@@ -34,11 +34,10 @@ export function createPgDb(url: string): Db & { close(): Promise<void> } {
 }
 
 /** Applies pending .sql migrations in filename order, tracked in schema_migrations. */
-export async function migrate(db: Db): Promise<void> {
-  const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "migrations");
+export async function migrate(db: Db, dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "migrations")): Promise<void> {
   await db.query("create table if not exists schema_migrations (name text primary key, applied_at timestamptz default now())");
   const done = new Set((await db.query<{ name: string }>("select name from schema_migrations")).map((r) => r.name));
-  for (const f of (await readdir(dir)).filter((n) => n.endsWith(".sql")).sort()) {
+  for (const f of (await readdir(dir)).filter((n) => n.endsWith(".sql") && !n.startsWith("._")).sort()) {
     if (done.has(f)) continue;
     const sql = await readFile(path.join(dir, f), "utf8");
     await db.tx(async (t) => {

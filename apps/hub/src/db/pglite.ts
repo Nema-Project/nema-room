@@ -25,3 +25,23 @@ export async function createTestDb(): Promise<Db> {
   await migrate(db);
   return db;
 }
+
+export async function createLocalDb(dataDir: string): Promise<Db & { close(): Promise<void> }> {
+  const client = new PGlite(dataDir);
+  const db = wrap(client, false);
+  try {
+    await migrate(db);
+  } catch (error) {
+    await client.close().catch(() => {});
+    throw error;
+  }
+
+  let closePromise: Promise<void> | undefined;
+  return {
+    ...db,
+    async close() {
+      closePromise ??= client.close();
+      await closePromise;
+    },
+  };
+}

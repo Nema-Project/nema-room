@@ -43,7 +43,7 @@ export default defineConfig({
         test: {
           name: `@nema/${dir.split("/")[1]}`,
           root: `${root}${dir}`,
-          exclude: ["**/node_modules/**", "**/dist/**", "**/.next/**"],
+          exclude: ["**/node_modules/**", "**/dist/**", "**/.next/**", "**/._*"],
           ...(isWeb ? { environment: "jsdom", setupFiles: [`${root}${dir}/test/setup.ts`] } : {}),
         },
       };
