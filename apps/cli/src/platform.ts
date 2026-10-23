@@ -23,6 +23,12 @@ export function commandSpec(bin: string, args: string[], env: NodeJS.ProcessEnv 
   for (const dir of dirs) for (const ext of extensions) {
     const candidate = dir ? p.join(dir, bin + ext) : bin + ext;
     if (!existsSync(candidate)) continue;
+    const candidateExt = p.extname(candidate);
+    if (/\.(?:[cm]?js)$/i.test(candidateExt)) return { bin: process.execPath, args: [candidate, ...args] };
+    if (!candidateExt) {
+      const header = readFileSync(candidate, "utf8").slice(0, 256);
+      if (/^#![^\r\n]*\bnode\b/.test(header)) return { bin: process.execPath, args: [candidate, ...args] };
+    }
     if (!/\.(cmd|bat)$/i.test(candidate)) return { bin: candidate, args };
     const match = /"%(?:dp0%|~dp0)[\\/]([^"\r\n]+\.(?:[cm]?js))"/i.exec(readFileSync(candidate, "utf8"));
     if (!match) throw new Error(`Unsupported command shim: ${p.basename(candidate)}; install a native executable or a standard npm shim.`);

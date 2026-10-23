@@ -31,6 +31,19 @@ test.runIf(process.platform === "win32")("npm command shims launch JS directly, 
   expect(JSON.parse(result.stdout)).toEqual(args);
 });
 
+test.runIf(process.platform === "win32")("PATH-resolved extensionless Node launchers run directly, preserving literal arguments", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "nema path launcher space-")); roots.push(dir);
+  const launcher = path.join(dir, "fake-launcher");
+  writeFileSync(launcher, `#!/usr/bin/env node\nconsole.log(JSON.stringify(process.argv.slice(2)))\n`);
+  const args = ['a & echo UNEXPECTED', 'x%PATH%', 'space " quote', '日本語'];
+  const command = commandSpec("fake-launcher", args, { Path: dir });
+  expect(command.bin).toBe(process.execPath);
+  expect(command.args[0]).toBe(launcher);
+  const result = spawnSync(command.bin, command.args, { encoding: "utf8" });
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual(args);
+});
+
 test("Windows hook arguments are encoded as literal PowerShell strings", () => {
   const command = hookCommand("C:\\Program Files\\node.exe", "C:\\O'Brien & 100%\\nema\\index.js", "codex", "win32");
   const script = Buffer.from(command.split(" ").at(-1)!, "base64").toString("utf16le");
