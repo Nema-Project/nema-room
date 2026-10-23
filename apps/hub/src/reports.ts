@@ -214,11 +214,12 @@ export function startReportFallback(
   daemon: DaemonRpc,
   events: EventBus,
   opts: ReportFallbackOptions = {},
-): { tick: () => Promise<void>; stop: () => void } {
+): { tick: () => Promise<void>; stop: () => void; drain: () => Promise<void> } {
   const intervalMs = opts.intervalMs ?? 300_000;
   const graceMs = opts.graceMs ?? 1_800_000;
   const now = opts.now ?? (() => new Date());
   let running: Promise<void> | null = null;
+  let stopped = false;
 
   const runTick = async (): Promise<void> => {
     const cutoff = new Date(now().getTime() - graceMs).toISOString();
@@ -236,6 +237,7 @@ export function startReportFallback(
   };
   // Ticks never overlap: a slow daemon call holds the next tick back.
   const tick = (): Promise<void> => {
+    if (stopped) return Promise.resolve();
     running ??= runTick().finally(() => {
       running = null;
     });
@@ -245,7 +247,14 @@ export function startReportFallback(
     void tick().catch((error) => console.error("report fallback tick failed", error));
   }, intervalMs);
   timer.unref?.();
-  return { tick, stop: () => clearInterval(timer) };
+  return {
+    tick,
+    stop: () => {
+      stopped = true;
+      clearInterval(timer);
+    },
+    drain: async () => { await running; },
+  };
 }
 
 async function body(c: Context): Promise<unknown> {

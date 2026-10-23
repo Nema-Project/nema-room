@@ -23,6 +23,8 @@ export type AppDeps = {
   /** Late-bound in main.ts, the same way `daemonStatus` is. */
   daemon: DaemonRpc;
   webOrigin?: string;
+  /** Optional gate for browser UI/API traffic; room and report authentication stay separate. */
+  uiAuth?: MiddlewareHandler;
   /** Diagram validation and rendering; defaults to the vendored archify. Tests inject a fake. */
   archify?: Archify;
   /** Port the hub listens on; only `127.0.0.1:<port>` and `localhost:<port>` are accepted as Host. */
@@ -64,6 +66,7 @@ export function createApp(deps: AppDeps): Hono {
     .map((o) => o.trim())
     .filter(Boolean);
   app.use("/api/*", cors({ origin: (o) => (webOrigins.includes(o) ? o : null), allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }));
+  if (deps.uiAuth) app.use("/api/*", deps.uiAuth);
   app.use("/api/*", requireJson);
   app.route("/api", uiRoutes(deps));
   app.route(
