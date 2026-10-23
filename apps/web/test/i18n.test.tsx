@@ -1,0 +1,185 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { render, screen, act } from "@testing-library/react";
+import { beforeEach, describe, expect, it } from "vitest";
+import { I18nProvider, detectLocale, useLocale, useT } from "@/lib/i18n";
+
+function Probe() {
+  const t = useT();
+  const [locale, setLocale] = useLocale();
+  return (
+    <div>
+      <span data-testid="locale">{locale}</span>
+      <span data-testid="a">{t("a")}</span>
+      <span data-testid="b">{t("b", { n: 3 })}</span>
+      <span data-testid="c">{t("missing.key")}</span>
+      <button onClick={() => setLocale("zh")}>zh</button>
+    </div>
+  );
+}
+
+const messages = { en: { a: "A-en", b: "B-en {n}" }, ja: { a: "A-ja" }, zh: { a: "A-zh", b: "B-zh {n}" } };
+
+beforeEach(() => {
+  localStorage.clear();
+  document.documentElement.lang = "";
+});
+
+describe("detectLocale", () => {
+  it("maps languages", () => {
+    expect(detectLocale(["ja-JP", "en"])).toBe("ja");
+    expect(detectLocale(["zh-TW"])).toBe("zh");
+    expect(detectLocale(["fr"])).toBe("en");
+    expect(detectLocale([])).toBe("en");
+  });
+});
+
+describe("I18nProvider", () => {
+  it("falls back to en for keys missing in the active locale, then to the key", async () => {
+    localStorage.setItem("nema.locale", "ja");
+    render(
+      <I18nProvider messages={messages}>
+        <Probe />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("A-ja")).toBeTruthy();
+    expect(screen.getByTestId("b").textContent).toBe("B-en 3");
+    expect(screen.getByTestId("c").textContent).toBe("missing.key");
+    expect(document.documentElement.lang).toBe("ja");
+  });
+
+  it("persists the chosen locale and updates <html lang>", async () => {
+    render(
+      <I18nProvider messages={messages}>
+        <Probe />
+      </I18nProvider>,
+    );
+    await act(async () => screen.getByText("zh").click());
+    expect(localStorage.getItem("nema.locale")).toBe("zh");
+    expect(screen.getByTestId("locale").textContent).toBe("zh");
+    expect(document.documentElement.lang).toBe("zh");
+  });
+
+  it("ignores an invalid stored locale", async () => {
+    localStorage.setItem("nema.locale", "xx");
+    render(
+      <I18nProvider messages={messages}>
+        <Probe />
+      </I18nProvider>,
+    );
+    expect(screen.getByTestId("locale").textContent).toBe("en");
+  });
+});
+
+describe("message files", () => {
+  const load = (l: string) => JSON.parse(readFileSync(resolve(import.meta.dirname, `../messages/${l}.json`), "utf8")) as Record<string, string>;
+  const exact: Record<string, { zh: string; ja: string; en: string }> = {
+    "basis.stated": { zh: "用户说过", ja: "発言あり", en: "Stated" },
+    "basis.decided": { zh: "用户决定", ja: "決定済み", en: "Decided" },
+    "basis.inferred": { zh: "推断", ja: "推測", en: "Inferred" },
+    "know.stale": { zh: "可能过时", ja: "古い可能性", en: "May be outdated" },
+    "detail.basis": { zh: "依据", ja: "根拠", en: "Basis" },
+    "detail.ingestedAt": { zh: "进库时间", ja: "登録日時", en: "Added" },
+    "detail.confirmedAt": { zh: "最后确认", ja: "最終確認", en: "Last confirmed" },
+    "detail.confirm": { zh: "确认仍有效", ja: "有効と確認", en: "Confirm still valid" },
+    "detail.quotes": { zh: "原文摘录", ja: "原文の抜粋", en: "Quotes" },
+    "author.system": { zh: "系统", ja: "システム", en: "System" },
+  };
+  it("have identical key sets", () => {
+    const en = load("en");
+    const ja = load("ja");
+    const zh = load("zh");
+    expect(Object.keys(ja).sort()).toEqual(Object.keys(en).sort());
+    expect(Object.keys(zh).sort()).toEqual(Object.keys(en).sort());
+    for (const [key, value] of Object.entries(exact)) {
+      expect(en[key]).toBe(value.en);
+      expect(ja[key]).toBe(value.ja);
+      expect(zh[key]).toBe(value.zh);
+    }
+  });
+
+  it("every new key exists in ja, en and zh", () => {
+    const en = load("en");
+    const ja = load("ja");
+    const zh = load("zh");
+    const keys: Record<string, { zh: string; ja: string; en: string }> = {
+      "know.workpackages": { zh: "开发包", ja: "開発パッケージ", en: "Work packages" },
+      "wp.generate": { zh: "生成开发包", ja: "開発パッケージを作成", en: "Generate work package" },
+      "wp.select": { zh: "选择需求", ja: "要件を選択", en: "Select requirements" },
+      "wp.generateSelected": { zh: "为所选需求生成开发包", ja: "選択した要件で作成", en: "Generate for selected" },
+      "wp.blocked": { zh: "待澄清", ja: "確認待ち", en: "Needs answers" },
+      "wp.status.draft": { zh: "草稿", ja: "下書き", en: "Draft" },
+      "wp.status.approved": { zh: "已批准", ja: "承認済み", en: "Approved" },
+      "wp.status.in_progress": { zh: "进行中", ja: "進行中", en: "In progress" },
+      "wp.status.done": { zh: "已完成", ja: "完了", en: "Done" },
+      "wp.status.dropped": { zh: "已放弃", ja: "中止", en: "Dropped" },
+      "wp.tab.overview": { zh: "概览", ja: "概要", en: "Overview" },
+      "wp.tab.spec": { zh: "Spec", ja: "Spec", en: "Spec" },
+      "wp.tab.plan": { zh: "Plan", ja: "Plan", en: "Plan" },
+      "wp.tab.history": { zh: "历史", ja: "履歴", en: "History" },
+      "wp.approve": { zh: "批准", ja: "承認", en: "Approve" },
+      "wp.regenerate": { zh: "重新生成", ja: "再生成", en: "Regenerate" },
+      "wp.drop": { zh: "放弃", ja: "中止", en: "Drop" },
+      "wp.edit": { zh: "编辑", ja: "編集", en: "Edit" },
+      "wp.save": { zh: "保存", ja: "保存", en: "Save" },
+      "grill.strict": { zh: "严格：影响实现的问题都先问", ja: "厳格：実装に影響する点はすべて先に確認", en: "Strict: ask everything that affects implementation" },
+      "grill.lenient": { zh: "宽松：只在决策冲突时停下", ja: "緩め：決定が矛盾するときだけ止まる", en: "Lenient: stop only on conflicting decisions" },
+      "grill.extraRules": { zh: "补充追问规则", ja: "追加の確認ルール", en: "Extra questioning rules" },
+      "plugins.nav": { zh: "插件", ja: "プラグイン", en: "Plugins" },
+      "plugins.local": { zh: "仅本机", ja: "ローカルのみ", en: "Local only" },
+      "plugins.external": { zh: "会外发", ja: "外部送信あり", en: "Sends data out" },
+      "plugins.installed": { zh: "已安装", ja: "インストール済み", en: "Installed" },
+      "plugins.notInstalled": { zh: "未安装", ja: "未インストール", en: "Not installed" },
+      "plugins.externalNote": {
+        zh: "打开后，调用内容会发送到外部服务",
+        ja: "有効にすると呼び出し内容が外部サービスに送信されます",
+        en: "When on, call contents are sent to an external service",
+      },
+      "know.diagrams": { zh: "代码图", ja: "コード図", en: "Code diagrams" },
+      "diagram.open": { zh: "在新窗口打开", ja: "新しいウィンドウで開く", en: "Open in new window" },
+      "diagram.update": { zh: "更新", ja: "更新", en: "Update" },
+      "diagram.updateQueued": { zh: "已排队更新", ja: "更新をキューに追加しました", en: "Update queued" },
+      "diagram.sourceCommit": { zh: "画图时的提交", ja: "作図時のコミット", en: "Drawn from commit" },
+      "code.title": { zh: "代码与插件", ja: "コードとプラグイン", en: "Code & plugins" },
+      "code.repos": { zh: "绑定的仓库", ja: "連携リポジトリ", en: "Linked repositories" },
+      "code.addRepo": { zh: "添加仓库", ja: "リポジトリを追加", en: "Add repository" },
+      "code.path": { zh: "本地路径", ja: "ローカルパス", en: "Local path" },
+      "code.label": { zh: "用途", ja: "用途", en: "Label" },
+      "code.mainBranch": { zh: "主分支", ja: "メインブランチ", en: "Main branch" },
+      "code.fetchedAt": { zh: "最后同步", ja: "最終同期", en: "Last fetched" },
+      "code.fetchFailed": { zh: "同步失败", ja: "同期失敗", en: "Fetch failed" },
+      "code.noOrigin": { zh: "没有 origin，使用本地分支", ja: "origin がないためローカルブランチを使用", en: "No origin; using the local branch" },
+      "report.label": { zh: "coding agent 上报", ja: "coding agent の報告", en: "Coding agent report" },
+      "report.commitsExist": { zh: "提交存在", ja: "コミットあり", en: "Commits exist" },
+      "report.onMain": { zh: "已合入主分支", ja: "メインブランチに反映済み", en: "On main" },
+      "report.notYet": { zh: "尚未合入主分支", ja: "まだメインブランチに未反映", en: "Not on main yet" },
+      "report.filesOk": { zh: "文件相符", ja: "ファイル一致", en: "Files match" },
+      "report.untouched": { zh: "未改动的文件", ja: "変更されていないファイル", en: "Files not touched" },
+      "impl.reported": { zh: "已上报", ja: "報告済み", en: "Reported" },
+      "impl.reportedInferred": { zh: "已上报（代码推断）", ja: "報告済み（コードから推測）", en: "Reported (inferred from code)" },
+      "impl.verified": { zh: "已核实", ja: "検証済み", en: "Verified" },
+      "impl.mismatch": { zh: "有出入", ja: "不一致", en: "Mismatch" },
+      "impl.confirm": { zh: "确认已实现", ja: "実装済みと確認", en: "Confirm implemented" },
+      "impl.confirmedByUser": { zh: "由用户确认", ja: "ユーザーが確認", en: "Confirmed by user" },
+      "github.loggedIn": { zh: "已保存令牌", ja: "トークン保存済み", en: "Token saved" },
+      "github.notLoggedIn": { zh: "未保存令牌", ja: "トークン未保存", en: "No token" },
+      "github.loginHint": {
+        zh: "在终端运行以下命令，从标准输入粘贴 personal access token",
+        ja: "ターミナルで次のコマンドを実行し、標準入力に personal access token を貼り付けます",
+        en: "Run this in a terminal and paste a personal access token on stdin",
+      },
+      "github.noRemote": { zh: "没有 GitHub 远端", ja: "GitHub リモートなし", en: "No GitHub remote" },
+      "code.plugins": { zh: "本 workspace 的插件", ja: "この workspace のプラグイン", en: "Plugins for this workspace" },
+      "code.modelEgress": {
+        zh: "Agent 读到的代码片段会随请求发送给模型服务商（OpenAI / Anthropic）。",
+        ja: "Agent が読んだコード片はリクエストとともにモデル提供者（OpenAI / Anthropic）に送信されます。",
+        en: "Code the Agent reads is sent to the model provider (OpenAI / Anthropic) with each request.",
+      },
+    };
+    for (const [key, value] of Object.entries(keys)) {
+      expect(en[key]).toBe(value.en);
+      expect(ja[key]).toBe(value.ja);
+      expect(zh[key]).toBe(value.zh);
+    }
+  });
+});

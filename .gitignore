@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.next/
+.env
+.env.*
+!.env.example
+.superpowers/
+.worktrees/
+coverage/
+*.log
+*.tsbuildinfo
+
+*.DS_Store*
+._*

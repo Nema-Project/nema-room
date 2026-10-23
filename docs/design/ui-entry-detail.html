@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nema Room — 条目详情草图</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #111; --ink-2: #555; --ink-3: #8a8a8a; --rule: #e6e6e6;
+    --paper: #fff; --paper-2: #f6f6f4; --side: #f3f2ee; --accent: #e3241b;
+    --sans: "Inter", "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Hiragino Sans", sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--sans); color: var(--ink); background: #dcdcd8; font-size: 14px; line-height: 1.55; -webkit-font-smoothing: antialiased; padding: 28px; }
+  h2.page { font-size: 20px; font-weight: 700; letter-spacing: -.015em; }
+  .sub { color: #555; font-size: 13px; margin: 4px 0 20px; max-width: 900px; }
+  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 20px; align-items: start; }
+  .panel { background: var(--paper); min-height: 700px; display: flex; flex-direction: column; }
+  .cap { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #555; margin-bottom: 8px; }
+
+  .top { padding: 16px 24px 0; border-bottom: 1px solid var(--rule); }
+  .crumb { font-size: 12px; color: var(--ink-3); display: flex; gap: 8px; align-items: center; }
+  .crumb b { color: var(--ink); font-weight: 600; }
+  .crumb .x { margin-left: auto; }
+  .idline { display: flex; align-items: baseline; gap: 10px; margin-top: 12px; }
+  .id { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+  .st { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; border: 1px solid var(--ink); padding: 0 6px; }
+  .title { font-size: 20px; font-weight: 700; letter-spacing: -.015em; margin: 4px 0 12px; line-height: 1.3; }
+  .tabs { display: flex; gap: 24px; font-size: 13px; font-weight: 600; }
+  .tabs span { padding: 8px 0 10px; color: var(--ink-3); }
+  .tabs .on { color: var(--ink); box-shadow: inset 0 -2px 0 var(--ink); }
+  .tabs .edit { margin-left: auto; font-weight: 500; color: var(--ink); }
+
+  .body { padding: 20px 24px 28px; }
+  .meta { display: grid; grid-template-columns: 84px 1fr; gap: 6px 12px; font-size: 13px; padding-bottom: 16px; border-bottom: 1px solid var(--rule); margin-bottom: 18px; }
+  .meta dt { color: var(--ink-3); }
+  .rel { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+  .rel span { font-family: var(--mono); font-size: 11px; border: 1px solid var(--rule); padding: 0 6px; }
+  .rel span.done { color: var(--ink-3); text-decoration: line-through; }
+  .md h4 { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin: 16px 0 6px; }
+  .md h4:first-child { margin-top: 0; }
+  .md ul { margin-left: 18px; }
+  .src { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--rule); }
+  .src .k { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 6px; }
+  .src a { display: block; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; font-size: 13px; margin: 3px 0; }
+
+  /* 历史 */
+  .tl { position: relative; }
+  .ver { display: grid; grid-template-columns: 44px 1fr; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+  .ver.sel { background: var(--paper-2); margin: 0 -24px; padding: 12px 24px; }
+  .vn { font-family: var(--mono); font-size: 12px; font-weight: 500; }
+  .vh { font-size: 12px; color: var(--ink-3); }
+  .vh b { color: var(--ink); font-weight: 600; }
+  .who { font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 0 5px; margin-left: 6px; }
+  .who.ai { border: 1px solid var(--ink-3); color: var(--ink-2); }
+  .who.me { background: var(--ink); color: #fff; }
+  .reason { margin-top: 2px; }
+  .from { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+  .from u { color: var(--ink); text-underline-offset: 2px; }
+  .diff { margin-top: 16px; border: 1px solid var(--rule); font-size: 13px; }
+  .diff .dh { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding: 6px 10px; border-bottom: 1px solid var(--rule); color: var(--ink-2); display: flex; }
+  .diff .dh span:last-child { margin-left: auto; font-weight: 500; letter-spacing: 0; text-transform: none; }
+  .dl { display: grid; grid-template-columns: 18px 1fr; padding: 2px 10px; }
+  .dl .s { font-family: var(--mono); color: var(--ink-3); }
+  .dl.del { color: var(--ink-3); text-decoration: line-through; background: #fff5f4; }
+  .dl.del .s { color: var(--accent); text-decoration: none; }
+  .dl.add { background: #f1f1ee; font-weight: 500; }
+  .dl.add .s { color: var(--ink); }
+
+  /* 为什么 */
+  .why { display: grid; grid-template-columns: 150px 1fr; font-size: 13px; }
+  .why .g { padding: 6px 12px 6px 0; border-right: 2px solid var(--rule); color: var(--ink-3); font-size: 12px; line-height: 1.4; }
+  .why .g b { font-family: var(--mono); font-weight: 500; color: var(--ink); display: block; font-size: 11px; }
+  .why .g.hl { border-right-color: var(--ink); }
+  .why .g.empty { border-right-color: var(--rule); }
+  .why .c { padding: 6px 0 6px 14px; }
+  .why .c.hl { background: var(--paper-2); }
+  .why .gap { grid-column: 1 / -1; height: 1px; background: var(--rule); margin: 2px 0; }
+  .hint { font-size: 12px; color: var(--ink-3); margin-bottom: 14px; }
+</style>
+</head>
+<body>
+<h2 class="page">条目详情：点击右栏任一条目后，右栏向左展开为 560px 宽的详情面板</h2>
+<p class="sub">同一条 R-7 的三个标签页并排给你看。点"内容"里的来源，会让左侧聊天滚动到那条原始消息；关掉详情回到知识列表。</p>
+
+<div class="row">
+
+  <!-- 1. 内容 -->
+  <div>
+    <div class="cap">① 内容</div>
+    <div class="panel">
+      <div class="top">
+        <div class="crumb">项目知识 / 当前需求 / <b>R-7</b><span class="x">✕</span></div>
+        <div class="idline"><span class="id">R-7</span><span class="st">有效</span></div>
+        <div class="title">Agent 回复改为流式输出</div>
+        <div class="tabs"><span class="on">内容</span><span>历史 3</span><span>为什么</span><span class="edit">编辑</span></div>
+      </div>
+      <div class="body">
+        <dl class="meta">
+          <dt>业务日期</dt><dd>2026-10-21（PdM 会议）</dd>
+          <dt>最后修改</dt><dd>10/21 14:09 · Agent</dd>
+          <dt>关联</dt><dd class="rel"><span>D-12</span><span>T-3</span><span>S-2</span><span class="done">Q-4</span></dd>
+        </dl>
+        <div class="md">
+          <h4>背景</h4>
+          <p>客户反馈 Agent 回复等待时间过长，在回复完整生成前看不到任何内容。</p>
+          <h4>要求</h4>
+          <ul><li>Agent 回复改为流式输出，生成过程中逐步显示。</li><li>本期只做 Web 端；嵌入式 widget 下期处理。</li></ul>
+          <h4>验收标准</h4>
+          <ul><li>首字在 2 秒内出现（P95）。</li><li>整段回复的总时长不作要求。</li></ul>
+        </div>
+        <div class="src">
+          <div class="k">来源</div>
+          <a>10/21 14:02 · 你的记录「跟pm聊了下 agent回复太慢…」</a>
+          <a>10/21 14:09 · 你对 Q-4 的回答「首字 2 秒内…」</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. 历史 -->
+  <div>
+    <div class="cap">② 历史（选中一个版本，下面显示与当前版本的差异）</div>
+    <div class="panel">
+      <div class="top">
+        <div class="crumb">项目知识 / 当前需求 / <b>R-7</b><span class="x">✕</span></div>
+        <div class="idline"><span class="id">R-7</span><span class="st">有效</span></div>
+        <div class="title">Agent 回复改为流式输出</div>
+        <div class="tabs"><span>内容</span><span class="on">历史 3</span><span>为什么</span><span class="edit">编辑</span></div>
+      </div>
+      <div class="body">
+        <div class="tl">
+          <div class="ver">
+            <span class="vn">v3</span>
+            <div><div class="vh"><b>10/21 14:09</b><span class="who ai">Agent</span> · 当前</div>
+              <div class="reason">根据 Q-4 的回答补充验收标准：首字 2 秒内，整段不限。</div>
+              <div class="from">来源：<u>14:09 你对 Q-4 的回答</u></div></div>
+          </div>
+          <div class="ver sel">
+            <span class="vn">v2</span>
+            <div><div class="vh"><b>10/21 14:05</b><span class="who me">你</span></div>
+              <div class="reason">手动修正：本期只做 Web 端。</div>
+              <div class="from">直接编辑</div></div>
+          </div>
+          <div class="ver">
+            <span class="vn">v1</span>
+            <div><div class="vh"><b>10/21 14:03</b><span class="who ai">Agent</span> · 新增</div>
+              <div class="reason">PdM 会议：客户嫌回复慢，决定先做流式。</div>
+              <div class="from">来源：<u>14:02 你的记录</u></div></div>
+          </div>
+        </div>
+        <div class="diff">
+          <div class="dh"><span>v2 → v3（当前）</span><span>验收标准</span></div>
+          <div class="dl"><span class="s"> </span><span>验收标准</span></div>
+          <div class="dl del"><span class="s">−</span><span>待确认：目标响应时间（见 Q-4）。</span></div>
+          <div class="dl add"><span class="s">+</span><span>首字在 2 秒内出现（P95）。</span></div>
+          <div class="dl add"><span class="s">+</span><span>整段回复的总时长不作要求。</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. 为什么 -->
+  <div>
+    <div class="cap">③ 为什么（每一段旁边写着它为什么长这样）</div>
+    <div class="panel">
+      <div class="top">
+        <div class="crumb">项目知识 / 当前需求 / <b>R-7</b><span class="x">✕</span></div>
+        <div class="idline"><span class="id">R-7</span><span class="st">有效</span></div>
+        <div class="title">Agent 回复改为流式输出</div>
+        <div class="tabs"><span>内容</span><span>历史 3</span><span class="on">为什么</span><span class="edit">编辑</span></div>
+      </div>
+      <div class="body">
+        <p class="hint">左边是每段文字最后一次被改的版本和理由。点理由可跳到对应的历史版本和原始消息。</p>
+        <div class="why">
+          <div class="g"><b>v1 · Agent</b>PdM 会议：客户嫌回复慢</div>
+          <div class="c"><b>背景</b><br>客户反馈 Agent 回复等待时间过长，在回复完整生成前看不到任何内容。</div>
+          <div class="gap"></div>
+          <div class="g"><b>v1 · Agent</b>PdM 会议：决定先做流式</div>
+          <div class="c"><b>要求</b><br>Agent 回复改为流式输出，生成过程中逐步显示。</div>
+          <div class="g"><b>v2 · 你</b>手动修正：只做 Web 端</div>
+          <div class="c">本期只做 Web 端；嵌入式 widget 下期处理。</div>
+          <div class="gap"></div>
+          <div class="g hl"><b>v3 · Agent</b>Q-4 的回答</div>
+          <div class="c hl"><b>验收标准</b><br>首字在 2 秒内出现（P95）。<br>整段回复的总时长不作要求。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

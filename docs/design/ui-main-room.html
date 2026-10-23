@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nema Room — 主界面草图</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #111111;
+    --ink-2: #555555;
+    --ink-3: #8a8a8a;
+    --rule: #e6e6e6;
+    --paper: #ffffff;
+    --paper-2: #f6f6f4;
+    --side: #f3f2ee;
+    --side-ink: #222222;
+    --side-ink-2: #8a8883;
+    --accent: #e3241b;           /* 瑞士红：只用在"需要你注意"的地方 */
+    --sans: "Inter", "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Hiragino Sans", "Noto Sans CJK SC", sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--sans); color: var(--ink); background: #dcdcd8; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  .frame { max-width: 1440px; height: 860px; margin: 24px auto; display: grid; grid-template-columns: 232px 1fr 380px; background: var(--paper); box-shadow: 0 1px 0 rgba(0,0,0,.08); overflow: hidden; }
+
+  /* ---- 左栏：Slack 式深色侧栏 ---- */
+  .side { background: var(--side); color: var(--side-ink); display: flex; flex-direction: column; border-right: 1px solid #e3e1db; }
+  .brand { padding: 20px 20px 18px; font-weight: 700; font-size: 15px; letter-spacing: -.01em; border-bottom: 1px solid #e3e1db; }
+  .lang { display: flex; gap: 0; margin-top: 10px; border: 1px solid var(--side-ink); width: max-content; font-size: 11px; font-weight: 600; }
+  .lang span { padding: 2px 8px; }
+  .lang .on { background: var(--ink); color: #fff; }
+  .brand small { display: block; font-weight: 500; font-size: 11px; color: var(--side-ink-2); letter-spacing: .08em; text-transform: uppercase; margin-top: 2px; }
+  .side h6 { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--side-ink-2); padding: 20px 20px 8px; }
+  .ws { display: flex; align-items: center; gap: 10px; padding: 7px 20px; font-size: 14px; color: #333; cursor: default; }
+  .ws.on { background: var(--ink); color: #fff; font-weight: 600; }
+  .ws .lock { width: 9px; height: 9px; border: 1.5px solid currentColor; border-radius: 1px; opacity: .6; flex: none; }
+  .ws .badge { margin-left: auto; font-size: 11px; font-weight: 700; background: var(--accent); color: #fff; padding: 0 6px; border-radius: 9px; }
+  .ws.add { color: var(--side-ink-2); }
+  .side .foot { margin-top: auto; padding: 16px 20px; border-top: 1px solid #e3e1db; font-size: 12px; color: var(--side-ink-2); }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #2fbf71; margin-right: 6px; vertical-align: 1px; }
+
+  /* ---- 中栏：聊天 ---- */
+  .chat { display: flex; flex-direction: column; border-right: 1px solid var(--rule); min-width: 0; }
+  .bar { height: 60px; padding: 0 28px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--rule); }
+  .bar h1 { font-size: 17px; font-weight: 700; letter-spacing: -.015em; }
+  .tag { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; border: 1px solid var(--ink); padding: 1px 6px; }
+  .bar .sp { margin-left: auto; color: var(--ink-3); font-size: 13px; }
+  .stream { flex: 1; overflow: auto; padding: 24px 28px 8px; }
+  .day { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; color: var(--ink-3); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; margin: 8px 0 16px; }
+  .day::before, .day::after { content: ""; height: 1px; background: var(--rule); }
+  .msg { display: grid; grid-template-columns: 36px 1fr; gap: 12px; padding: 8px 0; }
+  .av { width: 36px; height: 36px; display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+  .av.me { background: var(--ink); color: #fff; }
+  .av.ai { background: var(--paper-2); color: var(--ink); border: 1px solid var(--rule); font-family: var(--mono); font-size: 12px; }
+  .who { font-weight: 700; font-size: 14px; }
+  .who time { font-weight: 400; color: var(--ink-3); font-size: 12px; margin-left: 8px; }
+  .txt { color: var(--ink); white-space: pre-wrap; }
+  .memo { background: var(--paper-2); padding: 10px 12px; border-left: 2px solid var(--ink); color: var(--ink-2); }
+  .changes { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+  .chip { display: inline-flex; gap: 6px; align-items: baseline; border: 1px solid var(--rule); padding: 3px 8px; font-size: 12px; }
+  .chip b { font-family: var(--mono); font-weight: 500; font-size: 11px; }
+  .chip i { font-style: normal; color: var(--ink-3); }
+  .ask { margin-top: 10px; border-left: 3px solid var(--accent); padding: 8px 12px; background: #fff5f4; }
+  .ask .k { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+  .ask .q { font-weight: 600; margin-top: 2px; }
+  .working { color: var(--ink-3); font-size: 13px; display: flex; gap: 8px; align-items: center; }
+  .working .bar2 { width: 28px; height: 2px; background: linear-gradient(90deg, var(--ink) 40%, var(--rule) 40%); }
+  .composer { margin: 8px 28px 24px; border: 1px solid #cfcfcf; }
+  .composer .in { padding: 12px 14px; min-height: 64px; color: var(--ink-3); }
+  .composer .tb { display: flex; align-items: center; gap: 14px; padding: 6px 10px 8px 14px; color: var(--ink-3); font-size: 12px; }
+  .composer .send { margin-left: auto; background: var(--ink); color: #fff; font-weight: 600; padding: 6px 14px; font-size: 13px; }
+
+  /* ---- 右栏：项目知识 ---- */
+  .know { display: flex; flex-direction: column; background: var(--paper); min-width: 0; }
+  .know .bar { padding: 0 24px; }
+  .seg { display: flex; border: 1px solid var(--ink); margin-left: auto; font-size: 12px; font-weight: 600; }
+  .seg span { padding: 3px 10px; }
+  .seg .on { background: var(--ink); color: #fff; }
+  .list { flex: 1; overflow: auto; padding: 8px 0 24px; }
+  .grp { padding: 18px 24px 6px; display: flex; align-items: baseline; gap: 8px; }
+  .grp h3 { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .grp .n { font-size: 11px; color: var(--ink-3); font-weight: 600; }
+  .grp .n.red { color: var(--accent); }
+  .item { display: grid; grid-template-columns: 44px 1fr; gap: 8px; padding: 8px 24px; border-top: 1px solid var(--rule); }
+  .item:hover, .item.sel { background: var(--paper-2); }
+  .item .id { font-family: var(--mono); font-size: 11px; color: var(--ink-2); padding-top: 2px; }
+  .item .t { font-weight: 500; }
+  .item .m { font-size: 12px; color: var(--ink-3); }
+  .item.new .t::after { content: "新"; margin-left: 6px; font-size: 10px; font-weight: 700; color: #fff; background: var(--ink); padding: 0 4px; vertical-align: 2px; }
+  .item.q .id { color: var(--accent); }
+  .item a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
+  .fold { padding: 8px 24px; font-size: 12px; color: var(--ink-3); border-top: 1px solid var(--rule); }
+  .note { max-width: 1440px; margin: 0 auto 32px; color: #555; font-size: 13px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <aside class="side">
+    <div class="brand">Nema Room<small>根回し</small></div>
+    <h6>Workspaces</h6>
+    <div class="ws on"><span class="lock"></span>Agent 回复改进<span class="badge">1</span></div>
+    <div class="ws"><span class="lock"></span>客服后台重构</div>
+    <div class="ws">内部工具 · 报表</div>
+    <div class="ws add">＋ 新建 workspace</div>
+    <div class="foot"><span class="dot"></span>Codex 在线 · nema daemon
+      <div class="lang"><span>EN</span><span>日本語</span><span class="on">中文</span></div>
+    </div>
+  </aside>
+
+  <section class="chat">
+    <div class="bar">
+      <h1>Agent 回复改进</h1>
+      <span class="tag">保密</span>
+      <span class="sp">设置</span>
+    </div>
+    <div class="stream">
+      <div class="day">10月21日 周二</div>
+
+      <div class="msg">
+        <div class="av me">FC</div>
+        <div>
+          <div class="who">你<time>14:02</time></div>
+          <div class="txt memo">跟pm聊了下 agent回复太慢 客户等不及 先流式 后面再说多轮 别动tool调用那块
+参考 https://docs.google.com/document/d/1x…</div>
+        </div>
+      </div>
+
+      <div class="msg">
+        <div class="av ai">AI</div>
+        <div>
+          <div class="who">Nema<time>14:03</time></div>
+          <div class="txt">已更新 4 处：</div>
+          <div class="changes">
+            <span class="chip"><b>R-7</b>流式输出回复<i>需求 · 新增</i></span>
+            <span class="chip"><b>D-12</b>本期不改 tool 调用<i>决策 · 新增</i></span>
+            <span class="chip"><b>T-3</b>先流式，多轮延后<i>取舍 · 新增</i></span>
+            <span class="chip"><b>S-2</b>PdM 需求文档<i>来源 · 登记</i></span>
+          </div>
+          <div class="ask">
+            <div class="k">追问 · Q-4</div>
+            <div class="q">"太慢"的目标是多少？例如首字在 2 秒内出现，还是整段回复在 10 秒内完成？</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="msg">
+        <div class="av me">FC</div>
+        <div>
+          <div class="who">你<time>14:09</time></div>
+          <div class="txt md">首字 <b>2 秒内</b>，整段不管。补充两点：
+<ul style="margin:4px 0 0 18px"><li>先只做 Web 端，<code style="font-family:var(--mono);font-size:12px;background:var(--paper-2);padding:0 4px">widget</code> 下期</li><li>压测结果见 <a style="color:var(--ink);text-decoration:underline">性能报告</a></li></ul></div>
+        </div>
+      </div>
+
+      <div class="msg">
+        <div class="av ai">AI</div>
+        <div>
+          <div class="who">Nema<time>14:09</time></div>
+          <div class="working"><span class="bar2"></span>整理中 · 正在更新 R-7、关闭 Q-4</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="in">随手扔点什么… 会议速记、和 PdM 的聊天、需求变更、链接都可以</div>
+      <div class="tb"><span style="font-weight:700;color:var(--ink)">B</span><span style="font-style:italic;color:var(--ink)">I</span><span style="font-family:var(--mono);color:var(--ink)">&lt;/&gt;</span><span style="color:var(--ink)">• 列表</span><span style="color:var(--ink)">链接</span><span style="color:var(--rule)">|</span><span>支持 Markdown · Enter 换行 · Shift+Enter 发送</span><span class="send">发送 ⇧↵</span></div>
+    </div>
+  </section>
+
+  <aside class="know">
+    <div class="bar">
+      <h1 style="font-size:15px">项目知识</h1>
+      <div class="seg"><span class="on">分类</span><span>时间线</span></div>
+    </div>
+    <div class="list">
+      <div class="grp"><h3>待确认</h3><span class="n red">1</span></div>
+      <div class="item q sel"><span class="id">Q-4</span><div><div class="t">"太慢"的目标值？</div><div class="m">优先级 1 · 关联 R-7</div></div></div>
+
+      <div class="grp"><h3>当前需求</h3><span class="n">3</span></div>
+      <div class="item new"><span class="id">R-7</span><div><div class="t">Agent 回复改为流式输出</div><div class="m">业务日期 10/21 · 来自 PdM 会议</div></div></div>
+      <div class="item"><span class="id">R-5</span><div><div class="t">回复需引用知识库来源</div><div class="m">业务日期 09/30</div></div></div>
+      <div class="item"><span class="id">R-2</span><div><div class="t">支持日语与英语客户</div><div class="m">业务日期 09/12</div></div></div>
+      <div class="fold">已失效 2 条 ▸</div>
+
+      <div class="grp"><h3>已定决策</h3><span class="n">2</span></div>
+      <div class="item new"><span class="id">D-12</span><div><div class="t">本期不改 tool 调用逻辑</div><div class="m">业务日期 10/21</div></div></div>
+      <div class="item"><span class="id">D-9</span><div><div class="t">知识检索走现有 RAG 服务</div><div class="m">业务日期 10/02</div></div></div>
+
+      <div class="grp"><h3>取舍记录</h3><span class="n">1</span></div>
+      <div class="item new"><span class="id">T-3</span><div><div class="t">先流式，多轮对话优化延后</div><div class="m">理由：客户感知等待最痛</div></div></div>
+
+      <div class="grp"><h3>外部来源</h3><span class="n">2</span></div>
+      <div class="item"><span class="id">S-2</span><div><div class="t"><a>PdM 需求文档 ↗</a></div><div class="m">Google Docs · 关联 R-7、T-3</div></div></div>
+      <div class="item"><span class="id">S-1</span><div><div class="t"><a>启动会议 Slides ↗</a></div><div class="m">Google Slides · 关联 R-2</div></div></div>
+    </div>
+  </aside>
+
+</div>
+<p class="note">草图 · 字体 Inter（瑞士风格无衬线）+ 中文苹方，编号用等宽字体；配色只有黑白灰，红色只出现在"需要你处理"的地方（未处理追问、待确认数）。</p>
+</body>
+</html>
