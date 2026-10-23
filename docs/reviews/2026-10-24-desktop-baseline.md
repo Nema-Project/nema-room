@@ -24,3 +24,9 @@ The earlier full multi-project baseline was interrupted without a completed resu
 ## Execution update
 
 The user replaced the rejected LAN Grok implementation trial with native Luna implementers. The controller owns code review and acceptance. Task 1 covers on-disk PGlite and real queue/transaction/recovery behavior; other migration tasks and clean installation checks remain open. No tags, pushes or Releases have been created.
+
+## Resumption checks
+
+The saved local feature checkout was resumed without discarding incoming work. `node --test scripts/setup.test.mjs` passed all four installer-wizard checks. Scoped product fixes were accepted independently: live-PID refresh-lock safety (`f730a86`, 8 lock tests plus CLI typecheck), Windows PATH Node launcher resolution (`04babca`, 6 platform tests plus CLI typecheck), managed hub lifecycle (`79caccb`, 72 combined hub tests and 6 final lifecycle tests plus root typecheck), and owner-managed runner/model cancellation (`73fda8b`, 9 runner/lifecycle, 25 direct adapter, 15 Claude adapter tests plus CLI typecheck). These are targeted results, not a new full-suite pass.
+
+The paired lock/AuthStore run had 44 passing and 7 failing tests. All eight lock tests passed; the remaining failures concern Windows test setup/capabilities and platform assertions. A scratch-directory diagnosis showed `nativePermissions.expectPrivate` invokes `Get-Acl` through Windows PowerShell with a module path that cannot load `Microsoft.PowerShell.Security`; the production .NET ACL path succeeded. File symlink privilege, POSIX chmod/stat assertions and `mkfifo` are also still unresolved in that suite. No skips or fixture edits were used to claim acceptance.
