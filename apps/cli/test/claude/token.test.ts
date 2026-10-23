@@ -1,3 +1,4 @@
+import { expectPrivate, makePublic } from "../nativePermissions.js";
 import {
   chmodSync,
   lstatSync,
@@ -33,7 +34,7 @@ describe("Claude Code token file", () => {
 
     expect(claudeTokenPath(home)).toBe(join(home, "claude-code-token"));
     expect(readClaudeToken(home)).toBe("sekret-token");
-    expect(lstatSync(join(home, "claude-code-token")).mode & 0o777).toBe(0o600);
+    expectPrivate(join(home, "claude-code-token"), 0o600);
   });
 
   test.each(["", "first\nsecond"])("rejects invalid token %j without changing the existing file", (token) => {
@@ -62,7 +63,7 @@ describe("Claude Code token file", () => {
     mkdirSync(home, { recursive: true });
     const file = join(home, "claude-code-token");
     writeFileSync(file, "sekret-token", { mode: 0o600 });
-    chmodSync(file, 0o644);
+    makePublic(file);
     expect(() => readClaudeToken(home)).toThrow("Claude Code token 文件权限必须是 0600");
   });
 });

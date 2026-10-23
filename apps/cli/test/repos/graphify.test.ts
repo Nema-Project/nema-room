@@ -62,7 +62,8 @@ function git(cwd: string, args: string[]): string {
         GIT_COMMITTER_NAME: "Test",
         GIT_COMMITTER_EMAIL: "test@example.com",
         GIT_CONFIG_NOSYSTEM: "1",
-        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+        GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.autocrlf", GIT_CONFIG_VALUE_0: "false",
         GIT_TERMINAL_PROMPT: "0",
       },
     });
@@ -115,10 +116,12 @@ test("queryIndex maps exit 3 to 名称不唯一 and exit 4 to 没有匹配", asy
   mkdirSync(record);
   fake.bin = writeBin(
     "graphify-exit",
-    `#!/bin/sh
-pwd > "${record}/cwd"
-printf '%s\\n' "$@" > "${record}/argv"
-exit "$2"
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(record + "/cwd")}, process.cwd() + "\\n");
+fs.writeFileSync(${JSON.stringify(record + "/argv")}, args.join("\\n") + "\\n");
+process.exit(Number(args[1]));
 `,
   );
 
@@ -140,8 +143,10 @@ test("queryIndex rejects a value that starts with - before spawning graphify", a
   mkdirSync(record);
   fake.bin = writeBin(
     "graphify-argv",
-    `#!/bin/sh
-printf '%s\\n' "$@" > "${record}/argv"
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(record + "/argv")}, args.join("\\n") + "\\n");
 `,
   );
 
@@ -198,11 +203,13 @@ test("updateIndex writes changed files, deletes removed ones and runs graphify u
   const outside = join(root, "outside.txt");
   fake.bin = writeBin(
     "graphify-update",
-    `#!/bin/sh
-pwd > "${record}/cwd"
-printf '%s\\n' "$@" > "${record}/argv"
-mkdir -p graphify-out
-printf '{}' > graphify-out/graph.json
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(record + "/cwd")}, process.cwd() + "\\n");
+fs.writeFileSync(${JSON.stringify(record + "/argv")}, args.join("\\n") + "\\n");
+fs.mkdirSync("graphify-out", { recursive: true });
+fs.writeFileSync("graphify-out/graph.json", "{}");
 `,
   );
 
@@ -247,7 +254,7 @@ test("a rename from changedFiles removes the old snapshot file and writes the ne
   const child = git(repo, ["rev-parse", "HEAD"]).trim();
   mkdirSync(join(snapshot, "src"), { recursive: true });
   writeFileSync(join(snapshot, "src", "old-name.txt"), "same\n");
-  fake.bin = writeBin("graphify-noop", "#!/bin/sh\n");
+  fake.bin = writeBin("graphify-noop", "#!/usr/bin/env node\n");
 
   await updateIndex(snapshot, await changedFiles(repo, parent, child, "main"), repo, child, fake);
 
@@ -264,7 +271,11 @@ test("graphify update is called with --code-only", async () => {
   writeFileSync(join(repo, "a.txt"), "a\n");
   git(repo, ["add", "-A"]);
   git(repo, ["commit", "-m", "a"]);
-  const bin = writeBin("graphify-argv", `#!/bin/sh\nprintf '%s\\n' "$@" > "${argv}"\n`);
+  const bin = writeBin("graphify-argv", `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(argv)}, args.join("\\n") + "\\n");
+`);
 
   await updateIndex(snapshot, [{ status: "A", path: "a.txt" }], repo, "HEAD", { bin });
 

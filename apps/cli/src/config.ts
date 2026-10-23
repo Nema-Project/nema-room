@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { protectPrivatePath } from "./secrets/permissions.js";
 
 export const DEFAULT_BYOK_BASE_URL = "https://api.openai.com/v1";
 const BYOK_BASE_URL_ERROR = "byokBaseUrl 只允许 https，或 http://127.0.0.1 与 http://localhost（可带端口）";
@@ -77,10 +78,11 @@ export function loadConfig(nemaHome: string): NemaConfig {
 export function saveConfig(nemaHome: string, patch: Partial<NemaConfig>): NemaConfig {
   const next = ConfigSchema.parse({ ...loadConfig(nemaHome), ...patch });
   mkdirSync(nemaHome, { recursive: true });
+  protectPrivatePath(nemaHome, 0o700);
   const file = configFile(nemaHome);
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
-  chmodSync(tmp, 0o600);
+  protectPrivatePath(tmp);
   renameSync(tmp, file);
   return next;
 }

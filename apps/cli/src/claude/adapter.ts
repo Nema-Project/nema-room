@@ -1,6 +1,7 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import path from "node:path";
+import { commandSpec } from "../platform.js";
 import type { TaskAssign, TaskEvent } from "@nema/shared";
 import { configErrorMessage, loadConfig } from "../config.js";
 import type { AgentAdapter, AgentResult } from "../daemon/runner.js";
@@ -95,11 +96,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const maxToolCalls = task.limits?.maxToolCalls ?? MAX_TOOL_CALLS;
     const minutes = task.limits ? Math.round(task.limits.timeoutMs / 60_000) : 10;
     const allowed = new Set(claudeAllowedToolNames(task.pluginTools));
-    const child = spawn(bin, launch.args, {
+    const command = commandSpec(bin, launch.args, launch.env);
+    const child = spawn(command.bin, command.args, {
       cwd: path.join(launch.runDir, "work"),
       env: launch.env,
       stdio: ["pipe", "pipe", "pipe"],
       detached: true,
+      windowsHide: true,
     });
 
     return new Promise((resolve) => {
@@ -115,6 +118,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         // detached => the child leads its own process group. pid 0 would signal this group.
         const pid = child.pid;
         if (pid === undefined || pid <= 0 || pid === process.pid) return;
+        if (process.platform === "win32") {
+          spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+          return;
+        }
         try {
           process.kill(-pid, "SIGKILL");
         } catch (e) {

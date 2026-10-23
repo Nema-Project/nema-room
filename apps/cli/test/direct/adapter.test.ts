@@ -1,3 +1,4 @@
+import { makePublic } from "../nativePermissions.js";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -216,7 +217,7 @@ describe("CodexDirectAdapter", () => {
 
   test("an untrusted credential file is reported as unusable, not as not logged in", async () => {
     login();
-    chmodSync(join(home, "auth.json"), 0o644);
+    makePublic(join(home, "auth.json"));
     expect((await run()).result).toEqual({ ok: false, error: "凭证文件不可用（权限/符号链接/损坏），请重新运行 nema auth login" });
   });
 
@@ -394,7 +395,7 @@ describe("CodexDirectAdapter", () => {
 
   test("siwc without a login does not read the BYOK key", async () => {
     saveByokKey(home, "sekret-key");
-    chmodSync(byokKeyPath(home), 0o644);
+    makePublic(byokKeyPath(home));
 
     expect((await run()).result).toEqual({ ok: false, error: "未登录直连 Codex，请在终端运行 nema auth login" });
     expect(server.requests).toEqual([]);

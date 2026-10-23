@@ -1,9 +1,10 @@
 // Sending hooks and reports to the hub, and the local spool used while the hub is unreachable.
 import { randomUUID } from "node:crypto";
-import { closeSync, constants, fchmodSync, fstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import path from "node:path";
+import { openPrivateFile, protectPrivatePath } from "../secrets/permissions.js";
 
 export type HubPath = "/report/hook" | "/report";
 export type SendResult = "ok" | "dropped" | "failed";
@@ -114,12 +115,17 @@ export const spoolPath = (nemaHome: string): string => path.join(nemaHome, "repo
 /** Appends one line (0600). Returns false, writing nothing, when the spool would grow past 5 MB. */
 export function appendSpool(nemaHome: string, line: SpoolLine): boolean {
   mkdirSync(nemaHome, { recursive: true, mode: 0o700 });
+  if (process.platform === "win32") protectPrivatePath(nemaHome, 0o700);
+  try {
+    if (lstatSync(spoolPath(nemaHome)).isSymbolicLink()) throw new Error("上报缓存不能是符号链接");
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   const text = JSON.stringify(line) + "\n";
   const fd = openSync(spoolPath(nemaHome), constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
   try {
     const st = fstatSync(fd);
     if (!st.isFile()) return false;
-    if ((st.mode & 0o777) !== 0o600) fchmodSync(fd, 0o600);
+    if (process.platform === "win32") protectPrivatePath(spoolPath(nemaHome));
+    if (process.platform !== "win32" && (st.mode & 0o777) !== 0o600) fchmodSync(fd, 0o600);
     if (st.size + Buffer.byteLength(text) > SPOOL_MAX_BYTES) return false;
     writeSync(fd, text);
     return true;
@@ -131,7 +137,7 @@ export function appendSpool(nemaHome: string, line: SpoolLine): boolean {
 function readSpool(nemaHome: string): string | null {
   let fd: number;
   try {
-    fd = openSync(spoolPath(nemaHome), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    fd = openPrivateFile(spoolPath(nemaHome));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw e;

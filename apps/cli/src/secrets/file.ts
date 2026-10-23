@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { openPrivateFile, privateModeMatches, protectPrivatePath } from "./permissions.js";
 
 export type SecretFileErrorKind = "invalid" | "symlink" | "mode";
 
@@ -48,7 +49,7 @@ export function saveSecretLine(file: string, value: string, dirMode = 0o700): vo
 
   const dir = path.dirname(file);
   mkdirSync(dir, { recursive: true, mode: dirMode });
-  if (statSync(dir).mode & 0o777 & ~dirMode) chmodSync(dir, dirMode);
+  protectPrivatePath(dir, dirMode);
   const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   const fd = openSync(tmp, "wx", 0o600);
   try {
@@ -73,7 +74,7 @@ export function saveSecretLine(file: string, value: string, dirMode = 0o700): vo
 export function readSecretLine(file: string, missingMessage: string, invalidMessage: string): string {
   let fd: number;
   try {
-    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    fd = openPrivateFile(file);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new Error(missingMessage);
     if ((e as NodeJS.ErrnoException).code === "ELOOP") throw symlinkError(file);
@@ -81,7 +82,7 @@ export function readSecretLine(file: string, missingMessage: string, invalidMess
   }
   try {
     const st = fstatSync(fd);
-    if (!st.isFile() || (st.mode & 0o777) !== 0o600) {
+    if (!st.isFile() || !privateModeMatches(st)) {
       throw new SecretFileError("mode", `${path.basename(file)} 文件权限必须是 0600`);
     }
     // Hand-written files usually end in one newline. Anything else is never echoed back.

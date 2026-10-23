@@ -1,3 +1,4 @@
+import { expectPrivate } from "../nativePermissions.js";
 import {
   existsSync,
   lstatSync,
@@ -35,7 +36,7 @@ describe("BYOK key file", () => {
     saveByokKey(home, "sekret-key");
 
     expect(readByokKey(home)).toBe("sekret-key");
-    expect(lstatSync(join(home, "byok-key")).mode & 0o777).toBe(0o600);
+    expectPrivate(join(home, "byok-key"), 0o600);
   });
 
   test.each(["", "first\nsecond", "tab\tkey", "nul\u0000key"])("rejects invalid key %j without changing the existing file", (key) => {

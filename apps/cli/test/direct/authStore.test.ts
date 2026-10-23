@@ -1,3 +1,4 @@
+import { expectPrivate, makePublic } from "../nativePermissions.js";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -71,8 +72,8 @@ describe("save / read / clear", () => {
     const s = new AuthStore(home, neverRefresh);
     const a = auth();
     s.save(a);
-    expect(statSync(authFile()).mode & 0o777).toBe(0o600);
-    expect(statSync(home).mode & 0o777).toBe(0o700);
+    expectPrivate(authFile(), 0o600);
+    expectPrivate(home, 0o700);
     expect(s.read()).toEqual(a);
   });
 
@@ -88,7 +89,7 @@ describe("save / read / clear", () => {
     rmSync(authFile());
 
     writeFileSync(authFile(), JSON.stringify(auth()), { mode: 0o644 });
-    chmodSync(authFile(), 0o644);
+    makePublic(authFile());
     expect(s.read()).toBeNull();
     rmSync(authFile());
 
@@ -109,7 +110,7 @@ describe("save / read / clear", () => {
     expect(s.inspect()).toEqual({ auth: null, reason: "missing" });
     mkdirSync(home, { recursive: true, mode: 0o700 });
     writeFileSync(authFile(), JSON.stringify(auth()), { mode: 0o644 });
-    chmodSync(authFile(), 0o644);
+    makePublic(authFile());
     expect(s.inspect()).toEqual({ auth: null, reason: "unusable" });
     rmSync(authFile());
     writeFileSync(authFile(), "{not json", { mode: 0o600 });
@@ -196,7 +197,7 @@ describe("getAccessToken", () => {
     expect(disk.tokens).toEqual({ access_token: fresh, refresh_token: "rt-2", id_token: "idt-2" });
     expect(disk.lastRefresh).toBe("2026-10-22T10:00:00.000Z");
     expect(disk.accountId).toBe("acct-1");
-    expect(statSync(authFile()).mode & 0o777).toBe(0o600);
+    expectPrivate(authFile(), 0o600);
     expect(existsSync(lockFile())).toBe(false);
   });
 

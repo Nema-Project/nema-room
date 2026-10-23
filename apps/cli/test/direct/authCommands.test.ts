@@ -1,3 +1,4 @@
+import { makePublic } from "../nativePermissions.js";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -58,9 +59,12 @@ describe("nema auth status", () => {
     }
   });
 
-  test("an untrusted credential file (0644) is reported as unusable, not as not-logged-in", () => {
+  test("an untrusted credential file is reported as unusable, not as not-logged-in", async () => {
     saveAuth();
-    chmodSync(join(home, "auth.json"), 0o644);
+    if (process.platform === "win32") {
+      const { spawnSync } = await import("node:child_process");
+      expect(spawnSync("icacls.exe", [join(home, "auth.json"), "/grant", "*S-1-1-0:R"], { stdio: "ignore" }).status).toBe(0);
+    } else makePublic(join(home, "auth.json"));
     const c = capture();
     expect(authStatus({ nemaHome: home, out: c.out })).toBe(1);
     expect(c.text()).toContain("凭证文件不可用（权限/符号链接/损坏），请重新运行 nema auth login");

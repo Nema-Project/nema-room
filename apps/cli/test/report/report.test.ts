@@ -1,3 +1,4 @@
+import { expectPrivate } from "../nativePermissions.js";
 import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -67,7 +68,7 @@ describe("nema report hook", () => {
     expect(await runReportHook({ agent: "claude-code", nemaHome, hubUrl: dead, stdin: stdinOf(JSON.stringify({ cwd: repo, session_id: "one" })) })).toBe(0);
     expect(await runReportHook({ agent: "claude-code", nemaHome, hubUrl: dead, stdin: stdinOf(JSON.stringify({ cwd: repo, session_id: "two" })) })).toBe(0);
     expect(write).not.toHaveBeenCalled();
-    expect(statSync(spoolPath(nemaHome)).mode & 0o777).toBe(0o600);
+    expectPrivate(spoolPath(nemaHome), 0o600);
     expect(readFileSync(spoolPath(nemaHome), "utf8").trim().split("\n")).toHaveLength(2);
 
     const h = await hub();
@@ -103,7 +104,7 @@ describe("nema report hook", () => {
     expect(sent).toEqual([{ n: "new" }]);
     const rest = readFileSync(spoolPath(nemaHome), "utf8").trim().split("\n").map((l) => JSON.parse(l).body);
     expect(rest).toEqual([{ n: "later" }]);
-    expect(statSync(spoolPath(nemaHome)).mode & 0o777).toBe(0o600);
+    expectPrivate(spoolPath(nemaHome), 0o600);
   });
 });
 
@@ -191,7 +192,7 @@ describe("nema report", () => {
     await runReportHook({ agent: "x", nemaHome, hubUrl: h.url, stdin: stdinOf(JSON.stringify({ cwd: repo })) });
     const token = readFileSync(reportTokenPath(nemaHome), "utf8").trim();
     expect(token).toMatch(/^[0-9a-f]{64}$/);
-    expect(statSync(reportTokenPath(nemaHome)).mode & 0o777).toBe(0o600);
+    expectPrivate(reportTokenPath(nemaHome), 0o600);
     const printed = [...o.logs, ...o.errors, ...write.mock.calls.map((c) => String(c[0])), ...errWrite.mock.calls.map((c) => String(c[0]))].join("\n");
     expect(printed).not.toContain(token);
     expect(ensureReportToken(nemaHome)).toBe(token);

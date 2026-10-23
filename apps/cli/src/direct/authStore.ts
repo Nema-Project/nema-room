@@ -18,6 +18,7 @@ import path from "node:path";
 import { z } from "zod";
 import { jwtExp } from "./jwt.js";
 import { LockTimeoutError, withFileLock, type LockOptions } from "./lock.js";
+import { openPrivateFile, privateModeMatches, protectPrivatePath } from "../secrets/permissions.js";
 
 // Nema's own direct-mode login (`<nemaHome>/auth.json`). Never reads or links ~/.codex/auth.json.
 
@@ -66,8 +67,8 @@ export type AuthStoreOptions = { refreshTimeoutMs?: number; lock?: LockOptions }
 
 type StatLike = { isFile(): boolean; mode: number; uid: number };
 /** A credential file is trusted only if it is a regular file, mode 0600, and (where uids exist) owned by us. */
-export function isTrustedAuthStat(st: StatLike, uid: number | null = process.getuid?.() ?? null): boolean {
-  return st.isFile() && (st.mode & 0o777) === 0o600 && (uid === null || st.uid === uid);
+export function isTrustedAuthStat(st: StatLike, uid: number | null = process.getuid?.() ?? null, platform: NodeJS.Platform = process.platform): boolean {
+  return st.isFile() && privateModeMatches(st, platform) && (uid === null || st.uid === uid);
 }
 
 export class RefreshError extends Error {
@@ -132,7 +133,7 @@ export class AuthStore {
       if (!isTrustedAuthStat(lstatSync(this.file))) return { auth: null, reason: "unusable" };
       // O_NOFOLLOW + O_NONBLOCK: a symlink or FIFO swapped in after lstat neither redirects nor hangs the open;
       // fstat then re-checks the file we actually opened.
-      const fd = openSync(this.file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      const fd = openPrivateFile(this.file);
       let raw: string;
       try {
         if (!isTrustedAuthStat(fstatSync(fd))) return { auth: null, reason: "unusable" };
@@ -170,7 +171,7 @@ export class AuthStore {
   /** Atomic write (exclusive 0600 temp file + fsync + rename) under a 0700 directory. */
   save(auth: StoredAuth): void {
     mkdirSync(this.nemaHome, { recursive: true, mode: 0o700 });
-    if (statSync(this.nemaHome).mode & 0o077) chmodSync(this.nemaHome, 0o700);
+    protectPrivatePath(this.nemaHome, 0o700);
     const tmp = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
     const fd = openSync(tmp, "wx", 0o600);
     try {

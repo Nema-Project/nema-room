@@ -9,6 +9,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { PLUGINS } from "@nema/shared";
 import { readGithubToken } from "../secrets/github.js";
+import { commandSpec, windowsRuntimeEnv } from "../platform.js";
 
 export const GITHUB_ARGS = ["stdio", "--read-only", "--toolsets", "pull_requests,issues"] as const;
 
@@ -57,7 +58,8 @@ class ExactEnvStdioTransport implements Transport {
 
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.bin, [...GITHUB_ARGS], { env: this.env, cwd: this.cwd, stdio: ["pipe", "pipe", "ignore"], shell: false });
+      const command = commandSpec(this.bin, [...GITHUB_ARGS], this.env);
+      const child = spawn(command.bin, command.args, { env: this.env, cwd: this.cwd, stdio: ["pipe", "pipe", "ignore"], shell: false, windowsHide: true });
       this.child = child;
       let spawned = false;
       child.on("error", (error) => {
@@ -189,11 +191,12 @@ export class GithubMcp {
 
   private version(): Promise<{ ok: boolean; detail: string }> {
     const home = this.homeDir();
+    const command = commandSpec(this.bin, ["--version"]);
     return new Promise((resolve) => {
       execFile(
-        this.bin,
-        ["--version"],
-        { env: { PATH: this.basePath(), HOME: home }, cwd: home, timeout: STATUS_TIMEOUT_MS, shell: false, maxBuffer: 1024 * 1024 },
+        command.bin,
+        command.args,
+        { env: { ...windowsRuntimeEnv(process.env), PATH: this.basePath(), HOME: home }, cwd: home, timeout: STATUS_TIMEOUT_MS, shell: false, maxBuffer: 1024 * 1024 },
         (error, stdout) => {
           if (error) {
             resolve({ ok: false, detail: (error as NodeJS.ErrnoException).code === "ENOENT" ? NOT_INSTALLED : START_FAILED });
@@ -260,7 +263,7 @@ export class GithubMcp {
 
   private async start(token: string): Promise<Connection> {
     const home = this.homeDir();
-    const transport = new ExactEnvStdioTransport(this.bin, { PATH: this.basePath(), HOME: home, GITHUB_PERSONAL_ACCESS_TOKEN: token }, home);
+    const transport = new ExactEnvStdioTransport(this.bin, { ...windowsRuntimeEnv(process.env), PATH: this.basePath(), HOME: home, GITHUB_PERSONAL_ACCESS_TOKEN: token }, home);
     const client = new Client({ name: "nema-daemon", version: "0.1.0" });
     let markStopped: (error: Error) => void = () => {};
     const stopped = new Promise<never>((_, reject) => {

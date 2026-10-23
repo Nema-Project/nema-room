@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { PluginToolSpec } from "@nema/shared";
 import { claudeAllowedToolNames } from "../direct/tools.js";
+import { windowsRuntimeEnv } from "../platform.js";
 
 export const CLAUDE_ROOM_TOOLS = [
   "mcp__room__list_entries",
@@ -54,7 +55,7 @@ export function prepareClaudeLaunch(o: {
     { mode: 0o600 },
   );
 
-  const env: NodeJS.ProcessEnv = {};
+  const env: NodeJS.ProcessEnv = windowsRuntimeEnv(o.parentEnv);
   for (const key of ["PATH", "LANG", "LC_ALL", "TERM"] as const) {
     if (o.parentEnv[key] !== undefined) env[key] = o.parentEnv[key];
   }
@@ -65,6 +66,14 @@ export function prepareClaudeLaunch(o: {
     CLAUDE_CODE_OAUTH_TOKEN: o.token,
   });
 
+  if (process.platform === "win32") {
+    env.USERPROFILE = configDir;
+    env.APPDATA = path.join(configDir, "AppData", "Roaming");
+    env.LOCALAPPDATA = path.join(configDir, "AppData", "Local");
+    env.PATH ??= Object.entries(o.parentEnv).find(([key]) => key.toLowerCase() === "path")?.[1];
+    mkdirSync(env.APPDATA, { recursive: true });
+    mkdirSync(env.LOCALAPPDATA, { recursive: true });
+  }
   const args = [
     "-p",
     "--output-format",

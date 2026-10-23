@@ -645,7 +645,7 @@ export class KnowledgeStore {
           continue;
         }
         // A file whose frontmatter names another id or kind would commit under the wrong path.
-        if (path.relative(this.repoDir, this.filePath(entry.id, entry.kind)) !== rel) {
+        if (path.relative(this.repoDir, this.filePath(entry.id, entry.kind)).split(path.sep).join("/") !== rel) {
           console.warn(`[knowledge] skipping ${rel}: frontmatter says ${entry.kind} ${entry.id}`);
           skipped.push(...rels);
           continue;

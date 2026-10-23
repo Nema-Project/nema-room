@@ -4,6 +4,7 @@ import { execFile, type ChildProcess, type ExecException } from "node:child_proc
 import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { commandSpec, windowsRuntimeEnv } from "../platform.js";
 
 const MAX_OUT = 65_536;
 const MAX_BUFFER = 256 * 1024 * 1024;
@@ -11,6 +12,7 @@ const INSTALL_HINT = "graphify 未安装：请运行 uv tool install graphifyy";
 
 export function graphifyEnv(snapshotRoot: string): NodeJS.ProcessEnv {
   return {
+    ...windowsRuntimeEnv(process.env),
     PATH: process.env.PATH ?? "",
     LANG: process.env.LANG ?? "",
     HOME: path.join(snapshotRoot, "home"),
@@ -79,12 +81,13 @@ function stopChild(child: ChildProcess): void {
 // A larger graphify print fails the call. Upgrade path: stream and destroy the child after 64KB.
 function runGraphify(snapshotRoot: string, args: string[], cwd: string, opts?: GraphifyOpts): Promise<RunResult> {
   const bin = graphifyBin(opts);
+  const command = commandSpec(bin, args, graphifyEnv(snapshotRoot));
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const child = execFile(
-      bin,
-      args,
+      command.bin,
+      command.args,
       { cwd, env: graphifyEnv(snapshotRoot), shell: false, encoding: "buffer", maxBuffer: 1024 * 1024 },
       (error, stdout, stderr) => {
         if (settled) return;
@@ -167,6 +170,7 @@ export async function graphifyInstallStatus(opts?: GraphifyOpts): Promise<{ inst
 
 function gitEnv(): NodeJS.ProcessEnv {
   return {
+    ...windowsRuntimeEnv(process.env),
     PATH: process.env.PATH ?? "",
     HOME: process.env.HOME ?? "",
     LANG: process.env.LANG ?? "",

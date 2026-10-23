@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { browserCommand } from "../platform.js";
 import { configErrorMessage, loadConfig } from "../config.js";
 import { AuthStore, ReloginRequiredError, UNUSABLE_FILE_MESSAGE, type Refresher } from "./authStore.js";
 import { CodexFileTokenSource, CodexLoginError, defaultCodexHome, readCodexCliTokens } from "./codexLogin.js";
@@ -21,11 +22,11 @@ const errMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const tail4 = (s: string | undefined) => (s ? `…${s.slice(-4)}` : "未知");
 const NOT_LOGGED_IN = "尚未登录直连模式，请在终端运行 nema auth login";
 
-/** Opens the system browser (macOS `open`, otherwise `xdg-open`); failures are ignored since the URL is printed. */
+/** Opens the system browser without a shell; the URL is printed if launching fails. */
 export function defaultOpenBrowser(url: string): void {
-  const cmd = process.platform === "darwin" ? "open" : "xdg-open";
+  const command = browserCommand(url);
   try {
-    const child = spawn(cmd, [url], { stdio: "ignore", detached: true });
+    const child = spawn(command.bin, command.args, { stdio: "ignore", detached: true, windowsHide: true });
     child.on("error", () => {});
     child.unref();
   } catch {

@@ -1,8 +1,10 @@
-import { mkdtempSync, rmSync, statSync, writeFileSync, readdirSync } from "node:fs";
+import { expectPrivate } from "./nativePermissions.js";
+import { closeSync, mkdtempSync, rmSync, statSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { DEFAULT_BYOK_BASE_URL, DEFAULT_CONFIG, loadConfig, saveConfig } from "../src/config.js";
+import { openPrivateFile } from "../src/secrets/permissions.js";
 
 let home: string;
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), "nema-config-test-")); });
@@ -61,7 +63,8 @@ test("saveConfig merges, persists with 0600, leaves no temp files", () => {
   const c = saveConfig(home, { model: "m1" });
   expect(c).toEqual({ adapter: "codex-direct", model: "m1", reasoningEffort: "medium", authMode: "siwc" });
   expect(loadConfig(home)).toEqual(c);
-  expect(statSync(join(home, "config.json")).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") expectPrivate(join(home, "config.json"), 0o600);
+  closeSync(openPrivateFile(join(home, "config.json")));
   expect(readdirSync(home)).toEqual(["config.json"]);
 });
 test("saveConfig rejects unknown keys and invalid values", () => {

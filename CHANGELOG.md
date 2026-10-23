@@ -4,6 +4,12 @@
 
 ### Added
 
+- A Chinese, English, and Japanese terminal setup wizard (`node scripts/setup.mjs`), read-only environment checks, and a portable `npm run up` entry point.
+- Windows private credential ACL validation, shell-free npm command-shim handling, native browser launching, process-tree cleanup, and encoded reporting hooks. Platform checks now run on Windows, macOS, and Linux in CI; the full application suite runs on Linux.
+
+- Chinese, English, and Japanese release-facing READMEs with matching setup commands, runtime choices, data handling, and known limitations. Detailed Chinese implementation notes now live in `docs/reference.zh-CN.md`.
+- MIT license for Nema Room and matching license metadata for the root and workspace packages. Vendored third-party licenses and notices are retained.
+
 - The sidebar opens a plugins page with each plugin's name, local or external tag, install status, and functions. Workspace settings adds a code section to bind a repository, see whether the last fetch worked, and turn a plugin or its read-only functions on or off. External plugins note that calls leave the machine, and the section states that code the Agent reads is sent to the model provider.
 - `nema doctor` reports `graphify 可用：<version>` when `graphify --version` runs, or `graphify 未安装：请运行 uv tool install graphifyy` when the binary is missing. That line is informational and never fails doctor.
 - The daemon checks each bound repo's main branch every 5 minutes. The hub sends `repos.sync` (including `lastMainSha`) on welcome and when bindings change. Binding stores the indexed sha as `lastMainSha` without emitting `repo.moved`. A null `lastMainSha` is recorded once and does not emit `repo.moved` or update the index; a later sha updates the graphify index from the changed files (a rename removes the old path; a missing index is rebuilt in full) and emits `repo.moved` even when indexing fails. Each check emits `repo.fetched`. A failed fetch keeps the last sha. A repo without origin follows the local branch. The hub stores `last_main_sha` on `repo.moved`, `last_fetch_at` only on a successful `repo.fetched`, and `last_fetch_error`; settings shows a failure next to the last successful fetch time.

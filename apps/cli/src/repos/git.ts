@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import { lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { windowsRuntimeEnv } from "../platform.js";
 
 const MAX_LINES = 400;
 const MAX_BYTES = 65_536;
@@ -36,6 +37,7 @@ export type ChangedFile = { status: string; path: string };
 
 export function commandEnv(): NodeJS.ProcessEnv {
   return {
+    ...windowsRuntimeEnv(process.env),
     PATH: process.env.PATH ?? "",
     HOME: process.env.HOME ?? "",
     LANG: process.env.LANG ?? "",

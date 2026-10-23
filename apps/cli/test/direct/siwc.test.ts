@@ -1,3 +1,4 @@
+import { expectPrivate } from "../nativePermissions.js";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -80,7 +81,7 @@ describe("hostId", () => {
   test("creates a stable urn:uuid id in <nemaHome>/host-id with mode 0600", () => {
     const a = hostId(home);
     expect(a).toMatch(/^urn:uuid:[0-9a-f-]{36}$/);
-    expect(statSync(join(home, "host-id")).mode & 0o777).toBe(0o600);
+    expectPrivate(join(home, "host-id"), 0o600);
     expect(hostId(home)).toBe(a);
   });
 });
@@ -176,7 +177,7 @@ describe("siwcLogin", () => {
 
     // persisted
     const file = join(home, "auth.json");
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expectPrivate(file, 0o600);
     const saved = JSON.parse(readFileSync(file, "utf8")) as StoredAuth;
     expect(saved).toMatchObject({ version: 1, mode: "siwc", clientId: "oaiapp_issued123", accountId: "user-sub-abcd1234" });
     expect(saved.tokens.refresh_token).toBe("rt-secret-xyz");

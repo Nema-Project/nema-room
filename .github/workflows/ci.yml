@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  platform:
+    name: Platform checks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run typecheck -w apps/cli
+      - run: node --test scripts/setup.test.mjs
+      - run: node scripts/setup.mjs --help
+      - name: Native credentials, command execution, and authentication
+        run: npx vitest run apps/cli/test/platform.test.ts apps/cli/test/secrets/permissions.test.ts apps/cli/test/config.test.ts apps/cli/test/direct/authCommands.test.ts apps/cli/test/claude/adapter.test.ts packages/knowledge/test/store.test.ts packages/knowledge/test/history.test.ts --maxWorkers=2
+
+  test:
+    name: Full application tests and web build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test -- --maxWorkers=2
+      - run: npm run build -w apps/hub
+      - run: npm run build -w apps/cli
+      - run: npm run lint -w apps/web
+      - run: npm run build -w apps/web
+      - name: Check installer prerequisites
+        run: npm run setup:check
+      - name: Build and start the Compose stack
+        run: npm run up
+      - name: Wait for the hub and web UI
+        shell: bash
+        run: |
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:4400/api/daemon/status >/dev/null && curl --fail --silent http://127.0.0.1:3000 >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs --tail=100
+          exit 1
+      - name: Stop containers
+        if: always()
+        run: docker compose down
