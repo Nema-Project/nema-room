@@ -1,6 +1,8 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { LockTimeoutError, withFileLock } from "../../src/direct/lock.js";
 
@@ -47,17 +49,71 @@ test("serialises concurrent holders", async () => {
   expect(maxInside).toBe(1);
 });
 
-test("takes over a lock whose holder pid does not exist", async () => {
-  writeFileSync(lock, JSON.stringify({ pid: deadPid(), at: Date.now() }));
+test("takes over an old lock whose holder pid does not exist", async () => {
+  writeFileSync(lock, JSON.stringify({ pid: deadPid(), at: Date.now() - 60_000 }));
   const t0 = Date.now();
   await expect(withFileLock(lock, async () => "ok", { timeoutMs: 2000 })).resolves.toBe("ok");
   expect(Date.now() - t0).toBeLessThan(1000);
   expect(existsSync(lock)).toBe(false);
 });
 
-test("takes over a lock older than staleMs even if the holder is alive", async () => {
+test("does not take over an old lock while its holder pid is alive", async () => {
   writeFileSync(lock, JSON.stringify({ pid: process.pid, at: Date.now() - 60_000 }));
-  await expect(withFileLock(lock, async () => "ok", { timeoutMs: 2000 })).resolves.toBe("ok");
+  let ran = false;
+  const err = await withFileLock(lock, async () => { ran = true; }, { timeoutMs: 100, pollMs: 10, staleMs: 20 }).catch((e) => e);
+  expect(err).toBeInstanceOf(LockTimeoutError);
+  expect(ran).toBe(false);
+  expect(existsSync(lock)).toBe(true);
+});
+
+test("does not steal a subprocess lock while its event loop is stalled past staleMs", async () => {
+  const fixture = fileURLToPath(new URL("../fixtures/lock-stall-worker.mjs", import.meta.url));
+  const child = spawn(process.execPath, ["--import", "tsx", fixture, lock, "300"], {
+    cwd: fileURLToPath(new URL("../..", import.meta.url)),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  let stderr = "";
+  const lines: string[] = [];
+  const waiters: Array<() => void> = [];
+  child.stdout!.on("data", (data) => {
+    output += data;
+    let i: number;
+    while ((i = output.indexOf("\n")) >= 0) {
+      lines.push(output.slice(0, i));
+      output = output.slice(i + 1);
+      waiters.splice(0).forEach((wake) => wake());
+    }
+  });
+  child.stderr!.on("data", (data) => { stderr += data; });
+  const nextLine = (index: number) => new Promise<string>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`subprocess timed out; stderr: ${stderr}`)), 5_000);
+    const check = () => {
+      if (lines.length > index) { clearTimeout(timer); resolve(lines[index]!); }
+      else if (child.exitCode !== null) { clearTimeout(timer); reject(new Error(`subprocess exited ${child.exitCode}; stderr: ${stderr}`)); }
+      else waiters.push(check);
+    };
+    child.on("exit", () => waiters.splice(0).forEach((wake) => wake()));
+    check();
+  });
+
+  try {
+    expect(await nextLine(0)).toBe("holder-start");
+    let contenderEntered = false;
+    const contender = withFileLock(lock, async () => { contenderEntered = true; }, { staleMs: 100, pollMs: 10, timeoutMs: 3000 });
+    await new Promise((r) => setTimeout(r, 180));
+    expect(contenderEntered).toBe(false);
+    expect(await nextLine(1)).toBe("holder-end");
+    await contender;
+    expect(contenderEntered).toBe(true);
+    if (child.exitCode === null) await new Promise<void>((resolve, reject) => {
+      child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`subprocess exited ${code}; stderr: ${stderr}`)));
+    });
+    expect(child.exitCode).toBe(0);
+  } finally {
+    if (child.exitCode === null) child.kill();
+    await new Promise<void>((resolve) => child.exitCode !== null ? resolve() : child.once("exit", () => resolve()));
+  }
 });
 
 test("times out with LockTimeoutError while a live, fresh holder keeps the lock", async () => {
