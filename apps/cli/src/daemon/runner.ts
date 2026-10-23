@@ -5,7 +5,7 @@ export type AgentResult = { ok: true; reply: string } | { ok: false; error: stri
 
 export interface AgentAdapter {
   name: string;
-  run(task: TaskAssign, onEvent: (e: TaskEvent) => void): Promise<AgentResult>;
+  run(task: TaskAssign, onEvent: (e: TaskEvent) => void, signal?: AbortSignal): Promise<AgentResult>;
 }
 
 /** "auto" -> the configured adapter. "codex" and "codex-cli" are the retired CLI names; both run codex-direct. */
@@ -18,6 +18,9 @@ export function resolveAdapterName(requested: string, config: NemaConfig): strin
 /** Runs tasks one at a time, globally, in enqueue order. */
 export class Runner {
   private chain: Promise<void> = Promise.resolve();
+  private stopped = false;
+  private stopping?: Promise<void>;
+  private activeController?: AbortController;
 
   constructor(
     private readonly adapters: AgentAdapter[],
@@ -33,13 +36,18 @@ export class Runner {
    * workspace's isolation dir while Codex is still using it). Failures are swallowed.
    */
   exclusive(job: () => Promise<void>): Promise<void> {
-    const run = this.chain.then(job).catch(() => {});
+    if (this.stopped) return this.stopping ?? Promise.resolve();
+    const run = this.chain.then(async () => {
+      if (!this.stopped) await job();
+    }).catch(() => {});
     this.chain = run;
     return run;
   }
 
   enqueue(task: TaskAssign, onEvent: (e: TaskEvent) => void, onDone: (r: AgentResult) => void): void {
+    if (this.stopped) return;
     this.chain = this.chain.then(async () => {
+      if (this.stopped) return;
       let result: AgentResult;
       let name: string | undefined;
       try {
@@ -53,18 +61,34 @@ export class Runner {
         if (!adapter) {
           result = { ok: false, error: `adapter ${name} 不可用` };
         } else {
+          const controller = new AbortController();
+          this.activeController = controller;
           try {
-            result = await adapter.run(task, onEvent);
+            result = await adapter.run(task, (event) => {
+              if (!this.stopped) onEvent(event);
+            }, controller.signal);
           } catch (e) {
             result = { ok: false, error: e instanceof Error ? e.message : String(e) };
+          } finally {
+            if (this.activeController === controller) this.activeController = undefined;
           }
         }
       }
+      if (this.stopped) return;
       try {
         onDone(result!);
       } catch {
         // a failing completion callback must not stall the queue
       }
     });
+  }
+
+  /** Permanently stop accepting work and wait until active adapter cleanup has finished. */
+  stop(): Promise<void> {
+    if (this.stopping) return this.stopping;
+    this.stopped = true;
+    this.activeController?.abort(new Error("runner stopped"));
+    this.stopping = this.chain.then(() => {});
+    return this.stopping;
   }
 }

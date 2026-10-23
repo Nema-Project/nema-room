@@ -56,3 +56,55 @@ test("an unreadable config reaches the chat as a Chinese message, not a raw zod/
   expect(r.ok).toBe(false);
   expect(r.error).toMatch(/^配置文件 ~\/\.nema\/config\.json 无法读取：/);
 });
+
+test("stop aborts the active task, suppresses its callbacks, and skips queued work", async () => {
+  let started!: () => void;
+  const began = new Promise<void>((resolve) => { started = resolve; });
+  let release!: () => void;
+  const cleanup = new Promise<void>((resolve) => { release = resolve; });
+  const run = vi.fn(async (_task, _event, signal?: AbortSignal) => {
+    started();
+    await cleanup;
+    return { ok: true as const, reply: signal?.aborted ? "late" : "ok" };
+  });
+  const runner = new Runner([{ name: "codex-direct", run }], () => cfg("codex-direct"));
+  const events = vi.fn();
+  const dones = vi.fn();
+  runner.enqueue(task("auto"), events, dones);
+  runner.enqueue(task("auto"), events, dones);
+  await began;
+
+  const stopping = runner.stop();
+  expect(run.mock.calls[0]?.[2]?.aborted).toBe(true);
+  let stopped = false;
+  void stopping.then(() => { stopped = true; });
+  await Promise.resolve();
+  expect(stopped).toBe(false);
+  release();
+  await stopping;
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(events).not.toHaveBeenCalled();
+  expect(dones).not.toHaveBeenCalled();
+});
+
+test("concurrent stop calls wait for the same active cleanup and reject later jobs", async () => {
+  let release!: () => void;
+  const cleanup = new Promise<void>((resolve) => { release = resolve; });
+  const run = vi.fn(async () => { await cleanup; return { ok: true as const, reply: "ok" }; });
+  const runner = new Runner([{ name: "codex-direct", run }], () => cfg("codex-direct"));
+  runner.enqueue(task("auto"), () => {}, () => {});
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const first = runner.stop();
+  const second = runner.stop();
+  let secondSettled = false;
+  void second.then(() => { secondSettled = true; });
+  await Promise.resolve();
+  expect(secondSettled).toBe(false);
+  const exclusive = vi.fn(async () => {});
+  runner.exclusive(exclusive);
+  runner.enqueue(task("auto"), () => {}, () => {});
+  release();
+  await Promise.all([first, second]);
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(exclusive).not.toHaveBeenCalled();
+});

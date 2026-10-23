@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { TaskAssign, TaskEvent } from "@nema/shared";
 import { CLAUDE_ROOM_TOOLS } from "../../src/claude/launch.js";
 import { ClaudeCodeAdapter } from "../../src/claude/adapter.js";
@@ -404,6 +404,20 @@ describe("ClaudeCodeAdapter", () => {
 
     expect(runs).toBe(0);
     expect(result).toEqual({ ok: false, error: TIMED_OUT });
+  });
+
+  test("owner cancellation kills an active fake Claude child and waits for its close", async () => {
+    const childPidFile = join(root, "cancel-child.pid");
+    const bin = installFake({ mode: "hang", argvFile: join(root, "argv-cancel.json"), childPidFile, lines: [roomInit()] });
+    const controller = new AbortController();
+    const adapter = createAdapter(bin);
+    const pending = adapter.run(task("task-cancel", "tidy-cancel"), () => {}, controller.signal);
+    await vi.waitFor(() => expect(existsSync(childPidFile)).toBe(true));
+    const pid = Number(readFileSync(childPidFile, "utf8"));
+    controller.abort(new Error("owner stopped"));
+    await pending;
+    expect(() => process.kill(pid, 0)).toThrow();
+    expect(existsSync(join(home, "run", "task-cancel"))).toBe(false);
   });
 
   test("kills Claude's process group on failure and on success", async () => {

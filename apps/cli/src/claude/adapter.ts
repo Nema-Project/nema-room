@@ -49,7 +49,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   constructor(private readonly opts: ClaudeCodeAdapterOptions) {}
 
-  async run(task: TaskAssign, onEvent: (e: TaskEvent) => void): Promise<AgentResult> {
+  async run(task: TaskAssign, onEvent: (e: TaskEvent) => void, signal?: AbortSignal): Promise<AgentResult> {
+    if (signal?.aborted) return { ok: false, error: "Claude 运行已中止。" };
     let token: string;
     try {
       token = readClaudeToken(this.opts.nemaHome);
@@ -84,13 +85,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
 
     try {
-      return await this.execute(task, launch, onEvent);
+      return await this.execute(task, launch, onEvent, signal);
     } finally {
       rmSync(launch.runDir, { recursive: true, force: true });
     }
   }
 
-  private execute(task: TaskAssign, launch: ClaudeLaunch, onEvent: (e: TaskEvent) => void): Promise<AgentResult> {
+  private execute(task: TaskAssign, launch: ClaudeLaunch, onEvent: (e: TaskEvent) => void, signal?: AbortSignal): Promise<AgentResult> {
     const bin = this.opts.claudeBin ?? "claude";
     const timeoutMs = task.limits?.timeoutMs ?? this.opts.timeoutMs ?? 600_000;
     const maxToolCalls = task.limits?.maxToolCalls ?? MAX_TOOL_CALLS;
@@ -134,14 +135,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", cancel);
         killTree();
         if (closed) return resolve(result);
-        const grace = setTimeout(() => resolve(result), 2000);
-        child.once("close", () => {
-          clearTimeout(grace);
-          resolve(result);
-        });
+        child.once("close", () => resolve(result));
       };
+      const cancel = () => finish({ ok: false, error: "Claude 运行已中止。" });
 
       const handle = (line: string) => {
         if (settled) return;
@@ -187,6 +186,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       };
 
       const timer = setTimeout(() => finish({ ok: false, error: timedOutMessage(minutes) }), timeoutMs);
+      signal?.addEventListener("abort", cancel, { once: true });
+      if (signal?.aborted) cancel();
       child.stdout?.setEncoding("utf8");
       child.stderr?.setEncoding("utf8");
       child.on("spawn", () => {
@@ -196,6 +197,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", cancel);
         killTree();
         resolve({ ok: false, error: err.code === "ENOENT" ? NOT_FOUND : START_FAILED });
       });
