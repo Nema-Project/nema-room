@@ -18,17 +18,21 @@ function harness(overrides = {}) {
       this.options = options;
       this.url = '';
       this.destroyed = false;
+      this.setMenu = vi.fn();
       this.webContents = new EventEmitter();
       this.webContents.setWindowOpenHandler = vi.fn();
       windows.push(this);
     }
-    async loadURL(url) { this.url = url; }
+    async loadURL(url) { this.url = url; this.webContents.mainFrame = { url }; }
+    close() { this.closeEvent = { preventDefault: vi.fn() }; this.emit('close', this.closeEvent); }
     show() {}
     focus() {}
     isDestroyed() { return this.destroyed; }
     destroy() { this.destroyed = true; this.emit('closed'); }
   }
   const shell = { openExternal: vi.fn(async () => {}) };
+  const ipcHandlers = new Map();
+  const ipcMain = { handle: vi.fn((channel, handler) => ipcHandlers.set(channel, handler)), removeHandler: vi.fn((channel) => ipcHandlers.delete(channel)) };
   const dialog = { showErrorBox: vi.fn() };
   const Menu = { setApplicationMenu: vi.fn(), buildFromTemplate: vi.fn((value) => value) };
   class Tray extends EventEmitter { setToolTip() {} setContextMenu() {} }
@@ -40,6 +44,7 @@ function harness(overrides = {}) {
     dialog,
     shell,
     session: { defaultSession: { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() } },
+    ipcMain,
   };
   let launches = 0;
   const runtimeApi = {
@@ -57,7 +62,7 @@ function harness(overrides = {}) {
     assetsDir: 'C:/Nema/resources/payload',
     loadRuntimeApi: async () => runtimeApi,
   });
-  return { app, windows, shell, dialog, electron, runtimeApi, lifecycle };
+  return { app, windows, shell, dialog, electron, ipcHandlers, runtimeApi, lifecycle };
 }
 
 describe('Electron shell lifecycle', () => {
@@ -67,6 +72,12 @@ describe('Electron shell lifecycle', () => {
     expect(value.app.quit).toHaveBeenCalledOnce();
     expect(value.runtimeApi.ensureLocalRuntime).not.toHaveBeenCalled();
     expect(value.windows).toHaveLength(0);
+  });
+
+  it('removes the per-window native menu on Windows so Alt cannot reveal a second menu row', async () => {
+    const value = harness();
+    await value.lifecycle.install();
+    if (process.platform !== 'darwin') expect(value.windows[0].setMenu).toHaveBeenCalledWith(null);
   });
 
   it('coalesces simultaneous activation requests while the shared core is still resolving', async () => {
@@ -116,6 +127,17 @@ describe('Electron shell lifecycle', () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(value.windows).toHaveLength(2);
     expect(value.windows[1].url).not.toBe(first.url);
+  });
+
+  it('routes the custom close IPC through close-to-tray without authenticated Quit', async () => {
+    const value = harness();
+    await value.lifecycle.install();
+    const window = value.windows[0];
+    value.ipcHandlers.get('nema:window:close')({ sender: window.webContents, senderFrame: window.webContents.mainFrame });
+    expect(window.closeEvent.preventDefault).toHaveBeenCalledOnce();
+    expect(window.destroyed).toBe(true);
+    expect(value.runtimeApi.shutdownLocalRuntime).not.toHaveBeenCalled();
+    expect(value.app.quit).not.toHaveBeenCalled();
   });
 
   it('waits for authenticated runtime drain before quitting', async () => {

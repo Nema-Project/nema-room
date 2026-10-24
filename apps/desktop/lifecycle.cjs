@@ -1,9 +1,10 @@
 'use strict';
 
 const { createSecureWindowOptions, isExternalHttps, navigationDecision, validateRuntimeLaunchUrl } = require('./security.cjs');
+const { registerWindowControls } = require('./window-controls.cjs');
 
 function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi }) {
-  const { app, BrowserWindow, Menu, Tray, dialog, shell, session } = electron;
+  const { app, BrowserWindow, Menu, Tray, dialog, shell, session, ipcMain } = electron;
   let runtimeApi;
   let currentInstance;
   let mainWindow;
@@ -64,7 +65,9 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi }) {
       const instance = await ensureCore();
       validateRuntimeLaunchUrl(instance.launchUrl, instance.origin);
       const window = new BrowserWindow(createSecureWindowOptions(instance.origin));
+      if (process.platform !== 'darwin') window.setMenu(null);
       mainWindow = window;
+      registerWindowControls({ ipcMain, window, runtimeOrigin: instance.origin });
       destroyWindowOnClose(window);
       handleNavigation(window, instance.origin);
       window.once('ready-to-show', () => { if (!window.isDestroyed()) window.show(); });

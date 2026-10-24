@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('node:path');
 const ticketPattern = /^[0-9a-f]{64}$/;
 
 function parseLoopbackOrigin(value) {
@@ -33,7 +34,10 @@ function createSecureWindowOptions(runtimeOrigin) {
     minHeight: 600,
     show: false,
     title: 'Nema',
+    frame: false,
+    autoHideMenuBar: true,
     webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,

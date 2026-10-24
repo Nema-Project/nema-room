@@ -16,6 +16,7 @@ describe('Electron renderer security policy', () => {
       sandbox: true,
       webSecurity: true,
     });
+    expect(createSecureWindowOptions('http://127.0.0.1:43001')).toMatchObject({ frame: false, autoHideMenuBar: true });
   });
 
   it('allows only the expected local origin or credential-free external HTTPS links', () => {

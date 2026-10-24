@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { extractFile } from '@electron/asar';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const appVersion = JSON.parse(readFileSync(path.join(repo, 'apps/desktop/package.json'), 'utf8')).version;
@@ -104,16 +105,18 @@ async function ticketSession(origin, launchUrl) {
 }
 
 async function readWebAssets(origin, cookie, html) {
+  if (html.includes('class="desktop-titlebar"')) throw new Error('The ordinary browser response must not render native desktop chrome');
   const cssPath = html.match(/<link[^>]+href=["']([^"']+\.css(?:\?[^"']*)?)["'][^>]*>/i)?.[1];
   if (!cssPath) throw new Error('Packaged UI HTML did not reference a stylesheet');
   const css = await fetch(new URL(cssPath, origin), { headers: { cookie } });
   if (css.status !== 200 || !(css.headers.get('content-type') ?? '').includes('text/css')) throw new Error(`Packaged CSS failed: HTTP ${css.status}`);
   const body = await css.text();
+  if (!body.includes('.desktop-titlebar') || !body.includes('.nema-desktop-window')) throw new Error('Packaged CSS is missing custom desktop chrome or its desktop-only layout scope');
   const fontRef = body.match(/url\(["']?([^"')]+\.woff2)(?:\?[^"')]*)?["']?\)/i)?.[1];
   if (!fontRef) throw new Error('Packaged production CSS did not reference a generated font');
   const font = await fetch(new URL(fontRef, new URL(cssPath, origin)), { headers: { cookie } });
   if (font.status !== 200 || !(font.headers.get('content-type') ?? '').includes('font')) throw new Error(`Packaged font failed: HTTP ${font.status}`);
-  return { cssPath, fontPath: new URL(fontRef, new URL(cssPath, origin)).pathname };
+  return { cssPath, fontPath: new URL(fontRef, new URL(cssPath, origin)).pathname, ordinaryBrowserHasNoDesktopTitlebar: !html.includes('class="desktop-titlebar"') };
 }
 
 async function jsonRequest(origin, cookie, pathname, method = 'GET', value) {
@@ -169,6 +172,11 @@ async function smoke(args) {
   if (extractExit !== 0) throw new Error(`Windows tar extraction failed with exit ${extractExit}`);
   const executable = await findExecutable(installDir);
   if (!executable) throw new Error('Portable ZIP did not contain Nema.exe');
+  const asarPath = path.join(path.dirname(executable), 'resources', 'app.asar');
+  const packagedPreload = extractFile(asarPath, 'preload.cjs').toString('utf8');
+  const packagedControls = extractFile(asarPath, 'window-controls.cjs').toString('utf8');
+  if (!packagedPreload.includes("exposeInMainWorld('nemaWindowControls'") || !packagedPreload.includes('toggleMaximize')) throw new Error('Copied app ASAR is missing the narrow titlebar preload bridge');
+  if (!packagedControls.includes('Untrusted window-control sender') || !packagedControls.includes("'closed'")) throw new Error('Copied app ASAR is missing owning-window validation or lifecycle cleanup');
   const payload = path.join(path.dirname(executable), 'resources', 'payload');
   const manifest = JSON.parse(await readFile(path.join(payload, 'runtime-manifest.json'), 'utf8'));
   if (manifest.platform !== 'win32' || manifest.arch !== 'x64' || manifest.version !== appVersion) throw new Error('Copied app contains an unexpected runtime target/version');
@@ -289,6 +297,7 @@ async function smoke(args) {
     artifactBytes: artifactStat.size,
     executable,
     copiedPayload: payload,
+    packagedChrome: { preloadInAsar: true, ownerValidatedControlsInAsar: true, desktopOnlyCss: true },
     electronHome: home,
     electronUserDataProfile: profile,
     workspaceId,

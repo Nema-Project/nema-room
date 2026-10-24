@@ -18,6 +18,8 @@ describe('native Electron packaging configuration', () => {
     expect(config.win.target).toEqual(['nsis', 'zip']);
     expect(config.nsis).toMatchObject({ oneClick: false, perMachine: false, deleteAppDataOnUninstall: false, differentialPackage: false });
     expect(config.asar).toBe(true);
+    expect(config.files).toContain('preload.cjs');
+    expect(config.files).toContain('window-controls.cjs');
     expect(config.extraResources.map((entry) => entry.to)).toEqual(['payload']);
     expect(config.win.signExecutable).toBe(false);
   });
