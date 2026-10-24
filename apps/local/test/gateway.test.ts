@@ -141,16 +141,21 @@ describe("protected same-origin gateway", () => {
     const session = new SessionManager();
     const gateway = await startGateway({ webTarget: webOrigin, hubTarget: hubOrigin, session, port: 0, privateGatewayCredential: credential });
     gateways.push(gateway);
-    const launch = await fetch(`${gateway.origin}/_nema/launch?ticket=${session.issueTicket()}`, { redirect: "manual" });
+    const launchUrl = `${gateway.origin}/_nema/launch?ticket=${session.issueTicket()}`;
+    const launch = await fetch(launchUrl, { redirect: "manual" });
     const cookie = launch.headers.get("set-cookie")!.split(";")[0]!;
 
     expect(await (await fetch(gateway.origin, { headers: { cookie } })).text()).toBe("web:/");
-    const api = await fetch(`${gateway.origin}/api/workspaces`, { headers: { cookie, authorization: "Bearer client-secret", "x-nema-gateway-credential": "forged" } });
+    const api = await fetch(`${gateway.origin}/api/workspaces`, {
+      headers: { cookie, authorization: "Bearer client-secret", "x-nema-gateway-credential": "forged", referer: launchUrl },
+    });
     expect(api.status).toBe(200);
     expect(await api.json()).toEqual([]);
     expect(seen?.get(GATEWAY_CREDENTIAL_HEADER)).toBe(credential);
     expect(seen?.get("cookie")).toBeNull();
     expect(seen?.get("authorization")).toBeNull();
+    expect(seen?.get("referer")).toBeNull();
+    expect([...(seen?.values() ?? [])].some((value) => value.includes(new URL(launchUrl).searchParams.get("ticket")!))).toBe(false);
     expect((await fetch(`${hubOrigin}/api/workspaces`)).status).toBe(401);
     expect((await fetch(`${gateway.origin}/api/no-route`, { headers: { cookie } })).status).toBe(404);
     expect((await fetch(`${gateway.origin}/room`, { headers: { cookie } })).status).toBe(404);
