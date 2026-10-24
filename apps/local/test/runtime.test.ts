@@ -5,7 +5,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { closeEnsuredRuntimesForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, setWebIpcForTests, startLocalRuntime, ensureLocalRuntime } from "../src/runtime.js";
+import { closeEnsuredRuntimesForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, startLocalRuntime, ensureLocalRuntime } from "../src/runtime.js";
 import { acquireInstance, discoverInstance } from "../src/instance.js";
 import { createLocalDb } from "@nema/hub/db/local";
 import { postUserMessage } from "@nema/hub/messages";
@@ -123,7 +123,6 @@ afterEach(async () => {
   await Promise.all(ensuredHomes.splice(0).map((home) => closeEnsuredRuntimesForTests(home)));
   setEnsureSpawnerForTests(undefined);
   setEnsureTimeoutForTests(undefined);
-  setWebIpcForTests(false);
   setRuntimeReadyHookForTests(undefined);
   setSettingsOperationsForTests(undefined);
   await Promise.all(crashChildren.splice(0).map(closeCrashChild));

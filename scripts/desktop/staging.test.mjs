@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createSanitizedSourceSnapshot, npmCliPathFor, stageRuntime } from './stage-runtime.mjs';
+import { createSanitizedSourceSnapshot, npmCliPathFor, parseStageArgs, stageRuntime } from './stage-runtime.mjs';
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nema-stage-fixture-'));
@@ -80,6 +80,20 @@ test('stages a relocatable manifest and all declared runtime resources from fixt
   assert.equal(files.includes('.git'), false);
 });
 
+test('stages fixed native browser launchers beside the runtime manifest', async (t) => {
+  const f = await fixture(t);
+  await stageRuntime(f.options);
+  const target = path.join(f.output, `${process.platform}-${process.arch}`);
+  const launcher = process.platform === 'win32' ? 'Nema Browser.cmd' : process.platform === 'darwin' ? 'Nema Browser.command' : 'nema-browser';
+  const source = await readFile(path.join(target, launcher), 'utf8');
+  assert.match(source, /local[\\/]dist[\\/]src[\\/]browser\.js/);
+  assert.match(source, /--no-open/);
+  const manifest = JSON.parse(await readFile(path.join(target, 'runtime-manifest.json'), 'utf8'));
+  assert.equal(manifest.webEntry, 'web/apps/web/managed-parent.mjs');
+  assert.match(source, /runtime/);
+  assert.match(await readFile(path.join(target, manifest.webEntry), 'utf8'), /process\.once\("disconnect"/);
+});
+
 test('refuses to label a staged output for a different native target', async (t) => {
   const f = await fixture(t);
   await assert.rejects(stageRuntime({ ...f.options, platform: process.platform === 'win32' ? 'darwin' : 'win32', arch: process.platform === 'win32' ? 'arm64' : 'x64' }), /target|platform|architecture/i);
@@ -96,6 +110,15 @@ test('resolves npm inside the Windows and POSIX pinned Node distribution layouts
   const posixNode = path.join(f.source, 'posix-node', 'bin', 'node');
   assert.equal(npmCliPathFor(windowsNode, 'win32'), path.join(f.source, 'windows-node', 'node_modules/npm/bin/npm-cli.js'));
   assert.equal(npmCliPathFor(posixNode, 'darwin'), path.join(f.source, 'posix-node/lib/node_modules/npm/bin/npm-cli.js'));
+});
+
+test('parses the documented named native staging flags and retains positional compatibility', () => {
+  assert.deepEqual(parseStageArgs(['--platform', 'win32', '--arch', 'x64', '--out', 'some out', '--source-root', 'source']), {
+    platform: 'win32', arch: 'x64', outputDir: 'some out', sourceRoot: 'source',
+  });
+  assert.deepEqual(parseStageArgs(['source', 'output']), { sourceRoot: 'source', outputDir: 'output' });
+  assert.throws(() => parseStageArgs(['--platform', 'win32', '--arch']), /requires a value/i);
+  assert.throws(() => parseStageArgs(['--unknown', 'value']), /unknown staging option/i);
 });
 
 test('refuses missing version, standalone output, static assets, public assets, or runtime resources', async (t) => {

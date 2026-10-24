@@ -1,4 +1,4 @@
-import { setWebIpcForTests, startLocalRuntime, setRuntimeReadyHookForTests, type LocalRuntime } from "../../src/runtime.js";
+import { startLocalRuntime, setRuntimeReadyHookForTests, type LocalRuntime } from "../../src/runtime.js";
 import { claimNextTask } from "@nema/hub/tasks";
 import { postUserMessage } from "@nema/hub/messages";
 import { createWorkspace } from "@nema/hub/workspaces";
@@ -8,7 +8,6 @@ const assetsDir = process.argv[3];
 if (!home || !assetsDir) throw new Error("crash fixture requires a home and assets directory");
 
 let runtime: LocalRuntime | undefined;
-setWebIpcForTests(true);
 setRuntimeReadyHookForTests(async ({ db, dataDir, webPort, webChild }) => {
   void webChild;
   process.stdout.write(`${JSON.stringify({ phase: "web-port", port: webPort })}\n`);

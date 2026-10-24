@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 // scripted reply from the queue for its route; never talks to a real OpenAI endpoint.
 
 export type RecordedRequest = { method: string; url: string; headers: IncomingHttpHeaders; body: string };
-export type Reply = (res: ServerResponse) => void;
+export type Reply = (res: ServerResponse, request?: RecordedRequest) => void | Promise<void>;
 
 export const sseFrame = (o: unknown, event?: string): string =>
   `${event ? `event: ${event}\n` : ""}data: ${JSON.stringify(o)}\n\n`;
@@ -45,7 +45,7 @@ export async function startFakeResponsesServer() {
         res.writeHead(404).end();
         return;
       }
-      reply(res);
+      void reply(res, requests.at(-1));
     });
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));

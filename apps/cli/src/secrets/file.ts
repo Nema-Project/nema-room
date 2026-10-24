@@ -59,6 +59,9 @@ export function saveSecretLine(file: string, value: string, dirMode = 0o700): vo
     } finally {
       closeSync(fd);
     }
+    // A new Windows file can inherit an owner/DACL that differs from its private parent.
+    // Protect the completed temporary secret before it becomes the active credential.
+    protectPrivatePath(tmp, 0o600);
     renameSync(tmp, file);
   } catch (e) {
     try {

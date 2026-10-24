@@ -128,6 +128,39 @@ export function npmCliPathFor(nodePath, platform = process.platform) {
   return path.join(nodeRoot, npmRelative);
 }
 
+export function parseStageArgs(args) {
+  if (args.length === 0) return {};
+  if (!args[0].startsWith('--')) {
+    if (args.length > 2) throw new Error('Usage: stage-runtime.mjs [sourceRoot] [outputDir]');
+    return { ...(args[0] ? { sourceRoot: args[0] } : {}), ...(args[1] ? { outputDir: args[1] } : {}) };
+  }
+  const options = new Map([
+    ['--platform', 'platform'], ['--arch', 'arch'], ['--out', 'outputDir'], ['--source-root', 'sourceRoot'],
+  ]);
+  const result = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const key = options.get(args[index]);
+    const value = args[index + 1];
+    if (!key) throw new Error(`Unknown staging option: ${args[index]}`);
+    if (value === undefined || value.startsWith('--')) throw new Error(`Staging option ${args[index]} requires a value`);
+    if (Object.hasOwn(result, key)) throw new Error(`Staging option ${args[index]} was provided more than once`);
+    result[key] = value;
+  }
+  return result;
+}
+
+export async function writePlatformLaunchers(payloadRoot, manifest) {
+  const launcherName = manifest.platform === 'win32' ? 'Nema Browser.cmd' : manifest.platform === 'darwin' ? 'Nema Browser.command' : 'nema-browser';
+  const launcherTemplate = path.join(scriptDir, 'templates', launcherName);
+  const launcher = (await readFile(launcherTemplate, 'utf8')).replaceAll('{{NODE_PATH}}', manifest.node.replaceAll('/', path.sep));
+  const launcherPath = path.join(payloadRoot, launcherName);
+  await writeFile(launcherPath, launcher, { mode: manifest.platform === 'win32' ? 0o644 : 0o755 });
+  if (manifest.platform !== 'win32') await chmod(launcherPath, 0o755);
+  const webParentPath = path.join(payloadRoot, 'web', 'apps', 'web', 'managed-parent.mjs');
+  await cp(path.join(scriptDir, 'templates/web-parent.mjs'), webParentPath);
+  return { launcherPath, webParentPath };
+}
+
 function nodeRootFor(nodePath, platform) {
   return platform === 'win32' ? path.dirname(nodePath) : path.dirname(path.dirname(nodePath));
 }
@@ -307,7 +340,7 @@ export async function stageRuntime({
       node: `runtime/${tools.node}`, git: `runtime/${tools.git}`,
       coreEntry: 'app/node_modules/@nema/local/dist/src/index.js',
       cliEntry: 'app/node_modules/@nema/cli/dist/index.js',
-      webEntry: 'web/apps/web/server.js',
+      webEntry: 'web/apps/web/managed-parent.mjs',
       licenses: 'runtime/licenses',
     };
     // Provide a single manifest license directory while retaining the complete distributions and notices.
@@ -315,6 +348,7 @@ export async function stageRuntime({
     await copyTree(path.join(selectedToolsRoot, ...safeRelative(tools.licenses.node, 'Node license').slice(1)), put('runtime/licenses/node'), selectedToolsRoot);
     await copyTree(path.join(selectedToolsRoot, ...safeRelative(tools.licenses.git, 'Git license').slice(1)), put('runtime/licenses/git'), selectedToolsRoot);
     await writeFile(put('runtime-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx' });
+    await writePlatformLaunchers(staging, manifest);
     for (const [entry, name, directory] of [
       [manifest.node, 'Node executable', false], [manifest.git, 'Git executable', false],
       [manifest.coreEntry, 'core entry', false], [manifest.cliEntry, 'CLI entry', false],
@@ -373,13 +407,21 @@ export async function stageRuntime({
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const root = path.resolve(process.argv[2] ?? defaultRoot);
-  const out = path.resolve(process.argv[3] ?? path.join(root, 'dist/desktop'));
-  const local = JSON.parse(await readFile(path.join(root, 'apps/local/package.json'), 'utf8'));
-  stageRuntime({ sourceRoot: root, outputDir: out, version: local.version }).then((result) => {
+  let parsed;
+  try { parsed = parseStageArgs(process.argv.slice(2)); }
+  catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 2;
+  }
+  if (process.exitCode !== 2) {
+    const root = path.resolve(parsed.sourceRoot ?? defaultRoot);
+    const out = path.resolve(parsed.outputDir ?? path.join(root, 'dist/desktop'));
+    const local = JSON.parse(await readFile(path.join(root, 'apps/local/package.json'), 'utf8'));
+    stageRuntime({ ...parsed, sourceRoot: root, outputDir: out, version: local.version }).then((result) => {
     process.stdout.write(`Staged ${result.directory}\n`);
-  }).catch((error) => {
-    process.stderr.write(`${error.stack ?? error}\n`);
-    process.exitCode = 1;
-  });
+    }).catch((error) => {
+      process.stderr.write(`${error.stack ?? error}\n`);
+      process.exitCode = 1;
+    });
+  }
 }

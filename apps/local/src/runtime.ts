@@ -189,9 +189,6 @@ function childEnvironment(extra: Record<string, string>): NodeJS.ProcessEnv {
   return { ...env, ...extra };
 }
 
-let webIpcForTests = false;
-export function setWebIpcForTests(enabled: boolean): void { webIpcForTests = enabled; }
-
 function spawnWeb(assets: ResolvedAssets, port: number): ChildProcess {
   const args = assets.webPath.endsWith(".mjs") || assets.webPath.endsWith(".js")
     ? [assets.webPath]
@@ -201,7 +198,9 @@ function spawnWeb(assets: ResolvedAssets, port: number): ChildProcess {
     env: childEnvironment({
       PORT: String(port), HOSTNAME: "127.0.0.1", NODE_ENV: "production", NEXT_PUBLIC_NEMA_LOCAL: "1", NEMA_GIT_PATH: assets.gitPath,
     }),
-    stdio: webIpcForTests ? ["ignore", "ignore", "ignore", "ipc"] : "ignore",
+    // This private channel is intentionally separate from the core launcher's readiness IPC.
+    // A hard core exit closes it, allowing the managed Web wrapper to stop its listener.
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
     windowsHide: true,
   });
   child.on("error", () => {});
@@ -374,6 +373,12 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     const webPort = await freeLoopbackPort();
     const publicPort = options.webPort === undefined || options.webPort === 0 ? await freeLoopbackPort() : options.webPort;
     webChild = spawnWeb(assets, webPort);
+    webChild.on("message", (message: unknown) => {
+      if (message && typeof message === "object" && (message as { type?: unknown }).type === "managed-web-ready" &&
+        (message as { port?: unknown }).port === webPort) {
+        process.stdout.write(`${JSON.stringify({ state: "web-ready", port: webPort })}\n`);
+      }
+    });
     webChild.once("error", (error) => onUnexpectedWebExit(error));
     webChild.once("exit", () => onUnexpectedWebExit());
     await httpReady(`http://127.0.0.1:${webPort}/`, webChild, WEB_READY_TIMEOUT_MS);

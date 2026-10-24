@@ -13,6 +13,7 @@
     "setup": "node scripts/setup.mjs",
     "setup:check": "node scripts/setup.mjs --check",
     "desktop:stage": "node scripts/desktop/stage-runtime.mjs",
+    "desktop:smoke-runtime": "node scripts/desktop/smoke-runtime.mjs",
     "test": "vitest run",
     "typecheck": "tsc -b",
     "db:up": "docker compose up -d postgres",
