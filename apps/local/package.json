@@ -9,15 +9,27 @@
       "development": "./src/instance.ts",
       "types": "./dist/src/instance.d.ts",
       "import": "./dist/src/instance.js"
+    },
+    "./gateway": {
+      "development": "./src/gateway.ts",
+      "types": "./dist/src/gateway.d.ts",
+      "import": "./dist/src/gateway.js"
+    },
+    "./session": {
+      "development": "./src/session.ts",
+      "types": "./dist/src/session.d.ts",
+      "import": "./dist/src/session.js"
     }
   },
   "scripts": {
     "build": "tsc -b"
   },
   "dependencies": {
-    "@nema/cli": "*"
+    "@nema/cli": "*",
+    "hono": "^4.13.13"
   },
   "devDependencies": {
+    "@hono/node-server": "^2.1.5",
     "tsx": "^4.23.15"
   }
 }
