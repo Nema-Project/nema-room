@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createSanitizedSourceSnapshot, npmCliPathFor, parseStageArgs, stageRuntime } from './stage-runtime.mjs';
+import { toolsManifest } from './fetch-tools.mjs';
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nema-stage-fixture-'));
@@ -31,6 +32,7 @@ async function fixture(t) {
   ];
   for (const dir of dirs) await mkdir(path.join(source, dir), { recursive: true });
   await write('package.json', JSON.stringify({ version: '0.1.0' }));
+  await write('LICENSE', 'Application license');
   await write('apps/web/.next/standalone/apps/web/server.js');
   await write('apps/web/.next/static/chunks/a.js');
   await write('apps/web/public/fonts/a.woff2');
@@ -54,7 +56,8 @@ async function fixture(t) {
   await write('node_modules/@electric-sql/pglite/dist/initdb.wasm');
   await write('node_modules/@electric-sql/pglite/dist/pglite.data');
   await write(`node/${target}/git/${gitBinary}`); await write(`node/${target}/${gitLicense}`); await write(`node/${target}/${gitNotice}`);
-  await write(`node/${target}/tools-source.json`, JSON.stringify({ target, sourceCorrespondence: { status: 'pending-task-7c' } }));
+  const nodePin = toolsManifest.node.archive[target], gitPin = toolsManifest.git.archives[target];
+  await write(`node/${target}/tools-source.json`, JSON.stringify({ target, node: { version: toolsManifest.node.version, archive: nodePin.file, sha256: nodePin.sha256 }, git: { version: toolsManifest.git.version, gitForWindowsVersion: toolsManifest.git.gitForWindowsVersion, dugiteNativeVersion: toolsManifest.git.dugiteNativeVersion, archive: gitPin.file, sha256: gitPin.sha256 }, sourceCorrespondence: { status: 'pending-task-7c' } }));
   const tools = { node: `${target}/node/${windows ? 'node.exe' : 'bin/node'}`, git: `${target}/git/${gitBinary}`, licenses: { node: `${target}/node/LICENSE`, git: `${target}/${gitLicense}`, gitTree: `${target}/git`, gitNotices: `${target}/${path.dirname(gitNotice)}`, gitNotice: `${target}/${gitNotice}`, sourceRecord: `${target}/tools-source.json` } };
   return { source, output, write, tools, options: { sourceRoot: source, outputDir: output, toolsRoot: path.join(source, 'node'), platform, arch, version: '0.1.0', tools, build: false } };
 }
@@ -71,13 +74,22 @@ test('stages a relocatable manifest and all declared runtime resources from fixt
   assert.equal(manifest.arch, process.arch);
   for (const key of ['node', 'git', 'coreEntry', 'cliEntry', 'webEntry']) assert.ok((await readFile(path.join(target, manifest[key]))).length > 0, key);
   assert.ok((await readFile(path.join(target, manifest.licenses, 'node'))).length > 0);
-  for (const file of ['web/apps/web/.next/static/chunks/a.js', 'web/apps/web/public/fonts/a.woff2', 'app/node_modules/@nema/local/package.json', 'app/node_modules/@nema/hub/dist/src/db/migrations/0001.sql', 'app/node_modules/@nema/cli/src/report/SKILL.md', 'vendor/archify/THIRD_PARTY_NOTICES.md', 'vendor/superpowers-rules/LICENSE']) {
+  for (const file of ['web/apps/web/.next/static/chunks/a.js', 'web/apps/web/public/fonts/a.woff2', 'app/node_modules/@nema/local/package.json', 'app/node_modules/@nema/hub/dist/src/db/migrations/0001.sql', 'app/node_modules/@nema/cli/src/report/SKILL.md', 'vendor/archify/THIRD_PARTY_NOTICES.md', 'vendor/superpowers-rules/LICENSE', 'runtime/licenses/application']) {
     assert.ok((await readFile(path.join(target, file))).length > 0, file);
   }
   await assert.rejects(readFile(path.join(target, 'app/node_modules/@nema/local/dist/src/test/runtime.test.js')));
   const files = await readdir(target);
   assert.equal(files.includes('.env'), false);
   assert.equal(files.includes('.git'), false);
+});
+
+test('local staging accepts the documented collected source-material state', async (t) => {
+  const f = await fixture(t);
+  const sourceRecord = path.join(f.source, 'node', `${process.platform}-${process.arch}`, 'tools-source.json');
+  const nodePin = toolsManifest.node.archive[`${process.platform}-${process.arch}`], gitPin = toolsManifest.git.archives[`${process.platform}-${process.arch}`];
+  await writeFile(sourceRecord, JSON.stringify({ target: `${process.platform}-${process.arch}`, node: { version: toolsManifest.node.version, archive: nodePin.file, sha256: nodePin.sha256 }, git: { version: toolsManifest.git.version, gitForWindowsVersion: toolsManifest.git.gitForWindowsVersion, dugiteNativeVersion: toolsManifest.git.dugiteNativeVersion, archive: gitPin.file, sha256: gitPin.sha256 }, sourceCorrespondence: { status: 'source-materials-collected' } }));
+  await stageRuntime(f.options);
+  assert.ok((await readFile(path.join(f.output, `${process.platform}-${process.arch}`, 'runtime-manifest.json'), 'utf8')).includes('"schemaVersion": 1'));
 });
 
 test('stages fixed native browser launchers beside the runtime manifest', async (t) => {
@@ -131,6 +143,7 @@ test('refuses missing version, standalone output, static assets, public assets, 
     ['PGlite data', async (f) => rm(path.join(f.source, 'node_modules/@electric-sql/pglite/dist/pglite.data'))],
     ['migration', async (f) => rm(path.join(f.source, 'apps/hub/dist/src/db/migrations'), { recursive: true })],
     ['vendor notice', async (f) => rm(path.join(f.source, 'vendor/archify/THIRD_PARTY_NOTICES.md'))],
+    ['application license', async (f) => rm(path.join(f.source, 'LICENSE'))],
     ['required license', async (f) => rm(path.join(f.source, 'node', f.options.platform + '-' + f.options.arch, 'node/LICENSE'))],
   ]) {
     const f = await fixture(t);

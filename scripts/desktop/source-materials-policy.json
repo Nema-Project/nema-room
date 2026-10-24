@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "policyVersion": 1,
+  "targets": {
+    "win32-x64": {
+      "status": "pending",
+      "components": [
+        { "id": "node-source", "status": "pending", "requiredRoles": ["source", "recipe"], "coverage": { "kind": "files", "root": "runtime/win32-x64/node", "requiredMappingKeys": ["node-runtime", "npm-package", "corepack-package"] }, "reason": "Node, npm, Corepack source and build correspondence has not been fully reviewed." },
+        { "id": "mingit-component-sources", "status": "pending", "requiredRoles": ["source", "patch", "recipe"], "coverage": { "kind": "git-package-set", "root": "runtime/win32-x64/git", "packageVersionsPath": "runtime/win32-x64/git/etc/package-versions.txt" }, "reason": "The full MinGit package set, staged files, sources, patches, and exact recipes have not been reconciled." },
+        { "id": "font-sources", "status": "pending", "requiredRoles": ["source", "license"], "coverage": { "kind": "font-assets", "root": "web/apps/web/.next/static/media" }, "reason": "Exact font revisions for generated WOFF2 assets are not pinned." }
+      ]
+    },
+    "darwin-arm64": {
+      "status": "pending",
+      "components": [
+        { "id": "node-source", "status": "pending", "requiredRoles": ["source", "recipe"], "coverage": { "kind": "files", "root": "runtime/darwin-arm64/node", "requiredMappingKeys": ["node-runtime", "npm-package", "corepack-package"] }, "reason": "Node, npm, Corepack source and build correspondence has not been fully reviewed." },
+        { "id": "git-source", "status": "pending", "requiredRoles": ["source", "recipe", "license"], "coverage": { "kind": "posix-git-tree", "root": "runtime/darwin-arm64/git" }, "reason": "The target Git source, LFS/GCM additions, and exact build correspondence have not been reviewed." },
+        { "id": "font-sources", "status": "pending", "requiredRoles": ["source", "license"], "coverage": { "kind": "font-assets", "root": "web/apps/web/.next/static/media" }, "reason": "Exact font revisions for generated WOFF2 assets are not pinned." }
+      ]
+    },
+    "darwin-x64": {
+      "status": "pending",
+      "components": [
+        { "id": "node-source", "status": "pending", "requiredRoles": ["source", "recipe"], "coverage": { "kind": "files", "root": "runtime/darwin-x64/node", "requiredMappingKeys": ["node-runtime", "npm-package", "corepack-package"] }, "reason": "Node, npm, Corepack source and build correspondence has not been fully reviewed." },
+        { "id": "git-source", "status": "pending", "requiredRoles": ["source", "recipe", "license"], "coverage": { "kind": "posix-git-tree", "root": "runtime/darwin-x64/git" }, "reason": "The target Git source, LFS/GCM additions, and exact build correspondence have not been reviewed." },
+        { "id": "font-sources", "status": "pending", "requiredRoles": ["source", "license"], "coverage": { "kind": "font-assets", "root": "web/apps/web/.next/static/media" }, "reason": "Exact font revisions for generated WOFF2 assets are not pinned." }
+      ]
+    },
+    "linux-x64": {
+      "status": "pending",
+      "components": [
+        { "id": "node-source", "status": "pending", "requiredRoles": ["source", "recipe"], "coverage": { "kind": "files", "root": "runtime/linux-x64/node", "requiredMappingKeys": ["node-runtime", "npm-package", "corepack-package"] }, "reason": "Node, npm, Corepack source and build correspondence has not been fully reviewed." },
+        { "id": "git-source", "status": "pending", "requiredRoles": ["source", "recipe", "license"], "coverage": { "kind": "posix-git-tree", "root": "runtime/linux-x64/git" }, "reason": "The target Git source, LFS/GCM additions, and exact build correspondence have not been reviewed." },
+        { "id": "font-sources", "status": "pending", "requiredRoles": ["source", "license"], "coverage": { "kind": "font-assets", "root": "web/apps/web/.next/static/media" }, "reason": "Exact font revisions for generated WOFF2 assets are not pinned." }
+      ]
+    },
+    "linux-arm64": {
+      "status": "pending",
+      "components": [
+        { "id": "node-source", "status": "pending", "requiredRoles": ["source", "recipe"], "coverage": { "kind": "files", "root": "runtime/linux-arm64/node", "requiredMappingKeys": ["node-runtime", "npm-package", "corepack-package"] }, "reason": "Node, npm, Corepack source and build correspondence has not been fully reviewed." },
+        { "id": "git-source", "status": "pending", "requiredRoles": ["source", "recipe", "license"], "coverage": { "kind": "posix-git-tree", "root": "runtime/linux-arm64/git" }, "reason": "The target Git source, LFS/GCM additions, and exact build correspondence have not been reviewed." },
+        { "id": "font-sources", "status": "pending", "requiredRoles": ["source", "license"], "coverage": { "kind": "font-assets", "root": "web/apps/web/.next/static/media" }, "reason": "Exact font revisions for generated WOFF2 assets are not pinned." }
+      ]
+    }
+  }
+}

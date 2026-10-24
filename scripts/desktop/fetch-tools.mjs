@@ -8,7 +8,8 @@ import { gunzipSync, inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const manifestPath = fileURLToPath(new URL('./tools-manifest.json', import.meta.url));
-const manifest = JSON.parse(await readFile(manifestPath, 'utf8').then((s) => s.replace(/^\uFEFF/, '')));
+export const toolsManifest = JSON.parse(await readFile(manifestPath, 'utf8').then((s) => s.replace(/^\uFEFF/, '')));
+const manifest = toolsManifest;
 const supported = new Set(['win32-x64', 'darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64']);
 const keyFor = (platform, arch) => `${platform}-${arch}`;
 

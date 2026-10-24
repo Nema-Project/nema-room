@@ -5,7 +5,7 @@ import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fetchTools } from './fetch-tools.mjs';
+import { fetchTools, toolsManifest } from './fetch-tools.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRoot = path.resolve(scriptDir, '../..');
@@ -281,7 +281,12 @@ export async function stageRuntime({
     await checkedTargetDirectory(tools.licenses.gitTree, 'Git distribution');
     await checkedTargetDirectory(tools.licenses.gitNotices, 'Git notices');
     const toolsRecord = JSON.parse(await readFile(await checkedTargetFile(tools.licenses.sourceRecord, 'tool source record'), 'utf8'));
-    if (toolsRecord.target !== target || toolsRecord.sourceCorrespondence?.status !== 'pending-task-7c') throw new Error('Bundled tools target or pending Task 7c provenance status is invalid');
+    const expectedNodePin = toolsManifest.node.archive?.[target];
+    const expectedGitPin = toolsManifest.git.archives?.[target];
+    if (!expectedNodePin || !expectedGitPin || toolsRecord.target !== target ||
+      toolsRecord.node?.version !== toolsManifest.node.version || toolsRecord.node?.archive !== expectedNodePin.file || toolsRecord.node?.sha256 !== expectedNodePin.sha256 ||
+      toolsRecord.git?.version !== toolsManifest.git.version || toolsRecord.git?.gitForWindowsVersion !== toolsManifest.git.gitForWindowsVersion || toolsRecord.git?.dugiteNativeVersion !== toolsManifest.git.dugiteNativeVersion || toolsRecord.git?.archive !== expectedGitPin.file || toolsRecord.git?.sha256 !== expectedGitPin.sha256 ||
+      !['pending-task-7c', 'source-materials-collected'].includes(toolsRecord.sourceCorrespondence?.status)) throw new Error('Bundled tools target, pinned archive hashes, versions, or Task 7c provenance status are invalid');
     if (build) builtRoot = await makeBuildSnapshot(sourceRoot, nodePath, tempRoot);
 
     const webRoot = path.join(builtRoot, 'apps/web');
@@ -301,6 +306,7 @@ export async function stageRuntime({
     await requiredFile(builtRoot, 'apps/local/dist/src/index.js', 'compiled core entry');
     await requiredFile(builtRoot, 'apps/cli/dist/index.js', 'compiled CLI entry');
     await requiredFile(builtRoot, 'apps/cli/src/report/SKILL.md', 'report SKILL.md');
+    await requiredFile(builtRoot, 'LICENSE', 'application license');
     for (const file of REQUIRED_VENDOR) await requiredFile(builtRoot, file, file.includes('LICENSE') || file.includes('NOTICE') ? 'vendor license or notice' : 'vendor runtime resource');
     const pgliteRoot = path.join(builtRoot, 'node_modules/@electric-sql/pglite');
     await requiredFile(pgliteRoot, 'dist/pglite.wasm', 'PGlite WASM', builtRoot);
@@ -345,6 +351,7 @@ export async function stageRuntime({
     };
     // Provide a single manifest license directory while retaining the complete distributions and notices.
     await mkdir(put('runtime/licenses'), { recursive: true });
+    await copyTree(path.join(builtRoot, 'LICENSE'), put('runtime/licenses/application'), builtRoot);
     await copyTree(path.join(selectedToolsRoot, ...safeRelative(tools.licenses.node, 'Node license').slice(1)), put('runtime/licenses/node'), selectedToolsRoot);
     await copyTree(path.join(selectedToolsRoot, ...safeRelative(tools.licenses.git, 'Git license').slice(1)), put('runtime/licenses/git'), selectedToolsRoot);
     await writeFile(put('runtime-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx' });
