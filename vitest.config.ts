@@ -17,6 +17,9 @@ for (const d of readdirSync(`${root}packages`, { withFileTypes: true })) {
   const entry = `${root}packages/${d.name}/src/index.ts`;
   if (d.isDirectory() && existsSync(entry)) alias[`@nema/${d.name}`] = entry;
 }
+// The local package and the CLI's narrow permissions helper are tested from source.
+alias["@nema/local"] = `${root}apps/local/src/instance.ts`;
+alias["@nema/cli/secrets/permissions"] = `${root}apps/cli/src/secrets/permissions.ts`;
 
 // One project per workspace dir. Inline projects with `extends: true` inherit the alias above
 // (glob-discovered projects would not).

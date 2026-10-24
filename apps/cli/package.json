@@ -11,6 +11,13 @@
     "dist",
     "src/report/SKILL.md"
   ],
+  "exports": {
+    "./secrets/permissions": {
+      "development": "./src/secrets/permissions.ts",
+      "types": "./dist/secrets/permissions.d.ts",
+      "import": "./dist/secrets/permissions.js"
+    }
+  },
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -p tsconfig.test.json"

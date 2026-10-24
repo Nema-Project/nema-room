@@ -1,0 +1,23 @@
+{
+  "name": "@nema/local",
+  "license": "MIT",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "development": "./src/instance.ts",
+      "types": "./dist/src/instance.d.ts",
+      "import": "./dist/src/instance.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@nema/cli": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
+  }
+}
