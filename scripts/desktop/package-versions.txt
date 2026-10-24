@@ -1,0 +1,14 @@
+﻿schema=1
+node=24.22.1
+npm=11.19.1
+corepack=0.36.0
+git=2.56.0
+git_for_windows=2.56.0.windows.2
+git_lfs=3.8.1
+git_credential_manager=2.9.1
+dugite_native=2.56.0-1
+dugite_native_source_commit=7ce66f8
+git_license_source=https://raw.githubusercontent.com/git/git/a018953688f1b10bddf91bff8747068f5f4746a4/COPYING
+git_license_sha256=5b2198d1645f767585e8a88ac0499b04472164c0d2da22e75ecf97ef443ab32e
+git_submodule_commit=a018953688f1b10bddf91bff8747068f5f4746a4
+source_correspondence_status=pending-task-7c
