@@ -14,12 +14,14 @@ export type RunnerSetup = {
   userCodexHome: string;
   version: string;
   getConfig?: () => NemaConfig;
+  cliEntry?: string;
+  execPath?: string;
 };
 
 /** The daemon's runner. Codex stays on the direct adapter; Claude Code is selected only when config.adapter is claude-code. */
 export function createRunner(o: RunnerSetup): Runner {
   const direct = new CodexDirectAdapter({ nemaHome: o.nemaHome, version: o.version, codexHome: o.userCodexHome });
-  const claude = new ClaudeCodeAdapter({ nemaHome: o.nemaHome, cliEntry: process.argv[1] ?? "" });
+  const claude = new ClaudeCodeAdapter({ nemaHome: o.nemaHome, cliEntry: o.cliEntry ?? process.argv[1] ?? "", execPath: o.execPath ?? process.execPath });
   return new Runner([direct, claude], o.getConfig ?? (() => loadConfig(o.nemaHome)));
 }
 
@@ -30,6 +32,8 @@ export type DaemonStart = {
   userCodexHome: string;
   version: string;
   getConfig?: () => NemaConfig;
+  cliEntry?: string;
+  execPath?: string;
   /** For tests: production passes nothing and runs `graphify` from PATH. */
   graphify?: GraphifyOpts;
   /** For tests: production starts `github-mcp-server` from PATH on the first GitHub call. */
@@ -37,7 +41,7 @@ export type DaemonStart = {
 };
 
 /** Connects the daemon and answers repo RPC plus `plugin.call` and `plugins.status`. */
-export function startDaemon(o: DaemonStart): { close(): void; watcher: RepoWatcher } {
+export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: RepoWatcher } {
   const runner = createRunner(o);
   const rpc = new RpcRouter();
   const github = o.github ?? new GithubMcp({ nemaHome: o.nemaHome });
@@ -86,12 +90,14 @@ export function startDaemon(o: DaemonStart): { close(): void; watcher: RepoWatch
       sendMessage = send;
     },
   });
+  let closing: Promise<void> | undefined;
   return {
     watcher,
     close() {
-      watcher.stop();
-      connection.close();
-      github.close();
+      if (closing) return closing;
+      const tasks = [runner.stop(), watcher.stop(), connection.close(), github.close()];
+      closing = Promise.all(tasks).then(() => {});
+      return closing;
     },
   };
 }

@@ -84,6 +84,7 @@ function runGraphify(snapshotRoot: string, args: string[], cwd: string, opts?: G
   const command = commandSpec(bin, args, graphifyEnv(snapshotRoot));
   return new Promise((resolve, reject) => {
     let settled = false;
+    let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const child = execFile(
       command.bin,
@@ -95,6 +96,10 @@ function runGraphify(snapshotRoot: string, args: string[], cwd: string, opts?: G
         clearTimeout(timer);
         const out = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout ?? "");
         const errOut = Buffer.isBuffer(stderr) ? stderr : Buffer.from(stderr ?? "");
+        if (timedOut) {
+          reject(new Error("graphify 已中断"));
+          return;
+        }
         if (!error) {
           resolve({ code: 0, stdout: out, stderr: errOut });
           return;
@@ -111,13 +116,11 @@ function runGraphify(snapshotRoot: string, args: string[], cwd: string, opts?: G
         resolve({ code, stdout: out, stderr: errOut });
       },
     );
-    // A child that ignores SIGTERM never exits, so execFile's own timeout would not settle.
-    // Fail the call at the deadline, then SIGKILL if SIGTERM did not land.
+    // Report timeout only after execFile's close callback confirms the child exited.
     timer = setTimeout(() => {
       if (settled) return;
-      settled = true;
+      timedOut = true;
       stopChild(child);
-      reject(new Error("graphify 已中断"));
     }, graphifyTimeout(opts));
   });
 }

@@ -21,8 +21,8 @@ beforeEach(() => {
   mkdirSync(nemaHome);
 });
 
-afterEach(() => {
-  for (const client of clients.splice(0)) client.close();
+afterEach(async () => {
+  await Promise.all(clients.splice(0).map((c) => c.close()));
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -33,6 +33,8 @@ type FakeConfig = {
   crashOnce?: string;
   crashAlways?: boolean;
   exitOnStart?: boolean;
+  pidFile?: string;
+  holdHandshake?: boolean;
   bigText?: number;
   version?: string;
 };
@@ -154,6 +156,31 @@ test("a tool outside the fixed list is rejected before anything starts", async (
     "GitHub 插件没有工具 merge_pull_request",
   );
   expect(starts(startsFile)).toBe(0);
+});
+
+test("close waits for the real child exit", async () => {
+  saveGithubToken(nemaHome, "ghp_test_token");
+  const pidFile = join(root, "child-pid");
+  const gh = client({ bin: fakeServer({ pidFile }) });
+  await gh.call("list_issues", { owner: "o", repo: "r" });
+  await gh.close();
+  const pid = Number(readFileSync(pidFile, "utf8"));
+  expect(() => process.kill(pid, 0)).toThrow();
+  await expect(gh.call("list_issues", { owner: "o", repo: "r" })).rejects.toThrow("GitHub 插件已停止");
+});
+
+test("close during handshake kills the starting child and awaits its exit", async () => {
+  saveGithubToken(nemaHome, "ghp_test_token");
+  const pidFile = join(root, "handshake-pid");
+  const gh = client({ bin: fakeServer({ pidFile, holdHandshake: true }) });
+  const call = gh.call("list_issues", { owner: "o", repo: "r" });
+  const deadline = Date.now() + 5000;
+  while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+  expect(existsSync(pidFile)).toBe(true);
+  const pid = Number(readFileSync(pidFile, "utf8"));
+  await gh.close();
+  await expect(call).rejects.toThrow();
+  expect(() => process.kill(pid, 0)).toThrow();
 });
 
 test("plugin.call routes github__ names to the client and plugins.status reports github", async () => {

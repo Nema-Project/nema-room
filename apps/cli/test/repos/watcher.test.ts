@@ -19,7 +19,7 @@ let fake: GraphifyOpts;
 let server: http.Server | undefined;
 let wss: WebSocketServer | undefined;
 let conns: WebSocket[] = [];
-const closers: Array<() => void> = [];
+const closers: Array<() => Promise<void>> = [];
 
 const WS = "ws_watch";
 const REPO = "repo_watch";
@@ -33,7 +33,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  for (const close of closers.splice(0)) close();
+  await Promise.all(closers.splice(0).map((close) => close()));
   if (wss) for (const client of wss.clients) client.terminate();
   if (server) {
     server.closeAllConnections();
@@ -689,4 +689,31 @@ fs.writeFileSync("graphify-out/graph.json", "{}");
     writeFileSync(release, "1");
     await first;
   }
+});
+
+test("stop waits for active tick and prevents queued ticks", async () => {
+  const { repo, nemaHome } = setupOrigin();
+  const started = join(root, "stop-started");
+  const release = join(root, "stop-release");
+  fake.bin = writeBin(`#!/usr/bin/env node
+const fs = require("node:fs"); fs.writeFileSync(${JSON.stringify(started)}, "1");
+const until = Date.now() + 10000; while (!fs.existsSync(${JSON.stringify(release)}) && Date.now() < until) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+fs.mkdirSync("graphify-out", {recursive:true}); fs.writeFileSync("graphify-out/graph.json", "{}");
+`);
+  const { watcher } = watch(nemaHome);
+  watcher.setRepos([watched(repo, git(repo, ["rev-parse", "HEAD"]).trim())]);
+  const tick = watcher.tick();
+  const deadline = Date.now() + 5000;
+  while (!existsSync(started) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+  expect(existsSync(started)).toBe(true);
+  const stopping = watcher.stop();
+  const queued = watcher.tickRepo(REPO);
+  let settled = false;
+  void stopping.then(() => { settled = true; });
+  await new Promise((r) => setTimeout(r, 50));
+  expect(settled).toBe(false);
+  expect(watcher.stop()).toBe(stopping);
+  writeFileSync(release, "1");
+  await Promise.all([tick, queued, stopping]);
+  expect(settled).toBe(true);
 });

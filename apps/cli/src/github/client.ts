@@ -46,6 +46,8 @@ function cutUtf8(text: string, maxBytes: number): string {
 class ExactEnvStdioTransport implements Transport {
   private child: ChildProcess | undefined;
   private readonly buffer = new ReadBuffer();
+  private closing?: Promise<void>;
+  private spawnedChild: ChildProcess | undefined;
   onclose?: () => void;
   onerror?: (error: Error) => void;
   onmessage?: (message: JSONRPCMessage) => void;
@@ -61,6 +63,7 @@ class ExactEnvStdioTransport implements Transport {
       const command = commandSpec(this.bin, [...GITHUB_ARGS], this.env);
       const child = spawn(command.bin, command.args, { env: this.env, cwd: this.cwd, stdio: ["pipe", "pipe", "ignore"], shell: false, windowsHide: true });
       this.child = child;
+      this.spawnedChild = child;
       let spawned = false;
       child.on("error", (error) => {
         if (!spawned) reject(error);
@@ -105,25 +108,25 @@ class ExactEnvStdioTransport implements Transport {
   }
 
   async close(): Promise<void> {
-    const child = this.child;
+    if (this.closing) return this.closing;
+    this.closing = this.closeChild();
+    return this.closing;
+  }
+
+  private async closeChild(): Promise<void> {
+    const child = this.spawnedChild;
     this.child = undefined;
-    if (child && child.exitCode === null && child.signalCode === null) {
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // already gone
-      }
-      const sigkill = setTimeout(() => {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          // already gone
-        }
-      }, 2000);
-      sigkill.unref();
-      child.once("exit", () => clearTimeout(sigkill));
-    }
     this.buffer.clear();
+    if (child && child.exitCode === null && child.signalCode === null) {
+      await new Promise<void>((resolve) => {
+        let killTimer: ReturnType<typeof setTimeout> | undefined;
+        const done = () => { if (killTimer) clearTimeout(killTimer); resolve(); };
+        child.once("close", done);
+        try { child.kill("SIGTERM"); } catch { /* already gone */ }
+        killTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already gone */ } }, 2000);
+        killTimer.unref();
+      });
+    }
   }
 }
 
@@ -153,6 +156,8 @@ export class GithubMcp {
   private starting: Promise<Connection> | null = null;
   private startError: { message: string; until: number } | null = null;
   private closed = false;
+  private closing?: Promise<void>;
+  private startingTransport?: ExactEnvStdioTransport;
 
   constructor(private readonly opts: GithubMcpOpts) {}
 
@@ -262,8 +267,10 @@ export class GithubMcp {
   }
 
   private async start(token: string): Promise<Connection> {
+    if (this.closed) throw new Error(STOPPED);
     const home = this.homeDir();
     const transport = new ExactEnvStdioTransport(this.bin, { ...windowsRuntimeEnv(process.env), PATH: this.basePath(), HOME: home, GITHUB_PERSONAL_ACCESS_TOKEN: token }, home);
+    this.startingTransport = transport;
     const client = new Client({ name: "nema-daemon", version: "0.1.0" });
     let markStopped: (error: Error) => void = () => {};
     const stopped = new Promise<never>((_, reject) => {
@@ -290,24 +297,35 @@ export class GithubMcp {
     } catch (e) {
       conn.alive = false;
       await transport.close().catch(() => {});
+      if (this.startingTransport === transport) this.startingTransport = undefined;
       if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new Error(NOT_INSTALLED);
       throw new Error(START_FAILED);
     }
     if (this.closed) {
       conn.alive = false;
       await transport.close().catch(() => {});
+      if (this.startingTransport === transport) this.startingTransport = undefined;
       throw new Error(STOPPED);
     }
+    if (this.startingTransport === transport) this.startingTransport = undefined;
     return conn;
   }
 
-  close(): void {
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
     this.closed = true;
     const conn = this.conn;
     this.conn = null;
     if (conn) {
       conn.alive = false;
-      void conn.transport.close().catch(() => {});
+      conn.client.onclose?.();
     }
+    const starting = this.starting;
+    this.closing = Promise.all([
+      conn?.transport.close() ?? Promise.resolve(),
+      this.startingTransport?.close() ?? Promise.resolve(),
+      starting?.then((pending) => pending.transport.close(), () => {}) ?? Promise.resolve(),
+    ]).then(() => {});
+    return this.closing;
   }
 }

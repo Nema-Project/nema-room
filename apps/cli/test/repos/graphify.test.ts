@@ -109,6 +109,21 @@ fs.writeFileSync("graphify-out/graph.json", "{}");
   expect(env).not.toHaveProperty("NEMA_GRAPHIFY_BIN");
 });
 
+test("a graphify timeout settles only after its child has exited", async () => {
+  const snapshot = join(root, "timeout-snapshot");
+  const pidFile = join(root, "timeout-child-pid");
+  mkdirSync(snapshot);
+  fake = { bin: writeBin("graphify-timeout.cjs", `
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1000);
+`), timeoutMs: 500 };
+  await expect(buildIndex(snapshot, fake)).rejects.toThrow("graphify 已中断");
+  const pid = Number(readFileSync(pidFile, "utf8"));
+  expect(() => process.kill(pid, 0)).toThrow();
+});
+
 test("queryIndex maps exit 3 to 名称不唯一 and exit 4 to 没有匹配", async () => {
   const snapshot = join(root, "snap");
   const record = join(root, "record");

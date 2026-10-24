@@ -33,6 +33,15 @@ const options = (model?: string) => ({
 });
 
 describe("Claude Code launch", () => {
+  test("uses the explicit packaged CLI entry and executable in MCP argv", () => {
+    const launch = prepareClaudeLaunch(options());
+    const config = JSON.parse(readFileSync(launch.mcpPath, "utf8"));
+    expect(config.mcpServers.room).toMatchObject({
+      command: "/usr/local/bin/node",
+      args: ["/opt/nema/dist/index.js", "mcp"],
+    });
+  });
+
   test("maxTurns replaces the default --max-turns", () => {
     const launch = prepareClaudeLaunch({ ...options(), maxTurns: 48 });
     expect(launch.args[launch.args.indexOf("--max-turns") + 1]).toBe("48");

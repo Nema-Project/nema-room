@@ -13,7 +13,7 @@ import { Runner, type AgentAdapter } from "../src/daemon/runner.js";
 let server: http.Server;
 let wss: WebSocketServer;
 let conns: WebSocket[] = [];
-let closers: Array<() => void> = [];
+let closers: Array<() => Promise<void>> = [];
 
 async function start(port = 0): Promise<number> {
   server = http.createServer();
@@ -28,7 +28,7 @@ async function stop(): Promise<void> {
   await new Promise<void>((r) => server.close(() => r()));
 }
 afterEach(async () => {
-  for (const c of closers.splice(0)) c();
+  await Promise.all(closers.splice(0).map((close) => close()));
   await stop().catch(() => {});
   conns = [];
 });
@@ -136,6 +136,15 @@ describe("daemon connection", () => {
     });
     await new Promise<void>((r) => server.listen(port, "127.0.0.1", r));
     expect(await hello).toMatchObject({ type: "hello", token: "tk" });
+    expect(conns).toHaveLength(1);
+  });
+
+  test("intentional close never reconnects", async () => {
+    const port = await start();
+    const d = connectDaemon({ hubUrl: `http://127.0.0.1:${port}`, token: "tk", runner: new Runner([]), reconnectMs: 20 });
+    await waitConn(1);
+    await d.close();
+    await new Promise((r) => setTimeout(r, 100));
     expect(conns).toHaveLength(1);
   });
 
