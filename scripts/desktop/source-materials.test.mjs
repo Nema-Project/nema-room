@@ -28,7 +28,7 @@ const completeInputs = (sha256) => [
   { id: 'font-sources', component: 'Inter and JetBrains Mono', status: 'complete', correspondence: 'verified', version: 'fixture-fonts', immutableRef: 'fixture-commit', archiveTarget: 'win32-x64', tool: 'web', correspondenceEvidence: { basis: 'fixture font provenance mapping', fontAssetHashes: [{ path: 'web/apps/web/.next/static/media/Inter.woff2', sha256: 'aa0ac38cd3f2459bc65140b9035ec40965415e256eb7bf1a22b0ede5860b90db' }] }, sourcePath: 'arbitrary.txt', sha256 },
 ];
 const populateCompleteNotices = async (f) => {
-  const files = ['runtime/win32-x64/node/LICENSE', 'runtime/win32-x64/git/LICENSE.txt', 'runtime/licenses/application', 'vendor/archify/LICENSE', 'vendor/superpowers-rules/LICENSE', 'app/node_modules/example/LICENSE', 'runtime/win32-x64/git/bin/git', 'runtime/win32-x64/node/node.exe', 'runtime/win32-x64/node/node_modules/npm/package.json', 'runtime/win32-x64/node/node_modules/corepack/package.json'];
+  const files = ['runtime/win32-x64/node/LICENSE', 'runtime/win32-x64/git/LICENSE.txt', 'runtime/licenses/application', 'runtime/licenses/electron/LICENSE', 'runtime/licenses/electron/LICENSES.chromium.html', 'vendor/archify/LICENSE', 'vendor/superpowers-rules/LICENSE', 'app/node_modules/example/LICENSE', 'runtime/win32-x64/git/bin/git', 'runtime/win32-x64/node/node.exe', 'runtime/win32-x64/node/node_modules/npm/package.json', 'runtime/win32-x64/node/node_modules/corepack/package.json'];
   for (const file of files) {
     await mkdir(path.dirname(path.join(f.payload, file)), { recursive: true });
     await writeFile(path.join(f.payload, file), `fixture ${file}`);
@@ -145,6 +145,38 @@ test('collects hashed notices without asserting source correspondence', async (t
   assert.ok(result.notices.length >= 2);
   assert.ok(result.notices.every((notice) => /^[a-f0-9]{64}$/.test(notice.sha256)));
   assert.equal(result.publicationEligibility, 'pending');
+});
+
+test('collector inventories both Electron distribution notices from the staged payload', async (t) => {
+  const f = await rootFixture(t);
+  await mkdir(path.join(f.payload, 'runtime/licenses/electron'), { recursive: true });
+  await writeFile(path.join(f.payload, 'runtime/licenses/electron/LICENSE'), 'Electron MIT license');
+  await writeFile(path.join(f.payload, 'runtime/licenses/electron/LICENSES.chromium.html'), 'Chromium third-party notices');
+  const outputRoot = path.join(f.root, 'bundle');
+  const result = await collectSourceMaterials({ payloadRoot: f.payload, outputRoot, target: 'win32-x64', appVersion: '0.1.0', toolsManifestPath: f.toolsManifest });
+  const electronNotices = result.notices.filter((notice) => notice.sourcePath.startsWith('runtime/licenses/electron/'));
+  assert.deepEqual(electronNotices.map((notice) => notice.sourcePath).sort(), [
+    'runtime/licenses/electron/LICENSE',
+    'runtime/licenses/electron/LICENSES.chromium.html',
+  ]);
+  for (const notice of electronNotices) {
+    assert.equal(await pathHash(path.join(outputRoot, ...notice.bundlePath.split('/'))), notice.sha256);
+  }
+});
+
+test('desktop publication validation requires Electron and Chromium notice files', async (t) => {
+  const f = await rootFixture(t);
+  await writeFile(path.join(f.payload, 'source-materials.json'), JSON.stringify({ schemaVersion: 1, target: 'win32-x64', appVersion: '0.1.0' }));
+  await assert.rejects(
+    validatePublicationEligibility(f.payload, { toolsManifestPath: f.toolsManifest }),
+    /Missing material file: runtime\/licenses\/electron\/LICENSE/i,
+  );
+  await mkdir(path.join(f.payload, 'runtime/licenses/electron'), { recursive: true });
+  await writeFile(path.join(f.payload, 'runtime/licenses/electron/LICENSE'), 'Electron MIT license');
+  await assert.rejects(
+    validatePublicationEligibility(f.payload, { toolsManifestPath: f.toolsManifest }),
+    /Missing material file: runtime\/licenses\/electron\/LICENSES\.chromium\.html/i,
+  );
 });
 
 test('publication gate rejects missing source manifest', async (t) => {

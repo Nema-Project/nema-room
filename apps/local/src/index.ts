@@ -1,9 +1,9 @@
 import { pathToFileURL } from "node:url";
 import { startLocalRuntime, ensureLocalRuntime } from "./runtime.js";
 
-export { startLocalRuntime, ensureLocalRuntime } from "./runtime.js";
+export { startLocalRuntime, ensureLocalRuntime, shutdownLocalRuntime } from "./runtime.js";
 export type { LocalRuntime, LocalRuntimeOptions } from "./runtime.js";
-export { acquireInstance, discoverInstance } from "./instance.js";
+export { acquireInstance, discoverInstance, requestInstanceShutdown } from "./instance.js";
 export { SessionManager } from "./session.js";
 export { createGatewayCredential, createGatewayUiAuth, startGateway, GATEWAY_CREDENTIAL_HEADER, sessionCookieName } from "./gateway.js";
 

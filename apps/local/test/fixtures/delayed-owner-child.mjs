@@ -25,7 +25,7 @@ function json(res, status, value) {
 
 function proofFor(challenge) {
   return createHmac('sha256', Buffer.from(published.secret, 'hex'))
-    .update(JSON.stringify([protocol, published.homeHash, published.instanceId, published.controlOrigin, published.origin, challenge]))
+    .update(JSON.stringify([protocol, published.homeHash, published.instanceId, published.installationId, published.controlOrigin, published.origin, challenge]))
     .digest('hex');
 }
 
@@ -40,6 +40,7 @@ const server = createServer((req, res) => {
       protocol,
       homeHash: published.homeHash,
       instanceId: published.instanceId,
+      installationId: published.installationId,
       controlOrigin: published.controlOrigin,
       origin: published.origin,
       challenge,
@@ -63,6 +64,7 @@ function publishFreshDescriptor() {
     protocol,
     homeHash: previous.homeHash,
     instanceId,
+    installationId: previous.installationId,
     pid: process.pid,
     controlOrigin: previous.controlOrigin,
     origin,

@@ -483,6 +483,7 @@ export async function validatePublicationEligibility(payloadRoot, { toolsManifes
   if (materials.schemaVersion !== 1 || materials.target !== target || (expectedAppVersion && materials.appVersion !== expectedAppVersion)) throw new Error('Source-material manifest schema, target, or application version mismatch');
   const runtimeManifest = JSON.parse(await readFile(await safeFile(root, 'runtime-manifest.json'), 'utf8'));
   if (`${runtimeManifest.platform}-${runtimeManifest.arch}` !== target || runtimeManifest.version !== materials.appVersion) throw new Error('Source-material target or application version does not match runtime manifest');
+  for (const notice of ['runtime/licenses/electron/LICENSE', 'runtime/licenses/electron/LICENSES.chromium.html']) await safeFile(root, notice);
   const trusted = JSON.parse((await readFile(toolsManifestPath, 'utf8')).replace(/^\uFEFF/, ''));
   const trustedPolicy = await readTrustedPolicy(policyPath, target);
   if (materials.sourcePolicy?.sha256 !== trustedPolicy.sha256) throw new Error('Source-material manifest trusted policy hash mismatch');

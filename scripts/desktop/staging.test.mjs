@@ -33,6 +33,8 @@ async function fixture(t) {
   for (const dir of dirs) await mkdir(path.join(source, dir), { recursive: true });
   await write('package.json', JSON.stringify({ version: '0.1.0' }));
   await write('LICENSE', 'Application license');
+  await write('node_modules/electron/dist/LICENSE', 'Electron MIT license');
+  await write('node_modules/electron/dist/LICENSES.chromium.html', 'Chromium third-party notices');
   await write('apps/web/.next/standalone/apps/web/server.js');
   await write('apps/web/.next/static/chunks/a.js');
   await write('apps/web/public/fonts/a.woff2');
@@ -116,6 +118,14 @@ test('stages fixed native browser launchers beside the runtime manifest', async 
   assert.equal(manifest.webEntry, 'web/apps/web/managed-parent.mjs');
   assert.match(source, /runtime/);
   assert.match(await readFile(path.join(target, manifest.webEntry), 'utf8'), /process\.once\("disconnect"/);
+});
+
+test('stages Electron and Chromium notices inside the inventoried runtime license tree', async (t) => {
+  const f = await fixture(t);
+  await stageRuntime(f.options);
+  const target = path.join(f.output, `${process.platform}-${process.arch}`);
+  assert.equal(await readFile(path.join(target, 'runtime/licenses/electron/LICENSE'), 'utf8'), 'Electron MIT license');
+  assert.equal(await readFile(path.join(target, 'runtime/licenses/electron/LICENSES.chromium.html'), 'utf8'), 'Chromium third-party notices');
 });
 
 test('refuses to label a staged output for a different native target', async (t) => {

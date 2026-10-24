@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { ensureLocalRuntime } from "./runtime.js";
+import { ensureLocalRuntime, shutdownLocalRuntime } from "./runtime.js";
 import { defaultHome } from "./paths.js";
+import { discoverInstance } from "./instance.js";
 
 const ticketPattern = /^[0-9a-f]{64}$/;
 
@@ -17,6 +18,21 @@ export function validateLaunchUrl(value: string): boolean {
   }
 }
 
+export function parseBrowserArgs(args: string[]): { assetsDir: string; noOpen: boolean; quit: boolean } {
+  let assetsDir: string | undefined;
+  let noOpen = false;
+  let quit = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--assetsDir" && args[index + 1] && !assetsDir) assetsDir = args[++index];
+    else if (arg === "--no-open" && !noOpen) noOpen = true;
+    else if (arg === "--quit" && !quit) quit = true;
+    else throw new Error("Usage: browser --assetsDir <installation-directory> [--no-open | --quit]");
+  }
+  if (!assetsDir || (noOpen && quit)) throw new Error("Usage: browser --assetsDir <installation-directory> [--no-open | --quit]");
+  return { assetsDir, noOpen, quit };
+}
+
 function browserCommand(url: string): { command: string; args: string[] } {
   if (process.platform === "win32") {
     const command = `${process.env.SystemRoot || "C:\\Windows"}\\System32\\cmd.exe`;
@@ -28,16 +44,16 @@ function browserCommand(url: string): { command: string; args: string[] } {
 }
 
 export async function runBrowserLauncher(args: string[]): Promise<string> {
-  let assetsDir: string | undefined;
-  let noOpen = false;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === "--assetsDir" && args[index + 1] && !assetsDir) assetsDir = args[++index];
-    else if (arg === "--no-open" && !noOpen) noOpen = true;
-    else throw new Error("Usage: browser --assetsDir <installation-directory> [--no-open]");
+  const { assetsDir, noOpen, quit } = parseBrowserArgs(args);
+  const home = defaultHome();
+  if (quit) {
+    const instance = await discoverInstance(home);
+    if (!instance) throw new Error("No authenticated Nema core is running for this home");
+    await shutdownLocalRuntime({ home, assetsDir, expectedInstanceId: instance.instanceId });
+    process.stdout.write("Nema local core stopped\n");
+    return "";
   }
-  if (!assetsDir) throw new Error("Usage: browser --assetsDir <installation-directory> [--no-open]");
-  const runtime = await ensureLocalRuntime({ home: defaultHome(), assetsDir });
+  const runtime = await ensureLocalRuntime({ home, assetsDir });
   validateLaunchUrl(runtime.launchUrl);
   if (noOpen) {
     process.stdout.write(`${runtime.launchUrl}\n`);

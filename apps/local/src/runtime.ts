@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, closeSync, writeSync } from "node:fs";
 import http from "node:http";
@@ -14,7 +14,7 @@ import { loadConfig } from "@nema/cli/config";
 import { startDaemon } from "@nema/cli/daemon/setup";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { openPrivateFile, privateModeMatches, protectPrivatePath } from "@nema/cli/secrets/permissions";
-import { acquireInstance, discoverInstance, type InstanceLease } from "./instance.js";
+import { acquireInstance, discoverInstance, requestInstanceShutdown, type InstanceLease } from "./instance.js";
 import { resolveHome } from "./paths.js";
 import { createGatewayCredential, createGatewayUiAuth, startGateway, type RunningGateway } from "./gateway.js";
 import { SessionManager } from "./session.js";
@@ -135,6 +135,12 @@ function readManifest(assetsDir: string): ResolvedAssets {
     throw new Error("Runtime manifest references a missing asset");
   }
   return { ...value as RuntimeManifest, root, nodePath, gitPath, corePath, cliPath, webPath, licensesPath, ...(ownedHelperGuardianPath ? { ownedHelperGuardianPath } : {}) };
+}
+
+function installationIdentity(assets: ResolvedAssets): string {
+  const root = process.platform === "win32" ? assets.root.toLowerCase() : assets.root;
+  const manifestIdentity = [assets.version, assets.platform, assets.arch, assets.node, assets.git, assets.coreEntry, assets.cliEntry, assets.webEntry, assets.licenses, assets.ownedHelperGuardian ?? null];
+  return createHash("sha256").update(JSON.stringify([root, manifestIdentity])).digest("hex");
 }
 
 function ensureOwnedDirectory(home: string, directory: string, name: string): void {
@@ -311,7 +317,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
   const helperScope: OwnedHelperScope | undefined = assets.ownedHelperGuardianPath
     ? createOwnedHelperScope(assets.ownedHelperGuardianPath)
     : undefined;
-  const lease = await acquireInstance(paths.home);
+  const lease = await acquireInstance(paths.home, installationIdentity(assets));
   let db: Awaited<ReturnType<typeof createLocalDb>> | undefined;
   let hub: Awaited<ReturnType<typeof startHub>> | undefined;
   let daemon: ReturnType<typeof startDaemon> | undefined;
@@ -380,6 +386,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     })();
     return teardownPromise;
   };
+  lease.setShutdownHandler(() => teardown());
   try {
     ensureOwnedDirectory(paths.home, paths.data, "data");
     const token = privateDaemonToken(paths.home);
@@ -456,9 +463,13 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
   }
 }
 
-export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<{ origin: string; launchUrl: string; reused: boolean }> {
+export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<{ origin: string; launchUrl: string; instanceId: string; installationId: string; reused: boolean }> {
+  const expectedInstallationId = installationIdentity(readManifest(options.assetsDir));
   const existing = await discoverInstance(options.home);
-  if (existing) return { origin: existing.origin, launchUrl: existing.launchUrl, reused: true };
+  if (existing) {
+    if (existing.installationId !== expectedInstallationId) throw new Error("A local core from another installation owns this home");
+    return { ...existing, reused: true };
+  }
   const assets = readManifest(options.assetsDir);
   const paths = resolveHome(options.home);
   if (!/\.(?:mjs|js)$/i.test(assets.corePath)) throw new Error("Runtime manifest coreEntry must be compiled JavaScript");
@@ -530,17 +541,18 @@ export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<
         const childIsLive = spawned && child.exitCode === null && child.signalCode === null;
         if (code !== "NEMA_LOCAL_CONTROL_TIMEOUT" || !childIsLive) throw error;
       }
+      if (instance && instance.installationId !== expectedInstallationId) throw new Error("A local core from another installation owns this home");
       if (instance && outcome?.type === "ready") {
         verifiedCore = true;
         const channelError = closeLauncherChannel();
         if (channelError) throw new Error("Could not release the launcher IPC channel after core readiness", { cause: channelError });
-        return { origin: instance.origin, launchUrl: instance.launchUrl, reused: false };
+        return { ...instance, reused: false };
       }
       if (instance && (collisionSeen || outcome?.type === "collision")) {
         verifiedCore = true;
         const channelError = closeLauncherChannel();
         if (channelError) throw new Error("Could not release the launcher IPC channel after reusing the verified core", { cause: channelError });
-        return { origin: instance.origin, launchUrl: instance.launchUrl, reused: true };
+        return { ...instance, reused: true };
       }
       if (outcome?.type === "ready" && exited) {
         throw new Error("Managed local core reported ready but did not publish an authenticated instance");
@@ -567,6 +579,15 @@ export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<
     if (cleanupErrors.length) throw new AggregateError([primary, ...cleanupErrors], "Managed local core launch failed and child cleanup was incomplete", { cause: primary });
     throw primary;
   }
+}
+
+export async function shutdownLocalRuntime(options: LocalRuntimeOptions & { expectedInstanceId: string; timeoutMs?: number }): Promise<{ state: "complete" }> {
+  const assets = readManifest(options.assetsDir);
+  return requestInstanceShutdown(options.home ?? join(homedir(), ".nema", "desktop"), {
+    expectedInstanceId: options.expectedInstanceId,
+    expectedInstallationId: installationIdentity(assets),
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+  });
 }
 
 /** Test cleanup only: terminates detached core children launched by this module in the current test process. */

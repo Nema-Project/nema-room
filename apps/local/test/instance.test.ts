@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { openPrivateFile, protectPrivatePath } from "@nema/cli/secrets/permissions";
-import { acquireInstance, discoverInstance, type InstanceLease } from "../src/instance.js";
+import { acquireInstance, discoverInstance, requestInstanceShutdown, type InstanceLease } from "../src/instance.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/instance-child.ts", import.meta.url));
 const homes: string[] = [];
@@ -21,8 +21,8 @@ function newHome(): string {
   return home;
 }
 
-async function acquire(home: string): Promise<InstanceLease> {
-  const lease = await acquireInstance(home);
+async function acquire(home: string, installationId = "a".repeat(64)): Promise<InstanceLease> {
+  const lease = await acquireInstance(home, installationId);
   leases.push(lease);
   return lease;
 }
@@ -92,6 +92,21 @@ function rawRequest(port: number, headers: Record<string, string>): Promise<numb
   });
 }
 
+function rawShutdown(port: number, request: { authorization: string; body: string }): Promise<number> {
+  return new Promise((resolvePromise, reject) => {
+    const body = request.body;
+    const client = http.request({ host: "127.0.0.1", port, path: "/_nema/shutdown", method: "POST", headers: {
+      host: `127.0.0.1:${port}`, authorization: request.authorization,
+      "content-type": "application/json", "content-length": Buffer.byteLength(body),
+    } }, (response) => {
+      response.resume();
+      response.once("end", () => resolvePromise(response.statusCode ?? 0));
+    });
+    client.once("error", reject);
+    client.end(body);
+  });
+}
+
 function rawGet(port: number, path: string): Promise<number> {
   return new Promise((resolvePromise, reject) => {
     const request = http.get({ host: "127.0.0.1", port, path, headers: { host: `127.0.0.1:${port}` } }, (response) => {
@@ -139,10 +154,94 @@ describe("local instance ownership and discovery", () => {
     const home = newHome();
     const { child, ready } = await startOwner(home);
     const found = await discoverInstance(home);
-    expect(found).toEqual({ origin: "http://127.0.0.1:4173", launchUrl: "http://127.0.0.1:4173/_nema/launch", instanceId: expect.any(String) });
+    expect(found).toMatchObject({ origin: "http://127.0.0.1:4173", launchUrl: "http://127.0.0.1:4173/_nema/launch", instanceId: expect.any(String), installationId: expect.any(String) });
     expect(ready.state).toBe("ready");
     expect(child.exitCode).toBeNull();
     expect(JSON.stringify(found)).not.toContain(String(readDescriptor(home).secret));
+  });
+
+  it("waits for a private authenticated shutdown receipt after the owner has fully closed", async () => {
+    const home = newHome();
+    const lease = await acquire(home, "b".repeat(64));
+    let drained = false;
+    await lease.publish({ origin: "http://127.0.0.1:4173", createLaunchUrl: () => "http://127.0.0.1:4173/_nema/launch" });
+    lease.setShutdownHandler(async () => {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 15));
+      await lease.close();
+      drained = true;
+    });
+    const instance = await discoverInstance(home);
+    expect(instance?.installationId).toBe("b".repeat(64));
+    await expect(requestInstanceShutdown(home, {
+      expectedInstanceId: instance!.instanceId,
+      expectedInstallationId: "b".repeat(64),
+      timeoutMs: 2000,
+    })).resolves.toMatchObject({ state: "complete" });
+    expect(drained).toBe(true);
+  });
+
+  it("rejects an invalid shutdown timeout before starting the authenticated drain", async () => {
+    const home = newHome();
+    const lease = await acquire(home, "f".repeat(64));
+    await lease.publish({ origin: "http://127.0.0.1:4173", createLaunchUrl: () => "http://127.0.0.1:4173/_nema/launch" });
+    let shutdownCalls = 0;
+    lease.setShutdownHandler(async () => { shutdownCalls += 1; await lease.close(); });
+    const instance = await discoverInstance(home);
+    expect(instance).not.toBeNull();
+    await expect(requestInstanceShutdown(home, {
+      expectedInstanceId: instance!.instanceId,
+      expectedInstallationId: "f".repeat(64),
+      timeoutMs: 0,
+    })).rejects.toThrow(/timeout must be between/i);
+    expect(shutdownCalls).toBe(0);
+    expect(await discoverInstance(home)).toMatchObject({ instanceId: instance!.instanceId });
+  });
+
+  it("rejects wrong installation identity and replayed or cross-operation shutdown proofs", async () => {
+    const home = newHome();
+    const lease = await acquire(home, "c".repeat(64));
+    await lease.publish({ origin: "http://127.0.0.1:4173", createLaunchUrl: () => "http://127.0.0.1:4173/_nema/launch" });
+    let calls = 0;
+    lease.setShutdownHandler(async () => { calls += 1; });
+    await expect(requestInstanceShutdown(home, {
+      expectedInstanceId: String(readDescriptor(home).instanceId),
+      expectedInstallationId: "d".repeat(64),
+      timeoutMs: 100,
+    })).rejects.toThrow(/installation/i);
+    expect(calls).toBe(0);
+    const descriptor = readDescriptor(home);
+    const port = Number(new URL(String(descriptor.controlOrigin)).port);
+    expect(await rawShutdown(port, {
+      authorization: `Bearer ${String(descriptor.secret)}`,
+      body: JSON.stringify({ operation: "launch", homeHash: descriptor.homeHash, instanceId: descriptor.instanceId, installationId: descriptor.installationId, requestId: randomUUID(), proof: "0".repeat(64) }),
+    })).toBe(401);
+    expect(await rawShutdown(port, {
+      authorization: `Bearer ${String(descriptor.secret)}`,
+      body: JSON.stringify({ operation: "shutdown", homeHash: descriptor.homeHash, instanceId: descriptor.instanceId, installationId: descriptor.installationId, requestId: "not-a-uuid", proof: "0".repeat(64) }),
+    })).toBe(400);
+    expect(calls).toBe(0);
+    await lease.close();
+  });
+
+  it("accepts a signed shutdown request once and rejects its replay", async () => {
+    const home = newHome();
+    const lease = await acquire(home, "e".repeat(64));
+    await lease.publish({ origin: "http://127.0.0.1:4173", createLaunchUrl: () => "http://127.0.0.1:4173/_nema/launch" });
+    lease.setShutdownHandler(async () => {});
+    const descriptor = readDescriptor(home);
+    const requestId = randomUUID();
+    const proof = createHmac("sha256", Buffer.from(String(descriptor.secret), "hex"))
+      .update(JSON.stringify(["nema-local-v1", "shutdown", descriptor.homeHash, descriptor.instanceId, descriptor.installationId, requestId]))
+      .digest("hex");
+    const body = JSON.stringify({ operation: "shutdown", homeHash: descriptor.homeHash, instanceId: descriptor.instanceId, installationId: descriptor.installationId, requestId, proof });
+    const port = Number(new URL(String(descriptor.controlOrigin)).port);
+    const authorization = `Bearer ${String(descriptor.secret)}`;
+    expect(await rawShutdown(port, { authorization, body })).toBe(202);
+    expect(await rawShutdown(port, { authorization, body })).toBe(409);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+    const receipt = readFileSync(join(home, `shutdown-${requestId}.json`), "utf8");
+    expect(JSON.parse(receipt)).toMatchObject({ state: "error", instanceId: descriptor.instanceId, installationId: descriptor.installationId });
+    expect(await lease.close().then(() => true)).toBe(true);
   });
 
   it("releases ownership after a forced process crash", async () => {
@@ -167,7 +266,7 @@ describe("local instance ownership and discovery", () => {
     const crypto = await import("node:crypto");
     const homeHash = crypto.createHash("sha256").update(canonical).digest("hex");
     const port = 20000 + crypto.createHash("sha256").update(canonical).digest().readUInt32BE(0) % 25000;
-    writeFileSync(descriptorPath(home), JSON.stringify({ schemaVersion: 1, protocol: "nema-local-v1", homeHash, instanceId: randomUUID(), pid: unrelated.pid, controlOrigin: `http://127.0.0.1:${port}`, origin: "http://127.0.0.1:4173", secret: randomBytes(32).toString("hex") }), { mode: 0o600 });
+    writeFileSync(descriptorPath(home), JSON.stringify({ schemaVersion: 1, protocol: "nema-local-v1", homeHash, instanceId: randomUUID(), installationId: "a".repeat(64), pid: unrelated.pid, controlOrigin: `http://127.0.0.1:${port}`, origin: "http://127.0.0.1:4173", secret: randomBytes(32).toString("hex") }), { mode: 0o600 });
     protectPrivatePath(descriptorPath(home));
     expect(await discoverInstance(home)).toBeNull();
     expect(unrelated.exitCode).toBeNull();
@@ -191,14 +290,14 @@ describe("local instance ownership and discovery", () => {
     const origin = "http://127.0.0.1:4173";
     const instanceId = randomUUID();
     const secret = randomBytes(32).toString("hex");
-    writeFileSync(descriptorPath(home), JSON.stringify({ schemaVersion: 1, protocol: "nema-local-v1", homeHash, instanceId, pid: process.pid, controlOrigin, origin, secret }), { mode: 0o600 });
+    writeFileSync(descriptorPath(home), JSON.stringify({ schemaVersion: 1, protocol: "nema-local-v1", homeHash, instanceId, installationId: "a".repeat(64), pid: process.pid, controlOrigin, origin, secret }), { mode: 0o600 });
     protectPrivatePath(descriptorPath(home));
     let launchRequests = 0;
     let authorization: string | undefined;
     const impostor = http.createServer((req, res) => {
       if (req.method === "GET" && req.url?.startsWith("/_nema/instance?challenge=")) {
         const challenge = new URL(req.url, controlOrigin).searchParams.get("challenge");
-        const body = JSON.stringify({ protocol: "nema-local-v1", homeHash, instanceId, controlOrigin, origin, challenge, proof: "0".repeat(64) });
+        const body = JSON.stringify({ protocol: "nema-local-v1", homeHash, instanceId, installationId: "a".repeat(64), controlOrigin, origin, challenge, proof: "0".repeat(64) });
         res.writeHead(200, { "content-type": "application/json", "content-length": Buffer.byteLength(body) });
         res.end(body);
       } else {
@@ -389,6 +488,7 @@ describe("local instance ownership and discovery", () => {
       protocol: "nema-local-v1",
       homeHash,
       instanceId: randomUUID(),
+      installationId: "a".repeat(64),
       pid: process.pid,
       controlOrigin: `http://127.0.0.1:${port}`,
       origin: "http://127.0.0.1:4173",

@@ -1,11 +1,12 @@
-import { copyFileSync, cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { closeEnsuredRuntimesForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, startLocalRuntime, ensureLocalRuntime } from "../src/runtime.js";
+import { closeEnsuredRuntimesForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, startLocalRuntime, ensureLocalRuntime, shutdownLocalRuntime } from "../src/runtime.js";
 import { acquireInstance, discoverInstance } from "../src/instance.js";
 import { createLocalDb } from "@nema/hub/db/local";
 import { postUserMessage } from "@nema/hub/messages";
@@ -139,8 +140,15 @@ function delayedOwnerSpawner(mode: "delayed" | "stall" | "error-stall", delayMs:
   };
 }
 
-async function leaveStaleDescriptor(home: string): Promise<void> {
-  const lease = await acquireInstance(home);
+function testInstallationId(assetsDir: string): string {
+  const manifest = JSON.parse(readFileSync(join(assetsDir, "runtime-manifest.json"), "utf8")) as Record<string, unknown>;
+  const root = realpathSync.native(assetsDir);
+  const normalized = process.platform === "win32" ? root.toLowerCase() : root;
+  return createHash("sha256").update(JSON.stringify([normalized, [manifest.version, manifest.platform, manifest.arch, manifest.node, manifest.git, manifest.coreEntry, manifest.cliEntry, manifest.webEntry, manifest.licenses, manifest.ownedHelperGuardian ?? null]])).digest("hex");
+}
+
+async function leaveStaleDescriptor(home: string, assetsDir: string): Promise<void> {
+  const lease = await acquireInstance(home, testInstallationId(assetsDir));
   await lease.publish({ origin: "http://127.0.0.1:43210", createLaunchUrl: () => "http://127.0.0.1:43210/" });
   const descriptor = readFileSync(join(home, "instance.json"));
   await lease.close();
@@ -187,12 +195,13 @@ describe("managed local runtime", () => {
 
   it("retries only a spawned owner's control timeout while authenticated readiness is still starting", async () => {
     const home = join(tempDir("nema-home-"), "delayed-authenticated-owner");
+    const assetsDir = testAssets();
     mkdirSync(home, { recursive: true });
-    await leaveStaleDescriptor(home);
+    await leaveStaleDescriptor(home, assetsDir);
     setEnsureSpawnerForTests(delayedOwnerSpawner("delayed", 3_500));
     ensuredHomes.push(home);
 
-    const result = await ensureLocalRuntime({ home, assetsDir: testAssets() });
+    const result = await ensureLocalRuntime({ home, assetsDir });
     expect(result).toMatchObject({ origin: "http://127.0.0.1:43210", reused: false });
     expect(result.launchUrl).toMatch(/^http:\/\/127\.0\.0\.1:43210\/_nema\/launch\?ticket=/);
     expect(await discoverInstance(home)).toMatchObject({ origin: result.origin });
@@ -200,14 +209,15 @@ describe("managed local runtime", () => {
 
   it("keeps an unresponsive spawned owner bounded by the existing ensure deadline and cleans it up", async () => {
     const home = join(tempDir("nema-home-"), "stalled-authenticated-owner");
+    const assetsDir = testAssets();
     mkdirSync(home, { recursive: true });
-    await leaveStaleDescriptor(home);
+    await leaveStaleDescriptor(home, assetsDir);
     setEnsureSpawnerForTests(delayedOwnerSpawner("stall", 0));
     setEnsureTimeoutForTests(500);
     ensuredHomes.push(home);
     const startedAt = Date.now();
 
-    await expect(ensureLocalRuntime({ home, assetsDir: testAssets() })).rejects.toThrow(/did not become ready within 500ms/i);
+    await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/did not become ready within 500ms/i);
     expect(Date.now() - startedAt).toBeLessThan(10_000);
     expect(await discoverInstance(home)).toBeNull();
     ensuredHomes.splice(ensuredHomes.indexOf(home), 1);
@@ -215,12 +225,13 @@ describe("managed local runtime", () => {
 
   it("reports an owned child startup error instead of retrying a timed-out control request", async () => {
     const home = join(tempDir("nema-home-"), "error-during-control-timeout");
+    const assetsDir = testAssets();
     mkdirSync(home, { recursive: true });
-    await leaveStaleDescriptor(home);
+    await leaveStaleDescriptor(home, assetsDir);
     setEnsureSpawnerForTests(delayedOwnerSpawner("error-stall", 0));
     ensuredHomes.push(home);
 
-    await expect(ensureLocalRuntime({ home, assetsDir: testAssets() })).rejects.toThrow(/Synthetic owner startup failure \(NEMA_LOCAL_TEST_START_FAILED\)/);
+    await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/Synthetic owner startup failure \(NEMA_LOCAL_TEST_START_FAILED\)/);
   }, 12_000);
 
   it("starts the disk database and only publishes after loopback web readiness", async () => {
@@ -311,13 +322,38 @@ describe("managed local runtime", () => {
 
   it("reuses an already-running local runtime through authenticated discovery", async () => {
     const home = join(tempDir("nema-home-"), "single-owner");
-    const runtime = await startLocalRuntime({ home, assetsDir: testAssets() });
+    const assetsDir = testAssets();
+    const runtime = await startLocalRuntime({ home, assetsDir });
     runtimes.push(runtime);
-    const found = await ensureLocalRuntime({ home, assetsDir: testAssets() });
+    const found = await ensureLocalRuntime({ home, assetsDir });
     expect(found.reused).toBe(true);
     expect(found.origin).toBe(runtime.origin);
     expect(found.launchUrl).toMatch(new RegExp(`^${runtime.origin}/_nema/launch\\?ticket=[0-9a-f]{64}$`));
   });
+
+  it("writes shutdown completion only after the managed data and home lease drain", async () => {
+    const home = join(tempDir("nema-home-"), "authenticated-shutdown-drain");
+    const assetsDir = testAssets();
+    setRuntimeReadyHookForTests(async ({ db }) => {
+      await db.query("insert into workspaces(id, name) values ($1, $2)", ["ws_shutdown-proof", "Shutdown proof data"]);
+    });
+    const runtime = await startLocalRuntime({ home, assetsDir });
+    runtimes.push(runtime);
+    const before = await discoverInstance(home);
+    expect(before?.installationId).toBe(testInstallationId(assetsDir));
+
+    await expect(shutdownLocalRuntime({ home, assetsDir, expectedInstanceId: before!.instanceId, timeoutMs: 10_000 })).resolves.toMatchObject({ state: "complete" });
+    runtimes.splice(runtimes.indexOf(runtime), 1);
+    expect(await discoverInstance(home)).toBeNull();
+    const nextOwner = await acquireInstance(home, before!.installationId);
+    await nextOwner.close();
+
+    const reopened = await createLocalDb(join(home, "db"));
+    try {
+      const rows = await reopened.query<{ id: string; name: string }>("select id, name from workspaces where id = $1", ["ws_shutdown-proof"]);
+      expect(rows).toEqual([{ id: "ws_shutdown-proof", name: "Shutdown proof data" }]);
+    } finally { await reopened.close(); }
+  }, 60_000);
 
   it("rolls startup back if the owned Web child exits after its first HTTP response", async () => {
     const home = join(tempDir("nema-home-"), "web-exits-during-startup");
@@ -422,8 +458,8 @@ describe("managed local runtime", () => {
     try {
       setEnsureSpawnerForTests(sourceCoreSpawner());
       setEnsureTimeoutForTests(8_000);
-      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/another local core owns the control port/i);
-      expect(await discoverInstance(home)).toBeNull();
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/another local core from another installation/i);
+      expect(await discoverInstance(home)).not.toBeNull();
     } finally { await owner.close(); }
   }, 20_000);
 

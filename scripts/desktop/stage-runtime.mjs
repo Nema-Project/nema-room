@@ -245,6 +245,8 @@ export async function stageRuntime({
   if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('A valid explicit application version is required');
   const localVersion = localPackage.version;
   if (version !== localVersion) throw new Error(`Requested version ${version} does not match apps/local/package.json ${localVersion}`);
+  const electronMitLicense = await requiredFile(sourceRoot, 'node_modules/electron/dist/LICENSE', 'Electron MIT license', sourceRoot);
+  const electronThirdPartyNotices = await requiredFile(sourceRoot, 'node_modules/electron/dist/LICENSES.chromium.html', 'Electron Chromium notices', sourceRoot);
   const final = path.join(outputDir, `${platform}-${arch}`);
   if (await lstat(final).catch(() => null)) throw new Error(`Output target already exists; refusing to replace it: ${final}`);
   let tempRoot;
@@ -364,6 +366,8 @@ export async function stageRuntime({
     await copyTree(path.join(builtRoot, 'LICENSE'), put('runtime/licenses/application'), builtRoot);
     await copyTree(path.join(selectedToolsRoot, ...safeRelative(tools.licenses.node, 'Node license').slice(1)), put('runtime/licenses/node'), selectedToolsRoot);
     await copyTree(path.join(selectedToolsRoot, ...safeRelative(tools.licenses.git, 'Git license').slice(1)), put('runtime/licenses/git'), selectedToolsRoot);
+    await copyTree(electronMitLicense, put('runtime/licenses/electron/LICENSE'), sourceRoot);
+    await copyTree(electronThirdPartyNotices, put('runtime/licenses/electron/LICENSES.chromium.html'), sourceRoot);
     await writeFile(put('runtime-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx' });
     await writePlatformLaunchers(staging, manifest);
     for (const [entry, name, directory] of [

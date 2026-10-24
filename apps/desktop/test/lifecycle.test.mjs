@@ -1,0 +1,157 @@
+import { EventEmitter } from 'node:events';
+import { createRequire } from 'node:module';
+import { describe, expect, it, vi } from 'vitest';
+
+const require = createRequire(import.meta.url);
+const { createDesktopLifecycle } = require('../lifecycle.cjs');
+
+function harness(overrides = {}) {
+  const app = new EventEmitter();
+  app.requestSingleInstanceLock = vi.fn(() => overrides.lock !== false);
+  app.whenReady = vi.fn(() => Promise.resolve());
+  app.quit = vi.fn();
+  app.getFileIcon = vi.fn(async () => ({}));
+  const windows = [];
+  class BrowserWindow extends EventEmitter {
+    constructor(options) {
+      super();
+      this.options = options;
+      this.url = '';
+      this.destroyed = false;
+      this.webContents = new EventEmitter();
+      this.webContents.setWindowOpenHandler = vi.fn();
+      windows.push(this);
+    }
+    async loadURL(url) { this.url = url; }
+    show() {}
+    focus() {}
+    isDestroyed() { return this.destroyed; }
+    destroy() { this.destroyed = true; this.emit('closed'); }
+  }
+  const shell = { openExternal: vi.fn(async () => {}) };
+  const dialog = { showErrorBox: vi.fn() };
+  const Menu = { setApplicationMenu: vi.fn(), buildFromTemplate: vi.fn((value) => value) };
+  class Tray extends EventEmitter { setToolTip() {} setContextMenu() {} }
+  const electron = {
+    app,
+    BrowserWindow,
+    Menu,
+    Tray,
+    dialog,
+    shell,
+    session: { defaultSession: { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() } },
+  };
+  let launches = 0;
+  const runtimeApi = {
+    ensureLocalRuntime: vi.fn(async () => ({
+      origin: 'http://127.0.0.1:43001',
+      launchUrl: `http://127.0.0.1:43001/_nema/launch?ticket=${String(++launches).padStart(64, 'a')}`,
+      instanceId: 'e7543210-bd2a-44c1-8c5c-37db1ef40123',
+      installationId: 'b'.repeat(64),
+    })),
+    shutdownLocalRuntime: vi.fn(overrides.shutdown ?? (async () => ({ state: 'complete' }))),
+  };
+  const lifecycle = createDesktopLifecycle({
+    electron,
+    home: 'C:/Users/Test/.nema/desktop',
+    assetsDir: 'C:/Nema/resources/payload',
+    loadRuntimeApi: async () => runtimeApi,
+  });
+  return { app, windows, shell, dialog, electron, runtimeApi, lifecycle };
+}
+
+describe('Electron shell lifecycle', () => {
+  it('does not start a second application without the single-instance lock', async () => {
+    const value = harness({ lock: false });
+    await value.lifecycle.install();
+    expect(value.app.quit).toHaveBeenCalledOnce();
+    expect(value.runtimeApi.ensureLocalRuntime).not.toHaveBeenCalled();
+    expect(value.windows).toHaveLength(0);
+  });
+
+  it('coalesces simultaneous activation requests while the shared core is still resolving', async () => {
+    const value = harness();
+    await value.lifecycle.install();
+    value.windows[0].destroy();
+    let resolveRuntime;
+    const pendingRuntime = new Promise((resolve) => { resolveRuntime = resolve; });
+    value.runtimeApi.ensureLocalRuntime.mockImplementation(() => pendingRuntime);
+
+    value.app.emit('activate');
+    value.app.emit('second-instance');
+    value.app.emit('activate');
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(value.runtimeApi.ensureLocalRuntime).toHaveBeenCalledTimes(2);
+
+    resolveRuntime({
+      origin: 'http://127.0.0.1:43001',
+      launchUrl: `http://127.0.0.1:43001/_nema/launch?ticket=${'c'.repeat(64)}`,
+      instanceId: 'e7543210-bd2a-44c1-8c5c-37db1ef40123',
+      installationId: 'b'.repeat(64),
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(value.windows).toHaveLength(2);
+  });
+
+  it('does not bind Windows window close to the explicit Quit Nema action', async () => {
+    const value = harness();
+    await value.lifecycle.install();
+    const template = value.electron.Menu.setApplicationMenu.mock.calls[0][0];
+    const quit = template[0].submenu.find((item) => item.label === 'Quit Nema');
+    expect(quit.accelerator).not.toBe('Alt+F4');
+    expect(quit.accelerator).toBe('Ctrl+Shift+Q');
+  });
+
+  it('keeps the core alive when its window closes and gets a fresh ticket on activation', async () => {
+    const value = harness();
+    await value.lifecycle.install();
+    const first = value.windows[0];
+    const closeEvent = { preventDefault: vi.fn() };
+    first.emit('close', closeEvent);
+    expect(closeEvent.preventDefault).toHaveBeenCalledOnce();
+    expect(first.destroyed).toBe(true);
+    expect(value.runtimeApi.shutdownLocalRuntime).not.toHaveBeenCalled();
+    value.app.emit('activate');
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(value.windows).toHaveLength(2);
+    expect(value.windows[1].url).not.toBe(first.url);
+  });
+
+  it('waits for authenticated runtime drain before quitting', async () => {
+    let finishDrain;
+    const value = harness({ shutdown: () => new Promise((resolve) => { finishDrain = resolve; }) });
+    await value.lifecycle.install();
+    let settled = false;
+    const quitting = value.lifecycle.quitNema().then(() => { settled = true; });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(value.app.quit).not.toHaveBeenCalled();
+    expect(settled).toBe(false);
+    finishDrain({ state: 'complete' });
+    await quitting;
+    expect(value.runtimeApi.shutdownLocalRuntime).toHaveBeenCalledWith(expect.objectContaining({ expectedInstanceId: expect.any(String) }));
+    expect(value.app.quit).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the browser fallback available when authenticated shutdown fails', async () => {
+    const value = harness({ shutdown: async () => { throw new Error('helper drain failed'); } });
+    await value.lifecycle.install();
+    await value.lifecycle.quitNema();
+    expect(value.app.quit).not.toHaveBeenCalled();
+    expect(value.dialog.showErrorBox).toHaveBeenCalledWith('Nema could not finish quitting', 'helper drain failed');
+    await value.lifecycle.openBrowserMode();
+    expect(value.shell.openExternal).toHaveBeenCalledWith(expect.stringMatching(/^http:\/\/127\.0\.0\.1:43001\/_nema\/launch\?ticket=/));
+  });
+
+  it('destroys a crashed renderer without stopping the shared core', async () => {
+    const value = harness();
+    await value.lifecycle.install();
+    const first = value.windows[0];
+    first.webContents.emit('render-process-gone');
+    expect(first.destroyed).toBe(true);
+    expect(value.runtimeApi.shutdownLocalRuntime).not.toHaveBeenCalled();
+    await value.lifecycle.createMainWindow();
+    expect(value.windows).toHaveLength(2);
+    expect(value.runtimeApi.ensureLocalRuntime).toHaveBeenCalledTimes(2);
+  });
+});
