@@ -72,7 +72,7 @@ export type CollectedResponse = { status: "completed" | "incomplete"; items: Out
 
 /** Anything that can hand the transport a bearer token. AuthStore and CodexFileTokenSource both qualify. */
 export type TokenSource = {
-  getAccessToken(opts?: { force?: boolean; rejectedAccessToken?: string }): Promise<{ accessToken: string; auth: StoredAuth }>;
+  getAccessToken(opts?: { force?: boolean; rejectedAccessToken?: string; signal?: AbortSignal }): Promise<{ accessToken: string; auth: StoredAuth }>;
   recordAuthError(reason: { code: string; message: string }, forAuth: StoredAuth): Promise<void>;
 };
 
@@ -271,7 +271,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
  * once; a second 401 → ReloginRequiredError. Returns only an OK response.
  */
 async function send(ctx: TransportContext, url: string, init: (headers: Record<string, string>) => RequestInit): Promise<Response> {
-  let { accessToken, auth } = await ctx.auth.getAccessToken();
+  let { accessToken, auth } = await ctx.auth.getAccessToken({ signal: ctx.signal });
   let authRetried = false;
   let transientRetried = false;
   for (;;) {
@@ -295,6 +295,7 @@ async function send(ctx: TransportContext, url: string, init: (headers: Record<s
       throw new ModelApiError({ message: connectionMessage(e) }, { cause: e });
     }
     if (res.ok) return res;
+    ctx.signal.throwIfAborted();
     if (res.status === 401) {
       if (ctx.profile.refreshOn401 === false) throw new ByokRejectedError();
       const err = await httpError(res);
@@ -304,7 +305,7 @@ async function send(ctx: TransportContext, url: string, init: (headers: Record<s
         throw new ReloginRequiredError(err.code ?? "unauthorized");
       }
       authRetried = true;
-      ({ accessToken, auth } = await ctx.auth.getAccessToken({ force: true, rejectedAccessToken: accessToken }));
+      ({ accessToken, auth } = await ctx.auth.getAccessToken({ force: true, rejectedAccessToken: accessToken, signal: ctx.signal }));
       continue;
     }
     const err = toError(await httpError(res));

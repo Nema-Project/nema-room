@@ -37,7 +37,7 @@ export function readByokKey(nemaHome: string): string {
 export class ByokTokenSource implements TokenSource {
   constructor(private readonly nemaHome: string) {}
 
-  async getAccessToken(_opts: { force?: boolean; rejectedAccessToken?: string } = {}): Promise<{ accessToken: string; auth: StoredAuth }> {
+  async getAccessToken(_opts: { force?: boolean; rejectedAccessToken?: string; signal?: AbortSignal } = {}): Promise<{ accessToken: string; auth: StoredAuth }> {
     const accessToken = readByokKey(this.nemaHome);
     return {
       accessToken,

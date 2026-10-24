@@ -13,6 +13,7 @@ import {
 } from "./authStore.js";
 import { decodeJwtPayload } from "./jwt.js";
 import { withFileLock } from "./lock.js";
+import { protectPrivatePath } from "../secrets/permissions.js";
 
 /*
  * "Sign in with ChatGPT" (SIWC) token sharing for open-source tools — Nema's own login.
@@ -154,6 +155,7 @@ export function hostId(nemaHome: string): string {
     } finally {
       closeSync(fd);
     }
+    protectPrivatePath(file, 0o600);
     return id;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
@@ -175,6 +177,12 @@ export type SiwcLoginOptions = {
   timeoutMs?: number;
   /** Test-only override of the auth.openai.com endpoints. */
   endpoints?: SiwcEndpoints;
+  /** Cancels the callback listener and token exchange owned by the caller. */
+  signal?: AbortSignal;
+  /** Desktop owner requires its production opener to receive only the fixed provider endpoint. */
+  requireTrustedAuthorizeUrl?: boolean;
+  /** Hides provider and callback error text from the OAuth browser page. */
+  redactCallbackErrors?: boolean;
 };
 
 const b64url = (buf: Buffer) => buf.toString("base64url");
@@ -228,6 +236,8 @@ function waitForCallback(
   server: Server,
   expected: { state: string; clientId?: string },
   timeoutMs: number,
+  signal?: AbortSignal,
+  redactErrors = false,
 ): Promise<Callback> {
   return new Promise((resolve, reject) => {
     let done = false;
@@ -235,12 +245,16 @@ function waitForCallback(
       if (done) return;
       done = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       fn();
     };
+    const onAbort = () => finish(() => reject(signal?.reason ?? new DOMException("Aborted", "AbortError")));
     const timer = setTimeout(
       () => finish(() => reject(new Error(`登录超时：${Math.round(timeoutMs / 1000)} 秒内未收到浏览器回调`))),
       timeoutMs,
     );
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener("abort", onAbort, { once: true });
     server.on("request", (req: IncomingMessage, res: ServerResponse) => {
       const url = new URL(req.url ?? "/", `http://${SIWC.callbackHost}`);
       if (req.method !== "GET" || url.pathname !== SIWC.callbackPath) {
@@ -253,7 +267,7 @@ function waitForCallback(
       }
       const q = url.searchParams;
       const fail = (status: number, msg: string) => {
-        page(res, status, msg);
+        page(res, status, redactErrors ? "Login failed. Return to Nema Room settings." : msg);
         finish(() => reject(new Error(msg)));
       };
       if (!safeEqual(q.get("state") ?? "", expected.state)) return fail(400, "登录失败：state 不匹配，已拒绝此回调");
@@ -298,13 +312,13 @@ async function errorCode(res: Response): Promise<{ code?: string; detail?: strin
   return {};
 }
 
-async function exchangeCode(tokenUrl: string, form: Record<string, string>): Promise<TokenResponse> {
+async function exchangeCode(tokenUrl: string, form: Record<string, string>, signal?: AbortSignal): Promise<TokenResponse> {
   // Single attempt: the authorization code is one-time ([SIGN-IN] "invalid_grant → discard the code").
   const res = await fetch(tokenUrl, {
     method: "POST",
     headers: { ...nemaHeaders(), "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
     body: new URLSearchParams(form).toString(),
-    signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(EXCHANGE_TIMEOUT_MS)]) : AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
   });
   if (!res.ok) {
     const { code, detail } = await errorCode(res);
@@ -360,6 +374,7 @@ export async function siwcLogin(opts: SiwcLoginOptions): Promise<StoredAuth> {
   const tokenUrl = opts.endpoints?.tokenUrl ?? SIWC.tokenUrl;
   const timeoutMs = opts.timeoutMs ?? 300_000;
   const store = new AuthStore(nemaHome, siwcRefresher);
+  opts.signal?.throwIfAborted();
 
   const prior = store.read();
   // After an invalid_client failure the saved registration is dead: register a new client instead of reusing it.
@@ -395,15 +410,23 @@ export async function siwcLogin(opts: SiwcLoginOptions): Promise<StoredAuth> {
       code_challenge_method: "S256",
       code_challenge: challenge,
     });
-    const callback = waitForCallback(server, { state, clientId: savedClientId }, timeoutMs);
+    const authorizeRequestUrl = `${authorizeUrl}?${params.toString()}`;
+    if (opts.requireTrustedAuthorizeUrl) {
+      const url = new URL(authorizeRequestUrl);
+      if (url.protocol !== "https:" || url.hostname !== "auth.openai.com" || url.pathname !== "/api/accounts/authorize" || url.username || url.password || url.port || url.hash) {
+        throw new Error("Untrusted OAuth authorize URL");
+      }
+    }
+    const callback = waitForCallback(server, { state, clientId: savedClientId }, timeoutMs, opts.signal, opts.redactCallbackErrors);
     try {
-      opts.openBrowser(`${authorizeUrl}?${params.toString()}`);
+      opts.openBrowser(authorizeRequestUrl);
     } catch {
       /* the caller prints the URL; keep waiting for the callback */
     }
     const cb = await callback;
 
     try {
+      opts.signal?.throwIfAborted();
       const tokens = await exchangeCode(tokenUrl, {
         grant_type: "authorization_code",
         client_id: cb.clientId,
@@ -411,7 +434,7 @@ export async function siwcLogin(opts: SiwcLoginOptions): Promise<StoredAuth> {
         code_verifier: verifier,
         redirect_uri: redirectUri,
         resource: SIWC.resource,
-      });
+      }, opts.signal);
       const scopes = grantedScopes(tokens, cb.scope);
       if (!scopes || !scopes.includes(SIWC.planUsageScope)) {
         throw new Error(`登录失败：未授予 ${SIWC.planUsageScope}（该账号未允许 Nema 使用 ChatGPT 套餐额度），未保存凭证`);
@@ -430,11 +453,14 @@ export async function siwcLogin(opts: SiwcLoginOptions): Promise<StoredAuth> {
         lastRefresh: new Date().toISOString(),
       };
       // AuthStore.save() is unlocked; serialize with refreshers via auth.lock.
-      await withFileLock(path.join(nemaHome, "auth.lock"), async () => store.save(auth), { timeoutMs: 15_000 });
+      await withFileLock(path.join(nemaHome, "auth.lock"), async () => {
+        opts.signal?.throwIfAborted();
+        store.save(auth);
+      }, { timeoutMs: 15_000 });
       page(cb.res, 200, "Nema Room 登录成功，可以关闭此页面并回到终端。");
       return auth;
     } catch (e) {
-      page(cb.res, 500, e instanceof Error ? e.message : "登录失败");
+      page(cb.res, 500, opts.redactCallbackErrors ? "Login failed. Return to Nema Room settings." : e instanceof Error ? e.message : "登录失败");
       throw e;
     }
   } finally {

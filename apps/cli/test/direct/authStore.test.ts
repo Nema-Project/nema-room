@@ -167,6 +167,22 @@ describe("save / read / clear", () => {
   });
 });
 
+describe("owner cancellation", () => {
+  test("a refresh rotation received before cancellation is persisted before abort is reported", async () => {
+    const controller = new AbortController();
+    const store = new AuthStore(home, async (_held, signal) => {
+      void signal;
+      controller.abort(new DOMException("owner closed after refresh", "AbortError"));
+      return { access_token: "late-access", refresh_token: "late-refresh" };
+    });
+    const original = auth({ access_token: tokenExpiringIn(0), refresh_token: "original-refresh" });
+    store.save(original);
+    const pending = store.getAccessToken({ signal: controller.signal });
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(store.read()?.tokens).toMatchObject({ access_token: "late-access", refresh_token: "late-refresh" });
+  });
+});
+
 describe("getAccessToken", () => {
   test("missing login → ReloginRequiredError", async () => {
     const err = await new AuthStore(home, neverRefresh).getAccessToken().catch((e) => e);
@@ -308,13 +324,10 @@ describe("getAccessToken", () => {
   });
 
   test("persist failure after a successful refresh → credential_persist_failed (terminal)", async () => {
-    const s = new AuthStore(home, async () => {
-      chmodSync(home, 0o500); // the rotated pair can no longer be written atomically
-      return { access_token: tokenExpiringIn(3600, "lost"), refresh_token: "rt-lost" };
-    });
+    const s = new AuthStore(home, async () => ({ access_token: tokenExpiringIn(3600, "lost"), refresh_token: "rt-lost" }));
     s.save(auth({ access_token: tokenExpiringIn(10) }));
+    vi.spyOn(s, "save").mockImplementation(() => { throw new Error("simulated disk failure"); });
     const err = await s.getAccessToken().catch((e) => e);
-    chmodSync(home, 0o700);
     expect(err).toBeInstanceOf(ReloginRequiredError);
     expect(err.message).toBe(RELOGIN_MSG);
     expect(err.code).toBe("credential_persist_failed");

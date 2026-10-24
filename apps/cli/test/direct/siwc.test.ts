@@ -8,6 +8,7 @@ import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AuthStore, RefreshError, ReloginRequiredError, type StoredAuth } from "../../src/direct/authStore.js";
+import { authLogin } from "../../src/direct/authCommands.js";
 import {
   SIWC,
   hostId,
@@ -294,6 +295,77 @@ describe("siwcLogin", () => {
       }),
     ).rejects.toThrow(/超时|timed out/i);
     await expect(fetch(redirect)).rejects.toThrow();
+  });
+
+  test("owner abort closes the callback listener and untrusted production authorize URLs are rejected", async () => {
+    h = { tokenServer: await tokenOk(nonceRef), authorizeUrls: [] };
+    const controller = new AbortController();
+    let redirect: URL | undefined;
+    const pending = siwcLogin({
+      nemaHome: home, port: 0, timeoutMs: 10_000, signal: controller.signal,
+      openBrowser: (url) => { redirect = new URL(new URL(url).searchParams.get("redirect_uri")!); },
+    });
+    while (!redirect) await new Promise((resolve) => setTimeout(resolve, 1));
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(existsSync(join(home, "auth.json"))).toBe(false);
+    expect(h.tokenServer.calls).toHaveLength(0);
+    await expect(fetch(redirect)).rejects.toThrow();
+
+    await expect(siwcLogin({
+      nemaHome: home, port: 0, timeoutMs: 100, requireTrustedAuthorizeUrl: true,
+      endpoints: { authorizeUrl: "https://evil.example/authorize", tokenUrl: h.tokenServer.url },
+      openBrowser: () => { throw new Error("must not reach opener"); },
+    })).rejects.toThrow("Untrusted OAuth authorize URL");
+    expect(existsSync(join(home, "auth.json"))).toBe(false);
+  });
+
+  test("desktop login callback page redacts secret-bearing provider exchange errors", async () => {
+    const marker = "provider-secret-marker";
+    h = { tokenServer: await fakeTokenServer((_form, res) => json(res, 503, { error: "temporarily_unavailable", error_description: marker })), authorizeUrls: [] };
+    let callbackPage = "";
+    let resolveCallback!: () => void;
+    const callbackSeen = new Promise<void>((resolve) => { resolveCallback = resolve; });
+    const login = authLogin({
+      nemaHome: home, out: { log: () => {}, error: () => {} }, port: 0, timeoutMs: 5000,
+      endpoints: { tokenUrl: h.tokenServer.url }, requireTrustedAuthorizeUrl: true, redactCallbackErrors: true,
+      openBrowser: (url) => {
+        const authorize = new URL(url);
+        const callback = new URL(authorize.searchParams.get("redirect_uri")!);
+        callback.searchParams.set("state", authorize.searchParams.get("state")!);
+        callback.searchParams.set("code", "fake-one-use-code");
+        callback.searchParams.set("client_id", "oaiapp_fake");
+        void fetch(callback).then(async (response) => {
+          callbackPage = await response.text();
+          resolveCallback();
+        });
+      },
+    });
+    await expect(login).resolves.toBe(1);
+    await callbackSeen;
+    expect(callbackPage).toContain("Login failed");
+    expect(callbackPage).not.toContain(marker);
+    expect(h.tokenServer.calls).toHaveLength(1);
+    expect(existsSync(join(home, "auth.json"))).toBe(false);
+
+    let callbackErrorPage = "";
+    let resolveCallbackError!: () => void;
+    const callbackErrorSeen = new Promise<void>((resolve) => { resolveCallbackError = resolve; });
+    const callbackErrorLogin = siwcLogin({
+      nemaHome: home, port: 0, timeoutMs: 5000, redactCallbackErrors: true,
+      openBrowser: (url) => {
+        const authorize = new URL(url);
+        const callback = new URL(authorize.searchParams.get("redirect_uri")!);
+        callback.searchParams.set("state", authorize.searchParams.get("state")!);
+        callback.searchParams.set("error", marker);
+        void fetch(callback).then(async (response) => { callbackErrorPage = await response.text(); resolveCallbackError(); });
+      },
+    });
+    await expect(callbackErrorLogin).rejects.toThrow(marker);
+    await callbackErrorSeen;
+    expect(callbackErrorPage).toContain("Login failed");
+    expect(callbackErrorPage).not.toContain(marker);
+    expect(h.tokenServer.calls).toHaveLength(1);
   });
 
   test("the callback listener binds only 127.0.0.1", async () => {

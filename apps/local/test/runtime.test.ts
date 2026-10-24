@@ -5,7 +5,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { closeEnsuredRuntimesForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setWebIpcForTests, startLocalRuntime, ensureLocalRuntime } from "../src/runtime.js";
+import { closeEnsuredRuntimesForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, setWebIpcForTests, startLocalRuntime, ensureLocalRuntime } from "../src/runtime.js";
 import { acquireInstance, discoverInstance } from "../src/instance.js";
 import { createLocalDb } from "@nema/hub/db/local";
 import { postUserMessage } from "@nema/hub/messages";
@@ -125,6 +125,7 @@ afterEach(async () => {
   setEnsureTimeoutForTests(undefined);
   setWebIpcForTests(false);
   setRuntimeReadyHookForTests(undefined);
+  setSettingsOperationsForTests(undefined);
   await Promise.all(crashChildren.splice(0).map(closeCrashChild));
   await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()));
   for (const dir of testHomeDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -140,6 +141,82 @@ describe("managed local runtime", () => {
     expect(JSON.parse(readFileSync(join(home, "instance.json"), "utf8"))).toMatchObject({ schemaVersion: 1, protocol: "nema-local-v1" });
     expect(runtime.createLaunchTicket()).toMatch(/^[0-9a-f]{64}$/);
   });
+
+  it("cancels settings work early and drains it before releasing the runtime lease", async () => {
+    const home = join(tempDir("nema-home-"), "settings-drain");
+    let release!: () => void;
+    let resolveStarted!: () => void;
+    let resolveAborted!: () => void;
+    const started = new Promise<void>((resolve) => { resolveStarted = resolve; });
+    const aborted = new Promise<void>((resolve) => { resolveAborted = resolve; });
+    setSettingsOperationsForTests({
+      login: ({ signal }) => new Promise((resolve) => {
+        resolveStarted();
+        signal.addEventListener("abort", () => {
+          resolveAborted();
+          release = () => resolve({ ok: false });
+        }, { once: true });
+      }),
+      logout: async () => {},
+      probe: async () => ({ ok: true }),
+      saveSecret: () => {},
+    });
+    const runtime = await startLocalRuntime({ home, assetsDir: testAssets() });
+    runtimes.push(runtime);
+    const launch = await fetch(`${runtime.origin}/_nema/launch?ticket=${runtime.createLaunchTicket()}`, { redirect: "manual" });
+    const cookie = launch.headers.get("set-cookie")!.split(";")[0]!;
+    const login = await fetch(`${runtime.origin}/_nema/auth/login`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: "{}" });
+    expect(login.status).toBe(202);
+    await started;
+    let closeFinished = false;
+    const closing = runtime.close().then(() => { closeFinished = true; });
+    await aborted;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(closeFinished).toBe(false);
+    expect(await discoverInstance(home)).toBeNull();
+    release();
+    await closing;
+    expect(closeFinished).toBe(true);
+    runtimes.splice(runtimes.indexOf(runtime), 1);
+  }, 60_000);
+
+  it("drains an accepted logout before releasing the runtime lease", async () => {
+    const home = join(tempDir("nema-home-"), "logout-drain");
+    let release!: () => void;
+    let resolveStarted!: () => void;
+    let logoutSettled = false;
+    const started = new Promise<void>((resolve) => { resolveStarted = resolve; });
+    setSettingsOperationsForTests({
+      login: async () => ({ ok: true }),
+      logout: () => new Promise<void>((resolve) => { resolveStarted(); release = () => { logoutSettled = true; resolve(); }; }),
+      probe: async () => ({ ok: true }),
+      saveSecret: () => {},
+    });
+    const runtime = await startLocalRuntime({ home, assetsDir: testAssets() });
+    runtimes.push(runtime);
+    const launch = await fetch(`${runtime.origin}/_nema/launch?ticket=${runtime.createLaunchTicket()}`, { redirect: "manual" });
+    const cookie = launch.headers.get("set-cookie")!.split(";")[0]!;
+    const logoutResponse = fetch(`${runtime.origin}/_nema/auth/logout`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ kind: "siwc" }) });
+    await started;
+
+    let closeFinished = false;
+    const closing = runtime.close().then(() => { closeFinished = true; });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(closeFinished).toBe(false);
+      expect(await discoverInstance(home)).toBeNull();
+      await expect(acquireInstance(home)).rejects.toMatchObject({ code: "NEMA_LOCAL_OWNER_COLLISION" });
+    } finally {
+      release();
+      await logoutResponse.catch(() => undefined); // Shutdown intentionally closes accepted HTTP sockets.
+      await closing;
+    }
+    expect(closeFinished).toBe(true);
+    expect(logoutSettled).toBe(true);
+    const afterRelease = await acquireInstance(home);
+    await afterRelease.close();
+    runtimes.splice(runtimes.indexOf(runtime), 1);
+  }, 60_000);
 
   it("reuses an already-running local runtime through authenticated discovery", async () => {
     const home = join(tempDir("nema-home-"), "single-owner");

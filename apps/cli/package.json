@@ -17,6 +17,11 @@
       "types": "./dist/config.d.ts",
       "import": "./dist/config.js"
     },
+    "./localSettings": {
+      "development": "./src/localSettings.ts",
+      "types": "./dist/localSettings.d.ts",
+      "import": "./dist/localSettings.js"
+    },
     "./daemon/setup": {
       "development": "./src/daemon/setup.ts",
       "types": "./dist/daemon/setup.d.ts",

@@ -17,6 +17,7 @@ import { acquireInstance, discoverInstance, type InstanceLease } from "./instanc
 import { resolveHome } from "./paths.js";
 import { createGatewayCredential, createGatewayUiAuth, startGateway, type RunningGateway } from "./gateway.js";
 import { SessionManager } from "./session.js";
+import { createSettingsService, type SettingsOperations, type SettingsService } from "./settings.js";
 
 const MANIFEST_NAME = "runtime-manifest.json";
 const WEB_READY_TIMEOUT_MS = 15_000;
@@ -31,6 +32,7 @@ let ensureSpawnerForTests: EnsureSpawner | undefined;
 type RuntimeReadyHook = (runtime: { db: Awaited<ReturnType<typeof createLocalDb>>; home: string; dataDir: string; webPort: number; webChild: ChildProcess }) => Promise<void>;
 let runtimeReadyHookForTests: RuntimeReadyHook | undefined;
 let ensureTimeoutForTests: number | undefined;
+let settingsOperationsForTests: SettingsOperations | undefined;
 
 /** Explicit source-child hook used only by process tests; release builds never set it. */
 export function setEnsureSpawnerForTests(spawner: EnsureSpawner | undefined): void {
@@ -44,6 +46,11 @@ export function setRuntimeReadyHookForTests(hook: RuntimeReadyHook | undefined):
 
 export function setEnsureTimeoutForTests(timeoutMs: number | undefined): void {
   ensureTimeoutForTests = timeoutMs;
+}
+
+/** Explicit fake auth operations for lifecycle tests; never set by packaged startup. */
+export function setSettingsOperationsForTests(operations: SettingsOperations | undefined): void {
+  settingsOperationsForTests = operations;
 }
 
 type RuntimeManifest = {
@@ -300,6 +307,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
   let webChild: ChildProcess | undefined;
   let gateway: RunningGateway | undefined;
   let session: SessionManager | undefined;
+  let settings: SettingsService | undefined;
   const events = new EventBus();
   let teardownPromise: Promise<void> | undefined;
   let startupComplete = false;
@@ -323,6 +331,8 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     teardownPromise ??= (async () => {
       stopRequested = true;
       const errors: unknown[] = [];
+      // Prevent new auth work immediately; the service drains only after HTTP acceptance is stopped.
+      try { settings?.stopAccepting(); } catch (error) { appendFailure(errors, error); }
       // Revoke sessions and retire launch readiness before draining services.
       try { session?.close(); } catch (error) { appendFailure(errors, error); }
       let unpublished = false;
@@ -332,6 +342,8 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
       // Stop hub dispatch and all incoming hub writes before changing task run tokens.
       let hubDrained = !hub;
       try { await hub?.close(); hubDrained = true; } catch (error) { appendFailure(errors, error); }
+      // Expected cancellation/failure is a terminal job result; this wait is about actual resource drain.
+      try { await settings?.close(); } catch (error) { appendFailure(errors, error); }
       if (db && hubDrained) {
         try {
           const interrupted = await interruptRunning(db, "all");
@@ -392,12 +404,14 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     });
     await daemonReady(hub.url, gatewayCredential, DAEMON_READY_TIMEOUT_MS);
     assertWebAlive();
+    settings = createSettingsService({ home: paths.home, codexHome: process.env.CODEX_HOME ?? join(homedir(), ".codex"), operations: settingsOperationsForTests });
     gateway = await startGateway({
       webTarget: `http://127.0.0.1:${webPort}`,
       hubTarget: hub.url,
       session: sessionManager,
       port: publicPort,
       privateGatewayCredential: gatewayCredential,
+      settings,
     });
     assertWebAlive();
     if (runtimeReadyHookForTests && db && webChild) await runtimeReadyHookForTests({ db, home: paths.home, dataDir: paths.data, webPort, webChild });

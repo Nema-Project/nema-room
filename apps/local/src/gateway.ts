@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import http, { type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 import type { MiddlewareHandler } from "hono";
 import type { SessionManager } from "./session.js";
+import type { SettingsService } from "./settings.js";
 
 export const GATEWAY_CREDENTIAL_HEADER = "x-nema-gateway-credential";
 const SESSION_COOKIE_PREFIX = "nema_session_";
@@ -20,6 +21,7 @@ export type GatewayOptions = {
   port: number;
   /** Private credential shared with the hub's uiAuth middleware, never sent to the browser. */
   privateGatewayCredential: string;
+  settings?: SettingsService;
 };
 
 export type RunningGateway = { origin: string; close(): Promise<void> };
@@ -70,6 +72,22 @@ function send(res: ServerResponse, status: number, body: string, headers: Record
   if (res.destroyed) return;
   res.writeHead(status, { "content-type": "text/plain; charset=utf-8", "content-length": Buffer.byteLength(body), ...headers });
   res.end(body);
+}
+
+const SETTINGS_BODY_LIMIT = 16 * 1024;
+async function settingsJson(req: IncomingMessage): Promise<{ value: unknown } | { error: number }> {
+  const length = Number(req.headers["content-length"] ?? 0);
+  if (Number.isFinite(length) && length > SETTINGS_BODY_LIMIT) return { error: 413 };
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += data.length;
+    if (size > SETTINGS_BODY_LIMIT) return { error: 413 };
+    chunks.push(data);
+  }
+  try { return { value: JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown }; }
+  catch { return { error: 400 }; }
 }
 
 function mappedTarget(pathname: string, web: URL, hub: URL): { target: URL; ui: boolean } | null {
@@ -132,10 +150,12 @@ export async function startGateway(options: GatewayOptions): Promise<RunningGate
   });
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (closing) return send(res, 503, "gateway is closing");
-    if (req.headers.host?.toLowerCase() !== new URL(origin).host.toLowerCase()) return send(res, 403, "forbidden host");
+    const privateUiPath = (req.url ?? "").startsWith("/_nema/");
+    const noStore: Record<string, string> = privateUiPath ? { "cache-control": "no-store" } : {};
+    if (closing) return send(res, 503, "gateway is closing", noStore);
+    if (req.headers.host?.toLowerCase() !== new URL(origin).host.toLowerCase()) return send(res, 403, "forbidden host", noStore);
     const requestOrigin = req.headers.origin;
-    if (requestOrigin !== undefined && requestOrigin !== origin) return send(res, 403, "forbidden origin");
+    if (requestOrigin !== undefined && requestOrigin !== origin) return send(res, 403, "forbidden origin", noStore);
 
     let url: URL;
     try {
@@ -161,22 +181,39 @@ export async function startGateway(options: GatewayOptions): Promise<RunningGate
       });
     }
 
-    const mapped = mappedTarget(url.pathname, webTarget, hubTarget);
-    if (!mapped) return send(res, 404, "not found");
+    const settingsPath = url.pathname.startsWith("/_nema/");
+    const mapped = settingsPath ? null : mappedTarget(url.pathname, webTarget, hubTarget);
+    if (!settingsPath && !mapped) return send(res, 404, "not found");
     const token = sessionCookie(req, sessionCookieName(origin));
-    if (!token || !options.session.isValidSession(token)) return send(res, 401, "unauthorized");
+    if (!token || !options.session.isValidSession(token)) return send(res, 401, "unauthorized", noStore);
 
-    if (mapped.ui && req.method !== "GET" && req.method !== "HEAD") return send(res, 405, "method not allowed", { allow: "GET, HEAD" });
-    if (!mapped.ui && !["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].includes(req.method ?? "")) {
+    if (settingsPath) {
+      if (url.search !== "") return send(res, 400, JSON.stringify({ error: "invalid_request" }), { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      if (!options.settings || !["GET", "POST", "PATCH"].includes(req.method ?? "")) return send(res, 404, "not found", { "cache-control": "no-store" });
+      let body: unknown;
+      if (req.method !== "GET") {
+        const contentType = (req.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
+        if (contentType !== "application/json") return send(res, 415, JSON.stringify({ error: "content_type" }), { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        const parsed = await settingsJson(req);
+        if ("error" in parsed) return send(res, parsed.error, JSON.stringify({ error: parsed.error === 413 ? "body_too_large" : "invalid_json" }), { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        body = parsed.value;
+      }
+      const result = await options.settings.dispatch(req.method ?? "", url.pathname, body);
+      const encoded = JSON.stringify(result.body);
+      return send(res, result.status, encoded, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+    }
+
+    if (mapped!.ui && req.method !== "GET" && req.method !== "HEAD") return send(res, 405, "method not allowed", { allow: "GET, HEAD" });
+    if (!mapped!.ui && !["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].includes(req.method ?? "")) {
       return send(res, 405, "method not allowed", { allow: "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS" });
     }
-    if (!mapped.ui && ["POST", "PUT", "PATCH"].includes(req.method ?? "")) {
+    if (!mapped!.ui && ["POST", "PUT", "PATCH"].includes(req.method ?? "")) {
       const contentType = (req.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
       if (contentType !== "application/json") return send(res, 415, "content-type must be application/json");
     }
 
-    const target = new URL(`${url.pathname}${url.search}`, mapped.target);
-    const headers = sanitizedHeaders(req.headers, mapped.ui ? undefined : options.privateGatewayCredential);
+    const target = new URL(`${url.pathname}${url.search}`, mapped!.target);
+    const headers = sanitizedHeaders(req.headers, mapped!.ui ? undefined : options.privateGatewayCredential);
     const upstream = http.request(target, { method: req.method, headers });
     active.add(upstream);
     upstream.once("close", () => active.delete(upstream));
