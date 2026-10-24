@@ -15,9 +15,10 @@ export type SidebarProps = {
   onCreate: (name: string) => void | Promise<void>;
   onArchive: (id: string, archived: boolean) => void | Promise<void>;
   onDelete: (id: string) => void | Promise<void>;
+  onOpenModelSettings?: () => void;
 };
 
-export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate, onArchive, onDelete }: SidebarProps) {
+export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate, onArchive, onDelete, onOpenModelSettings }: SidebarProps) {
   const t = useT();
   const [locale, setLocale] = useLocale();
   const [adding, setAdding] = useState(false);
@@ -174,6 +175,9 @@ export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate,
         )}
       </nav>
       <div className="foot">
+        <button type="button" className="nav-model" onClick={() => { setPluginsOpen(false); onOpenModelSettings?.(); }}>
+          {t("sidebar.modelSettings")}
+        </button>
         <button type="button" className="nav-plugins" aria-expanded={pluginsOpen} onClick={() => setPluginsOpen((open) => !open)}>
           {t("plugins.nav")}
         </button>

@@ -50,6 +50,13 @@ describe("Sidebar", () => {
     expect(screen.getByText("nema daemon offline")).toBeTruthy();
   });
 
+  it("opens model settings from the sidebar when there are no workspaces", async () => {
+    const onOpenModelSettings = vi.fn();
+    setup({ workspaces: [], selectedId: null, onOpenModelSettings });
+    await userEvent.click(screen.getByRole("button", { name: "Model settings" }));
+    expect(onOpenModelSettings).toHaveBeenCalledTimes(1);
+  });
+
   it("switches the UI language", async () => {
     setup({ connected: false });
     await userEvent.click(screen.getByRole("button", { name: "日本語" }));

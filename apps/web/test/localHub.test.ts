@@ -12,7 +12,7 @@ describe("local same-origin hub URLs", () => {
     const hub = await import("../lib/hub");
     expect(hub.diagramHtmlUrl("w/1", "G 1")).toBe("/api/workspaces/w%2F1/diagrams/G%201.html");
     expect(hub.eventsUrl("w/1")).toBe("/api/workspaces/w%2F1/events");
-    const fetchMock = vi.fn(async () => new Response("[]", { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("[]", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     await hub.listWorkspaces();
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/workspaces");
