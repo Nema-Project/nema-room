@@ -500,7 +500,19 @@ export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<
   };
   try {
     while (Date.now() < deadline) {
-      const instance = await discoverInstance(options.home);
+      let instance: Awaited<ReturnType<typeof discoverInstance>> = null;
+      try { instance = await discoverInstance(options.home); }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "NEMA_LOCAL_CONTROL_TIMEOUT" && outcome?.type === "error") {
+          throw new Error(`${outcome.message} (${outcome.code})`, { cause: error });
+        }
+        if (code === "NEMA_LOCAL_CONTROL_TIMEOUT" && spawnFailure) {
+          throw new Error(`Could not spawn managed local core (${spawnFailure.message})`, { cause: spawnFailure });
+        }
+        const childIsLive = spawned && child.exitCode === null && child.signalCode === null;
+        if (code !== "NEMA_LOCAL_CONTROL_TIMEOUT" || !childIsLive) throw error;
+      }
       if (instance && outcome?.type === "ready") {
         verifiedCore = true;
         const channelError = closeLauncherChannel();

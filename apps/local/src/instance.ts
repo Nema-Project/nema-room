@@ -176,7 +176,11 @@ function requestControl(port: number, path: string, method = "GET", headers: Rec
       host: "127.0.0.1", port, path, method, headers: { host: `127.0.0.1:${port}`, ...headers },
       timeout: REQUEST_TIMEOUT_MS,
     }, (res) => { void readJsonResponse(res).then(resolve, reject); });
-    req.on("timeout", () => req.destroy(new Error("Control request timed out")));
+    req.on("timeout", () => {
+      const error = Object.assign(new Error("Control request timed out"), { code: "NEMA_LOCAL_CONTROL_TIMEOUT" });
+      req.destroy();
+      reject(error);
+    });
     req.on("error", reject);
     if (body !== undefined) req.write(body);
     req.end();

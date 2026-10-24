@@ -105,6 +105,27 @@ function sourceCoreSpawner(): (spec: { args: string[]; env: NodeJS.ProcessEnv })
   };
 }
 
+function delayedOwnerSpawner(mode: "delayed" | "stall" | "error-stall", delayMs: number): (spec: { args: string[]; env: NodeJS.ProcessEnv }) => ChildProcess {
+  const fixture = join(process.cwd(), "apps", "local", "test", "fixtures", "delayed-owner-child.mjs");
+  const permissions = join(process.cwd(), "apps", "cli", "src", "secrets", "permissions.ts");
+  return ({ args, env }) => {
+    const child = spawn(process.execPath, ["--import", "tsx", fixture, args[1]!, args[2]!, "synthetic-assets", permissions, mode, String(delayMs)], {
+      cwd: process.cwd(), env, stdio: ["pipe", "ignore", "pipe", "ipc"], windowsHide: true,
+    });
+    child.stderr?.resume();
+    return child;
+  };
+}
+
+async function leaveStaleDescriptor(home: string): Promise<void> {
+  const lease = await acquireInstance(home);
+  await lease.publish({ origin: "http://127.0.0.1:43210", createLaunchUrl: () => "http://127.0.0.1:43210/" });
+  const descriptor = readFileSync(join(home, "instance.json"));
+  await lease.close();
+  writeFileSync(join(home, "instance.json"), descriptor, { mode: 0o600 });
+  protectPrivatePath(join(home, "instance.json"), 0o600);
+}
+
 async function closeCrashChild(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const exited = new Promise<void>((resolvePromise) => child.once("exit", () => resolvePromise()));
@@ -131,6 +152,44 @@ afterEach(async () => {
 });
 
 describe("managed local runtime", () => {
+  it("retries only a spawned owner's control timeout while authenticated readiness is still starting", async () => {
+    const home = join(tempDir("nema-home-"), "delayed-authenticated-owner");
+    mkdirSync(home, { recursive: true });
+    await leaveStaleDescriptor(home);
+    setEnsureSpawnerForTests(delayedOwnerSpawner("delayed", 3_500));
+    ensuredHomes.push(home);
+
+    const result = await ensureLocalRuntime({ home, assetsDir: testAssets() });
+    expect(result).toMatchObject({ origin: "http://127.0.0.1:43210", reused: false });
+    expect(result.launchUrl).toMatch(/^http:\/\/127\.0\.0\.1:43210\/_nema\/launch\?ticket=/);
+    expect(await discoverInstance(home)).toMatchObject({ origin: result.origin });
+  }, 30_000);
+
+  it("keeps an unresponsive spawned owner bounded by the existing ensure deadline and cleans it up", async () => {
+    const home = join(tempDir("nema-home-"), "stalled-authenticated-owner");
+    mkdirSync(home, { recursive: true });
+    await leaveStaleDescriptor(home);
+    setEnsureSpawnerForTests(delayedOwnerSpawner("stall", 0));
+    setEnsureTimeoutForTests(500);
+    ensuredHomes.push(home);
+    const startedAt = Date.now();
+
+    await expect(ensureLocalRuntime({ home, assetsDir: testAssets() })).rejects.toThrow(/did not become ready within 500ms/i);
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
+    expect(await discoverInstance(home)).toBeNull();
+    ensuredHomes.splice(ensuredHomes.indexOf(home), 1);
+  }, 10_000);
+
+  it("reports an owned child startup error instead of retrying a timed-out control request", async () => {
+    const home = join(tempDir("nema-home-"), "error-during-control-timeout");
+    mkdirSync(home, { recursive: true });
+    await leaveStaleDescriptor(home);
+    setEnsureSpawnerForTests(delayedOwnerSpawner("error-stall", 0));
+    ensuredHomes.push(home);
+
+    await expect(ensureLocalRuntime({ home, assetsDir: testAssets() })).rejects.toThrow(/Synthetic owner startup failure \(NEMA_LOCAL_TEST_START_FAILED\)/);
+  }, 12_000);
+
   it("starts the disk database and only publishes after loopback web readiness", async () => {
     const home = join(tempDir("nema-home-"), "room with spaces-東京");
     const runtime = await startLocalRuntime({ home, assetsDir: testAssets() });
