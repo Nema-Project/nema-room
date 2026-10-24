@@ -133,6 +133,22 @@
 - [ ] Implement window/tray menus for opening UI, browser mode and quitting. No renderer Node integration; context isolation and sandbox enabled. Stage runtime outside ASAR where executables/assets require real filesystem paths. Keep data out of install directories; preserve it during upgrade/uninstall unless explicitly requested.
 - [ ] Package Windows x64 installer/ZIP and macOS arm64/x64 DMG/ZIP. Explicitly disable identity signing/notarization absent credentials, retaining necessary platform-local technical signing. Verify no certificate is required to build. Commit shell/config/scripts after local packaging smoke; macOS native jobs verify their corresponding output, not cross-build assumptions.
 
+## Task 8c: Fully Custom Desktop Title Bar and Window Controls
+
+**Approved amendment:** [2026-10-25 window-chrome design](../specs/2026-10-25-custom-window-chrome-design.md). Execute after the functional Task 8b desktop baseline is reviewed. Preserve the existing subagent-driven execution method.
+
+**Files:** Create `apps/desktop/{preload,window-controls}.cjs`, `apps/desktop/test/window-controls.test.mjs`, and `apps/web/components/DesktopTitlebar.tsx`; modify desktop lifecycle/security/package resource lists, `apps/web/app/{layout.tsx,globals.css}`, and existing English/Japanese/Chinese message files. Extend packaged desktop smoke for the new chrome. Read Next's applicable bundled instructions before Web changes.
+
+**Interfaces:** A sandboxed preload exposes only `window.nemaWindowControls` with `minimize()`, `toggleMaximize()`, `close()`, `getState(): Promise<{maximized:boolean}>`, and `onStateChanged(callback): unsubscribe`. No raw IPC object/channel parameter, filesystem, credentials or process execution. Main-process dispatch allows only those owning-window actions, validates sender/top-level frame and current verified origin, and disposes its handlers/listeners when appropriate. Ordinary browsers have no such object and render no desktop title bar.
+
+- [ ] Write failing desktop tests for allowed owning-window actions, rejected foreign/subframe/unknown messages, maximize-state updates and cleanup; verify closing uses the window-close/tray path rather than authenticated Quit. Run the focused Node test and capture RED.
+- [ ] Implement the narrow bridge and frameless window configuration, preserving sandbox/isolation/disabled Node integration. Render a roughly 36px light title bar with the existing monochrome palette, Nema identifier and custom accessible minimize/maximize-or-restore/close buttons. Reserve drag space and maintain content height; hide the in-window native menu row while retaining tray commands. Keep platform-appropriate application-menu behavior outside the window where applicable.
+- [ ] Run desktop security/lifecycle/control tests and applicable Web/root typechecks. Validate ordinary browser layout has no desktop offset or controls. Do not add unrelated toolbar features, dependencies or arbitrary renderer authority.
+- [ ] Stage/package changed Web resources and desktop code, then run the real copied-app smoke with a fresh UUID data/profile. Verify custom chrome, minimize/restore, maximize/restore, dragging, resizing, close-to-tray/reopen, authenticated Quit, and unchanged fake-chat persistence. Record an actual window screenshot; do not claim native macOS acceptance from Windows.
+- [ ] Send task-scoped review with the exact diff and evidence, fix findings, then commit the bounded UI change. Preserve the functional 8b artifact as the earlier baseline; identify new artifact hashes clearly.
+
+**Review focus:** top-level IPC sender checks; action allowlist without privileged renderer APIs; no duplicate handler/subscription after window reopen; frameless control/drag/resize hit areas; browser layout and independent-core lifecycle preservation.
+
 ## Task 9: Preserve Legacy Data, Hooks and Existing Product Coverage
 
 **Files:** Create `apps/local/src/{migration,import}.ts`, `test/{migration,import}.test.ts`, `apps/hub/src/db/export.ts`; modify `apps/cli/src/{index,report/commands,report/install}.ts` for safe desktop instance discovery; add `apps/cli/test/report/desktopDiscovery.test.ts`; update three READMEs and `docs/reviews/2026-10-24-desktop-validation.md`.
