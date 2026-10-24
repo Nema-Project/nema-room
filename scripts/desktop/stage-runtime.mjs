@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetchTools, toolsManifest } from './fetch-tools.mjs';
+import { buildOwnedHelper } from './build-owned-helper.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRoot = path.resolve(scriptDir, '../..');
@@ -234,6 +235,7 @@ export async function stageRuntime({
   version,
   tools,
   build = true,
+  ownedHelperBuilder = buildOwnedHelper,
 } = {}) {
   sourceRoot = path.resolve(sourceRoot);
   outputDir = path.resolve(outputDir);
@@ -288,6 +290,12 @@ export async function stageRuntime({
       toolsRecord.git?.version !== toolsManifest.git.version || toolsRecord.git?.gitForWindowsVersion !== toolsManifest.git.gitForWindowsVersion || toolsRecord.git?.dugiteNativeVersion !== toolsManifest.git.dugiteNativeVersion || toolsRecord.git?.archive !== expectedGitPin.file || toolsRecord.git?.sha256 !== expectedGitPin.sha256 ||
       !['pending-task-7c', 'source-materials-collected'].includes(toolsRecord.sourceCorrespondence?.status)) throw new Error('Bundled tools target, pinned archive hashes, versions, or Task 7c provenance status are invalid');
     if (build) builtRoot = await makeBuildSnapshot(sourceRoot, nodePath, tempRoot);
+    let ownedHelperPath;
+    if (platform === 'win32') {
+      ownedHelperPath = build
+        ? await ownedHelperBuilder({ output: path.join(tempRoot, 'owned-helper.exe'), sourceRoot: builtRoot })
+        : await checkedTargetFile(tools.ownedHelperGuardian, 'Windows helper guardian executable');
+    }
 
     const webRoot = path.join(builtRoot, 'apps/web');
     const standalone = path.join(webRoot, '.next/standalone');
@@ -319,6 +327,7 @@ export async function stageRuntime({
     const put = (relative) => path.join(staging, ...safeRelative(relative, 'payload').slice(0));
     await mkdir(staging, { recursive: true });
     await copyTree(selectedToolsRoot, put(`runtime/${target}`), selectedToolsRoot);
+    if (ownedHelperPath) await copyTree(ownedHelperPath, put('runtime/owned-helper.exe'), path.dirname(ownedHelperPath));
     await copyTree(standalone, put('web'), builtRoot);
     await copyTree(staticDir, put('web/apps/web/.next/static'), builtRoot);
     await copyTree(publicDir, put('web/apps/web/public'), builtRoot);
@@ -344,6 +353,7 @@ export async function stageRuntime({
     const manifest = {
       schemaVersion: 1, version, platform, arch,
       node: `runtime/${tools.node}`, git: `runtime/${tools.git}`,
+      ...(ownedHelperPath ? { ownedHelperGuardian: 'runtime/owned-helper.exe' } : {}),
       coreEntry: 'app/node_modules/@nema/local/dist/src/index.js',
       cliEntry: 'app/node_modules/@nema/cli/dist/index.js',
       webEntry: 'web/apps/web/managed-parent.mjs',
@@ -360,6 +370,7 @@ export async function stageRuntime({
       [manifest.node, 'Node executable', false], [manifest.git, 'Git executable', false],
       [manifest.coreEntry, 'core entry', false], [manifest.cliEntry, 'CLI entry', false],
       [manifest.webEntry, 'Web entry', false], [manifest.licenses, 'license directory', true],
+      ...(manifest.ownedHelperGuardian ? [[manifest.ownedHelperGuardian, 'Windows helper guardian executable', false]] : []),
     ]) {
       if (directory) await requireDirectory(path.join(staging, ...safeRelative(entry, name)), name, staging);
       else await requiredFile(staging, entry, name, staging);

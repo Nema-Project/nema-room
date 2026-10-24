@@ -56,9 +56,10 @@ async function fixture(t) {
   await write('node_modules/@electric-sql/pglite/dist/initdb.wasm');
   await write('node_modules/@electric-sql/pglite/dist/pglite.data');
   await write(`node/${target}/git/${gitBinary}`); await write(`node/${target}/${gitLicense}`); await write(`node/${target}/${gitNotice}`);
+  if (windows) await write(`node/${target}/owned-helper.exe`, 'native guardian fixture');
   const nodePin = toolsManifest.node.archive[target], gitPin = toolsManifest.git.archives[target];
   await write(`node/${target}/tools-source.json`, JSON.stringify({ target, node: { version: toolsManifest.node.version, archive: nodePin.file, sha256: nodePin.sha256 }, git: { version: toolsManifest.git.version, gitForWindowsVersion: toolsManifest.git.gitForWindowsVersion, dugiteNativeVersion: toolsManifest.git.dugiteNativeVersion, archive: gitPin.file, sha256: gitPin.sha256 }, sourceCorrespondence: { status: 'pending-task-7c' } }));
-  const tools = { node: `${target}/node/${windows ? 'node.exe' : 'bin/node'}`, git: `${target}/git/${gitBinary}`, licenses: { node: `${target}/node/LICENSE`, git: `${target}/${gitLicense}`, gitTree: `${target}/git`, gitNotices: `${target}/${path.dirname(gitNotice)}`, gitNotice: `${target}/${gitNotice}`, sourceRecord: `${target}/tools-source.json` } };
+  const tools = { node: `${target}/node/${windows ? 'node.exe' : 'bin/node'}`, git: `${target}/git/${gitBinary}`, ...(windows ? { ownedHelperGuardian: `${target}/owned-helper.exe` } : {}), licenses: { node: `${target}/node/LICENSE`, git: `${target}/${gitLicense}`, gitTree: `${target}/git`, gitNotices: `${target}/${path.dirname(gitNotice)}`, gitNotice: `${target}/${gitNotice}`, sourceRecord: `${target}/tools-source.json` } };
   return { source, output, write, tools, options: { sourceRoot: source, outputDir: output, toolsRoot: path.join(source, 'node'), platform, arch, version: '0.1.0', tools, build: false } };
 }
 
@@ -67,11 +68,15 @@ test('stages a relocatable manifest and all declared runtime resources from fixt
   await stageRuntime(f.options);
   const target = path.join(f.output, `${process.platform}-${process.arch}`);
   const manifest = JSON.parse(await readFile(path.join(target, 'runtime-manifest.json'), 'utf8'));
-  assert.deepEqual(Object.keys(manifest).sort(), ['arch', 'cliEntry', 'coreEntry', 'git', 'licenses', 'node', 'platform', 'schemaVersion', 'version', 'webEntry'].sort());
+  assert.deepEqual(Object.keys(manifest).sort(), ['arch', 'cliEntry', 'coreEntry', 'git', 'licenses', 'node', 'platform', 'schemaVersion', 'version', 'webEntry', ...(process.platform === 'win32' ? ['ownedHelperGuardian'] : [])].sort());
   assert.equal(manifest.schemaVersion, 1);
   assert.equal(manifest.version, '0.1.0');
   assert.equal(manifest.platform, process.platform);
   assert.equal(manifest.arch, process.arch);
+  if (process.platform === 'win32') {
+    assert.equal(manifest.ownedHelperGuardian, 'runtime/owned-helper.exe');
+    assert.equal((await readFile(path.join(target, manifest.ownedHelperGuardian), 'utf8')), 'native guardian fixture');
+  } else assert.equal(manifest.ownedHelperGuardian, undefined);
   for (const key of ['node', 'git', 'coreEntry', 'cliEntry', 'webEntry']) assert.ok((await readFile(path.join(target, manifest[key]))).length > 0, key);
   assert.ok((await readFile(path.join(target, manifest.licenses, 'node'))).length > 0);
   for (const file of ['web/apps/web/.next/static/chunks/a.js', 'web/apps/web/public/fonts/a.woff2', 'app/node_modules/@nema/local/package.json', 'app/node_modules/@nema/hub/dist/src/db/migrations/0001.sql', 'app/node_modules/@nema/cli/src/report/SKILL.md', 'vendor/archify/THIRD_PARTY_NOTICES.md', 'vendor/superpowers-rules/LICENSE', 'runtime/licenses/application']) {
@@ -81,6 +86,13 @@ test('stages a relocatable manifest and all declared runtime resources from fixt
   const files = await readdir(target);
   assert.equal(files.includes('.env'), false);
   assert.equal(files.includes('.git'), false);
+});
+
+test('requires the Windows helper guardian artifact before writing the manifest', async (t) => {
+  if (process.platform !== 'win32') return t.skip('Windows-only guardian resource');
+  const f = await fixture(t);
+  const tools = { ...f.options.tools, ownedHelperGuardian: `${process.platform}-${process.arch}/missing-owned-helper.exe` };
+  await assert.rejects(stageRuntime({ ...f.options, tools }), /Windows helper guardian executable.*missing|required/i);
 });
 
 test('local staging accepts the documented collected source-material state', async (t) => {

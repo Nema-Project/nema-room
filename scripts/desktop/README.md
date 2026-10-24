@@ -20,6 +20,8 @@ Staging refuses an existing target, version or native target mismatch, missing r
 
 The staged payload includes native browser launchers (`Nema Browser.cmd`, `Nema Browser.command`, or `nema-browser`) that call the bundled Node and compiled local core. Browser mode issues a verified loopback ticket URL and delegates opening to the fixed OS browser command. `--no-open` is the automation seam; it prints the ticket URL without launching a browser. The managed Next entry requires a private IPC channel from its owning core so a hard core exit closes the production listener independently of the launcher's readiness IPC.
 
+Windows x64 staging also builds `apps/cli/native/windows/owned-helper.c` with the native Clang toolchain and stages `runtime/owned-helper.exe`, referenced as `ownedHelperGuardian` in schema 1. Set `NEMA_WINDOWS_NATIVE_CC` to an explicit `clang.exe` path when it is not on the build shell's PATH. The compiler is a build-time dependency only; first launch reads the staged guardian and never compiles or downloads it. The guardian uses a current-user-only local pipe lease and a private Windows Job Object for each managed helper. The POSIX helper ownership implementation and native macOS/Linux process proof remain separate release gates; no POSIX cleanup guarantee is made by this Windows component.
+
 Fixture tests (`node --test scripts/desktop/staging.test.mjs`) validate layout and failure boundaries. `npm run desktop:smoke-runtime -- <payload>` exercises the actual staged payload with a temporary home, fake local Responses provider, and bundled Node/Git; it does not substitute for the full native stage or publication/provenance review.
 
 ## Source materials and release eligibility
