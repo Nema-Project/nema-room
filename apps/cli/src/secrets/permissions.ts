@@ -44,7 +44,10 @@ function windowsAcl(file: string, action: "protect" | "check"): void {
     env: { ...process.env, NEMA_PRIVATE_PATH: path.resolve(file), NEMA_PRIVATE_ACTION: action },
     stdio: "ignore", windowsHide: true, timeout: 15_000,
   });
-  if (result.error || result.status !== 0) throw new Error(`${path.basename(file)}: 无法验证私有 Windows ACL / cannot verify private Windows ACL`);
+  if (result.error || result.status !== 0) {
+    const reason = (result.error as NodeJS.ErrnoException | undefined)?.code ?? (result.status === null ? "unknown" : `powershell exit ${result.status}`);
+    throw new Error(`${path.basename(file)}: 无法验证私有 Windows ACL / cannot verify private Windows ACL (${reason})`);
+  }
 }
 
 export function protectPrivatePath(file: string, mode = 0o600): void {

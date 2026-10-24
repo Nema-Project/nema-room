@@ -12,6 +12,16 @@
     "src/report/SKILL.md"
   ],
   "exports": {
+    "./config": {
+      "development": "./src/config.ts",
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js"
+    },
+    "./daemon/setup": {
+      "development": "./src/daemon/setup.ts",
+      "types": "./dist/daemon/setup.d.ts",
+      "import": "./dist/daemon/setup.js"
+    },
     "./secrets/permissions": {
       "development": "./src/secrets/permissions.ts",
       "types": "./dist/secrets/permissions.d.ts",

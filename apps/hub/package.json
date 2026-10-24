@@ -4,7 +4,16 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
+  "main": "./dist/src/main.js",
+  "exports": {
+    "./db/local": { "development": "./src/db/pglite.ts", "types": "./dist/src/db/pglite.d.ts", "import": "./dist/src/db/pglite.js" },
+    "./events": { "development": "./src/events.ts", "types": "./dist/src/events.d.ts", "import": "./dist/src/events.js" },
+    "./interrupts": { "development": "./src/interrupts.ts", "types": "./dist/src/interrupts.d.ts", "import": "./dist/src/interrupts.js" },
+    "./lifecycle": { "development": "./src/lifecycle.ts", "types": "./dist/src/lifecycle.d.ts", "import": "./dist/src/lifecycle.js" },
+    "./messages": { "development": "./src/messages.ts", "types": "./dist/src/messages.d.ts", "import": "./dist/src/messages.js" },
+    "./tasks": { "development": "./src/tasks.ts", "types": "./dist/src/tasks.d.ts", "import": "./dist/src/tasks.js" },
+    "./workspaces": { "development": "./src/workspaces.ts", "types": "./dist/src/workspaces.d.ts", "import": "./dist/src/workspaces.js" }
+  },
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "build": "tsc -b && node -e \"require('node:fs').cpSync('src/db/migrations', 'dist/src/db/migrations', { recursive: true })\"",

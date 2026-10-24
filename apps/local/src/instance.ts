@@ -2,7 +2,6 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import {
   closeSync,
   constants,
-  existsSync,
   fstatSync,
   fsyncSync,
   lstatSync,
@@ -41,6 +40,7 @@ export interface InstanceLease {
   readonly home: string;
   readonly controlOrigin: string;
   publish(value: Published): Promise<void>;
+  unpublish(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -91,8 +91,11 @@ function readDescriptor(file: string): Descriptor | null {
   let fd: number;
   try { fd = openPrivateFile(file); }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw new Error("Instance descriptor is not a trusted private file");
+    const code = (error as NodeJS.ErrnoException).code;
+    let entryMissing = false;
+    try { lstatSync(file); } catch (statError) { entryMissing = (statError as NodeJS.ErrnoException).code === "ENOENT"; }
+    if (code === "ENOENT" || entryMissing) return null;
+    throw new Error(`Instance descriptor is not a trusted private file (${code ?? "private-file validation failed"})`);
   }
   try {
     const stat = fstatSync(fd);
@@ -203,6 +206,8 @@ export async function acquireInstance(home?: string): Promise<InstanceLease> {
   const descriptorSecret = randomBytes(32).toString("hex");
   let published: Published | undefined;
   let closing = false;
+  let retired = false;
+  let unpublishPromise: Promise<void> | undefined;
   let closePromise: Promise<void> | undefined;
   const server = http.createServer(async (req, res) => {
     res.setHeader("cache-control", "no-store");
@@ -243,7 +248,26 @@ export async function acquireInstance(home?: string): Promise<InstanceLease> {
   catch (error) {
     try { server.close(); } catch { /* not listening */ }
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === "EADDRINUSE") throw new Error(`Local instance control port collision at ${controlOrigin}; refusing a fallback port`);
+    if (code === "EADDRINUSE") {
+      const error = new Error(`Local instance control port collision at ${controlOrigin}; refusing a fallback port`);
+      Object.assign(error, { code: "NEMA_LOCAL_OWNER_COLLISION" });
+      throw error;
+    }
+    throw error;
+  }
+
+  try {
+    // A successful exclusive bind proves any prior descriptor's listener is gone. Clear only a
+    // structurally valid descriptor for this home/control endpoint so Windows can atomically publish.
+    const stale = readDescriptor(paths.instance);
+    if (stale) {
+      validateDescriptor(stale, homeHash, controlOrigin);
+      removeDescriptorIfOwner(paths.instance, stale.instanceId);
+    }
+  } catch (error) {
+    server.close();
+    server.closeAllConnections();
+    await once(server, "close");
     throw error;
   }
 
@@ -252,6 +276,7 @@ export async function acquireInstance(home?: string): Promise<InstanceLease> {
     controlOrigin,
     async publish(value) {
       if (closing) throw new Error("Instance lease is closing");
+      if (retired) throw new Error("Instance lease readiness has been retired");
       if (published) throw new Error("Instance lease is already published");
       if (!isLoopbackOrigin(value.origin)) throw new Error("UI origin must be a local HTTP origin");
       published = value;
@@ -259,9 +284,18 @@ export async function acquireInstance(home?: string): Promise<InstanceLease> {
         atomicWriteDescriptor(paths.instance, { schemaVersion: 1, protocol: PROTOCOL, homeHash, instanceId, pid: process.pid, controlOrigin, origin: value.origin, secret: descriptorSecret });
       } catch (error) { published = undefined; throw error; }
     },
+    unpublish() {
+      if (unpublishPromise) return unpublishPromise;
+      retired = true;
+      published = undefined;
+      unpublishPromise = Promise.resolve().then(() => removeDescriptorIfOwner(paths.instance, instanceId));
+      return unpublishPromise;
+    },
     close() {
       if (closePromise) return closePromise;
       closing = true;
+      retired = true;
+      published = undefined;
       closePromise = (async () => {
         removeDescriptorIfOwner(paths.instance, instanceId);
         if (server.listening) {
@@ -298,6 +332,9 @@ export async function discoverInstance(home?: string): Promise<DiscoveredInstanc
     if (code === "ECONNREFUSED") return null;
     throw error;
   }
+  // A newly acquired owner may still be starting behind an old, valid descriptor from a crash.
+  // Its control listener answers 503 until publish; no launch data is accepted during this window.
+  if (proofResponse.status === 503) return null;
   if (proofResponse.status !== 200 || !proofResponse.body || typeof proofResponse.body !== "object") throw new Error("Local instance proof was rejected");
   const proof = proofResponse.body as Record<string, unknown>;
   if (proof.protocol !== PROTOCOL || proof.homeHash !== homeHash || proof.instanceId !== descriptor.instanceId ||

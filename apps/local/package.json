@@ -6,6 +6,11 @@
   "type": "module",
   "exports": {
     ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./instance": {
       "development": "./src/instance.ts",
       "types": "./dist/src/instance.d.ts",
       "import": "./dist/src/instance.js"
@@ -26,6 +31,7 @@
   },
   "dependencies": {
     "@nema/cli": "*",
+    "@nema/hub": "*",
     "hono": "^4.13.13"
   },
   "devDependencies": {

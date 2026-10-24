@@ -20,6 +20,15 @@ for (const d of readdirSync(`${root}packages`, { withFileTypes: true })) {
 // The local package and the CLI's narrow permissions helper are tested from source.
 alias["@nema/local"] = `${root}apps/local/src/instance.ts`;
 alias["@nema/cli/secrets/permissions"] = `${root}apps/cli/src/secrets/permissions.ts`;
+alias["@nema/hub/db/local"] = `${root}apps/hub/src/db/pglite.ts`;
+alias["@nema/hub/events"] = `${root}apps/hub/src/events.ts`;
+alias["@nema/hub/interrupts"] = `${root}apps/hub/src/interrupts.ts`;
+alias["@nema/hub/lifecycle"] = `${root}apps/hub/src/lifecycle.ts`;
+alias["@nema/hub/messages"] = `${root}apps/hub/src/messages.ts`;
+alias["@nema/hub/tasks"] = `${root}apps/hub/src/tasks.ts`;
+alias["@nema/hub/workspaces"] = `${root}apps/hub/src/workspaces.ts`;
+alias["@nema/cli/config"] = `${root}apps/cli/src/config.ts`;
+alias["@nema/cli/daemon/setup"] = `${root}apps/cli/src/daemon/setup.ts`;
 
 // One project per workspace dir. Inline projects with `extends: true` inherit the alias above
 // (glob-discovered projects would not).

@@ -364,4 +364,41 @@ describe("local instance ownership and discovery", () => {
     await expect(lease.close()).resolves.toBeUndefined();
     expect(await discoverInstance(home)).toBeNull();
   });
+
+  it("unpublishes readiness while retaining the kernel owner until final close", async () => {
+    const home = newHome();
+    const lease = await acquire(home);
+    await lease.publish({ origin: "http://127.0.0.1:4173", createLaunchUrl: () => "http://127.0.0.1:4173/_nema/launch" });
+    await lease.unpublish();
+    await lease.unpublish();
+    expect(await discoverInstance(home)).toBeNull();
+    const challenge = randomBytes(32).toString("hex");
+    expect(await rawGet(Number(new URL(lease.controlOrigin).port), `/_nema/instance?challenge=${challenge}`)).toBe(503);
+    await expect(acquireInstance(home)).rejects.toThrow(/collision/i);
+    await expect(lease.publish({ origin: "http://127.0.0.1:4173", createLaunchUrl: () => "http://127.0.0.1:4173/_nema/launch" })).rejects.toThrow(/retired/i);
+    await lease.close();
+    const second = await acquire(home);
+    await second.close();
+  });
+
+  it("treats an old descriptor as pending while a new kernel owner has not published", async () => {
+    const home = newHome();
+    const { homeHash, port } = addressForHome(home);
+    writeFileSync(descriptorPath(home), JSON.stringify({
+      schemaVersion: 1,
+      protocol: "nema-local-v1",
+      homeHash,
+      instanceId: randomUUID(),
+      pid: process.pid,
+      controlOrigin: `http://127.0.0.1:${port}`,
+      origin: "http://127.0.0.1:4173",
+      secret: randomBytes(32).toString("hex"),
+    }), { mode: 0o600 });
+    protectPrivatePath(descriptorPath(home));
+    const lease = await acquire(home);
+    expect(await discoverInstance(home)).toBeNull();
+    await lease.publish({ origin: "http://127.0.0.1:4173", createLaunchUrl: () => "http://127.0.0.1:4173/_nema/launch" });
+    expect(await discoverInstance(home)).not.toBeNull();
+    await lease.close();
+  });
 });
