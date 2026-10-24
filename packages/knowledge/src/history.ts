@@ -2,6 +2,7 @@ import { KIND_DIR, kindFromId, type Entry } from "@nema/shared";
 import { parseCommitMessage } from "./commitMessage.js";
 import { git } from "./git.js";
 import { fromFile } from "./store.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 export type HistoryItem = {
   version: number;
@@ -29,10 +30,10 @@ function entryPaths(id: string): string[] {
 }
 
 /** Entry versions, newest first; the oldest commit is version 1. */
-export async function history(repoDir: string, id: string): Promise<HistoryItem[]> {
+export async function history(repoDir: string, id: string, ownedHelpers?: OwnedHelperScope): Promise<HistoryItem[]> {
   const paths = entryPaths(id);
   if (paths.length === 0) return [];
-  const out = await git(repoDir, ["log", "--format=%H%x00%cI%x00%B%x1e", "--", ...paths]);
+  const out = await git(repoDir, ["log", "--format=%H%x00%cI%x00%B%x1e", "--", ...paths], ownedHelpers);
   const items: HistoryItem[] = [];
   for (const rec of out.split("\x1e")) {
     if (rec.trim() === "") continue;
@@ -55,10 +56,10 @@ export async function history(repoDir: string, id: string): Promise<HistoryItem[
   return items;
 }
 
-export async function versionAt(repoDir: string, id: string, commit: string): Promise<Entry> {
+export async function versionAt(repoDir: string, id: string, commit: string, ownedHelpers?: OwnedHelperScope): Promise<Entry> {
   const p = entryPath(id);
   if (!p) throw new Error(`invalid entry id ${id}`);
-  return fromFile(await git(repoDir, ["show", `${commit}:${p}`]));
+  return fromFile(await git(repoDir, ["show", `${commit}:${p}`], ownedHelpers));
 }
 
 type Line = { text: string; commit: string };
@@ -83,14 +84,14 @@ function splitBlocks(lines: Line[]): Line[][] {
   return merged;
 }
 
-export async function blameParagraphs(repoDir: string, id: string): Promise<ParagraphBlame[]> {
+export async function blameParagraphs(repoDir: string, id: string, ownedHelpers?: OwnedHelperScope): Promise<ParagraphBlame[]> {
   const p = entryPath(id);
   if (!p) return [];
-  const hist = await history(repoDir, id);
+  const hist = await history(repoDir, id, ownedHelpers);
   if (hist.length === 0) return [];
   const byCommit = new Map(hist.map((h) => [h.commit, h]));
 
-  const raw = await git(repoDir, ["blame", "--porcelain", "HEAD", "--", p]);
+  const raw = await git(repoDir, ["blame", "--porcelain", "HEAD", "--", p], ownedHelpers);
   const all: Line[] = [];
   let sha = "";
   for (const line of raw.split("\n")) {

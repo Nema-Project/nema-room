@@ -17,8 +17,9 @@ import { workPackageIdOf, workPackageRules } from "./workpackages.js";
 import { applyRepoFetched, applyRepoMoved, listRepos, syncBoundRepos } from "./repos.js";
 import { claimNextTask, finishTask, getTask, interruptRunning, listTaskChanges, requeueDaemonTasks, toUiTask, type Task } from "./tasks.js";
 import { getWorkspace, listWorkspaces, repoPath } from "./workspaces.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
-export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daemonToken: string; hubUrl: string };
+export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daemonToken: string; hubUrl: string; ownedHelpers?: OwnedHelperScope };
 
 type Conn = {
   ws: WebSocket;
@@ -66,7 +67,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     const before = await listPromptMessages(db, task.workspaceId, userMessage.id, 20);
     // A system-started task or a coding agent's report is not the user's answer to the last follow-up question.
     const asked = userMessage.role === "system" || userMessage.role === "report" ? undefined : (await getLastAgentMessage(db, task.workspaceId))?.meta?.askedQuestion;
-    const store = new KnowledgeStore(repoPath(dataDir, task.workspaceId));
+    const store = new KnowledgeStore(repoPath(dataDir, task.workspaceId), deps.ownedHelpers);
     const lastAskedQuestion = asked ? await store.get(asked.id) : null;
     let workpackage: WorkPackagePromptInput | undefined;
     if (task.kind === "workpackage") {
@@ -85,7 +86,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       workspace,
       userMessage,
       recentMessages: before,
-      entries: await timeline(db, dataDir, task.workspaceId),
+      entries: await timeline(db, dataDir, task.workspaceId, deps.ownedHelpers),
       lastAskedQuestion,
       priorChanges: await listTaskChanges(db, task.id),
       grill: await grillState(db, task.workspaceId),
@@ -162,7 +163,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     let msg: Message | null = null;
     if (m.ok) {
       // With grill-me off the uncertain items still become questions, but the chat shows no asked one.
-      const q = (await grillState(db, a.workspaceId)).enabled ? await topOpenQuestion(db, dataDir, a.workspaceId) : null;
+      const q = (await grillState(db, a.workspaceId)).enabled ? await topOpenQuestion(db, dataDir, a.workspaceId, deps.ownedHelpers) : null;
       const meta: AgentMessageMeta = {
         changes: (await listTaskChanges(db, m.taskId)) as AgentMessageMeta["changes"],
         askedQuestion: q ? { id: q.id, title: q.title, body: q.body } : null,
@@ -261,9 +262,9 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
           // Moves are chained so two quick moves of one repo settle in order.
           const move = { repoId: m.repoId, to: m.to };
           moves = moves
-            .then(() => onRepoMoved(db, dataDir, rpc, events, move))
+            .then(() => onRepoMoved(db, dataDir, rpc, events, move, deps.ownedHelpers))
             .catch((e) => { if (!stopping) console.error("[daemon] diagram staleness check failed", e); })
-            .then(() => recheckReports({ db, events, daemon: rpc, dataDir }, move.repoId))
+            .then(() => recheckReports({ db, events, daemon: rpc, dataDir, ownedHelpers: deps.ownedHelpers }, move.repoId))
             .catch((e) => { if (!stopping) console.error("[daemon] report re-check failed", e); });
           track(moves);
         }

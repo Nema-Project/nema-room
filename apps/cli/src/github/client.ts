@@ -10,6 +10,8 @@ import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { PLUGINS } from "@nema/shared";
 import { readGithubToken } from "../secrets/github.js";
 import { commandSpec, windowsRuntimeEnv } from "../platform.js";
+import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
+import { runHelperFile } from "@nema/shared/ownedHelper";
 
 export const GITHUB_ARGS = ["stdio", "--read-only", "--toolsets", "pull_requests,issues"] as const;
 
@@ -44,10 +46,12 @@ function cutUtf8(text: string, maxBytes: number): string {
 
 /** Like the SDK's StdioClientTransport, but the child environment is exactly `env`, with nothing inherited. */
 class ExactEnvStdioTransport implements Transport {
-  private child: ChildProcess | undefined;
+  private child: ChildProcess | OwnedHelperProcess | undefined;
   private readonly buffer = new ReadBuffer();
   private closing?: Promise<void>;
-  private spawnedChild: ChildProcess | undefined;
+  private spawnedChild: ChildProcess | OwnedHelperProcess | undefined;
+  private startPromise?: Promise<void>;
+  private closed = false;
   onclose?: () => void;
   onerror?: (error: Error) => void;
   onmessage?: (message: JSONRPCMessage) => void;
@@ -56,9 +60,14 @@ class ExactEnvStdioTransport implements Transport {
     private readonly bin: string,
     private readonly env: NodeJS.ProcessEnv,
     private readonly cwd: string,
+    private readonly ownedHelpers?: OwnedHelperScope,
   ) {}
 
   start(): Promise<void> {
+    if (this.ownedHelpers) {
+      this.startPromise = this.startOwned();
+      return this.startPromise;
+    }
     return new Promise((resolve, reject) => {
       const command = commandSpec(this.bin, [...GITHUB_ARGS], this.env);
       const child = spawn(command.bin, command.args, { env: this.env, cwd: this.cwd, stdio: ["pipe", "pipe", "ignore"], shell: false, windowsHide: true });
@@ -78,21 +87,36 @@ class ExactEnvStdioTransport implements Transport {
         this.onclose?.();
       });
       child.stdin?.on("error", (error) => this.onerror?.(error));
-      child.stdout?.on("data", (chunk: Buffer) => {
-        this.buffer.append(chunk);
-        for (;;) {
-          let message: JSONRPCMessage | null;
-          try {
-            message = this.buffer.readMessage();
-          } catch (error) {
-            this.onerror?.(error as Error);
-            continue;
-          }
-          if (message === null) break;
-          this.onmessage?.(message);
-        }
-      });
+      child.stdout?.on("data", (chunk: Buffer) => this.readMessages(chunk));
     });
+  }
+
+  private async startOwned(): Promise<void> {
+    const command = commandSpec(this.bin, [...GITHUB_ARGS], this.env);
+    const child = await this.ownedHelpers!.spawn(command.bin, command.args, {
+      env: this.env, cwd: this.cwd, stdio: ["pipe", "pipe", "ignore"], windowsHide: true,
+    });
+    if (this.closed) {
+      child.kill("SIGTERM");
+      await child.closed;
+      throw new Error(STOPPED);
+    }
+    this.child = child;
+    this.spawnedChild = child;
+    void child.closed.then(() => { this.child = undefined; this.onclose?.(); });
+    child.stdin?.on("error", (error) => this.onerror?.(error as Error));
+    child.stdout?.on("data", (chunk: Buffer) => this.readMessages(chunk));
+  }
+
+  private readMessages(chunk: Buffer): void {
+    this.buffer.append(chunk);
+    for (;;) {
+      let message: JSONRPCMessage | null;
+      try { message = this.buffer.readMessage(); }
+      catch (error) { this.onerror?.(error as Error); continue; }
+      if (message === null) break;
+      this.onmessage?.(message);
+    }
   }
 
   send(message: JSONRPCMessage): Promise<void> {
@@ -109,14 +133,21 @@ class ExactEnvStdioTransport implements Transport {
 
   async close(): Promise<void> {
     if (this.closing) return this.closing;
+    this.closed = true;
     this.closing = this.closeChild();
     return this.closing;
   }
 
   private async closeChild(): Promise<void> {
+    if (this.startPromise) await this.startPromise.catch(() => {});
     const child = this.spawnedChild;
     this.child = undefined;
     this.buffer.clear();
+    if (child && !isChildProcess(child)) {
+      child.kill("SIGTERM");
+      await child.closed;
+      return;
+    }
     if (child && child.exitCode === null && child.signalCode === null) {
       await new Promise<void>((resolve) => {
         let killTimer: ReturnType<typeof setTimeout> | undefined;
@@ -128,6 +159,10 @@ class ExactEnvStdioTransport implements Transport {
       });
     }
   }
+}
+
+function isChildProcess(child: ChildProcess | OwnedHelperProcess): child is ChildProcess {
+  return "exitCode" in child;
 }
 
 type Connection = {
@@ -149,6 +184,7 @@ export type GithubMcpOpts = {
   timeoutMs?: number;
   retryDelayMs?: number;
   warn?: (message: string) => void;
+  ownedHelpers?: OwnedHelperScope;
 };
 
 export class GithubMcp {
@@ -197,6 +233,14 @@ export class GithubMcp {
   private version(): Promise<{ ok: boolean; detail: string }> {
     const home = this.homeDir();
     const command = commandSpec(this.bin, ["--version"]);
+    if (this.opts.ownedHelpers) {
+      return runHelperFile(command.bin, command.args, {
+        env: { ...windowsRuntimeEnv(process.env), PATH: this.basePath(), HOME: home }, cwd: home,
+        timeout: STATUS_TIMEOUT_MS, maxBuffer: 1024 * 1024, encoding: "utf8",
+      }, this.opts.ownedHelpers).then((result) => result.error
+        ? { ok: false, detail: (result.error as NodeJS.ErrnoException).code === "ENOENT" ? NOT_INSTALLED : START_FAILED }
+        : { ok: true, detail: cutUtf8(result.stdout.toString("utf8").trim(), 200) });
+    }
     return new Promise((resolve) => {
       execFile(
         command.bin,
@@ -269,7 +313,7 @@ export class GithubMcp {
   private async start(token: string): Promise<Connection> {
     if (this.closed) throw new Error(STOPPED);
     const home = this.homeDir();
-    const transport = new ExactEnvStdioTransport(this.bin, { ...windowsRuntimeEnv(process.env), PATH: this.basePath(), HOME: home, GITHUB_PERSONAL_ACCESS_TOKEN: token }, home);
+    const transport = new ExactEnvStdioTransport(this.bin, { ...windowsRuntimeEnv(process.env), PATH: this.basePath(), HOME: home, GITHUB_PERSONAL_ACCESS_TOKEN: token }, home, this.opts.ownedHelpers);
     this.startingTransport = transport;
     const client = new Client({ name: "nema-daemon", version: "0.1.0" });
     let markStopped: (error: Error) => void = () => {};
@@ -298,6 +342,7 @@ export class GithubMcp {
       conn.alive = false;
       await transport.close().catch(() => {});
       if (this.startingTransport === transport) this.startingTransport = undefined;
+      if (this.closed) throw new Error(STOPPED);
       if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new Error(NOT_INSTALLED);
       throw new Error(START_FAILED);
     }

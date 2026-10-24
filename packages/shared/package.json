@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./ownedHelper": {
+      "types": "./dist/ownedHelper.d.ts",
+      "default": "./dist/ownedHelper.js"
     }
   },
   "dependencies": {

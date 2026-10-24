@@ -2,9 +2,11 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { spawn as nodeSpawn } from "node:child_process";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { GithubMcp } from "../../src/github/client.js";
 import { saveGithubToken } from "../../src/secrets/github.js";
+import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 vi.setConfig({ testTimeout: 20_000 });
 
@@ -52,8 +54,8 @@ function fakeServer(config: FakeConfig): string {
   return bin;
 }
 
-function client(opts: { bin: string; warn?: (message: string) => void; retryDelayMs?: number }): GithubMcp {
-  const c = new GithubMcp({ nemaHome, bin: opts.bin, warn: opts.warn ?? (() => {}), retryDelayMs: opts.retryDelayMs });
+function client(opts: { bin: string; warn?: (message: string) => void; retryDelayMs?: number; ownedHelpers?: OwnedHelperScope }): GithubMcp {
+  const c = new GithubMcp({ nemaHome, bin: opts.bin, warn: opts.warn ?? (() => {}), retryDelayMs: opts.retryDelayMs, ownedHelpers: opts.ownedHelpers });
   clients.push(c);
   return c;
 }
@@ -148,6 +150,21 @@ test("a missing binary or token gives the Chinese message and does not loop", as
   await expect(ok.status()).resolves.toEqual({ installed: true, loggedIn: true, detail: "github-mcp-server 9.9.9" });
 });
 
+test("managed status reports a missing GitHub server as not installed", async () => {
+  const missingScope: OwnedHelperScope = {
+    spawn: async () => { throw Object.assign(new Error("missing helper"), { code: "ENOENT" }); },
+    stopAccepting() {},
+    async drain() {},
+  };
+  const gh = client({ bin: join(root, "no-such-managed-github-mcp-server"), ownedHelpers: missingScope });
+
+  await expect(gh.status()).resolves.toEqual({
+    installed: false,
+    loggedIn: false,
+    detail: "github-mcp-server 未安装",
+  });
+});
+
 test("a tool outside the fixed list is rejected before anything starts", async () => {
   saveGithubToken(nemaHome, "ghp_test_token");
   const startsFile = join(root, "starts");
@@ -180,6 +197,50 @@ test("close during handshake kills the starting child and awaits its exit", asyn
   const pid = Number(readFileSync(pidFile, "utf8"));
   await gh.close();
   await expect(call).rejects.toThrow();
+  expect(() => process.kill(pid, 0)).toThrow();
+});
+
+test("close while an owned spawn is pending kills and awaits the late child", async () => {
+  saveGithubToken(nemaHome, "ghp_test_token");
+  const pidFile = join(root, "late-child-pid");
+  let releaseSpawn!: (child: OwnedHelperProcess) => void;
+  let markSpawnEntered!: () => void;
+  let requested: { command: string; args: string[]; options?: Parameters<OwnedHelperScope["spawn"]>[2] };
+  const spawnEntered = new Promise<void>((resolve) => { markSpawnEntered = resolve; });
+  const scope: OwnedHelperScope = {
+    spawn: async (command, args, options) => {
+      requested = { command, args, options };
+      markSpawnEntered();
+      return new Promise<OwnedHelperProcess>((resolve) => { releaseSpawn = resolve; });
+    },
+    stopAccepting() {},
+    async drain() {},
+  };
+  const gh = client({ bin: fakeServer({ pidFile }), ownedHelpers: scope });
+  const call = gh.call("list_issues", { owner: "o", repo: "r" });
+  await spawnEntered;
+  const close = gh.close();
+
+  const child = nodeSpawn(requested!.command, requested!.args, { ...requested!.options, stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    child.once("close", (code, signal) => resolve({ code, signal }));
+  });
+  const pidDeadline = Date.now() + 5000;
+  while (!existsSync(pidFile) && Date.now() < pidDeadline) await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(existsSync(pidFile)).toBe(true);
+  releaseSpawn({
+    stdin: child.stdin,
+    stdout: child.stdout,
+    stderr: child.stderr,
+    kill: (signal) => child.kill(signal),
+    exited,
+    closed: exited,
+  });
+
+  await close;
+  await expect(call).rejects.toThrow("GitHub 插件已停止");
+  await expect(exited).resolves.toMatchObject({ signal: "SIGTERM" });
+  const pid = Number(readFileSync(pidFile, "utf8"));
   expect(() => process.kill(pid, 0)).toThrow();
 });
 

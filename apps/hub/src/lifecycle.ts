@@ -13,6 +13,8 @@ import { indexEntry } from "./entryIndex.js";
 import { startReportFallback } from "./reports.js";
 import { interruptRunning } from "./tasks.js";
 import { listWorkspaces, repoPath, type Workspace } from "./workspaces.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
+import { renderDiagram, validateDiagram } from "./archify.js";
 
 export type StartHubOptions = {
   db: Db;
@@ -26,6 +28,7 @@ export type StartHubOptions = {
   hostname?: string;
   /** Set false when the daemon owns its own workspace directories, as in Compose. */
   cleanDaemonDirs?: boolean;
+  ownedHelpers?: OwnedHelperScope;
 };
 
 export type RunningHub = { url: string; close(): Promise<void> };
@@ -47,7 +50,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
     const interrupted = await interruptRunning(opts.db, "all");
     if (interrupted.requeued.length > 0) console.log(`requeued ${interrupted.requeued.length} task(s) left running by the previous hub process`);
     await announceInterrupted(opts.db, events, interrupted);
-    await recoverUncommittedEntries(opts.db, opts.dataDir);
+    await recoverUncommittedEntries(opts.db, opts.dataDir, opts.ownedHelpers);
 
     const status = { connected: () => false };
     const liveDaemon: { rpc: DaemonRpc } = {
@@ -77,6 +80,11 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
       webOrigin: opts.webOrigin,
       uiAuth: opts.uiAuth,
       port: actualPort,
+      ownedHelpers: opts.ownedHelpers,
+      ...(opts.ownedHelpers ? { archify: {
+        validateDiagram: (type, spec) => validateDiagram(type, spec, opts.ownedHelpers),
+        renderDiagram: (type, spec) => renderDiagram(type, spec, opts.ownedHelpers),
+      } } : {}),
     });
     const fetchListener = getRequestListener((request, env) => {
       if (closed) return Promise.resolve(new Response("shutting down", { status: 503 }));
@@ -143,7 +151,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
     });
     requestListener = fetchListener;
 
-    attached = attachDaemonSocket(server, { db: opts.db, dataDir: opts.dataDir, events, daemonToken: opts.daemonToken, hubUrl });
+    attached = attachDaemonSocket(server, { db: opts.db, dataDir: opts.dataDir, events, daemonToken: opts.daemonToken, hubUrl, ownedHelpers: opts.ownedHelpers });
     status.connected = attached.isConnected;
     liveDaemon.rpc = attached.rpc;
     fallback = startReportFallback(opts.db, daemon, events);
@@ -184,7 +192,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
 }
 
 /** Recovers knowledge writes after migration and before the hub starts serving. */
-async function recoverUncommittedEntries(db: Db, dataDir: string): Promise<void> {
+async function recoverUncommittedEntries(db: Db, dataDir: string, ownedHelpers?: OwnedHelperScope): Promise<void> {
   let workspaces: Workspace[] = [];
   try {
     workspaces = await listWorkspaces(db);
@@ -194,7 +202,7 @@ async function recoverUncommittedEntries(db: Db, dataDir: string): Promise<void>
   }
   for (const ws of workspaces) {
     try {
-      const { recovered, skipped } = await new KnowledgeStore(repoPath(dataDir, ws.id)).recoverUncommitted();
+      const { recovered, skipped } = await new KnowledgeStore(repoPath(dataDir, ws.id), ownedHelpers).recoverUncommitted();
       if (recovered.length > 0) {
         const noun = recovered.length === 1 ? "entry" : "entries";
         console.log(`recovered ${recovered.length} uncommitted ${noun} in ${ws.id}`);
@@ -202,7 +210,7 @@ async function recoverUncommittedEntries(db: Db, dataDir: string): Promise<void>
       for (const rel of skipped) console.warn(`skipped ${rel} in ${ws.id}`);
       for (const entry of recovered) {
         try {
-          await indexEntry(db, ws.id, entry);
+          await indexEntry(db, ws.id, entry, ownedHelpers);
         } catch (err) {
           console.error(`failed to index recovered entry ${entry.id} in ${ws.id}`, err);
         }

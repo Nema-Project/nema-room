@@ -1,10 +1,11 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { changedFiles } from "../../src/repos/git.js";
-import { buildIndex, queryIndex, updateIndex, type GraphifyOpts } from "../../src/repos/graphify.js";
+import { buildIndex, graphifyInstallStatus, queryIndex, updateIndex, type GraphifyOpts } from "../../src/repos/graphify.js";
+import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 let root: string;
 let savedHome: string | undefined;
@@ -193,6 +194,19 @@ test("a missing graphify binary gives the install hint", async () => {
   await expect(buildIndex(snapshot, fake)).rejects.toThrow("graphify 未安装：请运行 uv tool install graphifyy");
 });
 
+test("managed graphify install status treats a missing binary as not installed", async () => {
+  const missingScope: OwnedHelperScope = {
+    spawn: async () => { throw Object.assign(new Error("missing helper"), { code: "ENOENT" }); },
+    stopAccepting() {},
+    async drain() {},
+  };
+
+  await expect(graphifyInstallStatus({ bin: join(root, "missing-graphify"), ownedHelpers: missingScope })).resolves.toEqual({
+    installed: false,
+    detail: "graphify 未安装：请运行 uv tool install graphifyy",
+  });
+});
+
 test("updateIndex writes changed files, deletes removed ones and runs graphify update", async () => {
   const repo = join(root, "repo");
   const snapshot = join(root, "snap");
@@ -253,6 +267,49 @@ fs.writeFileSync("graphify-out/graph.json", "{}");
   expect(readFileSync(secret, "utf8")).toBe("secret\n");
   expect(readFileSync(join(record, "argv"), "utf8")).toBe(`update\n${join(snapshot, "src")}\n--code-only\n`);
   expect(realpathSync(readFileSync(join(record, "cwd"), "utf8").trim())).toBe(realpathSync(snapshot));
+});
+
+test("managed incremental update fetches blob data through its owned helper scope", async () => {
+  const repo = join(root, "managed-repo");
+  const snapshot = join(root, "managed-snapshot");
+  const calls: Array<{ command: string; args: string[] }> = [];
+  const children: OwnedHelperProcess[] = [];
+  const scope: OwnedHelperScope = {
+    async spawn(command, args, options = {}) {
+      calls.push({ command, args });
+      const child: ChildProcess = spawn(command, args, { ...options, windowsHide: true });
+      const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
+      const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.once("close", (code, signal) => resolve({ code, signal })));
+      const owned: OwnedHelperProcess = {
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        kill: (signal) => child.kill(signal),
+        exited,
+        closed,
+      };
+      children.push(owned);
+      return owned;
+    },
+    stopAccepting() {},
+    async drain() { await Promise.all(children.map((child) => child.closed)); },
+  };
+  mkdirSync(repo);
+  git(repo, ["init", "-b", "main"]);
+  git(repo, ["config", "user.email", "test@example.com"]);
+  git(repo, ["config", "user.name", "Test"]);
+  writeFileSync(join(repo, "picked.txt"), "from committed blob\n");
+  git(repo, ["add", "-A"]);
+  git(repo, ["commit", "-m", "blob"]);
+  const bin = writeBin("graphify-managed", "#!/usr/bin/env node\n");
+
+  await updateIndex(snapshot, [{ status: "A", path: "picked.txt" }], repo, "HEAD", { ...fake, bin, ownedHelpers: scope });
+
+  expect(readFileSync(join(snapshot, "src", "picked.txt"), "utf8")).toBe("from committed blob\n");
+  expect(calls.some(({ args }) => args.includes("ls-tree"))).toBe(true);
+  expect(calls.some(({ args }) => args.includes("cat-file"))).toBe(true);
+  expect(calls.some(({ args }) => args.includes(bin))).toBe(true);
+  await scope.drain();
 });
 
 test("a rename from changedFiles removes the old snapshot file and writes the new one", async () => {

@@ -5,6 +5,8 @@ import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { commandSpec, windowsRuntimeEnv } from "../platform.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
+import { runHelperFile } from "@nema/shared/ownedHelper";
 
 const MAX_OUT = 65_536;
 const MAX_BUFFER = 256 * 1024 * 1024;
@@ -25,7 +27,7 @@ export function graphifyEnv(snapshotRoot: string): NodeJS.ProcessEnv {
  * Where graphify is and how long a call may run. Production passes nothing; tests pass a fake binary.
  * Read at call time, so a caller may fill the object in after handing it over.
  */
-export type GraphifyOpts = { bin?: string; timeoutMs?: number };
+export type GraphifyOpts = { bin?: string; timeoutMs?: number; ownedHelpers?: OwnedHelperScope };
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -82,6 +84,23 @@ function stopChild(child: ChildProcess): void {
 function runGraphify(snapshotRoot: string, args: string[], cwd: string, opts?: GraphifyOpts): Promise<RunResult> {
   const bin = graphifyBin(opts);
   const command = commandSpec(bin, args, graphifyEnv(snapshotRoot));
+  if (opts?.ownedHelpers) {
+    return runHelperFile(command.bin, command.args, {
+      cwd,
+      env: graphifyEnv(snapshotRoot),
+      timeout: graphifyTimeout(opts),
+      encoding: "buffer",
+      maxBuffer: 1024 * 1024,
+    }, opts.ownedHelpers).then((result) => {
+      if (result.error) {
+        const code = exitCode(result.error as ExecException);
+        if (code === "missing") throw new Error(INSTALL_HINT);
+        if (code === "killed") throw new Error("graphify 已中断");
+        return { code, stdout: result.stdout, stderr: result.stderr };
+      }
+      return { code: 0, stdout: result.stdout, stderr: result.stderr };
+    });
+  }
   return new Promise((resolve, reject) => {
     let settled = false;
     let timedOut = false;
@@ -181,7 +200,18 @@ function gitEnv(): NodeJS.ProcessEnv {
   };
 }
 
-function git(repoPath: string, args: string[]): Promise<Buffer> {
+function git(repoPath: string, args: string[], ownedHelpers?: OwnedHelperScope): Promise<Buffer> {
+  if (ownedHelpers) {
+    return runHelperFile("git", ["-C", repoPath, ...args], {
+      env: gitEnv(), encoding: "buffer", maxBuffer: MAX_BUFFER,
+    }, ownedHelpers).then((result) => {
+      if (result.error) {
+        const text = result.stderr.toString("utf8").trim();
+        throw new Error(text || result.error.message);
+      }
+      return result.stdout;
+    });
+  }
   return new Promise((resolve, reject) => {
     execFile(
       "git",
@@ -223,13 +253,13 @@ function parseLsTree(buf: Buffer): LsEntry[] {
 }
 
 /** Full blob bytes, or null for a symlink (mode 120000), which is not written into the snapshot. */
-async function blobAt(repoPath: string, ref: string, relPath: string): Promise<Buffer | null> {
+async function blobAt(repoPath: string, ref: string, relPath: string, ownedHelpers?: OwnedHelperScope): Promise<Buffer | null> {
   const rel = normalizeRepoPath(relPath);
-  const rows = parseLsTree(await git(repoPath, ["--literal-pathspecs", "ls-tree", "-z", ref, "--", rel]));
+  const rows = parseLsTree(await git(repoPath, ["--literal-pathspecs", "ls-tree", "-z", ref, "--", rel], ownedHelpers));
   const row = rows.length === 1 && rows[0]?.path === rel ? rows[0] : undefined;
   if (!row || row.type !== "blob") throw new Error(`${rel} 不存在于 ${ref}`);
   if (row.mode === "120000") return null;
-  return git(repoPath, ["cat-file", "blob", row.sha]);
+  return git(repoPath, ["cat-file", "blob", row.sha], ownedHelpers);
 }
 
 function destination(src: string, relPath: string): string {
@@ -267,7 +297,7 @@ export async function updateIndex(
       await rm(destination(src, file.path), { force: true });
       continue;
     }
-    const blob = await blobAt(repoPath, ref, file.path);
+    const blob = await blobAt(repoPath, ref, file.path, opts?.ownedHelpers);
     if (blob === null) continue;
     await writeInside(src, file.path, blob);
   }

@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { rmSync } from "node:fs";
 import path from "node:path";
 import { commandSpec } from "../platform.js";
@@ -9,6 +9,7 @@ import { parseClaudeLine, roomToolsOk } from "./events.js";
 import { claudeAllowedToolNames } from "../direct/tools.js";
 import { prepareClaudeLaunch, type ClaudeLaunch } from "./launch.js";
 import { readClaudeToken } from "./token.js";
+import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 const NOT_FOUND = "找不到 claude。请先安装 Claude Code 并把它放到 PATH 上。";
 const START_FAILED = "无法启动 Claude。";
@@ -31,6 +32,7 @@ export type ClaudeCodeAdapterOptions = {
   parentEnv?: NodeJS.ProcessEnv;
   execPath?: string;
   timeoutMs?: number;
+  ownedHelpers?: OwnedHelperScope;
 };
 
 function message(e: unknown): string {
@@ -91,20 +93,32 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
   }
 
-  private execute(task: TaskAssign, launch: ClaudeLaunch, onEvent: (e: TaskEvent) => void, signal?: AbortSignal): Promise<AgentResult> {
+  private async execute(task: TaskAssign, launch: ClaudeLaunch, onEvent: (e: TaskEvent) => void, signal?: AbortSignal): Promise<AgentResult> {
     const bin = this.opts.claudeBin ?? "claude";
     const timeoutMs = task.limits?.timeoutMs ?? this.opts.timeoutMs ?? 600_000;
     const maxToolCalls = task.limits?.maxToolCalls ?? MAX_TOOL_CALLS;
     const minutes = task.limits ? Math.round(task.limits.timeoutMs / 60_000) : 10;
     const allowed = new Set(claudeAllowedToolNames(task.pluginTools));
     const command = commandSpec(bin, launch.args, launch.env);
-    const child = spawn(command.bin, command.args, {
-      cwd: path.join(launch.runDir, "work"),
-      env: launch.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: true,
-      windowsHide: true,
-    });
+    let child: ChildProcess | OwnedHelperProcess;
+    try {
+      child = this.opts.ownedHelpers
+        ? await this.opts.ownedHelpers.spawn(command.bin, command.args, {
+          cwd: path.join(launch.runDir, "work"), env: launch.env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, signal,
+        })
+        : spawn(command.bin, command.args, {
+          cwd: path.join(launch.runDir, "work"), env: launch.env, stdio: ["pipe", "pipe", "pipe"], detached: true, windowsHide: true,
+        });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).name === "AbortError") return { ok: false, error: "Claude 运行已中止。" };
+      return { ok: false, error: (error as NodeJS.ErrnoException).code === "ENOENT" ? NOT_FOUND : START_FAILED };
+    }
+    const owned = "closed" in child;
+    const closedPromise = owned
+      ? (child as OwnedHelperProcess).closed
+      : new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveClosed) => {
+        (child as ChildProcess).once("close", (code, closeSignal) => resolveClosed({ code, signal: closeSignal }));
+      });
 
     return new Promise((resolve) => {
       let settled = false;
@@ -116,8 +130,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       let stderrBuf = "";
 
       const killTree = () => {
+        if (owned) {
+          child.kill("SIGKILL");
+          return;
+        }
         // detached => the child leads its own process group. pid 0 would signal this group.
-        const pid = child.pid;
+        const pid = (child as ChildProcess).pid;
         if (pid === undefined || pid <= 0 || pid === process.pid) return;
         if (process.platform === "win32") {
           spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
@@ -138,7 +156,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         signal?.removeEventListener("abort", cancel);
         killTree();
         if (closed) return resolve(result);
-        child.once("close", () => resolve(result));
+        void closedPromise.then(() => resolve(result));
       };
       const cancel = () => finish({ ok: false, error: "Claude 运行已中止。" });
 
@@ -190,17 +208,17 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       if (signal?.aborted) cancel();
       child.stdout?.setEncoding("utf8");
       child.stderr?.setEncoding("utf8");
-      child.on("spawn", () => {
-        if (settled) killTree();
-      });
-      child.on("error", (err: NodeJS.ErrnoException) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", cancel);
-        killTree();
-        resolve({ ok: false, error: err.code === "ENOENT" ? NOT_FOUND : START_FAILED });
-      });
+      if (!owned) {
+        (child as ChildProcess).on("spawn", () => { if (settled) killTree(); });
+        (child as ChildProcess).on("error", (err: NodeJS.ErrnoException) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", cancel);
+          killTree();
+          resolve({ ok: false, error: err.code === "ENOENT" ? NOT_FOUND : START_FAILED });
+        });
+      }
       child.stdout?.on("data", take);
       child.stderr?.on("data", (chunk: string) => {
         const room = STDERR_CAP - stderrBuf.length;
@@ -208,7 +226,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         stderrBuf += chunk.length > room ? chunk.slice(0, room) : chunk;
       });
       child.stdin?.on("error", () => {});
-      child.on("close", () => {
+      const onClose = () => {
         closed = true;
         killTree();
         if (settled) return;
@@ -220,7 +238,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           else if (AUTH_STDERR.test(stderrBuf)) error = LOGIN_FAILED;
           finish({ ok: false, error });
         }
-      });
+      };
+      if (owned) void closedPromise.then(onClose);
+      else (child as ChildProcess).once("close", onClose);
       try {
         child.stdin?.end(userMessage(task.prompt));
       } catch {

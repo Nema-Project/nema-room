@@ -1,4 +1,5 @@
 import http from "node:http";
+import { spawn as nodeSpawn } from "node:child_process";
 import type { AddressInfo } from "node:net";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import WebSocket from "ws";
@@ -11,6 +12,8 @@ import { claimNextTask, getTask, interruptRunning, recordTaskChange, resolveRunT
 import * as tasks from "../src/tasks.js";
 import { attachDaemonSocket } from "../src/daemonSocket.js";
 import { KnowledgeStore } from "@nema/knowledge";
+import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
+import { addReportMessage, getMessage } from "../src/messages.js";
 import { indexEntry } from "../src/entryIndex.js";
 import { repoPath } from "../src/workspaces.js";
 import { requestWorkPackage } from "../src/workpackages.js";
@@ -85,9 +88,9 @@ type Client = {
   closed: Promise<void>;
 };
 
-function connect(token = TOKEN, adapters: string[] = ["codex-direct"], hello: Msg = {}): Promise<Client> {
+function connect(token = TOKEN, adapters: string[] = ["codex-direct"], hello: Msg = {}, targetUrl = url): Promise<Client> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(targetUrl);
     sockets.push(ws);
     const queue: Msg[] = [];
     const waiters: Array<() => void> = [];
@@ -154,6 +157,64 @@ async function noMessage(c: Client, ms = 200, type = "task.assign"): Promise<voi
 }
 
 describe("daemon socket", () => {
+  test("repo-move callback carries the runtime helper scope into report work-package updates", async () => {
+    const repoId = "repo_move_scope";
+    const gitCommonDir = "/real/a/.git";
+    await db.query(
+      `insert into workspace_repos (id, workspace_id, path, git_common_dir, label, main_branch, has_origin, remote_url)
+       values ($1, $2, '/real/a', $3, 'API', 'main', true, null)`,
+      [repoId, wsA, gitCommonDir],
+    );
+    const store = new KnowledgeStore(repoPath(dataDir, wsA));
+    await store.upsert({ kind: "requirement", title: "需求", body: "b", reason: "r", sourceMessages: [], basis: "stated" } as never, { author: "user" });
+    const wp = await store.createWorkPackage({ title: "包", requirements: ["R-1"], repos: [repoId], reason: "r", sourceMessages: [] }, { author: "user" });
+    await store.setWorkPackageMeta(wp.id, {
+      status: "approved",
+      tasks: [{ n: 1, title: "实现", satisfies: ["R-1"], files: [{ op: "modify", repo: "API", path: "src/a.ts" }], status: "pending", inferred: false, reportMessageId: null, confirmedBy: null }],
+    }, "setup", { author: "user" });
+    const report = await addReportMessage(db, wsA, "实现完成", {
+      report: { agent: "claude-code", gitCommonDir, summary: "实现完成", entries: [wp.id], commits: ["abcdef1"], files: ["src/a.ts"], task: 1 },
+      check: { commitsExist: true, missingCommits: [], onMain: "not-yet", filesOk: true, untouchedFiles: [], touchedFiles: ["src/a.ts"], checkedAt: new Date().toISOString(), mainSha: "1".repeat(40) },
+    });
+    const spawnCalls: string[] = [];
+    const ownedHelpers: OwnedHelperScope = {
+      async spawn(command, args, options) {
+        spawnCalls.push(command);
+        const child = nodeSpawn(command, args, { ...options, stdio: options?.stdio ?? ["ignore", "pipe", "pipe"], windowsHide: true });
+        const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+          child.once("close", (code, signal) => resolve({ code, signal }));
+        });
+        return { stdin: child.stdin, stdout: child.stdout, stderr: child.stderr, kill: (signal) => child.kill(signal), exited: closed, closed } satisfies OwnedHelperProcess;
+      },
+      stopAccepting() {},
+      async drain() {},
+    };
+    const scopedServer = http.createServer();
+    const scopedHandle = attachDaemonSocket(scopedServer, { db, dataDir, events, daemonToken: TOKEN, hubUrl: "http://hub.test", ownedHelpers });
+    await new Promise<void>((resolve) => scopedServer.listen(0, "127.0.0.1", resolve));
+    const scopedUrl = `ws://127.0.0.1:${(scopedServer.address() as AddressInfo).port}/daemon`;
+    const daemon = await connect(TOKEN, ["codex-direct"], {}, scopedUrl);
+    try {
+      await daemon.next("welcome");
+      const sync = await daemon.next("rpc.request");
+      expect(sync.method).toBe("repos.sync");
+      daemon.send({ type: "rpc.response", id: sync.id, ok: true, result: {} });
+      daemon.send({ type: "repo.moved", repoId, mainRef: "origin/main", from: "0".repeat(40), to: "1".repeat(40) });
+      const rpcRequest = await daemon.next("rpc.request");
+      expect(rpcRequest.method).toBe("report.check");
+      daemon.send({ type: "rpc.response", id: rpcRequest.id, ok: true, result: {
+        commitsExist: true, missingCommits: [], onMain: "yes", filesOk: true, untouchedFiles: [], touchedFiles: ["src/a.ts"], checkedAt: new Date().toISOString(), mainSha: "1".repeat(40),
+      } });
+      await vi.waitFor(async () => expect((await new KnowledgeStore(repoPath(dataDir, wsA)).get(wp.id))?.workpackage?.tasks[0]?.status).toBe("verified"));
+      expect(spawnCalls.some((command) => /git(?:\.exe)?$/i.test(command))).toBe(true);
+      expect(((await getMessage(db, report.id))!.meta as any).check.onMain).toBe("yes");
+    } finally {
+      await scopedHandle.close();
+      scopedServer.closeAllConnections();
+      await new Promise<void>((resolve) => scopedServer.close(() => resolve()));
+    }
+  });
+
   test("bad token: error then close", async () => {
     const c = await connect("nope");
     const m = await c.next("error");

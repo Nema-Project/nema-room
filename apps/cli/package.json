@@ -27,6 +27,11 @@
       "types": "./dist/daemon/setup.d.ts",
       "import": "./dist/daemon/setup.js"
     },
+    "./ownedProcess": {
+      "development": "./src/ownedProcess.ts",
+      "types": "./dist/ownedProcess.d.ts",
+      "import": "./dist/ownedProcess.js"
+    },
     "./secrets/permissions": {
       "development": "./src/secrets/permissions.ts",
       "types": "./dist/secrets/permissions.d.ts",

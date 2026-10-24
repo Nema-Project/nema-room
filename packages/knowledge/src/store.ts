@@ -18,6 +18,7 @@ import {
 } from "@nema/shared";
 import { formatCommitMessage } from "./commitMessage.js";
 import { git, withRepoLock } from "./git.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 export type CommitMeta = { author: "agent" | "user" | "system"; taskId?: string; now?: Date };
 
@@ -299,7 +300,11 @@ function siblingMdRel(rel: string): string | null {
 const WP_DOC_FILE = /\.(?:spec|plan)\.md$/;
 
 export class KnowledgeStore {
-  constructor(private readonly repoDir: string) {}
+  constructor(private readonly repoDir: string, private readonly ownedHelpers?: OwnedHelperScope) {}
+
+  private git(args: string[]): Promise<string> {
+    return git(this.repoDir, args, this.ownedHelpers);
+  }
 
   private filePath(id: string, kind: EntryKind): string {
     return path.join(this.repoDir, KIND_DIR[kind], `${id}.md`);
@@ -312,16 +317,16 @@ export class KnowledgeStore {
   async init(): Promise<void> {
     await withRepoLock(this.repoDir, async () => {
       await mkdir(this.repoDir, { recursive: true });
-      await git(this.repoDir, ["init", "-b", "main"]);
-      await git(this.repoDir, ["config", "user.name", "Nema Room"]);
-      await git(this.repoDir, ["config", "user.email", "nema@localhost"]);
+      await this.git(["init", "-b", "main"]);
+      await this.git(["config", "user.name", "Nema Room"]);
+      await this.git(["config", "user.email", "nema@localhost"]);
       for (const kind of KINDS) {
         const d = path.join(this.repoDir, KIND_DIR[kind]);
         await mkdir(d, { recursive: true });
         await writeFile(path.join(d, ".gitkeep"), "");
       }
-      await git(this.repoDir, ["add", "-A"]);
-      await git(this.repoDir, ["commit", "-m", "init"]);
+      await this.git(["add", "-A"]);
+      await this.git(["commit", "-m", "init"]);
     });
   }
 
@@ -618,7 +623,7 @@ export class KnowledgeStore {
     return withRepoLock(this.repoDir, async () => {
       const recovered: Entry[] = [];
       const skipped: string[] = [];
-      const status = await git(this.repoDir, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+      const status = await this.git(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
       const changes = porcelainV1Z(status);
       const isPlain = (c: PorcelainChange) => !c.xy.includes("R") && !c.xy.includes("C") && isRecoverableStatus(c.xy);
       // A diagram's spec or a work package's spec/plan is recovered together with its .md, in the .md's commit.
@@ -651,8 +656,8 @@ export class KnowledgeStore {
           continue;
         }
         try {
-          await git(this.repoDir, ["add", "--", ...rels]);
-          await git(this.repoDir, ["commit", "-m", recoverMessage(entry), "--", ...rels]);
+          await this.git(["add", "--", ...rels]);
+          await this.git(["commit", "-m", recoverMessage(entry), "--", ...rels]);
         } catch (err) {
           // The files stay on disk. A later startup sees them still dirty.
           console.warn(`[knowledge] could not commit recovered entry ${rel}: ${err instanceof Error ? err.message : String(err)}`);
@@ -692,9 +697,9 @@ export class KnowledgeStore {
     }
     try {
       for (const w of writes) await writeFile(w.file, w.content);
-      await git(this.repoDir, ["add", "--", ...rels]);
-      const staged = (await git(this.repoDir, ["diff", "--cached", "--name-only", "--", ...rels])).trim();
-      if (staged === "") return (await git(this.repoDir, ["rev-parse", "HEAD"])).trim();
+      await this.git(["add", "--", ...rels]);
+      const staged = (await this.git(["diff", "--cached", "--name-only", "--", ...rels])).trim();
+      if (staged === "") return (await this.git(["rev-parse", "HEAD"])).trim();
       const message = formatCommitMessage({
         op,
         id: entry.id,
@@ -704,12 +709,12 @@ export class KnowledgeStore {
         author: meta.author,
         ...(meta.taskId !== undefined ? { taskId: meta.taskId } : {}),
       });
-      await git(this.repoDir, ["commit", "-m", message, "--", ...rels]);
+      await this.git(["commit", "-m", message, "--", ...rels]);
     } catch (err) {
       for (let i = 0; i < writes.length; i++) await this.rollback(writes[i]!.file, rels[i]!, previous[i] ?? null);
       throw err;
     }
-    return (await git(this.repoDir, ["rev-parse", "HEAD"])).trim();
+    return (await this.git(["rev-parse", "HEAD"])).trim();
   }
 
   /** Parse an on-disk entry. Unparseable files are warned about and left byte-for-byte. */
@@ -726,7 +731,7 @@ export class KnowledgeStore {
   /** Undo an uncommitted write: unstage it and put the previous content back (or remove the new file). */
   private async rollback(file: string, rel: string, previous: string | null): Promise<void> {
     try {
-      await git(this.repoDir, ["reset", "-q", "--", rel]);
+      await this.git(["reset", "-q", "--", rel]);
     } catch (e) {
       console.warn(`[knowledge] could not unstage ${rel} after a failed write`, e);
     }

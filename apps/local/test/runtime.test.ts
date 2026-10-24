@@ -1,10 +1,10 @@
 import { copyFileSync, cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { closeEnsuredRuntimesForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, startLocalRuntime, ensureLocalRuntime } from "../src/runtime.js";
 import { acquireInstance, discoverInstance } from "../src/instance.js";
 import { createLocalDb } from "@nema/hub/db/local";
@@ -17,6 +17,19 @@ const testHomeDirs: string[] = [];
 const runtimes: Array<{ close(): Promise<void> }> = [];
 const ensuredHomes: string[] = [];
 const crashChildren: ChildProcess[] = [];
+let guardianFixtureDir: string | undefined;
+let guardianFixturePath: string | undefined;
+
+beforeAll(() => {
+  if (process.platform !== "win32") return;
+  guardianFixtureDir = mkdtempSync(join(tmpdir(), "nema-runtime-guardian-"));
+  guardianFixturePath = join(guardianFixtureDir, "owned-helper.exe");
+  execFileSync(process.execPath, ["scripts/desktop/build-owned-helper.mjs", "--output", guardianFixturePath], { stdio: "inherit" });
+});
+
+afterAll(() => {
+  if (guardianFixtureDir) rmSync(guardianFixtureDir, { recursive: true, force: true });
+});
 
 function tempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -32,6 +45,14 @@ function testAssets(): string {
   copyFileSync(process.execPath, node);
   mkdirSync(join(assets, "git"), { recursive: true });
   writeFileSync(join(assets, "git", "git.exe"), "test fixture");
+  let ownedHelperGuardian: string | undefined;
+  if (process.platform === "win32") {
+    ownedHelperGuardian = "runtime/owned-helper.exe";
+    if (!guardianFixturePath) throw new Error("Windows runtime test guardian was not built");
+    const guardianPath = join(assets, ownedHelperGuardian);
+    mkdirSync(dirname(guardianPath), { recursive: true });
+    copyFileSync(guardianFixturePath, guardianPath);
+  }
   mkdirSync(join(assets, "licenses"), { recursive: true });
   cpSync("apps/local/test/fixtures", join(assets, "fixtures"), { recursive: true });
   writeFileSync(join(assets, "runtime-manifest.json"), JSON.stringify({
@@ -45,6 +66,7 @@ function testAssets(): string {
     cliEntry: "fixtures/fake-cli.mjs",
     webEntry: "fixtures/fake-web.mjs",
     licenses: "licenses",
+    ...(ownedHelperGuardian ? { ownedHelperGuardian } : {}),
   }));
   return assets;
 }
@@ -152,6 +174,17 @@ afterEach(async () => {
 });
 
 describe("managed local runtime", () => {
+  it.runIf(process.platform === "win32")("refuses a Windows payload without its helper guardian before acquiring ownership", async () => {
+    const assetsDir = testAssets();
+    const manifestPath = join(assetsDir, "runtime-manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+    delete manifest.ownedHelperGuardian;
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    const home = join(tempDir("nema-home-"), "missing-helper-guardian");
+    await expect(startLocalRuntime({ home, assetsDir })).rejects.toThrow(/ownedHelperGuardian/i);
+    expect(await discoverInstance(home)).toBeNull();
+  });
+
   it("retries only a spawned owner's control timeout while authenticated readiness is still starting", async () => {
     const home = join(tempDir("nema-home-"), "delayed-authenticated-owner");
     mkdirSync(home, { recursive: true });

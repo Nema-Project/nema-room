@@ -38,9 +38,9 @@ export async function syncIndex(root: string, repoPath: string, sha: string, gra
   if (indexed === sha) return;
   await rm(path.join(root, MARKER), { force: true });
   if (indexed !== null) {
-    await updateIndex(root, await diffNameStatus(repoPath, indexed, sha), repoPath, sha, graphify);
+    await updateIndex(root, await diffNameStatus(repoPath, indexed, sha, graphify?.ownedHelpers), repoPath, sha, graphify);
   } else {
-    await exportSnapshot(repoPath, sha, path.join(root, "src"));
+    await exportSnapshot(repoPath, sha, path.join(root, "src"), graphify?.ownedHelpers);
     await buildIndex(root, graphify);
   }
   await writeFile(path.join(root, MARKER), sha);

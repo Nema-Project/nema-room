@@ -6,6 +6,7 @@ import { changedFiles, exportSnapshot, fetchMain, inspectRepo, mainRef, missingA
 import { graphifyInstallStatus, queryIndex, type GraphifyOpts } from "./graphify.js";
 import { readIndexedSha, syncIndex, withIndexLock } from "./indexState.js";
 import { checkReport, uncoveredCommits } from "./reportCheck.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 const WS_RE = /^ws_[A-Za-z0-9_-]{1,32}$/;
 const REPO_RE = /^repo_[A-Za-z0-9_-]{1,32}$/;
@@ -154,9 +155,10 @@ function stringList(params: unknown, field: string, max: number): string[] {
 
 /** Fetches, then brings the snapshot index to the main ref. Call it inside `withIndexLock`. */
 async function indexLocked(root: string, repo: RepoCall, graphify?: GraphifyOpts): Promise<{ sha: string }> {
+  const helpers = graphify?.ownedHelpers;
   // A failed fetch, including "没有 origin", still indexes mainRef (the local branch, or the remote ref already present).
-  await fetchMain(repo.path, repo.mainBranch);
-  const sha = await revParse(repo.path, await mainRef(repo.path, repo.mainBranch));
+  await fetchMain(repo.path, repo.mainBranch, helpers);
+  const sha = await revParse(repo.path, await mainRef(repo.path, repo.mainBranch, helpers), helpers);
   await syncIndex(root, repo.path, sha, graphify);
   return { sha };
 }
@@ -176,6 +178,7 @@ async function ensureIndex(nemaHome: string, repo: RepoCall, graphify?: Graphify
 }
 
 async function runPluginCall(nemaHome: string, call: PluginCall, github: GithubMcp, graphify?: GraphifyOpts): Promise<unknown> {
+  const helpers = graphify?.ownedHelpers;
   if ("tool" in call) return github.call(call.tool, call.args);
   switch (call.name) {
     case "code__search":
@@ -185,17 +188,17 @@ async function runPluginCall(nemaHome: string, call: PluginCall, github: GithubM
     case "code__path":
       return queryIndex(await ensureIndex(nemaHome, call.repo, graphify), "path", [call.from, call.to], graphify);
     case "code__read": {
-      const ref = await mainRef(call.repo.path, call.repo.mainBranch);
+      const ref = await mainRef(call.repo.path, call.repo.mainBranch, helpers);
       const range =
         call.startLine !== undefined || call.endLine !== undefined
           ? { startLine: call.startLine, endLine: call.endLine }
           : undefined;
-      return readFileAtRef(call.repo.path, ref, call.path, range);
+      return readFileAtRef(call.repo.path, ref, call.path, range, helpers);
     }
     case "code__changes": {
       // An omitted `to` is the bound main ref itself, which changedFiles always accepts.
-      const to = call.to ?? (await mainRef(call.repo.path, call.repo.mainBranch));
-      return changedFiles(call.repo.path, call.from, to, call.repo.mainBranch);
+      const to = call.to ?? (await mainRef(call.repo.path, call.repo.mainBranch, helpers));
+      return changedFiles(call.repo.path, call.from, to, call.repo.mainBranch, helpers);
     }
   }
 }
@@ -204,15 +207,15 @@ async function runPluginCall(nemaHome: string, call: PluginCall, github: GithubM
  * `graphify` is for tests: production passes nothing and runs `graphify` from PATH.
  * `github` is the daemon's one GitHub MCP client; one is made here when none is passed.
  */
-export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string; graphify?: GraphifyOpts; github?: GithubMcp }): void {
-  const github = opts.github ?? new GithubMcp({ nemaHome: opts.nemaHome });
+export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string; graphify?: GraphifyOpts; github?: GithubMcp; ownedHelpers?: OwnedHelperScope }): void {
+  const github = opts.github ?? new GithubMcp({ nemaHome: opts.nemaHome, ownedHelpers: opts.ownedHelpers });
   router.register("repo.inspect", async (params) => {
     if (!params || typeof params !== "object" || typeof (params as { path?: unknown }).path !== "string") {
       throw new Error("invalid repo params");
     }
     const repoPath = (params as { path: string }).path;
     if (!repoPath) throw new Error("invalid repo params");
-    return inspectRepo(repoPath, opts.nemaHome);
+    return inspectRepo(repoPath, opts.nemaHome, opts.ownedHelpers);
   });
 
   router.register("repo.index", async (params) => indexRepo(opts.nemaHome, repoCall(params), opts.graphify));
@@ -222,7 +225,7 @@ export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string
     const repo = repoCall(params);
     const { from, to } = params as { from?: unknown; to?: unknown };
     if (typeof from !== "string" || typeof to !== "string" || !from || !to) throw new Error("invalid repo params");
-    return changedFiles(repo.path, from, to, repo.mainBranch);
+    return changedFiles(repo.path, from, to, repo.mainBranch, opts.ownedHelpers);
   });
 
   // A report's check: fetch main first, then compare the reported commits and files against the bound main ref.
@@ -230,8 +233,8 @@ export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string
     const repo = repoCall(params);
     const commits = stringList(params, "commits", 50);
     const files = stringList(params, "files", 500);
-    await fetchMain(repo.path, repo.mainBranch);
-    return checkReport(repo.path, await mainRef(repo.path, repo.mainBranch), commits, files);
+    await fetchMain(repo.path, repo.mainBranch, opts.ownedHelpers);
+    return checkReport(repo.path, await mainRef(repo.path, repo.mainBranch, opts.ownedHelpers), commits, files, opts.ownedHelpers);
   });
 
   // The fallback: main commits in from..to that no report covers. Both shas must be on main.
@@ -240,14 +243,14 @@ export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string
     const { from, to } = params as { from?: unknown; to?: unknown };
     if (typeof from !== "string" || typeof to !== "string" || !from || !to) throw new Error("invalid repo params");
     const covered = stringList(params, "covered", 10_000);
-    return uncoveredCommits(repo.path, await mainRef(repo.path, repo.mainBranch), from, to, covered);
+    return uncoveredCommits(repo.path, await mainRef(repo.path, repo.mainBranch, opts.ownedHelpers), from, to, covered, opts.ownedHelpers);
   });
 
   // Work package plans: which of these paths are not on the bound main ref. A `..` or absolute path is an error.
   router.register("repo.exists", async (params) => {
     const repo = repoCall(params);
     const paths = stringList(params, "paths", 500);
-    return { missing: await missingAtRef(repo.path, await mainRef(repo.path, repo.mainBranch), paths) };
+    return { missing: await missingAtRef(repo.path, await mainRef(repo.path, repo.mainBranch, opts.ownedHelpers), paths, opts.ownedHelpers) };
   });
 
   router.register("repo.forget", async (params) => {

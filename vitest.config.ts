@@ -19,6 +19,7 @@ for (const d of readdirSync(`${root}packages`, { withFileTypes: true })) {
 }
 // The local package and the CLI's narrow permissions helper are tested from source.
 alias["@nema/local"] = `${root}apps/local/src/instance.ts`;
+alias["@nema/shared/ownedHelper"] = `${root}packages/shared/src/ownedHelper.ts`;
 alias["@nema/cli/secrets/permissions"] = `${root}apps/cli/src/secrets/permissions.ts`;
 alias["@nema/hub/db/local"] = `${root}apps/hub/src/db/pglite.ts`;
 alias["@nema/hub/events"] = `${root}apps/hub/src/events.ts`;
@@ -41,7 +42,10 @@ const workspaceDirs = ["packages", "apps"].flatMap((g) =>
 );
 
 export default defineConfig({
-  resolve: { alias },
+  resolve: { alias: [
+    { find: /^@nema\/shared\/ownedHelper$/, replacement: `${root}packages/shared/src/ownedHelper.ts` },
+    ...Object.entries(alias).map(([find, replacement]) => ({ find, replacement })),
+  ] },
   test: {
     // Real git, PGlite and child processes run in every project; under a full parallel run a single
     // test can pass 5s on a busy machine without being stuck.

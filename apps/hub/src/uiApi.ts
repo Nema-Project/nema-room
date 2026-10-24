@@ -14,6 +14,7 @@ import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkP
 import { RepoError, bindRepo, getRepo, listRepos, syncBoundRepos, unbindRepo, updateRepo } from "./repos.js";
 import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
 import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, repoPath, updateWorkspace } from "./workspaces.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 export type UiDeps = {
   db: Db;
@@ -24,6 +25,7 @@ export type UiDeps = {
   daemon: DaemonRpc;
   /** Diagram rendering; defaults to the vendored archify. Tests inject a fake. */
   archify?: Archify;
+  ownedHelpers?: OwnedHelperScope;
 };
 
 /** Rendered diagram HTML runs archify's inline script only; it may not load or send anything. */
@@ -105,7 +107,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     return c.json({ error: "internal error" }, 500);
   });
 
-  const store = (ws: string) => new KnowledgeStore(repoPath(dataDir, ws));
+  const store = (ws: string) => new KnowledgeStore(repoPath(dataDir, ws), deps.ownedHelpers);
 
   app.get("/daemon/status", (c) => c.json({ connected: deps.daemonStatus() }));
 
@@ -125,7 +127,7 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/workspaces", async (c) => {
     const { name } = await body(c, CreateWorkspaceBody);
-    const created = await createWorkspace(db, dataDir, name);
+    const created = await createWorkspace(db, dataDir, name, deps.ownedHelpers);
     return c.json({ ...created, archived: created.archivedAt != null });
   });
 
@@ -234,11 +236,11 @@ export function uiRoutes(deps: UiDeps): Hono {
     const ws = await getWorkspace(db, id);
     if (!ws) throw new HttpError(404, `workspace not found: ${id}`);
     if (ws.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
-    const { entry } = await requestWorkPackage(db, dataDir, events, id, input);
+    const { entry } = await requestWorkPackage(db, dataDir, events, id, input, undefined, deps.ownedHelpers);
     return c.json(entry);
   });
 
-  const wpDeps = { db, dataDir, events, daemon: deps.daemon };
+  const wpDeps = { db, dataDir, events, daemon: deps.daemon, ownedHelpers: deps.ownedHelpers };
   const wpWorkspace = async (c: Context) => {
     const id = c.req.param("id")!;
     const ws = await getWorkspace(db, id);
@@ -293,7 +295,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     return c.json(list.map((e) => ({ ...e, isNew: fresh.has(e.id) })));
   });
 
-  app.get("/workspaces/:id/timeline", async (c) => c.json(await timeline(db, dataDir, c.req.param("id")!)));
+  app.get("/workspaces/:id/timeline", async (c) => c.json(await timeline(db, dataDir, c.req.param("id")!, deps.ownedHelpers)));
 
   const requireEntry = async (ws: string, eid: string) => {
     const entry = await store(ws).get(eid);
@@ -319,12 +321,12 @@ export function uiRoutes(deps: UiDeps): Hono {
     );
     // The commit is durable; bookkeeping failures must not fail the request.
     try {
-      await indexEntry(db, ws, entry);
+      await indexEntry(db, ws, entry, deps.ownedHelpers);
       events.emit(ws, { type: "knowledge.changed", entryId: entry.id });
     } catch (e) {
       console.error(`ui upsert: post-commit bookkeeping failed for ${entry.id} (commit ${commit})`, e);
     }
-    await retryBlockedPackages(db, dataDir, events, ws, entry, "user");
+    await retryBlockedPackages(db, dataDir, events, ws, entry, "user", deps.ownedHelpers);
     return c.json(entry);
   });
 
@@ -335,7 +337,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     await requireEntry(ws, eid);
     const { entry, commit } = await store(ws).confirm(eid, { author: "user" });
     try {
-      await indexEntry(db, ws, entry);
+      await indexEntry(db, ws, entry, deps.ownedHelpers);
       events.emit(ws, { type: "knowledge.changed", entryId: entry.id });
     } catch (e) {
       console.error(`ui confirm: post-commit bookkeeping failed for ${entry.id} (commit ${commit})`, e);
@@ -352,7 +354,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     if (status !== "reported" && status !== "mismatch") throw new HttpError(409, "只能确认已上报或有出入的实现");
     const { entry, commit } = await store(ws).confirmImplementation(eid, { author: "user" });
     try {
-      await indexEntry(db, ws, entry);
+      await indexEntry(db, ws, entry, deps.ownedHelpers);
       events.emit(ws, { type: "knowledge.changed", entryId: entry.id });
     } catch (e) {
       console.error(`ui implementation confirm: post-commit bookkeeping failed for ${entry.id} (commit ${commit})`, e);
@@ -364,7 +366,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     const ws = c.req.param("id")!;
     const eid = c.req.param("eid")!;
     await requireEntry(ws, eid);
-    return c.json(await history(repoPath(dataDir, ws), eid));
+    return c.json(await history(repoPath(dataDir, ws), eid, deps.ownedHelpers));
   });
 
   app.get("/workspaces/:id/entries/:eid/versions/:commit", async (c) => {
@@ -373,7 +375,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     const commit = c.req.param("commit")!;
     if (!kindFromId(eid) || !/^[0-9a-f]{4,64}$/i.test(commit)) throw new HttpError(404, "version not found");
     try {
-      return c.json(await versionAt(repoPath(dataDir, ws), eid, commit));
+      return c.json(await versionAt(repoPath(dataDir, ws), eid, commit, deps.ownedHelpers));
     } catch {
       throw new HttpError(404, `version not found: ${eid}@${commit}`);
     }
@@ -383,7 +385,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     const ws = c.req.param("id")!;
     const eid = c.req.param("eid")!;
     await requireEntry(ws, eid);
-    return c.json(await blameParagraphs(repoPath(dataDir, ws), eid));
+    return c.json(await blameParagraphs(repoPath(dataDir, ws), eid, deps.ownedHelpers));
   });
 
   const requireDiagram = async (ws: string, gid: string) => {
@@ -422,13 +424,13 @@ export function uiRoutes(deps: UiDeps): Hono {
     if (!gid || !entry?.diagram) return c.json({ error: `diagram not found: ${c.req.param("file")}` }, 404);
     const dir = repoPath(dataDir, ws);
     const rel = `diagrams/${gid}.json`;
-    const commit = (await git(dir, ["log", "-1", "--format=%H", "--", rel])).trim();
+    const commit = (await git(dir, ["log", "-1", "--format=%H", "--", rel], deps.ownedHelpers)).trim();
     if (commit === "") return c.json({ error: `diagram not found: ${gid}` }, 404);
     const key = `${ws}:${gid}:${entry.diagram.type}:${commit}`;
     let html = diagramHtml.get(key);
     if (html === undefined) {
       // Read the json at that commit, so the cache key always matches what was rendered.
-      const spec: unknown = JSON.parse(await git(dir, ["show", `${commit}:${rel}`]));
+      const spec: unknown = JSON.parse(await git(dir, ["show", `${commit}:${rel}`], deps.ownedHelpers));
       html = await archify.renderDiagram(entry.diagram.type, spec);
       diagramHtml.set(key, html);
       if (diagramHtml.size > DIAGRAM_CACHE_MAX) diagramHtml.delete(diagramHtml.keys().next().value!);

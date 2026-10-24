@@ -12,12 +12,14 @@ import { startHub } from "@nema/hub/lifecycle";
 import { interruptRunning } from "@nema/hub/tasks";
 import { loadConfig } from "@nema/cli/config";
 import { startDaemon } from "@nema/cli/daemon/setup";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { openPrivateFile, privateModeMatches, protectPrivatePath } from "@nema/cli/secrets/permissions";
 import { acquireInstance, discoverInstance, type InstanceLease } from "./instance.js";
 import { resolveHome } from "./paths.js";
 import { createGatewayCredential, createGatewayUiAuth, startGateway, type RunningGateway } from "./gateway.js";
 import { SessionManager } from "./session.js";
 import { createSettingsService, type SettingsOperations, type SettingsService } from "./settings.js";
+import { createOwnedHelperScope } from "./ownedHelpers.js";
 
 const MANIFEST_NAME = "runtime-manifest.json";
 const WEB_READY_TIMEOUT_MS = 15_000;
@@ -64,6 +66,7 @@ type RuntimeManifest = {
   cliEntry: string;
   webEntry: string;
   licenses: string;
+  ownedHelperGuardian?: string;
 };
 
 type ResolvedAssets = RuntimeManifest & {
@@ -74,6 +77,7 @@ type ResolvedAssets = RuntimeManifest & {
   cliPath: string;
   webPath: string;
   licensesPath: string;
+  ownedHelperGuardianPath?: string;
 };
 
 export type LocalRuntime = {
@@ -123,10 +127,14 @@ function readManifest(assetsDir: string): ResolvedAssets {
   const cliPath = manifestEntry(root, value.cliEntry, "cliEntry");
   const webPath = manifestEntry(root, value.webEntry, "webEntry");
   const licensesPath = manifestEntry(root, value.licenses, "licenses");
-  if (!existsSync(nodePath) || !existsSync(corePath) || !existsSync(cliPath) || !existsSync(webPath) || !existsSync(gitPath) || !existsSync(licensesPath)) {
+  const ownedHelperGuardianPath = process.platform === "win32"
+    ? manifestEntry(root, value.ownedHelperGuardian, "ownedHelperGuardian")
+    : undefined;
+  if (!existsSync(nodePath) || !existsSync(corePath) || !existsSync(cliPath) || !existsSync(webPath) || !existsSync(gitPath) || !existsSync(licensesPath) ||
+    (ownedHelperGuardianPath !== undefined && !existsSync(ownedHelperGuardianPath))) {
     throw new Error("Runtime manifest references a missing asset");
   }
-  return { ...value as RuntimeManifest, root, nodePath, gitPath, corePath, cliPath, webPath, licensesPath };
+  return { ...value as RuntimeManifest, root, nodePath, gitPath, corePath, cliPath, webPath, licensesPath, ...(ownedHelperGuardianPath ? { ownedHelperGuardianPath } : {}) };
 }
 
 function ensureOwnedDirectory(home: string, directory: string, name: string): void {
@@ -299,6 +307,10 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
 
   // Ownership is acquired before the DB path is opened or any home-owned runtime data is written.
   const paths = resolveHome(options.home);
+  // Validate and configure the helper owner before hub migrations/recovery can invoke Git or archify.
+  const helperScope: OwnedHelperScope | undefined = assets.ownedHelperGuardianPath
+    ? createOwnedHelperScope(assets.ownedHelperGuardianPath)
+    : undefined;
   const lease = await acquireInstance(paths.home);
   let db: Awaited<ReturnType<typeof createLocalDb>> | undefined;
   let hub: Awaited<ReturnType<typeof startHub>> | undefined;
@@ -330,6 +342,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     teardownPromise ??= (async () => {
       stopRequested = true;
       const errors: unknown[] = [];
+      helperScope?.stopAccepting();
       // Prevent new auth work immediately; the service drains only after HTTP acceptance is stopped.
       try { settings?.stopAccepting(); } catch (error) { appendFailure(errors, error); }
       // Revoke sessions and retire launch readiness before draining services.
@@ -352,13 +365,15 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
       // Wait for agent cleanup, stop Web, close DB, and release the kernel lease last.
       let daemonStopped = !daemon;
       try { await daemon?.close(); daemonStopped = true; } catch (error) { appendFailure(errors, error); }
+      let helpersDrained = !helperScope;
+      try { await helperScope?.drain(); helpersDrained = true; } catch (error) { appendFailure(errors, error); }
       let webStopped = validWebChild(webChild);
       try { await stopChild(webChild); webStopped = validWebChild(webChild); } catch (error) { appendFailure(errors, error); webStopped = false; }
       let dbClosed = !db;
-      if (hubDrained && daemonStopped) {
+      if (hubDrained && daemonStopped && helpersDrained) {
         try { await db?.close(); dbClosed = true; } catch (error) { appendFailure(errors, error); }
       }
-      if (unpublished && gatewayStopped && hubDrained && daemonStopped && webStopped && dbClosed) {
+      if (unpublished && gatewayStopped && hubDrained && daemonStopped && helpersDrained && webStopped && dbClosed) {
         try { await lease.close(); } catch (error) { appendFailure(errors, error); }
       }
       throwCleanupErrors(errors, primary);
@@ -395,6 +410,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
       port: 0,
       webOrigin: `http://127.0.0.1:${publicPort}`,
       uiAuth: createGatewayUiAuth(gatewayCredential),
+      ownedHelpers: helperScope,
     });
     assertWebAlive();
     daemon = startDaemon({
@@ -406,6 +422,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
       getConfig: () => loadConfig(paths.home),
       cliEntry: assets.cliPath,
       execPath: assets.nodePath,
+      ownedHelpers: helperScope,
     });
     await daemonReady(hub.url, gatewayCredential, DAEMON_READY_TIMEOUT_MS);
     assertWebAlive();

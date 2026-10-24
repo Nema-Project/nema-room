@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import { KnowledgeStore } from "@nema/knowledge";
 import { KNOWLEDGE_LANGUAGES, type KnowledgeLanguage } from "@nema/shared";
 import type { Db } from "./db/db.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 export type Workspace = {
   id: string;
@@ -52,10 +53,10 @@ function checkLanguage(l: string): KnowledgeLanguage {
   return l as KnowledgeLanguage;
 }
 
-export async function createWorkspace(db: Db, dataDir: string, name: string): Promise<Workspace> {
+export async function createWorkspace(db: Db, dataDir: string, name: string, ownedHelpers?: OwnedHelperScope): Promise<Workspace> {
   const n = checkName(name);
   const id = `ws_${nanoid(12)}`;
-  await new KnowledgeStore(repoPath(dataDir, id)).init();
+  await new KnowledgeStore(repoPath(dataDir, id), ownedHelpers).init();
   const rows = await db.query<Row>(`insert into workspaces(id, name) values ($1, $2) returning ${COLS}`, [id, n]);
   return toWorkspace(rows[0]!);
 }

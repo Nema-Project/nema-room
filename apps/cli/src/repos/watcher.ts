@@ -113,14 +113,14 @@ export class RepoWatcher {
 
   private async tickOne(repo: WatchedRepo): Promise<void> {
     if (this.stopped || !this.isWatched(repo)) return;
-    const fetched = await fetchMain(repo.path, repo.mainBranch);
+    const fetched = await fetchMain(repo.path, repo.mainBranch, this.graphify?.ownedHelpers);
     if (this.stopped || !this.isWatched(repo)) return;
     const at = new Date().toISOString();
     if (fetched.ok) this.onFetch({ repoId: repo.repoId, ok: true, at });
     else this.onFetch({ repoId: repo.repoId, ok: false, error: fetched.error, at });
 
-    const ref = await mainRef(repo.path, repo.mainBranch);
-    const sha = await revParse(repo.path, ref);
+    const ref = await mainRef(repo.path, repo.mainBranch, this.graphify?.ownedHelpers);
+    const sha = await revParse(repo.path, ref, this.graphify?.ownedHelpers);
     const root = snapshotDir(this.nemaHome, repo.workspaceId, repo.repoId);
     try {
       // Every tick brings the index to main, so a failed update or build is retried next tick.

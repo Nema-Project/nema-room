@@ -8,6 +8,7 @@ import { parseReposSync, RepoWatcher } from "../repos/watcher.js";
 import { connectDaemon } from "./connection.js";
 import { RpcRouter } from "./rpc.js";
 import { Runner } from "./runner.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 export type RunnerSetup = {
   nemaHome: string;
@@ -16,12 +17,13 @@ export type RunnerSetup = {
   getConfig?: () => NemaConfig;
   cliEntry?: string;
   execPath?: string;
+  ownedHelpers?: OwnedHelperScope;
 };
 
 /** The daemon's runner. Codex stays on the direct adapter; Claude Code is selected only when config.adapter is claude-code. */
 export function createRunner(o: RunnerSetup): Runner {
   const direct = new CodexDirectAdapter({ nemaHome: o.nemaHome, version: o.version, codexHome: o.userCodexHome });
-  const claude = new ClaudeCodeAdapter({ nemaHome: o.nemaHome, cliEntry: o.cliEntry ?? process.argv[1] ?? "", execPath: o.execPath ?? process.execPath });
+  const claude = new ClaudeCodeAdapter({ nemaHome: o.nemaHome, cliEntry: o.cliEntry ?? process.argv[1] ?? "", execPath: o.execPath ?? process.execPath, ownedHelpers: o.ownedHelpers });
   return new Runner([direct, claude], o.getConfig ?? (() => loadConfig(o.nemaHome)));
 }
 
@@ -38,18 +40,20 @@ export type DaemonStart = {
   graphify?: GraphifyOpts;
   /** For tests: production starts `github-mcp-server` from PATH on the first GitHub call. */
   github?: GithubMcp;
+  ownedHelpers?: OwnedHelperScope;
 };
 
 /** Connects the daemon and answers repo RPC plus `plugin.call` and `plugins.status`. */
 export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: RepoWatcher } {
   const runner = createRunner(o);
   const rpc = new RpcRouter();
-  const github = o.github ?? new GithubMcp({ nemaHome: o.nemaHome });
-  registerRepoHandlers(rpc, { nemaHome: o.nemaHome, graphify: o.graphify, github });
+  const graphify = { ...o.graphify, ownedHelpers: o.ownedHelpers };
+  const github = o.github ?? new GithubMcp({ nemaHome: o.nemaHome, ownedHelpers: o.ownedHelpers });
+  registerRepoHandlers(rpc, { nemaHome: o.nemaHome, graphify, github, ownedHelpers: o.ownedHelpers });
   let sendMessage: ((message: unknown) => boolean) | null = null;
   const watcher = new RepoWatcher({
     nemaHome: o.nemaHome,
-    graphify: o.graphify,
+    graphify,
     onMoved: (move) => {
       if (!sendMessage) return false;
       return sendMessage({ type: "repo.moved", repoId: move.repoId, mainRef: move.mainRef, from: move.from, to: move.to });
