@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -70,4 +70,39 @@ test("an installing record is not listed as installed", () => {
   const store = openExtensionStore(dir);
   store.putManaged(managed("pending", "installing"));
   expect(store.list().find((row) => row.id === "pending")?.installState).toBe("installing");
+});
+
+test("a failed install leaves the previous installed record and files", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  store.putManaged(managed("skill"));
+  writeFileSync(join(dir, "extensions", "skill", "keep.txt"), "old");
+  expect(() => store.installManaged(managed("skill"), join(dir, "missing-stage"))).toThrow(/staged/);
+  expect(store.list().find((row) => row.id === "skill")?.installState).toBe("installed");
+  expect(readFileSync(join(dir, "extensions", "skill", "keep.txt"), "utf8")).toBe("old");
+});
+
+test("cancelling an install removes only that extension directory", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  store.putManaged(managed("pending", "installing"));
+  store.putManaged(managed("other"));
+  writeFileSync(join(dir, "extensions", "pending", "partial.txt"), "partial");
+  writeFileSync(join(dir, "extensions", "other", "keep.txt"), "keep");
+  store.cancelInstall("pending");
+  expect(store.list().find((row) => row.id === "pending")?.installState).toBe("absent");
+  expect(existsSync(join(dir, "extensions", "pending"))).toBe(false);
+  expect(readFileSync(join(dir, "extensions", "other", "keep.txt"), "utf8")).toBe("keep");
+});
+
+test("installManaged activates a staged directory", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const staged = mkdtempSync(join(tmpdir(), "nema-ext-staged-"));
+  mkdirSync(join(staged, "skill"));
+  writeFileSync(join(staged, "SKILL.md"), "# skill");
+  const store = openExtensionStore(dir);
+  store.installManaged(managed("skill", "installing"), staged);
+  expect(readFileSync(join(dir, "extensions", "skill", "SKILL.md"), "utf8")).toBe("# skill");
+  expect(store.list().find((row) => row.id === "skill")?.installState).toBe("installed");
+  rmSync(staged, { recursive: true, force: true });
 });

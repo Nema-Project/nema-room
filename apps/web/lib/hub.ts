@@ -1,3 +1,4 @@
+import type { ExtensionRecord } from "@nema/shared";
 import type {
   EntryListItem,
   Entry,
@@ -82,6 +83,9 @@ export const updateDiagram = (id: string, gid: string) =>
 export const eventsUrl = (id: string) => `${BASE}${w(id)}/events`;
 
 export const listPlugins = () => request<PluginCatalogItem[]>("/plugins");
+export const listExtensions = () => request<ExtensionRecord[]>("/extensions");
+/** Opens the OS folder dialog in the host daemon. `path` is null when the dialog is cancelled. */
+export const pickDirectory = () => request<{ path: string | null }>("/pick-directory", { method: "POST", body: {} });
 export const listRepos = (id: string) => request<Repo[]>(`${w(id)}/repos`);
 export const bindRepo = (id: string, body: { path: string; label: string; mainBranch?: string }) =>
   request<Repo>(`${w(id)}/repos`, { method: "POST", body });

@@ -1,60 +1,15 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { bundledExtensions, type ExtensionRecord } from "@nema/shared";
+
+export type { Availability, ExtensionKind, ExtensionRecord, InstallState, Provision, UseState } from "@nema/shared";
+export { bundledExtensions } from "@nema/shared";
 
 const ID = /^[a-z][a-z0-9-]{0,63}$/;
-
-export type ExtensionKind = "skill" | "mcp" | "plugin";
-export type Provision = "bundled" | "managed" | "external";
-export type InstallState = "absent" | "installing" | "installed" | "updating" | "removing" | "failed";
-export type UseState = "enabled" | "disabled";
-export type Availability = "ready" | "missing-dependency" | "incompatible" | "damaged";
-
-export type ExtensionRecord = {
-  id: string;
-  kind: ExtensionKind;
-  name: string;
-  summary: string;
-  source: string;
-  revision: string;
-  provision: Provision;
-  installState: InstallState;
-  useState: UseState;
-  availability: Availability;
-  externalPath: string | null;
-  error: string | null;
-};
-
-const BUNDLED_IDS = ["code", "diagram", "superpowers", "grill", "github"] as const;
-
-function bundled(id: string, name: string, availability: Availability, error: string | null): ExtensionRecord {
-  return {
-    id,
-    kind: "plugin",
-    name,
-    summary: "",
-    source: "bundled",
-    revision: "bundled",
-    provision: "bundled",
-    installState: "installed",
-    useState: "enabled",
-    availability,
-    externalPath: null,
-    error,
-  };
-}
-
-export function bundledExtensions(): ExtensionRecord[] {
-  return [
-    bundled("code", "graphify", "missing-dependency", "bundled-runtime-missing"),
-    bundled("diagram", "archify", "ready", null),
-    bundled("superpowers", "superpowers", "ready", null),
-    bundled("grill", "grill-me", "ready", null),
-    bundled("github", "GitHub", "ready", null),
-  ];
-}
+const BUNDLED_IDS = new Set(bundledExtensions().map((row) => row.id));
 
 function assertId(id: string): void {
-  if (!ID.test(id) || (BUNDLED_IDS as readonly string[]).includes(id)) throw new Error(`invalid extension id: ${id}`);
+  if (!ID.test(id) || BUNDLED_IDS.has(id)) throw new Error(`invalid extension id: ${id}`);
 }
 
 function indexPath(root: string): string {
@@ -98,7 +53,7 @@ function ownedDirectory(root: string, id: string): string {
 export function openExtensionStore(root: string) {
   return {
     list(): ExtensionRecord[] {
-      const extra = readExtra(root).filter((row) => !(BUNDLED_IDS as readonly string[]).includes(row.id));
+      const extra = readExtra(root).filter((row) => !BUNDLED_IDS.has(row.id));
       return [...bundledExtensions(), ...extra];
     },
     putManaged(record: ExtensionRecord): void {
@@ -115,7 +70,7 @@ export function openExtensionStore(root: string) {
     removeManaged(id: string): void {
       const current = readExtra(root).find((row) => row.id === id);
       if (!current) {
-        if ((BUNDLED_IDS as readonly string[]).includes(id)) throw new Error("bundled extensions cannot be removed");
+        if (BUNDLED_IDS.has(id)) throw new Error("bundled extensions cannot be removed");
         throw new Error("extension is not managed");
       }
       if (current.provision === "bundled") throw new Error("bundled extensions cannot be removed");
@@ -128,6 +83,44 @@ export function openExtensionStore(root: string) {
       const current = readExtra(root).find((row) => row.id === id);
       if (!current || current.provision !== "external") throw new Error("extension is not external");
       writeExtra(root, readExtra(root).filter((row) => row.id !== id));
+    },
+    installManaged(record: ExtensionRecord, stagedDir: string): void {
+      assertId(record.id);
+      if (record.provision !== "managed") throw new Error("only a managed extension can be installed");
+      if (!existsSync(stagedDir) || !lstatSync(stagedDir).isDirectory()) {
+        throw new Error("staged extension directory is missing");
+      }
+      const { extensions, target } = managedPath(root, record.id);
+      mkdirSync(extensions, { recursive: true });
+      const incoming = path.join(extensions, `.${record.id}.incoming`);
+      rmSync(incoming, { recursive: true, force: true });
+      try {
+        cpSync(stagedDir, incoming, { recursive: true });
+        if (existsSync(target)) {
+          // ponytail: delete-then-rename. A crash between them loses the previous bytes.
+          // Upgrade path: rename the live dir aside, rename incoming in, then delete the aside copy.
+          ownedDirectory(root, record.id);
+          rmSync(target, { recursive: true, force: true });
+        }
+        renameSync(incoming, target);
+      } catch (error) {
+        rmSync(incoming, { recursive: true, force: true });
+        throw error;
+      }
+      const rows = readExtra(root).filter((row) => row.id !== record.id);
+      rows.push({ ...record, provision: "managed", installState: "installed", error: null });
+      writeExtra(root, rows);
+    },
+    cancelInstall(id: string): void {
+      assertId(id);
+      const current = readExtra(root).find((row) => row.id === id);
+      if (!current || current.installState !== "installing") throw new Error("extension is not installing");
+      const target = ownedDirectory(root, id);
+      if (existsSync(target)) rmSync(target, { recursive: true, force: true });
+      writeExtra(
+        root,
+        readExtra(root).map((row) => (row.id === id ? { ...row, installState: "absent", error: null } : row)),
+      );
     },
   };
 }

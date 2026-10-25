@@ -1,20 +1,16 @@
 # 安全策略
 
-English: report vulnerabilities privately at the link below. Do not open a public issue, and do not include tokens, `.env`, `auth.json`, or daemon tokens. This page continues in Chinese.
+English: this repository is private, so GitHub's advisory form does not exist and returns 404. Open a [security issue](https://github.com/Nema-Project/nema-room/issues/new?template=security.yml). Describe the impact. Do not include tokens, `.env`, `auth.json`, daemon tokens, or exploit steps. This page continues in Chinese.
 
-日本語: 脆弱性は下のリンクから非公開で報告してください。公開 issue にトークンや `.env` を貼らないでください。本文は中国語です。
+日本語: このリポジトリは非公開のため、GitHub の脆弱性報告フォームは 404 になります。[セキュリティ issue](https://github.com/Nema-Project/nema-room/issues/new?template=security.yml) を開いてください。影響だけを書き、トークン、`.env`、悪用手順は貼らないでください。本文は中国語です。
 
 ## 如何报告
 
-请使用 GitHub 的私密漏洞报告：
+本仓库是私有的。GitHub 的私密漏洞报告只对公开仓库提供，`/security/advisories/new` 会返回 404。私有仓库从 2024 年 5 月起也不能创建安全通告。
 
-<https://github.com/Nema-Project/nema-room/security/advisories/new>
+请使用 [安全 issue 模板](https://github.com/Nema-Project/nema-room/issues/new?template=security.yml)。写上 commit SHA、操作系统和影响。不要写利用步骤，不要粘贴令牌、`.env`、`auth.json` 或 daemon token。维护者需要样本时会再问。
 
-报告里写上 commit SHA、操作系统、影响和复现步骤。复现能去掉密钥时就去掉。维护者需要样本时会再问。
-
-若该页面无法打开，开一个公开 issue，标题写「安全问题」，只描述影响。利用步骤和密钥留到维护者改为私下沟通之后。
-
-本项目没有单独的安全邮箱。请不要把密钥发到 issue、pull request 或提交记录里。
+本项目没有单独的安全邮箱。密钥也不要写入 pull request 或提交记录。
 
 ## 报告范围
 

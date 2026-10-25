@@ -7,6 +7,7 @@ import { GithubGh, type GithubReader } from "../github/gh.js";
 import { changedFiles, exportSnapshot, fetchMain, inspectRepo, mainRef, missingAtRef, readFileAtRef, revParse } from "./git.js";
 import { graphifyInstallStatus, queryIndex, type GraphifyOpts } from "./graphify.js";
 import { readIndexedSha, syncIndex, withIndexLock } from "./indexState.js";
+import { pickDirectory as openDirectoryDialog } from "./pickDirectory.js";
 import { checkReport, uncoveredCommits } from "./reportCheck.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
@@ -209,8 +210,10 @@ async function runPluginCall(nemaHome: string, call: PluginCall, github: GithubR
  * `graphify` is for tests: production passes nothing and runs `graphify` from PATH.
  * `github` is the daemon's GitHub provider; the authenticated `gh` CLI is the production default.
  */
-export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string; graphify?: GraphifyOpts; github?: GithubReader; ownedHelpers?: OwnedHelperScope }): void {
+export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string; graphify?: GraphifyOpts; github?: GithubReader; ownedHelpers?: OwnedHelperScope; pickDirectory?: () => Promise<string | null> }): void {
   const github = opts.github ?? new GithubGh({ ownedHelpers: opts.ownedHelpers });
+  router.register("dialog.pickDirectory", async () => ({ path: await (opts.pickDirectory ?? openDirectoryDialog)() }));
+
   router.register("repo.inspect", async (params) => {
     if (!params || typeof params !== "object" || typeof (params as { path?: unknown }).path !== "string") {
       throw new Error("invalid repo params");

@@ -5,7 +5,12 @@
 ### Added
 
 - A CLI launcher in the desktop payload (`Nema CLI.cmd`, `Nema CLI.command`, or `nema-cli`) that runs the bundled CLI, so `report install` works from a packaged app.
-- GitHub issue templates, a pull request template, and contributing, security, and conduct guides. Vulnerability reports go through GitHub private advisories; public issues ask for the OS, Node/Docker versions, how Nema Room is run, and redacted errors.
+- Workspace settings chooses a local Git repository with a folder picker. The dialog opens in the host daemon, which can see the repository path. Cancelling the dialog leaves the path empty.
+- Night mode toggles from the bottom of the sidebar, next to the language switch, and is remembered in the browser.
+
+- The plugins page reads extension records and shows where an item came from, whether it is installed, and whether it is in use beside the name. A ready install or enabled use is green. A failed install, an external source, or an installed item that is not ready is red. A missing packaged Graphify runtime says it can be repaired from the page.
+
+- GitHub issue templates, a pull request template, and contributing, security, and conduct guides. Issues ask for the OS, Node/Docker versions, how Nema Room is run, and redacted errors. Security reports use a security issue template.
 
 - A Chinese, English, and Japanese terminal setup wizard (`node scripts/setup.mjs`), read-only environment checks, and a portable `npm run up` entry point.
 - Windows private credential ACL validation, shell-free npm command-shim handling, native browser launching, process-tree cleanup, and encoded reporting hooks. Platform checks now run on Windows, macOS, and Linux in CI; the full application suite runs on Linux.
@@ -60,6 +65,7 @@
 
 ### Fixed
 
+- Security reports no longer link to GitHub's private advisory form. That page returns 404 while the repository is private; use the security issue template instead.
 - The desktop window can load its titlebar mark and favicon. The local gateway now forwards only `/nema-room-mark.svg` and `/icon.png` (including the favicon cache query) to a signed-in session.
 - A workspace with enough messages no longer stretches the three-column layout past the window. The message list scrolls, and the composer and sidebar footer stay on screen.
 - A main-branch move is recorded only after `repo.moved` is sent. A closed socket, a failed send, or a throw leaves the previous sha so the next tick retries the index update and the message. A tick that is already running is not started again.

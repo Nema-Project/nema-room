@@ -57,6 +57,19 @@ describe("Sidebar", () => {
     expect(onOpenModelSettings).toHaveBeenCalledTimes(1);
   });
 
+  it("toggles night mode from the sidebar footer", async () => {
+    setup();
+    const toggle = screen.getByRole("button", { name: "Night mode" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    await userEvent.click(toggle);
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("nema.theme")).toBe("dark");
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    await userEvent.click(toggle);
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(localStorage.getItem("nema.theme")).toBe("light");
+  });
+
   it("switches the UI language", async () => {
     setup({ connected: false });
     await userEvent.click(screen.getByRole("button", { name: "日本語" }));

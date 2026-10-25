@@ -4,8 +4,19 @@ const { createSecureWindowOptions, isExternalHttps, navigationDecision, validate
 const { registerWindowControls } = require('./window-controls.cjs');
 const path = require('node:path');
 
+function initialWindowSize(screen) {
+  const width = 1180;
+  const height = 820;
+  const area = screen?.getPrimaryDisplay?.()?.workArea;
+  if (!area || !(area.width > 0) || !(area.height > 0)) return { width, height };
+  return {
+    width: Math.min(area.width - 48, Math.max(width, Math.round(area.width * 0.92))),
+    height: Math.min(area.height - 48, Math.max(height, Math.round(area.height * 0.92))),
+  };
+}
+
 function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, platform = process.platform }) {
-  const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, session, ipcMain } = electron;
+  const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, session, ipcMain, screen } = electron;
   const brandAsset = (name) => path.join(__dirname, 'assets', name);
   let runtimeApi;
   let currentInstance;
@@ -66,7 +77,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     const opening = (async () => {
       const instance = await ensureCore();
       validateRuntimeLaunchUrl(instance.launchUrl, instance.origin);
-      const window = new BrowserWindow({ ...createSecureWindowOptions(instance.origin), icon: brandAsset('icon.png') });
+      const window = new BrowserWindow({ ...createSecureWindowOptions(instance.origin), ...initialWindowSize(screen), icon: brandAsset('icon.png') });
       if (platform !== 'darwin') window.setMenu(null);
       mainWindow = window;
       registerWindowControls({ ipcMain, window, runtimeOrigin: instance.origin });
@@ -162,4 +173,4 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
   return { createMainWindow, install, openBrowserMode, quitNema };
 }
 
-module.exports = { createDesktopLifecycle };
+module.exports = { createDesktopLifecycle, initialWindowSize };

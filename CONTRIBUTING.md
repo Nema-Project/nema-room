@@ -76,4 +76,4 @@ npm run build -w apps/web
 
 缺陷、建议和使用问题请用 [issue 模板](https://github.com/Nema-Project/nema-room/issues/new/choose)。模板会要求系统、Node/Docker 版本、运行方式和脱敏后的错误信息。
 
-凭证、路径越界或本地接口方面的问题按 [SECURITY.md](SECURITY.md) 私下报告，不要开公开 issue。
+凭证、路径越界或本地接口方面的问题按 [SECURITY.md](SECURITY.md) 使用安全 issue 模板。只写影响，不要附密钥或利用步骤。
