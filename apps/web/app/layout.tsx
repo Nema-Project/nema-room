@@ -17,6 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // lang is corrected on the client by I18nProvider to follow the UI locale.
     <html lang="en" className={`${inter.variable} ${mono.variable}`} suppressHydrationWarning>
       <body>
+        <script dangerouslySetInnerHTML={{ __html: `try{if(localStorage.getItem("nema.theme")==="dark")document.documentElement.dataset.theme="dark"}catch(e){}` }} />
         <I18nProvider>
           <DesktopTitlebar />
           {children}

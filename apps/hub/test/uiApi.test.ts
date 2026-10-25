@@ -681,4 +681,43 @@ describe("diagram routes", () => {
     expect((await dreq("GET", `/api/workspaces/${other}/diagrams/${g.id}.html`)).status).toBe(200);
     expect(renders).toHaveLength(1);
   });
+
+  test("POST /pick-directory returns the host daemon's folder", async () => {
+    const picker = createApp({
+      db,
+      dataDir,
+      nemaHome,
+      events,
+      daemonStatus: () => true,
+      daemon: { call: async (method) => (method === "dialog.pickDirectory" ? { path: "C:\\src\\app" } : Promise.reject(new DaemonRpcError("daemon 未连接"))) },
+      webOrigin: "http://localhost:3000",
+    });
+    const chosen = await picker.request(`${HUB}/api/pick-directory`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    expect(chosen.status).toBe(200);
+    expect(await chosen.json()).toEqual({ path: "C:\\src\\app" });
+
+    const cancel = createApp({
+      db,
+      dataDir,
+      nemaHome,
+      events,
+      daemonStatus: () => true,
+      daemon: { call: async () => ({ path: null }) },
+      webOrigin: "http://localhost:3000",
+    });
+    expect(await (await cancel.request(`${HUB}/api/pick-directory`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json()).toEqual({ path: null });
+
+    const offline = createApp({
+      db,
+      dataDir,
+      nemaHome,
+      events,
+      daemonStatus: () => false,
+      daemon: { call: async () => Promise.reject(new DaemonRpcError("daemon 未连接")) },
+      webOrigin: "http://localhost:3000",
+    });
+    const down = await offline.request(`${HUB}/api/pick-directory`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    expect(down.status).toBe(503);
+    expect((await down.json()).error).toBe("daemon 未连接");
+  });
 });

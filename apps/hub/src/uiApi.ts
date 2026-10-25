@@ -92,6 +92,14 @@ async function body<T>(c: Context, schema: z.ZodType<T>): Promise<T> {
   return p.data;
 }
 
+function directoryChoice(result: unknown): string | null {
+  if (!result || typeof result !== "object" || !("path" in result)) throw new Error("invalid pick");
+  const picked = (result as { path: unknown }).path;
+  if (picked === null) return null;
+  if (typeof picked !== "string" || !picked.trim() || picked.length > 4096 || picked.includes("\0") || /[\r\n]/.test(picked)) throw new Error("invalid pick");
+  return picked;
+}
+
 export function uiRoutes(deps: UiDeps): Hono {
   const { db, dataDir, events } = deps;
   const app = new Hono();
@@ -110,6 +118,17 @@ export function uiRoutes(deps: UiDeps): Hono {
   const store = (ws: string) => new KnowledgeStore(repoPath(dataDir, ws), deps.ownedHelpers);
 
   app.get("/daemon/status", (c) => c.json({ connected: deps.daemonStatus() }));
+
+  // The dialog runs in the host daemon: a hub inside Docker cannot see repository directories.
+  app.post("/pick-directory", async (c) => {
+    try {
+      const result = await deps.daemon.call("dialog.pickDirectory", {}, 10 * 60 * 1000);
+      return c.json({ path: directoryChoice(result) });
+    } catch (error) {
+      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      throw error;
+    }
+  });
 
   app.get("/plugins", async (c) => {
     try {

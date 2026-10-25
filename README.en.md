@@ -17,7 +17,7 @@ Nema Room is a requirements discussion room that runs locally. Share ideas, meet
 - **Code context**: bind local repositories, read main-branch snapshots, search code, and generate diagrams with staleness indicators.
 - **Development handoff**: clarify questions, generate a work package, and approve it for Codex or Claude Code.
 - **Implementation tracking**: check commits, main-branch inclusion, and file changes, with manual confirmation available.
-- **Three UI languages**: English, Chinese, and Japanese, plus knowledge-language settings, plugin controls, and workspace archiving.
+- **Three UI languages**: English, Chinese, and Japanese, plus knowledge-language settings, plugin controls, workspace archiving, and a night-mode switch at the bottom of the sidebar.
 
 ## First release scope and requirements
 
@@ -115,7 +115,7 @@ Nema does not silently switch runtimes after authentication or model failures. `
 ## From discussion to delivery
 
 1. **Discuss**: send notes, then review, confirm, or correct the agent's interpretation in the knowledge panel.
-2. **Connect code**: install graphify with `uv tool install graphifyy` and bind a local Git repository in settings. The daemon checks the main branch every five minutes and reads committed snapshots, excluding uncommitted changes.
+2. **Connect code**: install graphify with `uv tool install graphifyy` and bind a local Git repository from settings with the folder picker. The dialog opens in the host daemon. The daemon checks the main branch every five minutes and reads committed snapshots, excluding uncommitted changes.
 3. **Generate a work package**: select active requirements and enable `superpowers` to generate a spec and plan. The `grill-me` plugin can create a blocking question when information is missing; generation retries after resolution.
 4. **Approve and hand off**: review and approve manually, then let your coding agent retrieve it. Editing or regenerating revokes approval.
 5. **Report and verify**: track `reported`, `verified`, and `mismatch`. **Verified means Git evidence passed or the user confirmed it, not that tests passed, the feature is correct, or acceptance criteria were met.**

@@ -4,6 +4,9 @@
 
 ### Added
 
+- Workspace settings chooses a local Git repository with a folder picker. The dialog opens in the host daemon, which can see the repository path. Cancelling the dialog leaves the path empty.
+- Night mode toggles from the bottom of the sidebar, next to the language switch, and is remembered in the browser.
+
 - The plugins page reads extension records and shows where an item came from, whether it is installed, and whether it is in use as separate lines. A missing packaged Graphify runtime says it can be repaired from the page.
 
 - GitHub issue templates, a pull request template, and contributing, security, and conduct guides. Vulnerability reports go through GitHub private advisories; public issues ask for the OS, Node/Docker versions, how Nema Room is run, and redacted errors.

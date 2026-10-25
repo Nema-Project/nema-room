@@ -1,11 +1,26 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { PluginsPage } from "@/components/PluginsPage";
 import { LOCALES, useLocale, useT, type Locale } from "@/lib/i18n";
 import type { WorkspaceView } from "@/lib/types";
 
 const LOCALE_LABELS: Record<Locale, string> = { en: "EN", ja: "日本語", zh: "中文" };
+const THEME_KEY = "nema.theme";
+const themeListeners = new Set<() => void>();
+
+function subscribeTheme(listener: () => void) {
+  themeListeners.add(listener);
+  return () => themeListeners.delete(listener);
+}
+
+function themeSnapshot() {
+  return document.documentElement.dataset.theme === "dark";
+}
+
+function publishTheme() {
+  for (const listener of themeListeners) listener();
+}
 
 export type SidebarProps = {
   workspaces: WorkspaceView[];
@@ -21,6 +36,7 @@ export type SidebarProps = {
 export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate, onArchive, onDelete, onOpenModelSettings }: SidebarProps) {
   const t = useT();
   const [locale, setLocale] = useLocale();
+  const dark = useSyncExternalStore(subscribeTheme, themeSnapshot, () => false);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +60,13 @@ export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate,
     setError(null);
     restoreCreateFocus.current = true;
     setAdding(false);
+  }
+
+  function toggleTheme() {
+    const next = dark ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem(THEME_KEY, next);
+    publishTheme();
   }
 
   useEffect(() => {
@@ -230,12 +253,17 @@ export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate,
           <span className={`dot${connected ? "" : " off"}`} />
           {connected ? t("sidebar.agentOnline") : t("sidebar.agentOffline")}
         </div>
-        <div className="lang" role="group" aria-label={t("sidebar.language")}>
-          {LOCALES.map((l) => (
-            <button key={l} type="button" className={l === locale ? "on" : undefined} aria-pressed={l === locale} onClick={() => setLocale(l)}>
-              {LOCALE_LABELS[l]}
-            </button>
-          ))}
+        <div className="foot-switch">
+          <button type="button" className="theme-toggle" aria-pressed={dark} onClick={toggleTheme}>
+            {t("sidebar.theme")}
+          </button>
+          <div className="lang" role="group" aria-label={t("sidebar.language")}>
+            {LOCALES.map((l) => (
+              <button key={l} type="button" className={l === locale ? "on" : undefined} aria-pressed={l === locale} onClick={() => setLocale(l)}>
+                {LOCALE_LABELS[l]}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       {pluginsOpen && <PluginsPage onClose={() => setPluginsOpen(false)} />}

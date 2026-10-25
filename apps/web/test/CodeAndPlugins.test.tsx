@@ -9,6 +9,7 @@ import type { PluginCatalogItem, Repo, WorkspacePlugin } from "@/lib/types";
 
 vi.mock("@/lib/hub", () => ({
   listRepos: vi.fn(),
+  pickDirectory: vi.fn(),
   bindRepo: vi.fn(),
   updateRepo: vi.fn(),
   unbindRepo: vi.fn(),
@@ -80,6 +81,7 @@ const catalog: PluginCatalogItem[] = [
 beforeEach(() => {
   localStorage.clear();
   vi.mocked(hub.listRepos).mockReset();
+  vi.mocked(hub.pickDirectory).mockReset();
   vi.mocked(hub.bindRepo).mockReset();
   vi.mocked(hub.updateRepo).mockReset();
   vi.mocked(hub.unbindRepo).mockReset();
@@ -106,7 +108,8 @@ function mount() {
 }
 
 async function fill(path: string, label: string, mainBranch = "") {
-  await userEvent.type(screen.getByRole("textbox", { name: "Local path" }), path);
+  vi.mocked(hub.pickDirectory).mockResolvedValueOnce({ path });
+  await userEvent.click(screen.getByRole("button", { name: "Choose folder" }));
   await userEvent.type(screen.getByRole("textbox", { name: "Label" }), label);
   if (mainBranch) await userEvent.type(screen.getByRole("textbox", { name: "Main branch" }), mainBranch);
 }
@@ -124,12 +127,12 @@ describe("CodeAndPlugins", () => {
     expect(hub.bindRepo).toHaveBeenCalledWith("w1", { path: "/tmp/app", label: "app", mainBranch: "develop" });
     const path = await screen.findByText("/tmp/app");
     expect(path.classList.contains("repo-path")).toBe(true);
-    expect((screen.getByRole("textbox", { name: "Local path" }) as HTMLInputElement).value).toBe("");
+    expect(screen.getByText("None selected")).toBeTruthy();
 
     await fill("/tmp/dup", "dup");
     await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
     expect((await screen.findByRole("alert")).textContent).toBe("该仓库已绑定到 workspace Alpha");
-    expect((screen.getByRole("textbox", { name: "Local path" }) as HTMLInputElement).value).toBe("/tmp/dup");
+    expect(screen.getByText("/tmp/dup")).toBeTruthy();
     expect((screen.getByRole("textbox", { name: "Label" }) as HTMLInputElement).value).toBe("dup");
     expect(hub.bindRepo).toHaveBeenLastCalledWith("w1", { path: "/tmp/dup", label: "dup" });
   });

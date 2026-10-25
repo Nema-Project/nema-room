@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { formatDay, formatTime } from "@/lib/format";
-import { bindRepo, listPlugins, listRepos, listWorkspacePlugins, unbindRepo, updateRepo, updateWorkspacePlugin } from "@/lib/hub";
+import { bindRepo, listPlugins, listRepos, listWorkspacePlugins, pickDirectory, unbindRepo, updateRepo, updateWorkspacePlugin } from "@/lib/hub";
 import { useLocale, useT, type Locale } from "@/lib/i18n";
 import type { PluginCatalogItem, Repo, WorkspacePlugin } from "@/lib/types";
 
@@ -34,6 +34,7 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
   const [label, setLabel] = useState("");
   const [mainBranch, setMainBranch] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -69,6 +70,21 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
       cancel = true;
     };
   }, [workspaceId]);
+
+  async function browse() {
+    setPicking(true);
+    try {
+      const chosen = await pickDirectory();
+      if (chosen.path) {
+        setPath(chosen.path);
+        setFormError(null);
+      }
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPicking(false);
+    }
+  }
 
   async function add(e: FormEvent) {
     e.preventDefault();
@@ -129,10 +145,13 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
         <RepoRow key={repo.id} repo={repo} locale={locale} onSave={saveRepo} onRemove={removeRepo} />
       ))}
       <form onSubmit={(e) => void add(e)}>
-        <label className="field">
+        <div className="field">
           <span className="label">{t("code.path")}</span>
-          <input type="text" value={path} onChange={(e) => setPath(e.target.value)} />
-        </label>
+          <div className="path-pick">
+            <button type="button" onClick={() => void browse()} disabled={picking}>{t("code.browse")}</button>
+            <span className="repo-path">{path || t("code.pathEmpty")}</span>
+          </div>
+        </div>
         <label className="field">
           <span className="label">{t("code.label")}</span>
           <input type="text" value={label} onChange={(e) => setLabel(e.target.value)} />

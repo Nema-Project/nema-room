@@ -9,6 +9,7 @@ import type { WorkspaceView } from "@/lib/types";
 vi.mock("@/lib/hub", () => ({
   updateWorkspace: vi.fn(),
   listRepos: vi.fn(),
+  pickDirectory: vi.fn(),
   bindRepo: vi.fn(),
   updateRepo: vi.fn(),
   unbindRepo: vi.fn(),
