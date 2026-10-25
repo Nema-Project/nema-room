@@ -1,0 +1,29 @@
+name: 使用问题
+description: 安装、模型配置或命令用法上需要帮助
+body:
+  - type: markdown
+    attributes:
+      value: |
+        中文、English、日本語都可以。先看 [README](https://github.com/Nema-Project/nema-room/blob/main/README.md) 的安装、模型运行方式和已知限制。命令细节见 [技术参考](https://github.com/Nema-Project/nema-room/blob/main/docs/reference.zh-CN.md)。
+
+        漏洞请改走 [私密报告](https://github.com/Nema-Project/nema-room/security/advisories/new)。不要在这里粘贴密钥。
+  - type: textarea
+    id: question
+    attributes:
+      label: 问题
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: 已经试过的步骤和结果
+      description: 写上系统、Node.js 版本、运行方式（向导、Compose、开发模式或桌面），以及脱敏后的错误原文。
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 确认
+      options:
+        - label: 我已去掉令牌、`.env`、`auth.json` 和 daemon token
+          required: true

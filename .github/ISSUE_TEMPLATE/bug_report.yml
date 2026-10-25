@@ -1,0 +1,95 @@
+name: 缺陷报告
+description: 安装、运行或界面行为与文档不符
+body:
+  - type: markdown
+    attributes:
+      value: |
+        中文、English、日本語都可以。
+
+        不要粘贴令牌、`.env`、`auth.json`、daemon token，或 `~/.nema` 里的凭证文件。日志请先去掉密钥和本机用户名。源码仓库不是应用数据的备份。
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node.js 版本
+      description: 运行 `node -v`。需要 Node.js 22 或更高。
+      placeholder: v22.x.x
+    validations:
+      required: true
+  - type: input
+    id: docker
+    attributes:
+      label: Docker 与 Compose 版本
+      description: 用了容器时填写 `docker --version` 和 `docker compose version`。纯桌面或未使用 Docker 可留空。
+      placeholder: Docker 27.x / Compose v2.x
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: 运行方式
+      options:
+        - 安装向导（node scripts/setup.mjs）
+        - Compose（docker compose 或 npm run up）
+        - 开发模式（npm run db:up 与 npm run dev，另开 daemon）
+        - 桌面应用
+        - 不确定
+    validations:
+      required: true
+  - type: dropdown
+    id: model
+    attributes:
+      label: 模型运行方式
+      description: 只选方式，不要填写密钥或账号。
+      options:
+        - Sign in with ChatGPT（siwc）
+        - BYOK
+        - Codex 兼容登录（compat）
+        - Claude Code
+        - 与模型无关
+        - 未配置
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 执行 …
+        2. 打开 localhost:3000 …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 贴出脱敏后的错误原文。`auth probe` 会向模型服务发送一次请求。
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 补充日志
+      description: 可附 `nema doctor` 的输出，或 `npm run logs` 里与本次相关的几行。去掉密钥。
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 确认
+      options:
+        - label: 我已去掉令牌、`.env`、`auth.json`、daemon token 和本机用户名
+          required: true
+        - label: 我看过 README 里的已知限制，这个问题与那些说明不同
+          required: true
