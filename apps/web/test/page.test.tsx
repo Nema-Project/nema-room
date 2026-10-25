@@ -1,6 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Home from "@/app/page";
+import { ThreadWindowsProvider } from "@/components/ThreadWindowsProvider";
 import { I18nProvider } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
 import type { WorkspaceView } from "@/lib/types";
@@ -48,7 +49,7 @@ afterEach(() => {
 const mount = async () => {
   render(
     <I18nProvider>
-      <Home />
+      <ThreadWindowsProvider><Home /></ThreadWindowsProvider>
     </I18nProvider>,
   );
   await act(async () => {});

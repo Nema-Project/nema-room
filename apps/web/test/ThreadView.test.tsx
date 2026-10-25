@@ -102,5 +102,15 @@ describe("ThreadView", () => {
     expect(screen.queryByText("Foreign reply")).toBeNull();
     expect(hub.markThreadRead).not.toHaveBeenCalledWith("w1", "anchor", 99);
   });
+  it("scrolls each newly selected target in the same mounted thread window", async () => {
+    const scroll = vi.fn(); Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scroll });
+    vi.mocked(hub.getThreadMessages).mockResolvedValue({ thread, anchor: msg("anchor", 2, "Pinned question"), messages: [msg("target-a", 3, "Target A"), msg("target-b", 4, "Target B")] });
+    const view = render(<I18nProvider><ThreadView workspaceId="w1" threadId="anchor" focusMessageId="target-a" /></I18nProvider>);
+    await screen.findByText("Target A");
+    await vi.waitFor(() => expect(scroll).toHaveBeenCalled());
+    scroll.mockClear();
+    view.rerender(<I18nProvider><ThreadView workspaceId="w1" threadId="anchor" focusMessageId="target-b" /></I18nProvider>);
+    await vi.waitFor(() => expect(scroll).toHaveBeenCalled());
+  });
   it("has no /thread command in its composer", async () => { mount(); const box = await screen.findByRole("textbox"); await userEvent.type(box, "/thread"); expect(screen.queryByRole("option", { name: /thread/ })).toBeNull(); });
 });

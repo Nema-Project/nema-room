@@ -1,4 +1,4 @@
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThreadWindows, type ThreadWindowsHandle } from "@/components/ThreadWindows";
@@ -38,6 +38,17 @@ describe("ThreadWindows", () => {
     expect(hub.markThreadRead).not.toHaveBeenCalled();
     act(() => ref.current!.focus("w1", "t1"));
     await vi.waitFor(() => expect(hub.markThreadRead).toHaveBeenCalledWith("w1", "t1", 4));
+  });
+  it("stops acknowledging when focus moves outside all floating windows", async () => {
+    vi.mocked(hub.getThreadMessages).mockImplementation(async (workspaceId, id) => ({ thread: thread(workspaceId, id), anchor: message(workspaceId, id, id, 2), messages: [message(workspaceId, id, `${id}-reply`, 3)] }));
+    const ref = mount(); act(() => ref.current!.open("w1", "t1"));
+    await vi.waitFor(() => expect(hub.markThreadRead).toHaveBeenCalledWith("w1", "t1", 3));
+    vi.mocked(hub.markThreadRead).mockClear();
+    fireEvent.pointerDown(document.body);
+    FakeEventSource.forWorkspace("w1")!.send({ type: "message.created", message: message("w1", "t1", "outside-focus", 4) } satisfies HubEvent);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(hub.markThreadRead).not.toHaveBeenCalledWith("w1", "t1", 4);
+    expect(document.querySelector('[data-thread-id="t1"]')).toBeTruthy();
   });
   it("delivers rapid messages to inactive windows and opens subscriptions per workspace", async () => {
     vi.mocked(hub.getThreadMessages).mockImplementation(async (workspaceId, id) => ({ thread: thread(workspaceId, id), anchor: message(workspaceId, id, id, 2), messages: [message(workspaceId, id, `${id}-reply`, 3)] }));

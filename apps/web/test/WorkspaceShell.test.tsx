@@ -1,6 +1,6 @@
 import { act, createEvent, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { forwardRef, useImperativeHandle } from "react";
+import { forwardRef } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceShell } from "@/components/WorkspaceShell";
 import * as hub from "@/lib/hub";
@@ -9,7 +9,7 @@ import type { HubEvent } from "@/lib/types";
 
 const hubHandlers: { onEvent?: (e: HubEvent) => void; onResync?: () => void } = {};
 const scroll = vi.fn();
-const { replace, HubError, threadOpen } = vi.hoisted(() => {
+const { replace, HubError, threadOpen, threadFocus, registerMainMessageHandler } = vi.hoisted(() => {
   class HubError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -17,7 +17,7 @@ const { replace, HubError, threadOpen } = vi.hoisted(() => {
       this.status = status;
     }
   }
-  return { replace: vi.fn(), HubError, threadOpen: vi.fn() };
+  return { replace: vi.fn(), HubError, threadOpen: vi.fn(), threadFocus: vi.fn(), registerMainMessageHandler: vi.fn(() => () => {}) };
 });
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace }) }));
@@ -36,13 +36,7 @@ vi.mock("@/lib/useHubEvents", () => ({
     hubHandlers.onResync = onResync;
   },
 }));
-vi.mock("@/components/ThreadWindows", () => ({
-  ThreadWindows: forwardRef(function ThreadWindows(_p: unknown, ref: React.Ref<unknown>) {
-    const handle = { open: threadOpen, focus: vi.fn(), handleEvent: vi.fn() };
-    useImperativeHandle(ref, () => handle);
-    return null;
-  }),
-}));
+vi.mock("@/components/ThreadWindowsProvider", () => ({ useThreadWindows: () => ({ open: threadOpen, focus: threadFocus, registerMainMessageHandler }) }));
 vi.mock("@/components/Chat", () => ({
   Chat: forwardRef(function Chat(_p: unknown, ref: React.Ref<unknown>) {
     if (typeof ref === "function") ref({ handleEvent: vi.fn(), resync: vi.fn(), scrollToMessage: scroll });
@@ -183,6 +177,14 @@ describe("WorkspaceShell knowledge wiring", () => {
     vi.mocked(hub.getMessage).mockResolvedValue({ id: "m_1", workspaceId: "w1", role: "user", content: "source", meta: null, taskId: null, createdAt: "x", editedAt: null, threadId: "t_1", seq: 9 } as never);
     await mount(); await userEvent.click(screen.getByText("open R-1")); await userEvent.click(screen.getByText("jump"));
     await vi.waitFor(() => expect(threadOpen).toHaveBeenCalledWith("w1", "t_1", "m_1"));
+  });
+  it("resolves a source even when its DOM node exists only in an inactive floating thread", async () => {
+    vi.mocked(hub.getMessage).mockResolvedValue({ id: "m-floating", workspaceId: "w1", role: "user", content: "source", meta: null, taskId: null, createdAt: "x", editedAt: null, threadId: "t-floating", seq: 23 } as never);
+    const floatingOnly = document.createElement("div"); floatingOnly.id = "msg-m-floating"; floatingOnly.className = "thread-floating"; document.body.append(floatingOnly);
+    await mount(); await userEvent.click(screen.getByText("open R-1")); await userEvent.click(screen.getByText("jump"));
+    await vi.waitFor(() => expect(threadOpen).toHaveBeenCalledWith("w1", "t-floating", "m-floating"));
+    expect(scroll).not.toHaveBeenCalledWith("m-floating");
+    floatingOnly.remove();
   });
   it("leaves an archived room for the next active workspace", async () => {
     replace.mockClear();

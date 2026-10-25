@@ -61,3 +61,31 @@
 
 - Browser smoke remains controller-owned and was not run here. The pre-fix controller browser findings are covered by added behavioral regressions; the controller should still perform the planned final smoke.
 - Vitest prints the pre-existing Vite `configLoader: 'native'` CommonJS/ESM warning; all tests pass.
+
+## Round 2 fixes (review base `ae490f6`)
+
+### Findings and regressions
+
+- **R5 — persistent floating host:** Added `ThreadWindowsProvider` under `I18nProvider` in RootLayout. It owns the mounted host and shared navigation registration, while each WorkspaceShell opens threads through the context. The provider keeps window identity, positions, subscriptions, and active state above route-page remounts; the attention path opens the requested workspace/thread before the route changes. Its main-message callback dispatches to the current shell or falls back to the real main-message URL. `ThreadWindowsProvider.test.tsx` opens A, uses B's real attention badge, changes a keyed route-page component, and verifies both windows remain, B's requested thread loads from workspace B, and B becomes active/focused.
+- **N1 — floating-only source navigation:** Removed WorkspaceShell's global DOM-ID shortcut. Source jumps always resolve the message and route thread targets with the message ID, so a matching node in an inactive floating window cannot bypass activation. `WorkspaceShell.test.tsx` places a source ID outside Chat and verifies the host opens the correct workspace/thread/message.
+- **N2 — sequential focus targets:** ThreadView schedules a scoped scroll for every changed `focusMessageId`, with pending targets retained until the message is rendered. Later SSE batches do not re-trigger a completed target scroll. `ThreadView.test.tsx` reuses one mounted thread view, selects target A then B, and verifies both scroll.
+- **Focus/read contract with persistent windows:** ThreadWindows focuses newly opened active windows and watches document pointer/focus movement. Leaving all floating windows clears the active read target while retaining all windows and positions. Tests verify opening actually focuses the wrapper and an outside pointer event prevents a background reply from being marked read.
+
+### RED / GREEN
+
+- RED: `npx vitest run --project @nema/web apps/web/test/ThreadView.test.tsx apps/web/test/WorkspaceShell.test.tsx apps/web/test/ThreadWindowsProvider.test.tsx` — before implementation, the new target-B scroll failed, both shell resolver cases failed to open the host, and the provider suite failed to resolve its not-yet-created module. This reproduced N2, N1, and R5.
+- GREEN focused: `npx vitest run --project @nema/web apps/web/test/ThreadView.test.tsx apps/web/test/ThreadWindows.test.tsx apps/web/test/WorkspaceShell.test.tsx apps/web/test/ThreadWindowsProvider.test.tsx` — 4 files / 39 tests passed, including outside-window focus/read behavior.
+- The first full suite after introducing the required root provider found two page tests still rendering Home without RootLayout's provider (2 failed, 222 passed). Updated the test harness to match the real root layout; focused page/provider run passed (2 files / 3 tests).
+
+### Verification
+
+- `npx vitest run --project @nema/web` — 26 files / 224 tests passed.
+- `npm run lint -w apps/web` — passed with no warnings.
+- `npm run typecheck` — passed.
+- `npx tsc -p apps/web/tsconfig.json --noEmit` — passed.
+- `npm run build -w apps/web` — passed; routes include `/w/[id]` and `/w/[id]/t/[tid]`.
+- `git diff --check` — passed.
+
+### Concerns
+
+- The controller owns the real Next/Chromium route smoke and will verify route-level host persistence and badge navigation after this commit. The added provider regression covers keyed page remounts and the real Sidebar attention behavior without duplicating browser smoke.

@@ -43,8 +43,8 @@ export function ThreadView({ workspaceId, threadId, active = true, floating = fa
   const messageVersions = useRef(new Map<string, number>());
   const anchorVersion = useRef(0);
   const threadVersion = useRef(0);
-  const pendingScroll = useRef<string | null>(null);
-  const initialFocusDone = useRef(false);
+  const pendingScroll = useRef<string | null>(focusMessageId ?? null);
+  const requestedFocusTarget = useRef(focusMessageId);
 
   useEffect(() => {
     confirmedSeq.current = 0;
@@ -54,7 +54,6 @@ export function ThreadView({ workspaceId, threadId, active = true, floating = fa
     messageVersions.current.clear();
     anchorVersion.current = 0;
     threadVersion.current = 0;
-    initialFocusDone.current = false;
   }, [workspaceId, threadId]);
 
   const load = useCallback(async () => {
@@ -156,10 +155,14 @@ export function ThreadView({ workspaceId, threadId, active = true, floating = fa
     return Boolean(target);
   }, []);
   useLayoutEffect(() => {
-    const targetId = pendingScroll.current ?? (!initialFocusDone.current ? focusMessageId ?? null : null);
+    if (requestedFocusTarget.current === focusMessageId) return;
+    requestedFocusTarget.current = focusMessageId;
+    pendingScroll.current = focusMessageId ?? null;
+  }, [focusMessageId]);
+  useLayoutEffect(() => {
+    const targetId = pendingScroll.current;
     if (!targetId || !scrollWithinThread(targetId)) return;
     pendingScroll.current = null;
-    if (targetId === focusMessageId) initialFocusDone.current = true;
   }, [messages, anchor, entry, focusMessageId, jumpVersion, scrollWithinThread]);
 
   async function send(content: string, quoted?: Message | null) {

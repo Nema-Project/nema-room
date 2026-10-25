@@ -7,7 +7,7 @@ import { EntryDetail } from "@/components/EntryDetail";
 import { KnowledgePanel } from "@/components/KnowledgePanel";
 import { ModelSettings } from "@/components/ModelSettings";
 import { Sidebar } from "@/components/Sidebar";
-import { ThreadWindows, type ThreadWindowsHandle } from "@/components/ThreadWindows";
+import { useThreadWindows } from "@/components/ThreadWindowsProvider";
 import { WorkspaceSettings } from "@/components/WorkspaceSettings";
 import { HubError, archiveWorkspace, createWorkspace, deleteWorkspace, getDaemonStatus, getMessage, listWorkspaces } from "@/lib/hub";
 import { mainMessageUrl, openThread } from "@/lib/threads";
@@ -75,7 +75,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   const t = useT();
   const router = useRouter();
   const chat = useRef<ChatHandle>(null);
-  const threadWindows = useRef<ThreadWindowsHandle>(null);
+  const threadWindows = useThreadWindows();
   const [workspaces, setWorkspaces] = useState<WorkspaceView[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
@@ -201,8 +201,8 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
 
   const openTargetThread = useCallback((workspaceId: string, threadId: string, messageId?: string) => {
     if (workspaceId !== current?.id) select(workspaceId);
-    openThread(workspaceId, threadId, threadWindows.current ?? { open: () => undefined }, messageId);
-  }, [current?.id, select]);
+    openThread(workspaceId, threadId, threadWindows, messageId);
+  }, [current?.id, select, threadWindows]);
   const openMainMessage = useCallback((workspaceId: string, message: import("@/lib/types").Message) => {
     if (workspaceId === current?.id) {
       chat.current?.showMessage(message);
@@ -213,12 +213,9 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
     try { localStorage.setItem(SELECTED_KEY, workspaceId); } catch { /* storage unavailable */ }
     router.push(mainMessageUrl(workspaceId, message.id));
   }, [current?.id, router]);
+  useEffect(() => threadWindows.registerMainMessageHandler(openMainMessage), [threadWindows, openMainMessage]);
   const jumpToMessage = useCallback(async (id: string) => {
     if (!current) return;
-    if (document.getElementById(`msg-${id}`)) {
-      chat.current?.scrollToMessage(id);
-      return;
-    }
     try {
       const message = await getMessage(current.id, id);
       if (message.threadId) openTargetThread(message.workspaceId, message.threadId, message.id);
@@ -484,7 +481,6 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
         </aside>
         )}
       </div>
-      <ThreadWindows ref={threadWindows} onOpenMainMessage={openMainMessage} />
     </div>
   );
 }
