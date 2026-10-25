@@ -424,6 +424,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
       hubUrl: hub.url,
       token,
       nemaHome: paths.home,
+      graphify: { bin: join(assets.root, "tools", "graphify", process.platform === "win32" ? "graphify.exe" : "graphify") },
       // Coding-agent hooks are installed once per user and sign with ~/.nema/report-token, whichever app they reach.
       reportTokenHome: join(homedir(), ".nema"),
       userCodexHome: process.env.CODEX_HOME ?? join(homedir(), ".codex"),

@@ -215,6 +215,7 @@ export function roomRoutes(deps: {
       const result = await daemon.call("plugin.call", {
         name,
         args,
+        taskId,
         repo: { workspaceId: repo.workspaceId, repoId: repo.id, path: repo.path, mainBranch: repo.mainBranch },
       }, INDEX_RPC_TIMEOUT_MS);
       const encoded = JSON.stringify(result);

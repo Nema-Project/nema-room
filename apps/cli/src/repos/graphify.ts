@@ -10,7 +10,7 @@ import { runHelperFile } from "@nema/shared/ownedHelper";
 
 const MAX_OUT = 65_536;
 const MAX_BUFFER = 256 * 1024 * 1024;
-const INSTALL_HINT = "graphify 未安装：请运行 uv tool install graphifyy";
+const INSTALL_HINT = "随包的 Graphify 运行环境缺失";
 
 export function graphifyEnv(snapshotRoot: string): NodeJS.ProcessEnv {
   return {
@@ -24,15 +24,27 @@ export function graphifyEnv(snapshotRoot: string): NodeJS.ProcessEnv {
 }
 
 /**
- * Where graphify is and how long a call may run. Production passes nothing; tests pass a fake binary.
+ * Where graphify is and how long a call may run. Tests pass a fake binary.
+ * An omitted `bin` is the packaged file, never a `PATH` lookup.
  * Read at call time, so a caller may fill the object in after handing it over.
  */
 export type GraphifyOpts = { bin?: string; timeoutMs?: number; ownedHelpers?: OwnedHelperScope };
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
+/** `tools/graphify/graphify` under the payload, or `NEMA_GRAPHIFY_BIN` when that is set. */
+export function packagedGraphifyBin(env: NodeJS.ProcessEnv = process.env): string {
+  const name = process.platform === "win32" ? "graphify.exe" : "graphify";
+  const fromEnv = env.NEMA_GRAPHIFY_BIN;
+  if (typeof fromEnv === "string" && fromEnv !== "") return fromEnv;
+  const root = typeof env.NEMA_PAYLOAD_ROOT === "string" && env.NEMA_PAYLOAD_ROOT !== ""
+    ? env.NEMA_PAYLOAD_ROOT
+    : path.dirname(process.execPath);
+  return path.join(root, "tools", "graphify", name);
+}
+
 function graphifyBin(opts?: GraphifyOpts): string {
-  return opts?.bin || "graphify";
+  return opts?.bin || packagedGraphifyBin();
 }
 
 function graphifyTimeout(opts?: GraphifyOpts): number {

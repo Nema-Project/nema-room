@@ -37,7 +37,7 @@ export type DaemonStart = {
   getConfig?: () => NemaConfig;
   cliEntry?: string;
   execPath?: string;
-  /** For tests: production passes nothing and runs `graphify` from PATH. */
+  /** For tests: production passes the packaged `tools/graphify` binary, not a PATH lookup. */
   graphify?: GraphifyOpts;
   /** Explicit provider injection for tests or callers; production uses the signed-in `gh` CLI. */
   github?: GithubReader;
@@ -52,7 +52,6 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
   const rpc = new RpcRouter();
   const graphify = { ...o.graphify, ownedHelpers: o.ownedHelpers };
   const github = o.github ?? new GithubGh({ ownedHelpers: o.ownedHelpers });
-  registerRepoHandlers(rpc, { nemaHome: o.nemaHome, graphify, github, ownedHelpers: o.ownedHelpers });
   registerExtensionHandlers(rpc, o.nemaHome);
   let sendMessage: ((message: unknown) => boolean) | null = null;
   const watcher = new RepoWatcher({
@@ -72,6 +71,13 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
       if (report.error !== undefined) message.error = report.error;
       sendMessage?.(message);
     },
+  });
+  registerRepoHandlers(rpc, {
+    nemaHome: o.nemaHome,
+    graphify,
+    github,
+    ownedHelpers: o.ownedHelpers,
+    prepareRepo: (repoId, taskId) => watcher.prepare(repoId, taskId),
   });
   rpc.register("repos.sync", async (params) => {
     watcher.setRepos(parseReposSync(params));

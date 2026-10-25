@@ -402,6 +402,33 @@ function pluginCall(id: string, repoPath: string, name: string, args: unknown, m
   };
 }
 
+test("plugin.call prepares a repository once for each task id it is given", async () => {
+  const { repo, nemaHome } = setupOrigin();
+  const prepared: string[] = [];
+  const rpc = new RpcRouter();
+  registerRepoHandlers(rpc, {
+    nemaHome,
+    graphify: fake,
+    github: missingGithub(nemaHome),
+    prepareRepo: async (repoId, taskId) => { prepared.push(`${taskId ?? ""}:${repoId}`); },
+  });
+  const call = (id: string, taskId: string) => rpc.handle({
+    type: "rpc.request",
+    id,
+    method: "plugin.call",
+    params: {
+      name: "code__read",
+      taskId,
+      args: { repo: "repo_demo", path: "README.md" },
+      repo: { workspaceId: "ws_demo", repoId: "repo_demo", path: repo, mainBranch: "main" },
+    },
+  });
+  expect((await call("a", "task-1")).ok).toBe(true);
+  expect((await call("b", "task-1")).ok).toBe(true);
+  expect((await call("c", "task-2")).ok).toBe(true);
+  expect(prepared).toEqual(["task-1:repo_demo", "task-1:repo_demo", "task-2:repo_demo"]);
+});
+
 test("plugin.call code__read returns the committed text at the main ref", async () => {
   const { repo, nemaHome } = setupOrigin();
   writeFileSync(join(repo, "notes.txt"), "alpha\nbeta\ngamma\n");
@@ -751,7 +778,7 @@ process.stdout.write("graphify 1.2.3\\n");
     type: "rpc.response",
     id: "st2",
     ok: true,
-    result: { code: { installed: false, detail: "graphify 未安装：请运行 uv tool install graphifyy" }, github: GITHUB_MISSING },
+    result: { code: { installed: false, detail: "随包的 Graphify 运行环境缺失" }, github: GITHUB_MISSING },
   });
 });
 

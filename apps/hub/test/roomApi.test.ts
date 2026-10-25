@@ -431,6 +431,7 @@ describe("room plugins", () => {
         params: {
           name: "code__search",
           args,
+          taskId: t.taskId,
           repo: { workspaceId: wsA, repoId: repo.id, path: repo.path, mainBranch: repo.mainBranch },
         },
         // A cold call may build the graphify index first, which takes minutes on a real repo.

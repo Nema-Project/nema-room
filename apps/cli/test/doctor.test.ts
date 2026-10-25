@@ -303,7 +303,7 @@ describe("graphify check", () => {
     expect(missing).toMatchObject({
       name: "graphify 可用",
       ok: true,
-      detail: "graphify 未安装：请运行 uv tool install graphifyy",
+      detail: "随包的 Graphify 运行环境缺失",
     });
 
     const bin = join(root, "graphify");

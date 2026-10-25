@@ -207,10 +207,11 @@ async function runPluginCall(nemaHome: string, call: PluginCall, github: GithubR
 }
 
 /**
- * `graphify` is for tests: production passes nothing and runs `graphify` from PATH.
+ * `graphify` is for tests: production passes the packaged binary, not a PATH lookup.
  * `github` is the daemon's GitHub provider; the authenticated `gh` CLI is the production default.
+ * `prepareRepo` refreshes that repo before a code call. The daemon passes the watcher.
  */
-export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string; graphify?: GraphifyOpts; github?: GithubReader; ownedHelpers?: OwnedHelperScope; pickDirectory?: () => Promise<string | null> }): void {
+export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string; graphify?: GraphifyOpts; github?: GithubReader; ownedHelpers?: OwnedHelperScope; pickDirectory?: () => Promise<string | null>; prepareRepo?: (repoId: string, taskId?: string) => Promise<void> }): void {
   const github = opts.github ?? new GithubGh({ ownedHelpers: opts.ownedHelpers });
   router.register("dialog.pickDirectory", async () => ({ path: await (opts.pickDirectory ?? openDirectoryDialog)() }));
 
@@ -265,7 +266,16 @@ export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string
     return { ok: true };
   });
 
-  router.register("plugin.call", async (params) => runPluginCall(opts.nemaHome, pluginParams(params), github, opts.graphify));
+  router.register("plugin.call", async (params) => {
+    const call = pluginParams(params);
+    if (opts.prepareRepo && "repo" in call) {
+      const taskId = params && typeof params === "object" && typeof (params as { taskId?: unknown }).taskId === "string"
+        ? (params as { taskId: string }).taskId
+        : "";
+      await opts.prepareRepo(call.repo.repoId, taskId === "" ? undefined : taskId);
+    }
+    return runPluginCall(opts.nemaHome, call, github, opts.graphify);
+  });
 
   router.register("plugins.status", async () => {
     const [code, gh] = await Promise.all([graphifyInstallStatus(opts.graphify), github.status()]);

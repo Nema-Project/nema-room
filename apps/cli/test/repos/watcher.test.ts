@@ -176,6 +176,40 @@ function gitTest(name: string, body: () => Promise<void>): void {
   test(name, body, 20_000);
 }
 
+gitTest("start does not fetch on a timer", async () => {
+  const { repo, nemaHome } = setupOrigin();
+  const fetches: FetchReport[] = [];
+  const watcher = new RepoWatcher({
+    nemaHome,
+    intervalMs: 15,
+    graphify: fake,
+    onFetch: (report) => fetches.push(report),
+    onMoved: () => {},
+  });
+  watcher.setRepos([watched(repo, null)]);
+  watcher.start();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  expect(fetches).toEqual([]);
+  await watcher.stop();
+});
+
+gitTest("prepare fetches once per task and a later task fetches again", async () => {
+  const { repo, bare, nemaHome } = setupOrigin();
+  const before = git(repo, ["rev-parse", "origin/main"]).trim();
+  const { watcher, fetches } = watch(nemaHome);
+  watcher.setRepos([watched(repo, before)]);
+  await watcher.prepare(REPO, "task-1");
+  expect(fetches).toHaveLength(1);
+  pushFile(bare, "later.txt", "next\n");
+  await watcher.prepare(REPO, "task-1");
+  expect(fetches).toHaveLength(1);
+  expect(git(repo, ["rev-parse", "origin/main"]).trim()).toBe(before);
+  await watcher.prepare(REPO, "task-2");
+  expect(fetches).toHaveLength(2);
+  expect(git(repo, ["rev-parse", "origin/main"]).trim()).not.toBe(before);
+  await watcher.stop();
+});
+
 gitTest("tick fetches, detects a new origin/main sha, updates the index with the changed files and reports moved", async () => {
   const { repo, bare, nemaHome } = setupOrigin();
   const before = git(repo, ["rev-parse", "origin/main"]).trim();

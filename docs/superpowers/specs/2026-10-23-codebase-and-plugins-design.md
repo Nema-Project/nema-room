@@ -1,5 +1,7 @@
 # 代码库与插件
 
+> **2026-10-25：** Graphify 不再要求用户安装，daemon 也不再每 5 分钟 fetch。见 `docs/superpowers/specs/2026-10-25-graphify-on-demand-design.md`。
+
 日期：2026-10-23。上游设计：`docs/superpowers/specs/2026-10-21-nema-room-design.md`（以下称主 spec）、`docs/superpowers/specs/2026-10-23-agent-runtimes-design.md`（以下称 runtime spec）。参考：核实报告 OS-06（graphify）、Stably AI 的 Orca（agent 钩子做法）。
 
 标注：【决定】是用户在 2026-10-23 的讨论中定下的；【Claude 的决定】是 Claude 的判断，用户可以推翻。

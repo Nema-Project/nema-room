@@ -1,7 +1,7 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { unexpectedEnvKeys } from "../windowsEnv.js";
 import { commitWithSymlink } from "./gitSymlink.js";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -193,7 +193,34 @@ test("a missing graphify binary gives the install hint", async () => {
   const snapshot = join(root, "snap");
   mkdirSync(snapshot);
   fake.bin = join(snapshot, "missing-graphify");
-  await expect(buildIndex(snapshot, fake)).rejects.toThrow("graphify 未安装：请运行 uv tool install graphifyy");
+  await expect(buildIndex(snapshot, fake)).rejects.toThrow("随包的 Graphify 运行环境缺失");
+});
+
+test("a missing packaged runtime does not run graphify from PATH", async () => {
+  const savedPath = process.env.PATH;
+  const savedBin = process.env.NEMA_GRAPHIFY_BIN;
+  const savedPayload = process.env.NEMA_PAYLOAD_ROOT;
+  const marker = join(root, "path-ran");
+  const dir = join(root, "path-bin");
+  mkdirSync(dir);
+  writeFileSync(join(dir, "graphify"), `#!/usr/bin/env node\nrequire("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran\\n");\nprocess.stdout.write("from-path\\n");\n`, { mode: 0o755 });
+  chmodSync(join(dir, "graphify"), 0o755);
+  process.env.PATH = `${dir}${delimiter}${savedPath ?? ""}`;
+  delete process.env.NEMA_GRAPHIFY_BIN;
+  process.env.NEMA_PAYLOAD_ROOT = join(root, "empty-payload");
+  const snapshot = join(root, "snap-path");
+  mkdirSync(snapshot);
+  try {
+    await expect(buildIndex(snapshot)).rejects.toThrow("随包的 Graphify 运行环境缺失");
+    expect(existsSync(marker)).toBe(false);
+  } finally {
+    if (savedPath === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPath;
+    if (savedBin === undefined) delete process.env.NEMA_GRAPHIFY_BIN;
+    else process.env.NEMA_GRAPHIFY_BIN = savedBin;
+    if (savedPayload === undefined) delete process.env.NEMA_PAYLOAD_ROOT;
+    else process.env.NEMA_PAYLOAD_ROOT = savedPayload;
+  }
 });
 
 test("managed graphify install status treats a missing binary as not installed", async () => {
@@ -205,7 +232,7 @@ test("managed graphify install status treats a missing binary as not installed",
 
   await expect(graphifyInstallStatus({ bin: join(root, "missing-graphify"), ownedHelpers: missingScope })).resolves.toEqual({
     installed: false,
-    detail: "graphify 未安装：请运行 uv tool install graphifyy",
+    detail: "随包的 Graphify 运行环境缺失",
   });
 });
 

@@ -27,6 +27,8 @@ export class RepoWatcher {
   private readonly known = new Map<string, string | null>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private inflight: Promise<void> | null = null;
+  /** Tasks that already refreshed a repo. Capped so a long-lived daemon does not keep every id. */
+  private readonly prepared = new Set<string>();
   /** Full ticks and single-repo ticks run one at a time, so one move is never reported twice. */
   private queue: Promise<void> = Promise.resolve();
   private stopped = false;
@@ -77,6 +79,31 @@ export class RepoWatcher {
     });
     this.inflight = run;
     return run;
+  }
+
+  /**
+   * Fetches one watched repo. The same task id does this once; a missing task id fetches every call.
+   * An unknown repo id is a no-op.
+   */
+  prepare(repoId: string, taskId?: string): Promise<void> {
+    if (!taskId) return this.tickRepo(repoId);
+    const key = `${taskId}\0${repoId}`;
+    if (this.prepared.has(key)) return Promise.resolve();
+    return this.serial(async () => {
+      if (this.stopped || this.prepared.has(key)) return;
+      const repo = this.repos.find((row) => row.repoId === repoId);
+      if (!repo || !this.isWatched(repo)) return;
+      try {
+        await this.tickOne(repo);
+      } catch (error) {
+        console.error(`[nema] repo watch failed for ${repo.repoId}`, error);
+        return;
+      }
+      if (this.stopped || !this.isWatched(repo)) return;
+      this.prepared.add(key);
+      // ponytail: drop the whole set past 500. The next call refetches. Upgrade path: forget a task when its run ends.
+      if (this.prepared.size > 500) this.prepared.clear();
+    });
   }
 
   /** Ticks one watched repo now (a coding agent's hook fired). An unknown repo id is a no-op. */
@@ -146,15 +173,10 @@ export class RepoWatcher {
   }
 
   start(): void {
-    if (this.stopped) return;
+    if (this.stopped || this.intervalMs < 0) return;
     if (this.timer) clearInterval(this.timer);
-    const timer = setInterval(() => {
-      void this.tick().catch((error) => {
-        console.error("[nema] repo watch failed", error);
-      });
-    }, this.intervalMs);
-    timer.unref();
-    this.timer = timer;
+    // Freshness is prepare(), tick(), or tickRepo(). A timer here would fetch every bound repo while idle.
+    this.timer = null;
   }
 
   stop(): Promise<void> {

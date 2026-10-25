@@ -149,7 +149,7 @@ node apps/cli/dist/index.js auth claude
 ## 从讨论到交付
 
 1. **讨论**：发送记录，在知识面板检查、确认或修正 Agent 的理解。
-2. **连接代码**：用 `uv tool install graphifyy` 安装 graphify，在设置里用文件夹选择器绑定本机 Git 仓库。对话框由本机 daemon 打开。daemon 每 5 分钟检查主分支，读取已提交快照，不包含未提交修改。
+2. **连接代码**：在设置里用文件夹选择器绑定本机 Git 仓库。对话框由本机 daemon 打开。Graphify 随安装包放在 `tools/graphify/`，不需要单独安装。任务第一次读取该仓库的代码时，daemon 才 `git fetch` 主分支，并读取已提交快照，不包含未提交修改。
 3. **生成开发包**：选择 active 需求，开启 `superpowers` 后生成 spec 与 plan。`grill-me` 可因信息不足创建问题并阻塞生成；解决后自动重试。
 4. **批准与交接**：人工审阅批准，再由编码 Agent 获取。编辑或重新生成会撤销批准。
 5. **上报与核验**：记录 `reported`、`verified`、`mismatch`。**verified 表示 Git 证据通过或用户确认，不代表测试通过、功能正确或需求验收完成。**
