@@ -11,3 +11,13 @@ GREEN: `npx vitest run --project @nema/hub prompt` — 1 file passed, 28 tests p
 Typecheck: `npm run typecheck` — passed (`tsc -b`). `git diff --check` — passed.
 
 Concern: the shared thread context now displays the anchor in its dedicated thread section and omits its duplicate from `# 最近消息`; the anchor plus latest 50 replies remain available. The controller-owned plan file had pre-existing edits and was left untouched.
+
+## Review fix round 1
+
+Moved the main-chat `open_thread` guidance outside the grill condition. The automatic unresolved-question thread explanation remains conditional on grill being enabled. Added assertions to the grill-off prompt test for both behaviors.
+
+RED: `npx vitest run --project @nema/hub prompt` — 1 failed / 27 passed; the grill-off case lacked `需要来回讨论时调用 \`open_thread\``.
+
+GREEN: `npx vitest run --project @nema/hub prompt` — 1 file passed, 28 tests passed. Existing Vite `configLoader: 'native'` compatibility warnings remain.
+
+Typecheck: `npm run typecheck` — passed (`tsc -b`).

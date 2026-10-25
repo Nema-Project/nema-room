@@ -148,9 +148,11 @@ export function buildPrompt(input: {
     if (conversation.opened === "user") {
       parts.push("这是用户主动开的 thread，直接进入讨论。标题目前是用户输入的第一行；如果它不能概括这个话题，调用 `open_thread` 给出更好的标题。");
     }
-  } else if (grill.enabled) {
+  } else {
     parts.push("需要来回讨论时调用 `open_thread`。");
-    parts.push("新增或更新未解决的追问时，你的回复会被放进 thread，把回复写成开启讨论、提出这个问题的话。");
+    if (grill.enabled) {
+      parts.push("新增或更新未解决的追问时，你的回复会被放进 thread，把回复写成开启讨论、提出这个问题的话。");
+    }
   }
   if (grill.enabled && grill.extraRules.trim()) parts.push(`# 本 workspace 的补充追问规则\n${grill.extraRules}`);
   if (lastAskedQuestion) {

@@ -346,6 +346,8 @@ describe("buildPrompt", () => {
   test("grill-me off drops strictness and extra rules but keeps uncertain-to-question", () => {
     const p = withGrill({ enabled: false, strictness: "lenient", extraRules: "涉及付款一律先问" });
     expect(p).toContain("不确定或有歧义时，不要猜，写成 `question` 条目");
+    expect(p).toContain("需要来回讨论时调用 `open_thread`");
+    expect(p).not.toContain("新增或更新未解决的追问时，你的回复会被放进 thread");
     expect(p).not.toContain("追问严格程度");
     expect(p).not.toContain("涉及付款一律先问");
     expect(p).not.toContain("系统会自动从待确认中挑一个问题展示");
