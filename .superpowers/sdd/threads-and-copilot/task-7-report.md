@@ -89,3 +89,10 @@
 ### Concerns
 
 - The controller owns the real Next/Chromium route smoke and will verify route-level host persistence and badge navigation after this commit. The added provider regression covers keyed page remounts and the real Sidebar attention behavior without duplicating browser smoke.
+
+## Round 3 fix (review base `34ee604`)
+
+- **N3 — preserve child focus in an activated window:** The active-window layout effect now focuses the wrapper only if the current document focus is outside that window. Focusing an inactive window's textarea therefore activates the window without stealing focus; opening a new window from outside still focuses its wrapper (covered by the persistent-provider test).
+- **RED:** `npx vitest run --project @nema/web apps/web/test/ThreadWindows.test.tsx -t 'keeps focus in a child'` — failed against unconditional wrapper focus because the wrapper's `.focus()` was called after the textarea focus event.
+- **GREEN:** `npx vitest run --project @nema/web apps/web/test/ThreadWindows.test.tsx apps/web/test/ThreadWindowsProvider.test.tsx` — 2 files / 8 tests passed, including child-focus preservation and programmatic-open wrapper focus.
+- **Verification:** `npm run lint -w apps/web`, `npx tsc -p apps/web/tsconfig.json --noEmit`, and `git diff --check` passed. Root typecheck/build and full suite were not rerun for this focus guard; the controller plans final integrated verification.

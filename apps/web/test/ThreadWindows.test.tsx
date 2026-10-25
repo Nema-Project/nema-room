@@ -39,6 +39,20 @@ describe("ThreadWindows", () => {
     act(() => ref.current!.focus("w1", "t1"));
     await vi.waitFor(() => expect(hub.markThreadRead).toHaveBeenCalledWith("w1", "t1", 4));
   });
+  it("keeps focus in a child when keyboard focus activates an inactive window", async () => {
+    vi.mocked(hub.getThreadMessages).mockImplementation(async (workspaceId, id) => ({ thread: thread(workspaceId, id), anchor: message(workspaceId, id, id, 2), messages: [message(workspaceId, id, `${id}-reply`, 3)] }));
+    const ref = mount(); act(() => ref.current!.open("w1", "t1")); act(() => ref.current!.open("w1", "t2"));
+    await vi.waitFor(() => expect(document.querySelector('[data-thread-id="t1"] textarea')).toBeTruthy());
+    const textarea = document.querySelector('[data-thread-id="t1"] textarea')!;
+    const wrapper = textarea.closest(".thread-floating") as HTMLElement;
+    const wrapperFocus = vi.spyOn(wrapper, "focus"); wrapperFocus.mockClear();
+    const activeElement = vi.spyOn(document, "activeElement", "get").mockReturnValue(textarea);
+    act(() => fireEvent.focusIn(textarea));
+    await vi.waitFor(() => expect(wrapper.classList.contains("active")).toBe(true));
+    expect(wrapperFocus).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(textarea);
+    activeElement.mockRestore();
+  });
   it("stops acknowledging when focus moves outside all floating windows", async () => {
     vi.mocked(hub.getThreadMessages).mockImplementation(async (workspaceId, id) => ({ thread: thread(workspaceId, id), anchor: message(workspaceId, id, id, 2), messages: [message(workspaceId, id, `${id}-reply`, 3)] }));
     const ref = mount(); act(() => ref.current!.open("w1", "t1"));

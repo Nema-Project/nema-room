@@ -20,7 +20,10 @@ export const ThreadWindows = forwardRef<ThreadWindowsHandle, { onOpenMainMessage
     setActive(id);
   }
   useImperativeHandle(ref, () => ({ open, focus: (workspaceId, threadId) => setActive(key(workspaceId, threadId)) }));
-  useLayoutEffect(() => { windowElements.current.get(active ?? "")?.focus({ preventScroll: true }); }, [active, windows.length]);
+  useLayoutEffect(() => {
+    const element = windowElements.current.get(active ?? "");
+    if (element && !element.contains(document.activeElement)) element.focus({ preventScroll: true });
+  }, [active, windows.length]);
   useEffect(() => {
     const updateActive = (event: Event) => {
       const element = event.target instanceof Element ? event.target.closest<HTMLElement>(".thread-floating") : null;
