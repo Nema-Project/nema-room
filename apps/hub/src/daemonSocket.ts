@@ -2,7 +2,7 @@ import type http from "node:http";
 import { nanoid } from "nanoid";
 import { WebSocketServer, type WebSocket } from "ws";
 import { KnowledgeStore } from "@nema/knowledge";
-import { WORKPACKAGE_LIMITS, parseDaemonToHub, type AgentMessageMeta, type HubToDaemon, type PluginToolSpec } from "@nema/shared";
+import { WORKPACKAGE_LIMITS, parseDaemonToHub, type AgentMessageMeta, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
 import { createConnectionRpc, DaemonRpcError, type ConnectionRpc, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
@@ -82,6 +82,8 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         rules: workPackageRules(),
       };
     }
+    const quoteId = userMessage.role === "user" ? (userMessage.meta as UserMessageMeta | null)?.quote?.messageId : undefined;
+    const quotedMessage = quoteId ? await getMessage(db, quoteId) : null;
     const prompt = await buildPrompt({
       workspace,
       userMessage,
@@ -91,6 +93,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       priorChanges: await listTaskChanges(db, task.id),
       grill: await grillState(db, task.workspaceId),
       ...(workpackage ? { workpackage } : {}),
+      ...(quotedMessage ? { quotedMessage } : {}),
     });
     return { prompt, confidential: workspace.confidential };
   }

@@ -6,7 +6,7 @@ import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { createWorkspace } from "../src/workspaces.js";
-import { postUserMessage } from "../src/messages.js";
+import { addMessage, postUserMessage } from "../src/messages.js";
 import { claimNextTask, finishTask, recordTaskChange } from "../src/tasks.js";
 import { EventBus } from "../src/events.js";
 import { indexEntry } from "../src/entryIndex.js";
@@ -78,6 +78,22 @@ describe("ui api", () => {
     const list = await json(await req("GET", `/api/workspaces/${ws}/messages`));
     expect(list.map((m: any) => m.id)).toContain(b.message.id);
     expect((await req("POST", `/api/workspaces/${ws}/messages`, { content: "  " })).status).toBe(400);
+  });
+
+  test("a quote must be a message in this workspace", async () => {
+    const first = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "alpha beta" }));
+    const other = await json(await req("POST", "/api/workspaces", { name: "B" }));
+    const foreign = await json(await req("POST", `/api/workspaces/${other.id}/messages`, { content: "secret" }));
+    const bad = await req("POST", `/api/workspaces/${ws}/messages`, { content: "about it", quoteMessageId: foreign.message.id });
+    expect(bad.status).toBe(400);
+    expect((await json(bad)).error).toBe("quote: message not in this workspace");
+    const ok = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "about it", quoteMessageId: first.message.id }));
+    expect(ok.message.meta.quote).toEqual({ messageId: first.message.id, role: "user", excerpt: "alpha beta" });
+    const long = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "long", quoteMessageId: (await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "你".repeat(250) }))).message.id }));
+    expect(long.message.meta.quote.excerpt).toHaveLength(200);
+    const system = await addMessage(db, ws, "system", "draw the diagram");
+    const quotedSystem = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "about the diagram", quoteMessageId: system.id }));
+    expect(quotedSystem.message.meta.quote.role).toBe("system");
   });
 
   test("workspaces create/patch/validation", async () => {

@@ -7,7 +7,7 @@ import type { Db } from "./db/db.js";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
 import type { EventBus, HubEvent } from "./events.js";
 import { indexEntry, openQuestionCounts, timeline, withDiagramStatus } from "./entryIndex.js";
-import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, listMessages, postSystemTask, postUserMessage } from "./messages.js";
+import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, listMessages, MessageOpError, postSystemTask, postUserMessage } from "./messages.js";
 import { vendoredArchify, type Archify } from "./diagrams.js";
 import { PluginError, daemonHttpStatus, listExtensions, pluginsForUi, setPluginState, workspacePluginState } from "./plugins.js";
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
@@ -43,7 +43,10 @@ const PatchWorkspaceBody = z.object({
   knowledgeLanguage: z.enum(KNOWLEDGE_LANGUAGES).optional(),
   archived: z.boolean().optional(),
 });
-const PostMessageBody = z.object({ content: z.string().refine((s) => s.trim() !== "", "must not be empty") });
+const PostMessageBody = z.object({
+  content: z.string().refine((s) => s.trim() !== "", "must not be empty"),
+  quoteMessageId: z.string().min(1).optional(),
+});
 const PreviewRepoBody = z.object({ path: z.string().min(1) });
 const BindRepoBody = z.object({
   path: z.string().min(1),
@@ -252,9 +255,15 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/workspaces/:id/messages", async (c) => {
     const id = c.req.param("id");
-    const { content } = await body(c, PostMessageBody);
+    const { content, quoteMessageId } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, id))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
-    const { message, task: created } = await postUserMessage(db, id, content);
+    let message, created;
+    try {
+      ({ message, task: created } = await postUserMessage(db, id, content, quoteMessageId));
+    } catch (e) {
+      if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
+      throw e;
+    }
     const task = toUiTask(created);
     events.emit(id, { type: "message.created", message });
     events.emit(id, { type: "task.updated", task });

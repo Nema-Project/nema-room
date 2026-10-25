@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import type { AgentMessageMeta, ReportMessageMeta } from "@nema/shared";
+import type { AgentMessageMeta, ReportMessageMeta, UserMessageMeta } from "@nema/shared";
 import type { Db } from "./db/db.js";
 import { insertQueuedTask, type Task } from "./tasks.js";
 
@@ -8,8 +8,8 @@ export type Message = {
   workspaceId: string;
   role: "user" | "agent" | "system" | "report";
   content: string;
-  /** Agent messages carry AgentMessageMeta; report messages carry ReportMessageMeta. */
-  meta: AgentMessageMeta | ReportMessageMeta | null;
+  /** Agent messages carry AgentMessageMeta; report messages carry ReportMessageMeta; user messages may carry UserMessageMeta. */
+  meta: AgentMessageMeta | ReportMessageMeta | UserMessageMeta | null;
   taskId: string | null;
   createdAt: string;
   editedAt: string | null;
@@ -30,6 +30,20 @@ type Row = {
 };
 
 const COLS = "id, workspace_id, role, content, meta, task_id, created_at, edited_at";
+
+export function messageExcerpt(content: string, max = 200): string {
+  return Array.from(content).slice(0, max).join("");
+}
+
+export class MessageOpError extends Error {
+  constructor(
+    public status: 400 | 404 | 409,
+    message: string,
+  ) {
+    super(message);
+    this.name = "MessageOpError";
+  }
+}
 
 function toMessage(r: Row): Message {
   return {
@@ -64,10 +78,17 @@ export async function postUserMessage(
   db: Db,
   workspaceId: string,
   content: string,
+  quoteMessageId?: string,
 ): Promise<{ message: Message; task: Task }> {
   if (content.trim() === "") throw new Error("message content must not be empty");
   return db.tx(async (t) => {
-    const message = await insertMessage(t, workspaceId, "user", content, null, null);
+    let meta: UserMessageMeta | null = null;
+    if (quoteMessageId) {
+      const quoted = await getMessage(t, quoteMessageId);
+      if (!quoted || quoted.workspaceId !== workspaceId) throw new MessageOpError(400, "quote: message not in this workspace");
+      meta = { quote: { messageId: quoted.id, role: quoted.role, excerpt: messageExcerpt(quoted.content) } };
+    }
+    const message = await insertMessage(t, workspaceId, "user", content, null, meta);
     const task = await insertQueuedTask(t, workspaceId, message.id);
     return { message, task };
   });

@@ -19,6 +19,14 @@ const base = (l: Workspace["knowledgeLanguage"] = "follow", recent: Message[] = 
   buildPrompt({ workspace: ws(l), userMessage: msg(999), recentMessages: recent, entries, lastAskedQuestion: last });
 
 describe("buildPrompt", () => {
+  test("a quoted message is inlined in full before the current message", () => {
+    const quoted = msg(7, "agent");
+    quoted.content = "结论是更新代码图";
+    const p = buildPrompt({ workspace: ws("follow"), userMessage: msg(999), recentMessages: [], entries, lastAskedQuestion: null, quotedMessage: quoted });
+    const section = ["# 本次消息引用的消息", "[m_7] agent: 结论是更新代码图", "本次用户消息是针对这条消息的补充、更正或确认。"].join("\n");
+    expect(p).toContain(section);
+    expect(p.indexOf(section)).toBeLessThan(p.indexOf("# 本次用户消息"));
+  });
   test("rules and content", () => {
     const p = base();
     for (const k of ["room", "sourceMessages", "question", "resolved", "source", "不要在回复里提问"]) expect(p).toContain(k);
