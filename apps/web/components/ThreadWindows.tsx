@@ -3,15 +3,14 @@
 import { forwardRef, useImperativeHandle, useRef, useState, type PointerEvent } from "react";
 import { ThreadView } from "@/components/ThreadView";
 import type { ThreadWindowHost } from "@/lib/threads";
-import type { HubEvent } from "@/lib/types";
+import type { Message } from "@/lib/types";
 
 type WindowItem = { workspaceId: string; threadId: string; messageId?: string; x: number; y: number };
-export type ThreadWindowsHandle = ThreadWindowHost & { focus: (workspaceId: string, threadId: string) => void; handleEvent: (event: HubEvent) => void };
+export type ThreadWindowsHandle = ThreadWindowHost & { focus: (workspaceId: string, threadId: string) => void };
 
-export const ThreadWindows = forwardRef<ThreadWindowsHandle>(function ThreadWindows(_, ref) {
+export const ThreadWindows = forwardRef<ThreadWindowsHandle, { onOpenMainMessage?: (workspaceId: string, message: Message) => void }>(function ThreadWindows({ onOpenMainMessage }, ref) {
   const [windows, setWindows] = useState<WindowItem[]>([]);
   const [active, setActive] = useState<string | null>(null);
-  const [event, setEvent] = useState<HubEvent | undefined>();
   const drag = useRef<{ id: string; x: number; y: number; left: number; top: number } | null>(null);
   const key = (workspaceId: string, threadId: string) => `${workspaceId}:${threadId}`;
   function open(workspaceId: string, threadId: string, messageId?: string) {
@@ -19,7 +18,7 @@ export const ThreadWindows = forwardRef<ThreadWindowsHandle>(function ThreadWind
     setWindows((list) => list.some((item) => key(item.workspaceId, item.threadId) === id) ? list.map((item) => key(item.workspaceId, item.threadId) === id && messageId ? { ...item, messageId } : item) : [...list, { workspaceId, threadId, messageId, x: 0, y: 0 }]);
     setActive(id);
   }
-  useImperativeHandle(ref, () => ({ open, focus: (workspaceId, threadId) => setActive(key(workspaceId, threadId)), handleEvent: setEvent }));
+  useImperativeHandle(ref, () => ({ open, focus: (workspaceId, threadId) => setActive(key(workspaceId, threadId)) }));
   function onPointerDown(e: PointerEvent<HTMLElement>, item: WindowItem) {
     if ((e.target as HTMLElement).closest("button")) return;
     const host = e.currentTarget.closest(".thread-floating") as HTMLElement | null;
@@ -43,8 +42,8 @@ export const ThreadWindows = forwardRef<ThreadWindowsHandle>(function ThreadWind
   return <div className="thread-windows">{windows.map((item, index) => {
     const id = key(item.workspaceId, item.threadId);
     const offset = index * 36;
-    return <div key={id} className={`thread-floating${active === id ? " active" : ""}`} style={{ right: `${24 + offset}px`, bottom: `${24 + offset}px`, transform: `translate(${item.x}px, ${item.y}px)`, zIndex: 50 + (active === id ? 1 : index) }} onMouseDown={(e) => { setActive(id); e.currentTarget.focus(); }} onFocus={() => setActive(id)} onKeyDown={(e) => { if (e.key === "Escape" && active === id) close(item); }} tabIndex={-1}>
-      <ThreadView workspaceId={item.workspaceId} threadId={item.threadId} focusMessageId={item.messageId} event={event} floating active={active === id} onClose={() => close(item)} onOpenThread={open} />
+    return <div key={id} className={`thread-floating${active === id ? " active" : ""}`} style={{ right: `${24 + offset}px`, bottom: `${24 + offset}px`, transform: `translate(${item.x}px, ${item.y}px)`, zIndex: active === id ? 100 + windows.length : 50 + index }} onMouseDown={(e) => { setActive(id); e.currentTarget.focus(); }} onFocus={() => setActive(id)} onKeyDown={(e) => { if (e.key === "Escape" && active === id) close(item); }} tabIndex={-1}>
+      <ThreadView workspaceId={item.workspaceId} threadId={item.threadId} focusMessageId={item.messageId} floating active={active === id} onClose={() => close(item)} onOpenThread={open} onOpenMainMessage={onOpenMainMessage} />
       <div className="thread-drag" onPointerDown={(e) => onPointerDown(e, item)} onPointerMove={onPointerMove} onPointerUp={() => { drag.current = null; }} />
     </div>;
   })}</div>;

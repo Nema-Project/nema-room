@@ -50,6 +50,11 @@ const mount = async (connected: boolean) => {
 };
 
 describe("Chat", () => {
+  it("keeps workspace thread replies out of the main conversation", async () => {
+    const ref = await mount(true);
+    act(() => ref.current!.handleEvent({ type: "message.created", message: { ...m("reply", "thread-only text", "agent"), threadId: "anchor" } }));
+    expect(screen.queryByText("thread-only text")).toBeNull();
+  });
   it("renders a thread row with unread count under the anchor and opens it", async () => {
     const onOpenThread = vi.fn();
     vi.mocked(hub.listMessages).mockResolvedValue([m("anchor", "question", "agent")]);
@@ -92,8 +97,10 @@ describe("Chat", () => {
     act(() => ref.current!.handleEvent({ type: "task.progress", taskId: "t1", text: "更新 R-7" }));
     expect(screen.getByText(/更新 R-7/)).toBeTruthy();
     const n = vi.mocked(hub.listMessages).mock.calls.length;
+    const threadN = vi.mocked(hub.listThreads).mock.calls.length;
     await act(async () => ref.current!.resync());
     expect(vi.mocked(hub.listMessages).mock.calls.length).toBe(n + 1);
+    expect(vi.mocked(hub.listThreads).mock.calls.length).toBe(threadN + 1);
   });
   it("appends SSE messages once", async () => {
     const ref = await mount(true);

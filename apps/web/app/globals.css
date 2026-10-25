@@ -419,6 +419,7 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .thread-scroll { overflow: auto; flex: 1; padding: 12px; }
 .thread-anchor { border-bottom: 1px solid var(--rule); margin-bottom: 12px; padding-bottom: 12px; }
 .thread-anchor > span { display: block; color: var(--ink-2); font-size: 12px; }
+.thread-error { margin: 8px 12px; }
 .thread-floating .composer { border-top: 1px solid var(--rule); }
 .thread-drag { position: absolute; height: 44px; top: 0; left: 0; right: 48px; z-index: 2; cursor: grab; }
 .thread-entry { position: absolute; inset: 48px 12px 12px; z-index: 3; background: var(--paper); overflow: auto; border: 1px solid var(--rule); border-radius: 8px; }

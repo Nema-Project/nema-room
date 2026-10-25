@@ -1,12 +1,14 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MessageItem } from "@/components/MessageItem";
 import * as hub from "@/lib/hub";
 import { I18nProvider } from "@/lib/i18n";
-import type { Message } from "@/lib/types";
+import type { HubEvent, Message } from "@/lib/types";
+import { FakeEventSource } from "./FakeEventSource";
 
-vi.mock("@/lib/hub", () => ({ getEntry: vi.fn(), withdrawEntry: vi.fn(), editMessage: vi.fn(), listMessageVersions: vi.fn() }));
+vi.mock("@/lib/hub", () => ({ getEntry: vi.fn(), withdrawEntry: vi.fn(), editMessage: vi.fn(), listMessageVersions: vi.fn(), eventsUrl: (id: string) => `http://hub/workspaces/${id}/events` }));
+afterEach(() => vi.unstubAllGlobals());
 
 const msg = (p: Partial<Message>): Message => ({
   id: "m1",
@@ -52,6 +54,18 @@ describe("MessageItem", () => {
     mount(msg({ meta: { changes: [{ entryId: "R-7", kind: "requirement", title: "Feature", op: "add" }], askedQuestion: null } }));
     await userEvent.click(await screen.findByRole("button", { name: "chip.withdraw" }));
     expect(hub.withdrawEntry).toHaveBeenCalledWith("w1", "R-7");
+  });
+  it("updates withdraw visibility in two mounted copies after knowledge.changed", async () => {
+    let status = "active";
+    vi.stubGlobal("EventSource", FakeEventSource); FakeEventSource.reset();
+    vi.mocked(hub.getEntry).mockImplementation(async () => ({ id: "R-7", status } as never));
+    const change = msg({ meta: { changes: [{ entryId: "R-7", kind: "requirement", title: "Feature", op: "add" }], askedQuestion: null } });
+    render(<I18nProvider><><MessageItem message={change} /><MessageItem message={{ ...change, id: "anchor-copy" }} /></></I18nProvider>);
+    expect(await screen.findAllByRole("button", { name: "Withdraw" })).toHaveLength(2);
+    status = "dropped";
+    const event: HubEvent = { type: "knowledge.changed", entryId: "R-7" };
+    for (const source of FakeEventSource.instances) source.send(event);
+    await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Withdraw" })).toBeNull());
   });
   it("shows change chips with kind and operation", () => {
     mount(

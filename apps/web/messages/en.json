@@ -344,5 +344,8 @@
   "chip.withdraw": "Withdraw",
   "chip.history": "History",
   "cmd.thread": "Open a follow-up thread",
-  "chip.withdrawFailed": "Could not withdraw this entry."
+  "chip.withdrawFailed": "Could not withdraw this entry.",
+  "thread.loadFailed": "Could not load this thread.",
+  "thread.retry": "Retry",
+  "thread.jumpUnavailable": "That message is not part of this conversation."
 }

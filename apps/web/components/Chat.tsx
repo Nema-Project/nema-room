@@ -10,6 +10,7 @@ import type { HubEvent, Message, Thread } from "@/lib/types";
 
 export type ChatHandle = {
   scrollToMessage: (messageId: string) => void;
+  showMessage: (message: Message) => void;
   /** The page owns the single SSE subscription and forwards events here. */
   handleEvent: (e: HubEvent) => void;
   /** Refetch after the stream reconnected (events in between were lost). */
@@ -64,15 +65,47 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
   const stream = useRef<HTMLDivElement>(null);
   // Bumped by every SSE-driven change of runningTask and by every active-task request, so a stale HTTP response never overwrites newer state.
   const taskVersion = useRef(0);
+  const messageVersion = useRef(0);
+  const messageVersions = useRef(new Map<string, number>());
+  const threadVersion = useRef(0);
+  const threadVersions = useRef(new Map<string, number>());
+  const pendingJump = useRef<string | null>(null);
+  const [jumpTick, setJumpTick] = useState(0);
 
   const load = useCallback(async () => {
+    const startedAt = messageVersion.current;
     try {
-      const list = await listMessages(workspaceId);
-      // Keep anything that arrived over SSE while the request was in flight.
-      setMessages((cur) => list.concat(cur.filter((c) => !list.some((l) => l.id === c.id))));
+      const list = (await listMessages(workspaceId)).filter((message) => message.threadId === null);
+      setMessages((cur) => {
+        const next = new Map(list.map((message) => [message.id, message]));
+        for (const message of cur) {
+          if ((messageVersions.current.get(message.id) ?? 0) > startedAt || !next.has(message.id)) next.set(message.id, message);
+        }
+        return [...next.values()].sort((a, b) => a.seq - b.seq);
+      });
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [workspaceId]);
+
+
+  const loadThreads = useCallback(async () => {
+    const startedAt = threadVersion.current;
+    try {
+      const list = await listThreads(workspaceId);
+      setThreads((current) => {
+        const next = new Map(list.map((thread) => [thread.id, thread]));
+        for (const [id, version] of threadVersions.current) {
+          if (version > startedAt) {
+            const newer = current.get(id);
+            if (newer) next.set(id, newer);
+          }
+        }
+        return next;
+      });
+    } catch {
+      /* retain rows already on screen */
     }
   }, [workspaceId]);
 
@@ -91,31 +124,45 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
 
   useEffect(() => {
     // Fetches seed component state from the hub after mount.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount, state updates after the network response
     void loadActive();
-    void listThreads(workspaceId).then((items) => setThreads(new Map(items.map((thread) => [thread.id, thread]))), () => undefined);
-  }, [load, loadActive, workspaceId]);
+    void loadThreads();
+  }, [load, loadActive, loadThreads]);
 
   const scrollToMessage = (id: string) => {
-    document.getElementById(`msg-${id}`)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    const element = [...(stream.current?.querySelectorAll<HTMLElement>("[id]") ?? [])].find((item) => item.id === `msg-${id}`);
+    element?.scrollIntoView?.({ behavior: "smooth", block: "center" });
   };
+  const hasMessage = (id: string) => [...(stream.current?.querySelectorAll<HTMLElement>("[id]") ?? [])].some((item) => item.id === `msg-${id}`);
+  const showMessage = useCallback((message: Message) => {
+    if (message.workspaceId !== workspaceId || message.threadId !== null) return;
+    setMessages((current) => merge(current, message));
+    pendingJump.current = message.id;
+    setJumpTick((tick) => tick + 1);
+  }, [workspaceId]);
 
   useImperativeHandle(
     ref,
     () => ({
       scrollToMessage,
+      showMessage,
       handleEvent(e) {
         if (e.type === "message.created" && e.message.workspaceId === workspaceId) {
-          setMessages((l) => merge(l, e.message));
+          if (e.message.threadId === null) {
+            messageVersions.current.set(e.message.id, ++messageVersion.current);
+            setMessages((l) => merge(l, e.message));
+          }
           const done = e.message.taskId;
           if (done && e.message.role !== "user") {
             taskVersion.current++;
             setRunningTask((cur) => (cur === done ? null : cur));
           }
         } else if (e.type === "message.updated" && e.message.workspaceId === workspaceId) {
-          // Only a message we already show is replaced; one not loaded yet arrives with the next load.
-          setMessages((l) => l.map((x) => (x.id === e.message.id ? e.message : x)));
+          if (e.message.threadId === null) {
+            messageVersions.current.set(e.message.id, ++messageVersion.current);
+            setMessages((l) => l.map((x) => (x.id === e.message.id ? e.message : x)));
+          }
         } else if (e.type === "task.updated" && e.task.workspaceId === workspaceId) {
           taskVersion.current++;
           if (e.task.status === "running") {
@@ -123,6 +170,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
             setProgress("");
           } else setRunningTask((cur) => (cur === e.task.id ? null : cur));
         } else if (e.type === "thread.updated" && e.thread.workspaceId === workspaceId) {
+          threadVersions.current.set(e.thread.id, ++threadVersion.current);
           setThreads((current) => new Map(current).set(e.thread.id, e.thread));
         } else if (e.type === "task.progress") {
           setRunningTask((cur) => {
@@ -134,15 +182,23 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
       resync: () => {
         void load();
         void loadActive();
+        void loadThreads();
       },
     }),
-    [workspaceId, load, loadActive],
+    [workspaceId, load, loadActive, loadThreads, showMessage],
   );
 
   useLayoutEffect(() => {
     const el = stream.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length, runningTask, progress]);
+
+  useLayoutEffect(() => {
+    const id = pendingJump.current;
+    if (!id) return;
+    scrollToMessage(id);
+    pendingJump.current = null;
+  }, [messages, jumpTick]);
 
   async function send(content: string, quoted?: Message | null) {
     const { message } = quoted ? await postMessage(workspaceId, content, quoted.id) : await postMessage(workspaceId, content);
@@ -160,11 +216,11 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
   }
 
   async function jumpToMessage(id: string) {
-    if (document.getElementById(`msg-${id}`)) { scrollToMessage(id); return; }
+    if (hasMessage(id)) { scrollToMessage(id); return; }
     try {
       const message = await getMessage(workspaceId, id);
       if (message.threadId) onOpenThread?.(message.threadId, message.id);
-      else scrollToMessage(id);
+      else showMessage(message);
     } catch { /* a deleted source can no longer be opened */ }
   }
 
@@ -198,7 +254,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
             key={hit.id}
             className="search-hit"
             onClick={() => {
-              if (document.getElementById(`msg-${hit.id}`)) scrollToMessage(hit.id);
+              if (hasMessage(hit.id)) scrollToMessage(hit.id);
               else { setOpenHit((cur) => (cur === hit.id ? null : hit.id)); void jumpToMessage(hit.id); }
             }}
           >

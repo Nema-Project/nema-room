@@ -21,6 +21,23 @@ describe("Composer", () => {
     await userEvent.type(box(), "need details{Shift>}{Enter}{/Shift}");
     expect(onThread).toHaveBeenCalledWith("need details");
   });
+  it("thread mode selects only visible slash commands by keyboard", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    render(<I18nProvider><Composer onSend={onSend} threadMode /></I18nProvider>);
+    await userEvent.type(box(), "/");
+    await userEvent.keyboard("{Enter}");
+    expect(box().value).toContain("Say how far this is, based on the code");
+    expect(box().value).not.toContain("/thread");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+  it("thread mode does not offer a typed /thread command", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    render(<I18nProvider><Composer onSend={onSend} threadMode /></I18nProvider>);
+    await userEvent.type(box(), "/thread");
+    expect(screen.queryByRole("option", { name: /thread/i })).toBeNull();
+    await userEvent.keyboard("{Enter}");
+    expect(onSend).not.toHaveBeenCalled();
+  });
   it("Enter inserts a newline and does not send", async () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
     mount(onSend);

@@ -344,5 +344,8 @@
   "chip.withdraw": "取り下げ",
   "chip.history": "履歴",
   "cmd.thread": "追いかけスレッドを開く",
-  "chip.withdrawFailed": "このエントリーを取り下げられませんでした。"
+  "chip.withdrawFailed": "このエントリーを取り下げられませんでした。",
+  "thread.loadFailed": "スレッドを読み込めませんでした。",
+  "thread.retry": "再試行",
+  "thread.jumpUnavailable": "そのメッセージはこの会話にありません。"
 }

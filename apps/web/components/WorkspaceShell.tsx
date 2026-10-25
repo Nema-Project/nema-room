@@ -10,7 +10,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { ThreadWindows, type ThreadWindowsHandle } from "@/components/ThreadWindows";
 import { WorkspaceSettings } from "@/components/WorkspaceSettings";
 import { HubError, archiveWorkspace, createWorkspace, deleteWorkspace, getDaemonStatus, getMessage, listWorkspaces } from "@/lib/hub";
-import { openThread } from "@/lib/threads";
+import { mainMessageUrl, openThread } from "@/lib/threads";
 import { useT } from "@/lib/i18n";
 import type { HubEvent, Workspace, WorkspaceView } from "@/lib/types";
 import { useHubEvents } from "@/lib/useHubEvents";
@@ -182,7 +182,6 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
           void refresh();
         }
         chat.current?.handleEvent(e);
-        threadWindows.current?.handleEvent(e);
       },
       [refresh],
     ),
@@ -204,6 +203,16 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
     if (workspaceId !== current?.id) select(workspaceId);
     openThread(workspaceId, threadId, threadWindows.current ?? { open: () => undefined }, messageId);
   }, [current?.id, select]);
+  const openMainMessage = useCallback((workspaceId: string, message: import("@/lib/types").Message) => {
+    if (workspaceId === current?.id) {
+      chat.current?.showMessage(message);
+      return;
+    }
+    setSelectedId(workspaceId);
+    setSettingsOpen(false);
+    try { localStorage.setItem(SELECTED_KEY, workspaceId); } catch { /* storage unavailable */ }
+    router.push(mainMessageUrl(workspaceId, message.id));
+  }, [current?.id, router]);
   const jumpToMessage = useCallback(async (id: string) => {
     if (!current) return;
     if (document.getElementById(`msg-${id}`)) {
@@ -212,13 +221,28 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
     }
     try {
       const message = await getMessage(current.id, id);
-      if (message.threadId) openTargetThread(message.workspaceId, message.threadId);
-      else chat.current?.scrollToMessage(id);
+      if (message.threadId) openTargetThread(message.workspaceId, message.threadId, message.id);
+      else chat.current?.showMessage(message);
     } catch {
       // Existing shell callers may ask to scroll an already mounted message without resolver data.
       chat.current?.scrollToMessage(id);
     }
   }, [current, openTargetThread]);
+
+  useEffect(() => {
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    const workspaceId = hash.get("workspace");
+    const messageId = hash.get("message");
+    if (!workspaceId || workspaceId !== roomId || !messageId) return;
+    let live = true;
+    void getMessage(workspaceId, messageId).then((message) => {
+      if (!live || message.workspaceId !== workspaceId) return;
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+      if (message.threadId) openTargetThread(workspaceId, message.threadId, message.id);
+      else chat.current?.showMessage(message);
+    }, () => undefined);
+    return () => { live = false; };
+  }, [roomId, openTargetThread]);
 
   async function create(name: string) {
     const ws = await createWorkspace(name); // errors surface in the sidebar form
@@ -460,7 +484,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
         </aside>
         )}
       </div>
-      <ThreadWindows ref={threadWindows} />
+      <ThreadWindows ref={threadWindows} onOpenMainMessage={openMainMessage} />
     </div>
   );
 }

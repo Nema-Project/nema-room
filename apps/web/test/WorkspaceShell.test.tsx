@@ -1,6 +1,6 @@
 import { act, createEvent, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { forwardRef } from "react";
+import { forwardRef, useImperativeHandle } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceShell } from "@/components/WorkspaceShell";
 import * as hub from "@/lib/hub";
@@ -9,7 +9,7 @@ import type { HubEvent } from "@/lib/types";
 
 const hubHandlers: { onEvent?: (e: HubEvent) => void; onResync?: () => void } = {};
 const scroll = vi.fn();
-const { replace, HubError } = vi.hoisted(() => {
+const { replace, HubError, threadOpen } = vi.hoisted(() => {
   class HubError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -17,7 +17,7 @@ const { replace, HubError } = vi.hoisted(() => {
       this.status = status;
     }
   }
-  return { replace: vi.fn(), HubError };
+  return { replace: vi.fn(), HubError, threadOpen: vi.fn() };
 });
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace }) }));
@@ -27,6 +27,7 @@ vi.mock("@/lib/hub", () => ({
   createWorkspace: vi.fn(),
   archiveWorkspace: vi.fn(),
   deleteWorkspace: vi.fn(),
+  getMessage: vi.fn(),
   HubError,
 }));
 vi.mock("@/lib/useHubEvents", () => ({
@@ -34,6 +35,13 @@ vi.mock("@/lib/useHubEvents", () => ({
     hubHandlers.onEvent = onEvent;
     hubHandlers.onResync = onResync;
   },
+}));
+vi.mock("@/components/ThreadWindows", () => ({
+  ThreadWindows: forwardRef(function ThreadWindows(_p: unknown, ref: React.Ref<unknown>) {
+    const handle = { open: threadOpen, focus: vi.fn(), handleEvent: vi.fn() };
+    useImperativeHandle(ref, () => handle);
+    return null;
+  }),
 }));
 vi.mock("@/components/Chat", () => ({
   Chat: forwardRef(function Chat(_p: unknown, ref: React.Ref<unknown>) {
@@ -170,6 +178,11 @@ describe("WorkspaceShell knowledge wiring", () => {
     expect(document.querySelector(".frame")!.classList.contains("entry-open")).toBe(true);
     await userEvent.click(screen.getByText("jump"));
     expect(scroll).toHaveBeenCalledWith("m_1");
+  });
+  it("passes the source message id through when opening its thread", async () => {
+    vi.mocked(hub.getMessage).mockResolvedValue({ id: "m_1", workspaceId: "w1", role: "user", content: "source", meta: null, taskId: null, createdAt: "x", editedAt: null, threadId: "t_1", seq: 9 } as never);
+    await mount(); await userEvent.click(screen.getByText("open R-1")); await userEvent.click(screen.getByText("jump"));
+    await vi.waitFor(() => expect(threadOpen).toHaveBeenCalledWith("w1", "t_1", "m_1"));
   });
   it("leaves an archived room for the next active workspace", async () => {
     replace.mockClear();

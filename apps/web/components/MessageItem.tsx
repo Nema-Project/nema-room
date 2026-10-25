@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Markdown } from "@/components/Markdown";
 import { editMessage, getEntry, HubError, listMessageVersions, withdrawEntry } from "@/lib/hub";
 import { formatTime } from "@/lib/format";
 import { useLocale, useT } from "@/lib/i18n";
+import { useHubEvents } from "@/lib/useHubEvents";
 import type { AgentMessageMeta, Entry, Message, MessageQuote, ReportMessageMeta } from "@/lib/types";
 
 export function AgentAvatar() {
@@ -153,10 +154,22 @@ function WithdrawChip({ workspaceId, entryId }: { workspaceId: string; entryId: 
   const [dropped, setDropped] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
-  useEffect(() => { let live = true; void getEntry(workspaceId, entryId).then((entry) => { if (live) setDropped(entry.status === "dropped"); }, () => undefined); return () => { live = false; }; }, [workspaceId, entryId]);
+  const requestVersion = useRef(0);
+  const refresh = useCallback(async () => {
+    const mine = ++requestVersion.current;
+    try {
+      const entry = await getEntry(workspaceId, entryId);
+      if (mine === requestVersion.current) setDropped(entry.status === "dropped");
+    } catch { /* keep the current chip state while the hub is unavailable */ }
+  }, [workspaceId, entryId]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial status comes from an async hub request
+    void refresh();
+  }, [refresh]);
+  useHubEvents(workspaceId, (event) => { if (event.type === "knowledge.changed" && event.entryId === entryId) void refresh(); });
   if (dropped) return null;
   return <>
-    <button type="button" disabled={busy} onClick={() => { setBusy(true); setError(false); void withdrawEntry(workspaceId, entryId).then(() => setDropped(true)).catch(() => setError(true)).finally(() => setBusy(false)); }}>{t("chip.withdraw")}</button>
+    <button type="button" disabled={busy} onClick={() => { setBusy(true); setError(false); void withdrawEntry(workspaceId, entryId).then(() => { requestVersion.current++; setDropped(true); }).catch(() => setError(true)).finally(() => setBusy(false)); }}>{t("chip.withdraw")}</button>
     {error && <small className="error">{t("chip.withdrawFailed")}</small>}
   </>;
 }
