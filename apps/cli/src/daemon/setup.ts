@@ -1,7 +1,7 @@
 import { ClaudeCodeAdapter } from "../claude/adapter.js";
 import { loadConfig, type NemaConfig } from "../config.js";
 import { CodexDirectAdapter } from "../direct/adapter.js";
-import { GithubMcp } from "../github/client.js";
+import { GithubGh, type GithubReader } from "../github/gh.js";
 import type { GraphifyOpts } from "../repos/graphify.js";
 import { registerRepoHandlers } from "../repos/handlers.js";
 import { parseReposSync, RepoWatcher } from "../repos/watcher.js";
@@ -38,8 +38,8 @@ export type DaemonStart = {
   execPath?: string;
   /** For tests: production passes nothing and runs `graphify` from PATH. */
   graphify?: GraphifyOpts;
-  /** For tests: production starts `github-mcp-server` from PATH on the first GitHub call. */
-  github?: GithubMcp;
+  /** Explicit provider injection for tests or callers; production uses the signed-in `gh` CLI. */
+  github?: GithubReader;
   ownedHelpers?: OwnedHelperScope;
 };
 
@@ -48,7 +48,7 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
   const runner = createRunner(o);
   const rpc = new RpcRouter();
   const graphify = { ...o.graphify, ownedHelpers: o.ownedHelpers };
-  const github = o.github ?? new GithubMcp({ nemaHome: o.nemaHome, ownedHelpers: o.ownedHelpers });
+  const github = o.github ?? new GithubGh({ ownedHelpers: o.ownedHelpers });
   registerRepoHandlers(rpc, { nemaHome: o.nemaHome, graphify, github, ownedHelpers: o.ownedHelpers });
   let sendMessage: ((message: unknown) => boolean) | null = null;
   const watcher = new RepoWatcher({

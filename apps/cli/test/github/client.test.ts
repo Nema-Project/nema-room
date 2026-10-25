@@ -254,7 +254,7 @@ test("plugin.call routes github__ names to the client and plugins.status reports
   const status = await rpc.handle({ type: "rpc.request", id: "s1", method: "plugins.status", params: {} });
   expect(status).toMatchObject({
     ok: true,
-    result: { github: { installed: false, detail: "未保存 GitHub 令牌：请运行 nema auth github" } },
+    result: { github: { installed: true, loggedIn: false, detail: "未保存 GitHub 令牌：请运行 nema auth github" } },
   });
 
   saveGithubToken(nemaHome, "ghp_test_token");
@@ -266,7 +266,7 @@ test("plugin.call routes github__ names to the client and plugins.status reports
   });
   expect(call).toMatchObject({ ok: true, result: 'list_issues {"owner":"o","repo":"r"}' });
   const status2 = await rpc.handle({ type: "rpc.request", id: "s2", method: "plugins.status", params: {} });
-  expect(status2).toMatchObject({ ok: true, result: { github: { installed: true, detail: "github-mcp-server fake 0.0.1" } } });
+  expect(status2).toMatchObject({ ok: true, result: { github: { installed: true, loggedIn: true, detail: "github-mcp-server fake 0.0.1" } } });
 
   const bad = await rpc.handle({ type: "rpc.request", id: "c2", method: "plugin.call", params: { name: "github__create_issue", args: {} } });
   expect(bad).toMatchObject({ ok: false, error: "未知函数 github__create_issue" });

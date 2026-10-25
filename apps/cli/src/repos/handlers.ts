@@ -1,7 +1,8 @@
 import { lstat, rm, unlink } from "node:fs/promises";
 import path from "node:path";
 import type { RpcRouter } from "../daemon/rpc.js";
-import { GITHUB_TOOLS, GithubMcp } from "../github/client.js";
+import { GITHUB_TOOLS } from "../github/client.js";
+import { GithubGh, type GithubReader } from "../github/gh.js";
 import { changedFiles, exportSnapshot, fetchMain, inspectRepo, mainRef, missingAtRef, readFileAtRef, revParse } from "./git.js";
 import { graphifyInstallStatus, queryIndex, type GraphifyOpts } from "./graphify.js";
 import { readIndexedSha, syncIndex, withIndexLock } from "./indexState.js";
@@ -177,7 +178,7 @@ async function ensureIndex(nemaHome: string, repo: RepoCall, graphify?: Graphify
   return root;
 }
 
-async function runPluginCall(nemaHome: string, call: PluginCall, github: GithubMcp, graphify?: GraphifyOpts): Promise<unknown> {
+async function runPluginCall(nemaHome: string, call: PluginCall, github: GithubReader, graphify?: GraphifyOpts): Promise<unknown> {
   const helpers = graphify?.ownedHelpers;
   if ("tool" in call) return github.call(call.tool, call.args);
   switch (call.name) {
@@ -205,10 +206,10 @@ async function runPluginCall(nemaHome: string, call: PluginCall, github: GithubM
 
 /**
  * `graphify` is for tests: production passes nothing and runs `graphify` from PATH.
- * `github` is the daemon's one GitHub MCP client; one is made here when none is passed.
+ * `github` is the daemon's GitHub provider; the authenticated `gh` CLI is the production default.
  */
-export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string; graphify?: GraphifyOpts; github?: GithubMcp; ownedHelpers?: OwnedHelperScope }): void {
-  const github = opts.github ?? new GithubMcp({ nemaHome: opts.nemaHome, ownedHelpers: opts.ownedHelpers });
+export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string; graphify?: GraphifyOpts; github?: GithubReader; ownedHelpers?: OwnedHelperScope }): void {
+  const github = opts.github ?? new GithubGh({ ownedHelpers: opts.ownedHelpers });
   router.register("repo.inspect", async (params) => {
     if (!params || typeof params !== "object" || typeof (params as { path?: unknown }).path !== "string") {
       throw new Error("invalid repo params");
@@ -264,8 +265,6 @@ export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string
 
   router.register("plugins.status", async () => {
     const [code, gh] = await Promise.all([graphifyInstallStatus(opts.graphify), github.status()]);
-    // The plugins page counts GitHub as installed only when the server runs and a token is saved.
-    // `loggedIn` lets the plugins page show the token state and the `nema auth github` hint.
-    return { code, github: { installed: gh.installed && gh.loggedIn, loggedIn: gh.loggedIn, detail: gh.detail } };
+    return { code, github: { installed: gh.installed, loggedIn: gh.loggedIn, detail: gh.detail } };
   });
 }
