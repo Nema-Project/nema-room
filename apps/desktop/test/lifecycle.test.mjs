@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { createDesktopLifecycle } = require('../lifecycle.cjs');
+const { createDesktopLifecycle, initialWindowSize } = require('../lifecycle.cjs');
 
 function harness(overrides = {}) {
   const app = new EventEmitter();
@@ -80,6 +80,7 @@ describe('Electron shell lifecycle', () => {
     const value = harness({ platform });
     await value.lifecycle.install();
     expect(value.windows[0].options.title).toBe('Nema Room');
+    expect(value.windows[0].options).toMatchObject({ width: 1180, height: 820 });
     expect(path.basename(value.windows[0].options.icon)).toBe('icon.png');
     expect(existsSync(value.windows[0].options.icon)).toBe(true);
     expect(value.trays).toHaveLength(1);
@@ -95,6 +96,11 @@ describe('Electron shell lifecycle', () => {
     expect(value.windows).toHaveLength(2);
     expect(value.runtimeApi.shutdownLocalRuntime).not.toHaveBeenCalled();
   });
+  it('opens across most of the work area instead of the 1180 fallback', () => {
+    expect(initialWindowSize({ getPrimaryDisplay: () => ({ workArea: { width: 1920, height: 1032 } }) })).toEqual({ width: 1766, height: 949 });
+    expect(initialWindowSize(undefined)).toEqual({ width: 1180, height: 820 });
+  });
+
   it('does not start a second application without the single-instance lock', async () => {
     const value = harness({ lock: false });
     await value.lifecycle.install();

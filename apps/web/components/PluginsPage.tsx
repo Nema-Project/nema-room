@@ -5,6 +5,18 @@ import { PLUGINS, type ExtensionRecord } from "@nema/shared";
 import { listExtensions } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
 
+function chipTone(kind: "provision" | "install" | "use", extension: ExtensionRecord) {
+  const broken = extension.availability !== "ready" || extension.error != null;
+  if (kind === "provision") return extension.provision === "external" ? "status-bad" : "";
+  if (kind === "install") {
+    if (extension.installState === "failed") return "status-bad";
+    if (extension.installState === "installed") return broken ? "status-bad" : "status-ok";
+    return "";
+  }
+  if (extension.useState === "enabled") return broken ? "status-bad" : "status-ok";
+  return "";
+}
+
 export function PluginsPage({ onClose }: { onClose?: () => void }) {
   const t = useT();
   const [extensions, setExtensions] = useState<ExtensionRecord[] | null>(null);
@@ -41,16 +53,16 @@ export function PluginsPage({ onClose }: { onClose?: () => void }) {
           const plugin = PLUGINS.find((item) => item.id === extension.id);
           return (
             <section key={extension.id} className="plugin-block">
-              <h2>{extension.name}</h2>
-              {plugin && (
-                <span className={plugin.dataFlow === "external" ? "tag red" : "tag"}>
-                  {t(plugin.dataFlow === "external" ? "plugins.external" : "plugins.local")}
-                </span>
-              )}
-              <p className="kmeta">{t(`extensions.provision.${extension.provision}`)}</p>
-              <p className="kmeta">{t(`extensions.install.${extension.installState}`)}</p>
-              <p className="kmeta">{t(`extensions.use.${extension.useState}`)}</p>
-              {extension.error === "bundled-runtime-missing" && <p className="kmeta">{t("extensions.error.bundled-runtime-missing")}</p>}
+              <div className="plugin-facts">
+                <h2>{extension.name}</h2>
+                <p className="plugin-status">
+                  <span className={["chip", chipTone("provision", extension)].filter(Boolean).join(" ")}>{t(`extensions.provision.${extension.provision}`)}</span>
+                  <span className={["chip", chipTone("install", extension)].filter(Boolean).join(" ")}>{t(`extensions.install.${extension.installState}`)}</span>
+                  <span className={["chip", chipTone("use", extension)].filter(Boolean).join(" ")}>{t(`extensions.use.${extension.useState}`)}</span>
+                  {plugin?.dataFlow === "external" && <span className="tag red">{t("plugins.external")}</span>}
+                </p>
+              </div>
+              {extension.error === "bundled-runtime-missing" && <p className="plugin-note">{t("extensions.error.bundled-runtime-missing")}</p>}
               {plugin && plugin.functions.length > 0 && (
                 <ul>
                   {plugin.functions.map((fn) => (

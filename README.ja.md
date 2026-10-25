@@ -198,7 +198,7 @@ npm run build -w apps/web
 - [変更履歴](CHANGELOG.md)
 - [設計・実装計画](docs/superpowers/)
 - [貢献ガイド（中国語）](CONTRIBUTING.md)
-- [セキュリティ（中国語）](SECURITY.md)：非公開で報告し、公開 issue に認証情報を貼らないでください。
+- [セキュリティ（中国語）](SECURITY.md)：リポジトリは非公開です。記載のセキュリティ issue テンプレートを使い、認証情報は貼らないでください。
 - [不具合報告](https://github.com/Nema-Project/nema-room/issues/new/choose)：テンプレートを使ってください。OS、Node/Docker のバージョン、実行方式、機密情報を除いたエラーを記載してください。
 
 第三者コンポーネントには archify と superpowers を基にした執筆ルールが含まれます。ライセンスと出典は [archify](vendor/archify/VENDORED.md) と [superpowers-rules](vendor/superpowers-rules/VENDORED.md) に保持しています。本プロジェクトは [MIT License](LICENSE) で公開します。第三者コンポーネントのライセンスと著作権表示も保持してください。

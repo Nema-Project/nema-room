@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, session, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, session, ipcMain, screen } = require('electron');
 const { mkdirSync } = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -17,7 +17,7 @@ if (testProfile) {
 const home = process.env.NEMA_DESKTOP_TEST_HOME || path.join(os.homedir(), '.nema', 'desktop');
 const assetsDir = path.join(process.resourcesPath, 'payload');
 const lifecycle = createDesktopLifecycle({
-  electron: { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, session, ipcMain },
+  electron: { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, session, ipcMain, screen },
   home,
   assetsDir,
   loadRuntimeApi: () => import(pathToFileURL(path.join(assetsDir, 'app', 'node_modules', '@nema', 'local', 'dist', 'src', 'index.js')).href),

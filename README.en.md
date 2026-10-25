@@ -198,7 +198,7 @@ The icon is wired into desktop packaging, windows, the tray, and the browser fav
 - [Changelog](CHANGELOG.md)
 - [Designs and implementation plans](docs/superpowers/)
 - [Contributing (Chinese)](CONTRIBUTING.md)
-- [Security policy (Chinese)](SECURITY.md): report privately. Do not paste credentials in a public issue.
+- [Security policy (Chinese)](SECURITY.md): the repository is private, so use the security issue template named there. Do not paste credentials.
 - [Report an issue](https://github.com/Nema-Project/nema-room/issues/new/choose): use a template. Include your OS, Node/Docker versions, how you run Nema Room, and redacted errors.
 
 This project is licensed under the [MIT License](LICENSE). Third-party components include archify and writing rules adapted from superpowers. License and source records are retained in [archify](vendor/archify/VENDORED.md) and [superpowers-rules](vendor/superpowers-rules/VENDORED.md); retain their licenses and copyright notices as well.

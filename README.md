@@ -191,7 +191,7 @@ npm run build -w apps/web
 - [变更记录](CHANGELOG.md)
 - [设计与实现计划](docs/superpowers/)
 - [参与贡献](CONTRIBUTING.md)
-- [安全问题](SECURITY.md)：请走私密报告，不要在公开 issue 中粘贴密钥。
+- [安全问题](SECURITY.md)：仓库仍是私有的，按该页的安全 issue 模板报告，不要粘贴密钥。
 - [问题反馈](https://github.com/Nema-Project/nema-room/issues/new/choose)：请使用模板，并提供系统、Node/Docker 版本、运行方式及脱敏后的错误信息。
 
 本项目采用 [MIT License](LICENSE)。第三方组件包括 archify 与改写自 superpowers 的写作规则，许可和来源保留在 [archify](vendor/archify/VENDORED.md) 与 [superpowers-rules](vendor/superpowers-rules/VENDORED.md)；请同时保留其许可证与版权声明。

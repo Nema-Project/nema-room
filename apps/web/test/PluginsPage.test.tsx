@@ -56,8 +56,8 @@ describe("PluginsPage", () => {
     expect(await screen.findByRole("heading", { name: "Extensions" })).toBeTruthy();
     const graphify = screen.getByRole("heading", { name: "graphify" }).closest("section")!;
     expect(within(graphify).getByText("Bundled with the app")).toBeTruthy();
-    expect(within(graphify).getByText("Installed")).toBeTruthy();
-    expect(within(graphify).getByText("Enabled")).toBeTruthy();
+    expect(within(graphify).getByText("Installed").classList.contains("status-bad")).toBe(true);
+    expect(within(graphify).getByText("Enabled").classList.contains("status-bad")).toBe(true);
     expect(within(graphify).getByText("The packaged Graphify runtime is missing. It can be repaired from here.")).toBeTruthy();
     expect(within(graphify).queryByText(/uv tool install/)).toBeNull();
     expect(within(graphify).getByText("code__search")).toBeTruthy();
@@ -79,7 +79,9 @@ describe("PluginsPage", () => {
     const block = heading.closest("section")!;
     expect(within(block).getByText("Sends data out").classList.contains("red")).toBe(true);
     expect(within(block).getByText("github__issue_read")).toBeTruthy();
-    expect(within(block).getByText("Bundled with the app")).toBeTruthy();
+    expect(within(block).getByText("Installed").classList.contains("status-ok")).toBe(true);
+    expect(within(block).getByText("Enabled").classList.contains("status-ok")).toBe(true);
+    expect(within(block).getByText("Bundled with the app").classList.contains("status-bad")).toBe(false);
     expect(within(block).queryByText(/gh 2\.67\.0|令牌不存在/)).toBeNull();
     expect(within(block).queryByText(/GitHub connection is/)).toBeNull();
     expect(within(block).queryByText(/authenticated local gh command|nema auth github|personal access token|uv tool install/i)).toBeNull();
