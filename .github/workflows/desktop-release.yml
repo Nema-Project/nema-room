@@ -1,0 +1,252 @@
+name: Desktop release
+
+# Ordinary pushes and pull requests only build and smoke every desktop target.
+# Only a push of a v<SemVer> tag reaches the publish job, and that job fails
+# closed unless every target built, smoked and passed desktop:validate-release.
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+# One run per ref; a tag run is never cancelled so a second attempt on the same
+# tag waits instead of racing the first publication.
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  # Every action below is pinned to a full commit SHA; the comment records the tag it was resolved from.
+  # actions/checkout       3d3c42e5aac5ba805825da76410c181273ba90b1  v7.0.1
+  # actions/setup-node     949feb2413d6458794dcd2491c4babbbce0c15c1  v7.1.0
+  # actions/upload-artifact   cf430e030ddbb5b0abf93d22962f4752f3646cd9  v7.0.2
+  # actions/download-artifact 9000827ccba6bdab643e8b6fd33ac0654aef8333  v8.0.2
+  NODE_VERSION: 22
+
+jobs:
+  plan:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Release helper tests
+        run: node --test scripts/desktop/release.test.mjs
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$REF_TYPE" = "tag" ]; then
+            # Rejects anything but strict v<SemVer> that equals the desktop and local package versions.
+            result=$(node scripts/desktop/release-version.mjs "$REF_NAME")
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "version=$(node -p "JSON.parse(process.argv[1]).version" "$result")" >> "$GITHUB_OUTPUT"
+            echo "prerelease=$(node -p "JSON.parse(process.argv[1]).prerelease" "$result")" >> "$GITHUB_OUTPUT"
+          else
+            version=$(node -p "require('./apps/desktop/package.json').version")
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build and smoke (${{ matrix.target }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: win32-x64
+            platform: win32
+            arch: x64
+            runner: windows-latest
+            installer: exe
+          - target: darwin-arm64
+            platform: darwin
+            arch: arm64
+            runner: macos-15
+            installer: dmg
+          - target: darwin-x64
+            platform: darwin
+            arch: x64
+            runner: macos-15-intel
+            installer: dmg
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Check native Windows C toolchain
+        if: matrix.platform == 'win32'
+        shell: bash
+        run: clang --version
+      - name: Stage runtime payload
+        shell: bash
+        run: npm run desktop:stage -- --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --out dist/desktop
+      - name: Collect source materials
+        # Needs the upstream source archives; only a release attempt pays for it. A failure blocks the release.
+        if: needs.plan.outputs.release == 'true'
+        shell: bash
+        run: npm run desktop:collect-source-materials -- "dist/desktop/$TARGET" "dist/desktop/$TARGET" "$TARGET" "$VERSION" scripts/desktop/source-materials-plan.json
+      - name: Package installer and ZIP
+        shell: bash
+        # make.mjs always runs electron-builder with --publish never.
+        run: npm run desktop:make -- --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --staged "dist/desktop/$TARGET" --out "dist/desktop-artifacts/$TARGET"
+      - name: Smoke packaged app (Windows portable ZIP)
+        if: matrix.platform == 'win32'
+        shell: bash
+        run: npm run desktop:smoke -- --zip "dist/desktop-artifacts/$TARGET/Nema-$VERSION-$TARGET.zip"
+      - name: Smoke staged runtime (macOS)
+        # desktop:smoke extracts a Windows ZIP; macOS gets the staged-payload runtime smoke only.
+        if: matrix.platform == 'darwin'
+        shell: bash
+        run: npm run desktop:smoke-runtime -- "dist/desktop/$TARGET"
+      - name: Checksums and upload set
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/desktop/release-manifest.mjs checksums "dist/desktop-artifacts/$TARGET" "$VERSION" "$TARGET"
+          mkdir -p "release-upload/$TARGET"
+          for name in "Nema-$VERSION-$TARGET.${{ matrix.installer }}" "Nema-$VERSION-$TARGET.zip" "SHA256SUMS-$VERSION-$TARGET.txt"; do
+            cp "dist/desktop-artifacts/$TARGET/$name" "release-upload/$TARGET/$name"
+          done
+      - name: Upload installer, ZIP and checksums
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nema-release-${{ needs.plan.outputs.version }}-${{ matrix.target }}
+          path: release-upload/${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: ${{ needs.plan.outputs.release == 'true' && 14 || 3 }}
+      - name: Upload staged payload for release validation
+        if: needs.plan.outputs.release == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nema-payload-${{ needs.plan.outputs.version }}-${{ matrix.target }}
+          path: dist/desktop/${{ matrix.target }}
+          include-hidden-files: true
+          compression-level: 1
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish release
+    needs: [plan, build]
+    # needs on a matrix job waits for every target; any failed target skips this job.
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Download build artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: nema-*-${{ needs.plan.outputs.version }}-*
+          path: downloaded
+      - name: Arrange per-target inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in win32-x64 darwin-arm64 darwin-x64; do
+            mkdir -p release-input release-payloads
+            mv "downloaded/nema-release-$VERSION-$target" "release-input/$target"
+            mv "downloaded/nema-payload-$VERSION-$target" "release-payloads/$target"
+          done
+      - name: Validate every target payload (fails closed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in win32-x64 darwin-arm64 darwin-x64; do
+            npm run desktop:validate-release -- "release-payloads/$target" "$target" "$VERSION"
+          done
+      - name: Verify the complete asset set
+        shell: bash
+        run: node scripts/desktop/release-manifest.mjs collect release-input release-assets "$VERSION" "$PRERELEASE"
+      - name: Refuse a published tag and validate any earlier draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          if view=$(gh release view "$TAG" --json isDraft,assets 2>/dev/null); then
+            if [ "$(node -p "JSON.parse(process.argv[1]).isDraft" "$view")" != "true" ]; then
+              echo "Release $TAG is already published; refusing to overwrite it." >&2
+              exit 1
+            fi
+            # A draft from a failed attempt is reused only when it holds nothing but assets of this release.
+            for existing in $(node -p "JSON.parse(process.argv[1]).assets.map((a) => a.name).join(' ')" "$view"); do
+              if [ ! -f "release-assets/$existing" ]; then
+                echo "Draft $TAG holds unexpected asset $existing; refusing to reuse it." >&2
+                exit 1
+              fi
+            done
+            echo "DRAFT_EXISTS=true" >> "$GITHUB_ENV"
+          fi
+      - name: Write release notes
+        shell: bash
+        run: |
+          {
+            echo "Nema Room $VERSION"
+            echo
+            echo "Build: commit $GITHUB_SHA, workflow run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID."
+            echo "These installers are unsigned (Windows) or ad-hoc signed (macOS); the operating system will warn on first launch."
+            echo "Verify downloads against SHA256SUMS-$VERSION.txt. release-manifest-$VERSION.json lists every asset with size, hash and build metadata."
+            echo
+            echo '```'
+            cat "release-assets/SHA256SUMS-$VERSION.txt"
+            echo '```'
+          } > release-notes.md
+      - name: Create or reuse draft, upload, publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease --latest=false); fi
+          if [ "${DRAFT_EXISTS:-false}" != "true" ]; then
+            gh release create "$TAG" --draft --verify-tag --title "Nema Room $VERSION" --notes-file release-notes.md "${flags[@]}"
+          else
+            gh release edit "$TAG" --title "Nema Room $VERSION" --notes-file release-notes.md "${flags[@]}"
+          fi
+          gh release upload "$TAG" release-assets/* --clobber
+          # Publish only when the draft holds exactly the verified asset set.
+          expected=$(ls release-assets | sort | tr '\n' ' ')
+          actual=$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort | tr '\n' ' ')
+          if [ "$expected" != "$actual" ]; then
+            echo "Draft assets differ from the verified set: $actual" >&2
+            exit 1
+          fi
+          gh release edit "$TAG" --draft=false "${flags[@]}"
