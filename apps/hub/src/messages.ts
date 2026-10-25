@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 import type { AgentMessageMeta, ReportMessageMeta, UserMessageMeta } from "@nema/shared";
 import type { Db } from "./db/db.js";
 import { insertQueuedTask, type Task } from "./tasks.js";
+import { conversationOf, getLastAgentMessage, getLastAskedQuestion } from "./threads.js";
 
 export type Message = {
   id: string;
@@ -68,11 +69,12 @@ async function insertMessage(
   content: string,
   taskId: string | null,
   meta: Message["meta"],
+  threadId: string | null = null,
 ): Promise<Message> {
   const rows = await db.query<Row>(
-    `insert into messages(id, workspace_id, role, content, meta, task_id, created_at)
-     values ($1, $2, $3, $4, $5::jsonb, $6, clock_timestamp()) returning ${COLS}`,
-    [`m_${nanoid(12)}`, workspaceId, role, content, meta === null ? null : JSON.stringify(meta), taskId],
+    `insert into messages(id, workspace_id, role, content, meta, task_id, created_at, thread_id)
+     values ($1, $2, $3, $4, $5::jsonb, $6, clock_timestamp(), $7) returning ${COLS}`,
+    [`m_${nanoid(12)}`, workspaceId, role, content, meta === null ? null : JSON.stringify(meta), taskId, threadId],
   );
   return toMessage(rows[0]!);
 }
@@ -81,17 +83,22 @@ export async function postUserMessage(
   db: Db,
   workspaceId: string,
   content: string,
-  quoteMessageId?: string,
+  opts: { quoteMessageId?: string; threadId?: string } | string = {},
 ): Promise<{ message: Message; task: Task }> {
   if (content.trim() === "") throw new Error("message content must not be empty");
+  const options = typeof opts === "string" ? { quoteMessageId: opts } : opts;
   return db.tx(async (t) => {
     let meta: UserMessageMeta | null = null;
-    if (quoteMessageId) {
-      const quoted = await getMessage(t, quoteMessageId);
+    if (options.threadId) {
+      const thread = await t.query<{ workspace_id: string }>("select workspace_id from threads where id=$1", [options.threadId]);
+      if (!thread[0] || thread[0].workspace_id !== workspaceId) throw new MessageOpError(400, "thread not in this workspace");
+    }
+    if (options.quoteMessageId) {
+      const quoted = await getMessage(t, options.quoteMessageId);
       if (!quoted || quoted.workspaceId !== workspaceId) throw new MessageOpError(400, "quote: message not in this workspace");
       meta = { quote: { messageId: quoted.id, role: quoted.role, excerpt: messageExcerpt(quoted.content) } };
     }
-    const message = await insertMessage(t, workspaceId, "user", content, null, meta);
+    const message = await insertMessage(t, workspaceId, "user", content, null, meta, options.threadId ?? null);
     const task = await insertQueuedTask(t, workspaceId, message.id);
     return { message, task };
   });
@@ -210,7 +217,7 @@ export function addMessage(
 /** Latest `limit` messages, returned oldest first. */
 export async function listMessages(db: Db, workspaceId: string, limit = 200): Promise<Message[]> {
   const rows = await db.query<Row>(
-    `select * from (select ${COLS}, seq from messages where workspace_id = $1 order by seq desc limit $2) m
+    `select * from (select ${COLS}, seq from messages where workspace_id = $1 and thread_id is null order by seq desc limit $2) m
      order by seq asc`,
     [workspaceId, limit],
   );
@@ -222,13 +229,14 @@ export async function getMessage(db: Db, id: string): Promise<Message | null> {
   return rows[0] ? toMessage(rows[0]) : null;
 }
 
-/** Latest agent message in the workspace, or null. */
-export async function getLastAgentMessage(db: Db, workspaceId: string): Promise<AgentMessage | null> {
+export { getLastAgentMessage, getLastAskedQuestion };
+
+/** Thread replies oldest first. The thread anchor is stored in threads.id, not messages.thread_id. */
+export async function listThreadMessages(db: Db, threadId: string, limit = 200): Promise<Message[]> {
   const rows = await db.query<Row>(
-    `select ${COLS} from messages where workspace_id = $1 and role = 'agent' order by seq desc limit 1`,
-    [workspaceId],
+    `select ${COLS} from messages where thread_id=$1 order by seq asc limit $2`, [threadId, limit],
   );
-  return rows[0] ? (toMessage(rows[0]) as AgentMessage) : null;
+  return rows.map(toMessage);
 }
 
 /**
@@ -237,22 +245,39 @@ export async function getLastAgentMessage(db: Db, workspaceId: string): Promise<
  */
 /** Latest `limit` messages except `excludeId`, oldest first. Later user messages are kept. */
 export async function listRecentMessages(db: Db, workspaceId: string, excludeId: string, limit = 20): Promise<Message[]> {
-  const rows = await db.query<Row>(
-    `select * from (
-       select ${COLS}, seq from messages
-       where workspace_id = $1 and id <> $2
-       order by seq desc limit $3) m
-     order by seq asc`,
-    [workspaceId, excludeId, limit],
-  );
+  const target = await getMessage(db, excludeId);
+  if (!target || target.workspaceId !== workspaceId) return [];
+  const threadId = await conversationOf(db, target);
+  if (threadId) {
+    const anchor = await getMessage(db, threadId);
+    const replies = await db.query<Row>(`select ${COLS} from (
+      select ${COLS}, seq from messages where workspace_id=$1 and thread_id=$2 and id<>$3
+      order by seq desc limit $4) r order by seq asc`, [workspaceId, threadId, excludeId, Math.min(limit, 50)]);
+    return [...(anchor ? [anchor] : []), ...replies.map(toMessage)];
+  }
+  const rows = await db.query<Row>(`select * from (
+    select ${COLS}, seq from messages where workspace_id=$1 and thread_id is null and id<>$2 order by seq desc limit $3
+  ) m order by seq asc`, [workspaceId, excludeId, limit]);
   return rows.map(toMessage);
 }
 
 export async function listPromptMessages(db: Db, workspaceId: string, userMessageId: string, limit = 20): Promise<Message[]> {
+  const targetRows = await db.query<{ id:string; workspace_id:string; role:Message["role"]; content:string; meta:Message["meta"]; task_id:string|null; created_at:Date|string; edited_at:Date|string|null; thread_id:string|null; seq:number }>(`select ${COLS},seq from messages where id=$1 and workspace_id=$2`, [userMessageId, workspaceId]);
+  const target = targetRows[0];
+  if (!target) return [];
+  const threadId = await conversationOf(db, toMessage(target));
+  if (threadId) {
+    const anchor = await getMessage(db, threadId);
+    const rows = await db.query<Row>(`select * from (
+      select ${COLS},seq from messages where workspace_id=$1 and thread_id=$2 and id<>$3
+        and (role<>'user' or seq < $4) order by seq desc limit $5
+    ) m order by seq asc`, [workspaceId, threadId, userMessageId, target.seq, Math.min(limit, 50)]);
+    return [...(anchor ? [anchor] : []), ...rows.map(toMessage)];
+  }
   const rows = await db.query<Row>(
     `select * from (
        select ${COLS}, seq from messages
-       where workspace_id = $1 and id <> $2
+       where workspace_id = $1 and thread_id is null and id <> $2
          and (role <> 'user' or seq < (select seq from messages where id = $2))
        order by seq desc limit $3) m
      order by seq asc`,

@@ -46,6 +46,7 @@ const PatchWorkspaceBody = z.object({
 const PostMessageBody = z.object({
   content: z.string().refine((s) => s.trim() !== "", "must not be empty"),
   quoteMessageId: z.string().min(1).optional(),
+  threadId: z.string().min(1).optional(),
 });
 const PreviewRepoBody = z.object({ path: z.string().min(1) });
 const BindRepoBody = z.object({
@@ -279,11 +280,11 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/workspaces/:id/messages", async (c) => {
     const id = c.req.param("id");
-    const { content, quoteMessageId } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, threadId } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, id))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     let message, created;
     try {
-      ({ message, task: created } = await postUserMessage(db, id, content, quoteMessageId));
+      ({ message, task: created } = await postUserMessage(db, id, content, { quoteMessageId, threadId }));
     } catch (e) {
       if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
       throw e;

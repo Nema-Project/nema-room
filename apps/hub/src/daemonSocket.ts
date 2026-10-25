@@ -7,7 +7,8 @@ import { createConnectionRpc, DaemonRpcError, type ConnectionRpc, type DaemonRpc
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
 import { chooseAskedQuestion, timeline, topOpenQuestion } from "./entryIndex.js";
-import { addMessage, getLastAgentMessage, getMessage, listMessageVersions, listPromptMessages, listRecentMessages, messageExcerpt, type Message } from "./messages.js";
+import { addMessage, getLastAskedQuestion, getMessage, listMessageVersions, listPromptMessages, listRecentMessages, messageExcerpt, type Message } from "./messages.js";
+import { conversationOf } from "./threads.js";
 import { announceInterrupted } from "./interrupts.js";
 import { enabledPluginTools, grillState } from "./plugins.js";
 import { recheckReports, registerReportToken } from "./reports.js";
@@ -75,7 +76,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       ? { id: named }
       : editing || userMessage.role === "system" || userMessage.role === "report"
         ? undefined
-        : (await getLastAgentMessage(db, task.workspaceId))?.meta?.askedQuestion;
+        : await getLastAskedQuestion(db, task.workspaceId, await conversationOf(db, userMessage));
     const store = new KnowledgeStore(repoPath(dataDir, task.workspaceId), deps.ownedHelpers);
     const lastAskedQuestion = asked ? await store.get(asked.id) : null;
     let workpackage: WorkPackagePromptInput | undefined;
