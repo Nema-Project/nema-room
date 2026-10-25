@@ -458,8 +458,9 @@ describe("managed local runtime", () => {
     try {
       setEnsureSpawnerForTests(sourceCoreSpawner());
       setEnsureTimeoutForTests(8_000);
-      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/another local core from another installation/i);
-      expect(await discoverInstance(home)).not.toBeNull();
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/another local core owns the control port/i);
+      // The owner never published, so there is no instance to discover; it must still hold the control port.
+      await expect(acquireInstance(home)).rejects.toMatchObject({ code: "NEMA_LOCAL_OWNER_COLLISION" });
     } finally { await owner.close(); }
   }, 20_000);
 
@@ -536,6 +537,10 @@ describe("managed local runtime", () => {
     mkdirSync(dataDir, { recursive: true });
     const tokenFile = join(dataDir, "daemon-token");
     writeFileSync(tokenFile, "a".repeat(64), { mode: 0o644 });
+    // On Windows the mode is ignored and a file under the user's temp dir already has a private DACL, so widen it.
+    if (process.platform === "win32") {
+      execFileSync(join(process.env.SystemRoot ?? "C:/Windows", "System32", "icacls.exe"), [tokenFile, "/grant", "*S-1-1-0:R"], { windowsHide: true, stdio: "ignore" });
+    }
     await expect(startLocalRuntime({ home, assetsDir: testAssets() })).rejects.toThrow(/trusted private file|private Windows ACL/i);
     expect(existsSync(join(home, "db"))).toBe(false);
     expect(await discoverInstance(home)).toBeNull();
