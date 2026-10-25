@@ -173,7 +173,7 @@ describe("CodeAndPlugins", () => {
     mount();
 
     expect(await screen.findByText("Installed graphify 0.9.0")).toBeTruthy();
-    expect(screen.getByText("Not installed 令牌不存在")).toBeTruthy();
+    expect(screen.queryByText("Not installed 令牌不存在")).toBeNull();
     expect(screen.getByText("When on, call contents are sent to an external service")).toBeTruthy();
     expect(screen.getByText("Sends data out").classList.contains("red")).toBe(true);
     expect(screen.getByText("Local only").classList.contains("red")).toBe(false);

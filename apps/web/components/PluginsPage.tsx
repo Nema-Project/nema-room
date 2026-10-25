@@ -43,14 +43,12 @@ export function PluginsPage({ onClose }: { onClose?: () => void }) {
             <span className={plugin.dataFlow === "external" ? "tag red" : "tag"}>
               {t(plugin.dataFlow === "external" ? "plugins.external" : "plugins.local")}
             </span>
-            <p className="kmeta">
-              {plugin.installed ? t("plugins.installed") : t("plugins.notInstalled")}
-              {plugin.detail ? ` ${plugin.detail}` : ""}
-            </p>
-            {plugin.id === "github" && <>
-              <p className="kmeta">{plugin.loggedIn ? t("github.connected") : t("github.notConnected")}</p>
-              <p className="help">{t("github.localConnectionHelp")}</p>
-            </>}
+            {plugin.id !== "github" && (
+              <p className="kmeta">
+                {plugin.installed ? t("plugins.installed") : t("plugins.notInstalled")}
+                {plugin.detail ? ` ${plugin.detail}` : ""}
+              </p>
+            )}
             <ul>
               {plugin.functions.map((fn) => (
                 <li key={fn.name}>

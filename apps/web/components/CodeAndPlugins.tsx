@@ -169,7 +169,7 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
             {row.plugin.dataFlow === "external" && <p className="help">{t("plugins.externalNote")}</p>}
             {catalogError ? (
               <p className="error">{catalogError}</p>
-            ) : catalog ? (
+            ) : row.plugin.id === "github" ? null : catalog ? (
               <p className="kmeta">{installText(row.plugin.id, catalog, t)}</p>
             ) : (
               <p className="kmeta">{t("common.loading")}</p>
