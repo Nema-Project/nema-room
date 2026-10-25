@@ -332,6 +332,7 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
     || (claudeSaved ? model !== savedModel : model !== "" && model !== savedModel)
   );
   const showModelList = !!settings && settings.config.adapter === "codex-direct";
+  const modelsLoading = showModelList && providerSaved && settings?.auth.state === "connected" && !modelsLoaded;
   const claudeModels = savedModel && !CLAUDE_MODEL_ALIASES.includes(savedModel as typeof CLAUDE_MODEL_ALIASES[number])
     ? [savedModel, ...CLAUDE_MODEL_ALIASES]
     : [...CLAUDE_MODEL_ALIASES];
@@ -345,11 +346,13 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
           ? "model.models.listFailed"
           : modelsUnavailable === "not_connected"
             ? "model.models.connectFirst"
-            : modelsLoaded && models.length === 0
-              ? "model.models.empty"
-              : savedModel && !models.includes(savedModel)
-                ? "model.modelNotListed"
-                : null;
+            : !modelsLoaded
+              ? "model.models.loading"
+              : models.length === 0
+                ? "model.models.empty"
+                : savedModel && !models.includes(savedModel)
+                  ? "model.modelNotListed"
+                  : null;
   const jobMessage = job?.state === "running" ? "model.job.running"
     : job?.state === "cancelling" ? "model.job.cancelling"
       : job?.state === "cancelled" ? "model.job.cancelled"
@@ -368,11 +371,11 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
         {notice && <p className="notice" role="status">{t(notice)}</p>}
         {!settings && !error && !statusError && <p className="kmeta">{t("common.loading")}</p>}
         {settings && <>
-          <form className="editform" onSubmit={saveModel}>
+          <form className="editform model-group" onSubmit={saveModel}>
             <h2 className="label">{t("model.modelChoice")}</h2>
             {showModelList && <label className="field">
-              <select aria-label={t("model.modelChoice")} value={model} disabled={!providerSaved || settings.auth.state !== "connected" || models.length === 0 || saving || savingModel || isBusy} onChange={(e) => setModel(e.target.value)}>
-                <option value="" disabled>{t("model.modelPick")}</option>
+              <select aria-label={t("model.modelChoice")} aria-busy={modelsLoading} value={model} disabled={!providerSaved || settings.auth.state !== "connected" || modelsLoading || models.length === 0 || saving || savingModel || isBusy} onChange={(e) => setModel(e.target.value)}>
+                <option value="" disabled>{modelsLoading ? t("model.models.loading") : t("model.modelPick")}</option>
                 {models.map((id) => <option key={id} value={id}>{id}</option>)}
               </select>
             </label>}
@@ -393,7 +396,7 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
             <button type="submit" disabled={!providerSaved || !modelDirty || saving || savingModel || isBusy}>{savingModel ? t("model.savingModel") : t("model.saveModel")}</button>
           </form>
 
-          <form className="editform model-block" onSubmit={save}>
+          <form className="editform model-block model-group" onSubmit={save}>
             <h2 className="label">{t("model.provider")}</h2>
             <label className="field"><span className="label">{t("model.service")}</span>
               <select aria-label={t("model.service")} value={mode === "claude" ? "claude" : mode === "byok" ? "api" : "chatgpt"} disabled={saving || isBusy} onChange={(e) => void applyProvider(e.target.value === "claude" ? "claude" : e.target.value === "api" ? "byok" : "siwc")}>
@@ -416,7 +419,7 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
             <button type="submit" className="primary" disabled={saving || isBusy}>{saving ? t("model.saving") : t("model.save")}</button>
           </form>
 
-          <section className="model-block" aria-label={t("model.authentication")}>
+          <section className="model-block model-group" aria-label={t("model.authentication")}>
             <h2 className="label">{t("model.authentication")}</h2>
             <p className="kmeta" role="status">{t(`model.auth.${selectedAuth}`)}</p>
             <p className="help">{t("model.auth.independent")}</p>

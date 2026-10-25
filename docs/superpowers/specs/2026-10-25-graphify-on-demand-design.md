@@ -8,7 +8,7 @@ Bind a local Git repository in workspace settings. That is the only setup step. 
 
 Graphify is the file `tools/graphify/graphify` (`graphify.exe` on Windows) under the desktop payload root. The desktop core passes that path into the daemon. A CLI daemon with no injected binary uses `NEMA_GRAPHIFY_BIN` when it is set, otherwise the same relative path under `NEMA_PAYLOAD_ROOT` or next to the Node executable. An injected test binary wins over the environment.
 
-When that file is missing, doctor and `plugins.status` stay informational and say `随包的 Graphify 运行环境缺失`. The plugins page already shows that the packaged runtime can be repaired. This change does not add a downloader or a repair action: graphifyy is a Python tool, and the desktop payload only accepts a pinned, reviewed artifact. Putting that artifact at `tools/graphify/` is the remaining packaging step. Until then, code indexing reports the missing packaged runtime.
+When that file is missing, doctor and `plugins.status` stay informational and say `随包的 Graphify 运行环境缺失`. The plugins page already shows that the packaged runtime can be repaired. There is still no repair action and no download on first launch. `desktop:stage` creates `tools/graphify/` from the pinned CPython and graphifyy lock in `docs/superpowers/specs/2026-10-25-graphify-package-design.md`. A payload built before that pin reports the missing packaged runtime.
 
 ## When fetch runs
 

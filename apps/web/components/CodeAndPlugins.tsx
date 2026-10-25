@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { formatDay, formatTime } from "@/lib/format";
-import { bindRepo, listPlugins, listRepos, listWorkspacePlugins, pickDirectory, unbindRepo, updateRepo, updateWorkspacePlugin } from "@/lib/hub";
+import { bindRepo, listPlugins, listRepos, listWorkspacePlugins, pickDirectory, previewRepo, unbindRepo, updateRepo, updateWorkspacePlugin, type RepoPreview } from "@/lib/hub";
 import { useLocale, useT, type Locale } from "@/lib/i18n";
 import type { PluginCatalogItem, Repo, WorkspacePlugin } from "@/lib/types";
 
@@ -30,9 +30,9 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
   const [plugins, setPlugins] = useState<WorkspacePlugin[] | null>(null);
   const [catalog, setCatalog] = useState<PluginCatalogItem[] | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [path, setPath] = useState("");
+  const [preview, setPreview] = useState<RepoPreview | null>(null);
   const [label, setLabel] = useState("");
-  const [mainBranch, setMainBranch] = useState("");
+  const [previewing, setPreviewing] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -73,32 +73,35 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
 
   async function browse() {
     setPicking(true);
+    let replacing = false;
     try {
       const chosen = await pickDirectory();
-      if (chosen.path) {
-        setPath(chosen.path);
-        setFormError(null);
-      }
+      if (!chosen?.path) return;
+      replacing = true;
+      setPreviewing(true);
+      setFormError(null);
+      const next = await previewRepo(workspaceId, chosen.path);
+      setPreview(next);
+      setLabel(next.label);
     } catch (err) {
+      if (replacing) setPreview(null);
       setFormError(err instanceof Error ? err.message : String(err));
     } finally {
       setPicking(false);
+      setPreviewing(false);
     }
   }
 
   async function add(e: FormEvent) {
     e.preventDefault();
-    const trimmedPath = path.trim();
+    if (!preview) return;
     const trimmedLabel = label.trim();
-    if (!trimmedPath || !trimmedLabel) return;
-    const branch = mainBranch.trim();
-    const body = { path: trimmedPath, label: trimmedLabel, ...(branch ? { mainBranch: branch } : {}) };
+    if (!trimmedLabel || (preview.labelTaken && trimmedLabel === preview.label)) return;
     try {
-      const created = await bindRepo(workspaceId, body);
+      const created = await bindRepo(workspaceId, { path: preview.root, label: trimmedLabel, mainBranch: preview.defaultBranch });
       setRepos((list) => [...(list ?? []), created]);
-      setPath("");
+      setPreview(null);
       setLabel("");
-      setMainBranch("");
       setFormError(null);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : String(err));
@@ -148,19 +151,21 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
         <div className="field">
           <span className="label">{t("code.path")}</span>
           <div className="path-pick">
-            <button type="button" onClick={() => void browse()} disabled={picking}>{t("code.browse")}</button>
-            <span className="repo-path">{path || t("code.pathEmpty")}</span>
+            <button type="button" onClick={() => void browse()} disabled={picking || previewing}>{t("code.browse")}</button>
+            <span className="repo-path">{preview?.root || t("code.pathEmpty")}</span>
           </div>
         </div>
-        <label className="field">
-          <span className="label">{t("code.label")}</span>
-          <input type="text" value={label} onChange={(e) => setLabel(e.target.value)} />
-        </label>
-        <label className="field">
-          <span className="label">{t("code.mainBranch")}</span>
-          <input type="text" value={mainBranch} onChange={(e) => setMainBranch(e.target.value)} />
-        </label>
-        <button type="submit">{t("code.addRepo")}</button>
+        {previewing && <p className="kmeta">{t("code.previewing")}</p>}
+        {preview && <>
+          <p><span className="label">{t("code.remote")}</span> {preview.hasOrigin && preview.remoteUrl ? preview.remoteUrl : t("code.noOrigin")}</p>
+          <p><span className="label">{t("code.mainBranch")}</span> {preview.defaultBranch}</p>
+          {preview.labelTaken && <label className="field">
+            <span className="label">{t("code.label")}</span>
+            <input type="text" aria-label={t("code.label")} value={label} onChange={(e) => setLabel(e.target.value)} />
+            <span className="help">{t("code.labelTaken")}</span>
+          </label>}
+        </>}
+        <button type="submit" disabled={!preview || previewing || (preview.labelTaken && (!label.trim() || label.trim() === preview.label))}>{t("code.addRepo")}</button>
         {formError && (
           <p className="error" role="alert">
             {formError}

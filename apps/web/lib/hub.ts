@@ -87,6 +87,15 @@ export const listExtensions = () => request<ExtensionRecord[]>("/extensions");
 /** Opens the OS folder dialog in the host daemon. `path` is null when the dialog is cancelled. */
 export const pickDirectory = () => request<{ path: string | null }>("/pick-directory", { method: "POST", body: {} });
 export const listRepos = (id: string) => request<Repo[]>(`${w(id)}/repos`);
+export type RepoPreview = {
+  root: string;
+  defaultBranch: string;
+  hasOrigin: boolean;
+  remoteUrl: string | null;
+  label: string;
+  labelTaken: boolean;
+};
+export const previewRepo = (id: string, path: string) => request<RepoPreview>(`${w(id)}/repos/preview`, { method: "POST", body: { path } });
 export const bindRepo = (id: string, body: { path: string; label: string; mainBranch?: string }) =>
   request<Repo>(`${w(id)}/repos`, { method: "POST", body });
 export const updateRepo = (id: string, repoId: string, patch: { label?: string; mainBranch?: string }) =>

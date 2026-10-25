@@ -8,8 +8,14 @@ const github = { call: async () => ({}), status: async () => ({ installed: false
 
 describe("folder dialog", () => {
   test("asks the host OS for one directory", () => {
-    expect(pickerCommand("win32").cmd).toBe("powershell.exe");
-    expect(pickerCommand("win32").args).toContain("-STA");
+    const win = pickerCommand("win32");
+    expect(win.cmd).toBe("powershell.exe");
+    expect(win.args).toContain("-STA");
+    const encoded = win.args[win.args.indexOf("-EncodedCommand") + 1] ?? "";
+    const script = Buffer.from(encoded, "base64").toString("utf16le");
+    expect(script).toContain("IFileOpenDialog");
+    expect(script).toContain("0x20");
+    expect(script).not.toContain("FolderBrowserDialog");
     expect(pickerCommand("darwin")).toEqual({ cmd: "osascript", args: ["-e", "POSIX path of (choose folder)"] });
     expect(pickerCommand("linux").args).toContain("--directory");
   });

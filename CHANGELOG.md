@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- The model menu says it is loading the provider's list, and stays closed, until that list arrives.
 - Creating a workspace lines the confirm and cancel marks up with the name field. They use the same thin stroke icons as the theme control, so the check no longer sits under the underline.
 - Claude Code tokens and the report token now get a private ACL on the file itself. Protecting only the parent directory left an elevated Windows process, including GitHub-hosted runners, as the Administrators owner, so the next read rejected the file.
 - Desktop staging downloads the Electron binary when it is missing. Electron 45 no longer does that during `npm ci`.
@@ -14,11 +15,14 @@
 
 ### Changed
 
+- Choosing a repository folder previews its remote and detected main branch. The name and branch come from the repository. A name is typed only when that name is already used. Windows opens the Explorer-style folder picker.
+- Model settings draws the model, provider, and sign-in groups on the sidebar tint, with the page color between them.
 - Model settings choose ChatGPT subscription, Claude subscription, or API key on one level. The Agent runtime control is gone. Stored adapter and auth mode are unchanged.
 - Bound repositories are fetched when a task first reads their code, not every five minutes. Graphify is resolved from the packaged `tools/graphify/` path. A missing runtime reports `随包的 Graphify 运行环境缺失` and is not installed from `PATH`.
 
 ### Added
 
+- Desktop staging downloads pinned CPython 3.11.17 and graphifyy 0.9.95 into `tools/graphify/`. The launcher uses a path relative to itself, so a release build does not contain a developer's install path. The app still does not download Graphify on first launch.
 - Model settings are separate from the provider. After a provider is saved and connected, its model is chosen from that provider's list. There is no custom model ID field. A saved model that is not in the list stays as it is until a listed model replaces it.
 
 - A CLI launcher in the desktop payload (`Nema CLI.cmd`, `Nema CLI.command`, or `nema-cli`) that runs the bundled CLI, so `report install` works from a packaged app.

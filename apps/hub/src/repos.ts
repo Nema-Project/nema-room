@@ -204,6 +204,48 @@ export async function applyRepoFetched(
 
 const INVALID_BRANCH = "主分支名称无效";
 
+export type RepoPreview = {
+  root: string;
+  defaultBranch: string;
+  hasOrigin: boolean;
+  remoteUrl: string | null;
+  label: string;
+  labelTaken: boolean;
+};
+
+function suggestedLabel(root: string): string {
+  const segment = root.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
+  const label = [...segment].slice(0, 40).join("");
+  checkLabel(label);
+  return label;
+}
+
+export async function previewRepo(db: Db, daemon: DaemonRpc, workspaceId: string, path: string): Promise<RepoPreview> {
+  const ws = await db.query<{ archived_at: Date | string | null }>(`select archived_at from workspaces where id = $1`, [workspaceId]);
+  if (!ws[0]) throw new RepoError(404, `找不到 workspace：${workspaceId}`);
+  if (ws[0].archived_at) throw new RepoError(409, "workspace 已归档，取消归档后才能绑定仓库");
+  let inspected: Inspected;
+  try {
+    inspected = asInspected(await daemon.call("repo.inspect", { path }));
+  } catch (error) {
+    if (error instanceof DaemonRpcError) {
+      if (DAEMON_UNAVAILABLE.has(error.message)) throw new RepoError(503, error.message);
+      throw new RepoError(400, error.message);
+    }
+    throw error;
+  }
+  const label = suggestedLabel(inspected.root);
+  const taken = await db.query(`select 1 as ok from workspace_repos where workspace_id = $1 and label = $2`, [workspaceId, label]);
+  return {
+    root: inspected.root,
+    defaultBranch: isBranchName(inspected.defaultBranch) ? inspected.defaultBranch : "main",
+    hasOrigin: inspected.hasOrigin,
+    remoteUrl: inspected.remoteUrl,
+    label,
+    labelTaken: taken.length > 0,
+  };
+}
+
 export async function bindRepo(
   db: Db,
   daemon: DaemonRpc,

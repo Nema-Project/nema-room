@@ -63,7 +63,14 @@ async function fixture(t) {
   const nodePin = toolsManifest.node.archive[target], gitPin = toolsManifest.git.archives[target];
   await write(`node/${target}/tools-source.json`, JSON.stringify({ target, node: { version: toolsManifest.node.version, archive: nodePin.file, sha256: nodePin.sha256 }, git: { version: toolsManifest.git.version, gitForWindowsVersion: toolsManifest.git.gitForWindowsVersion, dugiteNativeVersion: toolsManifest.git.dugiteNativeVersion, archive: gitPin.file, sha256: gitPin.sha256 }, sourceCorrespondence: { status: 'pending-task-7c' } }));
   const tools = { node: `${target}/node/${windows ? 'node.exe' : 'bin/node'}`, git: `${target}/git/${gitBinary}`, ...(windows ? { ownedHelperGuardian: `${target}/owned-helper.exe` } : {}), licenses: { node: `${target}/node/LICENSE`, git: `${target}/${gitLicense}`, gitTree: `${target}/git`, gitNotices: `${target}/${path.dirname(gitNotice)}`, gitNotice: `${target}/${gitNotice}`, sourceRecord: `${target}/tools-source.json` } };
-  return { source, output, write, tools, options: { sourceRoot: source, outputDir: output, toolsRoot: path.join(source, 'node'), platform, arch, version: '0.1.0', tools, build: false } };
+  const stageGraphify = async ({ destination, platform: graphifyPlatform }) => {
+    await mkdir(destination, { recursive: true });
+    await writeFile(path.join(destination, graphifyPlatform === 'win32' ? 'graphify.exe' : 'graphify'), 'graphify fixture');
+    await mkdir(path.join(destination, 'licenses'), { recursive: true });
+    await writeFile(path.join(destination, 'licenses', 'LICENSE'), 'graphify license fixture');
+    return destination;
+  };
+  return { source, output, write, tools, options: { sourceRoot: source, outputDir: output, toolsRoot: path.join(source, 'node'), platform, arch, version: '0.1.0', tools, build: false, fetchGraphify: stageGraphify } };
 }
 
 test('runs the Electron installer when the binary has not been downloaded yet', async (t) => {
@@ -98,7 +105,7 @@ test('stages a relocatable manifest and all declared runtime resources from fixt
   } else assert.equal(manifest.ownedHelperGuardian, undefined);
   for (const key of ['node', 'git', 'coreEntry', 'cliEntry', 'webEntry']) assert.ok((await readFile(path.join(target, manifest[key]))).length > 0, key);
   assert.ok((await readFile(path.join(target, manifest.licenses, 'node'))).length > 0);
-  for (const file of ['web/apps/web/.next/static/chunks/a.js', 'web/apps/web/public/fonts/a.woff2', 'app/node_modules/@nema/local/package.json', 'app/node_modules/@nema/hub/dist/src/db/migrations/0001.sql', 'app/node_modules/@nema/cli/src/report/SKILL.md', 'vendor/archify/THIRD_PARTY_NOTICES.md', 'vendor/superpowers-rules/LICENSE', 'runtime/licenses/application']) {
+  for (const file of ['web/apps/web/.next/static/chunks/a.js', 'web/apps/web/public/fonts/a.woff2', 'app/node_modules/@nema/local/package.json', 'app/node_modules/@nema/hub/dist/src/db/migrations/0001.sql', 'app/node_modules/@nema/cli/src/report/SKILL.md', 'vendor/archify/THIRD_PARTY_NOTICES.md', 'vendor/superpowers-rules/LICENSE', 'runtime/licenses/application', 'runtime/licenses/graphify-runtime/LICENSE', process.platform === 'win32' ? 'tools/graphify/graphify.exe' : 'tools/graphify/graphify']) {
     assert.ok((await readFile(path.join(target, file))).length > 0, file);
   }
   await assert.rejects(readFile(path.join(target, 'app/node_modules/@nema/local/dist/src/test/runtime.test.js')));

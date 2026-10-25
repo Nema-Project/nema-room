@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetchTools, toolsManifest } from './fetch-tools.mjs';
 import { buildOwnedHelper } from './build-owned-helper.mjs';
+import { fetchGraphify as fetchGraphifyRuntime } from './fetch-graphify.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRoot = path.resolve(scriptDir, '../..');
@@ -254,6 +255,7 @@ export async function stageRuntime({
   tools,
   build = true,
   ownedHelperBuilder = buildOwnedHelper,
+  fetchGraphify = fetchGraphifyRuntime,
 } = {}) {
   sourceRoot = path.resolve(sourceRoot);
   outputDir = path.resolve(outputDir);
@@ -347,6 +349,11 @@ export async function stageRuntime({
     const staging = path.join(tempRoot, 'payload');
     const put = (relative) => path.join(staging, ...safeRelative(relative, 'payload').slice(0));
     await mkdir(staging, { recursive: true });
+    const graphifyDir = await fetchGraphify({ platform, arch, destination: put('tools/graphify'), cacheDir: path.join(toolCache, 'graphify'), sourceRoot });
+    if (graphifyDir) {
+      await requiredFile(staging, platform === 'win32' ? 'tools/graphify/graphify.exe' : 'tools/graphify/graphify', 'packaged Graphify launcher', staging);
+      await copyTree(path.join(graphifyDir, 'licenses'), put('runtime/licenses/graphify-runtime'), staging);
+    }
     await copyTree(selectedToolsRoot, put(`runtime/${target}`), selectedToolsRoot);
     if (ownedHelperPath) await copyTree(ownedHelperPath, put('runtime/owned-helper.exe'), path.dirname(ownedHelperPath));
     await copyTree(standalone, put('web'), builtRoot);

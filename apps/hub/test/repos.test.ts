@@ -7,7 +7,7 @@ import { DaemonRpcError } from "../src/daemonRpc.js";
 import { attachDaemonSocket } from "../src/daemonSocket.js";
 import { EventBus, type HubEvent } from "../src/events.js";
 import { PluginError, setPluginState } from "../src/plugins.js";
-import { RepoError, applyRepoMoved, bindRepo, findRepoForWorkspace, getRepo, listRepos, syncBoundRepos, unbindRepo, updateRepo } from "../src/repos.js";
+import { RepoError, applyRepoMoved, bindRepo, findRepoForWorkspace, getRepo, listRepos, previewRepo, syncBoundRepos, unbindRepo, updateRepo } from "../src/repos.js";
 import { createWorkspace, deleteWorkspace, updateWorkspace } from "../src/workspaces.js";
 import { listMessages } from "../src/messages.js";
 import { listQueuedTasks } from "../src/tasks.js";
@@ -37,6 +37,27 @@ function daemonOf(handlers: Record<string, (params: unknown) => Promise<unknown>
     },
   };
 }
+
+test("preview names the folder, reports a taken label, and does not index", async () => {
+  const { db, dataDir } = await makeHubDeps();
+  const ws = await createWorkspace(db, dataDir, "Alpha");
+  const { daemon, calls } = daemonOf({
+    "repo.inspect": () => ({ ...inspected, root: "/real/a", defaultBranch: "develop" }),
+    "repo.index": () => ({ sha: "" }),
+  });
+  await expect(previewRepo(db, daemon, ws.id, "/a/x")).resolves.toEqual({
+    root: "/real/a",
+    defaultBranch: "develop",
+    hasOrigin: true,
+    remoteUrl: "https://example.com/a.git",
+    label: "a",
+    labelTaken: false,
+  });
+  await bindRepo(db, daemon, ws.id, { path: "/a/x", label: "a" });
+  calls.length = 0;
+  await expect(previewRepo(db, daemon, ws.id, "/a/x")).resolves.toMatchObject({ label: "a", labelTaken: true });
+  expect(calls.map((call) => call.method)).toEqual(["repo.inspect"]);
+});
 
 test("binding stores the inspected repo and fires repo.index", async () => {
   const { db, dataDir } = await makeHubDeps();

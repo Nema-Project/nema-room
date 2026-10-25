@@ -11,7 +11,7 @@ import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, listMessages, postSystemTask,
 import { vendoredArchify, type Archify } from "./diagrams.js";
 import { PluginError, daemonHttpStatus, listExtensions, pluginsForUi, setPluginState, workspacePluginState } from "./plugins.js";
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
-import { RepoError, bindRepo, getRepo, listRepos, syncBoundRepos, unbindRepo, updateRepo } from "./repos.js";
+import { RepoError, bindRepo, getRepo, listRepos, previewRepo, syncBoundRepos, unbindRepo, updateRepo } from "./repos.js";
 import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
 import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, repoPath, updateWorkspace } from "./workspaces.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
@@ -44,6 +44,7 @@ const PatchWorkspaceBody = z.object({
   archived: z.boolean().optional(),
 });
 const PostMessageBody = z.object({ content: z.string().refine((s) => s.trim() !== "", "must not be empty") });
+const PreviewRepoBody = z.object({ path: z.string().min(1) });
 const BindRepoBody = z.object({
   path: z.string().min(1),
   label: z.string().trim().min(1),
@@ -206,6 +207,11 @@ export function uiRoutes(deps: UiDeps): Hono {
   });
 
   app.get("/workspaces/:id/repos", async (c) => c.json(await listRepos(db, c.req.param("id")!)));
+
+  app.post("/workspaces/:id/repos/preview", async (c) => {
+    const input = await body(c, PreviewRepoBody);
+    return c.json(await previewRepo(db, deps.daemon, c.req.param("id")!, input.path));
+  });
 
   app.post("/workspaces/:id/repos", async (c) => {
     const id = c.req.param("id")!;

@@ -66,6 +66,10 @@ describe("ModelSettings", () => {
     const model = screen.getByRole("heading", { name: modelName });
     const heading = screen.getByRole("heading", { name: providerHeading });
     expect(model.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const groups = document.querySelectorAll(".model-group");
+    expect(groups).toHaveLength(3);
+    expect(groups[0]?.contains(model)).toBe(true);
+    expect(groups[1]?.contains(heading)).toBe(true);
   });
 
   it.each([
@@ -153,6 +157,34 @@ describe("ModelSettings", () => {
     expect(status.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText(/saved connection|保存済みの接続|已保存的连接/)).toBeNull();
     expect(screen.queryByText(/SIWC|BYOK/i)).toBeNull();
+  });
+
+  it("says the model list is loading and stays closed until the list arrives", async () => {
+    const saved = {
+      ...settings,
+      auth: { ...settings.auth, state: "connected" as const },
+    };
+    let release: (value: Response) => void = () => {};
+    const pending = new Promise<Response>((resolve) => { release = resolve; });
+    const fetchMock = vi.fn<typeof fetch>((input) => {
+      const path = typeof input === "string" ? input : input instanceof URL ? input.pathname : input.url;
+      if (path === "/_nema/auth/status") return Promise.resolve(reply({ state: "idle", error: null }));
+      if (path === "/_nema/models") return pending;
+      return Promise.resolve(reply(saved));
+    });
+    localStorage.setItem("nema.locale", "en");
+    vi.stubGlobal("fetch", fetchMock);
+    render(<I18nProvider><ModelSettings onClose={() => {}} /></I18nProvider>);
+    const select = await screen.findByLabelText("Model") as HTMLSelectElement;
+    await waitFor(() => expect(select.options[0]?.textContent).toBe("Loading the model list…"));
+    expect(select.disabled).toBe(true);
+    expect(select.getAttribute("aria-busy")).toBe("true");
+    expect(screen.getAllByText("Loading the model list…").length).toBeGreaterThan(0);
+    release(reply({ models: ["gpt-a"] }));
+    await waitFor(() => expect(select.disabled).toBe(false));
+    expect(select.getAttribute("aria-busy")).toBe("false");
+    expect(Array.from(select.options, (option) => option.value)).toEqual(["", "gpt-a"]);
+    expect(screen.queryByText("Loading the model list…")).toBeNull();
   });
 
   it("chooses a listed model for the saved provider and does not accept a typed model id", async () => {

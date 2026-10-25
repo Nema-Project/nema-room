@@ -682,6 +682,38 @@ describe("diagram routes", () => {
     expect(renders).toHaveLength(1);
   });
 
+  test("POST /workspaces/:id/repos/preview returns the inspect summary", async () => {
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const app = createApp({
+      db,
+      dataDir,
+      nemaHome,
+      events,
+      daemonStatus: () => true,
+      daemon: {
+        call: async (method) => {
+          if (method !== "repo.inspect") throw new DaemonRpcError("daemon 未连接");
+          return { root: "/real/a", gitCommonDir: "/real/a/.git", defaultBranch: "develop", hasOrigin: true, remoteUrl: "https://example.com/a.git" };
+        },
+      },
+      webOrigin: "http://localhost:3000",
+    });
+    const response = await app.request(`${HUB}/api/workspaces/${ws.id}/repos/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: "/a/x" }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      root: "/real/a",
+      defaultBranch: "develop",
+      hasOrigin: true,
+      remoteUrl: "https://example.com/a.git",
+      label: "a",
+      labelTaken: false,
+    });
+  });
+
   test("POST /pick-directory returns the host daemon's folder", async () => {
     const picker = createApp({
       db,

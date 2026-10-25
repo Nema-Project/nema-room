@@ -10,6 +10,7 @@ import type { PluginCatalogItem, Repo, WorkspacePlugin } from "@/lib/types";
 vi.mock("@/lib/hub", () => ({
   listRepos: vi.fn(),
   pickDirectory: vi.fn(),
+  previewRepo: vi.fn(),
   bindRepo: vi.fn(),
   updateRepo: vi.fn(),
   unbindRepo: vi.fn(),
@@ -82,6 +83,7 @@ beforeEach(() => {
   localStorage.clear();
   vi.mocked(hub.listRepos).mockReset();
   vi.mocked(hub.pickDirectory).mockReset();
+  vi.mocked(hub.previewRepo).mockReset();
   vi.mocked(hub.bindRepo).mockReset();
   vi.mocked(hub.updateRepo).mockReset();
   vi.mocked(hub.unbindRepo).mockReset();
@@ -107,34 +109,77 @@ function mount() {
   );
 }
 
-async function fill(path: string, label: string, mainBranch = "") {
+const preview = {
+  root: "/real/app",
+  defaultBranch: "develop",
+  hasOrigin: true,
+  remoteUrl: "https://example.com/app.git",
+  label: "app",
+  labelTaken: false,
+};
+
+async function choose(path = "/tmp/app", next = preview) {
   vi.mocked(hub.pickDirectory).mockResolvedValueOnce({ path });
+  vi.mocked(hub.previewRepo).mockResolvedValueOnce(next);
   await userEvent.click(screen.getByRole("button", { name: "Choose folder" }));
-  await userEvent.type(screen.getByRole("textbox", { name: "Label" }), label);
-  if (mainBranch) await userEvent.type(screen.getByRole("textbox", { name: "Main branch" }), mainBranch);
 }
 
 describe("CodeAndPlugins", () => {
-  it("adds a repo and shows the hub's 409 message inline", async () => {
-    const created = repo({ id: "r1", path: "/tmp/app", label: "app", mainBranch: "develop" });
+  it("adds a repo from the preview and shows the hub's 409 message inline", async () => {
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
     vi.mocked(hub.bindRepo).mockResolvedValueOnce(created).mockRejectedValueOnce(new Error("该仓库已绑定到 workspace Alpha"));
     mount();
     await screen.findByRole("button", { name: "Add repository" });
+    expect((screen.getByRole("button", { name: "Add repository" }) as HTMLButtonElement).disabled).toBe(true);
 
-    await fill("/tmp/app", "app", "develop");
+    await choose();
+    expect(screen.getByText("https://example.com/app.git")).toBeTruthy();
+    expect(screen.getByText("develop")).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Label" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
 
-    expect(hub.bindRepo).toHaveBeenCalledWith("w1", { path: "/tmp/app", label: "app", mainBranch: "develop" });
-    const path = await screen.findByText("/tmp/app");
+    expect(hub.bindRepo).toHaveBeenCalledWith("w1", { path: "/real/app", label: "app", mainBranch: "develop" });
+    const path = await screen.findByText("/real/app");
     expect(path.classList.contains("repo-path")).toBe(true);
     expect(screen.getByText("None selected")).toBeTruthy();
 
-    await fill("/tmp/dup", "dup");
+    await choose("/tmp/dup", { ...preview, root: "/real/dup", label: "dup" });
     await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
     expect((await screen.findByRole("alert")).textContent).toBe("该仓库已绑定到 workspace Alpha");
-    expect(screen.getByText("/tmp/dup")).toBeTruthy();
-    expect((screen.getByRole("textbox", { name: "Label" }) as HTMLInputElement).value).toBe("dup");
-    expect(hub.bindRepo).toHaveBeenLastCalledWith("w1", { path: "/tmp/dup", label: "dup" });
+    expect(screen.getByText("/real/dup")).toBeTruthy();
+    expect(hub.previewRepo).toHaveBeenLastCalledWith("w1", "/tmp/dup");
+  });
+
+  it("asks for another name when the suggested label is taken and ignores a cancelled pick", async () => {
+    mount();
+    await screen.findByRole("button", { name: "Add repository" });
+    await choose("/tmp/app", { ...preview, labelTaken: true });
+    expect(await screen.findByText("https://example.com/app.git")).toBeTruthy();
+    const add = screen.getByRole("button", { name: "Add repository" }) as HTMLButtonElement;
+    expect(add.disabled).toBe(true);
+    expect(screen.getByText("This name is already used here. Choose another.")).toBeTruthy();
+    vi.mocked(hub.pickDirectory).mockResolvedValueOnce({ path: null });
+    await userEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    expect(hub.previewRepo).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("https://example.com/app.git")).toBeTruthy();
+
+    const name = screen.getByRole("textbox", { name: "Label" });
+    await userEvent.clear(name);
+    await userEvent.type(name, "other");
+    expect(add.disabled).toBe(false);
+    vi.mocked(hub.bindRepo).mockResolvedValueOnce(repo({ id: "r2", path: "/real/app", label: "other", mainBranch: "develop" }));
+    await userEvent.click(add);
+    expect(hub.bindRepo).toHaveBeenCalledWith("w1", { path: "/real/app", label: "other", mainBranch: "develop" });
+  });
+
+  it("shows an inspect failure and does not bind", async () => {
+    vi.mocked(hub.pickDirectory).mockResolvedValueOnce({ path: "/tmp/notes" });
+    vi.mocked(hub.previewRepo).mockRejectedValueOnce(new Error("不是 git 仓库的根目录"));
+    mount();
+    await userEvent.click(await screen.findByRole("button", { name: "Choose folder" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("不是 git 仓库的根目录");
+    expect((screen.getByRole("button", { name: "Add repository" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(hub.bindRepo).not.toHaveBeenCalled();
   });
 
   it("shows no origin and fetch failure states", async () => {
