@@ -9,6 +9,7 @@
 - Desktop tool staging follows a symlink in a parent directory, such as macOS `/var`, and still refuses a symlink at the configured directory itself. Tool copies compare those links against the real directory, so Git's in-tree links stay inside the payload.
 - The Windows guardian links `advapi32`. GitHub's Clang needs that library for the private pipe ACL.
 - Windows packaged-app smoke extracts the ZIP in an ASCII directory, then copies it into the `東京` proof path. System `tar.exe` cannot enter that path on an English code page.
+- Private Windows ACL checks wait 45 seconds. A cold PowerShell on the packaged-app runner exceeded 15 seconds, so the desktop core never started.
 
 ### Added
 
@@ -56,6 +57,8 @@
 - `nema report`, `nema report hook` and `nema wp` find a running desktop app when neither `--hub` nor `NEMA_HUB_URL` is given, and send the report token only after the app proves its identity. The gateway forwards only `POST /report`, `POST /report/hook` and `GET /report/workpackages` with the caller's bearer token.
 
 ### Changed
+
+- Model and reasoning sit at the top of model settings, ahead of the provider and its login.
 
 - Codex direct, Claude Code, and `nema mcp` declare the task's plugin functions next to the three Room functions. Claude's `--allowedTools` and the init tool-face check use `mcp__room__<name>` for those functions. There is still one MCP server named `room`, and Claude still launches with `--tools ""`.
 - The composer hint no longer announces Markdown support.

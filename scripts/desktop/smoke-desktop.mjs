@@ -240,7 +240,7 @@ async function smoke(args) {
     const first = await waitUntil(async () => {
       const instance = await runtimeApi.discoverInstance(home);
       return instance?.installationId ? instance : null;
-    }, 'Copied packaged Electron app did not publish authenticated local-core readiness', 90_000);
+    }, 'Copied packaged Electron app did not publish authenticated local-core readiness', 180_000);
     instanceId = first.instanceId;
     const sessionData = await ticketSession(first.origin, first.launchUrl);
     assetEvidence = await readWebAssets(first.origin, sessionData.cookie, sessionData.html);
