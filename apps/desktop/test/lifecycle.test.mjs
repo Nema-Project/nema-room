@@ -233,6 +233,39 @@ describe('Electron shell lifecycle', () => {
     expect(value.shell.openExternal).toHaveBeenCalledWith('https://example.com/docs');
   });
 
+  it('opens a same-origin thread URL in its own secure window and denies query variants', async () => {
+    const value = harness();
+    await value.lifecycle.install();
+    const origin = 'http://127.0.0.1:43001';
+    const url = `${origin}/w/ws_abc/t/m_xyz`;
+    const handler = value.windows[0].webContents.setWindowOpenHandler.mock.calls[0][0];
+    expect(handler({ url })).toEqual({ action: 'deny' });
+    expect(value.windows).toHaveLength(2);
+    const thread = value.windows[1];
+    expect(thread.url).toBe(url);
+    expect(thread.options.webPreferences.preload).toBeTruthy();
+    expect(thread.options).toMatchObject({ frame: false });
+    expect(handler({ url: `${url}?bad=1` })).toEqual({ action: 'deny' });
+    expect(value.windows).toHaveLength(2);
+  });
+
+  it('focuses and reuses a thread window when reopened with another valid focus target', async () => {
+    const value = harness();
+    await value.lifecycle.install();
+    const origin = 'http://127.0.0.1:43001';
+    const base = `${origin}/w/ws_abc/t/m_xyz`;
+    const handler = value.windows[0].webContents.setWindowOpenHandler.mock.calls[0][0];
+    handler({ url: `${base}?messageId=m_first` });
+    const thread = value.windows[1];
+    const show = vi.spyOn(thread, 'show');
+    const focus = vi.spyOn(thread, 'focus');
+    handler({ url: `${base}?messageId=m_second` });
+    expect(value.windows).toHaveLength(2);
+    expect(show).toHaveBeenCalledOnce();
+    expect(focus).toHaveBeenCalledOnce();
+    expect(thread.url).toBe(`${base}?messageId=m_second`);
+  });
+
   it('destroys a crashed renderer without stopping the shared core', async () => {
     const value = harness();
     await value.lifecycle.install();

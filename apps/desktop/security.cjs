@@ -55,6 +55,7 @@ function isExternalHttps(value) {
 }
 
 const DIAGRAM_WINDOW_PATH = /^\/api\/workspaces\/ws_[A-Za-z0-9_-]{1,32}\/diagrams\/G-[1-9]\d*\.html$/;
+const THREAD_WINDOW_PATH = /^\/w\/ws_[A-Za-z0-9_-]{1,32}\/t\/m_[A-Za-z0-9_-]{1,32}$/;
 
 /** A diagram popup is the one same-origin page the shell may open. No query, hash, or other route. */
 function isDiagramWindowUrl(value, runtimeOrigin) {
@@ -64,6 +65,23 @@ function isDiagramWindowUrl(value, runtimeOrigin) {
     if (url.origin !== runtimeOrigin || url.username || url.password || url.search || url.hash) return false;
     return DIAGRAM_WINDOW_PATH.test(url.pathname);
   } catch { return false; }
+}
+
+/** A thread window may carry one validated message focus target, but no other query or hash. */
+function isThreadWindowUrl(value, runtimeOrigin) {
+  if (typeof value !== 'string' || /[\r\n\0]/.test(value) || !parseLoopbackOrigin(runtimeOrigin)) return false;
+  try {
+    const url = new URL(value, runtimeOrigin);
+    if (url.origin !== runtimeOrigin || url.username || url.password || url.hash || !THREAD_WINDOW_PATH.test(url.pathname)) return false;
+    const keys = [...url.searchParams.keys()];
+    return keys.length === 0 || (keys.length === 1 && keys[0] === 'messageId' && /^m_[A-Za-z0-9_-]{1,32}$/.test(url.searchParams.get('messageId') || ''));
+  } catch { return false; }
+}
+
+function threadWindowIdentity(value, runtimeOrigin) {
+  if (!isThreadWindowUrl(value, runtimeOrigin)) return null;
+  const url = new URL(value, runtimeOrigin);
+  return `${url.origin}${url.pathname}`;
 }
 
 /** A diagram window has a native frame and no preload. The main window's frameless shell must not be copied onto rendered HTML. */
@@ -93,4 +111,4 @@ function navigationDecision(value, runtimeOrigin) {
   } catch { return 'block'; }
 }
 
-module.exports = { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, navigationDecision, validateRuntimeLaunchUrl };
+module.exports = { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, isThreadWindowUrl, threadWindowIdentity, navigationDecision, validateRuntimeLaunchUrl };

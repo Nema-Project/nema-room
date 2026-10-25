@@ -1,6 +1,6 @@
 'use strict';
 
-const { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, navigationDecision, validateRuntimeLaunchUrl } = require('./security.cjs');
+const { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, isThreadWindowUrl, threadWindowIdentity, navigationDecision, validateRuntimeLaunchUrl } = require('./security.cjs');
 const { registerWindowControls } = require('./window-controls.cjs');
 const path = require('node:path');
 
@@ -22,6 +22,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
   let currentInstance;
   let mainWindow;
   let pendingMainWindow;
+  const threadWindows = new Map();
   let tray;
   let isQuitting = false;
   let quitPending = false;
@@ -56,16 +57,36 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     });
   }
 
-  function handleNavigation(window, runtimeOrigin, { diagramsOnly = false } = {}) {
+  function openThreadWindow(url, runtimeOrigin) {
+    const identity = threadWindowIdentity(url, runtimeOrigin);
+    const existing = threadWindows.get(identity);
+    if (existing && !existing.isDestroyed()) {
+      if (existing.webContents.getURL?.() !== url) void existing.loadURL(url);
+      existing.show();
+      existing.focus();
+      return;
+    }
+    const child = new BrowserWindow({ ...createSecureWindowOptions(runtimeOrigin), icon: brandAsset('icon.png') });
+    if (platform !== 'darwin') child.setMenu(null);
+    threadWindows.set(identity, child);
+    registerWindowControls({ ipcMain, window: child, runtimeOrigin });
+    child.once('closed', () => { if (threadWindows.get(identity) === child) threadWindows.delete(identity); });
+    handleNavigation(child, runtimeOrigin, { threadIdentity: identity });
+    child.webContents.on('render-process-gone', () => { if (!child.isDestroyed()) child.destroy(); });
+    void child.loadURL(url).catch(() => { if (!child.isDestroyed()) child.destroy(); });
+  }
+
+  function handleNavigation(window, runtimeOrigin, { diagramsOnly = false, threadIdentity: ownThread } = {}) {
     window.webContents.on('will-navigate', (event, url) => {
       const decision = navigationDecision(url, runtimeOrigin);
-      const allowed = diagramsOnly ? isDiagramWindowUrl(url, runtimeOrigin) : decision === 'runtime';
+      const allowed = diagramsOnly ? isDiagramWindowUrl(url, runtimeOrigin) : ownThread ? threadWindowIdentity(url, runtimeOrigin) === ownThread : decision === 'runtime';
       if (allowed) return;
       event.preventDefault();
       if (decision === 'external' && isExternalHttps(url)) void shell.openExternal(url).catch(() => undefined);
     });
     window.webContents.setWindowOpenHandler(({ url }) => {
-      if (isDiagramWindowUrl(url, runtimeOrigin)) openDiagramWindow(url, runtimeOrigin);
+      if (isThreadWindowUrl(url, runtimeOrigin)) openThreadWindow(url, runtimeOrigin);
+      else if (isDiagramWindowUrl(url, runtimeOrigin)) openDiagramWindow(url, runtimeOrigin);
       else if (navigationDecision(url, runtimeOrigin) === 'external' && isExternalHttps(url)) void shell.openExternal(url).catch(() => undefined);
       return { action: 'deny' };
     });
