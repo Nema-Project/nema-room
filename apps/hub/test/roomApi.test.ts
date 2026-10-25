@@ -9,6 +9,7 @@ import { addMessage, addReportMessage, postUserMessage } from "../src/messages.j
 import { claimNextTask, finishTask, listTaskChanges } from "../src/tasks.js";
 import { EventBus, type HubEvent } from "../src/events.js";
 import { roomRoutes } from "../src/roomApi.js";
+import { markThreadRead } from "../src/threads.js";
 import { DaemonRpcError, type DaemonRpc } from "../src/daemonRpc.js";
 import { Hono } from "hono";
 
@@ -115,10 +116,25 @@ describe("room api", () => {
     const nested = await postUserMessage(db, wsA, "reply task", { threadId: anchor.message.id });
     const task = await claimNextTask(db, "d2");
     expect(task?.id).toBe(nested.task.id);
+    const secondReply = await postUserMessage(db, wsA, "second reply", { threadId: anchor.message.id });
+    const firstSeq = await db.query<{ seq: number }>("select seq from messages where id=$1", [nested.message.id]);
+    await markThreadRead(db, anchor.message.id, firstSeq[0]!.seq);
+    const seen: HubEvent[] = [];
+    events.subscribe(wsA, (e) => seen.push(e));
     const r = await req("POST", "/room/threads", task!.runToken!, { title: "Renamed from reply" });
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual({ threadId: anchor.message.id });
     expect(await db.query("select title from threads where id=$1", [anchor.message.id])).toEqual([{ title: "Renamed from reply" }]);
+    expect(seen).toEqual([{
+      type: "thread.updated",
+      thread: expect.objectContaining({
+        id: anchor.message.id,
+        title: "Renamed from reply",
+        replyCount: 2,
+        unread: 1,
+        lastReplyAt: secondReply.message.createdAt,
+      }),
+    }]);
   });
 
   test("title is required and empty title is 400", async () => {

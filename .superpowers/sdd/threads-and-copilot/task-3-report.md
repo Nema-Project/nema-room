@@ -11,3 +11,11 @@ GREEN: `npx vitest run --project @nema/hub roomApi` — 34 passed. `python .supe
 Warnings: Vitest printed the existing Vite `configLoader: 'native'` CommonJS/ESM compatibility warning. One intermediate full CLI run caught two outdated assertions in the changed tool-list test; those expectations were updated and the final full suite passed.
 
 No known concerns. Controller-owned edits to `docs/superpowers/plans/2026-10-26-threads-and-copilot.md` remain uncommitted and were excluded from this task commit.
+
+## Review fix: preserve renamed thread statistics
+
+Regression coverage adds a second reply, marks the first reply read, and asserts that `thread.updated` retains `replyCount: 2`, `unread: 1`, and the newest reply timestamp.
+
+RED: `npx vitest run --project @nema/hub roomApi -t "open_thread from a thread task renames that thread"` — 1 failed, 33 skipped; event showed `replyCount: 0`, `unread: 0`, and `lastReplyAt: null`.
+
+GREEN: the same focused command — 1 passed, 33 skipped. `npm run typecheck` — passed. Vite printed the existing `configLoader: 'native'` compatibility warning. Full hub and CLI suites were not rerun, per review-fix instructions.

@@ -56,17 +56,26 @@ export async function getQuestionThread(db: Db, workspaceId: string, questionId:
 }
 
 export async function getThread(db: Db, id: string): Promise<Thread | null> {
-  const rows = await db.query<ThreadRow>("select id,workspace_id,title,opened_by,last_read_seq,created_at from threads where id=$1", [id]);
+  const rows = await db.query<ThreadRow>(
+    `select t.id,t.workspace_id,t.title,t.opened_by,t.last_read_seq,t.created_at,
+       count(m.id) filter (where m.id is not null)::int as reply_count,
+       count(m.id) filter (where m.seq > t.last_read_seq)::int as unread,
+       max(m.created_at) as last_reply_at
+     from threads t left join messages m on m.thread_id=t.id
+     where t.id=$1 group by t.id`, [id],
+  );
   return rows[0] ? toThread(rows[0]) : null;
 }
 
 export async function renameThread(db: Db, id: string, title: string): Promise<Thread> {
-  const rows = await db.query<ThreadRow>(
-    "update threads set title=$2 where id=$1 returning id,workspace_id,title,opened_by,last_read_seq,created_at",
+  const rows = await db.query<{ id: string }>(
+    "update threads set title=$2 where id=$1 returning id",
     [id, title],
   );
   if (!rows[0]) throw new MessageOpError(404, "thread not found");
-  return toThread(rows[0]);
+  const thread = await getThread(db, id);
+  if (!thread) throw new MessageOpError(404, "thread not found");
+  return thread;
 }
 
 export async function listThreads(db: Db, workspaceId: string): Promise<Thread[]> {
