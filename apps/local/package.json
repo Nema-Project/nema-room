@@ -24,6 +24,16 @@
       "development": "./src/session.ts",
       "types": "./dist/src/session.d.ts",
       "import": "./dist/src/session.js"
+    },
+    "./migration": {
+      "development": "./src/migration.ts",
+      "types": "./dist/src/migration.d.ts",
+      "import": "./dist/src/migration.js"
+    },
+    "./import": {
+      "development": "./src/import.ts",
+      "types": "./dist/src/import.d.ts",
+      "import": "./dist/src/import.js"
     }
   },
   "scripts": {

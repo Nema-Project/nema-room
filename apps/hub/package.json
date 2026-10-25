@@ -7,6 +7,8 @@
   "main": "./dist/src/main.js",
   "exports": {
     "./db/local": { "development": "./src/db/pglite.ts", "types": "./dist/src/db/pglite.d.ts", "import": "./dist/src/db/pglite.js" },
+    "./db/snapshot": { "development": "./src/db/snapshot.ts", "types": "./dist/src/db/snapshot.d.ts", "import": "./dist/src/db/snapshot.js" },
+    "./db/export": { "development": "./src/db/export.ts", "types": "./dist/src/db/export.d.ts", "import": "./dist/src/db/export.js" },
     "./events": { "development": "./src/events.ts", "types": "./dist/src/events.d.ts", "import": "./dist/src/events.js" },
     "./interrupts": { "development": "./src/interrupts.ts", "types": "./dist/src/interrupts.d.ts", "import": "./dist/src/interrupts.js" },
     "./lifecycle": { "development": "./src/lifecycle.ts", "types": "./dist/src/lifecycle.d.ts", "import": "./dist/src/lifecycle.js" },
