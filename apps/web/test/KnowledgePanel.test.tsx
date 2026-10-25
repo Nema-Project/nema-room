@@ -167,7 +167,9 @@ describe("KnowledgePanel", () => {
       const row = screen.getByText("backend erd").closest("[data-testid='entry-row']") as HTMLElement;
       expect(within(row).getByText(/erd/, { selector: ".kmeta" })).toBeTruthy();
 
-      await userEvent.click(screen.getByText("web flow"));
+      const opener = screen.getByRole("button", { name: "web flow" });
+      expect(opener.querySelector(".ext")?.textContent).toBe("↗");
+      await userEvent.click(opener);
       expect(open).toHaveBeenCalledWith(`${hub.HUB_URL}/api/workspaces/w1/diagrams/G-2.html`, "_blank", "noopener");
       expect(onOpen).not.toHaveBeenCalled();
     } finally {

@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Clicking a code diagram opens it. The desktop shell had refused every new window, so the title did nothing.
 - The model menu says it is loading the provider's list, and stays closed, until that list arrives.
 - Creating a workspace lines the confirm and cancel marks up with the name field. They use the same thin stroke icons as the theme control, so the check no longer sits under the underline.
 - Claude Code tokens and the report token now get a private ACL on the file itself. Protecting only the parent directory left an elevated Windows process, including GitHub-hosted runners, as the Administrators owner, so the next read rejected the file.
@@ -22,6 +23,7 @@
 
 ### Added
 
+- The latest unanswered follow-up in the chat has an answer box. Sending it is a normal message, which the agent records as the answer.
 - Desktop staging downloads pinned CPython 3.11.17 and graphifyy 0.9.95 into `tools/graphify/`. The launcher uses a path relative to itself, so a release build does not contain a developer's install path. The app still does not download Graphify on first launch.
 - Model settings are separate from the provider. After a provider is saved and connected, its model is chosen from that provider's list. There is no custom model ID field. A saved model that is not in the list stays as it is until a listed model replaces it.
 

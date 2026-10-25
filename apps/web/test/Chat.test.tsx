@@ -1,4 +1,5 @@
 import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Chat, type ChatHandle } from "@/components/Chat";
@@ -98,6 +99,21 @@ describe("Chat", () => {
     act(() => ref.current!.handleEvent({ type: "message.created", message: { ...m("r", "done", "agent"), taskId: "t1" } }));
     await act(async () => resolve({ running }));
     expect(screen.queryByText("Organizing")).toBeNull();
+  });
+  it("the latest unanswered follow-up has an answer box that sends a chat message", async () => {
+    const asked = (id: string, qid: string): Message => ({
+      ...m(id, "asked", "agent"),
+      meta: { changes: [], askedQuestion: { id: qid, title: "进度？", body: "现在到哪了" } },
+    });
+    vi.mocked(hub.listMessages).mockResolvedValue([asked("a1", "Q-1"), m("u1", "先这样"), asked("a2", "Q-2")]);
+    vi.mocked(hub.postMessage).mockResolvedValue({ message: m("u2", "到里程碑二") });
+    await mount(true);
+    const boxes = screen.getAllByRole("textbox", { name: "Answer" });
+    expect(boxes).toHaveLength(1);
+    await userEvent.type(boxes[0]!, "到里程碑二");
+    await userEvent.click(screen.getByRole("button", { name: "Answer" }));
+    expect(hub.postMessage).toHaveBeenCalledWith("w1", "到里程碑二");
+    expect(screen.queryByRole("textbox", { name: "Answer" })).toBeNull();
   });
   it("a stale {running: null} response does not hide a task started via SSE", async () => {
     let resolve!: (v: { running: typeof running | null }) => void;

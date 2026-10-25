@@ -50,6 +50,8 @@
   "chat.offline": "Agent 离线：消息会排队，nema daemon 上线后处理",
   "chat.working": "整理中",
   "chat.askedQuestion": "追问 · {id}",
+  "chat.answer": "回答",
+  "chat.answerPlaceholder": "在这里回答…",
   "kind.requirement": "需求",
   "kind.decision": "决策",
   "kind.tradeoff": "取舍",

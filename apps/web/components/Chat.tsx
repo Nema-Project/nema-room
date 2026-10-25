@@ -6,7 +6,7 @@ import { AgentAvatar, MessageItem } from "@/components/MessageItem";
 import { formatDay } from "@/lib/format";
 import { getActiveTask, listMessages, postMessage } from "@/lib/hub";
 import { useLocale, useT } from "@/lib/i18n";
-import type { HubEvent, Message } from "@/lib/types";
+import type { AgentMessageMeta, HubEvent, Message } from "@/lib/types";
 
 export type ChatHandle = {
   scrollToMessage: (messageId: string) => void;
@@ -30,6 +30,24 @@ const dayKey = (iso: string) => {
 
 function merge(list: Message[], m: Message): Message[] {
   return list.some((x) => x.id === m.id) ? list : [...list, m];
+}
+
+/** The latest follow-up with no user reply after it. Older cards stay as history. */
+export function answerableMessageId(messages: Message[]): string | null {
+  let id: string | null = null;
+  let answered = false;
+  for (const m of messages) {
+    if (m.role === "user") {
+      if (id) answered = true;
+      continue;
+    }
+    const asked = m.role === "agent" ? (m.meta as AgentMessageMeta | null)?.askedQuestion : null;
+    if (asked) {
+      id = m.id;
+      answered = false;
+    }
+  }
+  return answered ? null : id;
 }
 
 export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, connected = true, onOpenEntry }, ref) {
@@ -120,6 +138,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
     setMessages((l) => merge(l, message));
   }
 
+  const answerId = answerableMessageId(messages);
   let lastDay = "";
   return (
     <>
@@ -136,7 +155,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
           return (
             <div key={m.id}>
               {divider && <div className="day">{formatDay(new Date(m.createdAt), locale)}</div>}
-              <MessageItem message={m} onOpenEntry={onOpenEntry} />
+              <MessageItem message={m} onOpenEntry={onOpenEntry} onAnswer={m.id === answerId ? send : undefined} />
             </div>
           );
         })}

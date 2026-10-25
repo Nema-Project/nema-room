@@ -15,9 +15,11 @@ type Props = {
   message: Message;
   /** Opens an entry in the knowledge column; a report's entry ids link to it. */
   onOpenEntry?: (entryId: string) => void;
+  /** Present only on the latest follow-up that has no user message after it. */
+  onAnswer?: (content: string) => Promise<void>;
 };
 
-export function MessageItem({ message, onOpenEntry }: Props) {
+export function MessageItem({ message, onOpenEntry, onAnswer }: Props) {
   const t = useT();
   const [locale] = useLocale();
   const time = formatTime(new Date(message.createdAt), locale);
@@ -80,10 +82,55 @@ export function MessageItem({ message, onOpenEntry }: Props) {
             <div className="k">{t("chat.askedQuestion", { id: meta.askedQuestion.id })}</div>
             <div className="q">{meta.askedQuestion.title}</div>
             <Markdown source={meta.askedQuestion.body} />
+            {onAnswer && <AnswerBox onAnswer={onAnswer} />}
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+/** Sends the reply as a normal chat message. The hub treats the next user message as the answer to this question. */
+function AnswerBox({ onAnswer }: { onAnswer: (content: string) => Promise<void> }) {
+  const t = useT();
+  const [value, setValue] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function send() {
+    const content = value.trim();
+    if (!content || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      await onAnswer(content);
+      setValue("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <form className="ask-answer" onSubmit={(e) => { e.preventDefault(); void send(); }}>
+      <textarea
+        aria-label={t("chat.answer")}
+        rows={2}
+        value={value}
+        placeholder={t("chat.answerPlaceholder")}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.nativeEvent.isComposing || e.key === "Process" || e.keyCode === 229) return;
+          if (e.key === "Enter" && e.shiftKey) {
+            e.preventDefault();
+            void send();
+          }
+        }}
+      />
+      <button type="submit" disabled={sending || value.trim() === ""}>{t("chat.answer")}</button>
+      {error && <p className="error" role="alert">{t("composer.sendFailed", { message: error })}</p>}
+    </form>
   );
 }
 

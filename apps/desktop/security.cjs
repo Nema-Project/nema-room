@@ -54,6 +54,36 @@ function isExternalHttps(value) {
   } catch { return false; }
 }
 
+const DIAGRAM_WINDOW_PATH = /^\/api\/workspaces\/ws_[A-Za-z0-9_-]{1,32}\/diagrams\/G-[1-9]\d*\.html$/;
+
+/** A diagram popup is the one same-origin page the shell may open. No query, hash, or other route. */
+function isDiagramWindowUrl(value, runtimeOrigin) {
+  if (typeof value !== 'string' || /[\r\n\0]/.test(value) || !parseLoopbackOrigin(runtimeOrigin)) return false;
+  try {
+    const url = new URL(value, runtimeOrigin);
+    if (url.origin !== runtimeOrigin || url.username || url.password || url.search || url.hash) return false;
+    return DIAGRAM_WINDOW_PATH.test(url.pathname);
+  } catch { return false; }
+}
+
+/** A diagram window has a native frame and no preload. The main window's frameless shell must not be copied onto rendered HTML. */
+function createDiagramWindowOptions() {
+  return {
+    width: 1100,
+    height: 760,
+    minWidth: 640,
+    minHeight: 480,
+    title: 'Nema Room',
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+    },
+  };
+}
+
 function navigationDecision(value, runtimeOrigin) {
   try {
     const url = new URL(value);
@@ -63,4 +93,4 @@ function navigationDecision(value, runtimeOrigin) {
   } catch { return 'block'; }
 }
 
-module.exports = { createSecureWindowOptions, isExternalHttps, navigationDecision, validateRuntimeLaunchUrl };
+module.exports = { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, navigationDecision, validateRuntimeLaunchUrl };

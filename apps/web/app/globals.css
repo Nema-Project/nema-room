@@ -200,6 +200,11 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .ask { margin-top: 10px; border-left: 3px solid var(--accent); padding: 8px 12px; background: var(--ask-bg); }
 .ask .k { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
 .ask .q { font-weight: 600; margin-top: 2px; }
+.ask-answer { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 10px; align-items: end; }
+.ask-answer textarea { border: 1px solid var(--ink); padding: 6px 8px; background: var(--paper); font: inherit; resize: vertical; min-height: 40px; }
+.ask-answer button { background: var(--ink); color: var(--on-ink); font-weight: 600; padding: 6px 14px; font-size: 13px; }
+.ask-answer button:disabled { opacity: 0.5; }
+.ask-answer .error { grid-column: 1 / -1; }
 /* A coding agent's report: a muted outline, apart from user (filled) and Nema (plain) messages. */
 .av.rp { background: var(--paper); color: var(--ink-3); border: 1px dashed var(--ink-3); font-family: var(--mono); font-size: 11px; }
 .msg.report .who { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }

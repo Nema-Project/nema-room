@@ -240,8 +240,8 @@ function DiagramRow({ entry, onOpen, onOpenDiagram, dim }: { entry: Row; onOpen:
       <div className="kmain">
         <button type="button" className="ktitle" title={t("diagram.open")} onClick={() => onOpenDiagram(entry.id)}>
           {entry.title}
+          <span className="ext" aria-hidden="true">↗</span>
         </button>
-        <span className="ext" aria-hidden="true">↗</span>
         {entry.isNew && <span className="newtag">{t("know.new")}</span>}
         {meta.length > 0 && <div className="kmeta">{meta.join(" · ")}</div>}
       </div>

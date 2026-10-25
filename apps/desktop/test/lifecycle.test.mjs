@@ -200,6 +200,39 @@ describe('Electron shell lifecycle', () => {
     expect(value.shell.openExternal).toHaveBeenCalledWith(expect.stringMatching(/^http:\/\/127\.0\.0\.1:43001\/_nema\/launch\?ticket=/));
   });
 
+  it('opens a same-origin diagram in its own window and still denies every other popup', async () => {
+    const value = harness();
+    await value.lifecycle.install();
+    const origin = 'http://127.0.0.1:43001';
+    const diagram = `${origin}/api/workspaces/ws_abc/diagrams/G-1.html`;
+    const handler = value.windows[0].webContents.setWindowOpenHandler.mock.calls[0][0];
+
+    expect(handler({ url: diagram })).toEqual({ action: 'deny' });
+    expect(value.windows).toHaveLength(2);
+    expect(value.windows[1].url).toBe(diagram);
+    expect(value.windows[1].options.webPreferences).toMatchObject({
+      nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true,
+    });
+    expect(value.windows[1].options.webPreferences.preload).toBeUndefined();
+    expect(value.windows[1].options.frame).not.toBe(false);
+
+    const leaveDiagram = { preventDefault: vi.fn() };
+    value.windows[1].webContents.emit('will-navigate', leaveDiagram, `${origin}/`);
+    expect(leaveDiagram.preventDefault).toHaveBeenCalledOnce();
+    const stayOnDiagram = { preventDefault: vi.fn() };
+    value.windows[1].webContents.emit('will-navigate', stayOnDiagram, diagram);
+    expect(stayOnDiagram.preventDefault).not.toHaveBeenCalled();
+
+    const mainNav = { preventDefault: vi.fn() };
+    value.windows[0].webContents.emit('will-navigate', mainNav, `${origin}/`);
+    expect(mainNav.preventDefault).not.toHaveBeenCalled();
+
+    expect(handler({ url: `${origin}/` })).toEqual({ action: 'deny' });
+    expect(value.windows).toHaveLength(2);
+    expect(handler({ url: 'https://example.com/docs' })).toEqual({ action: 'deny' });
+    expect(value.shell.openExternal).toHaveBeenCalledWith('https://example.com/docs');
+  });
+
   it('destroys a crashed renderer without stopping the shared core', async () => {
     const value = harness();
     await value.lifecycle.install();

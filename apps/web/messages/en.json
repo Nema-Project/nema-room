@@ -50,6 +50,8 @@
   "chat.offline": "Agent offline: messages will queue and be processed when the nema daemon is back",
   "chat.working": "Organizing",
   "chat.askedQuestion": "Question · {id}",
+  "chat.answer": "Answer",
+  "chat.answerPlaceholder": "Answer here…",
   "kind.requirement": "Requirement",
   "kind.decision": "Decision",
   "kind.tradeoff": "Trade-off",

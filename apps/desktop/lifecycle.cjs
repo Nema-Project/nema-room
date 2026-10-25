@@ -1,6 +1,6 @@
 'use strict';
 
-const { createSecureWindowOptions, isExternalHttps, navigationDecision, validateRuntimeLaunchUrl } = require('./security.cjs');
+const { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, navigationDecision, validateRuntimeLaunchUrl } = require('./security.cjs');
 const { registerWindowControls } = require('./window-controls.cjs');
 const path = require('node:path');
 
@@ -44,15 +44,29 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     dialog.showErrorBox('Nema Room could not open', message);
   }
 
-  function handleNavigation(window, runtimeOrigin) {
+  function openDiagramWindow(url, runtimeOrigin) {
+    const child = new BrowserWindow({ ...createDiagramWindowOptions(), icon: brandAsset('icon.png') });
+    if (platform !== 'darwin') child.setMenu(null);
+    handleNavigation(child, runtimeOrigin, { diagramsOnly: true });
+    child.webContents.on('render-process-gone', () => {
+      if (!child.isDestroyed()) child.destroy();
+    });
+    void child.loadURL(url).catch(() => {
+      if (!child.isDestroyed()) child.destroy();
+    });
+  }
+
+  function handleNavigation(window, runtimeOrigin, { diagramsOnly = false } = {}) {
     window.webContents.on('will-navigate', (event, url) => {
       const decision = navigationDecision(url, runtimeOrigin);
-      if (decision === 'runtime') return;
+      const allowed = diagramsOnly ? isDiagramWindowUrl(url, runtimeOrigin) : decision === 'runtime';
+      if (allowed) return;
       event.preventDefault();
       if (decision === 'external' && isExternalHttps(url)) void shell.openExternal(url).catch(() => undefined);
     });
     window.webContents.setWindowOpenHandler(({ url }) => {
-      if (navigationDecision(url, runtimeOrigin) === 'external' && isExternalHttps(url)) void shell.openExternal(url).catch(() => undefined);
+      if (isDiagramWindowUrl(url, runtimeOrigin)) openDiagramWindow(url, runtimeOrigin);
+      else if (navigationDecision(url, runtimeOrigin) === 'external' && isExternalHttps(url)) void shell.openExternal(url).catch(() => undefined);
       return { action: 'deny' };
     });
     window.webContents.on('will-attach-webview', (event) => event.preventDefault());

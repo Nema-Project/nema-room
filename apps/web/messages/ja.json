@@ -50,6 +50,8 @@
   "chat.offline": "Agent オフライン：メッセージはキューに入り、nema daemon の復帰後に処理されます",
   "chat.working": "整理中",
   "chat.askedQuestion": "確認 · {id}",
+  "chat.answer": "回答する",
+  "chat.answerPlaceholder": "ここに回答…",
   "kind.requirement": "要件",
   "kind.decision": "決定",
   "kind.tradeoff": "トレードオフ",

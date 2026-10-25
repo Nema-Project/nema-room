@@ -83,7 +83,7 @@ echo '{"summary":"…","commits":["abc1234"]}' | nema report --json
 
 **生成。** 在知识面板里选一条或几条 `active` 的需求，点「生成开发包」（要先绑定代码仓库，并开着 `superpowers` 插件）。hub 新建一条 `workpackage` 条目（编号 `W-n`，存成知识库里的 `W-n.md`、`W-n.spec.md`、`W-n.plan.md`），并排一个系统任务，让 Agent 写 spec 和 plan。这类任务的上限比普通任务大：48 次模型调用、120 次工具调用、20 分钟。写的时候 Agent 用 `workpackage__*` 函数，规则文本在 `vendor/superpowers-rules/`。
 
-**grill 步骤。** 写 spec 之前先做就绪检查：Agent 读相关需求、决策和待确认内容，遇到会影响实现的不确定点，就建 `question` 条目，并用 `workpackage__block` 把开发包卡在最重要的那个问题上，不写 spec。你在界面里回答（解决）这个问题后，生成会自动重跑一次。`grill-me` 是内置插件，在 workspace 设置里可以调：严格程度（严格 / 宽松，宽松时只有决策互相冲突才停下来），以及额外规则（最多 2000 个字符）。关掉 grill-me 后不再做就绪检查，不确定点写进 spec；但整理时「拿不准就建 question」这条规则始终保留。
+**grill 步骤。** 写 spec 之前先做就绪检查：Agent 读相关需求、决策和待确认内容，遇到会影响实现的不确定点，就建 `question` 条目，并用 `workpackage__block` 把开发包卡在最重要的那个问题上，不写 spec。最近一条还没回答的追问下面有回答框，发出去就是一条聊天消息。Agent 把它写成决策或需求，并关闭对应的问题。这个问题挡住开发包时，生成会自动重跑一次。`grill-me` 是内置插件，在 workspace 设置里可以调：严格程度（严格 / 宽松，宽松时只有决策互相冲突才停下来），以及额外规则（最多 2000 个字符）。关掉 grill-me 后不再做就绪检查，不确定点写进 spec；但整理时「拿不准就建 question」这条规则始终保留。
 
 **spec 标记与 plan 格式。** hub 在保存时校验，不通过就把原因还给 Agent 让它改，不写入 git。无论知识库用什么语言，下面这些固定标记都按原样书写：
 
