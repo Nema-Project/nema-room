@@ -5,6 +5,8 @@
   "sidebar.newWorkspace": "＋ 新規 workspace",
   "sidebar.newWorkspaceName": "workspace 名",
   "sidebar.create": "作成",
+  "sidebar.createWorkspace": "workspace を作成",
+  "sidebar.creatingWorkspace": "workspace を作成しています…",
   "sidebar.cancel": "キャンセル",
   "sidebar.confidential": "機密",
   "sidebar.openQuestions": "未確認の質問 {n} 件",

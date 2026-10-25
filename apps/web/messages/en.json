@@ -5,6 +5,8 @@
   "sidebar.newWorkspace": "+ New workspace",
   "sidebar.newWorkspaceName": "Workspace name",
   "sidebar.create": "Create",
+  "sidebar.createWorkspace": "Create workspace",
+  "sidebar.creatingWorkspace": "Creating workspace…",
   "sidebar.cancel": "Cancel",
   "sidebar.confidential": "Confidential",
   "sidebar.openQuestions": "{n} open questions",

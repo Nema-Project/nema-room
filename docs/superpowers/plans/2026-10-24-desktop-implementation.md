@@ -149,6 +149,23 @@
 
 **Review focus:** top-level IPC sender checks; action allowlist without privileged renderer APIs; no duplicate handler/subscription after window reopen; frameless control/drag/resize hit areas; browser layout and independent-core lifecycle preservation.
 
+## Task 8d: Workspace Creation Feedback
+
+**User-requested UX amendment:** [workspace/settings design](../specs/2026-10-25-settings-workspace-ux.md). Execute before remaining Task9 work; preserve its interrupted files.
+
+- [ ] Add delayed-request tests to `apps/web/test/Sidebar.test.tsx`: visible pending status, disabled input/actions, Enter/click duplicate suppression, success, retained draft on error/retry, and draft cancellation.
+- [ ] Implement accessible confirm/cancel icons, keyboard behavior and pending feedback in Sidebar with matching existing CSS and en/ja/zh messages. Cancel is draft-only; no false server cancellation.
+- [ ] Run focused tests, targeted lint/typechecks, inspect the UI, and obtain task review. Keep provider work separate and package once after8e.
+
+## Task 8e: Understandable Existing Connection Settings
+
+**User-selected scope:** same design; reorganize existing connections only. No new Provider protocols.
+
+- [ ] Test dropdown selection and round-trip mappings for all four existing modes; preserve configured model/custom ID and authentication behavior.
+- [ ] Replace technical radio modes with contextual Agent/service/login dropdowns and clear explanatory copy; show only relevant controls. Put Claude Code availability in its own connection and move global GitHub credential controls into the GitHub plugin view.
+- [ ] Retain secret clearing, config-before-auth consistency, job cancellation, explicit opt-in probes, and ordinary browser/legacy mode compatibility. No implicit login or provider requests.
+- [ ] Run focused UI/settings tests and relevant type/lint checks; inspect en/ja/zh actual UI, pending workspace feedback and plugin credentials with fake-only fixtures. Review the bounded diff and package/smoke the combined8d/8e change into fresh outputs once.
+
 ## Task 9: Preserve Legacy Data, Hooks and Existing Product Coverage
 
 **Files:** Create `apps/local/src/{migration,import}.ts`, `test/{migration,import}.test.ts`, `apps/hub/src/db/export.ts`; modify `apps/cli/src/{index,report/commands,report/install}.ts` for safe desktop instance discovery; add `apps/cli/test/report/desktopDiscovery.test.ts`; update three READMEs and `docs/reviews/2026-10-24-desktop-validation.md`.

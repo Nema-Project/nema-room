@@ -5,6 +5,8 @@
   "sidebar.newWorkspace": "＋ 新建 workspace",
   "sidebar.newWorkspaceName": "Workspace 名称",
   "sidebar.create": "创建",
+  "sidebar.createWorkspace": "创建 workspace",
+  "sidebar.creatingWorkspace": "正在创建 workspace…",
   "sidebar.cancel": "取消",
   "sidebar.confidential": "保密",
   "sidebar.openQuestions": "{n} 个待确认问题",

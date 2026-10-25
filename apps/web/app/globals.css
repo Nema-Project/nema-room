@@ -69,7 +69,14 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .confirm p { margin: 8px 0 14px; }
 .confirm .actions { display: flex; gap: 8px; justify-content: flex-end; }
 .confirm .actions button { border: 1px solid var(--ink); padding: 5px 14px; background: var(--paper); font: inherit; font-weight: 700; }
+.ws.add-form { position: relative; display: block; padding-right: 48px; }
 .ws.add-form input { width: 100%; border: 0; border-bottom: 1px solid var(--ink); background: transparent; padding: 0 0 2px; outline: none; }
+.ws.add-form input:disabled { opacity: .65; }
+.add-actions { position: absolute; right: 6px; top: 4px; display: flex; gap: 2px; }
+.add-action { width: 22px; height: 22px; border: 0; border-radius: 4px; background: transparent; color: var(--side-ink-2); cursor: pointer; font-size: 16px; line-height: 1; }
+.add-action:hover:not(:disabled) { background: var(--side-rule); color: var(--ink); }
+.add-action:disabled { opacity: .4; cursor: default; }
+.ws.add-form .creating, .ws.add-form .error { display: block; margin-top: 5px; }
 .side .foot { margin-top: auto; padding: 16px 20px; border-top: 1px solid var(--side-rule); font-size: 12px; color: var(--side-ink-2); }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 6px; vertical-align: 1px; }
 .dot.off { background: #b5b3ad; }
