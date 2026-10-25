@@ -144,7 +144,10 @@ describe("Sidebar", () => {
     expect((screen.getByRole("button", { name: "Create workspace" }) as HTMLButtonElement).disabled).toBe(true);
     await userEvent.keyboard("{Enter}");
     expect(onCreate).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    for (const label of ["Create workspace", "Cancel"]) {
+      const icon = screen.getByRole("button", { name: label }).querySelector("svg");
+      expect(icon?.getAttribute("viewBox")).toBe("0 0 16 16");
+    }
   });
 
   it("clears the draft and restores New Workspace focus when cancelled", async () => {

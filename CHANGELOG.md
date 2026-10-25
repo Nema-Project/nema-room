@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Creating a workspace lines the confirm and cancel marks up with the name field. They use the same thin stroke icons as the theme control, so the check no longer sits under the underline.
 - Claude Code tokens and the report token now get a private ACL on the file itself. Protecting only the parent directory left an elevated Windows process, including GitHub-hosted runners, as the Administrators owner, so the next read rejected the file.
 - Desktop staging downloads the Electron binary when it is missing. Electron 45 no longer does that during `npm ci`.
 - Desktop tool staging follows a symlink in a parent directory, such as macOS `/var`, and still refuses a symlink at the configured directory itself. Tool copies compare those links against the real directory, so Git's in-tree links stay inside the payload.

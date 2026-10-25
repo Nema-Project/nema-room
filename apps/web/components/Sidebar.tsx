@@ -257,10 +257,10 @@ export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate,
             />
             <div className="add-actions">
               <button type="submit" className="add-action confirm" aria-label={t("sidebar.createWorkspace")} title={t("sidebar.createWorkspace")} disabled={creating || !name.trim()}>
-                ✓
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.2 8.2 6.5 11.4 12.8 4.6" /></svg>
               </button>
               <button type="button" className="add-action cancel" aria-label={t("sidebar.cancel")} title={t("sidebar.cancel")} disabled={creating} onClick={cancelDraft}>
-                ×
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8" /></svg>
               </button>
             </div>
             {creating && <span className="creating" role="status">{t("sidebar.creatingWorkspace")}</span>}
