@@ -17,8 +17,9 @@ import { workPackageIdOf, workPackageRules } from "./workpackages.js";
 import { applyRepoFetched, applyRepoMoved, listRepos, syncBoundRepos } from "./repos.js";
 import { claimNextTask, finishTask, getTask, interruptRunning, listTaskChanges, requeueDaemonTasks, toUiTask, type Task } from "./tasks.js";
 import { getWorkspace, listWorkspaces, repoPath } from "./workspaces.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
-export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daemonToken: string; hubUrl: string };
+export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daemonToken: string; hubUrl: string; ownedHelpers?: OwnedHelperScope };
 
 type Conn = {
   ws: WebSocket;
@@ -29,12 +30,19 @@ type Conn = {
 
 export const OLD_CLI_MESSAGE = "nema CLI 版本过旧，请运行 npm run build -w apps/cli 并重启 nema daemon";
 
-export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps): { isConnected(): boolean; rpc: DaemonRpc } {
+export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps): { isConnected(): boolean; rpc: DaemonRpc; close(): Promise<void> } {
   const { db, dataDir, events } = deps;
   const wss = new WebSocketServer({ server, path: "/daemon" });
   let current: Conn | null = null;
+  const connections = new Set<Conn>();
   let chain: Promise<void> = Promise.resolve();
   let moves: Promise<void> = Promise.resolve();
+  let stopping = false;
+  const pending = new Set<Promise<void>>();
+  const track = (promise: Promise<void>): void => {
+    pending.add(promise);
+    void promise.then(() => pending.delete(promise), () => pending.delete(promise));
+  };
 
   const send = (ws: WebSocket, m: HubToDaemon) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(m));
@@ -59,7 +67,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     const before = await listPromptMessages(db, task.workspaceId, userMessage.id, 20);
     // A system-started task or a coding agent's report is not the user's answer to the last follow-up question.
     const asked = userMessage.role === "system" || userMessage.role === "report" ? undefined : (await getLastAgentMessage(db, task.workspaceId))?.meta?.askedQuestion;
-    const store = new KnowledgeStore(repoPath(dataDir, task.workspaceId));
+    const store = new KnowledgeStore(repoPath(dataDir, task.workspaceId), deps.ownedHelpers);
     const lastAskedQuestion = asked ? await store.get(asked.id) : null;
     let workpackage: WorkPackagePromptInput | undefined;
     if (task.kind === "workpackage") {
@@ -78,7 +86,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       workspace,
       userMessage,
       recentMessages: before,
-      entries: await timeline(db, dataDir, task.workspaceId),
+      entries: await timeline(db, dataDir, task.workspaceId, deps.ownedHelpers),
       lastAskedQuestion,
       priorChanges: await listTaskChanges(db, task.id),
       grill: await grillState(db, task.workspaceId),
@@ -89,9 +97,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
 
   async function dispatchOnce(): Promise<void> {
     for (;;) {
+      if (stopping) return;
       const conn = current;
       if (!conn || conn.assigned) return;
       const task = await claimNextTask(db, conn.daemonId);
+      if (stopping) return;
       if (!task) return;
       if (current !== conn) {
         await requeueAndEmit(conn.daemonId);
@@ -117,6 +127,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         }
         continue;
       }
+      if (stopping) return;
       if (current !== conn || conn.ws.readyState !== conn.ws.OPEN) {
         await requeueAndEmit(conn.daemonId);
         return;
@@ -142,6 +153,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   // Dispatches are serialized so concurrent triggers never double-claim.
   const dispatch = (): Promise<void> => {
     chain = chain.then(dispatchOnce).catch((e) => console.error("[daemon] dispatch failed", e));
+    track(chain);
     return chain;
   };
 
@@ -151,7 +163,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     let msg: Message | null = null;
     if (m.ok) {
       // With grill-me off the uncertain items still become questions, but the chat shows no asked one.
-      const q = (await grillState(db, a.workspaceId)).enabled ? await topOpenQuestion(db, dataDir, a.workspaceId) : null;
+      const q = (await grillState(db, a.workspaceId)).enabled ? await topOpenQuestion(db, dataDir, a.workspaceId, deps.ownedHelpers) : null;
       const meta: AgentMessageMeta = {
         changes: (await listTaskChanges(db, m.taskId)) as AgentMessageMeta["changes"],
         askedQuestion: q ? { id: q.id, title: q.title, body: q.body } : null,
@@ -180,6 +192,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     let inbox: Promise<void> = Promise.resolve();
 
     const handle = async (raw: string) => {
+      if (stopping) return;
       let m;
       try {
         m = parseDaemonToHub(JSON.parse(raw));
@@ -201,6 +214,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
           return;
         }
         if (m.reportTokenHash) await registerReportToken(db, m.reportTokenHash);
+        if (stopping) return;
         const old = current;
         conn = {
           ws,
@@ -208,16 +222,29 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
           assigned: null,
           rpc: createConnectionRpc((id, method, params) => send(ws, { type: "rpc.request", id, method, params })),
         };
+        connections.add(conn);
         current = conn;
         // Leave old.assigned for the close handler. An in-flight dispatchOnce may have claimed a
         // task it has not sent; wait until that claim is requeued uncounted before a counted interrupt.
         const pendingDispatch = chain;
         if (old) old.ws.close();
         await pendingDispatch;
+        if (stopping) {
+          conn.rpc.failAll("hub shutting down");
+          connections.delete(conn);
+          if (current === conn) current = null;
+          return;
+        }
         await announceInterrupted(db, events, await interruptRunning(db, { exceptDaemonId: conn.daemonId }));
+        if (stopping) {
+          conn.rpc.failAll("hub shutting down");
+          connections.delete(conn);
+          if (current === conn) current = null;
+          return;
+        }
         // The id list lets the daemon drop isolation dirs of workspaces deleted while it was away.
         send(ws, { type: "welcome", workspaceIds: (await listWorkspaces(db)).map((w) => w.id) });
-        void syncBoundRepos(db, conn.rpc).catch((error) => console.error("[daemon] repos.sync failed", error));
+        track(syncBoundRepos(db, conn.rpc).catch((error) => { if (!stopping) console.error("[daemon] repos.sync failed", error); }));
         events.emitGlobal({ type: "daemon.status", connected: true });
         await dispatch();
         return;
@@ -235,10 +262,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
           // Moves are chained so two quick moves of one repo settle in order.
           const move = { repoId: m.repoId, to: m.to };
           moves = moves
-            .then(() => onRepoMoved(db, dataDir, rpc, events, move))
-            .catch((e) => console.error("[daemon] diagram staleness check failed", e))
-            .then(() => recheckReports({ db, events, daemon: rpc, dataDir }, move.repoId))
-            .catch((e) => console.error("[daemon] report re-check failed", e));
+            .then(() => onRepoMoved(db, dataDir, rpc, events, move, deps.ownedHelpers))
+            .catch((e) => { if (!stopping) console.error("[daemon] diagram staleness check failed", e); })
+            .then(() => recheckReports({ db, events, daemon: rpc, dataDir, ownedHelpers: deps.ownedHelpers }, move.repoId))
+            .catch((e) => { if (!stopping) console.error("[daemon] report re-check failed", e); });
+          track(moves);
         }
       } else if (m.type === "repo.fetched") {
         await applyRepoFetched(db, m);
@@ -248,11 +276,13 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     ws.on("message", (d) => {
       const raw = String(d);
       inbox = inbox.then(() => handle(raw)).catch((e) => console.error("[daemon] message failed", e));
+      track(inbox);
     });
     ws.on("error", () => {});
     ws.on("close", () => {
       inbox = inbox.then(async () => {
-        if (!conn) return;
+        if (conn) connections.delete(conn);
+        if (!conn || stopping) return;
         const wasCurrent = current === conn;
         const assigned = conn.assigned;
         if (wasCurrent) current = null;
@@ -263,18 +293,17 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         else await requeueAndEmit(conn.daemonId);
         if (wasCurrent) events.emitGlobal({ type: "daemon.status", connected: false });
       }).catch((e) => console.error("[daemon] close failed", e));
+      track(inbox);
     });
   });
 
-  events.subscribeAll((_ws, e) => {
+  const unsubscribe = events.subscribeAll((_ws, e) => {
     if (e.type === "task.updated" && e.task.status === "queued") void dispatch();
     else if (e.type === "workspace.deleted" && current) {
       send(current.ws, { type: "workspace.deleted", workspaceId: e.workspaceId });
-      void syncBoundRepos(db, current.rpc).catch((error) => console.error("[daemon] repos.sync failed", error));
+      track(syncBoundRepos(db, current.rpc).catch((error) => { if (!stopping) console.error("[daemon] repos.sync failed", error); }));
     }
   });
-  server.on("close", () => wss.close());
-
   const rpc: DaemonRpc = {
     call(method, params, timeoutMs) {
       const conn = current;
@@ -283,5 +312,29 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     },
   };
 
-  return { isConnected: () => current !== null, rpc };
+  let closePromise: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    closePromise ??= (async () => {
+      stopping = true;
+      unsubscribe();
+      current = null;
+      for (const conn of connections) conn.rpc.failAll("hub shutting down");
+      for (const client of wss.clients) {
+        if (client.readyState === client.OPEN || client.readyState === client.CONNECTING) client.close(1001, "hub shutting down");
+      }
+      const timeout = setTimeout(() => {
+        for (const client of wss.clients) client.terminate();
+      }, 1_000);
+      timeout.unref?.();
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+      clearTimeout(timeout);
+      while (pending.size > 0) await Promise.all([...pending]);
+      await Promise.all([chain, moves]);
+    })();
+    return closePromise;
+  };
+  wss.on("connection", (ws) => {
+    if (stopping) ws.close(1001, "hub shutting down");
+  });
+  return { isConnected: () => !stopping && current !== null, rpc, close };
 }

@@ -1,3 +1,5 @@
+import { protectPrivatePath } from "../src/secrets/permissions.js";
+import { makePublic } from "./nativePermissions.js";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -53,7 +55,7 @@ describe("runDoctor", () => {
 
   test("everything present passes", async () => {
     const codex = join(root, "codex");
-    writeFileSync(codex, '#!/bin/sh\necho "codex-cli 9.9.9"\n');
+    writeFileSync(codex, '#!/usr/bin/env node\nconsole.log("codex-cli 9.9.9");\n');
     chmodSync(codex, 0o755);
     const home = join(root, "home");
     mkdirSync(home);
@@ -108,7 +110,7 @@ describe("直连登录 check", () => {
 
   test("an untrusted credential file reads as unusable, not as 未登录", async () => {
     save(stored({ access_token: jwt({ exp: EXP }), refresh_token: "rt" }));
-    chmodSync(join(root, "nema", "auth.json"), 0o644);
+    makePublic(join(root, "nema", "auth.json"));
     expect(byName(await run(), "直连登录")).toMatchObject({ ok: false, detail: "凭证文件不可用（权限/符号链接/损坏），请重新运行 nema auth login" });
   });
 
@@ -258,12 +260,14 @@ describe("Claude Code checks", () => {
   test("a 0600 token file passes and a 0644 file fails, and no detail includes the token", async () => {
     const binDir = join(root, "bin");
     mkdirSync(binDir);
-    writeFileSync(join(binDir, "claude"), '#!/bin/sh\necho "claude 2.0.0"\n');
+    writeFileSync(join(binDir, "claude"), '#!/usr/bin/env node\nconsole.log("claude 2.0.0");\n');
     chmodSync(join(binDir, "claude"), 0o755);
     process.env.PATH = binDir;
     const nemaHome = join(root, "nema");
     mkdirSync(nemaHome);
     writeFileSync(join(nemaHome, "claude-code-token"), "sekret-token", { mode: 0o600 });
+    protectPrivatePath(join(nemaHome, "claude-code-token"));
+
 
     const ready = await run("claude-code");
     expect(byName(ready, "claude 可用")).toMatchObject({ ok: true });
@@ -271,7 +275,7 @@ describe("Claude Code checks", () => {
     expect(byName(ready, "claude code token").ok).toBe(true);
     expect(JSON.stringify(ready)).not.toContain("sekret-token");
 
-    chmodSync(join(nemaHome, "claude-code-token"), 0o644);
+    makePublic(join(nemaHome, "claude-code-token"));
     const loose = await run("claude-code");
     expect(byName(loose, "claude code token").ok).toBe(false);
     expect(JSON.stringify(loose)).not.toContain("sekret-token");
@@ -297,7 +301,7 @@ describe("graphify check", () => {
     });
 
     const bin = join(root, "graphify");
-    writeFileSync(bin, "#!/bin/sh\necho graphify 9.9.9\n");
+    writeFileSync(bin, '#!/usr/bin/env node\nconsole.log("graphify 9.9.9");\n');
     chmodSync(bin, 0o755);
     fake.bin = bin;
     const present = byName(await runDoctor(opts()), "graphify");
@@ -362,17 +366,19 @@ describe("GitHub checks", () => {
     expect(byName(before, "github 令牌").detail).toContain("不存在");
 
     const bin = join(root, "github-mcp-server");
-    writeFileSync(bin, "#!/bin/sh\necho 'Version: 0.9.9'\necho 'Commit: abc'\n");
+    writeFileSync(bin, '#!/usr/bin/env node\nconsole.log("Version: 0.9.9"); console.log("Commit: abc");\n');
     chmodSync(bin, 0o755);
     mkdirSync(join(root, "nema"));
     writeFileSync(join(root, "nema", "github-token"), "ghp_sekret", { mode: 0o600 });
+    protectPrivatePath(join(root, "nema", "github-token"));
+
     const after = await runDoctor({ ...opts(), githubMcpServerBin: bin });
     expect(byName(after, "github-mcp-server")).toMatchObject({ ok: true, detail: "可用：Version: 0.9.9" });
     expect(byName(after, "github 令牌")).toMatchObject({ ok: true });
     expect(byName(after, "github 令牌").detail).toContain("0600");
     expect(JSON.stringify(after)).not.toContain("ghp_sekret");
 
-    chmodSync(join(root, "nema", "github-token"), 0o644);
+    makePublic(join(root, "nema", "github-token"));
     const loose = await runDoctor({ ...opts(), githubMcpServerBin: bin });
     expect(byName(loose, "github 令牌").ok).toBe(true);
     expect(byName(loose, "github 令牌").detail).toContain("0600");

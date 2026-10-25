@@ -13,6 +13,7 @@ import { findRepoForWorkspace, listRepos } from "./repos.js";
 import { recordTaskChange, resolveRunToken } from "./tasks.js";
 import { repoPath } from "./workspaces.js";
 import { retryBlockedPackages } from "./workpackages.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 /** The daemon gives each GitHub call 60 s; waiting longer lets its own error arrive instead of a hub timeout. */
 const GITHUB_RPC_TIMEOUT_MS = 90_000;
@@ -26,6 +27,7 @@ export function roomRoutes(deps: {
   daemon: DaemonRpc;
   /** Defaults to the vendored archify. */
   archify?: Archify;
+  ownedHelpers?: OwnedHelperScope;
 }): Hono<{ Variables: { auth: Auth } }> {
   const { db, dataDir, events, daemon } = deps;
   const archify = deps.archify ?? vendoredArchify;
@@ -39,7 +41,7 @@ export function roomRoutes(deps: {
     await next();
   });
 
-  const store = (ws: string) => new KnowledgeStore(repoPath(dataDir, ws));
+  const store = (ws: string) => new KnowledgeStore(repoPath(dataDir, ws), deps.ownedHelpers);
 
   app.get("/entries", async (c) => {
     const body: ListEntriesResponse = { entries: await store(c.get("auth").workspaceId).list() };
@@ -138,13 +140,13 @@ export function roomRoutes(deps: {
     const { entry, commit, op } = result;
     // The commit is durable; failures below must not make the Agent retry (duplicate entry).
     try {
-      await indexEntry(db, workspaceId, entry);
+      await indexEntry(db, workspaceId, entry, deps.ownedHelpers);
       await recordTaskChange(db, taskId, { entryId: entry.id, kind: entry.kind, title: entry.title, op });
       events.emit(workspaceId, { type: "knowledge.changed", entryId: entry.id });
     } catch (e) {
       console.error(`room upsert: post-commit bookkeeping failed for ${entry.id} (commit ${commit})`, e);
     }
-    await retryBlockedPackages(db, dataDir, events, workspaceId, entry, "agent");
+    await retryBlockedPackages(db, dataDir, events, workspaceId, entry, "agent", deps.ownedHelpers);
     const body: UpsertEntryResponse = { entry, commit };
     return c.json(body);
   });
@@ -181,7 +183,7 @@ export function roomRoutes(deps: {
 
     try {
       if (pluginFunction(name)?.plugin.runsOn === "hub") {
-        const outcome = await callHubFunction({ db, dataDir, events, archify, daemon }, { taskId, workspaceId }, name, args);
+        const outcome = await callHubFunction({ db, dataDir, events, archify, daemon, ownedHelpers: deps.ownedHelpers }, { taskId, workspaceId }, name, args);
         if (outcome.status !== 200) {
           await record(false, 0);
           return c.json({ error: outcome.error }, outcome.status);
@@ -199,7 +201,7 @@ export function roomRoutes(deps: {
           await record(false, 0);
           return c.json({ error: check.error }, 400);
         }
-        const result = await daemon.call("plugin.call", { name, args: callArgs }, GITHUB_RPC_TIMEOUT_MS);
+        const result = await daemon.call("plugin.call", { name, args: check.args ?? callArgs }, GITHUB_RPC_TIMEOUT_MS);
         const encoded = JSON.stringify(result);
         await record(true, encoded === undefined ? 0 : Buffer.byteLength(encoded));
         return c.json({ result });

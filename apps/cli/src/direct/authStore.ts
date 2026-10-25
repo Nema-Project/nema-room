@@ -5,6 +5,7 @@ import {
   constants,
   fstatSync,
   fsyncSync,
+  ftruncateSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -18,6 +19,7 @@ import path from "node:path";
 import { z } from "zod";
 import { jwtExp } from "./jwt.js";
 import { LockTimeoutError, withFileLock, type LockOptions } from "./lock.js";
+import { openPrivateFile, privateModeMatches, protectPrivatePath } from "../secrets/permissions.js";
 
 // Nema's own direct-mode login (`<nemaHome>/auth.json`). Never reads or links ~/.codex/auth.json.
 
@@ -66,8 +68,8 @@ export type AuthStoreOptions = { refreshTimeoutMs?: number; lock?: LockOptions }
 
 type StatLike = { isFile(): boolean; mode: number; uid: number };
 /** A credential file is trusted only if it is a regular file, mode 0600, and (where uids exist) owned by us. */
-export function isTrustedAuthStat(st: StatLike, uid: number | null = process.getuid?.() ?? null): boolean {
-  return st.isFile() && (st.mode & 0o777) === 0o600 && (uid === null || st.uid === uid);
+export function isTrustedAuthStat(st: StatLike, uid: number | null = process.getuid?.() ?? null, platform: NodeJS.Platform = process.platform): boolean {
+  return st.isFile() && privateModeMatches(st, platform) && (uid === null || st.uid === uid);
 }
 
 export class RefreshError extends Error {
@@ -132,7 +134,7 @@ export class AuthStore {
       if (!isTrustedAuthStat(lstatSync(this.file))) return { auth: null, reason: "unusable" };
       // O_NOFOLLOW + O_NONBLOCK: a symlink or FIFO swapped in after lstat neither redirects nor hangs the open;
       // fstat then re-checks the file we actually opened.
-      const fd = openSync(this.file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      const fd = openPrivateFile(this.file);
       let raw: string;
       try {
         if (!isTrustedAuthStat(fstatSync(fd))) return { auth: null, reason: "unusable" };
@@ -170,7 +172,7 @@ export class AuthStore {
   /** Atomic write (exclusive 0600 temp file + fsync + rename) under a 0700 directory. */
   save(auth: StoredAuth): void {
     mkdirSync(this.nemaHome, { recursive: true, mode: 0o700 });
-    if (statSync(this.nemaHome).mode & 0o077) chmodSync(this.nemaHome, 0o700);
+    protectPrivatePath(this.nemaHome, 0o700);
     const tmp = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
     const fd = openSync(tmp, "wx", 0o600);
     try {
@@ -180,6 +182,9 @@ export class AuthStore {
       } finally {
         closeSync(fd);
       }
+      // On Windows the new file's inherited owner/DACL can differ from the protected parent.
+      // Protect and verify the file itself before the atomic rename makes it the active credential.
+      protectPrivatePath(tmp, 0o600);
       renameSync(tmp, this.file); // replaces a planted symlink rather than following it
     } catch (e) {
       try {
@@ -220,7 +225,8 @@ export class AuthStore {
    * Pass the token the server just rejected as `rejectedAccessToken` with `force`: if a peer has already
    * replaced it on disk, that token is returned without a refresh POST.
    */
-  async getAccessToken(opts: { force?: boolean; rejectedAccessToken?: string } = {}): Promise<AuthResult> {
+  async getAccessToken(opts: { force?: boolean; rejectedAccessToken?: string; signal?: AbortSignal } = {}): Promise<AuthResult> {
+    opts.signal?.throwIfAborted();
     const held = this.read();
     if (!hasRefreshToken(held)) throw new ReloginRequiredError();
     const req = { force: !!opts.force, rejected: opts.rejectedAccessToken };
@@ -228,7 +234,7 @@ export class AuthStore {
     const refreshTimeoutMs = this.opts.refreshTimeoutMs ?? REFRESH_TIMEOUT_MS;
     const lockOpts: LockOptions = { timeoutMs: Math.max(15_000, refreshTimeoutMs + 5_000), ...this.opts.lock };
     try {
-      return await withFileLock(this.lockPath, () => this.refreshLocked(held, req), lockOpts);
+      return await withFileLock(this.lockPath, () => this.refreshLocked(held, req, opts.signal), lockOpts);
     } catch (e) {
       if (e instanceof LockTimeoutError) throw new TransientAuthError("等待直连登录凭证锁超时，请稍后重试", { cause: e });
       throw e;
@@ -259,14 +265,15 @@ export class AuthStore {
   }
 
   // Runs with auth.lock held: re-read, adopt a peer's rotation, else refresh and persist before unlocking.
-  private async refreshLocked(held: StoredAuth, req: { force: boolean; rejected?: string }): Promise<AuthResult> {
+  private async refreshLocked(held: StoredAuth, req: { force: boolean; rejected?: string }, signal?: AbortSignal): Promise<AuthResult> {
+    signal?.throwIfAborted();
     const disk = this.read();
     if (!hasRefreshToken(disk)) throw new ReloginRequiredError();
     if (this.usableWithoutRefresh(disk, held, req)) return result(disk);
-    return this.refreshWith(disk, 1);
+    return this.refreshWith(disk, 1, signal);
   }
 
-  private async callRefresher(auth: StoredAuth): Promise<RefreshResult> {
+  private async callRefresher(auth: StoredAuth, ownerSignal?: AbortSignal): Promise<RefreshResult> {
     const ms = this.opts.refreshTimeoutMs ?? REFRESH_TIMEOUT_MS;
     const ac = new AbortController();
     let timer: NodeJS.Timeout | undefined;
@@ -277,17 +284,22 @@ export class AuthStore {
       }, ms);
     });
     try {
-      return await Promise.race([this.refresher(auth, ac.signal), deadline]);
+      if (ownerSignal?.aborted) ac.abort(ownerSignal.reason);
+      const abortFromOwner = () => ac.abort(ownerSignal?.reason);
+      ownerSignal?.addEventListener("abort", abortFromOwner, { once: true });
+      try { return await Promise.race([this.refresher(auth, ac.signal), deadline]); }
+      finally { ownerSignal?.removeEventListener("abort", abortFromOwner); }
     } finally {
       clearTimeout(timer);
     }
   }
 
-  private async refreshWith(disk: StoredAuth, retries: number): Promise<AuthResult> {
+  private async refreshWith(disk: StoredAuth, retries: number, signal?: AbortSignal): Promise<AuthResult> {
     let res: RefreshResult;
     try {
-      res = await this.callRefresher(disk);
+      res = await this.callRefresher(disk, signal);
     } catch (e) {
+      if (signal?.aborted) throw signal.reason ?? e;
       return this.onRefreshFailure(disk, e, retries);
     }
     if (!res || typeof res.access_token !== "string" || res.access_token === "") {
@@ -306,6 +318,8 @@ export class AuthStore {
     };
     delete next.lastAuthError;
     try {
+      // A successful refresh may have consumed a one-time refresh token. Commit its replacement
+      // before honoring owner cancellation so the next run never replays the spent token.
       this.save(next);
     } catch (e) {
       // The old refresh token is already spent, so this is unrecoverable. Make sure it is not left on disk
@@ -317,6 +331,7 @@ export class AuthStore {
       }
       throw new ReloginRequiredError("credential_persist_failed", { cause: e });
     }
+    signal?.throwIfAborted();
     return result(next);
   }
 
@@ -361,8 +376,15 @@ export class AuthStore {
   // Last-resort, non-atomic write into the existing regular file (no symlink following). Best effort.
   private overwriteInPlace(auth: StoredAuth): void {
     try {
-      const fd = openSync(this.file, constants.O_WRONLY | constants.O_TRUNC | constants.O_NOFOLLOW);
+      // O_NOFOLLOW is not implemented by every Windows filesystem. Open without truncation, then
+      // compare the opened file to the lstat target before modifying it so a swap cannot redirect us.
+      const before = lstatSync(this.file);
+      if (!before.isFile() || before.isSymbolicLink()) return;
+      const fd = openSync(this.file, constants.O_WRONLY | constants.O_NOFOLLOW);
       try {
+        const opened = fstatSync(fd);
+        if (!isTrustedAuthStat(opened) || opened.dev !== before.dev || opened.ino !== before.ino) return;
+        ftruncateSync(fd, 0);
         writeSync(fd, JSON.stringify(auth, null, 2) + "\n");
         fsyncSync(fd);
       } finally {

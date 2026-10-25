@@ -15,8 +15,10 @@ import type {
   WorkspaceView,
 } from "./types";
 
-export const HUB_URL = process.env.NEXT_PUBLIC_HUB_URL ?? "http://127.0.0.1:4400";
-const BASE = `${HUB_URL}/api`;
+/** Set at build time for the managed local desktop build; its UI and API share one origin. */
+export const LOCAL_HUB_MODE = process.env.NEXT_PUBLIC_NEMA_LOCAL === "1";
+export const HUB_URL = LOCAL_HUB_MODE ? "" : process.env.NEXT_PUBLIC_HUB_URL ?? "http://127.0.0.1:4400";
+const BASE = LOCAL_HUB_MODE ? "/api" : `${HUB_URL}/api`;
 
 export class HubError extends Error {
   constructor(

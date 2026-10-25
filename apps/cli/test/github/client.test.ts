@@ -2,9 +2,11 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { spawn as nodeSpawn } from "node:child_process";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { GithubMcp } from "../../src/github/client.js";
 import { saveGithubToken } from "../../src/secrets/github.js";
+import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 vi.setConfig({ testTimeout: 20_000 });
 
@@ -21,8 +23,8 @@ beforeEach(() => {
   mkdirSync(nemaHome);
 });
 
-afterEach(() => {
-  for (const client of clients.splice(0)) client.close();
+afterEach(async () => {
+  await Promise.all(clients.splice(0).map((c) => c.close()));
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -33,6 +35,8 @@ type FakeConfig = {
   crashOnce?: string;
   crashAlways?: boolean;
   exitOnStart?: boolean;
+  pidFile?: string;
+  holdHandshake?: boolean;
   bigText?: number;
   version?: string;
 };
@@ -50,8 +54,8 @@ function fakeServer(config: FakeConfig): string {
   return bin;
 }
 
-function client(opts: { bin: string; warn?: (message: string) => void; retryDelayMs?: number }): GithubMcp {
-  const c = new GithubMcp({ nemaHome, bin: opts.bin, warn: opts.warn ?? (() => {}), retryDelayMs: opts.retryDelayMs });
+function client(opts: { bin: string; warn?: (message: string) => void; retryDelayMs?: number; ownedHelpers?: OwnedHelperScope }): GithubMcp {
+  const c = new GithubMcp({ nemaHome, bin: opts.bin, warn: opts.warn ?? (() => {}), retryDelayMs: opts.retryDelayMs, ownedHelpers: opts.ownedHelpers });
   clients.push(c);
   return c;
 }
@@ -146,6 +150,21 @@ test("a missing binary or token gives the Chinese message and does not loop", as
   await expect(ok.status()).resolves.toEqual({ installed: true, loggedIn: true, detail: "github-mcp-server 9.9.9" });
 });
 
+test("managed status reports a missing GitHub server as not installed", async () => {
+  const missingScope: OwnedHelperScope = {
+    spawn: async () => { throw Object.assign(new Error("missing helper"), { code: "ENOENT" }); },
+    stopAccepting() {},
+    async drain() {},
+  };
+  const gh = client({ bin: join(root, "no-such-managed-github-mcp-server"), ownedHelpers: missingScope });
+
+  await expect(gh.status()).resolves.toEqual({
+    installed: false,
+    loggedIn: false,
+    detail: "github-mcp-server 未安装",
+  });
+});
+
 test("a tool outside the fixed list is rejected before anything starts", async () => {
   saveGithubToken(nemaHome, "ghp_test_token");
   const startsFile = join(root, "starts");
@@ -154,6 +173,75 @@ test("a tool outside the fixed list is rejected before anything starts", async (
     "GitHub 插件没有工具 merge_pull_request",
   );
   expect(starts(startsFile)).toBe(0);
+});
+
+test("close waits for the real child exit", async () => {
+  saveGithubToken(nemaHome, "ghp_test_token");
+  const pidFile = join(root, "child-pid");
+  const gh = client({ bin: fakeServer({ pidFile }) });
+  await gh.call("list_issues", { owner: "o", repo: "r" });
+  await gh.close();
+  const pid = Number(readFileSync(pidFile, "utf8"));
+  expect(() => process.kill(pid, 0)).toThrow();
+  await expect(gh.call("list_issues", { owner: "o", repo: "r" })).rejects.toThrow("GitHub 插件已停止");
+});
+
+test("close during handshake kills the starting child and awaits its exit", async () => {
+  saveGithubToken(nemaHome, "ghp_test_token");
+  const pidFile = join(root, "handshake-pid");
+  const gh = client({ bin: fakeServer({ pidFile, holdHandshake: true }) });
+  const call = gh.call("list_issues", { owner: "o", repo: "r" });
+  const deadline = Date.now() + 5000;
+  while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+  expect(existsSync(pidFile)).toBe(true);
+  const pid = Number(readFileSync(pidFile, "utf8"));
+  await gh.close();
+  await expect(call).rejects.toThrow();
+  expect(() => process.kill(pid, 0)).toThrow();
+});
+
+test("close while an owned spawn is pending kills and awaits the late child", async () => {
+  saveGithubToken(nemaHome, "ghp_test_token");
+  const pidFile = join(root, "late-child-pid");
+  let releaseSpawn!: (child: OwnedHelperProcess) => void;
+  let markSpawnEntered!: () => void;
+  let requested: { command: string; args: string[]; options?: Parameters<OwnedHelperScope["spawn"]>[2] };
+  const spawnEntered = new Promise<void>((resolve) => { markSpawnEntered = resolve; });
+  const scope: OwnedHelperScope = {
+    spawn: async (command, args, options) => {
+      requested = { command, args, options };
+      markSpawnEntered();
+      return new Promise<OwnedHelperProcess>((resolve) => { releaseSpawn = resolve; });
+    },
+    stopAccepting() {},
+    async drain() {},
+  };
+  const gh = client({ bin: fakeServer({ pidFile }), ownedHelpers: scope });
+  const call = gh.call("list_issues", { owner: "o", repo: "r" });
+  await spawnEntered;
+  const close = gh.close();
+
+  const child = nodeSpawn(requested!.command, requested!.args, { ...requested!.options, stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    child.once("close", (code, signal) => resolve({ code, signal }));
+  });
+  const pidDeadline = Date.now() + 5000;
+  while (!existsSync(pidFile) && Date.now() < pidDeadline) await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(existsSync(pidFile)).toBe(true);
+  releaseSpawn({
+    stdin: child.stdin,
+    stdout: child.stdout,
+    stderr: child.stderr,
+    kill: (signal) => child.kill(signal),
+    exited,
+    closed: exited,
+  });
+
+  await close;
+  await expect(call).rejects.toThrow("GitHub 插件已停止");
+  await expect(exited).resolves.toMatchObject({ signal: "SIGTERM" });
+  const pid = Number(readFileSync(pidFile, "utf8"));
+  expect(() => process.kill(pid, 0)).toThrow();
 });
 
 test("plugin.call routes github__ names to the client and plugins.status reports github", async () => {
@@ -166,7 +254,7 @@ test("plugin.call routes github__ names to the client and plugins.status reports
   const status = await rpc.handle({ type: "rpc.request", id: "s1", method: "plugins.status", params: {} });
   expect(status).toMatchObject({
     ok: true,
-    result: { github: { installed: false, detail: "未保存 GitHub 令牌：请运行 nema auth github" } },
+    result: { github: { installed: true, loggedIn: false, detail: "未保存 GitHub 令牌：请运行 nema auth github" } },
   });
 
   saveGithubToken(nemaHome, "ghp_test_token");
@@ -178,7 +266,7 @@ test("plugin.call routes github__ names to the client and plugins.status reports
   });
   expect(call).toMatchObject({ ok: true, result: 'list_issues {"owner":"o","repo":"r"}' });
   const status2 = await rpc.handle({ type: "rpc.request", id: "s2", method: "plugins.status", params: {} });
-  expect(status2).toMatchObject({ ok: true, result: { github: { installed: true, detail: "github-mcp-server fake 0.0.1" } } });
+  expect(status2).toMatchObject({ ok: true, result: { github: { installed: true, loggedIn: true, detail: "github-mcp-server fake 0.0.1" } } });
 
   const bad = await rpc.handle({ type: "rpc.request", id: "c2", method: "plugin.call", params: { name: "github__create_issue", args: {} } });
   expect(bad).toMatchObject({ ok: false, error: "未知函数 github__create_issue" });

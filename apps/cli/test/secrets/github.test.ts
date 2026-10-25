@@ -1,3 +1,4 @@
+import { expectPrivate } from "../nativePermissions.js";
 import { lstatSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +25,7 @@ test("nema auth github writes the token 0600 and never prints it", async () => {
   expect(c.text()).toBe("已保存 GitHub 令牌");
   expect(githubTokenPath(home)).toBe(join(home, "github-token"));
   expect(readFileSync(githubTokenPath(home), "utf8")).toBe("ghp_sekret");
-  expect(lstatSync(githubTokenPath(home)).mode & 0o777).toBe(0o600);
+  expectPrivate(githubTokenPath(home), 0o600);
   expect(readGithubToken(home)).toBe("ghp_sekret");
 
   const bad = capture();

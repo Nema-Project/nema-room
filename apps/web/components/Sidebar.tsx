@@ -15,14 +15,16 @@ export type SidebarProps = {
   onCreate: (name: string) => void | Promise<void>;
   onArchive: (id: string, archived: boolean) => void | Promise<void>;
   onDelete: (id: string) => void | Promise<void>;
+  onOpenModelSettings?: () => void;
 };
 
-export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate, onArchive, onDelete }: SidebarProps) {
+export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate, onArchive, onDelete, onOpenModelSettings }: SidebarProps) {
   const t = useT();
   const [locale, setLocale] = useLocale();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
@@ -32,20 +34,44 @@ export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate,
   const deleteRef = useRef<HTMLButtonElement>(null);
   const rowEls = useRef(new Map<string, HTMLButtonElement>());
   const restoreId = useRef<string | null>(null);
+  const createPending = useRef(false);
+  const newWorkspaceRef = useRef<HTMLButtonElement>(null);
+  const restoreCreateFocus = useRef(false);
+
+  function cancelDraft() {
+    if (createPending.current) return;
+    setName("");
+    setError(null);
+    restoreCreateFocus.current = true;
+    setAdding(false);
+  }
+
+  useEffect(() => {
+    if (!adding && restoreCreateFocus.current) {
+      restoreCreateFocus.current = false;
+      newWorkspaceRef.current?.focus();
+    }
+  }, [adding]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed || createPending.current) return;
+    createPending.current = true;
+    setCreating(true);
     setError(null);
     try {
       await onCreate(trimmed);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err)); // keep the form and the typed name
+      createPending.current = false;
+      setCreating(false);
       return;
     }
     setName("");
     setAdding(false);
+    createPending.current = false;
+    setCreating(false);
   }
 
   useEffect(() => {
@@ -163,17 +189,40 @@ export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate,
           </>
         )}
         {adding ? (
-          <form className="ws add-form" onSubmit={submit}>
-            <input autoFocus aria-label={t("sidebar.newWorkspaceName")} placeholder={t("sidebar.newWorkspaceName")} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setAdding(false)} />
+          <form className="ws add-form" onSubmit={submit} aria-busy={creating}>
+            <input
+              autoFocus
+              aria-label={t("sidebar.newWorkspaceName")}
+              placeholder={t("sidebar.newWorkspaceName")}
+              value={name}
+              disabled={creating}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && !creating) cancelDraft();
+                if (e.key === "Enter" && (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229)) e.preventDefault();
+              }}
+            />
+            <div className="add-actions">
+              <button type="submit" className="add-action confirm" aria-label={t("sidebar.createWorkspace")} title={t("sidebar.createWorkspace")} disabled={creating || !name.trim()}>
+                ✓
+              </button>
+              <button type="button" className="add-action cancel" aria-label={t("sidebar.cancel")} title={t("sidebar.cancel")} disabled={creating} onClick={cancelDraft}>
+                ×
+              </button>
+            </div>
+            {creating && <span className="creating" role="status">{t("sidebar.creatingWorkspace")}</span>}
             {error && <span className="error" role="alert">{error}</span>}
           </form>
         ) : (
-          <button type="button" className="ws add" onClick={() => setAdding(true)}>
+          <button type="button" className="ws add" ref={newWorkspaceRef} onClick={() => { setName(""); setError(null); setAdding(true); }}>
             {t("sidebar.newWorkspace")}
           </button>
         )}
       </nav>
       <div className="foot">
+        <button type="button" className="nav-model" onClick={() => { setPluginsOpen(false); onOpenModelSettings?.(); }}>
+          {t("sidebar.modelSettings")}
+        </button>
         <button type="button" className="nav-plugins" aria-expanded={pluginsOpen} onClick={() => setPluginsOpen((open) => !open)}>
           {t("plugins.nav")}
         </button>

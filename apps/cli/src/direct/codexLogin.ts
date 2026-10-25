@@ -83,7 +83,8 @@ export function readCodexCliTokens(codexHome: string, now = Date.now()): CodexCl
 export class CodexFileTokenSource {
   constructor(private readonly codexHome: string, private readonly now: () => number = Date.now) {}
 
-  async getAccessToken(opts: { force?: boolean; rejectedAccessToken?: string } = {}): Promise<{ accessToken: string; auth: StoredAuth }> {
+  async getAccessToken(opts: { force?: boolean; rejectedAccessToken?: string; signal?: AbortSignal } = {}): Promise<{ accessToken: string; auth: StoredAuth }> {
+    opts.signal?.throwIfAborted();
     const t = readCodexCliTokens(this.codexHome, this.now());
     if (opts.rejectedAccessToken !== undefined && t.accessToken === opts.rejectedAccessToken) {
       throw new CodexLoginError("模型接口拒绝了当前的 Codex 登录。Nema 不会刷新 ~/.codex/auth.json。请在 Codex 里重新登录后再试。");

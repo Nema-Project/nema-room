@@ -7,6 +7,7 @@ import type { EventBus } from "./events.js";
 import { reportRoutes } from "./reports.js";
 import { roomRoutes } from "./roomApi.js";
 import { uiRoutes } from "./uiApi.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 export const DEFAULT_HUB_PORT = 4400;
 
@@ -23,10 +24,13 @@ export type AppDeps = {
   /** Late-bound in main.ts, the same way `daemonStatus` is. */
   daemon: DaemonRpc;
   webOrigin?: string;
+  /** Optional gate for browser UI/API traffic; room and report authentication stay separate. */
+  uiAuth?: MiddlewareHandler;
   /** Diagram validation and rendering; defaults to the vendored archify. Tests inject a fake. */
   archify?: Archify;
   /** Port the hub listens on; only `127.0.0.1:<port>` and `localhost:<port>` are accepted as Host. */
   port?: number;
+  ownedHelpers?: OwnedHelperScope;
 };
 
 /**
@@ -64,6 +68,7 @@ export function createApp(deps: AppDeps): Hono {
     .map((o) => o.trim())
     .filter(Boolean);
   app.use("/api/*", cors({ origin: (o) => (webOrigins.includes(o) ? o : null), allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }));
+  if (deps.uiAuth) app.use("/api/*", deps.uiAuth);
   app.use("/api/*", requireJson);
   app.route("/api", uiRoutes(deps));
   app.route(
@@ -73,10 +78,11 @@ export function createApp(deps: AppDeps): Hono {
       dataDir: deps.dataDir,
       events: deps.events,
       daemon: deps.daemon,
+      ownedHelpers: deps.ownedHelpers,
       ...(deps.archify !== undefined ? { archify: deps.archify } : {}),
     }),
   );
   // Coding agents' hooks and reports (`nema report`), authorized by the report token.
-  app.route("/report", reportRoutes({ db: deps.db, events: deps.events, daemon: deps.daemon, dataDir: deps.dataDir }));
+  app.route("/report", reportRoutes({ db: deps.db, events: deps.events, daemon: deps.daemon, dataDir: deps.dataDir, ownedHelpers: deps.ownedHelpers }));
   return app;
 }

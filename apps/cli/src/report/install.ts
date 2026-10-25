@@ -24,13 +24,23 @@ function agentPaths(agent: ReportAgent, home: string): Paths {
 }
 
 const isObj = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
-const isNema = (h: unknown): boolean => isObj(h) && typeof h.command === "string" && h.command.includes(MARKER);
+const isNema = (h: unknown): boolean => {
+  if (!isObj(h) || typeof h.command !== "string") return false;
+  if (h.command.includes(MARKER)) return true;
+  const encoded = /^powershell\.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ([A-Za-z0-9+/=]+)$/.exec(h.command);
+  return encoded !== null && Buffer.from(encoded[1]!, "base64").toString("utf16le").includes(MARKER);
+};
 
 function shellQuote(s: string): string {
   return /^[A-Za-z0-9_\/.,:@%+=-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-export function hookCommand(nodeBin: string, cliEntry: string, agent: ReportAgent): string {
+export function hookCommand(nodeBin: string, cliEntry: string, agent: ReportAgent, platform = process.platform): string {
+  if (platform === "win32") {
+    const psQuote = (value: string) => `'${value.replaceAll("'", "''")}'`;
+    const script = `& ${psQuote(nodeBin)} ${psQuote(cliEntry)} report hook --agent ${agent}; exit $LASTEXITCODE`;
+    return `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(script, "utf16le").toString("base64")}`;
+  }
   return `${shellQuote(nodeBin)} ${shellQuote(cliEntry)} report hook --agent ${agent}`;
 }
 

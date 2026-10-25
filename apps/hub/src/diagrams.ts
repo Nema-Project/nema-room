@@ -10,6 +10,7 @@ import { findRepoForWorkspace, getRepo } from "./repos.js";
 import { getTask, recordTaskChange } from "./tasks.js";
 import { repoPath } from "./workspaces.js";
 import { callWorkPackageFunction } from "./workpackages.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 /** Diagram validation and rendering. Tests inject a fake; the hub uses the vendored archify. */
 export type Archify = {
@@ -19,7 +20,7 @@ export type Archify = {
 
 export const vendoredArchify: Archify = { validateDiagram, renderDiagram };
 
-export type DiagramDeps = { db: Db; dataDir: string; events: EventBus; archify: Archify; daemon?: DaemonRpc };
+export type DiagramDeps = { db: Db; dataDir: string; events: EventBus; archify: Archify; daemon?: DaemonRpc; ownedHelpers?: OwnedHelperScope };
 
 /** What the Room route sends back: `{ result }` on 200, `{ error }` otherwise. `ok` feeds `plugin_calls`. */
 export type HubCallOutcome =
@@ -61,7 +62,7 @@ export async function callHubFunction(
   if (name === "diagram__read") return readDiagram(deps, auth.workspaceId, args);
   if (name.startsWith("workpackage__")) {
     if (!deps.daemon) return { status: 404, error: `未知函数 ${name}` };
-    return callWorkPackageFunction({ db: deps.db, dataDir: deps.dataDir, events: deps.events, daemon: deps.daemon }, auth, name, args);
+    return callWorkPackageFunction({ db: deps.db, dataDir: deps.dataDir, events: deps.events, daemon: deps.daemon, ownedHelpers: deps.ownedHelpers }, auth, name, args);
   }
   return { status: 404, error: `未知函数 ${name}` };
 }
@@ -78,7 +79,7 @@ async function saveDiagram(deps: DiagramDeps, auth: { taskId: string; workspaceI
   if (!parsed.success) return { status: 400, error: `参数无效：${issues(parsed.error)}` };
   const input = parsed.data;
 
-  const store = new KnowledgeStore(repoPath(dataDir, workspaceId));
+  const store = new KnowledgeStore(repoPath(dataDir, workspaceId), deps.ownedHelpers);
   if (input.id !== undefined && (await store.get(input.id)) === null) {
     return { status: 404, error: `找不到图：${input.id}` };
   }
@@ -115,7 +116,7 @@ async function saveDiagram(deps: DiagramDeps, auth: { taskId: string; workspaceI
   const { entry, commit, op } = saved;
   // The commit is durable; failures below must not make the Agent retry (duplicate diagram).
   try {
-    await indexEntry(db, workspaceId, entry);
+    await indexEntry(db, workspaceId, entry, deps.ownedHelpers);
     // A fresh drawing matches the code it was drawn from.
     await setDiagramStatus(db, workspaceId, entry.id, false, repo.lastMainSha);
     await recordTaskChange(db, taskId, { entryId: entry.id, kind: entry.kind, title: entry.title, op });
@@ -130,7 +131,7 @@ async function readDiagram(deps: DiagramDeps, workspaceId: string, args: unknown
   const parsed = ReadArgs.safeParse(args);
   if (!parsed.success) return { status: 400, error: `参数无效：${issues(parsed.error)}` };
   const { id } = parsed.data;
-  const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId));
+  const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId), deps.ownedHelpers);
   const entry = kindFromId(id) === "diagram" ? await store.get(id) : null;
   if (!entry) return { status: 404, error: `找不到图：${id}` };
   return { status: 200, result: { entry, spec: await store.readDiagramSpec(id) }, ok: true };
@@ -170,6 +171,7 @@ export async function onRepoMoved(
   daemon: DaemonRpc,
   events: EventBus,
   move: { repoId: string; to: string },
+  ownedHelpers?: OwnedHelperScope,
 ): Promise<void> {
   const repo = await getRepo(db, move.repoId);
   if (!repo) return;
@@ -177,7 +179,7 @@ export async function onRepoMoved(
     `select entry_id from entry_index where workspace_id = $1 and kind = 'diagram' and status = 'active' order by entry_id`,
     [repo.workspaceId],
   );
-  const store = new KnowledgeStore(repoPath(dataDir, repo.workspaceId));
+  const store = new KnowledgeStore(repoPath(dataDir, repo.workspaceId), ownedHelpers);
   // Diagrams drawn at the same commit share one diff.
   const diffs = new Map<string, Promise<string[]>>();
   for (const { entry_id: entryId } of rows) {

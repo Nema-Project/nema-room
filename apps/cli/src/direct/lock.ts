@@ -44,7 +44,7 @@ function parseHolder(raw: string): Holder | null {
 
 function isStale(path: string, raw: string, staleMs: number): boolean {
   const h = parseHolder(raw);
-  if (h) return !pidAlive(h.pid) || Date.now() - h.at > staleMs;
+  if (h) return !pidAlive(h.pid);
   // Unreadable content (e.g. a holder that died between create and write): judge by age.
   try {
     return Date.now() - statSync(path).mtimeMs > staleMs;
@@ -82,7 +82,8 @@ function takeOver(path: string, staleRaw: string): void {
 
 /**
  * Cross-process mutual exclusion via an exclusively created lock file holding `{pid, at, token}`.
- * A lock whose holder pid is gone, or which is older than `staleMs`, is taken over.
+ * A lock whose holder pid is gone is taken over. `staleMs` controls the heartbeat interval and
+ * age-based recovery of malformed partial lock records; it never overrides a live holder pid.
  */
 export async function withFileLock<T>(lockPath: string, fn: () => Promise<T>, opts: LockOptions = {}): Promise<T> {
   const timeoutMs = opts.timeoutMs ?? 15_000;
@@ -113,7 +114,7 @@ export async function withFileLock<T>(lockPath: string, fn: () => Promise<T>, op
     await sleep(pollMs);
   }
 
-  // Heartbeat: keep `at` fresh while fn runs so a slow holder is never judged stale by age.
+  // Heartbeat records activity for diagnostics; live holders never expire by age.
   const heartbeat = setInterval(() => {
     try {
       const raw = readRaw(lockPath);
@@ -138,7 +139,7 @@ export async function withFileLock<T>(lockPath: string, fn: () => Promise<T>, op
       const raw = readRaw(lockPath);
       if (raw !== null && parseHolder(raw)?.token === token) unlinkSync(lockPath);
     } catch {
-      /* best effort: a lock we cannot remove becomes stale once this process exits or after staleMs */
+      /* best effort: a valid lock we cannot remove becomes stale once this process exits */
     }
   }
 }

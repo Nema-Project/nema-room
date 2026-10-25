@@ -72,12 +72,16 @@ describe("PluginsPage", () => {
       expect(screen.getByText(item.description)).toBeTruthy();
     }
     expect(screen.getByText("Sends data out").classList.contains("red")).toBe(true);
-    expect(screen.getByText("Not installed 令牌不存在")).toBeTruthy();
+    expect(screen.queryByText("Not installed 令牌不存在")).toBeNull();
+    expect(screen.queryByText("GitHub connection is not available.")).toBeNull();
     expect(screen.getByText("issue_read")).toBeTruthy();
   });
 
-  it("the plugins page shows GitHub as sends data out, with the login hint when no token", async () => {
-    vi.mocked(hub.listPlugins).mockResolvedValue([catalog[0]!, { ...catalog[1]!, loggedIn: false }]);
+  it("keeps GitHub install and login state off the plugins page", async () => {
+    vi.mocked(hub.listPlugins).mockResolvedValue([
+      catalog[0]!,
+      { ...catalog[1]!, installed: true, detail: "gh 2.67.0", loggedIn: true },
+    ]);
     render(
       <I18nProvider>
         <PluginsPage />
@@ -87,26 +91,13 @@ describe("PluginsPage", () => {
     const heading = await screen.findByRole("heading", { name: "GitHub" });
     const block = heading.closest("section")!;
     expect(within(block).getByText("Sends data out").classList.contains("red")).toBe(true);
-    expect(within(block).getByText("No token")).toBeTruthy();
-    expect(within(block).getByText("Run this in a terminal and paste a personal access token on stdin")).toBeTruthy();
-    expect(within(block).getByText("nema auth github").tagName).toBe("CODE");
-    expect(within(block).queryByText("Token saved")).toBeNull();
-    // graphify has no login state.
+    expect(within(block).getByText("issue_read")).toBeTruthy();
+    expect(within(block).queryByText(/Installed|Not installed|gh 2\.67\.0|令牌不存在/)).toBeNull();
+    expect(within(block).queryByText(/GitHub connection is/)).toBeNull();
+    expect(within(block).queryByText(/authenticated local gh command|nema auth github|personal access token/i)).toBeNull();
+    expect(within(block).queryByLabelText(/token/i)).toBeNull();
     const graphify = screen.getByRole("heading", { name: "graphify" }).closest("section")!;
-    expect(within(graphify).queryByText("No token")).toBeNull();
-  });
-
-  it("the plugins page shows a saved GitHub token without the hint", async () => {
-    vi.mocked(hub.listPlugins).mockResolvedValue([{ ...catalog[1]!, installed: true, detail: "v1.0.0", loggedIn: true }]);
-    render(
-      <I18nProvider>
-        <PluginsPage />
-      </I18nProvider>,
-    );
-
-    expect(await screen.findByText("Token saved")).toBeTruthy();
-    expect(screen.queryByText("No token")).toBeNull();
-    expect(screen.queryByText("nema auth github")).toBeNull();
+    expect(within(graphify).getByText("Installed graphify 0.9.0")).toBeTruthy();
   });
 
   it("opens from the sidebar plugins entry", async () => {

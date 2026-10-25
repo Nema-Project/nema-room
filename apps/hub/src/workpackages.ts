@@ -15,8 +15,9 @@ import { listRepos } from "./repos.js";
 import { getTask, recordTaskChange, toUiTask } from "./tasks.js";
 import { repoPath } from "./workspaces.js";
 import { checkSpec, parsePlan } from "./wpFormat.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
-export type WorkPackageDeps = { db: Db; dataDir: string; events: EventBus; daemon: DaemonRpc };
+export type WorkPackageDeps = { db: Db; dataDir: string; events: EventBus; daemon: DaemonRpc; ownedHelpers?: OwnedHelperScope };
 
 const WP_ID = /^W-[1-9]\d*$/;
 const ID = z.string().regex(WP_ID);
@@ -70,7 +71,7 @@ export async function callWorkPackageFunction(
   name: string,
   args: unknown,
 ): Promise<HubCallOutcome> {
-  const store = new KnowledgeStore(repoPath(deps.dataDir, auth.workspaceId));
+  const store = new KnowledgeStore(repoPath(deps.dataDir, auth.workspaceId), deps.ownedHelpers);
   const idOf = (a: unknown): string => (a && typeof a === "object" && typeof (a as { id?: unknown }).id === "string" ? (a as { id: string }).id : "");
   switch (name) {
     case "workpackage__request":
@@ -137,12 +138,13 @@ export async function requestWorkPackage(
   workspaceId: string,
   input: { requirements: string[]; title?: string },
   sourceMessageId?: string,
+  ownedHelpers?: OwnedHelperScope,
 ): Promise<{ entry: Entry }> {
   const plugin = (await workspacePluginState(db, workspaceId)).find((p) => p.plugin.id === "superpowers");
   if (!plugin?.enabled) throw new WorkPackageError(409, "superpowers 插件已关闭");
   const requirements = [...new Set(input.requirements)];
   if (requirements.length === 0) throw new WorkPackageError(400, "请至少选择一条需求");
-  const store = new KnowledgeStore(repoPath(dataDir, workspaceId));
+  const store = new KnowledgeStore(repoPath(dataDir, workspaceId), ownedHelpers);
   const titles: string[] = [];
   for (const id of requirements) {
     const req = kindFromId(id) === "requirement" ? await store.get(id) : null;
@@ -161,7 +163,7 @@ export async function requestWorkPackage(
     },
     { author: sourceMessageId ? "agent" : "user" },
   );
-  await indexEntry(db, workspaceId, entry).catch((e) => console.error(`work package: indexing ${entry.id} failed`, e));
+  await indexEntry(db, workspaceId, entry, ownedHelpers).catch((e) => console.error(`work package: indexing ${entry.id} failed`, e));
   events.emit(workspaceId, { type: "knowledge.changed", entryId: entry.id });
   await queueGeneration(db, events, workspaceId, entry.id, requirements);
   return { entry };
@@ -177,15 +179,15 @@ async function queueGeneration(db: Db, events: EventBus, workspaceId: string, id
  * After an entry write: a resolved question that a draft package waits on unblocks it, and its generation
  * is queued once. Never throws: the write that triggered it is already committed.
  */
-export async function retryBlockedPackages(db: Db, dataDir: string, events: EventBus, workspaceId: string, entry: Entry, author: "agent" | "user"): Promise<void> {
+export async function retryBlockedPackages(db: Db, dataDir: string, events: EventBus, workspaceId: string, entry: Entry, author: "agent" | "user", ownedHelpers?: OwnedHelperScope): Promise<void> {
   if (entry.kind !== "question" || entry.status !== "resolved") return;
   try {
-    const store = new KnowledgeStore(repoPath(dataDir, workspaceId));
+    const store = new KnowledgeStore(repoPath(dataDir, workspaceId), ownedHelpers);
     for (const summary of (await store.list()).filter((e) => e.kind === "workpackage" && e.status === "draft")) {
       const wp = await store.get(summary.id);
       if (!wp?.workpackage || wp.workpackage.blockedOn !== entry.id) continue;
       const cleared = await store.setWorkPackageMeta(wp.id, { blockedOn: null }, `问题 ${entry.id} 已解决，重新生成开发包 ${wp.id}`, { author });
-      await indexEntry(db, workspaceId, cleared).catch((e) => console.error(`work package: indexing ${cleared.id} failed`, e));
+      await indexEntry(db, workspaceId, cleared, ownedHelpers).catch((e) => console.error(`work package: indexing ${cleared.id} failed`, e));
       events.emit(workspaceId, { type: "knowledge.changed", entryId: cleared.id });
       await queueGeneration(db, events, workspaceId, wp.id, wp.workpackage.requirements);
     }
@@ -199,7 +201,7 @@ async function request(deps: WorkPackageDeps, auth: { taskId: string; workspaceI
   if (!parsed.success) return { status: 400, error: `参数无效：${issues(parsed.error)}` };
   try {
     const task = await getTask(deps.db, auth.taskId);
-    const { entry } = await requestWorkPackage(deps.db, deps.dataDir, deps.events, auth.workspaceId, parsed.data, task?.messageId);
+    const { entry } = await requestWorkPackage(deps.db, deps.dataDir, deps.events, auth.workspaceId, parsed.data, task?.messageId, deps.ownedHelpers);
     return { status: 200, result: { ok: true, id: entry.id }, ok: true };
   } catch (e) {
     if (e instanceof WorkPackageError) return refused(e.message);
@@ -210,7 +212,7 @@ async function request(deps: WorkPackageDeps, auth: { taskId: string; workspaceI
 async function afterWrite(deps: WorkPackageDeps, auth: { taskId: string; workspaceId: string }, entry: Entry, op: "add" | "update", commit: string): Promise<void> {
   // The commit is durable; failures below must not make the Agent retry.
   try {
-    await indexEntry(deps.db, auth.workspaceId, entry);
+    await indexEntry(deps.db, auth.workspaceId, entry, deps.ownedHelpers);
     await recordTaskChange(deps.db, auth.taskId, { entryId: entry.id, kind: entry.kind, title: entry.title, op });
     deps.events.emit(auth.workspaceId, { type: "knowledge.changed", entryId: entry.id });
   } catch (e) {
@@ -270,20 +272,20 @@ async function userPackage(store: KnowledgeStore, id: string): Promise<Entry> {
   return entry;
 }
 
-async function userAfter(deps: { db: Db; events: EventBus }, workspaceId: string, entry: Entry): Promise<void> {
-  await indexEntry(deps.db, workspaceId, entry).catch((e) => console.error(`work package: indexing ${entry.id} failed`, e));
+async function userAfter(deps: { db: Db; events: EventBus; ownedHelpers?: OwnedHelperScope }, workspaceId: string, entry: Entry): Promise<void> {
+  await indexEntry(deps.db, workspaceId, entry, deps.ownedHelpers).catch((e) => console.error(`work package: indexing ${entry.id} failed`, e));
   deps.events.emit(workspaceId, { type: "knowledge.changed", entryId: entry.id });
 }
 
 /** The user saves a spec or plan by hand. Any save resets the package to `draft`. */
 export async function userSaveWorkPackageDoc(
-  deps: { db: Db; dataDir: string; events: EventBus; daemon: DaemonRpc },
+  deps: { db: Db; dataDir: string; events: EventBus; daemon: DaemonRpc; ownedHelpers?: OwnedHelperScope },
   workspaceId: string,
   id: string,
   which: "spec" | "plan",
   markdown: string,
 ): Promise<Entry> {
-  const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId));
+  const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId), deps.ownedHelpers);
   const existing = await userPackage(store, id);
   let update: { tasks?: WpTask[] } = {};
   if (which === "plan") {
@@ -296,28 +298,28 @@ export async function userSaveWorkPackageDoc(
   return entry;
 }
 
-export async function approveWorkPackage(deps: { db: Db; dataDir: string; events: EventBus }, workspaceId: string, id: string): Promise<Entry> {
-  const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId));
+export async function approveWorkPackage(deps: { db: Db; dataDir: string; events: EventBus; ownedHelpers?: OwnedHelperScope }, workspaceId: string, id: string): Promise<Entry> {
+  const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId), deps.ownedHelpers);
   const wp = await store.readWorkPackage(id);
   if (!wp) throw new WorkPackageError(404, `找不到开发包 ${id}`);
   if (wp.entry.status !== "draft") throw new WorkPackageError(409, "只有草稿状态的开发包可以批准");
   if (wp.spec === null || wp.plan === null) throw new WorkPackageError(409, "开发包还没有 spec 和 plan");
-  const head = (await git(repoPath(deps.dataDir, workspaceId), ["rev-parse", "HEAD"])).trim();
+  const head = (await git(repoPath(deps.dataDir, workspaceId), ["rev-parse", "HEAD"], deps.ownedHelpers)).trim();
   const entry = await store.setWorkPackageMeta(id, { status: "approved", approvedAt: new Date().toISOString(), approvedCommit: head }, `用户批准开发包 ${id}`, { author: "user" });
   await userAfter(deps, workspaceId, entry);
   return entry;
 }
 
-export async function dropWorkPackage(deps: { db: Db; dataDir: string; events: EventBus }, workspaceId: string, id: string): Promise<Entry> {
-  const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId));
+export async function dropWorkPackage(deps: { db: Db; dataDir: string; events: EventBus; ownedHelpers?: OwnedHelperScope }, workspaceId: string, id: string): Promise<Entry> {
+  const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId), deps.ownedHelpers);
   await userPackage(store, id);
   const entry = await store.setWorkPackageMeta(id, { status: "dropped" }, `用户放弃开发包 ${id}`, { author: "user" });
   await userAfter(deps, workspaceId, entry);
   return entry;
 }
 
-export async function regenerateWorkPackage(deps: { db: Db; dataDir: string; events: EventBus }, workspaceId: string, id: string): Promise<void> {
-  const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId));
+export async function regenerateWorkPackage(deps: { db: Db; dataDir: string; events: EventBus; ownedHelpers?: OwnedHelperScope }, workspaceId: string, id: string): Promise<void> {
+  const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId), deps.ownedHelpers);
   const entry = await userPackage(store, id);
   if (entry.status === "done") throw new WorkPackageError(409, "已完成的开发包不能重新生成");
   await queueGeneration(deps.db, deps.events, workspaceId, id, entry.workpackage!.requirements);
@@ -352,7 +354,7 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
 
 /** Saves a new task list, derives the package status, and when every task is verified marks the requirements verified. */
 async function saveProgress(
-  deps: { db: Db; dataDir: string; events: EventBus },
+  deps: { db: Db; dataDir: string; events: EventBus; ownedHelpers?: OwnedHelperScope },
   workspaceId: string,
   wp: Entry,
   tasks: WpTask[],
@@ -360,7 +362,7 @@ async function saveProgress(
   author: "user" | "system",
   lastReportMessageId: string | null,
 ): Promise<Entry> {
-  const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId));
+  const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId), deps.ownedHelpers);
   let status: Entry["status"] = wp.status;
   const allVerified = tasks.length > 0 && tasks.every((t) => t.status === "verified");
   if (allVerified && status !== "done") status = "done";
@@ -408,7 +410,7 @@ async function saveProgress(
  * Does nothing unless the report names exactly one approved or in-progress `W-n` and an existing task.
  * Never throws: the report itself is already stored.
  */
-export async function applyReportToWorkPackage(db: Db, dataDir: string, events: EventBus, workspaceId: string, reportMessage: Pick<Message, "id" | "meta">): Promise<void> {
+export async function applyReportToWorkPackage(db: Db, dataDir: string, events: EventBus, workspaceId: string, reportMessage: Pick<Message, "id" | "meta">, ownedHelpers?: OwnedHelperScope): Promise<void> {
   try {
     const meta = reportMessage.meta as ReportMessageMeta | null;
     const report = meta?.report;
@@ -417,7 +419,7 @@ export async function applyReportToWorkPackage(db: Db, dataDir: string, events: 
     const ids = report.entries.filter((e) => kindFromId(e) === "workpackage");
     if (ids.length !== 1) return;
     await serialized(async () => {
-      const store = new KnowledgeStore(repoPath(dataDir, workspaceId));
+      const store = new KnowledgeStore(repoPath(dataDir, workspaceId), ownedHelpers);
       const wp = await store.get(ids[0]!);
       if (!wp?.workpackage || (wp.status !== "approved" && wp.status !== "in_progress")) return;
       const task = wp.workpackage.tasks.find((t) => t.n === report.task);
@@ -429,7 +431,7 @@ export async function applyReportToWorkPackage(db: Db, dataDir: string, events: 
       else next = reportPassed(check) && task.files.some((f) => touched.has(f.path)) ? "verified" : "mismatch";
       if (next === task.status && task.reportMessageId === reportMessage.id && !task.inferred) return;
       const tasks = wp.workpackage.tasks.map((t) => (t.n === task.n ? { ...t, status: next, inferred: false, reportMessageId: reportMessage.id } : t));
-      await saveProgress({ db, dataDir, events }, workspaceId, wp, tasks, `上报 ${reportMessage.id} → 任务 ${task.n}：${next}`, "system", reportMessage.id);
+      await saveProgress({ db, dataDir, events, ownedHelpers }, workspaceId, wp, tasks, `上报 ${reportMessage.id} → 任务 ${task.n}：${next}`, "system", reportMessage.id);
     });
   } catch (e) {
     console.error(`work package: applying report ${reportMessage.id} failed`, e);
@@ -437,9 +439,9 @@ export async function applyReportToWorkPackage(db: Db, dataDir: string, events: 
 }
 
 /** The user confirms a `reported` (including inferred) or `mismatch` task as done. */
-export async function confirmWorkPackageTask(deps: { db: Db; dataDir: string; events: EventBus }, workspaceId: string, id: string, n: number): Promise<Entry> {
+export async function confirmWorkPackageTask(deps: { db: Db; dataDir: string; events: EventBus; ownedHelpers?: OwnedHelperScope }, workspaceId: string, id: string, n: number): Promise<Entry> {
   return serialized(async () => {
-    const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId));
+    const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId), deps.ownedHelpers);
     const wp = await userPackage(store, id);
     const task = wp.workpackage!.tasks.find((t) => t.n === n);
     if (!task) throw new WorkPackageError(404, `${id} 没有任务 ${n}`);

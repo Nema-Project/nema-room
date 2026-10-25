@@ -49,7 +49,10 @@ function PlainEntryDetail({ workspaceId, entryId, onClose, onJumpToMessage, refr
   const [confirming, setConfirming] = useState(false);
   const seq = useRef(0);
   const editingRef = useRef(false);
-  editingRef.current = editing;
+  // Declared before the load effect below so the ref is current when that effect runs.
+  useEffect(() => {
+    editingRef.current = editing;
+  }, [editing]);
 
   const load = useCallback(async () => {
     const mine = ++seq.current; // only the latest request may write state
@@ -85,6 +88,7 @@ function PlainEntryDetail({ workspaceId, entryId, onClose, onJumpToMessage, refr
     // A change event while the form is open must not reset the typed values; flag it instead.
     if (!firstRun.current && editingRef.current) setStale(true);
     firstRun.current = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount and refresh: state is set once the requests resolve
     void load();
   }, [load, refreshKey]);
 

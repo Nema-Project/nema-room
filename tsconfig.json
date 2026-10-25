@@ -1,4 +1,4 @@
 {
   "files": [],
-  "references": [{ "path": "packages/shared" }, { "path": "packages/knowledge" }, { "path": "apps/hub" }, { "path": "apps/cli" }]
+  "references": [{ "path": "packages/shared" }, { "path": "packages/knowledge" }, { "path": "apps/hub" }, { "path": "apps/cli" }, { "path": "apps/local" }]
 }

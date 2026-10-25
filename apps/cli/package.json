@@ -1,5 +1,6 @@
 {
   "name": "@nema/cli",
+  "license": "MIT",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,6 +11,38 @@
     "dist",
     "src/report/SKILL.md"
   ],
+  "exports": {
+    "./config": {
+      "development": "./src/config.ts",
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js"
+    },
+    "./localSettings": {
+      "development": "./src/localSettings.ts",
+      "types": "./dist/localSettings.d.ts",
+      "import": "./dist/localSettings.js"
+    },
+    "./daemon/setup": {
+      "development": "./src/daemon/setup.ts",
+      "types": "./dist/daemon/setup.d.ts",
+      "import": "./dist/daemon/setup.js"
+    },
+    "./ownedProcess": {
+      "development": "./src/ownedProcess.ts",
+      "types": "./dist/ownedProcess.d.ts",
+      "import": "./dist/ownedProcess.js"
+    },
+    "./report/desktop": {
+      "development": "./src/report/desktop.ts",
+      "types": "./dist/report/desktop.d.ts",
+      "import": "./dist/report/desktop.js"
+    },
+    "./secrets/permissions": {
+      "development": "./src/secrets/permissions.ts",
+      "types": "./dist/secrets/permissions.d.ts",
+      "import": "./dist/secrets/permissions.js"
+    }
+  },
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -p tsconfig.test.json"

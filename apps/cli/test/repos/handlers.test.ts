@@ -55,7 +55,8 @@ function git(cwd: string, args: string[]): string {
         GIT_COMMITTER_NAME: "Test",
         GIT_COMMITTER_EMAIL: "test@example.com",
         GIT_CONFIG_NOSYSTEM: "1",
-        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+        GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.autocrlf", GIT_CONFIG_VALUE_0: "false",
         GIT_TERMINAL_PROMPT: "0",
       },
     });
@@ -154,11 +155,13 @@ test("repo.index exports origin/main into the snapshot and runs graphify extract
 
   const record = join(root, "record");
   mkdirSync(record);
-  fake.bin = writeBin(`#!/bin/sh
-pwd > "${record}/cwd"
-printf '%s\\n' "$@" > "${record}/argv"
-mkdir -p graphify-out
-printf '{}' > graphify-out/graph.json
+  fake.bin = writeBin(`#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(record + "/cwd")}, process.cwd() + "\\n");
+fs.writeFileSync(${JSON.stringify(record + "/argv")}, args.join("\\n") + "\\n");
+fs.mkdirSync("graphify-out", { recursive: true });
+fs.writeFileSync("graphify-out/graph.json", "{}");
 `);
 
   const res = await routerFor(nemaHome).handle({
@@ -192,11 +195,13 @@ test("a repo with no origin still exports the local branch and runs graphify ext
 
   const record = join(root, "record");
   mkdirSync(record);
-  fake.bin = writeBin(`#!/bin/sh
-pwd > "${record}/cwd"
-printf '%s\\n' "$@" > "${record}/argv"
-mkdir -p graphify-out
-printf '{}' > graphify-out/graph.json
+  fake.bin = writeBin(`#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(record + "/cwd")}, process.cwd() + "\\n");
+fs.writeFileSync(${JSON.stringify(record + "/argv")}, args.join("\\n") + "\\n");
+fs.mkdirSync("graphify-out", { recursive: true });
+fs.writeFileSync("graphify-out/graph.json", "{}");
 `);
 
   const res = await routerFor(nemaHome).handle({
@@ -222,10 +227,12 @@ test("a graphify that ignores SIGTERM and outlives the timeout does not return a
   writeFileSync(join(repo, "README.md"), "local\n");
   commitAll(repo, "init");
   const pidFile = join(root, "graphify.pid");
-  fake.bin = writeBin(`#!/bin/sh
-echo $$ > "${pidFile}"
-trap '' TERM
-while true; do sleep 30; done
+  fake.bin = writeBin(`#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 30000);
 `);
   const pending = routerFor(nemaHome).handle({
     type: "rpc.request",
@@ -271,9 +278,11 @@ test("indexing leaves the bound repo's git status and file list unchanged", asyn
   const statusBefore = git(repo, ["status", "--porcelain"]);
   const mainBefore = git(repo, ["rev-parse", "main"]).trim();
   const filesBefore = listFiles(repo);
-  fake.bin = writeBin(`#!/bin/sh
-mkdir -p graphify-out
-printf '{}' > graphify-out/graph.json
+  fake.bin = writeBin(`#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.mkdirSync("graphify-out", { recursive: true });
+fs.writeFileSync("graphify-out/graph.json", "{}");
 `);
 
   const res = await routerFor(nemaHome).handle({
@@ -428,16 +437,18 @@ test("plugin.call code__search builds a missing index first, then queries", asyn
 
   const record = join(root, "record");
   mkdirSync(record);
-  fake.bin = writeBin(`#!/bin/sh
-printf '%s\\n' "$@" >> "${record}/argv"
-printf '\\n' >> "${record}/argv"
-if [ "$1" = "extract" ]; then
-  mkdir -p graphify-out
-  printf '{}' > graphify-out/graph.json
-fi
-if [ "$1" = "query" ]; then
-  printf 'hits:%s' "$2"
-fi
+  fake.bin = writeBin(`#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(record + "/argv")}, args.join("\\n") + "\\n");
+fs.appendFileSync(${JSON.stringify(record + "/argv")}, "\\n");
+if (args[0] === "extract") {
+fs.mkdirSync("graphify-out", { recursive: true });
+fs.writeFileSync("graphify-out/graph.json", "{}");
+}
+if (args[0] === "query") {
+process.stdout.write("hits:" + args[1]);
+}
 `);
 
   const rpc = routerFor(nemaHome);
@@ -514,19 +525,21 @@ test("plugin.call code__explain and code__path query the built index", async () 
 
   const record = join(root, "record");
   mkdirSync(record);
-  fake.bin = writeBin(`#!/bin/sh
-printf '%s\\n' "$@" >> "${record}/argv"
-printf '\\n' >> "${record}/argv"
-if [ "$1" = "extract" ]; then
-  mkdir -p graphify-out
-  printf '{}' > graphify-out/graph.json
-fi
-if [ "$1" = "explain" ]; then
-  printf 'sym:%s' "$2"
-fi
-if [ "$1" = "path" ]; then
-  printf 'via:%s:%s' "$2" "$3"
-fi
+  fake.bin = writeBin(`#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(record + "/argv")}, args.join("\\n") + "\\n");
+fs.appendFileSync(${JSON.stringify(record + "/argv")}, "\\n");
+if (args[0] === "extract") {
+fs.mkdirSync("graphify-out", { recursive: true });
+fs.writeFileSync("graphify-out/graph.json", "{}");
+}
+if (args[0] === "explain") {
+process.stdout.write("sym:" + args[1]);
+}
+if (args[0] === "path") {
+process.stdout.write("via:" + args[1] + ":" + args[2]);
+}
 `);
 
   const rpc = routerFor(nemaHome);
@@ -649,15 +662,19 @@ test("handlers use the injected graphify binary and ignore NEMA_GRAPHIFY_BIN", a
   const nemaHome = join(root, "nema-home");
   mkdirSync(nemaHome);
   const savedBin = process.env.NEMA_GRAPHIFY_BIN;
-  process.env.NEMA_GRAPHIFY_BIN = writeBin(`#!/bin/sh
-printf 'graphify from-env\\n'
+  process.env.NEMA_GRAPHIFY_BIN = writeBin(`#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+process.stdout.write("graphify from-env\\n");
 `);
   closers.push(() => {
     if (savedBin === undefined) delete process.env.NEMA_GRAPHIFY_BIN;
     else process.env.NEMA_GRAPHIFY_BIN = savedBin;
   });
-  const injected = writeBin(`#!/bin/sh
-printf 'graphify injected\\n'
+  const injected = writeBin(`#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+process.stdout.write("graphify injected\\n");
 `);
   const rpc = new RpcRouter();
   registerRepoHandlers(rpc, { nemaHome, graphify: { bin: injected }, github: missingGithub(nemaHome) });
@@ -701,9 +718,11 @@ test("plugins.status reports installed with the version, or the install hint", a
   const nemaHome = join(root, "nema-home");
   mkdirSync(nemaHome);
   const record = join(root, "version-argv");
-  fake.bin = writeBin(`#!/bin/sh
-printf '%s\\n' "$@" > "${record}"
-printf 'graphify 1.2.3\\n'
+  fake.bin = writeBin(`#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(record)}, args.join("\\n") + "\\n");
+process.stdout.write("graphify 1.2.3\\n");
 `);
   const rpc = routerFor(nemaHome);
   const installed = await rpc.handle({ type: "rpc.request", id: "st", method: "plugins.status", params: {} });

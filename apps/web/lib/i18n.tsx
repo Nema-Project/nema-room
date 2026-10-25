@@ -41,6 +41,7 @@ export function I18nProvider({ children, messages = BUNDLED }: { children: React
     } catch {
       /* storage unavailable */
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the server renders "en"; storage and navigator exist only after hydration
     setLocaleState(isLocale(stored) ? stored : detectLocale(navigator.languages?.length ? navigator.languages : [navigator.language ?? "en"]));
   }, []);
 

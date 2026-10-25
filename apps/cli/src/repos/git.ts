@@ -6,6 +6,9 @@ import { execFile } from "node:child_process";
 import { lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { windowsRuntimeEnv } from "../platform.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
+import { runHelperFile } from "@nema/shared/ownedHelper";
 
 const MAX_LINES = 400;
 const MAX_BYTES = 65_536;
@@ -36,6 +39,7 @@ export type ChangedFile = { status: string; path: string };
 
 export function commandEnv(): NodeJS.ProcessEnv {
   return {
+    ...windowsRuntimeEnv(process.env),
     PATH: process.env.PATH ?? "",
     HOME: process.env.HOME ?? "",
     LANG: process.env.LANG ?? "",
@@ -50,7 +54,13 @@ function stripUserinfo(url: string): string {
   return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/?#]*@/i, "$1");
 }
 
-function execBuf(cmd: string, args: string[], opts?: { timeout?: number }): Promise<{ stdout: Buffer; stderr: Buffer }> {
+function execBuf(cmd: string, args: string[], opts?: { timeout?: number; ownedHelpers?: OwnedHelperScope }): Promise<{ stdout: Buffer; stderr: Buffer }> {
+  if (opts?.ownedHelpers) {
+    return runHelperFile(cmd, args, { env: commandEnv(), timeout: opts.timeout ?? 30_000, maxBuffer: MAX_BUFFER, encoding: "buffer" }, opts.ownedHelpers).then((result) => {
+      if (result.error) throw Object.assign(result.error, { stdout: result.stdout, stderr: result.stderr });
+      return { stdout: result.stdout, stderr: result.stderr };
+    });
+  }
   return new Promise((resolve, reject) => {
     execFile(
       cmd,
@@ -85,13 +95,13 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message.trim() : String(e);
 }
 
-export async function gitRaw(repoPath: string, args: string[], timeout?: number): Promise<Buffer> {
-  const { stdout } = await execBuf("git", ["-C", repoPath, ...args], { timeout });
+export async function gitRaw(repoPath: string, args: string[], timeout?: number, ownedHelpers?: OwnedHelperScope): Promise<Buffer> {
+  const { stdout } = await execBuf("git", ["-C", repoPath, ...args], { timeout, ownedHelpers });
   return stdout;
 }
 
-export async function gitText(repoPath: string, args: string[], timeout?: number): Promise<string> {
-  const text = (await gitRaw(repoPath, args, timeout)).toString("utf8");
+export async function gitText(repoPath: string, args: string[], timeout?: number, ownedHelpers?: OwnedHelperScope): Promise<string> {
+  const text = (await gitRaw(repoPath, args, timeout, ownedHelpers)).toString("utf8");
   return text.endsWith("\n") ? text.slice(0, -1) : text;
 }
 
@@ -108,9 +118,9 @@ function isUnder(child: string, parent: string): boolean {
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
 }
 
-async function originHeadBranch(repoPath: string): Promise<string> {
+async function originHeadBranch(repoPath: string, ownedHelpers?: OwnedHelperScope): Promise<string> {
   try {
-    const ref = await gitText(repoPath, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
+    const ref = await gitText(repoPath, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], undefined, ownedHelpers);
     if (ref.startsWith("origin/")) return ref.slice("origin/".length) || "main";
     return ref || "main";
   } catch {
@@ -239,7 +249,7 @@ async function emptyDir(destDir: string): Promise<void> {
 }
 
 /** `nemaHome` is the directory that must not contain `repoPath`, usually `~/.nema`. */
-export async function inspectRepo(repoPath: string, nemaHome: string): Promise<RepoInspect> {
+export async function inspectRepo(repoPath: string, nemaHome: string, ownedHelpers?: OwnedHelperScope): Promise<RepoInspect> {
   const real = await canonical(repoPath);
   const home = await canonical(nemaHome);
   if (isUnder(real, home)) throw new Error("不能绑定 ~/.nema 之下的目录");
@@ -247,40 +257,40 @@ export async function inspectRepo(repoPath: string, nemaHome: string): Promise<R
 
   let toplevel: string;
   try {
-    toplevel = await gitText(repoPath, ["rev-parse", "--show-toplevel"]);
+    toplevel = await gitText(repoPath, ["rev-parse", "--show-toplevel"], undefined, ownedHelpers);
   } catch {
     throw new Error("不是 git 仓库的根目录");
   }
   const root = await canonical(toplevel);
   if (root !== real) throw new Error("不是 git 仓库的根目录");
 
-  const commonRaw = await gitText(repoPath, ["rev-parse", "--git-common-dir"]);
+  const commonRaw = await gitText(repoPath, ["rev-parse", "--git-common-dir"], undefined, ownedHelpers);
   const commonAbs = path.isAbsolute(commonRaw) ? commonRaw : path.resolve(root, commonRaw);
   const gitCommonDir = await canonical(commonAbs);
-  const rawUrl = await gitText(repoPath, ["remote", "get-url", "origin"]).catch(() => null);
+  const rawUrl = await gitText(repoPath, ["remote", "get-url", "origin"], undefined, ownedHelpers).catch(() => null);
   const remoteUrl = rawUrl === null ? null : stripUserinfo(rawUrl);
   return {
     root,
     gitCommonDir,
-    defaultBranch: await originHeadBranch(repoPath),
+    defaultBranch: await originHeadBranch(repoPath, ownedHelpers),
     hasOrigin: remoteUrl !== null,
     remoteUrl,
   };
 }
 
-export async function mainRef(repoPath: string, mainBranch: string): Promise<string> {
+export async function mainRef(repoPath: string, mainBranch: string, ownedHelpers?: OwnedHelperScope): Promise<string> {
   try {
-    await gitText(repoPath, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${mainBranch}`]);
+    await gitText(repoPath, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${mainBranch}`], undefined, ownedHelpers);
     return `origin/${mainBranch}`;
   } catch {
     return mainBranch;
   }
 }
 
-export async function fetchMain(repoPath: string, mainBranch: string): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function fetchMain(repoPath: string, mainBranch: string, ownedHelpers?: OwnedHelperScope): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!isBranchName(mainBranch)) return { ok: false, error: "主分支名称无效" };
   try {
-    const remotes = await gitText(repoPath, ["remote"]);
+    const remotes = await gitText(repoPath, ["remote"], undefined, ownedHelpers);
     if (!remotes.split("\n").filter(Boolean).includes("origin")) return { ok: false, error: "没有 origin" };
   } catch (e) {
     return { ok: false, error: errorText(e) };
@@ -291,6 +301,7 @@ export async function fetchMain(repoPath: string, mainBranch: string): Promise<{
       repoPath,
       ["fetch", "--no-tags", "origin", "--", `refs/heads/${mainBranch}:refs/remotes/origin/${mainBranch}`],
       60_000,
+      ownedHelpers,
     );
     return { ok: true };
   } catch (e) {
@@ -298,8 +309,8 @@ export async function fetchMain(repoPath: string, mainBranch: string): Promise<{
   }
 }
 
-export async function revParse(repoPath: string, ref: string): Promise<string> {
-  return gitText(repoPath, ["rev-parse", "--verify", ref]);
+export async function revParse(repoPath: string, ref: string, ownedHelpers?: OwnedHelperScope): Promise<string> {
+  return gitText(repoPath, ["rev-parse", "--verify", ref], undefined, ownedHelpers);
 }
 
 export async function readFileAtRef(
@@ -307,18 +318,19 @@ export async function readFileAtRef(
   ref: string,
   relPath: string,
   range?: { startLine?: number; endLine?: number },
+  ownedHelpers?: OwnedHelperScope,
 ): Promise<FileAtRef> {
   const rel = normalizeRepoPath(relPath);
   // --literal-pathspecs is a git global option, so it has to precede ls-tree.
   // A single row is not enough: `ls-tree <ref> -- .` lists the tree, and one root blob
   // would otherwise be returned as if the caller had asked for that file.
-  const rows = parseLsTree(await gitRaw(repoPath, ["--literal-pathspecs", "ls-tree", "-z", ref, "--", rel]));
+  const rows = parseLsTree(await gitRaw(repoPath, ["--literal-pathspecs", "ls-tree", "-z", ref, "--", rel], undefined, ownedHelpers));
   const row = rows.length === 1 && rows[0].path === rel ? rows[0] : undefined;
   if (!row) throw new Error(`${rel} 不存在于 ${ref}`);
   if (row.mode === "120000") throw new Error(`${rel} 是符号链接，已拒绝`);
   if (row.type !== "blob") throw new Error(`${rel} 不存在于 ${ref}`);
 
-  const lines = splitLines((await gitRaw(repoPath, ["cat-file", "blob", row.sha])).toString("utf8"));
+  const lines = splitLines((await gitRaw(repoPath, ["cat-file", "blob", row.sha], undefined, ownedHelpers)).toString("utf8"));
   const startLine = range?.startLine ?? 1;
   const requestedEnd = range?.endLine ?? lines.length;
   let selected = startLine > lines.length ? [] : lines.slice(startLine - 1, requestedEnd);
@@ -338,12 +350,12 @@ export async function readFileAtRef(
 }
 
 /** The paths (normalized) that are not in the tree of `ref`. A path that is absolute or has `..` throws. */
-export async function missingAtRef(repoPath: string, ref: string, paths: string[]): Promise<string[]> {
+export async function missingAtRef(repoPath: string, ref: string, paths: string[], ownedHelpers?: OwnedHelperScope): Promise<string[]> {
   const missing: string[] = [];
   for (const p of paths) {
     const rel = normalizeRepoPath(p);
     try {
-      await gitRaw(repoPath, ["--literal-pathspecs", "cat-file", "-e", `${ref}:${rel}`]);
+      await gitRaw(repoPath, ["--literal-pathspecs", "cat-file", "-e", `${ref}:${rel}`], undefined, ownedHelpers);
     } catch {
       missing.push(p);
     }
@@ -351,9 +363,9 @@ export async function missingAtRef(repoPath: string, ref: string, paths: string[
   return missing;
 }
 
-async function isOnMain(repoPath: string, sha: string, ref: string): Promise<boolean> {
+async function isOnMain(repoPath: string, sha: string, ref: string, ownedHelpers?: OwnedHelperScope): Promise<boolean> {
   try {
-    await gitText(repoPath, ["merge-base", "--is-ancestor", sha, ref]);
+    await gitText(repoPath, ["merge-base", "--is-ancestor", sha, ref], undefined, ownedHelpers);
     return true;
   } catch {
     return false;
@@ -365,26 +377,26 @@ async function isOnMain(repoPath: string, sha: string, ref: string): Promise<boo
  * itself (`origin/<mainBranch>`, or the local branch without one) or a sha that main already contains, so
  * a side branch or an unpushed local commit is never read.
  */
-export async function changedFiles(repoPath: string, from: string, to: string, mainBranch: string): Promise<ChangedFile[]> {
+export async function changedFiles(repoPath: string, from: string, to: string, mainBranch: string, ownedHelpers?: OwnedHelperScope): Promise<ChangedFile[]> {
   if (!isBranchName(mainBranch)) throw new Error("主分支名称无效");
-  const ref = await mainRef(repoPath, mainBranch);
+  const ref = await mainRef(repoPath, mainBranch, ownedHelpers);
   for (const rev of [from, to]) {
     if (rev === ref) continue;
-    if (!SHA_RE.test(rev) || !(await isOnMain(repoPath, rev, ref))) throw new Error(`提交 ${rev} 不在主分支上`);
+    if (!SHA_RE.test(rev) || !(await isOnMain(repoPath, rev, ref, ownedHelpers))) throw new Error(`提交 ${rev} 不在主分支上`);
   }
-  return diffNameStatus(repoPath, from, to);
+  return diffNameStatus(repoPath, from, to, ownedHelpers);
 }
 
 /** The raw diff between two refs, for the daemon's own index sync. Plugin calls go through `changedFiles`. */
-export async function diffNameStatus(repoPath: string, from: string, to: string): Promise<ChangedFile[]> {
+export async function diffNameStatus(repoPath: string, from: string, to: string, ownedHelpers?: OwnedHelperScope): Promise<ChangedFile[]> {
   for (const rev of [from, to]) {
     if (rev.startsWith("-")) throw new Error(`无效的提交 ${rev}`);
   }
-  return parseNameStatus(await gitRaw(repoPath, ["diff", "--name-status", "-M", "-z", from, to, "--"]));
+  return parseNameStatus(await gitRaw(repoPath, ["diff", "--name-status", "-M", "-z", from, to, "--"], undefined, ownedHelpers));
 }
 
-export async function exportSnapshot(repoPath: string, ref: string, destDir: string): Promise<void> {
-  const archived = await gitRaw(repoPath, ["archive", "--format=tar", "--", ref], 60_000);
+export async function exportSnapshot(repoPath: string, ref: string, destDir: string, ownedHelpers?: OwnedHelperScope): Promise<void> {
+  const archived = await gitRaw(repoPath, ["archive", "--format=tar", "--", ref], 60_000, ownedHelpers);
   // execFile in this runtime does not forward an `input` option to stdin, so the archive
   // is a temp file. tar still extracts that stream with `-x -C destDir` and no shell.
   const scratch = await mkdtemp(path.join(tmpdir(), "nema-snapshot-"));
@@ -392,7 +404,7 @@ export async function exportSnapshot(repoPath: string, ref: string, destDir: str
   try {
     await writeFile(archivePath, stripSymlinkEntries(archived), { mode: 0o600 });
     await emptyDir(destDir);
-    await execBuf("tar", ["-x", "-f", archivePath, "-C", destDir], { timeout: 60_000 });
+    await execBuf("tar", ["-x", "-f", archivePath, "-C", destDir], { timeout: 60_000, ownedHelpers });
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

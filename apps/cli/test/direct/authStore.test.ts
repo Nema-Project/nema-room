@@ -1,3 +1,4 @@
+import { expectPrivate, makePublic } from "../nativePermissions.js";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -71,8 +72,8 @@ describe("save / read / clear", () => {
     const s = new AuthStore(home, neverRefresh);
     const a = auth();
     s.save(a);
-    expect(statSync(authFile()).mode & 0o777).toBe(0o600);
-    expect(statSync(home).mode & 0o777).toBe(0o700);
+    expectPrivate(authFile(), 0o600);
+    expectPrivate(home, 0o700);
     expect(s.read()).toEqual(a);
   });
 
@@ -88,7 +89,7 @@ describe("save / read / clear", () => {
     rmSync(authFile());
 
     writeFileSync(authFile(), JSON.stringify(auth()), { mode: 0o644 });
-    chmodSync(authFile(), 0o644);
+    makePublic(authFile());
     expect(s.read()).toBeNull();
     rmSync(authFile());
 
@@ -109,7 +110,7 @@ describe("save / read / clear", () => {
     expect(s.inspect()).toEqual({ auth: null, reason: "missing" });
     mkdirSync(home, { recursive: true, mode: 0o700 });
     writeFileSync(authFile(), JSON.stringify(auth()), { mode: 0o644 });
-    chmodSync(authFile(), 0o644);
+    makePublic(authFile());
     expect(s.inspect()).toEqual({ auth: null, reason: "unusable" });
     rmSync(authFile());
     writeFileSync(authFile(), "{not json", { mode: 0o600 });
@@ -166,6 +167,22 @@ describe("save / read / clear", () => {
   });
 });
 
+describe("owner cancellation", () => {
+  test("a refresh rotation received before cancellation is persisted before abort is reported", async () => {
+    const controller = new AbortController();
+    const store = new AuthStore(home, async (_held, signal) => {
+      void signal;
+      controller.abort(new DOMException("owner closed after refresh", "AbortError"));
+      return { access_token: "late-access", refresh_token: "late-refresh" };
+    });
+    const original = auth({ access_token: tokenExpiringIn(0), refresh_token: "original-refresh" });
+    store.save(original);
+    const pending = store.getAccessToken({ signal: controller.signal });
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(store.read()?.tokens).toMatchObject({ access_token: "late-access", refresh_token: "late-refresh" });
+  });
+});
+
 describe("getAccessToken", () => {
   test("missing login → ReloginRequiredError", async () => {
     const err = await new AuthStore(home, neverRefresh).getAccessToken().catch((e) => e);
@@ -196,7 +213,7 @@ describe("getAccessToken", () => {
     expect(disk.tokens).toEqual({ access_token: fresh, refresh_token: "rt-2", id_token: "idt-2" });
     expect(disk.lastRefresh).toBe("2026-10-22T10:00:00.000Z");
     expect(disk.accountId).toBe("acct-1");
-    expect(statSync(authFile()).mode & 0o777).toBe(0o600);
+    expectPrivate(authFile(), 0o600);
     expect(existsSync(lockFile())).toBe(false);
   });
 
@@ -307,13 +324,10 @@ describe("getAccessToken", () => {
   });
 
   test("persist failure after a successful refresh → credential_persist_failed (terminal)", async () => {
-    const s = new AuthStore(home, async () => {
-      chmodSync(home, 0o500); // the rotated pair can no longer be written atomically
-      return { access_token: tokenExpiringIn(3600, "lost"), refresh_token: "rt-lost" };
-    });
+    const s = new AuthStore(home, async () => ({ access_token: tokenExpiringIn(3600, "lost"), refresh_token: "rt-lost" }));
     s.save(auth({ access_token: tokenExpiringIn(10) }));
+    vi.spyOn(s, "save").mockImplementation(() => { throw new Error("simulated disk failure"); });
     const err = await s.getAccessToken().catch((e) => e);
-    chmodSync(home, 0o700);
     expect(err).toBeInstanceOf(ReloginRequiredError);
     expect(err.message).toBe(RELOGIN_MSG);
     expect(err.code).toBe("credential_persist_failed");

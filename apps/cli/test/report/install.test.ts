@@ -1,7 +1,8 @@
+import { expectPrivate } from "../nativePermissions.js";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { installReport, reportHookInstalled, uninstallReport, type ReportAgent } from "../../src/report/install.js";
+import { hookCommand, installReport, reportHookInstalled, uninstallReport, type ReportAgent } from "../../src/report/install.js";
 import { reportTokenPath } from "../../src/report/token.js";
 import { collectOut, tmp } from "./helpers.js";
 
@@ -36,13 +37,13 @@ describe("nema report install", () => {
     const cfg = read(claudeSettings(s.home));
     for (const ev of ["Stop", "SessionEnd"]) {
       const cmds = cfg.hooks[ev]!.flatMap((g) => g.hooks.map((h) => h.command));
-      expect(cmds).toEqual([`${NODE} ${ENTRY} report hook --agent claude`]);
+      expect(cmds).toEqual([hookCommand(NODE, ENTRY, "claude")]);
       expect(cfg.hooks[ev]![0]!.hooks[0]!.type).toBe("command");
     }
     const skill = readFileSync(path.join(s.home, ".claude", "skills", "nema-report", "SKILL.md"), "utf8");
     expect(skill).toContain("nema report");
     expect(skill).toContain("R-7");
-    expect(statSync(reportTokenPath(s.nemaHome)).mode & 0o777).toBe(0o600);
+    expectPrivate(reportTokenPath(s.nemaHome), 0o600);
     expect(s.logs.join("\n")).toContain("重启");
     expect(s.logs.join("\n")).not.toContain(readFileSync(reportTokenPath(s.nemaHome), "utf8"));
   });
@@ -51,8 +52,8 @@ describe("nema report install", () => {
     const s = setup();
     expect(await s.run("codex")).toBe(0);
     const cfg = read(path.join(s.home, ".codex", "hooks.json"));
-    expect(cfg.hooks.Stop![0]!.hooks[0]!.command).toBe(`${NODE} ${ENTRY} report hook --agent codex`);
-    expect(cfg.hooks.SessionEnd![0]!.hooks[0]!.command).toBe(`${NODE} ${ENTRY} report hook --agent codex`);
+    expect(cfg.hooks.Stop![0]!.hooks[0]!.command).toBe(hookCommand(NODE, ENTRY, "codex"));
+    expect(cfg.hooks.SessionEnd![0]!.hooks[0]!.command).toBe(hookCommand(NODE, ENTRY, "codex"));
     expect(existsSync(path.join(s.home, ".agents", "skills", "nema-report", "SKILL.md"))).toBe(true);
   });
 

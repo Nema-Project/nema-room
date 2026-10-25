@@ -11,11 +11,12 @@ import { getRepo, type Repo } from "./repos.js";
 import { insertQueuedTask, toUiTask, type Task } from "./tasks.js";
 import { repoPath } from "./workspaces.js";
 import { applyReportToWorkPackage } from "./workpackages.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 /** A report's git check fetches main first, which can take minutes on a large repo. */
 export const REPORT_CHECK_TIMEOUT_MS = INDEX_RPC_TIMEOUT_MS;
 
-export type ReportDeps = { db: Db; events: EventBus; daemon: DaemonRpc; dataDir?: string };
+export type ReportDeps = { db: Db; events: EventBus; daemon: DaemonRpc; dataDir?: string; ownedHelpers?: OwnedHelperScope };
 
 const sha256 = (value: string): string => createHash("sha256").update(value).digest("hex");
 
@@ -84,7 +85,7 @@ export async function receiveReport(deps: ReportDeps, repo: Repo, report: Report
     const updated = await setReportMeta(db, message.id, meta);
     if (updated) {
       events.emit(repo.workspaceId, { type: "message.updated", message: updated });
-      if (deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated);
+      if (deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);
     }
     const task = await queueReportTask(db, repo.workspaceId, message.id);
     if (task) events.emit(repo.workspaceId, { type: "task.updated", task: toUiTask(task) });
@@ -143,7 +144,7 @@ export async function recheckReports(deps: ReportDeps, repoId: string): Promise<
     const updated = await setReportMeta(db, row.id, { report: row.meta.report, check });
     if (updated) {
       events.emit(repo.workspaceId, { type: "message.updated", message: updated });
-      if (deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated);
+      if (deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);
     }
     if (reportPassed(check)) {
       await queueSystemTask(db, events, repo.workspaceId, `上报 ${row.id} 的提交已合入主分支，核实通过：把相关需求的 implementation 更新为 verified。`);
@@ -214,11 +215,12 @@ export function startReportFallback(
   daemon: DaemonRpc,
   events: EventBus,
   opts: ReportFallbackOptions = {},
-): { tick: () => Promise<void>; stop: () => void } {
+): { tick: () => Promise<void>; stop: () => void; drain: () => Promise<void> } {
   const intervalMs = opts.intervalMs ?? 300_000;
   const graceMs = opts.graceMs ?? 1_800_000;
   const now = opts.now ?? (() => new Date());
   let running: Promise<void> | null = null;
+  let stopped = false;
 
   const runTick = async (): Promise<void> => {
     const cutoff = new Date(now().getTime() - graceMs).toISOString();
@@ -236,6 +238,7 @@ export function startReportFallback(
   };
   // Ticks never overlap: a slow daemon call holds the next tick back.
   const tick = (): Promise<void> => {
+    if (stopped) return Promise.resolve();
     running ??= runTick().finally(() => {
       running = null;
     });
@@ -245,7 +248,14 @@ export function startReportFallback(
     void tick().catch((error) => console.error("report fallback tick failed", error));
   }, intervalMs);
   timer.unref?.();
-  return { tick, stop: () => clearInterval(timer) };
+  return {
+    tick,
+    stop: () => {
+      stopped = true;
+      clearInterval(timer);
+    },
+    drain: async () => { await running; },
+  };
 }
 
 async function body(c: Context): Promise<unknown> {
@@ -279,7 +289,7 @@ export function reportRoutes(deps: ReportDeps): Hono {
   const fetchable = async (gitCommonDir: string | undefined) => {
     if (!gitCommonDir || !deps.dataDir) return null;
     const repo = await routeRepo(deps.db, gitCommonDir);
-    return repo ? { repo, store: new KnowledgeStore(repoPath(deps.dataDir, repo.workspaceId)) } : null;
+    return repo ? { repo, store: new KnowledgeStore(repoPath(deps.dataDir, repo.workspaceId), deps.ownedHelpers) } : null;
   };
   const servable = (wp: { entry: { status: string; workpackage?: { repos: string[] } | undefined } }, repoId: string): boolean =>
     (wp.entry.status === "approved" || wp.entry.status === "in_progress") && (wp.entry.workpackage?.repos.includes(repoId) ?? false);

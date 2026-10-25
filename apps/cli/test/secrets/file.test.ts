@@ -1,3 +1,4 @@
+import { expectPrivate } from "../nativePermissions.js";
 import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,8 +21,8 @@ describe("saveSecretLine / readSecretLine", () => {
   test("round-trip and reject empty, multi-line, control-character and symlink cases", () => {
     saveSecretLine(file, "sekret-value");
     expect(read()).toBe("sekret-value");
-    expect(lstatSync(file).mode & 0o777).toBe(0o600);
-    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    expectPrivate(file, 0o600);
+    expectPrivate(dir, 0o700);
     expect(readdirSync(dir)).toEqual(["secret"]);
 
     for (const bad of ["", "first\nsecond", "cr\rvalue", "tab\tvalue", "nul\u0000value", "del\u007fvalue"]) {
@@ -79,6 +80,6 @@ describe("saveSecretLine / readSecretLine", () => {
   test("tightens a loose parent dir to dirMode", () => {
     mkdirSync(dir, { mode: 0o755 });
     saveSecretLine(file, "v");
-    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    expectPrivate(dir, 0o700);
   });
 });

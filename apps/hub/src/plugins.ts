@@ -35,6 +35,8 @@ const GrillSettingsSchema = z.object({
   extraRules: z.string().default(""),
 });
 
+const GithubSettingsSchema = z.object({ allowWrites: z.boolean().default(false) });
+
 function settingsObject(value: unknown): Record<string, unknown> {
   if (typeof value === "string") {
     try {
@@ -46,8 +48,12 @@ function settingsObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
-/** The stored settings of a plugin with defaults filled in. Only grill-me has settings. */
+/** The stored settings of a plugin with defaults filled in. Only grill-me and GitHub (allowWrites) have settings. */
 function resolveSettings(pluginId: string, raw: unknown): Record<string, unknown> {
+  if (pluginId === "github") {
+    const parsed = GithubSettingsSchema.safeParse(settingsObject(raw));
+    return parsed.success ? parsed.data : { allowWrites: false };
+  }
   if (pluginId !== "grill") return {};
   const parsed = GrillSettingsSchema.safeParse(settingsObject(raw));
   return parsed.success ? parsed.data : { ...DEFAULT_GRILL_SETTINGS };
@@ -108,7 +114,8 @@ export async function enabledPluginTools(db: Db, workspaceId: string): Promise<P
     if (state.plugin.scope === "github" && targets.length === 0) continue;
     const disabled = new Set(state.disabledFunctions);
     for (const fn of state.plugin.functions) {
-      if (!fn.readOnly || disabled.has(fn.name)) continue;
+      // A write function is offered only when the workspace opted in (GitHub: allowWrites, off by default).
+      if (disabled.has(fn.name) || (!fn.readOnly && !(state.plugin.id === "github" && state.settings.allowWrites === true))) continue;
       if (state.plugin.scope === "github") {
         tools.push({
           name: fn.name,
@@ -139,12 +146,18 @@ export async function setPluginState(
   }
   let settings: Record<string, unknown> | undefined;
   if (patch.settings !== undefined) {
-    if (plugin.id !== "grill") throw new PluginError(400, `插件 ${pluginId} 没有设置项`);
-    const extra = patch.settings.extraRules;
-    if (typeof extra === "string" && extra.length > GRILL_EXTRA_RULES_MAX) throw new PluginError(400, "补充追问规则最多 2000 字");
-    const parsed = GrillSettingsSchema.safeParse(patch.settings);
-    if (!parsed.success) throw new PluginError(400, "无效的追问设置");
-    settings = parsed.data;
+    if (plugin.id === "github") {
+      const parsedGithub = GithubSettingsSchema.safeParse(patch.settings);
+      if (!parsedGithub.success) throw new PluginError(400, "无效的 GitHub 设置");
+      settings = parsedGithub.data;
+    } else {
+      if (plugin.id !== "grill") throw new PluginError(400, `插件 ${pluginId} 没有设置项`);
+      const extra = patch.settings.extraRules;
+      if (typeof extra === "string" && extra.length > GRILL_EXTRA_RULES_MAX) throw new PluginError(400, "补充追问规则最多 2000 字");
+      const parsed = GrillSettingsSchema.safeParse(patch.settings);
+      if (!parsed.success) throw new PluginError(400, "无效的追问设置");
+      settings = parsed.data;
+    }
   }
   const rows = await db.query<StateRow>(
     `select plugin_id, enabled, disabled_functions, settings from workspace_plugins where workspace_id = $1 and plugin_id = $2`,

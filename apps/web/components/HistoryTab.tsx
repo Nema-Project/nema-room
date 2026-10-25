@@ -20,19 +20,21 @@ export function HistoryTab({ workspaceId, entryId, history, current, initialVers
   const t = useT();
   const [locale] = useLocale();
   const [selected, setSelected] = useState<number | null>(initialVersion);
-  const [old, setOld] = useState<Entry | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // The result is tagged with the commit it was fetched for, so a different selection starts from nothing without a reset.
+  const [fetched, setFetched] = useState<{ commit: string; entry: Entry | null; error: string | null } | null>(null);
   const item = history.find((h) => h.version === selected);
   const currentVersion = history[0]?.version;
+  const forItem = item && fetched?.commit === item.commit ? fetched : null;
+  const old = forItem?.entry ?? null;
+  const error = forItem?.error ?? null;
 
   useEffect(() => {
-    setOld(null);
-    setError(null);
     if (!item) return;
+    const commit = item.commit;
     let live = true;
-    getVersion(workspaceId, entryId, item.commit).then(
-      (e) => live && setOld(e),
-      (e) => live && setError(e instanceof Error ? e.message : String(e)),
+    getVersion(workspaceId, entryId, commit).then(
+      (e) => live && setFetched({ commit, entry: e, error: null }),
+      (e) => live && setFetched({ commit, entry: null, error: e instanceof Error ? e.message : String(e) }),
     );
     return () => {
       live = false;

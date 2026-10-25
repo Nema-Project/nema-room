@@ -13,6 +13,8 @@ export type DaemonOpts = {
   reconnectMs?: number;
   /** `~/.nema`: when set, isolation dirs of deleted workspaces (`<nemaHome>/ws/<id>`) are removed. */
   nemaHome?: string;
+  /** Whose `report-token` the hello registers; defaults to `nemaHome`. The desktop app points it at the user-level `~/.nema` its hooks use. */
+  reportTokenHome?: string;
   /** Reported in `hello` (defaults to apps/cli/package.json's version). */
   version?: string;
   /** When set, `rpc.request` is answered immediately and does not wait for the task runner. */
@@ -23,18 +25,21 @@ export type DaemonOpts = {
 
 export const VERSION_SKEW_ERROR = "hub 与 nema CLI 版本不一致，请同时更新（重新构建 compose 并重启 nema daemon）";
 
-export function connectDaemon(opts: DaemonOpts): { close(): void } {
+export function connectDaemon(opts: DaemonOpts): { close(): Promise<void> } {
   const reconnectMs = opts.reconnectMs ?? 3000;
   const url = opts.hubUrl.replace(/^http/, "ws").replace(/\/+$/, "") + "/daemon";
   let ws: WebSocket | null = null;
   let timer: NodeJS.Timeout | null = null;
   let closed = false;
+  let closePromise: Promise<void> | undefined;
+  const rpcInflight = new Set<Promise<unknown>>();
 
   const open = () => {
     if (closed) return;
     const sock = new WebSocket(url);
     ws = sock;
     const send = (m: unknown): boolean => {
+      if (closed) return false;
       if (sock.readyState !== WebSocket.OPEN) return false;
       try {
         sock.send(JSON.stringify(m));
@@ -44,10 +49,12 @@ export function connectDaemon(opts: DaemonOpts): { close(): void } {
       }
     };
     sock.on("open", () => {
+      if (closed) return;
       opts.bindSend?.(send);
       let hash: string | null = null;
       try {
-        hash = opts.nemaHome ? reportTokenHash(opts.nemaHome) : null;
+        const tokenHome = opts.reportTokenHome ?? opts.nemaHome;
+        hash = tokenHome ? reportTokenHash(tokenHome) : null;
       } catch (e) {
         console.error(`[nema] report token not sent: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -60,6 +67,7 @@ export function connectDaemon(opts: DaemonOpts): { close(): void } {
       });
     });
     sock.on("message", (d) => {
+      if (closed) return;
       let m;
       let rawMsg: unknown;
       try {
@@ -113,7 +121,9 @@ export function connectDaemon(opts: DaemonOpts): { close(): void } {
       } else if (m.type === "rpc.request" && opts.rpc) {
         // A running agent waits on this response, so it must not join the task queue.
         const router = opts.rpc;
-        void router.handle(m).then((res) => send(res));
+        const request = router.handle(m).then((res) => { if (!closed) send(res); });
+        rpcInflight.add(request);
+        void request.then(() => rpcInflight.delete(request), () => rpcInflight.delete(request));
       }
     });
     sock.on("error", () => {});
@@ -129,10 +139,19 @@ export function connectDaemon(opts: DaemonOpts): { close(): void } {
 
   return {
     close() {
+      if (closePromise) return closePromise;
       closed = true;
       if (timer) clearTimeout(timer);
       opts.bindSend?.(null);
-      ws?.terminate();
+      const socket = ws;
+      const socketClosed = !socket || socket.readyState === WebSocket.CLOSED
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            socket.once("close", () => resolve());
+            try { socket.terminate(); } catch { resolve(); }
+          });
+      closePromise = Promise.all([...rpcInflight, socketClosed]).then(() => {});
+      return closePromise;
     },
   };
 }

@@ -9,6 +9,7 @@ const GITHUB_NAMES = [
   "github__list_issues",
   "github__search_issues",
 ];
+const GH_COMMAND_NAMES = ["github__gh_read", "github__gh_write"];
 
 type JsonSchema = {
   type: string;
@@ -49,12 +50,13 @@ test("every registered function is named <pluginId>__<fn> and read-only", () => 
     "workpackage__request",
     "workpackage__mark_task_inferred",
     ...GITHUB_NAMES,
+    ...GH_COMMAND_NAMES,
   ]);
   for (const plugin of PLUGINS) {
     for (const fn of plugin.functions) {
       // superpowers' functions are the workpackage__ family.
       expect(fn.name.startsWith(`${plugin.id === "superpowers" ? "workpackage" : plugin.id}__`)).toBe(true);
-      expect(fn.readOnly).toBe(true);
+      expect(fn.readOnly).toBe(fn.name !== "github__gh_write");
       expect(fn.description).toMatch(/^[^.]+[.]$/);
     }
   }
@@ -135,4 +137,14 @@ test("github functions are the fixed read tools: owner/repo tools require both, 
   }
   expect(schema("github__pull_request_read").required.sort()).toEqual(["method", "owner", "pullNumber", "repo"]);
   expect(schema("github__issue_read").required.sort()).toEqual(["issue_number", "method", "owner", "repo"]);
+});
+
+test("github gh tools take one args array; only gh_write is a write tool", () => {
+  for (const name of GH_COMMAND_NAMES) {
+    expect(pluginFunction(name)?.plugin.id).toBe("github");
+    expect(schema(name).required).toEqual(["args"]);
+    expect(schema(name)).toMatchObject({ type: "object", additionalProperties: false });
+  }
+  expect(pluginFunction("github__gh_read")?.fn.readOnly).toBe(true);
+  expect(pluginFunction("github__gh_write")?.fn.readOnly).toBe(false);
 });

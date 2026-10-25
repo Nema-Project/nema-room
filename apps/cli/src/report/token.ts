@@ -2,6 +2,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from "node:fs";
 import path from "node:path";
+import { openPrivateFile, privateModeMatches, protectPrivatePath } from "../secrets/permissions.js";
 
 const TOKEN_RE = /^[0-9a-f]{64}$/;
 const SYMLINK = "上报令牌文件是符号链接，已拒绝";
@@ -14,7 +15,7 @@ export const reportTokenPath = (nemaHome: string): string => path.join(nemaHome,
 function readReportToken(nemaHome: string): string | null {
   let fd: number;
   try {
-    fd = openSync(reportTokenPath(nemaHome), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    fd = openPrivateFile(reportTokenPath(nemaHome));
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === "ENOENT") return null;
@@ -23,7 +24,7 @@ function readReportToken(nemaHome: string): string | null {
   }
   try {
     const st = fstatSync(fd);
-    if (!st.isFile() || (st.mode & 0o777) !== 0o600) throw new Error(BAD_MODE);
+    if (!st.isFile() || !privateModeMatches(st)) throw new Error(BAD_MODE);
     const token = readFileSync(fd, "utf8").trim();
     if (!TOKEN_RE.test(token)) throw new Error(BAD_TOKEN);
     return token;
@@ -43,7 +44,7 @@ export function ensureReportToken(nemaHome: string): string {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
   }
   mkdirSync(nemaHome, { recursive: true, mode: 0o700 });
-  if (statSync(nemaHome).mode & 0o077) chmodSync(nemaHome, 0o700);
+  protectPrivatePath(nemaHome, 0o700);
   const token = randomBytes(32).toString("hex");
   const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   const fd = openSync(tmp, "wx", 0o600);

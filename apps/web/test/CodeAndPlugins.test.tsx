@@ -173,7 +173,7 @@ describe("CodeAndPlugins", () => {
     mount();
 
     expect(await screen.findByText("Installed graphify 0.9.0")).toBeTruthy();
-    expect(screen.getByText("Not installed 令牌不存在")).toBeTruthy();
+    expect(screen.queryByText("Not installed 令牌不存在")).toBeNull();
     expect(screen.getByText("When on, call contents are sent to an external service")).toBeTruthy();
     expect(screen.getByText("Sends data out").classList.contains("red")).toBe(true);
     expect(screen.getByText("Local only").classList.contains("red")).toBe(false);
@@ -207,6 +207,18 @@ describe("CodeAndPlugins", () => {
     expect(toggle.checked).toBe(false);
     const row = toggle.closest(".plugin-row")!;
     expect(within(row as HTMLElement).getByText("When on, call contents are sent to an external service")).toBeTruthy();
+  });
+
+  it("the GitHub write permission starts off and PATCHes allowWrites", async () => {
+    vi.mocked(hub.listRepos).mockResolvedValue([]);
+    vi.mocked(hub.listPlugins).mockResolvedValue(catalog);
+    vi.mocked(hub.listWorkspacePlugins).mockResolvedValue([{ ...githubPlugin, enabled: true, settings: { allowWrites: false } }]);
+    vi.mocked(hub.updateWorkspacePlugin).mockImplementation(async (_id, _pluginId, patch) => ({ ...githubPlugin, enabled: true, settings: patch.settings }));
+    mount();
+    const toggle = (await screen.findByRole("checkbox", { name: /Let the agent change GitHub/ })) as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    await userEvent.click(toggle);
+    expect(hub.updateWorkspacePlugin).toHaveBeenCalledWith("w1", "github", { settings: { allowWrites: true } });
   });
 
   it("the model egress note is always shown", async () => {

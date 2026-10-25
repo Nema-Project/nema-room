@@ -1,10 +1,11 @@
+import { makePublic } from "../nativePermissions.js";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TaskAssign, TaskEvent } from "@nema/shared";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { loadConfig, saveConfig } from "../../src/config.js";
 import { CodexDirectAdapter } from "../../src/direct/adapter.js";
 import { AuthStore, RELOGIN_MESSAGE, type StoredAuth } from "../../src/direct/authStore.js";
@@ -216,7 +217,7 @@ describe("CodexDirectAdapter", () => {
 
   test("an untrusted credential file is reported as unusable, not as not logged in", async () => {
     login();
-    chmodSync(join(home, "auth.json"), 0o644);
+    makePublic(join(home, "auth.json"));
     expect((await run()).result).toEqual({ ok: false, error: "凭证文件不可用（权限/符号链接/损坏），请重新运行 nema auth login" });
   });
 
@@ -252,6 +253,25 @@ describe("CodexDirectAdapter", () => {
     const { result } = await run(adapter({ timeoutMs: 300 }));
     expect(result).toEqual({ ok: false, error: "Codex 直连运行超时" });
     expect(Date.now() - t0).toBeLessThan(5000);
+  });
+
+  test("an owner abort cancels an active HTTP response and waits for transport teardown", async () => {
+    login();
+    saveConfig(home, { model: "m" });
+    let closed!: () => void;
+    const responseClosed = new Promise<void>((resolve) => { closed = resolve; });
+    server.responses((res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(": active\n\n");
+      res.on("close", closed);
+    });
+    const controller = new AbortController();
+    const pending = adapter().run(task(), () => {}, controller.signal);
+    await vi.waitFor(() => expect(server.requests.some((r) => r.url === "/v1/responses")).toBe(true));
+    controller.abort(new Error("owner stopped"));
+    await pending;
+    await responseClosed;
+    expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
   });
 
   test("loop limit errors surface verbatim", async () => {
@@ -292,7 +312,7 @@ describe("CodexDirectAdapter", () => {
     await new Promise((r) => setTimeout(r, 800));
     expect(events.length).toBe(seen);
     expect(events.some((e) => e.type === "tool_call")).toBe(false);
-    expect(server.requests.filter((r) => r.url === "/v1/responses").length).toBe(1);
+    expect(server.requests.filter((r) => r.url === "/v1/responses").length).toBe(0);
   });
 
   test("compat sends the Codex access token and account id, and does not rewrite the Codex file", async () => {
@@ -394,7 +414,7 @@ describe("CodexDirectAdapter", () => {
 
   test("siwc without a login does not read the BYOK key", async () => {
     saveByokKey(home, "sekret-key");
-    chmodSync(byokKeyPath(home), 0o644);
+    makePublic(byokKeyPath(home));
 
     expect((await run()).result).toEqual({ ok: false, error: "未登录直连 Codex，请在终端运行 nema auth login" });
     expect(server.requests).toEqual([]);

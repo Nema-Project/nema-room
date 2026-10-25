@@ -1,5 +1,6 @@
 {
   "name": "nema-room",
+  "license": "MIT",
   "private": true,
   "workspaces": [
     "packages/*",
@@ -9,18 +10,26 @@
     "node": ">=22"
   },
   "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "setup:check": "node scripts/setup.mjs --check",
+    "desktop:stage": "node scripts/desktop/stage-runtime.mjs",
+    "desktop:make": "node scripts/desktop/make.mjs",
+    "desktop:smoke": "node scripts/desktop/smoke-desktop.mjs",
+    "desktop:validate-release": "node scripts/desktop/validate-release.mjs",
+    "desktop:collect-source-materials": "node scripts/desktop/collect-source-materials.mjs",
+    "desktop:smoke-runtime": "node scripts/desktop/smoke-runtime.mjs",
     "test": "vitest run",
     "typecheck": "tsc -b",
     "db:up": "docker compose up -d postgres",
     "dev": "concurrently -n hub,web -c blue,green \"npm run dev -w apps/hub\" \"npm run dev -w apps/web\"",
-    "up": "mkdir -p \"${NEMA_DATA_HOST_DIR:-$HOME/.nema/data}\" && docker compose up -d --build",
+    "up": "node scripts/up.mjs",
     "down": "docker compose down",
     "logs": "docker compose logs -f hub web"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
     "concurrently": "^9.2.5",
-    "typescript": "^7.0.2",
+    "typescript": "5.9.3",
     "vitest": "^5.0.5"
   }
 }

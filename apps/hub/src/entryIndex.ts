@@ -2,8 +2,9 @@ import type { Entry, EntrySummary } from "@nema/shared";
 import { KnowledgeStore } from "@nema/knowledge";
 import type { Db } from "./db/db.js";
 import { repoPath } from "./workspaces.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
-export async function indexEntry(db: Db, workspaceId: string, entry: Entry): Promise<void> {
+export async function indexEntry(db: Db, workspaceId: string, entry: Entry, ownedHelpers?: OwnedHelperScope): Promise<void> {
   await db.query(
     `insert into entry_index(workspace_id, entry_id, kind, title, status, priority, business_date, updated_at)
      values ($1,$2,$3,$4,$5,$6,$7,clock_timestamp())
@@ -15,13 +16,13 @@ export async function indexEntry(db: Db, workspaceId: string, entry: Entry): Pro
 }
 
 /** Order comes from the index; full summaries (url, related) are hydrated from the store. Entries missing from the store are skipped. */
-export async function timeline(db: Db, dataDir: string, workspaceId: string): Promise<EntrySummary[]> {
+export async function timeline(db: Db, dataDir: string, workspaceId: string, ownedHelpers?: OwnedHelperScope): Promise<EntrySummary[]> {
   const rows = await db.query<{ entry_id: string }>(
     `select entry_id from entry_index where workspace_id = $1
      order by business_date asc nulls last, updated_at asc, entry_id asc`,
     [workspaceId],
   );
-  const byId = new Map((await new KnowledgeStore(repoPath(dataDir, workspaceId)).list()).map((e) => [e.id, e]));
+  const byId = new Map((await new KnowledgeStore(repoPath(dataDir, workspaceId), ownedHelpers).list()).map((e) => [e.id, e]));
   return withDiagramStatus(
     db,
     workspaceId,
@@ -49,13 +50,13 @@ export async function openQuestionCounts(db: Db): Promise<Record<string, number>
   return Object.fromEntries(rows.map((r) => [r.workspace_id, Number(r.n)]));
 }
 
-export async function topOpenQuestion(db: Db, dataDir: string, workspaceId: string): Promise<Entry | null> {
+export async function topOpenQuestion(db: Db, dataDir: string, workspaceId: string, ownedHelpers?: OwnedHelperScope): Promise<Entry | null> {
   const rows = await db.query<{ entry_id: string }>(
     `select entry_id from entry_index where workspace_id = $1 and kind = 'question' and status = 'open'
      order by priority asc nulls last, split_part(entry_id, '-', 2)::int asc`,
     [workspaceId],
   );
-  const store = new KnowledgeStore(repoPath(dataDir, workspaceId));
+  const store = new KnowledgeStore(repoPath(dataDir, workspaceId), ownedHelpers);
   for (const r of rows) {
     const e = await store.get(r.entry_id); // skip stale index rows with no file in the store
     if (e) return e;

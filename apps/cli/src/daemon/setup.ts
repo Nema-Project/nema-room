@@ -1,25 +1,30 @@
 import { ClaudeCodeAdapter } from "../claude/adapter.js";
 import { loadConfig, type NemaConfig } from "../config.js";
 import { CodexDirectAdapter } from "../direct/adapter.js";
-import { GithubMcp } from "../github/client.js";
+import { GithubGh, type GithubReader } from "../github/gh.js";
 import type { GraphifyOpts } from "../repos/graphify.js";
+import { registerExtensionHandlers } from "../extensions/handlers.js";
 import { registerRepoHandlers } from "../repos/handlers.js";
 import { parseReposSync, RepoWatcher } from "../repos/watcher.js";
 import { connectDaemon } from "./connection.js";
 import { RpcRouter } from "./rpc.js";
 import { Runner } from "./runner.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 export type RunnerSetup = {
   nemaHome: string;
   userCodexHome: string;
   version: string;
   getConfig?: () => NemaConfig;
+  cliEntry?: string;
+  execPath?: string;
+  ownedHelpers?: OwnedHelperScope;
 };
 
 /** The daemon's runner. Codex stays on the direct adapter; Claude Code is selected only when config.adapter is claude-code. */
 export function createRunner(o: RunnerSetup): Runner {
   const direct = new CodexDirectAdapter({ nemaHome: o.nemaHome, version: o.version, codexHome: o.userCodexHome });
-  const claude = new ClaudeCodeAdapter({ nemaHome: o.nemaHome, cliEntry: process.argv[1] ?? "" });
+  const claude = new ClaudeCodeAdapter({ nemaHome: o.nemaHome, cliEntry: o.cliEntry ?? process.argv[1] ?? "", execPath: o.execPath ?? process.execPath, ownedHelpers: o.ownedHelpers });
   return new Runner([direct, claude], o.getConfig ?? (() => loadConfig(o.nemaHome)));
 }
 
@@ -30,22 +35,29 @@ export type DaemonStart = {
   userCodexHome: string;
   version: string;
   getConfig?: () => NemaConfig;
+  cliEntry?: string;
+  execPath?: string;
   /** For tests: production passes nothing and runs `graphify` from PATH. */
   graphify?: GraphifyOpts;
-  /** For tests: production starts `github-mcp-server` from PATH on the first GitHub call. */
-  github?: GithubMcp;
+  /** Explicit provider injection for tests or callers; production uses the signed-in `gh` CLI. */
+  github?: GithubReader;
+  /** Where the report token the hub should accept lives; defaults to `nemaHome`. */
+  reportTokenHome?: string;
+  ownedHelpers?: OwnedHelperScope;
 };
 
 /** Connects the daemon and answers repo RPC plus `plugin.call` and `plugins.status`. */
-export function startDaemon(o: DaemonStart): { close(): void; watcher: RepoWatcher } {
+export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: RepoWatcher } {
   const runner = createRunner(o);
   const rpc = new RpcRouter();
-  const github = o.github ?? new GithubMcp({ nemaHome: o.nemaHome });
-  registerRepoHandlers(rpc, { nemaHome: o.nemaHome, graphify: o.graphify, github });
+  const graphify = { ...o.graphify, ownedHelpers: o.ownedHelpers };
+  const github = o.github ?? new GithubGh({ ownedHelpers: o.ownedHelpers });
+  registerRepoHandlers(rpc, { nemaHome: o.nemaHome, graphify, github, ownedHelpers: o.ownedHelpers });
+  registerExtensionHandlers(rpc, o.nemaHome);
   let sendMessage: ((message: unknown) => boolean) | null = null;
   const watcher = new RepoWatcher({
     nemaHome: o.nemaHome,
-    graphify: o.graphify,
+    graphify,
     onMoved: (move) => {
       if (!sendMessage) return false;
       return sendMessage({ type: "repo.moved", repoId: move.repoId, mainRef: move.mainRef, from: move.from, to: move.to });
@@ -80,18 +92,21 @@ export function startDaemon(o: DaemonStart): { close(): void; watcher: RepoWatch
     token: o.token,
     runner,
     nemaHome: o.nemaHome,
+    ...(o.reportTokenHome ? { reportTokenHome: o.reportTokenHome } : {}),
     version: o.version,
     rpc,
     bindSend: (send) => {
       sendMessage = send;
     },
   });
+  let closing: Promise<void> | undefined;
   return {
     watcher,
     close() {
-      watcher.stop();
-      connection.close();
-      github.close();
+      if (closing) return closing;
+      const tasks = [runner.stop(), watcher.stop(), connection.close(), github.close()];
+      closing = Promise.all(tasks).then(() => {});
+      return closing;
     },
   };
 }

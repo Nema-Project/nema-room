@@ -1,3 +1,4 @@
+import { expectPrivate } from "../nativePermissions.js";
 import {
   existsSync,
   lstatSync,
@@ -15,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { authLogout } from "../../src/direct/authCommands.js";
 import { AuthStore } from "../../src/direct/authStore.js";
 import { authByok, ByokTokenSource, readByokKey, saveByokKey } from "../../src/direct/byok.js";
+import { protectPrivatePath } from "../../src/secrets/permissions.js";
 import { siwcRefresher } from "../../src/direct/siwc.js";
 
 function capture() {
@@ -35,7 +37,7 @@ describe("BYOK key file", () => {
     saveByokKey(home, "sekret-key");
 
     expect(readByokKey(home)).toBe("sekret-key");
-    expect(lstatSync(join(home, "byok-key")).mode & 0o777).toBe(0o600);
+    expectPrivate(join(home, "byok-key"), 0o600);
   });
 
   test.each(["", "first\nsecond", "tab\tkey", "nul\u0000key"])("rejects invalid key %j without changing the existing file", (key) => {
@@ -59,7 +61,9 @@ describe("BYOK key file", () => {
 
   test("accepts a hand-written file ending in one newline", () => {
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), "sekret-key\n", { mode: 0o600 });
+    const file = join(home, "byok-key");
+    writeFileSync(file, "sekret-key\n", { mode: 0o600 });
+    protectPrivatePath(file);
 
     expect(readByokKey(home)).toBe("sekret-key");
   });
@@ -68,7 +72,9 @@ describe("BYOK key file", () => {
     "rejects hand-written file content %j without echoing it",
     (content) => {
       mkdirSync(home, { recursive: true });
-      writeFileSync(join(home, "byok-key"), content, { mode: 0o600 });
+      const file = join(home, "byok-key");
+      writeFileSync(file, content, { mode: 0o600 });
+      protectPrivatePath(file);
 
       let message = "";
       try {
@@ -85,6 +91,10 @@ describe("BYOK key file", () => {
     expect(() => readByokKey(home)).toThrow("没有 BYOK API key。请把钥匙从标准输入交给 nema auth byok。");
     mkdirSync(home, { recursive: true });
     writeFileSync(join(home, "byok-key"), "sekret-key", { mode: 0o644 });
+    if (process.platform === "win32") {
+      expect(() => readByokKey(home)).toThrow(/private Windows ACL/i);
+      return;
+    }
     expect(() => readByokKey(home)).toThrow("BYOK key 文件权限必须是 0600");
   });
 });

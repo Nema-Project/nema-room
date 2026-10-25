@@ -1,10 +1,11 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { changedFiles } from "../../src/repos/git.js";
-import { buildIndex, queryIndex, updateIndex, type GraphifyOpts } from "../../src/repos/graphify.js";
+import { buildIndex, graphifyInstallStatus, queryIndex, updateIndex, type GraphifyOpts } from "../../src/repos/graphify.js";
+import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 let root: string;
 let savedHome: string | undefined;
@@ -62,7 +63,8 @@ function git(cwd: string, args: string[]): string {
         GIT_COMMITTER_NAME: "Test",
         GIT_COMMITTER_EMAIL: "test@example.com",
         GIT_CONFIG_NOSYSTEM: "1",
-        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+        GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.autocrlf", GIT_CONFIG_VALUE_0: "false",
         GIT_TERMINAL_PROMPT: "0",
       },
     });
@@ -108,6 +110,21 @@ fs.writeFileSync("graphify-out/graph.json", "{}");
   expect(env).not.toHaveProperty("NEMA_GRAPHIFY_BIN");
 });
 
+test("a graphify timeout settles only after its child has exited", async () => {
+  const snapshot = join(root, "timeout-snapshot");
+  const pidFile = join(root, "timeout-child-pid");
+  mkdirSync(snapshot);
+  fake = { bin: writeBin("graphify-timeout.cjs", `
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1000);
+`), timeoutMs: 500 };
+  await expect(buildIndex(snapshot, fake)).rejects.toThrow("graphify 已中断");
+  const pid = Number(readFileSync(pidFile, "utf8"));
+  expect(() => process.kill(pid, 0)).toThrow();
+});
+
 test("queryIndex maps exit 3 to 名称不唯一 and exit 4 to 没有匹配", async () => {
   const snapshot = join(root, "snap");
   const record = join(root, "record");
@@ -115,10 +132,12 @@ test("queryIndex maps exit 3 to 名称不唯一 and exit 4 to 没有匹配", asy
   mkdirSync(record);
   fake.bin = writeBin(
     "graphify-exit",
-    `#!/bin/sh
-pwd > "${record}/cwd"
-printf '%s\\n' "$@" > "${record}/argv"
-exit "$2"
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(record + "/cwd")}, process.cwd() + "\\n");
+fs.writeFileSync(${JSON.stringify(record + "/argv")}, args.join("\\n") + "\\n");
+process.exit(Number(args[1]));
 `,
   );
 
@@ -140,8 +159,10 @@ test("queryIndex rejects a value that starts with - before spawning graphify", a
   mkdirSync(record);
   fake.bin = writeBin(
     "graphify-argv",
-    `#!/bin/sh
-printf '%s\\n' "$@" > "${record}/argv"
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(record + "/argv")}, args.join("\\n") + "\\n");
 `,
   );
 
@@ -173,6 +194,19 @@ test("a missing graphify binary gives the install hint", async () => {
   await expect(buildIndex(snapshot, fake)).rejects.toThrow("graphify 未安装：请运行 uv tool install graphifyy");
 });
 
+test("managed graphify install status treats a missing binary as not installed", async () => {
+  const missingScope: OwnedHelperScope = {
+    spawn: async () => { throw Object.assign(new Error("missing helper"), { code: "ENOENT" }); },
+    stopAccepting() {},
+    async drain() {},
+  };
+
+  await expect(graphifyInstallStatus({ bin: join(root, "missing-graphify"), ownedHelpers: missingScope })).resolves.toEqual({
+    installed: false,
+    detail: "graphify 未安装：请运行 uv tool install graphifyy",
+  });
+});
+
 test("updateIndex writes changed files, deletes removed ones and runs graphify update", async () => {
   const repo = join(root, "repo");
   const snapshot = join(root, "snap");
@@ -198,11 +232,13 @@ test("updateIndex writes changed files, deletes removed ones and runs graphify u
   const outside = join(root, "outside.txt");
   fake.bin = writeBin(
     "graphify-update",
-    `#!/bin/sh
-pwd > "${record}/cwd"
-printf '%s\\n' "$@" > "${record}/argv"
-mkdir -p graphify-out
-printf '{}' > graphify-out/graph.json
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(record + "/cwd")}, process.cwd() + "\\n");
+fs.writeFileSync(${JSON.stringify(record + "/argv")}, args.join("\\n") + "\\n");
+fs.mkdirSync("graphify-out", { recursive: true });
+fs.writeFileSync("graphify-out/graph.json", "{}");
 `,
   );
 
@@ -233,6 +269,49 @@ printf '{}' > graphify-out/graph.json
   expect(realpathSync(readFileSync(join(record, "cwd"), "utf8").trim())).toBe(realpathSync(snapshot));
 });
 
+test("managed incremental update fetches blob data through its owned helper scope", async () => {
+  const repo = join(root, "managed-repo");
+  const snapshot = join(root, "managed-snapshot");
+  const calls: Array<{ command: string; args: string[] }> = [];
+  const children: OwnedHelperProcess[] = [];
+  const scope: OwnedHelperScope = {
+    async spawn(command, args, options = {}) {
+      calls.push({ command, args });
+      const child: ChildProcess = spawn(command, args, { ...options, windowsHide: true });
+      const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
+      const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.once("close", (code, signal) => resolve({ code, signal })));
+      const owned: OwnedHelperProcess = {
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        kill: (signal) => child.kill(signal),
+        exited,
+        closed,
+      };
+      children.push(owned);
+      return owned;
+    },
+    stopAccepting() {},
+    async drain() { await Promise.all(children.map((child) => child.closed)); },
+  };
+  mkdirSync(repo);
+  git(repo, ["init", "-b", "main"]);
+  git(repo, ["config", "user.email", "test@example.com"]);
+  git(repo, ["config", "user.name", "Test"]);
+  writeFileSync(join(repo, "picked.txt"), "from committed blob\n");
+  git(repo, ["add", "-A"]);
+  git(repo, ["commit", "-m", "blob"]);
+  const bin = writeBin("graphify-managed", "#!/usr/bin/env node\n");
+
+  await updateIndex(snapshot, [{ status: "A", path: "picked.txt" }], repo, "HEAD", { ...fake, bin, ownedHelpers: scope });
+
+  expect(readFileSync(join(snapshot, "src", "picked.txt"), "utf8")).toBe("from committed blob\n");
+  expect(calls.some(({ args }) => args.includes("ls-tree"))).toBe(true);
+  expect(calls.some(({ args }) => args.includes("cat-file"))).toBe(true);
+  expect(calls.some(({ args }) => args.includes(bin))).toBe(true);
+  await scope.drain();
+});
+
 test("a rename from changedFiles removes the old snapshot file and writes the new one", async () => {
   const repo = join(root, "repo");
   const snapshot = join(root, "snap");
@@ -247,7 +326,7 @@ test("a rename from changedFiles removes the old snapshot file and writes the ne
   const child = git(repo, ["rev-parse", "HEAD"]).trim();
   mkdirSync(join(snapshot, "src"), { recursive: true });
   writeFileSync(join(snapshot, "src", "old-name.txt"), "same\n");
-  fake.bin = writeBin("graphify-noop", "#!/bin/sh\n");
+  fake.bin = writeBin("graphify-noop", "#!/usr/bin/env node\n");
 
   await updateIndex(snapshot, await changedFiles(repo, parent, child, "main"), repo, child, fake);
 
@@ -264,7 +343,11 @@ test("graphify update is called with --code-only", async () => {
   writeFileSync(join(repo, "a.txt"), "a\n");
   git(repo, ["add", "-A"]);
   git(repo, ["commit", "-m", "a"]);
-  const bin = writeBin("graphify-argv", `#!/bin/sh\nprintf '%s\\n' "$@" > "${argv}"\n`);
+  const bin = writeBin("graphify-argv", `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(argv)}, args.join("\\n") + "\\n");
+`);
 
   await updateIndex(snapshot, [{ status: "A", path: "a.txt" }], repo, "HEAD", { bin });
 

@@ -17,7 +17,9 @@ if (args.includes("--version")) {
 
 if (config.record) writeFileSync(config.record, JSON.stringify({ args, env: process.env, cwd: process.cwd() }));
 if (config.starts) appendFileSync(config.starts, "start\n");
+if (config.pidFile) writeFileSync(config.pidFile, String(process.pid));
 if (config.exitOnStart) process.exit(3);
+if (config.holdHandshake) await new Promise(() => {});
 
 const server = new Server({ name: "fake-github", version: "0.0.1" }, { capabilities: { tools: {} } });
 

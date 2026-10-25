@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { commandSpec } from "./platform.js";
 import { claudeTokenPath, readClaudeToken } from "./claude/token.js";
 import { checkCodexAuth } from "./codex/isolation.js";
 import type { NemaConfig } from "./config.js";
@@ -48,7 +49,8 @@ export function defaultTokenFile(env: NodeJS.ProcessEnv = process.env): string {
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 async function version(bin: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync(bin, args, { timeout: 10_000 });
+  const command = commandSpec(bin, args);
+  const { stdout } = await execFileAsync(command.bin, command.args, { timeout: 10_000, windowsHide: true });
   return stdout.trim().split("\n")[0] ?? "";
 }
 
@@ -92,7 +94,7 @@ function claudeTokenCheck(opts: DoctorOpts): DoctorCheck {
   if (opts.adapter !== "claude-code") return { name, ok: true, detail: CLAUDE_ONLY };
   try {
     readClaudeToken(opts.nemaHome);
-    return { name, ok: true, detail: `权限为 0600（${claudeTokenPath(opts.nemaHome)}）` };
+    return { name, ok: true, detail: `${process.platform === "win32" ? "私有 Windows ACL" : "权限为 0600"}（${claudeTokenPath(opts.nemaHome)}）` };
   } catch (e) {
     return { name, ok: false, detail: msg(e) };
   }
@@ -125,7 +127,7 @@ function byokCheck(opts: DoctorOpts): DoctorCheck {
   return {
     name,
     ok: problems.length === 0,
-    detail: problems.length === 0 ? "key 文件权限为 0600，model 已设置" : problems.join("；"),
+    detail: problems.length === 0 ? `${process.platform === "win32" ? "key 使用私有 Windows ACL" : "key 文件权限为 0600"}，model 已设置` : problems.join("；"),
   };
 }
 
@@ -147,7 +149,7 @@ function githubTokenCheck(opts: DoctorOpts): DoctorCheck {
   if (!existsSync(githubTokenPath(opts.nemaHome))) return { name, ok: true, detail: "不存在（可运行 nema auth github）" };
   try {
     readGithubToken(opts.nemaHome);
-    return { name, ok: true, detail: `存在，权限为 0600（${githubTokenPath(opts.nemaHome)}）` };
+    return { name, ok: true, detail: `存在，${process.platform === "win32" ? "私有 Windows ACL" : "权限为 0600"}（${githubTokenPath(opts.nemaHome)}）` };
   } catch (e) {
     return { name, ok: true, detail: msg(e) };
   }

@@ -29,6 +29,8 @@ export class RepoWatcher {
   private inflight: Promise<void> | null = null;
   /** Full ticks and single-repo ticks run one at a time, so one move is never reported twice. */
   private queue: Promise<void> = Promise.resolve();
+  private stopped = false;
+  private stopping?: Promise<void>;
 
   constructor(opts: {
     nemaHome: string;
@@ -47,6 +49,7 @@ export class RepoWatcher {
   }
 
   setRepos(list: WatchedRepo[]): void {
+    if (this.stopped) return;
     const keep = new Set(list.map((repo) => repo.repoId));
     for (const id of this.known.keys()) {
       if (!keep.has(id)) this.known.delete(id);
@@ -67,6 +70,7 @@ export class RepoWatcher {
   }
 
   tick(): Promise<void> {
+    if (this.stopped) return this.stopping ?? Promise.resolve();
     if (this.inflight) return this.inflight;
     const run = this.serial(() => this.runTick()).finally(() => {
       this.inflight = null;
@@ -77,7 +81,9 @@ export class RepoWatcher {
 
   /** Ticks one watched repo now (a coding agent's hook fired). An unknown repo id is a no-op. */
   tickRepo(repoId: string): Promise<void> {
+    if (this.stopped) return this.stopping ?? Promise.resolve();
     return this.serial(async () => {
+      if (this.stopped) return;
       const repo = this.repos.find((row) => row.repoId === repoId);
       if (!repo) return;
       try {
@@ -90,6 +96,7 @@ export class RepoWatcher {
 
   private async runTick(): Promise<void> {
     for (const repo of this.repos) {
+      if (this.stopped) return;
       try {
         await this.tickOne(repo);
       } catch (error) {
@@ -105,15 +112,15 @@ export class RepoWatcher {
   }
 
   private async tickOne(repo: WatchedRepo): Promise<void> {
-    if (!this.isWatched(repo)) return;
-    const fetched = await fetchMain(repo.path, repo.mainBranch);
-    if (!this.isWatched(repo)) return;
+    if (this.stopped || !this.isWatched(repo)) return;
+    const fetched = await fetchMain(repo.path, repo.mainBranch, this.graphify?.ownedHelpers);
+    if (this.stopped || !this.isWatched(repo)) return;
     const at = new Date().toISOString();
     if (fetched.ok) this.onFetch({ repoId: repo.repoId, ok: true, at });
     else this.onFetch({ repoId: repo.repoId, ok: false, error: fetched.error, at });
 
-    const ref = await mainRef(repo.path, repo.mainBranch);
-    const sha = await revParse(repo.path, ref);
+    const ref = await mainRef(repo.path, repo.mainBranch, this.graphify?.ownedHelpers);
+    const sha = await revParse(repo.path, ref, this.graphify?.ownedHelpers);
     const root = snapshotDir(this.nemaHome, repo.workspaceId, repo.repoId);
     try {
       // Every tick brings the index to main, so a failed update or build is retried next tick.
@@ -122,6 +129,7 @@ export class RepoWatcher {
       // A broken or missing graphify must not stop main-branch tracking.
       console.error(`[nema] repo index failed for ${repo.repoId}`, error);
     }
+    if (this.stopped) return;
     if (!this.isWatched(repo)) {
       // Unbound while this tick ran: repo.forget may already have run, so drop what syncIndex just wrote.
       await withIndexLock(root, () => removeSnapshot(root));
@@ -138,7 +146,8 @@ export class RepoWatcher {
   }
 
   start(): void {
-    this.stop();
+    if (this.stopped) return;
+    if (this.timer) clearInterval(this.timer);
     const timer = setInterval(() => {
       void this.tick().catch((error) => {
         console.error("[nema] repo watch failed", error);
@@ -148,9 +157,13 @@ export class RepoWatcher {
     this.timer = timer;
   }
 
-  stop(): void {
+  stop(): Promise<void> {
+    if (this.stopping) return this.stopping;
+    this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.stopping = Promise.all([this.inflight ?? Promise.resolve(), this.queue]).then(() => {});
+    return this.stopping;
   }
 }
 

@@ -186,6 +186,20 @@ describe("WorkspaceShell knowledge wiring", () => {
     expect(replace).toHaveBeenCalledWith("/w/w2");
     expect(screen.queryByRole("heading", { name: "Old" })).toBeNull();
   });
+  it("opens model settings from the sidebar when the workspace list is empty", async () => {
+    vi.mocked(hub.listWorkspaces).mockResolvedValue([]);
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      config: { adapter: "codex-direct", authMode: "siwc", reasoningEffort: "medium" },
+      auth: { mode: "siwc", credential: "siwc", state: "missing", adapter: "codex-direct" },
+      tools: { claude: { available: false, tokenSaved: false }, github: { available: false, tokenSaved: false } },
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    localStorage.setItem("nema.locale", "en");
+    render(<I18nProvider><WorkspaceShell routeId={null} /></I18nProvider>);
+    await userEvent.click(await screen.findByRole("button", { name: "Model settings" }));
+    expect(await screen.findByRole("dialog", { name: "Model settings" })).toBeTruthy();
+    expect((screen.getByLabelText("Agent runtime") as HTMLSelectElement).value).toBe("nema");
+    expect((screen.getByLabelText("Model service") as HTMLSelectElement).value).toBe("chatgpt");
+  });
   it("refreshes the list when delete fails and shows the hub error", async () => {
     vi.mocked(hub.deleteWorkspace).mockRejectedValue(new HubError(500, "internal error"));
     await mount();

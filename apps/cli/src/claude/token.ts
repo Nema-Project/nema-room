@@ -17,6 +17,7 @@ import {
 import path from "node:path";
 import { createInterface } from "node:readline";
 import type { Out } from "../direct/authCommands.js";
+import { openPrivateFile, privateModeMatches, protectPrivatePath } from "../secrets/permissions.js";
 
 const INVALID_TOKEN = "token 必须是一行非空文本";
 const SYMLINK_TOKEN = "Claude Code token 文件是符号链接，已拒绝。";
@@ -35,7 +36,7 @@ export function saveClaudeToken(nemaHome: string, token: string): void {
   }
 
   mkdirSync(nemaHome, { recursive: true, mode: 0o700 });
-  if (statSync(nemaHome).mode & 0o077) chmodSync(nemaHome, 0o700);
+  protectPrivatePath(nemaHome, 0o700);
   const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   const fd = openSync(tmp, "wx", 0o600);
   try {
@@ -60,7 +61,7 @@ export function readClaudeToken(nemaHome: string): string {
   const file = claudeTokenPath(nemaHome);
   let fd: number;
   try {
-    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    fd = openPrivateFile(file);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new Error(MISSING_TOKEN);
     if ((e as NodeJS.ErrnoException).code === "ELOOP") throw new Error(SYMLINK_TOKEN);
@@ -68,7 +69,7 @@ export function readClaudeToken(nemaHome: string): string {
   }
   try {
     const st = fstatSync(fd);
-    if (!st.isFile() || (st.mode & 0o777) !== 0o600) throw new Error(TOKEN_MODE);
+    if (!st.isFile() || !privateModeMatches(st)) throw new Error(TOKEN_MODE);
     return readFileSync(fd, "utf8");
   } finally {
     closeSync(fd);

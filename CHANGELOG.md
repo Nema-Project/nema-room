@@ -4,6 +4,14 @@
 
 ### Added
 
+- GitHub issue templates, a pull request template, and contributing, security, and conduct guides. Vulnerability reports go through GitHub private advisories; public issues ask for the OS, Node/Docker versions, how Nema Room is run, and redacted errors.
+
+- A Chinese, English, and Japanese terminal setup wizard (`node scripts/setup.mjs`), read-only environment checks, and a portable `npm run up` entry point.
+- Windows private credential ACL validation, shell-free npm command-shim handling, native browser launching, process-tree cleanup, and encoded reporting hooks. Platform checks now run on Windows, macOS, and Linux in CI; the full application suite runs on Linux.
+
+- Chinese, English, and Japanese release-facing READMEs with matching setup commands, runtime choices, data handling, and known limitations. Detailed Chinese implementation notes now live in `docs/reference.zh-CN.md`.
+- MIT license for Nema Room and matching license metadata for the root and workspace packages. Vendored third-party licenses and notices are retained.
+
 - The sidebar opens a plugins page with each plugin's name, local or external tag, install status, and functions. Workspace settings adds a code section to bind a repository, see whether the last fetch worked, and turn a plugin or its read-only functions on or off. External plugins note that calls leave the machine, and the section states that code the Agent reads is sent to the model provider.
 - `nema doctor` reports `graphify 可用：<version>` when `graphify --version` runs, or `graphify 未安装：请运行 uv tool install graphifyy` when the binary is missing. That line is informational and never fails doctor.
 - The daemon checks each bound repo's main branch every 5 minutes. The hub sends `repos.sync` (including `lastMainSha`) on welcome and when bindings change. Binding stores the indexed sha as `lastMainSha` without emitting `repo.moved`. A null `lastMainSha` is recorded once and does not emit `repo.moved` or update the index; a later sha updates the graphify index from the changed files (a rename removes the old path; a missing index is rebuilt in full) and emits `repo.moved` even when indexing fails. Each check emits `repo.fetched`. A failed fetch keeps the last sha. A repo without origin follows the local branch. The hub stores `last_main_sha` on `repo.moved`, `last_fetch_at` only on a successful `repo.fetched`, and `last_fetch_error`; settings shows a failure next to the last successful fetch time.
@@ -24,6 +32,12 @@
 - 支持 BYOK 按量 API：设置 `authMode=byok`、`model` 和可选的 `byokBaseUrl`（默认 `https://api.openai.com/v1`），再用 `nema auth byok` 从 stdin 写入 key；它不使用订阅额度，遇到 401 也不会刷新 key。
 - `authMode=compat` uses the existing Codex login file (`~/.codex/auth.json`) to call the Codex responses endpoint directly. Nema reads that file and does not refresh or rewrite it.
 - Workspace names in the sidebar can be archived from a right-click menu, or permanently deleted after a red confirmation.
+- A desktop app (Electron) runs Nema Room on one machine without Docker or a database server: an on-disk PGlite database, a single-owner local core, a protected same-origin gateway, bundled Node and Git, a tray that keeps the core running after the window closes, and a custom window title bar. Windows packaging is verified; macOS is not yet, builds are unsigned, and nothing has been published.
+- Model settings in the app: choose the Agent runtime, model service and sign-in method, enter an API key or Claude Code token, and start or cancel a login, without a terminal. Credentials are never shown again.
+- Creating a workspace shows progress, and a failed or pending draft can be retried or discarded.
+- The Agent can run `gh` against GitHub issues, pull requests, labels, workflow runs and Projects through two tools, `github__gh_read` and `github__gh_write`. A fixed command allowlist applies, `--repo` and Project `--owner` must belong to the workspace's bound repositories, and there is no `gh api`, file or editor flag, merge, delete or auth command. Writes are off until the workspace turns on "Let the agent change GitHub" in Code & plugins.
+- `exportSnapshot` and `importLegacySnapshot` move an existing workspace database and its knowledge Git history into an empty desktop home. The import validates in a staging directory under the single-owner lease, rebuilds repositories without hooks, remotes or config, drops old run tokens, and can be recovered after an interruption. Credentials are never exported.
+- `nema report`, `nema report hook` and `nema wp` find a running desktop app when neither `--hub` nor `NEMA_HUB_URL` is given, and send the report token only after the app proves its identity. The gateway forwards only `POST /report`, `POST /report/hook` and `GET /report/workpackages` with the caller's bearer token.
 
 ### Changed
 
@@ -39,9 +53,13 @@
 - Dragging the workspace list or the knowledge panel below 160px collapses that column to a rail. Dragging or clicking the rail opens it again.
 - While a column divider is dragged, the handle shows a warm gray. The resting lines stay the pale rule.
 - Settings shows a small geometric mark beside its label. Each column divider has a square button that collapses and expands that column.
+- GitHub access defaults to the signed-in local `gh` command instead of `github-mcp-server` and a saved token. Nema no longer asks for or stores a GitHub token; the old `nema auth github` command and token file still exist but are not read by default.
+- The plugins pages no longer show an installed or connected line for GitHub.
+- The desktop core registers the user-level `~/.nema/report-token`, so coding-agent hooks installed once keep working with the desktop app.
 
 ### Fixed
 
+- The desktop window can load its titlebar mark and favicon. The local gateway now forwards only `/nema-room-mark.svg` and `/icon.png` (including the favicon cache query) to a signed-in session.
 - A workspace with enough messages no longer stretches the three-column layout past the window. The message list scrolls, and the composer and sidebar footer stay on screen.
 - A main-branch move is recorded only after `repo.moved` is sent. A closed socket, a failed send, or a throw leaves the previous sha so the next tick retries the index update and the message. A tick that is already running is not started again.
 - A failure while checking one bound repo no longer skips the other repos in that tick. The failed repo keeps its last sha and is tried again on the next tick.

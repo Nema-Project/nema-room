@@ -1,0 +1,51 @@
+{
+  "name": "@nema/local",
+  "license": "MIT",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./instance": {
+      "development": "./src/instance.ts",
+      "types": "./dist/src/instance.d.ts",
+      "import": "./dist/src/instance.js"
+    },
+    "./gateway": {
+      "development": "./src/gateway.ts",
+      "types": "./dist/src/gateway.d.ts",
+      "import": "./dist/src/gateway.js"
+    },
+    "./session": {
+      "development": "./src/session.ts",
+      "types": "./dist/src/session.d.ts",
+      "import": "./dist/src/session.js"
+    },
+    "./migration": {
+      "development": "./src/migration.ts",
+      "types": "./dist/src/migration.d.ts",
+      "import": "./dist/src/migration.js"
+    },
+    "./import": {
+      "development": "./src/import.ts",
+      "types": "./dist/src/import.d.ts",
+      "import": "./dist/src/import.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@nema/cli": "*",
+    "@nema/hub": "*",
+    "hono": "^4.13.13"
+  },
+  "devDependencies": {
+    "@hono/node-server": "^2.1.5",
+    "tsx": "^4.23.15"
+  }
+}

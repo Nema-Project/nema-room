@@ -1,5 +1,6 @@
 {
   "name": "@nema/shared",
+  "license": "MIT",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,6 +10,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./localInstance": {
+      "types": "./dist/localInstance.d.ts",
+      "default": "./dist/localInstance.js"
+    },
+    "./ownedHelper": {
+      "types": "./dist/ownedHelper.d.ts",
+      "default": "./dist/ownedHelper.js"
     }
   },
   "dependencies": {

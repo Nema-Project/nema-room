@@ -2,13 +2,15 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { browserCommand } from "../platform.js";
 import { configErrorMessage, loadConfig } from "../config.js";
 import { AuthStore, ReloginRequiredError, UNUSABLE_FILE_MESSAGE, type Refresher } from "./authStore.js";
 import { CodexFileTokenSource, CodexLoginError, defaultCodexHome, readCodexCliTokens } from "./codexLogin.js";
 import { jwtExp } from "./jwt.js";
 import { LockTimeoutError, withFileLock } from "./lock.js";
 import { cliVersion, siwcLogin, siwcRefresher, type SiwcEndpoints } from "./siwc.js";
-import { COMPAT_PROFILE, listModels, outputText, SIWC_PROFILE, streamResponse, type TokenSource, type TransportProfile } from "./transport.js";
+import { BYOK_PROFILE, COMPAT_PROFILE, listModels, outputText, SIWC_PROFILE, streamResponse, type TokenSource, type TransportProfile } from "./transport.js";
+import { ByokTokenSource } from "./byok.js";
 
 // `nema auth login|byok|status|logout|probe`. Nothing here ever prints a token.
 
@@ -21,11 +23,11 @@ const errMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const tail4 = (s: string | undefined) => (s ? `…${s.slice(-4)}` : "未知");
 const NOT_LOGGED_IN = "尚未登录直连模式，请在终端运行 nema auth login";
 
-/** Opens the system browser (macOS `open`, otherwise `xdg-open`); failures are ignored since the URL is printed. */
+/** Opens the system browser without a shell; the URL is printed if launching fails. */
 export function defaultOpenBrowser(url: string): void {
-  const cmd = process.platform === "darwin" ? "open" : "xdg-open";
+  const command = browserCommand(url);
   try {
-    const child = spawn(cmd, [url], { stdio: "ignore", detached: true });
+    const child = spawn(command.bin, command.args, { stdio: "ignore", detached: true, windowsHide: true });
     child.on("error", () => {});
     child.unref();
   } catch {
@@ -42,6 +44,9 @@ export async function authLogin(o: {
   endpoints?: SiwcEndpoints;
   /** Codex CLI home for authMode=compat. Defaults to $CODEX_HOME or ~/.codex. */
   codexHome?: string;
+  signal?: AbortSignal;
+  requireTrustedAuthorizeUrl?: boolean;
+  redactCallbackErrors?: boolean;
 }): Promise<number> {
   let authMode: string;
   try {
@@ -58,6 +63,9 @@ export async function authLogin(o: {
       port: o.port,
       timeoutMs: o.timeoutMs,
       endpoints: o.endpoints,
+      signal: o.signal,
+      requireTrustedAuthorizeUrl: o.requireTrustedAuthorizeUrl,
+      redactCallbackErrors: o.redactCallbackErrors,
       openBrowser: (url) => {
         o.out.log(`请在浏览器中完成「Sign in with ChatGPT」登录。若浏览器没有自动打开，请访问：\n${url}`);
         try {
@@ -148,6 +156,7 @@ export async function authProbe(o: {
   refresher?: Refresher;
   forceRefresh?: boolean;
   codexHome?: string;
+  signal?: AbortSignal;
 }): Promise<number> {
   let authMode: string;
   try {
@@ -159,14 +168,19 @@ export async function authProbe(o: {
   if (authMode === "compat") {
     const source = new CodexFileTokenSource(o.codexHome ?? defaultCodexHome());
     try {
-      await source.getAccessToken();
+      await source.getAccessToken({ signal: o.signal });
     } catch (e) {
       o.out.error(e instanceof CodexLoginError ? e.message : errMessage(e));
       return 1;
     }
     if (o.forceRefresh) o.out.log("已重新读取 Codex 登录（Nema 不刷新该凭证）");
     const profile = o.apiBase ? { ...COMPAT_PROFILE, baseUrl: o.apiBase } : COMPAT_PROFILE;
-    return runProbe(o, source, profile);
+    return runProbe(o, source, profile, o.signal);
+  }
+  const config = loadConfig(o.nemaHome);
+  if (config.authMode === "byok") {
+    const profile = { ...BYOK_PROFILE, baseUrl: config.byokBaseUrl ?? BYOK_PROFILE.baseUrl };
+    return runProbe(o, new ByokTokenSource(o.nemaHome), profile, o.signal);
   }
   const store = new AuthStore(o.nemaHome, o.refresher ?? siwcRefresher);
   const { auth, reason } = store.inspect();
@@ -181,15 +195,15 @@ export async function authProbe(o: {
   const profile = o.apiBase ? { ...SIWC_PROFILE, baseUrl: o.apiBase } : SIWC_PROFILE;
   if (o.forceRefresh) {
     const before = auth.lastRefresh;
-    const { auth: current } = await store.getAccessToken({ force: true });
+    const { auth: current } = await store.getAccessToken({ force: true, signal: o.signal });
     o.out.log(current.lastRefresh !== before ? `已强制刷新令牌（${current.lastRefresh}）` : "令牌未刷新");
   }
-  return runProbe(o, store, profile);
+  return runProbe(o, store, profile, o.signal);
 }
 
-async function runProbe(o: { nemaHome: string; out: Out }, source: TokenSource, profile: TransportProfile): Promise<number> {
+async function runProbe(o: { nemaHome: string; out: Out }, source: TokenSource, profile: TransportProfile, ownerSignal?: AbortSignal): Promise<number> {
   try {
-    const ctx = { auth: source, profile, version: cliVersion(), signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) };
+    const ctx = { auth: source, profile, version: cliVersion(), signal: ownerSignal ? AbortSignal.any([ownerSignal, AbortSignal.timeout(PROBE_TIMEOUT_MS)]) : AbortSignal.timeout(PROBE_TIMEOUT_MS) };
     const models = await listModels(ctx);
     o.out.log(`可用模型（${models.length}）：${models.join(", ") || "无"}`);
     if (models.length === 0) {

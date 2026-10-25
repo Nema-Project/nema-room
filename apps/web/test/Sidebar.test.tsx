@@ -50,6 +50,13 @@ describe("Sidebar", () => {
     expect(screen.getByText("nema daemon offline")).toBeTruthy();
   });
 
+  it("opens model settings from the sidebar when there are no workspaces", async () => {
+    const onOpenModelSettings = vi.fn();
+    setup({ workspaces: [], selectedId: null, onOpenModelSettings });
+    await userEvent.click(screen.getByRole("button", { name: "Model settings" }));
+    expect(onOpenModelSettings).toHaveBeenCalledTimes(1);
+  });
+
   it("switches the UI language", async () => {
     setup({ connected: false });
     await userEvent.click(screen.getByRole("button", { name: "日本語" }));
@@ -73,6 +80,61 @@ describe("Sidebar", () => {
     await userEvent.type(screen.getByRole("textbox"), "Delta{Enter}");
     expect((await screen.findByRole("alert")).textContent).toBe("boom");
     expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("Delta");
+  });
+
+  it("shows pending feedback, blocks duplicate submits, and closes after creation", async () => {
+    let resolveCreate!: () => void;
+    const onCreate = vi.fn(() => new Promise<void>((resolve) => { resolveCreate = resolve; }));
+    setup({ onCreate });
+    await userEvent.click(screen.getByRole("button", { name: /New workspace/ }));
+    const input = screen.getByRole("textbox");
+    await userEvent.type(input, "Delta");
+    fireEvent.submit(input.closest("form")!);
+    expect((await screen.findByRole("status")).textContent).toBe("Creating workspace…");
+    expect((input as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Create workspace" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.submit(input.closest("form")!);
+    expect(onCreate).toHaveBeenCalledTimes(1);
+    resolveCreate();
+    expect(await screen.findByRole("button", { name: /New workspace/ })).toBeTruthy();
+  });
+
+  it("cancels a draft, clears it on reopen, trims names, and ignores composing Enter", async () => {
+    const { onCreate } = setup();
+    await userEvent.click(screen.getByRole("button", { name: /New workspace/ }));
+    const input = screen.getByRole("textbox");
+    await userEvent.type(input, "  Delta  ");
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(onCreate).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("textbox")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /New workspace/ }));
+    expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("");
+    await userEvent.type(screen.getByRole("textbox"), "  Delta  ");
+    await userEvent.keyboard("{Enter}");
+    expect(onCreate).toHaveBeenCalledWith("Delta");
+  });
+
+  it("does not submit blank names and offers a cancel control", async () => {
+    const { onCreate } = setup();
+    await userEvent.click(screen.getByRole("button", { name: /New workspace/ }));
+    await userEvent.type(screen.getByRole("textbox"), "   ");
+    expect((screen.getByRole("button", { name: "Create workspace" }) as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.keyboard("{Enter}");
+    expect(onCreate).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  it("clears the draft and restores New Workspace focus when cancelled", async () => {
+    setup();
+    await userEvent.click(screen.getByRole("button", { name: /New workspace/ }));
+    await userEvent.type(screen.getByRole("textbox"), "Draft");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /New workspace/ }));
+    await userEvent.click(screen.getByRole("button", { name: /New workspace/ }));
+    expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("");
   });
 
   it("hides archived workspaces behind a collapsed group", () => {

@@ -78,7 +78,8 @@ export class CodexDirectAdapter implements AgentAdapter {
 
   constructor(private readonly opts: CodexDirectAdapterOptions) {}
 
-  async run(task: TaskAssign, onEvent: (e: TaskEvent) => void): Promise<AgentResult> {
+  async run(task: TaskAssign, onEvent: (e: TaskEvent) => void, ownerSignal?: AbortSignal): Promise<AgentResult> {
+    if (ownerSignal?.aborted) return { ok: false, error: "Codex 直连运行已中止" };
     let config;
     try {
       config = loadConfig(this.opts.nemaHome);
@@ -96,6 +97,7 @@ export class CodexDirectAdapter implements AgentAdapter {
       } catch (e) {
         return { ok: false, error: errorMessage(e) };
       }
+      if (ownerSignal?.aborted) return { ok: false, error: "Codex 直连运行已中止" };
     } else if (config.authMode === "byok") {
       if (!config.model) return { ok: false, error: "BYOK 需要指定模型，请运行 nema config set model <名称>" };
       source = new ByokTokenSource(this.opts.nemaHome);
@@ -106,6 +108,7 @@ export class CodexDirectAdapter implements AgentAdapter {
       } catch (e) {
         return { ok: false, error: errorMessage(e) };
       }
+      if (ownerSignal?.aborted) return { ok: false, error: "Codex 直连运行已中止" };
     } else {
       const store = new AuthStore(this.opts.nemaHome, this.opts.refresher ?? siwcRefresher);
       const { auth, reason } = store.inspect();
@@ -115,19 +118,28 @@ export class CodexDirectAdapter implements AgentAdapter {
     }
 
     const ac = new AbortController();
+    const abortFromOwner = () => ac.abort(ownerSignal?.reason ?? new Error("run stopped"));
+    ownerSignal?.addEventListener("abort", abortFromOwner, { once: true });
+    if (ownerSignal?.aborted) abortFromOwner();
     const timeout = new Promise<never>((_, reject) => {
       ac.signal.addEventListener("abort", () => reject(ac.signal.reason), { once: true });
     });
     timeout.catch(() => {});
     const timer = setTimeout(() => ac.abort(new RunTimeoutError()), task.limits?.timeoutMs ?? this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    const execution = this.execute(task, onEvent, source, profile, ac.signal, configuredModel);
     try {
       // The race makes the timeout win even while waiting on a hub call or a token refresh.
-      return await Promise.race([this.execute(task, onEvent, source, profile, ac.signal, configuredModel), timeout]);
+      return await Promise.race([execution, timeout]);
     } catch (e) {
       return { ok: false, error: errorMessage(ac.signal.reason instanceof RunTimeoutError ? ac.signal.reason : e) };
     } finally {
       clearTimeout(timer);
       if (!ac.signal.aborted) ac.abort(new Error("run finished"));
+      ownerSignal?.removeEventListener("abort", abortFromOwner);
+      // Owner-managed runs drain AuthStore refreshes with their independent deadline so a successful
+      // token rotation is persisted before Runner releases the adapter slot. Preserve timeout return
+      // behavior for legacy callers that do not supply an owner signal.
+      if (ownerSignal) await execution.catch(() => {});
     }
   }
 

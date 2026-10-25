@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DIAGRAM_TYPES, isDiagramType, type DiagramType } from "@nema/shared";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
+import { runHelperFile } from "@nema/shared/ownedHelper";
 
 /**
  * Diagram validation and rendering with the vendored archify (vendor/archify, see VENDORED.md).
@@ -38,7 +40,14 @@ export function archifyCli(): string {
 
 type RunResult = { code: number; stdout: string; stderr: string; timedOut: boolean };
 
-function runArchify(args: string[]): Promise<RunResult> {
+function runArchify(args: string[], helpers?: OwnedHelperScope): Promise<RunResult> {
+  const env = { ...process.env, ARCHIFY_UPDATE_CHECK_DISABLED: "1" };
+  if (helpers) return runHelperFile(process.execPath, [archifyCli(), ...args], {
+    timeout: ARCHIFY_TIMEOUT_MS, maxBuffer: MAX_OUTPUT_BYTES, encoding: "utf8", env,
+  }, helpers).then((result) => ({
+    code: result.error ? (typeof (result.error as NodeJS.ErrnoException).code === "number" ? Number((result.error as NodeJS.ErrnoException).code) : 1) : 0,
+    stdout: result.stdout.toString("utf8"), stderr: result.stderr.toString("utf8"), timedOut: result.timedOut,
+  }));
   return new Promise((resolve) => {
     execFile(
       process.execPath,
@@ -48,7 +57,7 @@ function runArchify(args: string[]): Promise<RunResult> {
         maxBuffer: MAX_OUTPUT_BYTES,
         windowsHide: true,
         // Never let archify phone home for release notes.
-        env: { ...process.env, ARCHIFY_UPDATE_CHECK_DISABLED: "1" },
+        env,
       },
       (error, stdout, stderr) => {
         const err = error as (NodeJS.ErrnoException & { killed?: boolean; code?: number | string }) | null;
@@ -117,9 +126,10 @@ function parseReceipt(stdout: string): Receipt | undefined {
 export async function validateDiagram(
   type: DiagramType,
   spec: unknown,
+  helpers?: OwnedHelperScope,
 ): Promise<{ ok: true } | { ok: false; diagnostics: string }> {
   return withSpecFile(spec, async (_dir, input) => {
-    const run = await runArchify(["validate", type, input, "--quality", "showcase", "--json"]);
+    const run = await runArchify(["validate", type, input, "--quality", "showcase", "--json"], helpers);
     const receipt = parseReceipt(run.stdout);
     if (!run.timedOut && run.code === 0 && receipt?.ok === true) return { ok: true };
     return { ok: false, diagnostics: formatDiagnostics(receipt, run) };
@@ -127,10 +137,10 @@ export async function validateDiagram(
 }
 
 /** Render a (validated) spec to a self-contained HTML document with `archify render`. */
-export async function renderDiagram(type: DiagramType, spec: unknown): Promise<string> {
+export async function renderDiagram(type: DiagramType, spec: unknown, helpers?: OwnedHelperScope): Promise<string> {
   return withSpecFile(spec, async (dir, input) => {
     const output = path.join(dir, "diagram.html");
-    const run = await runArchify(["render", type, input, output, "--quality", "showcase"]);
+    const run = await runArchify(["render", type, input, output, "--quality", "showcase"], helpers);
     if (run.timedOut || run.code !== 0 || !existsSync(output)) {
       throw new Error(`archify render failed: ${formatDiagnostics(parseReceipt(run.stdout), run)}`);
     }

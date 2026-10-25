@@ -169,12 +169,18 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
             {row.plugin.dataFlow === "external" && <p className="help">{t("plugins.externalNote")}</p>}
             {catalogError ? (
               <p className="error">{catalogError}</p>
-            ) : catalog ? (
+            ) : row.plugin.id === "github" ? null : catalog ? (
               <p className="kmeta">{installText(row.plugin.id, catalog, t)}</p>
             ) : (
               <p className="kmeta">{t("common.loading")}</p>
             )}
             {row.plugin.id === "grill" && <GrillSettings row={row} onSave={(settings) => patchPlugin("grill", { settings })} />}
+            {row.plugin.id === "github" && (
+              <label className="check">
+                <input type="checkbox" checked={row.settings?.allowWrites === true} onChange={(e) => void patchPlugin("github", { settings: { allowWrites: e.target.checked } }).catch(() => {})} />
+                <span>{t("github.allowWrites")}</span>
+              </label>
+            )}
             {open &&
               row.plugin.functions
                 .filter((fn) => fn.readOnly)
