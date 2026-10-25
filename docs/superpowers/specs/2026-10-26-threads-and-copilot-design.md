@@ -57,7 +57,7 @@ Prompt text stays in Chinese like the rest of `prompt.ts`.
 
 ### Model
 
-A thread is identified by its anchor: one top-level main-chat message (any role: user, agent, system, report). Messages inside a thread carry `thread_id` = the anchor's message id. Main-chat messages have `thread_id` null.
+A thread is identified by its anchor: one top-level main-chat message (any role: user, agent, system, report). Messages inside a thread carry `thread_id` = the anchor's message id. Main-chat messages have `thread_id` null. API message DTOs and message events expose numeric `seq` alongside `threadId`, so clients can acknowledge only rendered messages.
 
 New migration (next free number after the quote/edit work's `010`):
 
@@ -110,7 +110,7 @@ Under the anchor message, Google Chat style: thread icon, title, reply count, un
 
 ### Jumping to a message
 
-Anything that jumps to a message (entry detail "jump to source", search results, quote blocks) opens the thread window when the message is in a thread.
+Anything that jumps to a message (entry detail "jump to source", search results, quote blocks) opens the thread window when the message is in a thread. A workspace-scoped single-message GET resolves `threadId` when only the message id is available; missing or foreign-workspace messages return 404.
 
 ### Withdraw
 

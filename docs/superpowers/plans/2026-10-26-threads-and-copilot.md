@@ -43,14 +43,14 @@
 - Test: `packages/shared/test/entry.test.ts`, `apps/local/test/migration.test.ts`, `apps/hub/test/persistentDb.test.ts` (or the snapshot test next to it)
 
 **Interfaces:**
-- Produces: `Message.threadId: string | null`; `type ThreadOpenedBy = "agent" | "user" | "grill"`; `type Thread = { id: string; workspaceId: string; title: string; openedBy: ThreadOpenedBy; replyCount: number; unread: number; lastReplyAt: string | null; createdAt: string }` exported from `@nema/shared`.
+- Produces: `Message.threadId: string | null`; `Message.seq: number` (required in API responses and events for `throughSeq` acknowledgements); `type ThreadOpenedBy = "agent" | "user" | "grill"`; `type Thread = { id: string; workspaceId: string; title: string; openedBy: ThreadOpenedBy; replyCount: number; unread: number; lastReplyAt: string | null; createdAt: string }` exported from `@nema/shared`.
 - Produces: `HubEvent` gains `| { type: "thread.updated"; thread: Thread }` (`apps/hub/src/events.ts` and the web's mirror in `apps/web/lib/types.ts`).
 
-- [ ] **Step 1: Failing tests**
-  - `entry.test.ts`: `it("every kind accepts dropped")` — for each of `ENTRY_KINDS`, a valid upsert with `status: "dropped"` parses.
+- [x] **Step 1: Failing tests**
+  - `entry.test.ts`: `it("every kind accepts dropped")` — for each of `ENTRY_KINDS`, the persisted entry status schema accepts `dropped`; validate ordinary upserts where supported and full `EntryFrontmatter` fixtures for dedicated-operation kinds (diagram/workpackage). Preserve their existing upsert restrictions.
   - snapshot test: `it("round-trips threads and thread_id")` — export a workspace with one thread and one thread message, import into a fresh db, both present, including a durable question association; `it("imports a snapshot without threads")` — a snapshot lacking `threads`, `question_threads` and `messages.thread_id` imports, messages get `thread_id = null`.
-- [ ] **Step 2: Run** `npx vitest run --project @nema/shared entry` and `npx vitest run --project @nema/hub snapshot` → FAIL.
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run** `npx vitest run --project @nema/shared entry` and `npx vitest run --project @nema/hub snapshot` → FAIL.
+- [x] **Step 3: Implement**
   - `011_threads.sql`:
     ```sql
     alter table messages add column thread_id text null references messages(id);
@@ -71,10 +71,10 @@
     );
     ```
   - `KIND_STATUSES`: append `"dropped"` to every kind that lacks it. `INACTIVE_STATUSES` already contains it.
-  - Snapshot: `messages` columns gain `thread_id`; add `threads: ["id","workspace_id","title","opened_by","last_read_seq","created_at"]` to `TABLE_COLUMNS` and `OPTIONAL_TABLES`; a missing `thread_id` column imports as null. Add `question_threads: ["workspace_id","question_id","thread_id"]` to both snapshot lists, export after `threads`, restore after messages and threads, and allow older snapshots to omit it. Workspace delete removes `question_threads` before `threads` before `messages`.
+  - Snapshot: `messages` columns gain `thread_id`; add `threads: ["id","workspace_id","title","opened_by","last_read_seq","created_at"]` to `TABLE_COLUMNS` and `OPTIONAL_TABLES`; a missing `thread_id` column imports as null. Add `question_threads: ["workspace_id","question_id","thread_id"]` to both snapshot lists, export after `threads`, restore after messages and threads, and allow older snapshots to omit it. Workspace delete removes `question_threads` before `threads` before `messages`. Import inserts main-chat anchors before thread replies regardless of snapshot row order; validate that anchors are not nested. Add a reversed-message-row regression with an edited anchor.
   - `toMessage` maps `thread_id` → `threadId`; add it to `COLS`.
-- [ ] **Step 4: Run** both test commands and `npm run typecheck` → PASS.
-- [ ] **Step 5: Commit** `feat: store threads and allow dropped on every entry kind`
+- [x] **Step 4: Run** both test commands and `npm run typecheck` → PASS.
+- [x] **Step 5: Commit** `feat: store threads and allow dropped on every entry kind`
 
 ### Task 2: Hub thread store and conversation context
 
@@ -98,9 +98,9 @@
   - `listThreadMessages(db, threadId, limit = 200): Promise<Message[]>` — oldest first, excludes the anchor.
   - `listPromptMessages(db, workspaceId, messageId, limit)` and `listRecentMessages(...)` gain the conversation filter: when the message belongs to a thread (via `conversationOf`), return the anchor followed by the latest `limit` thread messages (limit 50 for threads, passed by the caller); otherwise main-chat messages only.
   - `getLastAgentMessage(db, workspaceId, threadId: string | null)` — scoped to the conversation.
-  - `getLastAskedQuestion(db, workspaceId, threadId: string | null)` — latest asked-question card in that conversation, including system cards created by legacy conversion. Used to build answer context.
+  - `getLastAskedQuestion(db, workspaceId, threadId: string | null)` (exported from `threads.ts`) — latest asked-question card in that conversation, including system cards created by legacy conversion. Used to build answer context.
 
-- [ ] **Step 1: Failing tests** in `threads.test.ts`:
+- [x] **Step 1: Failing tests** in `threads.test.ts`:
   - `ensureThread is idempotent` — two calls, one row, same title as the first call.
   - `ensureThread refuses an anchor inside a thread`.
   - `unread counts messages after last_read_seq; markThreadRead clears it`.
@@ -111,10 +111,10 @@
   - `getLastAskedQuestion includes a legacy system card and prefers a newer card`.
   - `main-chat prompt context excludes thread messages`; `thread prompt context is the anchor then only its own thread, capped at 50`.
   - `getLastAgentMessage is scoped to the thread`.
-- [ ] **Step 2: Run** `npx vitest run --project @nema/hub threads` → FAIL.
-- [ ] **Step 3: Implement** the functions above. `listThreads` is one query grouping `messages` by `thread_id` joined to `threads`.
-- [ ] **Step 4: Run** `npx vitest run --project @nema/hub` and `npm run typecheck` → PASS (fix existing callers of the changed signatures).
-- [ ] **Step 5: Commit** `feat(hub): thread store and per-conversation context`
+- [x] **Step 2: Run** `npx vitest run --project @nema/hub threads` → FAIL.
+- [x] **Step 3: Implement** the functions above. `listThreads` is one query grouping `messages` by `thread_id` joined to `threads`.
+- [x] **Step 4: Run** `npx vitest run --project @nema/hub` and `npm run typecheck` → PASS (fix existing callers of the changed signatures).
+- [x] **Step 5: Commit** `feat(hub): thread store and per-conversation context`
 
 ### Task 3: `open_thread` room tool
 
@@ -128,13 +128,13 @@
 - Produces: `POST /room/threads` body `{ title: string (1–80) }` → `{ threadId }`. Anchor = the task's message (`ensureThread(..., "agent")`). If that message is already in a thread, the call renames it to `title` (`renameThread(db, id, title)`, added in `threads.ts`) and returns it. Emits `{ type: "thread.updated", thread }`.
 - Produces: `RoomClient.openThread(args: unknown): Promise<RoomResult>`; tool `open_thread` with parameters `{ title: string }` and description `"Move this conversation into a thread anchored on the current message. Use it when the topic needs a longer back-and-forth. Your reply will be posted in the thread."`
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
   - roomApi: `open_thread anchors on the task message`; `open_thread twice returns the same thread`; `open_thread on an existing thread renames it`; `open_thread from a thread task renames that thread`; `title is required`; `empty title is 400`.
   - cli: `roomTools lists open_thread`; `dispatchTool open_thread calls room.openThread`; `CLAUDE_ROOM_TOOLS contains mcp__room__open_thread`.
-- [ ] **Step 2: Run** `npx vitest run --project @nema/hub roomApi` and `npx vitest run --project @nema/cli` → FAIL.
-- [ ] **Step 3: Implement.** In `tools.ts` the "is room" check and the allowed-names error list include `open_thread`; the comment "three Room functions" becomes "four".
-- [ ] **Step 4: Run** → PASS.
-- [ ] **Step 5: Commit** `feat: let the agent open a thread`
+- [x] **Step 2: Run** `npx vitest run --project @nema/hub roomApi` and `npx vitest run --project @nema/cli` → FAIL.
+- [x] **Step 3: Implement.** In `tools.ts` the "is room" check and the allowed-names error list include `open_thread`; the comment "three Room functions" becomes "four".
+- [x] **Step 4: Run** → PASS.
+- [x] **Step 5: Commit** `feat: let the agent open a thread`
 
 ### Task 4: Reply routing and follow-ups in threads
 
@@ -151,10 +151,11 @@
   1. `conversationOf(taskMessage)` if non-null (message in a thread, or a thread already anchored on it by `open_thread` / `/thread`);
   2. else, grill on and `chooseAskedQuestion(touched, null)` selects an **open question added or updated** by this task → `ensureThread(taskMessage.id, <selected question title>, "grill")`;
   3. else null (main chat).
+- Finish the task status transition, ensure the reply thread, insert the reply and record question associations in one database transaction; emit events only after commit. A stale run token must not create a reply or thread. Inject an insert failure in a regression, verify rollback, then retry and assert exactly one reply.
 - `askedQuestion` = `chooseAskedQuestion(touched, null)` — exclude resolved/dropped questions; no `topOpenQuestion` fallback. Use this same selection for routing. After resolving `replyThread`, atomically store the reply and associate every open question touched by this task with that thread if not already associated. Include prior changes on retry; never relocate an existing association.
 - `buildTaskPrompt`: context via the Task 2 conversation filter (thread limit 50, main 20); `lastAskedQuestion` from `getLastAskedQuestion(db, ws, conversationOf(taskMessage))`; passes `conversation` (Task 5 type) to `buildPrompt`, built from `getThread` and the anchor message; `opened` is the thread's `openedBy`.
 
-- [ ] **Step 1: Failing tests** (daemonSocket harness already fakes a daemon):
+- [x] **Step 1: Failing tests** (daemonSocket harness already fakes a daemon):
   - `reply goes to the thread when the task message is in a thread`.
   - `reply goes to the thread opened by open_thread during the task` and the main chat gets no agent message.
   - `a main-chat task that adds a question replies in a new thread on its message`.
@@ -167,10 +168,10 @@
   - `edit of an anchor replies in its thread`.
   - `report that adds a question opens a thread on the report`.
   - `grill off: a task that adds a question replies in the main chat`.
-- [ ] **Step 2: Run** `npx vitest run --project @nema/hub daemonSocket` → FAIL.
-- [ ] **Step 3: Implement** the rule. Events: `message.created` carries the message (with `threadId`); after a thread message is added also emit `thread.updated` with the fresh `getThread` + counts.
-- [ ] **Step 4: Run** `npx vitest run --project @nema/hub` and `npm run typecheck` → PASS.
-- [ ] **Step 5: Commit** `feat(hub): route replies and follow-ups into threads`
+- [x] **Step 2: Run** `npx vitest run --project @nema/hub daemonSocket` → FAIL.
+- [x] **Step 3: Implement** the rule. Events: `message.created` carries the message (with `threadId`); after a thread message is added also emit `thread.updated` with the fresh `getThread` + counts.
+- [x] **Step 4: Run** `npx vitest run --project @nema/hub` and `npm run typecheck` → PASS.
+- [x] **Step 5: Commit** `feat(hub): route replies and follow-ups into threads`
 
 ### Task 5: Copilot prompt
 
@@ -192,17 +193,17 @@ Rule changes (Chinese text is the builder's wording; these assertions pin the co
 - Thread only: section `# 当前 thread：<title>` with the anchor `[id] role: content`; follow-up questions are asked in the reply, one at a time; `opened: "user"` adds "这是用户主动开的 thread，直接进入讨论。标题目前是用户输入的第一行；如果它不能概括这个话题，调用 `open_thread` 给出更好的标题。"
 - Removed: "最后的回复只简短总结做了什么", "不要在回复里提问，系统会自动从待确认中挑一个问题展示".
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
   - `main prompt keeps the must-write rule and offers open_thread`.
   - `thread prompt has the same knowledge rules as the main prompt` — the numbered `# 规则` lines about upsert/basis/question/source/conflict are identical between `{kind:"main"}` and `{kind:"thread"}` builds (anti-goal 2).
   - `thread prompt shows the anchor and title`; `a user-opened thread prompt asks the agent to rename a bad title via open_thread`; `an agent-opened thread prompt does not offer open_thread`.
   - `conflict rule names related and quotes` (anti-goal 1, prompt side).
   - `no summary-only reply rule remains`.
   - Update existing assertions that pinned the removed sentences.
-- [ ] **Step 2: Run** `npx vitest run --project @nema/hub prompt` → FAIL.
-- [ ] **Step 3: Implement.** Keep the knowledge rules in one array used by both conversation kinds; only the conversation-specific lines differ.
-- [ ] **Step 4: Run** → PASS.
-- [ ] **Step 5: Commit** `feat(hub): copilot prompt for the main chat and threads`
+- [x] **Step 2: Run** `npx vitest run --project @nema/hub prompt` → FAIL.
+- [x] **Step 3: Implement.** Keep the knowledge rules in one array used by both conversation kinds; only the conversation-specific lines differ.
+- [x] **Step 4: Run** → PASS.
+- [x] **Step 5: Commit** `feat(hub): copilot prompt for the main chat and threads`
 
 ### Task 6: UI API — threads, attention badge, withdraw
 
@@ -213,36 +214,38 @@ Rule changes (Chinese text is the builder's wording; these assertions pin the co
 **Interfaces:**
 - Produces (in `threads.ts`): `attentionCount(db, dataDir, workspaceId): Promise<number>`, `attentionCounts(db, dataDir): Promise<Record<string, number>>` (for `GET /workspaces`), `nextAttention(db, dataDir, workspaceId): Promise<string | null>` (thread id).
 - Routes:
+  - `GET /workspaces/:id/messages/:messageId` → raw `Message`, including numeric `seq` and `threadId`; missing or foreign-workspace message is 404. Keep static `/messages/search` registered first. This resolves source/quote jumps without scanning every thread.
   - `GET /workspaces/:id/threads` → `Thread[]`.
   - `GET /workspaces/:id/threads/:tid/messages` → `{ thread: Thread; anchor: Message; messages: Message[] }`.
   - `POST /workspaces/:id/threads` body `{ content, quoteMessageId? }` → `/thread`: in one transaction post the anchor user message (main chat), `ensureThread(anchor.id, <first line of content, max 80 code points>, "user")`, queue its task. Returns `{ message, thread, task }`.
   - `POST /workspaces/:id/threads/:tid/messages` body `{ content, quoteMessageId? }` → user message in the thread + task.
   - `POST /workspaces/:id/threads/:tid/read` body `{ throughSeq: number }` → 204; calls Task 2 validation and monotonic acknowledgement; emits `thread.updated`. Validate route workspace ownership before any mutation.
   - `POST /workspaces/:id/entries/:eid/withdraw` → entry; `KnowledgeStore.withdraw(id, { author: "user" })` sets `status: "dropped"`, reason `用户撤回`, leaves `basis` and `confirmedAt`; reindex + `knowledge.changed`.
-  - `GET /workspaces/:id/attention/next` → `{ threadId: string } | null`. Merge unread threads (timestamp of oldest unread message) and legacy open questions (creation timestamp), sort oldest first across both with a stable id tie-break. Legacy means `getQuestionThread(...)` returns null. For a legacy question, in one transaction recheck its association, choose its first valid main-chat source in this workspace or the latest main-chat message (create a system anchor without a task if neither exists), ensure the thread, and call `associateQuestion`. Only the transaction that inserts the association posts the system `askedQuestion` card with empty `changes`; concurrent/repeated calls return the existing association without another card. Explicit associations take precedence over creating-task inference in all attention queries. All mutations emit events after commit.
+  - `GET /workspaces/:id/attention/next` → `{ threadId: string } | null`. Merge unread threads (timestamp of oldest unread message) and legacy open questions (creation timestamp), sort oldest first across both with a stable id tie-break. Legacy means `getQuestionThread(...)` returns null. For a legacy question, in one transaction lock its workspace row before creating any fallback anchor, recheck its association, choose its first valid main-chat source in this workspace or the latest main-chat message (create a system anchor without a task if neither exists), ensure the thread, and call `associateQuestion`. Only the transaction that inserts the association posts the system `askedQuestion` card with empty `changes`; concurrent/repeated calls return the existing association without another card. Explicit associations take precedence over creating-task inference in all attention queries. All mutations emit events after commit.
 - `GET /workspaces` field `openQuestions` is replaced by `attention` = unread threads + legacy open questions (`attentionCount`). Web updated in Task 7.
 - `GET /workspaces/:id/messages` returns main-chat messages only (Task 2); the web gets thread rows from `GET /threads`.
 - Search covers thread messages too; results carry `threadId` so the web can open the window.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
   - `slash thread creates anchor, thread and task in one go`.
   - `thread post in archived workspace is 409` (both POST routes).
   - `thread post to another workspace's thread is 400`.
   - `read acknowledges throughSeq and emits thread.updated`; `a message arriving after the rendered seq remains unread`; `read rejects another workspace or thread seq`.
   - `attention counts unread threads plus legacy questions`; `a question added inside a thread is not legacy`; `withdrawn question no longer counts`.
-  - `attention/next opens a thread for a legacy question with its card`; `converted question stops counting as legacy even when its original task is not on the chosen anchor`; `concurrent and repeated conversion creates one association and one card`; `empty history creates a system anchor without a task`; `mixed unread threads and legacy questions are ordered globally oldest first`; `returns null when nothing needs attention`.
+  - `attention/next opens a thread for a legacy question with its card`; `converted question stops counting as legacy even when its original task is not on the chosen anchor`; `concurrent and repeated conversion creates one association and one card`; `empty history creates a system anchor without a task`; `concurrent empty-history conversion creates one anchor, thread and card`; `mixed unread threads and legacy questions are ordered globally oldest first`; `returns null when nothing needs attention`.
   - `answer after legacy conversion receives the system card question as lastAskedQuestion`.
   - store: `withdraw sets dropped and keeps basis`.
-- [ ] **Step 2: Run** `npx vitest run --project @nema/hub uiApi` and `npx vitest run --project @nema/knowledge store` → FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** → PASS.
-- [ ] **Step 5: Commit** `feat(hub): thread, attention and withdraw endpoints`
+- [x] **Step 2: Run** `npx vitest run --project @nema/hub uiApi` and `npx vitest run --project @nema/knowledge store` → FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** → PASS.
+- [x] **Step 5: Commit** `feat(hub): thread, attention and withdraw endpoints`
 
 ### Task 7: Web — thread row, thread view, floating window, `/thread`, badge, withdraw
 
 **Files:**
 - Create: `apps/web/components/ThreadView.tsx` (header, pinned anchor, messages, composer)
-- Create: `apps/web/components/ThreadWindows.tsx` (floating windows host, owned by `WorkspaceShell`)
+- Create: `apps/web/components/ThreadWindows.tsx` (floating windows host in a persistent root client provider, controlled by `WorkspaceShell`)
+- Modify: `apps/web/app/layout.tsx` (persistent client provider under i18n, retaining windows across workspace page remounts)
 - Create: `apps/web/app/w/[id]/t/[tid]/page.tsx` (full-page `ThreadView`, used by the desktop window)
 - Create: `apps/web/lib/threads.ts` — `openThread(workspaceId, threadId, host)`: desktop (`window.nemaWindowControls` present) → `window.open(threadUrl, "_blank")`; web → `host.open(threadId)`.
 - Modify: `apps/web/lib/hub.ts`, `apps/web/lib/types.ts`, `apps/web/lib/slash.ts`, `apps/web/components/{Chat,Composer,MessageItem,Sidebar,WorkspaceShell,EntryDetail}.tsx`, `apps/web/app/globals.css`, `apps/web/messages/{en,ja,zh}.json`
@@ -258,30 +261,30 @@ Rule changes (Chinese text is the builder's wording; these assertions pin the co
 - `ThreadView` acknowledges read after rendering on open/focus and after each rendered message batch while focused. Send `{ throughSeq }` from the highest displayed thread message, never a later event's seq or the server maximum; skip empty threads and unfocused/background windows.
 - Jump-to-message (`EntryDetail` source jump, search hit, quote block) opens the thread when the target message has a `threadId` (or is resolved via `GET /threads/:tid/messages`).
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
   - `ThreadView`: `shows the anchor and thread messages`; `sends in the thread`; `marks rendered messages read on open with throughSeq`; `does not acknowledge an unrendered arrival or background message`; `no /thread in its composer`.
   - `Chat`: `renders a thread row with unread count under the anchor`; `clicking the row opens the thread`; `no answer box in the main chat`.
   - `Composer`: `/thread text posts a new thread`.
   - `MessageItem`: `withdraw on an add chip calls withdraw`.
   - Sidebar: `badge shows attention and opens the next thread`.
   - `openThread uses window.open on desktop and the floating host on web`.
-- [ ] **Step 2: Run** `npx vitest run --project @nema/web` → FAIL.
-- [ ] **Step 3: Implement.** Floating window: fixed position bottom-right, stacked to the left for each additional one, header drag moves it, close removes it from the host; keyboard: Escape closes when focused. Follow the existing CSS variables in `globals.css`.
-- [ ] **Step 4: Run** `npx vitest run --project @nema/web`, `npm run lint -w apps/web` and `npm run typecheck` → PASS.
-- [ ] **Step 5: Commit** `feat(web): threads in their own window`
+- [x] **Step 2: Run** `npx vitest run --project @nema/web` → FAIL.
+- [x] **Step 3: Implement.** Floating window: fixed position bottom-right, stacked to the left for each additional one, header drag moves it, close removes it from the host; keyboard: Escape closes when focused. Follow the existing CSS variables in `globals.css`.
+- [x] **Step 4: Run** `npx vitest run --project @nema/web`, `npm run lint -w apps/web` and `npm run typecheck` → PASS.
+- [x] **Step 5: Commit** `feat(web): threads in their own window`
 
 ### Task 8: Desktop — thread windows
 
 **Files:**
-- Modify: `apps/desktop/security.cjs`, `apps/desktop/lifecycle.cjs`
-- Test: `apps/desktop/test/lifecycle.test.mjs`, `apps/desktop/test/security.test.mjs` (if present)
+- Modify: `apps/desktop/security.cjs`, `apps/desktop/lifecycle.cjs`, `apps/desktop/window-controls.cjs` (one sender-scoped IPC dispatcher for multiple secure app windows)
+- Test: `apps/desktop/test/lifecycle.test.mjs`, `apps/desktop/test/security.test.mjs` (if present), `apps/desktop/test/window-controls.test.mjs` (multiple owners and independent cleanup)
 
 **Interfaces:**
-- `THREAD_WINDOW_PATH = /^\/w\/ws_[A-Za-z0-9_-]{1,32}\/t\/m_[A-Za-z0-9_-]{1,32}$/`; `isThreadWindowUrl(url, origin)` same-origin, no query or hash.
-- `openThreadWindow(url, origin)`: one window per thread url — focus the existing one if open. Uses `createSecureWindowOptions(origin)` (the app page, with preload, like the main window), not the diagram options. Its navigation is limited to its own thread URL.
+- `THREAD_WINDOW_PATH = /^\/w\/ws_[A-Za-z0-9_-]{1,32}\/t\/m_[A-Za-z0-9_-]{1,32}$/`; `isThreadWindowUrl(url, origin)` same-origin, no hash; optional exactly one `messageId` query with the strict message id pattern is allowed for source navigation. Reject arbitrary, invalid and duplicate query parameters.
+- `openThreadWindow(url, origin)`: one window per canonical thread path — focus the existing one if open, delivering/navigating to a new validated `messageId` focus target when supplied. Uses `createSecureWindowOptions(origin)` (the app page, with preload, like the main window), not the diagram options. Its navigation is limited to its own canonical thread path with the same validated optional focus query.
 - `setWindowOpenHandler` handles thread URLs before diagrams; everything else unchanged.
 
-- [ ] **Step 1: Failing tests:** `opens a same-origin thread URL in its own window`; `a second open of the same thread focuses the existing window`; `thread URL with a query is denied`; existing diagram and external-link tests stay green.
+- [ ] **Step 1: Failing tests:** `opens a same-origin thread URL in its own window`; `a second open of the same thread focuses the existing window`; `thread URL with an arbitrary query is denied`; `valid messageId query focuses the same thread window`; `invalid/duplicate messageId or a hash is denied`; existing diagram and external-link tests stay green.
 - [ ] **Step 2: Run** `npx vitest run --project @nema/desktop` → FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** → PASS.
