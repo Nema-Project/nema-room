@@ -32,6 +32,12 @@
 - 支持 BYOK 按量 API：设置 `authMode=byok`、`model` 和可选的 `byokBaseUrl`（默认 `https://api.openai.com/v1`），再用 `nema auth byok` 从 stdin 写入 key；它不使用订阅额度，遇到 401 也不会刷新 key。
 - `authMode=compat` uses the existing Codex login file (`~/.codex/auth.json`) to call the Codex responses endpoint directly. Nema reads that file and does not refresh or rewrite it.
 - Workspace names in the sidebar can be archived from a right-click menu, or permanently deleted after a red confirmation.
+- A desktop app (Electron) runs Nema Room on one machine without Docker or a database server: an on-disk PGlite database, a single-owner local core, a protected same-origin gateway, bundled Node and Git, a tray that keeps the core running after the window closes, and a custom window title bar. Windows packaging is verified; macOS is not yet, builds are unsigned, and nothing has been published.
+- Model settings in the app: choose the Agent runtime, model service and sign-in method, enter an API key or Claude Code token, and start or cancel a login, without a terminal. Credentials are never shown again.
+- Creating a workspace shows progress, and a failed or pending draft can be retried or discarded.
+- The Agent can run `gh` against GitHub issues, pull requests, labels, workflow runs and Projects through two tools, `github__gh_read` and `github__gh_write`. A fixed command allowlist applies, `--repo` and Project `--owner` must belong to the workspace's bound repositories, and there is no `gh api`, file or editor flag, merge, delete or auth command. Writes are off until the workspace turns on "Let the agent change GitHub" in Code & plugins.
+- `exportSnapshot` and `importLegacySnapshot` move an existing workspace database and its knowledge Git history into an empty desktop home. The import validates in a staging directory under the single-owner lease, rebuilds repositories without hooks, remotes or config, drops old run tokens, and can be recovered after an interruption. Credentials are never exported.
+- `nema report`, `nema report hook` and `nema wp` find a running desktop app when neither `--hub` nor `NEMA_HUB_URL` is given, and send the report token only after the app proves its identity. The gateway forwards only `POST /report`, `POST /report/hook` and `GET /report/workpackages` with the caller's bearer token.
 
 ### Changed
 
@@ -47,6 +53,9 @@
 - Dragging the workspace list or the knowledge panel below 160px collapses that column to a rail. Dragging or clicking the rail opens it again.
 - While a column divider is dragged, the handle shows a warm gray. The resting lines stay the pale rule.
 - Settings shows a small geometric mark beside its label. Each column divider has a square button that collapses and expands that column.
+- GitHub access defaults to the signed-in local `gh` command instead of `github-mcp-server` and a saved token. Nema no longer asks for or stores a GitHub token; the old `nema auth github` command and token file still exist but are not read by default.
+- The plugins pages no longer show an installed or connected line for GitHub.
+- The desktop core registers the user-level `~/.nema/report-token`, so coding-agent hooks installed once keep working with the desktop app.
 
 ### Fixed
 
