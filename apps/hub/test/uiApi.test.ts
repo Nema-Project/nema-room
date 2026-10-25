@@ -141,6 +141,25 @@ describe("ui api", () => {
     expect(await db.query("select 1 from message_versions where message_id = $1", [id])).toHaveLength(0);
   });
 
+  test("search matches the current text only, literally, newest first", async () => {
+    const post = async (content: string) => {
+      const created = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content }));
+      const task = (await claimNextTask(db, "d1"))!;
+      await finishTask(db, task.id, { ok: true });
+      return created.message.id as string;
+    };
+    const a = await post("100% done");
+    const b = await post("100% done too");
+    const renamed = await post("100% later");
+    expect((await req("PATCH", `/api/workspaces/${ws}/messages/${renamed}`, { content: "renamed" })).status).toBe(200);
+    const ids = async (q: string) =>
+      (await json(await req("GET", `/api/workspaces/${ws}/messages/search?q=${encodeURIComponent(q)}`))).map((m: { id: string }) => m.id);
+    expect(await ids("100%")).toEqual([b, a]);
+    expect(await ids("%")).toEqual([b, a]);
+    expect(await ids("_")).toEqual([]);
+    expect(await ids(" ")).toEqual([]);
+  });
+
   test("workspaces create/patch/validation", async () => {
     const c = await json(await req("POST", "/api/workspaces", { name: "New" }));
     expect(c.name).toBe("New");

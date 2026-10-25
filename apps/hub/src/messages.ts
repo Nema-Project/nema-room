@@ -98,6 +98,18 @@ export const EDIT_BUSY_MESSAGE = "message is still being processed";
 
 export type MessageVersion = { version: number; content: string; createdAt: string };
 
+/** Current message text only. `%`, `_`, and `\` in `q` are literal. Blank `q` matches nothing. */
+export async function searchMessages(db: Db, workspaceId: string, q: string): Promise<Message[]> {
+  const term = q.trim();
+  if (term === "") return [];
+  const pattern = "%" + term.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+  const rows = await db.query<Row>(
+    `select ${COLS} from messages where workspace_id = $1 and content ilike $2 escape '\\' order by seq desc limit 50`,
+    [workspaceId, pattern],
+  );
+  return rows.map(toMessage);
+}
+
 export async function listMessageVersions(db: Db, messageId: string): Promise<MessageVersion[]> {
   const rows = await db.query<{ version: number; content: string; created_at: Date | string }>(
     `select version, content, created_at from message_versions where message_id = $1 order by version asc`,

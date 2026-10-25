@@ -7,7 +7,7 @@ import type { Db } from "./db/db.js";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
 import type { EventBus, HubEvent } from "./events.js";
 import { indexEntry, openQuestionCounts, timeline, withDiagramStatus } from "./entryIndex.js";
-import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, editUserMessage, getMessage, listMessageVersions, listMessages, MessageOpError, postSystemTask, postUserMessage } from "./messages.js";
+import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, editUserMessage, getMessage, listMessageVersions, listMessages, MessageOpError, postSystemTask, postUserMessage, searchMessages } from "./messages.js";
 import { vendoredArchify, type Archify } from "./diagrams.js";
 import { PluginError, daemonHttpStatus, listExtensions, pluginsForUi, setPluginState, workspacePluginState } from "./plugins.js";
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
@@ -247,6 +247,8 @@ export function uiRoutes(deps: UiDeps): Hono {
   });
 
   app.get("/workspaces/:id/messages", async (c) => c.json(await listMessages(db, c.req.param("id")!)));
+
+  app.get("/workspaces/:id/messages/search", async (c) => c.json(await searchMessages(db, c.req.param("id")!, c.req.query("q") ?? "")));
 
   app.get("/workspaces/:id/messages/:messageId/versions", async (c) => {
     const message = await getMessage(db, c.req.param("messageId")!);
