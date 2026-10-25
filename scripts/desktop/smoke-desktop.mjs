@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { access, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -150,6 +150,25 @@ async function loadRuntime(payload) {
   return import(pathToFileURL(modulePath).href);
 }
 
+export async function extractPortableZip(zipFile, installDir) {
+  const extractDir = path.join(await realpath(os.tmpdir()), `nema-smoke-extract-${randomUUID()}`);
+  await mkdir(extractDir);
+  try {
+    // System tar.exe uses the ANSI code page and cannot chdir into 東京 on an en-US runner.
+    const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
+    const tarExe = path.join(systemRoot, 'System32', 'tar.exe');
+    const extract = spawn(tarExe, ['-xf', zipFile, '-C', extractDir], { stdio: 'inherit', windowsHide: true });
+    const extractExit = await new Promise((resolvePromise, reject) => {
+      extract.once('error', reject);
+      extract.once('exit', (code) => resolvePromise(code));
+    });
+    if (extractExit !== 0) throw new Error(`Windows tar extraction failed with exit ${extractExit}`);
+    await cp(extractDir, installDir, { recursive: true });
+  } finally {
+    await rm(extractDir, { recursive: true, force: true });
+  }
+}
+
 async function smoke(args) {
   const { zipFile } = parseSmokeArgs(args);
   await access(zipFile);
@@ -161,15 +180,8 @@ async function smoke(args) {
   const home = path.join(profile, '.nema', 'desktop');
   const codexHome = path.join(tempRoot, 'isolated Codex home');
   const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
-  const tarExe = path.join(systemRoot, 'System32', 'tar.exe');
   const artifactStat = await stat(zipFile);
-  await mkdir(installDir, { recursive: false });
-  const extract = spawn(tarExe, ['-xf', zipFile, '-C', installDir], { stdio: 'inherit', windowsHide: true });
-  const extractExit = await new Promise((resolvePromise, reject) => {
-    extract.once('error', reject);
-    extract.once('exit', (code) => resolvePromise(code));
-  });
-  if (extractExit !== 0) throw new Error(`Windows tar extraction failed with exit ${extractExit}`);
+  await extractPortableZip(zipFile, installDir);
   const executable = await findExecutable(installDir);
   if (!executable) throw new Error('Portable ZIP did not contain Nema.exe');
   const asarPath = path.join(path.dirname(executable), 'resources', 'app.asar');

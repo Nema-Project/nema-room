@@ -8,6 +8,7 @@
 - Desktop staging downloads the Electron binary when it is missing. Electron 45 no longer does that during `npm ci`.
 - Desktop tool staging follows a symlink in a parent directory, such as macOS `/var`, and still refuses a symlink at the configured directory itself. Tool copies compare those links against the real directory, so Git's in-tree links stay inside the payload.
 - The Windows guardian links `advapi32`. GitHub's Clang needs that library for the private pipe ACL.
+- Windows packaged-app smoke extracts the ZIP in an ASCII directory, then copies it into the `東京` proof path. System `tar.exe` cannot enter that path on an English code page.
 
 ### Added
 
