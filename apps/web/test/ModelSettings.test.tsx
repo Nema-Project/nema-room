@@ -52,10 +52,10 @@ beforeEach(() => {
 
 describe("ModelSettings", () => {
   it.each([
-    ["en", "SIWC direct", "Compatibility with Codex login", "BYOK direct", "Claude Code"],
-    ["ja", "SIWC 直接接続", "既存の Codex ログインを使用", "BYOK 直接接続", "Claude Code"],
-    ["zh", "SIWC 直接连接", "兼容现有 Codex 登录", "BYOK 直接连接", "Claude Code"],
-  ])("renders the four existing modes in %s", async (locale, ...labels) => {
+    ["en", "Agent runtime", "Model service", "ChatGPT sign-in", "Model"],
+    ["ja", "エージェント", "モデル接続", "ChatGPT のログイン方法", "モデル"],
+    ["zh", "Agent 运行环境", "模型服务", "ChatGPT 登录方式", "模型"],
+  ])("renders contextual connection controls in %s", async (locale, ...labels) => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(reply(settings));
     setup(fetchMock, locale);
     for (const label of labels) expect(await screen.findByLabelText(label)).toBeTruthy();
@@ -77,13 +77,88 @@ describe("ModelSettings", () => {
       }));
     vi.stubGlobal("fetch", fetchMock);
     setup(fetchMock);
-    await screen.findByLabelText("SIWC direct");
-    await userEvent.click(screen.getByLabelText(mode === "siwc" ? "SIWC direct" : mode === "compat" ? "Compatibility with Codex login" : mode === "byok" ? "BYOK direct" : "Claude Code"));
+    await screen.findByLabelText("Agent runtime");
+    if (mode === "claude") {
+      await userEvent.selectOptions(screen.getByLabelText("Agent runtime"), "claude");
+    } else if (mode === "byok") {
+      await userEvent.selectOptions(screen.getByLabelText("Model service"), "api");
+    } else if (mode === "compat") {
+      await userEvent.selectOptions(screen.getByLabelText("ChatGPT sign-in"), "codex");
+    }
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock.mock.calls[1][0]).toBe("/_nema/settings");
     expect(fetchMock.mock.calls[1][1]?.method).toBe("PATCH");
     expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({ adapter, authMode });
+  });
+
+  it.each([
+    ["compat", "codex-direct", "compat", "codex", false],
+    ["byok", "codex-direct", "byok", "", true],
+    ["claude", "claude-code", "siwc", "", false],
+  ])("initially selects saved %s configuration and its relevant fields", async (mode, adapter, authMode, signIn, hasApiFields) => {
+    const saved = {
+      ...settings,
+      config: { ...config, adapter, authMode },
+      auth: { ...settings.auth, mode: authMode, credential: mode === "claude" ? "claude" : mode },
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(reply(saved));
+    setup(fetchMock);
+    const agent = await screen.findByLabelText("Agent runtime") as HTMLSelectElement;
+    expect(agent.value).toBe(mode === "claude" ? "claude" : "nema");
+    if (mode === "byok") {
+      expect((screen.getByLabelText("Model service") as HTMLSelectElement).value).toBe("api");
+      expect(screen.getByLabelText("API key")).toBeTruthy();
+      expect(screen.getByLabelText("Service address (optional)")).toBeTruthy();
+    } else if (mode === "compat") {
+      expect((screen.getByLabelText("ChatGPT sign-in") as HTMLSelectElement).value).toBe(signIn);
+      expect(screen.queryByLabelText("API key")).toBeNull();
+    } else {
+      expect(screen.getByText(/Claude Code is not installed here/)).toBeTruthy();
+      expect(screen.queryByLabelText("Model service")).toBeNull();
+    }
+    expect(hasApiFields).toBe(mode === "byok");
+  });
+
+  it.each([
+    ["en", "ChatGPT with browser sign-in"],
+    ["ja", "ChatGPT をブラウザーでログイン"],
+    ["zh", "通过浏览器登录 ChatGPT"],
+  ])("uses user-facing saved-connection wording for unsaved changes in %s", async (locale, chatgptBrowser) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(reply(settings));
+    setup(fetchMock, locale);
+    const service = await screen.findByLabelText(locale === "en" ? "Model service" : locale === "ja" ? "モデル接続" : "模型服务") as HTMLSelectElement;
+    await userEvent.selectOptions(service, "api");
+    expect(service.value).toBe("api");
+    expect(screen.getByText(new RegExp(chatgptBrowser))).toBeTruthy();
+    expect(screen.queryByText(/SIWC|BYOK/i)).toBeNull();
+  });
+
+  it("renders saved custom model IDs and saves automatic selection as null", async () => {
+    const saved = { ...settings, config: { ...config, model: " custom-exact " } };
+    const saveExisting = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(reply(saved))
+      .mockResolvedValueOnce(reply({ config: saved.config }))
+      .mockResolvedValueOnce(reply(saved));
+    vi.stubGlobal("fetch", saveExisting);
+    const existingView = setup(saveExisting);
+    await userEvent.click(await screen.findByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(saveExisting).toHaveBeenCalledTimes(3));
+    expect(JSON.parse(String(saveExisting.mock.calls[1][1]?.body))).toMatchObject({ model: " custom-exact " });
+    existingView.unmount();
+
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(reply(saved))
+      .mockResolvedValueOnce(reply({ config: { ...config, model: null } }))
+      .mockResolvedValueOnce(reply(settings));
+    vi.stubGlobal("fetch", fetchMock);
+    setup(fetchMock);
+    await userEvent.selectOptions(await screen.findByLabelText("Model"), "custom");
+    expect((screen.getByLabelText("Custom model ID") as HTMLInputElement).value).toBe(" custom-exact ");
+    await userEvent.selectOptions(screen.getByLabelText("Model"), "default");
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({ model: null });
   });
 
   it("validates and lets optional model and base URL overrides be cleared", async () => {
@@ -96,19 +171,20 @@ describe("ModelSettings", () => {
       .mockResolvedValue(reply(settings));
     vi.stubGlobal("fetch", fetchMock);
     setup(fetchMock);
-    await screen.findByLabelText("BYOK direct");
-    await userEvent.click(screen.getByLabelText("BYOK direct"));
-    await userEvent.type(screen.getByLabelText("Model override (optional)"), "gpt-custom");
-    await userEvent.type(screen.getByLabelText("BYOK base URL (optional)"), "http://example.com/v1");
+    await screen.findByLabelText("Model service");
+    await userEvent.selectOptions(screen.getByLabelText("Model service"), "api");
+    await userEvent.selectOptions(screen.getByLabelText("Model"), "custom");
+    await userEvent.type(screen.getByLabelText("Custom model ID"), "gpt-custom");
+    await userEvent.type(screen.getByLabelText("Service address (optional)"), "http://example.com/v1");
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Enter an HTTPS URL or a localhost URL.");
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    await userEvent.clear(screen.getByLabelText("BYOK base URL (optional)"));
+    await userEvent.clear(screen.getByLabelText("Service address (optional)"));
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({ adapter: "codex-direct", authMode: "byok", model: "gpt-custom", byokBaseUrl: null });
-    await userEvent.clear(screen.getByLabelText("Model override (optional)"));
+    await userEvent.selectOptions(screen.getByLabelText("Model"), "default");
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
     expect(JSON.parse(String(fetchMock.mock.calls[3][1]?.body))).toMatchObject({ model: null });
@@ -120,8 +196,8 @@ describe("ModelSettings", () => {
       .mockResolvedValueOnce(reply({ error: "invalid_request", detail: "raw-provider-marker" }, 400));
     vi.stubGlobal("fetch", fetchMock);
     setup(fetchMock);
-    await screen.findByLabelText("SIWC direct");
-    await userEvent.click(screen.getByLabelText("Compatibility with Codex login"));
+    await screen.findByLabelText("Agent runtime");
+    await userEvent.selectOptions(screen.getByLabelText("ChatGPT sign-in"), "codex");
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Some settings are invalid. Review the values and try again.");
@@ -141,8 +217,8 @@ describe("ModelSettings", () => {
       .mockResolvedValueOnce(reply({ state: "running" }));
     vi.stubGlobal("fetch", fetchMock);
     setup(fetchMock);
-    await screen.findByLabelText("SIWC direct");
-    await userEvent.click(screen.getByLabelText("Compatibility with Codex login"));
+    await screen.findByLabelText("Agent runtime");
+    await userEvent.selectOptions(screen.getByLabelText("ChatGPT sign-in"), "codex");
     const loginButton = screen.getByRole("button", { name: "Start login" }) as HTMLButtonElement;
     expect(loginButton.disabled).toBe(true);
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
@@ -159,7 +235,7 @@ describe("ModelSettings", () => {
       .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     vi.stubGlobal("fetch", fetchMock);
     setup(fetchMock);
-    const input = await screen.findByLabelText("BYOK API key") as HTMLInputElement;
+    const input = await screen.findByLabelText("API key") as HTMLInputElement;
     expect(input.type).toBe("password");
     expect(input.value).toBe("");
     await userEvent.type(input, "secret-marker");
@@ -179,8 +255,8 @@ describe("ModelSettings", () => {
     }));
     vi.stubGlobal("fetch", fetchMock);
     setup(fetchMock);
-    await userEvent.type(await screen.findByLabelText("BYOK API key"), "draft-secret");
-    await userEvent.click(screen.getByLabelText("Claude Code"));
+    await userEvent.type(await screen.findByLabelText("API key"), "draft-secret");
+    await userEvent.selectOptions(screen.getByLabelText("Agent runtime"), "claude");
     const claudeInput = screen.getByLabelText("Claude Code token") as HTMLInputElement;
     expect(claudeInput.type).toBe("password");
     expect(claudeInput.value).toBe("");
@@ -199,7 +275,7 @@ describe("ModelSettings", () => {
       .mockResolvedValue(reply({ state: "failed", error: "login_failed" }));
     vi.stubGlobal("fetch", fetchMock);
     setup(fetchMock, "en", statusFetchMock);
-    await screen.findByLabelText("SIWC direct");
+    await screen.findByLabelText("Agent runtime");
     const probe = screen.getByRole("button", { name: "Test connection" }) as HTMLButtonElement;
     expect(probe.disabled).toBe(true);
     await userEvent.click(screen.getByLabelText("I understand this may use model quota"));
@@ -222,7 +298,7 @@ describe("ModelSettings", () => {
       .mockResolvedValueOnce(reply({ state: "running" }));
     vi.stubGlobal("fetch", fetchMock);
     setup(fetchMock);
-    await screen.findByLabelText("SIWC direct");
+    await screen.findByLabelText("Agent runtime");
     const probe = screen.getByRole("button", { name: "Test connection" }) as HTMLButtonElement;
     expect(probe.disabled).toBe(true);
     expect(fetchMock.mock.calls.some(([url]) => url === "/_nema/auth/probe")).toBe(false);
@@ -236,8 +312,8 @@ describe("ModelSettings", () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(reply(settings));
     vi.stubGlobal("fetch", fetchMock);
     setup(fetchMock);
-    await screen.findByLabelText("SIWC direct");
-    await userEvent.click(screen.getByLabelText("Claude Code"));
+    await screen.findByLabelText("Agent runtime");
+    await userEvent.selectOptions(screen.getByLabelText("Agent runtime"), "claude");
     expect(screen.getByText("Connection testing is not available for Claude Code.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Test connection" })).toBeNull();
     expect(fetchMock.mock.calls.some(([url]) => url === "/_nema/auth/probe")).toBe(false);
@@ -254,7 +330,7 @@ describe("ModelSettings", () => {
       .mockResolvedValueOnce(reply({ loggedOut: false, kind: "compat" }));
     vi.stubGlobal("fetch", fetchMock);
     setup(fetchMock);
-    await screen.findByLabelText("Compatibility with Codex login");
+    await screen.findByLabelText("ChatGPT sign-in");
     await userEvent.click(screen.getByRole("button", { name: "Log out of Nema Room" }));
     expect(await screen.findByText("Compatibility mode does not change the Codex login files.")).toBeTruthy();
     expect(screen.getByText("Credentials are saved.")).toBeTruthy();
@@ -272,7 +348,7 @@ describe("ModelSettings", () => {
       .mockResolvedValue(reply({ state: "succeeded", error: null }));
     vi.stubGlobal("fetch", fetchMock);
     setup(fetchMock, "en", statusFetchMock);
-    await screen.findByLabelText("SIWC direct");
+    await screen.findByLabelText("Agent runtime");
     await userEvent.click(screen.getByRole("button", { name: "Start login" }));
     expect(await screen.findByText("Authentication task completed.", {}, { timeout: 3000 })).toBeTruthy();
     expect(await screen.findByText("Credentials are saved.")).toBeTruthy();
@@ -284,7 +360,7 @@ describe("ModelSettings", () => {
       .mockResolvedValueOnce(reply(settings))
       .mockResolvedValueOnce(reply({ state: "running" }));
     const view = setup(fetchMock, "en", statusFetchMock);
-    await screen.findByLabelText("SIWC direct");
+    await screen.findByLabelText("Agent runtime");
     vi.useFakeTimers();
     try {
       fireEvent.click(screen.getByRole("button", { name: "Start login" }));
@@ -308,12 +384,12 @@ describe("ModelSettings", () => {
       .mockResolvedValueOnce(reply(settings))
       .mockResolvedValueOnce(reply({ state: "cancelled", error: null }));
     setup(fetchMock, "en", statusFetchMock, <ReopenableSettings />);
-    await screen.findByLabelText("SIWC direct");
+    await screen.findByLabelText("Agent runtime");
     await waitFor(() => expect(statusFetchMock).toHaveBeenCalledTimes(1));
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     await userEvent.click(screen.getByRole("button", { name: "Reopen settings" }));
     expect(await screen.findByText("Authentication task in progress…")).toBeTruthy();
-    await userEvent.click(screen.getByLabelText("Claude Code"));
+    expect((screen.getByLabelText("Agent runtime") as HTMLSelectElement).disabled).toBe(true);
     expect(screen.getByRole("button", { name: "Cancel authentication task" })).toBeTruthy();
 
     await act(async () => finishFirstStatus(reply({ state: "idle", error: null })));
@@ -335,7 +411,7 @@ describe("ModelSettings", () => {
       ? { state: "succeeded", error: null }
       : { state: "idle", error: null })));
     setup(fetchMock, "en", statusFetchMock);
-    await screen.findByLabelText("SIWC direct");
+    await screen.findByLabelText("Agent runtime");
     await waitFor(() => expect((screen.getByRole("button", { name: "Start login" }) as HTMLButtonElement).disabled).toBe(false));
     loginStarted = true;
     await userEvent.click(screen.getByRole("button", { name: "Start login" }));
@@ -363,7 +439,7 @@ describe("ModelSettings", () => {
       return Promise.resolve(reply({ state: "failed", error: "login_failed" }));
     });
     setup(fetchMock, "en", statusFetchMock);
-    await screen.findByLabelText("SIWC direct");
+    await screen.findByLabelText("Agent runtime");
     await waitFor(() => expect((screen.getByRole("button", { name: "Start login" }) as HTMLButtonElement).disabled).toBe(false));
     const callsBeforeLogin = statusFetchMock.mock.calls.length;
     loginStarted = true;
@@ -399,7 +475,7 @@ describe("ModelSettings", () => {
       .mockResolvedValueOnce(reply({ state: "idle", error: null }))
       .mockResolvedValueOnce(reply({ state: "running", error: null }));
     setup(fetchMock, "en", statusFetchMock, <ReopenableSettings />);
-    await screen.findByLabelText("BYOK direct");
+    await screen.findByLabelText("Model service");
     await waitFor(() => expect(statusFetchMock).toHaveBeenCalledTimes(1));
     await userEvent.click(screen.getByLabelText("I understand this may use model quota"));
     await userEvent.click(screen.getByRole("button", { name: "Test connection" }));
@@ -407,7 +483,7 @@ describe("ModelSettings", () => {
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     await userEvent.click(screen.getByRole("button", { name: "Reopen settings" }));
     expect(await screen.findByText("Authentication task in progress…")).toBeTruthy();
-    await userEvent.click(screen.getByLabelText("Claude Code"));
+    await userEvent.selectOptions(screen.getByLabelText("Agent runtime"), "claude");
     expect(screen.getByRole("button", { name: "Cancel authentication task" })).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Cancel authentication task" }));
     expect(await screen.findByText("Authentication task cancelled.")).toBeTruthy();
@@ -421,7 +497,7 @@ describe("ModelSettings", () => {
       .mockResolvedValueOnce(reply({ error: "invalid_request" }, 400));
     const statusFetchMock = vi.fn<typeof fetch>(() => new Promise((resolve) => { finishInitialStatus = resolve; }));
     setup(fetchMock, "en", statusFetchMock);
-    await screen.findByLabelText("SIWC direct");
+    await screen.findByLabelText("Agent runtime");
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Some settings are invalid.");
 
@@ -433,8 +509,8 @@ describe("ModelSettings", () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(reply(settings));
     vi.stubGlobal("fetch", fetchMock);
     setup(fetchMock);
-    expect(await screen.findByText("Claude Code tools are optional; SIWC and BYOK direct modes work without them.")).toBeTruthy();
-    expect(screen.getByText("GitHub tools are optional and are not required for direct model use.")).toBeTruthy();
-    expect(screen.getByLabelText("SIWC direct")).toBeTruthy();
+    expect(await screen.findByLabelText("Agent runtime")).toBeTruthy();
+    expect(screen.queryByLabelText(/GitHub.*(?:token|access)/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /GitHub.*(?:token|credential)/i })).toBeNull();
   });
 });

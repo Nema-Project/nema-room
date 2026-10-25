@@ -73,10 +73,11 @@ describe("PluginsPage", () => {
     }
     expect(screen.getByText("Sends data out").classList.contains("red")).toBe(true);
     expect(screen.getByText("Not installed 令牌不存在")).toBeTruthy();
+    expect(screen.getByText("GitHub connection is not available.")).toBeTruthy();
     expect(screen.getByText("issue_read")).toBeTruthy();
   });
 
-  it("the plugins page shows GitHub as sends data out, with the login hint when no token", async () => {
+  it("shows GitHub catalog availability and local connection options when disconnected", async () => {
     vi.mocked(hub.listPlugins).mockResolvedValue([catalog[0]!, { ...catalog[1]!, loggedIn: false }]);
     render(
       <I18nProvider>
@@ -87,16 +88,16 @@ describe("PluginsPage", () => {
     const heading = await screen.findByRole("heading", { name: "GitHub" });
     const block = heading.closest("section")!;
     expect(within(block).getByText("Sends data out").classList.contains("red")).toBe(true);
-    expect(within(block).getByText("No token")).toBeTruthy();
-    expect(within(block).getByText("Run this in a terminal and paste a personal access token on stdin")).toBeTruthy();
-    expect(within(block).getByText("nema auth github").tagName).toBe("CODE");
-    expect(within(block).queryByText("Token saved")).toBeNull();
+    expect(within(block).getByText("Not installed 令牌不存在")).toBeTruthy();
+    expect(within(block).getByText("GitHub connection is not available.")).toBeTruthy();
+    expect(within(block).getByText(/authenticated local gh command or an MCP connection configured elsewhere/)).toBeTruthy();
+    expect(within(block).queryByText(/nema auth github|paste a personal access token/i)).toBeNull();
     // graphify has no login state.
     const graphify = screen.getByRole("heading", { name: "graphify" }).closest("section")!;
-    expect(within(graphify).queryByText("No token")).toBeNull();
+    expect(within(graphify).queryByText("GitHub connection is not available.")).toBeNull();
   });
 
-  it("the plugins page shows a saved GitHub token without the hint", async () => {
+  it("shows connected GitHub catalog status and retains program availability", async () => {
     vi.mocked(hub.listPlugins).mockResolvedValue([{ ...catalog[1]!, installed: true, detail: "v1.0.0", loggedIn: true }]);
     render(
       <I18nProvider>
@@ -104,9 +105,17 @@ describe("PluginsPage", () => {
       </I18nProvider>,
     );
 
-    expect(await screen.findByText("Token saved")).toBeTruthy();
-    expect(screen.queryByText("No token")).toBeNull();
-    expect(screen.queryByText("nema auth github")).toBeNull();
+    expect(await screen.findByText("GitHub connection is available.")).toBeTruthy();
+    expect(screen.getByText("Installed v1.0.0")).toBeTruthy();
+  });
+
+  it("shows connection guidance without credential controls or token commands", async () => {
+    vi.mocked(hub.listPlugins).mockResolvedValue([{ ...catalog[1]!, loggedIn: false }]);
+    render(<I18nProvider><PluginsPage /></I18nProvider>);
+    await screen.findByRole("heading", { name: "GitHub" });
+    expect(screen.queryByLabelText(/GitHub.*token/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /save|remove token/i })).toBeNull();
+    expect(screen.getByText(/authenticated local gh command or an MCP connection configured elsewhere/)).toBeTruthy();
   });
 
   it("opens from the sidebar plugins entry", async () => {

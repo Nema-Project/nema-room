@@ -161,12 +161,12 @@ describe("message files", () => {
       "impl.mismatch": { zh: "有出入", ja: "不一致", en: "Mismatch" },
       "impl.confirm": { zh: "确认已实现", ja: "実装済みと確認", en: "Confirm implemented" },
       "impl.confirmedByUser": { zh: "由用户确认", ja: "ユーザーが確認", en: "Confirmed by user" },
-      "github.loggedIn": { zh: "已保存令牌", ja: "トークン保存済み", en: "Token saved" },
-      "github.notLoggedIn": { zh: "未保存令牌", ja: "トークン未保存", en: "No token" },
-      "github.loginHint": {
-        zh: "在终端运行以下命令，从标准输入粘贴 personal access token",
-        ja: "ターミナルで次のコマンドを実行し、標準入力に personal access token を貼り付けます",
-        en: "Run this in a terminal and paste a personal access token on stdin",
+      "github.connected": { zh: "GitHub 连接可用。", ja: "GitHub 接続を利用できます。", en: "GitHub connection is available." },
+      "github.notConnected": { zh: "GitHub 连接不可用。", ja: "GitHub 接続を利用できません。", en: "GitHub connection is not available." },
+      "github.localConnectionHelp": {
+        zh: "GitHub 访问可使用已登录的本地 gh 命令，或在其他位置配置的 MCP 连接。",
+        ja: "GitHub へのアクセスには、認証済みのローカル gh コマンドまたは別途設定した MCP 接続を利用できます。",
+        en: "GitHub access can use an already authenticated local gh command or an MCP connection configured elsewhere.",
       },
       "github.noRemote": { zh: "没有 GitHub 远端", ja: "GitHub リモートなし", en: "No GitHub remote" },
       "code.plugins": { zh: "本 workspace 的插件", ja: "この workspace のプラグイン", en: "Plugins for this workspace" },

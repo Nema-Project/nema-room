@@ -47,17 +47,10 @@ export function PluginsPage({ onClose }: { onClose?: () => void }) {
               {plugin.installed ? t("plugins.installed") : t("plugins.notInstalled")}
               {plugin.detail ? ` ${plugin.detail}` : ""}
             </p>
-            {plugin.id === "github" &&
-              (plugin.loggedIn ? (
-                <p className="kmeta">{t("github.loggedIn")}</p>
-              ) : (
-                <>
-                  <p className="kmeta">{t("github.notLoggedIn")}</p>
-                  <p className="help">
-                    {t("github.loginHint")} <code>nema auth github</code>
-                  </p>
-                </>
-              ))}
+            {plugin.id === "github" && <>
+              <p className="kmeta">{plugin.loggedIn ? t("github.connected") : t("github.notConnected")}</p>
+              <p className="help">{t("github.localConnectionHelp")}</p>
+            </>}
             <ul>
               {plugin.functions.map((fn) => (
                 <li key={fn.name}>

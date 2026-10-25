@@ -162,9 +162,17 @@
 **User-selected scope:** same design; reorganize existing connections only. No new Provider protocols.
 
 - [ ] Test dropdown selection and round-trip mappings for all four existing modes; preserve configured model/custom ID and authentication behavior.
-- [ ] Replace technical radio modes with contextual Agent/service/login dropdowns and clear explanatory copy; show only relevant controls. Put Claude Code availability in its own connection and move global GitHub credential controls into the GitHub plugin view.
+- [ ] Replace technical radio modes with contextual Agent/service/login dropdowns and clear explanatory copy; show only relevant controls. Put Claude Code availability in its own connection. Latest user steering removes all GitHub-token forms; plugin UI uses connection language and Task8f supplies local gh access.
 - [ ] Retain secret clearing, config-before-auth consistency, job cancellation, explicit opt-in probes, and ordinary browser/legacy mode compatibility. No implicit login or provider requests.
 - [ ] Run focused UI/settings tests and relevant type/lint checks; inspect en/ja/zh actual UI, pending workspace feedback and plugin credentials with fake-only fixtures. Review the bounded diff and package/smoke the combined8d/8e change into fresh outputs once.
+
+## Task 8f: Reuse Authenticated Local GitHub Access
+
+**Latest user steering:** use already-authenticated local `gh` or an existing MCP, rather than a Nema GitHub-token form. This supersedes8e's earlier token-form migration. Preserve backend compatibility without reading/deleting existing real credentials.
+
+- [ ] Resolve the existing read-only GitHub tool contract and bounded repository/confidentiality rules; implement direct `gh` access with fixed arguments and no `gh auth token`, credential copying or new login flow. Clarify the user's existing MCP source before claiming its reuse.
+- [ ] Test fake CLI success/missing/login/error/timeout/cancel and actual owned-helper lifecycle, safe read-only arguments, host/repository constraints, bounded output and secret-safe errors. Retain existing tool behavior and explicit plugin enabling.
+- [ ] Show plain connection/installation status in plugin UI and remove token-entry instructions. Review and verify the bounded implementation, then package8d/8e/8f together from the accepted source tree.
 
 ## Task 9: Preserve Legacy Data, Hooks and Existing Product Coverage
 
