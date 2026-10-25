@@ -26,7 +26,7 @@ Nema 的角色是 copilot：管「为什么」和「要做什么」，自己不�
 - coding agent 完成工作后自动向 Nema 上报；没有上报时，Nema 自己去看代码。【决定】
 - 导入仓库时自动画出架构图，作为项目知识的一部分；代码变化后能看出图过时并增量更新。【决定】
 - 插件统一管理：全局安装一次，每个 workspace 决定开哪些。【决定】
-- 第一版插件：graphify（读代码）、archify（画图）、nema report（上报）三个自带，加 GitHub（只读）一个外部插件，用来验证框架。【决定】
+- 第一版插件：graphify（读代码）、archify（画图）、nema report（上报）三个自带，加 GitHub 一个外部插件，用来验证框架（最初为只读，2026-10-25 起 Agent 可经受控 `gh` 命令写入，默认关闭，见第 6 节）。【决定】
 
 ## 非目标（本阶段不做）
 
@@ -166,7 +166,14 @@ Nema 的角色是 copilot：管「为什么」和「要做什么」，自己不�
 - 主分支出现新提交，且 30 分钟内没有覆盖这些提交的语义上报时（「覆盖」同样按祖先或补丁相同判断），hub 在该 workspace 生成一条系统输入「主分支有新提交但没有收到上报」，附提交列表，触发一次整理任务。Agent 用 `code__changes`、`code__read` 判断这些提交对应哪些条目；仅凭代码推断的关联标 `inferred`。【Claude 的决定：30 分钟】
 - **代码推断的工作最多到「已上报（代码推断）」**【决定】：兜底发现的关联把需求设为 `reported`，证据记为「无上报，代码推断」，依据为 `inferred`。界面上与普通「已上报」区分显示。用户在条目上点「确认」后才升为 `verified`。Room API 的 409 规则因此是：`verified` 必须有核实通过的上报，或者由用户本人确认（UI 接口，不经 Room）。Agent 不能把代码推断的工作直接设为 `verified`。
 
-### 6. 外部插件：GitHub（只读）
+### 6. 外部插件：GitHub（最初为只读，见下方 2026-10-25 修订）
+
+> **2026-10-25 修订【决定】**（用户澄清：目的是让 Nema Agent 自己调用 `gh` 与 GitHub 的 issue、Project、PR 交互，不是给用户用的功能）。以下条目中与本修订冲突的部分以本修订为准：
+> - **通路**：默认复用用户本机已登录的 `gh`，不再启动 `github-mcp-server`，也不再有 `nema auth github` 和 `~/.nema/github-token`（旧文件和旧接口保留兼容，不读取、不删除）。`GithubMcp` 仅作为显式注入的兼容实现保留。
+> - **函数**：原六个读取函数保留，新增 `github__gh_read` 与 `github__gh_write`，各接收一个 `args` 数组。命令来自 `packages/shared/src/ghCommand.ts` 的唯一白名单（issue、pr、label、run、project 命令，只接受长参数）；不提供 `gh api`、文件和编辑器参数、merge、delete、auth。Agent 仍没有 shell，也拿不到凭据。
+> - **范围**：hub 把 `--repo` 限定为绑定仓库、Project 的 `--owner` 限定为绑定仓库的所有者，daemon 执行前再校验一次，并固定 `GH_HOST=github.com`。`project item-edit` 使用全局 node id，无法绑定 owner，这是已知限制。
+> - **写权限**：默认关闭。仅当 workspace 的 GitHub 设置 `allowWrites` 为开且该函数未被关掉时，才向 Agent 提供 `github__gh_write`；调用时再校验，用读工具执行写命令会被拒绝。
+> - **状态显示**：插件页显示 `gh` 是否可用和是否有可用登录，不再显示令牌是否存在。
 
 - 数据流向：`external`。默认关闭，在 workspace 设置里手动打开。【决定】
 - 运行：官方 `github/github-mcp-server`（MIT），由 daemon 以 stdio 启动，固定参数 `--read-only --toolsets pull_requests,issues`。【Claude 的决定】
@@ -176,7 +183,7 @@ Nema 的角色是 copilot：管「为什么」和「要做什么」，自己不�
 
 ### 7. 管理界面【决定：方案 A】
 
-- **侧栏底部「插件」页（全局）**：已安装的插件；每个插件的数据流向标签（仅本机 / 会外发）、安装或登录状态（graphify 是否在 PATH、GitHub 令牌是否存在，不显示令牌）、它提供的函数列表。
+- **侧栏底部「插件」页（全局）**：已安装的插件；每个插件的数据流向标签（仅本机 / 会外发）、安装或登录状态（graphify 是否在 PATH、本机 `gh` 是否可用且已登录；2026-10-25 起不再有 GitHub 令牌）、它提供的函数列表。
 - **workspace 设置新增「代码与插件」页**：
   - 绑定的仓库：路径、用途说明、主分支；添加、移除。
   - 本 workspace 的插件：开关；`external` 插件旁注明「会外发」；可展开逐个开关函数。
