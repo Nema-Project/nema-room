@@ -19,6 +19,49 @@ const base = (l: Workspace["knowledgeLanguage"] = "follow", recent: Message[] = 
   buildPrompt({ workspace: ws(l), userMessage: msg(999), recentMessages: recent, entries, lastAskedQuestion: last });
 
 describe("buildPrompt", () => {
+  test("an edit shows the previous text and the entries it produced", () => {
+    const userMessage = { ...msg(999), content: "revised" };
+    const section = [
+      "# 用户修改了一条消息",
+      "[m_999] 旧版本：original",
+      "[m_999] 新版本：revised",
+      "# 之前依据这条消息写入的条目",
+      "R-1 | requirement | active | 流式输出",
+      "按新版本更新或作废这些条目；新写入或更新的条目在 sourceMessages 中包含 m_999，quotes 从新版本逐字复制。",
+    ].join("\n");
+    const p = buildPrompt({
+      workspace: ws("follow"),
+      userMessage,
+      recentMessages: [],
+      entries,
+      lastAskedQuestion: null,
+      edit: { previousContent: "original", cited: entries.slice(0, 1) },
+    });
+    expect(p).toContain(section);
+    expect(p.indexOf(section)).toBeLessThan(p.indexOf("# 本次用户消息"));
+    const none = buildPrompt({
+      workspace: ws("follow"),
+      userMessage,
+      recentMessages: [],
+      entries,
+      lastAskedQuestion: null,
+      edit: { previousContent: "original", cited: [] },
+    });
+    expect(none).toContain("# 之前依据这条消息写入的条目\n（无）\n按新版本更新或作废这些条目");
+    const quoted = msg(7, "agent");
+    quoted.content = "结论是更新代码图";
+    const both = buildPrompt({
+      workspace: ws("follow"),
+      userMessage,
+      recentMessages: [],
+      entries,
+      lastAskedQuestion: null,
+      edit: { previousContent: "original", cited: [] },
+      quotedMessage: quoted,
+    });
+    expect(both.indexOf("# 用户修改了一条消息")).toBeLessThan(both.indexOf("# 本次消息引用的消息"));
+    expect(both.indexOf("# 本次消息引用的消息")).toBeLessThan(both.indexOf("# 本次用户消息"));
+  });
   test("a quoted message is inlined in full before the current message", () => {
     const quoted = msg(7, "agent");
     quoted.content = "结论是更新代码图";

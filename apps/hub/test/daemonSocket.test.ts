@@ -7,8 +7,8 @@ import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { EventBus } from "../src/events.js";
 import { createWorkspace, updateWorkspace } from "../src/workspaces.js";
-import { addMessage, listMessages, postUserMessage, type AgentMessage } from "../src/messages.js";
-import { claimNextTask, getTask, interruptRunning, recordTaskChange, resolveRunToken } from "../src/tasks.js";
+import { addMessage, editUserMessage, listMessages, messageExcerpt, postUserMessage, type AgentMessage } from "../src/messages.js";
+import { claimNextTask, finishTask, getTask, interruptRunning, recordTaskChange, resolveRunToken } from "../src/tasks.js";
 import * as tasks from "../src/tasks.js";
 import { attachDaemonSocket } from "../src/daemonSocket.js";
 import { KnowledgeStore } from "@nema/knowledge";
@@ -242,6 +242,59 @@ describe("daemon socket", () => {
     await c.closed;
     expect(handle.isConnected()).toBe(false);
     expect((await listMessages(db, wsA)).some((x) => x.role === "system")).toBe(false);
+  });
+
+  test("an edit task quotes the previous text and the reply points back at it", async () => {
+    const original = await postUserMessage(db, wsA, "original");
+    await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
+    await addMessage(db, wsA, "agent", "which one", {
+      meta: { changes: [], askedQuestion: { id: "Q-1", title: "进度", body: "到哪了" } },
+    });
+    await new KnowledgeStore(repoPath(dataDir, wsA)).upsert(
+      { kind: "requirement", title: "进度说明", body: "b", reason: "r", basis: "stated", sourceMessages: [original.message.id] } as never,
+      { author: "agent" },
+    );
+    await postUserMessage(db, wsA, "later note");
+    await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
+    await editUserMessage(db, wsA, original.message.id, "middle");
+    const c = await connect();
+    const failed = await c.next("task.assign");
+    c.send({ type: "task.finished", taskId: failed.taskId, ok: false, error: "boom" });
+    await vi.waitFor(async () => {
+      const system = (await listMessages(db, wsA)).find((m) => m.role === "system");
+      expect(system?.content).toContain("boom");
+      expect(system?.meta).toBeNull();
+    });
+    const second = await editUserMessage(db, wsA, original.message.id, "latest");
+    events.emit(wsA, { type: "task.updated", task: { id: second.task.id, workspaceId: wsA, messageId: original.message.id, status: "queued", error: null } });
+    const again = await c.next("task.assign");
+    expect(again.prompt).toContain(`[${original.message.id}] 旧版本：middle`);
+    expect(again.prompt).toContain(`[${original.message.id}] 新版本：latest`);
+    expect(again.prompt).toContain("later note");
+    expect(again.prompt).toContain("R-1");
+    expect(again.prompt).not.toContain("上一个追问");
+    c.send({ type: "task.finished", taskId: again.taskId, ok: true, reply: "updated" });
+    await vi.waitFor(async () => {
+      const reply = (await listMessages(db, wsA)).find((m) => m.role === "agent" && m.content === "updated");
+      expect(reply?.meta && "quote" in reply.meta && reply.meta.quote).toEqual({
+        messageId: original.message.id,
+        role: "user",
+        excerpt: messageExcerpt("latest"),
+      });
+    });
+  });
+
+  test("a quote in the prompt is the message's current text", async () => {
+    const target = await postUserMessage(db, wsA, "first wording");
+    await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
+    await editUserMessage(db, wsA, target.message.id, "rewritten wording");
+    await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
+    await postUserMessage(db, wsA, "I meant the architecture", target.message.id);
+    const c = await connect();
+    const assigned = await c.next("task.assign");
+    expect(assigned.prompt).toContain("# 本次消息引用的消息");
+    expect(assigned.prompt).toContain("rewritten wording");
+    expect(assigned.prompt).not.toContain("first wording");
   });
 
   test("assign carries confidential from the workspace setting", async () => {

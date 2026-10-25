@@ -80,6 +80,8 @@ export function buildPrompt(input: {
   workpackage?: WorkPackagePromptInput;
   /** The message the user is replying to, in full, whatever its age. */
   quotedMessage?: Message | null;
+  /** Set when the user edited `userMessage` and this task re-runs it. */
+  edit?: { previousContent: string; cited: EntrySummary[] } | null;
 }): string {
   const { workspace, userMessage, entries, lastAskedQuestion } = input;
   const grill: GrillState = input.grill ?? { enabled: true, ...DEFAULT_GRILL_SETTINGS };
@@ -142,6 +144,19 @@ export function buildPrompt(input: {
     );
   }
   if (input.workpackage) parts.push(workPackageSection(input.workpackage, grill));
+  if (input.edit) {
+    const cited = input.edit.cited.length ? input.edit.cited.map(indexLine).join("\n") : "（无）";
+    parts.push(
+      [
+        "# 用户修改了一条消息",
+        `[${userMessage.id}] 旧版本：${input.edit.previousContent}`,
+        `[${userMessage.id}] 新版本：${userMessage.content}`,
+        "# 之前依据这条消息写入的条目",
+        cited,
+        `按新版本更新或作废这些条目；新写入或更新的条目在 sourceMessages 中包含 ${userMessage.id}，quotes 从新版本逐字复制。`,
+      ].join("\n"),
+    );
+  }
   if (input.quotedMessage) {
     const q = input.quotedMessage;
     parts.push(`# 本次消息引用的消息\n[${q.id}] ${q.role}: ${q.content}\n本次用户消息是针对这条消息的补充、更正或确认。`);

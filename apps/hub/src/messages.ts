@@ -220,6 +220,19 @@ export async function getLastAgentMessage(db: Db, workspaceId: string): Promise<
  * Last `limit` messages (oldest first) excluding the given user message and any user message
  * posted after it; agent/system messages posted after it are included.
  */
+/** Latest `limit` messages except `excludeId`, oldest first. Later user messages are kept. */
+export async function listRecentMessages(db: Db, workspaceId: string, excludeId: string, limit = 20): Promise<Message[]> {
+  const rows = await db.query<Row>(
+    `select * from (
+       select ${COLS}, seq from messages
+       where workspace_id = $1 and id <> $2
+       order by seq desc limit $3) m
+     order by seq asc`,
+    [workspaceId, excludeId, limit],
+  );
+  return rows.map(toMessage);
+}
+
 export async function listPromptMessages(db: Db, workspaceId: string, userMessageId: string, limit = 20): Promise<Message[]> {
   const rows = await db.query<Row>(
     `select * from (
