@@ -1,11 +1,11 @@
 ﻿import test from 'node:test';
 import assert from 'node:assert/strict';
-import { access, lstat, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
-import { assetsFor, extractArchive, sha256File, findRequiredFile, downloadVerified, publishStagedDirectory, gitLayoutFor, fetchTools } from './fetch-tools.mjs';
+import { assetsFor, extractArchive, sha256File, findRequiredFile, downloadVerified, publishStagedDirectory, gitLayoutFor, fetchTools, rejectSymlinkPath } from './fetch-tools.mjs';
 
 const tmp = async () => mkdtemp(path.join(os.tmpdir(), 'nema-tools-'));
 const tarEntry = (name, body, type = '0', linkname = '') => {
@@ -26,6 +26,24 @@ const zipEntry = (name, body) => {
   const eocd = Buffer.alloc(22); eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(1, 8); eocd.writeUInt16LE(1, 10); eocd.writeUInt32LE(directory.length, 12); eocd.writeUInt32LE(header.length, 16);
   return Buffer.concat([header, directory, eocd]);
 };
+
+test('a symlinked ancestor is canonical, a symlinked directory is refused', async (t) => {
+  const root = await tmp();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const actual = path.join(root, 'actual');
+  const linkParent = path.join(root, 'link-parent');
+  await mkdir(actual);
+  try {
+    await symlink(actual, linkParent, 'dir');
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'EPERM') return;
+    throw error;
+  }
+  await rejectSymlinkPath(path.join(linkParent, 'nested', 'out'));
+  const leaf = path.join(root, 'leaf');
+  await symlink(actual, leaf, 'dir');
+  await assert.rejects(rejectSymlinkPath(leaf), /symlink/);
+});
 
 test('manifest pins all five runtime targets to exact official versioned URLs and hashes', () => {
   const expected = [['win32','x64'],['darwin','arm64'],['darwin','x64'],['linux','x64'],['linux','arm64']];

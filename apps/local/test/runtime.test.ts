@@ -298,7 +298,7 @@ describe("managed local runtime", () => {
     runtimes.push(runtime);
     const launch = await fetch(`${runtime.origin}/_nema/launch?ticket=${runtime.createLaunchTicket()}`, { redirect: "manual" });
     const cookie = launch.headers.get("set-cookie")!.split(";")[0]!;
-    const logoutResponse = fetch(`${runtime.origin}/_nema/auth/logout`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ kind: "siwc" }) });
+    const logoutResponse = fetch(`${runtime.origin}/_nema/auth/logout`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ kind: "siwc" }) }).catch(() => undefined);
     await started;
 
     let closeFinished = false;
@@ -310,7 +310,7 @@ describe("managed local runtime", () => {
       await expect(acquireInstance(home)).rejects.toMatchObject({ code: "NEMA_LOCAL_OWNER_COLLISION" });
     } finally {
       release();
-      await logoutResponse.catch(() => undefined); // Shutdown intentionally closes accepted HTTP sockets.
+      await logoutResponse; // Shutdown intentionally closes accepted HTTP sockets.
       await closing;
     }
     expect(closeFinished).toBe(true);

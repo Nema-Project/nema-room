@@ -194,6 +194,7 @@ test("close during handshake kills the starting child and awaits its exit", asyn
   const pidFile = join(root, "handshake-pid");
   const gh = client({ bin: fakeServer({ pidFile, holdHandshake: true }) });
   const call = gh.call("list_issues", { owner: "o", repo: "r" });
+  call.catch(() => undefined); // close() rejects this before the assertion attaches
   const deadline = Date.now() + 5000;
   while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
   expect(existsSync(pidFile)).toBe(true);

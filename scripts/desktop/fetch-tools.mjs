@@ -1,7 +1,7 @@
 ﻿import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { gunzipSync, inflateRawSync } from 'node:zlib';
@@ -180,15 +180,20 @@ async function ensureInsideRoot(root, candidate) {
   if (resolved !== resolvedRoot && !resolved.startsWith(`${resolvedRoot}${path.sep}`)) throw new Error(`Path escapes configured directory: ${candidate}`);
   return resolved;
 }
-async function rejectSymlinkPath(directory) {
+export async function rejectSymlinkPath(directory) {
   const resolved = path.resolve(directory), root = path.parse(resolved).root;
+  const segments = resolved.slice(root.length).split(path.sep).filter(Boolean);
   let cursor = root;
-  for (const segment of resolved.slice(root.length).split(path.sep).filter(Boolean)) {
-    cursor = path.join(cursor, segment);
+  for (let i = 0; i < segments.length; i++) {
+    cursor = path.join(cursor, segments[i]);
+    let info;
     try {
-      const info = await lstat(cursor);
-      if (info.isSymbolicLink() || !info.isDirectory()) throw new Error(`Configured directory path contains a symlink or non-directory: ${cursor}`);
+      info = await lstat(cursor);
     } catch (error) { if (error.code !== 'ENOENT') throw error; break; }
+    if (!info.isSymbolicLink() && info.isDirectory()) continue;
+    // macOS temp lives under /var -> /private/var. Follow that ancestor, still refuse a symlink at the configured directory itself.
+    if (info.isSymbolicLink() && i < segments.length - 1) return rejectSymlinkPath(path.join(await realpath(cursor), ...segments.slice(i + 1)));
+    throw new Error(`Configured directory path contains a symlink or non-directory: ${cursor}`);
   }
 }
 export async function downloadVerified(asset, cacheDir, fetchImpl = fetch) {
