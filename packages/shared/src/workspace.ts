@@ -4,6 +4,18 @@ import { EntryKindSchema } from "./entry.js";
 export const KNOWLEDGE_LANGUAGES = ["ja", "en", "zh", "follow"] as const;
 export type KnowledgeLanguage = (typeof KNOWLEDGE_LANGUAGES)[number];
 
+export const MessageQuote = z.object({
+  messageId: z.string(),
+  role: z.enum(["user", "agent", "system", "report"]),
+  excerpt: z.string(),
+});
+export type MessageQuote = z.infer<typeof MessageQuote>;
+
+export const UserMessageMeta = z.object({
+  quote: MessageQuote.optional(),
+});
+export type UserMessageMeta = z.infer<typeof UserMessageMeta>;
+
 export const AgentMessageMeta = z.object({
   changes: z.array(
     z.object({
@@ -14,6 +26,7 @@ export const AgentMessageMeta = z.object({
     }),
   ),
   askedQuestion: z.object({ id: z.string(), title: z.string(), body: z.string() }).nullable(),
+  quote: MessageQuote.optional(),
 });
 export type AgentMessageMeta = z.infer<typeof AgentMessageMeta>;
 

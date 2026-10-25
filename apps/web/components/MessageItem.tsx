@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { Markdown } from "@/components/Markdown";
-import { getEntry } from "@/lib/hub";
+import { editMessage, getEntry, HubError, listMessageVersions } from "@/lib/hub";
 import { formatTime } from "@/lib/format";
 import { useLocale, useT } from "@/lib/i18n";
-import type { AgentMessageMeta, Entry, Message, ReportMessageMeta } from "@/lib/types";
+import type { AgentMessageMeta, Entry, Message, MessageQuote, ReportMessageMeta } from "@/lib/types";
 
 export function AgentAvatar() {
   return <div className="av ai">AI</div>;
@@ -17,9 +17,25 @@ type Props = {
   onOpenEntry?: (entryId: string) => void;
   /** Present only on the latest follow-up that has no user message after it. */
   onAnswer?: (content: string) => Promise<void>;
+  onQuote?: (message: Message) => void;
+  /** Replaces the message in the chat after an edit succeeds. */
+  onEdited?: (message: Message) => void;
+  onJump?: (messageId: string) => void;
 };
 
-export function MessageItem({ message, onOpenEntry, onAnswer }: Props) {
+export function messageRoleLabel(t: (key: string) => string, role: Message["role"]): string {
+  if (role === "user") return t("chat.you");
+  if (role === "system") return t("chat.role.system");
+  if (role === "report") return t("chat.role.report");
+  return "Nema";
+}
+
+function quoteOf(message: Message): MessageQuote | undefined {
+  const meta = message.meta as { quote?: MessageQuote } | null;
+  return meta?.quote;
+}
+
+export function MessageItem({ message, onOpenEntry, onAnswer, onQuote, onEdited, onJump }: Props) {
   const t = useT();
   const [locale] = useLocale();
   const time = formatTime(new Date(message.createdAt), locale);
@@ -27,33 +43,22 @@ export function MessageItem({ message, onOpenEntry, onAnswer }: Props) {
   if (message.role === "system") {
     return (
       <div className="sysmsg" id={`msg-${message.id}`}>
+        <button type="button" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
         {message.content}
       </div>
     );
   }
 
   if (message.role === "user") {
-    return (
-      <div className="msg" id={`msg-${message.id}`}>
-        <div className="av me">{t("chat.you")}</div>
-        <div>
-          <div className="who">
-            {t("chat.you")}
-            <time>{time}</time>
-          </div>
-          <div className="memo">
-            <Markdown source={message.content} />
-          </div>
-        </div>
-      </div>
-    );
+    return <UserMessage message={message} time={time} onQuote={onQuote} onEdited={onEdited} onJump={onJump} />;
   }
 
   if (message.role === "report") {
-    return <ReportItem message={message} time={time} onOpenEntry={onOpenEntry} />;
+    return <ReportItem message={message} time={time} onOpenEntry={onOpenEntry} onQuote={onQuote} onJump={onJump} />;
   }
 
   const meta = message.meta as AgentMessageMeta | null;
+  const quote = quoteOf(message);
   return (
     <div className="msg" id={`msg-${message.id}`}>
       <AgentAvatar />
@@ -61,7 +66,9 @@ export function MessageItem({ message, onOpenEntry, onAnswer }: Props) {
         <div className="who">
           Nema
           <time>{time}</time>
+          <button type="button" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
         </div>
+        {quote && <QuoteBlock quote={quote} onJump={onJump} />}
         <Markdown source={message.content} />
         {meta && meta.changes.length > 0 && (
           <div className="changes">
@@ -135,7 +142,101 @@ function AnswerBox({ onAnswer }: { onAnswer: (content: string) => Promise<void> 
 }
 
 /** A coding agent's report: the agent's summary, then its entries, commits and the daemon's git check. */
-function ReportItem({ message, time, onOpenEntry }: { message: Message; time: string; onOpenEntry?: (entryId: string) => void }) {
+function QuoteBlock({ quote, onJump }: { quote: MessageQuote; onJump?: (messageId: string) => void }) {
+  const t = useT();
+  return (
+    <button type="button" className="quote" onClick={() => onJump?.(quote.messageId)}>
+      <b>{messageRoleLabel(t, quote.role)}</b>
+      {quote.excerpt}
+    </button>
+  );
+}
+
+function UserMessage({
+  message,
+  time,
+  onQuote,
+  onEdited,
+  onJump,
+}: {
+  message: Message;
+  time: string;
+  onQuote?: (message: Message) => void;
+  onEdited?: (message: Message) => void;
+  onJump?: (messageId: string) => void;
+}) {
+  const t = useT();
+  const [locale] = useLocale();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.content);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [versions, setVersions] = useState<{ version: number; content: string; createdAt: string }[] | null>(null);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const quote = quoteOf(message);
+
+  useEffect(() => {
+    if (!editing) setDraft(message.content);
+  }, [editing, message.content]);
+
+  async function save() {
+    setEditError(null);
+    try {
+      const { message: next } = await editMessage(message.workspaceId, message.id, draft);
+      onEdited?.(next);
+      setEditing(false);
+      setVersions(null);
+      setVersionsOpen(false);
+    } catch (e) {
+      setEditError(e instanceof HubError && e.status === 409 && e.message === "message is still being processed" ? t("chat.editBusy") : e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function toggleVersions() {
+    if (!versions) setVersions(await listMessageVersions(message.workspaceId, message.id));
+    setVersionsOpen((open) => !open);
+  }
+
+  return (
+    <div className="msg" id={`msg-${message.id}`}>
+      <div className="av me">{t("chat.you")}</div>
+      <div>
+        <div className="who">
+          {t("chat.you")}
+          <time>{time}</time>
+          <button type="button" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
+          <button type="button" onClick={() => { setDraft(message.content); setEditing(true); setEditError(null); }}>{t("chat.edit")}</button>
+          {message.editedAt && <button type="button" onClick={() => void toggleVersions()}>{t("chat.edited")}</button>}
+        </div>
+        {quote && <QuoteBlock quote={quote} onJump={onJump} />}
+        {editing ? (
+          <div className="editbox">
+            <textarea value={draft} onChange={(e) => setDraft(e.target.value)} />
+            <button type="button" onClick={() => void save()}>{t("chat.save")}</button>
+            <button type="button" onClick={() => { setEditing(false); setDraft(message.content); setEditError(null); }}>{t("chat.cancel")}</button>
+            {editError && <p className="error" role="alert">{editError}</p>}
+          </div>
+        ) : (
+          <div className="memo">
+            <Markdown source={message.content} />
+          </div>
+        )}
+        {versionsOpen && versions && (
+          <div className="versions">
+            <div>{t("chat.versions")}</div>
+            {versions.map((v) => (
+              <div key={v.version}>
+                <time>{formatTime(new Date(v.createdAt), locale)}</time>
+                {v.content}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ReportItem({ message, time, onOpenEntry, onQuote, onJump }: { message: Message; time: string; onOpenEntry?: (entryId: string) => void; onQuote?: (message: Message) => void; onJump?: (messageId: string) => void }) {
   const t = useT();
   const meta = message.meta as ReportMessageMeta | null;
   const report = meta?.report;
@@ -148,7 +249,9 @@ function ReportItem({ message, time, onOpenEntry }: { message: Message; time: st
           <span className="rlabel">{t("report.label")}</span>
           {report && <span className="ragent">{report.agent}</span>}
           <time>{time}</time>
+          <button type="button" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
         </div>
+        {quoteOf(message) && <QuoteBlock quote={quoteOf(message)!} onJump={onJump} />}
         <div className="rbody">
           <Markdown source={message.content} />
           {report && report.entries.length > 0 && (

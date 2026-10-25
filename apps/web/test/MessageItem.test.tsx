@@ -16,6 +16,7 @@ const msg = (p: Partial<Message>): Message => ({
   meta: null,
   taskId: null,
   createdAt: "2026-10-21T14:03:00Z",
+  editedAt: null,
   ...p,
 });
 const mount = (m: Message) =>

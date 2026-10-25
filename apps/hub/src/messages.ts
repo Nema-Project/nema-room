@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import type { AgentMessageMeta, ReportMessageMeta } from "@nema/shared";
+import type { AgentMessageMeta, ReportMessageMeta, UserMessageMeta } from "@nema/shared";
 import type { Db } from "./db/db.js";
 import { insertQueuedTask, type Task } from "./tasks.js";
 
@@ -8,10 +8,11 @@ export type Message = {
   workspaceId: string;
   role: "user" | "agent" | "system" | "report";
   content: string;
-  /** Agent messages carry AgentMessageMeta; report messages carry ReportMessageMeta. */
-  meta: AgentMessageMeta | ReportMessageMeta | null;
+  /** Agent messages carry AgentMessageMeta; report messages carry ReportMessageMeta; user messages may carry UserMessageMeta. */
+  meta: AgentMessageMeta | ReportMessageMeta | UserMessageMeta | null;
   taskId: string | null;
   createdAt: string;
+  editedAt: string | null;
 };
 
 /** An agent message: its meta, when present, is always AgentMessageMeta. */
@@ -25,9 +26,24 @@ type Row = {
   meta: Message["meta"];
   task_id: string | null;
   created_at: Date | string;
+  edited_at: Date | string | null;
 };
 
-const COLS = "id, workspace_id, role, content, meta, task_id, created_at";
+const COLS = "id, workspace_id, role, content, meta, task_id, created_at, edited_at";
+
+export function messageExcerpt(content: string, max = 200): string {
+  return Array.from(content).slice(0, max).join("");
+}
+
+export class MessageOpError extends Error {
+  constructor(
+    public status: 400 | 404 | 409,
+    message: string,
+  ) {
+    super(message);
+    this.name = "MessageOpError";
+  }
+}
 
 function toMessage(r: Row): Message {
   return {
@@ -38,6 +54,7 @@ function toMessage(r: Row): Message {
     meta: r.meta ?? null,
     taskId: r.task_id,
     createdAt: new Date(r.created_at).toISOString(),
+    editedAt: r.edited_at ? new Date(r.edited_at).toISOString() : null,
   };
 }
 
@@ -61,12 +78,74 @@ export async function postUserMessage(
   db: Db,
   workspaceId: string,
   content: string,
+  quoteMessageId?: string,
 ): Promise<{ message: Message; task: Task }> {
   if (content.trim() === "") throw new Error("message content must not be empty");
   return db.tx(async (t) => {
-    const message = await insertMessage(t, workspaceId, "user", content, null, null);
+    let meta: UserMessageMeta | null = null;
+    if (quoteMessageId) {
+      const quoted = await getMessage(t, quoteMessageId);
+      if (!quoted || quoted.workspaceId !== workspaceId) throw new MessageOpError(400, "quote: message not in this workspace");
+      meta = { quote: { messageId: quoted.id, role: quoted.role, excerpt: messageExcerpt(quoted.content) } };
+    }
+    const message = await insertMessage(t, workspaceId, "user", content, null, meta);
     const task = await insertQueuedTask(t, workspaceId, message.id);
     return { message, task };
+  });
+}
+
+export const EDIT_BUSY_MESSAGE = "message is still being processed";
+
+export type MessageVersion = { version: number; content: string; createdAt: string };
+
+/** Current message text only. `%`, `_`, and `\` in `q` are literal. Blank `q` matches nothing. */
+export async function searchMessages(db: Db, workspaceId: string, q: string): Promise<Message[]> {
+  const term = q.trim();
+  if (term === "") return [];
+  const pattern = "%" + term.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+  const rows = await db.query<Row>(
+    `select ${COLS} from messages where workspace_id = $1 and content ilike $2 escape '\\' order by seq desc limit 50`,
+    [workspaceId, pattern],
+  );
+  return rows.map(toMessage);
+}
+
+export async function listMessageVersions(db: Db, messageId: string): Promise<MessageVersion[]> {
+  const rows = await db.query<{ version: number; content: string; created_at: Date | string }>(
+    `select version, content, created_at from message_versions where message_id = $1 order by version asc`,
+    [messageId],
+  );
+  return rows.map((r) => ({ version: r.version, content: r.content, createdAt: new Date(r.created_at).toISOString() }));
+}
+
+export async function editUserMessage(
+  db: Db,
+  workspaceId: string,
+  messageId: string,
+  content: string,
+): Promise<{ message: Message; task: Task }> {
+  if (content.trim() === "") throw new Error("message content must not be empty");
+  return db.tx(async (t) => {
+    const locked = await t.query<Row>(`select ${COLS} from messages where id = $1 and workspace_id = $2 for update`, [messageId, workspaceId]);
+    const row = locked[0];
+    if (!row) throw new MessageOpError(404, "message not found");
+    if (row.role !== "user") throw new MessageOpError(400, "only user messages can be edited");
+    const ws = await t.query<{ archived_at: Date | string | null }>(`select archived_at from workspaces where id = $1`, [workspaceId]);
+    if (ws[0]?.archived_at) throw new ArchivedWorkspaceError();
+    const busy = await t.query(`select 1 from tasks where message_id = $1 and status in ('queued', 'running') limit 1`, [messageId]);
+    if (busy.length > 0) throw new MessageOpError(409, EDIT_BUSY_MESSAGE);
+    await t.query(
+      `insert into message_versions(message_id, version, content, created_at)
+       select $1, coalesce((select max(version) from message_versions where message_id = $1), 0) + 1, content, coalesce(edited_at, created_at)
+       from messages where id = $1`,
+      [messageId],
+    );
+    const updated = await t.query<Row>(`update messages set content = $2, edited_at = clock_timestamp() where id = $1 returning ${COLS}`, [
+      messageId,
+      content,
+    ]);
+    const task = await insertQueuedTask(t, workspaceId, messageId, "edit");
+    return { message: toMessage(updated[0]!), task };
   });
 }
 
@@ -153,6 +232,19 @@ export async function getLastAgentMessage(db: Db, workspaceId: string): Promise<
  * Last `limit` messages (oldest first) excluding the given user message and any user message
  * posted after it; agent/system messages posted after it are included.
  */
+/** Latest `limit` messages except `excludeId`, oldest first. Later user messages are kept. */
+export async function listRecentMessages(db: Db, workspaceId: string, excludeId: string, limit = 20): Promise<Message[]> {
+  const rows = await db.query<Row>(
+    `select * from (
+       select ${COLS}, seq from messages
+       where workspace_id = $1 and id <> $2
+       order by seq desc limit $3) m
+     order by seq asc`,
+    [workspaceId, excludeId, limit],
+  );
+  return rows.map(toMessage);
+}
+
 export async function listPromptMessages(db: Db, workspaceId: string, userMessageId: string, limit = 20): Promise<Message[]> {
   const rows = await db.query<Row>(
     `select * from (

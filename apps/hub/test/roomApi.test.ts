@@ -167,6 +167,30 @@ describe("room api", () => {
     expect(((await r.json()) as any).error).toBe(`quotes: message ${other.message.id} is not in sourceMessages`);
   });
 
+  test("a quote matches the current text or any stored version", async () => {
+    const t = await runningTaskFor(wsA);
+    const m = await postUserMessage(db, wsA, "current text");
+    await db.query(`insert into message_versions(message_id, version, content) values ($1, 1, $2)`, [m.message.id, "the old wording"]);
+    const fromOld = await req("POST", "/room/entries", t.runToken, upsert({
+      sourceMessages: [m.message.id],
+      quotes: [{ messageId: m.message.id, text: "old wording" }],
+    }));
+    expect(fromOld.status).toBe(200);
+    const fromCurrent = await req("POST", "/room/entries", t.runToken, upsert({
+      title: "second",
+      sourceMessages: [m.message.id],
+      quotes: [{ messageId: m.message.id, text: "current text" }],
+    }));
+    expect(fromCurrent.status).toBe(200);
+    const neither = await req("POST", "/room/entries", t.runToken, upsert({
+      title: "third",
+      sourceMessages: [m.message.id],
+      quotes: [{ messageId: m.message.id, text: "never written" }],
+    }));
+    expect(neither.status).toBe(400);
+    expect(((await neither.json()) as any).error).toBe(`quotes: text must be copied verbatim from message ${m.message.id}`);
+  });
+
   test("rejects a quote that is not verbatim, including collapsed whitespace", async () => {
     const t = await runningTaskFor(wsA);
     const content = "先流式\n\n  后面再说多轮 **别动** tool";

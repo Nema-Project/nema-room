@@ -60,6 +60,15 @@ describe("KnowledgeStore", () => {
     });
   });
 
+  test("entriesCiting returns entries that name the message", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await s.upsert(req("cited"), { author: "agent" });
+    await s.upsert({ ...req("other"), sourceMessages: ["m_2"] }, { author: "agent" });
+    expect((await s.entriesCiting("m_1")).map((e) => e.id)).toEqual(["R-1"]);
+    expect(await s.entriesCiting("m_9")).toEqual([]);
+  });
+
   test("question defaults to open status", async () => {
     const s = new KnowledgeStore(dir);
     await s.init();

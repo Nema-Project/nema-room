@@ -21,7 +21,7 @@ export type KnowledgeManifestEntry = {
 
 export const TABLE_COLUMNS = {
   workspaces: ["id", "name", "confidential", "knowledge_language", "created_at", "archived_at"],
-  messages: ["id", "workspace_id", "role", "content", "meta", "task_id", "created_at", "seq"],
+  messages: ["id", "workspace_id", "role", "content", "meta", "task_id", "created_at", "seq", "edited_at"],
   tasks: ["id", "workspace_id", "message_id", "status", "run_token", "daemon_id", "error", "created_at", "started_at", "finished_at", "seq", "interruptions", "kind"],
   task_changes: ["task_id", "entry_id", "kind", "title", "op", "created_at"],
   entry_index: ["workspace_id", "entry_id", "kind", "title", "status", "priority", "business_date", "updated_at"],
@@ -31,7 +31,11 @@ export const TABLE_COLUMNS = {
   diagram_status: ["workspace_id", "entry_id", "stale", "checked_sha"],
   repo_hooks: ["id", "repo_id", "agent", "branch", "head", "session_id", "at"],
   main_moves: ["id", "repo_id", "from_sha", "to_sha", "at", "handled"],
+  message_versions: ["message_id", "version", "content", "created_at"],
 } as const;
+
+/** Snapshots taken before this table existed still import. */
+const OPTIONAL_TABLES = new Set<keyof typeof TABLE_COLUMNS>(["message_versions"]);
 
 export const TABLE_ORDER = Object.keys(TABLE_COLUMNS) as (keyof typeof TABLE_COLUMNS)[];
 const workspaceIdPattern = /^ws_[A-Za-z0-9_-]{1,32}$/;
@@ -57,10 +61,11 @@ export function validateSnapshot(value: unknown): Snapshot {
     settings = s as Snapshot["settings"];
   }
   const keys = Object.keys(value.tableData);
-  if (keys.length !== TABLE_ORDER.length || keys.some((key) => !TABLE_ORDER.includes(key as keyof typeof TABLE_COLUMNS))) throw new Error("Snapshot contains an unknown or missing table");
+  if (keys.some((key) => !TABLE_ORDER.includes(key as keyof typeof TABLE_COLUMNS))) throw new Error("Snapshot contains an unknown or missing table");
+  if (TABLE_ORDER.some((table) => !keys.includes(table) && !OPTIONAL_TABLES.has(table))) throw new Error("Snapshot contains an unknown or missing table");
   const tableData: Record<string, Record<string, unknown>[]> = {};
   for (const table of TABLE_ORDER) {
-    const rows = value.tableData[table];
+    const rows = value.tableData[table] ?? (OPTIONAL_TABLES.has(table) ? [] : undefined);
     if (!Array.isArray(rows)) throw new Error(`Snapshot table ${table} must be an array`);
     const allowed = TABLE_COLUMNS[table] as readonly string[];
     tableData[table] = rows.map((row, i) => {
@@ -92,6 +97,9 @@ export function validateSnapshot(value: unknown): Snapshot {
     taskIds.add(row.id);
     if (row.workspace_id !== null && row.workspace_id !== undefined) requireWorkspace(row);
     if (row.message_id !== null && row.message_id !== undefined && !messageIds.has(String(row.message_id))) throw new Error("Snapshot contains a missing message reference");
+  }
+  for (const row of tableData.message_versions!) {
+    if (typeof row.message_id !== "string" || !messageIds.has(row.message_id)) throw new Error("Snapshot contains a missing message reference");
   }
   for (const [table, rows] of Object.entries(tableData)) for (const row of rows) {
     if (["task_changes", "plugin_calls"].includes(table) && row.task_id && !taskIds.has(String(row.task_id))) throw new Error(`Snapshot contains a missing task reference (${table})`);

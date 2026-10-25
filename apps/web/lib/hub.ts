@@ -61,8 +61,16 @@ export const updateWorkspace = (id: string, patch: Partial<Pick<Workspace, "name
 export const archiveWorkspace = (id: string, archived: boolean) => request<Workspace>(w(id), { method: "PATCH", body: { archived } });
 export const deleteWorkspace = (id: string) => request<void>(w(id), { method: "DELETE" });
 export const listMessages = (id: string) => request<Message[]>(`${w(id)}/messages`);
-export const postMessage = (id: string, content: string) =>
-  request<{ message: Message; task: Task }>(`${w(id)}/messages`, { method: "POST", body: { content } });
+export const postMessage = (id: string, content: string, quoteMessageId?: string) =>
+  request<{ message: Message; task: Task }>(`${w(id)}/messages`, {
+    method: "POST",
+    body: quoteMessageId ? { content, quoteMessageId } : { content },
+  });
+export const editMessage = (id: string, messageId: string, content: string) =>
+  request<{ message: Message; task: Task }>(`${w(id)}/messages/${encodeURIComponent(messageId)}`, { method: "PATCH", body: { content } });
+export const listMessageVersions = (id: string, messageId: string) =>
+  request<{ version: number; content: string; createdAt: string }[]>(`${w(id)}/messages/${encodeURIComponent(messageId)}/versions`);
+export const searchMessages = (id: string, q: string) => request<Message[]>(`${w(id)}/messages/search?q=${encodeURIComponent(q)}`);
 export const getActiveTask = (id: string) => request<{ running: Task | null }>(`${w(id)}/tasks/active`);
 export const listEntries = (id: string) => request<EntryListItem[]>(`${w(id)}/entries`);
 export const getEntry = (id: string, eid: string) => request<Entry>(e(id, eid));

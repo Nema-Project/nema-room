@@ -375,6 +375,16 @@ export class KnowledgeStore {
     return all.map(summarize);
   }
 
+  /** Entries whose source messages include `messageId`, in the same order as `list`. */
+  async entriesCiting(messageId: string): Promise<EntrySummary[]> {
+    const all = await this.readAll();
+    const order = (k: EntryKind) => KINDS.indexOf(k);
+    return all
+      .filter((e) => e.sourceMessages.includes(messageId))
+      .sort((a, b) => order(a.kind) - order(b.kind) || idNumber(a.id) - idNumber(b.id))
+      .map(summarize);
+  }
+
   async get(id: string): Promise<Entry | null> {
     const kind = kindFromId(id);
     if (!kind) return null;

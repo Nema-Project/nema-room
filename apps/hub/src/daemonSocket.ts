@@ -2,12 +2,12 @@ import type http from "node:http";
 import { nanoid } from "nanoid";
 import { WebSocketServer, type WebSocket } from "ws";
 import { KnowledgeStore } from "@nema/knowledge";
-import { WORKPACKAGE_LIMITS, parseDaemonToHub, type AgentMessageMeta, type HubToDaemon, type PluginToolSpec } from "@nema/shared";
+import { WORKPACKAGE_LIMITS, parseDaemonToHub, type AgentMessageMeta, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
 import { createConnectionRpc, DaemonRpcError, type ConnectionRpc, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
 import { timeline, topOpenQuestion } from "./entryIndex.js";
-import { addMessage, getLastAgentMessage, getMessage, listPromptMessages, type Message } from "./messages.js";
+import { addMessage, getLastAgentMessage, getMessage, listMessageVersions, listPromptMessages, listRecentMessages, messageExcerpt, type Message } from "./messages.js";
 import { announceInterrupted } from "./interrupts.js";
 import { enabledPluginTools, grillState } from "./plugins.js";
 import { recheckReports, registerReportToken } from "./reports.js";
@@ -64,9 +64,12 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     if (!workspace) throw new Error("workspace not found");
     const userMessage = await getMessage(db, task.messageId);
     if (!userMessage) throw new Error("task message not found");
-    const before = await listPromptMessages(db, task.workspaceId, userMessage.id, 20);
-    // A system-started task or a coding agent's report is not the user's answer to the last follow-up question.
-    const asked = userMessage.role === "system" || userMessage.role === "report" ? undefined : (await getLastAgentMessage(db, task.workspaceId))?.meta?.askedQuestion;
+    const editing = task.kind === "edit";
+    const before = editing
+      ? await listRecentMessages(db, task.workspaceId, userMessage.id, 20)
+      : await listPromptMessages(db, task.workspaceId, userMessage.id, 20);
+    // A system-started task, a report, or an edit re-run is not the user's answer to the last follow-up question.
+    const asked = editing || userMessage.role === "system" || userMessage.role === "report" ? undefined : (await getLastAgentMessage(db, task.workspaceId))?.meta?.askedQuestion;
     const store = new KnowledgeStore(repoPath(dataDir, task.workspaceId), deps.ownedHelpers);
     const lastAskedQuestion = asked ? await store.get(asked.id) : null;
     let workpackage: WorkPackagePromptInput | undefined;
@@ -82,6 +85,14 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         rules: workPackageRules(),
       };
     }
+    const edit = editing
+      ? {
+          previousContent: (await listMessageVersions(db, userMessage.id)).at(-1)?.content ?? "",
+          cited: await store.entriesCiting(userMessage.id),
+        }
+      : null;
+    const quoteId = userMessage.role === "user" ? (userMessage.meta as UserMessageMeta | null)?.quote?.messageId : undefined;
+    const quotedMessage = quoteId ? await getMessage(db, quoteId) : null;
     const prompt = await buildPrompt({
       workspace,
       userMessage,
@@ -91,6 +102,8 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       priorChanges: await listTaskChanges(db, task.id),
       grill: await grillState(db, task.workspaceId),
       ...(workpackage ? { workpackage } : {}),
+      ...(quotedMessage ? { quotedMessage } : {}),
+      ...(edit ? { edit } : {}),
     });
     return { prompt, confidential: workspace.confidential };
   }
@@ -168,6 +181,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         changes: (await listTaskChanges(db, m.taskId)) as AgentMessageMeta["changes"],
         askedQuestion: q ? { id: q.id, title: q.title, body: q.body } : null,
       };
+      const finished = await getTask(db, m.taskId);
+      if (finished?.kind === "edit") {
+        const edited = await getMessage(db, finished.messageId);
+        if (edited) meta.quote = { messageId: edited.id, role: edited.role, excerpt: messageExcerpt(edited.content) };
+      }
       if (!(await finishTask(db, m.taskId, { ok: true }, a.runToken))) {
         conn.assigned = null;
         return;

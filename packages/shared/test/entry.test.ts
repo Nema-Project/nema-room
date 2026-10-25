@@ -38,7 +38,14 @@ test("kind-specific rules", () => {
   expect(() => UpsertEntryInput.parse({ ...base, kind: "decision", status: "open" })).toThrow();
 });
 test("AgentMessageMeta", () => {
-  expect(AgentMessageMeta.parse({ changes: [{ entryId: "R-7", kind: "requirement", title: "流式输出", op: "add" }], askedQuestion: null }).changes).toHaveLength(1);
+  const changes = [{ entryId: "R-7", kind: "requirement" as const, title: "流式输出", op: "add" as const }];
+  expect(AgentMessageMeta.parse({ changes, askedQuestion: null }).changes).toHaveLength(1);
+  const withQuote = AgentMessageMeta.parse({
+    changes,
+    askedQuestion: null,
+    quote: { messageId: "m_1", role: "user", excerpt: "hi" },
+  });
+  expect(withQuote.quote).toEqual({ messageId: "m_1", role: "user", excerpt: "hi" });
 });
 test("idNumber", () => {
   expect(idNumber("D-42")).toBe(42);

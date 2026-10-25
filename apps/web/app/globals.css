@@ -184,6 +184,13 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .who { font-weight: 700; font-size: 14px; }
 .who time { font-weight: 400; color: var(--ink-3); font-size: 12px; margin-left: 8px; }
 .memo { background: var(--paper-2); padding: 10px 12px; border-left: 2px solid var(--ink); color: var(--ink-2); }
+.quote, .quote-bar, .versions, .search-hit { background: var(--paper-2); color: var(--ink-2); border-left: 2px solid var(--ink); padding: 6px 10px; }
+.quote-bar { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.quote { display: block; width: 100%; text-align: left; margin-bottom: 6px; }
+.search { padding: 8px 12px 0; }
+.search input, .editbox textarea { width: 100%; border: 1px solid var(--ink); background: var(--paper-2); color: var(--ink); font: inherit; }
+.search-hit { margin-top: 6px; cursor: pointer; }
+.search-hit mark { background: var(--paper-2); color: var(--ink); font-weight: 700; }
 .sysmsg { padding: 6px 0 6px 48px; font-size: 12px; color: var(--ink-3); }
 .md { overflow-wrap: anywhere; }
 .md p + p, .md ul + p, .md p + ul, .md pre { margin-top: 6px; }

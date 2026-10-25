@@ -86,13 +86,20 @@ export function roomRoutes(deps: {
       return c.json({ error: "basis: required (stated | decided | inferred)" }, 400);
     }
     const byId = new Map(found.map((r) => [r.id, r]));
+    const versions = input.quotes?.length
+      ? await db.query<{ message_id: string; content: string }>(
+          `select message_id, content from message_versions where message_id = any($1::text[])`,
+          [ids],
+        )
+      : [];
     for (const quote of input.quotes ?? []) {
       if (!input.sourceMessages.includes(quote.messageId)) {
         return c.json({ error: `quotes: message ${quote.messageId} is not in sourceMessages` }, 400);
       }
-      // Exact substring: do not trim, collapse whitespace, or normalize Markdown.
+      // Exact substring of the current text or of any stored version. Do not trim or normalize.
       const message = byId.get(quote.messageId);
-      if (!message || !message.content.includes(quote.text)) {
+      const inVersion = versions.some((v) => v.message_id === quote.messageId && v.content.includes(quote.text));
+      if (!message || (!message.content.includes(quote.text) && !inVersion)) {
         return c.json({ error: `quotes: text must be copied verbatim from message ${quote.messageId}` }, 400);
       }
     }

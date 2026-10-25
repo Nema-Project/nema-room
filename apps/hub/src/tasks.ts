@@ -11,7 +11,7 @@ export type Task = {
   daemonId: string | null;
   error: string | null;
   /** `workpackage` tasks write a work package and run with larger limits. */
-  kind: "organize" | "workpackage";
+  kind: "organize" | "workpackage" | "edit";
 };
 
 /** Task as exposed to the web UI (REST + SSE): never carries the run token or daemon id. */

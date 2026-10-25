@@ -6,7 +6,7 @@ import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { createWorkspace } from "../src/workspaces.js";
-import { postUserMessage } from "../src/messages.js";
+import { addMessage, postUserMessage } from "../src/messages.js";
 import { claimNextTask, finishTask, recordTaskChange } from "../src/tasks.js";
 import { EventBus } from "../src/events.js";
 import { indexEntry } from "../src/entryIndex.js";
@@ -78,6 +78,86 @@ describe("ui api", () => {
     const list = await json(await req("GET", `/api/workspaces/${ws}/messages`));
     expect(list.map((m: any) => m.id)).toContain(b.message.id);
     expect((await req("POST", `/api/workspaces/${ws}/messages`, { content: "  " })).status).toBe(400);
+  });
+
+  test("a quote must be a message in this workspace", async () => {
+    const first = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "alpha beta" }));
+    const other = await json(await req("POST", "/api/workspaces", { name: "B" }));
+    const foreign = await json(await req("POST", `/api/workspaces/${other.id}/messages`, { content: "secret" }));
+    const bad = await req("POST", `/api/workspaces/${ws}/messages`, { content: "about it", quoteMessageId: foreign.message.id });
+    expect(bad.status).toBe(400);
+    expect((await json(bad)).error).toBe("quote: message not in this workspace");
+    const ok = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "about it", quoteMessageId: first.message.id }));
+    expect(ok.message.meta.quote).toEqual({ messageId: first.message.id, role: "user", excerpt: "alpha beta" });
+    const long = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "long", quoteMessageId: (await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "你".repeat(250) }))).message.id }));
+    expect(long.message.meta.quote.excerpt).toHaveLength(200);
+    const system = await addMessage(db, ws, "system", "draw the diagram");
+    const quotedSystem = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "about the diagram", quoteMessageId: system.id }));
+    expect(quotedSystem.message.meta.quote.role).toBe("system");
+  });
+
+  test("editing keeps the previous text, queues an edit task, and blocks while that task is open", async () => {
+    const posted = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "original" }));
+    const id = posted.message.id as string;
+    const busy = await req("PATCH", `/api/workspaces/${ws}/messages/${id}`, { content: "revised" });
+    expect(busy.status).toBe(409);
+    expect((await json(busy)).error).toBe("message is still being processed");
+    expect((await json(await req("GET", `/api/workspaces/${ws}/messages`))).find((m: { id: string }) => m.id === id).content).toBe("original");
+
+    const original = (await claimNextTask(db, "d1"))!;
+    await finishTask(db, original.id, { ok: true });
+    const seen: string[] = [];
+    events.subscribe(ws, (e) => seen.push(e.type));
+    const edited = await json(await req("PATCH", `/api/workspaces/${ws}/messages/${id}`, { content: "revised" }));
+    expect(edited.message.content).toBe("revised");
+    expect(typeof edited.message.editedAt).toBe("string");
+    expect(edited.task.status).toBe("queued");
+    expect(edited.task).not.toHaveProperty("kind");
+    expect(seen).toEqual(["message.updated", "task.updated"]);
+    const versions = await json(await req("GET", `/api/workspaces/${ws}/messages/${id}/versions`));
+    expect(versions).toEqual([{ version: 1, content: "original", createdAt: expect.any(String) }]);
+
+    const editTask = (await claimNextTask(db, "d1"))!;
+    await finishTask(db, editTask.id, { ok: true });
+    expect((await req("PATCH", `/api/workspaces/${ws}/messages/${id}`, { content: "third" })).status).toBe(200);
+    const again = await json(await req("GET", `/api/workspaces/${ws}/messages/${id}/versions`));
+    expect(again.map((v: { content: string }) => v.content)).toEqual(["original", "revised"]);
+
+    const agent = await addMessage(db, ws, "agent", "summary");
+    const notUser = await req("PATCH", `/api/workspaces/${ws}/messages/${agent.id}`, { content: "nope" });
+    expect(notUser.status).toBe(400);
+    expect((await json(notUser)).error).toBe("only user messages can be edited");
+
+    const third = (await claimNextTask(db, "d1"))!;
+    await finishTask(db, third.id, { ok: true });
+    expect((await req("PATCH", `/api/workspaces/${ws}/messages/${id}`, { content: "   " })).status).toBe(400);
+    expect((await req("PATCH", `/api/workspaces/${ws}`, { archived: true })).status).toBe(200);
+    const archived = await req("PATCH", `/api/workspaces/${ws}/messages/${id}`, { content: "later" });
+    expect(archived.status).toBe(409);
+    expect((await json(archived)).error).toMatch(/archived/);
+
+    expect((await req("PATCH", `/api/workspaces/${ws}`, { archived: false })).status).toBe(200);
+    expect((await req("DELETE", `/api/workspaces/${ws}`)).status).toBe(204);
+    expect(await db.query("select 1 from message_versions where message_id = $1", [id])).toHaveLength(0);
+  });
+
+  test("search matches the current text only, literally, newest first", async () => {
+    const post = async (content: string) => {
+      const created = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content }));
+      const task = (await claimNextTask(db, "d1"))!;
+      await finishTask(db, task.id, { ok: true });
+      return created.message.id as string;
+    };
+    const a = await post("100% done");
+    const b = await post("100% done too");
+    const renamed = await post("100% later");
+    expect((await req("PATCH", `/api/workspaces/${ws}/messages/${renamed}`, { content: "renamed" })).status).toBe(200);
+    const ids = async (q: string) =>
+      (await json(await req("GET", `/api/workspaces/${ws}/messages/search?q=${encodeURIComponent(q)}`))).map((m: { id: string }) => m.id);
+    expect(await ids("100%")).toEqual([b, a]);
+    expect(await ids("%")).toEqual([b, a]);
+    expect(await ids("_")).toEqual([]);
+    expect(await ids(" ")).toEqual([]);
   });
 
   test("workspaces create/patch/validation", async () => {

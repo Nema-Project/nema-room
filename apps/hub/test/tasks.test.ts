@@ -5,6 +5,7 @@ import { createWorkspace } from "../src/workspaces.js";
 import { addMessage, listMessages, postUserMessage } from "../src/messages.js";
 import {
   claimNextTask,
+  insertQueuedTask,
   getTask,
   finishTask,
   interruptRunning,
@@ -33,6 +34,13 @@ beforeEach(async () => {
 afterAll(cleanupHubDeps);
 
 describe("tasks", () => {
+  test("a queued edit task is allowed", async () => {
+    const { message } = await postUserMessage(db, wsA, "memo");
+    const task = await insertQueuedTask(db, wsA, message.id, "edit");
+    expect(task.kind).toBe("edit");
+    expect((await listMessages(db, wsA))[0]!.editedAt).toBeNull();
+  });
+
   test("per-workspace serial, cross-workspace parallel", async () => {
     const a1 = await postUserMessage(db, wsA, "memo 1");
     const a2 = await postUserMessage(db, wsA, "memo 2");

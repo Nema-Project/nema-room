@@ -22,6 +22,24 @@ describe("snapshot allowlist and references", () => {
     expect(() => validateSnapshot({ ...empty, tableData: { ...empty.tableData, workspaces: [{ id: "ws_abc", name: "A", confidential: true, knowledge_language: "follow" }], tasks: [{ id: "t1", workspace_id: "ws_abc", message_id: "m_missing", status: "done" }] } })).toThrow(/message/i);
   });
 
+  it("accepts a snapshot from before message versions", () => {
+    expect(validateSnapshot(empty).tableData.message_versions).toEqual([]);
+  });
+
+  it("rejects a version that cites an unknown message", () => {
+    const ws = { id: "ws_abc", name: "A", confidential: true, knowledge_language: "follow" };
+    const withVersion = {
+      ...empty,
+      tableData: {
+        ...empty.tableData,
+        workspaces: [ws],
+        messages: [{ id: "m1", workspace_id: "ws_abc", role: "user", content: "now" }],
+        message_versions: [{ message_id: "m_missing", version: 1, content: "old" }],
+      },
+    };
+    expect(() => validateSnapshot(withVersion)).toThrow(/message/i);
+  });
+
   it("rejects report-token hashes instead of migrating credential material", () => {
     expect(() => validateSnapshot({ ...empty, tableData: { ...empty.tableData, report_tokens: [{ hash: "a".repeat(64) }] } })).toThrow(/table/i);
   });
