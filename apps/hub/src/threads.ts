@@ -127,15 +127,39 @@ export async function getLastAskedQuestion(db: Db, workspaceId: string, threadId
   return rows[0]?.asked_question ?? null;
 }
 
-type AttentionQuestion = { workspace_id: string; entry_id: string; updated_at: Date | string };
+type AttentionQuestion = { workspace_id: string; entry_id: string; at: number };
 
-async function legacyQuestions(db: Db): Promise<AttentionQuestion[]> {
-  const rows = await db.query<AttentionQuestion>(
-    `select e.workspace_id,e.entry_id,e.updated_at from entry_index e
-     where e.kind='question' and e.status='open' order by e.updated_at asc,e.entry_id asc`,
+async function legacyQuestions(db: Db, dataDir: string): Promise<AttentionQuestion[]> {
+  const rows = await db.query<{ workspace_id: string; entry_id: string }>(
+    `select e.workspace_id,e.entry_id from entry_index e
+     where e.kind='question' and e.status='open'`,
   );
   const out: AttentionQuestion[] = [];
-  for (const row of rows) if (!(await getQuestionThread(db, row.workspace_id, row.entry_id))) out.push(row);
+  for (const row of rows) {
+    if (await getQuestionThread(db, row.workspace_id, row.entry_id)) continue;
+    const entry = await new KnowledgeStore(repoPath(dataDir, row.workspace_id)).get(row.entry_id);
+    if (!entry || entry.kind !== "question" || entry.status !== "open") continue;
+    let at = entry.ingestedAt ? Date.parse(entry.ingestedAt) : Number.NaN;
+    if (!Number.isFinite(at)) {
+      const originalAdd = await db.query<{ at: Date | string | null }>(
+        `select min(change.created_at) as at from task_changes change
+         join tasks task on task.id=change.task_id
+         where task.workspace_id=$1 and change.entry_id=$2 and change.kind='question' and change.op='add'`,
+        [row.workspace_id, row.entry_id],
+      );
+      at = originalAdd[0]?.at ? new Date(originalAdd[0].at).getTime() : Number.NaN;
+    }
+    if (!Number.isFinite(at) && entry.sourceMessages.length > 0) {
+      const source = await db.query<{ at: Date | string | null }>(
+        `select min(created_at) as at from messages where workspace_id=$1 and id=any($2::text[])`,
+        [row.workspace_id, entry.sourceMessages],
+      );
+      at = source[0]?.at ? new Date(source[0].at).getTime() : Number.NaN;
+    }
+    // Pre-metadata entries without source messages share a stable oldest timestamp; id breaks ties.
+    if (!Number.isFinite(at)) at = 0;
+    out.push({ workspace_id: row.workspace_id, entry_id: row.entry_id, at });
+  }
   return out;
 }
 
@@ -146,7 +170,7 @@ export async function attentionCounts(db: Db, _dataDir: string): Promise<Record<
      join messages m on m.thread_id=t.id and m.seq>t.last_read_seq group by t.workspace_id`,
   );
   for (const row of unread) result[row.workspace_id] = Number(row.n);
-  for (const q of await legacyQuestions(db)) result[q.workspace_id] = (result[q.workspace_id] ?? 0) + 1;
+  for (const q of await legacyQuestions(db, _dataDir)) result[q.workspace_id] = (result[q.workspace_id] ?? 0) + 1;
   return result;
 }
 
@@ -163,7 +187,7 @@ export async function nextAttentionResult(db: Db, dataDir: string, workspaceId: 
      where t.workspace_id=$1 group by t.workspace_id,t.id`, [workspaceId],
   );
   for (const row of unread) candidates.push({ workspaceId: row.workspace_id, id: row.thread_id, at: new Date(row.at).getTime(), kind: "thread" });
-  for (const q of await legacyQuestions(db)) if (q.workspace_id === workspaceId) candidates.push({ workspaceId: q.workspace_id, id: q.entry_id, at: new Date(q.updated_at).getTime(), kind: "question" });
+  for (const q of await legacyQuestions(db, dataDir)) if (q.workspace_id === workspaceId) candidates.push({ workspaceId: q.workspace_id, id: q.entry_id, at: q.at, kind: "question" });
   candidates.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
   const chosen = candidates[0];
   if (!chosen) return { threadId: null, anchor: null, card: null };

@@ -194,6 +194,17 @@ describe("ui api", () => {
     expect(await getLastAskedQuestion(db, ws, next.threadId)).toMatchObject({ id: q.id });
   });
 
+  test("reindexing an older legacy question does not move it behind a newer unread reply", async () => {
+    const q = await legacyQuestion();
+    const opened = await json(await req("POST", `/api/workspaces/${ws}/threads`, { content: "newer thread" }));
+    await req("POST", `/api/workspaces/${ws}/threads/${opened.thread.id}/messages`, { content: "newer unread reply" });
+    const store = new KnowledgeStore(repoPath(dataDir, ws));
+    const edited = await store.upsert({ kind: "question", id: q.id, title: q.title, body: "edited body", sourceMessages: [], reason: "edit", priority: q.priority }, { author: "user" });
+    await indexEntry(db, ws, edited.entry);
+    const next = await json(await req("GET", `/api/workspaces/${ws}/attention/next`));
+    expect(await getLastAskedQuestion(db, ws, next.threadId)).toMatchObject({ id: q.id, body: "edited body" });
+  });
+
   test("withdrawn question no longer counts as attention", async () => {
     const q = await legacyQuestion();
     const r = await req("POST", `/api/workspaces/${ws}/entries/${q.id}/withdraw`);

@@ -17,7 +17,7 @@ import { addReportMessage, getMessage } from "../src/messages.js";
 import { indexEntry } from "../src/entryIndex.js";
 import { repoPath } from "../src/workspaces.js";
 import { requestWorkPackage } from "../src/workpackages.js";
-import { associateQuestion, ensureThread, getQuestionThread, getThread } from "../src/threads.js";
+import { associateQuestion, ensureThread, getQuestionThread, getThread, nextAttention } from "../src/threads.js";
 
 const failTimeline = vi.hoisted(() => ({ on: false }));
 const promptBuild = vi.hoisted(() => ({ hold: false, release: () => {}, entered: () => {} }));
@@ -356,6 +356,22 @@ describe("daemon socket", () => {
     const agent = (await listThreadMessages(db, threadId!)).find((m): m is AgentMessage => m.role === "agent")!;
     expect(agent.meta?.askedQuestion?.id).toBe(created.id);
     expect(agent.meta?.askedQuestion?.id).not.toBe(older.id);
+  });
+
+  test("the first answer after legacy conversion receives that question in its assigned prompt", async () => {
+    const q = await addQuestion(wsA, 1);
+    const threadId = await nextAttention(db, dataDir, wsA);
+    expect(threadId).toBeTruthy();
+    expect(await getQuestionThread(db, wsA, q.id)).toBe(threadId);
+    const answer = await postUserMessage(db, wsA, "Here is the answer", { threadId: threadId! });
+    const c = await connect();
+    const assignment = await c.next("task.assign");
+    expect(assignment.taskId).toBe(answer.task.id);
+    expect(assignment.prompt).toContain("# 上一个追问");
+    expect(assignment.prompt).toContain(`${q.id}：${q.title}`);
+    expect(assignment.prompt).toContain(q.body);
+    c.send({ type: "task.finished", taskId: answer.task.id, ok: true, reply: "answer recorded" });
+    await vi.waitFor(async () => expect((await getTask(db, answer.task.id))?.status).toBe("done"));
   });
 
   test("a main-chat task that adds a question replies in a new thread on its message", async () => {
