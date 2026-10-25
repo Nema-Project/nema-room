@@ -19,7 +19,7 @@ English: this repository is private, so GitHub's advisory form does not exist an
 - 读取或写入超出预定位置的文件。预定位置包括已绑定仓库的快照、数据目录和凭证文件。
 - 凭证文件可被其他用户读取，或在权限过宽、路径为符号链接时仍被接受。
 - daemon 或 hub 在文档约定的回环地址之外可被访问，或缺少本地凭证仍可调用。
-- GitHub 令牌的保存或发送超出 `auth github` 和已启用插件的范围。
+- GitHub 访问超出已启用插件的范围：对未绑定仓库执行命令、未打开写入开关就修改 GitHub，或在默认路径之外读取、发送 `nema auth github` 保存的令牌。
 - 上报 hook 或插件调用转发了文档写明不会发送的对话内容。
 
 下列行为写在 README 中。只有当你能演示越过这些边界的具体步骤时，才作为漏洞报告：
@@ -36,4 +36,4 @@ English: this repository is private, so GitHub's advisory form does not exist an
 
 安装方式是默认分支的源码。CLI 不作为独立 npm 包发布，也没有单独的安全维护分支。修复进入 `main`。
 
-桌面打包仍在迁移中。源码安装的 Web / Compose 路径是当前支持的运行方式。
+桌面应用可以自己从源码构建，还没有发布版本，安装包也未签名。当前支持的运行方式是源码安装的 Web / Compose 路径。

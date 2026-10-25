@@ -42,7 +42,7 @@ node apps/cli/dist/index.js daemon
 | `scripts/desktop/` | 桌面打包 |
 | `vendor/` | 第三方快照 |
 
-桌面迁移尚未完成。安装说明仍以 README 中的 Web / Compose 路径为准。
+桌面应用可以自己从源码构建，还没有发布版本。安装说明仍以 README 中的 Web / Compose 路径为准。
 
 ## 提交前
 

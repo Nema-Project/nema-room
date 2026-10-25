@@ -14,11 +14,11 @@
 
 ## Code repositories and plugins
 
-在 workspace 设置里绑定仓库。daemon 在线时会检查这条路径并建立索引。Graphify 随安装包放在 `tools/graphify/`，不需要单独安装。安装包里没有这份运行环境时，插件页说明可以修复，不要求执行终端命令。
+在 workspace 设置里绑定仓库。daemon 在线时会检查这条路径并建立索引。Graphify 从安装包的 `tools/graphify/` 读取（Windows 为 `graphify.exe`）。未注入路径时，先认 `NEMA_GRAPHIFY_BIN`，否则用 `NEMA_PAYLOAD_ROOT` 或 Node 可执行文件旁边的同一相对路径。不从 PATH 查找，运行时也不下载。当前构建还没有放入这份文件。缺失时 doctor 和插件页显示 `随包的 Graphify 运行环境缺失`。插件页那句写成「可在此修复」，页面上只有这句说明，没有下载或修复操作。
 
-Nema 读的是 `origin/<main>`，不是你当前检出的文件。daemon 不按时钟 fetch。一次任务第一次调用代码函数时，才对这个仓库执行 `git fetch`，不改动工作区，也不动本地分支。同一次任务里之后的调用沿用这一次的结果。
+Nema 读的是 `origin/<main>`，不是你当前检出的文件。daemon 不按时钟 fetch。绑定仓库时建一次索引。一次任务第一次调用代码函数时，才对这个仓库执行 `git fetch`，不改动工作区，也不动本地分支。同一次任务里之后的调用沿用这一次的结果。编码 Agent 的钩子仍可通过 `repo.tick` 立刻检查这一个仓库。空闲时不拉取。
 
-graphify 不直接扫检出目录。它在一份私有快照上工作，目录是 `~/.nema/ws/<id>/graphify/`。
+graphify 不直接扫检出目录。它在一份私有快照上工作，目录是 `<nema home>/ws/<workspace id>/graphify/<repo id>`。Web / Compose 的 home 是 `~/.nema`，桌面应用是 `~/.nema/desktop`。
 
 绑定仓库之后，Agent 可以使用这些函数：`code__search`、`code__explain`、`code__path`、`code__read`、`code__changes`。
 
@@ -73,7 +73,7 @@ echo '{"summary":"…","commits":["abc1234"]}' | nema report --json
 
 **squash 合并。** squash 之后原提交不是主分支的祖先。只要主分支上有一个提交的 `git patch-id --stable` 和这些提交合起来的 patch-id 相同，也算合入。
 
-**30 分钟兜底。** hub 每 5 分钟检查一次。主分支移动 30 分钟后，如果里面有提交没有任何上报覆盖，hub 排一个系统任务，列出这些提交，让 Agent 用 `code__changes` / `code__read` 判断它们对应哪些需求。
+**30 分钟兜底。** 主分支相对上次记下的提交发生变化时，才会留下一条移动记录。这发生在绑定之后的刷新里：任务第一次读代码，或钩子触发 `repo.tick`。空闲时不去 fetch，也就没有新记录。hub 每 5 分钟查看已经记下、并且超过 30 分钟还没处理的移动。如果这段范围里有提交没有任何上报覆盖，hub 排一个系统任务，列出这些提交，让 Agent 用 `code__changes` / `code__read` 判断它们对应哪些需求。
 
 **推断出来的要你确认。** 仅凭代码推断出的关联，只会标成 `reported`，并注明是推断的。Agent 不能把它设成 `verified`，要你在界面上确认后才会变成 verified。
 
@@ -114,31 +114,19 @@ nema report --entries W-1 --task 2 --summary "…" --commits abc1234 --files src
 
 **superpowers 署名。** spec 和 plan 的写作规则改写自 [superpowers](https://github.com/obra/superpowers)（MIT，Copyright (c) 2025 Jesse Vincent）的 brainstorming 和 writing-plans 技能。许可证和来源版本在 `vendor/superpowers-rules/` 下。
 
-## GitHub (read-only)
+## GitHub
 
-GitHub 插件让 Agent 只读查看已绑定仓库在 GitHub 上的 pull request 和 issue。它通过官方的 `github-mcp-server` 工作，每个 workspace 默认关闭。
+GitHub 插件让 Agent 查看已绑定仓库在 GitHub 上的 issue、pull request、标签、Actions 运行和 Project，并在你允许时修改它们。调用内容会离开本机，所以每个 workspace 默认关闭，机密 workspace 也一样。在「代码与插件」里手动打开。
 
-**安装 `github-mcp-server`。** 从 [github/github-mcp-server](https://github.com/github/github-mcp-server) 的 Releases 下载对应平台的二进制，放进 `PATH`；或者用 Go 安装：
+**本机 `gh`。** 默认路径是你已经登录的 `gh`，不是 `github-mcp-server`。先在终端执行一次 `gh auth login`。Nema 不要求、也不读取 GitHub 令牌。`nema auth github` 和 `~/.nema/github-token` 还在，默认用不到。`nema doctor` 仍会打印 `github-mcp-server` 和令牌两行；这两行只是提示，缺了也不算失败，不必为此安装。`plugins.status` 会返回本机 `gh` 是否可用、是否已登录 github.com，但插件页和工作区设置都不显示这一行。要确认登录，在终端看 `gh auth status`。
 
-```bash
-go install github.com/github/github-mcp-server/cmd/github-mcp-server@latest
-```
+**写入另开一档。** 插件打开后，读取函数可用。`github__gh_write` 还要再打开「允许 agent 修改 GitHub」。用读函数执行写命令会被拒绝。
 
-daemon 用固定参数 `stdio --read-only --toolsets pull_requests,issues` 启动它，任何设置都不能改。子进程的环境变量只有 `PATH`、`HOME`（`~/.nema/run/github/` 下的目录）和 `GITHUB_PERSONAL_ACCESS_TOKEN`。
+**只能碰到绑定仓库。** `--repo` 必须是本 workspace 已绑定仓库的 github.com 远端（`origin`，不区分大小写）。`https://github.com/o/r.git`、`git@github.com:o/r.git`、`ssh://git@github.com/o/r` 都算 `o/r`。Project 命令的 `--owner` 必须是这些仓库的所有者。`GH_HOST` 固定为 github.com。不是 github.com 的远端（GitLab、自建）在该仓库下显示「没有 GitHub 远端」，也不会交给 Agent。
 
-**保存令牌。** 在终端运行下面的命令，从标准输入粘贴 personal access token：
+**命令是一张固定表。** Agent 没有 shell。`github__gh_read` 和 `github__gh_write` 只接受 `packages/shared/src/ghCommand.ts` 里的子命令，而且只用长参数。读取包括 `issue list|view|status`、`pr list|view|diff|checks|status`、`label list`、`run list|view`、`project list|view|field-list|item-list`。写入包括 `issue create|comment|edit|close|reopen`、`pr comment|edit`、`label create|edit`、`project item-add|item-create|item-edit|item-archive`。没有交给 Agent 的 `gh api`，也没有文件或编辑器参数、merge、delete、auth。`project item-edit` 用全局 node id，执行前无法再把它绑回某个 owner。
 
-```bash
-nema auth github
-```
-
-令牌写入 `~/.nema/github-token`（0600），不会打印，也不会写进日志或错误信息。权限只要读就够：fine-grained token 给相关仓库 Contents、Pull requests、Issues 的只读权限（Metadata 只读会自动带上）；classic token 读公开仓库不需要额外 scope，读私有仓库需要 `repo`。`nema doctor` 会检查 `github-mcp-server` 和令牌。插件页面显示是否已安装、是否已保存令牌。
-
-**默认关闭，会外发。** 每个 workspace 都要在 workspace 设置里手动打开 GitHub 插件，机密 workspace 也一样。打开后，Agent 的查询内容（仓库名、issue / PR 编号、搜索词）会发送给 GitHub。
-
-**只能访问绑定仓库的远端。** 每次调用的 `owner/repo` 必须是本 workspace 已绑定仓库的 GitHub 远端（`origin`，不区分大小写）。`https://github.com/o/r.git`、`git@github.com:o/r.git`、`ssh://git@github.com/o/r` 都算 `o/r`。搜索必须且只能带一个 `repo:owner/name` 限定。其他目标一律拒绝，不会转发给 GitHub。远端不在 github.com 上的仓库（GitLab、自建服务器）没有 GitHub 目标，workspace 设置里在该仓库下显示「没有 GitHub 远端」。
-
-Agent 可用的函数：`github__pull_request_read`、`github__list_pull_requests`、`github__search_pull_requests`、`github__issue_read`、`github__list_issues`、`github__search_issues`。服务器有、但不在这个列表里的工具不会提供给 Agent。
+另外六个读取函数还在，也由本机 `gh` 执行：`github__pull_request_read`、`github__list_pull_requests`、`github__search_pull_requests`、`github__issue_read`、`github__list_issues`、`github__search_issues`。搜索必须且只能带一个 `repo:owner/name`。
 
 ## API 与恢复
 
@@ -148,9 +136,9 @@ Agent 可用的函数：`github__pull_request_read`、`github__list_pull_request
 - `/api` 下的 POST / PUT / PATCH 必须带 `content-type: application/json`，否则返回 415（挡住跨站的“简单请求”）。
 - 用户在界面里修改条目（`PUT /api/workspaces/:id/entries/:eid`）时，请求里的 `basis` 和 `confirmed` 会被忽略：决策写成 `decided`，其他类型写成 `stated`，并刷新确认时间。`POST /api/workspaces/:id/entries/:eid/confirm` 的 body 为 `{}`，返回确认后的条目，重新索引并发出 `knowledge.changed`；条目不存在时返回 404。
 - 绑定本机 git 仓库：`GET/POST /api/workspaces/:id/repos`，`PATCH/DELETE /api/workspaces/:id/repos/:repoId`。POST 的 body 是 `{ path, label, mainBranch? }`。daemon 在线时会校验路径，并尝试 `git fetch` 后用 graphify 建索引（不把符号链接展开进快照）。有 origin 且 fetch 成功时快照是 `origin/<main>`；fetch 失败或没有 origin 时快照是本地分支，或仓库里已经有的远程 ref。同一个 git 仓库（相同的 git common dir，即使路径写法不同）不能绑第二次，返回 409，错误信息为 `该仓库已绑定到 workspace <名称>`。用途说明（label）需为 1–40 个字符且不含控制字符，否则 400 `用途说明需为 1–40 个字符`；同一 workspace 内不能重复，否则 409 `本 workspace 已有用途为 <label> 的仓库`。`code__changes` 的 `from`/`to` 只能是主分支 ref 本身，或主分支已包含的提交 sha，否则报 `提交 <x> 不在主分支上`。daemon 未连接、已断开或响应超时时 POST 返回 503，正文就是 `daemon 未连接`、`daemon 已断开` 或 `daemon 响应超时`。仓库路径校验失败返回 400，正文是 daemon 的中文原因。`mainBranch` 不是单个分支名（例如含 `:` 的 refspec）时 POST / PATCH 返回 400 `主分支名称无效`。保存的 origin URL 会去掉 `user:secret@`。仓库不存在时 PATCH / DELETE 返回 404 `找不到仓库：<id>`。Graphify 从安装包的 `tools/graphify/` 读取，不从 PATH 查找。测试通过 daemon 的 `graphify: { bin, timeoutMs }` 选项注入假可执行文件。daemon 不按时钟检查仓库：绑定仓库时建索引；一次任务里第一次调用代码函数时对该仓库 `git fetch` 并在提交变化时更新索引，同一次任务之后的调用不再 fetch。编码 Agent 的钩子仍可通过 `repo.tick` 立即检查一个仓库。hub 在 welcome、绑定变化和删除 workspace 时发送 `repos.sync`，条目含 `lastMainSha`（从未记录时为 null）。绑定后建索引成功时，hub 把索引用的 sha 存为 `lastMainSha`，不发 `repo.moved`。第一次看到 null 只记下当前 sha，不发 `repo.moved`；之后 sha 变了才按变更文件增量更新索引（重命名会删掉旧路径；还没有 `graphify-out/graph.json` 时整份重建），并发送 `repo.moved`。每次这样的检查都发 `repo.fetched`。fetch 失败时保留上次的 sha，索引和 `code__read` 仍用上次的 ref；没有 origin 时跟随本地分支。索引失败（例如随包运行环境缺失）时 daemon 记下错误，仍发送 `repo.moved` 并推进 sha。fetch 失败时 hub 只更新 `last_fetch_error`，`last_fetch_at` 保留上次成功的时间，设置页同时显示失败原因和上次成功时间。`repo.moved` 没发出去（socket 已关、发送失败或回调抛错）时也不推进 sha，下一次检查重试索引和消息。上一轮还没跑完时不会再开一轮。这些操作不改工作区。
-- 房间插件：运行中的任务用 run token 调用 `GET /room/plugins` 和 `POST /room/plugins/:name`。GET 返回本 workspace 已开启的只读工具。POST 的 body 是函数参数，且必须带一个本 workspace 已绑定仓库的 `repo`（仓库 id 或标签）。函数未开启返回 403 `函数 <name> 未在本 workspace 开启`。repo 对不上返回 400 `repo 不是本 workspace 绑定的仓库：<value>`。通过这项检查后，hub 把调用转发给 daemon 的 `plugin.call`（带上解析出的仓库路径），成功返回 `{ result }`。daemon 的其它错误返回 502，正文是 daemon 的错误信息；`daemon 未连接`、`daemon 已断开`、`daemon 响应超时` 返回 503，正文就是这一句。只要通过了「函数已开启」这一关，无论后面成功还是失败，都会写一行 `plugin_calls`；没通过则不写。
-- daemon 的 `plugin.call` 执行代码函数。`code__search`、`code__explain`、`code__path` 查图；还没有 `graphify-out/graph.json` 时先走和 `repo.index` 相同的建索引。`code__read` 读主分支上已提交的文件（可选 `startLine` / `endLine`，均为 ≥1 的整数）。`code__changes` 比较 `from` 到 `to`，省略 `to` 时用当前主分支 ref 的完整 SHA。缺参数或类型不对返回 `<函数名> 参数无效：<字段>`，未知函数返回 `未知函数 <name>`。查图的 `query`、`symbol`、`from`、`to` 以 `-` 开头时返回 `参数不能以 - 开头：<值>`。`plugins.status` 运行 `graphify --version`：成功时 `{ code: { installed: true, detail: "<版本>" } }`，运行环境不在时 `installed` 为 false，`detail` 为 `随包的 Graphify 运行环境缺失`。
-- 插件设置：`GET /api/plugins` 返回插件注册表，并附带 daemon `plugins.status` 的 `installed` 和 `detail`（daemon 不在线时同样是上面的 503 / 502）。`GET /api/workspaces/:id/plugins` 和 `PATCH /api/workspaces/:id/plugins/:pluginId` 读写该 workspace 的开关和禁用函数。本地插件默认开启，机密 workspace 也一样；没有对应行时不落库。未知插件返回 404 `找不到插件：<id>`。`disabledFunctions` 里出现该插件没有的函数名时返回 400 `未知函数 <name>`。`code` 的函数只有在 workspace 至少绑定了一个仓库时才会交给模型和 `task.assign` 的 `pluginTools`；`readOnly: false` 的函数不会提供。`repo` 参数的说明会列出已绑定仓库，格式为 `id (label)`。
+- 房间插件：运行中的任务用 run token 调用 `GET /room/plugins` 和 `POST /room/plugins/:name`。GET 返回本 workspace 已开启的工具。代码函数的 POST body 必须带一个本 workspace 已绑定仓库的 `repo`（仓库 id 或标签）。函数未开启返回 403 `函数 <name> 未在本 workspace 开启`。repo 对不上返回 400 `repo 不是本 workspace 绑定的仓库：<value>`。通过这项检查后，hub 把调用转发给 daemon 的 `plugin.call`（带上解析出的仓库路径），成功返回 `{ result }`。daemon 的其它错误返回 502，正文是 daemon 的错误信息；`daemon 未连接`、`daemon 已断开`、`daemon 响应超时` 返回 503，正文就是这一句。只要通过了「函数已开启」这一关，无论后面成功还是失败，都会写一行 `plugin_calls`；没通过则不写。GitHub 函数不带这个 `repo` 字段，范围由上文的 `--repo` / `--owner` 检查。
+- daemon 的 `plugin.call` 执行代码函数。`code__search`、`code__explain`、`code__path` 查图；还没有 `graphify-out/graph.json` 时先走和 `repo.index` 相同的建索引。`code__read` 读主分支上已提交的文件（可选 `startLine` / `endLine`，均为 ≥1 的整数）。`code__changes` 比较 `from` 到 `to`，省略 `to` 时用当前主分支 ref 的完整 SHA。缺参数或类型不对返回 `<函数名> 参数无效：<字段>`，未知函数返回 `未知函数 <name>`。查图的 `query`、`symbol`、`from`、`to` 以 `-` 开头时返回 `参数不能以 - 开头：<值>`。`plugins.status` 同时返回代码和 GitHub。代码侧运行随包的 `graphify --version`：成功时 `{ code: { installed: true, detail: "<版本>" } }`，运行环境不在时 `installed` 为 false，`detail` 为 `随包的 Graphify 运行环境缺失`。GitHub 侧是本机 `gh`：`{ github: { installed, loggedIn, detail } }`，不返回令牌。
+- 插件设置：`GET /api/plugins` 返回插件注册表，并附带 daemon `plugins.status` 的 `installed` 和 `detail`（daemon 不在线时同样是上面的 503 / 502）。`GET /api/workspaces/:id/plugins` 和 `PATCH /api/workspaces/:id/plugins/:pluginId` 读写该 workspace 的开关和禁用函数。本地插件默认开启，机密 workspace 也一样；没有对应行时不落库。未知插件返回 404 `找不到插件：<id>`。`disabledFunctions` 里出现该插件没有的函数名时返回 400 `未知函数 <name>`。`code` 的函数只有在 workspace 至少绑定了一个仓库时才会交给模型和 `task.assign` 的 `pluginTools`。GitHub 函数要等插件打开，并且至少有一个绑定仓库带 github.com 远端。`readOnly: false` 的函数默认不提供；只有 GitHub 的 `allowWrites` 打开、且该函数没被关掉时，才提供 `github__gh_write`。`repo` 参数的说明会列出已绑定仓库，格式为 `id (label)`。
 
 ### 重启与归档
 

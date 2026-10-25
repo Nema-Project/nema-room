@@ -17,7 +17,7 @@ Nema Room 是在本机运行的需求讨论室。把想法、会议记录和取�
 - **代码上下文**：绑定本机仓库，读取主分支快照、搜索代码，生成架构图并标记可能过时的图。
 - **开发交接**：先澄清问题，再生成开发包；人工批准后交给 Codex 或 Claude Code。
 - **实现跟踪**：核对提交、主分支合入情况和文件变动，支持人工确认。
-- **三语言界面**：中文、英文、日文；支持知识语言、插件设置、工作区归档，侧栏底部可切换夜间模式。
+- **三语言界面**：中文、英文、日文；支持知识语言、扩展管理、工作区归档，侧栏底部可切换夜间模式。
 
 ## 首版范围与环境要求
 
@@ -102,10 +102,10 @@ Linux 上若 UID/GID 不是 1000，请在 `.env` 设置 `NEMA_UID` / `NEMA_GID`�
 - 也可以用浏览器访问同一个核心：安装目录 `resources\payload` 里有 `Nema Browser.cmd`（macOS 为 `Nema Browser.command`，Linux 为 `nema-browser`），它启动或复用核心，并用一次性链接在浏览器里打开。加 `--no-open` 只打印链接，加 `--quit` 请求退出。界面进程异常退出后，也可以用它继续访问。
 
 **模型与 GitHub**
-- 模型提供方和登录方式在应用的“模型设置”里选择，不需要终端。ChatGPT 订阅可选浏览器登录或本机 Codex 登录，Claude 订阅使用本机 Claude Code，API 密钥填写密钥和可选服务地址。
-- Agent 通过本机已登录的 `gh` 访问 GitHub：先在终端执行一次 `gh auth login`。Nema 不要求也不保存 GitHub 令牌。读取默认可用；Agent 修改 GitHub（创建和评论 issue、改标签、操作 Project）默认**关闭**，需要在工作区的“代码与插件”里打开。Agent 只能访问该工作区绑定的 GitHub 仓库。
+- 模型在应用的“模型设置”里选择，不需要终端。提供方只有一层：ChatGPT 订阅、Claude 订阅或 API 密钥。ChatGPT 订阅可选浏览器登录或本机已有的 Codex 登录；Claude 订阅填写本机 Claude Code 令牌；API 密钥填写密钥和可选的 Responses API 地址。连上之后，从该提供方返回的列表里选模型，没有手填模型 ID 的栏。列表还在加载时，下拉框写明正在加载，并且先打不开。Claude 用官方别名，不选时沿用账号默认。每个提供方的登录各自保留。同一页可以设推理强度。没有单独的 Agent 运行时开关。
+- GitHub 插件默认关闭。在工作区的“代码与插件”里打开后，Agent 使用本机已登录的 `gh`（先在终端执行一次 `gh auth login`）。Nema 不要求也不保存 GitHub 令牌。读取随插件打开；修改 GitHub（创建和评论 issue、改标签、操作 Project）还要再打开同一页上的允许开关。Agent 只能访问该工作区绑定的 github.com 仓库。
 
-**编码 Agent 的上报钩子**：`nema report install` 写入的钩子（安装包版没有把 `nema` 放进 PATH：在安装目录的 `resourcespayload` 文件夹里运行 `Nema CLI.cmd report install --agent claude`，macOS 为 `Nema CLI.command`，Linux 为 `nema-cli`；写入的钩子指向随包的 Node 与 CLI 绝对路径）使用用户级的 `~/.nema/report-token`，桌面应用启动时把它登记给本机核心。应用运行时，钩子会自动找到并验证它；**新装钩子后需要重启桌面应用**，令牌才会被登记。应用没有运行时，上报进入本地缓存（最多 5 MB、保留 7 天），下次上报时补发。
+**编码 Agent 的上报钩子**：`nema report install` 写入的钩子（安装包版没有把 `nema` 放进 PATH：在安装目录的 `resources\payload` 文件夹里运行 `Nema CLI.cmd report install --agent claude`，macOS 为 `Nema CLI.command`，Linux 为 `nema-cli`；写入的钩子指向随包的 Node 与 CLI 绝对路径）使用用户级的 `~/.nema/report-token`，桌面应用启动时把它登记给本机核心。应用运行时，钩子会自动找到并验证它；**新装钩子后需要重启桌面应用**，令牌才会被登记。应用没有运行时，上报进入本地缓存（最多 5 MB、保留 7 天），下次上报时补发。
 
 **从 Web / Compose 版迁移**：目前只有库接口，没有命令行或界面入口。`exportSnapshot`（`apps/hub/src/db/export.ts`）从你指定的 PostgreSQL 连接导出，`importLegacySnapshot`（`apps/local/src/import.ts`）导入到一个**空的、未运行**的桌面数据目录。导入先在暂存目录里完整验证，失败时不改动目标；中断后用 `recoverInterruptedImport` 恢复。凭证不会被导出或导入，需要重新登录。
 
@@ -115,7 +115,7 @@ Linux 上若 UID/GID 不是 1000，请在 `.env` 设置 `NEMA_UID` / `NEMA_GID`�
 
 ## 模型运行方式
 
-默认适配器 `codex-direct` 使用 Nema 自己的工具循环，不启动 Codex CLI。模型只有 Room 函数和本任务启用的插件函数。
+默认适配器 `codex-direct` 使用 Nema 自己的工具循环，不启动 Codex CLI。模型只有 Room 函数和本任务启用的插件函数。下面四行是界面里三个提供方保存下来的配置；界面不显示这些内部名字。
 
 | 方式 | 配置与限制 |
 | --- | --- |
@@ -149,7 +149,7 @@ node apps/cli/dist/index.js auth claude
 ## 从讨论到交付
 
 1. **讨论**：发送记录，在知识面板检查、确认或修正 Agent 的理解。
-2. **连接代码**：在设置里用文件夹选择器绑定本机 Git 仓库。对话框由本机 daemon 打开。Graphify 随安装包放在 `tools/graphify/`，不需要单独安装。任务第一次读取该仓库的代码时，daemon 才 `git fetch` 主分支，并读取已提交快照，不包含未提交修改。
+2. **连接代码**：在设置里用文件夹选择器绑定本机 Git 仓库。对话框由本机 daemon 打开。Graphify 从安装包的 `tools/graphify/` 读取，不从 PATH 安装，也不在运行时下载。当前构建还没有放入这份文件；缺失时索引和代码搜索会报 `随包的 Graphify 运行环境缺失`，插件页显示同一句说明，但没有修复按钮。绑定仓库时会建一次索引。之后 daemon 不按时钟 `git fetch`：一次任务第一次读取该仓库的代码时才拉取主分支，并读取已提交快照，不包含未提交修改。同一次任务里之后的读取沿用这一次的结果。
 3. **生成开发包**：选择 active 需求，开启 `superpowers` 后生成 spec 与 plan。`grill-me` 可因信息不足创建问题并阻塞生成；解决后自动重试。
 4. **批准与交接**：人工审阅批准，再由编码 Agent 获取。编辑或重新生成会撤销批准。
 5. **上报与核验**：记录 `reported`、`verified`、`mismatch`。**verified 表示 Git 证据通过或用户确认，不代表测试通过、功能正确或需求验收完成。**
@@ -172,7 +172,7 @@ nema report --entries W-1 --task 1 --summary "Implement task 1" --commits COMMIT
 
 可选上报 hook：`nema report install --agent codex` 或 `--agent claude`。这会修改对应 Agent 的用户级 hook 配置并安装 `nema-report` skill；卸载用 `nema report uninstall --agent <agent>`。
 
-GitHub 插件默认关闭。启用前需安装 `github-mcp-server`，用 `auth github` 保存令牌，再在工作区开启。仅能读取已绑定 GitHub 远端的 PR 和 issue。
+GitHub 插件默认关闭。打开方式、`gh` 登录和写入开关见上面的桌面应用一节；Web / Compose 用的也是同一条路径。命令白名单和六个原有读取函数见技术参考。`nema auth github` 仍可把令牌写入 `~/.nema/github-token`，默认路径不读取它。
 
 ## 数据、隐私与已知限制
 
@@ -185,7 +185,7 @@ GitHub 插件默认关闭。启用前需安装 `github-mcp-server`，用 `auth g
 
 **源码仓库的 GitHub 副本不是应用数据备份。** 备份前停止写入，保存 PostgreSQL 导出与实际数据目录，并验证恢复流程。保留数据时不要用 `docker compose down -v`，`-v` 会删除数据库卷。
 
-- 本机存储不等于离线推理：聊天、知识和工具返回的代码会发送给模型服务商；GitHub 插件还会向 GitHub 发送查询。机密工作区不是离线模式或操作系统隔离边界。桌面应用里，Agent 还能经本机 `gh` 读取 GitHub，写入需要在工作区单独打开。
+- 本机存储不等于离线推理：聊天、知识和工具返回的代码会发送给模型服务商。GitHub 插件打开后，查询经本机 `gh` 发往 GitHub；写入还要在工作区单独打开。机密工作区不是离线模式或操作系统隔离边界。
 - 普通任务上限：24 次模型调用、60 次工具调用、10 分钟；开发包：48 次、120 次、20 分钟。中断最多重试 3 次。
 - 启动时可恢复部分未提交知识文件，但 Git 与数据库索引尚无完整的自动一致性修复机制。
 - SIWC 刷新失败可能需要重新登录；当前实现检查 ID token 声明，但不做 JWKS 签名校验。

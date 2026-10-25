@@ -17,7 +17,7 @@ Nema Room is a requirements discussion room that runs locally. Share ideas, meet
 - **Code context**: bind local repositories, read main-branch snapshots, search code, and generate diagrams with staleness indicators.
 - **Development handoff**: clarify questions, generate a work package, and approve it for Codex or Claude Code.
 - **Implementation tracking**: check commits, main-branch inclusion, and file changes, with manual confirmation available.
-- **Three UI languages**: English, Chinese, and Japanese, plus knowledge-language settings, plugin controls, workspace archiving, and a night-mode switch at the bottom of the sidebar.
+- **Three UI languages**: English, Chinese, and Japanese, plus knowledge-language settings, extension management, workspace archiving, and a night-mode switch at the bottom of the sidebar.
 
 ## First release scope and requirements
 
@@ -102,10 +102,10 @@ The desktop app puts the whole stack in one local program: an on-disk PGlite dat
 - You can also use the same core from a browser: `resources\payload` in the install directory contains `Nema Browser.cmd` (`Nema Browser.command` on macOS, `nema-browser` on Linux). It starts or reuses the core and opens a one-time link in your browser. `--no-open` prints the link instead; `--quit` asks the core to quit. It also lets you keep working after the window process exits unexpectedly.
 
 **Models and GitHub**
-- Choose the model provider and its login under "Model settings" in the app; no terminal is needed. A ChatGPT subscription uses browser login or an existing local Codex login. A Claude subscription uses local Claude Code. An API key takes the key and an optional service address.
-- The Agent reaches GitHub through the `gh` you are already signed in to: run `gh auth login` once in a terminal. Nema neither asks for nor stores a GitHub token. Reading is on by default. The Agent changing GitHub (creating and commenting on issues, editing labels, updating Projects) is **off** until you turn it on under "Code & plugins" in the workspace. The Agent can only reach the GitHub repositories bound to that workspace.
+- Choose the model under "Model settings" in the app; no terminal is needed. There is one provider list: ChatGPT subscription, Claude subscription, or API key. A ChatGPT subscription uses browser login or an existing local Codex login. A Claude subscription takes a local Claude Code token. An API key takes the key and an optional Responses API address. After that provider is connected, pick a model from the list it returns. While that list is loading, the menu says so and stays closed. There is no field for a custom model ID. Claude uses the official aliases; leaving it unset keeps the account default. Each provider keeps its own login. Reasoning effort is on the same page. There is no separate Agent-runtime control.
+- The GitHub plugin is off by default. After you turn it on under "Code & plugins" in the workspace, the Agent uses the `gh` you are already signed in to (run `gh auth login` once in a terminal). Nema neither asks for nor stores a GitHub token. Reading comes with the plugin. Changing GitHub (creating and commenting on issues, editing labels, updating Projects) needs the allow switch on that same page. The Agent can only reach the github.com repositories bound to that workspace.
 
-**Coding-agent report hooks:** the hooks that `nema report install` writes (the packaged app does not put `nema` on PATH: from the install directory's `resourcespayload` folder run `Nema CLI.cmd report install --agent claude`, or `Nema CLI.command` on macOS and `nema-cli` on Linux; the hooks then point at the bundled Node and CLI by absolute path) use the per-user `~/.nema/report-token`, which the desktop app registers with its local core at startup. While the app runs, a hook finds it and verifies its identity automatically. **After installing hooks, restart the desktop app** so the token is registered. While the app is not running, reports go to a local spool (at most 5 MB, kept 7 days) and are sent with the next report.
+**Coding-agent report hooks:** the hooks that `nema report install` writes (the packaged app does not put `nema` on PATH: from the install directory's `resources\payload` folder run `Nema CLI.cmd report install --agent claude`, or `Nema CLI.command` on macOS and `nema-cli` on Linux; the hooks then point at the bundled Node and CLI by absolute path) use the per-user `~/.nema/report-token`, which the desktop app registers with its local core at startup. While the app runs, a hook finds it and verifies its identity automatically. **After installing hooks, restart the desktop app** so the token is registered. While the app is not running, reports go to a local spool (at most 5 MB, kept 7 days) and are sent with the next report.
 
 **Migrating from the Web / Compose version:** there is only a library interface so far, with no command or UI. `exportSnapshot` (`apps/hub/src/db/export.ts`) exports from a PostgreSQL connection you name, and `importLegacySnapshot` (`apps/local/src/import.ts`) imports into an **empty, stopped** desktop data directory. The import validates everything in a staging directory first and leaves the destination untouched on failure; use `recoverInterruptedImport` after an interruption. Credentials are neither exported nor imported, so sign in again.
 
@@ -115,7 +115,7 @@ The desktop app puts the whole stack in one local program: an on-disk PGlite dat
 
 ## Model runtimes
 
-The default adapter, `codex-direct`, runs Nema's own tool loop without launching the Codex CLI. The model receives Room functions and the plugins enabled for that task.
+The default adapter, `codex-direct`, runs Nema's own tool loop without launching the Codex CLI. The model receives Room functions and the plugins enabled for that task. The four rows below are what the three providers in the app save; the app does not show these internal names.
 
 | Mode | Setup and limitations |
 | --- | --- |
@@ -149,7 +149,7 @@ Nema does not silently switch runtimes after authentication or model failures. `
 ## From discussion to delivery
 
 1. **Discuss**: send notes, then review, confirm, or correct the agent's interpretation in the knowledge panel.
-2. **Connect code**: bind a local Git repository from settings with the folder picker. The dialog opens in the host daemon. Graphify ships at `tools/graphify/` in the install payload; there is no separate install. The first time a task reads that repository, the daemon fetches its main branch and reads the committed snapshot, excluding uncommitted changes.
+2. **Connect code**: bind a local Git repository from settings with the folder picker. The dialog opens in the host daemon. Graphify is read from `tools/graphify/` in the install payload. It is not installed from `PATH` and is not downloaded at runtime. The current build does not include that file yet. When it is missing, indexing and code search report `随包的 Graphify 运行环境缺失`, and the plugins page shows the same sentence. There is no repair button. Binding a repository indexes it once. After that the daemon does not `git fetch` on a clock: the first time a task reads that repository, it fetches the main branch and reads the committed snapshot, excluding uncommitted changes. Later reads in the same task reuse that result.
 3. **Generate a work package**: select active requirements and enable `superpowers` to generate a spec and plan. The `grill-me` plugin can create a blocking question when information is missing; generation retries after resolution.
 4. **Approve and hand off**: review and approve manually, then let your coding agent retrieve it. Editing or regenerating revokes approval.
 5. **Report and verify**: track `reported`, `verified`, and `mismatch`. **Verified means Git evidence passed or the user confirmed it, not that tests passed, the feature is correct, or acceptance criteria were met.**
@@ -172,7 +172,7 @@ nema report --entries W-1 --task 1 --summary "Implement task 1" --commits COMMIT
 
 Optional reporting hooks: `nema report install --agent codex` or `--agent claude`. This modifies the agent's user-level hook configuration and installs the `nema-report` skill. Remove it with `nema report uninstall --agent <agent>`.
 
-The GitHub plugin is disabled by default. Install `github-mcp-server`, save a token with `auth github`, then enable it in the workspace. It can only read PRs and issues for bound GitHub remotes.
+The GitHub plugin is off by default. How to turn it on, sign in with `gh`, and allow writes is in the desktop section above; the Web / Compose daemon uses the same path. The command allowlist and the six older read functions are in the technical reference. `nema auth github` can still write a token to `~/.nema/github-token`; the default path does not read it.
 
 ## Data, privacy, and known limitations
 
@@ -185,7 +185,7 @@ The GitHub plugin is disabled by default. Install `github-mcp-server`, save a to
 
 **A GitHub copy of this source repository is not an application-data backup.** Stop writes before backing up, retain a PostgreSQL export and the actual data directories, and validate recovery. To preserve data, do not use `docker compose down -v`: `-v` deletes the database volume.
 
-- Local storage is not offline inference: chat, knowledge, and code returned by tools go to the model provider; the GitHub plugin also sends queries to GitHub. A confidential workspace is not an offline mode or operating-system isolation boundary. In the desktop app the Agent can also read GitHub through your local `gh` (writing needs a per-workspace opt-in).
+- Local storage is not offline inference: chat, knowledge, and code returned by tools go to the model provider. When the GitHub plugin is on, queries go to GitHub through your local `gh`; writing needs a separate opt-in in the workspace. A confidential workspace is not an offline mode or operating-system isolation boundary.
 - Ordinary task limits: 24 model calls, 60 tool calls, 10 minutes. Work packages: 48, 120, 20 minutes. Interrupted tasks retry up to three times.
 - Startup can recover some uncommitted knowledge files, but Git and database indexes do not have complete automatic reconciliation.
 - SIWC refresh failures may require another login. The implementation checks ID token claims but does not verify JWKS signatures.
