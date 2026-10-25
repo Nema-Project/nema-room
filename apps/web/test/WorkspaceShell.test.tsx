@@ -197,7 +197,8 @@ describe("WorkspaceShell knowledge wiring", () => {
     render(<I18nProvider><WorkspaceShell routeId={null} /></I18nProvider>);
     await userEvent.click(await screen.findByRole("button", { name: "Model settings" }));
     expect(await screen.findByRole("dialog", { name: "Model settings" })).toBeTruthy();
-    expect(screen.getByLabelText("SIWC direct")).toBeTruthy();
+    expect((screen.getByLabelText("Agent runtime") as HTMLSelectElement).value).toBe("nema");
+    expect((screen.getByLabelText("Model service") as HTMLSelectElement).value).toBe("chatgpt");
   });
   it("refreshes the list when delete fails and shows the hub error", async () => {
     vi.mocked(hub.deleteWorkspace).mockRejectedValue(new HubError(500, "internal error"));
