@@ -12,6 +12,7 @@ export type Message = {
   meta: AgentMessageMeta | ReportMessageMeta | null;
   taskId: string | null;
   createdAt: string;
+  editedAt: string | null;
 };
 
 /** An agent message: its meta, when present, is always AgentMessageMeta. */
@@ -25,9 +26,10 @@ type Row = {
   meta: Message["meta"];
   task_id: string | null;
   created_at: Date | string;
+  edited_at: Date | string | null;
 };
 
-const COLS = "id, workspace_id, role, content, meta, task_id, created_at";
+const COLS = "id, workspace_id, role, content, meta, task_id, created_at, edited_at";
 
 function toMessage(r: Row): Message {
   return {
@@ -38,6 +40,7 @@ function toMessage(r: Row): Message {
     meta: r.meta ?? null,
     taskId: r.task_id,
     createdAt: new Date(r.created_at).toISOString(),
+    editedAt: r.edited_at ? new Date(r.edited_at).toISOString() : null,
   };
 }
 
