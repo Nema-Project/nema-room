@@ -62,9 +62,10 @@ A thread is identified by its anchor: one top-level main-chat message (any role:
 New migration (next free number after the quote/edit work's `010`):
 
 - `messages.thread_id text null references messages(id)`;
-- table `threads(id text primary key references messages(id), workspace_id text, title text not null, last_read_seq bigint not null default 0, created_at timestamptz default now())`.
+- table `threads(id text primary key references messages(id), workspace_id text, title text not null, opened_by text not null, last_read_seq bigint not null default 0, created_at timestamptz default now())`;
+- table `question_threads(workspace_id text, question_id text, thread_id text references threads(id), primary key (workspace_id, question_id))`. Question ids belong to the knowledge store, not a SQL entries table. The association is durable and keeps the first assigned thread; later discussion elsewhere does not move it.
 
-Snapshots (`apps/hub/src/db/snapshot.ts`) carry the column and the table; an older snapshot imports with no threads. Deleting a workspace deletes its threads.
+Snapshots (`apps/hub/src/db/snapshot.ts`) carry the column and both tables; an older snapshot imports with no threads. Deleting a workspace deletes its question associations before its threads.
 
 ### Opening a thread
 
@@ -81,18 +82,18 @@ Snapshots (`apps/hub/src/db/snapshot.ts`) carry the column and the table; an old
 
 ### Follow-up questions (grill)
 
-- A question opened by a task belongs to that task's conversation: if the task's message is in a thread, the question is asked in that thread; if it is a main-chat message, a thread is opened on it (same as the agent opening one) and the question is asked there. The whole reply moves into the thread, nothing stays in the main chat. The prompt tells the agent this, so it phrases a reply that adds a question as a thread opener that asks it.
-- The "show the top open question after every turn" fallback (`chooseAskedQuestion(touched, topOpenQuestion)` in `onFinished`) is removed: `askedQuestion` is only a question this task added or updated. Otherwise nearly every main-chat message would move into a thread.
-- Legacy open questions (no thread) are reached from the badge: jumping to one opens a thread anchored on its first `sourceMessages` message (the latest main-chat message if it has none) with a system-posted asked-question card, and the user answers there.
-- In a thread, the user answers in the thread composer. `lastAskedQuestion` becomes per conversation: the last agent message's `askedQuestion` in the same thread (today: in the workspace). The `回答 Q-n：` answer box in the main chat is removed; the asked-question card is still shown on the agent message inside the thread.
+- An open question added or updated by a task is a follow-up candidate. Resolved or dropped questions are excluded. A candidate belongs to that task's conversation: if the task's message is in a thread, the question is asked in that thread; if it is a main-chat message and grill is on, a thread is opened on it (same as the agent opening one) and the question is asked there. The whole reply moves into the thread, nothing stays in the main chat. The prompt tells the agent this, so it phrases a reply that adds a question as a thread opener that asks it.
+- The "show the top open question after every turn" fallback (`chooseAskedQuestion(touched, topOpenQuestion)` in `onFinished`) is removed: `askedQuestion` is only an open question this task added or updated. Without this restriction, nearly every main-chat message would move into a thread. Use that same candidate selection for automatic thread creation, so updating a still-open question also moves the reply into a thread. All open questions touched by a thread reply receive a `question_threads` association if missing, atomically with storing the reply; retries preserve the first association.
+- Legacy open questions (no thread association, including no thread inferred from the original creating task) are reached from the badge. Jumping to one opens a thread anchored on its first valid main-chat `sourceMessages` message in the same workspace, falling back to the latest main-chat message. If none exists, create a system anchor without queuing a task. In one transaction ensure the thread, insert the association, and add one system-posted asked-question card only if the association was newly inserted. Concurrent clicks and retries reuse the association and do not duplicate cards. The user answers there; the question immediately stops counting as legacy. Conversation context must recognize the system card as the last asked question when no newer agent card exists.
+- In a thread, the user answers in the thread composer. `lastAskedQuestion` becomes per conversation: the latest asked-question card on an agent or system message in the same thread (today: the last agent message in the workspace). The `回答 Q-n：` answer box in the main chat is removed; the asked-question card is still shown on the agent message inside the thread.
 - Reports (`role = 'report'`) and system requests follow the same rule: a question they produce opens a thread on the report / system message.
 - Grill-me off: questions are still written (as today) but no thread is opened just for them.
 
 ### Read state and the badge
 
-- A thread is unread when it has a message with `seq > last_read_seq`. Opening the thread window (or receiving a message while it is open and focused) sets `last_read_seq` to its latest message. Stored in the hub so the web and the desktop windows agree.
-- The sidebar badge (today: `openQuestions` in `GET /workspaces`) becomes: number of unread threads + open questions not belonging to any thread (pre-existing ones). A question belongs to a thread when the task that added it (`task_changes`) ran on a message in that thread or on its anchor.
-- Clicking the badge opens the next item needing attention, oldest first: an unread thread opens its window; a legacy open question opens in the entry detail. Works for the current workspace too (select the workspace first if it is another one).
+- A thread is unread when it has a message with `seq > last_read_seq`. After rendering messages when the window is open and focused, the client sends the highest displayed thread message seq as `throughSeq`. The hub validates that seq belongs to this thread and advances `last_read_seq` with `greatest(last_read_seq, throughSeq)`. It never substitutes its current maximum: a message arriving after the rendered batch stays unread. Empty threads need no read request. Stored in the hub so the web and the desktop windows agree.
+- The sidebar badge (today: `openQuestions` in `GET /workspaces`) becomes: number of unread threads + open questions not belonging to any thread (pre-existing ones). A question belongs to a thread when `question_threads` has an association; if absent, infer one from the task that added it (`task_changes`) running on a message in that thread or on its anchor. Only open questions with neither association count as legacy.
+- Clicking the badge opens the next item needing attention, oldest first: an unread thread opens its window; a legacy open question is attached idempotently to a thread with its asked-question card and opens that thread window. Works for the current workspace too (select the workspace first if it is another one).
 
 ## UI
 
@@ -131,10 +132,11 @@ The quote / edit / search work (spec `2026-10-25-message-quote-edit-search-desig
 
 ## Checks
 
-- **Anti-goal 1 (threads conflict):** hub test: a decision entry is written from thread A; a task in thread B whose agent run tries to write a contradicting decision is driven through the room API with the conflict rule — assert a `question` exists whose `related` holds thread A's decision and whose `sourceMessages` holds thread B's message, that it is attached to thread B, and that thread A's decision is still the only active one. An explicit override in thread B supersedes instead. At minimum: `prompt.test.ts` asserts the conflict rule and the index are present in thread prompts.
+- **Anti-goal 1 (threads conflict):** deterministic hub tests cover the existing Room API 409 guard, question metadata, reply routing, and explicit supersession. They do not prove semantic contradiction detection: a test that manually writes a question only proves that the supplied tool sequence is accepted. Separately run the real agent on a fixed script: thread A decides Redis; thread B says "缓存用本地 LRU" without explicitly overriding A. Assert from the resulting entries and tool trace that A remains the only active decision, no conflicting decision with a new id was created, and B gets a question with `related` pointing to A and `quotes` / `sourceMessages` citing B's user statement. Then explicitly override Redis with LRU and verify supersession and the replacement decision. Record runtime/model, trace and entry ids, and pass/fail; a simulated daemon is not a substitute. Prompt assertions pin the conflict rule and shared index but cannot establish this behavioral check.
 - **Anti-goal 2 (agent only chats):** `prompt.test.ts` asserts the thread prompt contains the "stated / decided must be written" rule and the same tool rules as the main-chat prompt. Plus a short fixed script of conversations in `docs/` (or the test dir) for a manual run: one memo check (expect no writes), one clear decision inside a casual thread (expect a `decided` entry).
 - Context isolation: `listPromptMessages` test — a main-chat task sees no thread messages; a thread task sees the anchor and only its thread.
-- Read state: unread count and badge composition tested in hub.
+- Read state: unread count, monotonic acknowledgements, rejection of another thread's seq, and a concurrent arrival after rendering tested in hub; focused rendering acknowledgements tested in web.
+- Legacy questions: conversion persists its association, stops legacy counting, survives snapshot round-trip, and concurrent/repeated clicks create only one card; the first answer receives that question in prompt context.
 - Desktop: `lifecycle.test.mjs` case like the diagram one — a same-origin thread URL opens its own window, other popups still denied.
 
 ## Constraints
@@ -170,7 +172,7 @@ The quote / edit / search work (spec `2026-10-25-message-quote-edit-search-desig
 - Badge = unread threads + legacy open questions; jump order oldest first.
 - Reports and system requests open a thread when they produce a question; history stays in the main chat, no migration of old messages.
 - Withdraw sets `dropped` (added to every kind) via a dedicated endpoint; updates are reviewed through history, not undone; a superseded decision is not restored.
-- The whole reply moves into the thread when a task adds a question; the top-open-question fallback is removed; legacy questions open a thread from the badge.
+- With grill on, the whole reply moves into the thread when a task adds or updates an open question; the top-open-question fallback is removed; legacy questions open a thread from the badge.
 - Quote is kept alongside threads (reverses an earlier suggestion to replace it), since it is built and covers cross-thread references.
 - Agent-opened thread uses a new `room` MCP tool; the agent names the thread.
 - `/thread` title starts as the first line of the text; the agent renames it on its first reply by calling `open_thread` again.
@@ -178,4 +180,4 @@ The quote / edit / search work (spec `2026-10-25-message-quote-edit-search-desig
 
 ## Left to the builder
 
-Component structure, floating window placement and stacking, the thread route path, MCP tool name and schema, SSE event shapes for thread rows and read state, how `last_read_seq` is updated (endpoint shape), styling of the thread row and window, wording of the copy.
+Component structure, floating window placement and stacking, the thread route path, MCP tool name and schema, SSE event shapes for thread rows and read state, read endpoint path (the `throughSeq` acknowledgement semantics are fixed), styling of the thread row and window, wording of the copy.

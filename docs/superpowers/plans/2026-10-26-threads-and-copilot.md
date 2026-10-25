@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-26-threads-and-copilot-design.md`
 
-**Base:** main after the main-chat answer box + `/` menu work (the restored stash: `namedAnswerId`, `chooseAskedQuestion`, `apps/web/lib/slash.ts`) is committed. Do not start before `git status` on main is clean.
+**Base:** main after (1) the main-chat answer box + `/` menu work (`namedAnswerId`, `chooseAskedQuestion`, `apps/web/lib/slash.ts`) is committed and (2) `feat/message-quote-edit-search` is merged, including `010_message_versions.sql`. Verify both prerequisites and a clean `git status` before implementation. The threads migration is `011` only if it is still the next free number; otherwise use the next free number and update references.
 
 ## Global Constraints
 
@@ -28,7 +28,7 @@
 1. A task whose message is in a thread must never post its reply to the main chat, including on failure (`处理失败：` system message goes to the same thread). → Task 4 test `failure message stays in the thread`.
 2. The task is retried after a daemon drop (`priorChanges`); a retry must not open a second thread for the same anchor. → Task 3 test `open_thread twice returns the same thread`, Task 4 test `retry reuses thread`.
 3. A thread's anchor in the main chat is edited (quote/edit work): the re-run must reply in that anchor's thread, not in the main chat. → Task 4 test `edit of an anchor replies in its thread`.
-4. Two thread windows open for the same thread (two tabs, or web + desktop): read state stays consistent because it lives in the hub, and marking read never moves `last_read_seq` backwards. → Task 2 test `markRead never lowers last_read_seq`.
+4. Two thread windows open for the same thread (two tabs, or web + desktop): read state stays consistent because it lives in the hub, and marking read acknowledges only rendered messages and never moves `last_read_seq` backwards or consumes unseen concurrent arrivals. → Task 2 test `markRead never lowers last_read_seq` and `unseen concurrent arrival remains unread`.
 5. Archived workspace: posting in a thread or `/thread` is refused with 409 like a main-chat message. → Task 6 test `thread post in archived workspace is 409`.
 
 ---
@@ -48,7 +48,7 @@
 
 - [ ] **Step 1: Failing tests**
   - `entry.test.ts`: `it("every kind accepts dropped")` — for each of `ENTRY_KINDS`, a valid upsert with `status: "dropped"` parses.
-  - snapshot test: `it("round-trips threads and thread_id")` — export a workspace with one thread and one thread message, import into a fresh db, both present; `it("imports a snapshot without threads")` — a snapshot lacking `threads` and `messages.thread_id` imports, messages get `thread_id = null`.
+  - snapshot test: `it("round-trips threads and thread_id")` — export a workspace with one thread and one thread message, import into a fresh db, both present, including a durable question association; `it("imports a snapshot without threads")` — a snapshot lacking `threads`, `question_threads` and `messages.thread_id` imports, messages get `thread_id = null`.
 - [ ] **Step 2: Run** `npx vitest run --project @nema/shared entry` and `npx vitest run --project @nema/hub snapshot` → FAIL.
 - [ ] **Step 3: Implement**
   - `011_threads.sql`:
@@ -63,9 +63,15 @@
       last_read_seq bigint not null default 0,
       created_at timestamptz not null default now()
     );
+    create table question_threads (
+      workspace_id text not null references workspaces(id),
+      question_id text not null,
+      thread_id text not null references threads(id),
+      primary key (workspace_id, question_id)
+    );
     ```
   - `KIND_STATUSES`: append `"dropped"` to every kind that lacks it. `INACTIVE_STATUSES` already contains it.
-  - Snapshot: `messages` columns gain `thread_id`; add `threads: ["id","workspace_id","title","opened_by","last_read_seq","created_at"]` to `TABLE_COLUMNS` and `OPTIONAL_TABLES`; a missing `thread_id` column imports as null. Workspace delete removes `threads` rows before `messages`.
+  - Snapshot: `messages` columns gain `thread_id`; add `threads: ["id","workspace_id","title","opened_by","last_read_seq","created_at"]` to `TABLE_COLUMNS` and `OPTIONAL_TABLES`; a missing `thread_id` column imports as null. Add `question_threads: ["workspace_id","question_id","thread_id"]` to both snapshot lists, export after `threads`, restore after messages and threads, and allow older snapshots to omit it. Workspace delete removes `question_threads` before `threads` before `messages`.
   - `toMessage` maps `thread_id` → `threadId`; add it to `COLS`.
 - [ ] **Step 4: Run** both test commands and `npm run typecheck` → PASS.
 - [ ] **Step 5: Commit** `feat: store threads and allow dropped on every entry kind`
@@ -80,9 +86,11 @@
 **Interfaces:**
 - Produces (in `threads.ts`):
   - `ensureThread(db: Db, anchorId: string, title: string, openedBy: ThreadOpenedBy): Promise<Thread>` — insert if missing (`on conflict do nothing`), return the row (an existing row keeps its title and `openedBy`). Throws `MessageOpError(400)` if the anchor itself has a `thread_id` (no nested threads).
+  - `associateQuestion(db, workspaceId, questionId, threadId): Promise<{ threadId: string; inserted: boolean }>` — validate thread workspace, insert into `question_threads` on conflict do nothing, return the durable first association; callable within a transaction.
+  - `getQuestionThread(db, workspaceId, questionId): Promise<string | null>` — explicit association first, then original creating-task inference; null means legacy.
   - `getThread(db, id): Promise<Thread | null>`
   - `listThreads(db, workspaceId): Promise<Thread[]>` — with `replyCount`, `unread` (messages with `seq > last_read_seq`, any role), `lastReplyAt`.
-  - `markThreadRead(db, id): Promise<void>` — `last_read_seq = greatest(last_read_seq, max seq of the thread)`.
+  - `markThreadRead(db, id, throughSeq: number): Promise<void>` — validate that `throughSeq` is a positive safe integer naming a message in this thread, otherwise `MessageOpError(400)`; set `last_read_seq = greatest(last_read_seq, throughSeq)`. Never read the server maximum as the acknowledgement target.
   - `conversationOf(db, message: Message): Promise<string | null>` — the thread id a message belongs to: its `threadId`, else its own id if a thread is anchored on it, else null.
 - Produces (in `messages.ts`):
   - `postUserMessage(db, workspaceId, content, opts?: { quoteMessageId?: string; threadId?: string })` — signature change; callers updated. `threadId` must name a thread of the same workspace (`MessageOpError(400)`).
@@ -90,12 +98,17 @@
   - `listThreadMessages(db, threadId, limit = 200): Promise<Message[]>` — oldest first, excludes the anchor.
   - `listPromptMessages(db, workspaceId, messageId, limit)` and `listRecentMessages(...)` gain the conversation filter: when the message belongs to a thread (via `conversationOf`), return the anchor followed by the latest `limit` thread messages (limit 50 for threads, passed by the caller); otherwise main-chat messages only.
   - `getLastAgentMessage(db, workspaceId, threadId: string | null)` — scoped to the conversation.
+  - `getLastAskedQuestion(db, workspaceId, threadId: string | null)` — latest asked-question card in that conversation, including system cards created by legacy conversion. Used to build answer context.
 
 - [ ] **Step 1: Failing tests** in `threads.test.ts`:
   - `ensureThread is idempotent` — two calls, one row, same title as the first call.
   - `ensureThread refuses an anchor inside a thread`.
   - `unread counts messages after last_read_seq; markThreadRead clears it`.
-  - `markRead never lowers last_read_seq` — set `last_read_seq` above the thread's max seq by hand, call `markThreadRead`, value unchanged.
+  - `markRead never lowers last_read_seq` — set `last_read_seq` above the thread's max seq by hand, acknowledge an existing older thread message, value unchanged.
+  - `unseen concurrent arrival remains unread` — render through seq N, insert N+1, acknowledge N; N+1 remains unread.
+  - `read rejects a foreign thread seq, nonexistent seq, or invalid number`.
+  - `question association is idempotent and workspace-scoped`; `an existing association keeps its first thread`.
+  - `getLastAskedQuestion includes a legacy system card and prefers a newer card`.
   - `main-chat prompt context excludes thread messages`; `thread prompt context is the anchor then only its own thread, capped at 50`.
   - `getLastAgentMessage is scoped to the thread`.
 - [ ] **Step 2: Run** `npx vitest run --project @nema/hub threads` → FAIL.
@@ -136,15 +149,17 @@
 - Produces: `addMessage(db, workspaceId, role, content, opts: { taskId?; meta?; threadId?: string | null })`.
 - Routing rule, applied in `onFinished` and in the failure path, computed once per task as `replyThread`:
   1. `conversationOf(taskMessage)` if non-null (message in a thread, or a thread already anchored on it by `open_thread` / `/thread`);
-  2. else, grill on and the task **added** a question → `ensureThread(taskMessage.id, <first added question title>, "grill")`;
+  2. else, grill on and `chooseAskedQuestion(touched, null)` selects an **open question added or updated** by this task → `ensureThread(taskMessage.id, <selected question title>, "grill")`;
   3. else null (main chat).
-- `askedQuestion` = `chooseAskedQuestion(touched, null)` — no `topOpenQuestion` fallback.
-- `buildTaskPrompt`: context via the Task 2 conversation filter (thread limit 50, main 20); `lastAskedQuestion` from `getLastAgentMessage(db, ws, conversationOf(taskMessage))`; passes `conversation` (Task 5 type) to `buildPrompt`, built from `getThread` and the anchor message; `opened` is the thread's `openedBy`.
+- `askedQuestion` = `chooseAskedQuestion(touched, null)` — exclude resolved/dropped questions; no `topOpenQuestion` fallback. Use this same selection for routing. After resolving `replyThread`, atomically store the reply and associate every open question touched by this task with that thread if not already associated. Include prior changes on retry; never relocate an existing association.
+- `buildTaskPrompt`: context via the Task 2 conversation filter (thread limit 50, main 20); `lastAskedQuestion` from `getLastAskedQuestion(db, ws, conversationOf(taskMessage))`; passes `conversation` (Task 5 type) to `buildPrompt`, built from `getThread` and the anchor message; `opened` is the thread's `openedBy`.
 
 - [ ] **Step 1: Failing tests** (daemonSocket harness already fakes a daemon):
   - `reply goes to the thread when the task message is in a thread`.
   - `reply goes to the thread opened by open_thread during the task` and the main chat gets no agent message.
   - `a main-chat task that adds a question replies in a new thread on its message`.
+  - `a main-chat task that updates an existing open question replies in a thread`; `updating a resolved or dropped question does not open a thread`.
+  - `thread reply associates all touched open questions once, including on retry`.
   - `a main-chat task with no question and no open_thread replies in the main chat`.
   - `askedQuestion is null when the task touched no question` (old fallback gone).
   - `failure message stays in the thread`.
@@ -173,7 +188,7 @@ Rule changes (Chinese text is the builder's wording; these assertions pin the co
 - Unconditional: what the user clearly stated or decided must be written (`stated` / `decided`), in the main chat and in threads alike.
 - Agent proposals are never `stated` / `decided`; only what the user agreed to is `decided`.
 - Conflict: explicit override → supersede as today; any other contradiction of an active decision → do not write the decision, open a `question` with the active decision in `related`, the user's statement in `quotes` / `sourceMessages`.
-- Main chat only: "需要来回讨论时调用 `open_thread`"; with grill on: "新建追问时，你的回复会被放进 thread，把回复写成开启讨论、提出这个问题的话".
+- Main chat only: "需要来回讨论时调用 `open_thread`"; with grill on: "新增或更新未解决的追问时，你的回复会被放进 thread，把回复写成开启讨论、提出这个问题的话".
 - Thread only: section `# 当前 thread：<title>` with the anchor `[id] role: content`; follow-up questions are asked in the reply, one at a time; `opened: "user"` adds "这是用户主动开的 thread，直接进入讨论。标题目前是用户输入的第一行；如果它不能概括这个话题，调用 `open_thread` 给出更好的标题。"
 - Removed: "最后的回复只简短总结做了什么", "不要在回复里提问，系统会自动从待确认中挑一个问题展示".
 
@@ -202,9 +217,9 @@ Rule changes (Chinese text is the builder's wording; these assertions pin the co
   - `GET /workspaces/:id/threads/:tid/messages` → `{ thread: Thread; anchor: Message; messages: Message[] }`.
   - `POST /workspaces/:id/threads` body `{ content, quoteMessageId? }` → `/thread`: in one transaction post the anchor user message (main chat), `ensureThread(anchor.id, <first line of content, max 80 code points>, "user")`, queue its task. Returns `{ message, thread, task }`.
   - `POST /workspaces/:id/threads/:tid/messages` body `{ content, quoteMessageId? }` → user message in the thread + task.
-  - `POST /workspaces/:id/threads/:tid/read` → 204; emits `thread.updated`.
+  - `POST /workspaces/:id/threads/:tid/read` body `{ throughSeq: number }` → 204; calls Task 2 validation and monotonic acknowledgement; emits `thread.updated`. Validate route workspace ownership before any mutation.
   - `POST /workspaces/:id/entries/:eid/withdraw` → entry; `KnowledgeStore.withdraw(id, { author: "user" })` sets `status: "dropped"`, reason `用户撤回`, leaves `basis` and `confirmedAt`; reindex + `knowledge.changed`.
-  - `GET /workspaces/:id/attention/next` → `{ threadId: string } | null`. Order oldest first over: unread threads (oldest unread message), then legacy open questions (open `question` entries not added by a task whose message is in a thread or is an anchor; join `task_changes` → `tasks.message_id` → `messages`). For a legacy question: `ensureThread(<its first sourceMessages id that is a main-chat message, else the latest main-chat message>, question.title, "grill")`, add a `system` message in that thread whose meta carries `askedQuestion` (reuse `AgentMessageMeta` shape with empty `changes`), return that thread.
+  - `GET /workspaces/:id/attention/next` → `{ threadId: string } | null`. Merge unread threads (timestamp of oldest unread message) and legacy open questions (creation timestamp), sort oldest first across both with a stable id tie-break. Legacy means `getQuestionThread(...)` returns null. For a legacy question, in one transaction recheck its association, choose its first valid main-chat source in this workspace or the latest main-chat message (create a system anchor without a task if neither exists), ensure the thread, and call `associateQuestion`. Only the transaction that inserts the association posts the system `askedQuestion` card with empty `changes`; concurrent/repeated calls return the existing association without another card. Explicit associations take precedence over creating-task inference in all attention queries. All mutations emit events after commit.
 - `GET /workspaces` field `openQuestions` is replaced by `attention` = unread threads + legacy open questions (`attentionCount`). Web updated in Task 7.
 - `GET /workspaces/:id/messages` returns main-chat messages only (Task 2); the web gets thread rows from `GET /threads`.
 - Search covers thread messages too; results carry `threadId` so the web can open the window.
@@ -213,9 +228,10 @@ Rule changes (Chinese text is the builder's wording; these assertions pin the co
   - `slash thread creates anchor, thread and task in one go`.
   - `thread post in archived workspace is 409` (both POST routes).
   - `thread post to another workspace's thread is 400`.
-  - `read marks the thread read and emits thread.updated`.
+  - `read acknowledges throughSeq and emits thread.updated`; `a message arriving after the rendered seq remains unread`; `read rejects another workspace or thread seq`.
   - `attention counts unread threads plus legacy questions`; `a question added inside a thread is not legacy`; `withdrawn question no longer counts`.
-  - `attention/next opens a thread for a legacy question with its card`; `returns null when nothing needs attention`.
+  - `attention/next opens a thread for a legacy question with its card`; `converted question stops counting as legacy even when its original task is not on the chosen anchor`; `concurrent and repeated conversion creates one association and one card`; `empty history creates a system anchor without a task`; `mixed unread threads and legacy questions are ordered globally oldest first`; `returns null when nothing needs attention`.
+  - `answer after legacy conversion receives the system card question as lastAskedQuestion`.
   - store: `withdraw sets dropped and keeps basis`.
 - [ ] **Step 2: Run** `npx vitest run --project @nema/hub uiApi` and `npx vitest run --project @nema/knowledge store` → FAIL.
 - [ ] **Step 3: Implement.**
@@ -239,11 +255,11 @@ Rule changes (Chinese text is the builder's wording; these assertions pin the co
 - Main chat: remove `AnswerBox` and the `回答 Q-n：` send path from `Chat`; `AskedQuestion` shows the card only (inside threads too); thread composer answers.
 - Change chips: `add` chips get a withdraw button (`POST /entries/:eid/withdraw`), hidden once the entry is `dropped`; `update` chips open the entry's history tab.
 - Sidebar badge shows `attention`; clicking calls `attention/next` and opens the returned thread (selecting the workspace first if needed). Tooltip key `sidebar.attention`.
-- `ThreadView` marks read on open, on window focus, and on each new message while focused.
+- `ThreadView` acknowledges read after rendering on open/focus and after each rendered message batch while focused. Send `{ throughSeq }` from the highest displayed thread message, never a later event's seq or the server maximum; skip empty threads and unfocused/background windows.
 - Jump-to-message (`EntryDetail` source jump, search hit, quote block) opens the thread when the target message has a `threadId` (or is resolved via `GET /threads/:tid/messages`).
 
 - [ ] **Step 1: Failing tests**
-  - `ThreadView`: `shows the anchor and thread messages`; `sends in the thread`; `marks read on open`; `no /thread in its composer`.
+  - `ThreadView`: `shows the anchor and thread messages`; `sends in the thread`; `marks rendered messages read on open with throughSeq`; `does not acknowledge an unrendered arrival or background message`; `no /thread in its composer`.
   - `Chat`: `renders a thread row with unread count under the anchor`; `clicking the row opens the thread`; `no answer box in the main chat`.
   - `Composer`: `/thread text posts a new thread`.
   - `MessageItem`: `withdraw on an add chip calls withdraw`.
@@ -278,8 +294,8 @@ Rule changes (Chinese text is the builder's wording; these assertions pin the co
 - Create: `docs/reviews/2026-10-26-thread-agent-script.md` (manual run script)
 - Modify: `README.md`, `README.en.md`, `README.ja.md`, `CHANGELOG.md`
 
-- [ ] **Step 1: Anti-goal 1 test** `threadConflict.test.ts`: workspace with thread A and thread B. Through the room API with a run token of a thread-A task: upsert decision D-1 "缓存用 Redis" (`basis: decided`, source = A message). With a thread-B task: upsert a contradicting decision `id: D-1` rewrite citing only an agent message → 409 (existing guard); then upsert a `question` with `related: ["D-1"]`, quotes from the B user message. Then through the daemon harness finish the B task. Assert: D-1 still `active` and unchanged; the question's reply landed in thread B (`askedQuestion` on the agent message in B). Second case: B user message "改用本地 LRU，推翻 D-1" → upsert `id: D-1, status: superseded` with `basis: decided` citing it → 200.
+- [ ] **Step 1: Deterministic API and routing test** `threadConflict.test.ts`: workspace with thread A and thread B. Through the room API with a run token of a thread-A task: upsert decision D-1 "缓存用 Redis" (`basis: decided`, source = A message). With a thread-B task: upsert a contradicting decision `id: D-1` rewrite citing only an agent message → 409 (existing guard); then upsert a `question` with `related: ["D-1"]`, quotes from the B user message. Then through the daemon harness finish the B task. Assert: D-1 still `active` and unchanged; the question's reply landed in thread B (`askedQuestion` on the agent message in B). This checks the existing API guard and the supplied question/tool sequence, not semantic conflict detection or rejection of a new conflicting decision id. Second case: B user message "改用本地 LRU，推翻 D-1" → upsert `id: D-1, status: superseded` with `basis: decided` citing it → 200.
 - [ ] **Step 2: Run** `npx vitest run --project @nema/hub threadConflict` → PASS (it exercises Tasks 2–5; if it fails, fix the owning task's code, not the test).
-- [ ] **Step 3: Manual script** (anti-goal 2) in `docs/reviews/2026-10-26-thread-agent-script.md`: four conversations with the expected outcome each — memo check in the main chat (no writes); casual design chat that ends with "就这么定了：用 Redis" in a thread (one `decided` decision); `/thread` brainstorm with no decision (no writes); contradicting decision in a second thread (a question in that thread, no new decision).
+- [ ] **Step 3: Real-agent acceptance script and run** (both anti-goals) in `docs/reviews/2026-10-26-thread-agent-script.md`: four conversations with the expected outcome each — memo check in the main chat (no writes); casual design chat that ends with "就这么定了：用 Redis" in a thread (one `decided` decision); `/thread` brainstorm with no decision (no writes); contradicting decision in a second thread (a question in that thread, no new decision). For the conflict case, first let the real agent record Redis in thread A, then send "缓存用本地 LRU" in B without an explicit override. Inspect the complete resulting decision list, including new ids: Redis stays the only active decision; B gets a question related to Redis and quoting B's user message. Follow with "改用本地 LRU，推翻 D-1" (use the actual id) and check Redis is superseded and LRU becomes active. Run against a real configured runtime/model, record runtime/model, entry/message ids, relevant tool trace and actual pass/fail in the script's results section. Do not hand-author the question tool call in this run. If runtime access is unavailable, record this acceptance check as not run and the concrete blocker; deterministic tests passing does not complete the behavioral validation.
 - [ ] **Step 4: Docs.** README: threads (agent-opened, `/thread`, windows, badge), withdraw, the copilot behaviour; CHANGELOG Unreleased: Added threads / `/thread` / withdraw / attention badge; Changed agent behaviour and follow-ups move into threads; Removed the main-chat answer box.
 - [ ] **Step 5: Full check** `npm test`, `npm run typecheck` and `npm run lint -w apps/web` → PASS. Commit `test: thread conflict check, docs for threads`.
