@@ -15,6 +15,8 @@ export type Message = {
   createdAt: string;
   editedAt: string | null;
   threadId: string | null;
+  /** Database sequence for acknowledging exactly the rendered thread messages. */
+  seq: number;
 };
 
 /** An agent message: its meta, when present, is always AgentMessageMeta. */
@@ -30,9 +32,10 @@ type Row = {
   created_at: Date | string;
   edited_at: Date | string | null;
   thread_id: string | null;
+  seq: number | string;
 };
 
-const COLS = "id, workspace_id, role, content, meta, task_id, created_at, edited_at, thread_id";
+const COLS = "id, workspace_id, role, content, meta, task_id, created_at, edited_at, thread_id, seq";
 
 export function messageExcerpt(content: string, max = 200): string {
   return Array.from(content).slice(0, max).join("");
@@ -59,6 +62,7 @@ function toMessage(r: Row): Message {
     createdAt: new Date(r.created_at).toISOString(),
     editedAt: r.edited_at ? new Date(r.edited_at).toISOString() : null,
     threadId: r.thread_id,
+    seq: Number(r.seq),
   };
 }
 
@@ -217,7 +221,7 @@ export function addMessage(
 /** Latest `limit` messages, returned oldest first. */
 export async function listMessages(db: Db, workspaceId: string, limit = 200): Promise<Message[]> {
   const rows = await db.query<Row>(
-    `select * from (select ${COLS}, seq from messages where workspace_id = $1 and thread_id is null order by seq desc limit $2) m
+    `select * from (select ${COLS} from messages where workspace_id = $1 and thread_id is null order by seq desc limit $2) m
      order by seq asc`,
     [workspaceId, limit],
   );
@@ -251,32 +255,32 @@ export async function listRecentMessages(db: Db, workspaceId: string, excludeId:
   if (threadId) {
     const anchor = await getMessage(db, threadId);
     const replies = await db.query<Row>(`select ${COLS} from (
-      select ${COLS}, seq from messages where workspace_id=$1 and thread_id=$2 and id<>$3
+      select ${COLS} from messages where workspace_id=$1 and thread_id=$2 and id<>$3
       order by seq desc limit $4) r order by seq asc`, [workspaceId, threadId, excludeId, Math.min(limit, 50)]);
     return [...(anchor ? [anchor] : []), ...replies.map(toMessage)];
   }
   const rows = await db.query<Row>(`select * from (
-    select ${COLS}, seq from messages where workspace_id=$1 and thread_id is null and id<>$2 order by seq desc limit $3
+    select ${COLS} from messages where workspace_id=$1 and thread_id is null and id<>$2 order by seq desc limit $3
   ) m order by seq asc`, [workspaceId, excludeId, limit]);
   return rows.map(toMessage);
 }
 
 export async function listPromptMessages(db: Db, workspaceId: string, userMessageId: string, limit = 20): Promise<Message[]> {
-  const targetRows = await db.query<{ id:string; workspace_id:string; role:Message["role"]; content:string; meta:Message["meta"]; task_id:string|null; created_at:Date|string; edited_at:Date|string|null; thread_id:string|null; seq:number }>(`select ${COLS},seq from messages where id=$1 and workspace_id=$2`, [userMessageId, workspaceId]);
+  const targetRows = await db.query<{ id:string; workspace_id:string; role:Message["role"]; content:string; meta:Message["meta"]; task_id:string|null; created_at:Date|string; edited_at:Date|string|null; thread_id:string|null; seq:number }>(`select ${COLS} from messages where id=$1 and workspace_id=$2`, [userMessageId, workspaceId]);
   const target = targetRows[0];
   if (!target) return [];
   const threadId = await conversationOf(db, toMessage(target));
   if (threadId) {
     const anchor = await getMessage(db, threadId);
     const rows = await db.query<Row>(`select * from (
-      select ${COLS},seq from messages where workspace_id=$1 and thread_id=$2 and id<>$3
+      select ${COLS} from messages where workspace_id=$1 and thread_id=$2 and id<>$3
         and (role<>'user' or seq < $4) order by seq desc limit $5
     ) m order by seq asc`, [workspaceId, threadId, userMessageId, target.seq, Math.min(limit, 50)]);
     return [...(anchor ? [anchor] : []), ...rows.map(toMessage)];
   }
   const rows = await db.query<Row>(
     `select * from (
-       select ${COLS}, seq from messages
+       select ${COLS} from messages
        where workspace_id = $1 and thread_id is null and id <> $2
          and (role <> 'user' or seq < (select seq from messages where id = $2))
        order by seq desc limit $3) m

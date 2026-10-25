@@ -15,6 +15,7 @@ import { repoPath } from "../src/workspaces.js";
 import { createApp } from "../src/app.js";
 import type { Hono } from "hono";
 import { DaemonRpcError, type DaemonRpc } from "../src/daemonRpc.js";
+import { getLastAskedQuestion, getQuestionThread } from "../src/threads.js";
 
 let db: Db;
 let dataDir: string;
@@ -57,6 +58,12 @@ async function agentEntry(input: Record<string, unknown>, taskId: string) {
   await recordTaskChange(db, taskId, { entryId: r.entry.id, kind: r.entry.kind, title: r.entry.title, op: r.op });
   return r.entry;
 }
+async function legacyQuestion() {
+  const store = new KnowledgeStore(repoPath(dataDir, ws));
+  const r = await store.upsert({ kind: "question", title: "legacy", body: "Need a choice", sourceMessages: [], reason: "r", priority: 1 }, { author: "agent" });
+  await indexEntry(db, ws, r.entry);
+  return r.entry;
+}
 async function doneTask(fn: (taskId: string) => Promise<void>) {
   await postUserMessage(db, ws, "memo");
   const t = (await claimNextTask(db, "d1"))!;
@@ -65,6 +72,137 @@ async function doneTask(fn: (taskId: string) => Promise<void>) {
 }
 
 describe("ui api", () => {
+  test("slash thread creates anchor, thread and task in one go", async () => {
+    const seen: string[] = [];
+    events.subscribe(ws, (e) => seen.push(e.type));
+    const r = await req("POST", `/api/workspaces/${ws}/threads`, { content: "主题一\nsecond" });
+    expect(r.status).toBe(200);
+    const result = await json(r);
+    expect(result.message.role).toBe("user");
+    expect(result.thread).toMatchObject({ id: result.message.id, title: "主题一", openedBy: "user" });
+    expect(result.task.messageId).toBe(result.message.id);
+    expect(seen).toContain("message.created");
+    expect((await json(await req("GET", `/api/workspaces/${ws}/messages`))).map((m: any) => m.id)).toContain(result.message.id);
+    expect(await json(await req("GET", `/api/workspaces/${ws}/threads`))).toHaveLength(1);
+  });
+
+  test("message resolver returns main and thread messages and rejects foreign ids", async () => {
+    const main = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "main" }));
+    const thread = await json(await req("POST", `/api/workspaces/${ws}/threads`, { content: "thread" }));
+    const reply = await json(await req("POST", `/api/workspaces/${ws}/threads/${thread.thread.id}/messages`, { content: "reply" }));
+    const resolvedMain = await json(await req("GET", `/api/workspaces/${ws}/messages/${main.message.id}`));
+    const resolvedReply = await json(await req("GET", `/api/workspaces/${ws}/messages/${reply.message.id}`));
+    expect(resolvedMain).toMatchObject({ threadId: null, seq: expect.any(Number) });
+    expect(resolvedReply).toMatchObject({ threadId: thread.thread.id, seq: reply.message.seq });
+    const rendered = await json(await req("GET", `/api/workspaces/${ws}/threads/${thread.thread.id}/messages`));
+    expect(rendered.messages.at(-1).seq).toBe(resolvedReply.seq);
+    const other = await json(await req("POST", "/api/workspaces", { name: "Other" }));
+    expect((await req("GET", `/api/workspaces/${other.id}/messages/${reply.message.id}`)).status).toBe(404);
+  });
+
+  test("thread post in archived workspace is 409 and foreign thread is 400", async () => {
+    const created = await json(await req("POST", `/api/workspaces/${ws}/threads`, { content: "thread" }));
+    const other = await json(await req("POST", "/api/workspaces", { name: "Other" }));
+    expect((await req("POST", `/api/workspaces/${ws}/threads/${created.thread.id}/messages`, { content: "foreign" })).status).toBe(200);
+    expect((await req("POST", `/api/workspaces/${other.id}/threads/${created.thread.id}/messages`, { content: "foreign" })).status).toBe(400);
+    await req("PATCH", `/api/workspaces/${ws}`, { archived: true });
+    expect((await req("POST", `/api/workspaces/${ws}/threads`, { content: "no" })).status).toBe(409);
+    expect((await req("POST", `/api/workspaces/${ws}/threads/${created.thread.id}/messages`, { content: "no" })).status).toBe(409);
+  });
+
+  test("read acknowledges only the rendered thread sequence", async () => {
+    const opened = await json(await req("POST", `/api/workspaces/${ws}/threads`, { content: "subject" }));
+    const reply = await json(await req("POST", `/api/workspaces/${ws}/threads/${opened.thread.id}/messages`, { content: "reply" }));
+    const rendered = await json(await req("GET", `/api/workspaces/${ws}/threads/${opened.thread.id}/messages`));
+    const throughSeq = rendered.messages.at(-1).seq;
+    const seen: string[] = [];
+    events.subscribe(ws, (e) => seen.push(e.type));
+    expect((await req("POST", `/api/workspaces/${ws}/threads/${opened.thread.id}/read`, { throughSeq })).status).toBe(204);
+    expect(seen).toContain("thread.updated");
+    expect(rendered.messages.map((m: any) => m.id)).toContain(reply.message.id);
+    const later = await json(await req("POST", `/api/workspaces/${ws}/threads/${opened.thread.id}/messages`, { content: "later" }));
+    const list = await json(await req("GET", `/api/workspaces/${ws}/threads`));
+    expect(list.find((t: any) => t.id === opened.thread.id).unread).toBe(1);
+    const bad = await req("POST", `/api/workspaces/${ws}/threads/${opened.thread.id}/read`, { throughSeq: 999999 });
+    expect(bad.status).toBe(400);
+    expect(later.message.threadId).toBe(opened.thread.id);
+    const otherThread = await json(await req("POST", `/api/workspaces/${ws}/threads`, { content: "other" }));
+    const foreignSeq = (await db.query<{ seq: number }>("select seq from messages where id=$1", [otherThread.message.id]))[0]!.seq;
+    expect((await req("POST", `/api/workspaces/${ws}/threads/${opened.thread.id}/read`, { throughSeq: foreignSeq })).status).toBe(400);
+    const other = await json(await req("POST", "/api/workspaces", { name: "Other" }));
+    expect((await req("POST", `/api/workspaces/${other.id}/threads/${opened.thread.id}/read`, { throughSeq })).status).toBe(400);
+  });
+
+  test("attention counts unread threads and legacy questions and converts legacy questions", async () => {
+    const opened = await json(await req("POST", `/api/workspaces/${ws}/threads`, { content: "subject" }));
+    await req("POST", `/api/workspaces/${ws}/threads/${opened.thread.id}/messages`, { content: "unread" });
+    const q = await legacyQuestion();
+    const list = await json(await req("GET", "/api/workspaces"));
+    expect(list.find((w: any) => w.id === ws).attention).toBe(2);
+    const replySeq = (await db.query<{ seq: number }>("select seq from messages where thread_id=$1 order by seq desc limit 1", [opened.thread.id]))[0]!.seq;
+    await req("POST", `/api/workspaces/${ws}/threads/${opened.thread.id}/read`, { throughSeq: replySeq });
+    const converted = await json(await req("GET", `/api/workspaces/${ws}/attention/next`));
+    expect(converted.threadId).toBeTruthy();
+    const mapping = await db.query("select 1 from question_threads where workspace_id=$1 and question_id=$2", [ws, q.id]);
+    expect(mapping).toHaveLength(1);
+    expect(await getLastAskedQuestion(db, ws, converted.threadId)).toEqual({ id: q.id, title: q.title, body: q.body });
+    const again = await json(await req("GET", `/api/workspaces/${ws}/attention/next`));
+    expect(again.threadId).toBe(converted.threadId); // its card is unread; the question is no longer counted separately
+  });
+
+  test("empty legacy history gets one system anchor and repeated conversion returns it", async () => {
+    const q = await legacyQuestion();
+    const a = await Promise.all([req("GET", `/api/workspaces/${ws}/attention/next`), req("GET", `/api/workspaces/${ws}/attention/next`)]);
+    const ids = await Promise.all(a.map(async (r) => (await json(r)).threadId));
+    expect(ids[0]).toBe(ids[1]);
+    const thread = await db.query<{ n: number }>("select count(*)::int n from threads where workspace_id=$1", [ws]);
+    const cards = await db.query("select 1 from messages where workspace_id=$1 and role='system' and meta->'askedQuestion'->>'id'=$2", [ws, q.id]);
+    expect(thread[0]!.n).toBe(1);
+    expect(cards).toHaveLength(1);
+    const anchor = await db.query<{ role: string; task_id: string | null }>("select role,task_id from messages where id=$1", [ids[0]]);
+    expect(anchor[0]).toEqual({ role: "system", task_id: null });
+  });
+
+  test("legacy conversion explicitly associates a question whose original task is not on its source anchor", async () => {
+    const originalTask = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "original task" }));
+    const task = (await claimNextTask(db, "d1"))!;
+    const source = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "question source" }));
+    const question = await agentEntry({ kind: "question", title: "legacy source", body: "body", priority: 1, sourceMessages: [source.message.id] }, task.id);
+    await finishTask(db, task.id, { ok: true });
+    const result = await json(await req("GET", `/api/workspaces/${ws}/attention/next`));
+    expect(originalTask.message.id).not.toBe(result.threadId);
+    expect(result.threadId).toBe(source.message.id);
+    expect(await db.query("select 1 from question_threads where workspace_id=$1 and question_id=$2 and thread_id=$3", [ws, question.id, source.message.id])).toHaveLength(1);
+    expect(await getQuestionThread(db, ws, question.id)).toBe(source.message.id);
+  });
+
+  test("question opened inside a thread is not legacy attention", async () => {
+    const opened = await json(await req("POST", `/api/workspaces/${ws}/threads`, { content: "topic" }));
+    const task = await claimNextTask(db, "d1");
+    await agentEntry({ kind: "question", title: "thread question", body: "body", priority: 1 }, task!.id);
+    expect((await json(await req("GET", "/api/workspaces"))).find((w: any) => w.id === ws).attention).toBe(0);
+    expect(await getLastAskedQuestion(db, ws, opened.thread.id)).toBeNull();
+  });
+
+  test("mixed unread threads and legacy questions are ordered oldest first and empty attention returns null", async () => {
+    expect(await json(await req("GET", `/api/workspaces/${ws}/attention/next`))).toBeNull();
+    const q = await legacyQuestion();
+    const opened = await json(await req("POST", `/api/workspaces/${ws}/threads`, { content: "newer" }));
+    await req("POST", `/api/workspaces/${ws}/threads/${opened.thread.id}/messages`, { content: "unread" });
+    const next = await json(await req("GET", `/api/workspaces/${ws}/attention/next`));
+    expect(next.threadId).toBe(opened.thread.id);
+    expect(await getLastAskedQuestion(db, ws, next.threadId)).toMatchObject({ id: q.id });
+  });
+
+  test("withdrawn question no longer counts as attention", async () => {
+    const q = await legacyQuestion();
+    const r = await req("POST", `/api/workspaces/${ws}/entries/${q.id}/withdraw`);
+    expect(r.status).toBe(200);
+    expect((await json(r)).status).toBe("dropped");
+    const list = await json(await req("GET", "/api/workspaces"));
+    expect(list.find((w: any) => w.id === ws).attention).toBe(0);
+  });
+
   test("post message returns queued task, messages listed, events emitted", async () => {
     const seen: string[] = [];
     events.subscribe(ws, (e) => seen.push(e.type));
@@ -227,14 +365,14 @@ describe("ui api", () => {
     expect(await db.query("select 1 from tasks where id = $1", [q2.task.id])).toHaveLength(0);
   });
 
-  test("openQuestions counts open questions", async () => {
+  test("attention counts unassociated open questions", async () => {
     await doneTask(async (t) => {
       await agentEntry({ kind: "question", title: "Q1", priority: 1 }, t);
       await agentEntry({ kind: "question", title: "Q2", priority: 2 }, t);
       await agentEntry({ kind: "requirement", title: "R" }, t);
     });
     const list = await json(await req("GET", "/api/workspaces"));
-    expect(list.find((w: any) => w.id === ws).openQuestions).toBe(2);
+    expect(list.find((w: any) => w.id === ws).attention).toBe(2);
   });
 
   test("user PUT edit: author user, reason required", async () => {

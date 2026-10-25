@@ -1,6 +1,8 @@
 import type { Thread, ThreadOpenedBy, AgentMessageMeta } from "@nema/shared";
 import type { Db } from "./db/db.js";
-import { MessageOpError, type AgentMessage, type Message } from "./messages.js";
+import { MessageOpError, addMessage, getMessage, type AgentMessage, type Message } from "./messages.js";
+import { KnowledgeStore } from "@nema/knowledge";
+import { repoPath } from "./workspaces.js";
 
 type ThreadRow = {
   id: string; workspace_id: string; title: string; opened_by: ThreadOpenedBy;
@@ -104,14 +106,14 @@ export async function conversationOf(db: Db, message: Message): Promise<string |
 }
 
 export async function getLastAgentMessage(db: Db, workspaceId: string, threadId: string | null): Promise<AgentMessage | null> {
-  const rows = await db.query<{ id: string; workspace_id: string; role: "agent"; content: string; meta: AgentMessageMeta | null; task_id: string | null; created_at: Date | string; edited_at: Date | string | null; thread_id: string | null }>(
-    `select id,workspace_id,role,content,meta,task_id,created_at,edited_at,thread_id from messages
+  const rows = await db.query<{ id: string; workspace_id: string; role: "agent"; content: string; meta: AgentMessageMeta | null; task_id: string | null; created_at: Date | string; edited_at: Date | string | null; thread_id: string | null; seq: number | string }>(
+    `select id,workspace_id,role,content,meta,task_id,created_at,edited_at,thread_id,seq from messages
      where workspace_id=$1 and role='agent' and ${threadId === null ? "thread_id is null" : "thread_id=$2"} order by seq desc limit 1`,
     threadId === null ? [workspaceId] : [workspaceId, threadId],
   );
   if (!rows[0]) return null;
   const r = rows[0];
-  return { id:r.id, workspaceId:r.workspace_id, role:r.role, content:r.content, meta:r.meta, taskId:r.task_id, createdAt:new Date(r.created_at).toISOString(), editedAt:r.edited_at ? new Date(r.edited_at).toISOString() : null, threadId:r.thread_id };
+  return { id:r.id, workspaceId:r.workspace_id, role:r.role, content:r.content, meta:r.meta, taskId:r.task_id, createdAt:new Date(r.created_at).toISOString(), editedAt:r.edited_at ? new Date(r.edited_at).toISOString() : null, threadId:r.thread_id, seq:Number(r.seq) };
 }
 
 export async function getLastAskedQuestion(db: Db, workspaceId: string, threadId: string | null): Promise<{ id: string; title: string; body: string } | null> {
@@ -123,4 +125,94 @@ export async function getLastAskedQuestion(db: Db, workspaceId: string, threadId
   );
   // Legacy converted question cards persist the same typed question in system-message metadata.
   return rows[0]?.asked_question ?? null;
+}
+
+type AttentionQuestion = { workspace_id: string; entry_id: string; updated_at: Date | string };
+
+async function legacyQuestions(db: Db): Promise<AttentionQuestion[]> {
+  const rows = await db.query<AttentionQuestion>(
+    `select e.workspace_id,e.entry_id,e.updated_at from entry_index e
+     where e.kind='question' and e.status='open' order by e.updated_at asc,e.entry_id asc`,
+  );
+  const out: AttentionQuestion[] = [];
+  for (const row of rows) if (!(await getQuestionThread(db, row.workspace_id, row.entry_id))) out.push(row);
+  return out;
+}
+
+export async function attentionCounts(db: Db, _dataDir: string): Promise<Record<string, number>> {
+  const result: Record<string, number> = {};
+  const unread = await db.query<{ workspace_id: string; n: number | string }>(
+    `select t.workspace_id,count(distinct t.id)::int as n from threads t
+     join messages m on m.thread_id=t.id and m.seq>t.last_read_seq group by t.workspace_id`,
+  );
+  for (const row of unread) result[row.workspace_id] = Number(row.n);
+  for (const q of await legacyQuestions(db)) result[q.workspace_id] = (result[q.workspace_id] ?? 0) + 1;
+  return result;
+}
+
+export async function attentionCount(db: Db, dataDir: string, workspaceId: string): Promise<number> {
+  return (await attentionCounts(db, dataDir))[workspaceId] ?? 0;
+}
+
+/** Return the globally oldest unread thread or legacy question, converting a legacy question as needed. */
+export async function nextAttentionResult(db: Db, dataDir: string, workspaceId: string): Promise<{ threadId: string | null; anchor: Message | null; card: Message | null }> {
+  const candidates: Array<{ workspaceId: string; id: string; at: number; kind: "thread" | "question" }> = [];
+  const unread = await db.query<{ workspace_id: string; thread_id: string; at: Date | string }>(
+    `select t.workspace_id,t.id as thread_id,min(m.created_at) as at from threads t
+     join messages m on m.thread_id=t.id and m.seq>t.last_read_seq
+     where t.workspace_id=$1 group by t.workspace_id,t.id`, [workspaceId],
+  );
+  for (const row of unread) candidates.push({ workspaceId: row.workspace_id, id: row.thread_id, at: new Date(row.at).getTime(), kind: "thread" });
+  for (const q of await legacyQuestions(db)) if (q.workspace_id === workspaceId) candidates.push({ workspaceId: q.workspace_id, id: q.entry_id, at: new Date(q.updated_at).getTime(), kind: "question" });
+  candidates.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+  const chosen = candidates[0];
+  if (!chosen) return { threadId: null, anchor: null, card: null };
+  if (chosen.kind === "thread") return { threadId: chosen.id, anchor: null, card: null };
+
+  const converted = await db.tx(async (t) => {
+    // Serialize fallback anchor creation per workspace; an association conflict alone would
+    // still permit two empty anchors to be committed by concurrent readers.
+    const lock = await t.query<{ id: string }>("select id from workspaces where id=$1 for update", [workspaceId]);
+    if (!lock[0]) return { threadId: null, anchor: null, card: null };
+    const already = await getQuestionThread(t, workspaceId, chosen.id);
+    if (already) return { threadId: already, anchor: null, card: null };
+    const indexed = await t.query<{ entry_id: string; status: string }>(
+      "select entry_id,status from entry_index where workspace_id=$1 and entry_id=$2 and kind='question'", [workspaceId, chosen.id],
+    );
+    if (!indexed[0] || indexed[0].status !== "open") return { threadId: null, anchor: null, card: null };
+    const question = await new KnowledgeStore(repoPath(dataDir, workspaceId)).get(chosen.id);
+    if (!question || question.kind !== "question" || question.status !== "open") return { threadId: null, anchor: null, card: null };
+    let anchorId: string | null = null;
+    if (question.sourceMessages.length > 0) {
+      const sources = await t.query<{ id: string }>(
+        `select id from messages where workspace_id=$1 and thread_id is null and id=any($2::text[])
+         order by seq asc limit 1`, [workspaceId, question.sourceMessages],
+      );
+      anchorId = sources[0]?.id ?? null;
+    }
+    if (!anchorId) {
+      const latest = await t.query<{ id: string }>(
+        "select id from messages where workspace_id=$1 and thread_id is null order by seq desc limit 1", [workspaceId],
+      );
+      anchorId = latest[0]?.id ?? null;
+    }
+    let anchor: Message | null = null;
+    if (!anchorId) {
+      anchor = await addMessage(t, workspaceId, "system", `追问 ${question.id}：${question.title}`);
+      anchorId = anchor.id;
+    }
+    const thread = await ensureThread(t, anchorId, question.title, "agent");
+    const association = await associateQuestion(t, workspaceId, question.id, thread.id);
+    if (!association.inserted) return { threadId: association.threadId, anchor: null, card: null };
+    const card = await addMessage(t, workspaceId, "system", `追问 ${question.id}：${question.title}`, {
+      threadId: thread.id,
+      meta: { changes: [], askedQuestion: { id: question.id, title: question.title, body: question.body } },
+    });
+    return { threadId: thread.id, anchor, card };
+  });
+  return converted;
+}
+
+export async function nextAttention(db: Db, dataDir: string, workspaceId: string): Promise<string | null> {
+  return (await nextAttentionResult(db, dataDir, workspaceId)).threadId;
 }

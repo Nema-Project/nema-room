@@ -24,6 +24,7 @@ export type Message = {
   createdAt: string;
   editedAt: string | null;
   threadId: string | null;
+  seq: number;
 };
 
 export type Task = {

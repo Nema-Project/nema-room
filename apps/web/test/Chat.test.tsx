@@ -26,7 +26,7 @@ vi.mock("@/lib/hub", () => ({
 const running = { id: "t1", workspaceId: "w1", messageId: "a", status: "running" as const, error: null };
 
 const m = (id: string, content: string, role: Message["role"] = "user"): Message => ({
-  id, workspaceId: "w1", role, content, meta: null, taskId: null, createdAt: "2026-10-21T14:00:00Z", editedAt: null,
+  id, workspaceId: "w1", role, content, meta: null, taskId: null, createdAt: "2026-10-21T14:00:00Z", editedAt: null, threadId: null, seq: 1,
 });
 
 beforeEach(() => {

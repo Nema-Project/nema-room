@@ -77,6 +77,15 @@ describe("KnowledgeStore", () => {
     expect(r.entry.id).toBe("Q-1");
   });
 
+  test("withdraw sets dropped and keeps basis", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    const added = await s.upsert({ kind: "question", title: "q", body: "details", sourceMessages: [], reason: "r", priority: 2, basis: "stated" }, { author: "agent", now: new Date("2026-01-01T00:00:00Z") });
+    const withdrawn = await s.withdraw(added.entry.id, { author: "user" });
+    expect(withdrawn.entry).toMatchObject({ status: "dropped", basis: "stated", confirmedAt: added.entry.confirmedAt });
+    expect((await s.get(added.entry.id))?.basis).toBe("stated");
+  });
+
   test("update keeps id and records op=update", async () => {
     const s = new KnowledgeStore(dir);
     await s.init();
