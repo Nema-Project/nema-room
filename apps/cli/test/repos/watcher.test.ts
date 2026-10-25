@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { lf } from "../windowsEnv.js";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import { startDaemon } from "../../src/daemon/setup.js";
@@ -343,8 +344,8 @@ gitTest("a missing index is rebuilt in full from the new sha and the move is sti
   const src = join(nemaHome, "ws", WS, "graphify", REPO, "src");
   expect(moves).toEqual([{ repoId: REPO, mainRef: "origin/main", from: before, to: next }]);
   expect(readFileSync(record, "utf8")).toBe(`extract\n${src}\n--code-only\n---\n`);
-  expect(readFileSync(join(src, "README.md"), "utf8")).toBe("hello\n");
-  expect(readFileSync(join(src, "remote-only.txt"), "utf8")).toBe("from-origin\n");
+  expect(lf(readFileSync(join(src, "README.md"), "utf8"))).toBe("hello\n");
+  expect(lf(readFileSync(join(src, "remote-only.txt"), "utf8"))).toBe("from-origin\n");
 });
 
 gitTest("a thrown index still reports the move, stores the sha, and the next repo is fetched", async () => {

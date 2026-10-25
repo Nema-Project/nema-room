@@ -151,15 +151,20 @@ export function parseStageArgs(args) {
 }
 
 export async function writePlatformLaunchers(payloadRoot, manifest) {
-  const launcherName = manifest.platform === 'win32' ? 'Nema Browser.cmd' : manifest.platform === 'darwin' ? 'Nema Browser.command' : 'nema-browser';
-  const launcherTemplate = path.join(scriptDir, 'templates', launcherName);
-  const launcher = (await readFile(launcherTemplate, 'utf8')).replaceAll('{{NODE_PATH}}', manifest.node.replaceAll('/', path.sep));
-  const launcherPath = path.join(payloadRoot, launcherName);
-  await writeFile(launcherPath, launcher, { mode: manifest.platform === 'win32' ? 0o644 : 0o755 });
-  if (manifest.platform !== 'win32') await chmod(launcherPath, 0o755);
+  const nativePath = (relative) => relative.replaceAll('/', path.sep);
+  const names = manifest.platform === 'win32' ? ['Nema Browser.cmd', 'Nema CLI.cmd'] : manifest.platform === 'darwin' ? ['Nema Browser.command', 'Nema CLI.command'] : ['nema-browser', 'nema-cli'];
+  const launcherPaths = [];
+  for (const launcherName of names) {
+    const launcherTemplate = path.join(scriptDir, 'templates', launcherName);
+    const launcher = (await readFile(launcherTemplate, 'utf8')).replaceAll('{{NODE_PATH}}', nativePath(manifest.node)).replaceAll('{{CLI_PATH}}', nativePath(manifest.cliEntry ?? ''));
+    const launcherPath = path.join(payloadRoot, launcherName);
+    await writeFile(launcherPath, launcher, { mode: manifest.platform === 'win32' ? 0o644 : 0o755 });
+    if (manifest.platform !== 'win32') await chmod(launcherPath, 0o755);
+    launcherPaths.push(launcherPath);
+  }
   const webParentPath = path.join(payloadRoot, 'web', 'apps', 'web', 'managed-parent.mjs');
   await cp(path.join(scriptDir, 'templates/web-parent.mjs'), webParentPath);
-  return { launcherPath, webParentPath };
+  return { launcherPath: launcherPaths[0], cliLauncherPath: launcherPaths[1], webParentPath };
 }
 
 function nodeRootFor(nodePath, platform) {

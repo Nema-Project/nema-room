@@ -6,7 +6,7 @@
 
 简体中文 · [English](README.en.md) · [日本語](README.ja.md)
 
-> **2026-10-24 方向更新**：首版调整为可在本机独立完整使用的桌面应用；多设备同步、备份功能和团队只读查看在本地基本实现完成后再考虑。桌面迁移尚未完成，下文安装方式仍对应现有 Web / Compose 实现。见[首版范围](docs/superpowers/specs/2026-10-24-local-desktop-first.md)。
+> **2026-10-24 方向更新**：首版调整为可在本机独立完整使用的桌面应用；多设备同步、备份功能和团队只读查看在本地基本实现完成后再考虑。桌面应用已有预览实现，见[桌面应用（预览）](#桌面应用预览)，但还没有发布版本；“快速开始”仍对应现有 Web / Compose 实现。见[首版范围](docs/superpowers/specs/2026-10-24-local-desktop-first.md)。
 
 Nema Room 是在本机运行的需求讨论室。把想法、会议记录和取舍放进聊天，Agent 会整理出需求、决策、问题和来源。知识修改记录在 Git 中；准备开发时生成 spec 和 plan，再根据编码 Agent 上报的提交跟踪进度。
 
@@ -79,6 +79,40 @@ npm run down   # 停止容器，保留数据库卷
 
 Linux 上若 UID/GID 不是 1000，请在 `.env` 设置 `NEMA_UID` / `NEMA_GID`。自定义目录时先手动创建，并让 `NEMA_DATA_HOST_DIR` 与 daemon 读取的目录一致。
 
+## 桌面应用（预览）
+
+桌面应用把整套服务放进一个本机程序：磁盘上的 PGlite 数据库、单实例本机核心、受保护的同源网关、随包的 Node 和 Git，不需要 Docker 或数据库服务器。**目前只能自己从源码构建，没有发布版本。**
+
+| 项目 | 状态 |
+| --- | --- |
+| Windows x64 | 已构建；便携 ZIP 的冒烟已在本机通过，安装包尚未安装运行 |
+| macOS | 有构建配置（DMG、ZIP），**尚未在 macOS 上验证** |
+| Linux | 不提供桌面安装包 |
+| 签名与更新 | 安装包**未签名**；没有自动更新 |
+| 公开发布 | 尚无；第三方组件的源码对应审查未完成，完成前不会发布 |
+
+**构建（Windows x64）**：`npm ci` 后运行 `npm run desktop:make -- --platform win32 --arch x64`，产物在 `dist/desktop-artifacts/win32-x64/`：`Nema-<版本>-win32-x64.exe`（NSIS 安装包）和同名 `.zip`（便携版）。构建只支持当前系统，且需要本机 C 编译器（Windows 需要 Clang，见 [scripts/desktop/README.md](scripts/desktop/README.md)）。
+
+**第一次打开未签名的安装包**：只打开你自己构建或已核对过的文件。Windows 的 SmartScreen 会提示“Windows 已保护你的电脑”，点“更多信息”，再点“仍要运行”。macOS 包尚未验证；按系统惯例，未公证的应用需要在“系统设置 → 隐私与安全性”里选“仍要打开”。
+
+**数据位置**：默认在 `~/.nema/desktop`（`db/` 数据库、`data/` 知识 Git 仓库、`instance.json` 运行状态）。它不读取 Compose 的数据库，也不使用旧的 `~/.nema/data`。
+
+**窗口、托盘与浏览器模式**
+- 关闭窗口只关窗口，核心继续在托盘里运行；点托盘图标可重新打开。托盘菜单的 `Quit Nema` 才会退出，并等待后台任务清理完毕。
+- 也可以用浏览器访问同一个核心：安装目录 `resources\payload` 里有 `Nema Browser.cmd`（macOS 为 `Nema Browser.command`，Linux 为 `nema-browser`），它启动或复用核心，并用一次性链接在浏览器里打开。加 `--no-open` 只打印链接，加 `--quit` 请求退出。界面进程异常退出后，也可以用它继续访问。
+
+**模型与 GitHub**
+- 模型运行时、服务和登录方式在应用的“模型设置”里选择，不需要终端。
+- Agent 通过本机已登录的 `gh` 访问 GitHub：先在终端执行一次 `gh auth login`。Nema 不要求也不保存 GitHub 令牌。读取默认可用；Agent 修改 GitHub（创建和评论 issue、改标签、操作 Project）默认**关闭**，需要在工作区的“代码与插件”里打开。Agent 只能访问该工作区绑定的 GitHub 仓库。
+
+**编码 Agent 的上报钩子**：`nema report install` 写入的钩子（安装包版没有把 `nema` 放进 PATH：在安装目录的 `resourcespayload` 文件夹里运行 `Nema CLI.cmd report install --agent claude`，macOS 为 `Nema CLI.command`，Linux 为 `nema-cli`；写入的钩子指向随包的 Node 与 CLI 绝对路径）使用用户级的 `~/.nema/report-token`，桌面应用启动时把它登记给本机核心。应用运行时，钩子会自动找到并验证它；**新装钩子后需要重启桌面应用**，令牌才会被登记。应用没有运行时，上报进入本地缓存（最多 5 MB、保留 7 天），下次上报时补发。
+
+**从 Web / Compose 版迁移**：目前只有库接口，没有命令行或界面入口。`exportSnapshot`（`apps/hub/src/db/export.ts`）从你指定的 PostgreSQL 连接导出，`importLegacySnapshot`（`apps/local/src/import.ts`）导入到一个**空的、未运行**的桌面数据目录。导入先在暂存目录里完整验证，失败时不改动目标；中断后用 `recoverInterruptedImport` 恢复。凭证不会被导出或导入，需要重新登录。
+
+**升级**：桌面应用没有自动更新。先用托盘的 `Quit Nema` 退出，备份 `~/.nema/desktop`，再安装新版本；启动时会自动应用数据库迁移。**从旧安装包原地升级尚未验证**，请先备份。
+
+**已知限制**：后台工具进程的清理保证目前只在 Windows 上实现（POSIX 尚未证明）；Windows 本机全量测试为 0 失败，但有 23 个测试因条件限制被跳过（这不算 Windows 验收），POSIX 与 CI 尚未复跑。详见[验证记录](docs/reviews/2026-10-24-desktop-validation.md)。
+
 ## 模型运行方式
 
 默认适配器 `codex-direct` 使用 Nema 自己的工具循环，不启动 Codex CLI。模型只有 Room 函数和本任务启用的插件函数。
@@ -147,10 +181,11 @@ GitHub 插件默认关闭。启用前需安装 `github-mcp-server`，用 `auth g
 | PostgreSQL 的 Compose 卷 `nema-pg` | 聊天、任务、工作区设置、索引等 |
 | `~/.nema/data` | daemon token、工作区知识 Git 仓库 |
 | `~/.nema` | 本机配置、模型与插件凭证、代码索引快照、上报缓存等 |
+| `~/.nema/desktop` | 桌面应用的数据库、知识 Git 仓库和运行状态，与上面的 Compose 数据相互独立 |
 
 **源码仓库的 GitHub 副本不是应用数据备份。** 备份前停止写入，保存 PostgreSQL 导出与实际数据目录，并验证恢复流程。保留数据时不要用 `docker compose down -v`，`-v` 会删除数据库卷。
 
-- 本机存储不等于离线推理：聊天、知识和工具返回的代码会发送给模型服务商；GitHub 插件还会向 GitHub 发送查询。机密工作区不是离线模式或操作系统隔离边界。
+- 本机存储不等于离线推理：聊天、知识和工具返回的代码会发送给模型服务商；GitHub 插件还会向 GitHub 发送查询。机密工作区不是离线模式或操作系统隔离边界。桌面应用里，Agent 还能经本机 `gh` 读取 GitHub，写入需要在工作区单独打开。
 - 普通任务上限：24 次模型调用、60 次工具调用、10 分钟；开发包：48 次、120 次、20 分钟。中断最多重试 3 次。
 - 启动时可恢复部分未提交知识文件，但 Git 与数据库索引尚无完整的自动一致性修复机制。
 - SIWC 刷新失败可能需要重新登录；当前实现检查 ID token 声明，但不做 JWKS 签名校验。

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import { reconcileWorkspaceDirs, removeWorkspaceDir } from "../src/daemon/cleanup.js";
+import { canSymlinkFiles, linkDir } from "./links.js";
 
 async function setup() {
   const base = await mkdtemp(path.join(tmpdir(), "nema-cleanup-"));
@@ -26,8 +27,9 @@ describe("removeWorkspaceDir", () => {
   test("removes the workspace dir without following symlinks inside it", async () => {
     const { nemaHome, outside } = await setup();
     const dir = wsDir(nemaHome, "ws_abc");
-    symlinkSync(path.join(outside, "keep.txt"), path.join(dir, "codex-home", "auth.json"));
-    symlinkSync(outside, path.join(dir, "linked-dir"));
+    // The file link needs privilege on Windows; the directory link (a junction there) always runs.
+    if (canSymlinkFiles) symlinkSync(path.join(outside, "keep.txt"), path.join(dir, "codex-home", "auth.json"));
+    linkDir(outside, path.join(dir, "linked-dir"));
     expect(await removeWorkspaceDir(nemaHome, "ws_abc")).toBe(true);
     expect(existsSync(dir)).toBe(false);
     expect(readFileSync(path.join(outside, "keep.txt"), "utf8")).toBe("keep");
@@ -46,7 +48,7 @@ describe("removeWorkspaceDir", () => {
 
   test("a workspace entry that is a symlink is unlinked, its target untouched", async () => {
     const { nemaHome, outside } = await setup();
-    symlinkSync(outside, path.join(nemaHome, "ws", "ws_link"));
+    linkDir(outside, path.join(nemaHome, "ws", "ws_link"));
     expect(await removeWorkspaceDir(nemaHome, "ws_link")).toBe(true);
     expect(existsSync(path.join(nemaHome, "ws", "ws_link"))).toBe(false);
     expect(readFileSync(path.join(outside, "keep.txt"), "utf8")).toBe("keep");
@@ -58,7 +60,7 @@ describe("removeWorkspaceDir", () => {
     const elsewhere = path.join(base, "elsewhere");
     mkdirSync(path.join(elsewhere, "ws_abc"), { recursive: true });
     mkdirSync(nemaHome, { recursive: true });
-    symlinkSync(elsewhere, path.join(nemaHome, "ws"));
+    linkDir(elsewhere, path.join(nemaHome, "ws"));
     expect(await removeWorkspaceDir(nemaHome, "ws_abc")).toBe(false);
     expect(await reconcileWorkspaceDirs(nemaHome, [])).toEqual([]);
     expect(existsSync(path.join(elsewhere, "ws_abc"))).toBe(true);

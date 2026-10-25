@@ -39,6 +39,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Spawned test fixtures resolve @nema/* through compiled output, so build it first.
+      - run: npm run typecheck
       - run: npm test -- --maxWorkers=2
       - run: npm run build -w apps/hub
       - run: npm run build -w apps/cli

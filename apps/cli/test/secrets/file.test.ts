@@ -1,4 +1,6 @@
-import { expectPrivate } from "../nativePermissions.js";
+import { expectPrivate, makePublic } from "../nativePermissions.js";
+import { canSymlinkFiles } from "../links.js";
+import { protectPrivatePath } from "../../src/secrets/permissions.js";
 import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,7 +20,7 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 const read = () => readSecretLine(file, "MISSING", "INVALID");
 
 describe("saveSecretLine / readSecretLine", () => {
-  test("round-trip and reject empty, multi-line, control-character and symlink cases", () => {
+  test("round-trip and reject empty, multi-line and control-character cases", () => {
     saveSecretLine(file, "sekret-value");
     expect(read()).toBe("sekret-value");
     expectPrivate(file, 0o600);
@@ -36,7 +38,11 @@ describe("saveSecretLine / readSecretLine", () => {
       if (bad !== "") expect(message).not.toContain(bad);
       expect(readFileSync(file, "utf8")).toBe("sekret-value");
     }
+  });
 
+  // A file symlink needs privilege on Windows, so this runs only where one can be created.
+  test.runIf(canSymlinkFiles)("rejects a symlink on save and read without touching its target", () => {
+    saveSecretLine(file, "sekret-value");
     const target = join(root, "target");
     writeFileSync(target, "original", { mode: 0o600 });
     const link = join(dir, "link");
@@ -50,13 +56,15 @@ describe("saveSecretLine / readSecretLine", () => {
     expect(read).toThrow("MISSING");
 
     mkdirSync(dir, { recursive: true });
-    writeFileSync(file, "sekret-value\n", { mode: 0o600 });
+    // A hand-written file is private only once its DACL is (Windows ignores the mode argument).
+    const put = (text: string) => { writeFileSync(file, text, { mode: 0o600 }); protectPrivatePath(file); };
+    put("sekret-value\n");
     expect(read()).toBe("sekret-value");
 
-    writeFileSync(file, "sekret-value\n\n", { mode: 0o600 });
+    put("sekret-value\n\n");
     expect(read).toThrow("INVALID");
 
-    writeFileSync(file, "first\nsecond", { mode: 0o600 });
+    put("first\nsecond");
     let message = "";
     try {
       read();
@@ -67,13 +75,14 @@ describe("saveSecretLine / readSecretLine", () => {
 
     rmSync(file);
     writeFileSync(file, "sekret-value", { mode: 0o644 });
+    makePublic(file);
     let modeMessage = "";
     try {
       read();
     } catch (e) {
       modeMessage = (e as Error).message;
     }
-    expect(modeMessage).toContain("0600");
+    expect(modeMessage).toContain(process.platform === "win32" ? "ACL" : "0600");
     expect(modeMessage).not.toContain("sekret-value");
   });
 

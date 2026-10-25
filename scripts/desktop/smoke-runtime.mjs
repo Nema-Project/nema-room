@@ -151,6 +151,31 @@ async function browserLaunch(node, payload, env) {
   return url.href;
 }
 
+async function cliLauncherUsage(payload, env) {
+  let command = path.join(payload, process.platform === 'darwin' ? 'Nema CLI.command' : 'nema-cli');
+  let args = ['report', 'install', '--help'];
+  if (process.platform === 'win32') {
+    command = path.join(env.SystemRoot, 'System32', 'cmd.exe');
+    args = ['/d', '/s', '/c', 'call "Nema CLI.cmd" report install --help'];
+  }
+  const child = spawn(command, args, { cwd: payload, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, windowsVerbatimArguments: process.platform === 'win32' });
+  trackChildClose(child);
+  let stdout = '';
+  let stderr = '';
+  let spawnError;
+  child.once('error', (error) => { spawnError = error; });
+  child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
+  child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+  try { await waitForChildClose(child, 30_000); }
+  catch (error) {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    await waitForChildClose(child, 5_000).catch(() => {});
+    throw new Error(`Native CLI launcher did not exit: ${stderr}`, { cause: error });
+  }
+  if (spawnError || child.exitCode !== 0) throw new Error(`CLI launcher failed (${child.exitCode ?? spawnError?.message}): ${stderr}`);
+  if (!/Usage:.*report install/.test(stdout) || !stdout.includes('--agent')) throw new Error(`CLI launcher did not print report install usage: ${stdout}`);
+}
+
 export async function closeCore(core) {
   const { child } = core;
   if (child.exitCode !== null || child.signalCode !== null) {
@@ -265,6 +290,7 @@ async function runSmoke(sourcePayload) {
     const firstUrl = await browserLaunch(node, install, env);
     const secondUrl = await browserLaunch(node, install, env);
     if (new URL(firstUrl).origin !== new URL(secondUrl).origin) throw new Error('Duplicate browser launch did not reuse the same local runtime');
+    await cliLauncherUsage(install, env);
     const descriptorBefore = JSON.parse(await readFile(path.join(home, 'instance.json'), 'utf8'));
     if (descriptorBeforeLaunches.instanceId !== descriptorBefore.instanceId || descriptorBeforeLaunches.pid !== descriptorBefore.pid) throw new Error('Duplicate browser launches did not share the same authenticated runtime owner');
     const { cookie, html } = await ticketSession(core.origin, firstUrl);

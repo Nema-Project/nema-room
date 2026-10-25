@@ -1,7 +1,9 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { unexpectedEnvKeys } from "../windowsEnv.js";
+import { commitWithSymlink } from "./gitSymlink.js";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { changedFiles } from "../../src/repos/git.js";
 import { buildIndex, graphifyInstallStatus, queryIndex, updateIndex, type GraphifyOpts } from "../../src/repos/graphify.js";
@@ -98,8 +100,8 @@ fs.writeFileSync("graphify-out/graph.json", "{}");
   expect(readFileSync(join(record, "argv"), "utf8")).toBe(`extract\n${src}\n--code-only\n`);
   const env = parseEnv(join(record, "env"));
   const passed = ["GRAPHIFY_BACKEND", "GRAPHIFY_QUERY_LOG_DISABLE", "HOME", "LANG", "PATH"];
-  // macOS injects __CF_USER_TEXT_ENCODING after exec. It is not part of the env we pass.
-  const leaked = Object.keys(env).filter((key) => !passed.includes(key) && key !== "__CF_USER_TEXT_ENCODING");
+  // macOS injects __CF_USER_TEXT_ENCODING after exec, and Windows adds runtime/profile variables. Neither is passed by us.
+  const leaked = unexpectedEnvKeys(Object.keys(env), passed).filter((key) => key !== "__CF_USER_TEXT_ENCODING");
   expect(leaked).toEqual([]);
   expect(env.PATH).toBe(process.env.PATH);
   expect(env.LANG).toBe("C.UTF-8");
@@ -223,9 +225,7 @@ test("updateIndex writes changed files, deletes removed ones and runs graphify u
   writeFileSync(join(repo, "added.txt"), "added\n");
   const secret = join(root, "secret.txt");
   writeFileSync(secret, "secret\n");
-  symlinkSync(secret, join(repo, "escape"));
-  git(repo, ["add", "-A"]);
-  git(repo, ["commit", "-m", "files"]);
+  commitWithSymlink(git, repo, "escape", secret, "files");
 
   writeFileSync(join(snapshot, "src", "keep.txt"), "old\n");
   writeFileSync(join(snapshot, "src", "gone.txt"), "bye\n");
@@ -308,7 +308,8 @@ test("managed incremental update fetches blob data through its owned helper scop
   expect(readFileSync(join(snapshot, "src", "picked.txt"), "utf8")).toBe("from committed blob\n");
   expect(calls.some(({ args }) => args.includes("ls-tree"))).toBe(true);
   expect(calls.some(({ args }) => args.includes("cat-file"))).toBe(true);
-  expect(calls.some(({ args }) => args.includes(bin))).toBe(true);
+  // Where graphify is a Node script (Windows) it is launched as `node <bin>`; elsewhere it is the command itself.
+  expect(calls.some(({ command, args }) => command === bin || args.includes(bin))).toBe(true);
   await scope.drain();
 });
 

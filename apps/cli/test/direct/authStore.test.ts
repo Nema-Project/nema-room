@@ -1,4 +1,5 @@
 import { expectPrivate, makePublic } from "../nativePermissions.js";
+import { canSymlinkFiles } from "../links.js";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -82,11 +83,14 @@ describe("save / read / clear", () => {
     expect(s.read()).toBeNull();
     mkdirSync(home, { recursive: true, mode: 0o700 });
 
-    const real = join(root, "elsewhere.json");
-    writeFileSync(real, JSON.stringify(auth()), { mode: 0o600 });
-    symlinkSync(real, authFile());
-    expect(s.read()).toBeNull();
-    rmSync(authFile());
+    // Planting a file symlink needs privilege on Windows; without it only this link case is not exercised.
+    if (canSymlinkFiles) {
+      const real = join(root, "elsewhere.json");
+      writeFileSync(real, JSON.stringify(auth()), { mode: 0o600 });
+      symlinkSync(real, authFile());
+      expect(s.read()).toBeNull();
+      rmSync(authFile());
+    }
 
     writeFileSync(authFile(), JSON.stringify(auth()), { mode: 0o644 });
     makePublic(authFile());
@@ -116,11 +120,13 @@ describe("save / read / clear", () => {
     writeFileSync(authFile(), "{not json", { mode: 0o600 });
     expect(s.inspect()).toEqual({ auth: null, reason: "unusable" });
     rmSync(authFile());
-    const real = join(root, "elsewhere.json");
-    writeFileSync(real, JSON.stringify(auth()), { mode: 0o600 });
-    symlinkSync(real, authFile());
-    expect(s.inspect().reason).toBe("unusable");
-    rmSync(authFile());
+    if (canSymlinkFiles) { // see the note in the previous test
+      const real = join(root, "elsewhere.json");
+      writeFileSync(real, JSON.stringify(auth()), { mode: 0o600 });
+      symlinkSync(real, authFile());
+      expect(s.inspect().reason).toBe("unusable");
+      rmSync(authFile());
+    }
     // Pin the clock across a second boundary: auth() embeds Date.now() in the token's exp.
     let tick = 1_799_999_999_999;
     const clock = vi.spyOn(Date, "now").mockImplementation(() => tick++);
@@ -144,7 +150,8 @@ describe("save / read / clear", () => {
     expect(d.tokens.refresh_token).toBe("rt-1");
   });
 
-  test("save replaces a planted symlink instead of writing through it", () => {
+  // A file symlink needs privilege on Windows, so this runs only where one can be created.
+  test.runIf(canSymlinkFiles)("save replaces a planted symlink instead of writing through it", () => {
     mkdirSync(home, { recursive: true, mode: 0o700 });
     const target = join(root, "victim.txt");
     writeFileSync(target, "untouched");
@@ -473,12 +480,15 @@ describe("review fixes", () => {
     const st = (over: Partial<{ file: boolean; mode: number; uid: number }> = {}) => ({
       isFile: () => over.file ?? true, mode: 0o100000 | (over.mode ?? 0o600), uid: over.uid ?? 501,
     });
-    expect(isTrustedAuthStat(st(), 501)).toBe(true);
-    expect(isTrustedAuthStat(st(), null)).toBe(true); // no uids on this platform
-    expect(isTrustedAuthStat(st({ file: false }), 501)).toBe(false);
-    expect(isTrustedAuthStat(st({ mode: 0o644 }), 501)).toBe(false);
-    expect(isTrustedAuthStat(st({ mode: 0o640 }), 501)).toBe(false);
-    expect(isTrustedAuthStat(st({ uid: 0 }), 501)).toBe(false);
+    // Pinned to linux: on Windows mode bits are synthetic and the DACL is checked when the file is opened.
+    expect(isTrustedAuthStat(st(), 501, "linux")).toBe(true);
+    expect(isTrustedAuthStat(st(), null, "linux")).toBe(true); // no uids on this platform
+    expect(isTrustedAuthStat(st({ file: false }), 501, "linux")).toBe(false);
+    expect(isTrustedAuthStat(st({ mode: 0o644 }), 501, "linux")).toBe(false);
+    expect(isTrustedAuthStat(st({ mode: 0o640 }), 501, "linux")).toBe(false);
+    expect(isTrustedAuthStat(st({ uid: 0 }), 501, "linux")).toBe(false);
+    expect(isTrustedAuthStat(st({ mode: 0o644 }), null, "win32")).toBe(true);
+    expect(isTrustedAuthStat(st({ file: false }), null, "win32")).toBe(false);
   });
 
   test("a FIFO at auth.json is rejected without hanging", () => {

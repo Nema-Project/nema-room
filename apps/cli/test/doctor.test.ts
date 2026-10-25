@@ -10,6 +10,9 @@ import { AuthStore, type StoredAuth } from "../src/direct/authStore.js";
 import { defaultTokenFile, runDoctor as realRunDoctor, type DoctorOpts } from "../src/doctor.js";
 import type { GraphifyOpts } from "../src/repos/graphify.js";
 
+/** What the doctor says about a private file: the mode on POSIX, the DACL on Windows. */
+const privateWording = process.platform === "win32" ? "ACL" : "0600";
+
 let root: string;
 let server: Server | undefined;
 /** Every check gets a fake graphify, so no test runs the real one. */
@@ -195,17 +198,19 @@ describe("BYOK check", () => {
   test("byok rejects a key file whose mode is not 0600 without revealing its contents", async () => {
     mkdirSync(join(root, "nema"));
     writeFileSync(join(root, "nema", "byok-key"), "sekret-key", { mode: 0o644 });
+    makePublic(join(root, "nema", "byok-key"));
 
     const check = byName(await run("byok", "gpt-example"), "byok");
 
     expect(check.ok).toBe(false);
-    expect(check.detail).toContain("0600");
+    expect(check.detail).toContain(privateWording);
     expect(check.detail).not.toContain("sekret-key");
   });
 
   test("byok passes with a 0600 key and configured model without revealing the key", async () => {
     mkdirSync(join(root, "nema"));
     writeFileSync(join(root, "nema", "byok-key"), "sekret-key", { mode: 0o600 });
+    protectPrivatePath(join(root, "nema", "byok-key"));
 
     const check = byName(await run("byok", "gpt-example"), "byok");
 
@@ -375,20 +380,20 @@ describe("GitHub checks", () => {
     const after = await runDoctor({ ...opts(), githubMcpServerBin: bin });
     expect(byName(after, "github-mcp-server")).toMatchObject({ ok: true, detail: "可用：Version: 0.9.9" });
     expect(byName(after, "github 令牌")).toMatchObject({ ok: true });
-    expect(byName(after, "github 令牌").detail).toContain("0600");
+    expect(byName(after, "github 令牌").detail).toContain(privateWording);
     expect(JSON.stringify(after)).not.toContain("ghp_sekret");
 
     makePublic(join(root, "nema", "github-token"));
     const loose = await runDoctor({ ...opts(), githubMcpServerBin: bin });
     expect(byName(loose, "github 令牌").ok).toBe(true);
-    expect(byName(loose, "github 令牌").detail).toContain("0600");
+    expect(byName(loose, "github 令牌").detail).toContain(privateWording);
     expect(JSON.stringify(loose)).not.toContain("ghp_sekret");
   });
 });
 
 describe("defaultTokenFile", () => {
   test("derives from NEMA_DATA_DIR, expanding ~", () => {
-    expect(defaultTokenFile({ NEMA_DATA_DIR: "/data/x" })).toBe("/data/x/daemon-token");
+    expect(defaultTokenFile({ NEMA_DATA_DIR: "/data/x" })).toBe(join("/data/x", "daemon-token"));
     expect(defaultTokenFile({ NEMA_DATA_DIR: "~/nd" })).toBe(join(homedir(), "nd", "daemon-token"));
     expect(defaultTokenFile({})).toBe(join(homedir(), ".nema", "data", "daemon-token"));
   });

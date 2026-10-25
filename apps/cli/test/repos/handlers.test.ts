@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -13,6 +13,9 @@ import { startDaemon } from "../../src/daemon/setup.js";
 import { RpcRouter } from "../../src/daemon/rpc.js";
 import { registerRepoHandlers } from "../../src/repos/handlers.js";
 import { inspectRepo } from "../../src/repos/git.js";
+import { lf } from "../windowsEnv.js";
+import { linkDir } from "../links.js";
+import { commitWithSymlink } from "./gitSymlink.js";
 import type { GraphifyOpts } from "../../src/repos/graphify.js";
 import { GithubMcp } from "../../src/github/client.js";
 
@@ -136,8 +139,7 @@ test("repo.index exports origin/main into the snapshot and runs graphify extract
   const { repo, bare, nemaHome } = setupOrigin();
   const secret = join(root, "secret.txt");
   writeFileSync(secret, "secret\n");
-  symlinkSync(secret, join(repo, "escape"));
-  commitAll(repo, "link");
+  commitWithSymlink(git, repo, "escape", secret, "link");
   git(repo, ["push", "origin", "main"]);
 
   const other = join(root, "other");
@@ -174,8 +176,8 @@ fs.writeFileSync("graphify-out/graph.json", "{}");
   const snapshot = join(nemaHome, "ws", "ws_demo", "graphify", "repo_demo");
   const src = join(snapshot, "src");
   expect(res).toEqual({ type: "rpc.response", id: "1", ok: true, result: { sha: originSha } });
-  expect(readFileSync(join(src, "README.md"), "utf8")).toBe("v2\n");
-  expect(readFileSync(join(src, "extra.txt"), "utf8")).toBe("from-origin\n");
+  expect(lf(readFileSync(join(src, "README.md"), "utf8"))).toBe("v2\n");
+  expect(lf(readFileSync(join(src, "extra.txt"), "utf8"))).toBe("from-origin\n");
   expect(existsSync(join(src, "local-only.txt"))).toBe(false);
   expect(existsSync(join(src, "escape"))).toBe(false);
   expect(readFileSync(secret, "utf8")).toBe("secret\n");
@@ -213,7 +215,7 @@ fs.writeFileSync("graphify-out/graph.json", "{}");
 
   const src = join(nemaHome, "ws", "ws_local", "graphify", "repo_local", "src");
   expect(res).toEqual({ type: "rpc.response", id: "no-origin", ok: true, result: { sha } });
-  expect(readFileSync(join(src, "README.md"), "utf8")).toBe("local-main\n");
+  expect(lf(readFileSync(join(src, "README.md"), "utf8"))).toBe("local-main\n");
   expect(readFileSync(join(record, "argv"), "utf8")).toBe(`extract\n${src}\n--code-only\n`);
   expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("dirty\n");
 });
@@ -247,7 +249,9 @@ setInterval(() => {}, 30000);
       pending.then((res) => ({ done: true as const, res })),
       new Promise<{ done: false }>((resolve) => setTimeout(() => resolve({ done: false }), 8000)),
     ]);
-    if (existsSync(pidFile)) stillAlive = process.kill(Number(readFileSync(pidFile, "utf8")), 0);
+    if (existsSync(pidFile)) {
+      try { stillAlive = process.kill(Number(readFileSync(pidFile, "utf8")), 0); } catch { stillAlive = false; }
+    }
   } finally {
     try {
       process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL");
@@ -258,7 +262,9 @@ setInterval(() => {}, 30000);
   expect(winner.done).toBe(true);
   if (!winner.done) return;
   expect(existsSync(pidFile)).toBe(true);
-  expect(stillAlive).toBe(true);
+  // runGraphify settles only after the child has exited (SIGTERM, then SIGKILL after 200ms; Windows kills at once),
+  // so the child is already gone when the response arrives.
+  expect(stillAlive).toBe(false);
   expect(winner.res.ok).toBe(false);
   expect(winner.res).not.toMatchObject({ result: { sha: expect.any(String) } });
 });
@@ -336,7 +342,7 @@ test("repo.forget removes the snapshot and does not follow a symlink", async () 
   writeFileSync(join(outside, "keep.txt"), "keep\n");
   const linkParent = join(nemaHome, "ws", "ws_link", "graphify");
   mkdirSync(linkParent, { recursive: true });
-  symlinkSync(outside, join(linkParent, "repo_link"));
+  linkDir(outside, join(linkParent, "repo_link"));
   await rpc.handle({
     type: "rpc.request",
     id: "6",
@@ -458,7 +464,7 @@ process.stdout.write("hits:" + args[1]);
   const src = join(nemaHome, "ws", "ws_demo", "graphify", "repo_demo", "src");
   expect(first).toEqual({ type: "rpc.response", id: "search-1", ok: true, result: "hits:alpha" });
   expect(second).toEqual({ type: "rpc.response", id: "search-2", ok: true, result: "hits:beta" });
-  expect(readFileSync(join(src, "README.md"), "utf8")).toBe("v1\n");
+  expect(lf(readFileSync(join(src, "README.md"), "utf8"))).toBe("v1\n");
   expect(existsSync(join(src, "untracked.txt"))).toBe(false);
   expect(readFileSync(join(record, "argv"), "utf8")).toBe(`extract\n${src}\n--code-only\n\nquery\nalpha\n\nquery\nbeta\n\n`);
 });
@@ -467,16 +473,18 @@ test("concurrent repo.index and code__search build the index once", async () => 
   const { repo, nemaHome } = setupOrigin();
   const record = join(root, "record");
   mkdirSync(record);
-  fake.bin = writeBin(`#!/bin/sh
-printf '%s\n' "$1" >> "${record}/argv"
-if [ "$1" = "extract" ]; then
-  sleep 1
-  mkdir -p graphify-out
-  printf '{}' > graphify-out/graph.json
-fi
-if [ "$1" = "query" ]; then
-  printf 'hits:%s' "$2"
-fi
+  fake.bin = writeBin(`#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(record + "/argv")}, args[0] + "\\n");
+const finish = () => {
+  if (args[0] === "extract") {
+    fs.mkdirSync("graphify-out", { recursive: true });
+    fs.writeFileSync("graphify-out/graph.json", "{}");
+  }
+  if (args[0] === "query") process.stdout.write("hits:" + args[1]);
+};
+if (args[0] === "extract") setTimeout(finish, 1000); else finish();
 `);
 
   const rpc = routerFor(nemaHome);
@@ -498,15 +506,18 @@ test("a graph.json left without a completed index is rebuilt before querying", a
   writeFileSync(join(snapshot, "graphify-out", "graph.json"), "partial");
   const record = join(root, "record");
   mkdirSync(record);
-  fake.bin = writeBin(`#!/bin/sh
-printf '%s\n' "$1" >> "${record}/argv"
-if [ "$1" = "extract" ]; then
-  mkdir -p graphify-out
-  printf '{}' > graphify-out/graph.json
-fi
-if [ "$1" = "query" ]; then
-  printf 'hits:%s' "$2"
-fi
+  fake.bin = writeBin(`#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(record + "/argv")}, args[0] + "\\n");
+const finish = () => {
+  if (args[0] === "extract") {
+    fs.mkdirSync("graphify-out", { recursive: true });
+    fs.writeFileSync("graphify-out/graph.json", "{}");
+  }
+  if (args[0] === "query") process.stdout.write("hits:" + args[1]);
+};
+finish();
 `);
 
   const res = await routerFor(nemaHome).handle(pluginCall("s", repo, "code__search", { repo: "repo_demo", query: "alpha" }));

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { closeSync, statSync, chmodSync } from "node:fs";
+import { join } from "node:path";
 import { expect } from "vitest";
 import { openPrivateFile } from "../src/secrets/permissions.js";
 
@@ -26,6 +27,6 @@ foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.S
 
 export function makePublic(file: string): void {
   if (process.platform === "win32") {
-    expect(spawnSync("icacls.exe", [file, "/grant", "*S-1-1-0:R"], { windowsHide: true, stdio: "ignore" }).status).toBe(0);
+    expect(spawnSync(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "icacls.exe"), [file, "/grant", "*S-1-1-0:R"], { windowsHide: true, stdio: "ignore" }).status).toBe(0);
   } else chmodSync(file, 0o644);
 }

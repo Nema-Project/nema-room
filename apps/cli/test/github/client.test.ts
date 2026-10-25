@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { unexpectedEnvKeys } from "../windowsEnv.js";
 import { spawn as nodeSpawn } from "node:child_process";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { GithubMcp } from "../../src/github/client.js";
@@ -74,7 +75,9 @@ test("the server is started with only --read-only --toolsets pull_requests,issue
   const seen = JSON.parse(readFileSync(record, "utf8")) as { args: string[]; env: Record<string, string>; cwd: string };
   expect(seen.args).toEqual(["stdio", "--read-only", "--toolsets", "pull_requests,issues"]);
   // macOS sets __CF_USER_TEXT_ENCODING inside every process at startup; the client never passes it.
-  expect(Object.keys(seen.env).filter((key) => key !== "__CF_USER_TEXT_ENCODING").sort()).toEqual(["GITHUB_PERSONAL_ACCESS_TOKEN", "HOME", "PATH"]);
+  // On Windows the child also gets the runtime and profile variables Windows adds itself.
+  expect(unexpectedEnvKeys(Object.keys(seen.env).filter((key) => key !== "__CF_USER_TEXT_ENCODING"), ["GITHUB_PERSONAL_ACCESS_TOKEN", "HOME", "PATH"])).toEqual([]);
+  expect(Object.keys(seen.env)).toEqual(expect.arrayContaining(["GITHUB_PERSONAL_ACCESS_TOKEN", "HOME", "PATH"]));
   expect(seen.env.GITHUB_PERSONAL_ACCESS_TOKEN).toBe("ghp_test_token");
   expect(seen.env.PATH).toBe(process.env.PATH);
   expect(seen.env.HOME.startsWith(join(nemaHome, "run", "github"))).toBe(true);

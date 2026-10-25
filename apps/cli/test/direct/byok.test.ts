@@ -1,3 +1,4 @@
+import { canSymlinkFiles } from "../links.js";
 import { expectPrivate } from "../nativePermissions.js";
 import {
   existsSync,
@@ -49,7 +50,8 @@ describe("BYOK key file", () => {
     expect(readFileSync(file, "utf8")).toBe("original");
   });
 
-  test("rejects a symlink without changing its target", () => {
+  // A file symlink needs privilege on Windows, so this runs only where one can be created.
+  test.runIf(canSymlinkFiles)("rejects a symlink without changing its target", () => {
     mkdirSync(home, { recursive: true });
     const target = join(root, "target");
     writeFileSync(target, "original");

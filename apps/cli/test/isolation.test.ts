@@ -1,3 +1,4 @@
+import { canSymlinkFiles } from "./links.js";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,11 @@ const mcp = {
   args: ["/abs/dist/index.js", "mcp"],
   env: { NEMA_HUB_URL: "http://127.0.0.1:1234", NEMA_RUN_TOKEN: "tok" },
 };
+
+// The CLI adapter links the user's auth.json into the isolated home. A file symlink needs privilege on
+// Windows (admin or Developer Mode), so these run only where one can be created; a skip is not Windows acceptance.
+// The active direct adapter does not use this path.
+const linkTest = test.runIf(canSymlinkFiles);
 
 let root: string, userHome: string, nemaHome: string, emptyDir: string;
 const runDirs: string[] = [];
@@ -48,7 +54,7 @@ describe("checkCodexAuth", () => {
 });
 
 describe("prepareIsolation", () => {
-  test("isolated home: symlinked auth, generated config only", async () => {
+  linkTest("isolated home: symlinked auth, generated config only", async () => {
     writeFileSync(join(userHome, "AGENTS.md"), "user global instructions");
     writeFileSync(join(userHome, "config.toml"), '[mcp_servers.github]\ncommand = "gh-mcp"\n');
     mkdirSync(join(userHome, "memories"));
@@ -70,7 +76,7 @@ describe("prepareIsolation", () => {
     expect(preflight(p)).toEqual({ ok: true });
   });
 
-  test("replaces a regular auth.json file with a symlink and regenerates config each run", async () => {
+  linkTest("replaces a regular auth.json file with a symlink and regenerates config each run", async () => {
     const p1 = await prep();
     rmSync(join(p1.codexHome, "auth.json"));
     writeFileSync(join(p1.codexHome, "auth.json"), "stale copy");
@@ -80,7 +86,7 @@ describe("prepareIsolation", () => {
     expect(readFileSync(join(p2.codexHome, "config.toml"), "utf8")).not.toContain('"tok"');
   });
 
-  test("workspaces get separate homes", async () => {
+  linkTest("workspaces get separate homes", async () => {
     const a = await prep("ws_a");
     const b = await prep("ws_b");
     expect(a.wsHome).not.toBe(b.wsHome);
@@ -124,7 +130,7 @@ describe("renderCodexConfig", () => {
 });
 
 describe("buildEnv", () => {
-  test("env is an allowlist", async () => {
+  linkTest("env is an allowlist", async () => {
     const p = await prep();
     const env = buildEnv(p, { PATH: "/bin", OPENAI_API_KEY: "sk-x", GITHUB_TOKEN: "g", HOME: "/Users/me", LANG: "ja_JP.UTF-8" });
     expect(Object.keys(env).sort()).toEqual(["CODEX_HOME", "HOME", "LANG", "PATH", "TMPDIR"]);
@@ -135,7 +141,7 @@ describe("buildEnv", () => {
 });
 
 describe("preflight", () => {
-  test("reports planted instruction files and extra MCP servers", async () => {
+  linkTest("reports planted instruction files and extra MCP servers", async () => {
     const p = await prep();
     writeFileSync(join(p.codexHome, "AGENTS.md"), "planted");
     writeFileSync(join(p.codexHome, "config.toml"), '[mcp_servers.room]\ncommand = "x"\n[mcp_servers.github]\ncommand = "y"\n');
@@ -145,13 +151,13 @@ describe("preflight", () => {
     expect(problems.some((s) => s.includes("AGENTS.md"))).toBe(true);
     expect(problems.some((s) => s.includes("mcp_servers"))).toBe(true);
   });
-  test("reports auth.json that is not a symlink", async () => {
+  linkTest("reports auth.json that is not a symlink", async () => {
     const p = await prep();
     rmSync(join(p.codexHome, "auth.json"));
     writeFileSync(join(p.codexHome, "auth.json"), "copy");
     expect(preflight(p)).toMatchObject({ ok: false });
   });
-  test("reports .git / AGENTS.md in workDir or any ancestor", async () => {
+  linkTest("reports .git / AGENTS.md in workDir or any ancestor", async () => {
     const p = await prep();
     const parent = join(p.workDir, "..");
     // ancestor marker: put AGENTS.md in a synthetic parent via a fake paths object
@@ -170,7 +176,7 @@ describe("preflight", () => {
 });
 
 describe("cleanupRun", () => {
-  test("removes workDir only", async () => {
+  linkTest("removes workDir only", async () => {
     const p = await prep();
     writeFileSync(join(p.tmpDir, "x"), "x");
     await cleanupRun(p);

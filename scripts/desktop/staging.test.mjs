@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, link, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createSanitizedSourceSnapshot, npmCliPathFor, parseStageArgs, stageRuntime } from './stage-runtime.mjs';
+import { createSanitizedSourceSnapshot, npmCliPathFor, parseStageArgs, stageRuntime, writePlatformLaunchers } from './stage-runtime.mjs';
 import { toolsManifest } from './fetch-tools.mjs';
 
 async function fixture(t) {
@@ -118,6 +119,48 @@ test('stages fixed native browser launchers beside the runtime manifest', async 
   assert.equal(manifest.webEntry, 'web/apps/web/managed-parent.mjs');
   assert.match(source, /runtime/);
   assert.match(await readFile(path.join(target, manifest.webEntry), 'utf8'), /process\.once\("disconnect"/);
+});
+
+test('stages a CLI launcher that points at the bundled node and CLI entry', async (t) => {
+  const f = await fixture(t);
+  await stageRuntime(f.options);
+  const target = path.join(f.output, `${process.platform}-${process.arch}`);
+  const launcher = process.platform === 'win32' ? 'Nema CLI.cmd' : process.platform === 'darwin' ? 'Nema CLI.command' : 'nema-cli';
+  const source = await readFile(path.join(target, launcher), 'utf8');
+  const manifest = JSON.parse(await readFile(path.join(target, 'runtime-manifest.json'), 'utf8'));
+  const native = (value) => value.replaceAll('/', path.sep);
+  assert.ok(source.includes(native(manifest.node)));
+  assert.ok(source.includes(native(manifest.cliEntry)));
+  assert.equal(source.includes('{{'), false);
+  assert.match(source, process.platform === 'win32' ? /%\*/ : /"$@"/);
+  if (process.platform !== 'win32') assert.ok(((await stat(path.join(target, launcher))).mode & 0o111) !== 0);
+});
+
+test('the CLI launcher forwards arguments exactly and preserves exit codes from a path with spaces and Japanese characters', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-cli-launcher-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const payload = path.join(root, 'インストール dir', 'resources', 'payload');
+  const windows = process.platform === 'win32';
+  const nodeRel = windows ? 'runtime/node/node.exe' : 'runtime/node/bin/node';
+  const cliRel = 'app/node_modules/@nema/cli/dist/index.js';
+  await mkdir(path.dirname(path.join(payload, nodeRel)), { recursive: true });
+  await mkdir(path.dirname(path.join(payload, cliRel)), { recursive: true });
+  try { await link(process.execPath, path.join(payload, nodeRel)); } catch { await copyFile(process.execPath, path.join(payload, nodeRel)); }
+  await writeFile(path.join(payload, cliRel), "const [code, ...rest] = process.argv.slice(2); process.stdout.write(JSON.stringify({ rest, exec: process.execPath, entry: process.argv[1] })); process.exitCode = Number(code);");
+  await mkdir(path.join(payload, 'web/apps/web'), { recursive: true });
+  const manifest = { platform: process.platform, node: nodeRel, cliEntry: cliRel };
+  const { cliLauncherPath } = await writePlatformLaunchers(payload, manifest);
+  const run = (args) => windows
+    ? spawnSync(path.join(process.env.SystemRoot, 'System32', 'cmd.exe'), ['/d', '/s', '/c', `"call "${cliLauncherPath}" ${args.join(' ')}"`], { cwd: payload, encoding: 'utf8', windowsVerbatimArguments: true })
+    : spawnSync(cliLauncherPath, args, { cwd: payload, encoding: 'utf8' });
+  const ok = run(['0', 'report', 'install', '--agent', 'claude', '"with space"', '日本語', '--home=x']);
+  assert.equal(ok.status, 0, ok.stderr);
+  const seen = JSON.parse(ok.stdout);
+  assert.deepEqual(seen.rest, ['report', 'install', '--agent', 'claude', 'with space', '日本語', '--home=x']);
+  assert.equal(path.normalize(seen.exec).toLowerCase(), path.join(payload, nodeRel).toLowerCase());
+  assert.equal(path.normalize(seen.entry).toLowerCase(), path.join(payload, cliRel).toLowerCase());
+  assert.equal(run(['7']).status, 7);
+  assert.equal(run(['0']).status, 0);
 });
 
 test('stages Electron and Chromium notices inside the inventoried runtime license tree', async (t) => {

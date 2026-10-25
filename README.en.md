@@ -6,7 +6,7 @@
 
 [简体中文](README.md) · English · [日本語](README.ja.md)
 
-> **Direction update, 2026-10-24:** The first release will be a desktop app that works independently on the user's machine. Multi-device sync, backup features, and team read-only access are deferred until the local core is complete. Desktop migration is not yet implemented; the instructions below describe the existing Web / Compose version. See the [confirmed scope (Chinese)](docs/superpowers/specs/2026-10-24-local-desktop-first.md).
+> **Direction update, 2026-10-24:** The first release will be a desktop app that works independently on the user's machine. Multi-device sync, backup features, and team read-only access are deferred until the local core is complete. A desktop app now exists as a preview (see [Desktop app (preview)](#desktop-app-preview)), but nothing has been released; "Quick start" below still describes the existing Web / Compose version. See the [confirmed scope (Chinese)](docs/superpowers/specs/2026-10-24-local-desktop-first.md).
 
 Nema Room is a requirements discussion room that runs locally. Share ideas, meeting notes, and tradeoffs in chat; an agent organizes them into requirements, decisions, questions, and sources. Knowledge changes have Git history. When you are ready to build, generate a spec and plan, then track progress through your coding agent's commit reports.
 
@@ -79,6 +79,40 @@ npm run down   # Stop containers; retain the database volume
 
 On Linux, set `NEMA_UID` / `NEMA_GID` in `.env` if your UID/GID is not 1000. Create custom data directories yourself and ensure `NEMA_DATA_HOST_DIR` matches the directory read by the daemon.
 
+## Desktop app (preview)
+
+The desktop app puts the whole stack in one local program: an on-disk PGlite database, a single-owner local core, a protected same-origin gateway, and bundled Node and Git. It needs neither Docker nor a database server. **For now you build it from source; there is no released version.**
+
+| Item | Status |
+| --- | --- |
+| Windows x64 | Built; portable ZIP smoke passed locally; installer not yet installed or run |
+| macOS | Build configuration exists (DMG, ZIP); **not yet verified on a Mac** |
+| Linux | No desktop installer |
+| Signing and updates | Installers are **unsigned**; there is no auto-update |
+| Public release | None yet; source-correspondence review of third-party components is unfinished, and nothing is published until it is |
+
+**Build (Windows x64):** after `npm ci`, run `npm run desktop:make -- --platform win32 --arch x64`. Output goes to `dist/desktop-artifacts/win32-x64/`: `Nema-<version>-win32-x64.exe` (NSIS installer) and a matching `.zip` (portable). A build only targets the current OS and needs a native C compiler (Clang on Windows; see [scripts/desktop/README.md](scripts/desktop/README.md)).
+
+**Opening an unsigned installer for the first time:** open only a file you built or checked yourself. Windows SmartScreen shows "Windows protected your PC": choose "More info", then "Run anyway". The macOS package is unverified; as usual for an app that is not notarized, it would need "Open Anyway" in System Settings → Privacy & Security.
+
+**Where data lives:** `~/.nema/desktop` by default (`db/` database, `data/` knowledge Git repositories, `instance.json` run state). It does not read the Compose database and never uses the old `~/.nema/data`.
+
+**Window, tray, and browser mode**
+- Closing the window closes only the window; the core keeps running in the tray, and the tray icon reopens it. `Quit Nema` in the tray menu quits and waits for background work to be cleaned up.
+- You can also use the same core from a browser: `resources\payload` in the install directory contains `Nema Browser.cmd` (`Nema Browser.command` on macOS, `nema-browser` on Linux). It starts or reuses the core and opens a one-time link in your browser. `--no-open` prints the link instead; `--quit` asks the core to quit. It also lets you keep working after the window process exits unexpectedly.
+
+**Models and GitHub**
+- Choose the Agent runtime, service, and sign-in method under "Model settings" in the app; no terminal is needed.
+- The Agent reaches GitHub through the `gh` you are already signed in to: run `gh auth login` once in a terminal. Nema neither asks for nor stores a GitHub token. Reading is on by default. The Agent changing GitHub (creating and commenting on issues, editing labels, updating Projects) is **off** until you turn it on under "Code & plugins" in the workspace. The Agent can only reach the GitHub repositories bound to that workspace.
+
+**Coding-agent report hooks:** the hooks that `nema report install` writes (the packaged app does not put `nema` on PATH: from the install directory's `resourcespayload` folder run `Nema CLI.cmd report install --agent claude`, or `Nema CLI.command` on macOS and `nema-cli` on Linux; the hooks then point at the bundled Node and CLI by absolute path) use the per-user `~/.nema/report-token`, which the desktop app registers with its local core at startup. While the app runs, a hook finds it and verifies its identity automatically. **After installing hooks, restart the desktop app** so the token is registered. While the app is not running, reports go to a local spool (at most 5 MB, kept 7 days) and are sent with the next report.
+
+**Migrating from the Web / Compose version:** there is only a library interface so far, with no command or UI. `exportSnapshot` (`apps/hub/src/db/export.ts`) exports from a PostgreSQL connection you name, and `importLegacySnapshot` (`apps/local/src/import.ts`) imports into an **empty, stopped** desktop data directory. The import validates everything in a staging directory first and leaves the destination untouched on failure; use `recoverInterruptedImport` after an interruption. Credentials are neither exported nor imported, so sign in again.
+
+**Upgrading:** the desktop app has no auto-update. Quit with `Quit Nema` in the tray, back up `~/.nema/desktop`, then install the new version; database migrations run on startup. **Upgrading in place over an older installer has not been verified**, so back up first.
+
+**Known limitations:** cleanup of background helper processes is guaranteed only on Windows so far (POSIX is unproven), and the full Windows test run has 0 failures locally but 23 tests are skipped by gates (not Windows acceptance), and POSIX and CI have not been re-run. See the [validation record](docs/reviews/2026-10-24-desktop-validation.md).
+
 ## Model runtimes
 
 The default adapter, `codex-direct`, runs Nema's own tool loop without launching the Codex CLI. The model receives Room functions and the plugins enabled for that task.
@@ -147,10 +181,11 @@ The GitHub plugin is disabled by default. Install `github-mcp-server`, save a to
 | PostgreSQL Compose volume `nema-pg` | Chat, tasks, workspace settings, indexes, and related records |
 | `~/.nema/data` | Daemon token and workspace knowledge Git repositories |
 | `~/.nema` | Local configuration, model/plugin credentials, code index snapshots, report spool, and related files |
+| `~/.nema/desktop` | The desktop app's database, knowledge Git repositories, and run state; independent of the Compose data above |
 
 **A GitHub copy of this source repository is not an application-data backup.** Stop writes before backing up, retain a PostgreSQL export and the actual data directories, and validate recovery. To preserve data, do not use `docker compose down -v`: `-v` deletes the database volume.
 
-- Local storage is not offline inference: chat, knowledge, and code returned by tools go to the model provider; the GitHub plugin also sends queries to GitHub. A confidential workspace is not an offline mode or operating-system isolation boundary.
+- Local storage is not offline inference: chat, knowledge, and code returned by tools go to the model provider; the GitHub plugin also sends queries to GitHub. A confidential workspace is not an offline mode or operating-system isolation boundary. In the desktop app the Agent can also read GitHub through your local `gh` (writing needs a per-workspace opt-in).
 - Ordinary task limits: 24 model calls, 60 tool calls, 10 minutes. Work packages: 48, 120, 20 minutes. Interrupted tasks retry up to three times.
 - Startup can recover some uncommitted knowledge files, but Git and database indexes do not have complete automatic reconciliation.
 - SIWC refresh failures may require another login. The implementation checks ID token claims but does not verify JWKS signatures.
@@ -183,14 +218,6 @@ npm run build -w apps/web
 The root typecheck excludes web; build it separately. Before upgrading, back up data, then run `git pull`, `npm ci`, rebuild the CLI and Compose images, and restart the daemon. Keep hub and CLI versions aligned.
 
 See [.env.example](.env.example) for ports and directories. The CLI does not automatically load the root `.env`: export `NEMA_DATA_DIR` or pass `--token-file` to `daemon` / `doctor` for a custom data directory; also pass `--hub` for a different hub port. Changing `NEXT_PUBLIC_HUB_URL` requires rebuilding web.
-
-## Brand and icon
-
-The full brand name is **Nema Room**. The selected mark is **01 / ROOM / N** from the original concept board: an open space and negative-space N, matching the UI's monochrome geometry and warm gray palette.
-
-[Brand assets and usage (Chinese)](docs/design/brand/README.md) · [Icon PNG](docs/design/brand/nema-room-icon-01.png) · [Design spec (Chinese)](docs/superpowers/specs/2026-10-25-nema-room-brand-design.md) · [Integration plan](docs/superpowers/plans/2026-10-25-nema-room-brand.md)
-
-The icon is wired into desktop packaging, windows, the tray, and the browser favicon. See the brand asset notes for native verification status.
 
 ## Documentation and feedback
 

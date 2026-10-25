@@ -6,6 +6,7 @@
 
 - Model settings are separate from the provider. After a provider is saved and connected, its model is chosen from that provider's list. There is no custom model ID field. A saved model that is not in the list stays as it is until a listed model replaces it.
 
+- A CLI launcher in the desktop payload (`Nema CLI.cmd`, `Nema CLI.command`, or `nema-cli`) that runs the bundled CLI, so `report install` works from a packaged app.
 - Workspace settings chooses a local Git repository with a folder picker. The dialog opens in the host daemon, which can see the repository path. Cancelling the dialog leaves the path empty.
 - Night mode is a borderless sun and moon control at the bottom-left of the sidebar, to the left of the language switch. Switching reveals the theme in a circle from that control, and the choice is remembered in the browser.
 
