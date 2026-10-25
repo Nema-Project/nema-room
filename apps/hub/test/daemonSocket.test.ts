@@ -612,7 +612,8 @@ describe("daemon socket", () => {
     await addQuestion(wsA, 1);
     const c = await connect();
     const a1 = await c.next("task.assign");
-    expect(a1.prompt).toContain("不确定、有歧义、或与现有条目冲突的内容，不要猜");
+    expect(a1.prompt).toContain("不确定或有歧义时，不要猜，写成 `question` 条目");
+    expect(a1.prompt).toContain("任何其他与 active 决策矛盾的陈述");
     expect(a1.prompt).not.toContain("追问严格程度");
     c.send({ type: "task.finished", taskId: m1.task.id, ok: true, reply: "done" });
     await vi.waitFor(async () => expect((await getTask(db, m1.task.id))?.status).toBe("done"));
