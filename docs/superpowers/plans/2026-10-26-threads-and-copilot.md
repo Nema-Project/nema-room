@@ -112,11 +112,11 @@
 
 **Interfaces:**
 - Consumes: `ensureThread`, `conversationOf` (Task 2).
-- Produces: `POST /room/threads` body `{ title: string (1–80) }` → `{ threadId }`. Anchor = the task's message (`ensureThread(..., "agent")`); if that message is already in a thread, returns that thread unchanged. Emits `{ type: "thread.updated", thread }`.
+- Produces: `POST /room/threads` body `{ title: string (1–80) }` → `{ threadId }`. Anchor = the task's message (`ensureThread(..., "agent")`). If that message is already in a thread, the call renames it to `title` (`renameThread(db, id, title)`, added in `threads.ts`) and returns it. Emits `{ type: "thread.updated", thread }`.
 - Produces: `RoomClient.openThread(args: unknown): Promise<RoomResult>`; tool `open_thread` with parameters `{ title: string }` and description `"Move this conversation into a thread anchored on the current message. Use it when the topic needs a longer back-and-forth. Your reply will be posted in the thread."`
 
 - [ ] **Step 1: Failing tests**
-  - roomApi: `open_thread anchors on the task message`; `open_thread twice returns the same thread`; `open_thread from a thread task returns that thread`; `title is required`.
+  - roomApi: `open_thread anchors on the task message`; `open_thread twice returns the same thread`; `open_thread on an existing thread renames it`; `open_thread from a thread task renames that thread`; `title is required`; `empty title is 400`.
   - cli: `roomTools lists open_thread`; `dispatchTool open_thread calls room.openThread`; `CLAUDE_ROOM_TOOLS contains mcp__room__open_thread`.
 - [ ] **Step 2: Run** `npx vitest run --project @nema/hub roomApi` and `npx vitest run --project @nema/cli` → FAIL.
 - [ ] **Step 3: Implement.** In `tools.ts` the "is room" check and the allowed-names error list include `open_thread`; the comment "three Room functions" becomes "four".
@@ -174,13 +174,13 @@ Rule changes (Chinese text is the builder's wording; these assertions pin the co
 - Agent proposals are never `stated` / `decided`; only what the user agreed to is `decided`.
 - Conflict: explicit override → supersede as today; any other contradiction of an active decision → do not write the decision, open a `question` with the active decision in `related`, the user's statement in `quotes` / `sourceMessages`.
 - Main chat only: "需要来回讨论时调用 `open_thread`"; with grill on: "新建追问时，你的回复会被放进 thread，把回复写成开启讨论、提出这个问题的话".
-- Thread only: section `# 当前 thread：<title>` with the anchor `[id] role: content`; follow-up questions are asked in the reply, one at a time; `opened: "user"` adds "这是用户主动开的 thread，直接进入讨论".
+- Thread only: section `# 当前 thread：<title>` with the anchor `[id] role: content`; follow-up questions are asked in the reply, one at a time; `opened: "user"` adds "这是用户主动开的 thread，直接进入讨论。标题目前是用户输入的第一行；如果它不能概括这个话题，调用 `open_thread` 给出更好的标题。"
 - Removed: "最后的回复只简短总结做了什么", "不要在回复里提问，系统会自动从待确认中挑一个问题展示".
 
 - [ ] **Step 1: Failing tests**
   - `main prompt keeps the must-write rule and offers open_thread`.
   - `thread prompt has the same knowledge rules as the main prompt` — the numbered `# 规则` lines about upsert/basis/question/source/conflict are identical between `{kind:"main"}` and `{kind:"thread"}` builds (anti-goal 2).
-  - `thread prompt shows the anchor and title and does not offer open_thread`.
+  - `thread prompt shows the anchor and title`; `a user-opened thread prompt asks the agent to rename a bad title via open_thread`; `an agent-opened thread prompt does not offer open_thread`.
   - `conflict rule names related and quotes` (anti-goal 1, prompt side).
   - `no summary-only reply rule remains`.
   - Update existing assertions that pinned the removed sentences.

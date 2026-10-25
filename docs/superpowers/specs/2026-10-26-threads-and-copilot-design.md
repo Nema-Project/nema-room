@@ -69,7 +69,7 @@ Snapshots (`apps/hub/src/db/snapshot.ts`) carry the column and the table; an old
 ### Opening a thread
 
 - **By the agent.** A new `room` MCP tool (name builder's call, e.g. `open_thread({ title })`) available to organize tasks on a main-chat message. When called, the task's reply is stored as the first message of a new thread anchored to the task's message, not in the main chat. The main chat gets no extra message; the anchor just shows its thread row (below). If the anchor already has a thread, the reply goes into it.
-- **By the user.** `/thread <text>` in the composer. It is a real command, not a text insert: the message `<text>` is posted to the main chat as the anchor, a thread is created on it at once (title: agent's call on first reply, initially the first line of `<text>` truncated), and the task's reply goes into the thread without the agent deciding. The task is told in the prompt that this is a thread the user opened.
+- **By the user.** `/thread <text>` in the composer. It is a real command, not a text insert: the message `<text>` is posted to the main chat as the anchor, a thread is created on it at once with the first line of `<text>` (max 80 code points) as a provisional title, and the task's reply goes into the thread without the agent deciding. The task is told in the prompt that this is a thread the user opened, and that it should call `open_thread` with a better title when the provisional one does not describe the topic.
 - A message posted inside a thread window is a normal user message with `thread_id` set; its task runs with thread context and its reply goes to the same thread.
 - No "reply in thread" action on arbitrary existing messages in this version; quoting covers pointing back at one. Agent, system and report messages become anchors only through the paths above.
 
@@ -173,7 +173,7 @@ The quote / edit / search work (spec `2026-10-25-message-quote-edit-search-desig
 - The whole reply moves into the thread when a task adds a question; the top-open-question fallback is removed; legacy questions open a thread from the badge.
 - Quote is kept alongside threads (reverses an earlier suggestion to replace it), since it is built and covers cross-thread references.
 - Agent-opened thread uses a new `room` MCP tool; the agent names the thread.
-- `/thread` title starts as the first line of the text.
+- `/thread` title starts as the first line of the text; the agent renames it on its first reply by calling `open_thread` again.
 - Grill-me off opens no thread for questions.
 
 ## Left to the builder
