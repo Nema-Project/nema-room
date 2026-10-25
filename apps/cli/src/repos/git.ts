@@ -395,6 +395,11 @@ export async function diffNameStatus(repoPath: string, from: string, to: string,
   return parseNameStatus(await gitRaw(repoPath, ["diff", "--name-status", "-M", "-z", from, to, "--"], undefined, ownedHelpers));
 }
 
+/** Windows ships bsdtar in System32. A GNU tar earlier on PATH (Git for Windows' usr/bin) reads `C:...` as a remote host. */
+function tarBin(): string {
+  return process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
+}
+
 export async function exportSnapshot(repoPath: string, ref: string, destDir: string, ownedHelpers?: OwnedHelperScope): Promise<void> {
   const archived = await gitRaw(repoPath, ["archive", "--format=tar", "--", ref], 60_000, ownedHelpers);
   // execFile in this runtime does not forward an `input` option to stdin, so the archive
@@ -404,7 +409,7 @@ export async function exportSnapshot(repoPath: string, ref: string, destDir: str
   try {
     await writeFile(archivePath, stripSymlinkEntries(archived), { mode: 0o600 });
     await emptyDir(destDir);
-    await execBuf("tar", ["-x", "-f", archivePath, "-C", destDir], { timeout: 60_000, ownedHelpers });
+    await execBuf(tarBin(), ["-x", "-f", archivePath, "-C", destDir], { timeout: 60_000, ownedHelpers });
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

@@ -1,9 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
+import { lf } from "../windowsEnv.js";
+import { linkDir } from "../links.js";
+import { unexpectedEnvKeys } from "../windowsEnv.js";
+import { commitWithSymlink } from "./gitSymlink.js";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { changedFiles, exportSnapshot, fetchMain, inspectRepo, mainRef, readFileAtRef, revParse } from "../../src/repos/git.js";
+import { changedFiles, commandEnv, exportSnapshot, fetchMain, inspectRepo, mainRef, readFileAtRef, revParse } from "../../src/repos/git.js";
 
 let root: string;
 let savedHome: string | undefined;
@@ -161,7 +165,7 @@ test("inspectRepo returns the same gitCommonDir for the real root, a trailing sl
   writeFileSync(join(repo, "a.txt"), "a\n");
   commitAll(repo, "init");
   const link = join(root, "repo-link");
-  symlinkSync(repo, link);
+  linkDir(repo, link);
 
   const common = realpathSync(join(repo, ".git"));
   const real = await inspectRepo(repo, nemaHome);
@@ -234,7 +238,28 @@ test("fetchMain rejects a branch that is not a single name and never writes a lo
   expect(git(repo, ["for-each-ref", "--format=%(refname)", "refs/heads"])).toBe(branchesBefore);
 });
 
-test("git commands see SSH_AUTH_SOCK and a BatchMode ssh, and nothing else from the environment", async () => {
+// Windows cannot run a fake `git` shell script through execFile (git must be a native .exe), so there the
+// same contract is checked on the env object handed to every git child; the end-to-end run is POSIX-only.
+test.runIf(process.platform === "win32")("git children get SSH_AUTH_SOCK and a BatchMode ssh, and nothing else from the environment", () => {
+  const saved = { SSH_AUTH_SOCK: process.env.SSH_AUTH_SOCK, NEMA_UNRELATED: process.env.NEMA_UNRELATED };
+  process.env.SSH_AUTH_SOCK = "/tmp/agent.sock";
+  process.env.NEMA_UNRELATED = "leak";
+  try {
+    const env = commandEnv();
+    expect(env.SSH_AUTH_SOCK).toBe("/tmp/agent.sock");
+    expect(env.GIT_SSH_COMMAND).toBe("ssh -o BatchMode=yes");
+    expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(env).not.toHaveProperty("NEMA_UNRELATED");
+    expect(unexpectedEnvKeys(Object.keys(env), ["PATH", "HOME", "LANG", "GIT_TERMINAL_PROMPT", "GIT_SSH_COMMAND", "SSH_AUTH_SOCK"])).toEqual([]);
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test.runIf(process.platform !== "win32")("git commands see SSH_AUTH_SOCK and a BatchMode ssh, and nothing else from the environment", async () => {
   const bin = join(root, "fake-bin");
   const envFile = join(root, "git-env");
   mkdirSync(bin);
@@ -332,10 +357,9 @@ test("readFileAtRef rejects a symlink blob", async () => {
   initRepo(repo);
   const secret = join(root, "host-secret.txt");
   writeFileSync(secret, "secret\n");
-  symlinkSync(secret, join(repo, "escape"));
   mkdirSync(join(repo, "subdir"));
   writeFileSync(join(repo, "subdir", "f.txt"), "f\n");
-  commitAll(repo, "link");
+  commitWithSymlink(git, repo, "escape", secret, "link");
 
   await expect(readFileAtRef(repo, "HEAD", "escape")).rejects.toThrow("escape 是符号链接，已拒绝");
   await expect(readFileAtRef(repo, "HEAD", "subdir")).rejects.toThrow("subdir 不存在于 HEAD");
@@ -419,6 +443,26 @@ test("changedFiles rejects a non-sha ref other than the main ref, and a sha main
   await expect(changedFiles(repo, parent, "origin/main", "main")).resolves.toEqual([{ status: "M", path: "a.txt" }]);
 });
 
+// Regression: a GNU tar first on PATH (Git Bash) fails on drive-letter paths ("Cannot connect to C:"), so the export must not depend on PATH for tar.
+test.runIf(process.platform === "win32")("exportSnapshot does not take tar from PATH on Windows", async () => {
+  const { repo } = setupOrigin();
+  writeFileSync(join(repo, "a.txt"), "aaa\n");
+  const sha = commitAll(repo, "files");
+  const poison = join(root, "poison-bin");
+  mkdirSync(poison);
+  copyFileSync(process.execPath, join(poison, "tar.exe")); // node.exe rejects tar's arguments
+  const saved = process.env.PATH;
+  process.env.PATH = poison + delimiter + saved;
+  try {
+    const dest = join(root, "snap-poison");
+    mkdirSync(dest);
+    await exportSnapshot(repo, sha, dest);
+    expect(lf(readFileSync(join(dest, "a.txt"), "utf8"))).toBe("aaa\n");
+  } finally {
+    process.env.PATH = saved;
+  }
+});
+
 test("exportSnapshot writes the ref's tree into destDir and leaves the repo untouched", async () => {
   const { repo } = setupOrigin();
   mkdirSync(join(repo, "sub"));
@@ -426,8 +470,7 @@ test("exportSnapshot writes the ref's tree into destDir and leaves the repo unto
   writeFileSync(join(repo, "sub", "b.txt"), "bee\n");
   const secret = join(root, "host-secret.txt");
   writeFileSync(secret, "do-not-leak\n");
-  symlinkSync(secret, join(repo, "escape"));
-  const sha = commitAll(repo, "files");
+  const sha = commitWithSymlink(git, repo, "escape", secret, "files");
   writeFileSync(join(repo, "a.txt"), "dirty\n");
   const status = git(repo, ["status", "--porcelain"]);
   const head = git(repo, ["rev-parse", "HEAD"]).trim();
@@ -438,8 +481,8 @@ test("exportSnapshot writes the ref's tree into destDir and leaves the repo unto
   writeFileSync(join(dest, "stale.txt"), "stale\n");
   await exportSnapshot(repo, sha, dest);
 
-  expect(readFileSync(join(dest, "a.txt"), "utf8")).toBe("aaa\n");
-  expect(readFileSync(join(dest, "sub", "b.txt"), "utf8")).toBe("bee\n");
+  expect(lf(readFileSync(join(dest, "a.txt"), "utf8"))).toBe("aaa\n");
+  expect(lf(readFileSync(join(dest, "sub", "b.txt"), "utf8"))).toBe("bee\n");
   expect(() => lstatSync(join(dest, "stale.txt"))).toThrow(/ENOENT/);
   expect(() => lstatSync(join(dest, "escape"))).toThrow(/ENOENT/);
   assertNoSymlinks(dest);

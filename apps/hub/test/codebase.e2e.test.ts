@@ -15,6 +15,9 @@ import { claimNextTask } from "../src/tasks.js";
 import { createWorkspace } from "../src/workspaces.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 
+/** The snapshot export may use CRLF when the user's git config sets core.autocrlf; compare content only. */
+const lf = (text: string) => text.replace(/\r\n/g, "\n");
+
 afterAll(cleanupHubDeps);
 
 function git(cwd: string, args: string[]): string {
@@ -214,7 +217,7 @@ test("bind, index, and one fetch tick follow origin/main without touching the wo
         return false;
       }
     });
-    expect(readFileSync(path.join(snapshot, "src", "README.md"), "utf8")).toBe("hello\n");
+    expect(lf(readFileSync(path.join(snapshot, "src", "README.md"), "utf8"))).toBe("hello\n");
 
     await postUserMessage(db, workspace.id, "memo");
     const task = await claimNextTask(db, "d1");
@@ -255,7 +258,7 @@ test("bind, index, and one fetch tick follow origin/main without touching the wo
 
     await daemon.watcher.tick();
     await waitFor("moved", async () => (await getRepo(db, boundRepo.id))?.lastMainSha === next);
-    expect(readFileSync(path.join(snapshot, "src", "README.md"), "utf8")).toBe("from origin\n");
+    expect(lf(readFileSync(path.join(snapshot, "src", "README.md"), "utf8"))).toBe("from origin\n");
 
     const again = await postJson(`http://127.0.0.1:${port}/room/plugins/code__read`, { repo: boundRepo.id, path: "README.md" }, auth);
     expect(again.status, JSON.stringify(again.json)).toBe(200);
