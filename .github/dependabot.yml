@@ -1,0 +1,11 @@
+version: 2
+updates:
+  # Workflow actions are pinned to commit SHAs; Dependabot bumps the SHA and its version comment together.
+  # Monthly and grouped while the repository is private, so updates cost one CI run a month.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']

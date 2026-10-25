@@ -70,14 +70,18 @@ jobs:
           if [ "$REF_TYPE" = "tag" ]; then
             # Rejects anything but strict v<SemVer> that equals the desktop and local package versions.
             result=$(node scripts/desktop/release-version.mjs "$REF_NAME")
-            echo "release=true" >> "$GITHUB_OUTPUT"
-            echo "version=$(node -p "JSON.parse(process.argv[1]).version" "$result")" >> "$GITHUB_OUTPUT"
-            echo "prerelease=$(node -p "JSON.parse(process.argv[1]).prerelease" "$result")" >> "$GITHUB_OUTPUT"
+            {
+              echo "release=true"
+              echo "version=$(node -p "JSON.parse(process.argv[1]).version" "$result")"
+              echo "prerelease=$(node -p "JSON.parse(process.argv[1]).prerelease" "$result")"
+            } >> "$GITHUB_OUTPUT"
           else
             version=$(node -p "require('./apps/desktop/package.json').version")
-            echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "version=$version" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "release=false"
+              echo "version=$version"
+              echo "prerelease=false"
+            } >> "$GITHUB_OUTPUT"
           fi
       - name: Select targets
         id: targets
@@ -102,7 +106,7 @@ jobs:
             ];
             const wanted = process.argv[1].split(",");
             const include = wanted.includes("all") ? all : all.filter((t) => wanted.includes(t.target));
-            if (include.length === 0) throw new Error(`No desktop target matches ${process.argv[1]}`);
+            if (include.length === 0) throw new Error("No desktop target matches " + process.argv[1]);
             console.log(JSON.stringify({ include }));
           ' "$wanted")
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
@@ -278,7 +282,7 @@ jobs:
           fi
           gh release upload "$TAG" release-assets/* --clobber
           # Publish only when the draft holds exactly the verified asset set.
-          expected=$(ls release-assets | sort | tr '\n' ' ')
+          expected=$(find release-assets -maxdepth 1 -type f -printf '%f\n' | sort | tr '\n' ' ')
           actual=$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort | tr '\n' ' ')
           if [ "$expected" != "$actual" ]; then
             echo "Draft assets differ from the verified set: $actual" >&2
