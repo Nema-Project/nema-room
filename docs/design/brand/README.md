@@ -20,6 +20,6 @@ PNG 是通过内置 imagegen 根据原稿提取生成的位图，不是人工校
 
 `apps/desktop/assets/` 包含 1024px 应用 PNG、7 档 ICO（16/24/32/48/64/128/256px）、ICNS（16–1024px）、32px Windows 托盘图与 16/32px macOS template 图。`apps/web/app/icon.png` 为 192px favicon，`apps/web/public/nema-room-mark.svg` 用于桌面标题栏。应用图标使用独立的暖灰底容器；Windows 托盘与 README 用浅底保证明暗背景对比，透明母版本身不带容器。
 
-代码已接入桌面打包、窗口、标题栏、托盘和浏览器 favicon；显示名为 Nema Room，appId、Nema.exe 与发布文件前缀 Nema 保持兼容。小尺寸、格式与打包验证记录见实施计划。macOS 原生外观验证仍需在 Mac 上完成；Windows 系统缩放和安装升级检查须按计划记录实际结果，不以源代码测试代替。
+代码已接入桌面打包、窗口、标题栏、托盘和浏览器 favicon；显示名为 Nema Room，appId、Nema.exe 与发布文件前缀 Nema 保持兼容。2026-10-25 在 200%（3840×2160 物理像素）下核对了打包后的 exe、安装包文件图标和托盘：品牌包内的图标与母版导出一致，托盘中的标志可辨认，点击后窗口重新打开。100% 与 150% 核对的是系统会选用的 16/32 与 24/48 档，没有改本机缩放。16px 和 20px 较粗，门洞和 N 仍然成立。安装包没有执行安装，开始菜单和桌面没有快捷方式。macOS template 仍需在 Mac 上核对。详细记录见实施计划。
 
 参见 [设计规格](../../superpowers/specs/2026-10-25-nema-room-brand-design.md) 和 [实施计划](../../superpowers/plans/2026-10-25-nema-room-brand.md)。项目继续使用根目录的 MIT LICENSE；本次记录不作商标注册或名称独占声明。
