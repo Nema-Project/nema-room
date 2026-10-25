@@ -55,6 +55,9 @@ export function ensureReportToken(nemaHome: string): string {
     } finally {
       closeSync(fd);
     }
+    // A new Windows file can inherit an owner/DACL that differs from its private parent.
+    // Protect the completed temporary secret before it becomes the active credential.
+    protectPrivatePath(tmp, 0o600);
     try {
       // link (not rename) fails with EEXIST instead of replacing a token another process just created.
       linkSync(tmp, file);

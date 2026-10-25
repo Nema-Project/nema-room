@@ -309,10 +309,14 @@ describe("CodexDirectAdapter", () => {
     const result = await adapter({ timeoutMs: 250 }).run(task(), (e) => events.push(e));
     expect(result).toEqual({ ok: false, error: "Codex 直连运行超时" });
     const seen = events.length;
+    const modelCalls = () => server.requests.filter((r) => r.url === "/v1/responses").length;
+    const seenCalls = modelCalls();
     await new Promise((r) => setTimeout(r, 800));
     expect(events.length).toBe(seen);
     expect(events.some((e) => e.type === "tool_call")).toBe(false);
-    expect(server.requests.filter((r) => r.url === "/v1/responses").length).toBe(0);
+    // The first model call may win the race with the timeout. The late hub response must not send another.
+    expect(modelCalls()).toBe(seenCalls);
+    expect(modelCalls()).toBeLessThanOrEqual(1);
   });
 
   test("compat sends the Codex access token and account id, and does not rewrite the Codex file", async () => {

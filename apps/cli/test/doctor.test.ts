@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AuthStore, type StoredAuth } from "../src/direct/authStore.js";
 import { defaultTokenFile, runDoctor as realRunDoctor, type DoctorOpts } from "../src/doctor.js";
@@ -267,7 +267,8 @@ describe("Claude Code checks", () => {
     mkdirSync(binDir);
     writeFileSync(join(binDir, "claude"), '#!/usr/bin/env node\nconsole.log("claude 2.0.0");\n');
     chmodSync(join(binDir, "claude"), 0o755);
-    process.env.PATH = binDir;
+    // The shebang finds node through PATH. Replacing PATH hides node on Linux and macOS.
+    process.env.PATH = savedPath ? `${binDir}${delimiter}${savedPath}` : binDir;
     const nemaHome = join(root, "nema");
     mkdirSync(nemaHome);
     writeFileSync(join(nemaHome, "claude-code-token"), "sekret-token", { mode: 0o600 });
