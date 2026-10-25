@@ -94,6 +94,49 @@ export async function postUserMessage(
   });
 }
 
+export const EDIT_BUSY_MESSAGE = "message is still being processed";
+
+export type MessageVersion = { version: number; content: string; createdAt: string };
+
+export async function listMessageVersions(db: Db, messageId: string): Promise<MessageVersion[]> {
+  const rows = await db.query<{ version: number; content: string; created_at: Date | string }>(
+    `select version, content, created_at from message_versions where message_id = $1 order by version asc`,
+    [messageId],
+  );
+  return rows.map((r) => ({ version: r.version, content: r.content, createdAt: new Date(r.created_at).toISOString() }));
+}
+
+export async function editUserMessage(
+  db: Db,
+  workspaceId: string,
+  messageId: string,
+  content: string,
+): Promise<{ message: Message; task: Task }> {
+  if (content.trim() === "") throw new Error("message content must not be empty");
+  return db.tx(async (t) => {
+    const locked = await t.query<Row>(`select ${COLS} from messages where id = $1 and workspace_id = $2 for update`, [messageId, workspaceId]);
+    const row = locked[0];
+    if (!row) throw new MessageOpError(404, "message not found");
+    if (row.role !== "user") throw new MessageOpError(400, "only user messages can be edited");
+    const ws = await t.query<{ archived_at: Date | string | null }>(`select archived_at from workspaces where id = $1`, [workspaceId]);
+    if (ws[0]?.archived_at) throw new ArchivedWorkspaceError();
+    const busy = await t.query(`select 1 from tasks where message_id = $1 and status in ('queued', 'running') limit 1`, [messageId]);
+    if (busy.length > 0) throw new MessageOpError(409, EDIT_BUSY_MESSAGE);
+    await t.query(
+      `insert into message_versions(message_id, version, content, created_at)
+       select $1, coalesce((select max(version) from message_versions where message_id = $1), 0) + 1, content, coalesce(edited_at, created_at)
+       from messages where id = $1`,
+      [messageId],
+    );
+    const updated = await t.query<Row>(`update messages set content = $2, edited_at = clock_timestamp() where id = $1 returning ${COLS}`, [
+      messageId,
+      content,
+    ]);
+    const task = await insertQueuedTask(t, workspaceId, messageId, "edit");
+    return { message: toMessage(updated[0]!), task };
+  });
+}
+
 export const ARCHIVED_MESSAGE = "workspace is archived; unarchive it to send messages";
 
 /** Thrown when a message would start a task in an archived workspace. The UI API answers 409. */

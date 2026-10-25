@@ -7,7 +7,7 @@ import type { Db } from "./db/db.js";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
 import type { EventBus, HubEvent } from "./events.js";
 import { indexEntry, openQuestionCounts, timeline, withDiagramStatus } from "./entryIndex.js";
-import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, listMessages, MessageOpError, postSystemTask, postUserMessage } from "./messages.js";
+import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, editUserMessage, getMessage, listMessageVersions, listMessages, MessageOpError, postSystemTask, postUserMessage } from "./messages.js";
 import { vendoredArchify, type Archify } from "./diagrams.js";
 import { PluginError, daemonHttpStatus, listExtensions, pluginsForUi, setPluginState, workspacePluginState } from "./plugins.js";
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
@@ -247,6 +247,28 @@ export function uiRoutes(deps: UiDeps): Hono {
   });
 
   app.get("/workspaces/:id/messages", async (c) => c.json(await listMessages(db, c.req.param("id")!)));
+
+  app.get("/workspaces/:id/messages/:messageId/versions", async (c) => {
+    const message = await getMessage(db, c.req.param("messageId")!);
+    if (!message || message.workspaceId !== c.req.param("id")) throw new HttpError(404, "message not found");
+    return c.json(await listMessageVersions(db, message.id));
+  });
+
+  app.patch("/workspaces/:id/messages/:messageId", async (c) => {
+    const id = c.req.param("id")!;
+    const { content } = await body(c, PostMessageBody);
+    try {
+      const { message, task: created } = await editUserMessage(db, id, c.req.param("messageId")!, content);
+      const task = toUiTask(created);
+      events.emit(id, { type: "message.updated", message });
+      events.emit(id, { type: "task.updated", task });
+      return c.json({ message, task });
+    } catch (e) {
+      if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
+      if (e instanceof ArchivedWorkspaceError) throw new HttpError(409, e.message);
+      throw e;
+    }
+  });
 
   app.get("/workspaces/:id/tasks/active", async (c) => {
     const running = await getRunningTask(db, c.req.param("id")!);

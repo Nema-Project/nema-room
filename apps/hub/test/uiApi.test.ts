@@ -96,6 +96,51 @@ describe("ui api", () => {
     expect(quotedSystem.message.meta.quote.role).toBe("system");
   });
 
+  test("editing keeps the previous text, queues an edit task, and blocks while that task is open", async () => {
+    const posted = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "original" }));
+    const id = posted.message.id as string;
+    const busy = await req("PATCH", `/api/workspaces/${ws}/messages/${id}`, { content: "revised" });
+    expect(busy.status).toBe(409);
+    expect((await json(busy)).error).toBe("message is still being processed");
+    expect((await json(await req("GET", `/api/workspaces/${ws}/messages`))).find((m: { id: string }) => m.id === id).content).toBe("original");
+
+    const original = (await claimNextTask(db, "d1"))!;
+    await finishTask(db, original.id, { ok: true });
+    const seen: string[] = [];
+    events.subscribe(ws, (e) => seen.push(e.type));
+    const edited = await json(await req("PATCH", `/api/workspaces/${ws}/messages/${id}`, { content: "revised" }));
+    expect(edited.message.content).toBe("revised");
+    expect(typeof edited.message.editedAt).toBe("string");
+    expect(edited.task.status).toBe("queued");
+    expect(edited.task).not.toHaveProperty("kind");
+    expect(seen).toEqual(["message.updated", "task.updated"]);
+    const versions = await json(await req("GET", `/api/workspaces/${ws}/messages/${id}/versions`));
+    expect(versions).toEqual([{ version: 1, content: "original", createdAt: expect.any(String) }]);
+
+    const editTask = (await claimNextTask(db, "d1"))!;
+    await finishTask(db, editTask.id, { ok: true });
+    expect((await req("PATCH", `/api/workspaces/${ws}/messages/${id}`, { content: "third" })).status).toBe(200);
+    const again = await json(await req("GET", `/api/workspaces/${ws}/messages/${id}/versions`));
+    expect(again.map((v: { content: string }) => v.content)).toEqual(["original", "revised"]);
+
+    const agent = await addMessage(db, ws, "agent", "summary");
+    const notUser = await req("PATCH", `/api/workspaces/${ws}/messages/${agent.id}`, { content: "nope" });
+    expect(notUser.status).toBe(400);
+    expect((await json(notUser)).error).toBe("only user messages can be edited");
+
+    const third = (await claimNextTask(db, "d1"))!;
+    await finishTask(db, third.id, { ok: true });
+    expect((await req("PATCH", `/api/workspaces/${ws}/messages/${id}`, { content: "   " })).status).toBe(400);
+    expect((await req("PATCH", `/api/workspaces/${ws}`, { archived: true })).status).toBe(200);
+    const archived = await req("PATCH", `/api/workspaces/${ws}/messages/${id}`, { content: "later" });
+    expect(archived.status).toBe(409);
+    expect((await json(archived)).error).toMatch(/archived/);
+
+    expect((await req("PATCH", `/api/workspaces/${ws}`, { archived: false })).status).toBe(200);
+    expect((await req("DELETE", `/api/workspaces/${ws}`)).status).toBe(204);
+    expect(await db.query("select 1 from message_versions where message_id = $1", [id])).toHaveLength(0);
+  });
+
   test("workspaces create/patch/validation", async () => {
     const c = await json(await req("POST", "/api/workspaces", { name: "New" }));
     expect(c.name).toBe("New");
