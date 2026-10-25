@@ -2,9 +2,9 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { Composer } from "@/components/Composer";
-import { AgentAvatar, MessageItem } from "@/components/MessageItem";
-import { formatDay } from "@/lib/format";
-import { getActiveTask, listMessages, postMessage } from "@/lib/hub";
+import { AgentAvatar, MessageItem, messageRoleLabel } from "@/components/MessageItem";
+import { formatDay, formatTime } from "@/lib/format";
+import { getActiveTask, listMessages, postMessage, searchMessages } from "@/lib/hub";
 import { useLocale, useT } from "@/lib/i18n";
 import type { AgentMessageMeta, HubEvent, Message } from "@/lib/types";
 
@@ -22,6 +22,21 @@ type Props = {
   /** Opens an entry in the knowledge column (a report's entry ids). */
   onOpenEntry?: (entryId: string) => void;
 };
+
+function Snippet({ content, q }: { content: string; q: string }) {
+  const needle = q.trim();
+  const at = content.toLowerCase().indexOf(needle.toLowerCase());
+  if (at < 0 || needle === "") return <>{content}</>;
+  const start = Math.max(0, at - 40);
+  const end = Math.min(content.length, at + needle.length + 40);
+  return (
+    <>
+      {content.slice(start, at)}
+      <mark>{content.slice(at, at + needle.length)}</mark>
+      {content.slice(at + needle.length, end)}
+    </>
+  );
+}
 
 const dayKey = (iso: string) => {
   const d = new Date(iso);
@@ -57,6 +72,10 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
   const [error, setError] = useState<string | null>(null);
   const [runningTask, setRunningTask] = useState<string | null>(null);
   const [progress, setProgress] = useState<string>("");
+  const [quote, setQuote] = useState<Message | null>(null);
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<Message[] | null>(null);
+  const [openHit, setOpenHit] = useState<string | null>(null);
   const stream = useRef<HTMLDivElement>(null);
   // Bumped by every SSE-driven change of runningTask and by every active-task request, so a stale HTTP response never overwrites newer state.
   const taskVersion = useRef(0);
@@ -90,12 +109,14 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
     void loadActive();
   }, [load, loadActive]);
 
+  const scrollToMessage = (id: string) => {
+    document.getElementById(`msg-${id}`)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+  };
+
   useImperativeHandle(
     ref,
     () => ({
-      scrollToMessage(id) {
-        document.getElementById(`msg-${id}`)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
-      },
+      scrollToMessage,
       handleEvent(e) {
         if (e.type === "message.created" && e.message.workspaceId === workspaceId) {
           setMessages((l) => merge(l, e.message));
@@ -133,9 +154,19 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length, runningTask, progress]);
 
-  async function send(content: string) {
-    const { message } = await postMessage(workspaceId, content);
+  async function send(content: string, quoted?: Message | null) {
+    const { message } = quoted ? await postMessage(workspaceId, content, quoted.id) : await postMessage(workspaceId, content);
     setMessages((l) => merge(l, message));
+    if (quoted) setQuote(null);
+  }
+
+  async function search() {
+    const term = query.trim();
+    if (!term) {
+      setHits(null);
+      return;
+    }
+    setHits(await searchMessages(workspaceId, term));
   }
 
   const answerId = answerableMessageId(messages);
@@ -147,6 +178,32 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
           {t("chat.offline")}
         </div>
       )}
+      <div className="search">
+        <input
+          placeholder={t("chat.search")}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void search();
+          }}
+        />
+        {hits && hits.length === 0 && <p>{t("chat.noResults")}</p>}
+        {hits?.map((hit) => (
+          <div
+            key={hit.id}
+            className="search-hit"
+            onClick={() => {
+              if (document.getElementById(`msg-${hit.id}`)) scrollToMessage(hit.id);
+              else setOpenHit((cur) => (cur === hit.id ? null : hit.id));
+            }}
+          >
+            <span>{messageRoleLabel(t, hit.role)}</span>
+            <time>{formatTime(new Date(hit.createdAt), locale)}</time>
+            {openHit === hit.id ? hit.content : <Snippet content={hit.content} q={query} />}
+            <button type="button" onClick={(e) => { e.stopPropagation(); setQuote(hit); }}>{t("chat.quote")}</button>
+          </div>
+        ))}
+      </div>
       <div className="stream" ref={stream}>
         {messages.map((m) => {
           const key = dayKey(m.createdAt);
@@ -155,7 +212,14 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
           return (
             <div key={m.id}>
               {divider && <div className="day">{formatDay(new Date(m.createdAt), locale)}</div>}
-              <MessageItem message={m} onOpenEntry={onOpenEntry} onAnswer={m.id === answerId ? send : undefined} />
+              <MessageItem
+                message={m}
+                onOpenEntry={onOpenEntry}
+                onAnswer={m.id === answerId ? (content) => send(content) : undefined}
+                onQuote={setQuote}
+                onEdited={(message) => setMessages((l) => l.map((x) => (x.id === message.id ? message : x)))}
+                onJump={scrollToMessage}
+              />
             </div>
           );
         })}
@@ -177,7 +241,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
           {t("common.error", { message: error })}
         </p>
       )}
-      <Composer onSend={send} />
+      <Composer onSend={(content) => send(content, quote)} quote={quote} onClearQuote={() => setQuote(null)} />
     </>
   );
 });

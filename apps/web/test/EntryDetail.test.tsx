@@ -32,7 +32,7 @@ beforeEach(() => {
     { id: "Q-4", kind: "question", title: "q4", status: "resolved", businessDate: null, related: [], priority: 2, isNew: false, basis: null, confirmedAt: null },
   ]);
   vi.mocked(hub.listMessages).mockResolvedValue(
-    ["m_1", "m_2"].map((id) => ({ id, workspaceId: "w1", role: "user" as const, content: `message ${id}`, meta: null, taskId: null, createdAt: "2026-10-21T14:00:00Z" })),
+    ["m_1", "m_2"].map((id) => ({ id, workspaceId: "w1", role: "user" as const, content: `message ${id}`, meta: null, taskId: null, createdAt: "2026-10-21T14:00:00Z", editedAt: null })),
   );
   vi.mocked(hub.putEntry).mockClear();
   vi.mocked(hub.confirmEntry).mockClear();

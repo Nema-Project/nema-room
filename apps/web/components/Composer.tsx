@@ -1,10 +1,25 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { messageRoleLabel } from "@/components/MessageItem";
 import { applyFormat, type FormatKind } from "@/lib/markdownFormat";
 import { useT } from "@/lib/i18n";
+import type { Message } from "@/lib/types";
 
-export function Composer({ onSend }: { onSend: (content: string) => Promise<void> }) {
+function excerpt(content: string): string {
+  const chars = Array.from(content);
+  return chars.length <= 200 ? content : chars.slice(0, 200).join("");
+}
+
+export function Composer({
+  onSend,
+  quote,
+  onClearQuote,
+}: {
+  onSend: (content: string) => Promise<void>;
+  quote?: { role: Message["role"]; content: string } | null;
+  onClearQuote?: () => void;
+}) {
   const t = useT();
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +72,14 @@ export function Composer({ onSend }: { onSend: (content: string) => Promise<void
 
   return (
     <div className="composer">
+      {quote && (
+        <div className="quote-bar">
+          <span>
+            <b>{messageRoleLabel(t, quote.role)}</b> {excerpt(quote.content)}
+          </span>
+          <button type="button" onClick={onClearQuote}>{t("chat.quoteRemove")}</button>
+        </div>
+      )}
       <textarea
         ref={ref}
         className="in"

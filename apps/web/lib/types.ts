@@ -1,6 +1,6 @@
-import type { AgentMessageMeta, KnowledgeLanguage, ReportMessageMeta } from "@nema/shared";
+import type { AgentMessageMeta, KnowledgeLanguage, ReportMessageMeta, UserMessageMeta } from "@nema/shared";
 
-export type { AgentMessageMeta, Entry, EntrySummary, Implementation, KnowledgeLanguage, ReportCheck, ReportMessageMeta, UpsertEntryInput, WorkPackageMeta, WpTask } from "@nema/shared";
+export type { AgentMessageMeta, Entry, EntrySummary, Implementation, KnowledgeLanguage, MessageQuote, ReportCheck, ReportMessageMeta, UpsertEntryInput, UserMessageMeta, WorkPackageMeta, WpTask } from "@nema/shared";
 
 /** Wire shapes of apps/hub (JSON over REST/SSE). Kept here because the hub package is Node-only. */
 export type Workspace = {
@@ -18,10 +18,11 @@ export type Message = {
   workspaceId: string;
   role: "user" | "agent" | "system" | "report";
   content: string;
-  /** Agent messages carry AgentMessageMeta; report messages carry ReportMessageMeta. */
-  meta: AgentMessageMeta | ReportMessageMeta | null;
+  /** User messages may carry UserMessageMeta; agent messages carry AgentMessageMeta; report messages carry ReportMessageMeta. */
+  meta: AgentMessageMeta | ReportMessageMeta | UserMessageMeta | null;
   taskId: string | null;
   createdAt: string;
+  editedAt: string | null;
 };
 
 export type Task = {
