@@ -64,6 +64,7 @@ export function KnowledgePanel({ workspaceId, knowledgeLanguage, onOpen, refresh
   }, [workspaceId, view]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount and refresh: state is set once the request resolves
     void load();
   }, [load, refreshKey]);
 

@@ -80,7 +80,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   const [hubFault, setHubFault] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
-  const [openEntry, setOpenEntry] = useState<string | null>(null);
+  const [openState, setOpenState] = useState<{ roomId: string | null; entryId: string | null }>({ roomId: null, entryId: null });
   const [knowWidth, setKnowWidth] = useState<number | null>(null);
   const [knowCollapsed, setKnowCollapsed] = useState(false);
   const [sideWidth, setSideWidth] = useState<number | null>(null);
@@ -90,7 +90,6 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   const [panelTick, setPanelTick] = useState(0);
   const [detailTick, setDetailTick] = useState(0);
   const openEntryRef = useRef<string | null>(null);
-  openEntryRef.current = openEntry;
 
   const refresh = useCallback(async () => {
     try {
@@ -102,8 +101,10 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount: state is set once the request resolves
     void refresh();
     try {
+      // Stored layout is read after hydration so the server and first client render agree.
       setSelectedId(localStorage.getItem(SELECTED_KEY));
       setKnowWidth(readWidth(KNOW_WIDTH_KEY));
       setKnowCollapsed(localStorage.getItem(KNOW_COLLAPSED_KEY) === "1");
@@ -143,10 +144,13 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
     return () => clearInterval(id);
   }, [refresh]);
 
-  // A different room never keeps the previous room's entry open.
+  // A different room never keeps the previous room's entry open: an entry opened in another room does not count.
+  const roomId = current?.id ?? null;
+  const openEntry = openState.roomId === roomId ? openState.entryId : null;
+  const setOpenEntry = useCallback((entryId: string | null) => setOpenState({ roomId, entryId }), [roomId]);
   useEffect(() => {
-    setOpenEntry(null);
-  }, [current?.id]);
+    openEntryRef.current = openEntry;
+  }, [openEntry]);
 
   const resync = useCallback(() => {
     chat.current?.resync();

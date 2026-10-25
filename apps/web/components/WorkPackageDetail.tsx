@@ -55,6 +55,7 @@ export function WorkPackageDetail({ workspaceId, entryId, onClose, onJumpToMessa
   }, [workspaceId, entryId]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount and refresh: state is set once the requests resolve
     void load();
   }, [load, refreshKey]);
 
