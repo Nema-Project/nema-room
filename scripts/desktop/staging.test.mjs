@@ -264,6 +264,27 @@ test('rejects unsafe tool resource paths', async (t) => {
   await assert.rejects(stageRuntime(f.options), /path|escape|unsafe/i);
 });
 
+test('copies an in-tree tool symlink when the tools root is reached through a symlink', async (t) => {
+  const f = await fixture(t);
+  const linkRoot = path.join(path.dirname(f.source), 'node-link');
+  const kind = process.platform === 'win32' ? 'junction' : 'dir';
+  try {
+    await symlink(path.join(f.source, 'node'), linkRoot, kind);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'EPERM') return;
+    throw error;
+  }
+  const target = `${process.platform}-${process.arch}`;
+  const gitDir = path.join(f.source, 'node', target, 'git');
+  const inside = path.join(gitDir, 'inside');
+  await mkdir(inside);
+  await writeFile(path.join(inside, 'keep.txt'), 'fixture');
+  await symlink(inside, path.join(gitDir, 'git-add'), process.platform === 'win32' ? 'junction' : 'dir');
+  await stageRuntime({ ...f.options, toolsRoot: linkRoot });
+  const staged = path.join(f.output, target, 'runtime', target, 'git', 'git-add', 'keep.txt');
+  assert.equal(await readFile(staged, 'utf8'), 'fixture');
+});
+
 test('rejects workspace dependency symlinks that resolve outside the source payload', async (t) => {
   const f = await fixture(t);
   const outside = path.join(path.dirname(f.source), 'outside-package');

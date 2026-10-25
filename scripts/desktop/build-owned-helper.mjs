@@ -25,7 +25,7 @@ export async function buildOwnedHelper({ output, sourceRoot = root, testOnly = f
   const source = path.join(path.resolve(sourceRoot), 'apps/cli/native/windows/owned-helper.c');
   const args = ['-Wall', '-Wextra', '-Werror', '-municode', '-O2'];
   if (testOnly) args.push('-DNEMA_GUARDIAN_TESTING=1');
-  args.push(source, '-o', output);
+  args.push(source, '-ladvapi32', '-o', output);
   const result = spawnSync(compiler, args, { cwd: root, stdio: 'inherit', windowsHide: true });
   if (result.error) throw new Error(`Could not start Windows native compiler ${compiler}: ${result.error.message}`);
   if (result.status !== 0) throw new Error(`Windows native guardian compiler failed with status ${result.status ?? result.signal}`);

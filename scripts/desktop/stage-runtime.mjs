@@ -17,6 +17,7 @@ const isInside = (root, value) => {
   const rel = path.relative(root, value);
   return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel));
 };
+const canonicalRoot = (root) => realpath(root).catch(() => path.resolve(root));
 
 function safeRelative(value, name) {
   if (typeof value !== 'string' || !value || value.includes('\0') || value.includes('\\') || value.includes(':') || path.posix.isAbsolute(value)) throw new Error(`Unsafe ${name} path`);
@@ -48,9 +49,10 @@ async function copyTree(source, destination, allowedRoot, seen = new Set()) {
   if (!info) throw new Error(`Required staged resource is missing: ${source}`);
   if (info.isSymbolicLink()) {
     const resolved = await realpath(source);
-    if (!isInside(allowedRoot, resolved)) throw new Error(`Dependency or resource escapes payload source: ${source}`);
+    const policyRoot = await canonicalRoot(allowedRoot);
+    if (!isInside(policyRoot, resolved)) throw new Error(`Dependency or resource escapes payload source: ${source}`);
     if (seen.has(resolved)) throw new Error(`Cyclic resource link: ${source}`);
-    return copyTree(resolved, destination, allowedRoot, new Set([...seen, resolved]));
+    return copyTree(resolved, destination, policyRoot, new Set([...seen, resolved]));
   }
   if (info.isDirectory()) {
     await mkdir(destination, { recursive: true });
@@ -67,13 +69,14 @@ async function copyTree(source, destination, allowedRoot, seen = new Set()) {
 }
 
 async function copyCompiledDist(source, destination, allowedRoot) {
+  const policyRoot = await canonicalRoot(allowedRoot);
   async function visit(from, to, relative = '', seen = new Set()) {
     const info = await lstat(from);
     let resolved = from;
     let actual = info;
     if (info.isSymbolicLink()) {
       resolved = await realpath(from);
-      if (!isInside(allowedRoot, resolved)) throw new Error(`Dependency or resource escapes payload source: ${from}`);
+      if (!isInside(policyRoot, resolved)) throw new Error(`Dependency or resource escapes payload source: ${from}`);
       if (seen.has(resolved)) throw new Error(`Cyclic resource link: ${from}`);
       actual = await stat(resolved);
     }
