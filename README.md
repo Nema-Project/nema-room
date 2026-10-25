@@ -184,13 +184,6 @@ npm run build -w apps/web
 
 端口和目录见 [.env.example](.env.example)。CLI 不自动读取根目录 `.env`：改数据目录时应在 shell 导出 `NEMA_DATA_DIR` 或传 `--token-file` 给 `daemon` / `doctor`；改 hub 端口还需传 `--hub`。`NEXT_PUBLIC_HUB_URL` 改动后需重建 web。
 
-## 品牌与图标
-
-项目采用 **Nema Room** 作为品牌全称，当前图标选用原始设计稿的 **01 / ROOM / N**：以开放空间与负形 N 呼应界面的黑白、暖灰和几何语言。
-
-[品牌素材与使用说明](docs/design/brand/README.md) · [图标 PNG](docs/design/brand/nema-room-icon-01.png) · [设计规格](docs/superpowers/specs/2026-10-25-nema-room-brand-design.md) · [接入计划](docs/superpowers/plans/2026-10-25-nema-room-brand.md)
-
-图标已接入桌面打包、窗口、托盘和浏览器 favicon。平台实机验证状态见品牌素材说明。
 
 ## 文档与反馈
 
