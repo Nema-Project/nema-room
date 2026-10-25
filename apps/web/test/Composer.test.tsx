@@ -13,6 +13,14 @@ const mount = (onSend: (c: string) => Promise<void>) =>
 const box = () => screen.getByRole("textbox") as HTMLTextAreaElement;
 
 describe("Composer", () => {
+  it("/thread text posts a new thread", async () => {
+    const onThread = vi.fn().mockResolvedValue(undefined);
+    render(<I18nProvider><Composer onSend={vi.fn()} onThread={onThread} /></I18nProvider>);
+    await userEvent.type(box(), "/thr");
+    await userEvent.click(screen.getByRole("option", { name: /thread/i }));
+    await userEvent.type(box(), "need details{Shift>}{Enter}{/Shift}");
+    expect(onThread).toHaveBeenCalledWith("need details");
+  });
   it("Enter inserts a newline and does not send", async () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
     mount(onSend);
@@ -90,7 +98,7 @@ describe("Composer", () => {
   it("lists diagram types and Enter fills the one the typed prefix matches", async () => {
     mount(vi.fn().mockResolvedValue(undefined));
     await userEvent.type(box(), "/");
-    expect(screen.getAllByRole("option")).toHaveLength(12);
+    expect(screen.getAllByRole("option")).toHaveLength(13);
     await userEvent.type(box(), "diagram:s");
     expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["/diagram:sequenceSequence"]);
     await userEvent.keyboard("{Enter}");

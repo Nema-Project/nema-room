@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { flushSync } from "react-dom";
 import { PluginsPage } from "@/components/PluginsPage";
+import { nextAttention } from "@/lib/hub";
 import { LOCALES, useLocale, useT, type Locale } from "@/lib/i18n";
 import type { WorkspaceView } from "@/lib/types";
 
@@ -43,9 +44,10 @@ export type SidebarProps = {
   onArchive: (id: string, archived: boolean) => void | Promise<void>;
   onDelete: (id: string) => void | Promise<void>;
   onOpenModelSettings?: () => void;
+  onOpenThread?: (workspaceId: string, threadId: string) => void;
 };
 
-export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate, onArchive, onDelete, onOpenModelSettings }: SidebarProps) {
+export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate, onArchive, onDelete, onOpenModelSettings, onOpenThread }: SidebarProps) {
   const t = useT();
   const [locale, setLocale] = useLocale();
   const dark = useSyncExternalStore(subscribeTheme, themeSnapshot, () => false);
@@ -196,8 +198,8 @@ export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate,
   function row(w: WorkspaceView) {
     const selected = w.id === selectedId;
     return (
+      <div className="ws-wrap" key={w.id}>
       <button
-        key={w.id}
         type="button"
         className={`ws${selected ? " on" : ""}${w.archived ? " archived" : ""}`}
         aria-current={selected ? "page" : undefined}
@@ -221,6 +223,8 @@ export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate,
           </span>
         )}
       </button>
+      {(w.attention ?? 0) > 0 && <button type="button" className="attention-badge" title={t("sidebar.attention")} aria-label={t("sidebar.attention")} onClick={async (e) => { e.stopPropagation(); const next = await nextAttention(w.id); if (next) onOpenThread?.(w.id, next.threadId); }}>{w.attention}</button>}
+      </div>
     );
   }
 

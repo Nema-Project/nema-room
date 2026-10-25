@@ -7,8 +7,10 @@ import { EntryDetail } from "@/components/EntryDetail";
 import { KnowledgePanel } from "@/components/KnowledgePanel";
 import { ModelSettings } from "@/components/ModelSettings";
 import { Sidebar } from "@/components/Sidebar";
+import { ThreadWindows, type ThreadWindowsHandle } from "@/components/ThreadWindows";
 import { WorkspaceSettings } from "@/components/WorkspaceSettings";
-import { HubError, archiveWorkspace, createWorkspace, deleteWorkspace, getDaemonStatus, listWorkspaces } from "@/lib/hub";
+import { HubError, archiveWorkspace, createWorkspace, deleteWorkspace, getDaemonStatus, getMessage, listWorkspaces } from "@/lib/hub";
+import { openThread } from "@/lib/threads";
 import { useT } from "@/lib/i18n";
 import type { HubEvent, Workspace, WorkspaceView } from "@/lib/types";
 import { useHubEvents } from "@/lib/useHubEvents";
@@ -73,6 +75,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   const t = useT();
   const router = useRouter();
   const chat = useRef<ChatHandle>(null);
+  const threadWindows = useRef<ThreadWindowsHandle>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceView[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
@@ -80,7 +83,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   const [hubFault, setHubFault] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
-  const [openState, setOpenState] = useState<{ roomId: string | null; entryId: string | null }>({ roomId: null, entryId: null });
+  const [openState, setOpenState] = useState<{ roomId: string | null; entryId: string | null; tab?: "content" | "history" }>({ roomId: null, entryId: null });
   const [knowWidth, setKnowWidth] = useState<number | null>(null);
   const [knowCollapsed, setKnowCollapsed] = useState(false);
   const [sideWidth, setSideWidth] = useState<number | null>(null);
@@ -148,6 +151,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   const roomId = current?.id ?? null;
   const openEntry = openState.roomId === roomId ? openState.entryId : null;
   const setOpenEntry = useCallback((entryId: string | null) => setOpenState({ roomId, entryId }), [roomId]);
+  const setOpenHistory = useCallback((entryId: string) => setOpenState({ roomId, entryId, tab: "history" }), [roomId]);
   useEffect(() => {
     openEntryRef.current = openEntry;
   }, [openEntry]);
@@ -174,15 +178,18 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
           // The open entry is not touched: its content changes arrive as knowledge.changed, and bumping the
           // detail here would show a false "entry changed elsewhere" notice while the user edits it.
           setPanelTick((n) => n + 1);
+        } else if (e.type === "thread.updated") {
+          void refresh();
         }
         chat.current?.handleEvent(e);
+        threadWindows.current?.handleEvent(e);
       },
       [refresh],
     ),
     resync,
   );
 
-  function select(id: string) {
+  const select = useCallback((id: string) => {
     if (id !== current?.id) router.push(`/w/${encodeURIComponent(id)}`);
     setSelectedId(id);
     setSettingsOpen(false);
@@ -191,7 +198,27 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
     } catch {
       /* storage unavailable */
     }
-  }
+  }, [current?.id, router]);
+
+  const openTargetThread = useCallback((workspaceId: string, threadId: string, messageId?: string) => {
+    if (workspaceId !== current?.id) select(workspaceId);
+    openThread(workspaceId, threadId, threadWindows.current ?? { open: () => undefined }, messageId);
+  }, [current?.id, select]);
+  const jumpToMessage = useCallback(async (id: string) => {
+    if (!current) return;
+    if (document.getElementById(`msg-${id}`)) {
+      chat.current?.scrollToMessage(id);
+      return;
+    }
+    try {
+      const message = await getMessage(current.id, id);
+      if (message.threadId) openTargetThread(message.workspaceId, message.threadId);
+      else chat.current?.scrollToMessage(id);
+    } catch {
+      // Existing shell callers may ask to scroll an already mounted message without resolver data.
+      chat.current?.scrollToMessage(id);
+    }
+  }, [current, openTargetThread]);
 
   async function create(name: string) {
     const ws = await createWorkspace(name); // errors surface in the sidebar form
@@ -339,7 +366,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
       style={frameStyle}
     >
       <div className={sideCollapsed ? "side-col is-collapsed" : "side-col"}>
-        <Sidebar workspaces={workspaces ?? []} selectedId={current?.id ?? null} connected={connected} onSelect={select} onCreate={create} onArchive={changeArchive} onDelete={remove} onOpenModelSettings={() => { setSettingsOpen(false); setModelSettingsOpen(true); }} />
+        <Sidebar workspaces={workspaces ?? []} selectedId={current?.id ?? null} connected={connected} onSelect={select} onCreate={create} onArchive={changeArchive} onDelete={remove} onOpenThread={openTargetThread} onOpenModelSettings={() => { setSettingsOpen(false); setModelSettingsOpen(true); }} />
         <button
           type="button"
           className={dragging === "side" ? "col-resize side-resize is-dragging" : "col-resize side-resize"}
@@ -374,7 +401,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
                 {t("common.settings")}
               </button>
             </div>
-            <Chat key={current.id} ref={chat} workspaceId={current.id} connected={connected} onOpenEntry={setOpenEntry} />
+            <Chat key={current.id} ref={chat} workspaceId={current.id} connected={connected} onOpenEntry={setOpenEntry} onOpenHistory={setOpenHistory} onOpenThread={(tid, mid) => openTargetThread(current.id, tid, mid)} />
           </>
         ) : (
           <div className="placeholder">{workspaces === null && !error ? t("common.loading") : t("main.empty")}</div>
@@ -416,13 +443,14 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
         <aside className="know">
           {current && openEntry ? (
             <EntryDetail
-              key={`${current.id}/${openEntry}`}
+              key={`${current.id}/${openEntry}/${openState.tab ?? "content"}`}
               workspaceId={current.id}
               entryId={openEntry}
               refreshKey={detailTick}
               onClose={() => setOpenEntry(null)}
               onOpenEntry={setOpenEntry}
-              onJumpToMessage={(id) => chat.current?.scrollToMessage(id)}
+              onJumpToMessage={(id) => void jumpToMessage(id)}
+              initialTab={openState.tab}
             />
           ) : current ? (
             <KnowledgePanel key={current.id} workspaceId={current.id} knowledgeLanguage={current.knowledgeLanguage} refreshKey={panelTick} onOpen={setOpenEntry} />
@@ -432,6 +460,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
         </aside>
         )}
       </div>
+      <ThreadWindows ref={threadWindows} />
     </div>
   );
 }

@@ -4,9 +4,9 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffec
 import { Composer } from "@/components/Composer";
 import { AgentAvatar, MessageItem, messageRoleLabel } from "@/components/MessageItem";
 import { formatDay, formatTime } from "@/lib/format";
-import { getActiveTask, listMessages, postMessage, searchMessages } from "@/lib/hub";
+import { createThread, getActiveTask, getMessage, listMessages, listThreads, postMessage, searchMessages } from "@/lib/hub";
 import { useLocale, useT } from "@/lib/i18n";
-import type { HubEvent, Message } from "@/lib/types";
+import type { HubEvent, Message, Thread } from "@/lib/types";
 
 export type ChatHandle = {
   scrollToMessage: (messageId: string) => void;
@@ -21,6 +21,8 @@ type Props = {
   connected?: boolean;
   /** Opens an entry in the knowledge column (a report's entry ids). */
   onOpenEntry?: (entryId: string) => void;
+  onOpenThread?: (threadId: string, messageId?: string) => void;
+  onOpenHistory?: (entryId: string) => void;
 };
 
 function Snippet({ content, q }: { content: string; q: string }) {
@@ -47,16 +49,11 @@ function merge(list: Message[], m: Message): Message[] {
   return list.some((x) => x.id === m.id) ? list : [...list, m];
 }
 
-function userRepliesAfter(messages: Message[], messageId: string): string[] {
-  const start = messages.findIndex((m) => m.id === messageId);
-  if (start < 0) return [];
-  return messages.slice(start + 1).filter((m) => m.role === "user").map((m) => m.content);
-}
-
-export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, connected = true, onOpenEntry }, ref) {
+export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, connected = true, onOpenEntry, onOpenThread, onOpenHistory }, ref) {
   const t = useT();
   const [locale] = useLocale();
   const [messages, setMessages] = useState<Message[]>([]);
+  const [threads, setThreads] = useState<Map<string, Thread>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [runningTask, setRunningTask] = useState<string | null>(null);
   const [progress, setProgress] = useState<string>("");
@@ -93,9 +90,12 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
   }, [workspaceId]);
 
   useEffect(() => {
+    // Fetches seed component state from the hub after mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
     void loadActive();
-  }, [load, loadActive]);
+    void listThreads(workspaceId).then((items) => setThreads(new Map(items.map((thread) => [thread.id, thread]))), () => undefined);
+  }, [load, loadActive, workspaceId]);
 
   const scrollToMessage = (id: string) => {
     document.getElementById(`msg-${id}`)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
@@ -122,6 +122,8 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
             setRunningTask(e.task.id);
             setProgress("");
           } else setRunningTask((cur) => (cur === e.task.id ? null : cur));
+        } else if (e.type === "thread.updated" && e.thread.workspaceId === workspaceId) {
+          setThreads((current) => new Map(current).set(e.thread.id, e.thread));
         } else if (e.type === "task.progress") {
           setRunningTask((cur) => {
             if (cur === e.taskId) setProgress(e.text);
@@ -157,7 +159,23 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
     setHits(await searchMessages(workspaceId, term));
   }
 
-  let lastDay = "";
+  async function jumpToMessage(id: string) {
+    if (document.getElementById(`msg-${id}`)) { scrollToMessage(id); return; }
+    try {
+      const message = await getMessage(workspaceId, id);
+      if (message.threadId) onOpenThread?.(message.threadId, message.id);
+      else scrollToMessage(id);
+    } catch { /* a deleted source can no longer be opened */ }
+  }
+
+  async function createThreadFromComposer(content: string) {
+    const result = await createThread(workspaceId, content, quote?.id);
+    setMessages((cur) => merge(cur, result.message));
+    setThreads((cur) => new Map(cur).set(result.thread.id, result.thread));
+    setQuote(null);
+    onOpenThread?.(result.thread.id);
+  }
+
   return (
     <>
       {!connected && (
@@ -181,7 +199,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
             className="search-hit"
             onClick={() => {
               if (document.getElementById(`msg-${hit.id}`)) scrollToMessage(hit.id);
-              else setOpenHit((cur) => (cur === hit.id ? null : hit.id));
+              else { setOpenHit((cur) => (cur === hit.id ? null : hit.id)); void jumpToMessage(hit.id); }
             }}
           >
             <span>{messageRoleLabel(t, hit.role)}</span>
@@ -192,22 +210,21 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
         ))}
       </div>
       <div className="stream" ref={stream}>
-        {messages.map((m) => {
+        {messages.map((m, index) => {
           const key = dayKey(m.createdAt);
-          const divider = key !== lastDay;
-          lastDay = key;
+          const divider = index === 0 || key !== dayKey(messages[index - 1]!.createdAt);
           return (
             <div key={m.id}>
               {divider && <div className="day">{formatDay(new Date(m.createdAt), locale)}</div>}
               <MessageItem
                 message={m}
                 onOpenEntry={onOpenEntry}
-                repliesAfter={userRepliesAfter(messages, m.id)}
-                onAnswer={(questionId, content) => send(`回答 ${questionId}：\n${content}`)}
                 onQuote={setQuote}
                 onEdited={(message) => setMessages((l) => l.map((x) => (x.id === message.id ? message : x)))}
-                onJump={scrollToMessage}
+                onJump={jumpToMessage}
+                onOpenHistory={onOpenHistory}
               />
+              {threads.has(m.id) && <button type="button" className="thread-row" onClick={() => onOpenThread?.(m.id)}><b>{threads.get(m.id)!.title}</b><span>{t("thread.replyCount", { n: threads.get(m.id)!.replyCount })}</span>{threads.get(m.id)!.unread > 0 && <strong>{threads.get(m.id)!.unread}</strong>}<time>{threads.get(m.id)!.lastReplyAt ? formatTime(new Date(threads.get(m.id)!.lastReplyAt!), locale) : ""}</time></button>}
             </div>
           );
         })}
@@ -229,7 +246,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
           {t("common.error", { message: error })}
         </p>
       )}
-      <Composer onSend={(content) => send(content, quote)} quote={quote} onClearQuote={() => setQuote(null)} />
+      <Composer onSend={(content) => send(content, quote)} onThread={createThreadFromComposer} quote={quote} onClearQuote={() => setQuote(null)} />
     </>
   );
 });

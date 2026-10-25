@@ -336,5 +336,13 @@
   "model.error.mutation_conflict": "另一个身份验证更改仍在完成中，请稍后重试。",
   "model.error.probe_not_supported": "此模式不支持连接测试。",
   "model.error.service_unavailable": "设置服务不可用。请启动或重新连接本地 Nema Room 服务，然后重试。",
-  "model.error.invalidBaseUrl": "请输入 HTTPS URL 或 localhost URL。"
+  "model.error.invalidBaseUrl": "请输入 HTTPS URL 或 localhost URL。",
+  "sidebar.attention": "打开下一个未读线程",
+  "thread.replies": "{n} 条回复",
+  "thread.replyCount": "{n} 条回复",
+  "thread.anchor": "原始消息",
+  "chip.withdraw": "撤回",
+  "chip.history": "历史",
+  "cmd.thread": "打开追问线程",
+  "chip.withdrawFailed": "无法撤回此条目。"
 }

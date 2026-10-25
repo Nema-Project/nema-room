@@ -8,6 +8,8 @@ import type { WorkspaceView } from "@/lib/types";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
 vi.mock("@/lib/hub", () => ({
   listMessages: vi.fn().mockResolvedValue([]),
+  listThreads: vi.fn().mockResolvedValue([]),
+  getActiveTask: vi.fn().mockResolvedValue({ running: null }),
   postMessage: vi.fn(),
   listWorkspaces: vi.fn(),
   getDaemonStatus: vi.fn(),

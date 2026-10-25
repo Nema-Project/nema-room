@@ -16,10 +16,14 @@ export function Composer({
   onSend,
   quote,
   onClearQuote,
+  onThread,
+  threadMode = false,
 }: {
   onSend: (content: string) => Promise<void>;
   quote?: { role: Message["role"]; content: string } | null;
   onClearQuote?: () => void;
+  onThread?: (content: string) => Promise<void>;
+  threadMode?: boolean;
 }) {
   const t = useT();
   const [value, setValue] = useState("");
@@ -32,7 +36,7 @@ export function Composer({
   const [active, setActive] = useState(0);
   const [closedFor, setClosedFor] = useState<string | null>(null);
   const token = slashToken(value, cursor);
-  const matches = token ? matchingCommands(token.query) : [];
+  const matches = token ? matchingCommands(token.query).filter((item) => !threadMode || item.id !== "thread") : [];
   const tokenKey = token ? `${token.start}:${token.query}` : "";
   const menuOpen = token !== null && matches.length > 0 && closedFor !== tokenKey;
   const highlighted = matches.length === 0 ? 0 : active % matches.length;
@@ -57,7 +61,9 @@ export function Composer({
     setSending(true);
     setError(null);
     try {
-      await onSend(content);
+      const threadText = content.match(/^\/thread\s+([\s\S]+)$/);
+      if (threadText && onThread) await onThread(threadText[1]!.trim());
+      else await onSend(content);
       // Text typed while the send was in flight stays: drop only what was sent.
       setValue((cur) => (cur === sent ? "" : cur.startsWith(sent) ? cur.slice(sent.length).trimStart() : cur));
     } catch (e) {

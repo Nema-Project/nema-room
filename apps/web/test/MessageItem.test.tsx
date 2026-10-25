@@ -6,7 +6,7 @@ import * as hub from "@/lib/hub";
 import { I18nProvider } from "@/lib/i18n";
 import type { Message } from "@/lib/types";
 
-vi.mock("@/lib/hub", () => ({ getEntry: vi.fn() }));
+vi.mock("@/lib/hub", () => ({ getEntry: vi.fn(), withdrawEntry: vi.fn(), editMessage: vi.fn(), listMessageVersions: vi.fn() }));
 
 const msg = (p: Partial<Message>): Message => ({
   id: "m1",
@@ -46,6 +46,13 @@ describe("MessageItem", () => {
     expect(card.textContent).toContain("Draft");
   });
 
+  it("withdraw on an add chip calls withdraw", async () => {
+    vi.mocked(hub.getEntry).mockResolvedValue({ id: "R-7", status: "active" } as never);
+    vi.mocked(hub.withdrawEntry).mockResolvedValue({ id: "R-7", status: "dropped" } as never);
+    mount(msg({ meta: { changes: [{ entryId: "R-7", kind: "requirement", title: "Feature", op: "add" }], askedQuestion: null } }));
+    await userEvent.click(await screen.findByRole("button", { name: "chip.withdraw" }));
+    expect(hub.withdrawEntry).toHaveBeenCalledWith("w1", "R-7");
+  });
   it("shows change chips with kind and operation", () => {
     mount(
       msg({

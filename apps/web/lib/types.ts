@@ -11,7 +11,7 @@ export type Workspace = {
   createdAt: string;
   archived: boolean;
 };
-export type WorkspaceView = Workspace & { openQuestions: number };
+export type WorkspaceView = Workspace & { openQuestions: number; attention?: number };
 
 export type Message = {
   id: string;

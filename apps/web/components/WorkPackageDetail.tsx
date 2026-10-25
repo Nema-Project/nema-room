@@ -16,6 +16,7 @@ type Props = {
   /** Opens another entry in the knowledge column; requirements and `[R-3]`-style markers link to it. */
   onOpenEntry?: (entryId: string) => void;
   refreshKey?: number;
+  initialTab?: "overview" | "history";
 };
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -29,11 +30,11 @@ export function TaskTag({ task }: { task: WpTask }) {
   return <span className={cls} data-testid="task-tag">{label}</span>;
 }
 
-export function WorkPackageDetail({ workspaceId, entryId, onClose, onJumpToMessage, onOpenEntry, refreshKey = 0 }: Props) {
+export function WorkPackageDetail({ workspaceId, entryId, onClose, onJumpToMessage, onOpenEntry, refreshKey = 0, initialTab = "overview" }: Props) {
   const t = useT();
   const [wp, setWp] = useState<WorkPackage | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [editing, setEditing] = useState<"spec" | "plan" | null>(null);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);

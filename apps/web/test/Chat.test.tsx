@@ -15,6 +15,9 @@ vi.mock("@/lib/hub", () => ({
   editMessage: vi.fn(),
   listMessageVersions: vi.fn(),
   searchMessages: vi.fn(),
+  listThreads: vi.fn(),
+  createThread: vi.fn(),
+  getMessage: vi.fn(),
   HubError: class HubError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -32,6 +35,7 @@ const m = (id: string, content: string, role: Message["role"] = "user"): Message
 beforeEach(() => {
   vi.mocked(hub.listMessages).mockResolvedValue([m("a", "hello")]);
   vi.mocked(hub.getActiveTask).mockResolvedValue({ running: null });
+  vi.mocked(hub.listThreads).mockResolvedValue([]);
 });
 
 const mount = async (connected: boolean) => {
@@ -46,6 +50,34 @@ const mount = async (connected: boolean) => {
 };
 
 describe("Chat", () => {
+  it("renders a thread row with unread count under the anchor and opens it", async () => {
+    const onOpenThread = vi.fn();
+    vi.mocked(hub.listMessages).mockResolvedValue([m("anchor", "question", "agent")]);
+    vi.mocked(hub.listThreads).mockResolvedValue([{ id: "anchor", workspaceId: "w1", title: "Follow up", openedBy: "user", replyCount: 3, unread: 2, lastReplyAt: "2026-10-21T14:00:00Z", createdAt: "2026-10-21T13:00:00Z" }]);
+    render(<I18nProvider><Chat workspaceId="w1" onOpenThread={onOpenThread} /></I18nProvider>);
+    const row = await screen.findByRole("button", { name: /Follow up/ });
+    expect(row.textContent).toContain("2");
+    await userEvent.click(row);
+    expect(onOpenThread).toHaveBeenCalledWith("anchor");
+  });
+  it("has no answer box in the main chat", async () => {
+    vi.mocked(hub.listMessages).mockResolvedValue([{ ...m("q", "question", "agent"), meta: { changes: [], askedQuestion: { id: "Q-1", title: "Need answer", body: "Details" } } }]);
+    await mount(true);
+    expect(await screen.findByText("Question · Q-1")).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Answer Q-1" })).toBeNull();
+  });
+  it("/thread text creates a thread and opens it", async () => {
+    const thread = { id: "new-anchor", workspaceId: "w1", title: "Need more context", openedBy: "user" as const, replyCount: 0, unread: 0, lastReplyAt: null, createdAt: "2026-10-21T00:00:00Z" };
+    vi.mocked(hub.createThread).mockResolvedValue({ message: m("new-anchor", "Need more context"), thread, task: { id: "task", workspaceId: "w1", messageId: "new-anchor", status: "queued", error: null } });
+    const onOpenThread = vi.fn();
+    render(<I18nProvider><Chat workspaceId="w1" onOpenThread={onOpenThread} /></I18nProvider>);
+    const box = screen.getAllByRole("textbox").at(-1)!;
+    await userEvent.type(box, "/thr");
+    await userEvent.click(screen.getByRole("option", { name: /thread/i }));
+    await userEvent.type(box, "Need more context{Shift>}{Enter}{/Shift}");
+    expect(hub.createThread).toHaveBeenCalledWith("w1", "Need more context", undefined);
+    expect(onOpenThread).toHaveBeenCalledWith("new-anchor");
+  });
   it("shows the offline banner only when disconnected", async () => {
     await mount(false);
     expect(screen.getByRole("status").textContent).toContain("nema daemon");
@@ -115,7 +147,7 @@ describe("Chat", () => {
     await act(async () => resolve({ running }));
     expect(screen.queryByText("Organizing")).toBeNull();
   });
-  it("an older open follow-up can be answered by name", async () => {
+  it("renders question cards without answer boxes in the main chat", async () => {
     const asked = (id: string, qid: string): Message => ({
       ...m(id, "asked", "agent"),
       meta: { changes: [], askedQuestion: { id: qid, title: "进度？", body: "现在到哪了" } },
@@ -127,16 +159,11 @@ describe("Chat", () => {
       task: { id: "t2", workspaceId: "w1", messageId: "u2", status: "queued", error: null },
     }));
     await mount(true);
-    const box = await screen.findByRole("textbox", { name: "Answer Q-1" });
-    expect(screen.getByRole("textbox", { name: "Answer Q-2" })).toBeTruthy();
-    expect(screen.queryByRole("textbox", { name: "Answer Q-9" })).toBeNull();
-    await userEvent.type(box, "到里程碑二");
-    await userEvent.click(screen.getByRole("button", { name: "Answer Q-1" }));
-    expect(hub.postMessage).toHaveBeenCalledWith("w1", "回答 Q-1：\n到里程碑二");
+    expect(await screen.findByText("Question · Q-1")).toBeTruthy();
+    expect(screen.getByText("Question · Q-2")).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "Answer Q-1" })).toBeNull();
-    expect(screen.getByRole("textbox", { name: "Answer Q-2" })).toBeTruthy();
   });
-  it("a follow-up that already has a reply does not keep its answer box", async () => {
+  it("does not render answer boxes for existing follow-ups", async () => {
     const asked = (id: string, qid: string): Message => ({
       ...m(id, "asked", "agent"),
       meta: { changes: [], askedQuestion: { id: qid, title: "进度？", body: "现在到哪了" } },
@@ -149,7 +176,7 @@ describe("Chat", () => {
     ]);
     await mount(true);
     expect(screen.queryByRole("textbox", { name: "Answer Q-1" })).toBeNull();
-    expect(await screen.findByRole("textbox", { name: "Answer Q-2" })).toBeTruthy();
+    expect(await screen.findByText("Question · Q-2")).toBeTruthy();
   });
   it("a stale {running: null} response does not hide a task started via SSE", async () => {
     let resolve!: (v: { running: typeof running | null }) => void;
