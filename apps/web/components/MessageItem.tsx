@@ -166,6 +166,7 @@ function UserMessage({
   onJump?: (messageId: string) => void;
 }) {
   const t = useT();
+  const [locale] = useLocale();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
   const [editError, setEditError] = useState<string | null>(null);
@@ -183,6 +184,8 @@ function UserMessage({
       const { message: next } = await editMessage(message.workspaceId, message.id, draft);
       onEdited?.(next);
       setEditing(false);
+      setVersions(null);
+      setVersionsOpen(false);
     } catch (e) {
       setEditError(e instanceof HubError && e.status === 409 && e.message === "message is still being processed" ? t("chat.editBusy") : e instanceof Error ? e.message : String(e));
     }
@@ -220,7 +223,12 @@ function UserMessage({
         {versionsOpen && versions && (
           <div className="versions">
             <div>{t("chat.versions")}</div>
-            {versions.map((v) => <div key={v.version}>{v.content}</div>)}
+            {versions.map((v) => (
+              <div key={v.version}>
+                <time>{formatTime(new Date(v.createdAt), locale)}</time>
+                {v.content}
+              </div>
+            ))}
           </div>
         )}
       </div>

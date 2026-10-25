@@ -168,6 +168,7 @@ describe("Chat", () => {
       expect(hub.listMessageVersions).toHaveBeenCalledWith("w1", "a");
       expect(await screen.findByText("first draft")).toBeTruthy();
       expect(screen.getByText("更早的版本")).toBeTruthy();
+      expect(document.querySelector(".versions time")?.textContent).toMatch(/\d{2}:\d{2}/);
 
       await userEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]!);
       const box = screen.getByDisplayValue("hello");
@@ -176,6 +177,12 @@ describe("Chat", () => {
       await userEvent.click(screen.getByRole("button", { name: "保存" }));
       expect(hub.editMessage).toHaveBeenCalledWith("w1", "a", "revised");
       expect(screen.getByText("revised")).toBeTruthy();
+      vi.mocked(hub.listMessageVersions).mockResolvedValue([
+        { version: 1, content: "first draft", createdAt: "2026-10-21T00:00:00Z" },
+        { version: 2, content: "kept hello", createdAt: "2026-10-22T00:00:00Z" },
+      ]);
+      await userEvent.click(screen.getAllByRole("button", { name: "已编辑" })[0]!);
+      expect(await screen.findByText("kept hello")).toBeTruthy();
 
       vi.mocked(hub.editMessage).mockRejectedValue(new hub.HubError(409, "message is still being processed"));
       await userEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]!);
