@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { access, cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { createWriteStream, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -65,7 +65,12 @@ function waitForChildExit(child, timeoutMs = 10_000) {
 }
 
 async function startDesktop(executable, cwd, env) {
-  const child = spawn(executable, [], { cwd, env, stdio: 'ignore', windowsHide: false, detached: true });
+  const logPath = path.join(env.NEMA_DESKTOP_TEST_USER_DATA, 'smoke-electron.log');
+  const log = createWriteStream(logPath, { flags: 'a' });
+  const child = spawn(executable, [], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: false, detached: true });
+  child.stdout?.pipe(log, { end: false });
+  child.stderr?.pipe(log, { end: false });
+  child.smokeLogPath = logPath;
   let spawnError;
   child.once('error', (error) => { spawnError = error; });
   await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
@@ -216,6 +221,7 @@ async function smoke(args) {
     LANG: 'en_US.UTF-8',
     NEMA_DESKTOP_TEST_HOME: home,
     NEMA_DESKTOP_TEST_USER_DATA: profile,
+    NEMA_DESKTOP_DISABLE_GPU: '1',
   };
   const fake = await startFakeProvider();
   let appProcess;
@@ -297,6 +303,10 @@ async function smoke(args) {
       if (child?.exitCode === null && child?.signalCode === null) await stopOwnedMain(child).catch(() => {});
     }
     if (runtimeApi && instanceId) await runtimeApi.shutdownLocalRuntime({ home, assetsDir: payload, expectedInstanceId: instanceId, timeoutMs: 45_000 }).catch(() => {});
+    const logPath = appProcess?.smokeLogPath ?? path.join(profile, 'smoke-electron.log');
+    const tail = await readFile(logPath, 'utf8').catch(() => '');
+    const exited = appProcess?.exitCode != null ? ` (desktop exit ${appProcess.exitCode})` : '';
+    if (error instanceof Error && (exited || tail.trim())) error.message += `${exited}${tail.trim() ? `\nElectron log:\n${tail.slice(-2000)}` : ''}`;
     throw error;
   } finally {
     fake.server.closeAllConnections();

@@ -7,6 +7,8 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { createDesktopLifecycle } = require('./lifecycle.cjs');
 
+if (process.env.NEMA_DESKTOP_DISABLE_GPU === '1') app.disableHardwareAcceleration();
+
 const testProfile = process.env.NEMA_DESKTOP_TEST_USER_DATA;
 if (testProfile) {
   if (!path.isAbsolute(testProfile)) throw new Error('NEMA_DESKTOP_TEST_USER_DATA must be an absolute test profile path');
