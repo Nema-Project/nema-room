@@ -219,14 +219,6 @@ The root typecheck excludes web; build it separately. Before upgrading, back up 
 
 See [.env.example](.env.example) for ports and directories. The CLI does not automatically load the root `.env`: export `NEMA_DATA_DIR` or pass `--token-file` to `daemon` / `doctor` for a custom data directory; also pass `--hub` for a different hub port. Changing `NEXT_PUBLIC_HUB_URL` requires rebuilding web.
 
-## Brand and icon
-
-The full brand name is **Nema Room**. The selected mark is **01 / ROOM / N** from the original concept board: an open space and negative-space N, matching the UI's monochrome geometry and warm gray palette.
-
-[Brand assets and usage (Chinese)](docs/design/brand/README.md) · [Icon PNG](docs/design/brand/nema-room-icon-01.png) · [Design spec (Chinese)](docs/superpowers/specs/2026-10-25-nema-room-brand-design.md) · [Integration plan](docs/superpowers/plans/2026-10-25-nema-room-brand.md)
-
-The icon is wired into desktop packaging, windows, the tray, and the browser favicon. See the brand asset notes for native verification status.
-
 ## Documentation and feedback
 
 - [Detailed command and implementation reference (Chinese)](docs/reference.zh-CN.md)
