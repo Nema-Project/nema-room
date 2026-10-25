@@ -1,14 +1,14 @@
 name: CI
 
 # Branch pushes are covered by their pull request; only main runs on push.
-# Root-level Markdown and docs/ do not affect any build or test. Markdown
+# Root-level Markdown, docs/ and the site/ landing page do not affect any build or test. Markdown
 # elsewhere (skills, vendor rules) is product content and still triggers CI.
 on:
   push:
     branches: [main]
-    paths-ignore: ['*.md', 'docs/**']
+    paths-ignore: ['*.md', 'docs/**', 'site/**', '.github/workflows/pages.yml']
   pull_request:
-    paths-ignore: ['*.md', 'docs/**']
+    paths-ignore: ['*.md', 'docs/**', 'site/**', '.github/workflows/pages.yml']
 
 permissions:
   contents: read
