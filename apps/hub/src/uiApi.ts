@@ -9,7 +9,7 @@ import type { EventBus, HubEvent } from "./events.js";
 import { indexEntry, openQuestionCounts, timeline, withDiagramStatus } from "./entryIndex.js";
 import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, listMessages, postSystemTask, postUserMessage } from "./messages.js";
 import { vendoredArchify, type Archify } from "./diagrams.js";
-import { PluginError, daemonHttpStatus, pluginsForUi, setPluginState, workspacePluginState } from "./plugins.js";
+import { PluginError, daemonHttpStatus, listExtensions, pluginsForUi, setPluginState, workspacePluginState } from "./plugins.js";
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
 import { RepoError, bindRepo, getRepo, listRepos, syncBoundRepos, unbindRepo, updateRepo } from "./repos.js";
 import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
@@ -114,6 +114,15 @@ export function uiRoutes(deps: UiDeps): Hono {
   app.get("/plugins", async (c) => {
     try {
       return c.json(pluginsForUi(await deps.daemon.call("plugins.status", {})));
+    } catch (error) {
+      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      throw error;
+    }
+  });
+
+  app.get("/extensions", async (c) => {
+    try {
+      return c.json(await listExtensions(deps.daemon));
     } catch (error) {
       if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
       throw error;

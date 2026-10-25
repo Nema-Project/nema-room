@@ -4,6 +4,8 @@
 
 ### Added
 
+- The plugins page reads extension records and shows where an item came from, whether it is installed, and whether it is in use as separate lines. A missing packaged Graphify runtime says it can be repaired from the page.
+
 - GitHub issue templates, a pull request template, and contributing, security, and conduct guides. Vulnerability reports go through GitHub private advisories; public issues ask for the OS, Node/Docker versions, how Nema Room is run, and redacted errors.
 
 - A Chinese, English, and Japanese terminal setup wizard (`node scripts/setup.mjs`), read-only environment checks, and a portable `npm run up` entry point.

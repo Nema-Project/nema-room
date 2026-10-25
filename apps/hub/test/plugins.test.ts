@@ -319,6 +319,32 @@ describe("workspace plugins", () => {
     expect(saved.find((row) => row.id === "github")?.loggedIn).toBe(true);
   });
 
+  test("GET /api/extensions returns daemon records, and bundled seeds when the daemon is down", async () => {
+    const custom = [{ id: "pending", installState: "installing", provision: "managed", error: null }];
+    daemonCall = async (method) => (method === "extensions.list" ? custom : {});
+    const up = await uiReq("GET", "/api/extensions");
+    expect(up.status).toBe(200);
+    expect(daemonCalls.at(-1)).toEqual({ method: "extensions.list", params: {} });
+    expect(await up.json()).toEqual(custom);
+
+    daemonCall = async () => {
+      throw new DaemonRpcError("daemon 未连接");
+    };
+    const down = await uiReq("GET", "/api/extensions");
+    expect(down.status).toBe(200);
+    const seeds = (await down.json()) as { id: string; error: string | null; loggedIn?: boolean }[];
+    expect(seeds.map((row) => row.id)).toEqual(["code", "diagram", "superpowers", "grill", "github"]);
+    expect(seeds.find((row) => row.id === "code")?.error).toBe("bundled-runtime-missing");
+    expect(seeds.find((row) => row.id === "github")).not.toHaveProperty("loggedIn");
+
+    daemonCall = async () => {
+      throw new DaemonRpcError("graphify 缺失");
+    };
+    const failed = await uiReq("GET", "/api/extensions");
+    expect(failed.status).toBe(502);
+    expect(((await failed.json()) as { error: string }).error).toBe("graphify 缺失");
+  });
+
   test("plugin install status is 503 when the daemon is offline and 502 for other daemon errors", async () => {
     const offline = await uiReq("GET", "/api/plugins");
     expect(offline.status).toBe(503);

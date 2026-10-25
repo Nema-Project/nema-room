@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { DEFAULT_GRILL_SETTINGS, GRILL_EXTRA_RULES_MAX, PLUGINS, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
+import { DEFAULT_GRILL_SETTINGS, GRILL_EXTRA_RULES_MAX, PLUGINS, bundledExtensions, type ExtensionRecord, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
+import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import { githubTargets } from "./githubScope.js";
 import { listRepos, type Repo } from "./repos.js";
@@ -199,6 +200,18 @@ export function pluginsForUi(status: unknown): Array<PluginManifest & InstallSta
     const row = installed.get(plugin.id);
     return { ...plugin, ...(row ?? { installed: false, detail: "" }) };
   });
+}
+
+/** Daemon records when it is up. Bundled seeds when it is down, so the page can still open. */
+export async function listExtensions(daemon: DaemonRpc): Promise<ExtensionRecord[]> {
+  try {
+    const rows = await daemon.call("extensions.list", {});
+    if (!Array.isArray(rows)) throw new DaemonRpcError("extensions.list returned an invalid result");
+    return rows as ExtensionRecord[];
+  } catch (error) {
+    if (error instanceof DaemonRpcError && DAEMON_OFFLINE.has(error.message)) return bundledExtensions();
+    throw error;
+  }
 }
 
 /** One row per call that passed the "function is enabled" check, success or failure. */

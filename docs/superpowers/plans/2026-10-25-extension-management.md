@@ -87,9 +87,9 @@ Ids match `^[a-z][a-z0-9-]{0,63}$`. Records other than the bundled seeds live in
 - Consumes: `ExtensionRecord`
 - Produces: page title "扩展管理" / "Extensions" / "拡張管理", and separate lines for provision, install, and use
 
-- [ ] **Step 1: Fail the page test on the old single "Installed …detail" line**
-- [ ] **Step 2: Render the three statuses. Map `bundled-runtime-missing` to translated copy that does not mention uv.**
-- [ ] **Step 3: Keep GitHub free of connection and token text**
+- [x] **Step 1: Fail the page test on the old single "Installed …detail" line**
+- [x] **Step 2: Render the three statuses. Map `bundled-runtime-missing` to translated copy that does not mention uv.**
+- [x] **Step 3: Keep GitHub free of connection and token text**
 
 ### Task 4: Managed install and uninstall operations
 
@@ -102,3 +102,7 @@ Ids match `^[a-z][a-z0-9-]{0,63}$`. Records other than the bundled seeds live in
 - Produces: `installManaged` and `removeManaged` as the only file operations. A failed install leaves the previous installed record. Cancelling an `installing` record returns it to `absent` without deleting unrelated directories.
 
 This task does not download from GitHub yet. It accepts a directory the caller already staged.
+
+- [x] **Step 1: Fail tests for a missing stage, a cancelled install, and activating a staged directory**
+- [x] **Step 2: Implement `installManaged` and `cancelInstall`**
+- [x] **Step 3: Run the store tests and confirm they pass**
