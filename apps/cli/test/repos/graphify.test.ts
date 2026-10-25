@@ -308,7 +308,8 @@ test("managed incremental update fetches blob data through its owned helper scop
   expect(readFileSync(join(snapshot, "src", "picked.txt"), "utf8")).toBe("from committed blob\n");
   expect(calls.some(({ args }) => args.includes("ls-tree"))).toBe(true);
   expect(calls.some(({ args }) => args.includes("cat-file"))).toBe(true);
-  expect(calls.some(({ args }) => args.includes(bin))).toBe(true);
+  // Where graphify is a Node script (Windows) it is launched as `node <bin>`; elsewhere it is the command itself.
+  expect(calls.some(({ command, args }) => command === bin || args.includes(bin))).toBe(true);
   await scope.drain();
 });
 

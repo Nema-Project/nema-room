@@ -262,9 +262,9 @@ setInterval(() => {}, 30000);
   expect(winner.done).toBe(true);
   if (!winner.done) return;
   expect(existsSync(pidFile)).toBe(true);
-  // Windows has no SIGTERM to ignore: the kill is immediate, so the child is already gone. What holds on both
-  // platforms is that the timed-out index returns an error and no sha.
-  expect(stillAlive).toBe(process.platform !== "win32");
+  // runGraphify settles only after the child has exited (SIGTERM, then SIGKILL after 200ms; Windows kills at once),
+  // so the child is already gone when the response arrives.
+  expect(stillAlive).toBe(false);
   expect(winner.res.ok).toBe(false);
   expect(winner.res).not.toMatchObject({ result: { sha: expect.any(String) } });
 });
