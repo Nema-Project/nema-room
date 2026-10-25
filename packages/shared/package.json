@@ -11,6 +11,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./localInstance": {
+      "types": "./dist/localInstance.d.ts",
+      "default": "./dist/localInstance.js"
+    },
     "./ownedHelper": {
       "types": "./dist/ownedHelper.d.ts",
       "default": "./dist/ownedHelper.js"

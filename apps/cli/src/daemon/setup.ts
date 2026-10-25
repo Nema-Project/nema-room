@@ -41,6 +41,8 @@ export type DaemonStart = {
   graphify?: GraphifyOpts;
   /** Explicit provider injection for tests or callers; production uses the signed-in `gh` CLI. */
   github?: GithubReader;
+  /** Where the report token the hub should accept lives; defaults to `nemaHome`. */
+  reportTokenHome?: string;
   ownedHelpers?: OwnedHelperScope;
 };
 
@@ -90,6 +92,7 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
     token: o.token,
     runner,
     nemaHome: o.nemaHome,
+    ...(o.reportTokenHome ? { reportTokenHome: o.reportTokenHome } : {}),
     version: o.version,
     rpc,
     bindSend: (send) => {

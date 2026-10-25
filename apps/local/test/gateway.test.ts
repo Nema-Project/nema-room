@@ -179,9 +179,40 @@ describe("protected same-origin gateway", () => {
     expect((await fetch(`${hubOrigin}/api/workspaces`)).status).toBe(401);
     expect((await fetch(`${gateway.origin}/api/no-route`, { headers: { cookie } })).status).toBe(404);
     expect((await fetch(`${gateway.origin}/room`, { headers: { cookie } })).status).toBe(404);
-    expect((await fetch(`${gateway.origin}/report`, { headers: { cookie } })).status).toBe(404);
+    expect((await fetch(`${gateway.origin}/report`, { headers: { cookie } })).status).toBe(405);
     expect((await fetch(`${gateway.origin}/unknown`, { headers: { cookie } })).status).toBe(404);
     expect((await fetch(`${gateway.origin}/_nema/anything`, { headers: { cookie } })).status).toBe(404);
+    session.close();
+  });
+
+  test("forwards only the fixed report routes with the caller's bearer token and no browser credentials", async () => {
+    const credential = createGatewayCredential();
+    const app = new Hono();
+    app.post("/report/hook", (c) => c.json({ ok: true }));
+    app.post("/report", (c) => c.json({ ok: true }));
+    app.get("/report/workpackages/:id", (c) => c.json({ id: c.req.param("id"), git: c.req.query("gitCommonDir") }));
+    app.get("/room/plugins", (c) => c.text("room"));
+    let seen: Headers | undefined;
+    const hubOrigin = await listen(getRequestListener((request) => { seen = request.headers; return app.fetch(request); }));
+    const webOrigin = await listen((_req, res) => res.end("web"));
+    const session = new SessionManager();
+    const gateway = await startGateway({ webTarget: webOrigin, hubTarget: hubOrigin, session, port: 0, privateGatewayCredential: credential });
+    gateways.push(gateway);
+    const bearer = `Bearer ${"a".repeat(64)}`;
+    const post = (path: string, headers: Record<string, string>) => fetch(`${gateway.origin}${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: "{}" });
+
+    expect((await post("/report/hook", {})).status).toBe(401);
+    expect((await post("/report/hook", { authorization: "Bearer short" })).status).toBe(401);
+    expect((await post("/report/hook", { cookie: "nema=1", authorization: bearer, "x-nema-gateway-credential": "forged" })).status).toBe(200);
+    expect(seen?.get("authorization")).toBe(bearer);
+    expect(seen?.get("cookie")).toBeNull();
+    expect(seen?.get(GATEWAY_CREDENTIAL_HEADER)).toBeNull();
+    expect((await post("/report", { authorization: bearer })).status).toBe(200);
+    const wp = await fetch(`${gateway.origin}/report/workpackages/W-1?gitCommonDir=%2Frepo`, { headers: { authorization: bearer } });
+    expect(await wp.json()).toEqual({ id: "W-1", git: "/repo" });
+    expect((await fetch(`${gateway.origin}/report/hook`, { headers: { authorization: bearer } })).status).toBe(405);
+    expect((await fetch(`${gateway.origin}/report/other`, { headers: { authorization: bearer } })).status).toBe(404);
+    expect((await fetch(`${gateway.origin}/room/plugins`, { headers: { authorization: bearer } })).status).toBe(404);
     session.close();
   });
 

@@ -502,3 +502,18 @@ describe("local instance ownership and discovery", () => {
     await lease.close();
   });
 });
+
+describe("CLI discovery of a real instance", () => {
+  it("the CLI verifies the identity proof a published lease actually serves, and not after it stops", async () => {
+    const { discoverDesktopOrigin } = await import("@nema/cli/report/desktop");
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "nema-cli-discovery-")));
+    const lease = await acquireInstance(home);
+    try {
+      expect(await discoverDesktopOrigin(home)).toBeNull();
+      await lease.publish({ origin: "http://127.0.0.1:43112", createLaunchUrl: () => "http://127.0.0.1:43112/_nema/launch?ticket=x" });
+      expect(await discoverDesktopOrigin(home)).toBe("http://127.0.0.1:43112");
+    } finally { await lease.close(); }
+    expect(await discoverDesktopOrigin(home)).toBeNull();
+    rmSync(home, { recursive: true, force: true });
+  });
+});

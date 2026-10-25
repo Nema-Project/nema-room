@@ -2,6 +2,7 @@
 import { HookSignal, ReportInput } from "@nema/shared";
 import type { Out } from "../direct/authCommands.js";
 import { repoInfo } from "./git.js";
+import { discoverDesktopOrigin } from "./desktop.js";
 import { appendSpool, flushSpool, HOOK_TIMEOUTS, postToHub, sendToHub, type HubPath, type SendOpts, type SendResult } from "./send.js";
 import { ensureReportToken } from "./token.js";
 
@@ -11,6 +12,15 @@ export const DEFAULT_HUB_URL = "http://127.0.0.1:4400";
 /** `--hub`, else NEMA_HUB_URL, else the same default `nema daemon` uses. */
 export function resolveHubUrl(flag?: string): string {
   return flag || process.env.NEMA_HUB_URL || DEFAULT_HUB_URL;
+}
+
+/**
+ * Like `resolveHubUrl`, but when neither `--hub` nor NEMA_HUB_URL is given it first looks for a running desktop
+ * instance whose identity it can verify. An explicit address always wins and is never probed.
+ */
+export async function resolveHubTarget(flag?: string, discover: () => Promise<string | null> = discoverDesktopOrigin): Promise<string> {
+  if (flag || process.env.NEMA_HUB_URL) return resolveHubUrl(flag);
+  return (await discover()) ?? DEFAULT_HUB_URL;
 }
 
 /** Reads stdin up to 1 MB; anything past the cap makes the input unusable (returns null). */

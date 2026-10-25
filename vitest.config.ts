@@ -20,7 +20,9 @@ for (const d of readdirSync(`${root}packages`, { withFileTypes: true })) {
 // The local package and the CLI's narrow permissions helper are tested from source.
 alias["@nema/local"] = `${root}apps/local/src/instance.ts`;
 alias["@nema/shared/ownedHelper"] = `${root}packages/shared/src/ownedHelper.ts`;
+alias["@nema/shared/localInstance"] = `${root}packages/shared/src/localInstance.ts`;
 alias["@nema/cli/secrets/permissions"] = `${root}apps/cli/src/secrets/permissions.ts`;
+alias["@nema/cli/report/desktop"] = `${root}apps/cli/src/report/desktop.ts`;
 alias["@nema/hub/db/local"] = `${root}apps/hub/src/db/pglite.ts`;
 alias["@nema/hub/db/snapshot"] = `${root}apps/hub/src/db/snapshot.ts`;
 alias["@nema/hub/db/export"] = `${root}apps/hub/src/db/export.ts`;
@@ -46,6 +48,7 @@ const workspaceDirs = ["packages", "apps"].flatMap((g) =>
 export default defineConfig({
   resolve: { alias: [
     { find: /^@nema\/shared\/ownedHelper$/, replacement: `${root}packages/shared/src/ownedHelper.ts` },
+    { find: /^@nema\/shared\/localInstance$/, replacement: `${root}packages/shared/src/localInstance.ts` },
     ...Object.entries(alias).map(([find, replacement]) => ({ find, replacement })),
   ] },
   test: {

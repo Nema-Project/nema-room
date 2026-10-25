@@ -13,6 +13,8 @@ export type DaemonOpts = {
   reconnectMs?: number;
   /** `~/.nema`: when set, isolation dirs of deleted workspaces (`<nemaHome>/ws/<id>`) are removed. */
   nemaHome?: string;
+  /** Whose `report-token` the hello registers; defaults to `nemaHome`. The desktop app points it at the user-level `~/.nema` its hooks use. */
+  reportTokenHome?: string;
   /** Reported in `hello` (defaults to apps/cli/package.json's version). */
   version?: string;
   /** When set, `rpc.request` is answered immediately and does not wait for the task runner. */
@@ -51,7 +53,8 @@ export function connectDaemon(opts: DaemonOpts): { close(): Promise<void> } {
       opts.bindSend?.(send);
       let hash: string | null = null;
       try {
-        hash = opts.nemaHome ? reportTokenHash(opts.nemaHome) : null;
+        const tokenHome = opts.reportTokenHome ?? opts.nemaHome;
+        hash = tokenHome ? reportTokenHash(tokenHome) : null;
       } catch (e) {
         console.error(`[nema] report token not sent: ${e instanceof Error ? e.message : String(e)}`);
       }

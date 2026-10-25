@@ -14,7 +14,7 @@ import { defaultTokenFile, runDoctor } from "./doctor.js";
 import { authByok, authLogin, authLogout, authProbe, authStatus, consoleOut } from "./direct/authCommands.js";
 import { defaultCodexHome } from "./direct/codexLogin.js";
 import { cliVersion } from "./direct/siwc.js";
-import { resolveHubUrl, runReport, runReportHook, type ReportFlags } from "./report/commands.js";
+import { resolveHubTarget, runReport, runReportHook, type ReportFlags } from "./report/commands.js";
 import { runWpGet, runWpList } from "./wp/commands.js";
 import { authGithub } from "./secrets/github.js";
 import { installReport, REPORT_AGENTS, uninstallReport, type ReportAgent } from "./report/install.js";
@@ -165,19 +165,19 @@ const report = program
   .option("--task <n>", "the work package task number this report finishes (use with --entries W-n)")
   .option("--agent <name>", "coding agent name")
   .option("--json", "read the fields as a JSON object from standard input")
-  .option("--hub <url>", "hub URL (default: NEMA_HUB_URL or http://127.0.0.1:4400)")
+  .option("--hub <url>", "hub URL (default: NEMA_HUB_URL, else a running Nema desktop app, else http://127.0.0.1:4400)")
   .action(async (o: ReportFlags & { hub?: string }) => {
     const { hub, ...flags } = o;
-    process.exitCode = await runReport({ nemaHome: nemaHomeDir(), hubUrl: resolveHubUrl(hub), cwd: process.cwd(), out: consoleOut, flags, stdin: process.stdin });
+    process.exitCode = await runReport({ nemaHome: nemaHomeDir(), hubUrl: await resolveHubTarget(hub), cwd: process.cwd(), out: consoleOut, flags, stdin: process.stdin });
   });
 
 report
   .command("hook")
   .description("Called by a coding agent's hook: sends only agent, cwd, git common dir, branch, HEAD, time and session id")
   .requiredOption("--agent <name>", "coding agent name")
-  .option("--hub <url>", "hub URL (default: NEMA_HUB_URL or http://127.0.0.1:4400)")
+  .option("--hub <url>", "hub URL (default: NEMA_HUB_URL, else a running Nema desktop app, else http://127.0.0.1:4400)")
   .action(async (o: { agent: string; hub?: string }) => {
-    process.exitCode = await runReportHook({ agent: o.agent, nemaHome: nemaHomeDir(), hubUrl: resolveHubUrl(o.hub), stdin: process.stdin.isTTY ? null : process.stdin });
+    process.exitCode = await runReportHook({ agent: o.agent, nemaHome: nemaHomeDir(), hubUrl: await resolveHubTarget(o.hub), stdin: process.stdin.isTTY ? null : process.stdin });
   });
 
 function reportAgent(v: string): ReportAgent {
@@ -215,9 +215,9 @@ const wp = program.command("wp").description("Work packages: list the approved o
 wp
   .command("list")
   .description("List the approved work packages that cover the current repo")
-  .option("--hub <url>", "hub URL (default: NEMA_HUB_URL or http://127.0.0.1:4400)")
+  .option("--hub <url>", "hub URL (default: NEMA_HUB_URL, else a running Nema desktop app, else http://127.0.0.1:4400)")
   .action(async (o: { hub?: string }) => {
-    process.exitCode = await runWpList({ nemaHome: nemaHomeDir(), hubUrl: resolveHubUrl(o.hub), cwd: process.cwd(), out: consoleOut });
+    process.exitCode = await runWpList({ nemaHome: nemaHomeDir(), hubUrl: await resolveHubTarget(o.hub), cwd: process.cwd(), out: consoleOut });
   });
 
 wp
@@ -226,11 +226,11 @@ wp
   .option("--dir <dir>", "directory to write .nema/<W-n>/ under (default: the current directory)")
   .option("--stdout", "print the spec and plan instead of writing files")
   .option("--force", "overwrite files that exist with different content")
-  .option("--hub <url>", "hub URL (default: NEMA_HUB_URL or http://127.0.0.1:4400)")
+  .option("--hub <url>", "hub URL (default: NEMA_HUB_URL, else a running Nema desktop app, else http://127.0.0.1:4400)")
   .action(async (id: string, o: { dir?: string; stdout?: boolean; force?: boolean; hub?: string }) => {
     process.exitCode = await runWpGet({
       nemaHome: nemaHomeDir(),
-      hubUrl: resolveHubUrl(o.hub),
+      hubUrl: await resolveHubTarget(o.hub),
       cwd: process.cwd(),
       out: consoleOut,
       id,

@@ -32,6 +32,11 @@
       "types": "./dist/ownedProcess.d.ts",
       "import": "./dist/ownedProcess.js"
     },
+    "./report/desktop": {
+      "development": "./src/report/desktop.ts",
+      "types": "./dist/report/desktop.d.ts",
+      "import": "./dist/report/desktop.js"
+    },
     "./secrets/permissions": {
       "development": "./src/secrets/permissions.ts",
       "types": "./dist/secrets/permissions.d.ts",

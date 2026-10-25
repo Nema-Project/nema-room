@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   closeSync,
   constants,
@@ -15,9 +15,11 @@ import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
 import { join } from "node:path";
 import { openPrivateFile, privateModeMatches, protectPrivatePath } from "@nema/cli/secrets/permissions";
+import { LOCAL_INSTANCE_PROTOCOL, controlOriginFor, controlPortFor, equalHex, homeHashFor, instanceHmac as hmac } from "@nema/shared/localInstance";
 import { homeIdentity, resolveHome } from "./paths.js";
 
-const PROTOCOL = "nema-local-v1";
+const PROTOCOL = LOCAL_INSTANCE_PROTOCOL;
+
 const MAX_BODY = 4096;
 const REQUEST_TIMEOUT_MS = 1800;
 
@@ -61,9 +63,6 @@ export interface ShutdownOptions {
 }
 
 const sha256 = (value: string): Buffer => createHash("sha256").update(value).digest();
-const homeHashFor = (identity: string): string => sha256(identity).toString("hex");
-const controlPortFor = (identity: string): number => 20000 + sha256(identity).readUInt32BE(0) % 25000;
-const controlOriginFor = (port: number): string => `http://127.0.0.1:${port}`;
 const jsonHeaders = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 
 function send(res: ServerResponse, status: number, body: unknown, afterFinish?: () => void): void {
@@ -87,15 +86,6 @@ function validLaunchUrl(value: string, origin: string): boolean {
     const url = new URL(value);
     return isLoopbackOrigin(origin) && url.origin === origin && url.pathname === "/_nema/launch" && !url.hash;
   } catch { return false; }
-}
-
-function hmac(secret: string, tuple: unknown[]): Buffer {
-  return createHmac("sha256", Buffer.from(secret, "hex")).update(JSON.stringify(tuple)).digest();
-}
-
-function equalHex(left: string, right: string): boolean {
-  if (!/^[0-9a-f]{64}$/i.test(left) || !/^[0-9a-f]{64}$/i.test(right)) return false;
-  return timingSafeEqual(Buffer.from(left, "hex"), Buffer.from(right, "hex"));
 }
 
 function readDescriptor(file: string): Descriptor | null {

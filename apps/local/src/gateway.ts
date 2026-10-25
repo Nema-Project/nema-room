@@ -98,7 +98,11 @@ function mappedTarget(pathname: string, web: URL, hub: URL): { target: URL; ui: 
   return uiPath ? { target: web, ui: true } : null;
 }
 
-function sanitizedHeaders(source: IncomingHttpHeaders, credential?: string): http.OutgoingHttpHeaders {
+/** Coding-agent hooks and reports reach the hub with their own bearer report token, never a browser session. */
+const reportMethod = (pathname: string): "GET" | "POST" | null =>
+  pathname === "/report" || pathname === "/report/hook" ? "POST" : /^\/report\/workpackages(?:\/[A-Za-z0-9_.-]+)?$/.test(pathname) ? "GET" : null;
+
+function sanitizedHeaders(source: IncomingHttpHeaders, credential?: string, bearer?: string): http.OutgoingHttpHeaders {
   const headers: http.OutgoingHttpHeaders = {};
   const excluded = new Set([
     "host", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade",
@@ -113,6 +117,7 @@ function sanitizedHeaders(source: IncomingHttpHeaders, credential?: string): htt
     if (value !== undefined && !excluded.has(name.toLowerCase())) headers[name] = value;
   }
   if (credential) headers[GATEWAY_CREDENTIAL_HEADER] = credential;
+  if (bearer) headers.authorization = bearer;
   return headers;
 }
 
@@ -182,10 +187,17 @@ export async function startGateway(options: GatewayOptions): Promise<RunningGate
     }
 
     const settingsPath = url.pathname.startsWith("/_nema/");
-    const mapped = settingsPath ? null : mappedTarget(url.pathname, webTarget, hubTarget);
+    const reportAllowed = settingsPath ? null : reportMethod(url.pathname);
+    const report = reportAllowed !== null;
+    const mapped = settingsPath ? null : report ? { target: hubTarget, ui: false } : mappedTarget(url.pathname, webTarget, hubTarget);
     if (!settingsPath && !mapped) return send(res, 404, "not found");
-    const token = sessionCookie(req, sessionCookieName(origin));
-    if (!token || !options.session.isValidSession(token)) return send(res, 401, "unauthorized", noStore);
+    if (report) {
+      // No cookie session here: only a well-formed bearer is forwarded, and the hub accepts just a registered report token.
+      if (req.method !== reportAllowed || !/^Bearer [0-9a-f]{64}$/i.test(req.headers.authorization ?? "")) return send(res, req.method !== reportAllowed ? 405 : 401, req.method !== reportAllowed ? "method not allowed" : "unauthorized", noStore);
+    } else {
+      const token = sessionCookie(req, sessionCookieName(origin));
+      if (!token || !options.session.isValidSession(token)) return send(res, 401, "unauthorized", noStore);
+    }
 
     if (settingsPath) {
       if (url.search !== "") return send(res, 400, JSON.stringify({ error: "invalid_request" }), { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
@@ -213,7 +225,7 @@ export async function startGateway(options: GatewayOptions): Promise<RunningGate
     }
 
     const target = new URL(`${url.pathname}${url.search}`, mapped!.target);
-    const headers = sanitizedHeaders(req.headers, mapped!.ui ? undefined : options.privateGatewayCredential);
+    const headers = sanitizedHeaders(req.headers, mapped!.ui || report ? undefined : options.privateGatewayCredential, report ? req.headers.authorization : undefined);
     const upstream = http.request(target, { method: req.method, headers });
     active.add(upstream);
     upstream.once("close", () => active.delete(upstream));
