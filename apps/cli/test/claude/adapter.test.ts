@@ -416,7 +416,12 @@ describe("ClaudeCodeAdapter", () => {
     const pid = Number(readFileSync(childPidFile, "utf8"));
     controller.abort(new Error("owner stopped"));
     await pending;
-    expect(() => process.kill(pid, 0)).toThrow();
+    // The pid file is a grandchild. Group SIGKILL can reap the parent before that child is gone.
+    try {
+      await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
+    } finally {
+      try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+    }
     expect(existsSync(join(home, "run", "task-cancel"))).toBe(false);
   });
 
@@ -429,10 +434,10 @@ describe("ClaudeCodeAdapter", () => {
         return (e as NodeJS.ErrnoException).code !== "ESRCH";
       }
     };
-    const stop = (pidFile: string) => {
+    const stop = async (pidFile: string) => {
       const pid = Number(readFileSync(pidFile, "utf8"));
       try {
-        expect(alive(pid)).toBe(false);
+        await vi.waitFor(() => expect(alive(pid)).toBe(false));
       } finally {
         if (!alive(pid)) return;
         try {
@@ -460,7 +465,7 @@ describe("ClaudeCodeAdapter", () => {
     const failed = await runTask(createAdapter(failureBin), task("task-kill-fail", "tidy-kill-fail"));
     expect(failed.result.ok).toBe(false);
     if (!failed.result.ok) expect(failed.result.error).toContain("工具面");
-    stop(failurePid);
+    await stop(failurePid);
 
     const successPid = join(root, "success-child.pid");
     const successBin = installFake({
@@ -471,7 +476,7 @@ describe("ClaudeCodeAdapter", () => {
     });
     const succeeded = await runTask(createAdapter(successBin), task("task-kill-ok", "tidy-kill-ok"));
     expect(succeeded.result).toEqual({ ok: true, reply: "整理好了" });
-    stop(successPid);
+    await stop(successPid);
   });
 
   test("reports a missing claude binary", async () => {
