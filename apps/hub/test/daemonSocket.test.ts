@@ -342,6 +342,20 @@ describe("daemon socket", () => {
     expect((await getTask(db, m1.task.id))?.status).toBe("done");
   });
 
+  test("the asked card is a question this task opened, not an older higher-priority one", async () => {
+    const older = await addQuestion(wsA, 1);
+    const m1 = await postUserMessage(db, wsA, "where is the doc");
+    const created = await addQuestion(wsA, 3);
+    await recordTaskChange(db, m1.task.id, { entryId: created.id, kind: "question", title: created.title, op: "add" });
+    const c = await connect();
+    const a1 = await c.next("task.assign");
+    c.send({ type: "task.finished", taskId: a1.taskId, ok: true, reply: "asked the new one" });
+    await vi.waitFor(async () => expect((await getTask(db, m1.task.id))?.status).toBe("done"));
+    const agent = (await listMessages(db, wsA)).find((m): m is AgentMessage => m.role === "agent")!;
+    expect(agent.meta?.askedQuestion?.id).toBe(created.id);
+    expect(agent.meta?.askedQuestion?.id).not.toBe(older.id);
+  });
+
   test("with grill-me off the finished message has no asked question", async () => {
     const m1 = await postUserMessage(db, wsA, "first");
     await db.query(`insert into workspace_plugins (workspace_id, plugin_id, enabled) values ($1, 'grill', false)`, [wsA]);
@@ -452,6 +466,22 @@ describe("daemon socket", () => {
     expect(upTo).not.toContain(`${q1.id}：`);
     expect(a.prompt).toContain("NEWER-REPLY");
     expect(a.prompt).not.toContain("LATER-USER");
+  });
+
+  test("a named answer targets that question, not the latest follow-up", async () => {
+    const q1 = await addQuestion(wsA, 1);
+    const q2 = await addQuestion(wsA, 2);
+    const u0 = await postUserMessage(db, wsA, "zero");
+    await addMessage(db, wsA, "agent", "asked-q2", { taskId: u0.task.id, meta: { changes: [], askedQuestion: { id: q2.id, title: q2.title, body: q2.body } } });
+    await db.query("update tasks set status = 'done' where id = $1", [u0.task.id]);
+    const u1 = await postUserMessage(db, wsA, `回答 ${q1.id}：\n里程碑二`);
+    const c = await connect();
+    const a = await c.next("task.assign");
+    expect(a.taskId).toBe(u1.task.id);
+    expect(a.prompt).toContain("要回答的追问");
+    expect(a.prompt).toContain(`${q1.id}：`);
+    expect(a.prompt).not.toContain("上一个追问");
+    expect(a.prompt.split("# 要回答的追问")[1]!.split("# 最近消息")[0]).not.toContain(`${q2.id}：`);
   });
 
   test("prompt build failure: system message once, task failed, no stuck running", async () => {

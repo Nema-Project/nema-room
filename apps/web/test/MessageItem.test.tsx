@@ -67,6 +67,21 @@ describe("MessageItem", () => {
     expect(screen.getByText("追问 · Q-4")).toBeTruthy();
     expect(screen.getByText("目标是多少？")).toBeTruthy();
   });
+  it("shows a question this message added instead of an older asked question", async () => {
+    vi.mocked(hub.getEntry).mockImplementation(async (_workspace, id) => ({
+      id, kind: "question", status: "open", title: id === "Q-3" ? "文档在哪" : "更新架构图", body: id === "Q-3" ? "superpowers 文档位置" : "旧正文", priority: 2,
+    } as never));
+    mount(msg({
+      meta: {
+        changes: [{ entryId: "Q-3", kind: "question", title: "文档在哪", op: "add" }],
+        askedQuestion: { id: "Q-2", title: "更新架构图", body: "旧正文" },
+      },
+    }));
+    expect(await screen.findByText("追问 · Q-3")).toBeTruthy();
+    expect(await screen.findByText("superpowers 文档位置")).toBeTruthy();
+    expect(screen.queryByText("追问 · Q-2")).toBeNull();
+    expect(screen.queryByText("旧正文")).toBeNull();
+  });
   it("renders system messages without an avatar", () => {
     const { container } = mount(msg({ role: "system", content: "处理失败：x" }));
     expect(screen.getByText("处理失败：x")).toBeTruthy();

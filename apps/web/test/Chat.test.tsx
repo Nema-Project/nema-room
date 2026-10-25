@@ -11,6 +11,7 @@ vi.mock("@/lib/hub", () => ({
   listMessages: vi.fn(),
   postMessage: vi.fn(),
   getActiveTask: vi.fn(),
+  getEntry: vi.fn(),
   editMessage: vi.fn(),
   listMessageVersions: vi.fn(),
   searchMessages: vi.fn(),
@@ -114,20 +115,41 @@ describe("Chat", () => {
     await act(async () => resolve({ running }));
     expect(screen.queryByText("Organizing")).toBeNull();
   });
-  it("the latest unanswered follow-up has an answer box that sends a chat message", async () => {
+  it("an older open follow-up can be answered by name", async () => {
     const asked = (id: string, qid: string): Message => ({
       ...m(id, "asked", "agent"),
       meta: { changes: [], askedQuestion: { id: qid, title: "进度？", body: "现在到哪了" } },
     });
-    vi.mocked(hub.listMessages).mockResolvedValue([asked("a1", "Q-1"), m("u1", "先这样"), asked("a2", "Q-2")]);
-    vi.mocked(hub.postMessage).mockResolvedValue({ message: m("u2", "到里程碑二") });
+    vi.mocked(hub.getEntry).mockImplementation(async (_workspace, id) => ({ kind: "question", status: id === "Q-9" ? "resolved" : "open" }) as never);
+    vi.mocked(hub.listMessages).mockResolvedValue([asked("a1", "Q-1"), m("u1", "先这样"), asked("a2", "Q-2"), asked("a9", "Q-9")]);
+    vi.mocked(hub.postMessage).mockImplementation(async (_workspace, content) => ({
+      message: m("u2", content),
+      task: { id: "t2", workspaceId: "w1", messageId: "u2", status: "queued", error: null },
+    }));
     await mount(true);
-    const boxes = screen.getAllByRole("textbox", { name: "Answer" });
-    expect(boxes).toHaveLength(1);
-    await userEvent.type(boxes[0]!, "到里程碑二");
-    await userEvent.click(screen.getByRole("button", { name: "Answer" }));
-    expect(hub.postMessage).toHaveBeenCalledWith("w1", "到里程碑二");
-    expect(screen.queryByRole("textbox", { name: "Answer" })).toBeNull();
+    const box = await screen.findByRole("textbox", { name: "Answer Q-1" });
+    expect(screen.getByRole("textbox", { name: "Answer Q-2" })).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Answer Q-9" })).toBeNull();
+    await userEvent.type(box, "到里程碑二");
+    await userEvent.click(screen.getByRole("button", { name: "Answer Q-1" }));
+    expect(hub.postMessage).toHaveBeenCalledWith("w1", "回答 Q-1：\n到里程碑二");
+    expect(screen.queryByRole("textbox", { name: "Answer Q-1" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Answer Q-2" })).toBeTruthy();
+  });
+  it("a follow-up that already has a reply does not keep its answer box", async () => {
+    const asked = (id: string, qid: string): Message => ({
+      ...m(id, "asked", "agent"),
+      meta: { changes: [], askedQuestion: { id: qid, title: "进度？", body: "现在到哪了" } },
+    });
+    vi.mocked(hub.getEntry).mockResolvedValue({ kind: "question", status: "open" } as never);
+    vi.mocked(hub.listMessages).mockResolvedValue([
+      asked("a1", "Q-1"),
+      m("u1", "回答 Q-1：\n我想让你查看文档"),
+      asked("a2", "Q-2"),
+    ]);
+    await mount(true);
+    expect(screen.queryByRole("textbox", { name: "Answer Q-1" })).toBeNull();
+    expect(await screen.findByRole("textbox", { name: "Answer Q-2" })).toBeTruthy();
   });
   it("a stale {running: null} response does not hide a task started via SSE", async () => {
     let resolve!: (v: { running: typeof running | null }) => void;

@@ -15,8 +15,10 @@ type Props = {
   message: Message;
   /** Opens an entry in the knowledge column; a report's entry ids link to it. */
   onOpenEntry?: (entryId: string) => void;
-  /** Present only on the latest follow-up that has no user message after it. */
-  onAnswer?: (content: string) => Promise<void>;
+  /** Sends a reply to one open follow-up. The question id is named in the chat message. */
+  onAnswer?: (questionId: string, content: string) => Promise<void>;
+  /** User messages after this one. A `回答 Q-n：` reply closes that question's box. */
+  repliesAfter?: readonly string[];
   onQuote?: (message: Message) => void;
   /** Replaces the message in the chat after an edit succeeds. */
   onEdited?: (message: Message) => void;
@@ -35,7 +37,7 @@ function quoteOf(message: Message): MessageQuote | undefined {
   return meta?.quote;
 }
 
-export function MessageItem({ message, onOpenEntry, onAnswer, onQuote, onEdited, onJump }: Props) {
+export function MessageItem({ message, onOpenEntry, onAnswer, repliesAfter = [], onQuote, onEdited, onJump }: Props) {
   const t = useT();
   const [locale] = useLocale();
   const time = formatTime(new Date(message.createdAt), locale);
@@ -84,21 +86,82 @@ export function MessageItem({ message, onOpenEntry, onAnswer, onQuote, onEdited,
         {meta?.changes.filter((c) => c.kind === "workpackage").slice(0, 1).map((c) => (
           <WorkPackageCard key={c.entryId} workspaceId={message.workspaceId} entryId={c.entryId} onOpenEntry={onOpenEntry} />
         ))}
-        {meta?.askedQuestion && (
-          <div className="ask">
-            <div className="k">{t("chat.askedQuestion", { id: meta.askedQuestion.id })}</div>
-            <div className="q">{meta.askedQuestion.title}</div>
-            <Markdown source={meta.askedQuestion.body} />
-            {onAnswer && <AnswerBox onAnswer={onAnswer} />}
-          </div>
+        {meta && (meta.askedQuestion || meta.changes.some((c) => c.kind === "question" && c.op === "add")) && (
+          <AskedQuestion
+            workspaceId={message.workspaceId}
+            asked={meta.askedQuestion}
+            added={meta.changes.filter((c) => c.kind === "question" && c.op === "add").map((c) => ({ id: c.entryId, title: c.title }))}
+            repliesAfter={repliesAfter}
+            onAnswer={onAnswer}
+          />
         )}
       </div>
     </div>
   );
 }
 
-/** Sends the reply as a normal chat message. The hub treats the next user message as the answer to this question. */
-function AnswerBox({ onAnswer }: { onAnswer: (content: string) => Promise<void> }) {
+type QuestionSnap = { id: string; title: string; body: string };
+const questionNumber = (id: string) => Number(id.slice(id.indexOf("-") + 1)) || 0;
+const answeredBy = (replies: readonly string[], questionId: string) => replies.some((content) => content.trimStart().startsWith(`回答 ${questionId}：`));
+
+/** A question added in this message is what the reply asked. An older askedQuestion is only the fallback. */
+function AskedQuestion({ workspaceId, asked, added, repliesAfter, onAnswer }: { workspaceId: string; asked: QuestionSnap | null; added: { id: string; title: string }[]; repliesAfter: readonly string[]; onAnswer?: (questionId: string, content: string) => Promise<void> }) {
+  const t = useT();
+  const addedKey = JSON.stringify(added);
+  const preview: QuestionSnap | null = added[0] ? { id: added[0].id, title: added[0].title, body: "" } : asked;
+  const [question, setQuestion] = useState<QuestionSnap | null>(preview);
+  const [open, setOpen] = useState(added.length > 0);
+  const [sent, setSent] = useState(false);
+  useEffect(() => {
+    const parsed = JSON.parse(addedKey) as { id: string; title: string }[];
+    const ids = parsed.length > 0 ? parsed.map((item) => item.id) : asked ? [asked.id] : [];
+    if (ids.length === 0) return;
+    let live = true;
+    Promise.all(ids.map(async (id) => {
+      try {
+        return { id, entry: await getEntry(workspaceId, id), failed: false };
+      } catch {
+        return { id, entry: null, failed: true };
+      }
+    })).then((results) => {
+      if (!live) return;
+      const openQuestions = results.flatMap((result) => {
+        const entry = result.entry;
+        if (!entry || entry.kind !== "question" || entry.status !== "open") return [];
+        const addedTitle = parsed.find((item) => item.id === result.id)?.title;
+        const prior = asked?.id === result.id ? asked : null;
+        return [{ id: result.id, title: entry.title || addedTitle || prior?.title || "", body: entry.body || prior?.body || "", priority: entry.priority }];
+      });
+      openQuestions.sort((a, b) => (a.priority ?? 9) - (b.priority ?? 9) || questionNumber(a.id) - questionNumber(b.id));
+      const picked = openQuestions[0];
+      if (picked) {
+        setQuestion({ id: picked.id, title: picked.title, body: picked.body });
+        setOpen(true);
+        return;
+      }
+      const fallback = parsed[0];
+      if (fallback) setQuestion({ id: fallback.id, title: fallback.title, body: "" });
+      else if (asked) setQuestion(asked);
+      setOpen(results.some((result) => result.failed));
+    });
+    return () => { live = false; };
+  }, [workspaceId, addedKey, asked]);
+  if (!question) return null;
+  const answered = answeredBy(repliesAfter, question.id);
+  return (
+    <div className="ask">
+      <div className="k">{t("chat.askedQuestion", { id: question.id })}</div>
+      <div className="q">{question.title}</div>
+      {question.body && <Markdown source={question.body} />}
+      {onAnswer && open && !answered && !sent && (
+        <AnswerBox label={t("chat.answerFor", { id: question.id })} onAnswer={async (content) => { await onAnswer(question.id, content); setSent(true); }} />
+      )}
+    </div>
+  );
+}
+
+/** Sends the reply as a normal chat message. The hub treats a named `回答 Q-n：` as the answer to that question. */
+function AnswerBox({ label, onAnswer }: { label: string; onAnswer: (content: string) => Promise<void> }) {
   const t = useT();
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
@@ -122,7 +185,7 @@ function AnswerBox({ onAnswer }: { onAnswer: (content: string) => Promise<void> 
   return (
     <form className="ask-answer" onSubmit={(e) => { e.preventDefault(); void send(); }}>
       <textarea
-        aria-label={t("chat.answer")}
+        aria-label={label}
         rows={2}
         value={value}
         placeholder={t("chat.answerPlaceholder")}
@@ -135,7 +198,7 @@ function AnswerBox({ onAnswer }: { onAnswer: (content: string) => Promise<void> 
           }
         }}
       />
-      <button type="submit" disabled={sending || value.trim() === ""}>{t("chat.answer")}</button>
+      <button type="submit" aria-label={label} disabled={sending || value.trim() === ""}>{t("chat.answer")}</button>
       {error && <p className="error" role="alert">{t("composer.sendFailed", { message: error })}</p>}
     </form>
   );

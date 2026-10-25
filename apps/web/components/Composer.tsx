@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { messageRoleLabel } from "@/components/MessageItem";
 import { applyFormat, type FormatKind } from "@/lib/markdownFormat";
+import { applySlash, matchingCommands, slashToken, type SlashItem } from "@/lib/slash";
 import { useT } from "@/lib/i18n";
 import type { Message } from "@/lib/types";
 
@@ -27,6 +28,14 @@ export function Composer({
   const composing = useRef(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const pendingSel = useRef<[number, number] | null>(null);
+  const [cursor, setCursor] = useState(0);
+  const [active, setActive] = useState(0);
+  const [closedFor, setClosedFor] = useState<string | null>(null);
+  const token = slashToken(value, cursor);
+  const matches = token ? matchingCommands(token.query) : [];
+  const tokenKey = token ? `${token.start}:${token.query}` : "";
+  const menuOpen = token !== null && matches.length > 0 && closedFor !== tokenKey;
+  const highlighted = matches.length === 0 ? 0 : active % matches.length;
 
   useLayoutEffect(() => {
     if (pendingSel.current && ref.current) {
@@ -35,6 +44,11 @@ export function Composer({
       pendingSel.current = null;
     }
   });
+  const highlightedId = matches[highlighted]?.id;
+  useLayoutEffect(() => {
+    if (!menuOpen || !highlightedId) return;
+    document.getElementById(`slash-${highlightedId}`)?.scrollIntoView?.({ block: "nearest" });
+  }, [menuOpen, highlightedId]);
 
   async function send() {
     const sent = value;
@@ -53,8 +67,49 @@ export function Composer({
     }
   }
 
+  function place(text: string, caret: number) {
+    pendingSel.current = [caret, caret];
+    setValue(text);
+    setCursor(caret);
+    setActive(0);
+    setClosedFor(null);
+  }
+
+  function choose(item: SlashItem) {
+    const el = ref.current;
+    const caret = el?.selectionStart ?? cursor;
+    const current = slashToken(el?.value ?? value, caret);
+    if (!current) return;
+    const insert = item.type ? t(item.insert, { type: item.type }) : t(item.insert);
+    const next = applySlash(el?.value ?? value, current, insert);
+    place(next.text, next.cursor);
+  }
+
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (composing.current || e.nativeEvent.isComposing || e.keyCode === 229) return;
+    const caret = e.currentTarget.selectionStart;
+    const current = slashToken(e.currentTarget.value, caret);
+    const shown = current ? matchingCommands(current.query) : [];
+    const open = current !== null && shown.length > 0 && closedFor !== `${current.start}:${current.query}`;
+    if (open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      setActive((i) => {
+        const n = shown.length;
+        const cur = i % n;
+        return e.key === "ArrowDown" ? (cur + 1) % n : (cur - 1 + n) % n;
+      });
+      return;
+    }
+    if (open && (e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+      e.preventDefault();
+      choose(shown[highlighted % shown.length]!);
+      return;
+    }
+    if (open && e.key === "Escape") {
+      e.preventDefault();
+      setClosedFor(`${current.start}:${current.query}`);
+      return;
+    }
     if (e.key === "Enter" && e.shiftKey) {
       e.preventDefault();
       void send();
@@ -80,13 +135,45 @@ export function Composer({
           <button type="button" onClick={onClearQuote}>{t("chat.quoteRemove")}</button>
         </div>
       )}
+      {menuOpen && (
+        <div className="cmdmenu" id="slash-commands" role="listbox" aria-label={t("cmd.menu")}>
+          {matches.map((item, i) => (
+            <button
+              key={item.id}
+              type="button"
+              role="option"
+              id={`slash-${item.id}`}
+              aria-selected={i === highlighted}
+              className={i === highlighted ? "on" : ""}
+              onMouseDown={(e) => e.preventDefault()}
+              onMouseEnter={() => setActive(i)}
+              onClick={() => choose(item)}
+            >
+              <span className="name">/{item.id}</span>
+              <span className="hint">{t(item.hint)}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <textarea
         ref={ref}
         className="in"
         rows={3}
         value={value}
         placeholder={t("composer.placeholder")}
-        onChange={(e) => setValue(e.target.value)}
+        aria-controls={menuOpen ? "slash-commands" : undefined}
+        aria-activedescendant={menuOpen ? `slash-${matches[highlighted]?.id}` : undefined}
+        onChange={(e) => {
+          const nextCursor = e.target.selectionStart;
+          const prev = slashToken(value, cursor);
+          const next = slashToken(e.target.value, nextCursor);
+          setValue(e.target.value);
+          setCursor(nextCursor);
+          if (prev?.query !== next?.query) setActive(0);
+          const nextKey = next ? `${next.start}:${next.query}` : "";
+          if (closedFor && nextKey !== closedFor) setClosedFor(null);
+        }}
+        onSelect={(e) => setCursor(e.currentTarget.selectionStart)}
         onKeyDown={onKeyDown}
         onCompositionStart={() => (composing.current = true)}
         onCompositionEnd={() => (composing.current = false)}

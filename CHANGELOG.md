@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Answering a follow-up closes its answer box. The box stays closed while that reply is in the thread.
+- A reply that opens a new question shows that question. An older open question no longer replaces it on the card.
 - Clicking a code diagram opens it. The desktop shell had refused every new window, so the title did nothing.
 - The model menu says it is loading the provider's list, and stays closed, until that list arrives.
 - Creating a workspace lines the confirm and cancel marks up with the name field. They use the same thin stroke icons as the theme control, so the check no longer sits under the underline.
@@ -25,6 +27,8 @@
 
 - A chat message can quote any earlier message, a user's own message can be edited (the previous text is kept and the agent re-runs), and the workspace can be searched by keyword.
 - The latest unanswered follow-up in the chat has an answer box. Sending it is a normal message, which the agent records as the answer.
+- Every open follow-up has its own answer box. The message names that question, so an older one is not taken as a reply to the newest.
+- Typing `/` in the composer opens a command menu. Every diagram type is its own row, such as `/diagram:sequence`, and the list narrows as you type.
 - Desktop staging downloads pinned CPython 3.11.17 and graphifyy 0.9.95 into `tools/graphify/`. The launcher uses a path relative to itself, so a release build does not contain a developer's install path. The app still does not download Graphify on first launch.
 - Model settings are separate from the provider. After a provider is saved and connected, its model is chosen from that provider's list. There is no custom model ID field. A saved model that is not in the list stays as it is until a listed model replaces it.
 

@@ -3,7 +3,7 @@ import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { KnowledgeStore } from "@nema/knowledge";
 import { createWorkspace, repoPath } from "../src/workspaces.js";
-import { indexEntry, openQuestionCounts, timeline, topOpenQuestion } from "../src/entryIndex.js";
+import { chooseAskedQuestion, indexEntry, openQuestionCounts, timeline, topOpenQuestion } from "../src/entryIndex.js";
 
 let db: Db;
 let dataDir: string;
@@ -59,6 +59,15 @@ describe("entry index", () => {
     await add(wsA, { kind: "question", title: "q3", priority: 2, status: "resolved" });
     await add(wsA, { kind: "requirement", title: "r" });
     expect(await openQuestionCounts(db)).toEqual({ [wsA]: 2 });
+  });
+
+  test("chooseAskedQuestion prefers a question this task left open", () => {
+    const older = { id: "Q-2", kind: "question", status: "open", title: "old", body: "old body", priority: 1 } as never;
+    const created = { id: "Q-3", kind: "question", status: "open", title: "new", body: "new body", priority: 2 } as never;
+    const resolved = { id: "Q-1", kind: "question", status: "resolved", title: "done", body: "done", priority: 1 } as never;
+    expect(chooseAskedQuestion([created, resolved], older)?.id).toBe("Q-3");
+    expect(chooseAskedQuestion([resolved], older)?.id).toBe("Q-2");
+    expect(chooseAskedQuestion([], null)).toBeNull();
   });
 
   test("topOpenQuestion picks lowest priority then lowest number", async () => {

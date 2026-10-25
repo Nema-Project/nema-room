@@ -67,6 +67,11 @@ function workPackageSection(wp: WorkPackagePromptInput, grill: GrillState): stri
   ].join("\n\n");
 }
 
+/** An answer box sends `回答 Q-n：` so an older open question is not treated as a reply to the newest one. */
+export function namedAnswerId(content: string): string | null {
+  return /^回答 (Q-[1-9]\d*)：/.exec(content.trim())?.[1] ?? null;
+}
+
 export function buildPrompt(input: {
   workspace: Workspace;
   userMessage: Message;
@@ -130,8 +135,11 @@ export function buildPrompt(input: {
   ];
   if (grill.enabled && grill.extraRules.trim()) parts.push(`# 本 workspace 的补充追问规则\n${grill.extraRules}`);
   if (lastAskedQuestion) {
+    const named = userMessage.role === "user" && namedAnswerId(userMessage.content) === lastAskedQuestion.id;
     parts.push(
-      `# 上一个追问\n${lastAskedQuestion.id}：${lastAskedQuestion.title}\n${lastAskedQuestion.body}\n本次用户输入很可能是对它的回答。`,
+      named
+        ? `# 要回答的追问\n${lastAskedQuestion.id}：${lastAskedQuestion.title}\n${lastAskedQuestion.body}\n本次用户输入是对 ${lastAskedQuestion.id} 的回答。写成决策或需求，并把 ${lastAskedQuestion.id} 置为 \`resolved\`。`
+        : `# 上一个追问\n${lastAskedQuestion.id}：${lastAskedQuestion.title}\n${lastAskedQuestion.body}\n本次用户输入很可能是对它的回答。`,
     );
   }
   parts.push("# 最近消息\n" + (recent.length ? recent.map((m) => `[${m.id}] ${m.role}: ${m.content}`).join("\n") : "（无）"));

@@ -100,6 +100,14 @@ describe("buildPrompt", () => {
     expect(p).toContain("请确认审批人");
     expect(base()).not.toContain("上一个追问");
   });
+  test("a named answer is for that question", () => {
+    const q = { id: "Q-1", kind: "question", title: "进度", body: "到哪了", status: "open" } as unknown as Entry;
+    const userMessage = { ...msg(999), content: "回答 Q-1：\n到里程碑二" };
+    const p = buildPrompt({ workspace: ws("follow"), userMessage, recentMessages: [], entries, lastAskedQuestion: q });
+    expect(p).toContain("要回答的追问");
+    expect(p).toContain("是对 Q-1 的回答");
+    expect(p).not.toContain("上一个追问");
+  });
 
   test("lists prior changes on a retry", () => {
     const p = buildPrompt({

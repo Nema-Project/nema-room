@@ -6,12 +6,12 @@ import { WORKPACKAGE_LIMITS, parseDaemonToHub, type AgentMessageMeta, type HubTo
 import { createConnectionRpc, DaemonRpcError, type ConnectionRpc, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
-import { timeline, topOpenQuestion } from "./entryIndex.js";
+import { chooseAskedQuestion, timeline, topOpenQuestion } from "./entryIndex.js";
 import { addMessage, getLastAgentMessage, getMessage, listMessageVersions, listPromptMessages, listRecentMessages, messageExcerpt, type Message } from "./messages.js";
 import { announceInterrupted } from "./interrupts.js";
 import { enabledPluginTools, grillState } from "./plugins.js";
 import { recheckReports, registerReportToken } from "./reports.js";
-import { buildPrompt, type WorkPackagePromptInput } from "./prompt.js";
+import { buildPrompt, namedAnswerId, type WorkPackagePromptInput } from "./prompt.js";
 import { onRepoMoved } from "./diagrams.js";
 import { workPackageIdOf, workPackageRules } from "./workpackages.js";
 import { applyRepoFetched, applyRepoMoved, listRepos, syncBoundRepos } from "./repos.js";
@@ -69,7 +69,13 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       ? await listRecentMessages(db, task.workspaceId, userMessage.id, 20)
       : await listPromptMessages(db, task.workspaceId, userMessage.id, 20);
     // A system-started task, a report, or an edit re-run is not the user's answer to the last follow-up question.
-    const asked = editing || userMessage.role === "system" || userMessage.role === "report" ? undefined : (await getLastAgentMessage(db, task.workspaceId))?.meta?.askedQuestion;
+    // A message that names `回答 Q-n：` answers that question even when a newer follow-up exists.
+    const named = !editing && userMessage.role === "user" ? namedAnswerId(userMessage.content) : null;
+    const asked = named
+      ? { id: named }
+      : editing || userMessage.role === "system" || userMessage.role === "report"
+        ? undefined
+        : (await getLastAgentMessage(db, task.workspaceId))?.meta?.askedQuestion;
     const store = new KnowledgeStore(repoPath(dataDir, task.workspaceId), deps.ownedHelpers);
     const lastAskedQuestion = asked ? await store.get(asked.id) : null;
     let workpackage: WorkPackagePromptInput | undefined;
@@ -176,9 +182,17 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     let msg: Message | null = null;
     if (m.ok) {
       // With grill-me off the uncertain items still become questions, but the chat shows no asked one.
-      const q = (await grillState(db, a.workspaceId)).enabled ? await topOpenQuestion(db, dataDir, a.workspaceId, deps.ownedHelpers) : null;
+      // A question this task opened is the one the reply is about, even when an older question has higher priority.
+      const grillOn = (await grillState(db, a.workspaceId)).enabled;
+      const changes = (await listTaskChanges(db, m.taskId)) as AgentMessageMeta["changes"];
+      const store = new KnowledgeStore(repoPath(dataDir, a.workspaceId), deps.ownedHelpers);
+      const touched = grillOn
+        ? (await Promise.all([...new Set(changes.filter((c) => c.kind === "question").map((c) => c.entryId))].map((id) => store.get(id)))).filter((e) => e !== null)
+        : [];
+      const top = grillOn ? await topOpenQuestion(db, dataDir, a.workspaceId, deps.ownedHelpers) : null;
+      const q = grillOn ? chooseAskedQuestion(touched, top) : null;
       const meta: AgentMessageMeta = {
-        changes: (await listTaskChanges(db, m.taskId)) as AgentMessageMeta["changes"],
+        changes,
         askedQuestion: q ? { id: q.id, title: q.title, body: q.body } : null,
       };
       const finished = await getTask(db, m.taskId);

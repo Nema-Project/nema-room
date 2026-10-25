@@ -87,6 +87,24 @@ describe("Composer", () => {
     await userEvent.type(box(), "   {Shift>}{Enter}{/Shift}");
     expect(onSend).not.toHaveBeenCalled();
   });
+  it("lists diagram types and Enter fills the one the typed prefix matches", async () => {
+    mount(vi.fn().mockResolvedValue(undefined));
+    await userEvent.type(box(), "/");
+    expect(screen.getAllByRole("option")).toHaveLength(12);
+    await userEvent.type(box(), "diagram:s");
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["/diagram:sequenceSequence"]);
+    await userEvent.keyboard("{Enter}");
+    expect(box().value).toBe("Draw a sequence code diagram.");
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+  it("Escape closes the slash menu until the query changes", async () => {
+    mount(vi.fn().mockResolvedValue(undefined));
+    await userEvent.type(box(), "/");
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    await userEvent.type(box(), "p");
+    expect(screen.getByRole("option", { name: /\/progress/ })).toBeTruthy();
+  });
   it("keeps content and shows an error when sending fails", async () => {
     const onSend = vi.fn().mockRejectedValue(new Error("boom"));
     mount(onSend);

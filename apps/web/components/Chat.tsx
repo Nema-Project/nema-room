@@ -6,7 +6,7 @@ import { AgentAvatar, MessageItem, messageRoleLabel } from "@/components/Message
 import { formatDay, formatTime } from "@/lib/format";
 import { getActiveTask, listMessages, postMessage, searchMessages } from "@/lib/hub";
 import { useLocale, useT } from "@/lib/i18n";
-import type { AgentMessageMeta, HubEvent, Message } from "@/lib/types";
+import type { HubEvent, Message } from "@/lib/types";
 
 export type ChatHandle = {
   scrollToMessage: (messageId: string) => void;
@@ -47,22 +47,10 @@ function merge(list: Message[], m: Message): Message[] {
   return list.some((x) => x.id === m.id) ? list : [...list, m];
 }
 
-/** The latest follow-up with no user reply after it. Older cards stay as history. */
-export function answerableMessageId(messages: Message[]): string | null {
-  let id: string | null = null;
-  let answered = false;
-  for (const m of messages) {
-    if (m.role === "user") {
-      if (id) answered = true;
-      continue;
-    }
-    const asked = m.role === "agent" ? (m.meta as AgentMessageMeta | null)?.askedQuestion : null;
-    if (asked) {
-      id = m.id;
-      answered = false;
-    }
-  }
-  return answered ? null : id;
+function userRepliesAfter(messages: Message[], messageId: string): string[] {
+  const start = messages.findIndex((m) => m.id === messageId);
+  if (start < 0) return [];
+  return messages.slice(start + 1).filter((m) => m.role === "user").map((m) => m.content);
 }
 
 export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, connected = true, onOpenEntry }, ref) {
@@ -169,7 +157,6 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
     setHits(await searchMessages(workspaceId, term));
   }
 
-  const answerId = answerableMessageId(messages);
   let lastDay = "";
   return (
     <>
@@ -215,7 +202,8 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
               <MessageItem
                 message={m}
                 onOpenEntry={onOpenEntry}
-                onAnswer={m.id === answerId ? (content) => send(content) : undefined}
+                repliesAfter={userRepliesAfter(messages, m.id)}
+                onAnswer={(questionId, content) => send(`回答 ${questionId}：\n${content}`)}
                 onQuote={setQuote}
                 onEdited={(message) => setMessages((l) => l.map((x) => (x.id === message.id ? message : x)))}
                 onJump={scrollToMessage}

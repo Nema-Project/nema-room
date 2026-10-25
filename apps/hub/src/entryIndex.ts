@@ -50,6 +50,20 @@ export async function openQuestionCounts(db: Db): Promise<Record<string, number>
   return Object.fromEntries(rows.map((r) => [r.workspace_id, Number(r.n)]));
 }
 
+const questionNumber = (id: string) => Number(id.slice(id.indexOf("-") + 1)) || 0;
+
+/** A question this task opened beats an older, higher-priority one that the task did not touch. */
+export function chooseAskedQuestion(touched: readonly Entry[], fallback: Entry | null): Entry | null {
+  const seen = new Set<string>();
+  const open = touched.filter((entry) => {
+    if (entry.kind !== "question" || entry.status !== "open" || seen.has(entry.id)) return false;
+    seen.add(entry.id);
+    return true;
+  });
+  open.sort((a, b) => (a.priority ?? 9) - (b.priority ?? 9) || questionNumber(a.id) - questionNumber(b.id));
+  return open[0] ?? fallback;
+}
+
 export async function topOpenQuestion(db: Db, dataDir: string, workspaceId: string, ownedHelpers?: OwnedHelperScope): Promise<Entry | null> {
   const rows = await db.query<{ entry_id: string }>(
     `select entry_id from entry_index where workspace_id = $1 and kind = 'question' and status = 'open'
