@@ -6,6 +6,7 @@ dist/
 !.env.example
 .superpowers/
 .worktrees/
+.taste-skill/
 coverage/
 *.log
 *.tsbuildinfo
