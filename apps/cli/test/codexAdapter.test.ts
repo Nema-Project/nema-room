@@ -30,6 +30,11 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+// The CLI adapter is retired. Its fixtures run Codex through a /bin/sh wrapper and its isolation links auth.json
+// with a file symlink (privileged on Windows), so these tests are POSIX-only. They prove the legacy adapter,
+// not Windows: the active direct adapter has its own native tests (test/direct).
+const posixTest = test.runIf(process.platform !== "win32");
+
 describe("CodexAdapter", () => {
   test("name is codex-cli", () => {
     expect(adapter().name).toBe("codex-cli");
@@ -46,7 +51,7 @@ describe("CodexAdapter", () => {
     expect(existsSync(join(nemaHome, "ws"))).toBe(false);
   });
 
-  test("ok: reply from -o file, argv/env/stdin, workDir cleaned, events emitted", async () => {
+  posixTest("ok: reply from -o file, argv/env/stdin, workDir cleaned, events emitted", async () => {
     mode("ok");
     const events: unknown[] = [];
     const r = await adapter().run(task, (e) => events.push(e));
@@ -66,7 +71,7 @@ describe("CodexAdapter", () => {
     expect(existsSync(wd)).toBe(false);
   });
 
-  test("exit1", async () => {
+  posixTest("exit1", async () => {
     mode("exit1");
     const r = await adapter().run(task, () => {});
     expect(r.ok).toBe(false);
@@ -74,12 +79,12 @@ describe("CodexAdapter", () => {
     expect((r as { error: string }).error).toContain("boom");
   });
 
-  test("badjson", async () => {
+  posixTest("badjson", async () => {
     mode("badjson");
     expect(await adapter().run(task, () => {})).toEqual({ ok: false, error: "Agent 没有返回回复" });
   });
 
-  test("foreign mcp server kills the process", async () => {
+  posixTest("foreign mcp server kills the process", async () => {
     mode("foreign-mcp");
     const r = await adapter().run(task, () => {});
     expect(r.ok).toBe(false);
@@ -94,7 +99,7 @@ describe("CodexAdapter", () => {
     for (const end = Date.now() + ms; Date.now() < end && !cond(); ) await new Promise((r) => setTimeout(r, 20));
     return cond();
   };
-  test.each([["grandchild-hang", { timeoutMs: 2000 }], ["grandchild-foreign", {}]] as const)("%s: whole process tree is killed", async (m, o) => {
+  posixTest.each([["grandchild-hang", { timeoutMs: 2000 }], ["grandchild-foreign", {}]] as const)("%s: whole process tree is killed", async (m, o) => {
     mode(m);
     const r = await adapter(o).run(task, () => {});
     expect(r.ok).toBe(false);
@@ -103,7 +108,7 @@ describe("CodexAdapter", () => {
     expect(await waitFor(() => dead(gc))).toBe(true);
   });
 
-  test("multi-byte text split across stdout chunks arrives intact", async () => {
+  posixTest("multi-byte text split across stdout chunks arrives intact", async () => {
     mode("utf8-split");
     const events: { text: string }[] = [];
     const r = await adapter().run(task, (e) => events.push(e as { text: string }));
@@ -111,12 +116,12 @@ describe("CodexAdapter", () => {
     expect(r).toEqual({ ok: true, reply: "已更新：需求" });
   });
 
-  test("hang times out", async () => {
+  posixTest("hang times out", async () => {
     mode("hang");
     expect(await adapter({ timeoutMs: 200 }).run(task, () => {})).toEqual({ ok: false, error: "Codex 运行超时" });
   });
 
-  test("missing codex binary", async () => {
+  posixTest("missing codex binary", async () => {
     mode("ok");
     const r = await adapter({ codexBin: join(root, "nope") }).run(task, () => {});
     expect((r as { error: string }).error).toContain("找不到 codex 命令");
@@ -130,7 +135,7 @@ describe("CodexAdapter", () => {
     expect(existsSync(dump)).toBe(false);
   });
 
-  test("auth.json replaced by a regular file is moved back and re-linked", async () => {
+  posixTest("auth.json replaced by a regular file is moved back and re-linked", async () => {
     mode("replace-auth");
     const r = await adapter().run(task, () => {});
     expect(r.ok).toBe(true);

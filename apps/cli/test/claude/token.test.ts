@@ -1,3 +1,4 @@
+import { canSymlinkFiles } from "../links.js";
 import { expectPrivate, makePublic } from "../nativePermissions.js";
 import {
   chmodSync,
@@ -46,7 +47,8 @@ describe("Claude Code token file", () => {
     expect(readFileSync(file, "utf8")).toBe("original");
   });
 
-  test("rejects a symlink without changing its target", () => {
+  // A file symlink needs privilege on Windows, so this runs only where one can be created.
+  test.runIf(canSymlinkFiles)("rejects a symlink without changing its target", () => {
     mkdirSync(home, { recursive: true });
     const target = join(root, "target");
     writeFileSync(target, "original");
@@ -64,7 +66,7 @@ describe("Claude Code token file", () => {
     const file = join(home, "claude-code-token");
     writeFileSync(file, "sekret-token", { mode: 0o600 });
     makePublic(file);
-    expect(() => readClaudeToken(home)).toThrow("Claude Code token 文件权限必须是 0600");
+    expect(() => readClaudeToken(home)).toThrow(process.platform === "win32" ? "无法验证私有 Windows ACL" : "Claude Code token 文件权限必须是 0600");
   });
 });
 

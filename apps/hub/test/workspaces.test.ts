@@ -59,13 +59,20 @@ describe("workspaces", () => {
     const ws = await createWorkspace(db, dataDir, "A");
     const outsideRepo = path.join(dataDir, "outside-repo");
     const outsideAuth = path.join(dataDir, "outside-auth");
-    writeFileSync(outsideRepo, "repo-target");
-    writeFileSync(outsideAuth, "auth-target");
+    // Windows cannot create file symlinks without privilege, so there the link targets are directories
+    // (junctions); either way deletion must unlink the entry and leave the target alone.
+    const link = (target: string, at: string) => (process.platform === "win32" ? symlinkSync(target, at, "junction") : symlinkSync(target, at));
+    const targetFile = (target: string, text: string) => {
+      if (process.platform === "win32") { mkdirSync(target); writeFileSync(path.join(target, "f"), text); } else writeFileSync(target, text);
+    };
+    const readTarget = (target: string) => readFileSync(process.platform === "win32" ? path.join(target, "f") : target, "utf8");
+    targetFile(outsideRepo, "repo-target");
+    targetFile(outsideAuth, "auth-target");
     const repo = repoPath(dataDir, ws.id);
-    symlinkSync(outsideRepo, path.join(repo, "link"));
+    link(outsideRepo, path.join(repo, "link"));
     const codex = path.join(nemaHome, "ws", ws.id, "codex-home");
     mkdirSync(codex, { recursive: true });
-    symlinkSync(outsideAuth, path.join(codex, "auth.json"));
+    link(outsideAuth, path.join(codex, "auth.json"));
     await postUserMessage(db, ws.id, "memo");
     const task = (await claimNextTask(db, "d1"))!;
     await recordTaskChange(db, task.id, { entryId: "R-1", kind: "requirement", title: "t", op: "add" });
@@ -76,8 +83,8 @@ describe("workspaces", () => {
     expect(await getWorkspace(db, ws.id)).toBeNull();
     expect(existsSync(repo)).toBe(false);
     expect(existsSync(path.join(nemaHome, "ws", ws.id))).toBe(false);
-    expect(readFileSync(outsideRepo, "utf8")).toBe("repo-target");
-    expect(readFileSync(outsideAuth, "utf8")).toBe("auth-target");
+    expect(readTarget(outsideRepo)).toBe("repo-target");
+    expect(readTarget(outsideAuth)).toBe("auth-target");
   });
 
   it("delete without nemaHome (hub in a container) leaves the daemon's isolation dir to the daemon", async () => {
