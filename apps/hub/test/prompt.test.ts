@@ -8,7 +8,7 @@ const ws = (l: Workspace["knowledgeLanguage"]): Workspace => ({
   id: "ws_1", name: "项目甲", confidential: true, knowledgeLanguage: l, createdAt: "2026-01-01T00:00:00.000Z", archivedAt: null,
 });
 const msg = (i: number, role: Message["role"] = "user"): Message => ({
-  id: `m_${i}`, workspaceId: "ws_1", role, content: `content-${i}`, meta: null, taskId: null, createdAt: "2026-01-01T00:00:00.000Z", editedAt: null,
+  id: `m_${i}`, workspaceId: "ws_1", role, content: `content-${i}`, meta: null, taskId: null, createdAt: "2026-01-01T00:00:00.000Z", editedAt: null, threadId: null,
 });
 const entries = [
   { id: "R-1", kind: "requirement", status: "active", title: "流式输出", related: [] },

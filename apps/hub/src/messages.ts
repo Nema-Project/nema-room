@@ -13,6 +13,7 @@ export type Message = {
   taskId: string | null;
   createdAt: string;
   editedAt: string | null;
+  threadId: string | null;
 };
 
 /** An agent message: its meta, when present, is always AgentMessageMeta. */
@@ -27,9 +28,10 @@ type Row = {
   task_id: string | null;
   created_at: Date | string;
   edited_at: Date | string | null;
+  thread_id: string | null;
 };
 
-const COLS = "id, workspace_id, role, content, meta, task_id, created_at, edited_at";
+const COLS = "id, workspace_id, role, content, meta, task_id, created_at, edited_at, thread_id";
 
 export function messageExcerpt(content: string, max = 200): string {
   return Array.from(content).slice(0, max).join("");
@@ -55,6 +57,7 @@ function toMessage(r: Row): Message {
     taskId: r.task_id,
     createdAt: new Date(r.created_at).toISOString(),
     editedAt: r.edited_at ? new Date(r.edited_at).toISOString() : null,
+    threadId: r.thread_id,
   };
 }
 

@@ -112,11 +112,11 @@ export function idNumber(id: string): number {
 
 export const KIND_STATUSES = {
   requirement: ["active", "superseded", "dropped"],
-  decision: ["active", "superseded"],
-  tradeoff: ["active"],
-  question: ["open", "resolved"],
-  source: ["active"],
-  diagram: ["active", "superseded"],
+  decision: ["active", "superseded", "dropped"],
+  tradeoff: ["active", "dropped"],
+  question: ["open", "resolved", "dropped"],
+  source: ["active", "dropped"],
+  diagram: ["active", "superseded", "dropped"],
   workpackage: ["draft", "approved", "in_progress", "done", "dropped"],
 } as const satisfies Record<EntryKind, readonly string[]>;
 

@@ -18,10 +18,15 @@ const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@example.test", "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false", ...args], { cwd, encoding: "utf8", windowsHide: true }).trim();
 
 /** A source database with one workspace, two tasks (one still running), a real knowledge repo and no credentials. */
-async function makeSource(): Promise<{ outputDir: string; shas: string[]; knowledgeHead: string }> {
+async function makeSource(withThreads = false): Promise<{ outputDir: string; shas: string[]; knowledgeHead: string }> {
   const db = await createTestDb();
   await db.query(`insert into workspaces (id, name, confidential, knowledge_language) values ('ws_a', 'Alpha', true, 'ja')`);
   await db.query(`insert into messages (id, workspace_id, role, content, meta, task_id) values ('m1', 'ws_a', 'user', '日本語の要件', '{"k":[1,2]}', null)`);
+  if (withThreads) {
+    await db.query(`insert into messages (id, workspace_id, role, content, thread_id) values ('m2', 'ws_a', 'agent', 'thread reply', 'm1')`);
+    await db.query(`insert into threads (id, workspace_id, title, opened_by) values ('m1', 'ws_a', '質問の続き', 'user')`);
+    await db.query(`insert into question_threads (workspace_id, question_id, thread_id) values ('ws_a', 'Q-1', 'm1')`);
+  }
   await db.query(`insert into tasks (id, workspace_id, message_id, status, run_token, daemon_id) values ('t1', 'ws_a', 'm1', 'running', 'old-secret-run-token', 'd1')`);
   await db.query(`insert into tasks (id, workspace_id, message_id, status) values ('t2', 'ws_a', 'm1', 'done')`);
   await db.query(`insert into task_changes (task_id, entry_id, kind, title, op) values ('t2', 'e1', 'requirement', 'T', 'add')`);
@@ -59,6 +64,39 @@ async function makeSource(): Promise<{ outputDir: string; shas: string[]; knowle
 const homeOf = () => join(root, "home");
 
 describe("importLegacySnapshot", () => {
+  it("round-trips threads, thread messages, and their durable question association", async () => {
+    const { outputDir } = await makeSource(true);
+    await importLegacySnapshot(outputDir, homeOf(), { gitPath });
+    const db = await createLocalDb(join(homeOf(), "db"));
+    try {
+      expect(await db.query("select id, workspace_id, title, opened_by from threads")).toEqual([
+        { id: "m1", workspace_id: "ws_a", title: "質問の続き", opened_by: "user" },
+      ]);
+      expect(await db.query("select id, thread_id, content from messages where id = 'm2'")).toEqual([
+        { id: "m2", thread_id: "m1", content: "thread reply" },
+      ]);
+      expect(await db.query("select workspace_id, question_id, thread_id from question_threads")).toEqual([
+        { workspace_id: "ws_a", question_id: "Q-1", thread_id: "m1" },
+      ]);
+    } finally { await db.close(); }
+  });
+
+  it("imports an older snapshot without thread tables or messages.thread_id", async () => {
+    const { outputDir } = await makeSource();
+    const snapshotPath = join(outputDir, "snapshot.json");
+    const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));
+    delete snapshot.tableData.threads;
+    delete snapshot.tableData.question_threads;
+    for (const message of snapshot.tableData.messages) delete message.thread_id;
+    writeFileSync(snapshotPath, JSON.stringify(snapshot));
+    await importLegacySnapshot(outputDir, homeOf(), { gitPath });
+    const db = await createLocalDb(join(homeOf(), "db"));
+    try {
+      expect(await db.query("select id, thread_id from messages where id = 'm1'")).toEqual([{ id: "m1", thread_id: null }]);
+      expect(await db.query("select * from threads")).toEqual([]);
+    } finally { await db.close(); }
+  });
+
   it("restores rows, Git history and settings, and drops old run tokens and credentials", async () => {
     const { outputDir, shas } = await makeSource();
     const summary = await importLegacySnapshot(outputDir, homeOf(), { gitPath });

@@ -4,6 +4,18 @@ import { EntryKindSchema } from "./entry.js";
 export const KNOWLEDGE_LANGUAGES = ["ja", "en", "zh", "follow"] as const;
 export type KnowledgeLanguage = (typeof KNOWLEDGE_LANGUAGES)[number];
 
+export type ThreadOpenedBy = "agent" | "user" | "grill";
+export type Thread = {
+  id: string;
+  workspaceId: string;
+  title: string;
+  openedBy: ThreadOpenedBy;
+  replyCount: number;
+  unread: number;
+  lastReplyAt: string | null;
+  createdAt: string;
+};
+
 export const MessageQuote = z.object({
   messageId: z.string(),
   role: z.enum(["user", "agent", "system", "report"]),

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { AgentMessageMeta, EntryFrontmatter, KIND_DIR, KIND_PREFIX, UpsertEntryInput, idNumber, isStale, kindFromId } from "../src/index.js";
+import { AgentMessageMeta, ENTRY_KINDS, EntryFrontmatter, KIND_DIR, KIND_PREFIX, KIND_STATUSES, UpsertEntryInput, idNumber, isStale, kindFromId } from "../src/index.js";
 
 const baseDecision = {
   id: "D-1",
@@ -36,6 +36,19 @@ test("kind-specific rules", () => {
   expect(() => UpsertEntryInput.parse({ ...base, kind: "question" })).toThrow();
   expect(UpsertEntryInput.parse({ ...base, kind: "decision", sourceMessages: undefined }).sourceMessages).toEqual([]);
   expect(() => UpsertEntryInput.parse({ ...base, kind: "decision", status: "open" })).toThrow();
+});
+test("every kind accepts dropped", () => {
+  const diagram = { repoId: "repo_api", type: "architecture" as const, sourceCommits: {}, nodePaths: {} };
+  for (const kind of ENTRY_KINDS) {
+    expect(KIND_STATUSES[kind]).toContain("dropped");
+    if (kind === "diagram" || kind === "workpackage") continue; // These kinds are persisted through dedicated operations.
+    const extra = kind === "source" ? { url: "https://example.com" }
+      : kind === "question" ? { priority: 2 }
+      : {};
+    expect(UpsertEntryInput.safeParse({ kind, title: "t", body: "b", reason: "r", status: "dropped", ...extra }).success, kind).toBe(true);
+  }
+  expect(EntryFrontmatter.safeParse({ ...baseDecision, id: "G-1", kind: "diagram", status: "dropped", diagram }).success).toBe(true);
+  expect(EntryFrontmatter.safeParse({ ...baseDecision, id: "W-1", kind: "workpackage", status: "dropped", workpackage: wpMeta }).success).toBe(true);
 });
 test("AgentMessageMeta", () => {
   const changes = [{ entryId: "R-7", kind: "requirement" as const, title: "流式输出", op: "add" as const }];

@@ -21,7 +21,9 @@ export type KnowledgeManifestEntry = {
 
 export const TABLE_COLUMNS = {
   workspaces: ["id", "name", "confidential", "knowledge_language", "created_at", "archived_at"],
-  messages: ["id", "workspace_id", "role", "content", "meta", "task_id", "created_at", "seq", "edited_at"],
+  messages: ["id", "workspace_id", "role", "content", "meta", "task_id", "created_at", "seq", "edited_at", "thread_id"],
+  threads: ["id", "workspace_id", "title", "opened_by", "last_read_seq", "created_at"],
+  question_threads: ["workspace_id", "question_id", "thread_id"],
   tasks: ["id", "workspace_id", "message_id", "status", "run_token", "daemon_id", "error", "created_at", "started_at", "finished_at", "seq", "interruptions", "kind"],
   task_changes: ["task_id", "entry_id", "kind", "title", "op", "created_at"],
   entry_index: ["workspace_id", "entry_id", "kind", "title", "status", "priority", "business_date", "updated_at"],
@@ -35,7 +37,7 @@ export const TABLE_COLUMNS = {
 } as const;
 
 /** Snapshots taken before this table existed still import. */
-const OPTIONAL_TABLES = new Set<keyof typeof TABLE_COLUMNS>(["message_versions"]);
+const OPTIONAL_TABLES = new Set<keyof typeof TABLE_COLUMNS>(["message_versions", "threads", "question_threads"]);
 
 export const TABLE_ORDER = Object.keys(TABLE_COLUMNS) as (keyof typeof TABLE_COLUMNS)[];
 const workspaceIdPattern = /^ws_[A-Za-z0-9_-]{1,32}$/;
@@ -72,7 +74,7 @@ export function validateSnapshot(value: unknown): Snapshot {
       if (!isObject(row)) throw new Error(`Invalid ${table} row ${i}`);
       const columns = Object.keys(row);
       if (columns.some((column) => !allowed.includes(column))) throw new Error(`Snapshot table ${table} contains an unknown column`);
-      return row;
+      return table === "messages" && row.thread_id === undefined ? { ...row, thread_id: null } : row;
     });
   }
   const workspaces = tableData.workspaces!;
@@ -90,6 +92,17 @@ export function validateSnapshot(value: unknown): Snapshot {
     if (typeof row.id !== "string" || messageIds.has(row.id) || typeof row.content !== "string" || !["user", "agent", "system", "report"].includes(String(row.role))) throw new Error("Invalid message row");
     messageIds.add(row.id);
     if (row.workspace_id !== null && row.workspace_id !== undefined) requireWorkspace(row);
+  }
+  for (const row of tableData.messages!) if (row.thread_id != null && !messageIds.has(String(row.thread_id))) throw new Error("Snapshot contains a missing thread anchor message reference");
+  const threadIds = new Set<string>();
+  for (const row of tableData.threads!) {
+    if (typeof row.id !== "string" || !messageIds.has(row.id) || threadIds.has(row.id) || !["agent", "user", "grill"].includes(String(row.opened_by)) || typeof row.title !== "string") throw new Error("Invalid thread row");
+    requireWorkspace(row);
+    threadIds.add(row.id);
+  }
+  for (const row of tableData.question_threads!) {
+    requireWorkspace(row);
+    if (typeof row.question_id !== "string" || !threadIds.has(String(row.thread_id))) throw new Error("Snapshot contains a missing thread reference");
   }
   const taskIds = new Set<string>();
   for (const row of tableData.tasks!) {
