@@ -60,6 +60,15 @@ export async function getThread(db: Db, id: string): Promise<Thread | null> {
   return rows[0] ? toThread(rows[0]) : null;
 }
 
+export async function renameThread(db: Db, id: string, title: string): Promise<Thread> {
+  const rows = await db.query<ThreadRow>(
+    "update threads set title=$2 where id=$1 returning id,workspace_id,title,opened_by,last_read_seq,created_at",
+    [id, title],
+  );
+  if (!rows[0]) throw new MessageOpError(404, "thread not found");
+  return toThread(rows[0]);
+}
+
 export async function listThreads(db: Db, workspaceId: string): Promise<Thread[]> {
   const rows = await db.query<ThreadRow>(
     `select t.id,t.workspace_id,t.title,t.opened_by,t.last_read_seq,t.created_at,

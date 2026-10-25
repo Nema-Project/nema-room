@@ -18,16 +18,21 @@ const codeRead: PluginToolSpec = {
 };
 
 describe("roomTools", () => {
-  test("roomTools declares the 3 room functions plus each plugin tool", () => {
+  test("roomTools lists open_thread and each plugin tool", () => {
     const tools = roomTools([codeRead]);
-    expect(tools.map((t) => t.name)).toEqual(["list_entries", "read_entry", "upsert_entry", "code__read"]);
+    expect(tools.map((t) => t.name)).toEqual(["list_entries", "read_entry", "upsert_entry", "open_thread", "code__read"]);
     for (const t of tools) {
       expect(t.type).toBe("function");
       expect(t.strict).toBe(false);
     }
-    expect(tools[3]).toMatchObject({
+    expect(tools[4]).toMatchObject({
       description: codeRead.description,
       parameters: codeRead.parameters,
+    });
+    expect(tools[3]).toMatchObject({
+      name: "open_thread",
+      description: "Move this conversation into a thread anchored on the current message. Use it when the topic needs a longer back-and-forth. Your reply will be posted in the thread.",
+      parameters: { type: "object", properties: { title: { type: "string" } }, required: ["title"], additionalProperties: false },
     });
   });
 
@@ -35,6 +40,20 @@ describe("roomTools", () => {
     const upsert = roomTools([]).find((t) => t.name === "upsert_entry");
     expect((upsert?.parameters as { required?: string[] }).required).toContain("basis");
   });
+});
+
+test("dispatchTool open_thread calls room.openThread", async () => {
+  const calls: unknown[] = [];
+  const room = {
+    listEntries: async (): Promise<RoomResult> => ({ ok: true, json: [] }),
+    readEntry: async (): Promise<RoomResult> => ({ ok: true, json: {} }),
+    upsertEntry: async (): Promise<RoomResult> => ({ ok: true, json: {} }),
+    openThread: async (args: unknown): Promise<RoomResult> => { calls.push(args); return { ok: true, json: { threadId: "m1" } }; },
+    callPlugin: async (): Promise<RoomResult> => ({ ok: true, json: {} }),
+  };
+  const result = await dispatchTool("open_thread", '{"title":"Long topic"}', room);
+  expect(result).toEqual({ output: '{"threadId":"m1"}', known: true });
+  expect(calls).toEqual([{ title: "Long topic" }]);
 });
 
 describe("dispatchTool plugin tools", () => {
@@ -63,7 +82,7 @@ describe("dispatchTool plugin tools", () => {
     const unknown = await dispatchTool("code__search", "{}", room, [codeRead]);
     expect(unknown.known).toBe(false);
     const error = (JSON.parse(unknown.output) as { error: string }).error;
-    expect(error).toContain("只能使用 list_entries、read_entry、upsert_entry、code__read");
+    expect(error).toContain("只能使用 list_entries、read_entry、upsert_entry、open_thread、code__read");
     expect(calls).toEqual([{ name: "code__read", args: { repo: "r", path: "a.ts" } }]);
   });
 });

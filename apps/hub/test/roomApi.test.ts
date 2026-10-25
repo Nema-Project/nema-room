@@ -78,6 +78,55 @@ async function seedActiveDecision(token: string, messageId: string): Promise<voi
 }
 
 describe("room api", () => {
+  test("open_thread anchors on the task message and emits thread.updated", async () => {
+    const t = await runningTaskFor(wsA);
+    const seen: HubEvent[] = [];
+    events.subscribe(wsA, (e) => seen.push(e));
+    const r = await req("POST", "/room/threads", t.runToken, { title: "Long topic" });
+    expect(r.status).toBe(200);
+    const body = await r.json() as any;
+    expect(body.threadId).toBe(t.messageId);
+    expect(seen).toEqual([{ type: "thread.updated", thread: expect.objectContaining({ id: t.messageId, title: "Long topic" }) }]);
+  });
+
+  test("open_thread twice returns the same thread", async () => {
+    const t = await runningTaskFor(wsA);
+    const first = await req("POST", "/room/threads", t.runToken, { title: "First" });
+    const second = await req("POST", "/room/threads", t.runToken, { title: "Second" });
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual(await first.json());
+  });
+
+  test("open_thread on an existing thread renames it", async () => {
+    const t = await runningTaskFor(wsA);
+    await req("POST", "/room/threads", t.runToken, { title: "First" });
+    const r = await req("POST", "/room/threads", t.runToken, { title: "Renamed" });
+    expect(r.status).toBe(200);
+    const rows = await db.query<{ title: string }>("select title from threads where id=$1", [t.messageId]);
+    expect(rows).toEqual([{ title: "Renamed" }]);
+  });
+
+  test("open_thread from a thread task renames that thread", async () => {
+    const anchor = await postUserMessage(db, wsA, "anchor");
+    const t0 = await claimNextTask(db, "d1");
+    await req("POST", "/room/threads", t0!.runToken!, { title: "Original" });
+    await finishTask(db, t0!.id, { ok: true });
+    const nested = await postUserMessage(db, wsA, "reply task", { threadId: anchor.message.id });
+    const task = await claimNextTask(db, "d2");
+    expect(task?.id).toBe(nested.task.id);
+    const r = await req("POST", "/room/threads", task!.runToken!, { title: "Renamed from reply" });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ threadId: anchor.message.id });
+    expect(await db.query("select title from threads where id=$1", [anchor.message.id])).toEqual([{ title: "Renamed from reply" }]);
+  });
+
+  test("title is required and empty title is 400", async () => {
+    const t = await runningTaskFor(wsA);
+    expect((await req("POST", "/room/threads", t.runToken, {})).status).toBe(400);
+    expect((await req("POST", "/room/threads", t.runToken, { title: "" })).status).toBe(400);
+  });
+
   test("token scopes all access to its own workspace", async () => {
     const ta = await runningTaskFor(wsA);
     const tb = await runningTaskFor(wsB);

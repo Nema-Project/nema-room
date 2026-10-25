@@ -6,11 +6,13 @@ import type { Db } from "./db/db.js";
 import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
 import { callHubFunction, vendoredArchify, type Archify } from "./diagrams.js";
 import type { EventBus } from "./events.js";
+import { getMessage } from "./messages.js";
 import { indexEntry } from "./entryIndex.js";
 import { checkGithubCall, githubTargets } from "./githubScope.js";
 import { daemonHttpStatus, enabledPluginTools, recordPluginCall } from "./plugins.js";
 import { findRepoForWorkspace, listRepos } from "./repos.js";
-import { recordTaskChange, resolveRunToken } from "./tasks.js";
+import { getTask, recordTaskChange, resolveRunToken } from "./tasks.js";
+import { conversationOf, ensureThread, renameThread } from "./threads.js";
 import { repoPath } from "./workspaces.js";
 import { retryBlockedPackages } from "./workpackages.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
@@ -42,6 +44,33 @@ export function roomRoutes(deps: {
   });
 
   const store = (ws: string) => new KnowledgeStore(repoPath(dataDir, ws), deps.ownedHelpers);
+
+  app.post("/threads", async (c) => {
+    const { taskId, workspaceId } = c.get("auth");
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ error: "request body must be valid JSON" }, 400);
+    }
+    const title = raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>).title
+      : undefined;
+    if (typeof title !== "string") return c.json({ error: "title is required" }, 400);
+    if (title.length < 1 || title.length > 80) return c.json({ error: "title must be 1 to 80 characters" }, 400);
+
+    const task = await getTask(db, taskId);
+    if (!task || task.workspaceId !== workspaceId) return c.json({ error: "task not found" }, 404);
+    const anchor = await getMessage(db, task.messageId);
+    if (!anchor || anchor.workspaceId !== workspaceId) return c.json({ error: "task message not found" }, 404);
+
+    const existing = await conversationOf(db, anchor);
+    const thread = existing
+      ? await renameThread(db, existing, title)
+      : await ensureThread(db, anchor.id, title, "agent");
+    events.emit(workspaceId, { type: "thread.updated", thread });
+    return c.json({ threadId: thread.id });
+  });
 
   app.get("/entries", async (c) => {
     const body: ListEntriesResponse = { entries: await store(c.get("auth").workspaceId).list() };

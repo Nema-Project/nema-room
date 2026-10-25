@@ -110,7 +110,7 @@ describe("CodexDirectAdapter", () => {
     expect(result).toEqual({ ok: false, error: RELOGIN_MESSAGE });
   });
 
-  test("full run: model from the list, only the 3 Room functions, upsert via hub, reply + progress", async () => {
+  test("full run: model from the list, Room functions, upsert via hub, reply + progress", async () => {
     login();
     server.models(models("gpt-first", "gpt-second"));
     server.responses(
@@ -128,9 +128,9 @@ describe("CodexDirectAdapter", () => {
       expect(b.store).toBe(false);
       expect(b.reasoning).toEqual({ effort: "medium", summary: "auto" });
       const tools = b.tools as { type: string; name: string }[];
-      expect(tools.length).toBe(3);
+      expect(tools.length).toBe(4);
       expect(tools.every((t) => t.type === "function")).toBe(true);
-      expect(tools.map((t) => t.name)).toEqual(["list_entries", "read_entry", "upsert_entry"]);
+      expect(tools.map((t) => t.name)).toEqual(["list_entries", "read_entry", "upsert_entry", "open_thread"]);
     }
     const second = bodies[1]!.input as { type: string; call_id?: string }[];
     expect(second.filter((i) => i.call_id === "c1").map((i) => i.type)).toEqual(["function_call", "function_call_output"]);
@@ -157,7 +157,7 @@ describe("CodexDirectAdapter", () => {
     const result = await adapter().run(assigned, (e) => events.push(e));
     expect(result).toEqual({ ok: true, reply: "ok" });
     const body = JSON.parse(server.requests.find((r) => r.url === "/v1/responses")!.body) as { tools: { type: string; name: string; strict: boolean }[] };
-    expect(body.tools.map((t) => t.name)).toEqual(["list_entries", "read_entry", "upsert_entry", "code__read"]);
+    expect(body.tools.map((t) => t.name)).toEqual(["list_entries", "read_entry", "upsert_entry", "open_thread", "code__read"]);
     expect(body.tools.every((t) => t.type === "function" && t.strict === false)).toBe(true);
   });
 
