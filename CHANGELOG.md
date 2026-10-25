@@ -58,7 +58,9 @@
 
 ### Changed
 
+- Claude Code model settings offer the official aliases (`sonnet`, `opus`, `haiku`, `fable`, `best`, `opusplan`). The empty choice is labeled with the account default, Opus 5.5. Saving one starts the next task with `claude --model`.
 - Model and reasoning sit at the top of model settings, ahead of the provider and its login.
+- Each provider keeps its own login. Choosing a provider switches the one that runs the next task and leaves the other logins in place.
 
 - Codex direct, Claude Code, and `nema mcp` declare the task's plugin functions next to the three Room functions. Claude's `--allowedTools` and the init tool-face check use `mcp__room__<name>` for those functions. There is still one MCP server named `room`, and Claude still launches with `--tools ""`.
 - The composer hint no longer announces Markdown support.

@@ -10,9 +10,12 @@ export type ModelConfig = {
   model?: string;
   byokBaseUrl?: string;
 };
+export type CredentialState = "connected" | "missing" | "unusable";
 export type ModelSettingsDto = {
   config: ModelConfig;
-  auth: { mode: AuthMode; credential: CredentialKind; state: "connected" | "missing" | "unusable"; adapter: ModelAdapter };
+  auth: { mode: AuthMode; credential: CredentialKind; state: CredentialState; adapter: ModelAdapter };
+  /** Each provider's own login. Absent on older responses; the active provider then uses `auth`. */
+  credentials?: Partial<Record<CredentialKind, CredentialState>>;
   tools: Record<"claude" | "github", { available: boolean; tokenSaved: boolean }>;
 };
 export type AuthJob = { state: "idle" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled"; error: "login_failed" | "probe_failed" | null };

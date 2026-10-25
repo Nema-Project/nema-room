@@ -60,6 +60,19 @@ describe("authenticated settings backend", () => {
     expect(await claude.dispatch("GET", "/_nema/models", undefined)).toEqual({ status: 200, body: { models: [], unavailable: "not_applicable" } });
   });
 
+  test("reports each provider login separately and omits secret bytes", async () => {
+    const home = tempHome();
+    const service = createSettingsService({ home, codexHome: path.join(home, "no-codex") });
+    const secret = "provider-secret-not-shared";
+    await service.dispatch("POST", "/_nema/auth/secret", { kind: "byok", value: secret });
+    const status = await service.dispatch("GET", "/_nema/settings", undefined);
+    expect(status.body).toMatchObject({
+      auth: { mode: "siwc", credential: "siwc", state: "missing" },
+      credentials: { siwc: "missing", byok: "connected", claude: "missing" },
+    });
+    expect(JSON.stringify(status.body)).not.toContain(secret);
+  });
+
   test("secret writes accept only fixed kinds and never return submitted content", async () => {
     const home = tempHome();
     const saveSecret = vi.fn();

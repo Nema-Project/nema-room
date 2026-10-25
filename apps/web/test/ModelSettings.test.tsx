@@ -60,6 +60,9 @@ describe("ModelSettings", () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(reply(settings));
     setup(fetchMock, locale);
     for (const label of labels) expect(await screen.findByLabelText(label)).toBeTruthy();
+    const model = screen.getByRole("heading", { name: labels[3] });
+    const provider = screen.getByRole("heading", { name: locale === "en" ? "Provider" : locale === "ja" ? "プロバイダー" : "提供方" });
+    expect(model.compareDocumentPosition(provider) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it.each([
@@ -85,8 +88,9 @@ describe("ModelSettings", () => {
       await userEvent.selectOptions(screen.getByLabelText("Model service"), "api");
     } else if (mode === "compat") {
       await userEvent.selectOptions(screen.getByLabelText("ChatGPT sign-in"), "codex");
+    } else {
+      await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     }
-    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock.mock.calls[1][0]).toBe("/_nema/settings");
     expect(fetchMock.mock.calls[1][1]?.method).toBe("PATCH");
@@ -124,16 +128,26 @@ describe("ModelSettings", () => {
   });
 
   it.each([
-    ["en", "ChatGPT with browser sign-in"],
-    ["ja", "ChatGPT をブラウザーでログイン"],
-    ["zh", "通过浏览器登录 ChatGPT"],
-  ])("uses user-facing saved-connection wording for unsaved changes in %s", async (locale, chatgptBrowser) => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(reply(settings));
+    ["en", "Model service", "No credentials are saved for this mode.", "Each provider keeps its own login."],
+    ["ja", "モデル接続", "このモードの認証情報は保存されていません。", "プロバイダーごとにログインは分かれています。"],
+    ["zh", "模型服务", "此模式未保存凭据。", "每个提供方的登录分开保存。"],
+  ])("shows the selected provider's own login after switching in %s", async (locale, serviceLabel, ownStatus, independent) => {
+    const byok = {
+      ...settings,
+      config: { ...config, authMode: "byok" as const },
+      auth: { ...settings.auth, mode: "byok" as const, credential: "byok" as const, state: "missing" as const },
+      credentials: { siwc: "connected" as const, compat: "missing" as const, byok: "missing" as const, claude: "connected" as const },
+    };
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(reply(settings))
+      .mockResolvedValueOnce(reply({ config: byok.config }))
+      .mockResolvedValueOnce(reply(byok));
     setup(fetchMock, locale);
-    const service = await screen.findByLabelText(locale === "en" ? "Model service" : locale === "ja" ? "モデル接続" : "模型服务") as HTMLSelectElement;
-    await userEvent.selectOptions(service, "api");
-    expect(service.value).toBe("api");
-    expect(screen.getByText(new RegExp(chatgptBrowser))).toBeTruthy();
+    await userEvent.selectOptions(await screen.findByLabelText(serviceLabel), "api");
+    const status = await screen.findByText(ownStatus);
+    const note = screen.getByText(new RegExp(independent));
+    expect(status.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText(/saved connection|保存済みの接続|已保存的连接/)).toBeNull();
     expect(screen.queryByText(/SIWC|BYOK/i)).toBeNull();
   });
 
@@ -152,15 +166,31 @@ describe("ModelSettings", () => {
     await waitFor(() => expect(select.value).toBe("gpt-a"));
     expect(Array.from(select.options, (option) => option.value)).toEqual(["", "gpt-a", "gpt-b"]);
     expect(screen.queryByRole("textbox", { name: /model/i })).toBeNull();
-    await userEvent.selectOptions(screen.getByLabelText("Model service"), "api");
-    expect(select.disabled).toBe(true);
-    expect(screen.getByText("Save the provider first. The model list belongs to the saved provider, not the draft above.")).toBeTruthy();
-    await userEvent.selectOptions(screen.getByLabelText("Model service"), "chatgpt");
-    await waitFor(() => expect(select.disabled).toBe(false));
     await userEvent.selectOptions(select, "gpt-b");
     await userEvent.click(screen.getByRole("button", { name: "Save model" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({ model: "gpt-b", reasoningEffort: "medium" });
+  });
+
+  it("offers Claude Code model aliases and saves the chosen alias", async () => {
+    const claude = {
+      ...settings,
+      config: { ...config, adapter: "claude-code" as const, model: "sonnet" },
+      auth: { ...settings.auth, credential: "claude" as const, adapter: "claude-code" as const },
+    };
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(reply(claude))
+      .mockResolvedValueOnce(reply({ config: { ...claude.config, model: "opus" } }))
+      .mockResolvedValueOnce(reply({ ...claude, config: { ...claude.config, model: "opus" } }));
+    setup(fetchMock);
+    const select = await screen.findByLabelText("Model") as HTMLSelectElement;
+    expect(select.value).toBe("sonnet");
+    expect(Array.from(select.options, (option) => option.text)).toEqual(["Default (Opus 5.5)", "sonnet", "opus", "haiku", "fable", "best", "opusplan"]);
+    expect(screen.queryByText(/daily coding|does not use a model list/)).toBeNull();
+    await userEvent.selectOptions(select, "opus");
+    await userEvent.click(screen.getByRole("button", { name: "Save model" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ model: "opus", reasoningEffort: "medium" });
   });
 
   it("keeps an unlisted saved model until a listed one replaces it", async () => {
@@ -180,22 +210,26 @@ describe("ModelSettings", () => {
   });
 
   it("validates the service address and saves the provider without a model", async () => {
+    const byokSettings = { ...settings, config: { ...config, authMode: "byok" as const }, auth: { ...settings.auth, mode: "byok" as const, credential: "byok" as const } };
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(reply(settings))
-      .mockResolvedValueOnce(reply({ config: { ...config, authMode: "byok" } }))
-      .mockResolvedValueOnce(reply({ ...settings, config: { ...config, authMode: "byok" }, auth: { ...settings.auth, mode: "byok", credential: "byok" } }));
+      .mockResolvedValueOnce(reply({ config: byokSettings.config }))
+      .mockResolvedValueOnce(reply(byokSettings))
+      .mockResolvedValueOnce(reply({ config: byokSettings.config }))
+      .mockResolvedValueOnce(reply(byokSettings));
     setup(fetchMock);
     await screen.findByLabelText("Model service");
     await userEvent.selectOptions(screen.getByLabelText("Model service"), "api");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     await userEvent.type(screen.getByLabelText("Service address (optional)"), "http://example.com/v1");
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Enter an HTTPS URL or a localhost URL.");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
 
     await userEvent.clear(screen.getByLabelText("Service address (optional)"));
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    const body = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+    const body = JSON.parse(String(fetchMock.mock.calls[3][1]?.body));
     expect(body).toMatchObject({ adapter: "codex-direct", authMode: "byok", byokBaseUrl: null });
     expect(body).not.toHaveProperty("model");
   });
@@ -208,13 +242,12 @@ describe("ModelSettings", () => {
     setup(fetchMock);
     await screen.findByLabelText("Agent runtime");
     await userEvent.selectOptions(screen.getByLabelText("ChatGPT sign-in"), "codex");
-    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Some settings are invalid. Review the values and try again.");
     expect(alert.textContent).not.toContain("raw-provider-marker");
   });
 
-  it("does not start auth for a newly selected mode until that mode is saved", async () => {
+  it("uses the selected provider's login as soon as that provider is chosen", async () => {
     const compatSettings = {
       ...settings,
       config: { ...config, authMode: "compat" },
@@ -230,8 +263,6 @@ describe("ModelSettings", () => {
     await screen.findByLabelText("Agent runtime");
     await userEvent.selectOptions(screen.getByLabelText("ChatGPT sign-in"), "codex");
     const loginButton = screen.getByRole("button", { name: "Start login" }) as HTMLButtonElement;
-    expect(loginButton.disabled).toBe(true);
-    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(loginButton.disabled).toBe(false));
     await userEvent.click(loginButton);
     expect(fetchMock.mock.calls[3][0]).toBe("/_nema/auth/login");
@@ -258,16 +289,24 @@ describe("ModelSettings", () => {
   });
 
   it("clears a draft password when the selected credential kind changes", async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(reply({
+    const claudeSettings = {
       ...settings,
-      config: { ...config, authMode: "byok" },
-      auth: { ...settings.auth, mode: "byok", credential: "byok" },
-    }));
+      config: { ...config, adapter: "claude-code" as const },
+      auth: { ...settings.auth, credential: "claude" as const, adapter: "claude-code" as const },
+    };
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(reply({
+        ...settings,
+        config: { ...config, authMode: "byok" },
+        auth: { ...settings.auth, mode: "byok", credential: "byok" },
+      }))
+      .mockResolvedValueOnce(reply({ config: claudeSettings.config }))
+      .mockResolvedValueOnce(reply(claudeSettings));
     vi.stubGlobal("fetch", fetchMock);
     setup(fetchMock);
     await userEvent.type(await screen.findByLabelText("API key"), "draft-secret");
     await userEvent.selectOptions(screen.getByLabelText("Agent runtime"), "claude");
-    const claudeInput = screen.getByLabelText("Claude Code token") as HTMLInputElement;
+    const claudeInput = await screen.findByLabelText("Claude Code token") as HTMLInputElement;
     expect(claudeInput.type).toBe("password");
     expect(claudeInput.value).toBe("");
     expect((screen.getByRole("button", { name: "Save credential" }) as HTMLButtonElement).disabled).toBe(true);
@@ -319,12 +358,20 @@ describe("ModelSettings", () => {
   });
 
   it("shows the unsupported Claude probe message without exposing the SIWC probe action", async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(reply(settings));
+    const claudeSettings = {
+      ...settings,
+      config: { ...config, adapter: "claude-code" as const },
+      auth: { ...settings.auth, credential: "claude" as const, adapter: "claude-code" as const },
+    };
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(reply(settings))
+      .mockResolvedValueOnce(reply({ config: claudeSettings.config }))
+      .mockResolvedValueOnce(reply(claudeSettings));
     vi.stubGlobal("fetch", fetchMock);
     setup(fetchMock);
     await screen.findByLabelText("Agent runtime");
     await userEvent.selectOptions(screen.getByLabelText("Agent runtime"), "claude");
-    expect(screen.getByText("Connection testing is not available for Claude Code.")).toBeTruthy();
+    expect(await screen.findByText("Connection testing is not available for Claude Code.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Test connection" })).toBeNull();
     expect(fetchMock.mock.calls.some(([url]) => url === "/_nema/auth/probe")).toBe(false);
   });

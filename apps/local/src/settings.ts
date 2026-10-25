@@ -84,9 +84,20 @@ function redactedStatus(home: string, codexHome: string): Record<string, unknown
     const inspected = new AuthStore(home, siwcRefresher).inspect();
     state = inspected.auth ? "connected" : inspected.reason === "unusable" ? "unusable" : "missing";
   }
+  let siwc: "connected" | "missing" | "unusable" = "missing";
+  const inspected = new AuthStore(home, siwcRefresher).inspect();
+  siwc = inspected.auth ? "connected" : inspected.reason === "unusable" ? "unusable" : "missing";
+  let compat: "connected" | "missing" = "missing";
+  try { readCodexCliTokens(codexHome); compat = "connected"; } catch { compat = "missing"; }
   return {
     config,
     auth: { mode: config.authMode, credential, state, adapter: config.adapter },
+    credentials: {
+      siwc,
+      compat,
+      byok: existsSync(byokKeyPath(home)) ? "connected" : "missing",
+      claude: existsSync(claudeTokenPath(home)) ? "connected" : "missing",
+    },
     tools: {
       claude: { available: commandOnPath("claude"), tokenSaved: existsSync(claudeTokenPath(home)) },
       github: { available: commandOnPath("github-mcp-server"), tokenSaved: existsSync(githubTokenPath(home)) },
