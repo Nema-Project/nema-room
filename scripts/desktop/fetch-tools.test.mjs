@@ -45,8 +45,8 @@ test('a symlinked ancestor is canonical, a symlinked directory is refused', asyn
   await assert.rejects(rejectSymlinkPath(leaf), /symlink/);
 });
 
-test('manifest pins all five runtime targets to exact official versioned URLs and hashes', () => {
-  const expected = [['win32','x64'],['darwin','arm64'],['darwin','x64'],['linux','x64'],['linux','arm64']];
+test('manifest pins all four runtime targets to exact official versioned URLs and hashes', () => {
+  const expected = [['win32','x64'],['darwin','arm64'],['linux','x64'],['linux','arm64']];
   for (const [platform, arch] of expected) {
     const entries = assetsFor(platform, arch);
     assert.equal(entries.node.version, '24.22.1');
@@ -97,6 +97,7 @@ test('zip extraction rejects traversal before writing outside destination', asyn
 
 test('manifest selection rejects mismatched platform and architecture', () => {
   assert.throws(() => assetsFor('win32', 'arm64'), /unsupported/i);
+  assert.throws(() => assetsFor('darwin', 'x64'), /unsupported/i);
   assert.throws(() => assetsFor('freebsd', 'x64'), /unsupported/i);
 });
 
@@ -122,14 +123,12 @@ test('TAR extraction rejects descendants whose destination parent is an archive 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('pinned macOS Git layouts use bin/git and carry a concrete upstream notice', async () => {
-  for (const arch of ['arm64', 'x64']) {
-    const layout = gitLayoutFor('darwin', arch);
-    assert.equal(layout.binary, 'bin/git');
-    assert.match(layout.licenseSource.url, /git\/a018953688f1b10bddf91bff8747068f5f4746a4\/COPYING$/);
-    assert.match(layout.licenseSource.sha256, /^[a-f0-9]{64}$/);
-    assert.ok(layout.noticeCandidates.includes('libexec/git-core/NOTICE'));
-  }
+test('pinned macOS Git layout uses bin/git and carries a concrete upstream notice', async () => {
+  const layout = gitLayoutFor('darwin', 'arm64');
+  assert.equal(layout.binary, 'bin/git');
+  assert.match(layout.licenseSource.url, /git\/a018953688f1b10bddf91bff8747068f5f4746a4\/COPYING$/);
+  assert.match(layout.licenseSource.sha256, /^[a-f0-9]{64}$/);
+  assert.ok(layout.noticeCandidates.includes('libexec/git-core/NOTICE'));
 });
 
 test('pinned Ubuntu Git layouts use the bin/git path from the upstream build script', () => {
@@ -144,7 +143,7 @@ test('macOS archive fixture resolves Git executable and notice at the pinned lay
       tarEntry('libexec/git-core/NOTICE', Buffer.from('upstream notice')),
     );
     await extractArchive(tar, 'tar.gz', unpack);
-    const layout = gitLayoutFor('darwin', 'x64');
+    const layout = gitLayoutFor('darwin', 'arm64');
     assert.equal(await readFile(path.join(unpack, layout.binary), 'utf8'), 'git-bin');
     assert.equal(await findRequiredFile(unpack, layout.noticeCandidates, 'Git notice'), 'libexec/git-core/NOTICE');
   } finally { await rm(root, { recursive: true, force: true }); }

@@ -18,14 +18,6 @@
         { "id": "font-sources", "status": "pending", "requiredRoles": ["source", "license"], "coverage": { "kind": "font-assets", "root": "web/apps/web/.next/static/media" }, "reason": "Exact font revisions for generated WOFF2 assets are not pinned." }
       ]
     },
-    "darwin-x64": {
-      "status": "pending",
-      "components": [
-        { "id": "node-source", "status": "pending", "requiredRoles": ["source", "recipe"], "coverage": { "kind": "files", "root": "runtime/darwin-x64/node", "requiredMappingKeys": ["node-runtime", "npm-package", "corepack-package"] }, "reason": "Node, npm, Corepack source and build correspondence has not been fully reviewed." },
-        { "id": "git-source", "status": "pending", "requiredRoles": ["source", "recipe", "license"], "coverage": { "kind": "posix-git-tree", "root": "runtime/darwin-x64/git" }, "reason": "The target Git source, LFS/GCM additions, and exact build correspondence have not been reviewed." },
-        { "id": "font-sources", "status": "pending", "requiredRoles": ["source", "license"], "coverage": { "kind": "font-assets", "root": "web/apps/web/.next/static/media" }, "reason": "Exact font revisions for generated WOFF2 assets are not pinned." }
-      ]
-    },
     "linux-x64": {
       "status": "pending",
       "components": [

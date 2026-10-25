@@ -1,13 +1,27 @@
 name: Desktop release
 
-# Ordinary pushes and pull requests only build and smoke every desktop target.
-# Only a push of a v<SemVer> tag reaches the publish job, and that job fails
+# Desktop targets are win32-x64 and darwin-arm64; Intel Macs are not supported.
+# Desktop builds are the most expensive runs (macOS minutes bill at 10x), so
+# branch pushes do not trigger them. A pull request that touches desktop
+# packaging builds and smokes both targets; a manual dispatch builds the chosen
+# target(s). Only a push of a v<SemVer> tag reaches the publish job, which fails
 # closed unless every target built, smoked and passed desktop:validate-release.
 on:
   push:
-    branches: ['**']
     tags: ['v*']
   pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'scripts/desktop/**'
+      - 'package-lock.json'
+      - '.github/workflows/desktop-release.yml'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Desktop target(s) to build and smoke
+        type: choice
+        options: [all, win32-x64, darwin-arm64]
+        default: all
 
 permissions:
   contents: read
@@ -34,6 +48,8 @@ jobs:
       release: ${{ steps.version.outputs.release }}
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      matrix: ${{ steps.targets.outputs.matrix }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -63,29 +79,40 @@ jobs:
             echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
+      - name: Select targets
+        id: targets
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          EVENT: ${{ github.event_name }}
+          REQUESTED: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          # A tag and a pull request build every target; publish needs all of them.
+          # A dispatch can pick one target while fixing a single platform.
+          if [ "$REF_TYPE" != "tag" ] && [ "$EVENT" = "workflow_dispatch" ]; then
+            wanted="$REQUESTED"
+          else
+            wanted=all
+          fi
+          matrix=$(node -e '
+            const all = [
+              { target: "win32-x64", platform: "win32", arch: "x64", runner: "windows-latest", installer: "exe" },
+              { target: "darwin-arm64", platform: "darwin", arch: "arm64", runner: "macos-15", installer: "dmg" },
+            ];
+            const wanted = process.argv[1].split(",");
+            const include = wanted.includes("all") ? all : all.filter((t) => wanted.includes(t.target));
+            if (include.length === 0) throw new Error(`No desktop target matches ${process.argv[1]}`);
+            console.log(JSON.stringify({ include }));
+          ' "$wanted")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build and smoke (${{ matrix.target }})
     needs: plan
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: win32-x64
-            platform: win32
-            arch: x64
-            runner: windows-latest
-            installer: exe
-          - target: darwin-arm64
-            platform: darwin
-            arch: arm64
-            runner: macos-15
-            installer: dmg
-          - target: darwin-x64
-            platform: darwin
-            arch: x64
-            runner: macos-15-intel
-            installer: dmg
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     env:
@@ -183,7 +210,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for target in win32-x64 darwin-arm64 darwin-x64; do
+          for target in win32-x64 darwin-arm64; do
             mkdir -p release-input release-payloads
             mv "downloaded/nema-release-$VERSION-$target" "release-input/$target"
             mv "downloaded/nema-payload-$VERSION-$target" "release-payloads/$target"
@@ -192,7 +219,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for target in win32-x64 darwin-arm64 darwin-x64; do
+          for target in win32-x64 darwin-arm64; do
             npm run desktop:validate-release -- "release-payloads/$target" "$target" "$VERSION"
           done
       - name: Verify the complete asset set

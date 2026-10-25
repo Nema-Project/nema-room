@@ -6,11 +6,12 @@ import { builderConfig, parseMakeArgs, validateElectronNotices } from '../../../
 import { parseSmokeArgs } from '../../../scripts/desktop/smoke-desktop.mjs';
 
 describe('native Electron packaging configuration', () => {
-  it('accepts only native Windows x64 and macOS architecture builds', () => {
+  it('accepts only native Windows x64 and macOS arm64 builds', () => {
     expect(parseMakeArgs(['--platform', 'win32', '--arch', 'x64'], { platform: 'win32', arch: 'x64' })).toMatchObject({ platform: 'win32', arch: 'x64' });
     expect(parseMakeArgs(['--platform', 'darwin', '--arch', 'arm64'], { platform: 'darwin', arch: 'arm64' })).toMatchObject({ platform: 'darwin', arch: 'arm64' });
     expect(() => parseMakeArgs(['--platform', 'darwin', '--arch', 'arm64'], { platform: 'win32', arch: 'x64' })).toThrow(/native/i);
     expect(() => parseMakeArgs(['--platform', 'linux', '--arch', 'x64'], { platform: 'linux', arch: 'x64' })).toThrow(/unsupported/i);
+    expect(() => parseMakeArgs(['--platform', 'darwin', '--arch', 'x64'], { platform: 'darwin', arch: 'x64' })).toThrow(/unsupported/i);
   });
 
   it('builds Windows installer and portable ZIP with bundled resources outside ASAR', () => {

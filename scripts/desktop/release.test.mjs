@@ -48,17 +48,17 @@ test('collection accepts a complete matrix and writes a manifest, combined check
   const manifest = await collectReleaseManifest({ version, prerelease: false, artifactsRoot: root, outputDir: out, build: { commit: 'abc' } });
   assert.deepEqual(Object.keys(manifest.targets), [...expectedTargets]);
   const files = await readdir(out);
-  assert.equal(files.length, 9 + 2);
-  assert.ok(files.includes('Nema-1.2.3-win32-x64.exe') && files.includes('Nema-1.2.3-darwin-arm64.dmg') && files.includes('Nema-1.2.3-darwin-x64.zip'));
+  assert.equal(files.length, 6 + 2);
+  assert.ok(files.includes('Nema-1.2.3-win32-x64.exe') && files.includes('Nema-1.2.3-darwin-arm64.dmg') && files.includes('Nema-1.2.3-darwin-arm64.zip'));
   const sums = (await readFile(path.join(out, 'SHA256SUMS-1.2.3.txt'), 'utf8')).trim().split('\n');
-  assert.equal(sums.length, 6);
+  assert.equal(sums.length, 4);
   assert.equal(JSON.parse(await readFile(path.join(out, 'release-manifest-1.2.3.json'), 'utf8')).build.commit, 'abc');
 });
 
 test('collection refuses a missing matrix target without copying anything', async (t) => {
-  const root = await artifactsFixture(t, { skip: ['darwin-x64'] });
+  const root = await artifactsFixture(t, { skip: ['darwin-arm64'] });
   const out = path.join(await tempDir(t, 'nema-release-out-'), 'release');
-  await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: out }), /Missing release target darwin-x64/);
+  await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: out }), /Missing release target darwin-arm64/);
   assert.equal(await stat(out).catch(() => null), null);
 });
 
@@ -89,13 +89,14 @@ test('collection refuses duplicate checksum entries', async (t) => {
 
 test('every published asset name is unique across the matrix and unknown targets are refused', () => {
   assert.throws(() => expectedAssets(version, 'linux-x64'), /Unexpected release target/);
+  assert.throws(() => expectedAssets(version, 'darwin-x64'), /Unexpected release target/);
   const names = expectedTargets.flatMap((target) => [...expectedAssets(version, target), checksumFileName(version, target)]);
   assert.equal(new Set(names.map((name) => name.toLowerCase())).size, names.length);
 });
 
 test('collection refuses a checksum file that lists only part of the set', async (t) => {
   const root = await artifactsFixture(t);
-  const sumsFile = path.join(root, 'darwin-x64', checksumFileName(version, 'darwin-x64'));
+  const sumsFile = path.join(root, 'darwin-arm64', checksumFileName(version, 'darwin-arm64'));
   await writeFile(sumsFile, `${(await readFile(sumsFile, 'utf8')).split('\n')[0]}\n`);
   await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: path.join(root, 'out') }), /must list exactly/);
 });

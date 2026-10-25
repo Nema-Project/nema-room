@@ -13,7 +13,7 @@ export function parseMakeArgs(args, host = { platform: process.platform, arch: p
   for (let index = 0; index < args.length; index += 1) {
     const option = args[index];
     if (!['--platform', '--arch', '--out', '--stage-out', '--staged'].includes(option) || seen.has(option) || !args[index + 1] || args[index + 1].startsWith('--')) {
-      throw new Error('Usage: desktop:make [--platform win32|darwin] [--arch x64|arm64] [--out <directory>] [--stage-out <directory>] [--staged <payload-directory>]');
+      throw new Error('Usage: desktop:make [--platform win32 --arch x64 | --platform darwin --arch arm64] [--out <directory>] [--stage-out <directory>] [--staged <payload-directory>]');
     }
     seen.add(option);
     const value = args[++index];
@@ -23,7 +23,7 @@ export function parseMakeArgs(args, host = { platform: process.platform, arch: p
     else if (option === '--stage-out') parsed.stageOut = path.resolve(value);
     else parsed.staged = path.resolve(value);
   }
-  if (!((parsed.platform === 'win32' && parsed.arch === 'x64') || (parsed.platform === 'darwin' && ['x64', 'arm64'].includes(parsed.arch)))) {
+  if (!((parsed.platform === 'win32' && parsed.arch === 'x64') || (parsed.platform === 'darwin' && parsed.arch === 'arm64'))) {
     throw new Error(`Unsupported desktop target ${parsed.platform}-${parsed.arch}`);
   }
   if (parsed.platform !== host.platform || parsed.arch !== host.arch) {

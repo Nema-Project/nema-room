@@ -3,7 +3,7 @@ import { copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/pro
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const expectedTargets = Object.freeze(['win32-x64', 'darwin-arm64', 'darwin-x64']);
+export const expectedTargets = Object.freeze(['win32-x64', 'darwin-arm64']);
 const installerExtension = { win32: 'exe', darwin: 'dmg' };
 
 export function checksumFileName(version, target) {
