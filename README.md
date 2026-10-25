@@ -102,7 +102,7 @@ Linux 上若 UID/GID 不是 1000，请在 `.env` 设置 `NEMA_UID` / `NEMA_GID`�
 - 也可以用浏览器访问同一个核心：安装目录 `resources\payload` 里有 `Nema Browser.cmd`（macOS 为 `Nema Browser.command`，Linux 为 `nema-browser`），它启动或复用核心，并用一次性链接在浏览器里打开。加 `--no-open` 只打印链接，加 `--quit` 请求退出。界面进程异常退出后，也可以用它继续访问。
 
 **模型与 GitHub**
-- 模型运行时、服务和登录方式在应用的“模型设置”里选择，不需要终端。
+- 模型提供方和登录方式在应用的“模型设置”里选择，不需要终端。ChatGPT 订阅可选浏览器登录或本机 Codex 登录，Claude 订阅使用本机 Claude Code，API 密钥填写密钥和可选服务地址。
 - Agent 通过本机已登录的 `gh` 访问 GitHub：先在终端执行一次 `gh auth login`。Nema 不要求也不保存 GitHub 令牌。读取默认可用；Agent 修改 GitHub（创建和评论 issue、改标签、操作 Project）默认**关闭**，需要在工作区的“代码与插件”里打开。Agent 只能访问该工作区绑定的 GitHub 仓库。
 
 **编码 Agent 的上报钩子**：`nema report install` 写入的钩子（安装包版没有把 `nema` 放进 PATH：在安装目录的 `resourcespayload` 文件夹里运行 `Nema CLI.cmd report install --agent claude`，macOS 为 `Nema CLI.command`，Linux 为 `nema-cli`；写入的钩子指向随包的 Node 与 CLI 绝对路径）使用用户级的 `~/.nema/report-token`，桌面应用启动时把它登记给本机核心。应用运行时，钩子会自动找到并验证它；**新装钩子后需要重启桌面应用**，令牌才会被登记。应用没有运行时，上报进入本地缓存（最多 5 MB、保留 7 天），下次上报时补发。

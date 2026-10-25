@@ -395,24 +395,19 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
 
           <form className="editform model-block" onSubmit={save}>
             <h2 className="label">{t("model.provider")}</h2>
-            <label className="field"><span className="label">{t("model.agent")}</span>
-              <select aria-label={t("model.agent")} value={mode === "claude" ? "claude" : "nema"} disabled={saving || isBusy} onChange={(e) => void applyProvider(e.target.value === "claude" ? "claude" : "siwc")}>
-                <option value="nema">{t("model.agent.nema")}</option><option value="claude">{t("model.agent.claude")}</option>
-              </select>
-            </label>
-            {mode !== "claude" && <>
             <label className="field"><span className="label">{t("model.service")}</span>
-              <select aria-label={t("model.service")} value={mode === "byok" ? "api" : "chatgpt"} disabled={saving || isBusy} onChange={(e) => void applyProvider(e.target.value === "api" ? "byok" : "siwc")}>
-                <option value="chatgpt">{t("model.service.chatgpt")}</option><option value="api">{t("model.service.api")}</option>
+              <select aria-label={t("model.service")} value={mode === "claude" ? "claude" : mode === "byok" ? "api" : "chatgpt"} disabled={saving || isBusy} onChange={(e) => void applyProvider(e.target.value === "claude" ? "claude" : e.target.value === "api" ? "byok" : "siwc")}>
+                <option value="chatgpt">{t("model.service.chatgpt")}</option>
+                <option value="claude">{t("model.service.claude")}</option>
+                <option value="api">{t("model.service.api")}</option>
               </select>
             </label>
-            {mode !== "byok" && <label className="field"><span className="label">{t("model.signin")}</span>
+            {(mode === "siwc" || mode === "compat") && <label className="field"><span className="label">{t("model.signin")}</span>
               <select aria-label={t("model.signin")} value={mode === "compat" ? "codex" : "browser"} disabled={saving || isBusy} onChange={(e) => void applyProvider(e.target.value === "codex" ? "compat" : "siwc")}>
                 <option value="browser">{t("model.signin.browser")}</option><option value="codex">{t("model.signin.codex")}</option>
               </select>
             </label>}
             {mode === "compat" && <p className="help">{t("model.compatHelp")}</p>}
-            </>}
             {mode === "claude" && <p className="help">{settings.tools.claude.available ? t("model.claudeAvailable") : t("model.claudeUnavailable")}</p>}
             {mode === "byok" && <label className="field"><span className="label">{t("model.baseUrl")}</span>
               <input aria-label={t("model.baseUrl")} type="text" inputMode="url" value={baseUrl} disabled={saving || isBusy} onChange={(e) => setBaseUrl(e.target.value)} aria-invalid={error === "model.error.invalidBaseUrl"} />

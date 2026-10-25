@@ -11,6 +11,10 @@
 - Windows packaged-app smoke extracts the ZIP in an ASCII directory, then copies it into the `東京` proof path. System `tar.exe` cannot enter that path on an English code page.
 - Private Windows ACL checks wait 45 seconds. A cold PowerShell on the packaged-app runner exceeded 15 seconds, so the desktop core never started.
 
+### Changed
+
+- Model settings choose ChatGPT subscription, Claude subscription, or API key on one level. The Agent runtime control is gone. Stored adapter and auth mode are unchanged.
+
 ### Added
 
 - Model settings are separate from the provider. After a provider is saved and connected, its model is chosen from that provider's list. There is no custom model ID field. A saved model that is not in the list stays as it is until a listed model replaces it.

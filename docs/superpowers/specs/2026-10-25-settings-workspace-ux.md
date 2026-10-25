@@ -1,5 +1,7 @@
 # Workspace creation and connection settings UX
 
+> **Superseded in part (2026-10-25):** the Agent runtime / model service / sign-in stack below is replaced by one model-provider choice. See `docs/superpowers/specs/2026-10-25-model-provider-login-design.md`. Workspace creation in this document is unchanged. Stored modes remain `codex-direct/siwc`, `codex-direct/compat`, `codex-direct/byok`, and `claude-code`.
+
 User request: visible workspace creation feedback with confirm/cancel controls, dropdown-based connection selection, and understandable Agent/Provider settings. The user selected reorganizing existing connections rather than adding providers; GitHub credentials belong with the GitHub plugin.
 
 Workspace creation is a small, fully specified change: an inline name field with accessible confirm/cancel icons; Enter confirms and Escape cancels before submission. Immediately after submission show a creating status, disable editing/actions while the request is pending, and prevent duplicate requests. Cancel means cancel the draft, not promise to undo an already submitted server operation. On failure retain the name and show a retryable error; on success select the created workspace as today. Empty/whitespace-only names cannot submit. English, Japanese and Chinese remain supported.
