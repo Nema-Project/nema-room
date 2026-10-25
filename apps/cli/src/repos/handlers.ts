@@ -1,6 +1,7 @@
 import { lstat, rm, unlink } from "node:fs/promises";
 import path from "node:path";
 import type { RpcRouter } from "../daemon/rpc.js";
+import { GH_COMMAND_TOOLS } from "@nema/shared";
 import { GITHUB_TOOLS } from "../github/client.js";
 import { GithubGh, type GithubReader } from "../github/gh.js";
 import { changedFiles, exportSnapshot, fetchMain, inspectRepo, mainRef, missingAtRef, readFileAtRef, revParse } from "./git.js";
@@ -111,7 +112,7 @@ function pluginParams(params: unknown): PluginCall {
   // GitHub calls carry no repo: the hub already checked owner/repo against the bound remotes.
   if (name.startsWith("github__")) {
     const tool = name.slice("github__".length);
-    if (!GITHUB_TOOLS.includes(tool)) throw new Error(`未知函数 ${name}`);
+    if (!GITHUB_TOOLS.includes(tool) && !(GH_COMMAND_TOOLS as readonly string[]).includes(tool)) throw new Error(`未知函数 ${name}`);
     const args = row.args;
     if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error(`${name} 参数无效：args`);
     return { name: name as `github__${string}`, tool, args: args as Record<string, unknown> };

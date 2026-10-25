@@ -209,6 +209,18 @@ describe("CodeAndPlugins", () => {
     expect(within(row as HTMLElement).getByText("When on, call contents are sent to an external service")).toBeTruthy();
   });
 
+  it("the GitHub write permission starts off and PATCHes allowWrites", async () => {
+    vi.mocked(hub.listRepos).mockResolvedValue([]);
+    vi.mocked(hub.listPlugins).mockResolvedValue(catalog);
+    vi.mocked(hub.listWorkspacePlugins).mockResolvedValue([{ ...githubPlugin, enabled: true, settings: { allowWrites: false } }]);
+    vi.mocked(hub.updateWorkspacePlugin).mockImplementation(async (_id, _pluginId, patch) => ({ ...githubPlugin, enabled: true, settings: patch.settings }));
+    mount();
+    const toggle = (await screen.findByRole("checkbox", { name: /Let the agent change GitHub/ })) as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    await userEvent.click(toggle);
+    expect(hub.updateWorkspacePlugin).toHaveBeenCalledWith("w1", "github", { settings: { allowWrites: true } });
+  });
+
   it("the model egress note is always shown", async () => {
     vi.mocked(hub.listRepos).mockRejectedValue(new Error("down"));
     vi.mocked(hub.listPlugins).mockRejectedValue(new Error("down"));

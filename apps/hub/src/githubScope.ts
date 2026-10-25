@@ -1,8 +1,10 @@
+import { parseGhCommand } from "@nema/shared";
+
 // Which GitHub repositories a workspace's GitHub plugin calls may touch: the GitHub remotes of its bound repos.
 
 export type GithubTarget = { owner: string; repo: string };
 
-export type GithubCheck = { ok: true } | { ok: false; error: string };
+export type GithubCheck = { ok: true; args?: Record<string, unknown> } | { ok: false; error: string };
 
 const NAME = /^[A-Za-z0-9._-]+$/;
 const SEARCH_ERROR = "搜索必须且只能限定为本 workspace 绑定的仓库（repo:owner/name）";
@@ -68,6 +70,14 @@ function searchTarget(query: unknown, allowed: GithubTarget[]): GithubTarget | n
 /** Whether a `github__*` call stays inside the allowed remotes. `tool` may carry the `github__` prefix. */
 export function checkGithubCall(tool: string, args: Record<string, unknown>, allowed: GithubTarget[]): GithubCheck {
   const name = tool.startsWith("github__") ? tool.slice("github__".length) : tool;
+  if (name === "gh_read" || name === "gh_write") {
+    const parsed = parseGhCommand(args.args, allowed);
+    if (!parsed.ok) return { ok: false, error: parsed.error };
+    if (parsed.mode !== (name === "gh_write" ? "write" : "read")) {
+      return { ok: false, error: parsed.mode === "write" ? "this command changes GitHub: use github__gh_write" : "this command only reads: use github__gh_read" };
+    }
+    return { ok: true, args: { args: parsed.argv, bound: allowed } };
+  }
   if (OWNER_REPO_TOOLS.has(name)) {
     const owner = args.owner;
     const repo = args.repo;

@@ -1,3 +1,4 @@
+import { parseGhCommand, type GhRepoTarget } from "@nema/shared";
 import { runHelperFile } from "@nema/shared/ownedHelper";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { commandSpec, windowsRuntimeEnv } from "../platform.js";
@@ -5,6 +6,7 @@ import { commandSpec, windowsRuntimeEnv } from "../platform.js";
 const OUTPUT_LIMIT = 65_536;
 const CALL_TIMEOUT_MS = 60_000;
 const STATUS_TIMEOUT_MS = 10_000;
+const STDERR_LIMIT = 2048;
 const OWNER_OR_REPO = /^[A-Za-z0-9._-]+$/;
 const QUERY = "query($owner:String!,$name:String!,$number:Int!,$first:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:$first,after:$after){pageInfo{endCursor hasNextPage} nodes{id isResolved isOutdated path line startLine originalLine originalStartLine comments(first:100){nodes{databaseId body author{login} createdAt url}}}}}}}";
 const PARENT_QUERY = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){parent{number title url}}}}";
@@ -168,7 +170,7 @@ const ENV_ALLOW = new Set([
 function ghEnvironment(parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...windowsRuntimeEnv(parent) };
   for (const [key, value] of Object.entries(parent)) if (value !== undefined && ENV_ALLOW.has(key.toUpperCase()) || value !== undefined && ENV_ALLOW.has(key)) env[key] = value;
-  Object.assign(env, { GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1", GH_PAGER: "cat", PAGER: "cat" });
+  Object.assign(env, { GH_HOST: "github.com", GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1", GH_PAGER: "cat", PAGER: "cat" });
   return env;
 }
 function argsFor(request: GithubRequest): { args: string[]; input?: Buffer } {
@@ -180,6 +182,9 @@ function argsFor(request: GithubRequest): { args: string[]; input?: Buffer } {
   if (request.accept) args.push("--header", `Accept: ${request.accept}`);
   for (const [key, value] of Object.entries(request.fields)) args.push("-f", `${key}=${value}`);
   return { args };
+}
+function redactSecrets(text: string): string {
+  return text.replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, "[redacted]");
 }
 function cap(text: string, bytes: number): string {
   if (Buffer.byteLength(text) <= bytes) return text;
@@ -196,7 +201,7 @@ export class GithubGh implements GithubReader {
   constructor(private readonly options: GithubGhOptions = {}) {}
   private get bin(): string { return this.options.bin ?? "gh"; }
   private get env(): NodeJS.ProcessEnv { return ghEnvironment(this.options.env ?? process.env); }
-  private async execute(args: string[], options: { timeout: number; input?: Buffer } ): Promise<{ error: Error | null; stdout: string; code: number | null }> {
+  private async execute(args: string[], options: { timeout: number; input?: Buffer } ): Promise<{ error: Error | null; stdout: string; stderr: string; code: number | null }> {
     if (this.closed) throw new Error("GitHub provider stopped");
     const command = commandSpec(this.bin, args, this.env);
     const operation = runHelperFile(command.bin, command.args, {
@@ -206,9 +211,27 @@ export class GithubGh implements GithubReader {
     let result;
     try { result = await operation; }
     finally { this.pending.delete(operation); }
-    return { error: result.error, stdout: cap(result.stdout.toString("utf8"), OUTPUT_LIMIT), code: result.code };
+    return { error: result.error, stdout: cap(result.stdout.toString("utf8"), OUTPUT_LIMIT), stderr: cap(result.stderr.toString("utf8"), STDERR_LIMIT), code: result.code };
+  }
+  /** `github__gh_read` / `github__gh_write`: the hub already scoped the call; the table is applied again here. */
+  private async command(tool: string, input: object): Promise<string> {
+    const { args, bound } = input as { args?: unknown; bound?: unknown };
+    const targets: GhRepoTarget[] = Array.isArray(bound)
+      ? bound.filter((item): item is GhRepoTarget => !!item && typeof (item as GhRepoTarget).owner === "string" && typeof (item as GhRepoTarget).repo === "string")
+      : [];
+    const parsed = parseGhCommand(args, targets);
+    if (!parsed.ok) throw new Error(`GitHub: ${parsed.error}`);
+    if (parsed.mode !== (tool === "gh_write" ? "write" : "read")) throw new Error("GitHub: command does not match the tool");
+    const result = await this.execute(parsed.argv, { timeout: this.options.timeoutMs ?? CALL_TIMEOUT_MS });
+    if (result.error) {
+      if (result.error.message.includes("timed out")) throw new Error("GitHub call timed out");
+      const detail = redactSecrets(result.stderr || result.stdout).trim();
+      throw new Error(`gh failed${result.code === null ? "" : ` (exit ${result.code})`}${detail ? `: ${detail}` : ""}`);
+    }
+    return result.stdout;
   }
   async call(tool: string, args: object): Promise<unknown> {
+    if (tool === "gh_read" || tool === "gh_write") return this.command(tool, args);
     const request = githubApiRequest(tool, args);
     if (request.kind === "pr_status" || request.kind === "check_runs") {
       const metadata = await this.execute(["api", "--hostname", "github.com", "--method", "GET", `repos/${request.owner}/${request.repo}/pulls/${request.number}`], { timeout: this.options.timeoutMs ?? CALL_TIMEOUT_MS });

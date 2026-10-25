@@ -137,6 +137,7 @@
   "github.notConnected": "GitHub 连接不可用。",
   "github.localConnectionHelp": "GitHub 访问可使用已登录的本地 gh 命令，或在其他位置配置的 MCP 连接。",
   "github.noRemote": "没有 GitHub 远端",
+  "github.allowWrites": "允许 agent 修改 GitHub：创建和评论 issue、编辑标签、更新 Project。使用本机已登录的 gh，只作用于本 workspace 绑定的仓库。",
   "code.title": "代码与插件",
   "code.repos": "绑定的仓库",
   "code.addRepo": "添加仓库",

@@ -42,6 +42,15 @@ const REPO_NAME = { type: "string", description: "Repository name." };
 // The read tools of github-mcp-server's pull_requests and issues toolsets. Schemas follow the upstream
 // README (tools not listed against a local server). Search tools take no owner/repo: the query itself
 // must carry the one repo: qualifier.
+function ghArgsSchema(description: string): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: { args: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 80, description } },
+    required: ["args"],
+    additionalProperties: false,
+  };
+}
+
 const GITHUB_FUNCTIONS: PluginFunction[] = [
   {
     name: "github__pull_request_read",
@@ -158,6 +167,18 @@ const GITHUB_FUNCTIONS: PluginFunction[] = [
       required: ["query"],
       additionalProperties: false,
     },
+  },
+  {
+    name: "github__gh_read",
+    description: "Run a read-only gh command on a bound repository or on a Project of a bound owner, such as issue list, pr view, label list, run list or project item-list.",
+    readOnly: true,
+    parameters: ghArgsSchema("Arguments after gh, one array item each. Read commands: issue list|view|status, pr list|view|diff|checks|status, label list, run list|view, project list|view|field-list|item-list. Repository commands need --repo owner/name; project commands need --owner. Use long flags (--state, --limit, --json fields, --jq expr)."),
+  },
+  {
+    name: "github__gh_write",
+    description: "Run a gh command that changes GitHub on a bound repository or on a Project of a bound owner, such as issue create, issue comment, issue edit, pr comment or project item-add.",
+    readOnly: false,
+    parameters: ghArgsSchema("Arguments after gh, one array item each. Write commands: issue create|comment|edit|close|reopen, pr comment|edit, label create|edit, project item-add|item-create|item-edit|item-archive. Repository commands need --repo owner/name; project commands need --owner. Pass text with --title and --body; files, editors and merging are not available."),
   },
 ];
 

@@ -137,6 +137,7 @@
   "github.notConnected": "GitHub connection is not available.",
   "github.localConnectionHelp": "GitHub access can use an already authenticated local gh command or an MCP connection configured elsewhere.",
   "github.noRemote": "No GitHub remote",
+  "github.allowWrites": "Let the agent change GitHub: create and comment on issues, edit labels, update Projects. Uses your local gh login, only on repositories bound to this workspace.",
   "code.title": "Code & plugins",
   "code.repos": "Linked repositories",
   "code.addRepo": "Add repository",

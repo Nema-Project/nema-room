@@ -175,6 +175,12 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
               <p className="kmeta">{t("common.loading")}</p>
             )}
             {row.plugin.id === "grill" && <GrillSettings row={row} onSave={(settings) => patchPlugin("grill", { settings })} />}
+            {row.plugin.id === "github" && (
+              <label className="check">
+                <input type="checkbox" checked={row.settings?.allowWrites === true} onChange={(e) => void patchPlugin("github", { settings: { allowWrites: e.target.checked } }).catch(() => {})} />
+                <span>{t("github.allowWrites")}</span>
+              </label>
+            )}
             {open &&
               row.plugin.functions
                 .filter((fn) => fn.readOnly)

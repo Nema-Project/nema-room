@@ -92,3 +92,31 @@ test("uses the managed owned-helper scope for fake gh calls", async () => {
   try { await expect(gh.call("list_issues",{owner:"a",repo:"b"})).resolves.toBe("managed-result"); expect(spawned).toHaveLength(1); }
   finally { await gh.close(); }
 });
+
+test("gh_write runs the normalized argv against github.com and gh_read refuses a write command", async () => {
+  dir=mkdtempSync(join(tmpdir(),"nema-gh-profile-"));
+  const record=join(dir,"cmd.json");
+  const bin=fakeGh(`import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(record)},JSON.stringify({a:process.argv.slice(2),host:process.env.GH_HOST,prompt:process.env.GH_PROMPT_DISABLED})); process.stdout.write("https://github.com/a/b/issues/9\\n");`);
+  const gh=new GithubGh({bin});
+  const bound=[{owner:"a",repo:"b"}];
+  try {
+    await expect(gh.call("gh_write",{args:["issue","create","-R","A/B","--title","t","--body","-b"],bound})).resolves.toBe("https://github.com/a/b/issues/9\n");
+    const seen=JSON.parse(readFileSync(record,"utf8")) as {a:string[];host:string;prompt:string};
+    expect(seen).toEqual({a:["issue","create","--repo=A/B","--title=t","--body=-b"],host:"github.com",prompt:"1"});
+    await expect(gh.call("gh_read",{args:["issue","create","--repo","a/b","--title","t","--body","x"],bound})).rejects.toThrow(/does not match/);
+    await expect(gh.call("gh_write",{args:["issue","create","--repo","a/other","--title","t","--body","x"],bound})).rejects.toThrow(/bound/);
+    await expect(gh.call("gh_write",{args:["issue","create","--repo","a/b","--title","t","--body","x"]})).rejects.toThrow(/bound/);
+  } finally { await gh.close(); }
+});
+
+test("a failing gh command reports its exit code and stderr with token-like strings redacted", async () => {
+  const bin=fakeGh(`process.stderr.write("GraphQL: no such label (token ghp_abcdefghijklmnopqrstuvwxyz0123456789)"); process.exit(1);`);
+  const gh=new GithubGh({bin});
+  try {
+    const error=await gh.call("gh_read",{args:["issue","list","--repo","a/b"],bound:[{owner:"a",repo:"b"}]}).catch((e:Error)=>e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("exit 1");
+    expect((error as Error).message).toContain("no such label");
+    expect((error as Error).message).not.toContain("ghp_abcdef");
+  } finally { await gh.close(); }
+});

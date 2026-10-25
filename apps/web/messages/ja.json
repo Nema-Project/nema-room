@@ -137,6 +137,7 @@
   "github.notConnected": "GitHub 接続を利用できません。",
   "github.localConnectionHelp": "GitHub へのアクセスには、認証済みのローカル gh コマンドまたは別途設定した MCP 接続を利用できます。",
   "github.noRemote": "GitHub リモートなし",
+  "github.allowWrites": "エージェントに GitHub の変更を許可する（Issue の作成とコメント、ラベルの編集、Project の更新）。ローカルの gh ログインを使い、この workspace に紐づくリポジトリだけが対象です。",
   "code.title": "コードとプラグイン",
   "code.repos": "連携リポジトリ",
   "code.addRepo": "リポジトリを追加",

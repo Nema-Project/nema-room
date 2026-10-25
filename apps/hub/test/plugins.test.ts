@@ -150,7 +150,7 @@ describe("workspace plugins", () => {
   });
 
   test("github tools are off by default, also in a confidential workspace, and offered after enabling", async () => {
-    const githubNames = github.functions.map((fn) => fn.name);
+    const githubNames = github.functions.filter((fn) => fn.readOnly).map((fn) => fn.name);
     await insertRepo(wsA, "api", "git@github.com:Acme/API.git");
     await insertRepo(wsA, "web", "https://github.com/acme/web");
     await insertRepo(wsA, "lab", "https://gitlab.com/acme/lab.git");
@@ -175,6 +175,42 @@ describe("workspace plugins", () => {
     expect(listIssues.description).toContain("acme/api, acme/web");
     expect(listIssues.description).not.toContain("lab");
     expect(listIssues.parameters.properties.repo!.description).toBe("Repository name.");
+  });
+
+  test("github gh commands: reads are scoped to bound repos, writes are off until the workspace allows them", async () => {
+    await insertRepo(wsA, "api", "https://github.com/Acme/API.git");
+    await uiReq("PATCH", `/api/workspaces/${wsA}/plugins/github`, { enabled: true });
+    const task = await runningTask();
+    const names = async () => ((await (await roomReq("GET", "/room/plugins", task.runToken)).json()) as { tools: { name: string }[] }).tools.map((tool) => tool.name);
+    expect(await names()).toContain("github__gh_read");
+    expect(await names()).not.toContain("github__gh_write");
+
+    daemonCall = async () => "ok";
+    const read = await roomReq("POST", "/room/plugins/github__gh_read", task.runToken, { args: ["issue", "list", "-R", "acme/api", "--limit", "5"] });
+    expect(read.status).toBe(200);
+    expect(daemonCalls.at(-1)).toMatchObject({ method: "plugin.call", params: { name: "github__gh_read", args: { args: ["issue", "list", "--repo=acme/api", "--limit=5"], bound: [{ owner: "acme", repo: "api" }] } } });
+    const stranger = await roomReq("POST", "/room/plugins/github__gh_read", task.runToken, { args: ["issue", "list", "--repo", "acme/other"] });
+    expect(stranger.status).toBe(400);
+    const wrongTool = await roomReq("POST", "/room/plugins/github__gh_read", task.runToken, { args: ["issue", "create", "--repo", "acme/api", "--title", "t", "--body", "b"] });
+    expect(wrongTool.status).toBe(400);
+
+    const write = { args: ["issue", "create", "--repo", "acme/api", "--title", "t", "--body", "b"] };
+    const calls = daemonCalls.length;
+    expect((await roomReq("POST", "/room/plugins/github__gh_write", task.runToken, write)).status).toBe(403);
+    expect(daemonCalls).toHaveLength(calls);
+
+    const bad = await uiReq("PATCH", `/api/workspaces/${wsA}/plugins/github`, { settings: { allowWrites: "yes" } });
+    expect(bad.status).toBe(400);
+    const allowed = await uiReq("PATCH", `/api/workspaces/${wsA}/plugins/github`, { settings: { allowWrites: true } });
+    expect(await allowed.json()).toMatchObject({ enabled: true, settings: { allowWrites: true } });
+    expect(await names()).toContain("github__gh_write");
+    expect((await roomReq("POST", "/room/plugins/github__gh_write", task.runToken, write)).status).toBe(200);
+    expect(daemonCalls.at(-1)).toMatchObject({ params: { name: "github__gh_write", args: { args: ["issue", "create", "--repo=acme/api", "--title=t", "--body=b"] } } });
+    const mismatched = await roomReq("POST", "/room/plugins/github__gh_write", task.runToken, { args: ["issue", "list", "--repo", "acme/api"] });
+    expect(mismatched.status).toBe(400);
+    const off = await uiReq("PATCH", `/api/workspaces/${wsA}/plugins/github`, { disabledFunctions: ["github__gh_write"] });
+    expect(off.status).toBe(200);
+    expect(await names()).not.toContain("github__gh_write");
   });
 
   test("github tools are not offered when no bound repo has a GitHub remote", async () => {

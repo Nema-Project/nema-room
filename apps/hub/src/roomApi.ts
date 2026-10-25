@@ -201,7 +201,7 @@ export function roomRoutes(deps: {
           await record(false, 0);
           return c.json({ error: check.error }, 400);
         }
-        const result = await daemon.call("plugin.call", { name, args: callArgs }, GITHUB_RPC_TIMEOUT_MS);
+        const result = await daemon.call("plugin.call", { name, args: check.args ?? callArgs }, GITHUB_RPC_TIMEOUT_MS);
         const encoded = JSON.stringify(result);
         await record(true, encoded === undefined ? 0 : Buffer.byteLength(encoded));
         return c.json({ result });
