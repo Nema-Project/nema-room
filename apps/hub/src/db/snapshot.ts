@@ -93,10 +93,16 @@ export function validateSnapshot(value: unknown): Snapshot {
     messageIds.add(row.id);
     if (row.workspace_id !== null && row.workspace_id !== undefined) requireWorkspace(row);
   }
-  for (const row of tableData.messages!) if (row.thread_id != null && !messageIds.has(String(row.thread_id))) throw new Error("Snapshot contains a missing thread anchor message reference");
+  const messagesById = new Map(tableData.messages!.map((row) => [String(row.id), row]));
+  for (const row of tableData.messages!) {
+    if (row.thread_id == null) continue;
+    const anchor = messagesById.get(String(row.thread_id));
+    if (!anchor) throw new Error("Snapshot contains a missing thread anchor message reference");
+    if (anchor.thread_id != null) throw new Error("Snapshot thread anchors must be main-chat messages");
+  }
   const threadIds = new Set<string>();
   for (const row of tableData.threads!) {
-    if (typeof row.id !== "string" || !messageIds.has(row.id) || threadIds.has(row.id) || !["agent", "user", "grill"].includes(String(row.opened_by)) || typeof row.title !== "string") throw new Error("Invalid thread row");
+    if (typeof row.id !== "string" || !messageIds.has(row.id) || messagesById.get(row.id)?.thread_id != null || threadIds.has(row.id) || !["agent", "user", "grill"].includes(String(row.opened_by)) || typeof row.title !== "string") throw new Error("Invalid thread row");
     requireWorkspace(row);
     threadIds.add(row.id);
   }

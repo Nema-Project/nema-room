@@ -81,6 +81,24 @@ describe("importLegacySnapshot", () => {
     } finally { await db.close(); }
   });
 
+  it("restores a thread when its reply precedes its edited anchor in the snapshot", async () => {
+    const { outputDir } = await makeSource(true);
+    const snapshotPath = join(outputDir, "snapshot.json");
+    const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));
+    snapshot.tableData.messages.find((message: { id: string }) => message.id === "m1").content = "edited anchor";
+    snapshot.tableData.messages.reverse();
+    writeFileSync(snapshotPath, JSON.stringify(snapshot));
+
+    await importLegacySnapshot(outputDir, homeOf(), { gitPath });
+    const db = await createLocalDb(join(homeOf(), "db"));
+    try {
+      expect(await db.query("select id, content, thread_id from messages order by id")).toEqual([
+        { id: "m1", content: "edited anchor", thread_id: null },
+        { id: "m2", content: "thread reply", thread_id: "m1" },
+      ]);
+    } finally { await db.close(); }
+  });
+
   it("imports an older snapshot without thread tables or messages.thread_id", async () => {
     const { outputDir } = await makeSource();
     const snapshotPath = join(outputDir, "snapshot.json");
