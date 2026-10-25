@@ -116,6 +116,11 @@ describe("nema report install", () => {
   test("paths with spaces are quoted in the hook command", async () => {
     const s = setup();
     await installReport({ agent: "claude", home: s.home, nemaHome: s.nemaHome, out: s.out, nodeBin: "/opt/my node/node", cliEntry: ENTRY });
-    expect(read(claudeSettings(s.home)).hooks.Stop![0]!.hooks[0]!.command).toBe(`'/opt/my node/node' ${ENTRY} report hook --agent claude`);
+    const command = read(claudeSettings(s.home)).hooks.Stop![0]!.hooks[0]!.command as string;
+    if (process.platform === "win32") {
+      // Windows hooks are an encoded PowerShell script; the quoting lives inside it.
+      const encoded = /-EncodedCommand (\S+)$/.exec(command)![1]!;
+      expect(Buffer.from(encoded, "base64").toString("utf16le")).toBe(`& '/opt/my node/node' '${ENTRY}' report hook --agent claude; exit $LASTEXITCODE`);
+    } else expect(command).toBe(`'/opt/my node/node' ${ENTRY} report hook --agent claude`);
   });
 });

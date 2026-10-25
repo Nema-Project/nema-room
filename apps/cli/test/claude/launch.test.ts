@@ -54,10 +54,14 @@ describe("Claude Code launch", () => {
 
     expect(launch.runDir).toBe(join(nemaHome, "run", "task-123"));
     expect(launch.mcpPath).toBe(join(launch.runDir, "mcp.json"));
-    expect(readdirSync(configDir)).toEqual([]);
+    // On Windows the launch redirects the profile, so APPDATA/LOCALAPPDATA live under the config dir.
+    expect(readdirSync(configDir)).toEqual(process.platform === "win32" ? ["AppData"] : []);
     expect(readdirSync(workDir)).toEqual([]);
-    expect(lstatSync(configDir).mode & 0o777).toBe(0o700);
-    expect(lstatSync(launch.mcpPath).mode & 0o777).toBe(0o600);
+    // Windows reports synthetic modes and prepareClaudeLaunch sets no DACL there, so this proves only the POSIX modes.
+    if (process.platform !== "win32") {
+      expect(lstatSync(configDir).mode & 0o777).toBe(0o700);
+      expect(lstatSync(launch.mcpPath).mode & 0o777).toBe(0o600);
+    }
 
     expect(launch.args).toEqual([
       "-p",
@@ -93,6 +97,11 @@ describe("Claude Code launch", () => {
       HOME: configDir,
       CLAUDE_CONFIG_DIR: configDir,
       TMPDIR: tmpdir(),
+      ...(process.platform === "win32" && {
+        USERPROFILE: configDir,
+        APPDATA: join(configDir, "AppData", "Roaming"),
+        LOCALAPPDATA: join(configDir, "AppData", "Local"),
+      }),
     });
     expect(launch.env).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
     expect(launch.env).not.toHaveProperty("NEMA_RUN_TOKEN");
