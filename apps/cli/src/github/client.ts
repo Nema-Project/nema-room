@@ -7,7 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
-import { PLUGINS } from "@nema/shared";
+import { GH_COMMAND_TOOLS, PLUGINS } from "@nema/shared";
 import { readGithubToken } from "../secrets/github.js";
 import { commandSpec, windowsRuntimeEnv } from "../platform.js";
 import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
@@ -24,10 +24,13 @@ const CALL_TIMEOUT_MS = 60_000;
 const RETRY_DELAY_MS = 60_000;
 const STATUS_TIMEOUT_MS = 10_000;
 
-/** The fixed tool list, from the `github` manifest. Nothing else is ever called. */
-export const GITHUB_TOOLS: readonly string[] = (PLUGINS.find((plugin) => plugin.id === "github")?.functions ?? []).map((fn) =>
-  fn.name.slice("github__".length),
-);
+/**
+ * The fixed tool list this MCP server provides, from the `github` manifest. Nothing else is ever called.
+ * The `gh_read` / `gh_write` command tools run through the `gh` CLI, not this server.
+ */
+export const GITHUB_TOOLS: readonly string[] = (PLUGINS.find((plugin) => plugin.id === "github")?.functions ?? [])
+  .map((fn) => fn.name.slice("github__".length))
+  .filter((name) => !(GH_COMMAND_TOOLS as readonly string[]).includes(name));
 
 const noTool = (tool: string) => new Error(`GitHub 插件没有工具 ${tool}`);
 

@@ -84,7 +84,14 @@ test("uses the managed owned-helper scope for fake gh calls", async () => {
   const bin=fakeGh(`process.stdout.write("managed-result")`);
   const spawned:string[]=[];
   const scope:OwnedHelperScope={
-    async spawn(command,args,options){spawned.push(command);return process.platform==="win32"?spawnOwned(guardian,command,args,options):(spawn(command,args,{...options,stdio:options?.stdio}) as never);},
+    async spawn(command,args,options){
+      spawned.push(command);
+      if(process.platform==="win32") return spawnOwned(guardian,command,args,options);
+      // POSIX has no native guardian yet: a plain child with the same lifecycle shape is enough to prove the scope is used.
+      const child=spawn(command,args,{cwd:options?.cwd,env:options?.env,stdio:options?.stdio});
+      const exit=(event:"exit"|"close")=>new Promise<{code:number|null;signal:NodeJS.Signals|null}>((resolve)=>child.once(event,(code,signal)=>resolve({code,signal})));
+      return {stdin:child.stdin,stdout:child.stdout,stderr:child.stderr,kill:(signal)=>child.kill(signal),exited:exit("exit"),closed:exit("close")};
+    },
     stopAccepting(){},
     async drain(){},
   };
