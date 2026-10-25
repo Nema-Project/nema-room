@@ -20,3 +20,10 @@
 - Full hub run: 301/302 passed across 24 files; its only failure was the same fixture sequencing issue. After fixing it, the full daemon socket file passed 41/41. The controller asked not to repeat the roughly seven-minute full hub run for this test-only correction; the full aggregate was therefore not rerun to green.
 - Vite emitted its existing native config-loader warnings; daemon disconnect cleanup logs appeared during tests.
 - TDD note: production edits initially preceded the expanded tests. I restored the changed production files to checked-in `HEAD`, captured the RED result above, restored the implementation, then verified green.
+
+## Review fix round (FIX_BASE `f0b253c`)
+
+- Added three failure regressions before production edits. RED command: `umask 022; npx vitest run --project @nema/hub daemonSocket.test.ts -t 'daemon failure opens|prompt failure routes|failure associates a touched' --maxWorkers=2` → 3 failed as expected: no grill thread on daemon/prompt failure, and no question association in an existing thread.
+- Shared `taskReplyRouting` now selects the task's existing conversation or touched open question for success and both failure paths. `saveTaskOutcome` keeps run-token-guarded status, optional grill thread, message, and all open-question associations in one transaction. Events remain after commit.
+- GREEN: `npm run typecheck` passed; `umask 022; npx vitest run --project @nema/hub daemonSocket.test.ts -t 'daemon failure opens|prompt failure routes|failure associates a touched|failure message stays|prompt build failure|reply insert failure|grill off' --maxWorkers=2` → 7 passed; `umask 022; npx vitest run --project @nema/hub daemonSocket.test.ts -t 'question|thread|retry|reply insert failure|grill off|prompt build failure' --maxWorkers=2` → 23 passed.
+- Existing Vite native config-loader warnings appeared in test output.

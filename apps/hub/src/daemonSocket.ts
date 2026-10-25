@@ -2,7 +2,7 @@ import type http from "node:http";
 import { nanoid } from "nanoid";
 import { WebSocketServer, type WebSocket } from "ws";
 import { KnowledgeStore } from "@nema/knowledge";
-import { WORKPACKAGE_LIMITS, parseDaemonToHub, type AgentMessageMeta, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
+import { WORKPACKAGE_LIMITS, parseDaemonToHub, type AgentMessageMeta, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
 import { createConnectionRpc, DaemonRpcError, type ConnectionRpc, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
@@ -29,6 +29,16 @@ type Conn = {
   rpc: ConnectionRpc;
 };
 
+type TaskReplyRouting = {
+  task: Task;
+  taskMessage: Message;
+  changes: AgentMessageMeta["changes"];
+  touched: Entry[];
+  askedQuestion: Entry | null;
+  replyThread: string | null;
+  createThread: boolean;
+};
+
 export const OLD_CLI_MESSAGE = "nema CLI 版本过旧，请运行 npm run build -w apps/cli 并重启 nema daemon";
 
 export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps): { isConnected(): boolean; rpc: DaemonRpc; close(): Promise<void> } {
@@ -52,6 +62,61 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     const t = await getTask(db, taskId);
     if (t) events.emit(t.workspaceId, { type: "task.updated", task: toUiTask(t) });
   };
+
+  async function taskReplyRouting(taskId: string): Promise<TaskReplyRouting | null> {
+    const task = await getTask(db, taskId);
+    if (!task) return null;
+    const taskMessage = await getMessage(db, task.messageId);
+    if (!taskMessage) return null;
+    const changes = (await listTaskChanges(db, taskId)) as AgentMessageMeta["changes"];
+    const store = new KnowledgeStore(repoPath(dataDir, task.workspaceId), deps.ownedHelpers);
+    const touched = (await Promise.all(
+      [...new Set(changes.filter((change) => change.kind === "question").map((change) => change.entryId))]
+        .map((id) => store.get(id)),
+    )).filter((entry): entry is Entry => entry !== null);
+    const grillOn = (await grillState(db, task.workspaceId)).enabled;
+    const askedQuestion = grillOn ? chooseAskedQuestion(touched, null) : null;
+    const existingThread = await conversationOf(db, taskMessage);
+    const createThread = !existingThread && grillOn && askedQuestion !== null;
+    return {
+      task,
+      taskMessage,
+      changes,
+      touched,
+      askedQuestion,
+      replyThread: existingThread ?? (createThread ? taskMessage.id : null),
+      createThread,
+    };
+  }
+
+  async function saveTaskOutcome(
+    routing: TaskReplyRouting,
+    expectedRunToken: string,
+    result: { ok: true } | { ok: false; error: string },
+    role: "agent" | "system",
+    content: string,
+    meta?: AgentMessageMeta,
+  ): Promise<Message | null> {
+    return db.tx(async (t) => {
+      if (!(await finishTask(t, routing.task.id, result, expectedRunToken))) return null;
+      if (routing.createThread && routing.askedQuestion) {
+        await ensureThread(t, routing.taskMessage.id, routing.askedQuestion.title, "grill");
+      }
+      const message = await addMessage(t, routing.task.workspaceId, role, content, {
+        taskId: routing.task.id,
+        ...(meta ? { meta } : {}),
+        threadId: routing.replyThread,
+      });
+      if (routing.replyThread) {
+        for (const entry of routing.touched) {
+          if (entry.kind === "question" && entry.status === "open") {
+            await associateQuestion(t, routing.task.workspaceId, entry.id, routing.replyThread);
+          }
+        }
+      }
+      return message;
+    });
+  }
 
   /** Requeues a daemon's running tasks and announces each so UIs see them as queued again. */
   async function requeueAndEmit(daemonId: string): Promise<void> {
@@ -120,16 +185,12 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     return { prompt, confidential: workspace.confidential };
   }
 
-  async function saveTaskFailure(taskId: string, workspaceId: string, runToken: string, error: string): Promise<Message | null> {
-    const task = await getTask(db, taskId);
-    if (!task) return null;
-    const anchor = await getMessage(db, task.messageId);
-    if (!anchor) return null;
-    const replyThread = await conversationOf(db, anchor);
-    return db.tx(async (t) => {
-      if (!(await finishTask(t, taskId, { ok: false, error }, runToken))) return null;
-      return addMessage(t, workspaceId, "system", "处理失败：" + error, { taskId, threadId: replyThread });
-    });
+  async function saveTaskFailure(taskId: string, error: string, expectedRunToken?: string): Promise<Message | null> {
+    const routing = await taskReplyRouting(taskId);
+    if (!routing) return null;
+    const runToken = expectedRunToken ?? routing.task.runToken;
+    if (!runToken) return null;
+    return saveTaskOutcome(routing, runToken, { ok: false, error }, "system", "处理失败：" + error);
   }
 
   async function dispatchOnce(): Promise<void> {
@@ -152,7 +213,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       } catch (e) {
         const error = e instanceof Error ? e.message : String(e);
         try {
-          const msg = task.runToken ? await saveTaskFailure(task.id, task.workspaceId, task.runToken, error) : null;
+          const msg = task.runToken ? await saveTaskFailure(task.id, error, task.runToken) : null;
           if (msg) {
             events.emit(task.workspaceId, { type: "message.created", message: msg });
             if (msg.threadId) {
@@ -201,67 +262,33 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   async function onFinished(conn: Conn, m: Extract<ReturnType<typeof parseDaemonToHub>, { type: "task.finished" }>) {
     const a = conn.assigned;
     if (!a || a.taskId !== m.taskId) return;
-    let msg: Message | null = null;
-    let replyThread: string | null = null;
-    let taskMessage: Message | null = null;
-    let threadEvent = false;
+    let msg: Message | null;
     if (m.ok) {
-      // With grill-me off the uncertain items still become questions, but the chat shows no asked one.
-      // A question this task opened is the one the reply is about, even when an older question has higher priority.
-      const grillOn = (await grillState(db, a.workspaceId)).enabled;
-      const changes = (await listTaskChanges(db, m.taskId)) as AgentMessageMeta["changes"];
-      const store = new KnowledgeStore(repoPath(dataDir, a.workspaceId), deps.ownedHelpers);
-      const touched = (await Promise.all([...new Set(changes.filter((c) => c.kind === "question").map((c) => c.entryId))].map((id) => store.get(id)))).filter((e) => e !== null);
-      const q = grillOn ? chooseAskedQuestion(touched, null) : null;
-      const finished = await getTask(db, m.taskId);
-      if (!finished) return;
-      taskMessage = await getMessage(db, finished.messageId);
-      if (!taskMessage) return;
-      replyThread = await conversationOf(db, taskMessage);
-      if (!replyThread && grillOn && q) {
-        replyThread = taskMessage.id;
-        threadEvent = true;
+      const routing = await taskReplyRouting(m.taskId);
+      if (!routing) {
+        conn.assigned = null;
+        return;
       }
       const meta: AgentMessageMeta = {
-        changes,
-        askedQuestion: q ? { id: q.id, title: q.title, body: q.body } : null,
+        changes: routing.changes,
+        askedQuestion: routing.askedQuestion ? { id: routing.askedQuestion.id, title: routing.askedQuestion.title, body: routing.askedQuestion.body } : null,
       };
-      if (finished?.kind === "edit") {
-        const edited = await getMessage(db, finished.messageId);
+      if (routing.task.kind === "edit") {
+        const edited = await getMessage(db, routing.task.messageId);
         if (edited) meta.quote = { messageId: edited.id, role: edited.role, excerpt: messageExcerpt(edited.content) };
       }
-      msg = await db.tx(async (t) => {
-        if (!(await finishTask(t, m.taskId, { ok: true }, a.runToken))) return null;
-        if (threadEvent && taskMessage && q) await ensureThread(t, taskMessage.id, q.title, "grill");
-        const reply = await addMessage(t, a.workspaceId, "agent", m.reply, { taskId: m.taskId, meta, threadId: replyThread });
-        if (replyThread) {
-          for (const entry of touched) {
-            if (entry.kind === "question" && entry.status === "open") await associateQuestion(t, a.workspaceId, entry.id, replyThread);
-          }
-        }
-        return reply;
-      });
-      if (!msg) {
-        conn.assigned = null;
-        return;
-      }
+      msg = await saveTaskOutcome(routing, a.runToken, { ok: true }, "agent", m.reply, meta);
     } else {
-      const task = await getTask(db, m.taskId);
-      taskMessage = task ? await getMessage(db, task.messageId) : null;
-      replyThread = taskMessage ? await conversationOf(db, taskMessage) : null;
-      msg = await db.tx(async (t) => {
-        if (!(await finishTask(t, m.taskId, { ok: false, error: m.error }, a.runToken))) return null;
-        return addMessage(t, a.workspaceId, "system", "处理失败：" + m.error, { taskId: m.taskId, threadId: replyThread });
-      });
-      if (!msg) {
-        conn.assigned = null;
-        return;
-      }
+      msg = await saveTaskFailure(m.taskId, m.error, a.runToken);
+    }
+    if (!msg) {
+      conn.assigned = null;
+      return;
     }
     conn.assigned = null;
     events.emit(a.workspaceId, { type: "message.created", message: msg });
-    if (replyThread || threadEvent) {
-      const thread = await getThread(db, replyThread ?? taskMessage!.id);
+    if (msg.threadId) {
+      const thread = await getThread(db, msg.threadId);
       if (thread) events.emit(a.workspaceId, { type: "thread.updated", thread });
     }
     await emitTask(m.taskId);

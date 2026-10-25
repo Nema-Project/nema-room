@@ -461,6 +461,50 @@ describe("daemon socket", () => {
     expect(await listThreadMessages(db, m.message.id)).toContainEqual(expect.objectContaining({ role: "system", threadId: m.message.id, content: "处理失败：boom" }));
   });
 
+  test("daemon failure opens a grill thread for a touched open question", async () => {
+    const m = await postUserMessage(db, wsA, "fails after asking");
+    const q = await addQuestion(wsA, 1);
+    await recordTaskChange(db, m.task.id, { entryId: q.id, kind: "question", title: q.title, op: "add" });
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({ type: "task.finished", taskId: a.taskId, ok: false, error: "daemon error" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
+    expect(await getThread(db, m.message.id)).toMatchObject({ id: m.message.id, openedBy: "grill" });
+    expect(await getQuestionThread(db, wsA, q.id)).toBe(m.message.id);
+    expect(await listThreadMessages(db, m.message.id)).toContainEqual(expect.objectContaining({ role: "system", threadId: m.message.id, content: "处理失败：daemon error" }));
+  });
+
+  test("prompt failure routes a retained question from an interrupted attempt", async () => {
+    const m = await postUserMessage(db, wsA, "first attempt asks");
+    const first = await connect();
+    await first.next("task.assign");
+    const q = await addQuestion(wsA, 1);
+    await recordTaskChange(db, m.task.id, { entryId: q.id, kind: "question", title: q.title, op: "add" });
+    first.ws.terminate();
+    await first.closed;
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("queued"));
+    failTimeline.on = true;
+    const retry = await connect();
+    await retry.next("welcome");
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
+    expect(await getThread(db, m.message.id)).toMatchObject({ id: m.message.id, openedBy: "grill" });
+    expect(await getQuestionThread(db, wsA, q.id)).toBe(m.message.id);
+    expect(await listThreadMessages(db, m.message.id)).toContainEqual(expect.objectContaining({ role: "system", threadId: m.message.id }));
+  });
+
+  test("failure associates a touched open question with its existing thread", async () => {
+    const m = await postUserMessage(db, wsA, "thread failure asks");
+    await ensureThread(db, m.message.id, "Existing topic", "user");
+    const q = await addQuestion(wsA, 2);
+    await recordTaskChange(db, m.task.id, { entryId: q.id, kind: "question", title: q.title, op: "update" });
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({ type: "task.finished", taskId: a.taskId, ok: false, error: "thread error" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
+    expect(await getQuestionThread(db, wsA, q.id)).toBe(m.message.id);
+    expect(await listThreadMessages(db, m.message.id)).toContainEqual(expect.objectContaining({ role: "system", threadId: m.message.id, content: "处理失败：thread error" }));
+  });
+
   test("retry reuses the thread opened during the first run and stores one reply", async () => {
     const m = await postUserMessage(db, wsA, "interrupted");
     const first = await connect();
