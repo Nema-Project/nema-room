@@ -28,3 +28,18 @@ Command: npm run typecheck
 Result: tsc -b exited successfully.
 
 Vitest emitted the existing Vite native config loader warning about ESM syntax in vitest.config.ts; tests passed. Full project output was summarized by Vitest at completion in the captured execution session.
+
+Review fix round 1 (base cc262aa)
+================================
+
+RED command: umask 022 && npx vitest run --project @nema/hub threads
+Result: 2 regressions failed as expected: a question recorded as created but not selected returned null; a main-chat-created question later selected in a thread incorrectly returned the later thread. Ten other tests passed.
+
+GREEN command: umask 022 && npx vitest run --project @nema/hub threads
+Result:
+ Test Files  1 passed (1)
+ Tests       12 passed (12)
+ Duration    22.33s
+
+Typecheck command: npm run typecheck
+Result: tsc -b exited successfully.

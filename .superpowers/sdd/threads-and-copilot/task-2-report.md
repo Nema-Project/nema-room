@@ -20,3 +20,12 @@ TDD and verification:
 - Captured command summaries and warnings: `task-2-test-evidence.log`.
 
 Self-review: the Task 2 changes do not alter quote excerpt creation or edit/version transactions. The question-card reader expects system cards to retain their typed `askedQuestion` metadata, consistent with the conversion flow. Vitest reports the repository's existing Vite native config-loader warning; no test failures remain.
+
+## Review fix round 1 (base `cc262aa`)
+
+Addressed review findings I1, M1, and M2. `getQuestionThread` now gives explicit `question_threads` rows precedence, then finds the earliest workspace-scoped `task_changes` record with `kind='question'` and `op='add'`, and infers the conversation from that task's message. This covers questions created by a task even when they were not selected for its `askedQuestion` card, while a question created in main chat remains legacy when later selected by a thread task. `getLastAskedQuestion` now filters non-null question metadata in SQL, sorts descending by sequence, and reads at most one row. The system-card test now asserts the legacy card before adding and preferring a newer agent card.
+
+TDD evidence:
+- RED command: `umask 022 && npx vitest run --project @nema/hub threads` — failed the two new regressions (unselected created question returned `null`; main-chat-created question incorrectly resolved to the later thread). Ten other tests passed.
+- GREEN command: `umask 022 && npx vitest run --project @nema/hub threads` — passed, 12 tests.
+- `npm run typecheck` — passed (`tsc -b`).

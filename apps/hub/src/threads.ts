@@ -43,17 +43,16 @@ export async function associateQuestion(db: Db, workspaceId: string, questionId:
 export async function getQuestionThread(db: Db, workspaceId: string, questionId: string): Promise<string | null> {
   const explicit = await db.query<{ thread_id: string }>("select thread_id from question_threads where workspace_id=$1 and question_id=$2", [workspaceId, questionId]);
   if (explicit[0]) return explicit[0].thread_id;
-  const inferred = await db.query<{ thread_id: string | null; anchor_id: string }>(
-    `select coalesce(answer.thread_id, anchored.id) as thread_id, task.message_id as anchor_id
-     from messages answer join tasks task on task.id=answer.task_id
-     left join threads anchored on anchored.id=task.message_id
-     where answer.workspace_id=$1 and answer.meta->'askedQuestion'->>'id'=$2
-     order by answer.seq asc limit 1`, [workspaceId, questionId],
+  const inferred = await db.query<{ thread_id: string | null }>(
+    `select coalesce(message.thread_id, anchored.id) as thread_id
+     from task_changes change
+     join tasks task on task.id=change.task_id
+     join messages message on message.id=task.message_id
+     left join threads anchored on anchored.id=message.id
+     where message.workspace_id=$1 and change.entry_id=$2 and change.kind='question' and change.op='add'
+     order by message.seq asc limit 1`, [workspaceId, questionId],
   );
-  if (!inferred[0]) return null;
-  if (inferred[0].thread_id) return inferred[0].thread_id;
-  const containing = await db.query<{ thread_id: string | null }>("select thread_id from messages where id=$1", [inferred[0].anchor_id]);
-  return containing[0]?.thread_id ?? null;
+  return inferred[0]?.thread_id ?? null;
 }
 
 export async function getThread(db: Db, id: string): Promise<Thread | null> {
@@ -98,14 +97,12 @@ export async function getLastAgentMessage(db: Db, workspaceId: string, threadId:
 }
 
 export async function getLastAskedQuestion(db: Db, workspaceId: string, threadId: string | null): Promise<{ id: string; title: string; body: string } | null> {
-  const rows = await db.query<{ meta: AgentMessageMeta | null; content: string }>(
-    `select meta,content from messages where workspace_id=$1 and ${threadId === null ? "thread_id is null" : "thread_id=$2"}
-     and role in ('agent','system') order by seq desc`, threadId === null ? [workspaceId] : [workspaceId, threadId],
+  const rows = await db.query<{ asked_question: NonNullable<AgentMessageMeta["askedQuestion"]> }>(
+    `select meta->'askedQuestion' as asked_question from messages
+     where workspace_id=$1 and ${threadId === null ? "thread_id is null" : "thread_id=$2"}
+       and role in ('agent','system') and meta->'askedQuestion' is not null and meta->'askedQuestion' <> 'null'::jsonb
+     order by seq desc limit 1`, threadId === null ? [workspaceId] : [workspaceId, threadId],
   );
-  for (const row of rows) {
-    const q = row.meta?.askedQuestion;
-    if (q) return q;
-    // Legacy converted question cards persist the same typed question in system-message metadata.
-  }
-  return null;
+  // Legacy converted question cards persist the same typed question in system-message metadata.
+  return rows[0]?.asked_question ?? null;
 }

@@ -3,6 +3,7 @@ import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { createWorkspace } from "../src/workspaces.js";
 import { addMessage, listPromptMessages, postUserMessage } from "../src/messages.js";
+import { recordTaskChange } from "../src/tasks.js";
 import { associateQuestion, conversationOf, ensureThread, getLastAskedQuestion, getLastAgentMessage, getQuestionThread, listThreads, markThreadRead } from "../src/threads.js";
 
 let db: Db;
@@ -80,13 +81,24 @@ describe("thread store and conversation context", () => {
     await expect(associateQuestion(db, otherWs, "Q-2", thread.id)).rejects.toMatchObject({ status: 400 });
   });
 
-  test("question lookup infers its original creating task and keeps legacy null", async () => {
+  test("question lookup infers every question created by the original thread task", async () => {
     const { thread } = await openThread();
     const { task, message } = await postUserMessage(db, ws, "question task", { threadId: thread.id });
+    await recordTaskChange(db, task.id, { entryId: "Q-1", kind: "question", title: "Unselected", op: "add" });
+    await recordTaskChange(db, task.id, { entryId: "Q-2", kind: "question", title: "Selected", op: "add" });
     await addMessage(db, ws, "agent", "ask", { taskId: task.id, meta: { changes: [], askedQuestion: { id: "Q-2", title: "Q", body: "?" } } });
-    expect(await getQuestionThread(db, ws, "Q-2")).toBe(thread.id);
+    expect(await getQuestionThread(db, ws, "Q-1")).toBe(thread.id);
     expect(message.threadId).toBe(thread.id);
     expect(await getQuestionThread(db, ws, "legacy-question")).toBeNull();
+  });
+
+  test("a main-chat-created question stays legacy when selected by a thread task", async () => {
+    const original = await postUserMessage(db, ws, "create question in main chat");
+    await recordTaskChange(db, original.task.id, { entryId: "Q-MAIN", kind: "question", title: "Original", op: "add" });
+    const { thread } = await openThread();
+    const later = await postUserMessage(db, ws, "select prior question", { threadId: thread.id });
+    await addMessage(db, ws, "agent", "selected", { taskId: later.task.id, meta: { changes: [], askedQuestion: { id: "Q-MAIN", title: "Original", body: "?" } } });
+    expect(await getQuestionThread(db, ws, "Q-MAIN")).toBeNull();
   });
 
   test("posting a thread reply validates workspace and main chat excludes replies", async () => {
@@ -104,6 +116,7 @@ describe("thread store and conversation context", () => {
     const anchor = await db.query<{seq:number}>("select seq from messages where id=$1", [thread.id]);
     const legacy = await addMessage(db, ws, "system", "legacy question card", { meta: { changes: [], askedQuestion: { id: "Q-OLD", title: "Old", body: "old body" } } });
     await db.query("update messages set thread_id=$2 where id=$1", [legacy.id, thread.id]);
+    expect(await getLastAskedQuestion(db, ws, thread.id)).toMatchObject({ id: "Q-OLD" });
     const newer = await addMessage(db, ws, "agent", "new card", { meta: { changes: [], askedQuestion: { id: "Q-NEW", title: "New", body: "new body" } } });
     await db.query("update messages set thread_id=$2 where id=$1", [newer.id, thread.id]);
     expect(await getLastAskedQuestion(db, ws, thread.id)).toMatchObject({ id: "Q-NEW" });
