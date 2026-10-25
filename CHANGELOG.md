@@ -4,6 +4,7 @@
 
 ### Added
 
+- A CLI launcher in the desktop payload (`Nema CLI.cmd`, `Nema CLI.command`, or `nema-cli`) that runs the bundled CLI, so `report install` works from a packaged app.
 - GitHub issue templates, a pull request template, and contributing, security, and conduct guides. Vulnerability reports go through GitHub private advisories; public issues ask for the OS, Node/Docker versions, how Nema Room is run, and redacted errors.
 
 - A Chinese, English, and Japanese terminal setup wizard (`node scripts/setup.mjs`), read-only environment checks, and a portable `npm run up` entry point.

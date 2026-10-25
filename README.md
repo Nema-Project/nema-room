@@ -105,7 +105,7 @@ Linux 上若 UID/GID 不是 1000，请在 `.env` 设置 `NEMA_UID` / `NEMA_GID`�
 - 模型运行时、服务和登录方式在应用的“模型设置”里选择，不需要终端。
 - Agent 通过本机已登录的 `gh` 访问 GitHub：先在终端执行一次 `gh auth login`。Nema 不要求也不保存 GitHub 令牌。读取默认可用；Agent 修改 GitHub（创建和评论 issue、改标签、操作 Project）默认**关闭**，需要在工作区的“代码与插件”里打开。Agent 只能访问该工作区绑定的 GitHub 仓库。
 
-**编码 Agent 的上报钩子**：`nema report install` 写入的钩子使用用户级的 `~/.nema/report-token`，桌面应用启动时把它登记给本机核心。应用运行时，钩子会自动找到并验证它；**新装钩子后需要重启桌面应用**，令牌才会被登记。应用没有运行时，上报进入本地缓存（最多 5 MB、保留 7 天），下次上报时补发。
+**编码 Agent 的上报钩子**：`nema report install` 写入的钩子（安装包版没有把 `nema` 放进 PATH：在安装目录的 `resourcespayload` 文件夹里运行 `Nema CLI.cmd report install --agent claude`，macOS 为 `Nema CLI.command`，Linux 为 `nema-cli`；写入的钩子指向随包的 Node 与 CLI 绝对路径）使用用户级的 `~/.nema/report-token`，桌面应用启动时把它登记给本机核心。应用运行时，钩子会自动找到并验证它；**新装钩子后需要重启桌面应用**，令牌才会被登记。应用没有运行时，上报进入本地缓存（最多 5 MB、保留 7 天），下次上报时补发。
 
 **从 Web / Compose 版迁移**：目前只有库接口，没有命令行或界面入口。`exportSnapshot`（`apps/hub/src/db/export.ts`）从你指定的 PostgreSQL 连接导出，`importLegacySnapshot`（`apps/local/src/import.ts`）导入到一个**空的、未运行**的桌面数据目录。导入先在暂存目录里完整验证，失败时不改动目标；中断后用 `recoverInterruptedImport` 恢复。凭证不会被导出或导入，需要重新登录。
 
