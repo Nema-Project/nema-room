@@ -17,6 +17,7 @@ describe('Electron renderer security policy', () => {
       webSecurity: true,
     });
     expect(createSecureWindowOptions('http://127.0.0.1:43001')).toMatchObject({ frame: false, autoHideMenuBar: true });
+    expect(createSecureWindowOptions('http://127.0.0.1:43001').title).toBe('Nema Room');
   });
 
   it('allows only the expected local origin or credential-free external HTTPS links', () => {

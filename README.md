@@ -1,5 +1,7 @@
 # Nema Room
 
+<img src="docs/design/brand/nema-room-preview.png" width="88" height="88" alt="Nema Room 图标" />
+
 **把零散讨论变成可追溯的需求，再交给编码 Agent 实现。**
 
 简体中文 · [English](README.en.md) · [日本語](README.ja.md)
@@ -181,6 +183,14 @@ npm run build -w apps/web
 根目录 typecheck 不包含 web，web 构建需单独执行。升级前备份数据，再 `git pull`、`npm ci`、重建 CLI 和 Compose 镜像，并重启 daemon。hub 与 CLI 应保持版本一致。
 
 端口和目录见 [.env.example](.env.example)。CLI 不自动读取根目录 `.env`：改数据目录时应在 shell 导出 `NEMA_DATA_DIR` 或传 `--token-file` 给 `daemon` / `doctor`；改 hub 端口还需传 `--hub`。`NEXT_PUBLIC_HUB_URL` 改动后需重建 web。
+
+## 品牌与图标
+
+项目采用 **Nema Room** 作为品牌全称，当前图标选用原始设计稿的 **01 / ROOM / N**：以开放空间与负形 N 呼应界面的黑白、暖灰和几何语言。
+
+[品牌素材与使用说明](docs/design/brand/README.md) · [图标 PNG](docs/design/brand/nema-room-icon-01.png) · [设计规格](docs/superpowers/specs/2026-10-25-nema-room-brand-design.md) · [接入计划](docs/superpowers/plans/2026-10-25-nema-room-brand.md)
+
+图标已接入桌面打包、窗口、托盘和浏览器 favicon。平台实机验证状态见品牌素材说明。
 
 ## 文档与反馈
 

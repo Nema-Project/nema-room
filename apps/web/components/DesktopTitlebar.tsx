@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useSyncExternalStore } from "react";
+import Image from "next/image";
 import { useT } from "@/lib/i18n";
 
 type WindowState = { maximized: boolean };
@@ -72,7 +73,7 @@ export function DesktopTitlebar() {
   if (!controls) return null;
   return (
     <header className="desktop-titlebar" aria-label={t("window.titlebar")} onDoubleClick={() => void controls.toggleMaximize()}>
-      <span className="desktop-titlebar-brand">Nema</span>
+      <span className="desktop-titlebar-brand"><Image src="/nema-room-mark.svg" width={20} height={20} alt="" unoptimized />Nema Room</span>
       <div className="desktop-titlebar-controls" onDoubleClick={(event) => event.stopPropagation()}>
         <button className="desktop-titlebar-button" type="button" aria-label={t("window.minimize")} title={t("window.minimize")} onClick={() => void controls.minimize().catch(() => undefined)}>
           <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 8.5h8" /></svg>

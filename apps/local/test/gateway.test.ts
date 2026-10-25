@@ -60,6 +60,26 @@ describe("SessionManager", () => {
 });
 
 describe("protected same-origin gateway", () => {
+  test("serves only the two fixed brand resources to authenticated UI sessions", async () => {
+    const webTarget = await listen((req, res) => res.end(`web:${req.url}`));
+    const hubTarget = await listen((_req, res) => res.end("hub"));
+    const session = new SessionManager();
+    const gateway = await startGateway({ webTarget, hubTarget, session, port: 0, privateGatewayCredential: createGatewayCredential() });
+    gateways.push(gateway);
+    const launch = await fetch(`${gateway.origin}/_nema/launch?ticket=${session.issueTicket()}`, { redirect: "manual" });
+    const cookie = launch.headers.get("set-cookie")!.split(";")[0]!;
+    for (const resource of ["/icon.png", "/nema-room-mark.svg"]) {
+      expect((await fetch(`${gateway.origin}${resource}`)).status).toBe(401);
+      const response = await fetch(`${gateway.origin}${resource}`, { headers: { cookie } });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe(`web:${resource}`);
+      expect((await fetch(`${gateway.origin}${resource}`, { method: "POST", headers: { cookie } })).status).toBe(405);
+    }
+    for (const resource of ["/arbitrary.svg", "/assets/icon.png", "/nema-room-mark.svg/extra"]) {
+      expect((await fetch(`${gateway.origin}${resource}`, { headers: { cookie } })).status).toBe(404);
+    }
+    session.close();
+  });
   test("exchanges a ticket once for a private cookie and redirects without leaking the ticket", async () => {
     const webTarget = await listen((_req, res) => res.end("web"));
     const hubTarget = await listen((_req, res) => res.end("hub"));

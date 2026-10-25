@@ -2,9 +2,11 @@
 
 const { createSecureWindowOptions, isExternalHttps, navigationDecision, validateRuntimeLaunchUrl } = require('./security.cjs');
 const { registerWindowControls } = require('./window-controls.cjs');
+const path = require('node:path');
 
-function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi }) {
-  const { app, BrowserWindow, Menu, Tray, dialog, shell, session, ipcMain } = electron;
+function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, platform = process.platform }) {
+  const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, session, ipcMain } = electron;
+  const brandAsset = (name) => path.join(__dirname, 'assets', name);
   let runtimeApi;
   let currentInstance;
   let mainWindow;
@@ -28,7 +30,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi }) {
   function reportError(error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('Nema desktop operation failed', message);
-    dialog.showErrorBox('Nema could not open', message);
+    dialog.showErrorBox('Nema Room could not open', message);
   }
 
   function handleNavigation(window, runtimeOrigin) {
@@ -64,8 +66,8 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi }) {
     const opening = (async () => {
       const instance = await ensureCore();
       validateRuntimeLaunchUrl(instance.launchUrl, instance.origin);
-      const window = new BrowserWindow(createSecureWindowOptions(instance.origin));
-      if (process.platform !== 'darwin') window.setMenu(null);
+      const window = new BrowserWindow({ ...createSecureWindowOptions(instance.origin), icon: brandAsset('icon.png') });
+      if (platform !== 'darwin') window.setMenu(null);
       mainWindow = window;
       registerWindowControls({ ipcMain, window, runtimeOrigin: instance.origin });
       destroyWindowOnClose(window);
@@ -103,7 +105,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi }) {
       app.quit();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      dialog.showErrorBox('Nema could not finish quitting', message);
+      dialog.showErrorBox('Nema Room could not finish quitting', message);
       if (!mainWindow || mainWindow.isDestroyed()) void createMainWindow().catch(reportError);
     } finally { quitPending = false; }
   }
@@ -113,24 +115,26 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi }) {
     const browser = () => { void openBrowserMode().catch(reportError); };
     const quit = () => { void quitNema(); };
     Menu.setApplicationMenu(Menu.buildFromTemplate([
-      { label: 'Nema', submenu: [
-        { label: 'Open Nema', click: open },
+      { label: 'Nema Room', submenu: [
+        { label: 'Open Nema Room', click: open },
         { label: 'Open in Browser', click: browser },
         { type: 'separator' },
-        { label: 'Quit Nema', accelerator: process.platform === 'darwin' ? 'Command+Q' : 'Ctrl+Shift+Q', click: quit },
+        { label: 'Quit Nema Room', accelerator: platform === 'darwin' ? 'Command+Q' : 'Ctrl+Shift+Q', click: quit },
       ] },
     ]));
-    void app.getFileIcon(process.execPath, { size: 'small' }).then((icon) => {
+    try {
+      const icon = nativeImage.createFromPath(brandAsset(platform === 'darwin' ? 'trayTemplate.png' : 'tray.png'));
+      if (platform === 'darwin') icon.setTemplateImage(true);
       tray = new Tray(icon);
-      tray.setToolTip('Nema');
+      tray.setToolTip('Nema Room');
       tray.setContextMenu(Menu.buildFromTemplate([
-        { label: 'Open Nema', click: open },
+        { label: 'Open Nema Room', click: open },
         { label: 'Open in Browser', click: browser },
         { type: 'separator' },
-        { label: 'Quit Nema', click: quit },
+        { label: 'Quit Nema Room', click: quit },
       ]));
       tray.on('click', open);
-    }).catch((error) => console.error('Nema tray icon failed', error));
+    } catch (error) { console.error('Nema Room tray icon failed', error); }
   }
 
   async function install() {

@@ -94,7 +94,7 @@ function mappedTarget(pathname: string, web: URL, hub: URL): { target: URL; ui: 
   if (pathname === "/api" || pathname.startsWith("/api/")) return { target: hub, ui: false };
   const uiPath = pathname === "/" || /^\/w\/[A-Za-z0-9_-]+\/?$/.test(pathname) ||
     /^\/_next\/static\/.+/.test(pathname) || pathname === "/_next/image" ||
-    ["/favicon.ico", "/robots.txt", "/manifest.webmanifest", "/icon.svg"].includes(pathname);
+    ["/favicon.ico", "/robots.txt", "/manifest.webmanifest", "/icon.svg", "/icon.png", "/nema-room-mark.svg"].includes(pathname);
   return uiPath ? { target: web, ui: true } : null;
 }
 

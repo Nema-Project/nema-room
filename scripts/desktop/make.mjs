@@ -35,13 +35,13 @@ export function parseMakeArgs(args, host = { platform: process.platform, arch: p
 export function builderConfig(payloadDir, outputDir, target) {
   const common = {
     appId: 'org.nema-project.nema-room',
-    productName: 'Nema',
+    productName: 'Nema Room',
     executableName: 'Nema',
-    artifactName: '${productName}-${version}-${platform}-${arch}.${ext}',
+    artifactName: 'Nema-${version}-${platform}-${arch}.${ext}',
     asar: true,
     compression: 'normal',
     directories: { output: outputDir },
-    files: ['main.cjs', 'lifecycle.cjs', 'security.cjs', 'window-controls.cjs', 'preload.cjs', 'package.json'],
+    files: ['main.cjs', 'lifecycle.cjs', 'security.cjs', 'window-controls.cjs', 'preload.cjs', 'package.json', 'assets/**/*'],
     extraResources: [
       { from: payloadDir, to: 'payload', filter: ['**/*'] },
     ],
@@ -49,7 +49,7 @@ export function builderConfig(payloadDir, outputDir, target) {
   if (target.platform === 'win32') {
     return {
       ...common,
-      win: { target: ['nsis', 'zip'], signAndEditExecutable: true, signExecutable: false },
+      win: { target: ['nsis', 'zip'], icon: path.join(desktopDir, 'assets/icon.ico'), signAndEditExecutable: true, signExecutable: false },
       nsis: {
         oneClick: false,
         perMachine: false,
@@ -65,6 +65,7 @@ export function builderConfig(payloadDir, outputDir, target) {
   return {
     ...common,
     mac: {
+      icon: path.join(desktopDir, 'assets/icon.icns'),
       target: ['dmg', 'zip'],
       identity: '-',
       hardenedRuntime: false,

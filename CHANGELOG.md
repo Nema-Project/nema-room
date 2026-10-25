@@ -48,6 +48,7 @@
 
 ### Fixed
 
+- The desktop window can load its titlebar mark and favicon. The local gateway now forwards only `/nema-room-mark.svg` and `/icon.png` (including the favicon cache query) to a signed-in session.
 - A workspace with enough messages no longer stretches the three-column layout past the window. The message list scrolls, and the composer and sidebar footer stay on screen.
 - A main-branch move is recorded only after `repo.moved` is sent. A closed socket, a failed send, or a throw leaves the previous sha so the next tick retries the index update and the message. A tick that is already running is not started again.
 - A failure while checking one bound repo no longer skips the other repos in that tick. The failed repo keeps its last sha and is tried again on the next tick.

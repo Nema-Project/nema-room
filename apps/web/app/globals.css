@@ -284,7 +284,7 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .plugins-page { position: fixed; z-index: 15; top: 0; right: 0; bottom: 0; left: var(--side-width, 232px); display: flex; flex-direction: column; background: var(--paper); }
 .nema-desktop-window .plugins-page { top: 36px; }
 .desktop-titlebar { position: fixed; z-index: 100; inset: 0 0 auto; height: 36px; display: flex; align-items: center; justify-content: space-between; padding-left: 14px; background: var(--paper); color: var(--ink); border-bottom: 1px solid var(--rule); -webkit-app-region: drag; user-select: none; }
-.desktop-titlebar-brand { font-size: 12px; font-weight: 700; letter-spacing: .02em; }
+.desktop-titlebar-brand { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; letter-spacing: .02em; }
 .desktop-titlebar-controls { height: 100%; display: flex; -webkit-app-region: no-drag; }
 .desktop-titlebar-button { width: 46px; height: 35px; display: grid; place-items: center; border: 0; border-radius: 0; background: transparent; color: inherit; cursor: default; }
 .desktop-titlebar-button:hover, .desktop-titlebar-button:focus-visible { background: var(--paper-2); outline: none; }

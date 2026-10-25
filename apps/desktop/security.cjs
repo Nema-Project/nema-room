@@ -33,7 +33,7 @@ function createSecureWindowOptions(runtimeOrigin) {
     minWidth: 840,
     minHeight: 600,
     show: false,
-    title: 'Nema',
+    title: 'Nema Room',
     frame: false,
     autoHideMenuBar: true,
     webPreferences: {

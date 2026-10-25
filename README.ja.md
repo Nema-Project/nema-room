@@ -1,5 +1,7 @@
 # Nema Room
 
+<img src="docs/design/brand/nema-room-preview.png" width="88" height="88" alt="Nema Room アイコン" />
+
 **断片的な議論を、根拠をたどれる要件に整理し、コーディング Agent に引き継ぐ。**
 
 [简体中文](README.md) · [English](README.en.md) · 日本語
@@ -181,6 +183,14 @@ npm run build -w apps/web
 ルートの typecheck は web を含みません。web は個別にビルドしてください。更新前にデータをバックアップし、`git pull`、`npm ci`、CLI と Compose イメージの再ビルド、daemon の再起動を行います。hub と CLI は同じバージョンを使ってください。
 
 ポートや保存先は [.env.example](.env.example) を参照してください。CLI はルートの `.env` を自動で読みません。保存先を変更したら shell で `NEMA_DATA_DIR` を export するか、`daemon` / `doctor` に `--token-file` を指定します。hub のポートを変えたら `--hub` も指定してください。`NEXT_PUBLIC_HUB_URL` 変更後は web の再ビルドが必要です。
+
+## ブランドとアイコン
+
+ブランドの正式名称は **Nema Room** です。最初の比較案から **01 / ROOM / N** を採用しました。開いた空間と余白の N で、UI のモノクロ、暖かいグレー、幾何学的な表現に合わせています。
+
+[ブランド素材と使用説明（中国語）](docs/design/brand/README.md) · [アイコン PNG](docs/design/brand/nema-room-icon-01.png) · [設計仕様（中国語）](docs/superpowers/specs/2026-10-25-nema-room-brand-design.md) · [導入計画（英語）](docs/superpowers/plans/2026-10-25-nema-room-brand.md)
+
+デスクトップのパッケージ設定、ウィンドウ、トレイ、ブラウザー favicon にアイコンを導入しました。実機での検証状況はブランド素材の説明を参照してください。
 
 ## ドキュメントとフィードバック
 

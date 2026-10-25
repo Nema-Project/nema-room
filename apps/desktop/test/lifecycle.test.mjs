@@ -1,5 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
+import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
@@ -35,7 +37,13 @@ function harness(overrides = {}) {
   const ipcMain = { handle: vi.fn((channel, handler) => ipcHandlers.set(channel, handler)), removeHandler: vi.fn((channel) => ipcHandlers.delete(channel)) };
   const dialog = { showErrorBox: vi.fn() };
   const Menu = { setApplicationMenu: vi.fn(), buildFromTemplate: vi.fn((value) => value) };
-  class Tray extends EventEmitter { setToolTip() {} setContextMenu() {} }
+  const trays = [];
+  class Tray extends EventEmitter {
+    constructor(icon) { super(); this.icon = icon; trays.push(this); }
+    setToolTip(value) { this.tooltip = value; }
+    setContextMenu(value) { this.menu = value; }
+  }
+  const nativeImage = { createFromPath: (file) => ({ file, setTemplateImage(value) { this.template = value; } }) };
   const electron = {
     app,
     BrowserWindow,
@@ -45,6 +53,7 @@ function harness(overrides = {}) {
     shell,
     session: { defaultSession: { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() } },
     ipcMain,
+    nativeImage,
   };
   let launches = 0;
   const runtimeApi = {
@@ -61,11 +70,31 @@ function harness(overrides = {}) {
     home: 'C:/Users/Test/.nema/desktop',
     assetsDir: 'C:/Nema/resources/payload',
     loadRuntimeApi: async () => runtimeApi,
+    platform: overrides.platform ?? process.platform,
   });
-  return { app, windows, shell, dialog, electron, ipcHandlers, runtimeApi, lifecycle };
+  return { app, windows, trays, shell, dialog, electron, ipcHandlers, runtimeApi, lifecycle };
 }
 
 describe('Electron shell lifecycle', () => {
+  it.each(['win32', 'darwin'])('loads shipped window and tray icons on %s and reopens from the tray', async (platform) => {
+    const value = harness({ platform });
+    await value.lifecycle.install();
+    expect(value.windows[0].options.title).toBe('Nema Room');
+    expect(path.basename(value.windows[0].options.icon)).toBe('icon.png');
+    expect(existsSync(value.windows[0].options.icon)).toBe(true);
+    expect(value.trays).toHaveLength(1);
+    const tray = value.trays[0];
+    expect(tray.tooltip).toBe('Nema Room');
+    expect(path.basename(tray.icon.file)).toBe(platform === 'darwin' ? 'trayTemplate.png' : 'tray.png');
+    expect(existsSync(tray.icon.file)).toBe(true);
+    if (platform === 'darwin') expect(tray.icon.template).toBe(true);
+    expect(value.app.getFileIcon).not.toHaveBeenCalled();
+    value.windows[0].close();
+    tray.emit('click');
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(value.windows).toHaveLength(2);
+    expect(value.runtimeApi.shutdownLocalRuntime).not.toHaveBeenCalled();
+  });
   it('does not start a second application without the single-instance lock', async () => {
     const value = harness({ lock: false });
     await value.lifecycle.install();
@@ -109,7 +138,7 @@ describe('Electron shell lifecycle', () => {
     const value = harness();
     await value.lifecycle.install();
     const template = value.electron.Menu.setApplicationMenu.mock.calls[0][0];
-    const quit = template[0].submenu.find((item) => item.label === 'Quit Nema');
+    const quit = template[0].submenu.find((item) => item.label === 'Quit Nema Room');
     expect(quit.accelerator).not.toBe('Alt+F4');
     expect(quit.accelerator).toBe('Ctrl+Shift+Q');
   });
@@ -160,7 +189,7 @@ describe('Electron shell lifecycle', () => {
     await value.lifecycle.install();
     await value.lifecycle.quitNema();
     expect(value.app.quit).not.toHaveBeenCalled();
-    expect(value.dialog.showErrorBox).toHaveBeenCalledWith('Nema could not finish quitting', 'helper drain failed');
+    expect(value.dialog.showErrorBox).toHaveBeenCalledWith('Nema Room could not finish quitting', 'helper drain failed');
     await value.lifecycle.openBrowserMode();
     expect(value.shell.openExternal).toHaveBeenCalledWith(expect.stringMatching(/^http:\/\/127\.0\.0\.1:43001\/_nema\/launch\?ticket=/));
   });

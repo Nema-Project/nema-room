@@ -22,6 +22,9 @@ describe('native Electron packaging configuration', () => {
     expect(config.files).toContain('window-controls.cjs');
     expect(config.extraResources.map((entry) => entry.to)).toEqual(['payload']);
     expect(config.win.signExecutable).toBe(false);
+    expect(config).toMatchObject({ productName: 'Nema Room', executableName: 'Nema', appId: 'org.nema-project.nema-room' });
+    expect(config.files).toContain('assets/**/*');
+    expect(config.win.icon.replaceAll('\\', '/')).toMatch(/apps\/desktop\/assets\/icon\.ico$/);
   });
 
   it('requires the source-inventoried Electron notices before packaging', async () => {
@@ -43,6 +46,7 @@ describe('native Electron packaging configuration', () => {
     expect(config.mac.target).toEqual(['dmg', 'zip']);
     expect(config.mac).toMatchObject({ identity: '-', hardenedRuntime: false });
     expect(config.mac).not.toHaveProperty('notarize');
+    expect(config.mac.icon.replaceAll('\\', '/')).toMatch(/apps\/desktop\/assets\/icon\.icns$/);
   });
 
   it('uses the standard Windows portable ZIP by default and accepts an explicit artifact path', () => {
