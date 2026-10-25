@@ -718,6 +718,6 @@ describe("diagram routes", () => {
     });
     const down = await offline.request(`${HUB}/api/pick-directory`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     expect(down.status).toBe(503);
-    expect((await down.json()).error).toBe("daemon 未连接");
+    expect(((await down.json()) as { error: string }).error).toBe("daemon 未连接");
   });
 });
