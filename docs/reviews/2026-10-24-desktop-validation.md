@@ -89,3 +89,11 @@ What this does not cover: the NSIS installer was built but **not installed, laun
 3. macOS build and native checks.
 4. Source-correspondence review complete and `desktop:validate-release` passing.
 5. A first-install and upgrade check on a clean machine.
+
+## Added after the rebuilt artifacts (not covered by them)
+
+The artifacts above were built from `f8f42ef`, before these changes, so none of them is exercised by the packaged smoke:
+
+- **CLI launcher** (`Nema CLI.cmd` / `Nema CLI.command` / `nema-cli`): covered only by a staging unit test on Windows (arguments, exit code, bundled paths). The `report install --help` check in `smoke-runtime.mjs` has not been run, and the macOS and Linux launchers have not been executed.
+- **Release workflow** (`.github/workflows/desktop-release.yml`, `scripts/desktop/RELEASE.md`): version and manifest helpers pass 10 local tests; no workflow job has run on a GitHub runner, and the macOS runner labels are assumptions. The publish job does not check that the tag is on `main`; the checklist relies on a person tagging correctly.
+- **Windows tests**: 0 failing of 1165 locally, with 23 tests skipped by explicit gates (file symlinks, retired adapter). Skips are not Windows acceptance. Nothing was re-run on POSIX or in CI after the fixture changes.

@@ -85,7 +85,7 @@ Linux 上若 UID/GID 不是 1000，请在 `.env` 设置 `NEMA_UID` / `NEMA_GID`�
 
 | 项目 | 状态 |
 | --- | --- |
-| Windows x64 | 已构建并在本机验收（安装包与便携 ZIP） |
+| Windows x64 | 已构建；便携 ZIP 的冒烟已在本机通过，安装包尚未安装运行 |
 | macOS | 有构建配置（DMG、ZIP），**尚未在 macOS 上验证** |
 | Linux | 不提供桌面安装包 |
 | 签名与更新 | 安装包**未签名**；没有自动更新 |
@@ -111,7 +111,7 @@ Linux 上若 UID/GID 不是 1000，请在 `.env` 设置 `NEMA_UID` / `NEMA_GID`�
 
 **升级**：桌面应用没有自动更新。先用托盘的 `Quit Nema` 退出，备份 `~/.nema/desktop`，再安装新版本；启动时会自动应用数据库迁移。**从旧安装包原地升级尚未验证**，请先备份。
 
-**已知限制**：后台工具进程的清理保证目前只在 Windows 上实现（POSIX 尚未证明）；Windows 全量测试仍有已记录的基线失败。详见[验证记录](docs/reviews/2026-10-24-desktop-validation.md)。
+**已知限制**：后台工具进程的清理保证目前只在 Windows 上实现（POSIX 尚未证明）；Windows 本机全量测试为 0 失败，但有 23 个测试因条件限制被跳过（这不算 Windows 验收），POSIX 与 CI 尚未复跑。详见[验证记录](docs/reviews/2026-10-24-desktop-validation.md)。
 
 ## 模型运行方式
 

@@ -132,7 +132,7 @@ test('stages a CLI launcher that points at the bundled node and CLI entry', asyn
   assert.ok(source.includes(native(manifest.node)));
   assert.ok(source.includes(native(manifest.cliEntry)));
   assert.equal(source.includes('{{'), false);
-  assert.match(source, process.platform === 'win32' ? /%*/ : /"$@"/);
+  assert.match(source, process.platform === 'win32' ? /%\*/ : /"$@"/);
   if (process.platform !== 'win32') assert.ok(((await stat(path.join(target, launcher))).mode & 0o111) !== 0);
 });
 

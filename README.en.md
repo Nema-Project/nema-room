@@ -85,7 +85,7 @@ The desktop app puts the whole stack in one local program: an on-disk PGlite dat
 
 | Item | Status |
 | --- | --- |
-| Windows x64 | Built and accepted locally (installer and portable ZIP) |
+| Windows x64 | Built; portable ZIP smoke passed locally; installer not yet installed or run |
 | macOS | Build configuration exists (DMG, ZIP); **not yet verified on a Mac** |
 | Linux | No desktop installer |
 | Signing and updates | Installers are **unsigned**; there is no auto-update |
@@ -111,7 +111,7 @@ The desktop app puts the whole stack in one local program: an on-disk PGlite dat
 
 **Upgrading:** the desktop app has no auto-update. Quit with `Quit Nema` in the tray, back up `~/.nema/desktop`, then install the new version; database migrations run on startup. **Upgrading in place over an older installer has not been verified**, so back up first.
 
-**Known limitations:** cleanup of background helper processes is guaranteed only on Windows so far (POSIX is unproven), and the full Windows test run still has recorded baseline failures. See the [validation record](docs/reviews/2026-10-24-desktop-validation.md).
+**Known limitations:** cleanup of background helper processes is guaranteed only on Windows so far (POSIX is unproven), and the full Windows test run has 0 failures locally but 23 tests are skipped by gates (not Windows acceptance), and POSIX and CI have not been re-run. See the [validation record](docs/reviews/2026-10-24-desktop-validation.md).
 
 ## Model runtimes
 
