@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nema Room：議論を、たどれる要件に</title>
+<meta name="description" content="Nema Room は手元のパソコンで動く要件ディスカッションルームです。チャットのアイデアを要件・決定・確認事項に整理し、元の発言までたどれる形で記録して、Codex や Claude Code に引き渡します。">
+<link rel="icon" href="../assets/nema-room-mark.svg" type="image/svg+xml">
+<link rel="alternate" hreflang="zh-CN" href="https://nema-project.github.io/nema-room/">
+<link rel="alternate" hreflang="en" href="https://nema-project.github.io/nema-room/en/">
+<link rel="alternate" hreflang="ja" href="https://nema-project.github.io/nema-room/ja/">
+<link rel="alternate" hreflang="x-default" href="https://nema-project.github.io/nema-room/en/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../styles.css">
+<script>document.documentElement.classList.add('js')</script>
+</head>
+<body>
+
+<header class="hero" id="top">
+  <div class="topbar">
+    <a class="tile tile-ink logo" href="#top" aria-label="Nema Room ホーム">
+      <svg viewBox="0 0 360 360" aria-hidden="true"><path d="M55 55 120 28 304 130V332L237 307V171L120 116V298L55 323Z"/><path d="M183 195 218 181V300L183 286Z"/></svg>
+    </a>
+    <nav class="tile tile-warm nav" aria-label="ページ内の移動">
+      <a class="link" href="#demo">デモ</a>
+      <a class="link" href="#features">機能</a>
+      <a class="link" href="#flow">流れ</a>
+      <a class="link" href="#local">ローカル</a>
+      <a class="link" href="#faq">質問</a>
+    </nav>
+    <nav class="tile tile-warm langs" aria-label="言語">
+      <a class="link" href="../" lang="zh-CN" hreflang="zh-CN">中文</a>
+      <a class="link" href="../en/" lang="en" hreflang="en">English</a>
+      <a class="link" href="./" lang="ja" hreflang="ja" aria-current="page">日本語</a>
+    </nav>
+    <a class="tile tile-ink action" href="https://github.com/Nema-Project/nema-room">ソースを見る</a>
+  </div>
+
+  <div class="tile tile-paper name">
+    <h1 class="lines"><span class="line"><span data-line style="--i:0">Nema</span></span><span class="line"><span data-line style="--i:1">Room</span></span></h1>
+    <p class="name-line">手元で動く、要件のためのディスカッションルーム</p>
+  </div>
+
+  <figure class="tile picture pic-a">
+    <img src="../assets/white-doors-strandgade-25.jpg" width="1264" height="1400" alt="ハンマースホイ《白い扉》：がらんとした部屋で白い扉が 2 枚開き、奥の部屋が見える。" fetchpriority="high">
+  </figure>
+
+  <figure class="tile picture pic-b">
+    <img class="drift" src="../assets/interior-strandgade-30.jpg" width="1078" height="1400" alt="ハンマースホイ《ストランゲーゼ 30 番地の室内》：開いた扉の向こうに別の部屋と後ろ姿の人物。">
+  </figure>
+
+  <div class="pair">
+    <p class="tile tile-ink statement" data-rise style="--i:2">チャットに散らばったアイデアを、要件・決定・確認事項に整理します。</p>
+    <p class="tile tile-accent statement" data-rise style="--i:3">どれも元の発言までたどれます。確認が済んだら、Codex や Claude Code に実装を任せます。</p>
+  </div>
+</header>
+
+<main>
+
+<section class="tile tile-paper showcase" id="demo" aria-labelledby="demo-h">
+  <div class="showcase-text">
+    <h2 id="demo-h" class="h-sec" data-reveal>議論が形になるまで</h2>
+    <p data-reveal style="--i:1">以下は「請求書のエクスポート」についての議論です。メッセージをオンにすると、Nema が項目に整理し、誰かの発言か、誰かが決めたことか、エージェントの推測かを記録します。</p>
+    <dl class="legend" data-reveal style="--i:2">
+      <div><dt><span class="chip chip-said">発言あり</span></dt><dd>議論の中で誰かが言った</dd></div>
+      <div><dt><span class="chip chip-decided">決定済み</span></dt><dd>誰かが決めた</dd></div>
+      <div><dt><span class="chip chip-inferred">推測</span></dt><dd>エージェントの提案、確認待ち</dd></div>
+    </dl>
+  </div>
+
+  <div class="panel" data-ui data-reveal style="--i:1">
+    <div class="board" aria-live="polite">
+      <div class="board-head">
+        <strong>ナレッジ · 請求書エクスポート</strong>
+        <span class="counts" id="counts">要件 1 · 決定 1 · 確認事項 1</span>
+      </div>
+      <ol class="entries" id="entries"></ol>
+      <noscript><p class="board-empty">デモを試すには JavaScript を有効にしてください。</p></noscript>
+    </div>
+    <fieldset class="controls">
+      <legend class="controls-title">議論のメッセージ</legend>
+      <label class="msg"><span><b>佐藤</b> 月次の請求書を CSV で出したい。経理が毎月 1 日に照合します。</span><input type="checkbox" data-msg="m1" checked><i aria-hidden="true"></i></label>
+      <label class="msg"><span><b>高橋</b> PDF は今回見送り、CSV だけで。</span><input type="checkbox" data-msg="m2" checked><i aria-hidden="true"></i></label>
+      <label class="msg"><span><b>佐藤</b> 金額は小数点以下 2 桁、円は整数で。</span><input type="checkbox" data-msg="m3"><i aria-hidden="true"></i></label>
+      <label class="msg"><span><b>Nema</b> 経理は Excel で開くので、BOM は付けますか？</span><input type="checkbox" data-msg="m4" checked><i aria-hidden="true"></i></label>
+      <label class="msg"><span><b>高橋</b> 付けてください。ないと日本語が文字化けします。</span><input type="checkbox" data-msg="m5"><i aria-hidden="true"></i></label>
+      <label class="msg"><span><b>佐藤</b> 締めは東京時間、月末 23:59 です。</span><input type="checkbox" data-msg="m6"><i aria-hidden="true"></i></label>
+    </fieldset>
+  </div>
+</section>
+
+<section class="features" id="features" aria-labelledby="features-h">
+  <h2 id="features-h" class="tile tile-paper h-sec features-h" data-reveal>どの項目にも出典がある</h2>
+
+  <article class="cell" data-reveal>
+    <div class="cell-text">
+      <h3>誰の言葉かを分ける</h3>
+      <p>発言・決定・推測を分けて記録します。エージェントの推測が、あなたの決定になりすますことはありません。</p>
+    </div>
+    <div class="frag frag-dock-bottom" data-ui>
+      <div class="ui-entry">
+        <div class="ui-entry-top"><span class="ui-kind">決定 D-2</span><span class="chip chip-decided">決定済み</span></div>
+        <p class="ui-entry-title">出力ファイルに UTF-8 BOM を付ける</p>
+        <blockquote class="ui-quote">「付けてください。ないと日本語が文字化けします。」<cite>高橋 · 10:12 · Q-1 に回答</cite></blockquote>
+      </div>
+    </div>
+  </article>
+
+  <article class="cell cell-flip" data-reveal style="--i:1">
+    <div class="frag frag-dock-top" data-ui>
+      <ol class="ui-history">
+        <li><span class="ui-sha">a41c0e2</span><span>D-2 追加：BOM 付きで出力</span><time>10:12</time></li>
+        <li class="is-sel"><span class="ui-sha">7be19f0</span><span>Q-1 状態：未確認 → 回答済み</span><time>10:12</time></li>
+        <li><span class="ui-sha">e03d551</span><span>R-2 変更：円は整数に</span><time>10:07</time></li>
+        <li><span class="ui-sha">19ac7d4</span><span>D-1 追加：初版は CSV のみ</span><time>10:05</time></li>
+      </ol>
+    </div>
+    <div class="cell-text">
+      <h3>変更はすべて Git に</h3>
+      <p>ナレッジベース自体が Git リポジトリです。何が、なぜ、どう変わったかをいつでもさかのぼれます。</p>
+    </div>
+  </article>
+
+  <article class="cell" data-reveal style="--i:2">
+    <div class="cell-text">
+      <h3>コードを読める</h3>
+      <p>ローカルのリポジトリを紐づけると、エージェントが main ブランチのスナップショットを読んで検索します。議論の時点で既存の実装を踏まえられます。</p>
+    </div>
+    <div class="frag frag-dock-bottom frag-right" data-ui>
+      <div class="ui-repo">
+        <div class="ui-repo-row"><span>リポジトリ</span><b>~/code/ledger-app</b></div>
+        <div class="ui-repo-row"><span>ブランチ</span><b>main @ 5d2e8a1</b></div>
+        <div class="ui-repo-row"><span>取得</span><b>2 分前</b></div>
+        <div class="ui-repo-row ui-search"><span>検索</span><b>exportMonthlyCsv</b></div>
+        <div class="ui-hit">src/billing/export.ts<em>:48</em></div>
+        <div class="ui-hit">src/billing/export.test.ts<em>:12</em></div>
+      </div>
+    </div>
+  </article>
+
+  <article class="cell cell-flip" data-reveal>
+    <div class="frag frag-dock-top frag-right" data-ui>
+      <div class="ui-diagram">
+        <div class="ui-diagram-head"><b>請求書エクスポートの呼び出し図</b><span class="ui-stale">コード変更あり、図が古い可能性</span></div>
+        <svg viewBox="0 0 300 140" role="img" aria-label="呼び出し図：請求書画面がエクスポート処理を呼び、エクスポート処理が請求書リポジトリとタイムゾーンのヘルパーを読む">
+          <rect x="10" y="55" width="80" height="30" /><text x="50" y="74">BillingPage</text>
+          <rect x="120" y="55" width="80" height="30" /><text x="160" y="74">exportCsv</text>
+          <rect x="220" y="15" width="74" height="30" /><text x="257" y="34">BillRepo</text>
+          <rect x="220" y="95" width="74" height="30" class="is-changed" /><text x="257" y="114">tz.ts</text>
+          <path d="M90 70H120M200 65 220 30M200 75 220 110" />
+        </svg>
+      </div>
+    </div>
+    <div class="cell-text">
+      <h3>古くなった図は知らせる</h3>
+      <p>コードから描いた図は、どのコミットを元にしたかを覚えています。コードが変わると、図にそう表示されます。</p>
+    </div>
+  </article>
+
+  <article class="cell" data-reveal style="--i:1">
+    <div class="cell-text">
+      <h3>作る前に確認する</h3>
+      <p>議論で曖昧だった点は確認事項のリストになります。赤で示すのは、あなたの回答が必要なものだけです。</p>
+    </div>
+    <div class="frag frag-dock-bottom" data-ui>
+      <ul class="ui-questions">
+        <li class="is-open"><b>Q-3</b><span>請求のない月は空ファイルを出力するか？</span><em>未回答</em></li>
+        <li class="is-open"><b>Q-2</b><span>過去の請求書も新しいタイムゾーンで再計算するか？</span><em>未回答</em></li>
+        <li><b>Q-1</b><span>CSV に UTF-8 BOM を付けるか</span><em>回答済み</em></li>
+      </ul>
+    </div>
+  </article>
+
+  <article class="cell cell-flip" data-reveal style="--i:2">
+    <div class="frag frag-dock-top" data-ui>
+      <div class="ui-settings">
+        <div class="ui-set-row"><span>表示言語</span><div class="ui-seg"><b>中文</b><b>English</b><b class="on">日本語</b></div></div>
+        <div class="ui-set-row"><span>ナレッジの言語</span><div class="ui-seg"><b class="on">議論に合わせる</b><b>固定</b></div></div>
+        <div class="ui-set-row"><span>ナイトモード</span><span class="ui-switch" aria-hidden="true"></span></div>
+      </div>
+    </div>
+    <div class="cell-text">
+      <h3>3 つの表示言語</h3>
+      <p>中国語・英語・日本語の画面をいつでも切り替えられます。項目を記録する言語は別に設定できます。</p>
+    </div>
+  </article>
+</section>
+
+<section class="flow" id="flow" aria-labelledby="flow-h">
+  <div class="field field-1">
+    <h2 id="flow-h" class="flow-h" data-reveal>議論から実装まで</h2>
+    <div class="wp" data-ui>
+      <div class="wp-head"><b>開発パッケージ · 請求書 CSV 出力</b><span class="wp-state">整理中</span></div>
+      <ul class="wp-list"><li>要件 3</li><li>決定 1</li><li class="wp-alert">未回答の確認事項 2</li></ul>
+    </div>
+    <p class="clause" data-reveal style="--i:1">まずルームで議論する。項目は自動で整理される。</p>
+  </div>
+  <div class="field field-2">
+    <div class="wp" data-ui>
+      <div class="wp-head"><b>開発パッケージ · 請求書 CSV 出力</b><span class="wp-state">確認済み</span></div>
+      <ul class="wp-list"><li>要件 3</li><li>決定 3</li><li>未回答の確認事項 0</li></ul>
+    </div>
+    <p class="clause" data-reveal style="--i:1">次に、曖昧な点をひとつずつ確かめる。</p>
+  </div>
+  <div class="field field-3">
+    <div class="wp" data-ui>
+      <div class="wp-head"><b>開発パッケージ · 請求書 CSV 出力</b><span class="wp-state">承認済み</span></div>
+      <ul class="wp-list"><li>仕様と計画を生成済み</li><li>Claude Code に引き渡し</li><li>承認者：高橋</li></ul>
+    </div>
+    <p class="clause" data-reveal style="--i:1">開発パッケージを承認し、コーディングエージェントに渡す。</p>
+  </div>
+  <div class="field field-4">
+    <div class="wp" data-ui>
+      <div class="wp-head"><b>開発パッケージ · 請求書 CSV 出力</b><span class="wp-state">完了</span></div>
+      <ul class="wp-list"><li>コミット 3 件、main に取り込み済み</li><li>変更ファイル 6 件</li><li>要件 3 / 3 をカバー</li></ul>
+    </div>
+    <p class="clause" data-reveal style="--i:1">最後に、コミットが main に入るのを見届ける。</p>
+  </div>
+</section>
+
+<section class="tile tile-warm local" id="local" aria-labelledby="local-h">
+  <div class="local-row">
+    <dl class="facts" data-reveal>
+      <div><dt>データベース</dt><dd>ローカルディスク上の PGlite</dd></div>
+      <div><dt>データフォルダ</dt><dd>~/.nema/desktop</dd></div>
+      <div><dt>ネットワーク</dt><dd>ループバックのみで待ち受け</dd></div>
+    </dl>
+    <div class="local-main">
+      <h2 id="local-h" class="h-sec" data-reveal>あなたのパソコンだけで動く</h2>
+      <p class="lead" data-reveal style="--i:1">デスクトップ版はすべてを 1 つのアプリにまとめています。データベース、ローカルコア、Node と Git を同梱し、Docker もデータベースサーバーも不要です。議論の内容は選んだモデルプロバイダーにだけ送られ、GitHub のトークンを Nema が扱うことはありません。</p>
+    </div>
+  </div>
+  <div class="local-row local-row-2">
+    <p class="facts-word" data-reveal>現状</p>
+    <div class="records">
+      <ul class="record" data-reveal style="--i:1" aria-label="プラットフォーム">
+        <li><span>Windows x64 デスクトップ版</span><span>ビルド済み、プレビュー</span></li>
+        <li><span>macOS デスクトップ版</span><span>設定済み、未検証</span></li>
+        <li><span>Linux</span><span>Web / Compose 版</span></li>
+        <li><span>インストーラー署名</span><span>未署名</span></li>
+        <li><span>自動更新</span><span>なし</span></li>
+      </ul>
+      <ul class="record" data-reveal style="--i:2" aria-label="モデル">
+        <li><span>ChatGPT サブスクリプション</span><span>ブラウザでログイン</span></li>
+        <li><span>Claude サブスクリプション</span><span>Claude Code トークン</span></li>
+        <li><span>API キー</span><span>Responses API 互換</span></li>
+        <li><span>コーディングエージェント</span><span>Codex、Claude Code</span></li>
+        <li><span>ライセンス</span><span>MIT</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="faq" id="faq" aria-labelledby="faq-h">
+  <div class="band band-head"><h2 id="faq-h" data-reveal>よくある質問</h2></div>
+  <div class="band">
+    <h3 data-reveal>今すぐダウンロードできますか？</h3>
+    <p data-reveal style="--i:1">まだ正式リリースはありません。今はソースから Windows デスクトップのプレビュー版をビルドするか、Docker Compose で Web 版を動かせます。インストーラーは未署名のため、初回起動時に「Windows によって PC が保護されました」と表示されます。</p>
+  </div>
+  <div class="band band-alt">
+    <h3 data-reveal>費用はかかりますか？</h3>
+    <p data-reveal style="--i:1">Nema Room 自体は MIT ライセンスのオープンソースです。項目の整理にはモデルを呼び出すため、費用や利用枠は選んだプロバイダーによります。ChatGPT や Claude のサブスクリプション、または自分の API キーを使えます。</p>
+  </div>
+  <div class="band">
+    <h3 data-reveal>議論の内容はどこに送られますか？</h3>
+    <p data-reveal style="--i:1">データベースとナレッジベースはあなたのパソコンにあります。項目を生成するときだけ、関連する内容が選んだモデルプロバイダーに送られます。サービスは既定でローカルのみで待ち受けます。インターネットに直接公開しないでください。</p>
+  </div>
+  <div class="band band-alt">
+    <h3 data-reveal>エージェントはどう進捗を報告しますか？</h3>
+    <p data-reveal style="--i:1"><code>nema report install</code> で Codex や Claude Code に報告フックを入れます。コミットのたびに Nema へ通知され、Nema が動いていないときは手元に保存して次回送ります。</p>
+  </div>
+  <div class="band">
+    <h3 data-reveal>複数人で使えますか？</h3>
+    <p data-reveal style="--i:1">初版は 1 人が自分のパソコンで使うものです。複数端末の同期、バックアップ、チームの閲覧専用アクセスは、ローカルコアの完成後に対応します。</p>
+  </div>
+</section>
+
+<section class="cta" aria-labelledby="cta-h">
+  <figure class="tile picture cta-side cta-left"><img src="../assets/interior-no-30-strandgade.jpg" width="1137" height="1400" alt="ハンマースホイ《ストランゲーゼ 30 番地の室内》：扉が開き、女性が背を向けてテーブルに座っている。" loading="lazy"></figure>
+  <div class="tile tile-accent cta-main">
+    <h2 id="cta-h" data-reveal>ソースから試す</h2>
+    <p data-reveal style="--i:1">Node.js 22 以上と Git が必要です。リポジトリをクローンしてセットアップウィザードを実行すると、環境の確認、依存関係のインストール、モデルの選択まで案内します。</p>
+    <pre data-reveal style="--i:2"><code>git clone https://github.com/Nema-Project/nema-room.git
+cd nema-room
+node scripts/setup.mjs --lang ja</code></pre>
+    <a class="button button-paper" href="https://github.com/Nema-Project/nema-room" data-reveal style="--i:3">ソースを見る</a>
+  </div>
+  <div class="tile tile-ink cta-side cta-right" aria-hidden="true"></div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="mark-wall" aria-hidden="true">
+    <svg viewBox="0 0 360 360" class="mark-big"><path d="M55 55 120 28 304 130V332L237 307V171L120 116V298L55 323Z"/><path d="M183 195 218 181V300L183 286Z"/></svg>
+    <p class="mark-word">Nema Room</p>
+  </div>
+  <div class="foot-grid">
+    <nav class="foot-col" aria-label="このページ">
+      <p class="foot-title">このページ</p>
+      <a class="link" href="#demo">デモ</a>
+      <a class="link" href="#features">機能</a>
+      <a class="link" href="#flow">流れ</a>
+      <a class="link" href="#local">ローカル</a>
+    </nav>
+    <nav class="foot-col" aria-label="プロジェクト">
+      <p class="foot-title">プロジェクト</p>
+      <a class="link" href="https://github.com/Nema-Project/nema-room">GitHub リポジトリ</a>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/CHANGELOG.md">変更履歴</a>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/LICENSE">MIT ライセンス</a>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/SECURITY.md">セキュリティ</a>
+    </nav>
+    <nav class="foot-col" aria-label="README">
+      <p class="foot-title">README</p>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/README.md" lang="zh-CN">简体中文</a>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/README.en.md" lang="en">English</a>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/README.ja.md">日本語</a>
+    </nav>
+    <div class="foot-col foot-credits">
+      <p class="foot-title">絵画</p>
+      <p>ヴィルヘルム・ハンマースホイ《白い扉、ストランゲーゼ 25 番地》（1913）、《ストランゲーゼ 30 番地の室内》（1901）、《ストランゲーゼ 30 番地の室内》（1906）。パブリックドメイン、画像は Wikimedia Commons より。</p>
+    </div>
+  </div>
+  <div class="foot-last">
+    <p>© 2026 Nema Project · MIT ライセンス</p>
+    <a class="button button-ink" href="#top">トップへ戻る</a>
+  </div>
+</footer>
+
+<script type="application/json" id="demo-text">
+{
+  "provenance": { "said": "発言あり", "decided": "決定済み", "inferred": "推測" },
+  "kind": { "R": "要件", "D": "決定", "Q": "確認事項" },
+  "answered": "回答済み",
+  "source": "出典：",
+  "empty": "まだ項目はありません。右のメッセージをどれかオンにしてください。",
+  "counts": "要件 {R} · 決定 {D} · 確認事項 {Q}",
+  "filed": {
+    "m1": [{ "id": "R-1", "title": "請求書画面から月別に CSV を出力", "by": "said", "src": "佐藤 · 10:02" }],
+    "m2": [{ "id": "D-1", "title": "初版は CSV のみ、PDF はなし", "by": "decided", "src": "高橋 · 10:05" }],
+    "m3": [{ "id": "R-2", "title": "金額は小数 2 桁、JPY は整数", "by": "said", "src": "佐藤 · 10:07" }],
+    "m4": [{ "id": "Q-1", "title": "CSV に UTF-8 BOM を付けるか", "by": "inferred", "src": "Nema · 10:08" }],
+    "m5": [{ "id": "D-2", "title": "出力ファイルに UTF-8 BOM を付ける", "by": "decided", "src": "高橋 · 10:12 · Q-1 に回答" }],
+    "m6": [
+      { "id": "R-3", "title": "請求月は東京時間で区切る", "by": "said", "src": "佐藤 · 10:15" },
+      { "id": "Q-2", "title": "過去の請求書も新しいタイムゾーンで再計算するか", "by": "inferred", "src": "Nema · 10:15 · R-3 から派生" }
+    ]
+  }
+}
+</script>
+<script src="../main.js"></script>
+</body>
+</html>

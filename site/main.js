@@ -16,29 +16,23 @@
 })();
 
 // The demo: each message in the discussion files one or more entries, each traced to its source.
+// The words come from the page's own #demo-text block, so this script carries no language.
 (() => {
   const list = document.getElementById('entries');
   const counts = document.getElementById('counts');
+  const data = document.getElementById('demo-text');
   const toggles = [...document.querySelectorAll('[data-msg]')];
-  if (!list || !counts) return;
+  if (!list || !counts || !data) return;
 
+  const T = JSON.parse(data.textContent);
   const PROVENANCE = {
-    said: ['chip-said', '用户陈述'],
-    decided: ['chip-decided', '用户决定'],
-    inferred: ['chip-inferred', 'Agent 推断'],
+    said: ['chip-said', T.provenance.said],
+    decided: ['chip-decided', T.provenance.decided],
+    inferred: ['chip-inferred', T.provenance.inferred],
   };
-  const KIND = { R: '需求', D: '决策', Q: '问题' };
-  const FILED = {
-    m1: [{ id: 'R-1', title: '账单页可按月导出 CSV', by: 'said', src: '林 · 10:02' }],
-    m2: [{ id: 'D-1', title: '首版只做 CSV，不做 PDF', by: 'decided', src: '周 · 10:05' }],
-    m3: [{ id: 'R-2', title: '金额保留两位小数，JPY 取整', by: 'said', src: '林 · 10:07' }],
-    m4: [{ id: 'Q-1', title: 'CSV 是否带 UTF-8 BOM', by: 'inferred', src: 'Nema · 10:08' }],
-    m5: [{ id: 'D-2', title: '导出文件带 UTF-8 BOM', by: 'decided', src: '周 · 10:12 · 回答了 Q-1' }],
-    m6: [
-      { id: 'R-3', title: '按东京时间划分账单月份', by: 'said', src: '林 · 10:15' },
-      { id: 'Q-2', title: '旧账单是否按新时区重算', by: 'inferred', src: 'Nema · 10:15 · 由 R-3 引出' },
-    ],
-  };
+  const KIND = T.kind;
+  const FILED = T.filed;
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
   function render(changed) {
     const on = new Set(toggles.filter((t) => t.checked).map((t) => t.dataset.msg));
@@ -55,19 +49,19 @@
         const li = document.createElement('li');
         li.className = 'entry' + (fresh.has(e.id) ? ' is-new' : '') + (resolved ? ' is-resolved' : '');
         li.innerHTML =
-          `<div class="entry-top"><span class="entry-kind${kind === 'Q' && !resolved ? ' is-q' : ''}">${KIND[kind]} ${e.id}${resolved ? ' · 已回答' : ''}</span>` +
-          `<span class="chip ${chipClass}">${chipText}</span></div>` +
-          `<p class="entry-title">${e.title}</p><p class="entry-src">来源：${e.src}</p>`;
+          `<div class="entry-top"><span class="entry-kind${kind === 'Q' && !resolved ? ' is-q' : ''}">${esc(KIND[kind])} ${e.id}${resolved ? ' · ' + esc(T.answered) : ''}</span>` +
+          `<span class="chip ${chipClass}">${esc(chipText)}</span></div>` +
+          `<p class="entry-title">${esc(e.title)}</p><p class="entry-src">${esc(T.source)}${esc(e.src)}</p>`;
         list.append(li);
       }
     }
     if (!list.children.length) {
       const li = document.createElement('li');
       li.className = 'board-empty';
-      li.textContent = '还没有条目。打开右侧任意一条消息。';
+      li.textContent = T.empty;
       list.append(li);
     }
-    counts.textContent = `需求 ${tally.R} · 决策 ${tally.D} · 问题 ${tally.Q}`;
+    counts.textContent = T.counts.replace('{R}', tally.R).replace('{D}', tally.D).replace('{Q}', tally.Q);
   }
 
   toggles.forEach((t) => t.addEventListener('change', () => render(t)));

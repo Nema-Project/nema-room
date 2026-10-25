@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nema Room: turn discussions into traceable requirements</title>
+<meta name="description" content="Nema Room is a requirements discussion room that runs on your machine. Ideas from chat are filed as requirements, decisions and questions, each traced to what was said, then handed to Codex or Claude Code.">
+<link rel="icon" href="../assets/nema-room-mark.svg" type="image/svg+xml">
+<link rel="alternate" hreflang="zh-CN" href="https://nema-project.github.io/nema-room/">
+<link rel="alternate" hreflang="en" href="https://nema-project.github.io/nema-room/en/">
+<link rel="alternate" hreflang="ja" href="https://nema-project.github.io/nema-room/ja/">
+<link rel="alternate" hreflang="x-default" href="https://nema-project.github.io/nema-room/en/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../styles.css">
+<script>document.documentElement.classList.add('js')</script>
+</head>
+<body>
+
+<header class="hero" id="top">
+  <div class="topbar">
+    <a class="tile tile-ink logo" href="#top" aria-label="Nema Room home">
+      <svg viewBox="0 0 360 360" aria-hidden="true"><path d="M55 55 120 28 304 130V332L237 307V171L120 116V298L55 323Z"/><path d="M183 195 218 181V300L183 286Z"/></svg>
+    </a>
+    <nav class="tile tile-warm nav" aria-label="Page sections">
+      <a class="link" href="#demo">Demo</a>
+      <a class="link" href="#features">Features</a>
+      <a class="link" href="#flow">Flow</a>
+      <a class="link" href="#local">Local</a>
+      <a class="link" href="#faq">FAQ</a>
+    </nav>
+    <nav class="tile tile-warm langs" aria-label="Language">
+      <a class="link" href="../" lang="zh-CN" hreflang="zh-CN">中文</a>
+      <a class="link" href="./" lang="en" hreflang="en" aria-current="page">English</a>
+      <a class="link" href="../ja/" lang="ja" hreflang="ja">日本語</a>
+    </nav>
+    <a class="tile tile-ink action" href="https://github.com/Nema-Project/nema-room">View source</a>
+  </div>
+
+  <div class="tile tile-paper name">
+    <h1 class="lines"><span class="line"><span data-line style="--i:0">Nema</span></span><span class="line"><span data-line style="--i:1">Room</span></span></h1>
+    <p class="name-line">A requirements discussion room on your machine</p>
+  </div>
+
+  <figure class="tile picture pic-a">
+    <img src="../assets/white-doors-strandgade-25.jpg" width="1264" height="1400" alt="Hammershøi, White Doors: two white doors stand open in an empty room, showing the room beyond." fetchpriority="high">
+  </figure>
+
+  <figure class="tile picture pic-b">
+    <img class="drift" src="../assets/interior-strandgade-30.jpg" width="1078" height="1400" alt="Hammershøi, Interior, Strandgade 30: through an open door, another room and a figure seen from behind.">
+  </figure>
+
+  <div class="pair">
+    <p class="tile tile-ink statement" data-rise style="--i:2">Ideas scattered across chat are filed as requirements, decisions and questions.</p>
+    <p class="tile tile-accent statement" data-rise style="--i:3">Each traces back to what was said. Once it’s clear, Codex or Claude Code builds it.</p>
+  </div>
+</header>
+
+<main>
+
+<section class="tile tile-paper showcase" id="demo" aria-labelledby="demo-h">
+  <div class="showcase-text">
+    <h2 id="demo-h" class="h-sec" data-reveal>Chat becomes entries</h2>
+    <p data-reveal style="--i:1">Below is a discussion about exporting bills. Turn on a message and Nema files it as entries, noting whether someone stated it, someone decided it, or the agent inferred it.</p>
+    <dl class="legend" data-reveal style="--i:2">
+      <div><dt><span class="chip chip-said">Stated</span></dt><dd>Someone said it in the discussion</dd></div>
+      <div><dt><span class="chip chip-decided">Decided</span></dt><dd>Someone settled it</dd></div>
+      <div><dt><span class="chip chip-inferred">Inferred</span></dt><dd>The agent proposed it; waiting for you</dd></div>
+    </dl>
+  </div>
+
+  <div class="panel" data-ui data-reveal style="--i:1">
+    <div class="board" aria-live="polite">
+      <div class="board-head">
+        <strong>Knowledge · Bill export</strong>
+        <span class="counts" id="counts">Requirements 1 · Decisions 1 · Questions 1</span>
+      </div>
+      <ol class="entries" id="entries"></ol>
+      <noscript><p class="board-empty">Turn on JavaScript to try this demo.</p></noscript>
+    </div>
+    <fieldset class="controls">
+      <legend class="controls-title">Messages in the discussion</legend>
+      <label class="msg"><span><b>Lin</b> Monthly bills need a CSV export; finance reconciles on the 1st.</span><input type="checkbox" data-msg="m1" checked><i aria-hidden="true"></i></label>
+      <label class="msg"><span><b>Zhou</b> Skip PDF this time, CSV only.</span><input type="checkbox" data-msg="m2" checked><i aria-hidden="true"></i></label>
+      <label class="msg"><span><b>Lin</b> Two decimal places for amounts; yen in whole numbers.</span><input type="checkbox" data-msg="m3"><i aria-hidden="true"></i></label>
+      <label class="msg"><span><b>Nema</b> Finance opens it in Excel. Should the file have a BOM?</span><input type="checkbox" data-msg="m4" checked><i aria-hidden="true"></i></label>
+      <label class="msg"><span><b>Zhou</b> Yes, or non-English text comes out garbled.</span><input type="checkbox" data-msg="m5"><i aria-hidden="true"></i></label>
+      <label class="msg"><span><b>Lin</b> Settle on Tokyo time; the month closes at 23:59.</span><input type="checkbox" data-msg="m6"><i aria-hidden="true"></i></label>
+    </fieldset>
+  </div>
+</section>
+
+<section class="features" id="features" aria-labelledby="features-h">
+  <h2 id="features-h" class="tile tile-paper h-sec features-h" data-reveal>Every entry has a source</h2>
+
+  <article class="cell" data-reveal>
+    <div class="cell-text">
+      <h3>Who said what</h3>
+      <p>Stated, decided and inferred are labeled apart. An agent’s guess never passes for your decision.</p>
+    </div>
+    <div class="frag frag-dock-bottom" data-ui>
+      <div class="ui-entry">
+        <div class="ui-entry-top"><span class="ui-kind">Decision D-2</span><span class="chip chip-decided">Decided</span></div>
+        <p class="ui-entry-title">Exported files include a UTF-8 BOM</p>
+        <blockquote class="ui-quote">“Yes, or non-English text comes out garbled.”<cite>Zhou · 10:12 · answers Q-1</cite></blockquote>
+      </div>
+    </div>
+  </article>
+
+  <article class="cell cell-flip" data-reveal style="--i:1">
+    <div class="frag frag-dock-top" data-ui>
+      <ol class="ui-history">
+        <li><span class="ui-sha">a41c0e2</span><span>D-2 added: export with BOM</span><time>10:12</time></li>
+        <li class="is-sel"><span class="ui-sha">7be19f0</span><span>Q-1 status: open → answered</span><time>10:12</time></li>
+        <li><span class="ui-sha">e03d551</span><span>R-2 changed: yen rounded</span><time>10:07</time></li>
+        <li><span class="ui-sha">19ac7d4</span><span>D-1 added: CSV only for v1</span><time>10:05</time></li>
+      </ol>
+    </div>
+    <div class="cell-text">
+      <h3>Every change is in Git</h3>
+      <p>The knowledge base is a Git repository. What changed, why, and what it said before are all on record.</p>
+    </div>
+  </article>
+
+  <article class="cell" data-reveal style="--i:2">
+    <div class="cell-text">
+      <h3>It reads your code</h3>
+      <p>Bind a local repository and the agent reads a snapshot of main and searches it, so the discussion knows what already exists.</p>
+    </div>
+    <div class="frag frag-dock-bottom frag-right" data-ui>
+      <div class="ui-repo">
+        <div class="ui-repo-row"><span>Repo</span><b>~/code/ledger-app</b></div>
+        <div class="ui-repo-row"><span>Branch</span><b>main @ 5d2e8a1</b></div>
+        <div class="ui-repo-row"><span>Snapshot</span><b>2 min ago</b></div>
+        <div class="ui-repo-row ui-search"><span>Search</span><b>exportMonthlyCsv</b></div>
+        <div class="ui-hit">src/billing/export.ts<em>:48</em></div>
+        <div class="ui-hit">src/billing/export.test.ts<em>:12</em></div>
+      </div>
+    </div>
+  </article>
+
+  <article class="cell cell-flip" data-reveal>
+    <div class="frag frag-dock-top frag-right" data-ui>
+      <div class="ui-diagram">
+        <div class="ui-diagram-head"><b>Bill export call graph</b><span class="ui-stale">Code changed; may be stale</span></div>
+        <svg viewBox="0 0 300 140" role="img" aria-label="Call graph: the billing page calls the export service, which reads the bill repository and the time zone helper">
+          <rect x="10" y="55" width="80" height="30" /><text x="50" y="74">BillingPage</text>
+          <rect x="120" y="55" width="80" height="30" /><text x="160" y="74">exportCsv</text>
+          <rect x="220" y="15" width="74" height="30" /><text x="257" y="34">BillRepo</text>
+          <rect x="220" y="95" width="74" height="30" class="is-changed" /><text x="257" y="114">tz.ts</text>
+          <path d="M90 70H120M200 65 220 30M200 75 220 110" />
+        </svg>
+      </div>
+    </div>
+    <div class="cell-text">
+      <h3>Diagrams say when they’re stale</h3>
+      <p>A diagram drawn from code remembers which commit it came from. When the code moves on, the diagram says so.</p>
+    </div>
+  </article>
+
+  <article class="cell" data-reveal style="--i:1">
+    <div class="cell-text">
+      <h3>Ask before building</h3>
+      <p>Whatever the discussion left unclear becomes a list of questions. Only what needs your answer is marked red.</p>
+    </div>
+    <div class="frag frag-dock-bottom" data-ui>
+      <ul class="ui-questions">
+        <li class="is-open"><b>Q-3</b><span>Export an empty file for months with no bills?</span><em>Open</em></li>
+        <li class="is-open"><b>Q-2</b><span>Recalculate old bills in the new time zone?</span><em>Open</em></li>
+        <li><b>Q-1</b><span>Include a UTF-8 BOM in the CSV</span><em>Answered</em></li>
+      </ul>
+    </div>
+  </article>
+
+  <article class="cell cell-flip" data-reveal style="--i:2">
+    <div class="frag frag-dock-top" data-ui>
+      <div class="ui-settings">
+        <div class="ui-set-row"><span>Interface</span><div class="ui-seg"><b>中文</b><b class="on">English</b><b>日本語</b></div></div>
+        <div class="ui-set-row"><span>Knowledge</span><div class="ui-seg"><b class="on">Follow discussion</b><b>Fixed</b></div></div>
+        <div class="ui-set-row"><span>Night mode</span><span class="ui-switch" aria-hidden="true"></span></div>
+      </div>
+    </div>
+    <div class="cell-text">
+      <h3>Three interface languages</h3>
+      <p>Switch between Chinese, English and Japanese at any time. The language entries are written in is a separate setting.</p>
+    </div>
+  </article>
+</section>
+
+<section class="flow" id="flow" aria-labelledby="flow-h">
+  <div class="field field-1">
+    <h2 id="flow-h" class="flow-h" data-reveal>Discussion to commit</h2>
+    <div class="wp" data-ui>
+      <div class="wp-head"><b>Work package · Bill CSV export</b><span class="wp-state">Drafting</span></div>
+      <ul class="wp-list"><li>3 requirements</li><li>1 decision</li><li class="wp-alert">2 questions open</li></ul>
+    </div>
+    <p class="clause" data-reveal style="--i:1">First, talk it through. Entries file themselves.</p>
+  </div>
+  <div class="field field-2">
+    <div class="wp" data-ui>
+      <div class="wp-head"><b>Work package · Bill CSV export</b><span class="wp-state">Clarified</span></div>
+      <ul class="wp-list"><li>3 requirements</li><li>3 decisions</li><li>0 questions open</li></ul>
+    </div>
+    <p class="clause" data-reveal style="--i:1">Then answer the open questions, one by one.</p>
+  </div>
+  <div class="field field-3">
+    <div class="wp" data-ui>
+      <div class="wp-head"><b>Work package · Bill CSV export</b><span class="wp-state">Approved</span></div>
+      <ul class="wp-list"><li>Spec and plan generated</li><li>Handed to Claude Code</li><li>Approved by Zhou</li></ul>
+    </div>
+    <p class="clause" data-reveal style="--i:1">Next, approve the work package for a coding agent.</p>
+  </div>
+  <div class="field field-4">
+    <div class="wp" data-ui>
+      <div class="wp-head"><b>Work package · Bill CSV export</b><span class="wp-state">Done</span></div>
+      <ul class="wp-list"><li>3 commits, merged into main</li><li>6 files changed</li><li>3 / 3 requirements covered</li></ul>
+    </div>
+    <p class="clause" data-reveal style="--i:1">Finally, watch the commits land in main.</p>
+  </div>
+</section>
+
+<section class="tile tile-warm local" id="local" aria-labelledby="local-h">
+  <div class="local-row">
+    <dl class="facts" data-reveal>
+      <div><dt>Database</dt><dd>PGlite on your local disk</dd></div>
+      <div><dt>Data folder</dt><dd>~/.nema/desktop</dd></div>
+      <div><dt>Network</dt><dd>Listens on loopback only</dd></div>
+    </dl>
+    <div class="local-main">
+      <h2 id="local-h" class="h-sec" data-reveal>Runs only on your computer</h2>
+      <p class="lead" data-reveal style="--i:1">The desktop app packs the whole stack into one program, with the database, local core, Node and Git bundled. No Docker, no database server. Discussion text goes only to the model provider you choose, and Nema never touches your GitHub token.</p>
+    </div>
+  </div>
+  <div class="local-row local-row-2">
+    <p class="facts-word" data-reveal>Status</p>
+    <div class="records">
+      <ul class="record" data-reveal style="--i:1" aria-label="Platforms">
+        <li><span>Windows x64 desktop</span><span>Built, preview</span></li>
+        <li><span>macOS desktop</span><span>Configured, unverified</span></li>
+        <li><span>Linux</span><span>Web / Compose version</span></li>
+        <li><span>Installer signing</span><span>Not yet signed</span></li>
+        <li><span>Auto-update</span><span>None yet</span></li>
+      </ul>
+      <ul class="record" data-reveal style="--i:2" aria-label="Models">
+        <li><span>ChatGPT subscription</span><span>Browser sign-in</span></li>
+        <li><span>Claude subscription</span><span>Claude Code token</span></li>
+        <li><span>API key</span><span>Responses API compatible</span></li>
+        <li><span>Coding agents</span><span>Codex, Claude Code</span></li>
+        <li><span>License</span><span>MIT</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="faq" id="faq" aria-labelledby="faq-h">
+  <div class="band band-head"><h2 id="faq-h" data-reveal>Questions</h2></div>
+  <div class="band">
+    <h3 data-reveal>Can I download it now?</h3>
+    <p data-reveal style="--i:1">Not yet. You can build the Windows desktop preview from source, or run the web version with Docker Compose. Installers are unsigned, so Windows shows “Windows protected your PC” the first time you open one.</p>
+  </div>
+  <div class="band band-alt">
+    <h3 data-reveal>Does it cost anything?</h3>
+    <p data-reveal style="--i:1">Nema Room itself is open source under the MIT license. Filing entries calls a model, so cost or quota depends on your provider: a ChatGPT or Claude subscription, or your own API key.</p>
+  </div>
+  <div class="band">
+    <h3 data-reveal>Where does my discussion go?</h3>
+    <p data-reveal style="--i:1">The database and knowledge base stay on your computer. Only when entries are generated is the relevant text sent to the model provider you chose. Services listen on your machine only; don’t expose them to the internet.</p>
+  </div>
+  <div class="band band-alt">
+    <h3 data-reveal>How do coding agents report progress?</h3>
+    <p data-reveal style="--i:1">Run <code>nema report install</code> to add report hooks to Codex or Claude Code. Each commit notifies Nema; if Nema isn’t running, reports wait locally and go out next time.</p>
+  </div>
+  <div class="band">
+    <h3 data-reveal>Can a team use it together?</h3>
+    <p data-reveal style="--i:1">The first release is for one person on one machine. Multi-device sync, backups and read-only team access come after the local core is done.</p>
+  </div>
+</section>
+
+<section class="cta" aria-labelledby="cta-h">
+  <figure class="tile picture cta-side cta-left"><img src="../assets/interior-no-30-strandgade.jpg" width="1137" height="1400" alt="Hammershøi, Interior, Strandgade 30: a door stands open and a woman sits at a table with her back turned." loading="lazy"></figure>
+  <div class="tile tile-accent cta-main">
+    <h2 id="cta-h" data-reveal>Try it from source</h2>
+    <p data-reveal style="--i:1">You need Node.js 22 or later and Git. Clone the repository and run the setup wizard: it checks your environment, installs dependencies and walks you through choosing a model.</p>
+    <pre data-reveal style="--i:2"><code>git clone https://github.com/Nema-Project/nema-room.git
+cd nema-room
+node scripts/setup.mjs --lang en</code></pre>
+    <a class="button button-paper" href="https://github.com/Nema-Project/nema-room" data-reveal style="--i:3">View source</a>
+  </div>
+  <div class="tile tile-ink cta-side cta-right" aria-hidden="true"></div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="mark-wall" aria-hidden="true">
+    <svg viewBox="0 0 360 360" class="mark-big"><path d="M55 55 120 28 304 130V332L237 307V171L120 116V298L55 323Z"/><path d="M183 195 218 181V300L183 286Z"/></svg>
+    <p class="mark-word">Nema Room</p>
+  </div>
+  <div class="foot-grid">
+    <nav class="foot-col" aria-label="This page">
+      <p class="foot-title">This page</p>
+      <a class="link" href="#demo">Demo</a>
+      <a class="link" href="#features">Features</a>
+      <a class="link" href="#flow">Flow</a>
+      <a class="link" href="#local">Local</a>
+    </nav>
+    <nav class="foot-col" aria-label="Project">
+      <p class="foot-title">Project</p>
+      <a class="link" href="https://github.com/Nema-Project/nema-room">GitHub repository</a>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/CHANGELOG.md">Changelog</a>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/LICENSE">MIT License</a>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/SECURITY.md">Security</a>
+    </nav>
+    <nav class="foot-col" aria-label="README">
+      <p class="foot-title">README</p>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/README.md" lang="zh-CN">简体中文</a>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/README.en.md">English</a>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/README.ja.md" lang="ja">日本語</a>
+    </nav>
+    <div class="foot-col foot-credits">
+      <p class="foot-title">Paintings</p>
+      <p>Vilhelm Hammershøi: White Doors, Strandgade 25 (1913); Interior, Strandgade 30 (1901); Interior, Strandgade 30 (1906). Public domain, images via Wikimedia Commons.</p>
+    </div>
+  </div>
+  <div class="foot-last">
+    <p>© 2026 Nema Project · MIT License</p>
+    <a class="button button-ink" href="#top">Back to top</a>
+  </div>
+</footer>
+
+<script type="application/json" id="demo-text">
+{
+  "provenance": { "said": "Stated", "decided": "Decided", "inferred": "Inferred" },
+  "kind": { "R": "Requirement", "D": "Decision", "Q": "Question" },
+  "answered": "answered",
+  "source": "Source: ",
+  "empty": "No entries yet. Turn on any message on the right.",
+  "counts": "Requirements {R} · Decisions {D} · Questions {Q}",
+  "filed": {
+    "m1": [{ "id": "R-1", "title": "Export bills by month as CSV from the billing page", "by": "said", "src": "Lin · 10:02" }],
+    "m2": [{ "id": "D-1", "title": "First version is CSV only, no PDF", "by": "decided", "src": "Zhou · 10:05" }],
+    "m3": [{ "id": "R-2", "title": "Two decimal places; JPY in whole numbers", "by": "said", "src": "Lin · 10:07" }],
+    "m4": [{ "id": "Q-1", "title": "Should the CSV include a UTF-8 BOM?", "by": "inferred", "src": "Nema · 10:08" }],
+    "m5": [{ "id": "D-2", "title": "Exported files include a UTF-8 BOM", "by": "decided", "src": "Zhou · 10:12 · answers Q-1" }],
+    "m6": [
+      { "id": "R-3", "title": "Bill months follow Tokyo time", "by": "said", "src": "Lin · 10:15" },
+      { "id": "Q-2", "title": "Recalculate old bills in the new time zone?", "by": "inferred", "src": "Nema · 10:15 · raised by R-3" }
+    ]
+  }
+}
+</script>
+<script src="../main.js"></script>
+</body>
+</html>

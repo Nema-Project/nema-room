@@ -6,6 +6,10 @@
 <title>Nema Room：把讨论变成可追溯的需求</title>
 <meta name="description" content="Nema Room 是在本机运行的需求讨论室：聊天里的想法被整理成需求、决策和问题，每条都能追到原话，再生成工作包交给 Codex 或 Claude Code。">
 <link rel="icon" href="assets/nema-room-mark.svg" type="image/svg+xml">
+<link rel="alternate" hreflang="zh-CN" href="https://nema-project.github.io/nema-room/">
+<link rel="alternate" hreflang="en" href="https://nema-project.github.io/nema-room/en/">
+<link rel="alternate" hreflang="ja" href="https://nema-project.github.io/nema-room/ja/">
+<link rel="alternate" hreflang="x-default" href="https://nema-project.github.io/nema-room/en/">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
@@ -25,6 +29,11 @@
       <a class="link" href="#flow">流程</a>
       <a class="link" href="#local">本地运行</a>
       <a class="link" href="#faq">问答</a>
+    </nav>
+    <nav class="tile tile-warm langs" aria-label="语言">
+      <a class="link" href="./" lang="zh-CN" hreflang="zh-CN" aria-current="page">中文</a>
+      <a class="link" href="en/" lang="en" hreflang="en">English</a>
+      <a class="link" href="ja/" lang="ja" hreflang="ja">日本語</a>
     </nav>
     <a class="tile tile-ink action" href="https://github.com/Nema-Project/nema-room">查看源码</a>
   </div>
@@ -320,6 +329,27 @@ node scripts/setup.mjs</code></pre>
   </div>
 </footer>
 
+<script type="application/json" id="demo-text">
+{
+  "provenance": { "said": "用户陈述", "decided": "用户决定", "inferred": "Agent 推断" },
+  "kind": { "R": "需求", "D": "决策", "Q": "问题" },
+  "answered": "已回答",
+  "source": "来源：",
+  "empty": "还没有条目。打开右侧任意一条消息。",
+  "counts": "需求 {R} · 决策 {D} · 问题 {Q}",
+  "filed": {
+    "m1": [{ "id": "R-1", "title": "账单页可按月导出 CSV", "by": "said", "src": "林 · 10:02" }],
+    "m2": [{ "id": "D-1", "title": "首版只做 CSV，不做 PDF", "by": "decided", "src": "周 · 10:05" }],
+    "m3": [{ "id": "R-2", "title": "金额保留两位小数，JPY 取整", "by": "said", "src": "林 · 10:07" }],
+    "m4": [{ "id": "Q-1", "title": "CSV 是否带 UTF-8 BOM", "by": "inferred", "src": "Nema · 10:08" }],
+    "m5": [{ "id": "D-2", "title": "导出文件带 UTF-8 BOM", "by": "decided", "src": "周 · 10:12 · 回答了 Q-1" }],
+    "m6": [
+      { "id": "R-3", "title": "按东京时间划分账单月份", "by": "said", "src": "林 · 10:15" },
+      { "id": "Q-2", "title": "旧账单是否按新时区重算", "by": "inferred", "src": "Nema · 10:15 · 由 R-3 引出" }
+    ]
+  }
+}
+</script>
 <script src="main.js"></script>
 </body>
 </html>
