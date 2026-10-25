@@ -17,6 +17,14 @@ import { ByokTokenSource } from "./byok.js";
 export { authByok } from "./byok.js";
 
 export type Out = { log: (s: string) => void; error: (s: string) => void };
+
+/** Why the saved provider's model catalog could not be read. The message is the reason, never an upstream body. */
+export class ModelsListError extends Error {
+  constructor(readonly reason: "not_applicable" | "not_connected" | "list_failed") {
+    super(reason);
+    this.name = "ModelsListError";
+  }
+}
 export const consoleOut: Out = { log: (s) => console.log(s), error: (s) => console.error(s) };
 
 const errMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -238,5 +246,50 @@ async function runProbe(o: { nemaHome: string; out: Out }, source: TokenSource, 
     }
     o.out.error(`探针失败：${errMessage(e)}`);
     return 1;
+  }
+}
+
+/** Listed models for the saved provider. Does not send a generation request. */
+export async function listConfiguredModels(o: {
+  nemaHome: string;
+  codexHome?: string;
+  refresher?: Refresher;
+  signal?: AbortSignal;
+}): Promise<string[]> {
+  let config;
+  try {
+    config = loadConfig(o.nemaHome);
+  } catch {
+    throw new ModelsListError("list_failed");
+  }
+  if (config.adapter === "claude-code") throw new ModelsListError("not_applicable");
+  const signal = o.signal ? AbortSignal.any([o.signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000);
+  let source: TokenSource;
+  let profile: TransportProfile;
+  try {
+    if (config.authMode === "compat") {
+      source = new CodexFileTokenSource(o.codexHome ?? defaultCodexHome());
+      await source.getAccessToken({ signal });
+      profile = COMPAT_PROFILE;
+    } else if (config.authMode === "byok") {
+      source = new ByokTokenSource(o.nemaHome);
+      await source.getAccessToken({ signal });
+      profile = { ...BYOK_PROFILE, baseUrl: config.byokBaseUrl ?? BYOK_PROFILE.baseUrl };
+    } else {
+      const store = new AuthStore(o.nemaHome, o.refresher ?? siwcRefresher);
+      const { auth } = store.inspect();
+      if (!auth || auth.tokens.refresh_token === "" || auth.mode !== "siwc") throw new ModelsListError("not_connected");
+      await store.getAccessToken({ signal });
+      source = store;
+      profile = SIWC_PROFILE;
+    }
+  } catch (error) {
+    if (error instanceof ModelsListError) throw error;
+    throw new ModelsListError("not_connected");
+  }
+  try {
+    return await listModels({ auth: source, profile, version: cliVersion(), signal });
+  } catch {
+    throw new ModelsListError("list_failed");
   }
 }

@@ -20,17 +20,18 @@ function reply(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-function stubModelFetch(fetchMock: typeof fetch, statusFetchMock: typeof fetch = vi.fn<typeof fetch>().mockResolvedValue(reply({ state: "idle", error: null }))) {
+function stubModelFetch(fetchMock: typeof fetch, statusFetchMock: typeof fetch = vi.fn<typeof fetch>().mockResolvedValue(reply({ state: "idle", error: null })), models: unknown = { models: [] }) {
   vi.stubGlobal("fetch", vi.fn<typeof fetch>((input, init) => {
     const path = typeof input === "string" ? input : input instanceof URL ? input.pathname : input.url;
     if (path === "/_nema/auth/status") return statusFetchMock(input, init);
+    if (path === "/_nema/models") return Promise.resolve(reply(models));
     return fetchMock(input, init);
   }));
 }
 
-function setup(fetchMock: typeof fetch, locale = "en", statusFetchMock?: typeof fetch, content?: ReactNode) {
+function setup(fetchMock: typeof fetch, locale = "en", statusFetchMock?: typeof fetch, content?: ReactNode, models?: unknown) {
   localStorage.setItem("nema.locale", locale);
-  stubModelFetch(fetchMock, statusFetchMock);
+  stubModelFetch(fetchMock, statusFetchMock, models);
   return render(
     <I18nProvider>
       {content ?? <ModelSettings onClose={() => {}} />}
@@ -89,7 +90,9 @@ describe("ModelSettings", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock.mock.calls[1][0]).toBe("/_nema/settings");
     expect(fetchMock.mock.calls[1][1]?.method).toBe("PATCH");
-    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({ adapter, authMode });
+    const body = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(body).toMatchObject({ adapter, authMode });
+    expect(body).not.toHaveProperty("model");
   });
 
   it.each([
@@ -134,47 +137,56 @@ describe("ModelSettings", () => {
     expect(screen.queryByText(/SIWC|BYOK/i)).toBeNull();
   });
 
-  it("renders saved custom model IDs and saves automatic selection as null", async () => {
-    const saved = { ...settings, config: { ...config, model: " custom-exact " } };
-    const saveExisting = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(reply(saved))
-      .mockResolvedValueOnce(reply({ config: saved.config }))
-      .mockResolvedValueOnce(reply(saved));
-    vi.stubGlobal("fetch", saveExisting);
-    const existingView = setup(saveExisting);
-    await userEvent.click(await screen.findByRole("button", { name: "Save settings" }));
-    await waitFor(() => expect(saveExisting).toHaveBeenCalledTimes(3));
-    expect(JSON.parse(String(saveExisting.mock.calls[1][1]?.body))).toMatchObject({ model: " custom-exact " });
-    existingView.unmount();
-
+  it("chooses a listed model for the saved provider and does not accept a typed model id", async () => {
+    const saved = {
+      ...settings,
+      config: { ...config, model: "gpt-a" },
+      auth: { ...settings.auth, state: "connected" as const },
+    };
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(reply(saved))
-      .mockResolvedValueOnce(reply({ config: { ...config, model: null } }))
-      .mockResolvedValueOnce(reply(settings));
-    vi.stubGlobal("fetch", fetchMock);
-    setup(fetchMock);
-    await userEvent.selectOptions(await screen.findByLabelText("Model"), "custom");
-    expect((screen.getByLabelText("Custom model ID") as HTMLInputElement).value).toBe(" custom-exact ");
-    await userEvent.selectOptions(screen.getByLabelText("Model"), "default");
-    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+      .mockResolvedValueOnce(reply({ config: { ...config, model: "gpt-b", reasoningEffort: "medium" } }))
+      .mockResolvedValueOnce(reply({ ...saved, config: { ...config, model: "gpt-b" } }));
+    setup(fetchMock, "en", undefined, undefined, { models: ["gpt-a", "gpt-b"] });
+    const select = await screen.findByLabelText("Model") as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe("gpt-a"));
+    expect(Array.from(select.options, (option) => option.value)).toEqual(["", "gpt-a", "gpt-b"]);
+    expect(screen.queryByRole("textbox", { name: /model/i })).toBeNull();
+    await userEvent.selectOptions(screen.getByLabelText("Model service"), "api");
+    expect(select.disabled).toBe(true);
+    expect(screen.getByText("Save the provider first. The model list belongs to the saved provider, not the draft above.")).toBeTruthy();
+    await userEvent.selectOptions(screen.getByLabelText("Model service"), "chatgpt");
+    await waitFor(() => expect(select.disabled).toBe(false));
+    await userEvent.selectOptions(select, "gpt-b");
+    await userEvent.click(screen.getByRole("button", { name: "Save model" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({ model: null });
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({ model: "gpt-b", reasoningEffort: "medium" });
   });
 
-  it("validates and lets optional model and base URL overrides be cleared", async () => {
+  it("keeps an unlisted saved model until a listed one replaces it", async () => {
+    const saved = {
+      ...settings,
+      config: { ...config, model: "custom-exact" },
+      auth: { ...settings.auth, state: "connected" as const },
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(reply(saved));
+    setup(fetchMock, "en", undefined, undefined, { models: ["gpt-a"] });
+    const select = await screen.findByLabelText("Model") as HTMLSelectElement;
+    await waitFor(() => expect(select.disabled).toBe(false));
+    expect(select.value).toBe("");
+    expect(screen.getByText(/custom-exact/)).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: /model/i })).toBeNull();
+    expect((screen.getByRole("button", { name: "Save model" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("validates the service address and saves the provider without a model", async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(reply(settings))
-      .mockResolvedValueOnce(reply({ config: { ...config, authMode: "byok", model: "gpt-custom" } }))
-      .mockResolvedValueOnce(reply({ ...settings, config: { ...config, authMode: "byok", model: "gpt-custom" }, auth: { ...settings.auth, mode: "byok", credential: "byok" } }))
       .mockResolvedValueOnce(reply({ config: { ...config, authMode: "byok" } }))
-      .mockResolvedValueOnce(reply({ ...settings, config: { ...config, authMode: "byok" }, auth: { ...settings.auth, mode: "byok", credential: "byok" } }))
-      .mockResolvedValue(reply(settings));
-    vi.stubGlobal("fetch", fetchMock);
+      .mockResolvedValueOnce(reply({ ...settings, config: { ...config, authMode: "byok" }, auth: { ...settings.auth, mode: "byok", credential: "byok" } }));
     setup(fetchMock);
     await screen.findByLabelText("Model service");
     await userEvent.selectOptions(screen.getByLabelText("Model service"), "api");
-    await userEvent.selectOptions(screen.getByLabelText("Model"), "custom");
-    await userEvent.type(screen.getByLabelText("Custom model ID"), "gpt-custom");
     await userEvent.type(screen.getByLabelText("Service address (optional)"), "http://example.com/v1");
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Enter an HTTPS URL or a localhost URL.");
@@ -183,11 +195,9 @@ describe("ModelSettings", () => {
     await userEvent.clear(screen.getByLabelText("Service address (optional)"));
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({ adapter: "codex-direct", authMode: "byok", model: "gpt-custom", byokBaseUrl: null });
-    await userEvent.selectOptions(screen.getByLabelText("Model"), "default");
-    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
-    expect(JSON.parse(String(fetchMock.mock.calls[3][1]?.body))).toMatchObject({ model: null });
+    const body = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(body).toMatchObject({ adapter: "codex-direct", authMode: "byok", byokBaseUrl: null });
+    expect(body).not.toHaveProperty("model");
   });
 
   it("maps backend schema errors to local text and omits unknown server details", async () => {

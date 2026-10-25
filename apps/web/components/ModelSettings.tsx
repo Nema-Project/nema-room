@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ModelSettingsError, modelSettingsApi, validateByokBaseUrl, type AuthJob, type ModelSettingsDto, type SettingMode, type SettingsPatch } from "@/lib/modelSettings";
+import { ModelSettingsError, modelSettingsApi, validateByokBaseUrl, type AuthJob, type ModelSettingsDto, type ModelsCatalog, type SettingMode, type SettingsPatch } from "@/lib/modelSettings";
 import { useT } from "@/lib/i18n";
 
 const JOB_POLL_MS = 800;
@@ -28,8 +28,10 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
   const t = useT();
   const [settings, setSettings] = useState<ModelSettingsDto | null>(null);
   const [mode, setMode] = useState<SettingMode>("siwc");
-  const [customModel, setCustomModel] = useState(false);
   const [model, setModel] = useState("");
+  const [models, setModels] = useState<string[]>([]);
+  const [modelsUnavailable, setModelsUnavailable] = useState<ModelsCatalog["unavailable"]>(undefined);
+  const [modelsLoaded, setModelsLoaded] = useState(false);
   const [effort, setEffort] = useState<"low" | "medium" | "high">("medium");
   const [baseUrl, setBaseUrl] = useState("");
   const [secret, setSecret] = useState("");
@@ -40,6 +42,7 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savingModel, setSavingModel] = useState(false);
   const refreshController = useRef<AbortController | null>(null);
   const pollFailures = useRef(0);
 
@@ -65,8 +68,6 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
       if (!live) return;
       setSettings(value);
       setMode(modeFor(value));
-      setModel(value.config.model ?? "");
-      setCustomModel(!!value.config.model);
       setEffort(value.config.reasoningEffort);
       setBaseUrl(value.config.byokBaseUrl ?? "");
 
@@ -95,6 +96,39 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
       controller.abort();
     };
   }, []);
+
+  const catalogKey = settings && settings.config.adapter === "codex-direct" && settings.auth.state === "connected"
+    ? `${settings.config.authMode}\n${settings.config.byokBaseUrl ?? ""}`
+    : "";
+  const [catalogSeen, setCatalogSeen] = useState(catalogKey);
+  if (catalogKey !== catalogSeen) {
+    setCatalogSeen(catalogKey);
+    setModels([]);
+    setModelsUnavailable(undefined);
+    setModelsLoaded(false);
+    setModel("");
+  }
+
+  useEffect(() => {
+    if (!catalogKey || !settings) return;
+    const controller = new AbortController();
+    const savedModel = settings.config.model ?? "";
+    void modelSettingsApi.models(controller.signal).then((result) => {
+      if (controller.signal.aborted) return;
+      const list = Array.isArray(result.models) ? result.models.filter((id) => id !== "") : [];
+      setModels(list);
+      setModelsUnavailable(result.unavailable);
+      setModelsLoaded(true);
+      setModel(list.includes(savedModel) ? savedModel : "");
+    }).catch(() => {
+      if (controller.signal.aborted) return;
+      setModels([]);
+      setModelsUnavailable("list_failed");
+      setModelsLoaded(true);
+      setModel("");
+    });
+    return () => controller.abort();
+  }, [catalogKey, settings]);
 
   useEffect(() => {
     if (!job || (job.state !== "running" && job.state !== "cancelling")) return;
@@ -134,8 +168,6 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
     const patch: SettingsPatch = {
       adapter: mode === "claude" ? "claude-code" : "codex-direct",
       authMode: mode === "claude" ? settings.config.authMode : mode,
-      reasoningEffort: effort,
-      model: customModel ? model : null,
       byokBaseUrl: mode === "byok" ? baseUrl.trim() || null : settings.config.byokBaseUrl ?? null,
     };
     setSaving(true);
@@ -144,8 +176,6 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
       const next = await modelSettingsApi.read();
       setSettings(next);
       setMode(modeFor(next));
-      setModel(next.config.model ?? "");
-      setCustomModel(!!next.config.model);
       setEffort(next.config.reasoningEffort);
       setBaseUrl(next.config.byokBaseUrl ?? "");
       setNotice("model.saved");
@@ -153,6 +183,27 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
       setError(errorKey(e));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveModel(e: FormEvent) {
+    e.preventDefault();
+    if (!settings || !providerSaved) return;
+    setError(null);
+    setNotice(null);
+    const patch: SettingsPatch = { reasoningEffort: effort };
+    if (model) patch.model = model;
+    setSavingModel(true);
+    try {
+      await modelSettingsApi.patch(patch);
+      const next = await modelSettingsApi.read();
+      setSettings(next);
+      setEffort(next.config.reasoningEffort);
+      setNotice("model.modelSaved");
+    } catch (e: unknown) {
+      setError(errorKey(e));
+    } finally {
+      setSavingModel(false);
     }
   }
 
@@ -223,11 +274,27 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
   const secretLabel = mode === "byok" ? "model.byokKey" : "model.claudeToken";
   const canLogin = mode === "siwc" || mode === "compat";
   const modeSaved = !!settings && modeFor(settings) === mode;
-  const configSaved = modeSaved && !!settings
-    && effort === settings.config.reasoningEffort
-    && (customModel ? model : null) === (settings.config.model ?? null)
+  const providerSaved = modeSaved && !!settings
     && (mode !== "byok" || baseUrl.trim() === (settings.config.byokBaseUrl ?? ""));
-  const configReady = configSaved && !saving && !isBusy;
+  const providerReady = providerSaved && !saving && !isBusy;
+  const savedModel = settings?.config.model ?? "";
+  const modelDirty = !!settings && (effort !== settings.config.reasoningEffort || (model !== "" && model !== savedModel));
+  const showModelList = !!settings && settings.config.adapter === "codex-direct";
+  const modelHelp = !providerSaved
+    ? "model.models.saveProvider"
+    : settings?.config.adapter === "claude-code"
+      ? "model.models.claude"
+      : settings?.auth.state !== "connected"
+        ? "model.models.connectFirst"
+        : modelsUnavailable === "list_failed" || modelsUnavailable === "not_applicable"
+          ? "model.models.listFailed"
+          : modelsUnavailable === "not_connected"
+            ? "model.models.connectFirst"
+            : modelsLoaded && models.length === 0
+              ? "model.models.empty"
+              : savedModel && !models.includes(savedModel)
+                ? "model.modelNotListed"
+                : null;
   const jobMessage = job?.state === "running" ? "model.job.running"
     : job?.state === "cancelling" ? "model.job.cancelling"
       : job?.state === "cancelled" ? "model.job.cancelled"
@@ -247,6 +314,7 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
         {!settings && !error && !statusError && <p className="kmeta">{t("common.loading")}</p>}
         {settings && <>
           <form className="editform" onSubmit={save}>
+            <h2 className="label">{t("model.provider")}</h2>
             <label className="field"><span className="label">{t("model.agent")}</span>
               <select aria-label={t("model.agent")} value={mode === "claude" ? "claude" : "nema"} disabled={saving || isBusy} onChange={(e) => { setMode(e.target.value === "claude" ? "claude" : "siwc"); setSecret(""); setQuotaConfirmed(false); setError(null); }}>
                 <option value="nema">{t("model.agent.nema")}</option><option value="claude">{t("model.agent.claude")}</option>
@@ -266,23 +334,6 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
             {mode === "compat" && <p className="help">{t("model.compatHelp")}</p>}
             </>}
             {mode === "claude" && <p className="help">{settings.tools.claude.available ? t("model.claudeAvailable") : t("model.claudeUnavailable")}</p>}
-            <label className="field"><span className="label">{t("model.modelChoice")}</span>
-              <select aria-label={t("model.modelChoice")} value={customModel ? "custom" : "default"} disabled={saving || isBusy} onChange={(e) => setCustomModel(e.target.value === "custom")}>
-                <option value="default">{t("model.modelDefault")}</option><option value="custom">{t("model.modelCustom")}</option>
-              </select>
-              <span className="help">{t("model.modelHelp")}</span>
-            </label>
-            {customModel && <label className="field"><span className="label">{t("model.modelId")}</span>
-              <input aria-label={t("model.modelId")} value={model} disabled={saving || isBusy} onChange={(e) => setModel(e.target.value)} />
-            </label>
-            }
-            <label className="field"><span className="label">{t("model.reasoning")}</span>
-              <select aria-label={t("model.reasoning")} disabled={saving || isBusy} value={effort} onChange={(e) => setEffort(e.target.value as "low" | "medium" | "high")}>
-                <option value="low">{t("model.effort.low")}</option>
-                <option value="medium">{t("model.effort.medium")}</option>
-                <option value="high">{t("model.effort.high")}</option>
-              </select>
-            </label>
             {mode === "byok" && <label className="field"><span className="label">{t("model.baseUrl")}</span>
               <input aria-label={t("model.baseUrl")} type="text" inputMode="url" value={baseUrl} disabled={saving || isBusy} onChange={(e) => setBaseUrl(e.target.value)} aria-invalid={error === "model.error.invalidBaseUrl"} />
               <span className="help">{t("model.baseUrlHelp")}</span>
@@ -292,26 +343,45 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
 
           <section className="model-block" aria-label={t("model.authentication")}>
             <h2 className="label">{t("model.authentication")}</h2>
-            <p className="kmeta" role="status">{configSaved ? t(`model.auth.${settings.auth.state}`) : t("model.auth.savedConfigStatus", { mode: t(savedConnectionKey(modeFor(settings))) })}</p>
-            {!configReady && <p className="help">{t("model.saveBeforeAuth")}</p>}
+            <p className="kmeta" role="status">{providerSaved ? t(`model.auth.${settings.auth.state}`) : t("model.auth.savedConfigStatus", { mode: t(savedConnectionKey(modeFor(settings))) })}</p>
+            {!providerReady && <p className="help">{t("model.saveBeforeAuth")}</p>}
             {canLogin &&
-              <button type="button" onClick={() => void startLogin()} disabled={!authStatusLoaded || !configReady || isBusy}>{t("model.login")}</button>
+              <button type="button" onClick={() => void startLogin()} disabled={!authStatusLoaded || !providerReady || isBusy}>{t("model.login")}</button>
             }
             {isBusy && <button type="button" onClick={() => void cancelLogin()}>{t("model.cancelTask")}</button>}
             {mode === "byok" || mode === "claude" ? <div className="field">
               <label className="label" htmlFor="model-secret">{t(secretLabel)}</label>
               <input id="model-secret" type="password" autoComplete="new-password" disabled={saving || isBusy} value={secret} onChange={(e) => setSecret(e.target.value)} />
-              <button type="button" disabled={!secret || !configReady} onClick={() => void saveSecret(secretKind)}>{t("model.saveSecret")}</button>
+              <button type="button" disabled={!secret || !providerReady} onClick={() => void saveSecret(secretKind)}>{t("model.saveSecret")}</button>
             </div> : null}
-            {configReady && settings.auth.state === "connected" && <button type="button" onClick={() => void logout()}>{t("model.logout")}</button>}
+            {providerReady && settings.auth.state === "connected" && <button type="button" onClick={() => void logout()}>{t("model.logout")}</button>}
             {mode === "claude" && <p className="help">{t("model.claudeProbeUnsupported")}</p>}
             {mode !== "claude" && <div className="field">
               <label className="check"><input type="checkbox" checked={quotaConfirmed} disabled={saving} onChange={(e) => setQuotaConfirmed(e.target.checked)} />{t("model.quotaConfirm")}</label>
               <p className="help">{t("model.quotaHelp")}</p>
-              <button type="button" disabled={!authStatusLoaded || !quotaConfirmed || !configReady || isBusy} onClick={() => void probe()}>{t("model.probe")}</button>
+              <button type="button" disabled={!authStatusLoaded || !quotaConfirmed || !providerReady || isBusy} onClick={() => void probe()}>{t("model.probe")}</button>
             </div>}
             {jobMessage && <p role="status">{t(jobMessage)}</p>}
           </section>
+
+          <form className="editform model-block" onSubmit={saveModel}>
+            <h2 className="label">{t("model.modelChoice")}</h2>
+            {showModelList && <label className="field">
+              <select aria-label={t("model.modelChoice")} value={model} disabled={!providerSaved || settings.auth.state !== "connected" || models.length === 0 || saving || savingModel || isBusy} onChange={(e) => setModel(e.target.value)}>
+                <option value="" disabled>{t("model.modelPick")}</option>
+                {models.map((id) => <option key={id} value={id}>{id}</option>)}
+              </select>
+            </label>}
+            {modelHelp && <p className="help">{modelHelp === "model.modelNotListed" ? t(modelHelp, { id: savedModel }) : t(modelHelp)}</p>}
+            <label className="field"><span className="label">{t("model.reasoning")}</span>
+              <select aria-label={t("model.reasoning")} disabled={!providerSaved || saving || savingModel || isBusy} value={effort} onChange={(e) => setEffort(e.target.value as "low" | "medium" | "high")}>
+                <option value="low">{t("model.effort.low")}</option>
+                <option value="medium">{t("model.effort.medium")}</option>
+                <option value="high">{t("model.effort.high")}</option>
+              </select>
+            </label>
+            <button type="submit" disabled={!providerSaved || !modelDirty || saving || savingModel || isBusy}>{savingModel ? t("model.savingModel") : t("model.saveModel")}</button>
+          </form>
 
         </>}
       </div>

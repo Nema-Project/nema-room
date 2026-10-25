@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { flushSync } from "react-dom";
 import { PluginsPage } from "@/components/PluginsPage";
 import { LOCALES, useLocale, useT, type Locale } from "@/lib/i18n";
 import type { WorkspaceView } from "@/lib/types";
@@ -20,6 +21,17 @@ function themeSnapshot() {
 
 function publishTheme() {
   for (const listener of themeListeners) listener();
+}
+
+/** Percentages for the VitePress circle. Radius is relative to the normalized viewport diagonal. */
+export function themeSwitchOrigin(x: number, y: number, width: number, height: number) {
+  const span = Math.hypot(width, height) / Math.SQRT2 || 1;
+  const farthest = Math.hypot(Math.max(x, width - x), Math.max(y, height - y));
+  return {
+    x: `${(100 * x) / width}%`,
+    y: `${(100 * y) / height}%`,
+    r: `${(100 * farthest) / span}%`,
+  };
 }
 
 export type SidebarProps = {
@@ -62,11 +74,29 @@ export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate,
     setAdding(false);
   }
 
-  function toggleTheme() {
+  function toggleTheme(event: ReactMouseEvent<HTMLButtonElement>) {
     const next = dark ? "light" : "dark";
-    document.documentElement.dataset.theme = next;
-    localStorage.setItem(THEME_KEY, next);
-    publishTheme();
+    const apply = () => {
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem(THEME_KEY, next);
+      flushSync(() => publishTheme());
+    };
+    const reduce = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce || typeof document.startViewTransition !== "function") {
+      apply();
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const origin = themeSwitchOrigin(rect.left + rect.width / 2, rect.top + rect.height / 2, window.innerWidth, window.innerHeight);
+    const root = document.documentElement;
+    root.style.setProperty("--switch-x", origin.x);
+    root.style.setProperty("--switch-y", origin.y);
+    root.style.setProperty("--switch-r", origin.r);
+    try {
+      document.startViewTransition(apply);
+    } catch {
+      apply();
+    }
   }
 
   useEffect(() => {
@@ -254,8 +284,14 @@ export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate,
           {connected ? t("sidebar.agentOnline") : t("sidebar.agentOffline")}
         </div>
         <div className="foot-switch">
-          <button type="button" className="theme-toggle" aria-pressed={dark} onClick={toggleTheme}>
-            {t("sidebar.theme")}
+          <button type="button" className="theme-toggle" aria-pressed={dark} aria-label={t("sidebar.theme")} title={t("sidebar.theme")} onClick={toggleTheme}>
+            <svg className={dark ? "theme-icon" : "theme-icon on"} viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="8" cy="8" r="2.6" />
+              <path d="M8 1.6v1.7M8 12.7v1.7M1.6 8h1.7M12.7 8h1.7M3.4 3.4l1.2 1.2M11.4 11.4l1.2 1.2M12.6 3.4l-1.2 1.2M4.6 11.4l-1.2 1.2" />
+            </svg>
+            <svg className={dark ? "theme-icon on" : "theme-icon"} viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M9.4 2.1a4.9 4.9 0 1 0 4.5 7.3A3.9 3.9 0 0 1 9.4 2.1z" />
+            </svg>
           </button>
           <div className="lang" role="group" aria-label={t("sidebar.language")}>
             {LOCALES.map((l) => (

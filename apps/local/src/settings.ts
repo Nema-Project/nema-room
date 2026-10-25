@@ -1,13 +1,15 @@
 import { existsSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { saveConfig, loadConfig, type NemaConfig } from "@nema/cli/config";
-import { authLogin, authLogout, authProbe, defaultOpenBrowser, AuthStore, siwcRefresher, byokKeyPath, saveByokKey, claudeTokenPath, saveClaudeToken, githubTokenPath, saveGithubToken, defaultCodexHome, readCodexCliTokens } from "@nema/cli/localSettings";
+import { authLogin, authLogout, authProbe, defaultOpenBrowser, listConfiguredModels, ModelsListError, AuthStore, siwcRefresher, byokKeyPath, saveByokKey, claudeTokenPath, saveClaudeToken, githubTokenPath, saveGithubToken, defaultCodexHome, readCodexCliTokens } from "@nema/cli/localSettings";
 
 export type SettingsOperations = {
   login(options: { signal: AbortSignal }): Promise<{ ok: boolean }>;
   logout(kind: "siwc" | "compat" | "byok" | "claude" | "github"): Promise<void>;
   probe(options: { signal: AbortSignal }): Promise<{ ok: boolean; modelCount?: number }>;
   saveSecret(kind: "byok" | "claude" | "github", value: string): void;
+  /** When omitted, the saved provider's catalog is read. A thrown error is not returned to the client. */
+  listModels?(options: { signal: AbortSignal }): Promise<string[]>;
 };
 
 export type SettingsServiceOptions = { home: string; codexHome?: string; operations?: SettingsOperations };
@@ -162,6 +164,19 @@ export function createSettingsService(options: SettingsServiceOptions): Settings
     async dispatch(method, pathname, body): Promise<SettingsReply> {
       if (closed) return { status: 503, body: { error: "service_closing" } };
       try {
+        if (method === "GET" && pathname === "/_nema/models") {
+          const signal = AbortSignal.timeout(20_000);
+          try {
+            const listed = operations.listModels
+              ? await operations.listModels({ signal })
+              : await listConfiguredModels({ nemaHome: options.home, codexHome, signal });
+            if (!Array.isArray(listed) || listed.some((id) => typeof id !== "string" || id === "")) return { status: 200, body: { models: [], unavailable: "list_failed" } };
+            return { status: 200, body: { models: listed } };
+          } catch (error) {
+            const reason = error instanceof ModelsListError ? error.reason : "list_failed";
+            return { status: 200, body: { models: [], unavailable: reason } };
+          }
+        }
         if (method === "GET" && pathname === "/_nema/settings") return { status: 200, body: redactedStatus(options.home, codexHome) };
         if (method === "PATCH" && pathname === "/_nema/settings") {
           if (logoutPending) return { status: 409, body: { error: "mutation_conflict" } };

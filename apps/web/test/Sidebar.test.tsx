@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@/app/globals.css";
 import { I18nProvider } from "@/lib/i18n";
-import { Sidebar } from "@/components/Sidebar";
+import { Sidebar, themeSwitchOrigin } from "@/components/Sidebar";
 import type { WorkspaceView } from "@/lib/types";
 
 const ws = (id: string, name: string, extra: Partial<WorkspaceView> = {}): WorkspaceView => ({
@@ -68,6 +68,14 @@ describe("Sidebar", () => {
     await userEvent.click(toggle);
     expect(document.documentElement.dataset.theme).toBe("light");
     expect(localStorage.getItem("nema.theme")).toBe("light");
+  });
+
+  it("sizes the theme circle in percentages from the toggle", () => {
+    const origin = themeSwitchOrigin(20, 800, 1000, 900);
+    const span = Math.hypot(1000, 900) / Math.SQRT2;
+    expect(origin.x).toBe("2%");
+    expect(origin.y).toBe(`${(100 * 800) / 900}%`);
+    expect((parseFloat(origin.r) / 100) * span).toBeGreaterThanOrEqual(Math.hypot(980, 800) - 0.001);
   });
 
   it("switches the UI language", async () => {

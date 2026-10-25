@@ -1,5 +1,5 @@
 /** Narrow fixed helpers used by the authenticated local desktop settings backend. */
-export { authLogin, authLogout, authProbe, defaultOpenBrowser } from "./direct/authCommands.js";
+export { authLogin, authLogout, authProbe, defaultOpenBrowser, listConfiguredModels, ModelsListError } from "./direct/authCommands.js";
 export { AuthStore } from "./direct/authStore.js";
 export { siwcRefresher } from "./direct/siwc.js";
 export { byokKeyPath, saveByokKey } from "./direct/byok.js";

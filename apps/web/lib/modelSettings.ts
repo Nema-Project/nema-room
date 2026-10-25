@@ -16,6 +16,7 @@ export type ModelSettingsDto = {
   tools: Record<"claude" | "github", { available: boolean; tokenSaved: boolean }>;
 };
 export type AuthJob = { state: "idle" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled"; error: "login_failed" | "probe_failed" | null };
+export type ModelsCatalog = { models: string[]; unavailable?: "not_connected" | "not_applicable" | "list_failed" };
 
 export type SettingsPatch = Partial<Pick<ModelConfig, "adapter" | "authMode" | "reasoningEffort">> & {
   model?: string | null;
@@ -65,6 +66,7 @@ async function request<T>(path: string, method = "GET", body?: unknown, signal?:
 
 export const modelSettingsApi = {
   read: (signal?: AbortSignal) => request<ModelSettingsDto>("/_nema/settings", "GET", undefined, signal),
+  models: (signal?: AbortSignal) => request<ModelsCatalog>("/_nema/models", "GET", undefined, signal),
   patch: (body: SettingsPatch) => request<{ config: ModelConfig }>("/_nema/settings", "PATCH", body),
   login: () => request<{ state: "running" }>("/_nema/auth/login", "POST", {}),
   status: (signal?: AbortSignal) => request<AuthJob>("/_nema/auth/status", "GET", undefined, signal),

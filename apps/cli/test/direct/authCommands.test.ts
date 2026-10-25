@@ -5,7 +5,9 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { authLogin, authLogout, authProbe, authStatus } from "../../src/direct/authCommands.js";
+import { authLogin, authLogout, authProbe, authStatus, listConfiguredModels, ModelsListError } from "../../src/direct/authCommands.js";
+import { saveConfig } from "../../src/config.js";
+import { saveByokKey } from "../../src/direct/byok.js";
 import { AuthStore, type StoredAuth } from "../../src/direct/authStore.js";
 import { siwcRefresher } from "../../src/direct/siwc.js";
 
@@ -142,7 +144,7 @@ describe("nema auth login", () => {
 
 type Req = { method?: string; url?: string; headers: IncomingMessage["headers"]; body: string };
 
-async function fakeApi(opts: { failResponses?: boolean } = {}) {
+async function fakeApi(opts: { failResponses?: boolean; failModels?: boolean } = {}) {
   const reqs: Req[] = [];
   const server: Server = createServer((req, res) => {
     let body = "";
@@ -150,6 +152,11 @@ async function fakeApi(opts: { failResponses?: boolean } = {}) {
     req.on("end", () => {
       reqs.push({ method: req.method, url: req.url, headers: req.headers, body });
       if (req.method === "GET" && req.url === "/v1/models") {
+        if (opts.failModels) {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: { message: "upstream-marker-secret" } }));
+          return;
+        }
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ models: [
           { slug: "gpt-hidden", display_name: "Hidden", visibility: "hide" },
@@ -253,6 +260,39 @@ describe("nema auth probe", () => {
     } finally {
       await api.close();
     }
+  });
+
+  test("lists models for the saved provider without a generation request", async () => {
+    const api = await fakeApi();
+    try {
+      saveConfig(home, { authMode: "byok", byokBaseUrl: api.base });
+      saveByokKey(home, "byok-test-key");
+      await expect(listConfiguredModels({ nemaHome: home })).resolves.toEqual(["gpt-a", "gpt-b"]);
+      expect(api.reqs.map((request) => request.method)).toEqual(["GET"]);
+      expect(api.reqs[0]?.headers.authorization).toBe("Bearer byok-test-key");
+    } finally {
+      await api.close();
+    }
+  });
+
+  test("reports a catalog failure without the provider's response text", async () => {
+    const api = await fakeApi({ failModels: true });
+    try {
+      saveConfig(home, { authMode: "byok", byokBaseUrl: api.base });
+      saveByokKey(home, "byok-test-key");
+      const error = await listConfiguredModels({ nemaHome: home }).then(() => null, (caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ModelsListError);
+      expect(error).toMatchObject({ reason: "list_failed" });
+      expect(String(error)).not.toContain("upstream-marker-secret");
+    } finally {
+      await api.close();
+    }
+  });
+
+  test("does not list models before the saved provider is connected", async () => {
+    await expect(listConfiguredModels({ nemaHome: home })).rejects.toMatchObject({ reason: "not_connected" });
+    saveConfig(home, { adapter: "claude-code" });
+    await expect(listConfiguredModels({ nemaHome: home })).rejects.toMatchObject({ reason: "not_applicable" });
   });
 
   test("without a login it tells the user to log in", async () => {

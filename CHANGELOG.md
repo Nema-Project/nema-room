@@ -4,8 +4,10 @@
 
 ### Added
 
+- Model settings are separate from the provider. After a provider is saved and connected, its model is chosen from that provider's list. There is no custom model ID field. A saved model that is not in the list stays as it is until a listed model replaces it.
+
 - Workspace settings chooses a local Git repository with a folder picker. The dialog opens in the host daemon, which can see the repository path. Cancelling the dialog leaves the path empty.
-- Night mode toggles from the bottom of the sidebar, next to the language switch, and is remembered in the browser.
+- Night mode is a borderless sun and moon control at the bottom-left of the sidebar, to the left of the language switch. Switching reveals the theme in a circle from that control, and the choice is remembered in the browser.
 
 - The plugins page reads extension records and shows where an item came from, whether it is installed, and whether it is in use beside the name. A ready install or enabled use is green. A failed install, an external source, or an installed item that is not ready is red. A missing packaged Graphify runtime says it can be repaired from the page.
 

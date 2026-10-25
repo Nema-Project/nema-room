@@ -109,9 +109,24 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .side .foot { margin-top: auto; padding: 16px 20px; border-top: 1px solid var(--side-rule); font-size: 12px; color: var(--side-ink-2); }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 6px; vertical-align: 1px; }
 .dot.off { background: var(--dot-off); }
-.foot-switch { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-.theme-toggle { border: 1px solid var(--side-ink); padding: 2px 8px; font-size: 11px; font-weight: 600; color: var(--side-ink); }
-.theme-toggle[aria-pressed="true"] { background: var(--ink); color: var(--on-ink); }
+.foot-switch { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.theme-toggle { position: relative; width: 22px; height: 22px; flex: none; display: grid; place-items: center; border: 0; padding: 0; color: var(--side-ink); background: transparent; }
+.theme-toggle svg { width: 15px; height: 15px; grid-area: 1 / 1; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+.theme-icon { opacity: 0; transform: rotate(-40deg) scale(.7); }
+.theme-icon.on { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .theme-icon { transition: opacity 160ms ease, transform 220ms ease; }
+}
+:root:active-view-transition .theme-icon { transition: none; }
+::view-transition-old(root),
+::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+::view-transition-new(root) { animation: theme-switch 300ms ease-in; }
+:root[data-theme="dark"]::view-transition-new(root) { animation: none; }
+:root[data-theme="dark"]::view-transition-old(root) { animation: theme-switch 300ms ease-in reverse forwards; z-index: 1; }
+@keyframes theme-switch {
+  from { clip-path: circle(0 at var(--switch-x) var(--switch-y)); }
+  to { clip-path: circle(var(--switch-r) at var(--switch-x) var(--switch-y)); }
+}
 .lang { display: flex; border: 1px solid var(--side-ink); width: max-content; font-size: 11px; font-weight: 600; }
 .lang button { padding: 2px 8px; color: var(--side-ink); }
 .lang button.on { background: var(--ink); color: var(--on-ink); }

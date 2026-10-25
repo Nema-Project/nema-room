@@ -6,7 +6,7 @@ import { once } from "node:events";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createSettingsService, isAllowedAuthorizeUrl, type SettingsOperations } from "../src/settings.js";
 import { loadConfig, saveConfig } from "@nema/cli/config";
-import { byokKeyPath, claudeTokenPath, githubTokenPath } from "@nema/cli/localSettings";
+import { byokKeyPath, claudeTokenPath, githubTokenPath, ModelsListError } from "@nema/cli/localSettings";
 import { createGatewayCredential, startGateway } from "../src/gateway.js";
 import { SessionManager } from "../src/session.js";
 
@@ -46,6 +46,18 @@ describe("authenticated settings backend", () => {
     expect(loadConfig(home)).toEqual({ adapter: "codex-direct", authMode: "byok", reasoningEffort: "high" });
     expect((await service.dispatch("PATCH", "/_nema/settings", { extra: true })).status).toBe(400);
     expect((await service.dispatch("PATCH", "/_nema/settings", { byokBaseUrl: "http://example.com" })).status).toBe(400);
+  });
+
+  test("returns the saved provider's model catalog and never the provider's error text", async () => {
+    const home = tempHome();
+    const listed = createSettingsService({ home, operations: ops({ listModels: async () => ["gpt-a", "gpt-b"] }) });
+    expect(await listed.dispatch("GET", "/_nema/models", undefined)).toEqual({ status: 200, body: { models: ["gpt-a", "gpt-b"] } });
+    const failed = createSettingsService({ home, operations: ops({ listModels: async () => { throw new Error("raw-provider-marker"); } }) });
+    const failure = await failed.dispatch("GET", "/_nema/models", undefined);
+    expect(failure).toEqual({ status: 200, body: { models: [], unavailable: "list_failed" } });
+    expect(JSON.stringify(failure)).not.toContain("raw-provider-marker");
+    const claude = createSettingsService({ home, operations: ops({ listModels: async () => { throw new ModelsListError("not_applicable"); } }) });
+    expect(await claude.dispatch("GET", "/_nema/models", undefined)).toEqual({ status: 200, body: { models: [], unavailable: "not_applicable" } });
   });
 
   test("secret writes accept only fixed kinds and never return submitted content", async () => {
