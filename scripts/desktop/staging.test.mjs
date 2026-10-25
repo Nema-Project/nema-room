@@ -66,6 +66,22 @@ async function fixture(t) {
   return { source, output, write, tools, options: { sourceRoot: source, outputDir: output, toolsRoot: path.join(source, 'node'), platform, arch, version: '0.1.0', tools, build: false } };
 }
 
+test('runs the Electron installer when the binary has not been downloaded yet', async (t) => {
+  const f = await fixture(t);
+  await rm(path.join(f.source, 'node_modules/electron/dist'), { recursive: true });
+  await writeFile(path.join(f.source, 'node_modules/electron/install.js'), `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const dist = path.join(__dirname, 'dist');
+    fs.mkdirSync(dist, { recursive: true });
+    fs.writeFileSync(path.join(dist, 'LICENSE'), 'Electron MIT license');
+    fs.writeFileSync(path.join(dist, 'LICENSES.chromium.html'), 'Chromium third-party notices');
+  `);
+  await stageRuntime(f.options);
+  const target = path.join(f.output, `${process.platform}-${process.arch}`);
+  assert.equal(await readFile(path.join(target, 'runtime/licenses/electron/LICENSE'), 'utf8'), 'Electron MIT license');
+});
+
 test('stages a relocatable manifest and all declared runtime resources from fixture artifacts', async (t) => {
   const f = await fixture(t);
   await stageRuntime(f.options);

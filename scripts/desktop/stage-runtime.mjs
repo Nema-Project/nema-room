@@ -112,6 +112,16 @@ async function requireDirectory(dir, name, allowedRoot = dir) {
   }
 }
 
+// Electron 45 ships no postinstall. The binary appears only after install.js runs.
+async function ensureElectronBinary(sourceRoot) {
+  const license = path.join(sourceRoot, 'node_modules', 'electron', 'dist', 'LICENSE');
+  if (await lstat(license).catch(() => null)) return;
+  const installer = path.join(sourceRoot, 'node_modules', 'electron', 'install.js');
+  const info = await lstat(installer).catch(() => null);
+  if (!info?.isFile() || info.isSymbolicLink()) return;
+  await run(process.execPath, [installer], sourceRoot, process.env);
+}
+
 async function run(executable, args, cwd, env) {
   await new Promise((resolve, reject) => {
     const child = spawn(executable, args, { cwd, env, stdio: 'inherit', windowsHide: true });
@@ -250,6 +260,7 @@ export async function stageRuntime({
   if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('A valid explicit application version is required');
   const localVersion = localPackage.version;
   if (version !== localVersion) throw new Error(`Requested version ${version} does not match apps/local/package.json ${localVersion}`);
+  await ensureElectronBinary(sourceRoot);
   const electronMitLicense = await requiredFile(sourceRoot, 'node_modules/electron/dist/LICENSE', 'Electron MIT license', sourceRoot);
   const electronThirdPartyNotices = await requiredFile(sourceRoot, 'node_modules/electron/dist/LICENSES.chromium.html', 'Electron Chromium notices', sourceRoot);
   const final = path.join(outputDir, `${platform}-${arch}`);

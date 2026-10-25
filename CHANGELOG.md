@@ -5,6 +5,7 @@
 ### Fixed
 
 - Claude Code tokens and the report token now get a private ACL on the file itself. Protecting only the parent directory left an elevated Windows process, including GitHub-hosted runners, as the Administrators owner, so the next read rejected the file.
+- Desktop staging downloads the Electron binary when it is missing. Electron 45 no longer does that during `npm ci`.
 
 ### Added
 

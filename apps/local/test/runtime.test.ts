@@ -483,7 +483,8 @@ describe("managed local runtime", () => {
       request.once("error", (error: NodeJS.ErrnoException) => resolvePromise({ error }));
     });
     if ("error" in cleanupResult) {
-      expect(cleanupResult.error.code).toBe("ECONNREFUSED");
+      // An abrupt kill can refuse the connection or reset one that was already open.
+      expect(["ECONNREFUSED", "ECONNRESET"]).toContain(cleanupResult.error.code);
     } else {
       const markerDeadline = Date.now() + 2_000;
       while (!existsSync(webMarker) && Date.now() < markerDeadline) await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));

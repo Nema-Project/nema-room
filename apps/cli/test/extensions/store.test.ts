@@ -77,7 +77,8 @@ test("a failed install leaves the previous installed record and files", () => {
   const store = openExtensionStore(dir);
   store.putManaged(managed("skill"));
   writeFileSync(join(dir, "extensions", "skill", "keep.txt"), "old");
-  expect(() => store.installManaged(managed("skill"), join(dir, "missing-stage"))).toThrow(/staged/);
+  const missing = join(dir, "missing-stage");
+  expect(() => store.installManaged(managed("skill"), missing)).toThrow(/staged/);
   expect(store.list().find((row) => row.id === "skill")?.installState).toBe("installed");
   expect(readFileSync(join(dir, "extensions", "skill", "keep.txt"), "utf8")).toBe("old");
 });
