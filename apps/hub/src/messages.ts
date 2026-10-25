@@ -209,9 +209,9 @@ export function addMessage(
   workspaceId: string,
   role: "agent" | "system",
   content: string,
-  opts: { taskId?: string; meta?: AgentMessageMeta } = {},
+  opts: { taskId?: string; meta?: AgentMessageMeta; threadId?: string | null } = {},
 ): Promise<Message> {
-  return insertMessage(db, workspaceId, role, content, opts.taskId ?? null, opts.meta ?? null);
+  return insertMessage(db, workspaceId, role, content, opts.taskId ?? null, opts.meta ?? null, opts.threadId ?? null);
 }
 
 /** Latest `limit` messages, returned oldest first. */

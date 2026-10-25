@@ -7,8 +7,8 @@ import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { EventBus } from "../src/events.js";
 import { createWorkspace, updateWorkspace } from "../src/workspaces.js";
-import { addMessage, editUserMessage, listMessages, messageExcerpt, postUserMessage, type AgentMessage } from "../src/messages.js";
-import { claimNextTask, finishTask, getTask, interruptRunning, recordTaskChange, resolveRunToken } from "../src/tasks.js";
+import { addMessage, editUserMessage, listMessages, listThreadMessages, messageExcerpt, postUserMessage, type AgentMessage } from "../src/messages.js";
+import { claimNextTask, finishTask, getTask, insertQueuedTask, interruptRunning, recordTaskChange, resolveRunToken } from "../src/tasks.js";
 import * as tasks from "../src/tasks.js";
 import { attachDaemonSocket } from "../src/daemonSocket.js";
 import { KnowledgeStore } from "@nema/knowledge";
@@ -17,6 +17,7 @@ import { addReportMessage, getMessage } from "../src/messages.js";
 import { indexEntry } from "../src/entryIndex.js";
 import { repoPath } from "../src/workspaces.js";
 import { requestWorkPackage } from "../src/workpackages.js";
+import { associateQuestion, ensureThread, getQuestionThread, getThread } from "../src/threads.js";
 
 const failTimeline = vi.hoisted(() => ({ on: false }));
 const promptBuild = vi.hoisted(() => ({ hold: false, release: () => {}, entered: () => {} }));
@@ -324,7 +325,7 @@ describe("daemon socket", () => {
     expect(handle.isConnected()).toBe(true);
     expect(status).toEqual([true]);
 
-    const q = await addQuestion(wsA, 1);
+    await addQuestion(wsA, 1);
     await recordTaskChange(db, m1.task.id, { entryId: "R-1", kind: "requirement", title: "T", op: "add" });
     const progress: string[] = [];
     events.subscribe(wsA, (e) => e.type === "task.progress" && progress.push(e.text));
@@ -338,7 +339,7 @@ describe("daemon socket", () => {
     expect(agent.content).toBe("done 1");
     expect(agent.taskId).toBe(m1.task.id);
     expect(agent.meta?.changes).toEqual([{ entryId: "R-1", kind: "requirement", title: "T", op: "add" }]);
-    expect(agent.meta?.askedQuestion).toEqual({ id: q.id, title: q.title, body: q.body });
+    expect(agent.meta?.askedQuestion).toBeNull();
     expect((await getTask(db, m1.task.id))?.status).toBe("done");
   });
 
@@ -351,9 +352,214 @@ describe("daemon socket", () => {
     const a1 = await c.next("task.assign");
     c.send({ type: "task.finished", taskId: a1.taskId, ok: true, reply: "asked the new one" });
     await vi.waitFor(async () => expect((await getTask(db, m1.task.id))?.status).toBe("done"));
-    const agent = (await listMessages(db, wsA)).find((m): m is AgentMessage => m.role === "agent")!;
+    const threadId = await getQuestionThread(db, wsA, created.id);
+    const agent = (await listThreadMessages(db, threadId!)).find((m): m is AgentMessage => m.role === "agent")!;
     expect(agent.meta?.askedQuestion?.id).toBe(created.id);
     expect(agent.meta?.askedQuestion?.id).not.toBe(older.id);
+  });
+
+  test("a main-chat task that adds a question replies in a new thread on its message", async () => {
+    const m = await postUserMessage(db, wsA, "unclear request");
+    const q = await addQuestion(wsA, 2);
+    await recordTaskChange(db, m.task.id, { entryId: q.id, kind: "question", title: q.title, op: "add" });
+    const c = await connect();
+    const assigned = await c.next("task.assign");
+    const received: any[] = [];
+    let threadReplyCount = 0;
+    events.subscribe(wsA, (e) => {
+      if (e.type === "message.created") received.push(e.message);
+      if (e.type === "thread.updated" && e.thread.id === m.message.id) threadReplyCount = e.thread.replyCount;
+    });
+    c.send({ type: "task.finished", taskId: assigned.taskId, ok: true, reply: "please clarify" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    expect(await getQuestionThread(db, wsA, q.id)).toBe(m.message.id);
+    expect(await getThread(db, m.message.id)).toMatchObject({ id: m.message.id, openedBy: "grill" });
+    expect(threadReplyCount).toBe(1);
+    expect(received.find((item) => item.role === "agent")).toMatchObject({ threadId: m.message.id, content: "please clarify" });
+    expect(await listMessages(db, wsA)).toContainEqual(expect.objectContaining({ id: m.message.id }));
+  });
+
+  test("an open question updated by the task opens a thread; resolved and dropped questions do not", async () => {
+    const store = new KnowledgeStore(repoPath(dataDir, wsA));
+    const updatedTasks = [] as Array<{ message: Awaited<ReturnType<typeof postUserMessage>>; questionId: string }>;
+    for (const status of ["open", "resolved", "dropped"] as const) {
+      const q = await store.upsert({ kind: "question", title: `Updated ${status}`, body: "b", status, priority: 1, reason: "r", sourceMessages: [] } as never, { author: "agent" });
+      const message = await postUserMessage(db, wsA, `update ${status}`);
+      await recordTaskChange(db, message.task.id, { entryId: q.entry.id, kind: "question", title: q.entry.title, op: "update" });
+      updatedTasks.push({ message, questionId: q.entry.id });
+    }
+    const c = await connect();
+    for (const [i, status] of (["open", "resolved", "dropped"] as const).entries()) {
+      const a = await c.next("task.assign");
+      expect(a.taskId).toBe(updatedTasks[i]!.message.task.id);
+      c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: status });
+      await vi.waitFor(async () => expect((await getTask(db, a.taskId))?.status).toBe("done"));
+      expect(await getThread(db, updatedTasks[i]!.message.message.id) !== null).toBe(status === "open");
+    }
+  });
+
+  test("thread replies associate every touched open question once and keep existing links", async () => {
+    const m = await postUserMessage(db, wsA, "several questions");
+    const q1 = await addQuestion(wsA, 1);
+    const q2 = await addQuestion(wsA, 2);
+    const oldAnchor = await postUserMessage(db, wsA, "old topic");
+    await ensureThread(db, oldAnchor.message.id, "Existing", "user");
+    await associateQuestion(db, wsA, q2.id, oldAnchor.message.id);
+    await recordTaskChange(db, m.task.id, { entryId: q1.id, kind: "question", title: q1.title, op: "add" });
+    await recordTaskChange(db, m.task.id, { entryId: q2.id, kind: "question", title: q2.title, op: "update" });
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "two asks" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    expect(await getQuestionThread(db, wsA, q1.id)).toBe(m.message.id);
+    expect(await getQuestionThread(db, wsA, q2.id)).toBe(oldAnchor.message.id);
+    expect((await listThreadMessages(db, m.message.id)).filter((x) => x.role === "agent")).toHaveLength(1);
+  });
+
+  test("a main-chat task with no question and no open_thread stays in main chat with null askedQuestion", async () => {
+    const m = await postUserMessage(db, wsA, "ordinary");
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "ordinary reply" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    const agent = (await listMessages(db, wsA)).find((x): x is AgentMessage => x.role === "agent")!;
+    expect(agent).toMatchObject({ content: "ordinary reply", threadId: null });
+    expect(agent.meta?.askedQuestion).toBeNull();
+  });
+
+  test("reply goes to the thread when the task message is in a thread", async () => {
+    const anchor = await postUserMessage(db, wsA, "anchor");
+    await ensureThread(db, anchor.message.id, "Thread", "user");
+    await db.query("update tasks set status='done' where id=$1", [anchor.task.id]);
+    const m = await postUserMessage(db, wsA, "thread follow-up", { threadId: anchor.message.id });
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "thread reply" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    expect((await listThreadMessages(db, anchor.message.id)).some((x) => x.content === "thread reply")).toBe(true);
+    expect((await listMessages(db, wsA)).some((x) => x.content === "thread reply")).toBe(false);
+  });
+
+  test("a thread opened during the task receives its reply, with no main-chat agent message", async () => {
+    const m = await postUserMessage(db, wsA, "open while running");
+    const c = await connect();
+    const a = await c.next("task.assign");
+    await ensureThread(db, m.message.id, "Opened by tool", "agent");
+    c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "in the opened thread" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    expect((await listThreadMessages(db, m.message.id)).some((x) => x.content === "in the opened thread")).toBe(true);
+    expect((await listMessages(db, wsA)).some((x) => x.content === "in the opened thread")).toBe(false);
+  });
+
+  test("failure message stays in a thread", async () => {
+    const m = await postUserMessage(db, wsA, "fail here");
+    await ensureThread(db, m.message.id, "Failure", "agent");
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({ type: "task.finished", taskId: a.taskId, ok: false, error: "boom" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
+    expect(await listThreadMessages(db, m.message.id)).toContainEqual(expect.objectContaining({ role: "system", threadId: m.message.id, content: "处理失败：boom" }));
+  });
+
+  test("retry reuses the thread opened during the first run and stores one reply", async () => {
+    const m = await postUserMessage(db, wsA, "interrupted");
+    const first = await connect();
+    await first.next("task.assign");
+    await ensureThread(db, m.message.id, "Opened during run", "agent");
+    first.ws.terminate();
+    await first.closed;
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("queued"));
+    const retry = await connect();
+    const a = await retry.next("task.assign");
+    retry.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "once" });
+    retry.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "duplicate" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    expect(await getThread(db, m.message.id)).not.toBeNull();
+    expect((await listThreadMessages(db, m.message.id)).filter((x) => x.role === "agent")).toHaveLength(1);
+  });
+
+  test("a reply insert failure rolls back task, thread, and associations before retry succeeds", async () => {
+    const m = await postUserMessage(db, wsA, "atomic reply");
+    const q = await addQuestion(wsA, 1);
+    await recordTaskChange(db, m.task.id, { entryId: q.id, kind: "question", title: q.title, op: "add" });
+    const c = await connect();
+    const a = await c.next("task.assign");
+    const originalTx = db.tx.bind(db);
+    let failedInsert = false;
+    let rolledBack = false;
+    const txSpy = vi.spyOn(db, "tx").mockImplementation(((fn: (tx: Db) => Promise<unknown>) => originalTx(async (tx) => {
+      const wrapped = new Proxy(tx, {
+        get(target, property) {
+          if (property === "query") return async (sql: string, params?: unknown[]) => {
+            if (sql.startsWith("insert into messages")) {
+              failedInsert = true;
+              throw new Error("injected reply insert failure");
+            }
+            return target.query(sql, params);
+          };
+          const value = Reflect.get(target, property);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as Db;
+      try { return await fn(wrapped); } catch (error) { rolledBack = true; throw error; }
+    })) as typeof db.tx);
+    c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "retry me" });
+    await vi.waitFor(() => expect(rolledBack && failedInsert).toBe(true));
+    txSpy.mockRestore();
+    expect((await getTask(db, m.task.id))?.status).toBe("running");
+    expect(await getThread(db, m.message.id)).toBeNull();
+    expect(await getQuestionThread(db, wsA, q.id)).toBeNull();
+    expect((await listMessages(db, wsA)).some((x) => x.role === "agent")).toBe(false);
+
+    c.ws.terminate();
+    await c.closed;
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("queued"));
+    const retry = await connect();
+    const retryAssignment = await retry.next("task.assign");
+    retry.send({ type: "task.finished", taskId: retryAssignment.taskId, ok: true, reply: "saved once" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    expect(await getQuestionThread(db, wsA, q.id)).toBe(m.message.id);
+    expect((await listThreadMessages(db, m.message.id)).filter((x) => x.role === "agent")).toHaveLength(1);
+  });
+
+  test("editing an anchor and a report that adds a question reply in their threads", async () => {
+    const anchor = await postUserMessage(db, wsA, "original");
+    await ensureThread(db, anchor.message.id, "Anchor", "agent");
+    await db.query("update tasks set status='done' where id=$1", [anchor.task.id]);
+    const edited = await editUserMessage(db, wsA, anchor.message.id, "corrected");
+    const c = await connect();
+    const editAssignment = await c.next("task.assign");
+    expect(editAssignment.taskId).toBe(edited.task.id);
+    c.send({ type: "task.finished", taskId: editAssignment.taskId, ok: true, reply: "edited reply" });
+    await vi.waitFor(async () => expect((await getTask(db, edited.task.id))?.status).toBe("done"));
+    expect((await listThreadMessages(db, anchor.message.id)).some((x) => x.content === "edited reply")).toBe(true);
+    c.ws.terminate();
+    await c.closed;
+
+    const report = await addReportMessage(db, wsA, "report body", { report: { agent: "test", gitCommonDir: "/tmp/report/.git", summary: "report", entries: [], commits: [], files: [] }, check: null });
+    const reportTask = await insertQueuedTask(db, wsA, report.id);
+    const q = await addQuestion(wsA, 1);
+    await recordTaskChange(db, reportTask.id, { entryId: q.id, kind: "question", title: q.title, op: "add" });
+    const reportClient = await connect();
+    const reportAssignment = await reportClient.next("task.assign");
+    expect(reportAssignment.taskId).toBe(reportTask.id);
+    reportClient.send({ type: "task.finished", taskId: reportTask.id, ok: true, reply: "report asks" });
+    await vi.waitFor(async () => expect((await getTask(db, reportTask.id))?.status).toBe("done"));
+    expect(await getQuestionThread(db, wsA, q.id)).toBe(report.id);
+    expect((await listThreadMessages(db, report.id)).some((x) => x.content === "report asks")).toBe(true);
+  });
+
+  test("grill off keeps a question-adding task reply in main chat", async () => {
+    await db.query(`insert into workspace_plugins (workspace_id, plugin_id, enabled) values ($1, 'grill', false)`, [wsA]);
+    const m = await postUserMessage(db, wsA, "no grill");
+    const q = await addQuestion(wsA, 1);
+    await recordTaskChange(db, m.task.id, { entryId: q.id, kind: "question", title: q.title, op: "add" });
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "main reply" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    expect(await getThread(db, m.message.id)).toBeNull();
+    expect((await listMessages(db, wsA)).some((x) => x.content === "main reply" && x.threadId === null)).toBe(true);
   });
 
   test("with grill-me off the finished message has no asked question", async () => {
@@ -486,13 +692,15 @@ describe("daemon socket", () => {
 
   test("prompt build failure: system message once, task failed, no stuck running", async () => {
     const a = await postUserMessage(db, wsA, "a");
+    await ensureThread(db, a.message.id, "Prompt error", "agent");
     failTimeline.on = true;
     const c = await connect();
     await c.next("welcome");
     for (let i = 0; i < 100 && (await getTask(db, a.task.id))?.status !== "failed"; i++) await new Promise((r) => setTimeout(r, 20));
     expect((await getTask(db, a.task.id))?.status).toBe("failed");
-    const sys = (await listMessages(db, wsA)).filter((m) => m.role === "system");
+    const sys = (await listThreadMessages(db, a.message.id)).filter((m) => m.role === "system");
     expect(sys).toHaveLength(1);
+    expect(sys[0]).toMatchObject({ threadId: a.message.id });
     expect(sys[0]!.content.startsWith("处理失败：")).toBe(true);
   });
 

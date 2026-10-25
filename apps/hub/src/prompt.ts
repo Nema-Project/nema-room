@@ -1,4 +1,4 @@
-import { DEFAULT_GRILL_SETTINGS, type Entry, type EntrySummary, type ReportMessageMeta } from "@nema/shared";
+import { DEFAULT_GRILL_SETTINGS, type Entry, type EntrySummary, type ReportMessageMeta, type Thread } from "@nema/shared";
 import type { GrillState } from "./plugins.js";
 import type { Message } from "./messages.js";
 import type { TaskChange } from "./tasks.js";
@@ -44,6 +44,8 @@ export type WorkPackagePromptInput = {
   rules: { spec: string; plan: string };
 };
 
+export type ConversationPromptInput = { thread: Thread; anchor: Message; opened: Thread["openedBy"] };
+
 function workPackageSection(wp: WorkPackagePromptInput, grill: GrillState): string {
   const step1 = !grill.enabled
     ? "不做就绪检查；把所有不确定点写进 spec 的「留给实现者」或「待确认」小节。"
@@ -87,10 +89,16 @@ export function buildPrompt(input: {
   quotedMessage?: Message | null;
   /** Set when the user edited `userMessage` and this task re-runs it. */
   edit?: { previousContent: string; cited: EntrySummary[] } | null;
+  /** Current thread and its main-chat anchor, available to thread-aware prompt sections. */
+  conversation?: ConversationPromptInput;
 }): string {
   const { workspace, userMessage, entries, lastAskedQuestion } = input;
   const grill: GrillState = input.grill ?? { enabled: true, ...DEFAULT_GRILL_SETTINGS };
-  const recent = input.recentMessages.filter((m) => m.id !== userMessage.id).slice(-20);
+  const conversation = input.conversation;
+  const filteredMessages = input.recentMessages.filter((m) => m.id !== userMessage.id);
+  const recent = conversation
+    ? [conversation.anchor, ...filteredMessages.filter((m) => m.id !== conversation.anchor.id).slice(-50)]
+    : filteredMessages.slice(-20);
   const rules = [
     "你只能通过名为 `room` 的 MCP 工具读写项目知识；不要读写本地文件，不要联网。",
     "把用户输入整理成准确的业务语言，写成 requirement / decision / tradeoff / question / source 条目。每次 `upsert_entry` 都要填写 `sourceMessages`（至少包含本次用户消息 id）和 `reason`。",

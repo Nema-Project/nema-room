@@ -86,6 +86,24 @@ describe("buildPrompt", () => {
     expect(p).toContain("[m_29] agent: content-29");
     expect(p).not.toContain("[m_9] ");
   });
+  test("thread context keeps its anchor and the latest 50 replies", () => {
+    const anchor = { ...msg(1000), content: "thread anchor" };
+    const replies = Array.from({ length: 51 }, (_, i) => ({ ...msg(i, "agent"), threadId: anchor.id }));
+    const p = buildPrompt({
+      workspace: ws("follow"), userMessage: { ...msg(999), threadId: anchor.id },
+      recentMessages: [anchor, ...replies], entries, lastAskedQuestion: null,
+      conversation: {
+        thread: { id: anchor.id, workspaceId: "ws_1", title: "Topic", openedBy: "agent", replyCount: 51, unread: 0, lastReplyAt: null, createdAt: "2026-01-01T00:00:00.000Z" },
+        anchor,
+        opened: "agent",
+      },
+    });
+    const included = p.match(/^\[m_(?!999)\d+\] /gm) ?? [];
+    expect(included).toHaveLength(51);
+    expect(p).toContain("[m_1000] user: thread anchor");
+    expect(p).not.toContain("[m_0] ");
+    expect(p).toContain("[m_50] agent: content-50");
+  });
   test("language rules", () => {
     expect(base("ja")).toContain("日本語");
     expect(base("en")).toContain("English");

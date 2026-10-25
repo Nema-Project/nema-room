@@ -6,9 +6,9 @@ import { WORKPACKAGE_LIMITS, parseDaemonToHub, type AgentMessageMeta, type HubTo
 import { createConnectionRpc, DaemonRpcError, type ConnectionRpc, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
-import { chooseAskedQuestion, timeline, topOpenQuestion } from "./entryIndex.js";
+import { chooseAskedQuestion, timeline } from "./entryIndex.js";
 import { addMessage, getLastAskedQuestion, getMessage, listMessageVersions, listPromptMessages, listRecentMessages, messageExcerpt, type Message } from "./messages.js";
-import { conversationOf } from "./threads.js";
+import { associateQuestion, conversationOf, ensureThread, getThread } from "./threads.js";
 import { announceInterrupted } from "./interrupts.js";
 import { enabledPluginTools, grillState } from "./plugins.js";
 import { recheckReports, registerReportToken } from "./reports.js";
@@ -66,9 +66,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     const userMessage = await getMessage(db, task.messageId);
     if (!userMessage) throw new Error("task message not found");
     const editing = task.kind === "edit";
+    const conversationId = await conversationOf(db, userMessage);
+    const contextLimit = conversationId ? 50 : 20;
     const before = editing
-      ? await listRecentMessages(db, task.workspaceId, userMessage.id, 20)
-      : await listPromptMessages(db, task.workspaceId, userMessage.id, 20);
+      ? await listRecentMessages(db, task.workspaceId, userMessage.id, contextLimit)
+      : await listPromptMessages(db, task.workspaceId, userMessage.id, contextLimit);
     // A system-started task, a report, or an edit re-run is not the user's answer to the last follow-up question.
     // A message that names `回答 Q-n：` answers that question even when a newer follow-up exists.
     const named = !editing && userMessage.role === "user" ? namedAnswerId(userMessage.content) : null;
@@ -76,7 +78,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       ? { id: named }
       : editing || userMessage.role === "system" || userMessage.role === "report"
         ? undefined
-        : await getLastAskedQuestion(db, task.workspaceId, await conversationOf(db, userMessage));
+        : await getLastAskedQuestion(db, task.workspaceId, conversationId);
     const store = new KnowledgeStore(repoPath(dataDir, task.workspaceId), deps.ownedHelpers);
     const lastAskedQuestion = asked ? await store.get(asked.id) : null;
     let workpackage: WorkPackagePromptInput | undefined;
@@ -100,6 +102,8 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       : null;
     const quoteId = userMessage.role === "user" ? (userMessage.meta as UserMessageMeta | null)?.quote?.messageId : undefined;
     const quotedMessage = quoteId ? await getMessage(db, quoteId) : null;
+    const conversationThread = conversationId ? await getThread(db, conversationId) : null;
+    const conversationAnchor = conversationId ? await getMessage(db, conversationId) : null;
     const prompt = await buildPrompt({
       workspace,
       userMessage,
@@ -111,8 +115,21 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       ...(workpackage ? { workpackage } : {}),
       ...(quotedMessage ? { quotedMessage } : {}),
       ...(edit ? { edit } : {}),
+      ...(conversationThread && conversationAnchor ? { conversation: { thread: conversationThread, anchor: conversationAnchor, opened: conversationThread.openedBy } } : {}),
     });
     return { prompt, confidential: workspace.confidential };
+  }
+
+  async function saveTaskFailure(taskId: string, workspaceId: string, runToken: string, error: string): Promise<Message | null> {
+    const task = await getTask(db, taskId);
+    if (!task) return null;
+    const anchor = await getMessage(db, task.messageId);
+    if (!anchor) return null;
+    const replyThread = await conversationOf(db, anchor);
+    return db.tx(async (t) => {
+      if (!(await finishTask(t, taskId, { ok: false, error }, runToken))) return null;
+      return addMessage(t, workspaceId, "system", "处理失败：" + error, { taskId, threadId: replyThread });
+    });
   }
 
   async function dispatchOnce(): Promise<void> {
@@ -135,9 +152,13 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       } catch (e) {
         const error = e instanceof Error ? e.message : String(e);
         try {
-          if (await finishTask(db, task.id, { ok: false, error }, task.runToken ?? undefined)) {
-            const msg = await addMessage(db, task.workspaceId, "system", "处理失败：" + error, { taskId: task.id });
+          const msg = task.runToken ? await saveTaskFailure(task.id, task.workspaceId, task.runToken, error) : null;
+          if (msg) {
             events.emit(task.workspaceId, { type: "message.created", message: msg });
+            if (msg.threadId) {
+              const thread = await getThread(db, msg.threadId);
+              if (thread) events.emit(task.workspaceId, { type: "thread.updated", thread });
+            }
             await emitTask(task.id);
           }
         } catch (e2) {
@@ -181,40 +202,68 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     const a = conn.assigned;
     if (!a || a.taskId !== m.taskId) return;
     let msg: Message | null = null;
+    let replyThread: string | null = null;
+    let taskMessage: Message | null = null;
+    let threadEvent = false;
     if (m.ok) {
       // With grill-me off the uncertain items still become questions, but the chat shows no asked one.
       // A question this task opened is the one the reply is about, even when an older question has higher priority.
       const grillOn = (await grillState(db, a.workspaceId)).enabled;
       const changes = (await listTaskChanges(db, m.taskId)) as AgentMessageMeta["changes"];
       const store = new KnowledgeStore(repoPath(dataDir, a.workspaceId), deps.ownedHelpers);
-      const touched = grillOn
-        ? (await Promise.all([...new Set(changes.filter((c) => c.kind === "question").map((c) => c.entryId))].map((id) => store.get(id)))).filter((e) => e !== null)
-        : [];
-      const top = grillOn ? await topOpenQuestion(db, dataDir, a.workspaceId, deps.ownedHelpers) : null;
-      const q = grillOn ? chooseAskedQuestion(touched, top) : null;
+      const touched = (await Promise.all([...new Set(changes.filter((c) => c.kind === "question").map((c) => c.entryId))].map((id) => store.get(id)))).filter((e) => e !== null);
+      const q = grillOn ? chooseAskedQuestion(touched, null) : null;
+      const finished = await getTask(db, m.taskId);
+      if (!finished) return;
+      taskMessage = await getMessage(db, finished.messageId);
+      if (!taskMessage) return;
+      replyThread = await conversationOf(db, taskMessage);
+      if (!replyThread && grillOn && q) {
+        replyThread = taskMessage.id;
+        threadEvent = true;
+      }
       const meta: AgentMessageMeta = {
         changes,
         askedQuestion: q ? { id: q.id, title: q.title, body: q.body } : null,
       };
-      const finished = await getTask(db, m.taskId);
       if (finished?.kind === "edit") {
         const edited = await getMessage(db, finished.messageId);
         if (edited) meta.quote = { messageId: edited.id, role: edited.role, excerpt: messageExcerpt(edited.content) };
       }
-      if (!(await finishTask(db, m.taskId, { ok: true }, a.runToken))) {
+      msg = await db.tx(async (t) => {
+        if (!(await finishTask(t, m.taskId, { ok: true }, a.runToken))) return null;
+        if (threadEvent && taskMessage && q) await ensureThread(t, taskMessage.id, q.title, "grill");
+        const reply = await addMessage(t, a.workspaceId, "agent", m.reply, { taskId: m.taskId, meta, threadId: replyThread });
+        if (replyThread) {
+          for (const entry of touched) {
+            if (entry.kind === "question" && entry.status === "open") await associateQuestion(t, a.workspaceId, entry.id, replyThread);
+          }
+        }
+        return reply;
+      });
+      if (!msg) {
         conn.assigned = null;
         return;
       }
-      msg = await addMessage(db, a.workspaceId, "agent", m.reply, { taskId: m.taskId, meta });
     } else {
-      if (!(await finishTask(db, m.taskId, { ok: false, error: m.error }, a.runToken))) {
+      const task = await getTask(db, m.taskId);
+      taskMessage = task ? await getMessage(db, task.messageId) : null;
+      replyThread = taskMessage ? await conversationOf(db, taskMessage) : null;
+      msg = await db.tx(async (t) => {
+        if (!(await finishTask(t, m.taskId, { ok: false, error: m.error }, a.runToken))) return null;
+        return addMessage(t, a.workspaceId, "system", "处理失败：" + m.error, { taskId: m.taskId, threadId: replyThread });
+      });
+      if (!msg) {
         conn.assigned = null;
         return;
       }
-      msg = await addMessage(db, a.workspaceId, "system", "处理失败：" + m.error, { taskId: m.taskId });
     }
     conn.assigned = null;
     events.emit(a.workspaceId, { type: "message.created", message: msg });
+    if (replyThread || threadEvent) {
+      const thread = await getThread(db, replyThread ?? taskMessage!.id);
+      if (thread) events.emit(a.workspaceId, { type: "thread.updated", thread });
+    }
     await emitTask(m.taskId);
     await dispatch();
   }
