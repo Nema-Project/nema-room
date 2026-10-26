@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
-import { assetsFor, extractArchive, sha256File, findRequiredFile, downloadVerified, publishStagedDirectory, gitLayoutFor, fetchTools, rejectSymlinkPath } from './fetch-tools.mjs';
+import { assetsFor, extractArchive, sha256File, findRequiredFile, downloadVerified, publishStagedDirectory, gitLayoutFor, fetchTools, pruneDashedGitBuiltins, rejectSymlinkPath } from './fetch-tools.mjs';
 
 const tmp = async () => mkdtemp(path.join(os.tmpdir(), 'nema-tools-'));
 const tarEntry = (name, body, type = '0', linkname = '') => {
@@ -221,4 +221,25 @@ test('published Windows target contains only documented entries, no unpack or ow
     assert.equal(result.git, 'win32-x64/git/cmd/git.exe');
     assert.ok(entries.every((entry) => !entry.includes('unpack') && !entry.includes('owner')));
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('drops dashed Git builtins but keeps transport commands and remote helpers', async (t) => {
+  const dir = await tmp();
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const core = path.join(dir, 'libexec', 'git-core');
+  await mkdir(core, { recursive: true });
+  await writeFile(path.join(core, 'git'), 'git binary');
+  await writeFile(path.join(core, 'git-remote-http'), 'curl helper');
+  await writeFile(path.join(core, 'git-sh-setup'), 'shell library');
+  const links = { 'git-fetch': 'git', 'git-commit': 'git', 'git-upload-pack': 'git', 'git-receive-pack': 'git', 'git-upload-archive': 'git', 'git-remote-ext': 'git', 'git-remote-https': 'git-remote-http' };
+  try {
+    for (const [name, target] of Object.entries(links)) await symlink(target, path.join(core, name));
+  } catch (error) {
+    if (error.code === 'EPERM' || error.code === 'ENOTSUP') { t.skip('creating a symlink needs extra privilege'); return; }
+    throw error;
+  }
+  const removed = await pruneDashedGitBuiltins(dir);
+  assert.deepEqual(removed.sort(), ['git-commit', 'git-fetch']);
+  assert.deepEqual((await readdir(core)).sort(), ['git', 'git-receive-pack', 'git-remote-ext', 'git-remote-http', 'git-remote-https', 'git-sh-setup', 'git-upload-archive', 'git-upload-pack']);
+  assert.deepEqual(await pruneDashedGitBuiltins(path.join(dir, 'no-libexec')), []);
 });

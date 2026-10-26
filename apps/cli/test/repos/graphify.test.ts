@@ -148,15 +148,16 @@ process.exit(Number(args[1]));
 `,
   );
 
+  const graph = join(snapshot, "src", "graphify-out", "graph.json");
   await expect(queryIndex(snapshot, "query", ["3"], fake)).rejects.toThrow("名称不唯一");
-  expect(readFileSync(join(record, "argv"), "utf8")).toBe("query\n3\n");
+  expect(readFileSync(join(record, "argv"), "utf8")).toBe(`query\n3\n--graph\n${graph}\n`);
   expect(realpathSync(readFileSync(join(record, "cwd"), "utf8").trim())).toBe(realpathSync(snapshot));
 
   await expect(queryIndex(snapshot, "explain", ["4"], fake)).rejects.toThrow(/^没有匹配$/);
-  expect(readFileSync(join(record, "argv"), "utf8")).toBe("explain\n4\n");
+  expect(readFileSync(join(record, "argv"), "utf8")).toBe(`explain\n4\n--graph\n${graph}\n`);
 
   await expect(queryIndex(snapshot, "path", ["0", "from", "to"], fake)).resolves.toBe("");
-  expect(readFileSync(join(record, "argv"), "utf8")).toBe("path\n0\nfrom\nto\n");
+  expect(readFileSync(join(record, "argv"), "utf8")).toBe(`path\n0\nfrom\nto\n--graph\n${graph}\n`);
 });
 
 test("queryIndex rejects a value that starts with - before spawning graphify", async () => {
@@ -177,7 +178,7 @@ fs.writeFileSync(${JSON.stringify(record + "/argv")}, args.join("\\n") + "\\n");
   expect(lstatSync(join(record, "argv"), { throwIfNoEntry: false })).toBeUndefined();
 
   await expect(queryIndex(snapshot, "query", ["a-b"], fake)).resolves.toBe("");
-  expect(readFileSync(join(record, "argv"), "utf8")).toBe("query\na-b\n");
+  expect(readFileSync(join(record, "argv"), "utf8")).toBe(`query\na-b\n--graph\n${join(snapshot, "src", "graphify-out", "graph.json")}\n`);
 });
 
 test("queryIndex caps output at 64 KB", async () => {
