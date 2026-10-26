@@ -186,7 +186,9 @@ async function smoke(args) {
   const codexHome = path.join(tempRoot, 'isolated Codex home');
   const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
   const artifactStat = await stat(zipFile);
+  const extractStarted = Date.now();
   await extractPortableZip(zipFile, installDir);
+  process.stderr.write(`Extracted portable ZIP in ${Date.now() - extractStarted}ms\n`);
   const executable = await findExecutable(installDir);
   if (!executable) throw new Error('Portable ZIP did not contain Nema.exe');
   const asarPath = path.join(path.dirname(executable), 'resources', 'app.asar');
@@ -222,6 +224,7 @@ async function smoke(args) {
     NEMA_DESKTOP_TEST_HOME: home,
     NEMA_DESKTOP_TEST_USER_DATA: profile,
     NEMA_DESKTOP_DISABLE_GPU: '1',
+    NEMA_LOCAL_CORE_LOG: path.join(tempRoot, 'local-core.log'),
   };
   const fake = await startFakeProvider();
   let appProcess;
@@ -307,6 +310,8 @@ async function smoke(args) {
     const tail = await readFile(logPath, 'utf8').catch(() => '');
     const exited = appProcess?.exitCode != null ? ` (desktop exit ${appProcess.exitCode})` : '';
     if (error instanceof Error && (exited || tail.trim())) error.message += `${exited}${tail.trim() ? `\nElectron log:\n${tail.slice(-2000)}` : ''}`;
+    const coreLog = await readFile(env.NEMA_LOCAL_CORE_LOG, 'utf8').catch(() => '');
+    if (error instanceof Error && coreLog.trim()) error.message += `\nLocal core log:\n${coreLog.slice(-4000)}`;
     throw error;
   } finally {
     fake.server.closeAllConnections();

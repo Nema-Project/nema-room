@@ -306,6 +306,12 @@ function throwCleanupErrors(errors: unknown[], primary?: unknown): void {
 }
 
 export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<LocalRuntime> {
+  // Startup timings on stdout; a managed core discards them unless NEMA_LOCAL_CORE_LOG names a file.
+  const startedAt = Date.now();
+  const phase = (name: string) => process.stdout.write(`${JSON.stringify({
+    state: "startup-phase", phase: name, ms: Date.now() - startedAt, uptimeMs: Math.round(process.uptime() * 1000),
+  })}\n`);
+  phase("begin");
   const assets = readManifest(options.assetsDir);
   if (options.webPort !== undefined && (!Number.isInteger(options.webPort) || options.webPort < 0 || options.webPort > 65535)) {
     throw new Error("webPort must be a valid TCP port");
@@ -317,7 +323,9 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
   const helperScope: OwnedHelperScope | undefined = assets.ownedHelperGuardianPath
     ? createOwnedHelperScope(assets.ownedHelperGuardianPath)
     : undefined;
+  phase("helper-scope");
   const lease = await acquireInstance(paths.home, installationIdentity(assets));
+  phase("lease");
   let db: Awaited<ReturnType<typeof createLocalDb>> | undefined;
   let hub: Awaited<ReturnType<typeof startHub>> | undefined;
   let daemon: ReturnType<typeof startDaemon> | undefined;
@@ -390,6 +398,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
   try {
     ensureOwnedDirectory(paths.home, paths.data, "data");
     const token = privateDaemonToken(paths.home);
+    phase("private-files");
     const gatewayCredential = createGatewayCredential();
     const sessionManager = session = new SessionManager();
     const webPort = await freeLoopbackPort();
@@ -405,10 +414,12 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     webChild.once("exit", () => onUnexpectedWebExit());
     await httpReady(`http://127.0.0.1:${webPort}/`, webChild, WEB_READY_TIMEOUT_MS);
     assertWebAlive();
+    phase("web");
 
     ensureOwnedDirectory(paths.home, paths.db, "database");
     db = await createLocalDb(paths.db);
     assertWebAlive();
+    phase("db");
     hub = await startHub({
       db,
       dataDir: paths.data,
@@ -420,6 +431,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
       ownedHelpers: helperScope,
     });
     assertWebAlive();
+    phase("hub");
     daemon = startDaemon({
       hubUrl: hub.url,
       token,
@@ -436,6 +448,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     });
     await daemonReady(hub.url, gatewayCredential, DAEMON_READY_TIMEOUT_MS);
     assertWebAlive();
+    phase("daemon");
     settings = createSettingsService({ home: paths.home, codexHome: process.env.CODEX_HOME ?? join(homedir(), ".codex"), operations: settingsOperationsForTests });
     gateway = await startGateway({
       webTarget: `http://127.0.0.1:${webPort}`,
@@ -448,8 +461,10 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     assertWebAlive();
     if (runtimeReadyHookForTests && db && webChild) await runtimeReadyHookForTests({ db, home: paths.home, dataDir: paths.data, webPort, webChild });
     assertWebAlive();
+    phase("gateway");
     await lease.publish({ origin: gateway.origin, createLaunchUrl: () => `${gateway!.origin}/_nema/launch?ticket=${sessionManager.issueTicket()}` });
     assertWebAlive();
+    phase("published");
 
     const runtime: LocalRuntime = {
       origin: gateway.origin,
@@ -484,9 +499,16 @@ export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<
     ...(options.webPort === undefined ? [] : [String(options.webPort)]),
   ];
   const spec = { nodePath: assets.nodePath, args: childArgs, cwd: assets.root, env: childEnvironment({ NEMA_GIT_PATH: assets.gitPath }) };
-  const child = ensureSpawnerForTests
-    ? ensureSpawnerForTests(spec)
-    : spawn(spec.nodePath, spec.args, { cwd: spec.cwd, detached: true, env: spec.env, stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true });
+  // Diagnostics only: the desktop smoke names a file here to capture the core's startup phases and stderr.
+  const coreLog = process.env.NEMA_LOCAL_CORE_LOG ? openSync(process.env.NEMA_LOCAL_CORE_LOG, "a") : "ignore";
+  let child: ChildProcess;
+  try {
+    child = ensureSpawnerForTests
+      ? ensureSpawnerForTests(spec)
+      : spawn(spec.nodePath, spec.args, { cwd: spec.cwd, detached: true, env: spec.env, stdio: ["ignore", coreLog, coreLog, "ipc"], windowsHide: true });
+  } finally {
+    if (typeof coreLog === "number") closeSync(coreLog);
+  }
   let outcome: { type: "ready" } | { type: "collision" } | { type: "error"; code: string; message: string } | undefined;
   let spawnFailure: Error | undefined;
   let spawned = child.pid !== undefined;
