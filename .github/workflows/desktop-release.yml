@@ -58,7 +58,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
       - name: Release helper tests
-        run: node --test scripts/desktop/release.test.mjs
+        run: node --test scripts/desktop/release.test.mjs scripts/release-notes.test.mjs
       - name: Resolve version
         id: version
         shell: bash
@@ -110,6 +110,10 @@ jobs:
             console.log(JSON.stringify({ include }));
           ' "$wanted")
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+      - name: Require changelog notes
+        # A tag with no user-facing notes fails here, before either installer is built.
+        if: steps.version.outputs.release == 'true'
+        run: node scripts/release-notes.mjs --check CHANGELOG.md "${{ steps.version.outputs.version }}"
 
   build:
     name: Build and smoke (${{ matrix.target }})
@@ -259,18 +263,7 @@ jobs:
           fi
       - name: Write release notes
         shell: bash
-        run: |
-          {
-            echo "Nema Room $VERSION"
-            echo
-            echo "Build: commit $GITHUB_SHA, workflow run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID."
-            echo "These installers are unsigned (Windows) or ad-hoc signed (macOS); the operating system will warn on first launch."
-            echo "Verify downloads against SHA256SUMS-$VERSION.txt. release-manifest-$VERSION.json lists every asset with size, hash and build metadata."
-            echo
-            echo '```'
-            cat "release-assets/SHA256SUMS-$VERSION.txt"
-            echo '```'
-          } > release-notes.md
+        run: node scripts/release-notes.mjs CHANGELOG.md "$VERSION" "$GITHUB_SHA" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > release-notes.md
       - name: Create or reuse draft, upload, publish
         shell: bash
         run: |
