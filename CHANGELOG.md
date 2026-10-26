@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- The default landing page loads its demo from the site root. English stays at `/`, not `/en/`.
+
 ## [0.1.2] - 2026-10-26
 
 ### Added
