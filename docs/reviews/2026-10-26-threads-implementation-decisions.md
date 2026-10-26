@@ -44,13 +44,28 @@ Implemented from the approved spec and plan using Luna low workers and Sol high 
 
 - Ruling: Task8 thread windows use the same frameless secure app preload, so registerWindowControls must support multiple live windows. Existing code installs ipcMain.handle on fixed channels per registration, which would throw/overwrite when a child is registered. Refactor to one IPC dispatcher per ipcMain with a registry keyed by exact sender webContents; validate each owner mainFrame/origin, dispose only that owner, and remove shared handlers only after last window closes. Keep preload channel/API stable. Add multi-window own-controls and cleanup tests; modify window-controls.cjs and its existing test as necessary. This is required for working secure thread titlebars, not extra scope.
 
+- Ruling: start final read-only wholebranch Sol review while the single fullsuite finishes on stable product/test sources — all per-task code review gates are clean and concurrent read-only review cannot affect test results — completion and PR stay blocked on actual test exit, and any review fix requires covering verification.
+
+- Ruling: latest capped thread retrieval means select latest200 then return oldest-first within that batch — current oldest200 traps new replies/unread — older explicit targets still load via single-message GET; no pagination expansion.
+
+- Ruling: intercept only strictly validated sameorigin main-message URLs requested by a dedicated thread child, prevent its navigation and hand the request to existing/new main app window — required source jump conflicts with own-thread child navigation — narrow new desktop URL shape/parser and security/lifecycle tests, child boundary preserved.
+
+- Ruling: clamp floating actual geometry and reflow on viewport resize, preserving drag and normal cascade — headers/close must remain reachable under small viewport or manywindows — no dependency/layout redesign; additional geometry regression tests.
+
+- Ruling: complete I3 inside the still-active consolidated fix wave by resuming the same Luna worker for a minimal hashchange consumer plus repeated-target/unmount tests — silently parking a reproducible source jump failure would leave a required user flow broken — retain existing URL/parser/security boundary, no new fix agent or broad review; covering web verification required. The already-running fullroot validates unchanged Hub/Desktop/CLI portions; report exact commit coverage and separately run the complete Web suite after the narrow renderer fix instead of restarting the expensive root suite.
+
 ## Browser verification
 
 Real Chromium exercised main-chat isolation from thread replies, lossless rapid event delivery, active-window read acknowledgements, dragging, retaining windows across actual workspace navigation, and rejecting a foreign focus-message target. Six core checks passed. Four additional checks passed: preserving textarea focus, sending `/thread` through the actual composer, opening an attention target in another workspace while retaining windows, and withdrawing a newly added knowledge entry.
 
 The browser transport fixture used a fake daemon and does not establish model behavior. Real-model acceptance results are recorded separately in the agent acceptance script.
 
-## Review notes for the final gate
+## Whole-branch review fixes
 
-- Check slash command insertion uses its locale key.
-- At a 780 × 437 viewport, cascading multiple windows can place headers above the viewport. The browser badge timeout came from clicking through a covering window; a 1440 × 1000 run passed. Assess window placement and recovery in the final review.
+Sol identified five integration gaps after the per-task reviews. Commit `7469f83` fixes loading the newest bounded thread history, rendering legacy system question cards, forwarding validated desktop main-message jumps to the main window, keeping floating-window controls in bounds after opening/dragging/resizing, and routing retry-exhausted system errors into their current thread. It also completes the slash insertion locale key and removes an unused test helper.
+
+The post-fix Chromium run passed the original six core and four additional checks plus three geometry checks. At 780 × 437, multiple floating threads keep their headers visible; dragging against viewport edges and shrinking to 600 × 350 also preserve access to the header and close control. The browser screenshot was inspected. This remains UI/transport verification, not model-semantic acceptance.
+
+The same scoped Sol review also identified a same-document hash navigation gap in the source-jump receiver. Commit `bcacd6f` consumes validated hashes on mount and hash changes, cancels stale work, and handles repeated targets. Sol approved the complete fix wave with all five Important and both Minor findings addressed. Final verification passed: 119 test files passed and one skipped; 1322 tests passed and 22 skipped (581.19 seconds). The root run began at `7469f83`; the final narrow hash-receiver change at `bcacd6f` received its own complete Web run, with 26 files and 234 tests passing. Root/CLI/Web typechecks, Web lint (exit zero, one request-counter cleanup warning reviewed by Sol as intentional stable-ref invalidation), production Web build, and 35 desktop tests passed.
+
+The final Chromium check confirmed two sequential main-message jumps both stayed in the same document, fetched and scrolled the correct message, and consumed the hash. A foreign-workspace hash was ignored. Combined with the previous UI checks, 16 browser checks passed. Native packaged Electron GUI behavior was not exercised; its URL/IPC/lifecycle behavior is covered by the desktop tests. Real-model semantic acceptance remains not run because the actual production-runtime attempt failed with `EAI_AGAIN`.
