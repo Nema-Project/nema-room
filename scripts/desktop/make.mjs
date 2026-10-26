@@ -96,7 +96,7 @@ async function make(args) {
     payloadDir = target.staged;
     const manifest = JSON.parse(await readFile(path.join(payloadDir, 'runtime-manifest.json'), 'utf8'));
     if (manifest.schemaVersion !== 1 || manifest.version !== appPackage.version || manifest.platform !== target.platform || manifest.arch !== target.arch) throw new Error('Staged runtime manifest does not match the desktop package target/version');
-    for (const key of ['node', 'git', 'coreEntry', 'cliEntry', 'webEntry', 'licenses', ...(target.platform === 'win32' ? ['ownedHelperGuardian'] : [])]) {
+    for (const key of ['node', 'coreEntry', 'cliEntry', 'webEntry', 'licenses', ...(target.platform === 'win32' ? ['ownedHelperGuardian'] : [])]) {
       const relative = manifest[key];
       if (typeof relative !== 'string' || !relative || relative.includes('\\') || path.posix.isAbsolute(relative) || relative.split('/').some((part) => !part || part === '.' || part === '..')) throw new Error(`Staged runtime manifest has an invalid ${key} path`);
       const resolved = path.resolve(payloadDir, ...relative.split('/'));

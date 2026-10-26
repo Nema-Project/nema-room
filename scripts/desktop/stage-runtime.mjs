@@ -327,35 +327,20 @@ export async function stageRuntime({
     toolsRoot = path.resolve(toolsRoot);
     const target = `${platform}-${arch}`;
     const selectedToolsRoot = path.join(toolsRoot, target);
-    if (!tools || !tools.node || !tools.git || !tools.licenses) throw new Error('fetchTools result must include Node, Git, and license paths');
+    if (!tools || !tools.node || !tools.licenses) throw new Error('fetchTools result must include Node and license paths');
     const checkedTargetFile = async (value, name) => {
       if (value === null || value === undefined) throw new Error(`Missing required ${name} path`);
       const parts = safeRelative(value, name);
       if (parts[0] !== target || parts.length < 2) throw new Error(`${name} path must be inside selected target ${target}`);
       return requiredFile(selectedToolsRoot, parts.slice(1).join('/'), name, selectedToolsRoot);
     };
-    const checkedTargetDirectory = async (value, name) => {
-      if (value === null || value === undefined) return null;
-      const parts = safeRelative(value, name);
-      if (parts[0] !== target || parts.length < 2) throw new Error(`${name} path must be inside selected target ${target}`);
-      const relative = parts.slice(1).join('/');
-      await requireDirectory(path.join(selectedToolsRoot, ...safeRelative(relative, name)), name, selectedToolsRoot);
-      return true;
-    };
     const nodePath = await checkedTargetFile(tools.node, 'bundled Node executable');
-    await checkedTargetFile(tools.git, 'bundled Git executable');
     await checkedTargetFile(tools.licenses.node, 'Node license');
-    await checkedTargetFile(tools.licenses.git, 'Git license');
-    await checkedTargetFile(tools.licenses.gitNotice, 'Git notice');
     await checkedTargetFile(tools.licenses.sourceRecord, 'tool source record');
-    await checkedTargetDirectory(tools.licenses.gitTree, 'Git distribution');
-    await checkedTargetDirectory(tools.licenses.gitNotices, 'Git notices');
     const toolsRecord = JSON.parse(await readFile(await checkedTargetFile(tools.licenses.sourceRecord, 'tool source record'), 'utf8'));
     const expectedNodePin = toolsManifest.node.archive?.[target];
-    const expectedGitPin = toolsManifest.git.archives?.[target];
-    if (!expectedNodePin || !expectedGitPin || toolsRecord.target !== target ||
+    if (!expectedNodePin || toolsRecord.target !== target ||
       toolsRecord.node?.version !== toolsManifest.node.version || toolsRecord.node?.archive !== expectedNodePin.file || toolsRecord.node?.sha256 !== expectedNodePin.sha256 ||
-      toolsRecord.git?.version !== toolsManifest.git.version || toolsRecord.git?.gitForWindowsVersion !== toolsManifest.git.gitForWindowsVersion || toolsRecord.git?.dugiteNativeVersion !== toolsManifest.git.dugiteNativeVersion || toolsRecord.git?.archive !== expectedGitPin.file || toolsRecord.git?.sha256 !== expectedGitPin.sha256 ||
       !['pending-task-7c', 'source-materials-collected'].includes(toolsRecord.sourceCorrespondence?.status)) throw new Error('Bundled tools target, pinned archive hashes, versions, or Task 7c provenance status are invalid');
     if (build) builtRoot = await makeBuildSnapshot(sourceRoot, nodePath, tempRoot);
     let ownedHelperPath;
@@ -425,7 +410,7 @@ export async function stageRuntime({
     }
     const manifest = {
       schemaVersion: 1, version, platform, arch,
-      node: `runtime/${tools.node}`, git: `runtime/${tools.git}`,
+      node: `runtime/${tools.node}`,
       ...(ownedHelperPath ? { ownedHelperGuardian: 'runtime/owned-helper.exe' } : {}),
       coreEntry: 'app/node_modules/@nema/local/dist/src/index.js',
       cliEntry: 'app/node_modules/@nema/cli/dist/index.js',
@@ -436,13 +421,12 @@ export async function stageRuntime({
     await mkdir(put('runtime/licenses'), { recursive: true });
     await copyTree(path.join(builtRoot, 'LICENSE'), put('runtime/licenses/application'), builtRoot);
     await copyTree(path.join(selectedToolsRoot, ...safeRelative(tools.licenses.node, 'Node license').slice(1)), put('runtime/licenses/node'), selectedToolsRoot);
-    await copyTree(path.join(selectedToolsRoot, ...safeRelative(tools.licenses.git, 'Git license').slice(1)), put('runtime/licenses/git'), selectedToolsRoot);
     await copyTree(electronMitLicense, put('runtime/licenses/electron/LICENSE'), sourceRoot);
     await copyTree(electronThirdPartyNotices, put('runtime/licenses/electron/LICENSES.chromium.html'), sourceRoot);
     await writeFile(put('runtime-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx' });
     await writePlatformLaunchers(staging, manifest);
     for (const [entry, name, directory] of [
-      [manifest.node, 'Node executable', false], [manifest.git, 'Git executable', false],
+      [manifest.node, 'Node executable', false],
       [manifest.coreEntry, 'core entry', false], [manifest.cliEntry, 'CLI entry', false],
       [manifest.webEntry, 'Web entry', false], [manifest.licenses, 'license directory', true],
       ...(manifest.ownedHelperGuardian ? [[manifest.ownedHelperGuardian, 'Windows helper guardian executable', false]] : []),

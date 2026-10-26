@@ -83,7 +83,7 @@ On Linux, set `NEMA_UID` / `NEMA_GID` in `.env` if your UID/GID is not 1000. Cre
 
 ## Desktop app (preview)
 
-The desktop app puts the whole stack in one local program: an on-disk PGlite database, a single-owner local core, a protected same-origin gateway, and bundled Node and Git. It needs neither Docker nor a database server. **For now you build it from source; there is no released version.**
+The desktop app puts the whole stack in one local program: an on-disk PGlite database, a single-owner local core, a protected same-origin gateway, and bundled Node. It uses the Git already on your machine (2.31 or later); if Git is missing or older, the app says so on launch and links to https://git-scm.com/downloads. It needs neither Docker nor a database server. **For now you build it from source; there is no released version.**
 
 | Item | Status |
 | --- | --- |
@@ -93,7 +93,7 @@ The desktop app puts the whole stack in one local program: an on-disk PGlite dat
 | Signing and updates | Installers are **unsigned**; there is no auto-update |
 | Public release | None yet; source-correspondence review of third-party components is unfinished, and nothing is published until it is |
 
-**Build (Windows x64):** after `npm ci`, run `npm run desktop:make -- --platform win32 --arch x64`. Output goes to `dist/desktop-artifacts/win32-x64/`: `Nema-<version>-win32-x64.exe` (NSIS installer) and a matching `.zip` (portable). A build only targets the current OS and needs a native C compiler (Clang on Windows; see [scripts/desktop/README.md](scripts/desktop/README.md)).
+**Build (Windows x64):** after `npm ci`, run `npm run desktop:make -- --platform win32 --arch x64`. Output goes to `dist/desktop-artifacts/win32-x64/`: `Nema-<version>-win32-x64.exe` (NSIS installer). A build only targets the current OS and needs a native C compiler (Clang on Windows; see [scripts/desktop/README.md](scripts/desktop/README.md)).
 
 **Opening an unsigned installer for the first time:** open only a file you built or checked yourself. Windows SmartScreen shows "Windows protected your PC": choose "More info", then "Run anyway". The macOS package is unverified; as usual for an app that is not notarized, it would need "Open Anyway" in System Settings → Privacy & Security.
 

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { commandSpec } from "./platform.js";
+import { requireSystemGit } from "./systemGit.js";
 import { claudeTokenPath, readClaudeToken } from "./claude/token.js";
 import { checkCodexAuth } from "./codex/isolation.js";
 import type { NemaConfig } from "./config.js";
@@ -159,9 +160,9 @@ export async function runDoctor(opts: DoctorOpts): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
 
   try {
-    checks.push({ name: "git 可用", ok: true, detail: await version("git", ["--version"]) });
+    checks.push({ name: "git 可用", ok: true, detail: await requireSystemGit() });
   } catch (e) {
-    checks.push({ name: "git 可用", ok: false, detail: `无法运行 git：${msg(e)}` });
+    checks.push({ name: "git 可用", ok: false, detail: msg(e) });
   }
 
   // The codex binary is not used: Codex runs in-process. The row stays so a missing install is visible, and it never fails the check.

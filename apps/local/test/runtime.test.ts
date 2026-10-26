@@ -44,8 +44,6 @@ function testAssets(): string {
   const node = join(assets, "node", nodeName);
   mkdirSync(dirname(node), { recursive: true });
   copyFileSync(process.execPath, node);
-  mkdirSync(join(assets, "git"), { recursive: true });
-  writeFileSync(join(assets, "git", "git.exe"), "test fixture");
   let ownedHelperGuardian: string | undefined;
   if (process.platform === "win32") {
     ownedHelperGuardian = "runtime/owned-helper.exe";
@@ -62,7 +60,6 @@ function testAssets(): string {
     platform: process.platform,
     arch: process.arch,
     node: `node/${nodeName}`,
-    git: "git/git.exe",
     coreEntry: "fixtures/core-child.mjs",
     cliEntry: "fixtures/fake-cli.mjs",
     webEntry: "fixtures/fake-web.mjs",
@@ -144,7 +141,7 @@ function testInstallationId(assetsDir: string): string {
   const manifest = JSON.parse(readFileSync(join(assetsDir, "runtime-manifest.json"), "utf8")) as Record<string, unknown>;
   const root = realpathSync.native(assetsDir);
   const normalized = process.platform === "win32" ? root.toLowerCase() : root;
-  return createHash("sha256").update(JSON.stringify([normalized, [manifest.version, manifest.platform, manifest.arch, manifest.node, manifest.git, manifest.coreEntry, manifest.cliEntry, manifest.webEntry, manifest.licenses, manifest.ownedHelperGuardian ?? null]])).digest("hex");
+  return createHash("sha256").update(JSON.stringify([normalized, [manifest.version, manifest.platform, manifest.arch, manifest.node, manifest.coreEntry, manifest.cliEntry, manifest.webEntry, manifest.licenses, manifest.ownedHelperGuardian ?? null]])).digest("hex");
 }
 
 async function leaveStaleDescriptor(home: string, assetsDir: string): Promise<void> {
@@ -410,6 +407,25 @@ describe("managed local runtime", () => {
     expect(later.reused).toBe(true);
     expect(later.origin).toBe(starts[0]!.origin);
   }, 60_000);
+
+  it("refuses to start a core without a system git and says how to install one", async () => {
+    const home = join(tempDir("nema-home-"), "no-git");
+    const assetsDir = testAssets();
+    let spawned = false;
+    setEnsureSpawnerForTests(() => { spawned = true; throw new Error("must not spawn"); });
+    const saved = { PATH: process.env.PATH, Path: process.env.Path };
+    process.env.PATH = tempDir("nema-empty-path-");
+    delete process.env.Path;
+    try {
+      const error = await ensureLocalRuntime({ home, assetsDir }).catch((e: unknown) => e);
+      expect(error).toMatchObject({ code: "NEMA_GIT_UNAVAILABLE" });
+      expect((error as Error).message).toMatch(/git-scm\.com\/downloads/);
+      expect(spawned).toBe(false);
+    } finally {
+      process.env.PATH = saved.PATH;
+      if (saved.Path !== undefined) process.env.Path = saved.Path;
+    }
+  });
 
   it("reports an owned-core spawn error promptly instead of a readiness timeout", async () => {
     const home = join(tempDir("nema-home-"), "spawn-error");

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
-import { assetsFor, extractArchive, sha256File, findRequiredFile, downloadVerified, publishStagedDirectory, gitLayoutFor, fetchTools, pruneDashedGitBuiltins, rejectSymlinkPath } from './fetch-tools.mjs';
+import { assetsFor, extractArchive, sha256File, findRequiredFile, downloadVerified, publishStagedDirectory, fetchTools, rejectSymlinkPath } from './fetch-tools.mjs';
 
 const tmp = async () => mkdtemp(path.join(os.tmpdir(), 'nema-tools-'));
 const tarEntry = (name, body, type = '0', linkname = '') => {
@@ -51,9 +51,8 @@ test('manifest pins all four runtime targets to exact official versioned URLs an
     const entries = assetsFor(platform, arch);
     assert.equal(entries.node.version, '24.22.1');
     assert.match(entries.node.url, /node-v24\.22\.1/);
-    assert.match(entries.git.url, /dugite-native-v2\.56\.0-7ce66f8/);
     assert.match(entries.node.sha256, /^[a-f0-9]{64}$/);
-    assert.match(entries.git.sha256, /^[a-f0-9]{64}$/);
+    assert.equal(entries.git, undefined, 'Git is not bundled');
   }
   assert.throws(() => assetsFor('freebsd', 'x64'), /unsupported/i);
   assert.throws(() => assetsFor('win32', 'arm64'), /unsupported/i);
@@ -123,32 +122,6 @@ test('TAR extraction rejects descendants whose destination parent is an archive 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('pinned macOS Git layout uses bin/git and carries a concrete upstream notice', async () => {
-  const layout = gitLayoutFor('darwin', 'arm64');
-  assert.equal(layout.binary, 'bin/git');
-  assert.match(layout.licenseSource.url, /git\/a018953688f1b10bddf91bff8747068f5f4746a4\/COPYING$/);
-  assert.match(layout.licenseSource.sha256, /^[a-f0-9]{64}$/);
-  assert.ok(layout.noticeCandidates.includes('libexec/git-core/NOTICE'));
-});
-
-test('pinned Ubuntu Git layouts use the bin/git path from the upstream build script', () => {
-  for (const arch of ['x64', 'arm64']) assert.equal(gitLayoutFor('linux', arch).binary, 'bin/git');
-});
-
-test('macOS archive fixture resolves Git executable and notice at the pinned layout paths', async () => {
-  const root = await tmp(); const unpack = path.join(root, 'unpack');
-  try {
-    const tar = tarGz(
-      tarEntry('bin/git', Buffer.from('git-bin')),
-      tarEntry('libexec/git-core/NOTICE', Buffer.from('upstream notice')),
-    );
-    await extractArchive(tar, 'tar.gz', unpack);
-    const layout = gitLayoutFor('darwin', 'arm64');
-    assert.equal(await readFile(path.join(unpack, layout.binary), 'utf8'), 'git-bin');
-    assert.equal(await findRequiredFile(unpack, layout.noticeCandidates, 'Git notice'), 'libexec/git-core/NOTICE');
-  } finally { await rm(root, { recursive: true, force: true }); }
-});
-
 test('publication refuses a target created after staging and leaves its contents intact', async () => {
   const root = await tmp(); const stage = path.join(root, 'stage'); const target = path.join(root, 'target');
   try {
@@ -207,7 +180,7 @@ test('verified packaging preserves a target claimed concurrently during archive 
 
 const windowsToolCache = path.resolve('.superpowers/sdd/2026-10-24-desktop-implementation/tool-cache');
 let hasWindowsToolCache = process.platform === 'win32';
-for (const file of [assetsFor('win32', 'x64').node.file, assetsFor('win32', 'x64').git.file, 'git-COPYING-v2.56.0']) {
+for (const file of [assetsFor('win32', 'x64').node.file]) {
   try { await access(path.join(windowsToolCache, file)); } catch { hasWindowsToolCache = false; }
 }
 test('published Windows target contains only documented entries, no unpack or owner-marker residue', { skip: !hasWindowsToolCache }, async () => {
@@ -216,30 +189,9 @@ test('published Windows target contains only documented entries, no unpack or ow
     const result = await fetchTools({ platform: 'win32', arch: 'x64', cacheDir: windowsToolCache, outDir: out });
     const target = path.join(out, 'win32-x64');
     const entries = (await readdir(target)).sort();
-    assert.deepEqual(entries, ['git', 'node', 'tools-source.json']);
+    assert.deepEqual(entries, ['node', 'tools-source.json']);
     assert.equal(result.node, 'win32-x64/node/node.exe');
-    assert.equal(result.git, 'win32-x64/git/cmd/git.exe');
+    assert.equal(result.git, undefined);
     assert.ok(entries.every((entry) => !entry.includes('unpack') && !entry.includes('owner')));
   } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test('drops dashed Git builtins but keeps transport commands and remote helpers', async (t) => {
-  const dir = await tmp();
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const core = path.join(dir, 'libexec', 'git-core');
-  await mkdir(core, { recursive: true });
-  await writeFile(path.join(core, 'git'), 'git binary');
-  await writeFile(path.join(core, 'git-remote-http'), 'curl helper');
-  await writeFile(path.join(core, 'git-sh-setup'), 'shell library');
-  const links = { 'git-fetch': 'git', 'git-commit': 'git', 'git-upload-pack': 'git', 'git-receive-pack': 'git', 'git-upload-archive': 'git', 'git-remote-ext': 'git', 'git-remote-https': 'git-remote-http' };
-  try {
-    for (const [name, target] of Object.entries(links)) await symlink(target, path.join(core, name));
-  } catch (error) {
-    if (error.code === 'EPERM' || error.code === 'ENOTSUP') { t.skip('creating a symlink needs extra privilege'); return; }
-    throw error;
-  }
-  const removed = await pruneDashedGitBuiltins(dir);
-  assert.deepEqual(removed.sort(), ['git-commit', 'git-fetch']);
-  assert.deepEqual((await readdir(core)).sort(), ['git', 'git-receive-pack', 'git-remote-ext', 'git-remote-http', 'git-remote-https', 'git-sh-setup', 'git-upload-archive', 'git-upload-pack']);
-  assert.deepEqual(await pruneDashedGitBuiltins(path.join(dir, 'no-libexec')), []);
 });

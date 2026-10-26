@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { systemGitDirectory } from './system-git.mjs';
 import { startFakeResponsesServer, sse } from '../../apps/cli/test/fixtures/fake-responses-server.ts';
 
 const execFileAsync = promisify(execFile);
@@ -31,7 +32,7 @@ export function validatePayloadDirectory(directory) {
   if (manifest.schemaVersion !== 1 || manifest.platform !== process.platform || manifest.arch !== process.arch) {
     throw new Error('Runtime payload schema or native target does not match this host');
   }
-  for (const key of ['node', 'git', 'coreEntry', 'cliEntry', 'webEntry', 'licenses']) {
+  for (const key of ['node', 'coreEntry', 'cliEntry', 'webEntry', 'licenses']) {
     const value = manifest[key];
     if (typeof value !== 'string' || !value || value.includes('\\') || path.posix.isAbsolute(value) || value.split('/').some((part) => !part || part === '.' || part === '..')) {
       throw new Error(`Runtime manifest has an invalid ${key} path`);
@@ -272,9 +273,9 @@ async function runSmoke(sourcePayload) {
     await cp(selected.root, install, { recursive: true, force: false, errorOnExist: true });
     const copied = validatePayloadDirectory(install);
     const node = path.join(install, ...copied.manifest.node.split('/'));
-    const git = path.join(install, ...copied.manifest.git.split('/'));
     const env = {
-      PATH: [path.dirname(git), process.platform === 'win32' ? path.join(systemRoot, 'System32') : '/usr/bin:/bin'].join(path.delimiter),
+      // Only the user's own git and the OS directories, as a desktop app launched from the shell would see.
+      PATH: [systemGitDirectory(), process.platform === 'win32' ? path.join(systemRoot, 'System32') : '/usr/bin:/bin'].join(path.delimiter),
       SystemRoot: systemRoot,
       WINDIR: systemRoot,
       TEMP: temporaryRoot,
@@ -382,7 +383,7 @@ async function runSmoke(sourcePayload) {
       const roomRequest = fake.requests.find((request) => request.url === '/v1/responses' && request.headers.authorization === 'Bearer fake-local-smoke-key-only');
       if (!roomRequest || !postedMessageId) throw new Error('Missing fake provider request or persisted user message id');
       const repo = path.join(home, 'data', 'repos', workspace);
-      historyBefore = await readGit(git, repo);
+      historyBefore = await readGit('git', repo);
       if (historyBefore.length !== 2 || !historyBefore.some((line) => line.includes('Installed runtime proof'))) throw new Error(`Knowledge Git operation did not produce the expected entry and init history: ${historyBefore.join('; ')}`);
       const settingsConfig = JSON.parse(await readFile(path.join(home, 'config.json'), 'utf8'));
       if (settingsConfig.model !== 'smoke-model') throw new Error('Settings were not persisted on disk');
@@ -401,7 +402,7 @@ async function runSmoke(sourcePayload) {
     if (!persistedMessages.some((item) => item.role === 'agent' && item.content === 'Installed smoke completed through the fake Responses provider.')) {
       throw new Error('Actual chat response did not persist across graceful restart');
     }
-    const historyAfterRestart = await readGit(git, path.join(home, 'data', 'repos', workspace));
+    const historyAfterRestart = await readGit('git', path.join(home, 'data', 'repos', workspace));
     if (JSON.stringify(historyAfterRestart) !== JSON.stringify(historyBefore)) throw new Error('Exact knowledge Git history did not persist across graceful restart');
 
     const webProbe = await fetch(`http://127.0.0.1:${core.webPort}/`);
@@ -422,7 +423,7 @@ async function runSmoke(sourcePayload) {
     const recoverySession = await ticketSession(forcedCrashRecovery.origin, recoveryUrl);
     const recovered = await jsonRequest(forcedCrashRecovery.origin, recoverySession.cookie, '/api/workspaces');
     if (!recovered.some((item) => item.id === workspace)) throw new Error('Workspace did not recover after forced core crash');
-    const recoveryHistory = await readGit(git, path.join(home, 'data', 'repos', workspace));
+    const recoveryHistory = await readGit('git', path.join(home, 'data', 'repos', workspace));
     if (JSON.stringify(recoveryHistory) !== JSON.stringify(historyAfterRestart)) throw new Error('Knowledge Git history changed across forced core crash recovery');
     if (fake.requests.some((request) => !request.url.startsWith('/v1/'))) throw new Error('Unexpected request escaped the fake provider server');
     const instanceAfter = JSON.parse(await readFile(path.join(home, 'instance.json'), 'utf8'));

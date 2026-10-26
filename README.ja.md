@@ -83,7 +83,7 @@ Linux で UID/GID が 1000 以外の場合は `.env` に `NEMA_UID` / `NEMA_GID`
 
 ## デスクトップアプリ（プレビュー）
 
-デスクトップアプリは、全体を 1 つのローカルプログラムにまとめます。ディスク上の PGlite データベース、単一オーナーのローカルコア、保護された同一オリジンのゲートウェイ、同梱の Node と Git を使い、Docker もデータベースサーバーも不要です。**現時点ではソースから自分でビルドする必要があり、公開版はありません。**
+デスクトップアプリは、全体を 1 つのローカルプログラムにまとめます。ディスク上の PGlite データベース、単一オーナーのローカルコア、保護された同一オリジンのゲートウェイ、同梱の Node を使い、Docker もデータベースサーバーも不要です。Git は PC にインストール済みのもの（2.31 以降）を使います。Git がない、または古い場合は起動時にその旨を表示し、https://git-scm.com/downloads を案内します。**現時点ではソースから自分でビルドする必要があり、公開版はありません。**
 
 | 項目 | 状態 |
 | --- | --- |
@@ -93,7 +93,7 @@ Linux で UID/GID が 1000 以外の場合は `.env` に `NEMA_UID` / `NEMA_GID`
 | 署名と更新 | インストーラーは**未署名**。自動更新なし |
 | 一般公開 | まだなし。第三者コンポーネントのソース対応の確認が未完了で、完了するまで公開しません |
 
-**ビルド（Windows x64）**：`npm ci` の後に `npm run desktop:make -- --platform win32 --arch x64` を実行します。成果物は `dist/desktop-artifacts/win32-x64/` に出力されます：`Nema-<バージョン>-win32-x64.exe`（NSIS インストーラー）と同名の `.zip`（ポータブル版）。ビルドは実行中の OS 向けのみで、ネイティブ C コンパイラーが必要です（Windows では Clang。[scripts/desktop/README.md](scripts/desktop/README.md) を参照）。
+**ビルド（Windows x64）**：`npm ci` の後に `npm run desktop:make -- --platform win32 --arch x64` を実行します。成果物は `dist/desktop-artifacts/win32-x64/` に出力されます：`Nema-<バージョン>-win32-x64.exe`（NSIS インストーラー）。ビルドは実行中の OS 向けのみで、ネイティブ C コンパイラーが必要です（Windows では Clang。[scripts/desktop/README.md](scripts/desktop/README.md) を参照）。
 
 **未署名インストーラーを初めて開くとき**：自分でビルドした、または内容を確認したファイルだけを開いてください。Windows の SmartScreen が「Windows によって PC が保護されました」と表示したら、「詳細情報」→「実行」を選びます。macOS 版は未検証です。公証されていないアプリは、通常どおり「システム設定 → プライバシーとセキュリティ」で「このまま開く」を選ぶ必要があります。
 

@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { extractFile } from '@electron/asar';
+import { systemGitDirectory } from './system-git.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const appVersion = JSON.parse(readFileSync(path.join(repo, 'apps/desktop/package.json'), 'utf8')).version;
@@ -208,9 +209,9 @@ async function smoke(args) {
   await mkdir(profile, { recursive: false });
   await mkdir(home, { recursive: true });
   await mkdir(codexHome, { recursive: false });
-  const git = path.join(payload, ...manifest.git.split('/'));
   const env = {
-    PATH: [path.dirname(git), path.join(systemRoot, 'System32')].join(path.delimiter),
+    // Only the user's own git and System32, as a desktop app launched from Explorer would see.
+    PATH: [systemGitDirectory(), path.join(systemRoot, 'System32')].join(path.delimiter),
     SystemRoot: systemRoot,
     WINDIR: systemRoot,
     TEMP: tempRoot,
