@@ -338,6 +338,10 @@ test('publication gate rejects an omitted production dependency notice instead o
   const missingPackage = path.join(f.payload, 'app/node_modules/no-license');
   await mkdir(missingPackage, { recursive: true });
   await writeFile(path.join(missingPackage, 'package.json'), JSON.stringify({ name: 'no-license', version: '4.5.6' }));
+  const bareReadme = path.join(f.payload, 'app/node_modules/readme-bare');
+  await mkdir(bareReadme, { recursive: true });
+  await writeFile(path.join(bareReadme, 'package.json'), JSON.stringify({ name: 'readme-bare', version: '1.0.0', license: 'MIT' }));
+  await writeFile(path.join(bareReadme, 'README.md'), '# readme-bare\n\nNo grant here.\n');
   const archive = path.join(f.root, 'node-source.tar.gz');
   await writeFile(archive, 'fixture source archive');
   const { createHash } = await import('node:crypto');
@@ -345,6 +349,24 @@ test('publication gate rejects an omitted production dependency notice instead o
   await writeFile(path.join(f.root, 'arbitrary.txt'), 'fixture source archive');
   await collectSourceMaterials({ payloadRoot: f.payload, target: 'win32-x64', appVersion: '0.1.0', toolsManifestPath: f.toolsManifest, sourceMaterials: completeInputs(sha256), upstreamNotices, inputRoot: f.root });
   await assert.rejects(validatePublicationEligibility(f.payload, { toolsManifestPath: f.toolsManifest }), /production dependency notice inventory has unresolved packages/i);
+});
+
+test('an MIT package README that contains the license grant satisfies the notice inventory', async (t) => {
+  const f = await rootFixture(t);
+  const upstreamNotices = await populateCompleteNotices(f);
+  const readmePackage = path.join(f.payload, 'app/node_modules/readme-mit');
+  await mkdir(readmePackage, { recursive: true });
+  await writeFile(path.join(readmePackage, 'package.json'), JSON.stringify({ name: 'readme-mit', version: '1.0.0', license: 'MIT' }));
+  await writeFile(path.join(readmePackage, 'README.md'), 'Permission is hereby granted, free of charge.\n\nTHE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY.\n');
+  await writeFile(path.join(f.payload, 'runtime/licenses/electron/LICENSES.chromium.html'), 'ffmpeg is LGPL v2.1 and shipped as its own library');
+  const archive = path.join(f.root, 'node-source.tar.gz');
+  await writeFile(archive, 'fixture source archive');
+  const { createHash } = await import('node:crypto');
+  const sha256 = createHash('sha256').update('fixture source archive').digest('hex');
+  await writeFile(path.join(f.root, 'arbitrary.txt'), 'fixture source archive');
+  await collectSourceMaterials({ payloadRoot: f.payload, target: 'win32-x64', appVersion: '0.1.0', toolsManifestPath: f.toolsManifest, sourceMaterials: completeInputs(sha256), upstreamNotices, inputRoot: f.root });
+  const result = await validatePublicationEligibility(f.payload, { toolsManifestPath: f.toolsManifest });
+  assert.equal(result.eligible, true);
 });
 
 test('release validation CLI requires an explicit native target and version', () => {

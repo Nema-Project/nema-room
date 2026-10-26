@@ -38,7 +38,7 @@ Fixture tests (`node --test scripts/desktop/staging.test.mjs`) validate layout a
 
 ## Source materials and release eligibility
 
-`source-materials.mjs` inventories the staged Node tree, application and Electron notices, vendored notices, production dependency license files, and generated font assets. It copies notices and upstream source archives/recipes into an inspectable bundle without extracting or executing them. Remote downloads are HTTPS-only, allowlisted to primary upstream hosts, immutable-ref-bound, and capped at 256 MiB each. Use `npm run desktop:collect-source-materials -- <payload-root> <ignored-bundle-output> <platform-arch> <app-version> <source-plan.json>`.
+`source-materials.mjs` inventories the staged Node tree, application and Electron notices, vendored notices, production dependency license files, and generated font assets. An MIT package that ships the license grant in its README and no separate license file uses that README as the notice. It copies notices and upstream source archives/recipes into an inspectable bundle without extracting or executing them. Remote downloads are HTTPS-only, allowlisted to primary upstream hosts, immutable-ref-bound, and capped at 256 MiB each. Use `npm run desktop:collect-source-materials -- <payload-root> <ignored-bundle-output> <platform-arch> <app-version> <source-plan.json>`.
 
 A source plan may set `inputRoot` to a relative directory under the directory containing that plan. Local `sourcePath` entries for archives or notices are resolved relative to `inputRoot`; paths must remain inside that root and symlink/junction ancestors are rejected. Omit `inputRoot` for URL-only plans. The five-argument CLI form is unchanged; it does not infer a local input root from the working directory.
 

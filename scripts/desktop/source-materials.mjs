@@ -169,6 +169,16 @@ async function inventoryFontAssets(root) {
   await visit(base);
   return assets.sort((a, b) => a.path.localeCompare(b.path));
 }
+async function mitGrantReadme(packageDir, packageRel) {
+  for (const name of ['README.md', 'README', 'README.markdown']) {
+    const absolute = path.join(packageDir, name);
+    const info = await lstat(absolute).catch(() => null);
+    if (!info?.isFile() || info.isSymbolicLink()) continue;
+    const text = await readFile(absolute, 'utf8');
+    if (/permission is hereby granted/i.test(text) && /the software is provided "as is"/i.test(text)) return [`${packageRel}/${name}`];
+  }
+  return [];
+}
 async function inventoryProductionDependencies(root) {
   const packages = [];
   const missing = [];
@@ -208,7 +218,9 @@ async function inventoryProductionDependencies(root) {
     const notices = await noticeFiles(packageDir, packageRel);
     const isFirstParty = metadata.name?.startsWith('@nema/');
     const license = metadata.license ?? (isFirstParty ? 'MIT (root application license)' : null);
-    const associatedNoticePaths = isFirstParty ? ['runtime/licenses/application'] : notices;
+    // Some MIT packages (pg-types, pgpass) ship the grant in README.md and no LICENSE file.
+    const readmeNotice = notices.length || license !== 'MIT' ? [] : await mitGrantReadme(packageDir, packageRel);
+    const associatedNoticePaths = isFirstParty ? ['runtime/licenses/application'] : (notices.length ? notices : readmeNotice);
     const record = { name: metadata.name ?? null, version: metadata.version ?? null, license, packageRoot: packageRel, noticePaths: associatedNoticePaths };
     packages.push(record);
     if (!record.name || !record.version) missing.push({ packageRoot: packageRel, reason: 'package name or version metadata is missing' });
