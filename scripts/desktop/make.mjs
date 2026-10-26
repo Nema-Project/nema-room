@@ -49,7 +49,7 @@ export function builderConfig(payloadDir, outputDir, target) {
   if (target.platform === 'win32') {
     return {
       ...common,
-      win: { target: ['nsis', 'zip'], icon: path.join(desktopDir, 'assets/icon.ico'), signAndEditExecutable: true, signExecutable: false },
+      win: { target: ['nsis'], icon: path.join(desktopDir, 'assets/icon.ico'), signAndEditExecutable: true, signExecutable: false },
       nsis: {
         oneClick: false,
         perMachine: false,
@@ -66,7 +66,7 @@ export function builderConfig(payloadDir, outputDir, target) {
     ...common,
     mac: {
       icon: path.join(desktopDir, 'assets/icon.icns'),
-      target: ['dmg', 'zip'],
+      target: ['dmg'],
       identity: '-',
       hardenedRuntime: false,
       category: 'public.app-category.productivity',
@@ -119,8 +119,8 @@ async function make(args) {
   await writeFile(configPath, JSON.stringify(builderConfig(payloadDir, outputDir, target), null, 2));
   const cliPath = path.join(repo, 'node_modules/electron-builder/cli.js');
   const argsForBuilder = [cliPath, `--${target.platform === 'win32' ? 'win' : 'mac'}`, `--${target.arch}`, '--publish', 'never', '--config', configPath];
-  if (target.platform === 'win32') argsForBuilder.splice(2, 0, 'nsis', 'zip');
-  else argsForBuilder.splice(2, 0, 'dmg', 'zip');
+  if (target.platform === 'win32') argsForBuilder.splice(2, 0, 'nsis');
+  else argsForBuilder.splice(2, 0, 'dmg');
   const env = {
     ...process.env,
     ELECTRON_BUILDER_CACHE: path.join(repo, '.superpowers/sdd/2026-10-24-desktop-implementation/tool-cache/electron-builder'),

@@ -13,8 +13,8 @@ export function checksumFileName(version, target) {
 export function expectedAssets(version, target) {
   if (!expectedTargets.includes(target)) throw new Error(`Unexpected release target: ${target}`);
   const platform = target.split('-')[0];
-  const base = `Nema-${version}-${target}`;
-  return [`${base}.${installerExtension[platform]}`, `${base}.zip`];
+  // Installers only: the portable ZIPs duplicated the whole app beside each installer.
+  return [`Nema-${version}-${target}.${installerExtension[platform]}`];
 }
 
 async function hashFile(file) {
@@ -33,7 +33,7 @@ export function parseChecksums(text, source) {
   return entries;
 }
 
-// Run in each build job after packaging: records the exact installer and ZIP the publish job compares against.
+// Run in each build job after packaging: records the exact installer the publish job compares against.
 export async function writeTargetChecksums(directory, version, target) {
   const lines = [];
   for (const name of expectedAssets(version, target)) {
