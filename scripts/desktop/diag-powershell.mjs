@@ -9,10 +9,10 @@ import { fileURLToPath } from 'node:url';
 const exe = path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 const script = "$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User; $item = Get-Item -LiteralPath $env:NEMA_PRIVATE_PATH -Force; $null = $item.GetAccessControl(); 'ok'";
 
-function timeAcl(env, label) {
+function timeAcl(env, label, body = script) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'acl-'));
   const started = Date.now();
-  const result = spawnSync(exe, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
+  const result = spawnSync(exe, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', body], {
     env: { ...env, NEMA_PRIVATE_PATH: dir }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 90_000,
   });
   return `${label.padEnd(34)} ${String(Date.now() - started).padStart(6)}ms status=${result.status} ${result.error?.code ?? ''} ${(result.stderr?.toString() ?? '').trim().slice(0, 200)}`;
@@ -30,7 +30,16 @@ const sys32 = path.join(process.env.SystemRoot, 'System32');
 // Smoke env -> Electron -> childEnvironment() keeps only these keys.
 const coreEnv = { PATH: `C:\\Program Files\\Git\\cmd;${sys32}`, SystemRoot: process.env.SystemRoot, WINDIR: process.env.SystemRoot, TEMP: tempRoot, TMP: tempRoot, HOME: tempRoot, LANG: 'en_US.UTF-8' };
 
+console.log(`runner PSModulePath=${process.env.PSModulePath}`);
 console.log(timeAcl(process.env, 'full env, cold'));
+console.log(timeAcl(coreEnv, 'core env, exit 0', 'exit 0'));
+console.log(timeAcl(coreEnv, 'core env, .NET only', "$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User; $null = [System.IO.DirectoryInfo]::new($env:NEMA_PRIVATE_PATH).GetAccessControl(); 'ok'"));
+console.log(timeAcl(coreEnv, 'core env, GetCurrent only', '$null = [System.Security.Principal.WindowsIdentity]::GetCurrent().User'));
+console.log(timeAcl(coreEnv, 'core env, Get-Item only', '$null = Get-Item -LiteralPath $env:NEMA_PRIVATE_PATH -Force'));
+console.log(timeAcl({ ...coreEnv, PSModulePath: '' }, 'core env + empty PSModulePath'));
+for (const part of (process.env.PSModulePath ?? '').split(';').filter(Boolean)) {
+  console.log(timeAcl({ ...coreEnv, PSModulePath: part }, `core env + PSModulePath=${part}`.slice(0, 120)));
+}
 console.log(timeAcl(process.env, 'full env, warm'));
 console.log(timeAcl(coreEnv, 'core env'));
 console.log(timeAcl({ ...coreEnv, USERPROFILE: process.env.USERPROFILE }, 'core env + real USERPROFILE'));
