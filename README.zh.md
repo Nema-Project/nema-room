@@ -1,5 +1,7 @@
 # Nema Room
 
+[项目路线图、TODO 优先级与验收台账](ROADMAP.md)
+
 <img src="docs/design/brand/nema-room-preview.png" width="88" height="88" alt="Nema Room 图标" />
 
 **把零散讨论变成可追溯的需求，再交给编码 Agent 实现。**
