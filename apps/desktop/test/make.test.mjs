@@ -14,9 +14,9 @@ describe('native Electron packaging configuration', () => {
     expect(() => parseMakeArgs(['--platform', 'darwin', '--arch', 'x64'], { platform: 'darwin', arch: 'x64' })).toThrow(/unsupported/i);
   });
 
-  it('builds Windows installer and portable ZIP with bundled resources outside ASAR', () => {
+  it('builds only the Windows NSIS installer with bundled resources outside ASAR', () => {
     const config = builderConfig('C:/staged/payload', 'C:/dist', { platform: 'win32', arch: 'x64' });
-    expect(config.win.target).toEqual(['nsis', 'zip']);
+    expect(config.win.target).toEqual(['nsis']);
     expect(config.nsis).toMatchObject({ oneClick: false, perMachine: false, deleteAppDataOnUninstall: false, differentialPackage: false });
     expect(config.asar).toBe(true);
     expect(config.files).toContain('preload.cjs');
@@ -42,17 +42,18 @@ describe('native Electron packaging configuration', () => {
     }
   });
 
-  it('configures macOS DMG and ZIP with explicit ad-hoc signing only', () => {
+  it('builds only the macOS DMG with explicit ad-hoc signing only', () => {
     const config = builderConfig('/staged/payload', '/dist', { platform: 'darwin', arch: 'arm64' });
-    expect(config.mac.target).toEqual(['dmg', 'zip']);
+    expect(config.mac.target).toEqual(['dmg']);
     expect(config.mac).toMatchObject({ identity: '-', hardenedRuntime: false });
     expect(config.mac).not.toHaveProperty('notarize');
     expect(config.mac.icon.replaceAll('\\', '/')).toMatch(/apps\/desktop\/assets\/icon\.icns$/);
   });
 
-  it('uses the standard Windows portable ZIP by default and accepts an explicit artifact path', () => {
-    expect(parseSmokeArgs([]).zipFile.replaceAll('\\', '/')).toContain('dist/desktop-artifacts/win32-x64/Nema-0.1.0-win32-x64.zip');
-    expect(parseSmokeArgs(['--zip', 'dist/desktop-artifacts-final/win32-x64/Nema-0.1.0-win32-x64.zip']).zipFile.replaceAll('\\', '/')).toContain('desktop-artifacts-final');
-    expect(() => parseSmokeArgs(['--zip', 'a.zip', '--zip', 'b.zip'])).toThrow(/usage/i);
+  it('smokes the standard Windows installer by default and accepts an explicit installer path', () => {
+    expect(parseSmokeArgs([]).installer.replaceAll('\\', '/')).toContain('dist/desktop-artifacts/win32-x64/Nema-0.1.0-win32-x64.exe');
+    expect(parseSmokeArgs(['--installer', 'dist/desktop-artifacts-final/win32-x64/Nema-0.1.0-win32-x64.exe']).installer.replaceAll('\\', '/')).toContain('desktop-artifacts-final');
+    expect(() => parseSmokeArgs(['--installer', 'a.exe', '--installer', 'b.exe'])).toThrow(/usage/i);
+    expect(() => parseSmokeArgs(['--zip', 'a.zip'])).toThrow(/usage/i);
   });
 });
