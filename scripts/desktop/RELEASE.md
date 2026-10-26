@@ -8,7 +8,7 @@ No desktop release is published yet. Nothing in this repository links to a downl
 
 ## How the workflow behaves
 
-- Branch pushes do not run it. A pull request that touches `apps/desktop/`, `scripts/desktop/`, `package-lock.json` or the workflow builds, packages (`--publish never`) and smokes Windows x64 and macOS arm64 natively. Nothing is published. Intel Macs (macOS x64) are not supported.
+- Branch pushes do not run it. A pull request that changes `apps/desktop/` or `scripts/desktop/` builds, packages (`--publish never`) and smokes Windows x64 and macOS arm64 natively. A lockfile-only or workflow-only change does not. Nothing is published. Intel Macs (macOS x64) are not supported.
 - Manual run: `gh workflow run desktop-release.yml --ref <branch> -f target=<all|win32-x64|darwin-arm64>` builds only the chosen target(s). Use a single target while fixing one platform instead of pushing and rebuilding all of them.
 - Push of a `v<SemVer>` tag: builds and smokes both targets, plus source-material collection, then one `publish` job (`contents: write`) that runs only when every target succeeded.
 - The tag must be strict SemVer (`v1.2.3`, `v1.2.3-rc.1`, no build metadata) and equal the version in `apps/desktop/package.json` and `apps/local/package.json`. A hyphenated version is published as a prerelease and never as latest.
