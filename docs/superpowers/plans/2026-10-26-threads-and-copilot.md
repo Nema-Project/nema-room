@@ -284,11 +284,11 @@ Rule changes (Chinese text is the builder's wording; these assertions pin the co
 - `openThreadWindow(url, origin)`: one window per canonical thread path — focus the existing one if open, delivering/navigating to a new validated `messageId` focus target when supplied. Uses `createSecureWindowOptions(origin)` (the app page, with preload, like the main window), not the diagram options. Its navigation is limited to its own canonical thread path with the same validated optional focus query.
 - `setWindowOpenHandler` handles thread URLs before diagrams; everything else unchanged.
 
-- [ ] **Step 1: Failing tests:** `opens a same-origin thread URL in its own window`; `a second open of the same thread focuses the existing window`; `thread URL with an arbitrary query is denied`; `valid messageId query focuses the same thread window`; `invalid/duplicate messageId or a hash is denied`; existing diagram and external-link tests stay green.
-- [ ] **Step 2: Run** `npx vitest run --project @nema/desktop` → FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** → PASS.
-- [ ] **Step 5: Commit** `feat(desktop): open threads in their own window`
+- [x] **Step 1: Failing tests:** `opens a same-origin thread URL in its own window`; `a second open of the same thread focuses the existing window`; `thread URL with an arbitrary query is denied`; `valid messageId query focuses the same thread window`; `invalid/duplicate messageId or a hash is denied`; existing diagram and external-link tests stay green.
+- [x] **Step 2: Run** `npx vitest run --project @nema/desktop` → FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** → PASS.
+- [x] **Step 5: Commit** `feat(desktop): open threads in their own window`
 
 ### Task 9: Anti-goal checks, docs
 
