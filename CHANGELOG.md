@@ -2,10 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- Binding a repository shows a progress line while its code index runs. When the index finishes, chat says it is ready and code questions can start. Drawing the architecture diagram keeps a progress line and names that work.
+
 ### Changed
 
 - The landing page and desktop status now describe the 0.1.1 installers. The app uses Git already installed on the machine.
-- The README shows the room and an entry opened from a sample discussion.
+- Each README shows the room and an opened entry from a sample discussion, in that language.
+- The Chinese guide is `README.zh.md` again. `README.md` stays the English default.
 
 ## [0.1.1] - 2026-10-26
 

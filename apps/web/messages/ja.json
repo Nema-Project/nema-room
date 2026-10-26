@@ -49,6 +49,8 @@
   "chat.you": "あなた",
   "chat.offline": "Agent オフライン：メッセージはキューに入り、nema daemon の復帰後に処理されます",
   "chat.working": "整理中",
+  "chat.indexing": "{label} を索引しています",
+  "chat.drawingDiagram": "アーキテクチャ図を描いています",
   "chat.askedQuestion": "確認 · {id}",
   "chat.answer": "回答する",
   "chat.answerFor": "{id} に回答",

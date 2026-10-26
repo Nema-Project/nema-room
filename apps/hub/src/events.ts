@@ -12,7 +12,9 @@ export type HubEvent =
   | { type: "knowledge.changed"; entryId: string }
   | { type: "daemon.status"; connected: boolean }
   | { type: "workspace.deleted"; workspaceId: string }
-  | { type: "repo.moved"; repoId: string; mainRef: string; from: string | null; to: string };
+  | { type: "repo.moved"; repoId: string; mainRef: string; from: string | null; to: string }
+  /** Bind-time code index. `running` is the progress line; `done` and `failed` clear it. */
+  | { type: "repo.index"; repoId: string; label: string; status: "running" | "done" | "failed" };
 
 type Listener = (workspaceId: string, e: HubEvent) => void;
 

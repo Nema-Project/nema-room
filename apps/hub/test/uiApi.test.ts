@@ -428,9 +428,9 @@ describe("ui api", () => {
   });
 
   test("tasks/active returns the running task or null", async () => {
-    expect(await json(await req("GET", `/api/workspaces/${ws}/tasks/active`))).toEqual({ running: null });
+    expect(await json(await req("GET", `/api/workspaces/${ws}/tasks/active`))).toEqual({ running: null, indexing: [] });
     await postUserMessage(db, ws, "memo");
-    expect(await json(await req("GET", `/api/workspaces/${ws}/tasks/active`))).toEqual({ running: null }); // queued only
+    expect(await json(await req("GET", `/api/workspaces/${ws}/tasks/active`))).toEqual({ running: null, indexing: [] }); // queued only
     const t = (await claimNextTask(db, "d1"))!;
     const r = await json(await req("GET", `/api/workspaces/${ws}/tasks/active`));
     expect(r.running.id).toBe(t.id);
@@ -439,7 +439,7 @@ describe("ui api", () => {
     expect(r.running).not.toHaveProperty("daemonId");
     expect(JSON.stringify(r)).not.toContain(t.runToken!);
     await finishTask(db, t.id, { ok: true });
-    expect(await json(await req("GET", `/api/workspaces/${ws}/tasks/active`))).toEqual({ running: null });
+    expect(await json(await req("GET", `/api/workspaces/${ws}/tasks/active`))).toEqual({ running: null, indexing: [] });
   });
 
   test("unknown workspace → 404", async () => {

@@ -98,6 +98,21 @@ describe("Chat", () => {
     await mount(true);
     expect(screen.queryByRole("status")).toBeNull();
   });
+  it("shows an index line until that index finishes", async () => {
+    const ref = await mount(true);
+    act(() => ref.current!.handleEvent({ type: "repo.index", repoId: "r1", label: "API", status: "running" }));
+    expect(screen.getByText("Indexing API")).toBeTruthy();
+    act(() => ref.current!.handleEvent({ type: "repo.index", repoId: "r1", label: "API", status: "done" }));
+    expect(screen.queryByText("Indexing API")).toBeNull();
+  });
+  it("names architecture drawing until the agent reports progress", async () => {
+    const ref = await mount(true);
+    act(() => ref.current!.handleEvent({ type: "message.created", message: m("s", "为仓库 API（repo_x）画架构图：用 code__ 函数读代码。", "system") }));
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t9", workspaceId: "w1", messageId: "s", status: "running", error: null } }));
+    expect(screen.getByText("Drawing the architecture diagram")).toBeTruthy();
+    act(() => ref.current!.handleEvent({ type: "task.progress", taskId: "t9", text: "reading src" }));
+    expect(screen.getByText(/reading src/)).toBeTruthy();
+  });
   it("shows progress for a running task and refetches on resync", async () => {
     const ref = await mount(true);
     act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t1", workspaceId: "w1", messageId: "a", status: "running", error: null } }));

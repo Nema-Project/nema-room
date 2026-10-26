@@ -79,7 +79,8 @@ export const createThread = (id: string, content: string, quoteMessageId?: strin
 export const markThreadRead = (id: string, threadId: string, throughSeq: number) => request<void>(`${w(id)}/threads/${encodeURIComponent(threadId)}/read`, { method: "POST", body: { throughSeq } });
 export const nextAttention = (id: string) => request<{ threadId: string } | null>(`${w(id)}/attention/next`);
 export const withdrawEntry = (id: string, entryId: string) => request<Entry>(`${e(id, entryId)}/withdraw`, { method: "POST", body: {} });
-export const getActiveTask = (id: string) => request<{ running: Task | null }>(`${w(id)}/tasks/active`);
+export const getActiveTask = (id: string) =>
+  request<{ running: Task | null; indexing?: { repoId: string; label: string }[] }>(`${w(id)}/tasks/active`);
 export const listEntries = (id: string) => request<EntryListItem[]>(`${w(id)}/entries`);
 export const getEntry = (id: string, eid: string) => request<Entry>(e(id, eid));
 export const putEntry = (id: string, eid: string, input: Omit<UpsertEntryInput, "id">) =>

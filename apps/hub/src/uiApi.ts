@@ -11,7 +11,7 @@ import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, editUserMessage, getMessage, 
 import { vendoredArchify, type Archify } from "./diagrams.js";
 import { PluginError, daemonHttpStatus, listExtensions, pluginsForUi, setPluginState, workspacePluginState } from "./plugins.js";
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
-import { RepoError, bindRepo, getRepo, listRepos, previewRepo, syncBoundRepos, unbindRepo, updateRepo } from "./repos.js";
+import { RepoError, bindRepo, getRepo, listIndexing, listRepos, previewRepo, syncBoundRepos, unbindRepo, updateRepo } from "./repos.js";
 import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
 import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, repoPath, updateWorkspace } from "./workspaces.js";
 import { attentionCounts, ensureThread, getThread, listThreads, markThreadRead, nextAttentionResult } from "./threads.js";
@@ -365,8 +365,9 @@ export function uiRoutes(deps: UiDeps): Hono {
   });
 
   app.get("/workspaces/:id/tasks/active", async (c) => {
-    const running = await getRunningTask(db, c.req.param("id")!);
-    return c.json({ running: running ? toUiTask(running) : null });
+    const id = c.req.param("id")!;
+    const running = await getRunningTask(db, id);
+    return c.json({ running: running ? toUiTask(running) : null, indexing: listIndexing(id) });
   });
 
   app.post("/workspaces/:id/messages", async (c) => {
