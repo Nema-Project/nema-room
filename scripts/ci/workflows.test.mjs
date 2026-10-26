@@ -58,3 +58,39 @@ test('reusable verification checks the supplied ref with the complete existing s
   assert.ok(runs.indexOf('npm run typecheck') < runs.indexOf('npm test -- --maxWorkers=2'));
   assert.equal(verify.jobs.test.steps.find(s => s.run === 'docker compose down').if, 'always()');
 });
+
+// Evaluate the small Actions boolean expression subset used by these job gates.
+function condition(value, context) {
+  let source = expr(value);
+  source = source.replace(/always\(\)/g, 'true').replace(/cancelled\(\)/g, 'false');
+  source = source.replace(/needs\.[\w.]+|github\.event_name/g, key => JSON.stringify(key.split('.').reduce((v,k) => v?.[k], context) ?? ''));
+  assert.match(source, /^[\s\w'"!&|=().-]+$/);
+  return Function(`"use strict"; return (${source});`)();
+}
+function assertRelease(release) {
+  const {plan,verify,build,publish} = release.jobs;
+  assert.equal(release.on.workflow_dispatch.inputs.verify_full.default, false);
+  assert.equal(verify.uses, './.github/workflows/verify.yml');
+  assert.equal(expr(verify.with.checkout_ref), 'needs.plan.outputs.commit');
+  assert.ok(plan.outputs.commit); assert.ok(plan.outputs.verification_required);
+  assert.deepEqual([...build.needs].sort(), ['plan','verify']);
+  assert.deepEqual([...publish.needs].sort(), ['build','plan','verify']);
+  for (const job of [build,publish]) for (const step of checkout(job)) assert.equal(expr(step.with.ref), 'needs.plan.outputs.commit');
+  for (const required of ['true','false']) for (const result of ['success','failure','cancelled','skipped','']) {
+    const context = {github:{event_name:'push'}, needs:{plan:{result:'success',outputs:{release:required,verification_required:required}}, verify:{result},build:{result:'success'}}};
+    assert.equal(condition(build.if,context), result === 'success' || (required === 'false' && result === 'skipped'), `build ${required}/${result}`);
+    assert.equal(condition(publish.if,context), required === 'true' && result === 'success', `publish ${required}/${result}`);
+    context.github.event_name='workflow_dispatch';
+    assert.equal(condition(publish.if,context), false, 'manual dispatch never publishes, even on a tag');
+  }
+  for (const failed of ['plan','build']) {
+    const context={github:{event_name:'push'},needs:{plan:{result:'success',outputs:{release:'true',verification_required:'true'}},verify:{result:'success'},build:{result:'success'}}};
+    for(const result of ['failure','cancelled','skipped','']) { context.needs[failed].result=result; assert.equal(condition(publish.if,context),false); }
+  }
+}
+
+test('release gates bind all stages to one SHA and fail closed on verification results', () => {
+  const release = read('desktop-release'); assertRelease(release);
+  const wrongRef=structuredClone(release); checkout(wrongRef.jobs.build)[0].with.ref='main'; assert.throws(()=>assertRelease(wrongRef));
+  const missingVerify=structuredClone(release); missingVerify.jobs.publish.needs=['plan','build']; assert.throws(()=>assertRelease(missingVerify));
+});

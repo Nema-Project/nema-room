@@ -77,7 +77,7 @@ jobs:
       - run: npm ci
       # Spawned test fixtures resolve @nema/* through compiled output, so build it first.
       - run: npm run typecheck
-      - run: node --test scripts/ci/*.test.mjs
+      - run: node --test scripts/ci/*.test.mjs scripts/desktop/release-commit.test.mjs scripts/desktop/release.test.mjs scripts/release-notes.test.mjs
       - run: npm test -- --maxWorkers=2
       - run: npm run build -w apps/hub
       - run: npm run build -w apps/cli

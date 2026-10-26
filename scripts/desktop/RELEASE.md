@@ -1,42 +1,67 @@
 # Desktop release checklist
 
-No desktop release is published yet. Nothing in this repository links to a download, and this checklist does not change that. Local workflow and script validation is not a published release.
+Desktop preview releases exist for Windows x64 and macOS ARM64. This checklist separates automated verification from native installation and upgrade acceptance.
+
+## Rollout status and supported tags
+
+**Release-assurance rollout is not activated yet.** After the reviewed implementation is merged, record its actual main deployment SHA and successful verification/rehearsal runs in [the evidence record](../../docs/reviews/2026-10-26-p0-release-assurance.md). Do not use a placeholder SHA or create a release tag before that checkpoint.
+
+GitHub executes the workflow stored in the tagged commit. New safeguards cannot protect earlier commits retroactively. Supported release targets must descend from the recorded rollout commit and be reachable from `origin/main`; pre-rollout tags are unsupported. Historical releases are unchanged. This is not an organization-wide immutable policy against writers changing workflows.
+
+Before intentionally creating any tag, fetch main and check both ancestry relations, substituting the **recorded real SHAs**:
+
+```sh
+git fetch origin main
+git merge-base --is-ancestor "$ROLLOUT_COMMIT" "$RELEASE_COMMIT"
+git merge-base --is-ancestor "$RELEASE_COMMIT" origin/main
+```
+
+Both commands must exit 0. `ROLLOUT_COMMIT` must come from the deployment evidence, never an arbitrary older commit. Tag creation and publication require separate authorization.
 
 ## Publication gate
 
-`.github/workflows/desktop-release.yml` runs `npm run desktop:validate-release` for every target payload before it creates anything. The gate fails closed. Node (MIT), Inter and JetBrains Mono (OFL), and Electron's ffmpeg (LGPL) are notice obligations: the license text must be in the payload, and ffmpeg must be the separate library inside the Electron distribution. A source archive is not required for those three. Do not push a release tag until `desktop:validate-release` prints `Release eligible` for `win32-x64` and `darwin-arm64`. Do not work around the gate.
+The tag preflight resolves lightweight or annotated tags, rejects a moved tag and off-main commits, and records one immutable commit. The reusable `verify.yml` suite checks that exact SHA before expensive builds. Failed, cancelled, skipped or missing required verification blocks both tag builds and publication. Build and publish checkouts use that same SHA, and release metadata is checked against it.
 
-## How the workflow behaves
+The complete Windows/macOS platform checks and Ubuntu application tests, web build and Compose checks are retained. Existing version/changelog preflight, payload/license/source validation, asset hashes, draft handling and refusal to overwrite a published release remain required. `desktop:validate-release` must report `Release eligible` for both targets. Node (MIT), Inter and JetBrains Mono (OFL), and Electron ffmpeg (LGPL) retain their notices; ffmpeg remains a separate library. Do not bypass any validator.
 
-- Branch pushes do not run it. A pull request that changes `apps/desktop/` or `scripts/desktop/` builds, packages (`--publish never`) and smokes Windows x64 and macOS arm64 natively. A lockfile-only or workflow-only change does not. Nothing is published. Intel Macs (macOS x64) are not supported.
-- Manual run: `gh workflow run desktop-release.yml --ref <branch> -f target=<all|win32-x64|darwin-arm64>` builds only the chosen target(s). Use a single target while fixing one platform instead of pushing and rebuilding all of them.
-- Push of a `v<SemVer>` tag: builds and smokes both targets, plus source-material collection, then one `publish` job (`contents: write`) that runs only when every target succeeded.
-- The tag must be strict SemVer (`v1.2.3`, `v1.2.3-rc.1`, no build metadata) and equal the version in `apps/desktop/package.json` and `apps/local/package.json`. A hyphenated version is published as a prerelease and never as latest.
-- Concurrency is scoped to the ref and never cancels a tag run, so a second attempt on the same tag waits.
-- The publish job refuses a tag whose release is already published. A draft left by a failed attempt is reused only if it holds nothing but assets of this release; otherwise the job refuses.
-- Assets per target: installer (`.exe` or `.dmg`), portable ZIP, and `SHA256SUMS-<version>-<target>.txt`. The publish job adds `SHA256SUMS-<version>.txt` and `release-manifest-<version>.json` (sizes, hashes, commit, run id).
-- macOS packaged-app smoke is not automated: only the staged-payload runtime smoke runs there. Windows runs the packaged portable ZIP smoke.
+## Workflow behavior and safe rehearsal
 
-## Before the first tag
+- Branch pushes do not run desktop builds. PRs touching `apps/desktop/` or `scripts/desktop/` build both targets without publication. Workflow/lockfile-only changes use CI and an explicit rehearsal.
+- Manual runs build selected targets and **never publish, including dispatches on tags**. Set `verify_full=true` for complete verification before packaging:
 
-1. `npm run desktop:validate-release -- <payload> <platform-arch> <version>` prints `Release eligible` for `win32-x64` and `darwin-arm64`.
-2. The version in both package manifests is the intended first release version; no tag has been created for it.
-3. The release commit is on the intended branch and a manual `desktop-release.yml` run with `target=all` on that commit is green for both targets.
-4. The tag is created intentionally, by a person, on that commit: `git tag v<version>` then `git push origin v<version>`. Never tag automatically.
-5. After the run, the release is checked as below before anyone is told it exists.
+  ```sh
+  gh workflow run desktop-release.yml --ref <reviewed-branch> -f target=all -F verify_full=true
+  ```
 
-## Native first-install checks
+  GitHub may require the workflow on the default branch before this input is available. Record a deferred rehearsal instead of creating a release tag. Normal manual builds default to `verify_full=false`; `target` may be `all`, `win32-x64` or `darwin-arm64`.
+- Only a push of a strict `v<SemVer>` tag can publish. Version must equal both desktop/local manifests and have changelog notes; no build metadata. Hyphenated versions are prereleases and never latest.
+- Tag runs build both targets and collect source materials; publication additionally validates every payload and asset. Only publish receives `contents:write`. Verification is read-only and uses no secrets.
+- Concurrency is scoped to each workflow/ref; tag runs are never cancelled by superseded PR runs.
+- Existing published releases are never overwritten. A previous draft is reused only if its assets belong to this release.
+- Assets: two installers (`.exe`, `.dmg`), two per-target checksum files, combined `SHA256SUMS-<version>.txt`, and `release-manifest-<version>.json`. No portable ZIP is published.
+- Windows automation installs and smokes the NSIS installer. macOS automation checks only the staged runtime; it does not prove DMG installation, Finder startup, upgrade or recovery behavior.
 
-The installers are not notarized or Developer ID signed. Expect OS prompts and record what you actually saw.
+## Before an authorized release
 
-- Windows x64: run the NSIS installer. SmartScreen will likely show "Windows protected your PC" (More info, Run anyway). Install to the default and to a path with spaces. Launch, create a workspace, send a chat with a configured provider, quit from the tray, relaunch and confirm data persisted. Uninstall and confirm user data is kept. Also unzip the portable ZIP and launch it.
-- macOS arm64 (an Apple Silicon machine): open the DMG, drag the app to Applications. Gatekeeper will block an ad-hoc signed app downloaded from the web: use System Settings, Privacy and Security, Open Anyway (or right-click Open). Launch, create a workspace, chat, quit, relaunch and confirm persistence. Repeat once from the ZIP.
-- On every machine confirm `Nema CLI` (`report install --help`) and the browser launcher run from the bundled payload. Node is bundled. Git must already be installed (2.31 or later); on macOS, Finder also searches Homebrew and MacPorts.
+1. Verify rollout ancestry and successful complete CI/rehearsal for the intended commit. Record exact SHAs and run URLs.
+2. Check versions, changelog, payload validation and supported asset set for both targets. Review unresolved [roadmap](../../ROADMAP.md) acceptance, including P0-03/P0-04.
+3. Confirm the actual main ruleset requires the observed GitHub Actions `CI gate` and an up-to-date branch; YAML alone does not activate this setting.
+4. Confirm [private vulnerability reporting](../../SECURITY.md) is enabled and the form is accessible to a legitimate non-admin reporter. If unverified, retain blocked status and never request sensitive public reports.
+5. A person with release authorization creates the new tag on the verified commit. Do not automatically tag as part of CI testing.
+6. After publication, verify anonymous downloads and hashes before announcing availability.
+
+## Native installation checks
+
+Windows installers are unsigned; macOS packages are ad-hoc signed and not notarized. Record actual OS prompts.
+
+- Windows x64: install with NSIS to default and spaced paths, launch, create a workspace, chat with a configured provider, quit from the tray, relaunch and confirm persistence. Uninstall and confirm data is preserved.
+- macOS ARM64: install via DMG, launch from Finder, handle the OS's explicit Open Anyway flow as needed, create a workspace, chat, quit and relaunch. Check background-process cleanup separately.
+- Check bundled `Nema CLI` (`report install --help`) and browser launchers. Node is bundled; system Git 2.31+ is required.
+- Upgrade/recovery acceptance uses disposable backed-up data and remains separate from first-install smoke.
 
 ## Anonymous download and hash verification
 
-1. In a private browser window, or with `curl` and no token, open the release page and download every asset.
-2. Confirm the asset list is exactly the two installers, two ZIPs, two per-target checksum files, `SHA256SUMS-<version>.txt` and `release-manifest-<version>.json`.
-3. Verify hashes: `sha256sum -c SHA256SUMS-<version>.txt` (Linux), `shasum -a 256 -c SHA256SUMS-<version>.txt` (macOS), or compare `Get-FileHash -Algorithm SHA256 <file>` output on Windows with the listed values.
-4. Confirm the release is marked prerelease only for hyphenated versions and is not latest in that case.
-5. Only after this passes, record the public download URLs in the README and plan as live.
+1. Without an authenticated session, download every asset from the release page.
+2. Confirm exactly two installers, two per-target checksum files, combined checksums and the release manifest.
+3. Verify `sha256sum -c SHA256SUMS-<version>.txt`, macOS `shasum -a 256 -c ...`, or Windows `Get-FileHash -Algorithm SHA256` against the published list.
+4. Confirm manifest commit/run identity and prerelease/latest status, then record the public URLs and results.
