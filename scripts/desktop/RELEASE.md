@@ -20,7 +20,7 @@ Both commands must exit 0. `ROLLOUT_COMMIT` must come from the deployment eviden
 
 ## Publication gate
 
-The tag preflight resolves lightweight or annotated tags, rejects a moved tag and off-main commits, and records one immutable commit. The reusable `verify.yml` suite checks that exact SHA before expensive builds. Failed, cancelled, skipped or missing required verification blocks both tag builds and publication. Build and publish checkouts use that same SHA, and release metadata is checked against it.
+The tag preflight resolves lightweight or annotated tags, rejects a moved tag and off-main commits, and records one immutable commit. The reusable `verify.yml` suite checks that exact SHA before expensive builds. Failed, cancelled, skipped or missing required verification blocks both tag builds and publication. Build and publish checkouts use that same SHA, and release metadata is checked against it. The remote tag is re-fetched before draft operations and immediately before making the release public; movement or deletion fails closed. GitHub has no atomic tag-compare/publication operation, so deliberate concurrent writer interference is outside this workflow guarantee.
 
 The complete Windows/macOS platform checks and Ubuntu application tests, web build and Compose checks are retained. Existing version/changelog preflight, payload/license/source validation, asset hashes, draft handling and refusal to overwrite a published release remain required. `desktop:validate-release` must report `Release eligible` for both targets. Node (MIT), Inter and JetBrains Mono (OFL), and Electron ffmpeg (LGPL) retain their notices; ffmpeg remains a separate library. Do not bypass any validator.
 
@@ -33,7 +33,7 @@ The complete Windows/macOS platform checks and Ubuntu application tests, web bui
   gh workflow run desktop-release.yml --ref <reviewed-branch> -f target=all -F verify_full=true
   ```
 
-  GitHub may require the workflow on the default branch before this input is available. Record a deferred rehearsal instead of creating a release tag. Normal manual builds default to `verify_full=false`; `target` may be `all`, `win32-x64` or `darwin-arm64`.
+  GitHub may require the workflow on the default branch before this input is available. Record a deferred rehearsal instead of creating a release tag. Manual rehearsals do not run tag-only source collection or publication payload/asset validation; record this limit separately. Normal manual builds default to `verify_full=false`; `target` may be `all`, `win32-x64` or `darwin-arm64`.
 - Only a push of a strict `v<SemVer>` tag can publish. Version must equal both desktop/local manifests and have changelog notes; no build metadata. Hyphenated versions are prereleases and never latest.
 - Tag runs build both targets and collect source materials; publication additionally validates every payload and asset. Only publish receives `contents:write`. Verification is read-only and uses no secrets.
 - Concurrency is scoped to each workflow/ref; tag runs are never cancelled by superseded PR runs.

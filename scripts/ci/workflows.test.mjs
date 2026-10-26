@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, copyFileSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { parse } from 'yaml';
 const read = name => parse(readFileSync(new URL(`../../.github/workflows/${name}.yml`, import.meta.url), 'utf8'));
 const checkout = job => job.steps.filter(s => s.uses?.startsWith('actions/checkout@'));
@@ -93,4 +95,32 @@ test('release gates bind all stages to one SHA and fail closed on verification r
   const release = read('desktop-release'); assertRelease(release);
   const wrongRef=structuredClone(release); checkout(wrongRef.jobs.build)[0].with.ref='main'; assert.throws(()=>assertRelease(wrongRef));
   const missingVerify=structuredClone(release); missingVerify.jobs.publish.needs=['plan','build']; assert.throws(()=>assertRelease(missingVerify));
+});
+
+test('actual publication shell refuses a tag moved during upload before making the draft public', t => {
+  const cwd=mkdtempSync(join(tmpdir(),'publish-gate-'));t.after(()=>rmSync(cwd,{recursive:true,force:true}));
+  const git=(...args)=>execFileSync('git',args,{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  git('init','-q','-b','main');git('config','user.email','fixture@example.com');git('config','user.name','Fixture');
+  git('commit','--allow-empty','-qm','verified');const commit=git('rev-parse','HEAD');
+  git('tag','-a','v1.2.3','-m','annotated');git('commit','--allow-empty','-qm','unchecked');const other=git('rev-parse','HEAD');
+  git('clone','--bare','.',join(cwd,'remote.git'));git('remote','add','origin',join(cwd,'remote.git'));git('checkout','-q',commit);
+  mkdirSync(join(cwd,'scripts/desktop'),{recursive:true});copyFileSync(new URL('../desktop/release-commit.mjs',import.meta.url),join(cwd,'scripts/desktop/release-commit.mjs'));
+  mkdirSync(join(cwd,'release-assets'));writeFileSync(join(cwd,'release-assets/artifact.txt'),'fixture');
+  mkdirSync(join(cwd,'bin'));
+  writeFileSync(join(cwd,'bin/gh'),`#!/bin/bash
+set -euo pipefail
+case "$2" in
+  upload) if [ "$MOVE_TAG" = true ]; then git --git-dir="$REMOTE" update-ref refs/tags/v1.2.3 "$OTHER"; fi ;;
+  view) echo artifact.txt ;;
+  edit) for arg in "$@"; do if [ "$arg" = --draft=false ]; then touch "$PUBLISH_MARKER"; fi; done ;;
+esac
+`,{mode:0o755});
+  const env={...process.env,PATH:`${join(cwd,'bin')}:${process.env.PATH}`,TAG:'v1.2.3',RELEASE_COMMIT:commit,VERSION:'1.2.3',PRERELEASE:'false',DRAFT_EXISTS:'true',MOVE_TAG:'true',REMOTE:join(cwd,'remote.git'),OTHER:other,PUBLISH_MARKER:join(cwd,'published')};
+  const script=read('desktop-release').jobs.publish.steps.find(s=>s.name==='Create or reuse draft, upload, publish').run;
+  const run=()=>spawnSync('bash',['-c',script],{cwd,env,encoding:'utf8'});
+  let result=run();assert.notEqual(result.status,0,result.stderr);assert.match(result.stderr,/tag moved/i);assert.equal(existsSync(env.PUBLISH_MARKER),false);
+  // The same workflow shell also refuses movement before draft operations.
+  result=run();assert.notEqual(result.status,0);assert.equal(existsSync(env.PUBLISH_MARKER),false);
+  git('--git-dir='+env.REMOTE,'update-ref','refs/tags/v1.2.3',commit);env.MOVE_TAG='false';
+  result=run();assert.equal(result.status,0,result.stderr);assert.equal(existsSync(env.PUBLISH_MARKER),true);
 });

@@ -7,7 +7,7 @@ function inside(root, path) {
   return rel !== '..' && !rel.startsWith('../') && !rel.startsWith('..\\') && !isAbsolute(rel);
 }
 
-export async function checkDocs({root, paths}) {
+export async function checkDocs({root, paths, siteBasePath = "/nema-room/"}) {
   root = await realpath(root);
   if (!Array.isArray(paths) || paths.some(p => typeof p !== 'string' || !p || p.includes('\0'))) throw new TypeError('Expected Git path array');
   const errors = [];
@@ -50,10 +50,18 @@ export async function checkDocs({root, paths}) {
       try { target = decodeURIComponent(link.split(/[?#]/)[0]); }
       catch { errors.push(`${path}: invalid URL ${link}`); continue; }
       if (!target) continue;
-      const destination = target.startsWith('/') ? resolve(root, `.${target}`) : resolve(dirname(file), target);
-      if (!inside(root, destination)) { errors.push(`${path}: link escapes repository: ${link}`); continue; }
+      const siteHtml = path.startsWith('site/') && /\.html$/i.test(path);
+      const boundary = siteHtml ? resolve(root, 'site') : root;
+      if (siteHtml && target.startsWith('/') && !target.startsWith(siteBasePath) && target !== siteBasePath.slice(0, -1)) {
+        errors.push(`${path}: link outside deployed Pages prefix ${siteBasePath}: ${link}`); continue;
+      }
+      let destination = target.startsWith('/')
+        ? resolve(boundary, siteHtml ? target.slice(siteBasePath.length) : `.${target}`)
+        : resolve(dirname(file), target);
+      if (!inside(boundary, destination)) { errors.push(`${path}: link escapes ${siteHtml ? 'deployed site' : 'repository'}: ${link}`); continue; }
       try {
-        if (!inside(root, await realpath(destination))) errors.push(`${path}: link escapes repository: ${link}`);
+        if (siteHtml && (await stat(destination)).isDirectory()) destination = resolve(destination, 'index.html');
+        if (!inside(boundary, await realpath(destination))) errors.push(`${path}: link escapes ${siteHtml ? 'deployed site' : 'repository'}: ${link}`);
       } catch (error) { if (error.code === 'ENOENT') errors.push(`${path}: missing link target ${link}`); else throw error; }
     }
   }

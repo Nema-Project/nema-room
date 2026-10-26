@@ -13,6 +13,21 @@ export async function resolveReleaseCommit({cwd, ref, mainRef}) {
   return commit;
 }
 
+export async function verifyRemoteReleaseTag({cwd, ref, commit}) {
+  if (typeof ref !== 'string' || !ref.startsWith('refs/tags/') || !/^[a-f0-9]{40,64}$/i.test(commit ?? '')) throw new Error('Expected tag ref and immutable commit SHA');
+  await exec('git', ['check-ref-format', ref], {cwd});
+  // A dedicated local ref avoids trusting stale tags left by checkout or a previous check.
+  const fetchedRef = 'refs/nema-release/verified-tag';
+  await exec('git', ['fetch', '--no-tags', 'origin', `+${ref}:${fetchedRef}`], {cwd});
+  const {stdout} = await exec('git', ['rev-parse', '--verify', `${fetchedRef}^{commit}`], {cwd});
+  if (stdout.trim() !== commit) throw new Error('Remote release tag moved; commit mismatch');
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  console.log(await resolveReleaseCommit({cwd:process.cwd(), ref:process.argv[2], mainRef:process.argv[3]}));
+  if (process.argv[2] === '--verify-remote') {
+    await verifyRemoteReleaseTag({cwd:process.cwd(), ref:process.argv[3], commit:process.argv[4]});
+    console.log('Remote tag still identifies the verified release commit');
+  } else {
+    console.log(await resolveReleaseCommit({cwd:process.cwd(), ref:process.argv[2], mainRef:process.argv[3]}));
+  }
 }

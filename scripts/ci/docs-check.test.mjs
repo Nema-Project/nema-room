@@ -16,7 +16,7 @@ async function fixture(t, files) {
 }
 
 test('relative and repository-root links resolve while remote links, anchors and code are ignored', async t => {
-  const root = await fixture(t, {'README.md':'ok', 'README.en.md':'ok', 'docs/a.md': '[up](../README.md) [root](/README.md#x) [fragment](#x) [web](https://example.com/no) ` [code](missing) `\n```md\n[x](missing)\n```\n', 'site/index.html':'<a href="../README.md">ok</a><img src="https://example.com/a.png">'});
+  const root = await fixture(t, {'README.md':'ok', 'README.en.md':'ok', 'docs/a.md': '[up](../README.md) [root](/README.md#x) [fragment](#x) [web](https://example.com/no) ` [code](missing) `\n```md\n[x](missing)\n```\n', 'site/index.html':'<a href="./asset.html">ok</a><img src="https://example.com/a.png">', 'site/asset.html':'ok'});
   assert.deepEqual(await checkDocs({root, paths:['docs/a.md', 'site/index.html', 'deleted.md']}), []);
 });
 
@@ -49,4 +49,11 @@ test('an explicitly pending private channel is valid and translated entrypoints 
   await mkdir(join(root,'docs'),{recursive:true});
   await writeFile(join(root,'docs/guide.ja.md'),'https://github.com/Nema-Project/nema-room/issues/new?template=security.yml');
   assert.match((await checkDocs({root,paths:[]})).join('\n'),/public security issue link/i);
+});
+
+test('Pages URLs resolve within the deployed site tree including its project prefix', async t => {
+  const root = await fixture(t, {'site/index.html':'<link href="/nema-room/styles.css"><a href="/nema-room/zh/">中文</a>', 'site/styles.css':'body{}','site/zh/index.html':'<img src="../mark.svg">','site/mark.svg':'<svg/>','README.md':'not deployed','README.en.md':'not deployed'});
+  assert.deepEqual(await checkDocs({root,paths:['site/index.html','site/zh/index.html']}),[]);
+  await writeFile(join(root,'site/index.html'),'<a href="../README.md">outside deployment</a>');
+  assert.match((await checkDocs({root,paths:['site/index.html']})).join('\n'),/outside|escapes/i);
 });

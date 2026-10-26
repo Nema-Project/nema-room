@@ -302,6 +302,9 @@ jobs:
           test "$GITHUB_SHA" = "$RELEASE_COMMIT"
           test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
           node scripts/desktop/release-manifest.mjs collect release-input release-assets "$VERSION" "$PRERELEASE"
+      - name: Recheck remote tag before draft operations
+        shell: bash
+        run: node scripts/desktop/release-commit.mjs --verify-remote "refs/tags/$TAG" "$RELEASE_COMMIT"
       - name: Refuse a published tag and validate any earlier draft
         shell: bash
         run: |
@@ -327,6 +330,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          node scripts/desktop/release-commit.mjs --verify-remote "refs/tags/$TAG" "$RELEASE_COMMIT"
           flags=()
           if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease --latest=false); fi
           if [ "${DRAFT_EXISTS:-false}" != "true" ]; then
@@ -342,4 +346,6 @@ jobs:
             echo "Draft assets differ from the verified set: $actual" >&2
             exit 1
           fi
+          # Upload/validation can take time; re-read the remote ref immediately before publication.
+          node scripts/desktop/release-commit.mjs --verify-remote "refs/tags/$TAG" "$RELEASE_COMMIT"
           gh release edit "$TAG" --draft=false "${flags[@]}"
