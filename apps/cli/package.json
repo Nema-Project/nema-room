@@ -41,6 +41,11 @@
       "development": "./src/secrets/permissions.ts",
       "types": "./dist/secrets/permissions.d.ts",
       "import": "./dist/secrets/permissions.js"
+    },
+    "./systemGit": {
+      "development": "./src/systemGit.ts",
+      "types": "./dist/systemGit.d.ts",
+      "import": "./dist/systemGit.js"
     }
   },
   "scripts": {

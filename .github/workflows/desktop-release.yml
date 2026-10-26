@@ -126,6 +126,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Put temporary files on the workspace disk
+        # The checkout already lives on the runner's scratch disk, but TEMP still points at the
+        # slow system disk. Staging runs two npm installs under os.tmpdir(). RUNNER_TEMP follows
+        # the workspace, including runners that have no D: drive.
+        if: matrix.platform == 'win32'
+        shell: powershell
+        run: |
+          echo "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          echo "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          echo "npm_config_cache=$env:RUNNER_TEMP\npm-cache" >> $env:GITHUB_ENV
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}

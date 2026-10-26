@@ -15,20 +15,17 @@ const rootFixture = async (t) => {
   const payload = path.join(root, 'payload');
   const toolsManifest = path.join(root, 'tools-manifest.json');
   await mkdir(path.join(payload, 'runtime/win32-x64'), { recursive: true });
-  await writeFile(toolsManifest, JSON.stringify({ schemaVersion: 1, node: { version: '24.22.1', archive: { 'win32-x64': { file: 'node-v24.22.1-win-x64.zip', sha256: 'a'.repeat(64) } } }, git: { version: '2.56.0', gitForWindowsVersion: '2.56.0.windows.2', dugiteNativeVersion: '2.56.0-1', archives: { 'win32-x64': { file: 'dugite-native-v2.56.0-7ce66f8-windows-x64.tar.gz', sha256: 'b'.repeat(64) } } } }));
-  await writeFile(path.join(payload, 'runtime/win32-x64/tools-source.json'), JSON.stringify({ schemaVersion: 1, target: 'win32-x64', node: { version: '24.22.1', archive: 'node-v24.22.1-win-x64.zip', sha256: 'a'.repeat(64) }, git: { version: '2.56.0', gitForWindowsVersion: '2.56.0.windows.2', dugiteNativeVersion: '2.56.0-1', archive: 'dugite-native-v2.56.0-7ce66f8-windows-x64.tar.gz', sha256: 'b'.repeat(64) }, sourceCorrespondence: { status: 'pending-task-7c' } }));
+  await writeFile(toolsManifest, JSON.stringify({ schemaVersion: 1, node: { version: '24.22.1', archive: { 'win32-x64': { file: 'node-v24.22.1-win-x64.zip', sha256: 'a'.repeat(64) } } } }));
+  await writeFile(path.join(payload, 'runtime/win32-x64/tools-source.json'), JSON.stringify({ schemaVersion: 1, target: 'win32-x64', node: { version: '24.22.1', archive: 'node-v24.22.1-win-x64.zip', sha256: 'a'.repeat(64) }, sourceCorrespondence: { status: 'pending-task-7c' } }));
   await writeFile(path.join(payload, 'runtime-manifest.json'), JSON.stringify({ schemaVersion: 1, version: '0.1.0', platform: 'win32', arch: 'x64' }));
-  await mkdir(path.join(payload, 'runtime/win32-x64/git/etc'), { recursive: true });
-  await writeFile(path.join(payload, 'runtime/win32-x64/git/etc/package-versions.txt'), 'git 2.56.0\nmsys2 20261024\n');
   return { root, payload, toolsManifest };
 };
 const completeInputs = (sha256) => [
   { id: 'node-source', component: 'Node.js 24.22.1', status: 'complete', correspondence: 'verified', version: '24.22.1', immutableRef: 'v24.22.1', archiveTarget: 'win32-x64', tool: 'node', correspondenceEvidence: { toolArchiveSha256: 'a'.repeat(64), immutableRef: 'v24.22.1', basis: 'fixture upstream source hash and binary version pin' }, sourcePath: 'arbitrary.txt', sha256 },
-  { id: 'mingit-component-sources', component: 'Git for Windows 2.56.0.windows.2', status: 'complete', correspondence: 'verified', version: '2.56.0.windows.2', immutableRef: 'fixture-commit', archiveTarget: 'win32-x64', tool: 'git', correspondenceEvidence: { toolArchiveSha256: 'b'.repeat(64), immutableRef: 'fixture-commit', basis: 'fixture source package reconciliation' }, sourcePath: 'arbitrary.txt', sha256 },
   { id: 'font-sources', component: 'Inter and JetBrains Mono', status: 'complete', correspondence: 'verified', version: 'fixture-fonts', immutableRef: 'fixture-commit', archiveTarget: 'win32-x64', tool: 'web', correspondenceEvidence: { basis: 'fixture font provenance mapping', fontAssetHashes: [{ path: 'web/apps/web/.next/static/media/Inter.woff2', sha256: 'aa0ac38cd3f2459bc65140b9035ec40965415e256eb7bf1a22b0ede5860b90db' }] }, sourcePath: 'arbitrary.txt', sha256 },
 ];
 const populateCompleteNotices = async (f) => {
-  const files = ['runtime/win32-x64/node/LICENSE', 'runtime/win32-x64/git/LICENSE.txt', 'runtime/licenses/application', 'runtime/licenses/electron/LICENSE', 'runtime/licenses/electron/LICENSES.chromium.html', 'vendor/archify/LICENSE', 'vendor/superpowers-rules/LICENSE', 'app/node_modules/example/LICENSE', 'runtime/win32-x64/git/bin/git', 'runtime/win32-x64/node/node.exe', 'runtime/win32-x64/node/node_modules/npm/package.json', 'runtime/win32-x64/node/node_modules/corepack/package.json'];
+  const files = ['runtime/win32-x64/node/LICENSE', 'runtime/licenses/application', 'runtime/licenses/electron/LICENSE', 'runtime/licenses/electron/LICENSES.chromium.html', 'vendor/archify/LICENSE', 'vendor/superpowers-rules/LICENSE', 'app/node_modules/example/LICENSE', 'runtime/win32-x64/node/node.exe', 'runtime/win32-x64/node/node_modules/npm/package.json', 'runtime/win32-x64/node/node_modules/corepack/package.json'];
   for (const file of files) {
     await mkdir(path.dirname(path.join(f.payload, file)), { recursive: true });
     await writeFile(path.join(f.payload, file), `fixture ${file}`);
@@ -51,20 +48,6 @@ const pathHash = async (file) => {
   const { createHash } = await import('node:crypto');
   const bytes = await (await import('node:fs/promises')).readFile(file);
   return createHash('sha256').update(bytes).digest('hex');
-};
-const posixFixture = async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-posix-source-materials-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const payload = path.join(root, 'payload');
-  const toolsManifest = path.join(root, 'tools-manifest.json');
-  const target = 'darwin-arm64';
-  await mkdir(path.join(payload, 'runtime', target, 'git/bin'), { recursive: true });
-  await writeFile(path.join(payload, 'runtime', target, 'git/bin/git'), 'fixture git');
-  await mkdir(path.join(payload, 'runtime', target), { recursive: true });
-  await writeFile(path.join(payload, 'runtime', target, 'tools-source.json'), JSON.stringify({ target, node: { version: '24.22.1', archive: 'node-darwin.tar.gz', sha256: 'a'.repeat(64) }, git: { version: '2.56.0', archive: 'git-darwin.tar.gz', sha256: 'b'.repeat(64) }, sourceCorrespondence: { status: 'pending-task-7c' } }));
-  await writeFile(path.join(payload, 'runtime-manifest.json'), JSON.stringify({ schemaVersion: 1, version: '0.1.0', platform: 'darwin', arch: 'arm64' }));
-  await writeFile(toolsManifest, JSON.stringify({ node: { version: '24.22.1', archive: { [target]: { file: 'node-darwin.tar.gz', sha256: 'a'.repeat(64) } } }, git: { version: '2.56.0', archives: { [target]: { file: 'git-darwin.tar.gz', sha256: 'b'.repeat(64) } } } }));
-  return { root, payload, toolsManifest };
 };
 const writeResolvedFixture = async (f, upstreamNotices) => {
   const { createHash } = await import('node:crypto');
@@ -95,40 +78,25 @@ const writeResolvedFixture = async (f, upstreamNotices) => {
   const nodeFiles = ['runtime/win32-x64/node/LICENSE', 'runtime/win32-x64/node/node.exe'];
   const npmFiles = ['runtime/win32-x64/node/node_modules/npm/package.json'];
   const corepackFiles = ['runtime/win32-x64/node/node_modules/corepack/package.json'];
-  const gitSources = [
-    await addMaterial('git-package-source', 'MinGit package source git', 'source', 'git', '2.56.0.windows.2'),
-    await addMaterial('git-package-patch', 'MinGit package patch git', 'patch', 'git', '2.56.0.windows.2'),
-    await addMaterial('git-package-recipe', 'MinGit package recipe git', 'recipe', 'git', '2.56.0.windows.2'),
-    await addMaterial('msys-package-source', 'MinGit package source msys', 'source', 'git', '2.56.0.windows.2'),
-    await addMaterial('msys-package-patch', 'MinGit package patch msys', 'patch', 'git', '2.56.0.windows.2'),
-    await addMaterial('msys-package-recipe', 'MinGit package recipe msys', 'recipe', 'git', '2.56.0.windows.2'),
-  ];
   const fontInterSource = await addMaterial('inter-source', 'Inter fixture source', 'source', 'web', 'fixture-inter');
   const fontJetSource = await addMaterial('jetbrains-source', 'JetBrains fixture source', 'source', 'web', 'fixture-jetbrains');
-  const gitFiles0 = ['runtime/win32-x64/git/LICENSE.txt', 'runtime/win32-x64/git/bin/git'];
-  const gitFiles1 = ['runtime/win32-x64/git/etc/package-versions.txt'];
   const component = (id, requiredRoles, mappings) => {
     const coverage = id === 'node-source'
       ? { kind: 'files', root: 'runtime/win32-x64/node', requiredMappingKeys: ['node-runtime', 'npm-package', 'corepack-package'] }
-      : id === 'mingit-component-sources'
-        ? { kind: 'git-package-set', root: 'runtime/win32-x64/git' }
-        : { kind: 'font-assets' };
+      : { kind: 'font-assets' };
     return { id, status: 'resolved', requiredRoles, coverage, mappings };
   };
   const mappings = [
     component('node-source', ['source', 'recipe'], [
-      { key: 'node-runtime', files: await filesFor(nodeFiles), packages: [], materialRefs: [reference(nodeRuntime, 'source'), reference(nodeRecipe, 'recipe')] },
-      { key: 'npm-package', files: await filesFor(npmFiles), packages: [], materialRefs: [reference(npmSource, 'source'), reference(npmRecipe, 'recipe')] },
-      { key: 'corepack-package', files: await filesFor(corepackFiles), packages: [], materialRefs: [reference(corepackSource, 'source'), reference(corepackRecipe, 'recipe')] },
-    ]),
-    component('mingit-component-sources', ['source', 'patch', 'recipe'], [
-      { key: 'package:0', files: await filesFor(gitFiles0), packages: [{ index: 0, entry: 'git 2.56.0' }], materialRefs: gitSources.slice(0, 3).map((m, i) => reference(m, ['source', 'patch', 'recipe'][i])) },
-      { key: 'package:1', files: await filesFor(gitFiles1), packages: [{ index: 1, entry: 'msys2 20261024' }], materialRefs: gitSources.slice(3, 6).map((m, i) => reference(m, ['source', 'patch', 'recipe'][i])) },
+      { key: 'node-runtime', files: await filesFor(nodeFiles), materialRefs: [reference(nodeRuntime, 'source'), reference(nodeRecipe, 'recipe')] },
+      { key: 'npm-package', files: await filesFor(npmFiles), materialRefs: [reference(npmSource, 'source'), reference(npmRecipe, 'recipe')] },
+      { key: 'corepack-package', files: await filesFor(corepackFiles), materialRefs: [reference(corepackSource, 'source'), reference(corepackRecipe, 'recipe')] },
     ]),
     component('font-sources', ['source', 'license'], [
-      { key: 'font:web/apps/web/.next/static/media/Inter.woff2', family: 'inter', files: await filesFor(['web/apps/web/.next/static/media/Inter.woff2']), packages: [], materialRefs: [reference(fontInterSource, 'source'), await noticeReference('inter-ofl', 'license')] },
-      { key: 'font:web/apps/web/.next/static/media/JetBrains.woff2', family: 'jetbrains-mono', files: await filesFor(['web/apps/web/.next/static/media/JetBrains.woff2']), packages: [], materialRefs: [reference(fontJetSource, 'source'), await noticeReference('jetbrains-mono-ofl', 'license')] },
+      { key: 'font:web/apps/web/.next/static/media/Inter.woff2', family: 'inter', files: await filesFor(['web/apps/web/.next/static/media/Inter.woff2']), materialRefs: [reference(fontInterSource, 'source'), await noticeReference('inter-ofl', 'license')] },
+      { key: 'font:web/apps/web/.next/static/media/JetBrains.woff2', family: 'jetbrains-mono', files: await filesFor(['web/apps/web/.next/static/media/JetBrains.woff2']), materialRefs: [reference(fontJetSource, 'source'), await noticeReference('jetbrains-mono-ofl', 'license')] },
     ]),
+    { id: 'electron-ffmpeg', status: 'resolved', obligation: 'notice', notices: [{ sourcePath: 'runtime/licenses/electron/LICENSES.chromium.html' }] },
   ];
   const policyPath = path.join(f.root, 'trusted-fixture-policy.json');
   await writeFile(policyPath, JSON.stringify({ schemaVersion: 1, targets: { 'win32-x64': { status: 'resolved', components: mappings } } }));
@@ -138,7 +106,7 @@ const writeResolvedFixture = async (f, upstreamNotices) => {
 test('collects hashed notices without asserting source correspondence', async (t) => {
   const f = await rootFixture(t);
   await mkdir(path.join(f.payload, 'runtime/licenses'), { recursive: true });
-  await writeFile(path.join(f.payload, 'runtime/licenses/git'), 'Git license');
+  await writeFile(path.join(f.payload, 'runtime/licenses/application'), 'Application license');
   await writeFile(path.join(f.payload, 'runtime/licenses/node'), 'Node license');
   const result = await collectSourceMaterials({ payloadRoot: f.payload, outputRoot: path.join(f.root, 'bundle'), target: 'win32-x64', appVersion: '0.1.0', toolsManifestPath: f.toolsManifest });
   assert.equal(result.schemaVersion, 1);
@@ -251,6 +219,15 @@ test('collector aborts a source response as soon as its bounded byte limit is ex
   }), /bounded download size/i);
 });
 
+test('shipped Node, font, and ffmpeg notices satisfy the release policy without source archives', async (t) => {
+  const f = await rootFixture(t);
+  const upstreamNotices = await populateCompleteNotices(f);
+  await writeFile(path.join(f.payload, 'runtime/licenses/electron/LICENSES.chromium.html'), 'ffmpeg is LGPL v2.1 and shipped as its own library');
+  const result = await collectSourceMaterials({ payloadRoot: f.payload, outputRoot: f.payload, target: 'win32-x64', appVersion: '0.1.0', toolsManifestPath: f.toolsManifest, upstreamNotices, inputRoot: f.root });
+  assert.equal(result.publicationEligibility, 'eligible', JSON.stringify(result.unresolved));
+  assert.equal((await validatePublicationEligibility(f.payload, { toolsManifestPath: f.toolsManifest })).eligible, true);
+});
+
 test('caller-declared complete material cannot override the committed pending policy', async (t) => {
   const f = await rootFixture(t);
   const upstreamNotices = await populateCompleteNotices(f);
@@ -264,7 +241,7 @@ test('caller-declared complete material cannot override the committed pending po
   await assert.rejects(validatePublicationEligibility(f.payload, { toolsManifestPath: f.toolsManifest }), /trusted.*policy|policy.*pending/i);
 });
 
-test('resolved trusted fixture policy requires exact file/package coverage and distinct bound source roles', async (t) => {
+test('resolved trusted fixture policy requires exact file coverage and distinct bound source roles', async (t) => {
   const f = await rootFixture(t);
   const upstreamNotices = await populateCompleteNotices(f);
   const trusted = await writeResolvedFixture(f, upstreamNotices);
@@ -273,27 +250,18 @@ test('resolved trusted fixture policy requires exact file/package coverage and d
   assert.equal((await validatePublicationEligibility(f.payload, { toolsManifestPath: f.toolsManifest, policyPath: trusted.policyPath, expectedTarget: 'win32-x64', expectedAppVersion: '0.1.0' })).eligible, true);
 });
 
-test('trusted policy rejects missing shipped-file/package coverage and wrong bound hashes', async (t) => {
-  for (const tamper of ['file-coverage', 'file-hash', 'package-coverage', 'source-reference']) {
+test('trusted policy rejects missing shipped-file coverage and wrong bound hashes', async (t) => {
+  for (const tamper of ['file-coverage', 'file-hash', 'source-reference']) {
     const f = await rootFixture(t);
     const upstreamNotices = await populateCompleteNotices(f);
     const trusted = await writeResolvedFixture(f, upstreamNotices);
     const policy = JSON.parse(await (await import('node:fs/promises')).readFile(trusted.policyPath, 'utf8'));
     if (tamper === 'file-coverage') policy.targets['win32-x64'].components[0].mappings[0].files.pop();
     else if (tamper === 'file-hash') policy.targets['win32-x64'].components[0].mappings[0].files[0].sha256 = 'f'.repeat(64);
-    else if (tamper === 'package-coverage') policy.targets['win32-x64'].components[1].mappings[0].packages.pop();
     else policy.targets['win32-x64'].components[0].mappings[0].materialRefs[0].sha256 = 'f'.repeat(64);
     await writeFile(trusted.policyPath, JSON.stringify(policy));
     await assert.rejects(collectSourceMaterials({ payloadRoot: f.payload, outputRoot: path.join(f.root, 'bundle'), target: 'win32-x64', appVersion: '0.1.0', toolsManifestPath: f.toolsManifest, policyPath: trusted.policyPath, sourceMaterials: trusted.materials, upstreamNotices, inputRoot: f.root }), /cover|trusted material reference|hash mismatch|does not match shipped file bytes/i, tamper);
   }
-});
-
-test('macOS Git inventory does not require the Windows pacman package-version file', async (t) => {
-  const f = await posixFixture(t);
-  const result = await collectSourceMaterials({ payloadRoot: f.payload, outputRoot: path.join(f.root, 'bundle'), target: 'darwin-arm64', appVersion: '0.1.0', toolsManifestPath: f.toolsManifest });
-  assert.equal(result.gitDistribution.packageVersions, null);
-  assert.equal(result.gitDistribution.shippedGitFiles.count, 1);
-  assert.equal(result.publicationEligibility, 'pending');
 });
 
 test('collector rejects source and notice junction escapes under the explicit input root', async (t) => {
@@ -402,18 +370,16 @@ test('collector CLI reads local archive and notice paths under a plan-relative i
   const toolsManifest = JSON.parse((await (await import('node:fs/promises')).readFile(fileURLToPath(new URL('./tools-manifest.json', import.meta.url)), 'utf8')).replace(/^\uFEFF/, ''));
   await mkdir(path.join(inputRoot, 'archives'), { recursive: true });
   await mkdir(path.join(inputRoot, 'notices'), { recursive: true });
-  await mkdir(path.join(payload, 'runtime', target, 'git/etc'), { recursive: true });
+  await mkdir(path.join(payload, 'runtime', target), { recursive: true });
   const archiveBytes = Buffer.from('offline cached source archive');
   const noticeBytes = Buffer.from('offline cached upstream notice');
   await writeFile(path.join(inputRoot, 'archives/node.tar.gz'), archiveBytes);
   await writeFile(path.join(inputRoot, 'notices/THIRD-PARTY.txt'), noticeBytes);
-  await writeFile(path.join(payload, 'runtime', target, 'git/etc/package-versions.txt'), 'git 2.56.0\nmsys2 20261024\n');
   await writeFile(path.join(payload, 'runtime-manifest.json'), JSON.stringify({ schemaVersion: 1, version: '0.1.0', platform: 'win32', arch: 'x64' }));
   await writeFile(path.join(payload, 'runtime', target, 'tools-source.json'), JSON.stringify({
     schemaVersion: 1,
     target,
     node: { version: toolsManifest.node.version, archive: toolsManifest.node.archive[target].file, sha256: toolsManifest.node.archive[target].sha256 },
-    git: { version: toolsManifest.git.version, gitForWindowsVersion: toolsManifest.git.gitForWindowsVersion, dugiteNativeVersion: toolsManifest.git.dugiteNativeVersion, archive: toolsManifest.git.archives[target].file, sha256: toolsManifest.git.archives[target].sha256 },
   }));
   const planPath = path.join(planDir, 'source-plan.json');
   const sha256 = (await import('node:crypto')).createHash('sha256');

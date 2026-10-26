@@ -15,29 +15,12 @@ const keyFor = (platform, arch) => `${platform}-${arch}`;
 
 export function assetsFor(platform, arch) {
   const key = keyFor(platform, arch);
-  if (!supported.has(key) || !manifest.node.archive[key] || !manifest.git.archives[key]) {
+  if (!supported.has(key) || !manifest.node.archive[key]) {
     throw new Error(`Unsupported bundled tools target: ${key}`);
   }
   const n = manifest.node.archive[key];
-  const g = manifest.git.archives[key];
-  return {
-    target: key,
-    node: { ...n, version: manifest.node.version, url: `${manifest.node.source}${n.file}` },
-    git: { ...g, version: manifest.git.version, url: `${manifest.git.release.replace(/\/tag\//, '/download/')}/${g.file}` },
-  };
-}
-
-export function gitLayoutFor(platform, arch) {
-  const asset = assetsFor(platform, arch).git;
-  const windows = platform === 'win32';
-  return {
-    binary: asset.git,
-    licenseSource: { ...manifest.git.sourceLicense },
-    licenseCandidates: windows ? ['LICENSE.txt', 'LICENSE'] : [],
-    noticeCandidates: windows
-      ? ['ucrt64/doc/git-credential-manager/NOTICE']
-      : ['libexec/git-core/NOTICE'],
-  };
+  // Git is not bundled: Nema runs the user's own git (apps/cli/src/systemGit.ts).
+  return { target: key, node: { ...n, version: manifest.node.version, url: `${manifest.node.source}${n.file}` } };
 }
 
 export async function sha256File(file) {
@@ -196,27 +179,6 @@ export async function rejectSymlinkPath(directory) {
     throw new Error(`Configured directory path contains a symlink or non-directory: ${cursor}`);
   }
 }
-// Git execs these by their dashed names (local transport, and git-remote-<scheme> for each protocol), so their links stay.
-const DASHED_GIT_COMMANDS_KEPT = new Set(['git-upload-pack', 'git-receive-pack', 'git-upload-archive']);
-
-/**
- * Remove libexec/git-core links that only alias the git binary for its builtins (git-fetch -> git, ...).
- * git runs builtins itself, but staging must copy every link as a file because the release payload is
- * link-free, which turned dugite's ~145 links into ~500MB of identical binaries on macOS.
- */
-export async function pruneDashedGitBuiltins(gitRoot) {
-  const core = path.join(gitRoot, 'libexec', 'git-core');
-  const removed = [];
-  for (const name of await readdir(core).catch(() => [])) {
-    if (DASHED_GIT_COMMANDS_KEPT.has(name) || name.startsWith('git-remote-')) continue;
-    const entry = path.join(core, name);
-    if (!(await lstat(entry)).isSymbolicLink() || await readlink(entry) !== 'git') continue;
-    await rm(entry);
-    removed.push(name);
-  }
-  return removed;
-}
-
 export async function downloadVerified(asset, cacheDir, fetchImpl = fetch) {
   await mkdir(cacheDir, { recursive: true });
   const finalPath = await ensureInsideRoot(cacheDir, path.join(cacheDir, asset.file));
@@ -307,8 +269,6 @@ export async function fetchTools({ platform, arch, cacheDir, outDir }) {
   // Refuse replacing an existing staged target; caller owns cleanup of its explicit output directory.
   try { await lstat(targetRoot); throw new Error(`Output target already exists: ${targetRoot}`); } catch (e) { if (e.code !== 'ENOENT') throw e; }
   const nodeArchive = await downloadVerified(selected.node, cacheRoot);
-  const gitArchive = await downloadVerified(selected.git, cacheRoot);
-  const gitSourceLicense = await downloadVerified({ ...manifest.git.sourceLicense }, cacheRoot);
   // Keep staging on the output filesystem so its entries can move into the
   // exclusively-created target without copying or crossing volumes.
   // mkdtemp reserves a unique path owned by this invocation.
@@ -316,54 +276,27 @@ export async function fetchTools({ platform, arch, cacheDir, outDir }) {
   const staged = await ensureInsideRoot(work, path.join(work, selected.target));
   await mkdir(staged, { recursive: true });
   try {
-    const nodeTmp = path.join(work, 'node-unpack'), gitTmp = path.join(work, 'git-unpack');
+    const nodeTmp = path.join(work, 'node-unpack');
     await extractArchive(await readFile(nodeArchive), selected.node.format, nodeTmp);
-    await extractArchive(await readFile(gitArchive), selected.git.format, gitTmp);
-    await pruneDashedGitBuiltins(gitTmp);
     const nodeLicense = await findRequiredFile(nodeTmp, [
       `${selected.node.binary.split('/')[0]}/LICENSE`, `${selected.node.binary.split('/')[0]}/LICENSE.txt`,
       'LICENSE', 'LICENSE.txt',
     ], 'Node');
-    const gitLayout = gitLayoutFor(platform, arch);
-    let gitLicenseFromArchive = true;
-    const gitLicense = await findRequiredFile(gitTmp, gitLayout.licenseCandidates, 'Git license').catch(async () => {
-      gitLicenseFromArchive = false;
-      const fallback = 'COPYING';
-      if (await sha256File(gitSourceLicense) !== manifest.git.sourceLicense.sha256) throw new Error('Pinned Git source license checksum mismatch');
-      await mkdir(path.join(staged, 'licenses', 'git'), { recursive: true });
-      await copyFile(gitSourceLicense, path.join(staged, 'licenses', 'git', fallback));
-      return path.relative(gitTmp, path.join(staged, 'licenses', 'git', fallback));
-    });
-    const gitNotice = await findRequiredFile(gitTmp, gitLayout.noticeCandidates, 'Git notice');
-    const gitLicenses = path.join(gitTmp, 'ucrt64', 'share', 'licenses');
-    const gitGcm = path.join(gitTmp, 'ucrt64', 'doc', 'git-credential-manager');
-    if (platform === 'win32') {
-      const li = await lstat(gitLicenses).catch(() => null);
-      if (!li?.isDirectory()) throw new Error('Git distribution is missing its full ucrt64/share/licenses tree');
-      await findRequiredFile(gitGcm, ['LICENSE', 'NOTICE'], 'Git Credential Manager');
-    }
     const nodeHomeRel = selected.node.binary.includes('/') ? selected.node.binary.split('/')[0] : '.';
     const nodeHome = path.join(nodeTmp, nodeHomeRel);
-    const gitHome = gitTmp;
     const nodeDest = path.join(staged, 'node');
-    const gitDest = path.join(staged, 'git');
     await copyTree(nodeHome, nodeDest, nodeHome);
-    await copyTree(gitHome, gitDest, gitHome);
     const nodeBinary = path.join(nodeDest, selected.node.binary.slice(nodeHomeRel === '.' ? 0 : nodeHomeRel.length + 1));
-    const gitBinary = path.join(gitDest, gitLayout.binary);
-    for (const binary of [nodeBinary, gitBinary]) {
+    for (const binary of [nodeBinary]) {
       const info = await lstat(binary).catch(() => null);
       if (!info?.isFile()) throw new Error(`Bundled executable is missing for ${selected.target}: ${binary}`);
       if (platform !== 'win32') await chmod(binary, (info.mode & 0o777) | 0o111);
     }
-    const gitNoticeRel = await findRequiredFile(gitDest, gitLayout.noticeCandidates, 'Git notice');
     const nodeNoticeRel = await findRequiredFile(nodeDest, ['LICENSE', 'LICENSE.txt'], 'Node');
     const publishedRelative = (file) => path.relative(outputRoot, path.join(targetRoot, path.relative(staged, file))).split(path.sep).join('/');
-    const gitLicenseFile = gitLicenseFromArchive ? path.join(gitDest, gitLicense) : path.resolve(gitTmp, gitLicense);
     const record = {
       schemaVersion: 1, target: selected.target,
       node: { version: manifest.node.version, npmVersion: manifest.node.npmVersion, corepackVersion: manifest.node.corepackVersion, source: manifest.node.source, checksumSource: manifest.node.checksumSource, archive: selected.node.file, sha256: selected.node.sha256, executable: publishedRelative(nodeBinary), license: publishedRelative(path.join(nodeDest, nodeNoticeRel)) },
-      git: { version: manifest.git.version, gitForWindowsVersion: manifest.git.gitForWindowsVersion, gitLfsVersion: manifest.git.gitLfsVersion, gitCredentialManagerVersion: manifest.git.gitCredentialManagerVersion, dugiteNativeVersion: manifest.git.dugiteNativeVersion, source: manifest.git.source, sourceCommit: manifest.git.sourceCommit, release: manifest.git.release, archive: selected.git.file, sha256: selected.git.sha256, executable: publishedRelative(gitBinary), license: publishedRelative(gitLicenseFile), notice: publishedRelative(path.join(gitDest, gitNoticeRel)), licenseSource: { url: manifest.git.sourceLicense.url, sha256: manifest.git.sourceLicense.sha256, sourceCommit: manifest.git.sourceLicense.sourceCommit, provenance: manifest.git.sourceLicense.provenance }, distribution: publishedRelative(gitDest), credentialManagerNotices: platform === 'win32' ? publishedRelative(path.join(gitDest, 'ucrt64/doc/git-credential-manager')) : null },
       sourceCorrespondence: { status: 'pending-task-7c', evidence: 'Upstream sources, licenses, notices, and hashes are recorded. Corresponding source collection and redistribution obligations remain under Task 7c review.' },
     };
     const recordPath = path.join(staged, 'tools-source.json');
@@ -371,8 +304,7 @@ export async function fetchTools({ platform, arch, cacheDir, outDir }) {
     await publishStagedDirectory(staged, targetRoot);
     return {
       node: record.node.executable,
-      git: record.git.executable,
-      licenses: { node: record.node.license, git: record.git.license, gitTree: record.git.distribution, gitNotices: record.git.credentialManagerNotices, gitNotice: record.git.notice, sourceRecord: publishedRelative(recordPath) },
+      licenses: { node: record.node.license, sourceRecord: publishedRelative(recordPath) },
     };
   } finally { await rm(work, { recursive: true, force: true }); }
 }

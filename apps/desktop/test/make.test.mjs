@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { builderConfig, parseMakeArgs, validateElectronNotices } from '../../../scripts/desktop/make.mjs';
+import { assertReplaceableFfmpeg, builderConfig, parseMakeArgs, validateElectronNotices } from '../../../scripts/desktop/make.mjs';
 import { parseSmokeArgs } from '../../../scripts/desktop/smoke-desktop.mjs';
 
 describe('native Electron packaging configuration', () => {
@@ -26,6 +26,22 @@ describe('native Electron packaging configuration', () => {
     expect(config).toMatchObject({ productName: 'Nema Room', executableName: 'Nema', appId: 'org.nema-project.nema-room' });
     expect(config.files).toContain('assets/**/*');
     expect(config.win.icon.replaceAll('\\', '/')).toMatch(/apps\/desktop\/assets\/icon\.ico$/);
+  });
+
+  it('requires Electron ffmpeg to be a separate replaceable library', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'nema-ffmpeg-'));
+    try {
+      await expect(assertReplaceableFfmpeg(root, 'win32')).rejects.toThrow(/replaceable library/i);
+      await mkdir(path.dirname(path.join(root, 'ffmpeg.dll')), { recursive: true });
+      await writeFile(path.join(root, 'ffmpeg.dll'), 'ffmpeg');
+      await expect(assertReplaceableFfmpeg(root, 'win32')).resolves.toBe('ffmpeg.dll');
+      const mac = path.join(root, 'Electron.app/Contents/Frameworks/Electron Framework.framework/Libraries');
+      await mkdir(mac, { recursive: true });
+      await writeFile(path.join(mac, 'libffmpeg.dylib'), 'ffmpeg');
+      await expect(assertReplaceableFfmpeg(root, 'darwin')).resolves.toMatch(/libffmpeg\.dylib$/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('requires the source-inventoried Electron notices before packaging', async () => {

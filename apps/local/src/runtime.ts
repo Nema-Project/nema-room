@@ -14,6 +14,7 @@ import { loadConfig } from "@nema/cli/config";
 import { startDaemon } from "@nema/cli/daemon/setup";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { openPrivateFile, privateModeMatches, protectPrivatePath } from "@nema/cli/secrets/permissions";
+import { requireSystemGit } from "@nema/cli/systemGit";
 import { acquireInstance, discoverInstance, requestInstanceShutdown, type InstanceLease } from "./instance.js";
 import { resolveHome } from "./paths.js";
 import { createGatewayCredential, createGatewayUiAuth, startGateway, type RunningGateway } from "./gateway.js";
@@ -61,7 +62,6 @@ type RuntimeManifest = {
   platform: string;
   arch: string;
   node: string;
-  git: string;
   coreEntry: string;
   cliEntry: string;
   webEntry: string;
@@ -72,7 +72,6 @@ type RuntimeManifest = {
 type ResolvedAssets = RuntimeManifest & {
   root: string;
   nodePath: string;
-  gitPath: string;
   corePath: string;
   cliPath: string;
   webPath: string;
@@ -122,7 +121,6 @@ function readManifest(assetsDir: string): ResolvedAssets {
     throw new Error("Runtime manifest version, schema, platform, or architecture does not match this runtime");
   }
   const nodePath = manifestEntry(root, value.node, "node");
-  const gitPath = manifestEntry(root, value.git, "git");
   const corePath = manifestEntry(root, value.coreEntry, "coreEntry");
   const cliPath = manifestEntry(root, value.cliEntry, "cliEntry");
   const webPath = manifestEntry(root, value.webEntry, "webEntry");
@@ -130,16 +128,16 @@ function readManifest(assetsDir: string): ResolvedAssets {
   const ownedHelperGuardianPath = process.platform === "win32"
     ? manifestEntry(root, value.ownedHelperGuardian, "ownedHelperGuardian")
     : undefined;
-  if (!existsSync(nodePath) || !existsSync(corePath) || !existsSync(cliPath) || !existsSync(webPath) || !existsSync(gitPath) || !existsSync(licensesPath) ||
+  if (!existsSync(nodePath) || !existsSync(corePath) || !existsSync(cliPath) || !existsSync(webPath) || !existsSync(licensesPath) ||
     (ownedHelperGuardianPath !== undefined && !existsSync(ownedHelperGuardianPath))) {
     throw new Error("Runtime manifest references a missing asset");
   }
-  return { ...value as RuntimeManifest, root, nodePath, gitPath, corePath, cliPath, webPath, licensesPath, ...(ownedHelperGuardianPath ? { ownedHelperGuardianPath } : {}) };
+  return { ...value as RuntimeManifest, root, nodePath, corePath, cliPath, webPath, licensesPath, ...(ownedHelperGuardianPath ? { ownedHelperGuardianPath } : {}) };
 }
 
 function installationIdentity(assets: ResolvedAssets): string {
   const root = process.platform === "win32" ? assets.root.toLowerCase() : assets.root;
-  const manifestIdentity = [assets.version, assets.platform, assets.arch, assets.node, assets.git, assets.coreEntry, assets.cliEntry, assets.webEntry, assets.licenses, assets.ownedHelperGuardian ?? null];
+  const manifestIdentity = [assets.version, assets.platform, assets.arch, assets.node, assets.coreEntry, assets.cliEntry, assets.webEntry, assets.licenses, assets.ownedHelperGuardian ?? null];
   return createHash("sha256").update(JSON.stringify([root, manifestIdentity])).digest("hex");
 }
 
@@ -196,10 +194,9 @@ function childEnvironment(extra: Record<string, string>): NodeJS.ProcessEnv {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
-  const gitDir = extra.NEMA_GIT_PATH ? dirname(extra.NEMA_GIT_PATH) : "";
-  env.PATH = [gitDir, process.env.PATH].filter(Boolean).join(process.platform === "win32" ? ";" : ":");
+  // Git comes from the user's PATH: Nema runs the git they already use, with their credential helpers and SSH setup.
+  env.PATH = process.env.PATH ?? process.env.Path;
   delete env.Path;
-  delete extra.NEMA_GIT_PATH;
   return { ...env, ...extra };
 }
 
@@ -210,7 +207,7 @@ function spawnWeb(assets: ResolvedAssets, port: number): ChildProcess {
   const child = spawn(assets.nodePath, args, {
     cwd: dirname(assets.webPath),
     env: childEnvironment({
-      PORT: String(port), HOSTNAME: "127.0.0.1", NODE_ENV: "production", NEXT_PUBLIC_NEMA_LOCAL: "1", NEMA_GIT_PATH: assets.gitPath,
+      PORT: String(port), HOSTNAME: "127.0.0.1", NODE_ENV: "production", NEXT_PUBLIC_NEMA_LOCAL: "1",
     }),
     // This private channel is intentionally separate from the core launcher's readiness IPC.
     // A hard core exit closes it, allowing the managed Web wrapper to stop its listener.
@@ -489,6 +486,8 @@ export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<
     return { ...existing, reused: true };
   }
   const assets = readManifest(options.assetsDir);
+  // Before starting a core: without a usable system git, the desktop shows this install guidance instead.
+  await requireSystemGit();
   const paths = resolveHome(options.home);
   if (!/\.(?:mjs|js)$/i.test(assets.corePath)) throw new Error("Runtime manifest coreEntry must be compiled JavaScript");
   const childArgs = [
@@ -498,7 +497,7 @@ export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<
     assets.root,
     ...(options.webPort === undefined ? [] : [String(options.webPort)]),
   ];
-  const spec = { nodePath: assets.nodePath, args: childArgs, cwd: assets.root, env: childEnvironment({ NEMA_GIT_PATH: assets.gitPath }) };
+  const spec = { nodePath: assets.nodePath, args: childArgs, cwd: assets.root, env: childEnvironment({}) };
   // Diagnostics only: the desktop smoke names a file here to capture the core's startup phases and stderr.
   const coreLog = process.env.NEMA_LOCAL_CORE_LOG ? openSync(process.env.NEMA_LOCAL_CORE_LOG, "a") : "ignore";
   let child: ChildProcess;

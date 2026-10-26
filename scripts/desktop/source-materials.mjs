@@ -169,32 +169,6 @@ async function inventoryFontAssets(root) {
   await visit(base);
   return assets.sort((a, b) => a.path.localeCompare(b.path));
 }
-async function inventoryGitDistribution(root, target) {
-  const gitRoot = path.join(root, 'runtime', target, 'git');
-  const windowsGit = target.startsWith('win32-');
-  const packagePath = `runtime/${target}/git/etc/package-versions.txt`;
-  const packageFile = windowsGit ? await safeFile(root, packagePath) : null;
-  const packageBytes = packageFile ? await readFile(packageFile) : null;
-  const paths = [];
-  const visit = async (dir, relative = '') => {
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-      const rel = relative ? `${relative}/${entry.name}` : entry.name;
-      const absolute = path.join(dir, entry.name);
-      const info = await lstat(absolute);
-      if (info.isSymbolicLink()) throw new Error(`Unsafe symlink in Git distribution inventory: ${rel}`);
-      if (info.isDirectory()) await visit(absolute, rel);
-      else if (info.isFile()) paths.push({ path: rel, sha256: await hashFile(absolute) });
-    }
-  };
-  await visit(gitRoot);
-  paths.sort((a, b) => a.path.localeCompare(b.path));
-  const packageVersions = packageBytes ? packageBytes.toString('utf8').split(/\r?\n/).map((line) => line.trim()).filter(Boolean) : null;
-  return {
-    target,
-    packageVersions: packageBytes ? { path: packagePath, sha256: createHash('sha256').update(packageBytes).digest('hex'), packages: packageVersions } : null,
-    shippedGitFiles: { count: paths.length, pathsSha256: createHash('sha256').update(paths.map((item) => item.path).join('\n')).digest('hex'), contentSha256: createHash('sha256').update(paths.map((item) => `${item.path}\0${item.sha256}`).join('\n')).digest('hex'), files: paths },
-  };
-}
 async function inventoryProductionDependencies(root) {
   const packages = [];
   const missing = [];
@@ -276,7 +250,8 @@ async function readTrustedPolicy(policyPath, target) {
 
 async function validatePolicyCoverage({ trustedPolicy, payloadRoot, archiveRoot = payloadRoot, target, materials, notices }) {
   const { target: policyTarget } = trustedPolicy;
-  const requiredIds = target.startsWith('win32-') ? ['node-source', 'mingit-component-sources', 'font-sources'] : ['node-source', 'git-source', 'font-sources'];
+  // Git is not bundled (Nema uses the user's own git), so no Git source component is required.
+  const requiredIds = ['node-source', 'font-sources', 'electron-ffmpeg'];
   const byId = new Map(policyTarget.components.map((component) => [component.id, component]));
   if (byId.size !== requiredIds.length || requiredIds.some((id) => !byId.has(id))) throw new Error('Trusted source policy component set does not match target requirements');
   const pending = [];
@@ -287,17 +262,29 @@ async function validatePolicyCoverage({ trustedPolicy, payloadRoot, archiveRoot 
       pending.push(component.reason ?? `${id} remains pending in trusted source policy`);
       continue;
     }
+    if (component.obligation === 'notice') {
+      if (!Array.isArray(component.notices) || component.notices.length === 0) throw new Error(`Notice obligation has no notices: ${id}`);
+      for (const required of component.notices) {
+        if (!required?.sourcePath) throw new Error(`Notice obligation is missing a path: ${id}`);
+        const notice = notices.find((item) => item.sourcePath === required.sourcePath);
+        if (!notice) {
+          pending.push(`${id} notice is missing: ${required.sourcePath}`);
+          continue;
+        }
+        if (!Array.isArray(required.mustMatch) || required.mustMatch.length === 0) continue;
+        const relative = notice.sourcePath.startsWith('upstream:') ? notice.bundlePath : notice.sourcePath;
+        const text = await readFile(await safeFile(payloadRoot, relative), 'utf8');
+        for (const needle of required.mustMatch) {
+          if (!text.includes(needle)) pending.push(`${id} notice ${required.sourcePath} is missing ${JSON.stringify(needle)}`);
+        }
+      }
+      continue;
+    }
     const kind = component.coverage?.kind;
     let expectedFiles;
-    let expectedPackages = [];
-    if (kind === 'files' || kind === 'posix-git-tree' || kind === 'git-package-set') {
+    if (kind === 'files') {
       const root = component.coverage.root;
       expectedFiles = await inventoryTreeFiles(payloadRoot, root);
-      if (kind === 'git-package-set') {
-        const git = await inventoryGitDistribution(payloadRoot, target);
-        if (!git.packageVersions) throw new Error('Windows MinGit policy requires package-versions inventory');
-        expectedPackages = git.packageVersions.packages.map((entry, index) => ({ index, entry }));
-      }
     } else if (kind === 'font-assets') {
       expectedFiles = await inventoryFontAssets(payloadRoot);
     } else {
@@ -307,11 +294,7 @@ async function validatePolicyCoverage({ trustedPolicy, payloadRoot, archiveRoot 
     if (!Array.isArray(mappings) || !mappings.length) throw new Error(`Resolved source policy has no structured mappings: ${id}`);
     const keys = mappings.map((mapping) => mapping.key);
     if (keys.some((key) => typeof key !== 'string' || !key) || new Set(keys).size !== keys.length) throw new Error(`Resolved source policy has invalid or duplicate mapping keys: ${id}`);
-    const requiredMappingKeys = id === 'node-source'
-      ? ['node-runtime', 'npm-package', 'corepack-package']
-      : id === 'mingit-component-sources'
-        ? expectedPackages.map(({ index }) => `package:${index}`)
-        : null;
+    const requiredMappingKeys = id === 'node-source' ? ['node-runtime', 'npm-package', 'corepack-package'] : null;
     const expectedKeys = requiredMappingKeys ?? component.coverage.requiredMappingKeys;
     if (expectedKeys && JSON.stringify([...keys].sort()) !== JSON.stringify([...expectedKeys].sort())) throw new Error(`Trusted source mapping keys do not cover required artifacts: ${id}`);
     if (id === 'font-sources') {
@@ -319,11 +302,9 @@ async function validatePolicyCoverage({ trustedPolicy, payloadRoot, archiveRoot 
       if (families.length !== 2 || new Set(families).size !== 2 || !['inter', 'jetbrains-mono'].every((family) => families.includes(family))) throw new Error('Trusted font policy must map both Inter and JetBrains Mono families explicitly');
     }
     const files = [];
-    const packages = [];
     for (const mapping of mappings) {
-      if (!Array.isArray(mapping.files) || !Array.isArray(mapping.packages) || !Array.isArray(mapping.materialRefs)) throw new Error(`Trusted source mapping is incomplete: ${id}/${mapping.key}`);
+      if (!Array.isArray(mapping.files) || !Array.isArray(mapping.materialRefs)) throw new Error(`Trusted source mapping is incomplete: ${id}/${mapping.key}`);
       files.push(...mapping.files);
-      packages.push(...mapping.packages);
       const roles = new Set();
       const referenceIds = new Set();
       for (const reference of mapping.materialRefs) {
@@ -352,9 +333,6 @@ async function validatePolicyCoverage({ trustedPolicy, payloadRoot, archiveRoot 
       if (actualFiles.get(file.path) !== file.sha256) throw new Error(`Trusted source mapping does not match shipped file bytes: ${file.path}`);
     }
     if (mappedFiles.size !== actualFiles.size || [...actualFiles.keys()].some((file) => !mappedFiles.has(file))) throw new Error(`Trusted source mappings do not cover the complete shipped ${id} inventory`);
-    const actualPackages = new Set(expectedPackages.map((item) => JSON.stringify(item)));
-    const mappedPackages = new Set(packages.map((item) => JSON.stringify(item)));
-    if (mappedPackages.size !== packages.length || mappedPackages.size !== actualPackages.size || [...actualPackages].some((entry) => !mappedPackages.has(entry))) throw new Error(`Trusted source mappings do not cover the complete MinGit package inventory: ${id}`);
   }
   return { eligible: pending.length === 0, pending };
 }
@@ -368,8 +346,7 @@ export async function collectSourceMaterials({ payloadRoot, outputRoot = payload
   const toolsRecordPath = await safeFile(payload, `runtime/${target}/tools-source.json`);
   const record = JSON.parse(await readFile(toolsRecordPath, 'utf8'));
   const expectedNode = trustedManifest.node.archive?.[target];
-  const expectedGit = trustedManifest.git.archives?.[target];
-  if (!expectedNode || !expectedGit || record.target !== target) throw new Error(`Unsupported or mismatched source target ${target}`);
+  if (!expectedNode || record.target !== target) throw new Error(`Unsupported or mismatched source target ${target}`);
   const notices = await inventoryNotices(payload);
   await ensureOutputDirectory(output, 'source-materials/notices');
   for (const notice of notices) {
@@ -407,15 +384,12 @@ export async function collectSourceMaterials({ payloadRoot, outputRoot = payload
   notices.sort((a, b) => a.sourcePath.localeCompare(b.sourcePath));
   const tools = {
     node: { version: record.node?.version, archive: record.node?.archive, sha256: record.node?.sha256, expectedArchive: expectedNode.file, expectedSha256: expectedNode.sha256, pinMatches: record.node?.version === trustedManifest.node.version && record.node?.archive === expectedNode.file && record.node?.sha256 === expectedNode.sha256 },
-    git: { version: record.git?.version, gitForWindowsVersion: record.git?.gitForWindowsVersion, dugiteNativeVersion: record.git?.dugiteNativeVersion, archive: record.git?.archive, sha256: record.git?.sha256, expectedArchive: expectedGit.file, expectedSha256: expectedGit.sha256, pinMatches: record.git?.version === trustedManifest.git.version && record.git?.gitForWindowsVersion === trustedManifest.git.gitForWindowsVersion && record.git?.dugiteNativeVersion === trustedManifest.git.dugiteNativeVersion && record.git?.archive === expectedGit.file && record.git?.sha256 === expectedGit.sha256 },
   };
-  const gitDistribution = await inventoryGitDistribution(payload, target);
   const productionDependencies = await inventoryProductionDependencies(payload);
   let materials = sourceMaterials;
   if (!materials) materials = [
-    { id: 'node-source', component: `Node.js ${trustedManifest.node.version}`, status: 'pending', correspondence: 'unverified', reason: 'Exact upstream source archive has not been included in this collected bundle.' },
-    ...(target === 'win32-x64' ? [{ id: 'mingit-component-sources', component: `Git for Windows ${trustedManifest.git.gitForWindowsVersion}`, status: 'pending', correspondence: 'unverified', reason: 'MinGit contains a prebuilt MSYS2/MinGW package subset; the staged package-version inventory has not been reconciled to complete corresponding source archives, patches, and build recipes.' }] : [{ id: 'git-source', component: `Git ${trustedManifest.git.version}`, status: 'pending', correspondence: 'unverified', reason: 'The pinned dugite-native Git source is retained, but correspondence to the target binary and all bundled components remains unverified.' }]),
-    { id: 'font-sources', component: 'Inter and JetBrains Mono WOFF2 assets', status: 'pending', correspondence: 'unverified', reason: 'Generated WOFF2 files are shipped; OFL notices are retained, but exact upstream font revisions are not pinned to the generated assets.' },
+    { id: 'node-source', component: `Node.js ${trustedManifest.node.version}`, status: 'notice', correspondence: 'notice', reason: 'MIT. The staged Node LICENSE is the required notice.' },
+    { id: 'font-sources', component: 'Inter and JetBrains Mono WOFF2 assets', status: 'notice', correspondence: 'notice', reason: 'SIL Open Font License. The OFL notices ship with the WOFF2 files.' },
   ];
   materials = await Promise.all(materials.map(async (item) => {
     if (!item.sourcePath && !item.url) return item;
@@ -455,12 +429,13 @@ export async function collectSourceMaterials({ payloadRoot, outputRoot = payload
     fontMaterial.licenseNoticeIds = ['inter-ofl', 'jetbrains-mono-ofl'].filter((id) => notices.some((notice) => notice.sourcePath === `upstream:${id}`));
   }
   const correspondence = await validatePolicyCoverage({ trustedPolicy, payloadRoot: payload, archiveRoot: output, target, materials, notices });
+  const noticeOnlyIds = new Set(trustedPolicy.target.components.filter((component) => component.obligation === 'notice').map((component) => component.id));
   const unresolved = [
     ...correspondence.pending.map((reason) => ({ id: 'trusted-source-policy', reason })),
-    ...materials.filter((item) => !item.archive).map(({ id, reason }) => ({ id, reason: reason ?? 'expected archive bytes have not been collected' })),
+    ...materials.filter((item) => !item.archive && !noticeOnlyIds.has(item.id)).map(({ id, reason }) => ({ id, reason: reason ?? 'expected archive bytes have not been collected' })),
     ...productionDependencies.missing.map((item) => ({ id: `production-dependency:${item.packageRoot}`, package: item.package ?? null, reason: item.reason })),
   ];
-  const result = { schemaVersion: 1, target, appVersion, createdAt: new Date().toISOString(), eligibility: 'local-validation-only', publicationEligibility: correspondence.eligible && !unresolved.length ? 'eligible' : 'pending', sourcePolicy: { schemaVersion: trustedPolicy.policy.schemaVersion, policyVersion: trustedPolicy.policy.policyVersion, sha256: trustedPolicy.sha256 }, tools, gitDistribution, productionDependencies, notices, noticeCount: notices.length, materials, unresolved };
+  const result = { schemaVersion: 1, target, appVersion, createdAt: new Date().toISOString(), eligibility: 'local-validation-only', publicationEligibility: correspondence.eligible && !unresolved.length ? 'eligible' : 'pending', sourcePolicy: { schemaVersion: trustedPolicy.policy.schemaVersion, policyVersion: trustedPolicy.policy.policyVersion, sha256: trustedPolicy.sha256 }, tools, productionDependencies, notices, noticeCount: notices.length, materials, unresolved };
   const manifestPath = path.join(output, 'source-materials.json');
   await writeOutputFile(output, 'source-materials.json', `${JSON.stringify(result, null, 2)}\n`);
   if (path.resolve(output) === payload) {
@@ -468,7 +443,7 @@ export async function collectSourceMaterials({ payloadRoot, outputRoot = payload
       status: result.publicationEligibility === 'eligible' ? 'source-materials-collected' : 'pending-task-7c',
       manifest: 'source-materials.json',
       manifestSha256: await hashFile(manifestPath),
-      evidence: result.publicationEligibility === 'eligible' ? 'Trusted source policy mappings cover the staged inventory and every archive is hash-bound to immutable provenance.' : 'Local materials are inventoried; trusted correspondence policy or required evidence remains pending.',
+      evidence: result.publicationEligibility === 'eligible' ? 'The trusted source policy is satisfied. Notice obligations are the shipped license texts; any source-archive obligation is hash-bound.' : 'Local materials are inventoried; trusted correspondence policy or required evidence remains pending.',
     };
     await writeOutputFile(payload, `runtime/${target}/tools-source.json`, `${JSON.stringify(record, null, 2)}\n`, { exclusive: false });
   }
@@ -489,15 +464,13 @@ export async function validatePublicationEligibility(payloadRoot, { toolsManifes
   if (materials.sourcePolicy?.sha256 !== trustedPolicy.sha256) throw new Error('Source-material manifest trusted policy hash mismatch');
   const recordPath = await safeFile(root, `runtime/${target}/tools-source.json`);
   const record = JSON.parse(await readFile(recordPath, 'utf8'));
-  const actualGitDistribution = await inventoryGitDistribution(root, target);
-  if (JSON.stringify(actualGitDistribution) !== JSON.stringify(materials.gitDistribution)) throw new Error('Git package-version inventory or shipped file-set fingerprint mismatch');
   const actualDependencies = await inventoryProductionDependencies(root);
   if (JSON.stringify(actualDependencies) !== JSON.stringify(materials.productionDependencies)) throw new Error('Production dependency names, versions, license metadata, or notice paths do not match staged package closure');
   if (actualDependencies.missing.length) throw new Error(`Production dependency notice inventory has unresolved packages: ${actualDependencies.missing.length}`);
-  const nodePin = trusted.node.archive?.[target], gitPin = trusted.git.archives?.[target];
-  if (!nodePin || !gitPin) throw new Error(`Trusted tools manifest has no target pins for ${target}`);
-  if (record.target !== target || record.node?.version !== trusted.node.version || record.node?.archive !== nodePin.file || record.node?.sha256 !== nodePin.sha256 || record.git?.version !== trusted.git.version || record.git?.gitForWindowsVersion !== trusted.git.gitForWindowsVersion || record.git?.dugiteNativeVersion !== trusted.git.dugiteNativeVersion || record.git?.archive !== gitPin.file || record.git?.sha256 !== gitPin.sha256) throw new Error('Payload tool target/version/archive/hash does not match trusted tools manifest pins');
-  for (const tool of ['node', 'git']) if (!materials.tools?.[tool]?.pinMatches) throw new Error(`Source-material inventory has an untrusted ${tool} tool pin`);
+  const nodePin = trusted.node.archive?.[target];
+  if (!nodePin) throw new Error(`Trusted tools manifest has no target pins for ${target}`);
+  if (record.target !== target || record.node?.version !== trusted.node.version || record.node?.archive !== nodePin.file || record.node?.sha256 !== nodePin.sha256) throw new Error('Payload tool target/version/archive/hash does not match trusted tools manifest pins');
+  if (!materials.tools?.node?.pinMatches) throw new Error('Source-material inventory has an untrusted node tool pin');
   for (const notice of materials.notices ?? []) {
     const file = await safeFile(root, notice.bundlePath);
     if (await hashFile(file) !== notice.sha256) throw new Error(`Notice hash mismatch: ${notice.sourcePath}`);
@@ -508,7 +481,6 @@ export async function validatePublicationEligibility(payloadRoot, { toolsManifes
   for (const notice of stagedNotices) if (!noticePaths.has(notice.sourcePath) || materials.notices.find((item) => item.sourcePath === notice.sourcePath)?.sha256 !== notice.sha256) throw new Error(`Staged notice inventory is incomplete or changed: ${notice.sourcePath}`);
   const requiredNoticePaths = [
     (p) => /^runtime\/[^/]+\/node\//.test(p),
-    (p) => /^runtime\/[^/]+\/git\//.test(p),
     (p) => p === 'runtime/licenses/application',
     (p) => p.startsWith('vendor/archify/'),
     (p) => p.startsWith('vendor/superpowers-rules/'),
@@ -516,7 +488,9 @@ export async function validatePublicationEligibility(payloadRoot, { toolsManifes
   ];
   for (const matches of requiredNoticePaths) if (!stagedNotices.some((notice) => matches(notice.sourcePath))) throw new Error('Required staged notice category is missing');
   for (const font of ['inter-ofl', 'jetbrains-mono-ofl']) if (!materials.notices.some((notice) => notice.sourcePath === `upstream:${font}` && notice.provenance?.url && notice.provenance?.immutableRef)) throw new Error(`Required font license provenance is missing: ${font}`);
+  const noticeOnlyIds = new Set(trustedPolicy.target.components.filter((component) => component.obligation === 'notice').map((component) => component.id));
   for (const item of materials.materials) {
+    if (!item.archive?.path && noticeOnlyIds.has(item.id)) continue;
     if (item.archive?.path) {
       const archive = await safeFile(root, item.archive.path);
       if (await hashFile(archive) !== item.archive.sha256) throw new Error(`Source archive hash mismatch: ${item.id}`);

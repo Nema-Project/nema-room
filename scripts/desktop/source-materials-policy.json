@@ -1,37 +1,37 @@
 {
   "schemaVersion": 1,
-  "policyVersion": 1,
+  "policyVersion": 3,
   "targets": {
     "win32-x64": {
-      "status": "pending",
+      "status": "resolved",
       "components": [
-        { "id": "node-source", "status": "pending", "requiredRoles": ["source", "recipe"], "coverage": { "kind": "files", "root": "runtime/win32-x64/node", "requiredMappingKeys": ["node-runtime", "npm-package", "corepack-package"] }, "reason": "Node, npm, Corepack source and build correspondence has not been fully reviewed." },
-        { "id": "mingit-component-sources", "status": "pending", "requiredRoles": ["source", "patch", "recipe"], "coverage": { "kind": "git-package-set", "root": "runtime/win32-x64/git", "packageVersionsPath": "runtime/win32-x64/git/etc/package-versions.txt" }, "reason": "The full MinGit package set, staged files, sources, patches, and exact recipes have not been reconciled." },
-        { "id": "font-sources", "status": "pending", "requiredRoles": ["source", "license"], "coverage": { "kind": "font-assets", "root": "web/apps/web/.next/static/media" }, "reason": "Exact font revisions for generated WOFF2 assets are not pinned." }
+        { "id": "node-source", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/win32-x64/node/LICENSE" }], "reason": "Node.js, npm and Corepack are MIT. The LICENSE shipped inside the Node distribution is the required copyright and permission notice." },
+        { "id": "font-sources", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "upstream:inter-ofl" }, { "sourcePath": "upstream:jetbrains-mono-ofl" }], "reason": "Inter and JetBrains Mono are SIL Open Font License. The OFL text ships with the WOFF2 files; the font files are the work." },
+        { "id": "electron-ffmpeg", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/licenses/electron/LICENSES.chromium.html", "mustMatch": ["ffmpeg", "LGPL v2.1"] }], "reason": "Electron ships ffmpeg under the LGPL as its own library, so it can be replaced. The Chromium notice file must name ffmpeg and LGPL v2.1." }
       ]
     },
     "darwin-arm64": {
-      "status": "pending",
+      "status": "resolved",
       "components": [
-        { "id": "node-source", "status": "pending", "requiredRoles": ["source", "recipe"], "coverage": { "kind": "files", "root": "runtime/darwin-arm64/node", "requiredMappingKeys": ["node-runtime", "npm-package", "corepack-package"] }, "reason": "Node, npm, Corepack source and build correspondence has not been fully reviewed." },
-        { "id": "git-source", "status": "pending", "requiredRoles": ["source", "recipe", "license"], "coverage": { "kind": "posix-git-tree", "root": "runtime/darwin-arm64/git" }, "reason": "The target Git source, LFS/GCM additions, and exact build correspondence have not been reviewed." },
-        { "id": "font-sources", "status": "pending", "requiredRoles": ["source", "license"], "coverage": { "kind": "font-assets", "root": "web/apps/web/.next/static/media" }, "reason": "Exact font revisions for generated WOFF2 assets are not pinned." }
+        { "id": "node-source", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/darwin-arm64/node/LICENSE" }], "reason": "Node.js, npm and Corepack are MIT. The LICENSE shipped inside the Node distribution is the required copyright and permission notice." },
+        { "id": "font-sources", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "upstream:inter-ofl" }, { "sourcePath": "upstream:jetbrains-mono-ofl" }], "reason": "Inter and JetBrains Mono are SIL Open Font License. The OFL text ships with the WOFF2 files; the font files are the work." },
+        { "id": "electron-ffmpeg", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/licenses/electron/LICENSES.chromium.html", "mustMatch": ["ffmpeg", "LGPL v2.1"] }], "reason": "Electron ships ffmpeg under the LGPL as its own library, so it can be replaced. The Chromium notice file must name ffmpeg and LGPL v2.1." }
       ]
     },
     "linux-x64": {
-      "status": "pending",
+      "status": "resolved",
       "components": [
-        { "id": "node-source", "status": "pending", "requiredRoles": ["source", "recipe"], "coverage": { "kind": "files", "root": "runtime/linux-x64/node", "requiredMappingKeys": ["node-runtime", "npm-package", "corepack-package"] }, "reason": "Node, npm, Corepack source and build correspondence has not been fully reviewed." },
-        { "id": "git-source", "status": "pending", "requiredRoles": ["source", "recipe", "license"], "coverage": { "kind": "posix-git-tree", "root": "runtime/linux-x64/git" }, "reason": "The target Git source, LFS/GCM additions, and exact build correspondence have not been reviewed." },
-        { "id": "font-sources", "status": "pending", "requiredRoles": ["source", "license"], "coverage": { "kind": "font-assets", "root": "web/apps/web/.next/static/media" }, "reason": "Exact font revisions for generated WOFF2 assets are not pinned." }
+        { "id": "node-source", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/linux-x64/node/LICENSE" }], "reason": "Node.js, npm and Corepack are MIT. The LICENSE shipped inside the Node distribution is the required copyright and permission notice." },
+        { "id": "font-sources", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "upstream:inter-ofl" }, { "sourcePath": "upstream:jetbrains-mono-ofl" }], "reason": "Inter and JetBrains Mono are SIL Open Font License. The OFL text ships with the WOFF2 files; the font files are the work." },
+        { "id": "electron-ffmpeg", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/licenses/electron/LICENSES.chromium.html", "mustMatch": ["ffmpeg", "LGPL v2.1"] }], "reason": "Electron ships ffmpeg under the LGPL as its own library, so it can be replaced. The Chromium notice file must name ffmpeg and LGPL v2.1." }
       ]
     },
     "linux-arm64": {
-      "status": "pending",
+      "status": "resolved",
       "components": [
-        { "id": "node-source", "status": "pending", "requiredRoles": ["source", "recipe"], "coverage": { "kind": "files", "root": "runtime/linux-arm64/node", "requiredMappingKeys": ["node-runtime", "npm-package", "corepack-package"] }, "reason": "Node, npm, Corepack source and build correspondence has not been fully reviewed." },
-        { "id": "git-source", "status": "pending", "requiredRoles": ["source", "recipe", "license"], "coverage": { "kind": "posix-git-tree", "root": "runtime/linux-arm64/git" }, "reason": "The target Git source, LFS/GCM additions, and exact build correspondence have not been reviewed." },
-        { "id": "font-sources", "status": "pending", "requiredRoles": ["source", "license"], "coverage": { "kind": "font-assets", "root": "web/apps/web/.next/static/media" }, "reason": "Exact font revisions for generated WOFF2 assets are not pinned." }
+        { "id": "node-source", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/linux-arm64/node/LICENSE" }], "reason": "Node.js, npm and Corepack are MIT. The LICENSE shipped inside the Node distribution is the required copyright and permission notice." },
+        { "id": "font-sources", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "upstream:inter-ofl" }, { "sourcePath": "upstream:jetbrains-mono-ofl" }], "reason": "Inter and JetBrains Mono are SIL Open Font License. The OFL text ships with the WOFF2 files; the font files are the work." },
+        { "id": "electron-ffmpeg", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/licenses/electron/LICENSES.chromium.html", "mustMatch": ["ffmpeg", "LGPL v2.1"] }], "reason": "Electron ships ffmpeg under the LGPL as its own library, so it can be replaced. The Chromium notice file must name ffmpeg and LGPL v2.1." }
       ]
     }
   }

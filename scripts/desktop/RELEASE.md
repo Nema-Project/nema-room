@@ -2,9 +2,9 @@
 
 No desktop release is published yet. Nothing in this repository links to a download, and this checklist does not change that. Local workflow and script validation is not a published release.
 
-## Publication is blocked
+## Publication gate
 
-`.github/workflows/desktop-release.yml` runs `npm run desktop:validate-release` for every target payload before it creates anything. That validator fails closed: it rejects pending, unverified or mismatched source materials. Source-correspondence review (Task 7c) is not complete, and the source plan has no entries for the macOS target, so the publish job will refuse today. Do not push a release tag until Task 7c is resolved and the validator passes locally for all three targets. Do not work around the gate.
+`.github/workflows/desktop-release.yml` runs `npm run desktop:validate-release` for every target payload before it creates anything. The gate fails closed. Node (MIT), Inter and JetBrains Mono (OFL), and Electron's ffmpeg (LGPL) are notice obligations: the license text must be in the payload, and ffmpeg must be the separate library inside the Electron distribution. A source archive is not required for those three. Do not push a release tag until `desktop:validate-release` prints `Release eligible` for `win32-x64` and `darwin-arm64`. Do not work around the gate.
 
 ## How the workflow behaves
 
@@ -19,7 +19,7 @@ No desktop release is published yet. Nothing in this repository links to a downl
 
 ## Before the first tag
 
-1. Task 7c is complete and `npm run desktop:validate-release -- <payload> <platform-arch> <version>` prints `Release eligible` for `win32-x64` and `darwin-arm64`.
+1. `npm run desktop:validate-release -- <payload> <platform-arch> <version>` prints `Release eligible` for `win32-x64` and `darwin-arm64`.
 2. The version in both package manifests is the intended first release version; no tag has been created for it.
 3. The release commit is on the intended branch and a manual `desktop-release.yml` run with `target=all` on that commit is green for both targets.
 4. The tag is created intentionally, by a person, on that commit: `git tag v<version>` then `git push origin v<version>`. Never tag automatically.
@@ -31,7 +31,7 @@ The installers are not notarized or Developer ID signed. Expect OS prompts and r
 
 - Windows x64: run the NSIS installer. SmartScreen will likely show "Windows protected your PC" (More info, Run anyway). Install to the default and to a path with spaces. Launch, create a workspace, send a chat with a configured provider, quit from the tray, relaunch and confirm data persisted. Uninstall and confirm user data is kept. Also unzip the portable ZIP and launch it.
 - macOS arm64 (an Apple Silicon machine): open the DMG, drag the app to Applications. Gatekeeper will block an ad-hoc signed app downloaded from the web: use System Settings, Privacy and Security, Open Anyway (or right-click Open). Launch, create a workspace, chat, quit, relaunch and confirm persistence. Repeat once from the ZIP.
-- On every machine confirm `Nema CLI` (`report install --help`) and the browser launcher run from the bundled payload, and that no host Node or Git is required.
+- On every machine confirm `Nema CLI` (`report install --help`) and the browser launcher run from the bundled payload. Node is bundled. Git must already be installed (2.31 or later); on macOS, Finder also searches Homebrew and MacPorts.
 
 ## Anonymous download and hash verification
 
