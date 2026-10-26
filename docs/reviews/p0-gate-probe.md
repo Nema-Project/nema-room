@@ -1,3 +1,3 @@
 # CI gate rehearsal
 
-[Repository README](../../README.md)
+[Intentional missing target](./p0-intentionally-missing.md)
