@@ -1,0 +1,25 @@
+name: Diag Windows PowerShell
+
+# Temporary (PR #8): times the private-ACL PowerShell call on a Windows runner. Remove before merging.
+on:
+  pull_request:
+    paths: ['scripts/desktop/diag-powershell.mjs', '.github/workflows/diag-powershell.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Time PowerShell (first pass)
+        run: node scripts/desktop/diag-powershell.mjs
+      - name: Time PowerShell (second pass)
+        run: node scripts/desktop/diag-powershell.mjs
