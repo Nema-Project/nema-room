@@ -36,6 +36,7 @@ console.log(timeAcl(coreEnv, 'core env'));
 console.log(timeAcl({ ...coreEnv, USERPROFILE: process.env.USERPROFILE }, 'core env + real USERPROFILE'));
 console.log(timeAcl({ ...coreEnv, LOCALAPPDATA: process.env.LOCALAPPDATA, APPDATA: process.env.APPDATA }, 'core env + APPDATA/LOCALAPPDATA'));
 console.log(timeAcl({ ...coreEnv, PSModulePath: process.env.PSModulePath ?? '' }, 'core env + PSModulePath'));
+console.log(timeAcl({ ...coreEnv, PSModulePath: path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules') }, 'core env + system-only PSModulePath'));
 console.log(timeAcl({ ...coreEnv, SystemDrive: process.env.SystemDrive, ProgramData: process.env.ProgramData, ProgramFiles: process.env.ProgramFiles }, 'core env + SystemDrive/ProgramData/PF'));
 
 for (const detached of [true, false]) {

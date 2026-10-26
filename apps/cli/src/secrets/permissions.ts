@@ -38,10 +38,24 @@ foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.S
 if (-not $hasOwner) { throw 'Owner cannot read' }
 `;
 
+/**
+ * Pin PSModulePath to the system modules. Without it (the managed core's filtered environment) PowerShell
+ * falls back to a module scan that took ~22s per call on a GitHub Windows runner; a user path is never needed.
+ */
+export function aclEnvironment(file: string, action: "protect" | "check", env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const systemRoot = env.SystemRoot ?? "C:\\Windows";
+  return {
+    ...env,
+    PSModulePath: path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "Modules"),
+    NEMA_PRIVATE_PATH: path.resolve(file),
+    NEMA_PRIVATE_ACTION: action,
+  };
+}
+
 function windowsAcl(file: string, action: "protect" | "check"): void {
   const exe = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const result = spawnSync(exe, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", ACL_SCRIPT], {
-    env: { ...process.env, NEMA_PRIVATE_PATH: path.resolve(file), NEMA_PRIVATE_ACTION: action },
+    env: aclEnvironment(file, action),
     // A cold PowerShell on a busy Windows runner can take longer than a local call.
     stdio: "ignore", windowsHide: true, timeout: 45_000,
   });

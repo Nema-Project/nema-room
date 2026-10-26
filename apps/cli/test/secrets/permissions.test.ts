@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { readSecretLine, saveSecretLine } from "../../src/secrets/file.js";
-import { openPrivateFile, privateModeMatches, protectPrivatePath } from "../../src/secrets/permissions.js";
+import { aclEnvironment, openPrivateFile, privateModeMatches, protectPrivatePath } from "../../src/secrets/permissions.js";
 import { AuthStore, type StoredAuth } from "../../src/direct/authStore.js";
 import { ensureReportToken, reportTokenHash } from "../../src/report/token.js";
 import { readClaudeToken, saveClaudeToken } from "../../src/claude/token.js";
@@ -67,4 +67,31 @@ test("private files are regular files and retain their contents", () => {
   closeSync(fd);
   expect(statSync(file).isFile()).toBe(true);
   expect(readFileSync(file, "utf8")).toBe("placeholder");
+});
+
+test("the ACL PowerShell gets only the system module path, whatever the caller inherited", () => {
+  const systemRoot = path.win32.join("C:", "Windows");
+  const modules = path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "Modules");
+  const file = path.join(root, "key");
+  // The managed core's filtered environment has no PSModulePath; PowerShell's fallback module scan took ~22s per call on a runner.
+  const bare = aclEnvironment(file, "check", { SystemRoot: systemRoot, PATH: path.win32.join(systemRoot, "System32") });
+  expect(bare.PSModulePath).toBe(modules);
+  expect(bare.NEMA_PRIVATE_PATH).toBe(path.resolve(file));
+  expect(bare.NEMA_PRIVATE_ACTION).toBe("check");
+  const userModules = path.win32.join("C:", "Users", "me", "Documents", "WindowsPowerShell", "Modules");
+  const inherited = aclEnvironment(file, "protect", { SystemRoot: systemRoot, PSModulePath: userModules });
+  expect(inherited.PSModulePath).toBe(modules);
+});
+
+test.runIf(process.platform === "win32")("Windows ACL checks work without an inherited PSModulePath", () => {
+  const saved = process.env.PSModulePath;
+  delete process.env.PSModulePath;
+  try {
+    const file = path.join(root, "no-module-path");
+    writeFileSync(file, "placeholder");
+    protectPrivatePath(file);
+    closeSync(openPrivateFile(file));
+  } finally {
+    if (saved !== undefined) process.env.PSModulePath = saved;
+  }
 });
