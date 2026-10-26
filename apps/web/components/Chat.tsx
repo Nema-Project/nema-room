@@ -59,6 +59,8 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
   const [threads, setThreads] = useState<Map<string, Thread>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [runningTask, setRunningTask] = useState<string | null>(null);
+  const [runningMessageId, setRunningMessageId] = useState<string | null>(null);
+  const [indexing, setIndexing] = useState<{ repoId: string; label: string }[]>([]);
   const [progress, setProgress] = useState<string>("");
   const [quote, setQuote] = useState<Message | null>(null);
   const [query, setQuery] = useState("");
@@ -68,6 +70,8 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
   const searchInput = useRef<HTMLInputElement>(null);
   // Bumped by every SSE-driven change of runningTask and by every active-task request, so a stale HTTP response never overwrites newer state.
   const taskVersion = useRef(0);
+  const indexVersion = useRef(0);
+  const runningId = useRef<string | null>(null);
   const messageVersion = useRef(0);
   const messageVersions = useRef(new Map<string, number>());
   const threadVersion = useRef(0);
@@ -115,10 +119,14 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
   // The server is the source of truth for "is a task running": seed on mount and replace stale state on resync.
   const loadActive = useCallback(async () => {
     const mine = ++taskVersion.current;
+    const indexMine = indexVersion.current;
     try {
-      const { running } = await getActiveTask(workspaceId);
+      const { running, indexing: active } = await getActiveTask(workspaceId);
+      if (indexMine === indexVersion.current) setIndexing(active ?? []);
       if (mine !== taskVersion.current) return; // an SSE event or a newer request superseded this response
+      runningId.current = running ? running.id : null;
       setRunningTask(running ? running.id : null);
+      setRunningMessageId(running ? running.messageId : null);
       setProgress("");
     } catch {
       /* keep whatever we have; the next event or resync corrects it */
@@ -159,6 +167,10 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
           const done = e.message.taskId;
           if (done && e.message.role !== "user") {
             taskVersion.current++;
+            if (runningId.current === done) {
+              runningId.current = null;
+              setRunningMessageId(null);
+            }
             setRunningTask((cur) => (cur === done ? null : cur));
           }
         } else if (e.type === "message.updated" && e.message.workspaceId === workspaceId) {
@@ -169,9 +181,22 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
         } else if (e.type === "task.updated" && e.task.workspaceId === workspaceId) {
           taskVersion.current++;
           if (e.task.status === "running") {
+            runningId.current = e.task.id;
             setRunningTask(e.task.id);
+            setRunningMessageId(e.task.messageId);
             setProgress("");
-          } else setRunningTask((cur) => (cur === e.task.id ? null : cur));
+          } else if (runningId.current === e.task.id) {
+            runningId.current = null;
+            setRunningTask(null);
+            setRunningMessageId(null);
+          }
+        } else if (e.type === "repo.index") {
+          indexVersion.current++;
+          setIndexing((cur) =>
+            e.status === "running"
+              ? cur.some((row) => row.repoId === e.repoId) ? cur : [...cur, { repoId: e.repoId, label: e.label }]
+              : cur.filter((row) => row.repoId !== e.repoId),
+          );
         } else if (e.type === "thread.updated" && e.thread.workspaceId === workspaceId) {
           threadVersions.current.set(e.thread.id, ++threadVersion.current);
           setThreads((current) => new Map(current).set(e.thread.id, e.thread));
@@ -191,10 +216,14 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
     [workspaceId, load, loadActive, loadThreads, showMessage],
   );
 
+  const runningMessage = runningMessageId ? messages.find((m) => m.id === runningMessageId) : undefined;
+  // ponytail: the hub's bind prompt contains 画架构图. The bar label depends on that phrase.
+  const drawingDiagram = runningMessage?.role === "system" && runningMessage.content.includes("画架构图");
+
   useLayoutEffect(() => {
     const el = stream.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length, runningTask, progress]);
+  }, [messages.length, runningTask, progress, indexing]);
 
   useLayoutEffect(() => {
     const id = pendingJump.current;
@@ -293,6 +322,18 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
             </div>
           );
         })}
+        {indexing.map((row) => (
+          <div className="msg" key={row.repoId}>
+            <AgentAvatar />
+            <div>
+              <div className="who">Nema</div>
+              <div className="working">
+                <span className="bar2" />
+                {t("chat.indexing", { label: row.label })}
+              </div>
+            </div>
+          </div>
+        ))}
         {runningTask && (
           <div className="msg">
             <AgentAvatar />
@@ -300,7 +341,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
               <div className="who">Nema</div>
               <div className="working">
                 <span className="bar2" />
-                {progress ? `${t("chat.working")} · ${progress}` : t("chat.working")}
+                {progress ? `${t("chat.working")} · ${progress}` : drawingDiagram ? t("chat.drawingDiagram") : t("chat.working")}
               </div>
             </div>
           </div>

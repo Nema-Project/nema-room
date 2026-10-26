@@ -49,6 +49,8 @@
   "chat.you": "You",
   "chat.offline": "Agent offline: messages will queue and be processed when the nema daemon is back",
   "chat.working": "Organizing",
+  "chat.indexing": "Indexing {label}",
+  "chat.drawingDiagram": "Drawing the architecture diagram",
   "chat.askedQuestion": "Question · {id}",
   "chat.answer": "Answer",
   "chat.answerFor": "Answer {id}",

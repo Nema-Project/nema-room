@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Binding a repository shows a progress line while its code index runs. When the index finishes, chat says it is ready and code questions can start. Drawing the architecture diagram keeps a progress line and names that work.
+
 ### Changed
 
 - The landing page and desktop status now describe the 0.1.1 installers. The app uses Git already installed on the machine.

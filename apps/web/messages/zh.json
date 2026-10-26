@@ -49,6 +49,8 @@
   "chat.you": "你",
   "chat.offline": "Agent 离线：消息会排队，nema daemon 上线后处理",
   "chat.working": "整理中",
+  "chat.indexing": "正在索引 {label}",
+  "chat.drawingDiagram": "正在绘制架构图",
   "chat.askedQuestion": "追问 · {id}",
   "chat.answer": "回答",
   "chat.answerFor": "回答 {id}",

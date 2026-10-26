@@ -42,7 +42,8 @@ export type HubEvent =
   | { type: "thread.updated"; thread: Thread }
   | { type: "task.progress"; taskId: string; text: string }
   | { type: "knowledge.changed"; entryId: string }
-  | { type: "daemon.status"; connected: boolean };
+  | { type: "daemon.status"; connected: boolean }
+  | { type: "repo.index"; repoId: string; label: string; status: "running" | "done" | "failed" };
 
 export type EntryListItem = import("@nema/shared").EntrySummary & { isNew: boolean };
 

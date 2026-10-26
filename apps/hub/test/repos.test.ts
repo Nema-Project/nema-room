@@ -7,7 +7,7 @@ import { DaemonRpcError } from "../src/daemonRpc.js";
 import { attachDaemonSocket } from "../src/daemonSocket.js";
 import { EventBus, type HubEvent } from "../src/events.js";
 import { PluginError, setPluginState } from "../src/plugins.js";
-import { RepoError, applyRepoMoved, bindRepo, findRepoForWorkspace, getRepo, listRepos, previewRepo, syncBoundRepos, unbindRepo, updateRepo } from "../src/repos.js";
+import { RepoError, applyRepoMoved, bindRepo, findRepoForWorkspace, getRepo, indexFailedText, indexReadyText, listRepos, previewRepo, syncBoundRepos, unbindRepo, updateRepo } from "../src/repos.js";
 import { createWorkspace, deleteWorkspace, updateWorkspace } from "../src/workspaces.js";
 import { listMessages } from "../src/messages.js";
 import { listQueuedTasks } from "../src/tasks.js";
@@ -537,31 +537,34 @@ test("binding a repo queues one architecture task after its index succeeds", asy
 
   const api = await bindRepo(db, daemon, ws.id, { path: "/api", label: "API" }, events);
   expect(await architectureTasks()).toEqual([]);
-  expect(seen).toEqual([]);
+  expect(seen).toEqual([{ type: "repo.index", repoId: api.id, label: "API", status: "running" }]);
 
   finishers[0]!({ sha: "abc" });
-  await until(async () => (await architectureTasks()).length === 1);
+  await until(async () => (await architectureTasks()).length === 2);
   expect(await architectureTasks()).toEqual([
+    { content: indexReadyText("API"), queued: 0 },
     { content: `为仓库 API（${api.id}）画架构图：用 code__ 函数读代码，用 diagram__save 保存，type 为 architecture。`, queued: 1 },
   ]);
-  expect(seen.map((e) => e.type)).toEqual(["message.created", "task.updated"]);
+  expect(seen.map((e) => e.type)).toEqual(["repo.index", "repo.index", "message.created", "message.created", "task.updated"]);
 
   const web = await bindRepo(db, daemon, ws.id, { path: "/web", label: "Web" }, events);
-  expect(await architectureTasks()).toHaveLength(1);
+  expect(await architectureTasks()).toHaveLength(2);
   finishers[1]!({ sha: "def" });
-  await until(async () => (await architectureTasks()).length === 2);
+  await until(async () => (await architectureTasks()).length === 4);
   let list = await architectureTasks();
-  expect(list[1]!.content).toContain(`为仓库 Web（${web.id}）`);
-  expect(list[1]!.queued).toBe(1);
+  expect(list[2]!.content).toBe(indexReadyText("Web"));
+  expect(list[3]!.content).toContain(`为仓库 Web（${web.id}）`);
+  expect(list[3]!.queued).toBe(1);
 
   await unbindRepo(db, daemon, web.id);
-  expect(await architectureTasks()).toHaveLength(2);
+  expect(await architectureTasks()).toHaveLength(4);
   const again = await bindRepo(db, daemon, ws.id, { path: "/web", label: "Web" }, events);
   finishers[2]!({ sha: "ghi" });
-  await until(async () => (await architectureTasks()).length === 3);
+  await until(async () => (await architectureTasks()).length === 6);
   list = await architectureTasks();
-  expect(list[2]!.content).toContain(`为仓库 Web（${again.id}）`);
-  expect(list[2]!.queued).toBe(1);
+  expect(list[4]!.content).toBe(indexReadyText("Web"));
+  expect(list[5]!.content).toContain(`为仓库 Web（${again.id}）`);
+  expect(list[5]!.queued).toBe(1);
 });
 
 test("a failed or empty index queues no architecture task", async () => {
@@ -578,16 +581,20 @@ test("a failed or empty index queues no architecture task", async () => {
   const errors = vi.spyOn(console, "error").mockImplementation(() => {});
   await bindRepo(db, daemon, ws.id, { path: "/api", label: "API" });
   rejectIndex(new Error("index failed"));
-  await new Promise((resolve) => setImmediate(resolve));
-  expect((await listMessages(db, ws.id)).filter((m) => m.role === "system")).toHaveLength(0);
+  await until(async () => (await listMessages(db, ws.id)).some((m) => m.content === indexFailedText("API")));
+  expect(await listQueuedTasks(db, ws.id)).toEqual([]);
 
   const { daemon: emptyDaemon } = daemonOf({
     "repo.inspect": () => ({ ...inspected, root: "/web", gitCommonDir: "/web/.git" }),
     "repo.index": () => Promise.resolve({ sha: "" }),
   });
   await bindRepo(db, emptyDaemon, ws.id, { path: "/web", label: "Web" });
-  await new Promise((resolve) => setImmediate(resolve));
-  expect((await listMessages(db, ws.id)).filter((m) => m.role === "system")).toHaveLength(0);
+  await until(async () => (await listMessages(db, ws.id)).some((m) => m.content === indexFailedText("Web")));
+  expect((await listMessages(db, ws.id)).filter((m) => m.role === "system").map((m) => m.content)).toEqual([
+    indexFailedText("API"),
+    indexFailedText("Web"),
+  ]);
+  expect(await listQueuedTasks(db, ws.id)).toEqual([]);
   errors.mockRestore();
 });
 
@@ -601,7 +608,7 @@ test("a failed bind queues no architecture task", async () => {
   });
   await bindRepo(db, daemon, ws.id, { path: "/a", label: "A" });
   finishIndex({ sha: "abc" });
-  await until(async () => (await listMessages(db, ws.id)).some((m) => m.role === "system"));
+  await until(async () => (await listMessages(db, ws.id)).filter((m) => m.role === "system").length === 2);
   await expect(bindRepo(db, daemon, ws.id, { path: "/a", label: "B" })).rejects.toThrow(RepoError);
-  expect((await listMessages(db, ws.id)).filter((m) => m.role === "system")).toHaveLength(1);
+  expect((await listMessages(db, ws.id)).filter((m) => m.role === "system")).toHaveLength(2);
 });

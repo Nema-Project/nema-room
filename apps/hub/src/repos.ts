@@ -4,7 +4,7 @@ import type { Db } from "./db/db.js";
 import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
 import type { EventBus } from "./events.js";
 import { githubTarget } from "./githubScope.js";
-import { postSystemTask } from "./messages.js";
+import { addMessage, postSystemTask } from "./messages.js";
 import { toUiTask } from "./tasks.js";
 
 export class RepoError extends Error {
@@ -246,6 +246,43 @@ export async function previewRepo(db: Db, daemon: DaemonRpc, workspaceId: string
   };
 }
 
+/** One in-flight bind index per repo. Cleared when that index finishes or fails. */
+const indexing = new Map<string, Map<string, string>>();
+
+export function listIndexing(workspaceId: string): { repoId: string; label: string }[] {
+  return [...(indexing.get(workspaceId) ?? [])].map(([repoId, label]) => ({ repoId, label }));
+}
+
+function noteIndex(events: EventBus | undefined, repo: Repo, status: "running" | "done" | "failed"): void {
+  let rows = indexing.get(repo.workspaceId);
+  if (status === "running") {
+    if (!rows) indexing.set(repo.workspaceId, (rows = new Map()));
+    rows.set(repo.id, repo.label);
+  } else {
+    rows?.delete(repo.id);
+    if (rows && rows.size === 0) indexing.delete(repo.workspaceId);
+  }
+  events?.emit(repo.workspaceId, { type: "repo.index", repoId: repo.id, label: repo.label, status });
+}
+
+/** Shown in chat. The web progress line looks for「画架构图」in the task that follows a successful index. */
+export function indexReadyText(label: string): string {
+  return `仓库 ${label} 的代码索引已完成，可以开始询问代码库。`;
+}
+
+export function indexFailedText(label: string): string {
+  return `仓库 ${label} 的代码索引没有完成，暂时还不能询问代码库。`;
+}
+
+/** Posts the outcome and returns whether the repo is still bound. */
+async function announceIndex(db: Db, events: EventBus | undefined, repo: Repo, status: "done" | "failed"): Promise<boolean> {
+  noteIndex(events, repo, status);
+  if (!(await getRepo(db, repo.id))) return false;
+  const message = await addMessage(db, repo.workspaceId, "system", status === "done" ? indexReadyText(repo.label) : indexFailedText(repo.label));
+  events?.emit(repo.workspaceId, { type: "message.created", message });
+  return true;
+}
+
 export async function bindRepo(
   db: Db,
   daemon: DaemonRpc,
@@ -290,11 +327,15 @@ export async function bindRepo(
     );
     throw new RepoError(409, `该仓库已绑定到 workspace ${existing[0]?.name ?? ""}`);
   }
+  noteIndex(events, repo, "running");
   void daemon
     .call("repo.index", rpcRepo(repo), INDEX_RPC_TIMEOUT_MS)
     .then(async (result) => {
       const sha = (result as { sha?: unknown } | null)?.sha;
-      if (typeof sha !== "string" || sha === "") return;
+      if (typeof sha !== "string" || sha === "") {
+        await announceIndex(db, events, repo, "failed");
+        return;
+      }
       // The indexed snapshot is the watcher's baseline, not a move. Skip it if the branch
       // changed or a repo.moved already stored a sha while indexing ran.
       const rows = await db.query(
@@ -302,10 +343,14 @@ export async function bindRepo(
         [repo.id, sha, repo.mainBranch],
       );
       if (rows.length > 0) await syncBoundRepos(db, daemon);
+      if (!(await announceIndex(db, events, repo, "done"))) return;
       await queueArchitectureDiagram(db, events, repo);
     })
     .catch((error) => {
       console.error(`repo.index failed for ${repo.id}`, error);
+      void announceIndex(db, events, repo, "failed").catch((announceError) => {
+        console.error(`announcing the failed index for ${repo.id}`, announceError);
+      });
     });
   await syncBoundRepos(db, daemon);
   return repo;
