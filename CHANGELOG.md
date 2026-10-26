@@ -6,6 +6,10 @@
 
 - The default landing page loads its demo from the site root. English stays at `/`, not `/en/`.
 
+### Changed
+
+- The landing page links to the latest GitHub release instead of a fixed version number.
+
 ## [0.1.2] - 2026-10-26
 
 ### Added
