@@ -11,6 +11,27 @@ export async function checkDocs({root, paths}) {
   root = await realpath(root);
   if (!Array.isArray(paths) || paths.some(p => typeof p !== 'string' || !p || p.includes('\0'))) throw new TypeError('Expected Git path array');
   const errors = [];
+  // Always inspect active reporting routes, even for a docs-only PR with no Markdown changes.
+  const optional = async path => {
+    try {
+      const file = resolve(root, path);
+      if (!inside(root, await realpath(file))) throw new Error(`Path outside repository: ${path}`);
+      return await readFile(file, 'utf8');
+    } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  };
+  for (const path of ['.github/ISSUE_TEMPLATE/security.yml', '.github/ISSUE_TEMPLATE/security.yaml']) {
+    if (await optional(path) !== null) errors.push(`${path}: public security issue form must be removed`);
+  }
+  const active = ['SECURITY.md', 'CONTRIBUTING.md', 'README.md', 'README.en.md', 'README.zh.md', 'README.ja.md',
+    'docs/guide.en.md', 'docs/guide.zh.md', 'docs/guide.ja.md', '.github/ISSUE_TEMPLATE/config.yml'];
+  for (const path of active) {
+    const content = await optional(path);
+    if (content === null) continue;
+    if (/issues\/new[^\s)]*template=security\.ya?ml/i.test(content)) errors.push(`${path}: public security issue link must be removed`);
+    if (path === 'SECURITY.md' && /repository is private|本仓库是私有|リポジトリは非公開|no desktop release is published|还没有发布版本/i.test(content)) errors.push(`${path}: obsolete security guidance`);
+  }
+  const primary = await optional('README.md'), english = await optional('README.en.md');
+  if (primary !== english) errors.push('English README files must be byte-identical');
   for (const path of paths) {
     const file = resolve(root, path);
     if (!inside(root, file)) throw new Error(`Path outside repository: ${path}`);

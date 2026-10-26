@@ -227,3 +227,7 @@ npm run build -w apps/web
 ルートの typecheck は web を含みません。web は個別にビルドしてください。更新前にデータをバックアップし、`git pull`、`npm ci`、CLI と Compose イメージの再ビルド、daemon の再起動を行います。hub と CLI は同じバージョンを使ってください。
 
 ポートや保存先は [.env.example](../.env.example) を参照してください。CLI はルートの `.env` を自動で読みません。保存先を変更したら shell で `NEMA_DATA_DIR` を export するか、`daemon` / `doctor` に `--token-file` を指定します。hub のポートを変えたら `--hub` も指定してください。`NEXT_PUBLIC_HUB_URL` 変更後は web の再ビルドが必要です。
+
+## セキュリティ報告
+
+セキュリティ上の問題は [セキュリティポリシー](../SECURITY.md) を確認してください。非公開報告窓口は利用可否を確認中です。公開 issue や PR に機密情報を書かず、確認が済むまでは脆弱性の内容を含めずに非公開の連絡方法だけを問い合わせてください。修正は main に入り、以降のデスクトップ版で配布されます。旧リリース系列の個別保守は約束していません。

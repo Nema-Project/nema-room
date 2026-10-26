@@ -228,3 +228,7 @@ npm run build -w apps/web
 The root typecheck excludes web; build it separately. Before upgrading, back up data, then run `git pull`, `npm ci`, rebuild the CLI and Compose images, and restart the daemon. Keep hub and CLI versions aligned.
 
 See [.env.example](../.env.example) for ports and directories. The CLI does not automatically load the root `.env`: export `NEMA_DATA_DIR` or pass `--token-file` to `daemon` / `doctor` for a custom data directory; also pass `--hub` for a different hub port. Changing `NEXT_PUBLIC_HUB_URL` requires rebuilding web.
+
+## Security reporting
+
+For security concerns, read the [security policy](../SECURITY.md). Private reporting availability is still unverified: do not disclose sensitive details in public issues or PRs; until verified, ask only for a private contact route without vulnerability details. Fixes land on main and ship in a subsequent desktop release; older release lines are not separately maintained.

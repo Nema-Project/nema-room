@@ -16,7 +16,7 @@ async function fixture(t, files) {
 }
 
 test('relative and repository-root links resolve while remote links, anchors and code are ignored', async t => {
-  const root = await fixture(t, {'README.md':'ok', 'docs/a.md': '[up](../README.md) [root](/README.md#x) [fragment](#x) [web](https://example.com/no) ` [code](missing) `\n```md\n[x](missing)\n```\n', 'site/index.html':'<a href="../README.md">ok</a><img src="https://example.com/a.png">'});
+  const root = await fixture(t, {'README.md':'ok', 'README.en.md':'ok', 'docs/a.md': '[up](../README.md) [root](/README.md#x) [fragment](#x) [web](https://example.com/no) ` [code](missing) `\n```md\n[x](missing)\n```\n', 'site/index.html':'<a href="../README.md">ok</a><img src="https://example.com/a.png">'});
   assert.deepEqual(await checkDocs({root, paths:['docs/a.md', 'site/index.html', 'deleted.md']}), []);
 });
 
@@ -30,4 +30,23 @@ test('unsupported reference links are reported, and path traversal fails', async
   const root = await fixture(t, {'docs/a.md':'[label][target]\n[target]: elsewhere.md'});
   assert.match((await checkDocs({root, paths:['docs/a.md']})).join('\n'), /unsupported/i);
   await assert.rejects(checkDocs({root, paths:['../outside.md']}));
+});
+
+test('security migration rejects public vulnerability routes and obsolete support claims', async t => {
+  const root = await fixture(t, {
+    'SECURITY.md':'This repository is private. No desktop release is published yet.',
+    '.github/ISSUE_TEMPLATE/security.yml':'name: Security',
+    '.github/ISSUE_TEMPLATE/config.yml':'url: https://github.com/Nema-Project/nema-room/issues/new?template=security.yml',
+    'README.md':'English', 'README.en.md':'different',
+  });
+  const errors=await checkDocs({root,paths:[]});
+  for (const pattern of [/public security issue form/i,/public security issue link/i,/obsolete security guidance/i,/English README/i]) assert.match(errors.join('\n'),pattern);
+});
+
+test('an explicitly pending private channel is valid and translated entrypoints cannot route to public security issues', async t => {
+  const root = await fixture(t, {'SECURITY.md':'Private reporting availability is unverified. Do not publish sensitive details.', 'README.md':'same', 'README.en.md':'same', '.github/ISSUE_TEMPLATE/config.yml':'url: https://github.com/Nema-Project/nema-room/blob/main/SECURITY.md'});
+  assert.deepEqual(await checkDocs({root,paths:[]}),[]);
+  await mkdir(join(root,'docs'),{recursive:true});
+  await writeFile(join(root,'docs/guide.ja.md'),'https://github.com/Nema-Project/nema-room/issues/new?template=security.yml');
+  assert.match((await checkDocs({root,paths:[]})).join('\n'),/public security issue link/i);
 });

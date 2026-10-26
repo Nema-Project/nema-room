@@ -145,6 +145,8 @@ See [storage, backups, and known limitations](docs/guide.en.md#data). A copy of 
 
 Found a bug or have an idea? [Open an issue](https://github.com/Nema-Project/nema-room/issues/new/choose). Include your OS, installation method, and redacted errors. Contributions in English, Chinese, or Japanese are welcome.
 
+For security concerns, read the [security policy](SECURITY.md). Private reporting availability is still unverified: do not disclose sensitive details in public issues or PRs; until verified, ask only for a private contact route without vulnerability details. Fixes land on main and ship in a subsequent desktop release; older release lines are not separately maintained.
+
 ---
 
 [MIT](LICENSE) © Nema-Project contributors. Third-party notices: [archify](vendor/archify/VENDORED.md) · [superpowers rules](vendor/superpowers-rules/VENDORED.md).

@@ -145,6 +145,8 @@ nema wp get W-1
 
 不具合やアイデアは [issue](https://github.com/Nema-Project/nema-room/issues/new/choose) へ。OS、インストール方法、機密情報を除いたエラーを記載してください。日本語・英語・中国語での貢献を歓迎します。
 
+セキュリティ上の問題は [セキュリティポリシー](SECURITY.md) を確認してください。非公開報告窓口は利用可否を確認中です。公開 issue や PR に機密情報を書かず、確認が済むまでは脆弱性の内容を含めずに非公開の連絡方法だけを問い合わせてください。修正は main に入り、以降のデスクトップ版で配布されます。旧リリース系列の個別保守は約束していません。
+
 ---
 
 [MIT](LICENSE) © Nema-Project contributors。第三者のライセンスと出典：[archify](vendor/archify/VENDORED.md) · [superpowers rules](vendor/superpowers-rules/VENDORED.md)。
