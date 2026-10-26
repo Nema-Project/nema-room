@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { fetchGraphify, graphifyLock, materializeSymlinks, POSIX_GRAPHIFY_LAUNCHER } from './fetch-graphify.mjs';
+import { fetchGraphify, graphifyLock, homePathFiles, materializeSymlinks, POSIX_GRAPHIFY_LAUNCHER, pythonLicensePath, rejectMachinePaths } from './fetch-graphify.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -69,4 +69,45 @@ test('replaces an in-tree symlink with the target file', async (t) => {
   const info = await lstat(path.join(root, 'python3'));
   assert.equal(info.isSymbolicLink(), false);
   assert.equal(await readFile(path.join(root, 'python3'), 'utf8'), 'python-bytes');
+});
+
+test('finds the CPython license in the Windows and Unix install_only layouts', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-graphify-license-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const windows = path.join(root, 'win', 'python');
+  await mkdir(windows, { recursive: true });
+  await writeFile(path.join(windows, 'LICENSE.txt'), 'psf');
+  assert.equal(await pythonLicensePath(windows), path.join(windows, 'LICENSE.txt'));
+  const unix = path.join(root, 'unix', 'python');
+  await mkdir(path.join(unix, 'lib', 'python3.11'), { recursive: true });
+  await writeFile(path.join(unix, 'lib', 'python3.11', 'LICENSE.txt'), 'psf');
+  assert.equal(await pythonLicensePath(unix), path.join(unix, 'lib', 'python3.11', 'LICENSE.txt'));
+  await assert.rejects(pythonLicensePath(path.join(root, 'missing')), /CPython LICENSE\.txt/);
+});
+
+test('allows home paths only in unchanged upstream files', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-graphify-home-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  // Wheels built on a GitHub runner carry that runner's home, which equals ours on CI.
+  const homes = ['/Users/runner'];
+  await mkdir(path.join(root, 'numpy'), { recursive: true });
+  await writeFile(path.join(root, 'numpy', '__config__.py'), 'lib = "/Users/runner/work/numpy/build"');
+  await writeFile(path.join(root, 'clean.py'), 'print(1)');
+  const upstream = await homePathFiles(root, homes);
+  assert.deepEqual([...upstream.keys()], [path.join('numpy', '__config__.py')]);
+  await rejectMachinePaths(root, upstream, homes);
+
+  await writeFile(path.join(root, 'graphify'), 'exec /Users/runner/python3');
+  await assert.rejects(rejectMachinePaths(root, upstream, homes), /home path: .*graphify$/);
+  await rm(path.join(root, 'graphify'));
+
+  await writeFile(path.join(root, 'numpy', '__config__.py'), 'lib = "/Users/runner/other"');
+  await assert.rejects(rejectMachinePaths(root, upstream, homes), /home path: .*__config__\.py/);
+});
+
+test('rejects a uv tool path even in upstream files', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-graphify-uv-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, 'site.py'), 'p = "uv/tools/graphifyy/lib"');
+  await assert.rejects(rejectMachinePaths(root, await homePathFiles(root, ['/nowhere']), ['/nowhere']), /uv tool path/);
 });

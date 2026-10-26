@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmod, copyFile, cp, lstat, mkdir, readFile, readdir, readlink, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -58,10 +59,11 @@ export async function materializeSymlinks(root) {
   await walk(root);
 }
 
-async function rejectMachinePaths(directory) {
-  const homes = [...new Set([os.homedir(), os.homedir().replaceAll('\\', '/')].filter((value) => value && value.length >= 3))];
-  const needles = homes.flatMap((home) => [Buffer.from(home), Buffer.from(home, 'utf16le')]);
-  const uvPaths = [Buffer.from('uv\\tools\\graphifyy'), Buffer.from('uv/tools/graphifyy')];
+const machineHomes = () => [...new Set([os.homedir(), os.homedir().replaceAll('\\', '/')].filter((value) => value && value.length >= 3))];
+const homeNeedles = (homes) => homes.flatMap((home) => [Buffer.from(home), Buffer.from(home, 'utf16le')]);
+const sha256 = (body) => createHash('sha256').update(body).digest('hex');
+
+async function walkPayload(directory, visit) {
   async function walk(dir) {
     for (const name of await readdir(dir)) {
       const current = path.join(dir, name);
@@ -72,12 +74,47 @@ async function rejectMachinePaths(directory) {
         continue;
       }
       if (!info.isFile()) throw new Error(`Graphify payload contains an unsupported file: ${current}`);
-      const body = await readFile(current);
-      if (needles.some((needle) => body.includes(needle))) throw new Error(`Graphify payload contains this machine's home path: ${current}`);
-      if (uvPaths.some((needle) => body.includes(needle))) throw new Error(`Graphify payload contains a uv tool path: ${current}`);
+      await visit(current, await readFile(current));
     }
   }
   await walk(directory);
+}
+
+/**
+ * Files that already hold a home path straight out of the pinned archives, keyed by relative path with their digest.
+ * Wheels built on GitHub runners embed that runner's home, which is our home on CI too.
+ */
+export async function homePathFiles(directory, homes = machineHomes()) {
+  const needles = homeNeedles(homes);
+  const found = new Map();
+  await walkPayload(directory, (current, body) => {
+    if (needles.some((needle) => body.includes(needle))) found.set(path.relative(directory, current), sha256(body));
+  });
+  return found;
+}
+
+/** Reject a home path anywhere except an unchanged upstream file, and a uv tool path anywhere. */
+export async function rejectMachinePaths(directory, upstream = new Map(), homes = machineHomes()) {
+  const needles = homeNeedles(homes);
+  const uvPaths = [Buffer.from('uv\\tools\\graphifyy'), Buffer.from('uv/tools/graphifyy')];
+  await walkPayload(directory, (current, body) => {
+    if (needles.some((needle) => body.includes(needle)) && upstream.get(path.relative(directory, current)) !== sha256(body)) {
+      throw new Error(`Graphify payload contains this machine's home path: ${current}`);
+    }
+    if (uvPaths.some((needle) => body.includes(needle))) throw new Error(`Graphify payload contains a uv tool path: ${current}`);
+  });
+}
+
+/** CPython's license sits at the root on Windows and under lib/python3.x on Unix install_only builds. */
+export async function pythonLicensePath(pythonRoot) {
+  const candidates = [path.join(pythonRoot, 'LICENSE.txt')];
+  const lib = await readdir(path.join(pythonRoot, 'lib')).catch((error) => { if (error.code !== 'ENOENT') throw error; return []; });
+  for (const name of lib.filter((entry) => /^python3\.\d+$/.test(entry))) candidates.push(path.join(pythonRoot, 'lib', name, 'LICENSE.txt'));
+  for (const candidate of candidates) {
+    const info = await lstat(candidate).catch(() => null);
+    if (info?.isFile()) return candidate;
+  }
+  throw new Error('Bundled CPython LICENSE.txt is missing');
 }
 
 async function sitePackages(pythonRoot) {
@@ -159,6 +196,7 @@ export async function fetchGraphify({ platform, arch, destination, cacheDir, sou
   if (!pythonInfo?.isFile() || pythonInfo.isSymbolicLink()) throw new Error('Bundled CPython layout is missing its Python executable');
   const packages = await sitePackages(pythonRoot);
   await installWheels(pin, packages, cacheDir, fetchImpl);
+  const upstream = await homePathFiles(destination);
   const distInfo = (await readdir(packages)).find((name) => name.startsWith('graphifyy-') && name.endsWith('.dist-info'));
   if (!distInfo) throw new Error('graphifyy license metadata is missing');
   await cp(path.join(packages, distInfo, 'licenses'), path.join(destination, 'licenses', 'graphify'), { recursive: true });
@@ -168,13 +206,13 @@ export async function fetchGraphify({ platform, arch, destination, cacheDir, sou
     if (!info?.isFile() || info.isSymbolicLink()) throw new Error(`graphifyy ${name} is missing`);
   }
   await mkdir(path.join(destination, 'licenses', 'python'), { recursive: true });
-  await copyFile(path.join(pythonRoot, 'LICENSE.txt'), path.join(destination, 'licenses', 'python', 'LICENSE.txt'));
+  await copyFile(await pythonLicensePath(pythonRoot), path.join(destination, 'licenses', 'python', 'LICENSE.txt'));
   if (platform === 'win32') compileWindowsLauncher(sourceRoot, path.join(destination, 'graphify.exe'));
   else {
     const launcher = path.join(destination, 'graphify');
     await writeFile(launcher, POSIX_GRAPHIFY_LAUNCHER, { flag: 'wx', mode: 0o755 });
     await chmod(launcher, 0o755);
   }
-  await rejectMachinePaths(destination);
+  await rejectMachinePaths(destination, upstream);
   return destination;
 }
