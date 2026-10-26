@@ -163,6 +163,42 @@ async function renameAcross(source, target) {
   }
 }
 
+/**
+ * Drop what running graphify never loads: debug symbols, the installers (pip, setuptools, ensurepip) and
+ * Tcl/Tk with its Python bindings and demos. On win32-x64 this was ~115MB of the ~290MB Python tree.
+ */
+export async function prunePythonRuntime(pythonRoot, platform) {
+  const removed = [];
+  const remove = async (target) => {
+    if (!await lstat(target).catch(() => null)) return;
+    await rm(target, { recursive: true, force: true });
+    removed.push(path.relative(pythonRoot, target).split(path.sep).join('/'));
+  };
+  const removeMatching = async (dir, pattern) => {
+    for (const name of await readdir(dir).catch(() => [])) if (pattern.test(name)) await remove(path.join(dir, name));
+  };
+  const windows = platform === 'win32';
+  const lib = windows ? path.join(pythonRoot, 'Lib') : path.join(pythonRoot, 'lib', (await readdir(path.join(pythonRoot, 'lib'))).find((name) => /^python3\.\d+$/.test(name)) ?? 'python3');
+  for (const name of ['ensurepip', 'idlelib', 'tkinter', 'turtledemo', 'turtle.py']) await remove(path.join(lib, name));
+  await removeMatching(path.join(lib, 'site-packages'), /^(pip|setuptools)(-[^/]+\.dist-info)?$|^_distutils_hack$|^distutils-precedence\.pth$/);
+  if (windows) {
+    async function walk(dir) {
+      for (const name of await readdir(dir)) {
+        const current = path.join(dir, name);
+        if ((await lstat(current)).isDirectory()) await walk(current);
+        else if (name.toLowerCase().endsWith('.pdb')) await remove(current);
+      }
+    }
+    await walk(pythonRoot);
+    await remove(path.join(pythonRoot, 'tcl'));
+    await removeMatching(path.join(pythonRoot, 'DLLs'), /^(_tkinter\.pyd|tcl\d+t\.dll|tk\d+t\.dll)$/i);
+  } else {
+    await removeMatching(path.join(pythonRoot, 'lib'), /^(tcl\d.*|tk\d.*|itcl\d.*|thread\d.*|libtcl.*\.dylib|libtk.*\.dylib)$/);
+    await removeMatching(path.join(lib, 'lib-dynload'), /^_tkinter\./);
+  }
+  return removed;
+}
+
 function compileWindowsLauncher(sourceRoot, output) {
   const compiler = process.env.NEMA_WINDOWS_NATIVE_CC ?? 'clang';
   const source = path.join(sourceRoot, 'scripts', 'desktop', 'graphify-launcher.c');
@@ -196,6 +232,7 @@ export async function fetchGraphify({ platform, arch, destination, cacheDir, sou
   if (!pythonInfo?.isFile() || pythonInfo.isSymbolicLink()) throw new Error('Bundled CPython layout is missing its Python executable');
   const packages = await sitePackages(pythonRoot);
   await installWheels(pin, packages, cacheDir, fetchImpl);
+  await prunePythonRuntime(pythonRoot, platform);
   const upstream = await homePathFiles(destination);
   const distInfo = (await readdir(packages)).find((name) => name.startsWith('graphifyy-') && name.endsWith('.dist-info'));
   if (!distInfo) throw new Error('graphifyy license metadata is missing');

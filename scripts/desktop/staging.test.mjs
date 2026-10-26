@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createSanitizedSourceSnapshot, npmCliPathFor, parseStageArgs, stageRuntime, writePlatformLaunchers } from './stage-runtime.mjs';
+import { createSanitizedSourceSnapshot, npmCliPathFor, parseStageArgs, runtimeDependencyClosure, stageRuntime, writePlatformLaunchers } from './stage-runtime.mjs';
 import { toolsManifest } from './fetch-tools.mjs';
 
 async function fixture(t) {
@@ -42,10 +42,10 @@ async function fixture(t) {
   await write('apps/local/package.json', JSON.stringify({ name: '@nema/local', version: '0.1.0', type: 'module', dependencies: { '@nema/cli': '*', '@nema/hub': '*' } }));
   await write('apps/local/dist/src/index.js', 'export {};');
   await write('apps/local/dist/src/test/runtime.test.js', 'test fixture must not ship');
-  for (const [pkg, dep] of [['hub', '@nema/knowledge'], ['cli', '@nema/shared'], ['shared', 'zod'], ['knowledge', '@nema/shared']]) {
+  for (const [pkg, dep] of [['hub', ['@nema/knowledge', '@electric-sql/pglite']], ['cli', ['@nema/shared']], ['shared', ['zod']], ['knowledge', ['@nema/shared']]]) {
     const dir = pkg.startsWith('hub') ? 'apps/hub' : pkg.startsWith('cli') ? 'apps/cli' : `packages/${pkg}`;
     const dist = pkg === 'hub' ? 'dist/src/index.js' : pkg === 'cli' ? 'dist/index.js' : 'dist/index.js';
-    await write(`${dir}/package.json`, JSON.stringify({ name: `@nema/${pkg}`, version: pkg === 'local' || pkg === 'cli' ? '0.1.0' : '0.0.0', type: 'module', main: `./${dist}`, dependencies: { [dep]: '*' } }));
+    await write(`${dir}/package.json`, JSON.stringify({ name: `@nema/${pkg}`, version: pkg === 'local' || pkg === 'cli' ? '0.1.0' : '0.0.0', type: 'module', main: `./${dist}`, dependencies: Object.fromEntries(dep.map((name) => [name, '*'])) }));
     await write(`${dir}/${dist}`, 'export {};');
   }
   await write('apps/hub/dist/src/db/migrations/0001.sql');
@@ -54,7 +54,12 @@ async function fixture(t) {
   await write('vendor/superpowers-rules/LICENSE'); await write('vendor/superpowers-rules/spec-rules.md'); await write('vendor/superpowers-rules/plan-rules.md');
   await write(`node/${target}/node/${windows ? 'node.exe' : 'bin/node'}`); await write(`node/${target}/node/LICENSE`);
   await write(`node/${target}/node/${windows ? 'node_modules' : 'lib/node_modules'}/npm/bin/npm-cli.js`);
+  await write('node_modules/@electric-sql/pglite/package.json', JSON.stringify({ name: '@electric-sql/pglite', version: '0.5.11' }));
   await write('node_modules/@electric-sql/pglite/dist/index.js');
+  await write('node_modules/zod/package.json', JSON.stringify({ name: 'zod', version: '4.6.7' }));
+  // Web-only: Next's standalone trace ships it under web/, so the core's app/node_modules must not.
+  await write('node_modules/next/package.json', JSON.stringify({ name: 'next', version: '16.4.2', dependencies: { 'styled-jsx': '*' } }));
+  await write('node_modules/styled-jsx/package.json', JSON.stringify({ name: 'styled-jsx', version: '5.1.6' }));
   await write('node_modules/@electric-sql/pglite/dist/pglite.wasm');
   await write('node_modules/@electric-sql/pglite/dist/initdb.wasm');
   await write('node_modules/@electric-sql/pglite/dist/pglite.data');
@@ -109,6 +114,7 @@ test('stages a relocatable manifest and all declared runtime resources from fixt
     assert.ok((await readFile(path.join(target, file))).length > 0, file);
   }
   await assert.rejects(readFile(path.join(target, 'app/node_modules/@nema/local/dist/src/test/runtime.test.js')));
+  assert.deepEqual((await readdir(path.join(target, 'app/node_modules'))).sort(), ['@electric-sql', '@nema', 'zod']);
   const files = await readdir(target);
   assert.equal(files.includes('.env'), false);
   assert.equal(files.includes('.git'), false);
@@ -297,7 +303,10 @@ test('rejects workspace dependency symlinks that resolve outside the source payl
   const outside = path.join(path.dirname(f.source), 'outside-package');
   await mkdir(outside, { recursive: true });
   await writeFile(path.join(outside, 'index.js'), 'export {};');
-  await symlink(outside, path.join(f.source, 'node_modules', 'escape'), 'junction');
+  await writeFile(path.join(outside, 'package.json'), JSON.stringify({ name: 'zod', version: '4.6.7' }));
+  // A runtime dependency (zod, via @nema/shared) that links outside the payload source.
+  await rm(path.join(f.source, 'node_modules', 'zod'), { recursive: true });
+  await symlink(outside, path.join(f.source, 'node_modules', 'zod'), 'junction');
   await assert.rejects(stageRuntime(f.options), /escapes payload source/i);
 });
 
@@ -343,4 +352,24 @@ test('rejects output ownership collisions without deleting existing data', async
   await writeFile(path.join(target, 'owner.txt'), 'foreign');
   await assert.rejects(stageRuntime(f.options), /exist|owned|output/i);
   assert.equal(await readFile(path.join(target, 'owner.txt'), 'utf8'), 'foreign');
+});
+
+test('runtime dependency closure follows declared, nested and optional dependencies only', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-closure-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const pkg = async (dir, value) => {
+    await mkdir(path.join(root, dir), { recursive: true });
+    await writeFile(path.join(root, dir, 'package.json'), JSON.stringify(value));
+  };
+  await pkg('apps/core', { name: '@nema/core', dependencies: { a: '*', '@nema/shared': '*' }, optionalDependencies: { absent: '*' } });
+  await pkg('node_modules/a', { name: 'a', dependencies: { b: '*', '@s/c': '*' } });
+  await pkg('node_modules/a/node_modules/b', { name: 'b', dependencies: { d: '*' } });
+  await pkg('node_modules/@s/c', { name: '@s/c', peerDependencies: { absentPeer: '*' } });
+  await pkg('node_modules/d', { name: 'd' });
+  await pkg('node_modules/b', { name: 'b', version: 'hoisted-but-shadowed' });
+  await pkg('node_modules/unused', { name: 'unused' });
+  const closure = await runtimeDependencyClosure(root, [path.join(root, 'apps/core')]);
+  assert.deepEqual([...closure].sort(), ['@s/c', 'a', 'd']);
+  await pkg('apps/broken', { name: '@nema/broken', dependencies: { missing: '*' } });
+  await assert.rejects(runtimeDependencyClosure(root, [path.join(root, 'apps/broken')]), /missing.*@nema\/broken/);
 });
