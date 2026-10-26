@@ -1,5 +1,7 @@
 # Nema Room
 
+[Roadmap and acceptance tracker (Chinese)](ROADMAP.md)
+
 <img src="docs/design/brand/nema-room-preview.png" width="88" height="88" alt="Nema Room icon" />
 
 **Turn scattered discussions into traceable requirements, then hand them to a coding agent.**
