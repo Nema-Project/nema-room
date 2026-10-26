@@ -1,7 +1,7 @@
 # P0 release assurance design
 
 Date: 2026-10-26 (Asia/Tokyo)
-Status: Draft for design approval; implementation has not started.
+Status: Approved by the user on 2026-10-26; implementation has not started.
 Baseline: main d07d256dee32b65243f0f96cc8f6b4b74edf9711.
 Scope: ROADMAP P0-01, P0-02, P0-05.
 
@@ -11,7 +11,7 @@ Make publication depend on full verification of the exact released commit, enfor
 
 The user selected approach A: deliver these three related GitHub release safeguards together. Approach B would also include real-model semantic acceptance (P0-03) and native upgrade/recovery acceptance (P0-04); it was not selected because those require separate model credentials, disposable data, and Windows/macOS environments. Those items remain open.
 
-Implementation choices below are the designer's recommendations, subject to approval. Keep the current npm/Node 22 workflow, pinned action SHAs, platform checks, full Ubuntu tests/web/Compose checks, and desktop release validators. Do not redesign application code, add automatic tags, publish a release, or merge a PR as part of verification.
+Implementation choices below are the designer's recommendations approved with this spec. Keep the current npm/Node 22 workflow, pinned action SHAs, platform checks, full Ubuntu tests/web/Compose checks, and desktop release validators. Do not redesign application code, add automatic tags, publish a release, or merge a PR as part of verification.
 
 ## Observed current behavior
 
