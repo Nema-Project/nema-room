@@ -56,6 +56,9 @@ function isExternalHttps(value) {
 
 const DIAGRAM_WINDOW_PATH = /^\/api\/workspaces\/ws_[A-Za-z0-9_-]{1,32}\/diagrams\/G-[1-9]\d*\.html$/;
 const THREAD_WINDOW_PATH = /^\/w\/ws_[A-Za-z0-9_-]{1,32}\/t\/m_[A-Za-z0-9_-]{1,32}$/;
+const WORKSPACE_PATH = /^\/w\/(ws_[A-Za-z0-9_-]{1,32})$/;
+const WORKSPACE_ID = /^ws_[A-Za-z0-9_-]{1,32}$/;
+const MESSAGE_ID = /^m_[A-Za-z0-9_-]{1,32}$/;
 
 /** A diagram popup is the one same-origin page the shell may open. No query, hash, or other route. */
 function isDiagramWindowUrl(value, runtimeOrigin) {
@@ -82,6 +85,26 @@ function threadWindowIdentity(value, runtimeOrigin) {
   if (!isThreadWindowUrl(value, runtimeOrigin)) return null;
   const url = new URL(value, runtimeOrigin);
   return `${url.origin}${url.pathname}`;
+}
+
+/** Parses the single main-page URL shape emitted by the renderer for a message source jump. */
+function isMainMessageUrl(value, runtimeOrigin) {
+  if (typeof value !== 'string' || /[\r\n\0]/.test(value) || !parseLoopbackOrigin(runtimeOrigin)) return null;
+  try {
+    const url = new URL(value, runtimeOrigin);
+    if (url.origin !== runtimeOrigin || url.protocol !== 'http:' || url.hostname !== '127.0.0.1' ||
+      url.username || url.password || url.search) return null;
+    const pathMatch = WORKSPACE_PATH.exec(url.pathname);
+    if (!pathMatch || url.hash.length < 2) return null;
+    const raw = url.hash.slice(1);
+    const params = new URLSearchParams(raw);
+    const pairs = [...params.entries()];
+    if (pairs.length !== 2 || pairs.filter(([key]) => key === 'workspace').length !== 1 || pairs.filter(([key]) => key === 'message').length !== 1) return null;
+    const workspaceId = params.get('workspace');
+    const messageId = params.get('message');
+    if (!workspaceId || !WORKSPACE_ID.test(workspaceId) || workspaceId !== pathMatch[1] || !messageId || !MESSAGE_ID.test(messageId)) return null;
+    return { workspaceId, messageId };
+  } catch { return null; }
 }
 
 /** A diagram window has a native frame and no preload. The main window's frameless shell must not be copied onto rendered HTML. */
@@ -111,4 +134,4 @@ function navigationDecision(value, runtimeOrigin) {
   } catch { return 'block'; }
 }
 
-module.exports = { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, isThreadWindowUrl, threadWindowIdentity, navigationDecision, validateRuntimeLaunchUrl };
+module.exports = { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, isMainMessageUrl, isThreadWindowUrl, threadWindowIdentity, navigationDecision, validateRuntimeLaunchUrl };

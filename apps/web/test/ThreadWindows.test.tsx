@@ -93,4 +93,36 @@ describe("ThreadWindows", () => {
     act(() => ref.current!.focus("w1", "t1"));
     expect(Number(first.style.zIndex)).toBeGreaterThan(Number(third.style.zIndex));
   });
+  it("keeps controls inside a small viewport after opening, dragging, and resizing", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 780 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 437 });
+    vi.mocked(hub.getThreadMessages).mockImplementation(async (workspaceId, id) => ({ thread: thread(workspaceId, id), anchor: message(workspaceId, id, id, 2), messages: [] }));
+    const ref = mount();
+    act(() => { ref.current!.open("w1", "t1"); ref.current!.open("w1", "t2"); ref.current!.open("w1", "t3"); });
+    const assertReachable = () => {
+      for (const host of document.querySelectorAll<HTMLElement>(".thread-floating")) {
+        const left = Number.parseFloat(host.style.left);
+        const top = Number.parseFloat(host.style.top);
+        const width = Math.min(520, window.innerWidth - 32);
+        const height = Math.min(680, window.innerHeight - 32);
+        expect(left).toBeGreaterThanOrEqual(8);
+        expect(left + width).toBeLessThanOrEqual(window.innerWidth - 8);
+        expect(top).toBeGreaterThanOrEqual(8);
+        expect(top + height).toBeLessThanOrEqual(window.innerHeight - 8);
+        expect(top + 44).toBeLessThanOrEqual(window.innerHeight);
+        expect(host.querySelector(".thread-header button")).toBeTruthy();
+      }
+    };
+    assertReachable();
+    const third = document.querySelector('[data-window-id="w1:t3"]')!;
+    const dragHandle = third.querySelector(".thread-drag")!;
+    fireEvent.pointerDown(dragHandle, { pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(dragHandle, { pointerId: 1, clientX: -1000, clientY: -1000 });
+    fireEvent.pointerUp(dragHandle, { pointerId: 1 });
+    assertReachable();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 300 });
+    fireEvent(window, new Event("resize"));
+    assertReachable();
+  });
 });

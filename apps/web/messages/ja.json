@@ -344,6 +344,7 @@
   "chip.withdraw": "取り下げ",
   "chip.history": "履歴",
   "cmd.thread": "追いかけスレッドを開く",
+  "cmd.thread.insert": "/thread ",
   "chip.withdrawFailed": "このエントリーを取り下げられませんでした。",
   "thread.loadFailed": "スレッドを読み込めませんでした。",
   "thread.retry": "再試行",

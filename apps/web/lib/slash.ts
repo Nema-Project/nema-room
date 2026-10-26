@@ -9,7 +9,7 @@ export type SlashItem = {
 };
 
 export const SLASH_ITEMS: readonly SlashItem[] = [
-  { id: "thread", hint: "cmd.thread", insert: "/thread " },
+  { id: "thread", hint: "cmd.thread", insert: "cmd.thread.insert" },
   { id: "progress", hint: "cmd.progress", insert: "cmd.progress.insert" },
   ...DIAGRAM_TYPES.map((type) => ({
     id: `diagram:${type}`,

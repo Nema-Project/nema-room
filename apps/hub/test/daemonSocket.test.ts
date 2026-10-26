@@ -884,32 +884,62 @@ describe("daemon socket", () => {
     expect((await listMessages(db, wsA)).some((m) => m.role === "system")).toBe(false);
   });
 
-  test("four daemon disconnects mid-run post a system failure message", async () => {
-    const a = await postUserMessage(db, wsA, "a");
+  test.each(["thread member", "anchor whose thread was opened after submission", "main conversation"] as const)("four daemon disconnects mid-run post a system failure in the %s conversation", async (scenario) => {
+    let taskId: string;
+    let threadId: string | null;
+    if (scenario === "thread member") {
+      const anchor = await addMessage(db, wsA, "agent", "thread anchor");
+      const thread = await ensureThread(db, anchor.id, "Follow-up", "user");
+      threadId = thread.id;
+      taskId = (await postUserMessage(db, wsA, "thread member", { threadId: thread.id })).task.id;
+    } else if (scenario === "anchor whose thread was opened after submission") {
+      const anchor = await postUserMessage(db, wsA, "main anchor");
+      taskId = anchor.task.id;
+      threadId = (await ensureThread(db, anchor.message.id, "Opened before interruption", "user")).id;
+    } else {
+      const anchor = await postUserMessage(db, wsA, "main task");
+      taskId = anchor.task.id;
+      threadId = null;
+    }
+    let threadUpdates = 0;
+    if (threadId) events.subscribe(wsA, (event) => { if (event.type === "thread.updated" && event.thread.id === threadId) threadUpdates++; });
     let client = await connect();
     for (let i = 0; i < 4; i++) {
-      expect((await client.next("task.assign")).taskId).toBe(a.task.id);
+      expect((await client.next("task.assign")).taskId).toBe(taskId);
       client.ws.terminate();
       await client.closed;
       if (i < 3) {
-        for (let n = 0; n < 50 && (await getTask(db, a.task.id))?.status !== "queued"; n++) {
+        for (let n = 0; n < 50 && (await getTask(db, taskId))?.status !== "queued"; n++) {
           await new Promise((r) => setTimeout(r, 20));
         }
-        expect((await getTask(db, a.task.id))?.status).toBe("queued");
+        expect((await getTask(db, taskId))?.status).toBe("queued");
         client = await connect();
       }
     }
     const failedText = "处理失败：任务被中断，自动重试 3 次后仍未完成。请重新发送这条消息。";
-    let sys: { content: string; taskId: string | null }[] = [];
-    for (let n = 0; n < 50; n++) {
-      sys = (await listMessages(db, wsA)).filter((m) => m.role === "system");
-      if (sys.length > 0) break;
-      await new Promise((r) => setTimeout(r, 20));
+    if (threadId) {
+      let system: Awaited<ReturnType<typeof listThreadMessages>> = [];
+      for (let n = 0; n < 50; n++) {
+        system = (await listThreadMessages(db, threadId)).filter((m) => m.role === "system");
+        if (system.length > 0) break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(system).toEqual([expect.objectContaining({ content: failedText, taskId, threadId })]);
+      expect((await listMessages(db, wsA)).filter((m) => m.role === "system")).toHaveLength(0);
+      expect(threadUpdates).toBe(1);
+    } else {
+      let system: Awaited<ReturnType<typeof listMessages>> = [];
+      for (let n = 0; n < 50; n++) {
+        system = (await listMessages(db, wsA)).filter((m) => m.role === "system");
+        if (system.length > 0) break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(system).toEqual([expect.objectContaining({ content: failedText, taskId, threadId: null })]);
+      expect(threadUpdates).toBe(0);
     }
-    expect(sys).toEqual([expect.objectContaining({ content: failedText, taskId: a.task.id })]);
     const [row] = await db.query<{ status: string; error: string | null; interruptions: number }>(
       "select status, error, interruptions from tasks where id = $1",
-      [a.task.id],
+      [taskId],
     );
     expect(row).toEqual({
       status: "failed",

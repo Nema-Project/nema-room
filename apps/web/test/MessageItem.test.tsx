@@ -110,6 +110,19 @@ describe("MessageItem", () => {
     expect(screen.getByText("处理失败：x")).toBeTruthy();
     expect(container.querySelector(".av")).toBeNull();
   });
+  it("renders a converted legacy system question card with its body", () => {
+    vi.mocked(hub.getEntry).mockResolvedValue({ id: "Q-8", kind: "question", status: "open", title: "Question title", body: "Question body, distinct from title", priority: 1 } as never);
+    const { container } = mount(msg({
+      role: "system",
+      content: "Legacy question Q-8",
+      meta: { changes: [], askedQuestion: { id: "Q-8", title: "Question title", body: "Question body, distinct from title" } },
+    }));
+    expect(screen.getByText("Question title")).toBeTruthy();
+    expect(screen.getByText("Question body, distinct from title")).toBeTruthy();
+    expect(container.querySelector(".ask")).toBeTruthy();
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(container.querySelector(".av")).toBeNull();
+  });
   it("a report message shows the agent, commits and check lines", async () => {
     const onOpenEntry = vi.fn();
     const report = {

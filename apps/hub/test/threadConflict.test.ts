@@ -12,7 +12,6 @@ import { addMessage, listThreadMessages, postUserMessage, type AgentMessage } fr
 import { createWorkspace, repoPath } from "../src/workspaces.js";
 import { ensureThread } from "../src/threads.js";
 import { getTask, listTaskChanges, toUiTask } from "../src/tasks.js";
-import { KIND_DIR } from "@nema/shared";
 
 type WireMessage = Record<string, any>;
 type Client = {
@@ -97,10 +96,6 @@ const request = (method: string, path: string, token: string, body?: unknown) =>
   headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
   ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
 });
-
-function entryPath(kind: "decision", id: string): string {
-  return `${repoPath(dataDir, workspaceId)}/${KIND_DIR[kind]}/${id}.md`;
-}
 
 async function finishAssigned(reply: string): Promise<WireMessage> {
   const assignment = await socket.next("task.assign");

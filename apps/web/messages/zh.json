@@ -344,6 +344,7 @@
   "chip.withdraw": "撤回",
   "chip.history": "历史",
   "cmd.thread": "打开追问线程",
+  "cmd.thread.insert": "/thread ",
   "chip.withdrawFailed": "无法撤回此条目。",
   "thread.loadFailed": "无法加载此线程。",
   "thread.retry": "重试",

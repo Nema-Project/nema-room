@@ -45,10 +45,12 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
   const time = formatTime(new Date(message.createdAt), locale);
 
   if (message.role === "system") {
+    const meta = message.meta as AgentMessageMeta | null;
     return (
       <div className="sysmsg" id={`msg-${message.id}`}>
         <button type="button" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
         {message.content}
+        {meta?.askedQuestion && <AskedQuestion workspaceId={message.workspaceId} asked={meta.askedQuestion} added={[]} />}
       </div>
     );
   }

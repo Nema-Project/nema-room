@@ -1,6 +1,6 @@
 'use strict';
 
-const { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, isThreadWindowUrl, threadWindowIdentity, navigationDecision, validateRuntimeLaunchUrl } = require('./security.cjs');
+const { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, isMainMessageUrl, isThreadWindowUrl, threadWindowIdentity, navigationDecision, validateRuntimeLaunchUrl } = require('./security.cjs');
 const { registerWindowControls } = require('./window-controls.cjs');
 const path = require('node:path');
 
@@ -96,6 +96,10 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
       const allowed = diagramsOnly ? isDiagramWindowUrl(url, runtimeOrigin) : ownThread ? threadWindowIdentity(url, runtimeOrigin) === ownThread : decision === 'runtime';
       if (allowed) return;
       event.preventDefault();
+      if (ownThread && isMainMessageUrl(url, runtimeOrigin)) {
+        void focusMainMessage(url).catch(reportError);
+        return;
+      }
       if (decision === 'external' && isExternalHttps(url)) void shell.openExternal(url).catch(() => undefined);
     });
     window.webContents.setWindowOpenHandler(({ url }) => {
@@ -145,6 +149,15 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     pendingMainWindow = opening;
     try { return await opening; }
     finally { if (pendingMainWindow === opening) pendingMainWindow = undefined; }
+  }
+
+  async function focusMainMessage(url) {
+    const window = await createMainWindow();
+    await window.loadURL(url);
+    if (!window.isDestroyed()) {
+      window.show();
+      window.focus();
+    }
   }
 
   async function openBrowserMode() {

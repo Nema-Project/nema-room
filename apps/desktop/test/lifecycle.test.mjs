@@ -249,6 +249,45 @@ describe('Electron shell lifecycle', () => {
     expect(value.windows).toHaveLength(2);
   });
 
+  it('forwards a valid main-message jump from a thread child to the main app window', async () => {
+    const value = harness();
+    await value.lifecycle.install();
+    const origin = 'http://127.0.0.1:43001';
+    const popup = value.windows[0].webContents.setWindowOpenHandler.mock.calls[0][0];
+    popup({ url: `${origin}/w/ws_abc/t/m_thread` });
+    const child = value.windows[1];
+    const target = `${origin}/w/ws_abc#workspace=ws_abc&message=m_source`;
+    const event = { preventDefault: vi.fn() };
+    child.webContents.emit('will-navigate', event, target);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(child.url).toBe(`${origin}/w/ws_abc/t/m_thread`);
+    expect(value.windows[0].url).toBe(target);
+    expect(value.windows[0].show).toHaveBeenCalled();
+    expect(value.windows[0].focus).toHaveBeenCalled();
+  });
+
+  it('creates the main app window when a thread child jumps to a main source after main closed', async () => {
+    const value = harness();
+    await value.lifecycle.install();
+    const origin = 'http://127.0.0.1:43001';
+    const popup = value.windows[0].webContents.setWindowOpenHandler.mock.calls[0][0];
+    const main = value.windows[0];
+    main.destroy();
+    popup({ url: `${origin}/w/ws_abc/t/m_thread` });
+    const child = value.windows[1];
+    const target = `${origin}/w/ws_abc#workspace=ws_abc&message=m_source`;
+    const event = { preventDefault: vi.fn() };
+    child.webContents.emit('will-navigate', event, target);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(value.windows).toHaveLength(3);
+    expect(child.url).toBe(`${origin}/w/ws_abc/t/m_thread`);
+    expect(value.windows[2].url).toBe(target);
+    expect(value.windows[2].show).toHaveBeenCalled();
+    expect(value.windows[2].focus).toHaveBeenCalled();
+  });
+
   it('focuses and reuses a thread window when reopened with another valid focus target', async () => {
     const value = harness();
     await value.lifecycle.install();

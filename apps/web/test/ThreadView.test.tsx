@@ -4,13 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThreadView } from "@/components/ThreadView";
 import { I18nProvider } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
+import * as threadUrls from "@/lib/threads";
 import type { HubEvent, Message, Thread } from "@/lib/types";
 import { FakeEventSource } from "./FakeEventSource";
 
 vi.mock("@/lib/hub", () => ({ getThreadMessages: vi.fn(), postThreadMessage: vi.fn(), markThreadRead: vi.fn(), getMessage: vi.fn(), getEntry: vi.fn(), getHistory: vi.fn(), getWhy: vi.fn(), listMessages: vi.fn(), listEntries: vi.fn(), listRepos: vi.fn(), editMessage: vi.fn(), listMessageVersions: vi.fn(), withdrawEntry: vi.fn(), eventsUrl: (id: string) => `http://hub/workspaces/${id}/events` }));
 const thread: Thread = { id: "anchor", workspaceId: "w1", title: "Need details", openedBy: "user", replyCount: 1, unread: 1, lastReplyAt: null, createdAt: "2026-10-21T00:00:00Z" };
 const msg = (id: string, seq: number, content = id, role: Message["role"] = "user"): Message => ({ id, workspaceId: "w1", role, content, meta: null, taskId: null, createdAt: "2026-10-21T00:00:00Z", editedAt: null, threadId: "anchor", seq });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 beforeEach(() => {
   vi.spyOn(document, "hasFocus").mockReturnValue(true);
   vi.mocked(hub.getThreadMessages).mockResolvedValue({ thread, anchor: msg("anchor", 2, "Pinned question"), messages: [msg("r1", 3, "Reply")] });
@@ -94,6 +95,16 @@ describe("ThreadView", () => {
     vi.mocked(hub.getThreadMessages).mockResolvedValue({ thread, anchor: msg("anchor", 2, "Pinned question"), messages: [{ ...msg("r2", 4, "Another reply", "agent"), meta: { changes: [], askedQuestion: null, quote: { messageId: "main", role: "user", excerpt: "Go to main" } } }] });
     mount({ onOpenMainMessage }); await userEvent.click(await screen.findByRole("button", { name: /Go to main/ }));
     expect(onOpenMainMessage).toHaveBeenCalledWith("w1", main);
+  });
+  it("uses the standalone main-message URL fallback when no desktop callback exists", async () => {
+    const main = { ...msg("main", 1, "Main message"), threadId: null };
+    const urlBuilder = vi.spyOn(threadUrls, "mainMessageUrl");
+    vi.mocked(hub.getMessage).mockResolvedValue(main);
+    vi.mocked(hub.getThreadMessages).mockResolvedValue({ thread, anchor: msg("anchor", 2, "Pinned question"), messages: [{ ...msg("r2", 4, "Another reply", "agent"), meta: { changes: [], askedQuestion: null, quote: { messageId: "main", role: "user", excerpt: "Go to main" } } }] });
+    mount();
+    await userEvent.click(await screen.findByRole("button", { name: /Go to main/ }));
+    expect(urlBuilder).toHaveBeenCalledWith("w1", "main");
+    expect(urlBuilder).toHaveReturnedWith("/w/w1#workspace=w1&message=main");
   });
   it.each([ ["main conversation", null, "w1"], ["other thread", "different", "w1"], ["other workspace", "anchor", "w2"] ] as const)("rejects a deep-link target from the %s", async (_label, targetThreadId, targetWorkspaceId) => {
     vi.mocked(hub.getMessage).mockResolvedValue({ ...msg("foreign", 99, "Foreign reply"), workspaceId: targetWorkspaceId, threadId: targetThreadId });

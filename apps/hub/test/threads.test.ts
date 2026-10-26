@@ -2,9 +2,11 @@ import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { createWorkspace } from "../src/workspaces.js";
-import { addMessage, listPromptMessages, postUserMessage } from "../src/messages.js";
+import { addMessage, listMessages, listPromptMessages, listThreadMessages, postUserMessage } from "../src/messages.js";
 import { recordTaskChange } from "../src/tasks.js";
 import { associateQuestion, conversationOf, ensureThread, getLastAskedQuestion, getLastAgentMessage, getQuestionThread, listThreads, markThreadRead } from "../src/threads.js";
+import { announceInterrupted } from "../src/interrupts.js";
+import { EventBus } from "../src/events.js";
 
 let db: Db;
 let ws: string;
@@ -42,6 +44,20 @@ describe("thread store and conversation context", () => {
     await db.query("update messages set thread_id = $2 where id = $1", [reply.id, thread.id]);
     expect(await listThreads(db, ws)).toMatchObject([{ id: thread.id, replyCount: 1, unread: 1 }]);
     await markThreadRead(db, thread.id, Number((await db.query<{seq:number}>("select seq from messages where id=$1", [reply.id]))[0]!.seq));
+    expect((await listThreads(db, ws))[0]!.unread).toBe(0);
+  });
+
+  test("reopening a long thread loads the latest 200 replies and can acknowledge the latest", async () => {
+    const { thread } = await openThread();
+    for (let i = 1; i <= 201; i++) {
+      const reply = await addMessage(db, ws, "agent", `reply ${i}`);
+      await db.query("update messages set thread_id=$2 where id=$1", [reply.id, thread.id]);
+    }
+    const replies = await listThreadMessages(db, thread.id);
+    expect(replies).toHaveLength(200);
+    expect(replies[0]!.content).toBe("reply 2");
+    expect(replies.at(-1)!.content).toBe("reply 201");
+    await markThreadRead(db, thread.id, replies.at(-1)!.seq);
     expect((await listThreads(db, ws))[0]!.unread).toBe(0);
   });
 
@@ -147,5 +163,24 @@ describe("thread store and conversation context", () => {
     await addMessage(db, ws, "agent", "outside");
     expect(await getLastAgentMessage(db, ws, thread.id)).toMatchObject({ id: inside.id });
     expect(await getLastAgentMessage(db, ws, null)).toMatchObject({ content: "outside" });
+  });
+
+  test("terminal interruption failures go to each task's current thread and update its aggregate", async () => {
+    const anchor = await postUserMessage(db, ws, "main anchor");
+    const thread = await ensureThread(db, anchor.message.id, "Follow-up", "user");
+    const member = await postUserMessage(db, ws, "thread member", { threadId: thread.id });
+    const events = new EventBus();
+    const observed: string[] = [];
+    events.subscribe(ws, (event) => { observed.push(event.type); });
+
+    await announceInterrupted(db, events, { requeued: [], failed: [anchor.task.id, member.task.id] });
+
+    const failures = await listThreadMessages(db, thread.id);
+    expect(failures.filter((m) => m.role === "system")).toHaveLength(2);
+    expect(failures.filter((m) => m.role === "system").every((m) => m.threadId === thread.id)).toBe(true);
+    expect((await listMessages(db, ws)).filter((m) => m.role === "system")).toHaveLength(0);
+    expect(observed.filter((type) => type === "thread.updated")).toHaveLength(2);
+    expect(observed).toEqual(["message.created", "thread.updated", "message.created", "thread.updated", "task.updated", "task.updated"]);
+    expect((await listThreads(db, ws))[0]!.unread).toBe(3);
   });
 });

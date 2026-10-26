@@ -238,7 +238,7 @@ export { getLastAgentMessage, getLastAskedQuestion };
 /** Thread replies oldest first. The thread anchor is stored in threads.id, not messages.thread_id. */
 export async function listThreadMessages(db: Db, threadId: string, limit = 200): Promise<Message[]> {
   const rows = await db.query<Row>(
-    `select ${COLS} from messages where thread_id=$1 order by seq asc limit $2`, [threadId, limit],
+    `select * from (select ${COLS} from messages where thread_id=$1 order by seq desc limit $2) latest order by seq asc`, [threadId, limit],
   );
   return rows.map(toMessage);
 }
