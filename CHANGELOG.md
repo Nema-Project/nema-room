@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Security
+
+- Desktop tag publication verifies the exact main-line release commit with the full shared CI suite before packaging; failed or missing verification blocks publication. Manual rehearsals never publish.
+- Every PR reports a stable `CI gate`, with lightweight checks for allowed documentation changes. Repository enforcement remains pending post-merge activation.
+- Public security issue forms are replaced with private-reporting guidance. Channel availability remains explicitly unverified until administration and reporter-access checks succeed.
+
 ### Fixed
 
 - The default landing page loads its demo from the site root. English stays at `/`, not `/en/`.
