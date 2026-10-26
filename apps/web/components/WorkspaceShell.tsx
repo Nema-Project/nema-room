@@ -26,6 +26,9 @@ const KNOW_DEFAULT = 380;
 const SNAP = 160;
 const RAIL = 12;
 const CHAT_MIN = 280;
+const MAIN_MESSAGE_PATH = /^\/w\/(ws_[A-Za-z0-9_-]{1,32})$/;
+const MAIN_MESSAGE_WORKSPACE_ID = /^ws_[A-Za-z0-9_-]{1,32}$/;
+const MAIN_MESSAGE_ID = /^m_[A-Za-z0-9_-]{1,32}$/;
 
 type Col = "side" | "know";
 
@@ -49,6 +52,19 @@ function writeWidth(key: string, width: number) {
   } catch {
     /* storage unavailable */
   }
+}
+
+function mainMessageTarget(hash: string, pathname: string, search: string, roomId: string | null): { workspaceId: string; messageId: string } | null {
+  if (!roomId || search || /[\r\n\0]/.test(hash)) return null;
+  const path = MAIN_MESSAGE_PATH.exec(pathname);
+  if (!path || path[1] !== roomId || !hash.startsWith("#")) return null;
+  const pairs = [...new URLSearchParams(hash.slice(1)).entries()];
+  if (pairs.length !== 2 || pairs.filter(([key]) => key === "workspace").length !== 1 || pairs.filter(([key]) => key === "message").length !== 1) return null;
+  const params = new URLSearchParams(hash.slice(1));
+  const workspaceId = params.get("workspace");
+  const messageId = params.get("message");
+  if (!workspaceId || !MAIN_MESSAGE_WORKSPACE_ID.test(workspaceId) || workspaceId !== roomId || workspaceId !== path[1] || !messageId || !MAIN_MESSAGE_ID.test(messageId)) return null;
+  return { workspaceId, messageId };
 }
 
 function SettingsMark() {
@@ -93,6 +109,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   const [panelTick, setPanelTick] = useState(0);
   const [detailTick, setDetailTick] = useState(0);
   const openEntryRef = useRef<string | null>(null);
+  const mainMessageRequest = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -227,18 +244,25 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   }, [current, openTargetThread]);
 
   useEffect(() => {
-    const hash = new URLSearchParams(window.location.hash.slice(1));
-    const workspaceId = hash.get("workspace");
-    const messageId = hash.get("message");
-    if (!workspaceId || workspaceId !== roomId || !messageId) return;
-    let live = true;
-    void getMessage(workspaceId, messageId).then((message) => {
-      if (!live || message.workspaceId !== workspaceId) return;
-      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-      if (message.threadId) openTargetThread(workspaceId, message.threadId, message.id);
-      else chat.current?.showMessage(message);
-    }, () => undefined);
-    return () => { live = false; };
+    const consumeHash = () => {
+      const request = ++mainMessageRequest.current;
+      const target = mainMessageTarget(window.location.hash, window.location.pathname, window.location.search, roomId);
+      if (!target) return;
+      const requestedHash = window.location.hash;
+      void getMessage(target.workspaceId, target.messageId).then((message) => {
+        if (request !== mainMessageRequest.current || window.location.hash !== requestedHash ||
+          message.id !== target.messageId || message.workspaceId !== target.workspaceId) return;
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+        if (message.threadId) openTargetThread(target.workspaceId, message.threadId, message.id);
+        else chat.current?.showMessage(message);
+      }, () => undefined);
+    };
+    window.addEventListener("hashchange", consumeHash);
+    consumeHash();
+    return () => {
+      window.removeEventListener("hashchange", consumeHash);
+      mainMessageRequest.current++;
+    };
   }, [roomId, openTargetThread]);
 
   async function create(name: string) {
