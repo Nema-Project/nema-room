@@ -336,5 +336,17 @@
   "model.error.mutation_conflict": "別の認証変更処理が完了していません。少し待ってから再試行してください。",
   "model.error.probe_not_supported": "このモードでは接続テストを利用できません。",
   "model.error.service_unavailable": "設定サービスを利用できません。ローカルの Nema Room サービスを起動または再接続してから、もう一度お試しください。",
-  "model.error.invalidBaseUrl": "HTTPS または localhost の URL を入力してください。"
+  "model.error.invalidBaseUrl": "HTTPS または localhost の URL を入力してください。",
+  "sidebar.attention": "次の未読スレッドを開く",
+  "thread.replies": "返信 {n} 件",
+  "thread.replyCount": "返信 {n} 件",
+  "thread.anchor": "元のメッセージ",
+  "chip.withdraw": "取り下げ",
+  "chip.history": "履歴",
+  "cmd.thread": "追いかけスレッドを開く",
+  "cmd.thread.insert": "/thread ",
+  "chip.withdrawFailed": "このエントリーを取り下げられませんでした。",
+  "thread.loadFailed": "スレッドを読み込めませんでした。",
+  "thread.retry": "再試行",
+  "thread.jumpUnavailable": "そのメッセージはこの会話にありません。"
 }

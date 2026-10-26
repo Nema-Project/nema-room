@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Markdown } from "@/components/Markdown";
-import { editMessage, getEntry, HubError, listMessageVersions } from "@/lib/hub";
+import { editMessage, getEntry, HubError, listMessageVersions, withdrawEntry } from "@/lib/hub";
 import { formatTime } from "@/lib/format";
 import { useLocale, useT } from "@/lib/i18n";
+import { useHubEvents } from "@/lib/useHubEvents";
 import type { AgentMessageMeta, Entry, Message, MessageQuote, ReportMessageMeta } from "@/lib/types";
 
 export function AgentAvatar() {
@@ -23,6 +24,7 @@ type Props = {
   /** Replaces the message in the chat after an edit succeeds. */
   onEdited?: (message: Message) => void;
   onJump?: (messageId: string) => void;
+  onOpenHistory?: (entryId: string) => void;
 };
 
 export function messageRoleLabel(t: (key: string) => string, role: Message["role"]): string {
@@ -37,16 +39,18 @@ function quoteOf(message: Message): MessageQuote | undefined {
   return meta?.quote;
 }
 
-export function MessageItem({ message, onOpenEntry, onAnswer, repliesAfter = [], onQuote, onEdited, onJump }: Props) {
+export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, onOpenHistory }: Props) {
   const t = useT();
   const [locale] = useLocale();
   const time = formatTime(new Date(message.createdAt), locale);
 
   if (message.role === "system") {
+    const meta = message.meta as AgentMessageMeta | null;
     return (
       <div className="sysmsg" id={`msg-${message.id}`}>
         <button type="button" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
         {message.content}
+        {meta?.askedQuestion && <AskedQuestion workspaceId={message.workspaceId} asked={meta.askedQuestion} added={[]} />}
       </div>
     );
   }
@@ -77,8 +81,10 @@ export function MessageItem({ message, onOpenEntry, onAnswer, repliesAfter = [],
             {meta.changes.map((c) => (
               <span className="chip" key={`${c.entryId}-${c.op}`}>
                 <b>{c.entryId}</b>
-                {c.title}
+                <button type="button" className="chip-link" onClick={() => onOpenEntry?.(c.entryId)}>{c.title}</button>
                 <i>{`${t(`kind.${c.kind}`)} · ${t(c.kind === "source" && c.op === "add" ? "chip.register" : `chip.${c.op}`)}`}</i>
+                {c.op === "add" && <WithdrawChip workspaceId={message.workspaceId} entryId={c.entryId} />}
+                {c.op === "update" && <button type="button" onClick={() => onOpenHistory?.(c.entryId)}>{t("chip.history")}</button>}
               </span>
             ))}
           </div>
@@ -87,13 +93,7 @@ export function MessageItem({ message, onOpenEntry, onAnswer, repliesAfter = [],
           <WorkPackageCard key={c.entryId} workspaceId={message.workspaceId} entryId={c.entryId} onOpenEntry={onOpenEntry} />
         ))}
         {meta && (meta.askedQuestion || meta.changes.some((c) => c.kind === "question" && c.op === "add")) && (
-          <AskedQuestion
-            workspaceId={message.workspaceId}
-            asked={meta.askedQuestion}
-            added={meta.changes.filter((c) => c.kind === "question" && c.op === "add").map((c) => ({ id: c.entryId, title: c.title }))}
-            repliesAfter={repliesAfter}
-            onAnswer={onAnswer}
-          />
+          <AskedQuestion workspaceId={message.workspaceId} asked={meta.askedQuestion} added={meta.changes.filter((c) => c.kind === "question" && c.op === "add").map((c) => ({ id: c.entryId, title: c.title }))} />
         )}
       </div>
     </div>
@@ -102,16 +102,13 @@ export function MessageItem({ message, onOpenEntry, onAnswer, repliesAfter = [],
 
 type QuestionSnap = { id: string; title: string; body: string };
 const questionNumber = (id: string) => Number(id.slice(id.indexOf("-") + 1)) || 0;
-const answeredBy = (replies: readonly string[], questionId: string) => replies.some((content) => content.trimStart().startsWith(`回答 ${questionId}：`));
 
 /** A question added in this message is what the reply asked. An older askedQuestion is only the fallback. */
-function AskedQuestion({ workspaceId, asked, added, repliesAfter, onAnswer }: { workspaceId: string; asked: QuestionSnap | null; added: { id: string; title: string }[]; repliesAfter: readonly string[]; onAnswer?: (questionId: string, content: string) => Promise<void> }) {
+function AskedQuestion({ workspaceId, asked, added }: { workspaceId: string; asked: QuestionSnap | null; added: { id: string; title: string }[] }) {
   const t = useT();
   const addedKey = JSON.stringify(added);
   const preview: QuestionSnap | null = added[0] ? { id: added[0].id, title: added[0].title, body: "" } : asked;
   const [question, setQuestion] = useState<QuestionSnap | null>(preview);
-  const [open, setOpen] = useState(added.length > 0);
-  const [sent, setSent] = useState(false);
   useEffect(() => {
     const parsed = JSON.parse(addedKey) as { id: string; title: string }[];
     const ids = parsed.length > 0 ? parsed.map((item) => item.id) : asked ? [asked.id] : [];
@@ -136,72 +133,47 @@ function AskedQuestion({ workspaceId, asked, added, repliesAfter, onAnswer }: { 
       const picked = openQuestions[0];
       if (picked) {
         setQuestion({ id: picked.id, title: picked.title, body: picked.body });
-        setOpen(true);
         return;
       }
       const fallback = parsed[0];
       if (fallback) setQuestion({ id: fallback.id, title: fallback.title, body: "" });
       else if (asked) setQuestion(asked);
-      setOpen(results.some((result) => result.failed));
     });
     return () => { live = false; };
   }, [workspaceId, addedKey, asked]);
   if (!question) return null;
-  const answered = answeredBy(repliesAfter, question.id);
   return (
     <div className="ask">
       <div className="k">{t("chat.askedQuestion", { id: question.id })}</div>
       <div className="q">{question.title}</div>
       {question.body && <Markdown source={question.body} />}
-      {onAnswer && open && !answered && !sent && (
-        <AnswerBox label={t("chat.answerFor", { id: question.id })} onAnswer={async (content) => { await onAnswer(question.id, content); setSent(true); }} />
-      )}
     </div>
   );
 }
 
-/** Sends the reply as a normal chat message. The hub treats a named `回答 Q-n：` as the answer to that question. */
-function AnswerBox({ label, onAnswer }: { label: string; onAnswer: (content: string) => Promise<void> }) {
+function WithdrawChip({ workspaceId, entryId }: { workspaceId: string; entryId: string }) {
   const t = useT();
-  const [value, setValue] = useState("");
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function send() {
-    const content = value.trim();
-    if (!content || sending) return;
-    setSending(true);
-    setError(null);
+  const [dropped, setDropped] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
+  const requestVersion = useRef(0);
+  const refresh = useCallback(async () => {
+    const mine = ++requestVersion.current;
     try {
-      await onAnswer(content);
-      setValue("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSending(false);
-    }
-  }
-
-  return (
-    <form className="ask-answer" onSubmit={(e) => { e.preventDefault(); void send(); }}>
-      <textarea
-        aria-label={label}
-        rows={2}
-        value={value}
-        placeholder={t("chat.answerPlaceholder")}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.nativeEvent.isComposing || e.key === "Process" || e.keyCode === 229) return;
-          if (e.key === "Enter" && e.shiftKey) {
-            e.preventDefault();
-            void send();
-          }
-        }}
-      />
-      <button type="submit" aria-label={label} disabled={sending || value.trim() === ""}>{t("chat.answer")}</button>
-      {error && <p className="error" role="alert">{t("composer.sendFailed", { message: error })}</p>}
-    </form>
-  );
+      const entry = await getEntry(workspaceId, entryId);
+      if (mine === requestVersion.current) setDropped(entry.status === "dropped");
+    } catch { /* keep the current chip state while the hub is unavailable */ }
+  }, [workspaceId, entryId]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial status comes from an async hub request
+    void refresh();
+  }, [refresh]);
+  useHubEvents(workspaceId, (event) => { if (event.type === "knowledge.changed" && event.entryId === entryId) void refresh(); });
+  if (dropped) return null;
+  return <>
+    <button type="button" disabled={busy} onClick={() => { setBusy(true); setError(false); void withdrawEntry(workspaceId, entryId).then(() => { requestVersion.current++; setDropped(true); }).catch(() => setError(true)).finally(() => setBusy(false)); }}>{t("chip.withdraw")}</button>
+    {error && <small className="error">{t("chip.withdrawFailed")}</small>}
+  </>;
 }
 
 /** A coding agent's report: the agent's summary, then its entries, commits and the daemon's git check. */
@@ -238,6 +210,8 @@ function UserMessage({
   const quote = quoteOf(message);
 
   useEffect(() => {
+    // Keep a cancelled edit draft aligned with a newer message object.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!editing) setDraft(message.content);
   }, [editing, message.content]);
 

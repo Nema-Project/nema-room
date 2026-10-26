@@ -12,14 +12,24 @@ function excerpt(content: string): string {
   return chars.length <= 200 ? content : chars.slice(0, 200).join("");
 }
 
+function availableCommands(query: string, threadMode: boolean): SlashItem[] {
+  return matchingCommands(query).filter((item) => !threadMode || item.id !== "thread");
+}
+
 export function Composer({
   onSend,
   quote,
   onClearQuote,
+  onThread,
+  threadMode = false,
+  disabled = false,
 }: {
   onSend: (content: string) => Promise<void>;
   quote?: { role: Message["role"]; content: string } | null;
   onClearQuote?: () => void;
+  onThread?: (content: string) => Promise<void>;
+  threadMode?: boolean;
+  disabled?: boolean;
 }) {
   const t = useT();
   const [value, setValue] = useState("");
@@ -32,7 +42,7 @@ export function Composer({
   const [active, setActive] = useState(0);
   const [closedFor, setClosedFor] = useState<string | null>(null);
   const token = slashToken(value, cursor);
-  const matches = token ? matchingCommands(token.query) : [];
+  const matches = token ? availableCommands(token.query, threadMode) : [];
   const tokenKey = token ? `${token.start}:${token.query}` : "";
   const menuOpen = token !== null && matches.length > 0 && closedFor !== tokenKey;
   const highlighted = matches.length === 0 ? 0 : active % matches.length;
@@ -57,7 +67,9 @@ export function Composer({
     setSending(true);
     setError(null);
     try {
-      await onSend(content);
+      const threadText = content.match(/^\/thread\s+([\s\S]+)$/);
+      if (threadText && onThread) await onThread(threadText[1]!.trim());
+      else await onSend(content);
       // Text typed while the send was in flight stays: drop only what was sent.
       setValue((cur) => (cur === sent ? "" : cur.startsWith(sent) ? cur.slice(sent.length).trimStart() : cur));
     } catch (e) {
@@ -89,7 +101,7 @@ export function Composer({
     if (composing.current || e.nativeEvent.isComposing || e.keyCode === 229) return;
     const caret = e.currentTarget.selectionStart;
     const current = slashToken(e.currentTarget.value, caret);
-    const shown = current ? matchingCommands(current.query) : [];
+    const shown = current ? availableCommands(current.query, threadMode) : [];
     const open = current !== null && shown.length > 0 && closedFor !== `${current.start}:${current.query}`;
     if (open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault();
@@ -160,6 +172,7 @@ export function Composer({
         className="in"
         rows={3}
         value={value}
+        disabled={disabled}
         placeholder={t("composer.placeholder")}
         aria-controls={menuOpen ? "slash-commands" : undefined}
         aria-activedescendant={menuOpen ? `slash-${matches[highlighted]?.id}` : undefined}
@@ -201,7 +214,7 @@ export function Composer({
         </button>
         <span className="sep">|</span>
         <span>{t("composer.hint")}</span>
-        <button type="button" className="send" disabled={sending} onClick={() => void send()}>
+        <button type="button" className="send" disabled={sending || disabled} onClick={() => void send()}>
           {t("composer.send")}
         </button>
       </div>

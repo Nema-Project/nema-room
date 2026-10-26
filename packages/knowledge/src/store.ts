@@ -396,6 +396,17 @@ export class KnowledgeStore {
     }
   }
 
+  /** Mark an entry as withdrawn while retaining its provenance and confirmation time. */
+  async withdraw(id: string, meta: CommitMeta): Promise<{ entry: Entry; commit: string }> {
+    return withRepoLock(this.repoDir, async () => {
+      const existing = await this.get(id);
+      if (!existing) throw new Error(`entry ${id} not found`);
+      const entry: Entry = { ...existing, status: "dropped" };
+      const commit = await this.writeAndCommit(entry, "update", "用户撤回", [], meta);
+      return { entry, commit };
+    });
+  }
+
   async upsert(rawInput: UpsertEntryInput, meta: CommitMeta): Promise<{ entry: Entry; commit: string; op: "add" | "update" }> {
     const input = UpsertEntryInput.parse(rawInput);
     return withRepoLock(this.repoDir, async () => {

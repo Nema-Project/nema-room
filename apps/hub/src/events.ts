@@ -1,11 +1,13 @@
 import type { Message } from "./messages.js";
 import type { UiTask } from "./tasks.js";
+import type { Thread } from "@nema/shared";
 
 export type HubEvent =
   | { type: "message.created"; message: Message }
   /** An existing message changed, for example a report once its check is stored. */
   | { type: "message.updated"; message: Message }
   | { type: "task.updated"; task: UiTask }
+  | { type: "thread.updated"; thread: Thread }
   | { type: "task.progress"; taskId: string; text: string }
   | { type: "knowledge.changed"; entryId: string }
   | { type: "daemon.status"; connected: boolean }

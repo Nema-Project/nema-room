@@ -36,6 +36,10 @@ export class RoomClient {
     return this.call("POST", "/entries", input);
   }
 
+  openThread(args: unknown): Promise<RoomResult> {
+    return this.call("POST", "/threads", args);
+  }
+
   listPluginTools(): Promise<RoomResult> {
     return this.call("GET", "/plugins");
   }

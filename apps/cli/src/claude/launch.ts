@@ -9,6 +9,7 @@ export const CLAUDE_ROOM_TOOLS = [
   "mcp__room__list_entries",
   "mcp__room__read_entry",
   "mcp__room__upsert_entry",
+  "mcp__room__open_thread",
 ] as const;
 
 export type ClaudeLaunch = {

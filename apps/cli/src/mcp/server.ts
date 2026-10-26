@@ -26,7 +26,7 @@ function parsePluginTools(json: unknown): PluginToolSpec[] | null {
   return tools;
 }
 
-/** Hub listing, or the 3 Room tools alone when the list cannot be read. */
+/** Hub listing, or the 4 Room tools alone when the list cannot be read. */
 async function listedPluginTools(room: RoomClient): Promise<PluginToolSpec[]> {
   try {
     const listed = await room.listPluginTools();
@@ -75,6 +75,7 @@ export async function startMcpServer(opts: { hubUrl: string; runToken: string },
       return toToolResult(await room.readEntry(id));
     }
     if (name === "upsert_entry") return toToolResult(await room.upsertEntry(args));
+    if (name === "open_thread") return toToolResult(await room.openThread(args));
     return { content: [{ type: "text", text: `未知函数 ${name}` }], isError: true };
   });
   await server.connect(transport ?? new StdioServerTransport());

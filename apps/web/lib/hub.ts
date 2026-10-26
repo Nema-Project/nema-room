@@ -61,6 +61,7 @@ export const updateWorkspace = (id: string, patch: Partial<Pick<Workspace, "name
 export const archiveWorkspace = (id: string, archived: boolean) => request<Workspace>(w(id), { method: "PATCH", body: { archived } });
 export const deleteWorkspace = (id: string) => request<void>(w(id), { method: "DELETE" });
 export const listMessages = (id: string) => request<Message[]>(`${w(id)}/messages`);
+export const getMessage = (id: string, messageId: string) => request<Message>(`${w(id)}/messages/${encodeURIComponent(messageId)}`);
 export const postMessage = (id: string, content: string, quoteMessageId?: string) =>
   request<{ message: Message; task: Task }>(`${w(id)}/messages`, {
     method: "POST",
@@ -71,6 +72,13 @@ export const editMessage = (id: string, messageId: string, content: string) =>
 export const listMessageVersions = (id: string, messageId: string) =>
   request<{ version: number; content: string; createdAt: string }[]>(`${w(id)}/messages/${encodeURIComponent(messageId)}/versions`);
 export const searchMessages = (id: string, q: string) => request<Message[]>(`${w(id)}/messages/search?q=${encodeURIComponent(q)}`);
+export const listThreads = (id: string) => request<import("./types").Thread[]>(`${w(id)}/threads`);
+export const getThreadMessages = (id: string, threadId: string) => request<{ thread: import("./types").Thread; anchor: Message; messages: Message[] }>(`${w(id)}/threads/${encodeURIComponent(threadId)}/messages`);
+export const postThreadMessage = (id: string, threadId: string, content: string, quoteMessageId?: string) => request<{ message: Message; task: Task }>(`${w(id)}/threads/${encodeURIComponent(threadId)}/messages`, { method: "POST", body: quoteMessageId ? { content, quoteMessageId } : { content } });
+export const createThread = (id: string, content: string, quoteMessageId?: string) => request<{ message: Message; thread: import("./types").Thread; task: Task }>(`${w(id)}/threads`, { method: "POST", body: quoteMessageId ? { content, quoteMessageId } : { content } });
+export const markThreadRead = (id: string, threadId: string, throughSeq: number) => request<void>(`${w(id)}/threads/${encodeURIComponent(threadId)}/read`, { method: "POST", body: { throughSeq } });
+export const nextAttention = (id: string) => request<{ threadId: string } | null>(`${w(id)}/attention/next`);
+export const withdrawEntry = (id: string, entryId: string) => request<Entry>(`${e(id, entryId)}/withdraw`, { method: "POST", body: {} });
 export const getActiveTask = (id: string) => request<{ running: Task | null }>(`${w(id)}/tasks/active`);
 export const listEntries = (id: string) => request<EntryListItem[]>(`${w(id)}/entries`);
 export const getEntry = (id: string, eid: string) => request<Entry>(e(id, eid));

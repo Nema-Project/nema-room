@@ -6,7 +6,7 @@ import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, kindFromId } from "@nema/shared"
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
 import type { EventBus, HubEvent } from "./events.js";
-import { indexEntry, openQuestionCounts, timeline, withDiagramStatus } from "./entryIndex.js";
+import { indexEntry, timeline, withDiagramStatus } from "./entryIndex.js";
 import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, editUserMessage, getMessage, listMessageVersions, listMessages, MessageOpError, postSystemTask, postUserMessage, searchMessages } from "./messages.js";
 import { vendoredArchify, type Archify } from "./diagrams.js";
 import { PluginError, daemonHttpStatus, listExtensions, pluginsForUi, setPluginState, workspacePluginState } from "./plugins.js";
@@ -14,6 +14,8 @@ import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkP
 import { RepoError, bindRepo, getRepo, listRepos, previewRepo, syncBoundRepos, unbindRepo, updateRepo } from "./repos.js";
 import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
 import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, repoPath, updateWorkspace } from "./workspaces.js";
+import { attentionCounts, ensureThread, getThread, listThreads, markThreadRead, nextAttentionResult } from "./threads.js";
+import { listThreadMessages } from "./messages.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 export type UiDeps = {
@@ -46,6 +48,7 @@ const PatchWorkspaceBody = z.object({
 const PostMessageBody = z.object({
   content: z.string().refine((s) => s.trim() !== "", "must not be empty"),
   quoteMessageId: z.string().min(1).optional(),
+  threadId: z.string().min(1).optional(),
 });
 const PreviewRepoBody = z.object({ path: z.string().min(1) });
 const BindRepoBody = z.object({
@@ -153,8 +156,8 @@ export function uiRoutes(deps: UiDeps): Hono {
   });
 
   app.get("/workspaces", async (c) => {
-    const [list, counts] = await Promise.all([listWorkspaces(db), openQuestionCounts(db)]);
-    return c.json(list.map((w) => ({ ...w, openQuestions: counts[w.id] ?? 0, archived: w.archivedAt != null })));
+    const [list, counts] = await Promise.all([listWorkspaces(db), attentionCounts(db, dataDir)]);
+    return c.json(list.map((w) => ({ ...w, attention: counts[w.id] ?? 0, archived: w.archivedAt != null })));
   });
 
   app.post("/workspaces", async (c) => {
@@ -250,6 +253,95 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.get("/workspaces/:id/messages/search", async (c) => c.json(await searchMessages(db, c.req.param("id")!, c.req.query("q") ?? "")));
 
+  app.get("/workspaces/:id/messages/:messageId", async (c) => {
+    const message = await getMessage(db, c.req.param("messageId")!);
+    if (!message || message.workspaceId !== c.req.param("id")) throw new HttpError(404, "message not found");
+    return c.json(message);
+  });
+
+  app.get("/workspaces/:id/threads", async (c) => c.json(await listThreads(db, c.req.param("id")!)));
+
+  app.get("/workspaces/:id/threads/:tid/messages", async (c) => {
+    const workspaceId = c.req.param("id")!;
+    const thread = await getThread(db, c.req.param("tid")!);
+    if (!thread || thread.workspaceId !== workspaceId) throw new HttpError(404, "thread not found");
+    const anchor = await getMessage(db, thread.id);
+    if (!anchor) throw new HttpError(404, "thread not found");
+    return c.json({ thread, anchor, messages: await listThreadMessages(db, thread.id) });
+  });
+
+  app.post("/workspaces/:id/threads", async (c) => {
+    const workspaceId = c.req.param("id")!;
+    const { content, quoteMessageId } = await body(c, PostMessageBody);
+    if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
+    try {
+      const created = await db.tx(async (t) => {
+        const posted = await postUserMessage(t, workspaceId, content, { quoteMessageId });
+        const title = Array.from(content.split(/\r?\n/, 1)[0]!.trim()).slice(0, 80).join("") || "新追问";
+        const thread = await ensureThread(t, posted.message.id, title, "user");
+        return { ...posted, thread };
+      });
+      const task = toUiTask(created.task);
+      events.emit(workspaceId, { type: "message.created", message: created.message });
+      events.emit(workspaceId, { type: "task.updated", task });
+      events.emit(workspaceId, { type: "thread.updated", thread: created.thread });
+      return c.json({ message: created.message, thread: created.thread, task });
+    } catch (e) {
+      if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
+      if (e instanceof ArchivedWorkspaceError) throw new HttpError(409, e.message);
+      throw e;
+    }
+  });
+
+  app.post("/workspaces/:id/threads/:tid/messages", async (c) => {
+    const workspaceId = c.req.param("id")!;
+    const threadId = c.req.param("tid")!;
+    const { content, quoteMessageId } = await body(c, PostMessageBody);
+    if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
+    try {
+      const { message, task: created } = await postUserMessage(db, workspaceId, content, { quoteMessageId, threadId });
+      const task = toUiTask(created);
+      events.emit(workspaceId, { type: "message.created", message });
+      events.emit(workspaceId, { type: "task.updated", task });
+      const thread = await getThread(db, threadId);
+      if (thread) events.emit(workspaceId, { type: "thread.updated", thread });
+      return c.json({ message, task });
+    } catch (e) {
+      if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
+      if (e instanceof ArchivedWorkspaceError) throw new HttpError(409, e.message);
+      throw e;
+    }
+  });
+
+  app.post("/workspaces/:id/threads/:tid/read", async (c) => {
+    const workspaceId = c.req.param("id")!;
+    const threadId = c.req.param("tid")!;
+    const { throughSeq } = await body(c, z.object({ throughSeq: z.number().int().positive() }).strict());
+    const thread = await getThread(db, threadId);
+    if (!thread || thread.workspaceId !== workspaceId) throw new HttpError(400, "thread not in this workspace");
+    try {
+      await markThreadRead(db, threadId, throughSeq);
+    } catch (e) {
+      if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
+      throw e;
+    }
+    const updated = await getThread(db, threadId);
+    if (updated) events.emit(workspaceId, { type: "thread.updated", thread: updated });
+    return c.body(null, 204);
+  });
+
+  app.get("/workspaces/:id/attention/next", async (c) => {
+    const workspaceId = c.req.param("id")!;
+    const result = await nextAttentionResult(db, dataDir, workspaceId);
+    if (result.card && result.threadId) {
+      if (result.anchor) events.emit(workspaceId, { type: "message.created", message: result.anchor });
+      events.emit(workspaceId, { type: "message.created", message: result.card });
+      const thread = await getThread(db, result.threadId);
+      if (thread) events.emit(workspaceId, { type: "thread.updated", thread });
+    }
+    return c.json(result.threadId ? { threadId: result.threadId } : null);
+  });
+
   app.get("/workspaces/:id/messages/:messageId/versions", async (c) => {
     const message = await getMessage(db, c.req.param("messageId")!);
     if (!message || message.workspaceId !== c.req.param("id")) throw new HttpError(404, "message not found");
@@ -279,11 +371,11 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/workspaces/:id/messages", async (c) => {
     const id = c.req.param("id");
-    const { content, quoteMessageId } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, threadId } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, id))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     let message, created;
     try {
-      ({ message, task: created } = await postUserMessage(db, id, content, quoteMessageId));
+      ({ message, task: created } = await postUserMessage(db, id, content, { quoteMessageId, threadId }));
     } catch (e) {
       if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
       throw e;
@@ -371,6 +463,16 @@ export function uiRoutes(deps: UiDeps): Hono {
   };
 
   app.get("/workspaces/:id/entries/:eid", async (c) => c.json(await requireEntry(c.req.param("id")!, c.req.param("eid")!)));
+
+  app.post("/workspaces/:id/entries/:eid/withdraw", async (c) => {
+    const workspaceId = c.req.param("id")!;
+    const entryId = c.req.param("eid")!;
+    await requireEntry(workspaceId, entryId);
+    const { entry } = await store(workspaceId).withdraw(entryId, { author: "user" });
+    await indexEntry(db, workspaceId, entry);
+    events.emit(workspaceId, { type: "knowledge.changed", entryId: entry.id });
+    return c.json(entry);
+  });
 
   app.put("/workspaces/:id/entries/:eid", async (c) => {
     const ws = c.req.param("id");

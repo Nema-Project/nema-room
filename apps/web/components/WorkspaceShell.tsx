@@ -7,8 +7,10 @@ import { EntryDetail } from "@/components/EntryDetail";
 import { KnowledgePanel } from "@/components/KnowledgePanel";
 import { ModelSettings } from "@/components/ModelSettings";
 import { Sidebar } from "@/components/Sidebar";
+import { useThreadWindows } from "@/components/ThreadWindowsProvider";
 import { WorkspaceSettings } from "@/components/WorkspaceSettings";
-import { HubError, archiveWorkspace, createWorkspace, deleteWorkspace, getDaemonStatus, listWorkspaces } from "@/lib/hub";
+import { HubError, archiveWorkspace, createWorkspace, deleteWorkspace, getDaemonStatus, getMessage, listWorkspaces } from "@/lib/hub";
+import { mainMessageUrl, openThread } from "@/lib/threads";
 import { useT } from "@/lib/i18n";
 import type { HubEvent, Workspace, WorkspaceView } from "@/lib/types";
 import { useHubEvents } from "@/lib/useHubEvents";
@@ -24,6 +26,9 @@ const KNOW_DEFAULT = 380;
 const SNAP = 160;
 const RAIL = 12;
 const CHAT_MIN = 280;
+const MAIN_MESSAGE_PATH = /^\/w\/(ws_[A-Za-z0-9_-]{1,32})$/;
+const MAIN_MESSAGE_WORKSPACE_ID = /^ws_[A-Za-z0-9_-]{1,32}$/;
+const MAIN_MESSAGE_ID = /^m_[A-Za-z0-9_-]{1,32}$/;
 
 type Col = "side" | "know";
 
@@ -47,6 +52,19 @@ function writeWidth(key: string, width: number) {
   } catch {
     /* storage unavailable */
   }
+}
+
+function mainMessageTarget(hash: string, pathname: string, search: string, roomId: string | null): { workspaceId: string; messageId: string } | null {
+  if (!roomId || search || /[\r\n\0]/.test(hash)) return null;
+  const path = MAIN_MESSAGE_PATH.exec(pathname);
+  if (!path || path[1] !== roomId || !hash.startsWith("#")) return null;
+  const pairs = [...new URLSearchParams(hash.slice(1)).entries()];
+  if (pairs.length !== 2 || pairs.filter(([key]) => key === "workspace").length !== 1 || pairs.filter(([key]) => key === "message").length !== 1) return null;
+  const params = new URLSearchParams(hash.slice(1));
+  const workspaceId = params.get("workspace");
+  const messageId = params.get("message");
+  if (!workspaceId || !MAIN_MESSAGE_WORKSPACE_ID.test(workspaceId) || workspaceId !== roomId || workspaceId !== path[1] || !messageId || !MAIN_MESSAGE_ID.test(messageId)) return null;
+  return { workspaceId, messageId };
 }
 
 function SettingsMark() {
@@ -73,6 +91,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   const t = useT();
   const router = useRouter();
   const chat = useRef<ChatHandle>(null);
+  const threadWindows = useThreadWindows();
   const [workspaces, setWorkspaces] = useState<WorkspaceView[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
@@ -80,7 +99,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   const [hubFault, setHubFault] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
-  const [openState, setOpenState] = useState<{ roomId: string | null; entryId: string | null }>({ roomId: null, entryId: null });
+  const [openState, setOpenState] = useState<{ roomId: string | null; entryId: string | null; tab?: "content" | "history" }>({ roomId: null, entryId: null });
   const [knowWidth, setKnowWidth] = useState<number | null>(null);
   const [knowCollapsed, setKnowCollapsed] = useState(false);
   const [sideWidth, setSideWidth] = useState<number | null>(null);
@@ -90,6 +109,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   const [panelTick, setPanelTick] = useState(0);
   const [detailTick, setDetailTick] = useState(0);
   const openEntryRef = useRef<string | null>(null);
+  const mainMessageRequest = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -148,6 +168,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   const roomId = current?.id ?? null;
   const openEntry = openState.roomId === roomId ? openState.entryId : null;
   const setOpenEntry = useCallback((entryId: string | null) => setOpenState({ roomId, entryId }), [roomId]);
+  const setOpenHistory = useCallback((entryId: string) => setOpenState({ roomId, entryId, tab: "history" }), [roomId]);
   useEffect(() => {
     openEntryRef.current = openEntry;
   }, [openEntry]);
@@ -174,6 +195,8 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
           // The open entry is not touched: its content changes arrive as knowledge.changed, and bumping the
           // detail here would show a false "entry changed elsewhere" notice while the user edits it.
           setPanelTick((n) => n + 1);
+        } else if (e.type === "thread.updated") {
+          void refresh();
         }
         chat.current?.handleEvent(e);
       },
@@ -182,7 +205,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
     resync,
   );
 
-  function select(id: string) {
+  const select = useCallback((id: string) => {
     if (id !== current?.id) router.push(`/w/${encodeURIComponent(id)}`);
     setSelectedId(id);
     setSettingsOpen(false);
@@ -191,7 +214,56 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
     } catch {
       /* storage unavailable */
     }
-  }
+  }, [current?.id, router]);
+
+  const openTargetThread = useCallback((workspaceId: string, threadId: string, messageId?: string) => {
+    if (workspaceId !== current?.id) select(workspaceId);
+    openThread(workspaceId, threadId, threadWindows, messageId);
+  }, [current?.id, select, threadWindows]);
+  const openMainMessage = useCallback((workspaceId: string, message: import("@/lib/types").Message) => {
+    if (workspaceId === current?.id) {
+      chat.current?.showMessage(message);
+      return;
+    }
+    setSelectedId(workspaceId);
+    setSettingsOpen(false);
+    try { localStorage.setItem(SELECTED_KEY, workspaceId); } catch { /* storage unavailable */ }
+    router.push(mainMessageUrl(workspaceId, message.id));
+  }, [current?.id, router]);
+  useEffect(() => threadWindows.registerMainMessageHandler(openMainMessage), [threadWindows, openMainMessage]);
+  const jumpToMessage = useCallback(async (id: string) => {
+    if (!current) return;
+    try {
+      const message = await getMessage(current.id, id);
+      if (message.threadId) openTargetThread(message.workspaceId, message.threadId, message.id);
+      else chat.current?.showMessage(message);
+    } catch {
+      // Existing shell callers may ask to scroll an already mounted message without resolver data.
+      chat.current?.scrollToMessage(id);
+    }
+  }, [current, openTargetThread]);
+
+  useEffect(() => {
+    const consumeHash = () => {
+      const request = ++mainMessageRequest.current;
+      const target = mainMessageTarget(window.location.hash, window.location.pathname, window.location.search, roomId);
+      if (!target) return;
+      const requestedHash = window.location.hash;
+      void getMessage(target.workspaceId, target.messageId).then((message) => {
+        if (request !== mainMessageRequest.current || window.location.hash !== requestedHash ||
+          message.id !== target.messageId || message.workspaceId !== target.workspaceId) return;
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+        if (message.threadId) openTargetThread(target.workspaceId, message.threadId, message.id);
+        else chat.current?.showMessage(message);
+      }, () => undefined);
+    };
+    window.addEventListener("hashchange", consumeHash);
+    consumeHash();
+    return () => {
+      window.removeEventListener("hashchange", consumeHash);
+      mainMessageRequest.current++;
+    };
+  }, [roomId, openTargetThread]);
 
   async function create(name: string) {
     const ws = await createWorkspace(name); // errors surface in the sidebar form
@@ -339,7 +411,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
       style={frameStyle}
     >
       <div className={sideCollapsed ? "side-col is-collapsed" : "side-col"}>
-        <Sidebar workspaces={workspaces ?? []} selectedId={current?.id ?? null} connected={connected} onSelect={select} onCreate={create} onArchive={changeArchive} onDelete={remove} onOpenModelSettings={() => { setSettingsOpen(false); setModelSettingsOpen(true); }} />
+        <Sidebar workspaces={workspaces ?? []} selectedId={current?.id ?? null} connected={connected} onSelect={select} onCreate={create} onArchive={changeArchive} onDelete={remove} onOpenThread={openTargetThread} onOpenModelSettings={() => { setSettingsOpen(false); setModelSettingsOpen(true); }} />
         <button
           type="button"
           className={dragging === "side" ? "col-resize side-resize is-dragging" : "col-resize side-resize"}
@@ -374,7 +446,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
                 {t("common.settings")}
               </button>
             </div>
-            <Chat key={current.id} ref={chat} workspaceId={current.id} connected={connected} onOpenEntry={setOpenEntry} />
+            <Chat key={current.id} ref={chat} workspaceId={current.id} connected={connected} onOpenEntry={setOpenEntry} onOpenHistory={setOpenHistory} onOpenThread={(tid, mid) => openTargetThread(current.id, tid, mid)} />
           </>
         ) : (
           <div className="placeholder">{workspaces === null && !error ? t("common.loading") : t("main.empty")}</div>
@@ -416,13 +488,14 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
         <aside className="know">
           {current && openEntry ? (
             <EntryDetail
-              key={`${current.id}/${openEntry}`}
+              key={`${current.id}/${openEntry}/${openState.tab ?? "content"}`}
               workspaceId={current.id}
               entryId={openEntry}
               refreshKey={detailTick}
               onClose={() => setOpenEntry(null)}
               onOpenEntry={setOpenEntry}
-              onJumpToMessage={(id) => chat.current?.scrollToMessage(id)}
+              onJumpToMessage={(id) => void jumpToMessage(id)}
+              initialTab={openState.tab}
             />
           ) : current ? (
             <KnowledgePanel key={current.id} workspaceId={current.id} knowledgeLanguage={current.knowledgeLanguage} refreshKey={panelTick} onOpen={setOpenEntry} />

@@ -401,3 +401,25 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .kcheck { margin-right: 6px; }
 .mark { font-family: var(--mono); font-size: inherit; color: var(--ink-2); text-decoration: underline; }
 .grill-settings { margin-top: 8px; }
+.ws-wrap { display: flex; align-items: center; position: relative; }
+.ws-wrap > .ws { flex: 1; min-width: 0; }
+.attention-badge { border: 0; border-radius: 999px; background: var(--accent); color: white; min-width: 22px; height: 22px; margin-right: 6px; cursor: pointer; }
+.thread-row { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px 34px; padding: 7px 9px; border: 1px solid var(--rule); border-radius: 8px; color: var(--ink); background: var(--paper); cursor: pointer; max-width: calc(100% - 40px); }
+.thread-row strong { color: var(--on-ink); background: var(--accent); border-radius: 999px; padding: 1px 6px; }
+.thread-row time { margin-left: auto; color: var(--ink-2); }
+.chip-link { border: 0; padding: 0; background: transparent; color: inherit; cursor: pointer; text-decoration: underline; }
+.thread-windows { position: fixed; inset: 0; pointer-events: none; z-index: 40; }
+.thread-floating { position: absolute; width: min(520px, calc(100vw - 32px)); height: min(680px, calc(100vh - 32px)); pointer-events: auto; border: 1px solid var(--rule); border-radius: 12px; background: var(--paper); box-shadow: 0 12px 40px #0004; overflow: hidden; }
+.thread-floating:not(.active) { filter: saturate(.88); }
+.thread-window, .thread-page { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.thread-page { height: calc(100vh - 32px); max-width: 900px; margin: 16px auto; }
+.thread-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--rule); cursor: grab; }
+.thread-header span { display: block; color: var(--ink-2); font-size: 12px; }
+.thread-header button { border: 0; background: transparent; color: var(--ink); font-size: 22px; cursor: pointer; }
+.thread-scroll { overflow: auto; flex: 1; padding: 12px; }
+.thread-anchor { border-bottom: 1px solid var(--rule); margin-bottom: 12px; padding-bottom: 12px; }
+.thread-anchor > span { display: block; color: var(--ink-2); font-size: 12px; }
+.thread-error { margin: 8px 12px; }
+.thread-floating .composer { border-top: 1px solid var(--rule); }
+.thread-drag { position: absolute; height: 44px; top: 0; left: 0; right: 48px; z-index: 2; cursor: grab; }
+.thread-entry { position: absolute; inset: 48px 12px 12px; z-index: 3; background: var(--paper); overflow: auto; border: 1px solid var(--rule); border-radius: 8px; }

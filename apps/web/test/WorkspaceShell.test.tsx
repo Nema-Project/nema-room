@@ -8,8 +8,7 @@ import { I18nProvider } from "@/lib/i18n";
 import type { HubEvent } from "@/lib/types";
 
 const hubHandlers: { onEvent?: (e: HubEvent) => void; onResync?: () => void } = {};
-const scroll = vi.fn();
-const { replace, HubError } = vi.hoisted(() => {
+const { replace, scroll, showMessage, HubError, threadOpen, threadFocus, registerMainMessageHandler } = vi.hoisted(() => {
   class HubError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -17,7 +16,8 @@ const { replace, HubError } = vi.hoisted(() => {
       this.status = status;
     }
   }
-  return { replace: vi.fn(), HubError };
+  const scroll = vi.fn();
+  return { replace: vi.fn(), scroll, showMessage: vi.fn((message: { id: string }) => scroll(message.id)), HubError, threadOpen: vi.fn(), threadFocus: vi.fn(), registerMainMessageHandler: vi.fn(() => () => {}) };
 });
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace }) }));
@@ -27,6 +27,7 @@ vi.mock("@/lib/hub", () => ({
   createWorkspace: vi.fn(),
   archiveWorkspace: vi.fn(),
   deleteWorkspace: vi.fn(),
+  getMessage: vi.fn(),
   HubError,
 }));
 vi.mock("@/lib/useHubEvents", () => ({
@@ -35,10 +36,11 @@ vi.mock("@/lib/useHubEvents", () => ({
     hubHandlers.onResync = onResync;
   },
 }));
+vi.mock("@/components/ThreadWindowsProvider", () => ({ useThreadWindows: () => ({ open: threadOpen, focus: threadFocus, registerMainMessageHandler }) }));
 vi.mock("@/components/Chat", () => ({
   Chat: forwardRef(function Chat(_p: unknown, ref: React.Ref<unknown>) {
-    if (typeof ref === "function") ref({ handleEvent: vi.fn(), resync: vi.fn(), scrollToMessage: scroll });
-    else if (ref) (ref as { current: unknown }).current = { handleEvent: vi.fn(), resync: vi.fn(), scrollToMessage: scroll };
+    if (typeof ref === "function") ref({ handleEvent: vi.fn(), resync: vi.fn(), scrollToMessage: scroll, showMessage });
+    else if (ref) (ref as { current: unknown }).current = { handleEvent: vi.fn(), resync: vi.fn(), scrollToMessage: scroll, showMessage };
     return <div />;
   }),
 }));
@@ -61,21 +63,27 @@ vi.mock("@/components/EntryDetail", () => ({
 }));
 
 beforeEach(() => {
+  window.history.replaceState(null, "", "/");
+  scroll.mockClear(); showMessage.mockClear();
   vi.mocked(hub.listWorkspaces).mockResolvedValue([
     { id: "w1", name: "Alpha", confidential: false, knowledgeLanguage: "follow", createdAt: "x", openQuestions: 0, archived: false },
   ]);
   vi.mocked(hub.getDaemonStatus).mockResolvedValue({ connected: true });
 });
 
-const mount = async () => {
+const mount = async (routeId = "w1") => {
   render(
     <I18nProvider>
-      <WorkspaceShell routeId="w1" />
+      <WorkspaceShell routeId={routeId} />
     </I18nProvider>,
   );
   await act(async () => {});
 };
 const changed = (entryId: string) => act(async () => hubHandlers.onEvent!({ type: "knowledge.changed", entryId }));
+const setMainTarget = (hash: string, path = "/w/ws_1") => {
+  window.history.replaceState(null, "", `${path}#${hash}`);
+  act(() => window.dispatchEvent(new HashChangeEvent("hashchange")));
+};
 
 describe("WorkspaceShell knowledge wiring", () => {
   it("refreshes the panel on knowledge.changed", async () => {
@@ -170,6 +178,55 @@ describe("WorkspaceShell knowledge wiring", () => {
     expect(document.querySelector(".frame")!.classList.contains("entry-open")).toBe(true);
     await userEvent.click(screen.getByText("jump"));
     expect(scroll).toHaveBeenCalledWith("m_1");
+  });
+  it("passes the source message id through when opening its thread", async () => {
+    vi.mocked(hub.getMessage).mockResolvedValue({ id: "m_1", workspaceId: "w1", role: "user", content: "source", meta: null, taskId: null, createdAt: "x", editedAt: null, threadId: "t_1", seq: 9 } as never);
+    await mount(); await userEvent.click(screen.getByText("open R-1")); await userEvent.click(screen.getByText("jump"));
+    await vi.waitFor(() => expect(threadOpen).toHaveBeenCalledWith("w1", "t_1", "m_1"));
+  });
+  it("consumes same-path main-source hash changes and lets the newest in-flight target win", async () => {
+    let resolveFirst!: (message: never) => void;
+    let resolveSecond!: (message: never) => void;
+    vi.mocked(hub.getMessage).mockImplementation((_workspaceId, id) => new Promise((resolve) => {
+      if (id === "m_first") resolveFirst = resolve as (message: never) => void;
+      if (id === "m_second") resolveSecond = resolve as (message: never) => void;
+    }));
+    vi.mocked(hub.listWorkspaces).mockResolvedValue([{ id: "ws_1", name: "Canonical Alpha", confidential: false, knowledgeLanguage: "follow", createdAt: "x", openQuestions: 0, archived: false }]);
+    await mount("ws_1");
+    setMainTarget("workspace=ws_1&message=m_first");
+    setMainTarget("workspace=ws_1&message=m_second");
+    expect(hub.getMessage).toHaveBeenCalledWith("ws_1", "m_first");
+    expect(hub.getMessage).toHaveBeenCalledWith("ws_1", "m_second");
+
+    await act(async () => resolveFirst({ id: "m_first", workspaceId: "ws_1", role: "user", content: "first", meta: null, taskId: null, createdAt: "x", editedAt: null, threadId: null, seq: 1 } as never));
+    expect(window.location.hash).toBe("#workspace=ws_1&message=m_second");
+    expect(scroll).not.toHaveBeenCalled();
+    await act(async () => resolveSecond({ id: "m_second", workspaceId: "ws_1", role: "user", content: "second", meta: null, taskId: null, createdAt: "x", editedAt: null, threadId: null, seq: 2 } as never));
+    expect(showMessage).toHaveBeenCalledWith(expect.objectContaining({ id: "m_second" }));
+    expect(scroll).toHaveBeenCalledWith("m_second");
+    expect(window.location.hash).toBe("");
+  });
+  it.each([
+    ["workspace=ws_2&message=m_1", "/w/ws_1"],
+    ["workspace=ws_1&workspace=ws_1&message=m_1", "/w/ws_1"],
+    ["workspace=ws_1&message=m_1&extra=1", "/w/ws_1"],
+    ["workspace=ws_1&message=invalid", "/w/ws_1"],
+    ["workspace=ws_1&message=m_1", "/w/ws_2"],
+  ])("ignores foreign or malformed main-source hash %s at %s", async (hash, path) => {
+    vi.mocked(hub.listWorkspaces).mockResolvedValue([{ id: "ws_1", name: "Canonical Alpha", confidential: false, knowledgeLanguage: "follow", createdAt: "x", openQuestions: 0, archived: false }]);
+    await mount("ws_1");
+    setMainTarget(hash, path);
+    expect(hub.getMessage).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe(`#${hash}`);
+    expect(scroll).not.toHaveBeenCalled();
+  });
+  it("resolves a source even when its DOM node exists only in an inactive floating thread", async () => {
+    vi.mocked(hub.getMessage).mockResolvedValue({ id: "m-floating", workspaceId: "w1", role: "user", content: "source", meta: null, taskId: null, createdAt: "x", editedAt: null, threadId: "t-floating", seq: 23 } as never);
+    const floatingOnly = document.createElement("div"); floatingOnly.id = "msg-m-floating"; floatingOnly.className = "thread-floating"; document.body.append(floatingOnly);
+    await mount(); await userEvent.click(screen.getByText("open R-1")); await userEvent.click(screen.getByText("jump"));
+    await vi.waitFor(() => expect(threadOpen).toHaveBeenCalledWith("w1", "t-floating", "m-floating"));
+    expect(scroll).not.toHaveBeenCalledWith("m-floating");
+    floatingOnly.remove();
   });
   it("leaves an archived room for the next active workspace", async () => {
     replace.mockClear();

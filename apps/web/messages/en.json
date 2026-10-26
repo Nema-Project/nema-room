@@ -336,5 +336,17 @@
   "model.error.mutation_conflict": "Another authentication change is still finishing. Try again shortly.",
   "model.error.probe_not_supported": "Connection testing is not available for this mode.",
   "model.error.service_unavailable": "The settings service is unavailable. Start or reconnect the local Nema Room service, then retry.",
-  "model.error.invalidBaseUrl": "Enter an HTTPS URL or a localhost URL."
+  "model.error.invalidBaseUrl": "Enter an HTTPS URL or a localhost URL.",
+  "sidebar.attention": "Open the next unread thread",
+  "thread.replies": "{n} replies",
+  "thread.replyCount": "{n} replies",
+  "thread.anchor": "Original message",
+  "chip.withdraw": "Withdraw",
+  "chip.history": "History",
+  "cmd.thread": "Open a follow-up thread",
+  "cmd.thread.insert": "/thread ",
+  "chip.withdrawFailed": "Could not withdraw this entry.",
+  "thread.loadFailed": "Could not load this thread.",
+  "thread.retry": "Retry",
+  "thread.jumpUnavailable": "That message is not part of this conversation."
 }

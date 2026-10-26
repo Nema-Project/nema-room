@@ -13,6 +13,31 @@ const mount = (onSend: (c: string) => Promise<void>) =>
 const box = () => screen.getByRole("textbox") as HTMLTextAreaElement;
 
 describe("Composer", () => {
+  it("/thread text posts a new thread", async () => {
+    const onThread = vi.fn().mockResolvedValue(undefined);
+    render(<I18nProvider><Composer onSend={vi.fn()} onThread={onThread} /></I18nProvider>);
+    await userEvent.type(box(), "/thr");
+    await userEvent.click(screen.getByRole("option", { name: /thread/i }));
+    await userEvent.type(box(), "need details{Shift>}{Enter}{/Shift}");
+    expect(onThread).toHaveBeenCalledWith("need details");
+  });
+  it("thread mode selects only visible slash commands by keyboard", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    render(<I18nProvider><Composer onSend={onSend} threadMode /></I18nProvider>);
+    await userEvent.type(box(), "/");
+    await userEvent.keyboard("{Enter}");
+    expect(box().value).toContain("Say how far this is, based on the code");
+    expect(box().value).not.toContain("/thread");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+  it("thread mode does not offer a typed /thread command", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    render(<I18nProvider><Composer onSend={onSend} threadMode /></I18nProvider>);
+    await userEvent.type(box(), "/thread");
+    expect(screen.queryByRole("option", { name: /thread/i })).toBeNull();
+    await userEvent.keyboard("{Enter}");
+    expect(onSend).not.toHaveBeenCalled();
+  });
   it("Enter inserts a newline and does not send", async () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
     mount(onSend);
@@ -90,7 +115,7 @@ describe("Composer", () => {
   it("lists diagram types and Enter fills the one the typed prefix matches", async () => {
     mount(vi.fn().mockResolvedValue(undefined));
     await userEvent.type(box(), "/");
-    expect(screen.getAllByRole("option")).toHaveLength(12);
+    expect(screen.getAllByRole("option")).toHaveLength(13);
     await userEvent.type(box(), "diagram:s");
     expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["/diagram:sequenceSequence"]);
     await userEvent.keyboard("{Enter}");
