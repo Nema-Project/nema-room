@@ -48,10 +48,12 @@ test('collection accepts a complete matrix and writes a manifest, combined check
   const manifest = await collectReleaseManifest({ version, prerelease: false, artifactsRoot: root, outputDir: out, build: { commit: 'abc' } });
   assert.deepEqual(Object.keys(manifest.targets), [...expectedTargets]);
   const files = await readdir(out);
-  assert.equal(files.length, 6 + 2);
-  assert.ok(files.includes('Nema-1.2.3-win32-x64.exe') && files.includes('Nema-1.2.3-darwin-arm64.dmg') && files.includes('Nema-1.2.3-darwin-arm64.zip'));
+  assert.equal(files.length, 4 + 2);
+  assert.ok(files.includes('Nema-1.2.3-win32-x64.exe') && files.includes('Nema-1.2.3-darwin-arm64.dmg'));
+  // Releases ship installers only; the portable ZIPs are no longer built or published.
+  assert.equal(files.some((name) => name.endsWith('.zip')), false);
   const sums = (await readFile(path.join(out, 'SHA256SUMS-1.2.3.txt'), 'utf8')).trim().split('\n');
-  assert.equal(sums.length, 4);
+  assert.equal(sums.length, 2);
   assert.equal(JSON.parse(await readFile(path.join(out, 'release-manifest-1.2.3.json'), 'utf8')).build.commit, 'abc');
 });
 
@@ -62,8 +64,8 @@ test('collection refuses a missing matrix target without copying anything', asyn
   assert.equal(await stat(out).catch(() => null), null);
 });
 
-test('collection refuses a missing installer, ZIP or checksum file and unexpected files', async (t) => {
-  for (const file of ['Nema-1.2.3-darwin-arm64.dmg', 'Nema-1.2.3-darwin-arm64.zip', 'SHA256SUMS-1.2.3-darwin-arm64.txt']) {
+test('collection refuses a missing installer or checksum file and unexpected files, including a portable ZIP', async (t) => {
+  for (const file of ['Nema-1.2.3-darwin-arm64.dmg', 'SHA256SUMS-1.2.3-darwin-arm64.txt']) {
     const root = await artifactsFixture(t);
     await rm(path.join(root, 'darwin-arm64', file));
     await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: path.join(root, 'out') }), /Missing darwin-arm64 release file/, file);
@@ -71,12 +73,15 @@ test('collection refuses a missing installer, ZIP or checksum file and unexpecte
   const root = await artifactsFixture(t);
   await writeFile(path.join(root, 'win32-x64', 'latest.yml'), 'x');
   await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: path.join(root, 'out') }), /Unexpected file/);
+  const zipRoot = await artifactsFixture(t);
+  await writeFile(path.join(zipRoot, 'darwin-arm64', 'Nema-1.2.3-darwin-arm64.zip'), 'portable app');
+  await assert.rejects(collectReleaseManifest({ version, artifactsRoot: zipRoot, outputDir: path.join(zipRoot, 'out') }), /Unexpected file in darwin-arm64 artifact: Nema-1.2.3-darwin-arm64.zip/);
 });
 
 test('collection refuses a checksum mismatch', async (t) => {
   const root = await artifactsFixture(t);
-  await writeFile(path.join(root, 'win32-x64', 'Nema-1.2.3-win32-x64.zip'), 'tampered after checksum');
-  await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: path.join(root, 'out') }), /Checksum mismatch for win32-x64\/Nema-1.2.3-win32-x64.zip/);
+  await writeFile(path.join(root, 'win32-x64', 'Nema-1.2.3-win32-x64.exe'), 'tampered after checksum');
+  await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: path.join(root, 'out') }), /Checksum mismatch for win32-x64\/Nema-1.2.3-win32-x64.exe/);
 });
 
 test('collection refuses duplicate checksum entries', async (t) => {
@@ -94,10 +99,12 @@ test('every published asset name is unique across the matrix and unknown targets
   assert.equal(new Set(names.map((name) => name.toLowerCase())).size, names.length);
 });
 
-test('collection refuses a checksum file that lists only part of the set', async (t) => {
+test('collection refuses a checksum file that lists more or less than the set', async (t) => {
   const root = await artifactsFixture(t);
   const sumsFile = path.join(root, 'darwin-arm64', checksumFileName(version, 'darwin-arm64'));
-  await writeFile(sumsFile, `${(await readFile(sumsFile, 'utf8')).split('\n')[0]}\n`);
+  await writeFile(sumsFile, `${(await readFile(sumsFile, 'utf8')).split('\n')[0]}\n${'0'.repeat(64)}  Nema-1.2.3-darwin-arm64.zip\n`);
+  await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: path.join(root, 'out') }), /must list exactly/);
+  await writeFile(sumsFile, `${'0'.repeat(64)}  Nema-1.2.3-darwin-arm64.zip\n`);
   await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: path.join(root, 'out') }), /must list exactly/);
 });
 

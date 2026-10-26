@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { access, cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { createWriteStream, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,11 +12,27 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const appVersion = JSON.parse(readFileSync(path.join(repo, 'apps/desktop/package.json'), 'utf8')).version;
 
 export function parseSmokeArgs(args) {
-  let zipFile = path.join(repo, 'dist/desktop-artifacts', 'win32-x64', `Nema-${appVersion}-win32-x64.zip`);
-  if (args.length === 0) return { zipFile };
-  if (args.length !== 2 || args[0] !== '--zip' || !args[1] || args[1].startsWith('--')) throw new Error('Usage: desktop:smoke [--zip <native-Windows-portable-ZIP>]');
-  zipFile = path.resolve(args[1]);
-  return { zipFile };
+  if (args.length === 0) return { installer: path.join(repo, 'dist/desktop-artifacts', 'win32-x64', `Nema-${appVersion}-win32-x64.exe`) };
+  if (args.length !== 2 || args[0] !== '--installer' || !args[1] || args[1].startsWith('--')) throw new Error('Usage: desktop:smoke [--installer <native-Windows-NSIS-installer>]');
+  return { installer: path.resolve(args[1]) };
+}
+
+/** NSIS reads /D= only as the last argument and takes the rest of the line verbatim, so it must not be quoted. */
+export function nsisSilentCommandLine(installDir) {
+  return `/S /D=${installDir}`;
+}
+
+const INSTALL_TIMEOUT_MS = 15 * 60_000;
+
+/** Silently install the NSIS package the release ships; a stalled installer fails here instead of hanging the job. */
+async function installSilently(installer, installDir) {
+  const child = spawn(installer, [nsisSilentCommandLine(installDir)], { stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true });
+  const code = await new Promise((resolvePromise, reject) => {
+    const timer = setTimeout(() => { child.kill(); reject(new Error(`NSIS installer did not finish within ${INSTALL_TIMEOUT_MS}ms`)); }, INSTALL_TIMEOUT_MS);
+    child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    child.once('exit', (exitCode) => { clearTimeout(timer); resolvePromise(exitCode); });
+  });
+  if (code !== 0) throw new Error(`NSIS installer exited with ${code}`);
 }
 
 function sseFrame(value) {
@@ -155,42 +171,24 @@ async function loadRuntime(payload) {
   return import(pathToFileURL(modulePath).href);
 }
 
-export async function extractPortableZip(zipFile, installDir) {
-  const extractDir = path.join(await realpath(os.tmpdir()), `nema-smoke-extract-${randomUUID()}`);
-  await mkdir(extractDir);
-  try {
-    // System tar.exe uses the ANSI code page and cannot chdir into 東京 on an en-US runner.
-    const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
-    const tarExe = path.join(systemRoot, 'System32', 'tar.exe');
-    const extract = spawn(tarExe, ['-xf', zipFile, '-C', extractDir], { stdio: 'inherit', windowsHide: true });
-    const extractExit = await new Promise((resolvePromise, reject) => {
-      extract.once('error', reject);
-      extract.once('exit', (code) => resolvePromise(code));
-    });
-    if (extractExit !== 0) throw new Error(`Windows tar extraction failed with exit ${extractExit}`);
-    await cp(extractDir, installDir, { recursive: true });
-  } finally {
-    await rm(extractDir, { recursive: true, force: true });
-  }
-}
-
 async function smoke(args) {
-  const { zipFile } = parseSmokeArgs(args);
-  await access(zipFile);
+  const { installer } = parseSmokeArgs(args);
+  await access(installer);
   const id = randomUUID();
   const tempRoot = path.join(await realpath(os.tmpdir()), `Nema proof 東京-${id}`);
   await mkdir(tempRoot, { recursive: false });
-  const installDir = path.join(tempRoot, 'copied app resources with spaces');
+  const installDir = path.join(tempRoot, 'installed app with spaces');
   const profile = path.join(tempRoot, `Electron profile 東京-${id}`);
   const home = path.join(profile, '.nema', 'desktop');
   const codexHome = path.join(tempRoot, 'isolated Codex home');
   const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
-  const artifactStat = await stat(zipFile);
-  const extractStarted = Date.now();
-  await extractPortableZip(zipFile, installDir);
-  process.stderr.write(`Extracted portable ZIP in ${Date.now() - extractStarted}ms\n`);
+  const artifactStat = await stat(installer);
+  const installStarted = Date.now();
+  await installSilently(installer, installDir);
+  const installMs = Date.now() - installStarted;
+  process.stderr.write(`Installed NSIS package in ${installMs}ms\n`);
   const executable = await findExecutable(installDir);
-  if (!executable) throw new Error('Portable ZIP did not contain Nema.exe');
+  if (!executable) throw new Error('NSIS installer did not install Nema.exe');
   const asarPath = path.join(path.dirname(executable), 'resources', 'app.asar');
   const packagedPreload = extractFile(asarPath, 'preload.cjs').toString('utf8');
   const packagedControls = extractFile(asarPath, 'window-controls.cjs').toString('utf8');
@@ -323,7 +321,8 @@ async function smoke(args) {
   const restartedInstanceId = (await runtimeApi.discoverInstance(home))?.instanceId;
   const result = {
     result: 'passed',
-    artifact: path.relative(repo, zipFile),
+    artifact: path.relative(repo, installer),
+    installMs,
     artifactBytes: artifactStat.size,
     executable,
     copiedPayload: payload,
