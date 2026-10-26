@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-26
+
 ### Added
 
 - Agent-opened threads, the `/thread` command, independent thread windows, and a sidebar attention badge for unread threads. Users can also withdraw an entry while its provenance remains in history.
