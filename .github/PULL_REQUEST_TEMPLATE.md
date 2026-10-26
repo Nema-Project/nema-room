@@ -1,23 +1,23 @@
-## 做了什么
+## What changed
 
-<!-- 说明原因。若修复了 issue，写上 Fixes #编号。 -->
+<!-- Explain why. If this fixes an issue, add Fixes #number. -->
 
-## 怎样验证
+## How to verify
 
-<!-- 删去与本次改动无关的命令。 -->
+<!-- Remove commands that do not apply to this change. -->
 
 - [ ] `npm test`
 - [ ] `npm run typecheck`
 - [ ] `npm run typecheck -w apps/cli`
-- [ ] 改了 `apps/web`：`npm run lint -w apps/web`
-- [ ] 改了 `apps/web`：`npm run build -w apps/web`
+- [ ] For `apps/web` changes: `npm run lint -w apps/web`
+- [ ] For `apps/web` changes: `npm run build -w apps/web`
 
-## 清单
+## Checklist
 
-<!-- 删去与本次改动无关的项。 -->
+<!-- Remove items that do not apply to this change. -->
 
-- [ ] 用户能感知的行为已写入 `CHANGELOG.md` 的 `## [Unreleased]`
-- [ ] 安装、配置或使用方式有变时，已同步 `README.md`、`README.en.md`、`README.ja.md`
-- [ ] 界面文案已同时改 `apps/web/messages/zh.json`、`en.json`、`ja.json`
-- [ ] 没有提交 `.env`、令牌、`auth.json` 或 `~/.nema` 中的内容
-- [ ] 改了 `vendor/` 时，已按 `VENDORED.md` 更新来源记录并保留原许可证
+- [ ] User-visible behavior is documented in `CHANGELOG.md` under `## [Unreleased]`
+- [ ] Changes to installation, configuration, or usage are reflected in `README.md`, `README.ja.md`, and `README.en.md`
+- [ ] UI copy changes are reflected in `apps/web/messages/zh.json`, `en.json`, and `ja.json`
+- [ ] No `.env` files, tokens, `auth.json`, or contents of `~/.nema` are included
+- [ ] Changes to `vendor/` follow its `VENDORED.md` source record and preserve upstream licenses
