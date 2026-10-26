@@ -244,6 +244,51 @@ function targetMatches(platform, arch) {
  * Build and stage the self-contained managed runtime payload.
  * Fixture tests may pass build:false; production calls must use build:true and a tool cache.
  */
+/**
+ * Top-level names under `<root>/node_modules` that the runtime packages reach through their declared
+ * dependencies. Web dependencies (Next and its SWC binaries) ship in Next's standalone trace instead.
+ * A missing required dependency fails closed; a missing optional or peer dependency is skipped.
+ */
+export async function runtimeDependencyClosure(root, packageDirs) {
+  const rootModules = path.join(root, 'node_modules');
+  const readPackage = async (dir) => JSON.parse(await readFile(path.join(dir, 'package.json'), 'utf8'));
+  const resolveFrom = async (dir, name) => {
+    for (let current = dir; isInside(root, current); current = path.dirname(current)) {
+      const candidate = path.join(current, 'node_modules', ...name.split('/'));
+      if ((await stat(candidate).catch(() => null))?.isDirectory()) return candidate;
+      if (current === root) break;
+    }
+    return null;
+  };
+  const included = new Set();
+  const visited = new Set();
+  const queue = [...packageDirs];
+  while (queue.length) {
+    const dir = queue.shift();
+    if (visited.has(dir)) continue;
+    visited.add(dir);
+    const manifest = await readPackage(dir);
+    const wanted = [
+      ...Object.keys(manifest.dependencies ?? {}).map((name) => [name, true]),
+      ...Object.keys(manifest.optionalDependencies ?? {}).map((name) => [name, false]),
+      ...Object.keys(manifest.peerDependencies ?? {}).map((name) => [name, false]),
+    ];
+    for (const [name, required] of wanted) {
+      if (name.startsWith('@nema/')) continue;
+      const resolved = await resolveFrom(dir, name);
+      if (!resolved) {
+        if (required) throw new Error(`Runtime dependency ${name} of ${manifest.name ?? dir} is missing from the production install`);
+        continue;
+      }
+      const parts = path.relative(rootModules, resolved).split(path.sep);
+      // Nested installs ship inside their top-level package; only top-level names are copied.
+      included.add(parts[0].startsWith('@') ? `${parts[0]}/${parts[1]}` : parts[0]);
+      queue.push(resolved);
+    }
+  }
+  return included;
+}
+
 export async function stageRuntime({
   sourceRoot = defaultRoot,
   outputDir = path.join(defaultRoot, 'dist/desktop'),
@@ -370,13 +415,13 @@ export async function stageRuntime({
     await copyTree(path.join(builtRoot, 'apps/cli/src/report/SKILL.md'), put('app/node_modules/@nema/cli/src/report/SKILL.md'), builtRoot);
     await copyTree(path.join(builtRoot, 'vendor/archify'), put('vendor/archify'), builtRoot);
     await copyTree(path.join(builtRoot, 'vendor/superpowers-rules'), put('vendor/superpowers-rules'), builtRoot);
-    // Next's standalone trace supplies Web dependencies. The build snapshot has been
-    // reinstalled with --omit=dev, so this copy contains the lockfile's full production closure.
+    // Next's standalone trace supplies Web dependencies under web/. The core gets only what the runtime
+    // packages declare; the whole production install also carried Next and its SWC binary (~310MB).
     const rootModules = path.join(builtRoot, 'node_modules');
     await requireDirectory(rootModules, 'production node_modules', builtRoot);
-    for (const name of await readdir(rootModules)) {
-      if (name === '.bin' || name === '@nema') continue;
-      await copyTree(path.join(rootModules, name), put(`app/node_modules/${name}`), builtRoot);
+    const runtimeDirs = ['apps/local', 'apps/hub', 'apps/cli', 'packages/shared', 'packages/knowledge'].map((dir) => path.join(builtRoot, dir));
+    for (const name of [...await runtimeDependencyClosure(builtRoot, runtimeDirs)].sort()) {
+      await copyTree(path.join(rootModules, ...name.split('/')), put(`app/node_modules/${name}`), builtRoot);
     }
     const manifest = {
       schemaVersion: 1, version, platform, arch,

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { fetchGraphify, graphifyLock, homePathFiles, materializeSymlinks, POSIX_GRAPHIFY_LAUNCHER, pythonLicensePath, rejectMachinePaths } from './fetch-graphify.mjs';
+import { fetchGraphify, graphifyLock, homePathFiles, materializeSymlinks, POSIX_GRAPHIFY_LAUNCHER, prunePythonRuntime, pythonLicensePath, rejectMachinePaths } from './fetch-graphify.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -110,4 +110,33 @@ test('rejects a uv tool path even in upstream files', async (t) => {
   t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(path.join(root, 'site.py'), 'p = "uv/tools/graphifyy/lib"');
   await assert.rejects(rejectMachinePaths(root, await homePathFiles(root, ['/nowhere']), ['/nowhere']), /uv tool path/);
+});
+
+test('prunes debug symbols, installers and Tcl/Tk but keeps the runtime and licenses', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-graphify-prune-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const touch = async (relative) => {
+    await mkdir(path.dirname(path.join(root, relative)), { recursive: true });
+    await writeFile(path.join(root, relative), 'x');
+  };
+  const exists = (relative) => lstat(path.join(root, relative)).then(() => true, () => false);
+  const windowsGone = ['win/python311.pdb', 'win/DLLs/_ctypes.pdb', 'win/DLLs/_tkinter.pyd', 'win/DLLs/tcl86t.dll', 'win/DLLs/tk86t.dll', 'win/tcl/tcl8.6/init.tcl',
+    'win/Lib/tkinter/__init__.py', 'win/Lib/idlelib/idle.py', 'win/Lib/ensurepip/__init__.py', 'win/Lib/turtle.py',
+    'win/Lib/site-packages/pip/__init__.py', 'win/Lib/site-packages/pip-26.2.2.dist-info/RECORD', 'win/Lib/site-packages/setuptools/__init__.py',
+    'win/Lib/site-packages/setuptools-84.2.0.dist-info/RECORD', 'win/Lib/site-packages/_distutils_hack/__init__.py', 'win/Lib/site-packages/distutils-precedence.pth'];
+  const windowsKept = ['win/python.exe', 'win/python311.dll', 'win/LICENSE.txt', 'win/DLLs/_ctypes.pyd', 'win/Lib/encodings/__init__.py',
+    'win/Lib/site-packages/numpy/__init__.py', 'win/Lib/site-packages/pipx_like/__init__.py', 'win/Lib/site-packages/graphifyy-0.9.95.dist-info/RECORD'];
+  for (const file of [...windowsGone, ...windowsKept]) await touch(file);
+  await prunePythonRuntime(path.join(root, 'win'), 'win32');
+  for (const file of windowsGone) assert.equal(await exists(file), false, file);
+  for (const file of windowsKept) assert.equal(await exists(file), true, file);
+
+  const unixGone = ['mac/lib/python3.11/tkinter/__init__.py', 'mac/lib/python3.11/ensurepip/__init__.py', 'mac/lib/python3.11/lib-dynload/_tkinter.cpython-311-darwin.so',
+    'mac/lib/python3.11/site-packages/pip/__init__.py', 'mac/lib/tcl9.0/init.tcl', 'mac/lib/tk9.0/tk.tcl', 'mac/lib/libtcl9.0.dylib', 'mac/lib/libtcl9tk9.0.dylib'];
+  const unixKept = ['mac/bin/python3', 'mac/lib/libpython3.11.dylib', 'mac/lib/python3.11/LICENSE.txt', 'mac/lib/python3.11/lib-dynload/_ctypes.cpython-311-darwin.so',
+    'mac/lib/python3.11/site-packages/numpy/__init__.py'];
+  for (const file of [...unixGone, ...unixKept]) await touch(file);
+  await prunePythonRuntime(path.join(root, 'mac'), 'darwin');
+  for (const file of unixGone) assert.equal(await exists(file), false, file);
+  for (const file of unixKept) assert.equal(await exists(file), true, file);
 });
