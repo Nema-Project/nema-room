@@ -31,6 +31,11 @@ const sys32 = path.join(process.env.SystemRoot, 'System32');
 const coreEnv = { PATH: `C:\\Program Files\\Git\\cmd;${sys32}`, SystemRoot: process.env.SystemRoot, WINDIR: process.env.SystemRoot, TEMP: tempRoot, TMP: tempRoot, HOME: tempRoot, LANG: 'en_US.UTF-8' };
 
 console.log(`runner PSModulePath=${process.env.PSModulePath}`);
+const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../apps/cli/src/secrets/permissions.ts'), 'utf8');
+const aclScript = source.match(/WINDOWS_ACL_SCRIPT = String\.raw`([\s\S]*?)`;/)[1];
+for (const action of ['protect', 'check']) {
+  console.log(timeAcl({ ...coreEnv, NEMA_PRIVATE_ACTION: action }, `core env, shipped ACL script (${action})`, aclScript));
+}
 console.log(timeAcl(process.env, 'full env, cold'));
 console.log(timeAcl(coreEnv, 'core env, exit 0', 'exit 0'));
 console.log(timeAcl(coreEnv, 'core env, .NET only', "$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User; $null = [System.IO.DirectoryInfo]::new($env:NEMA_PRIVATE_PATH).GetAccessControl(); 'ok'"));

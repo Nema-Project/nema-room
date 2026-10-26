@@ -3,23 +3,27 @@ import { chmodSync, closeSync, constants, fstatSync, lstatSync, openSync } from 
 import path from "node:path";
 
 // Windows exposes synthetic POSIX modes. Enforce a private DACL instead of treating 0666 as 0600.
-const ACL_SCRIPT = String.raw`
+// Only .NET calls, no cmdlets: autoloading Get-Item/New-Object took ~22s per call under the managed core's
+// filtered environment on a GitHub Windows runner, while this script runs in ~0.2s there.
+export const WINDOWS_ACL_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $file = $env:NEMA_PRIVATE_PATH
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-$item = Get-Item -LiteralPath $file -Force
+if ([System.IO.Directory]::Exists($file)) { $item = [System.IO.DirectoryInfo]::new($file); $isDirectory = $true }
+elseif ([System.IO.File]::Exists($file)) { $item = [System.IO.FileInfo]::new($file); $isDirectory = $false }
+else { throw 'Path not found' }
 if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'Reparse point refused' }
 if ($env:NEMA_PRIVATE_ACTION -eq 'protect') {
-  if ($item.PSIsContainer) { $acl = New-Object System.Security.AccessControl.DirectorySecurity }
-  else { $acl = New-Object System.Security.AccessControl.FileSecurity }
+  if ($isDirectory) { $acl = [System.Security.AccessControl.DirectorySecurity]::new() }
+  else { $acl = [System.Security.AccessControl.FileSecurity]::new() }
   $acl.SetOwner($sid)
   $acl.SetAccessRuleProtection($true, $false)
   foreach ($principal in @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')) {
-    $identity = New-Object System.Security.Principal.SecurityIdentifier($principal)
-    if ($item.PSIsContainer) {
-      $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+    $identity = [System.Security.Principal.SecurityIdentifier]::new($principal)
+    if ($isDirectory) {
+      $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
     } else {
-      $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, 'FullControl', 'Allow')
+      $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, 'FullControl', 'Allow')
     }
     $acl.AddAccessRule($rule)
   }
@@ -38,24 +42,10 @@ foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.S
 if (-not $hasOwner) { throw 'Owner cannot read' }
 `;
 
-/**
- * Pin PSModulePath to the system modules. Without it (the managed core's filtered environment) PowerShell
- * falls back to a module scan that took ~22s per call on a GitHub Windows runner; a user path is never needed.
- */
-export function aclEnvironment(file: string, action: "protect" | "check", env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const systemRoot = env.SystemRoot ?? "C:\\Windows";
-  return {
-    ...env,
-    PSModulePath: path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "Modules"),
-    NEMA_PRIVATE_PATH: path.resolve(file),
-    NEMA_PRIVATE_ACTION: action,
-  };
-}
-
 function windowsAcl(file: string, action: "protect" | "check"): void {
   const exe = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const result = spawnSync(exe, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", ACL_SCRIPT], {
-    env: aclEnvironment(file, action),
+  const result = spawnSync(exe, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_ACL_SCRIPT], {
+    env: { ...process.env, NEMA_PRIVATE_PATH: path.resolve(file), NEMA_PRIVATE_ACTION: action },
     // A cold PowerShell on a busy Windows runner can take longer than a local call.
     stdio: "ignore", windowsHide: true, timeout: 45_000,
   });
