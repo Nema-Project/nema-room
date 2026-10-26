@@ -157,14 +157,6 @@ jobs:
         shell: bash
         # make.mjs always runs electron-builder with --publish never.
         run: npm run desktop:make -- --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --staged "dist/desktop/$TARGET" --out "dist/desktop-artifacts/$TARGET"
-      - name: Warm up Windows PowerShell
-        # The packaged app verifies private ACLs through Windows PowerShell. Earlier steps only use
-        # bash, so its first start on the runner is cold; the timings show how long that costs.
-        if: matrix.platform == 'win32'
-        shell: bash
-        run: |
-          time powershell.exe -NoLogo -NoProfile -NonInteractive -Command "exit 0"
-          time powershell.exe -NoLogo -NoProfile -NonInteractive -Command "exit 0"
       - name: Smoke packaged app (Windows NSIS installer)
         if: matrix.platform == 'win32'
         shell: bash
