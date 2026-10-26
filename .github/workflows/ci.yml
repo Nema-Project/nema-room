@@ -3,12 +3,14 @@ name: CI
 # Branch pushes are covered by their pull request; only main runs on push.
 # Root-level Markdown, docs/ and the site/ landing page do not affect any build or test. Markdown
 # elsewhere (skills, vendor rules) is product content and still triggers CI.
+# A manual dispatch runs the full suite on any ref, e.g. main before a release tag.
 on:
   push:
     branches: [main]
     paths-ignore: ['*.md', 'docs/**', 'site/**', '.github/workflows/pages.yml']
   pull_request:
     paths-ignore: ['*.md', 'docs/**', 'site/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
 
 permissions:
   contents: read
