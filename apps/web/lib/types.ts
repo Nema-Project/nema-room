@@ -1,6 +1,6 @@
-import type { AgentMessageMeta, KnowledgeLanguage, ReportMessageMeta, UserMessageMeta } from "@nema/shared";
+import type { AgentMessageMeta, KnowledgeLanguage, ReportMessageMeta, Thread, UserMessageMeta } from "@nema/shared";
 
-export type { AgentMessageMeta, Entry, EntrySummary, Implementation, KnowledgeLanguage, MessageQuote, ReportCheck, ReportMessageMeta, UpsertEntryInput, UserMessageMeta, WorkPackageMeta, WpTask } from "@nema/shared";
+export type { AgentMessageMeta, Entry, EntrySummary, Implementation, KnowledgeLanguage, MessageQuote, ReportCheck, ReportMessageMeta, Thread, ThreadOpenedBy, UpsertEntryInput, UserMessageMeta, WorkPackageMeta, WpTask } from "@nema/shared";
 
 /** Wire shapes of apps/hub (JSON over REST/SSE). Kept here because the hub package is Node-only. */
 export type Workspace = {
@@ -11,7 +11,7 @@ export type Workspace = {
   createdAt: string;
   archived: boolean;
 };
-export type WorkspaceView = Workspace & { openQuestions: number };
+export type WorkspaceView = Workspace & { openQuestions: number; attention?: number };
 
 export type Message = {
   id: string;
@@ -23,6 +23,8 @@ export type Message = {
   taskId: string | null;
   createdAt: string;
   editedAt: string | null;
+  threadId: string | null;
+  seq: number;
 };
 
 export type Task = {
@@ -37,6 +39,7 @@ export type HubEvent =
   | { type: "message.created"; message: Message }
   | { type: "message.updated"; message: Message }
   | { type: "task.updated"; task: Task }
+  | { type: "thread.updated"; thread: Thread }
   | { type: "task.progress"; taskId: string; text: string }
   | { type: "knowledge.changed"; entryId: string }
   | { type: "daemon.status"; connected: boolean };

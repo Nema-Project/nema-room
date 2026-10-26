@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { I18nProvider } from "@/lib/i18n";
 import { DesktopTitlebar } from "@/components/DesktopTitlebar";
+import { ThreadWindowsProvider } from "@/components/ThreadWindowsProvider";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-inter", display: "swap" });
@@ -19,8 +20,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <script dangerouslySetInnerHTML={{ __html: `try{if(localStorage.getItem("nema.theme")==="dark")document.documentElement.dataset.theme="dark"}catch(e){}` }} />
         <I18nProvider>
-          <DesktopTitlebar />
-          {children}
+          <ThreadWindowsProvider>
+            <DesktopTitlebar />
+            {children}
+          </ThreadWindowsProvider>
         </I18nProvider>
       </body>
     </html>

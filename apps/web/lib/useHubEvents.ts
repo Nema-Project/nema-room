@@ -4,6 +4,45 @@ import { useEffect, useRef } from "react";
 import { eventsUrl } from "./hub";
 import type { HubEvent } from "./types";
 
+type Subscriber = { onEvent: (event: HubEvent) => void; onReconnect?: () => void };
+type Channel = { source: EventSource; opened: boolean; subscribers: Set<Subscriber> };
+const channels = new Map<string, Channel>();
+
+function subscribe(workspaceId: string, subscriber: Subscriber) {
+  let channel = channels.get(workspaceId);
+  if (!channel) {
+    const source = new EventSource(eventsUrl(workspaceId));
+    channel = { source, opened: false, subscribers: new Set() };
+    channels.set(workspaceId, channel);
+    const current = channel;
+    source.onopen = () => {
+      const reconnect = current.opened;
+      current.opened = true;
+      if (!reconnect) return;
+      for (const item of [...current.subscribers]) {
+        try { item.onReconnect?.(); } catch { /* one view cannot block other workspace subscribers */ }
+      }
+    };
+    source.onmessage = (event: MessageEvent<string>) => {
+      let parsed: HubEvent;
+      try { parsed = JSON.parse(event.data) as HubEvent; } catch { return; }
+      for (const item of [...current.subscribers]) {
+        try { item.onEvent(parsed); } catch { /* one view cannot block delivery to sibling views */ }
+      }
+    };
+  }
+  channel.subscribers.add(subscriber);
+  return () => {
+    const current = channels.get(workspaceId);
+    if (!current) return;
+    current.subscribers.delete(subscriber);
+    if (current.subscribers.size === 0) {
+      current.source.close();
+      channels.delete(workspaceId);
+    }
+  };
+}
+
 /**
  * Subscribes to a workspace's SSE stream (which also carries global events such as daemon.status).
  * The hub has no workspace-less stream, so with `workspaceId === null` there is nothing to connect to
@@ -19,20 +58,7 @@ export function useHubEvents(workspaceId: string | null, onEvent: (e: HubEvent) 
 
   useEffect(() => {
     if (workspaceId === null || typeof EventSource === "undefined") return;
-    const source = new EventSource(eventsUrl(workspaceId)); // EventSource reconnects on its own
-    let opened = false;
-    // Events missed while the stream was down are lost, so every open after the first signals a resync.
-    source.onopen = () => {
-      if (opened) reconnect.current?.();
-      opened = true;
-    };
-    source.onmessage = (m: MessageEvent<string>) => {
-      try {
-        handler.current(JSON.parse(m.data) as HubEvent);
-      } catch {
-        /* ignore malformed frames */
-      }
-    };
-    return () => source.close();
+    const subscriber: Subscriber = { onEvent: (event) => handler.current(event), onReconnect: () => reconnect.current?.() };
+    return subscribe(workspaceId, subscriber);
   }, [workspaceId]);
 }

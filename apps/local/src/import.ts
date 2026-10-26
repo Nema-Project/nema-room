@@ -92,7 +92,13 @@ async function loadDatabase(dbDir: string, snapshot: Snapshot): Promise<void> {
     };
     await db.tx(async (tx) => {
       for (const table of TABLE_ORDER) {
-        for (const row of snapshot.tableData[table]!) {
+        const tableRows = snapshot.tableData[table]!;
+        // Thread messages reference their main-chat anchor in messages.thread_id.
+        // Insert all main-chat messages first so restore does not depend on snapshot row order.
+        const rows = table === "messages"
+          ? [...tableRows].sort((a, b) => Number(a.thread_id != null) - Number(b.thread_id != null))
+          : tableRows;
+        for (const row of rows) {
           const names = (TABLE_COLUMNS[table] as readonly string[]).filter((name) => row[name] !== undefined);
           if (names.length === 0) continue;
           const placeholders: string[] = [];

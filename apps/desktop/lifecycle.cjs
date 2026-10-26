@@ -1,6 +1,6 @@
 'use strict';
 
-const { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, navigationDecision, validateRuntimeLaunchUrl } = require('./security.cjs');
+const { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, isMainMessageUrl, isThreadWindowUrl, threadWindowIdentity, navigationDecision, validateRuntimeLaunchUrl } = require('./security.cjs');
 const { registerWindowControls } = require('./window-controls.cjs');
 const path = require('node:path');
 
@@ -22,6 +22,8 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
   let currentInstance;
   let mainWindow;
   let pendingMainWindow;
+  const threadWindows = new Map();
+  const threadLoadGeneration = new WeakMap();
   let tray;
   let isQuitting = false;
   let quitPending = false;
@@ -56,16 +58,53 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     });
   }
 
-  function handleNavigation(window, runtimeOrigin, { diagramsOnly = false } = {}) {
+  function openThreadWindow(url, runtimeOrigin) {
+    const identity = threadWindowIdentity(url, runtimeOrigin);
+    const existing = threadWindows.get(identity);
+    if (existing && !existing.isDestroyed()) {
+      if (existing.webContents.getURL?.() !== url) loadThreadUrl(existing, url);
+      existing.show();
+      existing.focus();
+      return;
+    }
+    const child = new BrowserWindow({ ...createSecureWindowOptions(runtimeOrigin), icon: brandAsset('icon.png') });
+    if (platform !== 'darwin') child.setMenu(null);
+    threadWindows.set(identity, child);
+    threadLoadGeneration.set(child, 0);
+    registerWindowControls({ ipcMain, window: child, runtimeOrigin });
+    child.once('closed', () => { if (threadWindows.get(identity) === child) threadWindows.delete(identity); });
+    handleNavigation(child, runtimeOrigin, { threadIdentity: identity });
+    child.once('ready-to-show', () => { if (!child.isDestroyed()) child.show(); });
+    child.webContents.on('render-process-gone', () => { if (!child.isDestroyed()) child.destroy(); });
+    loadThreadUrl(child, url);
+  }
+
+  function loadThreadUrl(window, url) {
+    const generation = (threadLoadGeneration.get(window) ?? 0) + 1;
+    threadLoadGeneration.set(window, generation);
+    let loading;
+    try { loading = window.loadURL(url); }
+    catch (error) { loading = Promise.reject(error); }
+    void Promise.resolve(loading).catch(() => {
+      if (threadLoadGeneration.get(window) === generation && !window.isDestroyed()) window.destroy();
+    });
+  }
+
+  function handleNavigation(window, runtimeOrigin, { diagramsOnly = false, threadIdentity: ownThread } = {}) {
     window.webContents.on('will-navigate', (event, url) => {
       const decision = navigationDecision(url, runtimeOrigin);
-      const allowed = diagramsOnly ? isDiagramWindowUrl(url, runtimeOrigin) : decision === 'runtime';
+      const allowed = diagramsOnly ? isDiagramWindowUrl(url, runtimeOrigin) : ownThread ? threadWindowIdentity(url, runtimeOrigin) === ownThread : decision === 'runtime';
       if (allowed) return;
       event.preventDefault();
+      if (ownThread && isMainMessageUrl(url, runtimeOrigin)) {
+        void focusMainMessage(url).catch(reportError);
+        return;
+      }
       if (decision === 'external' && isExternalHttps(url)) void shell.openExternal(url).catch(() => undefined);
     });
     window.webContents.setWindowOpenHandler(({ url }) => {
-      if (isDiagramWindowUrl(url, runtimeOrigin)) openDiagramWindow(url, runtimeOrigin);
+      if (isThreadWindowUrl(url, runtimeOrigin)) openThreadWindow(url, runtimeOrigin);
+      else if (isDiagramWindowUrl(url, runtimeOrigin)) openDiagramWindow(url, runtimeOrigin);
       else if (navigationDecision(url, runtimeOrigin) === 'external' && isExternalHttps(url)) void shell.openExternal(url).catch(() => undefined);
       return { action: 'deny' };
     });
@@ -110,6 +149,15 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     pendingMainWindow = opening;
     try { return await opening; }
     finally { if (pendingMainWindow === opening) pendingMainWindow = undefined; }
+  }
+
+  async function focusMainMessage(url) {
+    const window = await createMainWindow();
+    await window.loadURL(url);
+    if (!window.isDestroyed()) {
+      window.show();
+      window.focus();
+    }
   }
 
   async function openBrowserMode() {

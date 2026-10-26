@@ -114,6 +114,8 @@ export async function deleteWorkspace(db: Db, dataDir: string, id: string, nemaH
     if (busy.length > 0) throw new Error("workspace is busy");
     await t.query("delete from task_changes where task_id in (select id from tasks where workspace_id = $1)", [id]);
     await t.query("delete from tasks where workspace_id = $1", [id]);
+    await t.query("delete from question_threads where workspace_id = $1", [id]);
+    await t.query("delete from threads where workspace_id = $1", [id]);
     await t.query("delete from messages where workspace_id = $1", [id]);
     await t.query("delete from entry_index where workspace_id = $1", [id]);
     await t.query("delete from workspaces where id = $1", [id]);

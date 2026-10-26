@@ -24,7 +24,7 @@ import {
 } from "./transport.js";
 
 // codex-direct (spec 6.7): runs Nema's own tool loop in the daemon against the Responses API with the user's
-// Nema login. The model gets the 3 Room functions plus the task's plugin tools. Failures are reported, never retried via codex-cli.
+// Nema login. The model gets the 4 Room functions plus the task's plugin tools. Failures are reported, never retried via codex-cli.
 
 export const NOT_LOGGED_IN = "未登录直连 Codex，请在终端运行 nema auth login";
 export const RUN_TIMEOUT_MESSAGE = "Codex 直连运行超时";

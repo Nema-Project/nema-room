@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- Agent-opened threads, the `/thread` command, independent thread windows, and a sidebar attention badge for unread threads. Users can also withdraw an entry while its provenance remains in history.
+
+### Changed
+
+- The agent now acts as a copilot in both main chat and threads. It keeps memo checks and casual chat out of the knowledge base, asks in a thread when a statement conflicts with an active decision, and replaces that decision only after a clear user override. Follow-up answers move into their threads.
+
+### Removed
+
+- The main-chat follow-up answer box. Replies to follow-up questions now happen in their threads.
+
 ### Fixed
 
 - Answering a follow-up closes its answer box. The box stays closed while that reply is in the thread.

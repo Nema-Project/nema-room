@@ -20,6 +20,7 @@ type Props = {
   onJumpToMessage: (messageId: string) => void;
   /** Bumped by the shell when this entry changed elsewhere. */
   refreshKey?: number;
+  initialTab?: "content" | "history" | "why";
   /** Opens another entry in the knowledge column (work package requirement links and markers). */
   onOpenEntry?: (entryId: string) => void;
 };
@@ -28,11 +29,11 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Work packages (`W-n`) have their own detail with tabs for spec and plan; every other entry uses the common one. */
 export function EntryDetail(props: Props) {
-  if (props.entryId.startsWith("W-")) return <WorkPackageDetail {...props} />;
+  if (props.entryId.startsWith("W-")) return <WorkPackageDetail {...props} initialTab={props.initialTab === "history" ? "history" : "overview"} />;
   return <PlainEntryDetail {...props} />;
 }
 
-function PlainEntryDetail({ workspaceId, entryId, onClose, onJumpToMessage, refreshKey = 0 }: Props) {
+function PlainEntryDetail({ workspaceId, entryId, onClose, onJumpToMessage, refreshKey = 0, initialTab = "content" }: Props) {
   const t = useT();
   const [locale] = useLocale();
   const [entry, setEntry] = useState<Entry | null>(null);
@@ -40,7 +41,7 @@ function PlainEntryDetail({ workspaceId, entryId, onClose, onJumpToMessage, refr
   const [why, setWhy] = useState<ParagraphBlame[]>([]);
   const [messages, setMessages] = useState<Map<string, Message>>(new Map());
   const [statuses, setStatuses] = useState<Map<string, EntryListItem["status"]>>(new Map());
-  const [tab, setTab] = useState<Tab>("content");
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [picked, setPicked] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);

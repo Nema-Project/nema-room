@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, navigationDecision, validateRuntimeLaunchUrl } from '../security.cjs';
+import { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isMainMessageUrl, isThreadWindowUrl, navigationDecision, validateRuntimeLaunchUrl } from '../security.cjs';
 
 describe('Electron renderer security policy', () => {
   it('accepts only a ticket URL at the authenticated runtime origin', () => {
@@ -52,5 +52,39 @@ describe('Electron renderer security policy', () => {
     });
     expect(createDiagramWindowOptions().webPreferences.preload).toBeUndefined();
     expect(createDiagramWindowOptions().frame).not.toBe(false);
+  });
+
+  it('allows a thread popup only at its canonical same-origin path with an optional valid focus target', () => {
+    const origin = 'http://127.0.0.1:43001';
+    expect(isThreadWindowUrl(`${origin}/w/ws_abc/t/m_xyz`, origin)).toBe(true);
+    expect(isThreadWindowUrl('/w/ws_abc/t/m_xyz?messageId=m_target-1', origin)).toBe(true);
+    for (const url of [
+      `${origin}/w/ws_abc/t/m_xyz?bad=1`,
+      `${origin}/w/ws_abc/t/m_xyz?messageId=bad`,
+      `${origin}/w/ws_abc/t/m_xyz?messageId=m_a&messageId=m_b`,
+      `${origin}/w/ws_abc/t/m_xyz#focus`,
+      `${origin}/w/ws_abc/t/m_xyz/extra`,
+      `${origin}/w/ws_abc/t/m_xyz/../../`,
+      'http://127.0.0.1:43002/w/ws_abc/t/m_xyz',
+    ]) expect(isThreadWindowUrl(url, origin)).toBe(false);
+  });
+
+  it('parses only the canonical main-message focus URL shape', () => {
+    const origin = 'http://127.0.0.1:43001';
+    const valid = `${origin}/w/ws_abc#workspace=ws_abc&message=m_xyz`;
+    expect(isMainMessageUrl(valid, origin)).toEqual({ workspaceId: 'ws_abc', messageId: 'm_xyz' });
+    for (const url of [
+      `${origin}/w/ws_abc?x=1#workspace=ws_abc&message=m_xyz`,
+      `${origin}/w/ws_abc#workspace=ws_other&message=m_xyz`,
+      `${origin}/w/ws_abc#workspace=ws_abc&message=m_xyz&extra=1`,
+      `${origin}/w/ws_abc#workspace=ws_abc&workspace=ws_abc&message=m_xyz`,
+      `${origin}/w/ws_abc#workspace=ws_abc&message=m_xyz&message=m_xyz`,
+      `${origin}/w/ws_abc#workspace=ws_abc&message=bad`,
+      `${origin}/w/ws_abc/extra#workspace=ws_abc&message=m_xyz`,
+      `http://user:pass@127.0.0.1:43001/w/ws_abc#workspace=ws_abc&message=m_xyz`,
+      'http://127.0.0.1:43002/w/ws_abc#workspace=ws_abc&message=m_xyz',
+      `${origin}/w/ws_abc#workspace=ws_abc&message=m_xyz\r\n`,
+      `${origin}/w/ws_abc#workspace=ws_abc&message=m_xyz\0`,
+    ]) expect(isMainMessageUrl(url, origin)).toBeNull();
   });
 });

@@ -4,12 +4,13 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffec
 import { Composer } from "@/components/Composer";
 import { AgentAvatar, MessageItem, messageRoleLabel } from "@/components/MessageItem";
 import { formatDay, formatTime } from "@/lib/format";
-import { getActiveTask, listMessages, postMessage, searchMessages } from "@/lib/hub";
+import { createThread, getActiveTask, getMessage, listMessages, listThreads, postMessage, searchMessages } from "@/lib/hub";
 import { useLocale, useT } from "@/lib/i18n";
-import type { HubEvent, Message } from "@/lib/types";
+import type { HubEvent, Message, Thread } from "@/lib/types";
 
 export type ChatHandle = {
   scrollToMessage: (messageId: string) => void;
+  showMessage: (message: Message) => void;
   /** The page owns the single SSE subscription and forwards events here. */
   handleEvent: (e: HubEvent) => void;
   /** Refetch after the stream reconnected (events in between were lost). */
@@ -21,6 +22,8 @@ type Props = {
   connected?: boolean;
   /** Opens an entry in the knowledge column (a report's entry ids). */
   onOpenEntry?: (entryId: string) => void;
+  onOpenThread?: (threadId: string, messageId?: string) => void;
+  onOpenHistory?: (entryId: string) => void;
 };
 
 function Snippet({ content, q }: { content: string; q: string }) {
@@ -47,16 +50,11 @@ function merge(list: Message[], m: Message): Message[] {
   return list.some((x) => x.id === m.id) ? list : [...list, m];
 }
 
-function userRepliesAfter(messages: Message[], messageId: string): string[] {
-  const start = messages.findIndex((m) => m.id === messageId);
-  if (start < 0) return [];
-  return messages.slice(start + 1).filter((m) => m.role === "user").map((m) => m.content);
-}
-
-export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, connected = true, onOpenEntry }, ref) {
+export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, connected = true, onOpenEntry, onOpenThread, onOpenHistory }, ref) {
   const t = useT();
   const [locale] = useLocale();
   const [messages, setMessages] = useState<Message[]>([]);
+  const [threads, setThreads] = useState<Map<string, Thread>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [runningTask, setRunningTask] = useState<string | null>(null);
   const [progress, setProgress] = useState<string>("");
@@ -67,15 +65,47 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
   const stream = useRef<HTMLDivElement>(null);
   // Bumped by every SSE-driven change of runningTask and by every active-task request, so a stale HTTP response never overwrites newer state.
   const taskVersion = useRef(0);
+  const messageVersion = useRef(0);
+  const messageVersions = useRef(new Map<string, number>());
+  const threadVersion = useRef(0);
+  const threadVersions = useRef(new Map<string, number>());
+  const pendingJump = useRef<string | null>(null);
+  const [jumpTick, setJumpTick] = useState(0);
 
   const load = useCallback(async () => {
+    const startedAt = messageVersion.current;
     try {
-      const list = await listMessages(workspaceId);
-      // Keep anything that arrived over SSE while the request was in flight.
-      setMessages((cur) => list.concat(cur.filter((c) => !list.some((l) => l.id === c.id))));
+      const list = (await listMessages(workspaceId)).filter((message) => message.threadId === null);
+      setMessages((cur) => {
+        const next = new Map(list.map((message) => [message.id, message]));
+        for (const message of cur) {
+          if ((messageVersions.current.get(message.id) ?? 0) > startedAt || !next.has(message.id)) next.set(message.id, message);
+        }
+        return [...next.values()].sort((a, b) => a.seq - b.seq);
+      });
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [workspaceId]);
+
+
+  const loadThreads = useCallback(async () => {
+    const startedAt = threadVersion.current;
+    try {
+      const list = await listThreads(workspaceId);
+      setThreads((current) => {
+        const next = new Map(list.map((thread) => [thread.id, thread]));
+        for (const [id, version] of threadVersions.current) {
+          if (version > startedAt) {
+            const newer = current.get(id);
+            if (newer) next.set(id, newer);
+          }
+        }
+        return next;
+      });
+    } catch {
+      /* retain rows already on screen */
     }
   }, [workspaceId]);
 
@@ -93,35 +123,55 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
   }, [workspaceId]);
 
   useEffect(() => {
+    // Fetches seed component state from the hub after mount.
     void load();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount, state updates after the network response
     void loadActive();
-  }, [load, loadActive]);
+    void loadThreads();
+  }, [load, loadActive, loadThreads]);
 
   const scrollToMessage = (id: string) => {
-    document.getElementById(`msg-${id}`)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    const element = [...(stream.current?.querySelectorAll<HTMLElement>("[id]") ?? [])].find((item) => item.id === `msg-${id}`);
+    element?.scrollIntoView?.({ behavior: "smooth", block: "center" });
   };
+  const hasMessage = (id: string) => [...(stream.current?.querySelectorAll<HTMLElement>("[id]") ?? [])].some((item) => item.id === `msg-${id}`);
+  const showMessage = useCallback((message: Message) => {
+    if (message.workspaceId !== workspaceId || message.threadId !== null) return;
+    setMessages((current) => merge(current, message));
+    pendingJump.current = message.id;
+    setJumpTick((tick) => tick + 1);
+  }, [workspaceId]);
 
   useImperativeHandle(
     ref,
     () => ({
       scrollToMessage,
+      showMessage,
       handleEvent(e) {
         if (e.type === "message.created" && e.message.workspaceId === workspaceId) {
-          setMessages((l) => merge(l, e.message));
+          if (e.message.threadId === null) {
+            messageVersions.current.set(e.message.id, ++messageVersion.current);
+            setMessages((l) => merge(l, e.message));
+          }
           const done = e.message.taskId;
           if (done && e.message.role !== "user") {
             taskVersion.current++;
             setRunningTask((cur) => (cur === done ? null : cur));
           }
         } else if (e.type === "message.updated" && e.message.workspaceId === workspaceId) {
-          // Only a message we already show is replaced; one not loaded yet arrives with the next load.
-          setMessages((l) => l.map((x) => (x.id === e.message.id ? e.message : x)));
+          if (e.message.threadId === null) {
+            messageVersions.current.set(e.message.id, ++messageVersion.current);
+            setMessages((l) => l.map((x) => (x.id === e.message.id ? e.message : x)));
+          }
         } else if (e.type === "task.updated" && e.task.workspaceId === workspaceId) {
           taskVersion.current++;
           if (e.task.status === "running") {
             setRunningTask(e.task.id);
             setProgress("");
           } else setRunningTask((cur) => (cur === e.task.id ? null : cur));
+        } else if (e.type === "thread.updated" && e.thread.workspaceId === workspaceId) {
+          threadVersions.current.set(e.thread.id, ++threadVersion.current);
+          setThreads((current) => new Map(current).set(e.thread.id, e.thread));
         } else if (e.type === "task.progress") {
           setRunningTask((cur) => {
             if (cur === e.taskId) setProgress(e.text);
@@ -132,15 +182,23 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
       resync: () => {
         void load();
         void loadActive();
+        void loadThreads();
       },
     }),
-    [workspaceId, load, loadActive],
+    [workspaceId, load, loadActive, loadThreads, showMessage],
   );
 
   useLayoutEffect(() => {
     const el = stream.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length, runningTask, progress]);
+
+  useLayoutEffect(() => {
+    const id = pendingJump.current;
+    if (!id) return;
+    scrollToMessage(id);
+    pendingJump.current = null;
+  }, [messages, jumpTick]);
 
   async function send(content: string, quoted?: Message | null) {
     const { message } = quoted ? await postMessage(workspaceId, content, quoted.id) : await postMessage(workspaceId, content);
@@ -157,7 +215,23 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
     setHits(await searchMessages(workspaceId, term));
   }
 
-  let lastDay = "";
+  async function jumpToMessage(id: string) {
+    if (hasMessage(id)) { scrollToMessage(id); return; }
+    try {
+      const message = await getMessage(workspaceId, id);
+      if (message.threadId) onOpenThread?.(message.threadId, message.id);
+      else showMessage(message);
+    } catch { /* a deleted source can no longer be opened */ }
+  }
+
+  async function createThreadFromComposer(content: string) {
+    const result = await createThread(workspaceId, content, quote?.id);
+    setMessages((cur) => merge(cur, result.message));
+    setThreads((cur) => new Map(cur).set(result.thread.id, result.thread));
+    setQuote(null);
+    onOpenThread?.(result.thread.id);
+  }
+
   return (
     <>
       {!connected && (
@@ -180,8 +254,8 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
             key={hit.id}
             className="search-hit"
             onClick={() => {
-              if (document.getElementById(`msg-${hit.id}`)) scrollToMessage(hit.id);
-              else setOpenHit((cur) => (cur === hit.id ? null : hit.id));
+              if (hasMessage(hit.id)) scrollToMessage(hit.id);
+              else { setOpenHit((cur) => (cur === hit.id ? null : hit.id)); void jumpToMessage(hit.id); }
             }}
           >
             <span>{messageRoleLabel(t, hit.role)}</span>
@@ -192,22 +266,21 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
         ))}
       </div>
       <div className="stream" ref={stream}>
-        {messages.map((m) => {
+        {messages.map((m, index) => {
           const key = dayKey(m.createdAt);
-          const divider = key !== lastDay;
-          lastDay = key;
+          const divider = index === 0 || key !== dayKey(messages[index - 1]!.createdAt);
           return (
             <div key={m.id}>
               {divider && <div className="day">{formatDay(new Date(m.createdAt), locale)}</div>}
               <MessageItem
                 message={m}
                 onOpenEntry={onOpenEntry}
-                repliesAfter={userRepliesAfter(messages, m.id)}
-                onAnswer={(questionId, content) => send(`回答 ${questionId}：\n${content}`)}
                 onQuote={setQuote}
                 onEdited={(message) => setMessages((l) => l.map((x) => (x.id === message.id ? message : x)))}
-                onJump={scrollToMessage}
+                onJump={jumpToMessage}
+                onOpenHistory={onOpenHistory}
               />
+              {threads.has(m.id) && <button type="button" className="thread-row" onClick={() => onOpenThread?.(m.id)}><b>{threads.get(m.id)!.title}</b><span>{t("thread.replyCount", { n: threads.get(m.id)!.replyCount })}</span>{threads.get(m.id)!.unread > 0 && <strong>{threads.get(m.id)!.unread}</strong>}<time>{threads.get(m.id)!.lastReplyAt ? formatTime(new Date(threads.get(m.id)!.lastReplyAt!), locale) : ""}</time></button>}
             </div>
           );
         })}
@@ -229,7 +302,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
           {t("common.error", { message: error })}
         </p>
       )}
-      <Composer onSend={(content) => send(content, quote)} quote={quote} onClearQuote={() => setQuote(null)} />
+      <Composer onSend={(content) => send(content, quote)} onThread={createThreadFromComposer} quote={quote} onClearQuote={() => setQuote(null)} />
     </>
   );
 });

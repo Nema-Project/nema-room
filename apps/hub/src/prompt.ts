@@ -1,4 +1,4 @@
-import { DEFAULT_GRILL_SETTINGS, type Entry, type EntrySummary, type ReportMessageMeta } from "@nema/shared";
+import { DEFAULT_GRILL_SETTINGS, type Entry, type EntrySummary, type ReportMessageMeta, type Thread } from "@nema/shared";
 import type { GrillState } from "./plugins.js";
 import type { Message } from "./messages.js";
 import type { TaskChange } from "./tasks.js";
@@ -44,6 +44,8 @@ export type WorkPackagePromptInput = {
   rules: { spec: string; plan: string };
 };
 
+export type ConversationPromptInput = { thread: Thread; anchor: Message; opened: Thread["openedBy"] };
+
 function workPackageSection(wp: WorkPackagePromptInput, grill: GrillState): string {
   const step1 = !grill.enabled
     ? "不做就绪检查；把所有不确定点写进 spec 的「留给实现者」或「待确认」小节。"
@@ -87,24 +89,30 @@ export function buildPrompt(input: {
   quotedMessage?: Message | null;
   /** Set when the user edited `userMessage` and this task re-runs it. */
   edit?: { previousContent: string; cited: EntrySummary[] } | null;
+  /** Current thread and its main-chat anchor, available to thread-aware prompt sections. */
+  conversation?: ConversationPromptInput;
 }): string {
   const { workspace, userMessage, entries, lastAskedQuestion } = input;
   const grill: GrillState = input.grill ?? { enabled: true, ...DEFAULT_GRILL_SETTINGS };
-  const recent = input.recentMessages.filter((m) => m.id !== userMessage.id).slice(-20);
+  const conversation = input.conversation;
+  const filteredMessages = input.recentMessages.filter((m) => m.id !== userMessage.id);
+  const recent = conversation
+    ? [conversation.anchor, ...filteredMessages.filter((m) => m.id !== conversation.anchor.id).slice(-50)]
+    : filteredMessages.slice(-20);
   const rules = [
     "你只能通过名为 `room` 的 MCP 工具读写项目知识；不要读写本地文件，不要联网。",
-    "把用户输入整理成准确的业务语言，写成 requirement / decision / tradeoff / question / source 条目。每次 `upsert_entry` 都要填写 `sourceMessages`（至少包含本次用户消息 id）和 `reason`。",
-    "不确定、有歧义、或与现有条目冲突的内容，不要猜，写成 `question` 条目（status 为 `open`，priority 取 1–3，1 最高）。",
-    "每次 `upsert_entry` 都要填写 `basis`：用户字面说过的写 `stated`，用户明确拍板的写 `decided`，你自己推断的写 `inferred`。用户没说过的内容只能写成 `question` 或标 `inferred`，不能写成 `stated` / `decided`。",
-    "改写或作废 active 的决策，必须以用户消息为依据（basis 为 `stated` 或 `decided`，sourceMessages 含该用户消息）。只是推断时不要改它，新建一条 `question` 询问用户。",
+    "你是这个项目的资深架构师 / copilot：像同事一样交流，可以反问、提出方案，也可以表达不同意见。",
+    "只有用户陈述、决定、明确要求记录的内容，以及 URL 才写入知识；闲聊、项目问题和 memo 检查直接回答，不要写入。",
+    "用户清楚陈述或决定的内容必须写入，在主聊天和 thread 中都一样。每次 `upsert_entry` 都要填写 `sourceMessages`（至少包含本次用户消息 id）和 `reason`。",
+    "每次 `upsert_entry` 都要填写 `basis`：用户字面说过的写 `stated`，用户明确拍板的写 `decided`，你自己推断的写 `inferred`。你的提案不能标为 `stated` / `decided`，只有用户同意的提案才能标为 `decided`。",
+    "不确定或有歧义时，不要猜，写成 `question` 条目（status 为 `open`，priority 取 1–3，1 最高）。",
+    "明确的用户覆盖指令优先并取代原 active 决策。任何其他与 active 决策矛盾的陈述，都不要写入该决策；新建 `question`，在 `related` 中关联该决策，并在 `quotes` / `sourceMessages` 中记录用户的原话和消息 id。",
     "需要保留用户原话时，用 `quotes`（messageId + 从该消息逐字复制的文本，最多 500 字）。摘录对团队可见，只摘与条目相关的部分。",
     "用户确认某条内容仍然有效时，更新该条目并设 `confirmed: true`。",
     "用户的回答要写成决策或需求，并把对应的 question 置为 `resolved`。",
     "输入中出现的 URL 登记为 `source` 条目（url + 一句话说明 + related），不要访问链接。",
     languageRule(workspace.knowledgeLanguage),
-    grill.enabled
-      ? "最后的回复只简短总结做了什么，不要在回复里提问，系统会自动从待确认中挑一个问题展示。回复的语言与本次用户输入一致。"
-      : "最后的回复只简短总结做了什么，不要在回复里提问。回复的语言与本次用户输入一致。",
+    "回复要自然地继续对话，回复的语言与本次用户输入一致。",
   ];
   if (grill.enabled) {
     rules.push(
@@ -133,6 +141,19 @@ export function buildPrompt(input: {
     `# Workspace\n${workspace.name}`,
     "# 现有条目索引\n" + (entries.length ? entries.map(indexLine).join("\n") : "（暂无）"),
   ];
+  if (conversation) {
+    const anchorText = `# 当前 thread：${conversation.thread.title}\n[${conversation.anchor.id}] ${conversation.anchor.role}: ${conversation.anchor.content}`;
+    parts.push(anchorText);
+    parts.push("在回复中直接进行讨论；后续追问在回复中一次问一个。");
+    if (conversation.opened === "user") {
+      parts.push("这是用户主动开的 thread，直接进入讨论。标题目前是用户输入的第一行；如果它不能概括这个话题，调用 `open_thread` 给出更好的标题。");
+    }
+  } else {
+    parts.push("需要来回讨论时调用 `open_thread`。");
+    if (grill.enabled) {
+      parts.push("新增或更新未解决的追问时，你的回复会被放进 thread，把回复写成开启讨论、提出这个问题的话。");
+    }
+  }
   if (grill.enabled && grill.extraRules.trim()) parts.push(`# 本 workspace 的补充追问规则\n${grill.extraRules}`);
   if (lastAskedQuestion) {
     const named = userMessage.role === "user" && namedAnswerId(userMessage.content) === lastAskedQuestion.id;
@@ -142,7 +163,8 @@ export function buildPrompt(input: {
         : `# 上一个追问\n${lastAskedQuestion.id}：${lastAskedQuestion.title}\n${lastAskedQuestion.body}\n本次用户输入很可能是对它的回答。`,
     );
   }
-  parts.push("# 最近消息\n" + (recent.length ? recent.map((m) => `[${m.id}] ${m.role}: ${m.content}`).join("\n") : "（无）"));
+  const displayedRecent = conversation ? recent.filter((m) => m.id !== conversation.anchor.id) : recent;
+  parts.push("# 最近消息\n" + (displayedRecent.length ? displayedRecent.map((m) => `[${m.id}] ${m.role}: ${m.content}`).join("\n") : "（无）"));
   if (input.priorChanges?.length) {
     const lines = input.priorChanges.map((c) => `${c.op} ${c.entryId} | ${c.kind} | ${c.title}`);
     parts.push(

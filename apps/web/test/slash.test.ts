@@ -14,7 +14,7 @@ describe("slash commands", () => {
   });
 
   it("lists every diagram type and filters on the typed prefix", () => {
-    expect(matchingCommands("").map((item) => item.id)).toEqual(["progress", ...DIAGRAM_TYPES.map((type) => `diagram:${type}`), "update"]);
+    expect(matchingCommands("").map((item) => item.id)).toEqual(["thread", "progress", ...DIAGRAM_TYPES.map((type) => `diagram:${type}`), "update"]);
     expect(matchingCommands("diagram:w").map((item) => item.id)).toEqual(["diagram:workflow", "diagram:waterfall"]);
     expect(matchingCommands("diagram:s").map((item) => item.id)).toEqual(["diagram:sequence"]);
     expect(matchingCommands("z")).toEqual([]);

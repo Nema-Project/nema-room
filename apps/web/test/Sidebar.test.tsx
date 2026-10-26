@@ -5,6 +5,9 @@ import "@/app/globals.css";
 import { I18nProvider } from "@/lib/i18n";
 import { Sidebar, themeSwitchOrigin } from "@/components/Sidebar";
 import type { WorkspaceView } from "@/lib/types";
+import * as hub from "@/lib/hub";
+
+vi.mock("@/lib/hub", () => ({ nextAttention: vi.fn() }));
 
 const ws = (id: string, name: string, extra: Partial<WorkspaceView> = {}): WorkspaceView => ({
   id,
@@ -34,6 +37,14 @@ function setup(props: Partial<React.ComponentProps<typeof Sidebar>> = {}) {
 }
 
 describe("Sidebar", () => {
+  it("badge shows attention and opens the next thread in its workspace", async () => {
+    vi.mocked(hub.nextAttention).mockResolvedValue({ threadId: "th-2" });
+    const onOpenThread = vi.fn();
+    setup({ workspaces: [ws("w2", "Beta", { attention: 2 })], selectedId: "w1", onOpenThread });
+    await userEvent.click(screen.getByRole("button", { name: "Open the next unread thread" }));
+    expect(hub.nextAttention).toHaveBeenCalledWith("w2");
+    expect(onOpenThread).toHaveBeenCalledWith("w2", "th-2");
+  });
   it("marks the selected workspace, confidential workspaces and open-question counts", () => {
     setup();
     const alpha = screen.getByRole("button", { name: /Alpha/ });

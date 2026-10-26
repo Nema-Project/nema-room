@@ -8,7 +8,7 @@ const ws = (l: Workspace["knowledgeLanguage"]): Workspace => ({
   id: "ws_1", name: "项目甲", confidential: true, knowledgeLanguage: l, createdAt: "2026-01-01T00:00:00.000Z", archivedAt: null,
 });
 const msg = (i: number, role: Message["role"] = "user"): Message => ({
-  id: `m_${i}`, workspaceId: "ws_1", role, content: `content-${i}`, meta: null, taskId: null, createdAt: "2026-01-01T00:00:00.000Z", editedAt: null,
+  id: `m_${i}`, workspaceId: "ws_1", role, content: `content-${i}`, meta: null, taskId: null, createdAt: "2026-01-01T00:00:00.000Z", editedAt: null, threadId: null, seq: i,
 });
 const entries = [
   { id: "R-1", kind: "requirement", status: "active", title: "流式输出", related: [] },
@@ -72,7 +72,7 @@ describe("buildPrompt", () => {
   });
   test("rules and content", () => {
     const p = base();
-    for (const k of ["room", "sourceMessages", "question", "resolved", "source", "不要在回复里提问"]) expect(p).toContain(k);
+    for (const k of ["room", "sourceMessages", "question", "resolved", "source", "资深架构师 / copilot", "需要来回讨论时调用 `open_thread`"]) expect(p).toContain(k);
     expect(p).toContain("m_999");
     expect(p).toContain("content-999");
     expect(p).toContain("项目甲");
@@ -85,6 +85,24 @@ describe("buildPrompt", () => {
     expect((p.match(/^\[m_(?!999)\d+\] /gm) ?? []).length).toBe(20);
     expect(p).toContain("[m_29] agent: content-29");
     expect(p).not.toContain("[m_9] ");
+  });
+  test("thread context keeps its anchor and the latest 50 replies", () => {
+    const anchor = { ...msg(1000), content: "thread anchor" };
+    const replies = Array.from({ length: 51 }, (_, i) => ({ ...msg(i, "agent"), threadId: anchor.id }));
+    const p = buildPrompt({
+      workspace: ws("follow"), userMessage: { ...msg(999), threadId: anchor.id },
+      recentMessages: [anchor, ...replies], entries, lastAskedQuestion: null,
+      conversation: {
+        thread: { id: anchor.id, workspaceId: "ws_1", title: "Topic", openedBy: "agent", replyCount: 51, unread: 0, lastReplyAt: null, createdAt: "2026-01-01T00:00:00.000Z" },
+        anchor,
+        opened: "agent",
+      },
+    });
+    const included = p.match(/^\[m_(?!999)\d+\] /gm) ?? [];
+    expect(included).toHaveLength(51);
+    expect(p).toContain("[m_1000] user: thread anchor");
+    expect(p).not.toContain("[m_0] ");
+    expect(p).toContain("[m_50] agent: content-50");
   });
   test("language rules", () => {
     expect(base("ja")).toContain("日本語");
@@ -146,17 +164,68 @@ describe("buildPrompt", () => {
 
   test("includes the basis, decision, quote and confirm rules", () => {
     const rules = [
-      "每次 `upsert_entry` 都要填写 `basis`：用户字面说过的写 `stated`，用户明确拍板的写 `decided`，你自己推断的写 `inferred`。用户没说过的内容只能写成 `question` 或标 `inferred`，不能写成 `stated` / `decided`。",
-      "改写或作废 active 的决策，必须以用户消息为依据（basis 为 `stated` 或 `decided`，sourceMessages 含该用户消息）。只是推断时不要改它，新建一条 `question` 询问用户。",
+      "每次 `upsert_entry` 都要填写 `basis`：用户字面说过的写 `stated`，用户明确拍板的写 `decided`，你自己推断的写 `inferred`。你的提案不能标为 `stated` / `decided`，只有用户同意的提案才能标为 `decided`。",
+      "明确的用户覆盖指令优先并取代原 active 决策。任何其他与 active 决策矛盾的陈述，都不要写入该决策；新建 `question`，在 `related` 中关联该决策，并在 `quotes` / `sourceMessages` 中记录用户的原话和消息 id。",
       "需要保留用户原话时，用 `quotes`（messageId + 从该消息逐字复制的文本，最多 500 字）。摘录对团队可见，只摘与条目相关的部分。",
       "用户确认某条内容仍然有效时，更新该条目并设 `confirmed: true`。",
     ];
     const block = [
-      "3. 不确定、有歧义、或与现有条目冲突的内容，不要猜，写成 `question` 条目（status 为 `open`，priority 取 1–3，1 最高）。",
-      ...rules.map((r, i) => `${i + 4}. ${r}`),
-      "8. 用户的回答要写成决策或需求，并把对应的 question 置为 `resolved`。",
+      "5. 每次 `upsert_entry` 都要填写 `basis`：用户字面说过的写 `stated`，用户明确拍板的写 `decided`，你自己推断的写 `inferred`。你的提案不能标为 `stated` / `decided`，只有用户同意的提案才能标为 `decided`。",
+      "6. 不确定或有歧义时，不要猜，写成 `question` 条目（status 为 `open`，priority 取 1–3，1 最高）。",
+      "7. 明确的用户覆盖指令优先并取代原 active 决策。任何其他与 active 决策矛盾的陈述，都不要写入该决策；新建 `question`，在 `related` 中关联该决策，并在 `quotes` / `sourceMessages` 中记录用户的原话和消息 id。",
+      `8. ${rules[2]}`,
+      `9. ${rules[3]}`,
+      "10. 用户的回答要写成决策或需求，并把对应的 question 置为 `resolved`。",
     ].join("\n");
     expect(base()).toContain(block);
+  });
+
+  test("main prompt keeps the must-write rule and offers open_thread", () => {
+    const p = base();
+    expect(p).toContain("你是这个项目的资深架构师 / copilot");
+    expect(p).toContain("用户清楚陈述或决定的内容必须写入");
+    expect(p).toContain("需要来回讨论时调用 `open_thread`");
+    expect(p).toContain("新增或更新未解决的追问时，你的回复会被放进 thread，把回复写成开启讨论、提出这个问题的话");
+    expect(p).toContain("提案不能标为 `stated` / `decided`");
+  });
+
+  test("thread prompt has the same knowledge rules as the main prompt", () => {
+    const anchor = { ...msg(1), content: "thread anchor" };
+    const thread = { id: anchor.id, workspaceId: "ws_1", title: "主题", openedBy: "agent" as const, replyCount: 0, unread: 0, lastReplyAt: null, createdAt: "2026-01-01T00:00:00.000Z" };
+    const main = base().match(/^# 规则\n([\s\S]*?)(?=\n\n# Workspace)/)?.[1];
+    const inThread = buildPrompt({ workspace: ws("follow"), userMessage: msg(999), recentMessages: [], entries, lastAskedQuestion: null, conversation: { thread, anchor, opened: "agent" } });
+    const threadRules = inThread.match(/^# 规则\n([\s\S]*?)(?=\n\n# Workspace)/)?.[1];
+    expect(threadRules).toBe(main);
+  });
+
+  test("thread prompt shows the anchor and title", () => {
+    const anchor = { ...msg(1), content: "讨论登录流程" };
+    const p = buildPrompt({ workspace: ws("follow"), userMessage: msg(999), recentMessages: [], entries, lastAskedQuestion: null, conversation: { thread: { id: anchor.id, workspaceId: "ws_1", title: "登录流程", openedBy: "agent", replyCount: 0, unread: 0, lastReplyAt: null, createdAt: "2026-01-01T00:00:00.000Z" }, anchor, opened: "agent" } });
+    expect(p).toContain("# 当前 thread：登录流程\n[m_1] user: 讨论登录流程");
+    expect(p).toContain("后续追问在回复中一次问一个");
+  });
+
+  test("a user-opened thread prompt asks the agent to rename a bad title via open_thread", () => {
+    const anchor = msg(1);
+    const p = buildPrompt({ workspace: ws("follow"), userMessage: msg(999), recentMessages: [], entries, lastAskedQuestion: null, conversation: { thread: { id: anchor.id, workspaceId: "ws_1", title: "first line", openedBy: "user", replyCount: 0, unread: 0, lastReplyAt: null, createdAt: "2026-01-01T00:00:00.000Z" }, anchor, opened: "user" } });
+    expect(p).toContain("这是用户主动开的 thread，直接进入讨论。标题目前是用户输入的第一行；如果它不能概括这个话题，调用 `open_thread` 给出更好的标题。");
+  });
+
+  test("an agent-opened thread prompt does not offer open_thread", () => {
+    const anchor = msg(1);
+    const p = buildPrompt({ workspace: ws("follow"), userMessage: msg(999), recentMessages: [], entries, lastAskedQuestion: null, conversation: { thread: { id: anchor.id, workspaceId: "ws_1", title: "主题", openedBy: "agent", replyCount: 0, unread: 0, lastReplyAt: null, createdAt: "2026-01-01T00:00:00.000Z" }, anchor, opened: "agent" } });
+    expect(p).not.toContain("调用 `open_thread`");
+  });
+
+  test("conflict rule names related and quotes", () => {
+    const p = base();
+    expect(p).toContain("任何其他与 active 决策矛盾的陈述，都不要写入该决策；新建 `question`，在 `related` 中关联该决策，并在 `quotes` / `sourceMessages` 中记录用户的原话和消息 id");
+  });
+
+  test("no summary-only reply rule remains", () => {
+    const p = base();
+    expect(p).not.toContain("最后的回复只简短总结做了什么");
+    expect(p).not.toContain("不要在回复里提问，系统会自动从待确认中挑一个问题展示");
   });
 
   test("marks inferred entries in the index", () => {
@@ -276,7 +345,9 @@ describe("buildPrompt", () => {
 
   test("grill-me off drops strictness and extra rules but keeps uncertain-to-question", () => {
     const p = withGrill({ enabled: false, strictness: "lenient", extraRules: "涉及付款一律先问" });
-    expect(p).toContain("不确定、有歧义、或与现有条目冲突的内容，不要猜，写成 `question` 条目");
+    expect(p).toContain("不确定或有歧义时，不要猜，写成 `question` 条目");
+    expect(p).toContain("需要来回讨论时调用 `open_thread`");
+    expect(p).not.toContain("新增或更新未解决的追问时，你的回复会被放进 thread");
     expect(p).not.toContain("追问严格程度");
     expect(p).not.toContain("涉及付款一律先问");
     expect(p).not.toContain("系统会自动从待确认中挑一个问题展示");

@@ -33,6 +33,27 @@ function harness() {
 }
 
 describe('owning Electron window controls', () => {
+  it('dispatches controls to each registered owner and retains shared handlers until the last closes', () => {
+    const first = harness();
+    const secondWindow = {
+      ...first.window,
+      webContents: { mainFrame: { url: first.frame.url }, send: vi.fn(), isDestroyed: () => false },
+      isDestroyed: () => false,
+      minimize: vi.fn(), maximize: vi.fn(), unmaximize: vi.fn(), close: vi.fn(),
+      on: vi.fn(), once: vi.fn(), removeListener: vi.fn(),
+    };
+    const secondCleanup = registerWindowControls({ ipcMain: first.ipcMain, window: secondWindow, runtimeOrigin: 'http://127.0.0.1:43001' });
+    expect(first.ipcMain.handle).toHaveBeenCalledTimes(4);
+    const minimize = first.handlers.get('nema:window:minimize');
+    expect(() => minimize({ sender: secondWindow.webContents, senderFrame: secondWindow.webContents.mainFrame })).not.toThrow();
+    expect(secondWindow.minimize).toHaveBeenCalledOnce();
+    expect(first.window.minimize).not.toHaveBeenCalled();
+    first.cleanup();
+    expect(first.ipcMain.removeHandler).not.toHaveBeenCalled();
+    secondCleanup();
+    expect(first.ipcMain.removeHandler).toHaveBeenCalledTimes(4);
+  });
+
   it('dispatches only the fixed minimize, maximize, close, and state actions', () => {
     const h = harness();
     expect(h.call('minimize')).toBeUndefined();

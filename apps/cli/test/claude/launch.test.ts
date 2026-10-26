@@ -33,6 +33,10 @@ const options = (model?: string) => ({
 });
 
 describe("Claude Code launch", () => {
+  test("CLAUDE_ROOM_TOOLS contains mcp__room__open_thread", () => {
+    expect(CLAUDE_ROOM_TOOLS).toContain("mcp__room__open_thread");
+  });
+
   test("uses the explicit packaged CLI entry and executable in MCP argv", () => {
     const launch = prepareClaudeLaunch(options());
     const config = JSON.parse(readFileSync(launch.mcpPath, "utf8"));
