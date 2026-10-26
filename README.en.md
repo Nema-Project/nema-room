@@ -4,7 +4,7 @@
 
 **Turn scattered discussions into traceable requirements, then hand them to a coding agent.**
 
-[简体中文](README.md) · English · [日本語](README.ja.md)
+[简体中文](README.zh.md) · English · [日本語](README.ja.md)
 
 > **0.1.1:** Desktop installers are published for Windows x64 and Apple Silicon. The app runs on your machine and uses Git 2.31 or later already installed there. Multi-device sync, backup, and team read-only access come later. "Quick start" below is still the Web / Compose version. See [Desktop app](#desktop-app-preview).
 
@@ -12,11 +12,11 @@ Nema Room is a requirements discussion room that runs locally. Share ideas, meet
 
 The interface below is the app, using a sample discussion. Chat stays in the middle. Filed entries stay on the right, and an open question stays marked.
 
-<img src="docs/screenshots/room.png" width="1100" alt="The room: a bill-export discussion filed as a requirement, two decisions, and an open question.">
+<img src="docs/screenshots/room-en.png" width="1100" alt="The room: a bill-export discussion filed as a requirement, two decisions, and an open question.">
 
 Opening an entry shows why it was filed and the sentence it came from.
 
-<img src="docs/screenshots/entry.png" width="1100" alt="Requirement R-1, marked as something the user said, with the original sentence beside it.">
+<img src="docs/screenshots/entry-en.png" width="1100" alt="Requirement R-1, marked as something the user said, with the original sentence beside it.">
 
 ## Features
 

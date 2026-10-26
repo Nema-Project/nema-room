@@ -2,7 +2,7 @@
 
 安装入口为 `node scripts/setup.mjs --lang zh`，适用于 Windows、macOS、Linux。下文的 `0600` / `0700` 为 POSIX 权限表述；Windows 凭证使用私有 ACL，允许当前用户、SYSTEM 和管理员，不以 Node 返回的模拟 POSIX mode 判断安全性。
 
-安装、模型配置、平台限制与数据备份见 [中文 README](../README.md)、[English](../README.en.md)、[日本語](../README.ja.md)。本文保留进阶功能、格式约束和 API 实现说明。
+安装、模型配置、平台限制与数据备份见 [中文 README](../README.zh.md)、[English](../README.en.md)、[日本語](../README.ja.md)。本文保留进阶功能、格式约束和 API 实现说明。
 
 本文的 npx nema 命令仅适用于已安装依赖并构建 CLI 的项目根目录；在其他仓库使用 nema 前，需要先按 README 链接本地 CLI。CLI 当前不作为独立 npm 包发布。
 

@@ -2,7 +2,7 @@
 
 English and Japanese readers: the commands below match the READMEs. Issues and pull requests may be written in Chinese, English, or Japanese. This guide is in Chinese.
 
-Nema Room 是在本机运行的需求讨论室，采用 [MIT License](LICENSE)。贡献前请先读 [README](README.md) 里的首版范围、模型运行方式和已知限制。
+Nema Room 是在本机运行的需求讨论室，采用 [MIT License](LICENSE)。贡献前请先读 [README](README.zh.md) 里的首版范围、模型运行方式和已知限制。
 
 ## 开发环境
 
