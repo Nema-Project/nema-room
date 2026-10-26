@@ -1,59 +1,59 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nema Room：把讨论变成可追溯的需求</title>
-<meta name="description" content="Nema Room 是在本机运行的需求讨论室：聊天里的想法被整理成需求、决策和问题，每条都能追到原话，再生成工作包交给 Codex 或 Claude Code。">
-<link rel="icon" href="assets/nema-room-mark.svg" type="image/svg+xml">
+<title>Nema Room: turn discussions into traceable requirements</title>
+<meta name="description" content="Nema Room is a requirements discussion room that runs on your machine. Ideas from chat are filed as requirements, decisions and questions, each traced to what was said, then handed to Codex or Claude Code.">
+<link rel="icon" href="../assets/nema-room-mark.svg" type="image/svg+xml">
 <link rel="alternate" hreflang="zh-CN" href="https://nema-project.github.io/nema-room/">
 <link rel="alternate" hreflang="en" href="https://nema-project.github.io/nema-room/en/">
 <link rel="alternate" hreflang="ja" href="https://nema-project.github.io/nema-room/ja/">
 <link rel="alternate" hreflang="x-default" href="https://nema-project.github.io/nema-room/en/">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../styles.css">
 <script>document.documentElement.classList.add('js')</script>
 </head>
 <body>
 
 <header class="hero" id="top">
   <div class="topbar">
-    <a class="tile tile-ink logo" href="#top" aria-label="Nema Room 首页">
+    <a class="tile tile-ink logo" href="#top" aria-label="Nema Room home">
       <svg viewBox="0 0 360 360" aria-hidden="true"><path d="M55 55 120 28 304 130V332L237 307V171L120 116V298L55 323Z"/><path d="M183 195 218 181V300L183 286Z"/></svg>
     </a>
-    <nav class="tile tile-warm nav" aria-label="页面导航">
-      <a class="link" href="#demo">演示</a>
-      <a class="link" href="#features">功能</a>
-      <a class="link" href="#flow">流程</a>
-      <a class="link" href="#local">本地运行</a>
-      <a class="link" href="#faq">问答</a>
+    <nav class="tile tile-warm nav" aria-label="Page sections">
+      <a class="link" href="#demo">Demo</a>
+      <a class="link" href="#features">Features</a>
+      <a class="link" href="#flow">Flow</a>
+      <a class="link" href="#local">Local</a>
+      <a class="link" href="#faq">FAQ</a>
     </nav>
-    <nav class="tile tile-warm langs" aria-label="语言">
-      <a class="link" href="./" lang="zh-CN" hreflang="zh-CN" aria-current="page">中文</a>
-      <a class="link" href="en/" lang="en" hreflang="en">English</a>
-      <a class="link" href="ja/" lang="ja" hreflang="ja">日本語</a>
+    <nav class="tile tile-warm langs" aria-label="Language">
+      <a class="link" href="../" lang="zh-CN" hreflang="zh-CN">中文</a>
+      <a class="link" href="./" lang="en" hreflang="en" aria-current="page">English</a>
+      <a class="link" href="../ja/" lang="ja" hreflang="ja">日本語</a>
     </nav>
-    <a class="tile tile-ink action" href="https://github.com/Nema-Project/nema-room">查看源码</a>
+    <a class="tile tile-ink action" href="https://github.com/Nema-Project/nema-room">View source</a>
   </div>
 
   <div class="tile tile-paper name">
     <h1 class="lines"><span class="line"><span data-line style="--i:0">Nema</span></span><span class="line"><span data-line style="--i:1">Room</span></span></h1>
-    <p class="name-line">在本机运行的需求讨论室</p>
+    <p class="name-line">A requirements discussion room on your machine</p>
   </div>
 
   <figure class="tile picture pic-a">
-    <img src="assets/white-doors-strandgade-25.jpg" width="1264" height="1400" alt="Hammershøi 画作《白门》：空房间里两扇白色的门向内敞开，能看到后面的房间。" fetchpriority="high">
+    <img src="../assets/white-doors-strandgade-25.jpg" width="1264" height="1400" alt="Hammershøi, White Doors: two white doors stand open in an empty room, showing the room beyond." fetchpriority="high">
   </figure>
 
   <figure class="tile picture pic-b">
-    <img class="drift" src="assets/interior-strandgade-30.jpg" width="1078" height="1400" alt="Hammershøi 画作《斯特兰德街 30 号室内》：一扇门开着，穿过门洞是另一个房间和一个背影。">
+    <img class="drift" src="../assets/interior-strandgade-30.jpg" width="1078" height="1400" alt="Hammershøi, Interior, Strandgade 30: through an open door, another room and a figure seen from behind.">
   </figure>
 
   <div class="pair">
-    <p class="tile tile-ink statement" data-rise style="--i:2">聊天里散落的想法，被整理成需求、决策和问题。</p>
-    <p class="tile tile-accent statement" data-rise style="--i:3">每一条都能追到原话。问清楚以后，交给 Codex 或 Claude Code 去写。</p>
+    <p class="tile tile-ink statement" data-rise style="--i:2">Ideas scattered across chat are filed as requirements, decisions and questions.</p>
+    <p class="tile tile-accent statement" data-rise style="--i:3">Each traces back to what was said. Once it’s clear, Codex or Claude Code builds it.</p>
   </div>
 </header>
 
@@ -61,49 +61,49 @@
 
 <section class="tile tile-paper showcase" id="demo" aria-labelledby="demo-h">
   <div class="showcase-text">
-    <h2 id="demo-h" class="h-sec" data-reveal>讨论怎样落地</h2>
-    <p data-reveal style="--i:1">下面是一次关于“账单导出”的讨论。打开一条消息，Nema 会把它整理成条目，并注明这条是谁说的、谁定的，还是 Agent 推断的。</p>
+    <h2 id="demo-h" class="h-sec" data-reveal>Chat becomes entries</h2>
+    <p data-reveal style="--i:1">Below is a discussion about exporting bills. Turn on a message and Nema files it as entries, noting whether someone stated it, someone decided it, or the agent inferred it.</p>
     <dl class="legend" data-reveal style="--i:2">
-      <div><dt><span class="chip chip-said">用户陈述</span></dt><dd>有人在讨论里说过</dd></div>
-      <div><dt><span class="chip chip-decided">用户决定</span></dt><dd>有人拍板定下</dd></div>
-      <div><dt><span class="chip chip-inferred">Agent 推断</span></dt><dd>Agent 提出，等你确认</dd></div>
+      <div><dt><span class="chip chip-said">Stated</span></dt><dd>Someone said it in the discussion</dd></div>
+      <div><dt><span class="chip chip-decided">Decided</span></dt><dd>Someone settled it</dd></div>
+      <div><dt><span class="chip chip-inferred">Inferred</span></dt><dd>The agent proposed it; waiting for you</dd></div>
     </dl>
   </div>
 
   <div class="panel" data-ui data-reveal style="--i:1">
     <div class="board" aria-live="polite">
       <div class="board-head">
-        <strong>知识库 · 账单导出</strong>
-        <span class="counts" id="counts">需求 1 · 决策 1 · 问题 1</span>
+        <strong>Knowledge · Bill export</strong>
+        <span class="counts" id="counts">Requirements 1 · Decisions 1 · Questions 1</span>
       </div>
       <ol class="entries" id="entries"></ol>
-      <noscript><p class="board-empty">需要开启 JavaScript 才能看到这段演示。</p></noscript>
+      <noscript><p class="board-empty">Turn on JavaScript to try this demo.</p></noscript>
     </div>
     <fieldset class="controls">
-      <legend class="controls-title">讨论中的消息</legend>
-      <label class="msg"><span><b>林</b> 每月账单要能导出成 CSV，财务 1 号对账用。</span><input type="checkbox" data-msg="m1" checked><i aria-hidden="true"></i></label>
-      <label class="msg"><span><b>周</b> PDF 这次先不做，只做 CSV。</span><input type="checkbox" data-msg="m2" checked><i aria-hidden="true"></i></label>
-      <label class="msg"><span><b>林</b> 金额保留两位小数，日元取整。</span><input type="checkbox" data-msg="m3"><i aria-hidden="true"></i></label>
-      <label class="msg"><span><b>Nema</b> 财务用 Excel 打开，文件要带 BOM 吗？</span><input type="checkbox" data-msg="m4" checked><i aria-hidden="true"></i></label>
-      <label class="msg"><span><b>周</b> 要带，不然中文会乱码。</span><input type="checkbox" data-msg="m5"><i aria-hidden="true"></i></label>
-      <label class="msg"><span><b>林</b> 按东京时间结算，月底 23:59 截止。</span><input type="checkbox" data-msg="m6"><i aria-hidden="true"></i></label>
+      <legend class="controls-title">Messages in the discussion</legend>
+      <label class="msg"><span><b>Lin</b> Monthly bills need a CSV export; finance reconciles on the 1st.</span><input type="checkbox" data-msg="m1" checked><i aria-hidden="true"></i></label>
+      <label class="msg"><span><b>Zhou</b> Skip PDF this time, CSV only.</span><input type="checkbox" data-msg="m2" checked><i aria-hidden="true"></i></label>
+      <label class="msg"><span><b>Lin</b> Two decimal places for amounts; yen in whole numbers.</span><input type="checkbox" data-msg="m3"><i aria-hidden="true"></i></label>
+      <label class="msg"><span><b>Nema</b> Finance opens it in Excel. Should the file have a BOM?</span><input type="checkbox" data-msg="m4" checked><i aria-hidden="true"></i></label>
+      <label class="msg"><span><b>Zhou</b> Yes, or non-English text comes out garbled.</span><input type="checkbox" data-msg="m5"><i aria-hidden="true"></i></label>
+      <label class="msg"><span><b>Lin</b> Settle on Tokyo time; the month closes at 23:59.</span><input type="checkbox" data-msg="m6"><i aria-hidden="true"></i></label>
     </fieldset>
   </div>
 </section>
 
 <section class="features" id="features" aria-labelledby="features-h">
-  <h2 id="features-h" class="tile tile-paper h-sec features-h" data-reveal>每一条都有出处</h2>
+  <h2 id="features-h" class="tile tile-paper h-sec features-h" data-reveal>Every entry has a source</h2>
 
   <article class="cell" data-reveal>
     <div class="cell-text">
-      <h3>分清谁说的</h3>
-      <p>用户陈述、用户决定、Agent 推断分开标注。Agent 的推断不会冒充你的决定。</p>
+      <h3>Who said what</h3>
+      <p>Stated, decided and inferred are labeled apart. An agent’s guess never passes for your decision.</p>
     </div>
     <div class="frag frag-dock-bottom" data-ui>
       <div class="ui-entry">
-        <div class="ui-entry-top"><span class="ui-kind">决策 D-2</span><span class="chip chip-decided">用户决定</span></div>
-        <p class="ui-entry-title">导出文件带 UTF-8 BOM</p>
-        <blockquote class="ui-quote">“要带，不然中文会乱码。”<cite>周 · 10:12 · 回答了 Q-1</cite></blockquote>
+        <div class="ui-entry-top"><span class="ui-kind">Decision D-2</span><span class="chip chip-decided">Decided</span></div>
+        <p class="ui-entry-title">Exported files include a UTF-8 BOM</p>
+        <blockquote class="ui-quote">“Yes, or non-English text comes out garbled.”<cite>Zhou · 10:12 · answers Q-1</cite></blockquote>
       </div>
     </div>
   </article>
@@ -111,29 +111,29 @@
   <article class="cell cell-flip" data-reveal style="--i:1">
     <div class="frag frag-dock-top" data-ui>
       <ol class="ui-history">
-        <li><span class="ui-sha">a41c0e2</span><span>D-2 新增：导出文件带 BOM</span><time>10:12</time></li>
-        <li class="is-sel"><span class="ui-sha">7be19f0</span><span>Q-1 状态：待澄清 → 已回答</span><time>10:12</time></li>
-        <li><span class="ui-sha">e03d551</span><span>R-2 修改：日元改为取整</span><time>10:07</time></li>
-        <li><span class="ui-sha">19ac7d4</span><span>D-1 新增：首版只做 CSV</span><time>10:05</time></li>
+        <li><span class="ui-sha">a41c0e2</span><span>D-2 added: export with BOM</span><time>10:12</time></li>
+        <li class="is-sel"><span class="ui-sha">7be19f0</span><span>Q-1 status: open → answered</span><time>10:12</time></li>
+        <li><span class="ui-sha">e03d551</span><span>R-2 changed: yen rounded</span><time>10:07</time></li>
+        <li><span class="ui-sha">19ac7d4</span><span>D-1 added: CSV only for v1</span><time>10:05</time></li>
       </ol>
     </div>
     <div class="cell-text">
-      <h3>改动都在 Git 里</h3>
-      <p>知识库本身是一个 Git 仓库。哪条被改了、为什么改、改之前是什么，都能翻出来。</p>
+      <h3>Every change is in Git</h3>
+      <p>The knowledge base is a Git repository. What changed, why, and what it said before are all on record.</p>
     </div>
   </article>
 
   <article class="cell" data-reveal style="--i:2">
     <div class="cell-text">
-      <h3>读得到你的代码</h3>
-      <p>绑定本地仓库后，Agent 读取 main 分支快照、搜索代码，讨论时就知道现有实现。</p>
+      <h3>It reads your code</h3>
+      <p>Bind a local repository and the agent reads a snapshot of main and searches it, so the discussion knows what already exists.</p>
     </div>
     <div class="frag frag-dock-bottom frag-right" data-ui>
       <div class="ui-repo">
-        <div class="ui-repo-row"><span>仓库</span><b>~/code/ledger-app</b></div>
-        <div class="ui-repo-row"><span>分支</span><b>main @ 5d2e8a1</b></div>
-        <div class="ui-repo-row"><span>快照</span><b>2 分钟前</b></div>
-        <div class="ui-repo-row ui-search"><span>搜索</span><b>exportMonthlyCsv</b></div>
+        <div class="ui-repo-row"><span>Repo</span><b>~/code/ledger-app</b></div>
+        <div class="ui-repo-row"><span>Branch</span><b>main @ 5d2e8a1</b></div>
+        <div class="ui-repo-row"><span>Snapshot</span><b>2 min ago</b></div>
+        <div class="ui-repo-row ui-search"><span>Search</span><b>exportMonthlyCsv</b></div>
         <div class="ui-hit">src/billing/export.ts<em>:48</em></div>
         <div class="ui-hit">src/billing/export.test.ts<em>:12</em></div>
       </div>
@@ -143,8 +143,8 @@
   <article class="cell cell-flip" data-reveal>
     <div class="frag frag-dock-top frag-right" data-ui>
       <div class="ui-diagram">
-        <div class="ui-diagram-head"><b>账单导出调用图</b><span class="ui-stale">代码已变更，图可能过期</span></div>
-        <svg viewBox="0 0 300 140" role="img" aria-label="调用图：账单页调用导出服务，导出服务读取账单仓库和时区工具">
+        <div class="ui-diagram-head"><b>Bill export call graph</b><span class="ui-stale">Code changed; may be stale</span></div>
+        <svg viewBox="0 0 300 140" role="img" aria-label="Call graph: the billing page calls the export service, which reads the bill repository and the time zone helper">
           <rect x="10" y="55" width="80" height="30" /><text x="50" y="74">BillingPage</text>
           <rect x="120" y="55" width="80" height="30" /><text x="160" y="74">exportCsv</text>
           <rect x="220" y="15" width="74" height="30" /><text x="257" y="34">BillRepo</text>
@@ -154,21 +154,21 @@
       </div>
     </div>
     <div class="cell-text">
-      <h3>代码图会提醒过期</h3>
-      <p>从代码生成的图记住了它基于哪次提交。代码一变，图上就标出来，不会悄悄过时。</p>
+      <h3>Diagrams say when they’re stale</h3>
+      <p>A diagram drawn from code remembers which commit it came from. When the code moves on, the diagram says so.</p>
     </div>
   </article>
 
   <article class="cell" data-reveal style="--i:1">
     <div class="cell-text">
-      <h3>先问清楚再动手</h3>
-      <p>讨论里没说清的地方会变成问题列表。只有需要你回答的地方用红色标出。</p>
+      <h3>Ask before building</h3>
+      <p>Whatever the discussion left unclear becomes a list of questions. Only what needs your answer is marked red.</p>
     </div>
     <div class="frag frag-dock-bottom" data-ui>
       <ul class="ui-questions">
-        <li class="is-open"><b>Q-3</b><span>空账单月份要导出空文件吗？</span><em>待回答</em></li>
-        <li class="is-open"><b>Q-2</b><span>旧账单是否也按新时区重算？</span><em>待回答</em></li>
-        <li><b>Q-1</b><span>CSV 是否带 UTF-8 BOM</span><em>已回答</em></li>
+        <li class="is-open"><b>Q-3</b><span>Export an empty file for months with no bills?</span><em>Open</em></li>
+        <li class="is-open"><b>Q-2</b><span>Recalculate old bills in the new time zone?</span><em>Open</em></li>
+        <li><b>Q-1</b><span>Include a UTF-8 BOM in the CSV</span><em>Answered</em></li>
       </ul>
     </div>
   </article>
@@ -176,116 +176,116 @@
   <article class="cell cell-flip" data-reveal style="--i:2">
     <div class="frag frag-dock-top" data-ui>
       <div class="ui-settings">
-        <div class="ui-set-row"><span>界面语言</span><div class="ui-seg"><b class="on">中文</b><b>English</b><b>日本語</b></div></div>
-        <div class="ui-set-row"><span>知识语言</span><div class="ui-seg"><b class="on">跟随讨论</b><b>固定</b></div></div>
-        <div class="ui-set-row"><span>夜间模式</span><span class="ui-switch" aria-hidden="true"></span></div>
+        <div class="ui-set-row"><span>Interface</span><div class="ui-seg"><b>中文</b><b class="on">English</b><b>日本語</b></div></div>
+        <div class="ui-set-row"><span>Knowledge</span><div class="ui-seg"><b class="on">Follow discussion</b><b>Fixed</b></div></div>
+        <div class="ui-set-row"><span>Night mode</span><span class="ui-switch" aria-hidden="true"></span></div>
       </div>
     </div>
     <div class="cell-text">
-      <h3>三种界面语言</h3>
-      <p>中文、英文、日文界面随时切换。条目用什么语言记，可以单独设置。</p>
+      <h3>Three interface languages</h3>
+      <p>Switch between Chinese, English and Japanese at any time. The language entries are written in is a separate setting.</p>
     </div>
   </article>
 </section>
 
 <section class="flow" id="flow" aria-labelledby="flow-h">
   <div class="field field-1">
-    <h2 id="flow-h" class="flow-h" data-reveal>从讨论到提交</h2>
+    <h2 id="flow-h" class="flow-h" data-reveal>Discussion to commit</h2>
     <div class="wp" data-ui>
-      <div class="wp-head"><b>工作包 · 账单 CSV 导出</b><span class="wp-state">整理中</span></div>
-      <ul class="wp-list"><li>需求 3</li><li>决策 1</li><li class="wp-alert">问题 2 待回答</li></ul>
+      <div class="wp-head"><b>Work package · Bill CSV export</b><span class="wp-state">Drafting</span></div>
+      <ul class="wp-list"><li>3 requirements</li><li>1 decision</li><li class="wp-alert">2 questions open</li></ul>
     </div>
-    <p class="clause" data-reveal style="--i:1">先在房间里讨论，条目随讨论归档。</p>
+    <p class="clause" data-reveal style="--i:1">First, talk it through. Entries file themselves.</p>
   </div>
   <div class="field field-2">
     <div class="wp" data-ui>
-      <div class="wp-head"><b>工作包 · 账单 CSV 导出</b><span class="wp-state">已澄清</span></div>
-      <ul class="wp-list"><li>需求 3</li><li>决策 3</li><li>问题 0 待回答</li></ul>
+      <div class="wp-head"><b>Work package · Bill CSV export</b><span class="wp-state">Clarified</span></div>
+      <ul class="wp-list"><li>3 requirements</li><li>3 decisions</li><li>0 questions open</li></ul>
     </div>
-    <p class="clause" data-reveal style="--i:1">再把没说清的问题逐个问清楚。</p>
+    <p class="clause" data-reveal style="--i:1">Then answer the open questions, one by one.</p>
   </div>
   <div class="field field-3">
     <div class="wp" data-ui>
-      <div class="wp-head"><b>工作包 · 账单 CSV 导出</b><span class="wp-state">已批准</span></div>
-      <ul class="wp-list"><li>规格与计划已生成</li><li>交给 Claude Code</li><li>批准人：周</li></ul>
+      <div class="wp-head"><b>Work package · Bill CSV export</b><span class="wp-state">Approved</span></div>
+      <ul class="wp-list"><li>Spec and plan generated</li><li>Handed to Claude Code</li><li>Approved by Zhou</li></ul>
     </div>
-    <p class="clause" data-reveal style="--i:1">然后生成工作包，批准后交给编码 Agent。</p>
+    <p class="clause" data-reveal style="--i:1">Next, approve the work package for a coding agent.</p>
   </div>
   <div class="field field-4">
     <div class="wp" data-ui>
-      <div class="wp-head"><b>工作包 · 账单 CSV 导出</b><span class="wp-state">已完成</span></div>
-      <ul class="wp-list"><li>提交 3 个，已进入 main</li><li>改动 6 个文件</li><li>需求 3 / 3 已覆盖</li></ul>
+      <div class="wp-head"><b>Work package · Bill CSV export</b><span class="wp-state">Done</span></div>
+      <ul class="wp-list"><li>3 commits, merged into main</li><li>6 files changed</li><li>3 / 3 requirements covered</li></ul>
     </div>
-    <p class="clause" data-reveal style="--i:1">最后看提交落进 main，进度自动回报。</p>
+    <p class="clause" data-reveal style="--i:1">Finally, watch the commits land in main.</p>
   </div>
 </section>
 
 <section class="tile tile-warm local" id="local" aria-labelledby="local-h">
   <div class="local-row">
     <dl class="facts" data-reveal>
-      <div><dt>数据库</dt><dd>本机磁盘上的 PGlite</dd></div>
-      <div><dt>数据目录</dt><dd>~/.nema/desktop</dd></div>
-      <div><dt>网络</dt><dd>只监听本机回环地址</dd></div>
+      <div><dt>Database</dt><dd>PGlite on your local disk</dd></div>
+      <div><dt>Data folder</dt><dd>~/.nema/desktop</dd></div>
+      <div><dt>Network</dt><dd>Listens on loopback only</dd></div>
     </dl>
     <div class="local-main">
-      <h2 id="local-h" class="h-sec" data-reveal>只在你的电脑上运行</h2>
-      <p class="lead" data-reveal style="--i:1">桌面版把整套服务装进一个程序：数据库、本地核心、Node 和 Git 都随附，不需要 Docker，也不需要数据库服务器。讨论内容只发给你选的模型服务商，GitHub 令牌 Nema 不碰。</p>
+      <h2 id="local-h" class="h-sec" data-reveal>Runs only on your computer</h2>
+      <p class="lead" data-reveal style="--i:1">The desktop app packs the whole stack into one program, with the database, local core, Node and Git bundled. No Docker, no database server. Discussion text goes only to the model provider you choose, and Nema never touches your GitHub token.</p>
     </div>
   </div>
   <div class="local-row local-row-2">
-    <p class="facts-word" data-reveal>现状</p>
+    <p class="facts-word" data-reveal>Status</p>
     <div class="records">
-      <ul class="record" data-reveal style="--i:1" aria-label="平台">
-        <li><span>Windows x64 桌面版</span><span>已构建，预览</span></li>
-        <li><span>macOS 桌面版</span><span>配置就绪，未验证</span></li>
-        <li><span>Linux</span><span>Web / Compose 版</span></li>
-        <li><span>安装包签名</span><span>暂未签名</span></li>
-        <li><span>自动更新</span><span>暂无</span></li>
+      <ul class="record" data-reveal style="--i:1" aria-label="Platforms">
+        <li><span>Windows x64 desktop</span><span>Built, preview</span></li>
+        <li><span>macOS desktop</span><span>Configured, unverified</span></li>
+        <li><span>Linux</span><span>Web / Compose version</span></li>
+        <li><span>Installer signing</span><span>Not yet signed</span></li>
+        <li><span>Auto-update</span><span>None yet</span></li>
       </ul>
-      <ul class="record" data-reveal style="--i:2" aria-label="模型">
-        <li><span>ChatGPT 订阅</span><span>浏览器登录</span></li>
-        <li><span>Claude 订阅</span><span>Claude Code 令牌</span></li>
-        <li><span>API Key</span><span>兼容 Responses API</span></li>
-        <li><span>编码 Agent</span><span>Codex、Claude Code</span></li>
-        <li><span>许可证</span><span>MIT</span></li>
+      <ul class="record" data-reveal style="--i:2" aria-label="Models">
+        <li><span>ChatGPT subscription</span><span>Browser sign-in</span></li>
+        <li><span>Claude subscription</span><span>Claude Code token</span></li>
+        <li><span>API key</span><span>Responses API compatible</span></li>
+        <li><span>Coding agents</span><span>Codex, Claude Code</span></li>
+        <li><span>License</span><span>MIT</span></li>
       </ul>
     </div>
   </div>
 </section>
 
 <section class="faq" id="faq" aria-labelledby="faq-h">
-  <div class="band band-head"><h2 id="faq-h" data-reveal>常见问题</h2></div>
+  <div class="band band-head"><h2 id="faq-h" data-reveal>Questions</h2></div>
   <div class="band">
-    <h3 data-reveal>现在能下载吗？</h3>
-    <p data-reveal style="--i:1">还没有正式发布。现在可以从源码构建 Windows 桌面预览版，或者用 Docker Compose 运行 Web 版。安装包未签名，首次打开时 Windows 会提示“已保护你的电脑”。</p>
+    <h3 data-reveal>Can I download it now?</h3>
+    <p data-reveal style="--i:1">Not yet. You can build the Windows desktop preview from source, or run the web version with Docker Compose. Installers are unsigned, so Windows shows “Windows protected your PC” the first time you open one.</p>
   </div>
   <div class="band band-alt">
-    <h3 data-reveal>要花钱吗？</h3>
-    <p data-reveal style="--i:1">Nema Room 本身以 MIT 许可开源。整理条目需要调用模型，费用或额度由你选的服务商决定：ChatGPT 或 Claude 订阅，或者你自己的 API Key。</p>
+    <h3 data-reveal>Does it cost anything?</h3>
+    <p data-reveal style="--i:1">Nema Room itself is open source under the MIT license. Filing entries calls a model, so cost or quota depends on your provider: a ChatGPT or Claude subscription, or your own API key.</p>
   </div>
   <div class="band">
-    <h3 data-reveal>讨论内容会上传到哪里？</h3>
-    <p data-reveal style="--i:1">数据库和知识库都在你的电脑上。只有生成条目时，相关内容会发给你选择的模型服务商。服务默认只监听本机，不要直接暴露到公网。</p>
+    <h3 data-reveal>Where does my discussion go?</h3>
+    <p data-reveal style="--i:1">The database and knowledge base stay on your computer. Only when entries are generated is the relevant text sent to the model provider you chose. Services listen on your machine only; don’t expose them to the internet.</p>
   </div>
   <div class="band band-alt">
-    <h3 data-reveal>编码 Agent 怎么回报进度？</h3>
-    <p data-reveal style="--i:1">用 <code>nema report install</code> 给 Codex 或 Claude Code 装上回报钩子。提交时它会通知 Nema；Nema 没在运行时，回报先存在本地，下次再发。</p>
+    <h3 data-reveal>How do coding agents report progress?</h3>
+    <p data-reveal style="--i:1">Run <code>nema report install</code> to add report hooks to Codex or Claude Code. Each commit notifies Nema; if Nema isn’t running, reports wait locally and go out next time.</p>
   </div>
   <div class="band">
-    <h3 data-reveal>能多人一起用吗？</h3>
-    <p data-reveal style="--i:1">首版是一个人在本机使用。多设备同步、备份和团队只读访问，会在本地核心完成之后再做。</p>
+    <h3 data-reveal>Can a team use it together?</h3>
+    <p data-reveal style="--i:1">The first release is for one person on one machine. Multi-device sync, backups and read-only team access come after the local core is done.</p>
   </div>
 </section>
 
 <section class="cta" aria-labelledby="cta-h">
-  <figure class="tile picture cta-side cta-left"><img src="assets/interior-no-30-strandgade.jpg" width="1137" height="1400" alt="Hammershøi 画作《斯特兰德街 30 号室内》：门开着，一位女子背对观者坐在桌前。" loading="lazy"></figure>
+  <figure class="tile picture cta-side cta-left"><img src="../assets/interior-no-30-strandgade.jpg" width="1137" height="1400" alt="Hammershøi, Interior, Strandgade 30: a door stands open and a woman sits at a table with her back turned." loading="lazy"></figure>
   <div class="tile tile-accent cta-main">
-    <h2 id="cta-h" data-reveal>从源码开始试用</h2>
-    <p data-reveal style="--i:1">需要 Node.js 22 以上和 Git。克隆仓库后运行安装向导，它会检查环境、安装依赖并带你选好模型。</p>
+    <h2 id="cta-h" data-reveal>Try it from source</h2>
+    <p data-reveal style="--i:1">You need Node.js 22 or later and Git. Clone the repository and run the setup wizard: it checks your environment, installs dependencies and walks you through choosing a model.</p>
     <pre data-reveal style="--i:2"><code>git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
-node scripts/setup.mjs</code></pre>
-    <a class="button button-paper" href="https://github.com/Nema-Project/nema-room" data-reveal style="--i:3">查看源码</a>
+node scripts/setup.mjs --lang en</code></pre>
+    <a class="button button-paper" href="https://github.com/Nema-Project/nema-room" data-reveal style="--i:3">View source</a>
   </div>
   <div class="tile tile-ink cta-side cta-right" aria-hidden="true"></div>
 </section>
@@ -298,58 +298,58 @@ node scripts/setup.mjs</code></pre>
     <p class="mark-word">Nema Room</p>
   </div>
   <div class="foot-grid">
-    <nav class="foot-col" aria-label="页面">
-      <p class="foot-title">页面</p>
-      <a class="link" href="#demo">演示</a>
-      <a class="link" href="#features">功能</a>
-      <a class="link" href="#flow">流程</a>
-      <a class="link" href="#local">本地运行</a>
+    <nav class="foot-col" aria-label="This page">
+      <p class="foot-title">This page</p>
+      <a class="link" href="#demo">Demo</a>
+      <a class="link" href="#features">Features</a>
+      <a class="link" href="#flow">Flow</a>
+      <a class="link" href="#local">Local</a>
     </nav>
-    <nav class="foot-col" aria-label="项目">
-      <p class="foot-title">项目</p>
-      <a class="link" href="https://github.com/Nema-Project/nema-room">GitHub 仓库</a>
-      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/CHANGELOG.md">更新日志</a>
-      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/LICENSE">MIT 许可证</a>
-      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/SECURITY.md">安全说明</a>
+    <nav class="foot-col" aria-label="Project">
+      <p class="foot-title">Project</p>
+      <a class="link" href="https://github.com/Nema-Project/nema-room">GitHub repository</a>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/CHANGELOG.md">Changelog</a>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/LICENSE">MIT License</a>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/SECURITY.md">Security</a>
     </nav>
-    <nav class="foot-col" aria-label="说明文档">
-      <p class="foot-title">说明文档</p>
-      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/README.md">简体中文</a>
+    <nav class="foot-col" aria-label="README">
+      <p class="foot-title">README</p>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/README.md" lang="zh-CN">简体中文</a>
       <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/README.en.md">English</a>
-      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/README.ja.md">日本語</a>
+      <a class="link" href="https://github.com/Nema-Project/nema-room/blob/main/README.ja.md" lang="ja">日本語</a>
     </nav>
     <div class="foot-col foot-credits">
-      <p class="foot-title">画作</p>
-      <p>Vilhelm Hammershøi：《白门，斯特兰德街 25 号》（1913）、《斯特兰德街 30 号室内》（1901）、《斯特兰德街 30 号室内》（1906）。公有领域，图像来自 Wikimedia Commons。</p>
+      <p class="foot-title">Paintings</p>
+      <p>Vilhelm Hammershøi: White Doors, Strandgade 25 (1913); Interior, Strandgade 30 (1901); Interior, Strandgade 30 (1906). Public domain, images via Wikimedia Commons.</p>
     </div>
   </div>
   <div class="foot-last">
-    <p>© 2026 Nema Project · MIT 许可证</p>
-    <a class="button button-ink" href="#top">回到顶部</a>
+    <p>© 2026 Nema Project · MIT License</p>
+    <a class="button button-ink" href="#top">Back to top</a>
   </div>
 </footer>
 
 <script type="application/json" id="demo-text">
 {
-  "provenance": { "said": "用户陈述", "decided": "用户决定", "inferred": "Agent 推断" },
-  "kind": { "R": "需求", "D": "决策", "Q": "问题" },
-  "answered": "已回答",
-  "source": "来源：",
-  "empty": "还没有条目。打开右侧任意一条消息。",
-  "counts": "需求 {R} · 决策 {D} · 问题 {Q}",
+  "provenance": { "said": "Stated", "decided": "Decided", "inferred": "Inferred" },
+  "kind": { "R": "Requirement", "D": "Decision", "Q": "Question" },
+  "answered": "answered",
+  "source": "Source: ",
+  "empty": "No entries yet. Turn on any message on the right.",
+  "counts": "Requirements {R} · Decisions {D} · Questions {Q}",
   "filed": {
-    "m1": [{ "id": "R-1", "title": "账单页可按月导出 CSV", "by": "said", "src": "林 · 10:02" }],
-    "m2": [{ "id": "D-1", "title": "首版只做 CSV，不做 PDF", "by": "decided", "src": "周 · 10:05" }],
-    "m3": [{ "id": "R-2", "title": "金额保留两位小数，JPY 取整", "by": "said", "src": "林 · 10:07" }],
-    "m4": [{ "id": "Q-1", "title": "CSV 是否带 UTF-8 BOM", "by": "inferred", "src": "Nema · 10:08" }],
-    "m5": [{ "id": "D-2", "title": "导出文件带 UTF-8 BOM", "by": "decided", "src": "周 · 10:12 · 回答了 Q-1" }],
+    "m1": [{ "id": "R-1", "title": "Export bills by month as CSV from the billing page", "by": "said", "src": "Lin · 10:02" }],
+    "m2": [{ "id": "D-1", "title": "First version is CSV only, no PDF", "by": "decided", "src": "Zhou · 10:05" }],
+    "m3": [{ "id": "R-2", "title": "Two decimal places; JPY in whole numbers", "by": "said", "src": "Lin · 10:07" }],
+    "m4": [{ "id": "Q-1", "title": "Should the CSV include a UTF-8 BOM?", "by": "inferred", "src": "Nema · 10:08" }],
+    "m5": [{ "id": "D-2", "title": "Exported files include a UTF-8 BOM", "by": "decided", "src": "Zhou · 10:12 · answers Q-1" }],
     "m6": [
-      { "id": "R-3", "title": "按东京时间划分账单月份", "by": "said", "src": "林 · 10:15" },
-      { "id": "Q-2", "title": "旧账单是否按新时区重算", "by": "inferred", "src": "Nema · 10:15 · 由 R-3 引出" }
+      { "id": "R-3", "title": "Bill months follow Tokyo time", "by": "said", "src": "Lin · 10:15" },
+      { "id": "Q-2", "title": "Recalculate old bills in the new time zone?", "by": "inferred", "src": "Nema · 10:15 · raised by R-3" }
     ]
   }
 }
 </script>
-<script src="main.js"></script>
+<script src="../main.js"></script>
 </body>
 </html>
