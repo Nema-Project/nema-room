@@ -9,6 +9,7 @@
 ### Changed
 
 - The landing page links to the latest GitHub release instead of a fixed version number.
+- GitHub release notes lead with that version's changelog. Checksums stay in the attached SHA256SUMS file.
 
 ## [0.1.2] - 2026-10-26
 
