@@ -493,7 +493,10 @@ process.stdout.write("hits:" + args[1]);
   expect(second).toEqual({ type: "rpc.response", id: "search-2", ok: true, result: "hits:beta" });
   expect(lf(readFileSync(join(src, "README.md"), "utf8"))).toBe("v1\n");
   expect(existsSync(join(src, "untracked.txt"))).toBe(false);
-  expect(readFileSync(join(record, "argv"), "utf8")).toBe(`extract\n${src}\n--code-only\n\nquery\nalpha\n\nquery\nbeta\n\n`);
+  const graph = join(src, "graphify-out", "graph.json");
+  expect(readFileSync(join(record, "argv"), "utf8")).toBe(
+    `extract\n${src}\n--code-only\n\nquery\nalpha\n--graph\n${graph}\n\nquery\nbeta\n--graph\n${graph}\n\n`,
+  );
 });
 
 test("concurrent repo.index and code__search build the index once", async () => {
@@ -587,7 +590,7 @@ process.stdout.write("via:" + args[1] + ":" + args[2]);
   expect(explained).toEqual({ type: "rpc.response", id: "explain", ok: true, result: "sym:Widget" });
   expect(linked).toEqual({ type: "rpc.response", id: "path", ok: true, result: "via:Widget:Button" });
   expect(readFileSync(join(record, "argv"), "utf8")).toBe(
-    `extract\n${src}\n--code-only\n\nexplain\nWidget\n\npath\nWidget\nButton\n\n`,
+    `extract\n${src}\n--code-only\n\nexplain\nWidget\n--graph\n${join(src, "graphify-out", "graph.json")}\n\npath\nWidget\nButton\n--graph\n${join(src, "graphify-out", "graph.json")}\n\n`,
   );
 });
 

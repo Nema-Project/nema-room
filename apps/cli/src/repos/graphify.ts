@@ -186,18 +186,21 @@ export async function buildIndex(snapshotRoot: string, opts?: GraphifyOpts): Pro
   finish(await runGraphify(snapshotRoot, ["extract", src, "--code-only"], snapshotRoot, extractCallOpts(opts)));
 }
 
-/** Runs from the snapshot root, like extract and update, so graphify finds the same graphify-out/. */
+/** Extract writes `src/graphify-out/graph.json`. A query from the snapshot root looks beside itself and misses it. */
+function graphJson(snapshotRoot: string): string {
+  return path.join(snapshotRoot, "src", "graphify-out", "graph.json");
+}
+
 export async function queryIndex(
   snapshotRoot: string,
   kind: "query" | "explain" | "path",
   args: string[],
   opts?: GraphifyOpts,
 ): Promise<string> {
-  // ponytail: `--` before the values is not used because no real graphify CLI was available to confirm it.
   for (const arg of args) {
     if (arg.startsWith("-")) throw new Error(`参数不能以 - 开头：${arg}`);
   }
-  return finish(await runGraphify(snapshotRoot, [kind, ...args], snapshotRoot, opts));
+  return finish(await runGraphify(snapshotRoot, [kind, ...args, "--graph", graphJson(snapshotRoot)], snapshotRoot, opts));
 }
 
 /** Version text when `graphify --version` runs; the install hint when the binary is missing. */
