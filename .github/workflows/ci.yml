@@ -66,6 +66,8 @@ jobs:
       - run: npm run typecheck -w apps/cli
       - run: node --test scripts/setup.test.mjs
       - run: node scripts/setup.mjs --help
+      - name: Git link pruning for the macOS payload (needs real symlinks; skipped on Windows)
+        run: node --test --test-name-pattern="dashed Git builtins" scripts/desktop/fetch-tools.test.mjs
       - name: Native credentials, command execution, and authentication
         run: npx vitest run apps/cli/test/platform.test.ts apps/cli/test/secrets/permissions.test.ts apps/cli/test/config.test.ts apps/cli/test/direct/authCommands.test.ts apps/cli/test/claude/adapter.test.ts packages/knowledge/test/store.test.ts packages/knowledge/test/history.test.ts --maxWorkers=2
 

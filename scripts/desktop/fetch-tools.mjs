@@ -196,6 +196,27 @@ export async function rejectSymlinkPath(directory) {
     throw new Error(`Configured directory path contains a symlink or non-directory: ${cursor}`);
   }
 }
+// Git execs these by their dashed names (local transport, and git-remote-<scheme> for each protocol), so their links stay.
+const DASHED_GIT_COMMANDS_KEPT = new Set(['git-upload-pack', 'git-receive-pack', 'git-upload-archive']);
+
+/**
+ * Remove libexec/git-core links that only alias the git binary for its builtins (git-fetch -> git, ...).
+ * git runs builtins itself, but staging must copy every link as a file because the release payload is
+ * link-free, which turned dugite's ~145 links into ~500MB of identical binaries on macOS.
+ */
+export async function pruneDashedGitBuiltins(gitRoot) {
+  const core = path.join(gitRoot, 'libexec', 'git-core');
+  const removed = [];
+  for (const name of await readdir(core).catch(() => [])) {
+    if (DASHED_GIT_COMMANDS_KEPT.has(name) || name.startsWith('git-remote-')) continue;
+    const entry = path.join(core, name);
+    if (!(await lstat(entry)).isSymbolicLink() || await readlink(entry) !== 'git') continue;
+    await rm(entry);
+    removed.push(name);
+  }
+  return removed;
+}
+
 export async function downloadVerified(asset, cacheDir, fetchImpl = fetch) {
   await mkdir(cacheDir, { recursive: true });
   const finalPath = await ensureInsideRoot(cacheDir, path.join(cacheDir, asset.file));
@@ -298,6 +319,7 @@ export async function fetchTools({ platform, arch, cacheDir, outDir }) {
     const nodeTmp = path.join(work, 'node-unpack'), gitTmp = path.join(work, 'git-unpack');
     await extractArchive(await readFile(nodeArchive), selected.node.format, nodeTmp);
     await extractArchive(await readFile(gitArchive), selected.git.format, gitTmp);
+    await pruneDashedGitBuiltins(gitTmp);
     const nodeLicense = await findRequiredFile(nodeTmp, [
       `${selected.node.binary.split('/')[0]}/LICENSE`, `${selected.node.binary.split('/')[0]}/LICENSE.txt`,
       'LICENSE', 'LICENSE.txt',
