@@ -166,6 +166,9 @@ describe("protected same-origin gateway", () => {
     const cookie = launch.headers.get("set-cookie")!.split(";")[0]!;
 
     expect(await (await fetch(gateway.origin, { headers: { cookie } })).text()).toBe("web:/");
+    expect(await (await fetch(`${gateway.origin}/w/ws_abc/t/m_xyz?messageId=m_focus`, { headers: { cookie } })).text()).toBe("web:/w/ws_abc/t/m_xyz?messageId=m_focus");
+    expect((await fetch(`${gateway.origin}/w/ws_abc/t/m_xyz/extra`, { headers: { cookie } })).status).toBe(404);
+    expect((await fetch(`${gateway.origin}/w/ws_abc/t`, { headers: { cookie } })).status).toBe(404);
     const api = await fetch(`${gateway.origin}/api/workspaces`, {
       headers: { cookie, authorization: "Bearer client-secret", "x-nema-gateway-credential": "forged", referer: launchUrl },
     });

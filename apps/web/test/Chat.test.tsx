@@ -38,11 +38,11 @@ beforeEach(() => {
   vi.mocked(hub.listThreads).mockResolvedValue([]);
 });
 
-const mount = async (connected: boolean) => {
+const mount = async (connected: boolean, extra: { searchOpen?: boolean } = {}) => {
   const ref = createRef<ChatHandle>();
   render(
     <I18nProvider>
-      <Chat ref={ref} workspaceId="w1" connected={connected} />
+      <Chat ref={ref} workspaceId="w1" connected={connected} searchOpen={extra.searchOpen} />
     </I18nProvider>,
   );
   await act(async () => {});
@@ -50,6 +50,13 @@ const mount = async (connected: boolean) => {
 };
 
 describe("Chat", () => {
+  it("shows main-chat messages that arrived without a thread id", async () => {
+    const legacy = m("old", "still here");
+    delete (legacy as { threadId?: string | null }).threadId;
+    vi.mocked(hub.listMessages).mockResolvedValue([legacy]);
+    await mount(true);
+    expect(await screen.findByText("still here")).toBeTruthy();
+  });
   it("keeps workspace thread replies out of the main conversation", async () => {
     const ref = await mount(true);
     act(() => ref.current!.handleEvent({ type: "message.created", message: { ...m("reply", "thread-only text", "agent"), threadId: "anchor" } }));
@@ -193,6 +200,10 @@ describe("Chat", () => {
     await act(async () => resolve({ running: null }));
     expect(screen.getByText("Organizing")).toBeTruthy();
   });
+  it("keeps message search closed until the header opens it", async () => {
+    await mount(true);
+    expect(screen.queryByPlaceholderText("Search messages")).toBeNull();
+  });
   it("quotes a message, edits it, and searches", async () => {
     localStorage.setItem(LOCALE_STORAGE_KEY, "zh");
     try {
@@ -205,7 +216,7 @@ describe("Chat", () => {
         task: { id: "t2", workspaceId: "w1", messageId: "a", status: "queued", error: null },
       });
       vi.mocked(hub.searchMessages).mockResolvedValue([m("s", "进度说明", "agent")]);
-      await mount(true);
+      await mount(true, { searchOpen: true });
       await userEvent.click(screen.getByRole("button", { name: "引用" }));
       expect(screen.getByRole("button", { name: "取消引用" })).toBeTruthy();
       await userEvent.type(screen.getByPlaceholderText(placeholder), "about it");

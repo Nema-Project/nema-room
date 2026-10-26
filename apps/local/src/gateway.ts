@@ -93,6 +93,7 @@ async function settingsJson(req: IncomingMessage): Promise<{ value: unknown } | 
 function mappedTarget(pathname: string, web: URL, hub: URL): { target: URL; ui: boolean } | null {
   if (pathname === "/api" || pathname.startsWith("/api/")) return { target: hub, ui: false };
   const uiPath = pathname === "/" || /^\/w\/[A-Za-z0-9_-]+\/?$/.test(pathname) ||
+    /^\/w\/[A-Za-z0-9_-]+\/t\/[A-Za-z0-9_-]+\/?$/.test(pathname) ||
     /^\/_next\/static\/.+/.test(pathname) || pathname === "/_next/image" ||
     ["/favicon.ico", "/robots.txt", "/manifest.webmanifest", "/icon.svg", "/icon.png", "/nema-room-mark.svg"].includes(pathname);
   return uiPath ? { target: web, ui: true } : null;

@@ -137,6 +137,8 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .bar { height: 60px; padding: 0 28px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--rule); flex: none; }
 .bar h1 { font-size: 17px; font-weight: 700; letter-spacing: -0.015em; }
 .bar .sp { margin-left: auto; }
+.bar-actions { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+.bar-actions .sp { margin-left: 0; }
 .link { color: var(--ink-3); font-size: 13px; }
 .link:hover { color: var(--ink); }
 .tag { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--ink); padding: 1px 6px; }
@@ -181,14 +183,23 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .av { width: 36px; height: 36px; display: grid; place-items: center; font-weight: 700; font-size: 13px; }
 .av.me { background: var(--ink); color: var(--on-ink); }
 .av.ai { background: var(--paper); color: var(--ink); border: 1px solid var(--ink); font-family: var(--mono); font-size: 12px; }
-.who { font-weight: 700; font-size: 14px; }
-.who time { font-weight: 400; color: var(--ink-3); font-size: 12px; margin-left: 8px; }
+.who { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; font-weight: 700; font-size: 14px; }
+.who time { font-weight: 400; color: var(--ink-3); font-size: 12px; }
+.who button { font-weight: 400; color: var(--ink-2); }
+.quiet { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.msg:hover .quiet, .sysmsg:hover .quiet, .msg:focus-within .quiet, .sysmsg:focus-within .quiet { position: static; width: auto; height: auto; margin: 0; overflow: visible; clip: auto; white-space: normal; }
 .memo { background: var(--paper-2); padding: 10px 12px; border-left: 2px solid var(--ink); color: var(--ink-2); }
 .quote, .quote-bar, .versions, .search-hit { background: var(--paper-2); color: var(--ink-2); border-left: 2px solid var(--ink); padding: 6px 10px; }
 .quote-bar { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .quote { display: block; width: 100%; text-align: left; margin-bottom: 6px; }
 .search { padding: 8px 12px 0; }
 .search input, .editbox textarea { width: 100%; border: 1px solid var(--ink); background: var(--paper-2); color: var(--ink); font: inherit; }
+.search input { padding: 6px 10px; }
+.editbox { display: grid; gap: 10px; margin-top: 8px; }
+.editbox textarea { min-height: 72px; padding: 8px 10px; resize: vertical; }
+.editbox .actions { display: flex; gap: 12px; }
+.editbox .actions button { border: 1px solid var(--ink); padding: 5px 14px; font-weight: 600; }
+.editbox .actions .primary { background: var(--ink); color: var(--on-ink); }
 .search-hit { margin-top: 6px; cursor: pointer; }
 .search-hit mark { background: var(--paper-2); color: var(--ink); font-weight: 700; }
 .sysmsg { padding: 6px 0 6px 48px; font-size: 12px; color: var(--ink-3); }
@@ -401,9 +412,9 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .kcheck { margin-right: 6px; }
 .mark { font-family: var(--mono); font-size: inherit; color: var(--ink-2); text-decoration: underline; }
 .grill-settings { margin-top: 8px; }
-.ws-wrap { display: flex; align-items: center; position: relative; }
-.ws-wrap > .ws { flex: 1; min-width: 0; }
-.attention-badge { border: 0; border-radius: 999px; background: var(--accent); color: white; min-width: 22px; height: 22px; margin-right: 6px; cursor: pointer; }
+.ws-wrap { position: relative; }
+.ws-wrap:has(.attention-badge) > .ws { padding-right: 40px; }
+.attention-badge { position: absolute; right: 12px; top: 50%; translate: 0 -50%; z-index: 1; display: grid; place-items: center; min-width: 18px; height: 18px; margin: 0; padding: 0 6px; border: 0; border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; line-height: 1; cursor: pointer; }
 .thread-row { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px 34px; padding: 7px 9px; border: 1px solid var(--rule); border-radius: 8px; color: var(--ink); background: var(--paper); cursor: pointer; max-width: calc(100% - 40px); }
 .thread-row strong { color: var(--on-ink); background: var(--accent); border-radius: 999px; padding: 1px 6px; }
 .thread-row time { margin-left: auto; color: var(--ink-2); }
@@ -413,6 +424,7 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .thread-floating:not(.active) { filter: saturate(.88); }
 .thread-window, .thread-page { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .thread-page { height: calc(100vh - 32px); max-width: 900px; margin: 16px auto; }
+.nema-desktop-window .thread-page { height: calc(100vh - 68px); margin-top: 52px; }
 .thread-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--rule); cursor: grab; }
 .thread-header span { display: block; color: var(--ink-2); font-size: 12px; }
 .thread-header button { border: 0; background: transparent; color: var(--ink); font-size: 22px; cursor: pointer; }

@@ -512,15 +512,16 @@ test("repo.moved for an unknown repo is ignored without a broadcast", async () =
   expect(seen).toEqual([]);
 });
 
-test("binding a repo queues one architecture task naming that repo", async () => {
+test("binding a repo queues one architecture task after its index succeeds", async () => {
   const { db, dataDir } = await makeHubDeps();
   const ws = await createWorkspace(db, dataDir, "Alpha");
+  const finishers: Array<(value: { sha: string }) => void> = [];
   const { daemon } = daemonOf({
     "repo.inspect": (params) => {
       const requestPath = (params as { path: string }).path;
       return { ...inspected, root: requestPath, gitCommonDir: `${requestPath}/.git` };
     },
-    "repo.index": () => new Promise(() => {}),
+    "repo.index": () => new Promise<{ sha: string }>((resolve) => { finishers.push(resolve); }),
     "repo.forget": () => ({ ok: true }),
   });
   const events = new EventBus();
@@ -535,31 +536,72 @@ test("binding a repo queues one architecture task naming that repo", async () =>
   };
 
   const api = await bindRepo(db, daemon, ws.id, { path: "/api", label: "API" }, events);
+  expect(await architectureTasks()).toEqual([]);
+  expect(seen).toEqual([]);
+
+  finishers[0]!({ sha: "abc" });
+  await until(async () => (await architectureTasks()).length === 1);
   expect(await architectureTasks()).toEqual([
     { content: `为仓库 API（${api.id}）画架构图：用 code__ 函数读代码，用 diagram__save 保存，type 为 architecture。`, queued: 1 },
   ]);
   expect(seen.map((e) => e.type)).toEqual(["message.created", "task.updated"]);
 
   const web = await bindRepo(db, daemon, ws.id, { path: "/web", label: "Web" }, events);
+  expect(await architectureTasks()).toHaveLength(1);
+  finishers[1]!({ sha: "def" });
+  await until(async () => (await architectureTasks()).length === 2);
   let list = await architectureTasks();
-  expect(list).toHaveLength(2);
   expect(list[1]!.content).toContain(`为仓库 Web（${web.id}）`);
   expect(list[1]!.queued).toBe(1);
 
   await unbindRepo(db, daemon, web.id);
   expect(await architectureTasks()).toHaveLength(2);
   const again = await bindRepo(db, daemon, ws.id, { path: "/web", label: "Web" }, events);
+  finishers[2]!({ sha: "ghi" });
+  await until(async () => (await architectureTasks()).length === 3);
   list = await architectureTasks();
-  expect(list).toHaveLength(3);
   expect(list[2]!.content).toContain(`为仓库 Web（${again.id}）`);
   expect(list[2]!.queued).toBe(1);
+});
+
+test("a failed or empty index queues no architecture task", async () => {
+  const { db, dataDir } = await makeHubDeps();
+  const ws = await createWorkspace(db, dataDir, "Alpha");
+  let rejectIndex: (err: Error) => void = () => {};
+  const { daemon } = daemonOf({
+    "repo.inspect": (params) => {
+      const requestPath = (params as { path: string }).path;
+      return { ...inspected, root: requestPath, gitCommonDir: `${requestPath}/.git` };
+    },
+    "repo.index": () => new Promise((_resolve, reject) => { rejectIndex = reject; }),
+  });
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  await bindRepo(db, daemon, ws.id, { path: "/api", label: "API" });
+  rejectIndex(new Error("index failed"));
+  await new Promise((resolve) => setImmediate(resolve));
+  expect((await listMessages(db, ws.id)).filter((m) => m.role === "system")).toHaveLength(0);
+
+  const { daemon: emptyDaemon } = daemonOf({
+    "repo.inspect": () => ({ ...inspected, root: "/web", gitCommonDir: "/web/.git" }),
+    "repo.index": () => Promise.resolve({ sha: "" }),
+  });
+  await bindRepo(db, emptyDaemon, ws.id, { path: "/web", label: "Web" });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect((await listMessages(db, ws.id)).filter((m) => m.role === "system")).toHaveLength(0);
+  errors.mockRestore();
 });
 
 test("a failed bind queues no architecture task", async () => {
   const { db, dataDir } = await makeHubDeps();
   const ws = await createWorkspace(db, dataDir, "Alpha");
-  const { daemon } = daemonOf({ "repo.inspect": () => inspected, "repo.index": () => new Promise(() => {}) });
+  let finishIndex: (value: { sha: string }) => void = () => {};
+  const { daemon } = daemonOf({
+    "repo.inspect": () => inspected,
+    "repo.index": () => new Promise<{ sha: string }>((resolve) => { finishIndex = resolve; }),
+  });
   await bindRepo(db, daemon, ws.id, { path: "/a", label: "A" });
+  finishIndex({ sha: "abc" });
+  await until(async () => (await listMessages(db, ws.id)).some((m) => m.role === "system"));
   await expect(bindRepo(db, daemon, ws.id, { path: "/a", label: "B" })).rejects.toThrow(RepoError);
   expect((await listMessages(db, ws.id)).filter((m) => m.role === "system")).toHaveLength(1);
 });

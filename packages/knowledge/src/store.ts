@@ -565,17 +565,21 @@ export class KnowledgeStore {
 
   async readWorkPackage(id: string): Promise<{ entry: Entry; spec: string | null; plan: string | null } | null> {
     if (kindFromId(id) !== "workpackage") return null;
-    const entry = await this.get(id);
-    if (!entry) return null;
-    const read = async (which: "spec" | "plan"): Promise<string | null> => {
-      try {
-        return await readFile(path.join(this.repoDir, KIND_DIR.workpackage, `${id}.${which}.md`), "utf8");
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-        throw err;
-      }
-    };
-    return { entry, spec: await read("spec"), plan: await read("plan") };
+    // The entry (with tasks) and its spec/plan files are written under the repo lock; reading them under it too
+    // keeps a reader from pairing a just-written plan with the entry it read before that write.
+    return withRepoLock(this.repoDir, async () => {
+      const entry = await this.get(id);
+      if (!entry) return null;
+      const read = async (which: "spec" | "plan"): Promise<string | null> => {
+        try {
+          return await readFile(path.join(this.repoDir, KIND_DIR.workpackage, `${id}.${which}.md`), "utf8");
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+          throw err;
+        }
+      };
+      return { entry, spec: await read("spec"), plan: await read("plan") };
+    });
   }
 
   /** Hub-only: approval, status and task progress. Never exposed to the Agent. */

@@ -267,4 +267,13 @@ describe("WorkspaceShell knowledge wiring", () => {
     expect(vi.mocked(hub.listWorkspaces).mock.calls.length).toBeGreaterThan(before);
     expect(screen.getByRole("alert").textContent).toBe("internal error");
   });
+  it("opens message search from the header icon", async () => {
+    await mount();
+    const search = screen.getByRole("button", { name: "Search messages" });
+    expect(search.getAttribute("aria-expanded")).toBe("false");
+    await userEvent.click(search);
+    expect(search.getAttribute("aria-expanded")).toBe("true");
+    await userEvent.click(search);
+    expect(search.getAttribute("aria-expanded")).toBe("false");
+  });
 });

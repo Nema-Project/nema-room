@@ -67,6 +67,15 @@ function mainMessageTarget(hash: string, pathname: string, search: string, roomI
   return { workspaceId, messageId };
 }
 
+function SearchMark() {
+  return (
+    <svg className="mark" width="14" height="14" viewBox="0 0 12 12" aria-hidden="true">
+      <circle className="line" cx="5" cy="5" r="3.2" />
+      <path className="line" d="m7.4 7.4 2.8 2.8" />
+    </svg>
+  );
+}
+
 function SettingsMark() {
   return (
     <svg className="mark" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
@@ -98,6 +107,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   const [error, setError] = useState<string | null>(null);
   const [hubFault, setHubFault] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
   const [openState, setOpenState] = useState<{ roomId: string | null; entryId: string | null; tab?: "content" | "history" }>({ roomId: null, entryId: null });
   const [knowWidth, setKnowWidth] = useState<number | null>(null);
@@ -209,6 +219,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
     if (id !== current?.id) router.push(`/w/${encodeURIComponent(id)}`);
     setSelectedId(id);
     setSettingsOpen(false);
+    setSearchOpen(false);
     try {
       localStorage.setItem(SELECTED_KEY, id);
     } catch {
@@ -441,12 +452,17 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
             <div className="bar">
               <h1>{current.name}</h1>
               {current.confidential && <span className="tag">{t("sidebar.confidential")}</span>}
-              <button type="button" className="sp link" onClick={() => { setModelSettingsOpen(false); setSettingsOpen((o) => !o); }}>
-                <SettingsMark />
-                {t("common.settings")}
-              </button>
+              <div className="bar-actions">
+                <button type="button" className="link" aria-label={t("chat.search")} aria-expanded={searchOpen} onClick={() => setSearchOpen((open) => !open)}>
+                  <SearchMark />
+                </button>
+                <button type="button" className="link" onClick={() => { setModelSettingsOpen(false); setSettingsOpen((o) => !o); }}>
+                  <SettingsMark />
+                  {t("common.settings")}
+                </button>
+              </div>
             </div>
-            <Chat key={current.id} ref={chat} workspaceId={current.id} connected={connected} onOpenEntry={setOpenEntry} onOpenHistory={setOpenHistory} onOpenThread={(tid, mid) => openTargetThread(current.id, tid, mid)} />
+            <Chat key={current.id} ref={chat} workspaceId={current.id} connected={connected} searchOpen={searchOpen} onSearchClose={() => setSearchOpen(false)} onOpenEntry={setOpenEntry} onOpenHistory={setOpenHistory} onOpenThread={(tid, mid) => openTargetThread(current.id, tid, mid)} />
           </>
         ) : (
           <div className="placeholder">{workspaces === null && !error ? t("common.loading") : t("main.empty")}</div>

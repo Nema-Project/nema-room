@@ -48,7 +48,7 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
     const meta = message.meta as AgentMessageMeta | null;
     return (
       <div className="sysmsg" id={`msg-${message.id}`}>
-        <button type="button" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
+        <button type="button" className="quiet" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
         {message.content}
         {meta?.askedQuestion && <AskedQuestion workspaceId={message.workspaceId} asked={meta.askedQuestion} added={[]} />}
       </div>
@@ -72,7 +72,7 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
         <div className="who">
           Nema
           <time>{time}</time>
-          <button type="button" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
+          <button type="button" className="quiet" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
         </div>
         {quote && <QuoteBlock quote={quote} onJump={onJump} />}
         <Markdown source={message.content} />
@@ -240,16 +240,18 @@ function UserMessage({
         <div className="who">
           {t("chat.you")}
           <time>{time}</time>
-          <button type="button" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
-          <button type="button" onClick={() => { setDraft(message.content); setEditing(true); setEditError(null); }}>{t("chat.edit")}</button>
+          <button type="button" className="quiet" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
+          <button type="button" className="quiet" onClick={() => { setDraft(message.content); setEditing(true); setEditError(null); }}>{t("chat.edit")}</button>
           {message.editedAt && <button type="button" onClick={() => void toggleVersions()}>{t("chat.edited")}</button>}
         </div>
         {quote && <QuoteBlock quote={quote} onJump={onJump} />}
         {editing ? (
           <div className="editbox">
             <textarea value={draft} onChange={(e) => setDraft(e.target.value)} />
-            <button type="button" onClick={() => void save()}>{t("chat.save")}</button>
-            <button type="button" onClick={() => { setEditing(false); setDraft(message.content); setEditError(null); }}>{t("chat.cancel")}</button>
+            <div className="actions">
+              <button type="button" className="primary" onClick={() => void save()}>{t("chat.save")}</button>
+              <button type="button" onClick={() => { setEditing(false); setDraft(message.content); setEditError(null); }}>{t("chat.cancel")}</button>
+            </div>
             {editError && <p className="error" role="alert">{editError}</p>}
           </div>
         ) : (
@@ -286,7 +288,7 @@ function ReportItem({ message, time, onOpenEntry, onQuote, onJump }: { message: 
           <span className="rlabel">{t("report.label")}</span>
           {report && <span className="ragent">{report.agent}</span>}
           <time>{time}</time>
-          <button type="button" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
+          <button type="button" className="quiet" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
         </div>
         {quoteOf(message) && <QuoteBlock quote={quoteOf(message)!} onJump={onJump} />}
         <div className="rbody">
