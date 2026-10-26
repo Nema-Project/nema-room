@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { accessSync, constants } from "node:fs";
+import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -25,13 +27,42 @@ function unavailable(reason: { zh: string; en: string }, cause?: unknown): Error
   );
 }
 
+/** PATH a Mac app gets when Finder opens it. Anything else is left alone, including a test that cleared PATH. */
+export const FINDER_GIT_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+/** Install locations Finder does not put on PATH. Homebrew (Apple silicon, then Intel) and MacPorts. */
+export const EXTRA_GIT_DIRECTORIES = ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"];
+
+export function gitPathForFinderLaunch(currentPath: string | undefined, presentDirectories: readonly string[], platform = process.platform): string | undefined {
+  if (platform !== "darwin") return currentPath;
+  const parts = (currentPath ?? "").split(":").filter(Boolean);
+  if (parts.length === 0 || parts.some((part) => !FINDER_GIT_PATH.includes(part))) return currentPath;
+  const prefix = presentDirectories.filter((dir) => EXTRA_GIT_DIRECTORIES.includes(dir) && !parts.includes(dir));
+  return prefix.length ? [...prefix, ...parts].join(":") : currentPath;
+}
+
+function directoriesWithGit(directories: readonly string[]): string[] {
+  return directories.filter((dir) => {
+    try {
+      accessSync(path.join(dir, "git"), constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 async function gitVersionOutput(): Promise<string> {
+  if (process.platform === "darwin") {
+    const next = gitPathForFinderLaunch(process.env.PATH, directoriesWithGit(EXTRA_GIT_DIRECTORIES));
+    if (next && next !== process.env.PATH) process.env.PATH = next;
+  }
   const { stdout } = await execFileAsync("git", ["--version"], { timeout: 15_000, windowsHide: true });
   return stdout;
 }
 
 /**
  * Nema runs the git the user already has, so fetch uses their own credential helpers and SSH setup.
+ * A Mac app opened from Finder only has /usr/bin on PATH; Homebrew and MacPorts git are added in that case.
  * Resolves with the `git --version` line; rejects with code NEMA_GIT_UNAVAILABLE and install guidance.
  */
 export async function requireSystemGit(run: () => Promise<string> = gitVersionOutput): Promise<string> {

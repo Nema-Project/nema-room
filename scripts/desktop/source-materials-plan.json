@@ -5,24 +5,22 @@
     {
       "id": "node-source",
       "component": "Node.js 24.22.1",
-      "status": "pending",
-      "correspondence": "unverified",
-      "reason": "The official versioned source archive is hash-pinned, but binary build correspondence has not been independently established for this payload.",
+      "status": "notice",
+      "correspondence": "notice",
+      "reason": "MIT. The Node distribution LICENSE staged in the payload is the required notice; a source archive is not collected.",
       "version": "24.22.1",
       "immutableRef": "v24.22.1",
       "archiveTarget": "win32-x64",
-      "tool": "node",
-      "url": "https://nodejs.org/download/release/v24.22.1/node-v24.22.1.tar.gz",
-      "sha256": "001773d9bd53fbd27a25efd42aa6a9693ebfe500998ca9bec635e9b6ee79bc91"
+      "tool": "node"
     },
     {
       "id": "font-sources",
-      "component": "Inter and JetBrains Mono WOFF2 source revisions",
-      "status": "pending",
-      "correspondence": "unverified",
-      "reason": "OFL texts are included below, but exact upstream font revisions for the staged WOFF2 files are not pinned.",
-      "version": "WOFF2-revisions-unpinned",
-      "immutableRef": "WOFF2-revisions-unpinned",
+      "component": "Inter and JetBrains Mono",
+      "status": "notice",
+      "correspondence": "notice",
+      "reason": "SIL Open Font License. The OFL texts below ship with the WOFF2 files.",
+      "version": "woff2",
+      "immutableRef": "ofl-notice",
       "archiveTarget": "win32-x64",
       "tool": "web"
     }

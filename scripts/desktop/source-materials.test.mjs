@@ -96,6 +96,7 @@ const writeResolvedFixture = async (f, upstreamNotices) => {
       { key: 'font:web/apps/web/.next/static/media/Inter.woff2', family: 'inter', files: await filesFor(['web/apps/web/.next/static/media/Inter.woff2']), materialRefs: [reference(fontInterSource, 'source'), await noticeReference('inter-ofl', 'license')] },
       { key: 'font:web/apps/web/.next/static/media/JetBrains.woff2', family: 'jetbrains-mono', files: await filesFor(['web/apps/web/.next/static/media/JetBrains.woff2']), materialRefs: [reference(fontJetSource, 'source'), await noticeReference('jetbrains-mono-ofl', 'license')] },
     ]),
+    { id: 'electron-ffmpeg', status: 'resolved', obligation: 'notice', notices: [{ sourcePath: 'runtime/licenses/electron/LICENSES.chromium.html' }] },
   ];
   const policyPath = path.join(f.root, 'trusted-fixture-policy.json');
   await writeFile(policyPath, JSON.stringify({ schemaVersion: 1, targets: { 'win32-x64': { status: 'resolved', components: mappings } } }));
@@ -216,6 +217,15 @@ test('collector aborts a source response as soon as its bounded byte limit is ex
     },
     sourceMaterials: [{ id: 'node-source', component: 'Node', status: 'pending', correspondence: 'unverified', version: '24.22.1', immutableRef: 'v24.22.1', archiveTarget: 'win32-x64', tool: 'node', url: 'https://nodejs.org/node.tar.gz' }],
   }), /bounded download size/i);
+});
+
+test('shipped Node, font, and ffmpeg notices satisfy the release policy without source archives', async (t) => {
+  const f = await rootFixture(t);
+  const upstreamNotices = await populateCompleteNotices(f);
+  await writeFile(path.join(f.payload, 'runtime/licenses/electron/LICENSES.chromium.html'), 'ffmpeg is LGPL v2.1 and shipped as its own library');
+  const result = await collectSourceMaterials({ payloadRoot: f.payload, outputRoot: f.payload, target: 'win32-x64', appVersion: '0.1.0', toolsManifestPath: f.toolsManifest, upstreamNotices, inputRoot: f.root });
+  assert.equal(result.publicationEligibility, 'eligible', JSON.stringify(result.unresolved));
+  assert.equal((await validatePublicationEligibility(f.payload, { toolsManifestPath: f.toolsManifest })).eligible, true);
 });
 
 test('caller-declared complete material cannot override the committed pending policy', async (t) => {

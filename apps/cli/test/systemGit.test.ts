@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { MIN_GIT_VERSION, parseGitVersion, requireSystemGit } from "../src/systemGit.js";
+import { EXTRA_GIT_DIRECTORIES, FINDER_GIT_PATH, MIN_GIT_VERSION, gitPathForFinderLaunch, parseGitVersion, requireSystemGit } from "../src/systemGit.js";
 
 describe("system git", () => {
   test("parses the version lines that Git for Windows, Apple Git and Linux print", () => {
@@ -21,6 +21,16 @@ describe("system git", () => {
     expect(error).toMatchObject({ code: "NEMA_GIT_UNAVAILABLE" });
     expect((error as Error).message).toMatch(/git-scm\.com\/downloads/);
     expect((error as Error).message).toMatch(/2\.31/);
+  });
+
+  test("a Finder launch on macOS also sees Homebrew and MacPorts git", () => {
+    const finder = FINDER_GIT_PATH.join(":");
+    expect(gitPathForFinderLaunch(finder, ["/opt/homebrew/bin", "/usr/local/bin"], "darwin")).toBe(`/opt/homebrew/bin:/usr/local/bin:${finder}`);
+    expect(gitPathForFinderLaunch(finder, ["/opt/local/bin"], "darwin")).toBe(`/opt/local/bin:${finder}`);
+    expect(gitPathForFinderLaunch(`/opt/homebrew/bin:${finder}`, ["/opt/homebrew/bin"], "darwin")).toBe(`/opt/homebrew/bin:${finder}`);
+    expect(gitPathForFinderLaunch(finder, [], "darwin")).toBe(finder);
+    expect(gitPathForFinderLaunch("C:\\Users\\dev\\bin", EXTRA_GIT_DIRECTORIES, "win32")).toBe("C:\\Users\\dev\\bin");
+    expect(gitPathForFinderLaunch("D:\\temp\\no-git", ["/opt/homebrew/bin"], "darwin")).toBe("D:\\temp\\no-git");
   });
 
   test("an old or unreadable git is refused with its version", async () => {

@@ -74,6 +74,31 @@ export function builderConfig(payloadDir, outputDir, target) {
   };
 }
 
+export const FFMPEG_LIBRARY = {
+  win32: ['ffmpeg.dll'],
+  darwin: [
+    'Electron.app/Contents/Frameworks/Electron Framework.framework/Libraries/libffmpeg.dylib',
+    'Electron.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libffmpeg.dylib',
+  ],
+};
+
+/** LGPL ffmpeg must stay a separate file inside the Electron distribution so it can be replaced. */
+export async function assertReplaceableFfmpeg(electronDist, platform) {
+  const relatives = FFMPEG_LIBRARY[platform];
+  if (!relatives) throw new Error(`No replaceable ffmpeg library is defined for ${platform}`);
+  const root = await realpath(electronDist);
+  for (const relative of relatives) {
+    const file = path.join(root, ...relative.split('/'));
+    const info = await lstat(file).catch(() => null);
+    if (!info) continue;
+    const actual = info.isSymbolicLink() ? await realpath(file) : file;
+    const rel = path.relative(root, actual);
+    const actualInfo = info.isSymbolicLink() ? await lstat(actual) : info;
+    if (actualInfo.isFile() && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)) return relative;
+  }
+  throw new Error(`Electron ${platform} ffmpeg must be a separate replaceable library (LGPL). Looked for ${relatives.join(', ')}`);
+}
+
 export async function validateElectronNotices(payloadDir) {
   const root = await realpath(payloadDir);
   for (const relative of ['runtime/licenses/electron/LICENSE', 'runtime/licenses/electron/LICENSES.chromium.html']) {
@@ -113,6 +138,7 @@ async function make(args) {
     payloadDir = staged.directory;
   }
   await validateElectronNotices(payloadDir);
+  await assertReplaceableFfmpeg(path.join(repo, 'node_modules/electron/dist'), target.platform);
   const outputDir = target.out ?? path.join(repo, 'dist/desktop-artifacts', `${target.platform}-${target.arch}`);
   await mkdir(outputDir, { recursive: true });
   const configPath = path.join(outputDir, '.electron-builder-config.json');

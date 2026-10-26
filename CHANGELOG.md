@@ -8,6 +8,9 @@
 
 ### Changed
 
+- Desktop publication accepts Node and the bundled fonts from the license notices shipped with them. Electron's ffmpeg stays LGPL: the Chromium notice must name it, and the library must remain a separate file that can be replaced.
+- A Mac app opened from the Finder also finds Git installed by Homebrew or MacPorts.
+
 - The agent now acts as a copilot in both main chat and threads. It keeps memo checks and casual chat out of the knowledge base, asks in a thread when a statement conflicts with an active decision, and replaces that decision only after a clear user override. Follow-up answers move into their threads.
 
 ### Removed

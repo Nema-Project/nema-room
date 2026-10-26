@@ -251,7 +251,7 @@ async function readTrustedPolicy(policyPath, target) {
 async function validatePolicyCoverage({ trustedPolicy, payloadRoot, archiveRoot = payloadRoot, target, materials, notices }) {
   const { target: policyTarget } = trustedPolicy;
   // Git is not bundled (Nema uses the user's own git), so no Git source component is required.
-  const requiredIds = ['node-source', 'font-sources'];
+  const requiredIds = ['node-source', 'font-sources', 'electron-ffmpeg'];
   const byId = new Map(policyTarget.components.map((component) => [component.id, component]));
   if (byId.size !== requiredIds.length || requiredIds.some((id) => !byId.has(id))) throw new Error('Trusted source policy component set does not match target requirements');
   const pending = [];
@@ -260,6 +260,24 @@ async function validatePolicyCoverage({ trustedPolicy, payloadRoot, archiveRoot 
     const component = byId.get(id);
     if (component.status !== 'resolved') {
       pending.push(component.reason ?? `${id} remains pending in trusted source policy`);
+      continue;
+    }
+    if (component.obligation === 'notice') {
+      if (!Array.isArray(component.notices) || component.notices.length === 0) throw new Error(`Notice obligation has no notices: ${id}`);
+      for (const required of component.notices) {
+        if (!required?.sourcePath) throw new Error(`Notice obligation is missing a path: ${id}`);
+        const notice = notices.find((item) => item.sourcePath === required.sourcePath);
+        if (!notice) {
+          pending.push(`${id} notice is missing: ${required.sourcePath}`);
+          continue;
+        }
+        if (!Array.isArray(required.mustMatch) || required.mustMatch.length === 0) continue;
+        const relative = notice.sourcePath.startsWith('upstream:') ? notice.bundlePath : notice.sourcePath;
+        const text = await readFile(await safeFile(payloadRoot, relative), 'utf8');
+        for (const needle of required.mustMatch) {
+          if (!text.includes(needle)) pending.push(`${id} notice ${required.sourcePath} is missing ${JSON.stringify(needle)}`);
+        }
+      }
       continue;
     }
     const kind = component.coverage?.kind;
@@ -370,8 +388,8 @@ export async function collectSourceMaterials({ payloadRoot, outputRoot = payload
   const productionDependencies = await inventoryProductionDependencies(payload);
   let materials = sourceMaterials;
   if (!materials) materials = [
-    { id: 'node-source', component: `Node.js ${trustedManifest.node.version}`, status: 'pending', correspondence: 'unverified', reason: 'Exact upstream source archive has not been included in this collected bundle.' },
-    { id: 'font-sources', component: 'Inter and JetBrains Mono WOFF2 assets', status: 'pending', correspondence: 'unverified', reason: 'Generated WOFF2 files are shipped; OFL notices are retained, but exact upstream font revisions are not pinned to the generated assets.' },
+    { id: 'node-source', component: `Node.js ${trustedManifest.node.version}`, status: 'notice', correspondence: 'notice', reason: 'MIT. The staged Node LICENSE is the required notice.' },
+    { id: 'font-sources', component: 'Inter and JetBrains Mono WOFF2 assets', status: 'notice', correspondence: 'notice', reason: 'SIL Open Font License. The OFL notices ship with the WOFF2 files.' },
   ];
   materials = await Promise.all(materials.map(async (item) => {
     if (!item.sourcePath && !item.url) return item;
@@ -411,9 +429,10 @@ export async function collectSourceMaterials({ payloadRoot, outputRoot = payload
     fontMaterial.licenseNoticeIds = ['inter-ofl', 'jetbrains-mono-ofl'].filter((id) => notices.some((notice) => notice.sourcePath === `upstream:${id}`));
   }
   const correspondence = await validatePolicyCoverage({ trustedPolicy, payloadRoot: payload, archiveRoot: output, target, materials, notices });
+  const noticeOnlyIds = new Set(trustedPolicy.target.components.filter((component) => component.obligation === 'notice').map((component) => component.id));
   const unresolved = [
     ...correspondence.pending.map((reason) => ({ id: 'trusted-source-policy', reason })),
-    ...materials.filter((item) => !item.archive).map(({ id, reason }) => ({ id, reason: reason ?? 'expected archive bytes have not been collected' })),
+    ...materials.filter((item) => !item.archive && !noticeOnlyIds.has(item.id)).map(({ id, reason }) => ({ id, reason: reason ?? 'expected archive bytes have not been collected' })),
     ...productionDependencies.missing.map((item) => ({ id: `production-dependency:${item.packageRoot}`, package: item.package ?? null, reason: item.reason })),
   ];
   const result = { schemaVersion: 1, target, appVersion, createdAt: new Date().toISOString(), eligibility: 'local-validation-only', publicationEligibility: correspondence.eligible && !unresolved.length ? 'eligible' : 'pending', sourcePolicy: { schemaVersion: trustedPolicy.policy.schemaVersion, policyVersion: trustedPolicy.policy.policyVersion, sha256: trustedPolicy.sha256 }, tools, productionDependencies, notices, noticeCount: notices.length, materials, unresolved };
@@ -424,7 +443,7 @@ export async function collectSourceMaterials({ payloadRoot, outputRoot = payload
       status: result.publicationEligibility === 'eligible' ? 'source-materials-collected' : 'pending-task-7c',
       manifest: 'source-materials.json',
       manifestSha256: await hashFile(manifestPath),
-      evidence: result.publicationEligibility === 'eligible' ? 'Trusted source policy mappings cover the staged inventory and every archive is hash-bound to immutable provenance.' : 'Local materials are inventoried; trusted correspondence policy or required evidence remains pending.',
+      evidence: result.publicationEligibility === 'eligible' ? 'The trusted source policy is satisfied. Notice obligations are the shipped license texts; any source-archive obligation is hash-bound.' : 'Local materials are inventoried; trusted correspondence policy or required evidence remains pending.',
     };
     await writeOutputFile(payload, `runtime/${target}/tools-source.json`, `${JSON.stringify(record, null, 2)}\n`, { exclusive: false });
   }
@@ -469,7 +488,9 @@ export async function validatePublicationEligibility(payloadRoot, { toolsManifes
   ];
   for (const matches of requiredNoticePaths) if (!stagedNotices.some((notice) => matches(notice.sourcePath))) throw new Error('Required staged notice category is missing');
   for (const font of ['inter-ofl', 'jetbrains-mono-ofl']) if (!materials.notices.some((notice) => notice.sourcePath === `upstream:${font}` && notice.provenance?.url && notice.provenance?.immutableRef)) throw new Error(`Required font license provenance is missing: ${font}`);
+  const noticeOnlyIds = new Set(trustedPolicy.target.components.filter((component) => component.obligation === 'notice').map((component) => component.id));
   for (const item of materials.materials) {
+    if (!item.archive?.path && noticeOnlyIds.has(item.id)) continue;
     if (item.archive?.path) {
       const archive = await safeFile(root, item.archive.path);
       if (await hashFile(archive) !== item.archive.sha256) throw new Error(`Source archive hash mismatch: ${item.id}`);
