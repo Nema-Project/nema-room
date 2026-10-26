@@ -318,6 +318,9 @@ async function smoke(args) {
     fake.server.close();
   }
 
+  // Locally the final app and core stay up for visual acceptance; on CI nobody closes them and the step never ends.
+  const leaveRunning = !process.env.CI;
+  const restartedInstanceId = (await runtimeApi.discoverInstance(home))?.instanceId;
   const result = {
     result: 'passed',
     artifact: path.relative(repo, zipFile),
@@ -335,13 +338,22 @@ async function smoke(args) {
     electronNoticeEvidence,
     mainProcessCrashBrowserFallback: 'Electron main ChildProcess handle exited; authenticated core instance stayed the same; bundled browser launcher issued a fresh local ticket.',
     gracefulCoreRestart,
-    restartedInstanceId: (await runtimeApi.discoverInstance(home))?.instanceId,
+    restartedInstanceId,
     finalElectronPid: finalAppProcess?.pid,
     isolatedTestUserData: true,
-    cleanup: 'Final copied Electron test app and authenticated core are left running for parent visual acceptance; temporary tree is preserved.',
+    cleanup: leaveRunning
+      ? 'Final copied Electron test app and authenticated core are left running for parent visual acceptance; temporary tree is preserved.'
+      : 'CI: final copied Electron test app and authenticated core were shut down; temporary tree is preserved.',
   };
   const evidencePath = path.join(tempRoot, 'desktop-smoke-result.json');
   await writeFile(evidencePath, `${JSON.stringify(result, null, 2)}\n`, { flag: 'wx' });
+  if (!leaveRunning) {
+    await stopOwnedMain(finalAppProcess);
+    // Chromium helpers can inherit the log pipes and outlive the main process; drop our ends so Node can exit.
+    finalAppProcess.stdout?.destroy();
+    finalAppProcess.stderr?.destroy();
+    if (restartedInstanceId) await runtimeApi.shutdownLocalRuntime({ home, assetsDir: payload, expectedInstanceId: restartedInstanceId, timeoutMs: 45_000 });
+  }
   process.stdout.write(`${JSON.stringify({ ...result, evidencePath }, null, 2)}\n`);
 }
 
