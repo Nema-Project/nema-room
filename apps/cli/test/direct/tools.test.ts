@@ -69,6 +69,9 @@ describe("dispatchTool plugin tools", () => {
       upsertEntry: async (): Promise<RoomResult> => {
         throw new Error("upsertEntry");
       },
+      openThread: async (): Promise<RoomResult> => {
+        throw new Error("openThread");
+      },
       callPlugin: async (name: string, args: unknown): Promise<RoomResult> => {
         calls.push({ name, args });
         return { ok: true, json: { text: "body" } };
