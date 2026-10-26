@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nema Room: turn discussions into traceable requirements</title>
-<meta name="description" content="Nema Room is a requirements discussion room that runs on your machine. Ideas from chat are filed as requirements, decisions and questions, each traced to what was said, then handed to Codex or Claude Code.">
+<meta name="description" content="Nema Room is a requirements discussion room that runs on your machine. Ideas from chat are filed as requirements, decisions and questions, each traced to what was said, then handed to Codex or Claude Code. Desktop 0.1.1 is available for Windows x64 and Apple Silicon.">
 <link rel="icon" href="assets/nema-room-mark.svg" type="image/svg+xml">
 <link rel="alternate" hreflang="zh-CN" href="https://nema-project.github.io/nema-room/zh/">
 <link rel="alternate" hreflang="en" href="https://nema-project.github.io/nema-room/en/">
@@ -229,15 +229,15 @@
     </dl>
     <div class="local-main">
       <h2 id="local-h" class="h-sec" data-reveal>Runs only on your computer</h2>
-      <p class="lead" data-reveal style="--i:1">The desktop app packs the whole stack into one program, with the database, local core, Node and Git bundled. No Docker, no database server. Discussion text goes only to the model provider you choose, and Nema never touches your GitHub token.</p>
+      <p class="lead" data-reveal style="--i:1">The desktop app packs the whole stack into one program: the database, the local core, and Node. It uses Git 2.31 or later already installed on your machine. On a Mac, an app opened from the Finder also finds Homebrew and MacPorts Git. No Docker, and no database server. Discussion text goes only to the model provider you choose, and Nema never touches your GitHub token.</p>
     </div>
   </div>
   <div class="local-row local-row-2">
     <p class="facts-word" data-reveal>Status</p>
     <div class="records">
       <ul class="record" data-reveal style="--i:1" aria-label="Platforms">
-        <li><span>Windows x64 desktop</span><span>Built, preview</span></li>
-        <li><span>macOS desktop</span><span>Configured, unverified</span></li>
+        <li><span>Windows x64 desktop</span><span>0.1.1 installer</span></li>
+        <li><span>macOS desktop</span><span>0.1.1, Apple Silicon</span></li>
         <li><span>Linux</span><span>Web / Compose version</span></li>
         <li><span>Installer signing</span><span>Not yet signed</span></li>
         <li><span>Auto-update</span><span>None yet</span></li>
@@ -257,7 +257,7 @@
   <div class="band band-head"><h2 id="faq-h" data-reveal>Questions</h2></div>
   <div class="band">
     <h3 data-reveal>Can I download it now?</h3>
-    <p data-reveal style="--i:1">Not yet. You can build the Windows desktop preview from source, or run the web version with Docker Compose. Installers are unsigned, so Windows shows “Windows protected your PC” the first time you open one.</p>
+    <p data-reveal style="--i:1">Yes. <a href="https://github.com/Nema-Project/nema-room/releases/tag/v0.1.1">Version 0.1.1</a> has a Windows x64 installer and an Apple Silicon disk image. Installers are unsigned, so Windows shows “Windows protected your PC” the first time, and macOS asks you to open it from Privacy &amp; Security. The app also needs Git 2.31 or later on the machine. Intel Macs have no desktop build; on Linux, run the web version with Docker Compose.</p>
   </div>
   <div class="band band-alt">
     <h3 data-reveal>Does it cost anything?</h3>
@@ -280,12 +280,12 @@
 <section class="cta" aria-labelledby="cta-h">
   <figure class="tile picture cta-side cta-left"><img src="assets/interior-no-30-strandgade.jpg" width="1137" height="1400" alt="Hammershøi, Interior, Strandgade 30: a door stands open and a woman sits at a table with her back turned." loading="lazy"></figure>
   <div class="tile tile-accent cta-main">
-    <h2 id="cta-h" data-reveal>Try it from source</h2>
-    <p data-reveal style="--i:1">You need Node.js 22 or later and Git. Clone the repository and run the setup wizard: it checks your environment, installs dependencies and walks you through choosing a model.</p>
+    <h2 id="cta-h" data-reveal>Download 0.1.1</h2>
+    <p data-reveal style="--i:1">Windows x64 and Apple Silicon installers are on the 0.1.1 release. The app needs Git 2.31 or later already on the machine. To build from source, use Node.js 22 or later and Git, then run the setup wizard.</p>
     <pre data-reveal style="--i:2"><code>git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
 node scripts/setup.mjs --lang en</code></pre>
-    <a class="button button-paper" href="https://github.com/Nema-Project/nema-room" data-reveal style="--i:3">View source</a>
+    <a class="button button-paper" href="https://github.com/Nema-Project/nema-room/releases/tag/v0.1.1" data-reveal style="--i:3">Download 0.1.1</a>
   </div>
   <div class="tile tile-ink cta-side cta-right" aria-hidden="true"></div>
 </section>

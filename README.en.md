@@ -6,9 +6,17 @@
 
 [简体中文](README.md) · English · [日本語](README.ja.md)
 
-> **Direction update, 2026-10-24:** The first release will be a desktop app that works independently on the user's machine. Multi-device sync, backup features, and team read-only access are deferred until the local core is complete. A desktop app now exists as a preview (see [Desktop app (preview)](#desktop-app-preview)), but nothing has been released; "Quick start" below still describes the existing Web / Compose version. See the [confirmed scope (Chinese)](docs/superpowers/specs/2026-10-24-local-desktop-first.md).
+> **0.1.1:** Desktop installers are published for Windows x64 and Apple Silicon. The app runs on your machine and uses Git 2.31 or later already installed there. Multi-device sync, backup, and team read-only access come later. "Quick start" below is still the Web / Compose version. See [Desktop app](#desktop-app-preview).
 
 Nema Room is a requirements discussion room that runs locally. Share ideas, meeting notes, and tradeoffs in chat; an agent organizes them into requirements, decisions, questions, and sources. Knowledge changes have Git history. When you are ready to build, generate a spec and plan, then track progress through your coding agent's commit reports.
+
+The interface below is the app, using a sample discussion. Chat stays in the middle. Filed entries stay on the right, and an open question stays marked.
+
+<img src="docs/screenshots/room.png" width="1100" alt="The room: a bill-export discussion filed as a requirement, two decisions, and an open question.">
+
+Opening an entry shows why it was filed and the sentence it came from.
+
+<img src="docs/screenshots/entry.png" width="1100" alt="Requirement R-1, marked as something the user said, with the original sentence beside it.">
 
 ## Features
 
@@ -83,15 +91,15 @@ On Linux, set `NEMA_UID` / `NEMA_GID` in `.env` if your UID/GID is not 1000. Cre
 
 ## Desktop app (preview)
 
-The desktop app puts the whole stack in one local program: an on-disk PGlite database, a single-owner local core, a protected same-origin gateway, and bundled Node. It uses the Git already on your machine (2.31 or later). On macOS, an app opened from the Finder also finds Homebrew and MacPorts Git. If Git is missing or older, the app says so on launch and links to https://git-scm.com/downloads. It needs neither Docker nor a database server. **For now you build it from source; there is no released version.**
+The desktop app puts the whole stack in one local program: an on-disk PGlite database, a single-owner local core, a protected same-origin gateway, and bundled Node. It uses the Git already on your machine (2.31 or later). On macOS, an app opened from the Finder also finds Homebrew and MacPorts Git. If Git is missing or older, the app says so on launch and links to https://git-scm.com/downloads. It needs neither Docker nor a database server. **Desktop 0.1.1 is published** for Windows x64 and Apple Silicon: [download the installers](https://github.com/Nema-Project/nema-room/releases/tag/v0.1.1).
 
 | Item | Status |
 | --- | --- |
-| Windows x64 | Built; portable ZIP smoke passed locally; installer not yet installed or run |
-| macOS | Build configuration exists (DMG, ZIP); **not yet verified on a Mac** |
+| Windows x64 | 0.1.1 NSIS installer published |
+| macOS | 0.1.1 DMG for Apple Silicon (arm64). Intel Macs are not a target |
 | Linux | No desktop installer |
 | Signing and updates | Installers are **unsigned**; there is no auto-update |
-| Public release | None yet. Node (MIT), Inter and JetBrains Mono (OFL), and Electron's ffmpeg (LGPL, its own library) are accepted when those notices are in the app |
+| Public release | [0.1.1](https://github.com/Nema-Project/nema-room/releases/tag/v0.1.1). Node (MIT), Inter and JetBrains Mono (OFL), and Electron's ffmpeg (LGPL, its own library) ship with their notices |
 
 **Build (Windows x64):** after `npm ci`, run `npm run desktop:make -- --platform win32 --arch x64`. Output goes to `dist/desktop-artifacts/win32-x64/`: `Nema-<version>-win32-x64.exe` (NSIS installer). A build only targets the current OS and needs a native C compiler (Clang on Windows; see [scripts/desktop/README.md](scripts/desktop/README.md)).
 

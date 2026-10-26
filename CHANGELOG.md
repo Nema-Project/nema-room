@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The landing page and desktop status now describe the 0.1.1 installers. The app uses Git already installed on the machine.
+- The README shows the room and an entry opened from a sample discussion.
+
 ## [0.1.1] - 2026-10-26
 
 ### Added
