@@ -23,6 +23,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
   let mainWindow;
   let pendingMainWindow;
   const threadWindows = new Map();
+  const threadLoadGeneration = new WeakMap();
   let tray;
   let isQuitting = false;
   let quitPending = false;
@@ -61,7 +62,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     const identity = threadWindowIdentity(url, runtimeOrigin);
     const existing = threadWindows.get(identity);
     if (existing && !existing.isDestroyed()) {
-      if (existing.webContents.getURL?.() !== url) void existing.loadURL(url);
+      if (existing.webContents.getURL?.() !== url) loadThreadUrl(existing, url);
       existing.show();
       existing.focus();
       return;
@@ -69,11 +70,24 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     const child = new BrowserWindow({ ...createSecureWindowOptions(runtimeOrigin), icon: brandAsset('icon.png') });
     if (platform !== 'darwin') child.setMenu(null);
     threadWindows.set(identity, child);
+    threadLoadGeneration.set(child, 0);
     registerWindowControls({ ipcMain, window: child, runtimeOrigin });
     child.once('closed', () => { if (threadWindows.get(identity) === child) threadWindows.delete(identity); });
     handleNavigation(child, runtimeOrigin, { threadIdentity: identity });
+    child.once('ready-to-show', () => { if (!child.isDestroyed()) child.show(); });
     child.webContents.on('render-process-gone', () => { if (!child.isDestroyed()) child.destroy(); });
-    void child.loadURL(url).catch(() => { if (!child.isDestroyed()) child.destroy(); });
+    loadThreadUrl(child, url);
+  }
+
+  function loadThreadUrl(window, url) {
+    const generation = (threadLoadGeneration.get(window) ?? 0) + 1;
+    threadLoadGeneration.set(window, generation);
+    let loading;
+    try { loading = window.loadURL(url); }
+    catch (error) { loading = Promise.reject(error); }
+    void Promise.resolve(loading).catch(() => {
+      if (threadLoadGeneration.get(window) === generation && !window.isDestroyed()) window.destroy();
+    });
   }
 
   function handleNavigation(window, runtimeOrigin, { diagramsOnly = false, threadIdentity: ownThread } = {}) {

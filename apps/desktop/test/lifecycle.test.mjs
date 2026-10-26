@@ -25,10 +25,10 @@ function harness(overrides = {}) {
       this.webContents.setWindowOpenHandler = vi.fn();
       windows.push(this);
     }
-    async loadURL(url) { this.url = url; this.webContents.mainFrame = { url }; }
+    async loadURL(url) { this.url = url; this.webContents.mainFrame = { url }; return url.includes('/w/') ? overrides.loadURL?.(this, url) : undefined; }
     close() { this.closeEvent = { preventDefault: vi.fn() }; this.emit('close', this.closeEvent); }
-    show() {}
-    focus() {}
+    show = vi.fn();
+    focus = vi.fn();
     isDestroyed() { return this.destroyed; }
     destroy() { this.destroyed = true; this.emit('closed'); }
   }
@@ -264,6 +264,52 @@ describe('Electron shell lifecycle', () => {
     expect(show).toHaveBeenCalledOnce();
     expect(focus).toHaveBeenCalledOnce();
     expect(thread.url).toBe(`${base}?messageId=m_second`);
+  });
+
+  it('reveals a new thread window when its first page is ready', async () => {
+    const value = harness();
+    await value.lifecycle.install();
+    const handler = value.windows[0].webContents.setWindowOpenHandler.mock.calls[0][0];
+    handler({ url: 'http://127.0.0.1:43001/w/ws_abc/t/m_xyz' });
+    const thread = value.windows[1];
+    expect(thread.options.show).toBe(false);
+    thread.emit('ready-to-show');
+    expect(thread.show).toHaveBeenCalledOnce();
+    expect(thread.destroyed).toBe(false);
+  });
+
+  it('ignores a cancelled stale load after a replacement focus target starts', async () => {
+    const deferredLoads = new Map();
+    const value = harness({ loadURL: (_window, url) => new Promise((resolve, reject) => deferredLoads.set(url, { resolve, reject })) });
+    await value.lifecycle.install();
+    const handler = value.windows[0].webContents.setWindowOpenHandler.mock.calls[0][0];
+    const firstUrl = 'http://127.0.0.1:43001/w/ws_abc/t/m_xyz?messageId=m_first';
+    const latestUrl = 'http://127.0.0.1:43001/w/ws_abc/t/m_xyz?messageId=m_latest';
+    handler({ url: firstUrl });
+    const thread = value.windows[1];
+    handler({ url: latestUrl });
+    deferredLoads.get(firstUrl).reject(new Error('ERR_ABORTED'));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(thread.destroyed).toBe(false);
+    expect(thread.url).toBe(latestUrl);
+    deferredLoads.get(latestUrl).resolve();
+  });
+
+  it('handles a failed current replacement load and destroys the unusable thread window', async () => {
+    const deferredLoads = new Map();
+    const value = harness({ loadURL: (_window, url) => new Promise((resolve, reject) => deferredLoads.set(url, { resolve, reject })) });
+    await value.lifecycle.install();
+    const handler = value.windows[0].webContents.setWindowOpenHandler.mock.calls[0][0];
+    const firstUrl = 'http://127.0.0.1:43001/w/ws_abc/t/m_xyz?messageId=m_first';
+    const latestUrl = 'http://127.0.0.1:43001/w/ws_abc/t/m_xyz?messageId=m_latest';
+    handler({ url: firstUrl });
+    const thread = value.windows[1];
+    handler({ url: latestUrl });
+    deferredLoads.get(latestUrl).reject(new Error('replacement failed'));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(thread.destroyed).toBe(true);
+    deferredLoads.get(firstUrl).reject(new Error('ERR_ABORTED'));
+    await new Promise((resolve) => setImmediate(resolve));
   });
 
   it('destroys a crashed renderer without stopping the shared core', async () => {
