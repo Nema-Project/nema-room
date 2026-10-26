@@ -136,6 +136,7 @@ See [storage, backups, and known limitations](docs/guide.en.md#data). A copy of 
 | --- | --- |
 | [User guide](docs/guide.en.md) | Installation, model setup, desktop operation, CLI, backups, and upgrades |
 | [Technical reference](docs/reference.zh-CN.md) · 中文 | Commands, work-package formats, plugins, and implementation details |
+| [Agent development guide](AGENTS.md) | Shared conventions for local and remote coding agents |
 | [Contributing](CONTRIBUTING.md) · 中文 | Development setup, repository layout, and checks |
 | [Desktop build guide](scripts/desktop/README.md) | Native builds, bundled tools, and packaging |
 | [Roadmap and acceptance tracker](ROADMAP.md) · 中文 | Stabilization priorities, TODOs, and acceptance evidence |

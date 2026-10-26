@@ -136,6 +136,7 @@ nema wp get W-1
 | --- | --- |
 | [使用指南](docs/guide.zh.md) | 安装、模型配置、桌面操作、CLI、备份与升级 |
 | [技术参考](docs/reference.zh-CN.md) | 命令、开发包格式、插件与实现细节 |
+| [Agent 开发规范](AGENTS.md) | 本地与远程编码 Agent 共用的协作、实现和验证约定 |
 | [参与贡献](CONTRIBUTING.md) | 开发环境、目录结构与检查命令 |
 | [桌面构建指南](scripts/desktop/README.md) | 本机构建、随包工具与打包 |
 | [项目路线图与验收台账](ROADMAP.md) | 稳定化优先级、TODO 与验收证据 |
