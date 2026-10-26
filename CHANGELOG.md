@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- A quoted message separates the sender from the excerpt with a colon.
 - Binding a repository draws its architecture diagram after the code index finishes. A full extract may run for a few minutes instead of being stopped at one minute.
 - Code search reads the index extract writes at `src/graphify-out/graph.json`. It had been looking for that file next to the snapshot root, so a finished index still returned 502.
 - The sidebar attention count sits inside the workspace row again, and message search opens from the header icon instead of staying on screen.

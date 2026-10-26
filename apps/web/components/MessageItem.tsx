@@ -181,8 +181,7 @@ function QuoteBlock({ quote, onJump }: { quote: MessageQuote; onJump?: (messageI
   const t = useT();
   return (
     <button type="button" className="quote" onClick={() => onJump?.(quote.messageId)}>
-      <b>{messageRoleLabel(t, quote.role)}</b>
-      {quote.excerpt}
+      <b>{messageRoleLabel(t, quote.role)}:</b> {quote.excerpt}
     </button>
   );
 }

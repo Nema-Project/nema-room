@@ -174,4 +174,12 @@ describe("MessageItem", () => {
     expect(screen.getByText("Files match")).toBeTruthy();
     expect(screen.queryByText("Not on main yet")).toBeNull();
   });
+  it("separates a quoted sender from the excerpt", () => {
+    render(
+      <I18nProvider>
+        <MessageItem message={msg({ role: "user", content: "reply", meta: { quote: { messageId: "m0", role: "user", excerpt: "retry" } } })} />
+      </I18nProvider>,
+    );
+    expect(screen.getByRole("button", { name: "You: retry" })).toBeTruthy();
+  });
 });
