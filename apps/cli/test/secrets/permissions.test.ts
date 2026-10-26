@@ -1,11 +1,11 @@
 import { makePublic } from "../nativePermissions.js";
 import { spawnSync } from "node:child_process";
-import { chmodSync, closeSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { readSecretLine, saveSecretLine } from "../../src/secrets/file.js";
-import { openPrivateFile, privateModeMatches, protectPrivatePath } from "../../src/secrets/permissions.js";
+import { openPrivateFile, privateModeMatches, protectPrivatePath, WINDOWS_ACL_SCRIPT } from "../../src/secrets/permissions.js";
 import { AuthStore, type StoredAuth } from "../../src/direct/authStore.js";
 import { ensureReportToken, reportTokenHash } from "../../src/report/token.js";
 import { readClaudeToken, saveClaudeToken } from "../../src/claude/token.js";
@@ -67,4 +67,19 @@ test("private files are regular files and retain their contents", () => {
   closeSync(fd);
   expect(statSync(file).isFile()).toBe(true);
   expect(readFileSync(file, "utf8")).toBe("placeholder");
+});
+
+test("the Windows ACL script calls no cmdlets", () => {
+  // Cmdlet autoload took ~22s per call under the managed core's filtered environment on a GitHub Windows runner.
+  expect(WINDOWS_ACL_SCRIPT.match(/\b[A-Z][a-z]+-[A-Z][A-Za-z]+\b/g)).toBeNull();
+});
+
+test.runIf(process.platform === "win32")("Windows ACL protects a directory and refuses a missing path or a junction", () => {
+  const dir = path.join(root, "private dir 東京");
+  mkdirSync(dir);
+  protectPrivatePath(dir, 0o700);
+  expect(() => protectPrivatePath(path.join(root, "missing"))).toThrow(/cannot verify private Windows ACL/);
+  const junction = path.join(root, "junction");
+  symlinkSync(dir, junction, "junction");
+  expect(() => protectPrivatePath(junction, 0o700)).toThrow(/cannot verify private Windows ACL/);
 });
