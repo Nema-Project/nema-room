@@ -11,7 +11,7 @@ import { attachDaemonSocket } from "../src/daemonSocket.js";
 import { EventBus } from "../src/events.js";
 import { postUserMessage } from "../src/messages.js";
 import { getRepo, type Repo } from "../src/repos.js";
-import { claimNextTask } from "../src/tasks.js";
+import { claimNextTask, finishTask } from "../src/tasks.js";
 import { createWorkspace } from "../src/workspaces.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 
@@ -218,6 +218,16 @@ test("bind, index, and one fetch tick follow origin/main without touching the wo
       }
     });
     expect(lf(readFileSync(path.join(snapshot, "src", "README.md"), "utf8"))).toBe("hello\n");
+
+    // A finished index queues the architecture diagram, and the connected daemon claims it at once.
+    // End it so the workspace is free for the task this test claims itself.
+    let diagramTask = "";
+    await waitFor("architecture diagram claimed", async () => {
+      const rows = await db.query<{ id: string }>(`select id from tasks where workspace_id = $1 and status = 'running'`, [workspace.id]);
+      diagramTask = rows[0]?.id ?? "";
+      return diagramTask !== "";
+    });
+    await finishTask(db, diagramTask, { ok: false, error: "not under test" });
 
     await postUserMessage(db, workspace.id, "memo");
     const task = await claimNextTask(db, "d1");

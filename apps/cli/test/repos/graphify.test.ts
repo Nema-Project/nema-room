@@ -6,7 +6,7 @@ import { unexpectedEnvKeys } from "../windowsEnv.js";
 import { commitWithSymlink } from "./gitSymlink.js";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { changedFiles } from "../../src/repos/git.js";
-import { buildIndex, graphifyInstallStatus, queryIndex, updateIndex, type GraphifyOpts } from "../../src/repos/graphify.js";
+import { EXTRACT_TIMEOUT_MS, buildIndex, graphifyInstallStatus, queryIndex, updateIndex, type GraphifyOpts } from "../../src/repos/graphify.js";
 import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 let root: string;
@@ -110,6 +110,11 @@ fs.writeFileSync("graphify-out/graph.json", "{}");
   expect(env.GRAPHIFY_QUERY_LOG_DISABLE).toBe("1");
   expect(env.HOME).not.toBe(process.env.HOME);
   expect(env).not.toHaveProperty("NEMA_GRAPHIFY_BIN");
+});
+
+test("a full extract is allowed minutes, under the five-minute index RPC", () => {
+  expect(EXTRACT_TIMEOUT_MS).toBeGreaterThan(60_000);
+  expect(EXTRACT_TIMEOUT_MS).toBeLessThan(300_000);
 });
 
 test("a graphify timeout settles only after its child has exited", async () => {

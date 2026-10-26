@@ -16,6 +16,13 @@
 
 ### Fixed
 
+- Binding a repository draws its architecture diagram after the code index finishes. A full extract may run for a few minutes instead of being stopped at one minute.
+- The sidebar attention count sits inside the workspace row again, and message search opens from the header icon instead of staying on screen.
+- Message actions and the edit controls have space between them. Save and cancel are separate buttons.
+- Quote and edit stay hidden until the pointer is on that message.
+- The desktop window opens a thread when its row is clicked. The packaged shell had still been refusing every thread window.
+- Main-chat messages that do not carry a thread id stay on screen. The search field has space inside its border.
+- A desktop thread window loads its page, so the window controls are there and the window can be closed.
 - Answering a follow-up closes its answer box. The box stays closed while that reply is in the thread.
 - A reply that opens a new question shows that question. An older open question no longer replaces it on the card.
 - Clicking a code diagram opens it. The desktop shell had refused every new window, so the title did nothing.

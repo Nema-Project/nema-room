@@ -32,6 +32,14 @@ export type GraphifyOpts = { bin?: string; timeoutMs?: number; ownedHelpers?: Ow
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
+/**
+ * Full `extract` of a repository. The one-minute cap kills a monorepo mid-build and reports
+ * the same "graphify 已中断" as a cancel. Stays under the hub's 5-minute index RPC so fetch
+ * and the snapshot export still fit.
+ * ponytail: a larger repo needs this and INDEX_RPC_TIMEOUT_MS raised together.
+ */
+export const EXTRACT_TIMEOUT_MS = 180_000;
+
 /** `tools/graphify/graphify` under the payload, or `NEMA_GRAPHIFY_BIN` when that is set. */
 export function packagedGraphifyBin(env: NodeJS.ProcessEnv = process.env): string {
   const name = process.platform === "win32" ? "graphify.exe" : "graphify";
@@ -50,6 +58,12 @@ function graphifyBin(opts?: GraphifyOpts): string {
 function graphifyTimeout(opts?: GraphifyOpts): number {
   const n = opts?.timeoutMs;
   return n !== undefined && Number.isFinite(n) && n > 0 ? n : DEFAULT_TIMEOUT_MS;
+}
+
+/** An explicit `timeoutMs` still wins, so tests can stop a hung extract quickly. */
+function extractCallOpts(opts?: GraphifyOpts): GraphifyOpts {
+  if (opts?.timeoutMs !== undefined && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0) return opts;
+  return { ...opts, timeoutMs: EXTRACT_TIMEOUT_MS };
 }
 
 function cutUtf8(text: string, maxBytes: number): string {
@@ -169,7 +183,7 @@ function finish(result: RunResult): string {
 export async function buildIndex(snapshotRoot: string, opts?: GraphifyOpts): Promise<void> {
   const src = path.join(snapshotRoot, "src");
   await mkdir(path.join(snapshotRoot, "home"), { recursive: true });
-  finish(await runGraphify(snapshotRoot, ["extract", src, "--code-only"], snapshotRoot, opts));
+  finish(await runGraphify(snapshotRoot, ["extract", src, "--code-only"], snapshotRoot, extractCallOpts(opts)));
 }
 
 /** Runs from the snapshot root, like extract and update, so graphify finds the same graphify-out/. */

@@ -302,12 +302,12 @@ export async function bindRepo(
         [repo.id, sha, repo.mainBranch],
       );
       if (rows.length > 0) await syncBoundRepos(db, daemon);
+      await queueArchitectureDiagram(db, events, repo);
     })
     .catch((error) => {
       console.error(`repo.index failed for ${repo.id}`, error);
     });
   await syncBoundRepos(db, daemon);
-  await queueArchitectureDiagram(db, events, repo);
   return repo;
 }
 

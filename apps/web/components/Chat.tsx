@@ -24,6 +24,8 @@ type Props = {
   onOpenEntry?: (entryId: string) => void;
   onOpenThread?: (threadId: string, messageId?: string) => void;
   onOpenHistory?: (entryId: string) => void;
+  searchOpen?: boolean;
+  onSearchClose?: () => void;
 };
 
 function Snippet({ content, q }: { content: string; q: string }) {
@@ -50,7 +52,7 @@ function merge(list: Message[], m: Message): Message[] {
   return list.some((x) => x.id === m.id) ? list : [...list, m];
 }
 
-export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, connected = true, onOpenEntry, onOpenThread, onOpenHistory }, ref) {
+export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, connected = true, onOpenEntry, onOpenThread, onOpenHistory, searchOpen = false, onSearchClose }, ref) {
   const t = useT();
   const [locale] = useLocale();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -63,6 +65,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
   const [hits, setHits] = useState<Message[] | null>(null);
   const [openHit, setOpenHit] = useState<string | null>(null);
   const stream = useRef<HTMLDivElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
   // Bumped by every SSE-driven change of runningTask and by every active-task request, so a stale HTTP response never overwrites newer state.
   const taskVersion = useRef(0);
   const messageVersion = useRef(0);
@@ -75,7 +78,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
   const load = useCallback(async () => {
     const startedAt = messageVersion.current;
     try {
-      const list = (await listMessages(workspaceId)).filter((message) => message.threadId === null);
+      const list = (await listMessages(workspaceId)).filter((message) => message.threadId == null);
       setMessages((cur) => {
         const next = new Map(list.map((message) => [message.id, message]));
         for (const message of cur) {
@@ -136,7 +139,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
   };
   const hasMessage = (id: string) => [...(stream.current?.querySelectorAll<HTMLElement>("[id]") ?? [])].some((item) => item.id === `msg-${id}`);
   const showMessage = useCallback((message: Message) => {
-    if (message.workspaceId !== workspaceId || message.threadId !== null) return;
+    if (message.workspaceId !== workspaceId || message.threadId != null) return;
     setMessages((current) => merge(current, message));
     pendingJump.current = message.id;
     setJumpTick((tick) => tick + 1);
@@ -149,7 +152,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
       showMessage,
       handleEvent(e) {
         if (e.type === "message.created" && e.message.workspaceId === workspaceId) {
-          if (e.message.threadId === null) {
+          if (e.message.threadId == null) {
             messageVersions.current.set(e.message.id, ++messageVersion.current);
             setMessages((l) => merge(l, e.message));
           }
@@ -159,7 +162,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
             setRunningTask((cur) => (cur === done ? null : cur));
           }
         } else if (e.type === "message.updated" && e.message.workspaceId === workspaceId) {
-          if (e.message.threadId === null) {
+          if (e.message.threadId == null) {
             messageVersions.current.set(e.message.id, ++messageVersion.current);
             setMessages((l) => l.map((x) => (x.id === e.message.id ? e.message : x)));
           }
@@ -206,6 +209,10 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
     if (quoted) setQuote(null);
   }
 
+  useEffect(() => {
+    if (searchOpen) searchInput.current?.focus();
+  }, [searchOpen]);
+
   async function search() {
     const term = query.trim();
     if (!term) {
@@ -239,13 +246,15 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
           {t("chat.offline")}
         </div>
       )}
-      <div className="search">
+      {searchOpen && <div className="search">
         <input
+          ref={searchInput}
           placeholder={t("chat.search")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") void search();
+            if (e.key === "Escape") onSearchClose?.();
           }}
         />
         {hits && hits.length === 0 && <p>{t("chat.noResults")}</p>}
@@ -264,7 +273,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
             <button type="button" onClick={(e) => { e.stopPropagation(); setQuote(hit); }}>{t("chat.quote")}</button>
           </div>
         ))}
-      </div>
+      </div>}
       <div className="stream" ref={stream}>
         {messages.map((m, index) => {
           const key = dayKey(m.createdAt);

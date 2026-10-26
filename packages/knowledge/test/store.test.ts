@@ -603,6 +603,28 @@ describe("work packages", () => {
     expect((await git(dir, ["status", "--porcelain"])).trim()).toBe("");
   });
 
+  test("readWorkPackage never pairs a new plan with the entry's old tasks", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await s.createWorkPackage(wpInput, { author: "agent" });
+    await s.writeWorkPackageDoc("W-1", "spec", "# spec\n", {}, "写 spec", [], { author: "agent" });
+    // Hold the reader between reading the entry and reading the plan, and let a plan write land in that gap.
+    const get = s.get.bind(s);
+    let calls = 0;
+    vi.spyOn(s, "get").mockImplementation(async (id) => {
+      const entry = await get(id);
+      // Only the reader's call (the first) pauses; the writer's own lookup runs at full speed.
+      if (calls++ === 0) await new Promise((resolve) => setTimeout(resolve, 200));
+      return entry;
+    });
+    const reading = s.readWorkPackage("W-1");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const writing = s.writeWorkPackageDoc("W-1", "plan", "# plan\n", { tasks: [task(1), task(2)] }, "写 plan", [], { author: "agent" });
+    const [read] = await Promise.all([reading, writing]);
+    if (read?.plan !== null) expect(read?.entry.workpackage?.tasks).toEqual([task(1), task(2)]);
+    else expect(read?.entry.workpackage?.tasks).toEqual([]);
+  });
+
   test("setWorkPackageMeta approves and records the commit", async () => {
     const s = new KnowledgeStore(dir);
     await s.init();
