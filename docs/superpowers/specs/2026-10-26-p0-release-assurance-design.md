@@ -27,11 +27,13 @@ Implementation choices below are the designer's recommendations, subject to appr
 Extract the existing full verification jobs into a reusable workflow. Call the same suite from the PR wrapper and desktop tag release workflow, using local workflow references so the definition is versioned with the caller. Preserve the existing checks; this change must not silently shrink test coverage.
 
 For tag publication:
-1. Resolve the tag to a commit (including annotated tags), record its SHA, and require that it is reachable from fetched origin/main. An older ancestor of main is allowed; a commit on an unmerged branch is not.
+1. Resolve the tag to a commit (including annotated tags), record its SHA, and require that it is reachable from fetched origin/main. A main ancestor is eligible only if it includes the deployed gate implementation; a commit on an unmerged branch is not. Record the gate rollout commit in the release runbook and require supported release targets to descend from it.
 2. Run the complete reusable suite against that exact commit. Do not substitute a PR merge commit, another main commit, a green check by name, or a previous build artifact.
 3. Require successful verification and existing version/changelog preflight before expensive installer builds. The publish job must depend on successful verification as well as all build and payload-validation jobs.
 4. Failed, cancelled, skipped, or absent required verification cannot publish. No continue-on-error or success fallback.
 5. Preserve strict version matching, changelog validation, license/source validation, asset checksums, draft handling and refusal to overwrite a published release.
+
+Trust boundary: GitHub executes the workflow stored at the tagged commit. A new workflow cannot retroactively protect old commits. Tags pointing before the gate rollout commit are unsupported, must not be created, and are outside this workflow's enforcement guarantee. Existing historical tags/releases are untouched. This batch does not claim protection against a repository writer deliberately tagging old or modified workflows; organization-wide immutable policy would be a separate project. The release runbook must check rollout ancestry before creating a tag, and acceptance is scoped to commits containing the deployed gate.
 
 The modest extra cost is one full verification per release tag. This deliberately avoids querying old runs and reasoning about stale status provenance. Ordinary main pushes still do not repeat the full suite. Existing manual desktop builds remain nonpublishing; a release rehearsal may request full verification without creating a tag or release.
 
@@ -91,3 +93,7 @@ P0-01 is complete only after verified workflow behavior is deployed and its exac
 One spec and one implementation plan cover this batch. Use focused commits and a reviewable PR, with Codex co-author trailers. Update ROADMAP with partial progress and evidence, not blanket completion. Actual merge and release publication are not included in this design approval.
 
 The builder may choose helper filenames, fixtures and reusable-workflow job IDs while preserving the contracts above. Repository-settings activation for the specified additive protections and private reporting is part of the selected scope, subject to available permissions; unrelated settings must not change. Missing executor/admin/reporter access is an operational blocker to record, not grounds to fabricate acceptance.
+
+## Builder review
+
+A fresh reviewer identified the historical-tag trust boundary. The design now explicitly restricts supported release targets to descendants of the gate rollout commit and limits enforcement claims to workflow-bearing commits; existing historical releases remain unchanged. No remaining product choice requires expanding the selected scope.
