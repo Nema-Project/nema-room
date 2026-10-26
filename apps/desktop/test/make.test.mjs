@@ -67,7 +67,7 @@ describe('native Electron packaging configuration', () => {
   });
 
   it('smokes the standard Windows installer by default and accepts an explicit installer path', () => {
-    expect(parseSmokeArgs([]).installer.replaceAll('\\', '/')).toContain('dist/desktop-artifacts/win32-x64/Nema-0.1.1-win32-x64.exe');
+    expect(parseSmokeArgs([]).installer.replaceAll('\\', '/')).toContain('dist/desktop-artifacts/win32-x64/Nema-0.1.2-win32-x64.exe');
     expect(parseSmokeArgs(['--installer', 'dist/desktop-artifacts-final/win32-x64/Nema-0.1.0-win32-x64.exe']).installer.replaceAll('\\', '/')).toContain('desktop-artifacts-final');
     expect(() => parseSmokeArgs(['--installer', 'a.exe', '--installer', 'b.exe'])).toThrow(/usage/i);
     expect(() => parseSmokeArgs(['--zip', 'a.zip'])).toThrow(/usage/i);

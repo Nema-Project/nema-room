@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-26
+
 ### Added
 
 - Binding a repository shows a progress line while its code index runs. When the index finishes, chat says it is ready and code questions can start. Drawing the architecture diagram keeps a progress line and names that work.
