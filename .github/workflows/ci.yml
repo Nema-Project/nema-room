@@ -1,13 +1,10 @@
 name: CI
 
-# Branch pushes are covered by their pull request; only main runs on push.
+# A green pull request is the gate. Pushes to main do not run this workflow again.
 # Root-level Markdown, docs/ and the site/ landing page do not affect any build or test. Markdown
 # elsewhere (skills, vendor rules) is product content and still triggers CI.
 # A manual dispatch runs the full suite on any ref, e.g. main before a release tag.
 on:
-  push:
-    branches: [main]
-    paths-ignore: ['*.md', 'docs/**', 'site/**', '.github/workflows/pages.yml']
   pull_request:
     paths-ignore: ['*.md', 'docs/**', 'site/**', '.github/workflows/pages.yml']
   workflow_dispatch:
@@ -49,7 +46,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Ubuntu typecheck and the suite already run in the full test job.
+        os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     # Normal runs take 1-4 minutes; the 360-minute default would let a hung test burn the monthly budget.
     timeout-minutes: 15
