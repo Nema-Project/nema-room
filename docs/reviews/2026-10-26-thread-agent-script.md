@@ -12,9 +12,9 @@ Run these conversations in a disposable workspace using the current Nema runner,
 
 2. **Casual design chat in a thread, then a decision**
 
-   Open a thread and discuss a small cache design casually. End with the user message: “就这么定了：用 Redis”。
+   Start in main chat with: “给小工具加缓存，你觉得用 Redis 还是本地缓存？先帮我想想利弊。” Follow up naturally with: “如果以后要多实例部署，会有什么差别？” Let the agent open its own thread for the longer exchange. End in that agent-opened thread with the user message: “就这么定了：用 Redis”。
 
-   Expected: the thread reply acknowledges the decision and exactly one new `decision` entry is created with `basis: decided`, citing the final user message. The earlier casual discussion creates no entries.
+   Expected: the agent calls `open_thread` and the thread is agent-opened. Its reply acknowledges the decision and exactly one new `decision` entry is created with `basis: decided`, citing the final user message. The earlier casual discussion creates no entries.
 
 3. **`/thread` brainstorm without a decision**
 
