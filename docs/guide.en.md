@@ -86,7 +86,19 @@ Read-only check: `node scripts/setup.mjs --lang en --check`. With npm available,
 
 ### Manual installation (Bash)
 
-Compose runs PostgreSQL, the hub, and web. **The daemon runs on your host**, using local credentials and repository paths.
+Compose runs PostgreSQL, the hub, and web. **The daemon runs on your host**, using local credentials and repository paths. It is not in the images.
+
+Without cloning, download `docker-compose.yml` from the tag that published the images:
+
+```bash
+mkdir -p "$HOME/.nema/data"
+curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.3/docker-compose.yml
+docker compose up -d
+```
+
+This checkout pins hub and web at `0.1.3`. Images exist only after the first `v*` tag that contains the image publish workflow is on main. Tag `v0.1.3` predates that workflow, so replace the tag in the URL with the later tag that publishes them. The published web image calls the hub at `http://127.0.0.1:4400`. `NEMA_HUB_PORT` does not change a published image.
+
+To build from this checkout:
 
 ```bash
 git clone https://github.com/Nema-Project/nema-room.git
@@ -95,8 +107,10 @@ cp .env.example .env
 npm ci
 npm run build -w apps/cli
 mkdir -p "$HOME/.nema/data"
-docker compose up -d --build
+npm run up
 ```
+
+`npm run up` builds hub and web from this checkout. Changing `NEMA_HUB_PORT` applies only to that source build: the hub is published on that port, and web is rebuilt with `http://127.0.0.1:<port>`.
 
 Configure model access first. For the default authentication mode:
 
@@ -227,9 +241,9 @@ npm run lint -w apps/web
 npm run build -w apps/web
 ```
 
-The root typecheck excludes web; build it separately. Before upgrading, back up data, then run `git pull`, `npm ci`, rebuild the CLI and Compose images, and restart the daemon. Keep hub and CLI versions aligned.
+The root typecheck excludes web; build it separately. Before upgrading a source checkout, back up data, then run `git pull`, `npm ci`, rebuild the CLI, run `npm run up`, and restart the daemon. Keep hub and CLI versions aligned.
 
-See [.env.example](../.env.example) for ports and directories. The CLI does not automatically load the root `.env`: export `NEMA_DATA_DIR` or pass `--token-file` to `daemon` / `doctor` for a custom data directory; also pass `--hub` for a different hub port. Changing `NEXT_PUBLIC_HUB_URL` requires rebuilding web.
+See [.env.example](../.env.example) for ports and directories. The CLI does not automatically load the root `.env`: export `NEMA_DATA_DIR` or pass `--token-file` to `daemon` / `doctor` for a custom data directory; also pass `--hub` for a different hub port. Changing `NEMA_HUB_PORT` applies only to a source build with `npm run up`, which rebuilds web for `http://127.0.0.1:<port>`. Published images ignore `NEMA_HUB_PORT` and `NEXT_PUBLIC_HUB_URL` and keep `http://127.0.0.1:4400`. `npm run dev` still reads `NEXT_PUBLIC_HUB_URL`.
 
 ## Security reporting
 

@@ -25,6 +25,8 @@ node apps/cli/dist/index.js daemon
 
 已有 `.env` 时不要覆盖。开发模式不要同时启动 Compose 里的 hub 和 web，端口会冲突。CLI 不会自动读取根目录 `.env`。
 
+`npm run up` 用当前检出构建 hub 和 web。单独执行 `docker compose up` 会拉取钉死版本的 GHCR 镜像，不从源码构建。
+
 用户安装走 `node scripts/setup.mjs`。CLI 包是 private，不要把 `npx nema` 写成独立的 npm 安装方式。
 
 ## 目录

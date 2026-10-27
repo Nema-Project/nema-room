@@ -77,7 +77,17 @@ The Windows `.exe` is the NSIS installer: shortcuts, uninstall, and overwrite up
 
 ### Web / Compose
 
-Requires **Node.js ≥ 22**, **Git**, **Docker**, and **Docker Compose v2** on Windows, macOS, or Linux.
+Docker and Docker Compose v2 can start PostgreSQL, the hub, and web from pinned images, without cloning this repository. The daemon is not in those images. It still runs on the host. Until a standalone npm package exists, install the daemon from source. A source install also needs **Node.js ≥ 22** and **Git**, on Windows, macOS, or Linux.
+
+```sh
+mkdir -p "$HOME/.nema/data"
+curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.3/docker-compose.yml
+docker compose up -d
+```
+
+This checkout pins `ghcr.io/nema-project/nema-room-hub:0.1.3` and `ghcr.io/nema-project/nema-room-web:0.1.3`. Those images exist only after the first `v*` tag that contains the image publish workflow is on main. Tag `v0.1.3` was published before that workflow, so the pull fails until a later tag. Put that later tag in the URL above. Open [localhost:3000](http://localhost:3000). The published images ignore `NEMA_HUB_PORT` and keep the hub on port 4400.
+
+Building from a checkout still works. The wizard builds the images from this source:
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
@@ -85,7 +95,7 @@ cd nema-room
 node scripts/setup.mjs --lang en
 ```
 
-The wizard checks dependencies, builds the CLI, starts services, and guides model setup. Open [localhost:3000](http://localhost:3000) and keep the host daemon running. Existing `.env` files are preserved.
+The wizard checks dependencies, builds the CLI, starts services, and guides model setup. Keep the host daemon running. Existing `.env` files are preserved. `npm run up` is the same source build, including `--build`. Plain `docker compose up` pulls the pinned images. The published compose file has no build step, so `docker compose up --build` does not apply to it.
 
 [Manual setup and configuration](docs/guide.en.md#source-installation) · Read-only check: `node scripts/setup.mjs --lang en --check`
 

@@ -77,7 +77,17 @@ Windows の `.exe` は NSIS インストーラーです。ショートカット�
 
 ### Web / Compose
 
-Windows、macOS、Linux に対応。**Node.js ≥ 22**、**Git**、**Docker**、**Docker Compose v2** が必要です。
+Docker と Docker Compose v2 があれば、リポジトリを clone せずに、ピン留めしたイメージで PostgreSQL、hub、web を起動できます。daemon はイメージに入っていません。ホストで動かします。独立した npm パッケージができるまでは、daemon はソースからインストールします。ソースからのインストールには、Windows、macOS、Linux 上の **Node.js ≥ 22** と **Git** も必要です。
+
+```sh
+mkdir -p "$HOME/.nema/data"
+curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.3/docker-compose.yml
+docker compose up -d
+```
+
+このチェックアウトの compose ファイルは `ghcr.io/nema-project/nema-room-hub:0.1.3` と `ghcr.io/nema-project/nema-room-web:0.1.3` をピン留めしています。イメージが存在するのは、イメージ公開ワークフローを含む最初の `v*` tag が main に入った後です。`v0.1.3` はそのワークフローより前なので、より新しい tag が出るまで上の pull は失敗します。URL の tag をその tag に置き換えてください。その後 [localhost:3000](http://localhost:3000) を開きます。公開イメージは `NEMA_HUB_PORT` を無視し、hub は 4400 のままです。
+
+チェックアウトからビルドすることもできます。ウィザードは現在のソースからイメージをビルドします。
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
@@ -85,7 +95,7 @@ cd nema-room
 node scripts/setup.mjs --lang ja
 ```
 
-ウィザードが依存関係を確認し、CLI をビルドしてサービスを起動し、モデル設定を案内します。[localhost:3000](http://localhost:3000) を開き、ホストの daemon は起動したままにしてください。既存の `.env` は保持されます。
+ウィザードが依存関係を確認し、CLI をビルドしてサービスを起動し、モデル設定を案内します。ホストの daemon は起動したままにしてください。既存の `.env` は保持されます。`npm run up` は同じソースビルドで、`--build` を付けます。`docker compose up` だけを実行すると、ピン留めしたイメージを pull します。公開用 compose ファイルにビルド手順はないので、そのファイルに `docker compose up --build` は使いません。
 
 [手動インストールと設定](docs/guide.ja.md#source-installation) · 環境の確認のみ：`node scripts/setup.mjs --lang ja --check`
 

@@ -86,7 +86,19 @@ node scripts/setup.mjs --lang zh
 
 ### 手动安装（Bash）
 
-Compose 运行 PostgreSQL、hub 和 web；**daemon 仍在本机运行**，使用本机凭证和仓库路径。
+Compose 运行 PostgreSQL、hub 和 web；**daemon 仍在本机运行**，使用本机凭证和仓库路径。daemon 不在镜像里。
+
+不克隆仓库时，从发布了镜像的 tag 下载 `docker-compose.yml`：
+
+```bash
+mkdir -p "$HOME/.nema/data"
+curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.3/docker-compose.yml
+docker compose up -d
+```
+
+当前检出把 hub 和 web 钉在 `0.1.3`。镜像要等包含镜像发布工作流的第一个 `v*` tag 进入 main 之后才存在。`v0.1.3` 早于该工作流，请把 URL 里的 tag 换成后来真正发布镜像的那个 tag。发布的 web 镜像访问 hub 的地址是 `http://127.0.0.1:4400`。`NEMA_HUB_PORT` 不会改变发布镜像。
+
+从当前检出构建：
 
 ```bash
 git clone https://github.com/Nema-Project/nema-room.git
@@ -95,8 +107,10 @@ cp .env.example .env
 npm ci
 npm run build -w apps/cli
 mkdir -p "$HOME/.nema/data"
-docker compose up -d --build
+npm run up
 ```
+
+`npm run up` 用当前检出构建 hub 和 web。修改 `NEMA_HUB_PORT` 只在这条源码构建上生效：hub 发布到该端口，web 会按 `http://127.0.0.1:<端口>` 重建。
 
 首次使用先配置模型。使用默认认证时：
 
@@ -226,9 +240,9 @@ npm run lint -w apps/web
 npm run build -w apps/web
 ```
 
-根目录 typecheck 不包含 web，web 构建需单独执行。升级前备份数据，再 `git pull`、`npm ci`、重建 CLI 和 Compose 镜像，并重启 daemon。hub 与 CLI 应保持版本一致。
+根目录 typecheck 不包含 web，web 构建需单独执行。升级源码检出前先备份数据，再 `git pull`、`npm ci`、重建 CLI、执行 `npm run up`，并重启 daemon。hub 与 CLI 应保持版本一致。
 
-端口和目录见 [.env.example](../.env.example)。CLI 不自动读取根目录 `.env`：改数据目录时应在 shell 导出 `NEMA_DATA_DIR` 或传 `--token-file` 给 `daemon` / `doctor`；改 hub 端口还需传 `--hub`。`NEXT_PUBLIC_HUB_URL` 改动后需重建 web。
+端口和目录见 [.env.example](../.env.example)。CLI 不自动读取根目录 `.env`：改数据目录时应在 shell 导出 `NEMA_DATA_DIR` 或传 `--token-file` 给 `daemon` / `doctor`；改 hub 端口还需传 `--hub`。修改 `NEMA_HUB_PORT` 只在 `npm run up` 的源码构建上生效，web 会按 `http://127.0.0.1:<端口>` 重建。发布镜像忽略 `NEMA_HUB_PORT` 和 `NEXT_PUBLIC_HUB_URL`，地址保持 `http://127.0.0.1:4400`。`npm run dev` 仍读取 `NEXT_PUBLIC_HUB_URL`。
 
 ## 安全报告
 

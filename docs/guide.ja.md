@@ -86,7 +86,19 @@ Node/npm、Git、Docker、Compose を確認し、既存の `.env` を保持し�
 
 ### 手動インストール（Bash）
 
-Compose で PostgreSQL、hub、web を起動します。**daemon はホストで動かし**、ローカルの認証情報とリポジトリのパスを使います。
+Compose で PostgreSQL、hub、web を起動します。**daemon はホストで動かし**、ローカルの認証情報とリポジトリのパスを使います。daemon はイメージに入っていません。
+
+clone しない場合は、イメージを公開した tag から `docker-compose.yml` を取得します。
+
+```bash
+mkdir -p "$HOME/.nema/data"
+curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.3/docker-compose.yml
+docker compose up -d
+```
+
+このチェックアウトは hub と web を `0.1.3` にピン留めしています。イメージが存在するのは、イメージ公開ワークフローを含む最初の `v*` tag が main に入った後です。`v0.1.3` はそのワークフローより前なので、URL の tag は実際にイメージを公開したより新しい tag に置き換えてください。公開 web イメージが hub を呼ぶアドレスは `http://127.0.0.1:4400` です。`NEMA_HUB_PORT` は公開イメージを変えません。
+
+このチェックアウトからビルドする場合：
 
 ```bash
 git clone https://github.com/Nema-Project/nema-room.git
@@ -95,8 +107,10 @@ cp .env.example .env
 npm ci
 npm run build -w apps/cli
 mkdir -p "$HOME/.nema/data"
-docker compose up -d --build
+npm run up
 ```
+
+`npm run up` はこのチェックアウトから hub と web をビルドします。`NEMA_HUB_PORT` の変更が効くのはこのソースビルドだけです。hub はそのポートで公開され、web は `http://127.0.0.1:<ポート>` で再ビルドされます。
 
 まずモデルを設定します。標準の認証方式を使う場合：
 
@@ -226,9 +240,9 @@ npm run lint -w apps/web
 npm run build -w apps/web
 ```
 
-ルートの typecheck は web を含みません。web は個別にビルドしてください。更新前にデータをバックアップし、`git pull`、`npm ci`、CLI と Compose イメージの再ビルド、daemon の再起動を行います。hub と CLI は同じバージョンを使ってください。
+ルートの typecheck は web を含みません。web は個別にビルドしてください。ソースのチェックアウトを更新する前にデータをバックアップし、`git pull`、`npm ci`、CLI の再ビルド、`npm run up`、daemon の再起動を行います。hub と CLI は同じバージョンを使ってください。
 
-ポートや保存先は [.env.example](../.env.example) を参照してください。CLI はルートの `.env` を自動で読みません。保存先を変更したら shell で `NEMA_DATA_DIR` を export するか、`daemon` / `doctor` に `--token-file` を指定します。hub のポートを変えたら `--hub` も指定してください。`NEXT_PUBLIC_HUB_URL` 変更後は web の再ビルドが必要です。
+ポートや保存先は [.env.example](../.env.example) を参照してください。CLI はルートの `.env` を自動で読みません。保存先を変更したら shell で `NEMA_DATA_DIR` を export するか、`daemon` / `doctor` に `--token-file` を指定します。hub のポートを変えたら `--hub` も指定してください。`NEMA_HUB_PORT` の変更が効くのは `npm run up` のソースビルドだけで、web は `http://127.0.0.1:<ポート>` で再ビルドされます。公開イメージは `NEMA_HUB_PORT` と `NEXT_PUBLIC_HUB_URL` を無視し、`http://127.0.0.1:4400` のままです。`npm run dev` は引き続き `NEXT_PUBLIC_HUB_URL` を読みます。
 
 ## セキュリティ報告
 
