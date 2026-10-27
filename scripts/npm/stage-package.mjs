@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { setupCommand } from '../setup.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const REPOSITORY = 'https://github.com/Nema-Project/nema-room';
@@ -45,11 +46,9 @@ export async function stagePackage({
   await cp(licensePath, path.join(dir, 'LICENSE'));
   await writeFile(path.join(dir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   await mkdir(outDir, { recursive: true });
-  const packed = spawnSync('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', outDir], {
-    cwd: dir,
-    encoding: 'utf8',
-  });
-  if (packed.status !== 0) throw new Error(packed.stderr || packed.stdout || 'npm pack failed');
+  const npm = setupCommand('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', outDir]);
+  const packed = spawnSync(npm.bin, npm.args, { cwd: dir, encoding: 'utf8' });
+  if (packed.status !== 0) throw new Error(packed.stderr || packed.stdout || packed.error?.message || 'npm pack failed');
   const filename = JSON.parse(packed.stdout).at(-1)?.filename;
   if (!filename) throw new Error('npm pack did not report a tarball');
   const tarball = path.join(outDir, filename);

@@ -62,6 +62,21 @@ test('reusable verification checks the supplied ref with the complete existing s
   for (const command of ['npm ci','npm run typecheck','npm test -- --maxWorkers=2','npm run build -w apps/hub','npm run build -w apps/cli','npm run lint -w apps/web','npm run build -w apps/web','npm run setup:check','npm run up','docker compose down']) assert.ok(runs.includes(command), command);
   assert.ok(runs.indexOf('npm run typecheck') < runs.indexOf('npm test -- --maxWorkers=2'));
   assert.equal(verify.jobs.test.steps.find(s => s.run === 'docker compose down').if, 'always()');
+  const pack = verify.jobs['npm-pack'];
+  assert.deepEqual(pack.strategy.matrix.os, ['ubuntu-latest', 'windows-latest', 'macos-latest']);
+  const packRuns = pack.steps.map((step) => step.run ?? '').join('\n');
+  assert.match(packRuns, /npm ci/);
+  assert.match(packRuns, /npm run cli:pack/);
+  assert.match(packRuns, /scripts\/npm\/smoke-pack\.mjs/);
+  const hub = pack.steps.find((step) => step.name === 'Prepare local hub and daemon token');
+  assert.equal(hub.if, "runner.os == 'Linux'");
+  assert.match(hub.run, /NEMA_DATA_DIR/);
+  assert.match(hub.run, /daemon-token|nema-data/);
+  const daemon = pack.steps.find((step) => step.name === 'Smoke daemon against the hub');
+  assert.match(daemon.run, /--hub-url/);
+  assert.match(daemon.run, /--token-file/);
+  assert.match(daemon.run, /--expect-skew/);
+  assert.equal((daemon.run.match(/smoke-pack\.mjs/g) ?? []).length, 2);
 });
 
 // Evaluate the small Actions boolean expression subset used by these job gates.

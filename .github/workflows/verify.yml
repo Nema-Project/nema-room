@@ -112,3 +112,78 @@ jobs:
       - name: Stop containers
         if: always()
         run: docker compose down
+
+  npm-pack:
+    name: npm pack smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.checkout_ref }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build and pack the nema tarball
+        run: npm run cli:pack
+      - name: Smoke the packed CLI in a clean directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball=$(find dist-npm -name 'nema-*.tgz' | head -n 1)
+          test -n "$tarball"
+          node scripts/npm/smoke-pack.mjs "$tarball"
+      - name: Prepare local hub and daemon token
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run db:up
+          ready=0
+          for _ in $(seq 1 30); do
+            if docker compose exec -T postgres pg_isready -U nema -d nema >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "$ready" = 1
+          mkdir -p "$RUNNER_TEMP/nema-data"
+          npm run build -w apps/hub
+          NEMA_DATABASE_URL=postgres://nema:nema@127.0.0.1:5433/nema \
+            NEMA_DATA_DIR="$RUNNER_TEMP/nema-data" \
+            NEMA_HUB_PORT=4400 \
+            nohup node apps/hub/dist/src/main.js >"$RUNNER_TEMP/hub.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/hub.pid"
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4400/api/version >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/hub.log"
+          exit 1
+      - name: Smoke daemon against the hub
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball=$(find dist-npm -name 'nema-*.tgz' | head -n 1)
+          node scripts/npm/smoke-pack.mjs "$tarball" --hub-url http://127.0.0.1:4400 --token-file "$RUNNER_TEMP/nema-data/daemon-token"
+          node scripts/npm/smoke-pack.mjs "$tarball" --hub-url http://127.0.0.1:4400 --token-file "$RUNNER_TEMP/nema-data/daemon-token" --expect-skew
+      - name: Stop hub
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "$RUNNER_TEMP/hub.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/hub.pid")" || true
+          fi
+          docker compose down
