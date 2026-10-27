@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-27-source-evidence-protocol-design.md`
 
-**Base:** 设计对照 `ca980efe8cac4e4ce30326a5f1676b8ed4fd3235`。动手前 `git fetch` 并核对 HEAD。迁移文件只有在 `012_source_evidence.sql` 仍不存在时才用这个名字，否则用下一个空号并改下面所有引用。ADR-07 仍门控实施：业主还没排期 CX-03 时不要开始写生产代码。[issue #28](https://github.com/Nema-Project/nema-room/issues/28) 是本计划的前置：它合入之前不要开始本计划。本计划不实现 #28。一个数据目录只跑一个 hub 进程。
+**Base:** 设计对照 `ca980efe8cac4e4ce30326a5f1676b8ed4fd3235`。动手前 `git fetch` 并核对 HEAD。迁移文件只有在 `012_source_evidence.sql` 仍不存在时才用这个名字，否则用下一个空号并改下面所有引用。ADR-07 仍门控实施：业主还没排期 CX-03 时不要开始写生产代码。[issue #28](https://github.com/Nema-Project/nema-room/issues/28) 是本计划的前置：它合入之前不要开始本计划。本计划不重新实现 #28，也不得删除它合入后的用户 basis 证据检查和失效→active 检查。一个数据目录只跑一个 hub 进程。
 
 ## Global Constraints
 
@@ -29,7 +29,7 @@
 ## Review Focus
 
 1. 旧决策守卫的八个测试和 quote 逐字测试必须不改断言就通过。失败时文件字节不变，409 文案仍是 `改写已定决策 ...需要用户消息作为依据...`。→ 任务 6。
-2. 外部证据路径不得借「任意 user 消息」提升 basis。任务消息不是 user、或 quote 只存在于 `message_versions` 时必须 409 新文案。写入前后都没有 `sourceRefs` 的纯聊天路径仍是 #28，本计划不收紧。→ 任务 6。
+2. 外部证据路径不得借「任意 user 消息」提升 basis。任务消息不是 user、或 quote 只存在于 `message_versions` 时必须 409 新文案。写入前后都没有 `sourceRefs` 的纯聊天路径保持 #28 合入后的行为，包括用户 basis 证据检查和失效→active 检查，本计划不收紧，也不得删除。→ 任务 6。
 3. 导入在 `indexEntry` 失败后重试，仍是同一个 `S-n`。→ 任务 5。
 4. `revision: null` 和 `timeout` 不得写成 `current`。→ 任务 1 和任务 8。
 5. Room JSON 里的 `confirmationEventId` 必须被忽略，且不得消费已有事件。→ 任务 6。
@@ -204,13 +204,14 @@
 - Test: `apps/hub/test/roomApi.test.ts`
 
 **Interfaces:**
-- 保持 spec「今天的 POST /entries」第 1–8 步。不实现 #28 对纯聊天路径的收紧。
+- 保持 spec「#28 合入后的 POST /entries」全部步骤。第 8 步是 #28（本 PR）合入后的行为：用户 basis 证据检查，以及任一类型从 `INACTIVE_STATUSES`（`superseded`、`dropped`、`resolved`）改回 `active` 的检查。两项都要求引用当前任务的用户消息，否则 409 `user_basis_evidence`。不得删除。本任务不重新实现 #28，也不在没有 `sourceRefs` 的路径上再加逐字摘录。
+- 复用 `KnowledgeStore.upsert` 的可选第三个参数 `UpsertGuard`，不要新加锁，也不要在 `upsert` 之外先读一次磁盘再放行。Room 里已经是 `ks.upsert(input, { author: "agent", taskId }, async ({ existing, input: locked }) => { ... })`。回调先跑 `applyActiveDecisionGuard`，再跑 `assertCurrentTaskUserEvidence`。外部证据检查插在这之后、`return` 之前，仍在这把仓库锁里：用 `existing` 读写入前的 `sourceRefs`；要改写入内容时返回新的 input（`id` 和 `kind` 会被钉死）；要拒绝时抛 `UpsertRejected`。同一仓库上再调用 `upsert` / `confirm` / `withdraw` / `writeDiagram` / `withRepoLock(repoDir)` 会立刻抛 `RepoLockReentryError`。导入仍走任务 5 的 `writeImportedSource`，不走这个 guard。
 - 增加 spec「加上外部证据之后」的引用校验、改写定义和新 409 文案：`引用外部来源时，把条目标成 stated 或 decided 需要当前这条用户消息里的逐字摘录。外部文档不能代替这个确认。` 写入前或写入后 `sourceRefs` 非空时都要过，含显式清空。这一步不限于 active 决策：basis 是用户 basis，且新建或改了标题、正文、状态、basis、引用时都要过。只改 `related` 时不过。
 - 带 `sourceSnapshot` 的 S 条目，请求 basis 与磁盘不同：409 `导入的来源不能由 Agent 改 basis。只有界面的 promote_basis 事件可以。` 当前用户逐字摘录也不放行。标题、正文、状态或 url 有变时仍用 `导入的来源快照不能用 upsert 修改`。
 - 引用校验 400 文案用 spec 原句，含 `snapshotHash` 对不上当前 `contentHash`。
 - 有快照，或写入前、写入后的 `sourceRefs` 有一边非空时，丢掉 `confirmed: true` 的效果。
 - 不读取 `confirmationEventId`。
-- 外部证据检查和磁盘上的旧 `sourceRefs` 读取放在 #28 那次 `withRepoLock` 里面。不要在加锁前读一次就放行。
+- 外部证据检查和磁盘上的旧 `sourceRefs` 读取就在上面这个 `UpsertGuard` 里，不要再包一层 `withRepoLock`，也不要在加锁前读一次就放行。
 
 - [ ] **Step 1: 写失败测试** 在 `roomApi.test.ts`。先跑一遍现有 decision 描述块，确认仍是绿的，再加：
 
@@ -230,7 +231,7 @@
 - 不要改现有八个决策测试和 quote 测试的期望。
 
 - [ ] **Step 2: 跑** `npx vitest run --project @nema/hub roomApi` → 新用例 FAIL，旧决策用例 PASS。
-- [ ] **Step 3: 实现**。先跑旧的 active 决策守卫，再跑带快照来源的 basis 拒绝，再用「写入前或写入后有 `sourceRefs`」做外部引用一步。读旧引用和写文件在同一把仓库锁里。`getTask` / `getMessage` 只在需要新 409 的分支上查。不改纯聊天路径。
+- [ ] **Step 3: 实现**。在已有 `UpsertGuard` 里，先跑旧的 active 决策守卫，再保留 #28 的 `assertCurrentTaskUserEvidence`（用户 basis 证据检查和失效→active 检查，不得删除），再跑带快照来源的 basis 拒绝，再用「写入前或写入后有 `sourceRefs`」做外部引用一步。读旧引用和写文件在同一把仓库锁里。`getTask` / `getMessage` 只在需要新 409 的分支上查。纯聊天路径保持 #28 合入后的行为，不在没有 `sourceRefs` 时追加逐字摘录。
 - [ ] **Step 4: 跑** `npx vitest run --project @nema/hub roomApi` 和 `npm run typecheck` → PASS。
 - [ ] **Step 5: Commit** `feat(hub): require real confirmation for external evidence`
 
@@ -242,7 +243,7 @@
 - Test: `apps/hub/test/uiApi.test.ts`
 
 **Interfaces:**
-- `PUT` 与 `POST .../confirm` 的 Git 结果保持今天的 basis 规则。在 Git 之前插入 spec 规定的事件种类。Git 成功后消费。同一 payload 的重复确认不再产生 commit。
+- `PUT` 与 `POST .../confirm` 的 Git 结果保持 #28 合入后的界面 basis 规则（仍不检查当前任务的用户消息，也不走 Room 的 `user_basis_evidence`）。这不删除 `POST /entries` 上的用户 basis 证据检查和失效→active 检查。在 Git 之前插入 spec 规定的事件种类。Git 成功后消费。同一 payload 的重复确认不再产生 commit。
 - `PUT` 不接受客户端快照或 `confirmedRevision`。
 - 在测试 app 上内联一层与 `createGatewayUiAuth` 相同契约的中间件（检查 `x-nema-gateway-credential`）。不要从 hub 测试 `import` `apps/local`。Room Bearer 调 `POST /api/.../confirm` 得到 401，且没有新的 `evidence_events` 行。不要在 confirm 处理函数里识别 run token。现有不挂 `uiAuth` 的 `uiApi.test.ts` 用例继续走它们今天的调用方式。`PUT` 在写 Git 之前插入 `promote_basis`。同一 payload 的并发确认只有一条事件、一次 commit。
 
