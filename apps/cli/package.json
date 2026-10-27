@@ -49,7 +49,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -b && node ../../scripts/npm/bundle-cli.mjs",
+    "build": "tsc -b --force && node ../../scripts/npm/bundle-cli.mjs",
     "typecheck": "tsc -p tsconfig.test.json"
   },
   "dependencies": {

@@ -12,6 +12,7 @@
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "setup:check": "node scripts/setup.mjs --check",
+    "cli:pack": "npm run build -w @nema/cli && node scripts/npm/stage-package.mjs",
     "desktop:stage": "node scripts/desktop/stage-runtime.mjs",
     "desktop:make": "node scripts/desktop/make.mjs",
     "desktop:smoke": "node scripts/desktop/smoke-desktop.mjs",
