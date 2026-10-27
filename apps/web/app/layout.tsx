@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { I18nProvider } from "@/lib/i18n";
+import { AppReleaseBanner } from "@/components/AppRelease";
 import { DesktopTitlebar } from "@/components/DesktopTitlebar";
 import { ThreadWindowsProvider } from "@/components/ThreadWindowsProvider";
 import "./globals.css";
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <I18nProvider>
           <ThreadWindowsProvider>
             <DesktopTitlebar />
+            <AppReleaseBanner />
             {children}
           </ThreadWindowsProvider>
         </I18nProvider>

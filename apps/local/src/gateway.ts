@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import http, { type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 import type { MiddlewareHandler } from "hono";
+import type { AppReleaseService } from "./appRelease.js";
 import type { SessionManager } from "./session.js";
 import type { SettingsService } from "./settings.js";
 
@@ -22,6 +23,7 @@ export type GatewayOptions = {
   /** Private credential shared with the hub's uiAuth middleware, never sent to the browser. */
   privateGatewayCredential: string;
   settings?: SettingsService;
+  appRelease?: AppReleaseService;
 };
 
 export type RunningGateway = { origin: string; close(): Promise<void> };
@@ -202,7 +204,7 @@ export async function startGateway(options: GatewayOptions): Promise<RunningGate
 
     if (settingsPath) {
       if (url.search !== "") return send(res, 400, JSON.stringify({ error: "invalid_request" }), { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      if (!options.settings || !["GET", "POST", "PATCH"].includes(req.method ?? "")) return send(res, 404, "not found", { "cache-control": "no-store" });
+      if (!["GET", "POST", "PATCH"].includes(req.method ?? "")) return send(res, 404, "not found", { "cache-control": "no-store" });
       let body: unknown;
       if (req.method !== "GET") {
         const contentType = (req.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
@@ -211,6 +213,11 @@ export async function startGateway(options: GatewayOptions): Promise<RunningGate
         if ("error" in parsed) return send(res, parsed.error, JSON.stringify({ error: parsed.error === 413 ? "body_too_large" : "invalid_json" }), { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         body = parsed.value;
       }
+      const release = options.appRelease ? await options.appRelease.dispatch(req.method ?? "", url.pathname, body) : null;
+      if (release) {
+        return send(res, release.status, JSON.stringify(release.body), { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+      }
+      if (!options.settings) return send(res, 404, "not found", { "cache-control": "no-store" });
       const result = await options.settings.dispatch(req.method ?? "", url.pathname, body);
       const encoded = JSON.stringify(result.body);
       return send(res, result.status, encoded, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" });
