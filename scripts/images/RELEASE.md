@@ -7,6 +7,8 @@ A push of a `v*` tag builds `linux/amd64` hub and web images, runs `.github/work
 - `ghcr.io/nema-project/nema-room-hub`
 - `ghcr.io/nema-project/nema-room-web`
 
+Do not create a tag unless that SHA's `CI` workflow on `main` has already succeeded. A missing, in-progress, cancelled, or failed run is not a tag candidate. Publication is still blocked by `verify.yml` on the tag SHA (a failure, cancellation, skip, or missing run cannot publish), not by a separate lookup of the `main` workflow run. A SHA whose full suite failed on `main` fails that same verify.
+
 The version tag matches `apps/desktop`, `apps/local`, and `apps/cli`, and the `image:` tags in `docker-compose.yml`. `scripts/images/check-images.mjs` rejects a tag whose version differs from that pin, so the pin is updated in the release commit. A prerelease does not move `latest`. `workflow_dispatch` builds and smokes the images locally and does not push.
 
 Publish jobs share the concurrency group `image-publish-registry` and do not cancel each other. A stable release moves `latest` only when `org.opencontainers.image.version` on the current `latest` image is missing or older than or equal to this version. An older stable tag that reaches the registry later leaves `latest` where it is. The remote tag is checked again immediately before each version push, and again after both version tags exist and before either `latest` tag moves.

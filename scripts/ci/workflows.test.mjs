@@ -115,7 +115,7 @@ test('reusable verification checks the supplied ref with the complete existing s
   assert.equal(expr(outputs.app.value), 'jobs.test.result');
   assert.equal(expr(outputs.platform.value), 'jobs.platform.result');
   assert.equal(expr(outputs.npm_pack.value), 'jobs.npm-pack.result');
-  for (const name of ['npm-publish', 'desktop-release']) {
+  for (const name of ['npm-publish', 'desktop-release', 'image-publish']) {
     const caller = read(name).jobs.verify.with;
     for (const key of ['app_tests', 'platform', 'npm_pack']) assert.notEqual(caller[key], false, `${name} ${key}`);
   }
@@ -237,12 +237,26 @@ test('desktop pull request paths stay equal to the policy desktop class', () => 
 });
 
 test('image smoke paths are fixed and the workflow is not invented', () => {
+  const imagePaths = ['Dockerfile', 'docker-compose.yml', 'docker-compose.build.yml', 'scripts/images/**', '.github/workflows/image-publish.yml'];
   for (const path of ['Dockerfile', 'docker-compose.yml', 'docker-compose.build.yml', 'scripts/images/smoke-compose.mjs', '.github/workflows/image-publish.yml']) {
-    assert.equal(classifyPaths([path]).image, true, path);
+    const classified = classifyPaths([path]);
+    assert.equal(classified.image, true, path);
+    assert.equal(classified.mode, 'app', path);
+    assert.equal(classified.platform, false, path);
+    assert.equal(classified.npmPack, false, path);
   }
   assert.equal(classifyPaths(['apps/web/app/page.tsx']).image, false);
-  const workflow = new URL('../../.github/workflows/image-publish.yml', import.meta.url);
-  assert.equal(existsSync(workflow), false);
+  const image = read('image-publish');
+  assert.equal(existsSync(new URL('../../.github/workflows/image-publish.yml', import.meta.url)), true);
+  assert.deepEqual(image.on.pull_request.paths, imagePaths);
+  assert.match(expr(image.jobs.publish.if), /github\.event_name == 'push'/);
+  const plan = image.jobs.plan.steps.find((step) => step.id === 'commit').run;
+  assert.match(plan, /"\$EVENT" = "push"/);
+  assert.match(plan, /"\$REF_TYPE" = "tag"/);
+  assert.match(plan, /"\$VERIFY_FULL" = "true"/);
+  assert.doesNotMatch(plan, /pull_request/);
+  assert.equal(expr(image.jobs.verify.if), "needs.plan.outputs.verification_required == 'true'");
+  for (const key of ['app_tests', 'platform', 'npm_pack']) assert.notEqual(image.jobs.verify.with[key], false, key);
 });
 
 test('actual publication shell refuses a tag moved during upload before making the draft public', t => {
@@ -290,9 +304,9 @@ function assertPinnedUses(doc) {
 
 test('image publish pushes pinned GHCR images only after verify, and only from the publish job', () => {
   const image = read('image-publish');
-  assert.deepEqual(Object.keys(image.on).sort(), ['push', 'workflow_dispatch']);
+  assert.deepEqual(Object.keys(image.on).sort(), ['pull_request', 'push', 'workflow_dispatch']);
   assert.deepEqual(image.on.push.tags, ['v*']);
-  assert.equal(image.on.pull_request, undefined);
+  assert.deepEqual(image.on.pull_request.paths, ['Dockerfile', 'docker-compose.yml', 'docker-compose.build.yml', 'scripts/images/**', '.github/workflows/image-publish.yml']);
   assert.equal(image.permissions.contents, 'read');
   assert.equal(image.permissions.packages, undefined);
   assertRelease(image);
