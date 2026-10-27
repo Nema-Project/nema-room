@@ -56,6 +56,42 @@ describe("AppRelease", () => {
     expect(screen.queryByRole("link")).toBeNull();
   });
 
+  it("shows up to date only for a current check, and drops that line when a later check fails", async () => {
+    const fetchMock = installFetch(
+      { version: "0.1.3" },
+      { enabled: true, state: "current" },
+    );
+    renderRelease();
+    expect(await screen.findByText("You're up to date.")).toBeTruthy();
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      if (String(input) === "/_nema/version") return json({ version: "0.1.3" });
+      return json({ enabled: true, state: "error" });
+    });
+    await waitFor(() => {
+      window.dispatchEvent(new Event("focus"));
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(2);
+    });
+    await waitFor(() => expect(screen.queryByText("You're up to date.")).toBeNull());
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("hides the banner when automatic checks are turned off", async () => {
+    const fetchMock = installFetch(
+      { version: "0.1.3" },
+      { enabled: true, state: "newer", offer },
+    );
+    renderRelease();
+    expect(await screen.findByRole("link", { name: "Update available: 0.2.0" })).toBeTruthy();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/_nema/version") return json({ version: "0.1.3" });
+      if (init?.method === "PATCH") return json({ enabled: false, state: "disabled" });
+      return json({ enabled: true, state: "newer", offer });
+    });
+    await userEvent.click(screen.getByRole("checkbox", { name: "Check for updates automatically" }));
+    await waitFor(() => expect(screen.queryByRole("link")).toBeNull());
+    expect((screen.getByRole("checkbox", { name: "Check for updates automatically" }) as HTMLInputElement).checked).toBe(false);
+  });
+
   it("saves the automatic-check setting and does not show a banner for an error", async () => {
     const fetchMock = installFetch(
       { version: "0.1.3" },

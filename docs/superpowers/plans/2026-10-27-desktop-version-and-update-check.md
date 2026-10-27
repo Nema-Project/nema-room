@@ -4,7 +4,7 @@
 
 **Goal:** 桌面应用在 macOS 应用菜单、两端托盘和侧栏显示版本（有则带短 commit），并在有更新的稳定版时用托盘项和页面横幅链到 GitHub 发行页。不自动下载。
 
-**Architecture:** 版本比较和 `GET /repos/Nema-Project/nema-room/releases/latest` 放在本地核心。核心把结果写入桌面 home 的 `update-status.json`。Electron 只读这个文件来刷新托盘，并用 `update-check.json` 的 `checkRequestedAt` 请求手动检查。页面走已有的会话接口。
+**Architecture:** 版本比较和 `GET /repos/Nema-Project/nema-room/releases/latest` 放在本地核心。核心把结果写入桌面 home 的 `update-status.json`。Electron 只读这个文件来刷新托盘，并把手动检查写到 `update-check-request.json`，不改写 `update-check.json`。页面走已有的会话接口。
 
 **Spec:** [桌面版本号与更新检查](../specs/2026-10-27-desktop-version-and-update-check-design.md)。
 
@@ -61,7 +61,7 @@
 
 测试先写：有会话时 `GET /_nema/version` 返回版本和 7 位 commit；无会话 401。`POST /_nema/update/check` 在假 fetch 下返回 offer，并写入 `update-status.json`。`enabled: false` 时自动路径不调用 fetch。显式 commit 写入运行清单；坏 commit 不写。
 
-实现：`createAppReleaseService` 读清单和 `build-metadata.json`。偏好文件 `update-check.json` 的 `enabled`。网关在设置分发之前把这四个路径交给该服务。核心启动服务；`VITEST` 下不排程。`stage-runtime` 仅当源码根就是 Git 顶层时写入 40 位 commit。
+实现：`createAppReleaseService` 读清单和 `build-metadata.json`。偏好文件 `update-check.json` 的 `updateCheck.enabled`。托盘请求写 `update-check-request.json`。网关在设置分发之前把这四个路径交给该服务。核心启动服务；`VITEST` 下不排程。`stage-runtime` 仅当源码根就是 Git 顶层时写入 40 位 commit。失败的复查保留已有 offer。响应体超过 1 MB 时停止读取。
 
 验证：`npx vitest run apps/local/test/releaseCheck.test.ts apps/local/test/appRelease.test.ts`
 

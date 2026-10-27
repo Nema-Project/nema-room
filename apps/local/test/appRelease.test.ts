@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { createAppReleaseService, readBuildIdentity, UPDATE_CHECK_FILE, UPDATE_STATUS_FILE } from "../src/appRelease.js";
+import { createAppReleaseService, readBuildIdentity, UPDATE_CHECK_FILE, UPDATE_REQUEST_FILE, UPDATE_STATUS_FILE } from "../src/appRelease.js";
 import { createGatewayCredential, startGateway } from "../src/gateway.js";
 import { SessionManager } from "../src/session.js";
 
@@ -83,13 +83,44 @@ describe("desktop release service", () => {
     const quiet = createAppReleaseService({ home, version: "0.1.3", fetchImpl, schedule: true, delayMs: 10, intervalMs: 60_000, requestPollMs: 60_000 });
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(fetchImpl).not.toHaveBeenCalled();
+    expect(JSON.parse(readFileSync(path.join(home, UPDATE_STATUS_FILE), "utf8"))).toMatchObject({ state: "disabled" });
     quiet.close();
 
     const asked = createAppReleaseService({ home, version: "0.1.3", fetchImpl, schedule: true, delayMs: 60_000, intervalMs: 60_000, requestPollMs: 20 });
-    writeFileSync(path.join(home, UPDATE_CHECK_FILE), JSON.stringify({ updateCheck: { enabled: false }, checkRequestedAt: Date.now() }));
+    writeFileSync(path.join(home, UPDATE_REQUEST_FILE), JSON.stringify({ checkRequestedAt: Date.now() }));
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(readFileSync(path.join(home, UPDATE_CHECK_FILE), "utf8"))).toEqual({ updateCheck: { enabled: false } });
     asked.close();
+  });
+
+  test("an in-flight automatic check does not publish an offer after checks are turned off", async () => {
+    const home = tempHome();
+    let release: (value: Response) => void = () => {};
+    const fetchImpl = vi.fn(() => new Promise<Response>((resolve) => { release = resolve; }));
+    const service = createAppReleaseService({ home, version: "0.1.3", fetchImpl, schedule: true, delayMs: 10, intervalMs: 60_000, requestPollMs: 60_000 });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+    expect(await service.dispatch("PATCH", "/_nema/update", { enabled: false })).toMatchObject({ body: { enabled: false, state: "disabled" } });
+    release(newer());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await service.dispatch("GET", "/_nema/update", undefined)).toEqual({ status: 200, body: { enabled: false, state: "disabled" } });
+    service.close();
+  });
+
+  test("a failed recheck keeps the release already found", async () => {
+    const home = tempHome();
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(newer())
+      .mockRejectedValueOnce(new Error("offline"));
+    const service = createAppReleaseService({ home, version: "0.1.3", fetchImpl, schedule: false });
+    await service.dispatch("POST", "/_nema/update/check", {});
+    const again = await service.dispatch("POST", "/_nema/update/check", {});
+    expect(again).toMatchObject({
+      status: 200,
+      body: { state: "newer", offer: { version: "0.2.0", url: "https://github.com/Nema-Project/nema-room/releases/tag/v0.2.0" } },
+    });
+    expect(JSON.parse(readFileSync(path.join(home, UPDATE_STATUS_FILE), "utf8"))).toMatchObject({ state: "newer", version: "0.2.0" });
+    service.close();
   });
 
   test("a failed check stays silent", async () => {

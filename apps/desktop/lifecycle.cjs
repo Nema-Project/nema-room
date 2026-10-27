@@ -2,7 +2,7 @@
 
 const { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, isMainMessageUrl, isThreadWindowUrl, threadWindowIdentity, navigationDecision, validateRuntimeLaunchUrl } = require('./security.cjs');
 const { registerWindowControls } = require('./window-controls.cjs');
-const { mkdirSync, readFileSync, writeFileSync } = require('node:fs');
+const { mkdirSync, readFileSync, renameSync, writeFileSync } = require('node:fs');
 const path = require('node:path');
 
 const RELEASE_PAGE = /^https:\/\/github\.com\/Nema-Project\/nema-room\/releases\/tag\/v?\d+\.\d+\.\d+$/;
@@ -42,6 +42,14 @@ function releaseNotice(status) {
   return { label: `Update available: ${status.version}`, url: status.url };
 }
 
+function requestReleaseCheck(home) {
+  mkdirSync(home, { recursive: true });
+  const file = path.join(home, 'update-check-request.json');
+  const temp = `${file}.${process.pid}.tmp`;
+  writeFileSync(temp, `${JSON.stringify({ checkRequestedAt: Date.now() })}\n`, { mode: 0o600 });
+  renameSync(temp, file);
+}
+
 function defaultReleaseBridge({ home, assetsDir, app }) {
   return {
     identity: readPackagedIdentity(app, assetsDir),
@@ -49,12 +57,7 @@ function defaultReleaseBridge({ home, assetsDir, app }) {
       return readJson(path.join(home, 'update-status.json'), readFileSync);
     },
     requestCheck() {
-      const file = path.join(home, 'update-check.json');
-      const current = readJson(file, readFileSync);
-      const prefs = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
-      mkdirSync(home, { recursive: true });
-      // ponytail: last writer wins if the sidebar saves `enabled` in the same moment. One file is enough until a second writer shows up.
-      writeFileSync(file, `${JSON.stringify({ ...prefs, checkRequestedAt: Date.now() })}\n`, { mode: 0o600 });
+      requestReleaseCheck(home);
     },
   };
 }
@@ -331,4 +334,4 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
   return { createMainWindow, install, openBrowserMode, quitNema, refreshReleaseMenu };
 }
 
-module.exports = { createDesktopLifecycle, initialWindowSize, readPackagedIdentity, releaseNotice };
+module.exports = { createDesktopLifecycle, initialWindowSize, readPackagedIdentity, releaseNotice, requestReleaseCheck };

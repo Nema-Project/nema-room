@@ -76,6 +76,43 @@ export function releaseOffer(current: string, body: unknown): ReleaseOffer | nul
   return { version: `${parsed.major}.${parsed.minor}.${parsed.patch}`, url, tag };
 }
 
+/** Reads until `max` bytes. A larger body is cancelled and rejected instead of buffered. */
+export async function readCapped(response: Response, max: number): Promise<Uint8Array | null> {
+  const declared = Number(response.headers.get("content-length") ?? NaN);
+  if (Number.isFinite(declared) && declared > max) return null;
+  const body = response.body;
+  if (!body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return bytes.byteLength > max ? null : bytes;
+  }
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value?.byteLength) continue;
+      total += value.byteLength;
+      if (total > max) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    await reader.cancel().catch(() => undefined);
+    return null;
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 export async function fetchLatestRelease(current: string, options: {
   enabled: boolean;
   manual?: boolean;
@@ -98,10 +135,8 @@ export async function fetchLatestRelease(current: string, options: {
       },
     });
     if (!response.ok) return { state: "error" };
-    const length = Number(response.headers.get("content-length") ?? 0);
-    if (Number.isFinite(length) && length > MAX_BODY_BYTES) return { state: "error" };
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > MAX_BODY_BYTES) return { state: "error" };
+    const bytes = await readCapped(response, MAX_BODY_BYTES);
+    if (!bytes) return { state: "error" };
     let payload: unknown;
     try { payload = JSON.parse(new TextDecoder().decode(bytes)) as unknown; }
     catch { return { state: "error" }; }

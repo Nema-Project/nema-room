@@ -1,12 +1,12 @@
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { createDesktopLifecycle, initialWindowSize, readPackagedIdentity, releaseNotice } = require('../lifecycle.cjs');
+const { createDesktopLifecycle, initialWindowSize, readPackagedIdentity, releaseNotice, requestReleaseCheck } = require('../lifecycle.cjs');
 
 function harness(overrides = {}) {
   const app = new EventEmitter();
@@ -165,6 +165,17 @@ describe('Electron shell lifecycle', () => {
     expect(readPackagedIdentity({}, `${assetsDir}-missing`)).toEqual({ version: '', commit: '' });
     expect(releaseNotice({ state: 'newer', version: '0.2.0-rc.1', url: 'https://github.com/Nema-Project/nema-room/releases/tag/v0.2.0-rc.1' })).toBeNull();
     expect(releaseNotice({ state: 'error' })).toBeNull();
+  });
+
+  it('records a manual check without rewriting the automatic-check preference', () => {
+    const home = mkdtempSync(`${tmpdir()}/nema-update-request-`);
+    const prefs = path.join(home, 'update-check.json');
+    writeFileSync(prefs, `${JSON.stringify({ updateCheck: { enabled: false } })}\n`);
+    requestReleaseCheck(home);
+    expect(JSON.parse(readFileSync(prefs, 'utf8'))).toEqual({ updateCheck: { enabled: false } });
+    const request = JSON.parse(readFileSync(path.join(home, 'update-check-request.json'), 'utf8'));
+    expect(request.checkRequestedAt).toBeGreaterThan(Date.now() - 10_000);
+    rmSync(home, { recursive: true, force: true });
   });
 
   it('removes the per-window native menu on Windows so Alt cannot reveal a second menu row', async () => {

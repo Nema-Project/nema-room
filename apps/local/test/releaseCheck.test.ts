@@ -86,6 +86,19 @@ describe("fetchLatestRelease", () => {
     await expect(fetchLatestRelease("0.1.3", { enabled: true, fetchImpl, timeoutMs: 5 })).resolves.toEqual({ state: "error" });
   });
 
+  test("stops reading a body larger than 1 MB", async () => {
+    let pulled = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(new Uint8Array(100_000));
+      },
+    });
+    const fetchImpl: typeof fetch = async () => new Response(stream, { status: 200 });
+    await expect(fetchLatestRelease("0.1.3", { enabled: true, fetchImpl })).resolves.toEqual({ state: "error" });
+    expect(pulled).toBeLessThan(15);
+  });
+
   test("does not fetch when automatic checks are disabled, unless the check is manual", async () => {
     const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
     expect(await fetchLatestRelease("0.1.3", { enabled: false, fetchImpl })).toEqual({ state: "disabled" });

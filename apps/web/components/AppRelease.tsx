@@ -41,16 +41,19 @@ async function refresh(): Promise<boolean> {
     const versionBody = await versionResponse.json() as { version?: unknown; commit?: unknown };
     const version = typeof versionBody.version === "string" && VERSION_TEXT.test(versionBody.version) ? versionBody.version : undefined;
     if (!version) return false;
-    const updateBody = updateResponse.ok ? await updateResponse.json() as { enabled?: unknown; offer?: unknown } : {};
     const commit = typeof versionBody.commit === "string" && COMMIT_TEXT.test(versionBody.commit) ? versionBody.commit : undefined;
-    const offer = offerFrom(updateBody.offer);
-    view = {
+    const identity: ReleaseView = {
       version,
       ...(commit ? { commit } : {}),
-      enabled: updateBody.enabled !== false,
-      ...(offer ? { offer } : {}),
-      upToDate: view?.upToDate === true && !offer,
+      enabled: view?.enabled !== false,
+      ...(view?.offer ? { offer: view.offer } : {}),
+      upToDate: false,
     };
+    if (!updateResponse.ok) {
+      view = identity;
+      return true;
+    }
+    view = viewFromUpdate(await updateResponse.json() as { enabled?: unknown; state?: unknown; offer?: unknown }, identity);
     return true;
   } catch {
     // The desktop endpoint is absent in Web / Compose, and a failed check stays quiet.
@@ -60,9 +63,20 @@ async function refresh(): Promise<boolean> {
   }
 }
 
+function viewFromUpdate(body: { enabled?: unknown; state?: unknown; offer?: unknown }, previous: ReleaseView): ReleaseView {
+  const offer = offerFrom(body.offer) ?? (body.state === "error" ? previous.offer : undefined);
+  return {
+    version: previous.version,
+    ...(previous.commit ? { commit: previous.commit } : {}),
+    enabled: body.enabled !== false,
+    ...(offer ? { offer } : {}),
+    upToDate: body.state === "current" && !offer,
+  };
+}
+
 async function setEnabled(enabled: boolean) {
   if (!view) return;
-  const previous = view.enabled;
+  const previous = view;
   view = { ...view, enabled };
   publish();
   try {
@@ -74,8 +88,10 @@ async function setEnabled(enabled: boolean) {
       body: JSON.stringify({ enabled }),
     });
     if (!response.ok) throw new Error("update preference rejected");
+    view = viewFromUpdate(await response.json() as { enabled?: unknown; state?: unknown; offer?: unknown }, previous);
   } catch {
-    if (view) view = { ...view, enabled: previous };
+    view = previous;
+  } finally {
     publish();
   }
 }
@@ -93,14 +109,7 @@ async function check() {
       body: "{}",
     });
     if (!response.ok || !view) return;
-    const body = await response.json() as { enabled?: unknown; state?: unknown; offer?: unknown };
-    const offer = offerFrom(body.offer);
-    view = {
-      ...view,
-      enabled: body.enabled !== false,
-      ...(offer ? { offer } : { offer: undefined }),
-      upToDate: body.state === "current" && !offer,
-    };
+    view = viewFromUpdate(await response.json() as { enabled?: unknown; state?: unknown; offer?: unknown }, view);
   } catch {
     // Offline and rate limits stay quiet.
   } finally {

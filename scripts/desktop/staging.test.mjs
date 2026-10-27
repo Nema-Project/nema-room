@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { copyFile, link, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
@@ -90,10 +91,29 @@ test('runs the Electron installer when the binary has not been downloaded yet', 
   assert.equal(await readFile(path.join(target, 'runtime/licenses/electron/LICENSE'), 'utf8'), 'Electron MIT license');
 });
 
-test('records a full commit only when it is a 40-digit sha of this source root', () => {
-  assert.equal(recordedCommit(os.tmpdir(), 'AB'.repeat(20)), 'ab'.repeat(20));
-  assert.equal(recordedCommit(os.tmpdir(), 'nope'), undefined);
-  assert.equal(recordedCommit(path.join(os.tmpdir(), 'nema-not-a-repository'), undefined), undefined);
+test('records HEAD only when the source root is that git repository toplevel', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'nema-commit-root-'));
+  try {
+    const git = (args, cwd = root) => spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, GIT_AUTHOR_NAME: 'Nema Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Nema Test', GIT_COMMITTER_EMAIL: 'test@example.com' },
+    });
+    assert.equal(git(['init']).status, 0);
+    writeFileSync(path.join(root, 'note.txt'), 'note');
+    assert.equal(git(['add', 'note.txt']).status, 0);
+    assert.equal(git(['commit', '-m', 'note']).status, 0);
+    const head = git(['rev-parse', 'HEAD']).stdout.trim();
+    assert.match(head, /^[0-9a-f]{40}$/);
+    assert.equal(recordedCommit(root, undefined), head);
+    const nested = path.join(root, 'nested');
+    mkdirSync(nested);
+    assert.equal(recordedCommit(nested, undefined), undefined);
+    assert.equal(recordedCommit(root, 'nope'), undefined);
+    assert.equal(recordedCommit(os.tmpdir(), 'AB'.repeat(20)), 'ab'.repeat(20));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('stages a relocatable manifest and all declared runtime resources from fixture artifacts', async (t) => {
