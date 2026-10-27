@@ -4,7 +4,7 @@
 
 安装、模型配置、平台限制与数据备份见 [中文 README](../README.zh.md)、[English](../README.en.md)、[日本語](../README.ja.md)。本文保留进阶功能、格式约束和 API 实现说明。
 
-`nema` 是独立 npm 包。在 Node.js ≥ 22 上按正在运行的 hub 版本安装：`npx nema@<hub 版本>` 或 `npm i -g nema@<hub 版本>`。Compose 用 `curl http://127.0.0.1:4400/api/version` 查看版本；桌面版在侧边栏显示，回环地址提供 `GET /_nema/version`。`nema daemon` 的 `--hub` 默认是 `http://127.0.0.1:4400`，token 文件是 `$NEMA_DATA_DIR` 或 `~/.nema/data` 下的 `daemon-token`（hub 启动时写入；Compose 把该目录挂到容器 `/data`）。开发本仓库时仍可在源码检出里构建并链接本地 CLI。
+`nema` 是本仓库里的独立 npm 包。第一次发布之前它还不在 npm 上，步骤见 [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md)。发布之后，在 Node.js ≥ 22 上按正在运行的 hub 版本安装：`npx nema@<hub 版本>` 或 `npm i -g nema@<hub 版本>`。Compose 用 `curl http://127.0.0.1:4400/api/version` 查看版本；桌面版在侧边栏显示，回环地址提供 `GET /_nema/version`。`nema daemon` 的 `--hub` 默认是 `http://127.0.0.1:4400`，token 文件是 `$NEMA_DATA_DIR` 或 `~/.nema/data` 下的 `daemon-token`（hub 启动时写入；Compose 把该目录挂到容器 `/data`）。开发本仓库时仍可在源码检出里构建并链接本地 CLI。
 
 ## 知识依据与时效
 
@@ -132,7 +132,7 @@ GitHub 插件让 Agent 查看已绑定仓库在 GitHub 上的 issue、pull reque
 
 ### Hub 的本机访问限制
 
-- hub 只接受 `Host` 为 `127.0.0.1:<NEMA_HUB_PORT>` 或 `localhost:<NEMA_HUB_PORT>` 的 `/api`、`/room` 请求，其他 Host 一律 403（防 DNS rebinding）。因此请用这两个名字之一访问 hub（`NEXT_PUBLIC_HUB_URL` 也必须是其中之一）；daemon 的 WebSocket `/daemon` 不受影响，仍靠 daemon token 认证。compose 模式下浏览器和 daemon 经由发布到 `127.0.0.1` 的端口访问容器里的 hub，`Host` 依旧是 `127.0.0.1:<端口>` / `localhost:<端口>`，所以容器内端口必须与发布端口一致（`docker-compose.yml` 已按 `NEMA_HUB_PORT` 两边设成同一个值）。
+- hub 只接受 `Host` 为 `127.0.0.1:<NEMA_HUB_PORT>` 或 `localhost:<NEMA_HUB_PORT>` 的 `/api`、`/room` 请求，其他 Host 一律 403（防 DNS rebinding）。因此请用这两个名字之一访问 hub；daemon 的 WebSocket `/daemon` 不受影响，仍靠 daemon token 认证。compose 模式下浏览器和 daemon 经由发布到 `127.0.0.1` 的端口访问容器里的 hub，`Host` 依旧是 `127.0.0.1:<端口>` / `localhost:<端口>`，所以容器内端口必须与发布端口一致。`docker-compose.yml` 把宿主机端口、容器端口和 `NEMA_HUB_PORT` 都写成 `${NEMA_HUB_PORT:-4400}`。`NEMA_WEB_PORT`（默认 3000）只改 web 的宿主机端口，容器内仍监听 3000。web 容器启动时读取 `NEMA_HUB_URL`，compose 默认把它设成 `http://127.0.0.1:${NEMA_HUB_PORT:-4400}`。源码构建（`npm run up`，合并 `docker-compose.build.yml`）使用同一组插值，改端口不用重建 web。镜像里的 `NEXT_PUBLIC_HUB_URL` 只是回退值，默认仍是 `http://127.0.0.1:4400`。
 - `/api` 下的 POST / PUT / PATCH 必须带 `content-type: application/json`，否则返回 415（挡住跨站的“简单请求”）。
 - 用户在界面里修改条目（`PUT /api/workspaces/:id/entries/:eid`）时，请求里的 `basis` 和 `confirmed` 会被忽略：决策写成 `decided`，其他类型写成 `stated`，并刷新确认时间。`POST /api/workspaces/:id/entries/:eid/confirm` 的 body 为 `{}`，返回确认后的条目，重新索引并发出 `knowledge.changed`；条目不存在时返回 404。界面这两条不检查当前任务的用户消息。
 - 房间写入：运行中的任务 `POST /room/entries` 时 `basis` 仍必填。新建或更新把条目写成 `stated` / `decided`（标题、正文、状态或 basis 有变化），以及把任一类型从失效状态（`superseded`、`dropped`、`resolved`）改回 `active`，都必须在 `sourceMessages` 里带上**当前任务**的用户消息。否则 409，正文为 `写入 stated 或 decided，或把已失效条目恢复为 active，需要引用当前任务的用户消息。`，并带 `code` `user_basis_evidence`。只引用另一条用户消息，或 agent / system / report 消息，都不够；上报任务本身也不是用户消息。`inferred` 的新建和修改不要求这条，但改写 active 决策的原 409 文案不变。只改 `related`、且标题、正文、状态、basis 都不变时，不要求重新引用。检查和 Git 写入在同一把知识库锁里。同一仓库上重入这把锁会立刻失败，而不是卡住。加锁前看到的条目若在加锁时已经不在，返回 404 `entry not found: <id>`。

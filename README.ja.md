@@ -80,19 +80,23 @@ Windows の `.exe` は NSIS インストーラーです。ショートカット�
 
 ### Web / Compose
 
-Windows、macOS、Linux に対応。**Node.js ≥ 22**、**Git**、**Docker**、**Docker Compose v2** が必要です。
+イメージを公開するリリースが出るまでは、チェックアウトから PostgreSQL、hub、web をビルドします。これが今使える起動方法です。daemon はイメージに入っていません。ホストで動かします。daemon のパッケージ名はこのリポジトリの `nema` です。最初の公開までは npm 上になく、手順は [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md) にあります。それまでは、このチェックアウトから daemon を入れます。Windows、macOS、Linux 上の **Node.js ≥ 22**、**Git**、**Docker**、**Docker Compose v2** が必要です。
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
+# Linux と macOS のみ。Windows の Docker Desktop では不要です。
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 node scripts/setup.mjs --lang ja
 ```
 
-ウィザードが依存関係を確認し、CLI をビルドしてサービスを起動し、モデル設定を案内します。[localhost:3000](http://localhost:3000) を開き、ホストの daemon は起動したままにしてください。既存の `.env` は保持されます。
+ウィザードが依存関係を確認し、CLI をビルドしてソースからサービスを起動し、モデル設定を案内します。ホストの daemon は起動したままにしてください。既存の `.env` は保持されます。`npm run up` は同じソースビルドです。Linux と macOS では、UID/GID が 1000 でもそれ以外でも、上と同じように `NEMA_UID` と `NEMA_GID` を export してから `npm run up` してください。hub がデータディレクトリへ書き込めます。Windows の Docker Desktop ではこの export は不要です。その後 [localhost:3000](http://localhost:3000) を開きます。公開用 compose ファイルにビルド手順はありません。
+
+clone せずにピン留めしたイメージを pull できるのは、イメージ公開ワークフローを含む最初の `v*` tag からです。`v0.1.3` はそのリリースではなく、GHCR に `0.1.3` のイメージはありません。このチェックアウトが `ghcr.io/nema-project/nema-room-hub:0.1.3` と `ghcr.io/nema-project/nema-room-web:0.1.3` をピン留めしているのは、`scripts/images/check-images.mjs` がピンとパッケージ版の一致を要求するためです。次のリリースで版とピンが一緒に動き、その tag がイメージを公開します。その後、その tag から `docker-compose.yml` を取得します。Linux と macOS では同じように `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。そのあと `docker compose up -d` を実行します。ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。`NEMA_HUB_URL` の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` で、web コンテナの起動時に読まれるので、公開イメージを再ビルドせずにアドレスを変えられます。
 
 [手動インストールと設定](docs/guide.ja.md#source-installation) · 環境の確認のみ：`node scripts/setup.mjs --lang ja --check`
 
-ホストの daemon は npm パッケージ `nema` です（Node.js ≥ 22）。実行中の hub と同じバージョンを入れます。
+その最初の公開のあと、実行中の hub と同じバージョンを入れます（Node.js ≥ 22）。
 
 ```sh
 npx nema@<hub のバージョン> --version

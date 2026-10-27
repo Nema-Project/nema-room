@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.resetModules();
+  delete (window as Window & { __NEMA_HUB_URL__?: string }).__NEMA_HUB_URL__;
 });
 
 describe("local same-origin hub URLs", () => {
@@ -24,5 +25,15 @@ describe("local same-origin hub URLs", () => {
     const hub = await import("../lib/hub");
     expect(hub.diagramHtmlUrl("w1", "G1")).toBe("http://127.0.0.1:4400/api/workspaces/w1/diagrams/G1.html");
     expect(hub.eventsUrl("w1")).toBe("http://127.0.0.1:4400/api/workspaces/w1/events");
+  });
+
+  test("a runtime hub URL overrides the baked default", async () => {
+    vi.stubEnv("NEXT_PUBLIC_NEMA_LOCAL", "0");
+    vi.stubEnv("NEXT_PUBLIC_HUB_URL", "http://127.0.0.1:4400");
+    const hub = await import("../lib/hub");
+    (window as Window & { __NEMA_HUB_URL__?: string }).__NEMA_HUB_URL__ = "http://127.0.0.1:4410";
+    expect(hub.hubUrl()).toBe("http://127.0.0.1:4410");
+    expect(hub.diagramHtmlUrl("w1", "G1")).toBe("http://127.0.0.1:4410/api/workspaces/w1/diagrams/G1.html");
+    delete (window as Window & { __NEMA_HUB_URL__?: string }).__NEMA_HUB_URL__;
   });
 });
