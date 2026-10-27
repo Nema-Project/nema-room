@@ -118,6 +118,9 @@ export async function deleteWorkspace(db: Db, dataDir: string, id: string, nemaH
     await t.query("delete from threads where workspace_id = $1", [id]);
     await t.query("delete from messages where workspace_id = $1", [id]);
     await t.query("delete from entry_index where workspace_id = $1", [id]);
+    await t.query("delete from evidence_events where workspace_id = $1", [id]);
+    await t.query("delete from source_import_receipts where workspace_id = $1", [id]);
+    await t.query("delete from source_freshness where workspace_id = $1", [id]);
     await t.query("delete from workspaces where id = $1", [id]);
   });
   await fs.rm(repoPath(dataDir, id), { recursive: true, force: true });

@@ -98,7 +98,11 @@ async function loadDatabase(dbDir: string, snapshot: Snapshot): Promise<void> {
         const rows = table === "messages"
           ? [...tableRows].sort((a, b) => Number(a.thread_id != null) - Number(b.thread_id != null))
           : tableRows;
-        for (const row of rows) {
+        for (const originalRow of rows) {
+          // Restored pending confirmations cannot authorize a new knowledge write.
+          const row = table === "evidence_events" && originalRow.consumed_commit == null
+            ? { ...originalRow, consumable: false }
+            : originalRow;
           const names = (TABLE_COLUMNS[table] as readonly string[]).filter((name) => row[name] !== undefined);
           if (names.length === 0) continue;
           const placeholders: string[] = [];

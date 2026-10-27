@@ -12,6 +12,17 @@ import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 afterEach(cleanupHubDeps);
 
 describe("workspaces", () => {
+  it("delete removes source evidence rows", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "A");
+    await db.query("insert into evidence_events (id, workspace_id, kind, entry_id, content_hash, refs_hash, payload_hash, actor) values ('ev1', $1, 'confirm_entry', 'S-1', $2, $2, $2, 'user')", [ws.id, "a".repeat(64)]);
+    await db.query("insert into source_import_receipts (workspace_id, provider, resource_id, revision_key, content_hash, phase) values ($1, 'test', 'r1', 'v1', $2, 'reserved')", [ws.id, "a".repeat(64)]);
+    await db.query("insert into source_freshness (workspace_id, entry_id, freshness, reason, checked_at) values ($1, 'S-1', 'unknown', 'timeout', now())", [ws.id]);
+    await deleteWorkspace(db, dataDir, ws.id);
+    for (const table of ["evidence_events", "source_import_receipts", "source_freshness"]) expect(await db.query(`select 1 from ${table} where workspace_id = $1`, [ws.id])).toEqual([]);
+    expect(await getWorkspace(db, ws.id)).toBeNull();
+  });
+
   it("creates a workspace with defaults and an initialised repo", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Acme");
