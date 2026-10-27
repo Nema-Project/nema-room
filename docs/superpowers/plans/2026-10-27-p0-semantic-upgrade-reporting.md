@@ -62,3 +62,15 @@
 - Spec coverage: rubric and blocked runs → Tasks 1–2; data upgrade and OS split → Task 3; disabled channel → Task 4; evidence → Task 5.
 - No task enables repository settings or calls a model.
 - Installer overwrite and non-admin form access stay manual when this environment cannot do them.
+
+## Follow-up: scored-run harness fix
+
+The amendment in `docs/superpowers/specs/2026-10-27-p0-semantic-upgrade-reporting-design.md` is the source for this follow-up. P0-03 stays 进行中. Do not merge and do not post a GitHub comment.
+
+- [x] Require `cliEntry` in `createRunner`. Pass `apps/cli/dist/index.js` from the acceptance runner and the real CLI entry from `nema daemon`.
+- [x] Fail a Claude task unless the room server is `connected` and all four `mcp__room__*` tools are listed. Cover a failed server in the adapter test.
+- [x] Score `design-open-thread` from the threads table (`opened_by` `agent` and the anchor message id). Keep SSE text for display. Use a separate workspace for memo, design, brainstorm, and conflict. Seed one active Redis decision in the conflict workspace and resolve its id with the unique `/Redis/` match.
+- [x] Record each turn's `task_changes` and `opened_by`. Allow `R-*` on the first design turn, forbid `D-*` and `Q-*`, require the decided entry to be `active`, and require the override decision's `related` to include the Redis id. Classify tool-surface failures as blocked. Classify timeout and credential text as blocked only before turns start.
+- [x] State the compare-options `open_thread` trigger in the prompt and the tool description. Question-shaped ideas and "keep it in the discussion" do not write knowledge. Strict grill does not create a question entry for an undecided comparison.
+- [x] Change the brainstorm closing line so it does not ask the model to record the ideas. A `grill` thread is recorded and is not an agent-opened thread.
+- [x] Update the 2026-10-27 review with the redacted Windows run, the void Claude score, the fix, and the two-runs-per-adapter handoff. Add unit tests for the required CLI entry, the failed room server, the threads-table check, independent workspaces, and the new rubric clauses.

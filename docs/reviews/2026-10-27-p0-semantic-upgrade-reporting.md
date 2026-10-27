@@ -9,7 +9,7 @@ No release tag, GitHub release, ruleset edit, or merge was created. This agent d
 
 | Item | Status | What this change actually shows |
 | --- | --- | --- |
-| P0-03 | 进行中 | On 2026-10-27 a Windows host ran both adapters at `b158daf`. Each exited 1 with `semantic: evaluated` and `configuredModel: null`. Codex passed 5 of 12 checks. Claude passed 6 of 12. Neither result is a pass. |
+| P0-03 | 进行中 | On 2026-10-27 a Windows host ran both adapters at `b158daf`. Each exited 1 with `semantic: evaluated`. Codex passed 5 of 12 on that script. Claude's 6 of 12 is void: the harness launched the runner as the room MCP server, so Claude had no room tools. The harness, prompt, and rubric were then amended. Neither adapter has an exit 0 on the amended script. |
 | P0-04 | 已完成 | Disposable data-directory reopen, pending migration, failed migration, and backup restore passed on hosted `windows-latest` and `macos-latest` for head `ef87a29`. On 2026-10-27 the maintainer (NullumNomen) also reported a manual overwrite install on macOS and on Windows; workspace data remained on both. This agent did not run those installers. |
 | P0-05 | 已完成 | An earlier read on 2026-10-27 returned `{"enabled":false}`. The owner enabled the setting at about 11:52 Asia/Tokyo. A read at 11:54 returned HTTP 200 `{"enabled":true}`. The signed-out security page links to the form. At 12:18 Asia/Tokyo, collaborator Nullum-ai (`permission: read`, not admin) submitted test report GHSA-mgcq-mcqv-75ff. GitHub accepted it into triage. It was closed at 12:27 Asia/Tokyo (`2026-10-27T03:27:30Z`) with `published_at` null and no CVE. |
 
@@ -110,7 +110,23 @@ Claude Code, credential source `claude-token-file`. Passed: `memo-reply`, `memo-
 | conflict | `m_cToTYgOw_2ZY` | `m_cToTYgOw_2ZY` | `t_uFS3acQKVuNJ` |
 | override | `m_ntY6BOubufSZ` | `m_cToTYgOw_2ZY` | `t_LTOn5a4AcXBn` |
 
-P0-03 stays 进行中. Exit 0 on both adapters is still required before that status changes.
+P0-03 stays 进行中. The Claude transcript is not a model result. `startDaemon` was called without `cliEntry`, so the daemon used `process.argv[1]` (`threadSemanticRun.js`). Claude's `mcp.json` then ran `node threadSemanticRun.js mcp`. That process entered `main()` and exited with `unsupported adapter: ""`. Claude therefore had no room tools. Codex's 5/12 is a scored miss of the script that was running at `b158daf`. It is not a score for the amended checks.
+
+The amendment requires a real CLI entry, a connected room server that lists all four `mcp__room__*` tools (otherwise the task fails and the run is blocked), threads-table `open_thread` checks, separate workspaces, a seeded Redis decision, `R-*` allowed on the first design turn, an active decided entry, a supersede link on override, and a compare-options prompt. A `grill` thread is recorded and does not count as agent-opened. Timeout and credential text block the run only before turns start. A missing room tool surface stays blocked.
+
+Rerun after `npm run typecheck`. Each adapter twice. Write the JSON outside the repository. Exit 0 is a pass for that adapter only. Exit 1 is a finished transcript that missed a check. Exit 2 is blocked and must not be scored.
+
+```sh
+npm run typecheck
+export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+test -f "$CODEX_HOME/auth.json"
+node scripts/acceptance/run-thread-semantic.mjs --adapter codex-direct --out /tmp/nema-p0-03-codex-1.json
+node scripts/acceptance/run-thread-semantic.mjs --adapter codex-direct --out /tmp/nema-p0-03-codex-2.json
+node scripts/acceptance/run-thread-semantic.mjs --adapter claude-code --claude-token-file "$HOME/.nema/claude-code-token" --out /tmp/nema-p0-03-claude-1.json
+node scripts/acceptance/run-thread-semantic.mjs --adapter claude-code --claude-token-file "$HOME/.nema/claude-code-token" --out /tmp/nema-p0-03-claude-2.json
+```
+
+Optional `--model` selects a model. P0-03 stays 进行中 until both adapters exit 0 on this script.
 
 ### P0-04 installer overwrite
 

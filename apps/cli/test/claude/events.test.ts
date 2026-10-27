@@ -10,26 +10,37 @@ function expectRejected(result: { ok: true } | { ok: false; error: string }) {
   expect(result.error.startsWith(TOOL_FACE)).toBe(true);
 }
 
+const roomConnected = [{ name: "room", status: "connected" }];
+
 describe("Claude Code stream-json judgment", () => {
-  test("accepts the Room tool names when the only MCP server is room", () => {
-    expect(roomToolsOk([...CLAUDE_ROOM_TOOLS], ["room"])).toEqual({ ok: true });
+  test("accepts the Room tool names when the only MCP server is room and connected", () => {
+    expect(roomToolsOk([...CLAUDE_ROOM_TOOLS], roomConnected)).toEqual({ ok: true });
   });
 
-  test("accepts an empty tool list when the only MCP server is room", () => {
-    expect(roomToolsOk([], ["room"])).toEqual({ ok: true });
+  test("rejects an empty tool list even when the room server is connected", () => {
+    expectRejected(roomToolsOk([], roomConnected));
+  });
+
+  test("rejects a room server that is not connected", () => {
+    expectRejected(roomToolsOk([...CLAUDE_ROOM_TOOLS], [{ name: "room", status: "failed" }]));
+    expectRejected(roomToolsOk([...CLAUDE_ROOM_TOOLS], [{ name: "room", status: null }]));
+  });
+
+  test("rejects a tool list that is missing one Room tool", () => {
+    expectRejected(roomToolsOk(CLAUDE_ROOM_TOOLS.slice(0, 3), roomConnected));
   });
 
   test("rejects a tool outside the Room set", () => {
-    expectRejected(roomToolsOk([...CLAUDE_ROOM_TOOLS, "Bash"], ["room"]));
+    expectRejected(roomToolsOk([...CLAUDE_ROOM_TOOLS, "Bash"], roomConnected));
   });
 
   test("rejects an MCP server list that is not exactly room", () => {
-    expectRejected(roomToolsOk([...CLAUDE_ROOM_TOOLS], ["room", "other"]));
+    expectRejected(roomToolsOk([...CLAUDE_ROOM_TOOLS], [{ name: "room", status: "connected" }, { name: "other", status: "connected" }]));
     expectRejected(roomToolsOk([...CLAUDE_ROOM_TOOLS], []));
   });
 
   test("rejects a missing tool list or a missing MCP server list", () => {
-    expectRejected(roomToolsOk(null, ["room"]));
+    expectRejected(roomToolsOk(null, roomConnected));
     expectRejected(roomToolsOk([...CLAUDE_ROOM_TOOLS], null));
   });
 
@@ -44,7 +55,7 @@ describe("Claude Code stream-json judgment", () => {
     expect(parseClaudeLine(line)).toEqual({
       kind: "init",
       tools: ["mcp__room__list_entries", "Bash"],
-      mcpServers: ["room", "other"],
+      mcpServers: [{ name: "room", status: "connected" }, { name: "other", status: null }],
     });
   });
 
@@ -55,7 +66,7 @@ describe("Claude Code stream-json judgment", () => {
       mcp_servers: [{ name: "room", status: "connected" }],
     });
 
-    expect(parseClaudeLine(line)).toEqual({ kind: "init", tools: null, mcpServers: ["room"] });
+    expect(parseClaudeLine(line)).toEqual({ kind: "init", tools: null, mcpServers: [{ name: "room", status: "connected" }] });
   });
 
   test("reads a missing mcp_servers field as null", () => {

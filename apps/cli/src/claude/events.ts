@@ -3,8 +3,10 @@ import { CLAUDE_ROOM_TOOLS } from "./launch.js";
 const FAILURE = "Claude 的工具面无法确认为只有 Room：";
 const roomOnly = new Set<string>(CLAUDE_ROOM_TOOLS);
 
+export type McpServer = { name: string; status: string | null };
+
 export type ClaudeLine =
-  | { kind: "init"; tools: string[] | null; mcpServers: string[] | null }
+  | { kind: "init"; tools: string[] | null; mcpServers: McpServer[] | null }
   | { kind: "text"; text: string }
   | { kind: "tools"; names: string[] }
   | { kind: "result"; text: string }
@@ -20,14 +22,14 @@ function strings(value: unknown): string[] | null {
   return value;
 }
 
-function serverNames(value: unknown): string[] | null {
+function serverList(value: unknown): McpServer[] | null {
   if (!Array.isArray(value)) return null;
-  const names: string[] = [];
+  const servers: McpServer[] = [];
   for (const item of value) {
     if (!isRecord(item) || typeof item.name !== "string") return null;
-    names.push(item.name);
+    servers.push({ name: item.name, status: typeof item.status === "string" ? item.status : null });
   }
-  return names;
+  return servers;
 }
 
 // One event per line. Every tool_use block is returned so each one counts toward the limit.
@@ -42,7 +44,7 @@ export function parseClaudeLine(line: string): ClaudeLine {
   if (!isRecord(value)) return { kind: "ignore" };
 
   if (value.type === "system" && value.subtype === "init") {
-    return { kind: "init", tools: strings(value.tools), mcpServers: serverNames(value.mcp_servers) };
+    return { kind: "init", tools: strings(value.tools), mcpServers: serverList(value.mcp_servers) };
   }
 
   if (value.type === "assistant" && isRecord(value.message) && Array.isArray(value.message.content)) {
@@ -72,11 +74,14 @@ export function parseClaudeLine(line: string): ClaudeLine {
 
 export function roomToolsOk(
   tools: string[] | null,
-  mcpServers: string[] | null,
+  mcpServers: McpServer[] | null,
   allowed: ReadonlySet<string> = roomOnly,
 ): { ok: true } | { ok: false; error: string } {
-  const toolsOk = tools !== null && tools.every((name) => allowed.has(name));
-  const mcpOk = mcpServers !== null && mcpServers.length === 1 && mcpServers[0] === "room";
+  const toolsOk = tools !== null
+    && tools.every((name) => allowed.has(name))
+    && CLAUDE_ROOM_TOOLS.every((name) => tools.includes(name));
+  const room = mcpServers?.length === 1 ? mcpServers[0] : undefined;
+  const mcpOk = room?.name === "room" && room.status === "connected";
   if (toolsOk && mcpOk) return { ok: true };
   return { ok: false, error: `${FAILURE}${JSON.stringify({ tools, mcpServers })}` };
 }

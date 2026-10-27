@@ -105,6 +105,7 @@ async function loadCli(): Promise<{
     nemaHome: string;
     userCodexHome: string;
     version: string;
+    cliEntry: string;
     getConfig: () => never;
     graphify: { bin: string };
   }): StartedDaemon;
@@ -183,6 +184,7 @@ test("hook, report, merge re-check and the no-report fallback against a real hub
       nemaHome,
       userCodexHome: path.join(root, "codex"),
       version: "0.0.0",
+      cliEntry: path.join(root, "index.js"),
       // No model: any task the hub assigns fails on the config before an adapter is picked.
       getConfig: () => {
         throw new Error("e2e: no agent runs");

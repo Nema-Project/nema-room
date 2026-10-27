@@ -102,8 +102,8 @@ export function buildPrompt(input: {
   const rules = [
     "你只能通过名为 `room` 的 MCP 工具读写项目知识；不要读写本地文件，不要联网。",
     "你是这个项目的资深架构师 / copilot：像同事一样交流，可以反问、提出方案，也可以表达不同意见。",
-    "只有用户陈述、决定、明确要求记录的内容，以及 URL 才写入知识；闲聊、项目问题和 memo 检查直接回答，不要写入。",
-    "用户清楚陈述或决定的内容必须写入，在主聊天和 thread 中都一样。每次 `upsert_entry` 都要填写 `sourceMessages`（至少包含本次用户消息 id）和 `reason`。",
+    "只有用户明确陈述或明确决定的内容，以及 URL，才写入知识。疑问句式的想法（例如「你觉得…？」）和询问优缺点不是陈述，不要写入。闲聊、项目问题和 memo 检查直接回答，不要写入。用户说记在讨论里或留在 thread 里，是要求不写入知识。",
+    "用户明确陈述或明确决定的内容必须写入，在主聊天和 thread 中都一样。疑问句式的想法和询问优缺点不是陈述，不要写入。每次 `upsert_entry` 都要填写 `sourceMessages`（至少包含本次用户消息 id）和 `reason`。",
     "每次 `upsert_entry` 都要填写 `basis`：用户字面说过的写 `stated`，用户明确拍板的写 `decided`，你自己推断的写 `inferred`。你的提案不能标为 `stated` / `decided`，只有用户同意的提案才能标为 `decided`。",
     "不确定或有歧义时，不要猜，写成 `question` 条目（status 为 `open`，priority 取 1–3，1 最高）。",
     "明确的用户覆盖指令优先并取代原 active 决策。任何其他与 active 决策矛盾的陈述，都不要写入该决策；新建 `question`，在 `related` 中关联该决策，并在 `quotes` / `sourceMessages` 中记录用户的原话和消息 id。",
@@ -118,7 +118,7 @@ export function buildPrompt(input: {
     rules.push(
       grill.strictness === "lenient"
         ? "追问严格程度：宽松——只有决策互相冲突时才停下来问，其余写进待确认。"
-        : "追问严格程度：严格——任何会影响实现的问题都先问。",
+        : "追问严格程度：严格——任何会影响实现的问题都先问。比较方案或权衡利弊且尚未决定时，不要新建 question 条目。",
     );
   }
   const system = userMessage.role === "system";
@@ -149,7 +149,7 @@ export function buildPrompt(input: {
       parts.push("这是用户主动开的 thread，直接进入讨论。标题目前是用户输入的第一行；如果它不能概括这个话题，调用 `open_thread` 给出更好的标题。");
     }
   } else {
-    parts.push("需要来回讨论时调用 `open_thread`。");
+    parts.push("用户要求比较方案或权衡利弊、且尚未决定时，先调用 `open_thread`，在 thread 内讨论。");
     if (grill.enabled) {
       parts.push("新增或更新未解决的追问时，你的回复会被放进 thread，把回复写成开启讨论、提出这个问题的话。");
     }

@@ -21,6 +21,7 @@
 
 ### Changed
 
+- The copilot opens a thread when you ask it to compare options or weigh tradeoffs before a decision. A question-shaped idea, including a request for pros and cons, is not written. Asking to keep something in the discussion does not write knowledge. An undecided comparison does not create a question entry.
 - The landing page links to the latest GitHub release instead of a fixed version number.
 - GitHub release notes lead with that version's changelog. Checksums stay in the attached SHA256SUMS file.
 

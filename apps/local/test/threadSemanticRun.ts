@@ -1,17 +1,22 @@
 import { execFile, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { KnowledgeStore } from "@nema/knowledge";
 import { saveConfig } from "@nema/cli/config";
 import { startDaemon } from "@nema/cli/daemon/setup";
 import { defaultCodexHome, saveClaudeToken } from "@nema/cli/localSettings";
 import { createLocalDb } from "@nema/hub/db/local";
 import { startHub } from "@nema/hub/lifecycle";
-import { getTask } from "@nema/hub/tasks";
+import { getTask, listTaskChanges } from "@nema/hub/tasks";
 import { repoPath } from "@nema/hub/workspaces";
 import {
+  acceptanceWorkspacePlan,
+  activeRedisDecisionId,
+  BRAINSTORM_CLOSING,
   classifyRunError,
   credentialPreflight,
   evaluateSemantic,
@@ -25,13 +30,33 @@ const CASUAL_1 = "给小工具加缓存，你觉得用 Redis 还是本地缓存�
 const CASUAL_2 = "如果以后要多实例部署，会有什么差别？";
 const DECISION = "就这么定了：用 Redis";
 const BRAINSTORM = "缓存可以有这几种做法：进程内 LRU、本机文件、Redis、不缓存。请比较利弊，先不要选定。";
-const BRAINSTORM_END = "先把这些可能性记在讨论里，我们之后再决定。";
-const REDIS_DECISION = "就这么定了：缓存用 Redis";
 const LOCAL_LRU = "缓存用本地 LRU";
 
 type Db = Awaited<ReturnType<typeof createLocalDb>>;
 type Target = { kind: "main" } | { kind: "thread"; id: string } | { kind: "new-thread" };
-type TurnLog = { label: string; userMessageId: string; threadId: string | null; taskId: string; reply: string; traces: string[] };
+type TurnChange = { entry: string; kind: string; op: string };
+type TurnLog = {
+  label: string;
+  userMessageId: string;
+  threadId: string | null;
+  taskId: string;
+  reply: string;
+  traces: string[];
+  task_changes: TurnChange[];
+  opened_by: string | null;
+};
+type Room = { id: string; repo: string };
+
+function acceptanceCliEntry(): string {
+  const here = fileURLToPath(import.meta.url);
+  const candidates = [
+    resolve(here, "../../../cli/dist/index.js"),
+    resolve(here, "../../cli/dist/index.js"),
+  ];
+  const found = candidates.find((candidate) => existsSync(candidate));
+  if (!found) throw new Error("compiled CLI entry missing; run npm run typecheck");
+  return realpathSync(found);
+}
 
 function parseArgs(argv: string[]): Record<string, string | boolean> {
   const out: Record<string, string | boolean> = {};
@@ -144,12 +169,40 @@ async function knowledge(origin: string, workspaceId: string, repo: string): Pro
   return { entries, head: await gitHead(repo) };
 }
 
-async function agentThread(db: Db, workspaceId: string): Promise<{ id: string; openedBy: string } | null> {
+async function threadsIn(db: Db, workspaceId: string): Promise<{ id: string; openedBy: string }[]> {
   const rows = await db.query<{ id: string; opened_by: string }>(
-    "select id, opened_by from threads where workspace_id = $1 and opened_by = 'agent' order by created_at desc, id desc limit 1",
+    "select id, opened_by from threads where workspace_id = $1 order by created_at, id",
     [workspaceId],
   );
-  return rows[0] ? { id: rows[0].id, openedBy: rows[0].opened_by } : null;
+  return rows.map((row) => ({ id: row.id, openedBy: row.opened_by }));
+}
+
+async function threadOpenedBy(db: Db, workspaceId: string, threadId: string | null): Promise<string | null> {
+  if (!threadId) return null;
+  const rows = await db.query<{ opened_by: string }>("select opened_by from threads where workspace_id = $1 and id = $2", [workspaceId, threadId]);
+  return rows[0]?.opened_by ?? null;
+}
+
+function followAnchor(anchorId: string, threads: { id: string }[]): Target {
+  return threads.some((thread) => thread.id === anchorId) ? { kind: "thread", id: anchorId } : { kind: "main" };
+}
+
+async function seedRedisDecision(db: Db, repo: string, workspaceId: string): Promise<void> {
+  const store = new KnowledgeStore(repo);
+  const { entry } = await store.upsert({
+    kind: "decision",
+    title: "缓存用 Redis",
+    body: "缓存用 Redis",
+    status: "active",
+    basis: "decided",
+    reason: "acceptance seed",
+    sourceMessages: [],
+  }, { author: "system" });
+  await db.query(
+    `insert into entry_index(workspace_id, entry_id, kind, title, status, priority, business_date, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,clock_timestamp())`,
+    [workspaceId, entry.id, entry.kind, entry.title, entry.status, entry.priority ?? null, entry.businessDate],
+  );
 }
 
 async function waitTask(db: Db, taskId: string, timeoutMs: number): Promise<void> {
@@ -179,7 +232,17 @@ async function speak(db: Db, origin: string, workspaceId: string, trace: { texts
     "select content from messages where workspace_id = $1 and role = 'agent' and seq > (select seq from messages where id = $2) order by seq desc limit 1",
     [workspaceId, posted.message.id],
   );
-  return { label, userMessageId: posted.message.id, threadId, taskId: posted.task.id, reply: replies[0]?.content ?? "", traces: trace.texts(posted.task.id) };
+  const changes = await listTaskChanges(db, posted.task.id);
+  return {
+    label,
+    userMessageId: posted.message.id,
+    threadId,
+    taskId: posted.task.id,
+    reply: replies[0]?.content ?? "",
+    traces: trace.texts(posted.task.id),
+    task_changes: changes.map((change) => ({ entry: change.entryId, kind: change.kind, op: change.op })),
+    opened_by: await threadOpenedBy(db, workspaceId, threadId),
+  };
 }
 
 async function askedInThread(db: Db, workspaceId: string, threadId: string): Promise<boolean> {
@@ -199,82 +262,116 @@ async function rmRetry(target: string): Promise<void> {
   throw last;
 }
 
-async function script(db: Db, origin: string, workspaceId: string, repo: string, timeoutMs: number): Promise<{ input: SemanticInput; turns: TurnLog[] }> {
-  const trace = await openTrace(origin, workspaceId);
+async function runRoom(origin: string, room: Room, body: (trace: { texts(taskId: string): string[] }) => Promise<void>): Promise<void> {
+  const trace = await openTrace(origin, room.id);
+  try { await body(trace); }
+  finally { trace.close(); }
+}
+
+async function script(db: Db, origin: string, rooms: { memo: Room; design: Room; brainstorm: Room; conflict: Room }, timeoutMs: number): Promise<{ input: SemanticInput; turns: TurnLog[] }> {
   const turns: TurnLog[] = [];
-  try {
-    const memoBefore = await knowledge(origin, workspaceId, repo);
-    const memo = await speak(db, origin, workspaceId, trace, "memo", MEMO, { kind: "main" }, timeoutMs);
-    turns.push(memo);
-    const memoAfter = await knowledge(origin, workspaceId, repo);
+  let memoTurn!: TurnLog;
+  let memoBefore!: KnowledgeSnap;
+  let memoAfter!: KnowledgeSnap;
+  await runRoom(origin, rooms.memo, async (trace) => {
+    memoBefore = await knowledge(origin, rooms.memo.id, rooms.memo.repo);
+    memoTurn = await speak(db, origin, rooms.memo.id, trace, "memo", MEMO, { kind: "main" }, timeoutMs);
+    turns.push(memoTurn);
+    memoAfter = await knowledge(origin, rooms.memo.id, rooms.memo.repo);
+  });
 
-    const beforeCasual = await knowledge(origin, workspaceId, repo);
-    turns.push(await speak(db, origin, workspaceId, trace, "casual-1", CASUAL_1, { kind: "main" }, timeoutMs));
-    let designThread = await agentThread(db, workspaceId);
-    turns.push(await speak(db, origin, workspaceId, trace, "casual-2", CASUAL_2, designThread ? { kind: "thread", id: designThread.id } : { kind: "main" }, timeoutMs));
-    designThread = await agentThread(db, workspaceId);
-    const afterCasual = await knowledge(origin, workspaceId, repo);
-    const decision = await speak(db, origin, workspaceId, trace, "decision", DECISION, designThread ? { kind: "thread", id: designThread.id } : { kind: "main" }, timeoutMs);
+  let casual1!: TurnLog;
+  let casual2!: TurnLog;
+  let decision!: TurnLog;
+  let designThreads: { id: string; openedBy: string }[] = [];
+  let inAgentThread = false;
+  let decisionsAdded: EntryView[] = [];
+  await runRoom(origin, rooms.design, async (trace) => {
+    casual1 = await speak(db, origin, rooms.design.id, trace, "casual-1", CASUAL_1, { kind: "main" }, timeoutMs);
+    turns.push(casual1);
+    let threads = await threadsIn(db, rooms.design.id);
+    casual2 = await speak(db, origin, rooms.design.id, trace, "casual-2", CASUAL_2, followAnchor(casual1.userMessageId, threads), timeoutMs);
+    turns.push(casual2);
+    threads = await threadsIn(db, rooms.design.id);
+    const beforeDecision = await knowledge(origin, rooms.design.id, rooms.design.repo);
+    decision = await speak(db, origin, rooms.design.id, trace, "decision", DECISION, followAnchor(casual1.userMessageId, threads), timeoutMs);
     turns.push(decision);
-    designThread = await agentThread(db, workspaceId);
-    const afterDecision = await knowledge(origin, workspaceId, repo);
-    const casualIds = new Set(afterCasual.entries.map((entry) => entry.id));
+    designThreads = await threadsIn(db, rooms.design.id);
+    const afterDecision = await knowledge(origin, rooms.design.id, rooms.design.repo);
     const decisionRow = await db.query<{ id: string; thread_id: string | null }>("select id, thread_id from messages where id = $1", [decision.userMessageId]);
-    const inAgentThread = !!designThread && (decisionRow[0]?.thread_id === designThread.id || decisionRow[0]?.id === designThread.id);
+    const agent = designThreads.find((thread) => thread.id === casual1.userMessageId && thread.openedBy === "agent");
+    inAgentThread = !!agent && (decisionRow[0]?.thread_id === agent.id || decisionRow[0]?.id === agent.id);
+    const beforeIds = new Set(beforeDecision.entries.map((entry) => entry.id));
+    decisionsAdded = afterDecision.entries.filter((entry) => entry.kind === "decision" && !beforeIds.has(entry.id));
+  });
 
-    const brainBefore = await knowledge(origin, workspaceId, repo);
-    const brainOpen = await speak(db, origin, workspaceId, trace, "brainstorm", BRAINSTORM, { kind: "new-thread" }, timeoutMs);
+  let brainEnd!: TurnLog;
+  let brainBefore!: KnowledgeSnap;
+  let brainAfter!: KnowledgeSnap;
+  await runRoom(origin, rooms.brainstorm, async (trace) => {
+    brainBefore = await knowledge(origin, rooms.brainstorm.id, rooms.brainstorm.repo);
+    const brainOpen = await speak(db, origin, rooms.brainstorm.id, trace, "brainstorm", BRAINSTORM, { kind: "new-thread" }, timeoutMs);
     turns.push(brainOpen);
-    const brainEnd = await speak(db, origin, workspaceId, trace, "brainstorm-end", BRAINSTORM_END, { kind: "thread", id: brainOpen.threadId ?? brainOpen.userMessageId }, timeoutMs);
+    brainEnd = await speak(db, origin, rooms.brainstorm.id, trace, "brainstorm-end", BRAINSTORM_CLOSING, { kind: "thread", id: brainOpen.threadId ?? brainOpen.userMessageId }, timeoutMs);
     turns.push(brainEnd);
-    const brainAfter = await knowledge(origin, workspaceId, repo);
+    brainAfter = await knowledge(origin, rooms.brainstorm.id, rooms.brainstorm.repo);
+  });
 
-    const beforeRedis = await knowledge(origin, workspaceId, repo);
-    turns.push(await speak(db, origin, workspaceId, trace, "redis", REDIS_DECISION, { kind: "new-thread" }, timeoutMs));
-    const afterRedis = await knowledge(origin, workspaceId, repo);
-    const redisAdded = afterRedis.entries.filter((entry) => entry.kind === "decision" && !beforeRedis.entries.some((prev) => prev.id === entry.id));
-    const redisId = redisAdded.length === 1 ? redisAdded[0]!.id : "";
-    const conflict = await speak(db, origin, workspaceId, trace, "conflict", LOCAL_LRU, { kind: "new-thread" }, timeoutMs);
+  let conflictTurn!: TurnLog;
+  let overrideTurn!: TurnLog;
+  let redisId = "";
+  let conflictDecisions: EntryView[] = [];
+  let overrideDecisions: EntryView[] = [];
+  let question: EntryView | null = null;
+  let askedConflict = false;
+  await runRoom(origin, rooms.conflict, async (trace) => {
+    const seeded = await knowledge(origin, rooms.conflict.id, rooms.conflict.repo);
+    redisId = activeRedisDecisionId(seeded.entries);
+    if (redisId === "") throw new Error("acceptance seed did not leave one active Redis decision");
+    const conflict = await speak(db, origin, rooms.conflict.id, trace, "conflict", LOCAL_LRU, { kind: "new-thread" }, timeoutMs);
     turns.push(conflict);
+    conflictTurn = conflict;
     const threadB = conflict.threadId ?? conflict.userMessageId;
-    const afterConflict = await knowledge(origin, workspaceId, repo);
-    const questions = afterConflict.entries.filter((entry) => entry.kind === "question" && !afterRedis.entries.some((prev) => prev.id === entry.id));
-    const overrideText = redisId ? `改用本地 LRU，推翻 ${redisId}` : "改用本地 LRU，推翻 D-missing";
-    const override = await speak(db, origin, workspaceId, trace, "override", overrideText, { kind: "thread", id: threadB }, timeoutMs);
-    turns.push(override);
-    const afterOverride = await knowledge(origin, workspaceId, repo);
+    const afterConflict = await knowledge(origin, rooms.conflict.id, rooms.conflict.repo);
+    const addedQuestions = afterConflict.entries.filter((entry) => entry.kind === "question" && !seeded.entries.some((prev) => prev.id === entry.id));
+    question = addedQuestions.length === 1 ? addedQuestions[0]! : null;
+    conflictDecisions = afterConflict.entries.filter((entry) => entry.kind === "decision");
+    askedConflict = await askedInThread(db, rooms.conflict.id, threadB);
+    const overrideText = `改用本地 LRU，推翻 ${redisId}`;
+    overrideTurn = await speak(db, origin, rooms.conflict.id, trace, "override", overrideText, { kind: "thread", id: threadB }, timeoutMs);
+    turns.push(overrideTurn);
+    const afterOverride = await knowledge(origin, rooms.conflict.id, rooms.conflict.repo);
+    overrideDecisions = afterOverride.entries.filter((entry) => entry.kind === "decision");
+  });
 
-    const input: SemanticInput = {
-      memo: { reply: memo.reply, before: memoBefore, after: memoAfter },
-      design: {
-        reply: decision.reply,
-        beforeCasual,
-        afterCasual,
-        traces: turns.filter((item) => item.label.startsWith("casual") || item.label === "decision").flatMap((item) => item.traces),
-        threadOpenedBy: designThread?.openedBy ?? null,
-        finalMessageInAgentThread: inAgentThread,
-        decisionsAdded: afterDecision.entries.filter((entry) => entry.kind === "decision" && !casualIds.has(entry.id)),
-        finalUserMessageId: decision.userMessageId,
-      },
-      brainstorm: { reply: brainEnd.reply, before: brainBefore, after: brainAfter },
-      conflict: {
-        redisId,
-        decisions: afterConflict.entries.filter((entry) => entry.kind === "decision"),
-        question: questions.length === 1 ? questions[0]! : null,
-        userMessageId: conflict.userMessageId,
-        userMessageText: LOCAL_LRU,
-        agentAskedInThreadB: await askedInThread(db, workspaceId, threadB),
-      },
-      override: {
-        redisId,
-        decisions: afterOverride.entries.filter((entry) => entry.kind === "decision"),
-        overrideMessageId: override.userMessageId,
-      },
-    };
-    return { input, turns };
-  } finally {
-    trace.close();
-  }
+  const input: SemanticInput = {
+    memo: { reply: memoTurn.reply, before: memoBefore, after: memoAfter },
+    design: {
+      reply: decision.reply,
+      anchorMessageId: casual1.userMessageId,
+      threads: designThreads,
+      firstTurnChanges: casual1.task_changes,
+      secondTurnChanges: casual2.task_changes,
+      finalMessageInAgentThread: inAgentThread,
+      decisionsAdded,
+      finalUserMessageId: decision.userMessageId,
+    },
+    brainstorm: { reply: brainEnd.reply, before: brainBefore, after: brainAfter },
+    conflict: {
+      redisId,
+      decisions: conflictDecisions,
+      question,
+      userMessageId: conflictTurn.userMessageId,
+      userMessageText: LOCAL_LRU,
+      agentAskedInThreadB: askedConflict,
+    },
+    override: {
+      redisId,
+      decisions: overrideDecisions,
+      overrideMessageId: overrideTurn.userMessageId,
+    },
+  };
+  return { input, turns };
 }
 
 async function main(): Promise<number> {
@@ -304,6 +401,7 @@ async function main(): Promise<number> {
   const home = await mkdtemp(join(tmpdir(), "nema-accept-"));
   secretPaths.push(home);
   const closers: Array<() => Promise<void>> = [];
+  let phase: "startup" | "turn" = "startup";
   try {
     saveConfig(home, adapter === "codex-direct"
       ? { adapter: "codex-direct", authMode: "compat", ...(model ? { model } : {}) }
@@ -319,7 +417,7 @@ async function main(): Promise<number> {
     const token = randomBytes(32).toString("hex");
     const hub = await startHub({ db, dataDir, nemaHome: home, daemonToken: token, port: 0, webOrigin: "http://127.0.0.1:3000" });
     closers.push(() => hub.close());
-    const daemon = startDaemon({ hubUrl: hub.url, token, nemaHome: home, userCodexHome: codexHome, version: "0.0.0" });
+    const daemon = startDaemon({ hubUrl: hub.url, token, nemaHome: home, userCodexHome: codexHome, version: "0.0.0", cliEntry: acceptanceCliEntry() });
     closers.push(() => daemon.close());
     const connectedAt = Date.now() + 10_000;
     let connected = false;
@@ -329,8 +427,20 @@ async function main(): Promise<number> {
       await sleep(100);
     }
     if (!connected) throw new Error("daemon did not connect");
-    const workspace = await api<{ id: string }>(hub.url, "POST", "/api/workspaces", { name: "acceptance" });
-    const ran = await script(db, hub.url, workspace.id, repoPath(dataDir, workspace.id), timeoutMs);
+    const plan = acceptanceWorkspacePlan();
+    const openRoom = async (name: string): Promise<Room> => {
+      const workspace = await api<{ id: string }>(hub.url, "POST", "/api/workspaces", { name });
+      return { id: workspace.id, repo: repoPath(dataDir, workspace.id) };
+    };
+    const rooms = {
+      memo: await openRoom(plan.memo),
+      design: await openRoom(plan.design),
+      brainstorm: await openRoom(plan.brainstorm),
+      conflict: await openRoom(plan.conflict),
+    };
+    await seedRedisDecision(db, rooms.conflict.repo, rooms.conflict.id);
+    phase = "turn";
+    const ran = await script(db, hub.url, rooms, timeoutMs);
     const evaluation = evaluateSemantic(ran.input);
     return write({
       status: evaluation.ok ? "passed" : "failed",
@@ -344,7 +454,7 @@ async function main(): Promise<number> {
     }, evaluation.ok ? 0 : 1);
   } catch (error) {
     const message = redact(error instanceof Error ? error.message : String(error), secretPaths);
-    const kind = classifyRunError(message);
+    const kind = classifyRunError(message, phase);
     return write({ status: kind === "blocked" ? "blocked" : "failed", semantic: "not-run", adapter, configuredModel: model, commit, blocker: message, checks: [] }, kind === "blocked" ? 2 : 1);
   } finally {
     for (const close of closers.reverse()) await close().catch(() => {});

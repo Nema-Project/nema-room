@@ -116,6 +116,7 @@ async function startRealDaemon(opts: {
   nemaHome: string;
   userCodexHome: string;
   version: string;
+  cliEntry: string;
   graphify: { bin: string };
 }): Promise<StartedDaemon> {
   const href = new URL("../../cli/src/daemon/setup.ts", import.meta.url).href;
@@ -196,6 +197,7 @@ test("bind, index, and one fetch tick follow origin/main without touching the wo
       nemaHome,
       userCodexHome: path.join(root, "codex"),
       version: "0.0.0",
+      cliEntry: path.join(root, "index.js"),
       graphify: { bin: graphify },
     });
     await waitFor("daemon", async () => attached.isConnected());

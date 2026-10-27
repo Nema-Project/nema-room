@@ -14,14 +14,18 @@ export type EntryView = {
 
 export type KnowledgeSnap = { entries: EntryView[]; head: string };
 
+export type TaskChangeView = { entry: string; kind: string; op: string };
+
+export type ThreadView = { id: string; openedBy: string };
+
 export type SemanticInput = {
   memo: { reply: string; before: KnowledgeSnap; after: KnowledgeSnap };
   design: {
     reply: string;
-    beforeCasual: KnowledgeSnap;
-    afterCasual: KnowledgeSnap;
-    traces: string[];
-    threadOpenedBy: string | null;
+    anchorMessageId: string;
+    threads: ThreadView[];
+    firstTurnChanges: TaskChangeView[];
+    secondTurnChanges: TaskChangeView[];
     finalMessageInAgentThread: boolean;
     decisionsAdded: EntryView[];
     finalUserMessageId: string;
@@ -44,6 +48,20 @@ export type SemanticInput = {
 
 export type Check = { name: string; ok: boolean; detail: string };
 
+/** Closing line for the brainstorm thread. It must not ask the model to record the ideas. */
+export const BRAINSTORM_CLOSING = "这些先留在讨论里，暂不记录，之后再决定。";
+
+/** Memo, design, brainstorm, and conflict are separate workspaces. Override reuses conflict. */
+export function acceptanceWorkspacePlan(): { memo: string; design: string; brainstorm: string; conflict: string; override: string } {
+  return { memo: "memo", design: "design", brainstorm: "brainstorm", conflict: "conflict", override: "conflict" };
+}
+
+/** The id of the one active decision whose title or body matches Redis, or empty when the match is not unique. */
+export function activeRedisDecisionId(entries: EntryView[]): string {
+  const matches = entries.filter((entry) => entry.kind === "decision" && entry.status === "active" && /Redis/.test(`${entry.title}\n${entry.body}`));
+  return matches.length === 1 ? matches[0]!.id : "";
+}
+
 const stable = (entries: EntryView[]): string => JSON.stringify(entries.map((entry) => ({
   id: entry.id,
   kind: entry.kind,
@@ -65,6 +83,15 @@ function activeDecisions(entries: EntryView[]): EntryView[] {
   return entries.filter((entry) => entry.kind === "decision" && entry.status === "active");
 }
 
+function describeChanges(changes: TaskChangeView[]): string {
+  if (changes.length === 0) return "no changes";
+  return changes.map((change) => `${change.op} ${change.entry} ${change.kind}`).join(", ");
+}
+
+function requirementChange(change: TaskChangeView): boolean {
+  return change.kind === "requirement" && /^R-/.test(change.entry);
+}
+
 /** Scores a finished transcript. It does not talk to a model. */
 export function evaluateSemantic(input: SemanticInput): { ok: boolean; checks: Check[] } {
   const checks: Check[] = [];
@@ -73,13 +100,25 @@ export function evaluateSemantic(input: SemanticInput): { ok: boolean; checks: C
   check("memo-reply", input.memo.reply.trim() !== "", input.memo.reply.trim() ? "replied" : "empty reply");
   check("memo-no-write", sameKnowledge(input.memo.before, input.memo.after), "knowledge stays put");
 
-  check("design-no-early-write", sameKnowledge(input.design.beforeCasual, input.design.afterCasual), "casual turns stay out of knowledge");
-  check("design-open-thread", input.design.traces.some((text) => text.includes("open_thread")), input.design.traces.join(" | ") || "no tool trace");
-  check("design-agent-opened", input.design.threadOpenedBy === "agent" && input.design.finalMessageInAgentThread, `opened by ${input.design.threadOpenedBy ?? "nobody"}`);
+  const firstOk = input.design.firstTurnChanges.every(requirementChange);
+  const secondOk = input.design.secondTurnChanges.length === 0;
+  check(
+    "design-no-early-write",
+    firstOk && secondOk,
+    `turn1: ${describeChanges(input.design.firstTurnChanges)}; turn2: ${describeChanges(input.design.secondTurnChanges)}`,
+  );
+  const opened = input.design.threads.map((thread) => `${thread.id}:${thread.openedBy}`).join(", ") || "nobody";
+  const agentThread = input.design.threads.find((thread) => thread.id === input.design.anchorMessageId && thread.openedBy === "agent");
+  check("design-open-thread", agentThread !== undefined, opened);
+  check(
+    "design-agent-opened",
+    agentThread !== undefined && input.design.finalMessageInAgentThread,
+    `opened by ${input.design.threads.map((thread) => thread.openedBy).join(", ") || "nobody"}`,
+  );
   const added = input.design.decisionsAdded;
   const decision = added.length === 1 ? added[0] : undefined;
-  const oneDecided = decision !== undefined && decision.kind === "decision" && decision.basis === "decided" && decision.sourceMessages.includes(input.design.finalUserMessageId);
-  check("design-one-decided", oneDecided, added.map((entry) => `${entry.id}:${entry.basis}`).join(",") || "no decision");
+  const oneDecided = decision !== undefined && decision.kind === "decision" && decision.basis === "decided" && decision.status === "active" && decision.sourceMessages.includes(input.design.finalUserMessageId);
+  check("design-one-decided", oneDecided, added.map((entry) => `${entry.id}:${entry.basis}:${entry.status}`).join(",") || "no decision");
   check("design-reply", input.design.reply.trim() !== "", input.design.reply.trim() ? "replied" : "empty reply");
 
   check("brainstorm-reply", input.brainstorm.reply.trim() !== "", input.brainstorm.reply.trim() ? "replied" : "empty reply");
@@ -98,7 +137,7 @@ export function evaluateSemantic(input: SemanticInput): { ok: boolean; checks: C
   const redis = input.override.decisions.find((entry) => entry.id === input.override.redisId);
   const stillActive = activeDecisions(input.override.decisions);
   const lru = stillActive.length === 1 ? stillActive[0] : undefined;
-  const overridden = redis?.status === "superseded" && lru !== undefined && lru.id !== input.override.redisId && lru.basis === "decided" && /LRU/.test(`${lru.title}\n${lru.body}`) && lru.sourceMessages.includes(input.override.overrideMessageId);
+  const overridden = redis?.status === "superseded" && lru !== undefined && lru.id !== input.override.redisId && lru.basis === "decided" && /LRU/.test(`${lru.title}\n${lru.body}`) && lru.sourceMessages.includes(input.override.overrideMessageId) && lru.related.includes(input.override.redisId);
   check("override-redis-superseded", overridden, `redis=${redis?.status ?? "missing"} active=${stillActive.map((entry) => entry.id).join(",") || "none"}`);
 
   return { ok: checks.every((item) => item.ok), checks };
@@ -127,8 +166,11 @@ export function credentialPreflight(input: { adapter: string; codexAuthFile?: st
   return { ok: false, blocker: `unsupported adapter: ${input.adapter}` };
 }
 
+const STARTUP_BLOCK = /EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|getaddrinfo|fetch failed|无法连接|未登录|没有 Claude|登录失败|凭证|auth\.json|已过期|模型接口拒绝|timed out|timeout|超时|daemon did not connect/i;
+
 /** A connection or login failure cannot be scored. Other task errors are semantic-run failures. */
-export function classifyRunError(message: string): "blocked" | "failed" {
-  if (/EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|getaddrinfo|fetch failed|无法连接|未登录|没有 Claude|登录失败|凭证|auth\.json|已过期|模型接口拒绝|timed out|timeout|超时/i.test(message)) return "blocked";
+export function classifyRunError(message: string, phase: "startup" | "turn" = "startup"): "blocked" | "failed" {
+  if (/工具面无法确认/.test(message)) return "blocked";
+  if (phase === "startup" && STARTUP_BLOCK.test(message)) return "blocked";
   return "failed";
 }

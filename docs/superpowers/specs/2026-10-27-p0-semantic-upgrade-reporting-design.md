@@ -17,7 +17,7 @@ The conversations and expected results are the ones in [the thread acceptance sc
 
 The runner sends the scripted user messages through the hub and the real daemon adapter. It records the git commit, adapter, configured model (or provider default when unset), message ids, knowledge entries, and task progress text. Progress text is the tool trace the hub already emits (`调用 open_thread`, `mcp__room__open_thread`, and the other tool names).
 
-Checks:
+Checks below are the original script. The amendment at the end of this document supersedes the shared workspace, the progress-text `open_thread` check, the casual-turn write rule, and the timeout classification.
 
 1. Memo: the agent replies, and the knowledge entry list and git HEAD do not change.
 2. Design chat: casual turns do not write knowledge. The trace includes `open_thread`. The deciding user message sits in an agent-opened thread. That turn adds exactly one decision, `basis: decided`, whose `sourceMessages` include that user message.
@@ -62,3 +62,32 @@ While the setting is disabled, SECURITY.md, the issue chooser, CONTRIBUTING, the
 Record results in `docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md` with commit SHAs, commands, and links. Do not rewrite the 2026-10-26 review as if it were this run.
 
 Out of scope: release tags, GitHub releases, advisories, merges, ruleset changes, enabling private reporting, real-model runs without credentials, and NSIS/DMG overwrite. Do not claim those as done.
+
+## Amendment: harness, prompt, and rubric after the scored runs
+
+Recorded 2026-10-27 (Asia/Tokyo), after the maintainer Windows runs at `b158daf` (Codex 5/12, Claude 6/12, both exit 1). Line numbers in the task note refer to `17db281`. This amendment is the behavior to implement. It does not mark P0-03 已完成. Both adapters must be rerun twice on this behavior before that status can change.
+
+The Claude score is void. `threadSemanticRun` called `startDaemon` without `cliEntry`, so `createRunner` fell back to `process.argv[1]` (the runner). Claude's `mcp.json` then started `node threadSemanticRun.js mcp`. That process entered `main()` and exited with `unsupported adapter: ""`. Claude had no room tools. A transcript from that launch is not a model result.
+
+### Harness
+
+- `createRunner` / `startDaemon` require `cliEntry`. A missing value throws. Production `nema daemon` passes the real CLI entry. The acceptance runner passes `apps/cli/dist/index.js`.
+- Claude init passes only when the single MCP server is named `room` with status `connected`, and the tool list contains every `mcp__room__list_entries`, `mcp__room__read_entry`, `mcp__room__upsert_entry`, and `mcp__room__open_thread`. An empty tool list or a server that is not `connected` fails the task at once. The runner records that failure as blocked (exit 2), including after turns have started. Plugin tools that the task allowed may also be present. Any other tool still fails the task.
+- `design-open-thread` reads the `threads` table. The design thread id is the first design user message ("给小工具加缓存"), and `opened_by` must be `agent`. Progress text is display only and is not a check. A thread with `opened_by` `grill` is recorded in the check detail and does not count as agent-opened.
+- Memo, design, brainstorm, and conflict each use their own workspace. Override reuses the conflict workspace. That workspace is seeded with one active decision whose title and body contain `Redis` before any conflict turn. `redisId` is that decision only when it is the unique active decision matching `/Redis/`. The script does not ask the model to create the Redis decision.
+- Each turn in the output JSON includes `task_changes` as `{ entry, kind, op }` and the thread's `opened_by` when the turn is in a thread, including `grill`. Rubric details name the entries that were added or updated.
+- `design-one-decided` also requires `status` `active`.
+- Override requires the single remaining active decision to include the Redis id in `related` (there is no separate supersede column), with Redis `superseded`.
+- `classifyRunError` takes a phase. Preflight and the connection phase are blocked for connection, login, timeout, and credential failures. After the first turn starts, those words in a task error are a finished failure (exit 1), not blocked. The room tool-surface failure stays blocked in either phase.
+
+### Prompt and tool text
+
+- Main chat calls `open_thread` when the user asks to compare options or weigh tradeoffs and has not decided, then discusses inside the thread. The `open_thread` tool description says the same thing.
+- A question-shaped idea (`你觉得…？`) or a request for pros and cons is not a statement and is not written. Only an explicit statement or an explicit decision is written. Saying to keep something in the discussion or the thread means do not write knowledge.
+- While grill strictness is strict, comparing options or weighing tradeoffs before a decision does not create a new question entry. The discussion stays in the thread. That exception is part of the strictness line and does not remove the existing strictness sentence.
+
+### Rubric and script line
+
+- The brainstorm closing line does not tell the model to record the ideas. It is `这些先留在讨论里，暂不记录，之后再决定。` The no-write check stays.
+- The first design turn may add or update requirement entries whose ids start with `R-`. It must not add or update `D-*` or `Q-*`. The second design turn, which asks a question, must not change knowledge.
+- `design-one-decided` is exactly one added decision, `basis` `decided`, `status` `active`, and `sourceMessages` containing the deciding user message.
