@@ -276,7 +276,7 @@ function implementationFromData(raw: unknown): unknown {
   };
 }
 
-function summarize(e: Entry): EntrySummary {
+export function summarizeEntry(e: Entry): EntrySummary {
   const s: EntrySummary = {
     id: e.id,
     kind: e.kind,
@@ -459,10 +459,15 @@ export class KnowledgeStore {
   }
 
   async list(): Promise<EntrySummary[]> {
+    return (await this.listEntries()).map(summarizeEntry);
+  }
+
+  /** Full entries for hub evidence projection, read in one directory scan. */
+  async listEntries(): Promise<Entry[]> {
     const all = await this.readAll();
     const order = (k: EntryKind) => KINDS.indexOf(k);
     all.sort((a, b) => order(a.kind) - order(b.kind) || idNumber(a.id) - idNumber(b.id));
-    return all.map(summarize);
+    return all;
   }
 
   /** Entries whose source messages include `messageId`, in the same order as `list`. */
@@ -472,7 +477,7 @@ export class KnowledgeStore {
     return all
       .filter((e) => e.sourceMessages.includes(messageId))
       .sort((a, b) => order(a.kind) - order(b.kind) || idNumber(a.id) - idNumber(b.id))
-      .map(summarize);
+      .map(summarizeEntry);
   }
 
   async get(id: string): Promise<Entry | null> {

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { sourceEvidenceEntries, sourceEvidenceSummary } from "./sourceFreshness.js";
 import { ZodError } from "zod";
 import { KnowledgeStore, UpsertRejected } from "@nema/knowledge";
 import { canonicalJson, INACTIVE_STATUSES, UpsertEntryInput, pluginFunction, reportPassed, type Entry, type SourceRef, type GetEntryResponse, type Implementation, type ReportMessageMeta, type ListEntriesResponse, type UpsertEntryResponse } from "@nema/shared";
@@ -73,12 +74,14 @@ export function roomRoutes(deps: {
   });
 
   app.get("/entries", async (c) => {
-    const body: ListEntriesResponse = { entries: await store(c.get("auth").workspaceId).list() };
+    const ws = c.get("auth").workspaceId;
+    const body: ListEntriesResponse = { entries: (await sourceEvidenceEntries(db, ws, await store(ws).listEntries())).map(sourceEvidenceSummary) };
     return c.json(body);
   });
 
   app.get("/entries/:id", async (c) => {
-    const entry = await store(c.get("auth").workspaceId).get(c.req.param("id"));
+    const ws = c.get("auth").workspaceId;
+    const entry = (await sourceEvidenceEntries(db, ws, await store(ws).listEntries())).find(e => e.id === c.req.param("id"));
     if (!entry) return c.json({ error: `entry not found: ${c.req.param("id")}` }, 404);
     const body: GetEntryResponse = { entry };
     return c.json(body);

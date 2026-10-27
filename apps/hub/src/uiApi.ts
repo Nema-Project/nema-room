@@ -1,3 +1,4 @@
+import { sourceEvidenceEntries, sourceEvidenceSummary } from "./sourceFreshness.js";
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z, ZodError } from "zod";
@@ -455,8 +456,8 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.get("/workspaces/:id/entries", async (c) => {
     const ws = c.req.param("id");
-    const [list, fresh] = await Promise.all([store(ws).list().then((l) => withDiagramStatus(db, ws, l)), newEntryIds(ws)]);
-    return c.json(list.map((e) => ({ ...e, isNew: fresh.has(e.id) })));
+    const [list, fresh] = await Promise.all([sourceEvidenceEntries(db, ws, await store(ws).listEntries()), newEntryIds(ws)]);
+    return c.json((await withDiagramStatus(db, ws, list.map(sourceEvidenceSummary))).map((e) => ({ ...e, isNew: fresh.has(e.id) })));
   });
 
   app.get("/workspaces/:id/timeline", async (c) => c.json(await timeline(db, dataDir, c.req.param("id")!, deps.ownedHelpers)));
@@ -467,7 +468,12 @@ export function uiRoutes(deps: UiDeps): Hono {
     return entry;
   };
 
-  app.get("/workspaces/:id/entries/:eid", async (c) => c.json(await requireEntry(c.req.param("id")!, c.req.param("eid")!)));
+  app.get("/workspaces/:id/entries/:eid", async (c) => {
+    const ws = c.req.param("id")!, eid = c.req.param("eid")!;
+    const entry = (await sourceEvidenceEntries(db, ws, await store(ws).listEntries())).find(e => e.id === eid);
+    if (!entry) throw new HttpError(404, `entry not found: ${eid}`);
+    return c.json(entry);
+  });
 
   app.post("/workspaces/:id/entries/:eid/withdraw", async (c) => {
     const workspaceId = c.req.param("id")!;

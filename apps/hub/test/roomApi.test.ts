@@ -1086,3 +1086,47 @@ describe("external source evidence", () => {
   });
 
 });
+
+test("source checks and reimports project evidence on all four GET interfaces without rewriting decisions", async () => {
+  const { importSourceSnapshot } = await import("../src/sourceImport.js");
+  const { recordSourceCheck } = await import("../src/sourceFreshness.js");
+  const { sha256 } = await import("../src/db/snapshot.js");
+  const { createApp } = await import("../src/app.js");
+  const t = await runningTaskFor(wsA);
+  const snapshot = (text: string, revision: string | null) => {
+    const payload = { schemaVersion: 1 as const, provider: "fake", resourceId: "freshness", revision, title: text, canonicalUrl: "https://example.com/doc", excerpts: [{ locator: "p1", text }] };
+    return { ...payload, fetchedAt: new Date().toISOString(), contentHash: sha256(canonicalJson(payload)) };
+  };
+  const first = await importSourceSnapshot(db, dataDir, wsA, snapshot("A", "v1"));
+  const ks = new KnowledgeStore(repoPath(dataDir, wsA));
+  const decision = (await ks.upsert({ kind: "decision", title: "Dependent", body: "unchanged", reason: "test", basis: "inferred", sourceMessages: [], sourceRefs: [{ sourceEntryId: first.entry.id, revision: "v1", snapshotHash: first.entry.sourceSnapshot!.contentHash, locator: "p1" }] }, { author: "agent" })).entry;
+  const file = entryPath(wsA, "decision", decision.id), before = await readFile(file, "utf8");
+  await recordSourceCheck(db, dataDir, wsA, first.entry.id, { outcome: "ok", revision: "v2" });
+  expect(await readFile(file, "utf8")).toBe(before);
+  expect((await (await req("GET", `/room/entries/${decision.id}`, t.runToken)).json() as any).entry.reviewNeeded).toBe(true);
+  await recordSourceCheck(db, dataDir, wsA, first.entry.id, { outcome: "timeout" });
+  expect((await (await req("GET", `/room/entries/${decision.id}`, t.runToken)).json() as any).entry.reviewNeeded).toBe(false);
+  await expect(recordSourceCheck(db, dataDir, wsB, first.entry.id, { outcome: "offline" })).rejects.toMatchObject({ status: 404 });
+  await expect(recordSourceCheck(db, dataDir, wsA, decision.id, { outcome: "offline" })).rejects.toMatchObject({ status: 404 });
+  const ui = createApp({ db, dataDir, nemaHome: dataDir, events, daemonStatus: () => true, daemon, webOrigin: "http://localhost:3000" });
+  const uiReq = (method: string, suffix: string) => ui.request(`http://127.0.0.1:4400/api/workspaces/${wsA}/entries${suffix}`, { method, headers: { "content-type": "application/json" }, ...(method === "POST" ? { body: "{}" } : {}) });
+  expect((await uiReq("POST", `/${first.entry.id}/confirm`)).status).toBe(200);
+  expect((await (await uiReq("GET", `/${first.entry.id}`)).json() as any).unconfirmedSnapshot).toBe(false);
+  await importSourceSnapshot(db, dataDir, wsA, snapshot("B", null));
+  await recordSourceCheck(db, dataDir, wsA, first.entry.id, { outcome: "ok", revision: "v3" });
+  expect(await db.query("select freshness,reason from source_freshness where workspace_id=$1", [wsA])).toEqual([{ freshness: "unknown", reason: "incomparable" }]);
+  const roomList = (await (await req("GET", "/room/entries", t.runToken)).json() as any).entries;
+  const roomGet = (await (await req("GET", `/room/entries/${first.entry.id}`, t.runToken)).json() as any).entry;
+  const uiList = await (await uiReq("GET", "")).json() as any[];
+  const uiGet = await (await uiReq("GET", `/${first.entry.id}`)).json();
+  for (const entry of [roomList.find((e: any) => e.id === first.entry.id), roomGet, uiList.find((e: any) => e.id === first.entry.id), uiGet]) {
+    expect(entry).toMatchObject({ basis: "stated", freshness: "unknown", reviewNeeded: false, unconfirmedSnapshot: true });
+  }
+  expect(roomList.find((e: any) => e.id === decision.id)).toMatchObject({ reviewNeeded: true, unconfirmedSnapshot: false });
+  expect(await readFile(file, "utf8")).toBe(before);
+  const nullDecision = (await ks.upsert({ kind: "decision", title: "Null revision dependency", body: "stable", reason: "test", basis: "inferred", sourceMessages: [], sourceRefs: [{ sourceEntryId: first.entry.id, revision: null, snapshotHash: snapshot("B", null).contentHash }] }, { author: "agent" })).entry;
+  const nullFile = entryPath(wsA, "decision", nullDecision.id), nullBefore = await readFile(nullFile, "utf8");
+  await importSourceSnapshot(db, dataDir, wsA, snapshot("C", null));
+  expect((await (await req("GET", `/room/entries/${nullDecision.id}`, t.runToken)).json() as any).entry).toMatchObject({ reviewNeeded: true, freshness: "unknown" });
+  expect(await readFile(nullFile, "utf8")).toBe(nullBefore);
+});
