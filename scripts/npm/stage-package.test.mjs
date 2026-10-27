@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
@@ -68,6 +69,26 @@ test('stage copies the runtime files and packs a tarball', async (t) => {
   assert.equal(existsSync(path.join(staged.dir, 'src/report/SKILL.md')), true);
   assert.equal(existsSync(path.join(staged.dir, 'LICENSE')), true);
   assert.equal(existsSync(path.join(staged.dir, 'vendor')), false);
+});
+
+test('CLI runtime does not ship vendored files', async (t) => {
+  // apps/cli/src has no vendor/ reference and does not build a runtime path into vendor/.
+  const root = await temp(t);
+  const cliDir = path.join(root, 'apps/cli');
+  await mkdir(path.join(cliDir, 'dist'), { recursive: true });
+  await mkdir(path.join(cliDir, 'src/report'), { recursive: true });
+  await mkdir(path.join(root, 'vendor/archify'), { recursive: true });
+  await writeFile(path.join(cliDir, 'package.json'), JSON.stringify(cliPackage));
+  await writeFile(path.join(cliDir, 'dist/index.js'), 'export {};\n');
+  await writeFile(path.join(cliDir, 'src/report/SKILL.md'), '# skill\n');
+  await writeFile(path.join(root, 'LICENSE'), 'MIT\n');
+  await writeFile(path.join(root, 'vendor/archify/LICENSE'), 'upstream\n');
+  const staged = await stagePackage({ root, cliDir, licensePath: path.join(root, 'LICENSE'), outDir: path.join(root, 'out') });
+  assert.equal(existsSync(path.join(staged.dir, 'vendor')), false);
+  const packed = spawnSync('tar', ['-tzf', staged.tarball], { encoding: 'utf8' });
+  assert.equal(packed.status, 0, packed.stderr);
+  assert.equal(packed.stdout.includes('vendor/'), false);
+  assert.equal(/node(?:\.exe)?$|python|graphify/m.test(packed.stdout), false);
   const info = await stat(staged.tarball);
   assert.ok(info.size > 0);
   assert.match(staged.sizeLine, new RegExp(`npm package size: ${info.size}`));
