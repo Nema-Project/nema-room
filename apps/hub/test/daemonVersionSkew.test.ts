@@ -39,7 +39,7 @@ async function listen(releaseVersion?: string): Promise<number> {
 
 const clients: WebSocket[] = [];
 
-function hello(port: number, version: string): Promise<{ message: Record<string, unknown>; closed: Promise<void> }> {
+function hello(port: number, version: string): Promise<{ message: Promise<Record<string, unknown>>; closed: Promise<void> }> {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/daemon`);
   clients.push(ws);
   const closed = new Promise<void>((resolve) => ws.once("close", () => resolve()));
