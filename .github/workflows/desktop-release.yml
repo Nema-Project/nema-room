@@ -212,16 +212,21 @@ jobs:
         if: needs.plan.outputs.release == 'true'
         shell: bash
         run: npm run desktop:collect-source-materials -- "dist/desktop/$TARGET" "dist/desktop/$TARGET" "$TARGET" "$VERSION" scripts/desktop/source-materials-plan.json
-      - name: Package installer
+      - name: Package desktop artifacts
         shell: bash
         # make.mjs always runs electron-builder with --publish never.
+        # Windows emits the NSIS installer and a separate portable ZIP of the unpacked app.
         run: npm run desktop:make -- --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --staged "dist/desktop/$TARGET" --out "dist/desktop-artifacts/$TARGET"
       - name: Smoke packaged app (Windows NSIS installer)
         if: matrix.platform == 'win32'
         shell: bash
         run: npm run desktop:smoke -- --installer "dist/desktop-artifacts/$TARGET/Nema-$VERSION-$TARGET.exe"
+      - name: Smoke packaged app (Windows portable ZIP)
+        if: matrix.platform == 'win32'
+        shell: bash
+        run: npm run desktop:smoke -- --zip "dist/desktop-artifacts/$TARGET/Nema-$VERSION-$TARGET.zip"
       - name: Smoke staged runtime (macOS)
-        # desktop:smoke silently installs the Windows NSIS package; macOS gets the staged-payload runtime smoke only.
+        # Windows smoke installs the NSIS package and, separately, extracts the portable ZIP. macOS gets the staged-payload runtime smoke only.
         if: matrix.platform == 'darwin'
         shell: bash
         run: npm run desktop:smoke-runtime -- "dist/desktop/$TARGET"
@@ -230,11 +235,14 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/desktop/release-manifest.mjs checksums "dist/desktop-artifacts/$TARGET" "$VERSION" "$TARGET"
+          node scripts/desktop/release-manifest.mjs verify "dist/desktop-artifacts/$TARGET" "$VERSION" "$TARGET"
           mkdir -p "release-upload/$TARGET"
-          for name in "Nema-$VERSION-$TARGET.${{ matrix.installer }}" "SHA256SUMS-$VERSION-$TARGET.txt"; do
-            cp "dist/desktop-artifacts/$TARGET/$name" "release-upload/$TARGET/$name"
-          done
-      - name: Upload installer and checksums
+          cp "dist/desktop-artifacts/$TARGET/Nema-$VERSION-$TARGET.${{ matrix.installer }}" "release-upload/$TARGET/"
+          if [ "${{ matrix.platform }}" = "win32" ]; then
+            cp "dist/desktop-artifacts/$TARGET/Nema-$VERSION-$TARGET.zip" "release-upload/$TARGET/"
+          fi
+          cp "dist/desktop-artifacts/$TARGET/SHA256SUMS-$VERSION-$TARGET.txt" "release-upload/$TARGET/"
+      - name: Upload release assets and checksums
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nema-release-${{ needs.plan.outputs.version }}-${{ matrix.target }}
