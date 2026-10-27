@@ -9,7 +9,7 @@ No release tag, GitHub release, ruleset edit, or merge was created. This agent d
 
 | Item | Status | What this change actually shows |
 | --- | --- | --- |
-| P0-03 | 进行中 | Rubric and a blocked-credential spawn pass locally. No Codex or Claude credential exists here, so neither adapter completed the five conversations. |
+| P0-03 | 进行中 | On 2026-10-27 a Windows host ran both adapters at `b158daf`. Each exited 1 with `semantic: evaluated` and `configuredModel: null`. Codex passed 5 of 12 checks. Claude passed 6 of 12. Neither result is a pass. |
 | P0-04 | 已完成 | Disposable data-directory reopen, pending migration, failed migration, and backup restore passed on hosted `windows-latest` and `macos-latest` for head `ef87a29`. On 2026-10-27 the maintainer (NullumNomen) also reported a manual overwrite install on macOS and on Windows; workspace data remained on both. This agent did not run those installers. |
 | P0-05 | 已完成 | An earlier read on 2026-10-27 returned `{"enabled":false}`. The owner enabled the setting at about 11:52 Asia/Tokyo. A read at 11:54 returned HTTP 200 `{"enabled":true}`. The signed-out security page links to the form. At 12:18 Asia/Tokyo, collaborator Nullum-ai (`permission: read`, not admin) submitted test report GHSA-mgcq-mcqv-75ff. GitHub accepted it into triage. It was closed at 12:27 Asia/Tokyo (`2026-10-27T03:27:30Z`) with `published_at` null and no CVE. |
 
@@ -80,16 +80,37 @@ On 2026-10-27 the maintainer (NullumNomen) reported a separate manual check: a n
 
 ### P0-03 real-model runs
 
-Needs `npm ci` and `npm run typecheck` so `apps/local/dist` exists. Do not commit the JSON files.
+Recorded 2026-10-27 (Asia/Tokyo) on Windows, Node v26.12.1, commit `b158dafaaa694b4a3e6bb635ca66e78c1e57452d`. No `--model` was passed, so `configuredModel` is null. Both runs exited 1 with `semantic: evaluated`. That is a scored miss, not a blocked run and not a pass. Full JSON stayed outside the repository. Reply text is omitted here; the `design-open-thread` detail in each JSON is reply text, and neither detail contains the tool name `open_thread`.
 
-```sh
-export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
-test -f "$CODEX_HOME/auth.json"
-node scripts/acceptance/run-thread-semantic.mjs --adapter codex-direct --out /tmp/nema-p0-03-codex.json
-node scripts/acceptance/run-thread-semantic.mjs --adapter claude-code --claude-token-file "$HOME/.nema/claude-code-token" --out /tmp/nema-p0-03-claude.json
-```
+Codex direct, credential source `codex-compat-auth-file`. Passed: `memo-reply`, `memo-no-write`, `design-one-decided` (`D-1:decided`), `design-reply`, `brainstorm-reply`. Failed: `design-no-early-write`, `design-open-thread`, `design-agent-opened` (`opened by nobody`), `brainstorm-no-write`, `conflict-redis-only-active` (`D-3`), `conflict-question` (`Q-3` related `R-1,D-3`), `override-redis-superseded` (`redis=missing`, active `D-3`).
 
-Optional `--model`. Exit 0 is a pass for that adapter only. Exit 1 is a finished transcript that missed a check. Exit 2 is blocked and must not be scored. Copy a redacted summary (commit, adapter, model, check names, message ids, knowledge ids) into this review. Leave discussion text and any home path out of the repository.
+| Turn | Message | Thread | Task |
+| --- | --- | --- | --- |
+| memo | `m_3D4_aERwFrtd` | none | `t_hFOzMPr7qmrW` |
+| casual-1 | `m_MWXc2Z5cM5I7` | none | `t_JpP9SVY-nmHP` |
+| casual-2 | `m_Posrp7NwTVdS` | none | `t_Y8y9pE2rtXzq` |
+| decision | `m_e0ZUtBGqzIUW` | none | `t_XvL_nPxjvaiO` |
+| brainstorm | `m_DATpfrXKjHfn` | `m_DATpfrXKjHfn` | `t_w65eAvRHVGKb` |
+| brainstorm-end | `m_HZIKPSt1tFc6` | `m_DATpfrXKjHfn` | `t_L9-BOgwuzDWo` |
+| redis | `m_3P8-ObRoV1Qc` | `m_3P8-ObRoV1Qc` | `t_yVkuHeXkXnp2` |
+| conflict | `m_0EXQjBj_i9_Y` | `m_0EXQjBj_i9_Y` | `t_k2VVJdaiubrS` |
+| override | `m_167SuzVWTk6f` | `m_0EXQjBj_i9_Y` | `t_CIT3neWAYrnQ` |
+
+Claude Code, credential source `claude-token-file`. Passed: `memo-reply`, `memo-no-write`, `design-no-early-write`, `design-reply`, `brainstorm-reply`, `brainstorm-no-write`. Failed: `design-open-thread`, `design-agent-opened` (`opened by nobody`), `design-one-decided` (`no decision`), `conflict-redis-only-active` (`none`), `conflict-question` (`no question`), `override-redis-superseded` (`redis=missing`, active `none`). No decision or question id was created.
+
+| Turn | Message | Thread | Task |
+| --- | --- | --- | --- |
+| memo | `m_61EhyMuIJG6m` | none | `t_WI_jDPMNuVp4` |
+| casual-1 | `m_SKBKiFi9heuU` | none | `t_28JhRfCeCi8r` |
+| casual-2 | `m_eQlZXN63yywM` | none | `t_WRzkdGdO7ztD` |
+| decision | `m_3GyqlJNSiw5K` | none | `t_p07NHcwAVHTv` |
+| brainstorm | `m_UDdB513MeqUY` | `m_UDdB513MeqUY` | `t_5nMrNI8OEmfC` |
+| brainstorm-end | `m_BW35dOv0kEQf` | `m_UDdB513MeqUY` | `t_fGzoCuqzMp51` |
+| redis | `m_C75T7lEtHeNQ` | `m_C75T7lEtHeNQ` | `t_FiUEA3BQJVMw` |
+| conflict | `m_cToTYgOw_2ZY` | `m_cToTYgOw_2ZY` | `t_uFS3acQKVuNJ` |
+| override | `m_ntY6BOubufSZ` | `m_cToTYgOw_2ZY` | `t_LTOn5a4AcXBn` |
+
+P0-03 stays 进行中. Exit 0 on both adapters is still required before that status changes.
 
 ### P0-04 installer overwrite
 
