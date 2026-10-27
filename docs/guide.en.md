@@ -56,7 +56,7 @@ Current stabilization priorities and acceptance evidence are tracked in the [roa
 
 ## Web / Compose requirements
 
-The host daemon is the npm package `@nema-project/nema` (Node.js ≥ 22). The command name is `nema`. The package is in this repository and is not on npm until the first publish in [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md). Until that publish, install the daemon from this checkout with the wizard below. After that publish, install the same version as the running hub:
+The host daemon is the npm package `@nema-project/nema` (Node.js ≥ 22). The command name is `nema`. `@nema-project/nema@0.1.3` was published on 2026-10-27. That manual first publish is recorded in [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md). `v0.1.4` is the first trusted-publisher publish. Install the same version as the running hub:
 
 ```sh
 npx @nema-project/nema@<hub version> --version
@@ -97,7 +97,7 @@ Read-only check: `node scripts/setup.mjs --lang en --check`. With npm available,
 
 ### Manual installation (Bash)
 
-Compose runs PostgreSQL, the hub, and web. **The daemon runs on your host**, using local credentials and repository paths. It is not in the images. Until a release tag publishes images, build them from this checkout.
+Compose runs PostgreSQL, the hub, and web. **The daemon runs on your host**, using local credentials and repository paths. It is not in the images. Developing this repository still builds the images from this checkout. Tag `v0.1.4` is the first release that publishes them.
 
 ```bash
 git clone https://github.com/Nema-Project/nema-room.git
@@ -113,7 +113,7 @@ npm run up
 
 `npm run up` builds hub and web from this checkout. On Linux and macOS, the `export` sets the hub's user to the host user, including when that user is not uid 1000. Docker Desktop on Windows does not need that export. `NEMA_HUB_PORT` (default 4400) is both the published host port and the hub's listen port. `NEMA_WEB_PORT` (default 3000) is only the published host port. The web container reads `NEMA_HUB_URL` at start; compose sets it to `http://127.0.0.1:$NEMA_HUB_PORT`.
 
-Pulling pinned images, without cloning, starts at the first `v*` tag that contains the image publish workflow. Tag `v0.1.3` is not that release. `scripts/images/check-images.mjs` keeps the compose pin equal to the package version, so the pin moves with the release that publishes the images. After that tag exists, download its `docker-compose.yml`. On Linux and macOS, export `NEMA_UID` and `NEMA_GID` the same way. Docker Desktop on Windows does not need that export. Then run `docker compose up -d`. Host ports follow `NEMA_HUB_PORT` (default 4400; the container listens on the same port) and `NEMA_WEB_PORT` (default 3000; the container still listens on 3000). The published web image reads `NEMA_HUB_URL` at start. Compose defaults that to `http://127.0.0.1:$NEMA_HUB_PORT`, so the image does not need a rebuild when the port changes.
+Pulling pinned images, without cloning, starts at tag `v0.1.4`, the first tag that contains the image publish workflow and publishes the images (`linux/amd64`; arm64 is [issue #50](https://github.com/Nema-Project/nema-room/issues/50)). `scripts/images/check-images.mjs` keeps the compose pin equal to the package version (`0.1.4`). After that tag is pushed, download its `docker-compose.yml`. On Linux and macOS, export `NEMA_UID` and `NEMA_GID` the same way. Docker Desktop on Windows does not need that export. Then run `docker compose up -d`. Host ports follow `NEMA_HUB_PORT` (default 4400; the container listens on the same port) and `NEMA_WEB_PORT` (default 3000; the container still listens on 3000). The published web image reads `NEMA_HUB_URL` at start. Compose defaults that to `http://127.0.0.1:$NEMA_HUB_PORT`, so the image does not need a rebuild when the port changes.
 
 Configure model access first. For the default authentication mode:
 
@@ -244,7 +244,7 @@ npm run lint -w apps/web
 npm run build -w apps/web
 ```
 
-The root typecheck excludes web; build it separately. Before upgrading a source checkout, back up data, then run `git pull`, `npm ci`, rebuild the CLI, run `npm run up`, and restart the daemon. Keep the daemon on the hub version from `GET /api/version`. A mismatch prints `run: npm i -g @nema-project/nema@<version>` and does not reconnect. Until the first npm publish, that daemon still comes from this checkout.
+The root typecheck excludes web; build it separately. Before upgrading a source checkout, back up data, then run `git pull`, `npm ci`, rebuild the CLI, run `npm run up`, and restart the daemon. Keep the daemon on the hub version from `GET /api/version`. A mismatch prints `run: npm i -g @nema-project/nema@<version>` and does not reconnect. A source checkout still builds that daemon from this tree. `@nema-project/nema@0.1.3` has been on npm since 2026-10-27.
 
 See [.env.example](../.env.example) for ports and directories. The CLI does not automatically load the root `.env`: export `NEMA_DATA_DIR` or pass `--token-file` to `daemon` / `doctor` for a custom data directory; also pass `--hub` for a different hub port. Compose reads `NEMA_HUB_PORT` (default 4400; the host and the container use the same port) and `NEMA_WEB_PORT` (default 3000; the container stays on 3000). The web container reads `NEMA_HUB_URL` when it starts. Compose defaults that to `http://127.0.0.1:$NEMA_HUB_PORT`. Set `NEMA_HUB_URL` only when the browser reaches the hub at a different address. `NEXT_PUBLIC_HUB_URL` is what `npm run dev` reads, and it is only the baked fallback inside the image.
 

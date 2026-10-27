@@ -80,7 +80,7 @@ Windows の `.exe` は NSIS インストーラーです。ショートカット�
 
 ### Web / Compose
 
-イメージを公開するリリースが出るまでは、チェックアウトから PostgreSQL、hub、web をビルドします。これが今使える起動方法です。daemon はイメージに入っていません。ホストで動かします。daemon のパッケージ名はこのリポジトリの `nema` です。最初の公開までは npm 上になく、手順は [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md) にあります。それまでは、このチェックアウトから daemon を入れます。Windows、macOS、Linux 上の **Node.js ≥ 22**、**Git**、**Docker**、**Docker Compose v2** が必要です。
+このリポジトリを開発するときは、チェックアウトから PostgreSQL、hub、web をビルドします。tag `v0.1.4` がイメージを初めて公開するリリースです。daemon はイメージに入っていません。ホストで動かします。daemon のパッケージは `@nema-project/nema` です。`@nema-project/nema@0.1.3` は 2026-10-27 に npm へ公開され、その手動公開は [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md) に記録しています。Windows、macOS、Linux 上の **Node.js ≥ 22**、**Git**、**Docker**、**Docker Compose v2** が必要です。
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
@@ -92,11 +92,11 @@ node scripts/setup.mjs --lang ja
 
 ウィザードが依存関係を確認し、CLI をビルドしてソースからサービスを起動し、モデル設定を案内します。ホストの daemon は起動したままにしてください。既存の `.env` は保持されます。`npm run up` は同じソースビルドです。Linux と macOS では、UID/GID が 1000 でもそれ以外でも、上と同じように `NEMA_UID` と `NEMA_GID` を export してから `npm run up` してください。hub がデータディレクトリへ書き込めます。Windows の Docker Desktop ではこの export は不要です。その後 [localhost:3000](http://localhost:3000) を開きます。公開用 compose ファイルにビルド手順はありません。
 
-clone せずにピン留めしたイメージを pull できるのは、イメージ公開ワークフローを含む最初の `v*` tag からです。`v0.1.3` はそのリリースではなく、GHCR に `0.1.3` のイメージはありません。このチェックアウトが `ghcr.io/nema-project/nema-room-hub:0.1.3` と `ghcr.io/nema-project/nema-room-web:0.1.3` をピン留めしているのは、`scripts/images/check-images.mjs` がピンとパッケージ版の一致を要求するためです。次のリリースで版とピンが一緒に動き、その tag がイメージを公開します。その後、その tag から `docker-compose.yml` を取得します。Linux と macOS では同じように `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。そのあと `docker compose up -d` を実行します。ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。`NEMA_HUB_URL` の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` で、web コンテナの起動時に読まれるので、公開イメージを再ビルドせずにアドレスを変えられます。
+clone せずにピン留めしたイメージを pull できるのは tag `v0.1.4` からです。この tag はイメージ公開ワークフローを含み、これらのイメージの最初の公開です（`linux/amd64`。arm64 は [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。このチェックアウトが `ghcr.io/nema-project/nema-room-hub:0.1.4` と `ghcr.io/nema-project/nema-room-web:0.1.4` をピン留めしているのは、`scripts/images/check-images.mjs` がピンとパッケージ版の一致を要求するためです。その tag が push されたあと、そこから `docker-compose.yml` を取得します。Linux と macOS では同じように `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。そのあと `docker compose up -d` を実行します。ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。`NEMA_HUB_URL` の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` で、web コンテナの起動時に読まれるので、公開イメージを再ビルドせずにアドレスを変えられます。
 
 [手動インストールと設定](docs/guide.ja.md#source-installation) · 環境の確認のみ：`node scripts/setup.mjs --lang ja --check`
 
-ホストの daemon は npm パッケージ `@nema-project/nema` です（Node.js ≥ 22）。コマンド名は `nema` です。最初の公開までは npm 上にありません。手順は `scripts/npm/RELEASE.md` です。公開のあと、実行中の hub と同じバージョンを入れます。
+ホストの daemon は npm パッケージ `@nema-project/nema` です（Node.js ≥ 22）。コマンド名は `nema` です。`@nema-project/nema@0.1.3` は 2026-10-27 にメンテナーのアカウントから公開されました。`v0.1.4` は `scripts/npm/RELEASE.md` の trusted publisher による最初の公開です。実行中の hub と同じバージョンを入れます。
 
 ```sh
 npx @nema-project/nema@<hub のバージョン> --version

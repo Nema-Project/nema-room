@@ -56,7 +56,7 @@
 
 ## Web / Compose の動作条件
 
-ホストの daemon は npm パッケージ `@nema-project/nema` です（Node.js ≥ 22）。コマンド名は `nema` です。このパッケージはリポジトリにあり、[scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md) の最初の公開までは npm 上にありません。それまでは下のウィザードで、このチェックアウトから daemon を入れます。公開のあと、実行中の hub と同じバージョンを入れます。
+ホストの daemon は npm パッケージ `@nema-project/nema` です（Node.js ≥ 22）。コマンド名は `nema` です。`@nema-project/nema@0.1.3` は 2026-10-27 に npm へ公開されました。この手動の初回公開は [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md) に記録しています。`v0.1.4` は trusted publisher による最初の公開です。実行中の hub と同じバージョンを入れます。
 
 ```sh
 npx @nema-project/nema@<hub のバージョン> --version
@@ -97,7 +97,7 @@ Node/npm、Git、Docker、Compose を確認し、既存の `.env` を保持し�
 
 ### 手動インストール（Bash）
 
-Compose で PostgreSQL、hub、web を起動します。**daemon はホストで動かし**、ローカルの認証情報とリポジトリのパスを使います。daemon はイメージに入っていません。イメージを公開するリリースまでは、このチェックアウトからビルドします。
+Compose で PostgreSQL、hub、web を起動します。**daemon はホストで動かし**、ローカルの認証情報とリポジトリのパスを使います。daemon はイメージに入っていません。このリポジトリの開発は、このチェックアウトからビルドします。tag `v0.1.4` がイメージを初めて公開するリリースです。
 
 ```bash
 git clone https://github.com/Nema-Project/nema-room.git
@@ -113,7 +113,7 @@ npm run up
 
 `npm run up` はこのチェックアウトから hub と web をビルドします。Linux と macOS では、上の `export` は UID/GID が 1000 かどうかに関係なく、コンテナのユーザーをホストのユーザーにします。Windows の Docker Desktop ではこの export は不要です。`NEMA_HUB_PORT`（既定 4400）は公開されるホストのポートと hub の待受ポートの両方です。`NEMA_WEB_PORT`（既定 3000）はホストのポートだけを変えます。web コンテナは起動時に `NEMA_HUB_URL` を読み、compose はそれを `http://127.0.0.1:$NEMA_HUB_PORT` にします。
 
-clone せずにピン留めしたイメージを pull できるのは、イメージ公開ワークフローを含む最初の `v*` tag からです。`v0.1.3` はそのリリースではありません。`scripts/images/check-images.mjs` は compose のピンとパッケージ版の一致を要求するので、ピンはイメージを公開するリリースと一緒に動きます。その tag のあと、その `docker-compose.yml` を取得します。Linux と macOS では同じように `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。そのあと `docker compose up -d` を実行します。ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。公開 web イメージは起動時に `NEMA_HUB_URL` を読みます。compose の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` なので、ポートを変えてもイメージの再ビルドは不要です。
+clone せずにピン留めしたイメージを pull できるのは tag `v0.1.4` からです。この tag はイメージ公開ワークフローを含み、これらのイメージの最初の公開です（`linux/amd64`。arm64 は [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。`scripts/images/check-images.mjs` は compose のピンをパッケージ版（`0.1.4`）と一致させます。その tag が push されたあと、その `docker-compose.yml` を取得します。Linux と macOS では同じように `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。そのあと `docker compose up -d` を実行します。ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。公開 web イメージは起動時に `NEMA_HUB_URL` を読みます。compose の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` なので、ポートを変えてもイメージの再ビルドは不要です。
 
 まずモデルを設定します。標準の認証方式を使う場合：
 
@@ -243,7 +243,7 @@ npm run lint -w apps/web
 npm run build -w apps/web
 ```
 
-ルートの typecheck は web を含みません。web は個別にビルドしてください。ソースのチェックアウトを更新する前にデータをバックアップし、`git pull`、`npm ci`、CLI の再ビルド、`npm run up`、daemon の再起動を行います。daemon は `GET /api/version` が返す hub のバージョンに合わせます。違う場合は `run: npm i -g @nema-project/nema@<バージョン>` を出して再接続しません。最初の npm 公開までは、daemon はこのチェックアウトから入れます。
+ルートの typecheck は web を含みません。web は個別にビルドしてください。ソースのチェックアウトを更新する前にデータをバックアップし、`git pull`、`npm ci`、CLI の再ビルド、`npm run up`、daemon の再起動を行います。daemon は `GET /api/version` が返す hub のバージョンに合わせます。違う場合は `run: npm i -g @nema-project/nema@<バージョン>` を出して再接続しません。ソースのチェックアウトでは、daemon をこのツリーからビルドします。`@nema-project/nema@0.1.3` は 2026-10-27 から npm にあります。
 
 ポートや保存先は [.env.example](../.env.example) を参照してください。CLI はルートの `.env` を自動で読みません。保存先を変更したら shell で `NEMA_DATA_DIR` を export するか、`daemon` / `doctor` に `--token-file` を指定します。hub のポートを変えたら `--hub` も指定してください。Compose は `NEMA_HUB_PORT`（既定 4400。ホストとコンテナは同じポート）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）を読みます。web コンテナは起動時に `NEMA_HUB_URL` を読みます。Compose の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` です。ブラウザが別のアドレスで hub に届くときだけ `NEMA_HUB_URL` を設定してください。`NEXT_PUBLIC_HUB_URL` は `npm run dev` が読む値で、イメージの中では焼き込まれた代替値にすぎません。
 

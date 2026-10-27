@@ -29,7 +29,7 @@ services:
       retries: 30
 
   hub:
-    image: ghcr.io/nema-project/nema-room-hub:0.1.3
+    image: ghcr.io/nema-project/nema-room-hub:0.1.4
     restart: unless-stopped
     depends_on:
       postgres:
@@ -59,7 +59,7 @@ services:
       start_period: 15s
 
   web:
-    image: ghcr.io/nema-project/nema-room-web:0.1.3
+    image: ghcr.io/nema-project/nema-room-web:0.1.4
     restart: unless-stopped
     depends_on:
       hub:
