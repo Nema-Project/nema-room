@@ -62,7 +62,7 @@
 - 版本优先用 `app.getVersion()`。没有时用运行清单的 `version`。短 commit 依次看运行清单的 `commit`、`build.commit`，以及载荷根上的 `build-metadata.json` 的同样字段。只接受 7 到 64 位十六进制，展示前 7 位。`stage-runtime` 在源码根就是该目录的 Git 仓库时，把 40 位 `HEAD` 写入清单的 `commit`；fixture 目录不是仓库时不写。不改 `make.mjs`。来源 [S-1]，做法 [推断]
 - `GET /_nema/version` 返回 `{ version, commit? }`。`GET /_nema/update` 返回 `{ enabled, state, offer? }`。`PATCH /_nema/update` 的正文只能是 `{ enabled: boolean }`。`POST /_nema/update/check` 的正文是 `{}`，手动跑一次检查。这些路径仍在会话校验之后。核心在启动约 15 秒后检查，之后约每 24 小时一次；每 2 秒看一次 `update-check-request.json` 的 `checkRequestedAt`，用来接托盘的手动请求。Vitest 里不启动这些计时器。已经发出的自动检查如果在写结果前发现用户关掉了自动检查，就写成关闭，不发布 offer。来源 [S-1]，做法 [推断]
 - 比较使用数值主次修订号。可选 `v` 前缀。构建元数据 `+` 不参与顺序。预发布号小于同号的正式版。任一端无法解析时比较结果为空，不提示更新。`/releases/latest` 的 `draft` 或 `prerelease` 为 true，或 tag 带预发布号、无法解析、不比当前版本新，都不产生 offer。offer 的 URL 由 tag 自己拼出，不用响应里的 `html_url`。来源 [S-1]，做法 [推断]
-- 有 offer 时托盘增加 `Update available: <version>`，点击 `shell.openExternal` 打开发行页。页面在标题栏下显示横幅，侧栏页脚显示版本、自动检查开关和手动检查。检查失败或被忽略的 tag 不改变页面上的提示。手动检查发现已经是最新时，页脚可以显示一句「已是最新」。来源 [S-1]，做法 [推断]
+- 有 offer 时托盘增加 `Update available: <version>`，点击 `shell.openExternal` 打开发行页。页面在标题栏下显示横幅，侧栏页脚显示版本、自动检查开关和手动检查。检查失败或被忽略的 tag 不改变页面上的提示。手动检查发现已经是最新时，页脚可以显示一句「已是最新」。第一次读取失败时页面先保持空白，但仍每 60 秒和窗口重新聚焦时再读一次。来源 [S-1]，做法 [推断]
 - 自动检查关闭时不发网络请求，并清掉托盘上的旧提示。手动检查不受这个开关限制。[推断]
 
 ## 留给实现者

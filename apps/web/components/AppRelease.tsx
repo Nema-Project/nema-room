@@ -119,14 +119,15 @@ async function check() {
 }
 
 function ensureStarted() {
-  if (started || typeof window === "undefined") return;
-  started = true;
-  void refresh().then((found) => {
-    if (!found || !started || timer !== undefined) return;
-    timer = window.setInterval(() => { void refresh(); }, 60_000);
-    onFocus = () => { void refresh(); };
-    window.addEventListener("focus", onFocus);
-  });
+  if (typeof window === "undefined") return;
+  if (!started) {
+    started = true;
+    void refresh();
+  }
+  if (timer === undefined) timer = window.setInterval(() => { void refresh(); }, 60_000);
+  if (onFocus) return;
+  onFocus = () => { void refresh(); };
+  window.addEventListener("focus", onFocus);
 }
 
 /** Test isolation. The page keeps one in-memory snapshot for the banner and the footer. */

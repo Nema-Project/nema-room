@@ -33,6 +33,7 @@ function renderRelease() {
 afterEach(() => {
   resetAppReleaseForTests();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("AppRelease", () => {
@@ -46,6 +47,27 @@ describe("AppRelease", () => {
     const link = await screen.findByRole("link", { name: "Update available: 0.2.0" });
     expect(link.getAttribute("href")).toBe(offer.url);
     expect((screen.getByRole("checkbox", { name: "Check for updates automatically" }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("retries after the first version request fails", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    let available = false;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (!available) return json({}, false);
+      if (String(input) === "/_nema/version") return json({ version: "0.1.3", commit: "abc1234" });
+      return json({ enabled: true, state: "current" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderRelease();
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect(screen.queryByText(/Version/)).toBeNull();
+    available = true;
+    const beforeRetry = fetchMock.mock.calls.length;
+    window.dispatchEvent(new Event("focus"));
+    expect(await screen.findByText("Version 0.1.3 (abc1234)")).toBeTruthy();
+    expect(fetchMock.mock.calls.length).toBe(beforeRetry + 2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(beforeRetry + 4));
   });
 
   it("renders nothing when the desktop endpoint is unavailable", async () => {
