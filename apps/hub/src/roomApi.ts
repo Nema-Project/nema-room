@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { ZodError } from "zod";
-import { KnowledgeStore } from "@nema/knowledge";
-import { UpsertEntryInput, pluginFunction, reportPassed, type GetEntryResponse, type Implementation, type ReportMessageMeta, type ListEntriesResponse, type UpsertEntryResponse } from "@nema/shared";
+import { KnowledgeStore, UpsertRejected } from "@nema/knowledge";
+import { UpsertEntryInput, pluginFunction, reportPassed, type Entry, type GetEntryResponse, type Implementation, type ReportMessageMeta, type ListEntriesResponse, type UpsertEntryResponse } from "@nema/shared";
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
 import { callHubFunction, vendoredArchify, type Archify } from "./diagrams.js";
@@ -137,35 +137,25 @@ export function roomRoutes(deps: {
       if (refused) return c.json({ error: refused }, 409);
     }
     const ks = store(workspaceId);
-    const existing = input.id !== undefined ? await ks.get(input.id) : null;
-    if (input.id !== undefined && !existing) {
+    // Existence only. The basis decision re-reads the file inside the repo lock below.
+    if (input.id !== undefined && !(await ks.get(input.id))) {
       return c.json({ error: `entry not found: ${input.id}` }, 404);
-    }
-    let toSave = input;
-    if (existing && existing.kind === "decision" && existing.status === "active") {
-      const leavesActive = input.status !== undefined && input.status !== "active";
-      const rewrites = leavesActive || input.title !== existing.title || input.body !== existing.body;
-      const userBasis = input.basis === "stated" || input.basis === "decided";
-      const citesUser = input.sourceMessages.some((id) => byId.get(id)?.role === "user");
-      // Raising the basis claims the user said or decided it, so it needs the same evidence as a rewrite.
-      const raisesBasis = userBasis && input.basis !== existing.basis;
-      if (!rewrites && !userBasis) {
-        // A related-only update never downgrades the decision's basis.
-        toSave = { ...input, basis: existing.basis ?? undefined };
-      }
-      if ((rewrites || raisesBasis) && (!userBasis || !citesUser)) {
-        return c.json(
-          {
-            error: `改写已定决策 ${existing.id} 需要用户消息作为依据（basis 为 stated 或 decided，且 sourceMessages 含用户消息）。若只是推断，请不要改它，改为新建一条 question 询问用户。`,
-          },
-          409,
-        );
-      }
     }
     let result;
     try {
-      result = await ks.upsert(toSave, { author: "agent", taskId });
+      // CX-03 task 6 appends sourceRefs checks in this callback, after the user-basis
+      // guard and before the return. Do not call upsert or withRepoLock on this repo here.
+      result = await ks.upsert(input, { author: "agent", taskId }, async ({ existing, input: locked }) => {
+        const guarded = applyActiveDecisionGuard(existing, locked, byId);
+        await assertCurrentTaskUserEvidence(db, taskId, workspaceId, existing, guarded);
+        return guarded;
+      });
     } catch (e) {
+      if (e instanceof UpsertRejected) {
+        const body: { error: string; code?: string } = { error: e.message };
+        if (e.code !== undefined) body.code = e.code;
+        return c.json(body, e.status);
+      }
       if (e instanceof ZodError) {
         const msg = e.issues.map((i) => `${i.path.join(".") || "(body)"}: ${i.message}`).join("; ");
         return c.json({ error: `invalid entry: ${msg}` }, 400);
@@ -279,9 +269,70 @@ function badRepoValue(args: unknown): string {
   return JSON.stringify((args as Record<string, unknown>).repo) ?? "";
 }
 
+export const USER_BASIS_EVIDENCE_CODE = "user_basis_evidence";
+export const USER_BASIS_EVIDENCE_ERROR =
+  "写入 stated 或 decided，或把已 superseded 的决策恢复为 active，需要引用当前任务的用户消息。";
+
 export const VERIFIED_NEEDS_REPORT = "实现状态 verified 需要一条核实通过的上报作为证据（evidence.reportMessageId）。";
 export const INFERRED_NOT_VERIFIED = "代码推断的实现只能由用户确认为 verified。";
 export const CONFIRMED_BY_USER_ONLY = "confirmedBy 只能由用户确认设置。";
+
+function activeDecisionEvidenceError(id: string): string {
+  return `改写已定决策 ${id} 需要用户消息作为依据（basis 为 stated 或 decided，且 sourceMessages 含用户消息）。若只是推断，请不要改它，改为新建一条 question 询问用户。`;
+}
+
+/** Today's active-decision guard, using the entry read under the repo lock. */
+function applyActiveDecisionGuard(
+  existing: Entry | null,
+  input: UpsertEntryInput,
+  messagesById: Map<string, { role: string }>,
+): UpsertEntryInput {
+  if (!existing || existing.kind !== "decision" || existing.status !== "active") return input;
+  const leavesActive = input.status !== undefined && input.status !== "active";
+  const rewrites = leavesActive || input.title !== existing.title || input.body !== existing.body;
+  const userBasis = input.basis === "stated" || input.basis === "decided";
+  const citesUser = input.sourceMessages.some((id) => messagesById.get(id)?.role === "user");
+  // Raising the basis claims the user said or decided it, so it needs the same evidence as a rewrite.
+  const raisesBasis = userBasis && input.basis !== existing.basis;
+  let guarded = input;
+  if (!rewrites && !userBasis) {
+    // A related-only update never downgrades the decision's basis.
+    guarded = { ...input, basis: existing.basis ?? undefined };
+  }
+  if ((rewrites || raisesBasis) && (!userBasis || !citesUser)) {
+    throw new UpsertRejected(409, activeDecisionEvidenceError(existing.id));
+  }
+  return guarded;
+}
+
+function needsCurrentTaskUserEvidence(existing: Entry | null, input: UpsertEntryInput): boolean {
+  const userBasis = input.basis === "stated" || input.basis === "decided";
+  if (!existing) return userBasis;
+  const nextStatus = input.status ?? existing.status;
+  const revives = existing.kind === "decision" && existing.status === "superseded" && nextStatus === "active";
+  if (revives) return true;
+  if (!userBasis) return false;
+  const changesContent = input.title !== existing.title
+    || input.body !== existing.body
+    || (input.status !== undefined && input.status !== existing.status);
+  const changesBasis = input.basis !== existing.basis;
+  return changesContent || changesBasis;
+}
+
+/** User basis, and revival of a superseded decision, cite the current task's user message. */
+async function assertCurrentTaskUserEvidence(
+  db: Db,
+  taskId: string,
+  workspaceId: string,
+  existing: Entry | null,
+  input: UpsertEntryInput,
+): Promise<void> {
+  if (!needsCurrentTaskUserEvidence(existing, input)) return;
+  const task = await getTask(db, taskId);
+  const taskMessage = task && task.workspaceId === workspaceId ? await getMessage(db, task.messageId) : null;
+  const citesCurrentUser = taskMessage?.role === "user" && input.sourceMessages.includes(taskMessage.id);
+  if (!citesCurrentUser) throw new UpsertRejected(409, USER_BASIS_EVIDENCE_ERROR, USER_BASIS_EVIDENCE_CODE);
+}
 
 /** Same commit when one sha is a prefix of the other (reports may use abbreviated shas). */
 function sameCommit(a: string, b: string): boolean {

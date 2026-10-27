@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Room API writes of user basis (`stated` or `decided`), and reviving a superseded decision to active, require the current task's user message. The check runs in the same repository lock as the write. A missing or unrelated citation returns 409 `user_basis_evidence`.
 - Knowledge entry updates and rollback replace complete files atomically, preventing concurrent readers from seeing truncated frontmatter.
 
 - The default landing page loads its demo from the site root. English stays at `/`, not `/en/`.

@@ -5,10 +5,10 @@ import { KIND_DIR, PLUGINS } from "@nema/shared";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { createWorkspace, repoPath } from "../src/workspaces.js";
-import { addMessage, addReportMessage, postUserMessage } from "../src/messages.js";
+import { addMessage, addReportMessage, postSystemTask, postUserMessage } from "../src/messages.js";
 import { claimNextTask, finishTask, listTaskChanges } from "../src/tasks.js";
 import { EventBus, type HubEvent } from "../src/events.js";
-import { roomRoutes } from "../src/roomApi.js";
+import { USER_BASIS_EVIDENCE_CODE, USER_BASIS_EVIDENCE_ERROR, roomRoutes } from "../src/roomApi.js";
 import { markThreadRead } from "../src/threads.js";
 import { DaemonRpcError, type DaemonRpc } from "../src/daemonRpc.js";
 import { Hono } from "hono";
@@ -237,19 +237,19 @@ describe("room api", () => {
     const m = await postUserMessage(db, wsA, "current text");
     await db.query(`insert into message_versions(message_id, version, content) values ($1, 1, $2)`, [m.message.id, "the old wording"]);
     const fromOld = await req("POST", "/room/entries", t.runToken, upsert({
-      sourceMessages: [m.message.id],
+      sourceMessages: [t.messageId, m.message.id],
       quotes: [{ messageId: m.message.id, text: "old wording" }],
     }));
     expect(fromOld.status).toBe(200);
     const fromCurrent = await req("POST", "/room/entries", t.runToken, upsert({
       title: "second",
-      sourceMessages: [m.message.id],
+      sourceMessages: [t.messageId, m.message.id],
       quotes: [{ messageId: m.message.id, text: "current text" }],
     }));
     expect(fromCurrent.status).toBe(200);
     const neither = await req("POST", "/room/entries", t.runToken, upsert({
       title: "third",
-      sourceMessages: [m.message.id],
+      sourceMessages: [t.messageId, m.message.id],
       quotes: [{ messageId: m.message.id, text: "never written" }],
     }));
     expect(neither.status).toBe(400);
@@ -261,13 +261,13 @@ describe("room api", () => {
     const content = "先流式\n\n  后面再说多轮 **别动** tool";
     const m = await postUserMessage(db, wsA, content);
     const ok = await req("POST", "/room/entries", t.runToken, upsert({
-      sourceMessages: [m.message.id],
+      sourceMessages: [t.messageId, m.message.id],
       quotes: [{ messageId: m.message.id, text: "后面再说多轮 **别动**" }],
     }));
     expect(ok.status).toBe(200);
     const bad = await req("POST", "/room/entries", t.runToken, upsert({
       title: "other",
-      sourceMessages: [m.message.id],
+      sourceMessages: [t.messageId, m.message.id],
       quotes: [{ messageId: m.message.id, text: "先流式 后面再说多轮" }],
     }));
     expect(bad.status).toBe(400);
@@ -449,6 +449,180 @@ describe("decision basis changes", () => {
     }));
     expect(r.status).toBe(200);
     expect(((await r.json()) as any).entry.basis).toBe("decided");
+  });
+});
+
+describe("user basis evidence", () => {
+  function evidenceBody(): { error: string; code: string } {
+    return { error: USER_BASIS_EVIDENCE_ERROR, code: USER_BASIS_EVIDENCE_CODE };
+  }
+
+  test("rejects a new decided entry that cites only an agent message", async () => {
+    const t = await runningTaskFor(wsA);
+    const agent = await addMessage(db, wsA, "agent", "I decided");
+    const r = await req("POST", "/room/entries", t.runToken, upsert({
+      kind: "decision",
+      basis: "decided",
+      sourceMessages: [agent.id],
+    }));
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual(evidenceBody());
+    await expect(readFile(entryPath(wsA, "decision", "D-1"))).rejects.toThrow();
+  });
+
+  test("rejects a new stated entry that cites a user message from another task", async () => {
+    const t = await runningTaskFor(wsA);
+    const other = await postUserMessage(db, wsA, "a different request");
+    const r = await req("POST", "/room/entries", t.runToken, upsert({
+      basis: "stated",
+      sourceMessages: [other.message.id],
+    }));
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual(evidenceBody());
+    await expect(readFile(entryPath(wsA, "requirement", "R-1"))).rejects.toThrow();
+  });
+
+  test("rejects a stated body rewrite of a requirement that omits the current task user message", async () => {
+    const t = await runningTaskFor(wsA);
+    const created = await req("POST", "/room/entries", t.runToken, upsert({
+      title: "req",
+      body: "old",
+      sourceMessages: [t.messageId],
+    }));
+    expect(created.status).toBe(200);
+    const file = entryPath(wsA, "requirement", "R-1");
+    const before = await readFile(file);
+    const agent = await addMessage(db, wsA, "agent", "rewrite it");
+    const r = await req("POST", "/room/entries", t.runToken, upsert({
+      id: "R-1",
+      title: "req",
+      body: "new",
+      basis: "stated",
+      sourceMessages: [agent.id],
+    }));
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual(evidenceBody());
+    expect(await readFile(file)).toEqual(before);
+  });
+
+  test("rejects a decided rewrite of an active decision that cites a different user message", async () => {
+    const t = await runningTaskFor(wsA);
+    await seedActiveDecision(t.runToken, t.messageId);
+    const file = entryPath(wsA, "decision", "D-1");
+    const before = await readFile(file);
+    const other = await postUserMessage(db, wsA, "some other user message");
+    const r = await req("POST", "/room/entries", t.runToken, upsert({
+      id: "D-1",
+      kind: "decision",
+      title: "ship it",
+      body: "rewritten",
+      basis: "decided",
+      sourceMessages: [other.message.id],
+    }));
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual(evidenceBody());
+    expect(await readFile(file)).toEqual(before);
+  });
+
+  test("rejects reviving a superseded decision without the current task user message", async () => {
+    const t = await runningTaskFor(wsA);
+    const created = await req("POST", "/room/entries", t.runToken, upsert({
+      kind: "decision",
+      title: "old call",
+      body: "old",
+      status: "superseded",
+      basis: "inferred",
+      sourceMessages: [t.messageId],
+    }));
+    expect(created.status).toBe(200);
+    const file = entryPath(wsA, "decision", "D-1");
+    const before = await readFile(file);
+    const agent = await addMessage(db, wsA, "agent", "bring it back");
+    const r = await req("POST", "/room/entries", t.runToken, upsert({
+      id: "D-1",
+      kind: "decision",
+      title: "old call",
+      body: "rewritten",
+      status: "active",
+      basis: "inferred",
+      sourceMessages: [agent.id],
+    }));
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual(evidenceBody());
+    expect(await readFile(file)).toEqual(before);
+  });
+
+  test("rejects a decided entry from a system task that cites an older user message", async () => {
+    const user = await postUserMessage(db, wsA, "earlier user");
+    const userTask = await claimNextTask(db, "d-user");
+    expect(userTask?.workspaceId).toBe(wsA);
+    await finishTask(db, userTask!.id, { ok: true });
+    const sys = await postSystemTask(db, wsA, "draw the diagram");
+    const task = await claimNextTask(db, "d-sys");
+    expect(task?.id).toBe(sys.task.id);
+    const r = await req("POST", "/room/entries", task!.runToken!, upsert({
+      kind: "decision",
+      basis: "decided",
+      sourceMessages: [user.message.id],
+    }));
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual(evidenceBody());
+    await expect(readFile(entryPath(wsA, "decision", "D-1"))).rejects.toThrow();
+  });
+
+  test("accepts a stated body rewrite of a requirement that cites the current task user message", async () => {
+    const t = await runningTaskFor(wsA);
+    const created = await req("POST", "/room/entries", t.runToken, upsert({
+      title: "req",
+      body: "old",
+      sourceMessages: [t.messageId],
+    }));
+    expect(created.status).toBe(200);
+    const r = await req("POST", "/room/entries", t.runToken, upsert({
+      id: "R-1",
+      title: "req",
+      body: "new",
+      basis: "stated",
+      sourceMessages: [t.messageId],
+    }));
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as any).entry.body).toBe("new");
+  });
+
+  test("accepts reviving a superseded decision when the current task user message is cited", async () => {
+    const t = await runningTaskFor(wsA);
+    const created = await req("POST", "/room/entries", t.runToken, upsert({
+      kind: "decision",
+      title: "old call",
+      body: "old",
+      status: "superseded",
+      basis: "inferred",
+      sourceMessages: [t.messageId],
+    }));
+    expect(created.status).toBe(200);
+    const r = await req("POST", "/room/entries", t.runToken, upsert({
+      id: "D-1",
+      kind: "decision",
+      title: "old call",
+      body: "old",
+      status: "active",
+      basis: "inferred",
+      sourceMessages: [t.messageId],
+    }));
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as any).entry.status).toBe("active");
+  });
+
+  test("accepts an inferred entry that cites only an agent message", async () => {
+    const t = await runningTaskFor(wsA);
+    const agent = await addMessage(db, wsA, "agent", "just a guess");
+    const r = await req("POST", "/room/entries", t.runToken, upsert({
+      kind: "decision",
+      basis: "inferred",
+      sourceMessages: [agent.id],
+    }));
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as any).entry.basis).toBe("inferred");
   });
 });
 

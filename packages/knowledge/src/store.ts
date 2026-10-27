@@ -23,6 +23,36 @@ import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 export type CommitMeta = { author: "agent" | "user" | "system"; taskId?: string; now?: Date };
 
+/** A guard refused the upsert. The entry file is left untouched and the repo lock is released. */
+export class UpsertRejected extends Error {
+  constructor(
+    readonly status: 400 | 409,
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "UpsertRejected";
+  }
+}
+
+export type UpsertGuardContext = {
+  /** Entry read under the repo lock. Null when this upsert creates one. */
+  existing: Entry | null;
+  /** Parsed request. Return a replacement from the guard to write something else. */
+  input: UpsertEntryInput;
+};
+
+/**
+ * Runs inside `upsert`'s repo lock, after the target entry is read and its id is chosen,
+ * before the file is written. Return an input to replace the write; return void to keep
+ * the caller's input. Throw {@link UpsertRejected} to skip the write.
+ *
+ * The caller must not already hold this repo's `withRepoLock`, and the guard must not
+ * call `upsert`, `confirm`, `withdraw`, `writeDiagram`, or `withRepoLock` on this repo:
+ * the lock is not reentrant. CX-03 task 6 appends its sourceRefs checks in this callback.
+ */
+export type UpsertGuard = (ctx: UpsertGuardContext) => Promise<UpsertEntryInput | void> | UpsertEntryInput | void;
+
 export type CreateWorkPackageInput = {
   title: string;
   requirements: string[];
@@ -434,12 +464,17 @@ export class KnowledgeStore {
     });
   }
 
-  async upsert(rawInput: UpsertEntryInput, meta: CommitMeta): Promise<{ entry: Entry; commit: string; op: "add" | "update" }> {
-    const input = UpsertEntryInput.parse(rawInput);
+  async upsert(
+    rawInput: UpsertEntryInput,
+    meta: CommitMeta,
+    guard?: UpsertGuard,
+  ): Promise<{ entry: Entry; commit: string; op: "add" | "update" }> {
+    const parsed = UpsertEntryInput.parse(rawInput);
     return withRepoLock(this.repoDir, async () => {
       let op: "add" | "update";
       let id: string;
       let existing: Entry | null = null;
+      let input = parsed;
       if (input.id !== undefined) {
         existing = await this.get(input.id);
         if (!existing) throw new Error(`entry ${input.id} not found`);
@@ -449,6 +484,13 @@ export class KnowledgeStore {
         const max = await this.maxIdNumber(input.kind);
         op = "add";
         id = `${KIND_PREFIX[input.kind]}-${max + 1}`;
+      }
+      if (guard) {
+        const next = await guard({ existing, input });
+        if (next) {
+          // Pin the id and kind chosen under this lock. A guard must not retarget the file.
+          input = UpsertEntryInput.parse({ ...next, id, kind: input.kind });
+        }
       }
 
       const now = (meta.now ?? new Date()).toISOString();
