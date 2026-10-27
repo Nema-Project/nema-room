@@ -12,7 +12,7 @@ From a clean checkout of the release commit, with Node.js 22 or later:
 
 ```sh
 npm run cli:pack
-npm publish --access public dist-npm/nema-*.tgz
+npm publish --access public ./dist-npm/nema-<version>.tgz
 npx nema@<version> --version
 ```
 
