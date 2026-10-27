@@ -42,11 +42,13 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT" = "workflow_dispatch" ] || [ "$EVENT" = "push" ]; then
-            echo 'mode=full' >> "$GITHUB_OUTPUT"
-            echo 'platform=true' >> "$GITHUB_OUTPUT"
-            echo 'npm_pack=true' >> "$GITHUB_OUTPUT"
-            echo 'desktop=false' >> "$GITHUB_OUTPUT"
-            echo 'image=false' >> "$GITHUB_OUTPUT"
+            {
+              echo 'mode=full'
+              echo 'platform=true'
+              echo 'npm_pack=true'
+              echo 'desktop=false'
+              echo 'image=false'
+            } >> "$GITHUB_OUTPUT"
             node --input-type=module -e '
               import {writeFileSync} from "node:fs";
               writeFileSync(process.env.PATH_LIST_FILE, JSON.stringify([
