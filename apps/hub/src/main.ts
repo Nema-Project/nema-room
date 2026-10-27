@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_HUB_PORT } from "./app.js";
+import { readHubReleaseVersion } from "./hubVersion.js";
 import { createPgDb, migrate } from "./db/db.js";
 import { startHub } from "./lifecycle.js";
 
@@ -54,11 +55,13 @@ async function main(): Promise<void> {
   const db = createPgDb(databaseUrl);
   try {
     await migrate(db);
+    const releaseVersion = readHubReleaseVersion();
     const hub = await startHub({
       db,
       dataDir,
       nemaHome: path.join(os.homedir(), ".nema"),
       daemonToken,
+      releaseVersion,
       port,
       webOrigin: process.env.NEMA_WEB_ORIGIN ?? "http://localhost:3000,http://127.0.0.1:3000",
       hostname,

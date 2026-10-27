@@ -27,7 +27,7 @@ node apps/cli/dist/index.js daemon
 
 `npm run up` 用当前检出构建 hub 和 web。Linux 和 macOS 上先执行 `export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"`，再执行 `npm run up`。Windows 上的 Docker Desktop 不需要这条 export。单独执行 `docker compose up` 会拉取钉死版本的 GHCR 镜像；在包含镜像发布工作流的第一个 tag 之前，这些镜像还不存在。
 
-用户安装走 `node scripts/setup.mjs`。CLI 包是 private，不要把 `npx nema` 写成独立的 npm 安装方式。
+从本仓库跑 Web / Compose 仍走 `node scripts/setup.mjs`。宿主机 daemon 是 npm 包 `nema`。第一次发布之前它还不在 npm 上，daemon 从当前检出安装。发布之后按 hub 版本安装：`npx nema@<hub 版本>` 或 `npm i -g nema@<hub 版本>`。不要把不带版本的 `npx nema` 写成与任意 hub 都匹配的安装方式。
 
 ## 目录
 

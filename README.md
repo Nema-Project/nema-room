@@ -77,7 +77,7 @@ The Windows `.exe` is the NSIS installer: shortcuts, uninstall, and overwrite up
 
 ### Web / Compose
 
-Build PostgreSQL, the hub, and web from a checkout. That is the supported start until a release tag publishes images. The daemon is not in those images. It still runs on the host. Until a standalone npm package exists, install the daemon from source. You need **Node.js ≥ 22**, **Git**, **Docker**, and **Docker Compose v2** on Windows, macOS, or Linux.
+Build PostgreSQL, the hub, and web from a checkout. That is the supported start until a release tag publishes images. The daemon is not in those images. It still runs on the host. The daemon package is `nema` in this repository. It is not on npm until the first publish described in [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md). Until that publish, install the daemon from this checkout. You need **Node.js ≥ 22**, **Git**, **Docker**, and **Docker Compose v2** on Windows, macOS, or Linux.
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
@@ -93,7 +93,16 @@ Pulling pinned images, without cloning, begins with the first `v*` tag that cont
 
 [Manual setup and configuration](docs/guide.en.md#source-installation) · Read-only check: `node scripts/setup.mjs --lang en --check`
 
-The CLI is private and installed from source; `npx nema` is not a standalone installation method.
+After that first publish, install the same version as the running hub (Node.js ≥ 22):
+
+```sh
+npx nema@<hub version> --version
+npm i -g nema@<hub version>
+```
+
+Compose reports that version at `http://127.0.0.1:4400/api/version`. The desktop app shows it in the sidebar; its loopback origin also serves `GET /_nema/version`. A mismatch prints `run: npm i -g nema@<version>` and does not reconnect. `nema daemon` defaults to `--hub http://127.0.0.1:4400` and reads `daemon-token` from `$NEMA_DATA_DIR` or `~/.nema/data`. The hub writes that file on startup. Compose bind-mounts the host data directory at `/data`.
+
+Developing this repository still uses the source checkout above. Do not install an unversioned `nema` and assume it matches the hub.
 
 ## From discussion to delivery
 

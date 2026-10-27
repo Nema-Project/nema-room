@@ -77,7 +77,7 @@ Windows の `.exe` は NSIS インストーラーです。ショートカット�
 
 ### Web / Compose
 
-イメージを公開するリリースが出るまでは、チェックアウトから PostgreSQL、hub、web をビルドします。これが今使える起動方法です。daemon はイメージに入っていません。ホストで動かします。独立した npm パッケージができるまでは、daemon はソースからインストールします。Windows、macOS、Linux 上の **Node.js ≥ 22**、**Git**、**Docker**、**Docker Compose v2** が必要です。
+イメージを公開するリリースが出るまでは、チェックアウトから PostgreSQL、hub、web をビルドします。これが今使える起動方法です。daemon はイメージに入っていません。ホストで動かします。daemon のパッケージ名はこのリポジトリの `nema` です。最初の公開までは npm 上になく、手順は [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md) にあります。それまでは、このチェックアウトから daemon を入れます。Windows、macOS、Linux 上の **Node.js ≥ 22**、**Git**、**Docker**、**Docker Compose v2** が必要です。
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
@@ -93,7 +93,16 @@ clone せずにピン留めしたイメージを pull できるのは、イメ�
 
 [手動インストールと設定](docs/guide.ja.md#source-installation) · 環境の確認のみ：`node scripts/setup.mjs --lang ja --check`
 
-CLI は private パッケージで、ソースからインストールします。`npx nema` は単独のインストール方法ではありません。
+その最初の公開のあと、実行中の hub と同じバージョンを入れます（Node.js ≥ 22）。
+
+```sh
+npx nema@<hub のバージョン> --version
+npm i -g nema@<hub のバージョン>
+```
+
+Compose はそのバージョンを `http://127.0.0.1:4400/api/version` で返します。デスクトップ版はサイドバーに表示し、ループバックの `GET /_nema/version` でも読めます。バージョンが違うと daemon は `run: npm i -g nema@<バージョン>` を出して再接続しません。`nema daemon` の `--hub` の既定値は `http://127.0.0.1:4400` で、トークンは `$NEMA_DATA_DIR` または `~/.nema/data` の `daemon-token` です。hub が起動時にそのファイルを書きます。Compose はホストのデータディレクトリを `/data` にマウントします。
+
+このリポジトリの開発は上のソースインストールのままです。バージョンを付けない `nema` を入れて hub と一致するとみなさないでください。
 
 ## 議論から実装まで
 

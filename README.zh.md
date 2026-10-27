@@ -77,7 +77,7 @@ Windows 的 `.exe` 是 NSIS 安装包：会建立快捷方式，可以卸载，�
 
 ### Web / Compose
 
-在镜像发布之前，从检出构建 PostgreSQL、hub 和 web。这是目前可用的启动方式。daemon 不在镜像里，仍在本机运行。独立 npm 包可用之前，daemon 仍从源码安装。需要 **Node.js ≥ 22**、**Git**、**Docker** 和 **Docker Compose v2**，系统可以是 Windows、macOS 或 Linux。
+在镜像发布之前，从检出构建 PostgreSQL、hub 和 web。这是目前可用的启动方式。daemon 不在镜像里，仍在本机运行。daemon 的包名是本仓库里的 `nema`。第一次发布之前它还不在 npm 上，步骤见 [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md)。在那之前，daemon 从当前检出安装。需要 **Node.js ≥ 22**、**Git**、**Docker** 和 **Docker Compose v2**，系统可以是 Windows、macOS 或 Linux。
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
@@ -93,7 +93,16 @@ node scripts/setup.mjs --lang zh
 
 [手动安装与配置](docs/guide.zh.md#source-installation) · 只检查环境：`node scripts/setup.mjs --lang zh --check`
 
-CLI 包为 private，随源码安装；`npx nema` 不是独立的安装方式。
+第一次发布之后，安装与正在运行的 hub 相同的版本（Node.js ≥ 22）：
+
+```sh
+npx nema@<hub 版本> --version
+npm i -g nema@<hub 版本>
+```
+
+Compose 在 `http://127.0.0.1:4400/api/version` 返回该版本。桌面版在侧边栏显示版本，其回环地址也提供 `GET /_nema/version`。版本不一致时 daemon 会打印 `run: npm i -g nema@<版本>` 并且不再重连。`nema daemon` 的 `--hub` 默认是 `http://127.0.0.1:4400`，token 文件是 `$NEMA_DATA_DIR` 或 `~/.nema/data` 下的 `daemon-token`。hub 启动时写入该文件。Compose 把宿主机数据目录挂到容器的 `/data`。
+
+开发本仓库仍使用上面的源码安装。不要安装不带版本的 `nema` 并假定它与 hub 一致。
 
 ## 从讨论到交付
 

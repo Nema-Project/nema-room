@@ -56,7 +56,18 @@
 
 ## Web / Compose の動作条件
 
-Web / Compose は**ソースからインストール**します。CLI パッケージは private です。`npx nema` を単独の npm インストール手段として使わないでください。Windows、macOS、Linux で共通の Node.js セットアップを使用します。
+ホストの daemon は npm パッケージ `nema` です（Node.js ≥ 22）。このパッケージはリポジトリにあり、[scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md) の最初の公開までは npm 上にありません。それまでは下のウィザードで、このチェックアウトから daemon を入れます。公開のあと、実行中の hub と同じバージョンを入れます。
+
+```sh
+npx nema@<hub のバージョン> --version
+npm i -g nema@<hub のバージョン>
+```
+
+Compose では `curl http://127.0.0.1:4400/api/version` が `{"version":"..."}` を返します。デスクトップ版はサイドバーにバージョンを表示し、アプリのオリジンは `GET /_nema/version` を提供します。バージョンが違うと daemon は hub のエラーと `run: npm i -g nema@<バージョン>` を出して止まり、再接続しません。
+
+`nema daemon` の `--hub` の既定値は `http://127.0.0.1:4400` です。トークンファイルは `$NEMA_DATA_DIR` または `~/.nema/data` の `daemon-token`（`defaultTokenFile()`）です。hub は起動時にファイルがなければ書き込みます。Compose はコンテナの `NEMA_DATA_DIR` を `/data` にし、ホストのデータディレクトリ（既定は `~/.nema/data`、または `NEMA_DATA_HOST_DIR`）をそこにマウントするので、ホストの daemon とコンテナの hub は同じトークンファイルを使います。
+
+このリポジトリから Web / Compose を動かす場合は、下のソース用ウィザードを使います。Windows、macOS、Linux で共通の Node.js セットアップです。バージョンを付けない `nema` を入れて hub と一致するとみなさないでください。
 
 | 項目 | 条件 |
 | --- | --- |
@@ -232,7 +243,7 @@ npm run lint -w apps/web
 npm run build -w apps/web
 ```
 
-ルートの typecheck は web を含みません。web は個別にビルドしてください。ソースのチェックアウトを更新する前にデータをバックアップし、`git pull`、`npm ci`、CLI の再ビルド、`npm run up`、daemon の再起動を行います。hub と CLI は同じバージョンを使ってください。
+ルートの typecheck は web を含みません。web は個別にビルドしてください。ソースのチェックアウトを更新する前にデータをバックアップし、`git pull`、`npm ci`、CLI の再ビルド、`npm run up`、daemon の再起動を行います。daemon は `GET /api/version` が返す hub のバージョンに合わせます。違う場合は `run: npm i -g nema@<バージョン>` を出して再接続しません。最初の npm 公開までは、daemon はこのチェックアウトから入れます。
 
 ポートや保存先は [.env.example](../.env.example) を参照してください。CLI はルートの `.env` を自動で読みません。保存先を変更したら shell で `NEMA_DATA_DIR` を export するか、`daemon` / `doctor` に `--token-file` を指定します。hub のポートを変えたら `--hub` も指定してください。`NEMA_HUB_PORT` の変更が効くのは `npm run up` のソースビルドだけで、web は `http://127.0.0.1:<ポート>` で再ビルドされます。公開イメージは `NEMA_HUB_PORT` と `NEXT_PUBLIC_HUB_URL` を無視し、`http://127.0.0.1:4400` のままです。`npm run dev` は引き続き `NEXT_PUBLIC_HUB_URL` を読みます。
 

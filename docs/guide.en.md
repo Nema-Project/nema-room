@@ -56,7 +56,18 @@ Current stabilization priorities and acceptance evidence are tracked in the [roa
 
 ## Web / Compose requirements
 
-For Web / Compose, install **from source**. The CLI package is private; do not treat `npx nema` as a standalone npm installation command. Windows, macOS, and Linux share a Node.js setup wizard.
+The host daemon is the npm package `nema` (Node.js ≥ 22). The package is in this repository and is not on npm until the first publish in [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md). Until that publish, install the daemon from this checkout with the wizard below. After that publish, install the same version as the running hub:
+
+```sh
+npx nema@<hub version> --version
+npm i -g nema@<hub version>
+```
+
+Compose: `curl http://127.0.0.1:4400/api/version` returns `{"version":"..."}`. Desktop: the sidebar shows the app version, and the app origin serves `GET /_nema/version`. If the daemon version does not match, it prints the hub error and `run: npm i -g nema@<version>`, then stops. It does not keep reconnecting.
+
+`nema daemon` defaults to `--hub http://127.0.0.1:4400`. It reads `daemon-token` from `$NEMA_DATA_DIR` or `~/.nema/data` (`defaultTokenFile()`). The hub writes that file when it starts, if the file is missing. Compose sets the container `NEMA_DATA_DIR` to `/data` and bind-mounts the host data directory there (default `~/.nema/data`, or `NEMA_DATA_HOST_DIR`), so the host daemon and the container hub share one token file.
+
+Running the Web / Compose stack from this repository still uses the source wizard below. Windows, macOS, and Linux share that Node.js setup. Do not install an unversioned `nema` and assume it matches the hub.
 
 | Item | Requirement |
 | --- | --- |
@@ -233,7 +244,7 @@ npm run lint -w apps/web
 npm run build -w apps/web
 ```
 
-The root typecheck excludes web; build it separately. Before upgrading a source checkout, back up data, then run `git pull`, `npm ci`, rebuild the CLI, run `npm run up`, and restart the daemon. Keep hub and CLI versions aligned.
+The root typecheck excludes web; build it separately. Before upgrading a source checkout, back up data, then run `git pull`, `npm ci`, rebuild the CLI, run `npm run up`, and restart the daemon. Keep the daemon on the hub version from `GET /api/version`. A mismatch prints `run: npm i -g nema@<version>` and does not reconnect. Until the first npm publish, that daemon still comes from this checkout.
 
 See [.env.example](../.env.example) for ports and directories. The CLI does not automatically load the root `.env`: export `NEMA_DATA_DIR` or pass `--token-file` to `daemon` / `doctor` for a custom data directory; also pass `--hub` for a different hub port. Changing `NEMA_HUB_PORT` applies only to a source build with `npm run up`, which rebuilds web for `http://127.0.0.1:<port>`. Published images ignore `NEMA_HUB_PORT` and `NEXT_PUBLIC_HUB_URL` and keep `http://127.0.0.1:4400`. `npm run dev` still reads `NEXT_PUBLIC_HUB_URL`.
 
