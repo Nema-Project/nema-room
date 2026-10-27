@@ -4,6 +4,7 @@
 
 ### Added
 
+- The CLI and daemon pack as the npm package `nema` (Node.js ≥ 22). Install the running hub's version with `npx nema@<hub version>` or `npm i -g nema@<hub version>`. Compose serves that version at `GET /api/version`. The desktop app shows it in the sidebar and at `GET /_nema/version`. A mismatch prints `run: npm i -g nema@<version>` and does not reconnect. `nema daemon` still defaults to `http://127.0.0.1:4400` and the shared `daemon-token` file. The first npm publish and the trusted publisher are maintainer steps; see `scripts/npm/RELEASE.md`.
 - The desktop app shows its version in the macOS app menu, the tray menu on macOS and Windows, and the sidebar. A 7-character build commit is included when `runtime-manifest.json` or `build-metadata.json` has one.
 - After startup, and about once a day, the desktop app checks GitHub for a newer stable release. A tray item and an in-app banner link to that release page. Download and install stay manual. Turn the check off with **Check for updates automatically** in the sidebar (`updateCheck.enabled`). Failures stay silent. Prerelease and draft releases are not offered.
 - Windows releases include a portable ZIP next to the NSIS installer. The ZIP is a separate download of the unpacked app, with `Nema.exe` at the top and its own checksum. It does not contain the installer, and the installer does not contain the ZIP. The installer still adds shortcuts, uninstall, and overwrite upgrades. The ZIP is unzip-and-run, with no shortcuts or uninstaller. Both use `~/.nema/desktop`.

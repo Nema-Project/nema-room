@@ -92,7 +92,16 @@ The wizard checks dependencies, builds the CLI, starts services, and guides mode
 
 [Manual setup and configuration](docs/guide.en.md#source-installation) · Read-only check: `node scripts/setup.mjs --lang en --check`
 
-The CLI is private and installed from source; `npx nema` is not a standalone installation method.
+The host daemon is the npm package `nema` (Node.js ≥ 22). Install the same version as the running hub:
+
+```sh
+npx nema@<hub version> --version
+npm i -g nema@<hub version>
+```
+
+Compose reports that version at `http://127.0.0.1:4400/api/version`. The desktop app shows it in the sidebar; its loopback origin also serves `GET /_nema/version`. A mismatch prints `run: npm i -g nema@<version>` and does not reconnect. `nema daemon` defaults to `--hub http://127.0.0.1:4400` and reads `daemon-token` from `$NEMA_DATA_DIR` or `~/.nema/data`. The hub writes that file on startup. Compose bind-mounts the host data directory at `/data`.
+
+Developing this repository still uses the source checkout above. Do not install an unversioned `nema` and assume it matches the hub.
 
 ## From discussion to delivery
 

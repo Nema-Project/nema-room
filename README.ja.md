@@ -92,7 +92,16 @@ node scripts/setup.mjs --lang ja
 
 [手動インストールと設定](docs/guide.ja.md#source-installation) · 環境の確認のみ：`node scripts/setup.mjs --lang ja --check`
 
-CLI は private パッケージで、ソースからインストールします。`npx nema` は単独のインストール方法ではありません。
+ホストの daemon は npm パッケージ `nema` です（Node.js ≥ 22）。実行中の hub と同じバージョンを入れます。
+
+```sh
+npx nema@<hub のバージョン> --version
+npm i -g nema@<hub のバージョン>
+```
+
+Compose はそのバージョンを `http://127.0.0.1:4400/api/version` で返します。デスクトップ版はサイドバーに表示し、ループバックの `GET /_nema/version` でも読めます。バージョンが違うと daemon は `run: npm i -g nema@<バージョン>` を出して再接続しません。`nema daemon` の `--hub` の既定値は `http://127.0.0.1:4400` で、トークンは `$NEMA_DATA_DIR` または `~/.nema/data` の `daemon-token` です。hub が起動時にそのファイルを書きます。Compose はホストのデータディレクトリを `/data` にマウントします。
+
+このリポジトリの開発は上のソースインストールのままです。バージョンを付けない `nema` を入れて hub と一致するとみなさないでください。
 
 ## 議論から実装まで
 

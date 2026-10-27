@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import type { TaskAssign } from "@nema/shared";
-import { connectDaemon } from "../src/daemon/connection.js";
+import { connectDaemon, VERSION_SKEW_ERROR } from "../src/daemon/connection.js";
 import { Runner, type AgentAdapter } from "../src/daemon/runner.js";
 
 let server: http.Server;
@@ -218,5 +218,58 @@ describe("daemon connection", () => {
     });
     expect(maxActive).toBe(1);
     expect(order).toEqual(["a", "b"]);
+  });
+
+  test("welcome prints an observable connection signal", async () => {
+    const port = await start();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const d = connectDaemon({ hubUrl: `http://127.0.0.1:${port}`, token: "tk", runner: new Runner([{ name: "codex-direct", run: async () => ({ ok: true, reply: "" }) }]) });
+      closers.push(() => d.close());
+      const ws = await waitConn(1);
+      ws.send(JSON.stringify({ type: "welcome", workspaceIds: [] }));
+      const line = `[nema] daemon connected to http://127.0.0.1:${port}`;
+      for (let i = 0; i < 50 && !log.mock.calls.some((c) => c[0] === line); i++) await new Promise((r) => setTimeout(r, 20));
+      expect(log.mock.calls.some((c) => c[0] === line)).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("a skew rejection prints install guidance and does not reconnect", async () => {
+    const port = await start();
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const d = connectDaemon({ hubUrl: `http://127.0.0.1:${port}`, token: "tk", runner: new Runner([]), reconnectMs: 30 });
+      closers.push(() => d.close());
+      const ws = await waitConn(1);
+      ws.send(JSON.stringify({ type: "error", message: "hub 与 nema CLI 版本不一致（hub 1.2.3），请安装 nema@1.2.3" }));
+      ws.close();
+      await new Promise((r) => setTimeout(r, 120));
+      expect(conns).toHaveLength(1);
+      const text = err.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(text).toContain("hub 与 nema CLI 版本不一致（hub 1.2.3），请安装 nema@1.2.3");
+      expect(text).toContain("run: npm i -g nema@1.2.3");
+    } finally {
+      err.mockRestore();
+    }
+  });
+
+  test("a skew rejection without a hub version tells the user to look it up", async () => {
+    const port = await start();
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const d = connectDaemon({ hubUrl: `http://127.0.0.1:${port}`, token: "tk", runner: new Runner([]) });
+      closers.push(() => d.close());
+      const ws = await waitConn(1);
+      ws.send(JSON.stringify({ type: "error", message: VERSION_SKEW_ERROR }));
+      const text = () => err.mock.calls.map((c) => String(c[0])).join("\n");
+      for (let i = 0; i < 50 && !text().includes("nema@<hub 版本>"); i++) await new Promise((r) => setTimeout(r, 20));
+      expect(text()).toContain(VERSION_SKEW_ERROR);
+      expect(text()).toContain("run: npm i -g nema@<hub 版本>");
+      expect(text()).toContain("请先查看正在运行的 hub 的版本");
+    } finally {
+      err.mockRestore();
+    }
   });
 });

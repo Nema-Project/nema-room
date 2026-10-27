@@ -431,6 +431,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
       webOrigin: `http://127.0.0.1:${publicPort}`,
       uiAuth: createGatewayUiAuth(gatewayCredential),
       ownedHelpers: helperScope,
+      releaseVersion: assets.version,
     });
     assertWebAlive();
     phase("hub");

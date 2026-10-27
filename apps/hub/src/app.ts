@@ -31,6 +31,8 @@ export type AppDeps = {
   /** Port the hub listens on; only `127.0.0.1:<port>` and `localhost:<port>` are accepted as Host. */
   port?: number;
   ownedHelpers?: OwnedHelperScope;
+  /** User-facing release version. Present on Compose and desktop hubs; absent in tests that do not pair a daemon. */
+  releaseVersion?: string;
 };
 
 /**
@@ -68,6 +70,10 @@ export function createApp(deps: AppDeps): Hono {
     .map((o) => o.trim())
     .filter(Boolean);
   app.use("/api/*", cors({ origin: (o) => (webOrigins.includes(o) ? o : null), allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }));
+  app.get("/api/version", (c) => {
+    if (!deps.releaseVersion) return c.json({ error: "version unavailable" }, 404);
+    return c.json({ version: deps.releaseVersion });
+  });
   if (deps.uiAuth) app.use("/api/*", deps.uiAuth);
   app.use("/api/*", requireJson);
   app.route("/api", uiRoutes(deps));

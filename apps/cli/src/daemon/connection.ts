@@ -25,12 +25,20 @@ export type DaemonOpts = {
 
 export const VERSION_SKEW_ERROR = "hub 与 nema CLI 版本不一致，请同时更新（重新构建 compose 并重启 nema daemon）";
 
+function skewGuidance(message: string): string | null {
+  if (!message.includes("版本不一致")) return null;
+  const match = /nema@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/.exec(message);
+  if (match) return `run: npm i -g nema@${match[1]}`;
+  return "run: npm i -g nema@<hub 版本>\n请先查看正在运行的 hub 的版本";
+}
+
 export function connectDaemon(opts: DaemonOpts): { close(): Promise<void> } {
   const reconnectMs = opts.reconnectMs ?? 3000;
   const url = opts.hubUrl.replace(/^http/, "ws").replace(/\/+$/, "") + "/daemon";
   let ws: WebSocket | null = null;
   let timer: NodeJS.Timeout | null = null;
   let closed = false;
+  let stop = false;
   let closePromise: Promise<void> | undefined;
   const rpcInflight = new Set<Promise<unknown>>();
 
@@ -87,7 +95,13 @@ export function connectDaemon(opts: DaemonOpts): { close(): Promise<void> } {
       const nemaHome = opts.nemaHome;
       if (m.type === "error") {
         console.error(`[nema] hub: ${m.message}`);
+        const guidance = skewGuidance(m.message);
+        if (guidance) {
+          console.error(guidance);
+          stop = true;
+        }
       } else if (m.type === "welcome") {
+        console.log(`[nema] daemon connected to ${opts.hubUrl}`);
         const ids = m.workspaceIds;
         if (nemaHome && ids) {
           // Queued behind any task still running, so a dir is never removed under a live agent.
@@ -132,7 +146,7 @@ export function connectDaemon(opts: DaemonOpts): { close(): Promise<void> } {
         ws = null;
         opts.bindSend?.(null);
       }
-      if (!closed) timer = setTimeout(open, reconnectMs);
+      if (!closed && !stop) timer = setTimeout(open, reconnectMs);
     });
   };
   open();
