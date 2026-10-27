@@ -63,17 +63,18 @@
 
 ## 已定的做法
 
-- 工具缓存继续拷完整 Node 家目录。载荷拷贝跳过 `node/include/**`、`node/lib/node_modules/{npm,corepack}/**`、`node/node_modules/{npm,corepack}/**`、`node/bin/{npm,npx,corepack}`，以及 Windows 的 `npm` / `npx` / `corepack` 的 `.cmd` 和 `.ps1`。不跳过 `node` 可执行文件和 `LICENSE`。[D-1] [推断]
-- 运行时和 CLI 启动器不调用 npm 或 Corepack。`@electron/rebuild` 的 node-gyp 只在含 devDependency 的那次 `npm ci` 里用到头文件，所以头文件留在缓存、不进载荷。[D-2] [推断]
-- `materializeSymlinks` 之后，若 `bin/python` 或 `bin/python3` 与 `bin/python3.11` 字节相同，则删除前两者。字节不同则构建失败，不删。POSIX 启动器改为 `python/bin/python3.11`。Windows 启动器仍是 `python\python.exe`。[D-3] [推断]
-- 只在 darwin 上、且扫描不到 `libpython3.11` 的加载名时，删除 `lib/libpython3.11.dylib`。Windows DLL 保留。`prunePythonRuntime` 本身仍不删这个库。[D-4] [推断]
-- 载荷里的 `runtime/licenses/electron/LICENSES.chromium.html` 保留。`afterPack` 删除应用输出目录里其余同名文件；这份载荷副本缺失、不是普通文件、或出现两份时，不删任何副本并让打包失败。源映射只删 `*.js.map`、`*.mjs.map`、`*.cjs.map`、`*.css.map`、`*.ts.map`、`*.tsx.map`、`*.jsx.map`。[D-5] [推断]
+- 工具缓存继续拷完整 Node 家目录。载荷拷贝跳过 `node/include/**`、`node/lib/node_modules/{npm,corepack}/**`、`node/node_modules/{npm,corepack}/**`、`node/bin/{npm,npx,corepack}`，以及 Windows 的 `npm` / `npx` / `corepack` 的 `.cmd` 和 `.ps1`。不跳过 `node` 可执行文件和 `LICENSE`。（D-1，推断）
+- 运行时和 CLI 启动器不调用 npm 或 Corepack。`@electron/rebuild` 的 node-gyp 只在含 devDependency 的那次 `npm ci` 里用到头文件，所以头文件留在缓存、不进载荷。（D-2，推断）
+- `materializeSymlinks` 之后，若 `bin/python` 或 `bin/python3` 与 `bin/python3.11` 字节相同，则删除前两者。字节不同则构建失败，不删。POSIX 启动器改为 `python/bin/python3.11`。Windows 启动器仍是 `python\python.exe`。（D-3，推断）
+- 只在 darwin 上、且扫描不到 `libpython3.11` 的加载名时，删除 `lib/libpython3.11.dylib`。Windows DLL 保留。`prunePythonRuntime` 本身仍不删这个库。（D-4，推断）
+- 载荷里的 `runtime/licenses/electron/LICENSES.chromium.html` 保留。`afterPack` 删除应用输出目录里其余同名文件；这份载荷副本缺失、不是普通文件、或出现两份时，不删任何副本并让打包失败。源映射只删 `*.js.map`、`*.mjs.map`、`*.cjs.map`、`*.css.map`、`*.ts.map`、`*.tsx.map`、`*.jsx.map`。（D-5，推断）
 - 留下的 wheel 前缀：`graphifyy`、`networkx`、`numpy`、`pyyaml`、`rapidfuzz`、`tree_sitter`（运行时，不是语法）、`tree_sitter_bash`、`tree_sitter_c`、`tree_sitter_c_sharp`、`tree_sitter_cpp`、`tree_sitter_go`、`tree_sitter_java`、`tree_sitter_javascript`、`tree_sitter_json`、`tree_sitter_kotlin`、`tree_sitter_php`、`tree_sitter_python`、`tree_sitter_ruby`、`tree_sitter_rust`、`tree_sitter_swift`、`tree_sitter_typescript`。TypeScript 与 TSX 都由 `tree_sitter_typescript` 提供。每个目标 21 个 wheel。已留下的 wheel 的 URL 和 SHA-256 不改。[D-6]
-- 去掉的语法 wheel 前缀：`tree_sitter_elixir`、`tree_sitter_fortran`、`tree_sitter_groovy`、`tree_sitter_julia`、`tree_sitter_lua`、`tree_sitter_objc`、`tree_sitter_powershell`、`tree_sitter_scala`、`tree_sitter_verilog`、`tree_sitter_zig`。graphifyy 0.9.95 没有 YAML、TOML、HTML、CSS、Markdown 的 tree-sitter wheel（YAML 走 PyYAML）。这五项不是本次留下或去掉的对象。[D-6] [推断]
+- 去掉的语法 wheel 前缀：`tree_sitter_elixir`、`tree_sitter_fortran`、`tree_sitter_groovy`、`tree_sitter_julia`、`tree_sitter_lua`、`tree_sitter_objc`、`tree_sitter_powershell`、`tree_sitter_scala`、`tree_sitter_verilog`、`tree_sitter_zig`。graphifyy 0.9.95 没有 YAML、TOML、HTML、CSS、Markdown 的 tree-sitter wheel（YAML 走 PyYAML）。这五项不是本次留下或去掉的对象。（D-6，推断）
+- 去掉 `tree_sitter_objc` 之后，Objective-C 的 `.m` 和 `.h` 会带着警告被跳过。混有 ObjC 与 Swift 的 iOS 仓库，ObjC 部分的索引质量会下降。（D-6，推断）
 - C# 的 `tree_sitter_c_sharp` 留下。[D-6]
 - 托管 Next 配置增加 `images: { unoptimized: true }`，并用 `outputFileTracingExcludes` 排除 `node_modules/sharp/**` 与 `node_modules/@img/**`。打包再删 web 树里父目录为 `node_modules` 的 `sharp` 和 `@img`。不改 `DesktopTitlebar.tsx`。[D-7]
 - `stage-runtime`、`payload-size.mjs`、`desktop:make`（dmg / exe / `.app`）、`desktop:smoke-runtime`、`desktop:smoke` 打印大小。警告写 stderr，前缀 `payload size warning:`，不把退出码改成非 0。darwin-arm64 与 win32-x64 的 desktop workflow 在 stage 之后有单独一步打印载荷分段。[D-8]
-- `desktop:smoke-runtime` 在 CLI 检查之后跑一次随包启动器：`extract <临时目录> --code-only`，环境 `GRAPHIFY_BACKEND=none`。语料有 `function smokeGreet` 的 `hello.js` 和 `chip.v`。要求退出码 0，`graph.json` 含 `smokeGreet`，输出无 `Traceback`，且出现 verilog 的 `not installed`。超时 120 秒。启动器缺失时，只有 linux 可以跳过；darwin 与 win32 缺失即失败。[D-9] [推断]
+- `desktop:smoke-runtime` 在 CLI 检查之后跑一次随包启动器：`extract <临时目录> --code-only`，环境 `GRAPHIFY_BACKEND=none`。语料有 `function smokeGreet` 的 `hello.js` 和 `chip.v`。要求退出码 0，`graph.json` 含 `smokeGreet`，输出无 `Traceback`，且出现 verilog 的 `not installed`。超时 120 秒。启动器缺失时，只有 linux 可以跳过；darwin 与 win32 缺失即失败。（D-9，推断）
 
 ## 留给实现者
 
