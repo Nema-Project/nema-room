@@ -1,5 +1,8 @@
 import { nanoid } from "nanoid";
-import { canonicalJson } from "@nema/shared";
+import { git, versionAt, parseCommitMessage, withRepoLock } from "@nema/knowledge";
+import { repoPath } from "./workspaces.js";
+import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
+import { KIND_DIR, kindFromId, canonicalJson } from "@nema/shared";
 import type { Db } from "./db/db.js";
 import { sha256 } from "./db/snapshot.js";
 
@@ -54,4 +57,39 @@ export async function consumeEvidenceEvent(db: Db, workspaceId: string, id: stri
       and consumable = true and payload_hash = $4
     returning id`, [commit, id, workspaceId, payloadHash]);
   return rows.length > 0;
+}
+
+/** Recover consumption from committed evidence without changing knowledge files. */
+export async function reconcileUnconsumedEvents(db: Db, dataDir: string, workspaceId: string): Promise<void> {
+  const repo = repoPath(dataDir, workspaceId);
+  await withRepoLock(repo, async () => {
+    const events = await db.query<{ id: string; entry_id: string; kind: EvidenceEventInput["kind"]; target_basis: "stated" | "decided" | null; payload_hash: string }>(
+      "select id, entry_id, kind, target_basis, payload_hash from evidence_events where workspace_id=$1 and consumed_commit is null and consumed_at is null and consumable=true", [workspaceId]);
+    for (const event of events) {
+      const kind = kindFromId(event.entry_id);
+      if (!kind) continue;
+      // Missing history or an unreadable historical source cannot authorize consumption.
+      let commit: string, hash: string;
+      try {
+        commit = (await git(repo, ["log", "-1", "--format=%H", "--", `${KIND_DIR[kind]}/${event.entry_id}.md`])).trim();
+        if (!commit) continue;
+        const meta = parseCommitMessage(await git(repo, ["show", "-s", "--format=%B", commit]));
+        if (!meta.evidenceEventIds?.includes(event.id)) continue;
+        const entry = await versionAt(repo, event.entry_id, commit);
+        if (entry.id !== event.entry_id) continue;
+        if (event.kind === "promote_basis" && (event.target_basis === null || entry.basis !== event.target_basis)) continue;
+        if (event.kind === "confirm_revision" && (!entry.sourceSnapshot || entry.confirmedRevision !== entry.sourceSnapshot.revision)) continue;
+        const common = { workspaceId, entryId: entry.id, contentHash: entryContentHash(entry), refsHash: refsHash(entry),
+          revision: entry.sourceSnapshot?.revision ?? null,
+          snapshotHash: await relatedSnapshotHash(entry, (id) => versionAt(repo, id, commit)) };
+        const input: EvidenceEventInput = event.kind === "promote_basis"
+          ? { ...common, kind: event.kind, targetBasis: event.target_basis! }
+          : event.kind === "confirm_revision"
+            ? { ...common, kind: event.kind, snapshotHash: entry.sourceSnapshot!.contentHash }
+            : { ...common, kind: event.kind };
+        hash = payloadHashFor(input);
+      } catch { continue; }
+      if (hash === event.payload_hash) await consumeEvidenceEvent(db, workspaceId, event.id, hash, commit);
+    }
+  });
 }

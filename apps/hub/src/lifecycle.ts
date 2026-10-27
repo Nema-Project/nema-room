@@ -14,6 +14,8 @@ import { startReportFallback } from "./reports.js";
 import { interruptRunning } from "./tasks.js";
 import { listWorkspaces, repoPath, type Workspace } from "./workspaces.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
+import { reconcileSourceImports } from "./sourceImport.js";
+import { reconcileUnconsumedEvents } from "./evidenceEvents.js";
 import { renderDiagram, validateDiagram } from "./archify.js";
 
 export type StartHubOptions = {
@@ -51,6 +53,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
     if (interrupted.requeued.length > 0) console.log(`requeued ${interrupted.requeued.length} task(s) left running by the previous hub process`);
     await announceInterrupted(opts.db, events, interrupted);
     await recoverUncommittedEntries(opts.db, opts.dataDir, opts.ownedHelpers);
+    await reconcileWorkspaceEvidence(opts.db, opts.dataDir);
 
     const status = { connected: () => false };
     const liveDaemon: { rpc: DaemonRpc } = {
@@ -218,5 +221,18 @@ async function recoverUncommittedEntries(db: Db, dataDir: string, ownedHelpers?:
     } catch (err) {
       console.error(`failed to recover uncommitted entries in ${ws.id}`, err);
     }
+  }
+}
+
+/** Includes archived workspaces; a failed workspace must not prevent startup. */
+async function reconcileWorkspaceEvidence(db: Db, dataDir: string): Promise<void> {
+  let workspaces: Workspace[];
+  try { workspaces = await listWorkspaces(db); }
+  catch (error) { console.error("failed to list workspaces for evidence recovery", error); return; }
+  for (const workspace of workspaces) {
+    try { await reconcileSourceImports(db, dataDir, workspace.id); }
+    catch (error) { console.error(`failed to reconcile source imports in ${workspace.id}`, error); }
+    try { await reconcileUnconsumedEvents(db, dataDir, workspace.id); }
+    catch (error) { console.error(`failed to reconcile evidence events in ${workspace.id}`, error); }
   }
 }
