@@ -41,6 +41,8 @@ Nema Room is a local copilot for keeping a software project aligned. Requests, c
 - **Hand off with intent.** Generate a work package, resolve blocking questions, and approve the spec and plan before a coding agent picks them up.
 - **Bring the evidence back.** Connect commit reports to the requirements and read that Git evidence in the discussion.
 
+**Why Nema?** The name comes from *nemawashi* (根回し), the practice of building understanding before a decision. Nema Room keeps that coordination in the open: disagreements stay visible, and decisions keep their evidence.
+
 English, Chinese, and Japanese UI · Light and dark themes · Separate discussion threads
 
 <details>
