@@ -59,6 +59,18 @@ export function assessBundle(found, hubUrl) {
   if (!found) throw new Error(`web bundle missing ${hubUrl}`);
 }
 
+/** The page the browser loads must name this hub origin before any client script runs. */
+export function assessServedHubUrl(html, hubUrl) {
+  const quoted = JSON.stringify(hubUrl);
+  const needles = [
+    `window.__NEMA_HUB_URL__=${quoted}`,
+    `window.__NEMA_HUB_URL__=${quoted.replaceAll('"', '\\u0022')}`,
+    `window.__NEMA_HUB_URL__=${quoted.replaceAll('"', '&quot;')}`,
+  ];
+  const text = String(html);
+  if (!needles.some((needle) => text.includes(needle))) throw new Error(`web page missing ${hubUrl}`);
+}
+
 export function parseArgs(argv) {
   const out = {
     project: null,
@@ -117,27 +129,10 @@ function overrideText({ hubPort, webPort }) {
     ports: !override
       - "127.0.0.1:${hubPort}:${hubPort}"
   web:
+    environment:
+      NEMA_HUB_URL: http://127.0.0.1:${hubPort}
     ports: !override
       - "127.0.0.1:${webPort}:3000"
-`;
-}
-
-function bundleScript(hubUrl) {
-  return `const fs = require('node:fs');
-const path = require('node:path');
-const needle = ${JSON.stringify(hubUrl)};
-const root = '/app/apps/web/.next';
-let found = false;
-const walk = (dir) => {
-  for (const name of fs.readdirSync(dir)) {
-    const file = path.join(dir, name);
-    const info = fs.statSync(file);
-    if (info.isDirectory()) walk(file);
-    else if (info.size <= 5000000 && fs.readFileSync(file).includes(needle)) found = true;
-  }
-};
-walk(root);
-if (!found) process.exit(1);
 `;
 }
 
@@ -188,8 +183,9 @@ export async function smokeCompose(options, root) {
     });
     const body = await created.json().catch(() => ({}));
     assessWorkspace({ ok: created.ok, id: body.id });
-    const bundle = run(['exec', '-T', 'web', 'node', '-'], { input: bundleScript(hubUrl) });
-    assessBundle(bundle.status === 0, hubUrl);
+    const page = await fetch(`${origin}/`);
+    if (!page.ok) throw new Error(`web / returned ${page.status}`);
+    assessServedHubUrl(await page.text(), hubUrl);
     process.stdout.write(`image smoke: project ${project} hub ${hubUrl} accepted ${origin} and created ${body.id}\n`);
   } catch (error) {
     failed = error;

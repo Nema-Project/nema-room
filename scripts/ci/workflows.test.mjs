@@ -246,7 +246,8 @@ test('image publish pushes pinned GHCR images only after verify, and only from t
   assert.doesNotMatch(latest.run, /push --index/);
   const smokeText = image.jobs.smoke.steps.map((step) => step.run ?? '').join('\n');
   assert.match(smokeText, /docker compose pull/);
-  assert.match(smokeText, /scripts\/images\/smoke-compose\.mjs/);
+  assert.match(smokeText, /scripts\/images\/smoke-compose\.mjs --pull always --hub-port 4410 --web-port 3010/);
+  assert.match(buildText, /smoke-compose\.mjs --pull never --hub-port 4410 --web-port 3010/);
   assert.match(smokeText, /--pull always/);
   assert.doesNotMatch(smokeText, /docker build/);
   const raw = readFileSync(new URL('../../.github/workflows/image-publish.yml', import.meta.url), 'utf8');

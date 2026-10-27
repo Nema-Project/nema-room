@@ -4,19 +4,21 @@
 
 **Goal:** 打 `v*` tag 且同一提交通过 `verify` 之后，把 hub 与 web 的 `linux/amd64` 镜像推到 GHCR；`docker-compose.yml` 改为拉取钉死版本；源码构建仍走 `npm run up`。
 
-**Architecture:** 发布用的 compose 文件只有 `image:`，端口字面量固定为 hub 4400、web 3000。源码构建用 `docker-compose.build.yml` 以 `!override` 替换 hub 端口，并把 web 的构建参数设为 `http://127.0.0.1:<NEMA_HUB_PORT>`。web 运行镜像改为 Next standalone。工作流把构建（无 `packages: write`）和推送（只有 `packages: write` 加 `contents: read`）分开；推送的是构建 job 的 OCI layout，不在发布 job 里重新构建。
+**Architecture:** 发布用的 compose 文件只有 `image:`。`NEMA_HUB_PORT`（默认 4400）同时是 hub 的宿主机端口和容器端口；`NEMA_WEB_PORT`（默认 3000）只改 web 的宿主机端口，容器内仍是 3000。web 在容器启动时读取 `NEMA_HUB_URL`，默认 `http://127.0.0.1:$NEMA_HUB_PORT`。源码构建用 `docker-compose.build.yml` 加上 `build:`，端口与 URL 沿用发布文件。web 运行镜像是 Next standalone。工作流把构建（无 `packages: write`）和推送（只有 `packages: write` 加 `contents: read`）分开；推送的是构建 job 的 OCI layout，不在发布 job 里重新构建。
+
+> 下面各任务里「端口字面量固定」「发布镜像忽略 `NEMA_HUB_PORT`」「用构建参数写入 hub URL」是写计划时的决定。维护者在合并前改为运行期配置。那些勾选步骤保留作记录，不要按它们把运行期配置改回去。
 
 **Tech Stack:** Dockerfile，Docker Compose v2，buildx，钉死 digest 的 crane，Node `.mjs` 加 `node --test`，GitHub Actions。版本校验复用 `scripts/desktop/release-version.mjs` 与 `scripts/desktop/release-commit.mjs`。
 
 **Spec:** `docs/superpowers/specs/2026-10-27-ghcr-image-publish-design.md`
 
-**Base:** `ee6b203a355c4879ee93b58e4d02ae222945707f`。不改 Host 校验，不把 `NEXT_PUBLIC_*` 改成运行期配置，不发布 arm64，不推送镜像。
+**Base:** `ee6b203a355c4879ee93b58e4d02ae222945707f`。不改 Host 校验。hub 地址在运行期由 `NEMA_HUB_URL` 决定，默认 `http://127.0.0.1:4400`。不发布 arm64，不推送镜像。
 
 ## Global Constraints
 
 - 发布 job 不执行 `docker build`、`docker buildx build` 或 `npm ci`。crane 只复制已有的 OCI layout。
 - 除发布 job 外，没有任何 job 拥有 `packages: write`。全文件不出现 `id-token`，不出现 `secrets.GITHUB_TOKEN` 以外的 secret。
-- 发布镜像的浏览器 hub 地址是 `http://127.0.0.1:4400`。发布 compose 的 hub 端口三处都是字面量 4400。
+- 发布镜像的浏览器 hub 地址默认是 `http://127.0.0.1:4400`，容器启动时可由 `NEMA_HUB_URL` 覆盖。发布 compose 的 hub 宿主机端口与容器端口都是 `${NEMA_HUB_PORT:-4400}`。
 - 镜像版本等于 `apps/desktop`、`apps/local`、`apps/cli` 的共同版本，不使用 hub / web 的 `0.0.0`。
 - 每次冒烟生成一次性项目名 `nema-image-smoke-` 加 12 位十六进制。已有容器或卷则拒绝。只有本次确认过为空的项目才执行 `down -v`，并且 `down` 失败时冒烟失败。
 - 代码和注释用英文。两份英文 README 字节相同。
@@ -24,7 +26,7 @@
 ## Review Focus
 
 1. 发布 job 是否只推送构建产物，且权限只有 `packages: write` 与 `contents: read`。→ 任务 4。
-2. 发布 compose 的端口是否不再随 `NEMA_HUB_PORT` 插值，源码覆盖是否仍能改端口并重建 web。→ 任务 2。
+2. 发布 compose 的端口是否随 `NEMA_HUB_PORT` / `NEMA_WEB_PORT` 插值，且 hub 的宿主机端口与容器监听端口相同；web 的 `NEMA_HUB_URL` 是否默认跟随 hub 端口。→ 任务 2 的结果以维护者修订为准。
 3. web 运行镜像是否不再拷贝整棵 `/app`，入口是否把 `HOSTNAME` 覆盖为 `0.0.0.0`。→ 任务 1、任务 5。
 4. tag、三方版本、compose 镜像 tag 是否必须一致，预发布是否不会移动 `latest`。→ 任务 2、任务 4。
 5. 冒烟是否在没有 `build` 键的配置上证明 hub 接受 web 的 Origin，并成功创建工作区。→ 任务 3、任务 5。

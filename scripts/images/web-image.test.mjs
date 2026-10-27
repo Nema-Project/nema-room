@@ -36,6 +36,7 @@ test('web runtime copies the standalone server, static assets, and public files'
   assert.match(web, /COPY --from=web-build \/app\/apps\/web\/\.next\/static \.\/apps\/web\/\.next\/static/);
   assert.match(web, /COPY --from=web-build \/app\/apps\/web\/public \.\/apps\/web\/public/);
   assert.match(dockerfile, /ENTRYPOINT \["\/entrypoint\.sh"\]/);
+  assert.match(web, /NEMA_HUB_URL=http:\/\/127\.0\.0\.1:4400/);
 });
 
 test('entrypoint listens on all interfaces at port 3000', () => {

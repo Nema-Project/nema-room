@@ -4,8 +4,12 @@
 # The nema daemon still runs on the host: npm run build -w apps/cli && npx nema daemon
 # Every port is published on 127.0.0.1 only.
 #
-# Published hub/web images bake http://127.0.0.1:4400. These ports are literals so a
-# downloaded compose file cannot move the hub off the address inside the web image.
+# NEMA_HUB_PORT (default 4400) is both the published host port and the port the hub
+# listens on, because the browser's Host header is that published port.
+# NEMA_WEB_PORT (default 3000) is only the published host port; the container still
+# listens on 3000. NEMA_HUB_URL defaults to http://127.0.0.1:$NEMA_HUB_PORT and is
+# read when the web container starts, so the published image does not need a rebuild.
+# Set NEMA_HUB_URL only when the browser reaches the hub at a different address.
 services:
   postgres:
     image: postgres:17
@@ -38,13 +42,12 @@ services:
       NEMA_DATABASE_URL: postgres://nema:nema@postgres:5432/nema
       NEMA_DATA_DIR: /data
       NEMA_HUB_HOST: 0.0.0.0
-      # Same number as the published port and the hub URL baked into the web image.
-      NEMA_HUB_PORT: "4400"
-      NEMA_WEB_ORIGIN: http://localhost:3000,http://127.0.0.1:3000
+      NEMA_HUB_PORT: ${NEMA_HUB_PORT:-4400}
+      NEMA_WEB_ORIGIN: http://localhost:${NEMA_WEB_PORT:-3000},http://127.0.0.1:${NEMA_WEB_PORT:-3000}
       # The hub cannot see the host's ~/.nema/ws; the daemon removes those dirs itself.
       NEMA_HUB_CLEAN_DAEMON_DIRS: "0"
     ports:
-      - "127.0.0.1:4400:4400"
+      - "127.0.0.1:${NEMA_HUB_PORT:-4400}:${NEMA_HUB_PORT:-4400}"
     volumes:
       # Same directory the host daemon reads its daemon-token from (default ~/.nema/data).
       - ${NEMA_DATA_HOST_DIR:-${HOME}/.nema/data}:/data
@@ -61,8 +64,10 @@ services:
     depends_on:
       hub:
         condition: service_healthy
+    environment:
+      NEMA_HUB_URL: ${NEMA_HUB_URL:-http://127.0.0.1:${NEMA_HUB_PORT:-4400}}
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${NEMA_WEB_PORT:-3000}:3000"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s

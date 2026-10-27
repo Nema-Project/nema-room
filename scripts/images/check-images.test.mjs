@@ -11,9 +11,11 @@ const published = readFileSync(new URL('../../docker-compose.yml', import.meta.u
 const desktopVersion = JSON.parse(readFileSync(new URL('../../apps/desktop/package.json', import.meta.url), 'utf8')).version;
 
 function composeConfig(files, env = {}) {
+  const base = { ...process.env };
+  if (!Object.hasOwn(env, 'NEMA_HUB_URL')) delete base.NEMA_HUB_URL;
   const run = spawnSync('docker', ['compose', ...files.flatMap((file) => ['-f', file]), 'config', '--format', 'json'], {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: { ...base, ...env },
     encoding: 'utf8',
   });
   assert.equal(run.status, 0, run.stderr);
@@ -26,7 +28,7 @@ test('published compose pins hub and web and rejects drifted fixtures', () => {
   assert.throws(() => assertComposeImages(published.replace('nema-room-hub', 'nema-room-other'), desktopVersion), /missing/);
   const withBuild = published.replace('image: ghcr.io/nema-project/nema-room-hub', 'build:\n      context: .\n    image: ghcr.io/nema-project/nema-room-hub');
   assert.throws(() => assertComposeImages(withBuild, desktopVersion), /hub must not build/);
-  assert.throws(() => assertComposeImages(published.replace('127.0.0.1:4400:4400', '127.0.0.1:${NEMA_HUB_PORT:-4400}:4400'), desktopVersion), /literal|interpolate/);
+  assert.throws(() => assertComposeImages(published.replace('127.0.0.1:${NEMA_HUB_PORT:-4400}:${NEMA_HUB_PORT:-4400}', '127.0.0.1:4400:4400'), desktopVersion), /NEMA_HUB_PORT/);
 });
 
 test('package versions must match the release tag', () => {
@@ -68,7 +70,7 @@ test('repository compose file matches the desktop version', () => {
   assert.match(wrong.stderr, /desktop .* local .* cli /);
 });
 
-test('source build override replaces the hub port and rebuilds web for that port', () => {
+test('ports and the hub URL follow env on the published file and the source build', () => {
   const plain = composeConfig(['docker-compose.yml']);
   assert.equal(plain.services.hub.build, undefined);
   assert.equal(plain.services.web.build, undefined);
@@ -82,14 +84,26 @@ test('source build override replaces the hub port and rebuilds web for that port
   assert.ok(plain.services.hub.healthcheck);
   assert.ok(plain.services.web.healthcheck);
 
+  const moved = composeConfig(['docker-compose.yml'], { NEMA_HUB_PORT: '4410', NEMA_WEB_PORT: '3010' });
+  assert.equal(String(moved.services.hub.ports[0].published), '4410');
+  assert.equal(moved.services.hub.ports[0].target, 4410);
+  assert.equal(String(moved.services.hub.environment.NEMA_HUB_PORT), '4410');
+  assert.equal(moved.services.web.environment.NEMA_HUB_URL, 'http://127.0.0.1:4410');
+  assert.equal(String(moved.services.web.ports[0].published), '3010');
+  assert.equal(moved.services.web.ports[0].target, 3000);
+  assert.match(String(moved.services.hub.environment.NEMA_WEB_ORIGIN), /127\.0\.0\.1:3010/);
+  const customUrl = composeConfig(['docker-compose.yml'], { NEMA_HUB_PORT: '4410', NEMA_HUB_URL: 'http://127.0.0.1:9999' });
+  assert.equal(customUrl.services.web.environment.NEMA_HUB_URL, 'http://127.0.0.1:9999');
+
   const built = composeConfig(['docker-compose.yml', 'docker-compose.build.yml'], { NEMA_HUB_PORT: '5500' });
   assert.equal(built.services.hub.ports.length, 1);
   assert.equal(String(built.services.hub.ports[0].published), '5500');
   assert.equal(built.services.hub.ports[0].target, 5500);
   assert.equal(String(built.services.hub.environment.NEMA_HUB_PORT), '5500');
+  assert.equal(built.services.web.environment.NEMA_HUB_URL, 'http://127.0.0.1:5500');
   assert.equal(built.services.hub.build.target, 'hub');
   assert.equal(built.services.web.build.target, 'web');
-  assert.equal(built.services.web.build.args.NEXT_PUBLIC_HUB_URL, 'http://127.0.0.1:5500');
+  assert.equal(built.services.web.build.args, undefined);
   assert.equal(String(built.services.web.ports[0].published), '3000');
 });
 

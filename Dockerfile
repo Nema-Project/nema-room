@@ -67,8 +67,7 @@ CMD ["node", "apps/hub/dist/src/main.js"]
 
 # ---- web build ----
 FROM deps AS web-build
-# Inlined into the browser bundle at build time: the address the browser (on the host) uses for the hub.
-# Published images bake the fixed URL. A source build passes the matching hub port instead.
+# Fallback baked into the browser bundle. The running container overrides it with NEMA_HUB_URL.
 ARG NEXT_PUBLIC_HUB_URL=http://127.0.0.1:4400
 ENV NEXT_PUBLIC_HUB_URL=${NEXT_PUBLIC_HUB_URL}
 ENV NEMA_DOCKER_WEB=1
@@ -85,7 +84,8 @@ LABEL org.opencontainers.image.source=https://github.com/Nema-Project/nema-room 
       org.opencontainers.image.version=$IMAGE_VERSION
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
-    PORT=3000
+    PORT=3000 \
+    NEMA_HUB_URL=http://127.0.0.1:4400
 COPY --from=web-build /app/apps/web/.next/standalone ./
 COPY --from=web-build /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=web-build /app/apps/web/public ./apps/web/public

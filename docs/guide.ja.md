@@ -111,9 +111,9 @@ export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 npm run up
 ```
 
-`npm run up` はこのチェックアウトから hub と web をビルドします。Linux と macOS では、上の `export` は UID/GID が 1000 かどうかに関係なく、コンテナのユーザーをホストのユーザーにします。Windows の Docker Desktop ではこの export は不要です。`NEMA_HUB_PORT` の変更が効くのはこのソースビルドだけです。hub はそのポートで公開され、web は `http://127.0.0.1:<ポート>` で再ビルドされます。
+`npm run up` はこのチェックアウトから hub と web をビルドします。Linux と macOS では、上の `export` は UID/GID が 1000 かどうかに関係なく、コンテナのユーザーをホストのユーザーにします。Windows の Docker Desktop ではこの export は不要です。`NEMA_HUB_PORT`（既定 4400）は公開されるホストのポートと hub の待受ポートの両方です。`NEMA_WEB_PORT`（既定 3000）はホストのポートだけを変えます。web コンテナは起動時に `NEMA_HUB_URL` を読み、compose はそれを `http://127.0.0.1:$NEMA_HUB_PORT` にします。
 
-clone せずにピン留めしたイメージを pull できるのは、イメージ公開ワークフローを含む最初の `v*` tag からです。`v0.1.3` はそのリリースではありません。`scripts/images/check-images.mjs` は compose のピンとパッケージ版の一致を要求するので、ピンはイメージを公開するリリースと一緒に動きます。その tag のあと、その `docker-compose.yml` を取得します。Linux と macOS では同じように `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。そのあと `docker compose up -d` を実行します。公開 web イメージが hub を呼ぶアドレスは `http://127.0.0.1:4400` で、`NEMA_HUB_PORT` は無視されます。
+clone せずにピン留めしたイメージを pull できるのは、イメージ公開ワークフローを含む最初の `v*` tag からです。`v0.1.3` はそのリリースではありません。`scripts/images/check-images.mjs` は compose のピンとパッケージ版の一致を要求するので、ピンはイメージを公開するリリースと一緒に動きます。その tag のあと、その `docker-compose.yml` を取得します。Linux と macOS では同じように `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。そのあと `docker compose up -d` を実行します。ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。公開 web イメージは起動時に `NEMA_HUB_URL` を読みます。compose の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` なので、ポートを変えてもイメージの再ビルドは不要です。
 
 まずモデルを設定します。標準の認証方式を使う場合：
 
@@ -245,7 +245,7 @@ npm run build -w apps/web
 
 ルートの typecheck は web を含みません。web は個別にビルドしてください。ソースのチェックアウトを更新する前にデータをバックアップし、`git pull`、`npm ci`、CLI の再ビルド、`npm run up`、daemon の再起動を行います。daemon は `GET /api/version` が返す hub のバージョンに合わせます。違う場合は `run: npm i -g nema@<バージョン>` を出して再接続しません。最初の npm 公開までは、daemon はこのチェックアウトから入れます。
 
-ポートや保存先は [.env.example](../.env.example) を参照してください。CLI はルートの `.env` を自動で読みません。保存先を変更したら shell で `NEMA_DATA_DIR` を export するか、`daemon` / `doctor` に `--token-file` を指定します。hub のポートを変えたら `--hub` も指定してください。`NEMA_HUB_PORT` の変更が効くのは `npm run up` のソースビルドだけで、web は `http://127.0.0.1:<ポート>` で再ビルドされます。公開イメージは `NEMA_HUB_PORT` と `NEXT_PUBLIC_HUB_URL` を無視し、`http://127.0.0.1:4400` のままです。`npm run dev` は引き続き `NEXT_PUBLIC_HUB_URL` を読みます。
+ポートや保存先は [.env.example](../.env.example) を参照してください。CLI はルートの `.env` を自動で読みません。保存先を変更したら shell で `NEMA_DATA_DIR` を export するか、`daemon` / `doctor` に `--token-file` を指定します。hub のポートを変えたら `--hub` も指定してください。Compose は `NEMA_HUB_PORT`（既定 4400。ホストとコンテナは同じポート）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）を読みます。web コンテナは起動時に `NEMA_HUB_URL` を読みます。Compose の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` です。ブラウザが別のアドレスで hub に届くときだけ `NEMA_HUB_URL` を設定してください。`NEXT_PUBLIC_HUB_URL` は `npm run dev` が読む値で、イメージの中では焼き込まれた代替値にすぎません。
 
 ## セキュリティ報告
 

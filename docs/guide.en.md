@@ -111,9 +111,9 @@ export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 npm run up
 ```
 
-`npm run up` builds hub and web from this checkout. On Linux and macOS, the `export` sets the hub's user to the host user, including when that user is not uid 1000. Docker Desktop on Windows does not need that export. Changing `NEMA_HUB_PORT` applies only to that source build: the hub is published on that port, and web is rebuilt with `http://127.0.0.1:<port>`.
+`npm run up` builds hub and web from this checkout. On Linux and macOS, the `export` sets the hub's user to the host user, including when that user is not uid 1000. Docker Desktop on Windows does not need that export. `NEMA_HUB_PORT` (default 4400) is both the published host port and the hub's listen port. `NEMA_WEB_PORT` (default 3000) is only the published host port. The web container reads `NEMA_HUB_URL` at start; compose sets it to `http://127.0.0.1:$NEMA_HUB_PORT`.
 
-Pulling pinned images, without cloning, starts at the first `v*` tag that contains the image publish workflow. Tag `v0.1.3` is not that release. `scripts/images/check-images.mjs` keeps the compose pin equal to the package version, so the pin moves with the release that publishes the images. After that tag exists, download its `docker-compose.yml`. On Linux and macOS, export `NEMA_UID` and `NEMA_GID` the same way. Docker Desktop on Windows does not need that export. Then run `docker compose up -d`. The published web image calls the hub at `http://127.0.0.1:4400` and ignores `NEMA_HUB_PORT`.
+Pulling pinned images, without cloning, starts at the first `v*` tag that contains the image publish workflow. Tag `v0.1.3` is not that release. `scripts/images/check-images.mjs` keeps the compose pin equal to the package version, so the pin moves with the release that publishes the images. After that tag exists, download its `docker-compose.yml`. On Linux and macOS, export `NEMA_UID` and `NEMA_GID` the same way. Docker Desktop on Windows does not need that export. Then run `docker compose up -d`. Host ports follow `NEMA_HUB_PORT` (default 4400; the container listens on the same port) and `NEMA_WEB_PORT` (default 3000; the container still listens on 3000). The published web image reads `NEMA_HUB_URL` at start. Compose defaults that to `http://127.0.0.1:$NEMA_HUB_PORT`, so the image does not need a rebuild when the port changes.
 
 Configure model access first. For the default authentication mode:
 
@@ -246,7 +246,7 @@ npm run build -w apps/web
 
 The root typecheck excludes web; build it separately. Before upgrading a source checkout, back up data, then run `git pull`, `npm ci`, rebuild the CLI, run `npm run up`, and restart the daemon. Keep the daemon on the hub version from `GET /api/version`. A mismatch prints `run: npm i -g nema@<version>` and does not reconnect. Until the first npm publish, that daemon still comes from this checkout.
 
-See [.env.example](../.env.example) for ports and directories. The CLI does not automatically load the root `.env`: export `NEMA_DATA_DIR` or pass `--token-file` to `daemon` / `doctor` for a custom data directory; also pass `--hub` for a different hub port. Changing `NEMA_HUB_PORT` applies only to a source build with `npm run up`, which rebuilds web for `http://127.0.0.1:<port>`. Published images ignore `NEMA_HUB_PORT` and `NEXT_PUBLIC_HUB_URL` and keep `http://127.0.0.1:4400`. `npm run dev` still reads `NEXT_PUBLIC_HUB_URL`.
+See [.env.example](../.env.example) for ports and directories. The CLI does not automatically load the root `.env`: export `NEMA_DATA_DIR` or pass `--token-file` to `daemon` / `doctor` for a custom data directory; also pass `--hub` for a different hub port. Compose reads `NEMA_HUB_PORT` (default 4400; the host and the container use the same port) and `NEMA_WEB_PORT` (default 3000; the container stays on 3000). The web container reads `NEMA_HUB_URL` when it starts. Compose defaults that to `http://127.0.0.1:$NEMA_HUB_PORT`. Set `NEMA_HUB_URL` only when the browser reaches the hub at a different address. `NEXT_PUBLIC_HUB_URL` is what `npm run dev` reads, and it is only the baked fallback inside the image.
 
 ## Security reporting
 

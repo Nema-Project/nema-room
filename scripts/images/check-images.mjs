@@ -43,8 +43,15 @@ export function assertComposeImages(text, version) {
     if (!block) throw new Error(`Published compose is missing ${name}`);
     if (/^\s*build:/m.test(block)) throw new Error(`${name} must not build in the published compose file`);
   }
-  if (!services.hub.includes('127.0.0.1:4400:4400')) throw new Error('Published hub port must be the literal 127.0.0.1:4400:4400 mapping');
-  if (/\$\{NEMA_HUB_PORT/.test(text)) throw new Error('Published compose must not interpolate NEMA_HUB_PORT');
+  if (!services.hub.includes('127.0.0.1:${NEMA_HUB_PORT:-4400}:${NEMA_HUB_PORT:-4400}')) {
+    throw new Error('Published hub port must default to ${NEMA_HUB_PORT:-4400} on the host and in the container');
+  }
+  if (!services.web.includes('127.0.0.1:${NEMA_WEB_PORT:-3000}:3000')) {
+    throw new Error('Published web port must default to ${NEMA_WEB_PORT:-3000}');
+  }
+  if (!services.web.includes('NEMA_HUB_URL: ${NEMA_HUB_URL:-http://127.0.0.1:${NEMA_HUB_PORT:-4400}}')) {
+    throw new Error('Published web NEMA_HUB_URL must follow NEMA_HUB_PORT');
+  }
   if (!/image:\s*postgres:17\b/.test(services.postgres ?? '')) throw new Error('postgres image must stay postgres:17');
   if (!services.hub.includes('/api/daemon/status') || !services.web.includes('127.0.0.1:3000')) {
     throw new Error('Published hub and web need healthchecks');

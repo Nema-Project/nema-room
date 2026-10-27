@@ -212,7 +212,7 @@ jobs:
           node scripts/images/check-images.mjs --budget hub "$(tr -d '[:space:]' <"$RUNNER_TEMP/hub.size")" web "$(tr -d '[:space:]' <"$RUNNER_TEMP/web.size")"
       - name: Smoke the loaded images
         shell: bash
-        run: node scripts/images/smoke-compose.mjs --pull never
+        run: node scripts/images/smoke-compose.mjs --pull never --hub-port 4410 --web-port 3010
       - name: Upload OCI layouts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -351,4 +351,4 @@ jobs:
         run: docker compose pull
       - name: Smoke the pulled images
         shell: bash
-        run: node scripts/images/smoke-compose.mjs --pull always
+        run: node scripts/images/smoke-compose.mjs --pull always --hub-port 4410 --web-port 3010

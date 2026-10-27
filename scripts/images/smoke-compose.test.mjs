@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { assessBundle, assessHubProbe, assessWorkspace, assertDisposableProject, assertNoBuild, assertProjectAvailable, newSmokeProject, parseArgs } from './smoke-compose.mjs';
+import { assessBundle, assessHubProbe, assessServedHubUrl, assessWorkspace, assertDisposableProject, assertNoBuild, assertProjectAvailable, newSmokeProject, parseArgs } from './smoke-compose.mjs';
 
 const source = readFileSync(new URL('./smoke-compose.mjs', import.meta.url), 'utf8');
 
@@ -17,6 +17,8 @@ test('hub probe and workspace creation are explicit', () => {
   assert.doesNotThrow(() => assessWorkspace({ ok: true, id: 'ws_abc' }));
   assert.throws(() => assessWorkspace({ ok: true, id: '' }), /not created/);
   assert.throws(() => assessBundle(false, 'http://127.0.0.1:4400'), /missing http:\/\/127\.0\.0\.1:4400/);
+  assert.doesNotThrow(() => assessServedHubUrl('window.__NEMA_HUB_URL__="http://127.0.0.1:4410"', 'http://127.0.0.1:4410'));
+  assert.throws(() => assessServedHubUrl('window.__NEMA_HUB_URL__="http://127.0.0.1:4400"', 'http://127.0.0.1:4410'), /missing/);
 });
 
 test('pull policy is fixed and the project name is disposable', () => {
