@@ -82,13 +82,14 @@ Windows の `.exe` は NSIS インストーラーです。ショートカット�
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
+# Linux と macOS のみ。Windows の Docker Desktop では不要です。
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 node scripts/setup.mjs --lang ja
 ```
 
-ウィザードが依存関係を確認し、CLI をビルドしてソースからサービスを起動し、モデル設定を案内します。ホストの daemon は起動したままにしてください。既存の `.env` は保持されます。`npm run up` は同じソースビルドです。Linux では UID/GID が 1000 でもそれ以外でも、上と同じように `NEMA_UID` と `NEMA_GID` を export してから `npm run up` してください。hub がデータディレクトリへ書き込めます。その後 [localhost:3000](http://localhost:3000) を開きます。公開用 compose ファイルにビルド手順はありません。
+ウィザードが依存関係を確認し、CLI をビルドしてソースからサービスを起動し、モデル設定を案内します。ホストの daemon は起動したままにしてください。既存の `.env` は保持されます。`npm run up` は同じソースビルドです。Linux と macOS では、UID/GID が 1000 でもそれ以外でも、上と同じように `NEMA_UID` と `NEMA_GID` を export してから `npm run up` してください。hub がデータディレクトリへ書き込めます。Windows の Docker Desktop ではこの export は不要です。その後 [localhost:3000](http://localhost:3000) を開きます。公開用 compose ファイルにビルド手順はありません。
 
-clone せずにピン留めしたイメージを pull できるのは、イメージ公開ワークフローを含む最初の `v*` tag からです。`v0.1.3` はそのリリースではなく、GHCR に `0.1.3` のイメージはありません。このチェックアウトが `ghcr.io/nema-project/nema-room-hub:0.1.3` と `ghcr.io/nema-project/nema-room-web:0.1.3` をピン留めしているのは、`scripts/images/check-images.mjs` がピンとパッケージ版の一致を要求するためです。次のリリースで版とピンが一緒に動き、その tag がイメージを公開します。その後、その tag から `docker-compose.yml` を取得し、同じように `NEMA_UID` と `NEMA_GID` を export して `docker compose up -d` を実行します。公開イメージは `NEMA_HUB_PORT` を無視し、hub は 4400 のままです。
+clone せずにピン留めしたイメージを pull できるのは、イメージ公開ワークフローを含む最初の `v*` tag からです。`v0.1.3` はそのリリースではなく、GHCR に `0.1.3` のイメージはありません。このチェックアウトが `ghcr.io/nema-project/nema-room-hub:0.1.3` と `ghcr.io/nema-project/nema-room-web:0.1.3` をピン留めしているのは、`scripts/images/check-images.mjs` がピンとパッケージ版の一致を要求するためです。次のリリースで版とピンが一緒に動き、その tag がイメージを公開します。その後、その tag から `docker-compose.yml` を取得します。Linux と macOS では同じように `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。そのあと `docker compose up -d` を実行します。公開イメージは `NEMA_HUB_PORT` を無視し、hub は 4400 のままです。
 
 [手動インストールと設定](docs/guide.ja.md#source-installation) · 環境の確認のみ：`node scripts/setup.mjs --lang ja --check`
 

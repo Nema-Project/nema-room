@@ -82,13 +82,14 @@ Windows 的 `.exe` 是 NSIS 安装包：会建立快捷方式，可以卸载，�
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
+# 仅 Linux 和 macOS。Windows 上的 Docker Desktop 不需要这一行。
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 node scripts/setup.mjs --lang zh
 ```
 
-向导检查依赖、构建 CLI、从源码启动服务，并引导配置模型。保持本机 daemon 运行。已有 `.env` 会保留。`npm run up` 是同一条源码构建。在 Linux 上，无论 UID/GID 是不是 1000，都先按上面导出 `NEMA_UID` 和 `NEMA_GID`，再执行 `npm run up`，hub 才能写入数据目录。然后打开 [localhost:3000](http://localhost:3000)。发布用的 compose 文件没有构建步骤。
+向导检查依赖、构建 CLI、从源码启动服务，并引导配置模型。保持本机 daemon 运行。已有 `.env` 会保留。`npm run up` 是同一条源码构建。在 Linux 和 macOS 上，无论 UID/GID 是不是 1000，都先按上面导出 `NEMA_UID` 和 `NEMA_GID`，再执行 `npm run up`，hub 才能写入数据目录。Windows 上的 Docker Desktop 不需要这条 export。然后打开 [localhost:3000](http://localhost:3000)。发布用的 compose 文件没有构建步骤。
 
-不克隆、直接拉取钉死镜像，要从包含镜像发布工作流的第一个 `v*` tag 才开始。`v0.1.3` 不是这次发布，GHCR 上也没有 `0.1.3` 镜像。当前检出仍把镜像钉在 `ghcr.io/nema-project/nema-room-hub:0.1.3` 和 `ghcr.io/nema-project/nema-room-web:0.1.3`，因为 `scripts/images/check-images.mjs` 要求钉的版本等于包版本。下一次发版时版本和钉一起改，那个 tag 才会发布镜像。之后从那个 tag 下载 `docker-compose.yml`，同样导出 `NEMA_UID` 和 `NEMA_GID`，再执行 `docker compose up -d`。发布镜像忽略 `NEMA_HUB_PORT`，hub 固定在 4400。
+不克隆、直接拉取钉死镜像，要从包含镜像发布工作流的第一个 `v*` tag 才开始。`v0.1.3` 不是这次发布，GHCR 上也没有 `0.1.3` 镜像。当前检出仍把镜像钉在 `ghcr.io/nema-project/nema-room-hub:0.1.3` 和 `ghcr.io/nema-project/nema-room-web:0.1.3`，因为 `scripts/images/check-images.mjs` 要求钉的版本等于包版本。下一次发版时版本和钉一起改，那个 tag 才会发布镜像。之后从那个 tag 下载 `docker-compose.yml`。Linux 和 macOS 上同样导出 `NEMA_UID` 和 `NEMA_GID`。Windows 上的 Docker Desktop 不需要这条 export。然后执行 `docker compose up -d`。发布镜像忽略 `NEMA_HUB_PORT`，hub 固定在 4400。
 
 [手动安装与配置](docs/guide.zh.md#source-installation) · 只检查环境：`node scripts/setup.mjs --lang zh --check`
 

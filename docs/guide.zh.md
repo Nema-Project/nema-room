@@ -95,13 +95,14 @@ cp .env.example .env
 npm ci
 npm run build -w apps/cli
 mkdir -p "$HOME/.nema/data"
+# 仅 Linux 和 macOS。Windows 上的 Docker Desktop 不需要这一行。
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 npm run up
 ```
 
-`npm run up` 用当前检出构建 hub 和 web。上面的 `export` 把容器用户设成当前主机用户，UID/GID 不是 1000 时也一样。修改 `NEMA_HUB_PORT` 只在这条源码构建上生效：hub 发布到该端口，web 会按 `http://127.0.0.1:<端口>` 重建。
+`npm run up` 用当前检出构建 hub 和 web。在 Linux 和 macOS 上，上面的 `export` 把容器用户设成当前主机用户，UID/GID 不是 1000 时也一样。Windows 上的 Docker Desktop 不需要这条 export。修改 `NEMA_HUB_PORT` 只在这条源码构建上生效：hub 发布到该端口，web 会按 `http://127.0.0.1:<端口>` 重建。
 
-不克隆、直接拉取钉死镜像，要从包含镜像发布工作流的第一个 `v*` tag 才开始。`v0.1.3` 不是这次发布。`scripts/images/check-images.mjs` 要求 compose 的钉等于包版本，所以钉会跟着真正发布镜像的那次发版一起改。那个 tag 出现之后，下载它的 `docker-compose.yml`，同样导出 `NEMA_UID` 和 `NEMA_GID`，再执行 `docker compose up -d`。发布的 web 镜像访问 hub 的地址是 `http://127.0.0.1:4400`，并忽略 `NEMA_HUB_PORT`。
+不克隆、直接拉取钉死镜像，要从包含镜像发布工作流的第一个 `v*` tag 才开始。`v0.1.3` 不是这次发布。`scripts/images/check-images.mjs` 要求 compose 的钉等于包版本，所以钉会跟着真正发布镜像的那次发版一起改。那个 tag 出现之后，下载它的 `docker-compose.yml`。Linux 和 macOS 上同样导出 `NEMA_UID` 和 `NEMA_GID`。Windows 上的 Docker Desktop 不需要这条 export。然后执行 `docker compose up -d`。发布的 web 镜像访问 hub 的地址是 `http://127.0.0.1:4400`，并忽略 `NEMA_HUB_PORT`。
 
 首次使用先配置模型。使用默认认证时：
 
@@ -119,7 +120,7 @@ npm run logs   # 查看 hub / web 日志
 npm run down   # 停止容器，保留数据库卷
 ```
 
-Linux 上，上面的命令对任何主机用户都用 `id` 导出 `NEMA_UID` 和 `NEMA_GID`。也可以把同样的值写进 `.env`。自定义目录时先手动创建，并让 `NEMA_DATA_HOST_DIR` 与 daemon 读取的目录一致。
+在 Linux 和 macOS 上，上面的命令对任何主机用户都用 `id` 导出 `NEMA_UID` 和 `NEMA_GID`。Windows 上的 Docker Desktop 不需要这条 export。也可以把同样的值写进 `.env`。自定义目录时先手动创建，并让 `NEMA_DATA_HOST_DIR` 与 daemon 读取的目录一致。
 
 <a id="models"></a>
 

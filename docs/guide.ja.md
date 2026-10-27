@@ -95,13 +95,14 @@ cp .env.example .env
 npm ci
 npm run build -w apps/cli
 mkdir -p "$HOME/.nema/data"
+# Linux と macOS のみ。Windows の Docker Desktop では不要です。
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 npm run up
 ```
 
-`npm run up` はこのチェックアウトから hub と web をビルドします。上の `export` は、UID/GID が 1000 かどうかに関係なく、コンテナのユーザーをホストのユーザーにします。`NEMA_HUB_PORT` の変更が効くのはこのソースビルドだけです。hub はそのポートで公開され、web は `http://127.0.0.1:<ポート>` で再ビルドされます。
+`npm run up` はこのチェックアウトから hub と web をビルドします。Linux と macOS では、上の `export` は UID/GID が 1000 かどうかに関係なく、コンテナのユーザーをホストのユーザーにします。Windows の Docker Desktop ではこの export は不要です。`NEMA_HUB_PORT` の変更が効くのはこのソースビルドだけです。hub はそのポートで公開され、web は `http://127.0.0.1:<ポート>` で再ビルドされます。
 
-clone せずにピン留めしたイメージを pull できるのは、イメージ公開ワークフローを含む最初の `v*` tag からです。`v0.1.3` はそのリリースではありません。`scripts/images/check-images.mjs` は compose のピンとパッケージ版の一致を要求するので、ピンはイメージを公開するリリースと一緒に動きます。その tag のあと、その `docker-compose.yml` を取得し、同じように `NEMA_UID` と `NEMA_GID` を export して `docker compose up -d` を実行します。公開 web イメージが hub を呼ぶアドレスは `http://127.0.0.1:4400` で、`NEMA_HUB_PORT` は無視されます。
+clone せずにピン留めしたイメージを pull できるのは、イメージ公開ワークフローを含む最初の `v*` tag からです。`v0.1.3` はそのリリースではありません。`scripts/images/check-images.mjs` は compose のピンとパッケージ版の一致を要求するので、ピンはイメージを公開するリリースと一緒に動きます。その tag のあと、その `docker-compose.yml` を取得します。Linux と macOS では同じように `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。そのあと `docker compose up -d` を実行します。公開 web イメージが hub を呼ぶアドレスは `http://127.0.0.1:4400` で、`NEMA_HUB_PORT` は無視されます。
 
 まずモデルを設定します。標準の認証方式を使う場合：
 
@@ -119,7 +120,7 @@ npm run logs   # hub / web のログ
 npm run down   # コンテナを停止。DB ボリュームは保持
 ```
 
-Linux では、上のコマンドがすべてのホストユーザーについて `id` から `NEMA_UID` と `NEMA_GID` を export します。同じ値を `.env` に書くこともできます。保存先を変更する場合は、先にディレクトリを作成し、`NEMA_DATA_HOST_DIR` と daemon が読む保存先を一致させます。
+Linux と macOS では、上のコマンドがすべてのホストユーザーについて `id` から `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。同じ値を `.env` に書くこともできます。保存先を変更する場合は、先にディレクトリを作成し、`NEMA_DATA_HOST_DIR` と daemon が読む保存先を一致させます。
 
 <a id="models"></a>
 

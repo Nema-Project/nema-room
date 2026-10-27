@@ -95,13 +95,14 @@ cp .env.example .env
 npm ci
 npm run build -w apps/cli
 mkdir -p "$HOME/.nema/data"
+# Linux and macOS only. Docker Desktop on Windows does not need this.
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 npm run up
 ```
 
-`npm run up` builds hub and web from this checkout. The `export` sets the hub's user to the host user, including when that user is not uid 1000. Changing `NEMA_HUB_PORT` applies only to that source build: the hub is published on that port, and web is rebuilt with `http://127.0.0.1:<port>`.
+`npm run up` builds hub and web from this checkout. On Linux and macOS, the `export` sets the hub's user to the host user, including when that user is not uid 1000. Docker Desktop on Windows does not need that export. Changing `NEMA_HUB_PORT` applies only to that source build: the hub is published on that port, and web is rebuilt with `http://127.0.0.1:<port>`.
 
-Pulling pinned images, without cloning, starts at the first `v*` tag that contains the image publish workflow. Tag `v0.1.3` is not that release. `scripts/images/check-images.mjs` keeps the compose pin equal to the package version, so the pin moves with the release that publishes the images. After that tag exists, download its `docker-compose.yml`, export `NEMA_UID` and `NEMA_GID` the same way, and run `docker compose up -d`. The published web image calls the hub at `http://127.0.0.1:4400` and ignores `NEMA_HUB_PORT`.
+Pulling pinned images, without cloning, starts at the first `v*` tag that contains the image publish workflow. Tag `v0.1.3` is not that release. `scripts/images/check-images.mjs` keeps the compose pin equal to the package version, so the pin moves with the release that publishes the images. After that tag exists, download its `docker-compose.yml`. On Linux and macOS, export `NEMA_UID` and `NEMA_GID` the same way. Docker Desktop on Windows does not need that export. Then run `docker compose up -d`. The published web image calls the hub at `http://127.0.0.1:4400` and ignores `NEMA_HUB_PORT`.
 
 Configure model access first. For the default authentication mode:
 
@@ -119,7 +120,7 @@ npm run logs   # Hub / web logs
 npm run down   # Stop containers; retain the database volume
 ```
 
-On Linux, the commands above export `NEMA_UID` and `NEMA_GID` from `id` for every host user. The same values can be set in `.env`. Create custom data directories yourself and ensure `NEMA_DATA_HOST_DIR` matches the directory read by the daemon.
+On Linux and macOS, the commands above export `NEMA_UID` and `NEMA_GID` from `id` for every host user. Docker Desktop on Windows does not need that export. The same values can be set in `.env`. Create custom data directories yourself and ensure `NEMA_DATA_HOST_DIR` matches the directory read by the daemon.
 
 <a id="models"></a>
 
