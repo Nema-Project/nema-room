@@ -2,7 +2,65 @@
 
 const { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, isMainMessageUrl, isThreadWindowUrl, threadWindowIdentity, navigationDecision, validateRuntimeLaunchUrl } = require('./security.cjs');
 const { registerWindowControls } = require('./window-controls.cjs');
+const { mkdirSync, readFileSync, renameSync, writeFileSync } = require('node:fs');
 const path = require('node:path');
+
+const RELEASE_PAGE = /^https:\/\/github\.com\/Nema-Project\/nema-room\/releases\/tag\/v?\d+\.\d+\.\d+$/;
+const VERSION_TEXT = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
+function shortCommit(value) {
+  if (typeof value !== 'string' || !/^[0-9a-f]{7,64}$/i.test(value.trim())) return '';
+  return value.trim().toLowerCase().slice(0, 7);
+}
+
+function readJson(file, readFile) {
+  try { return JSON.parse(readFile(file, 'utf8')); }
+  catch { return null; }
+}
+
+function readPackagedIdentity(app, assetsDir, readFile = readFileSync) {
+  let version = '';
+  try {
+    const fromApp = app?.getVersion?.();
+    if (typeof fromApp === 'string' && VERSION_TEXT.test(fromApp.trim())) version = fromApp.trim();
+  } catch { /* a test double may omit getVersion */ }
+  const manifest = readJson(path.join(assetsDir, 'runtime-manifest.json'), readFile) ?? {};
+  if (!version && typeof manifest.version === 'string' && VERSION_TEXT.test(manifest.version.trim())) version = manifest.version.trim();
+  let commit = shortCommit(manifest.commit) || shortCommit(manifest.build?.commit);
+  if (!commit) {
+    const meta = readJson(path.join(assetsDir, 'build-metadata.json'), readFile) ?? {};
+    commit = shortCommit(meta.commit) || shortCommit(meta.build?.commit);
+  }
+  return { version, commit };
+}
+
+function releaseNotice(status) {
+  if (!status || status.state !== 'newer' || typeof status.version !== 'string' || !/^\d+\.\d+\.\d+$/.test(status.version)) return null;
+  if (typeof status.url !== 'string' || !RELEASE_PAGE.test(status.url)) return null;
+  const tag = status.url.slice(status.url.lastIndexOf('/') + 1);
+  if (tag !== status.version && tag !== `v${status.version}`) return null;
+  return { label: `Update available: ${status.version}`, url: status.url };
+}
+
+function requestReleaseCheck(home) {
+  mkdirSync(home, { recursive: true });
+  const file = path.join(home, 'update-check-request.json');
+  const temp = `${file}.${process.pid}.tmp`;
+  writeFileSync(temp, `${JSON.stringify({ checkRequestedAt: Date.now() })}\n`, { mode: 0o600 });
+  renameSync(temp, file);
+}
+
+function defaultReleaseBridge({ home, assetsDir, app }) {
+  return {
+    identity: readPackagedIdentity(app, assetsDir),
+    readStatus() {
+      return readJson(path.join(home, 'update-status.json'), readFileSync);
+    },
+    requestCheck() {
+      requestReleaseCheck(home);
+    },
+  };
+}
 
 function initialWindowSize(screen) {
   const width = 1180;
@@ -15,8 +73,10 @@ function initialWindowSize(screen) {
   };
 }
 
-function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, platform = process.platform }) {
+function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, platform = process.platform, release }) {
   const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, session, ipcMain, screen } = electron;
+  const releaseBridge = release ?? defaultReleaseBridge({ home, assetsDir, app });
+  let releaseTimer;
   const brandAsset = (name) => path.join(__dirname, 'assets', name);
   let runtimeApi;
   let currentInstance;
@@ -167,6 +227,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
   }
 
   async function quitNema() {
+    if (releaseTimer) clearInterval(releaseTimer);
     if (quitPending || isQuitting) return;
     quitPending = true;
     try {
@@ -183,31 +244,65 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     } finally { quitPending = false; }
   }
 
+  const open = () => { void createMainWindow().catch(reportError); };
+  const browser = () => { void openBrowserMode().catch(reportError); };
+  const quit = () => { void quitNema(); };
+
+  function menuEntries() {
+    const identity = releaseBridge.identity ?? {};
+    const version = typeof identity.version === 'string' && VERSION_TEXT.test(identity.version) ? identity.version : '';
+    const commit = shortCommit(identity.commit);
+    let status = null;
+    try { status = releaseBridge.readStatus?.() ?? null; }
+    catch { status = null; }
+    const notice = releaseNotice(status);
+    const entries = [
+      {
+        label: `About Nema Room${version ? ` ${version}` : ''}${commit ? ` (${commit})` : ''}`,
+        click: () => {
+          if (typeof dialog.showMessageBox !== 'function') return;
+          void dialog.showMessageBox({
+            type: 'info',
+            title: 'About Nema Room',
+            message: version ? `Nema Room ${version}` : 'Nema Room',
+            detail: commit ? `Build ${commit}` : '',
+            buttons: ['OK'],
+          });
+        },
+      },
+      { type: 'separator' },
+      { label: 'Open Nema Room', click: open },
+      { label: 'Open in Browser', click: browser },
+      { type: 'separator' },
+      { label: 'Check for Updates', click: () => { try { releaseBridge.requestCheck(); } catch { /* preference write stays local and quiet */ } } },
+    ];
+    if (notice) entries.push({ label: notice.label, click: () => { void shell.openExternal(notice.url).catch(() => undefined); } });
+    entries.push(
+      { type: 'separator' },
+      { label: 'Quit Nema Room', accelerator: platform === 'darwin' ? 'Command+Q' : 'Ctrl+Shift+Q', click: quit },
+    );
+    return entries;
+  }
+
+  function applyMenus() {
+    const entries = menuEntries();
+    Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'Nema Room', submenu: entries }]));
+    if (tray) tray.setContextMenu(Menu.buildFromTemplate(entries));
+  }
+
+  function refreshReleaseMenu() {
+    applyMenus();
+  }
+
   function buildMenus() {
-    const open = () => { void createMainWindow().catch(reportError); };
-    const browser = () => { void openBrowserMode().catch(reportError); };
-    const quit = () => { void quitNema(); };
-    Menu.setApplicationMenu(Menu.buildFromTemplate([
-      { label: 'Nema Room', submenu: [
-        { label: 'Open Nema Room', click: open },
-        { label: 'Open in Browser', click: browser },
-        { type: 'separator' },
-        { label: 'Quit Nema Room', accelerator: platform === 'darwin' ? 'Command+Q' : 'Ctrl+Shift+Q', click: quit },
-      ] },
-    ]));
     try {
       const icon = nativeImage.createFromPath(brandAsset(platform === 'darwin' ? 'trayTemplate.png' : 'tray.png'));
       if (platform === 'darwin') icon.setTemplateImage(true);
       tray = new Tray(icon);
       tray.setToolTip('Nema Room');
-      tray.setContextMenu(Menu.buildFromTemplate([
-        { label: 'Open Nema Room', click: open },
-        { label: 'Open in Browser', click: browser },
-        { type: 'separator' },
-        { label: 'Quit Nema Room', click: quit },
-      ]));
       tray.on('click', open);
     } catch (error) { console.error('Nema Room tray icon failed', error); }
+    applyMenus();
   }
 
   async function install() {
@@ -228,11 +323,15 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
     buildMenus();
+    if (process.env.VITEST !== 'true') {
+      releaseTimer = setInterval(() => refreshReleaseMenu(), 5_000);
+      releaseTimer.unref?.();
+    }
     await createMainWindow();
     return true;
   }
 
-  return { createMainWindow, install, openBrowserMode, quitNema };
+  return { createMainWindow, install, openBrowserMode, quitNema, refreshReleaseMenu };
 }
 
-module.exports = { createDesktopLifecycle, initialWindowSize };
+module.exports = { createDesktopLifecycle, initialWindowSize, readPackagedIdentity, releaseNotice, requestReleaseCheck };

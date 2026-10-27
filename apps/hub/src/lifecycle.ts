@@ -31,6 +31,8 @@ export type StartHubOptions = {
   /** Set false when the daemon owns its own workspace directories, as in Compose. */
   cleanDaemonDirs?: boolean;
   ownedHelpers?: OwnedHelperScope;
+  /** When set, hello.version must equal it. Unset keeps older callers accepting any CLI version. */
+  releaseVersion?: string;
 };
 
 export type RunningHub = { url: string; close(): Promise<void> };
@@ -84,6 +86,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
       uiAuth: opts.uiAuth,
       port: actualPort,
       ownedHelpers: opts.ownedHelpers,
+      releaseVersion: opts.releaseVersion,
       ...(opts.ownedHelpers ? { archify: {
         validateDiagram: (type, spec) => validateDiagram(type, spec, opts.ownedHelpers),
         renderDiagram: (type, spec) => renderDiagram(type, spec, opts.ownedHelpers),
@@ -154,7 +157,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
     });
     requestListener = fetchListener;
 
-    attached = attachDaemonSocket(server, { db: opts.db, dataDir: opts.dataDir, events, daemonToken: opts.daemonToken, hubUrl, ownedHelpers: opts.ownedHelpers });
+    attached = attachDaemonSocket(server, { db: opts.db, dataDir: opts.dataDir, events, daemonToken: opts.daemonToken, hubUrl, ownedHelpers: opts.ownedHelpers, releaseVersion: opts.releaseVersion });
     status.connected = attached.isConnected;
     liveDaemon.rpc = attached.rpc;
     fallback = startReportFallback(opts.db, daemon, events);

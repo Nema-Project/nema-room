@@ -210,7 +210,10 @@ describe("CodeAndPlugins", () => {
     await userEvent.tab();
     expect(hub.updateRepo).toHaveBeenCalledWith("w1", "r-ok", { mainBranch: "release" });
 
-    await userEvent.click(screen.getByRole("button", { name: "Delete /tmp/remote" }));
+    const remove = screen.getByRole("button", { name: "Delete /tmp/remote" });
+    expect(remove.classList.contains("settings-action")).toBe(true);
+    expect(remove.className.includes("danger") || remove.className.includes("red")).toBe(false);
+    await userEvent.click(remove);
     expect(hub.unbindRepo).toHaveBeenCalledWith("w1", "r-fail");
     expect(screen.queryByText("/tmp/remote")).toBeNull();
   });
@@ -295,6 +298,7 @@ describe("CodeAndPlugins", () => {
     await userEvent.clear(box);
     await userEvent.type(box, "ask about dates");
     const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    expect(save.classList.contains("settings-action")).toBe(true);
     await userEvent.click(save);
     expect(hub.updateWorkspacePlugin).toHaveBeenCalledWith("w1", "grill", { settings: { strictness: "lenient", extraRules: "ask about dates" } });
 

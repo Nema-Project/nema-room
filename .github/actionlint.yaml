@@ -1,0 +1,7 @@
+# actionlint 1.7.12 does not type jobs.<job_id>.result on workflow_call
+# outputs (rhysd/actionlint#343). GitHub documents that property and the
+# gate reads it. Ignore only this message; do not widen the pattern.
+paths:
+  .github/workflows/verify.yml:
+    ignore:
+      - 'property "result" is not defined in object type \{outputs: \{\}\}'

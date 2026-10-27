@@ -1,8 +1,10 @@
 name: CI
 
-# Every PR reports one stable gate; main pushes do not duplicate the suite.
+# Every PR reports one stable gate. Push to main and manual dispatch run the full suite.
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -10,7 +12,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   classify:
@@ -18,6 +20,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       mode: ${{ steps.changes.outputs.mode }}
+      platform: ${{ steps.changes.outputs.platform }}
+      npm_pack: ${{ steps.changes.outputs.npm_pack }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,8 +41,14 @@ jobs:
           PATH_LIST_FILE: ${{ runner.temp }}/changed-paths.json
         run: |
           set -euo pipefail
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            echo 'mode=full' >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" = "workflow_dispatch" ] || [ "$EVENT" = "push" ]; then
+            {
+              echo 'mode=full'
+              echo 'platform=true'
+              echo 'npm_pack=true'
+              echo 'desktop=false'
+              echo 'image=false'
+            } >> "$GITHUB_OUTPUT"
             node --input-type=module -e '
               import {writeFileSync} from "node:fs";
               writeFileSync(process.env.PATH_LIST_FILE, JSON.stringify([
@@ -76,10 +86,13 @@ jobs:
 
   verify:
     needs: classify
-    if: needs.classify.outputs.mode == 'full'
+    if: needs.classify.result == 'success'
     uses: ./.github/workflows/verify.yml
     with:
       checkout_ref: ${{ github.sha }}
+      app_tests: ${{ needs.classify.outputs.mode != 'docs' }}
+      platform: ${{ needs.classify.outputs.mode == 'full' || needs.classify.outputs.platform == 'true' }}
+      npm_pack: ${{ needs.classify.outputs.mode == 'full' || needs.classify.outputs.npm_pack == 'true' }}
 
   gate:
     name: CI gate
@@ -100,4 +113,9 @@ jobs:
           MODE: ${{ needs.classify.outputs.mode }}
           CLASSIFY: ${{ needs.classify.result }}
           DOCS: ${{ needs.docs.result }}
-          VERIFY: ${{ needs.verify.result }}
+          LINT: ${{ needs.verify.outputs.lint }}
+          APP: ${{ needs.verify.outputs.app }}
+          PLATFORM: ${{ needs.verify.outputs.platform }}
+          NPM_PACK: ${{ needs.verify.outputs.npm_pack }}
+          PLATFORM_REQUIRED: ${{ needs.classify.outputs.platform }}
+          NPM_PACK_REQUIRED: ${{ needs.classify.outputs.npm_pack }}

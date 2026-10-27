@@ -27,12 +27,18 @@
 - 发布前更新本文件，并同步 README、CHANGELOG、SECURITY 与官网。历史报告不改写为新的验收结果。
 - 同步与团队功能尚未具备前置条件时，不与稳定化任务同时扩张。
 
+## 产品北极星
+
+产品方向以 [issue #45](https://github.com/Nema-Project/nema-room/issues/45) 为北极星：Nema Room 是项目对齐副驾，帮助人和编码 Agent 持续理解项目在做什么、决策为何如此、还有什么没有定。该 issue 是对齐参考，不是已交付能力清单，其中的想法也不都已排期。
+
+评估新功能或架构变更时先问：这是否让人和 Agent 更容易维持一份有证据、且随项目演进而更新的共同理解？如果不是，先说明它为什么属于 Nema Room，再排优先级。新增事项和 spec 应写明如何服务于这条规则。发布、打包和分发算稳定化，不算产品方向。
+
 ## P0：发布前闭环
 
 | ID | 事项与依据 | 状态 | 验收标准 |
 | --- | --- | --- | --- |
 | P0-01 | 发布绑定完整 CI；已有同一提交测试失败但发布成功的记录 | 进行中 | 发布提交通过完整测试；tag 可追溯到主线；测试失败或缺失时发布被阻止；以失败场景验证门禁 |
-| P0-02 | 核实并强制合并检查；评估时可读的 active ruleset 仅要求 PR，传统分支保护接口返回 403，不能据此断言所有保护均不存在 | 进行中 | 记录实际保护规则；需要的检查未完成或失败时不可合并；文档变更与路径过滤不会造成检查永久等待 |
+| P0-02 | 核实并强制合并检查；评估时可读的 active ruleset 仅要求 PR，传统分支保护接口返回 403，不能据此断言所有保护均不存在。`strict_required_status_checks_policy` 在维护者按 [规格 D-9](docs/superpowers/specs/2026-10-27-pr-ci-fast-gate-design.md) 手工改掉之前仍为 true，本项不因此关闭 | 进行中 | 记录实际保护规则；需要的检查未完成或失败时不可合并；文档变更与路径过滤不会造成检查永久等待 |
 | P0-03 | 修复后的线程验收脚本上，Codex direct 与 Claude 各跑两次，均为退出码 0、12/12。证据：[PR #26 评论](https://github.com/Nema-Project/nema-room/pull/26#issuecomment-6434135887)、[执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) | 已完成 | 跑通只读总结、讨论后决策、无结论线程、冲突澄清、明确推翻旧决策；记录模型、适配器、提交、消息、知识变更与工具轨迹；Codex direct 和 Claude 分别记录结果 |
 | P0-04 | 数据目录升级与备份恢复已在 Windows 与 macOS 托管运行器通过；2026-10-27 维护者在 macOS 与 Windows 上手动覆盖安装后，workspace 数据均完整。证据：[执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) | 已完成 | 使用含聊天、线程、开发包、知识 Git 历史的旧版数据升级；核对数据完整性；模拟升级失败并从备份恢复；Windows 与 macOS 分别记录 |
 | P0-05 | 私密报告已启用。read 权限、非管理员协作者于 2026-10-27 12:18（Asia/Tokyo）提交测试报告并进入 triage，12:27 关闭且未发布。证据：[GHSA-mgcq-mcqv-75ff](https://github.com/Nema-Project/nema-room/security/advisories/GHSA-mgcq-mcqv-75ff)、[执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) | 已完成 | 修正文档，配置并验证私密报告渠道，明确桌面支持版本；避免引导用户在公开 Issue 提交敏感漏洞细节 |
@@ -62,13 +68,13 @@ P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实施进�
 | P1-05 | 开发包使用语言无关的结构化协议；wpFormat.ts 当前依赖中文标题与字段 | 待办 | 定义有版本的 schema 存储任务、文件、需求关联；中英日 Markdown 仅用于展示；兼容旧开发包；验证批准撤销与回报关联仍正确 |
 | P1-06 | 同步版本与验收文档 | 待办 | README、官网、CHANGELOG、SECURITY 对齐实际发布；各历史报告注明适用提交；新增当前验收矩阵而非将旧记录视为现状 |
 | P1-07 | 区分实现证据与需求验收；现有 verified 不代表测试或验收通过 | 待办 | 明确“提交已核对”“测试已通过”“验收已确认”的状态及证据来源；兼容现有数据；用户不会将 Git 核对误认为需求完成 |
-| P1-08 | 完善 CI 分层和桌面运行时变更覆盖 | 待办 | 保留 PR 检查及发布前完整打包；local/hub/cli/web 运行时改动有适当集成检查；依赖变更的打包风险有明确检查策略；避免无必要重复跑重型任务 |
+| P1-08 | 完善 CI 分层和桌面运行时变更覆盖。规格见 [fast-gate spec](docs/superpowers/specs/2026-10-27-pr-ci-fast-gate-design.md)，计划见 [fast-gate plan](docs/superpowers/plans/2026-10-27-pr-ci-fast-gate.md) | 进行中 | 保留 PR 检查及发布前完整打包；local/hub/cli/web 运行时改动有适当集成检查；依赖变更的打包风险有明确检查策略；避免无必要重复跑重型任务 |
 
 ## P2：后续能力
 
 | ID | 事项 | 状态 | 验收标准与前置条件 |
 | --- | --- | --- | --- |
-| P2-01 | 签名、公证与更新体验 | 待办 | 正式签名与 macOS 公证可验证；P0-04 已于 2026-10-27 完成，再设计自动更新、失败恢复与版本兼容 |
+| P2-01 | 签名、公证与更新体验 | 待办 | 正式签名与 macOS 公证可验证；P0-04 已于 2026-10-27 完成，再设计自动更新、失败恢复与版本兼容。版本号展示和只读的稳定版提示（issue #35）不计入本项 |
 | P2-02 | 规模与可诊断性 | 待办 | 建立大仓库、长会话、大量知识条目的耗时和资源基线；提供脱敏诊断导出；确保不含 token、密钥或默认导出私有讨论内容 |
 | P2-03 | 多设备同步 | 待办 | 先完成备份恢复与数据权威来源定义；设计冲突解决和一致性模型，再确定实现范围 |
 | P2-04 | 团队只读访问 | 待办 | 先设计身份、授权、撤销与审计；不得直接把当前单用户本地服务暴露为多人服务 |
@@ -101,5 +107,6 @@ P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实施进�
 | 2026-10-27 | 28 | 维护者 NullumNomen | [issue #28](https://github.com/Nema-Project/nema-room/issues/28) / [PR #30](https://github.com/Nema-Project/nema-room/pull/30) | 未承诺 | Room API 写入 `stated` 或 `decided`，以及把 `superseded`、`dropped`、`resolved` 改回 `active`，都必须引用当前任务的用户消息；检查在同一段仓库锁内。缺少或不相关的引用返回 409 `user_basis_evidence`。已合入 `main` `afd1456` |
 | 2026-10-27 | — | 维护者 NullumNomen | [PR #31](https://github.com/Nema-Project/nema-room/pull/31) | 未承诺 | 桌面包去掉 Node headers、npm 和 Corepack，只带一份 CPython，去掉未引用的 macOS `libpython3.11.dylib`，只留一份 Chromium 许可声明，去掉 source map、未用的 tree-sitter 语法和 sharp。打包打印各段体积，超出预算时警告。缺语法时警告并跳过。已合入 `main` `76680b8` |
 | 2026-10-27 | CX-03 | 待认领 | [PR #27](https://github.com/Nema-Project/nema-room/pull/27) | 未承诺 | 外部来源证据协议的设计已合入。实施前置 #28 已由 PR #30 完成，CX-03 成为下一项。生产代码尚未按该 spec 修改 |
-| 2026-10-27 | 32 | 待认领 | [issue #32](https://github.com/Nema-Project/nema-room/issues/32) | 未承诺 | 记录 manager agent 工作流的参考场景和与 `main` 的差距。P0 之后的设计参考，不是 spec，不改变 P0 顺序 |
+| 2026-10-27 | 32 | 待认领 | [issue #32](https://github.com/Nema-Project/nema-room/issues/32) | 未承诺 | 设计参考：实现证据与执行反馈回流到讨论（原 manager agent 场景，按 [issue #45](https://github.com/Nema-Project/nema-room/issues/45) 修订）。P0 之后的设计参考，不是 spec，不改变 P0 顺序 |
+| 2026-10-27 | 45 | Cursor Agent | [issue #45](https://github.com/Nema-Project/nema-room/issues/45) | 未承诺 | 将该 issue 记为产品北极星，决策规则写入路线图与 AGENTS.md。英文、中文、日文 README 与官网的标题和介绍改为项目对齐，并把交付写成回路 |
 | 2026-10-27 | CX-03 | Codex | 本地分支 `work`（实现至 `7b3548b`） | 未承诺 | 十项实现与审查修复已提交，361 项针对性测试通过；全量 1486 通过、7 项失败均在基线复现，等待最终验收，见 [实施验证](docs/reviews/2026-10-27-cx03-implementation.md)。不代替 P0 验收 |

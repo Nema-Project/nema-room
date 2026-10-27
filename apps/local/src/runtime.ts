@@ -19,6 +19,7 @@ import { acquireInstance, discoverInstance, requestInstanceShutdown, type Instan
 import { resolveHome } from "./paths.js";
 import { createGatewayCredential, createGatewayUiAuth, startGateway, type RunningGateway } from "./gateway.js";
 import { SessionManager } from "./session.js";
+import { createAppReleaseService, readBuildIdentity, type AppReleaseService } from "./appRelease.js";
 import { createSettingsService, type SettingsOperations, type SettingsService } from "./settings.js";
 import { createOwnedHelperScope } from "./ownedHelpers.js";
 
@@ -67,6 +68,8 @@ type RuntimeManifest = {
   webEntry: string;
   licenses: string;
   ownedHelperGuardian?: string;
+  commit?: string;
+  build?: { commit?: string };
 };
 
 type ResolvedAssets = RuntimeManifest & {
@@ -330,6 +333,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
   let gateway: RunningGateway | undefined;
   let session: SessionManager | undefined;
   let settings: SettingsService | undefined;
+  let appRelease: AppReleaseService | undefined;
   const events = new EventBus();
   let teardownPromise: Promise<void> | undefined;
   let startupComplete = false;
@@ -356,6 +360,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
       helperScope?.stopAccepting();
       // Prevent new auth work immediately; the service drains only after HTTP acceptance is stopped.
       try { settings?.stopAccepting(); } catch (error) { appendFailure(errors, error); }
+      try { appRelease?.close(); } catch (error) { appendFailure(errors, error); }
       // Revoke sessions and retire launch readiness before draining services.
       try { session?.close(); } catch (error) { appendFailure(errors, error); }
       let unpublished = false;
@@ -426,6 +431,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
       webOrigin: `http://127.0.0.1:${publicPort}`,
       uiAuth: createGatewayUiAuth(gatewayCredential),
       ownedHelpers: helperScope,
+      releaseVersion: assets.version,
     });
     assertWebAlive();
     phase("hub");
@@ -447,6 +453,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     assertWebAlive();
     phase("daemon");
     settings = createSettingsService({ home: paths.home, codexHome: process.env.CODEX_HOME ?? join(homedir(), ".codex"), operations: settingsOperationsForTests });
+    appRelease = createAppReleaseService({ home: paths.home, ...readBuildIdentity(assets.root, assets) });
     gateway = await startGateway({
       webTarget: `http://127.0.0.1:${webPort}`,
       hubTarget: hub.url,
@@ -454,6 +461,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
       port: publicPort,
       privateGatewayCredential: gatewayCredential,
       settings,
+      appRelease,
     });
     assertWebAlive();
     if (runtimeReadyHookForTests && db && webChild) await runtimeReadyHookForTests({ db, home: paths.home, dataDir: paths.data, webPort, webChild });

@@ -1,0 +1,11 @@
+# Source builds. `npm run up` and `node scripts/setup.mjs` merge this over docker-compose.yml.
+# Ports and NEMA_HUB_URL already follow NEMA_HUB_PORT / NEMA_WEB_PORT in the published file.
+services:
+  hub:
+    build:
+      context: .
+      target: hub
+  web:
+    build:
+      context: .
+      target: web

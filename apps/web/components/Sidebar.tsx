@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { flushSync } from "react-dom";
+import { AppReleaseFooter } from "@/components/AppRelease";
 import { PluginsPage } from "@/components/PluginsPage";
 import { nextAttention } from "@/lib/hub";
 import { LOCALES, useLocale, useT, type Locale } from "@/lib/i18n";
@@ -287,6 +288,7 @@ export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate,
           <span className={`dot${connected ? "" : " off"}`} />
           {connected ? t("sidebar.agentOnline") : t("sidebar.agentOffline")}
         </div>
+        <AppReleaseFooter />
         <div className="foot-switch">
           <button type="button" className="theme-toggle" aria-pressed={dark} aria-label={t("sidebar.theme")} title={t("sidebar.theme")} onClick={toggleTheme}>
             <svg className={dark ? "theme-icon" : "theme-icon on"} viewBox="0 0 16 16" aria-hidden="true">

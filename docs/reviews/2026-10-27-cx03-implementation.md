@@ -47,3 +47,9 @@ The original base was checked out separately at `/tmp/cx03-baseline`, reusing in
 The same six CLI failures appeared in the implementation's complete final run. Its seventh failure was `apps/local/test/runtime.test.ts`: `rejects daemon-token permissions before database creation`. Running that exact test against the base also failed with the same resolved-runtime-vs-rejection mismatch (1 failed, 23 skipped). All seven full-suite failures therefore reproduced on the base. This comparison establishes reproduction in this environment, not acceptance on Windows/macOS or a diagnosis of each failure.
 
 No desktop packaging, native platform acceptance, or real-model semantic checks were performed for this backend protocol change. CX-03 remains in progress in ROADMAP pending final acceptance; P0 status is unchanged.
+
+## PR preparation against updated main
+
+Before creating the PR, refreshed `origin/main` to `851ac11` (v0.1.4) and merged it into `codex/cx03-source-evidence`. Preserved the release changelog, current product-direction roadmap entries, and runtime changes. The lifecycle merge retains source/event recovery after uncommitted-entry recovery.
+
+Post-merge verification: root typecheck, CLI typecheck, Web TypeScript check, documentation link check, and diff whitespace check passed. The import/event/freshness regression command `npx vitest run --project @nema/hub sourceImport evidenceEvents sourceFreshness --maxWorkers=2 --hookTimeout=60000` passed all 44 tests across three files. The 361-test targeted result and complete-suite baseline comparison above remain historical evidence for the implementation before this merge; the complete suite was not rerun after updating main.

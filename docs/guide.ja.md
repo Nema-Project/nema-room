@@ -16,21 +16,23 @@
 
 ## デスクトップアプリ（プレビュー）
 
-デスクトップアプリは、全体を 1 つのローカルプログラムにまとめます。ディスク上の PGlite データベース、単一オーナーのローカルコア、保護された同一オリジンのゲートウェイ、同梱の Node を使い、Docker もデータベースサーバーも不要です。Git は PC にインストール済みのもの（2.31 以降）を使います。macOS では Finder から開いた場合も Homebrew と MacPorts の Git を見つけます。Git がない、または古い場合は起動時にその旨を表示し、https://git-scm.com/downloads を案内します。**デスクトップインストーラーを公開しています。** Windows x64 と Apple シリコン向けです。[インストーラーをダウンロード](https://github.com/Nema-Project/nema-room/releases/latest)。
+デスクトップアプリは、全体を 1 つのローカルプログラムにまとめます。ディスク上の PGlite データベース、単一オーナーのローカルコア、保護された同一オリジンのゲートウェイ、同梱の Node を使い、Docker もデータベースサーバーも不要です。Git は PC にインストール済みのもの（2.31 以降）を使います。macOS では Finder から開いた場合も Homebrew と MacPorts の Git を見つけます。Git がない、または古い場合は起動時にその旨を表示し、https://git-scm.com/downloads を案内します。**デスクトップ版を公開しています。** Windows x64 と Apple シリコン向けです。[ダウンロード](https://github.com/Nema-Project/nema-room/releases/latest)。Windows ではインストーラーかポータブル ZIP のどちらかを選びます。
 
 | 項目 | 状態 |
 | --- | --- |
-| Windows x64 | NSIS インストーラーを提供 |
+| Windows x64 | NSIS インストーラー（`.exe`）またはポータブル ZIP（`.zip`）。どちらか一方 |
 | macOS | Apple シリコン（arm64）向け DMG。Intel Mac は対象外 |
 | Linux | デスクトップ用インストーラーなし |
-| 署名と更新 | Windows は**未署名**、macOS は**アドホック署名・未公証**。自動更新なし |
+| 署名と更新 | Windows は**未署名**、macOS は**アドホック署名・未公証**。新しい安定版を見つけてリリースページを開くことはできる。ダウンロードとインストールは自動では行わない |
 | 一般公開 | [最新リリース](https://github.com/Nema-Project/nema-room/releases/latest)。Node（MIT）、同梱フォント（OFL）、Electron の ffmpeg（LGPL、差し替えできる別ライブラリ）は同梱の許諾文で公開 |
 
-**ビルド（Windows x64）**：`npm ci` の後に `npm run desktop:make -- --platform win32 --arch x64` を実行します。成果物は `dist/desktop-artifacts/win32-x64/` に出力されます：`Nema-<バージョン>-win32-x64.exe`（NSIS インストーラー）。ビルドは実行中の OS 向けのみで、ネイティブ C コンパイラーが必要です（Windows では Clang。[scripts/desktop/README.md](../scripts/desktop/README.md) を参照）。
+**ビルド（Windows x64）**：`npm ci` の後に `npm run desktop:make -- --platform win32 --arch x64` を実行します。成果物は `dist/desktop-artifacts/win32-x64/` に出力されます：`Nema-<バージョン>-win32-x64.exe`（NSIS インストーラー）と `Nema-<バージョン>-win32-x64.zip`（ポータブル版。アーカイブ直下に `Nema.exe`）。ビルドは実行中の OS 向けのみで、ネイティブ C コンパイラーが必要です（Windows では Clang。[scripts/desktop/README.md](../scripts/desktop/README.md) を参照）。
 
 **初回起動と OS の警告**：自分でビルドした、または内容を確認したファイルだけを開いてください。Windows の SmartScreen が「Windows によって PC が保護されました」と表示したら、「詳細情報」→「実行」を選びます。macOS 版は未検証です。公証されていないアプリは、通常どおり「システム設定 → プライバシーとセキュリティ」で「このまま開く」を選ぶ必要があります。
 
 **データの場所**：既定は `~/.nema/desktop`（`db/` がデータベース、`data/` が知識の Git リポジトリ、`instance.json` が実行状態）。Compose のデータベースは読まず、従来の `~/.nema/data` も使いません。
+
+**Windows のポータブル ZIP**：`Nema-<バージョン>-win32-x64.zip` を展開して `Nema.exe` を実行します。ショートカットもアンインストーラーもありません。そのフォルダを削除すると、ポータブル版だけを取り除けます。NSIS インストールと同じ `~/.nema/desktop` を使います。両方を同時に動かすとこのディレクトリを共有し、後から起動した側は既に動いているコアへ接続します。ZIP のフォルダを削除しても NSIS はアンインストールされず、NSIS をアンインストールしても展開済みフォルダと `~/.nema/desktop` は残ります。
 
 **ウィンドウ、トレイ、ブラウザーモード**
 - ウィンドウを閉じても閉じるのはウィンドウだけで、コアはトレイで動き続けます。トレイのアイコンから開き直せます。トレイメニューの `Quit Nema` で終了し、バックグラウンド処理の後始末を待ちます。
@@ -44,7 +46,7 @@
 
 **Web / Compose 版からの移行**：現在はライブラリのインターフェースだけで、コマンドも画面もありません。`exportSnapshot`（`apps/hub/src/db/export.ts`）は指定した PostgreSQL 接続からエクスポートし、`importLegacySnapshot`（`apps/local/src/import.ts`）は**空で停止中**のデスクトップのデータディレクトリへインポートします。インポートはまずステージング用ディレクトリで全体を検証し、失敗しても移行先は変更されません。中断した場合は `recoverInterruptedImport` で復旧します。認証情報はエクスポートもインポートもされないため、再度サインインしてください。
 
-**アップグレード**：デスクトップアプリに自動更新はありません。トレイの `Quit Nema` で終了し、`~/.nema/desktop` をバックアップしてから新しいバージョンをインストールします。起動時にデータベースのマイグレーションが適用されます。2026-10-27 のホストされた Windows と macOS ランナーで、使い捨てデータディレクトリの再オープン、未適用マイグレーション、失敗時のロールバック、バックアップ復元が通りました。同じ日、メンテナーが macOS と Windows で新しいパッケージを既存のインストールに上書きし、workspace のデータはどちらも残っていました。更新前には引き続き `~/.nema/desktop` をバックアップしてください。
+**アップグレード**：デスクトップアプリは更新をダウンロードもインストールもしません。起動の約 15 秒後と、おおよそ 1 日に 1 回、GitHub の新しい安定版を確認します。トレイとアプリ内のバナーがそのリリースページを開きます。`Check for Updates` はすぐに 1 回確認します。サイドバーの「更新を自動で確認する」（`~/.nema/desktop/update-check.json` の `updateCheck.enabled`）で定期確認を止められます。失敗、ドラフト、プレリリースは表示しません。トレイの `Quit Nema` で終了し、`~/.nema/desktop` をバックアップしてから新しいバージョンをインストールします。起動時にデータベースのマイグレーションが適用されます。2026-10-27 のホストされた Windows と macOS ランナーで、使い捨てデータディレクトリの再オープン、未適用マイグレーション、失敗時のロールバック、バックアップ復元が通りました。同じ日、メンテナーが macOS と Windows で新しいパッケージを既存のインストールに上書きし、workspace のデータはどちらも残っていました。更新前には引き続き `~/.nema/desktop` をバックアップしてください。
 
 現在の安定化の優先順位と受け入れの根拠は[ロードマップ](../ROADMAP.md)を参照してください。以下の過去の検証記録は、記載されたコミットと環境にのみ適用されます。
 
@@ -54,7 +56,18 @@
 
 ## Web / Compose の動作条件
 
-Web / Compose は**ソースからインストール**します。CLI パッケージは private です。`npx nema` を単独の npm インストール手段として使わないでください。Windows、macOS、Linux で共通の Node.js セットアップを使用します。
+ホストの daemon は npm パッケージ `@nema-project/nema` です（Node.js ≥ 22）。コマンド名は `nema` です。`@nema-project/nema@0.1.3` は 2026-10-27 に npm へ公開されました。この手動の初回公開は [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md) に記録しています。`v0.1.4` は trusted publisher による最初の公開です。実行中の hub と同じバージョンを入れます。
+
+```sh
+npx @nema-project/nema@<hub のバージョン> --version
+npm i -g @nema-project/nema@<hub のバージョン>
+```
+
+Compose では `curl http://127.0.0.1:4400/api/version` が `{"version":"..."}` を返します。デスクトップ版はサイドバーにバージョンを表示し、アプリのオリジンは `GET /_nema/version` を提供します。バージョンが違うと daemon は hub のエラーと `run: npm i -g @nema-project/nema@<バージョン>` を出して止まり、再接続しません。
+
+`nema daemon` の `--hub` の既定値は `http://127.0.0.1:4400` です。トークンファイルは `$NEMA_DATA_DIR` または `~/.nema/data` の `daemon-token`（`defaultTokenFile()`）です。hub は起動時にファイルがなければ書き込みます。Compose はコンテナの `NEMA_DATA_DIR` を `/data` にし、ホストのデータディレクトリ（既定は `~/.nema/data`、または `NEMA_DATA_HOST_DIR`）をそこにマウントするので、ホストの daemon とコンテナの hub は同じトークンファイルを使います。
+
+このリポジトリから Web / Compose を動かす場合は、下のソース用ウィザードを使います。Windows、macOS、Linux で共通の Node.js セットアップです。バージョンを付けない `@nema-project/nema` を入れて hub と一致するとみなさないでください。
 
 | 項目 | 条件 |
 | --- | --- |
@@ -84,7 +97,7 @@ Node/npm、Git、Docker、Compose を確認し、既存の `.env` を保持し�
 
 ### 手動インストール（Bash）
 
-Compose で PostgreSQL、hub、web を起動します。**daemon はホストで動かし**、ローカルの認証情報とリポジトリのパスを使います。
+Compose で PostgreSQL、hub、web を起動します。**daemon はホストで動かし**、ローカルの認証情報とリポジトリのパスを使います。daemon はイメージに入っていません。このリポジトリの開発は、このチェックアウトからビルドします。tag `v0.1.4` がイメージを初めて公開するリリースです。
 
 ```bash
 git clone https://github.com/Nema-Project/nema-room.git
@@ -93,8 +106,14 @@ cp .env.example .env
 npm ci
 npm run build -w apps/cli
 mkdir -p "$HOME/.nema/data"
-docker compose up -d --build
+# Linux と macOS のみ。Windows の Docker Desktop では不要です。
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
+npm run up
 ```
+
+`npm run up` はこのチェックアウトから hub と web をビルドします。Linux と macOS では、上の `export` は UID/GID が 1000 かどうかに関係なく、コンテナのユーザーをホストのユーザーにします。Windows の Docker Desktop ではこの export は不要です。`NEMA_HUB_PORT`（既定 4400）は公開されるホストのポートと hub の待受ポートの両方です。`NEMA_WEB_PORT`（既定 3000）はホストのポートだけを変えます。web コンテナは起動時に `NEMA_HUB_URL` を読み、compose はそれを `http://127.0.0.1:$NEMA_HUB_PORT` にします。
+
+clone せずにピン留めしたイメージを pull できるのは tag `v0.1.4` からです。この tag はイメージ公開ワークフローを含み、これらのイメージの最初の公開です（`linux/amd64`。arm64 は [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。`scripts/images/check-images.mjs` は compose のピンをパッケージ版（`0.1.4`）と一致させます。その tag が push され、両方のイメージが GHCR で公開されたあと、その tag から [`docker-compose.yml`](https://github.com/Nema-Project/nema-room/blob/v0.1.4/docker-compose.yml) を取得します（`curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.4/docker-compose.yml`）。リリースの添付ファイルではありません。Linux と macOS では同じように `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。そのあと `docker compose up -d` を実行します。ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。公開 web イメージは起動時に `NEMA_HUB_URL` を読みます。compose の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` なので、ポートを変えてもイメージの再ビルドは不要です。
 
 まずモデルを設定します。標準の認証方式を使う場合：
 
@@ -112,7 +131,7 @@ npm run logs   # hub / web のログ
 npm run down   # コンテナを停止。DB ボリュームは保持
 ```
 
-Linux で UID/GID が 1000 以外の場合は `.env` に `NEMA_UID` / `NEMA_GID` を設定してください。保存先を変更する場合は、先にディレクトリを作成し、`NEMA_DATA_HOST_DIR` と daemon が読む保存先を一致させます。
+Linux と macOS では、上のコマンドがすべてのホストユーザーについて `id` から `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。同じ値を `.env` に書くこともできます。保存先を変更する場合は、先にディレクトリを作成し、`NEMA_DATA_HOST_DIR` と daemon が読む保存先を一致させます。
 
 <a id="models"></a>
 
@@ -224,9 +243,9 @@ npm run lint -w apps/web
 npm run build -w apps/web
 ```
 
-ルートの typecheck は web を含みません。web は個別にビルドしてください。更新前にデータをバックアップし、`git pull`、`npm ci`、CLI と Compose イメージの再ビルド、daemon の再起動を行います。hub と CLI は同じバージョンを使ってください。
+ルートの typecheck は web を含みません。web は個別にビルドしてください。ソースのチェックアウトを更新する前にデータをバックアップし、`git pull`、`npm ci`、CLI の再ビルド、`npm run up`、daemon の再起動を行います。daemon は `GET /api/version` が返す hub のバージョンに合わせます。違う場合は `run: npm i -g @nema-project/nema@<バージョン>` を出して再接続しません。ソースのチェックアウトでは、daemon をこのツリーからビルドします。`@nema-project/nema@0.1.3` は 2026-10-27 から npm にあります。
 
-ポートや保存先は [.env.example](../.env.example) を参照してください。CLI はルートの `.env` を自動で読みません。保存先を変更したら shell で `NEMA_DATA_DIR` を export するか、`daemon` / `doctor` に `--token-file` を指定します。hub のポートを変えたら `--hub` も指定してください。`NEXT_PUBLIC_HUB_URL` 変更後は web の再ビルドが必要です。
+ポートや保存先は [.env.example](../.env.example) を参照してください。CLI はルートの `.env` を自動で読みません。保存先を変更したら shell で `NEMA_DATA_DIR` を export するか、`daemon` / `doctor` に `--token-file` を指定します。hub のポートを変えたら `--hub` も指定してください。Compose は `NEMA_HUB_PORT`（既定 4400。ホストとコンテナは同じポート）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）を読みます。web コンテナは起動時に `NEMA_HUB_URL` を読みます。Compose の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` です。ブラウザが別のアドレスで hub に届くときだけ `NEMA_HUB_URL` を設定してください。`NEXT_PUBLIC_HUB_URL` は `npm run dev` が読む値で、イメージの中では焼き込まれた代替値にすぎません。
 
 ## セキュリティ報告
 

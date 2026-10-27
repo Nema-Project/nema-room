@@ -9,6 +9,11 @@ This is the shared repository guide for local and remote coding agents. Read it 
 - Read the code, nearby tests, and relevant [technical reference](docs/reference.zh-CN.md) before changing behavior.
 - Historical material in `docs/superpowers/` and `docs/reviews/` applies to its recorded commit and environment. Resolve discrepancies using current source, configuration, and evidence; do not rewrite historical results as current acceptance.
 - Inspect the branch, working-tree status, and recent commits. Identify existing user or agent changes before editing.
+- Specs and plans follow [Product north star](#product-north-star).
+
+## Product north star
+
+Before writing a spec or plan, read [issue #45](https://github.com/Nema-Project/nema-room/issues/45) and apply its decision rule: does this make it easier for people and agents to maintain a shared, evidence-backed understanding of the project as it evolves? If it does not, explain why it belongs in Nema Room before prioritizing it. Say how the spec or plan serves that rule. Link the issue instead of copying it. Respect its guardrails: do not reframe Nema Room as merely an orchestrator, a coding UI, or a linear discussion-to-code pipeline; do not treat inferred knowledge as authoritative without provenance or human confirmation; do not equate Git evidence with tests or acceptance; do not claim integrations or drift detection that are not shipped. The name Nema comes from nemawashi (根回し): keep that coordination visible, including dissent and the evidence for a decision.
 
 ## Project boundaries
 
@@ -38,6 +43,8 @@ Desktop uses a local PGlite database and bundled Node, plus system Git. Web / Co
 - Use the current task's authorization for implementation. Publishing releases, merging, changing repository settings, or modifying real user data requires authorization for that action; routine read-only checks do not.
 - If work is blocked, report the exact blocker, completed changes, and remaining verification. Leave a reproducible handoff.
 
+Batch review fixes into one push. An in-progress CI run for that ref is cancelled, and a cancelled required job failing the `CI gate` is intentional. Do not idle waiting for CI; continue with the local checks. Do not push again only to clear a red X on an old SHA; the latest push is the one that counts. Before merging, check `main`'s latest `CI` workflow and do not merge when that run is missing, in progress, cancelled, or failed. Whoever sees `main` turn red reverts or fixes that first, before any other merge.
+
 ## Implementation conventions
 
 - Follow nearby TypeScript and module conventions. Keep code, comments, and commit messages in English; issues and PR discussions may use English, Chinese, or Japanese.
@@ -52,7 +59,7 @@ Desktop uses a local PGlite database and bundled Node, plus system Git. Web / Co
 
 ## Setup and verification
 
-Use Node.js 22 or later, npm, and Git. See [development setup](CONTRIBUTING.md#开发环境) for Docker/PostgreSQL and daemon startup. Preserve an existing `.env`. Do not run development hub/web alongside their Compose counterparts because their ports overlap. The CLI is private; do not document `npx nema` as a standalone installation.
+Use Node.js 22 or later, npm, and Git. See [development setup](CONTRIBUTING.md#开发环境) for Docker/PostgreSQL and daemon startup. Preserve an existing `.env`. Do not run development hub/web alongside their Compose counterparts because their ports overlap. The CLI publishes as the npm package `@nema-project/nema`. The command name is `nema`. Document a versioned install (`npx @nema-project/nema@<hub version>` / `npm i -g @nema-project/nema@<hub version>`), not an unversioned `npx @nema-project/nema` as if it matched every hub. Source setup remains the way to develop this repository.
 
 Choose checks based on the changed behavior. Add regression coverage for fixes and meaningful tests for new behavior; documentation-only edits need link, anchor, command, and consistency checks rather than application tests.
 
@@ -67,7 +74,7 @@ Choose checks based on the changed behavior. Add regression coverage for fixes a
 
 Run `npm ci` when dependencies need installing. Run `npm run typecheck` before the full test suite: child-process fixtures may need compiled workspace exports. Root typecheck excludes web; it does not replace the web build. A focused test can be run from the repository root with `npx vitest run <test-file>`.
 
-Read [.github/workflows/ci.yml](.github/workflows/ci.yml) for classification and the stable `CI gate`, and [.github/workflows/verify.yml](.github/workflows/verify.yml) for the complete reusable suite. The Windows and macOS platform job also runs the disposable desktop data-directory upgrade harness and the thread-acceptance rubric. Every PR runs classification and documentation checks. Only explicitly allowed documentation/site assets and the Pages workflow skip the full suite; agent instructions, executable files and mixed changes run it. Manual CI always runs the full suite. A required-check ruleset must be activated separately; an absent run is not a passing run. Run `node --test scripts/ci/*.test.mjs scripts/desktop/release-commit.test.mjs` and actionlint for CI/release gate changes. Do not add expensive duplicate checks without a concrete coverage need.
+Read [.github/workflows/ci.yml](.github/workflows/ci.yml) for classification and the stable `CI gate`, and [.github/workflows/verify.yml](.github/workflows/verify.yml) for the complete reusable suite. The Windows and macOS platform job also runs the disposable desktop data-directory upgrade harness and the thread-acceptance rubric. Every PR runs classification and documentation checks. The documentation allowlist skips application tests and heavy jobs. `AGENTS.md` and `CLAUDE.md` take the Ubuntu fast gate. Platform checks and npm pack follow the path table in `scripts/ci/policy.mjs`. A push to `main` and a manual dispatch run the full `verify.yml`. A required-check ruleset must be activated separately; an absent run is not a passing run. Run `node --test scripts/ci/*.test.mjs scripts/desktop/release-commit.test.mjs` and actionlint for CI/release gate changes. Do not add expensive duplicate checks without a concrete coverage need.
 
 Report the commands actually run, results, and skipped or blocked checks. Keep these claims separate: static checks, automated tests, packaging, real-model semantic acceptance, and native-platform acceptance. A successful build on one OS does not validate another, and skipped tests are not acceptance evidence.
 
@@ -79,3 +86,11 @@ Report the commands actually run, results, and skipped or blocked checks. Keep t
 - Update [ROADMAP.md](ROADMAP.md) when work changes a tracked item's status. Mark completion only with its acceptance evidence; do not mark an entire stabilization item done because one subtask landed.
 - Keep this guide concise. Put detailed designs and operational instructions in their existing documents and link to them.
 - Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md). Describe the concrete problem, resulting behavior, validation, and remaining limitations. Review the final diff and latest upstream changes before declaring completion.
+
+## Cursor Cloud specific instructions
+
+Boot already starts Docker, PostgreSQL on `127.0.0.1:5433` (`npm run db:up`), `npm run dev` (hub `127.0.0.1:4400`, web `127.0.0.1:3000`), and `node apps/cli/dist/index.js daemon`. A second `npm run dev` or `npm run up` binds those same ports.
+
+`.env` is copied from `.env.example` when missing. Hub dev reads it; the CLI does not. Do not commit `.env`.
+
+Creating a workspace does not need model credentials. `auth login` and `auth probe` do, and `auth probe` sends a real model request.

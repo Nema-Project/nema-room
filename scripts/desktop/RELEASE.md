@@ -10,6 +10,8 @@ Full `verify.yml` for that tree succeeded in [CI run 40433303454](https://github
 
 GitHub executes the workflow stored in the tagged commit. New safeguards cannot protect earlier commits retroactively. Supported release targets must descend from the recorded rollout commit and be reachable from `origin/main`; pre-rollout tags are unsupported. Historical releases are unchanged. This is not an organization-wide immutable policy against writers changing workflows.
 
+Do not create a tag unless that SHA's `CI` workflow on `main` has already succeeded. A missing, in-progress, cancelled, or failed run is not a tag candidate. Publication is still blocked by `verify.yml` on the tag SHA (a failure, cancellation, skip, or missing run cannot publish), not by a separate lookup of the `main` workflow run. A SHA whose full suite failed on `main` fails that same verify.
+
 Before intentionally creating any tag, fetch main and check both ancestry relations, substituting the **recorded real SHAs**:
 
 ```sh
@@ -40,8 +42,8 @@ The complete Windows/macOS platform checks and Ubuntu application tests, web bui
 - Tag runs build both targets and collect source materials; publication additionally validates every payload and asset. Only publish receives `contents:write`. Verification is read-only and uses no secrets.
 - Concurrency is scoped to each workflow/ref; tag runs are never cancelled by superseded PR runs.
 - Existing published releases are never overwritten. A previous draft is reused only if its assets belong to this release.
-- Assets: two installers (`.exe`, `.dmg`), two per-target checksum files, combined `SHA256SUMS-<version>.txt`, and `release-manifest-<version>.json`. No portable ZIP is published.
-- Windows automation installs and smokes the NSIS installer. macOS automation checks only the staged runtime; it does not prove DMG installation or Finder startup.
+- Assets: the Windows NSIS installer (`.exe`), a separate Windows portable ZIP (`.zip`), the macOS installer (`.dmg`), two per-target checksum files, combined `SHA256SUMS-<version>.txt`, and `release-manifest-<version>.json`. The ZIP is its own download of the unpacked app. It is not an archive that also contains the installer, and no macOS ZIP is published. Each Windows file has its own checksum entry.
+- Windows automation installs and smokes the NSIS installer, then lists the portable ZIP, verifies its checksum, and extracts and launches it. macOS automation checks only the staged runtime; it does not prove DMG installation or Finder startup.
 - The Windows and macOS platform job also runs a disposable data-directory upgrade and restore (chats, a thread, a work package, and knowledge Git history). On 2026-10-27 that step passed on both runners in [CI 40440137400](https://github.com/Nema-Project/nema-room/actions/runs/40440137400) (`ef87a29`): darwin arm64, Node v22.23.3, and win32 x64, Node v22.23.4, each 8/8. It does not install over an existing NSIS or DMG package. Local command after `npm ci`: `npx vitest run apps/hub/test/upgradeRecovery.test.ts --maxWorkers=1`.
 - On 2026-10-27 the maintainer (NullumNomen) reported a manual overwrite install on macOS and on Windows. Workspace data remained on both. That report is separate from the hosted data-directory job and from first-install smoke.
 
@@ -58,7 +60,8 @@ The complete Windows/macOS platform checks and Ubuntu application tests, web bui
 
 Windows installers are unsigned; macOS packages are ad-hoc signed and not notarized. Record actual OS prompts.
 
-- Windows x64: install with NSIS to default and spaced paths, launch, create a workspace, chat with a configured provider, quit from the tray, relaunch and confirm persistence. Uninstall and confirm data is preserved.
+- Windows x64 installer: install with NSIS to default and spaced paths, launch, create a workspace, chat with a configured provider, quit from the tray, relaunch and confirm persistence. Uninstall and confirm data is preserved.
+- Windows x64 portable ZIP: unzip `Nema-<version>-win32-x64.zip` and run `Nema.exe` from that folder. The archive root is the app directory (`Nema.exe` and `resources/`). It creates no desktop shortcut, no Start menu shortcut, and no uninstaller; delete the folder to remove that copy. User data still lives in `~/.nema/desktop` (`db/`, `data/`, `instance.json`), the same directory an NSIS install uses. Electron's ordinary per-user data directory is shared as well, because both builds use the same app id. A second launch while one copy is running connects to that core instead of opening another database. Uninstalling NSIS does not delete `~/.nema/desktop` and does not delete an extracted ZIP. Deleting the ZIP folder does not uninstall NSIS. These shortcut, uninstaller, and side-by-side data checks are manual; CI does not perform them.
 - macOS ARM64: install via DMG, launch from Finder, handle the OS's explicit Open Anyway flow as needed, create a workspace, chat, quit and relaunch. Check background-process cleanup separately.
 - Check bundled `Nema CLI` (`report install --help`) and browser launchers. Node is bundled; system Git 2.31+ is required.
 - Upgrade/recovery acceptance uses disposable backed-up data and remains separate from first-install smoke. The 2026-10-27 maintainer report covers an overwrite install on macOS and Windows with workspace data intact. It does not record a failed installer restore. Back up `~/.nema/desktop` before another overwrite.
@@ -66,6 +69,6 @@ Windows installers are unsigned; macOS packages are ad-hoc signed and not notari
 ## Anonymous download and hash verification
 
 1. Without an authenticated session, download every asset from the release page.
-2. Confirm exactly two installers, two per-target checksum files, combined checksums and the release manifest.
+2. Confirm the Windows installer, the Windows portable ZIP, the macOS installer, two per-target checksum files, combined checksums and the release manifest. There is no macOS ZIP, and the Windows ZIP does not contain the installer.
 3. Verify `sha256sum -c SHA256SUMS-<version>.txt`, macOS `shasum -a 256 -c ...`, or Windows `Get-FileHash -Algorithm SHA256` against the published list.
 4. Confirm manifest commit/run identity and prerelease/latest status, then record the public URLs and results.

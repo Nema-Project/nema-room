@@ -1,0 +1,168 @@
+name: Publish @nema-project/nema to npm
+
+# Trusted publishing (OIDC). The filename is part of the npm trusted-publisher
+# binding; do not rename it without changing the npm setting first.
+# A v* tag publishes only after verify.yml passes on that SHA. workflow_dispatch
+# builds and smokes the tarball and does not publish.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # actions/checkout       3d3c42e5aac5ba805825da76410c181273ba90b1  v7.0.1
+  # actions/setup-node     949feb2413d6458794dcd2491c4babbbce0c15c1  v7.1.0
+  # actions/upload-artifact   cf430e030ddbb5b0abf93d22962f4752f3646cd9  v7.0.2
+  # actions/download-artifact 9000827ccba6bdab643e8b6fd33ac0654aef8333  v8.0.2
+  NODE_VERSION: 22
+
+jobs:
+  verify:
+    uses: ./.github/workflows/verify.yml
+    with:
+      checkout_ref: ${{ github.sha }}
+
+  build:
+    name: Pack and smoke nema
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run cli:pack
+      - name: Smoke packed CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball=$(find dist-npm -name 'nema-project-nema-*.tgz' | head -n 1)
+          test -n "$tarball"
+          node scripts/npm/smoke-pack.mjs "$tarball"
+      - name: Prepare local hub and daemon token
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run db:up
+          ready=0
+          for _ in $(seq 1 30); do
+            if docker compose exec -T postgres pg_isready -U nema -d nema >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "$ready" = 1
+          mkdir -p "$RUNNER_TEMP/nema-data"
+          npm run build -w apps/hub
+          NEMA_DATABASE_URL=postgres://nema:nema@127.0.0.1:5433/nema \
+            NEMA_DATA_DIR="$RUNNER_TEMP/nema-data" \
+            NEMA_HUB_PORT=4400 \
+            nohup node apps/hub/dist/src/main.js >"$RUNNER_TEMP/hub.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/hub.pid"
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4400/api/version >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/hub.log"
+          exit 1
+      - name: Smoke daemon against the hub
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball=$(find dist-npm -name 'nema-project-nema-*.tgz' | head -n 1)
+          node scripts/npm/smoke-pack.mjs "$tarball" --hub-url http://127.0.0.1:4400 --token-file "$RUNNER_TEMP/nema-data/daemon-token"
+          node scripts/npm/smoke-pack.mjs "$tarball" --hub-url http://127.0.0.1:4400 --token-file "$RUNNER_TEMP/nema-data/daemon-token" --expect-skew
+      - name: Upload packed tarball
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nema-tarball
+          if-no-files-found: error
+          retention-days: 5
+          path: |
+            dist-npm/nema-project-nema-*.tgz
+            scripts/npm/check-tag.mjs
+            scripts/desktop/release-version.mjs
+            apps/cli/package.json
+            apps/desktop/package.json
+            apps/local/package.json
+      - name: Stop hub
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "$RUNNER_TEMP/hub.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/hub.pid")" || true
+          fi
+          docker compose down
+
+  publish:
+    name: Publish to npm
+    needs: [verify, build]
+    if: ${{ github.event_name == 'push' && needs.verify.result == 'success' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nema-tarball
+          path: artifact
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install an npm CLI that supports trusted publishing
+        run: npm install -g npm@11.6.2
+      - name: Confirm the tag and publish the packed tarball
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git init --quiet gate
+          git -C gate remote add origin "https://github.com/${REPO}.git"
+          # Resolve refs only. This is not a source checkout: the job still publishes the downloaded tarball.
+          auth=()
+          if [ -n "${GITHUB_TOKEN:-}" ]; then
+            auth=(-c "http.extraheader=AUTHORIZATION: bearer ${GITHUB_TOKEN}")
+          fi
+          git -C gate "${auth[@]}" fetch --no-tags origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          got=$(git -C gate rev-parse "refs/tags/${TAG}^{}")
+          if [ "$got" != "$SHA" ]; then
+            echo "tag moved: ${TAG} is ${got}, expected ${SHA}" >&2
+            exit 1
+          fi
+          git -C gate "${auth[@]}" fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          git -C gate merge-base --is-ancestor "$SHA" refs/remotes/origin/main
+          meta=$(node artifact/scripts/npm/check-tag.mjs "$TAG")
+          dist=$(node -e 'const tag=JSON.parse(process.argv[1]).distTag; if(tag!=="latest"&&tag!=="next") throw new Error("unexpected dist-tag"); process.stdout.write(tag)' "$meta")
+          # The tag can move after the check above. Fetch it again in this same step, immediately before publish.
+          git -C gate "${auth[@]}" fetch --no-tags origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          got=$(git -C gate rev-parse "refs/tags/${TAG}^{}")
+          if [ "$got" != "$SHA" ]; then
+            echo "tag moved: ${TAG} is ${got}, expected ${SHA}" >&2
+            exit 1
+          fi
+          tarball=$(find artifact/dist-npm -name 'nema-project-nema-*.tgz' | head -n 1)
+          test -n "$tarball"
+          npm publish --provenance --access public --tag "$dist" "./$tarball"

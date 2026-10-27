@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { assertReplaceableFfmpeg, builderConfig, parseMakeArgs, validateElectronNotices } from '../../../scripts/desktop/make.mjs';
+import { assertReplaceableFfmpeg, builderCliArgs, builderConfig, parseMakeArgs, validateElectronNotices } from '../../../scripts/desktop/make.mjs';
 import { parseSmokeArgs } from '../../../scripts/desktop/smoke-desktop.mjs';
 
 describe('native Electron packaging configuration', () => {
@@ -14,9 +15,11 @@ describe('native Electron packaging configuration', () => {
     expect(() => parseMakeArgs(['--platform', 'darwin', '--arch', 'x64'], { platform: 'darwin', arch: 'x64' })).toThrow(/unsupported/i);
   });
 
-  it('builds only the Windows NSIS installer with bundled resources outside ASAR', () => {
+  it('builds the Windows NSIS installer and a separate portable ZIP', () => {
     const config = builderConfig('C:/staged/payload', 'C:/dist', { platform: 'win32', arch: 'x64' });
-    expect(config.win.target).toEqual(['nsis']);
+    expect(config.win.target).toEqual(['nsis', 'zip']);
+    expect(config.afterPack.replaceAll('\\', '/')).toMatch(/scripts\/desktop\/after-pack\.cjs$/);
+    expect(builderCliArgs('cli.js', 'cfg.json', { platform: 'win32', arch: 'x64' })).toEqual(['cli.js', '--win', 'nsis', 'zip', '--x64', '--publish', 'never', '--config', 'cfg.json']);
     expect(config.nsis).toMatchObject({ oneClick: false, perMachine: false, deleteAppDataOnUninstall: false, differentialPackage: false });
     expect(config.asar).toBe(true);
     expect(config.files).toContain('preload.cjs');
@@ -61,15 +64,19 @@ describe('native Electron packaging configuration', () => {
   it('builds only the macOS DMG with explicit ad-hoc signing only', () => {
     const config = builderConfig('/staged/payload', '/dist', { platform: 'darwin', arch: 'arm64' });
     expect(config.mac.target).toEqual(['dmg']);
+    expect(builderCliArgs('cli.js', 'cfg.json', { platform: 'darwin', arch: 'arm64' })).toEqual(['cli.js', '--mac', 'dmg', '--arm64', '--publish', 'never', '--config', 'cfg.json']);
     expect(config.mac).toMatchObject({ identity: '-', hardenedRuntime: false });
     expect(config.mac).not.toHaveProperty('notarize');
     expect(config.mac.icon.replaceAll('\\', '/')).toMatch(/apps\/desktop\/assets\/icon\.icns$/);
   });
 
   it('smokes the standard Windows installer by default and accepts an explicit installer path', () => {
-    expect(parseSmokeArgs([]).installer.replaceAll('\\', '/')).toContain('dist/desktop-artifacts/win32-x64/Nema-0.1.3-win32-x64.exe');
+    const desktopVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+    expect(parseSmokeArgs([]).installer.replaceAll('\\', '/')).toContain(`dist/desktop-artifacts/win32-x64/Nema-${desktopVersion}-win32-x64.exe`);
     expect(parseSmokeArgs(['--installer', 'dist/desktop-artifacts-final/win32-x64/Nema-0.1.0-win32-x64.exe']).installer.replaceAll('\\', '/')).toContain('desktop-artifacts-final');
+    expect(parseSmokeArgs(['--zip', 'dist/Nema-0.1.3-win32-x64.zip']).zip.replaceAll('\\', '/')).toContain('Nema-0.1.3-win32-x64.zip');
     expect(() => parseSmokeArgs(['--installer', 'a.exe', '--installer', 'b.exe'])).toThrow(/usage/i);
-    expect(() => parseSmokeArgs(['--zip', 'a.zip'])).toThrow(/usage/i);
+    expect(() => parseSmokeArgs(['--zip'])).toThrow(/usage/i);
+    expect(() => parseSmokeArgs(['--installer', 'a.exe', '--zip', 'b.zip'])).toThrow(/usage/i);
   });
 });

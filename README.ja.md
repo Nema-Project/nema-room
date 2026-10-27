@@ -4,7 +4,7 @@
 
 <h1>Nema Room</h1>
 
-<p><strong>議論からコードへ。文脈を引き継ぐ。</strong></p>
+<p><strong>議論から実装まで、プロジェクトの理解を揃える。</strong></p>
 
 <p>
 <a href="https://github.com/Nema-Project/nema-room/releases/latest"><img src="https://img.shields.io/github/v/release/Nema-Project/nema-room?style=flat-square&color=555" alt="Latest release" /></a>
@@ -24,7 +24,7 @@
 
 </div>
 
-Nema Room は、AI Agent と要件を整理するローカルのワークスペースです。議論を出典と Git 履歴のある要件・決定にまとめ、spec と plan を確認・承認してから **Codex や Claude Code** に引き継ぎます。
+Nema Room は、ソフトウェアプロジェクトの理解を揃えるための、手元で動くコパイロットです。依頼や制約、トレードオフは散らばりやすく、同じ要件でも読み方が分かれることがあります。ここで Agent と議論し、出典と Git の履歴を残し、自分の発言と Agent の推論を分け、食い違いを計画にする前に解消します。承認した spec と plan を **Codex や Claude Code** に渡し、コミット報告は議論へ戻します。
 
 <img src="docs/screenshots/room-ja.png" width="1100" alt="請求書エクスポートの議論と、知識パネルに整理された要件・決定・未回答の質問。" />
 
@@ -34,11 +34,14 @@ Nema Room は、AI Agent と要件を整理するローカルのワークスペ�
 
 ## Nema Room でできること
 
+- **理解を揃える。** 散らばった記録を一つの記録にまとめます。新しい発言が有効な決定と食い違うときは、コパイロットがスレッドで尋ね、あなたの判断を待ちます。
 - **判断の根拠を残す。** 要件、決定、トレードオフ、未解決の質問に出典を保持。ユーザーの発言と Agent の推論を区別します。
 - **知識をバージョン管理。** 変更は Git に記録。項目を修正・取り下げても、履歴と出典は残ります。
 - **コードを踏まえて議論。** ローカルリポジトリを登録し、メインブランチのコミット済みコードを検索。図の生成や、古くなった図の表示にも対応します。
 - **意図を引き継ぐ。** 開発パッケージを生成し、不明点を解消。人が spec と plan を承認してから、コーディング Agent に渡します。
-- **実装の根拠を確認。** コミット報告を要件に結び付け、変更ファイルやメインブランチへの取り込みを確認できます。
+- **証拠を議論に戻す。** コミット報告を要件に結び付け、その Git の証拠を議論の中で確認します。
+
+**なぜ Nema？** 名は根回しに由来します。決定の前に理解を揃えつつ、食い違いも根拠も見える形で残します。
 
 日本語・英語・中国語の UI · ライト／ダークテーマ · 独立した議論スレッド
 
@@ -57,45 +60,62 @@ Nema Room は、AI Agent と要件を整理するローカルのワークスペ�
 
 ### デスクトップアプリ
 
-[最新リリース](https://github.com/Nema-Project/nema-room/releases/latest)からインストーラーをダウンロードします。
+[最新リリース](https://github.com/Nema-Project/nema-room/releases/latest)からデスクトップ版を 1 つダウンロードします。Windows では 2 つのダウンロードから 1 つを選びます。
 
-| プラットフォーム | インストール方法 |
+| プラットフォーム | ダウンロード |
 | --- | --- |
-| Windows x64 | `.exe` |
+| Windows x64 | `.exe` インストーラー、または `.zip` ポータブル版 |
 | macOS · Apple シリコン | `.dmg` |
 | Linux / Intel Mac | 下記の Web / Compose を使用 |
 
-1. [Git 2.31 以降](https://git-scm.com/downloads)をインストールしてから、Nema Room をインストールして開きます。Node とローカル DB は同梱されており、Docker は不要です。
+Windows の `.exe` は NSIS インストーラーです。ショートカット、アンインストール、上書き更新が使えます。`.zip` は展開してそのまま実行するアプリです。展開して `Nema.exe` を実行します。ショートカットもアンインストーラーもなく、インストーラーの繰り返しコピーを避けられます。どちらも `~/.nema/desktop` を使います。どちらか一方を選んでください。
+
+1. [Git 2.31 以降](https://git-scm.com/downloads)をインストールしてから、Nema Room をインストールして開くか、ポータブル ZIP を展開して `Nema.exe` を実行します。Node とローカル DB は同梱されており、Docker は不要です。
 2. **モデル設定**で ChatGPT サブスクリプション、Claude サブスクリプション、または Responses API 互換の API キーを接続します。利用可否や料金はプロバイダーによります。
 3. ワークスペースを作成して議論を始めます。コードの文脈が必要になったら、ローカルリポジトリを登録します。
 
-> **プレビュー版。** Windows は未署名、macOS はアドホック署名で未公証です。リリースのチェックサムでダウンロードを確認してください。自動更新はありません。更新前にトレイから終了し、`~/.nema/desktop` をバックアップしてください。2026-10-27 のホストされた Windows と macOS ランナーで、使い捨てデータディレクトリの移行とバックアップ復元は通りました。同じ日、メンテナーが macOS と Windows で新しいパッケージを既存のインストールに上書きし、workspace のデータはどちらも残っていました。初回起動と制限は[デスクトップガイド](docs/guide.ja.md#desktop)を参照してください。
+> **プレビュー版。** Windows のインストーラーとポータブル ZIP は未署名、macOS はアドホック署名で未公証です。リリースのチェックサムでダウンロードを確認してください。アプリは更新をダウンロードもインストールもしません。GitHub の新しい安定版を確認し、そのリリースページへリンクします。サイドバーの「更新を自動で確認する」で止められます。更新前にトレイから終了し、`~/.nema/desktop` をバックアップしてください。2026-10-27 のホストされた Windows と macOS ランナーで、使い捨てデータディレクトリの移行とバックアップ復元は通りました。同じ日、メンテナーが macOS と Windows で新しいパッケージを既存のインストールに上書きし、workspace のデータはどちらも残っていました。初回起動と制限は[デスクトップガイド](docs/guide.ja.md#desktop)を参照してください。
 
 <a id="初回リリースの範囲と動作条件"></a>
 
 ### Web / Compose
 
-Windows、macOS、Linux に対応。**Node.js ≥ 22**、**Git**、**Docker**、**Docker Compose v2** が必要です。
+このリポジトリを開発するときは、チェックアウトから PostgreSQL、hub、web をビルドします。tag `v0.1.4` がイメージを初めて公開するリリースです。daemon はイメージに入っていません。ホストで動かします。daemon のパッケージは `@nema-project/nema` です。`@nema-project/nema@0.1.3` は 2026-10-27 に npm へ公開され、その手動公開は [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md) に記録しています。Windows、macOS、Linux 上の **Node.js ≥ 22**、**Git**、**Docker**、**Docker Compose v2** が必要です。
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
+# Linux と macOS のみ。Windows の Docker Desktop では不要です。
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 node scripts/setup.mjs --lang ja
 ```
 
-ウィザードが依存関係を確認し、CLI をビルドしてサービスを起動し、モデル設定を案内します。[localhost:3000](http://localhost:3000) を開き、ホストの daemon は起動したままにしてください。既存の `.env` は保持されます。
+ウィザードが依存関係を確認し、CLI をビルドしてソースからサービスを起動し、モデル設定を案内します。ホストの daemon は起動したままにしてください。既存の `.env` は保持されます。`npm run up` は同じソースビルドです。Linux と macOS では、UID/GID が 1000 でもそれ以外でも、上と同じように `NEMA_UID` と `NEMA_GID` を export してから `npm run up` してください。hub がデータディレクトリへ書き込めます。Windows の Docker Desktop ではこの export は不要です。その後 [localhost:3000](http://localhost:3000) を開きます。公開用 compose ファイルにビルド手順はありません。
+
+clone せずにピン留めしたイメージを pull できるのは tag `v0.1.4` からです。この tag はイメージ公開ワークフローを含み、これらのイメージの最初の公開です（`linux/amd64`。arm64 は [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。このチェックアウトが `ghcr.io/nema-project/nema-room-hub:0.1.4` と `ghcr.io/nema-project/nema-room-web:0.1.4` をピン留めしているのは、`scripts/images/check-images.mjs` がピンとパッケージ版の一致を要求するためです。その tag が push され、両方のイメージが GHCR で公開されたあと、その tag から [`docker-compose.yml`](https://github.com/Nema-Project/nema-room/blob/v0.1.4/docker-compose.yml) を取得します（`curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.4/docker-compose.yml`）。リリースの添付ファイルではありません。Linux と macOS では同じように `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。そのあと `docker compose up -d` を実行します。ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。`NEMA_HUB_URL` の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` で、web コンテナの起動時に読まれるので、公開イメージを再ビルドせずにアドレスを変えられます。
 
 [手動インストールと設定](docs/guide.ja.md#source-installation) · 環境の確認のみ：`node scripts/setup.mjs --lang ja --check`
 
-CLI は private パッケージで、ソースからインストールします。`npx nema` は単独のインストール方法ではありません。
+ホストの daemon は npm パッケージ `@nema-project/nema` です（Node.js ≥ 22）。コマンド名は `nema` です。`@nema-project/nema@0.1.3` は 2026-10-27 にメンテナーのアカウントから公開されました。`v0.1.4` は `scripts/npm/RELEASE.md` の trusted publisher による最初の公開です。実行中の hub と同じバージョンを入れます。
+
+```sh
+npx @nema-project/nema@<hub のバージョン> --version
+npm i -g @nema-project/nema@<hub のバージョン>
+```
+
+Compose はそのバージョンを `http://127.0.0.1:4400/api/version` で返します。デスクトップ版はサイドバーに表示し、ループバックの `GET /_nema/version` でも読めます。バージョンが違うと daemon は `run: npm i -g @nema-project/nema@<バージョン>` を出して再接続しません。`nema daemon` の `--hub` の既定値は `http://127.0.0.1:4400` で、トークンは `$NEMA_DATA_DIR` または `~/.nema/data` の `daemon-token` です。hub が起動時にそのファイルを書きます。Compose はホストのデータディレクトリを `/data` にマウントします。
+
+このリポジトリの開発は上のソースインストールのままです。バージョンを付けない `@nema-project/nema` を入れて hub と一致するとみなさないでください。
 
 ## 議論から実装まで
+
+実装はループです。コミット報告は議論に戻ります。
 
 1. **議論** — アイデアやトレードオフを送り、Agent の解釈を確認。`/thread` で独立した議論を始めます。
 2. **接続** — ローカルリポジトリを登録し、コミット済みのコードを議論に取り込みます。
 3. **整理** — `superpowers` を有効にし、active な要件から spec と plan を含む開発パッケージを生成。不明点に回答します。
 4. **承認** — 人が確認・承認した後、コーディング Agent が取得。編集や再生成で承認は取り消されます。
-5. **追跡** — コミット報告を確認し、要件と実装を結ぶ根拠をたどります。
+5. **追跡** — コミット報告と、それに紐づく Git の証拠を議論へ戻します。
 
 ```text
 Discussion → Requirements + decisions → Approved spec + plan → Coding agent

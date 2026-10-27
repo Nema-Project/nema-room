@@ -17,6 +17,24 @@
 
 - Room writes with external references validate those references and require verbatim evidence from the current task's user message for user basis. Agents cannot rewrite imported snapshots, change their basis, or consume UI confirmation events. Main and thread prompts identify source excerpts as untrusted external data. Existing decision and user-message guards remain in force.
 
+## [0.1.4] - 2026-10-28
+
+### Added
+
+- Hub and web images publish to GHCR from tag `v0.1.4` after verification of that commit (`ghcr.io/nema-project/nema-room-hub` and `ghcr.io/nema-project/nema-room-web`, `linux/amd64`). Tag `v0.1.3` does not publish images. arm64 is tracked in issue #50. `npm run up` still builds the images from a source checkout. The compose pin equals the package version (`0.1.4`). The published web image reads `NEMA_HUB_URL` when the container starts (default `http://127.0.0.1:4400`). Compose publishes the hub on `NEMA_HUB_PORT` (default 4400, same port inside the container) and web on `NEMA_WEB_PORT` (default 3000, container port 3000), and sets `NEMA_HUB_URL` to `http://127.0.0.1:$NEMA_HUB_PORT` unless that variable is set. Linux and macOS setup exports `NEMA_UID` and `NEMA_GID` from `id` so any host user can write the data directory. Docker Desktop on Windows does not need that export.
+- The CLI and daemon pack as the npm package `@nema-project/nema` (command `nema`, Node.js ≥ 22). `@nema-project/nema@0.1.3` was published on 2026-10-27 from a maintainer account. That was the first publish. Nothing was published under the unscoped name `nema`, so there is no previously published daemon that still prints `npm i -g nema@<version>`. Tag `v0.1.4` is the first publish through the trusted publisher (`npm-publish.yml`); that publisher is configured and this release validates it. Install the running hub's version with `npx @nema-project/nema@<hub version>` or `npm i -g @nema-project/nema@<hub version>`. Source checkouts update with the repository. Compose serves the hub version at `GET /api/version`. The desktop app shows it in the sidebar and at `GET /_nema/version`. A mismatch prints `run: npm i -g @nema-project/nema@<version>` and does not reconnect. `nema daemon` still defaults to `http://127.0.0.1:4400` and the shared `daemon-token` file. See `scripts/npm/RELEASE.md`.
+- The desktop app shows its version in the macOS app menu, the tray menu on macOS and Windows, and the sidebar. A 7-character build commit is included when `runtime-manifest.json` or `build-metadata.json` has one.
+- After startup, and about once a day, the desktop app checks GitHub for a newer stable release. A tray item and an in-app banner link to that release page. Download and install stay manual. Turn the check off with **Check for updates automatically** in the sidebar (`updateCheck.enabled`). Failures stay silent. Prerelease and draft releases are not offered.
+- Windows releases include a portable ZIP next to the NSIS installer. The ZIP is a separate download of the unpacked app, with `Nema.exe` at the top and its own checksum. It does not contain the installer, and the installer does not contain the ZIP. The installer still adds shortcuts, uninstall, and overwrite upgrades. The ZIP is unzip-and-run, with no shortcuts or uninstaller. Both use `~/.nema/desktop`.
+
+### Changed
+
+- The landing page still links desktop downloads to the latest GitHub release. It names the Windows portable ZIP beside the installer, shows the unversioned `npm i -g @nema-project/nema` (command `nema`), and names the linux/amd64 hub and web image pins. `docker-compose.yml` is fetched from tag `v0.1.4`, not from the release assets. English, Chinese, and Japanese pages match. `site/en/` still redirects to the English page.
+- The PR `CI gate` still skips heavy checks for documentation changes. Other pull requests run the Ubuntu tests and web build, and run macOS/Windows platform checks and npm pack only for the paths that need them. Dockerfile, Compose, and `scripts/images/` changes run image smoke in the image workflow; that smoke is not a required `CI gate` check. A push to `main` runs full verification. Image, npm, and desktop tag workflows still call full `verify.yml`.
+- Workspace settings uses the same grouped panels as model settings. Close, delete, and save are bordered buttons in the standard ink color.
+- The English, Chinese, and Japanese READMEs, and the landing page, describe Nema Room as a local project-alignment copilot. Delivery is a feedback loop: commit evidence returns to the discussion.
+- The READMEs and the landing-page FAQ say the name Nema comes from nemawashi (根回し): understanding before a decision, with disagreements and evidence left visible.
+
 ## [0.1.3] - 2026-10-27
 
 ### Added

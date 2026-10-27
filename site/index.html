@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nema Room: turn discussions into traceable requirements</title>
-<meta name="description" content="Nema Room is a requirements discussion room that runs on your machine. Ideas from chat are filed as requirements, decisions and questions, each traced to what was said, then handed to Codex or Claude Code. Desktop installers are available for Windows x64 and Apple Silicon.">
+<title>Nema Room: keep the project aligned</title>
+<meta name="description" content="Local copilot for project alignment: one sourced reading, questions when statements conflict, and commit evidence back in the discussion. Windows x64 and Apple Silicon builds.">
 <link rel="icon" href="assets/nema-room-mark.svg" type="image/svg+xml">
 <link rel="alternate" hreflang="zh-CN" href="https://nema-project.github.io/nema-room/zh/">
 <link rel="alternate" hreflang="en" href="https://nema-project.github.io/nema-room/">
@@ -40,7 +40,7 @@
 
   <div class="tile tile-paper name">
     <h1 class="lines"><span class="line"><span data-line style="--i:0">Nema</span></span><span class="line"><span data-line style="--i:1">Room</span></span></h1>
-    <p class="name-line">A requirements discussion room on your machine</p>
+    <p class="name-line">Keep your project aligned, from discussion to delivery.</p>
   </div>
 
   <figure class="tile picture pic-a">
@@ -52,8 +52,8 @@
   </figure>
 
   <div class="pair">
-    <p class="tile tile-ink statement" data-rise style="--i:2">Ideas scattered across chat are filed as requirements, decisions and questions.</p>
-    <p class="tile tile-accent statement" data-rise style="--i:3">Each traces back to what was said. Once it’s clear, Codex or Claude Code builds it.</p>
+    <p class="tile tile-ink statement" data-rise style="--i:2">Notes and tradeoffs scatter, and one requirement can be read two ways.</p>
+    <p class="tile tile-accent statement" data-rise style="--i:3">Keep one sourced reading, then bring commit evidence back into the discussion.</p>
   </div>
 </header>
 
@@ -92,7 +92,7 @@
 </section>
 
 <section class="features" id="features" aria-labelledby="features-h">
-  <h2 id="features-h" class="tile tile-paper h-sec features-h" data-reveal>Every entry has a source</h2>
+  <h2 id="features-h" class="tile tile-paper h-sec features-h" data-reveal>One reading, with its sources</h2>
 
   <article class="cell" data-reveal>
     <div class="cell-text">
@@ -162,7 +162,7 @@
   <article class="cell" data-reveal style="--i:1">
     <div class="cell-text">
       <h3>Ask before building</h3>
-      <p>Whatever the discussion left unclear becomes a list of questions. Only what needs your answer is marked red.</p>
+      <p>Unclear points, and a statement that conflicts with an active decision, become questions. Nema asks and waits for you. Only what needs your answer is marked red.</p>
     </div>
     <div class="frag frag-dock-bottom" data-ui>
       <ul class="ui-questions">
@@ -190,7 +190,7 @@
 
 <section class="flow" id="flow" aria-labelledby="flow-h">
   <div class="field field-1">
-    <h2 id="flow-h" class="flow-h" data-reveal>Discussion to commit</h2>
+    <h2 id="flow-h" class="flow-h" data-reveal>Back into the discussion</h2>
     <div class="wp" data-ui>
       <div class="wp-head"><b>Work package · Bill CSV export</b><span class="wp-state">Drafting</span></div>
       <ul class="wp-list"><li>3 requirements</li><li>1 decision</li><li class="wp-alert">2 questions open</li></ul>
@@ -214,9 +214,9 @@
   <div class="field field-4">
     <div class="wp" data-ui>
       <div class="wp-head"><b>Work package · Bill CSV export</b><span class="wp-state">Done</span></div>
-      <ul class="wp-list"><li>3 commits, merged into main</li><li>6 files changed</li><li>3 / 3 requirements covered</li></ul>
+      <ul class="wp-list"><li>3 commits, merged into main</li><li>6 files changed</li><li>Linked to 3 requirements</li></ul>
     </div>
-    <p class="clause" data-reveal style="--i:1">Finally, watch the commits land in main.</p>
+    <p class="clause" data-reveal style="--i:1">Commit reports come back into the discussion.</p>
   </div>
 </section>
 
@@ -236,7 +236,7 @@
     <p class="facts-word" data-reveal>Status</p>
     <div class="records">
       <ul class="record" data-reveal style="--i:1" aria-label="Platforms">
-        <li><span>Windows x64 desktop</span><span>latest installer</span></li>
+        <li><span>Windows x64 desktop</span><span>latest installer or ZIP</span></li>
         <li><span>macOS desktop</span><span>latest, Apple Silicon</span></li>
         <li><span>Linux</span><span>Web / Compose version</span></li>
         <li><span>Installer signing</span><span>Not yet signed</span></li>
@@ -257,7 +257,7 @@
   <div class="band band-head"><h2 id="faq-h" data-reveal>Questions</h2></div>
   <div class="band">
     <h3 data-reveal>Can I download it now?</h3>
-    <p data-reveal style="--i:1">Yes. The <a href="https://github.com/Nema-Project/nema-room/releases/latest">latest release</a> has a Windows x64 installer and an Apple Silicon disk image. Installers are unsigned, so Windows shows “Windows protected your PC” the first time, and macOS asks you to open it from Privacy &amp; Security. The app also needs Git 2.31 or later on the machine. Intel Macs have no desktop build; on Linux, run the web version with Docker Compose.</p>
+    <p data-reveal style="--i:1">Yes. The <a href="https://github.com/Nema-Project/nema-room/releases/latest">latest release</a> has a Windows x64 installer, a Windows portable ZIP, and an Apple Silicon disk image. The ZIP is the unpacked app: unzip it and run <code>Nema.exe</code>. It has no shortcuts or uninstaller. The installer and the ZIP both use <code>~/.nema/desktop</code>. Pick one. Installers are unsigned, so Windows shows “Windows protected your PC” the first time, and macOS asks you to open it from Privacy &amp; Security. The app also needs Git 2.31 or later on the machine. Intel Macs have no desktop build. On Linux, use the linux/amd64 hub and web images, or build from source.</p>
   </div>
   <div class="band band-alt">
     <h3 data-reveal>Does it cost anything?</h3>
@@ -275,14 +275,29 @@
     <h3 data-reveal>Can a team use it together?</h3>
     <p data-reveal style="--i:1">The first release is for one person on one machine. Multi-device sync, backups and read-only team access come after the local core is done.</p>
   </div>
+  <div class="band band-alt">
+    <h3 data-reveal>Why Nema?</h3>
+    <p data-reveal style="--i:1">The name comes from nemawashi (根回し): understanding before a decision. Disagreements stay visible, and the decision keeps its evidence.</p>
+  </div>
 </section>
 
 <section class="cta" aria-labelledby="cta-h">
   <figure class="tile picture cta-side cta-left"><img src="assets/interior-no-30-strandgade.jpg" width="1137" height="1400" alt="Hammershøi, Interior, Strandgade 30: a door stands open and a woman sits at a table with her back turned." loading="lazy"></figure>
   <div class="tile tile-accent cta-main">
     <h2 id="cta-h" data-reveal>Download</h2>
-    <p data-reveal style="--i:1">Windows x64 and Apple Silicon installers are on the latest release. The app needs Git 2.31 or later already on the machine. To build from source, use Node.js 22 or later and Git, then run the setup wizard.</p>
-    <pre data-reveal style="--i:2"><code>git clone https://github.com/Nema-Project/nema-room.git
+    <p data-reveal style="--i:1">Windows x64 and Apple Silicon builds are on the latest release. On Windows, pick the installer or the portable ZIP. The ZIP unzips to <code>Nema.exe</code>, with no shortcuts or uninstaller. Both use <code>~/.nema/desktop</code>. The app needs Git 2.31 or later already on the machine.</p>
+    <p data-reveal style="--i:1">The host command is <code>nema</code>, from <code>npm i -g @nema-project/nema</code>. Hub and web images are linux/amd64. <a href="https://github.com/Nema-Project/nema-room/blob/v0.1.4/docker-compose.yml">docker-compose.yml on tag v0.1.4</a> pins <code>ghcr.io/nema-project/nema-room-hub:0.1.4</code> and <code>ghcr.io/nema-project/nema-room-web:0.1.4</code>. Fetch that file, then start them. It is not a release asset. On Linux and macOS, export <code>NEMA_UID</code> and <code>NEMA_GID</code> first. To develop this repository, clone it and run the setup wizard.</p>
+    <pre data-reveal style="--i:2"><code>npm i -g @nema-project/nema
+nema --version
+
+# Hub and web, linux/amd64. The compose file is on tag v0.1.4, not a release asset.
+curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.4/docker-compose.yml
+# Linux and macOS only. Docker Desktop on Windows does not need this.
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
+docker compose up -d
+
+# Or build this repository from source
+git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
 node scripts/setup.mjs --lang en</code></pre>
     <a class="button button-paper" href="https://github.com/Nema-Project/nema-room/releases/latest" data-reveal style="--i:3">Download latest</a>

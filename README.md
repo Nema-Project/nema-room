@@ -4,7 +4,7 @@
 
 <h1>Nema Room</h1>
 
-<p><strong>From conversation to code, with the context intact.</strong></p>
+<p><strong>Keep your project aligned, from discussion to delivery.</strong></p>
 
 <p>
 <a href="https://github.com/Nema-Project/nema-room/releases/latest"><img src="https://img.shields.io/github/v/release/Nema-Project/nema-room?style=flat-square&color=555" alt="Latest release" /></a>
@@ -24,7 +24,7 @@
 
 </div>
 
-Nema Room is a local workspace for shaping requirements with an AI agent. Turn discussions into requirements and decisions with sources and Git history, then hand an approved spec and plan to **Codex or Claude Code**.
+Nema Room is a local copilot for keeping a software project aligned. Requests, constraints, and tradeoffs scatter easily, and the same requirement can be read in more than one way. Discuss them here with an agent: keep sources and Git history, separate what you said from what the agent inferred, and clarify a conflict before it becomes the plan. Hand an approved spec and plan to **Codex or Claude Code**, then bring commit reports back into the discussion.
 
 <img src="docs/screenshots/room-en.png" width="1100" alt="A discussion about bill exports, with requirements, decisions, and an open question in the knowledge panel." />
 
@@ -34,11 +34,14 @@ Nema Room is a local workspace for shaping requirements with an AI agent. Turn d
 
 ## Why Nema Room
 
+- **Align understanding.** Bring scattered notes into one record. When a statement conflicts with an active decision, the copilot asks in a thread and waits for you.
 - **Keep the reasoning.** Requirements, decisions, tradeoffs, and open questions retain their sources. User statements and agent inferences stay distinguishable.
 - **Version your knowledge.** Changes have Git history. Correct or retract an entry without erasing where it came from.
 - **Ground discussions in code.** Bind local repositories, search committed main-branch snapshots, and generate diagrams with staleness indicators.
 - **Hand off with intent.** Generate a work package, resolve blocking questions, and approve the spec and plan before a coding agent picks them up.
-- **Follow the implementation.** Connect commit reports to requirements and inspect the Git evidence.
+- **Bring the evidence back.** Connect commit reports to the requirements and read that Git evidence in the discussion.
+
+**Why Nema?** The name comes from *nemawashi* (根回し), the practice of building understanding before a decision. Nema Room keeps that coordination in the open: disagreements stay visible, and decisions keep their evidence.
 
 English, Chinese, and Japanese UI · Light and dark themes · Separate discussion threads
 
@@ -57,45 +60,62 @@ See the original statement, why it was recorded, and whether it came from you or
 
 ### Desktop
 
-Download an installer from the [latest release](https://github.com/Nema-Project/nema-room/releases/latest).
+Download one desktop build from the [latest release](https://github.com/Nema-Project/nema-room/releases/latest). On Windows, pick one of the two downloads.
 
-| Platform | Installer |
+| Platform | Download |
 | --- | --- |
-| Windows x64 | `.exe` |
+| Windows x64 | `.exe` installer or `.zip` portable app |
 | macOS · Apple Silicon | `.dmg` |
 | Linux / Intel Mac | Use Web / Compose below |
 
-1. Install [Git 2.31 or later](https://git-scm.com/downloads), then install and open Nema Room. Node and the local database are bundled; Docker is not required.
+The Windows `.exe` is the NSIS installer: shortcuts, uninstall, and overwrite upgrade. The Windows `.zip` is the unpacked app: unzip it and run `Nema.exe`. It has no shortcuts or uninstaller, and it skips the installer's repeated file copy. Both use `~/.nema/desktop`. Pick one.
+
+1. Install [Git 2.31 or later](https://git-scm.com/downloads), then install and open Nema Room, or unzip the portable ZIP and run `Nema.exe`. Node and the local database are bundled; Docker is not required.
 2. Open **Model settings** and connect a ChatGPT subscription, Claude subscription, or a Responses API-compatible API key. Access and billing depend on the provider.
 3. Create a workspace and start a discussion. Bind a local repository when you want code context.
 
-> **Preview release.** Windows installers are unsigned; macOS builds are ad-hoc signed and not notarized. Verify downloads against the release checksums. There is no auto-update; quit from the tray and back up `~/.nema/desktop` before upgrading. A disposable data-directory migration and backup restore passed on hosted Windows and macOS runners on 2026-10-27. The same day, the maintainer installed a new package over an existing one on macOS and on Windows; workspace data remained. See the [desktop guide](docs/guide.en.md#desktop) for first launch and limitations.
+> **Preview release.** The Windows installer and portable ZIP are unsigned; macOS builds are ad-hoc signed and not notarized. Verify downloads against the release checksums. The app does not download or install updates. It checks GitHub for a newer stable release and links to that release; turn this off with “Check for updates automatically” in the sidebar. Quit from the tray and back up `~/.nema/desktop` before upgrading. A disposable data-directory migration and backup restore passed on hosted Windows and macOS runners on 2026-10-27. The same day, the maintainer installed a new package over an existing one on macOS and on Windows; workspace data remained. See the [desktop guide](docs/guide.en.md#desktop) for first launch and limitations.
 
 <a id="first-release-scope-and-requirements"></a>
 
 ### Web / Compose
 
-Requires **Node.js ≥ 22**, **Git**, **Docker**, and **Docker Compose v2** on Windows, macOS, or Linux.
+Build PostgreSQL, the hub, and web from a checkout when developing this repository. Tag `v0.1.4` is the first release that publishes images. The daemon is not in those images. It still runs on the host. The daemon package is `@nema-project/nema`. `@nema-project/nema@0.1.3` was published to npm on 2026-10-27; that manual publish is recorded in [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md). You need **Node.js ≥ 22**, **Git**, **Docker**, and **Docker Compose v2** on Windows, macOS, or Linux.
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
+# Linux and macOS only. Docker Desktop on Windows does not need this.
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 node scripts/setup.mjs --lang en
 ```
 
-The wizard checks dependencies, builds the CLI, starts services, and guides model setup. Open [localhost:3000](http://localhost:3000) and keep the host daemon running. Existing `.env` files are preserved.
+The wizard checks dependencies, builds the CLI, starts services from source, and guides model setup. Keep the host daemon running. Existing `.env` files are preserved. `npm run up` is the same source build. On Linux and macOS, export `NEMA_UID` and `NEMA_GID` the same way before `npm run up` so the hub can write its data directory for any host user, including users whose ids are not 1000. Docker Desktop on Windows does not need that export. Open [localhost:3000](http://localhost:3000). The published compose file has no build step.
+
+Pulling pinned images, without cloning, starts at tag `v0.1.4`. That tag contains the image publish workflow and is the first publish of these images (`linux/amd64`; arm64 is [issue #50](https://github.com/Nema-Project/nema-room/issues/50)). This checkout pins `ghcr.io/nema-project/nema-room-hub:0.1.4` and `ghcr.io/nema-project/nema-room-web:0.1.4` because `scripts/images/check-images.mjs` requires the pin to equal the package version. After that tag is pushed and both images are public on GHCR, fetch [`docker-compose.yml`](https://github.com/Nema-Project/nema-room/blob/v0.1.4/docker-compose.yml) from the tag (`curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.4/docker-compose.yml`). It is not a release asset. On Linux and macOS, export `NEMA_UID` and `NEMA_GID` as above. Docker Desktop on Windows does not need that export. Then run `docker compose up -d`. Host ports follow `NEMA_HUB_PORT` (default 4400; the container listens on the same port) and `NEMA_WEB_PORT` (default 3000; the container still listens on 3000). `NEMA_HUB_URL` defaults to `http://127.0.0.1:$NEMA_HUB_PORT` and is read when the web container starts, so one published image works without a rebuild.
 
 [Manual setup and configuration](docs/guide.en.md#source-installation) · Read-only check: `node scripts/setup.mjs --lang en --check`
 
-The CLI is private and installed from source; `npx nema` is not a standalone installation method.
+The host daemon is the npm package `@nema-project/nema` (Node.js ≥ 22). The command name is `nema`. `@nema-project/nema@0.1.3` was published on 2026-10-27 from a maintainer account. `v0.1.4` is the first publish through the trusted publisher described in `scripts/npm/RELEASE.md`. Install the same version as the running hub:
+
+```sh
+npx @nema-project/nema@<hub version> --version
+npm i -g @nema-project/nema@<hub version>
+```
+
+Compose reports that version at `http://127.0.0.1:4400/api/version`. The desktop app shows it in the sidebar; its loopback origin also serves `GET /_nema/version`. A mismatch prints `run: npm i -g @nema-project/nema@<version>` and does not reconnect. `nema daemon` defaults to `--hub http://127.0.0.1:4400` and reads `daemon-token` from `$NEMA_DATA_DIR` or `~/.nema/data`. The hub writes that file on startup. Compose bind-mounts the host data directory at `/data`.
+
+Developing this repository still uses the source checkout above. Do not install an unversioned `@nema-project/nema` and assume it matches the hub.
 
 ## From discussion to delivery
+
+Delivery is a loop: commit reports come back into the discussion.
 
 1. **Discuss** — share notes and tradeoffs; review the agent's interpretation. Use `/thread` for a separate discussion.
 2. **Connect** — bind a local repository to bring committed code into the conversation.
 3. **Prepare** — enable `superpowers`, select active requirements, and generate a work package with a spec and plan. Resolve blocking questions.
 4. **Approve** — review the package, then let your coding agent retrieve it. Editing or regenerating a package revokes approval.
-5. **Track** — inspect commit reports and their evidence against the requirements.
+5. **Track** — bring commit reports and their Git evidence back into the discussion.
 
 ```text
 Discussion → Requirements + decisions → Approved spec + plan → Coding agent

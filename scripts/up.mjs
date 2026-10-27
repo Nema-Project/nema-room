@@ -2,6 +2,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import * as nodeUtil from "node:util";
+import { devComposeUpArgs } from "./compose-dev.mjs";
 import { setupSettings } from "./setup.mjs";
 
 try {
@@ -13,7 +14,7 @@ try {
   const s = setupSettings(config);
   await mkdir(s.dataDir, { recursive: true });
   const env = { ...process.env, NEMA_DATA_HOST_DIR: s.dataDir, NEMA_HUB_PORT: s.port, NEMA_UID: s.uid, NEMA_GID: s.gid };
-  const result = spawnSync("docker", ["compose", "up", "-d", "--build"], { cwd: root, env, stdio: "inherit", windowsHide: true });
+  const result = spawnSync("docker", devComposeUpArgs(), { cwd: root, env, stdio: "inherit", windowsHide: true });
   if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;
 } catch (error) {

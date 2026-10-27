@@ -16,21 +16,23 @@ Detailed setup and operation for the desktop app and Web / Compose. For an overv
 
 ## Desktop app (preview)
 
-The desktop app puts the whole stack in one local program: an on-disk PGlite database, a single-owner local core, a protected same-origin gateway, and bundled Node. It uses the Git already on your machine (2.31 or later). On macOS, an app opened from the Finder also finds Homebrew and MacPorts Git. If Git is missing or older, the app says so on launch and links to https://git-scm.com/downloads. It needs neither Docker nor a database server. **Desktop installers are published** for Windows x64 and Apple Silicon: [download the installers](https://github.com/Nema-Project/nema-room/releases/latest).
+The desktop app puts the whole stack in one local program: an on-disk PGlite database, a single-owner local core, a protected same-origin gateway, and bundled Node. It uses the Git already on your machine (2.31 or later). On macOS, an app opened from the Finder also finds Homebrew and MacPorts Git. If Git is missing or older, the app says so on launch and links to https://git-scm.com/downloads. It needs neither Docker nor a database server. **Desktop builds are published** for Windows x64 and Apple Silicon: [download a build](https://github.com/Nema-Project/nema-room/releases/latest). On Windows, pick the installer or the portable ZIP.
 
 | Item | Status |
 | --- | --- |
-| Windows x64 | NSIS installer available |
+| Windows x64 | NSIS installer (`.exe`) or portable ZIP (`.zip`). Pick one |
 | macOS | DMG for Apple Silicon (arm64). Intel Macs are not a target |
 | Linux | No desktop installer |
-| Signing and updates | Windows is **unsigned**; macOS uses **ad-hoc signing, without notarization**. There is no auto-update |
+| Signing and updates | Windows is **unsigned**; macOS uses **ad-hoc signing, without notarization**. The app can notice a newer stable GitHub release and open its release page. It does not download or install updates |
 | Public release | [Latest release](https://github.com/Nema-Project/nema-room/releases/latest). Node (MIT), Inter and JetBrains Mono (OFL), and Electron's ffmpeg (LGPL, its own library) ship with their notices |
 
-**Build (Windows x64):** after `npm ci`, run `npm run desktop:make -- --platform win32 --arch x64`. Output goes to `dist/desktop-artifacts/win32-x64/`: `Nema-<version>-win32-x64.exe` (NSIS installer). A build only targets the current OS and needs a native C compiler (Clang on Windows; see [scripts/desktop/README.md](../scripts/desktop/README.md)).
+**Build (Windows x64):** after `npm ci`, run `npm run desktop:make -- --platform win32 --arch x64`. Output goes to `dist/desktop-artifacts/win32-x64/`: `Nema-<version>-win32-x64.exe` (NSIS installer) and `Nema-<version>-win32-x64.zip` (portable app; `Nema.exe` at the top of the archive). A build only targets the current OS and needs a native C compiler (Clang on Windows; see [scripts/desktop/README.md](../scripts/desktop/README.md)).
 
 **First launch and operating-system warnings:** open only a file you built or checked yourself. Windows SmartScreen shows "Windows protected your PC": choose "More info", then "Run anyway". The macOS package is unverified; as usual for an app that is not notarized, it would need "Open Anyway" in System Settings → Privacy & Security.
 
 **Where data lives:** `~/.nema/desktop` by default (`db/` database, `data/` knowledge Git repositories, `instance.json` run state). It does not read the Compose database and never uses the old `~/.nema/data`.
+
+**Windows portable ZIP:** unzip `Nema-<version>-win32-x64.zip` and run `Nema.exe`. There is no shortcut and no uninstaller; delete that folder to remove the portable copy. It uses the same `~/.nema/desktop` directory as an NSIS install. Running both at once shares that directory: the second launch connects to the core that is already running. Deleting the ZIP folder does not uninstall NSIS, and uninstalling NSIS does not delete the extracted folder or `~/.nema/desktop`.
 
 **Window, tray, and browser mode**
 - Closing the window closes only the window; the core keeps running in the tray, and the tray icon reopens it. `Quit Nema` in the tray menu quits and waits for background work to be cleaned up.
@@ -44,7 +46,7 @@ The desktop app puts the whole stack in one local program: an on-disk PGlite dat
 
 **Migrating from the Web / Compose version:** there is only a library interface so far, with no command or UI. `exportSnapshot` (`apps/hub/src/db/export.ts`) exports from a PostgreSQL connection you name, and `importLegacySnapshot` (`apps/local/src/import.ts`) imports into an **empty, stopped** desktop data directory. The import validates everything in a staging directory first and leaves the destination untouched on failure; use `recoverInterruptedImport` after an interruption. Credentials are neither exported nor imported, so sign in again.
 
-**Upgrading:** the desktop app has no auto-update. Quit with `Quit Nema` in the tray, back up `~/.nema/desktop`, then install the new version; database migrations run on startup. A disposable data-directory reopen, pending migration, failed migration, and backup restore passed on hosted Windows and macOS runners on 2026-10-27. On that date the maintainer installed a new package over an existing one on macOS and on Windows, and workspace data remained. Back up `~/.nema/desktop` before upgrading anyway.
+**Upgrading:** the desktop app does not download or install updates. About 15 seconds after startup, and about once a day, it checks GitHub for a newer stable release. The tray and an in-app banner link to that release page. **Check for updates** runs once immediately. **Check for updates automatically** in the sidebar (`updateCheck.enabled` in `~/.nema/desktop/update-check.json`) turns the scheduled check off. A failure, draft, or prerelease stays quiet. Quit with `Quit Nema` in the tray, back up `~/.nema/desktop`, then install the new version; database migrations run on startup. A disposable data-directory reopen, pending migration, failed migration, and backup restore passed on hosted Windows and macOS runners on 2026-10-27. On that date the maintainer installed a new package over an existing one on macOS and on Windows, and workspace data remained. Back up `~/.nema/desktop` before upgrading anyway.
 
 Current stabilization priorities and acceptance evidence are tracked in the [roadmap](../ROADMAP.md). The historical validation snapshot below applies only to the commit and environment recorded in that review.
 
@@ -54,7 +56,18 @@ Current stabilization priorities and acceptance evidence are tracked in the [roa
 
 ## Web / Compose requirements
 
-For Web / Compose, install **from source**. The CLI package is private; do not treat `npx nema` as a standalone npm installation command. Windows, macOS, and Linux share a Node.js setup wizard.
+The host daemon is the npm package `@nema-project/nema` (Node.js ≥ 22). The command name is `nema`. `@nema-project/nema@0.1.3` was published on 2026-10-27. That manual first publish is recorded in [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md). `v0.1.4` is the first trusted-publisher publish. Install the same version as the running hub:
+
+```sh
+npx @nema-project/nema@<hub version> --version
+npm i -g @nema-project/nema@<hub version>
+```
+
+Compose: `curl http://127.0.0.1:4400/api/version` returns `{"version":"..."}`. Desktop: the sidebar shows the app version, and the app origin serves `GET /_nema/version`. If the daemon version does not match, it prints the hub error and `run: npm i -g @nema-project/nema@<version>`, then stops. It does not keep reconnecting.
+
+`nema daemon` defaults to `--hub http://127.0.0.1:4400`. It reads `daemon-token` from `$NEMA_DATA_DIR` or `~/.nema/data` (`defaultTokenFile()`). The hub writes that file when it starts, if the file is missing. Compose sets the container `NEMA_DATA_DIR` to `/data` and bind-mounts the host data directory there (default `~/.nema/data`, or `NEMA_DATA_HOST_DIR`), so the host daemon and the container hub share one token file.
+
+Running the Web / Compose stack from this repository still uses the source wizard below. Windows, macOS, and Linux share that Node.js setup. Do not install an unversioned `@nema-project/nema` and assume it matches the hub.
 
 | Item | Requirement |
 | --- | --- |
@@ -84,7 +97,7 @@ Read-only check: `node scripts/setup.mjs --lang en --check`. With npm available,
 
 ### Manual installation (Bash)
 
-Compose runs PostgreSQL, the hub, and web. **The daemon runs on your host**, using local credentials and repository paths.
+Compose runs PostgreSQL, the hub, and web. **The daemon runs on your host**, using local credentials and repository paths. It is not in the images. Developing this repository still builds the images from this checkout. Tag `v0.1.4` is the first release that publishes them.
 
 ```bash
 git clone https://github.com/Nema-Project/nema-room.git
@@ -93,8 +106,14 @@ cp .env.example .env
 npm ci
 npm run build -w apps/cli
 mkdir -p "$HOME/.nema/data"
-docker compose up -d --build
+# Linux and macOS only. Docker Desktop on Windows does not need this.
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
+npm run up
 ```
+
+`npm run up` builds hub and web from this checkout. On Linux and macOS, the `export` sets the hub's user to the host user, including when that user is not uid 1000. Docker Desktop on Windows does not need that export. `NEMA_HUB_PORT` (default 4400) is both the published host port and the hub's listen port. `NEMA_WEB_PORT` (default 3000) is only the published host port. The web container reads `NEMA_HUB_URL` at start; compose sets it to `http://127.0.0.1:$NEMA_HUB_PORT`.
+
+Pulling pinned images, without cloning, starts at tag `v0.1.4`, the first tag that contains the image publish workflow and publishes the images (`linux/amd64`; arm64 is [issue #50](https://github.com/Nema-Project/nema-room/issues/50)). `scripts/images/check-images.mjs` keeps the compose pin equal to the package version (`0.1.4`). After that tag is pushed and both images are public on GHCR, fetch [`docker-compose.yml`](https://github.com/Nema-Project/nema-room/blob/v0.1.4/docker-compose.yml) from the tag (`curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.4/docker-compose.yml`). It is not a release asset. On Linux and macOS, export `NEMA_UID` and `NEMA_GID` the same way. Docker Desktop on Windows does not need that export. Then run `docker compose up -d`. Host ports follow `NEMA_HUB_PORT` (default 4400; the container listens on the same port) and `NEMA_WEB_PORT` (default 3000; the container still listens on 3000). The published web image reads `NEMA_HUB_URL` at start. Compose defaults that to `http://127.0.0.1:$NEMA_HUB_PORT`, so the image does not need a rebuild when the port changes.
 
 Configure model access first. For the default authentication mode:
 
@@ -112,7 +131,7 @@ npm run logs   # Hub / web logs
 npm run down   # Stop containers; retain the database volume
 ```
 
-On Linux, set `NEMA_UID` / `NEMA_GID` in `.env` if your UID/GID is not 1000. Create custom data directories yourself and ensure `NEMA_DATA_HOST_DIR` matches the directory read by the daemon.
+On Linux and macOS, the commands above export `NEMA_UID` and `NEMA_GID` from `id` for every host user. Docker Desktop on Windows does not need that export. The same values can be set in `.env`. Create custom data directories yourself and ensure `NEMA_DATA_HOST_DIR` matches the directory read by the daemon.
 
 <a id="models"></a>
 
@@ -225,9 +244,9 @@ npm run lint -w apps/web
 npm run build -w apps/web
 ```
 
-The root typecheck excludes web; build it separately. Before upgrading, back up data, then run `git pull`, `npm ci`, rebuild the CLI and Compose images, and restart the daemon. Keep hub and CLI versions aligned.
+The root typecheck excludes web; build it separately. Before upgrading a source checkout, back up data, then run `git pull`, `npm ci`, rebuild the CLI, run `npm run up`, and restart the daemon. Keep the daemon on the hub version from `GET /api/version`. A mismatch prints `run: npm i -g @nema-project/nema@<version>` and does not reconnect. A source checkout still builds that daemon from this tree. `@nema-project/nema@0.1.3` has been on npm since 2026-10-27.
 
-See [.env.example](../.env.example) for ports and directories. The CLI does not automatically load the root `.env`: export `NEMA_DATA_DIR` or pass `--token-file` to `daemon` / `doctor` for a custom data directory; also pass `--hub` for a different hub port. Changing `NEXT_PUBLIC_HUB_URL` requires rebuilding web.
+See [.env.example](../.env.example) for ports and directories. The CLI does not automatically load the root `.env`: export `NEMA_DATA_DIR` or pass `--token-file` to `daemon` / `doctor` for a custom data directory; also pass `--hub` for a different hub port. Compose reads `NEMA_HUB_PORT` (default 4400; the host and the container use the same port) and `NEMA_WEB_PORT` (default 3000; the container stays on 3000). The web container reads `NEMA_HUB_URL` when it starts. Compose defaults that to `http://127.0.0.1:$NEMA_HUB_PORT`. Set `NEMA_HUB_URL` only when the browser reaches the hub at a different address. `NEXT_PUBLIC_HUB_URL` is what `npm run dev` reads, and it is only the baked fallback inside the image.
 
 ## Security reporting
 

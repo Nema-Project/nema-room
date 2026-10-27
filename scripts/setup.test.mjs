@@ -2,7 +2,25 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { parseOptions, setupSettings } from "./setup.mjs";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { npmCliBeside, npmEntryFromShim, parseOptions, setupSettings } from "./setup.mjs";
+
+test("windows npm launch finds the cli beside node and in current shims", async () => {
+  const quoted = '"%dp0%\\node_modules\\npm\\bin\\npm-cli.js"';
+  const assigned = 'SET "NPM_CLI_JS=%~dp0\\node_modules\\npm\\bin\\npm-cli.js"';
+  assert.equal(npmEntryFromShim(quoted), "node_modules\\npm\\bin\\npm-cli.js");
+  assert.equal(npmEntryFromShim(assigned), "node_modules\\npm\\bin\\npm-cli.js");
+  const dir = await mkdtemp(path.join(os.tmpdir(), "nema-npm-"));
+  try {
+    const entry = path.join(dir, "node_modules", "npm", "bin", "npm-cli.js");
+    await mkdir(path.dirname(entry), { recursive: true });
+    await writeFile(entry, "");
+    assert.equal(npmCliBeside(dir), entry);
+    assert.equal(npmCliBeside(path.join(dir, "missing")), null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test("all three setup languages and read-only mode are available", () => {
   for (const lang of ["en", "zh", "ja"]) assert.deepEqual(parseOptions(["--lang", lang, "--check"]), { lang, check: true, help: false });

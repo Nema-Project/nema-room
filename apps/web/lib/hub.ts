@@ -18,8 +18,26 @@ import type {
 
 /** Set at build time for the managed local desktop build; its UI and API share one origin. */
 export const LOCAL_HUB_MODE = process.env.NEXT_PUBLIC_NEMA_LOCAL === "1";
-export const HUB_URL = LOCAL_HUB_MODE ? "" : process.env.NEXT_PUBLIC_HUB_URL ?? "http://127.0.0.1:4400";
-const BASE = LOCAL_HUB_MODE ? "/api" : `${HUB_URL}/api`;
+const DEFAULT_HUB_URL = "http://127.0.0.1:4400";
+
+/**
+ * Browser address of the hub. Docker writes `window.__NEMA_HUB_URL__` from `NEMA_HUB_URL`
+ * before hydration, so one published image can follow another host port. The build-time
+ * `NEXT_PUBLIC_HUB_URL` is only the fallback.
+ */
+export function hubUrl(): string {
+  if (LOCAL_HUB_MODE) return "";
+  if (typeof window !== "undefined") {
+    const configured = (window as Window & { __NEMA_HUB_URL__?: unknown }).__NEMA_HUB_URL__;
+    if (typeof configured === "string" && /^https?:\/\//.test(configured)) return configured.replace(/\/$/, "");
+  }
+  const baked = process.env.NEXT_PUBLIC_HUB_URL;
+  return (baked && baked.length > 0 ? baked : DEFAULT_HUB_URL).replace(/\/$/, "");
+}
+
+function base(): string {
+  return LOCAL_HUB_MODE ? "/api" : `${hubUrl()}/api`;
+}
 
 export class HubError extends Error {
   constructor(
@@ -31,7 +49,7 @@ export class HubError extends Error {
 }
 
 async function request<T>(path: string, init?: { method: string; body?: unknown }): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${base()}${path}`, {
     method: init?.method ?? "GET",
     headers: init?.body !== undefined ? { "content-type": "application/json" } : undefined,
     body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
@@ -94,10 +112,10 @@ export const getVersion = (id: string, eid: string, commit: string) => request<E
 export const getWhy = (id: string, eid: string) => request<ParagraphBlame[]>(`${e(id, eid)}/why`);
 export const getTimeline = (id: string) => request<EntrySummary[]>(`${w(id)}/timeline`);
 /** The hub renders a diagram's stored spec as standalone HTML; it is opened in its own window. */
-export const diagramHtmlUrl = (id: string, gid: string) => `${BASE}${w(id)}/diagrams/${encodeURIComponent(gid)}.html`;
+export const diagramHtmlUrl = (id: string, gid: string) => `${base()}${w(id)}/diagrams/${encodeURIComponent(gid)}.html`;
 export const updateDiagram = (id: string, gid: string) =>
   request<{ message: Message; task: Task }>(`${w(id)}/diagrams/${encodeURIComponent(gid)}/update`, { method: "POST", body: {} });
-export const eventsUrl = (id: string) => `${BASE}${w(id)}/events`;
+export const eventsUrl = (id: string) => `${base()}${w(id)}/events`;
 
 export const listPlugins = () => request<PluginCatalogItem[]>("/plugins");
 export const listExtensions = () => request<ExtensionRecord[]>("/extensions");

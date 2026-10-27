@@ -4,7 +4,7 @@
 
 <h1>Nema Room</h1>
 
-<p><strong>从讨论到代码，让上下文一路可追溯。</strong></p>
+<p><strong>让项目保持对齐，从讨论直到交付。</strong></p>
 
 <p>
 <a href="https://github.com/Nema-Project/nema-room/releases/latest"><img src="https://img.shields.io/github/v/release/Nema-Project/nema-room?style=flat-square&color=555" alt="Latest release" /></a>
@@ -24,7 +24,7 @@
 
 </div>
 
-Nema Room 是一个在本机运行的 AI 需求讨论室。把想法和取舍整理成有来源、有 Git 历史的需求与决策，审阅 spec 和 plan 后，交给 **Codex 或 Claude Code** 实现。
+Nema Room 是在本机运行的项目对齐副驾。需求、约束和取舍很容易散落，同一条需求也可能被读成不同的意思。在这里和 Agent 一起讨论：保留来源和 Git 历史，分清你的原话和 Agent 的推断，冲突在写进计划之前先澄清。批准 spec 和 plan 后交给 **Codex 或 Claude Code**，提交上报再回到讨论里。
 
 <img src="docs/screenshots/room.png" width="1100" alt="账单导出的示例讨论，右侧知识面板显示需求、决策和待确认问题。" />
 
@@ -34,11 +34,14 @@ Nema Room 是一个在本机运行的 AI 需求讨论室。把想法和取舍整
 
 ## 为什么用 Nema Room
 
+- **把理解对齐。** 把散落的记录收成同一份。新的说法和已有决策冲突时，副驾会在线程里提问，并等你来定。
 - **保留决策依据。** 需求、决策、取舍和待确认问题都有来源，用户陈述与 Agent 推断明确区分。
 - **让知识有版本。** 修改记录在 Git 中；修正或撤回条目时，历史与来源仍然保留。
 - **带着代码讨论。** 绑定本机仓库，搜索主分支的已提交快照，生成代码图并提示可能过时的内容。
 - **明确交接内容。** 生成开发包、澄清阻塞问题，人工批准 spec 和 plan 后再交给编码 Agent。
-- **跟踪实现证据。** 把提交上报关联到需求，查看提交、文件变动和主分支合入情况。
+- **把证据带回讨论。** 把提交上报关联到需求，在讨论里查看这些 Git 证据。
+
+**为什么叫 Nema？** 这个名字来自日语「根回し」（nemawashi），指在决定之前先把理解和顾虑理清。Nema Room 把这种协调留在明处：不同意见保持可见，决定则带着证据。
 
 中文、英文、日文界面 · 明暗主题 · 独立讨论线程
 
@@ -57,45 +60,62 @@ Nema Room 是一个在本机运行的 AI 需求讨论室。把想法和取舍整
 
 ### 桌面应用
 
-从[最新发布页](https://github.com/Nema-Project/nema-room/releases/latest)下载安装包。
+从[最新发布页](https://github.com/Nema-Project/nema-room/releases/latest)下载一个桌面版本。Windows 上两个下载里选一个。
 
-| 平台 | 安装方式 |
+| 平台 | 下载 |
 | --- | --- |
-| Windows x64 | `.exe` |
+| Windows x64 | `.exe` 安装包，或 `.zip` 便携应用 |
 | macOS · Apple 芯片 | `.dmg` |
 | Linux / Intel Mac | 使用下方 Web / Compose 方式 |
 
-1. 安装 [Git 2.31 或更新版本](https://git-scm.com/downloads)，然后安装并打开 Nema Room。Node 和本地数据库已随包提供，无需 Docker。
+Windows 的 `.exe` 是 NSIS 安装包：会建立快捷方式，可以卸载，也可以覆盖升级。`.zip` 是解压即可运行的程序目录：解压后运行 `Nema.exe`，没有快捷方式，也没有卸载程序，并且避开安装器里的重复拷贝。两者都使用 `~/.nema/desktop`。选其中一个。
+
+1. 安装 [Git 2.31 或更新版本](https://git-scm.com/downloads)，然后安装并打开 Nema Room，或解压便携 ZIP 后运行 `Nema.exe`。Node 和本地数据库已随包提供，无需 Docker。
 2. 在**模型设置**中连接 ChatGPT 订阅、Claude 订阅或兼容 Responses API 的 API 密钥。可用性与费用由服务商决定。
 3. 创建工作区，开始讨论；需要代码上下文时，再绑定本机仓库。
 
-> **预览版本。** Windows 安装包未签名，macOS 使用临时签名且未经公证。请按发布页的校验和核对下载。当前没有自动更新；升级前从托盘退出并备份 `~/.nema/desktop`。2026-10-27 的托管 Windows 与 macOS 运行器已通过一次性数据目录迁移和备份恢复。同日维护者在 macOS 与 Windows 上分别用新安装包覆盖旧安装，workspace 数据均完整。首次启动与已知限制见[桌面使用指南](docs/guide.zh.md#desktop)。
+> **预览版本。** Windows 安装包和便携 ZIP 都未签名，macOS 使用临时签名且未经公证。请按发布页的校验和核对下载。应用不会自动下载或安装。它会向 GitHub 查询更新的稳定版并链到发布页；可在侧栏关掉「自动检查更新」。升级前从托盘退出并备份 `~/.nema/desktop`。2026-10-27 的托管 Windows 与 macOS 运行器已通过一次性数据目录迁移和备份恢复。同日维护者在 macOS 与 Windows 上分别用新安装包覆盖旧安装，workspace 数据均完整。首次启动与已知限制见[桌面使用指南](docs/guide.zh.md#desktop)。
 
 <a id="首版范围与环境要求"></a>
 
 ### Web / Compose
 
-支持 Windows、macOS、Linux，需要 **Node.js ≥ 22**、**Git**、**Docker** 和 **Docker Compose v2**。
+开发本仓库时，从检出构建 PostgreSQL、hub 和 web。tag `v0.1.4` 是第一次发布镜像的版本。daemon 不在镜像里，仍在本机运行。daemon 的包是 `@nema-project/nema`。`@nema-project/nema@0.1.3` 已于 2026-10-27 发布到 npm，这次手动发布记录在 [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md)。需要 **Node.js ≥ 22**、**Git**、**Docker** 和 **Docker Compose v2**，系统可以是 Windows、macOS 或 Linux。
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
+# 仅 Linux 和 macOS。Windows 上的 Docker Desktop 不需要这一行。
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 node scripts/setup.mjs --lang zh
 ```
 
-向导检查依赖、构建 CLI、启动服务，并引导配置模型。完成后打开 [localhost:3000](http://localhost:3000)，保持本机 daemon 运行。已有 `.env` 会保留。
+向导检查依赖、构建 CLI、从源码启动服务，并引导配置模型。保持本机 daemon 运行。已有 `.env` 会保留。`npm run up` 是同一条源码构建。在 Linux 和 macOS 上，无论 UID/GID 是不是 1000，都先按上面导出 `NEMA_UID` 和 `NEMA_GID`，再执行 `npm run up`，hub 才能写入数据目录。Windows 上的 Docker Desktop 不需要这条 export。然后打开 [localhost:3000](http://localhost:3000)。发布用的 compose 文件没有构建步骤。
+
+不克隆、直接拉取钉死镜像，从 tag `v0.1.4` 开始。这个 tag 包含镜像发布工作流，也是这些镜像的第一次发布（`linux/amd64`；arm64 见 [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。当前检出把镜像钉在 `ghcr.io/nema-project/nema-room-hub:0.1.4` 和 `ghcr.io/nema-project/nema-room-web:0.1.4`，因为 `scripts/images/check-images.mjs` 要求钉的版本等于包版本。该 tag 推送之后，并且两个镜像都已在 GHCR 上公开，从该 tag 取 [`docker-compose.yml`](https://github.com/Nema-Project/nema-room/blob/v0.1.4/docker-compose.yml)（`curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.4/docker-compose.yml`）。它不是发布页上的附件。Linux 和 macOS 上同样导出 `NEMA_UID` 和 `NEMA_GID`。Windows 上的 Docker Desktop 不需要这条 export。然后执行 `docker compose up -d`。宿主机端口跟随 `NEMA_HUB_PORT`（默认 4400，容器监听同一端口）和 `NEMA_WEB_PORT`（默认 3000，容器内仍监听 3000）。`NEMA_HUB_URL` 默认是 `http://127.0.0.1:$NEMA_HUB_PORT`，web 容器启动时读取，因此同一份已发布镜像不用重建就能换地址。
 
 [手动安装与配置](docs/guide.zh.md#source-installation) · 只检查环境：`node scripts/setup.mjs --lang zh --check`
 
-CLI 包为 private，随源码安装；`npx nema` 不是独立的安装方式。
+宿主机 daemon 是 npm 包 `@nema-project/nema`（Node.js ≥ 22），命令名是 `nema`。`@nema-project/nema@0.1.3` 已于 2026-10-27 由维护者账号发布。`v0.1.4` 是 `scripts/npm/RELEASE.md` 里受信发布者的第一次发布。安装与正在运行的 hub 相同的版本：
+
+```sh
+npx @nema-project/nema@<hub 版本> --version
+npm i -g @nema-project/nema@<hub 版本>
+```
+
+Compose 在 `http://127.0.0.1:4400/api/version` 返回该版本。桌面版在侧边栏显示版本，其回环地址也提供 `GET /_nema/version`。版本不一致时 daemon 会打印 `run: npm i -g @nema-project/nema@<版本>` 并且不再重连。`nema daemon` 的 `--hub` 默认是 `http://127.0.0.1:4400`，token 文件是 `$NEMA_DATA_DIR` 或 `~/.nema/data` 下的 `daemon-token`。hub 启动时写入该文件。Compose 把宿主机数据目录挂到容器的 `/data`。
+
+开发本仓库仍使用上面的源码安装。不要安装不带版本的 `@nema-project/nema` 并假定它与 hub 一致。
 
 ## 从讨论到交付
+
+交付是一条回路：提交上报会回到讨论里。
 
 1. **讨论** — 发送想法和取舍，检查 Agent 的理解；用 `/thread` 开启独立讨论。
 2. **连接** — 绑定本机仓库，把已提交的代码带入讨论。
 3. **整理** — 开启 `superpowers`，选择 active 需求，生成包含 spec 和 plan 的开发包，回答阻塞问题。
 4. **批准** — 人工审阅后交给编码 Agent 获取；编辑或重新生成会撤销批准。
-5. **跟踪** — 查看提交上报，以及实现与需求之间的证据。
+5. **跟踪** — 把提交上报和对应的 Git 证据带回讨论。
 
 ```text
 讨论 → 需求与决策 → 已批准的 spec + plan → 编码 Agent

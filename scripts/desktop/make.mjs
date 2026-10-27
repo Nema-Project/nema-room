@@ -3,6 +3,7 @@ import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { reportPackagedArtifacts } from './payload-size.mjs';
+import { assertInstallerOmitsPortableZip, assertPortableAppZip } from './portable-zip.mjs';
 import { stageRuntime } from './stage-runtime.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -51,7 +52,7 @@ export function builderConfig(payloadDir, outputDir, target) {
   if (target.platform === 'win32') {
     return {
       ...common,
-      win: { target: ['nsis'], icon: path.join(desktopDir, 'assets/icon.ico'), signAndEditExecutable: true, signExecutable: false },
+      win: { target: ['nsis', 'zip'], icon: path.join(desktopDir, 'assets/icon.ico'), signAndEditExecutable: true, signExecutable: false },
       nsis: {
         oneClick: false,
         perMachine: false,
@@ -74,6 +75,13 @@ export function builderConfig(payloadDir, outputDir, target) {
       category: 'public.app-category.productivity',
     },
   };
+}
+
+/** CLI targets override win.target / mac.target, so they must list the same artifacts the config does. */
+export function builderCliArgs(cliPath, configPath, target) {
+  const platformFlag = target.platform === 'win32' ? 'win' : 'mac';
+  const targets = target.platform === 'win32' ? ['nsis', 'zip'] : ['dmg'];
+  return [cliPath, `--${platformFlag}`, ...targets, `--${target.arch}`, '--publish', 'never', '--config', configPath];
 }
 
 export const FFMPEG_LIBRARY = {
@@ -146,9 +154,7 @@ async function make(args) {
   const configPath = path.join(outputDir, '.electron-builder-config.json');
   await writeFile(configPath, JSON.stringify(builderConfig(payloadDir, outputDir, target), null, 2));
   const cliPath = path.join(repo, 'node_modules/electron-builder/cli.js');
-  const argsForBuilder = [cliPath, `--${target.platform === 'win32' ? 'win' : 'mac'}`, `--${target.arch}`, '--publish', 'never', '--config', configPath];
-  if (target.platform === 'win32') argsForBuilder.splice(2, 0, 'nsis');
-  else argsForBuilder.splice(2, 0, 'dmg');
+  const argsForBuilder = builderCliArgs(cliPath, configPath, target);
   const env = {
     ...process.env,
     ELECTRON_BUILDER_CACHE: path.join(repo, '.superpowers/sdd/2026-10-24-desktop-implementation/tool-cache/electron-builder'),
@@ -157,6 +163,11 @@ async function make(args) {
   const result = spawnSync(process.execPath, argsForBuilder, { cwd: desktopDir, env, stdio: 'inherit', windowsHide: true });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`electron-builder exited with status ${result.status ?? 'unknown'}`);
+  if (target.platform === 'win32') {
+    const zipName = `Nema-${appPackage.version}-win32-x64.zip`;
+    await assertPortableAppZip(path.join(outputDir, zipName));
+    await assertInstallerOmitsPortableZip(path.join(outputDir, `Nema-${appPackage.version}-win32-x64.exe`), zipName);
+  }
   await reportPackagedArtifacts(outputDir);
   process.stdout.write(`Packaged ${target.platform}-${target.arch} from ${payloadDir} into ${outputDir}\n`);
 }
