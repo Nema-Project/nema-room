@@ -4,7 +4,7 @@
 
 <h1>Nema Room</h1>
 
-<p><strong>From conversation to code, with the context intact.</strong></p>
+<p><strong>Keep your project aligned, from discussion to delivery.</strong></p>
 
 <p>
 <a href="https://github.com/Nema-Project/nema-room/releases/latest"><img src="https://img.shields.io/github/v/release/Nema-Project/nema-room?style=flat-square&color=555" alt="Latest release" /></a>
@@ -24,7 +24,7 @@
 
 </div>
 
-Nema Room is a local workspace for shaping requirements with an AI agent. Turn discussions into requirements and decisions with sources and Git history, then hand an approved spec and plan to **Codex or Claude Code**.
+Nema Room is a local copilot for keeping a software project aligned. Requests, constraints, and tradeoffs scatter easily, and the same requirement can be read in more than one way. Discuss them here with an agent: keep sources and Git history, separate what you said from what the agent inferred, and clarify a conflict before it becomes the plan. Hand an approved spec and plan to **Codex or Claude Code**, then bring commit reports back into the discussion.
 
 <img src="docs/screenshots/room-en.png" width="1100" alt="A discussion about bill exports, with requirements, decisions, and an open question in the knowledge panel." />
 
@@ -34,11 +34,14 @@ Nema Room is a local workspace for shaping requirements with an AI agent. Turn d
 
 ## Why Nema Room
 
+- **Align understanding.** Bring scattered notes into one record. When a statement conflicts with an active decision, the copilot asks in a thread and waits for you.
 - **Keep the reasoning.** Requirements, decisions, tradeoffs, and open questions retain their sources. User statements and agent inferences stay distinguishable.
 - **Version your knowledge.** Changes have Git history. Correct or retract an entry without erasing where it came from.
 - **Ground discussions in code.** Bind local repositories, search committed main-branch snapshots, and generate diagrams with staleness indicators.
 - **Hand off with intent.** Generate a work package, resolve blocking questions, and approve the spec and plan before a coding agent picks them up.
-- **Follow the implementation.** Connect commit reports to requirements and inspect the Git evidence.
+- **Bring the evidence back.** Connect commit reports to the requirements and read that Git evidence in the discussion.
+
+**Why Nema?** The name comes from *nemawashi* (根回し), the practice of building understanding before a decision. Nema Room keeps that coordination in the open: disagreements stay visible, and decisions keep their evidence.
 
 English, Chinese, and Japanese UI · Light and dark themes · Separate discussion threads
 
@@ -102,11 +105,13 @@ Developing this repository still uses the source checkout above. Do not install 
 
 ## From discussion to delivery
 
+Delivery is a loop: commit reports come back into the discussion.
+
 1. **Discuss** — share notes and tradeoffs; review the agent's interpretation. Use `/thread` for a separate discussion.
 2. **Connect** — bind a local repository to bring committed code into the conversation.
 3. **Prepare** — enable `superpowers`, select active requirements, and generate a work package with a spec and plan. Resolve blocking questions.
 4. **Approve** — review the package, then let your coding agent retrieve it. Editing or regenerating a package revokes approval.
-5. **Track** — inspect commit reports and their evidence against the requirements.
+5. **Track** — bring commit reports and their Git evidence back into the discussion.
 
 ```text
 Discussion → Requirements + decisions → Approved spec + plan → Coding agent

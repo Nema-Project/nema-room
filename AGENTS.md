@@ -9,6 +9,11 @@ This is the shared repository guide for local and remote coding agents. Read it 
 - Read the code, nearby tests, and relevant [technical reference](docs/reference.zh-CN.md) before changing behavior.
 - Historical material in `docs/superpowers/` and `docs/reviews/` applies to its recorded commit and environment. Resolve discrepancies using current source, configuration, and evidence; do not rewrite historical results as current acceptance.
 - Inspect the branch, working-tree status, and recent commits. Identify existing user or agent changes before editing.
+- Specs and plans follow [Product north star](#product-north-star).
+
+## Product north star
+
+Before writing a spec or plan, read [issue #45](https://github.com/Nema-Project/nema-room/issues/45) and apply its decision rule: does this make it easier for people and agents to maintain a shared, evidence-backed understanding of the project as it evolves? If it does not, explain why it belongs in Nema Room before prioritizing it. Say how the spec or plan serves that rule. Link the issue instead of copying it. Respect its guardrails: do not reframe Nema Room as merely an orchestrator, a coding UI, or a linear discussion-to-code pipeline; do not treat inferred knowledge as authoritative without provenance or human confirmation; do not equate Git evidence with tests or acceptance; do not claim integrations or drift detection that are not shipped. The name Nema comes from nemawashi (根回し): keep that coordination visible, including dissent and the evidence for a decision.
 
 ## Project boundaries
 
