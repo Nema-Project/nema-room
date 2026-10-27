@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Knowledge entry updates and rollback replace complete files atomically, preventing concurrent readers from seeing truncated frontmatter.
+
 - The default landing page loads its demo from the site root. English stays at `/`, not `/en/`.
 
 ### Changed

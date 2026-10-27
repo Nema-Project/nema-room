@@ -1,4 +1,5 @@
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import matter from "gray-matter";
 import {
@@ -298,6 +299,24 @@ function siblingMdRel(rel: string): string | null {
 }
 
 const WP_DOC_FILE = /\.(?:spec|plan)\.md$/;
+
+/** Readers must see a complete old or new file, including while a failed commit rolls back. */
+async function replaceFile(file: string, content: string): Promise<void> {
+  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${randomUUID()}.tmp`);
+  let mode: number | undefined;
+  try {
+    mode = (await stat(file)).mode & 0o777;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  try {
+    await writeFile(temporary, content, { flag: "wx", mode });
+    if (mode !== undefined) await chmod(temporary, mode);
+    await rename(temporary, file);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
 
 export class KnowledgeStore {
   constructor(private readonly repoDir: string, private readonly ownedHelpers?: OwnedHelperScope) {}
@@ -721,7 +740,7 @@ export class KnowledgeStore {
       }
     }
     try {
-      for (const w of writes) await writeFile(w.file, w.content);
+      for (const w of writes) await replaceFile(w.file, w.content);
       await this.git(["add", "--", ...rels]);
       const staged = (await this.git(["diff", "--cached", "--name-only", "--", ...rels])).trim();
       if (staged === "") return (await this.git(["rev-parse", "HEAD"])).trim();
@@ -762,7 +781,7 @@ export class KnowledgeStore {
     }
     try {
       if (previous === null) await rm(file, { force: true });
-      else await writeFile(file, previous);
+      else await replaceFile(file, previous);
     } catch (e) {
       console.warn(`[knowledge] could not restore ${file} after a failed write`, e);
     }

@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -684,4 +684,37 @@ describe("work packages", () => {
     const h = await history(dir, "W-1");
     expect(h.map((x) => [x.version, x.op, x.reason])).toEqual([[3, "update", "写 plan"], [2, "update", "写 spec"], [1, "add", "开始生成"]]);
   });
+});
+
+test("readers never observe truncated frontmatter during an entry update", async () => {
+  const store = new KnowledgeStore(dir);
+  await store.init();
+  await store.upsert(req("initial"), { author: "user" });
+  if (process.platform !== "win32") await chmod(path.join(dir, "requirements", "R-1.md"), 0o600);
+  let done = false;
+  const failures: unknown[] = [];
+  const writer = (async () => {
+    try {
+      for (let i = 0; i < 40; i++) {
+        await store.upsert(req(`revision ${i}`, { id: "R-1", body: "x".repeat(16_384) }), { author: "user" });
+      }
+    } finally {
+      done = true;
+    }
+  })();
+  const reader = async () => {
+    while (!done) {
+      try {
+        const entry = await store.get("R-1");
+        if (entry?.id !== "R-1") failures.push(entry);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+  };
+  await Promise.all([writer, ...Array.from({ length: 4 }, reader)]);
+  expect(failures).toEqual([]);
+  expect((await store.get("R-1"))?.title).toBe("revision 39");
+  if (process.platform !== "win32") expect((await stat(path.join(dir, "requirements", "R-1.md"))).mode & 0o777).toBe(0o600);
+  expect((await git(dir, ["status", "--porcelain"])).trim()).toBe("");
 });

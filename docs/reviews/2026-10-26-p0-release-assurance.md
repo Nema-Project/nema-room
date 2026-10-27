@@ -66,3 +66,13 @@ Execution rulings:
 - Regraded the reviewer's Pages finding from Minor to Important because valid website changes could be blocked and undeployed links could pass; fixed it in the same pass. Cost: project Pages prefix is explicit (`/nema-room/`) and must change if hosting changes.
 
 Review boundaries retained: required-check/private-reporting activation needs real operational evidence; historical or deliberately replaced workflows remain outside scope; manual rehearsal does not prove tag-only source/payload publication validation; native macOS installation, upgrades/recovery and real-model acceptance remain separate; remote URLs, anchors and general Markdown parsing remain outside the focused checker's advertised coverage. These limitations must not be presented as verified acceptance. No deferred Minor findings remain.
+
+## CI-discovered read/write race
+
+The first CI attempt for `df59c83212321b64e2292d181e185fc6ad0dc91d` failed in `apps/hub/test/workpackage.e2e.test.ts`: polling `KnowledgeStore.get` observed missing frontmatter fields during a background update, followed by ENOTEMPTY while cleanup raced with the unfinished Git write. [Run 40368315450, attempt 1](https://github.com/Nema-Project/nema-room/actions/runs/40368315450/attempts/1) correctly failed `CI gate`; it is not passing evidence. Three isolated E2E reruns passed, but a real-store concurrency probe reproduced 39 parse errors across 3,730 reads during 40 normal updates.
+
+Ruling: repair the reproduced underlying read/write race with same-directory temporary files and atomic replacement, including rollback, rather than swallowing schema errors or relying on retries. This is a focused verification-blocking fix, not an application redesign. Preserve existing file permissions and Git rollback behavior; per-file replacement does not promise multi-file transactions or power-loss durability. Cost: one additional storage change and regression in this PR, requiring full CI again.
+
+The regression failed against the old implementation and passed after the fix. Typecheck and 48 focused store/history/workpackage tests passed, including rollback tests. The standalone concurrent-read probe also passes without parse errors after recompilation. A same-SHA failed-job rerun was requested while diagnosing; its result cannot substitute for verification of the fix commit.
+
+Desktop PR run [40368315549](https://github.com/Nema-Project/nema-room/actions/runs/40368315549) passed both native build/smoke jobs on merge commit `6ea28a1ee29da22fd6c2ad50806817ebdc6af25b` (head `df59c83`). Windows NSIS smoke reported passed; macOS staged-runtime smoke succeeded; Publish release was skipped. This precedes the storage fix and is not final-commit desktop evidence.
