@@ -67,7 +67,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
       existing.focus();
       return;
     }
-    const child = new BrowserWindow({ ...createSecureWindowOptions(runtimeOrigin), icon: brandAsset('icon.png') });
+    const child = new BrowserWindow({ ...createSecureWindowOptions(runtimeOrigin, platform), icon: brandAsset('icon.png') });
     if (platform !== 'darwin') child.setMenu(null);
     threadWindows.set(identity, child);
     threadLoadGeneration.set(child, 0);
@@ -130,7 +130,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     const opening = (async () => {
       const instance = await ensureCore();
       validateRuntimeLaunchUrl(instance.launchUrl, instance.origin);
-      const window = new BrowserWindow({ ...createSecureWindowOptions(instance.origin), ...initialWindowSize(screen), icon: brandAsset('icon.png') });
+      const window = new BrowserWindow({ ...createSecureWindowOptions(instance.origin, platform), ...initialWindowSize(screen), icon: brandAsset('icon.png') });
       if (platform !== 'darwin') window.setMenu(null);
       mainWindow = window;
       registerWindowControls({ ipcMain, window, runtimeOrigin: instance.origin });

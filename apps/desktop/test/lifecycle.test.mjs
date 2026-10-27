@@ -80,7 +80,13 @@ describe('Electron shell lifecycle', () => {
     const value = harness({ platform });
     await value.lifecycle.install();
     expect(value.windows[0].options.title).toBe('Nema Room');
-    expect(value.windows[0].options).toMatchObject({ width: 1180, height: 820 });
+    expect(value.windows[0].options).toMatchObject({ width: 1180, height: 820, frame: false });
+    if (platform === 'darwin') {
+      expect(value.windows[0].options).toMatchObject({ titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 12, y: 11 } });
+    } else {
+      expect(value.windows[0].options.titleBarStyle).toBeUndefined();
+      expect(value.windows[0].options.trafficLightPosition).toBeUndefined();
+    }
     expect(path.basename(value.windows[0].options.icon)).toBe('icon.png');
     expect(existsSync(value.windows[0].options.icon)).toBe(true);
     expect(value.trays).toHaveLength(1);
@@ -233,6 +239,18 @@ describe('Electron shell lifecycle', () => {
     expect(value.shell.openExternal).toHaveBeenCalledWith('https://example.com/docs');
   });
 
+  it('opens a darwin thread window with native traffic lights', async () => {
+    const value = harness({ platform: 'darwin' });
+    await value.lifecycle.install();
+    const handler = value.windows[0].webContents.setWindowOpenHandler.mock.calls[0][0];
+    expect(handler({ url: 'http://127.0.0.1:43001/w/ws_abc/t/m_xyz' })).toEqual({ action: 'deny' });
+    expect(value.windows[1].options).toMatchObject({
+      frame: false,
+      titleBarStyle: 'hiddenInset',
+      trafficLightPosition: { x: 12, y: 11 },
+    });
+  });
+
   it('opens a same-origin thread URL in its own secure window and denies query variants', async () => {
     const value = harness();
     await value.lifecycle.install();
@@ -244,7 +262,8 @@ describe('Electron shell lifecycle', () => {
     const thread = value.windows[1];
     expect(thread.url).toBe(url);
     expect(thread.options.webPreferences.preload).toBeTruthy();
-    expect(thread.options).toMatchObject({ frame: false });
+    expect(thread.options.frame).toBe(false);
+    expect(thread.options.titleBarStyle).toBe(process.platform === 'darwin' ? 'hiddenInset' : undefined);
     expect(handler({ url: `${url}?bad=1` })).toEqual({ action: 'deny' });
     expect(value.windows).toHaveLength(2);
   });

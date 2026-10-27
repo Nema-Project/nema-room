@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isMainMessageUrl, isThreadWindowUrl, navigationDecision, validateRuntimeLaunchUrl } from '../security.cjs';
+import { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isMainMessageUrl, isThreadWindowUrl, navigationDecision, usesNativeTrafficLights, validateRuntimeLaunchUrl } from '../security.cjs';
 
 describe('Electron renderer security policy', () => {
   it('accepts only a ticket URL at the authenticated runtime origin', () => {
@@ -10,14 +11,36 @@ describe('Electron renderer security policy', () => {
   });
 
   it('keeps Node integration off, context isolation and sandbox on, and web security enabled', () => {
-    expect(createSecureWindowOptions('http://127.0.0.1:43001').webPreferences).toMatchObject({
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true,
-      webSecurity: true,
-    });
-    expect(createSecureWindowOptions('http://127.0.0.1:43001')).toMatchObject({ frame: false, autoHideMenuBar: true });
-    expect(createSecureWindowOptions('http://127.0.0.1:43001').title).toBe('Nema Room');
+    for (const platform of ['win32', 'linux', 'darwin']) {
+      expect(createSecureWindowOptions('http://127.0.0.1:43001', platform).webPreferences).toMatchObject({
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        webSecurity: true,
+      });
+      expect(createSecureWindowOptions('http://127.0.0.1:43001', platform).title).toBe('Nema Room');
+      expect(createSecureWindowOptions('http://127.0.0.1:43001', platform).autoHideMenuBar).toBe(true);
+    }
+  });
+
+  it('uses native macOS traffic lights and keeps custom chrome on Windows and Linux', () => {
+    expect(usesNativeTrafficLights('darwin')).toBe(true);
+    expect(usesNativeTrafficLights('win32')).toBe(false);
+    expect(usesNativeTrafficLights('linux')).toBe(false);
+    const mac = createSecureWindowOptions('http://127.0.0.1:43001', 'darwin');
+    expect(mac).toMatchObject({ frame: false, titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 12, y: 11 } });
+    for (const platform of ['win32', 'linux']) {
+      const options = createSecureWindowOptions('http://127.0.0.1:43001', platform);
+      expect(options).toMatchObject({ frame: false });
+      expect(options.titleBarStyle).toBeUndefined();
+      expect(options.trafficLightPosition).toBeUndefined();
+    }
+    const preload = readFileSync(new URL('../preload.cjs', import.meta.url), 'utf8');
+    expect(preload).toContain("nativeTrafficLights: process.platform === 'darwin'");
+    const css = readFileSync(new URL('../../web/app/globals.css', import.meta.url), 'utf8');
+    expect(css).toMatch(/\.desktop-titlebar-macos\s*\{[^}]*padding-left:\s*80px/);
+    expect(css).toMatch(/\.desktop-titlebar-macos\.desktop-titlebar-fullscreen\s*\{[^}]*padding-left:\s*14px/);
+    expect(css).toMatch(/\.desktop-titlebar\s*\{[^}]*-webkit-app-region:\s*drag/);
   });
 
   it('allows only the expected local origin or credential-free external HTTPS links', () => {

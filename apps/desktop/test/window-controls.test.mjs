@@ -59,7 +59,7 @@ describe('owning Electron window controls', () => {
     expect(h.call('minimize')).toBeUndefined();
     expect(h.call('toggle-maximize')).toBeUndefined();
     expect(h.call('close')).toBeUndefined();
-    expect(h.call('get-state')).toEqual({ maximized: false });
+    expect(h.call('get-state')).toEqual({ maximized: false, fullScreen: false });
     expect(h.window.minimize).toHaveBeenCalledOnce();
     expect(h.window.maximize).toHaveBeenCalledOnce();
     expect(h.window.close).toHaveBeenCalledOnce();
@@ -75,14 +75,21 @@ describe('owning Electron window controls', () => {
     expect(h.window.minimize).not.toHaveBeenCalled();
   });
 
-  it('publishes maximize state and removes handlers and listeners on cleanup', () => {
+  it('publishes maximize and fullscreen state and removes handlers and listeners on cleanup', () => {
     const h = harness();
     h.window.isMaximized.mockReturnValue(true);
+    h.window.isFullScreen = () => true;
     h.events.get('maximize')();
-    expect(h.window.webContents.send).toHaveBeenCalledWith('nema:window:state-changed', { maximized: true });
+    expect(h.window.webContents.send).toHaveBeenCalledWith('nema:window:state-changed', { maximized: true, fullScreen: true });
+    h.window.isMaximized.mockReturnValue(false);
+    h.window.isFullScreen = () => false;
+    h.events.get('leave-full-screen')();
+    expect(h.window.webContents.send).toHaveBeenCalledWith('nema:window:state-changed', { maximized: false, fullScreen: false });
     h.cleanup();
     expect(h.ipcMain.removeHandler).toHaveBeenCalledTimes(4);
     expect(h.window.removeListener).toHaveBeenCalledWith('maximize', expect.any(Function));
     expect(h.window.removeListener).toHaveBeenCalledWith('unmaximize', expect.any(Function));
+    expect(h.window.removeListener).toHaveBeenCalledWith('enter-full-screen', expect.any(Function));
+    expect(h.window.removeListener).toHaveBeenCalledWith('leave-full-screen', expect.any(Function));
   });
 });
