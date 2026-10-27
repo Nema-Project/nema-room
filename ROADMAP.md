@@ -27,6 +27,12 @@
 - 发布前更新本文件，并同步 README、CHANGELOG、SECURITY 与官网。历史报告不改写为新的验收结果。
 - 同步与团队功能尚未具备前置条件时，不与稳定化任务同时扩张。
 
+## 产品北极星
+
+产品方向以 [issue #45](https://github.com/Nema-Project/nema-room/issues/45) 为北极星：Nema Room 是项目对齐副驾，帮助人和编码 Agent 持续理解项目在做什么、决策为何如此、还有什么没有定。该 issue 是对齐参考，不是已交付能力清单，其中的想法也不都已排期。
+
+评估新功能或架构变更时先问：这是否让人和 Agent 更容易维持一份有证据、且随项目演进而更新的共同理解？如果不是，先说明它为什么属于 Nema Room，再排优先级。新增事项和 spec 应写明如何服务于这条规则。发布、打包和分发算稳定化，不算产品方向。
+
 ## P0：发布前闭环
 
 | ID | 事项与依据 | 状态 | 验收标准 |
@@ -102,3 +108,4 @@ P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：设计已�
 | 2026-10-27 | — | 维护者 NullumNomen | [PR #31](https://github.com/Nema-Project/nema-room/pull/31) | 未承诺 | 桌面包去掉 Node headers、npm 和 Corepack，只带一份 CPython，去掉未引用的 macOS `libpython3.11.dylib`，只留一份 Chromium 许可声明，去掉 source map、未用的 tree-sitter 语法和 sharp。打包打印各段体积，超出预算时警告。缺语法时警告并跳过。已合入 `main` `76680b8` |
 | 2026-10-27 | CX-03 | 待认领 | [PR #27](https://github.com/Nema-Project/nema-room/pull/27) | 未承诺 | 外部来源证据协议的设计已合入。实施前置 #28 已由 PR #30 完成，CX-03 成为下一项。生产代码尚未按该 spec 修改 |
 | 2026-10-27 | 32 | 待认领 | [issue #32](https://github.com/Nema-Project/nema-room/issues/32) | 未承诺 | 记录 manager agent 工作流的参考场景和与 `main` 的差距。P0 之后的设计参考，不是 spec，不改变 P0 顺序 |
+| 2026-10-27 | 45 | Cursor Agent | [issue #45](https://github.com/Nema-Project/nema-room/issues/45) | 未承诺 | 将该 issue 记为产品北极星，决策规则写入路线图与 AGENTS.md。英文、中文、日文 README 与官网的标题和介绍改为项目对齐，并把交付写成回路 |
