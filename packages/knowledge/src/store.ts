@@ -497,10 +497,13 @@ export class KnowledgeStore {
     });
   }
 
+  /** Hooks run under the repository lock. beforeWrite may return a prior commit for an exact replay. */
   async upsert(
     rawInput: UpsertEntryInput,
     meta: CommitMeta,
     guard?: UpsertGuard,
+    beforeWrite?: (entry: Entry, existing: Entry | null) => Promise<string | void>,
+    afterWrite?: (commit: string) => Promise<void>,
   ): Promise<{ entry: Entry; commit: string; op: "add" | "update" }> {
     const parsed = UpsertEntryInput.parse(rawInput);
     return withRepoLock(this.repoDir, async () => {
@@ -551,7 +554,9 @@ export class KnowledgeStore {
         }),
         body: input.body,
       };
-      const commit = await this.writeAndCommit(entry, op, input.reason, input.sourceMessages, meta);
+      const replay = await beforeWrite?.(entry, existing);
+      const commit = replay ?? await this.writeAndCommit(entry, op, input.reason, input.sourceMessages, meta);
+      await afterWrite?.(commit);
       return { entry, commit, op };
     });
   }
@@ -717,14 +722,22 @@ export class KnowledgeStore {
     return existing;
   }
 
-  async confirm(id: string, meta: CommitMeta): Promise<{ entry: Entry; commit: string }> {
+  /** Hooks run under the repository lock and must not call another locking method. */
+  async confirm(
+    id: string,
+    meta: CommitMeta,
+    beforeWrite?: (entry: Entry, existing: Entry) => Promise<string | void>,
+    afterWrite?: (commit: string) => Promise<void>,
+  ): Promise<{ entry: Entry; commit: string }> {
     return withRepoLock(this.repoDir, async () => {
       const existing = await this.get(id);
       if (!existing) throw new Error(`entry ${id} not found`);
       const now = (meta.now ?? new Date()).toISOString();
       const basis = existing.basis === null || existing.basis === "inferred" ? (existing.kind === "decision" ? "decided" : "stated") : existing.basis;
-      const entry: Entry = { ...existing, basis, confirmedAt: now };
-      const commit = await this.writeAndCommit(entry, "update", "用户确认仍然有效", [], meta);
+      const entry: Entry = { ...existing, basis, confirmedAt: now, confirmedRevision: existing.sourceSnapshot ? existing.sourceSnapshot.revision : existing.confirmedRevision };
+      const replay = await beforeWrite?.(entry, existing);
+      const commit = replay ?? await this.writeAndCommit(entry, "update", "用户确认仍然有效", [], meta);
+      await afterWrite?.(commit);
       return { entry, commit };
     });
   }
