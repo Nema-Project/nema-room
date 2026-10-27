@@ -9,7 +9,7 @@ No release tag, GitHub release, ruleset edit, or merge was created. This agent d
 
 | Item | Status | What this change actually shows |
 | --- | --- | --- |
-| P0-03 | 进行中 | On 2026-10-27 a Windows host ran both adapters at `b158daf`. Each exited 1 with `semantic: evaluated`. Codex passed 5 of 12 on that script. Claude's 6 of 12 is void: the harness launched the runner as the room MCP server, so Claude had no room tools. The harness, prompt, and rubric were then amended. Neither adapter has an exit 0 on the amended script. |
+| P0-03 | 已完成 | The `b158daf` runs are not the result. On the amended script, Windows reran Codex direct and Claude twice at `be0eb32`. Each exited 0 with `semantic: evaluated`, 12/12. `configuredModel` was null. The compiled runner also contained the CLI path later committed as `edba735`; without that path the command exits before scoring. |
 | P0-04 | 已完成 | Disposable data-directory reopen, pending migration, failed migration, and backup restore passed on hosted `windows-latest` and `macos-latest` for head `ef87a29`. On 2026-10-27 the maintainer (NullumNomen) also reported a manual overwrite install on macOS and on Windows; workspace data remained on both. This agent did not run those installers. |
 | P0-05 | 已完成 | An earlier read on 2026-10-27 returned `{"enabled":false}`. The owner enabled the setting at about 11:52 Asia/Tokyo. A read at 11:54 returned HTTP 200 `{"enabled":true}`. The signed-out security page links to the form. At 12:18 Asia/Tokyo, collaborator Nullum-ai (`permission: read`, not admin) submitted test report GHSA-mgcq-mcqv-75ff. GitHub accepted it into triage. It was closed at 12:27 Asia/Tokyo (`2026-10-27T03:27:30Z`) with `published_at` null and no CVE. |
 
@@ -126,7 +126,22 @@ node scripts/acceptance/run-thread-semantic.mjs --adapter claude-code --claude-t
 node scripts/acceptance/run-thread-semantic.mjs --adapter claude-code --claude-token-file "$HOME/.nema/claude-code-token" --out /tmp/nema-p0-03-claude-2.json
 ```
 
-Optional `--model` selects a model. P0-03 stays 进行中 until both adapters exit 0 on this script.
+Optional `--model` selects a model.
+
+Repeat recorded 2026-10-27 13:48–13:55 Asia/Tokyo on Windows, Node v26.12.1. Git HEAD in each JSON is `be0eb324386286fd6a7993c291fd45aef79ea185`. The compiled runner also included the `../../../../cli/dist/index.js` candidate later committed as `edba735`. Without that candidate the same command exits before any turn with `compiled CLI entry missing`. No `--model` was passed. All four runs exited 0 with `semantic: evaluated` and 12/12 checks. Reply text stayed outside the repository.
+
+Each run: design thread opened by the agent, `D-1` decided and active, casual and brainstorm turns did not change knowledge, `Q-1` related `D-1`, Redis decision `superseded`, active override decision `D-2`.
+
+| Run | Adapter | Open thread | Decision message | Conflict message | Override message |
+| --- | --- | --- | --- | --- | --- |
+| codex-1 | codex-direct | `m_dVI0wWOx1riC` | `m_XMHR36sk2xU0` | `m_XhODLVJr5NZT` | `m_hRy5Xp2ddu5A` |
+| codex-2 | codex-direct | `m_7S0dWgILh_OW` | `m_aXDaWKSQLRjy` | `m_sDyJpbuHrnlh` | `m_96R1YaTOJ-en` |
+| claude-1 | claude-code | `m_pP0VrWmv8Jvs` | `m_szWEoIsXtHrX` | `m_zzZOvQmiouCn` | `m_pOMqSF8ifZnb` |
+| claude-2 | claude-code | `m_rZYQSWu_VAgc` | `m_z7iFY7K5bIPr` | `m_zvt4KtsvDOd9` | `m_6EBxXOzaL_--` |
+
+Tasks, in that same run order: codex-1 `t_hkTbiAtEf-4F`, `t_ibJDyLXodLS4`, `t_VUbsIMQXvDW5`, `t_M235JPrQhqKT`, `t_9EUyIj22da0H`, `t_oD1B2EXg6KzI`, `t_XcpB-zZhAmaH`, `t_eaMGxZKyzAH7`. Codex-2 `t_wsqsH-MK4ywg`, `t_HxfObp1MzEAB`, `t_q6rwwBNTGnZt`, `t_ife6glb1E4r1`, `t_KpviIdjJ6Z-O`, `t_E3rBAKcm_hf-`, `t_35sB4LxBwMFl`, `t_3_309vVg171-`. Claude-1 `t_FXZMmGCRzybd`, `t_l-fNDw0NfT8h`, `t_b8QRVEOSSLkt`, `t_dDb1h53f9hZJ`, `t_XoH0XTvYFDGT`, `t_3DM3LUEPhu59`, `t_XDRHHl81CgXD`, `t_YVn8BHl1sSQ1`. Claude-2 `t_cgFZHJYV5a_i`, `t_NrCoBlQqSgEn`, `t_P0Thih3ArrxK`, `t_VRWoaiR790oL`, `t_st9ZVjplFAr2`, `t_IG7UvKkqofcB`, `t_VZaW1Vp7XJrl`, `t_kKAk0SF_R9Bz`.
+
+P0-03 is 已完成 for these two adapters on this script. The `b158daf` transcripts stay in the record above and are not this result.
 
 ### P0-04 installer overwrite
 
