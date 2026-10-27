@@ -23,7 +23,7 @@ The desktop app puts the whole stack in one local program: an on-disk PGlite dat
 | Windows x64 | NSIS installer available |
 | macOS | DMG for Apple Silicon (arm64). Intel Macs are not a target |
 | Linux | No desktop installer |
-| Signing and updates | Windows is **unsigned**; macOS uses **ad-hoc signing, without notarization**. There is no auto-update |
+| Signing and updates | Windows is **unsigned**; macOS uses **ad-hoc signing, without notarization**. The app can notice a newer stable GitHub release and open its release page. It does not download or install updates |
 | Public release | [Latest release](https://github.com/Nema-Project/nema-room/releases/latest). Node (MIT), Inter and JetBrains Mono (OFL), and Electron's ffmpeg (LGPL, its own library) ship with their notices |
 
 **Build (Windows x64):** after `npm ci`, run `npm run desktop:make -- --platform win32 --arch x64`. Output goes to `dist/desktop-artifacts/win32-x64/`: `Nema-<version>-win32-x64.exe` (NSIS installer). A build only targets the current OS and needs a native C compiler (Clang on Windows; see [scripts/desktop/README.md](../scripts/desktop/README.md)).
@@ -44,7 +44,7 @@ The desktop app puts the whole stack in one local program: an on-disk PGlite dat
 
 **Migrating from the Web / Compose version:** there is only a library interface so far, with no command or UI. `exportSnapshot` (`apps/hub/src/db/export.ts`) exports from a PostgreSQL connection you name, and `importLegacySnapshot` (`apps/local/src/import.ts`) imports into an **empty, stopped** desktop data directory. The import validates everything in a staging directory first and leaves the destination untouched on failure; use `recoverInterruptedImport` after an interruption. Credentials are neither exported nor imported, so sign in again.
 
-**Upgrading:** the desktop app has no auto-update. Quit with `Quit Nema` in the tray, back up `~/.nema/desktop`, then install the new version; database migrations run on startup. A disposable data-directory reopen, pending migration, failed migration, and backup restore passed on hosted Windows and macOS runners on 2026-10-27. On that date the maintainer installed a new package over an existing one on macOS and on Windows, and workspace data remained. Back up `~/.nema/desktop` before upgrading anyway.
+**Upgrading:** the desktop app does not download or install updates. About 15 seconds after startup, and about once a day, it checks GitHub for a newer stable release. The tray and an in-app banner link to that release page. **Check for updates** runs once immediately. **Check for updates automatically** in the sidebar (`updateCheck.enabled` in `~/.nema/desktop/update-check.json`) turns the scheduled check off. A failure, draft, or prerelease stays quiet. Quit with `Quit Nema` in the tray, back up `~/.nema/desktop`, then install the new version; database migrations run on startup. A disposable data-directory reopen, pending migration, failed migration, and backup restore passed on hosted Windows and macOS runners on 2026-10-27. On that date the maintainer installed a new package over an existing one on macOS and on Windows, and workspace data remained. Back up `~/.nema/desktop` before upgrading anyway.
 
 Current stabilization priorities and acceptance evidence are tracked in the [roadmap](../ROADMAP.md). The historical validation snapshot below applies only to the commit and environment recorded in that review.
 

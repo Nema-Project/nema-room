@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createSanitizedSourceSnapshot, npmCliPathFor, parseStageArgs, runtimeDependencyClosure, stageRuntime, writePlatformLaunchers } from './stage-runtime.mjs';
+import { createSanitizedSourceSnapshot, npmCliPathFor, parseStageArgs, recordedCommit, runtimeDependencyClosure, stageRuntime, writePlatformLaunchers } from './stage-runtime.mjs';
 import { nodePayloadExcluded, toolsManifest } from './fetch-tools.mjs';
 
 async function fixture(t) {
@@ -88,6 +88,12 @@ test('runs the Electron installer when the binary has not been downloaded yet', 
   await stageRuntime(f.options);
   const target = path.join(f.output, `${process.platform}-${process.arch}`);
   assert.equal(await readFile(path.join(target, 'runtime/licenses/electron/LICENSE'), 'utf8'), 'Electron MIT license');
+});
+
+test('records a full commit only when it is a 40-digit sha of this source root', () => {
+  assert.equal(recordedCommit(os.tmpdir(), 'AB'.repeat(20)), 'ab'.repeat(20));
+  assert.equal(recordedCommit(os.tmpdir(), 'nope'), undefined);
+  assert.equal(recordedCommit(path.join(os.tmpdir(), 'nema-not-a-repository'), undefined), undefined);
 });
 
 test('stages a relocatable manifest and all declared runtime resources from fixture artifacts', async (t) => {

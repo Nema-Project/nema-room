@@ -111,6 +111,13 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 6px; vertical-align: 1px; }
 .dot.off { background: var(--dot-off); }
 .foot-switch { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.foot-release { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 12px; }
+.foot-version { font-variant-numeric: tabular-nums; }
+.release-check { border: 0; padding: 0; background: transparent; color: var(--side-ink); font: inherit; font-weight: 600; cursor: pointer; }
+.release-check:disabled { opacity: .6; cursor: default; }
+.release-auto { display: flex; align-items: center; gap: 6px; }
+.release-banner { padding: 8px 16px; background: var(--paper-2); border-bottom: 1px solid var(--rule); font-size: 13px; text-align: center; }
+.release-banner a, .foot-release a { color: var(--accent); }
 .theme-toggle { position: relative; width: 22px; height: 22px; flex: none; display: grid; place-items: center; border: 0; padding: 0; color: var(--side-ink); background: transparent; }
 .theme-toggle svg { width: 15px; height: 15px; grid-area: 1 / 1; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
 .theme-icon { opacity: 0; transform: rotate(-40deg) scale(.7); }

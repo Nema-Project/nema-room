@@ -69,7 +69,7 @@ Download an installer from the [latest release](https://github.com/Nema-Project/
 2. Open **Model settings** and connect a ChatGPT subscription, Claude subscription, or a Responses API-compatible API key. Access and billing depend on the provider.
 3. Create a workspace and start a discussion. Bind a local repository when you want code context.
 
-> **Preview release.** Windows installers are unsigned; macOS builds are ad-hoc signed and not notarized. Verify downloads against the release checksums. There is no auto-update; quit from the tray and back up `~/.nema/desktop` before upgrading. A disposable data-directory migration and backup restore passed on hosted Windows and macOS runners on 2026-10-27. The same day, the maintainer installed a new package over an existing one on macOS and on Windows; workspace data remained. See the [desktop guide](docs/guide.en.md#desktop) for first launch and limitations.
+> **Preview release.** Windows installers are unsigned; macOS builds are ad-hoc signed and not notarized. Verify downloads against the release checksums. The app does not download or install updates. It checks GitHub for a newer stable release and links to that release; turn this off with “Check for updates automatically” in the sidebar. Quit from the tray and back up `~/.nema/desktop` before upgrading. A disposable data-directory migration and backup restore passed on hosted Windows and macOS runners on 2026-10-27. The same day, the maintainer installed a new package over an existing one on macOS and on Windows; workspace data remained. See the [desktop guide](docs/guide.en.md#desktop) for first launch and limitations.
 
 <a id="first-release-scope-and-requirements"></a>
 
