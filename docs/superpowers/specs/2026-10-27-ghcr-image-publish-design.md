@@ -64,7 +64,7 @@ Web / Compose 现在只能从源码跑起来：根目录 `Dockerfile` 已有 `hu
 - 两个运行镜像的 `docker image inspect` `Size` 上限各为 800 MiB。构建 job 打印 `image size: hub` 与 `image size: web` 的 MiB 数，超过上限失败。上限是为了拒绝今天这种把整棵 deps 树拷进 web 运行镜像的结果。若 standalone 或现有 hub 生产镜像的实测体积本身超过 800 MiB，实现在同一次改动里按实测上调常数并在 PR 里写上实测值，不为此删掉 hub 依赖。[推断]
 - hub 与 web 在发布用的 compose 里有 healthcheck：容器内的 `node` 请求本机的 `/api/daemon/status` 与 `/`。冒烟脚本在健康之后，从宿主机用 web 的 Origin 请求 hub 的 `/api/daemon/status`，要求 200 且 `access-control-allow-origin` 为该 Origin；再 `POST /api/workspaces` 创建一个工作区，要求响应里有 id。并在 web 容器的 standalone 产物里找到写死的 hub URL。冒烟前检查解析后的 compose 配置没有 `build` 键。构建 job 对本机 tag 使用 `--pull never`。tag 上的发布后 job 在干净的 runner 上 `docker compose pull` 再启动，不构建。[D-4]
 - 发布后的拉取冒烟 job 权限是 `contents: read` 与 `packages: read`，没有 `packages: write`。`packages: read` 只为了在包尚未被维护者改成 public 时，同一仓库的 CI 仍能拉到刚推送的镜像。[推断]
-- 四个 README、三份 guide、`docs/reference.zh-CN.md`、`CONTRIBUTING.md`、`.env.example` 写明：不 clone 时从对应 tag 下载 `docker-compose.yml` 再 `docker compose up -d`；daemon 不在镜像里，仍在宿主机运行，在独立 npm 包可用之前从源码安装；自定义 hub 端口只在源码构建路径生效，且 web 会按该端口重建。`CHANGELOG.md` 的 Unreleased 有对应条目。两份英文 README 字节相同。[D-5]
+- 四个 README、三份 guide、`docs/reference.zh-CN.md`、`CONTRIBUTING.md`、`.env.example` 写明：镜像发布之前默认从源码构建；不 clone 的拉取从包含本工作流的第一个发布 tag 起才可用，不把 `v0.1.3` 写成那次发布。`scripts/images/check-images.mjs` 要求 compose 的钉等于该 tag 的版本，所以钉随那次发版一起改。daemon 不在镜像里，仍在宿主机运行。Linux 启动前导出 `NEMA_UID=$(id -u)` 与 `NEMA_GID=$(id -g)`。自定义 hub 端口只在源码构建路径生效。`CHANGELOG.md` 的 Unreleased 有对应条目。两份英文 README 字节相同。[D-5]
 - `scripts/images/RELEASE.md` 写明失败关闭的条件，以及维护者的一次性步骤：首次 tag 推送之后确认两个 GHCR 包是 public，若不是则在包设置里改为 public。工作流文件名定为 `.github/workflows/image-publish.yml`。[推断]
 
 ## 留给实现者
@@ -72,7 +72,7 @@ Web / Compose 现在只能从源码跑起来：根目录 `Dockerfile` 已有 `hu
 - buildx 一次构建同时写出 OCI layout 和可供 `docker load` 的 docker archive 时，用这一次构建的两份输出：OCI 用于推送，archive 用于构建 job 的本地冒烟。若当前 buildx 不能在一次构建里写两份输出，则一次构建只写 OCI layout，再用钉死版本的 crane 或 skopeo 把该 layout 载入本地 daemon 后冒烟，仍然禁止为冒烟和推送各构建一遍。
 - crane 复制 OCI layout 的子命令以所钉版本的 `--help` 为准，写进工作流。目标是「不重新构建、把已有 OCI layout 推到上述两个名字」。稳定版再复制一份到 `latest`。
 - 800 MiB 上限的实测若不够，只按上一条已定做法上调常数。不在这次把 PGlite 从 hub 镜像里拆出去。
-- 冒烟使用独立的 compose 项目名 `nema-image-smoke` 和临时数据目录。清理只用 `docker compose -p nema-image-smoke down -v`。不要对开发者的默认项目执行 `down -v`。
+- 每次冒烟生成 `nema-image-smoke-` 加 12 位十六进制的项目名，并使用临时数据目录。该项目已有容器或卷则拒绝，不执行 `down -v`。只有本次确认过为空的项目才 `down -v`，且清理失败时冒烟失败。不要对开发者的默认项目执行 `down -v`。
 
 ## 验收标准
 

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { devComposeUpArgs } from '../compose-dev.mjs';
-import { assertComposeImages, assertImageBudget, assertPackageVersions, IMAGE_BUDGET_BYTES } from './check-images.mjs';
+import { assertComposeImages, assertImageBudget, assertPackageVersions, IMAGE_BUDGET_BYTES, shouldMoveLatest } from './check-images.mjs';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const published = readFileSync(new URL('../../docker-compose.yml', import.meta.url), 'utf8');
@@ -34,6 +34,23 @@ test('package versions must match the release tag', () => {
   assert.throws(() => assertPackageVersions({ tag: 'v1.2.3', desktop: '1.2.3', local: '1.2.4', cli: '1.2.3' }), /desktop 1\.2\.3, local 1\.2\.4, cli 1\.2\.3/);
   assert.throws(() => assertPackageVersions({ tag: '1.2.3', desktop: '1.2.3', local: '1.2.3', cli: '1.2.3' }), /v<SemVer>/);
   assert.throws(() => assertPackageVersions({ tag: 'v1.2', desktop: '1.2', local: '1.2', cli: '1.2' }), /strict SemVer/);
+});
+
+test('latest moves only when the candidate is not older', () => {
+  assert.equal(shouldMoveLatest('', '0.1.4'), true);
+  assert.equal(shouldMoveLatest(null, '0.1.4'), true);
+  assert.equal(shouldMoveLatest('0.1.3', '0.1.3'), true);
+  assert.equal(shouldMoveLatest('0.1.3', '0.1.10'), true);
+  assert.equal(shouldMoveLatest('0.1.4', '0.1.3'), false);
+  assert.equal(shouldMoveLatest('1.0.0-rc.1', '1.0.0'), true);
+  assert.equal(shouldMoveLatest('1.0.0', '1.0.0-rc.2'), false);
+  assert.throws(() => shouldMoveLatest('latest', '0.1.3'), /Not a release version/);
+  const move = spawnSync(process.execPath, ['scripts/images/check-images.mjs', '--move-latest', '0.1.3', '0.2.0'], { cwd: root, encoding: 'utf8' });
+  assert.equal(move.status, 0, move.stderr);
+  assert.equal(move.stdout, 'move\n');
+  const keep = spawnSync(process.execPath, ['scripts/images/check-images.mjs', '--move-latest', '0.2.0', '0.1.9'], { cwd: root, encoding: 'utf8' });
+  assert.equal(keep.status, 0, keep.stderr);
+  assert.equal(keep.stdout, 'keep\n');
 });
 
 test('image budget fails closed above 800 MiB', () => {

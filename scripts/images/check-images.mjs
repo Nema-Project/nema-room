@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { readPackageVersion, readReleaseVersion } from '../desktop/release-version.mjs';
+import { compareReleaseVersions, readPackageVersion, readReleaseVersion } from '../desktop/release-version.mjs';
 
 export const HUB_IMAGE = 'ghcr.io/nema-project/nema-room-hub';
 export const WEB_IMAGE = 'ghcr.io/nema-project/nema-room-web';
@@ -65,6 +65,12 @@ export function assertPackageVersions({ tag, desktop, local, cli }) {
   return version;
 }
 
+/** True when `next` should replace the tag `latest` currently labels as `current`. An empty current means latest is absent. */
+export function shouldMoveLatest(current, next) {
+  if (current == null || current === '') return true;
+  return compareReleaseVersions(current, next) <= 0;
+}
+
 /** `bytes` is `docker image inspect` Size. Returns the line the build log prints. */
 export function assertImageBudget(name, bytes, budget = IMAGE_BUDGET_BYTES) {
   const value = Number(bytes);
@@ -89,6 +95,13 @@ export async function checkRepositoryImages(root, tag) {
   return version;
 }
 
+function moveLatestFromArgs(argv) {
+  if (argv[0] !== '--move-latest') return null;
+  const [, current, next, extra] = argv;
+  if (next === undefined || extra) throw new Error('Usage: check-images.mjs --move-latest <current-or-empty> <next>');
+  return shouldMoveLatest(current, next) ? 'move' : 'keep';
+}
+
 function budgetFromArgs(argv) {
   if (argv[0] !== '--budget') return null;
   const pairs = argv.slice(1);
@@ -100,8 +113,11 @@ function budgetFromArgs(argv) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const lines = budgetFromArgs(process.argv.slice(2));
-    if (lines) {
+    const decision = moveLatestFromArgs(process.argv.slice(2));
+    const lines = decision ? null : budgetFromArgs(process.argv.slice(2));
+    if (decision) {
+      process.stdout.write(`${decision}\n`);
+    } else if (lines) {
       for (const line of lines) process.stdout.write(`${line}\n`);
     } else {
       const [tag, extra] = process.argv.slice(2);

@@ -86,19 +86,7 @@ Read-only check: `node scripts/setup.mjs --lang en --check`. With npm available,
 
 ### Manual installation (Bash)
 
-Compose runs PostgreSQL, the hub, and web. **The daemon runs on your host**, using local credentials and repository paths. It is not in the images.
-
-Without cloning, download `docker-compose.yml` from the tag that published the images:
-
-```bash
-mkdir -p "$HOME/.nema/data"
-curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.3/docker-compose.yml
-docker compose up -d
-```
-
-This checkout pins hub and web at `0.1.3`. Images exist only after the first `v*` tag that contains the image publish workflow is on main. Tag `v0.1.3` predates that workflow, so replace the tag in the URL with the later tag that publishes them. The published web image calls the hub at `http://127.0.0.1:4400`. `NEMA_HUB_PORT` does not change a published image.
-
-To build from this checkout:
+Compose runs PostgreSQL, the hub, and web. **The daemon runs on your host**, using local credentials and repository paths. It is not in the images. Until a release tag publishes images, build them from this checkout.
 
 ```bash
 git clone https://github.com/Nema-Project/nema-room.git
@@ -107,10 +95,13 @@ cp .env.example .env
 npm ci
 npm run build -w apps/cli
 mkdir -p "$HOME/.nema/data"
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 npm run up
 ```
 
-`npm run up` builds hub and web from this checkout. Changing `NEMA_HUB_PORT` applies only to that source build: the hub is published on that port, and web is rebuilt with `http://127.0.0.1:<port>`.
+`npm run up` builds hub and web from this checkout. The `export` sets the hub's user to the host user, including when that user is not uid 1000. Changing `NEMA_HUB_PORT` applies only to that source build: the hub is published on that port, and web is rebuilt with `http://127.0.0.1:<port>`.
+
+Pulling pinned images, without cloning, starts at the first `v*` tag that contains the image publish workflow. Tag `v0.1.3` is not that release. `scripts/images/check-images.mjs` keeps the compose pin equal to the package version, so the pin moves with the release that publishes the images. After that tag exists, download its `docker-compose.yml`, export `NEMA_UID` and `NEMA_GID` the same way, and run `docker compose up -d`. The published web image calls the hub at `http://127.0.0.1:4400` and ignores `NEMA_HUB_PORT`.
 
 Configure model access first. For the default authentication mode:
 
@@ -128,7 +119,7 @@ npm run logs   # Hub / web logs
 npm run down   # Stop containers; retain the database volume
 ```
 
-On Linux, set `NEMA_UID` / `NEMA_GID` in `.env` if your UID/GID is not 1000. Create custom data directories yourself and ensure `NEMA_DATA_HOST_DIR` matches the directory read by the daemon.
+On Linux, the commands above export `NEMA_UID` and `NEMA_GID` from `id` for every host user. The same values can be set in `.env`. Create custom data directories yourself and ensure `NEMA_DATA_HOST_DIR` matches the directory read by the daemon.
 
 <a id="models"></a>
 

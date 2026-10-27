@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { assessBundle, assessHubProbe, assessWorkspace, assertNoBuild, parseArgs } from './smoke-compose.mjs';
+import { assessBundle, assessHubProbe, assessWorkspace, assertDisposableProject, assertNoBuild, assertProjectAvailable, newSmokeProject, parseArgs } from './smoke-compose.mjs';
 
 const source = readFileSync(new URL('./smoke-compose.mjs', import.meta.url), 'utf8');
 
@@ -19,16 +19,27 @@ test('hub probe and workspace creation are explicit', () => {
   assert.throws(() => assessBundle(false, 'http://127.0.0.1:4400'), /missing http:\/\/127\.0\.0\.1:4400/);
 });
 
-test('pull policy and project name are fixed', () => {
+test('pull policy is fixed and the project name is disposable', () => {
   assert.equal(parseArgs([]).pull, 'never');
-  assert.equal(parseArgs([]).project, 'nema-image-smoke');
+  assert.equal(parseArgs([]).project, null);
   assert.equal(parseArgs(['--pull', 'always']).pull, 'always');
   assert.throws(() => parseArgs(['--pull', 'missing']), /unsupported --pull missing/);
+  assert.throws(() => parseArgs(['--project', 'nema-image-smoke']), /refusing compose project/);
+  assert.throws(() => parseArgs(['--project', 'nema']), /refusing compose project/);
+  const name = newSmokeProject();
+  assert.equal(parseArgs(['--project', name]).project, name);
+  assert.notEqual(newSmokeProject(), name);
+  assert.throws(() => assertDisposableProject('nema-image-smoke'), /refusing/);
+  assert.doesNotThrow(() => assertProjectAvailable({ project: name, containers: [], volumes: [] }));
+  assert.throws(() => assertProjectAvailable({ project: name, containers: ['abc'], volumes: [] }), /already has 1 containers/);
+  assert.throws(() => assertProjectAvailable({ project: name, containers: [], volumes: ['vol'] }), /already has 1 volumes/);
   assert.equal(parseArgs(['--hub-port', '4417', '--web-port', '3017']).hubPort, 4417);
 });
 
 test('cleanup always names the compose project', () => {
   assert.match(source, /'compose', '-p', project/);
+  assert.match(source, /ownsProject && !options\.keep/);
+  assert.match(source, /down\.status !== 0/);
   assert.match(source, /\['down', '-v'\]/);
   assert.doesNotMatch(source, /compose down -v/);
 });

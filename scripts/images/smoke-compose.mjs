@@ -1,8 +1,44 @@
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const PROJECT_NAME = /^nema-image-smoke-[a-f0-9]{12}$/;
+
+export function newSmokeProject() {
+  return `nema-image-smoke-${randomBytes(6).toString('hex')}`;
+}
+
+export function assertDisposableProject(name) {
+  if (typeof name !== 'string' || !PROJECT_NAME.test(name)) {
+    throw new Error(`refusing compose project ${JSON.stringify(name)}`);
+  }
+}
+
+export function assertProjectAvailable({ project, containers, volumes }) {
+  assertDisposableProject(project);
+  const present = [];
+  if (containers?.length) present.push(`${containers.length} containers`);
+  if (volumes?.length) present.push(`${volumes.length} volumes`);
+  if (present.length) throw new Error(`refusing ${project}: already has ${present.join(' and ')}`);
+}
+
+function commandLines(command, args) {
+  const run = spawnSync(command, args, { encoding: 'utf8' });
+  if (run.status !== 0) throw new Error((run.stderr || `${command} failed`).trim());
+  return run.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
+export function inspectProject(project) {
+  assertDisposableProject(project);
+  const filter = `label=com.docker.compose.project=${project}`;
+  return {
+    containers: commandLines('docker', ['ps', '-aq', '--filter', filter]),
+    volumes: commandLines('docker', ['volume', 'ls', '-q', '--filter', filter]),
+  };
+}
 
 export function assertNoBuild(config) {
   for (const [name, service] of Object.entries(config?.services ?? {})) {
@@ -25,7 +61,7 @@ export function assessBundle(found, hubUrl) {
 
 export function parseArgs(argv) {
   const out = {
-    project: 'nema-image-smoke',
+    project: null,
     pull: 'never',
     keep: false,
     hubPort: 4400,
@@ -43,14 +79,16 @@ export function parseArgs(argv) {
       const value = next();
       if (value !== 'never' && value !== 'always') throw new Error(`unsupported --pull ${value}`);
       out.pull = value;
-    } else if (arg === '--project') out.project = next();
+    } else if (arg === '--project') {
+      out.project = next();
+      assertDisposableProject(out.project);
+    }
     else if (arg === '--keep') out.keep = true;
     else if (arg === '--hub-port') out.hubPort = portNumber(next(), arg);
     else if (arg === '--web-port') out.webPort = portNumber(next(), arg);
     else if (arg === '--file') out.file = next();
     else throw new Error(`unknown arg ${arg}`);
   }
-  if (!out.project || out.project.includes('/') || out.project.includes('..')) throw new Error('project name required');
   if (out.hubPort === out.webPort) throw new Error('hub and web ports must differ');
   return out;
 }
@@ -104,6 +142,8 @@ if (!found) process.exit(1);
 }
 
 export async function smokeCompose(options, root) {
+  const project = options.project ?? newSmokeProject();
+  assertDisposableProject(project);
   const file = path.resolve(root, options.file ?? 'docker-compose.yml');
   const directory = await mkdtemp(path.join(tmpdir(), 'nema-image-smoke-'));
   const override = path.join(directory, 'ports.yml');
@@ -119,9 +159,13 @@ export async function smokeCompose(options, root) {
     NEMA_UID: process.env.NEMA_UID || String(process.getuid?.() ?? 1000),
     NEMA_GID: process.env.NEMA_GID || String(process.getgid?.() ?? 1000),
   };
-  const run = (args, extra = {}) => compose(options.project, files, args, { cwd: root, env, ...extra });
+  const run = (args, extra = {}) => compose(project, files, args, { cwd: root, env, ...extra });
+  let ownsProject = false;
   let failed = null;
   try {
+    const found = inspectProject(project);
+    assertProjectAvailable({ project, containers: found.containers, volumes: found.volumes });
+    ownsProject = true;
     const configured = run(['config', '--format', 'json']);
     if (configured.status !== 0) throw new Error(configured.stderr || 'docker compose config failed');
     assertNoBuild(JSON.parse(configured.stdout));
@@ -146,20 +190,30 @@ export async function smokeCompose(options, root) {
     assessWorkspace({ ok: created.ok, id: body.id });
     const bundle = run(['exec', '-T', 'web', 'node', '-'], { input: bundleScript(hubUrl) });
     assessBundle(bundle.status === 0, hubUrl);
-    process.stdout.write(`image smoke: hub ${hubUrl} accepted ${origin} and created ${body.id}\n`);
+    process.stdout.write(`image smoke: project ${project} hub ${hubUrl} accepted ${origin} and created ${body.id}\n`);
   } catch (error) {
     failed = error;
-    const logs = run(['logs', '--tail', '80']);
-    process.stderr.write(`${logs.stdout ?? ''}${logs.stderr ?? ''}`);
-    throw error;
+    if (ownsProject) {
+      const logs = run(['logs', '--tail', '80']);
+      process.stderr.write(`${logs.stdout ?? ''}${logs.stderr ?? ''}`);
+    }
   } finally {
-    if (!options.keep) {
-      run(['down', '-v']);
+    if (ownsProject && !options.keep) {
+      const down = run(['down', '-v']);
+      if (down.status !== 0) {
+        const message = (down.stderr || down.stdout || 'compose teardown failed').trim();
+        process.stderr.write(`${message}\n`);
+        const teardown = `teardown failed for ${project}: ${message}`;
+        failed = failed ? new Error(`${failed.message}\n${teardown}`) : new Error(teardown);
+      }
       await rm(directory, { recursive: true, force: true });
-    } else if (failed) {
+    } else if (options.keep && failed) {
       process.stderr.write(`image smoke kept ${directory}\n`);
+    } else if (!ownsProject) {
+      await rm(directory, { recursive: true, force: true });
     }
   }
+  if (failed) throw failed;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

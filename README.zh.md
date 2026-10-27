@@ -77,25 +77,18 @@ Windows 的 `.exe` 是 NSIS 安装包：会建立快捷方式，可以卸载，�
 
 ### Web / Compose
 
-只装 Docker 和 Docker Compose v2 时，可以不克隆仓库，用钉死版本的镜像启动 PostgreSQL、hub 和 web。daemon 不在这些镜像里，仍在本机运行。独立 npm 包可用之前，daemon 仍从源码安装。源码安装还需要 **Node.js ≥ 22** 和 **Git**，系统可以是 Windows、macOS 或 Linux。
-
-```sh
-mkdir -p "$HOME/.nema/data"
-curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.3/docker-compose.yml
-docker compose up -d
-```
-
-当前检出的 compose 文件把镜像钉在 `ghcr.io/nema-project/nema-room-hub:0.1.3` 和 `ghcr.io/nema-project/nema-room-web:0.1.3`。镜像要等包含镜像发布工作流的第一个 `v*` tag 进入 main 之后才存在。`v0.1.3` 早于该工作流，所以上面的拉取会失败，直到出现更新的 tag。把 URL 里的 tag 换成那个 tag。然后打开 [localhost:3000](http://localhost:3000)。发布镜像忽略 `NEMA_HUB_PORT`，hub 固定在 4400。
-
-从检出构建仍然可用。向导会用当前源码构建镜像：
+在镜像发布之前，从检出构建 PostgreSQL、hub 和 web。这是目前可用的启动方式。daemon 不在镜像里，仍在本机运行。独立 npm 包可用之前，daemon 仍从源码安装。需要 **Node.js ≥ 22**、**Git**、**Docker** 和 **Docker Compose v2**，系统可以是 Windows、macOS 或 Linux。
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 node scripts/setup.mjs --lang zh
 ```
 
-向导检查依赖、构建 CLI、从源码启动服务，并引导配置模型。保持本机 daemon 运行。已有 `.env` 会保留。`npm run up` 是同一条源码构建，会带上 `--build`。单独的 `docker compose up` 拉取钉死镜像。发布用的 compose 文件没有构建步骤，对它执行 `docker compose up --build` 不适用。
+向导检查依赖、构建 CLI、从源码启动服务，并引导配置模型。保持本机 daemon 运行。已有 `.env` 会保留。`npm run up` 是同一条源码构建。在 Linux 上，无论 UID/GID 是不是 1000，都先按上面导出 `NEMA_UID` 和 `NEMA_GID`，再执行 `npm run up`，hub 才能写入数据目录。然后打开 [localhost:3000](http://localhost:3000)。发布用的 compose 文件没有构建步骤。
+
+不克隆、直接拉取钉死镜像，要从包含镜像发布工作流的第一个 `v*` tag 才开始。`v0.1.3` 不是这次发布，GHCR 上也没有 `0.1.3` 镜像。当前检出仍把镜像钉在 `ghcr.io/nema-project/nema-room-hub:0.1.3` 和 `ghcr.io/nema-project/nema-room-web:0.1.3`，因为 `scripts/images/check-images.mjs` 要求钉的版本等于包版本。下一次发版时版本和钉一起改，那个 tag 才会发布镜像。之后从那个 tag 下载 `docker-compose.yml`，同样导出 `NEMA_UID` 和 `NEMA_GID`，再执行 `docker compose up -d`。发布镜像忽略 `NEMA_HUB_PORT`，hub 固定在 4400。
 
 [手动安装与配置](docs/guide.zh.md#source-installation) · 只检查环境：`node scripts/setup.mjs --lang zh --check`
 

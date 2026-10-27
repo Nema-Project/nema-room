@@ -18,7 +18,7 @@
 - 除发布 job 外，没有任何 job 拥有 `packages: write`。全文件不出现 `id-token`，不出现 `secrets.GITHUB_TOKEN` 以外的 secret。
 - 发布镜像的浏览器 hub 地址是 `http://127.0.0.1:4400`。发布 compose 的 hub 端口三处都是字面量 4400。
 - 镜像版本等于 `apps/desktop`、`apps/local`、`apps/cli` 的共同版本，不使用 hub / web 的 `0.0.0`。
-- 冒烟的 `docker compose down -v` 必须带项目名 `nema-image-smoke`。
+- 每次冒烟生成一次性项目名 `nema-image-smoke-` 加 12 位十六进制。已有容器或卷则拒绝。只有本次确认过为空的项目才执行 `down -v`，并且 `down` 失败时冒烟失败。
 - 代码和注释用英文。两份英文 README 字节相同。
 
 ## Review Focus
@@ -66,7 +66,7 @@
 - 新建：nema-room:scripts/images/smoke-compose.test.mjs
 - 满足：R-5
 
-- [ ] **Step 1:** 写测试。导出的 `assertNoBuild(config)` 在任一服务有 `build` 时抛错。`assessHubProbe({status, cors, origin})` 要求 status 200 且 cors 等于 origin。`assessWorkspace({ok, id})` 要求 `ok` 且 `id` 非空。`assessBundle(found, hubUrl)` 在产物里找不到该 URL 时抛错。参数解析接受 `--pull never` 与 `--pull always`，其它值失败。默认项目名是 `nema-image-smoke`。脚本正文包含 `docker compose` 与 `-p`，且 `down -v` 只和该项目名一起出现。
+- [ ] **Step 1:** 写测试。导出的 `assertNoBuild(config)` 在任一服务有 `build` 时抛错。`assessHubProbe({status, cors, origin})` 要求 status 200 且 cors 等于 origin。`assessWorkspace({ok, id})` 要求 `ok` 且 `id` 非空。`assessBundle(found, hubUrl)` 在产物里找不到该 URL 时抛错。参数解析接受 `--pull never` 与 `--pull always`，其它值失败。未传 `--project` 时生成 `nema-image-smoke-` 加 12 位十六进制，固定名 `nema-image-smoke` 被拒绝。脚本正文包含 `docker compose` 与 `-p`，且 `down -v` 只对本次确认过为空的项目执行。
 - [ ] **Step 2:** 跑 `node --test scripts/images/smoke-compose.test.mjs` → FAIL。
 - [ ] **Step 3:** 实现 `smoke-compose.mjs`。它用 `docker compose config --format json` 做 `assertNoBuild`，再用 `up -d --wait --pull <policy>` 启动。健康之后请求 `${hubUrl}/api/daemon/status`，带 `Origin` 为 web 的 origin；再 `POST /api/workspaces`，JSON 是 `{ "name": "image-smoke" }`，同样的 Origin。用容器里的 `node` 在 `/app/apps/web/.next` 中查找 hub URL。数据目录用临时目录，`NEMA_UID` / `NEMA_GID` 用当前用户。postgres 的宿主机端口改到 `127.0.0.1:55432:5432`，避免碰开发用的 5433。结束时对项目名执行 `down -v`，`--keep` 时跳过。不要读取或删除 `~/.nema`。
 - [ ] **Step 4:** 跑 `node --test scripts/images/*.test.mjs` → PASS。

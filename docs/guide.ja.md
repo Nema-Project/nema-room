@@ -86,19 +86,7 @@ Node/npm、Git、Docker、Compose を確認し、既存の `.env` を保持し�
 
 ### 手動インストール（Bash）
 
-Compose で PostgreSQL、hub、web を起動します。**daemon はホストで動かし**、ローカルの認証情報とリポジトリのパスを使います。daemon はイメージに入っていません。
-
-clone しない場合は、イメージを公開した tag から `docker-compose.yml` を取得します。
-
-```bash
-mkdir -p "$HOME/.nema/data"
-curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.3/docker-compose.yml
-docker compose up -d
-```
-
-このチェックアウトは hub と web を `0.1.3` にピン留めしています。イメージが存在するのは、イメージ公開ワークフローを含む最初の `v*` tag が main に入った後です。`v0.1.3` はそのワークフローより前なので、URL の tag は実際にイメージを公開したより新しい tag に置き換えてください。公開 web イメージが hub を呼ぶアドレスは `http://127.0.0.1:4400` です。`NEMA_HUB_PORT` は公開イメージを変えません。
-
-このチェックアウトからビルドする場合：
+Compose で PostgreSQL、hub、web を起動します。**daemon はホストで動かし**、ローカルの認証情報とリポジトリのパスを使います。daemon はイメージに入っていません。イメージを公開するリリースまでは、このチェックアウトからビルドします。
 
 ```bash
 git clone https://github.com/Nema-Project/nema-room.git
@@ -107,10 +95,13 @@ cp .env.example .env
 npm ci
 npm run build -w apps/cli
 mkdir -p "$HOME/.nema/data"
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 npm run up
 ```
 
-`npm run up` はこのチェックアウトから hub と web をビルドします。`NEMA_HUB_PORT` の変更が効くのはこのソースビルドだけです。hub はそのポートで公開され、web は `http://127.0.0.1:<ポート>` で再ビルドされます。
+`npm run up` はこのチェックアウトから hub と web をビルドします。上の `export` は、UID/GID が 1000 かどうかに関係なく、コンテナのユーザーをホストのユーザーにします。`NEMA_HUB_PORT` の変更が効くのはこのソースビルドだけです。hub はそのポートで公開され、web は `http://127.0.0.1:<ポート>` で再ビルドされます。
+
+clone せずにピン留めしたイメージを pull できるのは、イメージ公開ワークフローを含む最初の `v*` tag からです。`v0.1.3` はそのリリースではありません。`scripts/images/check-images.mjs` は compose のピンとパッケージ版の一致を要求するので、ピンはイメージを公開するリリースと一緒に動きます。その tag のあと、その `docker-compose.yml` を取得し、同じように `NEMA_UID` と `NEMA_GID` を export して `docker compose up -d` を実行します。公開 web イメージが hub を呼ぶアドレスは `http://127.0.0.1:4400` で、`NEMA_HUB_PORT` は無視されます。
 
 まずモデルを設定します。標準の認証方式を使う場合：
 
@@ -128,7 +119,7 @@ npm run logs   # hub / web のログ
 npm run down   # コンテナを停止。DB ボリュームは保持
 ```
 
-Linux で UID/GID が 1000 以外の場合は `.env` に `NEMA_UID` / `NEMA_GID` を設定してください。保存先を変更する場合は、先にディレクトリを作成し、`NEMA_DATA_HOST_DIR` と daemon が読む保存先を一致させます。
+Linux では、上のコマンドがすべてのホストユーザーについて `id` から `NEMA_UID` と `NEMA_GID` を export します。同じ値を `.env` に書くこともできます。保存先を変更する場合は、先にディレクトリを作成し、`NEMA_DATA_HOST_DIR` と daemon が読む保存先を一致させます。
 
 <a id="models"></a>
 

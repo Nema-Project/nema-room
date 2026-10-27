@@ -77,25 +77,18 @@ Windows の `.exe` は NSIS インストーラーです。ショートカット�
 
 ### Web / Compose
 
-Docker と Docker Compose v2 があれば、リポジトリを clone せずに、ピン留めしたイメージで PostgreSQL、hub、web を起動できます。daemon はイメージに入っていません。ホストで動かします。独立した npm パッケージができるまでは、daemon はソースからインストールします。ソースからのインストールには、Windows、macOS、Linux 上の **Node.js ≥ 22** と **Git** も必要です。
-
-```sh
-mkdir -p "$HOME/.nema/data"
-curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.3/docker-compose.yml
-docker compose up -d
-```
-
-このチェックアウトの compose ファイルは `ghcr.io/nema-project/nema-room-hub:0.1.3` と `ghcr.io/nema-project/nema-room-web:0.1.3` をピン留めしています。イメージが存在するのは、イメージ公開ワークフローを含む最初の `v*` tag が main に入った後です。`v0.1.3` はそのワークフローより前なので、より新しい tag が出るまで上の pull は失敗します。URL の tag をその tag に置き換えてください。その後 [localhost:3000](http://localhost:3000) を開きます。公開イメージは `NEMA_HUB_PORT` を無視し、hub は 4400 のままです。
-
-チェックアウトからビルドすることもできます。ウィザードは現在のソースからイメージをビルドします。
+イメージを公開するリリースが出るまでは、チェックアウトから PostgreSQL、hub、web をビルドします。これが今使える起動方法です。daemon はイメージに入っていません。ホストで動かします。独立した npm パッケージができるまでは、daemon はソースからインストールします。Windows、macOS、Linux 上の **Node.js ≥ 22**、**Git**、**Docker**、**Docker Compose v2** が必要です。
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 node scripts/setup.mjs --lang ja
 ```
 
-ウィザードが依存関係を確認し、CLI をビルドしてサービスを起動し、モデル設定を案内します。ホストの daemon は起動したままにしてください。既存の `.env` は保持されます。`npm run up` は同じソースビルドで、`--build` を付けます。`docker compose up` だけを実行すると、ピン留めしたイメージを pull します。公開用 compose ファイルにビルド手順はないので、そのファイルに `docker compose up --build` は使いません。
+ウィザードが依存関係を確認し、CLI をビルドしてソースからサービスを起動し、モデル設定を案内します。ホストの daemon は起動したままにしてください。既存の `.env` は保持されます。`npm run up` は同じソースビルドです。Linux では UID/GID が 1000 でもそれ以外でも、上と同じように `NEMA_UID` と `NEMA_GID` を export してから `npm run up` してください。hub がデータディレクトリへ書き込めます。その後 [localhost:3000](http://localhost:3000) を開きます。公開用 compose ファイルにビルド手順はありません。
+
+clone せずにピン留めしたイメージを pull できるのは、イメージ公開ワークフローを含む最初の `v*` tag からです。`v0.1.3` はそのリリースではなく、GHCR に `0.1.3` のイメージはありません。このチェックアウトが `ghcr.io/nema-project/nema-room-hub:0.1.3` と `ghcr.io/nema-project/nema-room-web:0.1.3` をピン留めしているのは、`scripts/images/check-images.mjs` がピンとパッケージ版の一致を要求するためです。次のリリースで版とピンが一緒に動き、その tag がイメージを公開します。その後、その tag から `docker-compose.yml` を取得し、同じように `NEMA_UID` と `NEMA_GID` を export して `docker compose up -d` を実行します。公開イメージは `NEMA_HUB_PORT` を無視し、hub は 4400 のままです。
 
 [手動インストールと設定](docs/guide.ja.md#source-installation) · 環境の確認のみ：`node scripts/setup.mjs --lang ja --check`
 

@@ -7,7 +7,9 @@ A push of a `v*` tag builds `linux/amd64` hub and web images, runs `.github/work
 - `ghcr.io/nema-project/nema-room-hub`
 - `ghcr.io/nema-project/nema-room-web`
 
-The version tag matches `apps/desktop`, `apps/local`, and `apps/cli`, and the `image:` tags in `docker-compose.yml`. A stable release also moves `latest`. A prerelease does not move `latest`. `workflow_dispatch` builds and smokes the images locally and does not push.
+The version tag matches `apps/desktop`, `apps/local`, and `apps/cli`, and the `image:` tags in `docker-compose.yml`. `scripts/images/check-images.mjs` rejects a tag whose version differs from that pin, so the pin is updated in the release commit. A prerelease does not move `latest`. `workflow_dispatch` builds and smokes the images locally and does not push.
+
+Publish jobs share the concurrency group `image-publish-registry` and do not cancel each other. A stable release moves `latest` only when `org.opencontainers.image.version` on the current `latest` image is missing or older than or equal to this version. An older stable tag that reaches the registry later leaves `latest` where it is. The remote tag is checked again immediately before each version push, and again after both version tags exist and before either `latest` tag moves.
 
 The publish job's permissions are `contents: read` and `packages: write`. It does not build an image and does not run `npm ci`. The only registry credential is `GITHUB_TOKEN`. The repository stores no long-lived registry secret. BuildKit provenance (`mode=max`) and the SBOM travel inside the OCI index. The workflow does not request `id-token` or GitHub artifact attestations.
 
@@ -23,7 +25,13 @@ Publication does not push when any of these is true:
 - the build job's smoke (`scripts/images/smoke-compose.mjs --pull never`) fails
 - crane cannot push the layout
 
-The tag is checked again with `scripts/desktop/release-commit.mjs --verify-remote` immediately before the push.
+The tag is checked again with `scripts/desktop/release-commit.mjs --verify-remote` immediately before each image push and before `latest` moves.
+
+## A push that stops halfway
+
+Both version tags are pushed before either `latest` tag moves. If the web push fails after the hub push, `latest` is unchanged and the pair is incomplete. Re-run the same tag workflow. The remote tag check runs again before each push. If GHCR refuses to overwrite the hub version tag, delete that package version in the package settings and re-run. Do not point `latest` at only one of the two images.
+
+If `latest` moves for hub and then the web move fails, re-run the workflow. The version check treats an equal version as safe to set again, and it will not move `latest` backward. There is no automatic rollback of a tag that already moved.
 
 ## One-time package visibility
 

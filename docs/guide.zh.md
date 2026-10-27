@@ -86,19 +86,7 @@ node scripts/setup.mjs --lang zh
 
 ### 手动安装（Bash）
 
-Compose 运行 PostgreSQL、hub 和 web；**daemon 仍在本机运行**，使用本机凭证和仓库路径。daemon 不在镜像里。
-
-不克隆仓库时，从发布了镜像的 tag 下载 `docker-compose.yml`：
-
-```bash
-mkdir -p "$HOME/.nema/data"
-curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.3/docker-compose.yml
-docker compose up -d
-```
-
-当前检出把 hub 和 web 钉在 `0.1.3`。镜像要等包含镜像发布工作流的第一个 `v*` tag 进入 main 之后才存在。`v0.1.3` 早于该工作流，请把 URL 里的 tag 换成后来真正发布镜像的那个 tag。发布的 web 镜像访问 hub 的地址是 `http://127.0.0.1:4400`。`NEMA_HUB_PORT` 不会改变发布镜像。
-
-从当前检出构建：
+Compose 运行 PostgreSQL、hub 和 web；**daemon 仍在本机运行**，使用本机凭证和仓库路径。daemon 不在镜像里。镜像发布之前，从当前检出构建。
 
 ```bash
 git clone https://github.com/Nema-Project/nema-room.git
@@ -107,10 +95,13 @@ cp .env.example .env
 npm ci
 npm run build -w apps/cli
 mkdir -p "$HOME/.nema/data"
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 npm run up
 ```
 
-`npm run up` 用当前检出构建 hub 和 web。修改 `NEMA_HUB_PORT` 只在这条源码构建上生效：hub 发布到该端口，web 会按 `http://127.0.0.1:<端口>` 重建。
+`npm run up` 用当前检出构建 hub 和 web。上面的 `export` 把容器用户设成当前主机用户，UID/GID 不是 1000 时也一样。修改 `NEMA_HUB_PORT` 只在这条源码构建上生效：hub 发布到该端口，web 会按 `http://127.0.0.1:<端口>` 重建。
+
+不克隆、直接拉取钉死镜像，要从包含镜像发布工作流的第一个 `v*` tag 才开始。`v0.1.3` 不是这次发布。`scripts/images/check-images.mjs` 要求 compose 的钉等于包版本，所以钉会跟着真正发布镜像的那次发版一起改。那个 tag 出现之后，下载它的 `docker-compose.yml`，同样导出 `NEMA_UID` 和 `NEMA_GID`，再执行 `docker compose up -d`。发布的 web 镜像访问 hub 的地址是 `http://127.0.0.1:4400`，并忽略 `NEMA_HUB_PORT`。
 
 首次使用先配置模型。使用默认认证时：
 
@@ -128,7 +119,7 @@ npm run logs   # 查看 hub / web 日志
 npm run down   # 停止容器，保留数据库卷
 ```
 
-Linux 上若 UID/GID 不是 1000，请在 `.env` 设置 `NEMA_UID` / `NEMA_GID`。自定义目录时先手动创建，并让 `NEMA_DATA_HOST_DIR` 与 daemon 读取的目录一致。
+Linux 上，上面的命令对任何主机用户都用 `id` 导出 `NEMA_UID` 和 `NEMA_GID`。也可以把同样的值写进 `.env`。自定义目录时先手动创建，并让 `NEMA_DATA_HOST_DIR` 与 daemon 读取的目录一致。
 
 <a id="models"></a>
 

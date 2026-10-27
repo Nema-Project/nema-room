@@ -77,25 +77,18 @@ The Windows `.exe` is the NSIS installer: shortcuts, uninstall, and overwrite up
 
 ### Web / Compose
 
-Docker and Docker Compose v2 can start PostgreSQL, the hub, and web from pinned images, without cloning this repository. The daemon is not in those images. It still runs on the host. Until a standalone npm package exists, install the daemon from source. A source install also needs **Node.js ≥ 22** and **Git**, on Windows, macOS, or Linux.
-
-```sh
-mkdir -p "$HOME/.nema/data"
-curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.3/docker-compose.yml
-docker compose up -d
-```
-
-This checkout pins `ghcr.io/nema-project/nema-room-hub:0.1.3` and `ghcr.io/nema-project/nema-room-web:0.1.3`. Those images exist only after the first `v*` tag that contains the image publish workflow is on main. Tag `v0.1.3` was published before that workflow, so the pull fails until a later tag. Put that later tag in the URL above. Open [localhost:3000](http://localhost:3000). The published images ignore `NEMA_HUB_PORT` and keep the hub on port 4400.
-
-Building from a checkout still works. The wizard builds the images from this source:
+Build PostgreSQL, the hub, and web from a checkout. That is the supported start until a release tag publishes images. The daemon is not in those images. It still runs on the host. Until a standalone npm package exists, install the daemon from source. You need **Node.js ≥ 22**, **Git**, **Docker**, and **Docker Compose v2** on Windows, macOS, or Linux.
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 node scripts/setup.mjs --lang en
 ```
 
-The wizard checks dependencies, builds the CLI, starts services, and guides model setup. Keep the host daemon running. Existing `.env` files are preserved. `npm run up` is the same source build, including `--build`. Plain `docker compose up` pulls the pinned images. The published compose file has no build step, so `docker compose up --build` does not apply to it.
+The wizard checks dependencies, builds the CLI, starts services from source, and guides model setup. Keep the host daemon running. Existing `.env` files are preserved. `npm run up` is the same source build. Export `NEMA_UID` and `NEMA_GID` the same way before `npm run up` so the hub can write its data directory for any host user, including users whose ids are not 1000. Open [localhost:3000](http://localhost:3000). The published compose file has no build step.
+
+Pulling pinned images, without cloning, begins with the first `v*` tag that contains the image publish workflow. Tag `v0.1.3` is not that release, and the `0.1.3` images are not on GHCR. This checkout still pins `ghcr.io/nema-project/nema-room-hub:0.1.3` and `ghcr.io/nema-project/nema-room-web:0.1.3` because `scripts/images/check-images.mjs` requires the pin to equal the package version. The pin moves when the next release is cut, and that tag is what publishes the images. After it exists, download `docker-compose.yml` from that tag, export `NEMA_UID` and `NEMA_GID` as above, and run `docker compose up -d`. Published images ignore `NEMA_HUB_PORT` and keep the hub on port 4400.
 
 [Manual setup and configuration](docs/guide.en.md#source-installation) · Read-only check: `node scripts/setup.mjs --lang en --check`
 
