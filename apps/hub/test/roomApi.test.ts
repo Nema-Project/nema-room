@@ -1,12 +1,13 @@
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
+import { KnowledgeStore } from "@nema/knowledge";
 import { KIND_DIR, PLUGINS } from "@nema/shared";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { createWorkspace, repoPath } from "../src/workspaces.js";
 import { addMessage, addReportMessage, postSystemTask, postUserMessage } from "../src/messages.js";
-import { claimNextTask, finishTask, listTaskChanges } from "../src/tasks.js";
+import { claimNextTask, finishTask, insertQueuedTask, listTaskChanges } from "../src/tasks.js";
 import { EventBus, type HubEvent } from "../src/events.js";
 import { USER_BASIS_EVIDENCE_CODE, USER_BASIS_EVIDENCE_ERROR, roomRoutes } from "../src/roomApi.js";
 import { markThreadRead } from "../src/threads.js";
@@ -611,6 +612,170 @@ describe("user basis evidence", () => {
     }));
     expect(r.status).toBe(200);
     expect(((await r.json()) as any).entry.status).toBe("active");
+  });
+
+  test("rejects reviving a dropped decision without the current task user message", async () => {
+    const t = await runningTaskFor(wsA);
+    await seedActiveDecision(t.runToken, t.messageId);
+    const withdrawn = await new KnowledgeStore(repoPath(dataDir, wsA)).withdraw("D-1", { author: "user" });
+    expect(withdrawn.entry.status).toBe("dropped");
+    const file = entryPath(wsA, "decision", "D-1");
+    const before = await readFile(file);
+    const agent = await addMessage(db, wsA, "agent", "bring it back");
+    const r = await req("POST", "/room/entries", t.runToken, upsert({
+      id: "D-1",
+      kind: "decision",
+      title: "ship it",
+      body: "original",
+      status: "active",
+      basis: "inferred",
+      sourceMessages: [agent.id],
+    }));
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual(evidenceBody());
+    expect(await readFile(file)).toEqual(before);
+  });
+
+  test("rejects reviving a superseded requirement without the current task user message", async () => {
+    const t = await runningTaskFor(wsA);
+    const created = await req("POST", "/room/entries", t.runToken, upsert({
+      title: "req",
+      body: "old",
+      sourceMessages: [t.messageId],
+    }));
+    expect(created.status).toBe(200);
+    const superseded = await req("POST", "/room/entries", t.runToken, upsert({
+      id: "R-1",
+      title: "req",
+      body: "old",
+      status: "superseded",
+      basis: "inferred",
+      sourceMessages: [t.messageId],
+    }));
+    expect(superseded.status).toBe(200);
+    const file = entryPath(wsA, "requirement", "R-1");
+    const before = await readFile(file);
+    const agent = await addMessage(db, wsA, "agent", "bring it back");
+    const r = await req("POST", "/room/entries", t.runToken, upsert({
+      id: "R-1",
+      title: "req",
+      body: "old",
+      status: "active",
+      basis: "inferred",
+      sourceMessages: [agent.id],
+    }));
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual(evidenceBody());
+    expect(await readFile(file)).toEqual(before);
+  });
+
+  test("accepts reviving a dropped decision when the current task user message is cited", async () => {
+    const t = await runningTaskFor(wsA);
+    await seedActiveDecision(t.runToken, t.messageId);
+    await new KnowledgeStore(repoPath(dataDir, wsA)).withdraw("D-1", { author: "user" });
+    const r = await req("POST", "/room/entries", t.runToken, upsert({
+      id: "D-1",
+      kind: "decision",
+      title: "ship it",
+      body: "original",
+      status: "active",
+      basis: "inferred",
+      sourceMessages: [t.messageId],
+    }));
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as any).entry.status).toBe("active");
+  });
+
+  test("accepts reviving a superseded requirement when the current task user message is cited", async () => {
+    const t = await runningTaskFor(wsA);
+    const created = await req("POST", "/room/entries", t.runToken, upsert({
+      title: "req",
+      body: "old",
+      sourceMessages: [t.messageId],
+    }));
+    expect(created.status).toBe(200);
+    const superseded = await req("POST", "/room/entries", t.runToken, upsert({
+      id: "R-1",
+      title: "req",
+      body: "old",
+      status: "superseded",
+      basis: "inferred",
+      sourceMessages: [t.messageId],
+    }));
+    expect(superseded.status).toBe(200);
+    const r = await req("POST", "/room/entries", t.runToken, upsert({
+      id: "R-1",
+      title: "req",
+      body: "old",
+      status: "active",
+      basis: "inferred",
+      sourceMessages: [t.messageId],
+    }));
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as any).entry.status).toBe("active");
+  });
+
+  test("rejects a decided entry from a report task that cites an older user message", async () => {
+    const user = await postUserMessage(db, wsA, "earlier user");
+    const userTask = await claimNextTask(db, "d-report-user");
+    expect(userTask?.workspaceId).toBe(wsA);
+    await finishTask(db, userTask!.id, { ok: true });
+    const report = await addReportMessage(db, wsA, "done", {
+      report: {
+        agent: "test",
+        gitCommonDir: "/tmp/report/.git",
+        summary: "done",
+        entries: [],
+        commits: ["abcdef1"],
+        files: [],
+      },
+      check: null,
+    });
+    await insertQueuedTask(db, wsA, report.id);
+    const task = await claimNextTask(db, "d-report");
+    expect(task?.messageId).toBe(report.id);
+    const r = await req("POST", "/room/entries", task!.runToken!, upsert({
+      kind: "decision",
+      basis: "decided",
+      sourceMessages: [user.message.id],
+    }));
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual(evidenceBody());
+    await expect(readFile(entryPath(wsA, "decision", "D-1"))).rejects.toThrow();
+  });
+
+  test("returns 404 when the entry disappears before the locked write", async () => {
+    const t = await runningTaskFor(wsA);
+    const created = await req("POST", "/room/entries", t.runToken, upsert({
+      title: "req",
+      body: "old",
+      sourceMessages: [t.messageId],
+    }));
+    expect(created.status).toBe(200);
+    const file = entryPath(wsA, "requirement", "R-1");
+    const original = KnowledgeStore.prototype.get;
+    let removed = false;
+    KnowledgeStore.prototype.get = async function (this: KnowledgeStore, id: string) {
+      const entry = await original.call(this, id);
+      if (id === "R-1" && entry && !removed) {
+        removed = true;
+        await rm(file);
+      }
+      return entry;
+    };
+    try {
+      const r = await req("POST", "/room/entries", t.runToken, upsert({
+        id: "R-1",
+        title: "req",
+        body: "new",
+        basis: "stated",
+        sourceMessages: [t.messageId],
+      }));
+      expect(r.status).toBe(404);
+      expect(await r.json()).toEqual({ error: "entry not found: R-1" });
+    } finally {
+      KnowledgeStore.prototype.get = original;
+    }
   });
 
   test("accepts an inferred entry that cites only an agent message", async () => {

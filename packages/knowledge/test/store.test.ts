@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { KnowledgeStore, UpsertRejected, git, history, parseCommitMessage } from "../src/index.js";
+import { KnowledgeStore, RepoLockReentryError, UpsertRejected, git, history, parseCommitMessage } from "../src/index.js";
 
 let dir: string;
 beforeEach(async () => {
@@ -177,6 +177,45 @@ describe("KnowledgeStore", () => {
     );
     expect(updated.entry.title).toBe("from-guard");
     expect(updated.entry.confirmedAt).toBe(created.entry.confirmedAt);
+  });
+
+  test("reentering the repo lock from a guard fails fast and the lock still works", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await s.upsert(req("kept"), { author: "agent" });
+    const before = await s.get("R-1");
+    const nested: Array<() => Promise<unknown>> = [
+      () => s.upsert(req("inner"), { author: "agent" }),
+      () => s.confirm("R-1", { author: "user" }),
+      () => s.withdraw("R-1", { author: "user" }),
+      () => s.writeDiagram(
+        { title: "d", body: "b", diagram: { repoId: "r", type: "architecture", sourceCommits: {}, nodePaths: {} }, spec: {}, reason: "r", sourceMessages: ["m_1"] },
+        { author: "agent" },
+      ),
+    ];
+    for (const call of nested) {
+      const started = Date.now();
+      await expect(s.upsert(req("nested", { id: "R-1" }), { author: "agent" }, call)).rejects.toBeInstanceOf(RepoLockReentryError);
+      expect(Date.now() - started).toBeLessThan(1000);
+    }
+    expect(await s.get("R-1")).toEqual(before);
+
+    const otherDir = await mkdtemp(path.join(tmpdir(), "nema-kb-"));
+    try {
+      const other = new KnowledgeStore(otherDir);
+      await other.init();
+      await s.upsert(req("outer", { id: "R-1" }), { author: "agent" }, async () => {
+        const written = await other.upsert(req("elsewhere"), { author: "agent" });
+        expect(written.entry.id).toBe("R-1");
+      });
+    } finally {
+      await rm(otherDir, { recursive: true, force: true });
+    }
+    expect((await s.get("R-1"))?.title).toBe("outer");
+
+    const next = await s.upsert(req("after"), { author: "agent" });
+    expect(next.entry.id).toBe("R-2");
+    expect(next.entry.title).toBe("after");
   });
 
   test("update unions sourceMessages, keeps omitted fields, commit records only input sources", async () => {

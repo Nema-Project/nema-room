@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Room API 写入用户 basis，或把 superseded 决策恢复为 active 时，必须引用当前任务的用户消息；检查和写入在同一把仓库锁里。
+**Goal:** Room API 写入用户 basis，或把任一类型从 `INACTIVE_STATUSES` 改回 active 时，必须引用当前任务的用户消息；检查和写入在同一把仓库锁里。同一仓库重入这把锁立刻抛错。
 
 **Architecture:** `KnowledgeStore.upsert` 增加可选 guard，在它已持有的 `withRepoLock` 内读完条目再决定写不写。Room 的 `POST /entries` 把今天的 active 决策守卫和本 issue 的用户证据都放进这个回调。不传 guard 的调用保持原样。CX-03 任务 6 以后在同一个回调里追加外部证据检查，不另加锁。
 
@@ -10,22 +10,22 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-27-user-basis-evidence-design.md`
 
-**Base:** `dce99af412e4c80547d144928a5378d65083f877`（`main`，PR #27 已合入）。不要实现 CX-03，不要改 `docs/superpowers/specs/2026-10-27-source-evidence-protocol-design.md` 或它的 plan。
+**Base:** `dce99af412e4c80547d144928a5378d65083f877`（`main`，PR #27 已合入）。不要实现 CX-03。CX-03 的 spec / plan 只按任务 3 改措辞，不改它的设计。
 
 ## Global Constraints
 
 - 不新增 npm 依赖，不建 `evidence_events`，不改条目文件格式。
-- `withRepoLock` 不可重入。guard 内不得调用同一仓库的 `upsert`、`confirm`、`withdraw`、`writeDiagram`，也不得 `withRepoLock(repoDir)`。
+- `withRepoLock` 不可重入。guard 内不得调用同一仓库的 `upsert`、`confirm`、`withdraw`、`writeDiagram`，也不得 `withRepoLock(repoDir)`。重入立刻抛 `RepoLockReentryError`。
 - 不传 guard 的 `upsert` 行为不变。界面 `PUT` / `confirm` 不传 guard。
 - 旧的 active 决策 409 原文不变，且先于新 409。新 409 原文和 `code` 以 spec 为准。
 - 代码注释用英文。hub 面向调用方的新错误用 spec 里的中文原句。
-- 不改 README、`ROADMAP.md`、CX-03 文档。
+- 不改 README、`ROADMAP.md`。CX-03 文档只改任务 3 列出的措辞。
 - 每个任务结束跑该任务列出的测试和 `npm run typecheck`。web 无改动，不跑 web lint / build。
 
 ## Review Focus
 
 1. 新建、需求改正文、只引用另一条用户消息的 active 决策改正文，在没有当前任务用户消息时必须是 409 `user_basis_evidence`，文件不变。→ 任务 2。
-2. superseded → active 即使 basis 为 `inferred` 也要当前任务用户消息。停在 superseded 的 `inferred` 改正文仍是 200。→ 任务 2。
+2. 从 `INACTIVE_STATUSES` 改回 active 即使 basis 为 `inferred` 也要当前任务用户消息，不限种类。停在 superseded 的 `inferred` 改正文仍是 200。→ 任务 2、任务 3。
 3. 只引用 agent 消息的 active 决策改写仍是旧 409 文案，没有 `code`。→ 任务 2。
 4. 两个 guard 在同一仓库上串行，后一个看到前一个写入后的标题。拒绝不写文件，并且之后还能再写。→ 任务 1。
 5. guard 的返回值能替换写入内容，包括压掉 `confirmed: true`。CX-03 任务 6 必须能沿 spec 里的回调往下加，而不是在锁外读一次再放行。→ 任务 1、任务 2。
@@ -44,7 +44,7 @@
 
 - Produces: spec「锁内接口」的 `UpsertRejected`、`UpsertGuardContext`、`UpsertGuard`，以及 `KnowledgeStore.upsert(rawInput, meta, guard?)`。
 - guard 在读完 `existing`、分配好 id 之后、`writeAndCommit` 之前运行。抛 `UpsertRejected` 则不写。返回的 input 在钉死锁内 `id` 和 `kind` 后重新 parse，并用于后面的写入。
-- 注释写明：调用方必须尚未持有该 `repoDir` 的仓库锁；guard 自己也不得再取这把锁。CX-03 任务 6 复用第三个参数，不新加方法。
+- 注释写明：调用方必须尚未持有该 `repoDir` 的仓库锁；guard 自己也不得再取这把锁。重入抛 `RepoLockReentryError`。CX-03 任务 6 复用第三个参数，不新加方法。
 
 - [ ] **Step 1: 写失败测试** 在 `store.test.ts`：
 
@@ -71,7 +71,7 @@
 - `POST /entries` 调用 `ks.upsert(input, { author: "agent", taskId }, guard)`。
 - guard 内顺序：`applyActiveDecisionGuard`（今天第 145–163 行的规则，改用锁内 `existing`），然后 `assertCurrentTaskUserEvidence`。后者只在 spec 的三种「需要证据」情况查询 `getTask` / `getMessage`。
 - 回调末尾 `return` 调整后的 input。注释按 spec 写明 CX-03 任务 6 插在这个 `return` 之前。
-- `UpsertRejected` 映射为 HTTP 状态。`code` 只在有值时出现。未知 id 的 404 仍在加锁前。
+- `UpsertRejected` 映射为 HTTP 状态。`code` 只在有值时出现。未知 id 的 404 仍在加锁前。锁内才发现条目已删除时同样 404。
 - quote 两个正向用例的 `sourceMessages` 加上当前任务用户消息 id。断言不改。
 
 - [ ] **Step 1: 写失败测试** 在 `roomApi.test.ts`。先确认现有 decision 描述块仍然只依赖当前任务用户消息或 `inferred`。再加 spec「测试」一节列出的拒绝、通过和系统任务用例。不要改那八个决策测试的期望。
@@ -87,5 +87,31 @@
 ## 不在本计划里
 
 - CX-03 的表、导入、`sourceRefs`、界面事件。任务 6 的插入点只写在注释和 spec 里，不实现。
-- 可重入的 `withRepoLock`。
+- 可重入的 `withRepoLock`。重入只报错，不改成允许嵌套。
 - prompt 改写。服务端拒绝会回到 Agent，prompt 里已有的句子不用再抄一遍。
+
+### Task 3: 评审补上的失效复活、重入报错和措辞
+
+**Files:**
+
+- Modify: `apps/hub/src/roomApi.ts`
+- Modify: `apps/hub/test/roomApi.test.ts`
+- Modify: `packages/knowledge/src/git.ts`
+- Modify: `packages/knowledge/src/index.ts`
+- Modify: `packages/knowledge/src/store.ts`
+- Modify: `packages/knowledge/test/store.test.ts`
+- Modify: `CHANGELOG.md`
+- Modify: `docs/reference.zh-CN.md`
+- Modify: `docs/superpowers/specs/2026-10-27-source-evidence-protocol-design.md`（只改措辞）
+- Modify: `docs/superpowers/plans/2026-10-27-source-evidence-protocol.md`（只改措辞，任务 6 写明 `UpsertGuard`）
+
+**Interfaces:**
+
+- 复活规则改成：`existing.status` 属于 `INACTIVE_STATUSES`，且本次要写成的状态是 `active`。409 原文改为 `写入 stated 或 decided，或把已失效条目恢复为 active，需要引用当前任务的用户消息。`
+- `withRepoLock` 用 `AsyncLocalStorage` 记住当前异步调用已持有的仓库目录。同一目录重入在排队之前抛 `RepoLockReentryError`。
+- 锁内 `entry <id> not found`，且请求带了 id：Room 返回 404 `entry not found: <id>`。
+- CX-03 里指纯聊天路径的「今天 / 保持今天」改为「#28 合入后的行为，包括用户 basis 证据检查和失效→active 检查，不得删除」。任务 6 写明把外部证据检查插进已有 `UpsertGuard`，插在 `assertCurrentTaskUserEvidence` 之后。
+
+- [ ] **Step 1: 写失败测试**。`dropped` 决策和 `superseded` 需求在不引用当前任务用户消息时不能改回 active；引用时可以。上报任务写成 `decided` 并只引用更早的用户消息时 409。guard 内 `upsert` 立刻抛 `RepoLockReentryError`，之后锁仍能写。条目在两次读取之间被删掉时 404。
+- [ ] **Step 2: 实现** spec 的补丁。不改 CX-03 的检查设计，不让锁变成可重入。
+- [ ] **Step 3: 跑** `npx vitest run --project @nema/hub roomApi`、`npx vitest run --project @nema/knowledge store` 和 `npm run typecheck` → PASS。

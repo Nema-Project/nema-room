@@ -48,8 +48,9 @@ export type UpsertGuardContext = {
  * the caller's input. Throw {@link UpsertRejected} to skip the write.
  *
  * The caller must not already hold this repo's `withRepoLock`, and the guard must not
- * call `upsert`, `confirm`, `withdraw`, `writeDiagram`, or `withRepoLock` on this repo:
- * the lock is not reentrant. CX-03 task 6 appends its sourceRefs checks in this callback.
+ * call `upsert`, `confirm`, `withdraw`, `writeDiagram`, or `withRepoLock` on this repo.
+ * That reentry throws `RepoLockReentryError` instead of deadlocking.
+ * CX-03 task 6 appends its sourceRefs checks in this callback.
  */
 export type UpsertGuard = (ctx: UpsertGuardContext) => Promise<UpsertEntryInput | void> | UpsertEntryInput | void;
 

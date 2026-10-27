@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile } from "node:child_process";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { runHelperFile } from "@nema/shared/ownedHelper";
@@ -21,11 +22,31 @@ export async function git(repoDir: string, args: string[], ownedHelpers?: OwnedH
 }
 
 const tails = new Map<string, Promise<unknown>>();
+const heldLocks = new AsyncLocalStorage<Set<string>>();
 
-/** Serialize `fn` against other callers using the same repo directory (in-process). */
+/** The async call already holds this repository's lock. Thrown before the call queues behind itself. */
+export class RepoLockReentryError extends Error {
+  constructor(readonly repoDir: string) {
+    super(`withRepoLock cannot be reentered for the same repository: ${repoDir}`);
+    this.name = "RepoLockReentryError";
+  }
+}
+
+/**
+ * Serialize `fn` against other callers using the same repo directory (in-process).
+ * A nested call for that same directory throws {@link RepoLockReentryError}.
+ * Another directory, or a later call after this one finishes, is unaffected.
+ */
 export function withRepoLock<T>(repoDir: string, fn: () => Promise<T>): Promise<T> {
+  const held = heldLocks.getStore();
+  if (held?.has(repoDir)) throw new RepoLockReentryError(repoDir);
+  const scope = new Set(held);
+  scope.add(repoDir);
   const prev = tails.get(repoDir) ?? Promise.resolve();
-  const run = prev.then(fn, fn);
+  const run = prev.then(
+    () => heldLocks.run(scope, fn),
+    () => heldLocks.run(scope, fn),
+  );
   const tail = run.catch(() => undefined);
   tails.set(repoDir, tail);
   void tail.then(() => {

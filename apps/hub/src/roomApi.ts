@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { ZodError } from "zod";
 import { KnowledgeStore, UpsertRejected } from "@nema/knowledge";
-import { UpsertEntryInput, pluginFunction, reportPassed, type Entry, type GetEntryResponse, type Implementation, type ReportMessageMeta, type ListEntriesResponse, type UpsertEntryResponse } from "@nema/shared";
+import { INACTIVE_STATUSES, UpsertEntryInput, pluginFunction, reportPassed, type Entry, type GetEntryResponse, type Implementation, type ReportMessageMeta, type ListEntriesResponse, type UpsertEntryResponse } from "@nema/shared";
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
 import { callHubFunction, vendoredArchify, type Archify } from "./diagrams.js";
@@ -160,6 +160,9 @@ export function roomRoutes(deps: {
         const msg = e.issues.map((i) => `${i.path.join(".") || "(body)"}: ${i.message}`).join("; ");
         return c.json({ error: `invalid entry: ${msg}` }, 400);
       }
+      if (input.id !== undefined && e instanceof Error && e.message === `entry ${input.id} not found`) {
+        return c.json({ error: `entry not found: ${input.id}` }, 404);
+      }
       console.error("room upsert failed", e);
       return c.json({ error: "internal error while saving entry" }, 500);
     }
@@ -271,7 +274,7 @@ function badRepoValue(args: unknown): string {
 
 export const USER_BASIS_EVIDENCE_CODE = "user_basis_evidence";
 export const USER_BASIS_EVIDENCE_ERROR =
-  "写入 stated 或 decided，或把已 superseded 的决策恢复为 active，需要引用当前任务的用户消息。";
+  "写入 stated 或 decided，或把已失效条目恢复为 active，需要引用当前任务的用户消息。";
 
 export const VERIFIED_NEEDS_REPORT = "实现状态 verified 需要一条核实通过的上报作为证据（evidence.reportMessageId）。";
 export const INFERRED_NOT_VERIFIED = "代码推断的实现只能由用户确认为 verified。";
@@ -309,7 +312,7 @@ function needsCurrentTaskUserEvidence(existing: Entry | null, input: UpsertEntry
   const userBasis = input.basis === "stated" || input.basis === "decided";
   if (!existing) return userBasis;
   const nextStatus = input.status ?? existing.status;
-  const revives = existing.kind === "decision" && existing.status === "superseded" && nextStatus === "active";
+  const revives = (INACTIVE_STATUSES as readonly string[]).includes(existing.status) && nextStatus === "active";
   if (revives) return true;
   if (!userBasis) return false;
   const changesContent = input.title !== existing.title
@@ -319,7 +322,7 @@ function needsCurrentTaskUserEvidence(existing: Entry | null, input: UpsertEntry
   return changesContent || changesBasis;
 }
 
-/** User basis, and revival of a superseded decision, cite the current task's user message. */
+/** User basis, and revival from any inactive status to active, cite the current task's user message. */
 async function assertCurrentTaskUserEvidence(
   db: Db,
   taskId: string,
