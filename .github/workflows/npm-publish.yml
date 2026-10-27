@@ -1,4 +1,4 @@
-name: Publish nema to npm
+name: Publish @nema-project/nema to npm
 
 # Trusted publishing (OIDC). The filename is part of the npm trusted-publisher
 # binding; do not rename it without changing the npm setting first.
@@ -50,7 +50,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tarball=$(find dist-npm -name 'nema-*.tgz' | head -n 1)
+          tarball=$(find dist-npm -name 'nema-project-nema-*.tgz' | head -n 1)
           test -n "$tarball"
           node scripts/npm/smoke-pack.mjs "$tarball"
       - name: Prepare local hub and daemon token
@@ -86,7 +86,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tarball=$(find dist-npm -name 'nema-*.tgz' | head -n 1)
+          tarball=$(find dist-npm -name 'nema-project-nema-*.tgz' | head -n 1)
           node scripts/npm/smoke-pack.mjs "$tarball" --hub-url http://127.0.0.1:4400 --token-file "$RUNNER_TEMP/nema-data/daemon-token"
           node scripts/npm/smoke-pack.mjs "$tarball" --hub-url http://127.0.0.1:4400 --token-file "$RUNNER_TEMP/nema-data/daemon-token" --expect-skew
       - name: Upload packed tarball
@@ -96,7 +96,7 @@ jobs:
           if-no-files-found: error
           retention-days: 5
           path: |
-            dist-npm/nema-*.tgz
+            dist-npm/nema-project-nema-*.tgz
             scripts/npm/check-tag.mjs
             scripts/desktop/release-version.mjs
             apps/cli/package.json
@@ -163,6 +163,6 @@ jobs:
             echo "tag moved: ${TAG} is ${got}, expected ${SHA}" >&2
             exit 1
           fi
-          tarball=$(find artifact/dist-npm -name 'nema-*.tgz' | head -n 1)
+          tarball=$(find artifact/dist-npm -name 'nema-project-nema-*.tgz' | head -n 1)
           test -n "$tarball"
-          npm publish --provenance --access public --tag "$dist" "$tarball"
+          npm publish --provenance --access public --tag "$dist" "./$tarball"

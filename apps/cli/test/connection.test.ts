@@ -243,13 +243,13 @@ describe("daemon connection", () => {
       const d = connectDaemon({ hubUrl: `http://127.0.0.1:${port}`, token: "tk", runner: new Runner([]), reconnectMs: 30 });
       closers.push(() => d.close());
       const ws = await waitConn(1);
-      ws.send(JSON.stringify({ type: "error", message: "hub 与 nema CLI 版本不一致（hub 1.2.3），请安装 nema@1.2.3" }));
+      ws.send(JSON.stringify({ type: "error", message: "hub 与 nema CLI 版本不一致（hub 1.2.3），请安装 @nema-project/nema@1.2.3" }));
       ws.close();
       await new Promise((r) => setTimeout(r, 120));
       expect(conns).toHaveLength(1);
       const text = err.mock.calls.map((c) => String(c[0])).join("\n");
-      expect(text).toContain("hub 与 nema CLI 版本不一致（hub 1.2.3），请安装 nema@1.2.3");
-      expect(text).toContain("run: npm i -g nema@1.2.3");
+      expect(text).toContain("hub 与 nema CLI 版本不一致（hub 1.2.3），请安装 @nema-project/nema@1.2.3");
+      expect(text).toContain("run: npm i -g @nema-project/nema@1.2.3");
     } finally {
       err.mockRestore();
     }
@@ -264,9 +264,9 @@ describe("daemon connection", () => {
       const ws = await waitConn(1);
       ws.send(JSON.stringify({ type: "error", message: VERSION_SKEW_ERROR }));
       const text = () => err.mock.calls.map((c) => String(c[0])).join("\n");
-      for (let i = 0; i < 50 && !text().includes("nema@<hub 版本>"); i++) await new Promise((r) => setTimeout(r, 20));
+      for (let i = 0; i < 50 && !text().includes("@nema-project/nema@<hub 版本>"); i++) await new Promise((r) => setTimeout(r, 20));
       expect(text()).toContain(VERSION_SKEW_ERROR);
-      expect(text()).toContain("run: npm i -g nema@<hub 版本>");
+      expect(text()).toContain("run: npm i -g @nema-project/nema@<hub 版本>");
       expect(text()).toContain("请先查看正在运行的 hub 的版本");
     } finally {
       err.mockRestore();

@@ -72,7 +72,7 @@ describe("daemon version skew", () => {
     expect(error.type).toBe("error");
     expect(error.message).toContain("版本不一致");
     expect(error.message).toContain("hub 1.2.3");
-    expect(error.message).toContain("nema@1.2.3");
+    expect(error.message).toContain("@nema-project/nema@1.2.3");
     await closed;
   });
 

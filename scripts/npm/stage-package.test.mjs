@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { setupCommand } from '../setup.mjs';
 import { derivePublishManifest, stagePackage } from './stage-package.mjs';
 
 const cliPackage = {
@@ -32,11 +33,11 @@ async function temp(t) {
   return dir;
 }
 
-test('publish manifest is the nema app, not the private workspace package', () => {
+test('publish manifest is the scoped nema app, not the private workspace package', () => {
   const manifest = derivePublishManifest(cliPackage);
-  assert.equal(manifest.name, 'nema');
+  assert.equal(manifest.name, '@nema-project/nema');
   assert.equal(manifest.private, undefined);
-  assert.equal(manifest.bin.nema, 'dist/index.js');
+  assert.deepEqual(manifest.bin, { nema: 'dist/index.js' });
   assert.equal(manifest.engines.node, '>=22');
   assert.match(JSON.stringify(manifest.repository), /https:\/\/github\.com\/Nema-Project\/nema-room/);
   assert.equal(Object.hasOwn(manifest, 'exports'), false);
@@ -62,7 +63,8 @@ test('stage copies the runtime files and packs a tarball', async (t) => {
   const outDir = path.join(root, 'dist-npm');
   const staged = await stagePackage({ root, cliDir, licensePath: path.join(root, 'LICENSE'), outDir });
   const manifest = JSON.parse(await readFile(path.join(staged.dir, 'package.json'), 'utf8'));
-  assert.equal(manifest.name, 'nema');
+  assert.equal(manifest.name, '@nema-project/nema');
+  assert.equal(path.basename(staged.tarball), 'nema-project-nema-0.1.3.tgz');
   assert.equal(Object.hasOwn(manifest, 'exports'), false);
   assert.equal(manifest.dependencies['@nema/shared'], undefined);
   assert.equal(existsSync(path.join(staged.dir, 'dist/index.js')), true);
@@ -92,4 +94,34 @@ test('CLI runtime does not ship vendored files', async (t) => {
   const info = await stat(staged.tarball);
   assert.ok(info.size > 0);
   assert.match(staged.sizeLine, new RegExp(`npm package size: ${info.size}`));
+});
+
+test('npm install exposes the nema bin and npx runs the scoped package', async (t) => {
+  const root = await temp(t);
+  const cliDir = path.join(root, 'apps/cli');
+  await mkdir(path.join(cliDir, 'dist'), { recursive: true });
+  await mkdir(path.join(cliDir, 'src/report'), { recursive: true });
+  await writeFile(path.join(cliDir, 'package.json'), JSON.stringify({ ...cliPackage, dependencies: {} }));
+  await writeFile(path.join(cliDir, 'dist/index.js'), '#!/usr/bin/env node\nprocess.stdout.write("nema-bin-ok\\n");\n');
+  await writeFile(path.join(cliDir, 'src/report/SKILL.md'), '# skill\n');
+  await writeFile(path.join(root, 'LICENSE'), 'MIT\n');
+  const staged = await stagePackage({ root, cliDir, licensePath: path.join(root, 'LICENSE'), outDir: path.join(root, 'dist-npm') });
+  assert.equal(path.basename(staged.tarball), 'nema-project-nema-0.1.3.tgz');
+  const installDir = path.join(root, 'install');
+  await mkdir(installDir);
+  const packedName = path.basename(staged.tarball);
+  await copyFile(staged.tarball, path.join(installDir, packedName));
+  const npm = setupCommand('npm', ['install', '--ignore-scripts', '--no-fund', '--no-audit', `./${packedName}`]);
+  const installed = spawnSync(npm.bin, npm.args, { cwd: installDir, encoding: 'utf8' });
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  const binName = process.platform === 'win32' ? 'nema.cmd' : 'nema';
+  const bin = path.join(installDir, 'node_modules', '.bin', binName);
+  const ran = spawnSync(bin, [], { cwd: installDir, encoding: 'utf8', shell: process.platform === 'win32' });
+  assert.equal(ran.status, 0, ran.stderr || ran.stdout);
+  assert.equal(ran.stdout.trim(), 'nema-bin-ok');
+  assert.equal(existsSync(path.join(installDir, 'node_modules', '@nema-project', 'nema', 'package.json')), true);
+  const exec = setupCommand('npm', ['exec', '--offline', '--no-fund', '--no-audit', '--', '@nema-project/nema']);
+  const viaNpx = spawnSync(exec.bin, exec.args, { cwd: installDir, encoding: 'utf8' });
+  assert.equal(viaNpx.status, 0, viaNpx.stderr || viaNpx.stdout);
+  assert.match(viaNpx.stdout, /nema-bin-ok/);
 });

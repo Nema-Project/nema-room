@@ -25,7 +25,7 @@ node apps/cli/dist/index.js daemon
 
 已有 `.env` 时不要覆盖。开发模式不要同时启动 Compose 里的 hub 和 web，端口会冲突。CLI 不会自动读取根目录 `.env`。
 
-从本仓库跑 Web / Compose 仍走 `node scripts/setup.mjs`。宿主机 daemon 是 npm 包 `nema`，按 hub 版本安装：`npx nema@<hub 版本>` 或 `npm i -g nema@<hub 版本>`。不要把不带版本的 `npx nema` 写成与任意 hub 都匹配的安装方式。
+从本仓库跑 Web / Compose 仍走 `node scripts/setup.mjs`。宿主机 daemon 是 npm 包 `@nema-project/nema`，命令名是 `nema`。按 hub 版本安装：`npx @nema-project/nema@<hub 版本>` 或 `npm i -g @nema-project/nema@<hub 版本>`。不要把不带版本的 `npx @nema-project/nema` 写成与任意 hub 都匹配的安装方式。
 
 ## 目录
 

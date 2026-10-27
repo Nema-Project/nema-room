@@ -56,18 +56,18 @@ Current stabilization priorities and acceptance evidence are tracked in the [roa
 
 ## Web / Compose requirements
 
-The host daemon is the npm package `nema`. Install the same version as the running hub, on Node.js ≥ 22:
+The host daemon is the npm package `@nema-project/nema`. The command name is `nema`. Install the same version as the running hub, on Node.js ≥ 22:
 
 ```sh
-npx nema@<hub version> --version
-npm i -g nema@<hub version>
+npx @nema-project/nema@<hub version> --version
+npm i -g @nema-project/nema@<hub version>
 ```
 
-Compose: `curl http://127.0.0.1:4400/api/version` returns `{"version":"..."}`. Desktop: the sidebar shows the app version, and the app origin serves `GET /_nema/version`. If the daemon version does not match, it prints the hub error and `run: npm i -g nema@<version>`, then stops. It does not keep reconnecting.
+Compose: `curl http://127.0.0.1:4400/api/version` returns `{"version":"..."}`. Desktop: the sidebar shows the app version, and the app origin serves `GET /_nema/version`. If the daemon version does not match, it prints the hub error and `run: npm i -g @nema-project/nema@<version>`, then stops. It does not keep reconnecting.
 
 `nema daemon` defaults to `--hub http://127.0.0.1:4400`. It reads `daemon-token` from `$NEMA_DATA_DIR` or `~/.nema/data` (`defaultTokenFile()`). The hub writes that file when it starts, if the file is missing. Compose sets the container `NEMA_DATA_DIR` to `/data` and bind-mounts the host data directory there (default `~/.nema/data`, or `NEMA_DATA_HOST_DIR`), so the host daemon and the container hub share one token file.
 
-Running the Web / Compose stack from this repository still uses the source wizard below. Windows, macOS, and Linux share that Node.js setup. Do not install an unversioned `nema` and assume it matches the hub.
+Running the Web / Compose stack from this repository still uses the source wizard below. Windows, macOS, and Linux share that Node.js setup. Do not install an unversioned `@nema-project/nema` and assume it matches the hub.
 
 | Item | Requirement |
 | --- | --- |
@@ -238,7 +238,7 @@ npm run lint -w apps/web
 npm run build -w apps/web
 ```
 
-The root typecheck excludes web; build it separately. Before upgrading, back up data, then run `git pull`, `npm ci`, rebuild the CLI and Compose images, and restart the daemon. Keep the daemon on the hub version from `GET /api/version`. A mismatch prints `run: npm i -g nema@<version>` and does not reconnect.
+The root typecheck excludes web; build it separately. Before upgrading, back up data, then run `git pull`, `npm ci`, rebuild the CLI and Compose images, and restart the daemon. Keep the daemon on the hub version from `GET /api/version`. A mismatch prints `run: npm i -g @nema-project/nema@<version>` and does not reconnect.
 
 See [.env.example](../.env.example) for ports and directories. The CLI does not automatically load the root `.env`: export `NEMA_DATA_DIR` or pass `--token-file` to `daemon` / `doctor` for a custom data directory; also pass `--hub` for a different hub port. Changing `NEXT_PUBLIC_HUB_URL` requires rebuilding web.
 

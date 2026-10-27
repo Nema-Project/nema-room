@@ -18,7 +18,7 @@ export function derivePublishManifest(pkg) {
     throw new Error(`internal dependency ${name} cannot be published`);
   }
   return {
-    name: 'nema',
+    name: '@nema-project/nema',
     version: pkg.version,
     license: pkg.license ?? 'MIT',
     type: 'module',
