@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createSanitizedSourceSnapshot, npmCliPathFor, parseStageArgs, runtimeDependencyClosure, stageRuntime, writePlatformLaunchers } from './stage-runtime.mjs';
-import { toolsManifest } from './fetch-tools.mjs';
+import { nodePayloadExcluded, toolsManifest } from './fetch-tools.mjs';
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nema-stage-fixture-'));
@@ -204,6 +204,41 @@ test('refuses to label a staged output for a different native target', async (t)
 test('refuses a payload version that differs from the explicit app package version', async (t) => {
   const f = await fixture(t);
   await assert.rejects(stageRuntime({ ...f.options, version: '9.9.9' }), /version.*does not match/i);
+});
+
+test('payload omits Node headers, npm, Corepack, sharp, and source maps', async (t) => {
+  assert.equal(nodePayloadExcluded('node/include/node.h'), true);
+  assert.equal(nodePayloadExcluded('node/bin/node'), false);
+  assert.equal(nodePayloadExcluded('node/LICENSE'), false);
+  assert.equal(nodePayloadExcluded('node/lib/node_modules/npm/bin/npm-cli.js'), true);
+  assert.equal(nodePayloadExcluded('node/node_modules/corepack/package.json'), true);
+  assert.equal(nodePayloadExcluded('node/bin/npx'), true);
+  assert.equal(nodePayloadExcluded('node/corepack.cmd'), true);
+  assert.equal(nodePayloadExcluded('node/npm.ps1'), true);
+  assert.equal(nodePayloadExcluded('tools-source.json'), false);
+  const f = await fixture(t);
+  const windows = process.platform === 'win32';
+  const nodeRoot = `node/${process.platform}-${process.arch}/node`;
+  await f.write(`${nodeRoot}/include/node.h`, 'header');
+  await f.write(`${nodeRoot}/${windows ? 'node_modules' : 'lib/node_modules'}/corepack/package.json`, '{}');
+  await f.write(`${nodeRoot}/${windows ? 'npm.cmd' : 'bin/npm'}`, 'shim');
+  await f.write('apps/web/.next/standalone/node_modules/sharp/index.js', 'sharp');
+  await f.write('apps/web/.next/standalone/node_modules/@img/sharp-darwin/lib.js', 'img');
+  await f.write('apps/web/.next/static/chunks/a.js.map', '{"version":3}');
+  await stageRuntime(f.options);
+  const target = path.join(f.output, `${process.platform}-${process.arch}`);
+  const nodeDir = path.join(target, 'runtime', `${process.platform}-${process.arch}`, 'node');
+  assert.ok((await readFile(path.join(nodeDir, windows ? 'node.exe' : 'bin/node'))).length > 0);
+  assert.ok((await readFile(path.join(nodeDir, 'LICENSE'))).length > 0);
+  await assert.rejects(readFile(path.join(nodeDir, 'include/node.h')));
+  await assert.rejects(readFile(path.join(nodeDir, windows ? 'node_modules/npm/bin/npm-cli.js' : 'lib/node_modules/npm/bin/npm-cli.js')));
+  await assert.rejects(readFile(path.join(nodeDir, windows ? 'node_modules/corepack/package.json' : 'lib/node_modules/corepack/package.json')));
+  await assert.rejects(readFile(path.join(nodeDir, windows ? 'npm.cmd' : 'bin/npm')));
+  await assert.rejects(readFile(path.join(target, 'web/node_modules/sharp/index.js')));
+  await assert.rejects(readFile(path.join(target, 'web/node_modules/@img/sharp-darwin/lib.js')));
+  await assert.rejects(readFile(path.join(target, 'web/apps/web/.next/static/chunks/a.js.map')));
+  assert.equal(await readFile(path.join(target, 'runtime/licenses/electron/LICENSES.chromium.html'), 'utf8'), 'Chromium third-party notices');
+  assert.ok((await readFile(path.join(target, 'web/apps/web/.next/static/chunks/a.js'))).length > 0);
 });
 
 test('resolves npm inside the Windows and POSIX pinned Node distribution layouts', async (t) => {

@@ -5,7 +5,8 @@ import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fetchTools, toolsManifest } from './fetch-tools.mjs';
+import { fetchTools, nodePayloadExcluded, toolsManifest } from './fetch-tools.mjs';
+import { reportPayload } from './payload-size.mjs';
 import { buildOwnedHelper } from './build-owned-helper.mjs';
 import { fetchGraphify as fetchGraphifyRuntime } from './fetch-graphify.mjs';
 
@@ -45,21 +46,27 @@ async function requiredFile(root, relative, name, allowedRoot = root) {
   return file;
 }
 
-async function copyTree(source, destination, allowedRoot, seen = new Set()) {
+const SOURCE_MAP_NAME = /\.(?:js|mjs|cjs|css|ts|tsx|jsx)\.map$/;
+
+async function copyTree(source, destination, allowedRoot, seen = new Set(), options = {}) {
+  const skipRoot = options.skipRoot ?? source;
+  const relative = path.relative(skipRoot, source).split(path.sep).join('/');
+  if (relative && options.skip?.(relative)) return;
   const info = await lstat(source).catch(() => null);
   if (!info) throw new Error(`Required staged resource is missing: ${source}`);
+  const nextOptions = { ...options, skipRoot };
   if (info.isSymbolicLink()) {
     const resolved = await realpath(source);
     const policyRoot = await canonicalRoot(allowedRoot);
     if (!isInside(policyRoot, resolved)) throw new Error(`Dependency or resource escapes payload source: ${source}`);
     if (seen.has(resolved)) throw new Error(`Cyclic resource link: ${source}`);
-    return copyTree(resolved, destination, policyRoot, new Set([...seen, resolved]));
+    return copyTree(resolved, destination, policyRoot, new Set([...seen, resolved]), nextOptions);
   }
   if (info.isDirectory()) {
     await mkdir(destination, { recursive: true });
     for (const entry of await readdir(source)) {
       if (entry.startsWith('._') || entry === '.DS_Store') continue;
-      await copyTree(path.join(source, entry), path.join(destination, entry), allowedRoot, seen);
+      await copyTree(path.join(source, entry), path.join(destination, entry), allowedRoot, seen, nextOptions);
     }
     return;
   }
@@ -67,6 +74,25 @@ async function copyTree(source, destination, allowedRoot, seen = new Set()) {
   await mkdir(path.dirname(destination), { recursive: true });
   await cp(source, destination, { errorOnExist: true, force: false, preserveTimestamps: false });
   if (process.platform !== 'win32') await chmod(destination, info.mode & 0o777);
+}
+
+async function pruneStagedPayload(staging) {
+  async function walk(dir) {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const absolute = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        if (path.basename(dir) === 'node_modules' && (entry.name === 'sharp' || entry.name === '@img')) {
+          await rm(absolute, { recursive: true, force: true });
+          continue;
+        }
+        await walk(absolute);
+        continue;
+      }
+      if (entry.isFile() && SOURCE_MAP_NAME.test(entry.name)) await rm(absolute);
+    }
+  }
+  await walk(staging);
 }
 
 async function copyCompiledDist(source, destination, allowedRoot) {
@@ -384,7 +410,10 @@ export async function stageRuntime({
       await requiredFile(staging, platform === 'win32' ? 'tools/graphify/graphify.exe' : 'tools/graphify/graphify', 'packaged Graphify launcher', staging);
       await copyTree(path.join(graphifyDir, 'licenses'), put('runtime/licenses/graphify-runtime'), staging);
     }
-    await copyTree(selectedToolsRoot, put(`runtime/${target}`), selectedToolsRoot);
+    await copyTree(selectedToolsRoot, put(`runtime/${target}`), selectedToolsRoot, new Set(), {
+      skip: nodePayloadExcluded,
+      skipRoot: selectedToolsRoot,
+    });
     if (ownedHelperPath) await copyTree(ownedHelperPath, put('runtime/owned-helper.exe'), path.dirname(ownedHelperPath));
     await copyTree(standalone, put('web'), builtRoot);
     await copyTree(staticDir, put('web/apps/web/.next/static'), builtRoot);
@@ -442,6 +471,7 @@ export async function stageRuntime({
         if (entry.isDirectory()) await copyCheck(absolute);
       }
     };
+    await pruneStagedPayload(staging);
     await copyCheck(staging);
     const owner = randomUUID();
     let claimed = false;
@@ -477,6 +507,7 @@ export async function stageRuntime({
       }
       throw error;
     }
+    await reportPayload(final);
     return { directory: final, manifest: path.join(final, 'runtime-manifest.json') };
   } finally {
     if (tempRoot) await rm(tempRoot, { recursive: true, force: true });

@@ -306,7 +306,7 @@ async function validatePolicyCoverage({ trustedPolicy, payloadRoot, archiveRoot 
     if (!Array.isArray(mappings) || !mappings.length) throw new Error(`Resolved source policy has no structured mappings: ${id}`);
     const keys = mappings.map((mapping) => mapping.key);
     if (keys.some((key) => typeof key !== 'string' || !key) || new Set(keys).size !== keys.length) throw new Error(`Resolved source policy has invalid or duplicate mapping keys: ${id}`);
-    const requiredMappingKeys = id === 'node-source' ? ['node-runtime', 'npm-package', 'corepack-package'] : null;
+    const requiredMappingKeys = id === 'node-source' ? ['node-runtime'] : null;
     const expectedKeys = requiredMappingKeys ?? component.coverage.requiredMappingKeys;
     if (expectedKeys && JSON.stringify([...keys].sort()) !== JSON.stringify([...expectedKeys].sort())) throw new Error(`Trusted source mapping keys do not cover required artifacts: ${id}`);
     if (id === 'font-sources') {

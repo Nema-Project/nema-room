@@ -184,6 +184,7 @@ async function smoke(args) {
   const codexHome = path.join(tempRoot, 'isolated Codex home');
   const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
   const artifactStat = await stat(installer);
+  process.stdout.write(`payload size: installer ${(artifactStat.size / 1048576).toFixed(1)} MiB\n`);
   const installStarted = Date.now();
   await installSilently(installer, installDir);
   const installMs = Date.now() - installStarted;

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { fetchGraphify, graphifyLock, homePathFiles, materializeSymlinks, POSIX_GRAPHIFY_LAUNCHER, prunePythonRuntime, pythonLicensePath, rejectMachinePaths } from './fetch-graphify.mjs';
+import { dedupePythonInterpreters, fetchGraphify, graphifyLock, homePathFiles, machoLoadNames, materializeSymlinks, POSIX_GRAPHIFY_LAUNCHER, prunePythonRuntime, pythonLicensePath, rejectMachinePaths, removeUnreferencedLibpython } from './fetch-graphify.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,7 +18,14 @@ test('graphify lock pins the release targets and no install path', async () => {
   assert.equal(graphifyLock.sourceCorrespondence.status, 'pending-task-7c');
   for (const key of ['win32-x64', 'darwin-arm64']) {
     const pin = graphifyLock.targets[key];
-    assert.equal(pin.wheels.length, 31);
+    assert.equal(pin.wheels.length, 21);
+    const files = pin.wheels.map((wheel) => wheel.file);
+    for (const prefix of ['graphifyy-', 'networkx-', 'numpy-', 'pyyaml-', 'rapidfuzz-', 'tree_sitter-', 'tree_sitter_bash-', 'tree_sitter_c-', 'tree_sitter_c_sharp-', 'tree_sitter_cpp-', 'tree_sitter_go-', 'tree_sitter_java-', 'tree_sitter_javascript-', 'tree_sitter_json-', 'tree_sitter_kotlin-', 'tree_sitter_php-', 'tree_sitter_python-', 'tree_sitter_ruby-', 'tree_sitter_rust-', 'tree_sitter_swift-', 'tree_sitter_typescript-']) {
+      assert.equal(files.some((file) => file.startsWith(prefix)), true, prefix);
+    }
+    for (const prefix of ['tree_sitter_elixir-', 'tree_sitter_fortran-', 'tree_sitter_groovy-', 'tree_sitter_julia-', 'tree_sitter_lua-', 'tree_sitter_objc-', 'tree_sitter_powershell-', 'tree_sitter_scala-', 'tree_sitter_verilog-', 'tree_sitter_zig-']) {
+      assert.equal(files.some((file) => file.startsWith(prefix)), false, prefix);
+    }
     assert.equal(pin.python.format, 'tar.gz');
     assert.match(pin.python.url, /^https:\/\/github\.com\/astral-sh\/python-build-standalone\//);
     assert.match(pin.python.sha256, /^[a-f0-9]{64}$/);
@@ -35,7 +42,7 @@ test('launcher sources name only the bundled Python', async () => {
   const source = await readFile(path.join(scriptDir, 'graphify-launcher.c'), 'utf8');
   assert.match(source, /python\\python\.exe/);
   assert.equal(source.includes('Users'), false);
-  assert.match(POSIX_GRAPHIFY_LAUNCHER, /python\/bin\/python3/);
+  assert.match(POSIX_GRAPHIFY_LAUNCHER, /python\/bin\/python3\.11/);
   assert.equal(POSIX_GRAPHIFY_LAUNCHER.includes('Users'), false);
 });
 
@@ -139,4 +146,71 @@ test('prunes debug symbols, installers and Tcl/Tk but keeps the runtime and lice
   await prunePythonRuntime(path.join(root, 'mac'), 'darwin');
   for (const file of unixGone) assert.equal(await exists(file), false, file);
   for (const file of unixKept) assert.equal(await exists(file), true, file);
+});
+
+function macho64(commands) {
+  const parts = commands.map((command) => {
+    const name = Buffer.from(`${command.name}\0`);
+    const aligned = Math.ceil((24 + name.length) / 8) * 8;
+    const body = Buffer.alloc(aligned);
+    body.writeUInt32LE(command.cmd, 0);
+    body.writeUInt32LE(aligned, 4);
+    body.writeUInt32LE(24, 8);
+    name.copy(body, 24);
+    return body;
+  });
+  const header = Buffer.alloc(32);
+  header.writeUInt32LE(0xfeedfacf, 0);
+  header.writeUInt32LE(commands.length, 16);
+  header.writeUInt32LE(parts.reduce((sum, part) => sum + part.length, 0), 20);
+  return Buffer.concat([header, ...parts]);
+}
+
+test('macho load names ignore an id command and read a FAT slice', () => {
+  assert.deepEqual(machoLoadNames(macho64([{ cmd: 0x0d, name: 'libpython3.11.dylib' }])), []);
+  const slice = macho64([{ cmd: 0x0c, name: 'libpython3.11.dylib' }]);
+  const fat = Buffer.alloc(8 + 20 + slice.length);
+  fat.writeUInt32BE(0xcafebabe, 0);
+  fat.writeUInt32BE(1, 4);
+  fat.writeUInt32BE(slice.length, 8 + 12);
+  fat.writeUInt32BE(28, 8 + 8);
+  slice.copy(fat, 28);
+  assert.deepEqual(machoLoadNames(fat), ['libpython3.11.dylib']);
+  assert.deepEqual(machoLoadNames(Buffer.from('not macho!!')), []);
+});
+
+test('dedupe removes only byte-identical python copies', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-python-dedupe-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = path.join(root, 'bin');
+  await mkdir(bin);
+  await writeFile(path.join(bin, 'python3.11'), 'same-bytes');
+  await writeFile(path.join(bin, 'python'), 'same-bytes');
+  await writeFile(path.join(bin, 'python3'), 'same-bytes');
+  assert.deepEqual(await dedupePythonInterpreters(root), ['python', 'python3']);
+  assert.equal(await readFile(path.join(bin, 'python3.11'), 'utf8'), 'same-bytes');
+  await assert.rejects(lstat(path.join(bin, 'python')));
+  await writeFile(path.join(bin, 'python3'), 'different');
+  await assert.rejects(dedupePythonInterpreters(root), /not a byte copy/);
+  assert.equal(await readFile(path.join(bin, 'python3'), 'utf8'), 'different');
+});
+
+test('libpython is removed only when no Mach-O loads it', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-libpython-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const python = path.join(root, 'python');
+  await mkdir(path.join(python, 'bin'), { recursive: true });
+  await mkdir(path.join(python, 'lib'), { recursive: true });
+  await writeFile(path.join(python, 'bin', 'python3.11'), macho64([]));
+  await writeFile(path.join(python, 'lib', 'libpython3.11.dylib'), 'library');
+  await writeFile(path.join(python, 'lib', 'extension.so'), macho64([{ cmd: 0x0c, name: 'libpython3.11.dylib' }]));
+  assert.equal(await removeUnreferencedLibpython(python), false);
+  assert.equal(await readFile(path.join(python, 'lib', 'libpython3.11.dylib'), 'utf8'), 'library');
+  await writeFile(path.join(python, 'lib', 'extension.so'), macho64([]));
+  assert.equal(await removeUnreferencedLibpython(python), true);
+  await assert.rejects(lstat(path.join(python, 'lib', 'libpython3.11.dylib')));
+  await writeFile(path.join(python, 'lib', 'libpython3.11.dylib'), 'library');
+  await writeFile(path.join(python, 'lib', 'broken.so'), Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0, 0, 0, 1]));
+  assert.equal(await removeUnreferencedLibpython(python), false);
+  assert.equal(await readFile(path.join(python, 'lib', 'libpython3.11.dylib'), 'utf8'), 'library');
 });
