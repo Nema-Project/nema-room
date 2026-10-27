@@ -236,9 +236,9 @@
     <p class="facts-word" data-reveal>現状</p>
     <div class="records">
       <ul class="record" data-reveal style="--i:1" aria-label="プラットフォーム">
-        <li><span>Windows x64 デスクトップ版</span><span>0.1.4 インストーラーまたは ZIP</span></li>
-        <li><span>macOS デスクトップ版</span><span>0.1.4、Apple シリコン</span></li>
-        <li><span>Linux</span><span>0.1.4 イメージ、amd64</span></li>
+        <li><span>Windows x64 デスクトップ版</span><span>最新インストーラーまたは ZIP</span></li>
+        <li><span>macOS デスクトップ版</span><span>最新、Apple シリコン</span></li>
+        <li><span>Linux</span><span>Web / Compose 版</span></li>
         <li><span>インストーラー署名</span><span>未署名</span></li>
         <li><span>自動更新</span><span>なし</span></li>
       </ul>
@@ -257,7 +257,7 @@
   <div class="band band-head"><h2 id="faq-h" data-reveal>よくある質問</h2></div>
   <div class="band">
     <h3 data-reveal>今すぐダウンロードできますか？</h3>
-    <p data-reveal style="--i:1">できます。<a href="https://github.com/Nema-Project/nema-room/releases/tag/v0.1.4">リリース 0.1.4</a> には Windows x64 のインストーラー、Windows のポータブル ZIP、Apple シリコン向けのディスクイメージがあります。ZIP は展開してそのまま実行するアプリです。展開して <code>Nema.exe</code> を実行します。ショートカットもアンインストーラーもありません。インストーラーと ZIP はどちらも <code>~/.nema/desktop</code> を使います。どちらか一方を選んでください。未署名のため、Windows では初回に「Windows によって PC が保護されました」と表示され、macOS では「プライバシーとセキュリティ」から開きます。アプリには Git 2.31 以降も必要です。Intel Mac 向けのデスクトップ版はありません。Linux では 0.1.4 の linux/amd64 hub と web イメージを使うか、ソースからビルドします。</p>
+    <p data-reveal style="--i:1">できます。<a href="https://github.com/Nema-Project/nema-room/releases/latest">最新リリース</a>には Windows x64 のインストーラー、Windows のポータブル ZIP、Apple シリコン向けのディスクイメージがあります。ZIP は展開してそのまま実行するアプリです。展開して <code>Nema.exe</code> を実行します。ショートカットもアンインストーラーもありません。インストーラーと ZIP はどちらも <code>~/.nema/desktop</code> を使います。どちらか一方を選んでください。未署名のため、Windows では初回に「Windows によって PC が保護されました」と表示され、macOS では「プライバシーとセキュリティ」から開きます。アプリには Git 2.31 以降も必要です。Intel Mac 向けのデスクトップ版はありません。Linux では linux/amd64 の hub と web イメージを使うか、ソースからビルドします。</p>
   </div>
   <div class="band band-alt">
     <h3 data-reveal>費用はかかりますか？</h3>
@@ -284,13 +284,13 @@
 <section class="cta" aria-labelledby="cta-h">
   <figure class="tile picture cta-side cta-left"><img src="../assets/interior-no-30-strandgade.jpg" width="1137" height="1400" alt="ハンマースホイ《ストランゲーゼ 30 番地の室内》：扉が開き、女性が背を向けてテーブルに座っている。" loading="lazy"></figure>
   <div class="tile tile-accent cta-main">
-    <h2 id="cta-h" data-reveal>0.1.4 をダウンロード</h2>
-    <p data-reveal style="--i:1">Windows x64 と Apple シリコン向けのビルドはリリース 0.1.4 にあります。Windows ではインストーラーかポータブル ZIP のどちらかを選びます。ZIP は展開して <code>Nema.exe</code> を実行します。ショートカットもアンインストーラーもありません。どちらも <code>~/.nema/desktop</code> を使います。パソコンには Git 2.31 以降が必要です。</p>
-    <p data-reveal style="--i:1">ホストのコマンドは <code>nema</code> です。npm パッケージ <code>@nema-project/nema</code> から入ります。このリリースの hub と web のイメージは linux/amd64 のみです。<code>ghcr.io/nema-project/nema-room-hub:0.1.4</code> と <code>ghcr.io/nema-project/nema-room-web:0.1.4</code> です。その tag から <code>docker-compose.yml</code> を取得して起動します。Linux と macOS では先に <code>NEMA_UID</code> と <code>NEMA_GID</code> を export します。このリポジトリを開発するときは、clone してセットアップウィザードを実行します。</p>
-    <pre data-reveal style="--i:2"><code>npm i -g @nema-project/nema@0.1.4
+    <h2 id="cta-h" data-reveal>ダウンロード</h2>
+    <p data-reveal style="--i:1">Windows x64 と Apple シリコン向けのビルドは最新リリースにあります。Windows ではインストーラーかポータブル ZIP のどちらかを選びます。ZIP は展開して <code>Nema.exe</code> を実行します。ショートカットもアンインストーラーもありません。どちらも <code>~/.nema/desktop</code> を使います。パソコンには Git 2.31 以降が必要です。</p>
+    <p data-reveal style="--i:1">ホストのコマンドは <code>nema</code> で、<code>npm i -g @nema-project/nema</code> から入ります。hub と web のイメージは linux/amd64 です。compose ファイルは <code>ghcr.io/nema-project/nema-room-hub:0.1.4</code> と <code>ghcr.io/nema-project/nema-room-web:0.1.4</code> をピン留めしています。最新リリースから <code>docker-compose.yml</code> を取得して起動します。Linux と macOS では先に <code>NEMA_UID</code> と <code>NEMA_GID</code> を export します。このリポジトリを開発するときは、clone してセットアップウィザードを実行します。</p>
+    <pre data-reveal style="--i:2"><code>npm i -g @nema-project/nema
 nema --version
 
-# hub と web。linux/amd64 のみ。先に tag v0.1.4 から docker-compose.yml を取得します。
+# hub と web。linux/amd64 のみ。先に最新リリースから docker-compose.yml を取得します。
 # Linux と macOS のみ。Windows の Docker Desktop では不要です。
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 docker compose up -d
@@ -299,7 +299,7 @@ docker compose up -d
 git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
 node scripts/setup.mjs --lang ja</code></pre>
-    <a class="button button-paper" href="https://github.com/Nema-Project/nema-room/releases/tag/v0.1.4" data-reveal style="--i:3">0.1.4 をダウンロード</a>
+    <a class="button button-paper" href="https://github.com/Nema-Project/nema-room/releases/latest" data-reveal style="--i:3">最新版をダウンロード</a>
   </div>
   <div class="tile tile-ink cta-side cta-right" aria-hidden="true"></div>
 </section>

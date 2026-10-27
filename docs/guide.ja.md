@@ -113,7 +113,7 @@ npm run up
 
 `npm run up` はこのチェックアウトから hub と web をビルドします。Linux と macOS では、上の `export` は UID/GID が 1000 かどうかに関係なく、コンテナのユーザーをホストのユーザーにします。Windows の Docker Desktop ではこの export は不要です。`NEMA_HUB_PORT`（既定 4400）は公開されるホストのポートと hub の待受ポートの両方です。`NEMA_WEB_PORT`（既定 3000）はホストのポートだけを変えます。web コンテナは起動時に `NEMA_HUB_URL` を読み、compose はそれを `http://127.0.0.1:$NEMA_HUB_PORT` にします。
 
-clone せずにピン留めしたイメージを pull できるのは tag `v0.1.4` からです。この tag はイメージ公開ワークフローを含み、これらのイメージの最初の公開です（`linux/amd64`。arm64 は [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。`scripts/images/check-images.mjs` は compose のピンをパッケージ版（`0.1.4`）と一致させます。その tag が push されたあと、その `docker-compose.yml` を取得します。Linux と macOS では同じように `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。そのあと `docker compose up -d` を実行します。ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。公開 web イメージは起動時に `NEMA_HUB_URL` を読みます。compose の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` なので、ポートを変えてもイメージの再ビルドは不要です。
+clone せずにピン留めしたイメージを pull できるのは tag `v0.1.4` からです。この tag はイメージ公開ワークフローを含み、これらのイメージの最初の公開です（`linux/amd64`。arm64 は [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。`scripts/images/check-images.mjs` は compose のピンをパッケージ版（`0.1.4`）と一致させます。その tag が push され、両方のイメージが GHCR で公開されたあと、その `docker-compose.yml` を取得します。Linux と macOS では同じように `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。そのあと `docker compose up -d` を実行します。ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。公開 web イメージは起動時に `NEMA_HUB_URL` を読みます。compose の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` なので、ポートを変えてもイメージの再ビルドは不要です。
 
 まずモデルを設定します。標準の認証方式を使う場合：
 
