@@ -9,7 +9,7 @@ This is the shared repository guide for local and remote coding agents. Read it 
 - Read the code, nearby tests, and relevant [technical reference](docs/reference.zh-CN.md) before changing behavior.
 - Historical material in `docs/superpowers/` and `docs/reviews/` applies to its recorded commit and environment. Resolve discrepancies using current source, configuration, and evidence; do not rewrite historical results as current acceptance.
 - Inspect the branch, working-tree status, and recent commits. Identify existing user or agent changes before editing.
-- Before writing a spec or plan, read [issue #45](https://github.com/Nema-Project/nema-room/issues/45) and apply [Product north star](#product-north-star).
+- Specs and plans follow [Product north star](#product-north-star).
 
 ## Product north star
 
