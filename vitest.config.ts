@@ -55,6 +55,12 @@ export default defineConfig({
     // Real git, PGlite and child processes run in every project; under a full parallel run a single
     // test can pass 5s on a busy machine without being stuck.
     testTimeout: 20_000,
+    // Windows beforeEach hooks that save a private token spawn PowerShell twice
+    // (directory, then file). windowsAcl allows each call 45s because a cold
+    // powershell.exe on a busy runner exceeds the 10s default hook limit.
+    // That default failed the Claude adapter hook on the merged platform job
+    // even though the same test passed on both parents. Linux stays at 10s.
+    hookTimeout: process.platform === "win32" ? 90_000 : 10_000,
     projects: workspaceDirs.map((dir) => {
       const isWeb = dir === "apps/web";
       return {
