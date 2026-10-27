@@ -38,7 +38,7 @@
 | ID | 事项与依据 | 状态 | 验收标准 |
 | --- | --- | --- | --- |
 | P0-01 | 发布绑定完整 CI；已有同一提交测试失败但发布成功的记录 | 进行中 | 发布提交通过完整测试；tag 可追溯到主线；测试失败或缺失时发布被阻止；以失败场景验证门禁 |
-| P0-02 | 核实并强制合并检查；评估时可读的 active ruleset 仅要求 PR，传统分支保护接口返回 403，不能据此断言所有保护均不存在 | 进行中 | 记录实际保护规则；需要的检查未完成或失败时不可合并；文档变更与路径过滤不会造成检查永久等待 |
+| P0-02 | 核实并强制合并检查；评估时可读的 active ruleset 仅要求 PR，传统分支保护接口返回 403，不能据此断言所有保护均不存在。`strict_required_status_checks_policy` 在维护者按 [规格 D-9](docs/superpowers/specs/2026-10-27-pr-ci-fast-gate-design.md) 手工改掉之前仍为 true，本项不因此关闭 | 进行中 | 记录实际保护规则；需要的检查未完成或失败时不可合并；文档变更与路径过滤不会造成检查永久等待 |
 | P0-03 | 修复后的线程验收脚本上，Codex direct 与 Claude 各跑两次，均为退出码 0、12/12。证据：[PR #26 评论](https://github.com/Nema-Project/nema-room/pull/26#issuecomment-6434135887)、[执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) | 已完成 | 跑通只读总结、讨论后决策、无结论线程、冲突澄清、明确推翻旧决策；记录模型、适配器、提交、消息、知识变更与工具轨迹；Codex direct 和 Claude 分别记录结果 |
 | P0-04 | 数据目录升级与备份恢复已在 Windows 与 macOS 托管运行器通过；2026-10-27 维护者在 macOS 与 Windows 上手动覆盖安装后，workspace 数据均完整。证据：[执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) | 已完成 | 使用含聊天、线程、开发包、知识 Git 历史的旧版数据升级；核对数据完整性；模拟升级失败并从备份恢复；Windows 与 macOS 分别记录 |
 | P0-05 | 私密报告已启用。read 权限、非管理员协作者于 2026-10-27 12:18（Asia/Tokyo）提交测试报告并进入 triage，12:27 关闭且未发布。证据：[GHSA-mgcq-mcqv-75ff](https://github.com/Nema-Project/nema-room/security/advisories/GHSA-mgcq-mcqv-75ff)、[执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) | 已完成 | 修正文档，配置并验证私密报告渠道，明确桌面支持版本；避免引导用户在公开 Issue 提交敏感漏洞细节 |
@@ -68,7 +68,7 @@ P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：设计已�
 | P1-05 | 开发包使用语言无关的结构化协议；wpFormat.ts 当前依赖中文标题与字段 | 待办 | 定义有版本的 schema 存储任务、文件、需求关联；中英日 Markdown 仅用于展示；兼容旧开发包；验证批准撤销与回报关联仍正确 |
 | P1-06 | 同步版本与验收文档 | 待办 | README、官网、CHANGELOG、SECURITY 对齐实际发布；各历史报告注明适用提交；新增当前验收矩阵而非将旧记录视为现状 |
 | P1-07 | 区分实现证据与需求验收；现有 verified 不代表测试或验收通过 | 待办 | 明确“提交已核对”“测试已通过”“验收已确认”的状态及证据来源；兼容现有数据；用户不会将 Git 核对误认为需求完成 |
-| P1-08 | 完善 CI 分层和桌面运行时变更覆盖 | 待办 | 保留 PR 检查及发布前完整打包；local/hub/cli/web 运行时改动有适当集成检查；依赖变更的打包风险有明确检查策略；避免无必要重复跑重型任务 |
+| P1-08 | 完善 CI 分层和桌面运行时变更覆盖。规格见 [fast-gate spec](docs/superpowers/specs/2026-10-27-pr-ci-fast-gate-design.md)，计划见 [fast-gate plan](docs/superpowers/plans/2026-10-27-pr-ci-fast-gate.md) | 进行中 | 保留 PR 检查及发布前完整打包；local/hub/cli/web 运行时改动有适当集成检查；依赖变更的打包风险有明确检查策略；避免无必要重复跑重型任务 |
 
 ## P2：后续能力
 

@@ -11,6 +11,7 @@
 
 ### Changed
 
+- The PR `CI gate` still skips heavy checks for documentation changes. Other pull requests run the Ubuntu tests and web build, and run macOS/Windows platform checks and npm pack only for the paths that need them. A push to `main` runs full verification.
 - Workspace settings uses the same grouped panels as model settings. Close, delete, and save are bordered buttons in the standard ink color.
 - The English, Chinese, and Japanese READMEs, and the landing page, describe Nema Room as a local project-alignment copilot. Delivery is a feedback loop: commit evidence returns to the discussion.
 - The READMEs and the landing-page FAQ say the name Nema comes from nemawashi (根回し): understanding before a decision, with disagreements and evidence left visible.
