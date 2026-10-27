@@ -6,6 +6,31 @@ on:
       checkout_ref:
         required: true
         type: string
+      app_tests:
+        description: Run the Ubuntu application tests and web build
+        type: boolean
+        default: true
+      platform:
+        description: Run macOS and Windows platform checks
+        type: boolean
+        default: true
+      npm_pack:
+        description: Run the npm pack smoke matrix
+        type: boolean
+        default: true
+    outputs:
+      lint:
+        description: Workflow lint result
+        value: ${{ jobs.workflow-lint.result }}
+      app:
+        description: Ubuntu application test result
+        value: ${{ jobs.test.result }}
+      platform:
+        description: Platform check result
+        value: ${{ jobs.platform.result }}
+      npm_pack:
+        description: npm pack smoke result
+        value: ${{ jobs.npm-pack.result }}
 
 permissions:
   contents: read
@@ -34,6 +59,7 @@ jobs:
           "$RUNNER_TEMP/actionlint" -color
 
   platform:
+    if: ${{ inputs.platform }}
     name: Platform checks (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -67,6 +93,7 @@ jobs:
         run: node --test scripts/desktop/smoke-desktop.test.mjs
 
   test:
+    if: ${{ inputs.app_tests }}
     name: Full application tests and web build
     runs-on: ubuntu-latest
     # Normal runs take 8-12 minutes.
@@ -114,6 +141,7 @@ jobs:
         run: docker compose down
 
   npm-pack:
+    if: ${{ inputs.npm_pack }}
     name: npm pack smoke (${{ matrix.os }})
     strategy:
       fail-fast: false

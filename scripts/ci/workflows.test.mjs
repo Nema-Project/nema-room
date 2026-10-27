@@ -31,9 +31,10 @@ function assertCi(ci) {
 
 test('PR gate runs for every PR and forwards actual dependency results to the policy', () => {
   const ci = read('ci'); const step = assertCi(ci);
-  for (const verify of ['success','failure','cancelled','skipped','']) {
-    const run = spawnSync(process.execPath, ['scripts/ci/policy.mjs'], {env:{...process.env, MODE:'full', CLASSIFY:'success', DOCS:'success', VERIFY:verify}});
-    assert.equal(run.status, verify === 'success' ? 0 : 1);
+  const fullEnv = {MODE:'full', CLASSIFY:'success', DOCS:'success', LINT:'success', APP:'success', PLATFORM:'success', NPM_PACK:'success', PLATFORM_REQUIRED:'true', NPM_PACK_REQUIRED:'true'};
+  for (const app of ['success','failure','cancelled','skipped','']) {
+    const run = spawnSync(process.execPath, ['scripts/ci/policy.mjs'], {env:{...process.env, ...fullEnv, APP:app}});
+    assert.equal(run.status, app === 'success' ? 0 : 1);
   }
   const mutation = structuredClone(ci);
   mutation.jobs.gate.steps.find(s => s.run === step.run).env.VERIFY = 'success';
@@ -44,15 +45,31 @@ test('PR gate runs for every PR and forwards actual dependency results to the po
 
 test('reusable verification checks the supplied ref with the complete existing suite', () => {
   const verify = read('verify');
-  assert.deepEqual(verify.on.workflow_call.inputs.checkout_ref, {required:true, type:'string'});
+  const inputs = verify.on.workflow_call.inputs;
+  assert.deepEqual(inputs.checkout_ref, {required:true, type:'string'});
+  for (const name of ['app_tests', 'platform', 'npm_pack']) {
+    assert.equal(inputs[name].type, 'boolean', name);
+    assert.equal(inputs[name].default, true, name);
+    assert.notEqual(inputs[name].required, true, name);
+  }
   assert.equal(verify.permissions.contents, 'read');
-  for (const job of Object.values(verify.jobs)) {
-    assert.equal(job.if, undefined);
+  const jobIf = {'workflow-lint': undefined, test: 'inputs.app_tests', platform: 'inputs.platform', 'npm-pack': 'inputs.npm_pack'};
+  for (const [name, job] of Object.entries(verify.jobs)) {
+    assert.equal(expr(job.if), jobIf[name], name);
     assert.equal(job['continue-on-error'], undefined);
     for (const step of checkout(job)) {
       assert.equal(expr(step.with.ref), 'inputs.checkout_ref');
       assert.equal(step.with['persist-credentials'], false);
     }
+  }
+  const outputs = verify.on.workflow_call.outputs;
+  assert.equal(expr(outputs.lint.value), 'jobs.workflow-lint.result');
+  assert.equal(expr(outputs.app.value), 'jobs.test.result');
+  assert.equal(expr(outputs.platform.value), 'jobs.platform.result');
+  assert.equal(expr(outputs.npm_pack.value), 'jobs.npm-pack.result');
+  for (const name of ['npm-publish', 'desktop-release']) {
+    const caller = read(name).jobs.verify.with;
+    for (const key of ['app_tests', 'platform', 'npm_pack']) assert.notEqual(caller[key], false, `${name} ${key}`);
   }
   assert.deepEqual(verify.jobs.platform.strategy.matrix.os, ['macos-latest','windows-latest']);
   assert.ok(verify.jobs.platform.steps.some((step) => step.run === 'npx vitest run apps/hub/test/upgradeRecovery.test.ts apps/local/test/semanticAcceptance.test.ts --maxWorkers=1'));
