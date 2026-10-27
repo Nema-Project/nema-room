@@ -165,4 +165,4 @@ jobs:
           fi
           tarball=$(find artifact/dist-npm -name 'nema-*.tgz' | head -n 1)
           test -n "$tarball"
-          npm publish --provenance --access public --tag "$dist" "$tarball"
+          npm publish --provenance --access public --tag "$dist" "./$tarball"
