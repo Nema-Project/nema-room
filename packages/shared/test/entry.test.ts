@@ -124,3 +124,51 @@ test("W-n parses as workpackage", () => {
   expect(KIND_PREFIX.workpackage).toBe("W");
   expect(KIND_DIR.workpackage).toBe("workpackages");
 });
+
+const snapshot = {
+  schemaVersion: 1, provider: "local", resourceId: "doc-1", revision: null,
+  fetchedAt: "2026-10-27T00:00:00.000Z", title: "External", canonicalUrl: null,
+  contentHash: "a".repeat(64), excerpts: [{ locator: "#p1", text: "Evidence" }],
+};
+const source = { ...baseDecision, id: "S-1", kind: "source" };
+const sourceRef = { sourceEntryId: "S-1", revision: null, snapshotHash: "a".repeat(64) };
+
+test("accepts a schemaVersion 1 snapshot only on source", () => {
+  expect(EntryFrontmatter.parse({ ...source, sourceSnapshot: snapshot }).sourceSnapshot).toEqual(snapshot);
+  expect(EntryFrontmatter.safeParse({ ...baseDecision, sourceSnapshot: snapshot }).success).toBe(false);
+});
+test("rejects schemaVersion 2, an empty provider, and a 2001-character excerpt", () => {
+  for (const patch of [{ schemaVersion: 2 }, { provider: "" }, { excerpts: [{ locator: "p", text: "x".repeat(2001) }] }]) {
+    expect(EntryFrontmatter.safeParse({ ...source, url: "https://example.com", sourceSnapshot: { ...snapshot, ...patch } }).success).toBe(false);
+  }
+});
+test("allows a source snapshot without url when canonicalUrl is null", () => {
+  expect(EntryFrontmatter.safeParse({ ...source, sourceSnapshot: snapshot }).success).toBe(true);
+});
+test("still requires url for a source without a snapshot", () => {
+  expect(EntryFrontmatter.safeParse(source).success).toBe(false);
+});
+test("rejects a source ref without snapshotHash", () => {
+  expect(EntryFrontmatter.safeParse({ ...baseDecision, sourceRefs: [{ sourceEntryId: "S-1", revision: null }] }).success).toBe(false);
+});
+test("defaults legacy evidence fields and restricts confirmedRevision", () => {
+  expect(EntryFrontmatter.parse(baseDecision)).toMatchObject({ sourceRefs: [], confirmedRevision: null });
+  expect(EntryFrontmatter.safeParse({ ...baseDecision, confirmedRevision: "r1" }).success).toBe(false);
+  expect(EntryFrontmatter.safeParse({ ...source, url: "https://example.com", confirmedRevision: "r1" }).success).toBe(false);
+  expect(EntryFrontmatter.parse({ ...source, sourceSnapshot: snapshot, confirmedRevision: "r1" }).confirmedRevision).toBe("r1");
+});
+test("enforces snapshot field boundaries", () => {
+  for (const patch of [
+    { provider: "Upper" }, { resourceId: " doc" }, { resourceId: "doc\u0000" }, { revision: "" },
+    { revision: "r\u007f" }, { canonicalUrl: "https://user:pass@example.com" }, { canonicalUrl: "file:///doc" },
+    { contentHash: "A".repeat(64) }, { fetchedAt: "yesterday" }, { excerpts: [] },
+    { excerpts: Array.from({ length: 5 }, () => ({ locator: "p", text: "x".repeat(2000) })) },
+  ]) expect(EntryFrontmatter.safeParse({ ...source, sourceSnapshot: { ...snapshot, ...patch } }).success).toBe(false);
+});
+test("validates source refs and exposes only refs through upsert", () => {
+  expect(UpsertEntryInput.parse({ ...baseUpsert, sourceRefs: [sourceRef], sourceSnapshot: snapshot, confirmedRevision: "r", confirmationEventId: "ev_1" })).toEqual({ ...baseUpsert, sourceMessages: [], sourceRefs: [sourceRef] });
+  expect(UpsertEntryInput.parse(baseUpsert).sourceRefs).toBeUndefined();
+  for (const refs of [Array(11).fill(sourceRef), [{ ...sourceRef, sourceEntryId: "D-1" }], [{ ...sourceRef, quote: "Evidence" }], [{ ...sourceRef, locator: "p", quote: "x".repeat(501) }]]) {
+    expect(UpsertEntryInput.safeParse({ ...baseUpsert, sourceRefs: refs }).success).toBe(false);
+  }
+});
