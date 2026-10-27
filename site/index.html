@@ -236,9 +236,9 @@
     <p class="facts-word" data-reveal>Status</p>
     <div class="records">
       <ul class="record" data-reveal style="--i:1" aria-label="Platforms">
-        <li><span>Windows x64 desktop</span><span>latest installer</span></li>
-        <li><span>macOS desktop</span><span>latest, Apple Silicon</span></li>
-        <li><span>Linux</span><span>Web / Compose version</span></li>
+        <li><span>Windows x64 desktop</span><span>0.1.4 installer or ZIP</span></li>
+        <li><span>macOS desktop</span><span>0.1.4, Apple Silicon</span></li>
+        <li><span>Linux</span><span>0.1.4 images, amd64</span></li>
         <li><span>Installer signing</span><span>Not yet signed</span></li>
         <li><span>Auto-update</span><span>None yet</span></li>
       </ul>
@@ -257,7 +257,7 @@
   <div class="band band-head"><h2 id="faq-h" data-reveal>Questions</h2></div>
   <div class="band">
     <h3 data-reveal>Can I download it now?</h3>
-    <p data-reveal style="--i:1">Yes. The <a href="https://github.com/Nema-Project/nema-room/releases/latest">latest release</a> has a Windows x64 installer and an Apple Silicon disk image. Installers are unsigned, so Windows shows “Windows protected your PC” the first time, and macOS asks you to open it from Privacy &amp; Security. The app also needs Git 2.31 or later on the machine. Intel Macs have no desktop build; on Linux, run the web version with Docker Compose.</p>
+    <p data-reveal style="--i:1">Yes. <a href="https://github.com/Nema-Project/nema-room/releases/tag/v0.1.4">Release 0.1.4</a> has a Windows x64 installer, a Windows portable ZIP, and an Apple Silicon disk image. The ZIP is the unpacked app: unzip it and run <code>Nema.exe</code>. It has no shortcuts or uninstaller. The installer and the ZIP both use <code>~/.nema/desktop</code>. Pick one. Installers are unsigned, so Windows shows “Windows protected your PC” the first time, and macOS asks you to open it from Privacy &amp; Security. The app also needs Git 2.31 or later on the machine. Intel Macs have no desktop build. On Linux, use the 0.1.4 linux/amd64 hub and web images, or build from source.</p>
   </div>
   <div class="band band-alt">
     <h3 data-reveal>Does it cost anything?</h3>
@@ -284,12 +284,22 @@
 <section class="cta" aria-labelledby="cta-h">
   <figure class="tile picture cta-side cta-left"><img src="assets/interior-no-30-strandgade.jpg" width="1137" height="1400" alt="Hammershøi, Interior, Strandgade 30: a door stands open and a woman sits at a table with her back turned." loading="lazy"></figure>
   <div class="tile tile-accent cta-main">
-    <h2 id="cta-h" data-reveal>Download</h2>
-    <p data-reveal style="--i:1">Windows x64 and Apple Silicon installers are on the latest release. The app needs Git 2.31 or later already on the machine. To build from source, use Node.js 22 or later and Git, then run the setup wizard.</p>
-    <pre data-reveal style="--i:2"><code>git clone https://github.com/Nema-Project/nema-room.git
+    <h2 id="cta-h" data-reveal>Download 0.1.4</h2>
+    <p data-reveal style="--i:1">Windows x64 and Apple Silicon builds are on release 0.1.4. On Windows, pick the installer or the portable ZIP. The ZIP unzips to <code>Nema.exe</code>, with no shortcuts or uninstaller. Both use <code>~/.nema/desktop</code>. The app needs Git 2.31 or later already on the machine.</p>
+    <p data-reveal style="--i:1">The host command is <code>nema</code>, from the npm package <code>@nema-project/nema</code>. Hub and web images for this release are linux/amd64: <code>ghcr.io/nema-project/nema-room-hub:0.1.4</code> and <code>ghcr.io/nema-project/nema-room-web:0.1.4</code>. Download <code>docker-compose.yml</code> from the tag, then start them. On Linux and macOS, export <code>NEMA_UID</code> and <code>NEMA_GID</code> first. To develop this repository, clone it and run the setup wizard.</p>
+    <pre data-reveal style="--i:2"><code>npm i -g @nema-project/nema@0.1.4
+nema --version
+
+# Hub and web, linux/amd64. Download docker-compose.yml from tag v0.1.4 first.
+# Linux and macOS only. Docker Desktop on Windows does not need this.
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
+docker compose up -d
+
+# Or build this repository from source
+git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
 node scripts/setup.mjs --lang en</code></pre>
-    <a class="button button-paper" href="https://github.com/Nema-Project/nema-room/releases/latest" data-reveal style="--i:3">Download latest</a>
+    <a class="button button-paper" href="https://github.com/Nema-Project/nema-room/releases/tag/v0.1.4" data-reveal style="--i:3">Download 0.1.4</a>
   </div>
   <div class="tile tile-ink cta-side cta-right" aria-hidden="true"></div>
 </section>

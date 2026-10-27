@@ -14,6 +14,7 @@
 
 ### Changed
 
+- The landing page names release 0.1.4 for desktop downloads, including the Windows portable ZIP beside the installer. It shows `npm i -g @nema-project/nema@0.1.4` (command `nema`) and the linux/amd64 hub and web images. English, Chinese, and Japanese pages match. `site/en/` still redirects to the English page.
 - The PR `CI gate` still skips heavy checks for documentation changes. Other pull requests run the Ubuntu tests and web build, and run macOS/Windows platform checks and npm pack only for the paths that need them. Dockerfile, Compose, and `scripts/images/` changes run image smoke in the image workflow; that smoke is not a required `CI gate` check. A push to `main` runs full verification. Image, npm, and desktop tag workflows still call full `verify.yml`.
 - Workspace settings uses the same grouped panels as model settings. Close, delete, and save are bordered buttons in the standard ink color.
 - The English, Chinese, and Japanese READMEs, and the landing page, describe Nema Room as a local project-alignment copilot. Delivery is a feedback loop: commit evidence returns to the discussion.
