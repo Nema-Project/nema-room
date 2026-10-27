@@ -80,7 +80,7 @@ export async function reportPackagedArtifacts(directory, stdout = process.stdout
         else await walk(absolute);
         continue;
       }
-      if (entry.isFile() && /\.(dmg|exe)$/i.test(entry.name)) found.push(absolute);
+      if (entry.isFile() && /\.(dmg|exe|zip)$/i.test(entry.name)) found.push(absolute);
     }
   }
   await walk(directory);

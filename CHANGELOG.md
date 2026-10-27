@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Windows releases include a portable ZIP next to the NSIS installer. The ZIP is a separate download of the unpacked app, with `Nema.exe` at the top and its own checksum. It does not contain the installer, and the installer does not contain the ZIP. The installer still adds shortcuts, uninstall, and overwrite upgrades. The ZIP is unzip-and-run, with no shortcuts or uninstaller. Both use `~/.nema/desktop`.
+
 ### Changed
 
 - Workspace settings uses the same grouped panels as model settings. Close, delete, and save are bordered buttons in the standard ink color.

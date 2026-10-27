@@ -13,8 +13,11 @@ export function checksumFileName(version, target) {
 export function expectedAssets(version, target) {
   if (!expectedTargets.includes(target)) throw new Error(`Unexpected release target: ${target}`);
   const platform = target.split('-')[0];
-  // Installers only: the portable ZIPs duplicated the whole app beside each installer.
-  return [`Nema-${version}-${target}.${installerExtension[platform]}`];
+  const installer = `Nema-${version}-${target}.${installerExtension[platform]}`;
+  // Windows publishes two independent downloads. The ZIP is the unpacked app, not a
+  // bundle that also contains the installer. macOS publishes the DMG only.
+  if (platform === 'win32') return [installer, `Nema-${version}-${target}.zip`];
+  return [installer];
 }
 
 async function hashFile(file) {
@@ -33,7 +36,7 @@ export function parseChecksums(text, source) {
   return entries;
 }
 
-// Run in each build job after packaging: records the exact installer the publish job compares against.
+// Run in each build job after packaging: records the exact assets the publish job compares against.
 export async function writeTargetChecksums(directory, version, target) {
   const lines = [];
   for (const name of expectedAssets(version, target)) {
@@ -44,6 +47,21 @@ export async function writeTargetChecksums(directory, version, target) {
   const file = path.join(directory, checksumFileName(version, target));
   await writeFile(file, `${lines.join('\n')}\n`);
   return file;
+}
+
+export async function verifyTargetChecksums(directory, version, target) {
+  const wanted = expectedAssets(version, target);
+  const checksumName = checksumFileName(version, target);
+  const sums = parseChecksums(await readFile(path.join(directory, checksumName), 'utf8'), `${target}/${checksumName}`);
+  if (sums.size !== wanted.length || wanted.some((name) => !sums.has(name))) {
+    throw new Error(`Checksum file for ${target} must list exactly ${wanted.join(', ')}`);
+  }
+  for (const name of wanted) {
+    const file = path.join(directory, name);
+    const info = await stat(file).catch(() => null);
+    if (!info?.isFile()) throw new Error(`Cannot verify missing ${target} asset: ${name}`);
+    if (await hashFile(file) !== sums.get(name)) throw new Error(`Checksum mismatch for ${target}/${name}`);
+  }
 }
 
 // artifactsRoot/<target>/ holds the downloaded build-job artifact for each target. Nothing is copied unless every check passes.
@@ -93,6 +111,9 @@ async function main(args) {
   if (command === 'checksums' && rest.length === 3) {
     const file = await writeTargetChecksums(path.resolve(rest[0]), rest[1], rest[2]);
     process.stdout.write(`Wrote ${file}\n`);
+  } else if (command === 'verify' && rest.length === 3) {
+    await verifyTargetChecksums(path.resolve(rest[0]), rest[1], rest[2]);
+    process.stdout.write(`Verified ${rest[2]} checksums\n`);
   } else if (command === 'collect' && rest.length === 4) {
     const [artifactsRoot, outputDir, version, prerelease] = rest;
     if (!['true', 'false'].includes(prerelease)) throw new Error('prerelease must be true or false');
@@ -100,7 +121,7 @@ async function main(args) {
     const manifest = await collectReleaseManifest({ version, prerelease: prerelease === 'true', artifactsRoot: path.resolve(artifactsRoot), outputDir: path.resolve(outputDir), build });
     process.stdout.write(`Collected ${Object.values(manifest.targets).flat().length} files for ${expectedTargets.length} targets\n`);
   } else {
-    throw new Error('Usage: release-manifest.mjs checksums <dir> <version> <target> | collect <artifacts-root> <output-dir> <version> <prerelease:true|false>');
+    throw new Error('Usage: release-manifest.mjs checksums <dir> <version> <target> | verify <dir> <version> <target> | collect <artifacts-root> <output-dir> <version> <prerelease:true|false>');
   }
 }
 
