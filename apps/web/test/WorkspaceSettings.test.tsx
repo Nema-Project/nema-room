@@ -81,4 +81,12 @@ describe("WorkspaceSettings", () => {
     setup();
     expect(await screen.findByRole("heading", { name: "Code & plugins" })).toBeTruthy();
   });
+
+  it("groups the fields like model settings and borders the close control", () => {
+    setup();
+    const close = screen.getByRole("button", { name: "Close" });
+    expect(close.classList.contains("settings-action")).toBe(true);
+    expect(close.classList.contains("link")).toBe(false);
+    expect(document.querySelectorAll(".settings-group").length).toBeGreaterThan(0);
+  });
 });

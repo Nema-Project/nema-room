@@ -7,6 +7,10 @@
 - The desktop app shows its version in the macOS app menu, the tray menu on macOS and Windows, and the sidebar. A 7-character build commit is included when `runtime-manifest.json` or `build-metadata.json` has one.
 - After startup, and about once a day, the desktop app checks GitHub for a newer stable release. A tray item and an in-app banner link to that release page. Download and install stay manual. Turn the check off with **Check for updates automatically** in the sidebar (`updateCheck.enabled`). Failures stay silent. Prerelease and draft releases are not offered.
 
+### Changed
+
+- Workspace settings uses the same grouped panels as model settings. Close, delete, and save are bordered buttons in the standard ink color.
+
 ## [0.1.3] - 2026-10-27
 
 ### Added
