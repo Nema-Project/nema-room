@@ -1,7 +1,11 @@
 # `npm run db:up`  -> only postgres (for `npm run dev`, published on 127.0.0.1:5433)
-# `npm run up`     -> postgres + hub + web (run mode); the nema daemon still runs on the host:
-#                     npm run build -w apps/cli && npx nema daemon
+# `docker compose up` -> pull the pinned hub and web images. No source checkout required.
+# `npm run up`     -> merge docker-compose.build.yml and build from this checkout.
+# The nema daemon still runs on the host: npm run build -w apps/cli && npx nema daemon
 # Every port is published on 127.0.0.1 only.
+#
+# Published hub/web images bake http://127.0.0.1:4400. These ports are literals so a
+# downloaded compose file cannot move the hub off the address inside the web image.
 services:
   postgres:
     image: postgres:17
@@ -21,9 +25,7 @@ services:
       retries: 30
 
   hub:
-    build:
-      context: .
-      target: hub
+    image: ghcr.io/nema-project/nema-room-hub:0.1.3
     restart: unless-stopped
     depends_on:
       postgres:
@@ -36,29 +38,37 @@ services:
       NEMA_DATABASE_URL: postgres://nema:nema@postgres:5432/nema
       NEMA_DATA_DIR: /data
       NEMA_HUB_HOST: 0.0.0.0
-      # Container port == published host port, so the Host guard (127.0.0.1:<port> / localhost:<port>)
-      # and the hub URL handed to the daemon match what the host sees.
-      NEMA_HUB_PORT: ${NEMA_HUB_PORT:-4400}
-      NEMA_WEB_ORIGIN: ${NEMA_WEB_ORIGIN:-http://localhost:3000,http://127.0.0.1:3000}
+      # Same number as the published port and the hub URL baked into the web image.
+      NEMA_HUB_PORT: "4400"
+      NEMA_WEB_ORIGIN: http://localhost:3000,http://127.0.0.1:3000
       # The hub cannot see the host's ~/.nema/ws; the daemon removes those dirs itself.
       NEMA_HUB_CLEAN_DAEMON_DIRS: "0"
     ports:
-      - "127.0.0.1:${NEMA_HUB_PORT:-4400}:${NEMA_HUB_PORT:-4400}"
+      - "127.0.0.1:4400:4400"
     volumes:
       # Same directory the host daemon reads its daemon-token from (default ~/.nema/data).
       - ${NEMA_DATA_HOST_DIR:-${HOME}/.nema/data}:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.NEMA_HUB_PORT||4400)+'/api/daemon/status').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
 
   web:
-    build:
-      context: .
-      target: web
-      args:
-        NEXT_PUBLIC_HUB_URL: ${NEXT_PUBLIC_HUB_URL:-http://127.0.0.1:4400}
+    image: ghcr.io/nema-project/nema-room-web:0.1.3
     restart: unless-stopped
     depends_on:
-      - hub
+      hub:
+        condition: service_healthy
     ports:
       - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
 
 volumes:
   nema-pg:

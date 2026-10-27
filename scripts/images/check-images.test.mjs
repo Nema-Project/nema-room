@@ -1,0 +1,85 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { devComposeUpArgs } from '../compose-dev.mjs';
+import { assertComposeImages, assertImageBudget, assertPackageVersions, IMAGE_BUDGET_BYTES } from './check-images.mjs';
+
+const root = fileURLToPath(new URL('../..', import.meta.url));
+const published = readFileSync(new URL('../../docker-compose.yml', import.meta.url), 'utf8');
+const desktopVersion = JSON.parse(readFileSync(new URL('../../apps/desktop/package.json', import.meta.url), 'utf8')).version;
+
+function composeConfig(files, env = {}) {
+  const run = spawnSync('docker', ['compose', ...files.flatMap((file) => ['-f', file]), 'config', '--format', 'json'], {
+    cwd: root,
+    env: { ...process.env, ...env },
+    encoding: 'utf8',
+  });
+  assert.equal(run.status, 0, run.stderr);
+  return JSON.parse(run.stdout);
+}
+
+test('published compose pins hub and web and rejects drifted fixtures', () => {
+  assert.doesNotThrow(() => assertComposeImages(published, desktopVersion));
+  assert.throws(() => assertComposeImages(published.replaceAll(`:${desktopVersion}`, ':latest'), desktopVersion), /latest tag/);
+  assert.throws(() => assertComposeImages(published.replace('nema-room-hub', 'nema-room-other'), desktopVersion), /missing/);
+  const withBuild = published.replace('image: ghcr.io/nema-project/nema-room-hub', 'build:\n      context: .\n    image: ghcr.io/nema-project/nema-room-hub');
+  assert.throws(() => assertComposeImages(withBuild, desktopVersion), /hub must not build/);
+  assert.throws(() => assertComposeImages(published.replace('127.0.0.1:4400:4400', '127.0.0.1:${NEMA_HUB_PORT:-4400}:4400'), desktopVersion), /literal|interpolate/);
+});
+
+test('package versions must match the release tag', () => {
+  assert.equal(assertPackageVersions({ tag: 'v1.2.3', desktop: '1.2.3', local: '1.2.3', cli: '1.2.3' }), '1.2.3');
+  assert.throws(() => assertPackageVersions({ tag: 'v1.2.3', desktop: '1.2.3', local: '1.2.4', cli: '1.2.3' }), /desktop 1\.2\.3, local 1\.2\.4, cli 1\.2\.3/);
+  assert.throws(() => assertPackageVersions({ tag: '1.2.3', desktop: '1.2.3', local: '1.2.3', cli: '1.2.3' }), /v<SemVer>/);
+  assert.throws(() => assertPackageVersions({ tag: 'v1.2', desktop: '1.2', local: '1.2', cli: '1.2' }), /strict SemVer/);
+});
+
+test('image budget fails closed above 800 MiB', () => {
+  assert.match(assertImageBudget('hub', IMAGE_BUDGET_BYTES), /^image size: hub 800\.0 MiB$/);
+  assert.throws(() => assertImageBudget('web', IMAGE_BUDGET_BYTES + 1), /image size: web 800\.0 MiB exceeds 800 MiB/);
+  assert.throws(() => assertImageBudget('hub', -1), /byte count/);
+});
+
+test('repository compose file matches the desktop version', () => {
+  const run = spawnSync(process.execPath, ['scripts/images/check-images.mjs'], { cwd: root, encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, new RegExp(`image versions: ${desktopVersion}`));
+  const wrong = spawnSync(process.execPath, ['scripts/images/check-images.mjs', 'v0.0.1'], { cwd: root, encoding: 'utf8' });
+  assert.notEqual(wrong.status, 0);
+  assert.match(wrong.stderr, /desktop .* local .* cli /);
+});
+
+test('source build override replaces the hub port and rebuilds web for that port', () => {
+  const plain = composeConfig(['docker-compose.yml']);
+  assert.equal(plain.services.hub.build, undefined);
+  assert.equal(plain.services.web.build, undefined);
+  assert.equal(plain.services.hub.image, `ghcr.io/nema-project/nema-room-hub:${desktopVersion}`);
+  assert.equal(plain.services.web.image, `ghcr.io/nema-project/nema-room-web:${desktopVersion}`);
+  assert.equal(plain.services.postgres.image, 'postgres:17');
+  assert.equal(plain.services.hub.ports.length, 1);
+  assert.equal(String(plain.services.hub.ports[0].published), '4400');
+  assert.equal(plain.services.hub.ports[0].target, 4400);
+  assert.equal(String(plain.services.web.ports[0].published), '3000');
+  assert.ok(plain.services.hub.healthcheck);
+  assert.ok(plain.services.web.healthcheck);
+
+  const built = composeConfig(['docker-compose.yml', 'docker-compose.build.yml'], { NEMA_HUB_PORT: '5500' });
+  assert.equal(built.services.hub.ports.length, 1);
+  assert.equal(String(built.services.hub.ports[0].published), '5500');
+  assert.equal(built.services.hub.ports[0].target, 5500);
+  assert.equal(String(built.services.hub.environment.NEMA_HUB_PORT), '5500');
+  assert.equal(built.services.hub.build.target, 'hub');
+  assert.equal(built.services.web.build.target, 'web');
+  assert.equal(built.services.web.build.args.NEXT_PUBLIC_HUB_URL, 'http://127.0.0.1:5500');
+  assert.equal(String(built.services.web.ports[0].published), '3000');
+});
+
+test('npm run up and the setup wizard build from source', () => {
+  assert.deepEqual(devComposeUpArgs(), ['compose', '-f', 'docker-compose.yml', '-f', 'docker-compose.build.yml', 'up', '-d', '--build']);
+  const up = readFileSync(new URL('../up.mjs', import.meta.url), 'utf8');
+  const setup = readFileSync(new URL('../setup.mjs', import.meta.url), 'utf8');
+  assert.match(up, /devComposeUpArgs\(/);
+  assert.match(setup, /devComposeUpArgs\(/);
+});

@@ -1,0 +1,17 @@
+# Source builds. `npm run up` and `node scripts/setup.mjs` merge this over docker-compose.yml.
+# The published file keeps literal ports; this file is what moves the hub with NEMA_HUB_PORT.
+services:
+  hub:
+    build:
+      context: .
+      target: hub
+    environment:
+      NEMA_HUB_PORT: ${NEMA_HUB_PORT:-4400}
+    ports: !override
+      - "127.0.0.1:${NEMA_HUB_PORT:-4400}:${NEMA_HUB_PORT:-4400}"
+  web:
+    build:
+      context: .
+      target: web
+      args:
+        NEXT_PUBLIC_HUB_URL: http://127.0.0.1:${NEMA_HUB_PORT:-4400}
