@@ -250,6 +250,7 @@ describe("daemon connection", () => {
       const text = err.mock.calls.map((c) => String(c[0])).join("\n");
       expect(text).toContain("hub 与 nema CLI 版本不一致（hub 1.2.3），请安装 @nema-project/nema@1.2.3");
       expect(text).toContain("run: npm i -g @nema-project/nema@1.2.3");
+      expect(text).not.toMatch(/run: npm i -g nema@/);
     } finally {
       err.mockRestore();
     }

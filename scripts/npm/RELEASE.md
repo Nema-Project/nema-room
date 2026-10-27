@@ -10,6 +10,8 @@ Before a trusted publisher exists, a maintainer publishes one working version wi
 
 The npm org `nema-project` must already exist, and the publisher's npm account must be a member of that org.
 
+Nothing has been published to npm under `nema` or `@nema-project/nema`. This is the first publish. Source checkouts update with the repository, so there is no previously published daemon that still prints `npm i -g nema@<version>`.
+
 From a clean checkout of the release commit, with Node.js 22 or later:
 
 ```sh
