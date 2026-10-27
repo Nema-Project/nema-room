@@ -1,7 +1,7 @@
 # P0 semantic acceptance, upgrade recovery, and reporting status
 
 Execution: 2026-10-27 (Asia/Tokyo). Design and plan: `docs/superpowers/specs/2026-10-27-p0-semantic-upgrade-reporting-design.md`, `docs/superpowers/plans/2026-10-27-p0-semantic-upgrade-reporting.md`.
-Branch: `github-rule/p0-semantic-upgrade-reporting-05b6`, cut from main `2cd0593` (merge of PR #22). The 2026-10-26 release-assurance review is unchanged and is not this result.
+Branch: `github-rule/p0-semantic-upgrade-reporting-05b6`, cut from main `2cd0593` (merge of PR #22). Implementation commit: `2e221b8c10a9109d5134630d7bd11bda3a0a2baa`. The 2026-10-26 release-assurance review is unchanged and is not this result.
 
 No release tag, GitHub release, advisory, ruleset edit, or merge was created. Private vulnerability reporting was not enabled.
 
