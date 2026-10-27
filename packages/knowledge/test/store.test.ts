@@ -691,6 +691,8 @@ test("readers never observe truncated frontmatter during an entry update", async
   await store.init();
   await store.upsert(req("initial"), { author: "user" });
   if (process.platform !== "win32") await chmod(path.join(dir, "requirements", "R-1.md"), 0o600);
+  // The hub and direct readers may hold distinct store instances for the same repo.
+  const readerStore = new KnowledgeStore(dir);
   let done = false;
   const failures: unknown[] = [];
   const writer = (async () => {
@@ -705,7 +707,7 @@ test("readers never observe truncated frontmatter during an entry update", async
   const reader = async () => {
     while (!done) {
       try {
-        const entry = await store.get("R-1");
+        const entry = await readerStore.get("R-1");
         if (entry?.id !== "R-1") failures.push(entry);
       } catch (error) {
         failures.push(error);
