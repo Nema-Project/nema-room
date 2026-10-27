@@ -1,9 +1,9 @@
 import { KnowledgeStore, summarizeEntry } from "@nema/knowledge";
-import { compareFreshness, type Entry, type SourceFreshness, type SourceObservation } from "@nema/shared";
+import { compareFreshness, type Entry, type SourceFreshness, type SourceObservation, type SourceFreshnessReason } from "@nema/shared";
 import type { Db } from "./db/db.js";
 import { repoPath } from "./workspaces.js";
 
-type FreshnessRow = { entry_id: string; freshness: SourceFreshness };
+type FreshnessRow = { entry_id: string; freshness: SourceFreshness; checked_revision: string | null; reason: SourceFreshnessReason };
 type ConfirmationRow = { entry_id: string; revision: string | null; snapshot_hash: string | null };
 
 export async function recordSourceCheck(db: Db, dataDir: string, workspaceId: string, entryId: string, observed: SourceObservation): Promise<void> {
@@ -19,10 +19,16 @@ export async function recordSourceCheck(db: Db, dataDir: string, workspaceId: st
 /** Confirmation rows must contain only consumed confirm_revision events. */
 export function attachSourceEvidence<T extends Entry>(entries: T[], freshnessRows: FreshnessRow[], confirmations: ConfirmationRow[] = []) {
   const sources = new Map(entries.map(entry => [entry.id, entry]));
-  const rows = new Map(freshnessRows.map(row => [row.entry_id, row.freshness]));
+  const rows = new Map(freshnessRows.map(row => [row.entry_id, row]));
   const freshnessOf = (entry: Entry): SourceFreshness => {
-    const value = rows.get(entry.id) ?? "unknown";
-    return entry.sourceSnapshot?.revision === null && value === "current" ? "unknown" : value;
+    const row = rows.get(entry.id);
+    if (!row || !entry.sourceSnapshot) return "unknown";
+    // The stored comparison predates any reimport. Recompare the observation
+    // with the snapshot being read, including after Git commits but indexing fails.
+    const observed: SourceObservation = row.reason === "match" || row.reason === "mismatch" || row.reason === "incomparable"
+      ? { outcome: "ok", revision: row.checked_revision }
+      : { outcome: row.reason };
+    return compareFreshness(entry.sourceSnapshot.revision, observed).freshness;
   };
   return entries.map(entry => {
     const snapshot = entry.kind === "source" ? entry.sourceSnapshot : undefined;
@@ -40,7 +46,7 @@ export function attachSourceEvidence<T extends Entry>(entries: T[], freshnessRow
 
 export async function sourceEvidenceEntries<T extends Entry>(db: Db, workspaceId: string, entries: T[]) {
   const [freshness, confirmations] = await Promise.all([
-    db.query<FreshnessRow>("select entry_id, freshness from source_freshness where workspace_id=$1", [workspaceId]),
+    db.query<FreshnessRow>("select entry_id, freshness, checked_revision, reason from source_freshness where workspace_id=$1", [workspaceId]),
     db.query<ConfirmationRow>(`select entry_id, revision, snapshot_hash from evidence_events
       where workspace_id=$1 and kind='confirm_revision' and consumed_commit is not null and consumed_at is not null`, [workspaceId]),
   ]);

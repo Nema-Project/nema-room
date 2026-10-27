@@ -8,13 +8,13 @@ it("does not set reviewNeeded when the source has never been checked", () => {
   expect(attachSourceEvidence([source, decision], [])[1]).toMatchObject({ freshness: "unknown", reviewNeeded: false, unconfirmedSnapshot: false });
 });
 it("clamps a current row to unknown when the snapshot revision is null", () => {
-  expect(attachSourceEvidence([source], [{ entry_id: "S-1", freshness: "current" }])[0].freshness).toBe("unknown");
+  expect(attachSourceEvidence([source], [{ entry_id: "S-1", freshness: "current", checked_revision: "v1", reason: "match" }])[0].freshness).toBe("unknown");
 });
 it("sets reviewNeeded when a null revision snapshot hash changes", () => {
   expect(attachSourceEvidence([{ ...source, sourceSnapshot: { ...source.sourceSnapshot!, contentHash: "b".repeat(64) } }, decision], [])[1].reviewNeeded).toBe(true);
 });
 it("unknown and timeout do not set reviewNeeded", () => {
-  expect(attachSourceEvidence([source, decision], [{ entry_id: "S-1", freshness: "unknown" }])[1].reviewNeeded).toBe(false);
+  expect(attachSourceEvidence([source, decision], [{ entry_id: "S-1", freshness: "unknown", checked_revision: null, reason: "timeout" }])[1].reviewNeeded).toBe(false);
 });
 it("a ref revision that differs from the snapshot sets reviewNeeded", () => {
   expect(attachSourceEvidence([{ ...source, sourceSnapshot: { ...source.sourceSnapshot!, revision: "v2" } }, decision], [])[1].reviewNeeded).toBe(true);
@@ -29,7 +29,7 @@ it("requires a consumed matching event and consistent confirmedRevision", () => 
 it("flags missing sources, missing snapshots and unavailable checks", () => {
   expect(attachSourceEvidence([decision], [])[0].reviewNeeded).toBe(true);
   expect(attachSourceEvidence([{ ...source, sourceSnapshot: undefined }, decision], [])[1].reviewNeeded).toBe(true);
-  expect(attachSourceEvidence([source, decision], [{ entry_id: "S-1", freshness: "unavailable" }])[1].reviewNeeded).toBe(true);
+  expect(attachSourceEvidence([source, decision], [{ entry_id: "S-1", freshness: "unavailable", checked_revision: null, reason: "forbidden" }])[1].reviewNeeded).toBe(true);
 });
 it("confirms null revision snapshots by hash without marking freshness current", () => {
   expect(attachSourceEvidence([source], [], [{ entry_id: source.id, revision: null, snapshot_hash: hash }])[0]).toMatchObject({ freshness: "unknown", unconfirmedSnapshot: false });

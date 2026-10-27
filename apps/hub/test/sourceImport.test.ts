@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { KnowledgeStore, git, withRepoLock } from "@nema/knowledge";
 import { canonicalJson, type SourceSnapshot } from "@nema/shared";
+import { recordSourceCheck, sourceEvidenceEntries } from "../src/sourceFreshness.js";
 import { createTestDb } from "../src/db/pglite.js";
 import type { Db } from "../src/db/db.js";
 import { sha256 } from "../src/db/snapshot.js";
@@ -78,4 +79,54 @@ it("supports imported sources without a canonical URL", async () => {
   const result = await run({ ...payload, fetchedAt, contentHash: sha256(canonicalJson(payload)) });
   expect(result.entry.url).toBeUndefined();
   expect((await store.get(result.entry.id))?.url).toBeUndefined();
+});
+
+function versionedSnapshot(revision: string | null): SourceSnapshot {
+  const { fetchedAt, contentHash, ...payload } = { ...snapshot(revision ?? "null"), revision };
+  return { ...payload, fetchedAt, contentHash: sha256(canonicalJson(payload)) };
+}
+async function readFreshness() {
+  const entry = (await store.get("S-1"))!;
+  const decision = { ...entry, id: "D-1", kind: "decision" as const, sourceSnapshot: undefined,
+    sourceRefs: [{ sourceEntryId: entry.id, revision: entry.sourceSnapshot!.revision, snapshotHash: entry.sourceSnapshot!.contentHash }] };
+  const result = await sourceEvidenceEntries(db, ws, [entry, decision]);
+  return { freshness: result[0].freshness, reviewNeeded: result[1].reviewNeeded };
+}
+it("recompares a retained successful check across A-B-A and null reimports", async () => {
+  await run(versionedSnapshot("A"));
+  await recordSourceCheck(db, dataDir, ws, "S-1", { outcome: "ok", revision: "A" });
+  for (const [revision, freshness] of [["A", "current"], ["B", "changed"], ["A", "current"], [null, "unknown"], ["B", "changed"]] as const) {
+    await run(versionedSnapshot(revision));
+    expect(await readFreshness()).toEqual({ freshness, reviewNeeded: freshness === "changed" });
+  }
+  await recordSourceCheck(db, dataDir, ws, "S-1", { outcome: "ok", revision: "A" });
+  await run(versionedSnapshot("A"));
+  expect(await readFreshness()).toEqual({ freshness: "current", reviewNeeded: false });
+});
+it("recompares a successful check made against a null imported revision", async () => {
+  await run(versionedSnapshot(null));
+  await recordSourceCheck(db, dataDir, ws, "S-1", { outcome: "ok", revision: "A" });
+  await run(versionedSnapshot("A"));
+  expect(await readFreshness()).toEqual({ freshness: "current", reviewNeeded: false });
+  await recordSourceCheck(db, dataDir, ws, "S-1", { outcome: "ok", revision: null });
+  await run(versionedSnapshot("B"));
+  expect(await readFreshness()).toEqual({ freshness: "unknown", reviewNeeded: false });
+});
+it("reads the new Git revision before failed indexing is retried", async () => {
+  await run(versionedSnapshot("A"));
+  await recordSourceCheck(db, dataDir, ws, "S-1", { outcome: "ok", revision: "B" });
+  expect(await readFreshness()).toEqual({ freshness: "changed", reviewNeeded: true });
+  await expect(importSourceSnapshot(db, dataDir, ws, versionedSnapshot("B"), async () => { throw Error("index failed"); })).rejects.toMatchObject({ status: 500 });
+  expect(await readFreshness()).toEqual({ freshness: "current", reviewNeeded: false });
+  await run(versionedSnapshot("B"));
+  expect(await readFreshness()).toEqual({ freshness: "current", reviewNeeded: false });
+});
+it("preserves timeout, offline and unavailable observations after reimport", async () => {
+  await run(versionedSnapshot("A"));
+  for (const outcome of ["timeout", "offline", "incomparable", "not_found", "forbidden"] as const) {
+    await recordSourceCheck(db, dataDir, ws, "S-1", { outcome });
+    await run(versionedSnapshot("B"));
+    const unavailable = outcome === "not_found" || outcome === "forbidden";
+    expect(await readFreshness()).toEqual({ freshness: unavailable ? "unavailable" : "unknown", reviewNeeded: unavailable });
+  }
 });
