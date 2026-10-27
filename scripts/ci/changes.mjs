@@ -13,10 +13,10 @@ export async function changedPaths({cwd, base, head}) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const paths = await changedPaths({cwd:process.cwd(), base:process.argv[2], head:process.argv[3]});
-  const mode = classifyPaths(paths);
+  const result = classifyPaths(paths);
   const file = process.env.PATH_LIST_FILE;
   if (!file || !process.env.GITHUB_OUTPUT) throw new Error('PATH_LIST_FILE and GITHUB_OUTPUT are required');
   await writeFile(file, JSON.stringify(paths));
-  await appendFile(process.env.GITHUB_OUTPUT, `mode=${mode}\n`);
-  console.log(`Classified ${paths.length} changed paths: ${mode}`);
+  await appendFile(process.env.GITHUB_OUTPUT, `mode=${result.mode}\n`);
+  console.log(`Classified ${paths.length} changed paths: ${result.mode}`);
 }
