@@ -10,6 +10,8 @@ Full `verify.yml` for that tree succeeded in [CI run 40433303454](https://github
 
 GitHub executes the workflow stored in the tagged commit. New safeguards cannot protect earlier commits retroactively. Supported release targets must descend from the recorded rollout commit and be reachable from `origin/main`; pre-rollout tags are unsupported. Historical releases are unchanged. This is not an organization-wide immutable policy against writers changing workflows.
 
+Do not create a tag unless that SHA's `CI` workflow on `main` has already succeeded. A missing, in-progress, cancelled, or failed run is not a tag candidate. Publication is still blocked by `verify.yml` on the tag SHA (a failure, cancellation, skip, or missing run cannot publish), not by a separate lookup of the `main` workflow run. A SHA whose full suite failed on `main` fails that same verify.
+
 Before intentionally creating any tag, fetch main and check both ancestry relations, substituting the **recorded real SHAs**:
 
 ```sh
