@@ -50,6 +50,7 @@ type Room = { id: string; repo: string };
 function acceptanceCliEntry(): string {
   const here = fileURLToPath(import.meta.url);
   const candidates = [
+    resolve(here, "../../../../cli/dist/index.js"),
     resolve(here, "../../../cli/dist/index.js"),
     resolve(here, "../../cli/dist/index.js"),
   ];
