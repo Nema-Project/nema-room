@@ -80,7 +80,7 @@ Windows 的 `.exe` 是 NSIS 安装包：会建立快捷方式，可以卸载，�
 
 ### Web / Compose
 
-在镜像发布之前，从检出构建 PostgreSQL、hub 和 web。这是目前可用的启动方式。daemon 不在镜像里，仍在本机运行。daemon 的包名是本仓库里的 `nema`。第一次发布之前它还不在 npm 上，步骤见 [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md)。在那之前，daemon 从当前检出安装。需要 **Node.js ≥ 22**、**Git**、**Docker** 和 **Docker Compose v2**，系统可以是 Windows、macOS 或 Linux。
+开发本仓库时，从检出构建 PostgreSQL、hub 和 web。tag `v0.1.4` 是第一次发布镜像的版本。daemon 不在镜像里，仍在本机运行。daemon 的包是 `@nema-project/nema`。`@nema-project/nema@0.1.3` 已于 2026-10-27 发布到 npm，这次手动发布记录在 [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md)。需要 **Node.js ≥ 22**、**Git**、**Docker** 和 **Docker Compose v2**，系统可以是 Windows、macOS 或 Linux。
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
@@ -92,11 +92,11 @@ node scripts/setup.mjs --lang zh
 
 向导检查依赖、构建 CLI、从源码启动服务，并引导配置模型。保持本机 daemon 运行。已有 `.env` 会保留。`npm run up` 是同一条源码构建。在 Linux 和 macOS 上，无论 UID/GID 是不是 1000，都先按上面导出 `NEMA_UID` 和 `NEMA_GID`，再执行 `npm run up`，hub 才能写入数据目录。Windows 上的 Docker Desktop 不需要这条 export。然后打开 [localhost:3000](http://localhost:3000)。发布用的 compose 文件没有构建步骤。
 
-不克隆、直接拉取钉死镜像，要从包含镜像发布工作流的第一个 `v*` tag 才开始。`v0.1.3` 不是这次发布，GHCR 上也没有 `0.1.3` 镜像。当前检出仍把镜像钉在 `ghcr.io/nema-project/nema-room-hub:0.1.3` 和 `ghcr.io/nema-project/nema-room-web:0.1.3`，因为 `scripts/images/check-images.mjs` 要求钉的版本等于包版本。下一次发版时版本和钉一起改，那个 tag 才会发布镜像。之后从那个 tag 下载 `docker-compose.yml`。Linux 和 macOS 上同样导出 `NEMA_UID` 和 `NEMA_GID`。Windows 上的 Docker Desktop 不需要这条 export。然后执行 `docker compose up -d`。宿主机端口跟随 `NEMA_HUB_PORT`（默认 4400，容器监听同一端口）和 `NEMA_WEB_PORT`（默认 3000，容器内仍监听 3000）。`NEMA_HUB_URL` 默认是 `http://127.0.0.1:$NEMA_HUB_PORT`，web 容器启动时读取，因此同一份已发布镜像不用重建就能换地址。
+不克隆、直接拉取钉死镜像，从 tag `v0.1.4` 开始。这个 tag 包含镜像发布工作流，也是这些镜像的第一次发布（`linux/amd64`；arm64 见 [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。当前检出把镜像钉在 `ghcr.io/nema-project/nema-room-hub:0.1.4` 和 `ghcr.io/nema-project/nema-room-web:0.1.4`，因为 `scripts/images/check-images.mjs` 要求钉的版本等于包版本。该 tag 推送之后，并且两个镜像都已在 GHCR 上公开，从该 tag 取 [`docker-compose.yml`](https://github.com/Nema-Project/nema-room/blob/v0.1.4/docker-compose.yml)（`curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.4/docker-compose.yml`）。它不是发布页上的附件。Linux 和 macOS 上同样导出 `NEMA_UID` 和 `NEMA_GID`。Windows 上的 Docker Desktop 不需要这条 export。然后执行 `docker compose up -d`。宿主机端口跟随 `NEMA_HUB_PORT`（默认 4400，容器监听同一端口）和 `NEMA_WEB_PORT`（默认 3000，容器内仍监听 3000）。`NEMA_HUB_URL` 默认是 `http://127.0.0.1:$NEMA_HUB_PORT`，web 容器启动时读取，因此同一份已发布镜像不用重建就能换地址。
 
 [手动安装与配置](docs/guide.zh.md#source-installation) · 只检查环境：`node scripts/setup.mjs --lang zh --check`
 
-宿主机 daemon 是 npm 包 `@nema-project/nema`（Node.js ≥ 22），命令名是 `nema`。第一次发布之前它还不在 npm 上，步骤见 `scripts/npm/RELEASE.md`。发布之后，安装与正在运行的 hub 相同的版本：
+宿主机 daemon 是 npm 包 `@nema-project/nema`（Node.js ≥ 22），命令名是 `nema`。`@nema-project/nema@0.1.3` 已于 2026-10-27 由维护者账号发布。`v0.1.4` 是 `scripts/npm/RELEASE.md` 里受信发布者的第一次发布。安装与正在运行的 hub 相同的版本：
 
 ```sh
 npx @nema-project/nema@<hub 版本> --version

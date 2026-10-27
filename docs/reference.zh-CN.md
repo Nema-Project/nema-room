@@ -4,7 +4,7 @@
 
 安装、模型配置、平台限制与数据备份见 [中文 README](../README.zh.md)、[English](../README.en.md)、[日本語](../README.ja.md)。本文保留进阶功能、格式约束和 API 实现说明。
 
-`@nema-project/nema` 是本仓库里的独立 npm 包，命令名是 `nema`。第一次发布之前它还不在 npm 上，步骤见 [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md)。发布之后，在 Node.js ≥ 22 上按正在运行的 hub 版本安装：`npx @nema-project/nema@<hub 版本>` 或 `npm i -g @nema-project/nema@<hub 版本>`。Compose 用 `curl http://127.0.0.1:4400/api/version` 查看版本；桌面版在侧边栏显示，回环地址提供 `GET /_nema/version`。`nema daemon` 的 `--hub` 默认是 `http://127.0.0.1:4400`，token 文件是 `$NEMA_DATA_DIR` 或 `~/.nema/data` 下的 `daemon-token`（hub 启动时写入；Compose 把该目录挂到容器 `/data`）。开发本仓库时仍可在源码检出里构建并链接本地 CLI。
+`@nema-project/nema` 是本仓库里的独立 npm 包，命令名是 `nema`。`@nema-project/nema@0.1.3` 已于 2026-10-27 发布到 npm，这是第一次发布。`v0.1.4` 是受信发布者（OIDC）的第一次发布，记录见 [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md)。在 Node.js ≥ 22 上按正在运行的 hub 版本安装：`npx @nema-project/nema@<hub 版本>` 或 `npm i -g @nema-project/nema@<hub 版本>`。Compose 用 `curl http://127.0.0.1:4400/api/version` 查看版本；桌面版在侧边栏显示，回环地址提供 `GET /_nema/version`。`nema daemon` 的 `--hub` 默认是 `http://127.0.0.1:4400`，token 文件是 `$NEMA_DATA_DIR` 或 `~/.nema/data` 下的 `daemon-token`（hub 启动时写入；Compose 把该目录挂到容器 `/data`）。开发本仓库时仍可在源码检出里构建并链接本地 CLI。
 
 ## 知识依据与时效
 

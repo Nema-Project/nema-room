@@ -6,37 +6,35 @@ The repository does not store an npm token. Publication uses trusted publishing 
 
 ## First publish
 
-Before a trusted publisher exists, a maintainer publishes one working version with their own npm account. Do not publish an empty placeholder. This manual publish is a one-time exception. It closes once the trusted publisher below is configured. After that, do not publish from a local npm login.
+Done on 2026-10-27. A maintainer published `@nema-project/nema@0.1.3` with their own npm account. That manual publish was a one-time exception. Nothing was published under the unscoped name `nema`. Do not publish again from a local npm login. Later versions, starting with `v0.1.4`, publish through the trusted publisher below.
 
-The npm org `nema-project` must already exist, and the publisher's npm account must be a member of that org.
+The npm org `nema-project` already existed, and the publisher's npm account was a member of that org. Source checkouts update with the repository, so there is no previously published daemon that still prints `npm i -g nema@<version>`.
 
-Nothing has been published to npm under `nema` or `@nema-project/nema`. This is the first publish. Source checkouts update with the repository, so there is no previously published daemon that still prints `npm i -g nema@<version>`.
-
-From a clean checkout of the release commit, with Node.js 22 or later:
+The commands below are the record of that publish, from a clean checkout of the release commit, with Node.js 22 or later:
 
 ```sh
 npm run cli:pack
-npm publish --access public ./dist-npm/nema-project-nema-<version>.tgz
-npx @nema-project/nema@<version> --version
+npm publish --access public ./dist-npm/nema-project-nema-0.1.3.tgz
+npx @nema-project/nema@0.1.3 --version
 ```
 
-If npm prompts for two-factor authentication, run the same publish again with `--otp <code>`:
+If npm prompts for two-factor authentication, the same publish is run again with `--otp <code>`:
 
 ```sh
-npm publish --access public --otp <code> ./dist-npm/nema-project-nema-<version>.tgz
+npm publish --access public --otp <code> ./dist-npm/nema-project-nema-0.1.3.tgz
 ```
 
 Keep the `./` prefix on the tarball path. `npm run cli:pack` builds `apps/cli` and writes `dist-npm/nema-project-nema-<version>.tgz`. The printed version must equal `apps/cli/package.json`. Then confirm the three release manifests match that tag:
 
 ```sh
-node scripts/npm/check-tag.mjs v<version>
+node scripts/npm/check-tag.mjs v0.1.3
 ```
 
 `check-tag.mjs` fails when the tag is not `v` plus strict SemVer, or when `apps/cli`, `apps/desktop`, and `apps/local` are not equal to each other and to the tag.
 
 ## Trusted publisher
 
-On the `@nema-project/nema` package page, add a trusted publisher for this repository:
+Configured on the `@nema-project/nema` package. Validation is pending the first OIDC publish, which is tag `v0.1.4`.
 
 - Repository: `Nema-Project/nema-room`
 - Workflow filename: `npm-publish.yml`

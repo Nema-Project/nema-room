@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -70,7 +71,8 @@ describe('native Electron packaging configuration', () => {
   });
 
   it('smokes the standard Windows installer by default and accepts an explicit installer path', () => {
-    expect(parseSmokeArgs([]).installer.replaceAll('\\', '/')).toContain('dist/desktop-artifacts/win32-x64/Nema-0.1.3-win32-x64.exe');
+    const desktopVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+    expect(parseSmokeArgs([]).installer.replaceAll('\\', '/')).toContain(`dist/desktop-artifacts/win32-x64/Nema-${desktopVersion}-win32-x64.exe`);
     expect(parseSmokeArgs(['--installer', 'dist/desktop-artifacts-final/win32-x64/Nema-0.1.0-win32-x64.exe']).installer.replaceAll('\\', '/')).toContain('desktop-artifacts-final');
     expect(parseSmokeArgs(['--zip', 'dist/Nema-0.1.3-win32-x64.zip']).zip.replaceAll('\\', '/')).toContain('Nema-0.1.3-win32-x64.zip');
     expect(() => parseSmokeArgs(['--installer', 'a.exe', '--installer', 'b.exe'])).toThrow(/usage/i);

@@ -236,7 +236,7 @@
     <p class="facts-word" data-reveal>现状</p>
     <div class="records">
       <ul class="record" data-reveal style="--i:1" aria-label="平台">
-        <li><span>Windows x64 桌面版</span><span>最新安装包</span></li>
+        <li><span>Windows x64 桌面版</span><span>最新安装包或 ZIP</span></li>
         <li><span>macOS 桌面版</span><span>最新，Apple 芯片</span></li>
         <li><span>Linux</span><span>Web / Compose 版</span></li>
         <li><span>安装包签名</span><span>暂未签名</span></li>
@@ -257,7 +257,7 @@
   <div class="band band-head"><h2 id="faq-h" data-reveal>常见问题</h2></div>
   <div class="band">
     <h3 data-reveal>现在能下载吗？</h3>
-    <p data-reveal style="--i:1">可以。<a href="https://github.com/Nema-Project/nema-room/releases/latest">最新发布</a>提供 Windows x64 安装包和 Apple 芯片 Mac 的磁盘镜像。安装包未签名，Windows 首次打开会提示“已保护你的电脑”，macOS 需要在“隐私与安全性”里打开。应用还需要本机已安装 Git 2.31 或更新版本。Intel Mac 没有桌面安装包；Linux 仍可用 Docker Compose 运行 Web 版。</p>
+    <p data-reveal style="--i:1">可以。<a href="https://github.com/Nema-Project/nema-room/releases/latest">最新发布</a>提供 Windows x64 安装包、Windows 便携 ZIP，以及 Apple 芯片 Mac 的磁盘镜像。ZIP 是解压即可运行的程序目录：解压后运行 <code>Nema.exe</code>，没有快捷方式，也没有卸载程序。安装包和 ZIP 都使用 <code>~/.nema/desktop</code>。选其中一个。安装包未签名，Windows 首次打开会提示“已保护你的电脑”，macOS 需要在“隐私与安全性”里打开。应用还需要本机已安装 Git 2.31 或更新版本。Intel Mac 没有桌面安装包。Linux 使用 linux/amd64 的 hub 与 web 镜像，或从源码构建。</p>
   </div>
   <div class="band band-alt">
     <h3 data-reveal>要花钱吗？</h3>
@@ -285,8 +285,19 @@
   <figure class="tile picture cta-side cta-left"><img src="../assets/interior-no-30-strandgade.jpg" width="1137" height="1400" alt="Hammershøi 画作《斯特兰德街 30 号室内》：门开着，一位女子背对观者坐在桌前。" loading="lazy"></figure>
   <div class="tile tile-accent cta-main">
     <h2 id="cta-h" data-reveal>下载</h2>
-    <p data-reveal style="--i:1">Windows x64 和 Apple 芯片的安装包在最新发布页。本机需要已经装好 Git 2.31 或更新版本。若要从源码构建，需要 Node.js 22 以上和 Git，然后运行安装向导。</p>
-    <pre data-reveal style="--i:2"><code>git clone https://github.com/Nema-Project/nema-room.git
+    <p data-reveal style="--i:1">Windows x64 和 Apple 芯片的构建在最新发布页。Windows 上在安装包和便携 ZIP 里选一个。ZIP 解压后运行 <code>Nema.exe</code>，没有快捷方式，也没有卸载程序。两者都使用 <code>~/.nema/desktop</code>。本机需要已经装好 Git 2.31 或更新版本。</p>
+    <p data-reveal style="--i:1">宿主机命令是 <code>nema</code>，用 <code>npm i -g @nema-project/nema</code> 安装。hub 和 web 镜像是 linux/amd64。<a href="https://github.com/Nema-Project/nema-room/blob/v0.1.4/docker-compose.yml">tag v0.1.4 上的 docker-compose.yml</a> 把镜像钉在 <code>ghcr.io/nema-project/nema-room-hub:0.1.4</code> 和 <code>ghcr.io/nema-project/nema-room-web:0.1.4</code>。先取这份文件再启动。它不是发布页上的附件。Linux 和 macOS 上先导出 <code>NEMA_UID</code> 和 <code>NEMA_GID</code>。开发本仓库则克隆后运行安装向导。</p>
+    <pre data-reveal style="--i:2"><code>npm i -g @nema-project/nema
+nema --version
+
+# hub 与 web，仅 linux/amd64。compose 文件在 tag v0.1.4 上，不是发布附件。
+curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.4/docker-compose.yml
+# 仅 Linux 和 macOS。Windows 上的 Docker Desktop 不需要这一行。
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
+docker compose up -d
+
+# 或从源码构建本仓库
+git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
 node scripts/setup.mjs</code></pre>
     <a class="button button-paper" href="https://github.com/Nema-Project/nema-room/releases/latest" data-reveal style="--i:3">下载最新版</a>
