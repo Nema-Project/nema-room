@@ -57,19 +57,21 @@ See the original statement, why it was recorded, and whether it came from you or
 
 ### Desktop
 
-Download an installer from the [latest release](https://github.com/Nema-Project/nema-room/releases/latest).
+Download one desktop build from the [latest release](https://github.com/Nema-Project/nema-room/releases/latest). On Windows, pick one of the two downloads.
 
-| Platform | Installer |
+| Platform | Download |
 | --- | --- |
-| Windows x64 | `.exe` |
+| Windows x64 | `.exe` installer or `.zip` portable app |
 | macOS · Apple Silicon | `.dmg` |
 | Linux / Intel Mac | Use Web / Compose below |
 
-1. Install [Git 2.31 or later](https://git-scm.com/downloads), then install and open Nema Room. Node and the local database are bundled; Docker is not required.
+The Windows `.exe` is the NSIS installer: shortcuts, uninstall, and overwrite upgrade. The Windows `.zip` is the unpacked app: unzip it and run `Nema.exe`. It has no shortcuts or uninstaller, and it skips the installer's repeated file copy. Both use `~/.nema/desktop`. Pick one.
+
+1. Install [Git 2.31 or later](https://git-scm.com/downloads), then install and open Nema Room, or unzip the portable ZIP and run `Nema.exe`. Node and the local database are bundled; Docker is not required.
 2. Open **Model settings** and connect a ChatGPT subscription, Claude subscription, or a Responses API-compatible API key. Access and billing depend on the provider.
 3. Create a workspace and start a discussion. Bind a local repository when you want code context.
 
-> **Preview release.** Windows installers are unsigned; macOS builds are ad-hoc signed and not notarized. Verify downloads against the release checksums. The app does not download or install updates. It checks GitHub for a newer stable release and links to that release; turn this off with “Check for updates automatically” in the sidebar. Quit from the tray and back up `~/.nema/desktop` before upgrading. A disposable data-directory migration and backup restore passed on hosted Windows and macOS runners on 2026-10-27. The same day, the maintainer installed a new package over an existing one on macOS and on Windows; workspace data remained. See the [desktop guide](docs/guide.en.md#desktop) for first launch and limitations.
+> **Preview release.** The Windows installer and portable ZIP are unsigned; macOS builds are ad-hoc signed and not notarized. Verify downloads against the release checksums. The app does not download or install updates. It checks GitHub for a newer stable release and links to that release; turn this off with “Check for updates automatically” in the sidebar. Quit from the tray and back up `~/.nema/desktop` before upgrading. A disposable data-directory migration and backup restore passed on hosted Windows and macOS runners on 2026-10-27. The same day, the maintainer installed a new package over an existing one on macOS and on Windows; workspace data remained. See the [desktop guide](docs/guide.en.md#desktop) for first launch and limitations.
 
 <a id="first-release-scope-and-requirements"></a>
 

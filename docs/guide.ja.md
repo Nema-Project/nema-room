@@ -16,21 +16,23 @@
 
 ## デスクトップアプリ（プレビュー）
 
-デスクトップアプリは、全体を 1 つのローカルプログラムにまとめます。ディスク上の PGlite データベース、単一オーナーのローカルコア、保護された同一オリジンのゲートウェイ、同梱の Node を使い、Docker もデータベースサーバーも不要です。Git は PC にインストール済みのもの（2.31 以降）を使います。macOS では Finder から開いた場合も Homebrew と MacPorts の Git を見つけます。Git がない、または古い場合は起動時にその旨を表示し、https://git-scm.com/downloads を案内します。**デスクトップインストーラーを公開しています。** Windows x64 と Apple シリコン向けです。[インストーラーをダウンロード](https://github.com/Nema-Project/nema-room/releases/latest)。
+デスクトップアプリは、全体を 1 つのローカルプログラムにまとめます。ディスク上の PGlite データベース、単一オーナーのローカルコア、保護された同一オリジンのゲートウェイ、同梱の Node を使い、Docker もデータベースサーバーも不要です。Git は PC にインストール済みのもの（2.31 以降）を使います。macOS では Finder から開いた場合も Homebrew と MacPorts の Git を見つけます。Git がない、または古い場合は起動時にその旨を表示し、https://git-scm.com/downloads を案内します。**デスクトップ版を公開しています。** Windows x64 と Apple シリコン向けです。[ダウンロード](https://github.com/Nema-Project/nema-room/releases/latest)。Windows ではインストーラーかポータブル ZIP のどちらかを選びます。
 
 | 項目 | 状態 |
 | --- | --- |
-| Windows x64 | NSIS インストーラーを提供 |
+| Windows x64 | NSIS インストーラー（`.exe`）またはポータブル ZIP（`.zip`）。どちらか一方 |
 | macOS | Apple シリコン（arm64）向け DMG。Intel Mac は対象外 |
 | Linux | デスクトップ用インストーラーなし |
 | 署名と更新 | Windows は**未署名**、macOS は**アドホック署名・未公証**。新しい安定版を見つけてリリースページを開くことはできる。ダウンロードとインストールは自動では行わない |
 | 一般公開 | [最新リリース](https://github.com/Nema-Project/nema-room/releases/latest)。Node（MIT）、同梱フォント（OFL）、Electron の ffmpeg（LGPL、差し替えできる別ライブラリ）は同梱の許諾文で公開 |
 
-**ビルド（Windows x64）**：`npm ci` の後に `npm run desktop:make -- --platform win32 --arch x64` を実行します。成果物は `dist/desktop-artifacts/win32-x64/` に出力されます：`Nema-<バージョン>-win32-x64.exe`（NSIS インストーラー）。ビルドは実行中の OS 向けのみで、ネイティブ C コンパイラーが必要です（Windows では Clang。[scripts/desktop/README.md](../scripts/desktop/README.md) を参照）。
+**ビルド（Windows x64）**：`npm ci` の後に `npm run desktop:make -- --platform win32 --arch x64` を実行します。成果物は `dist/desktop-artifacts/win32-x64/` に出力されます：`Nema-<バージョン>-win32-x64.exe`（NSIS インストーラー）と `Nema-<バージョン>-win32-x64.zip`（ポータブル版。アーカイブ直下に `Nema.exe`）。ビルドは実行中の OS 向けのみで、ネイティブ C コンパイラーが必要です（Windows では Clang。[scripts/desktop/README.md](../scripts/desktop/README.md) を参照）。
 
 **初回起動と OS の警告**：自分でビルドした、または内容を確認したファイルだけを開いてください。Windows の SmartScreen が「Windows によって PC が保護されました」と表示したら、「詳細情報」→「実行」を選びます。macOS 版は未検証です。公証されていないアプリは、通常どおり「システム設定 → プライバシーとセキュリティ」で「このまま開く」を選ぶ必要があります。
 
 **データの場所**：既定は `~/.nema/desktop`（`db/` がデータベース、`data/` が知識の Git リポジトリ、`instance.json` が実行状態）。Compose のデータベースは読まず、従来の `~/.nema/data` も使いません。
+
+**Windows のポータブル ZIP**：`Nema-<バージョン>-win32-x64.zip` を展開して `Nema.exe` を実行します。ショートカットもアンインストーラーもありません。そのフォルダを削除すると、ポータブル版だけを取り除けます。NSIS インストールと同じ `~/.nema/desktop` を使います。両方を同時に動かすとこのディレクトリを共有し、後から起動した側は既に動いているコアへ接続します。ZIP のフォルダを削除しても NSIS はアンインストールされず、NSIS をアンインストールしても展開済みフォルダと `~/.nema/desktop` は残ります。
 
 **ウィンドウ、トレイ、ブラウザーモード**
 - ウィンドウを閉じても閉じるのはウィンドウだけで、コアはトレイで動き続けます。トレイのアイコンから開き直せます。トレイメニューの `Quit Nema` で終了し、バックグラウンド処理の後始末を待ちます。

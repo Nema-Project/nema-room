@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { access, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { createWriteStream, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,9 +13,13 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const appVersion = JSON.parse(readFileSync(path.join(repo, 'apps/desktop/package.json'), 'utf8')).version;
 
 export function parseSmokeArgs(args) {
-  if (args.length === 0) return { installer: path.join(repo, 'dist/desktop-artifacts', 'win32-x64', `Nema-${appVersion}-win32-x64.exe`) };
-  if (args.length !== 2 || args[0] !== '--installer' || !args[1] || args[1].startsWith('--')) throw new Error('Usage: desktop:smoke [--installer <native-Windows-NSIS-installer>]');
-  return { installer: path.resolve(args[1]) };
+  const installer = path.join(repo, 'dist/desktop-artifacts', 'win32-x64', `Nema-${appVersion}-win32-x64.exe`);
+  if (args.length === 0) return { installer };
+  if (args.length !== 2 || !['--installer', '--zip'].includes(args[0]) || !args[1] || args[1].startsWith('--')) {
+    throw new Error('Usage: desktop:smoke [--installer <native-Windows-NSIS-installer> | --zip <native-Windows-portable-ZIP>]');
+  }
+  const file = path.resolve(args[1]);
+  return args[0] === '--zip' ? { zip: file } : { installer: file };
 }
 
 /** NSIS reads /D= only as the last argument and takes the rest of the line verbatim, so it must not be quoted. */
@@ -24,6 +28,27 @@ export function nsisSilentCommandLine(installDir) {
 }
 
 const INSTALL_TIMEOUT_MS = 15 * 60_000;
+const EXTRACT_TIMEOUT_MS = 15 * 60_000;
+
+/** System tar.exe uses the ANSI code page and cannot chdir into 東京 on an en-US runner, so extract in an ASCII temp dir first. */
+export async function extractPortableZip(zipFile, installDir) {
+  const extractDir = path.join(await realpath(os.tmpdir()), `nema-smoke-extract-${randomUUID()}`);
+  await mkdir(extractDir);
+  try {
+    const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
+    const tarExe = path.join(systemRoot, 'System32', 'tar.exe');
+    const extract = spawn(tarExe, ['-xf', zipFile, '-C', extractDir], { stdio: 'inherit', windowsHide: true });
+    const extractExit = await new Promise((resolvePromise, reject) => {
+      const timer = setTimeout(() => { extract.kill(); reject(new Error(`Windows tar extraction did not finish within ${EXTRACT_TIMEOUT_MS}ms`)); }, EXTRACT_TIMEOUT_MS);
+      extract.once('error', (error) => { clearTimeout(timer); reject(error); });
+      extract.once('exit', (code) => { clearTimeout(timer); resolvePromise(code); });
+    });
+    if (extractExit !== 0) throw new Error(`Windows tar extraction failed with exit ${extractExit}`);
+    await cp(extractDir, installDir, { recursive: true });
+  } finally {
+    await rm(extractDir, { recursive: true, force: true });
+  }
+}
 
 /** Silently install the NSIS package the release ships; a stalled installer fails here instead of hanging the job. */
 async function installSilently(installer, installDir) {
@@ -173,24 +198,34 @@ async function loadRuntime(payload) {
 }
 
 async function smoke(args) {
-  const { installer } = parseSmokeArgs(args);
-  await access(installer);
+  const parsed = parseSmokeArgs(args);
+  const artifact = parsed.installer ?? parsed.zip;
+  await access(artifact);
   const id = randomUUID();
   const tempRoot = path.join(await realpath(os.tmpdir()), `Nema proof 東京-${id}`);
   await mkdir(tempRoot, { recursive: false });
-  const installDir = path.join(tempRoot, 'installed app with spaces');
+  const installDir = path.join(tempRoot, parsed.zip ? 'copied app resources with spaces' : 'installed app with spaces');
   const profile = path.join(tempRoot, `Electron profile 東京-${id}`);
   const home = path.join(profile, '.nema', 'desktop');
   const codexHome = path.join(tempRoot, 'isolated Codex home');
   const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
-  const artifactStat = await stat(installer);
-  process.stdout.write(`payload size: installer ${(artifactStat.size / 1048576).toFixed(1)} MiB\n`);
-  const installStarted = Date.now();
-  await installSilently(installer, installDir);
-  const installMs = Date.now() - installStarted;
-  process.stderr.write(`Installed NSIS package in ${installMs}ms\n`);
+  const artifactStat = await stat(artifact);
+  process.stdout.write(`payload size: ${parsed.zip ? 'portable zip' : 'installer'} ${(artifactStat.size / 1048576).toFixed(1)} MiB\n`);
+  let installMs;
+  let extractMs;
+  if (parsed.zip) {
+    const extractStarted = Date.now();
+    await extractPortableZip(parsed.zip, installDir);
+    extractMs = Date.now() - extractStarted;
+    process.stderr.write(`Extracted portable ZIP in ${extractMs}ms\n`);
+  } else {
+    const installStarted = Date.now();
+    await installSilently(parsed.installer, installDir);
+    installMs = Date.now() - installStarted;
+    process.stderr.write(`Installed NSIS package in ${installMs}ms\n`);
+  }
   const executable = await findExecutable(installDir);
-  if (!executable) throw new Error('NSIS installer did not install Nema.exe');
+  if (!executable) throw new Error(parsed.zip ? 'Portable ZIP did not contain Nema.exe' : 'NSIS installer did not install Nema.exe');
   const asarPath = path.join(path.dirname(executable), 'resources', 'app.asar');
   const packagedPreload = extractFile(asarPath, 'preload.cjs').toString('utf8');
   const packagedControls = extractFile(asarPath, 'window-controls.cjs').toString('utf8');
@@ -323,8 +358,8 @@ async function smoke(args) {
   const restartedInstanceId = (await runtimeApi.discoverInstance(home))?.instanceId;
   const result = {
     result: 'passed',
-    artifact: path.relative(repo, installer),
-    installMs,
+    artifact: path.relative(repo, artifact),
+    ...(parsed.zip ? { extractMs } : { installMs }),
     artifactBytes: artifactStat.size,
     executable,
     copiedPayload: payload,

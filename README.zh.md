@@ -57,19 +57,21 @@ Nema Room 是一个在本机运行的 AI 需求讨论室。把想法和取舍整
 
 ### 桌面应用
 
-从[最新发布页](https://github.com/Nema-Project/nema-room/releases/latest)下载安装包。
+从[最新发布页](https://github.com/Nema-Project/nema-room/releases/latest)下载一个桌面版本。Windows 上两个下载里选一个。
 
-| 平台 | 安装方式 |
+| 平台 | 下载 |
 | --- | --- |
-| Windows x64 | `.exe` |
+| Windows x64 | `.exe` 安装包，或 `.zip` 便携应用 |
 | macOS · Apple 芯片 | `.dmg` |
 | Linux / Intel Mac | 使用下方 Web / Compose 方式 |
 
-1. 安装 [Git 2.31 或更新版本](https://git-scm.com/downloads)，然后安装并打开 Nema Room。Node 和本地数据库已随包提供，无需 Docker。
+Windows 的 `.exe` 是 NSIS 安装包：会建立快捷方式，可以卸载，也可以覆盖升级。`.zip` 是解压即可运行的程序目录：解压后运行 `Nema.exe`，没有快捷方式，也没有卸载程序，并且避开安装器里的重复拷贝。两者都使用 `~/.nema/desktop`。选其中一个。
+
+1. 安装 [Git 2.31 或更新版本](https://git-scm.com/downloads)，然后安装并打开 Nema Room，或解压便携 ZIP 后运行 `Nema.exe`。Node 和本地数据库已随包提供，无需 Docker。
 2. 在**模型设置**中连接 ChatGPT 订阅、Claude 订阅或兼容 Responses API 的 API 密钥。可用性与费用由服务商决定。
 3. 创建工作区，开始讨论；需要代码上下文时，再绑定本机仓库。
 
-> **预览版本。** Windows 安装包未签名，macOS 使用临时签名且未经公证。请按发布页的校验和核对下载。应用不会自动下载或安装。它会向 GitHub 查询更新的稳定版并链到发布页；可在侧栏关掉「自动检查更新」。升级前从托盘退出并备份 `~/.nema/desktop`。2026-10-27 的托管 Windows 与 macOS 运行器已通过一次性数据目录迁移和备份恢复。同日维护者在 macOS 与 Windows 上分别用新安装包覆盖旧安装，workspace 数据均完整。首次启动与已知限制见[桌面使用指南](docs/guide.zh.md#desktop)。
+> **预览版本。** Windows 安装包和便携 ZIP 都未签名，macOS 使用临时签名且未经公证。请按发布页的校验和核对下载。应用不会自动下载或安装。它会向 GitHub 查询更新的稳定版并链到发布页；可在侧栏关掉「自动检查更新」。升级前从托盘退出并备份 `~/.nema/desktop`。2026-10-27 的托管 Windows 与 macOS 运行器已通过一次性数据目录迁移和备份恢复。同日维护者在 macOS 与 Windows 上分别用新安装包覆盖旧安装，workspace 数据均完整。首次启动与已知限制见[桌面使用指南](docs/guide.zh.md#desktop)。
 
 <a id="首版范围与环境要求"></a>
 
