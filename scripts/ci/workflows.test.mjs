@@ -12,9 +12,15 @@ const expr = value => value?.replace(/^\$\{\{\s*|\s*\}\}$/g, '').trim();
 function assertCi(ci) {
   assert.ok(Object.hasOwn(ci.on, 'pull_request'));
   assert.ok(Object.hasOwn(ci.on, 'workflow_dispatch'));
-  assert.equal(ci.on.pull_request?.['paths-ignore'], undefined);
-  assert.equal(ci.on.pull_request?.paths, undefined);
+  assert.deepEqual(ci.on.push?.branches, ['main']);
+  for (const trigger of [ci.on.pull_request, ci.on.push, ci.on.workflow_dispatch]) {
+    assert.equal(trigger?.paths, undefined);
+    assert.equal(trigger?.['paths-ignore'], undefined);
+  }
   assert.equal(ci.on.pull_request_target, undefined);
+  assert.equal(ci.on.merge_group, undefined);
+  assert.equal(ci.concurrency.group, 'ci-${{ github.ref }}');
+  assert.equal(expr(ci.concurrency['cancel-in-progress']), "github.event_name == 'pull_request'");
   assert.equal(ci.permissions.contents, 'read');
   assert.equal(ci.jobs.gate.name, 'CI gate');
   assert.equal(expr(ci.jobs.gate.if), 'always()');
@@ -22,14 +28,41 @@ function assertCi(ci) {
   assert.equal(ci.jobs.verify.uses, './.github/workflows/verify.yml');
   assert.equal(expr(ci.jobs.verify.with.checkout_ref), 'github.sha');
   assert.equal(ci.jobs.verify.secrets, undefined);
-  assert.equal(expr(ci.jobs.verify.if), "needs.classify.outputs.mode == 'full'");
+  assert.equal(expr(ci.jobs.verify.if), "needs.classify.result == 'success'");
+  assert.equal(expr(ci.jobs.verify.with.app_tests), "needs.classify.outputs.mode != 'docs'");
+  assert.equal(expr(ci.jobs.verify.with.platform), "needs.classify.outputs.mode == 'full' || needs.classify.outputs.platform == 'true'");
+  assert.equal(expr(ci.jobs.verify.with.npm_pack), "needs.classify.outputs.mode == 'full' || needs.classify.outputs.npm_pack == 'true'");
+  const outputs = ci.jobs.classify.outputs;
+  assert.equal(expr(outputs.mode), 'steps.changes.outputs.mode');
+  assert.equal(expr(outputs.platform), 'steps.changes.outputs.platform');
+  assert.equal(expr(outputs.npm_pack), 'steps.changes.outputs.npm_pack');
+  const changes = ci.jobs.classify.steps.find(s => s.id === 'changes');
+  assert.ok(changes);
+  const fullBranch = changes.run.slice(0, changes.run.indexOf('changes.mjs'));
+  assert.match(fullBranch, /workflow_dispatch/);
+  assert.match(fullBranch, /"\$EVENT" = "push"/);
+  for (const line of ['mode=full', 'platform=true', 'npm_pack=true', 'desktop=false', 'image=false', 'README.md', 'scripts/desktop/RELEASE.md']) {
+    assert.ok(fullBranch.includes(line), line);
+  }
   const step = ci.jobs.gate.steps.find(s => s.run === 'node scripts/ci/policy.mjs');
   assert.ok(step);
-  for (const [key,value] of Object.entries({MODE:'needs.classify.outputs.mode', CLASSIFY:'needs.classify.result', DOCS:'needs.docs.result', VERIFY:'needs.verify.result'})) assert.equal(expr(step.env[key]), value);
+  for (const [key,value] of Object.entries({
+    MODE:'needs.classify.outputs.mode',
+    CLASSIFY:'needs.classify.result',
+    DOCS:'needs.docs.result',
+    LINT:'needs.verify.outputs.lint',
+    APP:'needs.verify.outputs.app',
+    PLATFORM:'needs.verify.outputs.platform',
+    NPM_PACK:'needs.verify.outputs.npm_pack',
+    PLATFORM_REQUIRED:'needs.classify.outputs.platform',
+    NPM_PACK_REQUIRED:'needs.classify.outputs.npm_pack',
+  })) assert.equal(expr(step.env[key]), value);
   return step;
 }
 
 test('PR gate runs for every PR and forwards actual dependency results to the policy', () => {
+  const release = read('desktop-release');
+  assert.match(expr(release.concurrency['cancel-in-progress']), /!startsWith\(github\.ref, 'refs\/tags\/'\)/);
   const ci = read('ci'); const step = assertCi(ci);
   const fullEnv = {MODE:'full', CLASSIFY:'success', DOCS:'success', LINT:'success', APP:'success', PLATFORM:'success', NPM_PACK:'success', PLATFORM_REQUIRED:'true', NPM_PACK_REQUIRED:'true'};
   for (const app of ['success','failure','cancelled','skipped','']) {
@@ -37,10 +70,24 @@ test('PR gate runs for every PR and forwards actual dependency results to the po
     assert.equal(run.status, app === 'success' ? 0 : 1);
   }
   const mutation = structuredClone(ci);
-  mutation.jobs.gate.steps.find(s => s.run === step.run).env.VERIFY = 'success';
+  mutation.jobs.gate.steps.find(s => s.run === step.run).env.PLATFORM_REQUIRED = 'true';
   assert.throws(() => assertCi(mutation));
   const skipped = structuredClone(ci); skipped.jobs.gate.if = 'success()';
   assert.throws(() => assertCi(skipped));
+});
+
+test('missing heavy-job flags fail the gate', () => {
+  const base = {MODE:'app', CLASSIFY:'success', DOCS:'success', LINT:'success', APP:'success', PLATFORM:'skipped', NPM_PACK:'skipped', NPM_PACK_REQUIRED:'false'};
+  const run = (extra) => {
+    const env = {...process.env, ...base};
+    delete env.PLATFORM_REQUIRED;
+    Object.assign(env, extra);
+    return spawnSync(process.execPath, ['scripts/ci/policy.mjs'], {env});
+  };
+  assert.equal(run({}).status, 1);
+  assert.equal(run({PLATFORM_REQUIRED:''}).status, 1);
+  assert.equal(run({PLATFORM_REQUIRED:'false'}).status, 0);
+  assert.equal(run({PLATFORM_REQUIRED:'true'}).status, 1);
 });
 
 test('reusable verification checks the supplied ref with the complete existing suite', () => {
