@@ -80,19 +80,23 @@ The Windows `.exe` is the NSIS installer: shortcuts, uninstall, and overwrite up
 
 ### Web / Compose
 
-Requires **Node.js ≥ 22**, **Git**, **Docker**, and **Docker Compose v2** on Windows, macOS, or Linux.
+Build PostgreSQL, the hub, and web from a checkout. That is the supported start until a release tag publishes images. The daemon is not in those images. It still runs on the host. The daemon package is `nema` in this repository. It is not on npm until the first publish described in [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md). Until that publish, install the daemon from this checkout. You need **Node.js ≥ 22**, **Git**, **Docker**, and **Docker Compose v2** on Windows, macOS, or Linux.
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
+# Linux and macOS only. Docker Desktop on Windows does not need this.
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 node scripts/setup.mjs --lang en
 ```
 
-The wizard checks dependencies, builds the CLI, starts services, and guides model setup. Open [localhost:3000](http://localhost:3000) and keep the host daemon running. Existing `.env` files are preserved.
+The wizard checks dependencies, builds the CLI, starts services from source, and guides model setup. Keep the host daemon running. Existing `.env` files are preserved. `npm run up` is the same source build. On Linux and macOS, export `NEMA_UID` and `NEMA_GID` the same way before `npm run up` so the hub can write its data directory for any host user, including users whose ids are not 1000. Docker Desktop on Windows does not need that export. Open [localhost:3000](http://localhost:3000). The published compose file has no build step.
+
+Pulling pinned images, without cloning, begins with the first `v*` tag that contains the image publish workflow. Tag `v0.1.3` is not that release, and the `0.1.3` images are not on GHCR. This checkout still pins `ghcr.io/nema-project/nema-room-hub:0.1.3` and `ghcr.io/nema-project/nema-room-web:0.1.3` because `scripts/images/check-images.mjs` requires the pin to equal the package version. The pin moves when the next release is cut, and that tag is what publishes the images. After it exists, download `docker-compose.yml` from that tag. On Linux and macOS, export `NEMA_UID` and `NEMA_GID` as above. Docker Desktop on Windows does not need that export. Then run `docker compose up -d`. Host ports follow `NEMA_HUB_PORT` (default 4400; the container listens on the same port) and `NEMA_WEB_PORT` (default 3000; the container still listens on 3000). `NEMA_HUB_URL` defaults to `http://127.0.0.1:$NEMA_HUB_PORT` and is read when the web container starts, so one published image works without a rebuild.
 
 [Manual setup and configuration](docs/guide.en.md#source-installation) · Read-only check: `node scripts/setup.mjs --lang en --check`
 
-The host daemon is the npm package `nema` (Node.js ≥ 22). Install the same version as the running hub:
+After that first publish, install the same version as the running hub (Node.js ≥ 22):
 
 ```sh
 npx nema@<hub version> --version
