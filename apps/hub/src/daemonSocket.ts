@@ -19,8 +19,9 @@ import { applyRepoFetched, applyRepoMoved, listRepos, syncBoundRepos } from "./r
 import { claimNextTask, finishTask, getTask, interruptRunning, listTaskChanges, requeueDaemonTasks, toUiTask, type Task } from "./tasks.js";
 import { getWorkspace, listWorkspaces, repoPath } from "./workspaces.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
+import { versionSkewMessage } from "./hubVersion.js";
 
-export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daemonToken: string; hubUrl: string; ownedHelpers?: OwnedHelperScope };
+export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daemonToken: string; hubUrl: string; ownedHelpers?: OwnedHelperScope; releaseVersion?: string };
 
 type Conn = {
   ws: WebSocket;
@@ -312,6 +313,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         if (m.type !== "hello") return;
         if (m.token !== deps.daemonToken) {
           send(ws, { type: "error", message: "daemon token 无效" });
+          ws.close();
+          return;
+        }
+        if (deps.releaseVersion && m.version !== deps.releaseVersion) {
+          send(ws, { type: "error", message: versionSkewMessage(deps.releaseVersion) });
           ws.close();
           return;
         }
