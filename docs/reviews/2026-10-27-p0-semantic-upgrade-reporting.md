@@ -10,7 +10,7 @@ No release tag, GitHub release, ruleset edit, or merge was created. This agent d
 | Item | Status | What this change actually shows |
 | --- | --- | --- |
 | P0-03 | 进行中 | Rubric and a blocked-credential spawn pass locally. No Codex or Claude credential exists here, so neither adapter completed the five conversations. |
-| P0-04 | 已完成 | Disposable data-directory reopen, pending migration, failed migration, and backup restore passed on hosted `windows-latest` and `macos-latest` for head `ef87a29`. The seeded home already uses the current schema, including threads. NSIS/DMG overwrite was not attempted and stays unverified. |
+| P0-04 | 已完成 | Disposable data-directory reopen, pending migration, failed migration, and backup restore passed on hosted `windows-latest` and `macos-latest` for head `ef87a29`. On 2026-10-27 the maintainer (NullumNomen) also reported a manual overwrite install on macOS and on Windows; workspace data remained on both. This agent did not run those installers. |
 | P0-05 | 已完成 | An earlier read on 2026-10-27 returned `{"enabled":false}`. The owner enabled the setting at about 11:52 Asia/Tokyo. A read at 11:54 returned HTTP 200 `{"enabled":true}`. The signed-out security page links to the form. At 12:18 Asia/Tokyo, collaborator Nullum-ai (`permission: read`, not admin) submitted test report GHSA-mgcq-mcqv-75ff. GitHub accepted it into triage. It was closed at 12:27 Asia/Tokyo (`2026-10-27T03:27:30Z`) with `published_at` null and no CVE. |
 
 P0-01 and P0-02 stay 进行中. This change does not activate the required `CI gate`.
@@ -70,7 +70,11 @@ The same run's full application job [121978298441](https://github.com/Nema-Proje
 
 [Desktop PR run 40440137237](https://github.com/Nema-Project/nema-room/actions/runs/40440137237) passed Windows NSIS smoke and macOS staged-runtime smoke. Publish was skipped. That smoke does not install over an existing data directory and does not prove DMG installation, Finder startup, or in-place overwrite.
 
-P0-04 is marked 已完成 for the data-directory acceptance only. There is no product migration newer than `011_threads.sql`, so the harness reopens current-schema data that already contains a thread, then applies a test-only migration. It does not replay a pre-thread database and it does not replace an installed package.
+The hosted data-directory acceptance is recorded above. There is no product migration newer than `011_threads.sql`, so the harness reopens current-schema data that already contains a thread, then applies a test-only migration. It does not replay a pre-thread database and it does not replace an installed package.
+
+### Maintainer overwrite install
+
+On 2026-10-27 the maintainer (NullumNomen) reported a separate manual check: a new installer was installed over the existing one on macOS, and the same kind of overwrite was done on Windows. On both platforms, workspace data was still present afterward. This agent did not repeat the install and was not given a package version or commit SHA for the builds that were overwritten. The report does not include a simulated installer failure followed by restoring a backup, and it does not replace the hosted data-directory logs. P0-04 stays 已完成 with both of those records. This note does not change P0-03 or P0-05.
 
 ## Maintainer handoff
 
@@ -89,9 +93,7 @@ Optional `--model`. Exit 0 is a pass for that adapter only. Exit 1 is a finished
 
 ### P0-04 installer overwrite
 
-The hosted data-directory runs above are recorded. This remaining check is still manual, on a disposable machine: quit the tray, back up `~/.nema/desktop`, install the new package over the old one, launch, and check chats, threads, work packages, and knowledge Git history. Separately restore that backup after a simulated failure. Keep the in-place installer warning until that check is recorded. It is not part of the P0-04 data-directory acceptance.
-
-Local replay, not a substitute for the hosted logs:
+The maintainer overwrite report above is the manual record. It is not a command this agent can rerun. Local replay of the data-directory harness, not a substitute for the hosted logs or the maintainer install:
 
 ```sh
 npx vitest run apps/hub/test/upgradeRecovery.test.ts --maxWorkers=1

@@ -33,7 +33,7 @@
 | P0-01 | 发布绑定完整 CI；已有同一提交测试失败但发布成功的记录 | 进行中 | 发布提交通过完整测试；tag 可追溯到主线；测试失败或缺失时发布被阻止；以失败场景验证门禁 |
 | P0-02 | 核实并强制合并检查；评估时可读的 active ruleset 仅要求 PR，传统分支保护接口返回 403，不能据此断言所有保护均不存在 | 进行中 | 记录实际保护规则；需要的检查未完成或失败时不可合并；文档变更与路径过滤不会造成检查永久等待 |
 | P0-03 | 完成真实模型的核心语义验收，见线程验收脚本 | 进行中 | 跑通只读总结、讨论后决策、无结论线程、冲突澄清、明确推翻旧决策；记录模型、适配器、提交、消息、知识变更与工具轨迹；Codex direct 和 Claude 分别记录结果 |
-| P0-04 | 数据目录升级、完整性核对、失败回滚与备份恢复已在 Windows 与 macOS 托管运行器通过；安装包原地覆盖仍未验证 | 已完成 | 使用含聊天、线程、开发包、知识 Git 历史的旧版数据升级；核对数据完整性；模拟升级失败并从备份恢复；Windows 与 macOS 分别记录 |
+| P0-04 | 数据目录升级与备份恢复已在 Windows 与 macOS 托管运行器通过；2026-10-27 维护者在 macOS 与 Windows 上手动覆盖安装后，workspace 数据均完整 | 已完成 | 使用含聊天、线程、开发包、知识 Git 历史的旧版数据升级；核对数据完整性；模拟升级失败并从备份恢复；Windows 与 macOS 分别记录 |
 | P0-05 | 私密报告已启用。read 权限、非管理员协作者于 2026-10-27 12:18（Asia/Tokyo）提交测试报告并进入 triage，12:27 关闭且未发布 | 已完成 | 修正文档，配置并验证私密报告渠道，明确桌面支持版本；避免引导用户在公开 Issue 提交敏感漏洞细节 |
 
 ## P1：稳定化迭代
@@ -78,3 +78,4 @@
 | 2026-10-27 | P0-04 | Cursor Agent | [PR #26](https://github.com/Nema-Project/nema-room/pull/26) | 未承诺 | 数据目录升级与恢复在 windows-latest 与 macos-latest 通过（[CI 40440137400](https://github.com/Nema-Project/nema-room/actions/runs/40440137400)，`ef87a29`）；安装包原地覆盖仍未验证，见 [执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) |
 | 2026-10-27 | P0-05 | Cursor Agent | [PR #26](https://github.com/Nema-Project/nema-room/pull/26) | 未承诺 | 维护者约 11:52（Asia/Tokyo）启用私密报告；11:54 读取为 HTTP 200 `{"enabled":true}`，未登录安全页链到报告表单。普通非管理员登录后打开表单仍未验收，状态改为进行中，见 [执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) |
 | 2026-10-27 | P0-05 | Cursor Agent | [PR #26](https://github.com/Nema-Project/nema-room/pull/26) | 未承诺 | read 权限协作者 Nullum-ai 于 12:18（Asia/Tokyo）提交测试报告 [GHSA-mgcq-mcqv-75ff](https://github.com/Nema-Project/nema-room/security/advisories/GHSA-mgcq-mcqv-75ff)，进入 triage；12:27 关闭，`published_at` 为空且无 CVE。状态改为已完成，见 [执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) |
+| 2026-10-27 | P0-04 | 维护者 NullumNomen | [PR #26](https://github.com/Nema-Project/nema-room/pull/26) | 未承诺 | 维护者分别在 macOS 与 Windows 手动覆盖安装，结果均为 workspace 数据完整。Cursor Agent 只记录该报告，见 [执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) |

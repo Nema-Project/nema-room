@@ -44,7 +44,7 @@
 
 **从 Web / Compose 版迁移**：目前只有库接口，没有命令行或界面入口。`exportSnapshot`（`apps/hub/src/db/export.ts`）从你指定的 PostgreSQL 连接导出，`importLegacySnapshot`（`apps/local/src/import.ts`）导入到一个**空的、未运行**的桌面数据目录。导入先在暂存目录里完整验证，失败时不改动目标；中断后用 `recoverInterruptedImport` 恢复。凭证不会被导出或导入，需要重新登录。
 
-**升级**：桌面应用没有自动更新。先用托盘的 `Quit Nema` 退出，备份 `~/.nema/desktop`，再安装新版本；启动时会自动应用数据库迁移。2026-10-27 的托管 Windows 与 macOS 运行器已通过一次性数据目录的重新打开、待应用迁移、失败回滚和备份恢复。**用新安装包覆盖旧安装尚未验证**，请先备份。
+**升级**：桌面应用没有自动更新。先用托盘的 `Quit Nema` 退出，备份 `~/.nema/desktop`，再安装新版本；启动时会自动应用数据库迁移。2026-10-27 的托管 Windows 与 macOS 运行器已通过一次性数据目录的重新打开、待应用迁移、失败回滚和备份恢复。同日维护者在 macOS 与 Windows 上分别用新安装包覆盖旧安装，workspace 数据均完整。升级前仍请先备份 `~/.nema/desktop`。
 
 当前稳定化优先级与验收证据见[项目路线图](../ROADMAP.md)。下方历史验证记录仅适用于当时记录的提交与环境。
 

@@ -39,13 +39,14 @@ The complete Windows/macOS platform checks and Ubuntu application tests, web bui
 - Concurrency is scoped to each workflow/ref; tag runs are never cancelled by superseded PR runs.
 - Existing published releases are never overwritten. A previous draft is reused only if its assets belong to this release.
 - Assets: two installers (`.exe`, `.dmg`), two per-target checksum files, combined `SHA256SUMS-<version>.txt`, and `release-manifest-<version>.json`. No portable ZIP is published.
-- Windows automation installs and smokes the NSIS installer. macOS automation checks only the staged runtime; it does not prove DMG installation, Finder startup, or in-place installer overwrite.
+- Windows automation installs and smokes the NSIS installer. macOS automation checks only the staged runtime; it does not prove DMG installation or Finder startup.
 - The Windows and macOS platform job also runs a disposable data-directory upgrade and restore (chats, a thread, a work package, and knowledge Git history). On 2026-10-27 that step passed on both runners in [CI 40440137400](https://github.com/Nema-Project/nema-room/actions/runs/40440137400) (`ef87a29`): darwin arm64, Node v22.23.3, and win32 x64, Node v22.23.4, each 8/8. It does not install over an existing NSIS or DMG package. Local command after `npm ci`: `npx vitest run apps/hub/test/upgradeRecovery.test.ts --maxWorkers=1`.
+- On 2026-10-27 the maintainer (NullumNomen) reported a manual overwrite install on macOS and on Windows. Workspace data remained on both. That report is separate from the hosted data-directory job and from first-install smoke.
 
 ## Before an authorized release
 
 1. Verify rollout ancestry and successful complete CI/rehearsal for the intended commit. Record exact SHAs and run URLs.
-2. Check versions, changelog, payload validation and supported asset set for both targets. Review unresolved [roadmap](../../ROADMAP.md) acceptance, including P0-03. P0-05 is recorded in the 2026-10-27 review. P0-04 data-directory checks passed on hosted Windows and macOS; installer overwrite remains open.
+2. Check versions, changelog, payload validation and supported asset set for both targets. Review unresolved [roadmap](../../ROADMAP.md) acceptance, including P0-03. P0-05 is recorded in the 2026-10-27 review. P0-04 data-directory checks passed on hosted Windows and macOS, and the maintainer reported a 2026-10-27 overwrite install on both platforms with workspace data intact.
 3. Confirm the actual main ruleset requires the observed GitHub Actions `CI gate` and an up-to-date branch; YAML alone does not activate this setting.
 4. Private vulnerability reporting was enabled by an administrator on 2026-10-27 at about 11:52 Asia/Tokyo. A read at 11:54 returned HTTP 200 `{"enabled":true}`, and the public security page links to the form when signed out. A signed-in collaborator with read permission, not an administrator, reached the form at 12:18 Asia/Tokyo. Test report GHSA-mgcq-mcqv-75ff was closed at 12:27 without publication and without a CVE. P0-05 is complete for that check. Never request sensitive public reports. Re-read with `node scripts/security/reporting-status.mjs`.
 5. A person with release authorization creates the new tag on the verified commit. Do not automatically tag as part of CI testing.
@@ -58,7 +59,7 @@ Windows installers are unsigned; macOS packages are ad-hoc signed and not notari
 - Windows x64: install with NSIS to default and spaced paths, launch, create a workspace, chat with a configured provider, quit from the tray, relaunch and confirm persistence. Uninstall and confirm data is preserved.
 - macOS ARM64: install via DMG, launch from Finder, handle the OS's explicit Open Anyway flow as needed, create a workspace, chat, quit and relaunch. Check background-process cleanup separately.
 - Check bundled `Nema CLI` (`report install --help`) and browser launchers. Node is bundled; system Git 2.31+ is required.
-- Upgrade/recovery acceptance uses disposable backed-up data and remains separate from first-install smoke. Quit the tray, back up `~/.nema/desktop`, install the new package over the old one, launch, and check chats, threads, work packages, and knowledge Git history. Separately restore that backup after a simulated failure. The hosted data-directory job does not replace this installer overwrite check.
+- Upgrade/recovery acceptance uses disposable backed-up data and remains separate from first-install smoke. The 2026-10-27 maintainer report covers an overwrite install on macOS and Windows with workspace data intact. It does not record a failed installer restore. Back up `~/.nema/desktop` before another overwrite.
 
 ## Anonymous download and hash verification
 
