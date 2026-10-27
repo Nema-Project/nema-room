@@ -38,3 +38,12 @@ describe("commit message", () => {
     expect(parseCommitMessage(formatCommitMessage(m))).toEqual(m);
   });
 });
+
+test("parses a commit without Evidence-Event", () => {
+  expect(parseCommitMessage("update R-1: t\n\nReason: r\nSource-Messages: \nAuthor: user")).not.toHaveProperty("evidenceEventIds");
+});
+test("round-trips evidence event ids", () => {
+  const m = { op: "update" as const, id: "R-1", title: "t", reason: "r", sourceMessages: [], author: "user" as const, evidenceEventIds: ["event-1", "event-2"] };
+  expect(formatCommitMessage(m)).toContain("\nEvidence-Event: event-1,event-2");
+  expect(parseCommitMessage(formatCommitMessage(m))).toEqual(m);
+});

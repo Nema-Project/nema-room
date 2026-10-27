@@ -21,7 +21,7 @@ import { formatCommitMessage } from "./commitMessage.js";
 import { git, withRepoLock } from "./git.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
-export type CommitMeta = { author: "agent" | "user" | "system"; taskId?: string; now?: Date };
+export type CommitMeta = { author: "agent" | "user" | "system"; taskId?: string; now?: Date; evidenceEventIds?: string[] };
 
 /** A guard refused the upsert. The entry file is left untouched and the repo lock is released. */
 export class UpsertRejected extends Error {
@@ -159,6 +159,20 @@ function toFile(e: Entry): string {
   if (e.ingestedAt !== null) data.ingested_at = e.ingestedAt;
   if (e.confirmedAt !== null) data.confirmed_at = e.confirmedAt;
   if (e.quotes.length > 0) data.quotes = e.quotes.map((q) => ({ message_id: q.messageId, text: q.text }));
+  if (e.sourceSnapshot !== undefined) {
+    const v = e.sourceSnapshot;
+    data.source_snapshot = {
+      schema_version: v.schemaVersion, provider: v.provider, resource_id: v.resourceId,
+      revision: v.revision, fetched_at: v.fetchedAt, title: v.title,
+      canonical_url: v.canonicalUrl, content_hash: v.contentHash, excerpts: v.excerpts,
+    };
+  }
+  if (e.sourceRefs.length > 0) data.source_refs = e.sourceRefs.map((v) => ({
+    source_entry_id: v.sourceEntryId, revision: v.revision, snapshot_hash: v.snapshotHash,
+    ...(v.locator !== undefined ? { locator: v.locator } : {}),
+    ...(v.quote !== undefined ? { quote: v.quote } : {}),
+  }));
+  if (e.confirmedRevision !== null) data.confirmed_revision = e.confirmedRevision;
   // Frontmatter block only; body is appended verbatim so it round-trips exactly.
   return matter.stringify("", data) + e.body;
 }
@@ -178,6 +192,13 @@ export function fromFile(raw: string): Entry {
     diagram: diagramFromData(data.diagram),
     implementation: implementationFromData(data.implementation),
     workpackage: workPackageFromData(data.workpackage),
+    sourceSnapshot: sourceSnapshotFromData(data.source_snapshot),
+    sourceRefs: Array.isArray(data.source_refs) ? data.source_refs.map((raw: unknown) => {
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+      const v = raw as Record<string, unknown>;
+      return { sourceEntryId: v.source_entry_id, revision: v.revision ?? null, snapshotHash: v.snapshot_hash, locator: v.locator, quote: v.quote };
+    }) : data.source_refs,
+    confirmedRevision: data.confirmed_revision ?? null,
     basis: data.basis ?? null,
     ingestedAt: data.ingested_at ?? null,
     confirmedAt: data.confirmed_at ?? null,
@@ -187,6 +208,17 @@ export function fromFile(raw: string): Entry {
   });
   // gray-matter keeps the newline that terminates the closing delimiter.
   return { ...fm, body: content.startsWith("\n") ? content.slice(1) : content };
+}
+
+function sourceSnapshotFromData(raw: unknown): unknown {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+  const v = raw as Record<string, unknown>;
+  return {
+    schemaVersion: v.schema_version, provider: v.provider, resourceId: v.resource_id,
+    revision: v.revision ?? null, fetchedAt: v.fetched_at, title: v.title,
+    canonicalUrl: v.canonical_url, contentHash: v.content_hash, excerpts: v.excerpts,
+  };
 }
 
 function diagramFromData(raw: unknown): unknown {
@@ -509,6 +541,9 @@ export class KnowledgeStore {
           priority: input.priority ?? existing?.priority,
           // Callers decide who may set it: the Room API checks it against reports, the UI never passes it.
           implementation: input.implementation ?? existing?.implementation,
+          sourceSnapshot: existing?.sourceSnapshot,
+          confirmedRevision: existing?.confirmedRevision ?? null,
+          sourceRefs: input.sourceRefs ?? existing?.sourceRefs ?? [],
           basis: input.basis ?? existing?.basis ?? null,
           quotes: mergeQuotes(existing?.quotes ?? [], input.quotes ?? []),
           ingestedAt: existing ? existing.ingestedAt : now,
@@ -802,6 +837,7 @@ export class KnowledgeStore {
         reason,
         sourceMessages,
         author: meta.author,
+        ...(meta.evidenceEventIds !== undefined ? { evidenceEventIds: meta.evidenceEventIds } : {}),
         ...(meta.taskId !== undefined ? { taskId: meta.taskId } : {}),
       });
       await this.git(["commit", "-m", message, "--", ...rels]);

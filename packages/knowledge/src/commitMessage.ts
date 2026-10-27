@@ -8,6 +8,7 @@ export type CommitInfo = {
   sourceMessages: string[];
   author: "agent" | "user" | "system";
   taskId?: string;
+  evidenceEventIds?: string[];
 };
 
 const oneLine = (s: string): string => s.replace(/[\r\n]+/g, " ");
@@ -21,6 +22,7 @@ export function formatCommitMessage(m: CommitInfo): string {
     `Author: ${m.author}`,
   ];
   if (m.taskId !== undefined) lines.push(`Task: ${m.taskId}`);
+  if (m.evidenceEventIds !== undefined) lines.push(`Evidence-Event: ${m.evidenceEventIds.join(",")}`);
   return lines.join("\n");
 }
 
@@ -49,5 +51,7 @@ export function parseCommitMessage(msg: string): CommitInfo {
   };
   const taskId = field("Task");
   if (taskId !== undefined) out.taskId = taskId;
+  const evidenceEventIds = field("Evidence-Event");
+  if (evidenceEventIds !== undefined) out.evidenceEventIds = evidenceEventIds === "" ? [] : evidenceEventIds.split(",");
   return out;
 }
