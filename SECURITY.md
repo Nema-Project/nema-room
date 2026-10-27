@@ -1,14 +1,14 @@
 # 安全策略
 
-English: this repository is public and desktop preview releases are available. Private vulnerability reporting is the intended channel, but its availability has not yet been verified. Do not post sensitive details in public issues or pull requests. Until verification, you may only ask for a private contact route without disclosing the vulnerability. No dedicated security email is published. Fixes land on main and ship in a subsequent desktop release; historical release lines are not separately maintained.
+English: this repository is public and desktop preview releases are available. Private vulnerability reporting was read as disabled on 2026-10-27, so it is not a working channel. Do not post sensitive details in public issues or pull requests. Ask only for a private contact route without disclosing the vulnerability. No dedicated security email is published. Fixes land on main and ship in a subsequent desktop release; historical release lines are not separately maintained.
 
-日本語: このリポジトリは公開されており、デスクトップのプレビュー版も配布されています。非公開の脆弱性報告窓口は利用可否を確認中です。公開 issue や PR に機密情報を書かず、確認が済むまでは脆弱性の内容を含めずに非公開の連絡方法だけを問い合わせてください。専用メールアドレスは公開していません。修正は main に入り、以降のデスクトップ版で配布されます。旧リリース系列の個別保守は約束していません。
+日本語: このリポジトリは公開されており、デスクトップのプレビュー版も配布されています。2026-10-27 の設定読み取りでは、非公開の脆弱性報告は無効でした。現在は利用できる窓口ではありません。公開 issue や PR に機密情報を書かず、脆弱性の内容を含めずに非公開の連絡方法だけを問い合わせてください。専用メールアドレスは公開していません。修正は main に入り、以降のデスクトップ版で配布されます。旧リリース系列の個別保守は約束していません。
 
 ## 如何报告
 
-**私密报告渠道待验证，当前不能声明已可用。** 预定入口是 [GitHub 私密漏洞报告](https://github.com/Nema-Project/nema-room/security/advisories/new)。需要先确认仓库已启用该功能，并由有权报告的普通非管理员用户验证表单可访问；仅有 URL 或管理员能打开页面不能作为证据。验证状态见 [P0 发布保障记录](docs/reviews/2026-10-26-p0-release-assurance.md)。
+**2026-10-27 读取仓库设置时，私密漏洞报告为关闭状态，目前不能使用。** 预定入口是 [GitHub 私密漏洞报告](https://github.com/Nema-Project/nema-room/security/advisories/new)，但该链接当前不是可用表单。需要维护者启用该功能，并由有权报告的普通非管理员用户打开表单且不提交；仅有 URL 或管理员能打开页面不能作为证据。本次读取见 [P0 语义、升级与报告记录](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md)。
 
-验证完成前，不要提交敏感详情；仅可在公开渠道提出不含漏洞细节的“请提供私密联系途径”请求。不要使用公开 issue、PR 或提交记录报告漏洞细节。本项目没有单独公布安全邮箱。
+渠道启用前，不要提交敏感详情；仅可在公开渠道提出不含漏洞细节的“请提供私密联系途径”请求。不要使用公开 issue、PR 或提交记录报告漏洞细节。本项目没有单独公布安全邮箱。
 
 确认私密渠道可用后，在该渠道提供受影响的桌面版本或源码 commit SHA、操作系统、影响及脱敏后的复现步骤。Never include credentials or real user data; use a redacted reproduction only in the verified private channel. 認証情報や実際の利用者データを含めず、確認済みの非公開窓口で匿名化した再現手順だけを共有してください。不要附真实用户数据、API key、令牌、`.env`、`auth.json` 或 daemon token；只用可公开的假数据重现。
 

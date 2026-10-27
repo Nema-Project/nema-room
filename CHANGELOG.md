@@ -2,11 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- A disposable desktop data-directory check covers reopen, a pending migration, a failed migration, and backup restore for chats, threads, work packages, and knowledge Git history. Hosted Windows and macOS jobs run that check. In-place NSIS or DMG installer overwrite remains unverified.
+- A thread semantic acceptance runner scores the scripted memo, decision, open-thread, conflict, and override checks. Rubric unit tests are not a real-model pass. Missing credentials or a connection failure exit as blocked and do not score the rubric.
+
 ### Security
 
 - Desktop tag publication verifies the exact main-line release commit with the full shared CI suite before packaging; failed or missing verification blocks publication. Manual rehearsals never publish.
 - Every PR reports a stable `CI gate`, with lightweight checks for allowed documentation changes. Repository enforcement remains pending post-merge activation.
-- Public security issue forms are replaced with private-reporting guidance. Channel availability remains explicitly unverified until administration and reporter-access checks succeed.
+- Public security issue forms are replaced with private-reporting guidance. On 2026-10-27 the repository setting was read as disabled (`enabled: false`), so the channel is not usable. Enabling it and confirming a non-admin can open the form remain maintainer steps.
 
 ### Fixed
 

@@ -231,4 +231,4 @@ See [.env.example](../.env.example) for ports and directories. The CLI does not 
 
 ## Security reporting
 
-For security concerns, read the [security policy](../SECURITY.md). Private reporting availability is still unverified: do not disclose sensitive details in public issues or PRs; until verified, ask only for a private contact route without vulnerability details. Fixes land on main and ship in a subsequent desktop release; older release lines are not separately maintained.
+For security concerns, read the [security policy](../SECURITY.md). Private vulnerability reporting was read as disabled on 2026-10-27, so it is not a working channel: do not disclose sensitive details in public issues or PRs; ask only for a private contact route without vulnerability details. Fixes land on main and ship in a subsequent desktop release; older release lines are not separately maintained.

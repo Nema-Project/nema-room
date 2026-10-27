@@ -39,14 +39,15 @@ The complete Windows/macOS platform checks and Ubuntu application tests, web bui
 - Concurrency is scoped to each workflow/ref; tag runs are never cancelled by superseded PR runs.
 - Existing published releases are never overwritten. A previous draft is reused only if its assets belong to this release.
 - Assets: two installers (`.exe`, `.dmg`), two per-target checksum files, combined `SHA256SUMS-<version>.txt`, and `release-manifest-<version>.json`. No portable ZIP is published.
-- Windows automation installs and smokes the NSIS installer. macOS automation checks only the staged runtime; it does not prove DMG installation, Finder startup, upgrade or recovery behavior.
+- Windows automation installs and smokes the NSIS installer. macOS automation checks only the staged runtime; it does not prove DMG installation, Finder startup, or in-place installer overwrite.
+- The Windows and macOS platform job also runs a disposable data-directory upgrade and restore (chats, a thread, a work package, and knowledge Git history). That check does not install over an existing NSIS or DMG package. Local command after `npm ci`: `npx vitest run apps/hub/test/upgradeRecovery.test.ts --maxWorkers=1`.
 
 ## Before an authorized release
 
 1. Verify rollout ancestry and successful complete CI/rehearsal for the intended commit. Record exact SHAs and run URLs.
 2. Check versions, changelog, payload validation and supported asset set for both targets. Review unresolved [roadmap](../../ROADMAP.md) acceptance, including P0-03/P0-04.
 3. Confirm the actual main ruleset requires the observed GitHub Actions `CI gate` and an up-to-date branch; YAML alone does not activate this setting.
-4. Confirm [private vulnerability reporting](../../SECURITY.md) is enabled and the form is accessible to a legitimate non-admin reporter. If unverified, retain blocked status and never request sensitive public reports.
+4. Private vulnerability reporting was read as disabled on 2026-10-27 (`enabled: false`). An administrator must enable it, then a legitimate non-admin reporter must open the form without submitting. Until both happen, keep P0-05 blocked and never request sensitive public reports. Re-read with `node scripts/security/reporting-status.mjs`.
 5. A person with release authorization creates the new tag on the verified commit. Do not automatically tag as part of CI testing.
 6. After publication, verify anonymous downloads and hashes before announcing availability.
 
@@ -57,7 +58,7 @@ Windows installers are unsigned; macOS packages are ad-hoc signed and not notari
 - Windows x64: install with NSIS to default and spaced paths, launch, create a workspace, chat with a configured provider, quit from the tray, relaunch and confirm persistence. Uninstall and confirm data is preserved.
 - macOS ARM64: install via DMG, launch from Finder, handle the OS's explicit Open Anyway flow as needed, create a workspace, chat, quit and relaunch. Check background-process cleanup separately.
 - Check bundled `Nema CLI` (`report install --help`) and browser launchers. Node is bundled; system Git 2.31+ is required.
-- Upgrade/recovery acceptance uses disposable backed-up data and remains separate from first-install smoke.
+- Upgrade/recovery acceptance uses disposable backed-up data and remains separate from first-install smoke. Quit the tray, back up `~/.nema/desktop`, install the new package over the old one, launch, and check chats, threads, work packages, and knowledge Git history. Separately restore that backup after a simulated failure. The hosted data-directory job does not replace this installer overwrite check.
 
 ## Anonymous download and hash verification
 

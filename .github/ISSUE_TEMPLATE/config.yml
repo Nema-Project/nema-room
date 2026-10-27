@@ -2,7 +2,7 @@ blank_issues_enabled: false
 contact_links:
   - name: 安全问题
     url: https://github.com/Nema-Project/nema-room/blob/main/SECURITY.md
-    about: 私密报告渠道待验证。先阅读安全策略；不要在公开 issue 中提交漏洞细节或凭证。
+    about: 私密报告尚未启用。先阅读安全策略；不要在公开 issue 中提交漏洞细节或凭证。
   - name: 安装与使用
     url: https://github.com/Nema-Project/nema-room/blob/main/README.md
     about: 安装向导、模型配置、数据位置和已知限制写在 README。
