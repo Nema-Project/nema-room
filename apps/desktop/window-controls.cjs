@@ -10,6 +10,10 @@ const CHANNELS = Object.freeze({
 
 const registries = new WeakMap();
 
+function readWindowState(window) {
+  return { maximized: window.isMaximized(), fullScreen: window.isFullScreen?.() === true };
+}
+
 function registerWindowControls({ ipcMain, window, runtimeOrigin }) {
   const webContents = window.webContents;
   let disposed = false;
@@ -17,7 +21,7 @@ function registerWindowControls({ ipcMain, window, runtimeOrigin }) {
     [CHANNELS.minimize, () => window.minimize()],
     [CHANNELS.toggleMaximize, () => window.isMaximized() ? window.unmaximize() : window.maximize()],
     [CHANNELS.close, () => window.close()],
-    [CHANNELS.getState, () => ({ maximized: window.isMaximized() })],
+    [CHANNELS.getState, () => readWindowState(window)],
   ]);
   let registry = registries.get(ipcMain);
   if (!registry) {
@@ -39,11 +43,13 @@ function registerWindowControls({ ipcMain, window, runtimeOrigin }) {
   registry.owners.set(webContents, owner);
   const publishState = () => {
     if (!disposed && !window.isDestroyed() && !webContents.isDestroyed?.()) {
-      webContents.send(CHANNELS.stateChanged, { maximized: window.isMaximized() });
+      webContents.send(CHANNELS.stateChanged, readWindowState(window));
     }
   };
   window.on('maximize', publishState);
   window.on('unmaximize', publishState);
+  window.on('enter-full-screen', publishState);
+  window.on('leave-full-screen', publishState);
   const cleanup = () => {
     if (disposed) return;
     disposed = true;
@@ -56,6 +62,8 @@ function registerWindowControls({ ipcMain, window, runtimeOrigin }) {
     }
     window.removeListener('maximize', publishState);
     window.removeListener('unmaximize', publishState);
+    window.removeListener('enter-full-screen', publishState);
+    window.removeListener('leave-full-screen', publishState);
   };
   window.once('closed', cleanup);
   return cleanup;
