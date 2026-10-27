@@ -5,7 +5,7 @@ import { z, ZodError } from "zod";
 import { KnowledgeStore, blameParagraphs, git, history, versionAt, parseCommitMessage } from "@nema/knowledge";
 import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, kindFromId, canonicalJson } from "@nema/shared";
 import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
-import { insertEvidenceEvent, consumeEvidenceEvent, payloadHashFor, type EvidenceEventInput } from "./evidenceEvents.js";
+import { insertEvidenceEvent, consumeEvidenceEvent, reconcileUnconsumedEventsLocked, payloadHashFor, type EvidenceEventInput } from "./evidenceEvents.js";
 import type { Entry } from "@nema/shared";
 import type { CommitMeta } from "@nema/knowledge";
 import type { Db } from "./db/db.js";
@@ -492,6 +492,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     return {
       meta,
       prepare: async (entry: Entry, existing: Entry | null): Promise<string | void> => {
+        await reconcileUnconsumedEventsLocked(db, dataDir, ws, entry.id);
         const common = { workspaceId: ws, entryId: entry.id, contentHash: entryContentHash(entry), refsHash: refsHash(entry),
           revision: entry.sourceSnapshot?.revision ?? null, snapshotHash: await relatedSnapshotHash(entry, (id) => store(ws).get(id)) };
         const promote: EvidenceEventInput = { ...common, kind: "promote_basis", targetBasis: entry.basis as "stated" | "decided" };

@@ -653,6 +653,38 @@ describe("ui api", () => {
     expect(await db.query("select * from evidence_events where workspace_id = $1", [ws])).toHaveLength(2);
   });
 
+  test.each(["decision", "source"] as const)("confirm retry reconciles committed evidence after consumption fails: %s", async (kind) => {
+    const e = await inferredEntry({ kind, title: "Retry", ...(kind === "source" ? { url: "https://example.com" } : {}) });
+    if (kind === "source") {
+      await new KnowledgeStore(repoPath(dataDir, ws)).writeImportedSource({ ...e, sourceSnapshot: {
+        schemaVersion: 1, provider: "manual", resourceId: "retry", revision: "v2",
+        fetchedAt: SEEDED_AT, title: "Retry", canonicalUrl: "https://example.com", contentHash: "a".repeat(64),
+        excerpts: [{ locator: "p1", text: "excerpt" }],
+      } });
+    }
+    const query = db.query.bind(db);
+    let consumed = 0;
+    const fault = vi.spyOn(db, "query").mockImplementation(async (sql, params) => {
+      if (sql.includes("update evidence_events") && ++consumed === (kind === "source" ? 2 : 1)) {
+        throw new Error("transient evidence consumption failure");
+      }
+      return query(sql, params);
+    });
+    try {
+      expect((await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {})).status).toBe(500);
+    } finally {
+      fault.mockRestore();
+    }
+    const head = (await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim();
+    const before = await db.query<any>("select id, consumed_commit from evidence_events where workspace_id = $1 order by id", [ws]);
+    expect(before).toHaveLength(kind === "source" ? 2 : 1);
+    expect(before.filter((row) => row.consumed_commit === null)).toHaveLength(1);
+    expect((await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {})).status).toBe(200);
+    expect((await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim()).toBe(head);
+    expect(await db.query("select id, consumed_commit from evidence_events where workspace_id = $1 order by id", [ws]))
+      .toEqual(before.map((row) => ({ id: row.id, consumed_commit: head })));
+  });
+
   test("a room token cannot confirm through the gated ui route", async () => {
     const e = await inferredEntry({ kind: "decision", title: "D" });
     app = createApp({ db, dataDir, events, daemonStatus: () => true, daemon,

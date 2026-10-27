@@ -9,6 +9,8 @@
 
 ### Fixed
 
+- UI confirmation retries recover committed evidence after transient database failures, preserving the original commit and events before a restart.
+
 - Source freshness reads compare the last observed revision with the current imported snapshot, including after interrupted indexing, so reimports update freshness and reference review flags immediately.
 
 ### Security
