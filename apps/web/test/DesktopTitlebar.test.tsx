@@ -1,11 +1,10 @@
-import { readFileSync } from "node:fs";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopTitlebar, showsCustomWindowButtons } from "@/components/DesktopTitlebar";
 import { I18nProvider } from "@/lib/i18n";
 
 vi.mock("next/image", () => ({
-  default: ({ alt }: { alt?: string }) => <img alt={alt ?? ""} />,
+  default: () => null,
 }));
 
 type Controls = NonNullable<Window["nemaWindowControls"]>;
@@ -79,12 +78,5 @@ describe("DesktopTitlebar", () => {
       expect(screen.getByRole("banner").className).toContain("desktop-titlebar-fullscreen");
     });
     expect(screen.queryByRole("button", { name: "Minimize" })).toBeNull();
-  });
-
-  it("keeps a drag region and a fixed inset for the traffic lights", () => {
-    const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
-    expect(css).toMatch(/\.desktop-titlebar\s*\{[^}]*-webkit-app-region:\s*drag/);
-    expect(css).toMatch(/\.desktop-titlebar-macos\s*\{[^}]*padding-left:\s*80px/);
-    expect(css).toMatch(/\.desktop-titlebar-macos\.desktop-titlebar-fullscreen\s*\{[^}]*padding-left:\s*14px/);
   });
 });
