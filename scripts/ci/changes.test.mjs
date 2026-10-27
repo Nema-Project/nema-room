@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile, rename } from 'node:fs/promises';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile, rename } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { changedPaths } from './changes.mjs';
@@ -22,4 +22,16 @@ test('complete NUL-delimited diff preserves strange names, deletions and both re
   assert.deepEqual(new Set(await changedPaths({cwd, base, head})), new Set([...names, 'executable.sh', 'README.md', 'deleted.md']));
   await assert.rejects(changedPaths({cwd, base:'HEAD; echo injected', head}));
   await assert.rejects(changedPaths({cwd, base:'f'.repeat(40), head}));
+  const output = join(cwd, 'github-output.txt');
+  const list = join(cwd, 'paths.json');
+  const script = new URL('./changes.mjs', import.meta.url).pathname;
+  const run = spawnSync(process.execPath, [script, base, head], {cwd, env:{...process.env, GITHUB_OUTPUT:output, PATH_LIST_FILE:list}, encoding:'utf8'});
+  assert.equal(run.status, 0, run.stderr);
+  const lines = Object.fromEntries((await readFile(output, 'utf8')).trim().split('\n').map(line => line.split('=')));
+  assert.equal(lines.mode, 'app');
+  for (const key of ['platform', 'npm_pack', 'desktop', 'image']) assert.match(lines[key], /^(true|false)$/, key);
+  const env = {...process.env, PATH_LIST_FILE:list};
+  delete env.GITHUB_OUTPUT;
+  const missing = spawnSync(process.execPath, [script, base, head], {cwd, env, encoding:'utf8'});
+  assert.notEqual(missing.status, 0);
 });

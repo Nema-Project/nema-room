@@ -17,6 +17,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const file = process.env.PATH_LIST_FILE;
   if (!file || !process.env.GITHUB_OUTPUT) throw new Error('PATH_LIST_FILE and GITHUB_OUTPUT are required');
   await writeFile(file, JSON.stringify(paths));
-  await appendFile(process.env.GITHUB_OUTPUT, `mode=${result.mode}\n`);
+  const lines = [
+    `mode=${result.mode}`,
+    `platform=${result.platform}`,
+    `npm_pack=${result.npmPack}`,
+    `desktop=${result.desktop}`,
+    `image=${result.image}`,
+  ];
+  await appendFile(process.env.GITHUB_OUTPUT, `${lines.join('\n')}\n`);
   console.log(`Classified ${paths.length} changed paths: ${result.mode}`);
 }
