@@ -11,7 +11,7 @@
 
 - Desktop tag publication verifies the exact main-line release commit with the full shared CI suite before packaging; failed or missing verification blocks publication. Manual rehearsals never publish.
 - Every PR reports a stable `CI gate`, with lightweight checks for allowed documentation changes. Repository enforcement remains pending post-merge activation.
-- Public security issue forms are replaced with private-reporting guidance. The setting was read as disabled earlier on 2026-10-27, then an administrator enabled it at about 11:52 Asia/Tokyo. A read at 11:54 returned `{"enabled":true}`. The report form is [private vulnerability reporting](https://github.com/Nema-Project/nema-room/security/advisories/new). A signed-in non-admin open of that form is still pending.
+- Public security issue forms are replaced with private-reporting guidance. The setting was read as disabled earlier on 2026-10-27, then an administrator enabled it at about 11:52 Asia/Tokyo. A read at 11:54 returned `{"enabled":true}`. The report form is [private vulnerability reporting](https://github.com/Nema-Project/nema-room/security/advisories/new). A signed-in non-admin reached that form on 2026-10-27; the test report was closed the same day without publication.
 
 ### Fixed
 

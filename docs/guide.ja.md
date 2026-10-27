@@ -230,4 +230,4 @@ npm run build -w apps/web
 
 ## セキュリティ報告
 
-セキュリティ上の問題は [非公開の脆弱性報告](https://github.com/Nema-Project/nema-room/security/advisories/new) から送り、[セキュリティポリシー](../SECURITY.md) を確認してください。公開 issue や PR に機密情報を書かないでください。管理者ではないアカウントでサインインしてフォームを開く確認は、まだ済んでいません。修正は main に入り、以降のデスクトップ版で配布されます。旧リリース系列の個別保守は約束していません。
+セキュリティ上の問題は [非公開の脆弱性報告](https://github.com/Nema-Project/nema-room/security/advisories/new) から送り、[セキュリティポリシー](../SECURITY.md) を確認してください。公開 issue や PR に機密情報を書かないでください。管理者ではない read 権限のアカウントが 2026-10-27 にフォームへ到達し、テスト報告は同日、未公開のまま閉じられました。修正は main に入り、以降のデスクトップ版で配布されます。旧リリース系列の個別保守は約束していません。

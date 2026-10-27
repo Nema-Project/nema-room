@@ -231,4 +231,4 @@ See [.env.example](../.env.example) for ports and directories. The CLI does not 
 
 ## Security reporting
 
-For security concerns, report through [private vulnerability reporting](https://github.com/Nema-Project/nema-room/security/advisories/new) and read the [security policy](../SECURITY.md). Do not disclose sensitive details in public issues or PRs. A signed-in non-admin open of the form is still pending. Fixes land on main and ship in a subsequent desktop release; older release lines are not separately maintained.
+For security concerns, report through [private vulnerability reporting](https://github.com/Nema-Project/nema-room/security/advisories/new) and read the [security policy](../SECURITY.md). Do not disclose sensitive details in public issues or PRs. A signed-in non-admin reached the form on 2026-10-27; the test report was closed the same day without publication. Fixes land on main and ship in a subsequent desktop release; older release lines are not separately maintained.

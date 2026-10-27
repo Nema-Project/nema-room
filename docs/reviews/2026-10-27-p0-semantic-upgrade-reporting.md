@@ -3,7 +3,7 @@
 Execution: 2026-10-27 (Asia/Tokyo). Design and plan: `docs/superpowers/specs/2026-10-27-p0-semantic-upgrade-reporting-design.md`, `docs/superpowers/plans/2026-10-27-p0-semantic-upgrade-reporting.md`.
 Branch: `github-rule/p0-semantic-upgrade-reporting-05b6`, cut from main `2cd0593` (merge of PR #22). Implementation commit: `2e221b8c10a9109d5134630d7bd11bda3a0a2baa`. The 2026-10-26 release-assurance review is unchanged and is not this result.
 
-No release tag, GitHub release, advisory, ruleset edit, or merge was created. This agent did not call PUT. The repository owner later enabled private vulnerability reporting.
+No release tag, GitHub release, ruleset edit, or merge was created. This agent did not call PUT. The repository owner later enabled private vulnerability reporting. A non-admin collaborator then submitted test advisory GHSA-mgcq-mcqv-75ff; it was closed without publication and without a CVE.
 
 ## Current status
 
@@ -11,7 +11,7 @@ No release tag, GitHub release, advisory, ruleset edit, or merge was created. Th
 | --- | --- | --- |
 | P0-03 | 进行中 | Rubric and a blocked-credential spawn pass locally. No Codex or Claude credential exists here, so neither adapter completed the five conversations. |
 | P0-04 | 已完成 | Disposable data-directory reopen, pending migration, failed migration, and backup restore passed on hosted `windows-latest` and `macos-latest` for head `ef87a29`. The seeded home already uses the current schema, including threads. NSIS/DMG overwrite was not attempted and stays unverified. |
-| P0-05 | 进行中 | An earlier read on 2026-10-27 returned `{"enabled":false}`. The owner enabled the setting at about 11:52 Asia/Tokyo. A read at 11:54 returned HTTP 200 `{"enabled":true}`. The signed-out security page links to the form. A signed-in non-admin open is still pending, so this item is not 已完成. |
+| P0-05 | 已完成 | An earlier read on 2026-10-27 returned `{"enabled":false}`. The owner enabled the setting at about 11:52 Asia/Tokyo. A read at 11:54 returned HTTP 200 `{"enabled":true}`. The signed-out security page links to the form. At 12:18 Asia/Tokyo, collaborator Nullum-ai (`permission: read`, not admin) submitted test report GHSA-mgcq-mcqv-75ff. GitHub accepted it into triage. It was closed at 12:27 Asia/Tokyo (`2026-10-27T03:27:30Z`) with `published_at` null and no CVE. |
 
 P0-01 and P0-02 stay 进行中. This change does not activate the required `CI gate`.
 
@@ -55,7 +55,7 @@ node scripts/security/reporting-status.mjs
 
 The owner also checked that https://github.com/Nema-Project/nema-room/security shows “Report a vulnerability” linking to `security/advisories/new` while signed out. This agent did not repeat that browser check.
 
-`enabled: true` is the repository setting. The interpreter does not treat it as proof that a non-admin reporter opened the form. SECURITY.md, the four READMEs, the three guides, CONTRIBUTING, and the issue chooser now point at https://github.com/Nema-Project/nema-room/security/advisories/new. A signed-in user who is not a repository admin has not yet opened that form. P0-05 stays 进行中 until that open is recorded, without submitting an advisory.
+`enabled: true` is the repository setting. The interpreter does not treat it as proof that a non-admin reporter opened the form. SECURITY.md, the four READMEs, the three guides, CONTRIBUTING, and the issue chooser now point at https://github.com/Nema-Project/nema-room/security/advisories/new. The non-admin check is recorded below. P0-05 is 已完成 for that check.
 
 ## Platform evidence
 
@@ -99,6 +99,22 @@ npx vitest run apps/hub/test/upgradeRecovery.test.ts --maxWorkers=1
 
 ### P0-05 non-admin form
 
-The setting is already enabled. Do not send another PUT from this agent, and do not file an advisory.
+The setting was already enabled. No further PUT was sent.
 
-Remaining check: sign in as a user who is not an admin. `gh api repos/Nema-Project/nema-room/collaborators/LOGIN/permission` should show that they are not an admin. Open `https://github.com/Nema-Project/nema-room/security/advisories/new` and confirm the form renders. Do not submit. Record that result in this review before marking P0-05 已完成.
+Recorded check: collaborator `Nullum-ai` is not an admin.
+
+```sh
+gh api repos/Nema-Project/nema-room/collaborators/Nullum-ai/permission
+```
+
+Response: `{"permission":"read"}`.
+
+At 12:18 Asia/Tokyo (`2026-10-27T03:18:36Z`) that account submitted a test report from `https://github.com/Nema-Project/nema-room/security/advisories/new`. GitHub accepted [GHSA-mgcq-mcqv-75ff](https://github.com/Nema-Project/nema-room/security/advisories/GHSA-mgcq-mcqv-75ff) into `triage`. The summary was "Security Advisory Test". No product vulnerability is described.
+
+It was closed at 12:27 Asia/Tokyo (`2026-10-27T03:27:30Z`):
+
+```sh
+gh api --method PATCH repos/Nema-Project/nema-room/security-advisories/GHSA-mgcq-mcqv-75ff -f state=closed
+```
+
+Response: `state` is `closed`, `published_at` is null, and `cve_id` is null. P0-05 is 已完成 for the private-channel check.

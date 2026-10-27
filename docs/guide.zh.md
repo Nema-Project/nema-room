@@ -230,4 +230,4 @@ npm run build -w apps/web
 
 ## 安全报告
 
-安全问题请通过 [GitHub 私密漏洞报告](https://github.com/Nema-Project/nema-room/security/advisories/new) 提交，并先读 [安全策略](../SECURITY.md)。不要在公开 issue 或 PR 提交敏感详情。普通非管理员登录后打开表单的验收仍未完成。修复进入 main 并在后续桌面版本分发，不承诺维护旧发布系列。
+安全问题请通过 [GitHub 私密漏洞报告](https://github.com/Nema-Project/nema-room/security/advisories/new) 提交，并先读 [安全策略](../SECURITY.md)。不要在公开 issue 或 PR 提交敏感详情。read 权限的非管理员已于 2026-10-27 到达该表单；测试报告于同日关闭且未发布。修复进入 main 并在后续桌面版本分发，不承诺维护旧发布系列。
