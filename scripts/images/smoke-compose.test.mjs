@@ -36,4 +36,5 @@ test('cleanup always names the compose project', () => {
 test('a local smoke still fetches the postgres image', () => {
   assert.match(source, /options\.pull === 'never'/);
   assert.match(source, /\['pull', 'postgres'\]/);
+  assert.match(source, /process\.env\.NEMA_UID/);
 });

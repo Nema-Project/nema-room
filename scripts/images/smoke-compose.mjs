@@ -114,8 +114,10 @@ export async function smokeCompose(options, root) {
   const env = {
     ...process.env,
     NEMA_DATA_HOST_DIR: dataDir,
-    NEMA_UID: String(process.getuid?.() ?? 1000),
-    NEMA_GID: String(process.getgid?.() ?? 1000),
+    // Callers can pin the container user. The default is the current uid, which owns the
+    // data directory on a daemon that bind-mounts this machine's filesystem.
+    NEMA_UID: process.env.NEMA_UID || String(process.getuid?.() ?? 1000),
+    NEMA_GID: process.env.NEMA_GID || String(process.getgid?.() ?? 1000),
   };
   const run = (args, extra = {}) => compose(options.project, files, args, { cwd: root, env, ...extra });
   let failed = null;
