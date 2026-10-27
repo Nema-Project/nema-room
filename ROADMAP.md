@@ -100,5 +100,6 @@ P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实施进�
 | 2026-10-27 | — | 维护者 NullumNomen | [PR #29](https://github.com/Nema-Project/nema-room/pull/29) | 未承诺 | macOS 桌面窗口改用系统红绿灯，自定义最小化、最大化和关闭按钮留在 Windows 与 Linux。已合入 `main` `5ff8cf9` |
 | 2026-10-27 | 28 | 维护者 NullumNomen | [issue #28](https://github.com/Nema-Project/nema-room/issues/28) / [PR #30](https://github.com/Nema-Project/nema-room/pull/30) | 未承诺 | Room API 写入 `stated` 或 `decided`，以及把 `superseded`、`dropped`、`resolved` 改回 `active`，都必须引用当前任务的用户消息；检查在同一段仓库锁内。缺少或不相关的引用返回 409 `user_basis_evidence`。已合入 `main` `afd1456` |
 | 2026-10-27 | — | 维护者 NullumNomen | [PR #31](https://github.com/Nema-Project/nema-room/pull/31) | 未承诺 | 桌面包去掉 Node headers、npm 和 Corepack，只带一份 CPython，去掉未引用的 macOS `libpython3.11.dylib`，只留一份 Chromium 许可声明，去掉 source map、未用的 tree-sitter 语法和 sharp。打包打印各段体积，超出预算时警告。缺语法时警告并跳过。已合入 `main` `76680b8` |
-| 2026-10-27 | CX-03 | 待认领 | [PR #27](https://github.com/Nema-Project/nema-room/pull/27) | 未承诺 | 外部来源证据协议的设计已合入。实施前置 #28 已由 PR #30 完成，CX-03 成为下一项。协议生产代码与针对性测试已实施，等待集成与最终验收；尚未完成 CX-03 |
+| 2026-10-27 | CX-03 | 待认领 | [PR #27](https://github.com/Nema-Project/nema-room/pull/27) | 未承诺 | 外部来源证据协议的设计已合入。实施前置 #28 已由 PR #30 完成，CX-03 成为下一项。生产代码尚未按该 spec 修改 |
 | 2026-10-27 | 32 | 待认领 | [issue #32](https://github.com/Nema-Project/nema-room/issues/32) | 未承诺 | 记录 manager agent 工作流的参考场景和与 `main` 的差距。P0 之后的设计参考，不是 spec，不改变 P0 顺序 |
+| 2026-10-27 | CX-03 | Codex | 本地分支 `work`（实现至 `7b3548b`） | 未承诺 | 十项实现与审查修复已提交，361 项针对性测试通过；全量 1486 通过、7 项失败均在基线复现，等待最终验收，见 [实施验证](docs/reviews/2026-10-27-cx03-implementation.md)。不代替 P0 验收 |
