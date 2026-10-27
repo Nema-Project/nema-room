@@ -556,6 +556,13 @@ export class KnowledgeStore {
     });
   }
 
+  /** Caller must already hold this repository's withRepoLock; this method never locks. */
+  async writeImportedSource(entry: Entry): Promise<string> {
+    if (entry.kind !== "source" || !entry.sourceSnapshot) throw new Error("Expected a source snapshot");
+    const existing = await this.get(entry.id);
+    return this.writeAndCommit(entry, existing ? "update" : "add", "Import source snapshot", [], { author: "system" });
+  }
+
   /** Add or update a diagram entry: `diagrams/G-n.md` and its archify spec `diagrams/G-n.json` in one commit. */
   async writeDiagram(input: WriteDiagramInput, meta: CommitMeta): Promise<{ entry: Entry; commit: string; op: "add" | "update" }> {
     return withRepoLock(this.repoDir, async () => {
