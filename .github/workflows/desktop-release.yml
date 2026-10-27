@@ -204,6 +204,9 @@ jobs:
       - name: Stage runtime payload
         shell: bash
         run: npm run desktop:stage -- --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --out dist/desktop
+      - name: Report payload sizes
+        shell: bash
+        run: node scripts/desktop/payload-size.mjs "dist/desktop/$TARGET"
       - name: Collect source materials
         # Needs the upstream source archives; only a release attempt pays for it. A failure blocks the release.
         if: needs.plan.outputs.release == 'true'

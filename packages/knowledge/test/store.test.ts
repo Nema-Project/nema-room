@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { KnowledgeStore, git, history, parseCommitMessage } from "../src/index.js";
+import { KnowledgeStore, RepoLockReentryError, UpsertRejected, git, history, parseCommitMessage } from "../src/index.js";
 
 let dir: string;
 beforeEach(async () => {
@@ -116,6 +116,106 @@ describe("KnowledgeStore", () => {
     await expect(s.upsert(req("x", { id: "D-1" }), { author: "agent" })).rejects.toThrow(/id prefix does not match kind/);
     expect((await git(dir, ["rev-parse", "HEAD"])).trim()).toBe(before);
     expect((await s.get("D-1"))?.kind).toBe("decision");
+  });
+
+  test("rejects an upsert from the guard without writing, then accepts a later upsert", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await s.upsert(req("kept"), { author: "agent" });
+    const before = await s.get("R-1");
+    await expect(s.upsert(req("nope", { id: "R-1" }), { author: "agent" }, () => {
+      throw new UpsertRejected(409, "no", "user_basis_evidence");
+    })).rejects.toBeInstanceOf(UpsertRejected);
+    expect(await s.get("R-1")).toEqual(before);
+    const next = await s.upsert(req("after"), { author: "agent" });
+    expect(next.entry.id).toBe("R-2");
+    expect(next.entry.title).toBe("after");
+  });
+
+  test("runs upsert guards one at a time and shows the previous write", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await s.upsert(req("v1"), { author: "agent" });
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const seen: Array<string | null> = [];
+    let firstInside = false;
+    const first = s.upsert(req("v2", { id: "R-1" }), { author: "agent" }, async ({ existing }) => {
+      firstInside = true;
+      seen.push(existing?.title ?? null);
+      await hold;
+    });
+    let secondInside = false;
+    let second: Promise<unknown> = Promise.resolve();
+    try {
+      await vi.waitFor(() => expect(firstInside).toBe(true));
+      second = s.upsert(req("v3", { id: "R-1" }), { author: "user" }, async ({ existing }) => {
+        secondInside = true;
+        seen.push(existing?.title ?? null);
+      });
+      // Long enough for an unlocked read to reach its guard. The repo lock must keep this one out.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(secondInside).toBe(false);
+    } finally {
+      release();
+    }
+    await Promise.all([first, second]);
+    expect(seen).toEqual(["v1", "v2"]);
+    expect((await s.get("R-1"))?.title).toBe("v3");
+  });
+
+  test("writes the input returned by the guard and can keep confirmedAt", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    const t1 = new Date("2026-01-01T00:00:00Z");
+    const t2 = new Date("2026-02-01T00:00:00Z");
+    const created = await s.upsert(req("v1"), { author: "agent", now: t1 });
+    const updated = await s.upsert(req("from-request", { id: "R-1", confirmed: true }), { author: "user", now: t2 }, () =>
+      req("from-guard", { id: "R-1", confirmed: false }),
+    );
+    expect(updated.entry.title).toBe("from-guard");
+    expect(updated.entry.confirmedAt).toBe(created.entry.confirmedAt);
+  });
+
+  test("reentering the repo lock from a guard fails fast and the lock still works", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await s.upsert(req("kept"), { author: "agent" });
+    const before = await s.get("R-1");
+    const nested: Array<() => Promise<unknown>> = [
+      () => s.upsert(req("inner"), { author: "agent" }),
+      () => s.confirm("R-1", { author: "user" }),
+      () => s.withdraw("R-1", { author: "user" }),
+      () => s.writeDiagram(
+        { title: "d", body: "b", diagram: { repoId: "r", type: "architecture", sourceCommits: {}, nodePaths: {} }, spec: {}, reason: "r", sourceMessages: ["m_1"] },
+        { author: "agent" },
+      ),
+    ];
+    for (const call of nested) {
+      const started = Date.now();
+      await expect(s.upsert(req("nested", { id: "R-1" }), { author: "agent" }, call)).rejects.toBeInstanceOf(RepoLockReentryError);
+      expect(Date.now() - started).toBeLessThan(1000);
+    }
+    expect(await s.get("R-1")).toEqual(before);
+
+    const otherDir = await mkdtemp(path.join(tmpdir(), "nema-kb-"));
+    try {
+      const other = new KnowledgeStore(otherDir);
+      await other.init();
+      await s.upsert(req("outer", { id: "R-1" }), { author: "agent" }, async () => {
+        const written = await other.upsert(req("elsewhere"), { author: "agent" });
+        expect(written.entry.id).toBe("R-1");
+      });
+    } finally {
+      await rm(otherDir, { recursive: true, force: true });
+    }
+    expect((await s.get("R-1"))?.title).toBe("outer");
+
+    const next = await s.upsert(req("after"), { author: "agent" });
+    expect(next.entry.id).toBe("R-2");
+    expect(next.entry.title).toBe("after");
   });
 
   test("update unions sourceMessages, keeps omitted fields, commit records only input sources", async () => {

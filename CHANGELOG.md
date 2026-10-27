@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- On macOS, the desktop window uses the system traffic-light controls in the top-left. The custom minimize, maximize, and close buttons stay on Windows and Linux.
+- Room API writes of user basis (`stated` or `decided`), and reviving any entry from an inactive status (`superseded`, `dropped`, or `resolved`) to `active`, require the current task's user message. The check runs in the same repository lock as the write. A missing or unrelated citation returns 409 `user_basis_evidence`. Re-entering that lock for the same repository throws instead of deadlocking. An entry deleted between the existence check and the locked write returns 404.
 - Knowledge entry updates and rollback replace complete files atomically, preventing concurrent readers from seeing truncated frontmatter.
 
 - The default landing page loads its demo from the site root. English stays at `/`, not `/en/`.
@@ -22,6 +24,7 @@
 ### Changed
 
 - The copilot opens a thread when you ask it to compare options or weigh tradeoffs before a decision. A question-shaped idea, including a request for pros and cons, is not written. Asking to keep something in the discussion does not write knowledge. An undecided comparison does not create a question entry.
+- Desktop payloads leave out Node headers, npm, and Corepack, ship one CPython interpreter, drop an unreferenced macOS `libpython3.11.dylib`, keep a single Chromium license notice, strip source maps, and omit cold tree-sitter grammars plus the sharp image toolchain. Packaging prints section sizes and warns when a budget is exceeded. Missing grammars are skipped with a warning.
 - The landing page links to the latest GitHub release instead of a fixed version number.
 - GitHub release notes lead with that version's changelog. Checksums stay in the attached SHA256SUMS file.
 

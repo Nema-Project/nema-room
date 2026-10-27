@@ -82,6 +82,10 @@ jobs:
       - run: npm run typecheck
       - run: node --test scripts/ci/*.test.mjs scripts/desktop/release-commit.test.mjs scripts/desktop/release.test.mjs scripts/release-notes.test.mjs
       - run: node --test scripts/security/reporting-status.test.mjs
+      - name: Desktop payload unit tests
+        run: |
+          node --test scripts/desktop/graphify.test.mjs scripts/desktop/graphify-languages.test.mjs scripts/desktop/payload-size.test.mjs scripts/desktop/fetch-tools.test.mjs scripts/desktop/source-materials.test.mjs scripts/desktop/after-pack.test.mjs
+          node --test --test-name-pattern "payload omits Node headers" scripts/desktop/staging.test.mjs
       - run: npm test -- --maxWorkers=2
       - run: npm run build -w apps/hub
       - run: npm run build -w apps/cli

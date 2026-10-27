@@ -11,8 +11,9 @@
 - [v0.1.2](https://github.com/Nema-Project/nema-room/releases/tag/v0.1.2) 已发布 Windows x64 与 macOS ARM64 安装包及校验清单。
 - 该版本对应提交的[完整 CI](https://github.com/Nema-Project/nema-room/actions/runs/40307045900)在 npm test 失败，但[发布工作流](https://github.com/Nema-Project/nema-room/actions/runs/40307052077)成功。失败原因需要另行定位，不能直接归因为产品缺陷或测试抖动。
 - 后续提交已有[完整 CI 成功记录](https://github.com/Nema-Project/nema-room/actions/runs/40309633322)，它不替代发布提交自身的验证。
-- [真实 Agent 线程验收](docs/reviews/2026-10-26-thread-agent-script.md)记录为 not run：模型连接失败，未完成语义验收。
+- [真实 Agent 线程验收](docs/reviews/2026-10-26-thread-agent-script.md)记录为 not run：模型连接失败，未完成语义验收。该条是 2026-10-26 的历史记录。2026-10-27 的修复后脚本已由 Codex direct 与 Claude 各跑两次，均为退出码 0、12/12，见 [PR #26 评论](https://github.com/Nema-Project/nema-room/pull/26#issuecomment-6434135887) 与 [执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md)。
 - [历史桌面验收](docs/reviews/2026-10-24-desktop-validation.md)只证明其记录的提交与环境；其中“尚未发布”等结论已经过时。
+- 已合入 `main` 的近期工作：[PR #29](https://github.com/Nema-Project/nema-room/pull/29) macOS 原生红绿灯（`5ff8cf9`）；[PR #30](https://github.com/Nema-Project/nema-room/pull/30) 落实 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 的用户 basis 证据检查（`afd1456`）；[PR #31](https://github.com/Nema-Project/nema-room/pull/31) 桌面包瘦身（`76680b8`）。
 - 本次评估通过 GitHub 读取源码、配置、Actions 和 Release；未本地重跑测试。开始每项工作前须重新检查最新状态。
 
 ## 优先级与维护规则
@@ -32,9 +33,23 @@
 | --- | --- | --- | --- |
 | P0-01 | 发布绑定完整 CI；已有同一提交测试失败但发布成功的记录 | 进行中 | 发布提交通过完整测试；tag 可追溯到主线；测试失败或缺失时发布被阻止；以失败场景验证门禁 |
 | P0-02 | 核实并强制合并检查；评估时可读的 active ruleset 仅要求 PR，传统分支保护接口返回 403，不能据此断言所有保护均不存在 | 进行中 | 记录实际保护规则；需要的检查未完成或失败时不可合并；文档变更与路径过滤不会造成检查永久等待 |
-| P0-03 | 修复后的线程验收脚本上，Codex direct 与 Claude 各跑两次，均为退出码 0、12/12 | 已完成 | 跑通只读总结、讨论后决策、无结论线程、冲突澄清、明确推翻旧决策；记录模型、适配器、提交、消息、知识变更与工具轨迹；Codex direct 和 Claude 分别记录结果 |
-| P0-04 | 数据目录升级与备份恢复已在 Windows 与 macOS 托管运行器通过；2026-10-27 维护者在 macOS 与 Windows 上手动覆盖安装后，workspace 数据均完整 | 已完成 | 使用含聊天、线程、开发包、知识 Git 历史的旧版数据升级；核对数据完整性；模拟升级失败并从备份恢复；Windows 与 macOS 分别记录 |
-| P0-05 | 私密报告已启用。read 权限、非管理员协作者于 2026-10-27 12:18（Asia/Tokyo）提交测试报告并进入 triage，12:27 关闭且未发布 | 已完成 | 修正文档，配置并验证私密报告渠道，明确桌面支持版本；避免引导用户在公开 Issue 提交敏感漏洞细节 |
+| P0-03 | 修复后的线程验收脚本上，Codex direct 与 Claude 各跑两次，均为退出码 0、12/12。证据：[PR #26 评论](https://github.com/Nema-Project/nema-room/pull/26#issuecomment-6434135887)、[执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) | 已完成 | 跑通只读总结、讨论后决策、无结论线程、冲突澄清、明确推翻旧决策；记录模型、适配器、提交、消息、知识变更与工具轨迹；Codex direct 和 Claude 分别记录结果 |
+| P0-04 | 数据目录升级与备份恢复已在 Windows 与 macOS 托管运行器通过；2026-10-27 维护者在 macOS 与 Windows 上手动覆盖安装后，workspace 数据均完整。证据：[执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) | 已完成 | 使用含聊天、线程、开发包、知识 Git 历史的旧版数据升级；核对数据完整性；模拟升级失败并从备份恢复；Windows 与 macOS 分别记录 |
+| P0-05 | 私密报告已启用。read 权限、非管理员协作者于 2026-10-27 12:18（Asia/Tokyo）提交测试报告并进入 triage，12:27 关闭且未发布。证据：[GHSA-mgcq-mcqv-75ff](https://github.com/Nema-Project/nema-room/security/advisories/GHSA-mgcq-mcqv-75ff)、[执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) | 已完成 | 修正文档，配置并验证私密报告渠道，明确桌面支持版本；避免引导用户在公开 Issue 提交敏感漏洞细节 |
+
+## 下一项
+
+P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：设计已随 [PR #27](https://github.com/Nema-Project/nema-room/pull/27) 合入，实施前置 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 已由 [PR #30](https://github.com/Nema-Project/nema-room/pull/30) 完成。它不代替 P0-01、P0-02。
+
+| ID | 事项与依据 | 状态 | 验收标准 |
+| --- | --- | --- | --- |
+| CX-03 | 外部来源证据协议。契约见 [spec](docs/superpowers/specs/2026-10-27-source-evidence-protocol-design.md) 与 [plan](docs/superpowers/plans/2026-10-27-source-evidence-protocol.md)。#28 已合入，可以按该契约写生产代码 | 待办 | 实施 `sourceRefs`、`evidence_events` 与 `source__import`；保留 #28 的用户 basis 检查，以及从 `superseded`、`dropped`、`resolved` 改回 `active` 的检查；不得把外部正文伪装成聊天消息 |
+
+## P0 之后
+
+| ID | 事项与依据 | 状态 | 验收标准 |
+| --- | --- | --- | --- |
+| 32 | [manager agent 工作流场景与现状差距](https://github.com/Nema-Project/nema-room/issues/32)。这是设计参考，不是 spec | 待办 | 落地前另走 spec、plan、实现和测试；不改变 P0 顺序；与 P1-07 对 `verified` 的区分分开记录 |
 
 ## P1：稳定化迭代
 
@@ -53,7 +68,7 @@
 
 | ID | 事项 | 状态 | 验收标准与前置条件 |
 | --- | --- | --- | --- |
-| P2-01 | 签名、公证与更新体验 | 待办 | 正式签名与 macOS 公证可验证；先完成 P0-04，再设计自动更新、失败恢复与版本兼容 |
+| P2-01 | 签名、公证与更新体验 | 待办 | 正式签名与 macOS 公证可验证；P0-04 已于 2026-10-27 完成，再设计自动更新、失败恢复与版本兼容 |
 | P2-02 | 规模与可诊断性 | 待办 | 建立大仓库、长会话、大量知识条目的耗时和资源基线；提供脱敏诊断导出；确保不含 token、密钥或默认导出私有讨论内容 |
 | P2-03 | 多设备同步 | 待办 | 先完成备份恢复与数据权威来源定义；设计冲突解决和一致性模型，再确定实现范围 |
 | P2-04 | 团队只读访问 | 待办 | 先设计身份、授权、撤销与审计；不得直接把当前单用户本地服务暴露为多人服务 |
@@ -81,4 +96,9 @@
 | 2026-10-27 | P0-04 | 维护者 NullumNomen | [PR #26](https://github.com/Nema-Project/nema-room/pull/26) | 未承诺 | 维护者分别在 macOS 与 Windows 手动覆盖安装，结果均为 workspace 数据完整。Cursor Agent 只记录该报告，见 [执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) |
 | 2026-10-27 | P0-03 | Cursor Agent | [PR #26](https://github.com/Nema-Project/nema-room/pull/26) | 未承诺 | Windows 上 Codex direct 与 Claude 均在 `b158daf` 跑完并评分，退出码均为 1。Codex 通过 5/12，Claude 通过 6/12。讨论正文未写入仓库。状态保持进行中，见 [执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) |
 | 2026-10-27 | P0-03 | Cursor Agent | [PR #26](https://github.com/Nema-Project/nema-room/pull/26) | 未承诺 | 修正评测脚本：Claude 的 room MCP 必须启动真实 CLI，room 服务器须 connected 且列出 4 个工具，否则记为 blocked。设计、讨论和冲突使用独立 workspace，open_thread 改由 threads 表判断。提示词改为比较方案时先开 thread。真实模型尚未按修复后脚本重跑，状态保持进行中，见 [执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) |
-| 2026-10-27 | P0-03 | Cursor Agent | [PR #26](https://github.com/Nema-Project/nema-room/pull/26) | 未承诺 | Windows 上修复后脚本各跑两次，Codex direct 与 Claude 均为退出码 0、12/12。JSON 记录的提交是 `be0eb32`；编译产物还包含后来提交的 `edba735` 路径修正，否则命令会在评分前退出。讨论正文未写入仓库。状态改为已完成，见 [执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) |
+| 2026-10-27 | P0-03 | Cursor Agent | [PR #26](https://github.com/Nema-Project/nema-room/pull/26) | 未承诺 | Windows 上修复后脚本各跑两次，Codex direct 与 Claude 均为退出码 0、12/12。JSON 记录的提交是 `be0eb32`；编译产物还包含后来提交的 `edba735` 路径修正，否则命令会在评分前退出。讨论正文未写入仓库。状态改为已完成，见 [PR #26 评论](https://github.com/Nema-Project/nema-room/pull/26#issuecomment-6434135887) 与 [执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) |
+| 2026-10-27 | — | 维护者 NullumNomen | [PR #29](https://github.com/Nema-Project/nema-room/pull/29) | 未承诺 | macOS 桌面窗口改用系统红绿灯，自定义最小化、最大化和关闭按钮留在 Windows 与 Linux。已合入 `main` `5ff8cf9` |
+| 2026-10-27 | 28 | 维护者 NullumNomen | [issue #28](https://github.com/Nema-Project/nema-room/issues/28) / [PR #30](https://github.com/Nema-Project/nema-room/pull/30) | 未承诺 | Room API 写入 `stated` 或 `decided`，以及把 `superseded`、`dropped`、`resolved` 改回 `active`，都必须引用当前任务的用户消息；检查在同一段仓库锁内。缺少或不相关的引用返回 409 `user_basis_evidence`。已合入 `main` `afd1456` |
+| 2026-10-27 | — | 维护者 NullumNomen | [PR #31](https://github.com/Nema-Project/nema-room/pull/31) | 未承诺 | 桌面包去掉 Node headers、npm 和 Corepack，只带一份 CPython，去掉未引用的 macOS `libpython3.11.dylib`，只留一份 Chromium 许可声明，去掉 source map、未用的 tree-sitter 语法和 sharp。打包打印各段体积，超出预算时警告。缺语法时警告并跳过。已合入 `main` `76680b8` |
+| 2026-10-27 | CX-03 | 待认领 | [PR #27](https://github.com/Nema-Project/nema-room/pull/27) | 未承诺 | 外部来源证据协议的设计已合入。实施前置 #28 已由 PR #30 完成，CX-03 成为下一项。生产代码尚未按该 spec 修改 |
+| 2026-10-27 | 32 | 待认领 | [issue #32](https://github.com/Nema-Project/nema-room/issues/32) | 未承诺 | 记录 manager agent 工作流的参考场景和与 `main` 的差距。P0 之后的设计参考，不是 spec，不改变 P0 顺序 |

@@ -25,7 +25,7 @@ const completeInputs = (sha256) => [
   { id: 'font-sources', component: 'Inter and JetBrains Mono', status: 'complete', correspondence: 'verified', version: 'fixture-fonts', immutableRef: 'fixture-commit', archiveTarget: 'win32-x64', tool: 'web', correspondenceEvidence: { basis: 'fixture font provenance mapping', fontAssetHashes: [{ path: 'web/apps/web/.next/static/media/Inter.woff2', sha256: 'aa0ac38cd3f2459bc65140b9035ec40965415e256eb7bf1a22b0ede5860b90db' }] }, sourcePath: 'arbitrary.txt', sha256 },
 ];
 const populateCompleteNotices = async (f) => {
-  const files = ['runtime/win32-x64/node/LICENSE', 'runtime/licenses/application', 'runtime/licenses/electron/LICENSE', 'runtime/licenses/electron/LICENSES.chromium.html', 'vendor/archify/LICENSE', 'vendor/superpowers-rules/LICENSE', 'app/node_modules/example/LICENSE', 'runtime/win32-x64/node/node.exe', 'runtime/win32-x64/node/node_modules/npm/package.json', 'runtime/win32-x64/node/node_modules/corepack/package.json'];
+  const files = ['runtime/win32-x64/node/LICENSE', 'runtime/licenses/application', 'runtime/licenses/electron/LICENSE', 'runtime/licenses/electron/LICENSES.chromium.html', 'vendor/archify/LICENSE', 'vendor/superpowers-rules/LICENSE', 'app/node_modules/example/LICENSE', 'runtime/win32-x64/node/node.exe'];
   for (const file of files) {
     await mkdir(path.dirname(path.join(f.payload, file)), { recursive: true });
     await writeFile(path.join(f.payload, file), `fixture ${file}`);
@@ -34,8 +34,6 @@ const populateCompleteNotices = async (f) => {
   await mkdir(path.join(f.payload, 'web/apps/web/.next/static/media'), { recursive: true });
   await writeFile(path.join(f.payload, 'web/apps/web/.next/static/media/Inter.woff2'), 'fixture woff2 bytes');
   await writeFile(path.join(f.payload, 'web/apps/web/.next/static/media/JetBrains.woff2'), 'fixture jetbrains woff2 bytes');
-  await writeFile(path.join(f.payload, 'runtime/win32-x64/node/node_modules/npm/package.json'), JSON.stringify({ name: 'npm', version: '11.19.1' }));
-  await writeFile(path.join(f.payload, 'runtime/win32-x64/node/node_modules/corepack/package.json'), JSON.stringify({ name: 'corepack', version: '0.36.0' }));
   const fonts = [];
   for (const id of ['inter-ofl', 'jetbrains-mono-ofl']) {
     const sourcePath = `${id}.txt`;
@@ -71,26 +69,18 @@ const writeResolvedFixture = async (f, upstreamNotices) => {
   const filesFor = async (paths) => Promise.all(paths.map(async (file) => ({ path: file, sha256: await pathHash(path.join(f.payload, ...file.split('/'))) })));
   const nodeRuntime = await addMaterial('node-runtime-source', 'Node 24', 'source', 'node', '24.22.1');
   const nodeRecipe = await addMaterial('node-runtime-recipe', 'Node build', 'recipe', 'node', '24.22.1');
-  const npmSource = await addMaterial('npm-source', 'npm 11', 'source', 'node', '11.19.1');
-  const npmRecipe = await addMaterial('npm-recipe', 'npm build', 'recipe', 'node', '11.19.1');
-  const corepackSource = await addMaterial('corepack-source', 'Corepack 0.36', 'source', 'node', '0.36.0');
-  const corepackRecipe = await addMaterial('corepack-recipe', 'Corepack build', 'recipe', 'node', '0.36.0');
   const nodeFiles = ['runtime/win32-x64/node/LICENSE', 'runtime/win32-x64/node/node.exe'];
-  const npmFiles = ['runtime/win32-x64/node/node_modules/npm/package.json'];
-  const corepackFiles = ['runtime/win32-x64/node/node_modules/corepack/package.json'];
   const fontInterSource = await addMaterial('inter-source', 'Inter fixture source', 'source', 'web', 'fixture-inter');
   const fontJetSource = await addMaterial('jetbrains-source', 'JetBrains fixture source', 'source', 'web', 'fixture-jetbrains');
   const component = (id, requiredRoles, mappings) => {
     const coverage = id === 'node-source'
-      ? { kind: 'files', root: 'runtime/win32-x64/node', requiredMappingKeys: ['node-runtime', 'npm-package', 'corepack-package'] }
+      ? { kind: 'files', root: 'runtime/win32-x64/node', requiredMappingKeys: ['node-runtime'] }
       : { kind: 'font-assets' };
     return { id, status: 'resolved', requiredRoles, coverage, mappings };
   };
   const mappings = [
     component('node-source', ['source', 'recipe'], [
       { key: 'node-runtime', files: await filesFor(nodeFiles), materialRefs: [reference(nodeRuntime, 'source'), reference(nodeRecipe, 'recipe')] },
-      { key: 'npm-package', files: await filesFor(npmFiles), materialRefs: [reference(npmSource, 'source'), reference(npmRecipe, 'recipe')] },
-      { key: 'corepack-package', files: await filesFor(corepackFiles), materialRefs: [reference(corepackSource, 'source'), reference(corepackRecipe, 'recipe')] },
     ]),
     component('font-sources', ['source', 'license'], [
       { key: 'font:web/apps/web/.next/static/media/Inter.woff2', family: 'inter', files: await filesFor(['web/apps/web/.next/static/media/Inter.woff2']), materialRefs: [reference(fontInterSource, 'source'), await noticeReference('inter-ofl', 'license')] },

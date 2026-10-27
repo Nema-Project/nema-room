@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { reportPackagedArtifacts } from './payload-size.mjs';
 import { stageRuntime } from './stage-runtime.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -45,6 +46,7 @@ export function builderConfig(payloadDir, outputDir, target) {
     extraResources: [
       { from: payloadDir, to: 'payload', filter: ['**/*'] },
     ],
+    afterPack: path.join(path.dirname(fileURLToPath(import.meta.url)), 'after-pack.cjs'),
   };
   if (target.platform === 'win32') {
     return {
@@ -155,6 +157,7 @@ async function make(args) {
   const result = spawnSync(process.execPath, argsForBuilder, { cwd: desktopDir, env, stdio: 'inherit', windowsHide: true });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`electron-builder exited with status ${result.status ?? 'unknown'}`);
+  await reportPackagedArtifacts(outputDir);
   process.stdout.write(`Packaged ${target.platform}-${target.arch} from ${payloadDir} into ${outputDir}\n`);
 }
 

@@ -1,5 +1,7 @@
 # Packaged Graphify runtime
 
+> Superseded in part by [desktop payload slim](2026-10-27-desktop-payload-slim-design.md). The payload now keeps `python/bin/python3.11` only, and the lockfile no longer installs every graphifyy hard-dependency wheel. The notes below describe the package as of the commit that added it.
+
 The release payload carries Graphify. GitHub Actions builds it the same way it builds Node and Git: `desktop:stage` downloads pinned bytes, checks SHA-256, and writes `tools/graphify/`. A developer's uv install is not an input. The app does not download Graphify, uv, or Python on first launch.
 
 ## Pin

@@ -14,7 +14,7 @@ export const graphifyLock = JSON.parse(await readFile(lockPath, 'utf8').then((te
 export const POSIX_GRAPHIFY_LAUNCHER = `#!/bin/sh
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
-exec "$root/python/bin/python3" -m graphify "$@"
+exec "$root/python/bin/python3.11" -m graphify "$@"
 `;
 
 function inside(root, candidate) {
@@ -199,6 +199,119 @@ export async function prunePythonRuntime(pythonRoot, platform) {
   return removed;
 }
 
+const MACHO_LOAD = new Set([0x0c, 0x80000018, 0x8000001f, 0x80000023]);
+
+function readMachONames(buffer, offset, end) {
+  if (end - offset < 8) return [];
+  const magicLe = buffer.readUInt32LE(offset);
+  const magicBe = buffer.readUInt32BE(offset);
+  if (magicBe === 0xcafebabe || magicBe === 0xbebafeca) {
+    const be = magicBe === 0xcafebabe;
+    const read32 = (at) => (be ? buffer.readUInt32BE(at) : buffer.readUInt32LE(at));
+    const count = read32(offset + 4);
+    if (count > 16) throw new Error('Unparseable Mach-O');
+    const names = [];
+    for (let index = 0; index < count; index += 1) {
+      const arch = offset + 8 + index * 20;
+      if (arch + 20 > end) throw new Error('Unparseable Mach-O');
+      const sliceOffset = read32(arch + 8);
+      const sliceSize = read32(arch + 12);
+      if (sliceSize < 8 || sliceOffset + sliceSize > buffer.length) throw new Error('Unparseable Mach-O');
+      names.push(...readMachONames(buffer, sliceOffset, sliceOffset + sliceSize));
+    }
+    return names;
+  }
+  const swapped = magicLe === 0xcffaedfe || magicLe === 0xcefaedfe;
+  const is64 = magicLe === 0xfeedfacf || magicLe === 0xcffaedfe;
+  const is32 = magicLe === 0xfeedface || magicLe === 0xcefaedfe;
+  if (!is64 && !is32) return [];
+  const read32 = (at) => (swapped ? buffer.readUInt32BE(at) : buffer.readUInt32LE(at));
+  const headerSize = is64 ? 32 : 28;
+  if (offset + headerSize > end) throw new Error('Unparseable Mach-O');
+  const ncmds = read32(offset + 16);
+  if (ncmds > 4096) throw new Error('Unparseable Mach-O');
+  let cursor = offset + headerSize;
+  const names = [];
+  for (let index = 0; index < ncmds; index += 1) {
+    if (cursor + 8 > end) throw new Error('Unparseable Mach-O');
+    const cmd = read32(cursor);
+    const cmdsize = read32(cursor + 4);
+    if (cmdsize < 8 || cursor + cmdsize > end) throw new Error('Unparseable Mach-O');
+    if (MACHO_LOAD.has(cmd)) {
+      if (cmdsize < 24) throw new Error('Unparseable Mach-O');
+      const nameOffset = read32(cursor + 8);
+      const start = cursor + nameOffset;
+      if (nameOffset < 24 || start >= cursor + cmdsize) throw new Error('Unparseable Mach-O');
+      const zero = buffer.indexOf(0, start);
+      if (zero < 0 || zero >= cursor + cmdsize) throw new Error('Unparseable Mach-O');
+      names.push(buffer.toString('utf8', start, zero));
+    }
+    cursor += cmdsize;
+  }
+  return names;
+}
+
+/** Dylib names from LC_LOAD* commands. LC_ID_DYLIB is not a load of itself. */
+export function machoLoadNames(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 8) return [];
+  return readMachONames(buffer, 0, buffer.length);
+}
+
+/** Drop byte-identical python and python3 copies. The payload cannot keep them as symlinks. */
+export async function dedupePythonInterpreters(pythonRoot) {
+  const canonical = path.join(pythonRoot, 'bin', 'python3.11');
+  const info = await lstat(canonical).catch(() => null);
+  if (!info?.isFile() || info.isSymbolicLink()) return [];
+  const canonicalBytes = await readFile(canonical);
+  const removed = [];
+  for (const name of ['python', 'python3']) {
+    const file = path.join(pythonRoot, 'bin', name);
+    const current = await lstat(file).catch(() => null);
+    if (!current) continue;
+    if (!current.isFile() || current.isSymbolicLink()) throw new Error(`Refusing to drop ${name}: only a regular file that copies python3.11 can be removed`);
+    const bytes = await readFile(file);
+    if (bytes.length !== canonicalBytes.length || !bytes.equals(canonicalBytes)) throw new Error(`Refusing to drop ${name}: it is not a byte copy of python3.11`);
+    await rm(file);
+    removed.push(name);
+  }
+  return removed;
+}
+
+/**
+ * Delete lib/libpython3.11.dylib when nothing loads it.
+ * An unreadable Mach-O keeps the library. Windows has no such file and is unchanged.
+ */
+export async function removeUnreferencedLibpython(pythonRoot) {
+  const dylib = path.join(pythonRoot, 'lib', 'libpython3.11.dylib');
+  const info = await lstat(dylib).catch(() => null);
+  if (!info?.isFile() || info.isSymbolicLink()) return false;
+  let referenced = false;
+  async function walk(dir) {
+    if (referenced) return;
+    for (const name of await readdir(dir)) {
+      if (referenced) return;
+      const current = path.join(dir, name);
+      if (current === dylib) continue;
+      const currentInfo = await lstat(current);
+      if (currentInfo.isSymbolicLink()) throw new Error(`Graphify payload still contains a symlink: ${current}`);
+      if (currentInfo.isDirectory()) {
+        await walk(current);
+        continue;
+      }
+      if (!currentInfo.isFile()) continue;
+      if (name !== 'python3.11' && !name.endsWith('.so') && !name.endsWith('.dylib')) continue;
+      let names;
+      try { names = machoLoadNames(await readFile(current)); }
+      catch { referenced = true; return; }
+      if (names.some((item) => item.includes('libpython3.11'))) referenced = true;
+    }
+  }
+  await walk(pythonRoot);
+  if (referenced) return false;
+  await rm(dylib);
+  return true;
+}
+
 function compileWindowsLauncher(sourceRoot, output) {
   const compiler = process.env.NEMA_WINDOWS_NATIVE_CC ?? 'clang';
   const source = path.join(sourceRoot, 'scripts', 'desktop', 'graphify-launcher.c');
@@ -227,12 +340,14 @@ export async function fetchGraphify({ platform, arch, destination, cacheDir, sou
   await extractArchive(await readFile(pythonArchive), pin.python.format, destination);
   await materializeSymlinks(destination);
   const pythonRoot = path.join(destination, 'python');
-  const pythonExe = platform === 'win32' ? path.join(pythonRoot, 'python.exe') : path.join(pythonRoot, 'bin', 'python3');
+  if (platform !== 'win32') await dedupePythonInterpreters(pythonRoot);
+  const pythonExe = platform === 'win32' ? path.join(pythonRoot, 'python.exe') : path.join(pythonRoot, 'bin', 'python3.11');
   const pythonInfo = await lstat(pythonExe).catch(() => null);
   if (!pythonInfo?.isFile() || pythonInfo.isSymbolicLink()) throw new Error('Bundled CPython layout is missing its Python executable');
   const packages = await sitePackages(pythonRoot);
   await installWheels(pin, packages, cacheDir, fetchImpl);
   await prunePythonRuntime(pythonRoot, platform);
+  if (platform === 'darwin') await removeUnreferencedLibpython(pythonRoot);
   const upstream = await homePathFiles(destination);
   const distInfo = (await readdir(packages)).find((name) => name.startsWith('graphifyy-') && name.endsWith('.dist-info'));
   if (!distInfo) throw new Error('graphifyy license metadata is missing');
