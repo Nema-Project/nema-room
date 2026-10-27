@@ -3,7 +3,7 @@
 Execution: 2026-10-27 (Asia/Tokyo). Design and plan: `docs/superpowers/specs/2026-10-27-p0-semantic-upgrade-reporting-design.md`, `docs/superpowers/plans/2026-10-27-p0-semantic-upgrade-reporting.md`.
 Branch: `github-rule/p0-semantic-upgrade-reporting-05b6`, cut from main `2cd0593` (merge of PR #22). Implementation commit: `2e221b8c10a9109d5134630d7bd11bda3a0a2baa`. The 2026-10-26 release-assurance review is unchanged and is not this result.
 
-No release tag, GitHub release, advisory, ruleset edit, or merge was created. Private vulnerability reporting was not enabled.
+No release tag, GitHub release, advisory, ruleset edit, or merge was created. This agent did not call PUT. The repository owner later enabled private vulnerability reporting.
 
 ## Current status
 
@@ -11,7 +11,7 @@ No release tag, GitHub release, advisory, ruleset edit, or merge was created. Pr
 | --- | --- | --- |
 | P0-03 | 进行中 | Rubric and a blocked-credential spawn pass locally. No Codex or Claude credential exists here, so neither adapter completed the five conversations. |
 | P0-04 | 已完成 | Disposable data-directory reopen, pending migration, failed migration, and backup restore passed on hosted `windows-latest` and `macos-latest` for head `ef87a29`. The seeded home already uses the current schema, including threads. NSIS/DMG overwrite was not attempted and stays unverified. |
-| P0-05 | 阻塞 | `GET` on 2026-10-27 returned `{"enabled":false}`. The setting was not changed. No non-admin reporter opened the form. |
+| P0-05 | 进行中 | An earlier read on 2026-10-27 returned `{"enabled":false}`. The owner enabled the setting at about 11:52 Asia/Tokyo. A read at 11:54 returned HTTP 200 `{"enabled":true}`. The signed-out security page links to the form. A signed-in non-admin open is still pending, so this item is not 已完成. |
 
 P0-01 and P0-02 stay 进行中. This change does not activate the required `CI gate`.
 
@@ -31,29 +31,31 @@ The empty-home spawn exited 2. Its JSON status is blocked and `semantic` is `not
 
 ## Reporting read
 
-Raw API, exit 0:
+The first read on 2026-10-27, before the owner enabled the setting, was HTTP 200 `{"enabled":false}`. `node scripts/security/reporting-status.mjs` printed `{"state":"disabled","enabled":false}`. No PUT was sent by this agent. `gh api user` is not used. A 403 there does not change this read.
+
+Later the same day the owner (NullumNomen, repository admin) enabled private vulnerability reporting at about 11:52 Asia/Tokyo. This agent read it again at 11:54 Asia/Tokyo (`Date: Tue, 27 Oct 2026 02:54:54 GMT` on the response):
 
 ```sh
-gh api repos/Nema-Project/nema-room/private-vulnerability-reporting
+gh api -i repos/Nema-Project/nema-room/private-vulnerability-reporting
 ```
+
+HTTP 200, body:
 
 ```json
-{"enabled":false}
+{"enabled":true}
 ```
-
-Interpreter, exit 0:
 
 ```sh
 node scripts/security/reporting-status.mjs
 ```
 
 ```json
-{"state":"disabled","enabled":false}
+{"state":"enabled","enabled":true}
 ```
 
-`gh api user` is not used. A 403 there does not change this read. No PUT was sent.
+The owner also checked that https://github.com/Nema-Project/nema-room/security shows “Report a vulnerability” linking to `security/advisories/new` while signed out. This agent did not repeat that browser check.
 
-User-facing copy now says the channel is disabled as of this read. The issue chooser still points at `SECURITY.md`, not `https://github.com/Nema-Project/nema-room/security/advisories/new`. That advisory URL is the intended form after an admin enables the setting. It is not a live form today.
+`enabled: true` is the repository setting. The interpreter does not treat it as proof that a non-admin reporter opened the form. SECURITY.md, the four READMEs, the three guides, CONTRIBUTING, and the issue chooser now point at https://github.com/Nema-Project/nema-room/security/advisories/new. A signed-in user who is not a repository admin has not yet opened that form. P0-05 stays 进行中 until that open is recorded, without submitting an advisory.
 
 ## Platform evidence
 
@@ -95,19 +97,8 @@ Local replay, not a substitute for the hosted logs:
 npx vitest run apps/hub/test/upgradeRecovery.test.ts --maxWorkers=1
 ```
 
-### P0-05 enablement and non-admin form
+### P0-05 non-admin form
 
-Do not run the PUT from an unprivileged automation account. An administrator enables the setting, then reads it back:
+The setting is already enabled. Do not send another PUT from this agent, and do not file an advisory.
 
-```sh
-gh api repos/Nema-Project/nema-room/private-vulnerability-reporting
-gh api --method PUT repos/Nema-Project/nema-room/private-vulnerability-reporting -f enabled=true
-gh api repos/Nema-Project/nema-room/private-vulnerability-reporting
-node scripts/security/reporting-status.mjs
-```
-
-Settings → Code security → Private vulnerability reporting → Enable.
-
-Non-admin check: sign in as a user who is not an admin. `gh api repos/Nema-Project/nema-room/collaborators/LOGIN/permission` should show that they are not an admin. Open `https://github.com/Nema-Project/nema-room/security/advisories/new` and confirm the form renders. Do not submit. Only then point SECURITY.md and the issue chooser at that live URL.
-
-Until both the enabled read and the non-admin form check exist, P0-05 stays 阻塞.
+Remaining check: sign in as a user who is not an admin. `gh api repos/Nema-Project/nema-room/collaborators/LOGIN/permission` should show that they are not an admin. Open `https://github.com/Nema-Project/nema-room/security/advisories/new` and confirm the form renders. Do not submit. Record that result in this review before marking P0-05 已完成.

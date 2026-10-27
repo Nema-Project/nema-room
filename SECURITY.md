@@ -1,16 +1,16 @@
 # 安全策略
 
-English: this repository is public and desktop preview releases are available. Private vulnerability reporting was read as disabled on 2026-10-27, so it is not a working channel. Do not post sensitive details in public issues or pull requests. Ask only for a private contact route without disclosing the vulnerability. No dedicated security email is published. Fixes land on main and ship in a subsequent desktop release; historical release lines are not separately maintained.
+English: this repository is public and desktop preview releases are available. Report vulnerabilities through [private vulnerability reporting](https://github.com/Nema-Project/nema-room/security/advisories/new). An administrator enabled that setting on 2026-10-27 at about 11:52 Asia/Tokyo. A read at 11:54 returned HTTP 200 `{"enabled":true}`, and the public security page links to the form when signed out. A signed-in non-admin open of the form has not been recorded. Do not post sensitive details in public issues or pull requests. No dedicated security email is published. Fixes land on main and ship in a subsequent desktop release; historical release lines are not separately maintained.
 
-日本語: このリポジトリは公開されており、デスクトップのプレビュー版も配布されています。2026-10-27 の設定読み取りでは、非公開の脆弱性報告は無効でした。現在は利用できる窓口ではありません。公開 issue や PR に機密情報を書かず、脆弱性の内容を含めずに非公開の連絡方法だけを問い合わせてください。専用メールアドレスは公開していません。修正は main に入り、以降のデスクトップ版で配布されます。旧リリース系列の個別保守は約束していません。
+日本語: このリポジトリは公開されており、デスクトップのプレビュー版も配布されています。脆弱性は [非公開の脆弱性報告](https://github.com/Nema-Project/nema-room/security/advisories/new) から送ってください。管理者が 2026-10-27 11:52 ごろ（Asia/Tokyo）にこの設定を有効にしました。11:54 の読み取りは HTTP 200 で `{"enabled":true}` でした。未ログインの公開セキュリティページもそのフォームへリンクします。管理者ではないアカウントでサインインしてフォームを開く確認は、まだ記録されていません。公開 issue や PR に機密情報を書かないでください。専用メールアドレスは公開していません。修正は main に入り、以降のデスクトップ版で配布されます。旧リリース系列の個別保守は約束していません。
 
 ## 如何报告
 
-**2026-10-27 读取仓库设置时，私密漏洞报告为关闭状态，目前不能使用。** 预定入口是 [GitHub 私密漏洞报告](https://github.com/Nema-Project/nema-room/security/advisories/new)，但该链接当前不是可用表单。需要维护者启用该功能，并由有权报告的普通非管理员用户打开表单且不提交；仅有 URL 或管理员能打开页面不能作为证据。本次读取见 [P0 语义、升级与报告记录](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md)。
+**请通过 [GitHub 私密漏洞报告](https://github.com/Nema-Project/nema-room/security/advisories/new) 提交。** 维护者于 2026-10-27 约 11:52（Asia/Tokyo）启用该设置。同日 11:54 的读取为 HTTP 200 `{"enabled":true}`。未登录打开仓库安全页时，“Report a vulnerability” 指向该表单。普通非管理员登录后打开表单尚未验收，因此这项验收仍未完成。记录见 [P0 语义、升级与报告记录](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md)。
 
-渠道启用前，不要提交敏感详情；仅可在公开渠道提出不含漏洞细节的“请提供私密联系途径”请求。不要使用公开 issue、PR 或提交记录报告漏洞细节。本项目没有单独公布安全邮箱。
+不要在公开 issue、PR 或提交记录里写漏洞细节。本项目没有单独公布安全邮箱。
 
-确认私密渠道可用后，在该渠道提供受影响的桌面版本或源码 commit SHA、操作系统、影响及脱敏后的复现步骤。Never include credentials or real user data; use a redacted reproduction only in the verified private channel. 認証情報や実際の利用者データを含めず、確認済みの非公開窓口で匿名化した再現手順だけを共有してください。不要附真实用户数据、API key、令牌、`.env`、`auth.json` 或 daemon token；只用可公开的假数据重现。
+在私密报告里提供受影响的桌面版本或源码 commit SHA、操作系统、影响及脱敏后的复现步骤。Never include credentials or real user data; use a redacted reproduction only in the private channel. 認証情報や実際の利用者データを含めず、非公開窓口で匿名化した再現手順だけを共有してください。不要附真实用户数据、API key、令牌、`.env`、`auth.json` 或 daemon token；只用可公开的假数据重现。
 
 ## 报告范围
 

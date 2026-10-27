@@ -230,4 +230,4 @@ npm run build -w apps/web
 
 ## 安全报告
 
-安全问题请先读 [安全策略](../SECURITY.md)。2026-10-27 读取仓库设置时，私密漏洞报告为关闭状态，目前不能使用：不要在公开 issue 或 PR 提交敏感详情；只可提出不含漏洞细节的私密联系途径请求。修复进入 main 并在后续桌面版本分发，不承诺维护旧发布系列。
+安全问题请通过 [GitHub 私密漏洞报告](https://github.com/Nema-Project/nema-room/security/advisories/new) 提交，并先读 [安全策略](../SECURITY.md)。不要在公开 issue 或 PR 提交敏感详情。普通非管理员登录后打开表单的验收仍未完成。修复进入 main 并在后续桌面版本分发，不承诺维护旧发布系列。

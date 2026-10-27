@@ -1,6 +1,9 @@
 import { spawnSync } from "node:child_process";
 
-/** 200 with a boolean `enabled` is a real read. Anything else is unknown, not disabled. */
+/**
+ * 200 with a boolean `enabled` is a real read. Anything else is unknown, not disabled.
+ * `enabled: true` is only the repository setting. It does not show that a non-admin reporter opened the form.
+ */
 export function interpretReportingStatus(status, body) {
   if (status === 200 && body && typeof body === "object" && typeof body.enabled === "boolean") {
     return { state: body.enabled ? "enabled" : "disabled", enabled: body.enabled };

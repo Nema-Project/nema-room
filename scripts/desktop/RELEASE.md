@@ -47,7 +47,7 @@ The complete Windows/macOS platform checks and Ubuntu application tests, web bui
 1. Verify rollout ancestry and successful complete CI/rehearsal for the intended commit. Record exact SHAs and run URLs.
 2. Check versions, changelog, payload validation and supported asset set for both targets. Review unresolved [roadmap](../../ROADMAP.md) acceptance, including P0-03 and P0-05. P0-04 data-directory checks passed on hosted Windows and macOS; installer overwrite remains open.
 3. Confirm the actual main ruleset requires the observed GitHub Actions `CI gate` and an up-to-date branch; YAML alone does not activate this setting.
-4. Private vulnerability reporting was read as disabled on 2026-10-27 (`enabled: false`). An administrator must enable it, then a legitimate non-admin reporter must open the form without submitting. Until both happen, keep P0-05 blocked and never request sensitive public reports. Re-read with `node scripts/security/reporting-status.mjs`.
+4. Private vulnerability reporting was enabled by an administrator on 2026-10-27 at about 11:52 Asia/Tokyo. A read at 11:54 returned HTTP 200 `{"enabled":true}`, and the public security page links to the form when signed out. A signed-in non-admin must still open `https://github.com/Nema-Project/nema-room/security/advisories/new` without submitting. Until that check is recorded, keep P0-05 in progress and never request sensitive public reports. Re-read with `node scripts/security/reporting-status.mjs`.
 5. A person with release authorization creates the new tag on the verified commit. Do not automatically tag as part of CI testing.
 6. After publication, verify anonymous downloads and hashes before announcing availability.
 

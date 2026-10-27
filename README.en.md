@@ -145,7 +145,7 @@ See [storage, backups, and known limitations](docs/guide.en.md#data). A copy of 
 
 Found a bug or have an idea? [Open an issue](https://github.com/Nema-Project/nema-room/issues/new/choose). Include your OS, installation method, and redacted errors. Contributions in English, Chinese, or Japanese are welcome.
 
-For security concerns, read the [security policy](SECURITY.md). Private vulnerability reporting was read as disabled on 2026-10-27, so it is not a working channel: do not disclose sensitive details in public issues or PRs; ask only for a private contact route without vulnerability details. Fixes land on main and ship in a subsequent desktop release; older release lines are not separately maintained.
+For security concerns, report through [private vulnerability reporting](https://github.com/Nema-Project/nema-room/security/advisories/new) and read the [security policy](SECURITY.md). Do not disclose sensitive details in public issues or PRs. A signed-in non-admin open of the form is still pending. Fixes land on main and ship in a subsequent desktop release; older release lines are not separately maintained.
 
 ---
 

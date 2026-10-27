@@ -34,7 +34,7 @@
 | P0-02 | 核实并强制合并检查；评估时可读的 active ruleset 仅要求 PR，传统分支保护接口返回 403，不能据此断言所有保护均不存在 | 进行中 | 记录实际保护规则；需要的检查未完成或失败时不可合并；文档变更与路径过滤不会造成检查永久等待 |
 | P0-03 | 完成真实模型的核心语义验收，见线程验收脚本 | 进行中 | 跑通只读总结、讨论后决策、无结论线程、冲突澄清、明确推翻旧决策；记录模型、适配器、提交、消息、知识变更与工具轨迹；Codex direct 和 Claude 分别记录结果 |
 | P0-04 | 数据目录升级、完整性核对、失败回滚与备份恢复已在 Windows 与 macOS 托管运行器通过；安装包原地覆盖仍未验证 | 已完成 | 使用含聊天、线程、开发包、知识 Git 历史的旧版数据升级；核对数据完整性；模拟升级失败并从备份恢复；Windows 与 macOS 分别记录 |
-| P0-05 | 私密报告设置已读到为关闭；启用与普通报告者访问仍待维护者操作 | 阻塞 | 修正文档，配置并验证私密报告渠道，明确桌面支持版本；避免引导用户在公开 Issue 提交敏感漏洞细节 |
+| P0-05 | 私密报告已启用，公开安全页在未登录时链到报告表单；普通非管理员登录后打开表单仍待验证 | 进行中 | 修正文档，配置并验证私密报告渠道，明确桌面支持版本；避免引导用户在公开 Issue 提交敏感漏洞细节 |
 
 ## P1：稳定化迭代
 
@@ -76,3 +76,4 @@
 | 2026-10-26 | P0-01/02/05 | Codex | 实现分支 codex/p0-release-assurance | 未承诺 | Native 实现与验证进行中；合并后激活及私密渠道验收未完成，见 [执行证据](docs/reviews/2026-10-26-p0-release-assurance.md) |
 | 2026-10-27 | P0-03/04/05 | Cursor Agent | 实现分支 github-rule/p0-semantic-upgrade-reporting-05b6 | 未承诺 | 验收脚本与数据目录升级检查已落地；真实模型、Windows/macOS 运行记录和私密渠道启用仍未闭环，见 [执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) |
 | 2026-10-27 | P0-04 | Cursor Agent | [PR #26](https://github.com/Nema-Project/nema-room/pull/26) | 未承诺 | 数据目录升级与恢复在 windows-latest 与 macos-latest 通过（[CI 40440137400](https://github.com/Nema-Project/nema-room/actions/runs/40440137400)，`ef87a29`）；安装包原地覆盖仍未验证，见 [执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) |
+| 2026-10-27 | P0-05 | Cursor Agent | [PR #26](https://github.com/Nema-Project/nema-room/pull/26) | 未承诺 | 维护者约 11:52（Asia/Tokyo）启用私密报告；11:54 读取为 HTTP 200 `{"enabled":true}`，未登录安全页链到报告表单。普通非管理员登录后打开表单仍未验收，状态改为进行中，见 [执行证据](docs/reviews/2026-10-27-p0-semantic-upgrade-reporting.md) |
