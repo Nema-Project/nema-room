@@ -1,6 +1,6 @@
 # npm release checklist
 
-The package name is `nema`. The command name is `nema`. The workflow file is `.github/workflows/npm-publish.yml`. That filename is part of the npm trusted-publisher binding. Rename it only after the npm setting is updated to the new filename.
+The package name is `@nema-project/nema`. The command name is `nema`. `npm pack` writes `dist-npm/nema-project-nema-<version>.tgz`. The workflow file is `.github/workflows/npm-publish.yml`. That filename is part of the npm trusted-publisher binding. Rename it only after the npm setting is updated to the new filename.
 
 The repository does not store an npm token. Publication uses trusted publishing (OIDC) and `npm publish --provenance --access public`.
 
@@ -8,15 +8,25 @@ The repository does not store an npm token. Publication uses trusted publishing 
 
 Before a trusted publisher exists, a maintainer publishes one working version with their own npm account. Do not publish an empty placeholder. This manual publish is a one-time exception. It closes once the trusted publisher below is configured. After that, do not publish from a local npm login.
 
+The npm org `nema-project` must already exist, and the publisher's npm account must be a member of that org.
+
+Nothing has been published to npm under `nema` or `@nema-project/nema`. This is the first publish. Source checkouts update with the repository, so there is no previously published daemon that still prints `npm i -g nema@<version>`.
+
 From a clean checkout of the release commit, with Node.js 22 or later:
 
 ```sh
 npm run cli:pack
-npm publish --access public ./dist-npm/nema-<version>.tgz
-npx nema@<version> --version
+npm publish --access public ./dist-npm/nema-project-nema-<version>.tgz
+npx @nema-project/nema@<version> --version
 ```
 
-`npm run cli:pack` builds `apps/cli` and writes the tarball under `dist-npm/`. The printed version must equal `apps/cli/package.json`. Then confirm the three release manifests match that tag:
+If npm prompts for two-factor authentication, run the same publish again with `--otp <code>`:
+
+```sh
+npm publish --access public --otp <code> ./dist-npm/nema-project-nema-<version>.tgz
+```
+
+Keep the `./` prefix on the tarball path. `npm run cli:pack` builds `apps/cli` and writes `dist-npm/nema-project-nema-<version>.tgz`. The printed version must equal `apps/cli/package.json`. Then confirm the three release manifests match that tag:
 
 ```sh
 node scripts/npm/check-tag.mjs v<version>
@@ -26,7 +36,7 @@ node scripts/npm/check-tag.mjs v<version>
 
 ## Trusted publisher
 
-On the npm package `nema`, add a trusted publisher for this repository:
+On the `@nema-project/nema` package page, add a trusted publisher for this repository:
 
 - Repository: `Nema-Project/nema-room`
 - Workflow filename: `npm-publish.yml`
@@ -37,7 +47,7 @@ Pushing a `v*` tag whose commit is on protected `main` runs `.github/workflows/n
 
 1. `verify.yml` must pass on that exact SHA.
 2. The build job has no `id-token` permission. It runs `npm run cli:pack`, smokes the tarball, and uploads that tarball.
-3. The publish job downloads the tarball. It does not check out the source, run `npm ci`, or build. It checks that the tag still points at the verified SHA, that the commit is an ancestor of `origin/main`, and that `node scripts/npm/check-tag.mjs` accepts the tag. It fetches the tag once more in that same step and aborts if the tag moved. It then runs `npm publish --provenance --access public` on the downloaded tarball. A stable tag uses the `latest` dist-tag. A prerelease tag uses `next` and does not move `latest`.
+3. The publish job downloads the tarball. It does not check out the source, run `npm ci`, or build. It checks that the tag still points at the verified SHA, that the commit is an ancestor of `origin/main`, and that `node scripts/npm/check-tag.mjs` accepts the tag. It fetches the tag once more in that same step and aborts if the tag moved. It then runs `npm publish --provenance --access public` on `./` plus the downloaded tarball path. A stable tag uses the `latest` dist-tag. A prerelease tag uses `next` and does not move `latest`.
 
 `workflow_dispatch` packs and smokes the tarball and does not publish.
 

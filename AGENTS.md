@@ -57,7 +57,7 @@ Desktop uses a local PGlite database and bundled Node, plus system Git. Web / Co
 
 ## Setup and verification
 
-Use Node.js 22 or later, npm, and Git. See [development setup](CONTRIBUTING.md#开发环境) for Docker/PostgreSQL and daemon startup. Preserve an existing `.env`. Do not run development hub/web alongside their Compose counterparts because their ports overlap. The CLI publishes as the npm package `nema`. Document a versioned install (`npx nema@<hub version>` / `npm i -g nema@<hub version>`), not an unversioned `npx nema` as if it matched every hub. Source setup remains the way to develop this repository.
+Use Node.js 22 or later, npm, and Git. See [development setup](CONTRIBUTING.md#开发环境) for Docker/PostgreSQL and daemon startup. Preserve an existing `.env`. Do not run development hub/web alongside their Compose counterparts because their ports overlap. The CLI publishes as the npm package `@nema-project/nema`. The command name is `nema`. Document a versioned install (`npx @nema-project/nema@<hub version>` / `npm i -g @nema-project/nema@<hub version>`), not an unversioned `npx @nema-project/nema` as if it matched every hub. Source setup remains the way to develop this repository.
 
 Choose checks based on the changed behavior. Add regression coverage for fixes and meaningful tests for new behavior; documentation-only edits need link, anchor, command, and consistency checks rather than application tests.
 

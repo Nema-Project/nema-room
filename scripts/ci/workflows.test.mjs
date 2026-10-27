@@ -67,6 +67,8 @@ test('reusable verification checks the supplied ref with the complete existing s
   const packRuns = pack.steps.map((step) => step.run ?? '').join('\n');
   assert.match(packRuns, /npm ci/);
   assert.match(packRuns, /npm run cli:pack/);
+  assert.match(packRuns, /nema-project-nema-\*\.tgz/);
+  assert.doesNotMatch(packRuns, /-name 'nema-\*\.tgz'/);
   assert.match(packRuns, /scripts\/npm\/smoke-pack\.mjs/);
   const hub = pack.steps.find((step) => step.name === 'Prepare local hub and daemon token');
   assert.equal(hub.if, "runner.os == 'Linux'");
@@ -140,6 +142,9 @@ test('npm publish uses OIDC on a verified tag and skips a dry run', () => {
   assert.ok(recheckAt !== -1 && recheckAt < publishAt);
   assert.match(publishStep.run, /--tag "\$dist"/);
   assert.match(runs, /npm publish --provenance --access public/);
+  assert.match(publishStep.run, /nema-project-nema-\*\.tgz/);
+  assert.match(publishStep.run, /"\.\/\$tarball"/);
+  assert.doesNotMatch(source, /-name 'nema-\*\.tgz'/);
   assert.doesNotMatch(runs, /npm ci|cli:pack|npm run build/);
   const context = (event, verifyResult) => ({ github: { event_name: event }, needs: { verify: { result: verifyResult }, build: { result: 'success' } } });
   assert.equal(condition(publish.if, context('workflow_dispatch', 'success')), false);

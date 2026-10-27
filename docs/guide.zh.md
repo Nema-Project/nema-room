@@ -56,18 +56,18 @@
 
 ## Web / Compose 环境要求
 
-宿主机 daemon 是 npm 包 `nema`（Node.js ≥ 22）。这个包在本仓库里，第一次发布之前还不在 npm 上，步骤见 [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md)。在那之前，用下面的向导从当前检出安装 daemon。发布之后，安装与正在运行的 hub 相同的版本：
+宿主机 daemon 是 npm 包 `@nema-project/nema`，命令名是 `nema`（Node.js ≥ 22）。这个包在本仓库里，第一次发布之前还不在 npm 上，步骤见 [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md)。在那之前，用下面的向导从当前检出安装 daemon。发布之后，安装与正在运行的 hub 相同的版本：
 
 ```sh
-npx nema@<hub 版本> --version
-npm i -g nema@<hub 版本>
+npx @nema-project/nema@<hub 版本> --version
+npm i -g @nema-project/nema@<hub 版本>
 ```
 
-Compose：`curl http://127.0.0.1:4400/api/version` 返回 `{"version":"..."}`。桌面版在侧边栏显示版本，应用源地址提供 `GET /_nema/version`。版本不一致时，daemon 会打印 hub 的错误和 `run: npm i -g nema@<版本>`，然后停止，不会继续重连。
+Compose：`curl http://127.0.0.1:4400/api/version` 返回 `{"version":"..."}`。桌面版在侧边栏显示版本，应用源地址提供 `GET /_nema/version`。版本不一致时，daemon 会打印 hub 的错误和 `run: npm i -g @nema-project/nema@<版本>`，然后停止，不会继续重连。
 
 `nema daemon` 的 `--hub` 默认是 `http://127.0.0.1:4400`。token 文件是 `$NEMA_DATA_DIR` 或 `~/.nema/data` 下的 `daemon-token`（`defaultTokenFile()`）。hub 启动时若文件不存在就写入它。Compose 把容器的 `NEMA_DATA_DIR` 设为 `/data`，并把宿主机数据目录挂到那里（默认 `~/.nema/data`，或 `NEMA_DATA_HOST_DIR`），因此宿主机 daemon 与容器 hub 共用同一个 token 文件。
 
-从本仓库运行 Web / Compose 仍使用下面的源码向导。Windows、macOS、Linux 共用这套 Node.js 安装。不要安装不带版本的 `nema` 并假定它与 hub 一致。
+从本仓库运行 Web / Compose 仍使用下面的源码向导。Windows、macOS、Linux 共用这套 Node.js 安装。不要安装不带版本的 `@nema-project/nema` 并假定它与 hub 一致。
 
 | 项目 | 要求 |
 | --- | --- |
@@ -243,7 +243,7 @@ npm run lint -w apps/web
 npm run build -w apps/web
 ```
 
-根目录 typecheck 不包含 web，web 构建需单独执行。升级源码检出前先备份数据，再 `git pull`、`npm ci`、重建 CLI、执行 `npm run up`，并重启 daemon。daemon 应使用 `GET /api/version` 给出的 hub 版本。版本不一致时会打印 `run: npm i -g nema@<版本>` 并且不再重连。第一次 npm 发布之前，daemon 仍来自这次检出。
+根目录 typecheck 不包含 web，web 构建需单独执行。升级源码检出前先备份数据，再 `git pull`、`npm ci`、重建 CLI、执行 `npm run up`，并重启 daemon。daemon 应使用 `GET /api/version` 给出的 hub 版本。版本不一致时会打印 `run: npm i -g @nema-project/nema@<版本>` 并且不再重连。第一次 npm 发布之前，daemon 仍来自这次检出。
 
 端口和目录见 [.env.example](../.env.example)。CLI 不自动读取根目录 `.env`：改数据目录时应在 shell 导出 `NEMA_DATA_DIR` 或传 `--token-file` 给 `daemon` / `doctor`；改 hub 端口还需传 `--hub`。Compose 读取 `NEMA_HUB_PORT`（默认 4400，宿主机和容器使用同一端口）和 `NEMA_WEB_PORT`（默认 3000，容器内仍是 3000）。web 容器启动时读取 `NEMA_HUB_URL`。Compose 默认把它设为 `http://127.0.0.1:$NEMA_HUB_PORT`。只有浏览器从别的地址访问 hub 时才设置 `NEMA_HUB_URL`。`NEXT_PUBLIC_HUB_URL` 是 `npm run dev` 读取的值，在镜像里只是烘焙进去的回退地址。
 
