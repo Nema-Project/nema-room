@@ -14,9 +14,9 @@
 
 ## Global Constraints
 
-- 文档白名单的成员与排除项保持基线：根 `*.md`、`docs/` 与 `site/` 的现有扩展名、`.github/workflows/pages.yml` 算文档；`AGENTS.md` / `CLAUDE.md`、可执行文件、`..`、绝对路径不算。空路径列表，以及含 `..`、`.` 段、绝对路径或反斜杠的路径，是 mode `full`。
+- 文档白名单的成员与排除项保持基线：根 `*.md`、`docs/` 与 `site/` 的现有扩展名、`.github/workflows/pages.yml` 算文档；`AGENTS.md` / `CLAUDE.md`、可执行文件不算。空路径列表，以及任一路径含空段、`.` 或 `..` 段、以 `/` 开头或含反斜杠，整次分类是 mode `full`。不安全路径在文档谓词之前判断。
 - `verify.yml` 的 `app_tests`、`platform`、`npm_pack` 默认 true。`npm-publish.yml` 与 `desktop-release.yml` 的 tag 调用不传 false。
-- `gatePasses` 不把 `cancelled`、失败、空结果当成通过。空结果不是 `skipped`。
+- `gatePasses` 不把 `cancelled`、失败、空结果当成通过。空结果不是 `skipped`。`platformRequired` / `npmPackRequired` 只有明确的 true 或 false 有效；空字符串和缺失失败，不能当成 false。
 - `desktop-release.yml` 的 `pull_request.paths` 保持 `apps/desktop/**` 与 `scripts/desktop/**`。不创建 `image-publish.yml`。
 - 不改 README。两份英文 README 保持字节相同。
 - 代码与注释用英文。提交信息用英文。
@@ -29,6 +29,8 @@
 4. `cancel-in-progress` 是否只在 `pull_request` 上为 true，`main` 推送是否不会被后来的推送取消正在跑的那次。→ 任务 4。
 5. 实现 diff 是否没有 ruleset、tag、发布。→ 任务 6。
 6. 只改 `apps/hub/` 或 `apps/web/` 是否不触发 platform / npm pack；只改 lockfile 是否不触发 desktop。→ 任务 1、任务 5。
+7. `jobs.classify.outputs.platform` 与 `npm_pack` 是否从 `steps.changes.outputs` 转出；必过标志为空时门禁是否失败。→ 任务 1、任务 4。
+8. `docs//guide.md` 这类空段是否是 mode `full`，而不是 `docs`。→ 任务 1。
 
 ---
 
@@ -41,12 +43,12 @@
 - [ ] **Step 1:** 改 `policy.test.mjs` 的断言，先不要改实现。现有 `classifyPaths(...) === 'docs'|'full'` 与只传 `verify` 的 `gatePasses` 断言改成下面的返回值，否则任务做完旧断言仍要求「未知路径 = 整套必跑」。
   - 测试名 `documentation allowlist stays docs and does not request heavy jobs`：`['README.md', 'docs/guide.zh.md']`、`['site/index.html']`、`['.github/workflows/pages.yml']` 的 mode 都是 `docs`，`platform`、`npmPack`、`desktop`、`image` 都为 false。
   - 测试名 `agent instructions stay on the app gate without heavy jobs`：`['AGENTS.md']`、`['CLAUDE.md']`、`['docs/AGENTS.md']`、`['site/nested/CLAUDE.md']` 的 mode 都是 `app`，四个标志都为 false。
-  - 测试名 `empty or unsafe paths fail closed onto the full suite`：`[]`、`['docs/../scripts/x.mjs']`、`['/docs/a.md']`、`['docs\\a.md']` 的 mode 是 `full`。
+  - 测试名 `empty or unsafe paths fail closed onto the full suite`：`[]`、`['docs//guide.md']`、`['docs/guide.md/']`、`['docs/./a.md']`、`['docs/../scripts/x.mjs']`、`['/docs/a.md']`、`['docs\\a.md']` 的 mode 都是 `full`。`docs//guide.md` 必须在断言里：现有文档谓词会把它当成 `docs`。
   - 测试名 `path classes match the fast-gate table`：`apps/web/app/page.tsx`、`apps/hub/src/app.ts`、`vendor/rules.md`、`unknown`、`docs/a.js` 是 `app` 且四个标志为 false；`apps/cli/src/index.ts` 使 `platform` 与 `npmPack` 为 true、`desktop` 为 false；`packages/shared/src/index.ts` 只使 `npmPack` 为 true；`packages/knowledge/src/store.ts` 与 `scripts/security/reporting-status.test.mjs` 只使 `platform` 为 true；`apps/desktop/package.json` 与 `scripts/desktop/smoke-desktop.test.mjs` 使 `platform` 与 `desktop` 为 true；`package-lock.json` 使 `platform` 与 `npmPack` 为 true、`desktop` 为 false；`Dockerfile` 与 `scripts/images/smoke-compose.mjs` 只使 `image` 为 true；`.github/workflows/ci.yml`、`.github/workflows/verify.yml`、`scripts/ci/policy.mjs` 使 `platform` 与 `npmPack` 为 true。混合 `['README.md', 'apps/web/app/page.tsx']` 是 `app`。
   - 保留现有非法输入抛错断言（`null`、字符串、`['']`、含 NUL 的路径）。
-  - 测试名 `gate accepts a skipped heavy job only when that class was not required`：mode `docs` 且 `lint` 为 `success`、`app`/`platform`/`npmPack` 为 `skipped`、两个 required 为 false 时通过；任一 required 为 true 时失败。mode `app` 且 `app` 为 `success`、`platformRequired` 为 false、`platform` 为 `skipped` 时通过；`platformRequired` 为 true 且 `platform` 为 `skipped` 时失败；`platform` 为 `success` 时无论 required 都通过。mode `full` 要求 `app`、`platform`、`npmPack` 都是 `success`。`lint` 为 `skipped`/`failure`/`cancelled` 时失败。`cancelled`、`failure`、`''`、`undefined`、`unknown` 在必过位置失败。删掉对单一 `verify` 结果的旧循环。
+  - 测试名 `gate accepts a skipped heavy job only when that class was not required`：mode `docs` 且 `lint` 为 `success`、`app`/`platform`/`npmPack` 为 `skipped`、两个 required 为 false 时通过；任一 required 为 true 时失败。mode `app` 且 `app` 为 `success`、`platformRequired` 为 false、`platform` 为 `skipped` 时通过；`platformRequired` 为 true 且 `platform` 为 `skipped` 时失败；`platform` 为 `success` 时无论 required 都通过。mode `app` 下 `platformRequired` 为 `''`、`undefined` 或其他字符串、且 `platform` 已是 `skipped` 时失败。mode `full` 在两个 required 为 true 时要求 `app`、`platform`、`npmPack` 都是 `success`；required 为 `''` 或缺失时，即使三个结果都是 `success` 也失败。`lint` 为 `skipped`/`failure`/`cancelled` 时失败。`cancelled`、`failure`、`''`、`undefined`、`unknown` 在必过位置失败。删掉对单一 `verify` 结果的旧循环。
 - [ ] **Step 2:** 跑 `node --test scripts/ci/policy.test.mjs` → 新断言 FAIL（返回值仍是字符串，或 `gatePasses` 还不接受新参数）。
-- [ ] **Step 3:** 改 `policy.mjs`。文档判定函数保持现有谓词。`classifyPaths` 在全部为文档时返回 mode `docs` 与四个 false；空列表，或任一路径含 `..`、`.` 段、绝对路径、反斜杠时返回 mode `full`；否则 mode `app`，并按规格路径表填布尔值。门禁基础设施路径把 `platform` 与 `npmPack` 设为 true。导出 `gatePasses`，按规格的 docs / app / full 表实现。CLI 入口读 `MODE`、`CLASSIFY`、`DOCS`、`LINT`、`APP`、`PLATFORM`、`NPM_PACK`、`PLATFORM_REQUIRED`、`NPM_PACK_REQUIRED`（后两个 `'true'` 为 true）。不要把空字符串默认成 `skipped`。同一提交里把 `changes.mjs` 写成 `mode=${result.mode}`，不要把对象拼进 `mode=`。四个布尔键留给任务 2。
+- [ ] **Step 3:** 改 `policy.mjs`。`classifyPaths` 在调用文档谓词之前先看路径形状：空列表，或任一路径 `split('/')` 后有空段、段为 `.` 或 `..`、以 `/` 开头、或含反斜杠，返回 mode `full`。不要先用现有文档谓词，它会接受 `docs//guide.md`。其余路径全部为文档时返回 mode `docs` 与四个 false；否则 mode `app`，并按规格路径表填布尔值。门禁基础设施路径把 `platform` 与 `npmPack` 设为 true。导出 `gatePasses`，按规格的 docs / app / full 表实现。`platformRequired` 与 `npmPackRequired` 只有 `true` 与 `false` 两个布尔值算数；`''`、`undefined` 和其他值失败，不要把它们收成 false。CLI 入口读 `MODE`、`CLASSIFY`、`DOCS`、`LINT`、`APP`、`PLATFORM`、`NPM_PACK`、`PLATFORM_REQUIRED`、`NPM_PACK_REQUIRED`：后两个只有字符串 `'true'` 和 `'false'` 分别变成 true 和 false，空字符串和未设置都按缺失失败。不要把空字符串默认成 `skipped`。同一提交里把 `changes.mjs` 写成 `mode=${result.mode}`，不要把对象拼进 `mode=`。四个布尔键留给任务 2。
 - [ ] **Step 4:** 跑 `node --test scripts/ci/policy.test.mjs scripts/ci/changes.test.mjs` → PASS。`changes.test.mjs` 仍只断言 diff 路径，不断言新的四个键。
 - [ ] **Step 5:** 提交信息：`test(ci): classify heavy jobs and failed-closed skips`
 
@@ -88,12 +90,14 @@
   - `concurrency.group` 仍是 `ci-${{ github.ref }}`。`cancel-in-progress` 的表达式是 `github.event_name == 'pull_request'`。
   - `verify.uses` 仍是 `./.github/workflows/verify.yml`，`checkout_ref` 仍是 `github.sha`，没有 `secrets`。
   - `verify.if` 仍只依赖 classify 成功（classify 失败时不调用 verify）。
-  - `app_tests` 表达式在 mode 不是 `docs` 时为 true；`platform` 在 mode 是 `full` 或输出 `platform == 'true'` 时为 true；`npm_pack` 同理。
-  - `push` 与 `workflow_dispatch` 的分类步骤把 `mode=full`、`platform=true`、`npm_pack=true`、`desktop=false`、`image=false` 写入输出，并且仍写今天那份文档路径 JSON。
-  - gate 的 `if` 仍是 `always()`。传给 `policy.mjs` 的 env 含 `MODE`、`CLASSIFY`、`DOCS`、`LINT`、`APP`、`PLATFORM`、`NPM_PACK`、`PLATFORM_REQUIRED`、`NPM_PACK_REQUIRED`，分别来自 classify 输出与 verify 的 job 输出 / 分类标志，不是字面量 `success`。
+  - 分类步骤 id 仍是 `changes`。`jobs.classify.outputs` 含且映射为：`mode` = `steps.changes.outputs.mode`，`platform` = `steps.changes.outputs.platform`，`npm_pack` = `steps.changes.outputs.npm_pack`。少了 `platform` 或 `npm_pack` 这一个测试就要失败。
+  - `app_tests` 表达式在 mode 不是 `docs` 时为 true；`platform` 在 mode 是 `full` 或 `needs.classify.outputs.platform == 'true'` 时为 true；`npm_pack` 用 `needs.classify.outputs.npm_pack`，同一写法。不要读步骤输出，其他 job 看不见步骤输出。
+  - `push` 与 `workflow_dispatch` 的分类步骤把 `mode=full`、`platform=true`、`npm_pack=true`、`desktop=false`、`image=false` 写入 `GITHUB_OUTPUT`，并且仍写今天那份文档路径 JSON。
+  - gate 的 `if` 仍是 `always()`。传给 `policy.mjs` 的 env 含 `MODE`、`CLASSIFY`、`DOCS`、`LINT`、`APP`、`PLATFORM`、`NPM_PACK`、`PLATFORM_REQUIRED`、`NPM_PACK_REQUIRED`。`PLATFORM_REQUIRED` 是 `needs.classify.outputs.platform`，`NPM_PACK_REQUIRED` 是 `needs.classify.outputs.npm_pack`，不是字面量 `true` 或 `false`，也不是字面量 `success`。
+  - 测试名 `missing heavy-job flags fail the gate`：用 `spawnSync` 跑 `scripts/ci/policy.mjs`。`MODE=app`，`CLASSIFY`/`DOCS`/`LINT`/`APP` 为 `success`，`PLATFORM` 与 `NPM_PACK` 为 `skipped`，`NPM_PACK_REQUIRED=false`，不设 `PLATFORM_REQUIRED`，退出码为 1。把 `PLATFORM_REQUIRED` 设成空字符串，退出码仍为 1。`PLATFORM_REQUIRED=false` 时退出码为 0。`PLATFORM_REQUIRED=true` 时退出码为 1。
   - `desktop-release` 的 `cancel-in-progress` 表达式仍含 `!startsWith(github.ref, 'refs/tags/')`。
 - [ ] **Step 2:** 跑 `node --test scripts/ci/workflows.test.mjs` → FAIL。
-- [ ] **Step 3:** 改 `ci.yml` 实现这些触发、并发、输入和 env。分类 shell 在 `push` 与 `workflow_dispatch` 上不调用 `changes.mjs`。PR 路径仍调用 `changes.mjs`。gate job 名保持 `CI gate`。
+- [ ] **Step 3:** 改 `ci.yml` 实现这些触发、并发、输入和 env。在 `jobs.classify.outputs` 里显式加上 `platform` 与 `npm_pack` 两条，值是 `steps.changes.outputs` 的同名输出。分类 shell 在 `push` 与 `workflow_dispatch` 上不调用 `changes.mjs`，但这两条分支也要写出 `platform=true` 与 `npm_pack=true`，否则 job 输出是空的，门禁按任务 1 失败关闭。PR 路径仍调用 `changes.mjs`。gate job 名保持 `CI gate`。
 - [ ] **Step 4:** 跑 `node --test scripts/ci/workflows.test.mjs scripts/ci/policy.test.mjs` → PASS。actionlint 对 `ci.yml` → 无 finding。
 - [ ] **Step 5:** 提交信息：`ci: run the full suite on main and a fast gate on pull requests`
 
@@ -116,10 +120,10 @@
 - 修改：nema-room:scripts/npm/RELEASE.md
 - 满足：R-7、R-8、R-9
 
-- [ ] **Step 1:** 在 `AGENTS.md` 的 “Working with other developers and agents” 下加一段英文，四条都要在：把 review 修改合成一次推送；该 ref 的进行中 CI 会被取消，被取消的必过 job 让 `CI gate` 失败是故意的；不要空等 CI，用本地检查继续下一项；不要只为了清除旧 SHA 上的红叉再推一次，算数的是最新一次推送。在 “Setup and verification” 里把「只有文档与 Pages 工作流跳过完整套件；Agent 说明走完整套件」改成与本规格一致的一句：文档白名单跳过应用测试与重型 job；`AGENTS.md` / `CLAUDE.md` 走 Ubuntu 快门；platform 与 npm pack 按 `scripts/ci/policy.mjs` 的路径表；`main` 推送与手动 dispatch 跑完整 `verify.yml`。不要写「可以停下来等 CI」。
+- [ ] **Step 1:** 在 `AGENTS.md` 的 “Working with other developers and agents” 下加一段英文，下面每条都要在：把 review 修改合成一次推送；该 ref 的进行中 CI 会被取消，被取消的必过 job 让 `CI gate` 失败是故意的；不要空等 CI，用本地检查继续下一项；不要只为了清除旧 SHA 上的红叉再推一次，算数的是最新一次推送；合并前先看 `main` 最新的 `CI`，缺失、进行中、被取消或失败时不合；谁看见 `main` 变红，谁先撤回或修好，再合别的。在 “Setup and verification” 里把「只有文档与 Pages 工作流跳过完整套件；Agent 说明走完整套件」改成与本规格一致的一句：文档白名单跳过应用测试与重型 job；`AGENTS.md` / `CLAUDE.md` 走 Ubuntu 快门；platform 与 npm pack 按 `scripts/ci/policy.mjs` 的路径表；`main` 推送与手动 dispatch 跑完整 `verify.yml`。不要写「可以停下来等 CI」。
 - [ ] **Step 2:** `ROADMAP.md`：P1-08 状态改为进行中，依据里加上本规格与本计划的相对链接，验收标准不改成已满足。P0-02 保持进行中，加一句：`strict_required_status_checks_policy` 在维护者按规格 D-9 手工改掉之前仍为 true，本项不因此关闭。不要把 P0-01 标成已完成。
 - [ ] **Step 3:** 在 P0 规格 “Require branches to be up to date before merging.” 那句后面加一句英文：该 up-to-date 要求由 `docs/superpowers/specs/2026-10-27-pr-ci-fast-gate-design.md` 取代，实现合入且 `main` 全量成功之后由维护者把 strict 改为 false。不改该规格的其余句子。
-- [ ] **Step 4:** 在 `scripts/desktop/RELEASE.md` 的 “Before intentionally creating any tag” 之前加一小段：打 tag 前，该 SHA 在 `main` 上的 `CI` 工作流必须已经成功；缺失、进行中、取消或失败都不打 tag。不要改写 rollout commit `2cd05930c34e5bd601a578fbc01a97e28d08401c` 那段历史（当时 `ci.yml` 确实不在 `main` 推送上跑）。在 `scripts/npm/RELEASE.md` 的 “Automatic publish” 列表第 1 条之前加同一条件。若 `scripts/images/RELEASE.md` 存在，加同一句；不存在则不创建。
+- [ ] **Step 4:** 在 `scripts/desktop/RELEASE.md` 的 “Before intentionally creating any tag” 之前加一小段：打 tag 前，该 SHA 在 `main` 上的 `CI` 工作流必须已经成功；缺失、进行中、取消或失败都不打 tag。挡住发布的仍是 tag SHA 上的 `verify.yml`（失败、取消、跳过或缺失都不能发布），不是另查一次 `main` 运行记录；`main` 全量失败的 SHA，这套 verify 也会失败。不要改写 rollout commit `2cd05930c34e5bd601a578fbc01a97e28d08401c` 那段历史（当时 `ci.yml` 确实不在 `main` 推送上跑）。在 `scripts/npm/RELEASE.md` 的 “Automatic publish” 列表第 1 条之前加同一条件。若 `scripts/images/RELEASE.md` 存在，加同一句；不存在则不创建。
 - [ ] **Step 5:** `CHANGELOG.md` 的 `## [Unreleased]` 下加 `### Changed` 条目：PR 的 `CI gate` 在文档变更上仍跳过重型检查；其他 PR 跑 Ubuntu 测试与 web build，只在相关路径上跑 macOS/Windows 与 npm pack；推送到 `main` 时跑完整验证。不要写 strict 已经关掉。
 - [ ] **Step 6:** 跑 `node --test scripts/ci/*.test.mjs scripts/desktop/release-commit.test.mjs` → PASS。对改过的 Markdown 跑 `node scripts/ci/docs-check.mjs`（把路径列表写成临时 JSON）→ 0 errors。`git diff -- README.md README.en.md README.zh.md README.ja.md` 为空。
 - [ ] **Step 7:** 提交信息：`docs: tell agents to batch CI pushes and record the fast gate`
