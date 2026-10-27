@@ -23,6 +23,26 @@ export function assetsFor(platform, arch) {
   return { target: key, node: { ...n, version: manifest.node.version, url: `${manifest.node.source}${n.file}` } };
 }
 
+const NODE_PACKAGE_DIRS = new Set(['npm', 'corepack']);
+const NODE_BIN_SHIMS = new Set(['npm', 'npx', 'corepack']);
+const NODE_WIN_SHIMS = new Set(['npm.cmd', 'npx.cmd', 'corepack.cmd', 'npm.ps1', 'npx.ps1', 'corepack.ps1']);
+
+/**
+ * Paths to omit when copying a staged tools target into the payload.
+ * Relative to the target root (`darwin-arm64/node/...`), forward slashes.
+ * The tool cache keeps these so `npm ci` and node-gyp still work.
+ */
+export function nodePayloadExcluded(relativePath) {
+  const parts = relativePath.split('/');
+  if (parts[0] !== 'node' || parts.length < 2) return false;
+  if (parts[1] === 'include') return true;
+  if (parts[1] === 'lib' && parts[2] === 'node_modules' && NODE_PACKAGE_DIRS.has(parts[3])) return true;
+  if (parts[1] === 'node_modules' && NODE_PACKAGE_DIRS.has(parts[2])) return true;
+  if (parts.length === 3 && parts[1] === 'bin' && NODE_BIN_SHIMS.has(parts[2])) return true;
+  if (parts.length === 2 && NODE_WIN_SHIMS.has(parts[1])) return true;
+  return false;
+}
+
 export async function sha256File(file) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(file)) hash.update(chunk);
@@ -285,6 +305,9 @@ export async function fetchTools({ platform, arch, cacheDir, outDir }) {
     const nodeHomeRel = selected.node.binary.includes('/') ? selected.node.binary.split('/')[0] : '.';
     const nodeHome = path.join(nodeTmp, nodeHomeRel);
     const nodeDest = path.join(staged, 'node');
+    // Keep include/, npm, and Corepack in the tool cache. Staging's npm ci needs
+    // the npm CLI, and node-gyp (via @electron/rebuild) needs the headers.
+    // The shipped payload copy drops them; see nodePayloadExcluded.
     await copyTree(nodeHome, nodeDest, nodeHome);
     const nodeBinary = path.join(nodeDest, selected.node.binary.slice(nodeHomeRel === '.' ? 0 : nodeHomeRel.length + 1));
     for (const binary of [nodeBinary]) {

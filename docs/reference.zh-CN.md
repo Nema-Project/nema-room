@@ -14,7 +14,7 @@
 
 ## Code repositories and plugins
 
-在 workspace 设置里绑定仓库。daemon 在线时会检查这条路径并建立索引。Graphify 从安装包的 `tools/graphify/` 读取（Windows 为 `graphify.exe`）。未注入路径时，先认 `NEMA_GRAPHIFY_BIN`，否则用 `NEMA_PAYLOAD_ROOT` 或 Node 可执行文件旁边的同一相对路径。不从 PATH 查找，运行时也不下载。`desktop:stage` 会按锁定的 CPython 3.11.17 和 graphifyy 0.9.95 放入这份文件，启动器只用相对路径。缺失时 doctor 和插件页显示 `随包的 Graphify 运行环境缺失`。插件页那句写成「可在此修复」，页面上只有这句说明，没有下载或修复操作。
+在 workspace 设置里绑定仓库。daemon 在线时会检查这条路径并建立索引。Graphify 从安装包的 `tools/graphify/` 读取（Windows 为 `graphify.exe`）。未注入路径时，先认 `NEMA_GRAPHIFY_BIN`，否则用 `NEMA_PAYLOAD_ROOT` 或 Node 可执行文件旁边的同一相对路径。不从 PATH 查找，运行时也不下载。`desktop:stage` 会按锁定的 CPython 3.11.17 和 graphifyy 0.9.95 放入这份文件，启动器只用相对路径。打包的解释器是 `python/bin/python3.11`。Tree-sitter 语法保留 JavaScript、TypeScript、TSX、Python、Go、Rust、Java、C、C++、C#、Ruby、PHP、Swift、Kotlin、Bash 和 JSON。这个锁定版本没有 YAML、TOML、HTML、CSS、Markdown 的语法包。缺语法时跳过该文件并警告，提取仍会结束。缺失时 doctor 和插件页显示 `随包的 Graphify 运行环境缺失`。插件页那句写成「可在此修复」，页面上只有这句说明，没有下载或修复操作。
 
 Nema 读的是 `origin/<main>`，不是你当前检出的文件。daemon 不按时钟 fetch。绑定仓库时建一次索引。一次任务第一次调用代码函数时，才对这个仓库执行 `git fetch`，不改动工作区，也不动本地分支。同一次任务里之后的调用沿用这一次的结果。编码 Agent 的钩子仍可通过 `repo.tick` 立刻检查这一个仓库。空闲时不拉取。
 

@@ -15,7 +15,16 @@ if (!managedLocalBuild) {
 const nextConfig: NextConfig = {
   // Next 16 otherwise regenerates apps/web/AGENTS.md on `next dev`.
   agentRules: false,
-  ...(managedLocalBuild ? { output: "standalone" } : {}),
+  ...(managedLocalBuild
+    ? {
+        output: "standalone",
+        images: { unoptimized: true },
+        // Next's file tracer still follows sharp. Packaging deletes any copy that lands in the payload.
+        outputFileTracingExcludes: {
+          "*": ["node_modules/sharp/**", "node_modules/@img/**"],
+        },
+      }
+    : {}),
 };
 
 export default nextConfig;

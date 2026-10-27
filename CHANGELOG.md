@@ -18,6 +18,7 @@
 
 ### Changed
 
+- Desktop payloads leave out Node headers, npm, and Corepack, ship one CPython interpreter, drop an unreferenced macOS `libpython3.11.dylib`, keep a single Chromium license notice, strip source maps, and omit cold tree-sitter grammars plus the sharp image toolchain. Packaging prints section sizes and warns when a budget is exceeded. Missing grammars are skipped with a warning.
 - The landing page links to the latest GitHub release instead of a fixed version number.
 - GitHub release notes lead with that version's changelog. Checksums stay in the attached SHA256SUMS file.
 
