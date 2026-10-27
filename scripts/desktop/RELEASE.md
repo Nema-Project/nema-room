@@ -40,12 +40,12 @@ The complete Windows/macOS platform checks and Ubuntu application tests, web bui
 - Existing published releases are never overwritten. A previous draft is reused only if its assets belong to this release.
 - Assets: two installers (`.exe`, `.dmg`), two per-target checksum files, combined `SHA256SUMS-<version>.txt`, and `release-manifest-<version>.json`. No portable ZIP is published.
 - Windows automation installs and smokes the NSIS installer. macOS automation checks only the staged runtime; it does not prove DMG installation, Finder startup, or in-place installer overwrite.
-- The Windows and macOS platform job also runs a disposable data-directory upgrade and restore (chats, a thread, a work package, and knowledge Git history). That check does not install over an existing NSIS or DMG package. Local command after `npm ci`: `npx vitest run apps/hub/test/upgradeRecovery.test.ts --maxWorkers=1`.
+- The Windows and macOS platform job also runs a disposable data-directory upgrade and restore (chats, a thread, a work package, and knowledge Git history). On 2026-10-27 that step passed on both runners in [CI 40440137400](https://github.com/Nema-Project/nema-room/actions/runs/40440137400) (`ef87a29`): darwin arm64, Node v22.23.3, and win32 x64, Node v22.23.4, each 8/8. It does not install over an existing NSIS or DMG package. Local command after `npm ci`: `npx vitest run apps/hub/test/upgradeRecovery.test.ts --maxWorkers=1`.
 
 ## Before an authorized release
 
 1. Verify rollout ancestry and successful complete CI/rehearsal for the intended commit. Record exact SHAs and run URLs.
-2. Check versions, changelog, payload validation and supported asset set for both targets. Review unresolved [roadmap](../../ROADMAP.md) acceptance, including P0-03/P0-04.
+2. Check versions, changelog, payload validation and supported asset set for both targets. Review unresolved [roadmap](../../ROADMAP.md) acceptance, including P0-03 and P0-05. P0-04 data-directory checks passed on hosted Windows and macOS; installer overwrite remains open.
 3. Confirm the actual main ruleset requires the observed GitHub Actions `CI gate` and an up-to-date branch; YAML alone does not activate this setting.
 4. Private vulnerability reporting was read as disabled on 2026-10-27 (`enabled: false`). An administrator must enable it, then a legitimate non-admin reporter must open the form without submitting. Until both happen, keep P0-05 blocked and never request sensitive public reports. Re-read with `node scripts/security/reporting-status.mjs`.
 5. A person with release authorization creates the new tag on the verified commit. Do not automatically tag as part of CI testing.

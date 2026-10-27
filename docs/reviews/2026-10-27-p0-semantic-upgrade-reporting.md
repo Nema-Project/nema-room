@@ -10,7 +10,7 @@ No release tag, GitHub release, advisory, ruleset edit, or merge was created. Pr
 | Item | Status | What this change actually shows |
 | --- | --- | --- |
 | P0-03 | 进行中 | Rubric and a blocked-credential spawn pass locally. No Codex or Claude credential exists here, so neither adapter completed the five conversations. |
-| P0-04 | 进行中 | Disposable data-directory reopen, pending migration, failed migration, and backup restore passed on this Linux host (Node v22.23.4). Windows and macOS platform logs are not available until CI runs. NSIS/DMG overwrite was not attempted. |
+| P0-04 | 已完成 | Disposable data-directory reopen, pending migration, failed migration, and backup restore passed on hosted `windows-latest` and `macos-latest` for head `ef87a29`. The seeded home already uses the current schema, including threads. NSIS/DMG overwrite was not attempted and stays unverified. |
 | P0-05 | 阻塞 | `GET` on 2026-10-27 returned `{"enabled":false}`. The setting was not changed. No non-admin reporter opened the form. |
 
 P0-01 and P0-02 stay 进行中. This change does not activate the required `CI gate`.
@@ -25,7 +25,7 @@ Host: Linux, Node v22.23.4. Times below are Asia/Tokyo on 2026-10-27.
 - `README.md` and `README.en.md` compare equal.
 - `node scripts/ci/docs-check.mjs` on the changed Markdown reported 0 errors. Anchors and remote URLs are outside that checker.
 - actionlint 1.7.12 passed on `.github/workflows/verify.yml` and `.github/workflows/ci.yml`.
-- Full `npm test`, web lint/build, Compose, and desktop packaging were not run. A Linux Vitest pass is not Windows or macOS acceptance.
+- Full `npm test`, web lint/build, Compose, and desktop packaging were not run on this host. The pull-request CI section below is that evidence. A Linux Vitest pass by itself is not Windows or macOS acceptance.
 
 The empty-home spawn exited 2. Its JSON status is blocked and `semantic` is `not-run`. That is the intended blocked path. It is not a model failure and not a model pass.
 
@@ -57,7 +57,18 @@ User-facing copy now says the channel is disabled as of this read. The issue cho
 
 ## Platform evidence
 
-Not yet recorded. After CI, link the `verify` platform job for this head on both `windows-latest` and `macos-latest` only if those logs show the upgrade tests passing. A failed or missing job stays 进行中. Do not mark P0-04 已完成 from this Linux run.
+Head `ef87a295e778c575e641d2aa82576d2d8c7fc531`. [CI run 40440137400](https://github.com/Nema-Project/nema-room/actions/runs/40440137400) completed successfully on 2026-10-27 (Asia/Tokyo), started 11:44. The upgrade step is separate from the earlier platform suite.
+
+| Runner | Job | Upgrade step |
+| --- | --- | --- |
+| macos-latest | [121978298481](https://github.com/Nema-Project/nema-room/actions/runs/40440137400/job/121978298481) | 11:45 Asia/Tokyo. `upgrade-recovery reopen/migrate/restore darwin arm64 v22.23.3`. 2 files, 8 tests passed. |
+| windows-latest | [121978298611](https://github.com/Nema-Project/nema-room/actions/runs/40440137400/job/121978298611) | 11:46 Asia/Tokyo. `upgrade-recovery reopen/migrate/restore win32 x64 v22.23.4`. 2 files, 8 tests passed. |
+
+The same run's full application job [121978298441](https://github.com/Nema-Project/nema-room/actions/runs/40440137400/job/121978298441) reported 122 test files passed and 1 skipped, 1348 tests passed and 23 skipped. Skipped tests are not acceptance evidence. Web lint/build and the Compose readiness check also passed in that job. `CI gate` passed.
+
+[Desktop PR run 40440137237](https://github.com/Nema-Project/nema-room/actions/runs/40440137237) passed Windows NSIS smoke and macOS staged-runtime smoke. Publish was skipped. That smoke does not install over an existing data directory and does not prove DMG installation, Finder startup, or in-place overwrite.
+
+P0-04 is marked 已完成 for the data-directory acceptance only. There is no product migration newer than `011_threads.sql`, so the harness reopens current-schema data that already contains a thread, then applies a test-only migration. It does not replay a pre-thread database and it does not replace an installed package.
 
 ## Maintainer handoff
 
@@ -74,15 +85,15 @@ node scripts/acceptance/run-thread-semantic.mjs --adapter claude-code --claude-t
 
 Optional `--model`. Exit 0 is a pass for that adapter only. Exit 1 is a finished transcript that missed a check. Exit 2 is blocked and must not be scored. Copy a redacted summary (commit, adapter, model, check names, message ids, knowledge ids) into this review. Leave discussion text and any home path out of the repository.
 
-### P0-04 hosted runners and installer overwrite
+### P0-04 installer overwrite
 
-Local, not OS acceptance:
+The hosted data-directory runs above are recorded. This remaining check is still manual, on a disposable machine: quit the tray, back up `~/.nema/desktop`, install the new package over the old one, launch, and check chats, threads, work packages, and knowledge Git history. Separately restore that backup after a simulated failure. Keep the in-place installer warning until that check is recorded. It is not part of the P0-04 data-directory acceptance.
+
+Local replay, not a substitute for the hosted logs:
 
 ```sh
 npx vitest run apps/hub/test/upgradeRecovery.test.ts --maxWorkers=1
 ```
-
-Mark P0-04 已完成 only after both hosted platform runs pass, then say in ROADMAP, CHANGELOG, and the READMEs/guides that the data-directory check passed on those runners. Keep the in-place installer warning until this separate check is done on a disposable machine: quit the tray, back up `~/.nema/desktop`, install the new package over the old one, launch, and check chats, threads, work packages, and knowledge Git history. Separately restore that backup after a simulated failure.
 
 ### P0-05 enablement and non-admin form
 

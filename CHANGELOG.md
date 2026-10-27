@@ -4,7 +4,7 @@
 
 ### Added
 
-- A disposable desktop data-directory check covers reopen, a pending migration, a failed migration, and backup restore for chats, threads, work packages, and knowledge Git history. Hosted Windows and macOS jobs run that check. In-place NSIS or DMG installer overwrite remains unverified.
+- A disposable desktop data-directory check covers reopen, a pending migration, a failed migration, and backup restore for chats, threads, work packages, and knowledge Git history. On 2026-10-27 that check passed on hosted Windows and macOS runners ([run 40440137400](https://github.com/Nema-Project/nema-room/actions/runs/40440137400), head `ef87a29`). In-place NSIS or DMG installer overwrite remains unverified.
 - A thread semantic acceptance runner scores the scripted memo, decision, open-thread, conflict, and override checks. Rubric unit tests are not a real-model pass. Missing credentials or a connection failure exit as blocked and do not score the rubric.
 
 ### Security
