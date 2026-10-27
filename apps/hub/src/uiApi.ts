@@ -1,8 +1,8 @@
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z, ZodError } from "zod";
-import { KnowledgeStore, blameParagraphs, git, history, versionAt } from "@nema/knowledge";
-import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, kindFromId } from "@nema/shared";
+import { KnowledgeStore, blameParagraphs, git, history, versionAt, parseCommitMessage } from "@nema/knowledge";
+import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, kindFromId, canonicalJson } from "@nema/shared";
 import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
 import { insertEvidenceEvent, consumeEvidenceEvent, payloadHashFor, type EvidenceEventInput } from "./evidenceEvents.js";
 import type { Entry } from "@nema/shared";
@@ -493,16 +493,31 @@ export function uiRoutes(deps: UiDeps): Hono {
         const kinds: EvidenceEventInput[] = mode === "put" || existing?.basis === null || existing?.basis === "inferred" ? [promote] : [];
         if (mode === "confirm" && revision) kinds.push(revision);
         if (!kinds.length) kinds.push({ ...common, kind: "confirm_entry" });
-        // A promoted entry now has a different basis, so replay also checks its original promotion.
-        const candidates = mode === "confirm" ? [...kinds, promote] : kinds;
-        for (const input of candidates) {
+        const consumed = async (input: EvidenceEventInput): Promise<string | undefined> => {
           const rows = await db.query<{ consumed_commit: string }>(
             "select consumed_commit from evidence_events where workspace_id = $1 and payload_hash = $2 and consumed_commit is not null order by consumed_at desc limit 1",
             [ws, payloadHashFor(input)]);
-          if (rows[0] && existing && existing.basis === entry.basis && existing.confirmedRevision === entry.confirmedRevision && entryContentHash(existing) === common.contentHash && refsHash(existing) === common.refsHash) {
-            Object.assign(entry, existing);
-            return rows[0].consumed_commit;
+          return rows[0]?.consumed_commit;
+        };
+        const commits = await Promise.all(kinds.map(consumed));
+        // Only a promotion made by a prior confirm substitutes for confirm_entry on replay.
+        // A snapshot always needs its own matching confirm_revision event.
+        if (kinds.length === 1 && kinds[0]!.kind === "confirm_entry" && !commits[0]) {
+          const promoted = await consumed(promote);
+          if (promoted) {
+            try {
+              const message = await git(repoPath(dataDir, ws), ["show", "-s", "--format=%B", promoted]);
+              if (parseCommitMessage(message).reason === "用户确认仍然有效") commits[0] = promoted;
+            } catch {
+              // A DB-only restore may name a commit absent from this repository; it cannot prove replay.
+            }
           }
+        }
+        // The evidence hash excludes metadata such as URL and related; replay must preserve those edits too.
+        const persisted = (value: Entry) => canonicalJson(JSON.parse(JSON.stringify({ ...value, confirmedAt: null })));
+        if (commits.every(Boolean) && existing && persisted(existing) === persisted(entry)) {
+          Object.assign(entry, existing);
+          return commits[0]!;
         }
         await db.tx(async (tx) => {
           for (const input of kinds) {

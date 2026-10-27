@@ -677,6 +677,49 @@ describe("ui api", () => {
     expect((await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim()).toBe(rows[0].consumed_commit);
   });
 
+  test("confirm after a snapshot PUT requires its own confirm_revision event", async () => {
+    const e = await inferredEntry({ kind: "source", title: "S", url: "https://example.com" });
+    const store = new KnowledgeStore(repoPath(dataDir, ws));
+    await store.writeImportedSource({ ...e, sourceSnapshot: {
+      schemaVersion: 1, provider: "manual", resourceId: "a", revision: null,
+      fetchedAt: SEEDED_AT, title: "S", canonicalUrl: "https://example.com", contentHash: "a".repeat(64),
+      excerpts: [{ locator: "p1", text: "excerpt" }],
+    } });
+    expect((await req("PUT", `/api/workspaces/${ws}/entries/${e.id}`, {
+      kind: "source", title: "S", url: "https://example.com", body: e.body, reason: "edit", sourceMessages: [],
+    })).status).toBe(200);
+    const before = (await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim();
+    expect((await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {})).status).toBe(200);
+    const rows = await db.query<any>("select * from evidence_events where workspace_id = $1 order by kind", [ws]);
+    expect(rows.map((row) => row.kind)).toEqual(["confirm_revision", "promote_basis"]);
+    const head = (await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim();
+    expect(head).not.toBe(before);
+    expect(rows[0].consumed_commit).toBe(head);
+    await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {});
+    expect((await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim()).toBe(head);
+    expect(await db.query("select * from evidence_events where workspace_id = $1", [ws])).toHaveLength(2);
+  });
+
+  test.each([
+    { field: "related", seed: { kind: "decision" }, patch: { related: ["R-99"] } },
+    { field: "url", seed: { kind: "source", url: "https://example.com/old" }, patch: { url: "https://example.com/new" } },
+    { field: "priority", seed: { kind: "question", priority: 1 }, patch: { priority: 2 } },
+    { field: "businessDate", seed: { kind: "decision" }, patch: { businessDate: "2026-10-28" } },
+  ])("PUT replay preserves an edit to $field outside the evidence hash", async ({ seed, patch }) => {
+    const e = await inferredEntry({ ...seed, title: "Entry" });
+    const payload = { ...seed, title: e.title, body: e.body, reason: "edit", sourceMessages: [] };
+    expect((await req("PUT", `/api/workspaces/${ws}/entries/${e.id}`, payload)).status).toBe(200);
+    const before = (await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim();
+    const r = await req("PUT", `/api/workspaces/${ws}/entries/${e.id}`, { ...payload, ...patch });
+    expect(r.status).toBe(200);
+    expect(await json(r)).toMatchObject(patch);
+    expect(await new KnowledgeStore(repoPath(dataDir, ws)).get(e.id)).toMatchObject(patch);
+    const head = (await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim();
+    expect(head).not.toBe(before);
+    await req("PUT", `/api/workspaces/${ws}/entries/${e.id}`, { ...payload, ...patch });
+    expect((await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim()).toBe(head);
+  });
+
   test("two concurrent confirms share one event and one commit", async () => {
     const e = await inferredEntry({ kind: "decision", title: "D" });
     const store = new KnowledgeStore(repoPath(dataDir, ws));
