@@ -107,17 +107,31 @@ async function ask(label, fallback = "") {
 const yes = async label => /^(y|yes)$/i.test(await ask(`${label} (y/N)`, "n"));
 const quote = value => process.platform === "win32" ? `'${value.replaceAll("'", "''")}'` : `'${value.replaceAll("'", "'\\''")}'`;
 
+// Current Node Windows shims assign `%~dp0\node_modules\npm\bin\npm-cli.js` without a quote before `%`.
+const NPM_SHIM_ENTRY = /%(?:~dp0|dp0%)[\\/]([^"'%\r\n]+\.(?:[cm]?js))/i;
+
+export function npmEntryFromShim(source) {
+  return NPM_SHIM_ENTRY.exec(source)?.[1] ?? null;
+}
+
+export function npmCliBeside(dir) {
+  const entry = path.join(dir, "node_modules", "npm", "bin", "npm-cli.js");
+  return existsSync(entry) ? entry : null;
+}
+
 // npm.cmd cannot be execFile'd on Windows. Invoke its JS entry without a shell.
 export function setupCommand(bin, args, env = process.env) {
   if (bin !== "npm" || process.platform !== "win32") return { bin, args };
   if (env.npm_execpath && /npm-cli\.js$/i.test(env.npm_execpath) && existsSync(env.npm_execpath)) return { bin: process.execPath, args: [env.npm_execpath, ...args] };
   const search = Object.entries(env).find(([key]) => key.toLowerCase() === "path")?.[1] ?? "";
-  for (const dir of [path.dirname(process.execPath), ...search.split(path.delimiter)]) {
+  for (const dir of [path.dirname(process.execPath), ...search.split(";")]) {
+    const bundled = npmCliBeside(dir);
+    if (bundled) return { bin: process.execPath, args: [bundled, ...args] };
     const shim = path.join(dir, "npm.cmd");
     if (!existsSync(shim)) continue;
-    const match = /"%(?:dp0%|~dp0)[\\/]([^"\r\n]+\.(?:[cm]?js))"/i.exec(readFileSync(shim, "utf8"));
-    if (!match) continue;
-    const entry = path.resolve(dir, match[1]);
+    const rel = npmEntryFromShim(readFileSync(shim, "utf8"));
+    if (!rel) continue;
+    const entry = path.resolve(dir, rel);
     if (existsSync(entry)) return { bin: process.execPath, args: [entry, ...args] };
   }
   throw new Error("npm is missing. Install Node.js with npm, then reopen the terminal.");

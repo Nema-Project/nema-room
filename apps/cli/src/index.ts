@@ -21,7 +21,7 @@ import { installReport, REPORT_AGENTS, uninstallReport, type ReportAgent } from 
 
 const nemaHomeDir = () => path.join(os.homedir(), ".nema");
 
-const program = new Command().name("nema").enablePositionalOptions();
+const program = new Command().name("nema").version(cliVersion()).enablePositionalOptions();
 
 program
   .command("daemon")

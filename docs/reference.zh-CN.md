@@ -4,7 +4,7 @@
 
 安装、模型配置、平台限制与数据备份见 [中文 README](../README.zh.md)、[English](../README.en.md)、[日本語](../README.ja.md)。本文保留进阶功能、格式约束和 API 实现说明。
 
-本文的 npx nema 命令仅适用于已安装依赖并构建 CLI 的项目根目录；在其他仓库使用 nema 前，需要先按 README 链接本地 CLI。CLI 当前不作为独立 npm 包发布。
+`nema` 是独立 npm 包。在 Node.js ≥ 22 上按正在运行的 hub 版本安装：`npx nema@<hub 版本>` 或 `npm i -g nema@<hub 版本>`。Compose 用 `curl http://127.0.0.1:4400/api/version` 查看版本；桌面版在侧边栏显示，回环地址提供 `GET /_nema/version`。`nema daemon` 的 `--hub` 默认是 `http://127.0.0.1:4400`，token 文件是 `$NEMA_DATA_DIR` 或 `~/.nema/data` 下的 `daemon-token`（hub 启动时写入；Compose 把该目录挂到容器 `/data`）。开发本仓库时仍可在源码检出里构建并链接本地 CLI。
 
 ## 知识依据与时效
 
