@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { parse } from 'yaml';
+import { classifyPaths } from './policy.mjs';
 const read = name => parse(readFileSync(new URL(`../../.github/workflows/${name}.yml`, import.meta.url), 'utf8'));
 const checkout = job => job.steps.filter(s => s.uses?.startsWith('actions/checkout@'));
 const expr = value => value?.replace(/^\$\{\{\s*|\s*\}\}$/g, '').trim();
@@ -225,6 +226,23 @@ test('release gates bind all stages to one SHA and fail closed on verification r
   const release = read('desktop-release'); assertRelease(release);
   const wrongRef=structuredClone(release); checkout(wrongRef.jobs.build)[0].with.ref='main'; assert.throws(()=>assertRelease(wrongRef));
   const missingVerify=structuredClone(release); missingVerify.jobs.publish.needs=['plan','build']; assert.throws(()=>assertRelease(missingVerify));
+});
+
+test('desktop pull request paths stay equal to the policy desktop class', () => {
+  assert.deepEqual(read('desktop-release').on.pull_request.paths, ['apps/desktop/**', 'scripts/desktop/**']);
+  assert.equal(classifyPaths(['apps/desktop/package.json']).desktop, true);
+  assert.equal(classifyPaths(['scripts/desktop/smoke-desktop.test.mjs']).desktop, true);
+  assert.equal(classifyPaths(['package-lock.json']).desktop, false);
+  assert.equal(classifyPaths(['apps/web/app/page.tsx']).desktop, false);
+});
+
+test('image smoke paths are fixed and the workflow is not invented', () => {
+  for (const path of ['Dockerfile', 'docker-compose.yml', 'docker-compose.build.yml', 'scripts/images/smoke-compose.mjs', '.github/workflows/image-publish.yml']) {
+    assert.equal(classifyPaths([path]).image, true, path);
+  }
+  assert.equal(classifyPaths(['apps/web/app/page.tsx']).image, false);
+  const workflow = new URL('../../.github/workflows/image-publish.yml', import.meta.url);
+  assert.equal(existsSync(workflow), false);
 });
 
 test('actual publication shell refuses a tag moved during upload before making the draft public', t => {
