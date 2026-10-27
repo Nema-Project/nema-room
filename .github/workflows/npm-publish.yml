@@ -131,7 +131,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - name: Install an npm CLI that supports trusted publishing
         run: npm install -g npm@11.6.2
-      - name: Confirm the tag still points at the verified commit
+      - name: Confirm the tag and publish the packed tarball
         shell: bash
         env:
           TAG: ${{ github.ref_name }}
@@ -154,11 +154,15 @@ jobs:
           fi
           git -C gate "${auth[@]}" fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
           git -C gate merge-base --is-ancestor "$SHA" refs/remotes/origin/main
-          node artifact/scripts/npm/check-tag.mjs "$TAG"
-      - name: Publish the packed tarball
-        shell: bash
-        run: |
-          set -euo pipefail
+          meta=$(node artifact/scripts/npm/check-tag.mjs "$TAG")
+          dist=$(node -e 'const tag=JSON.parse(process.argv[1]).distTag; if(tag!=="latest"&&tag!=="next") throw new Error("unexpected dist-tag"); process.stdout.write(tag)' "$meta")
+          # The tag can move after the check above. Fetch it again in this same step, immediately before publish.
+          git -C gate "${auth[@]}" fetch --no-tags origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          got=$(git -C gate rev-parse "refs/tags/${TAG}^{}")
+          if [ "$got" != "$SHA" ]; then
+            echo "tag moved: ${TAG} is ${got}, expected ${SHA}" >&2
+            exit 1
+          fi
           tarball=$(find artifact/dist-npm -name 'nema-*.tgz' | head -n 1)
           test -n "$tarball"
-          npm publish --provenance --access public "$tarball"
+          npm publish --provenance --access public --tag "$dist" "$tarball"

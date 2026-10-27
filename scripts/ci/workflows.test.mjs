@@ -134,6 +134,11 @@ test('npm publish uses OIDC on a verified tag and skips a dry run', () => {
   assert.match(runs, /check-tag\.mjs/);
   assert.match(runs, /merge-base --is-ancestor/);
   assert.match(runs, /refs\/heads\/main/);
+  const publishStep = publish.steps.find((step) => (step.run ?? '').includes('npm publish'));
+  const publishAt = publishStep.run.lastIndexOf('npm publish');
+  const recheckAt = publishStep.run.lastIndexOf('tag moved');
+  assert.ok(recheckAt !== -1 && recheckAt < publishAt);
+  assert.match(publishStep.run, /--tag "\$dist"/);
   assert.match(runs, /npm publish --provenance --access public/);
   assert.doesNotMatch(runs, /npm ci|cli:pack|npm run build/);
   const context = (event, verifyResult) => ({ github: { event_name: event }, needs: { verify: { result: verifyResult }, build: { result: 'success' } } });

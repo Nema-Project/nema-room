@@ -37,7 +37,7 @@ Pushing a `v*` tag whose commit is on protected `main` runs `.github/workflows/n
 
 1. `verify.yml` must pass on that exact SHA.
 2. The build job has no `id-token` permission. It runs `npm run cli:pack`, smokes the tarball, and uploads that tarball.
-3. The publish job downloads the tarball. It does not check out the source, run `npm ci`, or build. It checks that the tag still points at the verified SHA, that the commit is an ancestor of `origin/main`, and that `node scripts/npm/check-tag.mjs` accepts the tag. It then runs `npm publish --provenance --access public` on the downloaded tarball.
+3. The publish job downloads the tarball. It does not check out the source, run `npm ci`, or build. It checks that the tag still points at the verified SHA, that the commit is an ancestor of `origin/main`, and that `node scripts/npm/check-tag.mjs` accepts the tag. It fetches the tag once more in that same step and aborts if the tag moved. It then runs `npm publish --provenance --access public` on the downloaded tarball. A stable tag uses the `latest` dist-tag. A prerelease tag uses `next` and does not move `latest`.
 
 `workflow_dispatch` packs and smokes the tarball and does not publish.
 

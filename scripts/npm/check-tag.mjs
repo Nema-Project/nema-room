@@ -25,7 +25,8 @@ export function assertReleaseTrio(tag, versions) {
     throw new Error(`cli, desktop, and local versions differ: ${mismatches.join(', ')}`);
   }
   try {
-    return readReleaseVersion(tag, cli);
+    const release = readReleaseVersion(tag, cli);
+    return { ...release, distTag: release.prerelease ? 'next' : 'latest' };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`${message} (cli ${cli}, desktop ${desktop}, local ${local})`);

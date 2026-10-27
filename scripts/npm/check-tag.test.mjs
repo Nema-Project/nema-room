@@ -21,8 +21,10 @@ async function rootWith(t, versions) {
 
 test('matching cli, desktop, and local versions accept a strict tag', () => {
   const versions = { cli: '1.2.3', desktop: '1.2.3', local: '1.2.3' };
-  assert.deepEqual(assertReleaseTrio('v1.2.3', versions), { version: '1.2.3', prerelease: false });
-  assert.equal(assertReleaseTrio('v1.2.3-rc.1', { cli: '1.2.3-rc.1', desktop: '1.2.3-rc.1', local: '1.2.3-rc.1' }).prerelease, true);
+  assert.deepEqual(assertReleaseTrio('v1.2.3', versions), { version: '1.2.3', prerelease: false, distTag: 'latest' });
+  assert.deepEqual(assertReleaseTrio('v1.2.3-rc.1', { cli: '1.2.3-rc.1', desktop: '1.2.3-rc.1', local: '1.2.3-rc.1' }), {
+    version: '1.2.3-rc.1', prerelease: true, distTag: 'next',
+  });
 });
 
 test('a mismatched package or a bad tag fails and names the versions', async (t) => {
