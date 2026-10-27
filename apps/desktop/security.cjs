@@ -25,7 +25,26 @@ function validateRuntimeLaunchUrl(value, expectedOrigin) {
   } catch { throw new Error('Local core did not return a verified launch ticket'); }
 }
 
-function createSecureWindowOptions(runtimeOrigin) {
+function usesNativeTrafficLights(platform) {
+  return platform === 'darwin';
+}
+
+// ponytail: Electron 45 hides the traffic lights when the window is frameless and
+// titleBarStyle stays normal. hiddenInset shows them; its built-in margin is (12, 11).
+// 80px in .desktop-titlebar-macos clears that cluster on the 36px bar. If the bar
+// height or the system buttons change, update this point and that padding together.
+const MAC_TRAFFIC_LIGHT_POSITION = Object.freeze({ x: 12, y: 11 });
+
+function secureWindowChrome(platform) {
+  if (!usesNativeTrafficLights(platform)) return { frame: false };
+  return {
+    frame: false,
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: MAC_TRAFFIC_LIGHT_POSITION.x, y: MAC_TRAFFIC_LIGHT_POSITION.y },
+  };
+}
+
+function createSecureWindowOptions(runtimeOrigin, platform = process.platform) {
   if (!parseLoopbackOrigin(runtimeOrigin)) throw new Error('Expected runtime origin is not a canonical loopback origin');
   return {
     width: 1180,
@@ -34,8 +53,8 @@ function createSecureWindowOptions(runtimeOrigin) {
     minHeight: 600,
     show: false,
     title: 'Nema Room',
-    frame: false,
     autoHideMenuBar: true,
+    ...secureWindowChrome(platform),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
@@ -134,4 +153,4 @@ function navigationDecision(value, runtimeOrigin) {
   } catch { return 'block'; }
 }
 
-module.exports = { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, isMainMessageUrl, isThreadWindowUrl, threadWindowIdentity, navigationDecision, validateRuntimeLaunchUrl };
+module.exports = { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, isMainMessageUrl, isThreadWindowUrl, threadWindowIdentity, navigationDecision, usesNativeTrafficLights, validateRuntimeLaunchUrl };

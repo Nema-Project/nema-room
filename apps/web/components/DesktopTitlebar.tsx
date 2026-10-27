@@ -4,15 +4,21 @@ import { useEffect, useSyncExternalStore } from "react";
 import Image from "next/image";
 import { useT } from "@/lib/i18n";
 
-type WindowState = { maximized: boolean };
+type WindowState = { maximized: boolean; fullScreen?: boolean };
 type WindowControls = {
+  nativeTrafficLights?: boolean;
   minimize: () => Promise<void>;
   toggleMaximize: () => Promise<void>;
   close: () => Promise<void>;
   getState: () => Promise<WindowState>;
   onStateChanged: (callback: (state: WindowState) => void) => () => void;
 };
-type DesktopSnapshot = WindowState & { controls: WindowControls };
+type DesktopSnapshot = { maximized: boolean; fullScreen: boolean; controls: WindowControls };
+
+/** Custom min/max/close buttons are the Windows and Linux chrome. macOS uses system traffic lights. */
+export function showsCustomWindowButtons(nativeTrafficLights: boolean | undefined): boolean {
+  return nativeTrafficLights !== true;
+}
 
 declare global {
   interface Window { nemaWindowControls?: WindowControls }
@@ -31,14 +37,14 @@ function subscribe(callback: () => void) {
   if (subscribers.size === 1) {
     const controls = window.nemaWindowControls;
     if (controls) {
-      snapshot = { controls, maximized: false };
+      snapshot = { controls, maximized: false, fullScreen: false };
       stateUnsubscribe = controls.onStateChanged((state) => {
-        snapshot = { controls, maximized: state.maximized };
+        snapshot = { controls, maximized: state.maximized, fullScreen: state.fullScreen === true };
         notify();
       });
       void controls.getState().then((state) => {
         if (snapshot?.controls !== controls) return;
-        snapshot = { controls, maximized: state.maximized };
+        snapshot = { controls, maximized: state.maximized, fullScreen: state.fullScreen === true };
         notify();
       }).catch(() => undefined);
     }
@@ -61,6 +67,8 @@ export function DesktopTitlebar() {
   const current = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const controls = current?.controls ?? null;
   const maximized = current?.maximized ?? false;
+  const fullScreen = current?.fullScreen === true;
+  const customButtons = showsCustomWindowButtons(controls?.nativeTrafficLights);
 
   useEffect(() => {
     if (!controls) return;
@@ -71,10 +79,11 @@ export function DesktopTitlebar() {
   }, [controls]);
 
   if (!controls) return null;
+  const className = ["desktop-titlebar", customButtons ? "" : "desktop-titlebar-macos", !customButtons && fullScreen ? "desktop-titlebar-fullscreen" : ""].filter(Boolean).join(" ");
   return (
-    <header className="desktop-titlebar" aria-label={t("window.titlebar")} onDoubleClick={() => void controls.toggleMaximize()}>
+    <header className={className} aria-label={t("window.titlebar")} onDoubleClick={customButtons ? () => void controls.toggleMaximize() : undefined}>
       <span className="desktop-titlebar-brand"><Image src="/nema-room-mark.svg" width={20} height={20} alt="" unoptimized />Nema Room</span>
-      <div className="desktop-titlebar-controls" onDoubleClick={(event) => event.stopPropagation()}>
+      {customButtons ? <div className="desktop-titlebar-controls" onDoubleClick={(event) => event.stopPropagation()}>
         <button className="desktop-titlebar-button" type="button" aria-label={t("window.minimize")} title={t("window.minimize")} onClick={() => void controls.minimize().catch(() => undefined)}>
           <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 8.5h8" /></svg>
         </button>
@@ -84,7 +93,7 @@ export function DesktopTitlebar() {
         <button className="desktop-titlebar-button desktop-titlebar-close" type="button" aria-label={t("window.close")} title={t("window.close")} onClick={() => void controls.close().catch(() => undefined)}>
           <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 3 6 6m0-6L3 9" /></svg>
         </button>
-      </div>
+      </div> : null}
     </header>
   );
 }
