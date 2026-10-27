@@ -1,0 +1,319 @@
+name: Image publish
+
+# Hub and web images publish only from a v<SemVer> tag whose commit passed verify.
+# workflow_dispatch builds and smokes the same commit and stops before GHCR.
+# The publish job copies the build job's OCI layout. It does not install the
+# workspace or build an image. A stable release also moves the latest tag.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      verify_full:
+        description: Run complete verification before a nonpublishing rehearsal
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One run per ref. A tag run is never cancelled, so a second attempt waits.
+concurrency:
+  group: image-publish-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  # Every action below is pinned to a full commit SHA; the comment records the tag it was resolved from.
+  # actions/checkout             3d3c42e5aac5ba805825da76410c181273ba90b1  v7.0.1
+  # actions/setup-node           949feb2413d6458794dcd2491c4babbbce0c15c1  v7.1.0
+  # actions/upload-artifact      cf430e030ddbb5b0abf93d22962f4752f3646cd9  v7.0.2
+  # actions/download-artifact    9000827ccba6bdab643e8b6fd33ac0654aef8333  v8.0.2
+  # docker/setup-buildx-action   f87e5991a6d7451dcb8d9637bfbc97413f497069  v4.4.1
+  # docker/login-action          81c6f93d4bc991e510b342a00b419b3bb4efc5c6  v4.7.0
+  NODE_VERSION: 22
+  CRANE_VERSION: 0.22.1
+  CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+
+jobs:
+  plan:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.commit.outputs.commit }}
+      verification_required: ${{ steps.commit.outputs.verification_required }}
+      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Resolve immutable release commit
+        id: commit
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          TAG_REF: ${{ github.ref }}
+          EVENT_COMMIT: ${{ github.sha }}
+          VERIFY_FULL: ${{ inputs.verify_full }}
+        run: |
+          set -euo pipefail
+          commit="$EVENT_COMMIT"
+          required=false
+          if [ "$EVENT" = "push" ] && [ "$REF_TYPE" = "tag" ]; then
+            git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+            git fetch --no-tags origin "+${TAG_REF}:${TAG_REF}"
+            commit=$(node scripts/desktop/release-commit.mjs "$TAG_REF" refs/remotes/origin/main)
+            if [ "$commit" != "$EVENT_COMMIT" ]; then
+              echo 'Tag moved since the triggering event; refusing publication.' >&2
+              exit 1
+            fi
+            required=true
+          elif [ "$VERIFY_FULL" = "true" ]; then
+            required=true
+          fi
+          test "$(git rev-parse HEAD)" = "$commit"
+          echo "Verified checkout candidate: $commit"
+          {
+            echo "commit=$commit"
+            echo "verification_required=$required"
+          } >> "$GITHUB_OUTPUT"
+      - name: Image helper tests
+        run: node --test scripts/desktop/release-commit.test.mjs scripts/images/*.test.mjs
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "push" ] && [ "$REF_TYPE" = "tag" ]; then
+            result=$(node scripts/desktop/release-version.mjs "$REF_NAME")
+            node scripts/images/check-images.mjs "$REF_NAME"
+            {
+              echo "release=true"
+              echo "version=$(node -p "JSON.parse(process.argv[1]).version" "$result")"
+              echo "prerelease=$(node -p "JSON.parse(process.argv[1]).prerelease" "$result")"
+            } >> "$GITHUB_OUTPUT"
+          else
+            version=$(node -p "require('./apps/desktop/package.json').version")
+            node scripts/images/check-images.mjs
+            {
+              echo "release=false"
+              echo "version=$version"
+              echo "prerelease=false"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+  verify:
+    needs: plan
+    if: needs.plan.outputs.verification_required == 'true'
+    uses: ./.github/workflows/verify.yml
+    with:
+      checkout_ref: ${{ needs.plan.outputs.commit }}
+
+  build:
+    name: Build and smoke images
+    needs: [plan, verify]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' &&
+          (needs.verify.result == 'success' ||
+           (needs.plan.outputs.verification_required == 'false' && needs.verify.result == 'skipped')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.plan.outputs.commit }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver: docker-container
+      - name: Install crane
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="go-containerregistry_Linux_x86_64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/${archive}"
+          echo "${CRANE_SHA256}  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" crane
+      - name: Build OCI layouts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/oci"
+          build_target() {
+            target="$1"
+            name="nema-room-${target}"
+            dest="$RUNNER_TEMP/oci/${name}.tar"
+            args=(
+              --platform linux/amd64
+              --provenance=mode=max
+              --sbom=true
+              --build-arg "IMAGE_VERSION=${VERSION}"
+              --target "$target"
+              --output "type=oci,dest=${dest}"
+            )
+            if [ "$target" = "web" ]; then
+              args+=(--build-arg "NEXT_PUBLIC_HUB_URL=http://127.0.0.1:4400")
+            fi
+            docker buildx build "${args[@]}" .
+          }
+          build_target hub
+          build_target web
+      - name: Load the same layouts and check their size
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The docker exporter cannot write a provenance index. Load this build's OCI
+          # layout through a localhost registry so the smoke uses the bytes that publish.
+          docker rm -f nema-layout-registry >/dev/null 2>&1 || true
+          docker run -d --name nema-layout-registry -p 127.0.0.1:55000:5000 \
+            registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+          ready=0
+          attempt=0
+          while [ "$attempt" -lt 30 ]; do
+            attempt=$((attempt + 1))
+            if curl -fsS http://127.0.0.1:55000/v2/ >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+          for target in hub web; do
+            name="nema-room-${target}"
+            layout="$RUNNER_TEMP/layout/${name}"
+            rm -rf "$layout"
+            mkdir -p "$layout"
+            tar -xf "$RUNNER_TEMP/oci/${name}.tar" -C "$layout"
+            "$RUNNER_TEMP/crane" push --index --insecure "$layout" "localhost:55000/${name}:${VERSION}"
+            docker pull "localhost:55000/${name}:${VERSION}"
+            docker tag "localhost:55000/${name}:${VERSION}" "ghcr.io/nema-project/${name}:${VERSION}"
+          done
+          docker rm -f nema-layout-registry
+          docker image inspect --format '{{.Size}}' "ghcr.io/nema-project/nema-room-hub:${VERSION}" >"$RUNNER_TEMP/hub.size"
+          docker image inspect --format '{{.Size}}' "ghcr.io/nema-project/nema-room-web:${VERSION}" >"$RUNNER_TEMP/web.size"
+          node scripts/images/check-images.mjs --budget hub "$(tr -d '[:space:]' <"$RUNNER_TEMP/hub.size")" web "$(tr -d '[:space:]' <"$RUNNER_TEMP/web.size")"
+      - name: Smoke the loaded images
+        shell: bash
+        run: node scripts/images/smoke-compose.mjs --pull never
+      - name: Upload OCI layouts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nema-image-layouts
+          path: ${{ runner.temp }}/oci/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish images
+    needs: [plan, verify, build]
+    if: >-
+      ${{ !cancelled() && github.event_name == 'push' && needs.plan.outputs.release == 'true' &&
+          needs.plan.result == 'success' && needs.verify.result == 'success' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ github.ref_name }}
+      RELEASE_COMMIT: ${{ needs.plan.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.plan.outputs.commit }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Download OCI layouts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nema-image-layouts
+          path: oci
+      - name: Install crane
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="go-containerregistry_Linux_x86_64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/${archive}"
+          echo "${CRANE_SHA256}  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" crane
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push the verified layouts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_SHA" = "$RELEASE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          node scripts/desktop/release-commit.mjs --verify-remote "refs/tags/${TAG}" "$RELEASE_COMMIT"
+          node scripts/images/check-images.mjs "$TAG"
+          for target in hub web; do
+            name="nema-room-${target}"
+            layout="$RUNNER_TEMP/layout/${name}"
+            rm -rf "$layout"
+            mkdir -p "$layout"
+            tar -xf "oci/${name}.tar" -C "$layout"
+            "$RUNNER_TEMP/crane" push --index "$layout" "ghcr.io/nema-project/${name}:${VERSION}"
+          done
+      - name: Move latest for a stable release
+        if: needs.plan.outputs.prerelease == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/desktop/release-commit.mjs --verify-remote "refs/tags/${TAG}" "$RELEASE_COMMIT"
+          for target in hub web; do
+            name="nema-room-${target}"
+            "$RUNNER_TEMP/crane" tag "ghcr.io/nema-project/${name}:${VERSION}" latest
+          done
+
+  smoke:
+    name: Pull published images
+    needs: [plan, publish]
+    if: needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.plan.outputs.commit }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull pinned images
+        run: docker compose pull
+      - name: Smoke the pulled images
+        shell: bash
+        run: node scripts/images/smoke-compose.mjs --pull always

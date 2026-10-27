@@ -137,3 +137,59 @@ esac
   git('--git-dir='+env.REMOTE,'update-ref','refs/tags/v1.2.3',commit);env.MOVE_TAG='false';
   result=run();assert.equal(result.status,0,result.stderr);assert.equal(existsSync(env.PUBLISH_MARKER),true);
 });
+
+function assertPinnedUses(doc) {
+  const walk = (node) => {
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (!node || typeof node !== 'object') return;
+    if (typeof node.uses === 'string' && !node.uses.startsWith('./')) {
+      assert.match(node.uses, /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
+    }
+    for (const value of Object.values(node)) walk(value);
+  };
+  walk(doc);
+}
+
+test('image publish pushes pinned GHCR images only after verify, and only from the publish job', () => {
+  const image = read('image-publish');
+  assert.deepEqual(Object.keys(image.on).sort(), ['push', 'workflow_dispatch']);
+  assert.deepEqual(image.on.push.tags, ['v*']);
+  assert.equal(image.on.pull_request, undefined);
+  assert.equal(image.permissions.contents, 'read');
+  assert.equal(image.permissions.packages, undefined);
+  assertRelease(image);
+  assert.equal(image.jobs.build.permissions?.packages, undefined);
+  assert.deepEqual(image.jobs.publish.permissions, {contents: 'read', packages: 'write'});
+  assert.deepEqual([...image.jobs.smoke.needs].sort(), ['plan', 'publish']);
+  assert.deepEqual(image.jobs.smoke.permissions, {contents: 'read', packages: 'read'});
+  assert.equal(expr(image.jobs.smoke.if), "needs.publish.result == 'success'");
+  for (const result of ['success', 'failure', 'cancelled', 'skipped', '']) {
+    assert.equal(condition(image.jobs.smoke.if, {needs: {publish: {result}}}), result === 'success');
+  }
+  const buildText = image.jobs.build.steps.map((step) => `${step.name ?? ''}\n${step.run ?? ''}`).join('\n');
+  assert.match(buildText, /linux\/amd64/);
+  assert.match(buildText, /provenance=mode=max/);
+  assert.match(buildText, /sbom=true/);
+  assert.match(buildText, /--pull never/);
+  const publishText = image.jobs.publish.steps.map((step) => step.run ?? '').join('\n');
+  assert.doesNotMatch(publishText, /docker build/);
+  assert.doesNotMatch(publishText, /npm ci/);
+  assert.match(publishText, /release-commit\.mjs --verify-remote/);
+  assert.match(publishText, /push --index/);
+  const latest = image.jobs.publish.steps.find((step) => (step.run ?? '').includes('latest'));
+  assert.equal(expr(latest.if), "needs.plan.outputs.prerelease == 'false'");
+  const smokeText = image.jobs.smoke.steps.map((step) => step.run ?? '').join('\n');
+  assert.match(smokeText, /docker compose pull/);
+  assert.match(smokeText, /scripts\/images\/smoke-compose\.mjs/);
+  assert.match(smokeText, /--pull always/);
+  assert.doesNotMatch(smokeText, /docker build/);
+  const raw = readFileSync(new URL('../../.github/workflows/image-publish.yml', import.meta.url), 'utf8');
+  assert.equal(raw.includes('id-token'), false);
+  assert.deepEqual([...new Set(raw.match(/secrets\.[A-Za-z0-9_]+/g) ?? [])], ['secrets.GITHUB_TOKEN']);
+  assertPinnedUses(image);
+  const verifyRaw = readFileSync(new URL('../../.github/workflows/verify.yml', import.meta.url), 'utf8');
+  assert.match(verifyRaw, /scripts\/images\/\*\.test\.mjs/);
+});
