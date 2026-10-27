@@ -123,6 +123,12 @@ export async function smokeCompose(options, root) {
     const configured = run(['config', '--format', 'json']);
     if (configured.status !== 0) throw new Error(configured.stderr || 'docker compose config failed');
     assertNoBuild(JSON.parse(configured.stdout));
+    // `--pull never` keeps the locally tagged hub and web images. Postgres is not one of
+    // those images, so fetch it alone or a fresh runner has nothing to start.
+    if (options.pull === 'never') {
+      const base = run(['pull', 'postgres']);
+      if (base.status !== 0) throw new Error(base.stderr || base.stdout || 'docker compose pull postgres failed');
+    }
     const up = run(['up', '-d', '--wait', '--wait-timeout', '180', '--pull', options.pull]);
     if (up.status !== 0) throw new Error(up.stderr || up.stdout || 'docker compose up failed');
     const origin = `http://127.0.0.1:${options.webPort}`;

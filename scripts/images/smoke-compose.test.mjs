@@ -32,3 +32,8 @@ test('cleanup always names the compose project', () => {
   assert.match(source, /\['down', '-v'\]/);
   assert.doesNotMatch(source, /compose down -v/);
 });
+
+test('a local smoke still fetches the postgres image', () => {
+  assert.match(source, /options\.pull === 'never'/);
+  assert.match(source, /\['pull', 'postgres'\]/);
+});
