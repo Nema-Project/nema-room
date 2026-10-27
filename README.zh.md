@@ -96,16 +96,16 @@ node scripts/setup.mjs --lang zh
 
 [手动安装与配置](docs/guide.zh.md#source-installation) · 只检查环境：`node scripts/setup.mjs --lang zh --check`
 
-第一次发布之后，安装与正在运行的 hub 相同的版本（Node.js ≥ 22）：
+宿主机 daemon 是 npm 包 `@nema-project/nema`（Node.js ≥ 22），命令名是 `nema`。第一次发布之前它还不在 npm 上，步骤见 `scripts/npm/RELEASE.md`。发布之后，安装与正在运行的 hub 相同的版本：
 
 ```sh
-npx nema@<hub 版本> --version
-npm i -g nema@<hub 版本>
+npx @nema-project/nema@<hub 版本> --version
+npm i -g @nema-project/nema@<hub 版本>
 ```
 
-Compose 在 `http://127.0.0.1:4400/api/version` 返回该版本。桌面版在侧边栏显示版本，其回环地址也提供 `GET /_nema/version`。版本不一致时 daemon 会打印 `run: npm i -g nema@<版本>` 并且不再重连。`nema daemon` 的 `--hub` 默认是 `http://127.0.0.1:4400`，token 文件是 `$NEMA_DATA_DIR` 或 `~/.nema/data` 下的 `daemon-token`。hub 启动时写入该文件。Compose 把宿主机数据目录挂到容器的 `/data`。
+Compose 在 `http://127.0.0.1:4400/api/version` 返回该版本。桌面版在侧边栏显示版本，其回环地址也提供 `GET /_nema/version`。版本不一致时 daemon 会打印 `run: npm i -g @nema-project/nema@<版本>` 并且不再重连。`nema daemon` 的 `--hub` 默认是 `http://127.0.0.1:4400`，token 文件是 `$NEMA_DATA_DIR` 或 `~/.nema/data` 下的 `daemon-token`。hub 启动时写入该文件。Compose 把宿主机数据目录挂到容器的 `/data`。
 
-开发本仓库仍使用上面的源码安装。不要安装不带版本的 `nema` 并假定它与 hub 一致。
+开发本仓库仍使用上面的源码安装。不要安装不带版本的 `@nema-project/nema` 并假定它与 hub 一致。
 
 ## 从讨论到交付
 

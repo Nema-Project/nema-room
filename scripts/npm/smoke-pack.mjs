@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -40,17 +40,29 @@ export function bumpPatch(version) {
   return `${match[1]}.${match[2]}.${Number(match[3]) + 1}${match[4]}`;
 }
 
+export function localTarballArg(tarball) {
+  if (path.isAbsolute(tarball)) return tarball;
+  const spec = String(tarball).replace(/\\/g, '/');
+  if (spec.startsWith('./') || spec.startsWith('../')) return spec;
+  return `./${spec}`;
+}
+
+export function installedBin(installDir) {
+  const name = process.platform === 'win32' ? 'nema.cmd' : 'nema';
+  return path.join(installDir, 'node_modules', '.bin', name);
+}
+
 export async function bumpInstalledPackage(installDir) {
-  const file = path.join(installDir, 'node_modules', 'nema', 'package.json');
+  const file = path.join(installDir, 'node_modules', '@nema-project', 'nema', 'package.json');
   const pkg = JSON.parse(await readFile(file, 'utf8'));
   pkg.version = bumpPatch(pkg.version);
   await writeFile(file, `${JSON.stringify(pkg, null, 2)}\n`);
   return pkg.version;
 }
 
-function runNode(entry, args, cwd) {
-  const result = spawnSync(process.execPath, [entry, ...args], { cwd, encoding: 'utf8' });
-  if (result.status !== 0) throw new Error(result.stderr || result.stdout || `${entry} failed`);
+function runBin(bin, args, cwd) {
+  const result = spawnSync(bin, args, { cwd, encoding: 'utf8', shell: process.platform === 'win32', windowsHide: true });
+  if (result.status !== 0) throw new Error(result.stderr || result.stdout || `${bin} failed`);
   return result.stdout;
 }
 
@@ -99,27 +111,33 @@ export async function smokePack(options, { cliVersion = undefined, timeoutMs = 2
   const expected = cliVersion ?? JSON.parse(await readFile(path.join(repoRoot, 'apps/cli/package.json'), 'utf8')).version;
   const root = await mkdtemp(path.join(tmpdir(), 'nema-pack-smoke-'));
   await writeFile(path.join(root, 'package.json'), `${JSON.stringify({ name: 'nema-pack-smoke', private: true })}\n`);
-  const npm = setupCommand('npm', ['install', '--ignore-scripts', '--no-fund', '--no-audit', path.resolve(options.tarball)]);
+  const source = path.resolve(options.tarball);
+  const packedName = path.basename(source);
+  await copyFile(source, path.join(root, packedName));
+  const spec = localTarballArg(packedName);
+  const npm = setupCommand('npm', ['install', '--ignore-scripts', '--no-fund', '--no-audit', spec]);
   const installed = spawnSync(npm.bin, npm.args, { cwd: root, encoding: 'utf8' });
   if (installed.status !== 0) throw new Error(installed.stderr || installed.stdout || installed.error?.message || 'npm install failed');
-  const entry = path.join(root, 'node_modules', 'nema', 'dist', 'index.js');
-  const printed = runNode(entry, ['--version'], root);
+  const bin = installedBin(root);
+  const printed = runBin(bin, ['--version'], root);
   if (!options.expectSkew) assertVersion(printed, expected);
   process.stdout.write(`nema --version ${printed.trim()}\n`);
-  const installJs = path.join(root, 'node_modules', 'nema', 'dist', 'report', 'install.js');
+  const installJs = path.join(root, 'node_modules', '@nema-project', 'nema', 'dist', 'report', 'install.js');
   const skill = fileURLToPath(new URL('../../src/report/SKILL.md', pathToFileURL(installJs)));
   await readFile(skill, 'utf8');
   if (options.expectSkew) await bumpInstalledPackage(root);
   if (!options.hubUrl) return { root, version: printed.trim() };
-  const child = spawn(process.execPath, [entry, 'daemon', '--hub', options.hubUrl, '--token-file', options.tokenFile], {
+  const child = spawn(bin, ['daemon', '--hub', options.hubUrl, '--token-file', options.tokenFile], {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
+    shell: process.platform === 'win32',
+    windowsHide: true,
   });
   try {
-    const pattern = options.expectSkew ? /run: npm i -g nema@\d+\.\d+\.\d+/ : /\[nema\] daemon connected to /;
+    const pattern = options.expectSkew ? /run: npm i -g @nema-project\/nema@\d+\.\d+\.\d+/ : /\[nema\] daemon connected to /;
     const output = await waitForOutput(child, pattern, timeoutMs);
     if (options.expectSkew && output.includes('[nema] daemon connected to ')) throw new Error(`skewed daemon was welcomed:\n${output}`);
-    if (!options.expectSkew && /run: npm i -g nema@/.test(output)) throw new Error(`matching daemon was rejected:\n${output}`);
+    if (!options.expectSkew && /run: npm i -g @nema-project\/nema@/.test(output)) throw new Error(`matching daemon was rejected:\n${output}`);
     return { root, output };
   } finally {
     await stop(child);

@@ -22,5 +22,5 @@ export function readHubReleaseVersion(start = path.dirname(fileURLToPath(import.
 }
 
 export function versionSkewMessage(hubVersion: string): string {
-  return `hub 与 nema CLI 版本不一致（hub ${hubVersion}），请安装 nema@${hubVersion}`;
+  return `hub 与 nema CLI 版本不一致（hub ${hubVersion}），请安装 @nema-project/nema@${hubVersion}`;
 }

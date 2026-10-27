@@ -34,6 +34,6 @@ English: this repository is public and desktop preview releases are available. R
 
 ## 支持的版本
 
-当前支持桌面预览版本、npm 包 `nema`（与同一 tag 的桌面版版本号一致），以及 `main` 源码的 Web / Compose 运行方式。修复首先进入 `main`，随后在新的桌面版本和对应的 `nema` 版本中分发；不承诺对历史发布系列回移修复，也没有独立的安全维护分支。
+当前支持桌面预览版本、npm 包 `@nema-project/nema`（命令名 `nema`，与同一 tag 的桌面版版本号一致），以及 `main` 源码的 Web / Compose 运行方式。修复首先进入 `main`，随后在新的桌面版本和对应的 `@nema-project/nema` 版本中分发；不承诺对历史发布系列回移修复，也没有独立的安全维护分支。
 
 Windows 安装包尚未签名；macOS 使用 ad-hoc 签名、未公证。安装、校验和升级限制以 [使用指南](docs/guide.zh.md) 与 [发布检查清单](scripts/desktop/RELEASE.md) 为准；安装包可下载不代表升级或恢复验收已完成。

@@ -27,9 +27,9 @@ export const VERSION_SKEW_ERROR = "hub 与 nema CLI 版本不一致，请同时�
 
 function skewGuidance(message: string): string | null {
   if (!message.includes("版本不一致")) return null;
-  const match = /nema@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/.exec(message);
-  if (match) return `run: npm i -g nema@${match[1]}`;
-  return "run: npm i -g nema@<hub 版本>\n请先查看正在运行的 hub 的版本";
+  const match = /@nema-project\/nema@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/.exec(message);
+  if (match) return `run: npm i -g @nema-project/nema@${match[1]}`;
+  return "run: npm i -g @nema-project/nema@<hub 版本>\n请先查看正在运行的 hub 的版本";
 }
 
 export function connectDaemon(opts: DaemonOpts): { close(): Promise<void> } {

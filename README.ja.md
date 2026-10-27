@@ -96,16 +96,16 @@ clone せずにピン留めしたイメージを pull できるのは、イメ�
 
 [手動インストールと設定](docs/guide.ja.md#source-installation) · 環境の確認のみ：`node scripts/setup.mjs --lang ja --check`
 
-その最初の公開のあと、実行中の hub と同じバージョンを入れます（Node.js ≥ 22）。
+ホストの daemon は npm パッケージ `@nema-project/nema` です（Node.js ≥ 22）。コマンド名は `nema` です。最初の公開までは npm 上にありません。手順は `scripts/npm/RELEASE.md` です。公開のあと、実行中の hub と同じバージョンを入れます。
 
 ```sh
-npx nema@<hub のバージョン> --version
-npm i -g nema@<hub のバージョン>
+npx @nema-project/nema@<hub のバージョン> --version
+npm i -g @nema-project/nema@<hub のバージョン>
 ```
 
-Compose はそのバージョンを `http://127.0.0.1:4400/api/version` で返します。デスクトップ版はサイドバーに表示し、ループバックの `GET /_nema/version` でも読めます。バージョンが違うと daemon は `run: npm i -g nema@<バージョン>` を出して再接続しません。`nema daemon` の `--hub` の既定値は `http://127.0.0.1:4400` で、トークンは `$NEMA_DATA_DIR` または `~/.nema/data` の `daemon-token` です。hub が起動時にそのファイルを書きます。Compose はホストのデータディレクトリを `/data` にマウントします。
+Compose はそのバージョンを `http://127.0.0.1:4400/api/version` で返します。デスクトップ版はサイドバーに表示し、ループバックの `GET /_nema/version` でも読めます。バージョンが違うと daemon は `run: npm i -g @nema-project/nema@<バージョン>` を出して再接続しません。`nema daemon` の `--hub` の既定値は `http://127.0.0.1:4400` で、トークンは `$NEMA_DATA_DIR` または `~/.nema/data` の `daemon-token` です。hub が起動時にそのファイルを書きます。Compose はホストのデータディレクトリを `/data` にマウントします。
 
-このリポジトリの開発は上のソースインストールのままです。バージョンを付けない `nema` を入れて hub と一致するとみなさないでください。
+このリポジトリの開発は上のソースインストールのままです。バージョンを付けない `@nema-project/nema` を入れて hub と一致するとみなさないでください。
 
 ## 議論から実装まで
 
