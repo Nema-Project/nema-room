@@ -109,6 +109,39 @@ function assertRelease(release) {
   }
 }
 
+test('npm publish uses OIDC on a verified tag and skips a dry run', () => {
+  const workflow = read('npm-publish');
+  const source = readFileSync(new URL('../../.github/workflows/npm-publish.yml', import.meta.url), 'utf8');
+  assert.equal(source.includes('NPM_TOKEN'), false);
+  assert.deepEqual(workflow.on.push.tags, ['v*']);
+  assert.ok(Object.hasOwn(workflow.on, 'workflow_dispatch'));
+  assert.equal(workflow.on.pull_request, undefined);
+  assert.equal(workflow.on.workflow_call, undefined);
+  const { verify, build, publish } = workflow.jobs;
+  assert.equal(verify.uses, './.github/workflows/verify.yml');
+  assert.equal(expr(verify.with.checkout_ref), 'github.sha');
+  assert.equal(build.permissions['id-token'], undefined);
+  assert.equal(build.permissions.contents, 'read');
+  assert.equal(expr(checkout(build)[0].with.ref), 'github.sha');
+  assert.ok(build.steps.some((step) => step.uses?.startsWith('actions/upload-artifact@')));
+  assert.deepEqual([...publish.needs].sort(), ['build', 'verify']);
+  assert.equal(publish.permissions['id-token'], 'write');
+  assert.equal(publish.permissions.contents, 'read');
+  assert.deepEqual(Object.keys(publish.permissions).sort(), ['contents', 'id-token']);
+  assert.equal(checkout(publish).length, 0);
+  assert.ok(publish.steps.some((step) => step.uses?.startsWith('actions/download-artifact@')));
+  const runs = publish.steps.map((step) => step.run ?? '').join('\n');
+  assert.match(runs, /check-tag\.mjs/);
+  assert.match(runs, /merge-base --is-ancestor/);
+  assert.match(runs, /refs\/heads\/main/);
+  assert.match(runs, /npm publish --provenance --access public/);
+  assert.doesNotMatch(runs, /npm ci|cli:pack|npm run build/);
+  const context = (event, verifyResult) => ({ github: { event_name: event }, needs: { verify: { result: verifyResult }, build: { result: 'success' } } });
+  assert.equal(condition(publish.if, context('workflow_dispatch', 'success')), false);
+  assert.equal(condition(publish.if, context('push', 'success')), true);
+  assert.equal(condition(publish.if, context('push', 'failure')), false);
+});
+
 test('windows desktop release publishes a separate portable ZIP and still smokes NSIS', () => {
   const release = read('desktop-release');
   const runs = release.jobs.build.steps.map((step) => step.run ?? '').join('\n');
