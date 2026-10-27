@@ -59,6 +59,9 @@ jobs:
       - run: node scripts/setup.mjs --help
       - name: Native credentials, command execution, and authentication
         run: npx vitest run apps/cli/test/platform.test.ts apps/cli/test/secrets/permissions.test.ts apps/cli/test/config.test.ts apps/cli/test/direct/authCommands.test.ts apps/cli/test/claude/adapter.test.ts packages/knowledge/test/store.test.ts packages/knowledge/test/history.test.ts --maxWorkers=2
+      - name: Desktop data upgrade, backup restore, and semantic rubric
+        run: npx vitest run apps/hub/test/upgradeRecovery.test.ts apps/local/test/semanticAcceptance.test.ts --maxWorkers=1
+      - run: node --test scripts/security/reporting-status.test.mjs
 
   test:
     name: Full application tests and web build
@@ -78,6 +81,7 @@ jobs:
       # Spawned test fixtures resolve @nema/* through compiled output, so build it first.
       - run: npm run typecheck
       - run: node --test scripts/ci/*.test.mjs scripts/desktop/release-commit.test.mjs scripts/desktop/release.test.mjs scripts/release-notes.test.mjs
+      - run: node --test scripts/security/reporting-status.test.mjs
       - name: Desktop payload unit tests
         run: |
           node --test scripts/desktop/graphify.test.mjs scripts/desktop/graphify-languages.test.mjs scripts/desktop/payload-size.test.mjs scripts/desktop/fetch-tools.test.mjs scripts/desktop/source-materials.test.mjs scripts/desktop/after-pack.test.mjs

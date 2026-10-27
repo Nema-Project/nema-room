@@ -69,7 +69,7 @@ Download an installer from the [latest release](https://github.com/Nema-Project/
 2. Open **Model settings** and connect a ChatGPT subscription, Claude subscription, or a Responses API-compatible API key. Access and billing depend on the provider.
 3. Create a workspace and start a discussion. Bind a local repository when you want code context.
 
-> **Preview release.** Windows installers are unsigned; macOS builds are ad-hoc signed and not notarized. Verify downloads against the release checksums. There is no auto-update; quit from the tray and back up `~/.nema/desktop` before upgrading. In-place upgrades remain unverified. See the [desktop guide](docs/guide.en.md#desktop) for first launch and limitations.
+> **Preview release.** Windows installers are unsigned; macOS builds are ad-hoc signed and not notarized. Verify downloads against the release checksums. There is no auto-update; quit from the tray and back up `~/.nema/desktop` before upgrading. A disposable data-directory migration and backup restore passed on hosted Windows and macOS runners on 2026-10-27. The same day, the maintainer installed a new package over an existing one on macOS and on Windows; workspace data remained. See the [desktop guide](docs/guide.en.md#desktop) for first launch and limitations.
 
 <a id="first-release-scope-and-requirements"></a>
 
@@ -145,7 +145,7 @@ See [storage, backups, and known limitations](docs/guide.en.md#data). A copy of 
 
 Found a bug or have an idea? [Open an issue](https://github.com/Nema-Project/nema-room/issues/new/choose). Include your OS, installation method, and redacted errors. Contributions in English, Chinese, or Japanese are welcome.
 
-For security concerns, read the [security policy](SECURITY.md). Private reporting availability is still unverified: do not disclose sensitive details in public issues or PRs; until verified, ask only for a private contact route without vulnerability details. Fixes land on main and ship in a subsequent desktop release; older release lines are not separately maintained.
+For security concerns, report through [private vulnerability reporting](https://github.com/Nema-Project/nema-room/security/advisories/new) and read the [security policy](SECURITY.md). Do not disclose sensitive details in public issues or PRs. A signed-in non-admin reached the form on 2026-10-27; the test report was closed the same day without publication. Fixes land on main and ship in a subsequent desktop release; older release lines are not separately maintained.
 
 ---
 

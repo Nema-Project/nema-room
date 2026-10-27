@@ -88,7 +88,7 @@ test("config set rejects unknown keys and invalid values without writing", () =>
 });
 
 test("the daemon's runner registers both adapters, direct first, and defaults to codex-direct", () => {
-  const runner = createRunner({ nemaHome: home, userCodexHome: join(home, "codex"), version: "1.2.3" });
+  const runner = createRunner({ nemaHome: home, userCodexHome: join(home, "codex"), version: "1.2.3", cliEntry: join(home, "index.js") });
   expect(runner.adapterNames).toEqual(["codex-direct", "claude-code"]);
   const t: TaskAssign = { type: "task.assign", taskId: "t", workspaceId: "w", adapter: "auto", confidential: true, prompt: "p", runToken: "r", hubUrl: "http://127.0.0.1:1", pluginTools: [] };
   // no login in the temp home -> the direct adapter answers (and never falls back to codex-cli)

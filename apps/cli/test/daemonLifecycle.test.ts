@@ -53,6 +53,11 @@ test("owner stop waits for adapter teardown and suppresses late events and compl
   expect(completions).toEqual([]);
 });
 
+test("createRunner requires a CLI entry instead of guessing the current script", async () => {
+  const { createRunner } = await import("../src/daemon/setup.js");
+  expect(() => createRunner({ nemaHome: "synthetic-home", userCodexHome: "synthetic-codex", version: "test", cliEntry: "" })).toThrow(/cliEntry is required/);
+});
+
 test("runner setup forwards packaged CLI entry and exec path to Claude MCP launch", async () => {
   claudeConstruction.options = undefined;
   const { createRunner } = await import("../src/daemon/setup.js");
@@ -81,6 +86,7 @@ test("startDaemon close waits for its active runner and socket teardown", async 
   const daemon = startDaemon({
     hubUrl: `http://127.0.0.1:${address.port}`, token: "test", nemaHome: "synthetic-home",
     userCodexHome: "synthetic-codex", version: "test",
+    cliEntry: "C:/packaged/nema/dist/index.js",
     getConfig: () => ({ adapter: "claude-code", reasoningEffort: "medium", authMode: "siwc" }),
   });
   try {

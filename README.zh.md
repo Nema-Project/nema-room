@@ -69,7 +69,7 @@ Nema Room 是一个在本机运行的 AI 需求讨论室。把想法和取舍整
 2. 在**模型设置**中连接 ChatGPT 订阅、Claude 订阅或兼容 Responses API 的 API 密钥。可用性与费用由服务商决定。
 3. 创建工作区，开始讨论；需要代码上下文时，再绑定本机仓库。
 
-> **预览版本。** Windows 安装包未签名，macOS 使用临时签名且未经公证。请按发布页的校验和核对下载。当前没有自动更新；升级前从托盘退出并备份 `~/.nema/desktop`，原地升级尚未验证。首次启动与已知限制见[桌面使用指南](docs/guide.zh.md#desktop)。
+> **预览版本。** Windows 安装包未签名，macOS 使用临时签名且未经公证。请按发布页的校验和核对下载。当前没有自动更新；升级前从托盘退出并备份 `~/.nema/desktop`。2026-10-27 的托管 Windows 与 macOS 运行器已通过一次性数据目录迁移和备份恢复。同日维护者在 macOS 与 Windows 上分别用新安装包覆盖旧安装，workspace 数据均完整。首次启动与已知限制见[桌面使用指南](docs/guide.zh.md#desktop)。
 
 <a id="首版范围与环境要求"></a>
 
@@ -145,7 +145,7 @@ nema wp get W-1
 
 发现问题或有新想法？[提交 issue](https://github.com/Nema-Project/nema-room/issues/new/choose)，附上操作系统、安装方式和脱敏后的错误信息。欢迎使用中文、英文或日文参与贡献。
 
-安全问题请先读 [安全策略](SECURITY.md)。私密报告渠道仍待验证：不要在公开 issue 或 PR 提交敏感详情；验证前只可提出不含漏洞细节的私密联系途径请求。修复进入 main 并在后续桌面版本分发，不承诺维护旧发布系列。
+安全问题请通过 [GitHub 私密漏洞报告](https://github.com/Nema-Project/nema-room/security/advisories/new) 提交，并先读 [安全策略](SECURITY.md)。不要在公开 issue 或 PR 提交敏感详情。read 权限的非管理员已于 2026-10-27 到达该表单；测试报告于同日关闭且未发布。修复进入 main 并在后续桌面版本分发，不承诺维护旧发布系列。
 
 ---
 

@@ -42,6 +42,7 @@
   "dependencies": {
     "@nema/cli": "*",
     "@nema/hub": "*",
+    "@nema/knowledge": "*",
     "hono": "^4.13.13"
   },
   "devDependencies": {

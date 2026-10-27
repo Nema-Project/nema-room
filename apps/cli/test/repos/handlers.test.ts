@@ -797,6 +797,7 @@ test("startDaemon passes the repo router into the daemon connection", async () =
     nemaHome,
     userCodexHome: join(root, "codex"),
     version: "0.0.0",
+    cliEntry: join(root, "index.js"),
     graphify: fake,
     github: missingGithub(nemaHome),
   });

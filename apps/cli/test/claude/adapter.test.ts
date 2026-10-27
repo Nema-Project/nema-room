@@ -162,7 +162,7 @@ describe("ClaudeCodeAdapter", () => {
           type: "system",
           subtype: "init",
           tools: [...CLAUDE_ROOM_TOOLS, "mcp__room__code__read"],
-          mcp_servers: [{ name: "room" }],
+          mcp_servers: [{ name: "room", status: "connected" }],
         }),
         toolLine("mcp__room__code__read"),
         resultLine("读完了"),
@@ -192,7 +192,7 @@ describe("ClaudeCodeAdapter", () => {
           type: "system",
           subtype: "init",
           tools: [...CLAUDE_ROOM_TOOLS, "mcp__room__code__search"],
-          mcp_servers: [{ name: "room" }],
+          mcp_servers: [{ name: "room", status: "connected" }],
         }),
         resultLine("should-not-stick"),
       ],
@@ -206,6 +206,29 @@ describe("ClaudeCodeAdapter", () => {
     expect(existsSync(join(home, "run", assigned.taskId))).toBe(false);
   });
 
+  test("a failed room server fails the task", async () => {
+    const assigned = task("task-room-failed", "tidy-room-failed");
+    const bin = installFake({
+      mode: "lines",
+      argvFile: join(root, "argv-room-failed.json"),
+      lines: [
+        JSON.stringify({
+          type: "system",
+          subtype: "init",
+          tools: [...CLAUDE_ROOM_TOOLS],
+          mcp_servers: [{ name: "room", status: "failed" }],
+        }),
+        resultLine("should-not-stick"),
+      ],
+    });
+
+    const { result, runs } = await runTask(createAdapter(bin), assigned);
+
+    expect(runs).toBe(0);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("工具面");
+  });
+
   test("rejects an init that includes Bash and does not call codex-direct", async () => {
     const assigned = task("task-bad-init", "tidy-bad-init");
     const bin = installFake({
@@ -216,7 +239,7 @@ describe("ClaudeCodeAdapter", () => {
           type: "system",
           subtype: "init",
           tools: [...CLAUDE_ROOM_TOOLS, "Bash"],
-          mcp_servers: [{ name: "room" }],
+          mcp_servers: [{ name: "room", status: "connected" }],
         }),
       ],
     });
@@ -458,7 +481,7 @@ describe("ClaudeCodeAdapter", () => {
           type: "system",
           subtype: "init",
           tools: [...CLAUDE_ROOM_TOOLS, "Bash"],
-          mcp_servers: [{ name: "room" }],
+          mcp_servers: [{ name: "room", status: "connected" }],
         }),
       ],
     });

@@ -2,11 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- A disposable desktop data-directory check covers reopen, a pending migration, a failed migration, and backup restore for chats, threads, work packages, and knowledge Git history. On 2026-10-27 that check passed on hosted Windows and macOS runners ([run 40440137400](https://github.com/Nema-Project/nema-room/actions/runs/40440137400), head `ef87a29`). The same day the maintainer reported a manual overwrite install on macOS and on Windows; workspace data remained on both.
+- A thread semantic acceptance runner scores the scripted memo, decision, open-thread, conflict, and override checks. Rubric unit tests are not a real-model pass. Missing credentials or a connection failure exit as blocked and do not score the rubric. On 2026-10-27, after the harness amendment, Codex direct and Claude each exited 0 twice on Windows (12/12).
+
 ### Security
 
 - Desktop tag publication verifies the exact main-line release commit with the full shared CI suite before packaging; failed or missing verification blocks publication. Manual rehearsals never publish.
 - Every PR reports a stable `CI gate`, with lightweight checks for allowed documentation changes. Repository enforcement remains pending post-merge activation.
-- Public security issue forms are replaced with private-reporting guidance. Channel availability remains explicitly unverified until administration and reporter-access checks succeed.
+- Public security issue forms are replaced with private-reporting guidance. The setting was read as disabled earlier on 2026-10-27, then an administrator enabled it at about 11:52 Asia/Tokyo. A read at 11:54 returned `{"enabled":true}`. The report form is [private vulnerability reporting](https://github.com/Nema-Project/nema-room/security/advisories/new). A signed-in non-admin reached that form on 2026-10-27; the test report was closed the same day without publication.
 
 ### Fixed
 
@@ -18,6 +23,7 @@
 
 ### Changed
 
+- The copilot opens a thread when you ask it to compare options or weigh tradeoffs before a decision. A question-shaped idea, including a request for pros and cons, is not written. Asking to keep something in the discussion does not write knowledge. An undecided comparison does not create a question entry.
 - Desktop payloads leave out Node headers, npm, and Corepack, ship one CPython interpreter, drop an unreferenced macOS `libpython3.11.dylib`, keep a single Chromium license notice, strip source maps, and omit cold tree-sitter grammars plus the sharp image toolchain. Packaging prints section sizes and warns when a budget is exceeded. Missing grammars are skipped with a warning.
 - The landing page links to the latest GitHub release instead of a fixed version number.
 - GitHub release notes lead with that version's changelog. Checksums stay in the attached SHA256SUMS file.

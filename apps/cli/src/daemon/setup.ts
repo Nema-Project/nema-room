@@ -16,15 +16,16 @@ export type RunnerSetup = {
   userCodexHome: string;
   version: string;
   getConfig?: () => NemaConfig;
-  cliEntry?: string;
+  cliEntry: string;
   execPath?: string;
   ownedHelpers?: OwnedHelperScope;
 };
 
 /** The daemon's runner. Codex stays on the direct adapter; Claude Code is selected only when config.adapter is claude-code. */
 export function createRunner(o: RunnerSetup): Runner {
+  if (!o.cliEntry) throw new Error("cliEntry is required");
   const direct = new CodexDirectAdapter({ nemaHome: o.nemaHome, version: o.version, codexHome: o.userCodexHome });
-  const claude = new ClaudeCodeAdapter({ nemaHome: o.nemaHome, cliEntry: o.cliEntry ?? process.argv[1] ?? "", execPath: o.execPath ?? process.execPath, ownedHelpers: o.ownedHelpers });
+  const claude = new ClaudeCodeAdapter({ nemaHome: o.nemaHome, cliEntry: o.cliEntry, execPath: o.execPath ?? process.execPath, ownedHelpers: o.ownedHelpers });
   return new Runner([direct, claude], o.getConfig ?? (() => loadConfig(o.nemaHome)));
 }
 
@@ -35,7 +36,7 @@ export type DaemonStart = {
   userCodexHome: string;
   version: string;
   getConfig?: () => NemaConfig;
-  cliEntry?: string;
+  cliEntry: string;
   execPath?: string;
   /** For tests: production passes the packaged `tools/graphify` binary, not a PATH lookup. */
   graphify?: GraphifyOpts;

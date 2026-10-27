@@ -82,7 +82,7 @@ type StartedDaemon = { close(): void; watcher: { tick(): Promise<void> } };
 type Out = { log(s: string): void; error(s: string): void };
 type SendOpts = { connectMs: number; totalMs: number };
 type CliModules = {
-  startDaemon(o: { hubUrl: string; token: string; nemaHome: string; userCodexHome: string; version: string; graphify: { bin: string } }): StartedDaemon;
+  startDaemon(o: { hubUrl: string; token: string; nemaHome: string; userCodexHome: string; version: string; cliEntry: string; graphify: { bin: string } }): StartedDaemon;
   runReport(o: {
     nemaHome: string;
     hubUrl: string;
@@ -290,7 +290,7 @@ test("a work package goes from request through the grill question, approval, han
     listener = getRequestListener(
       createApp({ db, dataDir, nemaHome, events, daemonStatus: () => attached.isConnected(), daemon: attached.rpc, port }).fetch,
     );
-    daemon = cli.startDaemon({ hubUrl, token: "tok", nemaHome, userCodexHome: path.join(root, "codex"), version: "0.0.0", graphify: { bin: graphify } });
+    daemon = cli.startDaemon({ hubUrl, token: "tok", nemaHome, userCodexHome: path.join(root, "codex"), version: "0.0.0", cliEntry: path.join(root, "index.js"), graphify: { bin: graphify } });
     await waitFor("daemon", async () => attached.isConnected());
     await waitFor("report token", async () => (await db.query(`select 1 from report_tokens`)).length > 0);
     const api = `${hubUrl}/api/workspaces/${workspace.id}`;

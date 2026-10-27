@@ -600,6 +600,7 @@ gitTest("startDaemon sends repo.fetched and repo.moved when tick sees a new sha"
     nemaHome,
     userCodexHome: join(root, "codex"),
     version: "0.0.0",
+    cliEntry: join(root, "index.js"),
     graphify: fake,
   });
   closers.push(() => daemon.close());
@@ -654,6 +655,7 @@ gitTest("startDaemon answers repo.tick at once and then ticks that repo", async 
     nemaHome,
     userCodexHome: join(root, "codex"),
     version: "0.0.0",
+    cliEntry: join(root, "index.js"),
     graphify: fake,
   });
   closers.push(() => daemon.close());

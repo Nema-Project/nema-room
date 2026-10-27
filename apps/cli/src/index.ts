@@ -37,6 +37,7 @@ program
       nemaHome,
       userCodexHome: defaultCodexHome(),
       version: cliVersion(),
+      cliEntry: realpathSync(process.argv[1] ?? fileURLToPath(import.meta.url)),
     });
     console.log(`nema daemon connecting to ${o.hub}`);
   });

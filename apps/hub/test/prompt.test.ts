@@ -72,7 +72,7 @@ describe("buildPrompt", () => {
   });
   test("rules and content", () => {
     const p = base();
-    for (const k of ["room", "sourceMessages", "question", "resolved", "source", "资深架构师 / copilot", "需要来回讨论时调用 `open_thread`"]) expect(p).toContain(k);
+    for (const k of ["room", "sourceMessages", "question", "resolved", "source", "资深架构师 / copilot", "先调用 `open_thread`，在 thread 内讨论"]) expect(p).toContain(k);
     expect(p).toContain("m_999");
     expect(p).toContain("content-999");
     expect(p).toContain("项目甲");
@@ -183,8 +183,10 @@ describe("buildPrompt", () => {
   test("main prompt keeps the must-write rule and offers open_thread", () => {
     const p = base();
     expect(p).toContain("你是这个项目的资深架构师 / copilot");
-    expect(p).toContain("用户清楚陈述或决定的内容必须写入");
-    expect(p).toContain("需要来回讨论时调用 `open_thread`");
+    expect(p).toContain("用户明确陈述或明确决定的内容必须写入");
+    expect(p).toContain("疑问句式的想法（例如「你觉得…？」）和询问优缺点不是陈述，不要写入");
+    expect(p).toContain("用户说记在讨论里或留在 thread 里，是要求不写入知识");
+    expect(p).toContain("用户要求比较方案或权衡利弊、且尚未决定时，先调用 `open_thread`，在 thread 内讨论。");
     expect(p).toContain("新增或更新未解决的追问时，你的回复会被放进 thread，把回复写成开启讨论、提出这个问题的话");
     expect(p).toContain("提案不能标为 `stated` / `decided`");
   });
@@ -332,7 +334,7 @@ describe("buildPrompt", () => {
     buildPrompt({ workspace: ws("follow"), userMessage: msg(999), recentMessages: [], entries, lastAskedQuestion: null, grill });
 
   test("strict and lenient add their line", () => {
-    expect(withGrill({ enabled: true, strictness: "strict", extraRules: "" })).toContain("追问严格程度：严格——任何会影响实现的问题都先问。");
+    expect(withGrill({ enabled: true, strictness: "strict", extraRules: "" })).toContain("追问严格程度：严格——任何会影响实现的问题都先问。比较方案或权衡利弊且尚未决定时，不要新建 question 条目。");
     const lenient = withGrill({ enabled: true, strictness: "lenient", extraRules: "" });
     expect(lenient).toContain("追问严格程度：宽松——只有决策互相冲突时才停下来问，其余写进待确认。");
     expect(lenient).not.toContain("补充追问规则");
@@ -346,7 +348,7 @@ describe("buildPrompt", () => {
   test("grill-me off drops strictness and extra rules but keeps uncertain-to-question", () => {
     const p = withGrill({ enabled: false, strictness: "lenient", extraRules: "涉及付款一律先问" });
     expect(p).toContain("不确定或有歧义时，不要猜，写成 `question` 条目");
-    expect(p).toContain("需要来回讨论时调用 `open_thread`");
+    expect(p).toContain("用户要求比较方案或权衡利弊、且尚未决定时，先调用 `open_thread`，在 thread 内讨论。");
     expect(p).not.toContain("新增或更新未解决的追问时，你的回复会被放进 thread");
     expect(p).not.toContain("追问严格程度");
     expect(p).not.toContain("涉及付款一律先问");

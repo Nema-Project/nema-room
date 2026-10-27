@@ -31,7 +31,7 @@ describe("roomTools", () => {
     });
     expect(tools[3]).toMatchObject({
       name: "open_thread",
-      description: "Move this conversation into a thread anchored on the current message. Use it when the topic needs a longer back-and-forth. Your reply will be posted in the thread.",
+      description: "Move this conversation into a thread anchored on the current message. When the user asks to compare options or weigh tradeoffs and has not decided, call this first and discuss inside the thread. Your reply will be posted in the thread.",
       parameters: { type: "object", properties: { title: { type: "string" } }, required: ["title"], additionalProperties: false },
     });
   });

@@ -55,6 +55,9 @@ test('reusable verification checks the supplied ref with the complete existing s
     }
   }
   assert.deepEqual(verify.jobs.platform.strategy.matrix.os, ['macos-latest','windows-latest']);
+  assert.ok(verify.jobs.platform.steps.some((step) => step.run === 'npx vitest run apps/hub/test/upgradeRecovery.test.ts apps/local/test/semanticAcceptance.test.ts --maxWorkers=1'));
+  assert.ok(verify.jobs.platform.steps.some((step) => step.run === 'node --test scripts/security/reporting-status.test.mjs'));
+  assert.ok(verify.jobs.test.steps.some((step) => step.run === 'node --test scripts/security/reporting-status.test.mjs'));
   const runs = verify.jobs.test.steps.map(s => s.run);
   for (const command of ['npm ci','npm run typecheck','npm test -- --maxWorkers=2','npm run build -w apps/hub','npm run build -w apps/cli','npm run lint -w apps/web','npm run build -w apps/web','npm run setup:check','npm run up','docker compose down']) assert.ok(runs.includes(command), command);
   assert.ok(runs.indexOf('npm run typecheck') < runs.indexOf('npm test -- --maxWorkers=2'));
