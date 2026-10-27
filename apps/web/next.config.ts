@@ -1,10 +1,12 @@
 import type { NextConfig } from "next";
 
 const managedLocalBuild = process.env.NEMA_MANAGED_LOCAL_BUILD === "1";
+const dockerWeb = process.env.NEMA_DOCKER_WEB === "1";
+const standaloneBuild = managedLocalBuild || dockerWeb;
 
 // Developer and Compose builds share the repo-root .env (see .env.example).
-// The managed build runs in a sanitized source snapshot and must not load checkout secrets.
-if (!managedLocalBuild) {
+// Managed and published image builds must not load checkout secrets.
+if (!standaloneBuild) {
   try {
     process.loadEnvFile("../../.env"); // next dev/build run with cwd = apps/web
   } catch {
@@ -15,7 +17,7 @@ if (!managedLocalBuild) {
 const nextConfig: NextConfig = {
   // Next 16 otherwise regenerates apps/web/AGENTS.md on `next dev`.
   agentRules: false,
-  ...(managedLocalBuild
+  ...(standaloneBuild
     ? {
         output: "standalone",
         images: { unoptimized: true },
