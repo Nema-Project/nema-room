@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-27
+
 ### Added
 
 - A disposable desktop data-directory check covers reopen, a pending migration, a failed migration, and backup restore for chats, threads, work packages, and knowledge Git history. On 2026-10-27 that check passed on hosted Windows and macOS runners ([run 40440137400](https://github.com/Nema-Project/nema-room/actions/runs/40440137400), head `ef87a29`). The same day the maintainer reported a manual overwrite install on macOS and on Windows; workspace data remained on both.
@@ -18,7 +20,6 @@
 - On macOS, the desktop window uses the system traffic-light controls in the top-left. The custom minimize, maximize, and close buttons stay on Windows and Linux.
 - Room API writes of user basis (`stated` or `decided`), and reviving any entry from an inactive status (`superseded`, `dropped`, or `resolved`) to `active`, require the current task's user message. The check runs in the same repository lock as the write. A missing or unrelated citation returns 409 `user_basis_evidence`. Re-entering that lock for the same repository throws instead of deadlocking. An entry deleted between the existence check and the locked write returns 404.
 - Knowledge entry updates and rollback replace complete files atomically, preventing concurrent readers from seeing truncated frontmatter.
-
 - The default landing page loads its demo from the site root. English stays at `/`, not `/en/`.
 
 ### Changed

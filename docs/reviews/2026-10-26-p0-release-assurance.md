@@ -1,17 +1,49 @@
 # P0 release assurance execution evidence
 
-Execution: 2026-10-27 (Asia/Tokyo); design dated 2026-10-26. Scope: P0-01, P0-02, P0-05; P0-03/P0-04 remain open.
+Execution: 2026-10-27 (Asia/Tokyo); design dated 2026-10-26. Scope of this execution: P0-01, P0-02, P0-05. P0-03 and P0-04 were outside it; their later status is in the 2026-10-27 review.
 Design/plan: PR #21, base `d92f95b85cd5d63cee67754a03d401d17bcc28e9`. Execution: Native, isolated branch `codex/p0-release-assurance`.
 
 ## Current status
 
-Implementation is in [PR #22](https://github.com/Nema-Project/nema-room/pull/22), under verification. No release tags, releases, advisories or merges were created. Rollout is **not activated**; no deployment SHA exists yet. Code completion is separate from operational acceptance.
+`ROLLOUT_COMMIT` is `2cd05930c34e5bd601a578fbc01a97e28d08401c`, the merge of [PR #22](https://github.com/Nema-Project/nema-room/pull/22) onto `main` at 2026-10-27T02:00:51Z. Parents are `d92f95b85cd5d63cee67754a03d401d17bcc28e9` and `aa2accfaa84f45712947a89aa4aa302493816064`. Tree is `693e2552f983397e6a1284f19d5624abd283e144`. No release tag was created to record this.
+
+Before that merge, this file said rollout was not activated and that no deployment SHA existed. That described the pre-merge execution. From "Local checks" through the end of this file, the text is that execution record, except for the rollout section and the ruleset re-read above.
 
 | Item | Evidence / remaining work |
 | --- | --- |
-| P0-01 | Shared complete suite and immutable tag commit gate implemented; local policy/workflow tests pass. Actions and nonpublishing native rehearsal are recorded below. |
-| P0-02 | Stable `CI gate` implemented; Live docs success and negative gate checks passed; full-suite result recorded below. Required-check activation awaits separately authorized merge and administration access. |
-| P0-05 | Public security form removed and translated guidance corrected. Private reporting enabled state and non-admin reporter access are **unverified/blocked**; issue chooser links to SECURITY.md, not a claimed live private form. |
+| P0-01 | On `main` at `2cd05930c34e5bd601a578fbc01a97e28d08401c`. Full `verify.yml` of the same tree succeeded in [CI 40433303454](https://github.com/Nema-Project/nema-room/actions/runs/40433303454), which checked out pull merge `6b1e984f2e586fd783226216d02586852ce5fa01` (same parents, same tree, different commit). The main SHA has no Actions check runs, and no `verify_full=true` rehearsal was dispatched on it. Desktop [40433303492](https://github.com/Nema-Project/nema-room/actions/runs/40433303492) smoked both targets and skipped `verify` and Publish. |
+| P0-02 | Stable `CI gate` implemented; Live docs success and negative gate checks passed; full-suite result recorded below. A 2026-10-27 re-read of the active ruleset still does not require `CI gate` or an up-to-date branch. See the re-read below. |
+| P0-05 | Public security form removed and translated guidance corrected. Private reporting enabled state and non-admin reporter access were unverified in this execution. A later read and a non-admin report are recorded in [the 2026-10-27 review](2026-10-27-p0-semantic-upgrade-reporting.md). |
+
+## Rollout commit
+
+Recorded 2026-10-27 from `git log` and the public Actions API. These SHAs were read back; none is a placeholder.
+
+| Fact | Value |
+| --- | --- |
+| Main deployment SHA | `2cd05930c34e5bd601a578fbc01a97e28d08401c` |
+| PR head (second parent) | `aa2accfaa84f45712947a89aa4aa302493816064` |
+| Shared tree | `693e2552f983397e6a1284f19d5624abd283e144` |
+| Pull merge checked out by CI | `6b1e984f2e586fd783226216d02586852ce5fa01` (`refs/pull/22/merge`; message `Merge aa2accf… into d92f95b…`) |
+| Full verification | [CI 40433303454](https://github.com/Nema-Project/nema-room/actions/runs/40433303454), success. Jobs: classify, docs, `verify / Workflow lint`, `verify / Platform checks (macos-latest)`, `verify / Platform checks (windows-latest)`, `verify / Full application tests and web build`, `CI gate`. `head_sha` on the run is the PR head, not the main merge. The reusable workflow ref recorded on the run is `verify.yml` at `6b1e984f2e586fd783226216d02586852ce5fa01`. |
+| Desktop builds | [40433303492](https://github.com/Nema-Project/nema-room/actions/runs/40433303492), success for both Build and smoke jobs. `verify` skipped. Publish release skipped. |
+| Actions on the main SHA | `GET /commits/2cd05930c34e5bd601a578fbc01a97e28d08401c/check-runs` returned `total_count: 0`. No workflow run in the public run list has that `head_sha`. `ci.yml` at this commit triggers on `pull_request` and `workflow_dispatch` only. |
+| `verify_full=true` rehearsal | Not found. The only `workflow_dispatch` in the public run list is [Desktop release 40257632731](https://github.com/Nema-Project/nema-room/actions/runs/40257632731) on earlier `main` commit `be2eedc2fb0bdd7feeb53492a6984c4f2d1e42ac`, and it failed. That commit is not the rollout commit. |
+
+`git merge-base --is-ancestor 2cd05930c34e5bd601a578fbc01a97e28d08401c origin/main` is the ancestry check for commits already on `main`. The v0.1.3 tag commit does not exist until a maintainer tags the merge of the version PR.
+
+## Ruleset re-read (2026-10-27, v0.1.3 prep)
+
+Public `GET /repos/Nema-Project/nema-room/rulesets` and the ruleset detail endpoints:
+
+| Ruleset | id | Enforcement | Rules |
+| --- | --- | --- | --- |
+| `main` | 25809837 | disabled | `deletion`, `non_fast_forward` only |
+| `main pull request` | 25873388 | active on `~DEFAULT_BRANCH` | `pull_request` only: zero required reviews, no required status checks, no bypass actors |
+
+`GET /repos/Nema-Project/nema-room/rules/branches/main` returns that same pull-request rule and no `required_status_checks`. The observed GitHub Actions check name is `CI gate` (app id 15368, slug `github-actions`) from [CI 40433303454](https://github.com/Nema-Project/nema-room/actions/runs/40433303454). It is not a required check, and an up-to-date branch is not required. Classic branch protection `GET /branches/main/protection` returned 403 with this token and 401 without authentication, so that endpoint was not readable here. No repository setting was changed.
+
+`GET /repos/Nema-Project/nema-room/private-vulnerability-reporting` returned `{"enabled":true}` with and without authentication. This read does not repeat the non-admin form session recorded in the 2026-10-27 review.
 
 ## Local checks
 
