@@ -79,3 +79,11 @@ Report the commands actually run, results, and skipped or blocked checks. Keep t
 - Update [ROADMAP.md](ROADMAP.md) when work changes a tracked item's status. Mark completion only with its acceptance evidence; do not mark an entire stabilization item done because one subtask landed.
 - Keep this guide concise. Put detailed designs and operational instructions in their existing documents and link to them.
 - Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md). Describe the concrete problem, resulting behavior, validation, and remaining limitations. Review the final diff and latest upstream changes before declaring completion.
+
+## Cursor Cloud specific instructions
+
+Boot already starts Docker, PostgreSQL on `127.0.0.1:5433` (`npm run db:up`), `npm run dev` (hub `127.0.0.1:4400`, web `127.0.0.1:3000`), and `node apps/cli/dist/index.js daemon`. A second `npm run dev` or `npm run up` binds those same ports.
+
+`.env` is copied from `.env.example` when missing. Hub dev reads it; the CLI does not. Do not commit `.env`.
+
+Creating a workspace does not need model credentials. `auth login` and `auth probe` do, and `auth probe` sends a real model request.
