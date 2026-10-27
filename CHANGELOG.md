@@ -13,6 +13,8 @@
 ### Changed
 
 - Workspace settings uses the same grouped panels as model settings. Close, delete, and save are bordered buttons in the standard ink color.
+- The English, Chinese, and Japanese READMEs, and the landing page, describe Nema Room as a local project-alignment copilot. Delivery is a feedback loop: commit evidence returns to the discussion.
+- The READMEs and the landing-page FAQ say the name Nema comes from nemawashi (根回し): understanding before a decision, with disagreements and evidence left visible.
 
 ## [0.1.3] - 2026-10-27
 
