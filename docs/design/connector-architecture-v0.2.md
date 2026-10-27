@@ -3,7 +3,7 @@
 **版本**：v0.2.3  
 **日期**：2026-10-27  
 **状态**：架构决策已批准，实施仍由稳定化 P0（ADR-07 / CX-00）门控  
-**修订**：v0.2.3 把 §3.1 的确认事件归属指到 CX-03 spec 的决定，并改写 §12 第 7 步。v0.2.2 的九项 ADR 批准记录不变。  
+**修订**：v0.2.3 把 §3.1 的确认事件归属指到 CX-03 spec 的决定，并改写 §12 第 7 步。同版补上 §5：revision 为 `null` 时用 `SourceRef.snapshotHash` 对内容哈希标 `review-needed`。ADR-02 的条件段改为指向该 spec，并注明实施前要先合入 issue #28。v0.2.2 的九项 ADR 批准记录不变。  
 **目标仓库**：`Nema-Project/nema-room`  
 **适用范围**：本地优先桌面版；Hub、Daemon、Knowledge、CLI、Web  
 **基础材料**：《Nema Room 插件系统下一阶段：调研与设计》（2026-10-27）；仓库 `main` 中 `plugins.ts`、`roomApi.ts`、`entry.ts`、`extensions/store.ts`、`ROADMAP.md` 的只读检查。**未运行测试；实施前须按提交重新核实。**
@@ -193,7 +193,7 @@ type PendingWrite = {
 
 **不要**简单以 `modifiedTime > lastConfirmedAt` 断言决策失效。
 
-分别存储 `importedRevision`、`lastCheckedRevision`、`lastConfirmedRevision`；有的服务只提供时间戳，则注明精度与可靠性。版本比较优先使用服务提供的强版本标识，否则使用内容哈希；无法比较时返回 `unknown`。这三个名字各有一处权威位置，由 [CX-03 spec](../superpowers/specs/2026-10-27-source-evidence-protocol-design.md) 规定，不再并排各存一份：`importedRevision` 就是 S 条目上 `SourceSnapshot.revision`，`lastCheckedRevision` 只在本地 DB 的检查结果里，`lastConfirmedRevision` 只在确认事件和 S 条目的 `confirmedRevision`。`SourceRef.revision` 是依赖条目引用当时的版本，不是这三者的别名。
+分别存储 `importedRevision`、`lastCheckedRevision`、`lastConfirmedRevision`；有的服务只提供时间戳，则注明精度与可靠性。版本比较优先使用服务提供的强版本标识，否则使用内容哈希；无法比较时返回 `unknown`。这三个名字各有一处权威位置，由 [CX-03 spec](../superpowers/specs/2026-10-27-source-evidence-protocol-design.md) 规定，不再并排各存一份：`importedRevision` 就是 S 条目上 `SourceSnapshot.revision`，`lastCheckedRevision` 只在本地 DB 的检查结果里，`lastConfirmedRevision` 只在确认事件和 S 条目的 `confirmedRevision`。`SourceRef.revision` 是依赖条目引用当时的版本，不是这三者的别名。revision 为 `null` 时，依赖项是否过期不靠版本字符串比较：`SourceRef.snapshotHash` 记下引用当时的 `contentHash`，和来源当前的 `contentHash` 比。两边 revision 都是 `null` 但哈希不同，依赖标 `review-needed`；新鲜度仍是 `unknown`，不会因为哈希相同变成 `current`。
 
 - `current`：远端可验证版本与导入版本一致。
 - `changed`：远端版本与导入版本不同。
@@ -292,7 +292,7 @@ interface TaskSink {
 
 **批准记录**：2026-10-27，@NullumNomen 批准全部九项 ADR；ADR-02 与 ADR-09 附条件。
 
-**ADR-02 条件**：用户确认事件归属（落在 `messages` 表或独立 evidence event 表）待 CX-03 细化设计时明确，再行实施。
+**ADR-02 条件**：用户确认事件不写入 `messages`，写入独立的 `evidence_events`。契约是 [CX-03 spec](../superpowers/specs/2026-10-27-source-evidence-protocol-design.md)。实施仍要先合入 [issue #28](https://github.com/Nema-Project/nema-room/issues/28)（纯聊天路径的服务端 basis 检查）。CX-03 不修那条缺口。
 
 **ADR-09 条件**：目标方案 C（公共客户端 + 可选 BYO）；CX-08 初期仅启用 BYO 进行技术验证；公共 OAuth 客户端**不得上线**，直至 Google 对所需 scopes、应用类型、验证流程与隐私披露的官方要求经核实并记录。
 
