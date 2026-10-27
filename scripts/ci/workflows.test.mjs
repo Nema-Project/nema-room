@@ -94,6 +94,16 @@ function assertRelease(release) {
   }
 }
 
+test('windows desktop release publishes a separate portable ZIP and still smokes NSIS', () => {
+  const release = read('desktop-release');
+  const runs = release.jobs.build.steps.map((step) => step.run ?? '').join('\n');
+  assert.match(runs, /desktop:smoke -- --installer/);
+  assert.match(runs, /desktop:smoke -- --zip "dist\/desktop-artifacts\/\$TARGET\/Nema-\$VERSION-\$TARGET\.zip"/);
+  assert.match(runs, /release-manifest\.mjs verify/);
+  const checksum = release.jobs.build.steps.find((step) => step.name === 'Checksums and upload set');
+  assert.match(checksum.run, /if \[ "\$\{\{ matrix\.platform \}\}" = "win32" \]; then\n\s+cp "dist\/desktop-artifacts\/\$TARGET\/Nema-\$VERSION-\$TARGET\.zip"/);
+});
+
 test('release gates bind all stages to one SHA and fail closed on verification results', () => {
   const release = read('desktop-release'); assertRelease(release);
   const wrongRef=structuredClone(release); checkout(wrongRef.jobs.build)[0].with.ref='main'; assert.throws(()=>assertRelease(wrongRef));

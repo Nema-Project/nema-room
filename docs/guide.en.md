@@ -16,21 +16,23 @@ Detailed setup and operation for the desktop app and Web / Compose. For an overv
 
 ## Desktop app (preview)
 
-The desktop app puts the whole stack in one local program: an on-disk PGlite database, a single-owner local core, a protected same-origin gateway, and bundled Node. It uses the Git already on your machine (2.31 or later). On macOS, an app opened from the Finder also finds Homebrew and MacPorts Git. If Git is missing or older, the app says so on launch and links to https://git-scm.com/downloads. It needs neither Docker nor a database server. **Desktop installers are published** for Windows x64 and Apple Silicon: [download the installers](https://github.com/Nema-Project/nema-room/releases/latest).
+The desktop app puts the whole stack in one local program: an on-disk PGlite database, a single-owner local core, a protected same-origin gateway, and bundled Node. It uses the Git already on your machine (2.31 or later). On macOS, an app opened from the Finder also finds Homebrew and MacPorts Git. If Git is missing or older, the app says so on launch and links to https://git-scm.com/downloads. It needs neither Docker nor a database server. **Desktop builds are published** for Windows x64 and Apple Silicon: [download a build](https://github.com/Nema-Project/nema-room/releases/latest). On Windows, pick the installer or the portable ZIP.
 
 | Item | Status |
 | --- | --- |
-| Windows x64 | NSIS installer available |
+| Windows x64 | NSIS installer (`.exe`) or portable ZIP (`.zip`). Pick one |
 | macOS | DMG for Apple Silicon (arm64). Intel Macs are not a target |
 | Linux | No desktop installer |
-| Signing and updates | Windows is **unsigned**; macOS uses **ad-hoc signing, without notarization**. There is no auto-update |
+| Signing and updates | Windows is **unsigned**; macOS uses **ad-hoc signing, without notarization**. The app can notice a newer stable GitHub release and open its release page. It does not download or install updates |
 | Public release | [Latest release](https://github.com/Nema-Project/nema-room/releases/latest). Node (MIT), Inter and JetBrains Mono (OFL), and Electron's ffmpeg (LGPL, its own library) ship with their notices |
 
-**Build (Windows x64):** after `npm ci`, run `npm run desktop:make -- --platform win32 --arch x64`. Output goes to `dist/desktop-artifacts/win32-x64/`: `Nema-<version>-win32-x64.exe` (NSIS installer). A build only targets the current OS and needs a native C compiler (Clang on Windows; see [scripts/desktop/README.md](../scripts/desktop/README.md)).
+**Build (Windows x64):** after `npm ci`, run `npm run desktop:make -- --platform win32 --arch x64`. Output goes to `dist/desktop-artifacts/win32-x64/`: `Nema-<version>-win32-x64.exe` (NSIS installer) and `Nema-<version>-win32-x64.zip` (portable app; `Nema.exe` at the top of the archive). A build only targets the current OS and needs a native C compiler (Clang on Windows; see [scripts/desktop/README.md](../scripts/desktop/README.md)).
 
 **First launch and operating-system warnings:** open only a file you built or checked yourself. Windows SmartScreen shows "Windows protected your PC": choose "More info", then "Run anyway". The macOS package is unverified; as usual for an app that is not notarized, it would need "Open Anyway" in System Settings → Privacy & Security.
 
 **Where data lives:** `~/.nema/desktop` by default (`db/` database, `data/` knowledge Git repositories, `instance.json` run state). It does not read the Compose database and never uses the old `~/.nema/data`.
+
+**Windows portable ZIP:** unzip `Nema-<version>-win32-x64.zip` and run `Nema.exe`. There is no shortcut and no uninstaller; delete that folder to remove the portable copy. It uses the same `~/.nema/desktop` directory as an NSIS install. Running both at once shares that directory: the second launch connects to the core that is already running. Deleting the ZIP folder does not uninstall NSIS, and uninstalling NSIS does not delete the extracted folder or `~/.nema/desktop`.
 
 **Window, tray, and browser mode**
 - Closing the window closes only the window; the core keeps running in the tray, and the tray icon reopens it. `Quit Nema` in the tray menu quits and waits for background work to be cleaned up.
@@ -44,7 +46,7 @@ The desktop app puts the whole stack in one local program: an on-disk PGlite dat
 
 **Migrating from the Web / Compose version:** there is only a library interface so far, with no command or UI. `exportSnapshot` (`apps/hub/src/db/export.ts`) exports from a PostgreSQL connection you name, and `importLegacySnapshot` (`apps/local/src/import.ts`) imports into an **empty, stopped** desktop data directory. The import validates everything in a staging directory first and leaves the destination untouched on failure; use `recoverInterruptedImport` after an interruption. Credentials are neither exported nor imported, so sign in again.
 
-**Upgrading:** the desktop app has no auto-update. Quit with `Quit Nema` in the tray, back up `~/.nema/desktop`, then install the new version; database migrations run on startup. A disposable data-directory reopen, pending migration, failed migration, and backup restore passed on hosted Windows and macOS runners on 2026-10-27. On that date the maintainer installed a new package over an existing one on macOS and on Windows, and workspace data remained. Back up `~/.nema/desktop` before upgrading anyway.
+**Upgrading:** the desktop app does not download or install updates. About 15 seconds after startup, and about once a day, it checks GitHub for a newer stable release. The tray and an in-app banner link to that release page. **Check for updates** runs once immediately. **Check for updates automatically** in the sidebar (`updateCheck.enabled` in `~/.nema/desktop/update-check.json`) turns the scheduled check off. A failure, draft, or prerelease stays quiet. Quit with `Quit Nema` in the tray, back up `~/.nema/desktop`, then install the new version; database migrations run on startup. A disposable data-directory reopen, pending migration, failed migration, and backup restore passed on hosted Windows and macOS runners on 2026-10-27. On that date the maintainer installed a new package over an existing one on macOS and on Windows, and workspace data remained. Back up `~/.nema/desktop` before upgrading anyway.
 
 Current stabilization priorities and acceptance evidence are tracked in the [roadmap](../ROADMAP.md). The historical validation snapshot below applies only to the commit and environment recorded in that review.
 

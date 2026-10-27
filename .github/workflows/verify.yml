@@ -62,6 +62,9 @@ jobs:
       - name: Desktop data upgrade, backup restore, and semantic rubric
         run: npx vitest run apps/hub/test/upgradeRecovery.test.ts apps/local/test/semanticAcceptance.test.ts --maxWorkers=1
       - run: node --test scripts/security/reporting-status.test.mjs
+      - name: Portable ZIP extraction helper
+        if: runner.os == 'Windows'
+        run: node --test scripts/desktop/smoke-desktop.test.mjs
 
   test:
     name: Full application tests and web build
@@ -84,7 +87,7 @@ jobs:
       - run: node --test scripts/security/reporting-status.test.mjs
       - name: Desktop payload unit tests
         run: |
-          node --test scripts/desktop/graphify.test.mjs scripts/desktop/graphify-languages.test.mjs scripts/desktop/payload-size.test.mjs scripts/desktop/fetch-tools.test.mjs scripts/desktop/source-materials.test.mjs scripts/desktop/after-pack.test.mjs
+          node --test scripts/desktop/graphify.test.mjs scripts/desktop/graphify-languages.test.mjs scripts/desktop/payload-size.test.mjs scripts/desktop/fetch-tools.test.mjs scripts/desktop/source-materials.test.mjs scripts/desktop/after-pack.test.mjs scripts/desktop/portable-zip.test.mjs scripts/desktop/smoke-desktop.test.mjs
           node --test --test-name-pattern "payload omits Node headers" scripts/desktop/staging.test.mjs
       - run: npm test -- --maxWorkers=2
       - run: npm run build -w apps/hub

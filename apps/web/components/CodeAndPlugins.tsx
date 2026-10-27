@@ -140,7 +140,8 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
   }
 
   return (
-    <section className="code-section">
+    <>
+    <section className="code-section settings-group">
       <h2 className="label">{t("code.title")}</h2>
 
       <h3 className="label">{t("code.repos")}</h3>
@@ -172,7 +173,9 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
           </p>
         )}
       </form>
+    </section>
 
+    <section className="code-section settings-group">
       <h3 className="label">{t("code.plugins")}</h3>
       {(plugins ?? []).map((row) => {
         const open = openId === row.plugin.id;
@@ -230,6 +233,7 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
 
       <p className="help">{t("code.modelEgress")}</p>
     </section>
+    </>
   );
 }
 
@@ -268,7 +272,7 @@ function GrillSettings({ row, onSave }: { row: WorkspacePlugin; onSave: (setting
       </label>
       <p className={tooLong ? "error" : "kmeta"} data-testid="grill-counter">{t("grill.counter", { n: length })}</p>
       {tooLong && <p className="error" role="alert">{t("grill.tooLong")}</p>}
-      <button type="button" disabled={tooLong || saving} onClick={() => void save()}>{t("wp.save")}</button>
+      <button type="button" className="settings-action" disabled={tooLong || saving} onClick={() => void save()}>{t("wp.save")}</button>
     </div>
   );
 }
@@ -316,7 +320,7 @@ function RepoRow({
       <p className="kmeta">
         GitHub: {repo.githubTarget ? <span className="kid">{repo.githubTarget}</span> : <span>{t("github.noRemote")}</span>}
       </p>
-      <button type="button" aria-label={`${t("sidebar.delete")} ${repo.path}`} onClick={() => void onRemove(repo.id)}>
+      <button type="button" className="settings-action" aria-label={`${t("sidebar.delete")} ${repo.path}`} onClick={() => void onRemove(repo.id)}>
         {t("sidebar.delete")}
       </button>
     </div>

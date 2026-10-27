@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { readPackageVersion, readReleaseVersion } from './release-version.mjs';
-import { checksumFileName, collectReleaseManifest, expectedAssets, expectedTargets, writeTargetChecksums } from './release-manifest.mjs';
+import { checksumFileName, collectReleaseManifest, expectedAssets, expectedTargets, verifyTargetChecksums, writeTargetChecksums } from './release-manifest.mjs';
 import { createSanitizedSourceSnapshot } from './stage-runtime.mjs';
 
 const version = '1.2.3';
@@ -48,13 +48,14 @@ test('collection accepts a complete matrix and writes a manifest, combined check
   const manifest = await collectReleaseManifest({ version, prerelease: false, artifactsRoot: root, outputDir: out, build: { commit: 'abc' } });
   assert.deepEqual(Object.keys(manifest.targets), [...expectedTargets]);
   const files = await readdir(out);
-  assert.equal(files.length, 4 + 2);
-  assert.ok(files.includes('Nema-1.2.3-win32-x64.exe') && files.includes('Nema-1.2.3-darwin-arm64.dmg'));
-  // Releases ship installers only; the portable ZIPs are no longer built or published.
-  assert.equal(files.some((name) => name.endsWith('.zip')), false);
+  assert.equal(files.length, 7);
+  assert.ok(files.includes('Nema-1.2.3-win32-x64.exe') && files.includes('Nema-1.2.3-win32-x64.zip') && files.includes('Nema-1.2.3-darwin-arm64.dmg'));
+  assert.equal(files.includes('Nema-1.2.3-darwin-arm64.zip'), false);
   const sums = (await readFile(path.join(out, 'SHA256SUMS-1.2.3.txt'), 'utf8')).trim().split('\n');
-  assert.equal(sums.length, 2);
-  assert.equal(JSON.parse(await readFile(path.join(out, 'release-manifest-1.2.3.json'), 'utf8')).build.commit, 'abc');
+  assert.deepEqual(sums.map((line) => line.slice(66)), ['Nema-1.2.3-win32-x64.exe', 'Nema-1.2.3-win32-x64.zip', 'Nema-1.2.3-darwin-arm64.dmg']);
+  const written = JSON.parse(await readFile(path.join(out, 'release-manifest-1.2.3.json'), 'utf8'));
+  assert.equal(written.build.commit, 'abc');
+  assert.deepEqual(written.targets['win32-x64'].map((asset) => asset.name), ['Nema-1.2.3-win32-x64.exe', 'Nema-1.2.3-win32-x64.zip', 'SHA256SUMS-1.2.3-win32-x64.txt']);
 });
 
 test('collection refuses a missing matrix target without copying anything', async (t) => {
@@ -64,24 +65,41 @@ test('collection refuses a missing matrix target without copying anything', asyn
   assert.equal(await stat(out).catch(() => null), null);
 });
 
-test('collection refuses a missing installer or checksum file and unexpected files, including a portable ZIP', async (t) => {
+test('collection refuses a missing asset or checksum file and unexpected files', async (t) => {
   for (const file of ['Nema-1.2.3-darwin-arm64.dmg', 'SHA256SUMS-1.2.3-darwin-arm64.txt']) {
     const root = await artifactsFixture(t);
     await rm(path.join(root, 'darwin-arm64', file));
     await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: path.join(root, 'out') }), /Missing darwin-arm64 release file/, file);
   }
+  const missingZip = await artifactsFixture(t);
+  await rm(path.join(missingZip, 'win32-x64', 'Nema-1.2.3-win32-x64.zip'));
+  await assert.rejects(collectReleaseManifest({ version, artifactsRoot: missingZip, outputDir: path.join(missingZip, 'out') }), /Missing win32-x64 release file: Nema-1.2.3-win32-x64.zip/);
   const root = await artifactsFixture(t);
   await writeFile(path.join(root, 'win32-x64', 'latest.yml'), 'x');
   await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: path.join(root, 'out') }), /Unexpected file/);
   const zipRoot = await artifactsFixture(t);
   await writeFile(path.join(zipRoot, 'darwin-arm64', 'Nema-1.2.3-darwin-arm64.zip'), 'portable app');
   await assert.rejects(collectReleaseManifest({ version, artifactsRoot: zipRoot, outputDir: path.join(zipRoot, 'out') }), /Unexpected file in darwin-arm64 artifact: Nema-1.2.3-darwin-arm64.zip/);
+  const bundle = await artifactsFixture(t);
+  await writeFile(path.join(bundle, 'win32-x64', 'Nema-1.2.3-win32-x64.7z'), 'nested');
+  await assert.rejects(collectReleaseManifest({ version, artifactsRoot: bundle, outputDir: path.join(bundle, 'out') }), /Unexpected file in win32-x64 artifact: Nema-1.2.3-win32-x64.7z/);
 });
 
 test('collection refuses a checksum mismatch', async (t) => {
   const root = await artifactsFixture(t);
-  await writeFile(path.join(root, 'win32-x64', 'Nema-1.2.3-win32-x64.exe'), 'tampered after checksum');
-  await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: path.join(root, 'out') }), /Checksum mismatch for win32-x64\/Nema-1.2.3-win32-x64.exe/);
+  await writeFile(path.join(root, 'win32-x64', 'Nema-1.2.3-win32-x64.zip'), 'tampered after checksum');
+  await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: path.join(root, 'out') }), /Checksum mismatch for win32-x64\/Nema-1.2.3-win32-x64.zip/);
+  await assert.rejects(verifyTargetChecksums(path.join(root, 'win32-x64'), version, 'win32-x64'), /Checksum mismatch for win32-x64\/Nema-1.2.3-win32-x64.zip/);
+});
+
+test('verify accepts the Windows installer and portable ZIP checksums', async (t) => {
+  const root = await artifactsFixture(t);
+  await verifyTargetChecksums(path.join(root, 'win32-x64'), version, 'win32-x64');
+  const sumsFile = path.join(root, 'win32-x64', checksumFileName(version, 'win32-x64'));
+  const lines = (await readFile(sumsFile, 'utf8')).trim().split('\n');
+  assert.deepEqual(lines.map((line) => line.slice(66)), ['Nema-1.2.3-win32-x64.exe', 'Nema-1.2.3-win32-x64.zip']);
+  await writeFile(sumsFile, `${lines[0]}\n`);
+  await assert.rejects(verifyTargetChecksums(path.join(root, 'win32-x64'), version, 'win32-x64'), /must list exactly/);
 });
 
 test('collection refuses duplicate checksum entries', async (t) => {

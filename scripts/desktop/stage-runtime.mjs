@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { createReadStream, realpathSync } from 'node:fs';
 import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -315,6 +315,20 @@ export async function runtimeDependencyClosure(root, packageDirs) {
   return included;
 }
 
+export function recordedCommit(sourceRoot, explicit) {
+  if (explicit !== undefined) return /^[0-9a-f]{40}$/i.test(explicit) ? explicit.toLowerCase() : undefined;
+  const top = spawnSync('git', ['-C', sourceRoot, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 3000, windowsHide: true });
+  if (top.status !== 0) return undefined;
+  let topLevel = path.resolve(top.stdout.trim());
+  let root = path.resolve(sourceRoot);
+  try { topLevel = realpathSync(topLevel); root = realpathSync(root); } catch { /* compare the resolved paths */ }
+  if (topLevel !== root) return undefined;
+  const head = spawnSync('git', ['-C', sourceRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 3000, windowsHide: true });
+  if (head.status !== 0) return undefined;
+  const commit = head.stdout.trim().toLowerCase();
+  return /^[0-9a-f]{40}$/.test(commit) ? commit : undefined;
+}
+
 export async function stageRuntime({
   sourceRoot = defaultRoot,
   outputDir = path.join(defaultRoot, 'dist/desktop'),
@@ -323,6 +337,7 @@ export async function stageRuntime({
   platform = process.platform,
   arch = process.arch,
   version,
+  commit,
   tools,
   build = true,
   ownedHelperBuilder = buildOwnedHelper,
@@ -437,8 +452,10 @@ export async function stageRuntime({
     for (const name of [...await runtimeDependencyClosure(builtRoot, runtimeDirs)].sort()) {
       await copyTree(path.join(rootModules, ...name.split('/')), put(`app/node_modules/${name}`), builtRoot);
     }
+    const commitId = recordedCommit(sourceRoot, commit);
     const manifest = {
       schemaVersion: 1, version, platform, arch,
+      ...(commitId ? { commit: commitId } : {}),
       node: `runtime/${tools.node}`,
       ...(ownedHelperPath ? { ownedHelperGuardian: 'runtime/owned-helper.exe' } : {}),
       coreEntry: 'app/node_modules/@nema/local/dist/src/index.js',

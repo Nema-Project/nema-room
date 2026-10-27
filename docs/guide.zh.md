@@ -16,21 +16,23 @@
 
 ## 桌面应用（预览）
 
-桌面应用把整套服务放进一个本机程序：磁盘上的 PGlite 数据库、单实例本机核心、受保护的同源网关，以及随包的 Node。它使用你电脑上已经装好的 Git（2.31 或更新）。在 Mac 上，从访达打开时也会找到 Homebrew 和 MacPorts 的 Git。没有 Git 或版本太旧时，启动会说明原因，并给出 https://git-scm.com/downloads。不需要 Docker 或数据库服务器。**桌面安装包已发布**，提供 Windows x64 和 Apple 芯片安装包：[下载安装包](https://github.com/Nema-Project/nema-room/releases/latest)。
+桌面应用把整套服务放进一个本机程序：磁盘上的 PGlite 数据库、单实例本机核心、受保护的同源网关，以及随包的 Node。它使用你电脑上已经装好的 Git（2.31 或更新）。在 Mac 上，从访达打开时也会找到 Homebrew 和 MacPorts 的 Git。没有 Git 或版本太旧时，启动会说明原因，并给出 https://git-scm.com/downloads。不需要 Docker 或数据库服务器。**桌面版本已发布**，提供 Windows x64 和 Apple 芯片版本：[下载](https://github.com/Nema-Project/nema-room/releases/latest)。Windows 上在安装包和便携 ZIP 里选一个。
 
 | 项目 | 状态 |
 | --- | --- |
-| Windows x64 | 提供 NSIS 安装包 |
+| Windows x64 | NSIS 安装包（`.exe`）或便携 ZIP（`.zip`）。二选一 |
 | macOS | 提供 DMG，仅 Apple 芯片（arm64）。Intel Mac 不是目标 |
 | Linux | 不提供桌面安装包 |
-| 签名与更新 | Windows **未签名**；macOS 使用**临时签名，未经公证**。没有自动更新 |
+| 签名与更新 | Windows **未签名**；macOS 使用**临时签名，未经公证**。应用可以发现更新的稳定版并打开发布页。不会自动下载或安装 |
 | 公开发布 | [最新发布](https://github.com/Nema-Project/nema-room/releases/latest)。Node（MIT）、Inter 与 JetBrains Mono（OFL）、Electron 的 ffmpeg（LGPL，独立库）随应用里的许可声明一起发布 |
 
-**构建（Windows x64）**：`npm ci` 后运行 `npm run desktop:make -- --platform win32 --arch x64`，产物在 `dist/desktop-artifacts/win32-x64/`：`Nema-<版本>-win32-x64.exe`（NSIS 安装包）。构建只支持当前系统，且需要本机 C 编译器（Windows 需要 Clang，见 [scripts/desktop/README.md](../scripts/desktop/README.md)）。
+**构建（Windows x64）**：`npm ci` 后运行 `npm run desktop:make -- --platform win32 --arch x64`，产物在 `dist/desktop-artifacts/win32-x64/`：`Nema-<版本>-win32-x64.exe`（NSIS 安装包）和 `Nema-<版本>-win32-x64.zip`（便携应用，压缩包根上是 `Nema.exe`）。构建只支持当前系统，且需要本机 C 编译器（Windows 需要 Clang，见 [scripts/desktop/README.md](../scripts/desktop/README.md)）。
 
 **首次启动与系统提示**：只打开你自己构建或已核对过的文件。Windows 的 SmartScreen 会提示“Windows 已保护你的电脑”，点“更多信息”，再点“仍要运行”。macOS 包尚未验证；按系统惯例，未公证的应用需要在“系统设置 → 隐私与安全性”里选“仍要打开”。
 
 **数据位置**：默认在 `~/.nema/desktop`（`db/` 数据库、`data/` 知识 Git 仓库、`instance.json` 运行状态）。它不读取 Compose 的数据库，也不使用旧的 `~/.nema/data`。
+
+**Windows 便携 ZIP**：解压 `Nema-<版本>-win32-x64.zip` 后运行 `Nema.exe`。没有快捷方式，也没有卸载程序；删掉该文件夹即移除这份便携副本。它和 NSIS 安装使用同一个 `~/.nema/desktop`。两者同时运行时共用这个目录：后启动的那一个会连到已经在跑的核心。删掉 ZIP 目录不会卸载 NSIS，卸载 NSIS 也不会删除解压出来的文件夹或 `~/.nema/desktop`。
 
 **窗口、托盘与浏览器模式**
 - 关闭窗口只关窗口，核心继续在托盘里运行；点托盘图标可重新打开。托盘菜单的 `Quit Nema` 才会退出，并等待后台任务清理完毕。
@@ -44,7 +46,7 @@
 
 **从 Web / Compose 版迁移**：目前只有库接口，没有命令行或界面入口。`exportSnapshot`（`apps/hub/src/db/export.ts`）从你指定的 PostgreSQL 连接导出，`importLegacySnapshot`（`apps/local/src/import.ts`）导入到一个**空的、未运行**的桌面数据目录。导入先在暂存目录里完整验证，失败时不改动目标；中断后用 `recoverInterruptedImport` 恢复。凭证不会被导出或导入，需要重新登录。
 
-**升级**：桌面应用没有自动更新。先用托盘的 `Quit Nema` 退出，备份 `~/.nema/desktop`，再安装新版本；启动时会自动应用数据库迁移。2026-10-27 的托管 Windows 与 macOS 运行器已通过一次性数据目录的重新打开、待应用迁移、失败回滚和备份恢复。同日维护者在 macOS 与 Windows 上分别用新安装包覆盖旧安装，workspace 数据均完整。升级前仍请先备份 `~/.nema/desktop`。
+**升级**：桌面应用不会自动下载或安装。启动约 15 秒后，以及大约每天一次，它向 GitHub 查询更新的稳定版。托盘和应用内横幅会链到发布页。`Check for Updates` 会立刻查一次。侧栏的「自动检查更新」（`~/.nema/desktop/update-check.json` 里的 `updateCheck.enabled`）关掉定时检查。失败、草稿和预发布版本都不会提示。先用托盘的 `Quit Nema` 退出，备份 `~/.nema/desktop`，再安装新版本；启动时会自动应用数据库迁移。2026-10-27 的托管 Windows 与 macOS 运行器已通过一次性数据目录的重新打开、待应用迁移、失败回滚和备份恢复。同日维护者在 macOS 与 Windows 上分别用新安装包覆盖旧安装，workspace 数据均完整。升级前仍请先备份 `~/.nema/desktop`。
 
 当前稳定化优先级与验收证据见[项目路线图](../ROADMAP.md)。下方历史验证记录仅适用于当时记录的提交与环境。
 

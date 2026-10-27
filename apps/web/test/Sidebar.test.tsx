@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@/app/globals.css";
 import { I18nProvider } from "@/lib/i18n";
 import { Sidebar, themeSwitchOrigin } from "@/components/Sidebar";
+
+vi.mock("@/components/AppRelease", () => ({ AppReleaseFooter: () => null, AppReleaseBanner: () => null }));
 import type { WorkspaceView } from "@/lib/types";
 import * as hub from "@/lib/hub";
 

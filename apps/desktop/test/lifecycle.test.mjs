@@ -1,17 +1,19 @@
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { createDesktopLifecycle, initialWindowSize } = require('../lifecycle.cjs');
+const { createDesktopLifecycle, initialWindowSize, readPackagedIdentity, releaseNotice, requestReleaseCheck } = require('../lifecycle.cjs');
 
 function harness(overrides = {}) {
   const app = new EventEmitter();
   app.requestSingleInstanceLock = vi.fn(() => overrides.lock !== false);
   app.whenReady = vi.fn(() => Promise.resolve());
   app.quit = vi.fn();
+  app.getVersion = vi.fn(() => overrides.appVersion ?? '');
   app.getFileIcon = vi.fn(async () => ({}));
   const windows = [];
   class BrowserWindow extends EventEmitter {
@@ -35,7 +37,7 @@ function harness(overrides = {}) {
   const shell = { openExternal: vi.fn(async () => {}) };
   const ipcHandlers = new Map();
   const ipcMain = { handle: vi.fn((channel, handler) => ipcHandlers.set(channel, handler)), removeHandler: vi.fn((channel) => ipcHandlers.delete(channel)) };
-  const dialog = { showErrorBox: vi.fn() };
+  const dialog = { showErrorBox: vi.fn(), showMessageBox: vi.fn(async () => ({})) };
   const Menu = { setApplicationMenu: vi.fn(), buildFromTemplate: vi.fn((value) => value) };
   const trays = [];
   class Tray extends EventEmitter {
@@ -68,9 +70,10 @@ function harness(overrides = {}) {
   const lifecycle = createDesktopLifecycle({
     electron,
     home: 'C:/Users/Test/.nema/desktop',
-    assetsDir: 'C:/Nema/resources/payload',
+    assetsDir: overrides.assetsDir ?? 'C:/Nema/resources/payload',
     loadRuntimeApi: async () => runtimeApi,
     platform: overrides.platform ?? process.platform,
+    release: overrides.release,
   });
   return { app, windows, trays, shell, dialog, electron, ipcHandlers, runtimeApi, lifecycle };
 }
@@ -113,6 +116,66 @@ describe('Electron shell lifecycle', () => {
     expect(value.app.quit).toHaveBeenCalledOnce();
     expect(value.runtimeApi.ensureLocalRuntime).not.toHaveBeenCalled();
     expect(value.windows).toHaveLength(0);
+  });
+
+  it('shows About on the macOS app menu and both trays, and links only a real release page', async () => {
+    const requestCheck = vi.fn();
+    let status = null;
+    const release = {
+      identity: { version: '0.1.3', commit: 'ABC1234DEADBEEF' },
+      readStatus: () => status,
+      requestCheck,
+    };
+    const darwin = harness({ platform: 'darwin', release });
+    await darwin.lifecycle.install();
+    const appMenu = darwin.electron.Menu.setApplicationMenu.mock.calls[0][0][0].submenu;
+    const about = appMenu.find((item) => item.label.startsWith('About Nema Room'));
+    expect(about.label).toBe('About Nema Room 0.1.3 (abc1234)');
+    about.click();
+    expect(darwin.dialog.showMessageBox).toHaveBeenCalledWith(expect.objectContaining({ message: 'Nema Room 0.1.3', detail: 'Build abc1234' }));
+    expect(darwin.trays[0].menu.find((item) => item.label === 'About Nema Room 0.1.3 (abc1234)')).toBeTruthy();
+    darwin.trays[0].menu.find((item) => item.label === 'Check for Updates').click();
+    expect(requestCheck).toHaveBeenCalledOnce();
+
+    status = { state: 'newer', version: '0.2.0', url: 'https://github.com/Nema-Project/nema-room/releases/tag/v0.2.0' };
+    darwin.lifecycle.refreshReleaseMenu();
+    const notice = darwin.trays[0].menu.find((item) => item.label === 'Update available: 0.2.0');
+    notice.click();
+    expect(darwin.shell.openExternal).toHaveBeenCalledWith('https://github.com/Nema-Project/nema-room/releases/tag/v0.2.0');
+
+    status = { state: 'newer', version: '0.2.0', url: 'https://evil.example/releases/tag/v0.2.0' };
+    darwin.lifecycle.refreshReleaseMenu();
+    expect(darwin.trays[0].menu.some((item) => item.label === 'Update available: 0.2.0')).toBe(false);
+
+    const windows = harness({ platform: 'win32', release });
+    await windows.lifecycle.install();
+    expect(windows.windows[0].setMenu).toHaveBeenCalledWith(null);
+    expect(windows.trays[0].menu.find((item) => item.label === 'About Nema Room 0.1.3 (abc1234)')).toBeTruthy();
+  });
+
+  it('reads the packaged version and a manifest commit for About', () => {
+    const assetsDir = mkdtempSync(`${tmpdir()}/nema-about-`);
+    writeFileSync(`${assetsDir}/runtime-manifest.json`, JSON.stringify({ version: '9.9.9', commit: 'abcdef0123456789' }));
+    expect(readPackagedIdentity({ getVersion: () => '0.1.3' }, assetsDir)).toEqual({ version: '0.1.3', commit: 'abcdef0' });
+    expect(readPackagedIdentity({}, assetsDir)).toEqual({ version: '9.9.9', commit: 'abcdef0' });
+    const metadataOnly = mkdtempSync(`${tmpdir()}/nema-about-meta-`);
+    writeFileSync(`${metadataOnly}/runtime-manifest.json`, JSON.stringify({ version: '0.1.3' }));
+    writeFileSync(`${metadataOnly}/build-metadata.json`, JSON.stringify({ build: { commit: '1234567abcdef' } }));
+    expect(readPackagedIdentity({}, metadataOnly)).toEqual({ version: '0.1.3', commit: '1234567' });
+    expect(readPackagedIdentity({}, `${assetsDir}-missing`)).toEqual({ version: '', commit: '' });
+    expect(releaseNotice({ state: 'newer', version: '0.2.0-rc.1', url: 'https://github.com/Nema-Project/nema-room/releases/tag/v0.2.0-rc.1' })).toBeNull();
+    expect(releaseNotice({ state: 'error' })).toBeNull();
+  });
+
+  it('records a manual check without rewriting the automatic-check preference', () => {
+    const home = mkdtempSync(`${tmpdir()}/nema-update-request-`);
+    const prefs = path.join(home, 'update-check.json');
+    writeFileSync(prefs, `${JSON.stringify({ updateCheck: { enabled: false } })}\n`);
+    requestReleaseCheck(home);
+    expect(JSON.parse(readFileSync(prefs, 'utf8'))).toEqual({ updateCheck: { enabled: false } });
+    const request = JSON.parse(readFileSync(path.join(home, 'update-check-request.json'), 'utf8'));
+    expect(request.checkRequestedAt).toBeGreaterThan(Date.now() - 10_000);
+    rmSync(home, { recursive: true, force: true });
   });
 
   it('removes the per-window native menu on Windows so Alt cannot reveal a second menu row', async () => {
