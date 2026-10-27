@@ -1,8 +1,9 @@
 # Nema Room 外部连接器与可信来源架构设计
 
-**版本**：v0.2.2  
+**版本**：v0.2.3  
 **日期**：2026-10-27  
 **状态**：架构决策已批准，实施仍由稳定化 P0（ADR-07 / CX-00）门控  
+**修订**：v0.2.3 把 §3.1 的确认事件归属指到 CX-03 spec 的决定，并改写 §12 第 7 步。v0.2.2 的九项 ADR 批准记录不变。  
 **目标仓库**：`Nema-Project/nema-room`  
 **适用范围**：本地优先桌面版；Hub、Daemon、Knowledge、CLI、Web  
 **基础材料**：《Nema Room 插件系统下一阶段：调研与设计》（2026-10-27）；仓库 `main` 中 `plugins.ts`、`roomApi.ts`、`entry.ts`、`extensions/store.ts`、`ROADMAP.md` 的只读检查。**未运行测试；实施前须按提交重新核实。**
@@ -70,7 +71,7 @@ flowchart TD
 
 ## 3. 数据契约
 
-以下 TypeScript 为**建议协议草案**，并非仓库现有类型；最终字段和迁移需另行评审。
+以下 TypeScript 为 v0.2 起草时的**协议草案**，并非仓库现有类型。`SourceSnapshot`、`SourceRef`、用户确认事件和 `source__import` 的最终契约以 [CX-03 spec](../superpowers/specs/2026-10-27-source-evidence-protocol-design.md) 为准；字段名或存储位置与下文草案不一致时，以该 spec 为准。
 
 ```ts
 type SourceSnapshot = {
@@ -119,7 +120,7 @@ type WorkspaceSourceBinding = {
 - 既有已定决策的修改限制保持不变；引入 sourceRefs 不得绕过。
 - 兼容旧数据：`sourceRefs` 可选；旧 S 条目缺 revision 时为 `unknown`，不得自动标为 `current`。
 
-**待决问题**：用户确认事件是否落在 `messages` 中，还是新增独立 evidence event 表；需与当前 `roomApi.ts` 的防改写逻辑共同设计。
+**ADR-02 条件（已由 CX-03 决定）**：用户确认事件不写入 `messages`，写入独立的 evidence event 表。理由、被拒绝的 `messages` 方案，以及和 `roomApi.ts` 已定决策防改写的对照，见 [CX-03 spec](../superpowers/specs/2026-10-27-source-evidence-protocol-design.md)。这里不再把归属留作未决问题。
 
 ### 3.2 存储权威来源
 
@@ -192,7 +193,7 @@ type PendingWrite = {
 
 **不要**简单以 `modifiedTime > lastConfirmedAt` 断言决策失效。
 
-分别存储 `importedRevision`、`lastCheckedRevision`、`lastConfirmedRevision`；有的服务只提供时间戳，则注明精度与可靠性。版本比较优先使用服务提供的强版本标识，否则使用内容哈希；无法比较时返回 `unknown`。
+分别存储 `importedRevision`、`lastCheckedRevision`、`lastConfirmedRevision`；有的服务只提供时间戳，则注明精度与可靠性。版本比较优先使用服务提供的强版本标识，否则使用内容哈希；无法比较时返回 `unknown`。这三个名字各有一处权威位置，由 [CX-03 spec](../superpowers/specs/2026-10-27-source-evidence-protocol-design.md) 规定，不再并排各存一份：`importedRevision` 就是 S 条目上 `SourceSnapshot.revision`，`lastCheckedRevision` 只在本地 DB 的检查结果里，`lastConfirmedRevision` 只在确认事件和 S 条目的 `confirmedRevision`。`SourceRef.revision` 是依赖条目引用当时的版本，不是这三者的别名。
 
 - `current`：远端可验证版本与导入版本一致。
 - `changed`：远端版本与导入版本不同。
@@ -323,12 +324,12 @@ interface TaskSink {
 **只做设计准备，不直接改动生产数据或创建远程写操作。**
 
 1. 重新读取仓库 HEAD、当前 ROADMAP 和关联 PR；记录 commit SHA。
-2. 为 `sourceRefs`、`SourceSnapshot`、`workspace_sources`、`PendingWrite` 生成最小 schema/迁移提案。
+2. `sourceRefs` 与 `SourceSnapshot` 的契约和迁移已写入 CX-03 spec。`workspace_sources` 仍属 CX-02，`PendingWrite` 仍属 CX-09；不要在 CX-03 里实现它们。
 3. 绘制当前 `POST /entries` 证据校验与拟议外部证据校验的对照流程，列出所有可能绕过已定决策保护的路径。
 4. 列出 MCP 工具分类与策略接口，并提供跨工作区、隐式资源、搜索、嵌套参数的拒绝测试用例。
 5. 对 `ExtensionStore`、`PLUGINS`、`workspace_plugins` 给出兼容改造方案，禁止平行重复注册表。
 6. 将提案分成可独立审查的 PR，先完成 schema 与测试，再考虑 OAuth/Notion/Google 接入。
-7. 输出 ADR 待决项，等待用户批准后再实施有迁移风险的步骤。
+7. 九项 ADR 已于 2026-10-27 批准，不要再把「ADR 等待批准」当作下一步。仍有效的附带条件只有两条：ADR-02 的确认事件归属已由 [CX-03 spec](../superpowers/specs/2026-10-27-source-evidence-protocol-design.md) 定为独立 evidence event 表，有迁移的实施按该 spec 执行；ADR-09 的公共 OAuth 客户端在 CX-08 核实并记录 Google 官方要求之前不得上线。
 
 ---
 
