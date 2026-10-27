@@ -21,7 +21,7 @@ import { formatCommitMessage } from "./commitMessage.js";
 import { git, withRepoLock } from "./git.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
-export type CommitMeta = { author: "agent" | "user" | "system"; taskId?: string; now?: Date; evidenceEventIds?: string[] };
+export type CommitMeta = { author: "agent" | "user" | "system"; taskId?: string; now?: Date; uiAction?: "confirm" | "edit"; evidenceEventIds?: string[] };
 
 /** A guard refused the upsert. The entry file is left untouched and the repo lock is released. */
 export class UpsertRejected extends Error {
@@ -858,6 +858,7 @@ export class KnowledgeStore {
         sourceMessages,
         author: meta.author,
         ...(meta.evidenceEventIds !== undefined ? { evidenceEventIds: meta.evidenceEventIds } : {}),
+        ...(meta.uiAction !== undefined ? { uiAction: meta.uiAction } : {}),
         ...(meta.taskId !== undefined ? { taskId: meta.taskId } : {}),
       });
       await this.git(["commit", "-m", message, "--", ...rels]);

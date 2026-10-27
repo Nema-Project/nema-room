@@ -677,6 +677,23 @@ describe("ui api", () => {
     expect((await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim()).toBe(rows[0].consumed_commit);
   });
 
+  test("PUT cannot spoof confirmation provenance through its reason or client action", async () => {
+    const e = await inferredEntry({ kind: "decision", title: "D" });
+    const payload = { kind: "decision", title: e.title, body: e.body, reason: "用户确认仍然有效", sourceMessages: [], uiAction: "confirm" };
+    expect((await req("PUT", `/api/workspaces/${ws}/entries/${e.id}`, payload)).status).toBe(200);
+    const putCommit = (await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim();
+    expect((await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, { uiAction: "edit" })).status).toBe(200);
+    const rows = await db.query<any>("select * from evidence_events where workspace_id = $1 order by kind", [ws]);
+    expect(rows.map((row) => row.kind)).toEqual(["confirm_entry", "promote_basis"]);
+    const confirmCommit = (await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim();
+    expect(confirmCommit).not.toBe(putCommit);
+    expect(await git(repoPath(dataDir, ws), ["show", "-s", "--format=%B", putCommit])).toContain("UI-Action: edit");
+    expect(await git(repoPath(dataDir, ws), ["show", "-s", "--format=%B", confirmCommit])).toContain("UI-Action: confirm");
+    await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {});
+    expect((await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim()).toBe(confirmCommit);
+    expect(await db.query("select * from evidence_events where workspace_id = $1", [ws])).toHaveLength(2);
+  });
+
   test("confirm after a snapshot PUT requires its own confirm_revision event", async () => {
     const e = await inferredEntry({ kind: "source", title: "S", url: "https://example.com" });
     const store = new KnowledgeStore(repoPath(dataDir, ws));

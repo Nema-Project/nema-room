@@ -9,6 +9,7 @@ export type CommitInfo = {
   author: "agent" | "user" | "system";
   taskId?: string;
   evidenceEventIds?: string[];
+  uiAction?: "confirm" | "edit";
 };
 
 const oneLine = (s: string): string => s.replace(/[\r\n]+/g, " ");
@@ -23,6 +24,7 @@ export function formatCommitMessage(m: CommitInfo): string {
   ];
   if (m.taskId !== undefined) lines.push(`Task: ${m.taskId}`);
   if (m.evidenceEventIds !== undefined) lines.push(`Evidence-Event: ${m.evidenceEventIds.join(",")}`);
+  if (m.uiAction !== undefined) lines.push(`UI-Action: ${m.uiAction}`);
   return lines.join("\n");
 }
 
@@ -53,5 +55,8 @@ export function parseCommitMessage(msg: string): CommitInfo {
   if (taskId !== undefined) out.taskId = taskId;
   const evidenceEventIds = field("Evidence-Event");
   if (evidenceEventIds !== undefined) out.evidenceEventIds = evidenceEventIds === "" ? [] : evidenceEventIds.split(",");
+  // Only the final server-appended trailer is provenance; embedded user text is not.
+  const uiAction = /^UI-Action: (confirm|edit)$/.exec(lines.at(-1) ?? "");
+  if (uiAction) out.uiAction = uiAction[1] as "confirm" | "edit";
   return out;
 }

@@ -481,7 +481,7 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   // Runs inside the store's existing repository lock; never calls a locking store method.
   const confirmation = (ws: string, mode: "put" | "confirm") => {
-    const meta: CommitMeta = { author: "user", evidenceEventIds: [] };
+    const meta: CommitMeta = { author: "user", evidenceEventIds: [], uiAction: mode === "confirm" ? "confirm" : "edit" };
     const pending: { id: string; payloadHash: string }[] = [];
     return {
       meta,
@@ -507,7 +507,7 @@ export function uiRoutes(deps: UiDeps): Hono {
           if (promoted) {
             try {
               const message = await git(repoPath(dataDir, ws), ["show", "-s", "--format=%B", promoted]);
-              if (parseCommitMessage(message).reason === "用户确认仍然有效") commits[0] = promoted;
+              if (parseCommitMessage(message).uiAction === "confirm") commits[0] = promoted;
             } catch {
               // A DB-only restore may name a commit absent from this repository; it cannot prove replay.
             }

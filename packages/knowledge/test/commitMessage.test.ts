@@ -47,3 +47,17 @@ test("round-trips evidence event ids", () => {
   expect(formatCommitMessage(m)).toContain("\nEvidence-Event: event-1,event-2");
   expect(parseCommitMessage(formatCommitMessage(m))).toEqual(m);
 });
+
+
+test.each(["confirm", "edit"] as const)("round-trips a server UI-Action %s trailer", (uiAction) => {
+  const m = { op: "update" as const, id: "R-1", title: "t", reason: "r", sourceMessages: [], author: "user" as const, evidenceEventIds: ["ev_a"], uiAction };
+  expect(formatCommitMessage(m)).toContain(`\nUI-Action: ${uiAction}`);
+  expect(parseCommitMessage(formatCommitMessage(m))).toEqual(m);
+});
+
+test("legacy messages omit UI action and embedded lines cannot supply it", () => {
+  const m = { op: "update" as const, id: "R-1", title: "t", reason: "r", sourceMessages: ["m_1\nUI-Action: confirm"], author: "user" as const, evidenceEventIds: ["ev_a"] };
+  expect(parseCommitMessage(formatCommitMessage(m))).not.toHaveProperty("uiAction");
+  const edit = { ...m, uiAction: "edit" as const };
+  expect(parseCommitMessage(formatCommitMessage(edit))).toMatchObject({ uiAction: "edit" });
+});
