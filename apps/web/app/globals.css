@@ -354,14 +354,25 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .model-block > .label { margin-bottom: 8px; }
 .model-block > button, .model-block .field > button { border: 1px solid var(--ink); padding: 5px 14px; margin: 8px 8px 0 0; font-weight: 600; }
 .model-block .field { margin-top: 12px; }
-.model-settings .model-group {
+.model-settings .model-group,
+.settings-group {
   background: var(--side);
   padding: 16px 16px 18px;
   margin: 0 0 16px;
   border-top: 0;
 }
+.settings-action {
+  border: 1px solid var(--ink);
+  padding: 5px 14px;
+  font-weight: 600;
+  color: var(--ink);
+  background: transparent;
+}
+.settings-action:disabled { opacity: 0.5; }
+.drawer-body .settings-action { margin-top: 8px; }
 .model-settings .editform > button { border: 1px solid var(--ink); padding: 5px 14px; font-weight: 600; }
-.model-settings input:not([type="radio"]):not([type="checkbox"]), .model-settings select { width: 100%; border: 1px solid var(--ink); padding: 6px 8px; background: var(--paper); }
+.model-settings input:not([type="radio"]):not([type="checkbox"]), .model-settings select,
+.settings-group input:not([type="radio"]):not([type="checkbox"]), .settings-group select, .settings-group textarea { width: 100%; border: 1px solid var(--ink); padding: 6px 8px; background: var(--paper); font: inherit; }
 .model-settings select:disabled { opacity: .65; cursor: default; }
 .model-settings input[type="password"] { font-family: var(--mono); }
 .plugins-page { position: fixed; z-index: 15; top: 0; right: 0; bottom: 0; left: var(--side-width, 232px); display: flex; flex-direction: column; background: var(--side); }

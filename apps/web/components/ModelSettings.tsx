@@ -363,7 +363,7 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
     <aside className="drawer model-settings" role="dialog" aria-label={t("model.title")}>
       <div className="bar">
         <h1>{t("model.title")}</h1>
-        <button type="button" className="sp link" onClick={onClose}>{t("common.close")}</button>
+        <button type="button" className="sp settings-action" onClick={onClose}>{t("common.close")}</button>
       </div>
       <div className="drawer-body">
         {error && <p className="error" role="alert">{t(error)}</p>}

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Workspace settings uses the same grouped panels as model settings. Close, delete, and save are bordered buttons in the standard ink color.
+
 ## [0.1.3] - 2026-10-27
 
 ### Added
