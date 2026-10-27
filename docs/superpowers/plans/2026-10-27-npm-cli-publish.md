@@ -4,7 +4,7 @@
 
 **Goal:** 把 `apps/cli` 打成名为 `nema` 的独立 npm 包：内部依赖只以一份公共 chunk 进产物，CI 做三平台 pack 冒烟，`v*` tag 在 `verify` 通过的同一提交上用 trusted publishing 自动发布。
 
-**Architecture:** bundle 阶段以 `apps/cli/dist` 的每个 `.js` 为入口做代码分割打包：CLI 文件保持原路径，`@nema/shared` 被抽进公共 chunk 只出现一份，显式 Node 平台与 ESM 输出。组装阶段由 `scripts/npm/stage-package.mjs` 派生发布清单（`name: nema`、带 `repository`、无 `exports`）并 `npm pack`。冒烟以 hub 的 `welcome` 为接受证据，并覆盖版本不一致被拒的情形。发布工作流分两个 job：无 OIDC 的构建 job 产出 tarball，发布 job 只下载并发布，全程钉住触发事件的 SHA。
+**Architecture:** bundle 阶段以 `apps/cli/dist` 的每个 `.js` 为入口打包：CLI 自身的相对 import 标为 external、文件原样保留，只有 `@nema/shared` 被抽进公共 chunk 只出现一份，显式 Node 平台与 ESM 输出。组装阶段由 `scripts/npm/stage-package.mjs` 派生发布清单（`name: nema`、带 `repository`、无 `exports`）并 `npm pack`。冒烟以 hub 的 `welcome` 为接受证据，并覆盖版本不一致被拒的情形。发布工作流分两个 job：无 OIDC 的构建 job 产出 tarball，发布 job 只下载并发布，全程钉住触发事件的 SHA。
 
 **Tech Stack:** esbuild（新 devDependency）、Node `.mjs` 脚本加 `node --test`（沿用 `scripts/desktop/` 模式）、Vitest、GitHub Actions、npm trusted publishing。
 
@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - 产物里不能出现对 `@nema/shared` 等内部包的外部导入；`@nema/shared` 的模块体只出现一份；发布清单里不能有内部包依赖，也不能保留 monorepo 的 `exports` 映射。
-- CLI 文件不搬动：`cliVersion()` 靠 `../../package.json` 读版本，report 安装靠相对路径找 `src/report/SKILL.md`，文件深度一变两者都坏。
+- CLI 文件不搬动：`cliVersion()` 靠 `../../package.json` 读版本，report 安装靠相对路径找 `src/report/SKILL.md`，文件深度一变两者都坏。不搬动靠任务 1 的 external 标记保证，不靠 `splitting` 的默认行为（它会把共享的 CLI 模块也抽进 chunk）。
 - 带 `id-token: write` 的发布 job 不检出源码、不装依赖、不跑构建脚本，只发布构建 job 产出的 tarball；发布前复核 tag 仍指向已验过的 SHA。
 - 仓库里不出现长期 npm token；`.github/workflows/npm-publish.yml` 定名后不改名（npm 端 trusted publisher 按文件名绑定）。
 - 代码和注释用英文；两份英文 README 保持字节相同。
@@ -37,9 +37,9 @@
 - 新建：nema-room:scripts/npm/bundle-cli.test.mjs
 - 满足：R-1
 
-- [ ] **Step 1:** 测试断言：对含 `@nema/shared` 导入的 fixture 产物运行 bundle 后，（a）没有任何文件留下 `from "@nema/shared"` 的外部导入；（b）shared 的特征模块体在全部产物中只出现一次；（c）入口文件仍在原相对路径；（d）产物是 ESM（保留 `import` 语法、无 IIFE 包装）；（e）第三方导入（`zod`、`commander`）保留为外部导入。
+- [ ] **Step 1:** 测试断言：对含 `@nema/shared` 导入的 fixture 产物运行 bundle 后，（a）没有任何文件留下 `from "@nema/shared"` 的外部导入；（b）shared 的特征模块体在全部产物中只出现一次；（c）入口文件仍在原相对路径；（d）产物是 ESM（保留 `import` 语法、无 IIFE 包装）；（e）第三方导入（`zod`、`commander`）保留为外部导入；（f）所有 chunk 文件只含 `@nema/shared` 的代码，且含 `import.meta.url` 的模块（以真实 `dist` 里这类模块的清单逐一核对，包括提供 `cliVersion()` 的模块与 report 安装逻辑）都仍在原路径、内容未被抽进 chunk。
 - [ ] **Step 2:** 跑 `node --test scripts/npm/bundle-cli.test.mjs` → 新断言 FAIL。
-- [ ] **Step 3:** 加 esbuild 为根 devDependency 并更新 `package-lock.json`。实现 `bundle-cli.mjs`：枚举 `apps/cli/dist` 下每个 `.js` 为入口，esbuild 设 `bundle: true`、`splitting: true`、`format: "esm"`、`platform: "node"`，`external` 为全部第三方依赖、只内联 `@nema/shared`，`outbase` 设为 `apps/cli/dist` 使 CLI 文件写回原路径。`apps/cli` 的 `build` 脚本在 `tsc -b` 后调用它。
+- [ ] **Step 3:** 加 esbuild 为根 devDependency 并更新 `package-lock.json`。实现 `bundle-cli.mjs`：枚举 `apps/cli/dist` 下每个 `.js` 为入口，esbuild 设 `bundle: true`、`splitting: true`、`format: "esm"`、`platform: "node"`；用插件（`onResolve`）把 CLI 自身的相对 import（`./`、`../` 开头）标为 external，CLI 文件写回原路径且不被抽进 chunk；`external` 另含全部第三方依赖，只有 `@nema/shared` 被打包并抽进公共 chunk。`apps/cli` 的 `build` 脚本在 `tsc -b` 后调用它。
 - [ ] **Step 4:** 跑 `node --test scripts/npm/bundle-cli.test.mjs` PASS；跑 `npx vitest run apps/cli/test` PASS（桌面载荷的 staging 构建仍能完成）。
 - [ ] **Step 5:** 提交信息：`build(cli): bundle @nema/shared into a single chunk`
 
