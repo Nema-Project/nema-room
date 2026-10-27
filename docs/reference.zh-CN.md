@@ -130,6 +130,18 @@ GitHub 插件让 Agent 查看已绑定仓库在 GitHub 上的 issue、pull reque
 
 ## API 与恢复
 
+### 外部来源证据协议
+
+来源以 `source` 条目的 `sourceSnapshot` 保存经校验的摘录快照；其他知识通过 `sourceRefs` 引用来源条目、`revision`、`snapshotHash`、`locator` 和可选逐字 `quote`。引用的 `snapshotHash` 记录写入时的内容哈希。`basis` 仍只有 `stated`、`decided`、`inferred`；导入从 `inferred` 开始，不会把外部正文写成聊天消息。`source__import` 是 hub 内部导入路径，不是 Room 工具，也不在插件注册表里；当前没有随本协议交付外部服务连接器。一个数据目录同时只能运行一个 hub，知识库锁不跨进程。
+
+- Room 写入在同一知识库锁内校验 `sourceRefs`。来源必须是本 workspace 的带快照 source；revision 和哈希必须匹配当前快照，quote 必须来自对应 locator 的摘录。失败返回 400，错误原句分别为 `sourceRefs: unknown source entry <id>`、`sourceRefs: <id> has no source snapshot`、`sourceRefs: revision must match the current snapshot of <id>`、`sourceRefs: snapshotHash must match the current snapshot of <id>`、`sourceRefs: quote must be copied verbatim from excerpt <locator> of <id>`。
+- 写入前或写入后存在 `sourceRefs` 时，新建或改变标题、正文、状态、basis、引用并写成 `stated` / `decided`，必须引用当前任务的 user 消息，并从其当前正文提供逐字 `quotes`。其他消息或仅旧版本里的文字不够；清空引用仍要检查。缺少逐字证据返回 409 `引用外部来源时，把条目标成 stated 或 decided 需要当前这条用户消息里的逐字摘录。外部文档不能代替这个确认。`。原有 active 决策和用户 basis 守卫继续先执行。
+- Agent 不能用 `upsert` 修改导入来源的标题、正文、状态或 URL，返回 409 `导入的来源快照不能用 upsert 修改`；不能改变带快照来源的 basis，即使带当前用户逐字摘录也返回 409 `导入的来源不能由 Agent 改 basis。只有界面的 promote_basis 事件可以。`。快照字段不由 Room 写入；带外部引用或快照时 Agent 的 `confirmed: true` 不会完成确认，请求里的 `confirmationEventId` 被忽略，也不会消费事件。
+- 用户确认存在独立的 `evidence_events` 表，不在 `messages`，不进入 prompt，也不排队任务。界面编辑先记录 `promote_basis`；确认在需要提升 basis 时记录 `promote_basis`，带快照时另记 `confirm_revision`，其余情况记录 `confirm_entry`。事件绑定 workspace、条目、正文、引用和来源快照哈希；先插事件，再写 Git 的 `Evidence-Event` trailer，最后消费事件。重复动作可复用匹配的已消费结果。Git 还附加由服务端设置的 `UI-Action: edit` 或 `UI-Action: confirm` trailer，以区分编辑和确认；客户端不能选择这个标记，旧提交仍可读取。
+- UI 列表、单条和 Room 列表、单条读取返回 `freshness`、`reviewNeeded`、`unconfirmedSnapshot`。`freshness` 为 `current`、`changed`、`unavailable` 或 `unknown`；revision 为 `null` 或检查超时不能判为 `current`。引用版本或哈希不匹配、来源缺失，或来源为 `changed` / `unavailable` 时 `reviewNeeded` 为真。两边 revision 都是 `null` 但内容哈希变了，仍需复核，新鲜度保持 `unknown`。检查不修改知识正文或 basis，原有 source 的 90 天 `isStale` 规则保留。
+- `unconfirmedSnapshot` 表示当前快照尚无匹配 revision 与内容哈希的已消费 `confirm_revision` 事件，或 `confirmedRevision` 与快照版本不同。重新导入改变摘录后，即使 basis 仍为 `stated`，也会重新需要确认；revision 为 `null` 时仍按内容哈希区分。界面编辑提升 basis 本身不确认快照。
+- 导入通过 `source_import_receipts` 保留条目编号；Git 已提交而索引失败时返回 `导入已写入知识库但索引未完成：<id>`，重试修复索引并复用同一个 `S-n`。启动在恢复未提交知识后，逐 workspace 对账导入回执和未消费事件；仅有匹配提交与哈希的事件可补消费，不改写知识。已撤回来源重导入返回 409 `来源已撤回，不能重新导入`。
+
 ### Hub 的本机访问限制
 
 - hub 只接受 `Host` 为 `127.0.0.1:<NEMA_HUB_PORT>` 或 `localhost:<NEMA_HUB_PORT>` 的 `/api`、`/room` 请求，其他 Host 一律 403（防 DNS rebinding）。因此请用这两个名字之一访问 hub（`NEXT_PUBLIC_HUB_URL` 也必须是其中之一）；daemon 的 WebSocket `/daemon` 不受影响，仍靠 daemon token 认证。compose 模式下浏览器和 daemon 经由发布到 `127.0.0.1` 的端口访问容器里的 hub，`Host` 依旧是 `127.0.0.1:<端口>` / `localhost:<端口>`，所以容器内端口必须与发布端口一致（`docker-compose.yml` 已按 `NEMA_HUB_PORT` 两边设成同一个值）。
