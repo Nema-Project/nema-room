@@ -15,7 +15,7 @@ vi.mock("@/lib/hub", () => ({
 const entry: Entry = {
   id: "R-1", kind: "requirement", title: "Refund window", status: "active", businessDate: "2026-10-21",
   related: ["Q-4"], sourceMessages: ["m_1", "m_2"], body: "Refunds within **7 days**.",
-  basis: null, ingestedAt: null, confirmedAt: null, quotes: [],
+  basis: null, ingestedAt: null, confirmedAt: null, confirmedRevision: null, sourceRefs: [], quotes: [],
 };
 const hist = [
   { version: 2, commit: "c2", committedAt: "2026-10-21T15:00:00Z", op: "update" as const, reason: "changed window", sourceMessages: ["m_2"], author: "user" as const },

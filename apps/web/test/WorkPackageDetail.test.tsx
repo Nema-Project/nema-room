@@ -16,7 +16,7 @@ const task = (n: number, extra: Partial<WpTask> = {}): WpTask => ({
 });
 const wpEntry = (status: Entry["status"], tasks: WpTask[], blockedOn: string | null = null): Entry => ({
   id: "W-2", kind: "workpackage", title: "Refund package", status, businessDate: null, related: [], sourceMessages: [], body: "",
-  basis: null, ingestedAt: null, confirmedAt: null, quotes: [],
+  basis: null, ingestedAt: null, confirmedAt: null, confirmedRevision: null, sourceRefs: [], quotes: [],
   workpackage: { requirements: ["R-3", "R-5"], repos: ["r1"], approvedAt: null, approvedCommit: null, blockedOn, tasks },
 });
 const pkg = (status: Entry["status"], opts: { spec?: string | null; plan?: string | null; tasks?: WpTask[] } = {}): WorkPackage => ({
