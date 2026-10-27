@@ -8,6 +8,7 @@ import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as nodeUtil from "node:util";
+import { devComposeUpArgs } from "./compose-dev.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const CLI = path.join(ROOT, "apps/cli/dist/index.js");
@@ -196,7 +197,7 @@ export async function main(args = process.argv.slice(2)) {
     run("npm", ["run", "build", "-w", "apps/cli"], env);
     await mkdir(settings.dataDir, { recursive: true, mode: 0o700 });
     console.log(t.services);
-    run("docker", ["compose", "up", "-d", "--build"], env);
+    run("docker", devComposeUpArgs(), env);
     console.log(t.waiting);
     if (!await waitReady(settings)) throw new Error(t.timeout);
     const connection = ["--hub", settings.hubUrl, "--token-file", settings.tokenFile];

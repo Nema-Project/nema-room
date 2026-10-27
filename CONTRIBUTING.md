@@ -25,7 +25,9 @@ node apps/cli/dist/index.js daemon
 
 已有 `.env` 时不要覆盖。开发模式不要同时启动 Compose 里的 hub 和 web，端口会冲突。CLI 不会自动读取根目录 `.env`。
 
-从本仓库跑 Web / Compose 仍走 `node scripts/setup.mjs`。宿主机 daemon 是 npm 包 `@nema-project/nema`，命令名是 `nema`。按 hub 版本安装：`npx @nema-project/nema@<hub 版本>` 或 `npm i -g @nema-project/nema@<hub 版本>`。不要把不带版本的 `npx @nema-project/nema` 写成与任意 hub 都匹配的安装方式。
+`npm run up` 用当前检出构建 hub 和 web。Linux 和 macOS 上先执行 `export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"`，再执行 `npm run up`。Windows 上的 Docker Desktop 不需要这条 export。单独执行 `docker compose up` 会拉取钉死版本的 GHCR 镜像；在包含镜像发布工作流的第一个 tag 之前，这些镜像还不存在。hub 的宿主机端口和容器端口都是 `NEMA_HUB_PORT`（默认 4400）。web 的宿主机端口是 `NEMA_WEB_PORT`（默认 3000），容器内仍是 3000。web 启动时读取 `NEMA_HUB_URL`，compose 默认把它设成 `http://127.0.0.1:$NEMA_HUB_PORT`。
+
+从本仓库跑 Web / Compose 仍走 `node scripts/setup.mjs`。宿主机 daemon 是 npm 包 `@nema-project/nema`，命令名是 `nema`。第一次发布之前它还不在 npm 上，daemon 从当前检出安装。发布之后按 hub 版本安装：`npx @nema-project/nema@<hub 版本>` 或 `npm i -g @nema-project/nema@<hub 版本>`。不要把不带版本的 `npx @nema-project/nema` 写成与任意 hub 都匹配的安装方式。
 
 ## 目录
 

@@ -43,6 +43,9 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
   && git config --system --add safe.directory '*'
+ARG IMAGE_VERSION=dev
+LABEL org.opencontainers.image.source=https://github.com/Nema-Project/nema-room \
+      org.opencontainers.image.version=$IMAGE_VERSION
 WORKDIR /app
 ENV NODE_ENV=production \
     HOME=/tmp \
@@ -64,9 +67,10 @@ CMD ["node", "apps/hub/dist/src/main.js"]
 
 # ---- web build ----
 FROM deps AS web-build
-# Inlined into the browser bundle at build time: the address the browser (on the host) uses for the hub.
+# Fallback baked into the browser bundle. The running container overrides it with NEMA_HUB_URL.
 ARG NEXT_PUBLIC_HUB_URL=http://127.0.0.1:4400
 ENV NEXT_PUBLIC_HUB_URL=${NEXT_PUBLIC_HUB_URL}
+ENV NEMA_DOCKER_WEB=1
 COPY tsconfig.base.json ./
 COPY packages/shared packages/shared
 COPY apps/web apps/web
@@ -75,11 +79,19 @@ RUN npx tsc -b packages/shared && npm run build -w apps/web
 # ---- web runtime ----
 FROM ${NODE_IMAGE} AS web
 WORKDIR /app
+ARG IMAGE_VERSION=dev
+LABEL org.opencontainers.image.source=https://github.com/Nema-Project/nema-room \
+      org.opencontainers.image.version=$IMAGE_VERSION
 ENV NODE_ENV=production \
-    NEXT_TELEMETRY_DISABLED=1
-COPY --from=web-build /app ./
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    NEMA_HUB_URL=http://127.0.0.1:4400
+COPY --from=web-build /app/apps/web/.next/standalone ./
+COPY --from=web-build /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=web-build /app/apps/web/public ./apps/web/public
+COPY scripts/images/web-entrypoint.sh /entrypoint.sh
+RUN chmod 0755 /entrypoint.sh
 USER node
-WORKDIR /app/apps/web
 EXPOSE 3000
 # 0.0.0.0 inside the container only; compose publishes the port on 127.0.0.1.
-CMD ["/app/node_modules/.bin/next", "start", "-H", "0.0.0.0", "-p", "3000"]
+ENTRYPOINT ["/entrypoint.sh"]
