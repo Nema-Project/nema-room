@@ -1,16 +1,16 @@
 # 安全策略
 
-English: this repository is private, so GitHub's advisory form does not exist and returns 404. Open a [security issue](https://github.com/Nema-Project/nema-room/issues/new?template=security.yml). Describe the impact. Do not include tokens, `.env`, `auth.json`, daemon tokens, or exploit steps. This page continues in Chinese.
+English: this repository is public and desktop preview releases are available. Private vulnerability reporting is the intended channel, but its availability has not yet been verified. Do not post sensitive details in public issues or pull requests. Until verification, you may only ask for a private contact route without disclosing the vulnerability. No dedicated security email is published. Fixes land on main and ship in a subsequent desktop release; historical release lines are not separately maintained.
 
-日本語: このリポジトリは非公開のため、GitHub の脆弱性報告フォームは 404 になります。[セキュリティ issue](https://github.com/Nema-Project/nema-room/issues/new?template=security.yml) を開いてください。影響だけを書き、トークン、`.env`、悪用手順は貼らないでください。本文は中国語です。
+日本語: このリポジトリは公開されており、デスクトップのプレビュー版も配布されています。非公開の脆弱性報告窓口は利用可否を確認中です。公開 issue や PR に機密情報を書かず、確認が済むまでは脆弱性の内容を含めずに非公開の連絡方法だけを問い合わせてください。専用メールアドレスは公開していません。修正は main に入り、以降のデスクトップ版で配布されます。旧リリース系列の個別保守は約束していません。
 
 ## 如何报告
 
-本仓库是私有的。GitHub 的私密漏洞报告只对公开仓库提供，`/security/advisories/new` 会返回 404。私有仓库从 2024 年 5 月起也不能创建安全通告。
+**私密报告渠道待验证，当前不能声明已可用。** 预定入口是 [GitHub 私密漏洞报告](https://github.com/Nema-Project/nema-room/security/advisories/new)。需要先确认仓库已启用该功能，并由有权报告的普通非管理员用户验证表单可访问；仅有 URL 或管理员能打开页面不能作为证据。验证状态见 [P0 发布保障记录](docs/reviews/2026-10-26-p0-release-assurance.md)。
 
-请使用 [安全 issue 模板](https://github.com/Nema-Project/nema-room/issues/new?template=security.yml)。写上 commit SHA、操作系统和影响。不要写利用步骤，不要粘贴令牌、`.env`、`auth.json` 或 daemon token。维护者需要样本时会再问。
+验证完成前，不要提交敏感详情；仅可在公开渠道提出不含漏洞细节的“请提供私密联系途径”请求。不要使用公开 issue、PR 或提交记录报告漏洞细节。本项目没有单独公布安全邮箱。
 
-本项目没有单独的安全邮箱。密钥也不要写入 pull request 或提交记录。
+确认私密渠道可用后，在该渠道提供受影响的桌面版本或源码 commit SHA、操作系统、影响及脱敏后的复现步骤。Never include credentials or real user data; use a redacted reproduction only in the verified private channel. 認証情報や実際の利用者データを含めず、確認済みの非公開窓口で匿名化した再現手順だけを共有してください。不要附真实用户数据、API key、令牌、`.env`、`auth.json` 或 daemon token；只用可公开的假数据重现。
 
 ## 报告范围
 
@@ -34,6 +34,6 @@ English: this repository is private, so GitHub's advisory form does not exist an
 
 ## 支持的版本
 
-安装方式是默认分支的源码。CLI 不作为独立 npm 包发布，也没有单独的安全维护分支。修复进入 `main`。
+当前支持桌面预览版本以及 `main` 源码的 Web / Compose 运行方式。修复首先进入 `main`，随后在新的桌面版本中分发；不承诺对历史发布系列回移修复，也没有独立的安全维护分支。CLI 不作为独立 npm 包发布。
 
-桌面应用可以自己从源码构建，还没有发布版本，安装包也未签名。当前支持的运行方式是源码安装的 Web / Compose 路径。
+Windows 安装包尚未签名；macOS 使用 ad-hoc 签名、未公证。安装、校验和升级限制以 [使用指南](docs/guide.zh.md) 与 [发布检查清单](scripts/desktop/RELEASE.md) 为准；安装包可下载不代表升级或恢复验收已完成。

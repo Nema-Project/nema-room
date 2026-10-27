@@ -46,7 +46,7 @@ node apps/cli/dist/index.js daemon
 
 ## 提交前
 
-按改动范围运行对应检查。应用相关 pull request 会触发 CI，也可手动运行。Windows/macOS 跑平台检查，Ubuntu 跑完整测试、web 构建和 Compose。根目录 Markdown、docs/ 和 site/ 等路径目前会跳过应用 CI；以 [.github/workflows/ci.yml](.github/workflows/ci.yml) 为准，未运行不等于通过。
+按改动范围运行对应检查。所有 pull request 都运行分类、文档检查并输出固定的 `CI gate`。仅明确允许的文档与站点资源、Pages 工作流可跳过重型检查；Agent 指令、可执行文件和混合改动跑完整套件。手动 CI 总是跑完整套件：Windows/macOS 平台检查，Ubuntu 完整测试、web 构建和 Compose。见 [.github/workflows/ci.yml](.github/workflows/ci.yml) 与 [复用套件](.github/workflows/verify.yml)。仓库 required check 需另行启用，未运行不等于通过。
 
 ```bash
 npm test
@@ -76,4 +76,4 @@ npm run build -w apps/web
 
 缺陷、建议和使用问题请用 [issue 模板](https://github.com/Nema-Project/nema-room/issues/new/choose)。模板会要求系统、Node/Docker 版本、运行方式和脱敏后的错误信息。
 
-凭证、路径越界或本地接口方面的问题按 [SECURITY.md](SECURITY.md) 使用安全 issue 模板。只写影响，不要附密钥或利用步骤。
+凭证、路径越界或本地接口方面的问题先读 [SECURITY.md](SECURITY.md)。私密漏洞报告渠道待验证；不要在公开 issue 或 PR 提交敏感细节。验证前只可提出不含漏洞细节的私密联系途径请求。修复进入 main，并在后续桌面版本中分发，不承诺维护旧发布系列。

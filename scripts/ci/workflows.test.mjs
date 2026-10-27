@@ -1,0 +1,126 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, copyFileSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync, execFileSync } from 'node:child_process';
+import { parse } from 'yaml';
+const read = name => parse(readFileSync(new URL(`../../.github/workflows/${name}.yml`, import.meta.url), 'utf8'));
+const checkout = job => job.steps.filter(s => s.uses?.startsWith('actions/checkout@'));
+const expr = value => value?.replace(/^\$\{\{\s*|\s*\}\}$/g, '').trim();
+
+function assertCi(ci) {
+  assert.ok(Object.hasOwn(ci.on, 'pull_request'));
+  assert.ok(Object.hasOwn(ci.on, 'workflow_dispatch'));
+  assert.equal(ci.on.pull_request?.['paths-ignore'], undefined);
+  assert.equal(ci.on.pull_request?.paths, undefined);
+  assert.equal(ci.on.pull_request_target, undefined);
+  assert.equal(ci.permissions.contents, 'read');
+  assert.equal(ci.jobs.gate.name, 'CI gate');
+  assert.equal(expr(ci.jobs.gate.if), 'always()');
+  assert.deepEqual([...ci.jobs.gate.needs].sort(), ['classify','docs','verify']);
+  assert.equal(ci.jobs.verify.uses, './.github/workflows/verify.yml');
+  assert.equal(expr(ci.jobs.verify.with.checkout_ref), 'github.sha');
+  assert.equal(ci.jobs.verify.secrets, undefined);
+  assert.equal(expr(ci.jobs.verify.if), "needs.classify.outputs.mode == 'full'");
+  const step = ci.jobs.gate.steps.find(s => s.run === 'node scripts/ci/policy.mjs');
+  assert.ok(step);
+  for (const [key,value] of Object.entries({MODE:'needs.classify.outputs.mode', CLASSIFY:'needs.classify.result', DOCS:'needs.docs.result', VERIFY:'needs.verify.result'})) assert.equal(expr(step.env[key]), value);
+  return step;
+}
+
+test('PR gate runs for every PR and forwards actual dependency results to the policy', () => {
+  const ci = read('ci'); const step = assertCi(ci);
+  for (const verify of ['success','failure','cancelled','skipped','']) {
+    const run = spawnSync(process.execPath, ['scripts/ci/policy.mjs'], {env:{...process.env, MODE:'full', CLASSIFY:'success', DOCS:'success', VERIFY:verify}});
+    assert.equal(run.status, verify === 'success' ? 0 : 1);
+  }
+  const mutation = structuredClone(ci);
+  mutation.jobs.gate.steps.find(s => s.run === step.run).env.VERIFY = 'success';
+  assert.throws(() => assertCi(mutation));
+  const skipped = structuredClone(ci); skipped.jobs.gate.if = 'success()';
+  assert.throws(() => assertCi(skipped));
+});
+
+test('reusable verification checks the supplied ref with the complete existing suite', () => {
+  const verify = read('verify');
+  assert.deepEqual(verify.on.workflow_call.inputs.checkout_ref, {required:true, type:'string'});
+  assert.equal(verify.permissions.contents, 'read');
+  for (const job of Object.values(verify.jobs)) {
+    assert.equal(job.if, undefined);
+    assert.equal(job['continue-on-error'], undefined);
+    for (const step of checkout(job)) {
+      assert.equal(expr(step.with.ref), 'inputs.checkout_ref');
+      assert.equal(step.with['persist-credentials'], false);
+    }
+  }
+  assert.deepEqual(verify.jobs.platform.strategy.matrix.os, ['macos-latest','windows-latest']);
+  const runs = verify.jobs.test.steps.map(s => s.run);
+  for (const command of ['npm ci','npm run typecheck','npm test -- --maxWorkers=2','npm run build -w apps/hub','npm run build -w apps/cli','npm run lint -w apps/web','npm run build -w apps/web','npm run setup:check','npm run up','docker compose down']) assert.ok(runs.includes(command), command);
+  assert.ok(runs.indexOf('npm run typecheck') < runs.indexOf('npm test -- --maxWorkers=2'));
+  assert.equal(verify.jobs.test.steps.find(s => s.run === 'docker compose down').if, 'always()');
+});
+
+// Evaluate the small Actions boolean expression subset used by these job gates.
+function condition(value, context) {
+  let source = expr(value);
+  source = source.replace(/always\(\)/g, 'true').replace(/cancelled\(\)/g, 'false');
+  source = source.replace(/needs\.[\w.]+|github\.event_name/g, key => JSON.stringify(key.split('.').reduce((v,k) => v?.[k], context) ?? ''));
+  assert.match(source, /^[\s\w'"!&|=().-]+$/);
+  return Function(`"use strict"; return (${source});`)();
+}
+function assertRelease(release) {
+  const {plan,verify,build,publish} = release.jobs;
+  assert.equal(release.on.workflow_dispatch.inputs.verify_full.default, false);
+  assert.equal(verify.uses, './.github/workflows/verify.yml');
+  assert.equal(expr(verify.with.checkout_ref), 'needs.plan.outputs.commit');
+  assert.ok(plan.outputs.commit); assert.ok(plan.outputs.verification_required);
+  assert.deepEqual([...build.needs].sort(), ['plan','verify']);
+  assert.deepEqual([...publish.needs].sort(), ['build','plan','verify']);
+  for (const job of [build,publish]) for (const step of checkout(job)) assert.equal(expr(step.with.ref), 'needs.plan.outputs.commit');
+  for (const required of ['true','false']) for (const result of ['success','failure','cancelled','skipped','']) {
+    const context = {github:{event_name:'push'}, needs:{plan:{result:'success',outputs:{release:required,verification_required:required}}, verify:{result},build:{result:'success'}}};
+    assert.equal(condition(build.if,context), result === 'success' || (required === 'false' && result === 'skipped'), `build ${required}/${result}`);
+    assert.equal(condition(publish.if,context), required === 'true' && result === 'success', `publish ${required}/${result}`);
+    context.github.event_name='workflow_dispatch';
+    assert.equal(condition(publish.if,context), false, 'manual dispatch never publishes, even on a tag');
+  }
+  for (const failed of ['plan','build']) {
+    const context={github:{event_name:'push'},needs:{plan:{result:'success',outputs:{release:'true',verification_required:'true'}},verify:{result:'success'},build:{result:'success'}}};
+    for(const result of ['failure','cancelled','skipped','']) { context.needs[failed].result=result; assert.equal(condition(publish.if,context),false); }
+  }
+}
+
+test('release gates bind all stages to one SHA and fail closed on verification results', () => {
+  const release = read('desktop-release'); assertRelease(release);
+  const wrongRef=structuredClone(release); checkout(wrongRef.jobs.build)[0].with.ref='main'; assert.throws(()=>assertRelease(wrongRef));
+  const missingVerify=structuredClone(release); missingVerify.jobs.publish.needs=['plan','build']; assert.throws(()=>assertRelease(missingVerify));
+});
+
+test('actual publication shell refuses a tag moved during upload before making the draft public', t => {
+  const cwd=mkdtempSync(join(tmpdir(),'publish-gate-'));t.after(()=>rmSync(cwd,{recursive:true,force:true}));
+  const git=(...args)=>execFileSync('git',args,{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  git('init','-q','-b','main');git('config','user.email','fixture@example.com');git('config','user.name','Fixture');
+  git('commit','--allow-empty','-qm','verified');const commit=git('rev-parse','HEAD');
+  git('tag','-a','v1.2.3','-m','annotated');git('commit','--allow-empty','-qm','unchecked');const other=git('rev-parse','HEAD');
+  git('clone','--bare','.',join(cwd,'remote.git'));git('remote','add','origin',join(cwd,'remote.git'));git('checkout','-q',commit);
+  mkdirSync(join(cwd,'scripts/desktop'),{recursive:true});copyFileSync(new URL('../desktop/release-commit.mjs',import.meta.url),join(cwd,'scripts/desktop/release-commit.mjs'));
+  mkdirSync(join(cwd,'release-assets'));writeFileSync(join(cwd,'release-assets/artifact.txt'),'fixture');
+  mkdirSync(join(cwd,'bin'));
+  writeFileSync(join(cwd,'bin/gh'),`#!/bin/bash
+set -euo pipefail
+case "$2" in
+  upload) if [ "$MOVE_TAG" = true ]; then git --git-dir="$REMOTE" update-ref refs/tags/v1.2.3 "$OTHER"; fi ;;
+  view) echo artifact.txt ;;
+  edit) for arg in "$@"; do if [ "$arg" = --draft=false ]; then touch "$PUBLISH_MARKER"; fi; done ;;
+esac
+`,{mode:0o755});
+  const env={...process.env,PATH:`${join(cwd,'bin')}:${process.env.PATH}`,TAG:'v1.2.3',RELEASE_COMMIT:commit,VERSION:'1.2.3',PRERELEASE:'false',DRAFT_EXISTS:'true',MOVE_TAG:'true',REMOTE:join(cwd,'remote.git'),OTHER:other,PUBLISH_MARKER:join(cwd,'published')};
+  const script=read('desktop-release').jobs.publish.steps.find(s=>s.name==='Create or reuse draft, upload, publish').run;
+  const run=()=>spawnSync('bash',['-c',script],{cwd,env,encoding:'utf8'});
+  let result=run();assert.notEqual(result.status,0,result.stderr);assert.match(result.stderr,/tag moved/i);assert.equal(existsSync(env.PUBLISH_MARKER),false);
+  // The same workflow shell also refuses movement before draft operations.
+  result=run();assert.notEqual(result.status,0);assert.equal(existsSync(env.PUBLISH_MARKER),false);
+  git('--git-dir='+env.REMOTE,'update-ref','refs/tags/v1.2.3',commit);env.MOVE_TAG='false';
+  result=run();assert.equal(result.status,0,result.stderr);assert.equal(existsSync(env.PUBLISH_MARKER),true);
+});

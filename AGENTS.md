@@ -67,7 +67,7 @@ Choose checks based on the changed behavior. Add regression coverage for fixes a
 
 Run `npm ci` when dependencies need installing. Run `npm run typecheck` before the full test suite: child-process fixtures may need compiled workspace exports. Root typecheck excludes web; it does not replace the web build. A focused test can be run from the repository root with `npx vitest run <test-file>`.
 
-Read [.github/workflows/ci.yml](.github/workflows/ci.yml) for the current CI matrix. Root Markdown, `docs/`, and `site/` changes are currently filtered from application CI; an absent run is not a passing run. Do not add expensive duplicate checks without a concrete coverage need.
+Read [.github/workflows/ci.yml](.github/workflows/ci.yml) for classification and the stable `CI gate`, and [.github/workflows/verify.yml](.github/workflows/verify.yml) for the complete reusable suite. Every PR runs classification and documentation checks. Only explicitly allowed documentation/site assets and the Pages workflow skip the full suite; agent instructions, executable files and mixed changes run it. Manual CI always runs the full suite. A required-check ruleset must be activated separately; an absent run is not a passing run. Run `node --test scripts/ci/*.test.mjs scripts/desktop/release-commit.test.mjs` and actionlint for CI/release gate changes. Do not add expensive duplicate checks without a concrete coverage need.
 
 Report the commands actually run, results, and skipped or blocked checks. Keep these claims separate: static checks, automated tests, packaging, real-model semantic acceptance, and native-platform acceptance. A successful build on one OS does not validate another, and skipped tests are not acceptance evidence.
 

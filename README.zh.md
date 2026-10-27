@@ -145,6 +145,8 @@ nema wp get W-1
 
 发现问题或有新想法？[提交 issue](https://github.com/Nema-Project/nema-room/issues/new/choose)，附上操作系统、安装方式和脱敏后的错误信息。欢迎使用中文、英文或日文参与贡献。
 
+安全问题请先读 [安全策略](SECURITY.md)。私密报告渠道仍待验证：不要在公开 issue 或 PR 提交敏感详情；验证前只可提出不含漏洞细节的私密联系途径请求。修复进入 main 并在后续桌面版本分发，不承诺维护旧发布系列。
+
 ---
 
 [MIT](LICENSE) © Nema-Project contributors。第三方许可与来源：[archify](vendor/archify/VENDORED.md) · [superpowers rules](vendor/superpowers-rules/VENDORED.md)。

@@ -1,0 +1,103 @@
+name: Full verification
+
+on:
+  workflow_call:
+    inputs:
+      checkout_ref:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  workflow-lint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.checkout_ref }}
+      - name: actionlint (with the runner's shellcheck)
+        shell: bash
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$archive"
+          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+
+  platform:
+    name: Platform checks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Ubuntu typecheck and the suite already run in the full test job.
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # Normal runs take 1-4 minutes; the 360-minute default would let a hung test burn the monthly budget.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.checkout_ref }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run typecheck -w apps/cli
+      - run: node --test scripts/setup.test.mjs scripts/release-notes.test.mjs
+      - run: node scripts/setup.mjs --help
+      - name: Native credentials, command execution, and authentication
+        run: npx vitest run apps/cli/test/platform.test.ts apps/cli/test/secrets/permissions.test.ts apps/cli/test/config.test.ts apps/cli/test/direct/authCommands.test.ts apps/cli/test/claude/adapter.test.ts packages/knowledge/test/store.test.ts packages/knowledge/test/history.test.ts --maxWorkers=2
+
+  test:
+    name: Full application tests and web build
+    runs-on: ubuntu-latest
+    # Normal runs take 8-12 minutes.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.checkout_ref }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Spawned test fixtures resolve @nema/* through compiled output, so build it first.
+      - run: npm run typecheck
+      - run: node --test scripts/ci/*.test.mjs scripts/desktop/release-commit.test.mjs scripts/desktop/release.test.mjs scripts/release-notes.test.mjs
+      - run: npm test -- --maxWorkers=2
+      - run: npm run build -w apps/hub
+      - run: npm run build -w apps/cli
+      - run: npm run lint -w apps/web
+      - run: npm run build -w apps/web
+      - name: Check installer prerequisites
+        run: npm run setup:check
+      - name: Build and start the Compose stack
+        run: npm run up
+      - name: Wait for the hub and web UI
+        shell: bash
+        run: |
+          for _ in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:4400/api/daemon/status >/dev/null && curl --fail --silent http://127.0.0.1:3000 >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs --tail=100
+          exit 1
+      - name: Stop containers
+        if: always()
+        run: docker compose down

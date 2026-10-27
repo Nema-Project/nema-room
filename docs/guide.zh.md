@@ -227,3 +227,7 @@ npm run build -w apps/web
 根目录 typecheck 不包含 web，web 构建需单独执行。升级前备份数据，再 `git pull`、`npm ci`、重建 CLI 和 Compose 镜像，并重启 daemon。hub 与 CLI 应保持版本一致。
 
 端口和目录见 [.env.example](../.env.example)。CLI 不自动读取根目录 `.env`：改数据目录时应在 shell 导出 `NEMA_DATA_DIR` 或传 `--token-file` 给 `daemon` / `doctor`；改 hub 端口还需传 `--hub`。`NEXT_PUBLIC_HUB_URL` 改动后需重建 web。
+
+## 安全报告
+
+安全问题请先读 [安全策略](../SECURITY.md)。私密报告渠道仍待验证：不要在公开 issue 或 PR 提交敏感详情；验证前只可提出不含漏洞细节的私密联系途径请求。修复进入 main 并在后续桌面版本分发，不承诺维护旧发布系列。

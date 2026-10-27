@@ -22,6 +22,10 @@ on:
         type: choice
         options: [all, win32-x64, darwin-arm64]
         default: all
+      verify_full:
+        description: Run complete verification before a nonpublishing rehearsal
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -45,6 +49,8 @@ jobs:
     name: Resolve release version
     runs-on: ubuntu-latest
     outputs:
+      commit: ${{ steps.commit.outputs.commit }}
+      verification_required: ${{ steps.commit.outputs.verification_required }}
       release: ${{ steps.version.outputs.release }}
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
@@ -54,20 +60,54 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - name: Resolve immutable release commit
+        id: commit
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          TAG_REF: ${{ github.ref }}
+          EVENT_COMMIT: ${{ github.sha }}
+          VERIFY_FULL: ${{ inputs.verify_full }}
+        run: |
+          set -euo pipefail
+          commit="$EVENT_COMMIT"
+          required=false
+          if [ "$EVENT" = "push" ] && [ "$REF_TYPE" = "tag" ]; then
+            git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+            git fetch --no-tags origin "+$TAG_REF:$TAG_REF"
+            commit=$(node scripts/desktop/release-commit.mjs "$TAG_REF" refs/remotes/origin/main)
+            if [ "$commit" != "$EVENT_COMMIT" ]; then
+              echo 'Tag moved since the triggering event; refusing publication.' >&2
+              exit 1
+            fi
+            required=true
+          elif [ "$VERIFY_FULL" = "true" ]; then
+            required=true
+          fi
+          test "$(git rev-parse HEAD)" = "$commit"
+          echo "Verified checkout candidate: $commit"
+          {
+            echo "commit=$commit"
+            echo "verification_required=$required"
+          } >> "$GITHUB_OUTPUT"
       - name: Release helper tests
-        run: node --test scripts/desktop/release.test.mjs scripts/release-notes.test.mjs
+        run: node --test scripts/desktop/release-commit.test.mjs scripts/desktop/release.test.mjs scripts/release-notes.test.mjs
       - name: Resolve version
         id: version
         shell: bash
         env:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          if [ "$REF_TYPE" = "tag" ]; then
+          if [ "$EVENT" = "push" ] && [ "$REF_TYPE" = "tag" ]; then
             # Rejects anything but strict v<SemVer> that equals the desktop and local package versions.
             result=$(node scripts/desktop/release-version.mjs "$REF_NAME")
             {
@@ -94,7 +134,7 @@ jobs:
           set -euo pipefail
           # A tag and a pull request build every target; publish needs all of them.
           # A dispatch can pick one target while fixing a single platform.
-          if [ "$REF_TYPE" != "tag" ] && [ "$EVENT" = "workflow_dispatch" ]; then
+          if [ "$EVENT" = "workflow_dispatch" ]; then
             wanted="$REQUESTED"
           else
             wanted=all
@@ -115,9 +155,20 @@ jobs:
         if: steps.version.outputs.release == 'true'
         run: node scripts/release-notes.mjs --check CHANGELOG.md "${{ steps.version.outputs.version }}"
 
+  verify:
+    needs: plan
+    if: needs.plan.outputs.verification_required == 'true'
+    uses: ./.github/workflows/verify.yml
+    with:
+      checkout_ref: ${{ needs.plan.outputs.commit }}
+
   build:
     name: Build and smoke (${{ matrix.target }})
-    needs: plan
+    needs: [plan, verify]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' &&
+          (needs.verify.result == 'success' ||
+           (needs.plan.outputs.verification_required == 'false' && needs.verify.result == 'skipped')) }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
@@ -130,6 +181,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.plan.outputs.commit }}
       - name: Put temporary files on the workspace disk
         # The checkout already lives on the runner's scratch disk, but TEMP still points at the
         # slow system disk. Staging runs two npm installs under os.tmpdir(). RUNNER_TEMP follows
@@ -199,9 +251,11 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [plan, build]
+    needs: [plan, verify, build]
     # needs on a matrix job waits for every target; any failed target skips this job.
-    if: needs.plan.outputs.release == 'true'
+    if: >-
+      ${{ !cancelled() && github.event_name == 'push' && needs.plan.outputs.release == 'true' &&
+          needs.plan.result == 'success' && needs.verify.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -210,12 +264,14 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
       PRERELEASE: ${{ needs.plan.outputs.prerelease }}
       TAG: ${{ github.ref_name }}
+      RELEASE_COMMIT: ${{ needs.plan.outputs.commit }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.plan.outputs.commit }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -242,7 +298,13 @@ jobs:
           done
       - name: Verify the complete asset set
         shell: bash
-        run: node scripts/desktop/release-manifest.mjs collect release-input release-assets "$VERSION" "$PRERELEASE"
+        run: |
+          test "$GITHUB_SHA" = "$RELEASE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          node scripts/desktop/release-manifest.mjs collect release-input release-assets "$VERSION" "$PRERELEASE"
+      - name: Recheck remote tag before draft operations
+        shell: bash
+        run: node scripts/desktop/release-commit.mjs --verify-remote "refs/tags/$TAG" "$RELEASE_COMMIT"
       - name: Refuse a published tag and validate any earlier draft
         shell: bash
         run: |
@@ -263,11 +325,12 @@ jobs:
           fi
       - name: Write release notes
         shell: bash
-        run: node scripts/release-notes.mjs CHANGELOG.md "$VERSION" "$GITHUB_SHA" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > release-notes.md
+        run: node scripts/release-notes.mjs CHANGELOG.md "$VERSION" "$RELEASE_COMMIT" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > release-notes.md
       - name: Create or reuse draft, upload, publish
         shell: bash
         run: |
           set -euo pipefail
+          node scripts/desktop/release-commit.mjs --verify-remote "refs/tags/$TAG" "$RELEASE_COMMIT"
           flags=()
           if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease --latest=false); fi
           if [ "${DRAFT_EXISTS:-false}" != "true" ]; then
@@ -283,4 +346,6 @@ jobs:
             echo "Draft assets differ from the verified set: $actual" >&2
             exit 1
           fi
+          # Upload/validation can take time; re-read the remote ref immediately before publication.
+          node scripts/desktop/release-commit.mjs --verify-remote "refs/tags/$TAG" "$RELEASE_COMMIT"
           gh release edit "$TAG" --draft=false "${flags[@]}"
