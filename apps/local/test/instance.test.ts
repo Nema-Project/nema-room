@@ -133,7 +133,7 @@ function addressForHome(home: string): { homeHash: string; port: number } {
   const canonicalPath = realpathSync.native(home);
   const identity = process.platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
   const digest = createHash("sha256").update(identity).digest();
-  return { homeHash: digest.toString("hex"), port: 20000 + digest.readUInt32BE(0) % 25000 };
+  return { homeHash: digest.toString("hex"), port: 20000 + digest.readUInt32BE(0) % 12768 };
 }
 
 afterEach(async () => {
@@ -265,7 +265,7 @@ describe("local instance ownership and discovery", () => {
     const canonical = process.platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
     const crypto = await import("node:crypto");
     const homeHash = crypto.createHash("sha256").update(canonical).digest("hex");
-    const port = 20000 + crypto.createHash("sha256").update(canonical).digest().readUInt32BE(0) % 25000;
+    const port = 20000 + crypto.createHash("sha256").update(canonical).digest().readUInt32BE(0) % 12768;
     writeFileSync(descriptorPath(home), JSON.stringify({ schemaVersion: 1, protocol: "nema-local-v1", homeHash, instanceId: randomUUID(), installationId: "a".repeat(64), pid: unrelated.pid, controlOrigin: `http://127.0.0.1:${port}`, origin: "http://127.0.0.1:4173", secret: randomBytes(32).toString("hex") }), { mode: 0o600 });
     protectPrivatePath(descriptorPath(home));
     expect(await discoverInstance(home)).toBeNull();
@@ -351,8 +351,17 @@ describe("local instance ownership and discovery", () => {
   });
 
   it("calls the launch callback only after an authenticated launch request", async () => {
-    const home = newHome();
-    const lease = await acquire(home);
+    // ponytail: one fresh home when the hashed port is taken. discoverInstance recomputes
+    // controlPortFor, so a listen-port override would fail that assertion. A second collision still fails.
+    let home = newHome();
+    let lease: InstanceLease;
+    try {
+      lease = await acquire(home);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "NEMA_LOCAL_OWNER_COLLISION") throw error;
+      home = newHome();
+      lease = await acquire(home);
+    }
     let calls = 0;
     await lease.publish({ origin: "http://127.0.0.1:4173", createLaunchUrl: () => { calls += 1; return "http://127.0.0.1:4173/_nema/launch"; } });
     expect(calls).toBe(0);
