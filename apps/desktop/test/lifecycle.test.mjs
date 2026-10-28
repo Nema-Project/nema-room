@@ -15,6 +15,9 @@ function harness(overrides = {}) {
   app.quit = vi.fn();
   app.getVersion = vi.fn(() => overrides.appVersion ?? '');
   app.getFileIcon = vi.fn(async () => ({}));
+  let openAtLogin = overrides.openAtLogin === true;
+  app.getLoginItemSettings = vi.fn(() => ({ openAtLogin }));
+  app.setLoginItemSettings = vi.fn((value) => { openAtLogin = value.openAtLogin === true; });
   const windows = [];
   class BrowserWindow extends EventEmitter {
     constructor(options) {
@@ -431,6 +434,18 @@ describe('Electron shell lifecycle', () => {
     expect(thread.destroyed).toBe(true);
     deferredLoads.get(firstUrl).reject(new Error('ERR_ABORTED'));
     await new Promise((resolve) => setImmediate(resolve));
+  });
+
+  it('exposes open at login only to the main runtime window', async () => {
+    const value = harness({ openAtLogin: true });
+    await value.lifecycle.install();
+    const window = value.windows[0];
+    const get = value.ipcHandlers.get('nema:login-item:get');
+    const set = value.ipcHandlers.get('nema:login-item:set');
+    expect(get({ sender: window.webContents, senderFrame: window.webContents.mainFrame })).toEqual({ openAtLogin: true });
+    expect(set({ sender: window.webContents, senderFrame: window.webContents.mainFrame }, { openAtLogin: false })).toEqual({ openAtLogin: false });
+    expect(value.app.setLoginItemSettings).toHaveBeenCalledWith({ openAtLogin: false });
+    expect(() => get({ sender: {}, senderFrame: window.webContents.mainFrame })).toThrow(/Untrusted login-item sender/);
   });
 
   it('destroys a crashed renderer without stopping the shared core', async () => {

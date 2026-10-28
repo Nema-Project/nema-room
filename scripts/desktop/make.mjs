@@ -43,7 +43,7 @@ export function builderConfig(payloadDir, outputDir, target) {
     asar: true,
     compression: 'normal',
     directories: { output: outputDir },
-    files: ['main.cjs', 'lifecycle.cjs', 'security.cjs', 'window-controls.cjs', 'preload.cjs', 'package.json', 'assets/**/*'],
+    files: ['main.cjs', 'lifecycle.cjs', 'security.cjs', 'window-controls.cjs', 'login-item.cjs', 'preload.cjs', 'package.json', 'assets/**/*'],
     extraResources: [
       { from: payloadDir, to: 'payload', filter: ['**/*'] },
     ],

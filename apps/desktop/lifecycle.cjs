@@ -2,6 +2,7 @@
 
 const { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, isMainMessageUrl, isThreadWindowUrl, threadWindowIdentity, navigationDecision, validateRuntimeLaunchUrl } = require('./security.cjs');
 const { registerWindowControls } = require('./window-controls.cjs');
+const { registerLoginItem } = require('./login-item.cjs');
 const { mkdirSync, readFileSync, renameSync, writeFileSync } = require('node:fs');
 const path = require('node:path');
 
@@ -132,6 +133,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     threadWindows.set(identity, child);
     threadLoadGeneration.set(child, 0);
     registerWindowControls({ ipcMain, window: child, runtimeOrigin });
+    registerLoginItem({ ipcMain, app, window: child, runtimeOrigin });
     child.once('closed', () => { if (threadWindows.get(identity) === child) threadWindows.delete(identity); });
     handleNavigation(child, runtimeOrigin, { threadIdentity: identity });
     child.once('ready-to-show', () => { if (!child.isDestroyed()) child.show(); });
@@ -194,6 +196,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
       if (platform !== 'darwin') window.setMenu(null);
       mainWindow = window;
       registerWindowControls({ ipcMain, window, runtimeOrigin: instance.origin });
+      registerLoginItem({ ipcMain, app, window, runtimeOrigin: instance.origin });
       destroyWindowOnClose(window);
       handleNavigation(window, instance.origin);
       window.once('ready-to-show', () => { if (!window.isDestroyed()) window.show(); });

@@ -17,7 +17,7 @@ function chipTone(kind: "provision" | "install" | "use", extension: ExtensionRec
   return "";
 }
 
-export function PluginsPage({ onClose }: { onClose?: () => void }) {
+export function PluginsPage({ onClose, embedded = false }: { onClose?: () => void; embedded?: boolean }) {
   const t = useT();
   const [extensions, setExtensions] = useState<ExtensionRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +37,7 @@ export function PluginsPage({ onClose }: { onClose?: () => void }) {
   }, []);
 
   return (
-    <div className="plugins-page" role="region" aria-label={t("plugins.title")}>
+    <div className={embedded ? "plugins-page embedded" : "plugins-page"} role="region" aria-label={t("plugins.title")}>
       <div className="bar">
         <h1>{t("plugins.title")}</h1>
         {onClose && (

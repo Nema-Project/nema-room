@@ -4,6 +4,11 @@ Version sections on main may describe release preparation. A version heading and
 
 ## [Unreleased]
 
+### Added
+
+- **App settings** opens from the sidebar and covers the conversation. It has Model, Plugins, General, and About. Model settings and the plugins list move there. Version, **Check for updates**, and **Check for updates automatically** move to About, and a newer release stays a link to its release page. The update banner above the conversation stays. The sidebar keeps the daemon status, night mode, and the language switch. **Settings** in the header still edits the current workspace.
+- The desktop app can open at login from **App settings → General**. A browser or Compose session still shows that control and says it cannot change it.
+
 ## [0.1.5] - 2026-10-28
 
 ### Added

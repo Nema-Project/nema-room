@@ -243,7 +243,7 @@ describe("WorkspaceShell knowledge wiring", () => {
     expect(replace).toHaveBeenCalledWith("/w/w2");
     expect(screen.queryByRole("heading", { name: "Old" })).toBeNull();
   });
-  it("opens model settings from the sidebar when the workspace list is empty", async () => {
+  it("opens model settings across the main area, not the knowledge column", async () => {
     vi.mocked(hub.listWorkspaces).mockResolvedValue([]);
     vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       config: { adapter: "codex-direct", authMode: "siwc", reasoningEffort: "medium" },
@@ -252,9 +252,15 @@ describe("WorkspaceShell knowledge wiring", () => {
     }), { status: 200, headers: { "content-type": "application/json" } })));
     localStorage.setItem("nema.locale", "en");
     render(<I18nProvider><WorkspaceShell routeId={null} /></I18nProvider>);
-    await userEvent.click(await screen.findByRole("button", { name: "Model settings" }));
-    expect(await screen.findByRole("dialog", { name: "Model settings" })).toBeTruthy();
+    const opener = await screen.findByRole("button", { name: "App settings" });
+    await userEvent.click(opener);
+    const dialog = await screen.findByRole("dialog", { name: "Model settings" });
+    expect(dialog.closest(".app-settings")).toBeTruthy();
+    expect(dialog.closest(".know-col")).toBeNull();
     expect((screen.getByLabelText("Model provider") as HTMLSelectElement).value).toBe("chatgpt");
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Model settings" })).toBeNull();
+    await vi.waitFor(() => expect(document.activeElement).toBe(opener));
   });
   it("refreshes the list when delete fails and shows the hub error", async () => {
     vi.mocked(hub.deleteWorkspace).mockRejectedValue(new HubError(500, "internal error"));

@@ -37,6 +37,9 @@ describe('Electron renderer security policy', () => {
     }
     const preload = readFileSync(new URL('../preload.cjs', import.meta.url), 'utf8');
     expect(preload).toContain("nativeTrafficLights: process.platform === 'darwin'");
+    expect(preload).toContain("exposeInMainWorld('nemaLoginItem'");
+    expect(preload).toContain('nema:login-item:get');
+    expect(preload).toContain('nema:login-item:set');
     const css = readFileSync(new URL('../../web/app/globals.css', import.meta.url), 'utf8');
     expect(css).toMatch(/\.desktop-titlebar-macos\s*\{[^}]*padding-left:\s*80px/);
     expect(css).toMatch(/\.desktop-titlebar-macos\.desktop-titlebar-fullscreen\s*\{[^}]*padding-left:\s*14px/);

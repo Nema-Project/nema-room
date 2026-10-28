@@ -20,3 +20,13 @@ const bridge = Object.freeze({
 });
 
 contextBridge.exposeInMainWorld('nemaWindowControls', bridge);
+
+const loginItem = Object.freeze({
+  get: () => ipcRenderer.invoke('nema:login-item:get'),
+  set(openAtLogin) {
+    if (typeof openAtLogin !== 'boolean') throw new TypeError('openAtLogin must be a boolean');
+    return ipcRenderer.invoke('nema:login-item:set', { openAtLogin });
+  },
+});
+
+contextBridge.exposeInMainWorld('nemaLoginItem', loginItem);

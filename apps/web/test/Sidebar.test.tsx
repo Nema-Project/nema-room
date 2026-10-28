@@ -4,8 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@/app/globals.css";
 import { I18nProvider } from "@/lib/i18n";
 import { Sidebar, themeSwitchOrigin } from "@/components/Sidebar";
-
-vi.mock("@/components/AppRelease", () => ({ AppReleaseFooter: () => null, AppReleaseBanner: () => null }));
 import type { WorkspaceView } from "@/lib/types";
 import * as hub from "@/lib/hub";
 
@@ -63,11 +61,20 @@ describe("Sidebar", () => {
     expect(screen.getByText("nema daemon offline")).toBeTruthy();
   });
 
-  it("opens model settings from the sidebar when there are no workspaces", async () => {
-    const onOpenModelSettings = vi.fn();
-    setup({ workspaces: [], selectedId: null, onOpenModelSettings });
-    await userEvent.click(screen.getByRole("button", { name: "Model settings" }));
-    expect(onOpenModelSettings).toHaveBeenCalledTimes(1);
+  it("opens app settings from the sidebar and keeps daemon, theme, and language in the footer", async () => {
+    const onOpenAppSettings = vi.fn();
+    setup({ onOpenAppSettings, appSettingsOpen: true });
+    const foot = document.querySelector(".foot")!;
+    expect(foot.children).toHaveLength(3);
+    expect(foot.children[0]).toBe(screen.getByRole("button", { name: "App settings" }));
+    expect((foot.children[0] as HTMLButtonElement).getAttribute("aria-expanded")).toBe("true");
+    expect(foot.children[1].textContent).toContain("nema daemon online");
+    expect(foot.children[2].classList.contains("foot-switch")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Model settings" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Plugins" })).toBeNull();
+    expect(foot.querySelector(".foot-release")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "App settings" }));
+    expect(onOpenAppSettings).toHaveBeenCalledTimes(1);
   });
 
   it("toggles night mode from the sidebar footer", async () => {

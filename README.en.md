@@ -71,10 +71,10 @@ Download one desktop build from the [latest release](https://github.com/Nema-Pro
 The Windows `.exe` is the NSIS installer: shortcuts, uninstall, and overwrite upgrade. The Windows `.zip` is the unpacked app: unzip it and run `Nema.exe`. It has no shortcuts or uninstaller, and it skips the installer's repeated file copy. Both use `~/.nema/desktop`. Pick one.
 
 1. Install [Git 2.31 or later](https://git-scm.com/downloads), then install and open Nema Room, or unzip the portable ZIP and run `Nema.exe`. Node and the local database are bundled; Docker is not required.
-2. Open **Model settings** and connect a ChatGPT subscription, Claude subscription, or a Responses API-compatible API key. Access and billing depend on the provider.
+2. Open **App settings → Model** and connect a ChatGPT subscription, Claude subscription, or a Responses API-compatible API key. Access and billing depend on the provider.
 3. Create a workspace and start a discussion. Bind a local repository when you want code context.
 
-> **Preview release.** The Windows installer and portable ZIP are unsigned; macOS builds are ad-hoc signed and not notarized. Verify downloads against the release checksums. The app does not download or install updates. It checks GitHub for a newer stable release and links to that release; turn this off with “Check for updates automatically” in the sidebar. Quit from the tray and back up `~/.nema/desktop` before upgrading. A disposable data-directory migration and backup restore passed on hosted Windows and macOS runners on 2026-10-27. The same day, the maintainer installed a new package over an existing one on macOS and on Windows; workspace data remained. See the [desktop guide](docs/guide.en.md#desktop) for first launch and limitations.
+> **Preview release.** The Windows installer and portable ZIP are unsigned; macOS builds are ad-hoc signed and not notarized. Verify downloads against the release checksums. The app does not download or install updates. It checks GitHub for a newer stable release and links to that release; turn this off with **Check for updates automatically** under **App settings → About**. Quit from the tray and back up `~/.nema/desktop` before upgrading. A disposable data-directory migration and backup restore passed on hosted Windows and macOS runners on 2026-10-27. The same day, the maintainer installed a new package over an existing one on macOS and on Windows; workspace data remained. See the [desktop guide](docs/guide.en.md#desktop) for first launch and limitations.
 
 <a id="first-release-scope-and-requirements"></a>
 
@@ -105,7 +105,7 @@ npx @nema-project/nema@<hub version> --version
 npm i -g @nema-project/nema@<hub version>
 ```
 
-Compose reports that version at `http://127.0.0.1:4400/api/version`. The desktop app shows it in the sidebar; its loopback origin also serves `GET /_nema/version`. A mismatch prints `run: npm i -g @nema-project/nema@<version>` and does not reconnect. `nema daemon` defaults to `--hub http://127.0.0.1:4400` and reads `daemon-token` from `$NEMA_DATA_DIR` or `~/.nema/data`. The hub writes that file on startup. Compose bind-mounts the host data directory at `/data`.
+Compose reports that version at `http://127.0.0.1:4400/api/version`. The desktop app shows it under **App settings → About**; its loopback origin also serves `GET /_nema/version`. A mismatch prints `run: npm i -g @nema-project/nema@<version>` and does not reconnect. `nema daemon` defaults to `--hub http://127.0.0.1:4400` and reads `daemon-token` from `$NEMA_DATA_DIR` or `~/.nema/data`. The hub writes that file on startup. Compose bind-mounts the host data directory at `/data`.
 
 Developing this repository still uses the source checkout above. Do not install an unversioned `@nema-project/nema` and assume it matches the hub.
 
