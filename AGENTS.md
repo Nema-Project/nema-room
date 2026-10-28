@@ -91,6 +91,8 @@ Report the commands actually run, results, and skipped or blocked checks. Keep t
 
 Boot already starts Docker, PostgreSQL on `127.0.0.1:5433` (`npm run db:up`), `npm run dev` (hub `127.0.0.1:4400`, web `127.0.0.1:3000`), and `node apps/cli/dist/index.js daemon`. A second `npm run dev` or `npm run up` binds those same ports.
 
+This VM does not run systemd. The boot script starts `dockerd` (log: `/var/log/dockerd.log`). Hub and web are the tmux session `nema-dev`; the daemon is `nema-daemon`.
+
 `.env` is copied from `.env.example` when missing. Hub dev reads it; the CLI does not. Do not commit `.env`.
 
 Creating a workspace does not need model credentials. `auth login` and `auth probe` do, and `auth probe` sends a real model request.
