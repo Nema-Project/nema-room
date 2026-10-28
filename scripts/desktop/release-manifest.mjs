@@ -65,7 +65,7 @@ export async function verifyTargetChecksums(directory, version, target) {
 }
 
 // artifactsRoot/<target>/ holds the downloaded build-job artifact for each target. Nothing is copied unless every check passes.
-export async function collectReleaseManifest({ version, prerelease = false, artifactsRoot, outputDir, build = {} }) {
+export async function collectReleaseManifest({ version, prerelease = false, artifactsRoot, outputDir, build = {}, composeAsset = null }) {
   const seen = new Map();
   const targets = {};
   const plan = [];
@@ -97,11 +97,19 @@ export async function collectReleaseManifest({ version, prerelease = false, arti
       plan.push({ from: file, name });
     }
   }
-  const manifest = { schemaVersion: 1, version, prerelease, targets, build };
+  let compose;
+  if (composeAsset !== null) {
+    if (path.basename(composeAsset) !== 'docker-compose.yml') throw new Error('Compose asset must be named docker-compose.yml');
+    const info = await stat(composeAsset).catch(() => null);
+    if (!info?.isFile() || info.size === 0) throw new Error('Compose asset is missing or empty');
+    compose = { name: 'docker-compose.yml', size: info.size, sha256: await hashFile(composeAsset) };
+    plan.push({ from: composeAsset, name: compose.name });
+  }
+  const manifest = { schemaVersion: 1, version, prerelease, targets, build, ...(compose ? { compose } : {}) };
   await mkdir(outputDir, { recursive: true });
   for (const item of plan) await copyFile(item.from, path.join(outputDir, item.name));
   const combined = Object.values(targets).flat().filter((asset) => !asset.name.startsWith('SHA256SUMS-')).map((asset) => `${asset.sha256}  ${asset.name}`).join('\n');
-  await writeFile(path.join(outputDir, `SHA256SUMS-${version}.txt`), `${combined}\n`);
+  await writeFile(path.join(outputDir, `SHA256SUMS-${version}.txt`), `${combined}\n${compose ? `${compose.sha256}  ${compose.name}\n` : ''}`);
   await writeFile(path.join(outputDir, `release-manifest-${version}.json`), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
 }
@@ -114,14 +122,14 @@ async function main(args) {
   } else if (command === 'verify' && rest.length === 3) {
     await verifyTargetChecksums(path.resolve(rest[0]), rest[1], rest[2]);
     process.stdout.write(`Verified ${rest[2]} checksums\n`);
-  } else if (command === 'collect' && rest.length === 4) {
-    const [artifactsRoot, outputDir, version, prerelease] = rest;
+  } else if (command === 'collect' && (rest.length === 4 || rest.length === 5)) {
+    const [artifactsRoot, outputDir, version, prerelease, composeAsset] = rest;
     if (!['true', 'false'].includes(prerelease)) throw new Error('prerelease must be true or false');
     const build = { commit: process.env.GITHUB_SHA, ref: process.env.GITHUB_REF, runId: process.env.GITHUB_RUN_ID, repository: process.env.GITHUB_REPOSITORY };
-    const manifest = await collectReleaseManifest({ version, prerelease: prerelease === 'true', artifactsRoot: path.resolve(artifactsRoot), outputDir: path.resolve(outputDir), build });
+    const manifest = await collectReleaseManifest({ version, prerelease: prerelease === 'true', artifactsRoot: path.resolve(artifactsRoot), outputDir: path.resolve(outputDir), build, composeAsset: composeAsset ? path.resolve(composeAsset) : null });
     process.stdout.write(`Collected ${Object.values(manifest.targets).flat().length} files for ${expectedTargets.length} targets\n`);
   } else {
-    throw new Error('Usage: release-manifest.mjs checksums <dir> <version> <target> | verify <dir> <version> <target> | collect <artifacts-root> <output-dir> <version> <prerelease:true|false>');
+    throw new Error('Usage: release-manifest.mjs checksums <dir> <version> <target> | verify <dir> <version> <target> | collect <artifacts-root> <output-dir> <version> <prerelease:true|false> [compose-file]');
   }
 }
 
