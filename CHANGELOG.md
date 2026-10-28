@@ -9,7 +9,7 @@
 
 ### Fixed
 
-- Hub and web images now build on `node:22-trixie-slim` (Debian 13) instead of `node:22-slim` (Debian 12, whose regular security support has ended). Patch-level dependency updates: Next.js 16.4.3, Hono 4.13.14, PGlite 0.5.12, and Electron 45.1.0.
+- Hub and web images now build on `node:22-trixie-slim` (Debian 13) instead of `node:22-slim` (Debian 12, whose regular security support has ended). Patch-level dependency updates: Next.js 16.4.3, Hono 4.13.14, and PGlite 0.5.12. Electron moves from 45.0.0 to 45.1.0 — a feature and Chromium step rather than a patch, so it needs a desktop smoke pass before release.
 - The web build loads Inter (variable, weights 400–700) and JetBrains Mono (weight 500) from WOFF2 files in the repository. `next build` no longer downloads those faces from Google Fonts, so an unreachable fonts host cannot fail the image build. The web image ships the matching OFL texts at `/app/licenses/fonts/inter/OFL.txt` and `/app/licenses/fonts/jetbrains-mono/OFL.txt`.
 - UI confirmation retries recover committed evidence after transient database failures, preserving the original commit and events before a restart.
 
