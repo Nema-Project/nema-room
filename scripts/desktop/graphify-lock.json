@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "graphifyy": "0.9.95",
-  "python": "3.11.17",
-  "cpythonRelease": "20261021",
+  "python": "3.11.18",
+  "cpythonRelease": "20261026",
   "extras": [],
   "sourceCorrespondence": {
     "status": "pending-task-7c"
@@ -10,9 +10,9 @@
   "targets": {
     "win32-x64": {
       "python": {
-        "file": "cpython-3.11.17+20261021-x86_64-pc-windows-msvc-install_only.tar.gz",
-        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.11.17%2B20261021-x86_64-pc-windows-msvc-install_only.tar.gz",
-        "sha256": "136bbb2e50fe037fd5e32126e70e95b35d1fa5dac5bd04a55b8088415ee99540",
+        "file": "cpython-3.11.18+20261026-x86_64-pc-windows-msvc-install_only.tar.gz",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.11.18%2B20261026-x86_64-pc-windows-msvc-install_only.tar.gz",
+        "sha256": "75cb501dc11c7b55c6b447c58e4910bce5b1f609f1017328b4f3a858dfaf5428",
         "format": "tar.gz"
       },
       "wheels": [
@@ -125,9 +125,9 @@
     },
     "darwin-arm64": {
       "python": {
-        "file": "cpython-3.11.17+20261021-aarch64-apple-darwin-install_only.tar.gz",
-        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.11.17%2B20261021-aarch64-apple-darwin-install_only.tar.gz",
-        "sha256": "b5199d66966141fb6d5447512d2b2fe0398d417da37b1949f58db3792d314eac",
+        "file": "cpython-3.11.18+20261026-aarch64-apple-darwin-install_only.tar.gz",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.11.18%2B20261026-aarch64-apple-darwin-install_only.tar.gz",
+        "sha256": "cba3455e18516fbe8668cff2820c9b6a53447c552d612443c2b2fb60d390a908",
         "format": "tar.gz"
       },
       "wheels": [

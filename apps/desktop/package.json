@@ -10,7 +10,7 @@
     "make": "node ../../scripts/desktop/make.mjs"
   },
   "devDependencies": {
-    "electron": "45.0.0",
+    "electron": "45.1.0",
     "electron-builder": "26.18.0"
   }
 }

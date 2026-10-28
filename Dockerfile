@@ -2,7 +2,7 @@
 # Images for `docker compose up` (see docker-compose.yml). Targets: `hub` and `web`.
 # The nema daemon is NOT containerized: it runs on the host with the user's Codex login.
 
-ARG NODE_IMAGE=node:22-slim
+ARG NODE_IMAGE=node:22-trixie-slim
 
 # ---- all workspace dependencies (dev included) ----
 FROM ${NODE_IMAGE} AS deps
