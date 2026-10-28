@@ -286,12 +286,12 @@
   <div class="tile tile-accent cta-main">
     <h2 id="cta-h" data-reveal>下载</h2>
     <p data-reveal style="--i:1">Windows x64 和 Apple 芯片的构建在最新发布页。Windows 上在安装包和便携 ZIP 里选一个。ZIP 解压后运行 <code>Nema.exe</code>，没有快捷方式，也没有卸载程序。两者都使用 <code>~/.nema/desktop</code>。本机需要已经装好 Git 2.31 或更新版本。</p>
-    <p data-reveal style="--i:1">宿主机命令是 <code>nema</code>，用 <code>npm i -g @nema-project/nema</code> 安装。hub 和 web 镜像是 linux/amd64。<a href="https://github.com/Nema-Project/nema-room/blob/v0.1.5/docker-compose.yml">tag v0.1.5 上的 docker-compose.yml</a> 把镜像钉在 <code>ghcr.io/nema-project/nema-room-hub:0.1.5</code> 和 <code>ghcr.io/nema-project/nema-room-web:0.1.5</code>。先取这份文件再启动。它不是发布页上的附件。Linux 和 macOS 上先导出 <code>NEMA_UID</code> 和 <code>NEMA_GID</code>。开发本仓库则克隆后运行安装向导。</p>
-    <pre data-reveal style="--i:2"><code>npm i -g @nema-project/nema
+    <p data-reveal style="--i:1">宿主机命令是 <code>nema</code>，用 <code>npm i -g @nema-project/nema@0.1.4</code> 安装。hub 和 web 镜像是 linux/amd64。<a href="https://github.com/Nema-Project/nema-room/blob/v0.1.4/docker-compose.yml">tag v0.1.4 上的 docker-compose.yml</a> 把镜像钉在 <code>ghcr.io/nema-project/nema-room-hub:0.1.4</code> 和 <code>ghcr.io/nema-project/nema-room-web:0.1.4</code>。先取这份文件再启动。它不是发布页上的附件。Linux 和 macOS 上先导出 <code>NEMA_UID</code> 和 <code>NEMA_GID</code>。开发本仓库则克隆后运行安装向导。</p>
+    <pre data-reveal style="--i:2"><code>npm i -g @nema-project/nema@0.1.4
 nema --version
 
-# hub 与 web，仅 linux/amd64。compose 文件在 tag v0.1.5 上，不是发布附件。
-curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.5/docker-compose.yml
+# hub 与 web，仅 linux/amd64。compose 文件在 tag v0.1.4 上，不是发布附件。
+curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.4/docker-compose.yml
 # 仅 Linux 和 macOS。Windows 上的 Docker Desktop 不需要这一行。
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 docker compose up -d

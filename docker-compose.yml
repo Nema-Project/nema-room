@@ -1,5 +1,7 @@
 # `npm run db:up`  -> only postgres (for `npm run dev`, published on 127.0.0.1:5433)
-# `docker compose up` -> pull the pinned hub and web images. No source checkout required.
+# Published installs: fetch docker-compose.yml from tag v0.1.4, not main.
+# main is an unreleased v0.1.5 candidate; its pinned images do not exist until publication.
+# Do not use plain `docker compose up` on this candidate before its images are published.
 # `npm run up`     -> merge docker-compose.build.yml and build from this checkout.
 # The nema daemon still runs on the host: npm run build -w apps/cli && npx nema daemon
 # Every port is published on 127.0.0.1 only.
