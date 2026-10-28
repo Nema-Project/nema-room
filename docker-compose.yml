@@ -1,7 +1,8 @@
 # `npm run db:up`  -> only postgres (for `npm run dev`, published on 127.0.0.1:5433)
-# Published installs: fetch docker-compose.yml from tag v0.1.4, not main.
-# main is an unreleased v0.1.5 candidate; its pinned images do not exist until publication.
-# Do not use plain `docker compose up` on this candidate before its images are published.
+# Published installs: fetch docker-compose.yml from tag v0.1.5, not main.
+# The v0.1.5 images are published; use the matching 0.1.5 host daemon.
+# The immutable v0.1.5 file retains pre-publication comments; follow current README/guides.
+# main can advance ahead of published artifacts; use `npm run up` for source development.
 # `npm run up`     -> merge docker-compose.build.yml and build from this checkout.
 # The nema daemon still runs on the host: npm run build -w apps/cli && npx nema daemon
 # Every port is published on 127.0.0.1 only.

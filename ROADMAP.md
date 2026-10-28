@@ -16,15 +16,15 @@
 - 已合入 `main` 的近期工作：[PR #29](https://github.com/Nema-Project/nema-room/pull/29) macOS 原生红绿灯（`5ff8cf9`）；[PR #30](https://github.com/Nema-Project/nema-room/pull/30) 落实 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 的用户 basis 证据检查（`afd1456`）；[PR #31](https://github.com/Nema-Project/nema-room/pull/31) 桌面包瘦身（`76680b8`）。
 - 本次评估通过 GitHub 读取源码、配置、Actions 和 Release；未本地重跑测试。开始每项工作前须重新检查最新状态。
 
-## v0.1.5 发布准备
+## v0.1.5 发布与后续验收
 
-版本号、Compose 镜像钉和发布说明正在准备；这不表示 v0.1.5 已公开发布，也不关闭下列验收项：
+v0.1.5 已公开发布：npm、hub/web 镜像与桌面产物的发布流水线成功，包完整性、镜像匿名访问及桌面下载校验已验证。公开安装入口已由 PR #65 切到 v0.1.5。发布可用性不等于功能或真机验收完成：
 
-- Windows x64 与 macOS arm64 候选安装包的真机安装／覆盖升级、启动、一次 Graphify、退出与旧数据保留仍待验证；记录候选包 SHA，不能用旧版本的验收代替。
-- CX-03 仍待最终验收；发布前完成验收，或由维护者明确记录接受延期及其限制，不能因实现已合入就标记完成。
-- 合并 release PR 后，只有该合并 SHA 的 main 完整 CI 成功才可打 tag；打 tag 与 npm、镜像、桌面产物发布成功分别验证。
-- 公开安装入口继续使用 v0.1.4；只有 v0.1.5 tag 与两个镜像都可用并验证匿名拉取后，才用后续 PR 切换官网、README 和指南链接。main 的 Compose 为发布校验保留 v0.1.5 pin，开发走 `npm run up` 源码构建。
-- 公开分发后检查 GHCR 镜像匿名拉取、版本和下载校验；新版本不自动撤下旧版分发物。
+- Windows x64 与 macOS arm64 安装包的真机安装／覆盖升级、启动、一次 Graphify、退出与旧数据保留仍待验证；记录安装包 SHA，不能用旧版本的验收代替。
+- CX-03 最终验收作为后续事项继续跟踪；不因实现已合入或产物已发布就标记完成。维护者已选择快速迭代，不用这些未完成验收阻塞无关的小版本或安装文档修正。
+- v0.1.5 tag 指向 `d765122b9dabf19b79d75b9006cea68a6ca8aeef`，该提交的 main 完整 CI 已通过；npm、镜像与桌面发布结果分别验证。
+- 公开安装使用 v0.1.5 tag 的 Compose 和同版 daemon；tag 内的发布前注释仍称候选版，这是不可变历史说明，当前安装以 README/指南为准，实际镜像 pin 正确，不移动 tag；hub/web 镜像已验证匿名访问及发布后 pull/smoke。main 可能领先于公开产物，开发走 `npm run up` 源码构建。
+- 新版本不自动撤下旧版分发物。后续版本仍分别检查包、镜像和桌面产物的发布可用性。
 
 ## 优先级与维护规则
 
@@ -55,11 +55,11 @@
 
 ## 下一项
 
-P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实施进行中，等待集成与最终验收；设计已随 [PR #27](https://github.com/Nema-Project/nema-room/pull/27) 合入，实施前置 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 已由 [PR #30](https://github.com/Nema-Project/nema-room/pull/30) 完成。它不代替 P0-01、P0-02。
+P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实现已由 PR #54 合入，仅待最终验收；设计已随 [PR #27](https://github.com/Nema-Project/nema-room/pull/27) 合入，实施前置 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 已由 [PR #30](https://github.com/Nema-Project/nema-room/pull/30) 完成。它不代替 P0-01、P0-02。
 
 | ID | 事项与依据 | 状态 | 验收标准 |
 | --- | --- | --- | --- |
-| CX-03 | 外部来源证据协议。契约见 [spec](docs/superpowers/specs/2026-10-27-source-evidence-protocol-design.md) 与 [plan](docs/superpowers/plans/2026-10-27-source-evidence-protocol.md)。#28 已合入，协议实现等待集成与最终验收 | 进行中 | 已实现 `sourceRefs`、`evidence_events` 与内部 `source__import`，待整体验证；保留 #28 的用户 basis 检查，以及从 `superseded`、`dropped`、`resolved` 改回 `active` 的检查；不得把外部正文伪装成聊天消息 |
+| CX-03 | 外部来源证据协议。契约见 [spec](docs/superpowers/specs/2026-10-27-source-evidence-protocol-design.md) 与 [plan](docs/superpowers/plans/2026-10-27-source-evidence-protocol.md)。#28 已合入，协议实现已由 PR #54 合入，仅待最终验收 | 进行中 | 已实现 `sourceRefs`、`evidence_events` 与内部 `source__import`，待整体验证；保留 #28 的用户 basis 检查，以及从 `superseded`、`dropped`、`resolved` 改回 `active` 的检查；不得把外部正文伪装成聊天消息 |
 
 ## P0 之后
 
