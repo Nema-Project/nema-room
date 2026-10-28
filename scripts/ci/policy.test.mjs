@@ -13,10 +13,10 @@ test('documentation allowlist stays docs and does not request heavy jobs', () =>
   }
 });
 
-test('agent instructions stay on the app gate without heavy jobs', () => {
+test('agent instructions take the docs lane and do not request heavy jobs', () => {
   for (const paths of [['AGENTS.md'], ['CLAUDE.md'], ['docs/AGENTS.md'], ['site/nested/CLAUDE.md']]) {
     const result = classifyPaths(paths);
-    assert.equal(result.mode, 'app', JSON.stringify(paths));
+    assert.equal(result.mode, 'docs', JSON.stringify(paths));
     assert.deepEqual(heavy(result), none);
   }
 });

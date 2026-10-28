@@ -13,7 +13,6 @@ function unsafe(path) {
 }
 
 function documentation(path) {
-  if (/(^|\/)(AGENTS|CLAUDE)\.md$/i.test(path)) return false;
   if (path === '.github/workflows/pages.yml') return true;
   if (!path.includes('/') && /\.md$/i.test(path)) return true;
   // Executable files under docs are not documentation. Site assets retain the Pages allowlist.

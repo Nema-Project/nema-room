@@ -1,6 +1,6 @@
 # Hub and web image publication
 
-Workflow file: `.github/workflows/image-publish.yml`.
+Workflow file: `.github/workflows/image-publish.yml`. A pull request builds and smokes when it changes the Dockerfile, a Compose file, this workflow, or a non-Markdown file under `scripts/images/`. A Markdown-only change under `scripts/images/` does not start that build.
 
 A push of a `v*` tag builds `linux/amd64` hub and web images, runs `.github/workflows/verify.yml` on that same commit, then copies the build job's OCI layout to GHCR with crane `0.22.1`. Image names:
 
