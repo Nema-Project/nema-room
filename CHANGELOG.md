@@ -21,6 +21,10 @@
 
 - Room writes with external references validate those references and require verbatim evidence from the current task's user message for user basis. Agents cannot rewrite imported snapshots, change their basis, or consume UI confirmation events. Main and thread prompts identify source excerpts as untrusted external data. Existing decision and user-message guards remain in force.
 
+### Removed
+
+- The bundled Vue.js brand mark is removed from Archify diagrams. The Vue logo's artwork terms (CC-BY-NC-SA-4.0: non-commercial, share-alike) do not fit this project's distribution, so the mark catalogue now ships 106 marks. Diagrams that referenced the `vue` brand mark need a different mark or none.
+
 ## [0.1.4] - 2026-10-28
 
 ### Added

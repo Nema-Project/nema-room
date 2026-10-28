@@ -1822,31 +1822,6 @@ export const BRAND_MARKS = Object.freeze([
     }
   },
   {
-    "id": "vue",
-    "title": "Vue.js",
-    "category": "framework",
-    "aliases": [
-      "vuejs",
-      "vue.js"
-    ],
-    "domains": [
-      "vuejs.org"
-    ],
-    "viewBox": 24,
-    "hex": "4FC08D",
-    "path": "M24,1.61H14.06L12,5.16,9.94,1.61H0L12,22.39ZM12,14.08,5.16,2.23H9.59L12,6.41l2.41-4.18h4.43Z",
-    "provenance": {
-      "provider": "Simple Icons",
-      "providerVersion": "16.28.0",
-      "source": "https://github.com/vuejs/art/blob/a1c78b74569b70a25300925b4eacfefcc143b8f6/logo.svg",
-      "guidelines": "https://github.com/vuejs/art/blob/a1c78b74569b70a25300925b4eacfefcc143b8f6/README.md",
-      "license": {
-        "type": "CC-BY-NC-SA-4.0",
-        "url": "https://spdx.org/licenses/CC-BY-NC-SA-4.0"
-      }
-    }
-  },
-  {
     "id": "wechat",
     "title": "WeChat",
     "category": "channel",

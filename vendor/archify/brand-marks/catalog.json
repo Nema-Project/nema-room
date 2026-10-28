@@ -116,7 +116,6 @@
     { "id": "rust", "category": "language", "simpleIcon": "rust", "domains": ["rust-lang.org"] },
     { "id": "node-js", "category": "framework", "simpleIcon": "nodedotjs", "aliases": ["node", "nodejs"], "domains": ["nodejs.org"] },
     { "id": "react", "category": "framework", "simpleIcon": "react", "aliases": ["reactjs"], "domains": ["react.dev"] },
-    { "id": "vue", "category": "framework", "simpleIcon": "vuedotjs", "aliases": ["vuejs", "vue.js"], "domains": ["vuejs.org"] },
     { "id": "next-js", "category": "framework", "simpleIcon": "nextdotjs", "aliases": ["nextjs", "next.js"], "domains": ["nextjs.org"] },
     { "id": "pytorch", "category": "framework", "simpleIcon": "pytorch", "domains": ["pytorch.org"] },
     { "id": "tensorflow", "category": "framework", "simpleIcon": "tensorflow", "domains": ["tensorflow.org"] },
