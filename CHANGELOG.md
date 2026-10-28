@@ -4,6 +4,10 @@ Version sections on main may describe release preparation. A version heading and
 
 ## [Unreleased]
 
+### Changed
+
+- Markdown under `scripts/desktop/` and `scripts/images/` starts neither the desktop or image pull-request workflows nor the macOS/Windows platform checks. Code and scripts there still do. `AGENTS.md` and `CLAUDE.md` use the documentation CI lane.
+
 ## [0.1.5] - 2026-10-28
 
 ### Added
