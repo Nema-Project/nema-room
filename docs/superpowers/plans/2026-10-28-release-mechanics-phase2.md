@@ -8,6 +8,8 @@
 
 **Tech Stack:** Docker Compose v2，Node.js 22（内置 `node:test`、`fetch`），GitHub Actions（钉 SHA），`gh` CLI。不新增 npm 依赖：`yaml` 已经在 devDependencies 里。
 
+**North star:** 本计划服务于 [issue #45](https://github.com/Nema-Project/nema-room/issues/45) 的判断标准：让人和 agent 更容易对项目保持有证据支撑的共同理解。本期的做法是把「装的是哪一版、这一版齐没齐」从靠人记着翻过哪几处，变成随时可核对的项目事实：受支持入口只有一个版本来源（Release 上的固定名 Compose 资产），安装时把版本锁进本地 `.env`，四件产物齐不齐由同一次检查给出证据。不把 Nema Room 写成编排器、编码界面或线性的讨论到代码流水线；不宣称已有漂移检测、跨注册表原子性或本期尚未落地的集成——第 3 期的整套验证与晋升不在本计划内。
+
 **Spec:** `docs/superpowers/specs/2026-10-28-release-mechanics-design.md`，第 91–101 行「第 2 期：入口动态化」整节，以及「约束」64–72 行、「留给实现者」118–128 行、「验收标准」第 3/4/5/8/9 条。动手前读全文。规格里的问题 1（promote 自动翻指针）属于第 3 期，本计划不涉及；问题 2 已由维护者选定 **A：只打印 daemon 安装命令，不当场执行 `npm i -g`**，本计划按 A 写，不再列为待定。
 
 **Base:** 代码基线 `860a8d684964c615cd9210489dd74fd9c5edf686`（写本计划时的 `origin/main`，Merge pull request #76）。动手前：
@@ -37,7 +39,7 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 - `scripts/ci/workflows.test.mjs`：253 行「image smoke paths are fixed and the workflow is not invented」，322–372 行「image publish pushes pinned GHCR images only after verify, and only from the publish job」（361–366 行断言 smoke 文案 `/docker compose pull/` 与两条 smoke-compose 命令），279–320 行用 `gh` 桩直接跑 publish 作业里名为 `Create or reuse draft, upload, publish` 的那一步。
 - `scripts/release/stamp-version.mjs`：`selfCheck` 在 122–128 行，注释写「The image-version assertion joins in phase 2」，只跑 `check-tag`。`scripts/release/stamp-version.test.mjs` 第 114–115 行断言源码匹配 `/phase 2/` 且**不**出现 `check-images`。第 1 期把这件事明确留给了本期；`CONTRIBUTING.md` 第 82、84 行、`scripts/npm/RELEASE.md` 第 46 行、`scripts/images/RELEASE.md` 第 12 行都写着同一句承诺。
 - `scripts/compose-dev.mjs`：`devComposeFileArgs = ["-f","docker-compose.yml","-f","docker-compose.build.yml"]`，`devComposeUpArgs()` 返回 `["compose", ...devComposeFileArgs, "up","-d","--build"]`。`scripts/up.mjs` 与 `scripts/setup.mjs` 都用它，源码路径不变。
-- 带版本的 compose 链接：`rg -n 'raw.githubusercontent.com/Nema-Project/nema-room/v[0-9]' README*.md docs/guide*.md site/` 在基线上命中 **10 个文件**：`README.md`、`README.en.md`、`README.zh.md`、`README.ja.md`、`docs/guide.en.md`、`docs/guide.zh.md`、`docs/guide.ja.md`、`site/index.html`、`site/ja/index.html`、`site/zh/index.html`。每个文件同时有一处 `blob/v0.1.5/docker-compose.yml` 链接和一处 `curl -fsSLO https://raw.githubusercontent.com/.../v0.1.5/docker-compose.yml`。没有第四个 guide 文件（`docs/guide.md` 不存在）。
+- 带版本的 compose 链接：`rg -n 'raw.githubusercontent.com/Nema-Project/nema-room/v[0-9]' README*.md docs/guide*.md site/` 在基线上命中 **10 个文件**：`README.md`、`README.en.md`、`README.zh.md`、`README.ja.md`、`docs/guide.en.md`、`docs/guide.zh.md`、`docs/guide.ja.md`、`site/index.html`、`site/ja/index.html`、`site/zh/index.html`。每个文件同时有一处 `blob/v0.1.5/docker-compose.yml` 链接和一处 `curl -fsSLO https://raw.githubusercontent.com/.../v0.1.5/docker-compose.yml`。注意这个 `-fsSLO` **没有 `-L`**：`raw.githubusercontent.com` 不跳转所以今天能跑，但换成 `releases/latest/download/` 后会 302，任务 10 必须一并改成 `-fsSL`。没有第四个 guide 文件（`docs/guide.md` 不存在）。
 - `README.md` 与 `README.en.md` 在基线上**逐字节一致**（`md5sum` 都是 `b60127dcd32f7c68413750295587633d`），`scripts/ci/docs-check.mjs` 也把「English README files must be byte-identical」当错误条件。这条现在成立，本期必须保持。
 - daemon 命令的实际现状：`site/index.html` 第 289、290 行与 `site/{ja,zh}/index.html` 对应行写死 `npm i -g @nema-project/nema@0.1.5`（**不是** `@0.1.4`）；`README*.md` 与 `docs/guide*.md` 用占位符 `@<hub version>` / `@<hub 版本>` / `@<hub のバージョン>`，`@nema-project/nema@0.1.3` 只作为「2026-10-27 手动首发」的历史事实出现。规格说的「现有的 `@0.1.4` 字面命令」在基线上不存在。
 - 源码构建的镜像名随模板变化：今天 `npm run up` 把构建结果打成 `ghcr.io/nema-project/nema-room-hub:0.1.5`，改模板后（`NEMA_IMAGE_TAG` 未设时）会打成 `…:latest`。仓库里没有任何步骤依赖这个本地 tag 名：`verify.yml` 的 `npm run up` 只等端口，image-publish 的 `--pull never` 冒烟会显式传 `NEMA_IMAGE_TAG`（任务 5）。这是源码路径的可见变化，写进 PR 描述。
@@ -53,7 +55,7 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 3. **带版本的 compose 链接正好 10 个文件，没有第四个 guide。** 规格任务描述里提过 `docs/guide.md`「?」；实测没有这个文件。10 个文件是四个 README、三个 `docs/guide.<lang>.md`、三个站点页。
 4. **`README.md` 与 `README.en.md` 确实逐字节一致**（`md5sum` 同为 `b60127dcd32f7c68413750295587633d`），`docs-check.mjs` 也强制这一条。本期必须维持，任务 9、10 都带 `cmp` 检查。
 5. **第 1 期把「镜像版本断言」明确留给了本期，散在五处**：`scripts/release/stamp-version.mjs` 第 123 行的注释、`scripts/release/stamp-version.test.mjs` 第 114–115 行断言源码里有 `phase 2` 字样、`scripts/npm/RELEASE.md` 第 46 行、`scripts/images/RELEASE.md` 第 12 行、`CONTRIBUTING.md` 第 82、84 行。这些不是可选项，是本期必须收掉的承诺（任务 4、11）。
-6. **仓库里没有「公开镜像安装路径」的可执行入口。** `scripts/setup.mjs` 只做源码构建；`dist-npm` 打出的包里只有 `dist`、`src/report/SKILL.md`、`LICENSE`，不含任何 install 脚本。零 clone 的用户今天能做的只有 `curl` 一份 compose。所以任务 8 的 `scripts/install/public.mjs` 是这套流程的**入库实现**（从 checkout 运行，也给第 3 期复用），而零 clone 的等价手工流程是「下载资产 → 从文件读出双镜像版本 → 写 `.env` → 装同版 daemon」，任务 9 把它写成文档。若维护者要的是「零 clone 也能跑的一键安装器」，那需要把脚本本身作为第二个固定名资产发布，会扩大资产集，**本期不做**，也不在这份计划里假装有。
+6. **仓库里没有「公开镜像安装路径」的可执行入口。** `scripts/setup.mjs` 只做源码构建；`dist-npm` 打出的包里只有 `dist`、`src/report/SKILL.md`、`LICENSE`，不含任何 install 脚本。零 clone 的用户今天能做的只有 `curl` 一份 compose。所以任务 8 的 `scripts/install/public.mjs` 是这套流程的**入库实现**（从 checkout 运行，也给第 3 期复用），而零 clone 的等价手工流程是「下载资产 → 从文件读出双镜像版本 → 写 `.env` → 装同版 daemon」，任务 10 把它写进文档（与链接切换同批上线）。若维护者要的是「零 clone 也能跑的一键安装器」，那需要把脚本本身作为第二个固定名资产发布，会扩大资产集，**本期不做**，也不在这份计划里假装有。
 7. **`check-images.mjs` 现有的 `:latest` 正则本来就放过插值。** 第 35 行 `/image:\s+\S+:latest\b/` 对 `image: ghcr.io/nema-project/nema-room-hub:${NEMA_IMAGE_TAG:-latest}` 实测**不匹配**；拦住模板的是第 38–39 行的字面 pin 断言。所以「不出现字面钉版的 `:latest`」这条今天已经成立，任务 1 要做的是把字面 pin 断言从模板移到资产，并把「模板里必须是插值」变成一条正面断言。
 8. **`smoke-compose.mjs` 不需要改。** 它在 `smokeCompose` 里把 `process.env` 展开进 `docker compose` 的环境变量（第 149–156 行），所以工作流 step 上加 `NEMA_IMAGE_TAG` 就够。规格说「全部显式传入」，落在工作流层面，不在脚本层面。
 9. **`image-publish.yml` 的 PR 构建会立刻暴露「模板 `:latest` 与本地加载的 `${VERSION}` 不一致」**：第 220–223 行把镜像 tag 成 `ghcr.io/nema-project/nema-room-hub:${VERSION}`，第 230 行 `--pull never` 冒烟。模板改成插值后若不同时传 `NEMA_IMAGE_TAG`，PR 冒烟会找不到 `:latest`。任务 1 与任务 5 必须在同一个 PR 里，不能拆开合。
@@ -63,13 +65,14 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 
 - 每期独立 PR，独立合并。本计划 12 个任务，未超 15。
 - 只写文档的任务（本文件）不改任何生产代码、工作流、校验器；本文件不改 `CHANGELOG.md`、`ROADMAP.md`，不关闭 #63。
-- 本期不改 `CHANGELOG.md` 与 `ROADMAP.md`（任务要求）。AGENTS.md 第 83 行要求用户可见变更进 `changelog.d/<slug>.<category>.md` 片段；本期是否要一条由维护者定，默认不加，且无论如何不直接改 `CHANGELOG.md`。
+- 本期不改 `CHANGELOG.md` 与 `ROADMAP.md`，但**必须**新增一个 changelog 片段 `changelog.d/release-entry-dynamic.changed.md`（AGENTS.md 第 83 行）：一条中文 bullet，讲清受支持的 Compose 入口改为不随版本变化的 Release 资产、安装时把版本锁定到本地 `.env`。片段由任务 12 产出，随本期实现 PR 一起落地；不直接改 `CHANGELOG.md` 本身。
 - `.github/workflows/npm-publish.yml` 的文件名是 npm trusted publisher 绑定的一部分，**不改名**。本期不改它的行为。
 - GitHub Actions 全部钉完整 SHA。`scripts/ci/workflows.test.mjs` 的契约测试随工作流改动同步更新，不绕过、不注释。
 - 不存长期凭据。除 `GITHUB_TOKEN` 外不新增任何 secret。不自动 commit、tag 或 publish；tag 不由 CI 创建。
 - 三份 `RELEASE.md`（`scripts/npm/`、`scripts/images/`、`scripts/desktop/`）的政策不变：tag 只打在该 SHA 的 main CI 已成功的提交上，tag 创建是维护者的独立步骤。
 - 模板里的 `:-latest` **只**服务源码开发流程（`npm run db:up`、`npm run up` 的合并配置）。裸 `latest` 不得出现在任何受支持安装说明里，也不得成为发布资产的取值。
 - 发布资产永远是双镜像同版 pin 的字面文件；`.env` 里的 `NEMA_IMAGE_TAG` 是这次安装记录的锁定版本。二者由同一次读取产生，安装器不得在两者不一致时写入。
+- **`.env` 的锁与 compose 的 pin 必须同版。** 写入后两者不等，或读到的已有值彼此矛盾时，安装器必须报错退出、拒绝继续，不得以任一方「大概是对的」继续。
 - `README.md`、`README.en.md`、`README.zh.md`、`README.ja.md` 与 `docs/guide.{en,zh,ja}.md` 同一次改；`README.md` 与 `README.en.md` 必须保持逐字节一致（基线成立，见上）。
 - daemon 安装命令必须带版本，数字来自已锁定的整套版本（`.env` 的 `NEMA_IMAGE_TAG` 与 Release 版本相同）。不写无版本命令冒充「能配任意 hub」。
 - 代码、注释、提交信息用英文；本文件用中文。工作流里新增的 shell 一律 `set -euo pipefail`。
@@ -84,10 +87,10 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 
 1. **断言函数（`scripts/images/check-images.mjs`）。** 导出 `assertComposeShape(text)`（模板与资产共有的形状）、`assertComposeTemplate(text)`（形状 + 必须正好是插值形式）、`assertComposeAsset(text, version)`（形状 + 双镜像字面 pin 等于 `version` 且不含 `:latest`）、`renderComposeAsset(template, version)`（纯字符串转换）、`composeAssetVersion(text)`（从资产里读出两个镜像共同 pin 的严格版本，供安装器用）。`assertComposeImages` 这个名字删除，不保留别名；`assertPackageVersions`、`shouldMoveLatest`、`assertImageBudget`、`IMAGE_BUDGET_BYTES`、`HUB_IMAGE`、`WEB_IMAGE` 不动。
 2. **`checkRepositoryImages(root, tag?)` 的语义。** 永远跑模板形态断言；给了 `tag` 时再用 `renderComposeAsset` 渲染并跑版本断言，返回版本号。这样 `image-publish.yml` 第 117、125、291 行三处调用都不用改参数。CLI 新增 `--asset <file> <x.y.z>`，对任意一份已渲染的资产跑版本断言；不带参数仍是「模板形态 + 三包版本自检」。
-3. **`stamp-compose.mjs` 的形态。** `node scripts/images/stamp-compose.mjs <x.y.z>` 把渲染结果写到 stdout（不落盘）；`node scripts/images/stamp-compose.mjs <x.y.z> <path>` 自检通过后才写文件；`--check` 只自检、不输出也不写。拒绝把仓库根的 `docker-compose.yml` 当输出路径（防止把模板渲染成资产）。
+3. **`stamp-compose.mjs` 的形态。** 三种模式，stdout 与 stderr 严格分工：`node scripts/images/stamp-compose.mjs <x.y.z>` 只把渲染正文写 stdout（成功提示走 stderr，正文可直接重定向成文件）；`<x.y.z> <path>` 自检通过后才写文件，stdout 为空、`wrote <path>` 走 stderr；`--check <x.y.z>` 只自检不写，stdout 打 `compose asset: <version> ok`。`out` 的父目录不存在时递归创建。拒绝把仓库根的 `docker-compose.yml` 当输出路径（防止把模板渲染成资产）。
 4. **Release 资产的名字与清单。** 固定名 `docker-compose.yml`，不放进 `targets`（它是单份，不属于某个桌面 target）。`collectReleaseManifest` 增加一个参数接收该文件的路径，manifest 增加顶层键 `compose: { name, size, sha256 }`，并把它计入 `SHA256SUMS-<version>.txt`。`validate-release.mjs` **不动**（它校验桌面 payload，不校验资产集）。
 5. **安装器位置。** 新增目录 `scripts/install/`：`release-set.mjs`（纯校验）与 `public.mjs`（解析、写 `.env`、打印命令）。`scripts/setup.mjs` 只加「读出并自检 checkout 版本」这一小段，源码构建路径的其余行为与 `devComposeUpArgs()` 不变。
-6. **`.env` 的写法。** 只动 `NEMA_IMAGE_TAG` 一行：已有合法值就原样保留、不覆盖；没有就追加一行（前面带一行注释）。整文件读入、改行、写临时文件再 `rename`，保留其它行与结尾换行状态。
+6. **`.env` 的写法。** 只动 `NEMA_IMAGE_TAG` 一行：已有合法值就原样保留、不覆盖；没有就追加一行（前面带一行注释）。整文件读入、改行、保留其它行与结尾换行状态。写入与 compose 一起做成对提交，细节见任务 8：锁文件 → 重读比对 → 两个临时文件 + fsync → `.env` 先 rename、compose 后 rename → 重读复核两个文件版本相等。
 7. **已有键的判定。** `NEMA_IMAGE_TAG` 是严格 SemVer（不带 `v`、不是 `latest`、不是预发布）时算合法。合法即沿用并按该版本验证整套产物；该版本与最新 Release 不同则打印一行说明（安装仍停在原版本）并以 0 退出。空值、`latest`、非 SemVer、预发布一律非零退出，不写文件。
 
 ## Review Focus
@@ -97,8 +100,12 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 3. `stamp-version` 的自检是不是真的接上了渲染检查，而不是继续留着「phase 2 再做」的注释。→ 任务 4。
 4. image-publish 的三处 compose 调用有没有一处漏传 `NEMA_IMAGE_TAG`，从而悄悄拉 `latest`。→ 任务 5（含契约断言）。
 5. 安装器有没有在缺件时仍然写 `.env` 或打印「已锁定」，有没有覆盖已有键。→ 任务 7、8。
-6. 链接切换是否在前置门未满足时就被合并。→ 任务 10。
-7. 文档里是否还留着一个写死的 daemon 版本数字或一句「它不是发布资产」。→ 任务 9、10、11。
+6. 安装器的两条路径有没有混：锁定旧版本时去抓 latest 资产，或者 `applyInstall` 自己又发了一次网络请求、写的字节与校验过的字节不同。→ 任务 8。
+7. `.env` 与 compose 有没有可能落成不同版本，或并发两次安装把文件写坏。→ 任务 8（锁文件、成对提交、写后复核）。
+8. `stamp-compose.mjs` 的 stdout 有没有掺进提示行，让 `> out.yml` 得到不可解析的文件。→ 任务 2。
+9. 链接切换是否在前置门未满足时就被合并；文档里的 curl 是否漏了 `-L`。→ 任务 9、10。
+10. 文档里是否还留着一个写死的 daemon 版本数字或一句「它不是发布资产」；零 clone 五步是否完整可照做。→ 任务 9、10、11。
+11. 用户可见变更有没有 changelog 片段。→ 任务 12。
 
 本期的范围边界见文末「本期明确不做」。
 
@@ -166,21 +173,27 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 
 **Interfaces:**
 - `stampCompose({ root, version, out = null })` → `{ text, version }`；`out` 为 `null` 时不写文件。
-- CLI：`node scripts/images/stamp-compose.mjs <x.y.z>`（stdout）、`<x.y.z> <path>`（自检通过才写）、`--check <x.y.z>`（只自检；`--check` 可以放在版本号前或后，两种都接受）。
+- **`out` 的父目录不存在时递归创建**（`mkdir -p` 语义，`fs.mkdir(..., { recursive: true })`）。创建失败就报错退出，不写任何文件。工作流里 `compose-asset/` 这类目录不必预先存在。
+- **CLI 的 stdout 只放 compose 正文，成功提示一律走 stderr。** 三种模式：
+  - `<x.y.z>`（stdout 模式）：stdout **只有**渲染出的 compose 正文，一个字的提示都不掺；`compose asset: <version> ok` 写 stderr。这样 `node scripts/images/stamp-compose.mjs 9.9.9 > out.yml` 直接得到可解析的文件。
+  - `<x.y.z> <path>`（写文件模式）：stdout 什么都不输出；`wrote <path>` 与 `compose asset: <version> ok` 都写 stderr。
+  - `--check <x.y.z>`（或 `<x.y.z> --check`）：只自检、不写文件，stdout 打 `compose asset: <version> ok`（这种模式没有正文要混）。
 - 输出路径等于 `<root>/docker-compose.yml` 时直接拒绝（`refusing to overwrite the compose template`）。
 - 写文件用「写临时文件 + rename」，自检失败时不留半份文件，也不改已存在的旧文件。
-- 成功时 stdout 打一行 `compose asset: <version> ok`（写文件模式在 stderr 打 `wrote <path>`）。
 
 **Satisfies:** 验收 3（「`stamp-compose.mjs` 的产物通过版本断言」）、验收 8。
 
 - [ ] **Step 1: 写失败测试**
 
 `scripts/images/stamp-compose.test.mjs`（用 `mkdtemp` 在临时目录复制一份 `docker-compose.yml`）：
-- `it('renders both images to the given version and leaves the template untouched')`：`stampCompose({root, version:'9.9.9'})` 的 `text` 含两个 `:9.9.9`、不含 `:-latest`，`root/docker-compose.yml` 字节不变。
-- `it('writes the output only after the version assertion passes')`：`out` 指向临时目录里的 `docker-compose.yml`，写后文件与 `text` 相同。
-- `it('refuses the repository template path and a non-release version')`：`out` 指向 `root/docker-compose.yml` 抛 `/refusing to overwrite/`；`version` 为 `'v1.2.3'`、`'latest'`、`'1.2'`、`''` 各自抛错且不写文件。
-- `it('writes nothing when the rendered file fails the assertion')`：把临时模板的 web 行改成 `...:${OTHER_TAG:-latest}`，`out` 已存在旧内容；调用抛错后旧内容不变。
-- `it('--check prints the result and writes nothing')`：`spawnSync` CLI，`--check 9.9.9` 退出 0、stdout 有 `compose asset: 9.9.9 ok`、目录里没有新文件。
+- `test('renders both images to the given version and leaves the template untouched')`：`stampCompose({root, version:'9.9.9'})` 的 `text` 含两个 `:9.9.9`、不含 `:-latest`，`root/docker-compose.yml` 字节不变。
+- `test('writes the output only after the version assertion passes')`：`out` 指向临时目录里的 `docker-compose.yml`，写后文件与 `text` 相同。
+- `test('refuses the repository template path and a non-release version')`：`out` 指向 `root/docker-compose.yml` 抛 `/refusing to overwrite/`；`version` 为 `'v1.2.3'`、`'latest'`、`'1.2'`、`''` 各自抛错且不写文件。
+- `test('writes nothing when the rendered file fails the assertion')`：把临时模板的 web 行改成 `...:${OTHER_TAG:-latest}`，`out` 已存在旧内容；调用抛错后旧内容不变。
+- `test('--check prints the result and writes nothing')`：`spawnSync` CLI，`--check 9.9.9` 退出 0、stdout 有 `compose asset: 9.9.9 ok`、目录里没有新文件。
+- `test('creates a missing output directory')`（Review 1）：`out` 指向 `tmp/a/b/docker-compose.yml`（两级都不存在）时调用成功，文件写出且内容与 `text` 相同。
+- `test('stdout mode emits only the compose document')`（Review 6）：`spawnSync` CLI 跑 `9.9.9`，`result.stdout` 能被 devDependency 里的 `yaml` 直接 `parse` 成对象，且**不含** `compose asset` 与 `wrote` 字样；同一次运行里 `result.stderr` 含 `compose asset: 9.9.9 ok`。
+- `test('file mode writes nothing to stdout')`：`spawnSync` CLI 跑 `9.9.9 <tmp>/docker-compose.yml`，`result.stdout === ''`，`result.stderr` 同时含 `wrote` 与 `compose asset: 9.9.9 ok`。
 
 - [ ] **Step 2: 跑** `node --test scripts/images/stamp-compose.test.mjs` → FAIL（模块不存在）。
 
@@ -207,8 +220,11 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
     shell: bash
     run: |
       set -euo pipefail
+      mkdir -p compose-asset
       node scripts/images/stamp-compose.mjs "$VERSION" compose-asset/docker-compose.yml
   ```
+
+  `mkdir -p` 与脚本内部的父目录自动创建是两道保险：前者让步骤在日志里自解释，后者保证手动跑同一命令时不因目录缺失而 ENOENT。
 
   然后 `node scripts/desktop/release-manifest.mjs collect release-input release-assets "$VERSION" "$PRERELEASE" compose-asset/docker-compose.yml`。
 - 324–341 行的 draft 复用校验、357 行的 `gh release upload "$TAG" release-assets/*`、359–364 行的 expected/actual 比对都**不改**：`release-assets/docker-compose.yml` 会自动进入 `expected`。注意由此产生的行为：一个在旧版本 workflow 下建的 draft 没有该资产，`expected != actual` 会失败关闭，要人工删掉旧 draft 才能重跑。这是期望行为，写进 `scripts/desktop/RELEASE.md`（任务 11）。
@@ -219,8 +235,8 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 
 `scripts/desktop/release.test.mjs`：
 - 更新「collection accepts a complete matrix…」：`files.length` 7 → 8，合并校验和从 3 行变 4 行且最后一行是 `docker-compose.yml`，`written.compose.sha256` 等于文件哈希，`written.targets` 不变。
-- 新增 `it('refuses a missing or empty compose asset')`：不传文件、传空文件、传名为 `compose.yml` 的文件，各自抛错且 `outputDir` 里没有半份产物。
-- 新增 `it('refuses a duplicate compose asset name')`：在某个 target 目录里放一份 `docker-compose.yml`，collect 抛 `/Unexpected file/`。
+- 新增 `test('refuses a missing or empty compose asset')`：不传文件、传空文件、传名为 `compose.yml` 的文件，各自抛错且 `outputDir` 里没有半份产物。
+- 新增 `test('refuses a duplicate compose asset name')`：在某个 target 目录里放一份 `docker-compose.yml`，collect 抛 `/Unexpected file/`。
 
 - [ ] **Step 2: 跑** `node --test scripts/desktop/release.test.mjs` → FAIL。
 
@@ -248,7 +264,7 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 `scripts/release/stamp-version.test.mjs`：
 - 删掉第 114–115 行的 `assert.match(source, /phase 2/)` 与 `assert.doesNotMatch(source, /check-images/)`，改成 `assert.match(source, /renderComposeAsset/)`。
 - 现有「stamping a consistent tree…」用例保留 `docker-compose.yml` 字节不变的断言。
-- 新增 `it('refuses when the compose template cannot render at the new version')`：在 fixture 的 `docker-compose.yml` 里删掉一处 `:-latest`，`stampVersion(root, '9.9.9')` 抛错，四个版本文件与 `docker-compose.yml` 全部回到执行前字节，`git status --porcelain` 为空。
+- 新增 `test('refuses when the compose template cannot render at the new version')`：在 fixture 的 `docker-compose.yml` 里删掉一处 `:-latest`，`stampVersion(root, '9.9.9')` 抛错，四个版本文件与 `docker-compose.yml` 全部回到执行前字节，`git status --porcelain` 为空。
 
 - [ ] **Step 2: 跑** `node --test scripts/release/*.test.mjs` → FAIL。
 
@@ -311,6 +327,7 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 - `checkReleaseSet({ version, composeText, fetchImpl })` → `{ version, evidence: string[] }`，四项各一条证据行；任一缺失抛 `Release <version> is not installable: <item>`（多项时全部列出，用 `; ` 分隔）。规则：
   - compose：`composeAssetVersion(composeText) === version`，否则算缺件并说明实际值。
   - npm：`GET https://registry.npmjs.org/@nema-project/nema/<version>`，200 且响应 `version` 字段等于 `version`；404 算缺件。
+    **不编码 scope 里的斜杠。** Sourcery 提过把 `@nema-project/nema` 换成 `@nema-project%2fnema`；实测两种写法都返回 200 且 `version` 字段正确（`https://registry.npmjs.org/@nema-project/nema/0.1.5` 与 `https://registry.npmjs.org/@nema-project%2fnema/0.1.5`），npm registry 接受未编码的 scope 斜杠。保持未编码的写法即可，不需要特意改成编码版；这条不构成缺陷。
   - GHCR：先 `GET https://ghcr.io/token?service=ghcr.io&scope=repository:nema-project/nema-room-<target>:pull` 取 `token`，再 `GET https://ghcr.io/v2/nema-project/nema-room-<target>/manifests/<version>`，header `Authorization: Bearer <token>` 与 `Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json`；200 才算在。匿名进行，不用任何凭据。
   - 网络错误、超时、JSON 解析失败一律**不算存在**（不得当成可用）。
 - 这个模块是安装器的前置检查，不是 `verify-release`：它不查 Release 资产集、不查镜像版本标签、不查三处版本一致。第 3 期会另写 `verify-release.mjs`，本期不写、不占名字。
@@ -338,26 +355,58 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 - Test: `scripts/setup.test.mjs`
 
 **Interfaces:**
-- `resolveInstall({ dir, fetchText, fetchImpl, now = () => new Date() })` → `{ version, action: 'write' | 'reuse', envPath, composePath, daemonCommand, notes: string[] }`；只做决策，不写盘。
-- `applyInstall({ dir, plan })` → 写 `.env`（只在 `action === 'write'` 时写 `NEMA_IMAGE_TAG`）与 `docker-compose.yml`（仅当该文件不存在）。写盘前重读 `.env`，值变了就放弃（并发安全）。
-- 版本解析：抓 `https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml`（跟随重定向），`composeAssetVersion` 得到版本，再 `checkReleaseSet`。
-- `dir/.env` 已有合法 `NEMA_IMAGE_TAG=<V>`：`action: 'reuse'`，不写该键；按 `<V>` 验证整套产物；`<V>` 与资产版本不同时 `notes` 里加一行「install stays on <V>; fetch the asset for v<V> from …/releases/download/v<V>/docker-compose.yml」，退出码仍为 0。
+
+`resolveInstall({ dir, fetchText, fetchImpl, now = () => new Date() })` 只做决策、不写盘，返回：
+
+```js
+{
+  version,                                  // 要锁定的严格 SemVer
+  action: 'write' | 'reuse',                // 新锁 / 沿用已有锁
+  envPath,
+  composePath,
+  composeText,                              // 已经抓下来并通过 composeAssetVersion 的那段字节
+  composeSource: 'latest' | 'versioned' | 'local',
+  daemonCommand,
+  notes: string[],
+}
+```
+
+- **`composeText` 与 `composeSource` 是硬契约。** `composeText` 是**校验过的那段原始字节**，`applyInstall` 只写 `plan.composeText`，**绝不重新 fetch、绝不重新渲染**。`applyInstall` 全程不发起任何网络请求。
+- **两个入口，不许混。**
+  - **没有锁（干净安装）**：抓 `https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml`（fetch 默认跟随重定向；curl 用 `-fsSL`），用 `composeAssetVersion` 读出 `<V>`，`checkReleaseSet({ version: <V>, composeText })`，`composeSource: 'latest'`，`action: 'write'`。
+  - **`.env` 里已有合法 `NEMA_IMAGE_TAG=<V>`**：**不抓 latest**。改为抓**该版本自己的**资产 `https://github.com/Nema-Project/nema-room/releases/download/v<V>/docker-compose.yml`（同样跟随重定向），用 `composeAssetVersion` 确认它就是 `<V>`（不是就报错，不降级去用 latest），`checkReleaseSet({ version: <V>, composeText })`，`composeSource: 'versioned'`，`action: 'reuse'`。
+  - 本地 `dir/docker-compose.yml` 已存在时，用它做校验并 `composeSource: 'local'`；它的 `composeAssetVersion` 必须等于锁定版本，否则报错退出（不覆盖、不猜测）。
+- **为什么重锁路径不能用 latest**：versioned 资产地址 `releases/download/v<V>/docker-compose.yml` 在该 Release 存在期间不变；`releases/latest/download/...` 会随下一次发布改指向。锁定路径若读 latest，就会用一个可能是新版本的字节去验证旧锁，或者反过来把旧锁悄悄升到新版——两种都违反「已有键不覆盖」。
 - 已有值非法（空、`latest`、`v` 前缀、非 SemVer、预发布）：抛错，点名 key 与值，不写任何文件。
+- `action: 'reuse'` 且版本与当前 latest 不同时，`notes` 加一行「install stays on `<V>`; fetch the asset for v`<V>` from `…/releases/download/v<V>/docker-compose.yml`」，退出码仍为 0——沿用旧锁不是错误。
 - `daemonCommand`：`npm i -g @nema-project/nema@<version>`；同时给出 `npx @nema-project/nema@<version> --version`。**只打印，不执行**（问题 2 选 A）。
-- CLI：`node scripts/install/public.mjs [--dir <path>] [--check]`。`--check` 打印决策与证据、不写盘；不带 `--check` 时按 `applyInstall` 写入，然后打印 daemon 命令与 `docker compose up -d`。stdout 每一行都要能让用户分辨「已锁定」「沿用的旧锁定」「缺失项」。
-- `scripts/setup.mjs`：在打印 `t.config` 之后、`options.check` 返回之前，读出 checkout 的 trio（复用 `scripts/npm/check-tag.mjs` 的 `readReleaseTrio`/`assertReleaseTrio`），不一致就非零退出并说明；把它写进三种语言的 `config` 文案（例如「本检出构建的版本」）。源码路径不读这个键来选版本、不修改它已有的值，也不从 latest Release 推导 daemon 版本；`devComposeUpArgs()` 一字不改。注意：该键一旦存在，compose 仍会用它给源码构建出的本地镜像打 tag，这正是文档要说清「它不是源码版本选择器」的原因。
+
+`applyInstall({ dir, plan })` 把两个文件**成对提交**：
+
+1. 用 `O_EXCL` 在 `<dir>/.nema-install.lock` 建锁文件；已存在则报错退出并说明「另一个安装正在进行」（`another install is already running in <dir>`），不写任何文件。所有出口（成功、失败、异常）都删锁。
+2. 重读 `dir/.env` 与 `dir/docker-compose.yml`，与 `plan` 的决议比对（`NEMA_IMAGE_TAG` 是否仍为 `plan.version` 或仍为空、compose 是否仍不存在或仍是 `plan.composeText`）。不一致就**整个放弃、一个都不 rename**，报错退出，不静默覆盖别人刚写的值。
+3. 两个文件先写到同目录的临时文件（`.env.tmp-<rand>`、`docker-compose.yml.tmp-<rand>`），各自 `fsync`，再依次 `rename`：**`.env` 先、compose 后**。
+4. `rename` 后立即重读两个文件，确认 `.env` 的 `NEMA_IMAGE_TAG` 与 compose 里两个镜像的共同 pin 相等。不等就报错退出——这时已经不是原子的了，但至少不静默成功，错误信息要点名两个值。
+5. `action: 'reuse'` 且两个文件都已在位时不写任何文件，只复核一遍版本相等。
+
+`scripts/setup.mjs`：在打印 `t.config` 之后、`options.check` 返回之前，读出 checkout 的 trio（复用 `scripts/npm/check-tag.mjs` 的 `readReleaseTrio`/`assertReleaseTrio`），不一致就非零退出并说明；把它写进三种语言的 `config` 文案（例如「本检出构建的版本」）。源码路径不读这个键来选版本、不修改它已有的值，也不从 latest Release 推导 daemon 版本；`devComposeUpArgs()` 一字不改。注意：该键一旦存在，compose 仍会用它给源码构建出的本地镜像打 tag，这正是文档要说清「它不是源码版本选择器」的原因。
 
 **Satisfies:** 验收 5。
 
-- [ ] **Step 1: 写失败测试** `scripts/install/public.test.mjs`，全部在 `mkdtemp` 目录里跑，用假的 `fetchText`/`fetchImpl`：
-  - 空目录第一次安装：写入 `.env` 只含一行 `NEMA_IMAGE_TAG=1.2.3`（加一行注释）、写入 `docker-compose.yml` 等于抓到的资产、`daemonCommand` 里是 `@nema-project/nema@1.2.3`。
-  - 已有 `.env` 含 `NEMA_IMAGE_TAG=1.2.2`：`action: 'reuse'`，`.env` 字节不变，验证的是 `1.2.2` 那一套，`notes` 提到 1.2.3。
+- [ ] **Step 1: 写失败测试** `scripts/install/public.test.mjs`，全部在 `mkdtemp` 目录里跑，用假的 `fetchText`/`fetchImpl`（记录每次请求的 URL 与次数）：
+  - 空目录第一次安装：请求的 URL 是 `releases/latest/download/docker-compose.yml`；`action: 'write'`、`composeSource: 'latest'`；写入 `.env` 只含一行 `NEMA_IMAGE_TAG=1.2.3`（加一行注释）、`docker-compose.yml` 字节等于 `plan.composeText`、`daemonCommand` 里是 `@nema-project/nema@1.2.3`。
+  - **`fetchText` 调用次数**（Review 5）：`resolveInstall` + `applyInstall` 全过程里 `fetchText` 的调用次数等于该路径预期的次数；拆开断言「`applyInstall` 期间 `fetchText` 调用次数为 0」，且写出的 compose 字节与 `resolveInstall` 返回的 `composeText` 完全一致。
+  - **已有 `.env` 含 `NEMA_IMAGE_TAG=1.2.2`**（Review 3）：`action: 'reuse'`、`composeSource: 'versioned'`；请求的 URL 是 `releases/download/v1.2.2/docker-compose.yml`，且**全程没有任何请求指向 `releases/latest/`**；`.env` 字节不变；`notes` 提到最新是 1.2.3、安装仍在 1.2.2。
+  - versioned 资产的 pin 与锁定值不同（返回 1.2.4 的资产）：抛错，不写任何文件。
   - 已有 `.env` 含 `NEMA_IMAGE_TAG=latest`：抛错，`.env` 字节不变。
   - 已有 `.env` 含其它键与注释：写入后除 `NEMA_IMAGE_TAG` 行外逐字节不变。
   - 资产里两个镜像版本不同：抛错，不写 `.env`。
   - 四项缺一项：抛错，不写 `.env`（「缺件必须拒绝，不能宣称已锁定」）。
   - `--check`：不写任何文件。
-  - 已有 `docker-compose.yml`：不被覆盖；它的 pin 与锁定版本不同则抛错并说明。
+  - 已有 `docker-compose.yml`：`composeSource: 'local'`、不被覆盖；它的 pin 与锁定版本不同则抛错并说明。
+  - **并发只有一个成功**（Review 4）：先手动创建 `<dir>/.nema-install.lock`，`applyInstall` 抛 `/another install is already running/`，两个目标文件都不存在；再用两个 `Promise.all` 同时 `applyInstall` 同一目录的不同 plan，断言至少一个抛锁错误、且最终没有半份文件。
+  - **中间失败不留半份文件**（Review 4）：让 `.env` 的临时文件写入后、compose `rename` 前注入异常（通过注入 `fs` 替身或写一个只读的 compose 目标），断言 `.env` 与 `docker-compose.yml` 都不会留下新内容，锁文件被删。
+  - **写完后两个文件版本相等**（Review 4）：成功路径结束后重读，`NEMA_IMAGE_TAG` 的值 === `composeAssetVersion(读回的 compose)`。
 - `scripts/setup.test.mjs` 新增：`TEXT` 三种语言都有「checkout 版本」这一项；`parseOptions` 不变；`setupSettings` 不变。
 - [ ] **Step 2: 跑** `node --test scripts/install/*.test.mjs scripts/setup.test.mjs` → FAIL。
 - [ ] **Step 3: 实现** 两个模块、CLI、`setup.mjs` 那一小段与三语文案。
@@ -379,8 +428,9 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 - `docs/guide.*.md` 第 249–250 行「源码升级」段补一句：源码检出不用 `NEMA_IMAGE_TAG` 选版本。
 - 英文文案以 `README.md` 为准，`README.en.md` 必须同步到逐字节相同；zh/ja 与站点三语写等价内容，不新增承诺。
 - 站点三语、README 四语、guide 三语在同一次提交里改完。
+- 零 clone 手工流程的五步不在这里写：它指向 `releases/latest/download/...`，必须与任务 10 的链接切换同一时刻上线，整段见任务 10。
 
-**Satisfies:** 验收 4（文案面；链接面在任务 10）、验收 5（文档面）。
+**Satisfies:** 验收 4 的文案面（链接、零 clone 五步在前置门之后，见任务 10）、验收 5 的文档面。
 
 - [ ] **Step 1: 先 grep 现状**，把结果贴进 PR 描述：
 
@@ -398,29 +448,66 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 ### Task 10: 切换到固定名 Compose 资产链接（前置门）
 
 **Files:**
-- Modify: 任务 9 那 10 个文件里的 compose 链接与「不是发布资产」句子
+- Modify: 任务 9 那 10 个文件里的 compose 链接与「不是发布资产」句子，并补入零 clone 五步
 
 **Interfaces:**
 - 替换成 `https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml`：每个文件的 `blob/v0.1.5/docker-compose.yml` markdown 链接与 `curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.5/docker-compose.yml` 各一处。
+- **所有指向 `releases/latest/download/` 的 curl 一律带 `-L`**：`curl -fsSL -o docker-compose.yml <url>`。今天文档里的 `-fsSLO` 没有 `-L`，换成 release 下载地址后会只拿到 302 跳转体；这是本任务必须一起改的。
 - 删除「It is not a release asset.」/「リリースの添付ファイルではありません。」/「它不是发布页上的附件。」三句，改成「它是该 Release 的固定名资产」。
 - 站点 `<pre>` 里的注释行 `# Hub and web, linux/amd64. The compose file is on tag v0.1.5, not a release asset.` 同步改。
 - 切换后不再出现 `blob/v<版本>/docker-compose.yml`，也不再出现 `raw.githubusercontent.com/Nema-Project/nema-room/v<版本>`。
+- **零 clone 手工流程（Review 8）**：这五步与链接切换同一次提交上线（资产不存在时写进文档就是死链）。写进 README 的公开安装小节与 `docs/guide.*.md` 对应小节，三语各一份，命令本身保持英文。
+
+  ```sh
+  # 1. fetch the fixed-name compose asset for the current supported release
+  curl -fsSL -o docker-compose.yml \
+    https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
+
+  # 2. read the one version both images are pinned to; hub and web must agree
+  grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
+  grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
+
+  # 3. lock it in a local .env, using the version both greps printed
+  #    NEMA_IMAGE_TAG=<that version>
+  #    If .env already has NEMA_IMAGE_TAG, keep it, and fetch
+  #    https://github.com/Nema-Project/nema-room/releases/download/v<locked>/docker-compose.yml
+  #    instead of the latest URL.
+
+  # 4. start the stack
+  export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"   # Linux and macOS only
+  docker compose up -d
+
+  # 5. install the host daemon at the same version
+  npm i -g @nema-project/nema@<that version>
+  ```
+
+  文案必须同时说清三件事，不许省：
+  - 第 2 步两条输出**必须相同**；不同就停下，不要启动。
+  - 第 3 步**已有 `NEMA_IMAGE_TAG` 时不覆盖**，沿用旧值，并按旧值去下 `releases/download/v<locked>/docker-compose.yml`；latest 会变，versioned 地址在 Release 存在期间不变。
+  - 第 5 步的版本号就是第 2 步读出的那个版本，不是「最新版本」。
 
 **前置门（缺一不可，未满足就不合并本任务）：**
 
 1. 一个包含 `docker-compose.yml` 资产的版本已经**真实发布**（该资产由 desktop-release 上传，draft 转正已完成）。
-2. `curl -fsSI https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml` 返回 200，`curl -fsS` 下来的文件 `composeAssetVersion` 等于该 Release 的版本。
+2. 固定名资产能下到真文件、且版本可读：
+   ```sh
+   code=$(curl -fsSL -o /tmp/dc.yml -w '%{http_code}' \
+     https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml) \
+     && test "$code" = 200 \
+     && node -e "import('./scripts/images/check-images.mjs').then(m => console.log(m.composeAssetVersion(require('node:fs').readFileSync('/tmp/dc.yml','utf8'))))"
+   ```
+   两个条件都必须满足：`code` 是 `200`，且读出的严格版本非空并等于该 Release 的版本。`-L` 不能省：`releases/latest/download/...` 会 302 到带签名的对象地址，不带 `-L` 拿到的是跳转体而不是 compose。
 3. 该版本的 npm 包与两个 GHCR 镜像 tag 可匿名读到（`node scripts/install/public.mjs --check` 四项齐）。
 4. 该 URL 在**稳定** latest 上成立（不是预发布）。
 
 门未满足时：本任务保持未勾选，旧链接继续可用，PR 其余任务照常合并。这条门是规格第 4 条验收的实测依据，不能靠推理代替。
 
-**Satisfies:** 验收 4。
+**Satisfies:** 验收 4（含零 clone 安装步骤的落地）。
 
 - [ ] **Step 1: 逐条实测前置门**，把 4 条命令与输出贴进 PR。任何一条不满足就停在本任务，不改文件。
-- [ ] **Step 2: 改 10 个文件**：链接、curl 命令、那三句「不是发布资产」、站点注释行。三语同步。
-- [ ] **Step 3: 跑** `rg -n 'raw.githubusercontent.com/Nema-Project/nema-room/v[0-9]|blob/v[0-9][^/"]*/docker-compose.yml' README*.md docs/guide*.md site/` → **零命中**；`rg -n 'not a release asset|リリースの添付ファイル|发布页上的附件' README*.md docs/guide*.md site/` → 零命中；`cmp README.md README.en.md`；`node scripts/ci/docs-check.mjs /tmp/paths.json` → 0 errors。
-- [ ] **Step 4: 再实测** 切换后的 URL：`curl -fsSL .../releases/latest/download/docker-compose.yml | head -5`，确认是固定名下载而不是跳 HTML。
+- [ ] **Step 2: 改 10 个文件**：链接、curl 命令、那三句「不是发布资产」、站点注释行，并补入零 clone 五步。三语同步。
+- [ ] **Step 3: 跑** `rg -n 'raw.githubusercontent.com/Nema-Project/nema-room/v[0-9]|blob/v[0-9][^/"]*/docker-compose.yml' README*.md docs/guide*.md site/` → **零命中**；`rg -n 'not a release asset|リリースの添付ファイル|发布页上的附件' README*.md docs/guide*.md site/` → 零命中；`cmp README.md README.en.md`；`node scripts/ci/docs-check.mjs /tmp/paths.json` → 0 errors；`rg -c 'releases/latest/download/docker-compose.yml' README*.md docs/guide*.md` 四个 README 与三个 guide 各至少 1 处，且每处对应的 curl 都带 `-L`；零 clone 五步在四份 README 与三份 guide 里都在（三语齐全），第 2 步的两条 grep 与「已有键不覆盖」那句逐语种核对一遍。
+- [ ] **Step 4: 再实测** 切换后每个文档里的 curl 命令原样跑一遍（含 `-L`），确认落地的文件第一行是 compose 注释而不是 HTML；`rg -n 'latest/download/' README*.md docs/guide*.md site/` 的每一处都要能对上一个带 `-L` 的命令。
 - [ ] **Step 5: Commit** `docs: point the public compose entry at the fixed-name release asset`
 
 ### Task 11: 三份 RELEASE.md 与 CONTRIBUTING 的安装/发布说明
@@ -445,12 +532,20 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 - [ ] **Step 3: 跑** `rg -n 'phase 2|第 2 期' scripts/*/RELEASE.md CONTRIBUTING.md` → 零命中；`node scripts/ci/docs-check.mjs /tmp/paths.json`（paths 换成这四个文件）→ 0 errors；三条政策原句仍在（`rg -n 'Do not create a release tag from CI|不从 CI 创建 tag' scripts/*/RELEASE.md`）。
 - [ ] **Step 4: Commit** `docs(release): describe compose templates, assets, and locked versions`
 
-### Task 12: 集成验证与发布后核对
+### Task 12: changelog 片段、集成验证与发布后核对
 
 **Files:**
-- 无新文件（只跑检查、写 PR 描述与发布记录）
+- Add: `changelog.d/release-entry-dynamic.changed.md`
+- 其余只跑检查、写 PR 描述与发布记录
 
 **Interfaces:**
+- **changelog 片段（Review 10）**：`changelog.d/release-entry-dynamic.changed.md`，内容是一条 `- ` 开头的中文 bullet（维护者指定中文；`cut-changelog.mjs` 的 `fragmentBody` 只接受 bullet 行、不许标题，见 `scripts/release/cut-changelog.mjs` 第 86–98 行），说明受支持的 Compose 入口改为不随版本变化的 Release 资产、安装时把版本锁定到本地 `.env`。示意（实现时按最终行为定稿）：
+
+  ```md
+  - 受支持的 Compose 入口改为发布页上的固定名 `docker-compose.yml` 资产，安装链接不再随版本变化；首次安装把该版本锁定进本地 `.env` 的 `NEMA_IMAGE_TAG`，并给出同版 daemon 安装命令。
+  ```
+
+  这一段由本期实现 PR 携带，**不**直接改 `CHANGELOG.md`；`changelog.d/` 目录当前在仓库里不存在（`git ls-files changelog.d` 为空），本任务连同第一个片段一起创建它。`readFragments` 对缺失目录返回 `[]`（第 100–112 行），所以建目录是安全的。
 - 本地按 AGENTS.md 的对应行跑，并把实际输出贴进 PR：
 
   ```sh
@@ -469,11 +564,12 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 
 **Satisfies:** 验收 8 的证据部分，以及验收 3/4/5 的实测收口。
 
-- [ ] **Step 1: 本地跑完上面全部命令**，逐条记录退出码。没有 Docker 时明确写「`check-images.test.mjs` 的两个 `docker compose config` 用例未跑」。
-- [ ] **Step 2: 提交 PR 后等 `CI gate`**，把 run URL 记进 PR。
-- [ ] **Step 3: 合并前核对本计划「本期明确不做」** 没有一项被顺手做掉（`rg -n 'verify-release|release-promote|promote' .github/workflows scripts` 应无新增）。
-- [ ] **Step 4: 合并后按任务 10 的前置门实测**，满足才开链接切换的 PR。
-- [ ] **Step 5: Commit** 无（本任务只产出证据；证据写进 PR 描述与发布记录）。
+- [ ] **Step 1: 写 changelog 片段**，并在临时目录里验证它能被消费而不动真文件：复制 `CHANGELOG.md` 与 `changelog.d/release-entry-dynamic.changed.md` 到 `$(mktemp -d)`，用 `node -e` 调 `cutChangelogFile(<临时 CHANGELOG>, '0.0.0-test', '2026-10-28')`（`scripts/release/cut-changelog.mjs` 第 194 行导出；`main` 没有 `--help`），确认临时文件的 `### Changed` 下多出一条、临时片段被删。真仓库的 `CHANGELOG.md` 不动，`git diff --stat` 只有本计划与这个片段两个文件。
+- [ ] **Step 2: 本地跑完上面全部命令**，逐条记录退出码。没有 Docker 时明确写「`check-images.test.mjs` 的两个 `docker compose config` 用例未跑」。
+- [ ] **Step 3: 提交 PR 后等 `CI gate`**，把 run URL 记进 PR。
+- [ ] **Step 4: 合并前核对本计划「本期明确不做」** 没有一项被顺手做掉（`rg -n 'verify-release|release-promote|promote' .github/workflows scripts` 应无新增）。
+- [ ] **Step 5: 合并后按任务 10 的前置门实测**，满足才开链接切换的 PR。
+- [ ] **Step 6: Commit** 只有 `changelog.d/release-entry-dynamic.changed.md`；其余本任务产出的是证据，写进 PR 描述与发布记录。
 
 ---
 
@@ -483,12 +579,13 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 |---|---|
 | 1 第 2 期部分：盖印后自检含模板形态与渲染资产检查，`git diff --stat` 仍只含四个版本文件 | 1、2、4 |
 | 3 仓库根 compose 无字面 pin；形态断言对模板通过；`stamp-compose` 产物过版本断言；image-publish 三处显式 `NEMA_IMAGE_TAG` | 1、2、3、5、12 |
-| 4 站点三页、README 四份、guide 三份不再有随版本变化的 compose URL；模拟发布后零改动 | 9（文案）、10（链接 + 前置门实测） |
-| 5 公开安装在干净环境解析版本、验证整套产物后写 `.env` 并给同版 daemon 命令；已有键沿用验证不覆盖不混 latest；源码 setup 不受影响 | 7、8、9 |
+| 4 站点三页、README 四份、guide 三份不再有随版本变化的 compose URL；模拟发布后零改动；零 clone 五步可照做 | 9（文案）、10（链接 + 零 clone 步骤 + 前置门实测） |
+| 5 公开安装在干净环境解析版本、验证整套产物后写 `.env` 并给同版 daemon 命令；已有键沿用验证不覆盖不混 latest（锁定时抓 versioned 资产，不抓 latest）；`.env` 与 compose 同版；源码 setup 不受影响 | 7、8、9、10 |
 | 8 `workflows.test.mjs` 随改动更新且全绿；新增脚本都有相邻 `*.test.mjs`；按 AGENTS.md 跑测试并报告 | 1、2、3、4、5、6、7、8、12 |
 | 9 三份 RELEASE.md 与 CONTRIBUTING 的安装说明同步 | 11 |
+| 10（Review 10）用户可见变更进 `changelog.d/release-entry-dynamic.changed.md`，不直接改 `CHANGELOG.md` | 12 |
 
-验收 2、6、7 属于第 1 期与第 3 期，本计划不覆盖。
+验收 2、6、7 属于第 1 期与第 3 期，本计划不覆盖。表末「10（Review 10）」不是规格里的编号，只标本条 review 的产出位置。
 
 ## 本期明确不做
 
@@ -510,4 +607,4 @@ ancestry 必须成功。`860a8d6..HEAD` 里只允许文档提交（本计划文�
 
 ## 任务顺序与提交
 
-1 → 2 必须先（2 复用 1 的渲染与断言）；3 → 4 → 5 → 6 依次（3 的 workflow step 被 6 的契约断言盯住，5 的 `env` 被 5 自己的断言盯住，6 只加 desktop-release 的断言）；7 → 8 → 9 串行；10 必须等真实发布；11 可与 9 同批做；12 收口。每个任务一个提交，提交信息用英文，身份用维护者账号，不加任何联合作者署名。
+1 → 2 必须先（2 复用 1 的渲染与断言）；3 → 4 → 5 → 6 依次（3 的 workflow step 被 6 的契约断言盯住，5 的 `env` 被 5 自己的断言盯住，6 只加 desktop-release 的断言）；7 → 8 → 9 串行；10 必须等真实发布，且零 clone 五步与链接切换同批落地；11 可与 9 同批做；12 收口，并在那里产出 `changelog.d/release-entry-dynamic.changed.md`。每个任务一个提交，提交信息用英文，身份用维护者账号，不加任何联合作者署名。
