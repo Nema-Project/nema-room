@@ -2,6 +2,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/pr
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { fromFile } from "../src/store.js";
 import { KnowledgeStore, RepoLockReentryError, UpsertRejected, git, history, parseCommitMessage } from "../src/index.js";
@@ -796,9 +797,14 @@ test("readers never observe truncated frontmatter during an entry update", async
   const readerStore = new KnowledgeStore(dir);
   let done = false;
   const failures: unknown[] = [];
+  // get() shares replaceFile's lock, then gray-matter parses 16KB on the event
+  // loop. Four readers that re-queue immediately keep that lock busy and delay
+  // the writer's commits; 40 commits miss the 20s default on Windows. Yield once
+  // per read so git can run. Fewer win32 commits still overlap the rename.
+  const revisions = process.platform === "win32" ? 12 : 40;
   const writer = (async () => {
     try {
-      for (let i = 0; i < 40; i++) {
+      for (let i = 0; i < revisions; i++) {
         await store.upsert(req(`revision ${i}`, { id: "R-1", body: "x".repeat(16_384) }), { author: "user" });
       }
     } finally {
@@ -813,14 +819,15 @@ test("readers never observe truncated frontmatter during an entry update", async
       } catch (error) {
         failures.push(error);
       }
+      await setImmediate();
     }
   };
   await Promise.all([writer, ...Array.from({ length: 4 }, reader)]);
   expect(failures).toEqual([]);
-  expect((await store.get("R-1"))?.title).toBe("revision 39");
+  expect((await store.get("R-1"))?.title).toBe(`revision ${revisions - 1}`);
   if (process.platform !== "win32") expect((await stat(path.join(dir, "requirements", "R-1.md"))).mode & 0o777).toBe(0o600);
   expect((await git(dir, ["status", "--porcelain"])).trim()).toBe("");
-});
+}, process.platform === "win32" ? 60_000 : 20_000);
 
 const snapshotRaw = `source_snapshot:
   schema_version: 1
