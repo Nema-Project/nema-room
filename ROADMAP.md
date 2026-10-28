@@ -79,6 +79,7 @@ P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实现已�
 | P1-06 | 同步版本与验收文档 | 待办 | README、官网、CHANGELOG、SECURITY 对齐实际发布；各历史报告注明适用提交；新增当前验收矩阵而非将旧记录视为现状 |
 | P1-07 | 区分实现证据与需求验收；现有 verified 不代表测试或验收通过 | 待办 | 明确“提交已核对”“测试已通过”“验收已确认”的状态及证据来源；兼容现有数据；用户不会将 Git 核对误认为需求完成 |
 | P1-08 | 完善 CI 分层和桌面运行时变更覆盖。规格见 [fast-gate spec](docs/superpowers/specs/2026-10-27-pr-ci-fast-gate-design.md)，计划见 [fast-gate plan](docs/superpowers/plans/2026-10-27-pr-ci-fast-gate.md) | 进行中 | 保留 PR 检查及发布前完整打包；local/hub/cli/web 运行时改动有适当集成检查；依赖变更的打包风险有明确检查策略；避免无必要重复跑重型任务 |
+| P1-09 | [#63](https://github.com/Nema-Project/nema-room/issues/63) 发布去版本耦合。规格见 [release mechanics spec](docs/superpowers/specs/2026-10-28-release-mechanics-design.md) | 进行中 | 第 1 期（单点盖印 + changelog 片段）在 [PR #70](https://github.com/Nema-Project/nema-room/pull/70)；第 2、3 期未开工 |
 
 ## P2：后续能力
 
@@ -88,6 +89,10 @@ P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实现已�
 | P2-02 | 规模与可诊断性 | 待办 | 建立大仓库、长会话、大量知识条目的耗时和资源基线；提供脱敏诊断导出；确保不含 token、密钥或默认导出私有讨论内容 |
 | P2-03 | 多设备同步 | 待办 | 先完成备份恢复与数据权威来源定义；设计冲突解决和一致性模型，再确定实现范围 |
 | P2-04 | 团队只读访问 | 待办 | 先设计身份、授权、撤销与审计；不得直接把当前单用户本地服务暴露为多人服务 |
+| P2-05 | [#25](https://github.com/Nema-Project/nema-room/issues/25) 外部连接器 Epic。设计见 [connector architecture v0.2](docs/design/connector-architecture-v0.2.md) | 进行中 | CX-01、CX-03 已实现，CX-03 待最终验收；CX-02、CX-04、CX-05、CX-06、CX-07、CX-08、CX-09、CX-10 尚未开始 |
+| P2-06 | 扩展管理：Skills/MCP/插件的安装、卸载与启停未实现。规格见 [extension management spec](docs/superpowers/specs/2026-10-25-extension-management-design.md)，计划见 [extension management plan](docs/superpowers/plans/2026-10-25-extension-management.md) | 待办 | 生产路径仍只有记录与展示；安装、卸载、启停、来源解析、Skills 加载与 MCP 配置尚未落地 |
+| P2-07 | [#56](https://github.com/Nema-Project/nema-room/issues/56) 依赖体检：桌面 Python 升 3.11.18、基础镜像 trixie 化与大版本升级立项 | 待办 | 范围以该 issue 为准 |
+| P2-08 | [#50](https://github.com/Nema-Project/nema-room/issues/50) hub/web 镜像增加 linux/arm64（多架构 manifest） | 待办 | 范围以该 issue 为准 |
 
 ## 仓库演进原则
 
