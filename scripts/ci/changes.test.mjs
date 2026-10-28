@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile, rename } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile, rename } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { changedPaths } from './changes.mjs';
+import { classifyPaths } from './policy.mjs';
 
 test('complete NUL-delimited diff preserves strange names, deletions and both rename paths', async t => {
   const cwd = await mkdtemp(join(tmpdir(), 'ci-diff-'));
@@ -34,4 +35,46 @@ test('complete NUL-delimited diff preserves strange names, deletions and both re
   delete env.GITHUB_OUTPUT;
   const missing = spawnSync(process.execPath, [script, base, head], {cwd, env, encoding:'utf8'});
   assert.notEqual(missing.status, 0);
+});
+
+test('a docs-only PR behind main classifies the merge commit, not the reversed base diff', async t => {
+  const cwd = await mkdtemp(join(tmpdir(), 'ci-behind-'));
+  t.after(() => rm(cwd, {recursive:true, force:true}));
+  const git = (...args) => execFileSync('git', args, {cwd, encoding:'utf8'}).trim();
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 'fixture@example.com');
+  git('config', 'user.name', 'Fixture');
+  git('config', 'commit.gpgsign', 'false');
+  git('config', 'core.fsmonitor', 'false');
+  const spec = 'docs/superpowers/specs/2026-10-28-evidence-return-v1-design.md';
+  const vendor = 'vendor/archify/brand-marks/catalog.json';
+  await mkdir(join(cwd, 'docs'), {recursive:true});
+  await writeFile(join(cwd, 'docs/guide.md'), 'base\n');
+  git('add', '.'); git('commit', '-qm', 'base');
+  git('checkout', '-q', '-b', 'pr');
+  await mkdir(join(cwd, 'docs/superpowers/specs'), {recursive:true});
+  await writeFile(join(cwd, spec), 'spec\n');
+  git('add', '.'); git('commit', '-qm', 'docs only');
+  const pr = git('rev-parse', 'HEAD');
+  git('checkout', '-q', 'main');
+  await mkdir(join(cwd, 'vendor/archify/brand-marks'), {recursive:true});
+  await writeFile(join(cwd, vendor), '{}\n');
+  git('add', '.'); git('commit', '-qm', 'main moves');
+  const base = git('rev-parse', 'HEAD');
+  const branchDiff = git('diff', '--no-renames', '--name-only', base, pr).split('\n').filter(Boolean);
+  assert.ok(branchDiff.includes(spec));
+  assert.ok(branchDiff.includes(vendor));
+  assert.equal(classifyPaths(branchDiff).mode, 'app');
+  git('merge', '--no-ff', '-q', '-m', 'merge pr', 'pr');
+  const merge = git('rev-parse', 'HEAD');
+  assert.deepEqual((await changedPaths({cwd, base, head:merge})).sort(), [spec]);
+  const output = join(cwd, 'github-output.txt');
+  const list = join(cwd, 'paths.json');
+  const script = new URL('./changes.mjs', import.meta.url).pathname;
+  const run = spawnSync(process.execPath, [script, base, merge], {cwd, env:{...process.env, GITHUB_OUTPUT:output, PATH_LIST_FILE:list}, encoding:'utf8'});
+  assert.equal(run.status, 0, run.stderr);
+  const lines = Object.fromEntries((await readFile(output, 'utf8')).trim().split('\n').map(line => line.split('=')));
+  assert.equal(lines.mode, 'docs');
+  assert.equal(lines.platform, 'false');
+  assert.equal(lines.npm_pack, 'false');
 });

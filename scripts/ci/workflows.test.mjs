@@ -39,6 +39,8 @@ function assertCi(ci) {
   assert.equal(expr(outputs.npm_pack), 'steps.changes.outputs.npm_pack');
   const changes = ci.jobs.classify.steps.find(s => s.id === 'changes');
   assert.ok(changes);
+  assert.equal(expr(changes.env.BASE), 'github.event.pull_request.base.sha');
+  assert.equal(expr(changes.env.HEAD), 'github.sha');
   const fullBranch = changes.run.slice(0, changes.run.indexOf('changes.mjs'));
   assert.match(fullBranch, /workflow_dispatch/);
   assert.match(fullBranch, /"\$EVENT" = "push"/);

@@ -37,7 +37,9 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
+          # github.sha is the merge commit this job checks out. A two-dot diff of the
+          # branch head counts main's newer files when that head is behind base.
+          HEAD: ${{ github.sha }}
           PATH_LIST_FILE: ${{ runner.temp }}/changed-paths.json
         run: |
           set -euo pipefail

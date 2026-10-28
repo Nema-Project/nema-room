@@ -7,6 +7,8 @@ const exec = promisify(execFile);
 
 export async function changedPaths({cwd, base, head}) {
   for (const ref of [base, head]) if (typeof ref !== 'string' || !/^[a-f0-9]{40,64}$/i.test(ref)) throw new Error('Expected immutable commit SHA');
+  // `head` is the commit under test. A pull request passes github.sha (the merge
+  // ref), not the branch tip: two-dot against a tip behind base lists base's newer files.
   const {stdout} = await exec('git', ['diff', '--no-renames', '--name-only', '-z', base, head, '--'], {cwd, maxBuffer:64 * 1024 * 1024});
   return stdout ? stdout.slice(0, -1).split('\0') : [];
 }
