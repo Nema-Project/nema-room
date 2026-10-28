@@ -39,10 +39,14 @@ function trimEdgeBlank(lines) {
 export function cutChangelogText(markdown, version, date) {
   assertStrictVersion(version);
   assertCutDate(date);
-  const ended = markdown.endsWith('\n');
-  const lines = markdown.split('\n');
+  // CRLF is normalized before parsing. The cut file is written with LF, matching `*.md text eol=lf` in .gitattributes.
+  const normalized = markdown.replace(/\r\n/g, '\n');
+  const ended = normalized.endsWith('\n');
+  const lines = normalized.split('\n');
+  const unreleasedCount = lines.filter((line) => line === UNRELEASED).length;
+  if (unreleasedCount === 0) throw new Error('CHANGELOG.md has no [Unreleased] section');
+  if (unreleasedCount > 1) throw new Error('CHANGELOG.md has more than one [Unreleased] section');
   const unreleased = lines.indexOf(UNRELEASED);
-  if (unreleased < 0) throw new Error('CHANGELOG.md has no [Unreleased] section');
   const heading = new RegExp(`^## \\[${version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\](?:\\s|$)`);
   if (lines.some((line) => heading.test(line))) throw new Error(`CHANGELOG.md already has a section for ${version}`);
   let next = lines.findIndex((line, index) => index > unreleased && line.startsWith('## ['));

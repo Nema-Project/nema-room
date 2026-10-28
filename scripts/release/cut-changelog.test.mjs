@@ -84,6 +84,33 @@ test('cut moves Unreleased entries under a dated section and leaves the heading 
   assert.equal(check.status, 0, check.stderr);
 });
 
+test('a CRLF changelog is cut into the version section and written with LF', async (t) => {
+  const crlf = sample.replace(/\n/g, '\r\n');
+  assert.equal(cutChangelogText(crlf, '0.2.0', '2026-10-28'), cutSample);
+  const file = await tempChangelog(t, crlf);
+  await cutChangelogFile(file, '0.2.0', '2026-10-28');
+  const next = await readFile(file, 'utf8');
+  assert.equal(next, cutSample);
+  assert.equal(next.includes('\r'), false);
+});
+
+test('a second [Unreleased] heading is refused before any write', async (t) => {
+  const duplicate = sample.replace(
+    '## [0.1.5] - 2026-10-28',
+    '## [Unreleased]\n\n- Second heading entry.\n\n## [0.1.5] - 2026-10-28',
+  );
+  assert.throws(
+    () => cutChangelogText(duplicate, '0.2.0', '2026-10-28'),
+    /CHANGELOG\.md has more than one \[Unreleased\] section/,
+  );
+  const file = await tempChangelog(t, duplicate);
+  await assert.rejects(
+    cutChangelogFile(file, '0.2.0', '2026-10-28'),
+    /CHANGELOG\.md has more than one \[Unreleased\] section/,
+  );
+  assert.equal(await readFile(file, 'utf8'), duplicate);
+});
+
 test('an empty Unreleased section is refused and the file is left untouched', async (t) => {
   const empty = sample.replace(/\n### Changed[\s\S]*?Empty sections stay put\.\n/, '\n');
   assert.throws(() => cutChangelogText(empty, '0.2.0', '2026-10-28'), /no entries/);
