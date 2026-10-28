@@ -1,5 +1,7 @@
 # Changelog
 
+Version sections on main may describe release preparation. A version heading and date do not establish that its tag, packages, images or installers are available; published versions and downloads are listed on the [GitHub Releases page](https://github.com/Nema-Project/nema-room/releases). Public installation instructions stay on an available version until the required artifacts are verified.
+
 ## [Unreleased]
 
 ## [0.1.5] - 2026-10-28
