@@ -32,6 +32,23 @@ node scripts/npm/check-tag.mjs v0.1.3
 
 `check-tag.mjs` fails when the tag is not `v` plus strict SemVer, or when `apps/cli`, `apps/desktop`, and `apps/local` are not equal to each other and to the tag.
 
+## Release preparation
+
+Feature pull requests record user-visible notes as `changelog.d/<slug>.<category>.md` fragments (`category` is `added`, `changed`, `fixed`, `removed`, or `security`). Those fragments are the source of truth between releases. Do not edit `## [Unreleased]` directly. When the fragments are complete, set the release version from the repository root:
+
+```sh
+npm run release:stamp -- <x.y.z>
+npm run release:cut -- <x.y.z>
+```
+
+`<x.y.z>` is strict SemVer with no `v` prefix. `release:stamp` writes `version` in `apps/cli`, `apps/desktop`, and `apps/local` `package.json`, and the matching `package-lock.json` workspace records. It then runs `node scripts/npm/check-tag.mjs v<x.y.z>` only. It does not commit, tag, or publish. If the three package versions already differ from each other, or any of their `package-lock.json` records is missing or differs, the command exits non-zero before it writes. A failed `check-tag` after a write restores those four files.
+
+The image-version assertion joins in phase 2, when the compose template and its split assertions land. Until then `check-images` still requires the literal `image:` tags in `docker-compose.yml` to equal the package version. The stamp command does not edit that pin and does not run `check-images`. Update the pin in the same release commit.
+
+`release:cut` reads `changelog.d/*.md`, checks each filename, and composes the fragments into `[Unreleased]` under Added, Changed, Fixed, Removed, and Security. Existing bullets in a category stay ahead of that category's fragments, and fragments in a category follow filename order. It then moves the merged entries into `## [<x.y.z>] - <local cut date>`, directly under an empty `[Unreleased]` heading. The date is the calendar day in the maintainer's local timezone when the command runs. It is the cut day, not the day the tag is pushed. Do not edit it later to match the publish timestamp. If the merged `[Unreleased]` section has no entries, the command refuses and leaves `CHANGELOG.md` and the fragments untouched. Consumed fragments are deleted only after that write succeeds.
+
+Then write the ROADMAP record. Tag creation stays a separate maintainer step. Do not create a release tag from CI.
+
 ## Trusted publisher
 
 Configured on the `@nema-project/nema` package. Validation is pending the first OIDC publish, which is tag `v0.1.4`.

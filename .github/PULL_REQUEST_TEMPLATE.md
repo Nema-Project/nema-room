@@ -16,7 +16,7 @@
 
 <!-- Remove items that do not apply to this change. -->
 
-- [ ] User-visible behavior is documented in `CHANGELOG.md` under `## [Unreleased]`
+- [ ] User-visible behavior is recorded in a `changelog.d/<slug>.<category>.md` fragment
 - [ ] Changes to installation, configuration, or usage are reflected in `README.md`, `README.ja.md`, and `README.en.md`
 - [ ] UI copy changes are reflected in `apps/web/messages/zh.json`, `en.json`, and `ja.json`
 - [ ] No `.env` files, tokens, `auth.json`, or contents of `~/.nema` are included

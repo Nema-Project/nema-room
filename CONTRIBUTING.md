@@ -63,12 +63,29 @@ npm run build -w apps/web
 ## 约定
 
 - 代码、注释和提交说明使用英文。
-- 用户能感知的行为写进 [CHANGELOG.md](CHANGELOG.md) 的 `## [Unreleased]`，分类用 Added、Changed、Fixed、Removed 或 Security。
+- 用户能感知的行为写成 `changelog.d/<slug>.<category>.md` 片段，不要直接改 [CHANGELOG.md](CHANGELOG.md) 的 `## [Unreleased]`。`category` 是 `added`、`changed`、`fixed`、`removed` 或 `security` 之一，对应标题 Added、Changed、Fixed、Removed、Security。
 - 安装、配置或使用方式有变时，同时更新 `README.md`、`README.en.md`、`README.zh.md`、`README.ja.md` 以及对应的 `docs/guide.{en,zh,ja}.md` 章节；两份英文 README 保持一致。
 - 界面文案同时改三份 `apps/web/messages/*.json`。
 - 开发包的中文格式标记必须保留，例如 `## 已定的做法`、`### 任务 1：`、`- 修改：`、`- 满足：`。知识语言为英文或日文时也一样。
 - 不要提交 `.env`、令牌、`auth.json` 或 `~/.nema` 里的内容。示例只用 `example.com`、`YOUR_API_KEY_HERE` 这类占位符。
 - `vendor/` 只在升级第三方快照时修改。archify 的替换步骤见 [技术参考](docs/reference.zh-CN.md)。保留上游许可证和 `VENDORED.md`。
+
+## 发布准备
+
+功能 PR 把用户可见变更写成 `changelog.d/<slug>.<category>.md` 片段。两次发布之间以这些片段为准，不要直接改 `## [Unreleased]`。准备发布 PR 时，确认这些片段已经齐，然后在仓库根目录执行：
+
+```bash
+npm run release:stamp -- <x.y.z>
+npm run release:cut -- <x.y.z>
+```
+
+`<x.y.z>` 是严格 SemVer，不带 `v`。`release:stamp` 只改 `apps/cli`、`apps/desktop`、`apps/local` 三个 `package.json` 的 `version`，以及 `package-lock.json` 里对应的三条记录，然后只运行 `check-tag`。三条 `package.json` 版本事先不一致，或 `package-lock.json` 里对应记录缺失、不是字符串、或与包版本不同，命令在写入前拒绝。`check-tag` 在写入后失败时，这四个文件会恢复成执行前的内容。它不运行 `check-images`，不 commit、不打 tag、不 publish。镜像版本断言留到第 2 期，等 compose 模板和拆分后的断言落地。
+
+在那之前，`check-images` 仍要求 `docker-compose.yml` 的镜像 pin 等于包版本。pin 要在同一次发布提交里另改；盖印命令不改这个文件。细节见 [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md)。
+
+`release:cut` 先把 `changelog.d` 里的片段按 Added、Changed、Fixed、Removed、Security 合并进 `[Unreleased]`（同一分类里原有条目在前，片段按文件名升序接在后面），再把合并后的条目移到 `## [<x.y.z>] - <当天日期>`，紧跟在空的 `[Unreleased]` 标题之后。日期是执行命令时的本地日历日，是截稿日，不是打 tag 的日期。之后不要因为实际发布日不同再改这个日期。合并之后 `[Unreleased]` 仍没有条目时命令拒绝，`CHANGELOG.md` 不变，片段也不删除。只有写入成功之后才删除这次合并掉的片段。
+
+然后写 ROADMAP 记录。tag 仍由维护者在 main 的 CI 已成功的 SHA 上单独创建，不从 CI 创建。
 
 ## Pull request
 

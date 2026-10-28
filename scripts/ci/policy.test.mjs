@@ -21,6 +21,20 @@ test('agent instructions take the docs lane and do not request heavy jobs', () =
   }
 });
 
+test('changelog fragments are documentation and do not downgrade code', () => {
+  const only = classifyPaths(['changelog.d/70.changed.md']);
+  assert.equal(only.mode, 'docs');
+  assert.deepEqual(heavy(only), none);
+  assert.equal(classifyPaths(['changelog.d/nested/70.changed.md']).mode, 'docs');
+  const mixed = classifyPaths(['changelog.d/70.changed.md', 'apps/desktop/main.cjs']);
+  assert.equal(mixed.mode, 'app');
+  assert.equal(mixed.platform, true);
+  assert.equal(mixed.desktop, true);
+  assert.equal(mixed.npmPack, false);
+  assert.equal(mixed.image, false);
+  assert.notEqual(classifyPaths(['changelog.d/70.changed.txt']).mode, 'docs');
+});
+
 test('markdown under desktop and image scripts requests no heavy job', () => {
   for (const path of ['scripts/desktop/RELEASE.md', 'scripts/desktop/README.md', 'scripts/images/RELEASE.md', 'scripts/desktop/notes/x.md']) {
     const result = classifyPaths([path]);

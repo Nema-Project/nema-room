@@ -12,6 +12,7 @@ Version sections on main may describe release preparation. A version heading and
 ### Changed
 
 - Markdown under `scripts/desktop/` and `scripts/images/` starts neither the desktop or image pull-request workflows nor the macOS/Windows platform checks. Code and scripts there still do. `AGENTS.md` and `CLAUDE.md` use the documentation CI lane.
+- Release preparation stamps the cli, desktop, and local package versions, and their `package-lock.json` records, with `npm run release:stamp -- <version>`. The stamp refuses before writing when those records do not already match. `npm run release:cut -- <version>` merges `changelog.d/<slug>.<category>.md` fragments into `[Unreleased]` (existing entries ahead of a category's fragments, fragments in filename order), moves `[Unreleased]` into a section dated the local cut day, and deletes each consumed fragment only after that write succeeds. Neither command commits, tags, or publishes. That date stays the cut day when the tag is created later.
 
 ## [0.1.5] - 2026-10-28
 

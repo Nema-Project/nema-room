@@ -80,7 +80,7 @@ Report the commands actually run, results, and skipped or blocked checks. Keep t
 
 ## Documentation and completion
 
-- User-visible behavior changes belong in [CHANGELOG.md](CHANGELOG.md) under `[Unreleased]`.
+- User-visible behavior changes belong in a `changelog.d/<slug>.<category>.md` fragment (`category` is `added`, `changed`, `fixed`, `removed`, or `security`), not directly under `[Unreleased]`.
 - Installation, configuration, or usage changes must be reflected in `README.md`, `README.en.md`, `README.zh.md`, `README.ja.md`, and the affected `docs/guide.{en,zh,ja}.md` sections. Keep the two English READMEs identical.
 - UI copy changes must update all three `apps/web/messages/*.json` files.
 - Update [ROADMAP.md](ROADMAP.md) when work changes a tracked item's status. Mark completion only with its acceptance evidence; do not mark an entire stabilization item done because one subtask landed.
