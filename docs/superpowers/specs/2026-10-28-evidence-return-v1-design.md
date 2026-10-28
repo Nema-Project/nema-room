@@ -4,7 +4,7 @@
 
 **状态**：设计。本文件不是 plan，不改生产代码，不改测试，不改 ROADMAP 的状态。P1-07 仍是待办。本文件不改变 P0 的顺序。
 
-**修订**：2026-10-28，维护者在 [PR #59](https://github.com/Nema-Project/nema-room/pull/59) 选定了原先的四个问题（见「维护者的决定」）。同一次复审要求写明的验收不变量、观察绑定和需求级范围，写在「已定的做法」里。
+**修订**：2026-10-28，维护者在 [PR #59](https://github.com/Nema-Project/nema-room/pull/59) 选定了原先的四个问题（见「维护者的决定」）。同一次复审要求写明的验收不变量、观察绑定和需求级范围，写在「已定的做法」里。同日，维护者要求开发包rollup按来源上报分组保存提交：今天rollup把多条上报的提交收成一个扁平的 `commits`，却只留下一个 `reportMessageId`，`implementationRefusal` 于是拒绝rollup自己写下的需求。分组字段见「按上报分组的提交证据」。
 
 **设计所对照的 HEAD**：`f83b6d2f3ea8f8f4c2e7f1283ffdd1539c6b980b`（`origin/main`，Merge pull request #57）。下面标为「已核对」的行为是在这个 SHA 上读代码得到的，不是推断。
 
@@ -235,13 +235,21 @@ Agent 的 `verified` / `ci` 不是这条规则的输入。未点名之前，将�
 
 | 人看到的 | 何时为真 | 证据来源 | 覆盖范围 |
 |---|---|---|---|
-| 提交已核对 | `status === "verified"` 且 `confirmedBy` 不是 `"user"`，并且 `evidence` 里的提交都来自 `reportPassed` 的上报。 | 那些上报的 `ReportCheck` | 只这些提交：它们存在、在主分支上（或 patch-id 相同）、上报声称的文件被它们改过。不是需求的全部验收条件，也不是「需求已经实现」。界面在这四个字旁边写上这句范围。 |
+| 提交已核对 | `status === "verified"` 且 `confirmedBy` 不是 `"user"`，并且 `evidence.commits` 里的每一项都被一份 `reportPassed` 的上报覆盖。有非空 `reportEvidence` 时，每一项必须落在其中一组，该组的上报 `reportPassed`，且该组的 `report.commits` 用与今天相同的 `sameCommit` 含有它。没有 `reportEvidence` 时，全部落在 `reportMessageId` 那一条上报里。 | 那些上报的 `ReportCheck` | 只这些提交：它们存在、在主分支上（或 patch-id 相同）、上报声称的文件被它们改过。不是需求的全部验收条件，也不是「需求已经实现」。界面在这四个字旁边写上这句范围。 |
 | 测试已通过 | v1 不显示。 | 将来只来自上面的点名规则。不能来自 `report.verified` / `report.ci`。 | — |
 | 验收已确认 | `confirmedBy === "user"`。 | 用户在界面上的确认。提交说明仍是「用户确认已实现」。 | 用户接受了当时留下的 evidence。不是 git 三项因此变成真。若 git 核对后来变了，仍显示验收已确认，并加上复审标记。 |
 
 - `status === "reported"` 的文案是「已上报」。不要把它写成验收。
 - `status === "mismatch"` 只表示提交不存在，或声称的文件没有被这些提交改过。文案保持「有出入」。CI 失败不用这个词。
-- 需求 evidence 至少链到一条 `report` 消息（`reportMessageId`）和当时核对过的提交。界面可以点进那条上报的核实块。没有这样一份 `reportPassed` 时，不得显示「提交已核对」。
+- 需求 evidence 至少链到一条 `report` 消息（`reportMessageId`）和当时核对过的提交。有 `reportEvidence` 时，每一组都可以点进该组的上报。没有一份 `reportPassed` 覆盖这些提交时，不得显示「提交已核对」。
+
+### 按上报分组的提交证据
+
+`Implementation.evidence` 增加可选字段 `reportEvidence`。类型是 `{ reportMessageId: string; commits: string[] }[]`。它把扁平的 `commits` 按来源上报分组。
+
+- `reportMessageId` 和 `commits` 保持今天的含义，旧客户端继续读这两个字段。`commits` 是各组提交的扁平并集。`reportMessageId` 指向最后一组。
+- 旧文件没有 `reportEvidence`。读到的结果是缺失，按 null 处理。文件里不写出 null，也不写出空数组。缺键和空数组都表示「没有分组」，`implementationRefusal` 走今天的单条上报规则。
+- 这个字段写在需求 frontmatter 里。它不是新表，不是新列，不是 `sourceRefs`，也不往 `evidence_events` 插入行。【本任务已定】[推断]
 
 ### 用户验收：不变量和转换
 
@@ -249,7 +257,7 @@ Agent 的 `verified` / `ci` 不是这条规则的输入。未点名之前，将�
 
 v1 改成下面这样。
 
-用户可以确认需求，当且仅当存在 implementation，且要么状态是 `reported` 或 `mismatch`，要么状态是 `verified` 且 `confirmedBy` 为 null。确认之后：`status` 为 `verified`，`confirmedBy` 为 `"user"`，原来的 `reportMessageId`、`commits`、`note`、`inferred` 保留，`acceptanceReview` 为 null。按钮和 409 文案与此一致。`verified` 且 `confirmedBy` 已是 `"user"` 时，平常没有这颗按钮；只有 `acceptanceReview.needed` 为真时，同一颗按钮表示「仍确认」：清掉 `acceptanceReview`，不改 `confirmedBy`，不改 `status`，不把 git 核对改成通过。
+用户可以确认需求，当且仅当存在 implementation，且要么状态是 `reported` 或 `mismatch`，要么状态是 `verified` 且 `confirmedBy` 为 null。确认之后：`status` 为 `verified`，`confirmedBy` 为 `"user"`，原来的 `reportMessageId`、`reportEvidence`、`commits`、`note`、`inferred` 保留，`acceptanceReview` 为 null。按钮和 409 文案与此一致。`verified` 且 `confirmedBy` 已是 `"user"` 时，平常没有这颗按钮；只有 `acceptanceReview.needed` 为真时，同一颗按钮表示「仍确认」：清掉 `acceptanceReview`，不改 `confirmedBy`，不改 `status`，不把 git 核对改成通过。
 
 `acceptanceReview` 是 implementation.evidence 上的可选对象：`null`，或 `{ needed: true, at: string, reason: "linked_check_changed" }`。旧文件没有这个键，读成 null。它只挂在这一条需求上。它不是新表，不是通知，不是执行层决定卡片，也不是项目级漂移检测。
 
@@ -257,21 +265,26 @@ v1 改成下面这样。
 
 - 把 `confirmedBy` 从 `"user"` 改成 null 或其他值。
 - 在 `confirmedBy` 为 `"user"` 时修改 `status`。
-- 在 `confirmedBy` 为 `"user"` 时改写 `reportMessageId`、`commits`、`note`。
+- 在 `confirmedBy` 为 `"user"` 时改写 `reportMessageId`、`reportEvidence`、`commits`、`note`、`inferred`。
 - 清掉 hub 已经写下的 `acceptanceReview.needed`。只有上面的用户「仍确认」可以清。
 
 已核对：任务 `status === "verified"` 时，今天的 `applyReportToWorkPackage` 会直接返回。v1 保持「不把已是 `verified` 的任务降级」，并且同样不改该任务的 `confirmedBy`。
 
-当 `confirmedBy` 为 `"user"`，且 `evidence.reportMessageId` 指向的那条上报的 `check` 被替换，并且新的 `reportPassed` 与确认时不同，或新的通过提交集合与 `evidence.commits` 对不上：保持 `confirmedBy` 和 `status`，把 `acceptanceReview` 设为 `needed`，`at` 用这次替换的时间。对不上的比较与今天的 `sameCommit` 相同（允许短 SHA）。无关的上报不设这个标记。
+当 `confirmedBy` 为 `"user"`，且这次被替换的上报 id 等于 `evidence.reportMessageId`，或出现在 `reportEvidence` 的某一组里，并且新的 `reportPassed` 与被替换的那份 `check` 不同，或新的通过提交集合与 `evidence.commits` 对不上：保持 `confirmedBy` 和 `status`，把 `acceptanceReview` 设为 `needed`，`at` 用这次替换的时间。对不上的比较与今天的 `sameCommit` 相同（允许短 SHA）。无关的上报不设这个标记。没有 `reportEvidence` 时只看 `reportMessageId`。
 
-房间 API：若磁盘上的 implementation 已是 `confirmedBy: "user"`，请求里再带 `implementation` 即 409，除非这份对象与磁盘上的 status、confirmedBy、reportMessageId、commits、note、acceptanceReview 完全相同。省略 `implementation` 字段则仍保留旧值（今天 `upsert` 已是这样）。Agent 仍不能把 `confirmedBy` 写成 `"user"`（`CONFIRMED_BY_USER_ONLY` 保持）。Agent 仍不能在没有 `reportPassed` 上报时把 `status` 写成 `verified`。
+`implementationRefusal` 在 `status === "verified"` 且 `inferred === false` 时：
+
+- 没有 `reportEvidence`（缺键、null 或空数组）：与今天相同。`reportMessageId` 必须指向本 workspace 一条 `reportPassed` 的上报，`evidence.commits` 的每一项都用 `sameCommit` 出现在那一条的 `report.commits` 里，否则 `VERIFIED_NEEDS_REPORT`。
+- `reportEvidence` 非空：`evidence.commits` 的每一项都必须被至少一组覆盖。该组的 `reportMessageId` 指向一条 `reportPassed` 的上报，且该组记录的提交用 `sameCommit` 含有这一项。覆盖不到则 `VERIFIED_NEEDS_REPORT`。不再要求每一项都落在单独那个 `reportMessageId` 上。
+
+房间 API：磁盘上 `confirmedBy` 已是 `"user"` 时，请求里的 implementation 若与磁盘上的 `status`、`confirmedBy`、`reportMessageId`、`reportEvidence`、`commits`（顺序相同）、`note`、`inferred`、`acceptanceReview` 全部相同，则不改写这份 implementation，也不是 409。其它字段仍可更新。任一受保护字段不同：请求对象自己的 `confirmedBy` 非空时仍是 `CONFIRMED_BY_USER_ONLY`；请求把 `confirmedBy` 写成 null 或其它值时是 409，文件不变。省略 `implementation` 字段则仍保留旧值（今天 `upsert` 已是这样）。Agent 仍不能在磁盘上还没有用户确认时把 `confirmedBy` 写成 `"user"`。Agent 仍不能在没有 `reportPassed` 覆盖时把 `status` 写成 `verified`。
 
 开发包rollup：
 
 - 一个任务算「有 git 核对」仅当：`status === "verified"`、`confirmedBy !== "user"`、`inferred === false`，且 `reportMessageId` 指向的上报 `reportPassed` 为真。
-- 只有每个任务都满足上一句时，`saveProgress` 才可以把还没有用户确认的需求写成 `verified`、`confirmedBy: null`。`evidence.commits` 只收录这些通过核对的上报里的提交。`evidence.reportMessageId` 指向其中一条。`note` 写明这是提交已核对，并写上开发包 id。禁止「已核实」「验收」「全部任务已核实」。
+- 只有每个任务都满足上一句时，`saveProgress` 才可以把还没有用户确认的需求写成 `verified`、`confirmedBy: null`。每条贡献的 `reportPassed` 上报写成 `reportEvidence` 的一组，组内 `commits` 是该上报里被收下的提交。`evidence.commits` 是这些组的扁平并集，组的顺序就是任务顺序，完全相同的字符串只保留第一次。`evidence.reportMessageId` 指向最后一组。`note` 写明这是提交已核对，并写上开发包 id。禁止「已核实」「验收通过」「全部任务已核实」。note 里用来否定验收的「不是验收」可以保留；不要把需求写成已经验收。
 - 若有任一任务的 `verified` 来自 `confirmedBy: "user"` 或 `inferred`，或它的上报没有 `reportPassed`：不把需求写成 `verified`。开发包本身仍可按今天的规则在全部任务 `status === "verified"` 时变成 `done`。包是 `done` 不表示需求已是「提交已核对」。
-- 需求已是 `confirmedBy: "user"` 时，`saveProgress` 不替换它的 implementation。若这次rollup所依据的上报就是该需求 `reportMessageId` 指向的那条，且核对已变，只按上面的规则设 `acceptanceReview`。
+- 需求已是 `confirmedBy: "user"` 时，`saveProgress` 不替换它的 implementation，包括 `reportEvidence`。若这次rollup所依据的上报就是该需求 `reportMessageId` 或 `reportEvidence` 里的某一组，且核对已变，只按上面的规则设 `acceptanceReview`。v1 的 `recheckReports` 仍只挑选 `onMain` 为 `"not-yet"` 的上报，不扩大这个选择器；已经通过的核对不会被轮询重读。标记由替换核对的函数在被调用时写下。
 
 任务确认按钮的范围不变：仍只给 `reported` 与 `mismatch`。git 已通过的任务（`verified` 且 `confirmedBy` 为 null）不再次用任务按钮确认。需求上的验收走需求的确认按钮，包括这种 `verified` 且 `confirmedBy` 为 null 的需求。
 
@@ -279,7 +292,7 @@ v1 改成下面这样。
 |---|---|---|
 | 无 implementation | 已完成上报的整理任务把状态写成 `reported` | `reported`，`confirmedBy` null |
 | `reported` 或 `mismatch`，或 `verified` 且 `confirmedBy` null | 用户按确认 | `verified`，`confirmedBy` `"user"`，evidence 其余保留，`acceptanceReview` null |
-| 需求还不是用户确认 | 每个开发包任务都有 git 核对 | `verified`，`confirmedBy` null，note 为提交已核对 |
+| 需求还不是用户确认 | 每个开发包任务都有 git 核对 | `verified`，`confirmedBy` null，note 为提交已核对。`reportEvidence` 每条贡献上报一组，`commits` 是并集，`reportMessageId` 指向最后一组 |
 | 需求还不是用户确认 | 开发包变成 done，但其中有任务只是用户确认或推断 | 需求 implementation 不变 |
 | `verified`，`confirmedBy` `"user"` | 后来的上报、重跑、rollup、Agent upsert | `confirmedBy` 仍是 `"user"`，`status` 仍是 `verified`。所引上报的核对变了则 `acceptanceReview.needed` |
 | `verified`，`confirmedBy` `"user"`，且需要复审 | 用户按「仍确认」 | `acceptanceReview` null，确认保留 |
@@ -306,7 +319,7 @@ v1 改成下面这样。
 - 作者姓名的展示顺序，只要 author 和 committer 都在，且没有允许 / 拒绝字样。
 - 找不到的条目 id 用现有的安静样式。
 
-不留给实现者的：问题 1 到 4 的选择、`progress` 的默认值、`commits` 只在已完成时至少 1 个、进行中上报不排队也不套用开发包、重跑进行中上报不排队系统任务、meta 按块合并、观察绑定 `repoId + pr + observedHeadSha + observedAt`、读取失败不沿用旧的通过、CI 不写成 `mismatch`、`confirmedBy: "user"` 不被自动路径清除、`verified` 且 `confirmedBy` null 可以用户确认、没有 git 核对的任务rollup不得让需求显示「提交已核对」、`reasonCode` 的枚举、v1 不宣布测试通过、`evidence_events` 不写入 CI、作者不参与判定。
+不留给实现者的：问题 1 到 4 的选择、`progress` 的默认值、`commits` 只在已完成时至少 1 个、进行中上报不排队也不套用开发包、重跑进行中上报不排队系统任务、meta 按块合并、观察绑定 `repoId + pr + observedHeadSha + observedAt`、读取失败不沿用旧的通过、CI 不写成 `mismatch`、`confirmedBy: "user"` 不被自动路径清除、`verified` 且 `confirmedBy` null 可以用户确认、没有 git 核对的任务rollup不得让需求显示「提交已核对」、`reasonCode` 的枚举（九个值，见 `GithubObservation`）、v1 不宣布测试通过、`evidence_events` 不写入 CI、作者不参与判定、`reportEvidence` 的字段名和「缺键走今天的单条上报规则」、rollup 一组对一条贡献上报。
 
 ## 验收标准
 
@@ -325,8 +338,9 @@ v1 改成下面这样。
 13. 一条失败的 check run 不改变该任务或需求的 `reported` / `verified` / `mismatch`。`mismatch` 仍只来自 git。
 14. Agent 不能把 `confirmedBy` 写成 `"user"`。没有 `reportPassed` 时不能把 `status` 写成 `verified`。用上报去写 `stated` / `decided` 且不引用当前用户消息，仍是 409 `user_basis_evidence`。
 15. `evidence_events` 的行数不因上报或 GitHub 读取而增加。`sourceRefs` 的校验与 `f83b6d2` 相同。
-16. `docs/reference.zh-CN.md` 写上新字段、两份记录、三个状态的证据来源、`reasonCode`、验收不会被自动清除，以及 CI 尚未接入 `evidence_events`。README 不把 v1 写成已经会派发 agent、已经判定测试通过，或已经做了漂移检测。这些文档在实现该行为的提交里改，不在本设计提交里改。
+16. `docs/reference.zh-CN.md` 写上新字段、两份记录、三个状态的证据来源、`reasonCode`、`reportEvidence`（按上报分组；没有该键时仍按单条上报校验）、验收不会被自动清除，以及 CI 尚未接入 `evidence_events`。README 不把 v1 写成已经会派发 agent、已经判定测试通过，或已经做了漂移检测。这些文档在实现该行为的提交里改，不在本设计提交里改。
 17. 本设计不标记 ROADMAP P1-07 为完成。「测试已通过」的实现不属于 v1。
+18. 开发包的两个任务分别引用两条都 `reportPassed`、提交集合不同的上报：`saveProgress` 写下的需求是 `verified`、`confirmedBy` null，`reportEvidence` 有两组，`evidence.commits` 是这两组的并集，`reportMessageId` 指向最后一组。把这份 implementation 交给 `implementationRefusal`，结果是接受，不是 `VERIFIED_NEEDS_REPORT`。没有 `reportEvidence` 的旧 implementation 仍要求每个 commit 都出现在那一条 `reportMessageId` 的 `report.commits` 里。`reportEvidence` 不新建表，不写入 `sourceRefs`，不插入 `evidence_events`。
 
 ## v1 明确不做、留给以后的
 
