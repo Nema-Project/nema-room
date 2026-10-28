@@ -23,7 +23,7 @@ v0.1.5 已公开发布：npm、hub/web 镜像与桌面产物的发布流水线�
 - Windows x64 与 macOS arm64 安装包的真机安装／覆盖升级、启动、一次 Graphify、退出与旧数据保留仍待验证；记录安装包 SHA，不能用旧版本的验收代替。
 - CX-03 最终验收作为后续事项继续跟踪；不因实现已合入或产物已发布就标记完成。维护者已选择快速迭代，不用这些未完成验收阻塞无关的小版本或安装文档修正。
 - v0.1.5 tag 指向 `d765122b9dabf19b79d75b9006cea68a6ca8aeef`，该提交的 main 完整 CI 已通过；npm、镜像与桌面发布结果分别验证。
-- 公开安装使用 v0.1.5 tag 的 Compose 和同版 daemon；hub/web 镜像已验证匿名访问及发布后 pull/smoke。main 可能领先于公开产物，开发走 `npm run up` 源码构建。
+- 公开安装使用 v0.1.5 tag 的 Compose 和同版 daemon；tag 内的发布前注释仍称候选版，这是不可变历史说明，当前安装以 README/指南为准，实际镜像 pin 正确，不移动 tag；hub/web 镜像已验证匿名访问及发布后 pull/smoke。main 可能领先于公开产物，开发走 `npm run up` 源码构建。
 - 新版本不自动撤下旧版分发物。后续版本仍分别检查包、镜像和桌面产物的发布可用性。
 
 ## 优先级与维护规则
@@ -55,11 +55,11 @@ v0.1.5 已公开发布：npm、hub/web 镜像与桌面产物的发布流水线�
 
 ## 下一项
 
-P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实施进行中，等待集成与最终验收；设计已随 [PR #27](https://github.com/Nema-Project/nema-room/pull/27) 合入，实施前置 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 已由 [PR #30](https://github.com/Nema-Project/nema-room/pull/30) 完成。它不代替 P0-01、P0-02。
+P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实现已由 PR #54 合入，仅待最终验收；设计已随 [PR #27](https://github.com/Nema-Project/nema-room/pull/27) 合入，实施前置 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 已由 [PR #30](https://github.com/Nema-Project/nema-room/pull/30) 完成。它不代替 P0-01、P0-02。
 
 | ID | 事项与依据 | 状态 | 验收标准 |
 | --- | --- | --- | --- |
-| CX-03 | 外部来源证据协议。契约见 [spec](docs/superpowers/specs/2026-10-27-source-evidence-protocol-design.md) 与 [plan](docs/superpowers/plans/2026-10-27-source-evidence-protocol.md)。#28 已合入，协议实现等待集成与最终验收 | 进行中 | 已实现 `sourceRefs`、`evidence_events` 与内部 `source__import`，待整体验证；保留 #28 的用户 basis 检查，以及从 `superseded`、`dropped`、`resolved` 改回 `active` 的检查；不得把外部正文伪装成聊天消息 |
+| CX-03 | 外部来源证据协议。契约见 [spec](docs/superpowers/specs/2026-10-27-source-evidence-protocol-design.md) 与 [plan](docs/superpowers/plans/2026-10-27-source-evidence-protocol.md)。#28 已合入，协议实现已由 PR #54 合入，仅待最终验收 | 进行中 | 已实现 `sourceRefs`、`evidence_events` 与内部 `source__import`，待整体验证；保留 #28 的用户 basis 检查，以及从 `superseded`、`dropped`、`resolved` 改回 `active` 的检查；不得把外部正文伪装成聊天消息 |
 
 ## P0 之后
 
