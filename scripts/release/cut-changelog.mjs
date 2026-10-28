@@ -1,9 +1,19 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { assertStrictVersion } from './stamp-version.mjs';
 
 const UNRELEASED = '## [Unreleased]';
+const CATEGORIES = ['added', 'changed', 'fixed', 'removed', 'security'];
+const CATEGORY_HEADINGS = {
+  added: '### Added',
+  changed: '### Changed',
+  fixed: '### Fixed',
+  removed: '### Removed',
+  security: '### Security',
+};
+const HEADING_CATEGORY = new Map(Object.entries(CATEGORY_HEADINGS).map(([category, heading]) => [heading, category]));
+const SLUG = /^[a-z0-9][a-z0-9-]*$/;
 
 /** Calendar day in `timeZone`, or in the runtime's local zone when omitted. */
 export function localCutDate(now = new Date(), timeZone) {
@@ -60,10 +70,134 @@ export function cutChangelogText(markdown, version, date) {
   return text;
 }
 
-export async function cutChangelogFile(file, version, date) {
+function parseFragmentName(name) {
+  if (!name.endsWith('.md')) throw new Error(`changelog.d/${name} is not a markdown fragment`);
+  const stem = name.slice(0, -3);
+  const dot = stem.lastIndexOf('.');
+  if (dot <= 0) throw new Error(`changelog.d/${name} has an unparseable slug`);
+  const slug = stem.slice(0, dot);
+  const category = stem.slice(dot + 1);
+  if (!CATEGORIES.includes(category)) throw new Error(`changelog.d/${name} has unknown category "${category}"`);
+  if (!SLUG.test(slug)) throw new Error(`changelog.d/${name} has an unparseable slug`);
+  return category;
+}
+
+function fragmentBody(name, raw) {
+  const lines = trimEdgeBlank(raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n'));
+  if (lines.some((line) => /^#{1,6}(?:\s|$)/.test(line))) {
+    throw new Error(`changelog.d/${name} must not contain a heading`);
+  }
+  if (lines.some((line) => line !== '' && !line.startsWith('- '))) {
+    throw new Error(`changelog.d/${name} must contain only bullet entries`);
+  }
+  if (!lines.some((line) => line.startsWith('- '))) throw new Error(`changelog.d/${name} has no entries`);
+  return lines.join('\n');
+}
+
+async function readFragments(directory) {
+  let names;
+  try {
+    names = await readdir(directory);
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return [];
+    throw error;
+  }
+  const fragments = [];
+  for (const name of names.sort()) {
+    const full = path.join(directory, name);
+    if ((await stat(full)).isDirectory()) continue;
+    const category = parseFragmentName(name);
+    fragments.push({ name, category, body: fragmentBody(name, await readFile(full, 'utf8')), path: full });
+  }
+  return fragments;
+}
+
+function insertMissingCategories(existing, needed) {
+  const order = [...existing];
+  for (const category of CATEGORIES) {
+    if (!needed.has(category) || order.includes(category)) continue;
+    const rank = CATEGORIES.indexOf(category);
+    let index = order.length;
+    for (let i = 0; i < order.length; i += 1) {
+      if (CATEGORIES.indexOf(order[i]) > rank) {
+        index = i;
+        break;
+      }
+    }
+    order.splice(index, 0, category);
+  }
+  return order;
+}
+
+function composeUnreleased(bodyLines, fragments) {
+  const preamble = [];
+  const sections = new Map();
+  const seen = [];
+  let bucket = preamble;
+  for (const line of bodyLines) {
+    const category = HEADING_CATEGORY.get(line);
+    if (category) {
+      if (!sections.has(category)) {
+        sections.set(category, []);
+        seen.push(category);
+      }
+      bucket = sections.get(category);
+      continue;
+    }
+    bucket.push(line);
+  }
+  for (const category of sections.keys()) sections.set(category, trimEdgeBlank(sections.get(category)));
+  const grouped = new Map();
+  for (const fragment of [...fragments].sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))) {
+    const list = grouped.get(fragment.category) ?? [];
+    list.push(fragment.body);
+    grouped.set(fragment.category, list);
+  }
+  const order = insertMissingCategories(seen, new Set([...seen, ...grouped.keys()]));
+  const chunks = [];
+  const intro = trimEdgeBlank(preamble);
+  if (intro.length) chunks.push(intro.join('\n'));
+  for (const category of order) {
+    const parts = [];
+    const existing = sections.get(category) ?? [];
+    if (existing.length) parts.push(existing.join('\n'));
+    for (const body of grouped.get(category) ?? []) parts.push(body);
+    chunks.push(parts.length ? `${CATEGORY_HEADINGS[category]}\n\n${parts.join('\n\n')}` : CATEGORY_HEADINGS[category]);
+  }
+  if (!chunks.length) return bodyLines;
+  return ['', ...chunks.join('\n\n').split('\n'), ''];
+}
+
+function mergeFragments(markdown, fragments) {
+  if (fragments.length === 0) return markdown;
+  const normalized = markdown.replace(/\r\n/g, '\n');
+  const ended = normalized.endsWith('\n');
+  const lines = normalized.split('\n');
+  const unreleasedCount = lines.filter((line) => line === UNRELEASED).length;
+  if (unreleasedCount === 0) throw new Error('CHANGELOG.md has no [Unreleased] section');
+  if (unreleasedCount > 1) throw new Error('CHANGELOG.md has more than one [Unreleased] section');
+  const unreleased = lines.indexOf(UNRELEASED);
+  let next = lines.findIndex((line, index) => index > unreleased && line.startsWith('## ['));
+  if (next < 0) next = lines.length;
+  const mergedBody = composeUnreleased(lines.slice(unreleased + 1, next), fragments);
+  let text = [...lines.slice(0, unreleased + 1), ...mergedBody, ...lines.slice(next)].join('\n');
+  if (ended && !text.endsWith('\n')) text += '\n';
+  if (!ended && text.endsWith('\n')) text = text.slice(0, -1);
+  return text;
+}
+
+/**
+ * Compose `changelog.d` fragments into `[Unreleased]`, then cut.
+ * Consumed fragments are deleted only after the changelog write succeeds.
+ * `options.writeFile` replaces that write so a failing write can be injected.
+ */
+export async function cutChangelogFile(file, version, date, options = {}) {
+  const write = options.writeFile ?? writeFile;
   const before = await readFile(file, 'utf8');
-  const next = cutChangelogText(before, version, date);
-  await writeFile(file, next);
+  const fragments = await readFragments(path.join(path.dirname(file), 'changelog.d'));
+  const next = cutChangelogText(mergeFragments(before, fragments), version, date);
+  await write(file, next);
+  for (const fragment of fragments) await unlink(fragment.path);
 }
 
 export async function main(argv = process.argv.slice(2), options = {}) {

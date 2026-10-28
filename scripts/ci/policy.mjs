@@ -16,6 +16,8 @@ const scriptDoc = path => /^scripts\/(desktop|images)\/.*\.md$/i.test(path);
 
 function documentation(path) {
   if (path === '.github/workflows/pages.yml') return true;
+  // changelog.d/*.md and nested markdown fragments are release notes. Other files there are not.
+  if (/^changelog\.d\/.+\.md$/i.test(path)) return true;
   if (!path.includes('/') && /\.md$/i.test(path)) return true;
   // Executable files under docs are not documentation. Site assets retain the Pages allowlist.
   return /^(docs|site)\//.test(path) && /\.(md|mdx|txt|html|css|png|jpg|jpeg|svg|gif|webp|ico|pdf|woff2?|ttf)$/i.test(path);

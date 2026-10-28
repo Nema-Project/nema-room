@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -56,12 +56,35 @@ Intro stays.
 - Older note.
 `;
 
+const emptyUnreleased = `# Changelog
+
+## [Unreleased]
+
+## [0.1.5] - 2026-10-28
+
+### Added
+
+- Older note.
+`;
+
 async function tempChangelog(t, text) {
   const dir = await mkdtemp(path.join(tmpdir(), 'nema-cut-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'CHANGELOG.md');
   await writeFile(file, text);
   return file;
+}
+
+async function writeFragment(changelogFile, name, text) {
+  const dir = path.join(path.dirname(changelogFile), 'changelog.d');
+  await mkdir(dir, { recursive: true });
+  const file = path.join(dir, name);
+  await writeFile(file, text);
+  return file;
+}
+
+async function missing(file) {
+  await assert.rejects(access(file), { code: 'ENOENT' });
 }
 
 test('local cut date uses the given time zone, not the UTC calendar day', () => {
@@ -128,6 +151,133 @@ test('a heading without entries, a duplicate section, and a bad version do not w
   await assert.rejects(cutChangelogFile(file, '0.2.0', '2026-02-31'), /not a calendar day/);
   assert.equal(await readFile(file, 'utf8'), headingOnly);
   assert.throws(() => cutChangelogText('# Changelog\n', '0.2.0', '2026-10-28'), /no \[Unreleased\]/);
+});
+
+test('fragments fill an empty Unreleased section and are deleted after the write', async (t) => {
+  const file = await tempChangelog(t, emptyUnreleased);
+  const added = await writeFragment(file, '70.added.md', '- Fragment added.\n');
+  const fixed = await writeFragment(file, '71.fixed.md', '- Fragment fixed.\n');
+  await cutChangelogFile(file, '0.2.0', '2026-10-28');
+  const next = await readFile(file, 'utf8');
+  assert.match(next, /## \[Unreleased\]\n\n## \[0\.2\.0\] - 2026-10-28\n\n### Added\n\n- Fragment added\.\n\n### Fixed\n\n- Fragment fixed\.\n\n## \[0\.1\.5\]/);
+  await missing(added);
+  await missing(fixed);
+});
+
+test('existing Unreleased bullets stay ahead of fragment bullets', async (t) => {
+  const file = await tempChangelog(t, sample);
+  await writeFragment(file, '70.changed.md', '- Fragment change.\n');
+  await writeFragment(file, '71.fixed.md', '- Fragment fix.\n');
+  await cutChangelogFile(file, '0.2.0', '2026-10-28');
+  const next = await readFile(file, 'utf8');
+  const changed = next.indexOf('- Stamp versions from one command.');
+  const fragmentChange = next.indexOf('- Fragment change.');
+  const fixed = next.indexOf('- Empty sections stay put.');
+  const fragmentFix = next.indexOf('- Fragment fix.');
+  assert.ok(changed >= 0 && fragmentChange > changed);
+  assert.ok(fixed >= 0 && fragmentFix > fixed);
+  assert.ok(fragmentChange < fixed);
+});
+
+test('fragments follow category order and filename order inside a category', async (t) => {
+  const file = await tempChangelog(t, emptyUnreleased);
+  await writeFragment(file, 'b.fixed.md', '- Fixed b.\n');
+  await writeFragment(file, 'c.changed.md', '- Changed c.\n');
+  await writeFragment(file, 'a.changed.md', '- Changed a.\n');
+  await writeFragment(file, 'a.added.md', '- Added a.\n');
+  await writeFragment(file, 'd.security.md', '- Security d.\n');
+  await cutChangelogFile(file, '0.2.0', '2026-10-28');
+  const next = await readFile(file, 'utf8');
+  const positions = ['### Added', '- Added a.', '### Changed', '- Changed a.', '- Changed c.', '### Fixed', '- Fixed b.', '### Security', '- Security d.']
+    .map((needle) => next.indexOf(needle));
+  assert.deepEqual(positions, [...positions].sort((left, right) => left - right));
+  assert.ok(positions.every((index) => index >= 0));
+});
+
+test('a missing category heading is created in canonical order', async (t) => {
+  const fixedOnly = `# Changelog
+
+## [Unreleased]
+
+### Fixed
+
+- Existing fix.
+
+## [0.1.5] - 2026-10-28
+
+### Added
+
+- Older note.
+`;
+  const file = await tempChangelog(t, fixedOnly);
+  await writeFragment(file, '2.security.md', '- Fragment security.\n');
+  await writeFragment(file, '1.added.md', '- Fragment added.\n');
+  await cutChangelogFile(file, '0.2.0', '2026-10-28');
+  const next = await readFile(file, 'utf8');
+  const added = next.indexOf('### Added');
+  const fixed = next.indexOf('### Fixed');
+  const security = next.indexOf('### Security');
+  assert.ok(added >= 0 && added < fixed && fixed < security);
+  assert.match(next, /### Added\n\n- Fragment added\.\n\n### Fixed\n\n- Existing fix\.\n\n### Security\n\n- Fragment security\./);
+});
+
+test('an unknown category is rejected and nothing is written or deleted', async (t) => {
+  const file = await tempChangelog(t, emptyUnreleased);
+  const fragment = await writeFragment(file, '90.bogus.md', '- Should stay.\n');
+  let wrote = false;
+  await assert.rejects(
+    cutChangelogFile(file, '0.2.0', '2026-10-28', { writeFile: async () => { wrote = true; } }),
+    /changelog\.d\/90\.bogus\.md has unknown category "bogus"/,
+  );
+  assert.equal(wrote, false);
+  assert.equal(await readFile(file, 'utf8'), emptyUnreleased);
+  assert.equal(await readFile(fragment, 'utf8'), '- Should stay.\n');
+});
+
+test('a non-markdown file in changelog.d is rejected and nothing is written or deleted', async (t) => {
+  const file = await tempChangelog(t, sample);
+  const extra = await writeFragment(file, 'notes.txt', 'not a fragment\n');
+  let wrote = false;
+  await assert.rejects(
+    cutChangelogFile(file, '0.2.0', '2026-10-28', { writeFile: async () => { wrote = true; } }),
+    /changelog\.d\/notes\.txt is not a markdown fragment/,
+  );
+  assert.equal(wrote, false);
+  assert.equal(await readFile(file, 'utf8'), sample);
+  assert.equal(await readFile(extra, 'utf8'), 'not a fragment\n');
+});
+
+test('an unparseable slug is rejected and nothing is written or deleted', async (t) => {
+  const file = await tempChangelog(t, emptyUnreleased);
+  const fragment = await writeFragment(file, '70.extra.changed.md', '- Should stay.\n');
+  await assert.rejects(
+    cutChangelogFile(file, '0.2.0', '2026-10-28'),
+    /changelog\.d\/70\.extra\.changed\.md has an unparseable slug/,
+  );
+  assert.equal(await readFile(file, 'utf8'), emptyUnreleased);
+  assert.equal(await readFile(fragment, 'utf8'), '- Should stay.\n');
+});
+
+test('a failed changelog write leaves the fragments in place', async (t) => {
+  const file = await tempChangelog(t, emptyUnreleased);
+  const fragment = await writeFragment(file, '70.changed.md', '- Should stay.\n');
+  await assert.rejects(
+    cutChangelogFile(file, '0.2.0', '2026-10-28', {
+      writeFile: async () => { throw new Error('disk full'); },
+    }),
+    /disk full/,
+  );
+  assert.equal(await readFile(file, 'utf8'), emptyUnreleased);
+  assert.equal(await readFile(fragment, 'utf8'), '- Should stay.\n');
+});
+
+test('a CRLF fragment is normalised to LF in the cut changelog', async (t) => {
+  const file = await tempChangelog(t, emptyUnreleased.replace(/\n/g, '\r\n'));
+  await writeFragment(file, '70.changed.md', '- From fragment.\r\n');
+  await cutChangelogFile(file, '0.2.0', '2026-10-28');
+  const next = await readFile(file, 'utf8');
+  assert.equal(next.includes('\r'), false);
+  assert.match(next, /### Changed\n\n- From fragment\.\n/);
 });
 
 test('the repository changelog can be cut in memory and the command refuses a bad argument', async () => {
