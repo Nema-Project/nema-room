@@ -90,8 +90,8 @@ P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实现已�
 | P2-03 | 多设备同步 | 待办 | 先完成备份恢复与数据权威来源定义；设计冲突解决和一致性模型，再确定实现范围 |
 | P2-04 | 团队只读访问 | 待办 | 先设计身份、授权、撤销与审计；不得直接把当前单用户本地服务暴露为多人服务 |
 | P2-05 | [#25](https://github.com/Nema-Project/nema-room/issues/25) 外部连接器 Epic。设计见 [connector architecture v0.2](docs/design/connector-architecture-v0.2.md) | 进行中 | CX-01、CX-03 已实现，CX-03 待最终验收；CX-02、CX-04、CX-05、CX-06、CX-07、CX-08、CX-09、CX-10 尚未开始 |
-| P2-06 | 扩展管理：Skills/MCP/插件的安装、卸载与启停未实现。规格见 [extension management spec](docs/superpowers/specs/2026-10-25-extension-management-design.md)，计划见 [extension management plan](docs/superpowers/plans/2026-10-25-extension-management.md) | 待办 | 生产路径仍只有记录与展示；安装、卸载、启停、来源解析、Skills 加载与 MCP 配置尚未落地 |
-| P2-07 | [#56](https://github.com/Nema-Project/nema-room/issues/56) 依赖体检：桌面 Python 升 3.11.18、基础镜像 trixie 化与大版本升级立项 | 待办 | 范围以该 issue 为准 |
+| P2-06 | [#75](https://github.com/Nema-Project/nema-room/issues/75) 扩展管理：Skills/MCP/插件的安装、卸载与启停未实现。规格见 [extension management spec](docs/superpowers/specs/2026-10-25-extension-management-design.md)，计划见 [extension management plan](docs/superpowers/plans/2026-10-25-extension-management.md) | 待办 | 生产路径仍只有记录与展示；安装、卸载、启停、来源解析、Skills 加载与 MCP 配置尚未落地 |
+| P2-07 | [#56](https://github.com/Nema-Project/nema-room/issues/56) 依赖体检的剩余项：ESLint 9→10、TypeScript 5.9→7、Node 22→24，以及内置 Python 从 3.11 换线到 3.13/3.14。该 issue 中的桌面 Python 升 3.11.18、基础镜像 trixie 化与移除 Vue 图标已由 PR #57、#58 完成 | 待办 | 各升级单独 PR；内置 Python 换线需按 spec/plan 单独立项。范围以该 issue 为准 |
 | P2-08 | [#50](https://github.com/Nema-Project/nema-room/issues/50) hub/web 镜像增加 linux/arm64（多架构 manifest） | 待办 | 范围以该 issue 为准 |
 
 ## 仓库演进原则
