@@ -9,12 +9,15 @@
 
 ### Fixed
 
+- Hub and web images now build on `node:22-trixie-slim` (Debian 13) instead of `node:22-slim` (Debian 12, whose regular security support has ended). Patch-level dependency updates: Next.js 16.4.3, Hono 4.13.14, PGlite 0.5.12, and Electron 45.1.0.
 - The web build loads Inter (variable, weights 400–700) and JetBrains Mono (weight 500) from WOFF2 files in the repository. `next build` no longer downloads those faces from Google Fonts, so an unreachable fonts host cannot fail the image build. The web image ships the matching OFL texts at `/app/licenses/fonts/inter/OFL.txt` and `/app/licenses/fonts/jetbrains-mono/OFL.txt`.
 - UI confirmation retries recover committed evidence after transient database failures, preserving the original commit and events before a restart.
 
 - Source freshness reads compare the last observed revision with the current imported snapshot, including after interrupted indexing, so reimports update freshness and reference review flags immediately.
 
 ### Security
+
+- Desktop staging pins CPython **3.11.18** for the bundled Graphify runtime (was 3.11.17), picking up the October 2026 CPython security fixes, including `ssl` distrust of the compromised eMudhra intermediate CA keys (CVE-2026-115557) and rejection of link-replacement in `tarfile`'s `tar_filter` (CVE-2026-114583).
 
 - Room writes with external references validate those references and require verbatim evidence from the current task's user message for user basis. Agents cannot rewrite imported snapshots, change their basis, or consume UI confirmation events. Main and thread prompts identify source excerpts as untrusted external data. Existing decision and user-message guards remain in force.
 
