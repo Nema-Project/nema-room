@@ -6,7 +6,7 @@ import { closeSync, fstatSync, lstatSync, readFileSync, realpathSync } from "nod
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { LOCAL_INSTANCE_PROTOCOL, controlOriginFor, controlPortFor, equalHex, homeHashFor, homeIdentityFor, instanceHmac } from "@nema/shared/localInstance";
+import { LOCAL_INSTANCE_PROTOCOL, acceptedControlPorts, controlOriginFor, equalHex, homeHashFor, homeIdentityFor, instanceHmac } from "@nema/shared/localInstance";
 import { openPrivateFile, privateModeMatches } from "../secrets/permissions.js";
 
 const REQUEST_TIMEOUT_MS = 800;
@@ -65,10 +65,11 @@ export async function discoverDesktopOrigin(home = defaultDesktopHome()): Promis
     const canonical = realpathSync.native(home);
     const identity = homeIdentityFor(canonical);
     const homeHash = homeHashFor(identity);
-    const port = controlPortFor(identity);
-    const controlOrigin = controlOriginFor(port);
+    const accepted = acceptedControlPorts(identity).map(controlOriginFor);
     const descriptor = readDescriptor(path.join(canonical, "instance.json"));
-    if (!descriptor || descriptor.homeHash !== homeHash || descriptor.controlOrigin !== controlOrigin) return null;
+    if (!descriptor || descriptor.homeHash !== homeHash || !accepted.includes(descriptor.controlOrigin)) return null;
+    const controlOrigin = descriptor.controlOrigin;
+    const port = Number(new URL(controlOrigin).port);
 
     const challenge = randomBytes(32).toString("hex");
     const response = await getProof(port, challenge);

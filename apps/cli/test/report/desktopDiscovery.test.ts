@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
@@ -22,13 +22,13 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-type Fake = { secret?: string; serverSecret?: string; instanceId?: string; serve?: boolean; origin?: string };
+type Fake = { secret?: string; serverSecret?: string; instanceId?: string; serve?: boolean; origin?: string; port?: number };
 
 /** A descriptor plus a fake control endpoint that answers the way the desktop runtime does. */
 async function startFake(options: Fake = {}): Promise<void> {
   const identity = homeIdentityFor(home);
   const homeHash = homeHashFor(identity);
-  const port = controlPortFor(identity);
+  const port = options.port ?? controlPortFor(identity);
   const controlOrigin = controlOriginFor(port);
   const secret = options.secret ?? randomBytes(32).toString("hex");
   const instanceId = randomUUID();
@@ -63,6 +63,21 @@ describe("discoverDesktopOrigin", () => {
     server!.close(); server!.closeAllConnections(); await once(server!, "close");
     await startFake({ serve: false });
     expect(await discoverDesktopOrigin(home)).toBeNull();
+  });
+
+  test("returns the origin when the descriptor still names the previous control port", async () => {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const identity = homeIdentityFor(home);
+      const port = 20000 + createHash("sha256").update(identity).digest().readUInt32BE(0) % 25000;
+      if (port !== controlPortFor(identity)) {
+        await startFake({ port });
+        expect(await discoverDesktopOrigin(home)).toBe(ORIGIN);
+        return;
+      }
+      rmSync(home, { recursive: true, force: true });
+      home = realpathSync(mkdtempSync(join(tmpdir(), "nema-desktop-discovery-")));
+    }
+    throw new Error("no home whose previous control port differs from the current one");
   });
 
   test("returns null for a missing home, a missing descriptor and a non-loopback origin", async () => {

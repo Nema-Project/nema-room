@@ -15,7 +15,7 @@ import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
 import { join } from "node:path";
 import { openPrivateFile, privateModeMatches, protectPrivatePath } from "@nema/cli/secrets/permissions";
-import { LOCAL_INSTANCE_PROTOCOL, controlOriginFor, controlPortFor, equalHex, homeHashFor, instanceHmac as hmac } from "@nema/shared/localInstance";
+import { LOCAL_INSTANCE_PROTOCOL, acceptedControlPorts, controlOriginFor, controlPortFor, equalHex, homeHashFor, instanceHmac as hmac, legacyControlPortFor } from "@nema/shared/localInstance";
 import { homeIdentity, resolveHome } from "./paths.js";
 
 const PROTOCOL = LOCAL_INSTANCE_PROTOCOL;
@@ -306,12 +306,23 @@ export async function acquireInstance(home?: string, requestedInstallationId?: s
   }
 
   try {
-    // A successful exclusive bind proves any prior descriptor's listener is gone. Clear only a
-    // structurally valid descriptor for this home/control endpoint so Windows can atomically publish.
+    // A successful bind of the current port does not prove a core on the previous port is gone.
     const stale = readDescriptor(paths.instance);
     if (stale) {
-      validateDescriptor(stale, homeHash, controlOrigin);
-      removeDescriptorIfOwner(paths.instance, stale.instanceId);
+      const legacyOrigin = controlOriginFor(legacyControlPortFor(identity));
+      if (stale.controlOrigin === legacyOrigin && legacyOrigin !== controlOrigin) {
+        validateDescriptor(stale, homeHash, [controlOrigin, legacyOrigin]);
+        if (await legacyListenerAnswers(legacyControlPortFor(identity))) {
+          const error = new Error("An older local instance is still answering on the previous control port; shut that instance down completely before starting");
+          Object.assign(error, { code: "NEMA_LOCAL_OLD_OWNER_RUNNING" });
+          throw error;
+        }
+        removeDescriptorIfOwner(paths.instance, stale.instanceId);
+      } else {
+        // Binding the current port proves that listener is gone. Clear only a descriptor for this endpoint.
+        validateDescriptor(stale, homeHash, [controlOrigin]);
+        removeDescriptorIfOwner(paths.instance, stale.instanceId);
+      }
     }
   } catch (error) {
     server.close();
@@ -362,9 +373,19 @@ export async function acquireInstance(home?: string, requestedInstallationId?: s
   };
 }
 
-function validateDescriptor(value: Descriptor, homeHash: string, controlOrigin: string): void {
-  if (value.homeHash !== homeHash || value.controlOrigin !== controlOrigin || !isLoopbackOrigin(value.origin) || !/^[0-9a-f]{64}$/.test(value.installationId)) {
+function validateDescriptor(value: Descriptor, homeHash: string, controlOrigins: readonly string[]): void {
+  if (value.homeHash !== homeHash || !controlOrigins.includes(value.controlOrigin) || !isLoopbackOrigin(value.origin) || !/^[0-9a-f]{64}$/.test(value.installationId)) {
     throw new Error("Instance descriptor does not match the requested home or local control address");
+  }
+}
+
+/** True unless nothing is listening. Only ECONNREFUSED means the previous core is gone. */
+async function legacyListenerAnswers(port: number): Promise<boolean> {
+  try {
+    await requestControl(port, `/_nema/instance?challenge=${randomBytes(32).toString("hex")}`);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ECONNREFUSED";
   }
 }
 
@@ -372,11 +393,11 @@ export async function discoverInstance(home?: string): Promise<DiscoveredInstanc
   const paths = resolveHome(home);
   const identity = homeIdentity(paths.home);
   const homeHash = homeHashFor(identity);
-  const port = controlPortFor(identity);
-  const controlOrigin = controlOriginFor(port);
   const descriptor = readDescriptor(paths.instance);
   if (!descriptor) return null;
-  validateDescriptor(descriptor, homeHash, controlOrigin);
+  validateDescriptor(descriptor, homeHash, acceptedControlPorts(identity).map(controlOriginFor));
+  const controlOrigin = descriptor.controlOrigin;
+  const port = Number(new URL(controlOrigin).port);
   const challenge = randomBytes(32).toString("hex");
   let proofResponse: { status: number; body: unknown };
   try { proofResponse = await requestControl(port, `/_nema/instance?challenge=${challenge}`); }
@@ -430,18 +451,19 @@ export async function requestInstanceShutdown(home: string, options: ShutdownOpt
   const paths = resolveHome(home);
   const identity = homeIdentity(paths.home);
   const homeHash = homeHashFor(identity);
-  const controlPort = controlPortFor(identity);
   const descriptor = readDescriptor(paths.instance);
   if (!descriptor) throw new Error("No supported local core owns this home");
-  validateDescriptor(descriptor, homeHash, controlOriginFor(controlPort));
+  validateDescriptor(descriptor, homeHash, acceptedControlPorts(identity).map(controlOriginFor));
+  const controlOrigin = descriptor.controlOrigin;
+  const controlPort = Number(new URL(controlOrigin).port);
   if (descriptor.instanceId !== options.expectedInstanceId) throw new Error("Local core instance identity changed before shutdown");
   if (descriptor.installationId !== options.expectedInstallationId) throw new Error("Local core installation identity does not match this application");
   const challenge = randomBytes(32).toString("hex");
   const proofResponse = await requestControl(controlPort, `/_nema/instance?challenge=${challenge}`);
   if (proofResponse.status !== 200 || !proofResponse.body || typeof proofResponse.body !== "object") throw new Error("Local core identity proof was rejected before shutdown");
   const proof = proofResponse.body as Record<string, unknown>;
-  const expectedDiscovery = hmac(descriptor.secret, [PROTOCOL, homeHash, descriptor.instanceId, descriptor.installationId, controlOriginFor(controlPort), descriptor.origin, challenge]).toString("hex");
-  if (proof.protocol !== PROTOCOL || proof.homeHash !== homeHash || proof.instanceId !== descriptor.instanceId || proof.installationId !== descriptor.installationId || proof.controlOrigin !== controlOriginFor(controlPort) || proof.origin !== descriptor.origin || proof.challenge !== challenge || typeof proof.proof !== "string" || !equalHex(proof.proof, expectedDiscovery)) {
+  const expectedDiscovery = hmac(descriptor.secret, [PROTOCOL, homeHash, descriptor.instanceId, descriptor.installationId, controlOrigin, descriptor.origin, challenge]).toString("hex");
+  if (proof.protocol !== PROTOCOL || proof.homeHash !== homeHash || proof.instanceId !== descriptor.instanceId || proof.installationId !== descriptor.installationId || proof.controlOrigin !== controlOrigin || proof.origin !== descriptor.origin || proof.challenge !== challenge || typeof proof.proof !== "string" || !equalHex(proof.proof, expectedDiscovery)) {
     throw new Error("Local core identity proof is invalid before shutdown");
   }
   const requestId = randomUUID();

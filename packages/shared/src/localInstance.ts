@@ -9,6 +9,14 @@ const sha256 = (value: string): Buffer => createHash("sha256").update(value).dig
 export const homeHashFor = (identity: string): string => sha256(identity).toString("hex");
 // 20000–32767 stays below the default ephemeral ranges (Linux 32768, macOS/Windows 49152).
 export const controlPortFor = (identity: string): number => 20000 + sha256(identity).readUInt32BE(0) % 12768;
+/** Previous control port, `20000 + hash % 25000`. The modulus stays literal so it cannot follow the current range. */
+export const legacyControlPortFor = (identity: string): number => 20000 + sha256(identity).readUInt32BE(0) % 25000;
+/** Ports this home's descriptor may name: the current range first, then the pre-fix range. */
+export function acceptedControlPorts(identity: string): number[] {
+  const current = controlPortFor(identity);
+  const legacy = legacyControlPortFor(identity);
+  return current === legacy ? [current] : [current, legacy];
+}
 export const controlOriginFor = (port: number): string => `http://127.0.0.1:${port}`;
 
 /** Canonical identity is case-insensitive on Windows because the filesystem is. */
