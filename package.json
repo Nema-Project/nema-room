@@ -25,7 +25,9 @@
     "dev": "concurrently -n hub,web -c blue,green \"npm run dev -w apps/hub\" \"npm run dev -w apps/web\"",
     "up": "node scripts/up.mjs",
     "down": "docker compose down",
-    "logs": "docker compose logs -f hub web"
+    "logs": "docker compose logs -f hub web",
+    "release:cut": "node scripts/release/cut-changelog.mjs",
+    "release:stamp": "node scripts/release/stamp-version.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

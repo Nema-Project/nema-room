@@ -4,6 +4,10 @@ Version sections on main may describe release preparation. A version heading and
 
 ## [Unreleased]
 
+### Changed
+
+- Release preparation stamps the cli, desktop, and local package versions, and their `package-lock.json` records, with `npm run release:stamp -- <version>`. The stamp refuses before writing when those records do not already match. `npm run release:cut -- <version>` moves `[Unreleased]` into a section dated the local cut day. Neither command commits, tags, or publishes. That date stays the cut day when the tag is created later.
+
 ## [0.1.5] - 2026-10-28
 
 ### Added

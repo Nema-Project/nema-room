@@ -110,7 +110,7 @@ jobs:
       - run: npm ci
       # Spawned test fixtures resolve @nema/* through compiled output, so build it first.
       - run: npm run typecheck
-      - run: node --test scripts/ci/*.test.mjs scripts/images/*.test.mjs scripts/desktop/release-commit.test.mjs scripts/desktop/release.test.mjs scripts/release-notes.test.mjs
+      - run: node --test scripts/ci/*.test.mjs scripts/images/*.test.mjs scripts/desktop/release-commit.test.mjs scripts/desktop/release.test.mjs scripts/release-notes.test.mjs scripts/release/*.test.mjs
       - run: node --test scripts/security/reporting-status.test.mjs
       - name: Desktop payload unit tests
         run: |
