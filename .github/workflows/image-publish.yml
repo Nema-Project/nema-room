@@ -227,7 +227,12 @@ jobs:
           node scripts/images/check-images.mjs --budget hub "$(tr -d '[:space:]' <"$RUNNER_TEMP/hub.size")" web "$(tr -d '[:space:]' <"$RUNNER_TEMP/web.size")"
       - name: Smoke the loaded images
         shell: bash
-        run: node scripts/images/smoke-compose.mjs --pull never --hub-port 4410 --web-port 3010
+        env:
+          NEMA_IMAGE_TAG: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -n "$NEMA_IMAGE_TAG"
+          node scripts/images/smoke-compose.mjs --pull never --hub-port 4410 --web-port 3010
       - name: Upload OCI layouts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -363,7 +368,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Pull pinned images
-        run: docker compose pull
+        shell: bash
+        env:
+          NEMA_IMAGE_TAG: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -n "$NEMA_IMAGE_TAG"
+          docker compose pull
       - name: Smoke the pulled images
         shell: bash
-        run: node scripts/images/smoke-compose.mjs --pull always --hub-port 4410 --web-port 3010
+        env:
+          NEMA_IMAGE_TAG: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -n "$NEMA_IMAGE_TAG"
+          node scripts/images/smoke-compose.mjs --pull always --hub-port 4410 --web-port 3010
