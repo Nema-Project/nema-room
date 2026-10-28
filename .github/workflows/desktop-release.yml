@@ -3,10 +3,11 @@ name: Desktop release
 # Desktop targets are win32-x64 and darwin-arm64; Intel Macs are not supported.
 # Desktop builds are the most expensive runs (macOS minutes bill at 10x), so
 # branch pushes do not trigger them. A pull request builds and smokes both
-# targets only when it changes apps/desktop or non-Markdown files under
-# scripts/desktop. A lockfile-only or workflow-only change waits for the
-# release tag or a manual dispatch. A
-# manual dispatch builds the chosen target(s). Only a push of a v<SemVer> tag
+# targets only when it changes apps/desktop or a non-Markdown file under
+# scripts/desktop. Markdown directly in that folder or in a subfolder does
+# not. A lockfile-only or workflow-only change waits for the release tag
+# or a manual dispatch. A manual dispatch builds the chosen target(s).
+# Only a push of a v<SemVer> tag
 # reaches the publish job, which fails closed unless every target built, smoked
 # and passed desktop:validate-release.
 on:
@@ -17,6 +18,8 @@ on:
       - 'apps/desktop/**'
       - 'scripts/desktop/**'
       - '!scripts/desktop/**/*.md'
+      # Together with the pattern above: Markdown in a subfolder, and a file directly in the folder.
+      - '!scripts/desktop/*.md'
   workflow_dispatch:
     inputs:
       target:

@@ -21,6 +21,17 @@ test('agent instructions take the docs lane and do not request heavy jobs', () =
   }
 });
 
+test('markdown under desktop and image scripts requests no heavy job', () => {
+  for (const path of ['scripts/desktop/RELEASE.md', 'scripts/desktop/README.md', 'scripts/images/RELEASE.md', 'scripts/desktop/notes/x.md']) {
+    const result = classifyPaths([path]);
+    assert.equal(result.mode, 'app', path);
+    assert.deepEqual(heavy(result), none, path);
+  }
+  const script = classifyPaths(['scripts/desktop/smoke-desktop.test.mjs']);
+  assert.equal(script.platform, true);
+  assert.equal(script.desktop, true);
+});
+
 test('empty or unsafe paths fail closed onto the full suite', () => {
   for (const paths of [[], ['docs//guide.md'], ['docs/guide.md/'], ['docs/./a.md'], ['docs/../scripts/x.mjs'], ['/docs/a.md'], ['docs\\a.md']]) {
     assert.equal(classifyPaths(paths).mode, 'full', JSON.stringify(paths));

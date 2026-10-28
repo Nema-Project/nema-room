@@ -6,7 +6,7 @@ Version sections on main may describe release preparation. A version heading and
 
 ### Changed
 
-- Markdown-only edits under `scripts/desktop/` or `scripts/images/` no longer start the desktop or image pull-request workflows. Code and scripts there still do. `AGENTS.md` and `CLAUDE.md` use the documentation CI lane.
+- Markdown under `scripts/desktop/` and `scripts/images/` starts neither the desktop or image pull-request workflows nor the macOS/Windows platform checks. Code and scripts there still do. `AGENTS.md` and `CLAUDE.md` use the documentation CI lane.
 
 ## [0.1.5] - 2026-10-28
 

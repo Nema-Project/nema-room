@@ -3,9 +3,10 @@ name: Image publish
 # Hub and web images publish only from a v<SemVer> tag whose commit passed verify.
 # workflow_dispatch builds and smokes the same commit and stops before GHCR.
 # A pull request builds and smokes only when it changes the Dockerfile, Compose
-# files, a non-Markdown file under scripts/images, or this workflow. That
-# pull request does not publish
-# and does not run verify.yml. A tag still runs the full verify.yml suite.
+# files, a non-Markdown file under scripts/images, or this workflow.
+# Markdown directly in that folder or in a subfolder does not. The pull
+# request does not publish and does not run verify.yml. A tag still runs
+# the full verify.yml suite.
 # The publish job copies the build job's OCI layout. It does not install the
 # workspace or build an image. Publish jobs share one registry queue. A stable
 # release moves latest only when this version is not older than the label on latest.
@@ -18,6 +19,8 @@ on:
       - scripts/images/**
       - .github/workflows/image-publish.yml
       - '!scripts/images/**/*.md'
+      # Together with the pattern above: Markdown in a subfolder, and a file directly in the folder.
+      - '!scripts/images/*.md'
   push:
     tags: ['v*']
   workflow_dispatch:
