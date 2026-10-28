@@ -111,8 +111,7 @@ test('stamping a consistent tree updates only the version files while compose ke
   const compose = await readFile(path.join(root, 'docker-compose.yml'), 'utf8');
   const beforeLock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
   const source = await readFile(script, 'utf8');
-  assert.match(source, /phase 2/);
-  assert.doesNotMatch(source, /check-images/);
+  assert.match(source, /renderComposeAsset/);
 
   await stampVersion(root, '9.9.9');
 
@@ -150,4 +149,16 @@ test('a failed post-write check restores the version files', async (t) => {
   for (const [rel, text] of before) assert.equal(await readFile(path.join(root, rel), 'utf8'), text, rel);
   assert.equal(git(root, ['status', '--porcelain']), '');
   assert.equal(git(root, ['rev-parse', 'HEAD']), head);
+});
+
+
+test('refuses when the compose template cannot render at the new version', async (t) => {
+  const root = await fixture(t);
+  const file = path.join(root, 'docker-compose.yml');
+  await writeFile(file, (await readFile(file, 'utf8')).replace('${NEMA_IMAGE_TAG:-latest}', '${NEMA_IMAGE_TAG}'));
+  git(root, ['add', '.']); git(root, ['commit', '-qm', 'break template']);
+  const before = await snapshot(root);
+  await assert.rejects(stampVersion(root, '9.9.9'), /compose template failed at v9\.9\.9[\s\S]*Version files were restored/);
+  for (const [rel, text] of before) assert.equal(await readFile(path.join(root, rel), 'utf8'), text, rel);
+  assert.equal(git(root, ['status', '--porcelain']), '');
 });
