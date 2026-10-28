@@ -421,6 +421,7 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .app-settings .bar button:focus-visible,
 .app-settings-panel:focus-visible { outline: 1px solid var(--ink); outline-offset: -1px; }
 .app-settings-panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.app-settings-panel[hidden] { display: none; }
 .app-settings-panel > .drawer,
 .app-settings-panel > .plugins-page { flex: 1; min-height: 0; }
 .app-settings-section { overflow: auto; padding: 20px 28px 32px; max-width: 68ch; }

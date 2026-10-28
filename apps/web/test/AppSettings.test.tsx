@@ -44,12 +44,21 @@ describe("AppSettings", () => {
     expect(model.getAttribute("aria-selected")).toBe("true");
     expect(model.tabIndex).toBe(0);
     expect(document.activeElement).toBe(model);
+    expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
     const modelPanel = screen.getByRole("tabpanel", { name: "Model" });
     expect(modelPanel.querySelector(".model-settings.embedded")).toBeTruthy();
     expect(modelPanel.querySelector(".model-settings")?.getAttribute("role")).toBeNull();
     expect(screen.queryByRole("dialog", { name: "Model settings" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Model settings" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    for (const [id, name] of [["model", "Model"], ["plugins", "Plugins"], ["general", "General"], ["about", "About"]] as const) {
+      expect(document.getElementById(`app-settings-panel-${id}`)).toBeTruthy();
+      expect(screen.getByRole("tab", { name }).getAttribute("aria-controls")).toBe(`app-settings-panel-${id}`);
+      expect(document.getElementById(`app-settings-panel-${id}`)?.hidden).toBe(id !== "model");
+      expect(document.getElementById(`app-settings-panel-${id}`)?.tabIndex).toBe(id === "model" ? 0 : -1);
+    }
+    await waitFor(() => expect(hub.listExtensions).toHaveBeenCalledTimes(1));
+    expect(model.getAttribute("aria-selected")).toBe("true");
 
     await userEvent.keyboard("{ArrowDown}");
     const plugins = screen.getByRole("tab", { name: "Plugins" });
@@ -58,7 +67,7 @@ describe("AppSettings", () => {
     expect(plugins.tabIndex).toBe(0);
     expect(model.tabIndex).toBe(-1);
     expect(await screen.findByRole("heading", { name: "Extensions" })).toBeTruthy();
-    expect(hub.listExtensions).toHaveBeenCalled();
+    expect(hub.listExtensions).toHaveBeenCalledTimes(1);
 
     await userEvent.keyboard("{ArrowDown}");
     expect(screen.getByRole("tab", { name: "General" }).getAttribute("aria-selected")).toBe("true");
@@ -140,5 +149,27 @@ describe("AppSettings", () => {
     expect(link.getAttribute("href")).toBe(offer.url);
     expect(screen.getByRole("button", { name: "Check for updates" })).toBeTruthy();
     expect((screen.getByRole("checkbox", { name: "Check for updates automatically" }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("keeps an unsaved model change when another tab is shown", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/_nema/auth/status") return json({ state: "idle", error: null });
+      if (url === "/_nema/version" || url.startsWith("/_nema/update")) return json({}, false);
+      return json({
+        config: { adapter: "codex-direct", authMode: "siwc", reasoningEffort: "medium" },
+        auth: { mode: "siwc", credential: "siwc", state: "missing", adapter: "codex-direct" },
+        tools: { claude: { available: false, tokenSaved: false }, github: { available: false, tokenSaved: false } },
+      });
+    }));
+    renderSettings();
+    const effort = await screen.findByLabelText("Reasoning effort") as HTMLSelectElement;
+    await userEvent.selectOptions(effort, "high");
+    await userEvent.click(screen.getByRole("tab", { name: "General" }));
+    expect(screen.queryByRole("combobox", { name: "Reasoning effort" })).toBeNull();
+    expect(document.getElementById("app-settings-panel-model")?.hidden).toBe(true);
+    expect((document.getElementById("app-settings-panel-model")?.querySelector("[aria-label='Reasoning effort']") as HTMLSelectElement).value).toBe("high");
+    await userEvent.click(screen.getByRole("tab", { name: "Model" }));
+    expect((screen.getByRole("combobox", { name: "Reasoning effort" }) as HTMLSelectElement).value).toBe("high");
   });
 });

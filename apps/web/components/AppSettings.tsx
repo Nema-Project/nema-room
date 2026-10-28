@@ -187,22 +187,29 @@ export function AppSettings({ onClose }: { onClose: () => void }) {
             );
           })}
         </div>
-        <div
-          role="tabpanel"
-          id={`app-settings-panel-${tab}`}
-          aria-labelledby={`app-settings-tab-${tab}`}
-          tabIndex={0}
-          className="app-settings-panel"
-        >
-          {tab === "model" && <ModelSettings embedded />}
-          {tab === "plugins" && <PluginsPage embedded />}
-          {tab === "general" && <LoginItemSetting />}
-          {tab === "about" && (
-            <section className="app-settings-section">
-              <AppReleaseAbout />
-            </section>
-          )}
-        </div>
+        {TABS.map((id) => {
+          const selected = id === tab;
+          return (
+            <div
+              key={id}
+              role="tabpanel"
+              id={`app-settings-panel-${id}`}
+              aria-labelledby={`app-settings-tab-${id}`}
+              tabIndex={selected ? 0 : -1}
+              hidden={!selected}
+              className="app-settings-panel"
+            >
+              {id === "model" && <ModelSettings embedded />}
+              {id === "plugins" && <PluginsPage embedded />}
+              {id === "general" && <LoginItemSetting />}
+              {id === "about" && (
+                <section className="app-settings-section">
+                  <AppReleaseAbout />
+                </section>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

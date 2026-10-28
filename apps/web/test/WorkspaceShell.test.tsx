@@ -28,6 +28,7 @@ vi.mock("@/lib/hub", () => ({
   archiveWorkspace: vi.fn(),
   deleteWorkspace: vi.fn(),
   getMessage: vi.fn(),
+  listExtensions: vi.fn(async () => []),
   HubError,
 }));
 vi.mock("@/lib/useHubEvents", () => ({
@@ -259,7 +260,19 @@ describe("WorkspaceShell knowledge wiring", () => {
     expect(panel.closest(".know-col")).toBeNull();
     expect(panel.querySelector(".model-settings")?.getAttribute("role")).toBeNull();
     expect(screen.queryByRole("dialog", { name: "Model settings" })).toBeNull();
+    for (const [id, name] of [["model", "Model"], ["plugins", "Plugins"], ["general", "General"], ["about", "About"]] as const) {
+      expect(document.getElementById(`app-settings-panel-${id}`)).toBeTruthy();
+      expect(screen.getByRole("tab", { name }).getAttribute("aria-controls")).toBe(`app-settings-panel-${id}`);
+    }
     expect((screen.getByLabelText("Model provider") as HTMLSelectElement).value).toBe("chatgpt");
+    const effort = screen.getByLabelText("Reasoning effort") as HTMLSelectElement;
+    await userEvent.selectOptions(effort, "high");
+    await userEvent.click(screen.getByRole("tab", { name: "Plugins" }));
+    expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
+    expect(screen.queryByRole("combobox", { name: "Reasoning effort" })).toBeNull();
+    expect((document.getElementById("app-settings-panel-model")?.querySelector("[aria-label='Reasoning effort']") as HTMLSelectElement).value).toBe("high");
+    await userEvent.click(screen.getByRole("tab", { name: "Model" }));
+    expect((screen.getByRole("combobox", { name: "Reasoning effort" }) as HTMLSelectElement).value).toBe("high");
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("tabpanel", { name: "Model" })).toBeNull();
     await vi.waitFor(() => expect(document.activeElement).toBe(opener));
