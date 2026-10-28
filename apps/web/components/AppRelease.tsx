@@ -13,6 +13,7 @@ const COMMIT_TEXT = /^[0-9a-f]{7}$/;
 const listeners = new Set<() => void>();
 let view: ReleaseView | null = null;
 let checking = false;
+let settled = false;
 let started = false;
 let timer: number | undefined;
 let onFocus: (() => void) | undefined;
@@ -59,6 +60,7 @@ async function refresh(): Promise<boolean> {
     // The desktop endpoint is absent in Web / Compose, and a failed check stays quiet.
     return false;
   } finally {
+    settled = true;
     publish();
   }
 }
@@ -137,6 +139,7 @@ export function resetAppReleaseForTests() {
   timer = undefined;
   onFocus = undefined;
   started = false;
+  settled = false;
   view = null;
   checking = false;
   listeners.clear();
@@ -151,7 +154,7 @@ function useAppRelease() {
     listener();
     return () => { listeners.delete(listener); };
   }, []);
-  return { view, checking, setEnabled, check };
+  return { view, checking, settled, setEnabled, check };
 }
 
 export function AppReleaseBanner() {
@@ -165,13 +168,14 @@ export function AppReleaseBanner() {
   );
 }
 
-export function AppReleaseFooter() {
+export function AppReleaseFooter({ includeOffer = false }: { includeOffer?: boolean } = {}) {
   const t = useT();
   const { view: current, checking: busy, setEnabled: changeEnabled, check: runCheck } = useAppRelease();
   if (!current?.version) return null;
   return (
     <div className="foot-release">
       <div className="foot-version">{current.commit ? t("appRelease.versionCommit", { version: current.version, commit: current.commit }) : t("appRelease.version", { version: current.version })}</div>
+      {includeOffer && current.offer && <a href={current.offer.url} target="_blank" rel="noreferrer">{t("appRelease.update", { version: current.offer.version })}</a>}
       {current.upToDate && !current.offer && <div>{t("appRelease.upToDate")}</div>}
       <button type="button" className="release-check" onClick={() => { void runCheck(); }} disabled={busy}>
         {busy ? t("appRelease.checking") : t("appRelease.check")}
@@ -182,4 +186,13 @@ export function AppReleaseFooter() {
       </label>
     </div>
   );
+}
+
+/** About tab. The sidebar no longer shows this block. Web / Compose has no version endpoint, so the empty result is explained instead of omitted. */
+export function AppReleaseAbout() {
+  const t = useT();
+  const { view: current, settled: ready } = useAppRelease();
+  if (!ready) return <p className="kmeta">{t("common.loading")}</p>;
+  if (!current?.version) return <p className="help">{t("appSettings.aboutUnavailable")}</p>;
+  return <AppReleaseFooter includeOffer />;
 }

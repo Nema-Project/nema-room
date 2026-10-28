@@ -24,6 +24,7 @@ describe('native Electron packaging configuration', () => {
     expect(config.asar).toBe(true);
     expect(config.files).toContain('preload.cjs');
     expect(config.files).toContain('window-controls.cjs');
+    expect(config.files).toContain('login-item.cjs');
     expect(config.extraResources.map((entry) => entry.to)).toEqual(['payload']);
     expect(config.win.signExecutable).toBe(false);
     expect(config).toMatchObject({ productName: 'Nema Room', executableName: 'Nema', appId: 'org.nema-project.nema-room' });

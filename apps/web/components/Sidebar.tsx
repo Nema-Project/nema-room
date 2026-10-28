@@ -1,9 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type MouseEvent as ReactMouseEvent, type Ref } from "react";
 import { flushSync } from "react-dom";
-import { AppReleaseFooter } from "@/components/AppRelease";
-import { PluginsPage } from "@/components/PluginsPage";
 import { nextAttention } from "@/lib/hub";
 import { LOCALES, useLocale, useT, type Locale } from "@/lib/i18n";
 import type { WorkspaceView } from "@/lib/types";
@@ -44,11 +42,13 @@ export type SidebarProps = {
   onCreate: (name: string) => void | Promise<void>;
   onArchive: (id: string, archived: boolean) => void | Promise<void>;
   onDelete: (id: string) => void | Promise<void>;
-  onOpenModelSettings?: () => void;
+  onOpenAppSettings?: () => void;
+  appSettingsOpen?: boolean;
+  settingsButtonRef?: Ref<HTMLButtonElement>;
   onOpenThread?: (workspaceId: string, threadId: string) => void;
 };
 
-export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate, onArchive, onDelete, onOpenModelSettings, onOpenThread }: SidebarProps) {
+export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate, onArchive, onDelete, onOpenAppSettings, appSettingsOpen = false, settingsButtonRef, onOpenThread }: SidebarProps) {
   const t = useT();
   const [locale, setLocale] = useLocale();
   const dark = useSyncExternalStore(subscribeTheme, themeSnapshot, () => false);
@@ -59,7 +59,6 @@ export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate,
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
-  const [pluginsOpen, setPluginsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const deleteRef = useRef<HTMLButtonElement>(null);
@@ -209,10 +208,7 @@ export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate,
           else rowEls.current.delete(w.id);
         }}
         onClick={() => {
-          if (!w.archived) {
-            setPluginsOpen(false);
-            onSelect(w.id);
-          }
+          if (!w.archived) onSelect(w.id);
         }}
         onContextMenu={(e) => openMenu(e, w.id)}
       >
@@ -278,17 +274,13 @@ export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate,
         )}
       </nav>
       <div className="foot">
-        <button type="button" className="nav-model" onClick={() => { setPluginsOpen(false); onOpenModelSettings?.(); }}>
-          {t("sidebar.modelSettings")}
-        </button>
-        <button type="button" className="nav-plugins" aria-expanded={pluginsOpen} onClick={() => setPluginsOpen((open) => !open)}>
-          {t("plugins.nav")}
+        <button type="button" className="nav-app-settings" ref={settingsButtonRef} aria-expanded={appSettingsOpen} onClick={() => onOpenAppSettings?.()}>
+          {t("sidebar.appSettings")}
         </button>
         <div>
           <span className={`dot${connected ? "" : " off"}`} />
           {connected ? t("sidebar.agentOnline") : t("sidebar.agentOffline")}
         </div>
-        <AppReleaseFooter />
         <div className="foot-switch">
           <button type="button" className="theme-toggle" aria-pressed={dark} aria-label={t("sidebar.theme")} title={t("sidebar.theme")} onClick={toggleTheme}>
             <svg className={dark ? "theme-icon" : "theme-icon on"} viewBox="0 0 16 16" aria-hidden="true">
@@ -308,7 +300,6 @@ export function Sidebar({ workspaces, selectedId, connected, onSelect, onCreate,
           </div>
         </div>
       </div>
-      {pluginsOpen && <PluginsPage onClose={() => setPluginsOpen(false)} />}
       {menu && target && !confirmId && (
         <div ref={placeMenu} className="menu" role="menu" style={{ left: menu.x, top: menu.y }}>
           {target.archived ? (

@@ -2,10 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import { AppSettings } from "@/components/AppSettings";
 import { Chat, type ChatHandle } from "@/components/Chat";
 import { EntryDetail } from "@/components/EntryDetail";
 import { KnowledgePanel } from "@/components/KnowledgePanel";
-import { ModelSettings } from "@/components/ModelSettings";
 import { Sidebar } from "@/components/Sidebar";
 import { useThreadWindows } from "@/components/ThreadWindowsProvider";
 import { WorkspaceSettings } from "@/components/WorkspaceSettings";
@@ -108,7 +108,8 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   const [hubFault, setHubFault] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
+  const [appSettingsOpen, setAppSettingsOpen] = useState(false);
+  const appSettingsButtonRef = useRef<HTMLButtonElement>(null);
   const [openState, setOpenState] = useState<{ roomId: string | null; entryId: string | null; tab?: "content" | "history" }>({ roomId: null, entryId: null });
   const [knowWidth, setKnowWidth] = useState<number | null>(null);
   const [knowCollapsed, setKnowCollapsed] = useState(false);
@@ -220,6 +221,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
     setSelectedId(id);
     setSettingsOpen(false);
     setSearchOpen(false);
+    setAppSettingsOpen(false);
     try {
       localStorage.setItem(SELECTED_KEY, id);
     } catch {
@@ -238,6 +240,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
     }
     setSelectedId(workspaceId);
     setSettingsOpen(false);
+    setAppSettingsOpen(false);
     try { localStorage.setItem(SELECTED_KEY, workspaceId); } catch { /* storage unavailable */ }
     router.push(mainMessageUrl(workspaceId, message.id));
   }, [current?.id, router]);
@@ -411,6 +414,16 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
     applyColumn(col, column.getBoundingClientRect().width + step, frame.getBoundingClientRect().width, otherWidth(col));
   }
 
+  const openAppSettings = useCallback(() => {
+    setSettingsOpen(false);
+    setSearchOpen(false);
+    setAppSettingsOpen(true);
+  }, []);
+  const closeAppSettings = useCallback(() => {
+    setAppSettingsOpen(false);
+    queueMicrotask(() => appSettingsButtonRef.current?.focus());
+  }, []);
+
   const frameStyle = {
     ...(sideCollapsed ? { "--side-width": `${RAIL}px` } : sideWidth != null ? { "--side-width": `${sideWidth}px` } : {}),
     ...(knowCollapsed ? { "--know-width": `${RAIL}px` } : knowWidth != null ? { "--know-width": `${knowWidth}px` } : {}),
@@ -418,11 +431,11 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
 
   return (
     <div
-      className={openEntry && !settingsOpen ? "frame entry-open" : "frame"}
+      className={openEntry && !settingsOpen && !appSettingsOpen ? "frame entry-open" : "frame"}
       style={frameStyle}
     >
       <div className={sideCollapsed ? "side-col is-collapsed" : "side-col"}>
-        <Sidebar workspaces={workspaces ?? []} selectedId={current?.id ?? null} connected={connected} onSelect={select} onCreate={create} onArchive={changeArchive} onDelete={remove} onOpenThread={openTargetThread} onOpenModelSettings={() => { setSettingsOpen(false); setModelSettingsOpen(true); }} />
+        <Sidebar workspaces={workspaces ?? []} selectedId={current?.id ?? null} connected={connected} onSelect={select} onCreate={create} onArchive={changeArchive} onDelete={remove} onOpenThread={openTargetThread} onOpenAppSettings={openAppSettings} appSettingsOpen={appSettingsOpen} settingsButtonRef={appSettingsButtonRef} />
         <button
           type="button"
           className={dragging === "side" ? "col-resize side-resize is-dragging" : "col-resize side-resize"}
@@ -446,7 +459,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
           <Chevron dir={sideCollapsed ? "right" : "left"} />
         </button>
       </div>
-      <main className="chat">
+      <main className="chat" inert={appSettingsOpen ? true : undefined}>
         {current ? (
           <>
             <div className="bar">
@@ -456,7 +469,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
                 <button type="button" className="link" aria-label={t("chat.search")} aria-expanded={searchOpen} onClick={() => setSearchOpen((open) => !open)}>
                   <SearchMark />
                 </button>
-                <button type="button" className="link" onClick={() => { setModelSettingsOpen(false); setSettingsOpen((o) => !o); }}>
+                <button type="button" className="link" onClick={() => { setAppSettingsOpen(false); setSettingsOpen((o) => !o); }}>
                   <SettingsMark />
                   {t("common.settings")}
                 </button>
@@ -473,7 +486,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
           </p>
         )}
       </main>
-      <div className={knowCollapsed ? "know-col is-collapsed" : "know-col"}>
+      <div className={knowCollapsed ? "know-col is-collapsed" : "know-col"} inert={appSettingsOpen ? true : undefined}>
         <button
           type="button"
           className={dragging === "know" ? "col-resize know-resize is-dragging" : "col-resize know-resize"}
@@ -496,9 +509,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
         >
           <Chevron dir={knowCollapsed ? "left" : "right"} />
         </button>
-        {modelSettingsOpen ? (
-          <ModelSettings onClose={() => setModelSettingsOpen(false)} />
-        ) : current && settingsOpen ? (
+        {current && settingsOpen ? (
           <WorkspaceSettings key={current.id} workspace={current} onUpdated={updated} onClose={() => setSettingsOpen(false)} />
         ) : (
         <aside className="know">
@@ -521,6 +532,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
         </aside>
         )}
       </div>
+      {appSettingsOpen && <AppSettings onClose={closeAppSettings} />}
     </div>
   );
 }

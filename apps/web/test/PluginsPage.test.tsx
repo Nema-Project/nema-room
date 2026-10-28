@@ -1,12 +1,9 @@
 import { render, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionRecord } from "@nema/shared";
 import { PluginsPage } from "@/components/PluginsPage";
-import { Sidebar } from "@/components/Sidebar";
 import { I18nProvider } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
-import type { WorkspaceView } from "@/lib/types";
 
 vi.mock("@/lib/hub", () => ({ listExtensions: vi.fn(), listPlugins: vi.fn() }));
 
@@ -28,16 +25,6 @@ const catalog: ExtensionRecord[] = [
   row({ id: "code", name: "graphify", availability: "missing-dependency", error: "bundled-runtime-missing" }),
   row({ id: "github", name: "GitHub" }),
 ];
-
-const ws = (id: string, name: string): WorkspaceView => ({
-  id,
-  name,
-  confidential: false,
-  knowledgeLanguage: "follow",
-  createdAt: "2026-10-21T00:00:00Z",
-  openQuestions: 0,
-  archived: false,
-});
 
 beforeEach(() => {
   localStorage.clear();
@@ -88,14 +75,15 @@ describe("PluginsPage", () => {
     expect(within(block).queryByLabelText(/token/i)).toBeNull();
   });
 
-  it("opens from the sidebar plugins entry", async () => {
+  it("embeds without the overlay close button", async () => {
     render(
       <I18nProvider>
-        <Sidebar workspaces={[ws("w1", "Alpha")]} selectedId="w1" connected onSelect={() => {}} onCreate={() => {}} onArchive={() => {}} onDelete={() => {}} />
+        <PluginsPage embedded />
       </I18nProvider>,
     );
-    await userEvent.click(screen.getByRole("button", { name: "Plugins" }));
     expect(await screen.findByRole("heading", { name: "Extensions" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    expect(document.querySelector(".plugins-page.embedded")).toBeTruthy();
     expect(hub.listExtensions).toHaveBeenCalledOnce();
   });
 });

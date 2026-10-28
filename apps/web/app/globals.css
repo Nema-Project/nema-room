@@ -63,7 +63,7 @@ button, input { font: inherit; color: inherit; }
 button { background: none; border: 0; cursor: pointer; text-align: left; }
 
 /* Three-column grid. --know-width is set by the drag handle; 560px when an entry is open and the user has not dragged. */
-.frame { height: 100vh; display: grid; grid-template-columns: var(--side-width, 232px) minmax(0, 1fr) var(--know-width, 380px); grid-template-rows: minmax(0, 1fr); background: var(--paper); overflow: hidden; }
+.frame { position: relative; height: 100vh; display: grid; grid-template-columns: var(--side-width, 232px) minmax(0, 1fr) var(--know-width, 380px); grid-template-rows: minmax(0, 1fr); background: var(--paper); overflow: hidden; }
 .nema-desktop-window .frame { position: relative; top: 36px; height: calc(100vh - 36px); }
 .frame.entry-open { --know-width: 560px; }
 
@@ -107,10 +107,10 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .add-action:hover:not(:disabled) { background: var(--side-rule); color: var(--ink); }
 .add-action:disabled { opacity: .4; cursor: default; }
 .ws.add-form .creating, .ws.add-form .error { flex-basis: 100%; display: block; margin-top: 5px; }
-.side .foot { margin-top: auto; padding: 16px 20px; border-top: 1px solid var(--side-rule); font-size: 12px; color: var(--side-ink-2); }
+.side .foot { margin-top: auto; padding: 16px 20px; border-top: 1px solid var(--side-rule); font-size: 12px; color: var(--side-ink-2); display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 6px; vertical-align: 1px; }
 .dot.off { background: var(--dot-off); }
-.foot-switch { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.foot-switch { display: flex; align-items: center; gap: 8px; }
 .foot-release { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 12px; }
 .foot-version { font-variant-numeric: tabular-nums; }
 .release-check { border: 0; padding: 0; background: transparent; color: var(--side-ink); font: inherit; font-weight: 600; cursor: pointer; }
@@ -356,7 +356,8 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .notice .link { text-decoration: underline; }
 
 /* ---- plugins and linked repos ---- */
-.nav-plugins, .nav-model { display: block; width: 100%; margin-bottom: 12px; font-size: 13px; font-weight: 600; color: var(--side-ink); }
+.nav-app-settings { display: block; width: 100%; padding: 0; font-size: 13px; font-weight: 600; color: var(--side-ink); text-align: left; }
+.nav-app-settings:focus-visible { outline: 1px solid var(--side-ink); outline-offset: 2px; }
 .model-block { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--rule); }
 .model-block > .label { margin-bottom: 8px; }
 .model-block > button, .model-block .field > button { border: 1px solid var(--ink); padding: 5px 14px; margin: 8px 8px 0 0; font-weight: 600; }
@@ -385,6 +386,8 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .model-settings input[type="password"] { font-family: var(--mono); }
 .plugins-page { position: fixed; z-index: 15; top: 0; right: 0; bottom: 0; left: var(--side-width, 232px); display: flex; flex-direction: column; background: var(--side); }
 .nema-desktop-window .plugins-page { top: 36px; }
+.plugins-page.embedded { position: static; inset: auto; z-index: auto; flex: 1; min-height: 0; }
+.nema-desktop-window .plugins-page.embedded { top: auto; }
 .desktop-titlebar { position: fixed; z-index: 100; inset: 0 0 auto; height: 36px; display: flex; align-items: center; justify-content: space-between; padding-left: 14px; background: var(--paper); color: var(--ink); border-bottom: 1px solid var(--rule); -webkit-app-region: drag; user-select: none; }
 /* ponytail: 80px clears the hiddenInset lights at (12, 11) on this 36px bar. Fullscreen hides them, so the inset collapses. Update with MAC_TRAFFIC_LIGHT_POSITION. */
 .desktop-titlebar-macos { padding-left: 80px; }
@@ -408,6 +411,30 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .plugin-status .status-bad { color: var(--accent); }
 .plugin-note { margin-top: 10px; max-width: 68ch; padding: 8px 12px; background: var(--paper-2); font-size: 14px; }
 .plugin-block ul { list-style: none; margin-top: 12px; }
+.app-settings { position: absolute; z-index: 6; top: 0; right: 0; bottom: 0; left: var(--side-width, 232px); display: flex; flex-direction: column; min-width: 0; background: var(--paper); }
+.app-settings > .bar { padding: 0 28px; }
+.app-settings-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 196px minmax(0, 1fr); }
+.app-settings-tabs { border-right: 1px solid var(--rule); padding: 8px 0; overflow: auto; }
+.app-settings-tabs [role="tab"] { display: block; width: 100%; padding: 8px 18px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.app-settings-tabs [role="tab"][aria-selected="true"] { color: var(--ink); background: var(--paper-2); box-shadow: inset 2px 0 0 var(--ink); }
+.app-settings-tabs [role="tab"]:focus-visible,
+.app-settings .bar button:focus-visible,
+.app-settings-panel:focus-visible { outline: 1px solid var(--ink); outline-offset: -1px; }
+.app-settings-panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.app-settings-panel[hidden] { display: none; }
+.app-settings-panel > .drawer,
+.app-settings-panel > .plugins-page { flex: 1; min-height: 0; }
+.app-settings-section { overflow: auto; padding: 20px 28px 32px; max-width: 68ch; }
+.app-settings-section .label { margin-bottom: 12px; }
+.app-settings-section .help { margin-top: 8px; color: var(--ink-2); font-size: 13px; }
+.app-settings-section .foot-release { margin-top: 0; color: var(--ink-2); font-size: 13px; }
+.app-settings-section .release-check { color: var(--ink); }
+@media (max-width: 720px) {
+  .app-settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .app-settings-tabs { display: flex; border-right: 0; border-bottom: 1px solid var(--rule); }
+  .app-settings-tabs [role="tab"] { width: auto; white-space: nowrap; }
+  .app-settings-tabs [role="tab"][aria-selected="true"] { box-shadow: inset 0 -2px 0 var(--ink); }
+}
 .plugin-block li { display: grid; grid-template-columns: minmax(220px, max-content) minmax(0, 68ch); column-gap: 20px; align-items: baseline; padding: 4px 0; color: var(--ink-2); }
 .plugin-block .kid { color: var(--ink); font-family: var(--mono); font-size: 13px; }
 @media (max-width: 720px) {
