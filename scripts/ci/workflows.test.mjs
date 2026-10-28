@@ -232,6 +232,15 @@ test('windows desktop release publishes a separate portable ZIP and still smokes
 
 test('release gates bind all stages to one SHA and fail closed on verification results', () => {
   const release = read('desktop-release'); assertRelease(release);
+  const steps = release.jobs.publish.steps;
+  const stamp = steps.findIndex(step => step.name === 'Stamp the Compose asset');
+  const verify = steps.findIndex(step => step.name === 'Verify the complete asset set');
+  assert.ok(stamp >= 0 && verify > stamp);
+  assert.match(steps[verify].run, /compose-asset\/docker-compose\.yml/);
+  const publish = steps.find(step => step.name === 'Create or reuse draft, upload, publish');
+  assert.match(publish.run, /gh release upload "\$TAG" release-assets\/\*/);
+  assert.match(publish.run, /--draft=false/);
+  assert.match(publish.run, /--verify-remote/);
   const wrongRef=structuredClone(release); checkout(wrongRef.jobs.build)[0].with.ref='main'; assert.throws(()=>assertRelease(wrongRef));
   const missingVerify=structuredClone(release); missingVerify.jobs.publish.needs=['plan','build']; assert.throws(()=>assertRelease(missingVerify));
 });
