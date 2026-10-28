@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- The web build loads Inter (variable, weights 400–700) and JetBrains Mono (weight 500) from WOFF2 files in the repository. `next build` no longer downloads those faces from Google Fonts, so an unreachable fonts host cannot fail the image build. The web image ships the matching OFL texts at `/app/licenses/fonts/inter/OFL.txt` and `/app/licenses/fonts/jetbrains-mono/OFL.txt`.
 - UI confirmation retries recover committed evidence after transient database failures, preserving the original commit and events before a restart.
 
 - Source freshness reads compare the last observed revision with the current imported snapshot, including after interrupted indexing, so reimports update freshness and reference review flags immediately.

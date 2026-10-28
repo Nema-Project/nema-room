@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import { I18nProvider } from "@/lib/i18n";
 import { runtimeHubUrl } from "@/lib/runtimeHubUrl";
 import { AppReleaseBanner } from "@/components/AppRelease";
@@ -7,8 +7,23 @@ import { DesktopTitlebar } from "@/components/DesktopTitlebar";
 import { ThreadWindowsProvider } from "@/components/ThreadWindowsProvider";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-inter", display: "swap" });
-const mono = JetBrains_Mono({ subsets: ["latin"], weight: ["500"], variable: "--font-mono", display: "swap" });
+// Committed faces so `next build` does not download Google Fonts.
+// Inter variable: rsms/inter v4.1 (OFL, fonts/inter). Weights 400–700 match the previous Inter() call.
+// JetBrains Mono Medium: v2.304 weight 500 (OFL, fonts/jetbrains-mono).
+const inter = localFont({
+  src: "./fonts/inter/InterVariable.woff2",
+  weight: "400 700",
+  style: "normal",
+  variable: "--font-inter",
+  display: "swap",
+});
+const mono = localFont({
+  src: "./fonts/jetbrains-mono/JetBrainsMono-Medium.woff2",
+  weight: "500",
+  style: "normal",
+  variable: "--font-mono",
+  display: "swap",
+});
 
 // The published image reads NEMA_HUB_URL when a request arrives. A prerendered
 // page would freeze the build-time fallback into the HTML.
