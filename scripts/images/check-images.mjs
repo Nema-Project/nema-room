@@ -51,6 +51,10 @@ export function assertComposeShape(text) {
 
 const interpolation = '${NEMA_IMAGE_TAG:-latest}';
 
+function assertSingleImageKey(block, name) {
+  if ((block?.match(/^    image\s*:/gm) ?? []).length !== 1) throw new Error(`${name} must have exactly one image key`);
+}
+
 function validateVersion(version) {
   if (typeof version !== 'string' || version.startsWith('v')) throw new Error(`Not a release version: ${version}`);
   readReleaseVersion(`v${version}`, version);
@@ -61,6 +65,7 @@ export function assertComposeTemplate(text) {
   if (/image:\s+\S+:latest\b/.test(text)) throw new Error('Template must not use the latest tag literally');
   const services = serviceBlocks(text);
   for (const [name, image] of [['hub', HUB_IMAGE], ['web', WEB_IMAGE]]) {
+    assertSingleImageKey(services[name], name);
     if (!new RegExp(`^\\s*image: ${image.replaceAll('.', '\\.')}:\\$\\{NEMA_IMAGE_TAG:-latest\\}\\s*$`, 'm').test(services[name])) throw new Error(`${name} image must use NEMA_IMAGE_TAG interpolation`);
   }
 }
@@ -72,6 +77,7 @@ export function assertComposeAsset(text, version) {
   if (text.includes('${NEMA_IMAGE_TAG')) throw new Error('Published compose must not contain NEMA_IMAGE_TAG interpolation');
   const services = serviceBlocks(text);
   for (const [name, image] of [['hub', HUB_IMAGE], ['web', WEB_IMAGE]]) {
+    assertSingleImageKey(services[name], name);
     if (!services[name].split('\n').some(line => line.trim() === `image: ${image}:${version}`)) throw new Error(`Published compose is missing ${image}:${version}`);
   }
 }
@@ -87,6 +93,7 @@ export function renderComposeAsset(template, version) {
 export function composeAssetVersion(text) {
   const services = serviceBlocks(text);
   const versions = [['hub', HUB_IMAGE], ['web', WEB_IMAGE]].map(([name, image]) => {
+    assertSingleImageKey(services[name], name);
     const line = (services[name] ?? '').split('\n').map(line => line.trim()).find(line => line.startsWith(`image: ${image}:`));
     if (!line) throw new Error(`Published compose is missing ${image}`);
     return line.slice(`image: ${image}:`.length);

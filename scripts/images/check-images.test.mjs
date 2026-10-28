@@ -134,3 +134,19 @@ test('composeAssetVersion reads the shared pin', async () => {
   assert.equal(composeAssetVersion(asset), desktopVersion);
   assert.throws(() => composeAssetVersion(asset.replace(`nema-room-hub:${desktopVersion}`, 'nema-room-hub:1.2.3')), new RegExp(`1\\.2\\.3.*${desktopVersion.replaceAll('.', '\\.')}`));
 });
+
+for (const name of ['hub', 'web']) {
+  const addDuplicate = (text) => text.replace(
+    new RegExp(`(    image: ghcr.io/nema-project/nema-room-${name}:[^\\n]+)`),
+    '$1\n    image: ghcr.io/nema-project/nema-room-' + name + ':9.9.9',
+  );
+  test(`template rejects duplicate ${name} image keys`, () => {
+    assert.throws(() => assertComposeTemplate(addDuplicate(template)), /image/);
+  });
+  test(`asset rejects duplicate ${name} image keys`, () => {
+    assert.throws(() => assertComposeAsset(addDuplicate(asset), desktopVersion), /image/);
+  });
+  test(`asset version rejects duplicate ${name} image keys`, () => {
+    assert.throws(() => composeAssetVersion(addDuplicate(asset)), /image/);
+  });
+}
