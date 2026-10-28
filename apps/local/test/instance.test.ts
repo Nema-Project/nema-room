@@ -1,19 +1,23 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
-import { closeSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { openPrivateFile, protectPrivatePath } from "@nema/cli/secrets/permissions";
+import { equalHex, instanceHmac } from "@nema/shared/localInstance";
 import { acquireInstance, discoverInstance, requestInstanceShutdown, type InstanceLease } from "../src/instance.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/instance-child.ts", import.meta.url));
 const homes: string[] = [];
 const children: ChildProcess[] = [];
 const leases: InstanceLease[] = [];
+const servers: http.Server[] = [];
+const UI_ORIGIN = "http://127.0.0.1:4173";
 
 function newHome(): string {
   const home = mkdtempSync(join(tmpdir(), "nema-local-"));
@@ -133,10 +137,114 @@ function addressForHome(home: string): { homeHash: string; port: number } {
   const canonicalPath = realpathSync.native(home);
   const identity = process.platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
   const digest = createHash("sha256").update(identity).digest();
-  return { homeHash: digest.toString("hex"), port: 20000 + digest.readUInt32BE(0) % 25000 };
+  return { homeHash: digest.toString("hex"), port: 20000 + digest.readUInt32BE(0) % 12768 };
+}
+
+function legacyAddressFor(home: string): { homeHash: string; port: number; current: number } {
+  const canonicalPath = realpathSync.native(home);
+  const identity = process.platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
+  const digest = createHash("sha256").update(identity).digest();
+  const word = digest.readUInt32BE(0);
+  return { homeHash: digest.toString("hex"), port: 20000 + word % 25000, current: 20000 + word % 12768 };
+}
+
+function homeWithDistinctLegacyPort(): { home: string; homeHash: string; port: number } {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const home = newHome();
+    const address = legacyAddressFor(home);
+    if (address.port !== address.current) return { home, homeHash: address.homeHash, port: address.port };
+  }
+  throw new Error("no home whose previous control port differs from the current one");
+}
+
+async function deadPid(): Promise<number> {
+  const child = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore", windowsHide: true });
+  children.push(child);
+  await new Promise<void>((resolvePromise, reject) => {
+    if (child.exitCode !== null) return resolvePromise();
+    child.once("exit", () => resolvePromise());
+    child.once("error", reject);
+  });
+  if (child.pid === undefined) throw new Error("exited child has no pid");
+  return child.pid;
+}
+
+function writeLegacyDescriptor(home: string, fields: { homeHash: string; port: number; instanceId: string; secret: string; pid: number; installationId: string }): void {
+  writeFileSync(descriptorPath(home), JSON.stringify({
+    schemaVersion: 1,
+    protocol: "nema-local-v1",
+    homeHash: fields.homeHash,
+    instanceId: fields.instanceId,
+    installationId: fields.installationId,
+    pid: fields.pid,
+    controlOrigin: `http://127.0.0.1:${fields.port}`,
+    origin: UI_ORIGIN,
+    secret: fields.secret,
+  }), { mode: 0o600 });
+  protectPrivatePath(descriptorPath(home));
+}
+
+async function closeServer(server: http.Server): Promise<void> {
+  if (!server.listening) return;
+  server.close();
+  server.closeAllConnections();
+  await once(server, "close");
+}
+
+/** Answers the real discovery, launch, and shutdown HMAC checks on a chosen port. */
+async function listenLegacyCore(home: string, fields: { homeHash: string; port: number; instanceId: string; secret: string; installationId: string }): Promise<http.Server> {
+  const controlOrigin = `http://127.0.0.1:${fields.port}`;
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", controlOrigin);
+    if (req.method === "GET" && url.pathname === "/_nema/instance") {
+      const challenge = url.searchParams.get("challenge") ?? "";
+      const proof = instanceHmac(fields.secret, ["nema-local-v1", fields.homeHash, fields.instanceId, fields.installationId, controlOrigin, UI_ORIGIN, challenge]).toString("hex");
+      const body = JSON.stringify({ protocol: "nema-local-v1", homeHash: fields.homeHash, instanceId: fields.instanceId, installationId: fields.installationId, controlOrigin, origin: UI_ORIGIN, challenge, proof });
+      res.writeHead(200, { "content-type": "application/json", "content-length": Buffer.byteLength(body) });
+      res.end(body);
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/_nema/launch") {
+      const body = JSON.stringify({ origin: UI_ORIGIN, launchUrl: `${UI_ORIGIN}/_nema/launch`, instanceId: fields.instanceId });
+      res.writeHead(200, { "content-type": "application/json", "content-length": Buffer.byteLength(body) });
+      res.end(body);
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/_nema/shutdown") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { requestId?: string; proof?: string };
+      const requestId = parsed.requestId ?? "";
+      const expected = instanceHmac(fields.secret, ["nema-local-v1", "shutdown", fields.homeHash, fields.instanceId, fields.installationId, requestId]).toString("hex");
+      if (typeof parsed.proof !== "string" || !equalHex(parsed.proof, expected)) {
+        res.writeHead(401);
+        res.end();
+        return;
+      }
+      const state = "complete";
+      const message = "";
+      const proof = instanceHmac(fields.secret, ["nema-local-v1", "shutdown-complete", fields.homeHash, fields.instanceId, fields.installationId, requestId, state, message]).toString("hex");
+      const receipt = join(home, `shutdown-${requestId}.json`);
+      writeFileSync(receipt, JSON.stringify({ protocol: "nema-local-v1", homeHash: fields.homeHash, instanceId: fields.instanceId, installationId: fields.installationId, requestId, state, message, proof }), { mode: 0o600 });
+      protectPrivatePath(receipt);
+      const body = JSON.stringify({ state: "accepted", requestId });
+      res.writeHead(202, { "content-type": "application/json", "content-length": Buffer.byteLength(body) });
+      res.end(body);
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  servers.push(server);
+  await new Promise<void>((resolvePromise, reject) => {
+    server.once("error", reject);
+    server.listen(fields.port, "127.0.0.1", resolvePromise);
+  });
+  return server;
 }
 
 afterEach(async () => {
+  await Promise.all(servers.splice(0).map(closeServer));
   await Promise.all(children.splice(0).map(closeChild));
   await Promise.all(leases.splice(0).map((lease) => lease.close()));
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
@@ -265,7 +373,7 @@ describe("local instance ownership and discovery", () => {
     const canonical = process.platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
     const crypto = await import("node:crypto");
     const homeHash = crypto.createHash("sha256").update(canonical).digest("hex");
-    const port = 20000 + crypto.createHash("sha256").update(canonical).digest().readUInt32BE(0) % 25000;
+    const port = 20000 + crypto.createHash("sha256").update(canonical).digest().readUInt32BE(0) % 12768;
     writeFileSync(descriptorPath(home), JSON.stringify({ schemaVersion: 1, protocol: "nema-local-v1", homeHash, instanceId: randomUUID(), installationId: "a".repeat(64), pid: unrelated.pid, controlOrigin: `http://127.0.0.1:${port}`, origin: "http://127.0.0.1:4173", secret: randomBytes(32).toString("hex") }), { mode: 0o600 });
     protectPrivatePath(descriptorPath(home));
     expect(await discoverInstance(home)).toBeNull();
@@ -351,8 +459,17 @@ describe("local instance ownership and discovery", () => {
   });
 
   it("calls the launch callback only after an authenticated launch request", async () => {
-    const home = newHome();
-    const lease = await acquire(home);
+    // ponytail: one fresh home when the hashed port is taken. discoverInstance recomputes
+    // controlPortFor, so a listen-port override would fail that assertion. A second collision still fails.
+    let home = newHome();
+    let lease: InstanceLease;
+    try {
+      lease = await acquire(home);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "NEMA_LOCAL_OWNER_COLLISION") throw error;
+      home = newHome();
+      lease = await acquire(home);
+    }
     let calls = 0;
     await lease.publish({ origin: "http://127.0.0.1:4173", createLaunchUrl: () => { calls += 1; return "http://127.0.0.1:4173/_nema/launch"; } });
     expect(calls).toBe(0);
@@ -500,6 +617,38 @@ describe("local instance ownership and discovery", () => {
     await lease.publish({ origin: "http://127.0.0.1:4173", createLaunchUrl: () => "http://127.0.0.1:4173/_nema/launch" });
     expect(await discoverInstance(home)).not.toBeNull();
     await lease.close();
+  });
+
+  it("discovers and stops a core left by the previous port formula", async () => {
+    const { home, homeHash, port } = homeWithDistinctLegacyPort();
+    const instanceId = randomUUID();
+    const secret = randomBytes(32).toString("hex");
+    const installationId = "a".repeat(64);
+    const fields = { homeHash, port, instanceId, secret, installationId };
+    writeLegacyDescriptor(home, { ...fields, pid: await deadPid() });
+    await listenLegacyCore(home, fields);
+    const found = await discoverInstance(home);
+    expect(found).toMatchObject({ origin: UI_ORIGIN, launchUrl: `${UI_ORIGIN}/_nema/launch`, instanceId, installationId });
+    await expect(requestInstanceShutdown(home, { expectedInstanceId: instanceId, expectedInstallationId: installationId, timeoutMs: 2000 })).resolves.toEqual({ state: "complete" });
+  });
+
+  it("clears a stale descriptor from the previous port formula", async () => {
+    const { home, homeHash, port } = homeWithDistinctLegacyPort();
+    writeLegacyDescriptor(home, { homeHash, port, instanceId: randomUUID(), secret: randomBytes(32).toString("hex"), pid: await deadPid(), installationId: "a".repeat(64) });
+    const lease = await acquire(home);
+    expect(existsSync(descriptorPath(home))).toBe(false);
+    await lease.close();
+  });
+
+  it("refuses to start while an old-formula core still answers", async () => {
+    const { home, homeHash, port } = homeWithDistinctLegacyPort();
+    const instanceId = randomUUID();
+    const secret = randomBytes(32).toString("hex");
+    const installationId = "a".repeat(64);
+    writeLegacyDescriptor(home, { homeHash, port, instanceId, secret, pid: await deadPid(), installationId });
+    await listenLegacyCore(home, { homeHash, port, instanceId, secret, installationId });
+    await expect(acquireInstance(home, installationId)).rejects.toMatchObject({ code: "NEMA_LOCAL_OLD_OWNER_RUNNING" });
+    expect(existsSync(descriptorPath(home))).toBe(true);
   });
 });
 

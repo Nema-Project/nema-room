@@ -61,10 +61,15 @@ if (isDirectExecution()) {
       : "NEMA_LOCAL_START_FAILED";
     if (process.send && process.connected) {
       const collision = code === "NEMA_LOCAL_OWNER_COLLISION";
+      const oldOwner = code === "NEMA_LOCAL_OLD_OWNER_RUNNING";
       process.send({
         type: "core-error",
-        code: collision ? code : "NEMA_LOCAL_START_FAILED",
-        message: collision ? "Another local core owns the control port" : "Managed local core failed to start",
+        code: collision || oldOwner ? code : "NEMA_LOCAL_START_FAILED",
+        message: collision
+          ? "Another local core owns the control port"
+          : oldOwner
+            ? (error instanceof Error ? error.message : "An older local instance is still answering on the previous control port; shut that instance down completely before starting")
+            : "Managed local core failed to start",
       });
     }
     console.error("managed local core failed", code);
