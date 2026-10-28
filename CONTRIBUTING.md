@@ -70,6 +70,23 @@ npm run build -w apps/web
 - 不要提交 `.env`、令牌、`auth.json` 或 `~/.nema` 里的内容。示例只用 `example.com`、`YOUR_API_KEY_HERE` 这类占位符。
 - `vendor/` 只在升级第三方快照时修改。archify 的替换步骤见 [技术参考](docs/reference.zh-CN.md)。保留上游许可证和 `VENDORED.md`。
 
+## 发布准备
+
+功能 PR 仍把用户可见变更写入 [CHANGELOG.md](CHANGELOG.md) 的 `## [Unreleased]`。准备发布 PR 时，确认这些条目已经齐，然后在仓库根目录执行：
+
+```bash
+npm run release:stamp -- <x.y.z>
+npm run release:cut -- <x.y.z>
+```
+
+`<x.y.z>` 是严格 SemVer，不带 `v`。`release:stamp` 只改 `apps/cli`、`apps/desktop`、`apps/local` 三个 `package.json` 的 `version`，以及 `package-lock.json` 里对应的三条记录，然后只运行 `check-tag`。三条 `package.json` 版本事先不一致，或 `package-lock.json` 里对应记录缺失、不是字符串、或与包版本不同，命令在写入前拒绝。`check-tag` 在写入后失败时，这四个文件会恢复成执行前的内容。它不运行 `check-images`，不 commit、不打 tag、不 publish。镜像版本断言留到第 2 期，等 compose 模板和拆分后的断言落地。
+
+在那之前，`check-images` 仍要求 `docker-compose.yml` 的镜像 pin 等于包版本。pin 要在同一次发布提交里另改；盖印命令不改这个文件。细节见 [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md)。
+
+`release:cut` 把 `[Unreleased]` 的条目移到 `## [<x.y.z>] - <当天日期>`，紧跟在空的 `[Unreleased]` 标题之后。日期是执行命令时的本地日历日，是截稿日，不是打 tag 的日期。之后不要因为实际发布日不同再改这个日期。`[Unreleased]` 没有条目时命令拒绝，文件不变。
+
+然后写 ROADMAP 记录。tag 仍由维护者在 main 的 CI 已成功的 SHA 上单独创建，不从 CI 创建。
+
 ## Pull request
 
 用仓库里的 pull request 模板说明原因和验证方式。一个 pull request 只做一件事。CI 通过后再请求审阅。
