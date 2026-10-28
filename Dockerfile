@@ -89,6 +89,9 @@ ENV NODE_ENV=production \
 COPY --from=web-build /app/apps/web/.next/standalone ./
 COPY --from=web-build /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=web-build /app/apps/web/public ./apps/web/public
+# OFL notices for the self-hosted faces emitted into .next/static.
+COPY apps/web/app/fonts/inter/OFL.txt /app/licenses/fonts/inter/OFL.txt
+COPY apps/web/app/fonts/jetbrains-mono/OFL.txt /app/licenses/fonts/jetbrains-mono/OFL.txt
 COPY scripts/images/web-entrypoint.sh /entrypoint.sh
 RUN chmod 0755 /entrypoint.sh
 USER node

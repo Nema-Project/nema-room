@@ -35,6 +35,8 @@ test('web runtime copies the standalone server, static assets, and public files'
   assert.match(web, /COPY --from=web-build \/app\/apps\/web\/\.next\/standalone \.\//);
   assert.match(web, /COPY --from=web-build \/app\/apps\/web\/\.next\/static \.\/apps\/web\/\.next\/static/);
   assert.match(web, /COPY --from=web-build \/app\/apps\/web\/public \.\/apps\/web\/public/);
+  assert.match(web, /COPY apps\/web\/app\/fonts\/inter\/OFL\.txt \/app\/licenses\/fonts\/inter\/OFL\.txt/);
+  assert.match(web, /COPY apps\/web\/app\/fonts\/jetbrains-mono\/OFL\.txt \/app\/licenses\/fonts\/jetbrains-mono\/OFL\.txt/);
   assert.match(dockerfile, /ENTRYPOINT \["\/entrypoint\.sh"\]/);
   assert.match(web, /NEMA_HUB_URL=http:\/\/127\.0\.0\.1:4400/);
 });
