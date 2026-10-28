@@ -194,7 +194,7 @@ export function AppSettings({ onClose }: { onClose: () => void }) {
           tabIndex={0}
           className="app-settings-panel"
         >
-          {tab === "model" && <ModelSettings onClose={onClose} />}
+          {tab === "model" && <ModelSettings embedded />}
           {tab === "plugins" && <PluginsPage embedded />}
           {tab === "general" && <LoginItemSetting />}
           {tab === "about" && (

@@ -44,7 +44,12 @@ describe("AppSettings", () => {
     expect(model.getAttribute("aria-selected")).toBe("true");
     expect(model.tabIndex).toBe(0);
     expect(document.activeElement).toBe(model);
-    expect(screen.getByRole("tabpanel", { name: "Model" }).contains(screen.getByRole("dialog", { name: "Model settings" }))).toBe(true);
+    const modelPanel = screen.getByRole("tabpanel", { name: "Model" });
+    expect(modelPanel.querySelector(".model-settings.embedded")).toBeTruthy();
+    expect(modelPanel.querySelector(".model-settings")?.getAttribute("role")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Model settings" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Model settings" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
 
     await userEvent.keyboard("{ArrowDown}");
     const plugins = screen.getByRole("tab", { name: "Plugins" });

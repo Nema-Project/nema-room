@@ -26,7 +26,7 @@ function credentialState(settings: ModelSettingsDto, mode: SettingMode): "connec
   return modeFor(settings) === mode ? settings.auth.state : "missing";
 }
 
-export function ModelSettings({ onClose }: { onClose: () => void }) {
+export function ModelSettings({ onClose, embedded = false }: { onClose?: () => void; embedded?: boolean }) {
   const t = useT();
   const [settings, setSettings] = useState<ModelSettingsDto | null>(null);
   const [mode, setMode] = useState<SettingMode>("siwc");
@@ -360,11 +360,13 @@ export function ModelSettings({ onClose }: { onClose: () => void }) {
           : job?.state === "succeeded" ? "model.job.succeeded" : null;
 
   return (
-    <aside className="drawer model-settings" role="dialog" aria-label={t("model.title")}>
-      <div className="bar">
-        <h1>{t("model.title")}</h1>
-        <button type="button" className="sp settings-action" onClick={onClose}>{t("common.close")}</button>
-      </div>
+    <aside className={embedded ? "drawer model-settings embedded" : "drawer model-settings"} {...(embedded ? {} : { role: "dialog" as const, "aria-label": t("model.title") })}>
+      {!embedded && (
+        <div className="bar">
+          <h1>{t("model.title")}</h1>
+          {onClose && <button type="button" className="sp settings-action" onClick={onClose}>{t("common.close")}</button>}
+        </div>
+      )}
       <div className="drawer-body">
         {error && <p className="error" role="alert">{t(error)}</p>}
         {statusError && <p className="error" role="alert">{t(statusError)}</p>}

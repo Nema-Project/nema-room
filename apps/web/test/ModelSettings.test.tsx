@@ -52,6 +52,16 @@ beforeEach(() => {
 });
 
 describe("ModelSettings", () => {
+  it("embeds without its own title, close button, or dialog role", async () => {
+    setup(vi.fn<typeof fetch>().mockResolvedValue(reply(settings)), "en", undefined, <ModelSettings embedded />);
+    expect(await screen.findByLabelText("Model provider")).toBeTruthy();
+    expect(document.querySelector(".model-settings.embedded")).toBeTruthy();
+    expect(document.querySelector(".model-settings")?.getAttribute("role")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Model settings" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Model settings" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+  });
+
   it.each([
     ["en", "Model provider", "ChatGPT sign-in", "Model", "ChatGPT subscription", "Claude subscription", "API key", "Provider"],
     ["ja", "モデル提供元", "ChatGPT のログイン方法", "モデル", "ChatGPT サブスクリプション", "Claude サブスクリプション", "API キー", "プロバイダー"],

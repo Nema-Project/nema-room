@@ -254,12 +254,14 @@ describe("WorkspaceShell knowledge wiring", () => {
     render(<I18nProvider><WorkspaceShell routeId={null} /></I18nProvider>);
     const opener = await screen.findByRole("button", { name: "App settings" });
     await userEvent.click(opener);
-    const dialog = await screen.findByRole("dialog", { name: "Model settings" });
-    expect(dialog.closest(".app-settings")).toBeTruthy();
-    expect(dialog.closest(".know-col")).toBeNull();
+    const panel = await screen.findByRole("tabpanel", { name: "Model" });
+    expect(panel.closest(".app-settings")).toBeTruthy();
+    expect(panel.closest(".know-col")).toBeNull();
+    expect(panel.querySelector(".model-settings")?.getAttribute("role")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Model settings" })).toBeNull();
     expect((screen.getByLabelText("Model provider") as HTMLSelectElement).value).toBe("chatgpt");
     await userEvent.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "Model settings" })).toBeNull();
+    expect(screen.queryByRole("tabpanel", { name: "Model" })).toBeNull();
     await vi.waitFor(() => expect(document.activeElement).toBe(opener));
   });
   it("refreshes the list when delete fails and shows the hub error", async () => {
