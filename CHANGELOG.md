@@ -1,14 +1,20 @@
 # Changelog
 
+Version sections on main may describe release preparation. A version heading and date do not establish that its tag, packages, images or installers are available; published versions and downloads are listed on the [GitHub Releases page](https://github.com/Nema-Project/nema-room/releases). Public installation instructions stay on an available version until the required artifacts are verified.
+
 ## [Unreleased]
+
+## [0.1.5] - 2026-10-28
 
 ### Added
 
-- Source snapshots and `sourceRefs` preserve external evidence without turning excerpts into chat messages. Hub imports validate hashes and reuse source IDs after interrupted indexing; startup reconciles import receipts and confirmation events. This adds the protocol foundation; external service connectors are not included.
+- Source snapshots and `sourceRefs` preserve external evidence without turning excerpts into chat messages. Hub imports validate hashes and reuse source IDs after interrupted indexing; startup reconciles import receipts and confirmation events. This adds the protocol foundation; external service connectors are not included. Final CX-03 acceptance remains pending in `ROADMAP.md`; automated checks do not establish final acceptance.
 - UI edits and confirmations record independent evidence events with Git provenance. Knowledge reads report source freshness, references needing review, and unconfirmed snapshots without rewriting decisions.
 
 ### Fixed
 
+- Pull-request CI classifies the tested merge commit against its base, so documentation-only branches behind main no longer pick up main-only application changes.
+- The knowledge-store concurrency regression test yields between reads and uses bounded Windows-specific repetitions and timeout, preserving its integrity assertions without changing production behavior.
 - Hub and web images now build on `node:22-trixie-slim` (Debian 13) instead of `node:22-slim` (Debian 12, whose regular security support has ended). Patch-level dependency updates: Next.js 16.4.3, Hono 4.13.14, and PGlite 0.5.12. Electron moves from 45.0.0 to 45.1.0 — a feature and Chromium step rather than a patch, so it needs a desktop smoke pass before release.
 - The web build loads Inter (variable, weights 400–700) and JetBrains Mono (weight 500) from WOFF2 files in the repository. `next build` no longer downloads those faces from Google Fonts, so an unreachable fonts host cannot fail the image build. The web image ships the matching OFL texts at `/app/licenses/fonts/inter/OFL.txt` and `/app/licenses/fonts/jetbrains-mono/OFL.txt`.
 - UI confirmation retries recover committed evidence after transient database failures, preserving the original commit and events before a restart.

@@ -1,6 +1,6 @@
 # 项目路线图与验收台账
 
-更新日期：2026-10-27（Asia/Tokyo）
+更新日期：2026-10-28（Asia/Tokyo）
 
 本文件承接仓库评估中提出的 TODO，作为当前待办入口。它是建议的稳定化顺序，不代表全部问题已复现，也不代表已承诺交付日期。历史设计和评审保留在 `docs/superpowers/` 与 `docs/reviews/`；遇到冲突，应以对应提交的源码、CI 和验收证据为准。
 
@@ -15,6 +15,16 @@
 - [历史桌面验收](docs/reviews/2026-10-24-desktop-validation.md)只证明其记录的提交与环境；其中“尚未发布”等结论已经过时。
 - 已合入 `main` 的近期工作：[PR #29](https://github.com/Nema-Project/nema-room/pull/29) macOS 原生红绿灯（`5ff8cf9`）；[PR #30](https://github.com/Nema-Project/nema-room/pull/30) 落实 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 的用户 basis 证据检查（`afd1456`）；[PR #31](https://github.com/Nema-Project/nema-room/pull/31) 桌面包瘦身（`76680b8`）。
 - 本次评估通过 GitHub 读取源码、配置、Actions 和 Release；未本地重跑测试。开始每项工作前须重新检查最新状态。
+
+## v0.1.5 发布准备
+
+版本号、Compose 镜像钉和发布说明正在准备；这不表示 v0.1.5 已公开发布，也不关闭下列验收项：
+
+- Windows x64 与 macOS arm64 候选安装包的真机安装／覆盖升级、启动、一次 Graphify、退出与旧数据保留仍待验证；记录候选包 SHA，不能用旧版本的验收代替。
+- CX-03 仍待最终验收；发布前完成验收，或由维护者明确记录接受延期及其限制，不能因实现已合入就标记完成。
+- 合并 release PR 后，只有该合并 SHA 的 main 完整 CI 成功才可打 tag；打 tag 与 npm、镜像、桌面产物发布成功分别验证。
+- 公开安装入口继续使用 v0.1.4；只有 v0.1.5 tag 与两个镜像都可用并验证匿名拉取后，才用后续 PR 切换官网、README 和指南链接。main 的 Compose 为发布校验保留 v0.1.5 pin，开发走 `npm run up` 源码构建。
+- 公开分发后检查 GHCR 镜像匿名拉取、版本和下载校验；新版本不自动撤下旧版分发物。
 
 ## 优先级与维护规则
 
