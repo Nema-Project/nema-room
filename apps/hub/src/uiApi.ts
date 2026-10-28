@@ -1,8 +1,13 @@
+import { sourceEvidenceEntries, sourceEvidenceSummary } from "./sourceFreshness.js";
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z, ZodError } from "zod";
-import { KnowledgeStore, blameParagraphs, git, history, versionAt } from "@nema/knowledge";
-import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, kindFromId } from "@nema/shared";
+import { KnowledgeStore, blameParagraphs, git, history, versionAt, parseCommitMessage } from "@nema/knowledge";
+import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, kindFromId, canonicalJson } from "@nema/shared";
+import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
+import { insertEvidenceEvent, consumeEvidenceEvent, reconcileUnconsumedEventsLocked, payloadHashFor, type EvidenceEventInput } from "./evidenceEvents.js";
+import type { Entry } from "@nema/shared";
+import type { CommitMeta } from "@nema/knowledge";
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
 import type { EventBus, HubEvent } from "./events.js";
@@ -451,8 +456,8 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.get("/workspaces/:id/entries", async (c) => {
     const ws = c.req.param("id");
-    const [list, fresh] = await Promise.all([store(ws).list().then((l) => withDiagramStatus(db, ws, l)), newEntryIds(ws)]);
-    return c.json(list.map((e) => ({ ...e, isNew: fresh.has(e.id) })));
+    const [list, fresh] = await Promise.all([sourceEvidenceEntries(db, ws, await store(ws).listEntries()), newEntryIds(ws)]);
+    return c.json((await withDiagramStatus(db, ws, list.map(sourceEvidenceSummary))).map((e) => ({ ...e, isNew: fresh.has(e.id) })));
   });
 
   app.get("/workspaces/:id/timeline", async (c) => c.json(await timeline(db, dataDir, c.req.param("id")!, deps.ownedHelpers)));
@@ -463,7 +468,12 @@ export function uiRoutes(deps: UiDeps): Hono {
     return entry;
   };
 
-  app.get("/workspaces/:id/entries/:eid", async (c) => c.json(await requireEntry(c.req.param("id")!, c.req.param("eid")!)));
+  app.get("/workspaces/:id/entries/:eid", async (c) => {
+    const ws = c.req.param("id")!, eid = c.req.param("eid")!;
+    const entry = (await sourceEvidenceEntries(db, ws, await store(ws).listEntries())).find(e => e.id === eid);
+    if (!entry) throw new HttpError(404, `entry not found: ${eid}`);
+    return c.json(entry);
+  });
 
   app.post("/workspaces/:id/entries/:eid/withdraw", async (c) => {
     const workspaceId = c.req.param("id")!;
@@ -475,6 +485,63 @@ export function uiRoutes(deps: UiDeps): Hono {
     return c.json(entry);
   });
 
+  // Runs inside the store's existing repository lock; never calls a locking store method.
+  const confirmation = (ws: string, mode: "put" | "confirm") => {
+    const meta: CommitMeta = { author: "user", evidenceEventIds: [], uiAction: mode === "confirm" ? "confirm" : "edit" };
+    const pending: { id: string; payloadHash: string }[] = [];
+    return {
+      meta,
+      prepare: async (entry: Entry, existing: Entry | null): Promise<string | void> => {
+        await reconcileUnconsumedEventsLocked(db, dataDir, ws, entry.id);
+        const common = { workspaceId: ws, entryId: entry.id, contentHash: entryContentHash(entry), refsHash: refsHash(entry),
+          revision: entry.sourceSnapshot?.revision ?? null, snapshotHash: await relatedSnapshotHash(entry, (id) => store(ws).get(id)) };
+        const promote: EvidenceEventInput = { ...common, kind: "promote_basis", targetBasis: entry.basis as "stated" | "decided" };
+        const revision: EvidenceEventInput | null = entry.sourceSnapshot ? { ...common, kind: "confirm_revision", snapshotHash: entry.sourceSnapshot.contentHash } : null;
+        const kinds: EvidenceEventInput[] = mode === "put" || existing?.basis === null || existing?.basis === "inferred" ? [promote] : [];
+        if (mode === "confirm" && revision) kinds.push(revision);
+        if (!kinds.length) kinds.push({ ...common, kind: "confirm_entry" });
+        const consumed = async (input: EvidenceEventInput): Promise<string | undefined> => {
+          const rows = await db.query<{ consumed_commit: string }>(
+            "select consumed_commit from evidence_events where workspace_id = $1 and payload_hash = $2 and consumed_commit is not null order by consumed_at desc limit 1",
+            [ws, payloadHashFor(input)]);
+          return rows[0]?.consumed_commit;
+        };
+        const commits = await Promise.all(kinds.map(consumed));
+        // Only a promotion made by a prior confirm substitutes for confirm_entry on replay.
+        // A snapshot always needs its own matching confirm_revision event.
+        if (kinds.length === 1 && kinds[0]!.kind === "confirm_entry" && !commits[0]) {
+          const promoted = await consumed(promote);
+          if (promoted) {
+            try {
+              const message = await git(repoPath(dataDir, ws), ["show", "-s", "--format=%B", promoted]);
+              if (parseCommitMessage(message).uiAction === "confirm") commits[0] = promoted;
+            } catch {
+              // A DB-only restore may name a commit absent from this repository; it cannot prove replay.
+            }
+          }
+        }
+        // The evidence hash excludes metadata such as URL and related; replay must preserve those edits too.
+        const persisted = (value: Entry) => canonicalJson(JSON.parse(JSON.stringify({ ...value, confirmedAt: null })));
+        if (commits.every(Boolean) && existing && persisted(existing) === persisted(entry)) {
+          Object.assign(entry, existing);
+          return commits[0]!;
+        }
+        await db.tx(async (tx) => {
+          for (const input of kinds) {
+            const event = await insertEvidenceEvent(tx, input);
+            pending.push(event);
+            meta.evidenceEventIds!.push(event.id);
+          }
+        });
+      },
+      consume: async (commit: string) => {
+        for (const event of pending) {
+          if (!await consumeEvidenceEvent(db, ws, event.id, event.payloadHash, commit)) throw new Error("确认事件消费失败");
+        }
+      },
+    };
+  };
+
   app.put("/workspaces/:id/entries/:eid", async (c) => {
     const ws = c.req.param("id");
     const eid = c.req.param("eid");
@@ -485,9 +552,10 @@ export function uiRoutes(deps: UiDeps): Hono {
     // The client does not choose basis or confirmed. A user edit is a confirmation.
     // Implementation is kept as stored: the user changes it only through the implementation confirm.
     const { implementation: _implementation, ...edit } = parsed.data;
+    const audit = confirmation(ws, "put");
     const { entry, commit } = await store(ws).upsert(
       { ...edit, basis: parsed.data.kind === "decision" ? "decided" : "stated", confirmed: true },
-      { author: "user" },
+      audit.meta, undefined, audit.prepare, audit.consume,
     );
     // The commit is durable; bookkeeping failures must not fail the request.
     try {
@@ -505,7 +573,8 @@ export function uiRoutes(deps: UiDeps): Hono {
     const eid = c.req.param("eid")!;
     await body(c, z.object({}));
     await requireEntry(ws, eid);
-    const { entry, commit } = await store(ws).confirm(eid, { author: "user" });
+    const audit = confirmation(ws, "confirm");
+    const { entry, commit } = await store(ws).confirm(eid, audit.meta, audit.prepare, audit.consume);
     try {
       await indexEntry(db, ws, entry, deps.ownedHelpers);
       events.emit(ws, { type: "knowledge.changed", entryId: entry.id });

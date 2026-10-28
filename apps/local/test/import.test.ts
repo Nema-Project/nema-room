@@ -64,6 +64,23 @@ async function makeSource(withThreads = false): Promise<{ outputDir: string; sha
 const homeOf = () => join(root, "home");
 
 describe("importLegacySnapshot", () => {
+  it("marks restored unconsumed events not consumable", async () => {
+    const { outputDir } = await makeSource();
+    const snapshotPath = join(outputDir, "snapshot.json");
+    const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));
+    const event = { id: "ev1", workspace_id: "ws_a", kind: "confirm_entry", entry_id: "S-1", target_basis: null, revision: null, content_hash: "a".repeat(64), refs_hash: "b".repeat(64), snapshot_hash: null, payload_hash: "c".repeat(64), actor: "user", consumed_commit: null, consumed_at: null, consumable: true };
+    snapshot.tableData.evidence_events = [event, { ...event, id: "ev2", consumed_commit: "d".repeat(40), consumed_at: "2026-10-27T00:00:00.000Z" }];
+    writeFileSync(snapshotPath, JSON.stringify(snapshot));
+    await importLegacySnapshot(outputDir, homeOf(), { gitPath });
+    const db = await createLocalDb(join(homeOf(), "db"));
+    try {
+      const rows = await db.query<{ id: string; consumable: boolean; consumed_commit: string | null; consumed_at: Date | null }>("select id, consumable, consumed_commit, consumed_at from evidence_events order by id");
+      expect(rows[0]).toMatchObject({ id: "ev1", consumable: false, consumed_commit: null, consumed_at: null });
+      expect(rows[1]).toMatchObject({ id: "ev2", consumable: true, consumed_commit: "d".repeat(40) });
+      expect(new Date(rows[1]!.consumed_at!).toISOString()).toBe("2026-10-27T00:00:00.000Z");
+    } finally { await db.close(); }
+  });
+
   it("round-trips threads, thread messages, and their durable question association", async () => {
     const { outputDir } = await makeSource(true);
     await importLegacySnapshot(outputDir, homeOf(), { gitPath });

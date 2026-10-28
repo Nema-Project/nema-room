@@ -6,3 +6,4 @@ export * from "./protocol.js";
 export * from "./roomApi.js";
 export * from "./report.js";
 export * from "./ghCommand.js";
+export * from "./sourceEvidence.js";

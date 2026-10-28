@@ -2,7 +2,7 @@ import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { KnowledgeStore } from "@nema/knowledge";
-import { KIND_DIR, PLUGINS } from "@nema/shared";
+import { canonicalJson, KIND_DIR, PLUGINS } from "@nema/shared";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { createWorkspace, repoPath } from "../src/workspaces.js";
@@ -1016,4 +1016,117 @@ describe("implementation rules", () => {
     expect(r2.status).toBe(200);
     expect(((await r2.json()) as any).entry.implementation).toEqual(inferred);
   });
+});
+
+
+describe("external source evidence", () => {
+  const evidenceError = "引用外部来源时，把条目标成 stated 或 decided 需要当前这条用户消息里的逐字摘录。外部文档不能代替这个确认。";
+  async function source(ws = wsA) {
+    const payload = { schemaVersion: 1 as const, provider: "fake", resourceId: "doc", revision: "r1", title: "Source", canonicalUrl: "https://example.com/doc", excerpts: [{ locator: "p1", text: "external text" }] };
+    const { sha256 } = await import("../src/db/snapshot.js");
+    const { importSourceSnapshot } = await import("../src/sourceImport.js");
+    return (await importSourceSnapshot(db, dataDir, ws, { ...payload, fetchedAt: "2026-01-01T00:00:00Z", contentHash: sha256(canonicalJson(payload)) })).entry;
+  }
+  const ref = (s: any) => ({ sourceEntryId: s.id, revision: s.sourceSnapshot.revision, snapshotHash: s.sourceSnapshot.contentHash });
+  test("rejects a decided entry with source refs when the quote is only in an old version", async () => {
+    const t = await runningTaskFor(wsA); const s = await source();
+    await db.query("insert into message_versions(message_id, version, content) values ($1,1,'old wording')", [t.messageId]);
+    const r = await req("POST", "/room/entries", t.runToken, upsert({ kind: "decision", basis: "decided", sourceMessages: [t.messageId], sourceRefs: [ref(s)], quotes: [{ messageId: t.messageId, text: "old wording" }] }));
+    expect(r.status).toBe(409); expect((await r.json() as any).error).toBe(evidenceError);
+  });
+  test.each(["decided", "inferred"])("accepts a %s entry with valid source refs", async basis => {
+    const t = await runningTaskFor(wsA); const s = await source();
+    const r = await req("POST", "/room/entries", t.runToken, upsert({ basis, sourceMessages: [t.messageId], sourceRefs: [ref(s)], ...(basis === "decided" ? { quotes: [{ messageId: t.messageId, text: "memo" }] } : {}) }));
+    expect(r.status).toBe(200); expect((await r.json() as any).entry.sourceRefs).toEqual([ref(s)]);
+  });
+  test.each(["revision", "snapshotHash", "quote", "workspace"])("rejects an invalid source ref: %s", async field => {
+    const t = await runningTaskFor(wsA); const s = await source(field === "workspace" ? wsB : wsA);
+    const bad = { ...ref(s), ...(field === "revision" ? { revision: "old" } : field === "snapshotHash" ? { snapshotHash: "a".repeat(64) } : field === "quote" ? { locator: "p1", quote: "absent" } : {}) };
+    const r = await req("POST", "/room/entries", t.runToken, upsert({ basis: "inferred", sourceMessages: [t.messageId], sourceRefs: [bad] }));
+    expect(r.status).toBe(400);
+    expect((await r.json() as any).error).toBe(field === "workspace" ? "sourceRefs: unknown source entry S-1" : field === "quote" ? "sourceRefs: quote must be copied verbatim from excerpt p1 of S-1" : `sourceRefs: ${field} must match the current snapshot of S-1`);
+  });
+  test.each([false, true])("rejects a stated rewrite or clearing refs without a current quote (%s)", async clear => {
+    const t = await runningTaskFor(wsA); const s = await source();
+    const ks = new KnowledgeStore(repoPath(dataDir, wsA));
+    const saved = await ks.upsert(upsert({ basis: "stated", sourceRefs: [ref(s)] }) as any, { author: "user" });
+    const file = entryPath(wsA, "requirement", saved.entry.id); const before = await readFile(file);
+    const r = await req("POST", "/room/entries", t.runToken, upsert({ id: saved.entry.id, body: "rewrite", basis: clear ? "decided" : "stated", sourceMessages: [t.messageId], ...(clear ? { sourceRefs: [] } : {}) }));
+    expect(r.status).toBe(409); expect((await r.json() as any).error).toBe(evidenceError); expect(await readFile(file)).toEqual(before);
+  });
+  test.each(["body", "basis", "confirmed"])("protects a snapshotted source from agent %s changes", async field => {
+    const t = await runningTaskFor(wsA); const s = await source(); const file = entryPath(wsA, "source", s.id); const before = await readFile(file);
+    const r = await req("POST", "/room/entries", t.runToken, upsert({ id: s.id, kind: "source", title: s.title, body: field === "body" ? "changed" : s.body, url: s.url, basis: field === "basis" ? "stated" : s.basis, sourceMessages: [t.messageId], quotes: [{ messageId: t.messageId, text: "memo" }], confirmed: field === "confirmed" }));
+    expect(r.status).toBe(field === "confirmed" ? 200 : 409);
+    if (field !== "confirmed") { expect((await r.json() as any).error).toBe(field === "basis" ? "导入的来源不能由 Agent 改 basis。只有界面的 promote_basis 事件可以。" : "导入的来源快照不能用 upsert 修改"); expect(await readFile(file)).toEqual(before); }
+    else expect((await r.json() as any).entry.confirmedAt).toBe(s.confirmedAt);
+  });
+  test("does not consume an evidence event supplied by the agent", async () => {
+    const t = await runningTaskFor(wsA); const s = await source(); const ks = new KnowledgeStore(repoPath(dataDir, wsA));
+    const saved = await ks.upsert(upsert({ kind: "decision", basis: "inferred", sourceRefs: [ref(s)] }) as any, { author: "agent" });
+    const { insertEvidenceEvent } = await import("../src/evidenceEvents.js");
+    const event = await insertEvidenceEvent(db, { workspaceId: wsA, entryId: saved.entry.id, kind: "promote_basis", targetBasis: "decided", contentHash: "a".repeat(64), refsHash: "b".repeat(64) });
+    const r = await req("POST", "/room/entries", t.runToken, upsert({ id: saved.entry.id, kind: "decision", basis: "decided", sourceMessages: [t.messageId], confirmationEventId: event.id }));
+    expect(r.status).toBe(409); expect((await ks.get(saved.entry.id))?.basis).toBe("inferred");
+    expect(await db.query("select consumed_commit from evidence_events where id=$1", [event.id])).toEqual([{ consumed_commit: null }]);
+  });
+  test("counts a source refs change as an active decision rewrite", async () => {
+    const t = await runningTaskFor(wsA); const s = await source(); const ks = new KnowledgeStore(repoPath(dataDir, wsA));
+    const saved = await ks.upsert(upsert({ kind: "decision", basis: "decided", sourceRefs: [ref(s)] }) as any, { author: "user" });
+    const file = entryPath(wsA, "decision", saved.entry.id); const before = await readFile(file);
+    const r = await req("POST", "/room/entries", t.runToken, upsert({ id: saved.entry.id, kind: "decision", basis: "inferred", sourceMessages: [t.messageId], sourceRefs: [] }));
+    expect(r.status).toBe(409); expect((await r.json() as any).error).toBe(decisionGuardError(saved.entry.id)); expect(await readFile(file)).toEqual(before);
+  });
+
+  test("rejects a decided entry with source refs from a system task that cites an older user message", async () => {
+    const t = await runningTaskFor(wsA); const s = await source(); await finishTask(db, t.taskId, { ok: true });
+    await postSystemTask(db, wsA, "system task"); const task = await claimNextTask(db, "system");
+    const r = await req("POST", "/room/entries", task!.runToken!, upsert({ kind: "decision", basis: "decided", sourceMessages: [t.messageId], sourceRefs: [ref(s)], quotes: [{ messageId: t.messageId, text: "memo" }] }));
+    expect(r.status).toBe(409); expect((await r.json() as any).error).toBe(USER_BASIS_EVIDENCE_ERROR);
+  });
+
+});
+
+test("source checks and reimports project evidence on all four GET interfaces without rewriting decisions", async () => {
+  const { importSourceSnapshot } = await import("../src/sourceImport.js");
+  const { recordSourceCheck } = await import("../src/sourceFreshness.js");
+  const { sha256 } = await import("../src/db/snapshot.js");
+  const { createApp } = await import("../src/app.js");
+  const t = await runningTaskFor(wsA);
+  const snapshot = (text: string, revision: string | null) => {
+    const payload = { schemaVersion: 1 as const, provider: "fake", resourceId: "freshness", revision, title: text, canonicalUrl: "https://example.com/doc", excerpts: [{ locator: "p1", text }] };
+    return { ...payload, fetchedAt: new Date().toISOString(), contentHash: sha256(canonicalJson(payload)) };
+  };
+  const first = await importSourceSnapshot(db, dataDir, wsA, snapshot("A", "v1"));
+  const ks = new KnowledgeStore(repoPath(dataDir, wsA));
+  const decision = (await ks.upsert({ kind: "decision", title: "Dependent", body: "unchanged", reason: "test", basis: "inferred", sourceMessages: [], sourceRefs: [{ sourceEntryId: first.entry.id, revision: "v1", snapshotHash: first.entry.sourceSnapshot!.contentHash, locator: "p1" }] }, { author: "agent" })).entry;
+  const file = entryPath(wsA, "decision", decision.id), before = await readFile(file, "utf8");
+  await recordSourceCheck(db, dataDir, wsA, first.entry.id, { outcome: "ok", revision: "v2" });
+  expect(await readFile(file, "utf8")).toBe(before);
+  expect((await (await req("GET", `/room/entries/${decision.id}`, t.runToken)).json() as any).entry.reviewNeeded).toBe(true);
+  await recordSourceCheck(db, dataDir, wsA, first.entry.id, { outcome: "timeout" });
+  expect((await (await req("GET", `/room/entries/${decision.id}`, t.runToken)).json() as any).entry.reviewNeeded).toBe(false);
+  await expect(recordSourceCheck(db, dataDir, wsB, first.entry.id, { outcome: "offline" })).rejects.toMatchObject({ status: 404 });
+  await expect(recordSourceCheck(db, dataDir, wsA, decision.id, { outcome: "offline" })).rejects.toMatchObject({ status: 404 });
+  const ui = createApp({ db, dataDir, nemaHome: dataDir, events, daemonStatus: () => true, daemon, webOrigin: "http://localhost:3000" });
+  const uiReq = (method: string, suffix: string) => ui.request(`http://127.0.0.1:4400/api/workspaces/${wsA}/entries${suffix}`, { method, headers: { "content-type": "application/json" }, ...(method === "POST" ? { body: "{}" } : {}) });
+  expect((await uiReq("POST", `/${first.entry.id}/confirm`)).status).toBe(200);
+  expect((await (await uiReq("GET", `/${first.entry.id}`)).json() as any).unconfirmedSnapshot).toBe(false);
+  await importSourceSnapshot(db, dataDir, wsA, snapshot("B", null));
+  await recordSourceCheck(db, dataDir, wsA, first.entry.id, { outcome: "ok", revision: "v3" });
+  expect(await db.query("select freshness,reason from source_freshness where workspace_id=$1", [wsA])).toEqual([{ freshness: "unknown", reason: "incomparable" }]);
+  const roomList = (await (await req("GET", "/room/entries", t.runToken)).json() as any).entries;
+  const roomGet = (await (await req("GET", `/room/entries/${first.entry.id}`, t.runToken)).json() as any).entry;
+  const uiList = await (await uiReq("GET", "")).json() as any[];
+  const uiGet = await (await uiReq("GET", `/${first.entry.id}`)).json();
+  for (const entry of [roomList.find((e: any) => e.id === first.entry.id), roomGet, uiList.find((e: any) => e.id === first.entry.id), uiGet]) {
+    expect(entry).toMatchObject({ basis: "stated", freshness: "unknown", reviewNeeded: false, unconfirmedSnapshot: true });
+  }
+  expect(roomList.find((e: any) => e.id === decision.id)).toMatchObject({ reviewNeeded: true, unconfirmedSnapshot: false });
+  expect(await readFile(file, "utf8")).toBe(before);
+  const nullDecision = (await ks.upsert({ kind: "decision", title: "Null revision dependency", body: "stable", reason: "test", basis: "inferred", sourceMessages: [], sourceRefs: [{ sourceEntryId: first.entry.id, revision: null, snapshotHash: snapshot("B", null).contentHash }] }, { author: "agent" })).entry;
+  const nullFile = entryPath(wsA, "decision", nullDecision.id), nullBefore = await readFile(nullFile, "utf8");
+  await importSourceSnapshot(db, dataDir, wsA, snapshot("C", null));
+  expect((await (await req("GET", `/room/entries/${nullDecision.id}`, t.runToken)).json() as any).entry).toMatchObject({ reviewNeeded: true, freshness: "unknown" });
+  expect(await readFile(nullFile, "utf8")).toBe(nullBefore);
 });

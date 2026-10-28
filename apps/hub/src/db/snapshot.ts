@@ -21,6 +21,9 @@ export type KnowledgeManifestEntry = {
 
 export const TABLE_COLUMNS = {
   workspaces: ["id", "name", "confidential", "knowledge_language", "created_at", "archived_at"],
+  evidence_events: ["id", "workspace_id", "kind", "entry_id", "target_basis", "revision", "content_hash", "refs_hash", "snapshot_hash", "payload_hash", "actor", "created_at", "consumed_commit", "consumed_at", "consumable"],
+  source_import_receipts: ["workspace_id", "provider", "resource_id", "revision_key", "content_hash", "entry_id", "phase", "knowledge_commit", "created_at"],
+  source_freshness: ["workspace_id", "entry_id", "freshness", "checked_revision", "reason", "checked_at"],
   messages: ["id", "workspace_id", "role", "content", "meta", "task_id", "created_at", "seq", "edited_at", "thread_id"],
   threads: ["id", "workspace_id", "title", "opened_by", "last_read_seq", "created_at"],
   question_threads: ["workspace_id", "question_id", "thread_id"],
@@ -37,7 +40,7 @@ export const TABLE_COLUMNS = {
 } as const;
 
 /** Snapshots taken before this table existed still import. */
-const OPTIONAL_TABLES = new Set<keyof typeof TABLE_COLUMNS>(["message_versions", "threads", "question_threads"]);
+const OPTIONAL_TABLES = new Set<keyof typeof TABLE_COLUMNS>(["message_versions", "threads", "question_threads", "evidence_events", "source_import_receipts", "source_freshness"]);
 
 export const TABLE_ORDER = Object.keys(TABLE_COLUMNS) as (keyof typeof TABLE_COLUMNS)[];
 const workspaceIdPattern = /^ws_[A-Za-z0-9_-]{1,32}$/;
@@ -87,6 +90,28 @@ export function validateSnapshot(value: unknown): Snapshot {
   const requireWorkspace = (row: Record<string, unknown>) => {
     if (typeof row.workspace_id !== "string" || !ids.has(row.workspace_id)) throw new Error("Snapshot contains a missing workspace reference");
   };
+  const validHash = (value: unknown) => typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
+  for (const row of tableData.evidence_events!) {
+    requireWorkspace(row);
+    if (!["promote_basis", "confirm_revision", "confirm_entry"].includes(String(row.kind)) || row.actor !== "user" || typeof row.consumable !== "boolean" ||
+        (row.target_basis != null && !["stated", "decided"].includes(String(row.target_basis))) ||
+        (row.kind === "promote_basis" && row.target_basis == null) || (row.kind === "confirm_entry" && row.target_basis != null)) throw new Error("Invalid evidence event fields");
+    if (![row.content_hash, row.refs_hash, row.payload_hash].every(validHash) || (row.snapshot_hash != null && !validHash(row.snapshot_hash))) throw new Error("Invalid evidence hash");
+    if (row.kind === "confirm_revision" && row.snapshot_hash == null) throw new Error("confirm_revision requires a snapshot hash");
+    if ((row.consumed_commit == null) !== (row.consumed_at == null)) throw new Error("Invalid consumed columns");
+  }
+  for (const row of tableData.source_import_receipts!) {
+    requireWorkspace(row);
+    if (!["reserved", "committed", "indexed"].includes(String(row.phase))) throw new Error("Invalid source import phase");
+    if (!validHash(row.content_hash)) throw new Error("Invalid source import hash");
+  }
+  for (const row of tableData.source_freshness!) {
+    requireWorkspace(row);
+    if (!((row.freshness === "current" && row.reason === "match" && row.checked_revision != null) ||
+          (row.freshness === "changed" && row.reason === "mismatch" && row.checked_revision != null) ||
+          (row.freshness === "unavailable" && ["not_found", "forbidden"].includes(String(row.reason))) ||
+          (row.freshness === "unknown" && ["offline", "timeout", "incomparable"].includes(String(row.reason))))) throw new Error("Invalid source freshness fields");
+  }
   const messageIds = new Set<string>();
   for (const row of tableData.messages!) {
     if (typeof row.id !== "string" || messageIds.has(row.id) || typeof row.content !== "string" || !["user", "agent", "system", "report"].includes(String(row.role))) throw new Error("Invalid message row");

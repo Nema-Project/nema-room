@@ -10,7 +10,7 @@ import { addMessage, postUserMessage } from "../src/messages.js";
 import { claimNextTask, finishTask, recordTaskChange } from "../src/tasks.js";
 import { EventBus } from "../src/events.js";
 import { indexEntry } from "../src/entryIndex.js";
-import { KnowledgeStore } from "@nema/knowledge";
+import { KnowledgeStore, git } from "@nema/knowledge";
 import { repoPath } from "../src/workspaces.js";
 import { createApp } from "../src/app.js";
 import type { Hono } from "hono";
@@ -602,6 +602,190 @@ describe("ui api", () => {
     expect(await db.query("select entry_id from entry_index where workspace_id = $1 and entry_id = $2", [ws, e.id])).toEqual([
       { entry_id: e.id },
     ]);
+  });
+
+  test("confirm of an inferred decision records a consumed promote_basis event", async () => {
+    const e = await inferredEntry({ kind: "decision", title: "D" });
+    const r = await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {});
+    expect(r.status).toBe(200);
+    const rows = await db.query<any>("select * from evidence_events where workspace_id = $1", [ws]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: "promote_basis", target_basis: "decided", actor: "user" });
+    expect(rows[0].consumed_commit).toBe((await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim());
+    expect(await git(repoPath(dataDir, ws), ["log", "-1", "--format=%B"])).toContain(`Evidence-Event: ${rows[0].id}`);
+  });
+
+  test("confirm of a snapshotted source records confirm_revision and does not mark a null revision current", async () => {
+    const e = await inferredEntry({ kind: "source", title: "S", url: "https://example.com" });
+    const store = new KnowledgeStore(repoPath(dataDir, ws));
+    await store.writeImportedSource({ ...e, basis: "stated", sourceSnapshot: {
+      schemaVersion: 1, provider: "manual", resourceId: "a", revision: null,
+      fetchedAt: SEEDED_AT, title: "S", canonicalUrl: "https://example.com", contentHash: "a".repeat(64),
+      excerpts: [{ locator: "p1", text: "excerpt" }],
+    } });
+    const r = await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {});
+    expect(r.status).toBe(200);
+    expect((await json(r)).confirmedRevision).toBeNull();
+    const rows = await db.query<any>("select * from evidence_events where workspace_id = $1", [ws]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: "confirm_revision", revision: null, snapshot_hash: "a".repeat(64) });
+    expect(rows[0].consumed_commit).toBeTruthy();
+    expect(await db.query("select * from source_freshness where workspace_id = $1", [ws])).toHaveLength(0);
+  });
+
+  test("a snapshotted inferred source promotes and confirms its revision in one commit", async () => {
+    const e = await inferredEntry({ kind: "source", title: "S", url: "https://example.com" });
+    const store = new KnowledgeStore(repoPath(dataDir, ws));
+    await store.writeImportedSource({ ...e, sourceSnapshot: {
+      schemaVersion: 1, provider: "manual", resourceId: "a", revision: "v2",
+      fetchedAt: SEEDED_AT, title: "S", canonicalUrl: "https://example.com", contentHash: "a".repeat(64),
+      excerpts: [{ locator: "p1", text: "excerpt" }],
+    } });
+    const r = await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {});
+    expect(r.status).toBe(200);
+    expect((await json(r)).confirmedRevision).toBe("v2");
+    const rows = await db.query<any>("select * from evidence_events where workspace_id = $1 order by kind", [ws]);
+    expect(rows.map((row) => row.kind)).toEqual(["confirm_revision", "promote_basis"]);
+    expect(new Set(rows.map((row) => row.consumed_commit))).toEqual(new Set([(await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim()]));
+    const head = rows[0].consumed_commit;
+    await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {});
+    expect((await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim()).toBe(head);
+    expect(await db.query("select * from evidence_events where workspace_id = $1", [ws])).toHaveLength(2);
+  });
+
+  test.each(["decision", "source"] as const)("confirm retry reconciles committed evidence after consumption fails: %s", async (kind) => {
+    const e = await inferredEntry({ kind, title: "Retry", ...(kind === "source" ? { url: "https://example.com" } : {}) });
+    if (kind === "source") {
+      await new KnowledgeStore(repoPath(dataDir, ws)).writeImportedSource({ ...e, sourceSnapshot: {
+        schemaVersion: 1, provider: "manual", resourceId: "retry", revision: "v2",
+        fetchedAt: SEEDED_AT, title: "Retry", canonicalUrl: "https://example.com", contentHash: "a".repeat(64),
+        excerpts: [{ locator: "p1", text: "excerpt" }],
+      } });
+    }
+    const query = db.query.bind(db);
+    let consumed = 0;
+    const fault = vi.spyOn(db, "query").mockImplementation(async (sql, params) => {
+      if (sql.includes("update evidence_events") && ++consumed === (kind === "source" ? 2 : 1)) {
+        throw new Error("transient evidence consumption failure");
+      }
+      return query(sql, params);
+    });
+    try {
+      expect((await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {})).status).toBe(500);
+    } finally {
+      fault.mockRestore();
+    }
+    const head = (await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim();
+    const before = await db.query<any>("select id, consumed_commit from evidence_events where workspace_id = $1 order by id", [ws]);
+    expect(before).toHaveLength(kind === "source" ? 2 : 1);
+    expect(before.filter((row) => row.consumed_commit === null)).toHaveLength(1);
+    expect((await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {})).status).toBe(200);
+    expect((await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim()).toBe(head);
+    expect(await db.query("select id, consumed_commit from evidence_events where workspace_id = $1 order by id", [ws]))
+      .toEqual(before.map((row) => ({ id: row.id, consumed_commit: head })));
+  });
+
+  test("a room token cannot confirm through the gated ui route", async () => {
+    const e = await inferredEntry({ kind: "decision", title: "D" });
+    app = createApp({ db, dataDir, events, daemonStatus: () => true, daemon,
+      uiAuth: async (c, next) => {
+        if (c.req.header("x-nema-gateway-credential") !== "fake-gateway") return c.json({ error: "Unauthorized" }, 401);
+        await next();
+      },
+    });
+    expect((await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {}, { Authorization: "Bearer fake-run-token" })).status).toBe(401);
+    expect(await db.query("select * from evidence_events where workspace_id = $1", [ws])).toHaveLength(0);
+  });
+
+  test("put records a consumed promote_basis event", async () => {
+    const e = await inferredEntry({ kind: "decision", title: "D" });
+    const payload = { kind: "decision", title: "Edited", body: "new", reason: "edit", sourceMessages: [], sourceSnapshot: { invalid: true }, confirmedRevision: "forged" };
+    expect((await req("PUT", `/api/workspaces/${ws}/entries/${e.id}`, payload)).status).toBe(200);
+    const rows = await db.query<any>("select * from evidence_events where workspace_id = $1", [ws]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe("promote_basis");
+    expect(rows[0].consumed_commit).toBe((await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim());
+    expect((await req("PUT", `/api/workspaces/${ws}/entries/${e.id}`, payload)).status).toBe(200);
+    expect((await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim()).toBe(rows[0].consumed_commit);
+  });
+
+  test("PUT cannot spoof confirmation provenance through its reason or client action", async () => {
+    const e = await inferredEntry({ kind: "decision", title: "D" });
+    const payload = { kind: "decision", title: e.title, body: e.body, reason: "用户确认仍然有效", sourceMessages: [], uiAction: "confirm" };
+    expect((await req("PUT", `/api/workspaces/${ws}/entries/${e.id}`, payload)).status).toBe(200);
+    const putCommit = (await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim();
+    expect((await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, { uiAction: "edit" })).status).toBe(200);
+    const rows = await db.query<any>("select * from evidence_events where workspace_id = $1 order by kind", [ws]);
+    expect(rows.map((row) => row.kind)).toEqual(["confirm_entry", "promote_basis"]);
+    const confirmCommit = (await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim();
+    expect(confirmCommit).not.toBe(putCommit);
+    expect(await git(repoPath(dataDir, ws), ["show", "-s", "--format=%B", putCommit])).toContain("UI-Action: edit");
+    expect(await git(repoPath(dataDir, ws), ["show", "-s", "--format=%B", confirmCommit])).toContain("UI-Action: confirm");
+    await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {});
+    expect((await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim()).toBe(confirmCommit);
+    expect(await db.query("select * from evidence_events where workspace_id = $1", [ws])).toHaveLength(2);
+  });
+
+  test("confirm after a snapshot PUT requires its own confirm_revision event", async () => {
+    const e = await inferredEntry({ kind: "source", title: "S", url: "https://example.com" });
+    const store = new KnowledgeStore(repoPath(dataDir, ws));
+    await store.writeImportedSource({ ...e, sourceSnapshot: {
+      schemaVersion: 1, provider: "manual", resourceId: "a", revision: null,
+      fetchedAt: SEEDED_AT, title: "S", canonicalUrl: "https://example.com", contentHash: "a".repeat(64),
+      excerpts: [{ locator: "p1", text: "excerpt" }],
+    } });
+    expect((await req("PUT", `/api/workspaces/${ws}/entries/${e.id}`, {
+      kind: "source", title: "S", url: "https://example.com", body: e.body, reason: "edit", sourceMessages: [],
+    })).status).toBe(200);
+    const before = (await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim();
+    expect((await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {})).status).toBe(200);
+    const rows = await db.query<any>("select * from evidence_events where workspace_id = $1 order by kind", [ws]);
+    expect(rows.map((row) => row.kind)).toEqual(["confirm_revision", "promote_basis"]);
+    const head = (await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim();
+    expect(head).not.toBe(before);
+    expect(rows[0].consumed_commit).toBe(head);
+    await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {});
+    expect((await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim()).toBe(head);
+    expect(await db.query("select * from evidence_events where workspace_id = $1", [ws])).toHaveLength(2);
+  });
+
+  test.each([
+    { field: "related", seed: { kind: "decision" }, patch: { related: ["R-99"] } },
+    { field: "url", seed: { kind: "source", url: "https://example.com/old" }, patch: { url: "https://example.com/new" } },
+    { field: "priority", seed: { kind: "question", priority: 1 }, patch: { priority: 2 } },
+    { field: "businessDate", seed: { kind: "decision" }, patch: { businessDate: "2026-10-28" } },
+  ])("PUT replay preserves an edit to $field outside the evidence hash", async ({ seed, patch }) => {
+    const e = await inferredEntry({ ...seed, title: "Entry" });
+    const payload = { ...seed, title: e.title, body: e.body, reason: "edit", sourceMessages: [] };
+    expect((await req("PUT", `/api/workspaces/${ws}/entries/${e.id}`, payload)).status).toBe(200);
+    const before = (await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim();
+    const r = await req("PUT", `/api/workspaces/${ws}/entries/${e.id}`, { ...payload, ...patch });
+    expect(r.status).toBe(200);
+    expect(await json(r)).toMatchObject(patch);
+    expect(await new KnowledgeStore(repoPath(dataDir, ws)).get(e.id)).toMatchObject(patch);
+    const head = (await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim();
+    expect(head).not.toBe(before);
+    await req("PUT", `/api/workspaces/${ws}/entries/${e.id}`, { ...payload, ...patch });
+    expect((await git(repoPath(dataDir, ws), ["rev-parse", "HEAD"])).trim()).toBe(head);
+  });
+
+  test("two concurrent confirms share one event and one commit", async () => {
+    const e = await inferredEntry({ kind: "decision", title: "D" });
+    const store = new KnowledgeStore(repoPath(dataDir, ws));
+    const before = await store.get(e.id);
+    const countBefore = Number(await git(repoPath(dataDir, ws), ["rev-list", "--count", "HEAD"]));
+    const results = await Promise.all([0, 1].map(() => req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {})));
+    expect(results.map((r) => r.status)).toEqual([200, 200]);
+    const rows = await db.query<any>("select * from evidence_events where workspace_id = $1", [ws]);
+    expect(Number(await git(repoPath(dataDir, ws), ["rev-list", "--count", "HEAD"]))).toBe(countBefore + 1);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe("promote_basis");
+    expect(rows[0].consumed_commit).toMatch(/^[a-f0-9]{40}$/);
+    const saved = await store.get(e.id);
+    expect(saved?.confirmedAt).not.toBe(before?.confirmedAt);
+    await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {});
+    expect((await db.query<any>("select * from evidence_events where workspace_id = $1", [ws]))).toHaveLength(1);
+    expect((await store.get(e.id))?.confirmedAt).toBe(saved?.confirmedAt);
   });
 
   test("confirm on a missing entry is 404", async () => {

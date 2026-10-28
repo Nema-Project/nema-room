@@ -21,7 +21,7 @@ import { formatCommitMessage } from "./commitMessage.js";
 import { git, withRepoLock } from "./git.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
-export type CommitMeta = { author: "agent" | "user" | "system"; taskId?: string; now?: Date };
+export type CommitMeta = { author: "agent" | "user" | "system"; taskId?: string; now?: Date; uiAction?: "confirm" | "edit"; evidenceEventIds?: string[] };
 
 /** A guard refused the upsert. The entry file is left untouched and the repo lock is released. */
 export class UpsertRejected extends Error {
@@ -159,6 +159,20 @@ function toFile(e: Entry): string {
   if (e.ingestedAt !== null) data.ingested_at = e.ingestedAt;
   if (e.confirmedAt !== null) data.confirmed_at = e.confirmedAt;
   if (e.quotes.length > 0) data.quotes = e.quotes.map((q) => ({ message_id: q.messageId, text: q.text }));
+  if (e.sourceSnapshot !== undefined) {
+    const v = e.sourceSnapshot;
+    data.source_snapshot = {
+      schema_version: v.schemaVersion, provider: v.provider, resource_id: v.resourceId,
+      revision: v.revision, fetched_at: v.fetchedAt, title: v.title,
+      canonical_url: v.canonicalUrl, content_hash: v.contentHash, excerpts: v.excerpts,
+    };
+  }
+  if (e.sourceRefs.length > 0) data.source_refs = e.sourceRefs.map((v) => ({
+    source_entry_id: v.sourceEntryId, revision: v.revision, snapshot_hash: v.snapshotHash,
+    ...(v.locator !== undefined ? { locator: v.locator } : {}),
+    ...(v.quote !== undefined ? { quote: v.quote } : {}),
+  }));
+  if (e.confirmedRevision !== null) data.confirmed_revision = e.confirmedRevision;
   // Frontmatter block only; body is appended verbatim so it round-trips exactly.
   return matter.stringify("", data) + e.body;
 }
@@ -178,6 +192,13 @@ export function fromFile(raw: string): Entry {
     diagram: diagramFromData(data.diagram),
     implementation: implementationFromData(data.implementation),
     workpackage: workPackageFromData(data.workpackage),
+    sourceSnapshot: sourceSnapshotFromData(data.source_snapshot),
+    sourceRefs: Array.isArray(data.source_refs) ? data.source_refs.map((raw: unknown) => {
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+      const v = raw as Record<string, unknown>;
+      return { sourceEntryId: v.source_entry_id, revision: v.revision ?? null, snapshotHash: v.snapshot_hash, locator: v.locator, quote: v.quote };
+    }) : data.source_refs,
+    confirmedRevision: data.confirmed_revision ?? null,
     basis: data.basis ?? null,
     ingestedAt: data.ingested_at ?? null,
     confirmedAt: data.confirmed_at ?? null,
@@ -187,6 +208,17 @@ export function fromFile(raw: string): Entry {
   });
   // gray-matter keeps the newline that terminates the closing delimiter.
   return { ...fm, body: content.startsWith("\n") ? content.slice(1) : content };
+}
+
+function sourceSnapshotFromData(raw: unknown): unknown {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+  const v = raw as Record<string, unknown>;
+  return {
+    schemaVersion: v.schema_version, provider: v.provider, resourceId: v.resource_id,
+    revision: v.revision ?? null, fetchedAt: v.fetched_at, title: v.title,
+    canonicalUrl: v.canonical_url, contentHash: v.content_hash, excerpts: v.excerpts,
+  };
 }
 
 function diagramFromData(raw: unknown): unknown {
@@ -244,7 +276,7 @@ function implementationFromData(raw: unknown): unknown {
   };
 }
 
-function summarize(e: Entry): EntrySummary {
+export function summarizeEntry(e: Entry): EntrySummary {
   const s: EntrySummary = {
     id: e.id,
     kind: e.kind,
@@ -427,10 +459,15 @@ export class KnowledgeStore {
   }
 
   async list(): Promise<EntrySummary[]> {
+    return (await this.listEntries()).map(summarizeEntry);
+  }
+
+  /** Full entries for hub evidence projection, read in one directory scan. */
+  async listEntries(): Promise<Entry[]> {
     const all = await this.readAll();
     const order = (k: EntryKind) => KINDS.indexOf(k);
     all.sort((a, b) => order(a.kind) - order(b.kind) || idNumber(a.id) - idNumber(b.id));
-    return all.map(summarize);
+    return all;
   }
 
   /** Entries whose source messages include `messageId`, in the same order as `list`. */
@@ -440,7 +477,7 @@ export class KnowledgeStore {
     return all
       .filter((e) => e.sourceMessages.includes(messageId))
       .sort((a, b) => order(a.kind) - order(b.kind) || idNumber(a.id) - idNumber(b.id))
-      .map(summarize);
+      .map(summarizeEntry);
   }
 
   async get(id: string): Promise<Entry | null> {
@@ -465,10 +502,13 @@ export class KnowledgeStore {
     });
   }
 
+  /** Hooks run under the repository lock. beforeWrite may return a prior commit for an exact replay. */
   async upsert(
     rawInput: UpsertEntryInput,
     meta: CommitMeta,
     guard?: UpsertGuard,
+    beforeWrite?: (entry: Entry, existing: Entry | null) => Promise<string | void>,
+    afterWrite?: (commit: string) => Promise<void>,
   ): Promise<{ entry: Entry; commit: string; op: "add" | "update" }> {
     const parsed = UpsertEntryInput.parse(rawInput);
     return withRepoLock(this.repoDir, async () => {
@@ -509,6 +549,9 @@ export class KnowledgeStore {
           priority: input.priority ?? existing?.priority,
           // Callers decide who may set it: the Room API checks it against reports, the UI never passes it.
           implementation: input.implementation ?? existing?.implementation,
+          sourceSnapshot: existing?.sourceSnapshot,
+          confirmedRevision: existing?.confirmedRevision ?? null,
+          sourceRefs: input.sourceRefs ?? existing?.sourceRefs ?? [],
           basis: input.basis ?? existing?.basis ?? null,
           quotes: mergeQuotes(existing?.quotes ?? [], input.quotes ?? []),
           ingestedAt: existing ? existing.ingestedAt : now,
@@ -516,9 +559,18 @@ export class KnowledgeStore {
         }),
         body: input.body,
       };
-      const commit = await this.writeAndCommit(entry, op, input.reason, input.sourceMessages, meta);
+      const replay = await beforeWrite?.(entry, existing);
+      const commit = replay ?? await this.writeAndCommit(entry, op, input.reason, input.sourceMessages, meta);
+      await afterWrite?.(commit);
       return { entry, commit, op };
     });
+  }
+
+  /** Caller must already hold this repository's withRepoLock; this method never locks. */
+  async writeImportedSource(entry: Entry): Promise<string> {
+    if (entry.kind !== "source" || !entry.sourceSnapshot) throw new Error("Expected a source snapshot");
+    const existing = await this.get(entry.id);
+    return this.writeAndCommit(entry, existing ? "update" : "add", "Import source snapshot", [], { author: "system" });
   }
 
   /** Add or update a diagram entry: `diagrams/G-n.md` and its archify spec `diagrams/G-n.json` in one commit. */
@@ -675,14 +727,22 @@ export class KnowledgeStore {
     return existing;
   }
 
-  async confirm(id: string, meta: CommitMeta): Promise<{ entry: Entry; commit: string }> {
+  /** Hooks run under the repository lock and must not call another locking method. */
+  async confirm(
+    id: string,
+    meta: CommitMeta,
+    beforeWrite?: (entry: Entry, existing: Entry) => Promise<string | void>,
+    afterWrite?: (commit: string) => Promise<void>,
+  ): Promise<{ entry: Entry; commit: string }> {
     return withRepoLock(this.repoDir, async () => {
       const existing = await this.get(id);
       if (!existing) throw new Error(`entry ${id} not found`);
       const now = (meta.now ?? new Date()).toISOString();
       const basis = existing.basis === null || existing.basis === "inferred" ? (existing.kind === "decision" ? "decided" : "stated") : existing.basis;
-      const entry: Entry = { ...existing, basis, confirmedAt: now };
-      const commit = await this.writeAndCommit(entry, "update", "用户确认仍然有效", [], meta);
+      const entry: Entry = { ...existing, basis, confirmedAt: now, confirmedRevision: existing.sourceSnapshot ? existing.sourceSnapshot.revision : existing.confirmedRevision };
+      const replay = await beforeWrite?.(entry, existing);
+      const commit = replay ?? await this.writeAndCommit(entry, "update", "用户确认仍然有效", [], meta);
+      await afterWrite?.(commit);
       return { entry, commit };
     });
   }
@@ -802,6 +862,8 @@ export class KnowledgeStore {
         reason,
         sourceMessages,
         author: meta.author,
+        ...(meta.evidenceEventIds !== undefined ? { evidenceEventIds: meta.evidenceEventIds } : {}),
+        ...(meta.uiAction !== undefined ? { uiAction: meta.uiAction } : {}),
         ...(meta.taskId !== undefined ? { taskId: meta.taskId } : {}),
       });
       await this.git(["commit", "-m", message, "--", ...rels]);

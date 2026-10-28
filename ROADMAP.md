@@ -45,11 +45,11 @@
 
 ## 下一项
 
-P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：设计已随 [PR #27](https://github.com/Nema-Project/nema-room/pull/27) 合入，实施前置 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 已由 [PR #30](https://github.com/Nema-Project/nema-room/pull/30) 完成。它不代替 P0-01、P0-02。
+P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实施进行中，等待集成与最终验收；设计已随 [PR #27](https://github.com/Nema-Project/nema-room/pull/27) 合入，实施前置 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 已由 [PR #30](https://github.com/Nema-Project/nema-room/pull/30) 完成。它不代替 P0-01、P0-02。
 
 | ID | 事项与依据 | 状态 | 验收标准 |
 | --- | --- | --- | --- |
-| CX-03 | 外部来源证据协议。契约见 [spec](docs/superpowers/specs/2026-10-27-source-evidence-protocol-design.md) 与 [plan](docs/superpowers/plans/2026-10-27-source-evidence-protocol.md)。#28 已合入，可以按该契约写生产代码 | 待办 | 实施 `sourceRefs`、`evidence_events` 与 `source__import`；保留 #28 的用户 basis 检查，以及从 `superseded`、`dropped`、`resolved` 改回 `active` 的检查；不得把外部正文伪装成聊天消息 |
+| CX-03 | 外部来源证据协议。契约见 [spec](docs/superpowers/specs/2026-10-27-source-evidence-protocol-design.md) 与 [plan](docs/superpowers/plans/2026-10-27-source-evidence-protocol.md)。#28 已合入，协议实现等待集成与最终验收 | 进行中 | 已实现 `sourceRefs`、`evidence_events` 与内部 `source__import`，待整体验证；保留 #28 的用户 basis 检查，以及从 `superseded`、`dropped`、`resolved` 改回 `active` 的检查；不得把外部正文伪装成聊天消息 |
 
 ## P0 之后
 
@@ -109,3 +109,4 @@ P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：设计已�
 | 2026-10-27 | CX-03 | 待认领 | [PR #27](https://github.com/Nema-Project/nema-room/pull/27) | 未承诺 | 外部来源证据协议的设计已合入。实施前置 #28 已由 PR #30 完成，CX-03 成为下一项。生产代码尚未按该 spec 修改 |
 | 2026-10-27 | 32 | 待认领 | [issue #32](https://github.com/Nema-Project/nema-room/issues/32) | 未承诺 | 设计参考：实现证据与执行反馈回流到讨论（原 manager agent 场景，按 [issue #45](https://github.com/Nema-Project/nema-room/issues/45) 修订）。P0 之后的设计参考，不是 spec，不改变 P0 顺序 |
 | 2026-10-27 | 45 | Cursor Agent | [issue #45](https://github.com/Nema-Project/nema-room/issues/45) | 未承诺 | 将该 issue 记为产品北极星，决策规则写入路线图与 AGENTS.md。英文、中文、日文 README 与官网的标题和介绍改为项目对齐，并把交付写成回路 |
+| 2026-10-27 | CX-03 | Codex | 本地分支 `work`（实现至 `7b3548b`） | 未承诺 | 十项实现与审查修复已提交，361 项针对性测试通过；全量 1486 通过、7 项失败均在基线复现，等待最终验收，见 [实施验证](docs/reviews/2026-10-27-cx03-implementation.md)。不代替 P0 验收 |

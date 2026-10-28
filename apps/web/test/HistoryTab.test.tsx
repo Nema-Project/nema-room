@@ -10,7 +10,7 @@ vi.mock("@/lib/hub", () => ({ getVersion: vi.fn() }));
 
 const base: Entry = {
   id: "R-1", kind: "requirement", title: "t", status: "active", businessDate: null, related: [], sourceMessages: [], body: "",
-  basis: null, ingestedAt: null, confirmedAt: null, quotes: [],
+  basis: null, ingestedAt: null, confirmedAt: null, confirmedRevision: null, sourceRefs: [], quotes: [],
 };
 const h = (version: number, author: HistoryItem["author"]): HistoryItem => ({
   version, commit: `c${version}`, committedAt: "2026-10-21T14:00:00Z", op: version === 1 ? "add" : "update", reason: `reason ${version}`, sourceMessages: [], author,

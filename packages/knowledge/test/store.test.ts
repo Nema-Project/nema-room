@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { fromFile } from "../src/store.js";
 import { KnowledgeStore, RepoLockReentryError, UpsertRejected, git, history, parseCommitMessage } from "../src/index.js";
 
 let dir: string;
@@ -819,4 +820,70 @@ test("readers never observe truncated frontmatter during an entry update", async
   expect((await store.get("R-1"))?.title).toBe("revision 39");
   if (process.platform !== "win32") expect((await stat(path.join(dir, "requirements", "R-1.md"))).mode & 0o777).toBe(0o600);
   expect((await git(dir, ["status", "--porcelain"])).trim()).toBe("");
+});
+
+const snapshotRaw = `source_snapshot:
+  schema_version: 1
+  provider: local
+  resource_id: doc-1
+  revision: null
+  fetched_at: '2026-10-27T00:00:00.000Z'
+  title: external
+  canonical_url: null
+  content_hash: '${"a".repeat(64)}'
+  excerpts:
+    - locator: '#p1'
+      text: exact quote
+source_refs:
+  - source_entry_id: S-2
+    revision: null
+    snapshot_hash: '${"b".repeat(64)}'
+    locator: '#p1'
+    quote: exact quote
+`;
+const snapshotFile = () => LEGACY.replace("R-1", "S-1").replace("kind: requirement", "kind: source").replace("---\n\nkept", snapshotRaw + "---\n\nkept");
+
+describe("source evidence files", () => {
+  test("round-trips a source snapshot and source refs", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await writeFile(path.join(dir, "sources", "S-1.md"), snapshotFile());
+    const before = await s.get("S-1");
+    expect(before?.sourceSnapshot).toMatchObject({ revision: null, excerpts: [{ locator: "#p1", text: "exact quote" }] });
+    expect(before?.sourceRefs).toEqual([{ sourceEntryId: "S-2", revision: null, snapshotHash: "b".repeat(64), locator: "#p1", quote: "exact quote" }]);
+    await s.withdraw("S-1", { author: "user", evidenceEventIds: ["event-1"] });
+    expect(await s.get("S-1")).toEqual({ ...before, status: "dropped" });
+    expect(parseCommitMessage(await git(dir, ["log", "-1", "--format=%B"]))).toMatchObject({ evidenceEventIds: ["event-1"] });
+    expect(await readFile(path.join(dir, "sources", "S-1.md"), "utf8")).not.toContain("confirmed_revision:");
+  });
+  test("keeps a legacy file byte-identical when the new keys are empty", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await commitLegacy();
+    await s.upsert(req("legacy", { id: "R-1", body: "kept\n", related: ["R-2"] }), { author: "agent" });
+    expect(await readFile(path.join(dir, "requirements", "R-1.md"), "utf8")).toBe(LEGACY.replace("related: []", "related:\n  - R-2"));
+    expect((await s.get("R-1"))?.ingestedAt).toBeNull();
+  });
+  test("preserves a snapshot when the agent upserts other fields", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await writeFile(path.join(dir, "sources", "S-1.md"), snapshotFile().replace("---\n\nkept", "confirmed_revision: rev-1\n---\n\nkept"));
+    const before = await s.get("S-1");
+    await s.upsert({ kind: "source", id: "S-1", title: "legacy", url: "https://example.com", body: "kept\n", related: ["R-2"], sourceMessages: [], reason: "r", sourceSnapshot: {}, confirmedRevision: "forged" } as never, { author: "agent" });
+    expect(await s.get("S-1")).toMatchObject({ sourceSnapshot: before?.sourceSnapshot, sourceRefs: before?.sourceRefs, confirmedRevision: "rev-1" });
+  });
+  test("replaces source refs only when the field is present", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    const first = await s.upsert(req("x", { sourceRefs: [{ sourceEntryId: "S-1", revision: null, snapshotHash: "a".repeat(64) }] }), { author: "agent" });
+    await s.upsert(req("x", { id: first.entry.id }), { author: "agent" });
+    expect((await s.get(first.entry.id))?.sourceRefs).toHaveLength(1);
+    await s.upsert(req("x", { id: first.entry.id, sourceRefs: [] }), { author: "agent" });
+    expect((await s.get(first.entry.id))?.sourceRefs).toEqual([]);
+    expect(await readFile(path.join(dir, "requirements", "R-1.md"), "utf8")).not.toContain("source_refs:");
+  });
+  test("rejects unsupported snapshot schema versions and invalid reference hashes", () => {
+    expect(() => fromFile(snapshotFile().replace("schema_version: 1", "schema_version: 2"))).toThrow();
+    expect(() => fromFile(snapshotFile().replace("    snapshot_hash:", "    ignored_hash:"))).toThrow();
+  });
 });

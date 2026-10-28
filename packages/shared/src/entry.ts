@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Implementation } from "./report.js";
+import { SourceRef, SourceRevision, SourceSnapshot } from "./sourceEvidence.js";
 
 export const ENTRY_KINDS = ["requirement", "decision", "tradeoff", "question", "source", "diagram", "workpackage"] as const;
 export type EntryKind = (typeof ENTRY_KINDS)[number];
@@ -144,16 +145,22 @@ const Priority = z.union([z.literal(1), z.literal(2), z.literal(3)]);
 
 /** Kind-specific rules shared by frontmatter and upsert input. */
 function refineKind(
-  v: { kind: EntryKind; status?: string | undefined; url?: string | undefined; priority?: number | undefined; diagram?: DiagramMeta | undefined; implementation?: Implementation | undefined; workpackage?: WorkPackageMeta | undefined },
+  v: { sourceSnapshot?: SourceSnapshot | undefined; confirmedRevision?: string | null | undefined; kind: EntryKind; status?: string | undefined; url?: string | undefined; priority?: number | undefined; diagram?: DiagramMeta | undefined; implementation?: Implementation | undefined; workpackage?: WorkPackageMeta | undefined },
   ctx: z.RefinementCtx,
 ): void {
   if (v.status !== undefined && !(KIND_STATUSES[v.kind] as readonly string[]).includes(v.status)) {
     ctx.addIssue({ code: "custom", path: ["status"], message: `invalid status "${v.status}" for ${v.kind}` });
   }
   if (v.kind === "source") {
-    if (v.url === undefined) ctx.addIssue({ code: "custom", path: ["url"], message: "url is required for source" });
+    if (v.url === undefined && v.sourceSnapshot === undefined) ctx.addIssue({ code: "custom", path: ["url"], message: "url is required for source" });
   } else if (v.url !== undefined) {
     ctx.addIssue({ code: "custom", path: ["url"], message: "url is only allowed for source" });
+  }
+  if (v.sourceSnapshot !== undefined && v.kind !== "source") {
+    ctx.addIssue({ code: "custom", path: ["sourceSnapshot"], message: "sourceSnapshot is only allowed for source" });
+  }
+  if (v.confirmedRevision != null && (v.kind !== "source" || v.sourceSnapshot === undefined)) {
+    ctx.addIssue({ code: "custom", path: ["confirmedRevision"], message: "confirmedRevision requires a source snapshot" });
   }
   if (v.kind === "diagram") {
     if (v.diagram === undefined) ctx.addIssue({ code: "custom", path: ["diagram"], message: "diagram is required for diagram" });
@@ -184,6 +191,9 @@ export const EntryFrontmatter = z
     businessDate: BusinessDate,
     related: z.array(z.string()),
     sourceMessages: z.array(z.string()),
+    sourceSnapshot: SourceSnapshot.optional(),
+    sourceRefs: z.array(SourceRef).max(10).default([]),
+    confirmedRevision: SourceRevision.default(null),
     url: HttpUrl.optional(),
     priority: Priority.optional(),
     diagram: DiagramMeta.optional(),
@@ -230,6 +240,7 @@ export const UpsertEntryInput = z
     businessDate: BusinessDate.optional(),
     related: z.array(z.string()).optional(),
     sourceMessages: z.array(z.string()).default([]),
+    sourceRefs: z.array(SourceRef).max(10).optional(),
     url: HttpUrl.optional(),
     priority: Priority.optional(),
     /** Requirements only. The Room API checks it against reports; omitted keeps the stored one. */

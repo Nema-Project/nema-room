@@ -1,7 +1,8 @@
 import { Hono } from "hono";
+import { sourceEvidenceEntries, sourceEvidenceSummary } from "./sourceFreshness.js";
 import { ZodError } from "zod";
 import { KnowledgeStore, UpsertRejected } from "@nema/knowledge";
-import { INACTIVE_STATUSES, UpsertEntryInput, pluginFunction, reportPassed, type Entry, type GetEntryResponse, type Implementation, type ReportMessageMeta, type ListEntriesResponse, type UpsertEntryResponse } from "@nema/shared";
+import { canonicalJson, INACTIVE_STATUSES, UpsertEntryInput, pluginFunction, reportPassed, type Entry, type SourceRef, type GetEntryResponse, type Implementation, type ReportMessageMeta, type ListEntriesResponse, type UpsertEntryResponse } from "@nema/shared";
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
 import { callHubFunction, vendoredArchify, type Archify } from "./diagrams.js";
@@ -73,12 +74,14 @@ export function roomRoutes(deps: {
   });
 
   app.get("/entries", async (c) => {
-    const body: ListEntriesResponse = { entries: await store(c.get("auth").workspaceId).list() };
+    const ws = c.get("auth").workspaceId;
+    const body: ListEntriesResponse = { entries: (await sourceEvidenceEntries(db, ws, await store(ws).listEntries())).map(sourceEvidenceSummary) };
     return c.json(body);
   });
 
   app.get("/entries/:id", async (c) => {
-    const entry = await store(c.get("auth").workspaceId).get(c.req.param("id"));
+    const ws = c.get("auth").workspaceId;
+    const entry = (await sourceEvidenceEntries(db, ws, await store(ws).listEntries())).find(e => e.id === c.req.param("id"));
     if (!entry) return c.json({ error: `entry not found: ${c.req.param("id")}` }, 404);
     const body: GetEntryResponse = { entry };
     return c.json(body);
@@ -143,12 +146,11 @@ export function roomRoutes(deps: {
     }
     let result;
     try {
-      // CX-03 task 6 appends sourceRefs checks in this callback, after the user-basis
-      // guard and before the return. Do not call upsert or withRepoLock on this repo here.
+      // All evidence checks use the entry read under this same repository lock.
       result = await ks.upsert(input, { author: "agent", taskId }, async ({ existing, input: locked }) => {
         const guarded = applyActiveDecisionGuard(existing, locked, byId);
         await assertCurrentTaskUserEvidence(db, taskId, workspaceId, existing, guarded);
-        return guarded;
+        return await applyExternalEvidenceGuard(db, taskId, workspaceId, ks, existing, guarded);
       });
     } catch (e) {
       if (e instanceof UpsertRejected) {
@@ -292,7 +294,8 @@ function applyActiveDecisionGuard(
 ): UpsertEntryInput {
   if (!existing || existing.kind !== "decision" || existing.status !== "active") return input;
   const leavesActive = input.status !== undefined && input.status !== "active";
-  const rewrites = leavesActive || input.title !== existing.title || input.body !== existing.body;
+  const rewrites = leavesActive || input.title !== existing.title || input.body !== existing.body
+    || sourceRefsChanged(existing, input);
   const userBasis = input.basis === "stated" || input.basis === "decided";
   const citesUser = input.sourceMessages.some((id) => messagesById.get(id)?.role === "user");
   // Raising the basis claims the user said or decided it, so it needs the same evidence as a rewrite.
@@ -335,6 +338,59 @@ async function assertCurrentTaskUserEvidence(
   const taskMessage = task && task.workspaceId === workspaceId ? await getMessage(db, task.messageId) : null;
   const citesCurrentUser = taskMessage?.role === "user" && input.sourceMessages.includes(taskMessage.id);
   if (!citesCurrentUser) throw new UpsertRejected(409, USER_BASIS_EVIDENCE_ERROR, USER_BASIS_EVIDENCE_CODE);
+}
+
+function sourceRefsChanged(existing: Entry, input: UpsertEntryInput): boolean {
+  const normalized = (refs: SourceRef[]) => refs.map(ref => ({
+    sourceEntryId: ref.sourceEntryId, revision: ref.revision, snapshotHash: ref.snapshotHash,
+    locator: ref.locator ?? null, quote: ref.quote ?? null,
+  }));
+  return canonicalJson(normalized(input.sourceRefs ?? existing.sourceRefs)) !== canonicalJson(normalized(existing.sourceRefs));
+}
+
+/** Validate references and confirmation against disk while upsert holds the repo lock. */
+async function applyExternalEvidenceGuard(
+  db: Db,
+  taskId: string,
+  workspaceId: string,
+  store: KnowledgeStore,
+  existing: Entry | null,
+  input: UpsertEntryInput,
+): Promise<UpsertEntryInput> {
+  if (existing?.kind === "source" && existing.sourceSnapshot) {
+    if (input.title !== existing.title || input.body !== existing.body
+      || (input.status !== undefined && input.status !== existing.status)
+      || (input.url !== undefined && input.url !== existing.url)) {
+      throw new UpsertRejected(409, "导入的来源快照不能用 upsert 修改");
+    }
+    if (input.basis !== existing.basis) {
+      throw new UpsertRejected(409, "导入的来源不能由 Agent 改 basis。只有界面的 promote_basis 事件可以。");
+    }
+  }
+  const refs = input.sourceRefs ?? existing?.sourceRefs ?? [];
+  const hasRefs = refs.length > 0 || (existing?.sourceRefs.length ?? 0) > 0;
+  for (const ref of refs) {
+    const source = await store.get(ref.sourceEntryId);
+    if (!source || source.kind !== "source") throw new UpsertRejected(400, `sourceRefs: unknown source entry ${ref.sourceEntryId}`);
+    const snapshot = source.sourceSnapshot;
+    if (!snapshot) throw new UpsertRejected(400, `sourceRefs: ${ref.sourceEntryId} has no source snapshot`);
+    if (ref.revision !== snapshot.revision) throw new UpsertRejected(400, `sourceRefs: revision must match the current snapshot of ${ref.sourceEntryId}`);
+    if (ref.snapshotHash !== snapshot.contentHash) throw new UpsertRejected(400, `sourceRefs: snapshotHash must match the current snapshot of ${ref.sourceEntryId}`);
+    if (ref.quote !== undefined && !snapshot.excerpts.some(e => e.locator === ref.locator && e.text.includes(ref.quote!))) {
+      throw new UpsertRejected(400, `sourceRefs: quote must be copied verbatim from excerpt ${ref.locator} of ${ref.sourceEntryId}`);
+    }
+  }
+  const changed = !existing || input.title !== existing.title || input.body !== existing.body
+    || (input.status !== undefined && input.status !== existing.status)
+    || input.basis !== existing.basis || sourceRefsChanged(existing, input);
+  if (hasRefs && changed && (input.basis === "stated" || input.basis === "decided")) {
+    const task = await getTask(db, taskId);
+    const message = task?.workspaceId === workspaceId ? await getMessage(db, task.messageId) : null;
+    const quoted = message?.role === "user" && input.sourceMessages.includes(message.id)
+      && input.quotes?.some(q => q.messageId === message.id && message.content.includes(q.text));
+    if (!quoted) throw new UpsertRejected(409, "引用外部来源时，把条目标成 stated 或 decided 需要当前这条用户消息里的逐字摘录。外部文档不能代替这个确认。");
+  }
+  return hasRefs || existing?.sourceSnapshot ? { ...input, confirmed: false } : input;
 }
 
 /** Same commit when one sha is a prefix of the other (reports may use abbreviated shas). */

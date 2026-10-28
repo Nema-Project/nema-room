@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- Source snapshots and `sourceRefs` preserve external evidence without turning excerpts into chat messages. Hub imports validate hashes and reuse source IDs after interrupted indexing; startup reconciles import receipts and confirmation events. This adds the protocol foundation; external service connectors are not included.
+- UI edits and confirmations record independent evidence events with Git provenance. Knowledge reads report source freshness, references needing review, and unconfirmed snapshots without rewriting decisions.
+
+### Fixed
+
+- UI confirmation retries recover committed evidence after transient database failures, preserving the original commit and events before a restart.
+
+- Source freshness reads compare the last observed revision with the current imported snapshot, including after interrupted indexing, so reimports update freshness and reference review flags immediately.
+
+### Security
+
+- Room writes with external references validate those references and require verbatim evidence from the current task's user message for user basis. Agents cannot rewrite imported snapshots, change their basis, or consume UI confirmation events. Main and thread prompts identify source excerpts as untrusted external data. Existing decision and user-message guards remain in force.
+
 ## [0.1.4] - 2026-10-28
 
 ### Added
