@@ -12,8 +12,9 @@ function unsafe(path) {
   return path.startsWith('/') || path.includes('\\') || path.split('/').some(segment => segment === '' || segment === '.' || segment === '..');
 }
 
+const scriptDoc = path => /^scripts\/(desktop|images)\/.*\.md$/i.test(path);
+
 function documentation(path) {
-  if (/(^|\/)(AGENTS|CLAUDE)\.md$/i.test(path)) return false;
   if (path === '.github/workflows/pages.yml') return true;
   if (!path.includes('/') && /\.md$/i.test(path)) return true;
   // Executable files under docs are not documentation. Site assets retain the Pages allowlist.
@@ -22,11 +23,12 @@ function documentation(path) {
 
 function classes(path) {
   const gate = gateFiles.has(path) || under(path, 'scripts/ci');
+  const heavyScript = !scriptDoc(path);
   return {
-    platform: gate || platformFiles.has(path) || platformPrefixes.some(prefix => under(path, prefix)),
+    platform: heavyScript && (gate || platformFiles.has(path) || platformPrefixes.some(prefix => under(path, prefix))),
     npmPack: gate || npmFiles.has(path) || npmPrefixes.some(prefix => under(path, prefix)),
-    desktop: under(path, 'apps/desktop') || under(path, 'scripts/desktop'),
-    image: imageFiles.has(path) || under(path, 'scripts/images'),
+    desktop: heavyScript && (under(path, 'apps/desktop') || under(path, 'scripts/desktop')),
+    image: heavyScript && (imageFiles.has(path) || under(path, 'scripts/images')),
   };
 }
 

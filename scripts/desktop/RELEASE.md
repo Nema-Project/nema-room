@@ -30,7 +30,7 @@ The complete Windows/macOS platform checks and Ubuntu application tests, web bui
 
 ## Workflow behavior and safe rehearsal
 
-- Branch pushes do not run desktop builds. PRs touching `apps/desktop/` or `scripts/desktop/` build both targets without publication. Workflow/lockfile-only changes use CI and an explicit rehearsal.
+- Branch pushes do not run desktop builds. PRs touching `apps/desktop/` or a non-Markdown file under `scripts/desktop/` build both targets without publication. A Markdown-only change under `scripts/desktop/` does not start that build. Workflow/lockfile-only changes use CI and an explicit rehearsal.
 - Manual runs build selected targets and **never publish, including dispatches on tags**. Set `verify_full=true` for complete verification before packaging:
 
   ```sh

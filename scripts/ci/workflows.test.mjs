@@ -237,15 +237,21 @@ test('release gates bind all stages to one SHA and fail closed on verification r
 });
 
 test('desktop pull request paths stay equal to the policy desktop class', () => {
-  assert.deepEqual(read('desktop-release').on.pull_request.paths, ['apps/desktop/**', 'scripts/desktop/**']);
+  const pull = read('desktop-release').on.pull_request;
+  // GitHub rejects paths and paths-ignore on one event. Later ! patterns skip
+  // Markdown in scripts/desktop and in a subfolder; policy does the same.
+  assert.equal(pull['paths-ignore'], undefined);
+  assert.deepEqual(pull.paths, ['apps/desktop/**', 'scripts/desktop/**', '!scripts/desktop/**/*.md', '!scripts/desktop/*.md']);
   assert.equal(classifyPaths(['apps/desktop/package.json']).desktop, true);
+  assert.equal(classifyPaths(['apps/desktop/main.cjs']).desktop, true);
   assert.equal(classifyPaths(['scripts/desktop/smoke-desktop.test.mjs']).desktop, true);
+  assert.equal(classifyPaths(['scripts/desktop/RELEASE.md']).desktop, false);
   assert.equal(classifyPaths(['package-lock.json']).desktop, false);
   assert.equal(classifyPaths(['apps/web/app/page.tsx']).desktop, false);
 });
 
 test('image smoke paths are fixed and the workflow is not invented', () => {
-  const imagePaths = ['Dockerfile', 'docker-compose.yml', 'docker-compose.build.yml', 'scripts/images/**', '.github/workflows/image-publish.yml'];
+  const imagePaths = ['Dockerfile', 'docker-compose.yml', 'docker-compose.build.yml', 'scripts/images/**', '.github/workflows/image-publish.yml', '!scripts/images/**/*.md', '!scripts/images/*.md'];
   for (const path of ['Dockerfile', 'docker-compose.yml', 'docker-compose.build.yml', 'scripts/images/smoke-compose.mjs', '.github/workflows/image-publish.yml']) {
     const classified = classifyPaths([path]);
     assert.equal(classified.image, true, path);
@@ -256,7 +262,10 @@ test('image smoke paths are fixed and the workflow is not invented', () => {
   assert.equal(classifyPaths(['apps/web/app/page.tsx']).image, false);
   const image = read('image-publish');
   assert.equal(existsSync(new URL('../../.github/workflows/image-publish.yml', import.meta.url)), true);
+  assert.equal(image.on.pull_request['paths-ignore'], undefined);
   assert.deepEqual(image.on.pull_request.paths, imagePaths);
+  assert.equal(classifyPaths(['scripts/images/smoke-compose.mjs']).image, true);
+  assert.equal(classifyPaths(['scripts/images/RELEASE.md']).image, false);
   assert.match(expr(image.jobs.publish.if), /github\.event_name == 'push'/);
   const plan = image.jobs.plan.steps.find((step) => step.id === 'commit').run;
   assert.match(plan, /"\$EVENT" = "push"/);
@@ -314,7 +323,8 @@ test('image publish pushes pinned GHCR images only after verify, and only from t
   const image = read('image-publish');
   assert.deepEqual(Object.keys(image.on).sort(), ['pull_request', 'push', 'workflow_dispatch']);
   assert.deepEqual(image.on.push.tags, ['v*']);
-  assert.deepEqual(image.on.pull_request.paths, ['Dockerfile', 'docker-compose.yml', 'docker-compose.build.yml', 'scripts/images/**', '.github/workflows/image-publish.yml']);
+  assert.equal(image.on.pull_request['paths-ignore'], undefined);
+  assert.deepEqual(image.on.pull_request.paths, ['Dockerfile', 'docker-compose.yml', 'docker-compose.build.yml', 'scripts/images/**', '.github/workflows/image-publish.yml', '!scripts/images/**/*.md', '!scripts/images/*.md']);
   assert.equal(image.permissions.contents, 'read');
   assert.equal(image.permissions.packages, undefined);
   assertRelease(image);

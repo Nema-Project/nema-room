@@ -13,12 +13,23 @@ test('documentation allowlist stays docs and does not request heavy jobs', () =>
   }
 });
 
-test('agent instructions stay on the app gate without heavy jobs', () => {
+test('agent instructions take the docs lane and do not request heavy jobs', () => {
   for (const paths of [['AGENTS.md'], ['CLAUDE.md'], ['docs/AGENTS.md'], ['site/nested/CLAUDE.md']]) {
     const result = classifyPaths(paths);
-    assert.equal(result.mode, 'app', JSON.stringify(paths));
+    assert.equal(result.mode, 'docs', JSON.stringify(paths));
     assert.deepEqual(heavy(result), none);
   }
+});
+
+test('markdown under desktop and image scripts requests no heavy job', () => {
+  for (const path of ['scripts/desktop/RELEASE.md', 'scripts/desktop/README.md', 'scripts/images/RELEASE.md', 'scripts/desktop/notes/x.md']) {
+    const result = classifyPaths([path]);
+    assert.equal(result.mode, 'app', path);
+    assert.deepEqual(heavy(result), none, path);
+  }
+  const script = classifyPaths(['scripts/desktop/smoke-desktop.test.mjs']);
+  assert.equal(script.platform, true);
+  assert.equal(script.desktop, true);
 });
 
 test('empty or unsafe paths fail closed onto the full suite', () => {

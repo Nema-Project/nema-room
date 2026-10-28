@@ -74,7 +74,7 @@ Choose checks based on the changed behavior. Add regression coverage for fixes a
 
 Run `npm ci` when dependencies need installing. Run `npm run typecheck` before the full test suite: child-process fixtures may need compiled workspace exports. Root typecheck excludes web; it does not replace the web build. A focused test can be run from the repository root with `npx vitest run <test-file>`.
 
-Read [.github/workflows/ci.yml](.github/workflows/ci.yml) for classification and the stable `CI gate`, and [.github/workflows/verify.yml](.github/workflows/verify.yml) for the complete reusable suite. The Windows and macOS platform job also runs the disposable desktop data-directory upgrade harness and the thread-acceptance rubric. Every PR runs classification and documentation checks. The documentation allowlist skips application tests and heavy jobs. `AGENTS.md` and `CLAUDE.md` take the Ubuntu fast gate. Platform checks and npm pack follow the path table in `scripts/ci/policy.mjs`. A push to `main` and a manual dispatch run the full `verify.yml`. A required-check ruleset must be activated separately; an absent run is not a passing run. Run `node --test scripts/ci/*.test.mjs scripts/desktop/release-commit.test.mjs` and actionlint for CI/release gate changes. Do not add expensive duplicate checks without a concrete coverage need.
+Read [.github/workflows/ci.yml](.github/workflows/ci.yml) for classification and the stable `CI gate`, and [.github/workflows/verify.yml](.github/workflows/verify.yml) for the complete reusable suite. The Windows and macOS platform job also runs the disposable desktop data-directory upgrade harness and the thread-acceptance rubric. Every PR runs classification and documentation checks. The documentation allowlist skips application tests and heavy jobs, and `AGENTS.md` and `CLAUDE.md` are on that allowlist. Platform checks and npm pack follow the path table in `scripts/ci/policy.mjs`. A push to `main` and a manual dispatch run the full `verify.yml`. A required-check ruleset must be activated separately; an absent run is not a passing run. Run `node --test scripts/ci/*.test.mjs scripts/desktop/release-commit.test.mjs` and actionlint for CI/release gate changes. Do not add expensive duplicate checks without a concrete coverage need.
 
 Report the commands actually run, results, and skipped or blocked checks. Keep these claims separate: static checks, automated tests, packaging, real-model semantic acceptance, and native-platform acceptance. A successful build on one OS does not validate another, and skipped tests are not acceptance evidence.
 
@@ -90,6 +90,8 @@ Report the commands actually run, results, and skipped or blocked checks. Keep t
 ## Cursor Cloud specific instructions
 
 Boot already starts Docker, PostgreSQL on `127.0.0.1:5433` (`npm run db:up`), `npm run dev` (hub `127.0.0.1:4400`, web `127.0.0.1:3000`), and `node apps/cli/dist/index.js daemon`. A second `npm run dev` or `npm run up` binds those same ports.
+
+The Cursor Cloud VM does not run systemd. Its boot script starts `dockerd` (log: `/var/log/dockerd.log`). Hub and web run in the tmux session `nema-dev`; the daemon runs in `nema-daemon`.
 
 `.env` is copied from `.env.example` when missing. Hub dev reads it; the CLI does not. Do not commit `.env`.
 
