@@ -13,7 +13,7 @@ test('graphify lock pins the release targets and no install path', async () => {
   assert.equal(raw.includes('Users'), false);
   assert.equal(raw.includes('AppData'), false);
   assert.equal(graphifyLock.graphifyy, '0.9.95');
-  assert.equal(graphifyLock.python, '3.11.17');
+  assert.equal(graphifyLock.python, '3.11.18');
   assert.equal(graphifyLock.extras.length, 0);
   assert.equal(graphifyLock.sourceCorrespondence.status, 'pending-task-7c');
   for (const key of ['win32-x64', 'darwin-arm64']) {
@@ -34,8 +34,8 @@ test('graphify lock pins the release targets and no install path', async () => {
       assert.match(wheel.sha256, /^[a-f0-9]{64}$/);
     }
   }
-  assert.equal(graphifyLock.targets['win32-x64'].python.sha256, '136bbb2e50fe037fd5e32126e70e95b35d1fa5dac5bd04a55b8088415ee99540');
-  assert.equal(graphifyLock.targets['darwin-arm64'].python.sha256, 'b5199d66966141fb6d5447512d2b2fe0398d417da37b1949f58db3792d314eac');
+  assert.equal(graphifyLock.targets['win32-x64'].python.sha256, '75cb501dc11c7b55c6b447c58e4910bce5b1f609f1017328b4f3a858dfaf5428');
+  assert.equal(graphifyLock.targets['darwin-arm64'].python.sha256, 'cba3455e18516fbe8668cff2820c9b6a53447c552d612443c2b2fb60d390a908');
 });
 
 test('launcher sources name only the bundled Python', async () => {
