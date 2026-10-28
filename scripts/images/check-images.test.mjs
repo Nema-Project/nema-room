@@ -4,15 +4,17 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { devComposeUpArgs } from '../compose-dev.mjs';
-import { assertComposeImages, assertImageBudget, assertPackageVersions, IMAGE_BUDGET_BYTES, shouldMoveLatest } from './check-images.mjs';
+import { assertComposeTemplate, assertComposeAsset, renderComposeAsset, composeAssetVersion, assertImageBudget, assertPackageVersions, IMAGE_BUDGET_BYTES, shouldMoveLatest } from './check-images.mjs';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
-const published = readFileSync(new URL('../../docker-compose.yml', import.meta.url), 'utf8');
+const template = readFileSync(new URL('../../docker-compose.yml', import.meta.url), 'utf8');
 const desktopVersion = JSON.parse(readFileSync(new URL('../../apps/desktop/package.json', import.meta.url), 'utf8')).version;
+const asset = renderComposeAsset(template, desktopVersion);
 
 function composeConfig(files, env = {}) {
   const base = { ...process.env };
   if (!Object.hasOwn(env, 'NEMA_HUB_URL')) delete base.NEMA_HUB_URL;
+  if (!Object.hasOwn(env, 'NEMA_IMAGE_TAG')) delete base.NEMA_IMAGE_TAG;
   const run = spawnSync('docker', ['compose', ...files.flatMap((file) => ['-f', file]), 'config', '--format', 'json'], {
     cwd: root,
     env: { ...base, ...env },
@@ -22,13 +24,15 @@ function composeConfig(files, env = {}) {
   return JSON.parse(run.stdout);
 }
 
-test('published compose pins hub and web and rejects drifted fixtures', () => {
-  assert.doesNotThrow(() => assertComposeImages(published, desktopVersion));
-  assert.throws(() => assertComposeImages(published.replaceAll(`:${desktopVersion}`, ':latest'), desktopVersion), /latest tag/);
-  assert.throws(() => assertComposeImages(published.replace('nema-room-hub', 'nema-room-other'), desktopVersion), /missing/);
-  const withBuild = published.replace('image: ghcr.io/nema-project/nema-room-hub', 'build:\n      context: .\n    image: ghcr.io/nema-project/nema-room-hub');
-  assert.throws(() => assertComposeImages(withBuild, desktopVersion), /hub must not build/);
-  assert.throws(() => assertComposeImages(published.replace('127.0.0.1:${NEMA_HUB_PORT:-4400}:${NEMA_HUB_PORT:-4400}', '127.0.0.1:4400:4400'), desktopVersion), /NEMA_HUB_PORT/);
+test('template shape assertions and asset version assertions reject drifted fixtures', () => {
+  assert.doesNotThrow(() => assertComposeTemplate(template));
+  assert.doesNotThrow(() => assertComposeAsset(asset, desktopVersion));
+  assert.throws(() => assertComposeAsset(asset.replaceAll(`:${desktopVersion}`, ':latest'), desktopVersion), /latest/);
+  assert.throws(() => assertComposeAsset(asset.replace('nema-room-hub', 'nema-room-other'), desktopVersion), /missing/);
+  assert.throws(() => assertComposeTemplate(template.replace('image: ghcr.io/nema-project/nema-room-hub:${NEMA_IMAGE_TAG:-latest}', 'image: ghcr.io/nema-project/nema-room-hub:0.1.5')), /NEMA_IMAGE_TAG/);
+  const withBuild = template.replace('image: ghcr.io/nema-project/nema-room-hub', 'build:\n      context: .\n    image: ghcr.io/nema-project/nema-room-hub');
+  assert.throws(() => assertComposeTemplate(withBuild), /hub must not build/);
+  assert.throws(() => assertComposeTemplate(template.replace('127.0.0.1:${NEMA_HUB_PORT:-4400}:${NEMA_HUB_PORT:-4400}', '127.0.0.1:4400:4400')), /NEMA_HUB_PORT/);
 });
 
 test('package versions must match the release tag', () => {
@@ -74,8 +78,8 @@ test('ports and the hub URL follow env on the published file and the source buil
   const plain = composeConfig(['docker-compose.yml']);
   assert.equal(plain.services.hub.build, undefined);
   assert.equal(plain.services.web.build, undefined);
-  assert.equal(plain.services.hub.image, `ghcr.io/nema-project/nema-room-hub:${desktopVersion}`);
-  assert.equal(plain.services.web.image, `ghcr.io/nema-project/nema-room-web:${desktopVersion}`);
+  assert.equal(plain.services.hub.image, 'ghcr.io/nema-project/nema-room-hub:latest');
+  assert.equal(plain.services.web.image, 'ghcr.io/nema-project/nema-room-web:latest');
   assert.equal(plain.services.postgres.image, 'postgres:17');
   assert.equal(plain.services.hub.ports.length, 1);
   assert.equal(String(plain.services.hub.ports[0].published), '4400');
@@ -83,6 +87,10 @@ test('ports and the hub URL follow env on the published file and the source buil
   assert.equal(String(plain.services.web.ports[0].published), '3000');
   assert.ok(plain.services.hub.healthcheck);
   assert.ok(plain.services.web.healthcheck);
+
+  const pinned = composeConfig(['docker-compose.yml'], { NEMA_IMAGE_TAG: '9.9.9' });
+  assert.equal(pinned.services.hub.image, 'ghcr.io/nema-project/nema-room-hub:9.9.9');
+  assert.equal(pinned.services.web.image, 'ghcr.io/nema-project/nema-room-web:9.9.9');
 
   const moved = composeConfig(['docker-compose.yml'], { NEMA_HUB_PORT: '4410', NEMA_WEB_PORT: '3010' });
   assert.equal(String(moved.services.hub.ports[0].published), '4410');
@@ -113,4 +121,16 @@ test('npm run up and the setup wizard build from source', () => {
   const setup = readFileSync(new URL('../setup.mjs', import.meta.url), 'utf8');
   assert.match(up, /devComposeUpArgs\(/);
   assert.match(setup, /devComposeUpArgs\(/);
+});
+
+test('renderComposeAsset pins both images and rejects a template without interpolation', async () => {
+  assert.ok(!renderComposeAsset(template, '1.2.3').includes(':-latest'));
+  assert.throws(() => renderComposeAsset('image: x:y', '1.2.3'));
+  assert.throws(() => renderComposeAsset(template.replace('${NEMA_IMAGE_TAG:-latest}', '${NEMA_IMAGE_TAG}'), '1.2.3'));
+  assert.throws(() => renderComposeAsset(template, 'latest'));
+});
+
+test('composeAssetVersion reads the shared pin', async () => {
+  assert.equal(composeAssetVersion(asset), desktopVersion);
+  assert.throws(() => composeAssetVersion(asset.replace(`nema-room-hub:${desktopVersion}`, 'nema-room-hub:1.2.3')), new RegExp(`1\\.2\\.3.*${desktopVersion.replaceAll('.', '\\.')}`));
 });

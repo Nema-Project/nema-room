@@ -1,18 +1,7 @@
-# `npm run db:up`  -> only postgres (for `npm run dev`, published on 127.0.0.1:5433)
-# Published installs: fetch docker-compose.yml from tag v0.1.5, not main.
-# The v0.1.5 images are published; use the matching 0.1.5 host daemon.
-# The immutable v0.1.5 file retains pre-publication comments; follow current README/guides.
-# main can advance ahead of published artifacts; use `npm run up` for source development.
-# `npm run up`     -> merge docker-compose.build.yml and build from this checkout.
-# The nema daemon still runs on the host: npm run build -w apps/cli && npx nema daemon
-# Every port is published on 127.0.0.1 only.
-#
-# NEMA_HUB_PORT (default 4400) is both the published host port and the port the hub
-# listens on, because the browser's Host header is that published port.
-# NEMA_WEB_PORT (default 3000) is only the published host port; the container still
-# listens on 3000. NEMA_HUB_URL defaults to http://127.0.0.1:$NEMA_HUB_PORT and is
-# read when the web container starts, so the published image does not need a rebuild.
-# Set NEMA_HUB_URL only when the browser reaches the hub at a different address.
+# This compose file is a template, not an installable version.
+# For public installation use the supported Release docker-compose.yml asset.
+# Source development builds this tree with npm run up.
+
 services:
   postgres:
     image: postgres:17
@@ -32,7 +21,7 @@ services:
       retries: 30
 
   hub:
-    image: ghcr.io/nema-project/nema-room-hub:0.1.5
+    image: ghcr.io/nema-project/nema-room-hub:${NEMA_IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -62,7 +51,7 @@ services:
       start_period: 15s
 
   web:
-    image: ghcr.io/nema-project/nema-room-web:0.1.5
+    image: ghcr.io/nema-project/nema-room-web:${NEMA_IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       hub:
