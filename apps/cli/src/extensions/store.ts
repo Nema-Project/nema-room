@@ -1,4 +1,4 @@
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, cpSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeSync } from "node:fs";
 import path from "node:path";
 import { bundledExtensions, type ExtensionRecord } from "@nema/shared";
 
@@ -24,9 +24,28 @@ function readExtra(root: string): ExtensionRecord[] {
   return parsed as ExtensionRecord[];
 }
 
+/**
+ * Replace the index in one step: write a sibling temp file, flush it to disk, then rename over the
+ * index. A crash or a full disk leaves either the old index or the new one, never a half-written
+ * file that `readExtra` would fail to parse on the next start.
+ */
 function writeExtra(root: string, rows: ExtensionRecord[]): void {
   mkdirSync(root, { recursive: true });
-  writeFileSync(indexPath(root), JSON.stringify(rows));
+  const target = indexPath(root);
+  const temp = path.join(root, `index.json.${process.pid}.${Date.now()}.tmp`);
+  const fd = openSync(temp, "w", 0o600);
+  try {
+    writeSync(fd, JSON.stringify(rows));
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  try {
+    renameSync(temp, target);
+  } catch (error) {
+    rmSync(temp, { force: true });
+    throw error;
+  }
 }
 
 function managedPath(root: string, id: string): { extensions: string; target: string } {
@@ -53,8 +72,14 @@ function ownedDirectory(root: string, id: string): string {
 export function openExtensionStore(root: string) {
   return {
     list(): ExtensionRecord[] {
-      const extra = readExtra(root).filter((row) => !BUNDLED_IDS.has(row.id));
-      return [...bundledExtensions(), ...extra];
+      const rows = readExtra(root);
+      // A bundled id keeps its seed and takes only the stored use state; everything else is a record.
+      const overrides = new Map(rows.filter((row) => BUNDLED_IDS.has(row.id)).map((row) => [row.id, row]));
+      const seeds = bundledExtensions().map((row) => {
+        const override = overrides.get(row.id);
+        return override ? { ...row, useState: override.useState } : row;
+      });
+      return [...seeds, ...rows.filter((row) => !BUNDLED_IDS.has(row.id))];
     },
     putManaged(record: ExtensionRecord): void {
       assertId(record.id);
@@ -110,6 +135,25 @@ export function openExtensionStore(root: string) {
       const rows = readExtra(root).filter((row) => row.id !== record.id);
       rows.push({ ...record, provision: "managed", installState: "installed", error: null });
       writeExtra(root, rows);
+    },
+    /**
+     * Flip the use state of a record. Bundled extensions live in `bundledExtensions()`, so their
+     * choice is stored as an override row rather than by editing the seed.
+     */
+    setUseState(id: string, useState: ExtensionRecord["useState"]): ExtensionRecord {
+      if (useState !== "enabled" && useState !== "disabled") throw new Error(`invalid use state: ${useState}`);
+      if (BUNDLED_IDS.has(id)) {
+        const rows = readExtra(root).filter((row) => row.id !== id);
+        const seed = bundledExtensions().find((row) => row.id === id)!;
+        rows.push({ ...seed, useState });
+        writeExtra(root, rows);
+        return { ...seed, useState };
+      }
+      const current = readExtra(root).find((row) => row.id === id);
+      if (!current) throw new Error("extension is not installed here");
+      const next = { ...current, useState };
+      writeExtra(root, readExtra(root).map((row) => (row.id === id ? next : row)));
+      return next;
     },
     cancelInstall(id: string): void {
       assertId(id);

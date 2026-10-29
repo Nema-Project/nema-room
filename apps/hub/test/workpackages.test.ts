@@ -7,7 +7,7 @@ import { DaemonRpcError, type DaemonRpc } from "../src/daemonRpc.js";
 import { EventBus } from "../src/events.js";
 import { addReportMessage, postUserMessage } from "../src/messages.js";
 import { WorkPackageError, applyReportToWorkPackage, requestWorkPackage, retryBlockedPackages } from "../src/workpackages.js";
-import type { ReportCheck, WpTask } from "@nema/shared";
+import { bundledExtensions, type ReportCheck, type WpTask } from "@nema/shared";
 import { setPluginState } from "../src/plugins.js";
 import { roomRoutes } from "../src/roomApi.js";
 import { uiRoutes } from "../src/uiApi.js";
@@ -20,11 +20,18 @@ let dataDir: string;
 let ws: string;
 let room: Hono<any>;
 const daemonCalls: { method: string; params: any }[] = [];
+/**
+ * Offering a tool asks the daemon which extensions the install switched off before anything else.
+ * These assertions are about the calls the work-package path itself makes.
+ */
+const otherCalls = () => daemonCalls.filter((call) => call.method !== "extensions.list");
 let missing: string[] = [];
 const daemon: DaemonRpc = {
   async call(method, params: any) {
     daemonCalls.push({ method, params });
     if (method === "repo.exists") return { missing: (params.paths as string[]).filter((p) => missing.includes(p)) };
+    // The tool list asks which extensions the install switched off.
+    if (method === "extensions.list") return bundledExtensions();
     throw new DaemonRpcError("daemon 未连接");
   },
 };
@@ -114,8 +121,8 @@ describe("superpowers plugin", () => {
     const token = await runToken();
     const res = await call(token, "workpackage__save_plan", { id: wp.id, markdown: plan("- 修改：api:src/a.ts") });
     expect(res.json).toEqual({ result: { ok: true } });
-    expect(daemonCalls.map((c) => c.method)).toEqual(["repo.exists"]);
-    expect(daemonCalls[0]!.params).toMatchObject({ repoId: wp.workpackage!.repos[0], paths: ["src/a.ts"] });
+    expect(otherCalls().map((c) => c.method)).toEqual(["repo.exists"]);
+    expect(otherCalls()[0]!.params).toMatchObject({ repoId: wp.workpackage!.repos[0], paths: ["src/a.ts"] });
     const saved = (await store().readWorkPackage(wp.id))!;
     expect(saved.entry.workpackage!.tasks).toEqual([
       {

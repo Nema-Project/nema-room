@@ -192,6 +192,8 @@
   "extensions.install.failed": "失败",
   "extensions.use.enabled": "启用",
   "extensions.use.disabled": "停用",
+  "extensions.action.disable": "停用",
+  "extensions.action.enable": "启用",
   "extensions.error.bundled-runtime-missing": "随包的 Graphify 运行环境缺失，可在此修复。",
   "plugins.local": "仅本机",
   "plugins.external": "会外发",

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -106,4 +106,84 @@ test("installManaged activates a staged directory", () => {
   expect(readFileSync(join(dir, "extensions", "skill", "SKILL.md"), "utf8")).toBe("# skill");
   expect(store.list().find((row) => row.id === "skill")?.installState).toBe("installed");
   rmSync(staged, { recursive: true, force: true });
+});
+
+test("disabling a bundled extension keeps its seed and stores only the use state", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  const before = store.list().find((row) => row.id === "diagram")!;
+  const next = store.setUseState("diagram", "disabled");
+  expect(next.useState).toBe("disabled");
+  const after = store.list().find((row) => row.id === "diagram")!;
+  expect(after.useState).toBe("disabled");
+  // Nothing else about the seed may change: provision, availability, and functions stay as shipped.
+  expect({ ...after, useState: before.useState }).toEqual(before);
+  expect(store.list().filter((row) => row.id === "diagram")).toHaveLength(1);
+  // The choice survives reopening the store, which is what a hub restart does.
+  expect(openExtensionStore(dir).list().find((row) => row.id === "diagram")?.useState).toBe("disabled");
+});
+
+test("enabling a bundled extension again returns it to the shipped state", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  store.setUseState("grill", "disabled");
+  expect(store.setUseState("grill", "enabled").useState).toBe("enabled");
+  expect(store.list().find((row) => row.id === "grill")?.useState).toBe("enabled");
+});
+
+test("a managed extension takes its use state like any other record", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  store.putManaged(managed("skill"));
+  expect(store.setUseState("skill", "disabled").useState).toBe("disabled");
+  expect(store.list().find((row) => row.id === "skill")?.useState).toBe("disabled");
+});
+
+test("an unknown id or an unknown use state is refused without touching the store", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  const before = JSON.stringify(store.list());
+  expect(() => store.setUseState("nope", "enabled")).toThrow(/not installed/);
+  expect(() => store.setUseState("diagram", "paused" as never)).toThrow(/invalid use state/);
+  expect(JSON.stringify(store.list())).toBe(before);
+  expect(existsSync(join(dir, "index.json"))).toBe(false);
+});
+
+test("the index is replaced in one step and leaves no temp file behind", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  store.putManaged(managed("skill"));
+  store.setUseState("skill", "disabled");
+  store.setUseState("diagram", "disabled");
+  // Only the index itself may exist: a temp file here would mean a rename never happened.
+  expect(readdirSync(dir).filter((name) => name.startsWith("index.json"))).toEqual(["index.json"]);
+  // And the file it left behind is complete, parseable JSON rather than a truncated write.
+  const rows = JSON.parse(readFileSync(join(dir, "index.json"), "utf8")) as ExtensionRecord[];
+  expect(rows.find((row) => row.id === "skill")?.useState).toBe("disabled");
+  expect(rows.find((row) => row.id === "diagram")?.useState).toBe("disabled");
+});
+
+test("writing the index replaces the file instead of truncating it in place", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  store.putManaged(managed("skill"));
+  const file = join(dir, "index.json");
+  const before = statSync(file).ino;
+  store.setUseState("skill", "disabled");
+  // A new inode means the old file was never opened for writing: a reader either sees the whole old
+  // index or the whole new one, never a truncated middle.
+  expect(statSync(file).ino).not.toBe(before);
+});
+
+test("a half-written index from an older crash does not block the next write", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  // Simulate the leftover a crash mid-write can leave: a stray temp file beside a valid index.
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "index.json"), JSON.stringify([managed("skill")]));
+  writeFileSync(join(dir, "index.json.999.1.tmp"), "[{\"id\":");
+  const store = openExtensionStore(dir);
+  expect(store.setUseState("skill", "disabled").useState).toBe("disabled");
+  expect(JSON.parse(readFileSync(join(dir, "index.json"), "utf8")) as ExtensionRecord[]).toMatchObject([
+    { id: "skill", useState: "disabled" },
+  ]);
 });

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { sourceEvidenceEntries, sourceEvidenceSummary } from "./sourceFreshness.js";
 import { ZodError } from "zod";
 import { KnowledgeStore, UpsertRejected } from "@nema/knowledge";
-import { canonicalJson, INACTIVE_STATUSES, UpsertEntryInput, pluginFunction, reportPassed, type Entry, type SourceRef, type GetEntryResponse, type Implementation, type ReportMessageMeta, type ListEntriesResponse, type UpsertEntryResponse } from "@nema/shared";
+import { canonicalJson, INACTIVE_STATUSES, UpsertEntryInput, pluginFunction, reportPassed, type Entry, type PluginToolSpec, type SourceRef, type GetEntryResponse, type Implementation, type ReportMessageMeta, type ListEntriesResponse, type UpsertEntryResponse } from "@nema/shared";
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
 import { callHubFunction, vendoredArchify, type Archify } from "./diagrams.js";
@@ -10,7 +10,7 @@ import type { EventBus } from "./events.js";
 import { getMessage } from "./messages.js";
 import { indexEntry } from "./entryIndex.js";
 import { checkGithubCall, githubTargets } from "./githubScope.js";
-import { daemonHttpStatus, enabledPluginTools, recordPluginCall } from "./plugins.js";
+import { daemonHttpStatus, disabledExtensionIds, enabledPluginTools, recordPluginCall, withoutDisabledExtensions } from "./plugins.js";
 import { findRepoForWorkspace, listRepos } from "./repos.js";
 import { getTask, recordTaskChange, resolveRunToken } from "./tasks.js";
 import { conversationOf, ensureThread, renameThread } from "./threads.js";
@@ -22,6 +22,16 @@ import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 const GITHUB_RPC_TIMEOUT_MS = 90_000;
 
 type Auth = { taskId: string; workspaceId: string };
+
+/**
+ * The tools this install offers in a workspace: the workspace's own choice minus the extensions the
+ * install turned off. A daemon that cannot report its extension index yields no tools rather than
+ * every tool, because an offer that cannot be backed has to fail closed.
+ */
+async function installedToolsFor(daemon: DaemonRpc, db: Db, workspaceId: string): Promise<PluginToolSpec[]> {
+  const tools = await enabledPluginTools(db, workspaceId);
+  return withoutDisabledExtensions(tools, await disabledExtensionIds(daemon));
+}
 
 export function roomRoutes(deps: {
   db: Db;
@@ -182,12 +192,28 @@ export function roomRoutes(deps: {
     return c.json(body);
   });
 
-  app.get("/plugins", async (c) => c.json({ tools: await enabledPluginTools(db, c.get("auth").workspaceId) }));
+  // A daemon that cannot say which extensions are off has no tool list to offer, and that is a
+  // daemon-side failure like any other: 503 when it is down, 502 when it answered with an error.
+  app.get("/plugins", async (c) => {
+    try {
+      return c.json({ tools: await installedToolsFor(daemon, db, c.get("auth").workspaceId) });
+    } catch (error) {
+      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      throw error;
+    }
+  });
 
   app.post("/plugins/:name", async (c) => {
     const { taskId, workspaceId } = c.get("auth");
     const name = c.req.param("name");
-    const tools = await enabledPluginTools(db, workspaceId);
+    // The same list the page and the task prompt use, so a disabled extension is refused here too.
+    let tools: PluginToolSpec[];
+    try {
+      tools = await installedToolsFor(daemon, db, workspaceId);
+    } catch (error) {
+      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      throw error;
+    }
     // Check 1. A miss is not a call: no plugin_calls row, and the daemon is not contacted.
     if (!tools.some((tool) => tool.name === name)) return c.json({ error: `函数 ${name} 未在本 workspace 开启` }, 403);
 
