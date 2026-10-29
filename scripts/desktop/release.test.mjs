@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -58,8 +60,26 @@ test('collection accepts a complete matrix and writes a manifest, combined check
   assert.deepEqual(sums.map((line) => line.slice(66)), ['Nema-1.2.3-win32-x64.exe', 'Nema-1.2.3-win32-x64.zip', 'Nema-1.2.3-darwin-arm64.dmg', 'docker-compose.yml']);
   const written = JSON.parse(await readFile(path.join(out, 'release-manifest-1.2.3.json'), 'utf8'));
   assert.equal(written.build.commit, 'abc');
-  assert.equal(written.compose.sha256, createHash('sha256').update('compose asset').digest('hex'));
+  const copiedCompose = await readFile(path.join(out, 'docker-compose.yml'));
+  const sourceCompose = await readFile(composeAsset);
+  assert.deepEqual(copiedCompose, sourceCompose);
+  assert.equal(written.compose.sha256, createHash('sha256').update(copiedCompose).digest('hex'));
+  assert.equal(written.compose.sha256, createHash('sha256').update(sourceCompose).digest('hex'));
   assert.deepEqual(written.targets['win32-x64'].map((asset) => asset.name), ['Nema-1.2.3-win32-x64.exe', 'Nema-1.2.3-win32-x64.zip', 'SHA256SUMS-1.2.3-win32-x64.txt']);
+});
+
+test('collect CLI counts the optional Compose asset', async (t) => {
+  const root = await artifactsFixture(t);
+  const outputRoot = await tempDir(t, 'nema-release-cli-');
+  const composeAsset = path.join(outputRoot, 'docker-compose.yml');
+  await writeFile(composeAsset, 'compose asset');
+  const cli = fileURLToPath(new URL('./release-manifest.mjs', import.meta.url));
+  for (const [extra, count] of [[[], 5], [[composeAsset], 6]]) {
+    const out = path.join(outputRoot, `out-${count}`);
+    const run = spawnSync(process.execPath, [cli, 'collect', root, out, version, 'false', ...extra], { encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stdout, `Collected ${count} files for 2 targets\n`);
+  }
 });
 
 test('collection refuses a missing matrix target without copying anything', async (t) => {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readFile, writeFile, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, writeFile, mkdir, rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -41,9 +41,15 @@ test('writes nothing when the rendered file fails the assertion', async (t) => {
   await writeFile(out, 'old'); await assert.rejects(stamp({ root, version: '9.9.9', out }));
   assert.equal(await readFile(out, 'utf8'), 'old');
 });
-test('--check prints the result and writes nothing', () => {
-  const run = spawnSync(process.execPath, [cli, '--check', '9.9.9'], { encoding: 'utf8' });
+test('--check prints the result and writes nothing', async (t) => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'compose-check-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  await writeFile(path.join(cwd, 'sentinel'), 'unchanged');
+  const before = await readdir(cwd);
+  const run = spawnSync(process.execPath, [cli, '--check', '9.9.9'], { cwd, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr); assert.equal(run.stdout, 'compose asset: 9.9.9 ok\n');
+  assert.deepEqual(await readdir(cwd), before);
+  assert.equal(await readFile(path.join(cwd, 'sentinel'), 'utf8'), 'unchanged');
 });
 test('creates a missing output directory', async (t) => {
   const root = await fixture(t), out = path.join(root, 'a/b/docker-compose.yml');
@@ -51,7 +57,11 @@ test('creates a missing output directory', async (t) => {
 });
 test('stdout mode emits only the compose document', () => {
   const run = spawnSync(process.execPath, [cli, '9.9.9'], { encoding: 'utf8' });
-  assert.equal(run.status, 0, run.stderr); assert.ok(parse(run.stdout).services); assert.doesNotMatch(run.stdout, /compose asset|wrote/);
+  assert.equal(run.status, 0, run.stderr);
+  const { services } = parse(run.stdout);
+  assert.equal(services.hub.image, 'ghcr.io/nema-project/nema-room-hub:9.9.9');
+  assert.equal(services.web.image, 'ghcr.io/nema-project/nema-room-web:9.9.9');
+  assert.doesNotMatch(run.stdout, /compose asset|wrote/);
   assert.match(run.stderr, /compose asset: 9.9.9 ok/);
 });
 test('file mode writes nothing to stdout', async (t) => {

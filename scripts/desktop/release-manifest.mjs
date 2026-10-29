@@ -127,7 +127,7 @@ async function main(args) {
     if (!['true', 'false'].includes(prerelease)) throw new Error('prerelease must be true or false');
     const build = { commit: process.env.GITHUB_SHA, ref: process.env.GITHUB_REF, runId: process.env.GITHUB_RUN_ID, repository: process.env.GITHUB_REPOSITORY };
     const manifest = await collectReleaseManifest({ version, prerelease: prerelease === 'true', artifactsRoot: path.resolve(artifactsRoot), outputDir: path.resolve(outputDir), build, composeAsset: composeAsset ? path.resolve(composeAsset) : null });
-    process.stdout.write(`Collected ${Object.values(manifest.targets).flat().length} files for ${expectedTargets.length} targets\n`);
+    process.stdout.write(`Collected ${Object.values(manifest.targets).flat().length + (manifest.compose ? 1 : 0)} files for ${expectedTargets.length} targets\n`);
   } else {
     throw new Error('Usage: release-manifest.mjs checksums <dir> <version> <target> | verify <dir> <version> <target> | collect <artifacts-root> <output-dir> <version> <prerelease:true|false> [compose-file]');
   }
