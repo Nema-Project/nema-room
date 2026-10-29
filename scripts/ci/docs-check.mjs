@@ -35,7 +35,7 @@ export async function checkDocs({root, paths, siteBasePath = "/nema-room/"}) {
   for (const path of paths) {
     const file = resolve(root, path);
     if (!inside(root, file)) throw new Error(`Path outside repository: ${path}`);
-    if (!/\.(md|html)$/i.test(path)) continue;
+    if (!/\.(md|mdx|html)$/i.test(path)) continue;
     try { if (!(await stat(file)).isFile()) continue; }
     catch (error) { if (error.code === 'ENOENT') continue; throw error; }
     if (!inside(root, await realpath(file))) { errors.push(`${path}: file escapes repository`); continue; }

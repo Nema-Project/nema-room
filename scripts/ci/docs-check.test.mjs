@@ -57,3 +57,10 @@ test('Pages URLs resolve within the deployed site tree including its project pre
   await writeFile(join(root,'site/index.html'),'<a href="../README.md">outside deployment</a>');
   assert.match((await checkDocs({root,paths:['site/index.html']})).join('\n'),/outside|escapes/i);
 });
+
+test('MDX documents are checked like Markdown, since both share the documentation lane', async t => {
+  const root = await fixture(t, {'docs/a.mdx':'[missing](gone.mdx)\n[ok](../README.md)', 'README.md':'ok', 'README.en.md':'ok'});
+  assert.match((await checkDocs({root, paths:['docs/a.mdx']})).join('\n'), /gone\.mdx/);
+  await writeFile(join(root, 'docs/a.mdx'), '[ok](../README.md)');
+  assert.deepEqual(await checkDocs({root, paths:['docs/a.mdx']}), []);
+});
