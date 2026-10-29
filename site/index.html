@@ -286,8 +286,8 @@
   <div class="tile tile-accent cta-main">
     <h2 id="cta-h" data-reveal>Download</h2>
     <p data-reveal style="--i:1">Windows x64 and Apple Silicon builds are on the latest release. On Windows, pick the installer or the portable ZIP. The ZIP unzips to <code>Nema.exe</code>, with no shortcuts or uninstaller. Both use <code>~/.nema/desktop</code>. The app needs Git 2.31 or later already on the machine.</p>
-    <p data-reveal style="--i:1">The host command is <code>nema</code>, from <code>npm i -g @nema-project/nema@0.1.5</code>. Hub and web images are linux/amd64. <a href="https://github.com/Nema-Project/nema-room/blob/v0.1.5/docker-compose.yml">docker-compose.yml on tag v0.1.5</a> pins <code>ghcr.io/nema-project/nema-room-hub:0.1.5</code> and <code>ghcr.io/nema-project/nema-room-web:0.1.5</code>. Fetch that file, then start them. It is not a release asset. On Linux and macOS, export <code>NEMA_UID</code> and <code>NEMA_GID</code> first. To develop this repository, clone it and run the setup wizard.</p>
-    <pre data-reveal style="--i:2"><code>npm i -g @nema-project/nema@0.1.5
+    <p data-reveal style="--i:1">The host command is <code>nema</code>, from <code>npm i -g @nema-project/nema@&lt;locked version&gt;</code>. That number is <code>NEMA_IMAGE_TAG</code> in your <code>.env</code>, written from the release this install uses, so it equals that release's version. Hub and web images are linux/amd64. <a href="https://github.com/Nema-Project/nema-room/blob/v0.1.5/docker-compose.yml">docker-compose.yml on tag v0.1.5</a> pins <code>ghcr.io/nema-project/nema-room-hub:0.1.5</code> and <code>ghcr.io/nema-project/nema-room-web:0.1.5</code>. Fetch that file, then start them. It is not a release asset. On Linux and macOS, export <code>NEMA_UID</code> and <code>NEMA_GID</code> first. To develop this repository, clone it and run the setup wizard.</p>
+    <pre data-reveal style="--i:2"><code>npm i -g @nema-project/nema@&lt;locked version&gt;
 nema --version
 
 # Hub and web, linux/amd64. The compose file is on tag v0.1.5, not a release asset.
