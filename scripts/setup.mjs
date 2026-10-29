@@ -9,14 +9,15 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as nodeUtil from "node:util";
 import { devComposeUpArgs } from "./compose-dev.mjs";
+import { readReleaseTrio, assertReleaseTrio } from "./npm/check-tag.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const CLI = path.join(ROOT, "apps/cli/dist/index.js");
-const TEXT = {
+export const TEXT = {
   en: {
     title: "Nema Room setup",
     node: "Node.js 22 or newer is required.", missing: "Required tool unavailable:", docker: "Docker is not running or this user cannot access it.",
-    config: "Existing .env will be preserved. Setup uses these host settings:", data: "Data directory", hub: "Hub URL", uid: "Container UID/GID",
+    config: "Existing .env will be preserved. Setup uses these host settings:", data: "Data directory", hub: "Hub URL", uid: "Container UID/GID", checkout: "Version built from this checkout",
     proceed: "Install dependencies, build the CLI, and build/start the Compose services?", stopped: "Cancelled. No installation changes were made.",
     env: "Created .env from .env.example.", install: "Installing dependencies and building the CLI…", services: "Building and starting PostgreSQL, hub, and web…",
     waiting: "Waiting for hub, web, and the shared daemon token…", timeout: "Services did not become ready. Check: docker compose logs --tail=100 hub web postgres",
@@ -35,7 +36,7 @@ const TEXT = {
   zh: {
     title: "Nema Room 安装向导",
     node: "需要 Node.js 22 或以上版本。", missing: "缺少必需工具：", docker: "Docker 未启动，或当前用户无权访问。",
-    config: "已有 .env 会保留。向导将使用以下本机设置：", data: "数据目录", hub: "Hub 地址", uid: "容器 UID/GID",
+    config: "已有 .env 会保留。向导将使用以下本机设置：", data: "数据目录", hub: "Hub 地址", uid: "容器 UID/GID", checkout: "本检出构建的版本",
     proceed: "安装依赖、构建 CLI 并构建/启动 Compose 服务？", stopped: "已取消，未执行安装变更。",
     env: "已从 .env.example 创建 .env。", install: "正在安装依赖并构建 CLI……", services: "正在构建并启动 PostgreSQL、hub 和 web……",
     waiting: "等待 hub、web 和共享 daemon token 就绪……", timeout: "服务未能就绪，请检查：docker compose logs --tail=100 hub web postgres",
@@ -54,7 +55,7 @@ const TEXT = {
   ja: {
     title: "Nema Room セットアップ",
     node: "Node.js 22 以上が必要です。", missing: "必要なツールがありません：", docker: "Docker が停止中、または現在のユーザーにアクセス権がありません。",
-    config: "既存の .env は保持します。以下のホスト設定を使用します：", data: "データ保存先", hub: "Hub URL", uid: "コンテナ UID/GID",
+    config: "既存の .env は保持します。以下のホスト設定を使用します：", data: "データ保存先", hub: "Hub URL", uid: "コンテナ UID/GID", checkout: "このチェックアウトでビルドするバージョン",
     proceed: "依存関係と CLI をビルドし、Compose サービスをビルド・起動しますか？", stopped: "キャンセルしました。インストールによる変更はありません。",
     env: ".env.example から .env を作成しました。", install: "依存関係をインストールし、CLI をビルドしています…", services: "PostgreSQL、hub、web をビルド・起動しています…",
     waiting: "hub、web、共有 daemon token の準備を待っています…", timeout: "サービスが準備できません。確認：docker compose logs --tail=100 hub web postgres",
@@ -182,7 +183,11 @@ export async function main(args = process.argv.slice(2)) {
     try { fileEnv = nodeUtil.parseEnv(await readFile(path.join(ROOT, ".env"), "utf8")); }
     catch (error) { if (error.code !== "ENOENT") throw error; }
     const settings = setupSettings(fileEnv);
-    console.log(`${t.config}\n${t.data}: ${settings.dataDir}\n${t.hub}: ${settings.hubUrl}\n${t.uid}: ${settings.uid}/${settings.gid}\n`);
+    // A source checkout builds its own images; the trio must still agree. This key is reported,
+    // never used to pick a version: NEMA_IMAGE_TAG in .env neither selects nor overrides it.
+    const trio = await readReleaseTrio(ROOT);
+    const { version: checkoutVersion } = assertReleaseTrio(`v${trio.cli}`, trio);
+    console.log(`${t.config}\n${t.data}: ${settings.dataDir}\n${t.hub}: ${settings.hubUrl}\n${t.uid}: ${settings.uid}/${settings.gid}\n${t.checkout}: ${checkoutVersion}\n`);
     if (options.check) { console.log(t.check); return; }
     if (!process.stdin.isTTY) throw new Error(t.tty);
     if (!await yes(t.proceed)) { console.log(t.stopped); return; }
