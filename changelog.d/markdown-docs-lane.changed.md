@@ -1,0 +1,1 @@
+- Markdown-only changes take the documentation CI lane wherever the file lives, except the handful of Markdown files a package ships or a process reads at runtime; a Markdown-only pull request no longer runs the application suite.

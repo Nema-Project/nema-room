@@ -35,15 +35,59 @@ test('changelog fragments are documentation and do not downgrade code', () => {
   assert.notEqual(classifyPaths(['changelog.d/70.changed.txt']).mode, 'docs');
 });
 
-test('markdown under desktop and image scripts requests no heavy job', () => {
-  for (const path of ['scripts/desktop/RELEASE.md', 'scripts/desktop/README.md', 'scripts/images/RELEASE.md', 'scripts/desktop/notes/x.md']) {
+test('markdown anywhere takes the docs lane without downgrading real code', () => {
+  for (const path of [
+    'scripts/desktop/RELEASE.md', 'scripts/desktop/README.md', 'scripts/images/RELEASE.md', 'scripts/desktop/notes/x.md',
+    'scripts/npm/RELEASE.md', 'scripts/install/README.md', 'docs/superpowers/plans/x.md', '.github/PULL_REQUEST_TEMPLATE.md',
+    '.github/ISSUE_TEMPLATE/bug.md',
+  ]) {
     const result = classifyPaths([path]);
-    assert.equal(result.mode, 'app', path);
+    assert.equal(result.mode, 'docs', path);
     assert.deepEqual(heavy(result), none, path);
   }
   const script = classifyPaths(['scripts/desktop/smoke-desktop.test.mjs']);
   assert.equal(script.platform, true);
   assert.equal(script.desktop, true);
+});
+
+test('markdown that ships or is read at runtime keeps its consumer checks', () => {
+  // The CLI bundles this file into the npm package and installs it as a skill; it has to pass.
+  const skill = classifyPaths(['apps/cli/src/report/SKILL.md']);
+  assert.equal(skill.mode, 'app');
+  assert.equal(skill.platform, true);
+  assert.equal(skill.npmPack, true);
+  // The hub reads these at startup and the desktop runtime stages them.
+  for (const path of ['vendor/superpowers-rules/spec-rules.md', 'vendor/superpowers-rules/plan-rules.md']) {
+    assert.notEqual(classifyPaths([path]).mode, 'docs', path);
+  }
+  // The desktop staging step refuses to build without this notice file.
+  assert.notEqual(classifyPaths(['vendor/archify/THIRD_PARTY_NOTICES.md']).mode, 'docs');
+  // Deleting the license breaks npm staging and the desktop license tree, so it is not prose.
+  for (const path of ['LICENSE', 'LICENCE', 'COPYING']) {
+    const license = classifyPaths([path]);
+    assert.equal(license.mode, 'app', path);
+    assert.equal(license.npmPack, true, path);
+  }
+});
+
+test('vendor notes nothing reads stay on the docs lane', () => {
+  // The staged tree carries them, but no code opens them: a wording change needs no application run.
+  for (const path of ['vendor/archify/VENDORED.md', 'vendor/archify/renderers/erd/README.md', 'vendor/superpowers-rules/VENDORED.md']) {
+    assert.equal(classifyPaths([path]).mode, 'docs', path);
+  }
+});
+
+test('markdown cannot pull the npm pack smoke either', () => {
+  for (const path of ['scripts/npm/RELEASE.md', 'scripts/desktop/RELEASE.md', 'docs/superpowers/plans/x.md']) {
+    assert.equal(classifyPaths([path]).npmPack, false, path);
+  }
+  // A markdown file alongside real code still leaves the code's own classes intact.
+  const mixed = classifyPaths(['scripts/npm/RELEASE.md', 'apps/cli/src/index.ts']);
+  assert.equal(mixed.mode, 'app');
+  assert.equal(mixed.npmPack, true);
+  assert.equal(mixed.platform, true);
+  const plain = classifyPaths(['scripts/npm/check-tag.mjs']);
+  assert.equal(plain.npmPack, true);
 });
 
 test('empty or unsafe paths fail closed onto the full suite', () => {
@@ -53,7 +97,7 @@ test('empty or unsafe paths fail closed onto the full suite', () => {
 });
 
 test('path classes match the fast-gate table', () => {
-  for (const path of ['apps/web/app/page.tsx', 'apps/hub/src/app.ts', 'vendor/rules.md', 'unknown', 'docs/a.js']) {
+  for (const path of ['apps/web/app/page.tsx', 'apps/hub/src/app.ts', 'unknown', 'docs/a.js', 'vendor/rules.js']) {
     const result = classifyPaths([path]);
     assert.equal(result.mode, 'app', path);
     assert.deepEqual(heavy(result), none, path);
@@ -83,6 +127,8 @@ test('path classes match the fast-gate table', () => {
     assert.equal(classifyPaths([path]).npmPack, true, path);
   }
   assert.equal(classifyPaths(['README.md', 'apps/web/app/page.tsx']).mode, 'app');
+  assert.equal(classifyPaths(['vendor/rules.md']).mode, 'docs');
+  assert.equal(classifyPaths(['vendor/rules.js']).mode, 'app');
   for (const paths of [null, 'README.md', [null], [''], ['a\0b']]) assert.throws(() => classifyPaths(paths));
 });
 
