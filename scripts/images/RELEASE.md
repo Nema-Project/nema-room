@@ -9,7 +9,7 @@ A push of a `v*` tag builds `linux/amd64` hub and web images, runs `.github/work
 
 Do not create a tag unless that SHA's `CI` workflow on `main` has already succeeded. A missing, in-progress, cancelled, or failed run is not a tag candidate. Publication is still blocked by `verify.yml` on the tag SHA (a failure, cancellation, skip, or missing run cannot publish), not by a separate lookup of the `main` workflow run. A SHA whose full suite failed on `main` fails that same verify.
 
-The version tag matches `apps/desktop`, `apps/local`, and `apps/cli`, and the `image:` tags in `docker-compose.yml`. Set those three package versions with `npm run release:stamp -- <version>` (see `scripts/npm/RELEASE.md`). That command checks the tag against the three packages only. User-visible notes between releases live in `changelog.d/` fragments. `npm run release:cut -- <version>` composes them into `[Unreleased]` and deletes the consumed fragments only after that write succeeds. `scripts/images/check-images.mjs` still rejects a tag whose version differs from the compose pin, so the pin is updated in the same release commit. The image-version assertion joins the stamp command in phase 2. A prerelease does not move `latest`. `workflow_dispatch` builds and smokes the images locally and does not push.
+The version tag matches `apps/desktop`, `apps/local`, and `apps/cli`. Set those three package versions with `npm run release:stamp -- <version>` (see `scripts/npm/RELEASE.md`). That command's self-check is `check-tag`, the shape assertions on the compose template, and the version assertions on that template rendered at the new version. User-visible notes between releases live in `changelog.d/` fragments. `npm run release:cut -- <version>` composes them into `[Unreleased]` and deletes the consumed fragments only after that write succeeds. The `docker-compose.yml` in the repository tree is a template whose hub and web `image:` entries are `${NEMA_IMAGE_TAG:-latest}`, so the tree holds no publishable pin. The release asset is rendered from that template by `node scripts/images/stamp-compose.mjs <x.y.z>`, which pins both images to the release version; `image-publish.yml` and `desktop-release.yml` each validate the rendered asset in their own publication checks. `scripts/images/check-images.mjs` runs the shape assertions against the template and the version assertions against the asset. A prerelease does not move `latest`. `workflow_dispatch` builds and smokes the images locally and does not push.
 
 Publish jobs share the concurrency group `image-publish-registry` and do not cancel each other. A stable release moves `latest` only when `org.opencontainers.image.version` on the current `latest` image is missing or older than or equal to this version. An older stable tag that reaches the registry later leaves `latest` where it is. The remote tag is checked again immediately before each version push, and again after both version tags exist and before either `latest` tag moves.
 
@@ -22,7 +22,7 @@ Publication does not push when any of these is true:
 - `verify.yml` did not succeed for that commit
 - the tag moved after the triggering event
 - the tag commit is not an ancestor of protected `main`
-- the tag, the three package versions, and the compose image tags disagree
+- the rendered asset's two image pins do not equal this release version
 - either image exceeds the size budget enforced by `scripts/images/check-images.mjs` (800 MiB)
 - the build job's smoke (`scripts/images/smoke-compose.mjs --pull never`) fails
 - crane cannot push the layout
