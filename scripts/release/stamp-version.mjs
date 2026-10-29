@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readReleaseVersion } from '../desktop/release-version.mjs';
+import { assertComposeAsset, assertComposeTemplate, renderComposeAsset } from '../images/check-images.mjs';
 
 const checkTagScript = fileURLToPath(new URL('../npm/check-tag.mjs', import.meta.url));
 
@@ -120,12 +121,17 @@ function assertOnlyLockVersionsChanged(beforeText, afterText, version) {
 }
 
 async function selfCheck(root, version) {
-  // The image-version assertion joins in phase 2, when the compose template
-  // and its split assertions land. This step runs check-tag only.
   const tag = `v${version}`;
   const run = spawnSync(process.execPath, [checkTagScript, tag, root], { encoding: 'utf8' });
   if (run.status !== 0) {
     throw new Error(`check-tag failed for ${tag}:\n${(run.stderr || run.stdout || 'no output').trim()}`);
+  }
+  try {
+    const template = await readFile(path.join(root, 'docker-compose.yml'), 'utf8');
+    assertComposeTemplate(template);
+    assertComposeAsset(renderComposeAsset(template, version), version);
+  } catch (error) {
+    throw new Error(`compose template failed at ${tag}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

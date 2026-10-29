@@ -312,12 +312,19 @@ jobs:
           for target in win32-x64 darwin-arm64; do
             npm run desktop:validate-release -- "release-payloads/$target" "$target" "$VERSION"
           done
+      - name: Stamp the Compose asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p compose-asset
+          node scripts/images/stamp-compose.mjs "$VERSION" compose-asset/docker-compose.yml
+
       - name: Verify the complete asset set
         shell: bash
         run: |
           test "$GITHUB_SHA" = "$RELEASE_COMMIT"
           test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
-          node scripts/desktop/release-manifest.mjs collect release-input release-assets "$VERSION" "$PRERELEASE"
+          node scripts/desktop/release-manifest.mjs collect release-input release-assets "$VERSION" "$PRERELEASE" compose-asset/docker-compose.yml
       - name: Recheck remote tag before draft operations
         shell: bash
         run: node scripts/desktop/release-commit.mjs --verify-remote "refs/tags/$TAG" "$RELEASE_COMMIT"

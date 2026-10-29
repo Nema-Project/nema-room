@@ -232,6 +232,15 @@ test('windows desktop release publishes a separate portable ZIP and still smokes
 
 test('release gates bind all stages to one SHA and fail closed on verification results', () => {
   const release = read('desktop-release'); assertRelease(release);
+  const steps = release.jobs.publish.steps;
+  const stamp = steps.findIndex(step => step.name === 'Stamp the Compose asset');
+  const verify = steps.findIndex(step => step.name === 'Verify the complete asset set');
+  assert.ok(stamp >= 0 && verify > stamp);
+  assert.match(steps[verify].run, /compose-asset\/docker-compose\.yml/);
+  const publish = steps.find(step => step.name === 'Create or reuse draft, upload, publish');
+  assert.match(publish.run, /gh release upload "\$TAG" release-assets\/\*/);
+  assert.match(publish.run, /--draft=false/);
+  assert.match(publish.run, /--verify-remote/);
   const wrongRef=structuredClone(release); checkout(wrongRef.jobs.build)[0].with.ref='main'; assert.throws(()=>assertRelease(wrongRef));
   const missingVerify=structuredClone(release); missingVerify.jobs.publish.needs=['plan','build']; assert.throws(()=>assertRelease(missingVerify));
 });
@@ -328,6 +337,10 @@ test('image publish pushes pinned GHCR images only after verify, and only from t
   assert.equal(image.permissions.contents, 'read');
   assert.equal(image.permissions.packages, undefined);
   assertRelease(image);
+  const planSteps = image.jobs.plan.steps;
+  const helperIndex = planSteps.findIndex((step) => step.name === 'Image helper tests');
+  const installIndex = planSteps.findIndex((step) => step.run === 'npm ci --ignore-scripts');
+  assert.ok(installIndex >= 0 && installIndex < helperIndex, 'install dependencies before image helper tests');
   assert.equal(image.jobs.build.permissions?.packages, undefined);
   assert.deepEqual(image.jobs.publish.permissions, {contents: 'read', packages: 'write'});
   assert.deepEqual([...image.jobs.smoke.needs].sort(), ['plan', 'publish']);
@@ -364,6 +377,17 @@ test('image publish pushes pinned GHCR images only after verify, and only from t
   assert.match(buildText, /smoke-compose\.mjs --pull never --hub-port 4410 --web-port 3010/);
   assert.match(smokeText, /--pull always/);
   assert.doesNotMatch(smokeText, /docker build/);
+  const composeSteps = Object.values(image.jobs).flatMap((job) => job.steps ?? []).filter((step) => /docker compose|smoke-compose\.mjs/.test(step.run ?? ''));
+  assert.equal(composeSteps.length, 3);
+  for (const step of composeSteps) {
+    assert.equal(expr(step.env?.NEMA_IMAGE_TAG), 'needs.plan.outputs.version');
+    assert.match(step.run, /test -n "\$NEMA_IMAGE_TAG"/);
+  }
+  for (const [job, command] of [[image.jobs.build, '--pull never'], [image.jobs.smoke, 'docker compose pull'], [image.jobs.smoke, '--pull always']]) {
+    const step = job.steps.find((item) => (item.run ?? '').includes(command));
+    assert.ok(step);
+    assert.equal(expr(step.env?.NEMA_IMAGE_TAG), 'needs.plan.outputs.version');
+  }
   const raw = readFileSync(new URL('../../.github/workflows/image-publish.yml', import.meta.url), 'utf8');
   assert.equal(raw.includes('id-token'), false);
   assert.deepEqual([...new Set(raw.match(/secrets\.[A-Za-z0-9_]+/g) ?? [])], ['secrets.GITHUB_TOKEN']);

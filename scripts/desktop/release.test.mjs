@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -45,17 +48,38 @@ test('readReleaseVersion rejects invalid tags and version mismatch', () => {
 test('collection accepts a complete matrix and writes a manifest, combined checksums and assets', async (t) => {
   const root = await artifactsFixture(t);
   const out = path.join(await tempDir(t, 'nema-release-out-'), 'release');
-  const manifest = await collectReleaseManifest({ version, prerelease: false, artifactsRoot: root, outputDir: out, build: { commit: 'abc' } });
+  const composeAsset = path.join(await tempDir(t, 'nema-compose-'), 'docker-compose.yml');
+  await writeFile(composeAsset, 'compose asset');
+  const manifest = await collectReleaseManifest({ version, prerelease: false, artifactsRoot: root, outputDir: out, build: { commit: 'abc' }, composeAsset });
   assert.deepEqual(Object.keys(manifest.targets), [...expectedTargets]);
   const files = await readdir(out);
-  assert.equal(files.length, 7);
+  assert.equal(files.length, 8);
   assert.ok(files.includes('Nema-1.2.3-win32-x64.exe') && files.includes('Nema-1.2.3-win32-x64.zip') && files.includes('Nema-1.2.3-darwin-arm64.dmg'));
   assert.equal(files.includes('Nema-1.2.3-darwin-arm64.zip'), false);
   const sums = (await readFile(path.join(out, 'SHA256SUMS-1.2.3.txt'), 'utf8')).trim().split('\n');
-  assert.deepEqual(sums.map((line) => line.slice(66)), ['Nema-1.2.3-win32-x64.exe', 'Nema-1.2.3-win32-x64.zip', 'Nema-1.2.3-darwin-arm64.dmg']);
+  assert.deepEqual(sums.map((line) => line.slice(66)), ['Nema-1.2.3-win32-x64.exe', 'Nema-1.2.3-win32-x64.zip', 'Nema-1.2.3-darwin-arm64.dmg', 'docker-compose.yml']);
   const written = JSON.parse(await readFile(path.join(out, 'release-manifest-1.2.3.json'), 'utf8'));
   assert.equal(written.build.commit, 'abc');
+  const copiedCompose = await readFile(path.join(out, 'docker-compose.yml'));
+  const sourceCompose = await readFile(composeAsset);
+  assert.deepEqual(copiedCompose, sourceCompose);
+  assert.equal(written.compose.sha256, createHash('sha256').update(copiedCompose).digest('hex'));
+  assert.equal(written.compose.sha256, createHash('sha256').update(sourceCompose).digest('hex'));
   assert.deepEqual(written.targets['win32-x64'].map((asset) => asset.name), ['Nema-1.2.3-win32-x64.exe', 'Nema-1.2.3-win32-x64.zip', 'SHA256SUMS-1.2.3-win32-x64.txt']);
+});
+
+test('collect CLI counts the optional Compose asset', async (t) => {
+  const root = await artifactsFixture(t);
+  const outputRoot = await tempDir(t, 'nema-release-cli-');
+  const composeAsset = path.join(outputRoot, 'docker-compose.yml');
+  await writeFile(composeAsset, 'compose asset');
+  const cli = fileURLToPath(new URL('./release-manifest.mjs', import.meta.url));
+  for (const [extra, count] of [[[], 5], [[composeAsset], 6]]) {
+    const out = path.join(outputRoot, `out-${count}`);
+    const run = spawnSync(process.execPath, [cli, 'collect', root, out, version, 'false', ...extra], { encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stdout, `Collected ${count} files for 2 targets\n`);
+  }
 });
 
 test('collection refuses a missing matrix target without copying anything', async (t) => {
@@ -77,6 +101,9 @@ test('collection refuses a missing asset or checksum file and unexpected files',
   const root = await artifactsFixture(t);
   await writeFile(path.join(root, 'win32-x64', 'latest.yml'), 'x');
   await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: path.join(root, 'out') }), /Unexpected file/);
+  const duplicate = await artifactsFixture(t);
+  await writeFile(path.join(duplicate, 'win32-x64', 'docker-compose.yml'), 'duplicate');
+  await assert.rejects(collectReleaseManifest({ version, artifactsRoot: duplicate, outputDir: path.join(duplicate, 'out') }), /Unexpected file/);
   const zipRoot = await artifactsFixture(t);
   await writeFile(path.join(zipRoot, 'darwin-arm64', 'Nema-1.2.3-darwin-arm64.zip'), 'portable app');
   await assert.rejects(collectReleaseManifest({ version, artifactsRoot: zipRoot, outputDir: path.join(zipRoot, 'out') }), /Unexpected file in darwin-arm64 artifact: Nema-1.2.3-darwin-arm64.zip/);
@@ -140,4 +167,16 @@ test('release version comes from package fields in a source copy without .git', 
   assert.deepEqual(readReleaseVersion('v1.2.3-rc.1', packageVersion), { version: '1.2.3-rc.1', prerelease: true });
   await writeFile(path.join(snapshot, 'apps/local/package.json'), JSON.stringify({ version: '1.2.4' }));
   await assert.rejects(readPackageVersion(snapshot), /must match local runtime/);
+});
+
+
+test('refuses a missing or empty compose asset', async (t) => {
+  const root = await artifactsFixture(t), dir = await tempDir(t, 'nema-compose-');
+  const out = path.join(dir, 'out'), missing = path.join(dir, 'missing', 'docker-compose.yml');
+  await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: out, composeAsset: missing }));
+  const empty = path.join(dir, 'docker-compose.yml'); await writeFile(empty, '');
+  await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: out, composeAsset: empty }));
+  const wrong = path.join(dir, 'compose.yml'); await writeFile(wrong, 'contents');
+  await assert.rejects(collectReleaseManifest({ version, artifactsRoot: root, outputDir: out, composeAsset: wrong }));
+  assert.equal(await stat(out).catch(() => null), null);
 });

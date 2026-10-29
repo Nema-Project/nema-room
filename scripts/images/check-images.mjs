@@ -27,16 +27,7 @@ function serviceBlocks(text) {
   return blocks;
 }
 
-/** Published compose pins hub and web to `version` and does not build them. */
-export function assertComposeImages(text, version) {
-  if (typeof version !== 'string' || version === 'latest' || version.startsWith('v')) {
-    throw new Error(`Not a release version: ${JSON.stringify(version)}`);
-  }
-  if (/image:\s+\S+:latest\b/.test(text)) throw new Error('Published compose must not use the latest tag');
-  const hub = `${HUB_IMAGE}:${version}`;
-  const web = `${WEB_IMAGE}:${version}`;
-  if (!text.includes(`image: ${hub}`)) throw new Error(`Published compose is missing ${hub}`);
-  if (!text.includes(`image: ${web}`)) throw new Error(`Published compose is missing ${web}`);
+export function assertComposeShape(text) {
   const services = serviceBlocks(text);
   for (const name of ['hub', 'web']) {
     const block = services[name];
@@ -56,6 +47,60 @@ export function assertComposeImages(text, version) {
   if (!services.hub.includes('/api/daemon/status') || !services.web.includes('127.0.0.1:3000')) {
     throw new Error('Published hub and web need healthchecks');
   }
+}
+
+const interpolation = '${NEMA_IMAGE_TAG:-latest}';
+
+function assertSingleImageKey(block, name) {
+  if ((block?.match(/^    image\s*:/gm) ?? []).length !== 1) throw new Error(`${name} must have exactly one image key`);
+}
+
+function validateVersion(version) {
+  if (typeof version !== 'string' || version.startsWith('v')) throw new Error(`Not a release version: ${version}`);
+  readReleaseVersion(`v${version}`, version);
+}
+
+export function assertComposeTemplate(text) {
+  assertComposeShape(text);
+  if (/image:\s+\S+:latest\b/.test(text)) throw new Error('Template must not use the latest tag literally');
+  const services = serviceBlocks(text);
+  for (const [name, image] of [['hub', HUB_IMAGE], ['web', WEB_IMAGE]]) {
+    assertSingleImageKey(services[name], name);
+    if (!new RegExp(`^\\s*image: ${image.replaceAll('.', '\\.')}:\\$\\{NEMA_IMAGE_TAG:-latest\\}\\s*$`, 'm').test(services[name])) throw new Error(`${name} image must use NEMA_IMAGE_TAG interpolation`);
+  }
+}
+
+export function assertComposeAsset(text, version) {
+  validateVersion(version);
+  assertComposeShape(text);
+  if (/image:\s+\S+:latest\b/.test(text)) throw new Error('Published compose must not use the latest tag');
+  if (text.includes('${NEMA_IMAGE_TAG')) throw new Error('Published compose must not contain NEMA_IMAGE_TAG interpolation');
+  const services = serviceBlocks(text);
+  for (const [name, image] of [['hub', HUB_IMAGE], ['web', WEB_IMAGE]]) {
+    assertSingleImageKey(services[name], name);
+    if (!services[name].split('\n').some(line => line.trim() === `image: ${image}:${version}`)) throw new Error(`Published compose is missing ${image}:${version}`);
+  }
+}
+
+export function renderComposeAsset(template, version) {
+  if (template.split(interpolation).length - 1 !== 2) throw new Error('Expected exactly two NEMA_IMAGE_TAG interpolations');
+  const asset = template.replaceAll(interpolation, version);
+  if (/\$(?:NEMA_IMAGE_TAG|\{NEMA_IMAGE_TAG(?:\}|:-))/.test(asset)) throw new Error('Residual NEMA_IMAGE_TAG interpolation');
+  assertComposeAsset(asset, version);
+  return asset;
+}
+
+export function composeAssetVersion(text) {
+  const services = serviceBlocks(text);
+  const versions = [['hub', HUB_IMAGE], ['web', WEB_IMAGE]].map(([name, image]) => {
+    assertSingleImageKey(services[name], name);
+    const line = (services[name] ?? '').split('\n').map(line => line.trim()).find(line => line.startsWith(`image: ${image}:`));
+    if (!line) throw new Error(`Published compose is missing ${image}`);
+    return line.slice(`image: ${image}:`.length);
+  });
+  if (versions[0] !== versions[1]) throw new Error(`Image versions differ: hub ${versions[0]}, web ${versions[1]}`);
+  validateVersion(versions[0]);
+  return versions[0];
 }
 
 /** Tag shape plus desktop, local, and cli versions. Failures name all three versions. */
@@ -98,7 +143,9 @@ export async function checkRepositoryImages(root, tag) {
   const helper = await readPackageVersion(root);
   if (helper !== desktop) throw new Error(`desktop/local helper returned ${helper}, desktop package is ${desktop}`);
   const version = assertPackageVersions({ tag: tag ?? `v${desktop}`, desktop, local, cli });
-  assertComposeImages(await readFile(path.join(root, 'docker-compose.yml'), 'utf8'), version);
+  const template = await readFile(path.join(root, 'docker-compose.yml'), 'utf8');
+  assertComposeTemplate(template);
+  if (tag) renderComposeAsset(template, version);
   return version;
 }
 
@@ -126,6 +173,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       process.stdout.write(`${decision}\n`);
     } else if (lines) {
       for (const line of lines) process.stdout.write(`${line}\n`);
+    } else if (process.argv[2] === '--asset') {
+      const [, , , file, version, extra] = process.argv;
+      if (!file || !version || extra) throw new Error('Usage: check-images.mjs --asset <file> <version>');
+      assertComposeAsset(await readFile(file, 'utf8'), version);
+      process.stdout.write(`compose asset: ${version} ok\n`);
     } else {
       const [tag, extra] = process.argv.slice(2);
       if (extra) throw new Error('Usage: check-images.mjs [v<version>]');
