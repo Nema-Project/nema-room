@@ -35,15 +35,31 @@ test('changelog fragments are documentation and do not downgrade code', () => {
   assert.notEqual(classifyPaths(['changelog.d/70.changed.txt']).mode, 'docs');
 });
 
-test('markdown under desktop and image scripts requests no heavy job', () => {
-  for (const path of ['scripts/desktop/RELEASE.md', 'scripts/desktop/README.md', 'scripts/images/RELEASE.md', 'scripts/desktop/notes/x.md']) {
+test('markdown anywhere takes the docs lane without downgrading real code', () => {
+  for (const path of [
+    'scripts/desktop/RELEASE.md', 'scripts/desktop/README.md', 'scripts/images/RELEASE.md', 'scripts/desktop/notes/x.md',
+    'scripts/npm/RELEASE.md', 'scripts/install/README.md', 'docs/superpowers/plans/x.md', 'apps/desktop/NOTES.md', '.github/PULL_REQUEST_TEMPLATE.md',
+  ]) {
     const result = classifyPaths([path]);
-    assert.equal(result.mode, 'app', path);
+    assert.equal(result.mode, 'docs', path);
     assert.deepEqual(heavy(result), none, path);
   }
   const script = classifyPaths(['scripts/desktop/smoke-desktop.test.mjs']);
   assert.equal(script.platform, true);
   assert.equal(script.desktop, true);
+});
+
+test('markdown cannot pull the npm pack smoke either', () => {
+  for (const path of ['scripts/npm/RELEASE.md', 'apps/cli/README.md', 'packages/shared/NOTES.md']) {
+    assert.equal(classifyPaths([path]).npmPack, false, path);
+  }
+  // A markdown file alongside real code still leaves the code's own classes intact.
+  const mixed = classifyPaths(['scripts/npm/RELEASE.md', 'apps/cli/src/index.ts']);
+  assert.equal(mixed.mode, 'app');
+  assert.equal(mixed.npmPack, true);
+  assert.equal(mixed.platform, true);
+  const plain = classifyPaths(['scripts/npm/check-tag.mjs']);
+  assert.equal(plain.npmPack, true);
 });
 
 test('empty or unsafe paths fail closed onto the full suite', () => {
@@ -53,7 +69,7 @@ test('empty or unsafe paths fail closed onto the full suite', () => {
 });
 
 test('path classes match the fast-gate table', () => {
-  for (const path of ['apps/web/app/page.tsx', 'apps/hub/src/app.ts', 'vendor/rules.md', 'unknown', 'docs/a.js']) {
+  for (const path of ['apps/web/app/page.tsx', 'apps/hub/src/app.ts', 'unknown', 'docs/a.js', 'vendor/rules.js']) {
     const result = classifyPaths([path]);
     assert.equal(result.mode, 'app', path);
     assert.deepEqual(heavy(result), none, path);
@@ -83,6 +99,8 @@ test('path classes match the fast-gate table', () => {
     assert.equal(classifyPaths([path]).npmPack, true, path);
   }
   assert.equal(classifyPaths(['README.md', 'apps/web/app/page.tsx']).mode, 'app');
+  assert.equal(classifyPaths(['vendor/rules.md']).mode, 'docs');
+  assert.equal(classifyPaths(['vendor/rules.js']).mode, 'app');
   for (const paths of [null, 'README.md', [null], [''], ['a\0b']]) assert.throws(() => classifyPaths(paths));
 });
 

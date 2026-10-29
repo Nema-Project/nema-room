@@ -1,0 +1,1 @@
+- Markdown-only changes take the documentation lane wherever the file lives, and the desktop and image workflows no longer run for a Markdown-only pull request.
