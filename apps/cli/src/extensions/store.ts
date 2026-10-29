@@ -1,4 +1,4 @@
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, cpSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeSync } from "node:fs";
 import path from "node:path";
 import { bundledExtensions, type ExtensionRecord } from "@nema/shared";
 
@@ -24,9 +24,28 @@ function readExtra(root: string): ExtensionRecord[] {
   return parsed as ExtensionRecord[];
 }
 
+/**
+ * Replace the index in one step: write a sibling temp file, flush it to disk, then rename over the
+ * index. A crash or a full disk leaves either the old index or the new one, never a half-written
+ * file that `readExtra` would fail to parse on the next start.
+ */
 function writeExtra(root: string, rows: ExtensionRecord[]): void {
   mkdirSync(root, { recursive: true });
-  writeFileSync(indexPath(root), JSON.stringify(rows));
+  const target = indexPath(root);
+  const temp = path.join(root, `index.json.${process.pid}.${Date.now()}.tmp`);
+  const fd = openSync(temp, "w", 0o600);
+  try {
+    writeSync(fd, JSON.stringify(rows));
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  try {
+    renameSync(temp, target);
+  } catch (error) {
+    rmSync(temp, { force: true });
+    throw error;
+  }
 }
 
 function managedPath(root: string, id: string): { extensions: string; target: string } {

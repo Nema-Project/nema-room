@@ -1,9 +1,12 @@
 import http from "node:http";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { Hono } from "hono";
 import WebSocket from "ws";
-import { PLUGINS } from "@nema/shared";
+import { PLUGINS, bundledExtensions } from "@nema/shared";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { DaemonRpcError, type DaemonRpc } from "../src/daemonRpc.js";
@@ -39,9 +42,18 @@ const daemon: DaemonRpc = {
   },
 };
 
+/**
+ * Listing tools asks the daemon which extensions the install switched off. That read is the only
+ * daemon traffic a refused call may cause; everything before it stays local.
+ */
+const nonExtensionCalls = () => daemonCalls.filter((call) => call.method !== "extensions.list");
+
 beforeEach(async () => {
   daemonCalls.length = 0;
-  daemonCall = async () => {
+  // The daemon answers for extension state even while everything else is offline in these tests:
+  // the tool list now asks which extensions the install turned off.
+  daemonCall = async (method) => {
+    if (method === "extensions.list") return bundledExtensions();
     throw new DaemonRpcError("daemon 未连接");
   };
   const deps = await makeHubDeps();
@@ -145,7 +157,7 @@ describe("workspace plugins", () => {
     const call = await roomReq("POST", "/room/plugins/code__search", task.runToken, { repo: "repo_missing", query: "q" });
     expect(call.status).toBe(403);
     expect(((await call.json()) as { error: string }).error).toBe("函数 code__search 未在本 workspace 开启");
-    expect(daemonCalls).toEqual([]);
+    expect(nonExtensionCalls()).toEqual([]);
     expect(await db.query("select 1 from plugin_calls")).toEqual([]);
   });
 
@@ -163,7 +175,7 @@ describe("workspace plugins", () => {
       const call = await roomReq("POST", "/room/plugins/github__list_issues", task.runToken, { owner: "acme", repo: "api" });
       expect(call.status).toBe(403);
     }
-    expect(daemonCalls).toEqual([]);
+    expect(nonExtensionCalls()).toEqual([]);
 
     const on = await uiReq("PATCH", `/api/workspaces/${wsA}/plugins/github`, { enabled: true });
     expect(on.status).toBe(200);
@@ -185,7 +197,10 @@ describe("workspace plugins", () => {
     expect(await names()).toContain("github__gh_read");
     expect(await names()).not.toContain("github__gh_write");
 
-    daemonCall = async () => "ok";
+    daemonCall = async (method) => {
+      if (method === "extensions.list") return bundledExtensions();
+      return "ok";
+    };
     const read = await roomReq("POST", "/room/plugins/github__gh_read", task.runToken, { args: ["issue", "list", "-R", "acme/api", "--limit", "5"] });
     expect(read.status).toBe(200);
     expect(daemonCalls.at(-1)).toMatchObject({ method: "plugin.call", params: { name: "github__gh_read", args: { args: ["issue", "list", "--repo=acme/api", "--limit=5"], bound: [{ owner: "acme", repo: "api" }] } } });
@@ -195,9 +210,10 @@ describe("workspace plugins", () => {
     expect(wrongTool.status).toBe(400);
 
     const write = { args: ["issue", "create", "--repo", "acme/api", "--title", "t", "--body", "b"] };
-    const calls = daemonCalls.length;
+    const calls = nonExtensionCalls().length;
     expect((await roomReq("POST", "/room/plugins/github__gh_write", task.runToken, write)).status).toBe(403);
-    expect(daemonCalls).toHaveLength(calls);
+    // A refused write never reaches plugin.call; the only daemon read is the extension index.
+    expect(nonExtensionCalls()).toHaveLength(calls);
 
     const bad = await uiReq("PATCH", `/api/workspaces/${wsA}/plugins/github`, { settings: { allowWrites: "yes" } });
     expect(bad.status).toBe(400);
@@ -223,7 +239,7 @@ describe("workspace plugins", () => {
     expect(names).toEqual([...codeFunctionNames, ...diagramFunctionNames, ...workpackageFunctionNames]);
     const call = await roomReq("POST", "/room/plugins/github__list_issues", task.runToken, { owner: "acme", repo: "lab" });
     expect(call.status).toBe(403);
-    expect(daemonCalls).toEqual([]);
+    expect(nonExtensionCalls()).toEqual([]);
   });
 
   test("repo descriptions list every bound repo as id (label)", async () => {
@@ -456,6 +472,55 @@ describe("workspace plugins", () => {
       for (const socket of sockets) socket.terminate();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+describe("extension list while the daemon is down", () => {
+  const offline = async () => {
+    throw new DaemonRpcError("daemon 未连接");
+  };
+
+  /** An index file written the way the CLI writes it: only the rows that differ from the seeds. */
+  function writeIndex(rows: unknown[], body = JSON.stringify(rows)) {
+    const home = mkdtempSync(path.join(tmpdir(), "nema-home-"));
+    mkdirSync(path.join(home, "extensions"), { recursive: true });
+    writeFileSync(path.join(home, "extensions", "index.json"), body);
+    const app = createApp({ db, dataDir, events: new EventBus(), daemonStatus: () => false, daemon: { call: offline } as unknown as DaemonRpc, nemaHome: home });
+    return app;
+  }
+
+  const list = async (app: Hono<any>) => {
+    const res = await app.request(`${HUB}/api/extensions`, { headers: { Host: "127.0.0.1:4400" } });
+    expect(res.status).toBe(200);
+    return (await res.json()) as { id: string; useState: string; provision: string }[];
+  };
+
+  test("shows the choice the person made instead of the shipped default", async () => {
+    const app = writeIndex([{ ...bundledExtensions().find((row) => row.id === "github")!, useState: "disabled" }]);
+    const rows = await list(app);
+    expect(rows.find((row) => row.id === "github")?.useState).toBe("disabled");
+    // Every other seed keeps what it shipped with.
+    expect(rows.filter((row) => row.id !== "github").every((row) => row.useState === "enabled")).toBe(true);
+  });
+
+  test("keeps managed and external extensions, which exist only in the index", async () => {
+    const app = writeIndex([
+      { id: "remote", kind: "skill", name: "remote", summary: "", source: "https://example.com", revision: "abc", provision: "external", installState: "installed", useState: "enabled", availability: "ready", externalPath: "/tmp/remote", error: null },
+    ]);
+    const rows = await list(app);
+    expect(rows.map((row) => row.id)).toEqual(["code", "diagram", "superpowers", "grill", "github", "remote"]);
+    expect(rows.at(-1)).toMatchObject({ id: "remote", provision: "external" });
+  });
+
+  test("falls back to the seeds when the index is missing, unreadable, or not a list", async () => {
+    for (const body of [null, "{not json", '{"id":"github"}']) {
+      const app = body === null
+        ? createApp({ db, dataDir, events: new EventBus(), daemonStatus: () => false, daemon: { call: offline } as unknown as DaemonRpc, nemaHome: mkdtempSync(path.join(tmpdir(), "nema-home-")) })
+        : writeIndex([], body);
+      const rows = await list(app);
+      expect(rows.map((row) => row.id)).toEqual(["code", "diagram", "superpowers", "grill", "github"]);
+      expect(rows.every((row) => row.useState === "enabled")).toBe(true);
     }
   });
 });

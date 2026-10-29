@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { Hono } from "hono";
 import { KnowledgeStore, git, history } from "@nema/knowledge";
+import { bundledExtensions } from "@nema/shared";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { DaemonRpcError, type DaemonRpc } from "../src/daemonRpc.js";
@@ -21,9 +22,16 @@ let wsB: string;
 let room: Hono<any>;
 let emitted: { ws: string; event: unknown }[];
 const daemonCalls: unknown[] = [];
+/**
+ * Offering a tool asks the daemon which extensions the install switched off. That read is expected
+ * here; these assertions are about every other call, which is what "never sent to the daemon" means.
+ */
+const otherCalls = () => daemonCalls.filter((call) => (call as { method?: string }).method !== "extensions.list");
 const daemon: DaemonRpc = {
   async call(method, params) {
     daemonCalls.push({ method, params });
+    // The tool list asks which extensions the install switched off; nothing else is expected here.
+    if (method === "extensions.list") return bundledExtensions();
     throw new DaemonRpcError("daemon 未连接");
   },
 };
@@ -109,7 +117,7 @@ describe("diagram plugin", () => {
     expect(await db.query("select 1 from entry_index")).toEqual([]);
     expect(emitted).toEqual([]);
     expect(await callRows()).toEqual([{ name: "diagram__save", ok: false }]);
-    expect(daemonCalls).toEqual([]);
+    expect(otherCalls()).toEqual([]);
   });
 
   test("diagram__save with a valid spec creates G-1 with sourceCommits from lastMainSha and the task message as source", async () => {
@@ -148,7 +156,7 @@ describe("diagram plugin", () => {
       { name: "diagram__save", ok: true },
       { name: "diagram__read", ok: true },
     ]);
-    expect(daemonCalls).toEqual([]);
+    expect(otherCalls()).toEqual([]);
   });
 
   test("diagram__save with id updates G-1 in place", async () => {
@@ -218,7 +226,7 @@ describe("diagram plugin", () => {
 
     expect((await roomReq("POST", "/room/plugins/diagram__save", none.runToken, saveArgs(repo.label))).status).toBe(200);
     expect((await roomReq("POST", "/room/plugins/diagram__read", none.runToken, { id: "G-1" })).status).toBe(200);
-    expect(daemonCalls).toEqual([]);
+    expect(otherCalls()).toEqual([]);
   });
 });
 

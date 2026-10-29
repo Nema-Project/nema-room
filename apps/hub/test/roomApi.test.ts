@@ -2,7 +2,7 @@ import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { KnowledgeStore } from "@nema/knowledge";
-import { canonicalJson, KIND_DIR, PLUGINS } from "@nema/shared";
+import { canonicalJson, KIND_DIR, PLUGINS, bundledExtensions } from "@nema/shared";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { createWorkspace, repoPath } from "../src/workspaces.js";
@@ -21,7 +21,15 @@ let wsB: string;
 let events: EventBus;
 let app: Hono<any>;
 const daemonCalls: { method: string; params: unknown; timeoutMs?: number }[] = [];
+/**
+ * Offering a tool asks the daemon which extensions the install switched off before it asks for
+ * anything else. That read is expected; every other call is what these assertions are about.
+ */
+const otherCalls = () => daemonCalls.filter((call) => call.method !== "extensions.list");
 let daemonCall: (method: string, params: unknown) => Promise<unknown> = async (method) => {
+  // Offering a tool asks which extensions the install switched off before it asks the daemon for
+  // anything else, so that read is always answered and every other call stays unexpected.
+  if (method === "extensions.list") return bundledExtensions();
   throw new Error(`unexpected daemon call ${method}`);
 };
 const daemon: DaemonRpc = {
@@ -34,6 +42,7 @@ const daemon: DaemonRpc = {
 beforeEach(async () => {
   daemonCalls.length = 0;
   daemonCall = async (method) => {
+    if (method === "extensions.list") return bundledExtensions();
     throw new Error(`unexpected daemon call ${method}`);
   };
   const deps = await makeHubDeps();
@@ -826,7 +835,7 @@ describe("room plugins", () => {
     const call = await req("POST", "/room/plugins/code__read", t.runToken, { repo: repo.id, path: "a.ts" });
     expect(call.status).toBe(403);
     expect(((await call.json()) as { error: string }).error).toBe("函数 code__read 未在本 workspace 开启");
-    expect(daemonCalls).toEqual([]);
+    expect(otherCalls()).toEqual([]);
     expect(await db.query("select 1 from plugin_calls")).toEqual([]);
   });
 
@@ -837,7 +846,7 @@ describe("room plugins", () => {
     const r = await req("POST", "/room/plugins/code__search", t.runToken, { repo: other.id, query: "x" });
     expect(r.status).toBe(400);
     expect(((await r.json()) as { error: string }).error).toBe(`repo 不是本 workspace 绑定的仓库：${other.id}`);
-    expect(daemonCalls).toEqual([]);
+    expect(otherCalls()).toEqual([]);
     const rows = await db.query<PluginCallRow>("select task_id, name, args_summary, ok, result_bytes, ms from plugin_calls");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ task_id: t.taskId, name: "code__search", ok: false, result_bytes: 0 });
@@ -849,11 +858,11 @@ describe("room plugins", () => {
     const t = await runningTaskFor(wsA);
     const args = { repo: repo.id, query: "login" };
     const result = { hits: ["a"] };
-    daemonCall = async () => result;
+    daemonCall = async (method) => (method === "extensions.list" ? bundledExtensions() : result);
     const r = await req("POST", "/room/plugins/code__search", t.runToken, args);
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual({ result });
-    expect(daemonCalls).toEqual([
+    expect(otherCalls()).toEqual([
       {
         method: "plugin.call",
         params: {
@@ -883,7 +892,7 @@ describe("room plugins", () => {
     const repo = await insertRepo(wsA, "api");
     const t = await runningTaskFor(wsA);
     const args = { repo: repo.id, query: "q".repeat(300) };
-    daemonCall = async () => "ok";
+    daemonCall = async (method) => (method === "extensions.list" ? bundledExtensions() : "ok");
     const r = await req("POST", "/room/plugins/code__search", t.runToken, args);
     expect(r.status).toBe(200);
     const [row] = await db.query<{ args_summary: string }>("select args_summary from plugin_calls");
@@ -895,7 +904,8 @@ describe("room plugins", () => {
     const repo = await insertRepo(wsA, "api");
     const t = await runningTaskFor(wsA);
     for (const message of ["daemon 未连接", "daemon 已断开", "daemon 响应超时"]) {
-      daemonCall = async () => {
+      daemonCall = async (method) => {
+        if (method === "extensions.list") return bundledExtensions();
         throw new DaemonRpcError(message);
       };
       const r = await req("POST", "/room/plugins/code__search", t.runToken, { repo: repo.id, query: "q" });
@@ -908,7 +918,7 @@ describe("room plugins", () => {
       { ok: false, result_bytes: 0 },
       { ok: false, result_bytes: 0 },
     ]);
-    expect(daemonCalls.map((call) => call.method)).toEqual(["plugin.call", "plugin.call", "plugin.call"]);
+    expect(otherCalls().map((call) => call.method)).toEqual(["plugin.call", "plugin.call", "plugin.call"]);
   });
 
   test("a rejected call is recorded in plugin_calls and never reaches the daemon", async () => {
@@ -922,7 +932,7 @@ describe("room plugins", () => {
     const search = await req("POST", "/room/plugins/github__search_issues", t.runToken, { query: "is:open login" });
     expect(search.status).toBe(400);
     expect(((await search.json()) as { error: string }).error).toBe("搜索必须且只能限定为本 workspace 绑定的仓库（repo:owner/name）");
-    expect(daemonCalls).toEqual([]);
+    expect(otherCalls()).toEqual([]);
     const rows = await db.query<PluginCallRow>("select task_id, name, args_summary, ok, result_bytes, ms from plugin_calls order by id");
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ task_id: t.taskId, name: "github__list_issues", ok: false, result_bytes: 0 });
@@ -934,11 +944,11 @@ describe("room plugins", () => {
     await db.query(`insert into workspace_plugins (workspace_id, plugin_id, enabled, disabled_functions) values ($1, 'github', true, '{}')`, [wsA]);
     const t = await runningTaskFor(wsA);
     const args = { owner: "acme", repo: "api", pullNumber: 3, method: "get" };
-    daemonCall = async () => "PR #3";
+    daemonCall = async (method) => (method === "extensions.list" ? bundledExtensions() : "PR #3");
     const r = await req("POST", "/room/plugins/github__pull_request_read", t.runToken, args);
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual({ result: "PR #3" });
-    expect(daemonCalls).toEqual([{ method: "plugin.call", params: { name: "github__pull_request_read", args }, timeoutMs: 90_000 }]);
+    expect(otherCalls()).toEqual([{ method: "plugin.call", params: { name: "github__pull_request_read", args }, timeoutMs: 90_000 }]);
     const rows = await db.query<PluginCallRow>("select task_id, name, args_summary, ok, result_bytes, ms from plugin_calls");
     expect(rows).toEqual([expect.objectContaining({ name: "github__pull_request_read", ok: true, result_bytes: Buffer.byteLength(JSON.stringify("PR #3")) })]);
   });
@@ -946,7 +956,8 @@ describe("room plugins", () => {
   test("a daemon error is 502 and recorded", async () => {
     const repo = await insertRepo(wsA, "api");
     const t = await runningTaskFor(wsA);
-    daemonCall = async () => {
+    daemonCall = async (method) => {
+      if (method === "extensions.list") return bundledExtensions();
       throw new DaemonRpcError("graphify 失败");
     };
     const r = await req("POST", "/room/plugins/code__search", t.runToken, { repo: repo.id, query: "q" });

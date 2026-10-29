@@ -1,8 +1,10 @@
 import { z } from "zod";
-import { DEFAULT_GRILL_SETTINGS, GRILL_EXTRA_RULES_MAX, PLUGINS, bundledExtensions, type ExtensionRecord, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
+import { DEFAULT_GRILL_SETTINGS, GRILL_EXTRA_RULES_MAX, PLUGINS, bundledExtensions, pluginFunction, type ExtensionRecord, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import { githubTargets } from "./githubScope.js";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { listRepos, type Repo } from "./repos.js";
 
 const DAEMON_OFFLINE = new Set(["daemon 未连接", "daemon 已断开", "daemon 响应超时"]);
@@ -101,6 +103,34 @@ function withRepoList(parameters: Record<string, unknown>, repos: Repo[]): Recor
   const schema = repo && typeof repo === "object" && !Array.isArray(repo) ? { ...(repo as Record<string, unknown>) } : { type: "string" };
   props.repo = { ...schema, description: repos.map((item) => `${item.id} (${item.label})`).join(", ") };
   return cloned;
+}
+
+/**
+ * Which extensions the daemon has turned off for this install.
+ *
+ * The switch lives in the daemon's extension index, one record per install rather than per
+ * workspace, so the hub has to ask for it. A failure is not swallowed: an unreadable switch would
+ * make every offer a guess, and a disabled extension that still answers is worse than one that is
+ * briefly missing.
+ */
+export async function disabledExtensionIds(daemon: DaemonRpc): Promise<Set<string>> {
+  const rows = await daemon.call("extensions.list", {});
+  if (!Array.isArray(rows)) throw new DaemonRpcError("extensions.list returned an invalid result");
+  return new Set(
+    (rows as ExtensionRecord[]).filter((row) => row?.useState === "disabled").map((row) => row.id),
+  );
+}
+
+/**
+ * Drop the tools of every extension the install turned off.
+ *
+ * The switch is install-wide, not per workspace, so it lives in the daemon's extension index rather
+ * than in `workspace_plugins`; every path that offers or accepts a tool has to subtract it. Called
+ * separately from `enabledPluginTools` so the pure workspace decision stays free of network calls.
+ */
+export function withoutDisabledExtensions(tools: PluginToolSpec[], disabled: Set<string>): PluginToolSpec[] {
+  if (disabled.size === 0) return tools;
+  return tools.filter((tool) => !disabled.has(pluginFunction(tool.name)?.plugin.id ?? ""));
 }
 
 export async function enabledPluginTools(db: Db, workspaceId: string): Promise<PluginToolSpec[]> {
@@ -202,14 +232,47 @@ export function pluginsForUi(status: unknown): Array<PluginManifest & InstallSta
   });
 }
 
-/** Daemon records when it is up. Bundled seeds when it is down, so the page can still open. */
-export async function listExtensions(daemon: DaemonRpc): Promise<ExtensionRecord[]> {
+/**
+ * The last state the daemon wrote to its extension index, read straight from disk.
+ *
+ * Only for the offline fallback. The daemon is the owner of these records, but when it is not
+ * running the page still has to show what the person chose rather than the shipped defaults, or
+ * every extension they turned off looks enabled again. A missing or damaged index means the seeds;
+ * a read here never throws, because it runs on a page that is already reporting a disconnected daemon.
+ */
+export function extensionIndexFromDisk(nemaHome: string | undefined): ExtensionRecord[] {
+  const seeds = bundledExtensions();
+  if (!nemaHome) return seeds;
+  let rows: unknown;
+  try {
+    rows = JSON.parse(readFileSync(path.join(nemaHome, "extensions", "index.json"), "utf8")) as unknown;
+  } catch {
+    return seeds;
+  }
+  if (!Array.isArray(rows)) return seeds;
+  const stored = new Map<string, ExtensionRecord>();
+  for (const row of rows) {
+    const record = row as Partial<ExtensionRecord> | null;
+    if (record && typeof record.id === "string") stored.set(record.id, record as ExtensionRecord);
+  }
+  const merged = seeds.map((seed) => {
+    const override = stored.get(seed.id);
+    stored.delete(seed.id);
+    // A seed's choice is the only thing an override may change; everything else is what shipped.
+    return override?.useState === "enabled" || override?.useState === "disabled" ? { ...seed, useState: override.useState } : seed;
+  });
+  // Managed and external extensions exist only on disk, so the index is their only record.
+  return [...merged, ...[...stored.values()]];
+}
+
+/** Daemon records when it is up. Its own index on disk when it is down, so the page can still open. */
+export async function listExtensions(daemon: DaemonRpc, nemaHome?: string): Promise<ExtensionRecord[]> {
   try {
     const rows = await daemon.call("extensions.list", {});
     if (!Array.isArray(rows)) throw new DaemonRpcError("extensions.list returned an invalid result");
     return rows as ExtensionRecord[];
   } catch (error) {
-    if (error instanceof DaemonRpcError && DAEMON_OFFLINE.has(error.message)) return bundledExtensions();
+    if (error instanceof DaemonRpcError && DAEMON_OFFLINE.has(error.message)) return extensionIndexFromDisk(nemaHome);
     throw error;
   }
 }

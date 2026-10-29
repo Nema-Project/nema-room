@@ -156,7 +156,7 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.get("/extensions", async (c) => {
     try {
-      return c.json(await listExtensions(deps.daemon));
+      return c.json(await listExtensions(deps.daemon, deps.nemaHome));
     } catch (error) {
       if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
       throw error;

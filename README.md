@@ -144,6 +144,7 @@ nema wp get W-1
 
 - **Stored locally.** Desktop data lives in `~/.nema/desktop`. Web / Compose uses PostgreSQL and local knowledge Git repositories.
 - **Models receive context.** Chat, knowledge, and code returned by tools are sent to your selected model provider. Local storage does not mean offline inference.
+- **Extras can be switched off.** Every extension and plugin has an Enable / Disable switch on the Plugins page. A disabled extension's functions stop being offered to the agent and calls to them are refused; workspace switches still apply on top.
 - **GitHub is opt-in.** The plugin uses your signed-in local `gh` and is limited to bound repositories. Writes need a separate workspace opt-in.
 - **Built for local use.** There is no public multi-user authentication. Multi-device sync, managed backups, and team read-only access are not available yet.
 

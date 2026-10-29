@@ -204,6 +204,8 @@ Optional reporting hooks: `nema report install --agent codex` or `--agent claude
 
 The GitHub plugin is off by default. How to turn it on, sign in with `gh`, and allow writes is in the desktop section above; the Web / Compose daemon uses the same path. The command allowlist and the six older read functions are in the technical reference. `nema auth github` can still write a token to `~/.nema/github-token`; the default path does not read it.
 
+The Plugins page (Settings, bottom left) gives every extension an Enable / Disable switch that takes effect immediately, with no restart. A disabled extension's functions stop being offered to the Agent and calling one directly is refused. The switch covers the whole install; each workspace has its own switches on top, and both have to be on. Disabling a bundled extension stores only an override row, never a change to what shipped. See "Enabling and disabling extensions" in the technical reference.
+
 <a id="data"></a>
 
 ## Data, privacy, and known limitations

@@ -138,3 +138,54 @@ describe("PluginsPage use state", () => {
     expect(within(github).getByRole("button", { name: "Disable" })).toBeTruthy();
   });
 });
+
+describe("PluginsPage concurrent toggles", () => {
+  it("leaves another extension's button usable while one toggle is in flight", async () => {
+    const { setExtensionUse } = hub as unknown as { setExtensionUse: ReturnType<typeof vi.fn> };
+    let release: (row: ExtensionRecord) => void = () => {};
+    setExtensionUse.mockReturnValue(new Promise<ExtensionRecord>((resolve) => { release = resolve; }));
+    render(
+      <I18nProvider>
+        <PluginsPage />
+      </I18nProvider>,
+    );
+
+    const github = (await screen.findByRole("heading", { name: "GitHub" })).closest("section")!;
+    const graphify = screen.getByRole("heading", { name: "graphify" }).closest("section")!;
+    await act(async () => {
+      within(github).getByRole("button", { name: "Disable" }).click();
+    });
+    expect((within(github).getByRole("button", { name: "Disable" }) as HTMLButtonElement).disabled).toBe(true);
+    // graphify is a different extension, so its own switch stays live.
+    expect((within(graphify).getByRole("button", { name: "Disable" }) as HTMLButtonElement).disabled).toBe(false);
+    await act(async () => {
+      release({ ...catalog[1]!, useState: "disabled" });
+    });
+    expect(await within(github).findByText("Disabled")).toBeTruthy();
+  });
+
+  it("ignores a stale answer that arrives after a newer click", async () => {
+    const { setExtensionUse } = hub as unknown as { setExtensionUse: ReturnType<typeof vi.fn> };
+    const resolvers: ((row: ExtensionRecord) => void)[] = [];
+    setExtensionUse.mockImplementation(() => new Promise<ExtensionRecord>((resolve) => { resolvers.push(resolve); }));
+    render(
+      <I18nProvider>
+        <PluginsPage />
+      </I18nProvider>,
+    );
+
+    const github = (await screen.findByRole("heading", { name: "GitHub" })).closest("section")!;
+    await act(async () => {
+      within(github).getByRole("button", { name: "Disable" }).click();
+    });
+    // The first click is still pending, so a second one is refused at the source.
+    await act(async () => {
+      within(github).getByRole("button", { name: "Disable" }).click();
+    });
+    expect(setExtensionUse).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolvers[0]!({ ...catalog[1]!, useState: "disabled" });
+    });
+    expect(await within(github).findByText("Disabled")).toBeTruthy();
+  });
+});
