@@ -337,6 +337,10 @@ test('image publish pushes pinned GHCR images only after verify, and only from t
   assert.equal(image.permissions.contents, 'read');
   assert.equal(image.permissions.packages, undefined);
   assertRelease(image);
+  const planSteps = image.jobs.plan.steps;
+  const helperIndex = planSteps.findIndex((step) => step.name === 'Image helper tests');
+  const installIndex = planSteps.findIndex((step) => step.run === 'npm ci --ignore-scripts');
+  assert.ok(installIndex >= 0 && installIndex < helperIndex, 'install dependencies before image helper tests');
   assert.equal(image.jobs.build.permissions?.packages, undefined);
   assert.deepEqual(image.jobs.publish.permissions, {contents: 'read', packages: 'write'});
   assert.deepEqual([...image.jobs.smoke.needs].sort(), ['plan', 'publish']);

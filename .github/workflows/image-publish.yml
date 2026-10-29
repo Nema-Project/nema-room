@@ -101,6 +101,7 @@ jobs:
             echo "commit=$commit"
             echo "verification_required=$required"
           } >> "$GITHUB_OUTPUT"
+      - run: npm ci --ignore-scripts
       - name: Image helper tests
         run: node --test scripts/desktop/release-commit.test.mjs scripts/images/*.test.mjs
       - name: Resolve version
