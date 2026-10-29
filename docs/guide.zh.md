@@ -64,7 +64,7 @@ npx @nema-project/nema@<hub 版本> --version
 npm i -g @nema-project/nema@<hub 版本>
 ```
 
-上面命令里的版本就是 `.env` 里的 `NEMA_IMAGE_TAG`。公开安装会把它从取到的 `docker-compose.yml` 资产写进去，因此它等于该 Release 的版本。源码检出从这棵树构建 daemon，不用 `NEMA_IMAGE_TAG` 选版本。
+上面命令里的版本，就是所取 `docker-compose.yml` 里两个 `image:` 钉的那个版本：`grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2` 打印它，`nema-room-web:` 那条必须打印同一个值。源码检出从这棵树构建 daemon，不这样选版本。目前还没有东西会替你往 `.env` 写 `NEMA_IMAGE_TAG`：记录锁定版本的安装器随固定名 Compose 资产一起上线，在那之前请从取到的文件里读版本。
 
 Compose：`curl http://127.0.0.1:4400/api/version` 返回 `{"version":"..."}`。桌面版在**应用设置 → 关于**里显示版本，应用源地址提供 `GET /_nema/version`。版本不一致时，daemon 会打印 hub 的错误和 `run: npm i -g @nema-project/nema@<版本>`，然后停止，不会继续重连。
 

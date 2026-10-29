@@ -27,7 +27,7 @@ node apps/cli/dist/index.js daemon
 
 `npm run up` 用当前检出构建 hub 和 web。Linux 和 macOS 上先执行 `export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"`，再执行 `npm run up`。Windows 上的 Docker Desktop 不需要这条 export。单独执行 `docker compose up` 会从 GHCR 拉取镜像；仓库树里的 `docker-compose.yml` 是模板，镜像用的是 `${NEMA_IMAGE_TAG:-latest}` 插值，不是安装入口。开发 main 请用 `npm run up` 从源码构建；公开安装请取 Release 上的 `docker-compose.yml` 资产，它由模板按该 Release 的版本渲染、双镜像都钉在那个版本上。这些镜像从 tag `v0.1.4` 起发布（`linux/amd64`；arm64 见 issue #50）。hub 的宿主机端口和容器端口都是 `NEMA_HUB_PORT`（默认 4400）。web 的宿主机端口是 `NEMA_WEB_PORT`（默认 3000），容器内仍是 3000。web 启动时读取 `NEMA_HUB_URL`，compose 默认把它设成 `http://127.0.0.1:$NEMA_HUB_PORT`。
 
-从本仓库跑 Web / Compose 仍走 `node scripts/setup.mjs`。宿主机 daemon 是 npm 包 `@nema-project/nema`，命令名是 `nema`。`@nema-project/nema@0.1.3` 已在 2026-10-27 由维护者账号发布到 npm，这是第一次发布。`v0.1.4` 是受信发布者的第一次发布。开发本仓库时 daemon 仍从当前检出安装。已发布的 hub 按版本安装：`npx @nema-project/nema@<hub 版本>` 或 `npm i -g @nema-project/nema@<hub 版本>`，这个版本号来自 `.env` 的 `NEMA_IMAGE_TAG`，等于所装 Release 的版本。不要把不带版本的 `npx @nema-project/nema` 写成与任意 hub 都匹配的安装方式。
+从本仓库跑 Web / Compose 仍走 `node scripts/setup.mjs`。宿主机 daemon 是 npm 包 `@nema-project/nema`，命令名是 `nema`。`@nema-project/nema@0.1.3` 已在 2026-10-27 由维护者账号发布到 npm，这是第一次发布。`v0.1.4` 是受信发布者的第一次发布。开发本仓库时 daemon 仍从当前检出安装。已发布的 hub 按版本安装：`npx @nema-project/nema@<hub 版本>` 或 `npm i -g @nema-project/nema@<hub 版本>`，这个版本号就是所取 `docker-compose.yml` 里两个 `image:` 钉的那个版本：`grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2` 打印它，`nema-room-web:` 那条必须打印同一个值。目前还没有东西会替你往 `.env` 写 `NEMA_IMAGE_TAG`；记录锁定版本的安装器随固定名 Compose 资产一起上线，在那之前请从取到的文件里读版本。不要把不带版本的 `npx @nema-project/nema` 写成与任意 hub 都匹配的安装方式。
 
 ## 目录
 

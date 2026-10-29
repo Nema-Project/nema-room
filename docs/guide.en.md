@@ -64,7 +64,7 @@ npx @nema-project/nema@<hub version> --version
 npm i -g @nema-project/nema@<hub version>
 ```
 
-The version in those commands is `NEMA_IMAGE_TAG` from your `.env`. A public install writes that value from the `docker-compose.yml` asset it fetched, so it equals the release version. A source checkout builds the daemon from this tree and does not use `NEMA_IMAGE_TAG` to choose a version.
+The version in those commands is the one both `image:` pins in your `docker-compose.yml` carry: `grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2` prints it, and the `nema-room-web:` pin must print the same value. A source checkout builds the daemon from this tree and does not pick a version this way. Nothing writes `NEMA_IMAGE_TAG` into `.env` for you yet: the installer that records the locked version arrives with the fixed-name Compose asset, so until then read the version from the file you fetched.
 
 Compose: `curl http://127.0.0.1:4400/api/version` returns `{"version":"..."}`. Desktop: **App settings → About** shows the app version, and the app origin serves `GET /_nema/version`. If the daemon version does not match, it prints the hub error and `run: npm i -g @nema-project/nema@<version>`, then stops. It does not keep reconnecting.
 
