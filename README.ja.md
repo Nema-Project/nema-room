@@ -105,7 +105,7 @@ npx @nema-project/nema@<hub のバージョン> --version
 npm i -g @nema-project/nema@<hub のバージョン>
 ```
 
-上のコマンドのバージョンは、取得した `docker-compose.yml` の 2 つの `image:` が固定している版です。`grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2` で表示され、`nema-room-web:` の側も同じ値を表示しなければなりません。ソースのチェックアウトでは daemon をこのツリーからビルドし、この方法ではバージョンを選びません。`.env` に `NEMA_IMAGE_TAG` を代わりに書き込むものはまだありません。固定名 Compose 資産とともに、固定したバージョンを記録するインストーラが入ります。それまでは取得したファイルから版を読んでください。
+上のコマンドのバージョンは、取得した `docker-compose.yml` の 2 つの `image:` が固定している版です。`grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2` で表示され、`nema-room-web:` の側も同じ値を表示しなければなりません。ソースのチェックアウトでは daemon をこのツリーからビルドし、この方法ではバージョンを選びません。ソースのチェックアウトには `scripts/install/public.mjs` も入っています。公開済みの 1 つの版を解決し、その版の Compose 資産・2 つのイメージ・npm パッケージがそろっていることを確かめてから、`NEMA_IMAGE_TAG` と対応する `docker-compose.yml` をまとめて対象ディレクトリに書き込みます。まず `--check` を付けると検証だけで何も書きません。読むのはその Release 自身の `docker-compose.yml` 資産で、資産がない版は拒否します。まだその資産を持つ Release は公開されていないため、そうした版が出るまでは取得したファイルから版を読んでください。
 
 Compose はそのバージョンを `http://127.0.0.1:4400/api/version` で返します。デスクトップ版は **アプリ設定 → 情報** に表示し、ループバックの `GET /_nema/version` でも読めます。バージョンが違うと daemon は `run: npm i -g @nema-project/nema@<バージョン>` を出して再接続しません。`nema daemon` の `--hub` の既定値は `http://127.0.0.1:4400` で、トークンは `$NEMA_DATA_DIR` または `~/.nema/data` の `daemon-token` です。hub が起動時にそのファイルを書きます。Compose はホストのデータディレクトリを `/data` にマウントします。
 

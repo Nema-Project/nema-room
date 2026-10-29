@@ -9,14 +9,15 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as nodeUtil from "node:util";
 import { devComposeUpArgs } from "./compose-dev.mjs";
+import { readReleaseTrio, assertReleaseTrio } from "./npm/check-tag.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const CLI = path.join(ROOT, "apps/cli/dist/index.js");
-const TEXT = {
+export const TEXT = {
   en: {
     title: "Nema Room setup",
     node: "Node.js 22 or newer is required.", missing: "Required tool unavailable:", docker: "Docker is not running or this user cannot access it.",
-    config: "Existing .env will be preserved. Setup uses these host settings:", data: "Data directory", hub: "Hub URL", uid: "Container UID/GID",
+    config: "Existing .env will be preserved. Setup uses these host settings:", data: "Data directory", hub: "Hub URL", uid: "Container UID/GID", checkout: "Version built from this checkout",
     proceed: "Install dependencies, build the CLI, and build/start the Compose services?", stopped: "Cancelled. No installation changes were made.",
     env: "Created .env from .env.example.", install: "Installing dependencies and building the CLI…", services: "Building and starting PostgreSQL, hub, and web…",
     waiting: "Waiting for hub, web, and the shared daemon token…", timeout: "Services did not become ready. Check: docker compose logs --tail=100 hub web postgres",
@@ -35,7 +36,7 @@ const TEXT = {
   zh: {
     title: "Nema Room 安装向导",
     node: "需要 Node.js 22 或以上版本。", missing: "缺少必需工具：", docker: "Docker 未启动，或当前用户无权访问。",
-    config: "已有 .env 会保留。向导将使用以下本机设置：", data: "数据目录", hub: "Hub 地址", uid: "容器 UID/GID",
+    config: "已有 .env 会保留。向导将使用以下本机设置：", data: "数据目录", hub: "Hub 地址", uid: "容器 UID/GID", checkout: "本检出构建的版本",
     proceed: "安装依赖、构建 CLI 并构建/启动 Compose 服务？", stopped: "已取消，未执行安装变更。",
     env: "已从 .env.example 创建 .env。", install: "正在安装依赖并构建 CLI……", services: "正在构建并启动 PostgreSQL、hub 和 web……",
     waiting: "等待 hub、web 和共享 daemon token 就绪……", timeout: "服务未能就绪，请检查：docker compose logs --tail=100 hub web postgres",
@@ -54,7 +55,7 @@ const TEXT = {
   ja: {
     title: "Nema Room セットアップ",
     node: "Node.js 22 以上が必要です。", missing: "必要なツールがありません：", docker: "Docker が停止中、または現在のユーザーにアクセス権がありません。",
-    config: "既存の .env は保持します。以下のホスト設定を使用します：", data: "データ保存先", hub: "Hub URL", uid: "コンテナ UID/GID",
+    config: "既存の .env は保持します。以下のホスト設定を使用します：", data: "データ保存先", hub: "Hub URL", uid: "コンテナ UID/GID", checkout: "このチェックアウトでビルドするバージョン",
     proceed: "依存関係と CLI をビルドし、Compose サービスをビルド・起動しますか？", stopped: "キャンセルしました。インストールによる変更はありません。",
     env: ".env.example から .env を作成しました。", install: "依存関係をインストールし、CLI をビルドしています…", services: "PostgreSQL、hub、web をビルド・起動しています…",
     waiting: "hub、web、共有 daemon token の準備を待っています…", timeout: "サービスが準備できません。確認：docker compose logs --tail=100 hub web postgres",
@@ -161,50 +162,61 @@ async function waitReady(settings, timeoutMs = 90_000) {
   return false;
 }
 
-export async function main(args = process.argv.slice(2)) {
+/**
+ * The whole wizard. `deps` exists so a test can run it without a terminal or a Docker daemon: it
+ * supplies the process spawner and the line printer the wizard would otherwise use directly.
+ */
+export async function main(args = process.argv.slice(2), deps = {}) {
+  const spawn = deps.spawnSync ?? spawnSync;
+  const log = deps.log ?? ((line = "") => console.log(line));
+  const fail = deps.error ?? ((line) => console.error(line));
   const options = parseOptions(args);
   if (options.help) {
-    console.log("node scripts/setup.mjs [--lang en|zh|ja] [--check]\n--check: read-only prerequisites and configuration check; no installation.\nWindows / macOS / Linux: Node.js >= 22, npm, Git, Docker + Compose v2.");
+    log("node scripts/setup.mjs [--lang en|zh|ja] [--check]\n--check: read-only prerequisites and configuration check; no installation.\nWindows / macOS / Linux: Node.js >= 22, npm, Git, Docker + Compose v2.");
     return;
   }
   const t = TEXT[options.lang];
-  console.log(`\n${t.title}\n`);
+  log(`\n${t.title}\n`);
   try {
     if (+process.versions.node.split(".")[0] < 22) throw new Error(t.node);
     for (const [bin, argv] of [["npm", ["--version"]], ["git", ["--version"]], ["docker", ["compose", "version"]]]) {
       const command = setupCommand(bin, argv);
-      const result = spawnSync(command.bin, command.args, { stdio: "ignore", windowsHide: true });
+      const result = spawn(command.bin, command.args, { stdio: "ignore", windowsHide: true });
       if (result.error || result.status !== 0) throw new Error(`${t.missing} ${bin} ${argv.join(" ")}`);
-      console.log(`✓ ${bin} ${argv.join(" ")}`);
+      log(`✓ ${bin} ${argv.join(" ")}`);
     }
-    if (spawnSync("docker", ["info"], { stdio: "ignore", windowsHide: true }).status !== 0) throw new Error(t.docker);
+    if (spawn("docker", ["info"], { stdio: "ignore", windowsHide: true }).status !== 0) throw new Error(t.docker);
     let fileEnv = {};
     try { fileEnv = nodeUtil.parseEnv(await readFile(path.join(ROOT, ".env"), "utf8")); }
     catch (error) { if (error.code !== "ENOENT") throw error; }
     const settings = setupSettings(fileEnv);
-    console.log(`${t.config}\n${t.data}: ${settings.dataDir}\n${t.hub}: ${settings.hubUrl}\n${t.uid}: ${settings.uid}/${settings.gid}\n`);
-    if (options.check) { console.log(t.check); return; }
+    // A source checkout builds its own images; the trio must still agree. This key is reported,
+    // never used to pick a version: NEMA_IMAGE_TAG in .env neither selects nor overrides it.
+    const trio = await readReleaseTrio(ROOT);
+    const { version: checkoutVersion } = assertReleaseTrio(`v${trio.cli}`, trio);
+    log(`${t.config}\n${t.data}: ${settings.dataDir}\n${t.hub}: ${settings.hubUrl}\n${t.uid}: ${settings.uid}/${settings.gid}\n${t.checkout}: ${checkoutVersion}\n`);
+    if (options.check) { log(t.check); return; }
     if (!process.stdin.isTTY) throw new Error(t.tty);
-    if (!await yes(t.proceed)) { console.log(t.stopped); return; }
+    if (!await yes(t.proceed)) { log(t.stopped); return; }
     try {
       await copyFile(path.join(ROOT, ".env.example"), path.join(ROOT, ".env"), constants.COPYFILE_EXCL);
-      console.log(t.env);
+      log(t.env);
     } catch (error) { if (error.code !== "EEXIST") throw error; }
     const env = { ...process.env, NEMA_DATA_HOST_DIR: settings.dataDir, NEMA_DATA_DIR: settings.dataDir, NEMA_HUB_PORT: settings.port, NEMA_UID: settings.uid, NEMA_GID: settings.gid };
     const cli = args => run(process.execPath, [CLI, ...args], env);
-    console.log(t.install);
+    log(t.install);
     run("npm", ["ci"], env);
     run("npm", ["run", "build", "-w", "apps/cli"], env);
     await mkdir(settings.dataDir, { recursive: true, mode: 0o700 });
-    console.log(t.services);
+    log(t.services);
     run("docker", devComposeUpArgs(), env);
-    console.log(t.waiting);
+    log(t.waiting);
     if (!await waitReady(settings)) throw new Error(t.timeout);
     const connection = ["--hub", settings.hubUrl, "--token-file", settings.tokenFile];
-    console.log(`${t.manual}\n${process.platform === "win32" ? "& " : ""}${[process.execPath, CLI, "daemon", ...connection].map(quote).join(" ")}`);
-    console.log(t.mode);
+    log(`${t.manual}\n${process.platform === "win32" ? "& " : ""}${[process.execPath, CLI, "daemon", ...connection].map(quote).join(" ")}`);
+    log(t.mode);
     let mode;
-    do { mode = await ask(t.choose, "5"); if (!/^[1-5]$/.test(mode)) console.log(t.invalid); } while (!/^[1-5]$/.test(mode));
+    do { mode = await ask(t.choose, "5"); if (!/^[1-5]$/.test(mode)) log(t.invalid); } while (!/^[1-5]$/.test(mode));
     if (mode === "1") {
       cli(["config", "set", "adapter", "codex-direct"]);
       cli(["config", "set", "authMode", "siwc"]);
@@ -217,30 +229,30 @@ export async function main(args = process.argv.slice(2)) {
       cli(["config", "set", "authMode", "byok"]);
       cli(["config", "set", "model", model]);
       cli(["config", "set", "byokBaseUrl", base]);
-      console.log(t.secret);
+      log(t.secret);
       cli(["auth", "byok"]);
     } else if (mode === "3") {
-      console.log(t.compat);
+      log(t.compat);
       if (!await yes(t.proceed)) return;
       cli(["config", "set", "adapter", "codex-direct"]);
       cli(["config", "set", "authMode", "compat"]);
       cli(["auth", "login"]);
     } else if (mode === "4") {
-      console.log(t.claude);
-      if (!await yes(t.readyToken)) { console.log(t.later); return; }
+      log(t.claude);
+      if (!await yes(t.readyToken)) { log(t.later); return; }
       cli(["config", "set", "adapter", "claude-code"]);
-      console.log(t.secret);
+      log(t.secret);
       cli(["auth", "claude"]);
     }
-    if (mode === "5") { console.log(t.later); return; }
+    if (mode === "5") { log(t.later); return; }
     if (mode !== "4" && await yes(t.probe)) cli(["auth", "probe"]);
-    console.log(t.doctor);
+    log(t.doctor);
     cli(["doctor", ...connection]);
-    console.log(t.done);
+    log(t.done);
     if (await yes(t.start)) cli(["daemon", ...connection]);
   } catch (error) {
-    console.error(error.message);
-    if (!options.check) console.error(t.failed);
+    fail(error.message);
+    if (!options.check) fail(t.failed);
     process.exitCode = 1;
   }
 }
