@@ -5,7 +5,7 @@ import { PluginsPage } from "@/components/PluginsPage";
 import { I18nProvider } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
 
-vi.mock("@/lib/hub", () => ({ listExtensions: vi.fn(), listPlugins: vi.fn(), setExtensionUse: vi.fn() }));
+vi.mock("@/lib/hub", () => ({ listExtensions: vi.fn(), listPlugins: vi.fn(), setExtensionUse: vi.fn(), removeExtension: vi.fn() }));
 
 const row = (partial: Pick<ExtensionRecord, "id" | "name"> & Partial<ExtensionRecord>): ExtensionRecord => ({
   kind: "plugin",
@@ -31,6 +31,7 @@ beforeEach(() => {
   vi.mocked(hub.listExtensions).mockReset();
   vi.mocked(hub.listExtensions).mockResolvedValue(catalog);
   vi.mocked(hub.setExtensionUse).mockReset();
+  vi.mocked(hub.removeExtension).mockReset();
 });
 
 describe("PluginsPage", () => {
@@ -187,5 +188,131 @@ describe("PluginsPage concurrent toggles", () => {
       resolvers[0]!({ ...catalog[1]!, useState: "disabled" });
     });
     expect(await within(github).findByText("Disabled")).toBeTruthy();
+  });
+});
+
+describe("PluginsPage removal", () => {
+  const managed = row({ id: "skill", name: "Research skill", provision: "managed", source: "nema install" });
+  const external = row({ id: "remote", name: "Remote skill", provision: "external", source: "https://example.com", externalPath: "/tmp/remote" });
+
+  const renderPage = () =>
+    render(
+      <I18nProvider>
+        <PluginsPage />
+      </I18nProvider>,
+    );
+
+  it("offers no removal for a bundled extension", async () => {
+    renderPage();
+    const graphify = (await screen.findByRole("heading", { name: "graphify" })).closest("section")!;
+    expect(within(graphify).getByRole("button", { name: "Disable" })).toBeTruthy();
+    expect(within(graphify).queryByRole("button", { name: /uninstall|remove/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Uninstall" })).toBeNull();
+  });
+
+  it("removes a managed extension only after the inline confirm, and never toggles it", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([catalog[0]!, managed]);
+    vi.mocked(hub.removeExtension).mockResolvedValue({ id: "skill", removed: "managed" });
+    renderPage();
+
+    const block = (await screen.findByRole("heading", { name: "Research skill" })).closest("section")!;
+    await act(async () => {
+      within(block).getByRole("button", { name: "Uninstall" }).click();
+    });
+    // The first click only opens the confirmation; nothing has been deleted yet.
+    expect(hub.removeExtension).not.toHaveBeenCalled();
+    expect(within(block).getByText("Uninstalling deletes the extension directory Nema installed.")).toBeTruthy();
+
+    await act(async () => {
+      within(block).getByRole("button", { name: "Confirm uninstall" }).click();
+    });
+    expect(hub.removeExtension).toHaveBeenCalledWith("skill");
+    expect(hub.setExtensionUse).not.toHaveBeenCalled();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("heading", { name: "Research skill" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "graphify" })).toBeTruthy();
+  });
+
+  it("cancelling the confirmation leaves the extension alone", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([catalog[0]!, managed]);
+    renderPage();
+
+    const block = (await screen.findByRole("heading", { name: "Research skill" })).closest("section")!;
+    await act(async () => {
+      within(block).getByRole("button", { name: "Uninstall" }).click();
+    });
+    await act(async () => {
+      within(block).getByRole("button", { name: "Cancel" }).click();
+    });
+    expect(within(block).getByRole("button", { name: "Uninstall" })).toBeTruthy();
+    expect(within(block).queryByRole("button", { name: "Confirm uninstall" })).toBeNull();
+    expect(hub.removeExtension).not.toHaveBeenCalled();
+  });
+
+  it("asks to remove an external extension from the list, not to uninstall it", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([catalog[0]!, external]);
+    vi.mocked(hub.removeExtension).mockResolvedValue({ id: "remote", removed: "external" });
+    renderPage();
+
+    const block = (await screen.findByRole("heading", { name: "Remote skill" })).closest("section")!;
+    expect(within(block).queryByRole("button", { name: "Uninstall" })).toBeNull();
+    await act(async () => {
+      within(block).getByRole("button", { name: "Remove from list" }).click();
+    });
+    expect(
+      within(block).getByText("Only the list entry goes away; the files outside Nema stay exactly as they are."),
+    ).toBeTruthy();
+    await act(async () => {
+      within(block).getByRole("button", { name: "Confirm removal" }).click();
+    });
+    expect(hub.removeExtension).toHaveBeenCalledWith("remote");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("heading", { name: "Remote skill" })).toBeNull();
+  });
+
+  it("shows the failure and keeps the row when the removal is refused", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([catalog[0]!, managed]);
+    vi.mocked(hub.removeExtension).mockRejectedValue(new Error("bundled extensions cannot be removed"));
+    renderPage();
+
+    const block = (await screen.findByRole("heading", { name: "Research skill" })).closest("section")!;
+    await act(async () => {
+      within(block).getByRole("button", { name: "Uninstall" }).click();
+    });
+    await act(async () => {
+      within(block).getByRole("button", { name: "Confirm uninstall" }).click();
+    });
+    expect(await screen.findByText("bundled extensions cannot be removed")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Research skill" })).toBeTruthy();
+    // The row is usable again: the confirmation closed and the switch never went pending forever.
+    expect(within(block).getByRole("button", { name: "Disable" })).toBeTruthy();
+  });
+
+  it("refuses a second click while the removal is in flight", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([catalog[0]!, managed]);
+    let release: (value: { id: string; removed: "managed" }) => void = () => {};
+    vi.mocked(hub.removeExtension).mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    renderPage();
+
+    const block = (await screen.findByRole("heading", { name: "Research skill" })).closest("section")!;
+    await act(async () => {
+      within(block).getByRole("button", { name: "Uninstall" }).click();
+    });
+    await act(async () => {
+      within(block).getByRole("button", { name: "Confirm uninstall" }).click();
+    });
+    const confirm = within(block).getByRole("button", { name: "Confirm uninstall" }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    await act(async () => {
+      confirm.click();
+    });
+    expect(hub.removeExtension).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      release({ id: "skill", removed: "managed" });
+    });
   });
 });

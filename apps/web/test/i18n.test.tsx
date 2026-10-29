@@ -166,6 +166,21 @@ describe("message files", () => {
       "extensions.install.failed": { zh: "失败", ja: "失敗", en: "Failed" },
       "extensions.use.enabled": { zh: "启用", ja: "有効", en: "Enabled" },
       "extensions.use.disabled": { zh: "停用", ja: "停止", en: "Disabled" },
+      "extensions.action.remove": { zh: "卸载", ja: "アンインストール", en: "Uninstall" },
+      "extensions.action.detach": { zh: "移出列表", ja: "一覧から外す", en: "Remove from list" },
+      "extensions.action.confirm-remove": { zh: "确认卸载", ja: "アンインストールする", en: "Confirm uninstall" },
+      "extensions.action.confirm-detach": { zh: "确认移出", ja: "一覧から外す", en: "Confirm removal" },
+      "extensions.action.cancel": { zh: "取消", ja: "キャンセル", en: "Cancel" },
+      "extensions.note.remove": {
+        zh: "卸载会删除 Nema 安装的这个扩展目录。",
+        ja: "アンインストールすると、Nema がインストールしたこの拡張のディレクトリが削除されます。",
+        en: "Uninstalling deletes the extension directory Nema installed.",
+      },
+      "extensions.note.detach": {
+        zh: "只从列表移出，Nema 之外的文件保持原样。",
+        ja: "一覧から外すだけで、Nema の外にあるファイルはそのまま残ります。",
+        en: "Only the list entry goes away; the files outside Nema stay exactly as they are.",
+      },
       "extensions.error.bundled-runtime-missing": {
         zh: "随包的 Graphify 运行环境缺失，可在此修复。",
         ja: "同梱の Graphify 実行環境がありません。ここから修復できます。",

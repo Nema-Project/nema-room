@@ -284,6 +284,19 @@ export async function setExtensionUse(daemon: DaemonRpc, id: string, useState: "
   return row as ExtensionRecord;
 }
 
+/**
+ * Delete a managed extension, or detach an external one from the index.
+ *
+ * The daemon owns both the directory and the record, so it also owns the decision of which removal
+ * applies; the hub only carries the answer back. `removed` says which one happened, because the page
+ * shows a different outcome for a deleted extension than for one that was only taken off the list.
+ */
+export async function removeExtension(daemon: DaemonRpc, id: string): Promise<{ id: string; removed: "managed" | "external" }> {
+  const result = await daemon.call("extensions.remove", { id });
+  if (!result || typeof result !== "object") throw new DaemonRpcError("extensions.remove returned an invalid result");
+  return result as { id: string; removed: "managed" | "external" };
+}
+
 /** One row per call that passed the "function is enabled" check, success or failure. */
 export async function recordPluginCall(
   db: Db,

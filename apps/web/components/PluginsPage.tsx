@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { PLUGINS, type ExtensionRecord } from "@nema/shared";
-import { listExtensions, setExtensionUse } from "@/lib/hub";
+import { listExtensions, removeExtension, setExtensionUse } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
 
 function chipTone(kind: "provision" | "install" | "use", extension: ExtensionRecord) {
@@ -25,6 +25,9 @@ export function PluginsPage({ onClose, embedded = false }: { onClose?: () => voi
   // out graphify's button.
   const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
   const [actionError, setActionError] = useState<string | null>(null);
+  // One row at a time can be asking "really?". Removal deletes files or drops a list entry, so the
+  // first click only opens the question and the second one answers it.
+  const [confirming, setConfirming] = useState<string | null>(null);
   // Every applied toggle bumps this. The initial list read only lands when nothing was toggled while
   // it was in flight, so a slow first load cannot put the old state back over a fresh answer.
   const applied = useRef(0);
@@ -39,6 +42,27 @@ export function PluginsPage({ onClose, embedded = false }: { onClose?: () => voi
       .then((row) => {
         applied.current += 1;
         setExtensions((rows) => rows?.map((item) => (item.id === row.id ? row : item)) ?? null);
+      })
+      .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e)))
+      .finally(() =>
+        setPending((ids) => {
+          const rest = new Set(ids);
+          rest.delete(id);
+          return rest;
+        }),
+      );
+  };
+
+  const remove = (extension: ExtensionRecord) => {
+    const id = extension.id;
+    if (pending.has(id)) return;
+    setPending((ids) => new Set(ids).add(id));
+    setActionError(null);
+    removeExtension(id)
+      .then(() => {
+        applied.current += 1;
+        setConfirming((current) => (current === id ? null : current));
+        setExtensions((rows) => rows?.filter((item) => item.id !== id) ?? null);
       })
       .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e)))
       .finally(() =>
@@ -95,6 +119,26 @@ export function PluginsPage({ onClose, embedded = false }: { onClose?: () => voi
               <button type="button" className="sp" onClick={() => toggle(extension)} disabled={pending.has(extension.id)}>
                 {extension.useState === "enabled" ? t("extensions.action.disable") : t("extensions.action.enable")}
               </button>
+              {/* Bundled extensions ship inside the app, so there is nothing to delete: they only get the switch. */}
+              {extension.provision !== "bundled" && (
+                confirming === extension.id ? (
+                  <>
+                    <p className="plugin-note">
+                      {t(extension.provision === "managed" ? "extensions.note.remove" : "extensions.note.detach")}
+                    </p>
+                    <button type="button" className="sp" onClick={() => remove(extension)} disabled={pending.has(extension.id)}>
+                      {t(extension.provision === "managed" ? "extensions.action.confirm-remove" : "extensions.action.confirm-detach")}
+                    </button>
+                    <button type="button" className="sp" onClick={() => setConfirming(null)} disabled={pending.has(extension.id)}>
+                      {t("extensions.action.cancel")}
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" className="sp" onClick={() => { setActionError(null); setConfirming(extension.id); }} disabled={pending.has(extension.id)}>
+                    {t(extension.provision === "managed" ? "extensions.action.remove" : "extensions.action.detach")}
+                  </button>
+                )
+              )}
               {extension.error === "bundled-runtime-missing" && <p className="plugin-note">{t("extensions.error.bundled-runtime-missing")}</p>}
               {plugin && plugin.functions.length > 0 && (
                 <ul>

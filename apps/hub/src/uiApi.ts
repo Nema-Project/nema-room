@@ -14,7 +14,7 @@ import type { EventBus, HubEvent } from "./events.js";
 import { indexEntry, timeline, withDiagramStatus } from "./entryIndex.js";
 import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, editUserMessage, getMessage, listMessageVersions, listMessages, MessageOpError, postSystemTask, postUserMessage, searchMessages } from "./messages.js";
 import { vendoredArchify, type Archify } from "./diagrams.js";
-import { PluginError, daemonHttpStatus, listExtensions, pluginsForUi, setExtensionUse, setPluginState, workspacePluginState } from "./plugins.js";
+import { PluginError, daemonHttpStatus, listExtensions, pluginsForUi, removeExtension, setExtensionUse, setPluginState, workspacePluginState } from "./plugins.js";
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
 import { RepoError, bindRepo, getRepo, listIndexing, listRepos, previewRepo, syncBoundRepos, unbindRepo, updateRepo } from "./repos.js";
 import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
@@ -163,12 +163,23 @@ export function uiRoutes(deps: UiDeps): Hono {
     }
   });
 
-  // Only the use state is writable from the page here. Installing and removing keep their own
-  // staging rules and are not reachable through this route.
+  // Only the use state is writable from this route. Installing keeps its own staging rules and is
+  // not reachable here; removing has its own verb, so a PATCH carrying one is a client mistake.
   app.patch("/extensions/:id", async (c) => {
     const { useState } = await body(c, SetExtensionUseBody);
     try {
       return c.json(await setExtensionUse(deps.daemon, c.req.param("id"), useState));
+    } catch (error) {
+      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      throw error;
+    }
+  });
+
+  // Removal deletes a managed extension's directory or detaches an external one; the daemon decides
+  // which, and refuses a bundled extension outright.
+  app.delete("/extensions/:id", async (c) => {
+    try {
+      return c.json(await removeExtension(deps.daemon, c.req.param("id")));
     } catch (error) {
       if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
       throw error;
