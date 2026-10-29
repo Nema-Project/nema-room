@@ -192,6 +192,8 @@
   "extensions.install.failed": "Failed",
   "extensions.use.enabled": "Enabled",
   "extensions.use.disabled": "Disabled",
+  "extensions.action.disable": "Disable",
+  "extensions.action.enable": "Enable",
   "extensions.error.bundled-runtime-missing": "The packaged Graphify runtime is missing. It can be repaired from here.",
   "plugins.local": "Local only",
   "plugins.external": "Sends data out",

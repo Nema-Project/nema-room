@@ -107,3 +107,44 @@ test("installManaged activates a staged directory", () => {
   expect(store.list().find((row) => row.id === "skill")?.installState).toBe("installed");
   rmSync(staged, { recursive: true, force: true });
 });
+
+test("disabling a bundled extension keeps its seed and stores only the use state", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  const before = store.list().find((row) => row.id === "diagram")!;
+  const next = store.setUseState("diagram", "disabled");
+  expect(next.useState).toBe("disabled");
+  const after = store.list().find((row) => row.id === "diagram")!;
+  expect(after.useState).toBe("disabled");
+  // Nothing else about the seed may change: provision, availability, and functions stay as shipped.
+  expect({ ...after, useState: before.useState }).toEqual(before);
+  expect(store.list().filter((row) => row.id === "diagram")).toHaveLength(1);
+  // The choice survives reopening the store, which is what a hub restart does.
+  expect(openExtensionStore(dir).list().find((row) => row.id === "diagram")?.useState).toBe("disabled");
+});
+
+test("enabling a bundled extension again returns it to the shipped state", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  store.setUseState("grill", "disabled");
+  expect(store.setUseState("grill", "enabled").useState).toBe("enabled");
+  expect(store.list().find((row) => row.id === "grill")?.useState).toBe("enabled");
+});
+
+test("a managed extension takes its use state like any other record", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  store.putManaged(managed("skill"));
+  expect(store.setUseState("skill", "disabled").useState).toBe("disabled");
+  expect(store.list().find((row) => row.id === "skill")?.useState).toBe("disabled");
+});
+
+test("an unknown id or an unknown use state is refused without touching the store", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  const before = JSON.stringify(store.list());
+  expect(() => store.setUseState("nope", "enabled")).toThrow(/not installed/);
+  expect(() => store.setUseState("diagram", "paused" as never)).toThrow(/invalid use state/);
+  expect(JSON.stringify(store.list())).toBe(before);
+  expect(existsSync(join(dir, "index.json"))).toBe(false);
+});

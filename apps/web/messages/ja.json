@@ -192,6 +192,8 @@
   "extensions.install.failed": "失敗",
   "extensions.use.enabled": "有効",
   "extensions.use.disabled": "停止",
+  "extensions.action.disable": "無効化",
+  "extensions.action.enable": "有効化",
   "extensions.error.bundled-runtime-missing": "同梱の Graphify 実行環境がありません。ここから修復できます。",
   "plugins.local": "ローカルのみ",
   "plugins.external": "外部送信あり",

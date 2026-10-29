@@ -1,0 +1,1 @@
+- Extensions can be turned on and off from the Plugins page without uninstalling them; a built-in extension keeps its shipped definition and only its on/off choice is stored.

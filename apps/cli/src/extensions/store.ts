@@ -53,8 +53,14 @@ function ownedDirectory(root: string, id: string): string {
 export function openExtensionStore(root: string) {
   return {
     list(): ExtensionRecord[] {
-      const extra = readExtra(root).filter((row) => !BUNDLED_IDS.has(row.id));
-      return [...bundledExtensions(), ...extra];
+      const rows = readExtra(root);
+      // A bundled id keeps its seed and takes only the stored use state; everything else is a record.
+      const overrides = new Map(rows.filter((row) => BUNDLED_IDS.has(row.id)).map((row) => [row.id, row]));
+      const seeds = bundledExtensions().map((row) => {
+        const override = overrides.get(row.id);
+        return override ? { ...row, useState: override.useState } : row;
+      });
+      return [...seeds, ...rows.filter((row) => !BUNDLED_IDS.has(row.id))];
     },
     putManaged(record: ExtensionRecord): void {
       assertId(record.id);
@@ -110,6 +116,25 @@ export function openExtensionStore(root: string) {
       const rows = readExtra(root).filter((row) => row.id !== record.id);
       rows.push({ ...record, provision: "managed", installState: "installed", error: null });
       writeExtra(root, rows);
+    },
+    /**
+     * Flip the use state of a record. Bundled extensions live in `bundledExtensions()`, so their
+     * choice is stored as an override row rather than by editing the seed.
+     */
+    setUseState(id: string, useState: ExtensionRecord["useState"]): ExtensionRecord {
+      if (useState !== "enabled" && useState !== "disabled") throw new Error(`invalid use state: ${useState}`);
+      if (BUNDLED_IDS.has(id)) {
+        const rows = readExtra(root).filter((row) => row.id !== id);
+        const seed = bundledExtensions().find((row) => row.id === id)!;
+        rows.push({ ...seed, useState });
+        writeExtra(root, rows);
+        return { ...seed, useState };
+      }
+      const current = readExtra(root).find((row) => row.id === id);
+      if (!current) throw new Error("extension is not installed here");
+      const next = { ...current, useState };
+      writeExtra(root, readExtra(root).map((row) => (row.id === id ? next : row)));
+      return next;
     },
     cancelInstall(id: string): void {
       assertId(id);

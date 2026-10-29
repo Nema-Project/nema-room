@@ -214,6 +214,13 @@ export async function listExtensions(daemon: DaemonRpc): Promise<ExtensionRecord
   }
 }
 
+/** Flip one record's use state through the daemon, which owns the installed directory and index. */
+export async function setExtensionUse(daemon: DaemonRpc, id: string, useState: "enabled" | "disabled"): Promise<ExtensionRecord> {
+  const row = await daemon.call("extensions.setUse", { id, useState });
+  if (!row || typeof row !== "object") throw new DaemonRpcError("extensions.setUse returned an invalid result");
+  return row as ExtensionRecord;
+}
+
 /** One row per call that passed the "function is enabled" check, success or failure. */
 export async function recordPluginCall(
   db: Db,

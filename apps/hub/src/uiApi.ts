@@ -14,7 +14,7 @@ import type { EventBus, HubEvent } from "./events.js";
 import { indexEntry, timeline, withDiagramStatus } from "./entryIndex.js";
 import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, editUserMessage, getMessage, listMessageVersions, listMessages, MessageOpError, postSystemTask, postUserMessage, searchMessages } from "./messages.js";
 import { vendoredArchify, type Archify } from "./diagrams.js";
-import { PluginError, daemonHttpStatus, listExtensions, pluginsForUi, setPluginState, workspacePluginState } from "./plugins.js";
+import { PluginError, daemonHttpStatus, listExtensions, pluginsForUi, setExtensionUse, setPluginState, workspacePluginState } from "./plugins.js";
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
 import { RepoError, bindRepo, getRepo, listIndexing, listRepos, previewRepo, syncBoundRepos, unbindRepo, updateRepo } from "./repos.js";
 import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
@@ -44,6 +44,9 @@ const DIAGRAM_CACHE_MAX = 32;
 const PING_MS = 25_000;
 
 const CreateWorkspaceBody = z.object({ name: z.string().trim().min(1, "must not be empty") });
+// Strict on purpose: a body carrying anything but `useState` is a client mistake, and silently
+// dropping an `install` field would look like the route accepted an install request.
+const SetExtensionUseBody = z.strictObject({ useState: z.enum(["enabled", "disabled"]) });
 const PatchWorkspaceBody = z.object({
   name: z.string().trim().min(1, "must not be empty").optional(),
   confidential: z.boolean().optional(),
@@ -154,6 +157,18 @@ export function uiRoutes(deps: UiDeps): Hono {
   app.get("/extensions", async (c) => {
     try {
       return c.json(await listExtensions(deps.daemon));
+    } catch (error) {
+      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      throw error;
+    }
+  });
+
+  // Only the use state is writable from the page here. Installing and removing keep their own
+  // staging rules and are not reachable through this route.
+  app.patch("/extensions/:id", async (c) => {
+    const { useState } = await body(c, SetExtensionUseBody);
+    try {
+      return c.json(await setExtensionUse(deps.daemon, c.req.param("id"), useState));
     } catch (error) {
       if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
       throw error;

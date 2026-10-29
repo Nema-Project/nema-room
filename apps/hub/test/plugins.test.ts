@@ -319,6 +319,50 @@ describe("workspace plugins", () => {
     expect(saved.find((row) => row.id === "github")?.loggedIn).toBe(true);
   });
 
+  test("PATCH /api/extensions/:id forwards the use state and returns the daemon record", async () => {
+    const updated = { id: "grill", installState: "installed", provision: "bundled", useState: "disabled", error: null };
+    daemonCall = async (method, params) => {
+      expect(method).toBe("extensions.setUse");
+      expect(params).toEqual({ id: "grill", useState: "disabled" });
+      return updated;
+    };
+    const response = await uiReq("PATCH", "/api/extensions/grill", { useState: "disabled" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(updated);
+    expect(daemonCalls.at(-1)).toEqual({ method: "extensions.setUse", params: { id: "grill", useState: "disabled" } });
+  });
+
+  test("PATCH /api/extensions/:id rejects an unknown use state before the daemon sees it", async () => {
+    for (const body of [{}, { useState: "paused" }, { useState: true }, { useState: null }]) {
+      const response = await uiReq("PATCH", "/api/extensions/grill", body);
+      expect(response.status).toBe(400);
+    }
+    expect(daemonCalls).toHaveLength(0);
+  });
+
+  test("PATCH /api/extensions/:id reports a daemon refusal as 503 and any other failure as 502", async () => {
+    daemonCall = async () => {
+      throw new DaemonRpcError("daemon 已断开");
+    };
+    expect((await uiReq("PATCH", "/api/extensions/grill", { useState: "enabled" })).status).toBe(503);
+
+    daemonCall = async () => {
+      throw new DaemonRpcError("extension is not installed here");
+    };
+    const refused = await uiReq("PATCH", "/api/extensions/nope", { useState: "enabled" });
+    expect(refused.status).toBe(502);
+    expect(((await refused.json()) as { error: string }).error).toBe("extension is not installed here");
+  });
+
+  test("PATCH /api/extensions/:id does not accept an install or removal through the same route", async () => {
+    // Installing and removing have their own staging rules; this route must never carry one.
+    for (const body of [{ install: true }, { remove: true }, { action: "install" }, { useState: "enabled", install: true }]) {
+      const response = await uiReq("PATCH", "/api/extensions/grill", body);
+      expect(response.status).toBe(400);
+    }
+    expect(daemonCalls).toHaveLength(0);
+  });
+
   test("GET /api/extensions returns daemon records, and bundled seeds when the daemon is down", async () => {
     const custom = [{ id: "pending", installState: "installing", provision: "managed", error: null }];
     daemonCall = async (method) => (method === "extensions.list" ? custom : {});
