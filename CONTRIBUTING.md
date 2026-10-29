@@ -25,9 +25,9 @@ node apps/cli/dist/index.js daemon
 
 已有 `.env` 时不要覆盖。开发模式不要同时启动 Compose 里的 hub 和 web，端口会冲突。CLI 不会自动读取根目录 `.env`。
 
-`npm run up` 用当前检出构建 hub 和 web。Linux 和 macOS 上先执行 `export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"`，再执行 `npm run up`。Windows 上的 Docker Desktop 不需要这条 export。单独执行 `docker compose up` 会拉取钉死版本的 GHCR 镜像；仅适用于对应镜像已经发布的版本。main 在 release PR 合并后、镜像发布前可能钉住尚不可用的候选版本，不能把 main 的 Compose 当作公开安装入口。开发 main 请用 `npm run up` 从源码构建；公开安装请取 README 链接的已发布 tag 的 Compose 文件。这些镜像从 tag `v0.1.4` 起发布（`linux/amd64`；arm64 见 issue #50）。hub 的宿主机端口和容器端口都是 `NEMA_HUB_PORT`（默认 4400）。web 的宿主机端口是 `NEMA_WEB_PORT`（默认 3000），容器内仍是 3000。web 启动时读取 `NEMA_HUB_URL`，compose 默认把它设成 `http://127.0.0.1:$NEMA_HUB_PORT`。
+`npm run up` 用当前检出构建 hub 和 web。Linux 和 macOS 上先执行 `export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"`，再执行 `npm run up`。Windows 上的 Docker Desktop 不需要这条 export。单独执行 `docker compose up` 会从 GHCR 拉取镜像；仓库树里的 `docker-compose.yml` 是模板，镜像用的是 `${NEMA_IMAGE_TAG:-latest}` 插值，不是安装入口。开发 main 请用 `npm run up` 从源码构建；公开安装请取 Release 上的 `docker-compose.yml` 资产，它由模板按该 Release 的版本渲染、双镜像都钉在那个版本上。这些镜像从 tag `v0.1.4` 起发布（`linux/amd64`；arm64 见 issue #50）。hub 的宿主机端口和容器端口都是 `NEMA_HUB_PORT`（默认 4400）。web 的宿主机端口是 `NEMA_WEB_PORT`（默认 3000），容器内仍是 3000。web 启动时读取 `NEMA_HUB_URL`，compose 默认把它设成 `http://127.0.0.1:$NEMA_HUB_PORT`。
 
-从本仓库跑 Web / Compose 仍走 `node scripts/setup.mjs`。宿主机 daemon 是 npm 包 `@nema-project/nema`，命令名是 `nema`。`@nema-project/nema@0.1.3` 已在 2026-10-27 由维护者账号发布到 npm，这是第一次发布。`v0.1.4` 是受信发布者的第一次发布。开发本仓库时 daemon 仍从当前检出安装。已发布的 hub 按版本安装：`npx @nema-project/nema@<hub 版本>` 或 `npm i -g @nema-project/nema@<hub 版本>`。不要把不带版本的 `npx @nema-project/nema` 写成与任意 hub 都匹配的安装方式。
+从本仓库跑 Web / Compose 仍走 `node scripts/setup.mjs`。宿主机 daemon 是 npm 包 `@nema-project/nema`，命令名是 `nema`。`@nema-project/nema@0.1.3` 已在 2026-10-27 由维护者账号发布到 npm，这是第一次发布。`v0.1.4` 是受信发布者的第一次发布。开发本仓库时 daemon 仍从当前检出安装。已发布的 hub 按版本安装：`npx @nema-project/nema@<hub 版本>` 或 `npm i -g @nema-project/nema@<hub 版本>`，这个版本号来自 `.env` 的 `NEMA_IMAGE_TAG`，等于所装 Release 的版本。不要把不带版本的 `npx @nema-project/nema` 写成与任意 hub 都匹配的安装方式。
 
 ## 目录
 
@@ -79,9 +79,9 @@ npm run release:stamp -- <x.y.z>
 npm run release:cut -- <x.y.z>
 ```
 
-`<x.y.z>` 是严格 SemVer，不带 `v`。`release:stamp` 只改 `apps/cli`、`apps/desktop`、`apps/local` 三个 `package.json` 的 `version`，以及 `package-lock.json` 里对应的三条记录，然后只运行 `check-tag`。三条 `package.json` 版本事先不一致，或 `package-lock.json` 里对应记录缺失、不是字符串、或与包版本不同，命令在写入前拒绝。`check-tag` 在写入后失败时，这四个文件会恢复成执行前的内容。它不运行 `check-images`，不 commit、不打 tag、不 publish。镜像版本断言留到第 2 期，等 compose 模板和拆分后的断言落地。
+`<x.y.z>` 是严格 SemVer，不带 `v`。`release:stamp` 只改 `apps/cli`、`apps/desktop`、`apps/local` 三个 `package.json` 的 `version`，以及 `package-lock.json` 里对应的三条记录，然后运行自检：`check-tag`、compose 模板的形态断言、以及把该模板按新版本渲染后的版本断言。三条 `package.json` 版本事先不一致，或 `package-lock.json` 里对应记录缺失、不是字符串、或与包版本不同，命令在写入前拒绝。自检在写入后失败时，这四个文件会恢复成执行前的内容。它不改也不生成任何 compose 文件，不 commit、不打 tag、不 publish。
 
-在那之前，`check-images` 仍要求 `docker-compose.yml` 的镜像 pin 等于包版本。pin 要在同一次发布提交里另改；盖印命令不改这个文件。细节见 [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md)。
+仓库树的 `docker-compose.yml` 是模板，双镜像 `image:` 是 `${NEMA_IMAGE_TAG:-latest}`，发布提交里不再改该文件里的镜像 tag。Release 资产由 `node scripts/images/stamp-compose.mjs <x.y.z>` 从模板渲染；`check-images` 对模板跑形态断言、对资产跑版本断言。细节见 [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md)。
 
 `release:cut` 先把 `changelog.d` 里的片段按 Added、Changed、Fixed、Removed、Security 合并进 `[Unreleased]`（同一分类里原有条目在前，片段按文件名升序接在后面），再把合并后的条目移到 `## [<x.y.z>] - <当天日期>`，紧跟在空的 `[Unreleased]` 标题之后。日期是执行命令时的本地日历日，是截稿日，不是打 tag 的日期。之后不要因为实际发布日不同再改这个日期。合并之后 `[Unreleased]` 仍没有条目时命令拒绝，`CHANGELOG.md` 不变，片段也不删除。只有写入成功之后才删除这次合并掉的片段。
 
