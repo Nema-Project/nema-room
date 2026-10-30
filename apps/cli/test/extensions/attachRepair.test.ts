@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { RpcRouter } from "../../src/daemon/rpc.js";
 import { registerExtensionHandlers, type ExtensionHandlerOptions } from "../../src/extensions/handlers.js";
-import { openExtensionStore } from "../../src/extensions/store.js";
+import { bundledExtensions, openExtensionStore } from "../../src/extensions/store.js";
 
 let dir: string | undefined;
 afterEach(() => {
@@ -142,4 +142,57 @@ test("extensions.repair refuses anything that is not bundled", async () => {
     expect(response.ok).toBe(false);
   }
   expect(errorOf(await call("extensions.repair", { id: "notes" }))).toMatch(/only a bundled extension/);
+});
+
+test("extensions.repair checks the GitHub CLI for the github item", async () => {
+  let status = { installed: false, loggedIn: false, detail: "gh not found" };
+  const { call } = setup({ checkGithub: async () => status, checkGraphify: async () => { throw new Error("must not run"); } });
+  const missing = await call("extensions.repair", { id: "github" });
+  expect(missing.ok && missing.result).toMatchObject({ id: "github", availability: "missing-dependency", error: "github-cli-missing" });
+  status = { installed: true, loggedIn: false, detail: "not logged in" };
+  const signedOut = await call("extensions.repair", { id: "github" });
+  expect(signedOut.ok && signedOut.result).toMatchObject({ availability: "missing-dependency", error: "github-cli-signed-out" });
+  status = { installed: true, loggedIn: true, detail: "ok" };
+  const ready = await call("extensions.repair", { id: "github" });
+  expect(ready.ok && ready.result).toMatchObject({ availability: "ready", error: null });
+});
+
+test("a GitHub CLI check that throws marks the github item damaged", async () => {
+  const { call } = setup({ checkGithub: async () => { throw new Error("gh crashed"); } });
+  const response = await call("extensions.repair", { id: "github" });
+  expect(response.ok && response.result).toMatchObject({ availability: "damaged", error: "github-cli-damaged" });
+});
+
+test("an older Repair that finishes last does not overwrite a newer one", async () => {
+  const answers: Array<(value: { installed: boolean; detail: string }) => void> = [];
+  let tick = 0;
+  const { call } = setup({
+    checkGraphify: () => new Promise((resolve) => answers.push(resolve)),
+    now: () => new Date(Date.UTC(2026, 9, 30, 3, 0, tick++)),
+  });
+  const older = call("extensions.repair", { id: "code" });
+  const newer = call("extensions.repair", { id: "code" });
+  await vi.waitFor(() => expect(answers).toHaveLength(2));
+  answers[1]!({ installed: true, detail: "" });
+  const newest = await newer;
+  expect(newest.ok && newest.result).toMatchObject({ availability: "ready", checkedAt: "2026-10-30T03:00:01.000Z" });
+  answers[0]!({ installed: false, detail: "" });
+  const stale = await older;
+  // The late answer gets the stored, newer result back instead of writing its own.
+  expect(stale.ok && stale.result).toMatchObject({ availability: "ready", checkedAt: "2026-10-30T03:00:01.000Z" });
+  const listed = await call("extensions.list", {});
+  expect(listed.ok && (listed.result as Array<{ id: string }>).find((row) => row.id === "code")).toMatchObject({ availability: "ready", checkedAt: "2026-10-30T03:00:01.000Z" });
+});
+
+test("a stored check with an unknown availability is ignored and the shipped seed stands", async () => {
+  const { nemaHome, call } = setup();
+  const root = join(nemaHome, "extensions");
+  mkdirSync(root, { recursive: true });
+  const seed = bundledExtensions().find((row) => row.id === "code")!;
+  for (const broken of [{ availability: "fine" }, { availability: undefined }, { availability: "ready", error: 7 }]) {
+    writeFileSync(join(root, "index.json"), JSON.stringify([{ ...seed, ...broken, checkedAt: "2026-10-30T03:00:00.000Z" }]));
+    const listed = await call("extensions.list", {});
+    const row = listed.ok && (listed.result as Array<{ id: string }>).find((item) => item.id === "code");
+    expect(row, JSON.stringify(broken)).toEqual(seed);
+  }
 });

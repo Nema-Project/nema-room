@@ -53,7 +53,7 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
   const rpc = new RpcRouter();
   const graphify = { ...o.graphify, ownedHelpers: o.ownedHelpers };
   const github = o.github ?? new GithubGh({ ownedHelpers: o.ownedHelpers });
-  registerExtensionHandlers(rpc, o.nemaHome, { checkGraphify: () => graphifyInstallStatus(graphify) });
+  registerExtensionHandlers(rpc, o.nemaHome, { checkGraphify: () => graphifyInstallStatus(graphify), checkGithub: () => github.status() });
   let sendMessage: ((message: unknown) => boolean) | null = null;
   const watcher = new RepoWatcher({
     nemaHome: o.nemaHome,

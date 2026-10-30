@@ -7,6 +7,7 @@ import { resolveSkillSource, type SkillCandidate, type SkillResolution, type Sou
 import { bundledExtensions, openExtensionStore, type ExtensionRecord } from "./store.js";
 import { discoverSkills, inspectSkillFolder, placeSkill } from "./discover.js";
 import { graphifyInstallStatus } from "../repos/graphify.js";
+import { GithubGh } from "../github/gh.js";
 
 /** Hub waits 60 s for this RPC; stop GitHub reads first so the daemon's own error reaches the page. */
 const RESOLVE_TIMEOUT_MS = 45_000;
@@ -34,6 +35,8 @@ export type ExtensionHandlerOptions = {
   home?: string;
   /** Runs the packaged Graphify version check; production passes the daemon's packaged binary. */
   checkGraphify?: () => Promise<{ installed: boolean; detail: string }>;
+  /** Asks the GitHub CLI whether it is installed and signed in; production passes the daemon's reader. */
+  checkGithub?: () => Promise<{ installed: boolean; loggedIn: boolean; detail: string }>;
   now?: () => Date;
 };
 
@@ -46,6 +49,7 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
   const installer = new SkillInstaller({ root, store, fetch });
   const home = options.home ?? homedir();
   const checkGraphify = options.checkGraphify ?? (() => graphifyInstallStatus());
+  const checkGithub = options.checkGithub ?? (() => new GithubGh().status());
   const now = options.now ?? (() => new Date());
   // No install can be running before the router answers, so anything still `installing` was cut off.
   installer.recover();
@@ -137,13 +141,31 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
       error: null,
     });
   });
-  // Check a bundled item again and keep the result. Graphify is the one bundled item with a runtime
-  // of its own; the others are code inside the app and are ready whenever the app runs.
+  // Check a bundled item again and keep the result. Graphify has a packaged runtime of its own and
+  // GitHub needs the `gh` CLI signed in; the others are code inside the app and are ready whenever
+  // the app runs. The check time is taken before the check, so of two overlapping checks the one
+  // started later wins.
   router.register("extensions.repair", async (params): Promise<ExtensionRecord> => {
     const id = requireId(params, "extensions.repair");
     if (!BUNDLED_IDS.has(id)) throw new Error("only a bundled extension can be repaired");
+    const checkedAt = now().toISOString();
     let availability: ExtensionRecord["availability"] = "ready";
     let error: string | null = null;
+    if (id === "github") {
+      try {
+        const status = await checkGithub();
+        if (!status.installed) {
+          availability = "missing-dependency";
+          error = "github-cli-missing";
+        } else if (!status.loggedIn) {
+          availability = "missing-dependency";
+          error = "github-cli-signed-out";
+        }
+      } catch {
+        availability = "damaged";
+        error = "github-cli-damaged";
+      }
+    }
     if (id === "code") {
       try {
         if (!(await checkGraphify()).installed) {
@@ -155,6 +177,6 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
         error = "bundled-runtime-damaged";
       }
     }
-    return store.recordCheck(id, { availability, error, checkedAt: now().toISOString() });
+    return store.recordCheck(id, { availability, error, checkedAt });
   });
 }

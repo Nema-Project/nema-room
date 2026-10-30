@@ -370,6 +370,9 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
                 </p>
               )}
               {extension.error === "bundled-runtime-damaged" && <p className="plugin-note">{t("extensions.repair.damaged")}</p>}
+              {extension.error === "github-cli-missing" && <p className="plugin-note">{t("extensions.repair.github-missing")}</p>}
+              {extension.error === "github-cli-signed-out" && <p className="plugin-note">{t("extensions.repair.github-signed-out")}</p>}
+              {extension.error === "github-cli-damaged" && <p className="plugin-note">{t("extensions.repair.github-damaged")}</p>}
               {extension.provision === "bundled" && extension.checkedAt && extension.availability === "ready" && (
                 <p className="kmeta">{t("extensions.repair.ready")}</p>
               )}

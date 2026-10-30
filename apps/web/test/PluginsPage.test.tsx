@@ -754,9 +754,10 @@ describe("PluginsPage attach and repair", () => {
     expect(input.value).toBe("/home/me/work/notes");
     await act(async () => fireEvent.click(submit));
     expect(await within(found).findByText("Another extension already uses this id.")).toBeTruthy();
-    fireEvent.change(input, { target: { value: "  /home/me/work/notes  " } });
+    // The path goes out exactly as typed: a folder name may end in a space.
+    fireEvent.change(input, { target: { value: "/home/me/work/notes " } });
     await act(async () => fireEvent.click(submit));
-    expect(hub.attachExtension).toHaveBeenLastCalledWith("/home/me/work/notes");
+    expect(hub.attachExtension).toHaveBeenLastCalledWith("/home/me/work/notes ");
     expect(input.value).toBe("");
     expect(within(screen.getByRole("region", { name: "Installed" })).getByRole("heading", { name: "Notes", level: 3 })).toBeTruthy();
   });
@@ -785,6 +786,55 @@ describe("PluginsPage attach and repair", () => {
     expect(await screen.findByText("daemon 未连接")).toBeTruthy();
     expect(within(github).queryByText("Checked: working.")).toBeNull();
     expect((within(github).getByRole("button", { name: "Check again" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("the folder field waits for the extension list, so an attach cannot land before it", async () => {
+    let finish: (rows: ExtensionRecord[]) => void = () => {};
+    vi.mocked(hub.listExtensions).mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    renderPage();
+    const found = await screen.findByRole("region", { name: "Found on this computer" });
+    const input = within(found).getByRole("textbox", { name: "Another skill folder" }) as HTMLInputElement;
+    expect(input.disabled).toBe(true);
+    expect((within(found).getByRole("button", { name: "Choose…" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => finish(catalog));
+    expect(input.disabled).toBe(false);
+    expect((within(found).getByRole("button", { name: "Choose…" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("a location that could not be listed says so instead of reporting no folders", async () => {
+    vi.mocked(hub.discoverExtensions).mockResolvedValue({
+      ...emptyDiscovery,
+      locations: [{ label: "claude", path: "/home/me/.claude/skills", found: true, unreadable: true }, ...emptyDiscovery.locations.slice(1)],
+    });
+    renderPage();
+    const found = await screen.findByRole("region", { name: "Found on this computer" });
+    expect(await within(found).findByText("Nema could not read /home/me/.claude/skills.")).toBeTruthy();
+    expect(within(found).queryByText(/^No skill folders/)).toBeNull();
+  });
+
+  it("a found folder whose SKILL.md cannot be read says why", async () => {
+    vi.mocked(hub.discoverExtensions).mockResolvedValue({
+      ...emptyDiscovery,
+      skills: [{ path: "/home/me/.claude/skills/locked", location: "claude", name: null, description: null, id: null, attached: false, problem: "unreadable" }],
+    });
+    renderPage();
+    expect(await screen.findByText("SKILL.md could not be read.")).toBeTruthy();
+  });
+
+  it("a GitHub check explains a missing or signed-out GitHub CLI", async () => {
+    vi.mocked(hub.repairExtension)
+      .mockResolvedValueOnce({ ...catalog[1]!, availability: "missing-dependency", error: "github-cli-missing", checkedAt: "2026-10-30T03:00:00.000Z" })
+      .mockResolvedValueOnce({ ...catalog[1]!, availability: "missing-dependency", error: "github-cli-signed-out", checkedAt: "2026-10-30T03:01:00.000Z" })
+      .mockResolvedValueOnce({ ...catalog[1]!, availability: "damaged", error: "github-cli-damaged", checkedAt: "2026-10-30T03:02:00.000Z" });
+    renderPage();
+    const github = (await screen.findByRole("heading", { name: "GitHub", level: 3 })).closest("section")!;
+    await act(async () => fireEvent.click(within(github).getByRole("button", { name: "Check again" })));
+    expect(within(github).getByText("Checked: the GitHub CLI (gh) is not installed. Install it to use the GitHub tools.")).toBeTruthy();
+    await act(async () => fireEvent.click(within(github).getByRole("button", { name: "Repair" })));
+    expect(within(github).getByText("Checked: the GitHub CLI is not signed in to github.com. Run gh auth login, then check again.")).toBeTruthy();
+    await act(async () => fireEvent.click(within(github).getByRole("button", { name: "Repair" })));
+    expect(within(github).getByText("Checked: the GitHub CLI could not be asked for its status.")).toBeTruthy();
+    expect(within(github).queryByText("Checked: working.")).toBeNull();
   });
 
   it("managed and external rows have no Repair button", async () => {

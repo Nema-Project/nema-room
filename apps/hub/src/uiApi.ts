@@ -56,9 +56,10 @@ const InstallExtensionBody = z.strictObject({
   path: z.string().refine((value) => value === "." || safeRepoPath(value), "must be `.` or a safe folder inside the repository"),
 });
 // The folder is on the daemon's computer, which may be Windows while the hub runs elsewhere, so
-// either kind of absolute path is accepted here and the daemon makes the real check.
+// either kind of absolute path is accepted here and the daemon makes the real check. The path is
+// not trimmed: a folder name may begin or end with a space, and trimming would name another folder.
 const AttachExtensionBody = z.strictObject({
-  path: z.string().trim().refine((value) => posix.isAbsolute(value) || win32.isAbsolute(value), "must be an absolute folder path"),
+  path: z.string().refine((value) => posix.isAbsolute(value) || win32.isAbsolute(value), "must be an absolute folder path"),
 });
 const PatchWorkspaceBody = z.object({
   name: z.string().trim().min(1, "must not be empty").optional(),

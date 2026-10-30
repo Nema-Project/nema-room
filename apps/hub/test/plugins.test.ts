@@ -561,6 +561,14 @@ describe("workspace plugins", () => {
     truncated: false,
   };
 
+  test("GET /api/extensions/discover passes a location the daemon could not list", async () => {
+    const unreadable = { ...discovery, skills: [], locations: [{ label: "claude", path: "/home/x/.claude/skills", found: true, unreadable: true }] };
+    daemonCall = async () => unreadable;
+    const response = await uiReq("GET", "/api/extensions/discover");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(unreadable);
+  });
+
   test("GET /api/extensions/discover returns what the daemon found and refuses another shape", async () => {
     daemonCall = async (method, params) => {
       expect(method).toBe("extensions.discover");
@@ -570,7 +578,7 @@ describe("workspace plugins", () => {
     const response = await uiReq("GET", "/api/extensions/discover");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(discovery);
-    for (const bad of [null, [], { ...discovery, skills: "x" }, { ...discovery, truncated: "no" }, { ...discovery, skills: [{ ...discovery.skills[0], path: 7 }] }, { ...discovery, skills: [{ ...discovery.skills[0], attached: "yes" }] }]) {
+    for (const bad of [null, [], { ...discovery, skills: "x" }, { ...discovery, truncated: "no" }, { ...discovery, skills: [{ ...discovery.skills[0], path: 7 }] }, { ...discovery, skills: [{ ...discovery.skills[0], attached: "yes" }] }, { ...discovery, skills: [], locations: [null] }, { ...discovery, locations: [{ label: "claude", found: true }] }, { ...discovery, locations: [{ label: "claude", path: "/x", found: "yes" }] }, { ...discovery, locations: [{ label: "claude", path: "/x", found: true, unreadable: "yes" }] }]) {
       daemonCall = async () => bad;
       const refused = await uiReq("GET", "/api/extensions/discover");
       expect(refused.status, JSON.stringify(bad)).toBe(502);
@@ -587,9 +595,17 @@ describe("workspace plugins", () => {
         expect(params).toEqual({ path: folder });
         return attached;
       };
-      const response = await uiReq("POST", "/api/extensions/attach", { path: ` ${folder} ` });
+      const response = await uiReq("POST", "/api/extensions/attach", { path: folder });
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual(attached);
+    }
+    // A folder name may start or end with a space; the path reaches the daemon exactly as typed.
+    for (const folder of ["/home/x/notes ", "/home/x/ notes"]) {
+      daemonCall = async (_method, params) => {
+        expect(params).toEqual({ path: folder });
+        return attached;
+      };
+      expect((await uiReq("POST", "/api/extensions/attach", { path: folder })).status).toBe(200);
     }
     daemonCall = async () => {
       throw new DaemonRpcError("cannot attach /home/x/notes: id-taken");
@@ -606,7 +622,7 @@ describe("workspace plugins", () => {
   });
 
   test("POST /api/extensions/attach refuses a relative or malformed path as 400 without asking the daemon", async () => {
-    for (const body of [{}, { path: "" }, { path: "notes" }, { path: "./notes" }, { path: 7 }, { path: "/x", copy: true }]) {
+    for (const body of [{}, { path: "" }, { path: "notes" }, { path: "./notes" }, { path: " /x" }, { path: 7 }, { path: "/x", copy: true }]) {
       const before = daemonCalls.length;
       const response = await uiReq("POST", "/api/extensions/attach", body);
       expect(response.status, JSON.stringify(body)).toBe(400);

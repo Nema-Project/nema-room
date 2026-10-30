@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, lstatSync, openSync, opendirSync, readSync, realpathSync, statSync, type Dirent } from "node:fs";
 import path from "node:path";
 import { bundledExtensions, type AttachProblem, type DiscoveredSkill, type ExtensionRecord, type SkillDiscovery } from "@nema/shared";
 import { MAX_SKILL_BYTES, skillFrontMatter, skillId } from "./source.js";
@@ -12,6 +12,12 @@ export const SKILL_LOCATIONS: ReadonlyArray<{ label: string; dir: string }> = [
 
 /** Enough for any real collection; a location holding more is listed up to here and marked truncated. */
 export const MAX_DISCOVERED_SKILLS = 200;
+
+/**
+ * How many entries of one location are read at most. Hidden entries and plain files count too, so a
+ * location stuffed with other things cannot make the daemon list and sort all of it.
+ */
+export const MAX_SCANNED_ENTRIES = 2000;
 
 /** Same cap the GitHub preview uses for one SKILL.md. */
 const MAX_SKILL_MD_BYTES = MAX_SKILL_BYTES;
@@ -64,7 +70,13 @@ export function inspectSkillFolder(folder: string): InspectedSkill {
   } catch {
     return failed(real, "missing-frontmatter");
   }
-  const text = readCapped(file);
+  let text: string | null;
+  try {
+    text = readCapped(file);
+  } catch {
+    // One folder whose SKILL.md cannot be opened is that folder's problem, not the whole list's.
+    return failed(real, "unreadable");
+  }
   if (text === null) return failed(real, "too-large");
   const meta = skillFrontMatter(text);
   if (!meta) return failed(real, "missing-frontmatter");
@@ -83,6 +95,21 @@ export function placeSkill(skill: InspectedSkill, records: ExtensionRecord[]): {
   if (attached) return { attached: true, problem: null, id: skill.id };
   if (records.some((row) => row.id === skill.id)) return { attached: false, problem: "id-taken", id: null };
   return { attached: false, problem: null, id: skill.id };
+}
+
+/** Up to `limit` entries of one folder, read one at a time; `more` says the folder held others. */
+function readEntries(folder: string, limit: number): { entries: Dirent[]; more: boolean } {
+  const dir = opendirSync(folder);
+  const entries: Dirent[] = [];
+  try {
+    for (let entry = dir.readSync(); entry !== null; entry = dir.readSync()) {
+      if (entries.length >= limit) return { entries, more: true };
+      entries.push(entry);
+    }
+    return { entries, more: false };
+  } finally {
+    dir.closeSync();
+  }
 }
 
 /**
@@ -105,13 +132,17 @@ export function discoverSkills(home: string, records: ExtensionRecord[]): SkillD
       locations.push({ label: location.label, path: base, found: false });
       continue;
     }
-    locations.push({ label: location.label, path: base, found: true });
-    let entries;
+    let entries: Dirent[];
     try {
-      entries = readdirSync(root, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+      const read = readEntries(root, MAX_SCANNED_ENTRIES);
+      if (read.more) truncated = true;
+      entries = read.entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     } catch {
+      // It is there but cannot be listed: say so, so the page does not report an empty folder.
+      locations.push({ label: location.label, path: base, found: true, unreadable: true });
       continue;
     }
+    locations.push({ label: location.label, path: base, found: true });
     for (const entry of entries) {
       // Hidden folders hold an agent's own system skills or tooling, not something to attach.
       if (entry.name.startsWith(".")) continue;

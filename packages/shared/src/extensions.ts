@@ -40,7 +40,7 @@ export type ExtensionRecord = {
 };
 
 /** Why a skill folder on this computer cannot be attached. */
-export type AttachProblem = "missing-frontmatter" | "invalid-id" | "bundled-id" | "id-taken" | "outside-location" | "too-large" | "not-a-folder";
+export type AttachProblem = "missing-frontmatter" | "invalid-id" | "bundled-id" | "id-taken" | "outside-location" | "too-large" | "not-a-folder" | "unreadable";
 
 /** One skill folder found in a known location, as `GET /api/extensions/discover` returns it. */
 export type DiscoveredSkill = {
@@ -58,7 +58,8 @@ export type DiscoveredSkill = {
 };
 
 export type SkillDiscovery = {
-  locations: Array<{ label: string; path: string; found: boolean }>;
+  /** `unreadable` is set only on a location that exists but could not be listed. */
+  locations: Array<{ label: string; path: string; found: boolean; unreadable?: boolean }>;
   skills: DiscoveredSkill[];
   /** More folders were present than the list holds. */
   truncated: boolean;

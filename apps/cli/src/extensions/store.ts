@@ -89,9 +89,15 @@ function ownedDirectory(root: string, id: string): string {
   return real;
 }
 
-/** The result of a Repair check on a bundled override row, or nothing when it was never checked. */
+const AVAILABILITY: ReadonlySet<string> = new Set(["ready", "missing-dependency", "incompatible", "damaged"]);
+
+/**
+ * The result of a Repair check on a bundled override row, or nothing when it was never checked or
+ * the stored values are not a valid result. Same rule as the hub's offline read of the index.
+ */
 function checked(row: ExtensionRecord): Partial<ExtensionRecord> {
-  if (typeof row.checkedAt !== "string") return {};
+  if (typeof row.checkedAt !== "string" || !AVAILABILITY.has(row.availability)) return {};
+  if (row.error !== null && typeof row.error !== "string") return {};
   return { availability: row.availability, error: row.error, checkedAt: row.checkedAt };
 }
 
@@ -206,12 +212,18 @@ export function openExtensionStore(root: string) {
     /**
      * Store what a Repair check found for a bundled item. The seed stays the shipped default; the
      * override row carries the result and when it was taken, and keeps the use state as it was.
+     * `checkedAt` is when the check started; a result older than the stored one is not written, and
+     * the stored record comes back instead, so a slow check cannot replace a newer answer.
      */
     recordCheck(id: string, result: { availability: ExtensionRecord["availability"]; error: string | null; checkedAt: string }): ExtensionRecord {
       if (!BUNDLED_IDS.has(id)) throw new Error("only a bundled extension can be repaired");
       const stored = readExtra(root);
       const previous = stored.find((row) => row.id === id);
       const seed = bundledExtensions().find((row) => row.id === id)!;
+      const kept = previous ? checked(previous) : {};
+      if (typeof kept.checkedAt === "string" && kept.checkedAt > result.checkedAt) {
+        return { ...seed, useState: previous!.useState ?? seed.useState, ...kept };
+      }
       const next: ExtensionRecord = { ...seed, useState: previous?.useState ?? seed.useState, ...result };
       writeExtra(root, [...stored.filter((row) => row.id !== id), next]);
       return next;

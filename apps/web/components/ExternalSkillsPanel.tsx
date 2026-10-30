@@ -13,6 +13,7 @@ const PROBLEMS: ReadonlySet<string> = new Set<AttachProblem>([
   "outside-location",
   "too-large",
   "not-a-folder",
+  "unreadable",
 ]);
 
 /** The daemon ends a refusal with `: <problem>`; a known problem is shown in the page's language. */
@@ -70,13 +71,16 @@ export function ExternalSkillsPanel({ records, onAttached }: { records: Extensio
     return problem ? t(`extensions.attach.problem.${problem}`) : message;
   };
 
+  // Attaching before the page's list has loaded would race that first read, so the field waits for it.
+  const waiting = records === null;
+
   const attach = (target: string) => {
-    if (pending) return;
+    if (pending || waiting) return;
     setPending(target);
     setError(null);
     attachExtension(target)
       .then((record) => {
-        if (target === folder.trim()) setFolder("");
+        if (target === folder) setFolder("");
         onAttached(record);
       })
       .catch((e: unknown) => setError(describe(e instanceof Error ? e.message : String(e))))
@@ -85,8 +89,8 @@ export function ExternalSkillsPanel({ records, onAttached }: { records: Extensio
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    const target = folder.trim();
-    if (target) attach(target);
+    // Sent exactly as typed: a folder name may begin or end with a space.
+    if (folder.trim()) attach(folder);
   };
 
   const choose = () => {
@@ -104,7 +108,14 @@ export function ExternalSkillsPanel({ records, onAttached }: { records: Extensio
       <p className="plugin-note">{t("extensions.found.note")}</p>
       {loadError && <p className="error">{loadError}</p>}
       {!found && !loadError && <p className="kmeta">{t("common.loading")}</p>}
-      {found && found.skills.length === 0 && (
+      {found?.locations
+        .filter((location) => location.unreadable)
+        .map((location) => (
+          <p key={location.path} className="plugin-note">
+            {t("extensions.found.unreadable", { path: location.path })}
+          </p>
+        ))}
+      {found && found.skills.length === 0 && !found.locations.some((location) => location.unreadable) && (
         <p className="kmeta">{t("extensions.found.none", { locations: found.locations.map((location) => location.path).join(", ") })}</p>
       )}
       {found && found.skills.length > 0 && (
@@ -137,12 +148,12 @@ export function ExternalSkillsPanel({ records, onAttached }: { records: Extensio
       <form className="field" onSubmit={submit}>
         <label>
           <span className="label">{t("extensions.found.other")}</span>
-          <input type="text" value={folder} placeholder={t("extensions.found.placeholder")} onChange={(e) => setFolder(e.target.value)} disabled={pending !== null} />
+          <input type="text" value={folder} placeholder={t("extensions.found.placeholder")} onChange={(e) => setFolder(e.target.value)} disabled={pending !== null || waiting} />
         </label>
-        <button type="button" className="sp" onClick={choose} disabled={pending !== null}>
+        <button type="button" className="sp" onClick={choose} disabled={pending !== null || waiting}>
           {t("extensions.found.choose")}
         </button>
-        <button type="submit" className="sp" disabled={pending !== null || !folder.trim()}>
+        <button type="submit" className="sp" disabled={pending !== null || waiting || !folder.trim()}>
           {t("extensions.found.attach-folder")}
         </button>
       </form>

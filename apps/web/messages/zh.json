@@ -418,9 +418,13 @@
   "extensions.repair.ready": "已检查：可以使用。",
   "extensions.repair.still-missing": "已检查：随包的 Graphify 运行环境仍然缺失。重新安装 Nema 即可恢复。",
   "extensions.repair.damaged": "已检查：随包的 Graphify 运行环境存在，但无法运行。重新安装 Nema 会替换它。",
+  "extensions.repair.github-missing": "检查结果：未安装 GitHub CLI（gh）。安装后才能使用 GitHub 工具。",
+  "extensions.repair.github-signed-out": "检查结果：GitHub CLI 未登录 github.com。请运行 gh auth login，然后再检查一次。",
+  "extensions.repair.github-damaged": "检查结果：无法向 GitHub CLI 查询状态。",
   "extensions.found.title": "在这台电脑上找到",
   "extensions.found.note": "接入只记录文件夹所在位置。Nema 不复制任何文件，「从列表移除」也不会动这个文件夹。",
   "extensions.found.none": "{locations} 中没有 Skill 文件夹。",
+  "extensions.found.unreadable": "Nema 无法读取 {path}。",
   "extensions.found.attached": "已接入",
   "extensions.found.attach": "接入",
   "extensions.found.attach-named": "接入 {name}",
@@ -436,5 +440,6 @@
   "extensions.attach.problem.id-taken": "已有其他扩展使用这个 id。",
   "extensions.attach.problem.outside-location": "它链接到这个文件夹之外的位置，Nema 不会读取。",
   "extensions.attach.problem.too-large": "SKILL.md 超过 256 KiB。",
-  "extensions.attach.problem.not-a-folder": "这个路径下没有文件夹。"
+  "extensions.attach.problem.not-a-folder": "这个路径下没有文件夹。",
+  "extensions.attach.problem.unreadable": "无法读取 SKILL.md。"
 }

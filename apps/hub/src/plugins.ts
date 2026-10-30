@@ -390,6 +390,16 @@ export async function discoverExtensions(daemon: DaemonRpc): Promise<Record<stri
   const valid =
     row &&
     Array.isArray(row.locations) &&
+    row.locations.every((item) => {
+      const location = plainObject(item);
+      return (
+        location &&
+        typeof location.label === "string" &&
+        typeof location.path === "string" &&
+        typeof location.found === "boolean" &&
+        (location.unreadable === undefined || typeof location.unreadable === "boolean")
+      );
+    }) &&
     typeof row.truncated === "boolean" &&
     Array.isArray(row.skills) &&
     row.skills.every((item) => {

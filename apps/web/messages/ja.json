@@ -418,9 +418,13 @@
   "extensions.repair.ready": "チェック済み：使用できます。",
   "extensions.repair.still-missing": "チェック済み：同梱の Graphify ランタイムがまだ見つかりません。Nema を再インストールすると元に戻ります。",
   "extensions.repair.damaged": "チェック済み：同梱の Graphify ランタイムはありますが、実行できませんでした。Nema を再インストールすると置き換わります。",
+  "extensions.repair.github-missing": "確認結果：GitHub CLI（gh）がインストールされていません。GitHub ツールを使うにはインストールしてください。",
+  "extensions.repair.github-signed-out": "確認結果：GitHub CLI が github.com にサインインしていません。gh auth login を実行してから、もう一度確認してください。",
+  "extensions.repair.github-damaged": "確認結果：GitHub CLI に状態を問い合わせられませんでした。",
   "extensions.found.title": "このコンピューターで見つかったもの",
   "extensions.found.note": "接続はフォルダーの場所を記録するだけです。Nema はファイルをコピーせず、「一覧から外す」でもフォルダーはそのまま残ります。",
   "extensions.found.none": "{locations} に Skill フォルダーはありません。",
+  "extensions.found.unreadable": "Nema は {path} を読み取れませんでした。",
   "extensions.found.attached": "接続済み",
   "extensions.found.attach": "接続",
   "extensions.found.attach-named": "{name} を接続",
@@ -436,5 +440,6 @@
   "extensions.attach.problem.id-taken": "この id はすでに別の拡張が使っています。",
   "extensions.attach.problem.outside-location": "このフォルダーの外を指すリンクなので、Nema は読み込みません。",
   "extensions.attach.problem.too-large": "SKILL.md が 256 KiB を超えています。",
-  "extensions.attach.problem.not-a-folder": "このパスにフォルダーがありません。"
+  "extensions.attach.problem.not-a-folder": "このパスにフォルダーがありません。",
+  "extensions.attach.problem.unreadable": "SKILL.md を読み取れませんでした。"
 }
