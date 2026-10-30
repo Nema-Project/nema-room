@@ -79,6 +79,7 @@ ancestry 必须成功。第二条命令若列出下文「核对的代码」里�
 6. **「候选打包产物」固定为 tag 推送那次运行上传的 tarball，不重新打包。** 规格第 107 行要求把 registry tarball 的完整性与候选打包产物比较，一致视为完成，不同则拒绝。若每次 dispatch 都重新打包，判定就取决于 `cli:pack` 是否逐字节可复现（基线上未验证）。所以：tag 推送时 npm-publish 的 verify 与 build 照常运行并上传 `nema-tarball` 产物；promote 的候选预检下载**这次 push 运行**的产物、算出 `sha512`，作为本版唯一的「预期完整性」；dispatch 的 publish 作业下载同一个产物、核对 `sha512` 等于预期值后才发布。registry 已有该版本时与同一个值比较。代价：`nema-tarball` 的保留期是 5 天（npm-publish.yml 的 `retention-days: 5`），promote 必须在 tag 推送后 5 天内运行；过期时 promote 失败关闭，补救是对该 tag 的 push 运行 re-run 以重新生成产物（re-run 仍在同一 tag 提交上跑 verify）。provenance 只作为额外证据写进报告。
 7. **dispatch 能否被 GITHUB_TOKEN 触发、trusted publisher 是否接受 dispatch 事件，要实测。** GitHub 文档写明 `GITHUB_TOKEN` 触发的事件中只有 `workflow_dispatch` 和 `repository_dispatch` 会创建新运行；npm trusted publisher 绑定的是仓库与工作流文件名（可选 environment），不绑事件类型。两条都是文档结论，第一次真实晋升（任务 15）必须实测记录，任一不成立就停。
 8. **promote 从 main 运行，tag 只当数据；npm-publish 必须在 tag ref 上运行。** release-promote 持有写权限，不得执行 tag 提交里的脚本：它只在 `refs/heads/main` 上运行，用 main 的脚本，通过 API 读取 tag 指向的提交并核对它是 main 的祖先，不 checkout tag 的代码。npm 发布则相反：provenance 记录的是运行所在的 ref 与提交，只有在 tag ref 上运行，provenance 的 `gitCommit` 才是发布提交（v0.1.6 实测如此）。dispatch `--ref v<x.y.z>` 时 GitHub 使用**该 tag 里**的 `npm-publish.yml`，所以只有在第二步合入之后创建的 tag 才能走 promote 的 npm 步骤；更早的 tag（含 v0.1.6）上 dispatch 只会打包冒烟。
+9. **（实现第一步时补记）匿名被拒是权威否定。** 2026-10-30 实测：GHCR 对不存在或不公开的仓库，匿名 token 请求直接返回 403 `{"errors":[{"code":"DENIED"}]}`；对存在的仓库、不存在的 tag，manifest 返回 404 `MANIFEST_UNKNOWN`。#63 把「某镜像不能匿名访问」列为必须阻止推荐的部分失败场景，所以 401/403 `DENIED` 记为 `missing`（evidence `reason: denied`），不是 `unknown`；只有 5xx、429、超时与无法解析的应答是 `unknown`。本计划原先把 token 403 写成 `unknown`，与这条实测不符，已按实测改。
 
 ## Global Constraints
 
@@ -133,7 +134,7 @@ ancestry 必须成功。第二条命令若列出下文「核对的代码」里�
 - `readNpmDistTags({ fetchImpl })`：`/-/package/@nema-project/nema/dist-tags`。
 - `readImage({ fetchImpl, repository, reference })`：匿名 token → manifest（`Accept` 同 `release-set.mjs` 的四种类型）→ 若是 index 则递归（最多 3 层）找 `platform.os == 'linux' && platform.architecture == 'amd64'`，跳过 `unknown/unknown` → config blob → `Labels['org.opencontainers.image.version']`。evidence 含顶层 digest、平台 manifest digest、版本标签。manifest 404 / `MANIFEST_UNKNOWN` → `missing`；找不到 `linux/amd64` → `missing`（detail 写明）；标签缺失 → `ok` 但 `label: null`（由任务 3 判不一致）。
 
-- [ ] **Step 1: 写失败测试**：用注入的 `fetchImpl` 返回夹具。夹具照抄 v0.1.6 实测结构（两层 index + attestation 条目，config 有 `version`/`source` 无 `revision`）。用例：npm 200/404/500/超时/坏 JSON 分别得到 `ok`/`missing`/`unknown`/`unknown`/`unknown`；`unknown` 重试 2 次后仍 `unknown`，`missing` 只请求 1 次；GHCR token 失败 → `unknown`；manifest 404 → `missing`；两层 index 读出 `0.1.6`；只有 attestation 条目 → `missing`；provenance 读出 `280b224…` 且 `signatureVerified === false`。
+- [ ] **Step 1: 写失败测试**：用注入的 `fetchImpl` 返回夹具。夹具照抄 v0.1.6 实测结构（两层 index + attestation 条目，config 有 `version`/`source` 无 `revision`）。用例：npm 200/404/500/超时/坏 JSON 分别得到 `ok`/`missing`/`unknown`/`unknown`/`unknown`；`unknown` 重试 2 次后仍 `unknown`，`missing` 只请求 1 次；GHCR token 端点 5xx 或超时 → `unknown`、返回 403 `DENIED` → `missing`；manifest 404 → `missing`；两层 index 读出 `0.1.6`；只有 attestation 条目 → `missing`；provenance 读出 `280b224…` 且 `signatureVerified === false`。
 - [ ] **Step 2: 跑** `export PATH=/tmp/node-v22.20.0-linux-x64/bin:$PATH && node --test scripts/release/registry-read.test.mjs` → FAIL。
 - [ ] **Step 3: 实现。** 镜像名用 `check-images.mjs` 导出的 `HUB_IMAGE`、`WEB_IMAGE` 推出仓库路径，不再手写一份。
 - [ ] **Step 4: 跑** 同一命令 → PASS。
@@ -174,7 +175,7 @@ ancestry 必须成功。第二条命令若列出下文「核对的代码」里�
 - `overall`：任一 `missing` → `incomplete`（1）；否则任一 `unknown` → `undetermined`（2）；否则 `complete`（0）。
 - 模块里不得出现 `method: 'POST'|'PUT'|'PATCH'|'DELETE'`，测试用源码断言守住。
 
-- [ ] **Step 1: 写失败测试**，覆盖 #63 列出的部分失败场景，每个都断言非零退出与点名缺项：只有 hub 镜像（web `missing`，规格验收 6 的例子）；只有桌面 Release（npm 与镜像 `missing`）；npm 未发；镜像不可匿名访问（token 403 → `unknown`，退出 2，**不**报缺件）；Release 缺 `docker-compose.yml`；tag 提交与 manifest `build.commit` 不同；npm provenance 提交不同。完整一套退出 0 并逐项列出四项证据。`candidate` 阶段：npm 不存在 → 退出 0、npm 项 `pending`；npm 存在且 integrity 等于预期 → `ok`；不等 → 退出 1；Release 已发布且资产集正确 → `ok`、evidence `draft: false`。源码不含写方法。
+- [ ] **Step 1: 写失败测试**，覆盖 #63 列出的部分失败场景，每个都断言非零退出与点名缺项：只有 hub 镜像（web `missing`，规格验收 6 的例子）；只有桌面 Release（npm 与镜像 `missing`）；npm 未发；镜像不可匿名访问（token 或 manifest 返回 401/403 `DENIED` → `missing`，退出 1；见「不一致」第 9 条）；Release 缺 `docker-compose.yml`；tag 提交与 manifest `build.commit` 不同；npm provenance 提交不同。完整一套退出 0 并逐项列出四项证据。`candidate` 阶段：npm 不存在 → 退出 0、npm 项 `pending`；npm 存在且 integrity 等于预期 → `ok`；不等 → 退出 1；Release 已发布且资产集正确 → `ok`、evidence `draft: false`。源码不含写方法。
 - [ ] **Step 2–4:** `node --test scripts/release/*.test.mjs`，先 FAIL 后 PASS。
 - [ ] **Step 5: Commit** `feat(release): verify a released version as one set`
 

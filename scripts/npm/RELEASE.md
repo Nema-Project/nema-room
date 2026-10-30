@@ -68,6 +68,17 @@ Do not create a tag unless that SHA's `CI` workflow on `main` has already succee
 
 `workflow_dispatch` packs and smokes the tarball and does not publish.
 
+## After the tag workflows
+
+When `npm-publish`, `image-publish`, and `desktop-release` have all finished for a tag, run the read-only check and record its output, including the exit code, in that version's ROADMAP entry:
+
+```bash
+npm run release:verify -- <x.y.z>
+npm run release:verify -- --pointers <x.y.z>
+```
+
+It checks four items: the npm version and its integrity (with the provenance the registry reports, whose signature it does not verify), anonymous GHCR access to both version tags and their `linux/amd64` version labels, the GitHub Release asset set against the set derived from `scripts/desktop/release-manifest.mjs` (including `docker-compose.yml` and its hash and pin), and that the versions and the tag, release-manifest and npm-provenance commits agree. Exit 0 means every artifact exists and agrees. It is not a test, smoke, or acceptance result. Exit 1 names the missing or disagreeing item: that is a partial release to fix. Exit 2 means some answer was unavailable (timeout, 5xx, or a Release hidden from an anonymous reader). Run it again later, or with `GITHUB_TOKEN` set to see a draft. Do not treat exit 2 as missing or as ready. `--pointers` prints where `latest` points now and what a promotion would do. It moves nothing. This step does not change when any pointer moves: the three workflows still move them as described above.
+
 ## Fail closed
 
 The publish job does not emit a package when any of these is true:
