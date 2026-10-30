@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Chat, type ChatHandle } from "@/components/Chat";
 import { I18nProvider, LOCALE_STORAGE_KEY } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
@@ -18,6 +18,8 @@ vi.mock("@/lib/hub", () => ({
   listThreads: vi.fn(),
   createThread: vi.fn(),
   getMessage: vi.fn(),
+  attachmentCapabilities: vi.fn(),
+  uploadAttachment: vi.fn(),
   HubError: class HubError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -36,6 +38,7 @@ beforeEach(() => {
   vi.mocked(hub.listMessages).mockResolvedValue([m("a", "hello")]);
   vi.mocked(hub.getActiveTask).mockResolvedValue({ running: null });
   vi.mocked(hub.listThreads).mockResolvedValue([]);
+  vi.mocked(hub.attachmentCapabilities).mockResolvedValue(null);
 });
 
 const mount = async (connected: boolean, extra: { searchOpen?: boolean } = {}) => {
@@ -87,7 +90,7 @@ describe("Chat", () => {
     await userEvent.type(box, "/thr");
     await userEvent.click(screen.getByRole("option", { name: /thread/i }));
     await userEvent.type(box, "Need more context{Shift>}{Enter}{/Shift}");
-    expect(hub.createThread).toHaveBeenCalledWith("w1", "Need more context", undefined);
+    expect(hub.createThread).toHaveBeenCalledWith("w1", "Need more context", undefined, []);
     expect(onOpenThread).toHaveBeenCalledWith("new-anchor");
   });
   it("shows the offline banner only when disconnected", async () => {
@@ -236,7 +239,7 @@ describe("Chat", () => {
       expect(screen.getByRole("button", { name: "取消引用" })).toBeTruthy();
       await userEvent.type(screen.getByPlaceholderText(placeholder), "about it");
       await userEvent.click(screen.getByRole("button", { name: "发送 ⇧↵" }));
-      expect(hub.postMessage).toHaveBeenCalledWith("w1", "about it", "a");
+      expect(hub.postMessage).toHaveBeenCalledWith("w1", "about it", "a", []);
       expect(screen.queryByRole("button", { name: "取消引用" })).toBeNull();
 
       await userEvent.click(screen.getAllByRole("button", { name: "引用" })[0]!);
@@ -244,7 +247,7 @@ describe("Chat", () => {
       expect(screen.queryByRole("button", { name: "取消引用" })).toBeNull();
       await userEvent.type(screen.getByPlaceholderText(placeholder), "plain");
       await userEvent.click(screen.getByRole("button", { name: "发送 ⇧↵" }));
-      expect(hub.postMessage).toHaveBeenLastCalledWith("w1", "plain");
+      expect(hub.postMessage).toHaveBeenLastCalledWith("w1", "plain", undefined, []);
 
       await userEvent.click(screen.getByRole("button", { name: "已编辑" }));
       expect(hub.listMessageVersions).toHaveBeenCalledWith("w1", "a");
@@ -282,5 +285,39 @@ describe("Chat", () => {
     } finally {
       localStorage.removeItem(LOCALE_STORAGE_KEY);
     }
+  });
+});
+
+describe("Chat attachments", () => {
+  const png = () => new File([Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0])], "shot.png", { type: "image/png" });
+  beforeEach(() => {
+    vi.mocked(hub.attachmentCapabilities).mockResolvedValue({ adapter: "codex-direct", image: "native", pdf: "native", text: "text" });
+    vi.mocked(hub.uploadAttachment).mockImplementation(async (_w, file) => ({
+      id: "att1", kind: "image", mime: "image/png", name: (file as File).name, size: 10, sha256: "a".repeat(64), messageId: null, status: "staged", deletedAt: null,
+    }));
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:preview"), revokeObjectURL: vi.fn() }));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("sends attachment ids with a main-chat message", async () => {
+    vi.mocked(hub.postMessage).mockResolvedValue({ message: m("n", ""), task: { id: "t", workspaceId: "w1", messageId: "n", status: "queued", error: null } });
+    await mount(true);
+    await userEvent.upload(screen.getByLabelText("Choose files to attach"), png());
+    const send = screen.getByRole("button", { name: /Send/ }) as HTMLButtonElement;
+    await vi.waitFor(() => expect(send.disabled).toBe(false));
+    await userEvent.click(send);
+    expect(hub.postMessage).toHaveBeenCalledWith("w1", "", undefined, ["att1"]);
+  });
+
+  it("sends attachment ids when a thread is started from the composer", async () => {
+    const thread = { id: "new-anchor", workspaceId: "w1", title: "See this", openedBy: "user" as const, replyCount: 0, unread: 0, lastReplyAt: null, createdAt: "2026-10-21T00:00:00Z" };
+    vi.mocked(hub.createThread).mockResolvedValue({ message: m("new-anchor", "See this"), thread, task: { id: "task", workspaceId: "w1", messageId: "new-anchor", status: "queued", error: null } });
+    await mount(true);
+    await userEvent.upload(screen.getByLabelText("Choose files to attach"), png());
+    const send = screen.getByRole("button", { name: /Send/ }) as HTMLButtonElement;
+    await vi.waitFor(() => expect(send.disabled).toBe(false));
+    const box = screen.getAllByRole("textbox").at(-1)!;
+    await userEvent.type(box, "/thread See this{Shift>}{Enter}{/Shift}");
+    await vi.waitFor(() => expect(hub.createThread).toHaveBeenCalledWith("w1", "See this", undefined, ["att1"]));
   });
 });

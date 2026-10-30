@@ -8,7 +8,7 @@ import * as threadUrls from "@/lib/threads";
 import type { HubEvent, Message, Thread } from "@/lib/types";
 import { FakeEventSource } from "./FakeEventSource";
 
-vi.mock("@/lib/hub", () => ({ getThreadMessages: vi.fn(), postThreadMessage: vi.fn(), markThreadRead: vi.fn(), getMessage: vi.fn(), getEntry: vi.fn(), getHistory: vi.fn(), getWhy: vi.fn(), listMessages: vi.fn(), listEntries: vi.fn(), listRepos: vi.fn(), editMessage: vi.fn(), listMessageVersions: vi.fn(), withdrawEntry: vi.fn(), eventsUrl: (id: string) => `http://hub/workspaces/${id}/events` }));
+vi.mock("@/lib/hub", () => ({ attachmentCapabilities: vi.fn(), uploadAttachment: vi.fn(), getThreadMessages: vi.fn(), postThreadMessage: vi.fn(), markThreadRead: vi.fn(), getMessage: vi.fn(), getEntry: vi.fn(), getHistory: vi.fn(), getWhy: vi.fn(), listMessages: vi.fn(), listEntries: vi.fn(), listRepos: vi.fn(), editMessage: vi.fn(), listMessageVersions: vi.fn(), withdrawEntry: vi.fn(), eventsUrl: (id: string) => `http://hub/workspaces/${id}/events` }));
 const thread: Thread = { id: "anchor", workspaceId: "w1", title: "Need details", openedBy: "user", replyCount: 1, unread: 1, lastReplyAt: null, createdAt: "2026-10-21T00:00:00Z" };
 const msg = (id: string, seq: number, content = id, role: Message["role"] = "user"): Message => ({ id, workspaceId: "w1", role, content, meta: null, taskId: null, createdAt: "2026-10-21T00:00:00Z", editedAt: null, threadId: "anchor", seq });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -16,11 +16,23 @@ beforeEach(() => {
   vi.spyOn(document, "hasFocus").mockReturnValue(true);
   vi.mocked(hub.getThreadMessages).mockResolvedValue({ thread, anchor: msg("anchor", 2, "Pinned question"), messages: [msg("r1", 3, "Reply")] });
   vi.mocked(hub.postThreadMessage).mockResolvedValue({ message: msg("r2", 4), task: { id: "task", workspaceId: "w1", messageId: "r2", status: "queued", error: null } });
+  vi.mocked(hub.attachmentCapabilities).mockResolvedValue(null);
 });
 const mount = (props: Partial<React.ComponentProps<typeof ThreadView>> = {}) => render(<I18nProvider><ThreadView workspaceId="w1" threadId="anchor" {...props} /></I18nProvider>);
 describe("ThreadView", () => {
   it("shows the anchor and thread messages", async () => { mount(); expect(await screen.findByText("Pinned question")).toBeTruthy(); expect(screen.getByText("Reply")).toBeTruthy(); });
-  it("sends in the thread", async () => { mount(); const box = await screen.findByRole("textbox"); await userEvent.type(box, "more{Shift>}{Enter}{/Shift}"); expect(hub.postThreadMessage).toHaveBeenCalledWith("w1", "anchor", "more", undefined); });
+  it("sends in the thread", async () => { mount(); const box = await screen.findByRole("textbox"); await userEvent.type(box, "more{Shift>}{Enter}{/Shift}"); expect(hub.postThreadMessage).toHaveBeenCalledWith("w1", "anchor", "more", undefined, []); });
+  it("sends attachment ids with a thread reply", async () => {
+    vi.mocked(hub.attachmentCapabilities).mockResolvedValue({ adapter: "codex-direct", image: "native", pdf: "native", text: "text" });
+    vi.mocked(hub.uploadAttachment).mockResolvedValue({ id: "att9", kind: "text", mime: "text/plain", name: "err.log", size: 5, sha256: "b".repeat(64), messageId: null, status: "staged", deletedAt: null });
+    mount();
+    await screen.findByText("Pinned question");
+    await userEvent.upload(await screen.findByLabelText("Choose files to attach"), new File(["boom\n"], "err.log"));
+    const send = screen.getByRole("button", { name: /Send/ }) as HTMLButtonElement;
+    await vi.waitFor(() => expect(send.disabled).toBe(false));
+    await userEvent.click(send);
+    expect(hub.postThreadMessage).toHaveBeenCalledWith("w1", "anchor", "", undefined, ["att9"]);
+  });
   it("marks rendered messages read on open with throughSeq", async () => { mount(); await vi.waitFor(() => expect(hub.markThreadRead).toHaveBeenCalledWith("w1", "anchor", 3)); });
   it("retains an SSE message that arrives while the initial fetch is pending", async () => {
     let finish!: (result: { thread: Thread; anchor: Message; messages: Message[] }) => void;
