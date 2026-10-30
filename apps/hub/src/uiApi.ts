@@ -84,6 +84,9 @@ const PostMessageBody = z
     attachmentIds: z.array(z.string().min(1)).max(ATTACHMENT_LIMITS.perTaskCount).optional(),
   })
   .refine((b) => messageHasBody(b.content, b.attachmentIds ?? []), { message: "must not be empty", path: ["content"] });
+// An edit changes only the text; attachments stay as they are. Empty text is checked by editUserMessage,
+// which allows it only while the message still has a file that is not deleted.
+const EditMessageBody = z.strictObject({ content: z.string() });
 const PreviewRepoBody = z.object({ path: z.string().min(1) });
 const BindRepoBody = z.object({
   path: z.string().min(1),
@@ -517,7 +520,7 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.patch("/workspaces/:id/messages/:messageId", async (c) => {
     const id = c.req.param("id")!;
-    const { content } = await body(c, PostMessageBody);
+    const { content } = await body(c, EditMessageBody);
     try {
       const { message, task: created } = await editUserMessage(db, id, c.req.param("messageId")!, content);
       const task = toUiTask(created);
