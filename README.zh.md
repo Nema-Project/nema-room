@@ -102,6 +102,9 @@ curl -fsSL -o docker-compose.yml \
 #    instead of the latest one:
 #    curl -fsSL -o docker-compose.yml \
 #      https://github.com/Nema-Project/nema-room/releases/download/v<locked>/docker-compose.yml
+#    A lock older than v0.1.6 has no release asset; take that tag's file instead:
+#    curl -fsSL -o docker-compose.yml \
+#      https://raw.githubusercontent.com/Nema-Project/nema-room/v<locked>/docker-compose.yml
 
 # 2. read the one version both images are pinned to; hub and web must agree
 grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
@@ -119,7 +122,7 @@ docker compose up -d
 npm i -g @nema-project/nema@<that version>
 ```
 
-第 2 步的两行必须打印同一个版本；不同就停下，什么都不要启动。`.env` 已经有 `NEMA_IMAGE_TAG` 时沿用旧值：第 1 步改从 `releases/download/v<locked>/docker-compose.yml` 取该版本的资产，不取 latest，这样第 2 步和第 5 步读到的都是锁定的版本；第 3 步不要覆盖它。latest 会随每次发布变化，带版本的地址在该 Release 存在期间不变。第 5 步的版本就是第 2 步读出的那个版本，不是 npm 上的最新版本。`-L` 不能省，发布页下载地址会跳转。Windows 上的 Docker Desktop 不需要第 4 步的 export。
+第 2 步的两行必须打印同一个版本；不同就停下，什么都不要启动。`.env` 已经有 `NEMA_IMAGE_TAG` 时沿用旧值：第 1 步改从 `releases/download/v<locked>/docker-compose.yml` 取该版本的资产，不取 latest，这样第 2 步和第 5 步读到的都是锁定的版本；第 3 步不要覆盖它。latest 会随每次发布变化，带版本的地址在该 Release 存在期间不变。`v0.1.6` 之前的锁定版本（`0.1.4`、`0.1.5`）没有发布资产，带版本的地址会返回 404，这时改取该 tag 自己的文件 `raw.githubusercontent.com/Nema-Project/nema-room/v<locked>/docker-compose.yml`，它把双镜像钉在那个版本上。v0.1.6 的资产开头仍是仓库模板的注释，说它是模板、不是可安装的版本；这条注释已经过时，以两行钉住版本的 `image:` 为准，v0.1.6 之后的 Release 开头会写明自己的版本。第 5 步的版本就是第 2 步读出的那个版本，不是 npm 上的最新版本。`-L` 不能省，发布页下载地址会跳转。Windows 上的 Docker Desktop 不需要第 4 步的 export。
 
 宿主机端口跟随 `NEMA_HUB_PORT`（默认 4400，容器监听同一端口）和 `NEMA_WEB_PORT`（默认 3000，容器内仍监听 3000）。`NEMA_HUB_URL` 默认是 `http://127.0.0.1:$NEMA_HUB_PORT`，web 容器启动时读取，因此同一份已发布镜像不用重建就能换地址。
 
