@@ -1,3 +1,5 @@
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Hono } from "hono";
 import type { AttachmentView } from "@nema/shared";
@@ -213,6 +215,27 @@ describe("deleting a sent attachment", () => {
     await Promise.all([first, del(b.id)]);
     expect(updates).toHaveLength(2);
     expect(updates.at(-1)!.map((v) => v.status)).toEqual(["deleted", "deleted"]);
+  });
+
+  test("a delete whose file removal fails still emits the committed tombstone, then reports the failure", async () => {
+    const events = new EventBus();
+    const local = createApp({ db, dataDir, events, daemonStatus: () => true, daemon: { call: (m, p, t) => daemon.call(m, p, t) }, attachments });
+    const view = (await (await upload(png())).json()) as AttachmentView;
+    const { message } = await postUserMessage(db, ws, "pic", { attachmentIds: [view.id] });
+    // A non-empty directory where the file was: removing it without `recursive` fails after the commit.
+    const file = path.join(dataDir, "attachments", ws, view.id);
+    await rm(file, { force: true });
+    await mkdir(file);
+    await writeFile(path.join(file, "x"), "x");
+    const seen: HubEvent[] = [];
+    events.subscribe(ws, (e) => seen.push(e));
+    const res = await local.request(`${HUB}/api/workspaces/${ws}/attachments/${view.id}`, { method: "DELETE" });
+    expect(res.status).toBe(500);
+    expect(((await res.json()) as { error: string }).error).toMatch(/deleted.*could not be removed/);
+    const updated = seen.find((e): e is Extract<HubEvent, { type: "message.updated" }> => e.type === "message.updated");
+    expect(updated?.message.id).toBe(message.id);
+    expect(updated?.message.attachments).toEqual([expect.objectContaining({ id: view.id, status: "deleted" })]);
+    await rm(file, { recursive: true, force: true });
   });
 
   test("deleting an unsent upload emits nothing", async () => {

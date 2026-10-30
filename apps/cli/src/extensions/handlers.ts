@@ -66,7 +66,11 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
   installer.recover();
   const mcp = createMcpHandlers(nemaHome, { ownedHelpers: options.ownedHelpers, timeoutMs: options.mcpTimeoutMs });
   mcp.register(router, (id) => store.list().find((row) => row.id === id));
-  router.register("extensions.list", async () => store.list().map((row) => (row.kind === "mcp" && row.provision === "managed" ? { ...row, mcp: mcp.state(row) } : row)));
+  router.register("extensions.list", async () => {
+    // Started by the Plugins page as it loads: wait for crash recovery, so a stopped leftover's note shows.
+    await mcp.recovered;
+    return store.list().map((row) => (row.kind === "mcp" && row.provision === "managed" ? { ...row, mcp: mcp.state(row) } : row));
+  });
   // Three operations, three sets of rules, and the page may only reach two of them.
   //
   // Use state: flip one record's switch; every provision can be turned off and on again.

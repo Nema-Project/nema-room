@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -243,6 +243,74 @@ describe.skipIf(!posix)("start, stop and the operations around them", () => {
     expect(readFileSync(starts, "utf8").trim().split("\n")).toHaveLength(1);
     expect((await ok("extensions.mcp.status", { id: "search" })).connection).toBe("disconnected");
   }, 20_000);
+
+  test("a server left running by a daemon that did not shut down is stopped on the next start, with a note", async () => {
+    await ok("extensions.mcp.save", { id: "search", name: "Search", config: { ...stdio(), env: { FAKE_RECORD: { value: record("child") } } } });
+    await ok("extensions.mcp.start", { id: "search" });
+    const pid = childPid();
+    expect(existsSync(join(home, "run", "mcp", "search", "server.json"))).toBe(true);
+    // The old daemon is gone without closing; a new one starts on the same home.
+    const next = new RpcRouter();
+    const again = registerExtensionHandlers(next, home, { mcpTimeoutMs: 10_000 });
+    try {
+      const rpc = async (method: string, params: unknown) => next.handle({ type: "rpc.request", id: String(++seq), method, params });
+      // The first list (the Plugins page loading) already waits for the recovery and carries its note.
+      const first: any = await rpc("extensions.list", {});
+      const row = first.result.find((item: any) => item.id === "search");
+      expect(alive(pid)).toBe(false);
+      expect(row.mcp.connection).toBe("disconnected");
+      expect(row.mcp.lastError).toMatch(/left running by the previous daemon/);
+      expect(existsSync(join(home, "run", "mcp", "search", "server.json"))).toBe(false);
+      const restarted: any = await rpc("extensions.mcp.start", { id: "search" });
+      expect(restarted.result.connection).toBe("connected");
+    } finally {
+      await again.close();
+    }
+  });
+
+  test("when the recovery itself fails, no start runs until it succeeds, and the daemon keeps serving", async () => {
+    await ok("extensions.mcp.save", { id: "search", name: "Search", config: { ...stdio(), env: { FAKE_RECORD: { value: record("child") } } } });
+    mkdirSync(join(home, "run"), { recursive: true });
+    // Not a directory: the next daemon cannot read its records.
+    rmSync(join(home, "run", "mcp"), { recursive: true, force: true });
+    writeFileSync(join(home, "run", "mcp"), "");
+    const next = new RpcRouter();
+    const again = registerExtensionHandlers(next, home, { mcpTimeoutMs: 10_000 });
+    try {
+      const rpc = async (method: string, params: unknown): Promise<any> => next.handle({ type: "rpc.request", id: String(++seq), method, params });
+      const started = await rpc("extensions.mcp.start", { id: "search" });
+      expect(started.ok).toBe(false);
+      expect(started.error).toMatch(/left running by the previous daemon/);
+      expect((await rpc("extensions.list", {})).ok).toBe(true);
+    } finally {
+      await again.close();
+    }
+  });
+
+  test("a record that cannot be written fails the start cleanly and leaves no server running", async () => {
+    await ok("extensions.mcp.save", { id: "search", name: "Search", config: { ...stdio(), env: { FAKE_RECORD: { value: record("child") } } } });
+    // A directory where the record goes: writing it fails.
+    mkdirSync(join(home, "run", "mcp", "search", "server.json"), { recursive: true });
+    const started = await call("extensions.mcp.start", { id: "search" });
+    expect(started.ok).toBe(true);
+    expect((started.result as any).connection).toBe("error");
+    expect((started.result as any).lastError).toMatch(/could not record/);
+    if (existsSync(record("child"))) {
+      const pid = childPid();
+      expect(await until(() => !alive(pid))).toBe(true);
+    }
+  });
+
+  test("a server that exits on its own takes the rest of its process group with it", async () => {
+    const grandchild = join(home, "grandchild.pid");
+    await ok("extensions.mcp.save", { id: "search", name: "Search", config: { ...stdio(), env: { FAKE_RECORD: { value: record("child") }, FAKE_GRANDCHILD: { value: grandchild } } } });
+    await ok("extensions.mcp.start", { id: "search" });
+    const pid = childPid();
+    const grand = Number(readFileSync(grandchild, "utf8"));
+    process.kill(pid, "SIGKILL");
+    expect(await until(() => !alive(grand))).toBe(true);
+    expect(await until(() => !existsSync(join(home, "run", "mcp", "search", "server.json")))).toBe(true);
+  });
 
   test("remove stops the server and deletes config, secrets and record", async () => {
     await ok("extensions.mcp.save", { id: "search", name: "Search", config: stdio() });

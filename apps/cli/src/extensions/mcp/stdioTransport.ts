@@ -6,6 +6,8 @@ import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHel
 
 const KILL_GRACE_MS = 2000;
 const STOPPED = "MCP server stopped";
+/** The code of the start failure when the crash-recovery record cannot be written. */
+export const LEFTOVER_RECORD = "NEMA_MCP_RECORD";
 
 export type McpStdioLaunch = {
   bin: string;
@@ -15,6 +17,8 @@ export type McpStdioLaunch = {
   cwd: string;
   /** Desktop runtime: the guardian owns the process tree. Without it the child leads its own POSIX process group. */
   ownedHelpers?: OwnedHelperScope;
+  /** Keeps a record of the running group, so the next daemon can stop it if this one is killed. */
+  leftover?: { record(pid: number): void; clear(pid: number): void };
 };
 
 function signalGroup(pid: number | undefined, signal: NodeJS.Signals): void {
@@ -68,8 +72,33 @@ export class McpStdioTransport implements Transport {
       child.on("spawn", () => {
         spawned = true;
         this.child = child;
-        if (this.closed) signalGroup(child.pid, "SIGKILL");
+        if (this.closed) {
+          signalGroup(child.pid, "SIGKILL");
+          resolve();
+          return;
+        }
+        if (child.pid && this.launch.leftover) {
+          try {
+            this.launch.leftover.record(child.pid);
+          } catch {
+            // Without a record a crash of this daemon would leave it running for good: not started.
+            signalGroup(child.pid, "SIGKILL");
+            reject(Object.assign(new Error("could not record the server"), { code: LEFTOVER_RECORD }));
+            return;
+          }
+        }
         resolve();
+      });
+      // On exit, not close: a descendant holding an inherited pipe open would hold off close.
+      child.on("exit", () => {
+        // The leader is gone, on its own or stopped: nothing of its group stays behind, and there is
+        // nothing left for the next daemon to clean up.
+        if (process.platform !== "win32") signalGroup(child.pid, "SIGKILL");
+        try {
+          if (child.pid) this.launch.leftover?.clear(child.pid);
+        } catch {
+          // A record left behind names a process that is gone; the next daemon's check drops it.
+        }
       });
       child.on("close", () => this.onclose?.());
       child.stdin?.on("error", (error) => this.onerror?.(error));

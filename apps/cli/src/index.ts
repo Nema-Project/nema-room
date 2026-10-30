@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Command, InvalidArgumentError } from "commander";
 import { authClaude } from "./claude/token.js";
 import { startDaemon } from "./daemon/setup.js";
+import { stopOnSignals } from "./daemon/signals.js";
 import { startMcpServer } from "./mcp/server.js";
 import { configErrorMessage, DEFAULT_CONFIG, loadConfig, type NemaConfig } from "./config.js";
 import { configGet, configSet } from "./configCommands.js";
@@ -33,7 +34,7 @@ program
   .action(async (o: { hub: string; tokenFile: string }) => {
     const token = (await readFile(o.tokenFile, "utf8")).trim();
     const nemaHome = path.join(os.homedir(), ".nema");
-    startDaemon({
+    const daemon = startDaemon({
       hubUrl: o.hub,
       token,
       nemaHome,
@@ -41,6 +42,8 @@ program
       version: cliVersion(),
       cliEntry: realpathSync(process.argv[1] ?? fileURLToPath(import.meta.url)),
     });
+    // Ctrl-C, SIGTERM or SIGHUP close the daemon first, so its MCP servers do not outlive it.
+    stopOnSignals({ close: () => daemon.close() });
     console.log(`nema daemon connecting to ${o.hub}`);
   });
 

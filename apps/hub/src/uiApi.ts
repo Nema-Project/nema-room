@@ -85,7 +85,7 @@ const PostMessageBody = z
   })
   .refine((b) => messageHasBody(b.content, b.attachmentIds ?? []), { message: "must not be empty", path: ["content"] });
 // An edit changes only the text; attachments stay as they are. Empty text is checked by editUserMessage,
-// which allows it only while the message still has a file that is not deleted.
+// which allows it only while the message still has a file that is neither deleted nor missing.
 const EditMessageBody = z.strictObject({ content: z.string() });
 const PreviewRepoBody = z.object({ path: z.string().min(1) });
 const BindRepoBody = z.object({
