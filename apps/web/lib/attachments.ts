@@ -7,7 +7,7 @@ import {
   type AttachmentView,
   type SniffResult,
 } from "@nema/shared";
-import { attachmentCapabilities, uploadAttachment } from "@/lib/hub";
+import { attachmentCapabilities, deleteAttachment, uploadAttachment } from "@/lib/hub";
 
 /** The largest file any kind accepts. Anything bigger is refused before it is read into memory. */
 export const MAX_ATTACHMENT_BYTES = Math.max(ATTACHMENT_LIMITS.imageBytes, ATTACHMENT_LIMITS.pdfBytes, ATTACHMENT_LIMITS.textBytes);
@@ -96,6 +96,15 @@ function revoke(item: TrayItem) {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/** Give back a staged upload that will not be sent, instead of leaving it to the hub's 24-hour expiry. */
+function discard(workspaceId: string, view: AttachmentView | null) {
+  if (!view || view.status !== "staged") return;
+  // Best effort: if this fails, the hub's expiry still reclaims the bytes.
+  Promise.resolve()
+    .then(() => deleteAttachment(workspaceId, view.id))
+    .catch(() => {});
+}
+
 /** The composer's attachment tray: capability lookup, pre-checks, uploads, retries, and cleanup. */
 export function useAttachmentTray(workspaceId: string | undefined) {
   const [caps, setCaps] = useState<CapabilityState>({ state: workspaceId ? "loading" : "absent" });
@@ -133,9 +142,13 @@ export function useAttachmentTray(workspaceId: string | undefined) {
 
   // Attachments are staged in one workspace; switching workspaces starts an empty tray.
   useEffect(() => {
+    const tray = itemsRef;
     return () => {
-      for (const item of itemsRef.current) revoke(item);
-      itemsRef.current = [];
+      for (const item of tray.current) {
+        revoke(item);
+        if (workspaceId) discard(workspaceId, item.view);
+      }
+      tray.current = [];
       setItems([]);
       setNotices([]);
     };
@@ -148,6 +161,8 @@ export function useAttachmentTray(workspaceId: string | undefined) {
       update({ state: "uploading", error: null });
       try {
         const view = await uploadAttachment(workspaceId, item.file, item.key);
+        // Removed, or the workspace changed, while the bytes were on their way.
+        if (!itemsRef.current.some((i) => i.key === item.key)) return discard(workspaceId, view);
         update({ state: "ready", view, name: view.name, kind: view.kind, size: view.size });
       } catch (e) {
         update({ state: "failed", error: message(e) });
@@ -209,10 +224,13 @@ export function useAttachmentTray(workspaceId: string | undefined) {
 
   const remove = useCallback((key: string) => {
     const item = itemsRef.current.find((i) => i.key === key);
-    if (item) revoke(item);
+    if (item) {
+      revoke(item);
+      if (workspaceId) discard(workspaceId, item.view);
+    }
     itemsRef.current = itemsRef.current.filter((i) => i.key !== key);
     setItems((cur) => cur.filter((i) => i.key !== key));
-  }, []);
+  }, [workspaceId]);
 
   const retry = useCallback(
     (key: string) => {

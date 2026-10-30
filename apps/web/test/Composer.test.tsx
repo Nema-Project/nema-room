@@ -8,6 +8,7 @@ import { I18nProvider } from "@/lib/i18n";
 
 vi.mock("@/lib/hub", () => ({
   uploadAttachment: vi.fn(),
+  deleteAttachment: vi.fn(),
   attachmentCapabilities: vi.fn(),
   HubError: class HubError extends Error {
     status: number;
@@ -165,11 +166,13 @@ describe("Composer attachments", () => {
     vi.mocked(hub.attachmentCapabilities).mockResolvedValue(allNative);
     let n = 0;
     vi.mocked(hub.uploadAttachment).mockImplementation(async (_w, file) => staged(file as File, `att${++n}`));
+    vi.mocked(hub.deleteAttachment).mockImplementation(async (_w, id) => ({ ...staged(png(), id), status: "deleted", deletedAt: "2026-10-30T00:00:00.000Z" }));
     vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:preview"), revokeObjectURL: vi.fn() }));
   });
   afterEach(() => {
     vi.mocked(hub.uploadAttachment).mockReset();
     vi.mocked(hub.attachmentCapabilities).mockReset();
+    vi.mocked(hub.deleteAttachment).mockReset();
     vi.unstubAllGlobals();
   });
   const mountWs = async (onSend: (c: string, ids: string[]) => Promise<void> = vi.fn().mockResolvedValue(undefined), onThread?: (c: string, ids: string[]) => Promise<void>) => {
@@ -366,6 +369,42 @@ describe("Composer attachments", () => {
     await vi.waitFor(() => expect(hub.uploadAttachment).toHaveBeenCalledTimes(8));
     await act(async () => {});
     expect(hub.uploadAttachment).toHaveBeenCalledTimes(8);
+  });
+
+  it("gives back a staged upload that is removed from the tray", async () => {
+    await mountWs();
+    await userEvent.upload(picker(), png());
+    await vi.waitFor(() => expect(sendButton().disabled).toBe(false));
+    await userEvent.click(screen.getByRole("button", { name: "Remove shot.png" }));
+    await vi.waitFor(() => expect(hub.deleteAttachment).toHaveBeenCalledWith("w1", "att1"));
+  });
+
+  it("gives back an upload that finishes after its item was removed", async () => {
+    let finish!: (v: AttachmentView) => void;
+    vi.mocked(hub.uploadAttachment).mockImplementation(() => new Promise((r) => (finish = r)));
+    await mountWs();
+    const file = png();
+    await userEvent.upload(picker(), file);
+    await screen.findByRole("progressbar", { name: "Uploading shot.png" });
+    await userEvent.click(screen.getByRole("button", { name: "Remove shot.png" }));
+    expect(hub.deleteAttachment).not.toHaveBeenCalled();
+    await act(async () => finish(staged(file, "late")));
+    await vi.waitFor(() => expect(hub.deleteAttachment).toHaveBeenCalledWith("w1", "late"));
+    expect(screen.queryByText("shot.png")).toBeNull();
+  });
+
+  it("gives back staged uploads when the composer goes away, but not sent ones", async () => {
+    const { unmount } = render(<I18nProvider><Composer workspaceId="w1" onSend={vi.fn().mockResolvedValue(undefined)} /></I18nProvider>);
+    await act(async () => {});
+    await userEvent.upload(picker(), png("sent.png"));
+    await vi.waitFor(() => expect(sendButton().disabled).toBe(false));
+    await userEvent.click(sendButton());
+    await vi.waitFor(() => expect(screen.queryByText("sent.png")).toBeNull());
+    await userEvent.upload(picker(), png("draft.png"));
+    await vi.waitFor(() => expect(sendButton().disabled).toBe(false));
+    unmount();
+    await vi.waitFor(() => expect(hub.deleteAttachment).toHaveBeenCalledTimes(1));
+    expect(hub.deleteAttachment).toHaveBeenCalledWith("w1", "att2");
   });
 
   it("allows at most eight attachments", async () => {

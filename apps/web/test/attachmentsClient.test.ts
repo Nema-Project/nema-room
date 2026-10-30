@@ -49,6 +49,11 @@ describe("attachment hub client", () => {
     await expect(attachmentCapabilities()).resolves.toBeNull();
   });
 
+  it("returns null capabilities when the connected daemon predates attachments", async () => {
+    stubFetch(() => json({ error: "the connected daemon does not support attachments" }, 501));
+    await expect(attachmentCapabilities()).resolves.toBeNull();
+  });
+
   it("returns the daemon's capabilities and fails when the daemon is offline", async () => {
     const caps = { adapter: "claude-code", image: "native", pdf: "unknown", text: "text" };
     const fetchMock = stubFetch(() => json(caps));
