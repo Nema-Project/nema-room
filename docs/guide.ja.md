@@ -231,10 +231,11 @@ node apps/cli/dist/index.js auth claude
 | Claude Code | ネイティブ | 拒否：Claude Code が PDF ブロックをモデルに渡すか未確認 | 文字として |
 | ChatGPT でサインイン（`siwc`） | ネイティブ | ネイティブ | 文字として |
 | BYOK、既定の `https://api.openai.com/v1` | ネイティブ | ネイティブ | 文字として |
+| BYOK、`byokBaseUrl` が `https://openrouter.ai/api/v1`（正規化して比較） | ネイティブ：無料の画像対応モデルで実測して読めた | 拒否：未検証 | 文字として |
 | BYOK、`byokBaseUrl` を変更 | 拒否：プロバイダー次第、未検証 | 拒否：プロバイダー次第、未検証 | 文字として |
 | Codex ログイン互換（`compat`） | 拒否：非公開のバックエンド、未検証 | 拒否：非公開のバックエンド、未検証 | 文字として |
 
-「ネイティブ」の欄はプロバイダーが公開しているリクエスト形式に基づき、Nema が組み立てるリクエストに対する自動テストがありますが、どれもまだ実際のモデルでは動かしていません。実モデルでの検証はこれまで OpenRouter（`https://openrouter.ai/api/v1`）につないだ BYOK の 1 回だけで、[検証記録](reviews/2026-10-30-attachments-model-acceptance.md)にあります。画像は読めました。PDF は OpenRouter が既定で使う有料 OCR を通してしか読めなかったため、そこでは引き続き拒否します。PDF を文字抽出に落として送ることはしません。
+OpenRouter の画像の欄を除き、「ネイティブ」の欄はプロバイダーが公開しているリクエスト形式に基づき、Nema が組み立てるリクエストに対する自動テストがありますが、実際のモデルでは動かしていません。実モデルでの検証はこれまで OpenRouter（`https://openrouter.ai/api/v1`）につないだ BYOK の 1 回だけで、[検証記録](reviews/2026-10-30-attachments-model-acceptance.md)にあります。画像は読めたので、この行では画像を送ります。PDF の欄は変えていません。OpenRouter の行では画像を受け付けるモデルを選んでください。受け付けないモデルは OpenRouter 側で失敗します。PDF を文字抽出に落として送ることはしません。
 
 - **種類**は中身で判定し、拡張子は中身と一致している必要があります：PNG、JPEG、WebP、GIF、PDF、NUL を含まない厳密な UTF-8 テキスト。テキストファイルは拡張子なし、または次のいずれかの拡張子に限ります：txt, md, markdown, log, csv, tsv, json, jsonl, yaml, yml, toml, ini, xml, html, css, js, mjs, cjs, ts, tsx, jsx, py, rb, go, rs, java, kt, swift, c, h, cc, cpp, hpp, cs, php, sh, bash, zsh, sql, diff, patch。拡張子と中身が食い違うファイルは拒否し、SVG、HEIC、Office 文書、圧縮ファイル、音声、動画も拒否します。
 - **上限**：画像 10 MB、PDF 20 MB、テキストファイル 512 KB。1 つのタスクで最大 8 個・合計 32 MB で、そのメッセージ、引用元のメッセージ、スレッドの最初のメッセージを合わせて数えます。すべての添付の合計は `NEMA_ATTACHMENTS_MAX_BYTES`（既定 2 GB）が上限で、アップロード後にデータディスクの空きが 1 GB を下回る場合は拒否します。選んだまま送らなかったファイルは 24 時間後に消えます。
