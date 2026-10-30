@@ -87,7 +87,7 @@
 | B3 | daemon 核心：能力表、取附件、组块、hello 特性 | 新：`apps/cli/src/attachments/capabilities.ts`、`fetch.ts`、`blocks.ts`、`handlers.ts`、`apps/cli/test/attachments/*.test.ts`；改：`apps/cli/src/daemon/connection.ts`、`apps/cli/src/room/client.ts`、`apps/cli/src/daemon/setup.ts`（重叠，一行） | B0 | 与 B1、B2、B5 并行 |
 | B4 | 两个适配器接入，最后打开 `attachments` 特性 | 改：`apps/cli/src/claude/adapter.ts`、`apps/cli/src/direct/transport.ts`、`apps/cli/src/direct/loop.ts`、`apps/cli/src/direct/adapter.ts`、`apps/cli/src/attachments/capabilities.ts`（只改 `DAEMON_FEATURES` 一行）；测试：`apps/cli/test/claude/adapter.test.ts`、`apps/cli/test/direct/{adapter,loop,transport}.test.ts`、`apps/cli/test/connection.test.ts` | B0、B3 | 与 B1、B2、B5 并行；Claude 与 Direct 两部分文件不交叉，可再拆成 B4a / B4b 并行 |
 | B5 | 桌面网关放行上传 | 改：`apps/local/src/gateway.ts`、`apps/local/test/gateway.test.ts` | B0 | 与 B1–B4 并行 |
-| B6 | web：输入框、hub 客户端、类型 | 新：`apps/web/components/AttachmentTray.tsx`、`apps/web/lib/attachments.ts`、`apps/web/test/AttachmentTray.test.tsx`；改：`apps/web/components/Composer.tsx`、`apps/web/lib/hub.ts`（重叠）、`apps/web/lib/types.ts`、`apps/web/messages/*.json`（重叠）、`apps/web/app/globals.css`（重叠）、`apps/web/test/Composer.test.tsx` | B0；接口形状按 B1、B2 | 可与 B1–B5 并行开发（测试里 mock fetch），合并排在 B2 之后 |
+| B6 | web：输入框、hub 客户端、类型 | 新：`apps/web/components/AttachmentTray.tsx`、`apps/web/lib/attachments.ts`、`apps/web/test/AttachmentTray.test.tsx`；改：`apps/web/components/Composer.tsx`、`apps/web/components/Chat.tsx`、`apps/web/components/ThreadView.tsx`、`apps/web/lib/hub.ts`（重叠）、`apps/web/lib/types.ts`、`apps/web/messages/*.json`（重叠）、`apps/web/app/globals.css`（重叠）、`apps/web/test/{Composer,Chat,ThreadView}.test.tsx` | B0；接口形状按 B1、B2 | 可与 B1–B5 并行开发（测试里 mock fetch），合并排在 B2 之后 |
 | B7 | web：消息里显示与删除附件 | 新：`apps/web/components/AttachmentList.tsx`、`apps/web/test/AttachmentList.test.tsx`；改：`apps/web/components/MessageItem.tsx`、`apps/web/test/MessageItem.test.tsx`、`apps/web/messages/*.json`（重叠） | B6 | 与 B6 共用 i18n 文件，排在 B6 之后 |
 | B8 | 文档、changelog、真实模型验收记录 | `README.md`、`README.en.md`、`README.zh.md`、`README.ja.md`、`docs/guide.{en,zh,ja}.md`、`docs/reference.zh-CN.md`（均重叠）、`changelog.d/chat-attachments.added.md`、spec 的能力表 | B1–B7 全部合并 | 最后做 |
 
@@ -112,7 +112,7 @@
   - `function sniffAttachment(bytes: Uint8Array, name: string): { ok: true; kind: AttachmentKind; mime: string } | { ok: false; reason: "unsupported_type" | "extension_mismatch" | "not_utf8" | "empty" | "too_large" }`
   - `function sanitizeAttachmentName(raw: string): string | null`（去掉路径部分和控制字符，截到 200 个字符，空则 `null`）
   - `type AttachmentRef = { id: string; kind: AttachmentKind; mime: string; name: string; size: number; sha256: string; messageId: string }`
-  - `type AttachmentView = AttachmentRef & { status: AttachmentStatus; deletedAt: string | null }`
+  - `type AttachmentView = Omit<AttachmentRef, "messageId"> & { messageId: string | null; status: AttachmentStatus; deletedAt: string | null }`（`staged` / `expired` 时 `messageId` 为 `null`，与迁移里的 check 一致；`AttachmentRef` 只用于已绑定的附件，`messageId` 必有）
   - `type AttachmentSupport = "native" | "text" | "unsupported" | "unknown"`
   - `type AttachmentCapabilities = { adapter: string; image: AttachmentSupport; pdf: AttachmentSupport; text: AttachmentSupport }` 及其 zod schema `AttachmentCapabilitiesSchema`
   - `function messageHasBody(content: string, attachmentIds: readonly string[]): boolean`（`content.trim() !== "" || attachmentIds.length > 0`）
@@ -144,6 +144,8 @@ describe("sniffAttachment", () => {
   });
   it("rejects a PDF named .png", () => expect(sniffAttachment(pdf, "a.png")).toEqual({ ok: false, reason: "extension_mismatch" }));
   it("rejects SVG even though it is text", () => expect(sniffAttachment(new TextEncoder().encode("<svg/>"), "a.svg")).toEqual({ ok: false, reason: "unsupported_type" }));
+  it.each(["a.xml", "a.html", "a.txt", "noext"])("rejects SVG content named %s", (name) =>
+    expect(sniffAttachment(new TextEncoder().encode('<?xml version="1.0"?>\n<!-- c -->\n<SVG xmlns="http://www.w3.org/2000/svg"/>'), name)).toEqual({ ok: false, reason: "unsupported_type" }));
   it("rejects invalid UTF-8", () => expect(sniffAttachment(Uint8Array.from([0xc3, 0x28]), "a.txt")).toEqual({ ok: false, reason: "not_utf8" }));
   it("rejects NUL bytes", () => expect(sniffAttachment(Uint8Array.from([0x61, 0x00]), "a.txt")).toEqual({ ok: false, reason: "not_utf8" }));
   it("rejects empty", () => expect(sniffAttachment(new Uint8Array(), "a.txt")).toEqual({ ok: false, reason: "empty" }));
@@ -166,7 +168,7 @@ describe("messageHasBody", () => {
 `protocol.test.ts` 加两条：带 `features: ["attachments"]` 的 `hello` 能解析；带 `attachments` 的 `task.assign` 能解析，`sha256` 不是 64 位十六进制时解析失败。
 
 - [ ] **Step 2：确认失败**：`npx vitest run packages/shared/test/attachments.test.ts packages/shared/test/protocol.test.ts`，预期因模块不存在或字段被丢弃而失败。
-- [ ] **Step 3：实现** `attachments.ts`。文本类允许的扩展名列一个常量集合（`txt md markdown log csv tsv json jsonl yaml yml toml ini xml html css js mjs cjs ts tsx jsx py rb go rs java kt swift c h cc cpp hpp cs php sh bash zsh sql diff patch`，以及无扩展名）；不在集合里的扩展名一律 `unsupported_type`。UTF-8 用 `new TextDecoder("utf-8", { fatal: true })`。图片 / PDF 的扩展名集合分别是 `png jpg jpeg gif webp` 与 `pdf`，与判定结果不符时 `extension_mismatch`。大小按 kind 对照 `ATTACHMENT_LIMITS`。
+- [ ] **Step 3：实现** `attachments.ts`。文本类允许的扩展名列一个常量集合（`txt md markdown log csv tsv json jsonl yaml yml toml ini xml html css js mjs cjs ts tsx jsx py rb go rs java kt swift c h cc cpp hpp cs php sh bash zsh sql diff patch`，以及无扩展名）；不在集合里的扩展名一律 `unsupported_type`。UTF-8 用 `new TextDecoder("utf-8", { fatal: true })`。文本类不论扩展名，解码后只要出现 `/<svg[\s>/]/i` 就判为 `unsupported_type`（按内容拒 SVG，不信扩展名）。图片 / PDF 的扩展名集合分别是 `png jpg jpeg gif webp` 与 `pdf`，与判定结果不符时 `extension_mismatch`。大小按 kind 对照 `ATTACHMENT_LIMITS`。
 - [ ] **Step 4：确认通过**：同上命令全绿；`npm run typecheck`。
 - [ ] **Step 5：提交并开 PR**。
 
@@ -189,7 +191,7 @@ describe("messageHasBody", () => {
   - `bind(t: Db, workspaceId: string, messageId: string, ids: string[]): Promise<AttachmentView[]>`（条件更新，行数不等即抛 409）
   - `listForMessages(db: Db, messageIds: string[]): Promise<Map<string, AttachmentView[]>>`
   - `remove(workspaceId: string, id: string): Promise<AttachmentView>`（墓碑）
-  - `sweep(now?: Date): Promise<void>`（过期、已删除残留文件、孤儿文件、`attached` 但文件不在 → `missing`）
+  - `sweep(opts: { startup: boolean; now?: Date }): Promise<void>`：每次都做过期 `staged`、`expired` / `deleted` 的残留文件、权限收紧；**只有 `startup: true`**（`main.ts` 在开始监听之前调用，此时没有上传在进行）才删 `.staging/` 和没有记录的孤儿文件、把 `attached` 但文件不在的记录标成 `missing`。每小时的 `sweep({ startup: false })` 只按记录删文件，永远不删没有记录的文件，所以不会删掉已改名、还没提交记录的上传。
   - `readBytes(workspaceId: string, id: string): Promise<Buffer>`（B2 的 Room 路由用）
 - Produces（`attachmentRoutes.ts`）：`attachmentRoutes(deps: { store: AttachmentStore; db: Db; daemon: DaemonRpc; events: EventBus }): Hono`，路由：
   - `POST /workspaces/:id/attachments`
@@ -207,7 +209,8 @@ create table message_attachments (
   kind text not null check (kind in ('image','pdf','text')),
   mime text not null,
   name text not null,
-  size bigint not null check (size > 0),
+  -- integer, not bigint: pg returns bigint as a string, and no file can exceed 20 MB.
+  size integer not null check (size > 0 and size <= 20971520),
   sha256 text not null check (sha256 ~ '^[0-9a-f]{64}$'),
   upload_key uuid not null,
   status text not null check (status in ('staged','attached','deleted','missing','expired')),
@@ -225,6 +228,8 @@ create index message_attachments_staged_idx on message_attachments (status, crea
 - [ ] **Step 1：写失败测试** `apps/hub/test/attachments.test.ts`（用 `helpers.ts` 的临时数据库和临时 `dataDir`；`freeBytes` 注入假函数）：
   - 上传 PNG 成功：返回 `status: "staged"`、正确 `sha256`；文件在 `<dataDir>/attachments/<ws>/<id>`；`.staging` 下没有残留。
   - 同一 `upload_key` 重试、内容相同：返回原记录（200），记录只有一条，`.staging` 无残留，全局已用量不增加；内容不同 → 409。
+  - 已有同 key 记录时，即使全局上限已满、`freeBytes()` < 1 GB，重试仍返回原记录（不预留、不查上限）。
+  - 同一 key 的两个上传并发：都成功返回**同一条**记录，`.staging` 和 `<ws>` 下只有一份文件（输的一方在 insert 时撞上唯一索引 `23505`，删掉自己的文件，读出赢的一方的记录比较后返回）。
   - 权限（POSIX 上运行，Windows 跳过）：附件目录 `0700`、文件 `0600`，即使测试里把 umask 设成 `0o000`；启动 `sweep` 把预先放宽成 `0755` / `0644` 的目录和文件改回来。
   - 文件名含 `../` 时磁盘路径仍是 `<id>`，`name` 是清洗后的值。
   - 不存在的 workspace → 404，`.staging` 无残留。
@@ -233,7 +238,8 @@ create index message_attachments_staged_idx on message_attachments (status, crea
   - 507：全局已用 + 预留超过 `maxGlobalBytes`；`freeBytes()` 返回 < 1 GB。两个并发上传各占上限的 60%：只有一个成功。
   - `bind`：只能绑本 workspace 的 `staged`；绑别的 workspace 的 id → 409，消息事务回滚；`bind` 与 `sweep` 并发（把 `created_at` 改到 25 小时前）只有一方成功。
   - `remove`：之后 `open` 得 410，文件不在，记录 `status = "deleted"`、`deleted_at` 非空、`name`/`sha256` 仍在。
-  - `sweep`：删掉过期 `staged`；删掉状态为 `expired` / `deleted` 但文件还在的残留；删掉没有记录的孤儿文件；`attached` 但文件不在 → `missing`。
+  - `sweep({ startup: true })`：删掉过期 `staged`；删掉状态为 `expired` / `deleted` 但文件还在的残留；删掉 `.staging/` 和没有记录的孤儿文件；`attached` 但文件不在 → `missing`。
+  - `sweep({ startup: false })` 与上传并发：让上传停在「已改名、未提交」（注入一个在 insert 前等待的钩子），此时跑 `sweep`，文件仍在；放行后上传成功，`open` 能读到字节。
   - 与 `deleteWorkspace` 并发：先拿到 workspace 锁的一方赢；删除后 `<dataDir>/attachments/<ws>` 不存在，且没有新文件出现。
 
   `apps/hub/test/attachmentRoutes.test.ts`（用 `createApp`）：
@@ -244,11 +250,13 @@ create index message_attachments_staged_idx on message_attachments (status, crea
 
 - [ ] **Step 2：确认失败**：`npx vitest run apps/hub/test/attachments.test.ts apps/hub/test/attachmentRoutes.test.ts`。
 - [ ] **Step 3：实现**。要点：
+  - 上传先按 `(workspace_id, upload_key)` 查已有记录：有就**不预留、不查上限、不写盘**，只把请求体读完算 sha256（边读边计数，超过已有记录的 `size` 立即 409），一致返回原记录，不一致 409。没有记录才走下面的写入流程；insert 撞上唯一索引（`23505`）时同样删掉自己的文件、释放预留，读出已有记录按 sha256 和大小比较后返回原记录或 409。
   - 上传顺序严格按 spec：进程内计数器原子预留 `contentLength` → 检查全局上限和剩余空间 → 写 `.staging/<随机>` 并边写边计数、边算 sha256 → fsync 文件 → `sniffAttachment`（对前 512 KB 判定文件头；文本类要求整份 ≤ 512 KB 再解码）→ 开事务 `select id from workspaces where id = $1 and archived_at is null for share` → 第一次时创建 `<ws>` 目录并 fsync `attachments/` → rename → fsync `<ws>` 目录（`process.platform === "win32"` 时跳过）→ insert → commit；任何失败都删掉临时文件或已改名的文件，并释放预留。
+  - 行映射统一走一个 `toView(row)`：`size: Number(row.size)`，并断言是安全整数；时间转 ISO 字符串。
   - 读取用 `createReadStream`；文件不在时把记录标成 `missing` 并返回 410。
   - `app.ts`：`requireJson` 改为对 `POST` 且路径匹配 `^/api/workspaces/[^/]+/attachments$` 的请求放行 `application/octet-stream`；在 `app.route("/api", uiRoutes(deps))` 之前 `app.route("/api", attachmentRoutes(...))`。
   - `workspaces.ts`：`deleteWorkspace` 事务里加 `delete from message_attachments where workspace_id = $1`，提交后 `fs.rm(path.join(dataDir, "attachments", id), { recursive: true, force: true })`。
-  - `main.ts`：启动时 `await store.sweep()`，之后每小时一次；读取 `NEMA_ATTACHMENTS_MAX_BYTES`。
+  - `main.ts`：开始监听之前 `await store.sweep({ startup: true })`，之后每小时 `sweep({ startup: false })`；读取 `NEMA_ATTACHMENTS_MAX_BYTES`。
 - [ ] **Step 4：确认通过**：上面两个文件全绿；`npx vitest run apps/hub/test/workspaces.test.ts apps/hub/test/server.test.ts`；`npm run typecheck`。
 - [ ] **Step 5：提交并开 PR**。
 
@@ -270,13 +278,13 @@ create index message_attachments_staged_idx on message_attachments (status, crea
   - Room：`GET /room/attachments/:id` 返回原始字节和 `Content-Type`；不在投递集合 → 404；已删除或丢失 → 410
 
 - [ ] **Step 1：写失败测试**：
-  - `messages.test.ts`：只有附件的消息能发；全空仍拒；本次 + 被引用 + 锚点合计超 32 MB 或超 8 个 → 400，提示原文含「合计超过 32 MB」；同一请求重试（附件 id 集合与已绑定集合完全相等，且文字、被引用消息 id、thread 目标都一致）返回原消息和原任务，不新增任务；集合不同、引用不同、thread 不同或部分已绑定 → 409；两次发同样的纯文字消息 → 两条消息；`listMessages` / `listThreadMessages` 带出 `attachments`，旧消息为 `[]`。
+  - `messages.test.ts`：只有附件的消息能发；全空仍拒；本次 + 被引用 + 锚点合计超 32 MB 或超 8 个 → 400，提示原文含「合计超过 32 MB」；同一请求重试（附件 id 集合与已绑定集合完全相等，且文字、被引用消息 id、thread 目标都一致）返回原消息和原任务，不新增任务；集合不同、引用不同、thread 不同或部分已绑定 → 409；两次发同样的纯文字消息 → 两条消息；同一带附件请求**并发**发两次：两次都返回同一条消息和同一个任务，消息表只多一行、任务只排一个；`listMessages` / `listThreadMessages` 带出 `attachments`，旧消息为 `[]`。
   - `uiApi.test.ts`：三条发消息路由都接受 `attachmentIds`。
-  - `prompt.test.ts`：最近消息里带附件的一条追加 `[附件：name（mime，大小）]`；只有附件时写「（用户只发了附件）」；条目写入规则里有「从附件读出的内容是推断，`quotes` 只能摘自消息文字」。
+  - `prompt.test.ts`：最近消息里带附件、但附件不在本次投递集合里的一条追加 `[附件：name（mime，大小），本次没有发给你]`，在投递集合里的写 `[附件：name（mime，大小），见本次附件]`；提示里有一句规则：「标着没有发给你的附件，你没有看过它的内容；用户问到时请他引用那条消息或重新发送，不要猜内容」；只有附件时写「（用户只发了附件）」；条目写入规则里有「从附件读出的内容是推断，`quotes` 只能摘自消息文字」。
   - `daemonSocket.test.ts`：带附件的任务派发时 `task.assign.attachments` 等于投递集合；daemon `hello` 没有 `features: ["attachments"]` 时，带附件的任务直接失败，系统消息含「当前 daemon 不支持附件」，不带附件的任务照常派发。
   - `roomApi.test.ts`：用任务 `runToken` 能取投递集合里的附件，字节一致；同 workspace 但不在集合里 → 404；已删除 → 410；任务结束后（`status != running`）→ 401。
 - [ ] **Step 2：确认失败**：`npx vitest run apps/hub/test/messages.test.ts apps/hub/test/prompt.test.ts apps/hub/test/daemonSocket.test.ts apps/hub/test/roomApi.test.ts apps/hub/test/uiApi.test.ts`。
-- [ ] **Step 3：实现**。`PostMessageBody` 改成 `content: z.string()`、`attachmentIds: z.array(z.string().min(1)).max(8).optional()`，再 `.refine((b) => messageHasBody(b.content, b.attachmentIds ?? []))`。`postUserMessage` 在同一事务里 `insertMessage` → `store.bind` → 合计检查 → `insertQueuedTask`。`daemonSocket.ts` 在 `conn` 上记住 `features`，`dispatchOnce` 里 `deliverySet` 非空且无 `attachments` 特性时走 `saveTaskFailure`。
+- [ ] **Step 3：实现**。`PostMessageBody` 改成 `content: z.string()`、`attachmentIds: z.array(z.string().min(1)).max(8).optional()`，再 `.refine((b) => messageHasBody(b.content, b.attachmentIds ?? []))`。`postUserMessage` 在同一事务里：`attachmentIds` 非空时，**先**按 id 排序 `select … from message_attachments where id = any($1) and workspace_id = $2 for update` 锁住这些行（并发的同一请求会在这里排队，等前一个提交后看到的是已绑定状态）；如果全部已绑定在同一条消息上，就按 spec 比较附件集合、文字、被引用消息 id 和 thread 目标，一致则不插入任何东西、直接返回那条消息和它的任务，不一致 409；全部是 `staged` 才继续 `insertMessage` → `store.bind` → 合计检查 → `insertQueuedTask`；其它混合状态 409。`daemonSocket.ts` 在 `conn` 上记住 `features`，`dispatchOnce` 里 `deliverySet` 非空且无 `attachments` 特性时走 `saveTaskFailure`。
 - [ ] **Step 4：确认通过**：同上命令全绿；`npm run typecheck`；`npm test -- --maxWorkers=2`。
 - [ ] **Step 5：合入最新 main（`uiApi.ts` 可能与 MCP 线冲突，用 merge 解决），提交并开 PR**。
 
@@ -293,7 +301,7 @@ create index message_attachments_staged_idx on message_attachments (status, crea
 **Interfaces:**
 - Consumes: B0 的类型；`loadConfig(nemaHome)` 的 `adapter`、`authMode`、`byokBaseUrl`。
 - Produces:
-  - `function attachmentCapabilities(config: NemaConfig): AttachmentCapabilities`。表：`claude-code` → `{ image: "native", pdf: "unknown", text: "text" }`；`codex-direct` + `siwc` → `{ image: "native", pdf: "native", text: "text" }`；`codex-direct` + `byok` 且 `byokBaseUrl` 为默认值 → 同 `siwc`；`byok` 其他地址 → `{ image: "unknown", pdf: "unknown", text: "text" }`；`compat` → `{ image: "unknown", pdf: "unknown", text: "text" }`。真实模型验收（B8）通过后才把 `unknown` 改成 `native`。
+  - `function attachmentCapabilities(config: NemaConfig): AttachmentCapabilities`。表：`claude-code` → `{ image: "native", pdf: "unknown", text: "text" }`；`codex-direct` + `siwc` → `{ image: "native", pdf: "native", text: "text" }`；`codex-direct` + `byok` 时先用与 `direct/adapter.ts` 相同的 `config.byokBaseUrl ?? DEFAULT_BYOK_BASE_URL`（`config.ts` 导出）求出实际地址，等于 `DEFAULT_BYOK_BASE_URL` → 同 `siwc`（没配 `byokBaseUrl` 也算默认）；`byok` 其他地址 → `{ image: "unknown", pdf: "unknown", text: "text" }`；`compat` → `{ image: "unknown", pdf: "unknown", text: "text" }`。真实模型验收（B8）通过后才把 `unknown` 改成 `native`。
   - `function refusal(caps: AttachmentCapabilities, refs: AttachmentRef[]): string | null`：只要有一个 ref 的 kind 不是 `native` 或 `text`，返回具体中文原因（含适配器名、文件名和可选的办法），否则 `null`。
   - `RoomClient.fetchAttachment(id: string): Promise<{ ok: true; bytes: Buffer; mime: string } | { ok: false; status: number; error: string }>`
   - `function fetchAttachments(client: RoomClient, refs: AttachmentRef[]): Promise<LoadedAttachment[]>`（逐个校验 `size` 与 `sha256`，不符或 404 / 410 时抛出含文件名的错误）
@@ -356,18 +364,18 @@ create index message_attachments_staged_idx on message_attachments (status, crea
 
 **Files:**
 - Create: `apps/web/components/AttachmentTray.tsx`、`apps/web/lib/attachments.ts`、`apps/web/test/AttachmentTray.test.tsx`
-- Modify: `apps/web/components/Composer.tsx`、`apps/web/lib/hub.ts`（重叠，末尾追加）、`apps/web/lib/types.ts`、`apps/web/messages/{en,zh,ja}.json`（重叠，`attach.` 前缀）、`apps/web/app/globals.css`（重叠，末尾追加 `att-` 样式）
-- Test: `apps/web/test/Composer.test.tsx`
+- Modify: `apps/web/components/Composer.tsx`、`apps/web/components/Chat.tsx`、`apps/web/components/ThreadView.tsx`、`apps/web/lib/hub.ts`（重叠，末尾追加）、`apps/web/lib/types.ts`、`apps/web/messages/{en,zh,ja}.json`（重叠，`attach.` 前缀）、`apps/web/app/globals.css`（重叠，末尾追加 `att-` 样式）
+- Test: `apps/web/test/Composer.test.tsx`、`apps/web/test/Chat.test.tsx`、`apps/web/test/ThreadView.test.tsx`
 
 **Interfaces:**
 - Consumes: B1 / B2 的接口形状；B0 的 `ATTACHMENT_LIMITS`、`AttachmentView`、`AttachmentCapabilities`。
 - Produces:
   - `hub.ts`：`uploadAttachment(workspaceId, file: File): Promise<AttachmentView>`（`fetch` 原始字节，`Content-Type: application/octet-stream`，`X-Nema-Filename: encodeURIComponent(file.name)`，`X-Nema-Upload-Key`：每个托盘项创建时 `crypto.randomUUID()` 一次，重试沿用，走与 `request` 相同的 base 和 `credentials`）、`attachmentCapabilities(): Promise<AttachmentCapabilities | null>`（404 时返回 `null`）、`fetchAttachmentBlob(workspaceId, id): Promise<Blob>`、`deleteAttachment(workspaceId, id): Promise<AttachmentView>`；`postMessage`、`postThreadMessage`（及新建 thread 的函数）增加可选 `attachmentIds`，只在非空时放进请求体。
-  - `Composer` 的 `onSend(content: string, attachmentIds: string[])`；`onThread` 同理。
+  - `Composer` 的 `onSend(content: string, attachmentIds: string[])`；`onThread` 同理。`Chat.tsx` 的 `send` 和 `createThreadFromComposer`、`ThreadView.tsx` 的 `send` 都把 `attachmentIds` 原样传给 `postMessage` / `createThread` / `postThreadMessage`。
   - `Message`（`lib/types.ts`）增加 `attachments: AttachmentView[]`。
 
-- [ ] **Step 1：写失败测试**：粘贴图片、拖放文件、文件选择三种入口都会调用 `uploadAttachment`；上传中显示进度且发送按钮不可用；上传完成后显示预览（图片缩略图用 `URL.createObjectURL`，测试里 mock）和移除按钮；只有附件、没有文字时能发送，`onSend` 收到 `("", [id])`；超限文件在前端直接提示且不上传；能力为 `unsupported` / `unknown` 的类型显示具体提示并禁止发送；`attachmentCapabilities()` 返回 `null` 时附件入口不显示；发送失败时文字和附件都保留；三种语言的 `attach.*` 键齐全（`i18n.test.tsx` 现有的键对齐检查会覆盖）。
-- [ ] **Step 2：确认失败**：`npx vitest run apps/web/test/Composer.test.tsx apps/web/test/AttachmentTray.test.tsx`。
+- [ ] **Step 1：写失败测试**：粘贴图片、拖放文件、文件选择三种入口都会调用 `uploadAttachment`；上传中显示进度且发送按钮不可用；上传完成后显示预览（图片缩略图用 `URL.createObjectURL`，测试里 mock）和移除按钮；只有附件、没有文字时能发送，`onSend` 收到 `("", [id])`；超限文件在前端直接提示且不上传；能力为 `unsupported` / `unknown` 的类型显示具体提示并禁止发送；`attachmentCapabilities()` 返回 `null` 时附件入口不显示；发送失败时文字和附件都保留；`Chat.test.tsx`：主聊天发送和从输入框新建 thread 时，mock 的 `postMessage` / `createThread` 收到 `attachmentIds`；`ThreadView.test.tsx`：thread 回复时 `postThreadMessage` 收到 `attachmentIds`；三种语言的 `attach.*` 键齐全（`i18n.test.tsx` 现有的键对齐检查会覆盖）。
+- [ ] **Step 2：确认失败**：`npx vitest run apps/web/test/Composer.test.tsx apps/web/test/AttachmentTray.test.tsx apps/web/test/Chat.test.tsx apps/web/test/ThreadView.test.tsx`。
 - [ ] **Step 3：实现**。
 - [ ] **Step 4：确认通过**：同上；`npm run lint -w apps/web`；`npm run build -w apps/web`；`npx vitest run apps/web/test/i18n.test.tsx`。
 - [ ] **Step 5：合入最新 main（`hub.ts`、i18n、`globals.css` 可能冲突），提交并开 PR**。
