@@ -249,7 +249,7 @@ nema report --entries W-1 --task 1 --summary "Implement task 1" --commits COMMIT
 
 Optional reporting hooks: `nema report install --agent codex` or `--agent claude`. This modifies the agent's user-level hook configuration and installs the `nema-report` skill. Remove it with `nema report uninstall --agent <agent>`.
 
-Work in progress can be reported first: `echo '{"summary":"…","progress":"in_progress"}' | nema report --json`. Such a report may have no commits and does not advance a work package task; send a `completed` report (with at least one commit) when the work is done.
+Work in progress can be reported first: `nema report --progress in_progress --summary "…"` (or `"progress":"in_progress"` with `--json`). Such a report may have no commits and does not advance a work package task; send a `completed` report (with at least one commit) when the work is done.
 
 The GitHub plugin is off by default. How to turn it on, sign in with `gh`, and allow writes is in the desktop section above; the Web / Compose daemon uses the same path. The command allowlist and the six older read functions are in the technical reference. `nema auth github` can still write a token to `~/.nema/github-token`; the default path does not read it.
 

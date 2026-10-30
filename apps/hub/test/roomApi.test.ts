@@ -1071,6 +1071,110 @@ describe("implementation rules", () => {
     expect(forged.status).toBe(409);
     expect(((await forged.json()) as { error: string }).error).toBe("confirmedBy 只能由用户确认设置。");
   });
+
+  const S1 = "已有用户确认的实现不能由 Agent 改写。";
+  const ks = () => new KnowledgeStore(repoPath(dataDir, wsA));
+  /** R-1 on disk, accepted by the user: verified with confirmedBy "user". */
+  async function userConfirmed(evidence: Record<string, unknown> = {}) {
+    const { entry } = await ks().upsert(
+      { kind: "requirement", title: "T", body: "b", reason: "r", sourceMessages: [], implementation: impl("reported", { commits: ["abc1234"], ...evidence }) } as never,
+      { author: "user" },
+    );
+    await ks().confirmImplementation(entry.id, { author: "user" });
+    return (await ks().get(entry.id))!;
+  }
+  /** The `implementation:` block of an entry file's frontmatter, as written. */
+  async function implementationBlock(id: string): Promise<string> {
+    const lines = (await readFile(entryPath(wsA, "requirement", id), "utf8")).split("\n");
+    const start = lines.findIndex((line) => line.startsWith("implementation:"));
+    const rest = lines.slice(start + 1);
+    const end = rest.findIndex((line) => !line.startsWith(" "));
+    return [lines[start], ...rest.slice(0, end)].join("\n");
+  }
+
+  test("rejects an agent rewrite of a user-confirmed implementation", async () => {
+    const t = await runningTaskFor(wsA);
+    await userConfirmed();
+    const r = await req("POST", "/room/entries", t.runToken, upsert({ id: "R-1", sourceMessages: [t.messageId], implementation: impl("verified", { commits: ["abc1234"] }) }));
+    expect(r.status).toBe(409);
+    expect(((await r.json()) as { error: string }).error).toBe(S1);
+    expect((await ks().get("R-1"))!.implementation!.evidence).toMatchObject({ confirmedBy: "user", commits: ["abc1234"] });
+  });
+
+  test("rejects an agent change of only inferred on a user-confirmed implementation", async () => {
+    const t = await runningTaskFor(wsA);
+    const before = await userConfirmed();
+    const changed = { ...before.implementation!, evidence: { ...before.implementation!.evidence, inferred: true } };
+    const r = await req("POST", "/room/entries", t.runToken, upsert({ id: "R-1", sourceMessages: [t.messageId], implementation: changed }));
+    expect(r.status).toBe(409);
+    expect(((await r.json()) as { error: string }).error).toBe("confirmedBy 只能由用户确认设置。");
+    expect((await ks().get("R-1"))!.implementation!.evidence.inferred).toBe(false);
+  });
+
+  test("does not rewrite a user-confirmed implementation when the agent repeats it", async () => {
+    const t = await runningTaskFor(wsA);
+    const before = await userConfirmed();
+    await ks().upsert({ kind: "requirement", title: "Other", body: "b", reason: "r", sourceMessages: [] } as never, { author: "user" });
+    const implBefore = await implementationBlock("R-1");
+    const r = await req("POST", "/room/entries", t.runToken, upsert({ id: "R-1", sourceMessages: [t.messageId], related: ["R-2"], implementation: before.implementation }));
+    expect(r.status).toBe(200);
+    const after = (await ks().get("R-1"))!;
+    expect(after.related).toEqual(["R-2"]);
+    expect(after.implementation).toEqual(before.implementation);
+    expect(await implementationBlock("R-1")).toBe(implBefore);
+  });
+
+  test("does not erase a confirmation that lands before the locked write", async () => {
+    const t = await runningTaskFor(wsA);
+    const passing = await addReportMessage(db, wsA, "通过", { report: { ...reportInput, commits: ["abc1234"] }, check });
+    const draft = impl("verified", { reportMessageId: passing.id, commits: ["abc1234"] });
+    const first = await req("POST", "/room/entries", t.runToken, upsert({ sourceMessages: [t.messageId, passing.id], implementation: draft }));
+    expect(first.status).toBe(200);
+    const copied = ((await first.json()) as any).entry.implementation;
+    expect(copied.evidence.confirmedBy).toBeNull();
+    await ks().confirmImplementation("R-1", { author: "user" });
+    const r = await req("POST", "/room/entries", t.runToken, upsert({ id: "R-1", sourceMessages: [t.messageId], implementation: copied }));
+    expect(r.status).toBe(409);
+    expect(((await r.json()) as { error: string }).error).toBe(S1);
+    expect((await ks().get("R-1"))!.implementation!.evidence.confirmedBy).toBe("user");
+  });
+
+  test("accepts a rollup implementation whose commits come from two passing reports", async () => {
+    const t = await runningTaskFor(wsA);
+    const a = await addReportMessage(db, wsA, "通过", { report: { ...reportInput, commits: ["aaa1111"] }, check });
+    const b = await addReportMessage(db, wsA, "通过", { report: { ...reportInput, commits: ["bbb2222"] }, check });
+    const groups = [{ reportMessageId: a.id, commits: ["aaa1111"] }, { reportMessageId: b.id, commits: ["bbb2222"] }];
+    const rollup = impl("verified", { reportMessageId: b.id, commits: ["aaa1111", "bbb2222"], reportEvidence: groups });
+    const ok = await req("POST", "/room/entries", t.runToken, upsert({ sourceMessages: [t.messageId], implementation: rollup }));
+    expect(ok.status).toBe(200);
+    const stored = ((await ok.json()) as { entry: { id: string } }).entry.id;
+    expect((await ks().get(stored))!.implementation).toEqual({
+      status: "verified",
+      evidence: { reportMessageId: b.id, commits: ["aaa1111", "bbb2222"], inferred: false, note: null, confirmedBy: null, acceptanceReview: null, reportEvidence: groups },
+    });
+    const flat = impl("verified", { reportMessageId: b.id, commits: ["aaa1111", "bbb2222"] });
+    const refused = await req("POST", "/room/entries", t.runToken, upsert({ sourceMessages: [t.messageId], implementation: flat }));
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { error: string }).error).toBe(VERIFIED_NEEDS_REPORT);
+    const failing = await addReportMessage(db, wsA, "未合入", { report: { ...reportInput, commits: ["ccc3333"] }, check: { ...check, onMain: "not-yet" } });
+    const partly = impl("verified", {
+      reportMessageId: b.id,
+      commits: ["aaa1111", "ccc3333"],
+      reportEvidence: [groups[0], { reportMessageId: failing.id, commits: ["ccc3333"] }],
+    });
+    const notCovered = await req("POST", "/room/entries", t.runToken, upsert({ sourceMessages: [t.messageId], implementation: partly }));
+    expect(notCovered.status).toBe(409);
+    expect(((await notCovered.json()) as { error: string }).error).toBe(VERIFIED_NEEDS_REPORT);
+  });
+
+  test("keeps a user confirmation when the implementation field is omitted", async () => {
+    const t = await runningTaskFor(wsA);
+    const before = await userConfirmed();
+    await ks().upsert({ kind: "requirement", title: "Other", body: "b", reason: "r", sourceMessages: [] } as never, { author: "user" });
+    const r = await req("POST", "/room/entries", t.runToken, upsert({ id: before.id, sourceMessages: [t.messageId], related: ["R-2"] }));
+    expect(r.status).toBe(200);
+    expect((await ks().get(before.id))!.implementation).toEqual(before.implementation);
+  });
 });
 
 

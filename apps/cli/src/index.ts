@@ -164,6 +164,7 @@ const report = program
   .option("--entries <ids>", "comma-separated entry ids, e.g. R-7,D-12")
   .option("--files <paths>", "comma-separated files that were changed")
   .option("--task <n>", "the work package task number this report finishes (use with --entries W-n)")
+  .option("--progress <state>", "in_progress for unfinished work (commits optional), or completed (the default)")
   .option("--agent <name>", "coding agent name")
   .option("--json", "read the fields as a JSON object from standard input")
   .option("--hub <url>", "hub URL (default: NEMA_HUB_URL, else a running Nema desktop app, else http://127.0.0.1:4400)")

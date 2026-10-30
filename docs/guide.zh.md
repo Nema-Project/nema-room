@@ -248,7 +248,7 @@ nema report --entries W-1 --task 1 --summary "Implement task 1" --commits COMMIT
 
 可选上报 hook：`nema report install --agent codex` 或 `--agent claude`。这会修改对应 Agent 的用户级 hook 配置并安装 `nema-report` skill；卸载用 `nema report uninstall --agent <agent>`。
 
-进行中的工作可以先发一条进行中上报：`echo '{"summary":"…","progress":"in_progress"}' | nema report --json`。它可以没有提交，不会推进开发包任务；完成后再发 `completed` 上报（至少一个提交）。
+进行中的工作可以先发一条进行中上报：`nema report --progress in_progress --summary "…"`（用 `--json` 时写 `"progress":"in_progress"`）。它可以没有提交，不会推进开发包任务；完成后再发 `completed` 上报（至少一个提交）。
 
 GitHub 插件默认关闭。打开方式、`gh` 登录和写入开关见上面的桌面应用一节；Web / Compose 用的也是同一条路径。命令白名单和六个原有读取函数见技术参考。`nema auth github` 仍可把令牌写入 `~/.nema/github-token`，默认路径不读取它。
 

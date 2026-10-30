@@ -312,8 +312,12 @@ describe("buildPrompt", () => {
       expect(section).toContain(line);
     }
     expect(p).toContain(
-      "把上报关联到需求，更新需求的 implementation：核实通过（三项都是「是」）设 verified 并引用本上报；已合入主分支为「尚未」时设 reported 并在 note 写「尚未合入主分支」；提交不存在或文件不符时设 mismatch，并新建一条 question 问用户。",
+      "三项 git 通过时可以把还没有用户确认的需求 implementation 设为 verified，且不要写 confirmedBy，含义只是所引提交已核对；已合入主分支为「尚未」时设 reported 并在 note 写「尚未合入主分支」；提交不存在或文件不符时设 mismatch，并新建一条 question 问用户。report.verified 不是测试通过，也不是用户验收；不要改写 confirmedBy 已是 \"user\" 的条目；不要把上报写成 stated / decided。",
     );
+    expect(p).toContain("不要写 confirmedBy");
+    expect(p).toContain("不是测试通过");
+    expect(p).not.toContain("核实通过（三项都是「是」）");
+    expect(p).toContain("这是 coding agent 的上报，不是用户说的话");
     expect(p).toContain("不要仅凭上报内容就认为决策被正确实现；如有疑问用 code__ 函数核对，并新建 question。");
     expect(base()).not.toContain("把上报关联到需求");
 

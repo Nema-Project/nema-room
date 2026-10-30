@@ -95,6 +95,8 @@ export type ReportFlags = {
   files?: string;
   task?: string;
   agent?: string;
+  /** `in_progress` or `completed`; left out of the report when not given, which the hub reads as completed. */
+  progress?: string;
   json?: boolean;
 };
 
@@ -128,6 +130,10 @@ export async function runReport(o: ReportRun): Promise<number> {
     o.out.error("不在 git 仓库里，无法上报");
     return 1;
   }
+  if (o.flags.progress !== undefined && o.flags.progress !== "in_progress" && o.flags.progress !== "completed") {
+    o.out.error("--progress 只能是 in_progress 或 completed");
+    return 1;
+  }
   let fromJson: Record<string, unknown> = {};
   if (o.flags.json) {
     const raw = o.stdin ? await readCapped(o.stdin) : null;
@@ -149,6 +155,7 @@ export async function runReport(o: ReportRun): Promise<number> {
     ...(o.flags.entries !== undefined ? { entries: list(o.flags.entries) } : {}),
     ...(o.flags.files !== undefined ? { files: list(o.flags.files) } : {}),
     ...(o.flags.task !== undefined ? { task: /^\d+$/.test(o.flags.task) ? Number(o.flags.task) : o.flags.task } : {}),
+    ...(o.flags.progress !== undefined ? { progress: o.flags.progress } : {}),
   });
   if (!parsed.success) {
     o.out.error(`上报内容不完整或格式不对：${parsed.error.issues.map((i) => `${i.path.join(".") || "(根)"}：${i.message}`).join("；")}`);
