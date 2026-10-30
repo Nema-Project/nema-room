@@ -84,7 +84,7 @@ export function createApp(deps: AppDeps): Hono {
   app.use("/api/*", requireJson);
   const attachments = deps.attachments ?? new AttachmentStore(deps.db, deps.dataDir);
   app.route("/api", attachmentRoutes({ store: attachments, daemon: deps.daemon, daemonStatus: deps.daemonStatus, db: deps.db, events: deps.events }));
-  app.route("/api", mentionContextRoutes({ db: deps.db }));
+  app.route("/api", mentionContextRoutes({ db: deps.db, attachments }));
   app.route("/api", uiRoutes(deps));
   app.route(
     "/room",

@@ -135,8 +135,10 @@ describe("GET /api/workspaces/:id/mention-context", () => {
     expect(body.attachments).toHaveLength(3);
 
     const { listMentionAttachments } = await import("../src/mentionContext.js");
-    expect(await listMentionAttachments(db, ws, 50)).toHaveLength(3);
-    expect((await listMentionAttachments(db, ws, 2)).length).toBe(2);
+    expect((await listMentionAttachments(db, ws, 50)).items).toHaveLength(3);
+    expect(await listMentionAttachments(db, ws, 50)).toMatchObject({ more: false });
+    expect((await listMentionAttachments(db, ws, 2)).items).toHaveLength(2);
+    expect((await listMentionAttachments(db, ws, 2)).more).toBe(true);
   });
 
   test("an empty query lists the most recent of each group instead of a whole workspace", async () => {
@@ -147,6 +149,34 @@ describe("GET /api/workspaces/:id/mention-context", () => {
     const body = (await (await search(undefined)).json()) as Body;
     expect(body.attachments[0]!.name).toBe("二.png");
     expect(body.entries).toHaveLength(3);
+  });
+
+  test("an attachment whose file vanished from disk is left out and marked missing", async () => {
+    const alive = await sentAttachment("在的.png");
+    const gone = await sentAttachment("没了.png");
+    const { rm } = await import("node:fs/promises");
+    const path = await import("node:path");
+    await rm(path.join(dataDir, "attachments", ws, gone.id), { force: true });
+
+    const body = (await (await search("")).json()) as Body;
+    expect(body.attachments.map((a) => a.id)).toEqual([alive.id]);
+    const rows = await db.query<{ status: string }>(`select status from message_attachments where id = $1`, [gone.id]);
+    expect(rows[0]!.status).toBe("missing");
+    // And it is not offered on the next request either, now that it is marked.
+    expect(((await (await search("没了")).json()) as Body).attachments).toEqual([]);
+  });
+
+  test("exactly 50 eligible attachments is not reported as truncated, 51 is", async () => {
+    for (let i = 1; i <= 51; i++) await sentAttachment(`文件 ${i}.png`);
+    const body = (await (await search("")).json()) as Body;
+    expect(body.truncated).toBe(true);
+    await db.query(`update message_attachments set status = 'deleted' where id = (select id from message_attachments where workspace_id = $1 order by created_at limit 1)`, [ws]);
+    await db.query(`update message_attachments set status = 'deleted' where id = (select id from message_attachments where workspace_id = $1 and status = 'attached' order by created_at limit 1)`, [ws]);
+    expect(((await (await search("")).json()) as Body).truncated).toBe(false);
+  });
+
+  test("a query of spaces longer than the limit is still refused", async () => {
+    expect((await search(" ".repeat(201))).status).toBe(400);
   });
 
   test("does not call the daemon: attachments and entries live in the hub", async () => {
