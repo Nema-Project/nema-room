@@ -1,0 +1,1 @@
+- The `docker-compose.yml` attached to a release no longer starts with the repository template's "not an installable version" header. Its header names the pinned version, the `NEMA_IMAGE_TAG` value to lock, and the matching daemon command. This applies from the next release; the v0.1.6 asset keeps the old header, and its pins are correct.
