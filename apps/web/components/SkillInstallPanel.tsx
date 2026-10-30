@@ -48,7 +48,7 @@ export function SkillInstallPanel({
 
   return (
     <section className="plugin-block skill-install" role="region" aria-label={t("extensions.add.title")}>
-      <h2>{t("extensions.add.title")}</h2>
+      <h3>{t("extensions.add.title")}</h3>
       <form className="field" onSubmit={submit}>
         <label>
           <span className="label">{t("extensions.add.label")}</span>
@@ -78,7 +78,7 @@ export function SkillInstallPanel({
               const line = skill.id ? status(skill.id) : null;
               return (
                 <li key={skill.path}>
-                  <h3>{skill.name}</h3>
+                  <h4>{skill.name}</h4>
                   {skill.description && <p>{skill.description}</p>}
                   <p className="kmeta">{skill.path}</p>
                   {skill.problem ? (

@@ -403,5 +403,15 @@
   "extensions.problem.duplicate-id": "Another skill in this source has the same id.",
   "extensions.problem.too-large": "SKILL.md is larger than 256 KiB.",
   "chat.skillOffer.title": "Install {name}?",
-  "chat.skillOffer.note": "Nothing is installed until you press Install."
+  "chat.skillOffer.note": "Nothing is installed until you press Install.",
+  "extensions.section.installed": "Installed",
+  "extensions.section.discover": "Discover & install",
+  "extensions.filter.type": "Type",
+  "extensions.filter.all": "All",
+  "extensions.filter.skill": "Skills",
+  "extensions.filter.mcp": "MCP",
+  "extensions.filter.plugin": "Plugins",
+  "extensions.search.label": "Search extensions",
+  "extensions.search.placeholder": "Name, description or source",
+  "extensions.search.empty": "No extensions match."
 }

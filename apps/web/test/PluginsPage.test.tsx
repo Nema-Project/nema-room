@@ -412,14 +412,14 @@ describe("installing a skill from the page", () => {
     const panel = screen.getByRole("region", { name: "Install a skill" });
     expect(within(panel).getByText("Pinned to commit 0123456")).toBeTruthy();
     expect(within(panel).getByText("License: MIT")).toBeTruthy();
-    const pdf = within(panel).getByText("pdf", { selector: "h3" }).closest("li")!;
+    const pdf = within(panel).getByText("pdf", { selector: "h4" }).closest("li")!;
     expect(within(pdf).getByText("Fill PDF forms")).toBeTruthy();
     expect(within(pdf).getByText("Installs to /home/me/.nema/extensions/extensions/pdf")).toBeTruthy();
     expect((within(pdf).getByRole("button", { name: "Install" }) as HTMLButtonElement).disabled).toBe(false);
-    const word = within(panel).getByText("Word", { selector: "h3" }).closest("li")!;
+    const word = within(panel).getByText("Word", { selector: "h4" }).closest("li")!;
     expect(within(word).getByText("SKILL.md has no name and description, so it cannot be installed.")).toBeTruthy();
     expect(within(word).queryByRole("button", { name: "Install" })).toBeNull();
-    const notes = within(panel).getByText("notes", { selector: "h3" }).closest("li")!;
+    const notes = within(panel).getByText("notes", { selector: "h4" }).closest("li")!;
     expect(within(notes).getByText("Already installed")).toBeTruthy();
     expect(within(notes).queryByRole("button", { name: "Install" })).toBeNull();
   });
@@ -450,7 +450,7 @@ describe("installing a skill from the page", () => {
     expect(hub.installExtension).toHaveBeenCalledWith({ source: "https://github.com/acme/skills", commit: COMMIT, path: "skills/pdf" });
     expect(await screen.findByText("Install finished")).toBeTruthy();
     expect(hub.getExtensionInstall).toHaveBeenCalledWith("pdf");
-    expect(await screen.findByRole("heading", { name: "pdf", level: 2 })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "pdf", level: 3 })).toBeTruthy();
   });
 
   it("cancels a running install from the page", async () => {
@@ -483,7 +483,7 @@ describe("installing a skill from the page", () => {
     vi.mocked(hub.retryExtensionInstall).mockResolvedValue(job("running"));
     vi.mocked(hub.getExtensionInstall).mockResolvedValue(job("installed", 3));
     renderPage();
-    const block = (await screen.findByRole("heading", { name: "pdf", level: 2 })).closest("section")!;
+    const block = (await screen.findByRole("heading", { name: "pdf", level: 3 })).closest("section")!;
     expect(within(block).getByText("skills/pdf/a.md does not match its Git blob hash")).toBeTruthy();
     await act(async () => {
       fireEvent.click(within(block).getByRole("button", { name: "Retry install" }));
@@ -523,7 +523,7 @@ describe("installing a skill from the page", () => {
     vi.mocked(hub.listExtensions).mockResolvedValue([...catalog, row({ id: "pdf", name: "pdf", kind: "skill", provision: "managed", installState: "installing" })]);
     vi.mocked(hub.getExtensionInstall).mockResolvedValueOnce(job("running", 1)).mockReturnValue(new Promise(() => {}));
     renderPage();
-    const block = (await screen.findByRole("heading", { name: "pdf", level: 2 })).closest("section")!;
+    const block = (await screen.findByRole("heading", { name: "pdf", level: 3 })).closest("section")!;
     expect(await within(block).findByText("Installing 1/3")).toBeTruthy();
     expect(within(block).getByRole("button", { name: "Cancel install" })).toBeTruthy();
   });
@@ -552,10 +552,10 @@ describe("installing a skill from the page", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Install" }));
     });
-    expect(await screen.findByRole("heading", { name: "pdf", level: 2 })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "pdf", level: 3 })).toBeTruthy();
     // The refresh started with the job answers last, with the list from before the install.
     await act(async () => first(catalog));
-    expect(screen.getByRole("heading", { name: "pdf", level: 2 })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "pdf", level: 3 })).toBeTruthy();
   });
 
   it("refreshes again until a cancelled install is no longer recorded as installing", async () => {
@@ -576,7 +576,102 @@ describe("installing a skill from the page", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Cancel install" }));
     });
-    const block = (await screen.findByRole("heading", { name: "pdf", level: 2 })).closest("section")!;
+    const block = (await screen.findByRole("heading", { name: "pdf", level: 3 })).closest("section")!;
     expect(await within(block).findByRole("button", { name: "Retry install" })).toBeTruthy();
+  });
+});
+
+describe("PluginsPage sections, filter and search", () => {
+  const mixed: ExtensionRecord[] = [
+    // "code" appears only in this id, so the id search below cannot pass through another field.
+    row({ id: "code", name: "graphify", summary: "Repository index" }),
+    row({ id: "github", name: "GitHub", summary: "Issues and pull requests" }),
+    row({ id: "pdf", name: "pdf", kind: "skill", summary: "Fill PDF forms", provision: "managed", source: "https://github.com/acme/skills/tree/" + "a".repeat(40) + "/skills/pdf", revision: "a".repeat(40) }),
+    row({ id: "notes", name: "Notes", kind: "skill", summary: "Take meeting notes", provision: "external", source: "/home/me/.claude/skills/notes", externalPath: "/home/me/.claude/skills/notes" }),
+    row({ id: "docs", name: "docs", kind: "mcp", summary: "Docs server", provision: "managed", source: "https://example.com/mcp" }),
+    row({
+      id: "slides", name: "slides", kind: "skill", summary: "Build decks", provision: "managed", installState: "absent",
+      provenance: { repository: "https://github.com/acme/skills", commit: "b".repeat(40), path: "skills/slides", digest: "c".repeat(40), license: null },
+    }),
+  ];
+  const names = (region: HTMLElement) => within(region).queryAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+  const installedRegion = () => screen.getByRole("region", { name: "Installed" });
+  const discoverRegion = () => screen.getByRole("region", { name: "Discover & install" });
+
+  beforeEach(() => {
+    vi.mocked(hub.listExtensions).mockResolvedValue(mixed);
+  });
+
+  it("lists everything present under Installed, and an absent record under Discover & install with the install panel", async () => {
+    renderPage();
+    await screen.findByRole("heading", { name: "graphify", level: 3 });
+    expect(names(installedRegion())).toEqual(["graphify", "GitHub", "pdf", "Notes", "docs"]);
+    const discover = discoverRegion();
+    expect(within(discover).getByRole("heading", { name: "Install a skill" })).toBeTruthy();
+    expect(names(discover)).toContain("slides");
+    expect(names(installedRegion())).not.toContain("slides");
+    const slides = within(discover).getByRole("heading", { name: "slides", level: 3 }).closest("section")!;
+    expect(within(slides).getByRole("button", { name: "Retry install" })).toBeTruthy();
+  });
+
+  it("narrows both sections by type without asking the hub again", async () => {
+    renderPage();
+    await screen.findByRole("heading", { name: "graphify", level: 3 });
+    const types = screen.getByRole("radiogroup", { name: "Type" });
+    expect(within(types).getAllByRole("radio").map((r) => r.getAttribute("aria-label") ?? r.closest("label")?.textContent)).toEqual(["All", "Skills", "MCP", "Plugins"]);
+    expect((within(types).getByRole("radio", { name: "All" }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(within(types).getByRole("radio", { name: "Skills" }));
+    expect(names(installedRegion())).toEqual(["pdf", "Notes"]);
+    expect(names(discoverRegion())).toContain("slides");
+    fireEvent.click(within(types).getByRole("radio", { name: "MCP" }));
+    expect(names(installedRegion())).toEqual(["docs"]);
+    expect(names(discoverRegion())).not.toContain("slides");
+    fireEvent.click(within(types).getByRole("radio", { name: "Plugins" }));
+    expect(names(installedRegion())).toEqual(["graphify", "GitHub"]);
+    expect(hub.listExtensions).toHaveBeenCalledOnce();
+  });
+
+  it("searches name, description, source and id, ignoring case, and says when nothing matches", async () => {
+    renderPage();
+    await screen.findByRole("heading", { name: "graphify", level: 3 });
+    const search = screen.getByRole("searchbox", { name: "Search extensions" });
+    fireEvent.change(search, { target: { value: "MEETING" } });
+    expect(names(installedRegion())).toEqual(["Notes"]);
+    fireEvent.change(search, { target: { value: "acme/skills" } });
+    expect(names(installedRegion())).toEqual(["pdf"]);
+    expect(names(discoverRegion())).toContain("slides");
+    fireEvent.change(search, { target: { value: "code" } });
+    expect(names(installedRegion())).toEqual(["graphify"]);
+    fireEvent.change(search, { target: { value: "nothing like this" } });
+    expect(names(installedRegion())).toEqual([]);
+    expect(within(installedRegion()).getByText("No extensions match.")).toBeTruthy();
+    // A match that lives only under Discover & install is a match, not "nothing matches".
+    fireEvent.change(search, { target: { value: "decks" } });
+    expect(names(installedRegion())).toEqual([]);
+    expect(names(discoverRegion())).toEqual(["Install a skill", "slides"]);
+    expect(screen.queryByText("No extensions match.")).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "Skills" }));
+    fireEvent.change(search, { target: { value: "" } });
+    expect(names(installedRegion())).toEqual(["pdf", "Notes"]);
+  });
+
+  it("a row that is filtered out and shown again still has its running install line", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([
+      row({ id: "code", name: "graphify" }),
+      row({
+        id: "pdf", name: "pdf", kind: "skill", summary: "Fill PDF forms", provision: "managed", installState: "failed", error: "boom",
+        provenance: { repository: "https://github.com/acme/skills", commit: COMMIT, path: "skills/pdf", digest: "c".repeat(40), license: null },
+      }),
+    ]);
+    vi.mocked(hub.retryExtensionInstall).mockResolvedValue(job("running", 1));
+    vi.mocked(hub.getExtensionInstall).mockResolvedValue(job("running", 2));
+    renderPage();
+    const block = (await screen.findByRole("heading", { name: "pdf", level: 3 })).closest("section")!;
+    await act(async () => fireEvent.click(within(block).getByRole("button", { name: "Retry install" })));
+    expect(await screen.findByText(/Installing [12]\/3/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Plugins" }));
+    expect(screen.queryByText(/Installing [12]\/3/)).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "All" }));
+    expect(await screen.findByText(/Installing [12]\/3/)).toBeTruthy();
   });
 });
