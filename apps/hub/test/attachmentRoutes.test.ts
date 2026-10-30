@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Hono } from "hono";
 import type { AttachmentView } from "@nema/shared";
 import { AttachmentStore } from "../src/attachments.js";
@@ -177,6 +177,42 @@ describe("deleting a sent attachment", () => {
     const updated = seen.find((e): e is Extract<HubEvent, { type: "message.updated" }> => e.type === "message.updated");
     expect(updated?.message.id).toBe(message.id);
     expect(updated?.message.attachments).toEqual([expect.objectContaining({ id: view.id, status: "deleted" })]);
+  });
+
+  test("two deletes on one message: a slow first read cannot emit after the newer snapshot", async () => {
+    const events = new EventBus();
+    let held = false;
+    let otherEmitted: () => void = () => {};
+    const emitted = new Promise<void>((r) => { otherEmitted = r; });
+    // The first route read of the message's files runs at once (its snapshot predates the second delete) but
+    // its result is handed back only after the second delete has emitted, or after 300 ms.
+    const gated: Db = {
+      async query(sql, params) {
+        const rows = await db.query(sql, params);
+        if (!held && /from message_attachments where message_id = any/.test(sql)) {
+          held = true;
+          await Promise.race([emitted, new Promise((r) => setTimeout(r, 300))]);
+        }
+        return rows as never;
+      },
+      tx: (fn) => db.tx(fn),
+    };
+    const local = createApp({ db: gated, dataDir, events, daemonStatus: () => true, daemon: { call: (m, p, t) => daemon.call(m, p, t) }, attachments });
+    const a = (await (await upload(png())).json()) as AttachmentView;
+    const b = (await (await upload(png())).json()) as AttachmentView;
+    const { message } = await postUserMessage(db, ws, "pair", { attachmentIds: [a.id, b.id] });
+    const updates: AttachmentView[][] = [];
+    events.subscribe(ws, (e) => {
+      if (e.type !== "message.updated" || e.message.id !== message.id) return;
+      updates.push(e.message.attachments);
+      if (updates.length === 1 && held) otherEmitted();
+    });
+    const del = (id: string) => local.request(`${HUB}/api/workspaces/${ws}/attachments/${id}`, { method: "DELETE" });
+    const first = del(a.id);
+    await vi.waitFor(() => expect(held).toBe(true));
+    await Promise.all([first, del(b.id)]);
+    expect(updates).toHaveLength(2);
+    expect(updates.at(-1)!.map((v) => v.status)).toEqual(["deleted", "deleted"]);
   });
 
   test("deleting an unsent upload emits nothing", async () => {

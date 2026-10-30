@@ -294,6 +294,26 @@ describe("messages with attachments", () => {
     expect(await counts(db, ws.id)).toEqual({ messages: 1, tasks: 1 });
   });
 
+  test("the uploads are locked in id order before anything is written", async () => {
+    // PGlite runs one transaction at a time, so the race itself needs PostgreSQL; this pins the lock that makes
+    // a concurrent duplicate wait and then replay: it must come first, be FOR UPDATE, and be ordered by id.
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const a = await stagedRow(db, ws.id);
+    const b = await stagedRow(db, ws.id);
+    const log: string[] = [];
+    const record = (inner: Db): Db => ({
+      query: (sql, params) => { log.push(sql.replace(/\s+/g, " ")); return inner.query(sql, params); },
+      tx: (fn) => inner.tx((t) => fn(record(t))),
+    });
+    await postUserMessage(record(db), ws.id, "go", { attachmentIds: [b, a] });
+    const lock = log.findIndex((q) => /from message_attachments where id = any\(\$1\) and workspace_id = \$2 order by id for update/.test(q));
+    const insert = log.findIndex((q) => /insert into messages/.test(q));
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(lock).toBeLessThan(insert);
+    expect(log.slice(0, lock).some((q) => /insert|update/i.test(q))).toBe(false);
+  });
+
   test("lists carry attachments; messages without any carry []", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");
