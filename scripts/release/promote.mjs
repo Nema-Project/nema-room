@@ -15,6 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { verifyRemoteReleaseTag } from '../desktop/release-commit.mjs';
+import { expectedTargets } from '../desktop/release-manifest.mjs';
 import { npmPublishState, tarballIntegrity } from './npm-state.mjs';
 import { IMAGE_REPOSITORIES, REPOSITORY, readRelease } from './registry-read.mjs';
 import { parseVersion, pointerDecisions, readPointers, verifyRelease } from './verify-release.mjs';
@@ -88,6 +89,8 @@ export async function promote({ version, tag, commit, io, summary }) {
   await summary(`## promote ${tag} (${commit.slice(0, 12)})`);
   try {
     await guardTag();
+    // The image pull smoke and the desktop builds run outside verify-release: their push runs must have passed.
+    for (const line of await step('tag workflows', () => io.tagWorkflows())) await record(line);
     const expectedIntegrity = await step('expected integrity', () => io.expectedIntegrity());
     await record(`expected npm tarball ${expectedIntegrity} (from the tag's npm-publish push run)`);
 
@@ -202,6 +205,9 @@ export async function promote({ version, tag, commit, io, summary }) {
     } else {
       // A draft to publish, or a published stable Release that should be latest but is not (reconciled here).
       await guardTag();
+      // A desktop-release rerun started since the first check may be replacing draft assets: its newest run
+      // must again be complete and green right before the draft goes public.
+      if (release.draft) await step('tag workflows before the release', () => io.tagWorkflows());
       const latestFlag = makeLatest === true;
       await write('publish release', () => io.publishRelease({ tag, prerelease, makeLatest: latestFlag }), async () => {
         const reread = await io.releaseState({ tag });
@@ -240,27 +246,85 @@ async function run(command, args, options = {}) {
  * A tag push runs the complete verify.yml (every input defaults to true), so every verify job must have run
  * and passed, none skipped, and each required group must be there; the build job must have passed too.
  */
-export const REQUIRED_PUSH_JOBS = Object.freeze(['Pack and smoke nema', 'verify / Workflow lint', 'verify / Full application tests and web build', 'verify / Platform checks', 'verify / npm pack smoke']);
+/** Every job a tag push of verify.yml runs, matrix legs by exact name (workflows.test derives them from verify.yml). */
+export const VERIFY_JOBS = Object.freeze([
+  'verify / Workflow lint',
+  'verify / Full application tests and web build',
+  'verify / Platform checks (macos-latest)',
+  'verify / Platform checks (windows-latest)',
+  'verify / npm pack smoke (ubuntu-latest)',
+  'verify / npm pack smoke (windows-latest)',
+  'verify / npm pack smoke (macos-latest)',
+]);
+export const REQUIRED_PUSH_JOBS = Object.freeze(['Pack and smoke nema', ...VERIFY_JOBS]);
+
+/** Each required job by exact name: present and successful (a missing matrix leg is a missing job). */
+function requireJobs(jobs, required, label) {
+  for (const name of required) {
+    const matched = jobs.filter((job) => job?.name === name);
+    if (matched.length === 0 || !matched.every((job) => job.conclusion === 'success')) {
+      throw new Error(`${label}: ${name} did not run and pass (${matched.map((job) => `${job.name}=${job.conclusion}`).join(', ') || 'no such job'})`);
+    }
+  }
+}
 
 export function assertPushRunJobs(jobs, id, totalCount) {
   // A failed job on a page this list does not hold would go unseen: the list must be the whole run.
   if (!Number.isInteger(totalCount)) throw new Error(`npm-publish push run ${id}: the jobs API did not report its job count`);
   if (jobs.length !== totalCount) throw new Error(`npm-publish push run ${id}: the jobs answer lists ${jobs.length} of ${totalCount} jobs`);
   const named = jobs.filter((job) => typeof job?.name === 'string');
-  for (const prefix of REQUIRED_PUSH_JOBS) {
-    const matched = named.filter((job) => job.name.startsWith(prefix));
-    if (matched.length === 0 || !matched.every((job) => job.conclusion === 'success')) {
-      throw new Error(`npm-publish push run ${id}: ${prefix} did not run and pass (${matched.map((job) => `${job.name}=${job.conclusion}`).join(', ') || 'no such job'})`);
-    }
-  }
+  requireJobs(named, REQUIRED_PUSH_JOBS, `npm-publish push run ${id}`);
   const other = named.filter((job) => job.name.startsWith('verify / ') && job.conclusion !== 'success');
   if (other.length) throw new Error(`npm-publish push run ${id}: ${other.map((job) => `${job.name}=${job.conclusion}`).join(', ')}`);
 }
 
+/** Jobs the image and desktop push runs of a tag must have run and passed; verify-release cannot see them. */
+export const REQUIRED_TAG_RUN_JOBS = Object.freeze({
+  'image-publish.yml': Object.freeze(['Resolve release version', ...VERIFY_JOBS, 'Build and smoke images', 'Publish images', 'Pull published images']),
+  'desktop-release.yml': Object.freeze(['Resolve release version', ...VERIFY_JOBS, ...expectedTargets.map((target) => `Build and smoke (${target})`), 'Publish release']),
+});
+
+export function assertTagRunJobs(workflow, jobs, id, totalCount) {
+  const required = REQUIRED_TAG_RUN_JOBS[workflow];
+  if (!required) throw new Error(`${workflow}: no job list to check`);
+  const name = workflow.replace(/\.yml$/, '');
+  if (!Number.isInteger(totalCount)) throw new Error(`${name} push run ${id}: the jobs API did not report its job count`);
+  if (jobs.length !== totalCount) throw new Error(`${name} push run ${id}: the jobs answer lists ${jobs.length} of ${totalCount} jobs`);
+  requireJobs(jobs, required, `${name} push run ${id}`);
+  // A tag push runs every job of these workflows: none may be skipped, cancelled or failed.
+  const other = jobs.filter((job) => job?.conclusion !== 'success');
+  if (other.length) throw new Error(`${name} push run ${id}: ${other.map((job) => `${job?.name}=${job?.conclusion}`).join(', ')}`);
+}
+
+/** The workflow runs answer for one commit must hold every run: the newest run of the tag could be on a page not read. */
+export function completeRuns(answer, label) {
+  const runs = answer?.workflow_runs;
+  if (!Array.isArray(runs) || !Number.isInteger(answer?.total_count)) throw new Error(`${label}: the runs API did not report its run count`);
+  if (runs.length !== answer.total_count) throw new Error(`${label}: the runs answer lists ${runs.length} of ${answer.total_count} runs`);
+  return runs;
+}
+
+/** The latest image-publish and desktop-release push runs of the tag commit, each checked job by job. */
+async function tagWorkflowRuns({ tag, commit, gh }) {
+  const lines = [];
+  for (const workflow of Object.keys(REQUIRED_TAG_RUN_JOBS)) {
+    const name = workflow.replace(/\.yml$/, '');
+    const runs = completeRuns(JSON.parse(await run(gh, ['api', `repos/${REPOSITORY}/actions/workflows/${workflow}/runs?event=push&head_sha=${commit}&per_page=100`])), `${name} push runs at ${commit}`);
+    // The newest push run of this tag decides: a later failed rerun is not hidden behind an older success.
+    const latest = runs.filter((item) => item.head_branch === tag && item.head_sha === commit).sort((a, b) => b.id - a.id)[0];
+    if (!latest) throw new Error(`no ${name} push run for ${tag} at ${commit}`);
+    if (latest.status !== 'completed' || latest.conclusion !== 'success') throw new Error(`${name} push run ${latest.id} is ${latest.status}/${latest.conclusion}`);
+    const answer = JSON.parse(await run(gh, ['api', `repos/${REPOSITORY}/actions/runs/${latest.id}/jobs?per_page=100`]));
+    assertTagRunJobs(workflow, answer.jobs ?? [], latest.id, answer.total_count);
+    lines.push(`${name} push run ${latest.id}: success, all ${answer.total_count} jobs passed (${REQUIRED_TAG_RUN_JOBS[workflow].filter((job) => !job.startsWith('verify / ')).join(', ')} and the verify suite)`);
+  }
+  return lines;
+}
+
 /** Finds the tag's npm-publish push run, checks it, downloads nema-tarball and hashes it. */
 async function pushRunIntegrity({ tag, commit, gh }) {
-  const runs = JSON.parse(await run(gh, ['api', `repos/${REPOSITORY}/actions/workflows/npm-publish.yml/runs?event=push&head_sha=${commit}&per_page=20`]));
-  const push = (runs.workflow_runs ?? []).filter((item) => item.head_branch === tag && item.conclusion === 'success').sort((a, b) => b.id - a.id)[0];
+  const runs = completeRuns(JSON.parse(await run(gh, ['api', `repos/${REPOSITORY}/actions/workflows/npm-publish.yml/runs?event=push&head_sha=${commit}&per_page=100`])), `npm-publish push runs at ${commit}`);
+  const push = runs.filter((item) => item.head_branch === tag && item.conclusion === 'success').sort((a, b) => b.id - a.id)[0];
   if (!push) throw new Error(`no successful npm-publish push run for ${tag} at ${commit}`);
   // A successful run is not enough: its verify and build jobs must have run and passed.
   const answer = JSON.parse(await run(gh, ['api', `repos/${REPOSITORY}/actions/runs/${push.id}/jobs?per_page=100`]));
@@ -288,6 +352,7 @@ export function realIo({ env = process.env, fetchImpl = globalThis.fetch, versio
   const readIo = { fetchImpl, token: env.GITHUB_TOKEN || null, draftsVisible: env.RELEASE_PROMOTE_SEES_DRAFTS === 'true' };
   let expected;
   return {
+    tagWorkflows: () => tagWorkflowRuns({ tag, commit, gh }),
     async expectedIntegrity() {
       expected = await pushRunIntegrity({ tag, commit, gh });
       return expected;
@@ -347,6 +412,7 @@ const USAGE = 'Usage: promote.mjs [--preflight] <vX.Y.Z> <tag-commit-sha>  (run 
 
 /** The workflow's `Candidate preflight` step: same checks promote starts with, as their own visible step. */
 export async function preflight({ version, io }) {
+  for (const line of await io.tagWorkflows()) process.stdout.write(`${line}\n`);
   const expectedIntegrity = await io.expectedIntegrity();
   const report = await io.verify({ stage: 'candidate', expectedIntegrity });
   return { ok: report.exitCode === 0, overall: report.overall, expectedIntegrity };
@@ -364,6 +430,8 @@ export async function main(argv, { env = process.env } = {}) {
   if (isPreflight) {
     const result = await preflight({ version, io: realIo({ env, version, tag, commit }) });
     process.stdout.write(`candidate preflight ${tag}: ${result.overall}\n`);
+    // release-promote.yml records what this preflight verified for npm-publish to compare with its dispatch.
+    if (result.ok && env.GITHUB_OUTPUT) await appendFile(env.GITHUB_OUTPUT, `integrity=${result.expectedIntegrity}\n`);
     return result.ok ? 0 : 1;
   }
   const summary = async (line) => {
