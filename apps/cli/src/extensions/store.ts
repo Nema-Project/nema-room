@@ -59,6 +59,10 @@ function managedPath(root: string, id: string): { extensions: string; target: st
 function ownedDirectory(root: string, id: string): string {
   const { extensions, target } = managedPath(root, id);
   mkdirSync(extensions, { recursive: true });
+  // mkdirSync accepts an existing symlink that points at a directory, so this check has to run here:
+  // a linked root would make the outside directory the trusted root below and `rmSync` would delete
+  // files that are not Nema's.
+  if (lstatSync(extensions).isSymbolicLink()) throw new Error("managed extensions root is a symbolic link");
   const realExtensions = realpathSync(extensions);
   if (!existsSync(target)) return target;
   const stat = lstatSync(target);

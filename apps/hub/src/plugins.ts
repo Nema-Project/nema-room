@@ -293,8 +293,17 @@ export async function setExtensionUse(daemon: DaemonRpc, id: string, useState: "
  */
 export async function removeExtension(daemon: DaemonRpc, id: string): Promise<{ id: string; removed: "managed" | "external" }> {
   const result = await daemon.call("extensions.remove", { id });
-  if (!result || typeof result !== "object") throw new DaemonRpcError("extensions.remove returned an invalid result");
-  return result as { id: string; removed: "managed" | "external" };
+  // A dropped or partial reply must not pass as a removal: the page drops the row on this answer, so
+  // an array, a record without a verdict, or a verdict about another id has to fail here.
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    throw new DaemonRpcError("extensions.remove returned an invalid result");
+  }
+  const row = result as Record<string, unknown>;
+  const removed = row.removed;
+  if (typeof row.id !== "string" || row.id.length === 0 || row.id !== id || (removed !== "managed" && removed !== "external")) {
+    throw new DaemonRpcError("extensions.remove returned an invalid result");
+  }
+  return { id: row.id, removed };
 }
 
 /** One row per call that passed the "function is enabled" check, success or failure. */

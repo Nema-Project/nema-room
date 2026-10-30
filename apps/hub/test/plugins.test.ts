@@ -419,6 +419,24 @@ describe("workspace plugins", () => {
     expect(((await response.json()) as { error: string }).error).toBe("extensions.remove returned an invalid result");
   });
 
+  test("DELETE /api/extensions/:id refuses a result with a wrong shape or a different id", async () => {
+    // A dropped or truncated reply must not read as a successful removal: the page would drop the row
+    // for an extension that is still on disk.
+    const replies: unknown[] = [
+      [],
+      {},
+      { id: "grill" },
+      { id: "grill", removed: "weird" },
+      { id: "other", removed: "managed" },
+    ];
+    for (const reply of replies) {
+      daemonCall = async () => reply;
+      const response = await uiReq("DELETE", "/api/extensions/grill");
+      expect(response.status, JSON.stringify(reply)).toBe(502);
+      expect(((await response.json()) as { error: string }).error).toBe("extensions.remove returned an invalid result");
+    }
+  });
+
   test("GET /api/extensions returns daemon records, and bundled seeds when the daemon is down", async () => {
     const custom = [{ id: "pending", installState: "installing", provision: "managed", error: null }];
     daemonCall = async (method) => (method === "extensions.list" ? custom : {});

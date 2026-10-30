@@ -64,7 +64,18 @@ export function PluginsPage({ onClose, embedded = false }: { onClose?: () => voi
         setConfirming((current) => (current === id ? null : current));
         setExtensions((rows) => rows?.filter((item) => item.id !== id) ?? null);
       })
-      .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => {
+        setActionError(e instanceof Error ? e.message : String(e));
+        // The removal can have landed even though the answer did not: a lost reply, or another tab
+        // that removed the row first. Ask again, and let a list that no longer has the row clear it.
+        // A failed refresh stays quiet so it cannot replace the removal error with a lesser one.
+        listExtensions()
+          .then((rows) => {
+            setExtensions(rows);
+            setConfirming((current) => (current === id ? null : current));
+          })
+          .catch(() => {});
+      })
       .finally(() =>
         setPending((ids) => {
           const rest = new Set(ids);

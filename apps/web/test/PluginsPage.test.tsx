@@ -292,6 +292,47 @@ describe("PluginsPage removal", () => {
     expect(within(block).getByRole("button", { name: "Disable" })).toBeTruthy();
   });
 
+  it("reloads the list after a refused removal and drops a row that is already gone", async () => {
+    // The response can be lost after the daemon already removed the extension, or another tab can
+    // remove it first. Without a reload the row would stay, and every retry would say "not found".
+    vi.mocked(hub.listExtensions).mockResolvedValueOnce([catalog[0]!, managed]);
+    vi.mocked(hub.removeExtension).mockRejectedValue(new Error("daemon 已断开"));
+    vi.mocked(hub.listExtensions).mockResolvedValueOnce([catalog[0]!]);
+    renderPage();
+
+    const block = (await screen.findByRole("heading", { name: "Research skill" })).closest("section")!;
+    await act(async () => {
+      within(block).getByRole("button", { name: "Uninstall" }).click();
+    });
+    await act(async () => {
+      within(block).getByRole("button", { name: "Confirm uninstall" }).click();
+    });
+    expect(await screen.findByText("daemon 已断开")).toBeTruthy();
+    expect(hub.listExtensions).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("heading", { name: "Research skill" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "graphify" })).toBeTruthy();
+  });
+
+  it("keeps the row and closes the confirmation when the reload still lists it", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([catalog[0]!, managed]);
+    vi.mocked(hub.removeExtension).mockRejectedValue(new Error("extension is not managed"));
+    renderPage();
+
+    const block = (await screen.findByRole("heading", { name: "Research skill" })).closest("section")!;
+    await act(async () => {
+      within(block).getByRole("button", { name: "Uninstall" }).click();
+    });
+    await act(async () => {
+      within(block).getByRole("button", { name: "Confirm uninstall" }).click();
+    });
+    expect(await screen.findByText("extension is not managed")).toBeTruthy();
+    expect(hub.listExtensions).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("heading", { name: "Research skill" })).toBeTruthy();
+    // The confirmation is answered, so the row goes back to its normal button.
+    expect(within(block).getByRole("button", { name: "Uninstall" })).toBeTruthy();
+    expect(within(block).queryByRole("button", { name: "Confirm uninstall" })).toBeNull();
+  });
+
   it("refuses a second click while the removal is in flight", async () => {
     vi.mocked(hub.listExtensions).mockResolvedValue([catalog[0]!, managed]);
     let release: (value: { id: string; removed: "managed" }) => void = () => {};
