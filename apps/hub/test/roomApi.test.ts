@@ -1015,6 +1015,26 @@ describe("implementation rules", () => {
     expect(((await (await req("GET", "/room/entries", t.runToken)).json()) as any).entries).toEqual([]);
   });
 
+  test("reportEvidence groups must cite reports in this workspace and their own commits", async () => {
+    const t = await runningTaskFor(wsA);
+    const own = await addReportMessage(db, wsA, "通过", { report: reportInput, check });
+    const other = await addReportMessage(db, wsB, "别的 workspace", { report: reportInput, check });
+    const REFUSED = "reportEvidence 只能引用本 workspace 的上报，以及该上报里的提交。";
+    const cases: Array<Array<{ reportMessageId: string; commits: string[] }>> = [
+      [{ reportMessageId: "m_missing", commits: ["abcdef1"] }],
+      [{ reportMessageId: other.id, commits: ["abcdef1"] }],
+      [{ reportMessageId: own.id, commits: ["1234567"] }],
+      [{ reportMessageId: t.messageId, commits: ["abcdef1"] }],
+    ];
+    for (const reportEvidence of cases) {
+      const r = await req("POST", "/room/entries", t.runToken, upsert({ sourceMessages: [t.messageId], implementation: impl("reported", { commits: ["abcdef1"], reportEvidence }) }));
+      expect(r.status).toBe(409);
+      expect(((await r.json()) as { error: string }).error).toBe(REFUSED);
+    }
+    const ok = await req("POST", "/room/entries", t.runToken, upsert({ sourceMessages: [t.messageId], implementation: impl("reported", { commits: ["abcdef1"], reportEvidence: [{ reportMessageId: own.id, commits: ["abcdef1"] }] }) }));
+    expect(ok.status).toBe(200);
+  });
+
   test("the Agent can set verified citing a passing report", async () => {
     const t = await runningTaskFor(wsA);
     const passing = await addReportMessage(db, wsA, "通过", { report: reportInput, check });
