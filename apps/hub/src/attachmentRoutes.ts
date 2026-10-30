@@ -3,12 +3,18 @@ import { Hono, type Context } from "hono";
 import { AttachmentCapabilitiesSchema, type AttachmentView } from "@nema/shared";
 import { AttachmentError, type AttachmentStore } from "./attachments.js";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
+import type { Db } from "./db/db.js";
+import type { EventBus } from "./events.js";
+import { getMessage } from "./messages.js";
 import { daemonHttpStatus } from "./plugins.js";
 
 export type AttachmentRouteDeps = {
   store: AttachmentStore;
   daemon: DaemonRpc;
   daemonStatus: () => boolean;
+  /** With both, deleting a sent file emits message.updated so open chats show the tombstone. */
+  db?: Db;
+  events?: EventBus;
 };
 
 /** The one /api write that is not JSON. app.ts lets it past requireJson; the route checks the type itself. */
@@ -77,7 +83,13 @@ export function attachmentRoutes(deps: AttachmentRouteDeps): Hono {
 
   app.delete("/workspaces/:id/attachments/:aid", async (c) => {
     try {
-      return c.json(await deps.store.remove(c.req.param("id"), c.req.param("aid")));
+      const workspaceId = c.req.param("id");
+      const view = await deps.store.remove(workspaceId, c.req.param("aid"));
+      if (view.messageId && deps.db && deps.events) {
+        const message = await getMessage(deps.db, view.messageId);
+        if (message) deps.events.emit(workspaceId, { type: "message.updated", message });
+      }
+      return c.json(view);
     } catch (e) {
       return fail(c, e);
     }

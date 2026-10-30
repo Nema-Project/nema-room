@@ -82,7 +82,7 @@ export function createApp(deps: AppDeps): Hono {
   if (deps.uiAuth) app.use("/api/*", deps.uiAuth);
   app.use("/api/*", requireJson);
   const attachments = deps.attachments ?? new AttachmentStore(deps.db, deps.dataDir);
-  app.route("/api", attachmentRoutes({ store: attachments, daemon: deps.daemon, daemonStatus: deps.daemonStatus }));
+  app.route("/api", attachmentRoutes({ store: attachments, daemon: deps.daemon, daemonStatus: deps.daemonStatus, db: deps.db, events: deps.events }));
   app.route("/api", uiRoutes(deps));
   app.route(
     "/room",
@@ -92,6 +92,7 @@ export function createApp(deps: AppDeps): Hono {
       events: deps.events,
       daemon: deps.daemon,
       ownedHelpers: deps.ownedHelpers,
+      attachments,
       ...(deps.archify !== undefined ? { archify: deps.archify } : {}),
     }),
   );

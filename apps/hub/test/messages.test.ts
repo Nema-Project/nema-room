@@ -1,6 +1,10 @@
-import { afterEach, expect, test } from "vitest";
-import type { GithubObservation, ReportCheck, ReportMessageMeta } from "@nema/shared";
-import { addReportMessage, listMessages, mergeReportMeta, postSystemTask } from "../src/messages.js";
+import { afterEach, describe, expect, test } from "vitest";
+import { AttachmentRefSchema, type GithubObservation, type ReportCheck, type ReportMessageMeta } from "@nema/shared";
+import { AttachmentStore } from "../src/attachments.js";
+import type { Db } from "../src/db/db.js";
+import { addReportMessage, deliverySet, editUserMessage, getMessage, listMessages, listThreadMessages, mergeReportMeta, postSystemTask, postUserMessage, searchMessages } from "../src/messages.js";
+import { ensureThread } from "../src/threads.js";
+import { stagedRow, uploadPng } from "./attachmentFixtures.js";
 import { listQueuedTasks } from "../src/tasks.js";
 import { createWorkspace, updateWorkspace } from "../src/workspaces.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
@@ -170,4 +174,174 @@ test("clears a key the patch sets to null and refuses a non-report message", asy
   expect(m.check).toEqual(check());
   expect("checkError" in m).toBe(false);
   expect(await mergeReportMeta(db, "m_missing", { authors })).toBeNull();
+});
+
+describe("messages with attachments", () => {
+  const ids = (views: { id: string }[]) => views.map((v) => v.id);
+  const bound = async (db: Db, messageId: string) =>
+    (await db.query<{ id: string }>("select id from message_attachments where message_id = $1 order by id", [messageId])).map((r) => r.id);
+  const counts = async (db: Db, ws: string) => ({
+    messages: Number((await db.query<{ n: string }>("select count(*) n from messages where workspace_id = $1", [ws]))[0]!.n),
+    tasks: Number((await db.query<{ n: string }>("select count(*) n from tasks where workspace_id = $1", [ws]))[0]!.n),
+  });
+
+  test("a message with only attachments can be sent; an empty one cannot", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const a = await uploadPng(db, dataDir, ws.id);
+    const { message, task, replayed } = await postUserMessage(db, ws.id, "", { attachmentIds: [a.id] });
+    expect(replayed).toBe(false);
+    expect(message.content).toBe("");
+    expect(message.attachments).toEqual([{ ...a, status: "attached", messageId: message.id }]);
+    expect(task.messageId).toBe(message.id);
+    await expect(postUserMessage(db, ws.id, "  ", { attachmentIds: [] })).rejects.toMatchObject({ status: 400 });
+    await expect(postUserMessage(db, ws.id, "")).rejects.toThrow();
+  });
+
+  test("the delivery set over 32 MB or over 8 files is refused with the spec's wording", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const MB = 1024 * 1024;
+    const big = [await stagedRow(db, ws.id, "pdf", 17 * MB), await stagedRow(db, ws.id, "pdf", 16 * MB)];
+    await expect(postUserMessage(db, ws.id, "x", { attachmentIds: big })).rejects.toMatchObject({ status: 400, message: expect.stringContaining("合计超过 32 MB") });
+    // Nothing was bound: both uploads are still unsent.
+    expect((await db.query<{ status: string }>("select status from message_attachments where id = any($1)", [big])).map((r) => r.status)).toEqual(["staged", "staged"]);
+    expect(await counts(db, ws.id)).toEqual({ messages: 0, tasks: 0 });
+
+    // The quoted message's attachments count too.
+    const five = await Promise.all([1, 2, 3, 4, 5].map(() => stagedRow(db, ws.id, "image", 1000)));
+    const quoted = await postUserMessage(db, ws.id, "five", { attachmentIds: five });
+    const four = await Promise.all([1, 2, 3, 4].map(() => stagedRow(db, ws.id, "image", 1000)));
+    await expect(postUserMessage(db, ws.id, "more", { attachmentIds: four, quoteMessageId: quoted.message.id })).rejects.toMatchObject({ status: 400, message: expect.stringContaining("合计超过 32 MB") });
+    const three = four.slice(0, 3);
+    const ok = await postUserMessage(db, ws.id, "more", { attachmentIds: three, quoteMessageId: quoted.message.id });
+    expect(ok.message.attachments).toHaveLength(3);
+  });
+
+  test("a retry of the same request returns the original message and task", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const quoted = await postUserMessage(db, ws.id, "q");
+    const a = await stagedRow(db, ws.id);
+    const b = await stagedRow(db, ws.id);
+    const first = await postUserMessage(db, ws.id, "look", { attachmentIds: [a, b], quoteMessageId: quoted.message.id });
+    const before = await counts(db, ws.id);
+    const again = await postUserMessage(db, ws.id, "look", { attachmentIds: [b, a], quoteMessageId: quoted.message.id });
+    expect(again.replayed).toBe(true);
+    expect(again.message.id).toBe(first.message.id);
+    expect(again.task.id).toBe(first.task.id);
+    expect(ids(again.message.attachments).sort()).toEqual([a, b].sort());
+    expect(await counts(db, ws.id)).toEqual(before);
+  });
+
+  test("a retry that differs in any way is a 409 and changes nothing", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const quoted = await postUserMessage(db, ws.id, "q");
+    const anchor = await postUserMessage(db, ws.id, "anchor");
+    await ensureThread(db, anchor.message.id, "t", "user");
+    const a = await stagedRow(db, ws.id);
+    const b = await stagedRow(db, ws.id);
+    const first = await postUserMessage(db, ws.id, "look", { attachmentIds: [a, b], quoteMessageId: quoted.message.id });
+    const before = await counts(db, ws.id);
+    const fresh = await stagedRow(db, ws.id);
+    const variants: Parameters<typeof postUserMessage>[3][] = [
+      { attachmentIds: [a], quoteMessageId: quoted.message.id },
+      { attachmentIds: [a, b, fresh], quoteMessageId: quoted.message.id },
+      { attachmentIds: [a, fresh], quoteMessageId: quoted.message.id },
+      { attachmentIds: [a, b] },
+      { attachmentIds: [a, b], quoteMessageId: anchor.message.id },
+      { attachmentIds: [a, b], quoteMessageId: quoted.message.id, threadId: anchor.message.id },
+    ];
+    for (const v of variants) await expect(postUserMessage(db, ws.id, "look", v)).rejects.toMatchObject({ status: 409 });
+    await expect(postUserMessage(db, ws.id, "look again", { attachmentIds: [a, b], quoteMessageId: quoted.message.id })).rejects.toMatchObject({ status: 409 });
+    expect(await counts(db, ws.id)).toEqual(before);
+    expect(await bound(db, first.message.id)).toEqual([a, b].sort());
+    expect((await db.query<{ status: string }>("select status from message_attachments where id = $1", [fresh]))[0]!.status).toBe("staged");
+  });
+
+  test("an attachment id from another workspace or an unknown id is a 409", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const other = await createWorkspace(db, dataDir, "Beta");
+    const foreign = await stagedRow(db, other.id);
+    await expect(postUserMessage(db, ws.id, "x", { attachmentIds: [foreign] })).rejects.toMatchObject({ status: 409 });
+    await expect(postUserMessage(db, ws.id, "x", { attachmentIds: ["att_doesnotexist0000"] })).rejects.toMatchObject({ status: 409 });
+    expect(await counts(db, ws.id)).toEqual({ messages: 0, tasks: 0 });
+  });
+
+  test("the same text sent twice without attachments is two messages", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const one = await postUserMessage(db, ws.id, "same", { attachmentIds: [] });
+    const two = await postUserMessage(db, ws.id, "same");
+    expect(one.message.id).not.toBe(two.message.id);
+    expect(await counts(db, ws.id)).toEqual({ messages: 2, tasks: 2 });
+  });
+
+  test("two concurrent sends of one request make one message and one task", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const a = await stagedRow(db, ws.id);
+    const b = await stagedRow(db, ws.id);
+    const [x, y] = await Promise.all([
+      postUserMessage(db, ws.id, "go", { attachmentIds: [a, b] }),
+      postUserMessage(db, ws.id, "go", { attachmentIds: [b, a] }),
+    ]);
+    expect(x.message.id).toBe(y.message.id);
+    expect(x.task.id).toBe(y.task.id);
+    expect([x.replayed, y.replayed].sort()).toEqual([false, true]);
+    expect(await counts(db, ws.id)).toEqual({ messages: 1, tasks: 1 });
+  });
+
+  test("lists carry attachments; messages without any carry []", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const plain = await postUserMessage(db, ws.id, "plain");
+    const a = await uploadPng(db, dataDir, ws.id);
+    const withFile = await postUserMessage(db, ws.id, "pic", { attachmentIds: [a.id] });
+    await ensureThread(db, plain.message.id, "t", "user");
+    const b = await uploadPng(db, dataDir, ws.id);
+    const reply = await postUserMessage(db, ws.id, "", { attachmentIds: [b.id], threadId: plain.message.id });
+    const main = await listMessages(db, ws.id);
+    expect(main.find((m) => m.id === plain.message.id)!.attachments).toEqual([]);
+    expect(ids(main.find((m) => m.id === withFile.message.id)!.attachments)).toEqual([a.id]);
+    expect(ids((await listThreadMessages(db, plain.message.id)).find((m) => m.id === reply.message.id)!.attachments)).toEqual([b.id]);
+    expect(ids((await getMessage(db, withFile.message.id))!.attachments)).toEqual([a.id]);
+    expect((await searchMessages(db, ws.id, "pic"))[0]!.attachments.map((v) => v.id)).toEqual([a.id]);
+  });
+
+  test("deliverySet: this message, then the quoted one, then the thread anchor, once each, without deleted files", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const [p, q, r, s] = await Promise.all([1, 2, 3, 4].map(() => stagedRow(db, ws.id, "image", 100)));
+    const anchor = await postUserMessage(db, ws.id, "anchor", { attachmentIds: [p] });
+    await ensureThread(db, anchor.message.id, "t", "user");
+    const quoted = await postUserMessage(db, ws.id, "quoted", { attachmentIds: [q, s], threadId: anchor.message.id });
+    await new AttachmentStore(db, dataDir).remove(ws.id, s);
+    const reply = await postUserMessage(db, ws.id, "", { attachmentIds: [r], threadId: anchor.message.id, quoteMessageId: quoted.message.id });
+    const set = await deliverySet(db, reply.task.id);
+    expect(set.map((x) => x.id)).toEqual([r, q, p]);
+    expect(set.map((x) => x.messageId)).toEqual([reply.message.id, quoted.message.id, anchor.message.id]);
+    for (const ref of set) expect(AttachmentRefSchema.parse(ref)).toEqual(ref);
+    // Quoting the anchor itself does not deliver its files twice.
+    const t = await stagedRow(db, ws.id, "image", 100);
+    const again = await postUserMessage(db, ws.id, "x", { attachmentIds: [t], threadId: anchor.message.id, quoteMessageId: anchor.message.id });
+    expect((await deliverySet(db, again.task.id)).map((x) => x.id)).toEqual([t, p]);
+    const textOnly = await postUserMessage(db, ws.id, "no files");
+    expect(await deliverySet(db, textOnly.task.id)).toEqual([]);
+  });
+
+  test("editing keeps the attachments and allows empty text only when there are some", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const a = await stagedRow(db, ws.id);
+    const withFile = await postUserMessage(db, ws.id, "text", { attachmentIds: [a] });
+    const plain = await postUserMessage(db, ws.id, "text");
+    await db.query("update tasks set status = 'done' where workspace_id = $1", [ws.id]);
+    const edited = await editUserMessage(db, ws.id, withFile.message.id, "");
+    expect(edited.message.content).toBe("");
+    expect(ids(edited.message.attachments)).toEqual([a]);
+    await expect(editUserMessage(db, ws.id, plain.message.id, " ")).rejects.toMatchObject({ status: 400 });
+  });
 });

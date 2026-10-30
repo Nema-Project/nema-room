@@ -6,7 +6,8 @@ import { createApp } from "../src/app.js";
 import type { DaemonRpc } from "../src/daemonRpc.js";
 import { DaemonRpcError } from "../src/daemonRpc.js";
 import type { Db } from "../src/db/db.js";
-import { EventBus } from "../src/events.js";
+import { EventBus, type HubEvent } from "../src/events.js";
+import { postUserMessage } from "../src/messages.js";
 import { createWorkspace } from "../src/workspaces.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 
@@ -160,5 +161,31 @@ describe("capabilities route", () => {
     daemon = { call: () => Promise.reject(new DaemonRpcError("未知方法 attachments.capabilities")) };
     const res = await get();
     expect(res.status).toBe(501);
+  });
+});
+
+describe("deleting a sent attachment", () => {
+  test("emits message.updated with the tombstone so open chats update", async () => {
+    const events = new EventBus();
+    const local = createApp({ db, dataDir, events, daemonStatus: () => true, daemon: { call: (m, p, t) => daemon.call(m, p, t) }, attachments });
+    const view = (await (await upload(png())).json()) as AttachmentView;
+    const { message } = await postUserMessage(db, ws, "pic", { attachmentIds: [view.id] });
+    const seen: HubEvent[] = [];
+    events.subscribe(ws, (e) => seen.push(e));
+    const res = await local.request(`${HUB}/api/workspaces/${ws}/attachments/${view.id}`, { method: "DELETE" });
+    expect(res.status).toBe(200);
+    const updated = seen.find((e): e is Extract<HubEvent, { type: "message.updated" }> => e.type === "message.updated");
+    expect(updated?.message.id).toBe(message.id);
+    expect(updated?.message.attachments).toEqual([expect.objectContaining({ id: view.id, status: "deleted" })]);
+  });
+
+  test("deleting an unsent upload emits nothing", async () => {
+    const events = new EventBus();
+    const local = createApp({ db, dataDir, events, daemonStatus: () => true, daemon: { call: (m, p, t) => daemon.call(m, p, t) }, attachments });
+    const view = (await (await upload(png())).json()) as AttachmentView;
+    const seen: HubEvent[] = [];
+    events.subscribe(ws, (e) => seen.push(e));
+    expect((await local.request(`${HUB}/api/workspaces/${ws}/attachments/${view.id}`, { method: "DELETE" })).status).toBe(200);
+    expect(seen).toEqual([]);
   });
 });
