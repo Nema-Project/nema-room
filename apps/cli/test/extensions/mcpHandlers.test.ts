@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -253,13 +253,11 @@ describe.skipIf(!posix)("start, stop and the operations around them", () => {
     const next = new RpcRouter();
     const again = registerExtensionHandlers(next, home, { mcpTimeoutMs: 10_000 });
     try {
-      expect(await until(() => !alive(pid))).toBe(true);
       const rpc = async (method: string, params: unknown) => next.handle({ type: "rpc.request", id: String(++seq), method, params });
-      let row: any;
-      expect(await until(() => {
-        void rpc("extensions.list", {}).then((r: any) => { row = r.result?.find((item: any) => item.id === "search"); });
-        return Boolean(row?.mcp?.lastError);
-      })).toBe(true);
+      // The first list (the Plugins page loading) already waits for the recovery and carries its note.
+      const first: any = await rpc("extensions.list", {});
+      const row = first.result.find((item: any) => item.id === "search");
+      expect(alive(pid)).toBe(false);
       expect(row.mcp.connection).toBe("disconnected");
       expect(row.mcp.lastError).toMatch(/left running by the previous daemon/);
       expect(existsSync(join(home, "run", "mcp", "search", "server.json"))).toBe(false);
@@ -267,6 +265,39 @@ describe.skipIf(!posix)("start, stop and the operations around them", () => {
       expect(restarted.result.connection).toBe("connected");
     } finally {
       await again.close();
+    }
+  });
+
+  test("when the recovery itself fails, no start runs until it succeeds, and the daemon keeps serving", async () => {
+    await ok("extensions.mcp.save", { id: "search", name: "Search", config: { ...stdio(), env: { FAKE_RECORD: { value: record("child") } } } });
+    mkdirSync(join(home, "run"), { recursive: true });
+    // Not a directory: the next daemon cannot read its records.
+    rmSync(join(home, "run", "mcp"), { recursive: true, force: true });
+    writeFileSync(join(home, "run", "mcp"), "");
+    const next = new RpcRouter();
+    const again = registerExtensionHandlers(next, home, { mcpTimeoutMs: 10_000 });
+    try {
+      const rpc = async (method: string, params: unknown): Promise<any> => next.handle({ type: "rpc.request", id: String(++seq), method, params });
+      const started = await rpc("extensions.mcp.start", { id: "search" });
+      expect(started.ok).toBe(false);
+      expect(started.error).toMatch(/left running by the previous daemon/);
+      expect((await rpc("extensions.list", {})).ok).toBe(true);
+    } finally {
+      await again.close();
+    }
+  });
+
+  test("a record that cannot be written fails the start cleanly and leaves no server running", async () => {
+    await ok("extensions.mcp.save", { id: "search", name: "Search", config: { ...stdio(), env: { FAKE_RECORD: { value: record("child") } } } });
+    // A directory where the record goes: writing it fails.
+    mkdirSync(join(home, "run", "mcp", "search", "server.json"), { recursive: true });
+    const started = await call("extensions.mcp.start", { id: "search" });
+    expect(started.ok).toBe(true);
+    expect((started.result as any).connection).toBe("error");
+    expect((started.result as any).lastError).toMatch(/could not record/);
+    if (existsSync(record("child"))) {
+      const pid = childPid();
+      expect(await until(() => !alive(pid))).toBe(true);
     }
   });
 

@@ -65,6 +65,41 @@ describe.skipIf(!posix)("MCP servers left running by a daemon that did not shut 
     expect(existsSync(join(broken, "server.json"))).toBe(false);
   });
 
+  test("a server whose daemon is still running is left alone, record and all", async () => {
+    const { leader } = orphan();
+    const owner = orphan().leader;
+    openMcpLeftovers(home).record("search", leader);
+    const file = join(home, "run", "mcp", "search", "server.json");
+    // Written by another daemon on the same home that is still running.
+    writeFileSync(file, JSON.stringify(openMcpLeftovers(home, { self: owner }).entry(leader)));
+    expect(await openMcpLeftovers(home).sweep()).toEqual([]);
+    expect(alive(leader)).toBe(true);
+    expect(existsSync(file)).toBe(true);
+  });
+
+  test("a group whose leader exited is still stopped, so its descendants do not stay behind", async () => {
+    const { leader, child } = orphan();
+    await until(() => alive(child));
+    openMcpLeftovers(home).record("search", leader);
+    process.kill(leader, "SIGKILL");
+    expect(await until(() => !alive(leader))).toBe(true);
+    expect(alive(child)).toBe(true);
+    expect(await openMcpLeftovers(home).sweep()).toEqual(["search"]);
+    expect(await until(() => !alive(child))).toBe(true);
+    expect(existsSync(join(home, "run", "mcp", "search", "server.json"))).toBe(false);
+  });
+
+  test("when the start time cannot be read now, the record is kept and nothing is signalled", async () => {
+    const { leader } = orphan();
+    openMcpLeftovers(home).record("search", leader);
+    const file = join(home, "run", "mcp", "search", "server.json");
+    expect(await openMcpLeftovers(home, { identity: () => null }).sweep()).toEqual([]);
+    expect(alive(leader)).toBe(true);
+    expect(existsSync(file)).toBe(true);
+    // A later start that can read it stops the server.
+    expect(await openMcpLeftovers(home).sweep()).toEqual(["search"]);
+  });
+
   test("clear removes only the record of that pid", () => {
     const left = openMcpLeftovers(home);
     left.record("search", 4242);

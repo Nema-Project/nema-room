@@ -23,6 +23,47 @@ test("SIGINT, SIGTERM and SIGHUP close the daemon (and its MCP servers) before e
   }
 });
 
+test("the daemon exits only after close has finished", async () => {
+  const events: string[] = [];
+  let finish!: () => void;
+  const handlers = new Map<string, () => void>();
+  stopOnSignals({
+    close: () => new Promise<void>((resolve) => { events.push("close"); finish = () => { events.push("closed"); resolve(); }; }),
+    on: (signal, handler) => handlers.set(signal, handler),
+    exit: (code) => events.push(`exit ${code}`),
+    log: () => {},
+    timeoutMs: 1000,
+  });
+  handlers.get("SIGTERM")!();
+  await tick(20);
+  expect(events).toEqual(["close"]);
+  finish();
+  await tick();
+  expect(events).toEqual(["close", "closed", "exit 0"]);
+});
+
+test("the stop timeout keeps the process alive, so a hung close cannot end as a clean exit", async () => {
+  const timers: Array<{ unref: boolean }> = [];
+  const real = globalThis.setTimeout;
+  const spy = ((fn: () => void, ms: number) => {
+    const t = real(fn, ms);
+    const entry = { unref: false };
+    timers.push(entry);
+    const unref = t.unref.bind(t);
+    t.unref = () => { entry.unref = true; return unref(); };
+    return t;
+  }) as unknown as typeof setTimeout;
+  globalThis.setTimeout = spy;
+  try {
+    const h = harness(() => new Promise(() => {}), 10_000);
+    h.handlers.get("SIGTERM")!();
+  } finally {
+    globalThis.setTimeout = real;
+  }
+  expect(timers.length).toBeGreaterThan(0);
+  expect(timers.every((t) => !t.unref)).toBe(true);
+});
+
 test("a failed close exits non-zero; a second signal does not close twice", async () => {
   let closed = 0;
   const h = harness(async () => { closed += 1; throw new Error("boom"); });

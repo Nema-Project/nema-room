@@ -36,7 +36,7 @@ export function stopOnSignals(o: SignalOptions): void {
       log("nema daemon: stopping took too long; exiting");
       finish(1);
     }, timeoutMs);
-    timer.unref?.();
+    // Referenced on purpose: a hung close holds nothing else open, and Node would then end with 0.
     o.close().then(
       () => { clearTimeout(timer); finish(0); },
       (error: unknown) => {

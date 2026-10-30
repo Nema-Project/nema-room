@@ -43,14 +43,19 @@ export function createMcpHandlers(nemaHome: string, options: McpHandlerOptions =
   const supervisor = new McpSupervisor({ nemaHome, configs, secrets, ownedHelpers: options.ownedHelpers, timeoutMs: options.timeoutMs, leftovers });
   // A daemon that was killed never ran its close: its stdio servers may still be running. They are
   // stopped before anything else runs on a server's chain, and the row says so; none is restarted.
-  const ready: Promise<unknown> = leftovers
-    ? leftovers
-        .sweep()
-        .then((ids) => {
+  // If that fails, no start runs in this daemon: a second copy would run beside an untracked one.
+  const ready: Promise<void> = leftovers
+    ? leftovers.sweep().then(
+        (ids) => {
           for (const id of ids) supervisor.note(id, "stopped a copy left running by the previous daemon; start it again");
-        })
-        .catch(() => {})
+        },
+        (error: unknown) => {
+          throw new Error(`could not stop the MCP servers left running by the previous daemon (${error instanceof Error ? error.message : String(error)}); fix it and restart the daemon`);
+        },
+      )
     : Promise.resolve();
+  /** Settles when the recovery is over, either way. */
+  const recovered: Promise<void> = ready.catch(() => {});
   const chains = new Map<string, Promise<unknown>>();
   // Bumped by every stop: a start queued before a stop sees a newer number and does not launch.
   const stops = new Map<string, number>();
@@ -61,7 +66,7 @@ export function createMcpHandlers(nemaHome: string, options: McpHandlerOptions =
   }
 
   function serial<T>(id: string, run: () => Promise<T>): Promise<T> {
-    const next = (chains.get(id) ?? ready).catch(() => {}).then(run);
+    const next = (chains.get(id) ?? recovered).catch(() => {}).then(run);
     chains.set(id, next);
     void next.catch(() => {}).finally(() => {
       if (chains.get(id) === next) chains.delete(id);
@@ -114,8 +119,11 @@ export function createMcpHandlers(nemaHome: string, options: McpHandlerOptions =
         configs.remove(id);
       });
     },
+    /** Settles once servers left by a previous daemon are dealt with, so a listing carries the note. */
+    recovered,
     close(): Promise<void> {
-      return supervisor.closeAll();
+      // A recovery still stopping an old group finishes first, so its record is not lost half-way.
+      return recovered.then(() => supervisor.closeAll());
     },
     register(router: RpcRouter, record: (id: string) => ExtensionRecord | undefined): void {
       const managed = (id: string): ExtensionRecord => {
@@ -156,6 +164,7 @@ export function createMcpHandlers(nemaHome: string, options: McpHandlerOptions =
           if (row.useState === "disabled") throw new Error(`${id} is disabled; enable it first`);
           // A stop that came after this start was sent wins, even if the start was still waiting.
           if (stopCount(id) !== queuedAt) return supervisor.status(id);
+          await ready;
           configs.config(id);
           return supervisor.start(id);
         });

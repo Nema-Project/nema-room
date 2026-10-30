@@ -8,7 +8,7 @@ import type { McpConfig, McpConnection, McpValue } from "@nema/shared";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { commandSpec, windowsRuntimeEnv } from "../../platform.js";
 import type { McpLeftovers } from "./leftovers.js";
-import { McpStdioTransport } from "./stdioTransport.js";
+import { LEFTOVER_RECORD, McpStdioTransport } from "./stdioTransport.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TOOLS = 512;
@@ -243,6 +243,7 @@ export class McpSupervisor {
     const code = (error as NodeJS.ErrnoException | undefined)?.code;
     if (code === "ENOENT") return new StartError("the command was not found");
     if (code === "EACCES") return new StartError("the command cannot be run");
+    if (code === LEFTOVER_RECORD) return new StartError("could not record the server under run/mcp in the Nema home, so it was not started");
     // SDK and server messages can carry server output; keep a fixed text.
     return new StartError("the server could not be reached or closed the connection");
   }
