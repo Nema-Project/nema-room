@@ -3,11 +3,12 @@ import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z, ZodError } from "zod";
 import { KnowledgeStore, blameParagraphs, git, history, versionAt, parseCommitMessage } from "@nema/knowledge";
-import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, citedReports, confirmableImplementation, kindFromId, canonicalJson, parseSkillSource, reportPassed, safeRepoPath } from "@nema/shared";
+import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, parseMcpConfig, citedReports, confirmableImplementation, kindFromId, canonicalJson, parseSkillSource, reportPassed, safeRepoPath } from "@nema/shared";
 import type { Implementation, ReportMessageMeta, WorkPackageMeta } from "@nema/shared";
 import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
 import { insertEvidenceEvent, consumeEvidenceEvent, reconcileUnconsumedEventsLocked, payloadHashFor, type EvidenceEventInput } from "./evidenceEvents.js";
 import type { Entry } from "@nema/shared";
+import { ATTACHMENT_LIMITS, messageHasBody } from "@nema/shared";
 import type { CommitMeta } from "@nema/knowledge";
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
@@ -16,7 +17,7 @@ import { indexEntry, timeline, withDiagramStatus } from "./entryIndex.js";
 import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, editUserMessage, getMessage, listMessageVersions, listMessages, MessageOpError, postSystemTask, postUserMessage, searchMessages } from "./messages.js";
 import { vendoredArchify, type Archify } from "./diagrams.js";
 import { posix, win32 } from "node:path";
-import { PluginError, attachExtension, attachHttpStatus, daemonHttpStatus, discoverExtensions, listExtensions, repairExtension, pluginsForUi, cancelExtensionInstall, extensionInstallStatus, installExtension, removeExtension, resolveExtensionSource, retryExtensionInstall, setExtensionUse, setPluginState, workspacePluginState } from "./plugins.js";
+import { PluginError, clearMcpSecret, getMcpConfig, mcpHttpStatus, mcpServerStatus, saveMcpConfig, setMcpSecret, startMcp, stopMcp, attachExtension, attachHttpStatus, daemonHttpStatus, discoverExtensions, listExtensions, repairExtension, pluginsForUi, cancelExtensionInstall, extensionInstallStatus, installExtension, removeExtension, resolveExtensionSource, retryExtensionInstall, setExtensionUse, setPluginState, workspacePluginState } from "./plugins.js";
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
 import { RepoError, bindRepo, getRepo, listIndexing, listRepos, previewRepo, syncBoundRepos, unbindRepo, updateRepo } from "./repos.js";
 import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
@@ -61,6 +62,11 @@ const InstallExtensionBody = z.strictObject({
 // The folder is on the daemon's computer, which may be Windows while the hub runs elsewhere, so
 // either kind of absolute path is accepted here and the daemon makes the real check. The path is
 // not trimmed: a folder name may begin or end with a space, and trimming would name another folder.
+// `create: true` is an add: the daemon refuses an id that already exists instead of replacing it.
+const SaveMcpBody = z.strictObject({ id: z.string().min(1).max(64), name: z.string().min(1).max(128), config: z.unknown(), create: z.boolean().optional() });
+const EmptyBody = z.strictObject({});
+// The value is never echoed: a refused body only names the field.
+const McpSecretBody = z.strictObject({ value: z.string() });
 const AttachExtensionBody = z.strictObject({
   path: z.string().refine((value) => posix.isAbsolute(value) || win32.isAbsolute(value), "must be an absolute folder path"),
 });
@@ -70,11 +76,14 @@ const PatchWorkspaceBody = z.object({
   knowledgeLanguage: z.enum(KNOWLEDGE_LANGUAGES).optional(),
   archived: z.boolean().optional(),
 });
-const PostMessageBody = z.object({
-  content: z.string().refine((s) => s.trim() !== "", "must not be empty"),
-  quoteMessageId: z.string().min(1).optional(),
-  threadId: z.string().min(1).optional(),
-});
+const PostMessageBody = z
+  .object({
+    content: z.string(),
+    quoteMessageId: z.string().min(1).optional(),
+    threadId: z.string().min(1).optional(),
+    attachmentIds: z.array(z.string().min(1)).max(ATTACHMENT_LIMITS.perTaskCount).optional(),
+  })
+  .refine((b) => messageHasBody(b.content, b.attachmentIds ?? []), { message: "must not be empty", path: ["content"] });
 const PreviewRepoBody = z.object({ path: z.string().min(1) });
 const BindRepoBody = z.object({
   path: z.string().min(1),
@@ -273,6 +282,42 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/extensions/:id/repair", installRoute(repairExtension));
 
+  // MCP servers. D-4: registered on every deployment; with uiAuth on they sit behind it like the rest
+  // of /api. `start` takes nothing but the id in the path, so no request can name a command or URL.
+  const mcpRoute = (run: (c: Context) => Promise<unknown>) => async (c: Context) => {
+    try {
+      return c.json(await run(c));
+    } catch (error) {
+      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, mcpHttpStatus(error.message));
+      throw error;
+    }
+  };
+  app.post("/extensions/mcp", async (c) => {
+    const { id, name, config, create } = await body(c, SaveMcpBody);
+    let parsed;
+    try {
+      parsed = parseMcpConfig(config);
+    } catch (error) {
+      throw new HttpError(400, error instanceof Error ? error.message : "invalid MCP config");
+    }
+    return mcpRoute(() => saveMcpConfig(deps.daemon, { id, name, config: parsed, ...(create ? { create: true } : {}) }))(c);
+  });
+  app.get("/extensions/:id/mcp", mcpRoute((c) => getMcpConfig(deps.daemon, c.req.param("id")!)));
+  app.get("/extensions/:id/mcp/status", mcpRoute((c) => mcpServerStatus(deps.daemon, c.req.param("id")!)));
+  app.post("/extensions/:id/mcp/start", async (c) => {
+    await body(c, EmptyBody);
+    return mcpRoute(() => startMcp(deps.daemon, c.req.param("id")!))(c);
+  });
+  app.post("/extensions/:id/mcp/stop", async (c) => {
+    await body(c, EmptyBody);
+    return mcpRoute(() => stopMcp(deps.daemon, c.req.param("id")!))(c);
+  });
+  app.put("/extensions/:id/mcp/secrets/:name", async (c) => {
+    const { value } = await body(c, McpSecretBody);
+    return mcpRoute(() => setMcpSecret(deps.daemon, c.req.param("id")!, c.req.param("name")!, value))(c);
+  });
+  app.delete("/extensions/:id/mcp/secrets/:name", mcpRoute((c) => clearMcpSecret(deps.daemon, c.req.param("id")!, c.req.param("name")!)));
+
   app.get("/workspaces", async (c) => {
     const [list, counts] = await Promise.all([listWorkspaces(db), attentionCounts(db, dataDir)]);
     return c.json(list.map((w) => ({ ...w, attention: counts[w.id] ?? 0, archived: w.archivedAt != null })));
@@ -390,19 +435,21 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/workspaces/:id/threads", async (c) => {
     const workspaceId = c.req.param("id")!;
-    const { content, quoteMessageId } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, attachmentIds } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     try {
       const created = await db.tx(async (t) => {
-        const posted = await postUserMessage(t, workspaceId, content, { quoteMessageId });
+        const posted = await postUserMessage(t, workspaceId, content, { quoteMessageId, attachmentIds });
         const title = Array.from(content.split(/\r?\n/, 1)[0]!.trim()).slice(0, 80).join("") || "新追问";
         const thread = await ensureThread(t, posted.message.id, title, "user");
         return { ...posted, thread };
       });
       const task = toUiTask(created.task);
-      events.emit(workspaceId, { type: "message.created", message: created.message });
-      events.emit(workspaceId, { type: "task.updated", task });
-      events.emit(workspaceId, { type: "thread.updated", thread: created.thread });
+      if (!created.replayed) {
+        events.emit(workspaceId, { type: "message.created", message: created.message });
+        events.emit(workspaceId, { type: "task.updated", task });
+        events.emit(workspaceId, { type: "thread.updated", thread: created.thread });
+      }
       return c.json({ message: created.message, thread: created.thread, task });
     } catch (e) {
       if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
@@ -414,15 +461,17 @@ export function uiRoutes(deps: UiDeps): Hono {
   app.post("/workspaces/:id/threads/:tid/messages", async (c) => {
     const workspaceId = c.req.param("id")!;
     const threadId = c.req.param("tid")!;
-    const { content, quoteMessageId } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, attachmentIds } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     try {
-      const { message, task: created } = await postUserMessage(db, workspaceId, content, { quoteMessageId, threadId });
+      const { message, task: created, replayed } = await postUserMessage(db, workspaceId, content, { quoteMessageId, threadId, attachmentIds });
       const task = toUiTask(created);
-      events.emit(workspaceId, { type: "message.created", message });
-      events.emit(workspaceId, { type: "task.updated", task });
-      const thread = await getThread(db, threadId);
-      if (thread) events.emit(workspaceId, { type: "thread.updated", thread });
+      if (!replayed) {
+        events.emit(workspaceId, { type: "message.created", message });
+        events.emit(workspaceId, { type: "task.updated", task });
+        const thread = await getThread(db, threadId);
+        if (thread) events.emit(workspaceId, { type: "thread.updated", thread });
+      }
       return c.json({ message, task });
     } catch (e) {
       if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
@@ -490,18 +539,20 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/workspaces/:id/messages", async (c) => {
     const id = c.req.param("id");
-    const { content, quoteMessageId, threadId } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, threadId, attachmentIds } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, id))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
-    let message, created;
+    let message, created, replayed;
     try {
-      ({ message, task: created } = await postUserMessage(db, id, content, { quoteMessageId, threadId }));
+      ({ message, task: created, replayed } = await postUserMessage(db, id, content, { quoteMessageId, threadId, attachmentIds }));
     } catch (e) {
       if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
       throw e;
     }
     const task = toUiTask(created);
-    events.emit(id, { type: "message.created", message });
-    events.emit(id, { type: "task.updated", task });
+    if (!replayed) {
+      events.emit(id, { type: "message.created", message });
+      events.emit(id, { type: "task.updated", task });
+    }
     return c.json({ message, task });
   });
 

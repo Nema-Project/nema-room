@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DEFAULT_GRILL_SETTINGS, GRILL_EXTRA_RULES_MAX, PLUGINS, bundledExtensions, isCheckTime, pluginFunction, type ExtensionRecord, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
+import { DEFAULT_GRILL_SETTINGS, GRILL_EXTRA_RULES_MAX, PLUGINS, bundledExtensions, isCheckTime, parseMcpConfig, pluginFunction, secretRefs, type ExtensionRecord, type McpConfig, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import { githubTargets } from "./githubScope.js";
@@ -477,4 +477,118 @@ export async function recordPluginCall(
     `insert into plugin_calls (task_id, name, args_summary, ok, result_bytes, ms) values ($1, $2, $3, $4, $5, $6)`,
     [row.taskId, row.name, row.argsSummary.slice(0, 200), row.ok, row.resultBytes, row.ms],
   );
+}
+
+/*
+ * MCP servers (D-4: every deployment may write MCP configs through the hub; with uiAuth on they sit
+ * behind it like every other /api route). The hub checks shapes in both directions: a config the
+ * shared parser refuses never reaches the daemon, and a reply that is not the expected shape is a 502.
+ * No reply here carries a credential value; the secret route never echoes its body.
+ */
+const MCP_CONNECTIONS = new Set(["disconnected", "connecting", "connected", "needs-login", "error"]);
+
+/** Daemon refusals are the request's fault; the daemon being away is 503; anything else 502. */
+export function mcpHttpStatus(message: string): 400 | 404 | 409 | 502 | 503 {
+  if (DAEMON_OFFLINE.has(message)) return 503;
+  if (/^MCP server not found: /.test(message) || /^extension not found: /.test(message)) return 404;
+  if (/^MCP server \S+ already exists$/.test(message) || / is disabled; enable it first$/.test(message) || / is not an MCP server$/.test(message) || /is damaged or does not match the record/.test(message)) return 409;
+  if (/^(invalid MCP config: |invalid extension id|invalid secret name|invalid MCP id|MCP server name must|secret .* is not referenced|extensions\.mcp\.\w+ (needs|does not take))/.test(message)) return 400;
+  return 502;
+}
+
+function mcpStatus(value: unknown, id: string, method: string): Record<string, unknown> {
+  const row = plainObject(value);
+  const server = row ? row.server : undefined;
+  const serverOk = server === null || (plainObject(server) !== null && typeof (server as any).name === "string" && typeof (server as any).version === "string");
+  const toolsOk = row && Array.isArray(row.tools) && row.tools.every((tool) => {
+    const t = plainObject(tool);
+    return t && typeof t.name === "string" && typeof t.schemaDigest === "string";
+  });
+  if (!row || row.id !== id || typeof row.connection !== "string" || !MCP_CONNECTIONS.has(row.connection) || !serverOk || !toolsOk || !nullableString(row.lastError)) {
+    throw new DaemonRpcError(`${method} returned an invalid result`);
+  }
+  return { id, connection: row.connection, server, tools: row.tools, lastError: row.lastError };
+}
+
+function mcpSlots(value: unknown): Array<{ name: string; configured: boolean }> | null {
+  if (!Array.isArray(value)) return null;
+  const slots = value.map((item) => plainObject(item));
+  if (!slots.every((slot) => slot && typeof slot.name === "string" && typeof slot.configured === "boolean")) return null;
+  return slots.map((slot) => ({ name: slot!.name as string, configured: slot!.configured as boolean }));
+}
+
+export async function getMcpConfig(daemon: DaemonRpc, id: string): Promise<Record<string, unknown>> {
+  const row = plainObject(await daemon.call("extensions.mcp.get", { id }));
+  let config: McpConfig | null = null;
+  try {
+    config = row ? parseMcpConfig(row.config) : null;
+  } catch {
+    config = null;
+  }
+  const secrets = row ? mcpSlots(row.secrets) : null;
+  // One slot per reference the config makes, in its order: a missing, extra or repeated slot is a bad reply.
+  const slotsFit = config !== null && secrets !== null && JSON.stringify(secrets.map((slot) => slot.name)) === JSON.stringify(secretRefs(config));
+  if (!row || row.id !== id || typeof row.name !== "string" || !config || !secrets || !slotsFit) throw new DaemonRpcError("extensions.mcp.get returned an invalid result");
+  return { id, name: row.name, config, secrets };
+}
+
+const MCP_RECORD_KEYS = ["id", "kind", "name", "summary", "source", "revision", "provision", "installState", "useState", "availability", "externalPath", "error"];
+
+export async function saveMcpConfig(daemon: DaemonRpc, request: { id: string; name: string; config: McpConfig; create?: true }): Promise<ExtensionRecord> {
+  const row = plainObject(await daemon.call("extensions.mcp.save", request));
+  // The whole record, exactly: the page and the CLI show it as an extension row.
+  const fits =
+    row !== null &&
+    Object.keys(row).length === MCP_RECORD_KEYS.length &&
+    MCP_RECORD_KEYS.every((key) => Object.prototype.hasOwnProperty.call(row, key)) &&
+    row.id === request.id &&
+    row.kind === "mcp" &&
+    row.name === request.name &&
+    typeof row.summary === "string" &&
+    row.source === `mcp:${request.config.transport}` &&
+    typeof row.revision === "string" &&
+    /^[0-9a-f]{12}$/.test(row.revision) &&
+    row.provision === "managed" &&
+    row.installState === "installed" &&
+    (row.useState === "enabled" || row.useState === "disabled") &&
+    row.availability === "ready" &&
+    row.externalPath === null &&
+    row.error === null;
+  if (!fits) throw new DaemonRpcError("extensions.mcp.save returned an invalid result");
+  return row as unknown as ExtensionRecord;
+}
+
+export async function startMcp(daemon: DaemonRpc, id: string): Promise<Record<string, unknown>> {
+  // The daemon waits up to 30 s for connect plus listTools; give the call room to report that itself.
+  return mcpStatus(await daemon.call("extensions.mcp.start", { id }, 60_000), id, "extensions.mcp.start");
+}
+
+export async function stopMcp(daemon: DaemonRpc, id: string): Promise<Record<string, unknown>> {
+  return mcpStatus(await daemon.call("extensions.mcp.stop", { id }), id, "extensions.mcp.stop");
+}
+
+export async function mcpServerStatus(daemon: DaemonRpc, id: string): Promise<Record<string, unknown>> {
+  return mcpStatus(await daemon.call("extensions.mcp.status", { id }), id, "extensions.mcp.status");
+}
+
+async function mcpSecretCall(daemon: DaemonRpc, method: "extensions.mcp.setSecret" | "extensions.mcp.clearSecret", params: Record<string, string>, configured: boolean) {
+  // A restart after a credential change can take as long as a start.
+  const row = plainObject(await daemon.call(method, params, 60_000));
+  if (!row || row.id !== params.id || row.name !== params.name || row.configured !== configured) throw new DaemonRpcError(`${method} returned an invalid result`);
+  return { id: params.id, name: params.name, configured, status: mcpStatus(row.status, params.id, method) };
+}
+
+/** D-2: the page and the CLI write a value; nothing reads one back. */
+export async function setMcpSecret(daemon: DaemonRpc, id: string, name: string, value: string): Promise<Record<string, unknown>> {
+  try {
+    return await mcpSecretCall(daemon, "extensions.mcp.setSecret", { id, name, value }, true);
+  } catch (error) {
+    // Daemon errors are fixed text; this is the backstop if one ever quotes the value.
+    if (error instanceof Error && error.message.includes(value)) throw new DaemonRpcError("extensions.mcp.setSecret failed");
+    throw error;
+  }
+}
+
+export async function clearMcpSecret(daemon: DaemonRpc, id: string, name: string): Promise<Record<string, unknown>> {
+  return mcpSecretCall(daemon, "extensions.mcp.clearSecret", { id, name }, false);
 }

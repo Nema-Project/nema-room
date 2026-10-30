@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import { Hono } from "hono";
 import { sourceEvidenceEntries, sourceEvidenceSummary } from "./sourceFreshness.js";
 import { ZodError } from "zod";
@@ -7,7 +8,8 @@ import type { Db } from "./db/db.js";
 import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
 import { callHubFunction, vendoredArchify, type Archify } from "./diagrams.js";
 import type { EventBus } from "./events.js";
-import { getMessage } from "./messages.js";
+import { deliveryScope, getMessage } from "./messages.js";
+import { AttachmentError, AttachmentStore } from "./attachments.js";
 import { indexEntry } from "./entryIndex.js";
 import { checkGithubCall, githubTargets } from "./githubScope.js";
 import { daemonHttpStatus, disabledExtensionIds, enabledPluginTools, recordPluginCall, withoutDisabledExtensions } from "./plugins.js";
@@ -42,6 +44,8 @@ export function roomRoutes(deps: {
   /** Defaults to the vendored archify. */
   archify?: Archify;
   ownedHelpers?: OwnedHelperScope;
+  /** The hub's attachment store; a read-only one over dataDir when omitted. */
+  attachments?: AttachmentStore;
 }): Hono<{ Variables: { auth: Auth } }> {
   const { db, dataDir, events, daemon } = deps;
   const archify = deps.archify ?? vendoredArchify;
@@ -56,6 +60,23 @@ export function roomRoutes(deps: {
   });
 
   const store = (ws: string) => new KnowledgeStore(repoPath(dataDir, ws), deps.ownedHelpers);
+  const attachments = deps.attachments ?? new AttachmentStore(db, dataDir);
+
+  // Only the files of this task's delivery set; any other id is 404, even in the same workspace.
+  app.get("/attachments/:id", async (c) => {
+    const { taskId, workspaceId } = c.get("auth");
+    const id = c.req.param("id");
+    if (!(await deliveryScope(db, taskId)).has(id)) return c.json({ error: "attachment not found" }, 404);
+    try {
+      const { view, stream } = await attachments.open(workspaceId, id);
+      return new Response(Readable.toWeb(stream) as ReadableStream, {
+        headers: { "content-type": view.mime, "content-length": String(view.size), "x-content-type-options": "nosniff", "cache-control": "no-store" },
+      });
+    } catch (e) {
+      if (e instanceof AttachmentError) return c.json({ error: e.message }, e.status as 404 | 410);
+      throw e;
+    }
+  });
 
   app.post("/threads", async (c) => {
     const { taskId, workspaceId } = c.get("auth");

@@ -113,7 +113,7 @@ export async function getLastAgentMessage(db: Db, workspaceId: string, threadId:
   );
   if (!rows[0]) return null;
   const r = rows[0];
-  return { id:r.id, workspaceId:r.workspace_id, role:r.role, content:r.content, meta:r.meta, taskId:r.task_id, createdAt:new Date(r.created_at).toISOString(), editedAt:r.edited_at ? new Date(r.edited_at).toISOString() : null, threadId:r.thread_id, seq:Number(r.seq) };
+  return { id:r.id, workspaceId:r.workspace_id, role:r.role, content:r.content, meta:r.meta, taskId:r.task_id, createdAt:new Date(r.created_at).toISOString(), editedAt:r.edited_at ? new Date(r.edited_at).toISOString() : null, threadId:r.thread_id, seq:Number(r.seq), attachments:[] };
 }
 
 export async function getLastAskedQuestion(db: Db, workspaceId: string, threadId: string | null): Promise<{ id: string; title: string; body: string } | null> {

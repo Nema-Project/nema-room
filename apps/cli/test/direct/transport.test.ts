@@ -7,7 +7,9 @@ import {
   BYOK_PROFILE,
   ByokRejectedError,
   listModels,
+  MAX_DIRECT_REQUEST_BYTES,
   ModelApiError,
+  REQUEST_TOO_LARGE_MESSAGE,
   ModelQuotaError,
   SIWC_PROFILE,
   streamResponse,
@@ -90,6 +92,34 @@ const textStream = (text: string) =>
   ]);
 
 describe("streamResponse request", () => {
+  test("the request cap is 48 MB", () => {
+    expect(MAX_DIRECT_REQUEST_BYTES).toBe(48 * 1024 * 1024);
+  });
+
+  test("a body over the cap is never sent and fails with a fixed message", async () => {
+    server.responses(textStream("hello"));
+    const big = req({ input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "x".repeat(2000) }] }] });
+    await expect(streamResponse(big, { ...ctx(), maxRequestBytes: 1000 })).rejects.toThrow(new Error(REQUEST_TOO_LARGE_MESSAGE));
+    expect(REQUEST_TOO_LARGE_MESSAGE).toBe("这次任务的附件和对话合计超过模型一次请求的上限，请减少附件或不引用那条消息");
+    expect(server.requests).toEqual([]);
+  });
+
+  test("the cap counts UTF-8 bytes, not characters", async () => {
+    server.responses(textStream("hello"));
+    const size = Buffer.byteLength(JSON.stringify({ x: "汉".repeat(400) }));
+    const wide = req({ input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "汉".repeat(400) }] }] });
+    // 400 characters, ~1200 bytes: a character count would pass a 1000-byte cap.
+    expect(size).toBeGreaterThan(1000);
+    await expect(streamResponse(wide, { ...ctx(), maxRequestBytes: 1000 })).rejects.toThrow(new Error(REQUEST_TOO_LARGE_MESSAGE));
+    expect(server.requests).toEqual([]);
+  });
+
+  test("a body under the cap is sent", async () => {
+    server.responses(textStream("hello"));
+    await streamResponse(req(), { ...ctx(), maxRequestBytes: 100_000 });
+    expect(server.requests).toHaveLength(1);
+  });
+
   test("sends identifying headers and the exact body", async () => {
     server.responses(textStream("hello"));
     await streamResponse(req(), ctx());

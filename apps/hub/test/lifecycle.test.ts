@@ -181,3 +181,29 @@ test("close waits for asynchronous cancellation of a response returned after shu
   }
   expect(await db.query("select 1 as alive")).toEqual([{ alive: 1 }]);
 });
+
+test("startup sweeps attachment leftovers before serving and passes the quota to the upload route", async () => {
+  const { root, db } = await fixture();
+  const dataDir = path.join(root, "data");
+  const ws = (await createWorkspace(db, dataDir, "A")).id;
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  const { existsSync } = await import("node:fs");
+  await mkdir(path.join(dataDir, "attachments", ".staging"), { recursive: true });
+  await writeFile(path.join(dataDir, "attachments", ".staging", "left"), "x");
+  await mkdir(path.join(dataDir, "attachments", ws), { recursive: true });
+  await writeFile(path.join(dataDir, "attachments", ws, "att_orphan0000000000"), "x");
+  const { startHub } = await import("../src/lifecycle.js");
+  const hub = await startHub({ db, dataDir, nemaHome: path.join(root, "home"), daemonToken: "test-token", port: 0, webOrigin: "http://localhost:3000", attachmentsMaxBytes: 10 });
+  running.push(hub);
+  expect(existsSync(path.join(dataDir, "attachments", ".staging", "left"))).toBe(false);
+  expect(existsSync(path.join(dataDir, "attachments", ws, "att_orphan0000000000"))).toBe(false);
+  const port = new URL(hub.url).port;
+  const png = new Uint8Array(100).fill(1);
+  png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const res = await fetch(`${hub.url}/api/workspaces/${ws}/attachments`, {
+    method: "POST",
+    headers: { host: `127.0.0.1:${port}`, "content-type": "application/octet-stream", "x-nema-filename": "a.png", "x-nema-upload-key": "00000000-0000-4000-8000-000000000001" },
+    body: png,
+  });
+  expect(res.status).toBe(507);
+});

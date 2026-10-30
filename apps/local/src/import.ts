@@ -1,12 +1,12 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { constants as fsConstants, existsSync } from "node:fs";
+import { lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import { createLocalDb } from "@nema/hub/db/local";
 import { acquireInstance } from "./instance.js";
-import { readSnapshot, TABLE_COLUMNS, TABLE_ORDER, type Snapshot } from "./migration.js";
+import { attachmentHasFile, readSnapshot, sha256, TABLE_COLUMNS, TABLE_ORDER, type Snapshot } from "./migration.js";
 import { resolveHome, type HomePaths } from "./paths.js";
 
 const execFileAsync = promisify(execFile);
@@ -80,6 +80,26 @@ async function restoreKnowledge(gitPath: string, bundle: string, destination: st
 }
 
 type Column = { table_name: string; column_name: string; data_type: string; udt_name: string };
+
+/**
+ * Copy attachment files into data/attachments/<workspace>/<id>, where the hub reads them. readSnapshot verified them,
+ * but the bytes are checked again as they are copied so a file swapped in between is never imported.
+ */
+async function restoreAttachments(source: string, destination: string, snapshot: Snapshot): Promise<void> {
+  for (const row of snapshot.tableData.message_attachments ?? []) {
+    if (!attachmentHasFile(row)) continue;
+    const dir = join(destination, String(row.workspace_id));
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const fh = await open(join(source, String(row.workspace_id), String(row.id)), fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    let bytes: Buffer;
+    try {
+      if (!(await fh.stat()).isFile()) throw new Error("Attachment path is unsafe");
+      bytes = await fh.readFile();
+    } finally { await fh.close(); }
+    if (bytes.length !== row.size || sha256(bytes) !== row.sha256) throw new Error("Attachment hash mismatch");
+    await writeFile(join(dir, String(row.id)), bytes, { flag: "wx", mode: 0o600 });
+  }
+}
 
 async function loadDatabase(dbDir: string, snapshot: Snapshot): Promise<void> {
   const db = await createLocalDb(dbDir);
@@ -207,6 +227,7 @@ export async function importLegacySnapshot(sourceDir: string, destinationHome: s
       await restoreKnowledge(gitPath, join(sourceDir, "knowledge", basename(item.bundle)), join(knowledgeDir, item.workspaceId), emptyHome, item);
     }
     await rm(emptyHome, { recursive: true, force: true });
+    await restoreAttachments(join(sourceDir, "attachments"), join(staging, "data", "attachments"), snapshot);
     await loadDatabase(join(staging, "db"), snapshot);
 
     await options.hooks?.beforeActivate?.();

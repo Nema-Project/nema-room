@@ -226,7 +226,7 @@ test("reconcile marks missing or mismatched mcp.json damaged, restores a matchin
   secrets.set("orphan", "API_TOKEN", MARK);
   secrets.set("fine", "API_TOKEN", MARK);
 
-  expect(configs.reconcile()).toEqual({ damaged: ["edited", "gone"], removedSecrets: ["orphan"] });
+  expect(configs.reconcile()).toEqual({ damaged: ["edited", "gone"], removedSecrets: ["orphan"], clearedSlots: [] });
   expect(record("gone")?.availability).toBe("damaged");
   expect(record("edited")?.availability).toBe("damaged");
   expect(record("fine")?.availability).toBe("ready");
@@ -235,6 +235,17 @@ test("reconcile marks missing or mismatched mcp.json damaged, restores a matchin
 
   // Saving again repairs a damaged record.
   expect(configs.save("gone", "Gone", stdio()).availability).toBe("ready");
-  expect(configs.reconcile()).toEqual({ damaged: ["edited"], removedSecrets: [] });
+  expect(configs.reconcile()).toEqual({ damaged: ["edited"], removedSecrets: [], clearedSlots: [] });
   expect(everythingButSecrets()).not.toContain(MARK);
+});
+
+test("reconcile clears a stored credential the saved config no longer names", () => {
+  const configs = open();
+  configs.save("search", "Search", stdio());
+  configs.setSecret("search", "API_TOKEN", MARK);
+  // A save cut off after writing the new config but before pruning leaves this behind.
+  openMcpSecretStore(home).set("search", "OLD_TOKEN", MARK);
+  const result = open().reconcile();
+  expect(result.clearedSlots).toEqual(["search/OLD_TOKEN"]);
+  expect(openMcpSecretStore(home).names("search")).toEqual(["API_TOKEN"]);
 });
