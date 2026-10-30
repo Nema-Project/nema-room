@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 // Hooks and reports from coding agents: `nema report hook` and `nema report` post here with the report token.
 import { createHash } from "node:crypto";
 import { Hono, type Context } from "hono";
@@ -159,10 +160,13 @@ export async function recheckReports(deps: ReportDeps, repoId: string): Promise<
     // and a failure here should leave an extra mark rather than a lost one.
     await noteLinkedCheckChanged(db, deps.dataDir, repo.workspaceId, row.id, previous, check, row.meta.report.commits);
     const updated = await mergeReportMeta(db, row.id, { check, checkError: null, checkSkipped: null });
-    if (updated) events.emit(repo.workspaceId, { type: "message.updated", message: updated });
+    if (!updated) continue;
+    events.emit(repo.workspaceId, { type: "message.updated", message: updated });
+    // A newer check stored meanwhile wins the merge; act only on the check that is actually stored.
+    if (!isDeepStrictEqual((updated.meta as ReportMessageMeta | null)?.check, check)) continue;
     // An in-progress report only keeps its new check, even once it is on main.
     if (row.meta.report.progress === "in_progress") continue;
-    if (updated && deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);
+    if (deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);
     if (reportPassed(check)) await queueSystemTask(db, events, repo.workspaceId, commitsCheckedTask(row.id));
   }
 }
