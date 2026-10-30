@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { PLUGINS, type ExtensionRecord, type SkillInstallJob } from "@nema/shared";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { PLUGINS, type ExtensionKind, type ExtensionRecord, type SkillInstallJob } from "@nema/shared";
 import {
   cancelExtensionInstall,
   getExtensionInstall,
@@ -29,6 +29,20 @@ function chipTone(kind: "provision" | "install" | "use", extension: ExtensionRec
   return "";
 }
 
+const TYPES = ["all", "skill", "mcp", "plugin"] as const;
+type TypeFilter = (typeof TYPES)[number];
+
+/** View state only: the filter and the search never send a request. */
+function matches(extension: ExtensionRecord, type: TypeFilter, query: string): boolean {
+  if (type !== "all" && extension.kind !== (type as ExtensionKind)) return false;
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  // The repository counts as the source too: a cancelled install's record still names where it came from.
+  return [extension.name, extension.summary, extension.source, extension.id, extension.provenance?.repository ?? ""].some((field) =>
+    field.toLowerCase().includes(needle),
+  );
+}
+
 export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onClose?: () => void; embedded?: boolean; pollMs?: number }) {
   const t = useT();
   const [jobs, setJobs] = useState<Record<string, TrackedJob>>({});
@@ -44,6 +58,9 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
     };
   }, []);
   const [extensions, setExtensions] = useState<ExtensionRecord[] | null>(null);
+  const ids = useId();
+  const [type, setType] = useState<TypeFilter>("all");
+  const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   // One pending request per extension, not one for the whole page: turning GitHub off must not grey
   // out graphify's button.
@@ -271,27 +288,18 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
     // `track` only changes with `pollMs`, which a page never changes after it mounts.
   }, [track]);
 
-  return (
-    <div className={embedded ? "plugins-page embedded" : "plugins-page"} role="region" aria-label={t("plugins.title")}>
-      <div className="bar">
-        <h1>{t("plugins.title")}</h1>
-        {onClose && (
-          <button type="button" className="sp link" onClick={onClose}>
-            {t("common.close")}
-          </button>
-        )}
-      </div>
-      <div className="drawer-body">
-        {error && <p className="error">{error}</p>}
-        {actionError && <p className="error">{actionError}</p>}
-        <SkillInstallPanel onInstall={install} busy={(id) => busy.has(id)} status={(id) => jobLine(id, "panel")} />
-        {extensions === null && !error && <p className="kmeta">{t("common.loading")}</p>}
-        {extensions?.map((extension) => {
+  // Present records are "installed" (a failed install stays here with its reason and Retry); a record
+  // whose install was cancelled has nothing on disk, so it belongs with what can be installed.
+  const shown = (extensions ?? []).filter((extension) => matches(extension, type, query));
+  const installed = shown.filter((extension) => extension.installState !== "absent");
+  const discoverable = shown.filter((extension) => extension.installState === "absent");
+
+  const renderRow = (extension: ExtensionRecord) => {
           const plugin = PLUGINS.find((item) => item.id === extension.id);
           return (
             <section key={extension.id} className="plugin-block">
               <div className="plugin-facts">
-                <h2>{extension.name}</h2>
+                <h3>{extension.name}</h3>
                 <p className="plugin-status">
                   <span className={["chip", chipTone("provision", extension)].filter(Boolean).join(" ")}>{t(`extensions.provision.${extension.provision}`)}</span>
                   <span className={["chip", chipTone("install", extension)].filter(Boolean).join(" ")}>{t(`extensions.install.${extension.installState}`)}</span>
@@ -345,7 +353,49 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
               )}
             </section>
           );
-        })}
+  };
+
+  return (
+    <div className={embedded ? "plugins-page embedded" : "plugins-page"} role="region" aria-label={t("plugins.title")}>
+      <div className="bar">
+        <h1>{t("plugins.title")}</h1>
+        {onClose && (
+          <button type="button" className="sp link" onClick={onClose}>
+            {t("common.close")}
+          </button>
+        )}
+      </div>
+      <div className="drawer-body">
+        {error && <p className="error">{error}</p>}
+        {actionError && <p className="error">{actionError}</p>}
+        <div className="extension-filters">
+          <fieldset role="radiogroup" aria-label={t("extensions.filter.type")}>
+            {TYPES.map((value) => (
+              <label key={value}>
+                <input type="radio" name={`${ids}-type`} value={value} checked={type === value} onChange={() => setType(value)} />
+                {t(`extensions.filter.${value}`)}
+              </label>
+            ))}
+          </fieldset>
+          <input
+            type="search"
+            aria-label={t("extensions.search.label")}
+            placeholder={t("extensions.search.placeholder")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <section className="extension-section" aria-labelledby={`${ids}-installed`}>
+          <h2 id={`${ids}-installed`}>{t("extensions.section.installed")}</h2>
+          {extensions === null && !error && <p className="kmeta">{t("common.loading")}</p>}
+          {installed.map(renderRow)}
+          {extensions !== null && installed.length === 0 && <p className="kmeta">{t("extensions.search.empty")}</p>}
+        </section>
+        <section className="extension-section" aria-labelledby={`${ids}-discover`}>
+          <h2 id={`${ids}-discover`}>{t("extensions.section.discover")}</h2>
+          <SkillInstallPanel onInstall={install} busy={(id) => busy.has(id)} status={(id) => jobLine(id, "panel")} />
+          {discoverable.map(renderRow)}
+        </section>
       </div>
     </div>
   );
