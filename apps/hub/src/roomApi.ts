@@ -12,6 +12,7 @@ import { indexEntry } from "./entryIndex.js";
 import { checkGithubCall, githubTargets } from "./githubScope.js";
 import { daemonHttpStatus, disabledExtensionIds, enabledPluginTools, recordPluginCall, withoutDisabledExtensions } from "./plugins.js";
 import { findRepoForWorkspace, listRepos } from "./repos.js";
+import { offerSkillInstall } from "./skillOffers.js";
 import { getTask, recordTaskChange, resolveRunToken } from "./tasks.js";
 import { conversationOf, ensureThread, renameThread } from "./threads.js";
 import { repoPath } from "./workspaces.js";
@@ -190,6 +191,20 @@ export function roomRoutes(deps: {
     await retryBlockedPackages(db, dataDir, events, workspaceId, entry, "agent", deps.ownedHelpers);
     const body: UpsertEntryResponse = { entry, commit };
     return c.json(body);
+  });
+
+  // The agent's only way into extension management: propose one previewed skill. Installing it is the
+  // user's click on the card under the reply, which goes to the same install service as the page.
+  app.post("/extensions/offer", async (c) => {
+    const { taskId, workspaceId } = c.get("auth");
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ error: "request body must be valid JSON" }, 400);
+    }
+    const outcome = await offerSkillInstall(db, daemon, taskId, workspaceId, raw);
+    return c.json(outcome.body, outcome.status);
   });
 
   // A daemon that cannot say which extensions are off has no tool list to offer, and that is a

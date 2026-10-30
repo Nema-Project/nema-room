@@ -40,6 +40,11 @@ export class RoomClient {
     return this.call("POST", "/threads", args);
   }
 
+  /** Pin a skill source and offer one of its skills to the user; the hub installs nothing. */
+  offerSkillInstall(args: unknown): Promise<RoomResult> {
+    return this.call("POST", "/extensions/offer", args);
+  }
+
   listPluginTools(): Promise<RoomResult> {
     return this.call("GET", "/plugins");
   }

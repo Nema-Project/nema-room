@@ -28,6 +28,24 @@ export const UserMessageMeta = z.object({
 });
 export type UserMessageMeta = z.infer<typeof UserMessageMeta>;
 
+/**
+ * A skill the agent offered to install from chat. It is the preview the daemon pinned, nothing more:
+ * the agent cannot install it. The user installs it by pressing Install on the card under the reply,
+ * which sends exactly this source, commit and folder through the same install service as the page.
+ */
+export const SkillInstallOffer = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  source: z.string(),
+  repository: z.string(),
+  commit: z.string().regex(/^[0-9a-f]{40}$/),
+  path: z.string(),
+  license: z.string().nullable(),
+  target: z.string(),
+});
+export type SkillInstallOffer = z.infer<typeof SkillInstallOffer>;
+
 export const AgentMessageMeta = z.object({
   changes: z.array(
     z.object({
@@ -39,6 +57,8 @@ export const AgentMessageMeta = z.object({
   ),
   askedQuestion: z.object({ id: z.string(), title: z.string(), body: z.string() }).nullable(),
   quote: MessageQuote.optional(),
+  /** Skills the agent offered to install in this reply; each waits for the user's own click. */
+  skillOffers: z.array(SkillInstallOffer).optional(),
 });
 export type AgentMessageMeta = z.infer<typeof AgentMessageMeta>;
 

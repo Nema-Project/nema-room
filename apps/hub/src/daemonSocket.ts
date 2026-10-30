@@ -20,6 +20,7 @@ import { claimNextTask, finishTask, getTask, interruptRunning, listTaskChanges, 
 import { getWorkspace, listWorkspaces, repoPath } from "./workspaces.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { versionSkewMessage } from "./hubVersion.js";
+import { clearSkillOffers, listSkillOffers } from "./skillOffers.js";
 
 export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daemonToken: string; hubUrl: string; ownedHelpers?: OwnedHelperScope; releaseVersion?: string };
 
@@ -100,6 +101,12 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   ): Promise<Message | null> {
     return db.tx(async (t) => {
       if (!(await finishTask(t, routing.task.id, result, expectedRunToken))) return null;
+      // Read under the task row lock finishTask now holds: an offer still being written either
+      // committed first and is read here, or waits and then sees the task finished and is refused.
+      // A failed task's offers are not shown at all.
+      const offers = await listSkillOffers(t, routing.task.id);
+      if (meta && offers.length > 0) meta = { ...meta, skillOffers: offers };
+      await clearSkillOffers(t, routing.task.id);
       if (routing.createThread && routing.askedQuestion) {
         await ensureThread(t, routing.taskMessage.id, routing.askedQuestion.title, "grill");
       }

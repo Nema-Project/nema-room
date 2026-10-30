@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Markdown } from "@/components/Markdown";
+import { SkillOfferCard } from "@/components/SkillOfferCard";
 import { editMessage, getEntry, HubError, listMessageVersions, withdrawEntry } from "@/lib/hub";
 import { formatTime } from "@/lib/format";
 import { useLocale, useT } from "@/lib/i18n";
@@ -92,6 +93,7 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
         {meta?.changes.filter((c) => c.kind === "workpackage").slice(0, 1).map((c) => (
           <WorkPackageCard key={c.entryId} workspaceId={message.workspaceId} entryId={c.entryId} onOpenEntry={onOpenEntry} />
         ))}
+        {meta?.skillOffers?.map((offer) => <SkillOfferCard key={offer.id} offer={offer} />)}
         {meta && (meta.askedQuestion || meta.changes.some((c) => c.kind === "question" && c.op === "add")) && (
           <AskedQuestion workspaceId={message.workspaceId} asked={meta.askedQuestion} added={meta.changes.filter((c) => c.kind === "question" && c.op === "add").map((c) => ({ id: c.entryId, title: c.title }))} />
         )}

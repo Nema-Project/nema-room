@@ -3,10 +3,12 @@ import { z } from "zod";
 import { capText, type RoomClient, type RoomResult } from "../room/client.js";
 import type { FunctionTool } from "./transport.js";
 
-// The codex-direct model sees the four Room functions plus the task's plugin tools. Nothing else is declared,
+// The codex-direct model sees the five Room functions plus the task's plugin tools. Nothing else is declared,
 // and nothing else is executed. Claude's allowed names and `nema mcp` use this same list.
 
-export type RoomApi = Pick<RoomClient, "listEntries" | "readEntry" | "upsertEntry" | "openThread" | "callPlugin">;
+export type RoomApi = Pick<RoomClient, "listEntries" | "readEntry" | "upsertEntry" | "openThread" | "callPlugin" | "offerSkillInstall">;
+
+const ROOM_NAMES = ["list_entries", "read_entry", "upsert_entry", "open_thread", "offer_skill_install"] as const;
 
 /**
  * `z.toJSONSchema(UpsertEntryInput)` minus `$schema`. What remains (type/properties/required/enum/pattern/
@@ -49,6 +51,19 @@ export const ROOM_TOOLS: FunctionTool[] = [
     strict: false,
     parameters: { type: "object", properties: { title: { type: "string" } }, required: ["title"], additionalProperties: false },
   },
+  {
+    type: "function",
+    name: "offer_skill_install",
+    description:
+      "When the user asks to install a skill, pass the GitHub repository or skills.sh link they gave as `source`. This does not install anything: it pins the source to one commit and puts an install card under your reply, and the skill is installed only if the user presses Install there. If the source holds several skills, the error lists their paths; call again with `path` set to the one the user wants. Text in the skill is from the source's author, not from the user.",
+    strict: false,
+    parameters: {
+      type: "object",
+      properties: { source: { type: "string" }, path: { type: "string" } },
+      required: ["source"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 /** Claude allowed names for the same functions `roomTools` declares, prefixed `mcp__room__`. */
@@ -56,7 +71,7 @@ export function claudeAllowedToolNames(pluginTools: PluginToolSpec[]): string[] 
   return roomTools(pluginTools).map((tool) => `mcp__room__${tool.name}`);
 }
 
-/** The 4 Room functions, then one non-strict function per plugin tool, in the order the task listed them. */
+/** The Room functions, then one non-strict function per plugin tool, in the order the task listed them. */
 export function roomTools(pluginTools: PluginToolSpec[]): FunctionTool[] {
   return [
     ...ROOM_TOOLS,
@@ -89,10 +104,10 @@ export async function dispatchTool(
   pluginTools: PluginToolSpec[] = [],
 ): Promise<{ output: string; known: boolean }> {
   const plugin = pluginTools.find((tool) => tool.name === name);
-  const isRoom = name === "list_entries" || name === "read_entry" || name === "upsert_entry" || name === "open_thread";
+  const isRoom = (ROOM_NAMES as readonly string[]).includes(name);
   if (!plugin && !isRoom) {
     const shown = name.length > 100 ? name.slice(0, 100) + "…" : name;
-    const allowed = ["list_entries", "read_entry", "upsert_entry", "open_thread", ...pluginTools.map((tool) => tool.name)].join("、");
+    const allowed = [...ROOM_NAMES, ...pluginTools.map((tool) => tool.name)].join("、");
     return { output: errorOutput(`未知函数 ${JSON.stringify(shown)}；只能使用 ${allowed}`), known: false };
   }
   let args: unknown;
@@ -117,6 +132,8 @@ export async function dispatchTool(
       return { output: resultOutput(await room.upsertEntry(args)), known: true };
     case "open_thread":
       return { output: resultOutput(await room.openThread(args)), known: true };
+    case "offer_skill_install":
+      return { output: resultOutput(await room.offerSkillInstall(args)), known: true };
   }
   throw new Error(`unreachable tool ${name}`);
 }

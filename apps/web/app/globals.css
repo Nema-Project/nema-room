@@ -457,6 +457,14 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .code-section .path-pick .repo-path { min-width: 0; overflow-wrap: anywhere; }
 .tag.red { color: var(--accent); border-color: var(--accent); }
 
+.skill-offer { margin-top: 10px; border: 1px solid var(--rule); padding: 8px 12px; }
+.skill-offer h4 { font-size: 14px; font-weight: 600; color: var(--ink); margin: 0 0 4px; }
+.skill-offer p { margin: 2px 0; }
+.skill-offer .kmeta { overflow-wrap: anywhere; }
+.skill-offer .note { color: var(--ink-2); font-size: 12px; }
+.skill-offer .actions { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-top: 6px; }
+.skill-offer .actions button { border: 1px solid var(--ink); padding: 4px 12px; font-weight: 600; }
+.skill-offer .actions .primary { background: var(--ink); color: var(--on-ink); }
 .wpcard { margin-top: 10px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; border: 1px solid var(--rule); padding: 6px 10px; }
 .wp-tasks { list-style: none; margin: 0; padding: 0; }
 .wp-tasks li { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 6px 0; border-bottom: 1px solid var(--rule); }

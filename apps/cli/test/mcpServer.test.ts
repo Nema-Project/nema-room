@@ -44,7 +44,7 @@ describe("room mcp server", () => {
   test("exposes open_thread with the Room tools", async () => {
     const c = await connect();
     const names = (await c.listTools()).tools.map((t) => t.name).sort();
-    expect(names).toEqual(["list_entries", "open_thread", "read_entry", "upsert_entry"]);
+    expect(names).toEqual(["list_entries", "offer_skill_install", "open_thread", "read_entry", "upsert_entry"]);
   });
   test("upsert_entry parameters list basis as required", async () => {
     const c = await connect();
@@ -58,13 +58,16 @@ describe("room mcp server", () => {
     await c.callTool({ name: "read_entry", arguments: { id: "R-1" } });
     await c.callTool({ name: "upsert_entry", arguments: { kind: "requirement", title: "t", body: "b", reason: "r", sourceMessages: ["m1"] } });
     await c.callTool({ name: "open_thread", arguments: { title: "A longer topic" } });
+    await c.callTool({ name: "offer_skill_install", arguments: { source: "acme/skills" } });
     expect(seen.map((s) => `${s.method} ${s.url}`)).toEqual([
       "GET /room/plugins",
       "GET /room/entries",
       "GET /room/entries/R-1",
       "POST /room/entries",
       "POST /room/threads",
+      "POST /room/extensions/offer",
     ]);
+    expect(JSON.parse(seen[5]!.body)).toEqual({ source: "acme/skills" });
     expect(seen.every((s) => s.auth === "Bearer tok123")).toBe(true);
     expect(JSON.parse(seen[3]!.body)).toMatchObject({ kind: "requirement", title: "t" });
     expect(JSON.parse(seen[4]!.body)).toEqual({ title: "A longer topic" });
@@ -84,7 +87,7 @@ describe("room mcp server", () => {
     ];
     const c = await connect();
     const listed = await c.listTools();
-    expect(listed.tools.map((t) => t.name).sort()).toEqual(["code__read", "list_entries", "open_thread", "read_entry", "upsert_entry"]);
+    expect(listed.tools.map((t) => t.name).sort()).toEqual(["code__read", "list_entries", "offer_skill_install", "open_thread", "read_entry", "upsert_entry"]);
     expect(listed.tools.find((t) => t.name === "code__read")?.inputSchema).toMatchObject({
       type: "object",
       required: ["repo", "path"],
@@ -105,7 +108,7 @@ describe("room mcp server", () => {
     });
     try {
       const c = await connect();
-      expect((await c.listTools()).tools.map((t) => t.name).sort()).toEqual(["list_entries", "open_thread", "read_entry", "upsert_entry"]);
+      expect((await c.listTools()).tools.map((t) => t.name).sort()).toEqual(["list_entries", "offer_skill_install", "open_thread", "read_entry", "upsert_entry"]);
       expect(errors.length).toBeGreaterThan(0);
     } finally {
       spy.mockRestore();

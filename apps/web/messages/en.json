@@ -400,5 +400,7 @@
   "extensions.problem.invalid-id": "Its name cannot be turned into an extension id.",
   "extensions.problem.bundled-id": "Its name is taken by a built-in extension.",
   "extensions.problem.duplicate-id": "Another skill in this source has the same id.",
-  "extensions.problem.too-large": "SKILL.md is larger than 256 KiB."
+  "extensions.problem.too-large": "SKILL.md is larger than 256 KiB.",
+  "chat.skillOffer.title": "Install {name}?",
+  "chat.skillOffer.note": "Nothing is installed until you press Install."
 }

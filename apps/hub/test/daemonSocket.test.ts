@@ -311,6 +311,41 @@ describe("daemon socket", () => {
     expect(b).toMatchObject({ workspaceId: wsB, adapter: "auto", confidential: true });
   });
 
+  test("a reply carries the skills its task offered, and the offers are cleared once it is saved", async () => {
+    const m = await postUserMessage(db, wsA, "install the pdf skill");
+    const c = await connect();
+    expect((await c.next()).type).toBe("welcome");
+    const a = await c.next("task.assign");
+    const offer = {
+      id: "pdf",
+      name: "pdf",
+      description: "Read PDFs",
+      source: "acme/skills",
+      repository: "https://github.com/acme/skills",
+      commit: "b".repeat(40),
+      path: "skills/pdf",
+      license: null,
+      target: "/x/extensions/pdf",
+    };
+    await db.query(`insert into task_skill_offers (task_id, skill_id, offer) values ($1, $2, $3::jsonb)`, [a.taskId, "pdf", JSON.stringify(offer)]);
+    c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "here is the skill" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    const agent = (await listMessages(db, wsA)).find((row): row is AgentMessage => row.role === "agent")!;
+    expect(agent.meta?.skillOffers).toEqual([offer]);
+    expect(await db.query(`select 1 from task_skill_offers where task_id = $1`, [a.taskId])).toEqual([]);
+  });
+
+  test("a reply without offers has no skillOffers field", async () => {
+    const m = await postUserMessage(db, wsA, "hello");
+    const c = await connect();
+    expect((await c.next()).type).toBe("welcome");
+    const a = await c.next("task.assign");
+    c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "hi" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    const agent = (await listMessages(db, wsA)).find((row): row is AgentMessage => row.role === "agent")!;
+    expect(agent.meta && "skillOffers" in agent.meta).toBe(false);
+  });
+
   test("dispatches, stores agent reply with meta, completes, dispatches next", async () => {
     await updateWorkspace(db, wsA, { confidential: false });
     const m1 = await postUserMessage(db, wsA, "first");
