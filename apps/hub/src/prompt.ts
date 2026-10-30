@@ -2,6 +2,7 @@ import { DEFAULT_GRILL_SETTINGS, type AttachmentView, type Entry, type EntrySumm
 import type { GrillState } from "./plugins.js";
 import type { Message } from "./messages.js";
 import type { TaskChange } from "./tasks.js";
+import { mentionSection, type ResolvedMentions } from "./mentions.js";
 import type { Workspace } from "./workspaces.js";
 
 const LANG_NAME = { ja: "日本語", en: "English", zh: "中文" } as const;
@@ -112,6 +113,8 @@ export function buildPrompt(input: {
   conversation?: ConversationPromptInput;
   /** Ids in this task's delivery set (task.assign.attachments). */
   deliveredAttachmentIds?: readonly string[];
+  /** What this message mentions with `@`, already read: entries, their files and topics (spec §3). */
+  mentions?: ResolvedMentions;
 }): string {
   const { workspace, userMessage, entries, lastAskedQuestion } = input;
   const grill: GrillState = input.grill ?? { enabled: true, ...DEFAULT_GRILL_SETTINGS };
@@ -226,6 +229,10 @@ export function buildPrompt(input: {
   if (input.quotedMessage) {
     const q = input.quotedMessage;
     parts.push(`# 本次消息引用的消息\n[${q.id}] ${q.role}: ${q.content}${files(q)}\n本次用户消息是针对这条消息的补充、更正或确认。`);
+  }
+  if (input.mentions) {
+    const section = mentionSection({ ...input.mentions, delivered });
+    if (section !== "") parts.push(section);
   }
   if (report) parts.push(reportSection(userMessage));
   else {

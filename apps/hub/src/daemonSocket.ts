@@ -9,6 +9,7 @@ import type { EventBus } from "./events.js";
 import { chooseAskedQuestion, timeline } from "./entryIndex.js";
 import { addMessage, deliverySet, getLastAskedQuestion, getMessage, listMessageVersions, listPromptMessages, listRecentMessages, messageExcerpt, type Message } from "./messages.js";
 import { associateQuestion, conversationOf, ensureThread, getThread } from "./threads.js";
+import { resolveMentions } from "./mentions.js";
 import { retainedSkills } from "./skillActivations.js";
 import { announceInterrupted } from "./interrupts.js";
 import { enabledPluginTools, grillState } from "./plugins.js";
@@ -188,12 +189,17 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
           cited: await store.entriesCiting(userMessage.id),
         }
       : null;
-    const quoteId = userMessage.role === "user" ? (userMessage.meta as UserMessageMeta | null)?.quote?.messageId : undefined;
+    const userMeta = userMessage.role === "user" ? (userMessage.meta as UserMessageMeta | null) : null;
+    const quoteId = userMeta?.quote?.messageId;
     const quotedMessage = quoteId ? await getMessage(db, quoteId) : null;
     const conversationThread = conversationId ? await getThread(db, conversationId) : null;
     const conversationAnchor = conversationId ? await getMessage(db, conversationId) : null;
     // Every ref is checked against AttachmentRefSchema here as well as when it was read.
     const attachments = AttachmentRefSchema.array().parse(await deliverySet(db, task.id));
+    // Mentions are read now, latest entries and the files as they are: only the current message's own mentions.
+    const resolved = userMeta?.mentions?.length
+      ? await resolveMentions(db, dataDir, task.workspaceId, userMeta.mentions, { ...(deps.ownedHelpers ? { ownedHelpers: deps.ownedHelpers } : {}) })
+      : null;
     const prompt = await buildPrompt({
       workspace,
       userMessage,
@@ -207,6 +213,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       ...(edit ? { edit } : {}),
       ...(conversationThread && conversationAnchor ? { conversation: { thread: conversationThread, anchor: conversationAnchor, opened: conversationThread.openedBy } } : {}),
       deliveredAttachmentIds: attachments.map((a) => a.id),
+      ...(resolved ? { mentions: resolved } : {}),
     });
     // A thread's activated Skills come back on its next task; ids only, the daemon reads them again.
     const retained = conversationId ? await retainedSkills(db, conversationId) : [];
