@@ -274,6 +274,14 @@ test('a prerelease older than npm next is refused before it is published', async
   assert.match(text, /npm next is 0\.2\.0-rc\.2, newer than 0\.2\.0-rc\.1/);
 });
 
+test('an older stable whose publish moved npm latest backwards stops before GHCR', async () => {
+  // latest was 0.2.0 before the dispatch; a publisher that ignored maintenance leaves it on 0.1.7.
+  const { result, state, text } = await run({ npmLatest: v('0.2.0'), hub: vd('0.2.0', 'hub'), web: vd('0.2.0', 'web'), github: v('0.2.0'), latestAfterPublish: v('0.1.7') });
+  assert.equal(result.ok, false);
+  assert.deepEqual(state.writes, ['npm dispatch']);
+  assert.match(text, /npm latest moved backwards from 0\.2\.0 to 0\.1\.7/);
+});
+
 test('a failed preflight stops before npm', async () => {
   const { result, state } = await run({ fail: { 'verify-candidate': true } });
   assert.equal(result.ok, false);

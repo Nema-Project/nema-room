@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { verifyRemoteReleaseTag } from '../desktop/release-commit.mjs';
 import { npmPublishState, tarballIntegrity } from './npm-state.mjs';
-import { IMAGE_REPOSITORIES, REPOSITORY } from './registry-read.mjs';
+import { IMAGE_REPOSITORIES, REPOSITORY, readRelease } from './registry-read.mjs';
 import { parseVersion, pointerDecisions, readPointers, verifyRelease } from './verify-release.mjs';
 
 const exec = promisify(execFile);
@@ -118,6 +118,7 @@ export async function promote({ version, tag, commit, io, summary }) {
       if (decision === 'unknown') throw new PromoteStop(`${npmName} cannot be read before publishing`);
       // npm-publish sends an older stable to maintenance; an older prerelease has no such tag, so refuse it.
       if (prerelease && decision === 'keep') throw new PromoteStop(`npm next is ${pointers.npm.next.version}, newer than ${version}; publishing would move next backwards`);
+      const before = prerelease ? pointers.npm.next : pointers.npm.latest;
       await guardTag();
       const published = async () => (await io.npmState({ expectedIntegrity })) === 'same';
       const run = await write('npm publish run', async () => {
@@ -129,6 +130,10 @@ export async function promote({ version, tag, commit, io, summary }) {
       const after = await step('read npm dist-tags after publish', () => io.readPointers());
       const tagNow = prerelease ? after.npm.next : after.npm.latest;
       const by = run ? ` by run ${run.id ?? run}` : '';
+      if (decision === 'keep' && tagNow.state === 'version' && tagNow.version === version) {
+        // The pointer was newer before the dispatch: a publish that took it is a backwards move, not a promotion.
+        throw new PromoteStop(`${npmName} moved backwards from ${before.version} to ${version}; a maintainer restores it with npm dist-tag add @nema-project/nema@${before.version} ${prerelease ? 'next' : 'latest'}`);
+      }
       if (tagNow.state === 'version' && tagNow.version === version) {
         flipped.push(npmName);
         await record(`npm ${version}: published${by}; ${npmName} -> ${version}`);
@@ -325,9 +330,10 @@ export function realIo({ env = process.env, fetchImpl = globalThis.fetch, versio
       await run(crane, ['tag', `${image}@${digest}`, 'latest']);
     },
     async releaseState() {
-      const view = JSON.parse(await run(gh, ['release', 'view', tag, '-R', REPOSITORY, '--json', 'isDraft,isPrerelease,tagName']));
-      if (view.tagName !== tag) throw new Error(`release view answered ${view.tagName}`);
-      return { draft: view.isDraft, prerelease: view.isPrerelease };
+      // The same draft-aware reader verify-release uses: the by-tag endpoint never returns a draft.
+      const release = await readRelease(readIo, tag);
+      if (release.state !== 'ok') throw new Error(`release ${tag} is ${release.state}: ${release.detail}`);
+      return { draft: release.evidence.isDraft, prerelease: release.evidence.isPrerelease };
     },
     async publishRelease({ prerelease, makeLatest }) {
       // Set the prerelease flag from the tag both ways: a reused draft may carry a stale one.

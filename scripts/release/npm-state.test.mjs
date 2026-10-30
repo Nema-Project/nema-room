@@ -34,6 +34,15 @@ test('inputs are strict', async () => {
   }
 });
 
+test('only canonical base64 counts: unused padding bits set would never equal npm\'s own form', async () => {
+  // Same 64 bytes as EXPECTED, but the last base64 char before == carries non-zero unused bits.
+  const tail = EXPECTED.at(-3);
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const noncanonical = `${EXPECTED.slice(0, -3)}${alphabet[alphabet.indexOf(tail) + 1]}==`;
+  assert.deepEqual(Buffer.from(noncanonical.slice(7), 'base64'), Buffer.from(EXPECTED.slice(7), 'base64'));
+  await assert.rejects(npmPublishState({ version: '0.1.7', expectedIntegrity: noncanonical, fetchImpl: reply(404, {}) }), /sha512/);
+});
+
 test('tarballIntegrity matches the npm dist.integrity form', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'npm-state-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -48,6 +57,9 @@ test('CLI exit codes: 0 for absent and same, 3 for different, 2 for cannot tell'
   assert.equal(await main(['0.1.7', EXPECTED], { fetchImpl: reply(404, {}), stdout: out, stderr: sink() }), 0);
   assert.equal(out.text, 'absent\n');
   assert.equal(await main(['0.1.7', EXPECTED], { fetchImpl: reply(200, { version: '0.1.7', dist: { integrity: OTHER } }), stdout: sink(), stderr: sink() }), 3);
+  out = sink();
+  assert.equal(await main(['0.1.7', EXPECTED], { fetchImpl: reply(200, { version: '0.1.7', dist: { integrity: EXPECTED } }), stdout: out, stderr: sink() }), 0);
+  assert.equal(out.text, 'same\n');
   assert.equal(await main(['0.1.7', EXPECTED], { fetchImpl: reply(503, {}), stdout: sink(), stderr: sink() }), 2);
   assert.equal(await main(['0.1.7'], { stdout: sink(), stderr: sink() }), 2);
 });

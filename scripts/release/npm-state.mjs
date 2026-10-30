@@ -20,7 +20,9 @@ export async function tarballIntegrity(file) {
 /** `sha512-` plus the canonical base64 of exactly 64 bytes, as npm writes it. */
 export function isSha512Integrity(value) {
   if (typeof value !== 'string' || !/^sha512-[A-Za-z0-9+/]{86}==$/.test(value)) return false;
-  return Buffer.from(value.slice(7), 'base64').length === 64;
+  const bytes = Buffer.from(value.slice(7), 'base64');
+  // Re-encode: base64 with non-zero unused bits decodes to the same bytes but is not npm's string.
+  return bytes.length === 64 && bytes.toString('base64') === value.slice(7);
 }
 
 export async function npmPublishState({ version, expectedIntegrity, fetchImpl = globalThis.fetch }) {
