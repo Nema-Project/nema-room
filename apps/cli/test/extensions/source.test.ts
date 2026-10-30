@@ -21,6 +21,7 @@ function fakeGithub(routes: Record<string, Reply>): { fetch: SourceFetch; asked:
       headers: { get: (name: string) => reply.headers?.[name.toLowerCase()] ?? null },
       json: async () => reply.json,
       text: async () => reply.text ?? JSON.stringify(reply.json),
+      arrayBuffer: async () => new TextEncoder().encode(reply.text ?? JSON.stringify(reply.json)).buffer as ArrayBuffer,
     };
   };
   return { fetch, asked };

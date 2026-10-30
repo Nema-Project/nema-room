@@ -7,7 +7,14 @@ import { bundledExtensions, type ExtensionRecord, type SkillSource } from "@nema
 export type SourceFetch = (
   url: string,
   init: { headers: Record<string, string>; signal?: AbortSignal },
-) => Promise<{ ok: boolean; status: number; headers: { get(name: string): string | null }; json(): Promise<unknown>; text(): Promise<string> }>;
+) => Promise<{
+  ok: boolean;
+  status: number;
+  headers: { get(name: string): string | null };
+  json(): Promise<unknown>;
+  text(): Promise<string>;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}>;
 
 export type SkillProblem = "missing-frontmatter" | "invalid-id" | "bundled-id" | "duplicate-id" | "too-large";
 
@@ -40,7 +47,7 @@ export type SkillResolution = {
 };
 
 const API = "https://api.github.com";
-const RAW = "https://raw.githubusercontent.com";
+export const RAW = "https://raw.githubusercontent.com";
 const COMMIT = /^[0-9a-f]{40}$/;
 const ID = /^[a-z][a-z0-9-]{0,63}$/;
 /** Skills listed for a whole-repository preview. */
@@ -53,7 +60,7 @@ const BUNDLED_IDS = new Set(bundledExtensions().map((row) => row.id));
 
 const HEADERS = { Accept: "application/vnd.github+json", "User-Agent": "nema-extension-resolver", "X-GitHub-Api-Version": "2022-11-28" };
 
-type Options = { fetch: SourceFetch; signal?: AbortSignal };
+export type Options = { fetch: SourceFetch; signal?: AbortSignal };
 
 async function getJson(url: string, slug: string, o: Options, notFound: string): Promise<unknown> {
   const response = await o.fetch(url, { headers: HEADERS, signal: o.signal });
@@ -81,8 +88,28 @@ function scalar(value: string): string {
   return trimmed.replace(/(^|\s+)#.*$/, "").trim();
 }
 
-function encodePath(path: string): string {
+export function encodePath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
+}
+
+export type TreeEntry = { path: string; type: string; mode: string; sha: string; size: number | null };
+
+/** Every entry of a repository at one commit, as GitHub's recursive tree listing reports it. */
+export async function commitTree(owner: string, repo: string, commit: string, o: Options): Promise<{ entries: TreeEntry[]; truncated: boolean }> {
+  const slug = `${owner}/${repo}`;
+  const body = await getJson(`${API}/repos/${owner}/${repo}/git/trees/${commit}?recursive=1`, slug, o, `commit not found in ${slug}: ${commit}`);
+  const tree = field(body, "tree");
+  if (!Array.isArray(tree)) throw new Error(`GitHub returned no file list for ${slug} at ${commit}`);
+  const entries = tree
+    .filter((entry) => typeof field(entry, "path") === "string" && typeof field(entry, "type") === "string" && typeof field(entry, "sha") === "string")
+    .map((entry) => ({
+      path: field(entry, "path") as string,
+      type: field(entry, "type") as string,
+      mode: typeof field(entry, "mode") === "string" ? (field(entry, "mode") as string) : "",
+      sha: field(entry, "sha") as string,
+      size: typeof field(entry, "size") === "number" ? (field(entry, "size") as number) : null,
+    }));
+  return { entries, truncated: field(body, "truncated") === true };
 }
 
 /** `name` and `description` from a SKILL.md front matter; plain and folded/literal scalars only. */

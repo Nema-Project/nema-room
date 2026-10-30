@@ -230,3 +230,14 @@ test("a managed GitHub record's source link must name the same commit as its rev
   store.putManaged({ ...managed("skill"), source: `https://github.com/acme/skills/tree/${commit}`, revision: commit });
   expect(store.list().find((row) => row.id === "skill")?.revision).toBe(commit);
 });
+
+test("failing an interrupted install also removes a half-copied incoming folder", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  store.putManaged(managed("skill", "installing"));
+  mkdirSync(join(dir, "extensions", ".skill.incoming"));
+  writeFileSync(join(dir, "extensions", ".skill.incoming", "half.md"), "half");
+  store.failInstall("skill", "interrupted");
+  expect(existsSync(join(dir, "extensions", ".skill.incoming"))).toBe(false);
+  expect(store.list().find((row) => row.id === "skill")).toMatchObject({ installState: "failed", error: "interrupted" });
+});

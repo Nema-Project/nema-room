@@ -47,7 +47,7 @@ Agent 读到的代码片段会随请求发送给模型服务商（OpenAI / Anthr
 
 ### 解析 Skill 安装来源
 
-安装 Skill 的第一步是把贴进来的来源解析成一个固定提交，再列出那个提交里有哪些 Skill。这一步只预览，不写记录、不建目录；插件页的安装入口还没接上，现在只能通过 `POST /api/extensions/resolve`（请求体 `{ "source": "..." }`）调用。
+安装 Skill 的第一步是把贴进来的来源解析成一个固定提交，再列出那个提交里有哪些 Skill。这一步只预览，不写记录、不建目录，通过 `POST /api/extensions/resolve`（请求体 `{ "source": "..." }`）调用；真正安装见下一节。插件页的安装入口还没接上。
 
 | 写法 | 例子 | 解析结果 |
 | --- | --- | --- |
@@ -64,6 +64,27 @@ Agent 读到的代码片段会随请求发送给模型服务商（OpenAI / Anthr
 - **托管记录必须钉在提交上。** 来源是 GitHub 的托管扩展，`revision` 必须是 40 位提交，`source` 必须是指向同一个提交的 `tree` 链接；写成分支名、或两处提交对不上的记录会被拒绝。记录另带 `provenance`：仓库、提交、目录、`SKILL.md` 摘要和许可证。
 - **不支持的写法在 hub 就拒绝（`400`），不会发出任何网络请求。** 只接受 `https` 的 github.com 和 skills.sh 地址，带账号密码、端口、查询参数、`..` 或编码过的路径一律不认。GitHub 那边的问题（仓库不存在、分支不存在、触发频率限制、45 秒没有回应）由 daemon 报出，hub 返回 `502` 并保留原始消息；daemon 不在线是 `503`。
 - **目前不带 GitHub 登录。** 解析走 GitHub 的公开接口，只支持公开仓库，并受未登录的频率限制约束。
+
+### 安装 Skill
+
+预览之后，把预览里的来源、提交和 Skill 目录原样交回去安装：`POST /api/extensions/install`，请求体 `{ "source": "...", "commit": "<40 位提交>", "path": "skills/pdf" }`（仓库根目录的 Skill 用 `"."`）。daemon 按这个提交重新核对一遍，只装这一个目录，不会换成分支上更新的提交。
+
+| 接口 | 作用 |
+| --- | --- |
+| `POST /api/extensions/install` | 写入 `installing` 记录后立刻返回任务，下载在后台继续 |
+| `GET /api/extensions/:id/install` | 任务状态：`running` / `installed` / `failed` / `cancelled`，带已写入文件数 `done` / `total` 和失败原因 `error` |
+| `POST /api/extensions/:id/install/cancel` | 取消正在下载的安装，删掉已下载的部分，记录变为 `absent` |
+| `POST /api/extensions/:id/install/retry` | 按记录里保存的仓库、提交和目录重新安装，失败、取消、被中断的都能重试 |
+
+- **只下载所选目录，逐个校验。** 文件列表和每个文件都按固定提交读取；每个文件下载后算 Git blob SHA-1，跟提交里的记录对不上就整体失败。
+- **先检查再批量下载。** 核对提交时只读所选 `SKILL.md`（不超过 256 KiB，只解析 front matter）；其余文件下载前先按文件列表检查：目录里有符号链接、子模块、在某个平台上不安全的文件名（`\`、`:`、`*`、`?`、`"`、`<`、`>`、`|`、控制字符、`.`、`..`、Windows 设备名如 `CON`、`nul.txt`、`COM1`，以及以点或空格结尾的名字）、只差大小写的两个文件名、单个文件超过 5 MiB、超过 500 个文件或总量超过 20 MiB，都直接失败，其余文件一个都不下载。
+- **可执行位跟着 Git 走。** Git 里标为可执行（`100755`）的文件装好后仍可执行，其它文件不带可执行位。
+- **原子激活。** 文件先写进 `<nema home>/extensions/staging/<id>-*`，全部校验通过后才换进 `<nema home>/extensions/extensions/<id>`；失败或取消时删掉暂存和半成品目录，不留下装了一半的扩展。
+- **同一个扩展同一时间只装一次。** 从接受安装或重试的那一刻起，到清理完成为止（包括已经点了取消、还在收尾的时候），再装、重试或卸载都会被拒绝；已经装好的不会被重装覆盖，更新另做。
+- **启停选择不会被安装覆盖。** 安装过程中停用、或者对一个停用的失败安装点重试，装好后仍是停用。
+- **记录带来源信息。** 装好的托管记录 `revision` 是提交，`source` 是指向该提交的 `tree` 链接，`provenance` 存仓库、提交、目录、`SKILL.md` 摘要和许可证。
+- **daemon 重启后不会留着「安装中」。** 启动时清空暂存目录，把仍是 `installing` 的记录改成 `failed`（`interrupted: the daemon stopped before the install finished`）并删掉半成品（包括激活时复制了一半的 `.<id>.incoming`），之后可以直接重试。
+- 下载 10 分钟没完成按失败处理。请求格式不对（提交不是 40 位、目录缺失或不安全、来源不支持）在 hub 返回 `400`；GitHub 或 daemon 的拒绝返回 `502` 并保留原始消息，daemon 不在线是 `503`。
 
 
 ## Code diagrams
