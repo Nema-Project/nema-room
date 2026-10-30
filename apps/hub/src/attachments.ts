@@ -19,6 +19,21 @@ import type { Db } from "./db/db.js";
 // Bytes: <dataDir>/attachments/<workspaceId>/<id>, written through <dataDir>/attachments/.staging.
 // Metadata: message_attachments. The user's file name never takes part in a path.
 
+/**
+ * The delete was recorded (the tombstone is committed) but the file could not be removed. The hourly
+ * sweep removes files whose rows say they are gone, so the bytes are retried; callers still publish
+ * the tombstone, which is the attachment's state from now on.
+ */
+export class AttachmentCleanupError extends Error {
+  constructor(
+    readonly view: AttachmentView,
+    cause: unknown,
+  ) {
+    super("the attachment was deleted but its file could not be removed yet; it will be retried", { cause });
+    this.name = "AttachmentCleanupError";
+  }
+}
+
 export class AttachmentError extends Error {
   constructor(
     readonly status: 400 | 404 | 409 | 410 | 411 | 413 | 415 | 507,
@@ -485,7 +500,11 @@ export class AttachmentStore {
       const rows = await t.query<Row>(`update message_attachments set status = 'deleted', deleted_at = now() where id = $1 returning ${COLS}`, [id]);
       return toView(rows[0]!);
     });
-    await fs.rm(this.file(workspaceId, id), { force: true });
+    try {
+      await fs.rm(this.file(workspaceId, id), { force: true });
+    } catch (e) {
+      throw new AttachmentCleanupError(view, e);
+    }
     if (view.messageId === null) await this.db.query("delete from message_attachments where id = $1 and status = 'expired'", [id]);
     return view;
   }

@@ -4,7 +4,7 @@ import { chmod, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from "n
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { ATTACHMENT_LIMITS } from "@nema/shared";
-import { AttachmentError, AttachmentStore, toAttachmentRef, writeFully, type UploadInput } from "../src/attachments.js";
+import { AttachmentCleanupError, AttachmentError, AttachmentStore, toAttachmentRef, writeFully, type UploadInput } from "../src/attachments.js";
 import type { Db } from "../src/db/db.js";
 import { createWorkspace, deleteWorkspace, updateWorkspace } from "../src/workspaces.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
@@ -281,6 +281,23 @@ describe("open, bind, remove", () => {
     expect(await s.remove(ws, view.id)).toEqual(gone);
     expect(await status(s.remove("ws_other", view.id))).toBe(404);
     expect(await s.usedBytes()).toBe(0);
+  });
+
+  test("remove whose file removal fails reports the committed tombstone with the error", async () => {
+    const s = store();
+    const { view } = await s.upload(ws, input(png(10)));
+    const id = await message("m1");
+    await db.tx((t) => s.bind(t, ws, id, [view.id]));
+    const file = path.join(root(), ws, view.id);
+    await rm(file);
+    await mkdir(file);
+    await writeFile(path.join(file, "x"), "x");
+    const err = await s.remove(ws, view.id).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(AttachmentCleanupError);
+    expect((err as AttachmentCleanupError).view).toMatchObject({ id: view.id, status: "deleted", messageId: id });
+    expect((err as AttachmentCleanupError).view.deletedAt).not.toBeNull();
+    expect(await status(s.open(ws, view.id))).toBe(410);
+    await rm(file, { recursive: true, force: true });
   });
 
   test("removing a staged upload drops it entirely", async () => {
