@@ -116,7 +116,7 @@ issue 把「内联 base64」和「写进 agent 工作目录给路径」列成要
 
 - **类型判定看内容，不看扩展名**：图片和 PDF 按文件头判定（PNG `89 50 4E 47`、JPEG `FF D8 FF`、GIF `GIF87a` / `GIF89a`、WebP `RIFF....WEBP`、PDF `%PDF-`）。文本类要求整份能按 UTF-8 严格解码且不含 NUL。扩展名只用于显示；扩展名和判定结果冲突（例如 `.png` 里是 PDF）时拒收。浏览器给的 `Content-Type` 不作数。
 - **文件名**：只存显示用的名字，去掉路径部分和控制字符，限制长度（例如 200 个字符）。磁盘上的文件名由 hub 生成（附件 id 或内容摘要），用户给的名字永远不参与拼路径，所以不存在路径穿越。
-- **上传接口**：`POST /api/workspaces/:id/attachments`，请求体是原始字节，`Content-Type` 必须是 `application/octet-stream`。原始文件名放在请求头 `X-Nema-Filename` 里，按 UTF-8 做百分号编码；hub 解码后按下面「文件名」一条清洗，缺失或解码失败时返回 400。`application/octet-stream` 和自定义请求头都不属于 CORS 的「简单请求」，跨站页面发不出来，必须先过预检，效果和现有 `requireJson` 一样。`requireJson` 只为这一条路由放开这一种类型。仍然经过 `hostGuard`，桌面下仍然经过 `uiAuth`。hub 边读边计数，超过上限立即中止并返回 413，不先把整个请求读进内存。
+- **上传接口**：`POST /api/workspaces/:id/attachments`，请求体是原始字节，`Content-Type` 必须是 `application/octet-stream`。原始文件名放在请求头 `X-Nema-Filename` 里，按 UTF-8 做百分号编码；hub 解码后按下面「文件名」一条清洗，缺失或解码失败时返回 400。上传还必须带请求头 `X-Nema-Upload-Key`：前端为每个选中的文件生成一个随机 UUID，重试同一个文件时沿用。`message_attachments` 对 `(workspace_id, upload_key)` 建唯一索引。同一个 key 再次上传时，如果已有记录的 sha256 和大小与这次相同，就删掉这次写的临时文件，返回原记录（200），不新增记录、不重复占用全局上限；不同则返回 409。缺失或不是 UUID 时返回 400。`application/octet-stream` 和自定义请求头都不属于 CORS 的「简单请求」，跨站页面发不出来，必须先过预检，效果和现有 `requireJson` 一样。`requireJson` 只为这一条路由放开这一种类型。仍然经过 `hostGuard`，桌面下仍然经过 `uiAuth`。hub 边读边计数，超过上限立即中止并返回 413，不先把整个请求读进内存。
 - **竞态与持久化**：两个并发上传合计超过全局上限时只有一个成功；缺 `Content-Length` 返回 411；清理中断后重启会删掉残留文件；`attached` 但文件不在的记录在启动扫描后变成 `missing`；带附件的同一请求重试返回原消息而不是报错，而附件集合、引用或 thread 不同的重试返回 409，纯文字的重复发送仍新建消息；Direct 请求体超过 48 MB 时任务在发请求前失败；上传与删除 workspace 并发时不留文件；绑定与过期清理并发时只有一方成功；thread 回复的投递集合包含锚点附件；能力接口在 daemon 离线、返回形状不对时的响应；全局上限和磁盘剩余空间不足时返回 507。
 - **桌面网关**：已核对，`apps/local/src/gateway.ts` 对代理到 hub 的 POST / PUT / PATCH 也要求 `application/json`，否则直接 415。网关要为同一条上传路径（只此一条、只 POST）放行 `application/octet-stream`，其余不变：仍然先验会话 cookie，仍然转发网关凭据，仍然流式转发请求体，不在网关里缓存整份文件。网关也按单个文件上限计数，超过就中止并返回 413，免得超大请求先穿过网关。
 - **读取接口**：`GET /api/workspaces/:id/attachments/:aid/content`。附件必须属于路径里的 workspace，否则 404。响应头：判定出的类型（文本一律 `text/plain; charset=utf-8`）、`X-Content-Type-Options: nosniff`、`Content-Disposition: attachment`、`Content-Security-Policy: sandbox; default-src 'none'`、`Cross-Origin-Resource-Policy: same-origin`、`Cache-Control: private, no-cache`。前端用 `fetch` 取回再生成 `blob:` 地址显示，不直接把 hub 地址放进 `<img src>`，这样别的网站也不能把附件嵌进它的页面。
@@ -162,7 +162,7 @@ issue 把「内联 base64」和「写进 agent 工作目录给路径」列成要
 
 | 方案 | 做法 | 好处 | 代价与风险 |
 | --- | --- | --- | --- |
-| **A. hub 数据目录里的文件 + 数据库元数据（推荐）** | 字节写到 `<dataDir>/attachments/<workspaceId>/<附件id>`，原子写（临时文件加改名）。新表 `message_attachments` 存 id、workspace、消息、类型、名字、大小、sha256、状态、时间 | 数据库不变胖；桌面的 PGlite 和 Compose 的 PostgreSQL 都只多一张小表；`deleteWorkspace` 里多删一个目录即可；Compose 下文件落在宿主的 `~/.nema/data`，和知识仓库一起备份 | 数据库和文件要保持一致：删除时先删记录再删文件，启动时清理没有记录的孤儿文件；备份只备了 PostgreSQL 卷会丢附件 |
+| **A. hub 数据目录里的文件 + 数据库元数据（推荐）** | 字节写到 `<dataDir>/attachments/<workspaceId>/<附件id>`，原子写（临时文件加改名）。新表 `message_attachments` 存 id、workspace、消息、类型、名字、大小、sha256、上传 key、状态、时间 | 数据库不变胖；桌面的 PGlite 和 Compose 的 PostgreSQL 都只多一张小表；`deleteWorkspace` 里多删一个目录即可；Compose 下文件落在宿主的 `~/.nema/data`，和知识仓库一起备份 | 数据库和文件要保持一致：删除时先删记录再删文件，启动时清理没有记录的孤儿文件；备份只备了 PostgreSQL 卷会丢附件 |
 | B. 数据库 `bytea` | 字节直接存进 PostgreSQL / PGlite 的表 | 一致性最简单，一个事务搞定；备份数据库就带上附件 | 桌面的 PGlite 是进程内数据库，几十 MB 的二进制会拖慢启动和备份；Compose 的数据库卷变大；读取时整块进内存 |
 | C. 写进 workspace 的知识 Git 仓库 | 放到 `<dataDir>/repos/<id>/attachments/` 并提交 | 和知识历史天然绑在一起 | 二进制进 Git 后删不掉（历史里永远在），和 D-4 的删除冲突；仓库迅速变大；知识仓库的格式变化要另做兼容与迁移 |
 
@@ -175,6 +175,7 @@ issue 把「内联 base64」和「写进 agent 工作目录给路径」列成要
 - 带附件的发消息可以安全重试。只有请求里**至少有一个**附件 id 时才走这条路径；纯文字消息照旧每次都新建，两次发同样的文字就是两条消息。判断「同一请求」要全部满足：请求的附件 id 集合与那条消息绑定的附件集合**完全相等**（不多不少）、文字一致、被引用消息 id 一致、目标一致（同一个 thread，或都不在 thread 里）。都满足就当作前一次已经成功，返回那条消息和它的任务（200），不报错、不再排队任务。其余情况（部分已绑定、集合不同、引用或 thread 不同、绑在别的消息上）一律拒绝（409），不返回旧消息。
 - 状态变化都用条件更新，避免竞态：发消息绑定附件用 `update … set status='attached' where id = any($1) and status='staged' and workspace_id=$2`，更新行数不等于请求数就整笔回滚；过期清理用 `update … set status='expired' where status='staged' and created_at < now() - interval '24 hours' returning id`，只删这些返回的文件。两者不会同时拿到同一条记录。
 - 过期清理和删除都可以中断后重来：启动时和每次清理时，对状态为 `expired` 或已删除、但文件还在的记录再删一次文件。`expired` 记录在文件删掉后连同记录一起删除；已删除的记录作为墓碑保留（D-4）。
+- 文件权限不依赖 umask：`<dataDir>/attachments/`、`.staging/` 和每个 workspace 目录都以 `0700` 创建，临时文件和附件文件以 `0600` 打开（创建时显式传 mode，改名后不变）。hub 启动时检查 `<dataDir>/attachments/` 及其下目录，组或其他用户有任何权限位时改回 `0700` / `0600` 并在日志里记一行（只写路径，不写内容）。Compose 下文件落在宿主的 `~/.nema/data`，属主是容器里 hub 的用户，权限位同样生效。Windows 上没有 POSIX 权限位，依赖用户目录本身的 ACL，本版不另设 ACL。
 - 每个 workspace 的附件目录在该 workspace 第一次上传时创建，创建后 fsync 上一级目录，再写文件。Windows 上没有目录 fsync，所以 hub 启动时还要扫一遍：状态是 `attached` 但文件不在的记录标成 `missing`。这样即使断电丢了目录项，界面也会明确显示「附件文件已丢失」，任务明确失败，不会假装还在。
 - 读取时文件意外不在（例如手工删了数据目录里的文件），返回 410，把记录标成 `missing`，消息里显示「附件文件已丢失」；daemon 收到 410 时让任务失败并写明原因。
 
@@ -279,7 +280,7 @@ Composer ──POST /api/workspaces/:id/attachments (octet-stream)──▶ hub
   - Room：`runToken` 只能取本任务的附件；
   - 删除 workspace 后目录不在了；
   - `staged` 过期清理；
-  - daemon 的 `hello` 没有 `attachments` 特性时，带附件的任务失败、原因明确；只有附件的消息能发、全空的消息仍被拒；本次加被引用消息合计超限时拒绝发送；`X-Nema-Filename` 缺失、解码失败、含路径或控制字符；先写文件后写记录，模拟两步之间崩溃后启动清理；文件丢失时返回 410；
+  - daemon 的 `hello` 没有 `attachments` 特性时，带附件的任务失败、原因明确；只有附件的消息能发、全空的消息仍被拒；本次加被引用消息合计超限时拒绝发送；`X-Nema-Filename` 缺失、解码失败、含路径或控制字符；同一 `X-Nema-Upload-Key` 重试上传只留一条记录、一份文件，内容不同返回 409；附件目录和文件的权限是 `0700` / `0600`，启动时把放宽了的权限改回来；先写文件后写记录，模拟两步之间崩溃后启动清理；文件丢失时返回 410；
   - 删除附件（D-4）：删除后字节不在、墓碑还在、Room 返回 410。
 - **桌面网关**：上传路径放行 `application/octet-stream`，别的路径仍然 415；没有会话 cookie 时 401；超过单个文件上限时 413；请求体是流式转发的。
 - **daemon / 适配器**：
