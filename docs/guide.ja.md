@@ -144,9 +144,14 @@ docker compose up -d
 
 # 5. install the host daemon at the version step 2 printed
 npm i -g @nema-project/nema@<that version>
+
+# 6. start the host daemon and keep it running; Compose does not run it.
+#    It connects to http://127.0.0.1:4400 with the daemon-token the hub
+#    wrote under ~/.nema/data.
+nema daemon
 ```
 
-手順 2 の 2 行は同じ版を表示しなければなりません。違う場合はそこで止め、何も起動しないでください。`.env` にすでに `NEMA_IMAGE_TAG` があればその値を使い続けます。手順 1 では latest ではなく `releases/download/v<locked>/docker-compose.yml` からその版の資産を取得し、手順 2 と手順 5 が固定済みの版を読むようにします。手順 3 では上書きしません。latest はリリースのたびに変わりますが、版付きのアドレスはその Release がある限り変わりません。`v0.1.6` より前の固定（`0.1.4`、`0.1.5`）にはリリース資産がなく、版付きのアドレスは 404 を返します。その場合は、その tag 自身のファイル `raw.githubusercontent.com/Nema-Project/nema-room/v<locked>/docker-compose.yml` を取得します。両イメージがその版に固定されています。v0.1.6 の資産の先頭には、テンプレートでありインストール可能な版ではないというリポジトリのテンプレートのコメントが残っています。このコメントは古く、固定された 2 行の `image:` が正しい情報です。v0.1.6 より後の Release では、先頭のコメントに自分の版が書かれます。手順 5 の版は手順 2 で読んだ版で、npm の最新版ではありません。リリースのダウンロード先はリダイレクトするので `-L` は省けません。Windows の Docker Desktop では手順 4 の export は不要です。
+手順 2 の 2 行は同じ版を表示しなければなりません。違う場合はそこで止め、何も起動しないでください。`.env` にすでに `NEMA_IMAGE_TAG` があればその値を使い続けます。手順 1 では latest ではなく `releases/download/v<locked>/docker-compose.yml` からその版の資産を取得し、手順 2 と手順 5 が固定済みの版を読むようにします。手順 3 では上書きしません。latest はリリースのたびに変わりますが、版付きのアドレスはその Release がある限り変わりません。`v0.1.6` より前の固定（`0.1.4`、`0.1.5`）にはリリース資産がなく、版付きのアドレスは 404 を返します。その場合は、その tag 自身のファイル `raw.githubusercontent.com/Nema-Project/nema-room/v<locked>/docker-compose.yml` を取得します。両イメージがその版に固定されています。v0.1.6 の資産の先頭には、テンプレートでありインストール可能な版ではないというリポジトリのテンプレートのコメントが残っています。このコメントは古く、固定された 2 行の `image:` が正しい情報です。v0.1.6 より後の Release では、先頭のコメントに自分の版が書かれます。手順 5 の版は手順 2 で読んだ版で、npm の最新版ではありません。エージェントのタスクには、手順 6 の daemon が動き続けている必要があります。Release の公開直後は、イメージや npm パッケージがまだ公開中のことがあります。`docker compose up` がイメージを pull できない、または `npm i` がその版を見つけられないときは、少し待つか、チェックアウトから `node scripts/install/public.mjs --check` を実行してください。インストール前に Compose 資産・2 つのイメージ・npm パッケージがそろっていることを確かめます。リリースのダウンロード先はリダイレクトするので `-L` は省けません。Windows の Docker Desktop では手順 4 の export は不要です。
 
 ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。公開 web イメージは起動時に `NEMA_HUB_URL` を読みます。compose の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` なので、ポートを変えてもイメージの再ビルドは不要です。
 

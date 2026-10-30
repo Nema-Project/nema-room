@@ -300,6 +300,8 @@ docker compose up -d
 # Install the host daemon at the version both lines printed.
 npm i -g @nema-project/nema@&lt;locked version&gt;
 nema --version
+# Start the daemon and keep it running; Compose does not run it.
+nema daemon
 
 # Or build this repository from source
 git clone https://github.com/Nema-Project/nema-room.git

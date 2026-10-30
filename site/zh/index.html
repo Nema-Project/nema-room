@@ -300,6 +300,8 @@ docker compose up -d
 # 用上面两行打印的版本安装宿主机 daemon。
 npm i -g @nema-project/nema@&lt;locked version&gt;
 nema --version
+# 启动 daemon 并保持运行；Compose 不会替你启动它。
+nema daemon
 
 # 或从源码构建本仓库
 git clone https://github.com/Nema-Project/nema-room.git
