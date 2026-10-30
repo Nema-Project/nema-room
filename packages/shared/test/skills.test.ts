@@ -39,9 +39,9 @@ test("/skill:<id> always names a Skill, built-in names included", () => {
   for (const text of ["/skill:", "/skill: x", "/skill:skill:x", "/skill:a:b:c", "/skill:Tdd"]) expect(parseManualSkill(text), text).toBeNull();
 });
 
-test("skillSlashCommand writes the prefix only where a built-in takes the name", () => {
+test("skillSlashCommand: a user Skill is /name, a project Skill and a built-in's name are /skill:name", () => {
   expect(skillSlashCommand("tdd")).toBe("/tdd");
-  expect(skillSlashCommand("web:deploy")).toBe("/web:deploy");
+  expect(skillSlashCommand("web:deploy")).toBe("/skill:web:deploy");
   expect(skillSlashCommand("thread")).toBe("/skill:thread");
   expect(skillSlashCommand("update")).toBe("/skill:update");
 });

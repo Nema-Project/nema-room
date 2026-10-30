@@ -55,9 +55,13 @@ export function isReservedSlashName(id: string): boolean {
   return RESERVED_SLASH_NAMES.includes(id) || id.startsWith("diagram:") || id.startsWith(SKILL_SLASH_PREFIX);
 }
 
-/** What the composer inserts for a Skill: `/<id>`, or `/skill:<id>` when the id is reserved. */
+/**
+ * What the composer inserts for a Skill (2026-10-31 用户决定): `/<id>` for a user-level one, and
+ * `/skill:<id>` for one whose id a built-in command takes or that comes from a repository
+ * (`/skill:<repo slug>:<name>`). `/<slug>:<name>` is accepted as well.
+ */
 export function skillSlashCommand(id: string): string {
-  return isReservedSlashName(id) ? `/${SKILL_SLASH_PREFIX}${id}` : `/${id}`;
+  return isReservedSlashName(id) || id.includes(":") ? `/${SKILL_SLASH_PREFIX}${id}` : `/${id}`;
 }
 
 // An external id: a Skill name, optionally after one `<repo slug>:` prefix; `/skill:` may come first.
