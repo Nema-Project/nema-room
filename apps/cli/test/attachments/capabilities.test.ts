@@ -36,8 +36,8 @@ describe("attachmentCapabilities", () => {
     expect(attachmentCapabilities(cfg({ authMode: "compat" })).adapter).toBe("codex-direct (compat)");
   });
 
-  test("the attachments feature stays off until the adapters deliver attachments", () => {
-    expect(DAEMON_FEATURES).toEqual([]);
+  test("the daemon advertises attachments now that both adapters deliver them", () => {
+    expect(DAEMON_FEATURES).toEqual(["attachments"]);
   });
 });
 

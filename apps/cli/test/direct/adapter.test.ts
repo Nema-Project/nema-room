@@ -1,16 +1,18 @@
 import { makePublic } from "../nativePermissions.js";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { TaskAssign, TaskEvent } from "@nema/shared";
+import type { AttachmentRef, TaskAssign, TaskEvent } from "@nema/shared";
+import { attachmentPreamble } from "../../src/attachments/blocks.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { loadConfig, saveConfig } from "../../src/config.js";
 import { CodexDirectAdapter } from "../../src/direct/adapter.js";
 import { AuthStore, RELOGIN_MESSAGE, type StoredAuth } from "../../src/direct/authStore.js";
 import { byokKeyPath, saveByokKey } from "../../src/direct/byok.js";
-import { COMPAT_PROFILE, SIWC_PROFILE, type TransportProfile } from "../../src/direct/transport.js";
+import { COMPAT_PROFILE, REQUEST_TOO_LARGE_MESSAGE, SIWC_PROFILE, type TransportProfile } from "../../src/direct/transport.js";
 import { json, sse, startFakeResponsesServer, type FakeResponsesServer } from "../fixtures/fake-responses-server.js";
 
 const b64u = (s: string) => Buffer.from(s).toString("base64url");
@@ -23,6 +25,7 @@ let server: FakeResponsesServer;
 let hub: Server;
 let hubUrl: string;
 let hubSeen: { method?: string; url?: string; auth?: string; body: string }[];
+let hubFiles: Map<string, { status: number; type: string; body: Buffer; stall?: boolean }>;
 
 const auth = (tokens = { access_token: ACCESS, refresh_token: "rt-0" }): StoredAuth => ({
   version: 1,
@@ -41,11 +44,19 @@ beforeEach(async () => {
   mkdirSync(home, { recursive: true, mode: 0o700 });
   server = await startFakeResponsesServer();
   hubSeen = [];
+  hubFiles = new Map();
   hub = createServer((req, res) => {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", () => {
       hubSeen.push({ method: req.method, url: req.url, auth: req.headers.authorization, body });
+      if (req.url?.startsWith("/room/attachments/")) {
+        const file = hubFiles.get(decodeURIComponent(req.url.slice("/room/attachments/".length)));
+        if (file?.stall) return;
+        if (!file) res.writeHead(404, { "content-type": "application/json" }).end('{"error":"not in task"}');
+        else res.writeHead(file.status, { "content-type": file.type }).end(file.body);
+        return;
+      }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(req.method === "POST" ? '{"id":"R-1"}' : '{"entries":[]}');
     });
@@ -61,7 +72,7 @@ afterEach(async () => {
 });
 
 const profile = (): TransportProfile => ({ ...SIWC_PROFILE, baseUrl: server.baseUrl });
-const adapter = (extra: { timeoutMs?: number } = {}) =>
+const adapter = (extra: { timeoutMs?: number; maxRequestBytes?: number } = {}) =>
   new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: profile(), refresher, ...extra });
 const task = (): TaskAssign => ({
   type: "task.assign",
@@ -87,9 +98,9 @@ const stream = (items: Record<string, unknown>[], deltas: string[] = []) =>
     { type: "response.completed", response: { id: "resp", status: "completed", output: items } },
   ]);
 
-async function run(a = adapter()) {
+async function run(a = adapter(), assigned: TaskAssign = task()) {
   const events: TaskEvent[] = [];
-  const result = await a.run(task(), (e) => events.push(e));
+  const result = await a.run(assigned, (e) => events.push(e));
   return { result, events };
 }
 
@@ -422,5 +433,108 @@ describe("CodexDirectAdapter", () => {
 
     expect((await run()).result).toEqual({ ok: false, error: "未登录直连 Codex，请在终端运行 nema auth login" });
     expect(server.requests).toEqual([]);
+  });
+});
+
+describe("CodexDirectAdapter attachments", () => {
+  const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 9, 9]);
+  const pdf = Buffer.from("%PDF-1.7\nSECRET-PDF-BYTES\n");
+  const log = Buffer.from("SECRET-LOG-LINE\n");
+  function serve(id: string, kind: AttachmentRef["kind"], mime: string, name: string, body: Buffer): AttachmentRef {
+    hubFiles.set(id, { status: 200, type: mime, body });
+    return { id, kind, mime, name, size: body.length, sha256: sha(body), messageId: "m1" };
+  }
+  const withAttachments = (attachments: AttachmentRef[]): TaskAssign => ({ ...task(), attachments });
+  type Part = { type: string; text?: string; image_url?: string; filename?: string; file_data?: string };
+  const firstUser = (body: Record<string, unknown>) => (body.input as Array<{ role?: string; content: Part[] }>)[0]!;
+
+  test("image, PDF and text go into the user message on every call, never into instructions", async () => {
+    login();
+    server.models(models("gpt-first"));
+    server.responses(stream([fcItem("list_entries", {}, "c1")]), stream([msgItem("看过了")]));
+    const refs = [serve("img", "image", "image/png", "shot.png", png), serve("doc", "pdf", "application/pdf", "spec.pdf", pdf), serve("log", "text", "text/plain", "boot.log", log)];
+    const { result } = await run(adapter(), withAttachments(refs));
+    expect(result).toEqual({ ok: true, reply: "看过了" });
+
+    expect(hubSeen.filter((h) => h.url?.startsWith("/room/attachments/")).map((h) => `${h.url} ${h.auth}`)).toEqual([
+      "/room/attachments/img Bearer run-tok", "/room/attachments/doc Bearer run-tok", "/room/attachments/log Bearer run-tok",
+    ]);
+    const bodies = server.requests.filter((r) => r.url === "/v1/responses").map((r) => JSON.parse(r.body) as Record<string, unknown>);
+    expect(bodies).toHaveLength(2);
+    for (const body of bodies) {
+      expect(body.instructions).toBe("HUB PROMPT: 规则与上下文");
+      const user = firstUser(body);
+      expect(user.role).toBe("user");
+      const parts = user.content;
+      expect(parts.map((p) => p.type)).toEqual(["input_text", "input_text", "input_text", "input_image", "input_text", "input_file", "input_text"]);
+      expect(parts[1]).toEqual({ type: "input_text", text: attachmentPreamble() });
+      expect(parts[2]).toEqual({ type: "input_text", text: `附件信息：${JSON.stringify({ name: "shot.png", type: "image/png", sha256: refs[0]!.sha256, size: refs[0]!.size })}` });
+      expect(parts[3]).toEqual({ type: "input_image", image_url: `data:image/png;base64,${png.toString("base64")}` });
+      expect(parts[4]).toEqual({ type: "input_text", text: `附件信息：${JSON.stringify({ name: "spec.pdf", type: "application/pdf", sha256: refs[1]!.sha256, size: refs[1]!.size })}` });
+      expect(parts[5]).toEqual({ type: "input_file", filename: "spec.pdf", file_data: `data:application/pdf;base64,${pdf.toString("base64")}` });
+      expect(parts[6]!.text).toContain("SECRET-LOG-LINE");
+      const boundary = /NEMA-ATTACHMENT-[0-9a-f]{32}/.exec(parts[6]!.text!)![0];
+      const instructions = String(body.instructions);
+      for (const leaked of ["SECRET-LOG-LINE", boundary, png.toString("base64"), pdf.toString("base64"), "shot.png", "spec.pdf"]) {
+        expect(instructions).not.toContain(leaked);
+      }
+    }
+  });
+
+  test("compat with an image fails before any model or hub request", async () => {
+    saveConfig(home, { authMode: "compat" });
+    const { result } = await run(adapter(), withAttachments([serve("img", "image", "image/png", "shot.png", png)]));
+    expect(result.ok).toBe(false);
+    expect((result as { error: string }).error).toContain("shot.png");
+    expect((result as { error: string }).error).toContain("codex-direct (compat)");
+    expect(server.requests).toEqual([]);
+    expect(hubSeen).toEqual([]);
+  });
+
+  test("an oversized first request is never sent", async () => {
+    login();
+    server.models(models("gpt-first"));
+    server.responses(stream([msgItem("should-not-run")]));
+    const { result } = await run(adapter({ maxRequestBytes: 1000 }), withAttachments([serve("log", "text", "text/plain", "boot.log", Buffer.alloc(4000, 0x61))]));
+    expect(result.ok).toBe(false);
+    expect(result).toEqual({ ok: false, error: REQUEST_TOO_LARGE_MESSAGE });
+    expect(server.requests.filter((r) => r.url === "/v1/responses")).toEqual([]);
+  });
+
+  test("a second request that grows over the cap after a tool call is not sent", async () => {
+    login();
+    const refs = () => [serve("log", "text", "text/plain", "boot.log", Buffer.alloc(2000, 0x61))];
+    // Measure the first request under a generous cap.
+    server.models(models("gpt-first"));
+    server.responses(stream([msgItem("ok")]));
+    await run(adapter({ maxRequestBytes: 1_000_000 }), withAttachments(refs()));
+    const first = Buffer.byteLength(server.requests.find((r) => r.url === "/v1/responses")!.body);
+    server.requests.length = 0;
+
+    server.models(models("gpt-first"));
+    server.responses(stream([fcItem("list_entries", {}, "c1")]), stream([msgItem("should-not-run")]));
+    const { result } = await run(adapter({ maxRequestBytes: first + 10 }), withAttachments(refs()));
+    expect(result.ok).toBe(false);
+    expect(result).toEqual({ ok: false, error: REQUEST_TOO_LARGE_MESSAGE });
+    expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
+  });
+  test("a text attachment that is not UTF-8 fails with its name and no model request", async () => {
+    login();
+    server.models(models("gpt-first"));
+    server.responses(stream([msgItem("should-not-run")]));
+    const { result } = await run(adapter(), withAttachments([serve("bad", "text", "text/plain", "bad.txt", Buffer.from([0x61, 0xc3, 0x28]))]));
+    expect(result.ok).toBe(false);
+    expect((result as { error: string }).error).toContain("bad.txt");
+    expect(server.requests.filter((r) => r.url === "/v1/responses")).toEqual([]);
+  });
+
+  test("a stalled attachment download ends with the run timeout", async () => {
+    login();
+    const ref = serve("img", "image", "image/png", "slow.png", png);
+    hubFiles.set("img", { status: 200, type: "image/png", body: png, stall: true });
+    const { result } = await run(adapter({ timeoutMs: 200 }), withAttachments([ref]));
+    expect(result).toEqual({ ok: false, error: "Codex 直连运行超时" });
+    expect(server.requests.filter((r) => r.url === "/v1/responses")).toEqual([]);
   });
 });
