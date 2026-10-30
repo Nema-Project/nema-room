@@ -1,4 +1,4 @@
-import type { ExtensionRecord, SkillDiscovery, SkillInstallJob, SkillSourcePreview } from "@nema/shared";
+import { AttachmentCapabilitiesSchema, type AttachmentCapabilities, type AttachmentView, type ExtensionRecord, type SkillDiscovery, type SkillInstallJob, type SkillSourcePreview } from "@nema/shared";
 import type {
   EntryListItem,
   Entry,
@@ -81,10 +81,10 @@ export const archiveWorkspace = (id: string, archived: boolean) => request<Works
 export const deleteWorkspace = (id: string) => request<void>(w(id), { method: "DELETE" });
 export const listMessages = (id: string) => request<Message[]>(`${w(id)}/messages`);
 export const getMessage = (id: string, messageId: string) => request<Message>(`${w(id)}/messages/${encodeURIComponent(messageId)}`);
-export const postMessage = (id: string, content: string, quoteMessageId?: string) =>
+export const postMessage = (id: string, content: string, quoteMessageId?: string, attachmentIds?: string[]) =>
   request<{ message: Message; task: Task }>(`${w(id)}/messages`, {
     method: "POST",
-    body: quoteMessageId ? { content, quoteMessageId } : { content },
+    body: messageBody(content, quoteMessageId, attachmentIds),
   });
 export const editMessage = (id: string, messageId: string, content: string) =>
   request<{ message: Message; task: Task }>(`${w(id)}/messages/${encodeURIComponent(messageId)}`, { method: "PATCH", body: { content } });
@@ -93,8 +93,8 @@ export const listMessageVersions = (id: string, messageId: string) =>
 export const searchMessages = (id: string, q: string) => request<Message[]>(`${w(id)}/messages/search?q=${encodeURIComponent(q)}`);
 export const listThreads = (id: string) => request<import("./types").Thread[]>(`${w(id)}/threads`);
 export const getThreadMessages = (id: string, threadId: string) => request<{ thread: import("./types").Thread; anchor: Message; messages: Message[] }>(`${w(id)}/threads/${encodeURIComponent(threadId)}/messages`);
-export const postThreadMessage = (id: string, threadId: string, content: string, quoteMessageId?: string) => request<{ message: Message; task: Task }>(`${w(id)}/threads/${encodeURIComponent(threadId)}/messages`, { method: "POST", body: quoteMessageId ? { content, quoteMessageId } : { content } });
-export const createThread = (id: string, content: string, quoteMessageId?: string) => request<{ message: Message; thread: import("./types").Thread; task: Task }>(`${w(id)}/threads`, { method: "POST", body: quoteMessageId ? { content, quoteMessageId } : { content } });
+export const postThreadMessage = (id: string, threadId: string, content: string, quoteMessageId?: string, attachmentIds?: string[]) => request<{ message: Message; task: Task }>(`${w(id)}/threads/${encodeURIComponent(threadId)}/messages`, { method: "POST", body: messageBody(content, quoteMessageId, attachmentIds) });
+export const createThread = (id: string, content: string, quoteMessageId?: string, attachmentIds?: string[]) => request<{ message: Message; thread: import("./types").Thread; task: Task }>(`${w(id)}/threads`, { method: "POST", body: messageBody(content, quoteMessageId, attachmentIds) });
 export const markThreadRead = (id: string, threadId: string, throughSeq: number) => request<void>(`${w(id)}/threads/${encodeURIComponent(threadId)}/read`, { method: "POST", body: { throughSeq } });
 export const nextAttention = (id: string) => request<{ threadId: string } | null>(`${w(id)}/attention/next`);
 export const withdrawEntry = (id: string, entryId: string) => request<Entry>(`${e(id, entryId)}/withdraw`, { method: "POST", body: {} });
@@ -175,3 +175,68 @@ export const regenerateWorkPackage = (id: string, wid: string) => request<{ ok: 
 export const dropWorkPackage = (id: string, wid: string) => request<Entry>(`${wp(id, wid)}/drop`, { method: "POST", body: {} });
 export const confirmWorkPackageTask = (id: string, wid: string, n: number) =>
   request<Entry>(`${wp(id, wid)}/tasks/${n}/confirm`, { method: "POST", body: {} });
+
+// Chat attachments (#104). Uploads are raw bytes, not JSON, so they bypass request().
+
+/** A message body: the quote and the attachment ids appear only when there are some. */
+function messageBody(content: string, quoteMessageId?: string, attachmentIds?: string[]) {
+  return {
+    content,
+    ...(quoteMessageId ? { quoteMessageId } : {}),
+    ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
+  };
+}
+
+async function hubFailure(res: Response): Promise<HubError> {
+  let message = `hub request failed (${res.status})`;
+  try {
+    const j = (await res.json()) as { error?: string };
+    if (j.error) message = j.error;
+  } catch {
+    /* non-JSON error body */
+  }
+  return new HubError(res.status, message);
+}
+
+const att = (id: string, aid: string) => `${w(id)}/attachments/${encodeURIComponent(aid)}`;
+
+/**
+ * Upload one file as a staged attachment. `uploadKey` is a UUID made once per picked file and
+ * reused on retries, so the hub returns the first upload instead of storing the bytes twice.
+ */
+export async function uploadAttachment(workspaceId: string, file: Blob & { name: string }, uploadKey: string): Promise<AttachmentView> {
+  const res = await fetch(`${base()}${w(workspaceId)}/attachments`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/octet-stream",
+      "x-nema-filename": encodeURIComponent(file.name),
+      "x-nema-upload-key": uploadKey,
+    },
+    body: file,
+  });
+  if (!res.ok) throw await hubFailure(res);
+  return (await res.json()) as AttachmentView;
+}
+
+/**
+ * What the daemon's current adapter can read. Null when this hub has no attachment support (404),
+ * so the composer hides the entry. Throws when the daemon is offline or answers in the wrong shape.
+ */
+export async function attachmentCapabilities(): Promise<AttachmentCapabilities | null> {
+  const res = await fetch(`${base()}/daemon/attachment-capabilities`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw await hubFailure(res);
+  const parsed = AttachmentCapabilitiesSchema.safeParse(await res.json());
+  if (!parsed.success) throw new HubError(502, "unexpected attachment capabilities");
+  return parsed.data;
+}
+
+/** The attachment's bytes, for a blob: URL. The hub address is never put into <img src>. */
+export async function fetchAttachmentBlob(workspaceId: string, id: string): Promise<Blob> {
+  const res = await fetch(`${base()}${att(workspaceId, id)}/content`);
+  if (!res.ok) throw await hubFailure(res);
+  return res.blob();
+}
+
+/** Delete an attachment's bytes; the hub keeps a tombstone and returns it. */
+export const deleteAttachment = (workspaceId: string, id: string) => request<AttachmentView>(att(workspaceId, id), { method: "DELETE" });
