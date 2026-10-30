@@ -3,7 +3,7 @@ import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z, ZodError } from "zod";
 import { KnowledgeStore, blameParagraphs, git, history, versionAt, parseCommitMessage } from "@nema/knowledge";
-import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, kindFromId, canonicalJson } from "@nema/shared";
+import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, kindFromId, canonicalJson, parseSkillSource } from "@nema/shared";
 import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
 import { insertEvidenceEvent, consumeEvidenceEvent, reconcileUnconsumedEventsLocked, payloadHashFor, type EvidenceEventInput } from "./evidenceEvents.js";
 import type { Entry } from "@nema/shared";
@@ -14,7 +14,7 @@ import type { EventBus, HubEvent } from "./events.js";
 import { indexEntry, timeline, withDiagramStatus } from "./entryIndex.js";
 import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, editUserMessage, getMessage, listMessageVersions, listMessages, MessageOpError, postSystemTask, postUserMessage, searchMessages } from "./messages.js";
 import { vendoredArchify, type Archify } from "./diagrams.js";
-import { PluginError, daemonHttpStatus, listExtensions, pluginsForUi, removeExtension, setExtensionUse, setPluginState, workspacePluginState } from "./plugins.js";
+import { PluginError, daemonHttpStatus, listExtensions, pluginsForUi, removeExtension, resolveExtensionSource, setExtensionUse, setPluginState, workspacePluginState } from "./plugins.js";
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
 import { RepoError, bindRepo, getRepo, listIndexing, listRepos, previewRepo, syncBoundRepos, unbindRepo, updateRepo } from "./repos.js";
 import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
@@ -47,6 +47,7 @@ const CreateWorkspaceBody = z.object({ name: z.string().trim().min(1, "must not 
 // Strict on purpose: a body carrying anything but `useState` is a client mistake, and silently
 // dropping an `install` field would look like the route accepted an install request.
 const SetExtensionUseBody = z.strictObject({ useState: z.enum(["enabled", "disabled"]) });
+const ResolveExtensionSourceBody = z.strictObject({ source: z.string() });
 const PatchWorkspaceBody = z.object({
   name: z.string().trim().min(1, "must not be empty").optional(),
   confidential: z.boolean().optional(),
@@ -180,6 +181,24 @@ export function uiRoutes(deps: UiDeps): Hono {
   app.delete("/extensions/:id", async (c) => {
     try {
       return c.json(await removeExtension(deps.daemon, c.req.param("id")));
+    } catch (error) {
+      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      throw error;
+    }
+  });
+
+  // Preview only: which commit a GitHub or skills.sh source points at and which skills it holds.
+  // Nothing is installed, so a source the parser refuses never reaches the daemon or the network.
+  app.post("/extensions/resolve", async (c) => {
+    const { source } = await body(c, ResolveExtensionSourceBody);
+    const trimmed = source.trim();
+    try {
+      parseSkillSource(trimmed);
+    } catch (error) {
+      throw new HttpError(400, error instanceof Error ? error.message : "unsupported extension source");
+    }
+    try {
+      return c.json(await resolveExtensionSource(deps.daemon, trimmed));
     } catch (error) {
       if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
       throw error;

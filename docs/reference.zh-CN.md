@@ -45,6 +45,26 @@ Agent 读到的代码片段会随请求发送给模型服务商（OpenAI / Anthr
 - **外部扩展永远不动文件。** 移出之后它只是不再出现在插件页和工具清单里，想看回来重新接入即可。
 - **卸载走 `DELETE /api/extensions/:id`，返回 `{ id, removed }`。** `removed` 是 `"managed"` 或 `"external"`，页面据此知道删掉的是目录还是只摘了记录。daemon 不在线是 `503`，其它 daemon 拒绝是 `502`，错误体保留原始消息。
 
+### 解析 Skill 安装来源
+
+安装 Skill 的第一步是把贴进来的来源解析成一个固定提交，再列出那个提交里有哪些 Skill。这一步只预览，不写记录、不建目录；插件页的安装入口还没接上，现在只能通过 `POST /api/extensions/resolve`（请求体 `{ "source": "..." }`）调用。
+
+| 写法 | 例子 | 解析结果 |
+| --- | --- | --- |
+| GitHub 仓库 | `https://github.com/acme/skills`、`github.com/acme/skills`、`acme/skills` | 仓库默认分支，找整个仓库里的 `SKILL.md` |
+| 仓库子目录 | `https://github.com/acme/skills/tree/v2/skills/pdf` | 指定的分支、标签或提交，只找这个目录下的 `SKILL.md` |
+| 单个 `SKILL.md` | `https://github.com/acme/skills/blob/main/skills/pdf/SKILL.md` | 只取链接指向的这一个 `SKILL.md`，下面嵌套的 Skill 不算 |
+| skills.sh 页面 | `https://skills.sh/acme/skills/pdf` | skills.sh 背后的 GitHub 仓库，只留名字是 `pdf` 的那个 Skill |
+
+- **分支名里带 `/` 也能认。** 链接本身分不清 `tree/feature/x/skills` 是分支 `feature` 加目录 `x/skills`，还是分支 `feature/x` 加目录 `skills`；daemon 先按最短的分支名查，GitHub 不认识就逐段加长。
+- **分支只读一次。** daemon 先把分支或标签换成 40 位提交，之后读文件列表和每个 `SKILL.md` 都只用这个提交，所以预览期间分支被推了新提交，看到的内容也不会变。
+- **每个 Skill 带名称、说明、目录和摘要。** 名称和说明取自 `SKILL.md` 开头的 front matter；摘要是这个 `SKILL.md` 在该提交里的 Git blob SHA-1。预览同时给出仓库许可证（GitHub 报告的 SPDX 标识，没有就是 `null`）和每个 Skill 将安装到的目录 `<nema home>/extensions/extensions/<id>`。
+- **装不了的会标出来，不会悄悄跳过。** 缺 front matter（`missing-frontmatter`）、名字转不成合法 id（`invalid-id`）、和内置扩展同名（`bundled-id`）、和同一来源里另一个 Skill 转成同一个 id（`duplicate-id`，两个都不让装，免得装进同一个目录）、或 `SKILL.md` 超过 256 KiB（`too-large`，不下载）的 Skill 照样列出，但 `id` 为 `null`。整仓预览最多列 50 个，超出时 `truncated` 为 `true`。
+- **skills.sh 页面只对应一个 Skill。** 依次按名称、id、目录名匹配，取第一个有结果的那一档；同一档匹配到两个以上就报「ambiguous」，不替你挑。
+- **托管记录必须钉在提交上。** 来源是 GitHub 的托管扩展，`revision` 必须是 40 位提交，`source` 必须是指向同一个提交的 `tree` 链接；写成分支名、或两处提交对不上的记录会被拒绝。记录另带 `provenance`：仓库、提交、目录、`SKILL.md` 摘要和许可证。
+- **不支持的写法在 hub 就拒绝（`400`），不会发出任何网络请求。** 只接受 `https` 的 github.com 和 skills.sh 地址，带账号密码、端口、查询参数、`..` 或编码过的路径一律不认。GitHub 那边的问题（仓库不存在、分支不存在、触发频率限制、45 秒没有回应）由 daemon 报出，hub 返回 `502` 并保留原始消息；daemon 不在线是 `503`。
+- **目前不带 GitHub 登录。** 解析走 GitHub 的公开接口，只支持公开仓库，并受未登录的频率限制约束。
+
 
 ## Code diagrams
 
