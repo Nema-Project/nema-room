@@ -108,7 +108,7 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
     }
   }
 
-  async function saveRepo(repoId: string, patch: { label?: string; mainBranch?: string }) {
+  async function saveRepo(repoId: string, patch: { label?: string; mainBranch?: string; trustSkills?: boolean }) {
     try {
       const next = await updateRepo(workspaceId, repoId, patch);
       setRepos((list) => list?.map((repo) => (repo.id === repoId ? next : repo)) ?? null);
@@ -285,12 +285,13 @@ function RepoRow({
 }: {
   repo: Repo;
   locale: Locale;
-  onSave: (repoId: string, patch: { label?: string; mainBranch?: string }) => Promise<void>;
+  onSave: (repoId: string, patch: { label?: string; mainBranch?: string; trustSkills?: boolean }) => Promise<void>;
   onRemove: (repoId: string) => Promise<void>;
 }) {
   const t = useT();
   const [label, setLabel] = useState(repo.label);
   const [branch, setBranch] = useState(repo.mainBranch);
+  const [confirmTrust, setConfirmTrust] = useState(false);
   const status = fetchStatus(repo, t, locale);
 
   function commitLabel() {
@@ -317,6 +318,31 @@ function RepoRow({
         <input type="text" aria-label={`${t("code.mainBranch")} ${repo.path}`} value={branch} onChange={(e) => setBranch(e.target.value)} onBlur={commitBranch} />
       </label>
       {status && <p className="kmeta">{status}</p>}
+      <label className="check">
+        <input
+          type="checkbox"
+          aria-label={`${t("code.trustSkills")} ${repo.path}`}
+          checked={repo.trustSkills}
+          onChange={(e) => {
+            if (e.target.checked) return setConfirmTrust(true);
+            setConfirmTrust(false);
+            void onSave(repo.id, { trustSkills: false }).catch(() => {});
+          }}
+        />
+        <span>{t("code.trustSkills")}</span>
+      </label>
+      {confirmTrust && !repo.trustSkills && (
+        <div role="group" aria-label={`${t("code.trustSkills")} ${repo.path}`} className="confirm">
+          <p className="help">{t("code.trustSkillsConfirm")}</p>
+          <button type="button" className="settings-action" onClick={() => { setConfirmTrust(false); void onSave(repo.id, { trustSkills: true }).catch(() => {}); }}>
+            {t("code.trustSkillsYes")}
+          </button>
+          <button type="button" className="settings-action" onClick={() => setConfirmTrust(false)}>
+            {t("sidebar.cancel")}
+          </button>
+        </div>
+      )}
+      {repo.trustSkills && <p className="kmeta">{t("code.trustSkillsNext")}</p>}
       <p className="kmeta">
         GitHub: {repo.githubTarget ? <span className="kid">{repo.githubTarget}</span> : <span>{t("github.noRemote")}</span>}
       </p>

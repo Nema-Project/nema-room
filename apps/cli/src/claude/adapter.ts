@@ -13,7 +13,8 @@ import { claudeAllowedToolNames } from "../direct/tools.js";
 import { CLAUDE_SKILL_TOOLS, prepareClaudeLaunch, withSkillArgs, type ClaudeLaunch } from "./launch.js";
 import { claudeSkillsSection, prepareClaudeSkills, type ClaudeSkillPrep } from "../skills/claudeSkills.js";
 import { MIN_CLAUDE_SKILLS_VERSION, claudeSkillsSupported, claudeVersionRunner, versionAtLeast } from "../skills/claudeVersion.js";
-import { takeSnapshot, type SnapshotSkill } from "../skills/snapshot.js";
+import type { SnapshotSkill } from "../skills/snapshot.js";
+import { readRepoSkillFile, takeTaskSnapshot } from "../skills/repoSkills.js";
 import { preloadSection, readSkillBody } from "../skills/preload.js";
 import { settleReports, trackReport } from "../skills/reports.js";
 import { RoomClient } from "../room/client.js";
@@ -168,7 +169,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   /** Copies the task's Skills into the run dir, or null when the task runs without them. */
   private async prepareSkills(task: TaskAssign, launch: ClaudeLaunch, onEvent: (e: TaskEvent) => void): Promise<SkillRun | null> {
-    const snapshot = await takeSnapshot({ nemaHome: this.opts.nemaHome, claudeCodeOk: true });
+    const snapshot = await takeTaskSnapshot({ nemaHome: this.opts.nemaHome, claudeCodeOk: true, ...(task.projectSkills ? { projectSkills: task.projectSkills } : {}) });
     if (snapshot.warnings.length > 0) onEvent({ type: "progress", text: `部分 Skill 未载入：${snapshot.warnings.join("；")}` });
     if (snapshot.skills.length === 0) return null;
     const check = this.opts.claudeSkillsOk ?? (() => claudeSkillsSupported(claudeVersionRunner(this.opts.claudeBin ?? "claude")));
@@ -176,7 +177,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       onEvent({ type: "progress", text: TOO_OLD });
       return null;
     }
-    const prep = await prepareClaudeSkills({ nemaHome: this.opts.nemaHome, runDir: launch.runDir, snapshot });
+    const prep = await prepareClaudeSkills({ nemaHome: this.opts.nemaHome, runDir: launch.runDir, snapshot, readRepoFile: readRepoSkillFile });
     const reasons = { budget: "超过 50 MiB", changed: "文件已改变", unreadable: "无法读取" } as const;
     if (prep.skipped.length > 0) {
       onEvent({ type: "progress", text: `部分 Skill 未载入：${prep.skipped.map((s) => `${s.id}（${reasons[s.reason]}）`).join("；")}` });
@@ -185,7 +186,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const copied = { skills: snapshot.skills.filter((skill) => prep.copied.includes(skill.id)), warnings: [] };
     let preload: string | null = null;
     if (task.retainedSkills && task.retainedSkills.length > 0) {
-      const section = await preloadSection({ snapshot: copied, retained: task.retainedSkills, readBody: (skill) => readSkillBody(this.opts.nemaHome, skill) });
+      const section = await preloadSection({ snapshot: copied, retained: task.retainedSkills, readBody: (skill) => readSkillBody(this.opts.nemaHome, skill, readRepoSkillFile) });
       preload = section.text;
       if (section.dropped.length > 0) onEvent({ type: "progress", text: `这些 Skill 放不下，没有预载：${section.dropped.join("、")}` });
     }

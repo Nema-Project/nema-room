@@ -977,6 +977,29 @@ describe("ui api", () => {
     errors.mockRestore();
   });
 
+  test("trustSkills starts off, only PATCH turns it on, and unbinding drops it", async () => {
+    const rpc: DaemonRpc = {
+      async call(method) {
+        if (method === "repo.inspect") return { root: "/real/t", gitCommonDir: "/real/t/.git", defaultBranch: "main", hasOrigin: false, remoteUrl: null };
+        if (method === "repo.index") return { sha: "abc" };
+        if (method === "repos.sync" || method === "repo.forget") return { ok: true };
+        throw new Error(`unexpected ${method}`);
+      },
+    };
+    app = createApp({ db, dataDir, nemaHome, events, daemonStatus: () => true, daemon: rpc, webOrigin: "http://localhost:3000" });
+    const repo = await json(await req("POST", `/api/workspaces/${ws}/repos`, { path: "/t", label: "web" }));
+    expect(repo.trustSkills).toBe(false);
+    const trusted = await json(await req("PATCH", `/api/workspaces/${ws}/repos/${repo.id}`, { trustSkills: true }));
+    expect(trusted.trustSkills).toBe(true);
+    expect((await req("PATCH", `/api/workspaces/${ws}/repos/${repo.id}`, { trustSkills: "yes" })).status).toBe(400);
+    const { trustedSkillRepos } = await import("../src/repos.js");
+    expect(await trustedSkillRepos(db, ws)).toEqual([{ repoId: repo.id, label: "web", path: "/real/t", mainBranch: "main", gitCommonDir: "/real/t/.git" }]);
+    expect((await req("DELETE", `/api/workspaces/${ws}/repos/${repo.id}`)).status).toBeLessThan(300);
+    expect(await trustedSkillRepos(db, ws)).toEqual([]);
+    const again = await json(await req("POST", `/api/workspaces/${ws}/repos`, { path: "/t", label: "web" }));
+    expect(again.trustSkills).toBe(false);
+  });
+
   test("binding the same git common dir twice is 409 even through a different path spelling", async () => {
     const alpha = await json(await req("POST", "/api/workspaces", { name: "Alpha" }));
     const beta = await json(await req("POST", "/api/workspaces", { name: "Beta" }));

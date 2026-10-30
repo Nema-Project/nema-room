@@ -16,12 +16,14 @@ import { recheckReports, registerReportToken } from "./reports.js";
 import { buildPrompt, namedAnswerId, type WorkPackagePromptInput } from "./prompt.js";
 import { onRepoMoved } from "./diagrams.js";
 import { workPackageIdOf, workPackageRules } from "./workpackages.js";
-import { applyRepoFetched, applyRepoMoved, listRepos, syncBoundRepos } from "./repos.js";
+import { applyRepoFetched, applyRepoMoved, listRepos, syncBoundRepos, trustedSkillRepos } from "./repos.js";
 import { claimNextTask, finishTask, getTask, interruptRunning, listTaskChanges, requeueDaemonTasks, toUiTask, type Task } from "./tasks.js";
 import { getWorkspace, listWorkspaces, repoPath } from "./workspaces.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { versionSkewMessage } from "./hubVersion.js";
 import { clearSkillOffers, listSkillOffers } from "./skillOffers.js";
+
+type ProjectSkillRepo = Awaited<ReturnType<typeof trustedSkillRepos>>[number];
 
 export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daemonToken: string; hubUrl: string; ownedHelpers?: OwnedHelperScope; releaseVersion?: string };
 
@@ -138,7 +140,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     for (const id of ids) await emitTask(id);
   }
 
-  async function buildTaskPrompt(task: Task): Promise<{ prompt: string; confidential: boolean; attachments: AttachmentRef[]; retainedSkills: string[] }> {
+  async function buildTaskPrompt(task: Task): Promise<{ prompt: string; confidential: boolean; attachments: AttachmentRef[]; retainedSkills: string[]; projectSkills: ProjectSkillRepo[] }> {
     const workspace = await getWorkspace(db, task.workspaceId);
     if (!workspace) throw new Error("workspace not found");
     const userMessage = await getMessage(db, task.messageId);
@@ -200,7 +202,9 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     });
     // A thread's activated Skills come back on its next task; ids only, the daemon reads them again.
     const retained = conversationId ? await retainedSkills(db, conversationId) : [];
-    return { prompt, confidential: workspace.confidential, attachments, retainedSkills: retained };
+    // Only repositories the user trusts; the daemon reads their Skills at the main commit.
+    const projectSkills = await trustedSkillRepos(db, task.workspaceId);
+    return { prompt, confidential: workspace.confidential, attachments, retainedSkills: retained, projectSkills };
   }
 
   async function saveTaskFailure(taskId: string, error: string, expectedRunToken?: string): Promise<Message | null> {
@@ -223,7 +227,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         await requeueAndEmit(conn.daemonId);
         return;
       }
-      let built: { prompt: string; confidential: boolean; attachments: AttachmentRef[]; retainedSkills: string[] };
+      let built: { prompt: string; confidential: boolean; attachments: AttachmentRef[]; retainedSkills: string[]; projectSkills: ProjectSkillRepo[] };
       let pluginTools: PluginToolSpec[] = [];
       try {
         built = await buildTaskPrompt(task);
@@ -268,6 +272,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         ...(task.kind === "workpackage" ? { limits: { ...WORKPACKAGE_LIMITS } } : {}),
         ...(built.attachments.length > 0 ? { attachments: built.attachments } : {}),
         ...(built.retainedSkills.length > 0 ? { retainedSkills: built.retainedSkills } : {}),
+        ...(built.projectSkills.length > 0 ? { projectSkills: built.projectSkills } : {}),
       });
       await emitTask(task.id);
       return;

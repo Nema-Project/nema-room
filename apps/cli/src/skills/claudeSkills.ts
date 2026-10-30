@@ -54,7 +54,8 @@ function copyRoot(runDir: string, skill: SnapshotSkill): { root: string; addDir:
     return { root: path.join(runDir, "work", ".claude", "skills", skill.id), addDir: null };
   }
   const slug = skill.repo?.slug;
-  const name = skill.meta.name;
+  // The folder name, as Claude Code names a Skill by its folder.
+  const name = skill.repo ? path.posix.basename(skill.repo.dir) : "";
   if (!slug || !isSkillName(slug) || !isSkillName(name)) return null;
   const base = path.resolve(runDir, "repo-skills");
   const addDir = path.resolve(base, slug);

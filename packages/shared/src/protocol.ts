@@ -46,7 +46,7 @@ const HubToDaemonSchema = z.discriminatedUnion("type", [
     attachments: z.array(AttachmentRefSchema).optional(),
     limits: z.object({ maxModelCalls: z.number().int().min(1), maxToolCalls: z.number().int().min(1), timeoutMs: z.number().int().min(1) }).optional(),
     /** Bound repos whose Skills the user trusts; the daemon reads them at the main commit. Optional for older hubs. */
-    projectSkills: z.array(z.object({ repoId: z.string(), label: z.string(), path: z.string(), mainBranch: z.string() })).optional(),
+    projectSkills: z.array(z.object({ repoId: z.string(), label: z.string(), path: z.string(), mainBranch: z.string(), gitCommonDir: z.string().optional() })).optional(),
     /** Skill ids this thread activated, newest first; the daemon preloads the current versions. Thread tasks only. */
     retainedSkills: z.array(z.string()).optional(),
     /** The Skill the user called with a leading `/skill-id`, and the rest of the line as its arguments. */
