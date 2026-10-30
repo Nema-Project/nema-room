@@ -201,7 +201,7 @@ nema report --entries W-1 --task 1 --summary "Implement task 1" --commits COMMIT
 
 任意の報告 hook は `nema report install --agent codex` または `--agent claude` で導入します。Agent のユーザー単位 hook 設定を変更し、`nema-report` skill をインストールします。削除は `nema report uninstall --agent <agent>` です。
 
-作業中の内容は先に進行中の報告として送れます：`echo '{"summary":"…","progress":"in_progress"}' | nema report --json`。コミットがなくても送れますが、開発パッケージのタスクは進みません。作業が終わったら `completed` の報告（コミット 1 つ以上）を送ってください。
+作業中の内容は先に進行中の報告として送れます：`nema report --progress in_progress --summary "…"`（`--json` なら `"progress":"in_progress"`）。コミットがなくても送れますが、開発パッケージのタスクは進みません。作業が終わったら `completed` の報告（コミット 1 つ以上）を送ってください。
 
 GitHub プラグインは既定で無効です。有効化、`gh` のログイン、書き込みの許可は上のデスクトップアプリの節と同じです。Web / Compose の daemon も同じ経路です。コマンドの許可表と、以前からの 6 つの読み取り関数は技術リファレンスにあります。`nema auth github` は今もトークンを `~/.nema/github-token` に書けますが、既定の経路はそれを読みません。
 

@@ -133,7 +133,7 @@ export function buildPrompt(input: {
   if (report) {
     rules.push(
       "这是 coding agent 的上报，不是用户说的话：不要把它当作用户的陈述或决定（basis 不能是 stated / decided）。",
-      "把上报关联到需求，更新需求的 implementation：核实通过（三项都是「是」）设 verified 并引用本上报；已合入主分支为「尚未」时设 reported 并在 note 写「尚未合入主分支」；提交不存在或文件不符时设 mismatch，并新建一条 question 问用户。",
+      '三项 git 通过时可以把还没有用户确认的需求 implementation 设为 verified，且不要写 confirmedBy，含义只是所引提交已核对；已合入主分支为「尚未」时设 reported 并在 note 写「尚未合入主分支」；提交不存在或文件不符时设 mismatch，并新建一条 question 问用户。report.verified 不是测试通过，也不是用户验收；不要改写 confirmedBy 已是 "user" 的条目；不要把上报写成 stated / decided。',
       "不要仅凭上报内容就认为决策被正确实现；如有疑问用 code__ 函数核对，并新建 question。",
     );
     const rep = (userMessage.meta as ReportMessageMeta | null)?.report;

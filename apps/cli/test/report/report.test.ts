@@ -152,6 +152,49 @@ describe("nema report", () => {
     expect(h.received[0]!.body).toMatchObject({ agent: "codex", summary: "s", commits: [sha], entries: [], files: [] });
   });
 
+  test("sends progress in_progress and allows empty commits", async () => {
+    const repo = makeRepo();
+    const h = await hub();
+    const o = collectOut();
+    const code = await runReport({ nemaHome: tmp("nema-home-"), hubUrl: h.url, cwd: repo, out: o.out, flags: { summary: "s", progress: "in_progress" } });
+    expect(code).toBe(0);
+    expect(h.received[0]!.body).toMatchObject({ progress: "in_progress", commits: [] });
+  });
+
+  test("leaves progress out when the flag is not given", async () => {
+    const repo = makeRepo();
+    const sha = git(repo, "rev-parse", "HEAD");
+    const h = await hub();
+    const o = collectOut();
+    expect(await runReport({ nemaHome: tmp("nema-home-"), hubUrl: h.url, cwd: repo, out: o.out, flags: { summary: "s", commits: sha } })).toBe(0);
+    expect(h.received[0]!.body).toMatchObject({ progress: "completed" });
+    expect(await runReport({ nemaHome: tmp("nema-home-"), hubUrl: h.url, cwd: repo, out: o.out, flags: { summary: "s" } })).toBe(1);
+    expect(h.received).toHaveLength(1);
+  });
+
+  test("rejects an unknown progress value", async () => {
+    const repo = makeRepo();
+    const h = await hub();
+    const o = collectOut();
+    const code = await runReport({ nemaHome: tmp("nema-home-"), hubUrl: h.url, cwd: repo, out: o.out, flags: { summary: "s", commits: "abcdef1", progress: "paused" } });
+    expect(code).toBe(1);
+    expect(o.errors.join("\n")).toContain("--progress");
+    expect(h.received).toHaveLength(0);
+  });
+
+  test("report keeps claim fields given through --json", async () => {
+    const repo = makeRepo();
+    const sha = git(repo, "rev-parse", "HEAD");
+    const h = await hub();
+    const o = collectOut();
+    const code = await runReport({
+      nemaHome: tmp("nema-home-"), hubUrl: h.url, cwd: repo, out: o.out, flags: { json: true },
+      stdin: stdinOf(JSON.stringify({ summary: "s", commits: [sha], branch: "feature/x", pr: 12 })),
+    });
+    expect(code).toBe(0);
+    expect(h.received[0]!.body).toMatchObject({ branch: "feature/x", pr: 12 });
+  });
+
   test("report outside a repo exits 1 with 不在 git 仓库里，无法上报", async () => {
     const h = await hub();
     const o = collectOut();
