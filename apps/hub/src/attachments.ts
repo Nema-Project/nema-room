@@ -472,6 +472,30 @@ export class AttachmentStore {
     }
   }
 
+  /**
+   * Which of these files still exist on disk right now. A file that vanished is marked `missing` (the same way a
+   * failed read marks it) and left out, so the mention menu never offers something the agent could not receive.
+   */
+  async available(workspaceId: string, ids: readonly string[]): Promise<Set<string>> {
+    const ok = new Set<string>();
+    for (const id of ids) {
+      let st: Awaited<ReturnType<typeof fs.stat>>;
+      try {
+        st = await fs.stat(this.file(workspaceId, id));
+      } catch {
+        // Gone or unreadable: mark it the way a failed read does, and never offer it.
+        await this.db.query("update message_attachments set status = 'missing' where id = $1 and status = 'attached'", [id]);
+        continue;
+      }
+      if (!st.isFile()) {
+        await this.db.query("update message_attachments set status = 'missing' where id = $1 and status = 'attached'", [id]);
+        continue;
+      }
+      ok.add(id);
+    }
+    return ok;
+  }
+
   async open(workspaceId: string, id: string): Promise<{ view: AttachmentView; stream: Readable }> {
     const { view, file } = await this.readable(workspaceId, id);
     const fh = await this.openFile(id, file);
