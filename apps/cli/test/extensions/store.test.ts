@@ -219,3 +219,14 @@ test("a managed record from GitHub must name the commit it was installed from, n
   expect(store.list().find((row) => row.id === "skill")).toMatchObject({ revision: commit, installState: "installed" });
   rmSync(staged, { recursive: true, force: true });
 });
+
+test("a managed GitHub record's source link must name the same commit as its revision", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  const commit = "0123456789abcdef0123456789abcdef01234567";
+  for (const source of ["https://github.com/acme/skills/tree/main/skills/pdf", `https://github.com/acme/skills/tree/${"f".repeat(40)}/pdf`, "https://github.com/acme/skills"]) {
+    expect(() => store.putManaged({ ...managed("skill"), source, revision: commit }), source).toThrow("a GitHub source must be pinned to a 40-character commit");
+  }
+  store.putManaged({ ...managed("skill"), source: `https://github.com/acme/skills/tree/${commit}`, revision: commit });
+  expect(store.list().find((row) => row.id === "skill")?.revision).toBe(commit);
+});

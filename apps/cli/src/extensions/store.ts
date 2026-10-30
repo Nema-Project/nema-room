@@ -20,7 +20,10 @@ const COMMIT = /^[0-9a-f]{40}$/;
  */
 function assertPinned(record: ExtensionRecord): void {
   if (record.provision !== "managed") return;
-  if (/^https:\/\/(www\.)?github\.com\//i.test(record.source) && !COMMIT.test(record.revision)) {
+  if (!/^https:\/\/(www\.)?github\.com\//i.test(record.source)) return;
+  // The revision and the source link have to agree on the same commit, or the record names two versions.
+  const linked = /^https:\/\/(?:www\.)?github\.com\/[^/]+\/[^/]+\/tree\/([0-9a-f]{40})(?:\/|$)/i.exec(record.source)?.[1];
+  if (!COMMIT.test(record.revision) || linked !== record.revision) {
     throw new Error("a GitHub source must be pinned to a 40-character commit");
   }
 }

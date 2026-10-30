@@ -134,6 +134,96 @@ describe("pinnedSkillRecord", () => {
       availability: "ready",
       externalPath: null,
       error: null,
+      provenance: { repository: "https://github.com/Acme/skills", commit: COMMIT, path: "skills/pdf", digest: "a".repeat(40), license: "MIT" },
     });
+  });
+});
+
+/** A repository at COMMIT whose tree is `entries` and whose SKILL.md files say `files[path]`. */
+function repoWith(entries: Array<{ path: string; sha?: string; size?: number }>, files: Record<string, string>, extra: Record<string, Reply> = {}) {
+  const routes: Record<string, Reply> = {
+    "https://api.github.com/repos/acme/skills": { json: { full_name: "acme/skills", default_branch: "main", license: null } },
+    "https://api.github.com/repos/acme/skills/commits/main": { json: { sha: COMMIT } },
+    [`https://api.github.com/repos/acme/skills/git/trees/${COMMIT}?recursive=1`]: {
+      json: { tree: entries.map((entry, index) => ({ type: "blob", sha: entry.sha ?? index.toString(16).padStart(40, "0"), size: entry.size ?? 100, path: entry.path })) },
+    },
+    ...extra,
+  };
+  for (const [path, text] of Object.entries(files)) routes[`https://raw.githubusercontent.com/acme/skills/${COMMIT}/${path}`] = { text };
+  return fakeGithub(routes);
+}
+
+describe("review follow-ups", () => {
+  test("a SKILL.md larger than the front matter budget is not downloaded", async () => {
+    const github = repoWith([{ path: "big/SKILL.md", size: 10 * 1024 * 1024 }, { path: "ok/SKILL.md" }], { "ok/SKILL.md": skillFile("ok", "fine") });
+    const resolved = await resolveSkillSource(parseSkillSource("acme/skills"), { fetch: github.fetch });
+    expect(resolved.skills.find((skill) => skill.path === "big")).toMatchObject({ id: null, problem: "too-large" });
+    expect(github.asked.some((url) => url.includes("big/SKILL.md"))).toBe(false);
+  });
+
+  test("two skills whose names map to the same id are both blocked instead of sharing a target", async () => {
+    const github = repoWith([{ path: "a/SKILL.md" }, { path: "b/SKILL.md" }, { path: "c/SKILL.md" }], {
+      "a/SKILL.md": skillFile("Pdf Tools", "one"),
+      "b/SKILL.md": skillFile("pdf-tools", "two"),
+      "c/SKILL.md": skillFile("other", "three"),
+    });
+    const resolved = await resolveSkillSource(parseSkillSource("acme/skills"), { fetch: github.fetch });
+    expect(resolved.skills.map((skill) => [skill.path, skill.id, skill.problem])).toEqual([
+      ["a", null, "duplicate-id"],
+      ["b", null, "duplicate-id"],
+      ["c", "other", null],
+    ]);
+  });
+
+  test("a skills.sh skill past the listing cap is still found", async () => {
+    const entries = Array.from({ length: 60 }, (_, index) => ({ path: `s${String(index).padStart(2, "0")}/SKILL.md` }));
+    const files = Object.fromEntries(entries.map((entry, index) => [entry.path, skillFile(`n${index}`, `skill ${index}`)]));
+    const github = repoWith(entries, files);
+    const resolved = await resolveSkillSource(parseSkillSource("https://skills.sh/acme/skills/s59"), { fetch: github.fetch });
+    expect(resolved.skills.map((skill) => [skill.name, skill.path])).toEqual([["n59", "s59"]]);
+    // A whole-repository preview of the same tree still stops at the listing cap and says so.
+    const listed = await resolveSkillSource(parseSkillSource("acme/skills"), { fetch: repoWith(entries, files).fetch });
+    expect(listed.skills).toHaveLength(50);
+    expect(listed.truncated).toBe(true);
+  });
+
+  test("a skills.sh name that matches two skills at the same rank is refused, and a name match beats a folder match", async () => {
+    const files = { "x/pdf/SKILL.md": skillFile("alpha", "one"), "y/pdf/SKILL.md": skillFile("beta", "two"), "z/SKILL.md": skillFile("pdf", "three") };
+    const entries = Object.keys(files).map((path) => ({ path }));
+    const chosen = await resolveSkillSource(parseSkillSource("https://skills.sh/acme/skills/pdf"), { fetch: repoWith(entries, files).fetch });
+    expect(chosen.skills.map((skill) => skill.path)).toEqual(["z"]);
+    const ambiguous = { "x/pdf/SKILL.md": files["x/pdf/SKILL.md"], "y/pdf/SKILL.md": files["y/pdf/SKILL.md"] };
+    await expect(
+      resolveSkillSource(parseSkillSource("https://skills.sh/acme/skills/pdf"), { fetch: repoWith(Object.keys(ambiguous).map((path) => ({ path })), ambiguous).fetch }),
+    ).rejects.toThrow(`skill pdf is ambiguous in acme/skills at ${COMMIT}: x/pdf, y/pdf`);
+  });
+
+  test("a branch with a slash in a tree link is found by trying longer refs", async () => {
+    const github = repoWith([{ path: "skills/pdf/SKILL.md" }, { path: "other/SKILL.md" }], { "skills/pdf/SKILL.md": skillFile("pdf", "forms") }, {
+      "https://api.github.com/repos/acme/skills/commits/feature": { status: 404, json: { message: "No commit found for SHA: feature" } },
+      "https://api.github.com/repos/acme/skills/commits/feature/x": { json: { sha: COMMIT } },
+    });
+    const resolved = await resolveSkillSource(parseSkillSource("https://github.com/acme/skills/tree/feature/x/skills/pdf"), { fetch: github.fetch });
+    expect(resolved).toMatchObject({ ref: "feature/x", path: "skills/pdf", commit: COMMIT });
+    expect(resolved.skills.map((skill) => skill.path)).toEqual(["skills/pdf"]);
+  });
+
+  test("paths with reserved URL characters are encoded in every URL built from them", async () => {
+    const github = repoWith([{ path: "odd dir/a#1?/SKILL.md", sha: "c".repeat(40) }], { "odd%20dir/a%231%3F/SKILL.md": skillFile("odd", "odd path") });
+    const resolved = await resolveSkillSource(parseSkillSource("acme/skills"), { fetch: github.fetch });
+    expect(resolved.skills[0]).toMatchObject({ id: "odd", path: "odd dir/a#1?" });
+    expect(pinnedSkillRecord(resolved, resolved.skills[0]!).source).toBe(`https://github.com/acme/skills/tree/${COMMIT}/odd%20dir/a%231%3F`);
+  });
+
+  test("a blob link selects only the SKILL.md it names, not skills nested under it", async () => {
+    const github = repoWith([{ path: "skills/pdf/SKILL.md" }, { path: "skills/pdf/nested/SKILL.md" }], { "skills/pdf/SKILL.md": skillFile("pdf", "forms") });
+    const resolved = await resolveSkillSource(parseSkillSource("https://github.com/acme/skills/blob/main/skills/pdf/SKILL.md"), { fetch: github.fetch });
+    expect(resolved.skills.map((skill) => skill.path)).toEqual(["skills/pdf"]);
+  });
+
+  test("front matter comments are not part of the name or description", async () => {
+    const github = repoWith([{ path: "SKILL.md" }], { "SKILL.md": `---\nname: pdf   # the short name\ndescription: "Fill # forms" # trailing\n---\n` });
+    const resolved = await resolveSkillSource(parseSkillSource("acme/skills"), { fetch: github.fetch });
+    expect(resolved.skills[0]).toMatchObject({ id: "pdf", name: "pdf", description: "Fill # forms" });
   });
 });

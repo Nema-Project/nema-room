@@ -11,31 +11,32 @@ describe("parseSkillSource", () => {
       "vercel-labs/agent-skills",
       "  vercel-labs/agent-skills  ",
     ]) {
-      expect(parseSkillSource(input)).toEqual({ via: "github", owner: "vercel-labs", repo: "agent-skills", ref: null, path: null, skill: null });
+      expect(parseSkillSource(input)).toEqual({ via: "github", owner: "vercel-labs", repo: "agent-skills", ref: null, path: null, skill: null, refPath: null, exact: false });
     }
   });
 
   test("keeps the ref and subdirectory of a tree link, and the folder of a SKILL.md blob link", () => {
     expect(parseSkillSource("https://github.com/acme/skills/tree/main/skills/pdf")).toEqual({
-      via: "github", owner: "acme", repo: "skills", ref: "main", path: "skills/pdf", skill: null,
+      via: "github", owner: "acme", repo: "skills", ref: "main", path: "skills/pdf", skill: null, refPath: "main/skills/pdf", exact: false,
     });
     expect(parseSkillSource("https://github.com/acme/skills/tree/v1.2.0")).toEqual({
-      via: "github", owner: "acme", repo: "skills", ref: "v1.2.0", path: null, skill: null,
+      via: "github", owner: "acme", repo: "skills", ref: "v1.2.0", path: null, skill: null, refPath: "v1.2.0", exact: false,
     });
     expect(parseSkillSource("https://github.com/acme/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/pdf/SKILL.md")).toEqual({
       via: "github", owner: "acme", repo: "skills", ref: "0123456789abcdef0123456789abcdef01234567", path: "skills/pdf", skill: null,
+      refPath: "0123456789abcdef0123456789abcdef01234567/skills/pdf", exact: true,
     });
     expect(parseSkillSource("https://github.com/acme/skills/blob/main/SKILL.md")).toEqual({
-      via: "github", owner: "acme", repo: "skills", ref: "main", path: null, skill: null,
+      via: "github", owner: "acme", repo: "skills", ref: "main", path: null, skill: null, refPath: "main", exact: true,
     });
   });
 
   test("turns a skills.sh page into the GitHub repository behind it and the skill it names", () => {
     expect(parseSkillSource("https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices")).toEqual({
-      via: "skills.sh", owner: "vercel-labs", repo: "agent-skills", ref: null, path: null, skill: "vercel-react-best-practices",
+      via: "skills.sh", owner: "vercel-labs", repo: "agent-skills", ref: null, path: null, skill: "vercel-react-best-practices", refPath: null, exact: false,
     });
     expect(parseSkillSource("https://www.skills.sh/vercel-labs/agent-skills")).toEqual({
-      via: "skills.sh", owner: "vercel-labs", repo: "agent-skills", ref: null, path: null, skill: null,
+      via: "skills.sh", owner: "vercel-labs", repo: "agent-skills", ref: null, path: null, skill: null, refPath: null, exact: false,
     });
   });
 

@@ -9,7 +9,7 @@ export type SourceFetch = (
   init: { headers: Record<string, string>; signal?: AbortSignal },
 ) => Promise<{ ok: boolean; status: number; headers: { get(name: string): string | null }; json(): Promise<unknown>; text(): Promise<string> }>;
 
-export type SkillProblem = "missing-frontmatter" | "invalid-id" | "bundled-id";
+export type SkillProblem = "missing-frontmatter" | "invalid-id" | "bundled-id" | "duplicate-id" | "too-large";
 
 export type SkillCandidate = {
   /** Managed id the skill would install under; null when it cannot be installed (see `problem`). */
@@ -43,7 +43,12 @@ const API = "https://api.github.com";
 const RAW = "https://raw.githubusercontent.com";
 const COMMIT = /^[0-9a-f]{40}$/;
 const ID = /^[a-z][a-z0-9-]{0,63}$/;
+/** Skills listed for a whole-repository preview. */
 const MAX_SKILLS = 50;
+/** SKILL.md files read while looking for one named skill. */
+const MAX_SCAN = 200;
+/** Larger SKILL.md files are not downloaded just to read their front matter. */
+const MAX_SKILL_BYTES = 256 * 1024;
 const BUNDLED_IDS = new Set(bundledExtensions().map((row) => row.id));
 
 const HEADERS = { Accept: "application/vnd.github+json", "User-Agent": "nema-extension-resolver", "X-GitHub-Api-Version": "2022-11-28" };
@@ -64,10 +69,20 @@ function field(value: unknown, key: string): unknown {
   return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
 }
 
-function unquote(value: string): string {
+/** A plain or quoted YAML scalar on one line, without a trailing `# comment`. */
+function scalar(value: string): string {
   const trimmed = value.trim();
-  if (trimmed.length >= 2 && (trimmed[0] === '"' || trimmed[0] === "'") && trimmed.at(-1) === trimmed[0]) return trimmed.slice(1, -1);
-  return trimmed;
+  const quote = trimmed[0];
+  if (quote === '"' || quote === "'") {
+    const end = trimmed.indexOf(quote, 1);
+    if (end > 0) return trimmed.slice(1, end);
+  }
+  // In YAML a comment starts at `#` preceded by whitespace; `a#b` stays one word.
+  return trimmed.replace(/(^|\s+)#.*$/, "").trim();
+}
+
+function encodePath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
 }
 
 /** `name` and `description` from a SKILL.md front matter; plain and folded/literal scalars only. */
@@ -84,7 +99,7 @@ export function skillFrontMatter(text: string): { name: string; description: str
       const block: string[] = [];
       while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1]!)) block.push(lines[++i]!.trim());
       values[key!] = block.join(rest!.startsWith(">") ? " " : "\n");
-    } else values[key!] = unquote(rest!);
+    } else values[key!] = scalar(rest!);
   }
   const name = values.name?.trim();
   const description = values.description?.trim();
@@ -113,52 +128,89 @@ export async function resolveSkillSource(source: SkillSource, o: Options): Promi
   const spdx = field(field(meta, "license"), "spdx_id");
   const license = typeof spdx === "string" && spdx && spdx !== "NOASSERTION" ? spdx : null;
 
-  const commitBody = await getJson(`${API}/repos/${source.owner}/${source.repo}/commits/${encodeURIComponent(ref)}`, slug, o, `ref not found in ${slug}: ${ref}`);
-  const commit = field(commitBody, "sha");
-  if (typeof commit !== "string" || !COMMIT.test(commit)) throw new Error(`${ref} in ${slug} did not resolve to a commit`);
+  // A link cannot say where a slashed branch name ends and the folder begins, so try the shortest
+  // ref first and lengthen it while GitHub does not know it. Git refuses `a` and `a/b` as two branches,
+  // so at most one split names a branch.
+  const segments = source.refPath ? source.refPath.split("/") : [];
+  const splits: Array<{ ref: string; path: string | null }> = segments.length
+    ? segments.map((_, index) => ({ ref: segments.slice(0, index + 1).join("/"), path: segments.slice(index + 1).join("/") || null }))
+    : [{ ref, path: source.path }];
+  let commit: unknown;
+  let chosenRef = ref;
+  let folderPath = source.path;
+  for (const split of splits) {
+    const notFound = `ref not found in ${slug}: ${ref}`;
+    try {
+      const body = await getJson(`${API}/repos/${source.owner}/${source.repo}/commits/${encodePath(split.ref)}`, slug, o, notFound);
+      commit = field(body, "sha");
+      chosenRef = split.ref;
+      folderPath = split.path;
+      break;
+    } catch (error) {
+      if (!(error instanceof Error && error.message === notFound) || split === splits.at(-1)) throw error;
+    }
+  }
+  if (typeof commit !== "string" || !COMMIT.test(commit)) throw new Error(`${chosenRef} in ${slug} did not resolve to a commit`);
 
   const treeBody = await getJson(`${API}/repos/${source.owner}/${source.repo}/git/trees/${commit}?recursive=1`, slug, o, `commit not found in ${slug}: ${commit}`);
   const tree = field(treeBody, "tree");
   if (!Array.isArray(tree)) throw new Error(`GitHub returned no file list for ${slug} at ${commit}`);
-  const prefix = source.path ? `${source.path}/` : "";
+  const prefix = folderPath ? `${folderPath}/` : "";
+  const exactFile = `${prefix}SKILL.md`;
   const files = tree
-    .filter((entry): entry is { path: string; type: string; sha: string } =>
+    .filter((entry): entry is { path: string; type: string; sha: string; size?: number } =>
       typeof field(entry, "path") === "string" && field(entry, "type") === "blob" && typeof field(entry, "sha") === "string")
-    .filter((entry) => (entry.path === "SKILL.md" || entry.path.endsWith("/SKILL.md")) && entry.path.startsWith(prefix))
+    .filter((entry) => (source.exact ? entry.path === exactFile : (entry.path === "SKILL.md" || entry.path.endsWith("/SKILL.md")) && entry.path.startsWith(prefix)))
     .sort((a, b) => a.path.localeCompare(b.path));
-  if (files.length === 0) throw new Error(`no SKILL.md under ${source.path ?? "the repository root"} in ${slug} at ${commit}`);
+  if (files.length === 0) throw new Error(`no SKILL.md under ${folderPath ?? "the repository root"} in ${slug} at ${commit}`);
 
-  const skills: SkillCandidate[] = [];
-  for (const file of files.slice(0, MAX_SKILLS)) {
+  const read = async (file: (typeof files)[number]): Promise<SkillCandidate> => {
     const folder = file.path === "SKILL.md" ? "." : file.path.slice(0, -"/SKILL.md".length);
-    const response = await o.fetch(`${RAW}/${owner}/${repo}/${commit}/${file.path}`, { headers: { "User-Agent": HEADERS["User-Agent"] }, signal: o.signal });
+    const fallback = folder === "." ? repo! : folder.split("/").at(-1)!;
+    if (typeof file.size === "number" && file.size > MAX_SKILL_BYTES) {
+      return { id: null, name: fallback, description: "", path: folder, digest: file.sha, problem: "too-large" };
+    }
+    const response = await o.fetch(`${RAW}/${owner}/${repo}/${commit}/${encodePath(file.path)}`, { headers: { "User-Agent": HEADERS["User-Agent"] }, signal: o.signal });
     if (!response.ok) throw new Error(`could not read ${file.path} in ${slug} at ${commit} (${response.status})`);
     const meta = skillFrontMatter(await response.text());
-    const fallback = folder === "." ? repo! : folder.split("/").at(-1)!;
-    if (!meta) {
-      skills.push({ id: null, name: fallback, description: "", path: folder, digest: file.sha, problem: "missing-frontmatter" });
-      continue;
-    }
+    if (!meta) return { id: null, name: fallback, description: "", path: folder, digest: file.sha, problem: "missing-frontmatter" };
     const id = skillId(meta.name);
     const problem: SkillProblem | null = !ID.test(id) ? "invalid-id" : BUNDLED_IDS.has(id) ? "bundled-id" : null;
-    skills.push({ id: problem ? null : id, name: meta.name, description: meta.description, path: folder, digest: file.sha, problem });
-  }
+    return { id: problem ? null : id, name: meta.name, description: meta.description, path: folder, digest: file.sha, problem };
+  };
 
-  const chosen = source.skill
-    ? skills.filter((skill) => skill.name === source.skill || skill.id === source.skill || skill.path.split("/").at(-1) === source.skill)
-    : skills;
-  if (source.skill && chosen.length === 0) throw new Error(`skill ${source.skill} not found in ${slug} at ${commit}`);
+  let chosen: SkillCandidate[] = [];
+  const limit = source.skill ? MAX_SCAN : MAX_SKILLS;
+  for (const file of files.slice(0, limit)) chosen.push(await read(file));
+  if (source.skill) {
+    // One skills.sh page is one skill: match by name, then by id, then by folder, and stop at the first
+    // rank that matches anything. Two matches at that rank is a question, not a guess.
+    const wanted = source.skill;
+    const ranks = [
+      (skill: SkillCandidate) => skill.name === wanted,
+      (skill: SkillCandidate) => skill.id === wanted,
+      (skill: SkillCandidate) => skill.path.split("/").at(-1) === wanted,
+    ];
+    const hits = ranks.map((rank) => chosen.filter(rank)).find((list) => list.length > 0) ?? [];
+    if (hits.length === 0) throw new Error(`skill ${wanted} not found in ${slug} at ${commit}`);
+    if (hits.length > 1) throw new Error(`skill ${wanted} is ambiguous in ${slug} at ${commit}: ${hits.map((skill) => skill.path).join(", ")}`);
+    chosen = hits;
+  }
+  // Two skills that map to one id would install into one folder; neither is offered until renamed.
+  const counts = new Map<string, number>();
+  for (const skill of chosen) if (skill.id) counts.set(skill.id, (counts.get(skill.id) ?? 0) + 1);
+  chosen = chosen.map((skill) => (skill.id && counts.get(skill.id)! > 1 ? { ...skill, id: null, problem: "duplicate-id" } : skill));
 
   return {
     repository: `https://github.com/${owner}/${repo}`,
     owner: owner!,
     repo: repo!,
-    ref,
+    ref: chosenRef,
     commit,
     license,
-    path: source.path,
+    path: folderPath,
     skills: chosen,
-    truncated: field(treeBody, "truncated") === true || files.length > MAX_SKILLS,
+    truncated: field(treeBody, "truncated") === true || files.length > limit,
   };
 }
 
@@ -169,7 +221,7 @@ export async function resolveSkillSource(source: SkillSource, o: Options): Promi
 export function pinnedSkillRecord(resolution: SkillResolution, skill: SkillCandidate): ExtensionRecord {
   if (!skill.id || skill.problem) throw new Error(`skill ${skill.name} cannot be installed: ${skill.problem ?? "invalid-id"}`);
   if (!COMMIT.test(resolution.commit)) throw new Error("a skill record needs a 40-character commit");
-  const folder = skill.path === "." ? "" : `/${skill.path}`;
+  const folder = skill.path === "." ? "" : `/${encodePath(skill.path)}`;
   return {
     id: skill.id,
     kind: "skill",
@@ -183,5 +235,6 @@ export function pinnedSkillRecord(resolution: SkillResolution, skill: SkillCandi
     availability: "ready",
     externalPath: null,
     error: null,
+    provenance: { repository: resolution.repository, commit: resolution.commit, path: skill.path, digest: skill.digest, license: resolution.license },
   };
 }

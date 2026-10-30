@@ -67,7 +67,8 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
       }
       throw error;
     }
-    const present = new Set(store.list().map((row) => row.id));
+    // Only a finished install counts; a cancelled or failed one leaves a record but no usable copy.
+    const present = new Set(store.list().filter((row) => row.installState === "installed").map((row) => row.id));
     return {
       ...resolved,
       skills: resolved.skills.map((skill) => ({

@@ -16,6 +16,15 @@ export type SkillSource = {
   path: string | null;
   /** Skill named by a skills.sh page; null means every skill found. */
   skill: string | null;
+  /**
+   * Everything after `tree/` or `blob/` in a link (without a trailing `SKILL.md`), or null.
+   * A GitHub link cannot tell `feature/x/skills` apart as ref `feature` + path `x/skills` or ref
+   * `feature/x` + path `skills`; `ref`/`path` hold the first-segment guess and the resolver tries
+   * longer refs from this when GitHub does not know the guess.
+   */
+  refPath: string | null;
+  /** A blob link names one `SKILL.md`: only the file directly in `path`, not skills nested below it. */
+  exact: boolean;
 };
 
 const MAX_INPUT = 2048;
@@ -46,7 +55,7 @@ export function parseSkillSource(raw: string): SkillSource {
     const [owner, repo] = input.split("/");
     const name = repoName(repo!);
     if (!OWNER.test(owner!) || !name) refuse(input);
-    return { via: "github", owner: owner!, repo: name, ref: null, path: null, skill: null };
+    return { via: "github", owner: owner!, repo: name, ref: null, path: null, skill: null, refPath: null, exact: false };
   }
 
   let url: URL;
@@ -67,7 +76,7 @@ export function parseSkillSource(raw: string): SkillSource {
     if (segments.length < 2 || segments.length > 3 || !segments.every(plainSegment)) refuse(input);
     const name = repoName(segments[1]!);
     if (!OWNER.test(segments[0]!) || !name) refuse(input);
-    return { via: "skills.sh", owner: segments[0]!, repo: name, ref: null, path: null, skill: segments[2] ?? null };
+    return { via: "skills.sh", owner: segments[0]!, repo: name, ref: null, path: null, skill: segments[2] ?? null, refPath: null, exact: false };
   }
 
   if (host !== "github.com" && host !== "www.github.com") refuse(input);
@@ -75,7 +84,7 @@ export function parseSkillSource(raw: string): SkillSource {
   const [owner, repoSegment, kind, ref, ...rest] = segments;
   const repo = repoName(repoSegment!);
   if (!OWNER.test(owner!) || !repo) refuse(input);
-  if (kind === undefined) return { via: "github", owner: owner!, repo, ref: null, path: null, skill: null };
+  if (kind === undefined) return { via: "github", owner: owner!, repo, ref: null, path: null, skill: null, refPath: null, exact: false };
   if ((kind !== "tree" && kind !== "blob") || ref === undefined || !REF.test(ref) || ref.includes("..")) refuse(input);
   if (!rest.every(plainSegment)) refuse(input);
   let folder = rest;
@@ -84,5 +93,14 @@ export function parseSkillSource(raw: string): SkillSource {
     if (rest.at(-1) !== "SKILL.md") refuse(input);
     folder = rest.slice(0, -1);
   }
-  return { via: "github", owner: owner!, repo, ref, path: folder.length ? folder.join("/") : null, skill: null };
+  return {
+    via: "github",
+    owner: owner!,
+    repo,
+    ref,
+    path: folder.length ? folder.join("/") : null,
+    skill: null,
+    refPath: [ref, ...folder].join("/"),
+    exact: kind === "blob",
+  };
 }

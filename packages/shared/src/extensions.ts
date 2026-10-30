@@ -4,6 +4,19 @@ export type InstallState = "absent" | "installing" | "installed" | "updating" | 
 export type UseState = "enabled" | "disabled";
 export type Availability = "ready" | "missing-dependency" | "incompatible" | "damaged";
 
+/** Where a managed copy came from, kept with the record so it stays auditable after the source moves. */
+export type ExtensionProvenance = {
+  repository: string;
+  /** 40-character commit the files were copied from. */
+  commit: string;
+  /** Folder inside the repository; `.` is the root. */
+  path: string;
+  /** Git blob SHA-1 of the skill's SKILL.md at that commit. */
+  digest: string;
+  /** SPDX id GitHub reported for the repository, or null. */
+  license: string | null;
+};
+
 export type ExtensionRecord = {
   id: string;
   kind: ExtensionKind;
@@ -17,6 +30,8 @@ export type ExtensionRecord = {
   availability: Availability;
   externalPath: string | null;
   error: string | null;
+  /** Only on records Nema installed from a pinned source. */
+  provenance?: ExtensionProvenance;
 };
 
 function bundled(id: string, name: string, availability: Availability, error: string | null): ExtensionRecord {

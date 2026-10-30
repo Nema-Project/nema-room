@@ -208,3 +208,33 @@ test("extensions.resolveSource refuses an unsupported source before fetching any
   }
   expect(asked).toEqual([]);
 });
+
+test("extensions.resolveSource does not call a cancelled install installed", async () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-rpc-"));
+  const commit = "0123456789abcdef0123456789abcdef01234567";
+  const store = openExtensionStore(join(dir, "extensions"));
+  const base = { kind: "skill" as const, summary: "", source: "nema install", revision: "abc123", provision: "managed" as const, useState: "enabled" as const, availability: "ready" as const, externalPath: null, error: null };
+  store.putManaged({ ...base, id: "gone", name: "gone", installState: "absent" });
+  store.putManaged({ ...base, id: "here", name: "here", installState: "installed" });
+  const replies: Record<string, unknown> = {
+    "https://api.github.com/repos/acme/skills": { full_name: "acme/skills", default_branch: "main", license: null },
+    "https://api.github.com/repos/acme/skills/commits/main": { sha: commit },
+    [`https://api.github.com/repos/acme/skills/git/trees/${commit}?recursive=1`]: {
+      tree: [{ path: "gone/SKILL.md", type: "blob", sha: "a".repeat(40) }, { path: "here/SKILL.md", type: "blob", sha: "b".repeat(40) }],
+    },
+    [`https://raw.githubusercontent.com/acme/skills/${commit}/gone/SKILL.md`]: "---\nname: gone\ndescription: d\n---\n",
+    [`https://raw.githubusercontent.com/acme/skills/${commit}/here/SKILL.md`]: "---\nname: here\ndescription: d\n---\n",
+  };
+  const router = new RpcRouter();
+  registerExtensionHandlers(router, dir, {
+    fetch: async (url: string) => {
+      const body = replies[url];
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => body, text: async () => String(body) };
+    },
+  });
+  const response = await rpc(router, "r3", "extensions.resolveSource", { source: "acme/skills" });
+  expect(response.ok).toBe(true);
+  if (!response.ok) return;
+  const skills = (response.result as { skills: Array<{ id: string; installed: boolean }> }).skills;
+  expect(skills.map((skill) => [skill.id, skill.installed])).toEqual([["gone", false], ["here", true]]);
+});
