@@ -104,6 +104,7 @@
   "composer.send": "Send ⇧↵",
   "composer.sendFailed": "Could not send: {message}",
   "cmd.menu": "Commands",
+  "cmd.skills": "Skills",
   "cmd.progress": "Ask how far the code has got",
   "cmd.diagram.architecture": "Architecture",
   "cmd.diagram.workflow": "Workflow",

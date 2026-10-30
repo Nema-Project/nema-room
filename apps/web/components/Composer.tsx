@@ -1,12 +1,13 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
+import { Fragment, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { messageHasBody } from "@nema/shared";
 import { AttachmentTray } from "@/components/AttachmentTray";
 import { messageRoleLabel } from "@/components/MessageItem";
 import { useAttachmentTray } from "@/lib/attachments";
 import { applyFormat, type FormatKind } from "@/lib/markdownFormat";
-import { applySlash, matchingCommands, slashToken, type SlashItem } from "@/lib/slash";
+import { applySlash, matchingItems, slashToken, type SkillRow, type SlashItem } from "@/lib/slash";
+import { useSkillRows } from "@/lib/skillMenu";
 import { useT } from "@/lib/i18n";
 import type { Message } from "@/lib/types";
 
@@ -15,8 +16,9 @@ function excerpt(content: string): string {
   return chars.length <= 200 ? content : chars.slice(0, 200).join("");
 }
 
-function availableCommands(query: string, threadMode: boolean): SlashItem[] {
-  return matchingCommands(query).filter((item) => !threadMode || item.id !== "thread");
+function availableItems(value: string, token: { query: string; start: number }, skills: readonly SkillRow[], threadMode: boolean): SlashItem[] {
+  // Skills only when the `/` starts the whole message; other lines keep just the built-in commands.
+  return matchingItems(token.query, { atMessageStart: value.slice(0, token.start).trim() === "", skills, threadMode });
 }
 
 export function Composer({
@@ -51,7 +53,8 @@ export function Composer({
   const picker = useRef<HTMLInputElement>(null);
   const tray = useAttachmentTray(workspaceId);
   const token = slashToken(value, cursor);
-  const matches = token ? availableCommands(token.query, threadMode) : [];
+  const skills = useSkillRows(workspaceId, token !== null);
+  const matches = token ? availableItems(value, token, skills, threadMode) : [];
   const tokenKey = token ? `${token.start}:${token.query}` : "";
   const menuOpen = token !== null && matches.length > 0 && closedFor !== tokenKey;
   const highlighted = matches.length === 0 ? 0 : active % matches.length;
@@ -105,7 +108,7 @@ export function Composer({
     const caret = el?.selectionStart ?? cursor;
     const current = slashToken(el?.value ?? value, caret);
     if (!current) return;
-    const insert = item.type ? t(item.insert, { type: item.type }) : t(item.insert);
+    const insert = item.skill ? item.insert : item.type ? t(item.insert, { type: item.type }) : t(item.insert);
     const next = applySlash(el?.value ?? value, current, insert);
     place(next.text, next.cursor);
   }
@@ -114,7 +117,7 @@ export function Composer({
     if (composing.current || e.nativeEvent.isComposing || e.keyCode === 229) return;
     const caret = e.currentTarget.selectionStart;
     const current = slashToken(e.currentTarget.value, caret);
-    const shown = current ? availableCommands(current.query, threadMode) : [];
+    const shown = current ? availableItems(e.currentTarget.value, current, skills, threadMode) : [];
     const open = current !== null && shown.length > 0 && closedFor !== `${current.start}:${current.query}`;
     if (open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault();
@@ -185,8 +188,13 @@ export function Composer({
       {menuOpen && (
         <div className="cmdmenu" id="slash-commands" role="listbox" aria-label={t("cmd.menu")}>
           {matches.map((item, i) => (
+            <Fragment key={item.id}>
+            {item.skill && !matches[i - 1]?.skill && (
+              <div className="cmdgroup" role="presentation">
+                {t("cmd.skills")}
+              </div>
+            )}
             <button
-              key={item.id}
               type="button"
               role="option"
               id={`slash-${item.id}`}
@@ -196,9 +204,10 @@ export function Composer({
               onMouseEnter={() => setActive(i)}
               onClick={() => choose(item)}
             >
-              <span className="name">/{item.id}</span>
-              <span className="hint">{t(item.hint)}</span>
+              <span className="name">{item.skill ? item.skill.command : `/${item.id}`}</span>
+              <span className="hint">{item.skill ? item.hint : t(item.hint)}</span>
             </button>
+            </Fragment>
           ))}
         </div>
       )}

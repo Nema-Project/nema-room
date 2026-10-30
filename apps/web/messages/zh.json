@@ -104,6 +104,7 @@
   "composer.send": "发送 ⇧↵",
   "composer.sendFailed": "发送失败：{message}",
   "cmd.menu": "命令",
+  "cmd.skills": "Skills",
   "cmd.progress": "根据代码说明做到哪了",
   "cmd.diagram.architecture": "架构",
   "cmd.diagram.workflow": "流程",

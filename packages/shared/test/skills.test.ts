@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { RESERVED_SLASH_NAMES, isReservedSlashName, isSkillName, parseManualSkill } from "../src/index.js";
+import { RESERVED_SLASH_NAMES, isReservedSlashName, isSkillName, parseManualSkill, skillSlashCommand } from "../src/index.js";
 
 test("isSkillName follows the Agent Skills naming rules", () => {
   for (const ok of ["pdf-tools", "3d-print", "a", "a".repeat(64), "tdd"]) expect(isSkillName(ok)).toBe(true);
@@ -8,8 +8,8 @@ test("isSkillName follows the Agent Skills naming rules", () => {
 
 test("reserved slash names cover the built-in composer commands", () => {
   expect([...RESERVED_SLASH_NAMES]).toEqual(["thread", "progress", "update"]);
-  for (const name of ["thread", "progress", "update", "diagram:flow", "diagram:architecture", "diagram:"]) expect(isReservedSlashName(name)).toBe(true);
-  for (const name of ["tdd", "threads", "diagram", "web:deploy"]) expect(isReservedSlashName(name)).toBe(false);
+  for (const name of ["thread", "progress", "update", "diagram:flow", "diagram:architecture", "diagram:", "skill:", "skill:tdd"]) expect(isReservedSlashName(name)).toBe(true);
+  for (const name of ["tdd", "threads", "diagram", "skill", "skills", "web:deploy"]) expect(isReservedSlashName(name)).toBe(false);
 });
 
 test("parseManualSkill reads a leading /name and its arguments", () => {
@@ -29,6 +29,21 @@ test("parseManualSkill leaves built-in commands alone", () => {
   expect(parseManualSkill("/thread x")).toBeNull();
   expect(parseManualSkill("/progress")).toBeNull();
   expect(parseManualSkill("/diagram:flow")).toBeNull();
+});
+
+test("/skill:<id> always names a Skill, built-in names included", () => {
+  expect(parseManualSkill("/skill:thread 开一个")).toEqual({ skillId: "thread", arguments: "开一个" });
+  expect(parseManualSkill("/skill:tdd")).toEqual({ skillId: "tdd", arguments: "" });
+  expect(parseManualSkill("/skill:web:deploy now")).toEqual({ skillId: "web:deploy", arguments: "now" });
+  expect(parseManualSkill("/skill")).toEqual({ skillId: "skill", arguments: "" });
+  for (const text of ["/skill:", "/skill: x", "/skill:skill:x", "/skill:a:b:c", "/skill:Tdd"]) expect(parseManualSkill(text), text).toBeNull();
+});
+
+test("skillSlashCommand writes the prefix only where a built-in takes the name", () => {
+  expect(skillSlashCommand("tdd")).toBe("/tdd");
+  expect(skillSlashCommand("web:deploy")).toBe("/web:deploy");
+  expect(skillSlashCommand("thread")).toBe("/skill:thread");
+  expect(skillSlashCommand("update")).toBe("/skill:update");
 });
 
 test("a / name with a part longer than 64 characters is not a Skill call", () => {

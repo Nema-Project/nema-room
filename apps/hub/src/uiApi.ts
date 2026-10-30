@@ -19,7 +19,7 @@ import { vendoredArchify, type Archify } from "./diagrams.js";
 import { posix, win32 } from "node:path";
 import { PluginError, clearMcpSecret, getMcpConfig, mcpHttpStatus, mcpServerStatus, saveMcpConfig, setMcpSecret, startMcp, stopMcp, attachExtension, attachHttpStatus, daemonHttpStatus, discoverExtensions, listExtensions, repairExtension, pluginsForUi, cancelExtensionInstall, extensionInstallStatus, installExtension, removeExtension, resolveExtensionSource, retryExtensionInstall, setExtensionUse, setPluginState, workspacePluginState } from "./plugins.js";
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
-import { RepoError, bindRepo, getRepo, listIndexing, listRepos, previewRepo, syncBoundRepos, unbindRepo, updateRepo } from "./repos.js";
+import { RepoError, bindRepo, getRepo, listIndexing, listRepos, previewRepo, syncBoundRepos, trustedSkillRepos, unbindRepo, updateRepo } from "./repos.js";
 import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
 import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, repoPath, updateWorkspace } from "./workspaces.js";
 import { attentionCounts, ensureThread, getThread, listThreads, markThreadRead, nextAttentionResult } from "./threads.js";
@@ -380,6 +380,22 @@ export function uiRoutes(deps: UiDeps): Hono {
   });
 
   app.get("/workspaces/:id/repos", async (c) => c.json(await listRepos(db, c.req.param("id")!)));
+
+  // The Skills the composer's `/` menu offers: the daemon's user-level ones plus this workspace's trusted repositories'.
+  app.get("/workspaces/:id/skills", async (c) => {
+    const id = c.req.param("id")!;
+    if (!(await getWorkspace(db, id))) throw new HttpError(404, `workspace not found: ${id}`);
+    try {
+      const skills = await deps.daemon.call("skills.catalog", { projectSkills: await trustedSkillRepos(db, id) });
+      if (!Array.isArray(skills)) return c.json({ error: "invalid skills.catalog result" }, 502);
+      return c.json({ supported: true, skills });
+    } catch (error) {
+      if (!(error instanceof DaemonRpcError)) throw error;
+      // An older daemon: the menu keeps only the built-in commands.
+      if (error.message.startsWith("未知方法 ")) return c.json({ supported: false, skills: [] });
+      return c.json({ error: error.message }, daemonHttpStatus(error.message));
+    }
+  });
 
   app.post("/workspaces/:id/repos/preview", async (c) => {
     const input = await body(c, PreviewRepoBody);
