@@ -400,5 +400,7 @@
   "extensions.problem.invalid-id": "名称无法转换成扩展 id。",
   "extensions.problem.bundled-id": "名称与内置扩展重名。",
   "extensions.problem.duplicate-id": "这个来源里另一个 Skill 的 id 与它相同。",
-  "extensions.problem.too-large": "SKILL.md 超过 256 KiB。"
+  "extensions.problem.too-large": "SKILL.md 超过 256 KiB。",
+  "chat.skillOffer.title": "安装 {name}？",
+  "chat.skillOffer.note": "在你点「安装」之前，不会安装任何东西。"
 }

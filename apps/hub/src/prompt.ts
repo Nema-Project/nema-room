@@ -122,6 +122,11 @@ export function buildPrompt(input: {
         : "追问严格程度：严格——任何会影响实现的问题都先问。比较方案或权衡利弊且尚未决定时，不要新建 question 条目。",
     );
   }
+  // Only the user can ask for an install; the hub refuses offers from any other task, and the prompt
+  // does not suggest one.
+  if (userMessage.role === "user") {
+    rules.push("用户要求安装 skill 时，调用 `offer_skill_install`，把用户给的 GitHub 仓库或 skills.sh 链接作为 `source`。它不会安装任何东西，只会在你的回复下方放一张安装卡片，用户点「安装」才会安装。不要说已经安装好了。");
+  }
   const system = userMessage.role === "system";
   if (system) rules.push("这是系统发起的请求，不是用户说的话：不要把它当作用户的陈述或决定（basis 不能是 stated / decided）。");
   const report = userMessage.role === "report";

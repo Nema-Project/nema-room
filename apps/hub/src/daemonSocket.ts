@@ -20,6 +20,7 @@ import { claimNextTask, finishTask, getTask, interruptRunning, listTaskChanges, 
 import { getWorkspace, listWorkspaces, repoPath } from "./workspaces.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { versionSkewMessage } from "./hubVersion.js";
+import { clearSkillOffers, listSkillOffers } from "./skillOffers.js";
 
 export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daemonToken: string; hubUrl: string; ownedHelpers?: OwnedHelperScope; releaseVersion?: string };
 
@@ -100,6 +101,8 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   ): Promise<Message | null> {
     return db.tx(async (t) => {
       if (!(await finishTask(t, routing.task.id, result, expectedRunToken))) return null;
+      // The reply's meta now carries any offers; a failed task's offers are not shown at all.
+      await clearSkillOffers(t, routing.task.id);
       if (routing.createThread && routing.askedQuestion) {
         await ensureThread(t, routing.taskMessage.id, routing.askedQuestion.title, "grill");
       }
@@ -274,6 +277,8 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         changes: routing.changes,
         askedQuestion: routing.askedQuestion ? { id: routing.askedQuestion.id, title: routing.askedQuestion.title, body: routing.askedQuestion.body } : null,
       };
+      const offers = await listSkillOffers(db, m.taskId);
+      if (offers.length > 0) meta.skillOffers = offers;
       if (routing.task.kind === "edit") {
         const edited = await getMessage(db, routing.task.messageId);
         if (edited) meta.quote = { messageId: edited.id, role: edited.role, excerpt: messageExcerpt(edited.content) };

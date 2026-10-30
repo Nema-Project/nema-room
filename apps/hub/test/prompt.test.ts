@@ -261,6 +261,14 @@ describe("buildPrompt", () => {
     expect(p).toContain("Q-5 | question | open | 无依据 | priority 1");
     expect(p).not.toContain("Q-5 | question | open | 无依据 | priority 1 | inferred");
   });
+  test("only a user's own message gets the skill install rule, and it says the user installs", () => {
+    const rule = "用户要求安装 skill 时，调用 `offer_skill_install`，把用户给的 GitHub 仓库或 skills.sh 链接作为 `source`。它不会安装任何东西，只会在你的回复下方放一张安装卡片，用户点「安装」才会安装。不要说已经安装好了。";
+    expect(base()).toContain(rule);
+    for (const role of ["system", "report"] as const) {
+      expect(buildPrompt({ workspace: ws("follow"), userMessage: msg(999, role), recentMessages: [], entries, lastAskedQuestion: null })).not.toContain("offer_skill_install");
+    }
+  });
+
   test("the prompt for a system task says 本次系统请求 and forbids stated/decided", () => {
     const p = buildPrompt({ workspace: ws("follow"), userMessage: msg(999, "system"), recentMessages: [], entries, lastAskedQuestion: null });
     expect(p).toContain("# 本次系统请求\n[m_999] content-999");

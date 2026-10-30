@@ -20,12 +20,12 @@ const codeRead: PluginToolSpec = {
 describe("roomTools", () => {
   test("roomTools lists open_thread and each plugin tool", () => {
     const tools = roomTools([codeRead]);
-    expect(tools.map((t) => t.name)).toEqual(["list_entries", "read_entry", "upsert_entry", "open_thread", "code__read"]);
+    expect(tools.map((t) => t.name)).toEqual(["list_entries", "read_entry", "upsert_entry", "open_thread", "offer_skill_install", "code__read"]);
     for (const t of tools) {
       expect(t.type).toBe("function");
       expect(t.strict).toBe(false);
     }
-    expect(tools[4]).toMatchObject({
+    expect(tools[5]).toMatchObject({
       description: codeRead.description,
       parameters: codeRead.parameters,
     });
@@ -42,6 +42,34 @@ describe("roomTools", () => {
   });
 });
 
+test("offer_skill_install takes a source and an optional path, and says it only offers", () => {
+  const offer = roomTools([]).find((t) => t.name === "offer_skill_install")!;
+  expect(offer.parameters).toEqual({
+    type: "object",
+    properties: { source: { type: "string" }, path: { type: "string" } },
+    required: ["source"],
+    additionalProperties: false,
+  });
+  // The model has to know pressing Install is the user's step, not something it already did.
+  expect(offer.description).toMatch(/does not install/i);
+});
+
+test("dispatchTool offer_skill_install calls room.offerSkillInstall with the arguments", async () => {
+  const calls: unknown[] = [];
+  const ok = async (): Promise<RoomResult> => ({ ok: true, json: {} });
+  const room = {
+    listEntries: ok,
+    readEntry: ok,
+    upsertEntry: ok,
+    openThread: ok,
+    callPlugin: ok,
+    offerSkillInstall: async (args: unknown): Promise<RoomResult> => { calls.push(args); return { ok: true, json: { offer: { id: "pdf" } } }; },
+  };
+  expect(await dispatchTool("offer_skill_install", '{"source":"acme/skills","path":"skills/pdf"}', room)).toEqual({ output: '{"offer":{"id":"pdf"}}', known: true });
+  expect(calls).toEqual([{ source: "acme/skills", path: "skills/pdf" }]);
+  expect((await dispatchTool("offer_skill_install", "[1]", room)).known).toBe(false);
+});
+
 test("dispatchTool open_thread calls room.openThread", async () => {
   const calls: unknown[] = [];
   const room = {
@@ -50,6 +78,7 @@ test("dispatchTool open_thread calls room.openThread", async () => {
     upsertEntry: async (): Promise<RoomResult> => ({ ok: true, json: {} }),
     openThread: async (args: unknown): Promise<RoomResult> => { calls.push(args); return { ok: true, json: { threadId: "m1" } }; },
     callPlugin: async (): Promise<RoomResult> => ({ ok: true, json: {} }),
+    offerSkillInstall: async (): Promise<RoomResult> => ({ ok: true, json: {} }),
   };
   const result = await dispatchTool("open_thread", '{"title":"Long topic"}', room);
   expect(result).toEqual({ output: '{"threadId":"m1"}', known: true });
@@ -76,6 +105,9 @@ describe("dispatchTool plugin tools", () => {
         calls.push({ name, args });
         return { ok: true, json: { text: "body" } };
       },
+      offerSkillInstall: async (): Promise<RoomResult> => {
+        throw new Error("offerSkillInstall");
+      },
     };
 
     const listed = await dispatchTool("code__read", '{"repo":"r","path":"a.ts"}', room, [codeRead]);
@@ -85,7 +117,7 @@ describe("dispatchTool plugin tools", () => {
     const unknown = await dispatchTool("code__search", "{}", room, [codeRead]);
     expect(unknown.known).toBe(false);
     const error = (JSON.parse(unknown.output) as { error: string }).error;
-    expect(error).toContain("只能使用 list_entries、read_entry、upsert_entry、open_thread、code__read");
+    expect(error).toContain("只能使用 list_entries、read_entry、upsert_entry、open_thread、offer_skill_install、code__read");
     expect(calls).toEqual([{ name: "code__read", args: { repo: "r", path: "a.ts" } }]);
   });
 });

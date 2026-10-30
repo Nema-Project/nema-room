@@ -76,7 +76,7 @@ describe("tool output cap (64 KB)", () => {
 
 describe("ROOM_TOOLS / dispatchTool", () => {
   test("Room functions are non-strict with JSON-schema parameters", () => {
-    expect(ROOM_TOOLS.map((t) => t.name)).toEqual(["list_entries", "read_entry", "upsert_entry", "open_thread"]);
+    expect(ROOM_TOOLS.map((t) => t.name)).toEqual(["list_entries", "read_entry", "upsert_entry", "open_thread", "offer_skill_install"]);
     for (const t of ROOM_TOOLS) {
       expect(t.type).toBe("function");
       expect(t.strict).toBe(false);

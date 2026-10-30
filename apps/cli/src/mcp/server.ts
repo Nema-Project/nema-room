@@ -76,6 +76,7 @@ export async function startMcpServer(opts: { hubUrl: string; runToken: string },
     }
     if (name === "upsert_entry") return toToolResult(await room.upsertEntry(args));
     if (name === "open_thread") return toToolResult(await room.openThread(args));
+    if (name === "offer_skill_install") return toToolResult(await room.offerSkillInstall(args));
     return { content: [{ type: "text", text: `未知函数 ${name}` }], isError: true };
   });
   await server.connect(transport ?? new StdioServerTransport());

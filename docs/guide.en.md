@@ -208,6 +208,8 @@ The Plugins page (Settings, bottom left) gives every extension an Enable / Disab
 
 To install a skill, paste a GitHub repository, a link to a folder or `SKILL.md` in one, or a skills.sh page into "Install a skill" at the top of the Plugins page and press Preview. The preview shows the commit the source is pinned to, the license GitHub reports, and every skill found there with the folder it would install to. A skill that cannot be installed says why. Install copies only that skill's folder at that commit; the line under it shows files done out of the total, with Cancel install while it runs. A failed install shows the reason on its row and offers Retry install, which starts again from the same commit. Only public repositories are supported for now. See "Installing a skill" in the technical reference (安装 Skill).
 
+You can also ask in chat, for example "install the pdf skill from anthropics/skills". The Agent pins the source the same way as the Preview button and puts a card under its reply with the skill's name, description, repository, commit, license, and target folder. The Agent cannot install anything itself: the skill is installed only when you press Install on the card, which goes through the same install service as the Plugins page and shows the same progress and Cancel install. If the source holds several skills, the Agent asks which one you mean. Only a message you sent can lead to an install card; system requests and coding-agent reports cannot.
+
 <a id="data"></a>
 
 ## Data, privacy, and known limitations

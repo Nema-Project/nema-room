@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { CLAUDE_ROOM_TOOLS, prepareClaudeLaunch } from "../../src/claude/launch.js";
+import { ROOM_TOOLS } from "../../src/direct/tools.js";
 
 let root: string;
 let nemaHome: string;
@@ -33,6 +34,11 @@ const options = (model?: string) => ({
 });
 
 describe("Claude Code launch", () => {
+  test("CLAUDE_ROOM_TOOLS is exactly the Room functions codex-direct declares", () => {
+    expect([...CLAUDE_ROOM_TOOLS]).toEqual(ROOM_TOOLS.map((tool) => `mcp__room__${tool.name}`));
+    expect(CLAUDE_ROOM_TOOLS).toContain("mcp__room__offer_skill_install");
+  });
+
   test("CLAUDE_ROOM_TOOLS contains mcp__room__open_thread", () => {
     expect(CLAUDE_ROOM_TOOLS).toContain("mcp__room__open_thread");
   });

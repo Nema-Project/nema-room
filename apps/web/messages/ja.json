@@ -400,5 +400,7 @@
   "extensions.problem.invalid-id": "名前を拡張機能の ID に変換できません。",
   "extensions.problem.bundled-id": "名前が組み込みの拡張機能と重複しています。",
   "extensions.problem.duplicate-id": "このソース内の別の Skill と ID が重複しています。",
-  "extensions.problem.too-large": "SKILL.md が 256 KiB を超えています。"
+  "extensions.problem.too-large": "SKILL.md が 256 KiB を超えています。",
+  "chat.skillOffer.title": "{name} をインストールしますか？",
+  "chat.skillOffer.note": "「インストール」を押すまで、何もインストールされません。"
 }
