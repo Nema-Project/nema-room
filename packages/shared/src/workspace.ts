@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { EntryKindSchema } from "./entry.js";
+import { MessageMentions } from "./mentions.js";
 
 export const KNOWLEDGE_LANGUAGES = ["ja", "en", "zh", "follow"] as const;
 export type KnowledgeLanguage = (typeof KNOWLEDGE_LANGUAGES)[number];
@@ -25,6 +26,8 @@ export type MessageQuote = z.infer<typeof MessageQuote>;
 
 export const UserMessageMeta = z.object({
   quote: MessageQuote.optional(),
+  /** `@` mentions in this message, validated and stored by the hub (at most MENTION_LIMITS.perMessage). */
+  mentions: MessageMentions.optional(),
 });
 export type UserMessageMeta = z.infer<typeof UserMessageMeta>;
 
@@ -76,3 +79,5 @@ export function isBranchName(name: string): boolean {
   if (name.endsWith("/") || name.endsWith(".") || name.endsWith(".lock")) return false;
   return name.split("/").every((segment) => segment !== "" && !segment.startsWith(".") && !segment.endsWith(".lock"));
 }
+
+export * from "./mentions.js";
