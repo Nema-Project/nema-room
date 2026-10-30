@@ -1,0 +1,1 @@
+- `nema auth status` with `authMode=byok` no longer says "尚未登录直连模式" and points to `nema auth login`. It shows the mode, the base URL (marked when it is the default), the model, and whether the API key is saved, missing or unusable; the key itself is never printed. It exits 0 only when a usable key and a model are both set.
