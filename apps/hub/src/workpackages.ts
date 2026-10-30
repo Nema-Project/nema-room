@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z, ZodError } from "zod";
 import { KnowledgeStore, git } from "@nema/knowledge";
-import { kindFromId, reportPassed, type Entry, type ReportMessageMeta, type WpTask } from "@nema/shared";
+import { kindFromId, reportPassed, type Entry, type ReportCheck, type ReportMessageMeta, type WpTask } from "@nema/shared";
 import type { DaemonRpc } from "./daemonRpc.js";
 import type { HubCallOutcome } from "./diagrams.js";
 import type { Db } from "./db/db.js";
@@ -391,7 +391,7 @@ async function saveProgress(
             reason: `开发包 ${wp.id} 全部任务已核实`,
             implementation: {
               status: "verified",
-              evidence: { reportMessageId: lastReportMessageId, commits: [...commits], inferred: false, note: `开发包 ${wp.id} 全部任务已核实`, confirmedBy: null },
+              evidence: { reportMessageId: lastReportMessageId, commits: [...commits], inferred: false, note: `开发包 ${wp.id} 全部任务已核实`, confirmedBy: null, acceptanceReview: null, reportEvidence: null },
             },
           },
           { author: "system" },
@@ -450,3 +450,17 @@ export async function confirmWorkPackageTask(deps: { db: Db; dataDir: string; ev
     return saveProgress(deps, workspaceId, wp, tasks, `用户确认任务 ${n} 已完成`, "user", task.reportMessageId);
   });
 }
+
+/**
+ * Marks requirements the user accepted on this report for review when the report's git check changed.
+ * Called before the new check is merged into the report meta. Filled in with the acceptance guard.
+ */
+export async function noteLinkedCheckChanged(
+  _db: Db,
+  _dataDir: string | undefined,
+  _workspaceId: string,
+  _messageId: string,
+  _previous: ReportCheck | null,
+  _next: ReportCheck,
+  _reportCommits: string[],
+): Promise<void> {}

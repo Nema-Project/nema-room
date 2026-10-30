@@ -322,6 +322,7 @@ export const USER_BASIS_EVIDENCE_ERROR =
 export const VERIFIED_NEEDS_REPORT = "实现状态 verified 需要一条核实通过的上报作为证据（evidence.reportMessageId）。";
 export const INFERRED_NOT_VERIFIED = "代码推断的实现只能由用户确认为 verified。";
 export const CONFIRMED_BY_USER_ONLY = "confirmedBy 只能由用户确认设置。";
+export const REPORT_EVIDENCE_PROVENANCE = "reportEvidence 只能引用本 workspace 的上报，以及该上报里的提交。";
 
 function activeDecisionEvidenceError(id: string): string {
   return `改写已定决策 ${id} 需要用户消息作为依据（basis 为 stated 或 decided，且 sourceMessages 含用户消息）。若只是推断，请不要改它，改为新建一条 question 询问用户。`;
@@ -443,9 +444,24 @@ function sameCommit(a: string, b: string): boolean {
  * Why the Agent may not save this implementation, or null when it may. `verified` needs a `report` message
  * of this workspace whose stored check passed, and every cited commit must be one of that report's commits.
  */
+/** Every reportEvidence group cites a report message in this workspace and only commits that report lists. */
+async function reportEvidenceCitesReports(db: Db, workspaceId: string, groups: Implementation["evidence"]["reportEvidence"]): Promise<boolean> {
+  for (const group of groups ?? []) {
+    const rows = await db.query<{ meta: ReportMessageMeta | null }>(
+      `select meta from messages where id = $1 and workspace_id = $2 and role = 'report'`,
+      [group.reportMessageId, workspaceId],
+    );
+    const reported = rows[0]?.meta?.report.commits;
+    if (!reported) return false;
+    if (!group.commits.every((sha) => sha !== "" && reported.some((r) => sameCommit(r, sha)))) return false;
+  }
+  return true;
+}
+
 async function implementationRefusal(db: Db, workspaceId: string, impl: Implementation): Promise<string | null> {
   const ev = impl.evidence;
   if (ev.confirmedBy !== null) return CONFIRMED_BY_USER_ONLY;
+  if (!(await reportEvidenceCitesReports(db, workspaceId, ev.reportEvidence ?? null))) return REPORT_EVIDENCE_PROVENANCE;
   if (impl.status !== "verified") return null;
   if (ev.inferred) return INFERRED_NOT_VERIFIED;
   if (ev.reportMessageId === null) return VERIFIED_NEEDS_REPORT;

@@ -16,10 +16,25 @@ const ROOM_NAMES = ["list_entries", "read_entry", "upsert_entry", "open_thread",
  * accepts for non-strict functions; the hub re-validates every upsert anyway.
  */
 function upsertParameters(): Record<string, unknown> {
-  const { $schema: _drop, ...schema } = z.toJSONSchema(UpsertEntryInput) as Record<string, unknown>;
+  const { $schema: _drop, ...raw } = z.toJSONSchema(UpsertEntryInput) as Record<string, unknown>;
+  const schema = withOptionalEvidence(raw);
   // UpsertEntryInput keeps basis optional for UI edits; the Agent must always state it.
   const required = Array.isArray(schema.required) ? (schema.required as string[]) : [];
   return { ...schema, required: required.includes("basis") ? required : [...required, "basis"] };
+}
+
+// The implementation evidence keys the hub fills itself default to null; the Agent need not send them.
+const OPTIONAL_EVIDENCE = new Set(["acceptanceReview", "reportEvidence"]);
+
+type SchemaNode = { properties?: Record<string, SchemaNode>; required?: string[] } & Record<string, unknown>;
+
+function withOptionalEvidence(schema: Record<string, unknown>): Record<string, unknown> {
+  const implementation = (schema as SchemaNode).properties?.implementation;
+  const evidence = implementation?.properties?.evidence;
+  if (!implementation || !evidence?.required) return schema;
+  const nextEvidence = { ...evidence, required: evidence.required.filter((k) => !OPTIONAL_EVIDENCE.has(k)) };
+  const nextImplementation = { ...implementation, properties: { ...implementation.properties, evidence: nextEvidence } };
+  return { ...schema, properties: { ...(schema as SchemaNode).properties, implementation: nextImplementation } };
 }
 
 export const ROOM_TOOLS: FunctionTool[] = [
