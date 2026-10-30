@@ -265,3 +265,54 @@ test("repo.uncovered lists main commits not covered by the given shas or their s
   });
   expect(all.ok && (all.result as string[]).sort()).toEqual([reported, squash, stray, picked, side].sort());
 });
+
+const repoParams = (repo: string) => ({ workspaceId: "ws_demo", repoId: "repo_demo", path: repo, mainBranch: "main" });
+
+test("returns author and committer for a resolved commit", async () => {
+  const { repo, nemaHome } = setup();
+  writeFileSync(join(repo, "a.txt"), "a\n");
+  git(repo, ["add", "-A"]);
+  execFileSync("git", ["commit", "-m", "a"], {
+    cwd: repo,
+    env: {
+      PATH: process.env.PATH,
+      HOME: process.env.HOME,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+      GIT_AUTHOR_NAME: "Ada Author",
+      GIT_AUTHOR_EMAIL: "author@example.com",
+      GIT_COMMITTER_NAME: "Cy Committer",
+      GIT_COMMITTER_EMAIL: "committer@example.com",
+    },
+  });
+  const sha = git(repo, ["rev-parse", "HEAD"]);
+  const rpc = new RpcRouter();
+  registerRepoHandlers(rpc, { nemaHome });
+  const res = await rpc.handle({ type: "rpc.request", id: "1", method: "report.authors", params: { ...repoParams(repo), commits: [sha.slice(0, 7)] } });
+  expect(res).toMatchObject({ ok: true });
+  const result = (res as { result: { checkedAt: string; source: string; commits: unknown[]; missing: string[] } }).result;
+  expect(result.source).toBe("git");
+  expect(Number.isNaN(Date.parse(result.checkedAt))).toBe(false);
+  expect(result.missing).toEqual([]);
+  expect(result.commits).toEqual([
+    { sha, authorName: "Ada Author", authorEmail: "author@example.com", committerName: "Cy Committer", committerEmail: "committer@example.com" },
+  ]);
+});
+
+test("lists an unreadable sha as missing", async () => {
+  const { repo, nemaHome } = setup();
+  const rpc = new RpcRouter();
+  registerRepoHandlers(rpc, { nemaHome });
+  const res = await rpc.handle({ type: "rpc.request", id: "1", method: "report.authors", params: { ...repoParams(repo), commits: ["deadbee"] } });
+  expect(res).toMatchObject({ ok: true, result: { source: "git", commits: [], missing: ["deadbee"] } });
+  await expect(
+    rpc.handle({ type: "rpc.request", id: "2", method: "report.authors", params: { ...repoParams(repo), commits: ["--all"] } }),
+  ).resolves.toMatchObject({ ok: false });
+});
+
+test("does not add authors to report.check", async () => {
+  const { repo } = setup();
+  const sha = git(repo, ["rev-parse", "HEAD"]);
+  const check = await checkReport(repo, "origin/main", [sha], []);
+  expect(Object.keys(check).sort()).toEqual(["checkedAt", "commitsExist", "filesOk", "mainSha", "missingCommits", "onMain", "touchedFiles", "untouchedFiles"]);
+});

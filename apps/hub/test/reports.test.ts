@@ -522,3 +522,70 @@ test("a draft package is 404", async () => {
   const missing = await get(`/report/workpackages/W-99?gitCommonDir=${encodeURIComponent(GIT_DIR)}`);
   expect(missing.status).toBe(404);
 });
+
+const authorsResult = {
+  checkedAt: "2026-10-23T10:02:00.000Z",
+  source: "git" as const,
+  commits: [{ sha: "abcdef1".padEnd(40, "0"), authorName: "Ada", authorEmail: "author@example.com", committerName: "Cy", committerEmail: "committer@example.com" }],
+  missing: [],
+};
+
+test("stores authors beside the check and still passes on git alone", async () => {
+  const { ws, repoId } = await bind();
+  const wpId = await approvedPackage(ws, repoId);
+  handlers["report.check"] = () => ({ ...passing, touchedFiles: ["src/a.ts"] });
+  handlers["report.authors"] = () => authorsResult;
+  const errors: unknown[][] = [];
+  const saved = console.error;
+  console.error = (...args: unknown[]) => void errors.push(args);
+  try {
+    const r = await post("/report", { ...report(), entries: [wpId], task: 1 });
+    expect(r.status).toBe(202);
+    const { messageId } = (await r.json()) as { messageId: string };
+    await waitFor(async () => (await listQueuedTasks(db, ws)).length > 0);
+    const meta = await metaOf(messageId);
+    expect(meta.authors).toEqual(authorsResult);
+    expect(meta.check).toEqual({ ...passing, touchedFiles: ["src/a.ts"] });
+    expect(calls.map((c) => c.method)).toEqual(expect.arrayContaining(["report.check", "report.authors"]));
+    expect(calls.find((c) => c.method === "report.authors")!.params).toEqual({ workspaceId: ws, repoId, path: "/real/a", mainBranch: "main", commits: ["abcdef1"] });
+    expect(await taskStatus(ws, wpId)).toBe("verified");
+  } finally {
+    console.error = saved;
+  }
+  expect(JSON.stringify(errors)).not.toContain("author@example.com");
+});
+
+test("keeps the report when author lookup throws", async () => {
+  const { ws } = await bind();
+  handlers["report.check"] = () => passing;
+  handlers["report.authors"] = () => {
+    throw new DaemonRpcError("author@example.com is unreadable");
+  };
+  const errors: unknown[][] = [];
+  const saved = console.error;
+  console.error = (...args: unknown[]) => void errors.push(args);
+  let messageId: string;
+  try {
+    const r = await post("/report", report());
+    expect(r.status).toBe(202);
+    ({ messageId } = (await r.json()) as { messageId: string });
+    await waitFor(async () => (await listQueuedTasks(db, ws)).length > 0);
+  } finally {
+    console.error = saved;
+  }
+  const meta = await metaOf(messageId!);
+  expect(meta.check).toEqual(passing);
+  expect("authors" in meta).toBe(false);
+  expect(JSON.stringify(errors)).not.toContain("author@example.com");
+});
+
+test("an in-progress report with no commits does not look up authors", async () => {
+  const { ws } = await bind();
+  handlers["report.authors"] = () => authorsResult;
+  const r = await post("/report", { ...report(), progress: "in_progress", commits: [] });
+  const { messageId } = (await r.json()) as { messageId: string };
+  await waitFor(async () => (await metaOf(messageId)).checkSkipped);
+  await settle();
+  expect(calls.map((c) => c.method)).not.toContain("report.authors");
+  void ws;
+});

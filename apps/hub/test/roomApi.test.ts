@@ -1028,6 +1028,29 @@ describe("implementation rules", () => {
     expect(r2.status).toBe(200);
     expect(((await r2.json()) as any).entry.implementation).toEqual(stored(inferred));
   });
+
+  test("ignores authors when refusing a verified implementation", async () => {
+    const t = await runningTaskFor(wsA);
+    const authors = {
+      checkedAt: "2026-10-23T10:02:00.000Z",
+      source: "git" as const,
+      commits: [{ sha: "abcdef1".padEnd(40, "0"), authorName: "Mallory", authorEmail: "mallory@example.com", committerName: "Mallory", committerEmail: "mallory@example.com" }],
+      missing: [],
+    };
+    const bare = await addReportMessage(db, wsA, "通过", { report: reportInput, check });
+    const withAuthors = await addReportMessage(db, wsA, "通过", { report: reportInput, check, authors });
+    for (const passing of [bare, withAuthors]) {
+      const r = await req("POST", "/room/entries", t.runToken, upsert({ sourceMessages: [t.messageId, passing.id], implementation: impl("verified", { reportMessageId: passing.id, commits: ["abcdef1"] }) }));
+      expect(r.status).toBe(200);
+    }
+    const failing = await addReportMessage(db, wsA, "未合入", { report: reportInput, check: { ...check, onMain: "not-yet" }, authors });
+    const r = await req("POST", "/room/entries", t.runToken, upsert({ sourceMessages: [t.messageId], implementation: impl("verified", { reportMessageId: failing.id, commits: ["abcdef1"] }) }));
+    expect(r.status).toBe(409);
+    expect(((await r.json()) as { error: string }).error).toBe(VERIFIED_NEEDS_REPORT);
+    const forged = await req("POST", "/room/entries", t.runToken, upsert({ sourceMessages: [t.messageId], implementation: impl("verified", { reportMessageId: withAuthors.id, commits: ["abcdef1"], confirmedBy: "user" }) }));
+    expect(forged.status).toBe(409);
+    expect(((await forged.json()) as { error: string }).error).toBe("confirmedBy 只能由用户确认设置。");
+  });
 });
 
 

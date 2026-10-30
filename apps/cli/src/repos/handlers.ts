@@ -8,7 +8,7 @@ import { changedFiles, exportSnapshot, fetchMain, inspectRepo, mainRef, missingA
 import { graphifyInstallStatus, queryIndex, type GraphifyOpts } from "./graphify.js";
 import { readIndexedSha, syncIndex, withIndexLock } from "./indexState.js";
 import { pickDirectory as openDirectoryDialog } from "./pickDirectory.js";
-import { checkReport, uncoveredCommits } from "./reportCheck.js";
+import { checkReport, readAuthors, uncoveredCommits } from "./reportCheck.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 const WS_RE = /^ws_[A-Za-z0-9_-]{1,32}$/;
@@ -241,6 +241,12 @@ export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string
     const files = stringList(params, "files", 500);
     await fetchMain(repo.path, repo.mainBranch, opts.ownedHelpers);
     return checkReport(repo.path, await mainRef(repo.path, repo.mainBranch, opts.ownedHelpers), commits, files, opts.ownedHelpers);
+  });
+
+  // Commit metadata of a report's commits, read after its check. Evidence only: never part of the check.
+  router.register("report.authors", async (params) => {
+    const repo = repoCall(params);
+    return readAuthors(repo.path, stringList(params, "commits", 50), opts.ownedHelpers);
   });
 
   // The fallback: main commits in from..to that no report covers. Both shas must be on main.

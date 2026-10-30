@@ -1,6 +1,6 @@
 // Deterministic checks of a coding agent's report against the repo's main branch. No model is involved:
 // every answer comes from git (object existence, ancestry, `patch-id --stable`, and `diff-tree`).
-import type { ReportCheck } from "@nema/shared";
+import type { ReportAuthors, ReportCheck } from "@nema/shared";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { commandEnv, gitRaw, gitText } from "./git.js";
@@ -202,6 +202,30 @@ export async function checkReport(repoPath: string, mainRefName: string, commits
   const untouchedFiles = files.filter((file) => !touched.has(normalizeClaim(file)));
 
   return { commitsExist, missingCommits, onMain, filesOk: untouchedFiles.length === 0, untouchedFiles, touchedFiles: [...touched], checkedAt, mainSha };
+}
+
+/**
+ * Author and committer of each reported commit that resolves in the repo; the rest are listed as `missing`.
+ * Evidence only: nothing here allows or denies a report, and `checkReport` does not read it.
+ */
+export async function readAuthors(repoPath: string, commits: string[], helpers?: OwnedHelperScope): Promise<ReportAuthors> {
+  for (const sha of commits) assertSha(sha);
+  const out: ReportAuthors["commits"] = [];
+  const missing: string[] = [];
+  const seen = new Set<string>();
+  for (const sha of commits) {
+    const full = await resolveCommit(repoPath, sha, helpers);
+    if (full === null) {
+      missing.push(sha);
+      continue;
+    }
+    if (seen.has(full)) continue;
+    seen.add(full);
+    const raw = (await gitRaw(repoPath, ["show", "-s", "--no-show-signature", "--format=%an%x00%ae%x00%cn%x00%ce", full, "--"], undefined, helpers)).toString("utf8");
+    const [authorName = "", authorEmail = "", committerName = "", committerEmail = ""] = raw.replace(/\n$/, "").split("\0");
+    out.push({ sha: full, authorName, authorEmail, committerName, committerEmail });
+  }
+  return { checkedAt: new Date().toISOString(), source: "git", commits: out, missing };
 }
 
 /**

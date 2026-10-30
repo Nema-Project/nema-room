@@ -2,11 +2,11 @@
 import { createHash } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { KnowledgeStore } from "@nema/knowledge";
-import { HookSignal, ReportInput, reportPassed, type ReportCheck, type ReportMessageMeta, type StoredReport } from "@nema/shared";
+import { HookSignal, ReportInput, reportPassed, type ReportAuthors, type ReportCheck, type ReportMessageMeta, type StoredReport } from "@nema/shared";
 import { INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
-import { ArchivedWorkspaceError, addReportMessage, mergeReportMeta, postSystemTask, type ReportMetaPatch } from "./messages.js";
+import { ArchivedWorkspaceError, addReportMessage, mergeReportMeta, postSystemTask, type Message, type ReportMetaPatch } from "./messages.js";
 import { getRepo, type Repo } from "./repos.js";
 import { insertQueuedTask, toUiTask, type Task } from "./tasks.js";
 import { repoPath } from "./workspaces.js";
@@ -81,13 +81,16 @@ export async function receiveReport(deps: ReportDeps, repo: Repo, report: Report
       return;
     }
     let patch: ReportMetaPatch;
+    let checked = false;
     try {
       const check = (await daemon.call("report.check", checkParams(repo, report), REPORT_CHECK_TIMEOUT_MS)) as ReportCheck;
       patch = { check, checkError: null, checkSkipped: null };
+      checked = true;
     } catch (error) {
       patch = { check: null, checkError: error instanceof Error ? error.message : String(error) };
     }
-    const updated = await mergeReportMeta(db, message.id, patch);
+    let updated = await mergeReportMeta(db, message.id, patch);
+    if (checked) updated = (await recordAuthors(deps, repo, message.id, report)) ?? updated;
     if (updated) events.emit(repo.workspaceId, { type: "message.updated", message: updated });
     if (inProgress) return;
     if (updated && deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);
@@ -102,6 +105,24 @@ export async function receiveReport(deps: ReportDeps, repo: Repo, report: Report
 /** The system task for a completed report whose commits now pass the git check. A commit check, not acceptance. */
 export function commitsCheckedTask(messageId: string): string {
   return `上报 ${messageId} 的提交已核对（不是验收）。把还没有用户确认的需求 implementation 设为 verified，且不要写 confirmedBy。不要改写 confirmedBy 已是 "user" 的 implementation。`;
+}
+
+/**
+ * Reads the commits' author and committer and merges them as `authors`. A failed read leaves `authors` unset
+ * rather than storing an empty list that would look read; the log names the message, never an email.
+ */
+async function recordAuthors(deps: ReportDeps, repo: Repo, messageId: string, report: StoredReport): Promise<Message | null> {
+  try {
+    const authors = (await deps.daemon.call("report.authors", { ...repoParams(repo), commits: report.commits }, REPORT_CHECK_TIMEOUT_MS)) as ReportAuthors;
+    return await mergeReportMeta(deps.db, messageId, { authors });
+  } catch {
+    console.error(`report ${messageId}: author lookup failed`);
+    return null;
+  }
+}
+
+function repoParams(repo: Repo) {
+  return { workspaceId: repo.workspaceId, repoId: repo.id, path: repo.path, mainBranch: repo.mainBranch };
 }
 
 function checkParams(repo: Repo, report: StoredReport) {
