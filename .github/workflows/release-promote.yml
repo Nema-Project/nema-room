@@ -1,0 +1,174 @@
+name: Release promote
+
+# Promote one tagged release after its three tag workflows succeeded (the
+# preflight requires the image-publish and desktop-release push runs of the tag
+# commit, every job passed, including the image pull smoke):
+#   gh workflow run release-promote.yml --ref main -f tag=v<x.y.z>
+# Runs main's scripts only. The tag is data: its commit is read through the API
+# and must be on main; nothing from the tag commit is checked out or executed.
+# Order: Candidate preflight (verify-release --stage candidate against the tag's
+# npm-publish push-run tarball) -> npm (dispatches npm-publish.yml on the tag,
+# which publishes only for a live run of this workflow) -> verify-release
+# --stage final -> GHCR hub and web latest -> GitHub Release published.
+# Any missing or unknown answer stops; later pointers are not touched. A rerun
+# finishes only the steps that are not done yet. The step summary lists what
+# moved and what did not.
+# npm-publish accepts a dispatch only from a run whose title names its tag.
+run-name: Release promote ${{ inputs.tag }}
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to promote, v<x.y.z> or v<x.y.z>-<pre>
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-promote
+  cancel-in-progress: false
+
+env:
+  # actions/checkout       3d3c42e5aac5ba805825da76410c181273ba90b1  v7.0.1
+  # actions/setup-node     949feb2413d6458794dcd2491c4babbbce0c15c1  v7.1.0
+  # docker/login-action    81c6f93d4bc991e510b342a00b419b3bb4efc5c6  v4.7.0
+  NODE_VERSION: 22
+  # Same crane as image-publish.yml.
+  CRANE_VERSION: 0.22.1
+  CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+
+jobs:
+  # Anyone who can dispatch has repo write; publishing a release is a maintainer decision.
+  # This job holds no write permission, and promote gets its write token only after it passes.
+  authorize:
+    name: Authorize dispatcher
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Require a maintainer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          # Both the user who dispatched and the one who re-ran must hold maintain or admin.
+          for who in "$ACTOR" "$TRIGGERING_ACTOR"; do
+            role=$(gh api "repos/${GH_REPO}/collaborators/${who}/permission" --jq .role_name) || role=""
+            case "$role" in
+              admin|maintain) echo "${who}: ${role}" ;;
+              *) echo "${who} is ${role:-unknown} on ${GH_REPO}; release-promote needs maintain or admin" >&2; exit 1 ;;
+            esac
+          done
+  promote:
+    name: Promote ${{ inputs.tag }}
+    needs: authorize
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      actions: write
+      contents: write
+      packages: write
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_PROMOTE_SEES_DRAFTS: 'true'
+    steps:
+      # Re-running a failed promote job reuses the successful authorize job: check the re-runner here too,
+      # before anything else runs with this job's write token.
+      - name: Require a maintainer
+        shell: bash
+        env:
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          # Both the user who dispatched and the one who re-ran must hold maintain or admin.
+          for who in "$ACTOR" "$TRIGGERING_ACTOR"; do
+            role=$(gh api "repos/${GH_REPO}/collaborators/${who}/permission" --jq .role_name) || role=""
+            case "$role" in
+              admin|maintain) echo "${who}: ${role}" ;;
+              *) echo "${who} is ${role:-unknown} on ${GH_REPO}; release-promote needs maintain or admin" >&2; exit 1 ;;
+            esac
+          done
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "tag must look like v<x.y.z>: ${TAG}" >&2; exit 1; }
+          commit=$(node --input-type=module -e '
+            import { readTagCommit } from "./scripts/release/registry-read.mjs";
+            const result = await readTagCommit({ fetchImpl: fetch, token: process.env.GITHUB_TOKEN }, process.argv[1]);
+            if (result.state !== "ok") { console.error(process.argv[1] + ": " + result.state + ": " + result.detail); process.exit(1); }
+            process.stdout.write(result.evidence.commit);
+          ' "$TAG")
+          status=$(gh api "repos/${GH_REPO}/compare/${commit}...${GITHUB_SHA}" --jq .status)
+          case "$status" in
+            ahead|identical) ;;
+            *) echo "${TAG} (${commit}) is not on main (${status})" >&2; exit 1 ;;
+          esac
+          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
+      - name: Install crane
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="go-containerregistry_Linux_x86_64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/${archive}"
+          echo "${CRANE_SHA256}  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" crane
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # npm-publish.yml checks this step by name before it publishes; keep the name.
+      - name: Candidate preflight
+        id: preflight
+        shell: bash
+        env:
+          COMMIT: ${{ steps.tag.outputs.commit }}
+        run: node scripts/release/promote.mjs --preflight "$TAG" "$COMMIT"
+      # npm-publish downloads this from the promote run it was given and publishes only this tag, commit and
+      # tarball: a dispatch for a tag moved since the preflight, or for another tarball, cannot borrow the run.
+      - name: Record what the preflight verified
+        shell: bash
+        env:
+          COMMIT: ${{ steps.tag.outputs.commit }}
+          INTEGRITY: ${{ steps.preflight.outputs.integrity }}
+        run: |
+          set -euo pipefail
+          test -n "$INTEGRITY"
+          mkdir -p "$RUNNER_TEMP/promote-binding"
+          jq -n --arg tag "$TAG" --arg commit "$COMMIT" --arg integrity "$INTEGRITY" '{tag: $tag, commit: $commit, integrity: $integrity}' > "$RUNNER_TEMP/promote-binding/promote-binding.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: promote-binding
+          path: ${{ runner.temp }}/promote-binding/promote-binding.json
+          if-no-files-found: error
+          retention-days: 5
+          # A re-run of this job records again in the same run.
+          overwrite: true
+      - name: Promote
+        shell: bash
+        env:
+          COMMIT: ${{ steps.tag.outputs.commit }}
+        run: CRANE_BIN="$RUNNER_TEMP/crane" node scripts/release/promote.mjs "$TAG" "$COMMIT"
