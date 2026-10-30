@@ -27,6 +27,8 @@ export const missing = (detail, evidence = {}) => ({ state: 'missing', detail, e
 export const unknown = (detail, evidence = {}) => ({ state: 'unknown', detail, evidence });
 
 class Undetermined extends Error {}
+/** An authoritative "not there" discovered deep inside a read (a listed asset or a referenced blob answering 404). */
+class Absent extends Error {}
 
 export const imageRepository = (image) => image.replace(/^ghcr\.io\//, '');
 export const IMAGE_REPOSITORIES = Object.freeze({ hub: imageRepository(HUB_IMAGE), web: imageRepository(WEB_IMAGE) });
@@ -67,8 +69,10 @@ async function guard(read) {
   try {
     return await read();
   } catch (error) {
+    if (error instanceof Absent) return missing(error.message);
     if (error instanceof Undetermined) return unknown(error.message);
-    throw error;
+    // A registry answer shaped in a way this reader does not expect is reported, not thrown.
+    return unknown(`unexpected answer: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -112,7 +116,9 @@ export function readNpmProvenance(io, version) {
     }
     const definition = statement?.predicate?.buildDefinition ?? {};
     const workflow = definition.externalParameters?.workflow ?? {};
-    const commit = definition.resolvedDependencies?.[0]?.digest?.gitCommit ?? null;
+    // The source checkout is the dependency whose URI names this repository; do not assume it is listed first.
+    const source = (definition.resolvedDependencies ?? []).find((dependency) => typeof dependency?.uri === 'string' && dependency.uri.startsWith(`git+https://github.com/${REPOSITORY}@`));
+    const commit = source?.digest?.gitCommit ?? null;
     return ok({
       workflowPath: workflow.path ?? null,
       workflowRef: workflow.ref ?? null,
@@ -177,6 +183,7 @@ export function readImage(io, repository, reference) {
       const next = platform ?? (nested.length === 1 ? nested[0] : null);
       if (!next) return missing(`ghcr.io/${repository}:${reference} has no linux/amd64 image`, { reason: 'no-platform' });
       const child = await ghcrGet(io, auth.token, repository, 'manifests', next.digest, MANIFEST_ACCEPT);
+      if (child.response.status === 404) return missing(`ghcr.io/${repository}:${reference} references ${next.digest}, which does not exist`, { reason: 'broken' });
       if (child.response.status !== 200) return unknown(`${child.url}: HTTP ${child.response.status}`);
       manifest = await json(child.response, child.url);
       if (platform) manifest = { ...manifest, platformDigest: next.digest };
@@ -184,6 +191,7 @@ export function readImage(io, repository, reference) {
     const configDigest = manifest?.config?.digest;
     if (!configDigest) return missing(`ghcr.io/${repository}:${reference} has no linux/amd64 image config`, { reason: 'no-platform' });
     const config = await ghcrGet(io, auth.token, repository, 'blobs', configDigest);
+    if (config.response.status === 404) return missing(`ghcr.io/${repository}:${reference} references config ${configDigest}, which does not exist`, { reason: 'broken' });
     if (config.response.status !== 200) return unknown(`${config.url}: HTTP ${config.response.status}`);
     const body = await json(config.response, config.url);
     const labels = body?.config?.Labels ?? {};
@@ -217,13 +225,26 @@ export function readTagCommit(io, tag) {
   });
 }
 
-/** GitHub hides drafts from anonymous callers with the same 404 it gives a missing release. */
+/** Whether the token can see draft Releases: only collaborators with push access can. */
+async function tokenSeesDrafts(io) {
+  const url = `${GITHUB_API}/repos/${REPOSITORY}`;
+  const response = await request(io, url, { headers: githubHeaders(io) });
+  if (response.status !== 200) return false;
+  const body = await json(response, url);
+  return body?.permissions?.push === true;
+}
+
+/**
+ * GitHub hides drafts with the same 404 it gives a missing release, from anonymous callers and from tokens
+ * without push access. A 404 is authoritative only for a token that is known to see drafts.
+ */
 export function readRelease(io, tag) {
   return guard(async () => {
     const url = `${GITHUB_API}/repos/${REPOSITORY}/releases/tags/${tag}`;
     const response = await request(io, url, { headers: githubHeaders(io) });
     if (response.status === 404) {
       if (!io.token) return unknown(`release ${tag} is not visible anonymously: missing, or a draft; set GITHUB_TOKEN to tell`);
+      if (!(await tokenSeesDrafts(io))) return unknown(`release ${tag} is not visible to this token, which cannot be shown to see drafts: missing, or a draft`);
       return missing(`release ${tag} does not exist`);
     }
     if (response.status !== 200) return unknown(`${url}: HTTP ${response.status}`);
@@ -252,6 +273,7 @@ export async function readReleaseAsset(io, asset) {
   const url = useApi ? asset.apiUrl : asset.url;
   const headers = useApi ? githubHeaders(io, 'application/octet-stream') : {};
   const response = await request(io, url, { headers, redirect: 'follow' });
+  if (response.status === 404) throw new Absent(`release asset ${asset.name} is listed but its download answers 404`);
   if (response.status !== 200) throw new Undetermined(`${url}: HTTP ${response.status}`);
   return Buffer.from(await response.arrayBuffer());
 }
@@ -292,7 +314,9 @@ export function checkReleaseAssets(io, version, release) {
     const targets = Object.keys(manifest?.targets ?? {}).sort();
     if (targets.join(',') !== [...expectedTargets].sort().join(',')) return missing(`release manifest targets are ${targets.join(', ') || 'empty'}; expected ${expectedTargets.join(', ')}`);
     for (const target of expectedTargets) {
-      const listed = (manifest.targets[target] ?? []).map((asset) => asset.name).sort();
+      const entries = manifest.targets[target];
+      if (!Array.isArray(entries) || entries.some((asset) => typeof asset?.name !== 'string')) return missing(`release manifest ${target} entry is malformed`);
+      const listed = entries.map((asset) => asset.name).sort();
       const wanted = [...expectedAssets(version, target), checksumFileName(version, target)].sort();
       if (listed.join(',') !== wanted.join(',')) return missing(`release manifest ${target} lists ${listed.join(', ')}; expected ${wanted.join(', ')}`);
     }

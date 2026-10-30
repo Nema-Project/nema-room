@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { COMMIT, io, releaseAssets, world } from './fake-registry.fixture.mjs';
+import { COMMIT, integrityOf, io, releaseAssets, world } from './fake-registry.fixture.mjs';
 import {
   checkReleaseAssets,
   expectedReleaseAssets,
@@ -17,7 +17,7 @@ test('npm: present is ok, 404 is missing, and only authoritative answers are mis
   let { io: ok } = io(world());
   const present = await readNpmVersion(ok, '0.1.6');
   assert.equal(present.state, 'ok');
-  assert.match(present.evidence.integrity, /^sha512-/);
+  assert.equal(present.evidence.integrity, integrityOf(world().tarball), 'the registry value, not just any sha512');
 
   const absent = io(world());
   assert.equal((await readNpmVersion(absent.io, '9.9.9')).state, 'missing');
@@ -46,6 +46,10 @@ test('npm provenance is read from the registry and marked unverified', async () 
   assert.equal(result.evidence.workflowPath, '.github/workflows/npm-publish.yml');
   assert.equal(result.evidence.workflowRef, 'refs/tags/v0.1.6');
   assert.equal(result.evidence.signatureVerified, false);
+
+  const reordered = world('0.1.6', { provenance: { '0.1.6': { commit: COMMIT, ref: 'refs/tags/v0.1.6', otherDependencyFirst: true } } });
+  const second = await readNpmProvenance(io(reordered).io, '0.1.6');
+  assert.equal(second.evidence.commit, COMMIT, 'the repository source is found even when it is not listed first');
 });
 
 test('GHCR: walks the nested index to the linux/amd64 version label', async () => {
@@ -77,6 +81,14 @@ test('GHCR: missing tag, denied anonymous access and an attestation-only index a
 
   ({ io: ok } = io(world('0.1.6', { fail: [[/ghcr\.io\/token/, 503]] })));
   assert.equal((await readImage(ok, HUB, '0.1.6')).state, 'unknown');
+
+  for (const broken of ['brokenChild', 'brokenConfig']) {
+    const b = world();
+    b.images[HUB]['0.1.6'][broken] = true;
+    const result = await readImage(io(b).io, HUB, '0.1.6');
+    assert.equal(result.state, 'missing', `${broken}: a referenced manifest or blob answering 404 is missing`);
+    assert.match(result.detail, /which does not exist/);
+  }
 });
 
 test('GitHub: lightweight and annotated tags resolve to the commit', async () => {
@@ -99,6 +111,11 @@ test('GitHub: an anonymous 404 may hide a draft, so it is unknown; with a token 
   assert.equal(draft.state, 'ok');
   assert.equal(draft.evidence.isDraft, true);
   assert.equal((await readRelease(withToken, 'v9.9.9')).state, 'missing');
+
+  const weak = world('0.1.6', { tokenPush: false });
+  weak.releases['v0.1.6'].draft = true;
+  const hiddenFromWeakToken = await readRelease(io(weak, { token: 'read-only-token' }).io, 'v9.9.9');
+  assert.equal(hiddenFromWeakToken.state, 'unknown', 'a token without push access cannot see drafts, so its 404 proves nothing');
 });
 
 test('the expected asset set comes from code, as v0.1.6 publishes it', () => {
@@ -141,6 +158,16 @@ test('the asset check reports a missing name, an extra name, and a target left o
   const noMac = await assetCheck(releaseAssets('0.1.6', { dropTarget: 'darwin-arm64' }));
   assert.equal(noMac.state, 'missing');
   assert.match(noMac.detail, /Nema-0\.1\.6-darwin-arm64\.dmg/);
+
+  const malformed = await assetCheck(releaseAssets('0.1.6', { mutateManifest: (m) => ({ ...m, targets: { ...m.targets, 'win32-x64': 'oops' } }) }));
+  assert.equal(malformed.state, 'missing');
+  assert.match(malformed.detail, /win32-x64 entry is malformed/);
+
+  const listedButGone = releaseAssets('0.1.6');
+  listedButGone['docker-compose.yml'] = null;
+  const gone = await assetCheck(listedButGone);
+  assert.equal(gone.state, 'missing');
+  assert.match(gone.detail, /docker-compose\.yml is listed but its download answers 404/);
 });
 
 test('the Compose asset must match the manifest hash and pin this version', async () => {

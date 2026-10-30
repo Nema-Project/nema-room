@@ -139,11 +139,21 @@ export async function verifyRelease({ version, stage = 'final', expectedIntegrit
 
 // ---------- pointers ----------
 
+/** A pointer value from a registry is data: anything that is not a strict release version is unknown. */
+function versionPointer(value, source) {
+  try {
+    parseVersion(value);
+    return { state: 'version', version: value };
+  } catch {
+    return { state: 'unknown', version: null, detail: `${source} holds ${JSON.stringify(value)}, not a release version` };
+  }
+}
+
 function pointerFromImage(result) {
   if (result.state === 'missing' && result.evidence.reason === 'absent') return { state: 'absent', version: null };
   if (result.state !== 'ok') return { state: 'unknown', version: null, detail: result.detail };
   if (!result.evidence.label) return { state: 'unknown', version: null, detail: `${result.evidence.reference} has no version label` };
-  return { state: 'version', version: result.evidence.label };
+  return versionPointer(result.evidence.label, result.evidence.reference);
 }
 
 export async function readPointers(io) {
@@ -151,11 +161,11 @@ export async function readPointers(io) {
   const npmPointer = (name) => {
     if (tags.state !== 'ok') return { state: 'unknown', version: null, detail: tags.detail };
     const value = tags.evidence.tags[name];
-    return typeof value === 'string' ? { state: 'version', version: value } : { state: 'absent', version: null };
+    return value === undefined ? { state: 'absent', version: null } : versionPointer(value, `npm dist-tag ${name}`);
   };
   const latestRelease = await readLatestRelease(io);
   const github = latestRelease.state === 'ok'
-    ? { state: 'version', version: latestRelease.evidence.tag.replace(/^v/, '') }
+    ? versionPointer(latestRelease.evidence.tag.replace(/^v/, ''), `GitHub latest release ${latestRelease.evidence.tag}`)
     : latestRelease.state === 'missing' ? { state: 'absent', version: null } : { state: 'unknown', version: null, detail: latestRelease.detail };
   return {
     npm: { latest: npmPointer('latest'), next: npmPointer('next') },
@@ -169,7 +179,11 @@ export function pointerDecisions(pointers, version, prerelease) {
   const decide = (pointer) => {
     if (pointer.state === 'unknown') return 'unknown';
     if (pointer.state === 'absent') return 'move';
-    return shouldMoveLatest(pointer.version, version) ? 'move' : 'keep';
+    try {
+      return shouldMoveLatest(pointer.version, version) ? 'move' : 'keep';
+    } catch {
+      return 'unknown';
+    }
   };
   const stable = (pointer) => (prerelease ? 'skip' : decide(pointer));
   return {

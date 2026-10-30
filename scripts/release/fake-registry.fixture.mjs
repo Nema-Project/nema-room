@@ -26,13 +26,15 @@ const response = (status, body, headers = {}) => ({
   },
 });
 
-function provenance({ commit, path = '.github/workflows/npm-publish.yml', ref, event = 'push' }) {
+function provenance({ commit, path = '.github/workflows/npm-publish.yml', ref, event = 'push', otherDependencyFirst = false }) {
+  const source = { uri: `git+https://github.com/Nema-Project/nema-room@${ref}`, digest: { gitCommit: commit } };
+  const other = { uri: 'git+https://github.com/actions/runner-images@main', digest: { gitCommit: '2'.repeat(40) } };
   const statement = {
     predicate: {
       buildDefinition: {
         externalParameters: { workflow: { ref, repository: 'https://github.com/Nema-Project/nema-room', path } },
         internalParameters: { github: { event_name: event } },
-        resolvedDependencies: [{ uri: `git+https://github.com/Nema-Project/nema-room@${ref}`, digest: { gitCommit: commit } }],
+        resolvedDependencies: otherDependencyFirst ? [other, source] : [source],
       },
     },
   };
@@ -44,7 +46,7 @@ function provenance({ commit, path = '.github/workflows/npm-publish.yml', ref, e
   };
 }
 
-export function releaseAssets(version, { commit = COMMIT, dropTarget = null, composeVersion = version, composeSha = null, extra = [] } = {}) {
+export function releaseAssets(version, { commit = COMMIT, dropTarget = null, composeVersion = version, composeSha = null, extra = [], mutateManifest = (m) => m } = {}) {
   const compose = renderComposeAsset(template, composeVersion);
   const targets = {};
   const assets = {};
@@ -60,7 +62,7 @@ export function releaseAssets(version, { commit = COMMIT, dropTarget = null, com
   const manifest = { schemaVersion: 1, version, prerelease: false, targets, build: { commit, ref: `refs/tags/v${version}` }, compose: { name: 'docker-compose.yml', size: compose.length, sha256 } };
   assets['docker-compose.yml'] = Buffer.from(compose);
   assets[`SHA256SUMS-${version}.txt`] = Buffer.from('sums');
-  assets[`release-manifest-${version}.json`] = Buffer.from(JSON.stringify(manifest));
+  assets[`release-manifest-${version}.json`] = Buffer.from(JSON.stringify(mutateManifest(manifest)));
   for (const name of extra) assets[name] = Buffer.from('extra');
   return assets;
 }
@@ -80,6 +82,7 @@ export function world(version = '0.1.6', overrides = {}) {
     tags: { [`v${version}`]: { commit: COMMIT, annotated: true } },
     releases: { [`v${version}`]: { draft: false, prerelease: false, assets: releaseAssets(version) } },
     latestRelease: `v${version}`,
+    tokenPush: true,
     fail: [],
     throwOn: [],
   };
@@ -116,12 +119,14 @@ export function fakeFetch(w) {
       if (kind === 'blobs') {
         const ref = reference.replace(/^sha256:config-/, '');
         const image = images[ref];
+        if (image?.brokenConfig) return response(404, { errors: [{ code: 'BLOB_UNKNOWN' }] });
         const labels = { 'org.opencontainers.image.source': 'https://github.com/Nema-Project/nema-room' };
         if (image?.label) labels['org.opencontainers.image.version'] = image.label;
         return response(200, { os: 'linux', architecture: 'amd64', config: { Labels: labels } });
       }
       if (reference.startsWith('sha256:child-')) {
         const ref = reference.slice('sha256:child-'.length);
+        if (images[ref]?.brokenChild) return response(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] });
         const entries = [];
         if (!images[ref]?.noPlatform) entries.push({ mediaType: 'application/vnd.oci.image.manifest.v1+json', digest: `sha256:amd64-${ref}`, platform: { os: 'linux', architecture: 'amd64' } });
         entries.push({ mediaType: 'application/vnd.oci.image.manifest.v1+json', digest: `sha256:att-${ref}`, platform: { os: 'unknown', architecture: 'unknown' } });
@@ -141,6 +146,9 @@ export function fakeFetch(w) {
     }
     if ((match = /^https:\/\/api\.github\.com\/repos\/Nema-Project\/nema-room\/git\/tags\/tagobj-(.+)$/.exec(url))) {
       return response(200, { object: { type: 'commit', sha: w.tags[match[1]].commit } });
+    }
+    if (url === 'https://api.github.com/repos/Nema-Project/nema-room') {
+      return response(200, init.headers?.Authorization ? { full_name: 'Nema-Project/nema-room', permissions: { pull: true, push: w.tokenPush } } : { full_name: 'Nema-Project/nema-room' });
     }
     if (url === 'https://api.github.com/repos/Nema-Project/nema-room/releases/latest') {
       return w.latestRelease ? response(200, { tag_name: w.latestRelease }) : response(404, { message: 'Not Found' });

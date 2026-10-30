@@ -140,6 +140,12 @@ test('pointer reads: an unlabeled GHCR latest is unknown, an absent one is absen
   assert.equal(read.npm.next.state, 'absent');
   assert.deepEqual(read.github.latest, { state: 'version', version: '0.1.6' });
 
+  const odd = world('0.1.6', { distTags: { latest: 'banana' } });
+  read = await readPointers(io(odd).io);
+  assert.equal(read.npm.latest.state, 'unknown');
+  assert.match(read.npm.latest.detail, /not a release version/);
+  assert.equal(pointerDecisions(read, '0.1.7', false)['npm latest'], 'unknown');
+
   read = await readPointers(io(world('0.1.6', { fail: [[/dist-tags/, 500]] })).io);
   assert.equal(read.npm.latest.state, 'unknown');
   assert.equal(pointerDecisions(read, '0.1.7', false)['npm latest'], 'unknown');
