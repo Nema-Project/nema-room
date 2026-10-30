@@ -349,6 +349,21 @@ export async function readFileAtRef(
   return { path: rel, startLine, endLine, totalLines: lines.length, text, truncated };
 }
 
+/**
+ * The regular files (mode 100644/100755) in the tree of `ref`, at most `max` of them. Symlinks (120000) and
+ * submodules (160000) are left out. Reads git objects only: no fetch, no working tree.
+ */
+export async function listFilesAtRef(repoPath: string, ref: string, max: number, ownedHelpers?: OwnedHelperScope): Promise<{ paths: string[]; truncated: boolean }> {
+  const rows = parseLsTree(await gitRaw(repoPath, ["--literal-pathspecs", "ls-tree", "-r", "-z", ref], undefined, ownedHelpers));
+  const paths: string[] = [];
+  for (const row of rows) {
+    if (row.type !== "blob" || (row.mode !== "100644" && row.mode !== "100755")) continue;
+    if (paths.length === max) return { paths, truncated: true };
+    paths.push(row.path);
+  }
+  return { paths, truncated: false };
+}
+
 /** The paths (normalized) that are not in the tree of `ref`. A path that is absolute or has `..` throws. */
 export async function missingAtRef(repoPath: string, ref: string, paths: string[], ownedHelpers?: OwnedHelperScope): Promise<string[]> {
   const missing: string[] = [];

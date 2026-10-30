@@ -1,10 +1,10 @@
 import { lstat, rm, unlink } from "node:fs/promises";
 import path from "node:path";
 import type { RpcRouter } from "../daemon/rpc.js";
-import { GH_COMMAND_TOOLS } from "@nema/shared";
+import { GH_COMMAND_TOOLS, isBranchName } from "@nema/shared";
 import { GITHUB_TOOLS } from "../github/client.js";
 import { GithubGh, type GithubReader } from "../github/gh.js";
-import { changedFiles, exportSnapshot, fetchMain, inspectRepo, mainRef, missingAtRef, readFileAtRef, revParse } from "./git.js";
+import { changedFiles, exportSnapshot, fetchMain, inspectRepo, listFilesAtRef, mainRef, missingAtRef, readFileAtRef, revParse } from "./git.js";
 import { graphifyInstallStatus, queryIndex, type GraphifyOpts } from "./graphify.js";
 import { readIndexedSha, syncIndex, withIndexLock } from "./indexState.js";
 import { pickDirectory as openDirectoryDialog } from "./pickDirectory.js";
@@ -53,6 +53,38 @@ export async function removeSnapshot(dir: string): Promise<void> {
     return;
   }
   await rm(dir, { recursive: true, force: true });
+}
+
+/** Most paths `repo.files` returns for one repository (mention candidates). */
+const MAX_REPO_FILES = 50_000;
+
+type FileList = { paths: string[]; truncated: boolean };
+
+/** The most recent file listings, by key (repository and commit); a failed load is not kept. */
+export class FileListCache {
+  private readonly entries = new Map<string, Promise<FileList>>();
+
+  constructor(private readonly size: number) {}
+
+  get(key: string, load: () => Promise<FileList>): Promise<FileList> {
+    let hit = this.entries.get(key);
+    if (hit) this.entries.delete(key);
+    else {
+      hit = load();
+      hit.catch(() => {
+        if (this.entries.get(key) === hit) this.entries.delete(key);
+      });
+    }
+    this.entries.set(key, hit);
+    while (this.entries.size > this.size) this.entries.delete(this.entries.keys().next().value!);
+    return hit;
+  }
+}
+
+/** The full sha of the bound main ref (origin/<main>, or the local branch without one). Never fetches. */
+async function mainHead(repo: RepoCall, ownedHelpers?: OwnedHelperScope): Promise<string> {
+  if (!isBranchName(repo.mainBranch)) throw new Error("主分支名称无效");
+  return revParse(repo.path, await mainRef(repo.path, repo.mainBranch, ownedHelpers), ownedHelpers);
 }
 
 const CODE_FUNCTIONS = new Set(["code__search", "code__explain", "code__path", "code__read", "code__changes"]);
@@ -225,6 +257,18 @@ export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string
   });
 
   router.register("repo.index", async (params) => indexRepo(opts.nemaHome, repoCall(params), opts.graphify));
+
+  // Mention support: the commit a file mention is pinned to when the hub receives the message.
+  router.register("repo.head", async (params) => ({ commit: await mainHead(repoCall(params), opts.ownedHelpers) }));
+
+  // Mention candidates: the regular files on the bound main ref. Paths only, never contents or the working tree.
+  const fileLists = new FileListCache(8);
+  router.register("repo.files", async (params) => {
+    const repo = repoCall(params);
+    const commit = await mainHead(repo, opts.ownedHelpers);
+    const listed = await fileLists.get(`${repo.repoId}\0${repo.path}\0${commit}`, () => listFilesAtRef(repo.path, commit, MAX_REPO_FILES, opts.ownedHelpers));
+    return { commit, paths: listed.paths, truncated: listed.truncated };
+  });
 
   // The hub asks this after main moves, to flag diagrams whose code changed. Both shas must be on main.
   router.register("repo.changes", async (params) => {

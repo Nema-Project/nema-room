@@ -11,7 +11,7 @@ vi.setConfig({ testTimeout: 20_000 });
 import WebSocket, { WebSocketServer } from "ws";
 import { startDaemon } from "../../src/daemon/setup.js";
 import { RpcRouter } from "../../src/daemon/rpc.js";
-import { registerRepoHandlers } from "../../src/repos/handlers.js";
+import { FileListCache, registerRepoHandlers } from "../../src/repos/handlers.js";
 import { inspectRepo } from "../../src/repos/git.js";
 import { lf } from "../windowsEnv.js";
 import { linkDir } from "../links.js";
@@ -847,4 +847,71 @@ test("repo.exists reports missing paths and rejects ..", async () => {
   expect(bad).toMatchObject({ ok: false });
   const abs = await rpc.handle({ type: "rpc.request", id: "ex3", method: "repo.exists", params: { ...base, paths: ["/etc/passwd"] } });
   expect(abs).toMatchObject({ ok: false });
+});
+
+const repoParams = (repo: string, mainBranch = "main") => ({ workspaceId: "ws_demo", repoId: "repo_demo", path: repo, mainBranch });
+
+test("repo.head returns the main ref's full sha without fetching, and follows main when it moves", async () => {
+  const { repo, bare, nemaHome } = setupOrigin();
+  const rpc = routerFor(nemaHome);
+  const first = git(repo, ["rev-parse", "HEAD"]).trim();
+  await expect(rpc.handle({ type: "rpc.request", id: "1", method: "repo.head", params: repoParams(repo) })).resolves.toMatchObject({ ok: true, result: { commit: first } });
+
+  writeFileSync(join(repo, "b.txt"), "b\n");
+  const second = commitAll(repo, "second");
+  git(repo, ["push", "origin", "main"]);
+  await expect(rpc.handle({ type: "rpc.request", id: "2", method: "repo.head", params: repoParams(repo) })).resolves.toMatchObject({ ok: true, result: { commit: second } });
+
+  // A commit that only exists on the remote is not fetched: repo.head stays on the local origin/main.
+  const other = join(root, "other");
+  git(root, ["clone", "-q", bare, other]);
+  writeFileSync(join(other, "c.txt"), "c\n");
+  commitAll(other, "remote only");
+  git(other, ["push", "-q", "origin", "main"]);
+  await expect(rpc.handle({ type: "rpc.request", id: "3", method: "repo.head", params: repoParams(repo) })).resolves.toMatchObject({ ok: true, result: { commit: second } });
+});
+
+test("repo.files lists main-branch files with their commit and ignores the working tree", async () => {
+  const { repo, nemaHome } = setupOrigin();
+  writeFileSync(join(repo, "a b.ts"), "x\n");
+  const sha = commitAll(repo, "files");
+  git(repo, ["push", "origin", "main"]);
+  writeFileSync(join(repo, "dirty.txt"), "uncommitted\n");
+  const rpc = routerFor(nemaHome);
+  const res = await rpc.handle({ type: "rpc.request", id: "1", method: "repo.files", params: repoParams(repo) });
+  expect(res).toMatchObject({ ok: true, result: { commit: sha, truncated: false } });
+  if (!res.ok) return;
+  expect([...(res.result as { paths: string[] }).paths].sort()).toEqual(["README.md", "a b.ts"]);
+});
+
+test("repo.head and repo.files reject an invalid main branch name", async () => {
+  const { repo, nemaHome } = setupOrigin();
+  const rpc = routerFor(nemaHome);
+  for (const method of ["repo.head", "repo.files"]) {
+    await expect(rpc.handle({ type: "rpc.request", id: method, method, params: repoParams(repo, "main~1") })).resolves.toMatchObject({ ok: false, error: "主分支名称无效" });
+  }
+});
+
+test("FileListCache loads one listing per key and keeps only the most recent entries", async () => {
+  const cache = new FileListCache(2);
+  let loads = 0;
+  const load = async () => ({ paths: [`p${++loads}`], truncated: false });
+  const a1 = await cache.get("a", load);
+  const a2 = await cache.get("a", load);
+  expect(a2).toBe(a1);
+  expect(loads).toBe(1);
+  await cache.get("b", load);
+  await cache.get("a", load); // a is now the most recent
+  await cache.get("c", load); // evicts b
+  expect(loads).toBe(3);
+  await cache.get("a", load);
+  expect(loads).toBe(3);
+  await cache.get("b", load);
+  expect(loads).toBe(4);
+});
+
+test("FileListCache does not keep a failed load", async () => {
+  const cache = new FileListCache(2);
+  await expect(cache.get("a", async () => { throw new Error("boom"); })).rejects.toThrow("boom");
+  await expect(cache.get("a", async () => ({ paths: ["ok"], truncated: false }))).resolves.toEqual({ paths: ["ok"], truncated: false });
 });

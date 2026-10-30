@@ -7,7 +7,7 @@ import { linkDir } from "../links.js";
 import { unexpectedEnvKeys } from "../windowsEnv.js";
 import { commitWithSymlink } from "./gitSymlink.js";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { changedFiles, commandEnv, exportSnapshot, fetchMain, inspectRepo, mainRef, readFileAtRef, revParse } from "../../src/repos/git.js";
+import { changedFiles, commandEnv, exportSnapshot, fetchMain, inspectRepo, listFilesAtRef, mainRef, readFileAtRef, revParse } from "../../src/repos/git.js";
 
 let root: string;
 let savedHome: string | undefined;
@@ -491,4 +491,35 @@ test("exportSnapshot writes the ref's tree into destDir and leaves the repo unto
   expect(git(repo, ["rev-parse", "HEAD"]).trim()).toBe(head);
   expect(git(repo, ["rev-parse", "main"]).trim()).toBe(main);
   expect(readFileSync(join(repo, "a.txt"), "utf8")).toBe("dirty\n");
+});
+
+test("listFilesAtRef lists regular files at the ref only: no symlinks, submodules, other branches or working tree", async () => {
+  const { repo } = setupOrigin();
+  mkdirSync(join(repo, "apps/web 目录"), { recursive: true });
+  writeFileSync(join(repo, "apps/web 目录/文件 一.ts"), "x\n");
+  writeFileSync(join(repo, "run.sh"), "#!/bin/sh\n", { mode: 0o755 });
+  git(repo, ["add", "-A"]);
+  git(repo, ["update-index", "--chmod=+x", "run.sh"]);
+  // A submodule (gitlink, mode 160000) entry.
+  git(repo, ["update-index", "--add", "--cacheinfo", `160000,${git(repo, ["rev-parse", "HEAD"]).trim()},vendor/sub`]);
+  commitWithSymlink(git, repo, "link", "README.md", "files");
+  git(repo, ["push", "origin", "main"]);
+  git(repo, ["checkout", "-q", "-b", "side"]);
+  writeFileSync(join(repo, "side.txt"), "side\n");
+  commitAll(repo, "side");
+  git(repo, ["checkout", "-q", "main"]);
+  writeFileSync(join(repo, "untracked.txt"), "new\n");
+
+  const listed = await listFilesAtRef(repo, "origin/main", 50_000);
+  expect(listed.truncated).toBe(false);
+  expect([...listed.paths].sort()).toEqual(["README.md", "apps/web 目录/文件 一.ts", "run.sh"]);
+});
+
+test("listFilesAtRef stops at max and says so", async () => {
+  const { repo } = setupOrigin();
+  for (const n of ["a", "b", "c"]) writeFileSync(join(repo, `${n}.txt`), n);
+  commitAll(repo, "three");
+  await expect(listFilesAtRef(repo, "main", 2)).resolves.toMatchObject({ truncated: true, paths: expect.any(Array) });
+  expect((await listFilesAtRef(repo, "main", 2)).paths).toHaveLength(2);
+  expect((await listFilesAtRef(repo, "main", 4)).truncated).toBe(false);
 });
