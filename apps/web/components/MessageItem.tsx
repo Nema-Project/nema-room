@@ -201,6 +201,8 @@ function UserMessage({
   onEdited?: (message: Message) => void;
   onJump?: (messageId: string) => void;
 }) {
+  const latest = useRef(message);
+  useEffect(() => { latest.current = message; }, [message]);
   const t = useT();
   const [locale] = useLocale();
   const [editing, setEditing] = useState(false);
@@ -265,7 +267,13 @@ function UserMessage({
           workspaceId={message.workspaceId}
           attachments={attachments}
           canDelete
-          onChange={(next) => onEdited?.({ ...message, attachments: next })}
+          onChange={(next) => {
+            // Merge into the newest message: a delete can land after an edit or another delete.
+            const cur = latest.current;
+            const merged = { ...cur, attachments: (cur.attachments ?? []).map((x) => (x.id === next.id ? next : x)) };
+            latest.current = merged;
+            onEdited?.(merged);
+          }}
         />
         {versionsOpen && versions && (
           <div className="versions">

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MessageItem } from "@/components/MessageItem";
@@ -333,5 +333,46 @@ describe("MessageItem attachments", () => {
     await userEvent.click(screen.getByRole("button", { name: "Delete err.log" }));
     await userEvent.click(screen.getByRole("button", { name: "Delete attachment" }));
     await vi.waitFor(() => expect(onEdited).toHaveBeenCalledWith(expect.objectContaining({ id: "m1", content: "see log", attachments: [tomb] })));
+  });
+
+  const deferred = <T,>() => {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((r) => { resolve = r; });
+    return { promise, resolve };
+  };
+  const confirmDelete = async (name: string) => {
+    const card = screen.getByText(name).closest("li")!;
+    await userEvent.click(within(card).getByRole("button", { name: `Delete ${name}` }));
+    await userEvent.click(within(card).getByRole("button", { name: "Delete attachment" }));
+  };
+
+  it("keeps every tombstone when two deletes finish out of order", async () => {
+    const other = { ...file, id: "a2", name: "b.log" };
+    const d1 = deferred<typeof file>();
+    const d2 = deferred<typeof file>();
+    vi.mocked(hub.deleteAttachment).mockImplementation((_w, id) => (id === "a1" ? d1.promise : d2.promise) as never);
+    const onEdited = vi.fn();
+    show(user({ content: "logs", attachments: [file, other] }), onEdited);
+    await confirmDelete("err.log");
+    await confirmDelete("b.log");
+    const t2 = { ...other, status: "deleted" as const, deletedAt: "2026-10-30T09:16:00Z" };
+    const t1 = { ...file, status: "deleted" as const, deletedAt: "2026-10-30T09:15:00Z" };
+    d2.resolve(t2 as never);
+    await vi.waitFor(() => expect(onEdited).toHaveBeenCalledTimes(1));
+    d1.resolve(t1 as never);
+    await vi.waitFor(() => expect(onEdited).toHaveBeenCalledTimes(2));
+    expect(onEdited.mock.calls[1]![0].attachments).toEqual([t1, t2]);
+  });
+
+  it("applies a late tombstone to the newest message, not the one it started from", async () => {
+    const d = deferred<typeof file>();
+    vi.mocked(hub.deleteAttachment).mockReturnValue(d.promise as never);
+    const onEdited = vi.fn();
+    const { rerender } = show(user({ content: "v1", attachments: [file] }), onEdited);
+    await confirmDelete("err.log");
+    rerender(<I18nProvider><MessageItem message={user({ content: "v2", editedAt: "2026-10-30T09:14:00Z", attachments: [file] })} onEdited={onEdited} /></I18nProvider>);
+    const tomb = { ...file, status: "deleted" as const, deletedAt: "2026-10-30T09:15:00Z" };
+    d.resolve(tomb as never);
+    await vi.waitFor(() => expect(onEdited).toHaveBeenCalledWith(expect.objectContaining({ content: "v2", attachments: [tomb] })));
   });
 });

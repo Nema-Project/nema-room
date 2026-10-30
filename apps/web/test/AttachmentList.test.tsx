@@ -38,13 +38,18 @@ describe("AttachmentList", () => {
   it("revokes the thumbnail URL when it unmounts", async () => {
     const { unmount } = mount([view({})]);
     await screen.findByRole("img", { name: "shot.png" });
+    await act(async () => {});
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
     unmount();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:url-1");
   });
 
   it("shows PDFs and text files as cards and downloads on click", async () => {
     vi.mocked(hub.fetchAttachmentBlob).mockResolvedValue(new Blob(["%PDF-1.7"], { type: "application/pdf" }));
-    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const clicked: { href: string; download: string }[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push({ href: this.href, download: this.download });
+    });
     mount([view({ id: "p", kind: "pdf", mime: "application/pdf", name: "spec.pdf", size: 2 * 1024 * 1024 }), view({ id: "t", kind: "text", mime: "text/plain", name: "err.log", size: 300 })]);
     expect(screen.getByText("spec.pdf")).toBeTruthy();
     expect(screen.getByText(/application\/pdf/)).toBeTruthy();
@@ -53,7 +58,7 @@ describe("AttachmentList", () => {
     expect(hub.fetchAttachmentBlob).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Download spec.pdf" }));
     expect(hub.fetchAttachmentBlob).toHaveBeenCalledWith("w1", "p");
-    expect(click).toHaveBeenCalled();
+    expect(clicked).toEqual([{ href: "blob:url-1", download: "spec.pdf" }]);
     click.mockRestore();
   });
 
@@ -111,5 +116,39 @@ describe("AttachmentList", () => {
     vi.mocked(hub.fetchAttachmentBlob).mockRejectedValue(new Error("attachment deleted"));
     mount([view({})]);
     expect(await screen.findByText(/attachment deleted/)).toBeTruthy();
+  });
+
+  it("turns the card into a tombstone when the hub says the file was deleted", async () => {
+    vi.mocked(hub.fetchAttachmentBlob).mockRejectedValue(Object.assign(new Error("the attachment was deleted"), { status: 410 }));
+    mount([view({})]);
+    const card = (await screen.findByText(/Attachment deleted/)).closest("li")!;
+    expect(card.textContent).toContain("0123456789ab");
+    expect(screen.queryByRole("button", { name: "Download shot.png" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete shot.png" })).toBeNull();
+  });
+
+  it("marks the card missing when a download finds the file gone", async () => {
+    vi.mocked(hub.fetchAttachmentBlob).mockRejectedValue(Object.assign(new Error("the attachment file is missing"), { status: 410 }));
+    mount([view({ kind: "text", mime: "text/plain", name: "a.txt" })]);
+    await userEvent.click(screen.getByRole("button", { name: "Download a.txt" }));
+    expect(await screen.findByText(/Attachment file is missing/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Download a.txt" })).toBeNull();
+  });
+
+  it("waits until a thumbnail is near the viewport before fetching it", async () => {
+    let seen: ((entries: { isIntersecting: boolean }[]) => void) | null = null;
+    const disconnect = vi.fn();
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(cb: (entries: { isIntersecting: boolean }[]) => void) { seen = cb; }
+      observe() {}
+      disconnect = disconnect;
+    });
+    mount([view({})]);
+    await act(async () => {});
+    expect(hub.fetchAttachmentBlob).not.toHaveBeenCalled();
+    act(() => seen!([{ isIntersecting: true }]));
+    expect(await screen.findByRole("img", { name: "shot.png" })).toBeTruthy();
+    expect(hub.fetchAttachmentBlob).toHaveBeenCalledTimes(1);
+    expect(disconnect).toHaveBeenCalled();
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AttachmentView } from "@nema/shared";
 import { formatBytes } from "@/lib/attachments";
 import { formatDay, formatTime } from "@/lib/format";
@@ -9,6 +9,16 @@ import { useLocale, useT } from "@/lib/i18n";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const viewable = (a: AttachmentView) => a.status === "attached" || a.status === "staged";
+
+/**
+ * The hub answers 410 when the bytes are gone: deleted (possibly by another window, or by a delete whose
+ * file removal failed after the tombstone was committed) or missing on disk. The card follows suit
+ * instead of offering a download that cannot work.
+ */
+function goneAs(a: AttachmentView, e: unknown): AttachmentView | null {
+  if ((e as { status?: unknown } | null)?.status !== 410) return null;
+  return /deleted/i.test(message(e)) ? { ...a, status: "deleted" } : { ...a, status: "missing" };
+}
 
 /** Save the attachment's bytes under its name. The hub URL is fetched, never linked. */
 async function download(workspaceId: string, a: AttachmentView) {
@@ -25,10 +35,27 @@ async function download(workspaceId: string, a: AttachmentView) {
 }
 
 /** An image attachment's thumbnail, loaded through fetch so the hub address never lands in <img src>. */
-function Thumbnail({ workspaceId, attachment }: { workspaceId: string; attachment: AttachmentView }) {
+function Thumbnail({ workspaceId, attachment, onGone }: { workspaceId: string; attachment: AttachmentView; onGone: (next: AttachmentView) => void }) {
   const t = useT();
   const [state, setState] = useState<{ url: string | null; error: string | null }>({ url: null, error: null });
+  // A long chat mounts every message; fetch a thumbnail only once it comes near the viewport.
+  const [near, setNear] = useState(() => typeof IntersectionObserver === "undefined");
+  const placeholder = useRef<HTMLSpanElement>(null);
   useEffect(() => {
+    if (near || !placeholder.current) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        setNear(true);
+        io.disconnect();
+      }
+    }, { rootMargin: "200px" });
+    io.observe(placeholder.current);
+    return () => io.disconnect();
+  }, [near]);
+  const goneRef = useRef(onGone);
+  useEffect(() => { goneRef.current = onGone; });
+  useEffect(() => {
+    if (!near) return;
     let url: string | null = null;
     let live = true;
     fetchAttachmentBlob(workspaceId, attachment.id).then(
@@ -38,16 +65,20 @@ function Thumbnail({ workspaceId, attachment }: { workspaceId: string; attachmen
         setState({ url, error: null });
       },
       (e) => {
-        if (live) setState({ url: null, error: message(e) });
+        if (!live) return;
+        const gone = goneAs(attachment, e);
+        if (gone) goneRef.current(gone);
+        else setState({ url: null, error: message(e) });
       },
     );
     return () => {
       live = false;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [workspaceId, attachment.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refetch per attachment, not per re-render of its view
+  }, [workspaceId, attachment.id, near]);
   if (state.error) return <span className="att-error">{t("attach.loadFailed", { message: state.error })}</span>;
-  if (!state.url) return <span className="att-icon">{t("attach.kind.image")}</span>;
+  if (!state.url) return <span ref={placeholder} className="att-icon">{t("attach.kind.image")}</span>;
   // eslint-disable-next-line @next/next/no-img-element -- a local blob: URL, which next/image cannot load
   return <img className="att-thumb" src={state.url} alt={attachment.name} />;
 }
@@ -61,7 +92,8 @@ function Attachment({
   workspaceId: string;
   attachment: AttachmentView;
   canDelete: boolean;
-  onChange: (next: AttachmentView) => void;
+  /** `publish` is false for a local guess from a 410, which only changes this card. */
+  onChange: (next: AttachmentView, publish: boolean) => void;
 }) {
   const t = useT();
   const [locale] = useLocale();
@@ -73,7 +105,7 @@ function Attachment({
     setBusy(true);
     setError(null);
     try {
-      onChange(await deleteAttachment(workspaceId, a.id));
+      onChange(await deleteAttachment(workspaceId, a.id), true);
       setConfirming(false);
     } catch (e) {
       setError(t("attach.deleteFailed", { message: message(e) }));
@@ -87,7 +119,9 @@ function Attachment({
     try {
       await download(workspaceId, a);
     } catch (e) {
-      setError(t("attach.loadFailed", { message: message(e) }));
+      const gone = goneAs(a, e);
+      if (gone) onChange(gone, false);
+      else setError(t("attach.loadFailed", { message: message(e) }));
     }
   }
 
@@ -106,7 +140,7 @@ function Attachment({
   }
   return (
     <li className={a.status === "missing" ? "att-card att-gone" : "att-card"}>
-      {a.kind === "image" && viewable(a) ? <Thumbnail workspaceId={workspaceId} attachment={a} /> : <span className="att-icon">{t(`attach.kind.${a.kind}`)}</span>}
+      {a.kind === "image" && viewable(a) ? <Thumbnail workspaceId={workspaceId} attachment={a} onGone={(next) => onChange(next, false)} /> : <span className="att-icon">{t(`attach.kind.${a.kind}`)}</span>}
       <span className="att-meta">
         <span className="att-name">{a.name}</span>
         <span className="att-size">{meta}</span>
@@ -147,8 +181,12 @@ export function AttachmentList({
   workspaceId: string;
   attachments: readonly AttachmentView[];
   canDelete?: boolean;
-  /** Called with the full list after one attachment was replaced by its tombstone. */
-  onChange?: (next: AttachmentView[]) => void;
+  /**
+   * Called with the tombstone the hub returned for one deleted attachment. Only that one view is
+   * reported, so the owner merges it into its newest state rather than into a list captured when the
+   * delete started.
+   */
+  onChange?: (next: AttachmentView) => void;
 }) {
   const [replaced, setReplaced] = useState<ReadonlyMap<string, AttachmentView>>(new Map());
   if (attachments.length === 0) return null;
@@ -165,9 +203,9 @@ export function AttachmentList({
           workspaceId={workspaceId}
           attachment={a}
           canDelete={canDelete && a.status !== "deleted"}
-          onChange={(next) => {
+          onChange={(next, publish) => {
             setReplaced((cur) => new Map(cur).set(next.id, next));
-            onChange?.(shown.map((x) => (x.id === next.id ? next : x)));
+            if (publish) onChange?.(next);
           }}
         />
       ))}
