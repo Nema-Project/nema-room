@@ -1,7 +1,7 @@
 import { Readable } from "node:stream";
 import { Hono, type Context } from "hono";
 import { AttachmentCapabilitiesSchema, type AttachmentView } from "@nema/shared";
-import { AttachmentError, type AttachmentStore } from "./attachments.js";
+import { AttachmentCleanupError, AttachmentError, type AttachmentStore } from "./attachments.js";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
@@ -103,6 +103,13 @@ export function attachmentRoutes(deps: AttachmentRouteDeps): Hono {
       if (view.messageId) await emitCurrent(workspaceId, view.messageId);
       return c.json(view);
     } catch (e) {
+      if (e instanceof AttachmentCleanupError) {
+        // The tombstone is committed; open chats must stop offering the file even though its bytes
+        // are still on disk until the sweep retries the removal.
+        console.error("[attachments] removing a deleted attachment's file failed", e.cause);
+        if (e.view.messageId) await emitCurrent(c.req.param("id"), e.view.messageId);
+        return c.json({ error: e.message }, 500);
+      }
       return fail(c, e);
     }
   });

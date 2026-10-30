@@ -19,6 +19,21 @@ import type { Db } from "./db/db.js";
 // Bytes: <dataDir>/attachments/<workspaceId>/<id>, written through <dataDir>/attachments/.staging.
 // Metadata: message_attachments. The user's file name never takes part in a path.
 
+/**
+ * The delete was recorded (the tombstone is committed) but the file could not be removed. The hourly
+ * sweep removes files whose rows say they are gone, so the bytes are retried; callers still publish
+ * the tombstone, which is the attachment's state from now on.
+ */
+export class AttachmentCleanupError extends Error {
+  constructor(
+    readonly view: AttachmentView,
+    cause: unknown,
+  ) {
+    super("the attachment was deleted but its file could not be removed yet; it will be retried", { cause });
+    this.name = "AttachmentCleanupError";
+  }
+}
+
 export class AttachmentError extends Error {
   constructor(
     readonly status: 400 | 404 | 409 | 410 | 411 | 413 | 415 | 507,
@@ -44,6 +59,8 @@ export type AttachmentStoreOptions = {
   maxGlobalBytes?: number;
   /** Free bytes on the data disk; defaults to statfs on the data directory. Tests inject a fake. */
   freeBytes?: () => Promise<number>;
+  /** Removes a gone attachment's path in the sweep; defaults to fs.rm. Tests inject a failure. */
+  removePath?: (p: string) => Promise<void>;
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -199,6 +216,7 @@ export class AttachmentStore {
   private admission: Promise<void> = Promise.resolve();
   /** Uploads in progress per workspace and upload key; a concurrent retry waits and then matches. */
   private readonly inflight = new Map<string, Promise<unknown>>();
+  private readonly removePath: (p: string) => Promise<void>;
 
   constructor(
     private readonly db: Db,
@@ -208,6 +226,7 @@ export class AttachmentStore {
     this.root = path.join(dataDir, "attachments");
     this.staging = path.join(this.root, ".staging");
     this.maxGlobalBytes = opts.maxGlobalBytes ?? ATTACHMENT_LIMITS.defaultGlobalBytes;
+    this.removePath = opts.removePath ?? ((p) => fs.rm(p, { recursive: true, force: true }));
     this.freeBytes =
       opts.freeBytes ??
       (async () => {
@@ -485,7 +504,11 @@ export class AttachmentStore {
       const rows = await t.query<Row>(`update message_attachments set status = 'deleted', deleted_at = now() where id = $1 returning ${COLS}`, [id]);
       return toView(rows[0]!);
     });
-    await fs.rm(this.file(workspaceId, id), { force: true });
+    try {
+      await fs.rm(this.file(workspaceId, id), { force: true });
+    } catch (e) {
+      throw new AttachmentCleanupError(view, e);
+    }
     if (view.messageId === null) await this.db.query("delete from message_attachments where id = $1 and status = 'expired'", [id]);
     return view;
   }
@@ -503,12 +526,24 @@ export class AttachmentStore {
     const gone = await this.db.query<{ id: string; workspace_id: string; status: AttachmentStatus }>(
       "select id, workspace_id, status from message_attachments where status in ('expired', 'deleted')",
     );
-    for (const g of gone) await fs.rm(this.file(g.workspace_id, g.id), { force: true });
-    const expired = gone.filter((g) => g.status === "expired").map((g) => g.id);
+    // One path that cannot be removed must not stop the rest; its row stays, so the next sweep retries it.
+    // Recursive because only ids make up the path: whatever sits there belongs to a gone attachment.
+    const cleanupErrors: unknown[] = [];
+    const removed = new Set<string>();
+    for (const g of gone) {
+      try {
+        await this.removePath(this.file(g.workspace_id, g.id));
+        removed.add(g.id);
+      } catch (e) {
+        cleanupErrors.push(e);
+      }
+    }
+    const expired = gone.filter((g) => g.status === "expired" && removed.has(g.id)).map((g) => g.id);
     if (expired.length > 0) await this.db.query("delete from message_attachments where id = any($1) and status = 'expired'", [expired]);
     await this.removeDeletedWorkspaceDirs();
     if (opts.startup) await this.startupScan();
     if (permissionErrors.length > 0) throw new AggregateError(permissionErrors, "could not make the attachment files private");
+    if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, "could not remove some deleted attachment files; the next sweep retries them");
   }
 
   /** No upload can create a directory for a workspace that does not exist (it locks the row first). */

@@ -4,7 +4,7 @@ import { chmod, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from "n
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { ATTACHMENT_LIMITS } from "@nema/shared";
-import { AttachmentError, AttachmentStore, toAttachmentRef, writeFully, type UploadInput } from "../src/attachments.js";
+import { AttachmentCleanupError, AttachmentError, AttachmentStore, toAttachmentRef, writeFully, type UploadInput } from "../src/attachments.js";
 import type { Db } from "../src/db/db.js";
 import { createWorkspace, deleteWorkspace, updateWorkspace } from "../src/workspaces.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
@@ -283,6 +283,23 @@ describe("open, bind, remove", () => {
     expect(await s.usedBytes()).toBe(0);
   });
 
+  test("remove whose file removal fails reports the committed tombstone with the error", async () => {
+    const s = store();
+    const { view } = await s.upload(ws, input(png(10)));
+    const id = await message("m1");
+    await db.tx((t) => s.bind(t, ws, id, [view.id]));
+    const file = path.join(root(), ws, view.id);
+    await rm(file);
+    await mkdir(file);
+    await writeFile(path.join(file, "x"), "x");
+    const err = await s.remove(ws, view.id).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(AttachmentCleanupError);
+    expect((err as AttachmentCleanupError).view).toMatchObject({ id: view.id, status: "deleted", messageId: id });
+    expect((err as AttachmentCleanupError).view.deletedAt).not.toBeNull();
+    expect(await status(s.open(ws, view.id))).toBe(410);
+    await rm(file, { recursive: true, force: true });
+  });
+
   test("removing a staged upload drops it entirely", async () => {
     const s = store();
     const { view } = await s.upload(ws, input(png(10)));
@@ -317,6 +334,44 @@ describe("sweep", () => {
     expect((await readdir(path.join(root(), ws))).sort()).toEqual([attached.id]);
     expect(await staging()).toEqual([]);
     expect(existsSync(path.join(root(), "ws_gone"))).toBe(false);
+  });
+
+  test("the sweep removes a deleted attachment's path even when it is a non-empty directory", async () => {
+    const s = store();
+    const a = (await s.upload(ws, input(png(10)))).view;
+    const id = await message("m1");
+    await db.tx((t) => s.bind(t, ws, id, [a.id]));
+    await db.query("update message_attachments set status = 'deleted', deleted_at = now() where id = $1", [a.id]);
+    const file = path.join(root(), ws, a.id);
+    await rm(file);
+    await mkdir(file);
+    await writeFile(path.join(file, "x"), "x");
+    await s.sweep({ startup: false });
+    expect(existsSync(file)).toBe(false);
+  });
+
+  test("one path the sweep cannot remove does not stop the others", async () => {
+    const stuckPath: string[] = [];
+    const s = new AttachmentStore(db, dataDir, {
+      freeBytes: async () => 1e15,
+      removePath: async (p) => {
+        if (stuckPath.includes(p)) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+        await rm(p, { recursive: true, force: true });
+      },
+    });
+    const stuck = (await s.upload(ws, input(png(10)))).view;
+    const other = (await s.upload(ws, input(png(11)))).view;
+    const expired = (await s.upload(ws, input(png(12)))).view;
+    const id = await message("m1");
+    await db.tx((t) => s.bind(t, ws, id, [stuck.id, other.id]));
+    await db.query("update message_attachments set status = 'deleted', deleted_at = now() where id = any($1)", [[stuck.id, other.id]]);
+    await db.query("update message_attachments set status = 'expired' where id = $1", [expired.id]);
+    stuckPath.push(path.join(root(), ws, stuck.id), path.join(root(), ws, expired.id));
+    const err = await s.sweep({ startup: false }).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(AggregateError);
+    expect(existsSync(path.join(root(), ws, other.id))).toBe(false);
+    // The expired row whose file is still there stays, so the next sweep retries it.
+    expect(await db.query("select status from message_attachments where id = $1", [expired.id])).toEqual([{ status: "expired" }]);
   });
 
   test("the hourly sweep never deletes a file that has no row yet", async () => {
