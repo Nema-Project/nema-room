@@ -7,7 +7,7 @@ import type { DaemonRpc } from "../src/daemonRpc.js";
 import { DaemonRpcError } from "../src/daemonRpc.js";
 import type { Db } from "../src/db/db.js";
 import { EventBus, type HubEvent } from "../src/events.js";
-import { addReportMessage, getMessage, listMessages } from "../src/messages.js";
+import { addReportMessage, getMessage, listMessages, mergeReportMeta } from "../src/messages.js";
 import { recheckReports, registerReportToken, routeRepo, startReportFallback } from "../src/reports.js";
 import { applyRepoMoved } from "../src/repos.js";
 import { listQueuedTasks } from "../src/tasks.js";
@@ -176,7 +176,7 @@ test("report creates a report message, stores the check, then queues a task", as
 
   const message = await getMessage(db, messageId);
   expect(message).toMatchObject({ workspaceId: ws, role: "report", content: "实现了流式输出", taskId: null });
-  expect(message!.meta).toEqual({ report: report(), check: null });
+  expect(message!.meta).toEqual({ report: { ...report(), progress: "completed" }, check: null });
   expect(seen.some((s) => s.ws === ws && s.e.type === "message.created" && s.e.message.id === messageId)).toBe(true);
 
   await waitFor(async () => calls.some((c) => c.method === "report.check"));
@@ -214,14 +214,158 @@ test("a report check error still queues the task with checkError", async () => {
     return queued.length > 0 ? queued : null;
   });
   expect(task).toMatchObject({ messageId });
-  expect((await getMessage(db, messageId))!.meta).toEqual({ report: report(), check: null, checkError: "没有这个提交" });
+  expect((await getMessage(db, messageId))!.meta).toEqual({ report: { ...report(), progress: "completed" }, check: null, checkError: "没有这个提交" });
 });
 
 test("an invalid report is 400 and stores nothing", async () => {
   const { ws } = await bind();
   const r = await post("/report", { ...report(), commits: [] });
   expect(r.status).toBe(400);
+  expect(await r.json()).toEqual({ error: "上报内容不完整或格式不对" });
+  const completed = await post("/report", { ...report(), progress: "completed", commits: [] });
+  expect(completed.status).toBe(400);
+  const { commits: _commits, ...noCommits } = report();
+  expect((await post("/report", noCommits)).status).toBe(400);
   expect(await listMessages(db, ws)).toEqual([]);
+});
+
+/** An approved package with one task on src/a.ts, for reports that name it. */
+async function approvedPackage(ws: string, repoId: string): Promise<string> {
+  const store = new KnowledgeStore(repoPath(dataDir, ws));
+  await store.upsert({ kind: "requirement", title: "流式输出", body: "b", sourceMessages: [], reason: "r" }, { author: "user" });
+  const wp = await store.createWorkPackage({ title: "流式", requirements: ["R-1"], repos: [repoId], reason: "r", sourceMessages: [] }, { author: "user" });
+  const task = { n: 1, title: "t", satisfies: ["R-1"], files: [{ op: "modify" as const, repo: "API", path: "src/a.ts" }], status: "pending" as const, inferred: false, reportMessageId: null, confirmedBy: null };
+  await store.writeWorkPackageDoc(wp.id, "spec", "# spec\n", {}, "s", [], { author: "user" });
+  await store.writeWorkPackageDoc(wp.id, "plan", "### 任务 1：a\n- 满足：R-1\n", { tasks: [task] }, "p", [], { author: "user" });
+  await store.setWorkPackageMeta(wp.id, { status: "approved", approvedAt: "2026-10-23T10:00:00.000Z", approvedCommit: "c" }, "x", { author: "user" });
+  return wp.id;
+}
+
+async function taskStatus(ws: string, wpId: string): Promise<string | undefined> {
+  return (await new KnowledgeStore(repoPath(dataDir, ws)).get(wpId))?.workpackage?.tasks[0]?.status;
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
+const metaOf = async (id: string) => (await getMessage(db, id))!.meta as ReportMessageMeta;
+
+test("stores an in-progress report with no commits and does not check, queue, or apply", async () => {
+  const { ws, repoId } = await bind();
+  const wpId = await approvedPackage(ws, repoId);
+  const body = { ...report(), entries: [wpId], task: 1, progress: "in_progress", commits: [] };
+  const r = await post("/report", body);
+  expect(r.status).toBe(202);
+  const { messageId } = (await r.json()) as { messageId: string };
+  const meta = await waitFor(async () => {
+    const m = await metaOf(messageId);
+    return m.checkSkipped ? m : null;
+  });
+  await settle();
+  expect(calls.map((c) => c.method)).not.toContain("report.check");
+  expect(meta.report).toEqual(body);
+  expect(meta.check).toBeNull();
+  expect(meta.checkSkipped).toBe("in_progress_no_commits");
+  expect("checkError" in meta).toBe(false);
+  expect(await listQueuedTasks(db, ws)).toEqual([]);
+  expect(await taskStatus(ws, wpId)).toBe("pending");
+});
+
+test("checks an in-progress report that has commits without queueing it", async () => {
+  const { ws, repoId } = await bind();
+  const wpId = await approvedPackage(ws, repoId);
+  const notYet: ReportCheck = { ...passing, onMain: "not-yet" };
+  handlers["report.check"] = () => notYet;
+  const r = await post("/report", { ...report(), entries: [wpId], task: 1, progress: "in_progress" });
+  expect(r.status).toBe(202);
+  const { messageId } = (await r.json()) as { messageId: string };
+  const meta = await waitFor(async () => {
+    const m = await metaOf(messageId);
+    return m.check ? m : null;
+  });
+  await settle();
+  expect(meta.check).toEqual(notYet);
+  expect(meta.report.progress).toBe("in_progress");
+  expect(await listQueuedTasks(db, ws)).toEqual([]);
+  expect(await taskStatus(ws, wpId)).toBe("pending");
+});
+
+const S3 = (id: string) =>
+  `上报 ${id} 的提交已核对（不是验收）。把还没有用户确认的需求 implementation 设为 verified，且不要写 confirmedBy。不要改写 confirmedBy 已是 "user" 的 implementation。`;
+
+test("rechecks an in-progress report onto main without applying or queueing", async () => {
+  const { ws, repoId } = await bind();
+  const wpId = await approvedPackage(ws, repoId);
+  const message = await addReportMessage(db, ws, "进行中", {
+    report: { ...report(), entries: [wpId], task: 1, progress: "in_progress" },
+    check: { ...passing, onMain: "not-yet", checkedAt: "2026-10-23T10:00:00.000Z" },
+  });
+  handlers["report.check"] = () => passing;
+  await recheckReports({ db, events, daemon, dataDir }, repoId);
+  const meta = await metaOf(message.id);
+  expect(meta.check?.onMain).toBe("yes");
+  expect(meta.report.progress).toBe("in_progress");
+  expect(await taskStatus(ws, wpId)).toBe("pending");
+  expect((await listMessages(db, ws)).filter((m) => m.role === "system")).toEqual([]);
+  expect(await listQueuedTasks(db, ws)).toEqual([]);
+});
+
+test("keeps github when a completed report is rechecked", async () => {
+  const { ws, repoId } = await bind();
+  const message = await addReportMessage(db, ws, "未合入", { report: report(), check: { ...passing, onMain: "not-yet", checkedAt: "2026-10-23T10:00:00.000Z" } });
+  const authors = { checkedAt: "2026-10-23T10:00:00.000Z", source: "git" as const, commits: [], missing: [] };
+  const github = {
+    state: "read" as const,
+    observedAt: "2026-10-23T10:00:00.000Z",
+    source: "github-plugin-read" as const,
+    binding: { repoId, owner: "o", repo: "r", pr: 7, observedHeadSha: "a".repeat(40), claimedHeadSha: null },
+    headMatch: "not_comparable" as const,
+    checkRuns: [],
+    truncated: false,
+  };
+  await mergeReportMeta(db, message.id, { authors });
+  await mergeReportMeta(db, message.id, { github });
+  handlers["report.check"] = () => passing;
+  await recheckReports({ db, events, daemon }, repoId);
+  const meta = await metaOf(message.id);
+  expect(meta.check).toEqual(passing);
+  expect(meta.authors).toEqual(authors);
+  expect(meta.github?.current).toEqual(github);
+  expect(meta.checkHistory).toHaveLength(1);
+});
+
+test("a completed recheck that passes applies the report to its package task", async () => {
+  const { ws, repoId } = await bind();
+  const wpId = await approvedPackage(ws, repoId);
+  const message = await addReportMessage(db, ws, "未合入", {
+    report: { ...report(), entries: [wpId], task: 1 },
+    check: { ...passing, onMain: "not-yet", touchedFiles: ["src/a.ts"], checkedAt: "2026-10-23T10:00:00.000Z" },
+  });
+  handlers["report.check"] = () => ({ ...passing, touchedFiles: ["src/a.ts"] });
+  await recheckReports({ db, events, daemon, dataDir }, repoId);
+  const task = (await new KnowledgeStore(repoPath(dataDir, ws)).get(wpId))?.workpackage?.tasks[0];
+  expect(task).toMatchObject({ status: "verified", confirmedBy: null, reportMessageId: message.id });
+  const system = (await listMessages(db, ws)).filter((m) => m.role === "system");
+  expect(system.map((m) => m.content)).toEqual([S3(message.id)]);
+});
+
+test("does not recheck a report that is already on main", async () => {
+  const { ws, repoId } = await bind();
+  const message = await addReportMessage(db, ws, "已合入", { report: report(), check: passing });
+  handlers["report.check"] = () => ({ ...passing, filesOk: false });
+  await recheckReports({ db, events, daemon }, repoId);
+  expect(calls.map((c) => c.method)).not.toContain("report.check");
+  expect((await metaOf(message.id)).check).toEqual(passing);
+});
+
+test("an older recheck result does not replace a newer stored check", async () => {
+  const { ws, repoId } = await bind();
+  const stored: ReportCheck = { ...passing, onMain: "not-yet", checkedAt: "2026-10-23T10:05:00.000Z" };
+  const message = await addReportMessage(db, ws, "未合入", { report: report(), check: stored });
+  handlers["report.check"] = () => ({ ...passing, checkedAt: "2026-10-23T10:01:00.000Z" });
+  await recheckReports({ db, events, daemon }, repoId);
+  const meta = await metaOf(message.id);
+  expect(meta.check).toEqual(stored);
+  expect(meta.checkHistory ?? []).toEqual([]);
+  expect((await listMessages(db, ws)).filter((m) => m.role === "system")).toEqual([]);
 });
 
 test("a main move re-checks a not-yet report and queues the verified system task when it now passes", async () => {
@@ -261,7 +405,8 @@ test("a main move re-checks a not-yet report and queues the verified system task
   expect(last).toEqual({ ws, e: { type: "message.updated", message: await getMessage(db, messageId) } });
   expect(((last.e as { message: { meta: ReportMessageMeta } }).message.meta).check).toEqual(passing);
   const system = (await listMessages(db, ws)).filter((m) => m.role === "system");
-  expect(system.map((m) => m.content)).toEqual([`上报 ${messageId} 的提交已合入主分支，核实通过：把相关需求的 implementation 更新为 verified。`]);
+  expect(system.map((m) => m.content)).toEqual([S3(messageId)]);
+  for (const banned of ["验收通过", "已核实", "全部任务已核实"]) expect(system[0]!.content).not.toContain(banned);
   const queued = await listQueuedTasks(db, ws);
   expect(queued.some((t) => t.messageId === system[0]!.id)).toBe(true);
 
@@ -376,4 +521,23 @@ test("a draft package is 404", async () => {
   expect(await res.json()).toEqual({ error: `没有可取的开发包 ${wp.id}` });
   const missing = await get(`/report/workpackages/W-99?gitCommonDir=${encodeURIComponent(GIT_DIR)}`);
   expect(missing.status).toBe(404);
+});
+
+test("a recheck whose result is overtaken by a newer stored check neither applies nor queues", async () => {
+  const { ws, repoId } = await bind();
+  const wpId = await approvedPackage(ws, repoId);
+  const message = await addReportMessage(db, ws, "未合入", {
+    report: { ...report(), entries: [wpId], task: 1 },
+    check: { ...passing, onMain: "not-yet", touchedFiles: ["src/a.ts"], checkedAt: "2026-10-23T10:00:00.000Z" },
+  });
+  const newer: ReportCheck = { ...passing, filesOk: false, untouchedFiles: ["src/a.ts"], checkedAt: "2026-10-23T10:03:00.000Z" };
+  handlers["report.check"] = async () => {
+    // Another recheck stores a newer failing check while this one is still running.
+    await mergeReportMeta(db, message.id, { check: newer, checkError: null, checkSkipped: null });
+    return { ...passing, touchedFiles: ["src/a.ts"], checkedAt: "2026-10-23T10:02:00.000Z" };
+  };
+  await recheckReports({ db, events, daemon, dataDir }, repoId);
+  expect((await metaOf(message.id)).check).toEqual(newer);
+  expect(await taskStatus(ws, wpId)).toBe("pending");
+  expect((await listMessages(db, ws)).filter((m) => m.role === "system")).toEqual([]);
 });

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -13,7 +14,7 @@ import type { Db } from "../src/db/db.js";
 import { attachDaemonSocket } from "../src/daemonSocket.js";
 import { EventBus } from "../src/events.js";
 import { getMessage, listMessages, type Message } from "../src/messages.js";
-import { startReportFallback } from "../src/reports.js";
+import { registerReportToken, startReportFallback } from "../src/reports.js";
 import { getRepo, type Repo } from "../src/repos.js";
 import { createWorkspace } from "../src/workspaces.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
@@ -244,7 +245,7 @@ test("hook, report, merge re-check and the no-report fallback against a real hub
     await daemon.watcher.tick();
     await waitFor("moved to the merge", async () => (await getRepo(db, boundRepo.id))?.lastMainSha === reported);
     const verifiedTask = await waitFor("verified system task", async () =>
-      (await listMessages(db, workspace.id)).find((m) => m.role === "system" && m.content.startsWith(`上报 ${reportMessage.id} 的提交已合入主分支`)),
+      (await listMessages(db, workspace.id)).find((m) => m.role === "system" && m.content.startsWith(`上报 ${reportMessage.id} 的提交已核对（不是验收）`)),
     );
     expect(((await getMessage(db, reportMessage.id))!.meta as ReportMessageMeta).check).toMatchObject({ onMain: "yes", filesOk: true });
     await waitFor("verified task queued", async () => taskFor(db, verifiedTask.id));
@@ -288,6 +289,61 @@ test("hook, report, merge re-check and the no-report fallback against a real hub
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (savedHome === undefined) delete process.env.HOME;
     else process.env.HOME = savedHome;
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("an in-progress report with no commits is accepted by a real hub", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "nema-report-progress-")));
+  const repo = path.join(root, "repo");
+  mkdirSync(repo);
+  git(repo, ["init", "-b", "main"]);
+  writeFileSync(path.join(repo, "README.md"), "hello\n");
+  commitAll(repo, "init");
+  const gitCommonDir = path.join(repo, ".git");
+
+  const { db, dataDir } = await makeHubDeps();
+  const workspace = await createWorkspace(db, dataDir, "API");
+  await db.query(
+    `insert into workspace_repos (id, workspace_id, path, git_common_dir, label, main_branch, has_origin, remote_url)
+     values ('repo_progress', $1, $2, $3, 'API', 'main', false, null)`,
+    [workspace.id, repo, gitCommonDir],
+  );
+  const token = "c".repeat(64);
+  await registerReportToken(db, createHash("sha256").update(token).digest("hex"));
+  const daemonCalls: string[] = [];
+  let listener: http.RequestListener = (_req, res) => res.end();
+  const server = http.createServer((req, res) => listener(req, res));
+  try {
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    const daemon = {
+      async call(method: string): Promise<unknown> {
+        daemonCalls.push(method);
+        throw new Error("e2e: no daemon");
+      },
+    };
+    listener = getRequestListener(createApp({ db, dataDir, events: new EventBus(), daemonStatus: () => true, daemon, port }).fetch);
+    const res = await fetch(`http://127.0.0.1:${port}/report`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ agent: "claude-code", gitCommonDir, summary: "做到一半", progress: "in_progress" }),
+    });
+    expect(res.status).toBe(202);
+    const { messageId } = (await res.json()) as { messageId: string };
+    const meta = await waitFor("skipped check", async () => {
+      const m = (await getMessage(db, messageId))?.meta as ReportMessageMeta | undefined;
+      return m?.checkSkipped ? m : null;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(meta.check).toBeNull();
+    expect(meta.checkSkipped).toBe("in_progress_no_commits");
+    expect(meta.report).toMatchObject({ progress: "in_progress", commits: [] });
+    expect(daemonCalls).not.toContain("report.check");
+    expect(await db.query(`select 1 from tasks where workspace_id = $1 and status = 'queued'`, [workspace.id])).toEqual([]);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(root, { recursive: true, force: true });
   }
 }, 60_000);

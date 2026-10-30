@@ -241,7 +241,7 @@ describe("KnowledgeStore", () => {
     );
     await writeFile(path.join(dir, "requirements", "R-1.md"), file);
     await git(dir, ["commit", "-am", "impl"]);
-    const implementation = { status: "reported", evidence: { reportMessageId: "m_9", commits: ["abc1234"], inferred: false, note: null, confirmedBy: null } };
+    const implementation = { status: "reported", evidence: { reportMessageId: "m_9", commits: ["abc1234"], inferred: false, note: null, confirmedBy: null, acceptanceReview: null, reportEvidence: null } };
     expect((await s.get("R-1"))?.implementation).toEqual(implementation);
     const u = await s.upsert({ kind: "requirement", id: "R-1", title: "x2", body: "b", sourceMessages: ["m_2"], reason: "again" }, { author: "agent" });
     expect(u.entry.implementation).toEqual(implementation);
@@ -862,6 +862,86 @@ describe("source evidence files", () => {
     expect(await s.get("S-1")).toEqual({ ...before, status: "dropped" });
     expect(parseCommitMessage(await git(dir, ["log", "-1", "--format=%B"]))).toMatchObject({ evidenceEventIds: ["event-1"] });
     expect(await readFile(path.join(dir, "sources", "S-1.md"), "utf8")).not.toContain("confirmed_revision:");
+  });
+  test("omits a null acceptance review and report evidence from the file", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    const implementation = { status: "verified" as const, evidence: { reportMessageId: "m_1", commits: ["abc1234"], inferred: false, note: null, confirmedBy: null } };
+    await s.upsert(req("x", { implementation }), { author: "system" });
+    const got = await s.get("R-1");
+    expect(got?.implementation?.evidence.acceptanceReview).toBeNull();
+    expect(got?.implementation?.evidence.reportEvidence).toBeNull();
+    const raw = await readFile(path.join(dir, "requirements", "R-1.md"), "utf8");
+    expect(raw).not.toContain("acceptance_review");
+    expect(raw).not.toContain("report_evidence");
+  });
+  test("round-trips acceptance review and report evidence", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    const acceptanceReview = { needed: true as const, at: "2026-10-28T00:00:00.000Z", reason: "linked_check_changed" as const };
+    const reportEvidence = [
+      { reportMessageId: "m_2", commits: ["bbb2222"] },
+      { reportMessageId: "m_1", commits: ["aaa1111", "ccc3333"] },
+    ];
+    const implementation = { status: "verified" as const, evidence: { reportMessageId: "m_1", commits: ["bbb2222", "aaa1111", "ccc3333"], inferred: false, note: null, confirmedBy: "user" as const, acceptanceReview, reportEvidence } };
+    await s.upsert(req("x", { implementation }), { author: "system" });
+    const raw = await readFile(path.join(dir, "requirements", "R-1.md"), "utf8");
+    expect(raw).toContain("acceptance_review:");
+    expect(raw).toContain("report_evidence:");
+    expect(raw).toContain("report_message_id: m_2");
+    expect((await s.get("R-1"))?.implementation?.evidence).toMatchObject({ acceptanceReview, reportEvidence });
+  });
+  test("keeps a legacy file byte-identical when nothing changes", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await commitLegacy();
+    await s.upsert(req("legacy", { id: "R-1", body: "kept\n", related: [] }), { author: "agent" });
+    expect(await readFile(path.join(dir, "requirements", "R-1.md"), "utf8")).toBe(LEGACY);
+  });
+  test("changes only related on a legacy file and omits the new null keys", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await commitLegacy();
+    await s.upsert(req("legacy", { id: "R-1", body: "kept\n", related: ["R-2"] }), { author: "agent" });
+    const raw = await readFile(path.join(dir, "requirements", "R-1.md"), "utf8");
+    expect(raw).toBe(LEGACY.replace("related: []", "related:\n  - R-2"));
+    expect(raw).not.toContain("acceptance_review");
+    expect(raw).not.toContain("report_evidence");
+  });
+  test("confirms a git-checked requirement and keeps its commits", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    const reportEvidence = [{ reportMessageId: "m_1", commits: ["abc1234"] }];
+    const implementation = { status: "verified" as const, evidence: { reportMessageId: "m_1", commits: ["abc1234"], inferred: false, note: "n", confirmedBy: null, reportEvidence } };
+    await s.upsert(req("x", { implementation }), { author: "system" });
+    const { entry } = await s.confirmImplementation("R-1", { author: "user" });
+    expect(entry.implementation).toEqual({
+      status: "verified",
+      evidence: { reportMessageId: "m_1", commits: ["abc1234"], inferred: false, note: "n", confirmedBy: "user", acceptanceReview: null, reportEvidence },
+    });
+    expect((await s.get("R-1"))?.implementation).toEqual(entry.implementation);
+    expect(parseCommitMessage(await git(dir, ["log", "-1", "--format=%B"]))).toMatchObject({ reason: "用户确认已实现" });
+  });
+  test("clears only the review when the user accepts again", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    const acceptanceReview = { needed: true as const, at: "2026-10-28T00:00:00.000Z", reason: "linked_check_changed" as const };
+    const evidence = { reportMessageId: "m_1", commits: ["abc1234"], inferred: false, note: "n", confirmedBy: "user" as const, reportEvidence: null };
+    await s.upsert(req("x", { implementation: { status: "verified", evidence: { ...evidence, acceptanceReview } } }), { author: "system" });
+    const { entry } = await s.confirmImplementation("R-1", { author: "user" });
+    expect(entry.implementation).toEqual({ status: "verified", evidence: { ...evidence, acceptanceReview: null } });
+    expect((await s.get("R-1"))?.implementation).toEqual(entry.implementation);
+  });
+  test("refuses to confirm a user-accepted requirement that needs no review", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    const evidence = { reportMessageId: "m_1", commits: ["abc1234"], inferred: false, note: "n", confirmedBy: "user" as const };
+    await s.upsert(req("x", { implementation: { status: "verified", evidence } }), { author: "system" });
+    const before = await s.get("R-1");
+    const head = (await git(dir, ["rev-parse", "HEAD"])).trim();
+    await expect(s.confirmImplementation("R-1", { author: "user" })).rejects.toThrow();
+    expect(await s.get("R-1")).toEqual(before);
+    expect((await git(dir, ["rev-parse", "HEAD"])).trim()).toBe(head);
   });
   test("keeps a legacy file byte-identical when the new keys are empty", async () => {
     const s = new KnowledgeStore(dir);

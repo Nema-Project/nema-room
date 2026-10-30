@@ -174,6 +174,16 @@ describe("MessageItem", () => {
     expect(screen.getByText("Files match")).toBeTruthy();
     expect(screen.queryByText("Not on main yet")).toBeNull();
   });
+  it("does not render a skipped in-progress check as pending", () => {
+    const report = { agent: "codex", gitCommonDir: "/g", summary: "halfway", progress: "in_progress" as const, entries: [], commits: [], files: [] };
+    render(
+      <I18nProvider>
+        <MessageItem message={msg({ role: "report", content: "halfway", meta: { report, check: null, checkSkipped: "in_progress_no_commits" } })} />
+      </I18nProvider>,
+    );
+    expect(screen.getByText("This in-progress report has no commits, so no commit check was run.")).toBeTruthy();
+    expect(screen.queryByText("Checking…")).toBeNull();
+  });
   it("separates a quoted sender from the excerpt", () => {
     render(
       <I18nProvider>

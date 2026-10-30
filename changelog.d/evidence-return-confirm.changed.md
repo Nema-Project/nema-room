@@ -1,0 +1,1 @@
+- The user can now confirm a requirement whose commits were checked (`verified`) but that no user has accepted yet, and accept again after a linked check changed; the confirm button keeps refusing an implementation the user already accepted. The room also refuses `reportEvidence` that cites a report from another workspace or commits that report does not list.

@@ -202,6 +202,8 @@ nema report --entries W-1 --task 1 --summary "Implement task 1" --commits COMMIT
 
 Optional reporting hooks: `nema report install --agent codex` or `--agent claude`. This modifies the agent's user-level hook configuration and installs the `nema-report` skill. Remove it with `nema report uninstall --agent <agent>`.
 
+Work in progress can be reported first: `echo '{"summary":"…","progress":"in_progress"}' | nema report --json`. Such a report may have no commits and does not advance a work package task; send a `completed` report (with at least one commit) when the work is done.
+
 The GitHub plugin is off by default. How to turn it on, sign in with `gh`, and allow writes is in the desktop section above; the Web / Compose daemon uses the same path. The command allowlist and the six older read functions are in the technical reference. `nema auth github` can still write a token to `~/.nema/github-token`; the default path does not read it.
 
 The Plugins page (Settings, bottom left) gives every extension an Enable / Disable switch that takes effect immediately, with no restart. A disabled extension's functions stop being offered to the Agent and calling one directly is refused. The switch covers the whole install; each workspace has its own switches on top, and both have to be on. Disabling a bundled extension stores only an override row, never a change to what shipped. An extension Nema installed also has Uninstall, which deletes its directory with the record; one found outside Nema only offers Remove from list, which drops the record and leaves your files where they are. A bundled extension offers no removal, only the switch. See "Enabling, disabling and removing extensions" in the technical reference.

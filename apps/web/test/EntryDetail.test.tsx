@@ -277,7 +277,7 @@ describe("EntryDetail", () => {
       ...entry,
       implementation: {
         status: "reported",
-        evidence: { reportMessageId: null, commits: ["0123456789abcdef0123456789abcdef01234567"], inferred: true, note: "主分支上的退款逻辑", confirmedBy: null },
+        evidence: { reportMessageId: null, commits: ["0123456789abcdef0123456789abcdef01234567"], inferred: true, note: "主分支上的退款逻辑", confirmedBy: null, acceptanceReview: null, reportEvidence: null },
       },
     };
     const verified: Entry = {
@@ -309,7 +309,7 @@ describe("EntryDetail", () => {
     const onJump = vi.fn();
     vi.mocked(hub.getEntry).mockResolvedValue({
       ...entry,
-      implementation: { status: "mismatch", evidence: { reportMessageId: "m_r", commits: ["abcdef1"], inferred: false, note: null, confirmedBy: null } },
+      implementation: { status: "mismatch", evidence: { reportMessageId: "m_r", commits: ["abcdef1"], inferred: false, note: null, confirmedBy: null, acceptanceReview: null, reportEvidence: null } },
     });
     await mount({ onJumpToMessage: onJump });
     expect(screen.getByText("Mismatch").classList.contains("red")).toBe(true);

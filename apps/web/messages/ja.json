@@ -244,6 +244,7 @@
   "report.untouched": "変更されていないファイル",
   "report.checkPending": "チェック中…",
   "report.checkFailed": "チェックできません：{message}",
+  "report.checkSkipped": "進行中の報告にはまだコミットがありません。今回はコミット照合をしていません。",
   "impl.reported": "報告済み",
   "impl.reportedInferred": "報告済み（コードから推測）",
   "impl.verified": "検証済み",
