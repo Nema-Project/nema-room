@@ -97,9 +97,10 @@ clone せずにピン留めしたイメージを pull できるのは tag `v0.1.
 ```sh
 # 1. fetch the fixed-name compose asset for the current supported release;
 #    the old file is replaced only after the download succeeds
+NEMA_FETCHED= NEMA_LOCKED= NEMA_UP= NEMA_INSTALLED=
 curl -fsSL -o docker-compose.yml.download \
   https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml \
-  && mv docker-compose.yml.download docker-compose.yml
+  && mv docker-compose.yml.download docker-compose.yml && NEMA_FETCHED=1
 #    If .env already has NEMA_IMAGE_TAG, keep it and fetch that version's asset
 #    instead of the latest one:
 #      https://github.com/Nema-Project/nema-room/releases/download/v<locked>/docker-compose.yml
@@ -107,32 +108,33 @@ curl -fsSL -o docker-compose.yml.download \
 #      https://raw.githubusercontent.com/Nema-Project/nema-room/v<locked>/docker-compose.yml
 
 # 2. read the one version both images are pinned to; hub and web must agree
-NEMA_LOCKED=
 NEMA_VERSION=$(grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
 WEB_VERSION=$(grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
-test -n "$NEMA_VERSION" && test "$NEMA_VERSION" = "$WEB_VERSION" && echo "$NEMA_VERSION"
+test -n "$NEMA_FETCHED" && test -n "$NEMA_VERSION" && test "$NEMA_VERSION" = "$WEB_VERSION" \
+  && echo "$NEMA_VERSION"
 
 # 3. lock it in a local .env; an existing NEMA_IMAGE_TAG stays as it is
-test -n "$NEMA_VERSION" && test "$NEMA_VERSION" = "$WEB_VERSION" \
+test -n "$NEMA_FETCHED" && test -n "$NEMA_VERSION" && test "$NEMA_VERSION" = "$WEB_VERSION" \
   && { grep -q '^NEMA_IMAGE_TAG=' .env 2>/dev/null || printf '\nNEMA_IMAGE_TAG=%s\n' "$NEMA_VERSION" >> .env; } \
   && grep -qx "NEMA_IMAGE_TAG=$NEMA_VERSION" .env \
   && NEMA_LOCKED=$NEMA_VERSION && echo "locked $NEMA_LOCKED"
 
-# 4. start the stack; steps 4-6 do nothing unless step 3 printed "locked"
+# 4. start the stack; each later step runs only if the one before succeeded.
+#    If .env sets NEMA_HUB_PORT or NEMA_DATA_HOST_DIR, export the same values first.
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"   # Linux and macOS only
-test -n "$NEMA_LOCKED" && docker compose up -d
+test -n "$NEMA_LOCKED" && mkdir -p -m 700 "${NEMA_DATA_HOST_DIR:-$HOME/.nema/data}" \
+  && docker compose up -d && NEMA_UP=1
 
 # 5. install the host daemon at the locked version
-test -n "$NEMA_LOCKED" && npm i -g "@nema-project/nema@$NEMA_LOCKED"
+test -n "$NEMA_UP" && npm i -g "@nema-project/nema@$NEMA_LOCKED" && NEMA_INSTALLED=1
 
 # 6. start the host daemon and keep it running; Compose does not run it.
-#    If .env sets NEMA_HUB_PORT or NEMA_DATA_HOST_DIR, export the same values
-#    first so the daemon finds the hub and the daemon-token the hub wrote.
-test -n "$NEMA_LOCKED" && NEMA_DATA_DIR="${NEMA_DATA_HOST_DIR:-$HOME/.nema/data}" \
+#    It finds the hub and the daemon-token the hub wrote in the data directory.
+test -n "$NEMA_INSTALLED" && NEMA_DATA_DIR="${NEMA_DATA_HOST_DIR:-$HOME/.nema/data}" \
   nema daemon --hub "http://127.0.0.1:${NEMA_HUB_PORT:-4400}"
 ```
 
-手順 2 は hub と web が同じ版に固定されているときだけその版を表示します。何も表示されなければそこで止め、何も起動しないでください。手順 3 は `.env` がその版を固定しているときだけ `locked <版>` を表示します。表示されなければ `.env` は別の版に固定されているので、手順 1 の説明どおりその版の資産を取得し、手順 2 と 3 をやり直します。手順 3 が `locked` を表示するまで、手順 4〜6 は何もしません。ダウンロードや確認が失敗しても、スタックの起動や daemon のインストールは行われません。手順 3 が認識するのは、自分が書く `NEMA_IMAGE_TAG=<版>` という素の行だけです。手で編集した `.env`（引用符・コメント・CRLF）の場合や、同じディレクトリで 2 つのインストールが同時に走りうる場合は、チェックアウトから `scripts/install/public.mjs` を使ってください。Compose と同じ方法で値を読み、ロックファイルの下で `.env` と `docker-compose.yml` をまとめて書き込みます。`.env` にすでに `NEMA_IMAGE_TAG` があればその値を使い続けます。手順 1 では latest ではなく `releases/download/v<locked>/docker-compose.yml` からその版の資産を取得し、手順 2 と手順 5 が固定済みの版を読むようにします。手順 3 では上書きしません。latest はリリースのたびに変わりますが、版付きのアドレスはその Release がある限り変わりません。`v0.1.6` より前の固定（`0.1.4`、`0.1.5`）にはリリース資産がなく、版付きのアドレスは 404 を返します。その場合は、その tag 自身のファイル `raw.githubusercontent.com/Nema-Project/nema-room/v<locked>/docker-compose.yml` を取得します。両イメージがその版に固定されています。v0.1.6 の資産の先頭には、テンプレートでありインストール可能な版ではないというリポジトリのテンプレートのコメントが残っています。このコメントは古く、固定された 2 行の `image:` が正しい情報です。v0.1.6 より後の Release では、先頭のコメントに自分の版が書かれます。手順 5 の版は手順 2 で読んだ版で、npm の最新版ではありません。エージェントのタスクには、手順 6 の daemon が動き続けている必要があります。Release の公開直後は、イメージや npm パッケージがまだ公開中のことがあります。`docker compose up` がイメージを pull できない、または `npm i` がその版を見つけられないときは、少し待つか、チェックアウトから `node scripts/install/public.mjs --check` を実行してください。インストール前に Compose 資産・2 つのイメージ・npm パッケージがそろっていることを確かめます。リリースのダウンロード先はリダイレクトするので `-L` は省けません。Windows の Docker Desktop では手順 4 の export は不要です。
+手順 2 は hub と web が同じ版に固定されているときだけその版を表示します。何も表示されなければそこで止め、何も起動しないでください。手順 3 は `.env` がその版を固定しているときだけ `locked <版>` を表示します。表示されなければ `.env` は別の版に固定されているので、手順 1 の説明どおりその版の資産を取得し、手順 2 と 3 をやり直します。手順 2 以降は、前の手順が成功したときだけ次が実行されます。ダウンロード・確認・起動・インストールのどれかが失敗すると残りは止まり、古いファイルや古い `nema` のまま進むことはありません。手順 4 では、セットアップウィザードと同じく自分のユーザーでデータディレクトリを先に作るので、hub がそこに `daemon-token` を書けます。手順 3 が認識するのは、自分が書く `NEMA_IMAGE_TAG=<版>` という素の行だけです。手で編集した `.env`（引用符・コメント・CRLF）の場合や、同じディレクトリで 2 つのインストールが同時に走りうる場合は、チェックアウトから `scripts/install/public.mjs` を使ってください。Compose と同じ方法で値を読み、ロックファイルの下で `.env` と `docker-compose.yml` をまとめて書き込みます。`.env` にすでに `NEMA_IMAGE_TAG` があればその値を使い続けます。手順 1 では latest ではなく `releases/download/v<locked>/docker-compose.yml` からその版の資産を取得し、手順 2 と手順 5 が固定済みの版を読むようにします。手順 3 では上書きしません。latest はリリースのたびに変わりますが、版付きのアドレスはその Release がある限り変わりません。`v0.1.6` より前の固定（`0.1.4`、`0.1.5`）にはリリース資産がなく、版付きのアドレスは 404 を返します。その場合は、その tag 自身のファイル `raw.githubusercontent.com/Nema-Project/nema-room/v<locked>/docker-compose.yml` を取得します。両イメージがその版に固定されています。v0.1.6 の資産の先頭には、テンプレートでありインストール可能な版ではないというリポジトリのテンプレートのコメントが残っています。このコメントは古く、固定された 2 行の `image:` が正しい情報です。v0.1.6 より後の Release では、先頭のコメントに自分の版が書かれます。手順 5 の版は手順 2 で読んだ版で、npm の最新版ではありません。エージェントのタスクには、手順 6 の daemon が動き続けている必要があります。Release の公開直後は、イメージや npm パッケージがまだ公開中のことがあります。`docker compose up` がイメージを pull できない、または `npm i` がその版を見つけられないときは、少し待つか、チェックアウトから `node scripts/install/public.mjs --check` を実行してください。インストール前に Compose 資産・2 つのイメージ・npm パッケージがそろっていることを確かめます。リリースのダウンロード先はリダイレクトするので `-L` は省けません。Windows の Docker Desktop では手順 4 の export は不要です。
 
 ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。`NEMA_HUB_URL` の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` で、web コンテナの起動時に読まれるので、公開イメージを再ビルドせずにアドレスを変えられます。
 

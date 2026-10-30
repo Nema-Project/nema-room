@@ -288,23 +288,21 @@
     <p data-reveal style="--i:1">Windows x64 和 Apple 芯片的构建在最新发布页。Windows 上在安装包和便携 ZIP 里选一个。ZIP 解压后运行 <code>Nema.exe</code>，没有快捷方式，也没有卸载程序。两者都使用 <code>~/.nema/desktop</code>。本机需要已经装好 Git 2.31 或更新版本。</p>
     <p data-reveal style="--i:1">宿主机命令是 <code>nema</code>，用 <code>npm i -g @nema-project/nema@&lt;locked version&gt;</code> 安装。这个数字是你取到的 <code>docker-compose.yml</code> 里两个 <code>image:</code> 钉的那个版本。hub 和 web 镜像是 linux/amd64。<a href="https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml">docker-compose.yml</a> 是最新 Release 的固定名资产，渲染时双镜像都钉在该 Release 的版本上。取到后确认两处钉的版本相同，把 <code>NEMA_IMAGE_TAG=&lt;该版本&gt;</code> 写进 <code>.env</code>（已有值就沿用，并改取 <code>releases/download/v&lt;locked&gt;/docker-compose.yml</code>），再启动。v0.1.6 的文件开头仍是模板那条「不是可安装的版本」注释，以两行钉住版本的 <code>image:</code> 为准。v0.1.6 之前的锁定版本没有发布资产，改取 <code>raw.githubusercontent.com/Nema-Project/nema-room/v&lt;locked&gt;/docker-compose.yml</code>。Linux 和 macOS 上先导出 <code>NEMA_UID</code> 和 <code>NEMA_GID</code>。开发本仓库则克隆后运行安装向导。</p>
     <pre data-reveal style="--i:2"><code># hub 与 web，仅 linux/amd64。compose 文件是最新 Release 的固定名资产。
-curl -fsSL -o docker-compose.yml.download https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml &amp;&amp; mv docker-compose.yml.download docker-compose.yml
+NEMA_FETCHED= NEMA_LOCKED= NEMA_UP= NEMA_INSTALLED=
+curl -fsSL -o docker-compose.yml.download https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml &amp;&amp; mv docker-compose.yml.download docker-compose.yml &amp;&amp; NEMA_FETCHED=1
 # .env 里已有 NEMA_IMAGE_TAG 时沿用它，改取 .../releases/download/v&lt;locked&gt;/docker-compose.yml。
 # hub 和 web 版本一致时才打印版本；没打印就停下。
-NEMA_LOCKED=
 NEMA_VERSION=$(grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
 WEB_VERSION=$(grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
-test -n "$NEMA_VERSION" &amp;&amp; test "$NEMA_VERSION" = "$WEB_VERSION" &amp;&amp; echo "$NEMA_VERSION"
+test -n "$NEMA_FETCHED" &amp;&amp; test -n "$NEMA_VERSION" &amp;&amp; test "$NEMA_VERSION" = "$WEB_VERSION" &amp;&amp; echo "$NEMA_VERSION"
 # 锁进 .env（已有值就沿用）；没打印 locked 就停下。
-test -n "$NEMA_VERSION" &amp;&amp; test "$NEMA_VERSION" = "$WEB_VERSION" &amp;&amp; { grep -q '^NEMA_IMAGE_TAG=' .env 2&gt;/dev/null || printf '\nNEMA_IMAGE_TAG=%s\n' "$NEMA_VERSION" &gt;&gt; .env; } &amp;&amp; grep -qx "NEMA_IMAGE_TAG=$NEMA_VERSION" .env &amp;&amp; NEMA_LOCKED=$NEMA_VERSION &amp;&amp; echo "locked $NEMA_LOCKED"
-# 仅 Linux 和 macOS。Windows 上的 Docker Desktop 不需要这一行。
+test -n "$NEMA_FETCHED" &amp;&amp; test -n "$NEMA_VERSION" &amp;&amp; test "$NEMA_VERSION" = "$WEB_VERSION" &amp;&amp; { grep -q '^NEMA_IMAGE_TAG=' .env 2&gt;/dev/null || printf '\nNEMA_IMAGE_TAG=%s\n' "$NEMA_VERSION" &gt;&gt; .env; } &amp;&amp; grep -qx "NEMA_IMAGE_TAG=$NEMA_VERSION" .env &amp;&amp; NEMA_LOCKED=$NEMA_VERSION &amp;&amp; echo "locked $NEMA_LOCKED"
+# 下面每一行只在上一行成功后执行。export 那行仅 Linux 和 macOS 需要。
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
-test -n "$NEMA_LOCKED" &amp;&amp; docker compose up -d
-# 用这个版本安装宿主机 daemon。
-test -n "$NEMA_LOCKED" &amp;&amp; npm i -g "@nema-project/nema@$NEMA_LOCKED"
-nema --version
-# 启动 daemon 并保持运行；Compose 不会替你启动它。.env 设了 NEMA_HUB_PORT 或 NEMA_DATA_HOST_DIR 时先 export 同样的值。
-test -n "$NEMA_LOCKED" &amp;&amp; NEMA_DATA_DIR="${NEMA_DATA_HOST_DIR:-$HOME/.nema/data}" nema daemon --hub "http://127.0.0.1:${NEMA_HUB_PORT:-4400}"
+test -n "$NEMA_LOCKED" &amp;&amp; mkdir -p -m 700 "${NEMA_DATA_HOST_DIR:-$HOME/.nema/data}" &amp;&amp; docker compose up -d &amp;&amp; NEMA_UP=1
+test -n "$NEMA_UP" &amp;&amp; npm i -g "@nema-project/nema@$NEMA_LOCKED" &amp;&amp; NEMA_INSTALLED=1
+# .env 设了 NEMA_HUB_PORT 或 NEMA_DATA_HOST_DIR 时先 export 同样的值。Compose 不会替你启动 daemon。
+test -n "$NEMA_INSTALLED" &amp;&amp; NEMA_DATA_DIR="${NEMA_DATA_HOST_DIR:-$HOME/.nema/data}" nema daemon --hub "http://127.0.0.1:${NEMA_HUB_PORT:-4400}"
 
 # 或从源码构建本仓库
 git clone https://github.com/Nema-Project/nema-room.git
