@@ -286,15 +286,35 @@
   <div class="tile tile-accent cta-main">
     <h2 id="cta-h" data-reveal>ダウンロード</h2>
     <p data-reveal style="--i:1">Windows x64 と Apple シリコン向けのビルドは最新リリースにあります。Windows ではインストーラーかポータブル ZIP のどちらかを選びます。ZIP は展開して <code>Nema.exe</code> を実行します。ショートカットもアンインストーラーもありません。どちらも <code>~/.nema/desktop</code> を使います。パソコンには Git 2.31 以降が必要です。</p>
-    <p data-reveal style="--i:1">ホストのコマンドは <code>nema</code> で、<code>npm i -g @nema-project/nema@&lt;locked version&gt;</code> から入ります。この数字は取得した <code>docker-compose.yml</code> の 2 つの <code>image:</code> が固定している版です。<code>.env</code> へ代わりに書き込むものはまだありません。hub と web のイメージは linux/amd64 です。現在のワークフローで公開する Release には、その版に固定したレンダリング済み <code>docker-compose.yml</code> も添付されます。まだそれを持つ公開済み Release はないため、<a href="https://github.com/Nema-Project/nema-room/blob/v0.1.5/docker-compose.yml">tag v0.1.5 の docker-compose.yml</a> が <code>ghcr.io/nema-project/nema-room-hub:0.1.5</code> と <code>ghcr.io/nema-project/nema-room-web:0.1.5</code> をピン留めしています。そのファイルを取得してから起動します。この tag 上のファイルはリリースの添付ファイルではありません。Linux と macOS では先に <code>NEMA_UID</code> と <code>NEMA_GID</code> を export します。このリポジトリを開発するときは、clone してセットアップウィザードを実行します。</p>
-    <pre data-reveal style="--i:2"><code>npm i -g @nema-project/nema@&lt;locked version&gt;
-nema --version
-
-# hub と web。linux/amd64 のみ。リリース添付はまだないため、compose ファイルは tag v0.1.5 から取得します。
-curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.5/docker-compose.yml
-# Linux と macOS のみ。Windows の Docker Desktop では不要です。
-export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
-docker compose up -d
+    <p data-reveal style="--i:1">ホストのコマンドは <code>nema</code> で、<code>npm i -g @nema-project/nema@&lt;locked version&gt;</code> から入ります。この数字は取得した <code>docker-compose.yml</code> の 2 つの <code>image:</code> が固定している版です。hub と web のイメージは linux/amd64 です。<a href="https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml">docker-compose.yml</a> は最新 Release の固定名の資産で、両イメージをその Release の版に固定してレンダリングしたものです。取得したら 2 つの固定が同じ版か確かめ、<code>NEMA_IMAGE_TAG=&lt;その版&gt;</code> を <code>.env</code> に書いてから起動します（既存の値があればそれを使い、<code>releases/download/v&lt;locked&gt;/docker-compose.yml</code> を取得します）。v0.1.6 のファイルの先頭にはテンプレートの「インストール可能な版ではない」というコメントが残っていますが、固定された 2 行の <code>image:</code> が正しい情報です。v0.1.6 より前の固定にはリリース資産がないため、<code>raw.githubusercontent.com/Nema-Project/nema-room/v&lt;locked&gt;/docker-compose.yml</code> を取得します。Linux と macOS では先に <code>NEMA_UID</code> と <code>NEMA_GID</code> を export します。このリポジトリを開発するときは、clone してセットアップウィザードを実行します。</p>
+    <pre data-reveal style="--i:2"><code># hub と web。linux/amd64 のみ。compose ファイルは最新 Release の固定名の資産です。.env に NEMA_IMAGE_TAG があればその版を使います。
+NEMA_FETCHED= NEMA_LOCKED= NEMA_UP= NEMA_INSTALLED=
+NEMA_PIN=$(sed -n 's/^NEMA_IMAGE_TAG=//p' .env 2&gt;/dev/null | tail -1)
+NEMA_URL=https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
+test -n "$NEMA_PIN" \
+  &amp;&amp; NEMA_URL=https://github.com/Nema-Project/nema-room/releases/download/v$NEMA_PIN/docker-compose.yml
+{ curl -fsSL -o docker-compose.yml.download "$NEMA_URL" \
+  || { test -n "$NEMA_PIN" &amp;&amp; curl -fsSL -o docker-compose.yml.download \
+    "https://raw.githubusercontent.com/Nema-Project/nema-room/v$NEMA_PIN/docker-compose.yml"; }; } \
+  &amp;&amp; mv docker-compose.yml.download docker-compose.yml &amp;&amp; NEMA_FETCHED=1
+# hub と web が一致すれば版を、.env がその版を固定していれば locked を表示します。どちらかが出なければ止めます。
+NEMA_VERSION=$(grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
+WEB_VERSION=$(grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
+test -n "$NEMA_FETCHED" &amp;&amp; test -n "$NEMA_VERSION" &amp;&amp; test "$NEMA_VERSION" = "$WEB_VERSION" \
+  &amp;&amp; echo "$NEMA_VERSION"
+test -n "$NEMA_FETCHED" &amp;&amp; test -n "$NEMA_VERSION" &amp;&amp; test "$NEMA_VERSION" = "$WEB_VERSION" \
+  &amp;&amp; { test -n "$NEMA_PIN" || printf '\nNEMA_IMAGE_TAG=%s\n' "$NEMA_VERSION" &gt;&gt; .env; } \
+  &amp;&amp; test "$(sed -n 's/^NEMA_IMAGE_TAG=//p' .env | tail -1)" = "$NEMA_VERSION" \
+  &amp;&amp; NEMA_LOCKED=$NEMA_VERSION &amp;&amp; echo "locked $NEMA_LOCKED"
+# 各手順は前の手順が成功したときだけ実行されます。.env で NEMA_HUB_PORT や NEMA_DATA_HOST_DIR を設定したら先に同じ値を export します。
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"   # Linux and macOS only
+NEMA_DIR=${NEMA_DATA_HOST_DIR:-$HOME/.nema/data}
+test -n "$NEMA_LOCKED" &amp;&amp; mkdir -p -m 700 "$NEMA_DIR" &amp;&amp; test -w "$NEMA_DIR" \
+  &amp;&amp; NEMA_IMAGE_TAG=$NEMA_LOCKED docker compose up -d --wait &amp;&amp; NEMA_UP=1
+test -n "$NEMA_UP" &amp;&amp; npm i -g "@nema-project/nema@$NEMA_LOCKED" &amp;&amp; NEMA_INSTALLED=1
+# Compose は daemon を起動しません。動かし続けてください。
+test -n "$NEMA_INSTALLED" \
+  &amp;&amp; NEMA_DATA_DIR=$NEMA_DIR nema daemon --hub "http://127.0.0.1:${NEMA_HUB_PORT:-4400}"
 
 # またはこのリポジトリをソースからビルド
 git clone https://github.com/Nema-Project/nema-room.git

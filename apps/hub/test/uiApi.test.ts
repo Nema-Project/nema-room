@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { createWorkspace } from "../src/workspaces.js";
-import { addMessage, postUserMessage } from "../src/messages.js";
+import { addMessage, addReportMessage, postUserMessage } from "../src/messages.js";
 import { claimNextTask, finishTask, recordTaskChange } from "../src/tasks.js";
 import { EventBus } from "../src/events.js";
 import { indexEntry } from "../src/entryIndex.js";
@@ -871,6 +871,59 @@ describe("ui api", () => {
     expect(r.status).toBe(409);
     expect((await json(r)).error).toBe("只能确认已上报、有出入，或提交已核对但尚未验收的实现");
     expect((await store.get(e.id))!.implementation!.evidence.confirmedBy).toBe("user");
+  });
+
+  test("attaches report pass state without storing it", async () => {
+    const store = new KnowledgeStore(repoPath(dataDir, ws));
+    const check = { commitsExist: true, missingCommits: [], onMain: "yes" as const, filesOk: true, untouchedFiles: [], touchedFiles: ["a.ts"], checkedAt: "2026-10-23T10:00:00.000Z", mainSha: "1".repeat(40) };
+    const report = { agent: "claude-code", gitCommonDir: "/x/.git", summary: "s", entries: [], commits: ["aaa1111"], files: [] };
+    const passed = await addReportMessage(db, ws, "通过", { report, check });
+    const pending = await addReportMessage(db, ws, "待核对", { report: { ...report, commits: ["bbb2222"] }, check: null });
+    const groups = [{ reportMessageId: passed.id, commits: ["aaa1111"] }, { reportMessageId: pending.id, commits: ["bbb2222"] }];
+    const evidence = { reportMessageId: pending.id, commits: ["aaa1111", "bbb2222"], inferred: false, note: null, confirmedBy: null, acceptanceReview: null, reportEvidence: groups };
+    const { entry: grouped } = await store.upsert(
+      { kind: "requirement", title: "分组", body: "b", reason: "r", basis: "stated", sourceMessages: [], implementation: { status: "verified", evidence } },
+      { author: "system" },
+    );
+    const { entry: single } = await store.upsert(
+      { kind: "requirement", title: "单条", body: "b", reason: "r", basis: "stated", sourceMessages: [], implementation: { status: "reported", evidence: { ...evidence, reportMessageId: passed.id, reportEvidence: null } } },
+      { author: "system" },
+    );
+    const { entry: none } = await store.upsert(
+      { kind: "requirement", title: "无上报", body: "b", reason: "r", basis: "stated", sourceMessages: [], implementation: { status: "reported", evidence: { ...evidence, reportMessageId: null, reportEvidence: null } } },
+      { author: "system" },
+    );
+    const want = [{ reportMessageId: passed.id, reportPassed: true }, { reportMessageId: pending.id, reportPassed: false }];
+    expect((await json(await req("GET", `/api/workspaces/${ws}/entries/${grouped.id}`))).implementation.evidence.reports).toEqual(want);
+    const list = await json(await req("GET", `/api/workspaces/${ws}/entries`));
+    const byId = (id: string) => list.find((e: { id: string }) => e.id === id);
+    expect(byId(grouped.id).implementation.evidence.reports).toEqual(want);
+    expect(byId(single.id).implementation.evidence.reports).toEqual([{ reportMessageId: passed.id, reportPassed: true }]);
+    expect(byId(none.id).implementation.evidence.reports).toEqual([]);
+    for (const e of [grouped, single, none]) await indexEntry(db, ws, e);
+    const timeline = await json(await req("GET", `/api/workspaces/${ws}/timeline`));
+    expect(timeline.find((e: { id: string }) => e.id === grouped.id).implementation.evidence.reports).toEqual(want);
+    const file = await readFile(path.join(repoPath(dataDir, ws), "requirements", `${grouped.id}.md`), "utf8");
+    expect(file).toContain(passed.id);
+    expect(file).not.toContain("reports:");
+    expect(file).not.toContain("reportPassed");
+  });
+
+  test("attaches each work package task's report pass state", async () => {
+    const store = new KnowledgeStore(repoPath(dataDir, ws));
+    const check = { commitsExist: true, missingCommits: [], onMain: "yes" as const, filesOk: true, untouchedFiles: [], touchedFiles: ["a.ts"], checkedAt: "2026-10-23T10:00:00.000Z", mainSha: "1".repeat(40) };
+    const report = { agent: "claude-code", gitCommonDir: "/x/.git", summary: "s", entries: [], commits: ["aaa1111"], files: [] };
+    const passed = await addReportMessage(db, ws, "通过", { report, check });
+    const failed = await addReportMessage(db, ws, "未合入", { report, check: { ...check, onMain: "not-yet" as const } });
+    await store.upsert({ kind: "requirement", title: "需求", body: "b", reason: "r", basis: "stated", sourceMessages: [] }, { author: "user" });
+    const wp = await store.createWorkPackage({ title: "包", requirements: ["R-1"], repos: [], reason: "r", sourceMessages: [] }, { author: "user" });
+    const task = (n: number, reportMessageId: string | null) => ({ n, title: `t${n}`, satisfies: ["R-1"], files: [], status: "verified" as const, inferred: false, reportMessageId, confirmedBy: null });
+    await store.setWorkPackageMeta(wp.id, { tasks: [task(1, passed.id), task(2, failed.id), task(3, null)] }, "setup", { author: "user" });
+    const read = await json(await req("GET", `/api/workspaces/${ws}/workpackages/${wp.id}`));
+    expect(read.entry.workpackage.tasks.map((t: { reportPassed: boolean }) => t.reportPassed)).toEqual([true, false, false]);
+    const detail = await json(await req("GET", `/api/workspaces/${ws}/entries/${wp.id}`));
+    expect(detail.workpackage.tasks.map((t: { reportPassed: boolean }) => t.reportPassed)).toEqual([true, false, false]);
+    expect(JSON.stringify((await store.get(wp.id))!.workpackage)).not.toContain("reportPassed");
   });
 
   test("POST /repos stores the inspected repo and GET lists it", async () => {

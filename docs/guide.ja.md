@@ -64,7 +64,7 @@ npx @nema-project/nema@<hub のバージョン> --version
 npm i -g @nema-project/nema@<hub のバージョン>
 ```
 
-上のコマンドのバージョンは、取得した `docker-compose.yml` の 2 つの `image:` が固定している版です。`grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2` で表示され、`nema-room-web:` の側も同じ値を表示しなければなりません。ソースのチェックアウトでは daemon をこのツリーからビルドし、この方法ではバージョンを選びません。ソースのチェックアウトには `scripts/install/public.mjs` も入っています。公開済みの 1 つの版を解決し、その版の Compose 資産・2 つのイメージ・npm パッケージがそろっていることを確かめてから、`NEMA_IMAGE_TAG` と対応する `docker-compose.yml` をまとめて対象ディレクトリに書き込みます。まず `--check` を付けると検証だけで何も書きません。読むのはその Release 自身の `docker-compose.yml` 資産で、資産がない版は拒否します。まだその資産を持つ Release は公開されていないため、そうした版が出るまでは取得したファイルから版を読んでください。
+上のコマンドのバージョンは、取得した `docker-compose.yml` の 2 つの `image:` が固定している版です。`grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2` で表示され、`nema-room-web:` の側も同じ値を表示しなければなりません。ソースのチェックアウトでは daemon をこのツリーからビルドし、この方法ではバージョンを選びません。ソースのチェックアウトには `scripts/install/public.mjs` も入っています。公開済みの 1 つの版を解決し、その版の Compose 資産・2 つのイメージ・npm パッケージがそろっていることを確かめてから、`NEMA_IMAGE_TAG` と対応する `docker-compose.yml` をまとめて対象ディレクトリに書き込みます。まず `--check` を付けると検証だけで何も書きません。読むのはその Release 自身の `docker-compose.yml` 資産で、資産がない版は拒否します。`v0.1.6` より前の Release にはこの資産がありません。
 
 Compose では `curl http://127.0.0.1:4400/api/version` が `{"version":"..."}` を返します。デスクトップ版は **アプリ設定 → 情報** にバージョンを表示し、アプリのオリジンは `GET /_nema/version` を提供します。バージョンが違うと daemon は hub のエラーと `run: npm i -g @nema-project/nema@<バージョン>` を出して止まり、再接続しません。
 
@@ -116,9 +116,56 @@ npm run up
 
 `npm run up` はこのチェックアウトから hub と web をビルドします。Linux と macOS では、上の `export` は UID/GID が 1000 かどうかに関係なく、コンテナのユーザーをホストのユーザーにします。Windows の Docker Desktop ではこの export は不要です。`NEMA_HUB_PORT`（既定 4400）は公開されるホストのポートと hub の待受ポートの両方です。`NEMA_WEB_PORT`（既定 3000）はホストのポートだけを変えます。web コンテナは起動時に `NEMA_HUB_URL` を読み、compose はそれを `http://127.0.0.1:$NEMA_HUB_PORT` にします。
 
-clone せずにピン留めしたイメージを pull できるのは tag `v0.1.4` からです。この tag はイメージ公開ワークフローを含み、これらのイメージの最初の公開です（`linux/amd64`。arm64 は [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。このリポジトリのツリーにある `docker-compose.yml` はテンプレートで、hub と web の `image:` は `${NEMA_IMAGE_TAG:-latest}` の展開なので、ツリーには使えるバージョンがありません。現在のリリースワークフローで版を公開すると、両イメージをその版に固定したレンダリング済み `docker-compose.yml` も添付されます。インストール時はそのバージョンをローカルの `.env` の `NEMA_IMAGE_TAG` に固定します。この資産を持つ公開済み Release はまだないため、tag `v0.1.5` から [`docker-compose.yml`](https://github.com/Nema-Project/nema-room/blob/v0.1.5/docker-compose.yml) を取得します（`curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.5/docker-compose.yml`）。この tag 上のファイルはリリースの添付ファイルではありません。Linux と macOS では同じように `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。そのあと `docker compose up -d` を実行します。ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。公開 web イメージは起動時に `NEMA_HUB_URL` を読みます。compose の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` なので、ポートを変えてもイメージの再ビルドは不要です。
+clone せずにピン留めしたイメージを pull できるのは tag `v0.1.4` からです。この tag はイメージ公開ワークフローを含み、これらのイメージの最初の公開です（`linux/amd64`。arm64 は [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。このリポジトリのツリーにある `docker-compose.yml` はテンプレートで、hub と web の `image:` は `${NEMA_IMAGE_TAG:-latest}` の展開なので、ツリーには使えるバージョンがありません。`v0.1.6` 以降の各 Release には、hub と web のイメージをその Release の版に固定したレンダリング済み `docker-compose.yml` が添付されます。これはその Release の固定名の資産なので、現在の版は常に [`releases/latest/download/docker-compose.yml`](https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml) にあります。インストール時はその版をローカルの `.env` の `NEMA_IMAGE_TAG` に固定します。clone しないインストール手順：
 
-公開版のインストールには、入れるバージョンに対応する上記リンクの Compose ファイルを使い、同じ版の daemon を入れます。版はそのファイルで両イメージが固定されているバージョンです。main は公開済みの成果物より先に進むことがあるため、開発には `npm run up` でソースからビルドします。成果物の公開は実機・機能の受け入れ確認の代わりにはなりません。
+```sh
+# 1. fetch the compose asset. With no NEMA_IMAGE_TAG in .env this is the
+#    current supported release; an existing lock keeps its own version
+#    (0.1.4 and 0.1.5 have no release asset, so their tag file is used).
+NEMA_FETCHED= NEMA_LOCKED= NEMA_UP= NEMA_INSTALLED=
+NEMA_PIN=$(sed -n 's/^NEMA_IMAGE_TAG=//p' .env 2>/dev/null | tail -1)
+NEMA_URL=https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
+test -n "$NEMA_PIN" \
+  && NEMA_URL=https://github.com/Nema-Project/nema-room/releases/download/v$NEMA_PIN/docker-compose.yml
+{ curl -fsSL -o docker-compose.yml.download "$NEMA_URL" \
+  || { test -n "$NEMA_PIN" && curl -fsSL -o docker-compose.yml.download \
+    "https://raw.githubusercontent.com/Nema-Project/nema-room/v$NEMA_PIN/docker-compose.yml"; }; } \
+  && mv docker-compose.yml.download docker-compose.yml && NEMA_FETCHED=1
+
+# 2. read the one version both images are pinned to; hub and web must agree
+NEMA_VERSION=$(grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
+WEB_VERSION=$(grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
+test -n "$NEMA_FETCHED" && test -n "$NEMA_VERSION" && test "$NEMA_VERSION" = "$WEB_VERSION" \
+  && echo "$NEMA_VERSION"
+
+# 3. lock it in a local .env; an existing NEMA_IMAGE_TAG stays as it is,
+#    and the last assignment, the one Compose uses, must equal that version
+test -n "$NEMA_FETCHED" && test -n "$NEMA_VERSION" && test "$NEMA_VERSION" = "$WEB_VERSION" \
+  && { test -n "$NEMA_PIN" || printf '\nNEMA_IMAGE_TAG=%s\n' "$NEMA_VERSION" >> .env; } \
+  && test "$(sed -n 's/^NEMA_IMAGE_TAG=//p' .env | tail -1)" = "$NEMA_VERSION" \
+  && NEMA_LOCKED=$NEMA_VERSION && echo "locked $NEMA_LOCKED"
+
+# 4. start the stack; each later step runs only if the one before succeeded.
+#    If .env sets NEMA_HUB_PORT or NEMA_DATA_HOST_DIR, export the same values first.
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"   # Linux and macOS only
+NEMA_DIR=${NEMA_DATA_HOST_DIR:-$HOME/.nema/data}
+test -n "$NEMA_LOCKED" && mkdir -p -m 700 "$NEMA_DIR" && test -w "$NEMA_DIR" \
+  && NEMA_IMAGE_TAG=$NEMA_LOCKED docker compose up -d --wait && NEMA_UP=1
+
+# 5. install the host daemon at the locked version
+test -n "$NEMA_UP" && npm i -g "@nema-project/nema@$NEMA_LOCKED" && NEMA_INSTALLED=1
+
+# 6. start the host daemon and keep it running; Compose does not run it.
+#    It reads the daemon-token the hub wrote in the data directory.
+test -n "$NEMA_INSTALLED" \
+  && NEMA_DATA_DIR=$NEMA_DIR nema daemon --hub "http://127.0.0.1:${NEMA_HUB_PORT:-4400}"
+```
+
+手順 1 は `.env` の最後の `NEMA_IMAGE_TAG`、つまり Compose が実際に使う値を読みます。値がなければ `releases/latest/download/` から現在の版を取得します。値があればその固定を使い続け、代わりに `releases/download/v<locked>/docker-compose.yml` からその版の資産を取得します。`0.1.4` と `0.1.5` にはリリース資産がないため、そのダウンロードが 404 になったあと、その tag 自身のファイル `raw.githubusercontent.com/Nema-Project/nema-room/v<locked>/docker-compose.yml` を取得します。このファイルは両イメージをその版に固定しています。latest はリリースのたびに変わりますが、版付きのアドレスはその Release がある限り変わりません。手順 2 は hub と web が同じ版に固定されているときだけその版を表示し、手順 3 はその版が実際に有効な固定でもあるときだけ `locked <版>` を表示します。どちらかが何も表示しなければ止めます。以降の各手順は前の手順が成功したときだけ実行されます。ダウンロード・確認・起動・インストールのどれかが失敗すると残りは止まり、古いファイルや古い `nema` のまま進むことはありません。手順 4 では、セットアップウィザードと同じく自分のユーザーでデータディレクトリを作って書き込めることを確かめ、固定した版を Compose に明示的に渡すので、シェルで export した `NEMA_IMAGE_TAG` に上書きされません。`--wait` はサービスが healthy になってから戻るので、その時点で hub は手順 6 のための `daemon-token` を書き終えています。手順 1 と 3 が読むのは `NEMA_IMAGE_TAG=<版>` という素の行だけで、手で編集した `.env`（引用符・コメント・CRLF）では止まります。その場合や、同じディレクトリで 2 つのインストールが同時に走りうる場合は、チェックアウトから `scripts/install/public.mjs` を使ってください。Compose と同じ方法で値を読み、ロックファイルの下で `.env` と `docker-compose.yml` をまとめて書き込みます。v0.1.6 の資産の先頭には、テンプレートでありインストール可能な版ではないというリポジトリのテンプレートのコメントが残っています。このコメントは古く、固定された 2 行の `image:` が正しい情報です。v0.1.6 より後の Release では、先頭のコメントに自分の版が書かれます。エージェントのタスクには、手順 6 の daemon が動き続けている必要があります。Release の公開直後は、イメージや npm パッケージがまだ公開中のことがあります。手順 4 がイメージを pull できない、または手順 5 がその版を見つけられないときは、少し待ってから手順をやり直すか、チェックアウトから `node scripts/install/public.mjs --check` を実行してください。インストール前に Compose 資産・2 つのイメージ・npm パッケージがそろっていることを確かめます。リリースのダウンロード先はリダイレクトするので `-L` は省けません。Windows の Docker Desktop では手順 4 の export は不要です。
+
+ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。公開 web イメージは起動時に `NEMA_HUB_URL` を読みます。compose の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` なので、ポートを変えてもイメージの再ビルドは不要です。
+
+公開版のインストールには、入れる Release の Compose 資産を使い、同じ版の daemon を入れます。版はそのファイルで両イメージが固定されているバージョンです。main は公開済みの成果物より先に進むことがあるため、開発には `npm run up` でソースからビルドします。成果物の公開は実機・機能の受け入れ確認の代わりにはなりません。
 
 まずモデルを設定します。標準の認証方式を使う場合：
 
@@ -181,7 +228,7 @@ node apps/cli/dist/index.js auth claude
 2. **コード連携**：設定のシステムフォルダ選択でローカル Git リポジトリを登録します。選択後にリモートと検出したメインブランチを表示し、名前はフォルダ名を使います。その名前が既にあるときだけ入力します。ダイアログはホストの daemon が開きます。Windows はエクスプローラー形式の選択です。Graphify はインストール先の `tools/graphify/` から読みます。PATH からは入れず、実行時にダウンロードもしません。`desktop:stage` が固定した CPython 3.11.18 と graphifyy 0.9.95 をこのディレクトリへ入れ、起動ファイルは自分からの相対パスだけを使います。同梱インタプリタは `python/bin/python3.11` です。Tree-sitter の文法は JavaScript、TypeScript、TSX、Python、Go、Rust、Java、C、C++、C#、Ruby、PHP、Swift、Kotlin、Bash、JSON を残します。この固定版に YAML、TOML、HTML、CSS、Markdown の文法 wheel はありません。文法が無いファイルは警告して飛ばし、抽出は完了します。無いときは索引とコード検索が `随包的 Graphify 运行环境缺失` と報告し、プラグインページも同じ文を表示します。そこの「修復」は再チェックするだけで、ランタイムを戻すことはできません。リポジトリの登録時に一度索引を作ります。全量の抽出には数分かかることがあります。索引中はチャットに進捗が出て、終わるとコードについて質問できる旨が表示されます。アーキテクチャ図はその索引の後に描き、その間も進捗を表示します。その後 daemon は時計どおりに `git fetch` しません。タスクがそのリポジトリのコードを初めて読むときだけメインブランチを fetch し、コミット済みのスナップショットを読みます。未コミットの変更は含みません。同じタスクの後続の読み取りは、その結果を再利用します。
 3. **開発パッケージ生成**：active な要件を選び、`superpowers` を有効にして spec と plan を生成します。情報不足の場合、`grill-me` が質問を作成して生成を止めます。チャットのその確認の下で回答すると、生成は自動で再試行します。未解決の古い確認も、そのカードから回答できます。
 4. **承認と引き継ぎ**：人が確認・承認し、コーディング Agent に取得させます。編集や再生成で承認は取り消されます。
-5. **報告と検証**：`reported`、`verified`、`mismatch` を記録します。**verified は Git の証拠が検査を通ったか、ユーザーが確認したことを示します。テスト合格、機能の正しさ、要件の受け入れ完了を保証しません。**
+5. **報告と検証**：`reported`、`verified`、`mismatch` を記録します。**引用したすべての報告が Git 照合を通ると、`verified` は「コミットは照合済み」と表示されます。テスト合格、機能の正しさ、要件の受け入れ完了は保証しません。あなたが要件を確認すると「受け入れ確認済み」と表示されます。** 「コミットは照合済み」の要件はあなたが受け入れられます。後で引用した報告の照合が変わると再確認が必要と表示され、「引き続き受け入れる」はその表示だけを消します。あなたが確認した開発パッケージのタスクは「タスク完了を確認済み」と表示され、要件の受け入れではありません。チャットの各報告では、エージェントの主張と hub の照合（Git の 3 項目、コミットの作成者、GitHub の読み取り。失敗した check run は赤）を分けて表示します。
 
 開発パッケージでは、知識の言語が日本語や英語でも、`## 已定的做法`、`### 任务 1：`、`- 修改：`、`- 满足：` など固定の中国語書式を保持する必要があります。詳細はリファレンスを参照してください。
 
@@ -201,7 +248,7 @@ nema report --entries W-1 --task 1 --summary "Implement task 1" --commits COMMIT
 
 任意の報告 hook は `nema report install --agent codex` または `--agent claude` で導入します。Agent のユーザー単位 hook 設定を変更し、`nema-report` skill をインストールします。削除は `nema report uninstall --agent <agent>` です。
 
-作業中の内容は先に進行中の報告として送れます：`echo '{"summary":"…","progress":"in_progress"}' | nema report --json`。コミットがなくても送れますが、開発パッケージのタスクは進みません。作業が終わったら `completed` の報告（コミット 1 つ以上）を送ってください。
+作業中の内容は先に進行中の報告として送れます：`nema report --progress in_progress --summary "…"`（`--json` なら `"progress":"in_progress"`）。コミットがなくても送れますが、開発パッケージのタスクは進みません。作業が終わったら `completed` の報告（コミット 1 つ以上）を送ってください。
 
 GitHub プラグインは既定で無効です。有効化、`gh` のログイン、書き込みの許可は上のデスクトップアプリの節と同じです。Web / Compose の daemon も同じ経路です。コマンドの許可表と、以前からの 6 つの読み取り関数は技術リファレンスにあります。`nema auth github` は今もトークンを `~/.nema/github-token` に書けますが、既定の経路はそれを読みません。
 

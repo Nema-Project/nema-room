@@ -16,13 +16,12 @@
 - 已合入 `main` 的近期工作：[PR #29](https://github.com/Nema-Project/nema-room/pull/29) macOS 原生红绿灯（`5ff8cf9`）；[PR #30](https://github.com/Nema-Project/nema-room/pull/30) 落实 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 的用户 basis 证据检查（`afd1456`）；[PR #31](https://github.com/Nema-Project/nema-room/pull/31) 桌面包瘦身（`76680b8`）。
 - 本次评估通过 GitHub 读取源码、配置、Actions 和 Release；未本地重跑测试。开始每项工作前须重新检查最新状态。
 
-## v0.1.6 发布准备
+## v0.1.6 发布与后续验收
 
-版本号与发布说明已按 `npm run release:stamp -- 0.1.6`、`npm run release:cut -- 0.1.6` 准备；这不表示 v0.1.6 已公开发布，也不关闭下列验收项：
+v0.1.6 已公开发布：tag `v0.1.6` 指向 `280b224589ae13d4db99a4481bcd0baf58cf273d`，该提交的 [main CI](https://github.com/Nema-Project/nema-room/actions/runs/40994815874) 成功；[npm](https://github.com/Nema-Project/nema-room/actions/runs/40996073785)、[镜像](https://github.com/Nema-Project/nema-room/actions/runs/40996073787) 与[桌面](https://github.com/Nema-Project/nema-room/actions/runs/40996073896)发布工作流均成功。发布可用性不等于功能或真机验收完成：
 
-- 这是第一个由 desktop-release 附上固定名 `docker-compose.yml` 资产的版本。发布后实测 `releases/latest/download/docker-compose.yml` 返回 200、双镜像钉在 `0.1.6`，再按发布机制第 2 期任务 10 切换公开安装链接；在那之前 README、指南与官网仍指向 v0.1.5 tag 上的 Compose 文件。
-- 合并 release PR 后，只有该合并 SHA 的 main 完整 CI 成功才可打 tag；npm、hub/web 镜像与桌面产物的发布结果分别验证。
-- Windows x64 与 macOS arm64 安装包的真机安装／覆盖升级、启动、一次 Graphify、退出与旧数据保留仍待验证；CX-03 最终验收继续跟踪。维护者已选择快速迭代，这些未完成验收不阻塞本次小版本。
+- 这是第一个带固定名 `docker-compose.yml` 资产的版本。2026-10-30 实测 `releases/latest/download/docker-compose.yml` 跟随跳转后返回 200，双镜像钉在 `0.1.6`，与 `SHA256SUMS-0.1.6.txt` 里的哈希一致；`npm view @nema-project/nema version` 为 `0.1.6`；两个 GHCR 镜像的 `0.1.6` 与 `latest` 可匿名读到；`node scripts/install/public.mjs --check` 四项齐。公开安装链接据此由发布机制第 2 期任务 10 切到该固定名资产。
+- Windows x64 与 macOS arm64 安装包的真机安装／覆盖升级、启动、一次 Graphify、退出与旧数据保留仍待验证；CX-03 最终验收继续跟踪。维护者已选择快速迭代，这些未完成验收不阻塞小版本。
 
 ## v0.1.5 发布与后续验收
 
@@ -87,7 +86,7 @@ P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实现已�
 | P1-06 | 同步版本与验收文档 | 待办 | README、官网、CHANGELOG、SECURITY 对齐实际发布；各历史报告注明适用提交；新增当前验收矩阵而非将旧记录视为现状 |
 | P1-07 | 区分实现证据与需求验收；现有 verified 不代表测试或验收通过 | 待办 | 明确“提交已核对”“测试已通过”“验收已确认”的状态及证据来源；兼容现有数据；用户不会将 Git 核对误认为需求完成 |
 | P1-08 | 完善 CI 分层和桌面运行时变更覆盖。规格见 [fast-gate spec](docs/superpowers/specs/2026-10-27-pr-ci-fast-gate-design.md)，计划见 [fast-gate plan](docs/superpowers/plans/2026-10-27-pr-ci-fast-gate.md) | 进行中 | 保留 PR 检查及发布前完整打包；local/hub/cli/web 运行时改动有适当集成检查；依赖变更的打包风险有明确检查策略；避免无必要重复跑重型任务 |
-| P1-09 | [#63](https://github.com/Nema-Project/nema-room/issues/63) 发布去版本耦合。规格见 [release mechanics spec](docs/superpowers/specs/2026-10-28-release-mechanics-design.md) | 进行中 | 第 1 期（单点盖印 + changelog 片段）已由 [PR #70](https://github.com/Nema-Project/nema-room/pull/70) 合入（`954a8c3`）。第 2 期基本落地：[plan](docs/superpowers/plans/2026-10-28-release-mechanics-phase2.md)（[PR #79](https://github.com/Nema-Project/nema-room/pull/79)），以及 [PR #80](https://github.com/Nema-Project/nema-room/pull/80) Compose 模板与固定名资产、[PR #81](https://github.com/Nema-Project/nema-room/pull/81) 安装说明、[PR #83](https://github.com/Nema-Project/nema-room/pull/83) 整套产物校验与锁定版本安装。v0.1.6 是第一个附带 `docker-compose.yml` 资产的版本，正在发布；它的 release PR [#89](https://github.com/Nema-Project/nema-room/pull/89) 没有改 Compose、站点、README 和指南里的版本号。剩余：第 2 期任务 10（资产链接实测可用后，再切换公开安装链接）；第 3 期（verify-release 与 promote）未开工。spec 的问题 1、问题 2 已由维护者在 2026-10-28 选定，均为 A |
+| P1-09 | [#63](https://github.com/Nema-Project/nema-room/issues/63) 发布去版本耦合。规格见 [release mechanics spec](docs/superpowers/specs/2026-10-28-release-mechanics-design.md) | 进行中 | 第 1 期（单点盖印 + changelog 片段）已由 [PR #70](https://github.com/Nema-Project/nema-room/pull/70) 合入（`954a8c3`）。第 2 期基本落地：[plan](docs/superpowers/plans/2026-10-28-release-mechanics-phase2.md)（[PR #79](https://github.com/Nema-Project/nema-room/pull/79)），以及 [PR #80](https://github.com/Nema-Project/nema-room/pull/80) Compose 模板与固定名资产、[PR #81](https://github.com/Nema-Project/nema-room/pull/81) 安装说明、[PR #83](https://github.com/Nema-Project/nema-room/pull/83) 整套产物校验与锁定版本安装。v0.1.6 是第一个附带 `docker-compose.yml` 资产的版本，正在发布；它的 release PR [#89](https://github.com/Nema-Project/nema-room/pull/89) 没有改 Compose、站点、README 和指南里的版本号。第 2 期任务 10 已由 [PR #92](https://github.com/Nema-Project/nema-room/pull/92) 合入（`a869b2c`），公开安装链接改为 `releases/latest/download/docker-compose.yml`。第 3 期：[plan](docs/superpowers/plans/2026-10-30-release-mechanics-phase3.md)（[PR #102](https://github.com/Nema-Project/nema-room/pull/102)，`d01babf`）；第一步只读检查 `npm run release:verify -- <x.y.z>` 已加入，2026-10-30 对 v0.1.6 回溯运行退出 0、对 v0.1.5 退出 1 并点名缺 `docker-compose.yml`，这是演练，不算规格要求的「第一步上线后的一次真实发布」。剩余：下一次真实发布的只读报告无误报；第 3 期第二步 promote（改 npm-publish、image-publish、desktop-release 三条工作流并新增 release-promote，需维护者用带 workflow 权限的凭据推送）。spec 的问题 1、问题 2 已由维护者在 2026-10-28 选定，均为 A |
 
 ## P2：后续能力
 

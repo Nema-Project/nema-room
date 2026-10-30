@@ -380,7 +380,7 @@ test("a work package goes from request through the grill question, approval, han
     expect(afterOne.status).toBe("in_progress");
     expect(afterOne.workpackage!.tasks[1]!.status).toBe("pending");
 
-    // 7. Task 2 is reported from a commit that is not on main yet: reported. The user confirms it: done.
+    // 7. Task 2 is reported from a commit that is not on main yet: reported. The user confirms it: done, but its requirements stay unmarked.
     mkdirSync(path.join(wt, "docs"));
     writeFileSync(path.join(wt, "docs", "stream.md"), "# stream\n");
     const task2 = commitPaths(wt, ["docs/stream.md"], "docs: stream page");
@@ -396,7 +396,9 @@ test("a work package goes from request through the grill question, approval, han
     expect(done.status).toBe("done");
     expect(done.workpackage!.tasks.map((t) => t.status)).toEqual(["verified", "verified"]);
     expect(done.workpackage!.tasks[1]!.confirmedBy).toBe("user");
-    for (const id of ["R-1", "R-2"]) expect((await store.get(id))!.implementation?.status, id).toBe("verified");
+    // A task the user confirmed has no passing report of its own, so the package's requirements are not
+    // marked as commits-checked: done is not acceptance, and a user confirmation is not a git check.
+    for (const id of ["R-1", "R-2"]) expect((await store.get(id))!.implementation?.status, id).toBeUndefined();
   } finally {
     daemon?.close();
     server.closeAllConnections();

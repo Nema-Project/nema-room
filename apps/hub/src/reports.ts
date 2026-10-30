@@ -13,7 +13,7 @@ import { workspacePluginState } from "./plugins.js";
 import { getRepo, type Repo } from "./repos.js";
 import { insertQueuedTask, toUiTask, type Task } from "./tasks.js";
 import { repoPath } from "./workspaces.js";
-import { applyReportToWorkPackage, noteLinkedCheckChanged } from "./workpackages.js";
+import { announceCitingEntries, applyReportToWorkPackage, noteLinkedCheckChanged } from "./workpackages.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 /** A report's git check fetches main first, which can take minutes on a large repo. */
@@ -283,12 +283,16 @@ async function recheckOne(deps: ReportDeps, repo: Repo, row: { id: string; meta:
   if (previous?.checkedAt && !(typeof check.checkedAt === "string" && check.checkedAt >= previous.checkedAt)) return;
   // Mark the review before the meta moves on: the knowledge repo and the database are not one transaction,
   // and a failure here should leave an extra mark rather than a lost one.
-  await noteLinkedCheckChanged(db, deps.dataDir, repo.workspaceId, row.id, previous, check, row.meta.report.commits);
+  await noteLinkedCheckChanged(deps, repo.workspaceId, row.id, previous, check, row.meta.report.commits);
   const updated = await mergeReportMeta(db, row.id, { check, checkError: null, checkSkipped: null });
   if (!updated) return;
   events.emit(repo.workspaceId, { type: "message.updated", message: updated });
   // A newer check stored meanwhile wins the merge; act only on the check that is actually stored.
   if (!isDeepStrictEqual((updated.meta as ReportMessageMeta | null)?.check, check)) return;
+  // Entries citing this report show its pass state; refresh them when it flips.
+  if ((previous !== null && reportPassed(previous)) !== reportPassed(check)) {
+    await announceCitingEntries(deps, repo.workspaceId, row.id).catch((e) => console.error(`announcing entries citing ${row.id} failed`, e));
+  }
   // An in-progress report only keeps its new check, even once it is on main.
   if (row.meta.report.progress === "in_progress") return;
   if (deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);

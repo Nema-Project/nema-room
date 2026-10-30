@@ -27,7 +27,7 @@ node apps/cli/dist/index.js daemon
 
 `npm run up` 用当前检出构建 hub 和 web。Linux 和 macOS 上先执行 `export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"`，再执行 `npm run up`。Windows 上的 Docker Desktop 不需要这条 export。单独执行 `docker compose up` 会从 GHCR 拉取镜像；仓库树里的 `docker-compose.yml` 是模板，镜像用的是 `${NEMA_IMAGE_TAG:-latest}` 插值，不是安装入口。开发 main 请用 `npm run up` 从源码构建；公开安装请取 Release 上的 `docker-compose.yml` 资产，它由模板按该 Release 的版本渲染、双镜像都钉在那个版本上。这些镜像从 tag `v0.1.4` 起发布（`linux/amd64`；arm64 见 issue #50）。hub 的宿主机端口和容器端口都是 `NEMA_HUB_PORT`（默认 4400）。web 的宿主机端口是 `NEMA_WEB_PORT`（默认 3000），容器内仍是 3000。web 启动时读取 `NEMA_HUB_URL`，compose 默认把它设成 `http://127.0.0.1:$NEMA_HUB_PORT`。
 
-从本仓库跑 Web / Compose 仍走 `node scripts/setup.mjs`。宿主机 daemon 是 npm 包 `@nema-project/nema`，命令名是 `nema`。`@nema-project/nema@0.1.3` 已在 2026-10-27 由维护者账号发布到 npm，这是第一次发布。`v0.1.4` 是受信发布者的第一次发布。开发本仓库时 daemon 仍从当前检出安装。已发布的 hub 按版本安装：`npx @nema-project/nema@<hub 版本>` 或 `npm i -g @nema-project/nema@<hub 版本>`，这个版本号就是所取 `docker-compose.yml` 里两个 `image:` 钉的那个版本：`grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2` 打印它，`nema-room-web:` 那条必须打印同一个值。目前还没有东西会替你往 `.env` 写 `NEMA_IMAGE_TAG`；记录锁定版本的安装器随固定名 Compose 资产一起上线，在那之前请从取到的文件里读版本。不要把不带版本的 `npx @nema-project/nema` 写成与任意 hub 都匹配的安装方式。
+从本仓库跑 Web / Compose 仍走 `node scripts/setup.mjs`。宿主机 daemon 是 npm 包 `@nema-project/nema`，命令名是 `nema`。`@nema-project/nema@0.1.3` 已在 2026-10-27 由维护者账号发布到 npm，这是第一次发布。`v0.1.4` 是受信发布者的第一次发布。开发本仓库时 daemon 仍从当前检出安装。已发布的 hub 按版本安装：`npx @nema-project/nema@<hub 版本>` 或 `npm i -g @nema-project/nema@<hub 版本>`，这个版本号就是所取 `docker-compose.yml` 里两个 `image:` 钉的那个版本：`grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2` 打印它，`nema-room-web:` 那条必须打印同一个值。从 `v0.1.6` 起，Release 带固定名 `docker-compose.yml` 资产，最新版本在 `https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml`（`curl` 要带 `-L`）。不克隆时按 README 的五步从该文件读出版本、写进 `.env` 的 `NEMA_IMAGE_TAG`；源码检出里的 `scripts/install/public.mjs` 会解析版本、校验 Compose 资产、两个镜像和 npm 包后，把 `NEMA_IMAGE_TAG` 和配套的 `docker-compose.yml` 一起写入。不要把不带版本的 `npx @nema-project/nema` 写成与任意 hub 都匹配的安装方式。
 
 ## 目录
 
@@ -86,6 +86,8 @@ npm run release:cut -- <x.y.z>
 `release:cut` 先把 `changelog.d` 里的片段按 Added、Changed、Fixed、Removed、Security 合并进 `[Unreleased]`（同一分类里原有条目在前，片段按文件名升序接在后面），再把合并后的条目移到 `## [<x.y.z>] - <当天日期>`，紧跟在空的 `[Unreleased]` 标题之后。日期是执行命令时的本地日历日，是截稿日，不是打 tag 的日期。之后不要因为实际发布日不同再改这个日期。合并之后 `[Unreleased]` 仍没有条目时命令拒绝，`CHANGELOG.md` 不变，片段也不删除。只有写入成功之后才删除这次合并掉的片段。
 
 然后写 ROADMAP 记录。tag 仍由维护者在 main 的 CI 已成功的 SHA 上单独创建，不从 CI 创建。
+
+tag 推送触发的 `npm-publish`、`image-publish`、`desktop-release` 三条工作流都结束后，运行只读检查 `npm run release:verify -- <x.y.z>`，把输出和退出码记进该版本的 ROADMAP 记录。退出 0 只表示产物齐全且彼此一致，不是测试、冒烟或验收结果；退出 1 会点名缺的那一项；退出 2 表示有查询没得到答复，稍后重跑，不能当作缺件，也不能当作就绪。细节见 [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md#after-the-tag-workflows)。
 
 ## Pull request
 

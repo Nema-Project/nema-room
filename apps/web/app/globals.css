@@ -506,3 +506,10 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .external-skills .field { padding: 12px 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
 .external-skills .field label { flex: 1 1 260px; }
 .external-skills .field button[type="submit"] { border: 1px solid var(--ink); padding: 5px 14px; font-weight: 600; }
+.rblock { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--line, rgba(0,0,0,.08)); }
+.rblock-title { font-size: 12px; font-weight: 600; margin: 0 0 4px; }
+.rsub { margin-top: 6px; }
+.rsub-title { font-size: 11px; font-weight: 600; margin: 0 0 2px; color: var(--ink-3); }
+.rclaims, .rauthors { list-style: none; margin: 4px 0 0; padding: 0; font-size: 12px; display: grid; gap: 2px; }
+.rauthors li { display: flex; flex-wrap: wrap; gap: 6px; }
+.rhistory { margin-top: 6px; opacity: .75; }

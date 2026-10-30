@@ -166,6 +166,16 @@ export const Implementation = z.object({
 });
 export type Implementation = z.infer<typeof Implementation>;
 
+/** Whether a cited report's stored git check passed. Derived on read for the UI; never written to knowledge files. */
+export type ReportPassState = { reportMessageId: string; reportPassed: boolean };
+
+/** The reports an implementation cites: one per `reportEvidence` group, else its `reportMessageId`, else none. */
+export function citedReports(impl: Implementation): string[] {
+  const groups = impl.evidence.reportEvidence ?? [];
+  if (groups.length > 0) return groups.map((g) => g.reportMessageId);
+  return impl.evidence.reportMessageId ? [impl.evidence.reportMessageId] : [];
+}
+
 /**
  * Whether the user can confirm this implementation: `reported`, `mismatch`, commits checked but not yet
  * accepted (`verified` with no `confirmedBy`), or accepted with a review still needed ("still accept").

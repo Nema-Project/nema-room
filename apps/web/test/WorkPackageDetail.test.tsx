@@ -85,15 +85,37 @@ describe("WorkPackageDetail", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("缺少来源标记：- 7 天");
   });
 
+  it("does not confirm a git-verified task from the task button", async () => {
+    vi.mocked(hub.getWorkPackage).mockResolvedValue(
+      pkg("in_progress", {
+        tasks: [
+          task(1, { status: "verified", reportMessageId: "m_1", reportPassed: true } as never),
+          task(2, { status: "verified", reportMessageId: "m_2", reportPassed: false } as never),
+          task(3, { status: "verified", reportMessageId: "m_3", confirmedBy: "user", reportPassed: false } as never),
+          task(4, { status: "reported", reportMessageId: "m_4" }),
+        ],
+      }),
+    );
+    await mount();
+    const rows = screen.getAllByTestId("task-row");
+    expect(within(rows[0]!).getByText("Commits checked")).toBeTruthy();
+    expect(within(rows[0]!).queryByRole("button", { name: /Confirm implemented/ })).toBeNull();
+    expect(within(rows[1]!).queryByText("Commits checked")).toBeNull();
+    expect(within(rows[1]!).queryByText("Verified")).toBeNull();
+    expect(within(rows[2]!).getByText("Task marked done by you")).toBeTruthy();
+    expect(within(rows[2]!).queryByText("Accepted")).toBeNull();
+    expect(within(rows[3]!).getByRole("button", { name: /Confirm implemented/ })).toBeTruthy();
+  });
+
   it("task rows show status and confirm", async () => {
     const onJump = vi.fn();
     vi.mocked(hub.getWorkPackage).mockResolvedValue(
-      pkg("in_progress", { tasks: [task(1, { status: "verified", reportMessageId: "m_1" }), task(2, { status: "reported", inferred: true }), task(3, { status: "mismatch" }), task(4)] }),
+      pkg("in_progress", { tasks: [task(1, { status: "verified", reportMessageId: "m_1", reportPassed: true } as never), task(2, { status: "reported", inferred: true }), task(3, { status: "mismatch" }), task(4)] }),
     );
     await mount({ onJumpToMessage: onJump });
     const rows = screen.getAllByTestId("task-row");
     expect(rows).toHaveLength(4);
-    expect(within(rows[0]!).getByText("Verified")).toBeTruthy();
+    expect(within(rows[0]!).getByText("Commits checked")).toBeTruthy();
     expect(within(rows[1]!).getByText("Reported (inferred from code)")).toBeTruthy();
     expect(within(rows[2]!).getByText("Mismatch").classList.contains("red")).toBe(true);
     expect(within(rows[3]!).getByText("Pending")).toBeTruthy();

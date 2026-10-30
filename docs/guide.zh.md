@@ -64,7 +64,7 @@ npx @nema-project/nema@<hub 版本> --version
 npm i -g @nema-project/nema@<hub 版本>
 ```
 
-上面命令里的版本，就是所取 `docker-compose.yml` 里两个 `image:` 钉的那个版本：`grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2` 打印它，`nema-room-web:` 那条必须打印同一个值。源码检出从这棵树构建 daemon，不这样选版本。源码检出里也带 `scripts/install/public.mjs`：它解析一个已发布的版本，校验该版本的 Compose 资产、两个镜像和 npm 包都在，然后把 `NEMA_IMAGE_TAG` 和配套的 `docker-compose.yml` 一起写进目标目录；先加 `--check` 跑一遍只校验不写盘。它读的是该 Release 自己的 `docker-compose.yml` 资产，资产缺席就拒绝安装——目前还没有任何已发布的 Release 带这份资产，所以在这样的版本出现之前，仍请从取到的文件里读版本。
+上面命令里的版本，就是所取 `docker-compose.yml` 里两个 `image:` 钉的那个版本：`grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2` 打印它，`nema-room-web:` 那条必须打印同一个值。源码检出从这棵树构建 daemon，不这样选版本。源码检出里也带 `scripts/install/public.mjs`：它解析一个已发布的版本，校验该版本的 Compose 资产、两个镜像和 npm 包都在，然后把 `NEMA_IMAGE_TAG` 和配套的 `docker-compose.yml` 一起写进目标目录；先加 `--check` 跑一遍只校验不写盘。它读的是该 Release 自己的 `docker-compose.yml` 资产，资产缺席就拒绝安装；`v0.1.6` 之前的 Release 都没有这份资产。
 
 Compose：`curl http://127.0.0.1:4400/api/version` 返回 `{"version":"..."}`。桌面版在**应用设置 → 关于**里显示版本，应用源地址提供 `GET /_nema/version`。版本不一致时，daemon 会打印 hub 的错误和 `run: npm i -g @nema-project/nema@<版本>`，然后停止，不会继续重连。
 
@@ -116,9 +116,56 @@ npm run up
 
 `npm run up` 用当前检出构建 hub 和 web。在 Linux 和 macOS 上，上面的 `export` 把容器用户设成当前主机用户，UID/GID 不是 1000 时也一样。Windows 上的 Docker Desktop 不需要这条 export。`NEMA_HUB_PORT`（默认 4400）同时是宿主机发布端口和 hub 的监听端口。`NEMA_WEB_PORT`（默认 3000）只改宿主机端口。web 容器启动时读取 `NEMA_HUB_URL`；compose 把它设为 `http://127.0.0.1:$NEMA_HUB_PORT`。
 
-不克隆、直接拉取钉死镜像，从 tag `v0.1.4` 开始。这个 tag 包含镜像发布工作流，也是这些镜像的第一次发布（`linux/amd64`；arm64 见 [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。本仓库树里的 `docker-compose.yml` 是模板，hub 与 web 的 `image:` 用 `${NEMA_IMAGE_TAG:-latest}` 插值，树里没有可用的版本；当前发布工作流发一个版本时，也会附上一份渲染好的 `docker-compose.yml`、双镜像都钉在那个版本上，安装时把这个版本锁进本地 `.env` 的 `NEMA_IMAGE_TAG`。目前还没有任何已发布的 Release 带这份资产，所以从 tag `v0.1.5` 取 [`docker-compose.yml`](https://github.com/Nema-Project/nema-room/blob/v0.1.5/docker-compose.yml)（`curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.5/docker-compose.yml`），它把双镜像钉在 `0.1.5`。这份 tag 上的文件不是发布页附件。Linux 和 macOS 上同样导出 `NEMA_UID` 和 `NEMA_GID`。Windows 上的 Docker Desktop 不需要这条 export。然后执行 `docker compose up -d`。宿主机端口跟随 `NEMA_HUB_PORT`（默认 4400，容器监听同一端口）和 `NEMA_WEB_PORT`（默认 3000，容器内仍监听 3000）。发布的 web 镜像在启动时读取 `NEMA_HUB_URL`。compose 默认把它设为 `http://127.0.0.1:$NEMA_HUB_PORT`，所以改端口不用重建镜像。
+不克隆、直接拉取钉死镜像，从 tag `v0.1.4` 开始。这个 tag 包含镜像发布工作流，也是这些镜像的第一次发布（`linux/amd64`；arm64 见 [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。本仓库树里的 `docker-compose.yml` 是模板，hub 与 web 的 `image:` 用 `${NEMA_IMAGE_TAG:-latest}` 插值，树里没有可用的版本。从 `v0.1.6` 起，每个 Release 都附上一份渲染好的 `docker-compose.yml`，hub 与 web 镜像都钉在该 Release 的版本上。它是该 Release 的固定名资产，所以当前版本始终在 [`releases/latest/download/docker-compose.yml`](https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml)；安装时把它的版本锁进本地 `.env` 的 `NEMA_IMAGE_TAG`。不克隆的安装步骤：
 
-公开安装请使用上面链接的、与你所装版本对应的 Compose 文件，并安装同版 daemon，版本就是该文件里两个镜像钉住的版本。main 可能领先于已发布产物；开发请用 `npm run up` 从源码构建。产物发布不代替真机或功能验收。
+```sh
+# 1. fetch the compose asset. With no NEMA_IMAGE_TAG in .env this is the
+#    current supported release; an existing lock keeps its own version
+#    (0.1.4 and 0.1.5 have no release asset, so their tag file is used).
+NEMA_FETCHED= NEMA_LOCKED= NEMA_UP= NEMA_INSTALLED=
+NEMA_PIN=$(sed -n 's/^NEMA_IMAGE_TAG=//p' .env 2>/dev/null | tail -1)
+NEMA_URL=https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
+test -n "$NEMA_PIN" \
+  && NEMA_URL=https://github.com/Nema-Project/nema-room/releases/download/v$NEMA_PIN/docker-compose.yml
+{ curl -fsSL -o docker-compose.yml.download "$NEMA_URL" \
+  || { test -n "$NEMA_PIN" && curl -fsSL -o docker-compose.yml.download \
+    "https://raw.githubusercontent.com/Nema-Project/nema-room/v$NEMA_PIN/docker-compose.yml"; }; } \
+  && mv docker-compose.yml.download docker-compose.yml && NEMA_FETCHED=1
+
+# 2. read the one version both images are pinned to; hub and web must agree
+NEMA_VERSION=$(grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
+WEB_VERSION=$(grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
+test -n "$NEMA_FETCHED" && test -n "$NEMA_VERSION" && test "$NEMA_VERSION" = "$WEB_VERSION" \
+  && echo "$NEMA_VERSION"
+
+# 3. lock it in a local .env; an existing NEMA_IMAGE_TAG stays as it is,
+#    and the last assignment, the one Compose uses, must equal that version
+test -n "$NEMA_FETCHED" && test -n "$NEMA_VERSION" && test "$NEMA_VERSION" = "$WEB_VERSION" \
+  && { test -n "$NEMA_PIN" || printf '\nNEMA_IMAGE_TAG=%s\n' "$NEMA_VERSION" >> .env; } \
+  && test "$(sed -n 's/^NEMA_IMAGE_TAG=//p' .env | tail -1)" = "$NEMA_VERSION" \
+  && NEMA_LOCKED=$NEMA_VERSION && echo "locked $NEMA_LOCKED"
+
+# 4. start the stack; each later step runs only if the one before succeeded.
+#    If .env sets NEMA_HUB_PORT or NEMA_DATA_HOST_DIR, export the same values first.
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"   # Linux and macOS only
+NEMA_DIR=${NEMA_DATA_HOST_DIR:-$HOME/.nema/data}
+test -n "$NEMA_LOCKED" && mkdir -p -m 700 "$NEMA_DIR" && test -w "$NEMA_DIR" \
+  && NEMA_IMAGE_TAG=$NEMA_LOCKED docker compose up -d --wait && NEMA_UP=1
+
+# 5. install the host daemon at the locked version
+test -n "$NEMA_UP" && npm i -g "@nema-project/nema@$NEMA_LOCKED" && NEMA_INSTALLED=1
+
+# 6. start the host daemon and keep it running; Compose does not run it.
+#    It reads the daemon-token the hub wrote in the data directory.
+test -n "$NEMA_INSTALLED" \
+  && NEMA_DATA_DIR=$NEMA_DIR nema daemon --hub "http://127.0.0.1:${NEMA_HUB_PORT:-4400}"
+```
+
+第 1 步读取 `.env` 里最后一条 `NEMA_IMAGE_TAG`，也就是 Compose 实际使用的那条。没有锁时，它从 `releases/latest/download/` 取当前版本；已有锁时沿用它，改从 `releases/download/v<locked>/docker-compose.yml` 取该版本的资产。`0.1.4` 和 `0.1.5` 没有发布资产，那次下载 404 之后，它改取该 tag 自己的文件 `raw.githubusercontent.com/Nema-Project/nema-room/v<locked>/docker-compose.yml`，这份文件把双镜像钉在那个版本上。latest 会随每次发布变化，带版本的地址在该 Release 存在期间不变。第 2 步只在 hub 和 web 钉在同一个版本上时打印该版本；第 3 步只在这个版本也是实际生效的锁时打印 `locked <版本>`。任何一步没打印就停下。后面每一步只在前一步成功后才执行，所以下载、检查、启动或安装任何一步失败，后面都会停下，不会拿旧文件或旧版 `nema` 接着跑。第 4 步先用你自己的用户建好数据目录（安装向导也这样做）并确认可写；它把锁定的版本显式传给 Compose，shell 里 export 的 `NEMA_IMAGE_TAG` 无法覆盖；`--wait` 要等服务健康才返回，那时 hub 已经为第 6 步写好 `daemon-token`。第 1、3 步只认 `NEMA_IMAGE_TAG=<版本>` 这种纯文本行，`.env` 是手改过的（带引号、注释或 CRLF）时会停下。这种情况，或者同一目录可能有两次安装同时进行时，请在源码检出里用 `scripts/install/public.mjs`：它按 Compose 的方式读取这个值，并在锁文件保护下把 `.env` 和 `docker-compose.yml` 一起写入。v0.1.6 的资产开头仍是仓库模板的注释，说它是模板、不是可安装的版本；这条注释已经过时，以两行钉住版本的 `image:` 为准，v0.1.6 之后的 Release 开头会写明自己的版本。agent 任务需要第 6 步的 daemon 一直在跑。Release 刚发布时，镜像或 npm 包可能还在发布中；第 4 步拉不到镜像或第 5 步找不到该版本时，请稍等后重跑这些步骤，或在源码检出里先跑 `node scripts/install/public.mjs --check`，它在安装前校验 Compose 资产、两个镜像和 npm 包都在。`-L` 不能省，发布页下载地址会跳转。Windows 上的 Docker Desktop 不需要第 4 步的 export。
+
+宿主机端口跟随 `NEMA_HUB_PORT`（默认 4400，容器监听同一端口）和 `NEMA_WEB_PORT`（默认 3000，容器内仍监听 3000）。发布的 web 镜像在启动时读取 `NEMA_HUB_URL`。compose 默认把它设为 `http://127.0.0.1:$NEMA_HUB_PORT`，所以改端口不用重建镜像。
+
+公开安装请使用你所装 Release 的 Compose 资产，并安装同版 daemon，版本就是该文件里两个镜像钉住的版本。main 可能领先于已发布产物；开发请用 `npm run up` 从源码构建。产物发布不代替真机或功能验收。
 
 首次使用先配置模型。使用默认认证时：
 
@@ -181,7 +228,7 @@ node apps/cli/dist/index.js auth claude
 2. **连接代码**：在设置里用系统文件夹选择器绑定本机 Git 仓库。选中后先显示远程地址和识别到的主分支，名字用文件夹名，不用手填；名字冲突时才改。对话框由本机 daemon 打开。Windows 用资源管理器式的选择器。Graphify 从安装包的 `tools/graphify/` 读取，不从 PATH 安装，也不在运行时下载。`desktop:stage` 按锁定的 CPython 3.11.18 和 graphifyy 0.9.95 放入这份文件，启动器只用相对路径。打包的解释器是 `python/bin/python3.11`。Tree-sitter 语法保留 JavaScript、TypeScript、TSX、Python、Go、Rust、Java、C、C++、C#、Ruby、PHP、Swift、Kotlin、Bash 和 JSON。这个锁定版本没有 YAML、TOML、HTML、CSS、Markdown 的语法包。缺语法时跳过该文件并警告，提取仍会结束。缺失时索引和代码搜索会报 `随包的 Graphify 运行环境缺失`，插件页显示同一句说明。那里的「修复」只会重新检查，不能补回运行环境。绑定仓库时会建一次索引。完整提取可能要几分钟。索引进度会显示在聊天里，结束后说明可以开始问代码。架构图在这次索引结束后才画，画的时候也有进度。之后 daemon 不按时钟 `git fetch`：一次任务第一次读取该仓库的代码时才拉取主分支，并读取已提交快照，不包含未提交修改。同一次任务里之后的读取沿用这一次的结果。
 3. **生成开发包**：选择 active 需求，开启 `superpowers` 后生成 spec 与 plan。`grill-me` 可因信息不足创建问题并阻塞生成。在聊天里那条追问下回答后，生成自动重试。
 4. **批准与交接**：人工审阅批准，再由编码 Agent 获取。编辑或重新生成会撤销批准。
-5. **上报与核验**：记录 `reported`、`verified`、`mismatch`。**verified 表示 Git 证据通过或用户确认，不代表测试通过、功能正确或需求验收完成。**
+5. **上报与核验**：记录 `reported`、`verified`、`mismatch`。**引用的每条上报都通过 Git 核对时，`verified` 显示为「提交已核对」，不代表测试通过、功能正确或需求验收完成；你自己确认需求后显示为「验收已确认」。** 「提交已核对」的需求可以由你确认。之后所引上报的核对变了，需求会标出需要复审，「仍确认」只清掉这个标记。你确认的开发包任务显示「任务已完成并确认」，这不是需求验收。聊天里每条上报把 agent 的声称和 hub 的核实分开显示（Git 三项、提交作者、GitHub 读取；失败的 check run 标红）。
 
 开发包当前有固定的中文格式标记，即使知识语言为英文或日文也必须保留，例如 `## 已定的做法`、`### 任务 1：`、`- 修改：`、`- 满足：`。完整约束见技术参考。
 
@@ -201,7 +248,7 @@ nema report --entries W-1 --task 1 --summary "Implement task 1" --commits COMMIT
 
 可选上报 hook：`nema report install --agent codex` 或 `--agent claude`。这会修改对应 Agent 的用户级 hook 配置并安装 `nema-report` skill；卸载用 `nema report uninstall --agent <agent>`。
 
-进行中的工作可以先发一条进行中上报：`echo '{"summary":"…","progress":"in_progress"}' | nema report --json`。它可以没有提交，不会推进开发包任务；完成后再发 `completed` 上报（至少一个提交）。
+进行中的工作可以先发一条进行中上报：`nema report --progress in_progress --summary "…"`（用 `--json` 时写 `"progress":"in_progress"`）。它可以没有提交，不会推进开发包任务；完成后再发 `completed` 上报（至少一个提交）。
 
 GitHub 插件默认关闭。打开方式、`gh` 登录和写入开关见上面的桌面应用一节；Web / Compose 用的也是同一条路径。命令白名单和六个原有读取函数见技术参考。`nema auth github` 仍可把令牌写入 `~/.nema/github-token`，默认路径不读取它。
 

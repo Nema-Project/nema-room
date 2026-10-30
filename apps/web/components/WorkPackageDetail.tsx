@@ -5,7 +5,7 @@ import { HistoryTab } from "@/components/HistoryTab";
 import { Markdown } from "@/components/Markdown";
 import { approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, getHistory, getWorkPackage, regenerateWorkPackage, saveWorkPackageDoc } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
-import type { HistoryItem, WorkPackage, WpTask } from "@/lib/types";
+import type { HistoryItem, WorkPackage, WpTask, WpTaskView } from "@/lib/types";
 
 type Tab = "overview" | "spec" | "plan" | "history";
 type Props = {
@@ -21,11 +21,21 @@ type Props = {
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** A task's status, in the same tag style as a requirement's implementation status. */
+/**
+ * A task's status, in the same tag style as a requirement's implementation status. A task the user confirmed
+ * reads "task marked done by you", never requirement acceptance. A `verified` task reads "commits checked" only
+ * when its own report's check passed; otherwise it has no verified label.
+ */
 export function TaskTag({ task }: { task: WpTask }) {
   const t = useT();
+  const { reportPassed } = task as WpTaskView;
+  if (task.status === "verified") {
+    if (task.confirmedBy === "user") return <span className="itag verified" data-testid="task-tag">{t("impl.taskConfirmed")}</span>;
+    if (!task.inferred && reportPassed === true) return <span className="itag verified" data-testid="task-tag">{t("impl.verified")}</span>;
+    return null;
+  }
   const inferred = task.status === "reported" && task.inferred;
-  const cls = task.status === "mismatch" ? "itag red" : inferred ? "itag inferred" : task.status === "verified" ? "itag verified" : "itag";
+  const cls = task.status === "mismatch" ? "itag red" : inferred ? "itag inferred" : "itag";
   const label = task.status === "pending" ? t("wp.task.pending") : t(inferred ? "impl.reportedInferred" : `impl.${task.status}`);
   return <span className={cls} data-testid="task-tag">{label}</span>;
 }
