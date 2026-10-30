@@ -13,10 +13,15 @@ const PARENT_QUERY = "query($owner:String!,$name:String!,$number:Int!){repositor
 const ISSUE_QUERY = "query($owner:String!,$name:String!,$first:Int!,$after:String,$states:[IssueState!],$labels:[String!],$orderBy:IssueOrder,$filterBy:IssueFilters){repository(owner:$owner,name:$name){issues(first:$first,after:$after,states:$states,labels:$labels,orderBy:$orderBy,filterBy:$filterBy){pageInfo{endCursor hasNextPage} nodes{number title state url createdAt updatedAt labels(first:100){nodes{name}}}}}}";
 
 export type GithubStatus = { installed: boolean; loggedIn: boolean; detail: string };
+export type PullRequestObservation =
+  | { outcome: "out_of_scope" }
+  | { outcome: "read"; observedHeadSha: string; checkRuns: { name: string; status: string; conclusion: string | null; url: string | null }[]; truncated: boolean };
 export interface GithubReader {
   call(tool: string, args: object): Promise<unknown>;
   status(): Promise<GithubStatus>;
   close(): Promise<void>;
+  /** One read of a pull request's head and one page of its check runs, for a report's evidence. */
+  observePullRequest?(args: { owner: string; repo: string; pr: number; perPage: number }): Promise<PullRequestObservation>;
 }
 export type GithubRequest =
   | { kind: "rest"; endpoint: string; fields: Record<string, string>; accept?: string }
@@ -250,6 +255,42 @@ export class GithubGh implements GithubReader {
     const result = await this.execute(operation.args, { timeout: this.options.timeoutMs ?? CALL_TIMEOUT_MS, input: operation.input });
     if (result.error) throw new Error(result.error.message.includes("timed out") ? "GitHub call timed out" : "GitHub call failed");
     return result.stdout;
+  }
+  /**
+   * The same two GETs as `pull_request_read` `get` then `get_check_runs`, one page only. A 404 on the pull
+   * request is `out_of_scope` (nothing else is tried). The head must be exactly 40 hex characters.
+   */
+  async observePullRequest(input: { owner: string; repo: string; pr: number; perPage: number }): Promise<PullRequestObservation> {
+    const [owner, repo] = ownerRepo(input as unknown as Record<string, unknown>);
+    const pr = optionalNumber(input as unknown as Record<string, unknown>, "pr");
+    if (!pr) return invalid("pr");
+    const perPage = optionalNumber(input as unknown as Record<string, unknown>, "perPage", 100) ?? 100;
+    const timeout = this.options.timeoutMs ?? CALL_TIMEOUT_MS;
+    const failed = (result: { error: Error | null }): never => {
+      throw new Error(result.error?.message.includes("timed out") ? "GitHub call timed out" : "GitHub call failed");
+    };
+    const metadata = await this.execute(["api", "--hostname", "github.com", "--method", "GET", `repos/${owner}/${repo}/pulls/${pr}`], { timeout });
+    if (metadata.error) {
+      if (!metadata.error.message.includes("timed out") && /Not Found|HTTP 404/.test(`${metadata.stdout}\n${metadata.stderr}`)) return { outcome: "out_of_scope" };
+      return failed(metadata);
+    }
+    let sha: unknown;
+    try { sha = (JSON.parse(metadata.stdout) as { head?: { sha?: unknown } }).head?.sha; } catch { /* rejected below */ }
+    if (typeof sha !== "string" || !/^[a-f0-9]{40}$/i.test(sha)) throw new Error("GitHub returned invalid pull request head SHA");
+    const head = sha.toLowerCase();
+    const runs = await this.execute(["api", "--hostname", "github.com", "--method", "GET", `repos/${owner}/${repo}/commits/${head}/check-runs`, "-f", `per_page=${perPage}`], { timeout });
+    if (runs.error) return failed(runs);
+    let body: { total_count?: unknown; check_runs?: unknown };
+    try { body = JSON.parse(runs.stdout) as typeof body; } catch { throw new Error("GitHub returned invalid check runs"); }
+    if (!body || !Array.isArray(body.check_runs)) throw new Error("GitHub returned invalid check runs");
+    const checkRuns = body.check_runs.map((run: Record<string, unknown>) => ({
+      name: typeof run?.name === "string" ? run.name : "",
+      status: typeof run?.status === "string" ? run.status : "",
+      conclusion: typeof run?.conclusion === "string" ? run.conclusion : null,
+      url: typeof run?.html_url === "string" ? run.html_url : null,
+    }));
+    const truncated = typeof body.total_count !== "number" || body.total_count > checkRuns.length;
+    return { outcome: "read", observedHeadSha: head, checkRuns, truncated };
   }
   async status(): Promise<GithubStatus> {
     let version;

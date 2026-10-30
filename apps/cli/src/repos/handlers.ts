@@ -249,6 +249,16 @@ export function registerRepoHandlers(router: RpcRouter, opts: { nemaHome: string
     return readAuthors(repo.path, stringList(params, "commits", 50), opts.ownedHelpers);
   });
 
+  // One read of a claimed pull request for a report's evidence: its head and one page of check runs. The hub
+  // already chose the one bound target; this never picks another repository.
+  router.register("github.observe", async (params) => {
+    const row = (params && typeof params === "object" ? params : {}) as Record<string, unknown>;
+    const { owner, repo, pr } = row;
+    if (typeof owner !== "string" || typeof repo !== "string" || typeof pr !== "number" || !Number.isInteger(pr) || pr < 1) throw new Error("invalid github params");
+    if (!github.observePullRequest) throw new Error("GitHub call failed");
+    return github.observePullRequest({ owner, repo, pr, perPage: 100 });
+  });
+
   // The fallback: main commits in from..to that no report covers. Both shas must be on main.
   router.register("repo.uncovered", async (params) => {
     const repo = repoCall(params);

@@ -316,3 +316,33 @@ test("does not add authors to report.check", async () => {
   const check = await checkReport(repo, "origin/main", [sha], []);
   expect(Object.keys(check).sort()).toEqual(["checkedAt", "commitsExist", "filesOk", "mainSha", "missingCommits", "onMain", "touchedFiles", "untouchedFiles"]);
 });
+
+test("observes a pull request through the injected reader", async () => {
+  const { nemaHome } = setup();
+  const seen: unknown[] = [];
+  const observation = { outcome: "read" as const, observedHeadSha: "a".repeat(40), checkRuns: [], truncated: false };
+  const github = {
+    call: async () => null,
+    status: async () => ({ installed: true, loggedIn: true, detail: "" }),
+    close: async () => {},
+    observePullRequest: async (args: unknown) => {
+      seen.push(args);
+      return observation;
+    },
+  };
+  const rpc = new RpcRouter();
+  registerRepoHandlers(rpc, { nemaHome, github });
+  const res = await rpc.handle({ type: "rpc.request", id: "1", method: "github.observe", params: { owner: "example", repo: "repo", pr: 7, claimedHeadSha: null } });
+  expect(res).toMatchObject({ ok: true, result: observation });
+  expect(seen).toEqual([{ owner: "example", repo: "repo", pr: 7, perPage: 100 }]);
+});
+
+test("github.observe fails when the reader cannot observe", async () => {
+  const { nemaHome } = setup();
+  const github = { call: async () => null, status: async () => ({ installed: true, loggedIn: true, detail: "" }), close: async () => {} };
+  const rpc = new RpcRouter();
+  registerRepoHandlers(rpc, { nemaHome, github });
+  const res = await rpc.handle({ type: "rpc.request", id: "1", method: "github.observe", params: { owner: "example", repo: "repo", pr: 7, claimedHeadSha: null } });
+  expect(res).toMatchObject({ ok: false });
+  expect(JSON.stringify(res)).toContain("GitHub call failed");
+});
