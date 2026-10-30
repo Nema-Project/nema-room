@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assertPushRunJobs, promote } from './promote.mjs';
+import { assertPushRunJobs, assertTagRunJobs, preflight, promote } from './promote.mjs';
 
 const COMMIT = 'a'.repeat(40);
 const INTEGRITY = 'sha512-EXPECTED';
@@ -18,6 +18,11 @@ function world({ version = '0.1.7', npm = 'absent', npmLatest = v('0.1.6'), npmN
   };
   const { prerelease } = { prerelease: version.includes('-') };
   const io = {
+    async tagWorkflows() {
+      state.log.push('tag workflows');
+      boom('tagWorkflows');
+      return ['image-publish push run 11: success, Pull published images passed', 'desktop-release push run 12: success'];
+    },
     async expectedIntegrity() { boom('expectedIntegrity'); return INTEGRITY; },
     async verify({ stage, expectedIntegrity }) {
       state.log.push(`verify ${stage}`);
@@ -89,8 +94,9 @@ async function run(options = {}, version = options.version ?? '0.1.7') {
 test('all steps in order: preflight, npm, final verify, hub latest, web latest, then the Release as latest', async () => {
   const { result, state, text } = await run();
   assert.equal(result.ok, true);
-  assert.deepEqual(state.log, ['verify candidate', 'npm dispatch', 'verify final', 'ghcr hub latest', 'ghcr web latest', 'release']);
+  assert.deepEqual(state.log, ['tag workflows', 'verify candidate', 'npm dispatch', 'verify final', 'ghcr hub latest', 'ghcr web latest', 'release']);
   assert.deepEqual(state.writes, ['npm dispatch', 'ghcr hub latest', 'ghcr web latest', 'release {"tag":"v0.1.7","prerelease":false,"makeLatest":true}']);
+  assert.match(text, /- image-publish push run 11: success, Pull published images passed\n- desktop-release push run 12: success/);
   assert.match(text, /npm 0\.1\.7: published by run 42; npm latest -> 0\.1\.7/);
   assert.match(text, new RegExp(`ghcr hub latest: 0\\.1\\.6 -> 0\\.1\\.7 \\(${DIGESTS.hub}\\)`));
   assert.match(text, /GitHub Release v0\.1\.7: published, latest=true/);
@@ -315,4 +321,34 @@ test('the push run must have run and passed the build job and the whole verify s
   assert.doesNotThrow(() => assertPushRunJobs(ok, 1, ok.length));
   assert.throws(() => assertPushRunJobs(ok, 1, ok.length + 1), /lists 7 of 8 jobs/);
   assert.throws(() => assertPushRunJobs(ok, 1, undefined), /did not report its job count/);
+});
+
+test('image-publish or desktop-release push runs that did not pass stop before verify and before any write', async () => {
+  const { result, state, text } = await run({ fail: { tagWorkflows: true } });
+  assert.equal(result.ok, false);
+  assert.deepEqual(state.log, ['tag workflows']);
+  assert.deepEqual(state.writes, []);
+  assert.match(text, /stopped:\*\* tag workflows: tagWorkflows failed/);
+  // The Candidate preflight step checks them too, before it reads the npm tarball.
+  const { state: pre, io } = world({ fail: { tagWorkflows: true } });
+  await assert.rejects(preflight({ version: '0.1.7', io }), /tagWorkflows failed/);
+  assert.deepEqual(pre.log, ['tag workflows']);
+  const { state: okState, io: okIo } = world();
+  assert.equal((await preflight({ version: '0.1.7', io: okIo })).ok, true);
+  assert.deepEqual(okState.log, ['tag workflows', 'verify candidate']);
+});
+
+test('the image-publish push run must have passed its pull smoke, the desktop run its builds and publish', () => {
+  const image = ['Resolve release version', 'verify / Workflow lint', 'Build and smoke images', 'Publish images', 'Pull published images'].map((name) => ({ name, conclusion: 'success' }));
+  const desktop = ['Resolve release version', 'verify / Workflow lint', 'Build and smoke (darwin-arm64)', 'Build and smoke (win32-x64)', 'Publish release'].map((name) => ({ name, conclusion: 'success' }));
+  assert.doesNotThrow(() => assertTagRunJobs('image-publish.yml', image, 1, image.length));
+  assert.doesNotThrow(() => assertTagRunJobs('desktop-release.yml', desktop, 2, desktop.length));
+  const set = (jobs, name, conclusion) => jobs.map((job) => (job.name === name ? { ...job, conclusion } : job));
+  assert.throws(() => assertTagRunJobs('image-publish.yml', set(image, 'Pull published images', 'failure'), 1, image.length), /image-publish push run 1: Pull published images did not run and pass \(Pull published images=failure\)/);
+  assert.throws(() => assertTagRunJobs('image-publish.yml', image.filter((job) => job.name !== 'Pull published images'), 1, image.length - 1), /Pull published images did not run and pass \(no such job\)/);
+  assert.throws(() => assertTagRunJobs('desktop-release.yml', set(desktop, 'Build and smoke (win32-x64)', 'skipped'), 2, desktop.length), /Build and smoke did not run and pass/);
+  assert.throws(() => assertTagRunJobs('image-publish.yml', set(image, 'verify / Workflow lint', 'cancelled'), 1, image.length), /verify \/ Workflow lint=cancelled/);
+  assert.throws(() => assertTagRunJobs('image-publish.yml', image, 1, image.length + 1), /lists 5 of 6 jobs/);
+  assert.throws(() => assertTagRunJobs('image-publish.yml', image, 1, undefined), /did not report its job count/);
+  assert.throws(() => assertTagRunJobs('npm-publish.yml', image, 1, image.length), /no job list/);
 });

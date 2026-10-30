@@ -31,7 +31,7 @@ The tag is checked again with `scripts/desktop/release-commit.mjs --verify-remot
 
 ## After the tag workflows
 
-When all three tag workflows have finished, run `npm run release:verify -- <x.y.z>` (see [scripts/npm/RELEASE.md](../npm/RELEASE.md#after-the-tag-workflows)). It reads both version tags anonymously and checks that the `linux/amd64` image's `org.opencontainers.image.version` label equals the version. The images carry no `org.opencontainers.image.revision` label, so it cannot compare an image to the tag commit. It is read-only and does not move `latest`; `release-promote` does.
+When all three tag workflows have finished, run `npm run release:verify -- <x.y.z>` (see [scripts/npm/RELEASE.md](../npm/RELEASE.md#after-the-tag-workflows)). It reads both version tags anonymously and checks that the `linux/amd64` image's `org.opencontainers.image.version` label equals the version. The images carry no `org.opencontainers.image.revision` label, so it cannot compare an image to the tag commit. It is read-only and does not move `latest`; `release-promote` does, and only after its `Candidate preflight` has seen this workflow's push run succeed with `Pull published images` passed.
 
 ## A push that stops halfway
 

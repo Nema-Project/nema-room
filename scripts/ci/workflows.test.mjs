@@ -249,10 +249,64 @@ test('npm publishes only when release-promote dispatches the tag, from the push 
   assertPinnedUses(workflow);
 });
 
+test('actual npm origin shell binds the promote run to the tag, treats the tag as data, and counts every push run job', t => {
+  const cwd = mkdtempSync(join(tmpdir(), 'npm-origin-')); t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  mkdirSync(join(cwd, 'bin')); mkdirSync(join(cwd, 'fix'));
+  // gh api <url> [--jq <filter>] answers from fix/<url with every non-alphanumeric as _>.json, like gh does with --jq.
+  writeFileSync(join(cwd, 'bin/gh'), `#!/bin/bash
+set -euo pipefail
+test "$1" = api
+file="$FIX/$(printf '%s' "$2" | tr -c 'A-Za-z0-9' '_').json"
+test -f "$file" || { echo "gh: unexpected $2" >&2; exit 1; }
+if [ "\${3:-}" = --jq ]; then jq -r "$4" "$file"; else cat "$file"; fi
+`, { mode: 0o755 });
+  const sha = 'a'.repeat(40);
+  const repo = 'o/r';
+  const fixture = (url, body) => writeFileSync(join(cwd, 'fix', `${url.replace(/[^A-Za-z0-9]/g, '_')}.json`), JSON.stringify(body));
+  const verifyJobs = ['Pack and smoke nema', 'verify / Workflow lint', 'verify / Full application tests and web build', 'verify / Platform checks (macos-latest)', 'verify / npm pack smoke (ubuntu-latest)'].map((name) => ({ name, conclusion: 'success' }));
+  const setup = ({ title = 'Release promote v1.2.3', runs = [{ id: 7, head_branch: 'v1.2.3', conclusion: 'success' }], jobs = verifyJobs, total = jobs.length } = {}) => {
+    fixture(`repos/${repo}/actions/runs/99`, { path: '.github/workflows/release-promote.yml', head_branch: 'main', status: 'in_progress', display_title: title });
+    fixture(`repos/${repo}/actions/runs/99/jobs`, { total_count: 1, jobs: [{ name: 'Promote', steps: [{ name: 'Candidate preflight', conclusion: 'success' }] }] });
+    fixture(`repos/${repo}/actions/workflows/npm-publish.yml/runs?event=push&head_sha=${sha}&per_page=20`, { workflow_runs: runs });
+    for (const run of runs) fixture(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`, { total_count: total, jobs });
+  };
+  const script = read('npm-publish').jobs.publish.steps.find((step) => step.id === 'origin').run;
+  const run = (tag = 'v1.2.3') => {
+    const output = join(cwd, `out-${Math.random()}`); writeFileSync(output, '');
+    const env = { ...process.env, PATH: `${join(cwd, 'bin')}:${process.env.PATH}`, FIX: join(cwd, 'fix'), GH_TOKEN: 'x', REPO: repo, TAG: tag, SHA: sha, PROMOTE_RUN_ID: '99', EXPECTED_INTEGRITY: `sha512-${'A'.repeat(86)}==`, GITHUB_OUTPUT: output };
+    const result = spawnSync('bash', ['-c', script], { cwd, env, encoding: 'utf8' });
+    return { ...result, output: readFileSync(output, 'utf8') };
+  };
+  setup();
+  let result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.output, 'push_run=7\n');
+  // A promote run for another tag cannot authorise this one.
+  setup({ title: 'Release promote v1.2.4' });
+  result = run();
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /is not promoting v1\.2\.3/); assert.equal(result.output, '');
+  // A valid tag name that is jq syntax must not select another tag's push run.
+  const hostile = 'v1"or(true)or"';
+  setup({ title: `Release promote ${hostile}`, runs: [{ id: 7, head_branch: 'v9.9.9', conclusion: 'success' }] });
+  result = run(hostile);
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /no successful push run/); assert.equal(result.output, '');
+  // A jobs page that does not hold every job of the run proves nothing, even when every listed job passed.
+  setup({ total: verifyJobs.length + 1 });
+  result = run();
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /lists 5 of 6 jobs/); assert.equal(result.output, '');
+  setup({ jobs: verifyJobs.map((job, i) => (i === 2 ? { ...job, conclusion: 'skipped' } : job)) });
+  result = run();
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /Full application tests and web build did not run and pass/);
+  setup({ jobs: verifyJobs.filter((job) => job.name !== 'Pack and smoke nema') });
+  result = run();
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /Pack and smoke nema did not run and pass/);
+});
+
 test('release-promote runs main scripts only, treats the tag as data, and is the one pointer writer', () => {
   const promote = read('release-promote');
   const source = readFileSync(new URL('../../.github/workflows/release-promote.yml', import.meta.url), 'utf8');
   assert.deepEqual(Object.keys(promote.on), ['workflow_dispatch']);
+  assert.equal(promote['run-name'], 'Release promote ${{ inputs.tag }}', 'npm-publish binds a promote run to its tag through this title');
   assert.equal(promote.on.workflow_dispatch.inputs.tag.required, true);
   assert.equal(promote.permissions.contents, 'read');
   assert.equal(promote.concurrency.group, 'release-promote');

@@ -1,6 +1,8 @@
 name: Release promote
 
-# Promote one tagged release after its three tag workflows finished:
+# Promote one tagged release after its three tag workflows succeeded (the
+# preflight requires the image-publish and desktop-release push runs of the tag
+# commit, every job passed, including the image pull smoke):
 #   gh workflow run release-promote.yml --ref main -f tag=v<x.y.z>
 # Runs main's scripts only. The tag is data: its commit is read through the API
 # and must be on main; nothing from the tag commit is checked out or executed.
@@ -11,6 +13,8 @@ name: Release promote
 # Any missing or unknown answer stops; later pointers are not touched. A rerun
 # finishes only the steps that are not done yet. The step summary lists what
 # moved and what did not.
+# npm-publish accepts a dispatch only from a run whose title names its tag.
+run-name: Release promote ${{ inputs.tag }}
 on:
   workflow_dispatch:
     inputs:
@@ -68,7 +72,7 @@ jobs:
           commit=$(node --input-type=module -e '
             import { readTagCommit } from "./scripts/release/registry-read.mjs";
             const result = await readTagCommit({ fetchImpl: fetch, token: process.env.GITHUB_TOKEN }, process.argv[1]);
-            if (result.state !== "ok") { console.error(`${process.argv[1]}: ${result.state}: ${result.detail}`); process.exit(1); }
+            if (result.state !== "ok") { console.error(process.argv[1] + ": " + result.state + ": " + result.detail); process.exit(1); }
             process.stdout.write(result.evidence.commit);
           ' "$TAG")
           status=$(gh api "repos/${GH_REPO}/compare/${commit}...${GITHUB_SHA}" --jq .status)

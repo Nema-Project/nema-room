@@ -158,17 +158,21 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$PROMOTE_RUN_ID" =~ ^[0-9]+$ ]] || { echo "promote_run_id must be a run id" >&2; exit 1; }
-          [[ "$EXPECTED_INTEGRITY" =~ ^sha512-[A-Za-z0-9+/]+=*$ ]] || { echo "expected_integrity must be sha512-<base64>" >&2; exit 1; }
+          [[ "$EXPECTED_INTEGRITY" =~ ^sha512-[A-Za-z0-9+/]{86}==$ ]] || { echo "expected_integrity must be sha512-<86 base64 chars>==" >&2; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "unexpected commit ${SHA}" >&2; exit 1; }
           # Only a live release-promote run on main, past its Candidate preflight, may publish.
           promote=$(gh api "repos/${REPO}/actions/runs/${PROMOTE_RUN_ID}")
           test "$(jq -r .path <<<"$promote")" = ".github/workflows/release-promote.yml" || { echo "run ${PROMOTE_RUN_ID} is not release-promote" >&2; exit 1; }
           test "$(jq -r .head_branch <<<"$promote")" = "main" || { echo "release-promote run ${PROMOTE_RUN_ID} is not on main" >&2; exit 1; }
           test "$(jq -r .status <<<"$promote")" = "in_progress" || { echo "release-promote run ${PROMOTE_RUN_ID} is not in progress" >&2; exit 1; }
+          # release-promote names each run after its tag input (run-name), so a run promoting another tag cannot authorise this one.
+          test "$(jq -r .display_title <<<"$promote")" = "Release promote ${TAG}" || { echo "release-promote run ${PROMOTE_RUN_ID} is not promoting ${TAG}" >&2; exit 1; }
           preflight=$(gh api "repos/${REPO}/actions/runs/${PROMOTE_RUN_ID}/jobs" --jq '[.jobs[].steps[] | select(.name == "Candidate preflight") | .conclusion] | join(",")')
           test "$preflight" = "success" || { echo "release-promote run ${PROMOTE_RUN_ID} has no successful Candidate preflight (${preflight:-none})" >&2; exit 1; }
           # The tarball comes from this tag's push run: same commit, verify and build both succeeded.
+          # The tag is data: jq gets it with --arg, never inside the filter text.
           push_run=$(gh api "repos/${REPO}/actions/workflows/npm-publish.yml/runs?event=push&head_sha=${SHA}&per_page=20" \
-            --jq "[.workflow_runs[] | select(.head_branch == \"${TAG}\" and .conclusion == \"success\")] | sort_by(.id) | last | .id // empty")
+            | jq -r --arg tag "$TAG" '[.workflow_runs[] | select(.head_branch == $tag and .conclusion == "success")] | sort_by(.id) | last | .id // empty')
           test -n "$push_run" || { echo "no successful push run of npm-publish for ${TAG} at ${SHA}" >&2; exit 1; }
           # A tag push runs the complete verify.yml: every verify job must have run and passed, none skipped.
           jobs=$(gh api "repos/${REPO}/actions/runs/${push_run}/jobs?per_page=100")
