@@ -198,7 +198,10 @@ function cap(text: string, bytes: number): string {
   return out;
 }
 
-export type GithubGhOptions = { bin?: string; env?: NodeJS.ProcessEnv; ownedHelpers?: OwnedHelperScope; timeoutMs?: number };
+/** A report's GitHub read parses whole responses (a PR and one page of 100 check runs), so it gets its own bound. */
+const OBSERVE_LIMIT_BYTES = 8 * 1024 * 1024;
+
+export type GithubGhOptions = { bin?: string; env?: NodeJS.ProcessEnv; ownedHelpers?: OwnedHelperScope; timeoutMs?: number; observeLimitBytes?: number };
 export class GithubGh implements GithubReader {
   private readonly abort = new AbortController();
   private closed = false;
@@ -206,17 +209,19 @@ export class GithubGh implements GithubReader {
   constructor(private readonly options: GithubGhOptions = {}) {}
   private get bin(): string { return this.options.bin ?? "gh"; }
   private get env(): NodeJS.ProcessEnv { return ghEnvironment(this.options.env ?? process.env); }
-  private async execute(args: string[], options: { timeout: number; input?: Buffer } ): Promise<{ error: Error | null; stdout: string; stderr: string; code: number | null }> {
+  private async execute(args: string[], options: { timeout: number; input?: Buffer; maxBuffer?: number; whole?: boolean } ): Promise<{ error: Error | null; stdout: string; stderr: string; code: number | null }> {
     if (this.closed) throw new Error("GitHub provider stopped");
     const command = commandSpec(this.bin, args, this.env);
     const operation = runHelperFile(command.bin, command.args, {
-      env: this.env, timeout: options.timeout, maxBuffer: 1024 * 1024, encoding: "utf8", signal: this.abort.signal, input: options.input,
+      env: this.env, timeout: options.timeout, maxBuffer: options.maxBuffer ?? 1024 * 1024, encoding: "utf8", signal: this.abort.signal, input: options.input,
     }, this.options.ownedHelpers);
     this.pending.add(operation);
     let result;
     try { result = await operation; }
     finally { this.pending.delete(operation); }
-    return { error: result.error, stdout: cap(result.stdout.toString("utf8"), OUTPUT_LIMIT), stderr: cap(result.stderr.toString("utf8"), STDERR_LIMIT), code: result.code };
+    // `whole` callers parse the JSON themselves; cutting it at the display cap would only make it unparseable.
+    const stdout = result.stdout.toString("utf8");
+    return { error: result.error, stdout: options.whole ? stdout : cap(stdout, OUTPUT_LIMIT), stderr: cap(result.stderr.toString("utf8"), STDERR_LIMIT), code: result.code };
   }
   /** `github__gh_read` / `github__gh_write`: the hub already scoped the call; the table is applied again here. */
   private async command(tool: string, input: object): Promise<string> {
@@ -265,20 +270,23 @@ export class GithubGh implements GithubReader {
     const pr = optionalNumber(input as unknown as Record<string, unknown>, "pr");
     if (!pr) return invalid("pr");
     const perPage = optionalNumber(input as unknown as Record<string, unknown>, "perPage", 100) ?? 100;
-    const timeout = this.options.timeoutMs ?? CALL_TIMEOUT_MS;
+    const read = { timeout: this.options.timeoutMs ?? CALL_TIMEOUT_MS, maxBuffer: this.options.observeLimitBytes ?? OBSERVE_LIMIT_BYTES, whole: true };
     const failed = (result: { error: Error | null }): never => {
-      throw new Error(result.error?.message.includes("timed out") ? "GitHub call timed out" : "GitHub call failed");
+      const message = result.error?.message ?? "";
+      if (message.includes("timed out")) throw new Error("GitHub call timed out");
+      if (message.includes("maxBuffer")) throw new Error("GitHub returned invalid response: larger than the read limit");
+      throw new Error("GitHub call failed");
     };
-    const metadata = await this.execute(["api", "--hostname", "github.com", "--method", "GET", `repos/${owner}/${repo}/pulls/${pr}`], { timeout });
+    const metadata = await this.execute(["api", "--hostname", "github.com", "--method", "GET", `repos/${owner}/${repo}/pulls/${pr}`], read);
     if (metadata.error) {
-      if (!metadata.error.message.includes("timed out") && /Not Found|HTTP 404/.test(`${metadata.stdout}\n${metadata.stderr}`)) return { outcome: "out_of_scope" };
+      if (!metadata.error.message.includes("timed out") && !metadata.error.message.includes("maxBuffer") && /Not Found|HTTP 404/.test(`${metadata.stdout}\n${metadata.stderr}`)) return { outcome: "out_of_scope" };
       return failed(metadata);
     }
     let sha: unknown;
     try { sha = (JSON.parse(metadata.stdout) as { head?: { sha?: unknown } }).head?.sha; } catch { /* rejected below */ }
     if (typeof sha !== "string" || !/^[a-f0-9]{40}$/i.test(sha)) throw new Error("GitHub returned invalid pull request head SHA");
     const head = sha.toLowerCase();
-    const runs = await this.execute(["api", "--hostname", "github.com", "--method", "GET", `repos/${owner}/${repo}/commits/${head}/check-runs`, "-f", `per_page=${perPage}`], { timeout });
+    const runs = await this.execute(["api", "--hostname", "github.com", "--method", "GET", `repos/${owner}/${repo}/commits/${head}/check-runs`, "-f", `per_page=${perPage}`], read);
     if (runs.error) return failed(runs);
     let body: { total_count?: unknown; check_runs?: unknown };
     try { body = JSON.parse(runs.stdout) as typeof body; } catch { throw new Error("GitHub returned invalid check runs"); }

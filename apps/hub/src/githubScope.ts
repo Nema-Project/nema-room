@@ -44,7 +44,14 @@ export function githubTarget(remoteUrl: string | null): GithubTarget | null {
   }
   if (!["https:", "http:", "ssh:", "git:"].includes(parsed.protocol)) return null;
   if (parsed.hostname.toLowerCase() !== "github.com" || parsed.search || parsed.hash) return null;
-  return fromPath(decodeURIComponent(parsed.pathname));
+  let pathname: string;
+  try {
+    pathname = decodeURIComponent(parsed.pathname);
+  } catch {
+    // A malformed percent escape names no repository.
+    return null;
+  }
+  return fromPath(pathname);
 }
 
 function isAllowed(target: GithubTarget, allowed: GithubTarget[]): boolean {

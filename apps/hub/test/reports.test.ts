@@ -809,3 +809,52 @@ test("does not insert an evidence event for a report or a github read", async ()
   expect(calls.filter((c) => c.method === "github.observe")).toHaveLength(2);
   expect(await count()).toBe(before);
 });
+
+test("maps a daemon RPC timeout to timeout", async () => {
+  const { ws } = await bind(GIT_DIR, "A", REMOTE);
+  await enableGithub(ws);
+  handlers["report.check"] = () => passing;
+  handlers["plugins.status"] = () => loggedIn;
+  handlers["github.observe"] = () => {
+    throw new DaemonRpcError("daemon 响应超时");
+  };
+  const { messageId } = (await (await post("/report", { ...report(), pr: 7 })).json()) as { messageId: string };
+  expect((await githubOf(messageId)).current).toMatchObject({ state: "unavailable", reasonCode: "timeout" });
+  expect(calls.find((c) => c.method === "github.observe")!.timeoutMs).toBeGreaterThan(120_000);
+});
+
+test("a malformed GitHub remote still records an observation", async () => {
+  const { ws } = await bind(GIT_DIR, "A", "https://github.com/example/re%E0po.git");
+  await enableGithub(ws);
+  handlers["report.check"] = () => passing;
+  handlers["plugins.status"] = () => loggedIn;
+  const withPr = (await (await post("/report", { ...report(), pr: 7 })).json()) as { messageId: string };
+  expect((await githubOf(withPr.messageId)).current).toMatchObject({ state: "unavailable", reasonCode: "remote_missing", binding: null });
+  const withoutPr = (await (await post("/report", report())).json()) as { messageId: string };
+  expect((await githubOf(withoutPr.messageId)).current.state).toBe("not_requested");
+});
+
+test("an older GitHub read that finishes last does not replace a newer one", async () => {
+  const { ws, repoId } = await bind(GIT_DIR, "A", REMOTE);
+  await enableGithub(ws);
+  handlers["report.check"] = () => ({ ...passing, onMain: "not-yet" });
+  handlers["plugins.status"] = () => loggedIn;
+  handlers["github.observe"] = () => ({ outcome: "read", observedHeadSha: PR_HEAD, checkRuns: [], truncated: false });
+  const { messageId } = (await (await post("/report", { ...report(), pr: 7 })).json()) as { messageId: string };
+  await githubOf(messageId);
+  await settle();
+  const older = "a".repeat(40);
+  const newer = "b".repeat(40);
+  let n = 0;
+  handlers["github.observe"] = async () => {
+    const mine = ++n;
+    // The first read requested is the slow one, so it would finish last.
+    await new Promise((r) => setTimeout(r, mine === 1 ? 300 : 10));
+    return { outcome: "read", observedHeadSha: mine === 1 ? older : newer, checkRuns: [], truncated: false };
+  };
+  handlers["report.check"] = () => ({ ...passing, onMain: "not-yet", checkedAt: "2026-10-23T10:05:00.000Z" });
+  await Promise.all([recheckReports({ db, events, daemon, dataDir }, repoId), recheckReports({ db, events, daemon, dataDir }, repoId)]);
+  const { current, history } = (await metaOf(messageId)).github!;
+  expect(current.binding!.observedHeadSha).toBe(newer);
+  expect(history.map((h) => h.binding!.observedHeadSha)).toEqual([PR_HEAD, older]);
+});
