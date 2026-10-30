@@ -99,6 +99,29 @@ Agent 读到的代码片段会随请求发送给模型服务商（OpenAI / Anthr
 - 下载 10 分钟没完成按失败处理。请求格式不对（提交不是 40 位、目录缺失或不安全、来源不支持）在 hub 返回 `400`；GitHub 或 daemon 的拒绝返回 `502` 并保留原始消息，daemon 不在线是 `503`。
 
 
+### MCP 服务器
+
+托管的 MCP 记录是 `kind: "mcp"`、`provision: "managed"`、`source` 为 `mcp:stdio` 或 `mcp:http` 的扩展记录。配置存在 `<nema home>/extensions/mcp/<id>/mcp.json`，`revision` 是它的摘要；凭据存在 `<nema home>/secrets/mcp/<id>/<REF>`，macOS/Linux 上是 `0600`，Windows 上是私有 ACL（D-1）。配置里只有引用：凭据位置（名字含 `token`、`secret`、`password`、`passwd`、`key`、`auth`、`cookie`、`session`、`credential`，或请求头 `authorization`、`proxy-authorization`、`cookie`）必须是 `{ "secret": "REF" }` 或 `{ "env": "VAR" }`，`--token VALUE` 这种把凭据放进参数的写法也拒绝；`PATH`、`HOME`、`USERPROFILE` 不能覆盖。HTTP 地址必须是 https，明文 http 只允许 127.0.0.1、::1、localhost。错误消息只提字段名，不带值。
+
+hub 路由（都转发给 daemon，只有 daemon 写 `index.json` 和 `mcp.json`）：
+
+| 路由 | daemon RPC | 说明 |
+| --- | --- | --- |
+| `POST /api/extensions/mcp` | `extensions.mcp.save` | 请求体 `{ id, name, config, create? }`，hub 先校验配置，不合法 400；`create: true` 时 id 已存在返回 409 `MCP server <id> already exists`（`nema mcp add` 和插件页的添加都这样发）；运行中的服务器先停止。命令、参数、`cwd` 或地址变了会删掉已存凭据，不再被引用的凭据也会删掉 |
+| `GET /api/extensions/<id>/mcp` | `extensions.mcp.get` | 配置和 `secrets: [{ name, configured }]`，从不返回凭据值 |
+| `GET /api/extensions/<id>/mcp/status` | `extensions.mcp.status` | `{ connection, server, tools: [{ name, schemaDigest }], lastError }` |
+| `POST /api/extensions/<id>/mcp/start`、`…/stop` | `extensions.mcp.start` / `stop` | 请求体 `{}`；停用的记录不能启动（409），配置损坏也是 409 |
+| `PUT /api/extensions/<id>/mcp/secrets/<REF>` | `extensions.mcp.setSecret` | 请求体 `{ "value": "…" }`，只写不读（D-2）；运行中的服务器用新值重启 |
+| `DELETE /api/extensions/<id>/mcp/secrets/<REF>` | `extensions.mcp.clearSecret` | 删除凭据；运行中的服务器重启 |
+
+daemon 未连接 503，记录不存在 404，停用 / 不是 MCP / 配置损坏 409，请求或配置不合法 400，其余 502。`GET /api/extensions` 里的 MCP 记录多一个 `mcp` 字段（`transport`、`connection`、`server`、`tools`、`secrets`、`lastError`）。所有部署（包括 Compose）都能通过 hub 修改 MCP 配置（D-4）；桌面应用的 `/api/*` 需要应用内登录，所以 `nema mcp add/edit/start/stop/status/list` 在那里会得到 401，并提示改用插件页。`nema mcp secret set|clear` 直接写 `secrets/mcp`，不经过 hub；加 `--desktop` 时写桌面应用的 `~/.nema/desktop/secrets/mcp`。`secret set` 只去掉行尾换行，读完标准输入后会再核对一次配置摘要和引用，配置在此期间变了就不写。
+
+stdio 服务器直接启动程序，不经过 shell。环境只有 daemon 的 `PATH`、指向私有目录 `<nema home>/run/mcp/<id>/home` 的 `HOME`（Windows 上还有同一目录的 `USERPROFILE`，以及 `SystemRoot`、`ComSpec`、`PATHEXT`、`TEMP`、`TMP`），加上配置里的变量，不继承 daemon 的其他环境变量；未设置 `cwd` 时工作目录也是这个私有目录。macOS/Linux 上停止时结束整个进程组；Windows 上 stdio 服务器只能在桌面应用里启动，由它的托管子进程范围清理进程树，Web / Compose 的 Windows daemon 会拒绝启动。daemon 退出时停掉所有 MCP 服务器；daemon 启动时检查记录：配置缺失或被改动的记为 `damaged`，没有记录的凭据目录和配置里已不再引用的凭据都会删掉，不会自动启动任何服务器。停用或卸载一个 MCP 记录会先把它停掉。
+
+HTTP 服务器不跟随重定向；服务器返回 401 或 403 时连接状态是 `needs-login`（「需要登录」）。
+
+本版本 MCP 服务器的工具不会出现在 Agent 的工具清单里（D-3），页面只列出它们的名字。
+
 ## Code diagrams
 
 **绑定时画架构图。** 新绑定一个仓库后，hub 会自动排一个系统任务，为这个仓库画一张 `architecture` 图。每个新绑定的仓库只画这一次；解绑后重新绑定，会再画一次。

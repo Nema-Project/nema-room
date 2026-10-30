@@ -19,6 +19,12 @@ vi.mock("@/lib/hub", () => ({
   attachExtension: vi.fn(),
   repairExtension: vi.fn(),
   pickDirectory: vi.fn(),
+  saveMcpServer: vi.fn(),
+  getMcpServer: vi.fn(),
+  startMcpServer: vi.fn(),
+  stopMcpServer: vi.fn(),
+  setMcpSecret: vi.fn(),
+  clearMcpSecret: vi.fn(),
 }));
 
 const emptyDiscovery = {
@@ -867,5 +873,39 @@ describe("PluginsPage attach and repair", () => {
     renderPage();
     const block = (await screen.findByRole("heading", { name: "Notes", level: 3 })).closest("section")!;
     expect(within(block).queryByRole("button", { name: /Repair|Check again/ })).toBeNull();
+  });
+
+  it("adds an MCP server from Discover and shows its controls in the list", async () => {
+    const mcpRow = row({
+      id: "search", name: "Search", kind: "mcp", source: "mcp:stdio", revision: "abcdef123456", provision: "managed",
+      mcp: { transport: "stdio", connection: "disconnected", server: null, tools: [], secrets: [{ name: "API_TOKEN", configured: false }], lastError: null },
+    });
+    vi.mocked(hub.saveMcpServer).mockResolvedValue(mcpRow);
+    render(
+      <I18nProvider>
+        <PluginsPage />
+      </I18nProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Add an MCP server…" }));
+    fireEvent.change(screen.getByLabelText("Id"), { target: { value: "search" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Search" } });
+    fireEvent.change(screen.getByLabelText("Command"), { target: { value: "node" } });
+    vi.mocked(hub.listExtensions).mockResolvedValue([...catalog, mcpRow]);
+    fireEvent.click(screen.getByRole("button", { name: "Save MCP server" }));
+    const block = (await screen.findByRole("heading", { name: "Search" })).closest("section")!;
+    expect(within(block).getByRole("button", { name: "Start" })).toBeTruthy();
+    expect(within(block).getByLabelText("New value for API_TOKEN")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Save MCP server" })).toBeNull();
+  });
+
+  it("hides the MCP add button when filtering to skills", async () => {
+    render(
+      <I18nProvider>
+        <PluginsPage />
+      </I18nProvider>,
+    );
+    expect(await screen.findByRole("button", { name: "Add an MCP server…" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Skills" }));
+    expect(screen.queryByRole("button", { name: "Add an MCP server…" })).toBeNull();
   });
 });
