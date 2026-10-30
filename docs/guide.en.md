@@ -220,6 +220,27 @@ node apps/cli/dist/index.js auth claude
 
 Nema does not silently switch runtimes after authentication or model failures. `config get` and `auth status` show configuration and login status without printing tokens.
 
+<a id="attachments"></a>
+
+### Attachments by runtime
+
+Images and PDFs are sent as the provider's own content blocks, and only where this table says *native*. Text files are always sent as text inside the message. *Refused* combinations are named in the composer before you send, and the task fails with a one-line reason before the model is called; switch runtime or convert the file, then send again.
+
+| Runtime | Images | PDF | Text files |
+| --- | --- | --- | --- |
+| Claude Code | native | refused: not verified that Claude Code passes PDF blocks to the model | as text |
+| Sign in with ChatGPT (`siwc`) | native | native | as text |
+| BYOK with the default `https://api.openai.com/v1` | native | native | as text |
+| BYOK with another `byokBaseUrl` | refused: depends on the provider, not verified | refused: depends on the provider, not verified | as text |
+| Codex login compatibility (`compat`) | refused: non-public backend, not verified | refused: non-public backend, not verified | as text |
+
+The *native* cells follow the providers' published request formats and are covered by automated tests of the requests Nema builds; none of them has been run against the real models yet. The only real-model run so far used BYOK with OpenRouter (`https://openrouter.ai/api/v1`) and is recorded in the [acceptance record](reviews/2026-10-30-attachments-model-acceptance.md): images were read; PDFs were read only through OpenRouter's paid OCR, which it applies by default, so they stay refused there. No PDF is turned into text as a fallback.
+
+- **Types** are decided from the file's content, not its extension: PNG, JPEG, WebP, GIF, PDF, and strict UTF-8 text without NUL bytes. A file whose extension contradicts its content is refused, as are SVG, HEIC, Office documents, archives, audio, and video.
+- **Limits:** images 10 MB, PDFs 20 MB, text files 512 KB. One task takes at most 8 files and 32 MB in total, counting the message, the message it quotes, and the thread's first message. All attachments together are capped by `NEMA_ATTACHMENTS_MAX_BYTES` (default 2 GB), and uploads are refused when the data disk has less than 1 GB free. Files picked but never sent are removed after 24 hours.
+- **What the model is told:** attachments are data. What it reads from them is its inference, not something you said or decided, and quotes in its interpretation can only come from message text.
+- **Deleting** an attachment (Delete on its card, confirmed) removes the file at once and keeps a tombstone in the message with the name, type, size, sha256, and deletion time. A file that disappeared from disk shows as missing.
+
 <a id="workflow"></a>
 
 ## From discussion to delivery
@@ -276,13 +297,14 @@ Each built-in row has Repair, shown as Check again when the item already works. 
 | Default location | Contents |
 | --- | --- |
 | PostgreSQL Compose volume `nema-pg` | Chat, tasks, workspace settings, indexes, and related records |
-| `~/.nema/data` | Daemon token and workspace knowledge Git repositories |
+| `~/.nema/data` | Daemon token, workspace knowledge Git repositories, and chat attachments (`attachments/`) |
 | `~/.nema` | Local configuration, model/plugin credentials, code index snapshots, report spool, and related files |
-| `~/.nema/desktop` | The desktop app's database, knowledge Git repositories, and run state; independent of the Compose data above |
+| `~/.nema/desktop` | The desktop app's database, knowledge Git repositories, chat attachments (`data/attachments/`), and run state; independent of the Compose data above |
 
 **A GitHub copy of this source repository is not an application-data backup.** Stop writes before backing up, retain a PostgreSQL export and the actual data directories, and validate recovery. To preserve data, do not use `docker compose down -v`: `-v` deletes the database volume.
 
 - Local storage is not offline inference: chat, knowledge, and code returned by tools go to the model provider. When the GitHub plugin is on, queries go to GitHub through your local `gh`; writing needs a separate opt-in in the workspace. A confidential workspace is not an offline mode or operating-system isolation boundary.
+- Attachments are sent to the model provider with the task that uses them. Deleting one removes its file but cannot take back what a model already received; a quoted message's attachments go along with the quote. Back up `attachments/` together with the database: a row without its file shows as missing.
 - Ordinary task limits: 24 model calls, 60 tool calls, 10 minutes. Work packages: 48, 120, 20 minutes. Interrupted tasks retry up to three times.
 - Startup can recover some uncommitted knowledge files, but Git and database indexes do not have complete automatic reconciliation.
 - SIWC refresh failures may require another login. The implementation checks ID token claims but does not verify JWKS signatures.
