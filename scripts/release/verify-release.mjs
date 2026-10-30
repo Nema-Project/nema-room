@@ -153,7 +153,9 @@ function pointerFromImage(result) {
   if (result.state === 'missing' && result.evidence.reason === 'absent') return { state: 'absent', version: null };
   if (result.state !== 'ok') return { state: 'unknown', version: null, detail: result.detail };
   if (!result.evidence.label) return { state: 'unknown', version: null, detail: `${result.evidence.reference} has no version label` };
-  return versionPointer(result.evidence.label, result.evidence.reference);
+  const pointer = versionPointer(result.evidence.label, result.evidence.reference);
+  // The digest lets promote tell "latest has this version's label" from "latest is the verified index".
+  return pointer.state === 'version' ? { ...pointer, digest: result.evidence.digest ?? null } : pointer;
 }
 
 export async function readPointers(io) {
