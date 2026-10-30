@@ -67,10 +67,11 @@ export const MENTION_LIMITS = {
 } as const;
 
 export const MessageMention = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("entry"), id: z.string().regex(/^(R|D|T|Q|S|G|W)-[1-9]\d*$/) }),
-  z.object({ type: z.literal("file"), repoId: z.string().min(1), path: z.string().min(1).max(1024), commit: z.string().regex(/^[0-9a-f]{40}$/) }),
-  z.object({ type: z.literal("thread"), id: z.string().min(1) }),
+  z.object({ type: z.literal("entry"), id: z.string().regex(/^(R|D|T|Q|S|G|W)-[1-9]\d*$/), text: MentionTextSchema }),
+  z.object({ type: z.literal("file"), repoId: z.string().min(1), path: z.string().min(1).max(1024), commit: z.string().regex(/^[0-9a-f]{40}$/), commitSource: z.enum(["head", "candidate"]).optional(), text: MentionTextSchema }),
+  z.object({ type: z.literal("thread"), id: z.string().min(1), text: MentionTextSchema }),
 ]);
+// MentionTextSchema = z.string().min(1).max(1100): the readable text inserted into the body, stored as written.
 // UserMessageMeta gains: mentions: z.array(MessageMention).max(MENTION_LIMITS.perMessage).optional()
 export function mentionText(m: MessageMention, labels: { repoLabel?: string; threadTitle?: string }): string;
 export function normalizeMentionPath(p: string): string | null; // rejects "..", absolute paths, backslashes, NUL
@@ -82,20 +83,23 @@ export function fuzzyScore(query: string, candidate: string): number | null; // 
   - 文件写 `` `label:path` ``。
   - 话题写 `[话题：标题]`。
   - 正文是给人看的，hub 和 agent 只认 `meta.mentions`。
+- **存下可读文本：** 每个提及带 `text`，即插入正文时的原文（由 `mentionText` 生成）。之后仓库 label 或话题标题改了，旧消息的提及仍按当时的 `text` 对应正文，不按现在的名字重建。
 - **快照还是最新：**
-  - 文件的 `commit` 是 web 拿到候选列表时那个主分支提交的完整 SHA，也就是发送时的快照。
+  - 文件的 `commit` 以 hub **收到发送请求时**为准。web 送来的 `commit` 只是候选列表当时的值，可能已经过期（比如候选被缓存后主分支前进了）。hub 在写入前用 daemon RPC `repo.head` 取每个被提及仓库主分支的当前提交并覆盖它（§2）。daemon 不在线或版本过旧时，保留 web 送来的值，记 `commitSource: "candidate"`，并在 prompt 的文件行注明"提交号来自候选列表，可能早于发送时"。覆盖成功时记 `commitSource: "head"`。`commitSource` 只由 hub 写，web 送来的值会被忽略。
   - 条目和话题在 prompt 构建时取最新内容。
-- **去重：** 同一条消息里，同类型、同 id（文件按 repoId+path）只保留第一次。
+- **出现次数与元数据一一对应：** 一个提及对应正文里的一处 `text`。同一段 `text` 在 `mentions` 里出现 k 次，正文里就必须至少出现 k 次，否则 hub 回 400。构建 prompt 时同一对象只展开一次。
 - **校验位置：** hub 在 `postUserMessage` 里校验并写入：
   - 条目必须存在于本 workspace。
   - 话题必须属于本 workspace。
   - 文件的 `repoId` 必须已绑定到本 workspace，`path` 必须通过 `normalizeMentionPath`。
   - 任何一项不通过都回 400，消息不写入。
   - hub 不核对文件是否存在，因为文件可能已在新提交里被删除。这由 `code__read` 在读取时报告。
-- **编辑：** `EditMessageBody` 仍只收 `content`。`editUserMessage` 只保留可读文本仍出现在新正文里的提及，其余丢弃；重跑的任务按保留下来的提及构建 prompt。
+- **编辑：** `EditMessageBody` 仍只收 `content`。`editUserMessage` 用存下的 `text` 计数：某段 `text` 在新正文里出现 n 次、在原提及里有 k 个，就按原顺序保留前 min(n, k) 个，其余丢弃。所以删掉两处相同提及中的一处，只会去掉一个提及；全部删掉才会全部去掉。重跑的任务按保留下来的提及构建 prompt。web 端的 `syncMentions` 用同一套计数规则。
+- **重放：** 带附件的重复发送会走 `lockForSend`（`apps/hub/src/messages.ts:212`）的重放判断，现在比较附件、正文、引用和话题。加入提及后，要把提及也纳入比较：按 `type`、id（文件按 repoId+path）和 `text` 依次比较，不比较文件的 `commit`（它会被 hub 覆盖）。提及不同就按冲突回 409，不当作重放。
 
 ### 2. 文件候选（D8）
 
+- **daemon RPC `repo.head`：** 在 `registerRepoHandlers` 里注册。参数是 `RepoCall`，返回 `{ commit: string }`，即 `mainRef` 的完整 SHA。只做 `rev-parse`，不 fetch。hub 在发送时用它固定文件提及的提交（§1）。
 - **daemon RPC `repo.files`：** 在 `registerRepoHandlers` 里注册。
   - 参数与 `repo.changes` 相同，即 `RepoCall`。
   - 返回 `{ commit: string; paths: string[]; truncated: boolean }`。
@@ -163,7 +167,7 @@ hub 新增 `apps/hub/src/mentions.ts`：
   - `/` 菜单仍只在行首触发；两个菜单同一时间只开一个，以包含光标的 token 为准。
 - **分组与排序：** 依次是条目、文件、话题，每组最多 8 条。
   - 条目和话题在前端用 `fuzzyScore` 过滤已加载的列表：`listEntries`、`listThreads`，30 秒内复用。
-  - 文件调用 `mention-files`，150 ms 防抖，同一个查询 30 秒内复用。
+  - 文件调用 `mention-files`，150 ms 防抖，同一个查询 30 秒内复用。缓存只影响候选列表；发送时的提交号由 hub 重新取（§1）。
   - 查询完全等于某个条目 id（如 `D-12`、不区分大小写）时，这个条目排在最前。
   - 查询为空时，条目按最近更新排序，话题按 `lastReplyAt` 排序，文件组提示"输入文件名搜索"。
 - **选中：** 把 `@query` 换成可读文本加一个空格，并在本地的提及列表里加一条。
@@ -194,11 +198,13 @@ hub 新增 `apps/hub/src/mentions.ts`：
 按 TDD 写测试，只用临时数据库、临时 git 仓库和假 daemon，不调用真实模型。
 
 - **shared：** schema 的合法和非法输入；`normalizeMentionPath`；`fuzzyScore` 的排序；`mentionText`。
-- **cli：** `repo.files` 排除符号链接和子模块、遇到上限截断、缓存命中、不碰工作区（往工作区加一个未提交文件后列表不变）；`code__read` 的 `ref` 在主分支上、不在主分支上、格式非法三种情况。
+- **cli：** `repo.head` 返回主分支当前提交；`repo.files` 排除符号链接和子模块、遇到上限截断、缓存命中、不碰工作区（往工作区加一个未提交文件后列表不变）；`code__read` 的 `ref` 在主分支上、不在主分支上、格式非法三种情况。
 - **hub：**
   - 路由在 `ok`、`unsupported`、`offline` 下的返回，以及空查询。
   - 三个发送入口都能写入提及，归属不对时回 400。
-  - 编辑后提及按正文过滤。
+  - 发送时文件提交号被 `repo.head` 覆盖；daemon 不在线时保留并在 prompt 里注明。
+  - 编辑后提及按 `text` 计数过滤，label 或标题改名不影响旧提及。
+  - 提及不同的重复发送回 409，不当作重放。
   - prompt 段落的顺序、预算、截断、已删除条目、话题锚点。
 - **web：** `@` 触发规则；分组和排序；选中后的正文和 chip；删掉文本后提及移除；`/` 和 `@` 共存；发送带上提及；不可用时的提示；`[W-n]` 渲染成链接。
 - **真实环境验收：** 用一次性环境跑两种运行方式，确认 agent 读到了被提及的条目和固定提交的文件。
