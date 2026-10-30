@@ -71,6 +71,9 @@ describe("sniffAttachment, beyond the plan's table", () => {
     expect(sniffAttachment(bigPdf, "a.pdf")).toEqual({ ok: false, reason: "too_large" });
     expect(sniffAttachment(new Uint8Array(ATTACHMENT_LIMITS.textBytes).fill(0x61), "a.txt")).toMatchObject({ ok: true });
   });
+  it.each(["<svg:svg xmlns:svg=\"http://www.w3.org/2000/svg\"/>", "<x:SVG\n/>", "<a.b-c:svg>"])("rejects a namespace-prefixed SVG root %#", (doc) =>
+    expect(sniffAttachment(text('<?xml version="1.0"?>\n' + doc), "a.xml")).toEqual({ ok: false, reason: "unsupported_type" }));
+  it("does not treat a prefixed tag that merely starts with svg as SVG", () => expect(sniffAttachment(text("<x:svgish/>"), "a.xml")).toMatchObject({ ok: true }));
   it("does not treat a tag that merely starts with svg as SVG", () => expect(sniffAttachment(text("<svgfoo/> and svg in prose"), "a.xml")).toMatchObject({ ok: true }));
 });
 
@@ -103,6 +106,20 @@ describe("limits and schemas", () => {
     expect(() => AttachmentRefSchema.parse({ ...ref, kind: "video" })).toThrow();
     expect(() => AttachmentRefSchema.parse({ ...ref, size: 0 })).toThrow();
   });
+  it.each([
+    ["image with a PDF mime", { kind: "image", mime: "application/pdf" }],
+    ["image with an unknown image mime", { kind: "image", mime: "image/svg+xml" }],
+    ["pdf with an image mime", { kind: "pdf", mime: "image/png" }],
+    ["text with a non-text mime", { kind: "text", mime: "application/pdf" }],
+    ["image over its limit", { size: ATTACHMENT_LIMITS.imageBytes + 1 }],
+    ["pdf over its limit", { kind: "pdf", mime: "application/pdf", size: ATTACHMENT_LIMITS.pdfBytes + 1 }],
+    ["text over its limit", { kind: "text", mime: "text/plain", size: ATTACHMENT_LIMITS.textBytes + 1 }],
+  ])("AttachmentRefSchema rejects %s", (_label, patch) => expect(() => AttachmentRefSchema.parse({ ...ref, ...patch })).toThrow());
+  it.each([
+    [{ kind: "image", mime: "image/webp", size: ATTACHMENT_LIMITS.imageBytes }],
+    [{ kind: "pdf", mime: "application/pdf", size: ATTACHMENT_LIMITS.pdfBytes }],
+    [{ kind: "text", mime: "text/plain", size: ATTACHMENT_LIMITS.textBytes }],
+  ])("AttachmentRefSchema accepts a consistent ref at its limit %#", (patch) => expect(AttachmentRefSchema.parse({ ...ref, ...patch })).toMatchObject(patch));
   it("AttachmentCapabilitiesSchema checks every field", () => {
     const caps = { adapter: "codex-direct", image: "native", pdf: "native", text: "text" };
     expect(AttachmentCapabilitiesSchema.parse(caps)).toEqual(caps);

@@ -29,12 +29,18 @@ const TEXT_EXTENSIONS = new Set([
   "js", "mjs", "cjs", "ts", "tsx", "jsx", "py", "rb", "go", "rs", "java", "kt", "swift", "c", "h", "cc", "cpp", "hpp",
   "cs", "php", "sh", "bash", "zsh", "sql", "diff", "patch",
 ]);
+const MIMES: Record<AttachmentKind, ReadonlySet<string>> = {
+  image: new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]),
+  pdf: new Set(["application/pdf"]),
+  text: new Set(["text/plain"]),
+};
 const SIZE_LIMIT: Record<AttachmentKind, number> = {
   image: ATTACHMENT_LIMITS.imageBytes,
   pdf: ATTACHMENT_LIMITS.pdfBytes,
   text: ATTACHMENT_LIMITS.textBytes,
 };
-const SVG_TAG = /<svg[\s>/]/i;
+// An <svg> element, with or without a namespace prefix such as <svg:svg xmlns:svg="…">.
+const SVG_TAG = /<(?:[A-Za-z_][\w.-]*:)?svg[\s>/]/i;
 
 function startsWith(bytes: Uint8Array, prefix: readonly number[], at = 0): boolean {
   if (bytes.length < at + prefix.length) return false;
@@ -114,6 +120,10 @@ export const AttachmentRefSchema = z.object({
   size: z.number().int().positive(),
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
   messageId: z.string().min(1),
+}).superRefine((ref, ctx) => {
+  // The same rules sniffAttachment applies, so a ref can never describe bytes the hub would refuse.
+  if (!MIMES[ref.kind].has(ref.mime)) ctx.addIssue({ code: "custom", path: ["mime"], message: `${ref.mime} is not a ${ref.kind} type` });
+  if (ref.size > SIZE_LIMIT[ref.kind]) ctx.addIssue({ code: "custom", path: ["size"], message: `over the ${ref.kind} limit` });
 });
 export type AttachmentRef = z.infer<typeof AttachmentRefSchema>;
 
