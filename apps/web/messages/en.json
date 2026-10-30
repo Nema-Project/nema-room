@@ -425,6 +425,7 @@
   "extensions.found.title": "Found on this computer",
   "extensions.found.note": "Attaching records where the folder is. Nema copies nothing, and Remove from list leaves the folder as it is.",
   "extensions.found.none": "No skill folders in {locations}.",
+  "extensions.found.no-match": "No found folders match.",
   "extensions.found.unreadable": "Nema could not read {path}.",
   "extensions.found.attached": "Attached",
   "extensions.found.attach": "Attach",

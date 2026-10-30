@@ -172,3 +172,14 @@ test("a link to a folder whose name starts with two dots stays inside its locati
   const rows = discoverSkills(home, bundledExtensions()).skills;
   expect(rows).toEqual([expect.objectContaining({ path: target, name: "notes", problem: null })]);
 });
+
+test.skipIf(!canDenyReads)("a location behind a folder that cannot be entered is unreadable, not missing", () => {
+  home = realpathSync(mkdtempSync(join(tmpdir(), "nema-discover-")));
+  skill(join(home, ".claude", "skills", "notes"), "notes");
+  chmodSync(join(home, ".claude"), 0o000);
+  denied.push(join(home, ".claude"));
+  const found = discoverSkills(home, bundledExtensions());
+  expect(found.locations[0]).toEqual({ label: "claude", path: join(home, ".claude", "skills"), found: true, unreadable: true });
+  // A location that is simply not there is still reported as not found.
+  expect(found.locations[1]).toEqual({ label: "codex", path: join(home, ".codex", "skills"), found: false });
+});

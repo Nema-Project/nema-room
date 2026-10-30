@@ -788,6 +788,31 @@ describe("PluginsPage attach and repair", () => {
     expect((within(github).getByRole("button", { name: "Check again" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it("the page's type filter and search narrow the found folders too", async () => {
+    const lint = { path: "/home/me/.codex/skills/lint", location: "codex", name: "lint", description: "Checks style", id: "lint", attached: false, problem: null };
+    vi.mocked(hub.discoverExtensions).mockResolvedValue({ ...emptyDiscovery, skills: [notes, lint] });
+    renderPage();
+    const found = await screen.findByRole("region", { name: "Found on this computer" });
+    await within(found).findByRole("button", { name: "Attach Notes" });
+    const search = screen.getByRole("searchbox", { name: "Search extensions" });
+    fireEvent.change(search, { target: { value: "MEETING" } });
+    expect(within(found).getAllByRole("heading", { level: 4 }).map((h) => h.textContent)).toEqual(["Notes"]);
+    // A match that lives only among the found folders is a match, not "nothing matches".
+    expect(screen.queryByText("No extensions match.")).toBeNull();
+    fireEvent.change(search, { target: { value: "codex/skills" } });
+    expect(within(found).getAllByRole("heading", { level: 4 }).map((h) => h.textContent)).toEqual(["lint"]);
+    fireEvent.change(search, { target: { value: "nothing like this" } });
+    expect(within(found).queryAllByRole("heading", { level: 4 })).toEqual([]);
+    expect(within(found).getByText("No found folders match.")).toBeTruthy();
+    expect(screen.getByText("No extensions match.")).toBeTruthy();
+    fireEvent.change(search, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("radio", { name: "MCP" }));
+    expect(within(found).queryAllByRole("heading", { level: 4 })).toEqual([]);
+    expect(within(found).getByText("No found folders match.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Skills" }));
+    expect(within(found).getAllByRole("heading", { level: 4 })).toHaveLength(2);
+  });
+
   it("the folder field waits for the extension list, so an attach cannot land before it", async () => {
     let finish: (rows: ExtensionRecord[]) => void = () => {};
     vi.mocked(hub.listExtensions).mockReturnValue(new Promise((resolve) => (finish = resolve)));

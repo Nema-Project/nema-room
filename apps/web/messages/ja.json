@@ -425,6 +425,7 @@
   "extensions.found.title": "このコンピューターで見つかったもの",
   "extensions.found.note": "接続はフォルダーの場所を記録するだけです。Nema はファイルをコピーせず、「一覧から外す」でもフォルダーはそのまま残ります。",
   "extensions.found.none": "{locations} に Skill フォルダーはありません。",
+  "extensions.found.no-match": "一致する見つかったフォルダーはありません。",
   "extensions.found.unreadable": "Nema は {path} を読み取れませんでした。",
   "extensions.found.attached": "接続済み",
   "extensions.found.attach": "接続",

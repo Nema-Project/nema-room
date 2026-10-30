@@ -63,6 +63,8 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
   const ids = useId();
   const [type, setType] = useState<TypeFilter>("all");
   const [query, setQuery] = useState("");
+  // Found folders that pass the filter and search; a match there is a match for "nothing matches".
+  const [foundMatches, setFoundMatches] = useState(0);
   const [error, setError] = useState<string | null>(null);
   // One pending request per extension, not one for the whole page: turning GitHub off must not grey
   // out graphify's button.
@@ -434,12 +436,12 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
           <h2 id={`${ids}-installed`}>{t("extensions.section.installed")}</h2>
           {extensions === null && !error && <p className="kmeta">{t("common.loading")}</p>}
           {installed.map(renderRow)}
-          {extensions !== null && installed.length === 0 && discoverable.length === 0 && <p className="kmeta">{t("extensions.search.empty")}</p>}
+          {extensions !== null && installed.length === 0 && discoverable.length === 0 && foundMatches === 0 && <p className="kmeta">{t("extensions.search.empty")}</p>}
         </section>
         <section className="extension-section" aria-labelledby={`${ids}-discover`}>
           <h2 id={`${ids}-discover`}>{t("extensions.section.discover")}</h2>
           <SkillInstallPanel onInstall={install} busy={(id) => busy.has(id)} status={(id) => jobLine(id, "panel")} />
-          <ExternalSkillsPanel records={extensions} onAttached={attached} />
+          <ExternalSkillsPanel records={extensions} onAttached={attached} type={type} query={query} onMatches={setFoundMatches} />
           {discoverable.map(renderRow)}
         </section>
       </div>

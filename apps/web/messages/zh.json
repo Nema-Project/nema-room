@@ -425,6 +425,7 @@
   "extensions.found.title": "在这台电脑上找到",
   "extensions.found.note": "接入只记录文件夹所在位置。Nema 不复制任何文件，「从列表移除」也不会动这个文件夹。",
   "extensions.found.none": "{locations} 中没有 Skill 文件夹。",
+  "extensions.found.no-match": "没有匹配的已找到文件夹。",
   "extensions.found.unreadable": "Nema 无法读取 {path}。",
   "extensions.found.attached": "已接入",
   "extensions.found.attach": "接入",

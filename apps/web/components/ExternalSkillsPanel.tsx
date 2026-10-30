@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import type { AttachProblem, ExtensionRecord, SkillDiscovery } from "@nema/shared";
+import type { AttachProblem, DiscoveredSkill, ExtensionRecord, SkillDiscovery } from "@nema/shared";
 import { attachExtension, discoverExtensions, pickDirectory } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
 
@@ -34,7 +34,29 @@ function folderName(folder: string): string {
  * list later drops only the record. The list is read again whenever the page's records change, so
  * an item someone detached shows its Attach button again.
  */
-export function ExternalSkillsPanel({ records, onAttached }: { records: ExtensionRecord[] | null; onAttached: (record: ExtensionRecord) => void }) {
+/** Same rule as the page's rows: the type has to allow skills, and the search is case-insensitive. */
+function shownSkill(skill: DiscoveredSkill, type: string, query: string): boolean {
+  if (type !== "all" && type !== "skill") return false;
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return [skill.name ?? "", skill.description ?? "", skill.path, skill.id ?? ""].some((field) => field.toLowerCase().includes(needle));
+}
+
+export function ExternalSkillsPanel({
+  records,
+  onAttached,
+  type = "all",
+  query = "",
+  onMatches,
+}: {
+  records: ExtensionRecord[] | null;
+  onAttached: (record: ExtensionRecord) => void;
+  /** The page's type filter and search; they narrow the found list the same way they narrow rows. */
+  type?: string;
+  query?: string;
+  /** How many found folders the filter and search leave, so the page knows whether anything matched. */
+  onMatches?: (count: number) => void;
+}) {
   const t = useT();
   const [found, setFound] = useState<SkillDiscovery | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -70,6 +92,12 @@ export function ExternalSkillsPanel({ records, onAttached }: { records: Extensio
     if (problem === "already-attached") return t("extensions.found.already");
     return problem ? t(`extensions.attach.problem.${problem}`) : message;
   };
+
+  const visible = found ? found.skills.filter((skill) => shownSkill(skill, type, query)) : [];
+  const matches = visible.length;
+  useEffect(() => {
+    onMatches?.(matches);
+  }, [matches, onMatches]);
 
   // Attaching before the page's list has loaded would race that first read, so the field waits for it.
   const waiting = records === null;
@@ -118,9 +146,10 @@ export function ExternalSkillsPanel({ records, onAttached }: { records: Extensio
       {found && found.skills.length === 0 && !found.locations.some((location) => location.unreadable) && (
         <p className="kmeta">{t("extensions.found.none", { locations: found.locations.map((location) => location.path).join(", ") })}</p>
       )}
-      {found && found.skills.length > 0 && (
+      {found && found.skills.length > 0 && visible.length === 0 && <p className="kmeta">{t("extensions.found.no-match")}</p>}
+      {visible.length > 0 && (
         <ul className="skill-preview">
-          {found.skills.map((skill) => (
+          {visible.map((skill) => (
             <li key={skill.path}>
               <h4>{skill.name ?? folderName(skill.path)}</h4>
               {skill.description && <p>{skill.description}</p>}

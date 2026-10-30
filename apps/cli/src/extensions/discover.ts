@@ -130,10 +130,14 @@ export function discoverSkills(home: string, records: ExtensionRecord[]): SkillD
     const base = path.join(home, location.dir);
     let root: string;
     try {
-      if (!statSync(base).isDirectory()) throw new Error("not a folder");
+      if (!statSync(base).isDirectory()) throw Object.assign(new Error("not a folder"), { code: "ENOTDIR" });
       root = realpathSync(base);
-    } catch {
-      locations.push({ label: location.label, path: base, found: false });
+    } catch (error) {
+      // Only "nothing there" is not found; a location behind a folder that cannot be entered is there
+      // but unreadable.
+      const code = (error as NodeJS.ErrnoException).code;
+      const missing = code === "ENOENT" || code === "ENOTDIR";
+      locations.push(missing ? { label: location.label, path: base, found: false } : { label: location.label, path: base, found: true, unreadable: true });
       continue;
     }
     let entries: Dirent[];

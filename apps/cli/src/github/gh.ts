@@ -316,15 +316,23 @@ export class GithubGh implements GithubReader {
     try {
       auth = await this.execute(["auth", "status", "--hostname", "github.com", "--json", "hostname,login,state,active", "--no-refresh"], { timeout: STATUS_TIMEOUT_MS });
     } catch { return { installed: true, loggedIn: false, detail: "GitHub CLI installed; login status unavailable", inconclusive: true }; }
-    if (auth.error) return { installed: true, loggedIn: false, detail: "GitHub CLI installed; no active github.com login or CLI upgrade required" };
+    // gh exits non-zero both when nobody is signed in and when the query itself failed (an older gh
+    // without --json, a timeout). Only JSON it printed or its own "not logged in" message is an answer.
+    type AuthPayload = { hosts?: Record<string, Array<{ active?: boolean; state?: string }>> };
+    let payload: AuthPayload | null = null;
     try {
-      const payload = JSON.parse(auth.stdout) as { hosts?: Record<string, Array<{ active?: boolean; state?: string }>> };
+      const parsed = JSON.parse(auth.stdout) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && "hosts" in parsed) payload = parsed as AuthPayload;
+    } catch { /* not JSON: decided below */ }
+    if (payload) {
       const accounts = payload.hosts?.["github.com"] ?? [];
       const loggedIn = accounts.some((account) => account.active === true && (!account.state || account.state === "success"));
       return { installed: true, loggedIn, detail: loggedIn ? "GitHub CLI logged in to github.com" : "GitHub CLI installed; no active github.com login" };
-    } catch {
-      return { installed: true, loggedIn: false, detail: "GitHub CLI installed; login status unavailable (upgrade gh)", inconclusive: true };
     }
+    if (auth.error && !auth.error.message.includes("timed out") && /not logged in/i.test(`${auth.stderr}\n${auth.stdout}`)) {
+      return { installed: true, loggedIn: false, detail: "GitHub CLI installed; no active github.com login" };
+    }
+    return { installed: true, loggedIn: false, detail: "GitHub CLI installed; login status unavailable (upgrade gh)", inconclusive: true };
   }
   async close(): Promise<void> {
     if (this.closed) return;
