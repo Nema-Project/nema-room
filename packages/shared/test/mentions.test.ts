@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import * as shared from "../src/index.js";
 import {
   MENTION_LIMITS,
   MessageMention,
@@ -6,32 +7,33 @@ import {
   fuzzyScore,
   keepMentionsFor,
   mentionText,
-  normalizeMentionPath,
   type MessageMention as Mention,
 } from "../src/index.js";
 
-const SHA = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
 const entry = (id: string, text = `[${id}]`): Mention => ({ type: "entry", id, text });
-const file = (over: Partial<Extract<Mention, { type: "file" }>> = {}): Mention => ({
-  type: "file", repoId: "r1", path: "apps/web/lib/slash.ts", commit: SHA, text: "`web:apps/web/lib/slash.ts`", ...over,
+const attachment = (over: Partial<Extract<Mention, { type: "attachment" }>> = {}): Mention => ({
+  type: "attachment", id: "att_abcdefghijklmnop", text: "`附件：截图 1.png`", ...over,
 });
 
 describe("MessageMention", () => {
-  test("accepts the three kinds, each with its text", () => {
+  test("accepts the three workspace kinds, each with its text", () => {
     expect(MessageMention.safeParse({ type: "entry", id: "W-3", text: "[W-3]" }).success).toBe(true);
-    expect(MessageMention.safeParse(file()).success).toBe(true);
+    expect(MessageMention.safeParse(attachment()).success).toBe(true);
     expect(MessageMention.safeParse({ type: "thread", id: "t1", text: "[话题：发布]" }).success).toBe(true);
   });
 
+  test("a repository file mention is no longer a valid kind", () => {
+    expect(MessageMention.safeParse({ type: "file", repoId: "r1", path: "a.ts", commit: "a".repeat(40), text: "`web:a.ts`" }).success).toBe(false);
+  });
+
   test("text is required and bounded", () => {
-    expect(MessageMention.safeParse({ type: "entry", id: "W-3" }).success).toBe(false);
+    expect(MessageMention.safeParse({ type: "attachment", id: "att_abcdefghijklmnop" }).success).toBe(false);
     expect(MessageMention.safeParse({ type: "entry", id: "W-3", text: "" }).success).toBe(false);
     expect(MessageMention.safeParse({ type: "entry", id: "W-3", text: "x".repeat(4097) }).success).toBe(false);
   });
 
-  test("ids and commits with a trailing newline are refused", () => {
+  test("an entry id with a trailing newline is refused", () => {
     expect(MessageMention.safeParse(entry("D-12\n")).success).toBe(false);
-    expect(MessageMention.safeParse(file({ commit: `${SHA}\n` })).success).toBe(false);
   });
 
   test("entry ids follow the entry id rule", () => {
@@ -39,15 +41,25 @@ describe("MessageMention", () => {
     for (const id of ["R-1", "D-12", "T-3", "Q-4", "S-5", "G-6", "W-7"]) expect(MessageMention.safeParse(entry(id)).success, id).toBe(true);
   });
 
-  test("file commit is a full lowercase sha, commitSource is head or candidate or absent, path is bounded", () => {
-    expect(MessageMention.safeParse(file({ commit: SHA.slice(0, 7) })).success).toBe(false);
-    expect(MessageMention.safeParse(file({ commit: SHA.toUpperCase() })).success).toBe(false);
-    expect(MessageMention.safeParse(file({ commitSource: "head" })).success).toBe(true);
-    expect(MessageMention.safeParse(file({ commitSource: "candidate" })).success).toBe(true);
-    expect(MessageMention.safeParse({ ...file(), commitSource: "web" }).success).toBe(false);
-    expect(MessageMention.safeParse(file({ path: "a".repeat(1024) })).success).toBe(true);
-    expect(MessageMention.safeParse(file({ path: "a".repeat(1025) })).success).toBe(false);
-    expect(MessageMention.safeParse(file({ repoId: "" })).success).toBe(false);
+  test("an attachment id is a non-empty bounded string", () => {
+    expect(MessageMention.safeParse(attachment({ id: "" })).success).toBe(false);
+    expect(MessageMention.safeParse(attachment({ id: "a".repeat(65) })).success).toBe(false);
+  });
+
+  test("a thread id is a non-empty string", () => {
+    expect(MessageMention.safeParse({ type: "thread", id: "", text: "[话题：x]" }).success).toBe(false);
+  });
+});
+
+describe("MENTION_LIMITS", () => {
+  test("counts attachment candidates and no longer names repository files", () => {
+    expect(MENTION_LIMITS.attachmentCandidates).toBe(50);
+    expect(MENTION_LIMITS).not.toHaveProperty("fileCandidates");
+    expect(MENTION_LIMITS.perMessage).toBe(20);
+    expect(MENTION_LIMITS.entryBytes).toBe(4096);
+    expect(MENTION_LIMITS.entriesTotalBytes).toBe(16384);
+    expect(MENTION_LIMITS.menuPerGroup).toBe(8);
+    expect(MENTION_LIMITS.threadAnchorBytes).toBe(1024);
   });
 });
 
@@ -64,43 +76,29 @@ describe("UserMessageMeta.mentions", () => {
   });
 });
 
-describe("normalizeMentionPath", () => {
-  test("keeps plain relative paths and tidies ./ and //", () => {
-    expect(normalizeMentionPath("a/b.ts")).toBe("a/b.ts");
-    expect(normalizeMentionPath("./a")).toBe("a");
-    expect(normalizeMentionPath("a//b")).toBe("a/b");
-    expect(normalizeMentionPath("a/./b")).toBe("a/b");
-    expect(normalizeMentionPath("路径 有空格/文件.md")).toBe("路径 有空格/文件.md");
-  });
-
-  test("rejects parent segments, absolute paths, backslashes, NUL and empty paths", () => {
-    for (const p of ["../a", "a/../b", "..", "/a", "a\\b", "a\u0000b", "", ".", "./", "a".repeat(1025)]) expect(normalizeMentionPath(p), JSON.stringify(p)).toBeNull();
-  });
-
-  test("rejects Windows drive-rooted paths but keeps a colon elsewhere", () => {
-    for (const p of ["C:/outside/file", "c:", "./D:/x"]) expect(normalizeMentionPath(p), p).toBeNull();
-    expect(normalizeMentionPath("docs/a:b.md")).toBe("docs/a:b.md");
+describe("no repository path helper is exported any more", () => {
+  test("normalizeMentionPath is gone", () => {
+    expect("normalizeMentionPath" in shared).toBe(false);
   });
 });
 
 describe("fuzzyScore", () => {
-  const rank = (q: string, paths: string[]) =>
-    paths.map((p) => [p, fuzzyScore(q, p)] as const).filter(([, s]) => s !== null).sort((a, b) => b[1]! - a[1]!).map(([p]) => p);
+  const rank = (q: string, candidates: string[]) =>
+    candidates.map((p) => [p, fuzzyScore(q, p)] as const).filter(([, s]) => s !== null).sort((a, b) => b[1]! - a[1]!).map(([p]) => p);
 
-  test("a file-name prefix beats a path-segment prefix", () => {
+  test("a last-segment prefix beats a segment prefix", () => {
     expect(rank("slash", ["apps/web/lib/slashy/x.ts", "apps/web/lib/slash.ts"])).toEqual(["apps/web/lib/slash.ts", "apps/web/lib/slashy/x.ts"]);
   });
 
-  test("a path-segment prefix beats a subsequence", () => {
+  test("a segment prefix beats a subsequence", () => {
     expect(rank("lib", ["apps/xlxixbx.ts", "apps/web/lib/a.ts"])).toEqual(["apps/web/lib/a.ts", "apps/xlxixbx.ts"]);
   });
 
-  test("a query spanning segments matches from a segment start", () => {
-    expect(fuzzyScore("lib/sla", "apps/web/lib/slash.ts")).not.toBeNull();
-    expect(fuzzyScore("lib/sla", "apps/web/lib/slash.ts")!).toBeGreaterThan(fuzzyScore("lib/sla", "apps/lxixb/sxlxa.ts") ?? -Infinity);
+  test("a plain title is matched as a whole name: prefix first", () => {
+    expect(rank("发布", ["旧发布流程", "发布流程 v2", "部署"])).toEqual(["发布流程 v2", "旧发布流程"]);
   });
 
-  test("is case-insensitive and prefers the shorter path on a tie", () => {
+  test("is case-insensitive and prefers the shorter candidate on a tie", () => {
     expect(fuzzyScore("SLASH", "apps/web/lib/slash.ts")).toBe(fuzzyScore("slash", "apps/web/lib/slash.ts"));
     expect(rank("slash", ["apps/web/lib/slash.ts", "a/slash.ts"])).toEqual(["a/slash.ts", "apps/web/lib/slash.ts"]);
   });
@@ -117,27 +115,29 @@ describe("fuzzyScore", () => {
 });
 
 describe("mentionText", () => {
-  test("entry, file and thread", () => {
+  test("entry, attachment and thread", () => {
     expect(mentionText(entry("D-12"), {})).toBe("[D-12]");
-    expect(mentionText(file(), { repoLabel: "web" })).toBe("`web:apps/web/lib/slash.ts`");
+    expect(mentionText(attachment(), { attachmentName: "截图 1.png" })).toBe("`附件：截图 1.png`");
     expect(mentionText({ type: "thread", id: "t1", text: "x" }, { threadTitle: "发布流程" })).toBe("[话题：发布流程]");
   });
-});
 
-describe("mentionText for any valid file", () => {
-  test("the longest path with the longest label still passes the schema", () => {
-    const m = file({ path: "p".repeat(1024) });
-    const text = mentionText(m, { repoLabel: "长".repeat(40) });
-    expect(MessageMention.safeParse({ ...m, text }).success).toBe(true);
+  test("the longest attachment name still passes the schema", () => {
+    const name = "长".repeat(200);
+    const m = attachment();
+    expect(MessageMention.safeParse({ ...m, text: mentionText(m, { attachmentName: name }) }).success).toBe(true);
   });
 
-  test("a backtick in the label or path cannot close the code span early", () => {
-    expect(mentionText(file({ path: "a`b.ts" }), { repoLabel: "web" })).toBe("``web:a`b.ts``");
-    expect(mentionText(file({ path: "x``y" }), { repoLabel: "w`eb" })).toBe("```w`eb:x``y```");
-    // CommonMark strips one space on each side, so content that starts or ends with a backtick is padded.
-    expect(mentionText(file({ path: "b`" }), { repoLabel: "web" })).toBe("`` web:b` ``");
-    const worst = file({ path: "`".repeat(1024) });
-    expect(MessageMention.safeParse({ ...worst, text: mentionText(worst, { repoLabel: "长".repeat(40) }) }).success).toBe(true);
+  test("a backtick in the attachment name cannot close the code span early", () => {
+    expect(mentionText(attachment(), { attachmentName: "a`b.png" })).toBe("``附件：a`b.png``");
+    // CommonMark strips one space on each side, so content ending with a backtick is padded (the `附件：` prefix
+    // means it can never begin with one).
+    expect(mentionText(attachment(), { attachmentName: "b.png`" })).toBe("`` 附件：b.png` ``");
+    const worst = attachment();
+    expect(MessageMention.safeParse({ ...worst, text: mentionText(worst, { attachmentName: "`".repeat(200) }) }).success).toBe(true);
+  });
+
+  test("without a name the attachment id is used", () => {
+    expect(mentionText(attachment(), {})).toBe("`附件：att_abcdefghijklmnop`");
   });
 });
 
@@ -155,14 +155,14 @@ describe("keepMentionsFor", () => {
     expect(keepMentionsFor("没有引用了", [entry("D-12"), entry("D-12")])).toEqual([]);
   });
 
-  test("a mention is kept by its stored text even if the label changed since", () => {
-    const old = file({ text: "`old-label:apps/web/lib/slash.ts`" });
-    expect(keepMentionsFor("看 `old-label:apps/web/lib/slash.ts`", [old])).toEqual([old]);
+  test("a mention is kept by its stored text even if the name changed since", () => {
+    const old = attachment({ text: "`附件：旧名字.png`" });
+    expect(keepMentionsFor("看 `附件：旧名字.png`", [old])).toEqual([old]);
   });
 
   test("keeps the original order across different texts", () => {
     const d = entry("D-1");
-    const f = file();
-    expect(keepMentionsFor("`web:apps/web/lib/slash.ts` 和 [D-1]", [d, f])).toEqual([d, f]);
+    const a = attachment();
+    expect(keepMentionsFor("`附件：截图 1.png` 和 [D-1]", [d, a])).toEqual([d, a]);
   });
 });
