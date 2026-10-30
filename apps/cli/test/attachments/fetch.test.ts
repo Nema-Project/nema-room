@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { AttachmentRef } from "@nema/shared";
-import { fetchAttachments } from "../../src/attachments/fetch.js";
+import { fetchAttachments, loadTaskAttachments } from "../../src/attachments/fetch.js";
 import { RoomClient } from "../../src/room/client.js";
 
 const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
@@ -106,5 +106,36 @@ describe("fetchAttachments", () => {
     files.set("b", { status: 200, type: "image/png", body: png });
     await expect(fetchAttachments(new RoomClient(hubUrl, "tok"), [ref("a", png), ref("b", png)])).rejects.toThrow(/a\.png/);
     expect(seen.map((s) => s.url)).toEqual(["/room/attachments/a"]);
+  });
+});
+
+describe("loadTaskAttachments", () => {
+  const native = { adapter: "a", image: "native", pdf: "native", text: "text" } as const;
+  const task = (attachments?: AttachmentRef[]) => ({ hubUrl, runToken: "tok", ...(attachments ? { attachments } : {}) });
+
+  test("no attachments: nothing fetched", async () => {
+    expect(await loadTaskAttachments(task(), native)).toEqual({ ok: true, attachments: [] });
+    expect(await loadTaskAttachments(task([]), native)).toEqual({ ok: true, attachments: [] });
+    expect(seen).toEqual([]);
+  });
+
+  test("a refused kind fails before any hub call", async () => {
+    files.set("img", { status: 200, type: "image/png", body: png });
+    const r = await loadTaskAttachments(task([ref("img", png)]), { ...native, image: "unknown" });
+    expect(r.ok).toBe(false);
+    expect((r as { error: string }).error).toContain("img.png");
+    expect(seen).toEqual([]);
+  });
+
+  test("loads and verifies deliverable attachments", async () => {
+    files.set("img", { status: 200, type: "image/png", body: png });
+    const r = await loadTaskAttachments(task([ref("img", png)]), native);
+    expect(r.ok && r.attachments[0]!.bytes.equals(png)).toBe(true);
+  });
+
+  test("a fetch failure becomes ok:false with the file name", async () => {
+    const r = await loadTaskAttachments(task([ref("nope", png)]), native);
+    expect(r).toMatchObject({ ok: false });
+    expect((r as { error: string }).error).toContain("nope.png");
   });
 });

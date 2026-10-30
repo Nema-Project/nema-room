@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import type { AttachmentRef } from "@nema/shared";
-import type { RoomClient } from "../room/client.js";
+import type { AttachmentCapabilities, AttachmentRef, TaskAssign } from "@nema/shared";
+import { RoomClient } from "../room/client.js";
+import { refusal } from "./capabilities.js";
 
 export type LoadedAttachment = AttachmentRef & { bytes: Buffer };
 
@@ -25,4 +26,24 @@ export async function fetchAttachments(client: RoomClient, refs: readonly Attach
     loaded.push({ ...ref, bytes: r.bytes });
   }
   return loaded;
+}
+
+/**
+ * What an adapter does first with a task's attachments: refuse (D-2 A) before any network or launch when
+ * a kind is not deliverable, otherwise fetch and verify them. No attachments is `[]` with no hub call.
+ */
+export async function loadTaskAttachments(
+  task: Pick<TaskAssign, "attachments" | "hubUrl" | "runToken">,
+  caps: AttachmentCapabilities,
+  signal?: AbortSignal,
+): Promise<{ ok: true; attachments: LoadedAttachment[] } | { ok: false; error: string }> {
+  const refs = task.attachments ?? [];
+  if (refs.length === 0) return { ok: true, attachments: [] };
+  const refused = refusal(caps, refs);
+  if (refused) return { ok: false, error: refused };
+  try {
+    return { ok: true, attachments: await fetchAttachments(new RoomClient(task.hubUrl, task.runToken, signal), refs) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
