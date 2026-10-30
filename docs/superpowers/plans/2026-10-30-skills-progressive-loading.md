@@ -465,7 +465,7 @@ Skills 段落和 hub 第 127 条规则的新文字照 spec §3 逐字写。
 - Modify: `apps/web/messages/{en,zh,ja}.json`
 - Test: `apps/web/test/PluginsPage.test.tsx`
 
-每个 Skill 行写两行，例如「Claude Code：部分可用，缺少：执行脚本」「Nema 内置 Agent：部分可用，缺少：执行脚本、读取图片」。`claude-code-too-old` 显示「Claude Code 版本过低（需要 2.1.309 或更新），Skills 不可用」。`model-override`、`reserved-slash-name` 显示对应说明。停用确认加一句「正在运行的 Claude Code 任务仍可能读取它」。每个 `SkillGap`、`SkillNote` 都有三语文案。
+每个 Skill 行写两行，例如「Claude Code：部分可用，缺少：执行脚本」「Nema 内置 Agent：部分可用，缺少：执行脚本、读取图片」。`claude-code-too-old` 显示「Claude Code 版本过低（需要 2.1.309 或更新），Skills 不可用」。`model-override` 显示对应说明；`reserved-slash-name` 写成「与内置命令重名，用 /skill:<id> 调用」（2026-10-31 用户决定，见 spec §9）。停用确认加一句「正在运行的 Claude Code 任务仍可能读取它」。每个 `SkillGap`、`SkillNote` 都有三语文案。
 
 - [ ] **Step 1: 写失败测试**：`partial` 的两行文字；`none` 和版本过低；没有 `skill` 字段时不显示；停用确认的新句子；三个语言文件的键集合相同（照现有 i18n 测试写法）。
 - [ ] **Step 2: 跑** `npx vitest run apps/web/test/PluginsPage.test.tsx` → FAIL。
