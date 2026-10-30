@@ -95,17 +95,18 @@ The wizard checks dependencies, builds the CLI, starts services from source, and
 Pulling pinned images, without cloning, starts at tag `v0.1.4`. That tag contains the image publish workflow and is the first publish of these images (`linux/amd64`; arm64 is [issue #50](https://github.com/Nema-Project/nema-room/issues/50)). The `docker-compose.yml` in this repository tree is a template: its hub and web `image:` entries interpolate `${NEMA_IMAGE_TAG:-latest}`, so the tree carries no usable version. Each release from `v0.1.6` on attaches a rendered `docker-compose.yml` whose hub and web images are pinned to that release's version. It is a fixed-name asset of that release, so the current one is always at [`releases/latest/download/docker-compose.yml`](https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml), and an install locks its version into a local `.env` as `NEMA_IMAGE_TAG`. To install without cloning:
 
 ```sh
-# 1. fetch the fixed-name compose asset for the current supported release;
-#    the old file is replaced only after the download succeeds
+# 1. fetch the compose asset. With no NEMA_IMAGE_TAG in .env this is the
+#    current supported release; an existing lock keeps its own version
+#    (0.1.4 and 0.1.5 have no release asset, so their tag file is used).
 NEMA_FETCHED= NEMA_LOCKED= NEMA_UP= NEMA_INSTALLED=
-curl -fsSL -o docker-compose.yml.download \
-  https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml \
+NEMA_PIN=$(sed -n 's/^NEMA_IMAGE_TAG=//p' .env 2>/dev/null | tail -1)
+NEMA_URL=https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
+test -n "$NEMA_PIN" \
+  && NEMA_URL=https://github.com/Nema-Project/nema-room/releases/download/v$NEMA_PIN/docker-compose.yml
+{ curl -fsSL -o docker-compose.yml.download "$NEMA_URL" \
+  || { test -n "$NEMA_PIN" && curl -fsSL -o docker-compose.yml.download \
+    "https://raw.githubusercontent.com/Nema-Project/nema-room/v$NEMA_PIN/docker-compose.yml"; }; } \
   && mv docker-compose.yml.download docker-compose.yml && NEMA_FETCHED=1
-#    If .env already has NEMA_IMAGE_TAG, keep it and fetch that version's asset
-#    instead of the latest one:
-#      https://github.com/Nema-Project/nema-room/releases/download/v<locked>/docker-compose.yml
-#    A lock older than v0.1.6 has no release asset; take that tag's file instead:
-#      https://raw.githubusercontent.com/Nema-Project/nema-room/v<locked>/docker-compose.yml
 
 # 2. read the one version both images are pinned to; hub and web must agree
 NEMA_VERSION=$(grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
@@ -113,28 +114,30 @@ WEB_VERSION=$(grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut
 test -n "$NEMA_FETCHED" && test -n "$NEMA_VERSION" && test "$NEMA_VERSION" = "$WEB_VERSION" \
   && echo "$NEMA_VERSION"
 
-# 3. lock it in a local .env; an existing NEMA_IMAGE_TAG stays as it is
+# 3. lock it in a local .env; an existing NEMA_IMAGE_TAG stays as it is,
+#    and the last assignment, the one Compose uses, must equal that version
 test -n "$NEMA_FETCHED" && test -n "$NEMA_VERSION" && test "$NEMA_VERSION" = "$WEB_VERSION" \
-  && { grep -q '^NEMA_IMAGE_TAG=' .env 2>/dev/null || printf '\nNEMA_IMAGE_TAG=%s\n' "$NEMA_VERSION" >> .env; } \
-  && grep -qx "NEMA_IMAGE_TAG=$NEMA_VERSION" .env \
+  && { test -n "$NEMA_PIN" || printf '\nNEMA_IMAGE_TAG=%s\n' "$NEMA_VERSION" >> .env; } \
+  && test "$(sed -n 's/^NEMA_IMAGE_TAG=//p' .env | tail -1)" = "$NEMA_VERSION" \
   && NEMA_LOCKED=$NEMA_VERSION && echo "locked $NEMA_LOCKED"
 
 # 4. start the stack; each later step runs only if the one before succeeded.
 #    If .env sets NEMA_HUB_PORT or NEMA_DATA_HOST_DIR, export the same values first.
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"   # Linux and macOS only
-test -n "$NEMA_LOCKED" && mkdir -p -m 700 "${NEMA_DATA_HOST_DIR:-$HOME/.nema/data}" \
-  && docker compose up -d && NEMA_UP=1
+NEMA_DIR=${NEMA_DATA_HOST_DIR:-$HOME/.nema/data}
+test -n "$NEMA_LOCKED" && mkdir -p -m 700 "$NEMA_DIR" && test -w "$NEMA_DIR" \
+  && NEMA_IMAGE_TAG=$NEMA_LOCKED docker compose up -d --wait && NEMA_UP=1
 
 # 5. install the host daemon at the locked version
 test -n "$NEMA_UP" && npm i -g "@nema-project/nema@$NEMA_LOCKED" && NEMA_INSTALLED=1
 
 # 6. start the host daemon and keep it running; Compose does not run it.
-#    It finds the hub and the daemon-token the hub wrote in the data directory.
-test -n "$NEMA_INSTALLED" && NEMA_DATA_DIR="${NEMA_DATA_HOST_DIR:-$HOME/.nema/data}" \
-  nema daemon --hub "http://127.0.0.1:${NEMA_HUB_PORT:-4400}"
+#    It reads the daemon-token the hub wrote in the data directory.
+test -n "$NEMA_INSTALLED" \
+  && NEMA_DATA_DIR=$NEMA_DIR nema daemon --hub "http://127.0.0.1:${NEMA_HUB_PORT:-4400}"
 ```
 
-Step 2 prints the version only when hub and web are pinned to the same one; if it prints nothing, stop and do not start anything. Step 3 prints `locked <version>` only when `.env` holds that version; if it prints nothing, `.env` is locked to another version, so fetch that version's asset as step 1 describes and run steps 2 and 3 again. From step 2 on, each step runs only if the one before it succeeded, so a failed download, check, startup, or install stops the rest instead of continuing with a stale file or an older `nema`. Step 4 creates the data directory as your user first, as the setup wizard does, so the hub can write `daemon-token` there. Step 3 recognizes only the plain `NEMA_IMAGE_TAG=<version>` line it writes; for an `.env` edited by hand (quoted values, comments, CRLF), or when two installs could run in the same directory, use `scripts/install/public.mjs` from a checkout, which reads the value the way Compose does and writes `.env` and `docker-compose.yml` together under a lock file. An `.env` that already has `NEMA_IMAGE_TAG` keeps it: in step 1 fetch that version's asset from `releases/download/v<locked>/docker-compose.yml` instead of the latest URL, so steps 2 and 5 read the locked version, and in step 3 do not overwrite it. `latest` moves with each release, while a versioned address stays the same as long as that release exists. A lock from before `v0.1.6` (`0.1.4` or `0.1.5`) has no release asset, so its versioned address returns 404; fetch that tag's own file from `raw.githubusercontent.com/Nema-Project/nema-room/v<locked>/docker-compose.yml` instead, which pins both images to that version. The v0.1.6 asset still opens with the repository template's comment calling it a template, not an installable version. That comment is stale: the two pinned `image:` lines are what count, and releases after v0.1.6 carry a header that names their version. The version in step 5 is the one step 2 printed, not the newest version on npm. Agent tasks need the daemon from step 6 running. Right after a release is published, its images or npm package can still be publishing; if `docker compose up` cannot pull an image or `npm i` cannot find the version, wait for them, or run `node scripts/install/public.mjs --check` from a checkout, which verifies the Compose asset, both images, and the npm package before anything is installed. `-L` is required: the release download address redirects. Docker Desktop on Windows does not need the export in step 4.
+Step 1 reads the last `NEMA_IMAGE_TAG` in `.env`, the one Compose uses. With none, it fetches the current release from `releases/latest/download/`. With one, it keeps that lock and fetches that version's asset from `releases/download/v<locked>/docker-compose.yml` instead; `0.1.4` and `0.1.5` have no release asset, so after that download's 404 it takes the tag's own file from `raw.githubusercontent.com/Nema-Project/nema-room/v<locked>/docker-compose.yml`, which pins both images to that version. `latest` moves with each release, while a versioned address stays the same as long as that release exists. Step 2 prints the version only when hub and web are pinned to the same one, and step 3 prints `locked <version>` only when that version is also the effective lock; if either prints nothing, stop. Each later step runs only if the one before it succeeded, so a failed download, check, startup, or install stops the rest instead of continuing with a stale file or an older `nema`. Step 4 creates the data directory as your user, as the setup wizard does, and checks that it is writable; it passes the locked version to Compose explicitly, so an exported `NEMA_IMAGE_TAG` in your shell cannot override it; and `--wait` returns only after the services are healthy, by which time the hub has written `daemon-token` for step 6. Steps 1 and 3 read only plain `NEMA_IMAGE_TAG=<version>` lines, so an `.env` edited by hand (quotes, comments, CRLF) makes them stop. For that case, or when two installs could run in the same directory, use `scripts/install/public.mjs` from a checkout: it reads the value the way Compose does and writes `.env` and `docker-compose.yml` together under a lock file. The v0.1.6 asset still opens with the repository template's comment calling it a template, not an installable version. That comment is stale: the two pinned `image:` lines are what count, and releases after v0.1.6 carry a header that names their version. Agent tasks need the daemon from step 6 running. Right after a release is published, its images or npm package can still be publishing; if step 4 cannot pull an image or step 5 cannot find the version, wait and run the steps again, or run `node scripts/install/public.mjs --check` from a checkout, which verifies the Compose asset, both images, and the npm package before anything is installed. `-L` is required: the release download address redirects. Docker Desktop on Windows does not need the export in step 4.
 
 Host ports follow `NEMA_HUB_PORT` (default 4400; the container listens on the same port) and `NEMA_WEB_PORT` (default 3000; the container still listens on 3000). `NEMA_HUB_URL` defaults to `http://127.0.0.1:$NEMA_HUB_PORT` and is read when the web container starts, so one published image works without a rebuild.
 
