@@ -182,7 +182,7 @@ export const confirmWorkPackageTask = (id: string, wid: string, n: number) =>
 export type McpServerStatus = { id: string; connection: McpConnection; server: { name: string; version: string } | null; tools: Array<{ name: string; schemaDigest: string }>; lastError: string | null };
 const mcpUrl = (id: string) => `/extensions/${encodeURIComponent(id)}/mcp`;
 /** Save (add or replace) an MCP server config. Credential slots hold references only. */
-export const saveMcpServer = (body: { id: string; name: string; config: McpConfig; create?: true }) => request<ExtensionRecord>("/extensions/mcp", { method: "POST", body });
+export const saveMcpServer = (body: { id: string; name: string; config: McpConfig; create?: boolean }) => request<ExtensionRecord>("/extensions/mcp", { method: "POST", body });
 /** The saved config for the edit form, and which secrets are set. */
 export const getMcpServer = (id: string) =>
   request<{ id: string; name: string; config: McpConfig; secrets: Array<{ name: string; configured: boolean }> }>(mcpUrl(id));

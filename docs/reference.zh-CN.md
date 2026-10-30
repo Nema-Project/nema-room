@@ -107,7 +107,7 @@ hub 路由（都转发给 daemon，只有 daemon 写 `index.json` 和 `mcp.json`
 
 | 路由 | daemon RPC | 说明 |
 | --- | --- | --- |
-| `POST /api/extensions/mcp` | `extensions.mcp.save` | 请求体 `{ id, name, config, create? }`，hub 先校验配置，不合法 400；`create: true` 时 id 已存在返回 409 `MCP server <id> already exists`（`nema mcp add` 和插件页的添加都这样发）；运行中的服务器先停止。命令、参数、`cwd` 或地址变了会删掉已存凭据，不再被引用的凭据也会删掉 |
+| `POST /api/extensions/mcp` | `extensions.mcp.save` | 请求体 `{ id, name, config, create? }`，hub 先校验配置，不合法 400；`create: true` 时 id 已存在返回 409 `MCP server <id> already exists`（`nema mcp add` 和插件页的添加都这样发）；`create: false` 是编辑，记录已不存在时返回 404，不会把已卸载的服务器重新建出来（`nema mcp edit` 和插件页的编辑都这样发）；`cwd` 必须是绝对路径，保存时就拒绝相对路径；运行中的服务器先停止。命令、参数、`cwd` 或地址变了会删掉已存凭据，不再被引用的凭据也会删掉 |
 | `GET /api/extensions/<id>/mcp` | `extensions.mcp.get` | 配置和 `secrets: [{ name, configured }]`，从不返回凭据值 |
 | `GET /api/extensions/<id>/mcp/status` | `extensions.mcp.status` | `{ connection, server, tools: [{ name, schemaDigest }], lastError }` |
 | `POST /api/extensions/<id>/mcp/start`、`…/stop` | `extensions.mcp.start` / `stop` | 请求体 `{}`；停用的记录不能启动（409），配置损坏也是 409。stop 会让在它之前发出、还在排队的 start 不再启动；`nema mcp start` 在没连上时以非零状态退出 |

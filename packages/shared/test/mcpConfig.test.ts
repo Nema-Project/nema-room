@@ -84,6 +84,13 @@ describe("parseMcpConfig", () => {
     expect(parseMcpConfig({ transport: "stdio", command: "server", args: ["--no-auth", "--verbose"], env: {} }).args).toEqual(["--no-auth", "--verbose"]);
   });
 
+  test("refuses a relative working directory, which the daemon could never start in", () => {
+    rejects({ transport: "stdio", command: "node", args: [], cwd: "work/dir", env: {} }, /cwd must be an absolute path/);
+    rejects({ transport: "stdio", command: "node", args: [], cwd: "./x", env: {} }, /cwd must be an absolute path/);
+    expect(parseMcpConfig({ transport: "stdio", command: "node", args: [], cwd: "/srv/mcp", env: {} }).cwd).toBe("/srv/mcp");
+    expect(parseMcpConfig({ transport: "stdio", command: "node", args: [], cwd: "C:\\mcp", env: {} }).cwd).toBe("C:\\mcp");
+  });
+
   test("refuses PATH and HOME in env, which the daemon sets itself", () => {
     for (const name of ["PATH", "Path", "HOME", "USERPROFILE"]) {
       rejects({ transport: "stdio", command: "node", args: [], env: { [name]: { value: "/x" } } }, new RegExp(`"${name}" is set by Nema`));

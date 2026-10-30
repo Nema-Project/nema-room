@@ -922,10 +922,14 @@ describe("PluginsPage attach and repair", () => {
     fireEvent.change(screen.getByLabelText("Id"), { target: { value: "search" } });
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Search" } });
     fireEvent.change(screen.getByLabelText("Command"), { target: { value: "node" } });
+    fireEvent.change(screen.getByLabelText("Environment (NAME=value, NAME=secret:REF or NAME=env:VAR)"), { target: { value: "API_TOKEN=secret:API_TOKEN" } });
     vi.mocked(hub.listExtensions).mockRejectedValue(new Error("hub went away"));
     fireEvent.click(screen.getByRole("button", { name: "Save MCP server" }));
     const block = (await screen.findByRole("heading", { name: "Search" })).closest("section")!;
     expect(within(block).getByRole("button", { name: "Start" })).toBeTruthy();
+    // The row has its credential slot from the saved config, without the list read.
+    expect(within(block).getByLabelText("New value for API_TOKEN")).toBeTruthy();
+    expect(within(block).getByText("Not set")).toBeTruthy();
   });
 });
 

@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import type { ExtensionRecord, McpConfig, McpValue } from "@nema/shared";
-import { clearMcpSecret, getMcpServer, getMcpServerStatus, saveMcpServer, setMcpSecret, startMcpServer, stopMcpServer } from "@/lib/hub";
+import { mcpTargetChanged, secretRefs, type ExtensionRecord, type McpConfig, type McpRecordState, type McpValue } from "@nema/shared";
+import { clearMcpSecret, getMcpServer, getMcpServerStatus, saveMcpServer, setMcpSecret, startMcpServer, stopMcpServer, type McpServerStatus } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
 
 /** `NAME=value`, `NAME=secret:REF`, `NAME=env:VAR`, one per line; `NAME=value:…` keeps a literal that starts with a prefix. */
@@ -49,7 +49,24 @@ function valueLines(values: Record<string, McpValue>): string {
  * Add or edit an MCP server. Credentials are never typed here: a credential slot names a secret
  * (`NAME=secret:REF`, set below the server once it is saved) or a daemon environment variable.
  */
-export function McpServerForm({ initial, onSaved, onCancel }: { initial?: { id: string; name: string; config: McpConfig }; onSaved: (record: ExtensionRecord) => void; onCancel?: () => void }) {
+/**
+ * The row state right after a save, from the config itself: the daemon stops a running server
+ * before saving, keeps a slot's value only when the target did not change, and drops slots the
+ * config no longer names. So the row has its credential boxes even if the next list read fails.
+ */
+function savedState(config: McpConfig, initial: { config: McpConfig } | undefined, previous: McpRecordState["secrets"]): McpRecordState {
+  const kept = initial !== undefined && !mcpTargetChanged(initial.config, config);
+  return {
+    transport: config.transport,
+    connection: "disconnected",
+    server: null,
+    tools: [],
+    secrets: secretRefs(config).map((name) => ({ name, configured: kept && previous.some((slot) => slot.name === name && slot.configured) })),
+    lastError: null,
+  };
+}
+
+export function McpServerForm({ initial, previousSecrets = [], onSaved, onCancel }: { initial?: { id: string; name: string; config: McpConfig }; previousSecrets?: McpRecordState["secrets"]; onSaved: (record: ExtensionRecord) => void; onCancel?: () => void }) {
   const t = useT();
   const ids = useId();
   const [id, setId] = useState(initial?.id ?? "");
@@ -81,9 +98,9 @@ export function McpServerForm({ initial, onSaved, onCancel }: { initial?: { id: 
     }
     setSaving(true);
     setError(null);
-    // A new server is create-only, so it never replaces one with the same id.
-    saveMcpServer({ id: id.trim(), name: name.trim(), config, ...(initial ? {} : { create: true as const }) })
-      .then(onSaved)
+    // An add is create-only and an edit must-exist, so neither replaces nor revives another tab's change.
+    saveMcpServer({ id: id.trim(), name: name.trim(), config, create: !initial })
+      .then((record) => onSaved({ ...record, mcp: savedState(config, initial, previousSecrets) }))
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setSaving(false));
   };
@@ -156,18 +173,20 @@ export function McpServerForm({ initial, onSaved, onCancel }: { initial?: { id: 
 }
 
 /** One credential slot: whether it is set, and a write-only box. The stored value is never shown. */
-function SecretSlot({ id, name, configured, onChanged }: { id: string; name: string; configured: boolean; onChanged: () => void }) {
+type SecretAnswer = { id: string; name: string; configured: boolean; status: McpServerStatus };
+
+function SecretSlot({ id, name, configured, onChanged }: { id: string; name: string; configured: boolean; onChanged: (answer: SecretAnswer) => void }) {
   const t = useT();
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const run = (request: () => Promise<unknown>) => {
+  const run = (request: () => Promise<SecretAnswer>) => {
     setBusy(true);
     setError(null);
     request()
-      .then(() => {
+      .then((answer) => {
         setValue("");
-        onChanged();
+        onChanged(answer);
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
@@ -200,7 +219,28 @@ function SecretSlot({ id, name, configured, onChanged }: { id: string; name: str
 /** Start/stop, connection, what the server reports, credential slots and Edit for one MCP record. */
 export function McpServerControls({ extension, onChanged }: { extension: ExtensionRecord; onChanged: (saved?: ExtensionRecord) => void }) {
   const t = useT();
-  const state = extension.mcp;
+  // What the row shows: the list's state, updated at once by every answer and status check, so a
+  // change shows even if the list read that follows fails or another client made it.
+  const [live, setLive] = useState<McpRecordState | undefined>(extension.mcp);
+  useEffect(() => setLive(extension.mcp), [extension.mcp]);
+  const state = live;
+  const base = (): McpRecordState => ({ transport: extension.source === "mcp:http" ? "http" : "stdio", connection: "disconnected", server: null, tools: [], secrets: [], lastError: null });
+  const apply = (status: McpServerStatus | undefined) => {
+    if (!status || status.id !== extension.id) return;
+    setLive((current) => {
+      const prev = current ?? base();
+      const next = { ...prev, connection: status.connection, server: status.server, tools: status.tools, lastError: status.lastError };
+      return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
+    });
+  };
+  const applySecret = (answer: SecretAnswer) => {
+    setLive((current) => {
+      const prev = current ?? base();
+      return { ...prev, secrets: prev.secrets.map((slot) => (slot.name === answer.name ? { ...slot, configured: answer.configured } : slot)) };
+    });
+    apply(answer.status);
+    changed.current();
+  };
   const [busy, setBusy] = useState(false);
   // A start can take as long as the server's handshake; it never blocks Stop.
   const [starting, setStarting] = useState(false);
@@ -211,26 +251,29 @@ export function McpServerControls({ extension, onChanged }: { extension: Extensi
   const changed = useRef(onChanged);
   changed.current = onChanged;
 
-  // A server can exit or drop while nobody touches the page: check a running one now and then.
-  const shown = state?.connection ?? "disconnected";
+  // A server can exit, or be started from another tab or the CLI, while nobody touches this page:
+  // every row checks its status now and then, and any changed field shows.
+  const applyRef = useRef(apply);
+  applyRef.current = apply;
   useEffect(() => {
-    if (starting || !(shown === "connected" || shown === "connecting")) return;
+    if (starting) return;
     const timer = setInterval(() => {
       getMcpServerStatus(extension.id)
-        .then((status) => {
-          if (status.connection !== shown) changed.current();
-        })
+        .then((status) => applyRef.current(status))
         .catch(() => {});
     }, 5_000);
     return () => clearInterval(timer);
-  }, [extension.id, shown, starting]);
+  }, [extension.id, starting]);
 
   const start = () => {
     if (starting || busy) return;
     setStarting(true);
     setError(null);
     startMcpServer(extension.id)
-      .then(() => changed.current())
+      .then((status) => {
+        apply(status);
+        changed.current();
+      })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setStarting(false));
   };
@@ -240,7 +283,10 @@ export function McpServerControls({ extension, onChanged }: { extension: Extensi
     setBusy(true);
     setError(null);
     request()
-      .then(() => changed.current())
+      .then((answer) => {
+        if (answer && typeof answer === "object" && "connection" in answer) apply(answer as McpServerStatus);
+        changed.current();
+      })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
   };
@@ -259,6 +305,7 @@ export function McpServerControls({ extension, onChanged }: { extension: Extensi
     return (
       <McpServerForm
         initial={editing}
+        previousSecrets={state?.secrets ?? []}
         onSaved={(saved) => {
           setEditing(null);
           onChanged(saved);
@@ -303,7 +350,7 @@ export function McpServerControls({ extension, onChanged }: { extension: Extensi
           <p className="kmeta">{t("mcp.secret.note")}</p>
           <ul className="mcp-secrets">
             {state.secrets.map((slot) => (
-              <SecretSlot key={slot.name} id={extension.id} name={slot.name} configured={slot.configured} onChanged={() => changed.current()} />
+              <SecretSlot key={slot.name} id={extension.id} name={slot.name} configured={slot.configured} onChanged={applySecret} />
             ))}
           </ul>
         </>

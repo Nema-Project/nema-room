@@ -534,7 +534,7 @@ export async function getMcpConfig(daemon: DaemonRpc, id: string): Promise<Recor
 
 const MCP_RECORD_KEYS = ["id", "kind", "name", "summary", "source", "revision", "provision", "installState", "useState", "availability", "externalPath", "error"];
 
-export async function saveMcpConfig(daemon: DaemonRpc, request: { id: string; name: string; config: McpConfig; create?: true }): Promise<ExtensionRecord> {
+export async function saveMcpConfig(daemon: DaemonRpc, request: { id: string; name: string; config: McpConfig; create?: boolean }): Promise<ExtensionRecord> {
   const row = plainObject(await daemon.call("extensions.mcp.save", request));
   // The whole record, exactly: the page and the CLI show it as an extension row.
   const fits =
