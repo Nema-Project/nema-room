@@ -500,5 +500,16 @@
   "attach.reject.not_utf8": "{name} は追加されませんでした：UTF-8 のテキストではありません。",
   "attach.reject.empty": "{name} は追加されませんでした：ファイルが空です。",
   "attach.reject.too_many": "{name} は追加されませんでした：1 つのメッセージに添付できるのは {count} 個までです。",
-  "attach.reject.total_too_large": "{name} は追加されませんでした：1 つのメッセージの添付ファイルは合計 {total} までです。"
+  "attach.reject.total_too_large": "{name} は追加されませんでした：1 つのメッセージの添付ファイルは合計 {total} までです。",
+  "attach.download": "ダウンロード",
+  "attach.downloadName": "{name} をダウンロード",
+  "attach.loadFailed": "読み込めませんでした：{message}",
+  "attach.delete": "削除",
+  "attach.deleteName": "{name} を削除",
+  "attach.deleteNote": "{name} を削除しますか？内容は Nema から削除され、名前・種類・サイズ・sha256 だけが残ります。すでに agent やモデルに送った内容は取り消せません。",
+  "attach.deleteConfirm": "添付ファイルを削除",
+  "attach.deleteCancel": "キャンセル",
+  "attach.deleteFailed": "削除できませんでした：{message}",
+  "attach.deleted": "添付ファイルは削除されました",
+  "attach.missing": "添付ファイルが見つかりません"
 }

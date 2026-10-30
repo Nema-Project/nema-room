@@ -500,5 +500,16 @@
   "attach.reject.not_utf8": "{name} was not added: it is not UTF-8 text.",
   "attach.reject.empty": "{name} was not added: the file is empty.",
   "attach.reject.too_many": "{name} was not added: a message can carry at most {count} attachments.",
-  "attach.reject.total_too_large": "{name} was not added: a message's attachments can total at most {total}."
+  "attach.reject.total_too_large": "{name} was not added: a message's attachments can total at most {total}.",
+  "attach.download": "Download",
+  "attach.downloadName": "Download {name}",
+  "attach.loadFailed": "Could not load: {message}",
+  "attach.delete": "Delete",
+  "attach.deleteName": "Delete {name}",
+  "attach.deleteNote": "Delete {name}? Its content is removed from Nema; the name, type, size and sha256 stay. What was already sent to an agent or model cannot be taken back.",
+  "attach.deleteConfirm": "Delete attachment",
+  "attach.deleteCancel": "Cancel",
+  "attach.deleteFailed": "Could not delete: {message}",
+  "attach.deleted": "Attachment deleted",
+  "attach.missing": "Attachment file is missing"
 }

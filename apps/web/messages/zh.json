@@ -500,5 +500,16 @@
   "attach.reject.not_utf8": "没有添加 {name}：它不是 UTF-8 文本。",
   "attach.reject.empty": "没有添加 {name}：文件是空的。",
   "attach.reject.too_many": "没有添加 {name}：一条消息最多 {count} 个附件。",
-  "attach.reject.total_too_large": "没有添加 {name}：一条消息的附件合计最多 {total}。"
+  "attach.reject.total_too_large": "没有添加 {name}：一条消息的附件合计最多 {total}。",
+  "attach.download": "下载",
+  "attach.downloadName": "下载 {name}",
+  "attach.loadFailed": "无法载入：{message}",
+  "attach.delete": "删除",
+  "attach.deleteName": "删除 {name}",
+  "attach.deleteNote": "删除 {name}？文件内容会从 Nema 删除，只留下名字、类型、大小和 sha256。已经发给 agent 或模型的内容无法撤回。",
+  "attach.deleteConfirm": "删除附件",
+  "attach.deleteCancel": "取消",
+  "attach.deleteFailed": "删除失败：{message}",
+  "attach.deleted": "附件已删除",
+  "attach.missing": "附件文件已丢失"
 }

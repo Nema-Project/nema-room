@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AttachmentList } from "@/components/AttachmentList";
 import { Markdown } from "@/components/Markdown";
 import { SkillOfferCard } from "@/components/SkillOfferCard";
 import { editMessage, getEntry, HubError, listEntries, listMessageVersions, withdrawEntry } from "@/lib/hub";
@@ -208,6 +209,7 @@ function UserMessage({
   const [versions, setVersions] = useState<{ version: number; content: string; createdAt: string }[] | null>(null);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const quote = quoteOf(message);
+  const attachments = message.attachments ?? [];
 
   useEffect(() => {
     // Keep a cancelled edit draft aligned with a newer message object.
@@ -254,11 +256,17 @@ function UserMessage({
             </div>
             {editError && <p className="error" role="alert">{editError}</p>}
           </div>
-        ) : (
+        ) : message.content.trim() !== "" || attachments.length === 0 ? (
           <div className="memo">
             <Markdown source={message.content} />
           </div>
-        )}
+        ) : null}
+        <AttachmentList
+          workspaceId={message.workspaceId}
+          attachments={attachments}
+          canDelete
+          onChange={(next) => onEdited?.({ ...message, attachments: next })}
+        />
         {versionsOpen && versions && (
           <div className="versions">
             <div>{t("chat.versions")}</div>
