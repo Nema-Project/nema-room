@@ -128,6 +128,28 @@ test("a failing gh command reports its exit code and stderr with token-like stri
   } finally { await gh.close(); }
 });
 
+test("status tells a missing gh apart from a check that could not finish", async () => {
+  const missing = new GithubGh({ bin: join(tmpdir(), "nema-no-such-gh", "gh") });
+  try { expect(await missing.status()).toEqual({ installed: false, loggedIn: false, detail: "GitHub CLI unavailable" }); }
+  finally { await missing.close(); }
+  const brokenVersion = new GithubGh({ bin: fakeGh(`process.exit(3);`) });
+  try { expect(await brokenVersion.status()).toMatchObject({ installed: false, loggedIn: false, inconclusive: true }); }
+  finally { await brokenVersion.close(); }
+  rmSync(dir!, { recursive: true, force: true }); dir = undefined;
+  const garbled = new GithubGh({ bin: fakeGh(`const a=process.argv.slice(2); process.stdout.write(a[0]==="--version" ? "gh version 2.60.0" : "not json");`) });
+  try { expect(await garbled.status()).toMatchObject({ installed: true, loggedIn: false, inconclusive: true }); }
+  finally { await garbled.close(); }
+  rmSync(dir!, { recursive: true, force: true }); dir = undefined;
+  // gh exits 1 when nobody is signed in: that is an answer, not a failed check.
+  const signedOut = new GithubGh({ bin: fakeGh(`const a=process.argv.slice(2); if(a[0]==="--version") process.stdout.write("gh version 2.60.0"); else { process.stderr.write("You are not logged into any GitHub hosts. To log in, run: gh auth login\\n"); process.exit(1); }`) });
+  try {
+    const status = await signedOut.status();
+    expect(status).toMatchObject({ installed: true, loggedIn: false });
+    expect(status.inconclusive).toBeUndefined();
+  }
+  finally { await signedOut.close(); }
+});
+
 const HEAD40 = "0123456789abcdef0123456789abcdef01234567";
 
 test("reads one page of check runs and marks a short page truncated", async () => {
@@ -224,4 +246,18 @@ test("a response over the observation limit is an invalid response, not a cut-of
   try {
     await expect(gh.observePullRequest({ owner: "a", repo: "b", pr: 7, perPage: 100 })).rejects.toThrow(/^GitHub returned invalid/);
   } finally { await gh.close(); }
+});
+
+test("status treats a failing auth query it cannot read as inconclusive, and reads JSON it got even on a non-zero exit", async () => {
+  const oldGh = new GithubGh({ bin: fakeGh(`const a=process.argv.slice(2); if(a[0]==="--version") process.stdout.write("gh version 2.20.0"); else { process.stderr.write("unknown flag: --json\\n"); process.exit(1); }`) });
+  try { expect(await oldGh.status()).toMatchObject({ installed: true, loggedIn: false, inconclusive: true }); }
+  finally { await oldGh.close(); }
+  rmSync(dir!, { recursive: true, force: true }); dir = undefined;
+  const failedToken = new GithubGh({ bin: fakeGh(`const a=process.argv.slice(2); if(a[0]==="--version") process.stdout.write("gh version 2.70.0"); else { process.stdout.write(JSON.stringify({hosts:{"github.com":[{active:true,state:"failed"}]}})); process.exit(1); }`) });
+  try {
+    const status = await failedToken.status();
+    expect(status).toMatchObject({ installed: true, loggedIn: false });
+    expect(status.inconclusive).toBeUndefined();
+  }
+  finally { await failedToken.close(); }
 });

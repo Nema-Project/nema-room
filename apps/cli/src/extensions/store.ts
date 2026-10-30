@@ -1,6 +1,6 @@
 import { closeSync, cpSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeSync } from "node:fs";
 import path from "node:path";
-import { bundledExtensions, type ExtensionRecord } from "@nema/shared";
+import { bundledExtensions, isCheckTime, type ExtensionRecord } from "@nema/shared";
 
 export type { Availability, ExtensionKind, ExtensionRecord, InstallState, Provision, UseState } from "@nema/shared";
 export { bundledExtensions } from "@nema/shared";
@@ -89,6 +89,18 @@ export function ownedDirectory(root: string, id: string): string {
   return real;
 }
 
+const AVAILABILITY: ReadonlySet<string> = new Set(["ready", "missing-dependency", "incompatible", "damaged"]);
+
+/**
+ * The result of a Repair check on a bundled override row, or nothing when it was never checked or
+ * the stored values are not a valid result. Same rule as the hub's offline read of the index.
+ */
+function checked(row: ExtensionRecord): Partial<ExtensionRecord> {
+  if (!isCheckTime(row.checkedAt) || !AVAILABILITY.has(row.availability)) return {};
+  if (row.error !== null && typeof row.error !== "string") return {};
+  return { availability: row.availability, error: row.error, checkedAt: row.checkedAt };
+}
+
 export function openExtensionStore(root: string) {
   return {
     list(): ExtensionRecord[] {
@@ -97,7 +109,7 @@ export function openExtensionStore(root: string) {
       const overrides = new Map(rows.filter((row) => BUNDLED_IDS.has(row.id)).map((row) => [row.id, row]));
       const seeds = bundledExtensions().map((row) => {
         const override = overrides.get(row.id);
-        return override ? { ...row, useState: override.useState } : row;
+        return override ? { ...row, useState: override.useState, ...checked(override) } : row;
       });
       return [...seeds, ...rows.filter((row) => !BUNDLED_IDS.has(row.id))];
     },
@@ -165,16 +177,51 @@ export function openExtensionStore(root: string) {
     setUseState(id: string, useState: ExtensionRecord["useState"]): ExtensionRecord {
       if (useState !== "enabled" && useState !== "disabled") throw new Error(`invalid use state: ${useState}`);
       if (BUNDLED_IDS.has(id)) {
-        const rows = readExtra(root).filter((row) => row.id !== id);
+        const stored = readExtra(root);
+        const previous = stored.find((row) => row.id === id);
         const seed = bundledExtensions().find((row) => row.id === id)!;
-        rows.push({ ...seed, useState });
-        writeExtra(root, rows);
-        return { ...seed, useState };
+        // A stored Repair result outlives the switch; only the use state changes here.
+        const next = { ...seed, ...(previous ? checked(previous) : {}), useState };
+        writeExtra(root, [...stored.filter((row) => row.id !== id), next]);
+        return next;
       }
       const current = readExtra(root).find((row) => row.id === id);
       if (!current) throw new Error("extension is not installed here");
       const next = { ...current, useState };
       writeExtra(root, readExtra(root).map((row) => (row.id === id ? next : row)));
+      return next;
+    },
+    /**
+     * Point at a skill folder someone else keeps. The record names the folder's real path and nothing
+     * is copied. The id check and the write happen with no await between them, so two attaches of the
+     * same id cannot both land.
+     */
+    attachExternal(record: ExtensionRecord): ExtensionRecord {
+      assertId(record.id);
+      if (record.provision !== "external" || !record.externalPath || !path.isAbsolute(record.externalPath)) {
+        throw new Error("an attached extension needs an absolute external path");
+      }
+      const rows = readExtra(root);
+      if (rows.some((row) => row.provision === "external" && row.externalPath === record.externalPath)) {
+        throw new Error(`already attached: ${record.externalPath}`);
+      }
+      if (rows.some((row) => row.id === record.id)) throw new Error(`cannot attach ${record.externalPath}: id-taken`);
+      writeExtra(root, [...rows, record]);
+      return record;
+    },
+    /**
+     * Store what a Repair check found for a bundled item. The seed stays the shipped default; the
+     * override row carries the result and when it was taken, and keeps the use state as it was.
+     * The daemon runs one check per item at a time, so the last result written is the newest; times
+     * are not compared, because a clock that moved back would otherwise keep a stale result.
+     */
+    recordCheck(id: string, result: { availability: ExtensionRecord["availability"]; error: string | null; checkedAt: string }): ExtensionRecord {
+      if (!BUNDLED_IDS.has(id)) throw new Error("only a bundled extension can be repaired");
+      const stored = readExtra(root);
+      const previous = stored.find((row) => row.id === id);
+      const seed = bundledExtensions().find((row) => row.id === id)!;
+      const next: ExtensionRecord = { ...seed, useState: previous?.useState ?? seed.useState, ...result };
+      writeExtra(root, [...stored.filter((row) => row.id !== id), next]);
       return next;
     },
     /** End an install that did not finish: drop whatever reached the managed folder and keep the reason. */

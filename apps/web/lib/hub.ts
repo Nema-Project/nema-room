@@ -1,4 +1,4 @@
-import type { ExtensionRecord, SkillInstallJob, SkillSourcePreview } from "@nema/shared";
+import type { ExtensionRecord, SkillDiscovery, SkillInstallJob, SkillSourcePreview } from "@nema/shared";
 import type {
   EntryListItem,
   Entry,
@@ -136,6 +136,13 @@ const installUrl = (id: string) => `/extensions/${encodeURIComponent(id)}/instal
 export const getExtensionInstall = (id: string) => request<SkillInstallJob>(installUrl(id));
 export const cancelExtensionInstall = (id: string) => request<SkillInstallJob>(`${installUrl(id)}/cancel`, { method: "POST", body: {} });
 export const retryExtensionInstall = (id: string) => request<SkillInstallJob>(`${installUrl(id)}/retry`, { method: "POST", body: {} });
+/** Skill folders the daemon found in the known locations on its computer. Nothing is attached. */
+export const discoverExtensions = () => request<SkillDiscovery>("/extensions/discover");
+/** Attach a skill folder by reference: the record names its real path and nothing is copied. */
+export const attachExtension = (path: string) => request<ExtensionRecord>("/extensions/attach", { method: "POST", body: { path } });
+/** Check a bundled item again; the answer is the record with the stored result. */
+export const repairExtension = (id: string) =>
+  request<ExtensionRecord>(`/extensions/${encodeURIComponent(id)}/repair`, { method: "POST", body: {} });
 /** Opens the OS folder dialog in the host daemon. `path` is null when the dialog is cancelled. */
 export const pickDirectory = () => request<{ path: string | null }>("/pick-directory", { method: "POST", body: {} });
 export const listRepos = (id: string) => request<Repo[]>(`${w(id)}/repos`);

@@ -6,7 +6,7 @@ import { resetAppReleaseForTests } from "@/components/AppRelease";
 import { I18nProvider } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
 
-vi.mock("@/lib/hub", () => ({ listExtensions: vi.fn(async () => []) }));
+vi.mock("@/lib/hub", () => ({ listExtensions: vi.fn(async () => []), discoverExtensions: vi.fn(async () => ({ locations: [], skills: [], truncated: false })) }));
 
 const offer = { version: "0.2.0", url: "https://github.com/Nema-Project/nema-room/releases/tag/v0.2.0" };
 

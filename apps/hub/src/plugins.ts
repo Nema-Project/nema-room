@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DEFAULT_GRILL_SETTINGS, GRILL_EXTRA_RULES_MAX, PLUGINS, bundledExtensions, pluginFunction, type ExtensionRecord, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
+import { DEFAULT_GRILL_SETTINGS, GRILL_EXTRA_RULES_MAX, PLUGINS, bundledExtensions, isCheckTime, pluginFunction, type ExtensionRecord, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import { githubTargets } from "./githubScope.js";
@@ -72,6 +72,20 @@ export async function grillState(db: Db, workspaceId: string): Promise<GrillStat
 /** `daemon 未连接` / `daemon 已断开` / `daemon 响应超时` are 503. Any other daemon error is 502. */
 export function daemonHttpStatus(message: string): 502 | 503 {
   return DAEMON_OFFLINE.has(message) ? 503 : 502;
+}
+
+/**
+ * The daemon refuses an attach with a message the page parses; those are the request's fault and
+ * get a 4xx (409 for a clash with an existing record, 422 for a folder that cannot be a skill).
+ * Anything else is a gateway or connection problem as before.
+ */
+export function attachHttpStatus(message: string): 400 | 409 | 422 | 502 | 503 {
+  if (message.startsWith("already attached: ")) return 409;
+  const problem = /^cannot attach .*: ([a-z-]+)$/s.exec(message)?.[1];
+  if (problem === "id-taken") return 409;
+  if (problem) return 422;
+  if (message === "extensions.attach needs an absolute folder path") return 400;
+  return daemonHttpStatus(message);
 }
 
 function stringArray(value: unknown): string[] {
@@ -240,6 +254,8 @@ export function pluginsForUi(status: unknown): Array<PluginManifest & InstallSta
  * every extension they turned off looks enabled again. A missing or damaged index means the seeds;
  * a read here never throws, because it runs on a page that is already reporting a disconnected daemon.
  */
+const AVAILABILITY = new Set(["ready", "missing-dependency", "incompatible", "damaged"]);
+
 export function extensionIndexFromDisk(nemaHome: string | undefined): ExtensionRecord[] {
   const seeds = bundledExtensions();
   if (!nemaHome) return seeds;
@@ -259,7 +275,15 @@ export function extensionIndexFromDisk(nemaHome: string | undefined): ExtensionR
     const override = stored.get(seed.id);
     stored.delete(seed.id);
     // A seed's choice is the only thing an override may change; everything else is what shipped.
-    return override?.useState === "enabled" || override?.useState === "disabled" ? { ...seed, useState: override.useState } : seed;
+    const useState = override?.useState === "enabled" || override?.useState === "disabled" ? override.useState : seed.useState;
+    // A Repair result counts only with the time it was taken, the same rule the daemon applies.
+    // Same rule as the daemon's store: a string check time, a known availability, and an error that
+    // is a string or null; anything else leaves the seed's values.
+    const checked = override && isCheckTime(override.checkedAt) && AVAILABILITY.has(override.availability) &&
+      (override.error === null || typeof override.error === "string")
+      ? { availability: override.availability, error: override.error, checkedAt: override.checkedAt }
+      : {};
+    return { ...seed, useState, ...checked };
   });
   // Managed and external extensions exist only on disk, so the index is their only record.
   return [...merged, ...[...stored.values()]];
@@ -369,6 +393,79 @@ export async function cancelExtensionInstall(daemon: DaemonRpc, id: string): Pro
 /** Retry re-resolves the recorded commit before it answers, so it gets the same budget as a start. */
 export async function retryExtensionInstall(daemon: DaemonRpc, id: string): Promise<Record<string, unknown>> {
   return installJob(await daemon.call("extensions.retryInstall", { id }, RESOLVE_SOURCE_TIMEOUT_MS), "extensions.retryInstall", id);
+}
+
+function plainObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+const nullableString = (value: unknown) => value === null || typeof value === "string";
+
+/** Skill folders the daemon found in the known locations on its computer. Read-only. */
+export async function discoverExtensions(daemon: DaemonRpc): Promise<Record<string, unknown>> {
+  const row = plainObject(await daemon.call("extensions.discover", {}));
+  const valid =
+    row &&
+    Array.isArray(row.locations) &&
+    row.locations.every((item) => {
+      const location = plainObject(item);
+      return (
+        location &&
+        typeof location.label === "string" &&
+        typeof location.path === "string" &&
+        typeof location.found === "boolean" &&
+        (location.unreadable === undefined || typeof location.unreadable === "boolean")
+      );
+    }) &&
+    typeof row.truncated === "boolean" &&
+    Array.isArray(row.skills) &&
+    row.skills.every((item) => {
+      const skill = plainObject(item);
+      return (
+        skill &&
+        typeof skill.path === "string" &&
+        typeof skill.location === "string" &&
+        typeof skill.attached === "boolean" &&
+        nullableString(skill.id) &&
+        nullableString(skill.name) &&
+        nullableString(skill.description) &&
+        nullableString(skill.problem)
+      );
+    });
+  if (!valid) throw new DaemonRpcError("extensions.discover returned an invalid result");
+  return row;
+}
+
+/** Attach a skill folder by reference: the daemon answers with the external record it wrote. */
+export async function attachExtension(daemon: DaemonRpc, folder: string): Promise<Record<string, unknown>> {
+  const row = plainObject(await daemon.call("extensions.attach", { path: folder }));
+  if (!row || typeof row.id !== "string" || row.provision !== "external" || row.installState !== "installed" || typeof row.externalPath !== "string") {
+    throw new DaemonRpcError("extensions.attach returned an invalid result");
+  }
+  return row;
+}
+
+/**
+ * The daemon gives the packaged Graphify check up to 60 s and the GitHub CLI check two 10 s calls.
+ * A second Repair of the same item shares the running check, so no call waits for more than one.
+ */
+export const REPAIR_TIMEOUT_MS = 90_000;
+
+/** Check a bundled item again; the daemon answers with the record carrying the stored result. */
+export async function repairExtension(daemon: DaemonRpc, id: string): Promise<Record<string, unknown>> {
+  const row = plainObject(await daemon.call("extensions.repair", { id }, REPAIR_TIMEOUT_MS));
+  if (
+    !row ||
+    row.id !== id ||
+    row.provision !== "bundled" ||
+    typeof row.availability !== "string" ||
+    !AVAILABILITY.has(row.availability) ||
+    !nullableString(row.error) ||
+    typeof row.checkedAt !== "string"
+  ) {
+    throw new DaemonRpcError("extensions.repair returned an invalid result");
+  }
+  return row;
 }
 
 /** One row per call that passed the "function is enabled" check, success or failure. */
