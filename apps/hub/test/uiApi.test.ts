@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
+import { stagedRow, uploadPng } from "./attachmentFixtures.js";
 import type { Db } from "../src/db/db.js";
 import { createWorkspace } from "../src/workspaces.js";
 import { addMessage, addReportMessage, postUserMessage } from "../src/messages.js";
@@ -1258,5 +1259,57 @@ describe("diagram routes", () => {
     const down = await offline.request(`${HUB}/api/pick-directory`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     expect(down.status).toBe(503);
     expect(((await down.json()) as { error: string }).error).toBe("daemon 未连接");
+  });
+});
+
+describe("sending messages with attachments", () => {
+  test("the main, new-thread and thread-reply routes all accept attachmentIds", async () => {
+    const a = await uploadPng(db, dataDir, ws);
+    const main = await req("POST", `/api/workspaces/${ws}/messages`, { content: "", attachmentIds: [a.id] });
+    expect(main.status).toBe(200);
+    const mainBody = await json(main);
+    expect(mainBody.message.attachments.map((v: { id: string }) => v.id)).toEqual([a.id]);
+
+    const b = await uploadPng(db, dataDir, ws);
+    const thread = await req("POST", `/api/workspaces/${ws}/threads`, { content: "", attachmentIds: [b.id] });
+    expect(thread.status).toBe(200);
+    const threadBody = await json(thread);
+    expect(threadBody.message.attachments.map((v: { id: string }) => v.id)).toEqual([b.id]);
+    expect(threadBody.thread.title).toBe("新追问");
+
+    const c = await uploadPng(db, dataDir, ws);
+    const reply = await req("POST", `/api/workspaces/${ws}/threads/${threadBody.thread.id}/messages`, { content: "see", attachmentIds: [c.id] });
+    expect(reply.status).toBe(200);
+    expect((await json(reply)).message.attachments.map((v: { id: string }) => v.id)).toEqual([c.id]);
+  });
+
+  test("a retried send answers with the original message and task, once", async () => {
+    const a = await uploadPng(db, dataDir, ws);
+    const seen: string[] = [];
+    events.subscribe(ws, (e) => seen.push(e.type));
+    const first = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "x", attachmentIds: [a.id] }));
+    const again = await req("POST", `/api/workspaces/${ws}/messages`, { content: "x", attachmentIds: [a.id] });
+    expect(again.status).toBe(200);
+    const body = await json(again);
+    expect(body.message.id).toBe(first.message.id);
+    expect(body.task.id).toBe(first.task.id);
+    expect(seen.filter((t) => t === "message.created")).toHaveLength(1);
+    const changed = await req("POST", `/api/workspaces/${ws}/messages`, { content: "y", attachmentIds: [a.id] });
+    expect(changed.status).toBe(409);
+  });
+
+  test("empty text needs an attachment; more than 8 ids is a 400", async () => {
+    expect((await req("POST", `/api/workspaces/${ws}/messages`, { content: " " })).status).toBe(400);
+    expect((await req("POST", `/api/workspaces/${ws}/messages`, { content: "", attachmentIds: [] })).status).toBe(400);
+    const nine = Array.from({ length: 9 }, (_, i) => `att_${String(i).padStart(16, "0")}`);
+    expect((await req("POST", `/api/workspaces/${ws}/messages`, { content: "x", attachmentIds: nine })).status).toBe(400);
+  });
+
+  test("the delivery limit is a 400 that names it", async () => {
+    const MB = 1024 * 1024;
+    const ids = [await stagedRow(db, ws, "pdf", 20 * MB), await stagedRow(db, ws, "pdf", 13 * MB)];
+    const r = await req("POST", `/api/workspaces/${ws}/messages`, { content: "x", attachmentIds: ids });
+    expect(r.status).toBe(400);
+    expect((await json(r)).error).toContain("合计超过 32 MB");
   });
 });

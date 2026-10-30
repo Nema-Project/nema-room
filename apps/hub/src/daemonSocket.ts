@@ -2,12 +2,12 @@ import type http from "node:http";
 import { nanoid } from "nanoid";
 import { WebSocketServer, type WebSocket } from "ws";
 import { KnowledgeStore } from "@nema/knowledge";
-import { WORKPACKAGE_LIMITS, parseDaemonToHub, type AgentMessageMeta, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
+import { AttachmentRefSchema, WORKPACKAGE_LIMITS, parseDaemonToHub, type AgentMessageMeta, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
 import { createConnectionRpc, DaemonRpcError, type ConnectionRpc, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
 import { chooseAskedQuestion, timeline } from "./entryIndex.js";
-import { addMessage, getLastAskedQuestion, getMessage, listMessageVersions, listPromptMessages, listRecentMessages, messageExcerpt, type Message } from "./messages.js";
+import { addMessage, deliverySet, getLastAskedQuestion, getMessage, listMessageVersions, listPromptMessages, listRecentMessages, messageExcerpt, type Message } from "./messages.js";
 import { associateQuestion, conversationOf, ensureThread, getThread } from "./threads.js";
 import { announceInterrupted } from "./interrupts.js";
 import { enabledPluginTools, grillState } from "./plugins.js";
@@ -29,6 +29,8 @@ type Conn = {
   daemonId: string;
   assigned: { taskId: string; workspaceId: string; runToken: string } | null;
   rpc: ConnectionRpc;
+  /** hello.features; "attachments" means the daemon fetches task.assign.attachments. */
+  features: ReadonlySet<string>;
 };
 
 type TaskReplyRouting = {
@@ -40,6 +42,8 @@ type TaskReplyRouting = {
   replyThread: string | null;
   createThread: boolean;
 };
+
+export const NO_ATTACHMENT_SUPPORT_MESSAGE = "当前 daemon 不支持附件，请升级 CLI";
 
 export const OLD_CLI_MESSAGE = "nema CLI 版本过旧，请运行 npm run build -w apps/cli 并重启 nema daemon";
 
@@ -133,7 +137,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     for (const id of ids) await emitTask(id);
   }
 
-  async function buildTaskPrompt(task: Task): Promise<{ prompt: string; confidential: boolean }> {
+  async function buildTaskPrompt(task: Task): Promise<{ prompt: string; confidential: boolean; attachments: AttachmentRef[] }> {
     const workspace = await getWorkspace(db, task.workspaceId);
     if (!workspace) throw new Error("workspace not found");
     const userMessage = await getMessage(db, task.messageId);
@@ -177,6 +181,8 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     const quotedMessage = quoteId ? await getMessage(db, quoteId) : null;
     const conversationThread = conversationId ? await getThread(db, conversationId) : null;
     const conversationAnchor = conversationId ? await getMessage(db, conversationId) : null;
+    // Every ref is checked against AttachmentRefSchema here as well as when it was read.
+    const attachments = AttachmentRefSchema.array().parse(await deliverySet(db, task.id));
     const prompt = await buildPrompt({
       workspace,
       userMessage,
@@ -189,8 +195,9 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       ...(quotedMessage ? { quotedMessage } : {}),
       ...(edit ? { edit } : {}),
       ...(conversationThread && conversationAnchor ? { conversation: { thread: conversationThread, anchor: conversationAnchor, opened: conversationThread.openedBy } } : {}),
+      deliveredAttachmentIds: attachments.map((a) => a.id),
     });
-    return { prompt, confidential: workspace.confidential };
+    return { prompt, confidential: workspace.confidential, attachments };
   }
 
   async function saveTaskFailure(taskId: string, error: string, expectedRunToken?: string): Promise<Message | null> {
@@ -213,10 +220,12 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         await requeueAndEmit(conn.daemonId);
         return;
       }
-      let built: { prompt: string; confidential: boolean };
+      let built: { prompt: string; confidential: boolean; attachments: AttachmentRef[] };
       let pluginTools: PluginToolSpec[] = [];
       try {
         built = await buildTaskPrompt(task);
+        // An older daemon would drop the field and answer from the text alone; fail the task instead.
+        if (built.attachments.length > 0 && !conn.features.has("attachments")) throw new Error(NO_ATTACHMENT_SUPPORT_MESSAGE);
         pluginTools = await enabledPluginTools(db, task.workspaceId);
       } catch (e) {
         const error = e instanceof Error ? e.message : String(e);
@@ -254,6 +263,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         hubUrl: deps.hubUrl,
         pluginTools,
         ...(task.kind === "workpackage" ? { limits: { ...WORKPACKAGE_LIMITS } } : {}),
+        ...(built.attachments.length > 0 ? { attachments: built.attachments } : {}),
       });
       await emitTask(task.id);
       return;
@@ -342,6 +352,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
           ws,
           daemonId: `d_${nanoid(10)}`,
           assigned: null,
+          features: new Set(m.features ?? []),
           rpc: createConnectionRpc((id, method, params) => send(ws, { type: "rpc.request", id, method, params })),
         };
         connections.add(conn);
