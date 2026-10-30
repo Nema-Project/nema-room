@@ -85,8 +85,7 @@ describe("daemon connection", () => {
     closers.push(() => d.close());
     const features = (await hello).features;
     expect(features).toEqual([...DAEMON_FEATURES]);
-    // Until the adapters deliver attachments, advertising them would let the hub send what gets dropped.
-    expect(features).not.toContain("attachments");
+    expect(features).toContain("attachments");
   });
 
   test("hello carries the real CLI version, not 0.0.0", async () => {

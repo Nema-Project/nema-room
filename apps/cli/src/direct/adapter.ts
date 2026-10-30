@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { TaskAssign, TaskEvent } from "@nema/shared";
-import { configErrorMessage, DEFAULT_BYOK_BASE_URL, loadConfig } from "../config.js";
+import { attachmentCapabilities, refusal } from "../attachments/capabilities.js";
+import { attachmentLabel, attachmentPreamble, textAttachmentBlock } from "../attachments/blocks.js";
+import { loadTaskAttachments, type LoadedAttachment } from "../attachments/fetch.js";
+import { configErrorMessage, DEFAULT_BYOK_BASE_URL, loadConfig, type NemaConfig } from "../config.js";
 import type { AgentAdapter, AgentResult } from "../daemon/runner.js";
 import { RoomClient } from "../room/client.js";
 import { AuthStore, ReloginRequiredError, UNUSABLE_FILE_MESSAGE, type Refresher } from "./authStore.js";
@@ -18,6 +21,7 @@ import {
   ModelQuotaError,
   SIWC_PROFILE,
   streamResponse,
+  type InputContentPart,
   type TokenSource,
   type TransportContext,
   type TransportProfile,
@@ -46,7 +50,25 @@ export type CodexDirectAdapterOptions = {
   refresher?: Refresher;
   /** Codex CLI home whose auth.json compat mode reads. Defaults to $CODEX_HOME or ~/.codex. */
   codexHome?: string;
+  /** Request body cap (defaults to MAX_DIRECT_REQUEST_BYTES); tests lower it. */
+  maxRequestBytes?: number;
 };
+
+/** The attachment parts of the first user message: preamble, then each attachment (native ones labeled). */
+function attachmentParts(attachments: readonly LoadedAttachment[]): InputContentPart[] {
+  if (attachments.length === 0) return [];
+  const parts: InputContentPart[] = [{ type: "input_text", text: attachmentPreamble() }];
+  for (const a of attachments) {
+    if (a.kind === "text") {
+      parts.push({ type: "input_text", text: textAttachmentBlock(a) });
+      continue;
+    }
+    const data = `data:${a.mime};base64,${a.bytes.toString("base64")}`;
+    parts.push({ type: "input_text", text: attachmentLabel(a) });
+    parts.push(a.kind === "image" ? { type: "input_image", image_url: data } : { type: "input_file", filename: a.name, file_data: data });
+  }
+  return parts;
+}
 
 class RunTimeoutError extends Error {
   constructor() {
@@ -80,12 +102,15 @@ export class CodexDirectAdapter implements AgentAdapter {
 
   async run(task: TaskAssign, onEvent: (e: TaskEvent) => void, ownerSignal?: AbortSignal): Promise<AgentResult> {
     if (ownerSignal?.aborted) return { ok: false, error: "Codex 直连运行已中止" };
-    let config;
+    let config: NemaConfig;
     try {
       config = loadConfig(this.opts.nemaHome);
     } catch (e) {
       return { ok: false, error: configErrorMessage(e) };
     }
+    // An attachment this login cannot take fails the task before any login check or request (D-2 A).
+    const refused = task.attachments?.length ? refusal(attachmentCapabilities({ ...config, adapter: "codex-direct" }), task.attachments) : null;
+    if (refused) return { ok: false, error: refused };
     let source: TokenSource;
     let profile: TransportProfile;
     let configuredModel: string | undefined;
@@ -154,7 +179,12 @@ export class CodexDirectAdapter implements AgentAdapter {
     } catch (e) {
       throw new Error(configErrorMessage(e), { cause: e });
     }
-    const ctx: TransportContext = { auth: source, profile, version: this.opts.version, signal };
+    const loaded = await loadTaskAttachments(task, attachmentCapabilities({ ...config, adapter: "codex-direct" }), signal);
+    if (!loaded.ok) throw new Error(loaded.error);
+    const ctx: TransportContext = {
+      auth: source, profile, version: this.opts.version, signal,
+      ...(this.opts.maxRequestBytes !== undefined ? { maxRequestBytes: this.opts.maxRequestBytes } : {}),
+    };
     const model = configuredModel ?? config.model ?? (await this.defaultModel(ctx));
     const room = new RoomClient(task.hubUrl, task.runToken, signal);
     const sessionId = randomUUID();
@@ -164,6 +194,7 @@ export class CodexDirectAdapter implements AgentAdapter {
     const { reply } = await runToolLoop({
       instructions: task.prompt,
       userText: DIRECT_USER_TEXT,
+      userParts: attachmentParts(loaded.attachments),
       room,
       pluginTools: task.pluginTools,
       signal,

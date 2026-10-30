@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { PluginToolSpec } from "@nema/shared";
 import type { RoomClient } from "../room/client.js";
 import { dispatchTool, type RoomApi } from "./tools.js";
-import type { CollectedResponse, InputItem, OutputItem, OutputTextPart, SummaryTextPart } from "./transport.js";
+import type { CollectedResponse, InputContentPart, InputItem, OutputItem, OutputTextPart, SummaryTextPart } from "./transport.js";
 import { isFunctionCall, isMessage } from "./transport.js";
 
 // The codex-direct tool loop (spec 6.7 item 4). Stateless: every model call re-sends the whole history
@@ -18,6 +18,8 @@ export type ToolLoopOptions = {
   /** Sent as the request `instructions` by `call`; kept here so callers pass the hub prompt in one place. */
   instructions: string;
   userText: string;
+  /** Extra parts after `userText` in the first user message (attachments); re-sent with the history on every call. */
+  userParts?: InputContentPart[];
   call: (input: InputItem[]) => Promise<CollectedResponse>;
   room: RoomClient | RoomApi;
   /** Plugin functions from `task.assign`. Routed through `dispatchTool`, so they count toward the tool limit. */
@@ -29,7 +31,7 @@ export type ToolLoopOptions = {
   signal?: AbortSignal;
 };
 
-const userMessage = (text: string): InputItem => ({ type: "message", role: "user", content: [{ type: "input_text", text }] });
+const userMessage = (text: string, parts: InputContentPart[] = []): InputItem => ({ type: "message", role: "user", content: [{ type: "input_text", text }, ...parts] });
 
 const sha32 = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 32);
 
@@ -61,7 +63,7 @@ const textParts = (m: { content?: unknown }): OutputTextPart[] =>
  */
 export async function runToolLoop(opts: ToolLoopOptions): Promise<{ reply: string }> {
   const limits = opts.limits ?? DEFAULT_LIMITS;
-  const history: InputItem[] = [userMessage(opts.userText)];
+  const history: InputItem[] = [userMessage(opts.userText, opts.userParts)];
   const ids = new CallIds();
   let modelCalls = 0;
   let toolCalls = 0;

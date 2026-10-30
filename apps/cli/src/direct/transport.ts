@@ -30,12 +30,17 @@ import { SIWC } from "./siwc.js";
 // ---- request / response types ----------------------------------------------------------------------------
 
 export type InputTextPart = { type: "input_text"; text: string };
+/** User-message parts for attachments: an image as a data URL, a PDF as inline file data. */
+export type InputImagePart = { type: "input_image"; image_url: string };
+export type InputFilePart = { type: "input_file"; filename: string; file_data: string };
+export type InputContentPart = InputTextPart | InputImagePart | InputFilePart;
 export type OutputTextPart = { type: "output_text"; text: string; annotations?: unknown[] };
 export type SummaryTextPart = { type: "summary_text"; text: string };
 
 /** Typed content parts only: the backend rejects string `content`. */
 export type InputItem =
-  | { type: "message"; role: "user" | "developer" | "system"; content: InputTextPart[] }
+  | { type: "message"; role: "user"; content: InputContentPart[] }
+  | { type: "message"; role: "developer" | "system"; content: InputTextPart[] }
   | { type: "message"; role: "assistant"; content: OutputTextPart[]; id?: string; status?: "completed" }
   | { type: "function_call"; call_id: string; name: string; arguments: string; id?: string }
   | { type: "function_call_output"; call_id: string; output: string }
@@ -153,7 +158,16 @@ export type TransportContext = {
   signal: AbortSignal;
   /** Delay before the single network/5xx retry (default 1000 ms). */
   retryDelayMs?: number;
+  /** Largest serialized request body sent (default MAX_DIRECT_REQUEST_BYTES); tests lower it. */
+  maxRequestBytes?: number;
 };
+
+/**
+ * The largest request body codex-direct sends, under the Responses API's 50 MB per request. The tool loop
+ * re-sends the whole history (attachments included) on every call, so this is checked before each one.
+ */
+export const MAX_DIRECT_REQUEST_BYTES = 48 * 1024 * 1024;
+export const REQUEST_TOO_LARGE_MESSAGE = "这次任务的附件和对话合计超过模型一次请求的上限，请减少附件或不引用那条消息";
 
 // ---- errors ------------------------------------------------------------------------------------------------
 
@@ -498,6 +512,7 @@ function parseFrame(block: string): Record<string, unknown> | null {
  */
 export async function streamResponse(req: ResponsesRequest, ctx: TransportContext & { onTextDelta?: (t: string) => void }): Promise<CollectedResponse> {
   const body = JSON.stringify(requestBody(req));
+  if (Buffer.byteLength(body, "utf8") > (ctx.maxRequestBytes ?? MAX_DIRECT_REQUEST_BYTES)) throw new Error(REQUEST_TOO_LARGE_MESSAGE);
   const res = await send(ctx, `${ctx.profile.baseUrl}/responses`, (h) => ({
     method: "POST",
     headers: { ...h, "Content-Type": "application/json", Accept: "text/event-stream", session_id: req.sessionId },

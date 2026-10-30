@@ -1,11 +1,8 @@
 import type { AttachmentCapabilities, AttachmentKind, AttachmentRef, AttachmentSupport } from "@nema/shared";
 import { DEFAULT_BYOK_BASE_URL, type NemaConfig } from "../config.js";
 
-/**
- * Abilities this daemon advertises in `hello.features`. Empty until both adapters deliver attachments
- * (plan B4): advertising "attachments" earlier would let the hub send attachments the run then drops.
- */
-export const DAEMON_FEATURES: readonly string[] = [];
+/** Abilities this daemon advertises in `hello.features`: both adapters deliver attachments (plan B4). */
+export const DAEMON_FEATURES: readonly string[] = ["attachments"];
 
 type Table = Pick<AttachmentCapabilities, "image" | "pdf" | "text">;
 

@@ -3,7 +3,10 @@ import { rmSync } from "node:fs";
 import path from "node:path";
 import { commandSpec } from "../platform.js";
 import type { TaskAssign, TaskEvent } from "@nema/shared";
-import { configErrorMessage, loadConfig } from "../config.js";
+import { attachmentCapabilities } from "../attachments/capabilities.js";
+import { attachmentLabel, attachmentPreamble, textAttachmentBlock } from "../attachments/blocks.js";
+import { loadTaskAttachments, type LoadedAttachment } from "../attachments/fetch.js";
+import { configErrorMessage, loadConfig, type NemaConfig } from "../config.js";
 import type { AgentAdapter, AgentResult } from "../daemon/runner.js";
 import { parseClaudeLine, roomToolsOk } from "./events.js";
 import { claudeAllowedToolNames } from "../direct/tools.js";
@@ -39,11 +42,25 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-function userMessage(prompt: string): string {
-  return `${JSON.stringify({
-    type: "user",
-    message: { role: "user", content: [{ type: "text", text: prompt }] },
-  })}\n`;
+type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+  | { type: "document"; source: { type: "base64"; media_type: "application/pdf"; data: string } };
+
+function attachmentBlocks(a: LoadedAttachment): ContentBlock[] {
+  if (a.kind === "text") return [{ type: "text", text: textAttachmentBlock(a) }];
+  // A native block carries no name: a one-line JSON label ahead of it says which file it is.
+  const label: ContentBlock = { type: "text", text: attachmentLabel(a) };
+  const data = a.bytes.toString("base64");
+  if (a.kind === "image") return [label, { type: "image", source: { type: "base64", media_type: a.mime, data } }];
+  return [label, { type: "document", source: { type: "base64", media_type: "application/pdf", data } }];
+}
+
+/** The one stream-json user message: the prompt, then (with attachments) the preamble and every attachment. */
+function userMessage(prompt: string, attachments: readonly LoadedAttachment[] = []): string {
+  const content: ContentBlock[] = [{ type: "text", text: prompt }];
+  if (attachments.length > 0) content.push({ type: "text", text: attachmentPreamble() }, ...attachments.flatMap(attachmentBlocks));
+  return `${JSON.stringify({ type: "user", message: { role: "user", content } })}\n`;
 }
 
 export class ClaudeCodeAdapter implements AgentAdapter {
@@ -60,12 +77,18 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       return { ok: false, error: message(e) };
     }
 
-    let model: string | undefined;
+    let config: NemaConfig;
     try {
-      model = loadConfig(this.opts.nemaHome).model;
+      config = loadConfig(this.opts.nemaHome);
     } catch (e) {
       return { ok: false, error: configErrorMessage(e) };
     }
+    const model = config.model;
+
+    // Refused or unreadable attachments fail the task before anything is launched (D-2 A).
+    const loaded = await loadTaskAttachments(task, attachmentCapabilities({ ...config, adapter: "claude-code" }), signal);
+    if (!loaded.ok) return { ok: false, error: loaded.error };
+    if (signal?.aborted) return { ok: false, error: "Claude 运行已中止。" };
 
     let launch: ClaudeLaunch;
     try {
@@ -87,13 +110,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
 
     try {
-      return await this.execute(task, launch, onEvent, signal);
+      return await this.execute(task, launch, onEvent, signal, loaded.attachments);
     } finally {
       rmSync(launch.runDir, { recursive: true, force: true });
     }
   }
 
-  private async execute(task: TaskAssign, launch: ClaudeLaunch, onEvent: (e: TaskEvent) => void, signal?: AbortSignal): Promise<AgentResult> {
+  private async execute(task: TaskAssign, launch: ClaudeLaunch, onEvent: (e: TaskEvent) => void, signal: AbortSignal | undefined, attachments: readonly LoadedAttachment[]): Promise<AgentResult> {
     const bin = this.opts.claudeBin ?? "claude";
     const timeoutMs = task.limits?.timeoutMs ?? this.opts.timeoutMs ?? 600_000;
     const maxToolCalls = task.limits?.maxToolCalls ?? MAX_TOOL_CALLS;
@@ -242,7 +265,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       if (owned) void closedPromise.then(onClose);
       else (child as ChildProcess).once("close", onClose);
       try {
-        child.stdin?.end(userMessage(task.prompt));
+        child.stdin?.end(userMessage(task.prompt, attachments));
       } catch {
         // The child can exit before the prompt is written.
       }
