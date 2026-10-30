@@ -379,6 +379,64 @@ describe("workspace plugins", () => {
     expect(daemonCalls).toHaveLength(0);
   });
 
+  test("DELETE /api/extensions/:id forwards the removal and returns what happened", async () => {
+    daemonCall = async (method, params) => {
+      expect(method).toBe("extensions.remove");
+      expect(params).toEqual({ id: "skill" });
+      return { id: "skill", removed: "managed" };
+    };
+    const response = await uiReq("DELETE", "/api/extensions/skill");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ id: "skill", removed: "managed" });
+    expect(daemonCalls.at(-1)).toEqual({ method: "extensions.remove", params: { id: "skill" } });
+
+    daemonCall = async () => ({ id: "remote", removed: "external" });
+    const detached = await uiReq("DELETE", "/api/extensions/remote");
+    expect(detached.status).toBe(200);
+    expect(await detached.json()).toEqual({ id: "remote", removed: "external" });
+  });
+
+  test("DELETE /api/extensions/:id reports a daemon refusal as 503 and any other failure as 502", async () => {
+    daemonCall = async () => {
+      throw new DaemonRpcError("daemon 已断开");
+    };
+    const offline = await uiReq("DELETE", "/api/extensions/skill");
+    expect(offline.status).toBe(503);
+    expect(((await offline.json()) as { error: string }).error).toBe("daemon 已断开");
+
+    daemonCall = async () => {
+      throw new DaemonRpcError("bundled extensions cannot be removed");
+    };
+    const bundled = await uiReq("DELETE", "/api/extensions/code");
+    expect(bundled.status).toBe(502);
+    expect(((await bundled.json()) as { error: string }).error).toBe("bundled extensions cannot be removed");
+  });
+
+  test("DELETE /api/extensions/:id refuses a result that is not a removal", async () => {
+    daemonCall = async () => "ok";
+    const response = await uiReq("DELETE", "/api/extensions/skill");
+    expect(response.status).toBe(502);
+    expect(((await response.json()) as { error: string }).error).toBe("extensions.remove returned an invalid result");
+  });
+
+  test("DELETE /api/extensions/:id refuses a result with a wrong shape or a different id", async () => {
+    // A dropped or truncated reply must not read as a successful removal: the page would drop the row
+    // for an extension that is still on disk.
+    const replies: unknown[] = [
+      [],
+      {},
+      { id: "grill" },
+      { id: "grill", removed: "weird" },
+      { id: "other", removed: "managed" },
+    ];
+    for (const reply of replies) {
+      daemonCall = async () => reply;
+      const response = await uiReq("DELETE", "/api/extensions/grill");
+      expect(response.status, JSON.stringify(reply)).toBe(502);
+      expect(((await response.json()) as { error: string }).error).toBe("extensions.remove returned an invalid result");
+    }
+  });
+
   test("GET /api/extensions returns daemon records, and bundled seeds when the daemon is down", async () => {
     const custom = [{ id: "pending", installState: "installing", provision: "managed", error: null }];
     daemonCall = async (method) => (method === "extensions.list" ? custom : {});

@@ -122,6 +122,9 @@ export const listExtensions = () => request<ExtensionRecord[]>("/extensions");
 /** Flip one extension's use state. The daemon owns the record; the page only asks for the change. */
 export const setExtensionUse = (id: string, useState: "enabled" | "disabled") =>
   request<ExtensionRecord>(`/extensions/${encodeURIComponent(id)}`, { method: "PATCH", body: { useState } });
+/** Delete a managed extension, or take an external one off the list. `removed` says which happened. */
+export const removeExtension = (id: string) =>
+  request<{ id: string; removed: "managed" | "external" }>(`/extensions/${encodeURIComponent(id)}`, { method: "DELETE" });
 /** Opens the OS folder dialog in the host daemon. `path` is null when the dialog is cancelled. */
 export const pickDirectory = () => request<{ path: string | null }>("/pick-directory", { method: "POST", body: {} });
 export const listRepos = (id: string) => request<Repo[]>(`${w(id)}/repos`);

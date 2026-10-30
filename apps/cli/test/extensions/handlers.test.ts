@@ -1,12 +1,18 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { RpcRouter } from "../../src/daemon/rpc.js";
 import { registerExtensionHandlers } from "../../src/extensions/handlers.js";
+import { openExtensionStore } from "../../src/extensions/store.js";
 
 let dir: string | undefined;
-afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); dir = undefined; });
+let outside: string | undefined;
+afterEach(() => {
+  for (const path of [dir, outside]) if (path) rmSync(path, { recursive: true, force: true });
+  dir = undefined;
+  outside = undefined;
+});
 
 test("extensions.list returns the bundled seeds", async () => {
   dir = mkdtempSync(join(tmpdir(), "nema-ext-rpc-"));
@@ -44,4 +50,114 @@ test("extensions.setUse refuses malformed params without a write", async () => {
     expect(response.ok).toBe(false);
   }
   expect(existsSync(join(dir, "extensions", "index.json"))).toBe(false);
+});
+
+/** A record the store writes itself, so `extensions.remove` sees the same index the CLI would. */
+function seed(id: string, provision: "managed" | "external", externalPath: string | null = null): void {
+  const store = openExtensionStore(join(dir!, "extensions"));
+  store.putManaged({
+    id,
+    kind: "skill",
+    name: id,
+    summary: "A skill",
+    source: provision === "external" ? "https://example.com/skills" : "nema install",
+    revision: "abc123",
+    provision,
+    installState: "installed",
+    useState: "enabled",
+    availability: "ready",
+    externalPath,
+    error: null,
+  });
+}
+
+async function rpc(router: RpcRouter, id: string, method: string, params: unknown) {
+  return router.handle({ type: "rpc.request", id, method, params });
+}
+
+test("extensions.remove deletes a managed extension directory and its record", async () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-rpc-"));
+  const router = new RpcRouter();
+  registerExtensionHandlers(router, dir);
+  seed("skill", "managed");
+  writeFileSync(join(dir, "extensions", "extensions", "skill", "SKILL.md"), "# skill");
+
+  const response = await rpc(router, "1", "extensions.remove", { id: "skill" });
+  expect(response.ok).toBe(true);
+  if (!response.ok) return;
+  expect(response.result).toEqual({ id: "skill", removed: "managed" });
+  expect(existsSync(join(dir, "extensions", "extensions", "skill"))).toBe(false);
+  const listed = await rpc(router, "2", "extensions.list", {});
+  expect(listed.ok).toBe(true);
+  if (!listed.ok) return;
+  expect((listed.result as Array<{ id: string }>).some((row) => row.id === "skill")).toBe(false);
+});
+
+test("extensions.remove detaches an external extension and keeps its files", async () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-rpc-"));
+  outside = mkdtempSync(join(tmpdir(), "nema-ext-rpc-outside-"));
+  writeFileSync(join(outside, "SKILL.md"), "# outside");
+  const router = new RpcRouter();
+  registerExtensionHandlers(router, dir);
+  seed("remote", "external", outside);
+
+  const response = await rpc(router, "1", "extensions.remove", { id: "remote" });
+  expect(response.ok).toBe(true);
+  if (!response.ok) return;
+  expect(response.result).toEqual({ id: "remote", removed: "external" });
+  expect(readFileSync(join(outside, "SKILL.md"), "utf8")).toBe("# outside");
+  const listed = await rpc(router, "2", "extensions.list", {});
+  expect(listed.ok).toBe(true);
+  if (!listed.ok) return;
+  expect((listed.result as Array<{ id: string }>).some((row) => row.id === "remote")).toBe(false);
+});
+
+test("extensions.remove refuses a bundled extension and leaves the list alone", async () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-rpc-"));
+  const router = new RpcRouter();
+  registerExtensionHandlers(router, dir);
+  const before = await rpc(router, "1", "extensions.list", {});
+  expect(before.ok).toBe(true);
+
+  const response = await rpc(router, "2", "extensions.remove", { id: "code" });
+  expect(response.ok).toBe(false);
+  if (response.ok) return;
+  expect(response.error).toBe("bundled extensions cannot be removed");
+  const after = await rpc(router, "3", "extensions.list", {});
+  expect(after.ok).toBe(true);
+  if (!after.ok || !before.ok) return;
+  expect(after.result).toEqual(before.result);
+  expect(existsSync(join(dir, "extensions", "index.json"))).toBe(false);
+});
+
+test("extensions.remove refuses a missing id or a non-string id without a write", async () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-rpc-"));
+  const router = new RpcRouter();
+  registerExtensionHandlers(router, dir);
+  for (const params of [{}, { id: "" }, { id: 7 }, { id: null }, null]) {
+    const response = await rpc(router, "x", "extensions.remove", params);
+    expect(response.ok).toBe(false);
+    if (response.ok) return;
+    expect(response.error).toBe("extensions.remove needs a string id");
+  }
+  expect(existsSync(join(dir, "extensions", "index.json"))).toBe(false);
+});
+
+test("extensions.remove refuses an unknown id and leaves the store alone", async () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-rpc-"));
+  const router = new RpcRouter();
+  registerExtensionHandlers(router, dir);
+  seed("skill", "managed");
+  const before = await rpc(router, "1", "extensions.list", {});
+  expect(before.ok).toBe(true);
+
+  const response = await rpc(router, "2", "extensions.remove", { id: "nope" });
+  expect(response.ok).toBe(false);
+  if (response.ok) return;
+  expect(response.error).toBe("extension not found: nope");
+  const after = await rpc(router, "3", "extensions.list", {});
+  expect(after.ok).toBe(true);
+  if (!after.ok || !before.ok) return;
+  expect(after.result).toEqual(before.result);
+  expect(existsSync(join(dir, "extensions", "extensions", "skill"))).toBe(true);
 });

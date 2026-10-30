@@ -54,6 +54,22 @@ test("does not delete a managed id whose directory points outside extensions", (
   expect(store.list().some((row) => row.id === "linked")).toBe(true);
 });
 
+test("refuses a managed root that is itself a symbolic link", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const outside = mkdtempSync(join(tmpdir(), "nema-ext-root-"));
+  const store = openExtensionStore(dir);
+  store.putManaged(managed("linked"));
+  // A whole extensions/ root pointing elsewhere would make the outside directory the trusted root.
+  rmSync(join(dir, "extensions"), { recursive: true });
+  mkdirSync(join(outside, "linked"));
+  writeFileSync(join(outside, "linked", "keep.txt"), "keep");
+  symlinkSync(outside, join(dir, "extensions"), "junction");
+  expect(() => store.removeManaged("linked")).toThrow(/symbolic link/);
+  expect(readFileSync(join(outside, "linked", "keep.txt"), "utf8")).toBe("keep");
+  expect(store.list().some((row) => row.id === "linked")).toBe(true);
+  rmSync(outside, { recursive: true, force: true });
+});
+
 test("detaching an external item leaves its file in place", () => {
   dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
   const outside = mkdtempSync(join(tmpdir(), "nema-ext-external-"));
