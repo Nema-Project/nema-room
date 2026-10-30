@@ -111,6 +111,11 @@ export async function promote({ version, tag, commit, io, summary }) {
       if (pointer.version === version) already.push(npmName);
       await record(`npm ${version}: already published with the expected tarball; ${npmName} is ${pointer.version ?? 'absent'}`);
     } else if (npmBefore === 'absent') {
+      const pointers = await step('read npm dist-tags', () => io.readPointers());
+      const decision = pointerDecisions(pointers, version, prerelease)[npmName];
+      if (decision === 'unknown') throw new PromoteStop(`${npmName} cannot be read before publishing`);
+      // npm-publish sends an older stable to maintenance; an older prerelease has no such tag, so refuse it.
+      if (prerelease && decision === 'keep') throw new PromoteStop(`npm next is ${pointers.npm.next.version}, newer than ${version}; publishing would move next backwards`);
       await guardTag();
       const published = async () => (await io.npmState({ expectedIntegrity })) === 'same';
       const run = await write('npm publish run', async () => {
@@ -119,8 +124,15 @@ export async function promote({ version, tag, commit, io, summary }) {
         return dispatched;
       }, published);
       if (!(await step('npm state after publish', published))) throw new PromoteStop('npm publish run finished but the registry does not hold the expected tarball');
-      flipped.push(npmName);
-      await record(`npm ${version}: published${run ? ` by run ${run.id ?? run}` : ''}`);
+      const after = await step('read npm dist-tags after publish', () => io.readPointers());
+      const tagNow = prerelease ? after.npm.next : after.npm.latest;
+      const by = run ? ` by run ${run.id ?? run}` : '';
+      if (tagNow.state === 'version' && tagNow.version === version) {
+        flipped.push(npmName);
+        await record(`npm ${version}: published${by}; ${npmName} -> ${version}`);
+      } else {
+        await record(`npm ${version}: published${by} under maintenance; ${npmName} stays ${tagNow.version ?? tagNow.state}`);
+      }
     } else {
       throw new PromoteStop(`npm state is ${JSON.stringify(npmBefore)}`);
     }
@@ -137,11 +149,12 @@ export async function promote({ version, tag, commit, io, summary }) {
         if (!DIGEST.test(digest ?? '')) throw new PromoteStop(`final verify did not record a digest for ${target} ${version}`);
         const pointers = await step(`read ${name}`, () => io.readPointers());
         const pointer = pointers.ghcr[target];
-        if (pointer.state === 'version' && pointer.version === version) {
+        if (pointer.state === 'version' && pointer.version === version && pointer.digest === digest) {
           already.push(name);
-          await record(`${name}: already ${version}`);
+          await record(`${name}: already ${version} (${digest})`);
           continue;
         }
+        // Same label but another index is not this release: decide as for an equal version, which moves.
         const decision = pointerDecisions(pointers, version, false)[name];
         if (decision === 'unknown') throw new PromoteStop(`${name} cannot be read: ${pointer.detail ?? 'unknown'}`);
         if (decision === 'keep') {
@@ -151,7 +164,7 @@ export async function promote({ version, tag, commit, io, summary }) {
         await guardTag();
         await write(`move ${name}`, () => io.moveGhcrLatest({ target, version, digest }), async () => {
           const reread = (await io.readPointers()).ghcr[target];
-          return reread.state === 'version' && reread.version === version;
+          return reread.state === 'version' && reread.digest === digest;
         });
         flipped.push(name);
         await record(`${name}: ${pointer.version ?? 'absent'} -> ${version} (${digest})`);
@@ -263,15 +276,11 @@ export function realIo({ env = process.env, fetchImpl = globalThis.fetch, versio
       return (await npmPublishState({ version, expectedIntegrity, fetchImpl })).state;
     },
     async dispatchNpm({ expectedIntegrity }) {
-      const since = Date.now() - 5_000;
-      await run(gh, ['workflow', 'run', 'npm-publish.yml', '-R', REPOSITORY, '--ref', tag, '-f', `promote_run_id=${env.GITHUB_RUN_ID}`, '-f', `expected_integrity=${expectedIntegrity}`]);
-      for (let attempt = 0; attempt < 30; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 10_000));
-        const list = JSON.parse(await run(gh, ['run', 'list', '-R', REPOSITORY, '--workflow', 'npm-publish.yml', '--event', 'workflow_dispatch', '--commit', commit, '--json', 'databaseId,createdAt', '--limit', '20']));
-        const found = list.filter((item) => Date.parse(item.createdAt) >= since).sort((a, b) => b.databaseId - a.databaseId)[0];
-        if (found) return { id: found.databaseId };
-      }
-      throw new Error('the npm-publish dispatch did not create a run within 5 minutes');
+      // return_run_details (GitHub, 2026-02) answers with the created run's id: no guessing from a run list.
+      const answer = JSON.parse(await run(gh, ['api', '-X', 'POST', `repos/${REPOSITORY}/actions/workflows/npm-publish.yml/dispatches`,
+        '-f', `ref=${tag}`, '-f', `inputs[promote_run_id]=${env.GITHUB_RUN_ID}`, '-f', `inputs[expected_integrity]=${expectedIntegrity}`, '-F', 'return_run_details=true']) || '{}');
+      if (!Number.isInteger(answer.workflow_run_id)) throw new Error(`the npm-publish dispatch did not return a run id: ${JSON.stringify(answer)}`);
+      return { id: answer.workflow_run_id };
     },
     async waitNpm({ id }) {
       const deadline = Date.now() + 60 * 60_000;
@@ -301,9 +310,8 @@ export function realIo({ env = process.env, fetchImpl = globalThis.fetch, versio
       return { draft: view.isDraft };
     },
     async publishRelease({ prerelease, makeLatest }) {
-      const args = ['release', 'edit', tag, '-R', REPOSITORY, '--draft=false', `--latest=${makeLatest}`];
-      if (prerelease) args.push('--prerelease');
-      await run(gh, args);
+      // Set the prerelease flag from the tag both ways: a reused draft may carry a stale one.
+      await run(gh, ['release', 'edit', tag, '-R', REPOSITORY, '--draft=false', `--prerelease=${prerelease}`, `--latest=${makeLatest}`]);
     },
     verifyRemoteTag: ({ tag: name, commit: sha }) => verifyRemoteReleaseTag({ cwd: process.cwd(), ref: `refs/tags/${name}`, commit: sha }),
   };
