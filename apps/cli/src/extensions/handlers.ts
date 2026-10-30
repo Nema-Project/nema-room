@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { RpcRouter } from "../daemon/rpc.js";
 import { parseSkillSource } from "@nema/shared";
+import { SkillInstaller, type InstallJob } from "./install.js";
 import { resolveSkillSource, type SkillCandidate, type SkillResolution, type SourceFetch } from "./source.js";
 import { openExtensionStore } from "./store.js";
 
@@ -29,6 +30,10 @@ export type ExtensionHandlerOptions = { fetch?: SourceFetch };
 export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, options: ExtensionHandlerOptions = {}): void {
   const root = path.join(nemaHome, "extensions");
   const store = openExtensionStore(root);
+  const fetch = options.fetch ?? (globalThis.fetch as unknown as SourceFetch);
+  const installer = new SkillInstaller({ root, store, fetch });
+  // No install can be running before the router answers, so anything still `installing` was cut off.
+  installer.recover();
   router.register("extensions.list", async () => store.list());
   // Three operations, three sets of rules, and the page may only reach two of them.
   //
@@ -43,6 +48,7 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
     const id = requireId(params, "extensions.remove");
     const record = store.list().find((row) => row.id === id);
     if (!record) throw new Error(`extension not found: ${id}`);
+    if (installer.running(id)) throw new Error(`${id} is installing; cancel the install first`);
     if (record.provision === "bundled") throw new Error("bundled extensions cannot be removed");
     if (record.provision === "managed") {
       store.removeManaged(id);
@@ -57,7 +63,6 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
     const raw = (params as { source?: unknown } | undefined)?.source;
     if (typeof raw !== "string") throw new Error("extensions.resolveSource needs a string source");
     const source = parseSkillSource(raw);
-    const fetch = options.fetch ?? (globalThis.fetch as unknown as SourceFetch);
     let resolved: SkillResolution;
     try {
       resolved = await resolveSkillSource(source, { fetch, signal: AbortSignal.timeout(RESOLVE_TIMEOUT_MS) });
@@ -78,4 +83,17 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
       })),
     };
   });
+  // Install one previewed skill: the page sends back the source, the commit and the folder it showed,
+  // and the daemon installs exactly that. The call returns once the record is written; the download
+  // continues and `extensions.installStatus` reports it.
+  router.register("extensions.install", async (params): Promise<InstallJob> => {
+    const p = (params ?? {}) as { source?: unknown; commit?: unknown; path?: unknown };
+    if (typeof p.source !== "string" || typeof p.commit !== "string" || typeof p.path !== "string") {
+      throw new Error("extensions.install needs string source, commit and path");
+    }
+    return installer.start({ source: p.source, commit: p.commit, path: p.path });
+  });
+  router.register("extensions.installStatus", async (params) => installer.status(requireId(params, "extensions.installStatus")));
+  router.register("extensions.cancelInstall", async (params) => installer.cancel(requireId(params, "extensions.cancelInstall")));
+  router.register("extensions.retryInstall", async (params) => installer.retry(requireId(params, "extensions.retryInstall")));
 }

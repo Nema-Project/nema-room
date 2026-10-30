@@ -328,6 +328,46 @@ export async function resolveExtensionSource(daemon: DaemonRpc, source: string):
   return row;
 }
 
+const INSTALL_STATES = new Set(["running", "installed", "failed", "cancelled"]);
+
+/** An install job as the daemon reports it; anything else, or a job for another id, is not passed on. */
+function installJob(result: unknown, method: string, id?: string): Record<string, unknown> {
+  const row = result && typeof result === "object" && !Array.isArray(result) ? (result as Record<string, unknown>) : null;
+  if (
+    !row ||
+    typeof row.id !== "string" ||
+    (id !== undefined && row.id !== id) ||
+    typeof row.state !== "string" ||
+    !INSTALL_STATES.has(row.state) ||
+    typeof row.done !== "number" ||
+    typeof row.total !== "number"
+  ) {
+    throw new DaemonRpcError(`${method} returned an invalid result`);
+  }
+  return row;
+}
+
+/**
+ * Start installing one previewed skill. The daemon re-reads that exact commit and folder, writes the
+ * `installing` record and answers; the download carries on and is followed with `installStatus`.
+ */
+export async function installExtension(daemon: DaemonRpc, request: { source: string; commit: string; path: string }): Promise<Record<string, unknown>> {
+  return installJob(await daemon.call("extensions.install", request, RESOLVE_SOURCE_TIMEOUT_MS), "extensions.install");
+}
+
+export async function extensionInstallStatus(daemon: DaemonRpc, id: string): Promise<Record<string, unknown>> {
+  return installJob(await daemon.call("extensions.installStatus", { id }), "extensions.installStatus", id);
+}
+
+export async function cancelExtensionInstall(daemon: DaemonRpc, id: string): Promise<Record<string, unknown>> {
+  return installJob(await daemon.call("extensions.cancelInstall", { id }), "extensions.cancelInstall", id);
+}
+
+/** Retry re-resolves the recorded commit before it answers, so it gets the same budget as a start. */
+export async function retryExtensionInstall(daemon: DaemonRpc, id: string): Promise<Record<string, unknown>> {
+  return installJob(await daemon.call("extensions.retryInstall", { id }, RESOLVE_SOURCE_TIMEOUT_MS), "extensions.retryInstall", id);
+}
+
 /** One row per call that passed the "function is enabled" check, success or failure. */
 export async function recordPluginCall(
   db: Db,

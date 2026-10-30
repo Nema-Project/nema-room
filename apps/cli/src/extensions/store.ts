@@ -177,6 +177,18 @@ export function openExtensionStore(root: string) {
       writeExtra(root, readExtra(root).map((row) => (row.id === id ? next : row)));
       return next;
     },
+    /** End an install that did not finish: drop whatever reached the managed folder and keep the reason. */
+    failInstall(id: string, error: string): void {
+      assertId(id);
+      const current = readExtra(root).find((row) => row.id === id);
+      if (!current || current.provision !== "managed" || current.installState !== "installing") throw new Error("extension is not installing");
+      const target = ownedDirectory(root, id);
+      if (existsSync(target)) rmSync(target, { recursive: true, force: true });
+      writeExtra(
+        root,
+        readExtra(root).map((row) => (row.id === id ? { ...row, installState: "failed", error } : row)),
+      );
+    },
     cancelInstall(id: string): void {
       assertId(id);
       const current = readExtra(root).find((row) => row.id === id);

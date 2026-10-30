@@ -492,6 +492,66 @@ describe("workspace plugins", () => {
     }
   });
 
+  const job = { id: "pdf", state: "running", done: 0, total: 3, error: null, commit: COMMIT, path: "skills/pdf" };
+
+  test("POST /api/extensions/install forwards the previewed source, commit and folder", async () => {
+    daemonCall = async (method, params) => {
+      expect(method).toBe("extensions.install");
+      expect(params).toEqual({ source: "https://github.com/acme/skills", commit: COMMIT, path: "skills/pdf" });
+      return job;
+    };
+    const response = await uiReq("POST", "/api/extensions/install", { source: " https://github.com/acme/skills ", commit: COMMIT, path: "skills/pdf" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(job);
+    expect(lastTimeoutMs).toBe(60_000);
+  });
+
+  test("POST /api/extensions/install refuses an unpinned or malformed request as 400 without asking the daemon", async () => {
+    for (const body of [
+      {},
+      { source: "acme/skills", commit: "main", path: "skills/pdf" },
+      { source: "acme/skills", commit: COMMIT },
+      { source: "acme/skills", commit: COMMIT, path: "" },
+      { source: "https://gitlab.com/acme/skills", commit: COMMIT, path: "." },
+      { source: "acme/skills", commit: COMMIT, path: ".", force: true },
+    ]) {
+      const before = daemonCalls.length;
+      const response = await uiReq("POST", "/api/extensions/install", body);
+      expect(response.status, JSON.stringify(body)).toBe(400);
+      expect(daemonCalls.length).toBe(before);
+    }
+  });
+
+  test("install status, cancel and retry go to the daemon for that id and must come back as a job for it", async () => {
+    const routes: Array<[string, string, string]> = [
+      ["GET", "/api/extensions/pdf/install", "extensions.installStatus"],
+      ["POST", "/api/extensions/pdf/install/cancel", "extensions.cancelInstall"],
+      ["POST", "/api/extensions/pdf/install/retry", "extensions.retryInstall"],
+    ];
+    for (const [verb, url, method] of routes) {
+      daemonCall = async (called, params) => {
+        expect(called).toBe(method);
+        expect(params).toEqual({ id: "pdf" });
+        return job;
+      };
+      const ok = await uiReq(verb, url);
+      expect(ok.status, url).toBe(200);
+      expect(await ok.json()).toEqual(job);
+      for (const bad of [null, [], { ...job, id: "other" }, { ...job, state: "paused" }, { ...job, done: "1" }]) {
+        daemonCall = async () => bad;
+        const response = await uiReq(verb, url);
+        expect(response.status, `${url} ${JSON.stringify(bad)}`).toBe(502);
+        expect(((await response.json()) as { error: string }).error).toBe(`${method} returned an invalid result`);
+      }
+      daemonCall = async () => {
+        throw new DaemonRpcError("pdf is not installing");
+      };
+      const refused = await uiReq(verb, url);
+      expect(refused.status).toBe(502);
+      expect(((await refused.json()) as { error: string }).error).toBe("pdf is not installing");
+    }
+  });
+
   test("GET /api/extensions returns daemon records, and bundled seeds when the daemon is down", async () => {
     const custom = [{ id: "pending", installState: "installing", provision: "managed", error: null }];
     daemonCall = async (method) => (method === "extensions.list" ? custom : {});

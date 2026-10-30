@@ -174,7 +174,7 @@ test("extensions.resolveSource previews a GitHub source pinned to one commit, wi
   const fetch = async (url: string) => {
     if (!(url in replies)) throw new Error(`unexpected fetch: ${url}`);
     const body = replies[url];
-    return { ok: true, status: 200, headers: { get: () => null }, json: async () => body, text: async () => String(body) };
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => body, text: async () => String(body), arrayBuffer: async () => new TextEncoder().encode(String(body)).buffer as ArrayBuffer };
   };
   const router = new RpcRouter();
   registerExtensionHandlers(router, dir, { fetch });
@@ -229,7 +229,7 @@ test("extensions.resolveSource does not call a cancelled install installed", asy
   registerExtensionHandlers(router, dir, {
     fetch: async (url: string) => {
       const body = replies[url];
-      return { ok: true, status: 200, headers: { get: () => null }, json: async () => body, text: async () => String(body) };
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => body, text: async () => String(body), arrayBuffer: async () => new TextEncoder().encode(String(body)).buffer as ArrayBuffer };
     },
   });
   const response = await rpc(router, "r3", "extensions.resolveSource", { source: "acme/skills" });
@@ -237,4 +237,70 @@ test("extensions.resolveSource does not call a cancelled install installed", asy
   if (!response.ok) return;
   const skills = (response.result as { skills: Array<{ id: string; installed: boolean }> }).skills;
   expect(skills.map((skill) => [skill.id, skill.installed])).toEqual([["gone", false], ["here", true]]);
+});
+
+test("extensions.install runs end to end over RPC, and remove waits for a running install", async () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-rpc-"));
+  const { createHash } = await import("node:crypto");
+  const commit = "0123456789abcdef0123456789abcdef01234567";
+  const skill = Buffer.from("---\nname: notes\ndescription: Take notes\n---\n");
+  const extra = Buffer.from("helper\n");
+  const sha = (bytes: Buffer) => createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const replies: Record<string, Buffer> = {
+    "https://api.github.com/repos/acme/skills": Buffer.from(JSON.stringify({ full_name: "acme/skills", default_branch: "main", license: null })),
+    [`https://api.github.com/repos/acme/skills/commits/${commit}`]: Buffer.from(JSON.stringify({ sha: commit })),
+    [`https://api.github.com/repos/acme/skills/git/trees/${commit}?recursive=1`]: Buffer.from(JSON.stringify({
+      tree: [
+        { path: "notes/SKILL.md", type: "blob", mode: "100644", sha: sha(skill), size: skill.length },
+        { path: "notes/helper.txt", type: "blob", mode: "100644", sha: sha(extra), size: extra.length },
+      ],
+    })),
+    [`https://raw.githubusercontent.com/acme/skills/${commit}/notes/SKILL.md`]: skill,
+    [`https://raw.githubusercontent.com/acme/skills/${commit}/notes/helper.txt`]: extra,
+  };
+  const router = new RpcRouter();
+  registerExtensionHandlers(router, dir, {
+    fetch: async (url: string) => {
+      const body = replies[url];
+      if (!body) throw new Error(`unexpected fetch: ${url}`);
+      if (url.endsWith("helper.txt")) await gate;
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => JSON.parse(body.toString()), text: async () => body.toString(), arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.length) as ArrayBuffer };
+    },
+  });
+  const started = await rpc(router, "i1", "extensions.install", { source: "acme/skills", commit, path: "notes" });
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+  expect(started.result).toMatchObject({ id: "notes", state: "running" });
+  const refused = await rpc(router, "i2", "extensions.remove", { id: "notes" });
+  expect(refused.ok).toBe(false);
+  if (!refused.ok) expect(refused.error).toBe("notes is installing; cancel the install first");
+  release();
+  let status: { state: string } = { state: "running" };
+  for (let i = 0; i < 100 && status.state === "running"; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const polled = await rpc(router, "i3", "extensions.installStatus", { id: "notes" });
+    if (polled.ok) status = polled.result as { state: string };
+  }
+  expect(status).toMatchObject({ state: "installed", done: 2, total: 2 });
+  expect(readFileSync(join(dir, "extensions", "extensions", "notes", "helper.txt"), "utf8")).toBe("helper\n");
+  for (const method of ["extensions.install", "extensions.installStatus", "extensions.cancelInstall", "extensions.retryInstall"]) {
+    expect((await rpc(router, "bad", method, {})).ok, method).toBe(false);
+  }
+});
+
+test("a daemon start turns an install that was cut off into a failed one", async () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-rpc-"));
+  const commit = "0123456789abcdef0123456789abcdef01234567";
+  openExtensionStore(join(dir, "extensions")).putManaged({
+    id: "notes", kind: "skill", name: "notes", summary: "", source: `https://github.com/acme/skills/tree/${commit}/notes`, revision: commit,
+    provision: "managed", installState: "installing", useState: "enabled", availability: "ready", externalPath: null, error: null,
+    provenance: { repository: "https://github.com/acme/skills", commit, path: "notes", digest: "a".repeat(40), license: null },
+  });
+  const router = new RpcRouter();
+  registerExtensionHandlers(router, dir, { fetch: async () => { throw new Error("no network in tests"); } });
+  const status = await rpc(router, "s", "extensions.installStatus", { id: "notes" });
+  expect(status.ok).toBe(true);
+  if (status.ok) expect(status.result).toMatchObject({ state: "failed", error: "interrupted: the daemon stopped before the install finished", commit, path: "notes" });
 });
