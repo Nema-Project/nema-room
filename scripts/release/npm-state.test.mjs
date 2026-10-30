@@ -6,7 +6,11 @@ import { join } from 'node:path';
 import { main, npmPublishState, tarballIntegrity } from './npm-state.mjs';
 
 const EXPECTED = 'sha512-AAAA';
-const reply = (status, body) => async () => ({ status, json: async () => (typeof body === 'string' ? JSON.parse(body) : body) });
+const URL_0_1_7 = 'https://registry.npmjs.org/@nema-project/nema/0.1.7';
+const reply = (status, body) => async (url) => {
+  assert.equal(url, URL_0_1_7, 'asks for the exact package version');
+  return { status, json: async () => (typeof body === 'string' ? JSON.parse(body) : body) };
+};
 
 test('404 is absent, equal integrity is same, another integrity is different', async () => {
   assert.equal((await npmPublishState({ version: '0.1.7', expectedIntegrity: EXPECTED, fetchImpl: reply(404, {}) })).state, 'absent');

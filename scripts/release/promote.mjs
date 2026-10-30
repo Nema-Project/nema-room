@@ -24,10 +24,12 @@ const TARGETS = Object.freeze(['hub', 'web']);
 
 export class PromoteStop extends Error {}
 
-/** The three pointer groups a stable release flips, in order; a prerelease flips npm next and publishes a prerelease. */
+/** The pointers a stable release moves, in order; a prerelease moves npm next and publishes a prerelease. */
 function pointerNames(prerelease) {
-  return prerelease ? ['npm next', 'github release (prerelease)'] : ['npm latest', 'ghcr hub latest', 'ghcr web latest', 'github latest'];
+  return prerelease ? ['npm next', 'github release'] : ['npm latest', 'ghcr hub latest', 'ghcr web latest', 'github latest'];
 }
+
+const DIGEST = /^sha256:[a-f0-9]{64}$/;
 
 /**
  * @param {object} options
@@ -42,7 +44,9 @@ export async function promote({ version, tag, commit, io, summary }) {
   const { prerelease } = parseVersion(version);
   if (tag !== `v${version}`) throw new Error(`tag ${tag} does not name version ${version}`);
   if (!/^[a-f0-9]{40}$/.test(commit ?? '')) throw new Error('commit must be a full SHA');
+  // Pointers that serve this version now: moved by this run, or found there by a rerun.
   const flipped = [];
+  const already = [];
   const done = [];
   const record = async (line) => {
     done.push(line);
@@ -55,11 +59,29 @@ export async function promote({ version, tag, commit, io, summary }) {
       throw new PromoteStop(`${tag} no longer points at ${commit}: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
+  const message = (error) => (error instanceof Error ? error.message : String(error));
   const step = async (name, fn) => {
     try {
       return await fn();
     } catch (error) {
-      throw error instanceof PromoteStop ? error : new PromoteStop(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+      throw error instanceof PromoteStop ? error : new PromoteStop(`${name}: ${message(error)}`);
+    }
+  };
+  /** A write whose command failed may still have landed: read back before deciding it did not. */
+  const write = async (name, fn, landed) => {
+    try {
+      return await fn();
+    } catch (error) {
+      if (error instanceof PromoteStop) throw error;
+      let after = false;
+      try {
+        after = await landed();
+      } catch {
+        // the read-back failed too; report the write as failed
+      }
+      if (!after) throw new PromoteStop(`${name}: ${message(error)}`);
+      await summary(`- ${name}: the command reported "${message(error)}", but the read-back shows it landed`);
+      return undefined;
     }
   };
 
@@ -73,19 +95,32 @@ export async function promote({ version, tag, commit, io, summary }) {
     if (candidate.exitCode !== 0) throw new PromoteStop(`candidate preflight is ${candidate.overall}; see the report above`);
     await record('candidate preflight: complete');
 
-    // npm: absent -> dispatch and wait; same -> already done; different -> refuse.
+    // npm: absent -> dispatch and wait; same -> already published; different -> refuse.
+    const npmName = prerelease ? 'npm next' : 'npm latest';
     const npmBefore = await step('npm state', () => io.npmState({ expectedIntegrity }));
     if (npmBefore === 'different') throw new PromoteStop(`npm already holds a different ${version} tarball; refusing`);
     if (npmBefore === 'same') {
-      await record(`npm ${version}: already published with the expected tarball`);
+      // Published earlier. The dist-tag must agree: OIDC publishing cannot move a dist-tag on its own.
+      const pointers = await step('read npm dist-tags', () => io.readPointers());
+      const decision = pointerDecisions(pointers, version, prerelease)[npmName];
+      const pointer = prerelease ? pointers.npm.next : pointers.npm.latest;
+      if (decision === 'unknown') throw new PromoteStop(`${npmName} cannot be read: ${pointer.detail ?? 'unknown'}`);
+      if (decision === 'move' && pointer.version !== version) {
+        throw new PromoteStop(`npm has ${version} but ${npmName} is ${pointer.version ?? 'absent'}; promote cannot move a dist-tag (trusted publishing only publishes). A maintainer runs: npm dist-tag add @nema-project/nema@${version} ${prerelease ? 'next' : 'latest'}`);
+      }
+      if (pointer.version === version) already.push(npmName);
+      await record(`npm ${version}: already published with the expected tarball; ${npmName} is ${pointer.version ?? 'absent'}`);
     } else if (npmBefore === 'absent') {
       await guardTag();
-      const run = await step('npm dispatch', () => io.dispatchNpm({ tag, commit, expectedIntegrity }));
-      await step('npm publish run', () => io.waitNpm(run));
-      const npmAfter = await step('npm state after publish', () => io.npmState({ expectedIntegrity }));
-      if (npmAfter !== 'same') throw new PromoteStop(`npm publish run finished but the registry answer is ${npmAfter}`);
-      flipped.push(prerelease ? 'npm next' : 'npm latest (or maintenance when latest is newer)');
-      await record(`npm ${version}: published by run ${run.id ?? run}`);
+      const published = async () => (await io.npmState({ expectedIntegrity })) === 'same';
+      const run = await write('npm publish run', async () => {
+        const dispatched = await io.dispatchNpm({ tag, commit, expectedIntegrity });
+        await io.waitNpm(dispatched);
+        return dispatched;
+      }, published);
+      if (!(await step('npm state after publish', published))) throw new PromoteStop('npm publish run finished but the registry does not hold the expected tarball');
+      flipped.push(npmName);
+      await record(`npm ${version}: published${run ? ` by run ${run.id ?? run}` : ''}`);
     } else {
       throw new PromoteStop(`npm state is ${JSON.stringify(npmBefore)}`);
     }
@@ -97,9 +132,13 @@ export async function promote({ version, tag, commit, io, summary }) {
     if (!prerelease) {
       for (const target of TARGETS) {
         const name = `ghcr ${target} latest`;
+        // Bind latest to the exact index final verify read, not to whatever the version tag says later.
+        const digest = final.items?.images?.evidence?.[target]?.digest;
+        if (!DIGEST.test(digest ?? '')) throw new PromoteStop(`final verify did not record a digest for ${target} ${version}`);
         const pointers = await step(`read ${name}`, () => io.readPointers());
         const pointer = pointers.ghcr[target];
         if (pointer.state === 'version' && pointer.version === version) {
+          already.push(name);
           await record(`${name}: already ${version}`);
           continue;
         }
@@ -110,38 +149,57 @@ export async function promote({ version, tag, commit, io, summary }) {
           continue;
         }
         await guardTag();
-        await step(`move ${name}`, () => io.moveGhcrLatest({ target, version }));
+        await write(`move ${name}`, () => io.moveGhcrLatest({ target, version, digest }), async () => {
+          const reread = (await io.readPointers()).ghcr[target];
+          return reread.state === 'version' && reread.version === version;
+        });
         flipped.push(name);
-        await record(`${name}: ${pointer.version ?? 'absent'} -> ${version}`);
+        await record(`${name}: ${pointer.version ?? 'absent'} -> ${version} (${digest})`);
       }
     }
 
     const release = await step('read release', () => io.releaseState({ tag }));
-    if (!release.draft) {
-      await record(`GitHub Release ${tag}: already published`);
-    } else {
-      let makeLatest = false;
-      if (!prerelease) {
-        const pointers = await step('read github latest', () => io.readPointers());
+    let makeLatest = false;
+    if (!prerelease) {
+      const pointers = await step('read github latest', () => io.readPointers());
+      const pointer = pointers.github.latest;
+      if (pointer.state === 'version' && pointer.version === version) {
+        makeLatest = null; // already latest
+      } else {
         const decision = pointerDecisions(pointers, version, false)['github latest'];
-        if (decision === 'unknown') throw new PromoteStop(`GitHub latest release cannot be read: ${pointers.github.latest.detail ?? 'unknown'}`);
+        if (decision === 'unknown') throw new PromoteStop(`GitHub latest release cannot be read: ${pointer.detail ?? 'unknown'}`);
         makeLatest = decision === 'move';
       }
+    }
+    if (!release.draft && makeLatest !== true) {
+      if (makeLatest === null) already.push('github latest');
+      if (prerelease) already.push('github release');
+      await record(`GitHub Release ${tag}: already published${makeLatest === null ? ' and latest' : ''}`);
+    } else {
+      // A draft to publish, or a published stable Release that should be latest but is not (reconciled here).
       await guardTag();
-      await step('publish release', () => io.publishRelease({ tag, prerelease, makeLatest }));
-      flipped.push(prerelease ? 'github release (prerelease)' : makeLatest ? 'github latest' : 'github release (not latest)');
-      await record(`GitHub Release ${tag}: published${prerelease ? ' as prerelease' : ''}, latest=${makeLatest}`);
+      const latestFlag = makeLatest === true;
+      await write('publish release', () => io.publishRelease({ tag, prerelease, makeLatest: latestFlag }), async () => {
+        if ((await io.releaseState({ tag })).draft) return false;
+        if (!latestFlag) return true;
+        const reread = (await io.readPointers()).github.latest;
+        return reread.state === 'version' && reread.version === version;
+      });
+      flipped.push(prerelease ? 'github release' : latestFlag ? 'github latest' : 'github release (not latest)');
+      await record(`GitHub Release ${tag}: ${release.draft ? 'published' : 'already published, now marked latest'}${prerelease ? ' as prerelease' : ''}, latest=${latestFlag}`);
     }
     await summary(`\npromote ${tag}: done`);
-    return { ok: true, flipped, done };
+    return { ok: true, flipped, already, done };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    const notFlipped = pointerNames(prerelease).filter((name) => !flipped.some((item) => item.startsWith(name.split(' (')[0])));
+    const reason = message(error);
+    const live = [...flipped, ...already];
+    const notFlipped = pointerNames(prerelease).filter((name) => !live.includes(name));
     await summary(`\n**promote ${tag} stopped:** ${reason}`);
-    await summary(`- flipped: ${flipped.length ? flipped.join(', ') : 'none'}`);
+    await summary(`- flipped by this run: ${flipped.length ? flipped.join(', ') : 'none'}`);
+    if (already.length) await summary(`- already on ${version} before this run: ${already.join(', ')}`);
     await summary(`- not flipped: ${notFlipped.length ? notFlipped.join(', ') : 'none'}`);
-    if (flipped.length) await summary('- partial window: the flipped pointers already serve this version; rerun promote after fixing the cause to finish the rest');
-    return { ok: false, flipped, done, reason };
+    if (live.length && notFlipped.length) await summary('- partial window: some pointers already serve this version and others do not; rerun promote after fixing the cause to finish the rest');
+    return { ok: false, flipped, already, done, reason };
   }
 }
 
@@ -152,11 +210,23 @@ async function run(command, args, options = {}) {
   return stdout.trim();
 }
 
+/** The push run's build job and every verify job must have run; verify may skip a matrix leg, not all of it. */
+export function assertPushRunJobs(jobs, id) {
+  for (const prefix of ['Pack and smoke nema', 'verify / ']) {
+    const matched = jobs.filter((job) => typeof job?.name === 'string' && job.name.startsWith(prefix));
+    const passed = matched.length > 0 && matched.every((job) => ['success', 'skipped'].includes(job.conclusion)) && matched.some((job) => job.conclusion === 'success');
+    if (!passed) throw new Error(`npm-publish push run ${id}: ${prefix.trim()} did not run and pass (${matched.map((job) => `${job.name}=${job.conclusion}`).join(', ') || 'no such job'})`);
+  }
+}
+
 /** Finds the tag's npm-publish push run, checks it, downloads nema-tarball and hashes it. */
 async function pushRunIntegrity({ tag, commit, gh }) {
   const runs = JSON.parse(await run(gh, ['api', `repos/${REPOSITORY}/actions/workflows/npm-publish.yml/runs?event=push&head_sha=${commit}&per_page=20`]));
   const push = (runs.workflow_runs ?? []).filter((item) => item.head_branch === tag && item.conclusion === 'success').sort((a, b) => b.id - a.id)[0];
   if (!push) throw new Error(`no successful npm-publish push run for ${tag} at ${commit}`);
+  // A successful run is not enough: its verify and build jobs must have run and passed.
+  const jobs = JSON.parse(await run(gh, ['api', `repos/${REPOSITORY}/actions/runs/${push.id}/jobs?per_page=100`])).jobs ?? [];
+  assertPushRunJobs(jobs, push.id);
   const dir = await mkdtemp(path.join(tmpdir(), 'promote-npm-'));
   try {
     try {
@@ -217,11 +287,13 @@ export function realIo({ env = process.env, fetchImpl = globalThis.fetch, versio
       throw new Error(`npm-publish run ${id} did not finish within 60 minutes`);
     },
     readPointers: () => readPointers(readIo),
-    async moveGhcrLatest({ target, version: next }) {
+    async moveGhcrLatest({ target, version: next, digest }) {
       if (!crane) throw new Error('CRANE_BIN is not set');
       const image = `ghcr.io/${IMAGE_REPOSITORIES[target]}`;
-      await run(crane, ['digest', `${image}:${next}`]);
-      await run(crane, ['tag', `${image}:${next}`, 'latest']);
+      const current = await run(crane, ['digest', `${image}:${next}`]);
+      if (current !== digest) throw new PromoteStop(`${image}:${next} is now ${current}, not the verified ${digest}`);
+      // Tag the verified index by digest, so a version tag rewritten after verify cannot become latest.
+      await run(crane, ['tag', `${image}@${digest}`, 'latest']);
     },
     async releaseState() {
       const view = JSON.parse(await run(gh, ['release', 'view', tag, '-R', REPOSITORY, '--json', 'isDraft,tagName']));
