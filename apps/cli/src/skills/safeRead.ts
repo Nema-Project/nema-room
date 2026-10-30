@@ -6,7 +6,7 @@ import path from "node:path";
 // again after the file is open, so a swap between the check and the open is caught: the bytes come only
 // from a descriptor whose device and inode match what the walk saw, under parents that did not change.
 
-export type SafeReadFailure = "outside" | "link" | "not-file" | "too-large" | "changed" | "missing";
+export type SafeReadFailure = "outside" | "link" | "not-file" | "too-large" | "changed" | "missing" | "unreadable";
 export type SafeReadResult = { ok: true; bytes: Buffer } | { ok: false; reason: SafeReadFailure };
 
 /** A relative path inside a Skill, with `/` separators; `null` for anything that could point elsewhere. */
@@ -30,8 +30,10 @@ const same = (a: Seen, b: Stats) => a.dev === b.dev && a.ino === b.ino;
 async function lstatOrNull(p: string): Promise<Stats | null> {
   try {
     return await lstat(p);
-  } catch {
-    return null;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return null;
+    throw error;
   }
 }
 
@@ -42,6 +44,20 @@ const NOFOLLOW = process.platform !== "win32" && typeof constants.O_NOFOLLOW ===
  * trusts. `hooks.afterCheck` runs between the walk and the open; only tests use it.
  */
 export async function readInsideRoot(
+  root: string,
+  rel: string,
+  maxBytes: number,
+  hooks?: { afterCheck?: () => void | Promise<void> },
+): Promise<SafeReadResult> {
+  // Any other filesystem error (EACCES, EIO, …) fails this one read, not the caller.
+  try {
+    return await readChecked(root, rel, maxBytes, hooks);
+  } catch {
+    return { ok: false, reason: "unreadable" };
+  }
+}
+
+async function readChecked(
   root: string,
   rel: string,
   maxBytes: number,
@@ -115,7 +131,10 @@ export async function readInsideRoot(
 
 const SKIPPED = new Set([".git", "node_modules"]);
 
-/** Files under `root`, depth-first in name order, without following links; `.git` and `node_modules` are skipped. */
+/**
+ * Files under `root`, depth-first in name order, without following links; `.git` and `node_modules` are
+ * skipped. `truncated` is set when `maxItems` is reached or a folder lies deeper than `maxDepth`.
+ */
 export async function listResources(root: string, opts: { maxItems: number; maxDepth: number }): Promise<{ items: string[]; truncated: boolean }> {
   const items: string[] = [];
   let truncated = false;
@@ -132,7 +151,12 @@ export async function listResources(root: string, opts: { maxItems: number; maxD
       if (entry.isSymbolicLink()) continue;
       const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
       if (entry.isDirectory()) {
-        if (SKIPPED.has(entry.name) || depth >= opts.maxDepth) continue;
+        if (SKIPPED.has(entry.name)) continue;
+        // A folder past the depth limit is not listed, so the list is incomplete.
+        if (depth >= opts.maxDepth) {
+          truncated = true;
+          return;
+        }
         await walk(path.join(dir, entry.name), rel, depth + 1);
       } else if (entry.isFile()) {
         if (items.length >= opts.maxItems) {

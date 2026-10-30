@@ -105,7 +105,8 @@ export async function takeSnapshot(o: { nemaHome: string; claudeCodeOk: boolean;
   const skills: SnapshotSkill[] = [];
   const warnings: string[] = [];
   for (const row of rows) {
-    const inspected = await inspectRow(o.nemaHome, row, o.claudeCodeOk);
+    // One unreadable folder costs only its own Skill.
+    const inspected = await inspectRow(o.nemaHome, row, o.claudeCodeOk).catch((error: unknown) => `${row.id}: ${error instanceof Error ? error.message : String(error)}`);
     if (typeof inspected === "string") warnings.push(inspected);
     else skills.push(inspected);
   }

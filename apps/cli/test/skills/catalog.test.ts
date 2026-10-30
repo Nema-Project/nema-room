@@ -54,4 +54,10 @@ test("over the budget: descriptions shrink first, then the last Skills are left 
   expect(cut.text).toMatch(/<description>[xy]{200}…<\/description>/);
   expect(cut.text).toContain("<name>s00</name>");
   expect(cut.text).not.toContain("<name>s9</name>");
+  expect(cut.listed).toHaveLength(40 - cut.omitted);
+  expect(cut.listed[0]).toBe("s00");
+  const snap = await snapshot();
+  const { readSkillTool } = await import("../../src/skills/readSkill.js");
+  const tool = readSkillTool(snap, { listed: cut.listed })!;
+  expect((tool.parameters as { properties: { name: { enum: string[] } } }).properties.name.enum).toEqual(cut.listed);
 });

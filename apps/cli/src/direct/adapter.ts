@@ -190,7 +190,12 @@ export class CodexDirectAdapter implements AgentAdapter {
     const room = new RoomClient(task.hubUrl, task.runToken, signal);
     const sessionId = randomUUID();
     const now = this.opts.now ?? Date.now;
-    const skills = await prepareDirectSkills({ nemaHome: this.opts.nemaHome, prompt: task.prompt, onEvent });
+    const skills = await prepareDirectSkills({
+      nemaHome: this.opts.nemaHome,
+      prompt: task.prompt,
+      pluginToolNames: (task.pluginTools ?? []).map((tool) => tool.name),
+      onEvent,
+    });
     const instructions = skills.instructions;
     const tools = [...roomTools(task.pluginTools), ...skills.tools];
 

@@ -66,11 +66,12 @@ function render(skills: SnapshotSkill[], cap: number, omitted: number): string {
  * budget it degrades the way Codex does: descriptions are shortened first (never under 200 characters),
  * then the last Skills in id order are left out and counted.
  */
-export function codexCatalog(snapshot: SkillSnapshot): { text: string; omitted: number } | null {
+export function codexCatalog(snapshot: SkillSnapshot): { text: string; omitted: number; listed: string[] } | null {
   const skills = modelInvocable(snapshot);
   if (skills.length === 0) return null;
+  const ids = (kept: number) => skills.slice(0, kept).map((skill) => skill.id);
   const longest = Math.max(...skills.map((skill) => description(skill).length));
-  if (render(skills, longest, 0).length <= CATALOG_BUDGET) return { text: render(skills, longest, 0), omitted: 0 };
+  if (render(skills, longest, 0).length <= CATALOG_BUDGET) return { text: render(skills, longest, 0), omitted: 0, listed: ids(skills.length) };
   // The largest cap that fits, by bisection.
   let low = MIN_DESCRIPTION;
   let high = longest;
@@ -80,11 +81,11 @@ export function codexCatalog(snapshot: SkillSnapshot): { text: string; omitted: 
       if (render(skills, mid, 0).length <= CATALOG_BUDGET) low = mid;
       else high = mid - 1;
     }
-    return { text: render(skills, low, 0), omitted: 0 };
+    return { text: render(skills, low, 0), omitted: 0, listed: ids(skills.length) };
   }
   for (let kept = skills.length - 1; kept >= 1; kept--) {
     const text = render(skills.slice(0, kept), MIN_DESCRIPTION, skills.length - kept);
-    if (text.length <= CATALOG_BUDGET) return { text, omitted: skills.length - kept };
+    if (text.length <= CATALOG_BUDGET) return { text, omitted: skills.length - kept, listed: ids(kept) };
   }
-  return { text: render(skills.slice(0, 1), MIN_DESCRIPTION, skills.length - 1), omitted: skills.length - 1 };
+  return { text: render(skills.slice(0, 1), MIN_DESCRIPTION, skills.length - 1), omitted: skills.length - 1, listed: ids(1) };
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import { lstat, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -37,7 +38,7 @@ function validManifest(value: unknown): value is SkillManifest {
 /** Hashes every regular file under `root`, without following links. */
 export async function computeManifest(root: string): Promise<SkillManifest> {
   const { items, truncated } = await listResources(root, { maxItems: MAX_FILES, maxDepth: 16 });
-  if (truncated) throw new Error(`more than ${MAX_FILES} files`);
+  if (truncated) throw new Error(`more than ${MAX_FILES} files, or folders deeper than 16 levels`);
   const files: ManifestFile[] = [];
   let total = 0;
   for (const rel of items) {
@@ -61,7 +62,8 @@ export async function computeManifest(root: string): Promise<SkillManifest> {
 
 /** Writes a managed folder's manifest in one step; the folder belongs to Nema. */
 export async function saveManifest(root: string, manifest: SkillManifest): Promise<void> {
-  const temp = path.join(root, `${MANIFEST_FILE}.${process.pid}.${Date.now()}.tmp`);
+  // Random, so two snapshots saving the same folder at once never pick the same name.
+  const temp = path.join(root, `${MANIFEST_FILE}.${process.pid}.${randomUUID()}.tmp`);
   await writeFile(temp, JSON.stringify(manifest), { mode: 0o600, flag: "wx" });
   await rename(temp, path.join(root, MANIFEST_FILE));
 }

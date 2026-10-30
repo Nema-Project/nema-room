@@ -108,6 +108,25 @@ describe("listResources", () => {
     const all = await listResources(root, { maxItems: 200, maxDepth: 4 });
     expect(all.items).toContain("a/b/c/d/deep.md");
     expect(all.items).not.toContain("a/b/c/d/e/deeper.md");
-    expect(await listResources(root, { maxItems: 3, maxDepth: 4 })).toMatchObject({ truncated: true, items: { length: 3 } });
+    expect(all.truncated).toBe(true);
+    expect(await listResources(root, { maxItems: 200, maxDepth: 8 })).toMatchObject({ truncated: false });
+    expect(await listResources(root, { maxItems: 3, maxDepth: 8 })).toMatchObject({ truncated: true, items: { length: 3 } });
   });
+});
+
+test("a filesystem error fails only that read", async () => {
+  if (process.platform === "win32" || process.getuid?.() === 0) return;
+  const { chmodSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "nema-safe-eacces-")));
+  try {
+    mkdirSync(join(root, "locked"));
+    writeFileSync(join(root, "locked", "a.md"), "x");
+    chmodSync(join(root, "locked"), 0o000);
+    expect(await readInsideRoot(root, "locked/a.md", 1024)).toEqual({ ok: false, reason: "unreadable" });
+  } finally {
+    chmodSync(join(root, "locked"), 0o700);
+    rmSync(root, { recursive: true, force: true });
+  }
 });

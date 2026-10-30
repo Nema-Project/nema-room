@@ -4,7 +4,7 @@ import type { FunctionTool } from "../direct/transport.js";
 import { escapeSkillText, modelInvocable } from "./catalog.js";
 import { parseSkillFile } from "./frontmatter.js";
 import { normalizeSkillPath } from "./safeRead.js";
-import { MAX_SKILL_FILE_BYTES, readSnapshotFile, stillReadable, type RepoFileReader, type SkillSnapshot, type SnapshotReadFailure, type SnapshotSkill } from "./snapshot.js";
+import { MAX_SKILL_FILE_BYTES, readSnapshotFile, type RepoFileReader, type SkillSnapshot, type SnapshotReadFailure, type SnapshotSkill } from "./snapshot.js";
 
 // `read_skill`, the codex-direct activation tool (spec §2). It reads from this task's snapshot only and
 // re-checks every read, so a Skill switched off mid-task is refused from its next read on.
@@ -13,6 +13,14 @@ export const READ_SKILL = "read_skill";
 export const PAGE_BYTES = 48 * 1024;
 export const TASK_BYTES = 512 * 1024;
 const MAX_RESOURCES = 200;
+// With a full page this stays under the 64 KB tool-output cap, so the list and the next offset survive it.
+const RESOURCE_LIST_BYTES = 8 * 1024;
+
+// Skill text sits inside Nema's wrappers; a tag of the same name in it would end the wrapper early.
+const FRAMING = /<(\/?)(skill_content|skill_file|skill_resources)(?=[\s>\/]|$)/gi;
+export function neutralizeFraming(text: string): string {
+  return text.replace(FRAMING, "&lt;$1$2");
+}
 const MAX_RESOURCE_DEPTH = 4;
 
 const ALREADY = (id: string) => `Skill ${id} 的这一部分已经载入，见前文。`;
@@ -25,14 +33,17 @@ const FAILURES: Record<SnapshotReadFailure, string> = {
   link: "这个路径是链接，已拒绝。",
   "not-file": "这个路径不是文件。",
   "too-large": "文件超过 1 MiB，不能读取。",
+  unreadable: "无法读取这个文件。",
   missing: "该 Skill 里没有这个文件。",
 };
 
 const errorOutput = (error: string) => JSON.stringify({ error });
 
 /** The tool definition, or `null` when no Skill can be read (the tool is then not offered at all). */
-export function readSkillTool(snapshot: SkillSnapshot, extraIds: string[] = []): FunctionTool | null {
-  const ids = [...new Set([...modelInvocable(snapshot).map((skill) => skill.id), ...extraIds])];
+export function readSkillTool(snapshot: SkillSnapshot, o: { listed?: string[]; extraIds?: string[] } = {}): FunctionTool | null {
+  // Only what the catalog shows, so the schema stays within the catalog's budget.
+  const invocable = modelInvocable(snapshot).map((skill) => skill.id).filter((id) => !o.listed || o.listed.includes(id));
+  const ids = [...new Set([...invocable, ...(o.extraIds ?? [])])];
   if (ids.length === 0) return null;
   return {
     type: "function",
@@ -94,10 +105,17 @@ export class SkillReader {
       readRepoFile?: RepoFileReader;
       /** Ids readable besides the catalog's, such as a Skill the user called by hand. */
       extraIds?: string[];
+      /** The catalog's ids when it had to leave some out; the rest cannot be read. */
+      listed?: string[];
     },
   ) {
     const extra = new Set(o.extraIds ?? []);
-    this.allowed = new Map(o.snapshot.skills.filter((skill) => !skill.meta.disableModelInvocation || extra.has(skill.id)).map((skill) => [skill.id, skill]));
+    const listed = o.listed ? new Set(o.listed) : null;
+    this.allowed = new Map(
+      o.snapshot.skills
+        .filter((skill) => extra.has(skill.id) || (!skill.meta.disableModelInvocation && (!listed || listed.has(skill.id))))
+        .map((skill) => [skill.id, skill]),
+    );
   }
 
   /** The body's first page is already in the prompt (preloaded); reading it again returns a pointer instead. */
@@ -130,7 +148,9 @@ export class SkillReader {
     if (rel !== null) {
       const file = skill.manifest.files.find((f) => f.path === rel);
       if (file?.binary) {
-        if (!(await stillReadable(this.o.nemaHome, skill))) return errorOutput(FAILURES.gone);
+        // Checked against the manifest like any other read, so a changed file is not described from the snapshot.
+        const current = await readSnapshotFile(this.o.nemaHome, skill, rel, file.size, this.o.readRepoFile);
+        if (!current.ok) return errorOutput(FAILURES[current.reason]);
         this.seen.add(key);
         return `${file.path} 是二进制文件（${file.size} 字节，${path.extname(file.path) || "无扩展名"}），Nema 读不出它的内容。`;
       }
@@ -154,17 +174,27 @@ export class SkillReader {
     const name = escapeSkillText(skill.id);
     const parts: string[] = [];
     if (rel === null) {
-      parts.push(`<skill_content name="${name}" revision="${revision}">`, page.text, "</skill_content>");
+      parts.push(`<skill_content name="${name}" revision="${revision}">`, neutralizeFraming(page.text), "</skill_content>");
       if (args.offset === 0) {
         parts.push(`Skill 目录：skill://${skill.id}/，正文中的相对路径相对于该目录。`);
         const resources = skill.manifest.files
           .map((f) => f.path)
           .filter((p) => p !== "SKILL.md" && p.split("/").length - 1 <= MAX_RESOURCE_DEPTH)
           .slice(0, MAX_RESOURCES);
-        if (resources.length > 0) parts.push("<skill_resources>", ...resources.map((p) => `<file>${escapeSkillText(p)}</file>`), "</skill_resources>");
+        const lines: string[] = [];
+        let used = 0;
+        for (const p of resources) {
+          const line = `<file>${escapeSkillText(p)}</file>`;
+          if (used + Buffer.byteLength(line) + 1 > RESOURCE_LIST_BYTES) break;
+          used += Buffer.byteLength(line) + 1;
+          lines.push(line);
+        }
+        const notListed = skill.manifest.files.filter((f) => f.path !== "SKILL.md").length - lines.length;
+        if (lines.length > 0) parts.push("<skill_resources>", ...lines, "</skill_resources>");
+        if (notListed > 0) parts.push(`另有 ${notListed} 个文件未列出。`);
       }
     } else {
-      parts.push(`<skill_file name="${name}" path="${escapeSkillText(read.file.path)}" revision="${revision}">`, page.text, "</skill_file>");
+      parts.push(`<skill_file name="${name}" path="${escapeSkillText(read.file.path)}" revision="${revision}">`, neutralizeFraming(page.text), "</skill_file>");
     }
     if (page.next !== null) parts.push(`（未完：下一页用 offset=${page.next}）`);
 
