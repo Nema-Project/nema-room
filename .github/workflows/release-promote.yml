@@ -142,10 +142,31 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       # npm-publish.yml checks this step by name before it publishes; keep the name.
       - name: Candidate preflight
+        id: preflight
         shell: bash
         env:
           COMMIT: ${{ steps.tag.outputs.commit }}
         run: node scripts/release/promote.mjs --preflight "$TAG" "$COMMIT"
+      # npm-publish downloads this from the promote run it was given and publishes only this tag, commit and
+      # tarball: a dispatch for a tag moved since the preflight, or for another tarball, cannot borrow the run.
+      - name: Record what the preflight verified
+        shell: bash
+        env:
+          COMMIT: ${{ steps.tag.outputs.commit }}
+          INTEGRITY: ${{ steps.preflight.outputs.integrity }}
+        run: |
+          set -euo pipefail
+          test -n "$INTEGRITY"
+          mkdir -p "$RUNNER_TEMP/promote-binding"
+          jq -n --arg tag "$TAG" --arg commit "$COMMIT" --arg integrity "$INTEGRITY" '{tag: $tag, commit: $commit, integrity: $integrity}' > "$RUNNER_TEMP/promote-binding/promote-binding.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: promote-binding
+          path: ${{ runner.temp }}/promote-binding/promote-binding.json
+          if-no-files-found: error
+          retention-days: 5
+          # A re-run of this job records again in the same run.
+          overwrite: true
       - name: Promote
         shell: bash
         env:

@@ -213,8 +213,12 @@ test('npm publishes only when release-promote dispatches the tag, from the push 
   assert.equal(checkout(publish).length, 0);
   const runs = publish.steps.map((step) => step.run ?? '').join('\n');
   assert.doesNotMatch(runs, /npm ci|cli:pack|npm run build/);
-  const download = publish.steps.find((step) => step.uses?.startsWith('actions/download-artifact@'));
+  const download = publish.steps.find((step) => step.uses?.startsWith('actions/download-artifact@') && step.with.name === 'nema-tarball');
   assert.equal(expr(download.with['run-id']), 'steps.origin.outputs.push_run');
+  const binding = publish.steps.find((step) => step.uses?.startsWith('actions/download-artifact@') && step.with.name === 'promote-binding');
+  assert.equal(expr(binding.with['run-id']), 'inputs.promote_run_id');
+  assert.equal(binding.with.path, 'promote');
+  assert.ok(publish.steps.indexOf(publish.steps.find((step) => step.id === 'origin')) < publish.steps.indexOf(binding), 'the run is checked before its artifact is read');
   const origin = publish.steps.find((step) => step.id === 'origin');
   assert.ok(publish.steps.indexOf(origin) < publish.steps.indexOf(download));
   assert.match(origin.run, /\.github\/workflows\/release-promote\.yml/);
@@ -360,8 +364,10 @@ esac
   const step = read('npm-publish').jobs.publish.steps.find((s) => (s.run ?? '').includes('npm publish'));
   const integrity = `sha512-${'A'.repeat(86)}==`;
   let n = 0;
-  const run = ({ env = {}, tags = {}, edit } = {}) => {
+  const run = ({ env = {}, tags = {}, edit, binding = {} } = {}) => {
     const cwd = join(root, `job-${n += 1}`);
+    mkdirSync(join(cwd, 'promote'), { recursive: true });
+    writeFileSync(join(cwd, 'promote/promote-binding.json'), JSON.stringify({ tag: 'v1.2.3', commit: sha, integrity, ...binding }));
     for (const file of Object.keys(files).concat('scripts/desktop/release-version.mjs')) {
       mkdirSync(join(cwd, 'artifact', file, '..'), { recursive: true });
       copyFileSync(join(src, file), join(cwd, 'artifact', file));
@@ -390,11 +396,19 @@ esac
   assert.notEqual(r.status, 0); assert.equal(r.published, '');
   r = run({ env: { FAKE_STATE: 'unknown' } });
   assert.notEqual(r.status, 0); assert.equal(r.published, '');
+  // Only the tag, commit and tarball the promote run's preflight verified: a tag moved since then, another tag
+  // or another tarball cannot borrow the run, and a binding without a field proves nothing.
+  for (const [binding, field] of [[{ commit: later }, 'commit'], [{ tag: 'v1.2.4' }, 'tag'], [{ integrity: `sha512-${'C'.repeat(86)}==` }, 'integrity']]) {
+    r = run({ binding });
+    assert.notEqual(r.status, 0); assert.match(r.stderr, new RegExp(`promote run preflighted ${field} `)); assert.equal(r.published, '');
+  }
+  r = run({ binding: { commit: null } });
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /promote binding has no commit/); assert.equal(r.published, '');
   // The tarball must be the one promote verified.
   r = run({ env: { FAKE_INTEGRITY: `sha512-${'B'.repeat(86)}==` } });
   assert.notEqual(r.status, 0); assert.match(r.stderr, /release-promote expected/); assert.equal(r.published, '');
   // A tag that does not point at the dispatched commit stops before anything runs.
-  r = run({ env: { SHA: later } });
+  r = run({ env: { SHA: later }, binding: { commit: later } });
   assert.notEqual(r.status, 0); assert.match(r.stderr, /tag moved/); assert.equal(r.published, '');
   // Artifact scripts must be the tag commit's files, on the real publish path.
   r = run({ edit: (cwd) => writeFileSync(join(cwd, 'artifact/scripts/release/npm-state.mjs'), "process.stdout.write('same');\n") });
@@ -455,6 +469,18 @@ test('release-promote runs main scripts only, treats the tag as data, and is the
   const runs = job.steps.map((step) => step.run ?? '').join('\n');
   assert.match(job.steps.find((step) => step.name === 'Resolve tag').run, /readTagCommit[\s\S]*compare\/\$\{commit\}\.\.\.\$\{GITHUB_SHA\}/);
   assert.match(job.steps.find((step) => step.name === 'Candidate preflight').run, /promote\.mjs --preflight "\$TAG" "\$COMMIT"/);
+  // What the preflight verified is recorded for npm-publish, after the preflight and before Promote dispatches.
+  const at = (find) => job.steps.findIndex(find);
+  const record = job.steps.find((step) => step.name === 'Record what the preflight verified');
+  assert.equal(record.env.INTEGRITY, '${{ steps.preflight.outputs.integrity }}');
+  assert.equal(job.steps.find((step) => step.name === 'Candidate preflight').id, 'preflight');
+  const upload = job.steps.find((step) => step.uses?.startsWith('actions/upload-artifact@'));
+  assert.equal(upload.with.name, 'promote-binding');
+  assert.equal(upload.with['if-no-files-found'], 'error');
+  assert.equal(upload.with.overwrite, true);
+  assert.ok(at((step) => step.name === 'Candidate preflight') < at((step) => step === record));
+  assert.ok(at((step) => step === record) < at((step) => step === upload));
+  assert.ok(at((step) => step === upload) < at((step) => step.name === 'Promote'));
   assert.match(job.steps.find((step) => step.name === 'Promote').run, /promote\.mjs "\$TAG" "\$COMMIT"/);
   // promote.mjs is the only writer: no inline crane tag, release edit, npm publish, tag or merge here.
   assert.doesNotMatch(runs, /crane"? tag|gh release edit|npm publish|git tag|gh pr merge|git push|npm ci/);

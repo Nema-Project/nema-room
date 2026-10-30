@@ -197,6 +197,13 @@ jobs:
           ok=$(jq '[.jobs[] | select(.name | startswith("verify / "))] | all(.conclusion == "success")' <<<"$jobs")
           test "$ok" = true || { echo "push run ${push_run}: a verify job did not pass" >&2; exit 1; }
           echo "push_run=${push_run}" >> "$GITHUB_OUTPUT"
+      # What the promote run's Candidate preflight verified: this dispatch must be for exactly that.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: promote-binding
+          path: promote
+          run-id: ${{ inputs.promote_run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: nema-tarball
@@ -217,6 +224,13 @@ jobs:
           EXPECTED_INTEGRITY: ${{ inputs.expected_integrity }}
         run: |
           set -euo pipefail
+          # The promote run's preflight checked one tag, at one commit, with one tarball: only that may publish.
+          binding=promote/promote-binding.json
+          for field in tag commit integrity; do
+            case "$field" in tag) want="$TAG" ;; commit) want="$SHA" ;; integrity) want="$EXPECTED_INTEGRITY" ;; esac
+            got=$(jq -er --arg f "$field" '.[$f] | strings' "$binding") || { echo "promote binding has no ${field}" >&2; exit 1; }
+            test "$got" = "$want" || { echo "promote run preflighted ${field} ${got}, this dispatch is for ${want}" >&2; exit 1; }
+          done
           git init --quiet gate
           git -C gate remote add origin "https://github.com/${REPO}.git"
           # Resolve refs only. This is not a source checkout: the job still publishes the downloaded tarball.

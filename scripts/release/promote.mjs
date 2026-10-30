@@ -430,6 +430,8 @@ export async function main(argv, { env = process.env } = {}) {
   if (isPreflight) {
     const result = await preflight({ version, io: realIo({ env, version, tag, commit }) });
     process.stdout.write(`candidate preflight ${tag}: ${result.overall}\n`);
+    // release-promote.yml records what this preflight verified for npm-publish to compare with its dispatch.
+    if (result.ok && env.GITHUB_OUTPUT) await appendFile(env.GITHUB_OUTPUT, `integrity=${result.expectedIntegrity}\n`);
     return result.ok ? 0 : 1;
   }
   const summary = async (line) => {
