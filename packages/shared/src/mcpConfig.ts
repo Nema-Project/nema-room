@@ -80,6 +80,8 @@ function parseValues(raw: unknown, what: string, nameRule: RegExp, nameLabel: st
   for (const [name, value] of Object.entries(raw)) {
     // A plain object would take `__proto__` as its prototype and drop the entry.
     if (name === "__proto__") fail(`${nameLabel} "__proto__" is not allowed`);
+    // The supervisor gives every stdio server the daemon's PATH and a private HOME (USERPROFILE on Windows).
+    if (!header && /^(path|home|userprofile)$/i.test(name)) fail(`${nameLabel} "${name}" is set by Nema and cannot be configured`);
     if (!nameRule.test(name)) fail(`invalid ${nameLabel} "${name.slice(0, 64)}"`);
     out[name] = parseValue(value, name, { header });
   }
