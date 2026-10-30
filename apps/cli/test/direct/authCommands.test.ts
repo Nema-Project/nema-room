@@ -73,6 +73,57 @@ describe("nema auth status", () => {
     expect(c.text()).not.toContain("尚未登录");
   });
 
+  test("BYOK shows base URL, model and whether a key is saved, never the key", () => {
+    saveConfig(home, { authMode: "byok", byokBaseUrl: "https://openrouter.ai/api/v1", model: "vendor/model-b:free" });
+    saveByokKey(home, "sk-byok-secret-value");
+    const c = capture();
+    expect(authStatus({ nemaHome: home, out: c.out })).toBe(0);
+    const t = c.text();
+    expect(t).toContain("模式：byok");
+    expect(t).toContain("base URL：https://openrouter.ai/api/v1");
+    expect(t).toContain("模型：vendor/model-b:free");
+    expect(t).toContain("API key：已保存");
+    expect(t).not.toContain("尚未登录");
+    expect(t).not.toContain("nema auth login");
+    expect(t).not.toContain("sk-byok-secret-value");
+  });
+
+  test("BYOK without a key or a model says what is missing", () => {
+    saveConfig(home, { authMode: "byok" });
+    const c = capture();
+    expect(authStatus({ nemaHome: home, out: c.out })).toBe(1);
+    const t = c.text();
+    expect(t).toContain("base URL：https://api.openai.com/v1（默认）");
+    expect(t).toContain("模型：未设置");
+    expect(t).toContain("nema config set model");
+    expect(t).toContain("API key：未保存");
+    expect(t).toContain("nema auth byok");
+    expect(t).not.toContain("尚未登录");
+  });
+
+  test("BYOK settings under the Claude Code adapter are reported as unused, not healthy", () => {
+    saveConfig(home, { adapter: "claude-code", authMode: "byok", model: "vendor/model-b:free" });
+    saveByokKey(home, "sk-byok-secret-value");
+    const c = capture();
+    expect(authStatus({ nemaHome: home, out: c.out })).toBe(1);
+    const t = c.text();
+    expect(t).toContain("adapter：claude-code");
+    expect(t).toContain("当前 adapter 不使用 BYOK");
+    expect(t).not.toContain("sk-byok-secret-value");
+  });
+
+  test("BYOK with an unusable key file reports it without printing the file", () => {
+    saveConfig(home, { authMode: "byok", model: "gpt-x" });
+    saveByokKey(home, "sk-byok-secret-value");
+    if (process.platform !== "win32") chmodSync(join(home, "byok-key"), 0o644);
+    else writeFileSync(join(home, "byok-key"), "\n");
+    const c = capture();
+    expect(authStatus({ nemaHome: home, out: c.out })).toBe(1);
+    const t = c.text();
+    expect(t).toContain("API key：不可用");
+    expect(t).not.toContain("sk-byok-secret-value");
+  });
+
   test("reports not logged in", () => {
     const c = capture();
     expect(authStatus({ nemaHome: home, out: c.out })).toBe(1);

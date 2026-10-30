@@ -1,16 +1,16 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import path from "node:path";
 import { browserCommand } from "../platform.js";
-import { configErrorMessage, loadConfig } from "../config.js";
+import { configErrorMessage, DEFAULT_BYOK_BASE_URL, loadConfig, type NemaConfig } from "../config.js";
 import { AuthStore, ReloginRequiredError, UNUSABLE_FILE_MESSAGE, type Refresher } from "./authStore.js";
 import { CodexFileTokenSource, CodexLoginError, defaultCodexHome, readCodexCliTokens } from "./codexLogin.js";
 import { jwtExp } from "./jwt.js";
 import { LockTimeoutError, withFileLock } from "./lock.js";
 import { cliVersion, siwcLogin, siwcRefresher, type SiwcEndpoints } from "./siwc.js";
 import { BYOK_PROFILE, COMPAT_PROFILE, listModels, outputText, SIWC_PROFILE, streamResponse, type TokenSource, type TransportProfile } from "./transport.js";
-import { ByokTokenSource } from "./byok.js";
+import { byokKeyPath, ByokTokenSource, readByokKey } from "./byok.js";
 
 // `nema auth login|byok|status|logout|probe`. Nothing here ever prints a token.
 
@@ -103,15 +103,59 @@ function confirmCodexLogin(o: { out: Out; codexHome?: string }): number {
   }
 }
 
-export function authStatus(o: { nemaHome: string; out: Out; codexHome?: string }): number {
-  let authMode: string;
+/**
+ * BYOK has no login: report the saved endpoint, model and whether the key file is usable, from the same config
+ * snapshot that selected this branch. The key is never printed. Only codex-direct uses BYOK, so under another
+ * adapter the settings are shown as unused and the status is not healthy.
+ */
+function byokStatus(o: { nemaHome: string; out: Out }, config: NemaConfig): number {
+  o.out.log("模式：byok");
+  o.out.log(`adapter：${config.adapter}`);
+  o.out.log(config.byokBaseUrl ? `base URL：${config.byokBaseUrl}` : `base URL：${DEFAULT_BYOK_BASE_URL}（默认）`);
+  o.out.log(config.model ? `模型：${config.model}` : "模型：未设置（BYOK 需要指定模型，请运行 nema config set model <名称>）");
+  let keyOk = false;
+  const present = keyFilePresence(byokKeyPath(o.nemaHome));
+  if (present === "missing") {
+    o.out.log("API key：未保存（请把 key 从标准输入交给 nema auth byok）");
+  } else if (present !== "present") {
+    o.out.log(`API key：不可用（无法检查 key 文件：${errMessage(present.error)}）`);
+  } else {
+    try {
+      readByokKey(o.nemaHome);
+      keyOk = true;
+      o.out.log("API key：已保存");
+    } catch (e) {
+      o.out.log(`API key：不可用（${errMessage(e)}）`);
+    }
+  }
+  if (config.adapter !== "codex-direct") {
+    o.out.log(`当前 adapter 不使用 BYOK：${config.adapter} 用它自己的凭证。要用 BYOK，请运行 nema config set adapter codex-direct`);
+    return 1;
+  }
+  return keyOk && config.model ? 0 : 1;
+}
+
+/** lstat, so a dangling symlink counts as present (then unusable). Only ENOENT means missing; other errors are kept. */
+function keyFilePresence(file: string): "present" | "missing" | { error: unknown } {
   try {
-    ({ authMode } = loadConfig(o.nemaHome));
+    lstatSync(file);
+    return "present";
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : { error: e };
+  }
+}
+
+export function authStatus(o: { nemaHome: string; out: Out; codexHome?: string }): number {
+  let config: NemaConfig;
+  try {
+    config = loadConfig(o.nemaHome);
   } catch (e) {
     o.out.error(configErrorMessage(e));
     return 1;
   }
+  const { authMode } = config;
   if (authMode === "compat") return confirmCodexLogin(o) === 0 ? 0 : 1;
+  if (authMode === "byok") return byokStatus(o, config);
   const { auth, reason } = new AuthStore(o.nemaHome, siwcRefresher).inspect();
   if (!auth) {
     o.out.log(reason === "unusable" ? UNUSABLE_FILE_MESSAGE : NOT_LOGGED_IN);
