@@ -153,15 +153,15 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
 
     try {
-      const result = await this.execute(task, launch, onEvent, signal, stdin, Math.max(1, timeoutMs - (Date.now() - startedAt)), skillRun);
-      // Activation reports finish before the task does, so the thread has them for its next task.
+      return await this.execute(task, launch, onEvent, signal, stdin, Math.max(1, timeoutMs - (Date.now() - startedAt)), skillRun);
+    } finally {
+      // Reports finish before the task does, so the thread has them for its next task; a failed, timed-out
+      // or stopped task reports what it did load too, and a lost report is a warning, never the outcome.
       if (skillRun && skillRun.reports.length > 0) {
         const reports = await settleReports(skillRun.reports, 5000);
         if (reports.timedOut) onEvent({ type: "progress", text: "Skill 激活记录未能及时上报" });
         else if (reports.failed > 0) onEvent({ type: "progress", text: `${reports.failed} 条 Skill 激活记录上报失败` });
       }
-      return result;
-    } finally {
       rmSync(launch.runDir, { recursive: true, force: true });
     }
   }

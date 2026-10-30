@@ -728,6 +728,32 @@ describe("ClaudeCodeAdapter with Skills", () => {
     expect(done.ok).toBe(false);
   });
 
+  test("a task that fails after loading a Skill still reports it, so its thread keeps the Skill", async () => {
+    await withTdd();
+    const seen: string[] = [];
+    const hub = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        seen.push(`${req.url} ${body}`);
+        res.writeHead(204).end();
+      });
+    });
+    await new Promise<void>((r) => hub.listen(0, "127.0.0.1", r));
+    try {
+      // A load, then a run that ends without a result: the task fails, but the load is still reported.
+      const bin = installFake({ mode: "lines", argvFile: join(root, "argv-fail.json"), lines: [skillInit(), use("t1", "Skill", { skill: "tdd" }), result("t1")] });
+      const assigned = { ...task("task-skills-fail", "do it"), hubUrl: `http://127.0.0.1:${(hub.address() as AddressInfo).port}` };
+      const { result: done } = await runTask(skillAdapter(bin, true), assigned);
+      expect(done.ok).toBe(false);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatch(/^\/room\/skills\/activated /);
+    } finally {
+      hub.closeAllConnections();
+      await new Promise<void>((r) => hub.close(() => r()));
+    }
+  });
+
   test("an old Claude Code runs with the arguments it has today", async () => {
     await withTdd();
     const argvFile = join(root, "argv-old.json");

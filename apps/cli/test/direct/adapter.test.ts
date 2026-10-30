@@ -13,7 +13,7 @@ import { CodexDirectAdapter } from "../../src/direct/adapter.js";
 import { AuthStore, RELOGIN_MESSAGE, type StoredAuth } from "../../src/direct/authStore.js";
 import { byokKeyPath, saveByokKey } from "../../src/direct/byok.js";
 import { COMPAT_PROFILE, REQUEST_TOO_LARGE_MESSAGE, SIWC_PROFILE, type TransportProfile } from "../../src/direct/transport.js";
-import { json, sse, startFakeResponsesServer, type FakeResponsesServer } from "../fixtures/fake-responses-server.js";
+import { json, reset, sse, startFakeResponsesServer, type FakeResponsesServer } from "../fixtures/fake-responses-server.js";
 
 const b64u = (s: string) => Buffer.from(s).toString("base64url");
 const jwt = (p: Record<string, unknown>) => `${b64u(JSON.stringify({ alg: "none" }))}.${b64u(JSON.stringify(p))}.sig`;
@@ -105,9 +105,9 @@ const stream = (items: Record<string, unknown>[], deltas: string[] = []) =>
     { type: "response.completed", response: { id: "resp", status: "completed", output: items } },
   ]);
 
-async function run(a = adapter(), assigned: TaskAssign = task()) {
+async function run(a = adapter(), assigned: TaskAssign = task(), signal?: AbortSignal) {
   const events: TaskEvent[] = [];
-  const result = await a.run(assigned, (e) => events.push(e));
+  const result = await a.run(assigned, (e) => events.push(e), signal);
   return { result, events };
 }
 
@@ -233,6 +233,39 @@ describe("CodexDirectAdapter", () => {
     const failed = await run();
     expect(failed.result).toEqual({ ok: true, reply: "done" });
     expect(failed.events).toContainEqual({ type: "progress", text: "1 条 Skill 激活记录上报失败" });
+  });
+
+  test("a task that fails after reading a Skill still reports the load, so its thread keeps the Skill", async () => {
+    login();
+    saveConfig(home, { model: "gpt-configured" });
+    const { managedSkill, skillText, COMMIT } = await import("../skills/helpers.js");
+    managedSkill(home, "tdd", { "SKILL.md": skillText("tdd") });
+    // The Skill is read, then the next model call breaks the connection.
+    server.responses(stream([fcItem("read_skill", { name: "tdd" }, "c1")]), reset);
+    const { result } = await run();
+    expect(result.ok).toBe(false);
+    expect(hubSeen.map((h) => `${h.method} ${h.url} ${h.body}`)).toEqual([`POST /room/skills/activated {"skillId":"tdd","revision":"${COMMIT}"}`]);
+  });
+
+  test("a task stopped by its owner still reports what it read: the report outlives the run's abort", async () => {
+    login();
+    saveConfig(home, { model: "gpt-configured" });
+    const { managedSkill, skillText, COMMIT } = await import("../skills/helpers.js");
+    managedSkill(home, "tdd", { "SKILL.md": skillText("tdd") });
+    // The hub takes 400 ms to answer the report; the second model call never answers, so only the stop ends it.
+    hubSkillReply = { delayMs: 400, status: 204 };
+    server.responses(stream([fcItem("read_skill", { name: "tdd" }, "c1")]), () => {});
+    const owner = new AbortController();
+    const pending = run(adapter(), task(), owner.signal);
+    await vi.waitFor(() => expect(hubSeen.length).toBeGreaterThan(0), { timeout: 5000 });
+    // The request is in flight when the stop arrives. A report tied to the run's signal would be cancelled
+    // here and the task would end at once; this one waits for the hub, so it still reaches it.
+    owner.abort(new Error("stopped by the user"));
+    const stoppedAt = Date.now();
+    const { result } = await pending;
+    expect(result.ok).toBe(false);
+    expect(Date.now() - stoppedAt).toBeGreaterThanOrEqual(250);
+    expect(hubSeen.map((h) => h.body)).toEqual([JSON.stringify({ skillId: "tdd", revision: COMMIT })]);
   });
 
   test("without Skills the prompt and tools are unchanged and read_skill is unknown", async () => {

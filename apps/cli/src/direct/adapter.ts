@@ -198,6 +198,9 @@ export class CodexDirectAdapter implements AgentAdapter {
     };
     const model = configuredModel ?? config.model ?? (await this.defaultModel(ctx));
     const room = new RoomClient(task.hubUrl, task.runToken, signal);
+    // Reports outlive the run's signal: a task that fails, times out or is stopped still leaves the thread
+    // the Skills it read.
+    const reportRoom = new RoomClient(task.hubUrl, task.runToken);
     const sessionId = randomUUID();
     const now = this.opts.now ?? Date.now;
     const skills = await prepareDirectSkills({
@@ -207,7 +210,7 @@ export class CodexDirectAdapter implements AgentAdapter {
       onEvent,
       ...(task.retainedSkills ? { retained: task.retainedSkills } : {}),
       onActivated: async (id, revision) => {
-        const reported = await room.reportSkillActivation(id, revision);
+        const reported = await reportRoom.reportSkillActivation(id, revision);
         if (!reported.ok) throw new Error(reported.error);
       },
     });
@@ -216,48 +219,53 @@ export class CodexDirectAdapter implements AgentAdapter {
 
     const first = attachmentParts(loaded.attachments);
     sent.blocks = first.blocks;
-    const { reply } = await runToolLoop({
-      instructions,
-      userText: DIRECT_USER_TEXT,
-      userParts: first.parts,
-      room,
-      pluginTools: task.pluginTools,
-      ...(skills.reader ? { skills: skills.reader } : {}),
-      signal,
-      ...(task.limits ? { limits: { ...DEFAULT_LIMITS, maxModelCalls: task.limits.maxModelCalls, maxToolCalls: task.limits.maxToolCalls } } : {}),
-      onProgress: (text) => onEvent({ type: "tool_call", text }),
-      call: async (input) => {
-        // Throttled progress: the accumulated text of this model call, at most every PROGRESS_INTERVAL_MS.
-        let text = "";
-        let sent = "";
-        let lastAt = -Infinity;
-        const flush = () => {
-          if (text === sent) return;
-          sent = text;
-          lastAt = now();
-          onEvent({ type: "agent_message", text: text.slice(-PROGRESS_MAX_CHARS) });
-        };
-        try {
-          return await streamResponse(
-            { model, instructions, input, tools, reasoning: { effort: config.reasoningEffort, summary: "auto" }, sessionId },
-            {
-              ...ctx,
-              onTextDelta: (d) => {
-                text += d;
-                if (now() - lastAt >= PROGRESS_INTERVAL_MS) flush();
+    let reply: string;
+    try {
+      ({ reply } = await runToolLoop({
+        instructions,
+        userText: DIRECT_USER_TEXT,
+        userParts: first.parts,
+        room,
+        pluginTools: task.pluginTools,
+        ...(skills.reader ? { skills: skills.reader } : {}),
+        signal,
+        ...(task.limits ? { limits: { ...DEFAULT_LIMITS, maxModelCalls: task.limits.maxModelCalls, maxToolCalls: task.limits.maxToolCalls } } : {}),
+        onProgress: (text) => onEvent({ type: "tool_call", text }),
+        call: async (input) => {
+          // Throttled progress: the accumulated text of this model call, at most every PROGRESS_INTERVAL_MS.
+          let text = "";
+          let sent = "";
+          let lastAt = -Infinity;
+          const flush = () => {
+            if (text === sent) return;
+            sent = text;
+            lastAt = now();
+            onEvent({ type: "agent_message", text: text.slice(-PROGRESS_MAX_CHARS) });
+          };
+          try {
+            return await streamResponse(
+              { model, instructions, input, tools, reasoning: { effort: config.reasoningEffort, summary: "auto" }, sessionId },
+              {
+                ...ctx,
+                onTextDelta: (d) => {
+                  text += d;
+                  if (now() - lastAt >= PROGRESS_INTERVAL_MS) flush();
+                },
               },
-            },
-          );
-        } finally {
-          if (!signal.aborted) flush();
-        }
-      },
-    });
-    // Activation reports go to the hub; give them a moment, but a lost one must not fail the task.
-    if (skills.reader) {
-      const reports = await skills.reader.settleReports(5000);
-      if (reports.timedOut) onEvent({ type: "progress", text: "Skill 激活记录未能及时上报" });
-      else if (reports.failed > 0) onEvent({ type: "progress", text: `${reports.failed} 条 Skill 激活记录上报失败` });
+            );
+          } finally {
+            if (!signal.aborted) flush();
+          }
+        },
+      }));
+    } finally {
+      // A failed, timed-out or stopped task reports what it read before its run is aborted; a lost
+      // report is a warning, never the task's outcome.
+      if (skills.reader) {
+        const reports = await skills.reader.settleReports(5000);
+        if (reports.timedOut) onEvent({ type: "progress", text: "Skill 激活记录未能及时上报" });
+        else if (reports.failed > 0) onEvent({ type: "progress", text: `${reports.failed} 条 Skill 激活记录上报失败` });
+      }
     }
     return { ok: true, reply };
   }
