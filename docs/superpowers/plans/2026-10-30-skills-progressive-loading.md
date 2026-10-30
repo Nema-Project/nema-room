@@ -109,7 +109,7 @@ S5、S6 谁先做都可以；任何一个都可以单独顺延到 v0.2.0 之后�
   - `type SkillGap = "scripts" | "shell-injection" | "allowed-tools" | "subagent" | "hooks" | "paths" | "binary-assets" | "skill-dir-variable" | "claude-code-too-old"`
   - `type SkillNote = "model-override" | "stop-not-enforced" | "reserved-slash-name"`
   - `type SkillUsage = { runtimes: Array<{ adapter: SkillAdapter; support: "full" | "partial" | "none"; missing: SkillGap[]; notes: SkillNote[] }>; compatibility: string | null; diagnostics: string[]; invocation: "model-and-user" | "user-only" | "model-only" }`
-  - `const RESERVED_SLASH_NAMES: readonly string[] = ["thread", "progress", "update"]` 和 `isReservedSlashName(id: string): boolean`（另含 `diagram:`、`skill:` 前缀判断）；`skillSlashCommand(id)`：保留名返回 `/skill:<id>`，其他返回 `/<id>`（S6 加）
+  - `const RESERVED_SLASH_NAMES: readonly string[] = ["thread", "progress", "update"]` 和 `isReservedSlashName(id: string): boolean`（另含 `diagram:`、`skill:` 前缀判断）；`skillSlashCommand(id)`：保留名和带 `<slug>:` 的返回 `/skill:<id>`，其他返回 `/<id>`（S6 加）
   - `isSkillName(name: string): boolean`：Global Constraints 里的规范规则
   - `parseManualSkill(content: string): { skillId: string; arguments: string } | null`：去掉开头空白后匹配 `^/(skill:)?([a-z0-9][a-z0-9:-]*)(?:\s+([\s\S]*))?$`；不带 `skill:` 时保留名返回 `null`，带了总是 Skill；`arguments` 去掉首尾空白（S0 合并时还没有 `skill:`，S6 补上）
   - `task.assign` 新字段：`projectSkills?: Array<{ repoId: string; label: string; path: string; mainBranch: string }>`、`retainedSkills?: string[]`、`manualSkill?: { skillId: string; arguments: string }`

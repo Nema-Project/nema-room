@@ -28,7 +28,7 @@ describe("Skills in the slash menu", () => {
   const skills = [
     { id: "tdd", description: "Write the test first.", command: "/tdd" },
     { id: "thread", description: "A Skill that shares a built-in name.", command: "/skill:thread" },
-    { id: "web:deploy", description: "Ship the web app.", command: "/web:deploy" },
+    { id: "web:deploy", description: "Ship the web app.", command: "/skill:web:deploy" },
   ];
   const ids = (items: { id: string }[]) => items.map((i) => i.id);
 

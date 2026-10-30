@@ -50,7 +50,7 @@ test("a trusted repository's Skills come with their repo id and prefix", async (
   const out = (await call({ projectSkills: [{ repoId: "repo_1", label: "web", path: repo, mainBranch: "main" }] })) as { result: Array<Record<string, unknown>> };
   expect(out.result.map((r) => [r.id, r.command, r.repoId])).toEqual([
     ["tdd", "/tdd", null],
-    ["web:tdd", "/web:tdd", "repo_1"],
+    ["web:tdd", "/skill:web:tdd", "repo_1"],
   ]);
 });
 
