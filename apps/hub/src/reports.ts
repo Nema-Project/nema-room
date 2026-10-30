@@ -10,7 +10,7 @@ import { ArchivedWorkspaceError, addReportMessage, mergeReportMeta, postSystemTa
 import { getRepo, type Repo } from "./repos.js";
 import { insertQueuedTask, toUiTask, type Task } from "./tasks.js";
 import { repoPath } from "./workspaces.js";
-import { applyReportToWorkPackage } from "./workpackages.js";
+import { applyReportToWorkPackage, noteLinkedCheckChanged } from "./workpackages.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 /** A report's git check fetches main first, which can take minutes on a large repo. */
@@ -63,36 +63,45 @@ async function queueReportTask(db: Db, workspaceId: string, messageId: string): 
 }
 
 /**
- * Stores the report as a `report` message right away. `done` then runs the daemon's git check, stores it in
- * the message meta (or `checkError`), and queues the organizing task, the same way a user message does.
+ * Stores the report as a `report` message right away. `done` then runs the daemon's git check and merges it
+ * into the message meta (or `checkError`). A completed report is then applied to its work package task and
+ * gets an organizing task, the same way a user message does. An in-progress report only keeps its check: it
+ * is not applied and starts no task. An in-progress report with no commits is not checked at all
+ * (`checkSkipped`).
  */
 export async function receiveReport(deps: ReportDeps, repo: Repo, report: ReportInput): Promise<{ messageId: string; done: Promise<void> }> {
   const { db, events, daemon } = deps;
   const message = await addReportMessage(db, repo.workspaceId, report.summary, { report, check: null });
   events.emit(repo.workspaceId, { type: "message.created", message });
+  const inProgress = report.progress === "in_progress";
   const done = (async () => {
+    if (inProgress && report.commits.length === 0) {
+      const skipped = await mergeReportMeta(db, message.id, { check: null, checkError: null, checkSkipped: "in_progress_no_commits" });
+      if (skipped) events.emit(repo.workspaceId, { type: "message.updated", message: skipped });
+      return;
+    }
     let patch: ReportMetaPatch;
     try {
-      const check = (await daemon.call(
-        "report.check",
-        { workspaceId: repo.workspaceId, repoId: repo.id, path: repo.path, mainBranch: repo.mainBranch, commits: report.commits, files: report.files },
-        REPORT_CHECK_TIMEOUT_MS,
-      )) as ReportCheck;
+      const check = (await daemon.call("report.check", checkParams(repo, report), REPORT_CHECK_TIMEOUT_MS)) as ReportCheck;
       patch = { check, checkError: null, checkSkipped: null };
     } catch (error) {
       patch = { check: null, checkError: error instanceof Error ? error.message : String(error) };
     }
     const updated = await mergeReportMeta(db, message.id, patch);
-    if (updated) {
-      events.emit(repo.workspaceId, { type: "message.updated", message: updated });
-      if (deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);
-    }
+    if (updated) events.emit(repo.workspaceId, { type: "message.updated", message: updated });
+    if (inProgress) return;
+    if (updated && deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);
     const task = await queueReportTask(db, repo.workspaceId, message.id);
     if (task) events.emit(repo.workspaceId, { type: "task.updated", task: toUiTask(task) });
   })().catch((error) => {
     console.error(`handling report ${message.id} failed`, error);
   });
   return { messageId: message.id, done };
+}
+
+/** The system task for a completed report whose commits now pass the git check. A commit check, not acceptance. */
+export function commitsCheckedTask(messageId: string): string {
+  return `上报 ${messageId} 的提交已核对（不是验收）。把还没有用户确认的需求 implementation 设为 verified，且不要写 confirmedBy。不要改写 confirmedBy 已是 "user" 的 implementation。`;
 }
 
 function checkParams(repo: Repo, report: StoredReport) {
@@ -117,7 +126,9 @@ const RECHECK_DAYS = 30;
 
 /**
  * After main moved: re-runs the check of this repo's reports that were not on main yet (from the last 30 days).
- * A report that now passes gets the new check stored and a system task to mark its requirements verified.
+ * The new check is merged into the meta; the claim, authors and GitHub observation stay. A completed report that
+ * now passes is applied to its package task and gets a system task saying its commits are checked (not accepted).
+ * An in-progress report only keeps its new check.
  * A daemon error leaves that report as it was.
  */
 export async function recheckReports(deps: ReportDeps, repoId: string): Promise<void> {
@@ -141,14 +152,18 @@ export async function recheckReports(deps: ReportDeps, repoId: string): Promise<
       console.error(`re-checking report ${row.id} failed`, error);
       continue;
     }
+    const previous = row.meta.check;
+    // An older result than the stored one changes nothing (the merge would refuse it too).
+    if (previous?.checkedAt && !(typeof check.checkedAt === "string" && check.checkedAt >= previous.checkedAt)) continue;
+    // Mark the review before the meta moves on: the knowledge repo and the database are not one transaction,
+    // and a failure here should leave an extra mark rather than a lost one.
+    await noteLinkedCheckChanged(db, deps.dataDir, repo.workspaceId, row.id, previous, check, row.meta.report.commits);
     const updated = await mergeReportMeta(db, row.id, { check, checkError: null, checkSkipped: null });
-    if (updated) {
-      events.emit(repo.workspaceId, { type: "message.updated", message: updated });
-      if (deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);
-    }
-    if (reportPassed(check)) {
-      await queueSystemTask(db, events, repo.workspaceId, `上报 ${row.id} 的提交已合入主分支，核实通过：把相关需求的 implementation 更新为 verified。`);
-    }
+    if (updated) events.emit(repo.workspaceId, { type: "message.updated", message: updated });
+    // An in-progress report only keeps its new check, even once it is on main.
+    if (row.meta.report.progress === "in_progress") continue;
+    if (updated && deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);
+    if (reportPassed(check)) await queueSystemTask(db, events, repo.workspaceId, commitsCheckedTask(row.id));
   }
 }
 
