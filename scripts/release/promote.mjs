@@ -296,14 +296,22 @@ export function assertTagRunJobs(workflow, jobs, id, totalCount) {
   if (other.length) throw new Error(`${name} push run ${id}: ${other.map((job) => `${job?.name}=${job?.conclusion}`).join(', ')}`);
 }
 
+/** The workflow runs answer for one commit must hold every run: the newest run of the tag could be on a page not read. */
+export function completeRuns(answer, label) {
+  const runs = answer?.workflow_runs;
+  if (!Array.isArray(runs) || !Number.isInteger(answer?.total_count)) throw new Error(`${label}: the runs API did not report its run count`);
+  if (runs.length !== answer.total_count) throw new Error(`${label}: the runs answer lists ${runs.length} of ${answer.total_count} runs`);
+  return runs;
+}
+
 /** The latest image-publish and desktop-release push runs of the tag commit, each checked job by job. */
 async function tagWorkflowRuns({ tag, commit, gh }) {
   const lines = [];
   for (const workflow of Object.keys(REQUIRED_TAG_RUN_JOBS)) {
     const name = workflow.replace(/\.yml$/, '');
-    const runs = JSON.parse(await run(gh, ['api', `repos/${REPOSITORY}/actions/workflows/${workflow}/runs?event=push&head_sha=${commit}&per_page=20`]));
+    const runs = completeRuns(JSON.parse(await run(gh, ['api', `repos/${REPOSITORY}/actions/workflows/${workflow}/runs?event=push&head_sha=${commit}&per_page=100`])), `${name} push runs at ${commit}`);
     // The newest push run of this tag decides: a later failed rerun is not hidden behind an older success.
-    const latest = (runs.workflow_runs ?? []).filter((item) => item.head_branch === tag && item.head_sha === commit).sort((a, b) => b.id - a.id)[0];
+    const latest = runs.filter((item) => item.head_branch === tag && item.head_sha === commit).sort((a, b) => b.id - a.id)[0];
     if (!latest) throw new Error(`no ${name} push run for ${tag} at ${commit}`);
     if (latest.status !== 'completed' || latest.conclusion !== 'success') throw new Error(`${name} push run ${latest.id} is ${latest.status}/${latest.conclusion}`);
     const answer = JSON.parse(await run(gh, ['api', `repos/${REPOSITORY}/actions/runs/${latest.id}/jobs?per_page=100`]));
@@ -315,8 +323,8 @@ async function tagWorkflowRuns({ tag, commit, gh }) {
 
 /** Finds the tag's npm-publish push run, checks it, downloads nema-tarball and hashes it. */
 async function pushRunIntegrity({ tag, commit, gh }) {
-  const runs = JSON.parse(await run(gh, ['api', `repos/${REPOSITORY}/actions/workflows/npm-publish.yml/runs?event=push&head_sha=${commit}&per_page=20`]));
-  const push = (runs.workflow_runs ?? []).filter((item) => item.head_branch === tag && item.conclusion === 'success').sort((a, b) => b.id - a.id)[0];
+  const runs = completeRuns(JSON.parse(await run(gh, ['api', `repos/${REPOSITORY}/actions/workflows/npm-publish.yml/runs?event=push&head_sha=${commit}&per_page=100`])), `npm-publish push runs at ${commit}`);
+  const push = runs.filter((item) => item.head_branch === tag && item.conclusion === 'success').sort((a, b) => b.id - a.id)[0];
   if (!push) throw new Error(`no successful npm-publish push run for ${tag} at ${commit}`);
   // A successful run is not enough: its verify and build jobs must have run and passed.
   const answer = JSON.parse(await run(gh, ['api', `repos/${REPOSITORY}/actions/runs/${push.id}/jobs?per_page=100`]));

@@ -171,8 +171,13 @@ jobs:
           test "$preflight" = "success" || { echo "release-promote run ${PROMOTE_RUN_ID} has no successful Candidate preflight (${preflight:-none})" >&2; exit 1; }
           # The tarball comes from this tag's push run: same commit, verify and build both succeeded.
           # The tag is data: jq gets it with --arg, never inside the filter text.
-          push_run=$(gh api "repos/${REPO}/actions/workflows/npm-publish.yml/runs?event=push&head_sha=${SHA}&per_page=20" \
-            | jq -r --arg tag "$TAG" '[.workflow_runs[] | select(.head_branch == $tag and .conclusion == "success")] | sort_by(.id) | last | .id // empty')
+          runs=$(gh api "repos/${REPO}/actions/workflows/npm-publish.yml/runs?event=push&head_sha=${SHA}&per_page=100")
+          # Like promote.mjs completeRuns: the newest run of the tag could sit on a page this answer does not hold.
+          if [ "$(jq '(.total_count | type) == "number" and (.workflow_runs | length) == .total_count' <<<"$runs")" != true ]; then
+            echo "npm-publish push runs at ${SHA}: the runs answer does not hold every run" >&2
+            exit 1
+          fi
+          push_run=$(jq -r --arg tag "$TAG" '[.workflow_runs[] | select(.head_branch == $tag and .conclusion == "success")] | sort_by(.id) | last | .id // empty' <<<"$runs")
           test -n "$push_run" || { echo "no successful push run of npm-publish for ${TAG} at ${SHA}" >&2; exit 1; }
           # A tag push runs the complete verify.yml: every verify job must have run and passed, none skipped.
           jobs=$(gh api "repos/${REPO}/actions/runs/${push_run}/jobs?per_page=100")

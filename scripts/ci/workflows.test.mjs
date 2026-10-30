@@ -221,7 +221,7 @@ test('npm publishes only when release-promote dispatches the tag, from the push 
   assert.match(origin.run, /head_branch[\s\S]*"main"/);
   assert.match(origin.run, /"in_progress"/);
   assert.match(origin.run, /"Candidate preflight"/);
-  assert.match(origin.run, /event=push&head_sha=\$\{SHA\}/);
+  assert.match(origin.run, /event=push&head_sha=\$\{SHA\}&per_page=100/);
   for (const job of REQUIRED_PUSH_JOBS) assert.ok(origin.run.includes(`'${job}'`), job);
   assert.match(origin.run, /select\(\.name == \$job\)/, 'each required job by its exact name, not a prefix');
   assert.doesNotMatch(origin.run, /"skipped"/, 'no verify job may be skipped');
@@ -273,10 +273,10 @@ if [ "\${3:-}" = --jq ]; then jq -r "$4" "$file"; else cat "$file"; fi
   const repo = 'o/r';
   const fixture = (url, body) => writeFileSync(join(cwd, 'fix', `${url.replace(/[^A-Za-z0-9]/g, '_')}.json`), JSON.stringify(body));
   const verifyJobs = REQUIRED_PUSH_JOBS.map((name) => ({ name, conclusion: 'success' }));
-  const setup = ({ title = 'Release promote v1.2.3', runs = [{ id: 7, head_branch: 'v1.2.3', conclusion: 'success' }], jobs = verifyJobs, total = jobs.length } = {}) => {
+  const setup = ({ title = 'Release promote v1.2.3', runs = [{ id: 7, head_branch: 'v1.2.3', conclusion: 'success' }], runTotal, jobs = verifyJobs, total = jobs.length } = {}) => {
     fixture(`repos/${repo}/actions/runs/99`, { path: '.github/workflows/release-promote.yml', head_branch: 'main', status: 'in_progress', display_title: title });
     fixture(`repos/${repo}/actions/runs/99/jobs`, { total_count: 1, jobs: [{ name: 'Promote', steps: [{ name: 'Candidate preflight', conclusion: 'success' }] }] });
-    fixture(`repos/${repo}/actions/workflows/npm-publish.yml/runs?event=push&head_sha=${sha}&per_page=20`, { workflow_runs: runs });
+    fixture(`repos/${repo}/actions/workflows/npm-publish.yml/runs?event=push&head_sha=${sha}&per_page=100`, { total_count: runTotal ?? runs.length, workflow_runs: runs });
     for (const run of runs) fixture(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`, { total_count: total, jobs });
   };
   const script = read('npm-publish').jobs.publish.steps.find((step) => step.id === 'origin').run;
@@ -299,6 +299,10 @@ if [ "\${3:-}" = --jq ]; then jq -r "$4" "$file"; else cat "$file"; fi
   setup({ title: `Release promote ${hostile}`, runs: [{ id: 7, head_branch: 'v9.9.9', conclusion: 'success' }] });
   result = run(hostile);
   assert.notEqual(result.status, 0); assert.match(result.stderr, /no successful push run/); assert.equal(result.output, '');
+  // A runs page that does not hold every run of the commit could hide the newest one.
+  setup({ runTotal: 101 });
+  result = run();
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /runs answer does not hold every run/); assert.equal(result.output, '');
   // A jobs page that does not hold every job of the run proves nothing, even when every listed job passed.
   setup({ total: verifyJobs.length + 1 });
   result = run();
@@ -315,64 +319,106 @@ if [ "\${3:-}" = --jq ]; then jq -r "$4" "$file"; else cat "$file"; fi
   assert.notEqual(result.status, 0); assert.match(result.stderr, /Pack and smoke nema did not run and pass/);
 });
 
-test('actual npm publish shell refuses artifact scripts that differ from the tag commit', t => {
-  const cwd = mkdtempSync(join(tmpdir(), 'npm-pinned-')); t.after(() => rmSync(cwd, { recursive: true, force: true }));
-  const git = (...args) => execFileSync('git', args, { cwd: join(cwd, 'gate'), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  mkdirSync(join(cwd, 'gate/scripts/release'), { recursive: true });
-  writeFileSync(join(cwd, 'gate/scripts/release/npm-state.mjs'), 'export const ok = true;\n');
-  git('init', '-q'); git('add', '.'); git('-c', 'user.name=F', '-c', 'user.email=f@example.com', 'commit', '-qm', 'tag');
-  const sha = git('rev-parse', 'HEAD');
-  mkdirSync(join(cwd, 'artifact/scripts/release'), { recursive: true }); mkdirSync(join(cwd, 'artifact/dist-npm'));
-  writeFileSync(join(cwd, 'artifact/dist-npm/nema-project-nema-1.2.3.tgz'), 'built');
-  const run = read('npm-publish').jobs.publish.steps.find((step) => (step.run ?? '').includes('npm publish')).run;
-  const script = run.slice(run.indexOf('# Only the tarball is build output.'), run.indexOf('done < <(find artifact -type f -print0)') + 'done < <(find artifact -type f -print0)'.length);
-  assert.ok(script.startsWith('# Only the tarball'), 'the check is one block of the publish step');
-  const exec = () => spawnSync('bash', ['-c', `set -euo pipefail\n${script}\necho pinned`], { cwd, encoding: 'utf8', env: { ...process.env, SHA: sha, TAG: 'v1.2.3' } });
-  writeFileSync(join(cwd, 'artifact/scripts/release/npm-state.mjs'), 'export const ok = true;\n');
-  let result = exec();
-  assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /pinned/);
-  writeFileSync(join(cwd, 'artifact/scripts/release/npm-state.mjs'), 'export const ok = true; /* replaced during the build */\n');
-  result = exec();
-  assert.notEqual(result.status, 0); assert.match(result.stderr, /artifact file scripts\/release\/npm-state\.mjs differs from v1\.2\.3/);
-  writeFileSync(join(cwd, 'artifact/scripts/release/npm-state.mjs'), 'export const ok = true;\n');
-  writeFileSync(join(cwd, 'artifact/scripts/release/extra.mjs'), 'export {};\n');
-  result = exec();
-  assert.notEqual(result.status, 0); assert.match(result.stderr, /artifact file scripts\/release\/extra\.mjs is not in v1\.2\.3/);
-});
-
-test('actual npm dist-tag shell routes older stables to maintenance, never moves a tag backwards, and stops on an unrecognised tag', t => {
-  const cwd = mkdtempSync(join(tmpdir(), 'npm-dist-')); t.after(() => rmSync(cwd, { recursive: true, force: true }));
-  mkdirSync(join(cwd, 'bin')); mkdirSync(join(cwd, 'artifact/scripts/desktop'), { recursive: true });
-  copyFileSync(new URL('../desktop/release-version.mjs', import.meta.url), join(cwd, 'artifact/scripts/desktop/release-version.mjs'));
-  // npm view @nema-project/nema dist-tags.<tag> answers from TAG_<tag> (empty: no such tag, as npm does).
-  writeFileSync(join(cwd, 'bin/npm'), `#!/bin/bash
+test('actual npm publish step: pins artifact scripts, publishes only an absent version, routes dist-tags, and never treats an error as done', t => {
+  const root = mkdtempSync(join(tmpdir(), 'npm-publish-step-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  // The tag commit: the scripts the publish step runs, as fakes whose answers come from the environment.
+  const src = join(root, 'src');
+  const files = {
+    'scripts/npm/check-tag.mjs': "process.stdout.write(JSON.stringify({ distTag: process.env.FAKE_DIST ?? 'latest' }));\n",
+    'scripts/release/npm-state.mjs': [
+      "import { readFileSync, existsSync } from 'node:fs';",
+      "if (process.argv[2] === '--integrity') { process.stdout.write(process.env.FAKE_INTEGRITY); process.exit(0); }",
+      "const published = existsSync(process.env.NPM_LOG) && readFileSync(process.env.NPM_LOG, 'utf8').includes('publish');",
+      "const state = published ? process.env.FAKE_STATE_AFTER : process.env.FAKE_STATE;",
+      "process.stdout.write(state); process.exit(state === 'different' ? 3 : 0);",
+      '',
+    ].join('\n'),
+  };
+  for (const [file, text] of Object.entries(files)) { mkdirSync(join(src, file, '..'), { recursive: true }); writeFileSync(join(src, file), text); }
+  mkdirSync(join(src, 'scripts/desktop'), { recursive: true });
+  copyFileSync(new URL('../desktop/release-version.mjs', import.meta.url), join(src, 'scripts/desktop/release-version.mjs'));
+  sh(root, 'init', '-q', '-b', 'main', src);
+  sh(src, 'add', '.'); sh(src, '-c', 'user.name=F', '-c', 'user.email=f@example.com', 'commit', '-qm', 'release');
+  const sha = sh(src, 'rev-parse', 'HEAD');
+  sh(src, 'tag', 'v1.2.3');
+  sh(src, '-c', 'user.name=F', '-c', 'user.email=f@example.com', 'commit', '--allow-empty', '-qm', 'later');
+  const later = sh(src, 'rev-parse', 'HEAD');
+  sh(root, 'clone', '-q', '--bare', src, join(root, 'origin.git'));
+  // https://github.com/o/r.git resolves to the local bare repository; nothing leaves the machine.
+  const gitconfig = join(root, 'gitconfig');
+  writeFileSync(gitconfig, `[url "file://${join(root, 'origin.git')}"]\n\tinsteadOf = https://github.com/o/r.git\n`);
+  mkdirSync(join(root, 'bin'));
+  writeFileSync(join(root, 'bin/npm'), `#!/bin/bash
 set -euo pipefail
-test "$1 $2" = "view @nema-project/nema"
-name="TAG_\${3#dist-tags.}"
-printf '%s\\n' "\${!name:-}"
+case "$1" in
+  view) test "$2" = @nema-project/nema; name="TAG_\${3#dist-tags.}"; printf '%s\\n' "\${!name:-}" ;;
+  publish) echo "$*" >> "$NPM_LOG"; exit "\${PUBLISH_EXIT:-0}" ;;
+  *) echo "npm: unexpected $*" >&2; exit 1 ;;
+esac
 `, { mode: 0o755 });
-  const run = read('npm-publish').jobs.publish.steps.find((step) => (step.run ?? '').includes('npm publish')).run;
-  const script = run.slice(run.indexOf('# Re-read the channel dist-tag'), run.indexOf('# The tag can move after the check above.'));
-  const exec = (dist, version, tags) => spawnSync('bash', ['-c', `set -euo pipefail\n${script}\necho "dist=$dist"`], { cwd, encoding: 'utf8', env: { ...process.env, PATH: `${join(cwd, 'bin')}:${process.env.PATH}`, dist, version, ...Object.fromEntries(Object.entries(tags).map(([key, value]) => [`TAG_${key}`, value])) } });
-  let result = exec('latest', '0.1.7', { latest: '0.1.6' });
-  assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /^dist=latest$/m);
-  result = exec('latest', '0.1.7', {});
-  assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /^dist=latest$/m, 'no latest yet');
-  result = exec('latest', '0.1.7', { latest: '0.2.0' });
-  assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /^dist=maintenance$/m);
-  result = exec('latest', '0.1.7', { latest: '0.2.0', maintenance: '0.1.6' });
-  assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /^dist=maintenance$/m);
-  result = exec('latest', '0.1.7', { latest: '0.2.0', maintenance: '0.1.9' });
-  assert.notEqual(result.status, 0); assert.match(result.stderr, /npm maintenance is 0\.1\.9, newer than 0\.1\.7/);
-  result = exec('next', '0.2.0-rc.1', { next: '0.2.0-rc.2' });
-  assert.notEqual(result.status, 0); assert.match(result.stderr, /npm next is 0\.2\.0-rc\.2, newer than 0\.2\.0-rc\.1/);
-  result = exec('next', '0.2.0-rc.2', {});
-  assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /^dist=next$/m, 'a first prerelease has no next yet');
-  // A tag value that is not a release version is an error, never "older".
-  for (const [dist, tags] of [['latest', { latest: 'canary' }], ['latest', { latest: '0.2.0', maintenance: 'oops' }], ['next', { next: 'beta' }]]) {
-    result = exec(dist, dist === 'next' ? '0.2.0-rc.1' : '0.1.7', tags);
-    assert.notEqual(result.status, 0, JSON.stringify(tags)); assert.doesNotMatch(result.stdout, /dist=/);
+  const step = read('npm-publish').jobs.publish.steps.find((s) => (s.run ?? '').includes('npm publish'));
+  const integrity = `sha512-${'A'.repeat(86)}==`;
+  let n = 0;
+  const run = ({ env = {}, tags = {}, edit } = {}) => {
+    const cwd = join(root, `job-${n += 1}`);
+    for (const file of Object.keys(files).concat('scripts/desktop/release-version.mjs')) {
+      mkdirSync(join(cwd, 'artifact', file, '..'), { recursive: true });
+      copyFileSync(join(src, file), join(cwd, 'artifact', file));
+    }
+    mkdirSync(join(cwd, 'artifact/dist-npm'));
+    writeFileSync(join(cwd, 'artifact/dist-npm/nema-project-nema-1.2.3.tgz'), 'packed');
+    edit?.(cwd);
+    const log = join(cwd, 'npm.log');
+    const result = spawnSync('bash', ['-c', step.run], { cwd, encoding: 'utf8', env: {
+      ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}`, GIT_CONFIG_GLOBAL: gitconfig, GIT_CONFIG_NOSYSTEM: '1', GITHUB_TOKEN: '',
+      TAG: 'v1.2.3', SHA: sha, REPO: 'o/r', EXPECTED_INTEGRITY: integrity, FAKE_INTEGRITY: integrity, FAKE_STATE: 'absent', FAKE_STATE_AFTER: 'same', NPM_LOG: log,
+      ...Object.fromEntries(Object.entries(tags).map(([key, value]) => [`TAG_${key}`, value])), ...env,
+    } });
+    return { ...result, published: existsSync(log) ? readFileSync(log, 'utf8') : '' };
+  };
+  const publishedWith = (tag) => `publish --provenance --access public --tag ${tag} ./artifact/dist-npm/nema-project-nema-1.2.3.tgz\n`;
+  // absent reaches npm publish on the channel tag.
+  let r = run({ tags: { latest: '1.2.2' } });
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.published, publishedWith('latest'));
+  r = run({ env: { FAKE_DIST: 'next' }, tags: { latest: '1.2.2' } });
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.published, publishedWith('next'), 'a first prerelease has no next yet');
+  // same is done without publishing; different and an unanswered query fail before publishing.
+  r = run({ env: { FAKE_STATE: 'same' } });
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /already on npm with the expected tarball/); assert.equal(r.published, '');
+  r = run({ env: { FAKE_STATE: 'different' } });
+  assert.notEqual(r.status, 0); assert.equal(r.published, '');
+  r = run({ env: { FAKE_STATE: 'unknown' } });
+  assert.notEqual(r.status, 0); assert.equal(r.published, '');
+  // The tarball must be the one promote verified.
+  r = run({ env: { FAKE_INTEGRITY: `sha512-${'B'.repeat(86)}==` } });
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /release-promote expected/); assert.equal(r.published, '');
+  // A tag that does not point at the dispatched commit stops before anything runs.
+  r = run({ env: { SHA: later } });
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /tag moved/); assert.equal(r.published, '');
+  // Artifact scripts must be the tag commit's files, on the real publish path.
+  r = run({ edit: (cwd) => writeFileSync(join(cwd, 'artifact/scripts/release/npm-state.mjs'), "process.stdout.write('same');\n") });
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /artifact file scripts\/release\/npm-state\.mjs differs from v1\.2\.3/); assert.equal(r.published, '');
+  r = run({ edit: (cwd) => writeFileSync(join(cwd, 'artifact/scripts/release/extra.mjs'), 'export {};\n') });
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /artifact file scripts\/release\/extra\.mjs is not in v1\.2\.3/); assert.equal(r.published, '');
+  // Dist-tags: an older stable goes to maintenance, never backwards; an unrecognised value is an error.
+  r = run({ tags: { latest: '2.0.0' } });
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.published, publishedWith('maintenance'));
+  r = run({ tags: { latest: '2.0.0', maintenance: '1.2.1' } });
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.published, publishedWith('maintenance'));
+  r = run({ tags: { latest: '2.0.0', maintenance: '1.9.0' } });
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /npm maintenance is 1\.9\.0, newer than 1\.2\.3/); assert.equal(r.published, '');
+  r = run({ env: { FAKE_DIST: 'next' }, tags: { next: '1.2.4' } });
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /npm next is 1\.2\.4, newer than 1\.2\.3/); assert.equal(r.published, '');
+  for (const tags of [{ latest: 'canary' }, { latest: '2.0.0', maintenance: 'oops' }]) {
+    r = run({ tags });
+    assert.notEqual(r.status, 0, JSON.stringify(tags)); assert.equal(r.published, '');
   }
+  // A failed publish counts as done only when the registry then holds the same tarball.
+  r = run({ env: { PUBLISH_EXIT: '1' }, tags: { latest: '1.2.2' } });
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.published, publishedWith('latest'));
+  r = run({ env: { PUBLISH_EXIT: '1', FAKE_STATE_AFTER: 'absent' }, tags: { latest: '1.2.2' } });
+  assert.notEqual(r.status, 0); assert.equal(r.published, publishedWith('latest'));
 });
 
 test('release-promote runs main scripts only, treats the tag as data, and is the one pointer writer', () => {
@@ -421,13 +467,20 @@ test('release-promote runs main scripts only, treats the tag as data, and is the
 test('actual release-promote authorize shell admits only maintain or admin for both the actor and the triggering actor', t => {
   const cwd = mkdtempSync(join(tmpdir(), 'promote-authorize-')); t.after(() => rmSync(cwd, { recursive: true, force: true }));
   mkdirSync(join(cwd, 'bin'));
-  // gh api repos/o/r/collaborators/<login>/permission --jq .role_name answers from ROLES ("login=role ...").
+  // gh api repos/o/r/collaborators/<login>/permission [--jq f] answers the endpoint's JSON for the role in ROLES ("login=role ...").
   writeFileSync(join(cwd, 'bin/gh'), `#!/bin/bash
 set -euo pipefail
 test "$1" = api
 login=$(printf '%s' "$2" | sed -n 's#^repos/o/r/collaborators/\\([^/]*\\)/permission$#\\1#p')
 test -n "$login" || { echo "gh: unexpected $2" >&2; exit 1; }
-for pair in $ROLES; do if [ "\${pair%%=*}" = "$login" ]; then echo "\${pair#*=}"; exit 0; fi; done
+for pair in $ROLES; do
+  if [ "\${pair%%=*}" = "$login" ]; then
+    # The endpoint answers JSON (legacy permission plus role_name); like gh, --jq filters it.
+    body=$(jq -n --arg role "\${pair#*=}" '{permission: (if $role == "maintain" then "write" else $role end), role_name: $role, user: {login: "x"}}')
+    if [ "\${3:-}" = --jq ]; then jq -r "$4" <<<"$body"; else printf '%s\\n' "$body"; fi
+    exit 0
+  fi
+done
 echo "gh: HTTP 404" >&2; exit 1
 `, { mode: 0o755 });
   const workflow = read('release-promote');

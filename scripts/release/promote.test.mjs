@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assertPushRunJobs, assertTagRunJobs, preflight, promote } from './promote.mjs';
+import { assertPushRunJobs, assertTagRunJobs, completeRuns, preflight, promote } from './promote.mjs';
 
 const COMMIT = 'a'.repeat(40);
 const INTEGRITY = 'sha512-EXPECTED';
@@ -386,4 +386,12 @@ test('the tag workflows are checked again right before the Release is published'
   assert.deepEqual(state.log, ['tag workflows', 'verify candidate', 'npm dispatch', 'verify final', 'ghcr hub latest', 'ghcr web latest', 'tag workflows']);
   assert.equal(state.draft, true, 'the Release stays a draft');
   assert.match(lines.join('\n'), /stopped:\*\* tag workflows before the release: desktop-release push run 12 is in_progress/);
+});
+
+test('a workflow runs answer that does not hold every run of the commit is refused', () => {
+  const runs = [{ id: 1 }, { id: 2 }];
+  assert.deepEqual(completeRuns({ total_count: 2, workflow_runs: runs }, 'x'), runs);
+  assert.throws(() => completeRuns({ total_count: 21, workflow_runs: runs }, 'image-publish push runs'), /image-publish push runs: the runs answer lists 2 of 21 runs/);
+  assert.throws(() => completeRuns({ workflow_runs: runs }, 'x'), /did not report its run count/);
+  assert.throws(() => completeRuns({ total_count: 0 }, 'x'), /did not report its run count/);
 });
