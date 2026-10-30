@@ -312,7 +312,13 @@ test('release-promote runs main scripts only, treats the tag as data, and is the
   assert.equal(promote.concurrency.group, 'release-promote');
   assert.equal(promote.concurrency['cancel-in-progress'], false);
   const job = promote.jobs.promote;
-  assert.deepEqual(Object.keys(promote.jobs), ['promote']);
+  assert.deepEqual(Object.keys(promote.jobs), ['authorize', 'promote']);
+  // Write permissions exist only in a job that runs after a maintainer check that itself holds none.
+  const { authorize } = promote.jobs;
+  assert.deepEqual(authorize.permissions, { contents: 'read' });
+  assert.equal(job.needs, 'authorize');
+  assert.equal(condition(authorize.if, { github: { ref: 'refs/heads/main' } }), true);
+  assert.equal(condition(authorize.if, { github: { ref: 'refs/heads/feature' } }), false);
   assert.equal(condition(job.if, { github: { ref: 'refs/heads/main' } }), true);
   assert.equal(condition(job.if, { github: { ref: 'refs/tags/v1.2.3' } }), false);
   assert.equal(condition(job.if, { github: { ref: 'refs/heads/feature' } }), false);
@@ -337,6 +343,32 @@ test('release-promote runs main scripts only, treats the tag as data, and is the
   const image = readFileSync(new URL('../../.github/workflows/image-publish.yml', import.meta.url), 'utf8');
   for (const key of ['CRANE_VERSION', 'CRANE_SHA256']) assert.equal(source.match(new RegExp(`${key}: (\\S+)`))[1], image.match(new RegExp(`${key}: (\\S+)`))[1], key);
   assertPinnedUses(promote);
+});
+
+test('actual release-promote authorize shell admits only maintain or admin for both the actor and the triggering actor', t => {
+  const cwd = mkdtempSync(join(tmpdir(), 'promote-authorize-')); t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  mkdirSync(join(cwd, 'bin'));
+  // gh api repos/o/r/collaborators/<login>/permission --jq .role_name answers from ROLES ("login=role ...").
+  writeFileSync(join(cwd, 'bin/gh'), `#!/bin/bash
+set -euo pipefail
+test "$1" = api
+login=$(printf '%s' "$2" | sed -n 's#^repos/o/r/collaborators/\\([^/]*\\)/permission$#\\1#p')
+test -n "$login" || { echo "gh: unexpected $2" >&2; exit 1; }
+for pair in $ROLES; do if [ "\${pair%%=*}" = "$login" ]; then echo "\${pair#*=}"; exit 0; fi; done
+echo "gh: HTTP 404" >&2; exit 1
+`, { mode: 0o755 });
+  const script = read('release-promote').jobs.authorize.steps.find((step) => step.name === 'Require a maintainer').run;
+  const run = (actor, triggering, roles) => spawnSync('bash', ['-c', script], { cwd, encoding: 'utf8', env: { ...process.env, PATH: `${join(cwd, 'bin')}:${process.env.PATH}`, GH_TOKEN: 'x', GH_REPO: 'o/r', ACTOR: actor, TRIGGERING_ACTOR: triggering, ROLES: roles } });
+  let result = run('owner', 'owner', 'owner=admin');
+  assert.equal(result.status, 0, result.stderr);
+  result = run('keeper', 'keeper', 'keeper=maintain');
+  assert.equal(result.status, 0, result.stderr);
+  result = run('writer', 'writer', 'writer=write');
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /writer is write on o\/r; release-promote needs maintain or admin/);
+  result = run('owner', 'writer', 'owner=admin writer=write');
+  assert.notEqual(result.status, 0, 'a rerun by a writer of a maintainer run is refused'); assert.match(result.stderr, /writer is write/);
+  result = run('stranger', 'stranger', 'owner=admin');
+  assert.notEqual(result.status, 0, 'an unanswered permission query refuses');
 });
 
 test('windows desktop release publishes a separate portable ZIP and still smokes NSIS', () => {

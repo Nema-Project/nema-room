@@ -40,8 +40,36 @@ env:
   CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
 
 jobs:
+  # Anyone who can dispatch has repo write; publishing a release is a maintainer decision.
+  # This job holds no write permission, and promote gets its write token only after it passes.
+  authorize:
+    name: Authorize dispatcher
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Require a maintainer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          # Both the user who dispatched and the one who re-ran must hold maintain or admin.
+          for who in "$ACTOR" "$TRIGGERING_ACTOR"; do
+            role=$(gh api "repos/${GH_REPO}/collaborators/${who}/permission" --jq .role_name) || role=""
+            case "$role" in
+              admin|maintain) echo "${who}: ${role}" ;;
+              *) echo "${who} is ${role:-unknown} on ${GH_REPO}; release-promote needs maintain or admin" >&2; exit 1 ;;
+            esac
+          done
   promote:
     name: Promote ${{ inputs.tag }}
+    needs: authorize
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
