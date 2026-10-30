@@ -130,19 +130,29 @@ nema report --summary "实现了流式输出" --commits abc1234,def5678 --entrie
 echo '{"summary":"…","commits":["abc1234"]}' | nema report --json
 ```
 
-进行中的工作也可以先上报：`--json` 里加 `"progress":"in_progress"`（不写就是 `completed`）。进行中上报可以没有提交；没有提交时不做提交核对，消息上会写明「这次没有做提交核对」。有提交时照常核对，但不会推进开发包任务，也不会排整理任务；完成后再发一条 `completed` 上报（至少一个提交）。
+进行中的工作也可以先上报：加 `--progress in_progress`，或在 `--json` 里写 `"progress":"in_progress"`（不写就是 `completed`）。进行中上报可以没有提交；没有提交时不做提交核对，消息上会写明「这次没有做提交核对」。有提交时照常核对，但不会推进开发包任务，也不会排整理任务；完成后再发一条 `completed` 上报（至少一个提交）。
 
 ```bash
-echo '{"summary":"先接好流式接口","progress":"in_progress"}' | nema report --json
+nema report --progress in_progress --summary "先接好流式接口"
 ```
 
 上报会变成聊天里的一条 `report` 消息。daemon 核对三件事：提交存在；提交在主分支上；声称改过的文件确实被这些提交改过（多改了别的文件没关系，merge 提交不算，改名按新路径算）。核对完，hub 排一个整理任务。
 
+**声称和观察分开存。** `--json` 里还可以带 Agent 自己的说法：`branch`、`pr`、`headSha`、`ci`、`verified`、`notVerified`、`blockers`。它们原样存在 `messages.meta.report` 里，之后不改写。hub 自己读到的东西各存一个键，各自替换、互不覆盖：`check` 是 git 核对（替换时旧的三项结果记进 `checkHistory`）；`authors` 是这些提交的作者和提交者（只是提交元数据，不允许也不拒绝任何东西，读失败就不写这个键）；`github` 是对声称的 PR 的一次读取。`report.verified` 是 Agent 的说法，不是测试通过，也不是验收。
+
+**GitHub 观察。** 上报带了 `pr`，hub 读一次那个 PR 的 head 和一页（最多 100 条）check run，结果放在 `github.current`，`source` 是 `github-plugin-read`。只有在本 workspace 开着 GitHub 插件、`gh` 已安装并登录、上报所在仓库有唯一一个 GitHub remote 时才读；只读这个仓库，不去别的仓库找。不带 `pr` 时记为 `not_requested`；该读却没读到时记为 `unavailable`。读到的 head 和上报声称的 `headSha` 不同，会标成不一致，但不改上报。之后主分支移动、还没合入的上报重新核对时，会再读一次；新的一次替换 `current`，旧的放进 `github.history`。新的一次读失败时，`current` 是一份新的「读不到」，不沿用上一次的 head 或 check run。hub 不轮询 GitHub。check run 只是读到的记录：v1 不据此得出测试已通过，失败的 check run 也不会把任务或需求改成 `mismatch`。上报和 GitHub 读取都不写 `evidence_events`，也不写 `sourceRefs`。`checkHistory` 和 `github.history` 只记这一条上报自己的观察被替换过，不能用来回答需求第一次偏离是什么时候。
+
+**`reasonCode`。** 没有读到时，`github.current` 用 `reasonCode` 写明原因，只有这九种：`plugin_disabled`（插件没开）、`gh_unavailable`（没有 gh）、`gh_logged_out`（gh 没登录）、`remote_missing`（仓库没有 GitHub remote）、`remote_not_unique`（GitHub remote 不止一个）、`out_of_scope`（这个仓库里读不到这个 PR）、`timeout`（超时）、`http_error`（请求失败）、`invalid_response`（返回的内容不对）。不管哪种，上报本身都照常收下。
+
 **三种状态。** 需求条目的 `implementation` 有三种：
 
-- `reported`：已上报，还没核实通过（比如提交还没合入主分支，证据写着「尚未合入主分支」）。
-- `verified`：上报的核对通过。只有核对通过的上报，或你在界面上的确认，才能变成 verified。
+- `reported`：已上报，还没核对通过（比如提交还没合入主分支，证据写着「尚未合入主分支」）。
+- `verified`：分两种，看 `confirmedBy`。`confirmedBy` 为空表示「提交已核对」：所引的提交存在、在主分支上（或 patch-id 相同）、改过上报声称的文件。这不是需求的全部验收条件，也不是测试通过。`confirmedBy` 为 `user` 表示你在界面上确认过，这才是验收。
 - `mismatch`：上报和代码对不上，比如提交不存在，或声称的文件没被改过。
+
+Agent 只能在引用的上报核对通过时写 `verified`，而且不能写 `confirmedBy`。证据可以按上报分组写进 `reportEvidence`：每组一条上报和它的提交，`evidence.commits` 的每个提交都要落在某个核对通过的组里。没有 `reportEvidence` 时，仍按单条 `reportMessageId` 校验：那条上报核对通过，所有提交都在它的提交里。
+
+**你确认过的验收不会被自动清除。** 上报、重新核对、开发包完成都不会把 `confirmedBy: user` 改回空，Agent 改写它会被拒绝（原样重复不算改写）。你可以确认一条「提交已核对」但还没人确认的需求。之后你确认时引用的上报，核对结果变了（通过变失败，或通过的提交和你确认的对不上），hub 只在需求上加一个「需要复审」标记（`acceptanceReview`），验收仍在，你可以再确认一次。
 
 **「做完」= 在 `origin/<main>` 上。** 没有 origin 时看本地 main。上报的提交是主分支的祖先，就算合入。之后主分支每移动一次，还没合入的上报会重新核对，通过后变成 `verified`。
 
@@ -185,7 +195,7 @@ nema wp get W-1 --dir ../elsewhere # 写到别处的 .nema/W-1/ 下
 nema report --entries W-1 --task 2 --summary "…" --commits abc1234 --files src/x.ts
 ```
 
-**状态怎么变，什么时候算 done。** 任务状态是 `pending`、`reported`、`verified`、`mismatch`，另有一个 `inferred` 标记。它们由 hub 根据上报的核对结果设置，Agent 不能自己改：提交已在主分支上、声称的文件确实改过、并且碰到了任务列出的文件，才是 `verified`；提交还没合入主分支是 `reported`；对不上是 `mismatch`。同一任务的后一次上报通过核对，可以把 `reported` 或 `mismatch` 升成 `verified`，而 `verified` 不会被后来失败的上报降级。上报写了不存在的任务号、或开发包没有批准，上报照常保存和整理，任务状态不变。`reported`（包括仅凭代码推断出的）和 `mismatch` 的任务，可以由你在界面上确认成 `verified`。开发包状态由任务推出来：有任务离开 `pending` 就是 `in_progress`，全部任务 `verified` 就是 `done`；这时它覆盖的需求也会标成 `verified`。
+**状态怎么变，什么时候算 done。** 任务状态是 `pending`、`reported`、`verified`、`mismatch`，另有一个 `inferred` 标记。它们由 hub 根据上报的核对结果设置，Agent 不能自己改：提交已在主分支上、声称的文件确实改过、并且碰到了任务列出的文件，才是 `verified`；提交还没合入主分支是 `reported`；对不上是 `mismatch`。同一任务的后一次上报通过核对，可以把 `reported` 或 `mismatch` 升成 `verified`，而 `verified` 不会被后来失败的上报降级。上报写了不存在的任务号、或开发包没有批准，上报照常保存和整理，任务状态不变。`reported`（包括仅凭代码推断出的）和 `mismatch` 的任务，可以由你在界面上确认成 `verified`。开发包状态由任务推出来：有任务离开 `pending` 就是 `in_progress`，全部任务 `verified` 就是 `done`。`done` 不是验收。只有每个任务都有核对通过的上报（不是你确认的、也不是推断的）时，它覆盖的、还没有你确认过的需求才会写成「提交已核对」（`verified`，`confirmedBy` 为空），每条贡献的上报在 `reportEvidence` 里各占一组。
 
 **superpowers 署名。** spec 和 plan 的写作规则改写自 [superpowers](https://github.com/obra/superpowers)（MIT，Copyright (c) 2025 Jesse Vincent）的 brainstorming 和 writing-plans 技能。许可证和来源版本在 `vendor/superpowers-rules/` 下。
 

@@ -11,7 +11,8 @@ import { addReportMessage, getMessage, listMessages, mergeReportMeta } from "../
 import { recheckReports, registerReportToken, routeRepo, startReportFallback } from "../src/reports.js";
 import { applyRepoMoved } from "../src/repos.js";
 import { listQueuedTasks } from "../src/tasks.js";
-import { KnowledgeStore } from "@nema/knowledge";
+import { KnowledgeStore, git } from "@nema/knowledge";
+import { noteLinkedCheckChanged } from "../src/workpackages.js";
 import { createWorkspace, repoPath, updateWorkspace } from "../src/workspaces.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 
@@ -808,4 +809,81 @@ test("does not insert an evidence event for a report or a github read", async ()
   await recheckReports({ db, events, daemon, dataDir }, repoId);
   expect(calls.filter((c) => c.method === "github.observe")).toHaveLength(2);
   expect(await count()).toBe(before);
+});
+
+async function confirmedRequirement(ws: string, evidence: Record<string, unknown>, title = "需求"): Promise<string> {
+  const store = new KnowledgeStore(repoPath(dataDir, ws));
+  const { entry } = await store.upsert(
+    {
+      kind: "requirement", title, body: "b", reason: "r", sourceMessages: [],
+      implementation: { status: "reported", evidence: { reportMessageId: null, commits: ["abc1234"], inferred: false, note: null, confirmedBy: null, ...evidence } },
+    } as never,
+    { author: "user" },
+  );
+  await store.confirmImplementation(entry.id, { author: "user" });
+  return entry.id;
+}
+const implOf = async (ws: string, id: string) => (await new KnowledgeStore(repoPath(dataDir, ws)).get(id))!.implementation!;
+const knowledgeHead = (ws: string) => git(repoPath(dataDir, ws), ["rev-parse", "HEAD"]);
+
+test("marks acceptance review when a passing check is replaced by a failing one", async () => {
+  const { ws } = await bind();
+  const id = await confirmedRequirement(ws, { reportMessageId: "m_linked" });
+  const failing: ReportCheck = { ...passing, commitsExist: false, missingCommits: ["abc1234"] };
+  await noteLinkedCheckChanged(db, dataDir, ws, "m_linked", passing, failing, ["abc1234"]);
+  const impl = await implOf(ws, id);
+  expect(impl.status).toBe("verified");
+  expect(impl.evidence.confirmedBy).toBe("user");
+  expect(impl.evidence.commits).toEqual(["abc1234"]);
+  expect(impl.evidence.acceptanceReview).toMatchObject({ needed: true, reason: "linked_check_changed" });
+  const head = await knowledgeHead(ws);
+  await noteLinkedCheckChanged(db, dataDir, ws, "m_linked", passing, failing, ["abc1234"]);
+  expect(await knowledgeHead(ws)).toBe(head);
+});
+
+test("marks acceptance review when the passing commit set drifts", async () => {
+  const { ws } = await bind();
+  const direct = await confirmedRequirement(ws, { reportMessageId: "m_linked" }, "直接");
+  const grouped = await confirmedRequirement(ws, { reportMessageId: "m_other", reportEvidence: [{ reportMessageId: "m_linked", commits: ["abc1234"] }] }, "分组");
+  const unrelated = await confirmedRequirement(ws, { reportMessageId: "m_other" }, "无关");
+  await noteLinkedCheckChanged(db, dataDir, ws, "m_linked", passing, passing, ["def5678"]);
+  expect((await implOf(ws, direct)).evidence.acceptanceReview?.needed).toBe(true);
+  expect((await implOf(ws, grouped)).evidence.acceptanceReview?.needed).toBe(true);
+  expect((await implOf(ws, unrelated)).evidence.acceptanceReview).toBeNull();
+});
+
+test("does not mark a review when the check still passes on the same commits", async () => {
+  const { ws } = await bind();
+  const id = await confirmedRequirement(ws, { reportMessageId: "m_linked" });
+  const head = await knowledgeHead(ws);
+  await noteLinkedCheckChanged(db, dataDir, ws, "m_linked", passing, { ...passing, checkedAt: "2026-10-23T10:09:00.000Z" }, ["abc1234def"]);
+  expect((await implOf(ws, id)).evidence.acceptanceReview).toBeNull();
+  expect(await knowledgeHead(ws)).toBe(head);
+});
+
+test("does not clear a user confirmation when a later completed report is stored", async () => {
+  const { ws, repoId } = await bind();
+  const id = await confirmedRequirement(ws, { reportMessageId: "m_linked" });
+  const wpId = await approvedPackage(ws, repoId);
+  handlers["report.check"] = () => ({ ...passing, touchedFiles: ["src/a.ts"] });
+  const r = await post("/report", { ...report(), entries: [wpId, id], task: 1 });
+  expect(r.status).toBe(202);
+  await waitFor(async () => (await listQueuedTasks(db, ws)).length > 0);
+  const impl = await implOf(ws, id);
+  expect(impl.status).toBe("verified");
+  expect(impl.evidence.confirmedBy).toBe("user");
+});
+
+test("the chinese reference separates commit checks from acceptance", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const doc = await readFile(new URL("../../../docs/reference.zh-CN.md", import.meta.url), "utf8");
+  for (const phrase of ["提交已核对", "reasonCode", "验收不会被自动清除", "reportEvidence"]) expect(doc).toContain(phrase);
+  const reasons = ["plugin_disabled", "gh_logged_out", "gh_unavailable", "remote_missing", "remote_not_unique", "out_of_scope", "timeout", "http_error", "invalid_response"];
+  const start = doc.indexOf("**`reasonCode`。**");
+  expect(start).toBeGreaterThan(-1);
+  const section = doc.slice(start, doc.indexOf("\n\n", start));
+  const listed = [...section.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]);
+  expect(listed.sort()).toEqual([...reasons].sort());
+  expect(doc).toContain("### 任务");
+  expect(doc).not.toContain("全部任务 `verified` 就是 `done`；这时它覆盖的需求也会标成 `verified`");
 });

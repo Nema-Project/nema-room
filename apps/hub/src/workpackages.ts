@@ -1,15 +1,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { z, ZodError } from "zod";
-import { KnowledgeStore, git } from "@nema/knowledge";
-import { kindFromId, reportPassed, type Entry, type ReportCheck, type ReportMessageMeta, type WpTask } from "@nema/shared";
+import { KnowledgeStore, UpsertRejected, git } from "@nema/knowledge";
+import { kindFromId, reportPassed, type Entry, type Implementation, type ReportCheck, type ReportMessageMeta, type UpsertEntryInput, type WpTask } from "@nema/shared";
 import type { DaemonRpc } from "./daemonRpc.js";
 import type { HubCallOutcome } from "./diagrams.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
 import { indexEntry } from "./entryIndex.js";
-import { getMessage, postSystemTask, type Message } from "./messages.js";
+import { postSystemTask, type Message } from "./messages.js";
 import { workspacePluginState } from "./plugins.js";
 import { listRepos } from "./repos.js";
 import { getTask, recordTaskChange, toUiTask } from "./tasks.js";
@@ -344,6 +345,26 @@ async function markInferred(deps: WorkPackageDeps, store: KnowledgeStore, auth: 
   return { status: 200, result: { ok: true }, ok: true };
 }
 
+/** The note and commit reason when every task of a package has a passing git check. Not acceptance. */
+export function commitsCheckedNote(wpId: string): string {
+  return `开发包 ${wpId} 的提交已核对`;
+}
+
+/**
+ * One reportEvidence group per passing report behind the tasks, in task order, when every task has a git check:
+ * verified, not by the user, not inferred, and its report's stored check passed. Otherwise null.
+ */
+async function gitCheckedGroups(db: Db, workspaceId: string, tasks: WpTask[]): Promise<{ reportMessageId: string; commits: string[] }[] | null> {
+  const groups: { reportMessageId: string; commits: string[] }[] = [];
+  for (const t of tasks) {
+    if (t.status !== "verified" || t.confirmedBy === "user" || t.inferred || !t.reportMessageId) return null;
+    const meta = await reportMeta(db, workspaceId, t.reportMessageId);
+    if (!meta?.check || !reportPassed(meta.check)) return null;
+    if (!groups.some((g) => g.reportMessageId === t.reportMessageId)) groups.push({ reportMessageId: t.reportMessageId, commits: [...meta.report.commits] });
+  }
+  return groups.length > 0 ? groups : null;
+}
+
 // Progress edits read and rewrite the whole task list, so they run one at a time.
 let progressQueue: Promise<unknown> = Promise.resolve();
 function serialized<T>(fn: () => Promise<T>): Promise<T> {
@@ -370,35 +391,41 @@ async function saveProgress(
   const entry = await store.setWorkPackageMeta(wp.id, { tasks, ...(status !== wp.status ? { status } : {}) }, reason, { author });
   await userAfter(deps, workspaceId, entry);
   if (status === "done" && wp.status !== "done") {
-    const commits = new Set<string>();
-    for (const t of tasks) {
-      const m = t.reportMessageId ? await getMessage(deps.db, t.reportMessageId) : null;
-      for (const c of (m?.meta as ReportMessageMeta | null)?.report?.commits ?? []) commits.add(c);
-    }
-    for (const reqId of entry.workpackage!.requirements) {
-      try {
-        const req = await store.get(reqId);
-        if (!req || req.implementation?.status === "verified") continue;
-        const updated = await store.upsert(
-          {
-            id: reqId,
-            kind: req.kind,
-            title: req.title,
-            body: req.body,
-            status: req.status,
-            related: req.related,
-            sourceMessages: [],
-            reason: `开发包 ${wp.id} 全部任务已核实`,
-            implementation: {
-              status: "verified",
-              evidence: { reportMessageId: lastReportMessageId, commits: [...commits], inferred: false, note: `开发包 ${wp.id} 全部任务已核实`, confirmedBy: null, acceptanceReview: null, reportEvidence: null },
+    const groups = await gitCheckedGroups(deps.db, workspaceId, tasks);
+    // A package can be done through user confirmations or inferred tasks; only a package whose every task has
+    // a passing git check says anything about its requirements' commits.
+    if (groups) {
+      const commits: string[] = [];
+      for (const group of groups) for (const c of group.commits) if (!commits.includes(c)) commits.push(c);
+      const note = commitsCheckedNote(wp.id);
+      for (const reqId of entry.workpackage!.requirements) {
+        try {
+          const req = await store.get(reqId);
+          if (!req || req.implementation?.status === "verified") continue;
+          const updated = await store.upsert(
+            {
+              id: reqId,
+              kind: req.kind,
+              title: req.title,
+              body: req.body,
+              status: req.status,
+              related: req.related,
+              sourceMessages: [],
+              reason: note,
+              implementation: {
+                status: "verified",
+                evidence: { reportMessageId: groups.at(-1)!.reportMessageId, commits, inferred: false, note, confirmedBy: null, acceptanceReview: null, reportEvidence: groups },
+              },
             },
-          },
-          { author: "system" },
-        );
-        await userAfter(deps, workspaceId, updated.entry);
-      } catch (e) {
-        console.error(`work package: marking ${reqId} verified failed`, e);
+            { author: "system" },
+            // Judged under the repo lock: a user acceptance that landed meanwhile is never replaced.
+            ({ existing, input }) => guardStoredImplementation(deps.db, workspaceId, existing, input),
+          );
+          await userAfter(deps, workspaceId, updated.entry);
+        } catch (e) {
+          if (e instanceof UpsertRejected) continue;
+          console.error(`work package: marking ${reqId} verified failed`, e);
+        }
       }
     }
   }
@@ -451,16 +478,161 @@ export async function confirmWorkPackageTask(deps: { db: Db; dataDir: string; ev
   });
 }
 
+/** Thrown by the review guard when the mark is already set, so `upsert` stops before writing. */
+class ReviewAlreadyNeeded extends Error {}
+
+function commitsAlign(a: string[], b: string[]): boolean {
+  return a.every((x) => b.some((y) => sameCommit(x, y))) && b.every((y) => a.some((x) => sameCommit(x, y)));
+}
+
+/** Whether a user acceptance that cites `messageId` no longer matches the report's new check. */
+function linkedCheckChanged(impl: Implementation, messageId: string, previous: ReportCheck | null, next: ReportCheck, reportCommits: string[]): boolean {
+  const ev = impl.evidence;
+  if (impl.status !== "verified" || ev.confirmedBy !== "user") return false;
+  const group = (ev.reportEvidence ?? []).find((g) => g.reportMessageId === messageId);
+  if (!group && ev.reportMessageId !== messageId) return false;
+  const passedBefore = previous !== null && reportPassed(previous);
+  const passedNow = reportPassed(next);
+  if (passedBefore !== passedNow) return true;
+  // A rollup accepted several reports; this report only answers for its own group.
+  const accepted = group ? group.commits : ev.commits;
+  return !commitsAlign(passedNow ? reportCommits : [], accepted);
+}
+
 /**
- * Marks requirements the user accepted on this report for review when the report's git check changed.
- * Called before the new check is merged into the report meta. Filled in with the acceptance guard.
+ * Marks `acceptanceReview` on every user-accepted requirement that cites this report when its check changes:
+ * pass became fail (or back), or the passing commits no longer line up with the accepted ones. Only
+ * `acceptanceReview` changes; the acceptance itself stays. A mark that is already set writes nothing.
+ * Called before the report's meta moves on, so a failure leaves an extra mark rather than a lost one.
  */
 export async function noteLinkedCheckChanged(
   _db: Db,
-  _dataDir: string | undefined,
-  _workspaceId: string,
-  _messageId: string,
-  _previous: ReportCheck | null,
-  _next: ReportCheck,
-  _reportCommits: string[],
-): Promise<void> {}
+  dataDir: string | undefined,
+  workspaceId: string,
+  messageId: string,
+  previous: ReportCheck | null,
+  next: ReportCheck,
+  reportCommits: string[],
+): Promise<void> {
+  if (!dataDir) return;
+  const store = new KnowledgeStore(repoPath(dataDir, workspaceId));
+  const candidates = (await store.listEntries()).filter((e) => e.kind === "requirement" && e.implementation && linkedCheckChanged(e.implementation, messageId, previous, next, reportCommits));
+  for (const candidate of candidates) {
+    try {
+      await store.upsert(
+        { id: candidate.id, kind: candidate.kind, title: candidate.title, body: candidate.body, sourceMessages: [], reason: `上报 ${messageId} 的核对已变，验收需要复审` },
+        { author: "system" },
+        ({ existing, input }) => {
+          const impl = existing?.implementation;
+          if (!existing || !impl || !linkedCheckChanged(impl, messageId, previous, next, reportCommits)) throw new ReviewAlreadyNeeded();
+          if (impl.evidence.acceptanceReview?.needed) throw new ReviewAlreadyNeeded();
+          return {
+            ...input,
+            title: existing.title,
+            body: existing.body,
+            implementation: { ...impl, evidence: { ...impl.evidence, acceptanceReview: { needed: true, at: new Date().toISOString(), reason: "linked_check_changed" } } },
+          };
+        },
+      );
+    } catch (error) {
+      if (error instanceof ReviewAlreadyNeeded) continue;
+      throw error;
+    }
+  }
+}
+
+export const VERIFIED_NEEDS_REPORT = "实现状态 verified 需要一条核实通过的上报作为证据（evidence.reportMessageId）。";
+export const INFERRED_NOT_VERIFIED = "代码推断的实现只能由用户确认为 verified。";
+export const CONFIRMED_BY_USER_ONLY = "confirmedBy 只能由用户确认设置。";
+export const REPORT_EVIDENCE_PROVENANCE = "reportEvidence 只能引用本 workspace 的上报，以及该上报里的提交。";
+export const AGENT_REWRITES_USER_ACCEPTANCE = "已有用户确认的实现不能由 Agent 改写。";
+
+/** Same commit when one sha is a prefix of the other (reports may use abbreviated shas). */
+export function sameCommit(a: string, b: string): boolean {
+  return a !== "" && b !== "" && (a.startsWith(b) || b.startsWith(a));
+}
+
+async function reportMeta(db: Db, workspaceId: string, messageId: string): Promise<ReportMessageMeta | null> {
+  const rows = await db.query<{ meta: ReportMessageMeta | null }>(
+    `select meta from messages where id = $1 and workspace_id = $2 and role = 'report'`,
+    [messageId, workspaceId],
+  );
+  return rows[0]?.meta ?? null;
+}
+
+/** Every reportEvidence group cites a report message in this workspace and only commits that report lists. */
+async function reportEvidenceCitesReports(db: Db, workspaceId: string, groups: Implementation["evidence"]["reportEvidence"]): Promise<boolean> {
+  for (const group of groups ?? []) {
+    const reported = (await reportMeta(db, workspaceId, group.reportMessageId))?.report.commits;
+    if (!reported) return false;
+    if (!group.commits.every((sha) => reported.some((r) => sameCommit(r, sha)))) return false;
+  }
+  return true;
+}
+
+/**
+ * Why the Agent (or a package rollup) may not save this implementation, or null when it may. `verified` needs
+ * passing reports of this workspace: with `reportEvidence`, every cited commit must sit in a group whose
+ * report passed; without it, every commit must be one of the single `reportMessageId` report's commits.
+ */
+export async function implementationRefusal(db: Db, workspaceId: string, impl: Implementation): Promise<string | null> {
+  const ev = impl.evidence;
+  if (ev.confirmedBy !== null) return CONFIRMED_BY_USER_ONLY;
+  if (!(await reportEvidenceCitesReports(db, workspaceId, ev.reportEvidence ?? null))) return REPORT_EVIDENCE_PROVENANCE;
+  if (impl.status !== "verified") return null;
+  if (ev.inferred) return INFERRED_NOT_VERIFIED;
+  const groups = ev.reportEvidence ?? [];
+  if (groups.length > 0) {
+    const passed: string[][] = [];
+    for (const group of groups) {
+      const meta = await reportMeta(db, workspaceId, group.reportMessageId);
+      if (meta?.check && reportPassed(meta.check)) passed.push(group.commits);
+    }
+    const covered = ev.commits.every((sha) => passed.some((commits) => commits.some((c) => sameCommit(c, sha))));
+    return covered ? null : VERIFIED_NEEDS_REPORT;
+  }
+  if (ev.reportMessageId === null) return VERIFIED_NEEDS_REPORT;
+  const meta = await reportMeta(db, workspaceId, ev.reportMessageId);
+  if (!meta?.check || !reportPassed(meta.check)) return VERIFIED_NEEDS_REPORT;
+  const reported = meta.report.commits;
+  if (!ev.commits.every((sha) => reported.some((r) => sameCommit(r, sha)))) return VERIFIED_NEEDS_REPORT;
+  return null;
+}
+
+/** The fields a user acceptance protects; equal on all of them means the Agent only repeated it. */
+function sameProtectedImplementation(a: Implementation, b: Implementation): boolean {
+  const pick = (impl: Implementation) => ({
+    status: impl.status,
+    confirmedBy: impl.evidence.confirmedBy,
+    reportMessageId: impl.evidence.reportMessageId,
+    reportEvidence: impl.evidence.reportEvidence ?? null,
+    commits: impl.evidence.commits,
+    note: impl.evidence.note,
+    inferred: impl.evidence.inferred,
+    acceptanceReview: impl.evidence.acceptanceReview ?? null,
+  });
+  return isDeepStrictEqual(pick(a), pick(b));
+}
+
+/**
+ * The implementation rules, run inside `upsert`'s repo lock against the entry read there. A user-accepted
+ * implementation is kept: repeating it unchanged drops the field from the write; any other change is 409.
+ * Otherwise `implementationRefusal` decides. Throws {@link UpsertRejected}; must not call back into the store.
+ */
+export async function guardStoredImplementation(db: Db, workspaceId: string, existing: Entry | null, input: UpsertEntryInput): Promise<UpsertEntryInput> {
+  const next = input.implementation;
+  if (next === undefined) return input;
+  const stored = existing?.implementation;
+  if (stored?.evidence.confirmedBy === "user") {
+    const parsed = { ...next, evidence: { ...next.evidence, acceptanceReview: next.evidence.acceptanceReview ?? null, reportEvidence: next.evidence.reportEvidence ?? null } } as Implementation;
+    if (sameProtectedImplementation(stored, parsed)) {
+      const { implementation: _kept, ...rest } = input;
+      return rest as UpsertEntryInput;
+    }
+    if (next.evidence.confirmedBy !== null) throw new UpsertRejected(409, CONFIRMED_BY_USER_ONLY);
+    throw new UpsertRejected(409, AGENT_REWRITES_USER_ACCEPTANCE);
+  }
+  const refused = await implementationRefusal(db, workspaceId, next as Implementation);
+  if (refused) throw new UpsertRejected(409, refused);
+  return input;
+}

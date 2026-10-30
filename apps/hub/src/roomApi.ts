@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { sourceEvidenceEntries, sourceEvidenceSummary } from "./sourceFreshness.js";
 import { ZodError } from "zod";
 import { KnowledgeStore, UpsertRejected } from "@nema/knowledge";
-import { canonicalJson, INACTIVE_STATUSES, UpsertEntryInput, pluginFunction, reportPassed, type Entry, type PluginToolSpec, type SourceRef, type GetEntryResponse, type Implementation, type ReportMessageMeta, type ListEntriesResponse, type UpsertEntryResponse } from "@nema/shared";
+import { canonicalJson, INACTIVE_STATUSES, UpsertEntryInput, pluginFunction, type Entry, type PluginToolSpec, type SourceRef, type GetEntryResponse, type ListEntriesResponse, type UpsertEntryResponse } from "@nema/shared";
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
 import { callHubFunction, vendoredArchify, type Archify } from "./diagrams.js";
@@ -16,7 +16,7 @@ import { offerSkillInstall } from "./skillOffers.js";
 import { getTask, recordTaskChange, resolveRunToken } from "./tasks.js";
 import { conversationOf, ensureThread, renameThread } from "./threads.js";
 import { repoPath } from "./workspaces.js";
-import { retryBlockedPackages } from "./workpackages.js";
+import { guardStoredImplementation, retryBlockedPackages } from "./workpackages.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 /** The daemon gives each GitHub call 60 s; waiting longer lets its own error arrive instead of a hub timeout. */
@@ -146,10 +146,6 @@ export function roomRoutes(deps: {
         return c.json({ error: `quotes: text must be copied verbatim from message ${quote.messageId}` }, 400);
       }
     }
-    if (input.implementation !== undefined) {
-      const refused = await implementationRefusal(db, workspaceId, input.implementation);
-      if (refused) return c.json({ error: refused }, 409);
-    }
     const ks = store(workspaceId);
     // Existence only. The basis decision re-reads the file inside the repo lock below.
     if (input.id !== undefined && !(await ks.get(input.id))) {
@@ -159,7 +155,10 @@ export function roomRoutes(deps: {
     try {
       // All evidence checks use the entry read under this same repository lock.
       result = await ks.upsert(input, { author: "agent", taskId }, async ({ existing, input: locked }) => {
-        const guarded = applyActiveDecisionGuard(existing, locked, byId);
+        // The implementation is judged against the entry read under this lock, so a user confirmation that
+        // landed after the Agent read the entry is never overwritten.
+        const withImplementation = await guardStoredImplementation(db, workspaceId, existing, locked);
+        const guarded = applyActiveDecisionGuard(existing, withImplementation, byId);
         await assertCurrentTaskUserEvidence(db, taskId, workspaceId, existing, guarded);
         return await applyExternalEvidenceGuard(db, taskId, workspaceId, ks, existing, guarded);
       });
@@ -319,10 +318,13 @@ export const USER_BASIS_EVIDENCE_CODE = "user_basis_evidence";
 export const USER_BASIS_EVIDENCE_ERROR =
   "写入 stated 或 decided，或把已失效条目恢复为 active，需要引用当前任务的用户消息。";
 
-export const VERIFIED_NEEDS_REPORT = "实现状态 verified 需要一条核实通过的上报作为证据（evidence.reportMessageId）。";
-export const INFERRED_NOT_VERIFIED = "代码推断的实现只能由用户确认为 verified。";
-export const CONFIRMED_BY_USER_ONLY = "confirmedBy 只能由用户确认设置。";
-export const REPORT_EVIDENCE_PROVENANCE = "reportEvidence 只能引用本 workspace 的上报，以及该上报里的提交。";
+export {
+  AGENT_REWRITES_USER_ACCEPTANCE,
+  CONFIRMED_BY_USER_ONLY,
+  INFERRED_NOT_VERIFIED,
+  REPORT_EVIDENCE_PROVENANCE,
+  VERIFIED_NEEDS_REPORT,
+} from "./workpackages.js";
 
 function activeDecisionEvidenceError(id: string): string {
   return `改写已定决策 ${id} 需要用户消息作为依据（basis 为 stated 或 decided，且 sourceMessages 含用户消息）。若只是推断，请不要改它，改为新建一条 question 询问用户。`;
@@ -433,45 +435,4 @@ async function applyExternalEvidenceGuard(
     if (!quoted) throw new UpsertRejected(409, "引用外部来源时，把条目标成 stated 或 decided 需要当前这条用户消息里的逐字摘录。外部文档不能代替这个确认。");
   }
   return hasRefs || existing?.sourceSnapshot ? { ...input, confirmed: false } : input;
-}
-
-/** Same commit when one sha is a prefix of the other (reports may use abbreviated shas). */
-function sameCommit(a: string, b: string): boolean {
-  return a.startsWith(b) || b.startsWith(a);
-}
-
-/**
- * Why the Agent may not save this implementation, or null when it may. `verified` needs a `report` message
- * of this workspace whose stored check passed, and every cited commit must be one of that report's commits.
- */
-/** Every reportEvidence group cites a report message in this workspace and only commits that report lists. */
-async function reportEvidenceCitesReports(db: Db, workspaceId: string, groups: Implementation["evidence"]["reportEvidence"]): Promise<boolean> {
-  for (const group of groups ?? []) {
-    const rows = await db.query<{ meta: ReportMessageMeta | null }>(
-      `select meta from messages where id = $1 and workspace_id = $2 and role = 'report'`,
-      [group.reportMessageId, workspaceId],
-    );
-    const reported = rows[0]?.meta?.report.commits;
-    if (!reported) return false;
-    if (!group.commits.every((sha) => sha !== "" && reported.some((r) => sameCommit(r, sha)))) return false;
-  }
-  return true;
-}
-
-async function implementationRefusal(db: Db, workspaceId: string, impl: Implementation): Promise<string | null> {
-  const ev = impl.evidence;
-  if (ev.confirmedBy !== null) return CONFIRMED_BY_USER_ONLY;
-  if (!(await reportEvidenceCitesReports(db, workspaceId, ev.reportEvidence ?? null))) return REPORT_EVIDENCE_PROVENANCE;
-  if (impl.status !== "verified") return null;
-  if (ev.inferred) return INFERRED_NOT_VERIFIED;
-  if (ev.reportMessageId === null) return VERIFIED_NEEDS_REPORT;
-  const rows = await db.query<{ meta: ReportMessageMeta | null }>(
-    `select meta from messages where id = $1 and workspace_id = $2 and role = 'report'`,
-    [ev.reportMessageId, workspaceId],
-  );
-  const meta = rows[0]?.meta;
-  if (!meta?.check || !reportPassed(meta.check)) return VERIFIED_NEEDS_REPORT;
-  const reported = meta.report.commits;
-  if (!ev.commits.every((sha) => sha !== "" && reported.some((r) => sameCommit(r, sha)))) return VERIFIED_NEEDS_REPORT;
-  return null;
 }

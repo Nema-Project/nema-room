@@ -6,7 +6,7 @@ import type { Db } from "../src/db/db.js";
 import { DaemonRpcError, type DaemonRpc } from "../src/daemonRpc.js";
 import { EventBus } from "../src/events.js";
 import { addReportMessage, postUserMessage } from "../src/messages.js";
-import { WorkPackageError, applyReportToWorkPackage, requestWorkPackage, retryBlockedPackages } from "../src/workpackages.js";
+import { WorkPackageError, applyReportToWorkPackage, implementationRefusal, requestWorkPackage, retryBlockedPackages } from "../src/workpackages.js";
 import { bundledExtensions, type ReportCheck, type WpTask } from "@nema/shared";
 import { setPluginState } from "../src/plugins.js";
 import { roomRoutes } from "../src/roomApi.js";
@@ -475,14 +475,76 @@ describe("progress from reports", () => {
 
   test("all tasks verified -> done, and the requirements become verified with evidence", async () => {
     const wp = await approvedPackage();
-    await report([wp.id], 1, check(), ["aaaaaaa"]);
+    const first = await report([wp.id], 1, check(), ["aaaaaaa"]);
     const last = await report([wp.id], 2, check({ touchedFiles: ["src/b.ts"] }), ["bbbbbbb"]);
     expect((await store().get(wp.id))!.status).toBe("done");
     const req = (await store().get("R-1"))!;
     expect(req.implementation).toEqual({
       status: "verified",
-      evidence: { reportMessageId: last.id, commits: ["aaaaaaa", "bbbbbbb"], inferred: false, note: `开发包 ${wp.id} 全部任务已核实`, confirmedBy: null, acceptanceReview: null, reportEvidence: null },
+      evidence: {
+        reportMessageId: last.id,
+        commits: ["aaaaaaa", "bbbbbbb"],
+        inferred: false,
+        note: `开发包 ${wp.id} 的提交已核对`,
+        confirmedBy: null,
+        acceptanceReview: null,
+        reportEvidence: [
+          { reportMessageId: first.id, commits: ["aaaaaaa"] },
+          { reportMessageId: last.id, commits: ["bbbbbbb"] },
+        ],
+      },
     });
+    for (const banned of ["已核实", "验收"]) expect(req.implementation!.evidence.note).not.toContain(banned);
+    expect(await implementationRefusal(db, ws, req.implementation!)).toBeNull();
+  });
+
+  test("does not verify the requirement when the last task was confirmed by the user", async () => {
+    const wp = await approvedPackage();
+    await report([wp.id], 1, check(), ["aaaaaaa"]);
+    const token = await runToken();
+    expect((await call(token, "workpackage__mark_task_inferred", { id: wp.id, task: 2, commits: ["bbbbbbb"] })).json.result.ok).toBe(true);
+    const before = (await store().get("R-1"))!.implementation;
+    const res = await ui().request(`/api/workspaces/${ws}/workpackages/${wp.id}/tasks/2/confirm`, { method: "POST" });
+    expect(res.status).toBe(200);
+    expect((await store().get(wp.id))!.status).toBe("done");
+    const req = (await store().get("R-1"))!;
+    expect(req.implementation).toEqual(before);
+    expect(req.implementation?.status).not.toBe("verified");
+  });
+
+  test("leaves a user-confirmed requirement in place when the package becomes done", async () => {
+    const wp = await approvedPackage();
+    await store().upsert(
+      {
+        id: "R-1", kind: "requirement", title: "需求", body: "b", reason: "r", sourceMessages: [],
+        implementation: { status: "reported", evidence: { reportMessageId: null, commits: ["abc1234"], inferred: false, note: null, confirmedBy: null } },
+      } as never,
+      { author: "user" },
+    );
+    await store().confirmImplementation("R-1", { author: "user" });
+    await report([wp.id], 1, check(), ["aaaaaaa"]);
+    await report([wp.id], 2, check({ touchedFiles: ["src/b.ts"] }), ["bbbbbbb"]);
+    expect((await store().get(wp.id))!.status).toBe("done");
+    const req = (await store().get("R-1"))!;
+    expect(req.implementation).toMatchObject({ status: "verified", evidence: { confirmedBy: "user", commits: ["abc1234"], note: null } });
+  });
+
+  test("does not turn a failed check run into a git mismatch", async () => {
+    const wp = await approvedPackage();
+    const failedRun = {
+      state: "read" as const, observedAt: "2026-10-23T10:00:00.000Z", source: "github-plugin-read" as const,
+      binding: { repoId: "r", owner: "o", repo: "r", pr: 1, observedHeadSha: "a".repeat(40), claimedHeadSha: null },
+      headMatch: "not_comparable" as const, checkRuns: [{ name: "ci", status: "completed", conclusion: "failure", url: null }], truncated: false,
+    };
+    const message = await addReportMessage(db, ws, "做完了", {
+      report: { agent: "claude-code", gitCommonDir: "/x/.git", summary: "做完了", entries: [wp.id], commits: ["abcdef1"], files: [], task: 1 },
+      check: check(),
+      github: { current: failedRun, history: [] },
+    } as never);
+    await applyReportToWorkPackage(db, dataDir, events, ws, message);
+    expect((await tasks(wp.id))[0]!.status).toBe("verified");
+    await report([wp.id], 2, check({ filesOk: false, touchedFiles: [] }));
+    expect((await tasks(wp.id))[1]!.status).toBe("mismatch");
   });
 
   test("user confirm of an inferred task verifies it", async () => {
