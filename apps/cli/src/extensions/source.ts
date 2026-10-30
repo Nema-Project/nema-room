@@ -1,4 +1,4 @@
-import { bundledExtensions, type ExtensionRecord, type SkillSource } from "@nema/shared";
+import { bundledExtensions, type ExtensionRecord, type SkillProblem, type SkillSource } from "@nema/shared";
 
 /**
  * The slice of `fetch` the resolver needs. Production passes the global `fetch`; tests pass a fake
@@ -16,7 +16,7 @@ export type SourceFetch = (
   arrayBuffer(): Promise<ArrayBuffer>;
 }>;
 
-export type SkillProblem = "missing-frontmatter" | "invalid-id" | "bundled-id" | "duplicate-id" | "too-large";
+export type { SkillProblem } from "@nema/shared";
 
 export type SkillCandidate = {
   /** Managed id the skill would install under; null when it cannot be installed (see `problem`). */
