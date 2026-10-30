@@ -373,7 +373,11 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-/** Saves a new task list, derives the package status, and when every task is verified marks the requirements verified. */
+/**
+ * Saves a new task list and derives the package status. When every task is verified by its own passing
+ * check, the requirements are marked commits-checked first; the package becomes done only once every
+ * requirement write landed, so a failed write keeps it open and the next report on the package retries.
+ */
 async function saveProgress(
   deps: { db: Db; dataDir: string; events: EventBus; ownedHelpers?: OwnedHelperScope },
   workspaceId: string,
@@ -381,55 +385,69 @@ async function saveProgress(
   tasks: WpTask[],
   reason: string,
   author: "user" | "system",
-  lastReportMessageId: string | null,
 ): Promise<Entry> {
   const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId), deps.ownedHelpers);
   let status: Entry["status"] = wp.status;
   const allVerified = tasks.length > 0 && tasks.every((t) => t.status === "verified");
-  if (allVerified && status !== "done") status = "done";
-  else if (status === "approved" && tasks.some((t) => t.status !== "pending")) status = "in_progress";
+  if (allVerified && status !== "done") {
+    status = (await markRequirementsChecked(deps, store, workspaceId, wp, tasks)) ? "done" : "in_progress";
+  } else if (status === "approved" && tasks.some((t) => t.status !== "pending")) status = "in_progress";
+  const changed = status !== wp.status || !isDeepStrictEqual(tasks, wp.workpackage!.tasks);
+  if (!changed) return wp;
   const entry = await store.setWorkPackageMeta(wp.id, { tasks, ...(status !== wp.status ? { status } : {}) }, reason, { author });
   await userAfter(deps, workspaceId, entry);
-  if (status === "done" && wp.status !== "done") {
-    const groups = await gitCheckedGroups(deps.db, workspaceId, tasks);
-    // A package can be done through user confirmations or inferred tasks; only a package whose every task has
-    // a passing git check says anything about its requirements' commits.
-    if (groups) {
-      const commits: string[] = [];
-      for (const group of groups) for (const c of group.commits) if (!commits.includes(c)) commits.push(c);
-      const note = commitsCheckedNote(wp.id);
-      for (const reqId of entry.workpackage!.requirements) {
-        try {
-          const req = await store.get(reqId);
-          if (!req || req.implementation?.status === "verified") continue;
-          const updated = await store.upsert(
-            {
-              id: reqId,
-              kind: req.kind,
-              title: req.title,
-              body: req.body,
-              status: req.status,
-              related: req.related,
-              sourceMessages: [],
-              reason: note,
-              implementation: {
-                status: "verified",
-                evidence: { reportMessageId: groups.at(-1)!.reportMessageId, commits, inferred: false, note, confirmedBy: null, acceptanceReview: null, reportEvidence: groups },
-              },
-            },
-            { author: "system" },
-            // Judged under the repo lock: a user acceptance that landed meanwhile is never replaced.
-            ({ existing, input }) => guardStoredImplementation(deps.db, workspaceId, existing, input),
-          );
-          await userAfter(deps, workspaceId, updated.entry);
-        } catch (e) {
-          if (e instanceof UpsertRejected) continue;
-          console.error(`work package: marking ${reqId} verified failed`, e);
-        }
-      }
+  return entry;
+}
+
+/**
+ * Marks the package's requirements commits-checked when every task has a passing git check. A package done
+ * through user confirmations or inferred tasks says nothing about its requirements' commits, so nothing is
+ * written. Returns false when a requirement write failed and should be retried.
+ */
+async function markRequirementsChecked(
+  deps: { db: Db; dataDir: string; events: EventBus; ownedHelpers?: OwnedHelperScope },
+  store: KnowledgeStore,
+  workspaceId: string,
+  wp: Entry,
+  tasks: WpTask[],
+): Promise<boolean> {
+  const groups = await gitCheckedGroups(deps.db, workspaceId, tasks);
+  if (!groups) return true;
+  const commits: string[] = [];
+  for (const group of groups) for (const c of group.commits) if (!commits.includes(c)) commits.push(c);
+  const note = commitsCheckedNote(wp.id);
+  let complete = true;
+  for (const reqId of wp.workpackage!.requirements) {
+    try {
+      const req = await store.get(reqId);
+      if (!req || req.implementation?.status === "verified") continue;
+      const updated = await store.upsert(
+        {
+          id: reqId,
+          kind: req.kind,
+          title: req.title,
+          body: req.body,
+          status: req.status,
+          related: req.related,
+          sourceMessages: [],
+          reason: note,
+          implementation: {
+            status: "verified",
+            evidence: { reportMessageId: groups.at(-1)!.reportMessageId, commits, inferred: false, note, confirmedBy: null, acceptanceReview: null, reportEvidence: groups },
+          },
+        },
+        { author: "system" },
+        // Judged under the repo lock: a user acceptance that landed meanwhile is never replaced.
+        ({ existing, input }) => guardStoredImplementation(deps.db, workspaceId, existing, input),
+      );
+      await userAfter(deps, workspaceId, updated.entry);
+    } catch (e) {
+      if (e instanceof UpsertRejected) continue;
+      complete = false;
+      console.error(`work package: marking ${reqId} verified failed`, e);
     }
   }
-  return entry;
+  return complete;
 }
 
 /**
@@ -450,7 +468,14 @@ export async function applyReportToWorkPackage(db: Db, dataDir: string, events: 
       const wp = await store.get(ids[0]!);
       if (!wp?.workpackage || (wp.status !== "approved" && wp.status !== "in_progress")) return;
       const task = wp.workpackage.tasks.find((t) => t.n === report.task);
-      if (!task || task.status === "verified") return;
+      if (!task) return;
+      if (task.status === "verified") {
+        // Every task verified but the package still open: a requirement write failed earlier; try again.
+        if (wp.workpackage.tasks.every((t) => t.status === "verified")) {
+          await saveProgress({ db, dataDir, events, ownedHelpers }, workspaceId, wp, wp.workpackage.tasks, `上报 ${reportMessage.id} → 重试开发包 ${wp.id} 的需求标记`, "system");
+        }
+        return;
+      }
       const touched = new Set(check.touchedFiles);
       let next: "verified" | "mismatch" | "reported";
       if (!check.commitsExist || !check.filesOk) next = "mismatch";
@@ -458,7 +483,7 @@ export async function applyReportToWorkPackage(db: Db, dataDir: string, events: 
       else next = reportPassed(check) && task.files.some((f) => touched.has(f.path)) ? "verified" : "mismatch";
       if (next === task.status && task.reportMessageId === reportMessage.id && !task.inferred) return;
       const tasks = wp.workpackage.tasks.map((t) => (t.n === task.n ? { ...t, status: next, inferred: false, reportMessageId: reportMessage.id } : t));
-      await saveProgress({ db, dataDir, events, ownedHelpers }, workspaceId, wp, tasks, `上报 ${reportMessage.id} → 任务 ${task.n}：${next}`, "system", reportMessage.id);
+      await saveProgress({ db, dataDir, events, ownedHelpers }, workspaceId, wp, tasks, `上报 ${reportMessage.id} → 任务 ${task.n}：${next}`, "system");
     });
   } catch (e) {
     console.error(`work package: applying report ${reportMessage.id} failed`, e);
@@ -474,7 +499,7 @@ export async function confirmWorkPackageTask(deps: { db: Db; dataDir: string; ev
     if (!task) throw new WorkPackageError(404, `${id} 没有任务 ${n}`);
     if (task.status !== "reported" && task.status !== "mismatch") throw new WorkPackageError(409, "只有已上报或不符的任务可以确认");
     const tasks = wp.workpackage!.tasks.map((t) => (t.n === n ? { ...t, status: "verified" as const, confirmedBy: "user" as const } : t));
-    return saveProgress(deps, workspaceId, wp, tasks, `用户确认任务 ${n} 已完成`, "user", task.reportMessageId);
+    return saveProgress(deps, workspaceId, wp, tasks, `用户确认任务 ${n} 已完成`, "user");
   });
 }
 
@@ -494,9 +519,11 @@ function linkedCheckChanged(impl: Implementation, messageId: string, previous: R
   const passedBefore = previous !== null && reportPassed(previous);
   const passedNow = reportPassed(next);
   if (passedBefore !== passedNow) return true;
+  // Still failing: there is no passing commit set to compare, so nothing changed for the acceptance.
+  if (!passedNow) return false;
   // A rollup accepted several reports; this report only answers for its own group.
   const accepted = group ? group.commits : ev.commits;
-  return !commitsAlign(passedNow ? reportCommits : [], accepted);
+  return !commitsAlign(reportCommits, accepted);
 }
 
 /**
@@ -506,20 +533,19 @@ function linkedCheckChanged(impl: Implementation, messageId: string, previous: R
  * Called before the report's meta moves on, so a failure leaves an extra mark rather than a lost one.
  */
 export async function noteLinkedCheckChanged(
-  _db: Db,
-  dataDir: string | undefined,
+  deps: { db: Db; dataDir?: string; events: EventBus; ownedHelpers?: OwnedHelperScope },
   workspaceId: string,
   messageId: string,
   previous: ReportCheck | null,
   next: ReportCheck,
   reportCommits: string[],
 ): Promise<void> {
-  if (!dataDir) return;
-  const store = new KnowledgeStore(repoPath(dataDir, workspaceId));
+  if (!deps.dataDir) return;
+  const store = new KnowledgeStore(repoPath(deps.dataDir, workspaceId), deps.ownedHelpers);
   const candidates = (await store.listEntries()).filter((e) => e.kind === "requirement" && e.implementation && linkedCheckChanged(e.implementation, messageId, previous, next, reportCommits));
   for (const candidate of candidates) {
     try {
-      await store.upsert(
+      const { entry } = await store.upsert(
         { id: candidate.id, kind: candidate.kind, title: candidate.title, body: candidate.body, sourceMessages: [], reason: `上报 ${messageId} 的核对已变，验收需要复审` },
         { author: "system" },
         ({ existing, input }) => {
@@ -534,6 +560,7 @@ export async function noteLinkedCheckChanged(
           };
         },
       );
+      await userAfter(deps, workspaceId, entry);
     } catch (error) {
       if (error instanceof ReviewAlreadyNeeded) continue;
       throw error;

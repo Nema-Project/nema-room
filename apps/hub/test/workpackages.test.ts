@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { Hono } from "hono";
 import { KnowledgeStore } from "@nema/knowledge";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
@@ -496,6 +496,27 @@ describe("progress from reports", () => {
     });
     for (const banned of ["已核实", "验收"]) expect(req.implementation!.evidence.note).not.toContain(banned);
     expect(await implementationRefusal(db, ws, req.implementation!)).toBeNull();
+  });
+
+  test("keeps the package open when a requirement rollup fails, and a later report on it retries", async () => {
+    const wp = await approvedPackage();
+    await report([wp.id], 1, check(), ["aaaaaaa"]);
+    const real = KnowledgeStore.prototype.upsert;
+    const spy = vi.spyOn(KnowledgeStore.prototype, "upsert").mockImplementationOnce(async () => {
+      throw new Error("disk full");
+    });
+    try {
+      await report([wp.id], 2, check({ touchedFiles: ["src/b.ts"] }), ["bbbbbbb"]);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(KnowledgeStore.prototype.upsert).toBe(real);
+    expect((await tasks(wp.id)).map((t) => t.status)).toEqual(["verified", "verified"]);
+    expect((await store().get(wp.id))!.status).toBe("in_progress");
+    expect((await store().get("R-1"))!.implementation?.status).not.toBe("verified");
+    await report([wp.id], 2, check({ touchedFiles: ["src/b.ts"] }), ["bbbbbbb"]);
+    expect((await store().get(wp.id))!.status).toBe("done");
+    expect((await store().get("R-1"))!.implementation).toMatchObject({ status: "verified", evidence: { note: `开发包 ${wp.id} 的提交已核对`, confirmedBy: null } });
   });
 
   test("does not verify the requirement when the last task was confirmed by the user", async () => {

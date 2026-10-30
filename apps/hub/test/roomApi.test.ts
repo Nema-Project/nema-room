@@ -1147,6 +1147,11 @@ describe("implementation rules", () => {
     const rollup = impl("verified", { reportMessageId: b.id, commits: ["aaa1111", "bbb2222"], reportEvidence: groups });
     const ok = await req("POST", "/room/entries", t.runToken, upsert({ sourceMessages: [t.messageId], implementation: rollup }));
     expect(ok.status).toBe(200);
+    const stored = ((await ok.json()) as { entry: { id: string } }).entry.id;
+    expect((await ks().get(stored))!.implementation).toEqual({
+      status: "verified",
+      evidence: { reportMessageId: b.id, commits: ["aaa1111", "bbb2222"], inferred: false, note: null, confirmedBy: null, acceptanceReview: null, reportEvidence: groups },
+    });
     const flat = impl("verified", { reportMessageId: b.id, commits: ["aaa1111", "bbb2222"] });
     const refused = await req("POST", "/room/entries", t.runToken, upsert({ sourceMessages: [t.messageId], implementation: flat }));
     expect(refused.status).toBe(409);

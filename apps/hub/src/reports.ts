@@ -283,7 +283,7 @@ async function recheckOne(deps: ReportDeps, repo: Repo, row: { id: string; meta:
   if (previous?.checkedAt && !(typeof check.checkedAt === "string" && check.checkedAt >= previous.checkedAt)) return;
   // Mark the review before the meta moves on: the knowledge repo and the database are not one transaction,
   // and a failure here should leave an extra mark rather than a lost one.
-  await noteLinkedCheckChanged(db, deps.dataDir, repo.workspaceId, row.id, previous, check, row.meta.report.commits);
+  await noteLinkedCheckChanged(deps, repo.workspaceId, row.id, previous, check, row.meta.report.commits);
   const updated = await mergeReportMeta(db, row.id, { check, checkError: null, checkSkipped: null });
   if (!updated) return;
   events.emit(repo.workspaceId, { type: "message.updated", message: updated });

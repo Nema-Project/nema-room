@@ -1,4 +1,6 @@
+import { spawn as nodeSpawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
 import type { Hono } from "hono";
 import { afterAll, beforeEach, expect, test } from "vitest";
 import type { ReportCheck, ReportMessageMeta } from "@nema/shared";
@@ -830,14 +832,14 @@ test("marks acceptance review when a passing check is replaced by a failing one"
   const { ws } = await bind();
   const id = await confirmedRequirement(ws, { reportMessageId: "m_linked" });
   const failing: ReportCheck = { ...passing, commitsExist: false, missingCommits: ["abc1234"] };
-  await noteLinkedCheckChanged(db, dataDir, ws, "m_linked", passing, failing, ["abc1234"]);
+  await noteLinkedCheckChanged({ db, dataDir, events }, ws, "m_linked", passing, failing, ["abc1234"]);
   const impl = await implOf(ws, id);
   expect(impl.status).toBe("verified");
   expect(impl.evidence.confirmedBy).toBe("user");
   expect(impl.evidence.commits).toEqual(["abc1234"]);
   expect(impl.evidence.acceptanceReview).toMatchObject({ needed: true, reason: "linked_check_changed" });
   const head = await knowledgeHead(ws);
-  await noteLinkedCheckChanged(db, dataDir, ws, "m_linked", passing, failing, ["abc1234"]);
+  await noteLinkedCheckChanged({ db, dataDir, events }, ws, "m_linked", passing, failing, ["abc1234"]);
   expect(await knowledgeHead(ws)).toBe(head);
 });
 
@@ -846,7 +848,7 @@ test("marks acceptance review when the passing commit set drifts", async () => {
   const direct = await confirmedRequirement(ws, { reportMessageId: "m_linked" }, "直接");
   const grouped = await confirmedRequirement(ws, { reportMessageId: "m_other", reportEvidence: [{ reportMessageId: "m_linked", commits: ["abc1234"] }] }, "分组");
   const unrelated = await confirmedRequirement(ws, { reportMessageId: "m_other" }, "无关");
-  await noteLinkedCheckChanged(db, dataDir, ws, "m_linked", passing, passing, ["def5678"]);
+  await noteLinkedCheckChanged({ db, dataDir, events }, ws, "m_linked", passing, passing, ["def5678"]);
   expect((await implOf(ws, direct)).evidence.acceptanceReview?.needed).toBe(true);
   expect((await implOf(ws, grouped)).evidence.acceptanceReview?.needed).toBe(true);
   expect((await implOf(ws, unrelated)).evidence.acceptanceReview).toBeNull();
@@ -856,9 +858,49 @@ test("does not mark a review when the check still passes on the same commits", a
   const { ws } = await bind();
   const id = await confirmedRequirement(ws, { reportMessageId: "m_linked" });
   const head = await knowledgeHead(ws);
-  await noteLinkedCheckChanged(db, dataDir, ws, "m_linked", passing, { ...passing, checkedAt: "2026-10-23T10:09:00.000Z" }, ["abc1234def"]);
+  await noteLinkedCheckChanged({ db, dataDir, events }, ws, "m_linked", passing, { ...passing, checkedAt: "2026-10-23T10:09:00.000Z" }, ["abc1234def"]);
   expect((await implOf(ws, id)).evidence.acceptanceReview).toBeNull();
   expect(await knowledgeHead(ws)).toBe(head);
+});
+
+test("does not mark a review when a failing check is replaced by another failing one", async () => {
+  const { ws } = await bind();
+  const id = await confirmedRequirement(ws, { reportMessageId: "m_linked" });
+  const failing: ReportCheck = { ...passing, commitsExist: false, missingCommits: ["abc1234"] };
+  const head = await knowledgeHead(ws);
+  await noteLinkedCheckChanged({ db, dataDir, events }, ws, "m_linked", failing, { ...failing, checkedAt: "2026-10-23T10:09:00.000Z" }, ["abc1234"]);
+  await noteLinkedCheckChanged({ db, dataDir, events }, ws, "m_linked", null, failing, ["abc1234"]);
+  expect((await implOf(ws, id)).evidence.acceptanceReview).toBeNull();
+  expect(await knowledgeHead(ws)).toBe(head);
+});
+
+test("announces a newly marked review so open entries refresh, and only once", async () => {
+  const { ws } = await bind();
+  const id = await confirmedRequirement(ws, { reportMessageId: "m_linked" });
+  const failing: ReportCheck = { ...passing, commitsExist: false, missingCommits: ["abc1234"] };
+  seen = [];
+  await noteLinkedCheckChanged({ db, dataDir, events }, ws, "m_linked", passing, failing, ["abc1234"]);
+  await noteLinkedCheckChanged({ db, dataDir, events }, ws, "m_linked", passing, failing, ["abc1234"]);
+  expect(seen.filter((s) => s.e.type === "knowledge.changed")).toEqual([{ ws, e: { type: "knowledge.changed", entryId: id } }]);
+});
+
+test("writes review marks through the runtime's owned helper scope", async () => {
+  const { ws } = await bind();
+  await confirmedRequirement(ws, { reportMessageId: "m_linked" });
+  const failing: ReportCheck = { ...passing, commitsExist: false, missingCommits: ["abc1234"] };
+  const spawned: string[] = [];
+  const ownedHelpers: OwnedHelperScope = {
+    async spawn(command, args, options) {
+      spawned.push(`${command} ${args.join(" ")}`);
+      const child = nodeSpawn(command, args, { ...options, stdio: options?.stdio ?? ["ignore", "pipe", "pipe"], windowsHide: true });
+      const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.once("close", (code, sig) => resolve({ code, signal: sig })));
+      return { stdin: child.stdin, stdout: child.stdout, stderr: child.stderr, kill: (sig) => child.kill(sig), exited: closed, closed } satisfies OwnedHelperProcess;
+    },
+    stopAccepting() {},
+    async drain() {},
+  };
+  await noteLinkedCheckChanged({ db, dataDir, events, ownedHelpers }, ws, "m_linked", passing, failing, ["abc1234"]);
+  expect(spawned.some((c) => c.startsWith("git ") && c.includes("commit"))).toBe(true);
 });
 
 test("does not clear a user confirmation when a later completed report is stored", async () => {

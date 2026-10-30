@@ -195,7 +195,7 @@ nema wp get W-1 --dir ../elsewhere # 写到别处的 .nema/W-1/ 下
 nema report --entries W-1 --task 2 --summary "…" --commits abc1234 --files src/x.ts
 ```
 
-**状态怎么变，什么时候算 done。** 任务状态是 `pending`、`reported`、`verified`、`mismatch`，另有一个 `inferred` 标记。它们由 hub 根据上报的核对结果设置，Agent 不能自己改：提交已在主分支上、声称的文件确实改过、并且碰到了任务列出的文件，才是 `verified`；提交还没合入主分支是 `reported`；对不上是 `mismatch`。同一任务的后一次上报通过核对，可以把 `reported` 或 `mismatch` 升成 `verified`，而 `verified` 不会被后来失败的上报降级。上报写了不存在的任务号、或开发包没有批准，上报照常保存和整理，任务状态不变。`reported`（包括仅凭代码推断出的）和 `mismatch` 的任务，可以由你在界面上确认成 `verified`。开发包状态由任务推出来：有任务离开 `pending` 就是 `in_progress`，全部任务 `verified` 就是 `done`。`done` 不是验收。只有每个任务都有核对通过的上报（不是你确认的、也不是推断的）时，它覆盖的、还没有你确认过的需求才会写成「提交已核对」（`verified`，`confirmedBy` 为空），每条贡献的上报在 `reportEvidence` 里各占一组。
+**状态怎么变，什么时候算 done。** 任务状态是 `pending`、`reported`、`verified`、`mismatch`，另有一个 `inferred` 标记。它们由 hub 根据上报的核对结果设置，Agent 不能自己改：提交已在主分支上、声称的文件确实改过、并且碰到了任务列出的文件，才是 `verified`；提交还没合入主分支是 `reported`；对不上是 `mismatch`。同一任务的后一次上报通过核对，可以把 `reported` 或 `mismatch` 升成 `verified`，而 `verified` 不会被后来失败的上报降级。上报写了不存在的任务号、或开发包没有批准，上报照常保存和整理，任务状态不变。`reported`（包括仅凭代码推断出的）和 `mismatch` 的任务，可以由你在界面上确认成 `verified`。开发包状态由任务推出来：有任务离开 `pending` 就是 `in_progress`，全部任务 `verified` 就是 `done`。`done` 不是验收。只有每个任务都有核对通过的上报（不是你确认的、也不是推断的）时，它覆盖的、还没有你确认过的需求才会写成「提交已核对」（`verified`，`confirmedBy` 为空），每条贡献的上报在 `reportEvidence` 里各占一组。这些需求写完，开发包才变成 `done`；有一条没写成功，开发包留在 `in_progress`，下一次关于这个开发包的上报会再试。
 
 **superpowers 署名。** spec 和 plan 的写作规则改写自 [superpowers](https://github.com/obra/superpowers)（MIT，Copyright (c) 2025 Jesse Vincent）的 brainstorming 和 writing-plans 技能。许可证和来源版本在 `vendor/superpowers-rules/` 下。
 
