@@ -1,5 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import http, { type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
+import { Transform } from "node:stream";
+import { ATTACHMENT_LIMITS } from "@nema/shared";
 import type { MiddlewareHandler } from "hono";
 import type { AppReleaseService } from "./appRelease.js";
 import type { SessionManager } from "./session.js";
@@ -13,6 +15,33 @@ export function sessionCookieName(origin: string): string {
   const url = new URL(origin);
   if (url.protocol !== "http:" || url.hostname !== "127.0.0.1") throw new Error("Invalid gateway origin");
   return `${SESSION_COOKIE_PREFIX}${url.port}`;
+}
+
+/** The largest single attachment the hub accepts; the gateway refuses bigger uploads before they reach the hub. */
+export const ATTACHMENT_UPLOAD_MAX_BYTES = Math.max(ATTACHMENT_LIMITS.imageBytes, ATTACHMENT_LIMITS.pdfBytes, ATTACHMENT_LIMITS.textBytes);
+
+/** The only hub route that accepts a non-JSON write: raw attachment bytes, POST only. */
+const ATTACHMENT_UPLOAD_PATH = /^\/api\/workspaces\/[^/]+\/attachments$/;
+
+/**
+ * Passes chunks through until more than `limit` bytes have been seen, then calls `onOverflow` once and drops the rest.
+ * HTTP framing already stops at Content-Length; this keeps the cap even if that framing is ever bypassed.
+ */
+export function uploadByteCounter(limit: number, onOverflow: () => void): Transform {
+  let seen = 0;
+  let overflowed = false;
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      if (overflowed) return callback();
+      seen += chunk.length;
+      if (seen > limit) {
+        overflowed = true;
+        onOverflow();
+        return callback();
+      }
+      callback(null, chunk);
+    },
+  });
 }
 
 export type GatewayOptions = {
@@ -227,18 +256,29 @@ export async function startGateway(options: GatewayOptions): Promise<RunningGate
     if (!mapped!.ui && !["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].includes(req.method ?? "")) {
       return send(res, 405, "method not allowed", { allow: "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS" });
     }
+    let uploadLimit: number | null = null;
     if (!mapped!.ui && ["POST", "PUT", "PATCH"].includes(req.method ?? "")) {
       const contentType = (req.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
-      if (contentType !== "application/json") return send(res, 415, "content-type must be application/json");
+      const upload = !report && req.method === "POST" && url.search === "" && ATTACHMENT_UPLOAD_PATH.test(url.pathname) && contentType === "application/octet-stream";
+      if (!upload && contentType !== "application/json") return send(res, 415, "content-type must be application/json");
+      if (upload) {
+        // Refuse early, without contacting the hub; close the connection so the unread body is dropped.
+        const declared = req.headers["content-length"];
+        if (declared === undefined || !/^\d+$/.test(declared)) return send(res, 411, "content-length required", { connection: "close" });
+        const length = Number(declared);
+        if (length > ATTACHMENT_UPLOAD_MAX_BYTES) return send(res, 413, "attachment too large", { connection: "close" });
+        uploadLimit = length;
+      }
     }
 
+    let overflowed = false;
     const target = new URL(`${url.pathname}${url.search}`, mapped!.target);
     const headers = sanitizedHeaders(req.headers, mapped!.ui || report ? undefined : options.privateGatewayCredential, report ? req.headers.authorization : undefined);
     const upstream = http.request(target, { method: req.method, headers });
     active.add(upstream);
     upstream.once("close", () => active.delete(upstream));
     upstream.once("response", (upstreamResponse) => {
-      if (closing || res.destroyed) {
+      if (closing || overflowed || res.destroyed) {
         upstreamResponse.destroy();
         return;
       }
@@ -247,6 +287,7 @@ export async function startGateway(options: GatewayOptions): Promise<RunningGate
     });
     upstream.once("error", () => {
       active.delete(upstream);
+      if (overflowed) return;
       if (!res.headersSent && !res.destroyed) send(res, 502, "upstream unavailable");
       else if (!res.destroyed) res.destroy();
     });
@@ -254,7 +295,19 @@ export async function startGateway(options: GatewayOptions): Promise<RunningGate
     res.once("close", () => {
       if (!res.writableEnded) upstream.destroy();
     });
-    req.pipe(upstream);
+    if (uploadLimit === null) {
+      req.pipe(upstream);
+      return;
+    }
+    // Stream the upload through a byte counter: never buffer the file, never forward more than was declared.
+    const counter = uploadByteCounter(uploadLimit, () => {
+      overflowed = true;
+      req.unpipe(counter);
+      if (!res.headersSent) send(res, 413, "attachment too large", { connection: "close" });
+      else res.destroy();
+      upstream.destroy();
+    });
+    req.pipe(counter).pipe(upstream);
   }
 
   await new Promise<void>((resolve, reject) => {
