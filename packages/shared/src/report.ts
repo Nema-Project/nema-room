@@ -165,3 +165,13 @@ export const Implementation = z.object({
   }),
 });
 export type Implementation = z.infer<typeof Implementation>;
+
+/**
+ * Whether the user can confirm this implementation: `reported`, `mismatch`, commits checked but not yet
+ * accepted (`verified` with no `confirmedBy`), or accepted with a review still needed ("still accept").
+ */
+export function confirmableImplementation(impl: Implementation): boolean {
+  if (impl.status === "reported" || impl.status === "mismatch") return true;
+  if (impl.evidence.confirmedBy === null) return true;
+  return impl.evidence.acceptanceReview?.needed === true;
+}

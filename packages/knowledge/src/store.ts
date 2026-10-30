@@ -7,6 +7,7 @@ import {
   KIND_DIR,
   KIND_PREFIX,
   UpsertEntryInput,
+  confirmableImplementation,
   idNumber,
   kindFromId,
   type DiagramMeta,
@@ -151,6 +152,9 @@ function toFile(e: Entry): string {
         inferred: ev.inferred,
         note: ev.note,
         confirmed_by: ev.confirmedBy,
+        // Null stays off the file so an untouched implementation keeps its bytes.
+        ...(ev.acceptanceReview ? { acceptance_review: { needed: ev.acceptanceReview.needed, at: ev.acceptanceReview.at, reason: ev.acceptanceReview.reason } } : {}),
+        ...(ev.reportEvidence ? { report_evidence: ev.reportEvidence.map((g) => ({ report_message_id: g.reportMessageId, commits: g.commits })) } : {}),
       },
     };
   }
@@ -272,8 +276,20 @@ function implementationFromData(raw: unknown): unknown {
       inferred: e.inferred ?? false,
       note: e.note ?? null,
       confirmedBy: e.confirmed_by ?? null,
+      acceptanceReview: e.acceptance_review ?? null,
+      reportEvidence: reportEvidenceFromData(e.report_evidence),
     },
   };
+}
+
+function reportEvidenceFromData(raw: unknown): unknown {
+  if (raw === undefined || raw === null) return null;
+  if (!Array.isArray(raw)) return raw; // let the schema reject it
+  return raw.map((g) => {
+    if (typeof g !== "object" || g === null || Array.isArray(g)) return g;
+    const x = g as Record<string, unknown>;
+    return { reportMessageId: x.report_message_id, commits: x.commits ?? [] };
+  });
 }
 
 export function summarizeEntry(e: Entry): EntrySummary {
@@ -748,20 +764,22 @@ export class KnowledgeStore {
   }
 
   /**
-   * The user's confirm that a requirement is implemented: `verified`, confirmed by the user, evidence kept.
-   * Only a `reported` or `mismatch` implementation can be confirmed.
+   * The user's acceptance of a requirement: `verified`, confirmed by the user, evidence kept.
+   * A `reported`, `mismatch`, or commits-checked (`verified` with no `confirmedBy`) implementation can be
+   * accepted. One the user already accepted can only be accepted again while its review is needed, and that
+   * only clears the review. See `confirmableImplementation`.
    */
   async confirmImplementation(id: string, meta: CommitMeta): Promise<{ entry: Entry; commit: string }> {
     return withRepoLock(this.repoDir, async () => {
       const existing = await this.get(id);
       if (!existing) throw new Error(`entry ${id} not found`);
       const impl = existing.implementation;
-      if (!impl || (impl.status !== "reported" && impl.status !== "mismatch")) {
-        throw new Error(`entry ${id} has no reported or mismatched implementation`);
+      if (!impl || !confirmableImplementation(impl)) {
+        throw new Error(`entry ${id} has no implementation the user can confirm`);
       }
       const entry: Entry = {
         ...existing,
-        implementation: { status: "verified", evidence: { ...impl.evidence, confirmedBy: "user" } },
+        implementation: { status: "verified", evidence: { ...impl.evidence, confirmedBy: "user", acceptanceReview: null } },
       };
       const commit = await this.writeAndCommit(entry, "update", "用户确认已实现", [], meta);
       return { entry, commit };
