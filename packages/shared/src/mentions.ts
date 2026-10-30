@@ -5,15 +5,14 @@ export const MENTION_LIMITS = {
   perMessage: 20,
   entryBytes: 4096,
   entriesTotalBytes: 16384,
-  fileCandidates: 50,
+  attachmentCandidates: 50,
   menuPerGroup: 8,
   threadAnchorBytes: 1024,
 } as const;
 
 /**
- * The readable text inserted into the message body for a mention, stored as written. 4096 leaves room for the
- * longest file mention: a 1024-character path and a 40-character label inside a code span whose fence must be
- * longer than any backtick run in them.
+ * The readable text inserted into the message body for a mention, stored as written. 4096 is far above the
+ * longest attachment mention: a 200-character name inside a code span whose fence outlasts any backtick in it.
  */
 const MentionText = z.string().min(1).max(4096);
 
@@ -24,13 +23,9 @@ const MentionText = z.string().min(1).max(4096);
 export const MessageMention = z.discriminatedUnion("type", [
   z.object({ type: z.literal("entry"), id: z.string().regex(/^(R|D|T|Q|S|G|W)-[1-9]\d*$/), text: MentionText }),
   z.object({
-    type: z.literal("file"),
-    repoId: z.string().min(1),
-    path: z.string().min(1).max(1024),
-    /** The main-branch commit the file is pinned to when the hub received the message. */
-    commit: z.string().regex(/^[0-9a-f]{40}$/),
-    /** Written by the hub only: "head" when it pinned `commit` itself, "candidate" when it kept the web's value. */
-    commitSource: z.enum(["head", "candidate"]).optional(),
+    type: z.literal("attachment"),
+    /** A `message_attachments` id: a file already uploaded to this workspace and sent with a message. */
+    id: z.string().min(1).max(64),
     text: MentionText,
   }),
   z.object({ type: z.literal("thread"), id: z.string().min(1), text: MentionText }),
@@ -39,13 +34,13 @@ export type MessageMention = z.infer<typeof MessageMention>;
 
 export const MessageMentions = z.array(MessageMention).max(MENTION_LIMITS.perMessage);
 
-/** The readable text a mention puts into the body: `[D-12]`, `` `label:path` `` or `[话题：标题]`. */
-export function mentionText(m: MessageMention, labels: { repoLabel?: string; threadTitle?: string }): string {
+/** The readable text a mention puts into the body: `[D-12]`, `` `附件：名字` `` or `[话题：标题]`. */
+export function mentionText(m: MessageMention, labels: { attachmentName?: string; threadTitle?: string }): string {
   switch (m.type) {
     case "entry":
       return `[${m.id}]`;
-    case "file":
-      return codeSpan(`${labels.repoLabel ?? m.repoId}:${m.path}`);
+    case "attachment":
+      return codeSpan(`附件：${labels.attachmentName ?? m.id}`);
     case "thread":
       return `[话题：${labels.threadTitle ?? m.id}]`;
   }
@@ -59,25 +54,12 @@ function codeSpan(text: string): string {
   return `${fence}${pad}${text}${pad}${fence}`;
 }
 
-/** A repository-relative path with `./` and empty segments removed; null for `..`, absolute (also `C:`), backslash or NUL. */
-export function normalizeMentionPath(p: string): string | null {
-  if (p.length === 0 || p.length > 1024 || p.startsWith("/") || p.includes("\\") || p.includes("\0")) return null;
-  const parts: string[] = [];
-  for (const seg of p.split("/")) {
-    if (seg === "" || seg === ".") continue;
-    if (seg === "..") return null;
-    // A Windows drive root (`C:`) as the first segment is an absolute path, not a repository path.
-    if (parts.length === 0 && /^[A-Za-z]:/.test(seg)) return null;
-    parts.push(seg);
-  }
-  return parts.length === 0 ? null : parts.join("/");
-}
-
 const TIER = 100_000;
 
 /**
- * How well `query` matches a path-like `candidate`, case-insensitive; higher is better, null is no match.
- * File-name prefix > path-segment prefix > subsequence; within a tier the shorter candidate scores higher.
+ * How well `query` matches `candidate`, case-insensitive; higher is better, null is no match. Used for entry
+ * titles, attachment names and topic titles as well as paths: a last-segment prefix (the file name, or the whole
+ * title when it has no `/`) beats a segment prefix, which beats a subsequence; shorter candidates win ties.
  */
 export function fuzzyScore(query: string, candidate: string): number | null {
   const q = query.toLowerCase();
