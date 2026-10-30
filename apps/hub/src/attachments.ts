@@ -127,6 +127,19 @@ function sniffError(reason: "unsupported_type" | "extension_mismatch" | "not_utf
   }
 }
 
+/** FileHandle.write may write fewer bytes than asked; keep going until the whole chunk is on disk. */
+export async function writeFully(
+  fh: { write(buffer: Uint8Array, offset: number, length: number): Promise<{ bytesWritten: number }> },
+  chunk: Uint8Array,
+): Promise<void> {
+  let offset = 0;
+  while (offset < chunk.length) {
+    const { bytesWritten } = await fh.write(chunk, offset, chunk.length - offset);
+    if (bytesWritten <= 0) throw new Error("the attachment file could not be written");
+    offset += bytesWritten;
+  }
+}
+
 const isCode = (e: unknown, code: string) => typeof e === "object" && e !== null && (e as { code?: unknown }).code === code;
 
 async function fsyncDir(dir: string): Promise<void> {
@@ -153,6 +166,8 @@ export class AttachmentStore {
   private readonly freeBytes: () => Promise<number>;
   private reserved = 0;
   private admission: Promise<void> = Promise.resolve();
+  /** Uploads in progress per workspace and upload key; a concurrent retry waits and then matches. */
+  private readonly inflight = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly db: Db,
@@ -224,13 +239,27 @@ export class AttachmentStore {
     await this.workspaceGate(this.db, workspaceId, false);
 
     const uploadKey = input.uploadKey.toLowerCase();
+    // One upload per key at a time: a duplicate waits, then takes the retry path below without
+    // reserving quota for a second copy.
+    const slot = `${workspaceId}\u0000${uploadKey}`;
+    for (let busy = this.inflight.get(slot); busy; busy = this.inflight.get(slot)) await busy.catch(() => {});
+    const attempt = this.uploadOnce(workspaceId, name, uploadKey, length, input.body);
+    this.inflight.set(slot, attempt);
+    try {
+      return await attempt;
+    } finally {
+      if (this.inflight.get(slot) === attempt) this.inflight.delete(slot);
+    }
+  }
+
+  private async uploadOnce(workspaceId: string, name: string, uploadKey: string, length: number, body: AsyncIterable<Uint8Array>): Promise<UploadResult> {
     const existing = await this.byKey(workspaceId, uploadKey);
     // A retry stores nothing and reserves nothing; it only proves it carries the same bytes.
-    if (existing) return { view: await this.matchRetry(existing, length, input.body), created: false };
+    if (existing) return { view: await this.matchRetry(existing, length, body), created: false };
 
     await this.reserve(length);
     try {
-      return await this.store(workspaceId, name, uploadKey, length, input.body);
+      return await this.store(workspaceId, name, uploadKey, length, body);
     } finally {
       this.reserved -= length;
     }
@@ -238,6 +267,9 @@ export class AttachmentStore {
 
   private async matchRetry(existing: Row, length: number, body: AsyncIterable<Uint8Array>): Promise<AttachmentView> {
     const view = toView(existing);
+    if (view.status !== "staged" && view.status !== "attached") {
+      throw new AttachmentError(409, "this upload is no longer available; upload the file again");
+    }
     if (length !== view.size) throw new AttachmentError(409, "this upload key was already used for a different file");
     const hash = createHash("sha256");
     let count = 0;
@@ -323,7 +355,7 @@ export class AttachmentStore {
           headLength += part.length;
         }
         if (limit === undefined && headLength >= MAGIC_BYTES) decideLimit();
-        await fh.write(chunk);
+        await writeFully(fh, chunk);
         hash.update(chunk);
       }
       if (count !== length) throw new AttachmentError(400, "the body is shorter than Content-Length");
@@ -360,25 +392,42 @@ export class AttachmentStore {
     throw new AttachmentError(410, "the attachment file is missing");
   }
 
-  async open(workspaceId: string, id: string): Promise<{ view: AttachmentView; stream: Readable }> {
-    const { view, file } = await this.readable(workspaceId, id);
+  /**
+   * Opens the stored file without following a symlink, and only when it is a regular file. A file
+   * whose mode lets other users read it is made private first; if that fails, nothing is served.
+   */
+  private async openFile(id: string, file: string): Promise<fs.FileHandle> {
     let fh: fs.FileHandle;
     try {
-      fh = await fs.open(file, "r");
+      fh = await fs.open(file, fs.constants.O_RDONLY | (POSIX ? fs.constants.O_NOFOLLOW : 0));
     } catch (e) {
-      if (isCode(e, "ENOENT")) return this.markMissing(id);
+      if (isCode(e, "ENOENT") || isCode(e, "ELOOP")) return this.markMissing(id);
       throw e;
     }
+    try {
+      const st = await fh.stat();
+      if (!st.isFile()) return await this.markMissing(id);
+      if (POSIX && (st.mode & 0o077) !== 0) await fh.chmod(0o600);
+      return fh;
+    } catch (e) {
+      await fh.close();
+      throw e;
+    }
+  }
+
+  async open(workspaceId: string, id: string): Promise<{ view: AttachmentView; stream: Readable }> {
+    const { view, file } = await this.readable(workspaceId, id);
+    const fh = await this.openFile(id, file);
     return { view, stream: fh.createReadStream() };
   }
 
   async readBytes(workspaceId: string, id: string): Promise<Buffer> {
     const { file } = await this.readable(workspaceId, id);
+    const fh = await this.openFile(id, file);
     try {
-      return await fs.readFile(file);
-    } catch (e) {
-      if (isCode(e, "ENOENT")) return this.markMissing(id);
-      throw e;
+      return await fh.readFile();
+    } finally {
+      await fh.close();
     }
   }
 
@@ -386,6 +435,8 @@ export class AttachmentStore {
   async bind(t: Db, workspaceId: string, messageId: string, ids: string[]): Promise<AttachmentView[]> {
     const unique = [...new Set(ids)];
     if (unique.length === 0) return [];
+    const owner = await t.query("select 1 from messages where id = $1 and workspace_id = $2", [messageId, workspaceId]);
+    if (owner.length === 0) throw new AttachmentError(409, "the message is not in this workspace");
     const rows = await t.query<Row>(
       `update message_attachments set status = 'attached', message_id = $3, attached_at = now()
        where id = any($1) and workspace_id = $2 and status = 'staged' returning ${COLS}`,
@@ -417,13 +468,15 @@ export class AttachmentStore {
       if (!r || r.status === "expired") throw new AttachmentError(404, "attachment not found");
       if (r.status === "deleted") return toView(r);
       if (r.status === "staged") {
-        await t.query("delete from message_attachments where id = $1", [id]);
+        // Expired until the file is gone, so a failed removal is retried by the next sweep.
+        await t.query("update message_attachments set status = 'expired' where id = $1", [id]);
         return { ...toView(r), status: "deleted" as const, deletedAt: new Date().toISOString() };
       }
       const rows = await t.query<Row>(`update message_attachments set status = 'deleted', deleted_at = now() where id = $1 returning ${COLS}`, [id]);
       return toView(rows[0]!);
     });
     await fs.rm(this.file(workspaceId, id), { force: true });
+    if (view.messageId === null) await this.db.query("delete from message_attachments where id = $1 and status = 'expired'", [id]);
     return view;
   }
 
@@ -433,6 +486,8 @@ export class AttachmentStore {
    * and marks lost files `missing`: an upload in flight has a file but no row yet.
    */
   async sweep(opts: { startup: boolean; now?: Date }): Promise<void> {
+    // Repair modes first, so a directory the hub cannot read is fixed rather than taken as empty.
+    const permissionErrors = await this.tightenPermissions();
     const cutoff = new Date((opts.now ?? new Date()).getTime() - ATTACHMENT_LIMITS.stagedTtlMs);
     await this.db.query("update message_attachments set status = 'expired' where status = 'staged' and created_at < $1", [cutoff]);
     const gone = await this.db.query<{ id: string; workspace_id: string; status: AttachmentStatus }>(
@@ -441,8 +496,22 @@ export class AttachmentStore {
     for (const g of gone) await fs.rm(this.file(g.workspace_id, g.id), { force: true });
     const expired = gone.filter((g) => g.status === "expired").map((g) => g.id);
     if (expired.length > 0) await this.db.query("delete from message_attachments where id = any($1) and status = 'expired'", [expired]);
+    await this.removeDeletedWorkspaceDirs();
     if (opts.startup) await this.startupScan();
-    await this.tightenPermissions();
+    if (permissionErrors.length > 0) throw new AggregateError(permissionErrors, "could not make the attachment files private");
+  }
+
+  /** No upload can create a directory for a workspace that does not exist (it locks the row first). */
+  private async removeDeletedWorkspaceDirs(): Promise<void> {
+    let entries: string[];
+    try {
+      entries = await fs.readdir(this.root);
+    } catch (e) {
+      if (isCode(e, "ENOENT")) return;
+      throw e;
+    }
+    const workspaces = new Set((await this.db.query<{ id: string }>("select id from workspaces")).map((r) => r.id));
+    for (const entry of entries) if (entry !== ".staging" && !workspaces.has(entry)) await fs.rm(path.join(this.root, entry), { recursive: true, force: true });
   }
 
   private async startupScan(): Promise<void> {
@@ -454,7 +523,6 @@ export class AttachmentStore {
       throw e;
     }
     await fs.rm(this.staging, { recursive: true, force: true });
-    const workspaces = new Set((await this.db.query<{ id: string }>("select id from workspaces")).map((r) => r.id));
     const live = await this.db.query<{ id: string; workspace_id: string; status: AttachmentStatus }>(
       "select id, workspace_id, status from message_attachments where status = any($1)",
       [FILE_STATUSES],
@@ -463,40 +531,64 @@ export class AttachmentStore {
     for (const entry of entries) {
       if (entry === ".staging") continue;
       const dir = path.join(this.root, entry);
-      if (!workspaces.has(entry)) {
-        await fs.rm(dir, { recursive: true, force: true });
+      const st = await fs.lstat(dir).catch(() => undefined);
+      if (!st) continue;
+      if (!st.isDirectory()) {
+        await fs.rm(dir, { force: true });
         continue;
       }
-      const files = await fs.readdir(dir).catch(() => [] as string[]);
-      for (const f of files) if (!expected.has(`${entry}/${f}`)) await fs.rm(path.join(dir, f), { recursive: true, force: true });
+      for (const f of await fs.readdir(dir)) {
+        const p = path.join(dir, f);
+        const fst = await fs.lstat(p);
+        // Only regular files the database knows stay; symlinks and anything else go.
+        if (!fst.isFile() || !expected.has(`${entry}/${f}`)) await fs.rm(p, { recursive: true, force: true });
+      }
     }
     for (const r of live) {
       try {
-        await fs.access(this.file(r.workspace_id, r.id));
-      } catch {
+        await fs.lstat(this.file(r.workspace_id, r.id));
+      } catch (e) {
+        if (!isCode(e, "ENOENT")) {
+          console.error(`attachment ${r.id}: could not check its file`, e);
+          continue;
+        }
         if (r.status === "attached") await this.db.query("update message_attachments set status = 'missing' where id = $1 and status = 'attached'", [r.id]);
         else await this.db.query("delete from message_attachments where id = $1 and status = 'staged'", [r.id]);
       }
     }
   }
 
-  private async tightenPermissions(): Promise<void> {
-    if (!POSIX) return;
+  private async tightenPermissions(): Promise<Error[]> {
+    const errors: Error[] = [];
+    if (!POSIX) return errors;
     const walk = async (p: string): Promise<void> => {
       let st;
       try {
         st = await fs.lstat(p);
-      } catch {
+      } catch (e) {
+        if (!isCode(e, "ENOENT")) errors.push(e as Error);
         return;
       }
       if (st.isSymbolicLink()) return;
       const want = st.isDirectory() ? 0o700 : 0o600;
       if ((st.mode & 0o777) !== want) {
-        await fs.chmod(p, want).catch(() => {});
-        if (st.mode & 0o077) console.warn(`tightened permissions on ${p}`);
+        try {
+          await fs.chmod(p, want);
+          if (st.mode & 0o077) console.warn(`tightened permissions on ${p}`);
+        } catch (e) {
+          errors.push(e as Error);
+          return;
+        }
       }
-      if (st.isDirectory()) for (const e of await fs.readdir(p).catch(() => [] as string[])) await walk(path.join(p, e));
+      if (st.isDirectory()) {
+        try {
+          for (const e of await fs.readdir(p)) await walk(path.join(p, e));
+        } catch (e) {
+          errors.push(e as Error);
+        }
+      }
     };
     await walk(this.root);
+    return errors;
   }
 }

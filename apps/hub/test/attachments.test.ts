@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { ATTACHMENT_LIMITS } from "@nema/shared";
-import { AttachmentError, AttachmentStore, toAttachmentRef, type UploadInput } from "../src/attachments.js";
+import { AttachmentError, AttachmentStore, toAttachmentRef, writeFully, type UploadInput } from "../src/attachments.js";
 import type { Db } from "../src/db/db.js";
 import { createWorkspace, deleteWorkspace, updateWorkspace } from "../src/workspaces.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
@@ -377,5 +377,105 @@ describe("attachmentsMaxBytesFromEnv", async () => {
   });
   test.each(["0", "-1", "1.5", "1e9", "abc"])("refuses %s", (v) => {
     expect(() => attachmentsMaxBytesFromEnv({ NEMA_ATTACHMENTS_MAX_BYTES: v })).toThrow(/NEMA_ATTACHMENTS_MAX_BYTES/);
+  });
+});
+
+describe("review hardening", () => {
+  test("bind refuses a message from another workspace", async () => {
+    const s = store();
+    const other = (await createWorkspace(db, dataDir, "B")).id;
+    const { view } = await s.upload(ws, input(png(10)));
+    await db.query("insert into messages(id, workspace_id, role, content) values ('m_other', $1, 'user', 'x')", [other]);
+    expect(await status(db.tx((t) => s.bind(t, ws, "m_other", [view.id])))).toBe(409);
+    expect((await s.open(ws, view.id)).view.status).toBe("staged");
+  });
+
+  test("writeFully keeps writing after a short write", async () => {
+    const written: number[] = [];
+    const fake = {
+      async write(buf: Uint8Array, offset: number, length: number) {
+        const n = Math.min(3, length);
+        written.push(...buf.subarray(offset, offset + n));
+        return { bytesWritten: n, buffer: buf };
+      },
+    };
+    await writeFully(fake, Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]));
+    expect(written).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    await expect(writeFully({ write: async (b: Uint8Array) => ({ bytesWritten: 0, buffer: b }) }, Uint8Array.from([1]))).rejects.toThrow();
+  });
+
+  test.skipIf(process.platform === "win32")("a symlink planted at an attachment path is never followed", async () => {
+    const s = store();
+    const { view } = await s.upload(ws, input(png(10)));
+    await message("m1");
+    await db.tx((t) => s.bind(t, ws, "m1", [view.id]));
+    const secret = path.join(dataDir, "secret.txt");
+    await writeFile(secret, "do not serve");
+    const file = path.join(root(), ws, view.id);
+    await rm(file);
+    await symlink(secret, file);
+    expect(await status(s.open(ws, view.id))).toBe(410);
+    expect(await status(s.readBytes(ws, view.id))).toBe(410);
+    await rm(file);
+    await symlink(secret, file);
+    await s.sweep({ startup: true });
+    expect(existsSync(file)).toBe(false);
+    expect(await readFile(secret, "utf8")).toBe("do not serve");
+    expect((await s.listForMessages(db, ["m1"])).get("m1")![0]!.status).toBe("missing");
+  });
+
+  test.skipIf(process.platform === "win32")("open makes a loosened file private before serving it", async () => {
+    const s = store();
+    const { view } = await s.upload(ws, input(png(10)));
+    await chmod(path.join(root(), ws, view.id), 0o644);
+    const { stream } = await s.open(ws, view.id);
+    stream.destroy();
+    expect((await stat(path.join(root(), ws, view.id))).mode & 0o777).toBe(0o600);
+  });
+
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)("an unreadable directory is repaired, not treated as missing", async () => {
+    const s = store();
+    const { view } = await s.upload(ws, input(png(10)));
+    await message("m1");
+    await db.tx((t) => s.bind(t, ws, "m1", [view.id]));
+    await chmod(path.join(root(), ws), 0o000);
+    await s.sweep({ startup: true });
+    expect((await s.open(ws, view.id)).view.status).toBe("attached");
+  });
+
+  test("removing an unsent upload stays recoverable until its file is gone", async () => {
+    const s = store();
+    const { view } = await s.upload(ws, input(png(10)));
+    await s.remove(ws, view.id);
+    expect(await db.query("select 1 from message_attachments where id = $1", [view.id])).toEqual([]);
+    expect(await s.usedBytes()).toBe(0);
+  });
+
+  test("the hourly sweep removes the directory of a workspace that no longer exists", async () => {
+    const s = store();
+    await mkdir(path.join(root(), "ws_gone"), { recursive: true });
+    await writeFile(path.join(root(), "ws_gone", "att_z"), "x");
+    await s.sweep({ startup: false });
+    expect(existsSync(path.join(root(), "ws_gone"))).toBe(false);
+  });
+
+  test("concurrent uploads with one new key share one reservation", async () => {
+    const s = store({ maxGlobalBytes: 1000 });
+    const bytes = png(600);
+    const key = newKey();
+    const [a, b] = await Promise.all([
+      s.upload(ws, { name: "a.png", uploadKey: key, contentLength: 600, body: body(bytes).iterable }),
+      s.upload(ws, { name: "a.png", uploadKey: key, contentLength: 600, body: body(bytes).iterable }),
+    ]);
+    expect(a.view).toEqual(b.view);
+  });
+
+  test("a retry of an upload that expired is refused", async () => {
+    const s = store();
+    const bytes = png(10);
+    const key = newKey();
+    await s.upload(ws, { name: "a.png", uploadKey: key, contentLength: 10, body: body(bytes).iterable });
+    await db.query("update message_attachments set status = 'expired' where upload_key = $1", [key]);
+    expect(await status(s.upload(ws, { name: "a.png", uploadKey: key, contentLength: 10, body: body(bytes).iterable }))).toBe(409);
   });
 });
