@@ -225,7 +225,11 @@ export async function mergeReportMeta(db: Db, messageId: string, patch: ReportMe
     if (!rows[0]?.meta) return null;
     const meta: ReportMessageMeta = { ...rows[0].meta };
     const touchesCheck = "check" in patch || "checkError" in patch || "checkSkipped" in patch;
-    const stale = touchesCheck && patch.check != null && meta.check?.checkedAt != null && !(typeof patch.check.checkedAt === "string" && patch.check.checkedAt >= meta.check.checkedAt);
+    // Once a check is stored, only a check at least as new may change the check keys: an older check,
+    // a failed call (check null + checkError) or a skip must not clear a newer stored result.
+    const stored = meta.check?.checkedAt;
+    const stale =
+      touchesCheck && stored != null && !(patch.check != null && typeof patch.check.checkedAt === "string" && patch.check.checkedAt >= stored);
     if (touchesCheck && !stale) {
       if ("check" in patch) {
         if (meta.check) {

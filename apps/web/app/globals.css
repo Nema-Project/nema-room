@@ -404,7 +404,7 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .plugins-page .drawer-body { padding: 16px 24px 32px; display: flex; flex-direction: column; gap: 12px; }
 .plugin-block { background: var(--paper); padding: 16px 20px 14px; }
 .plugin-facts { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 32px; }
-.plugin-block h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
+.plugin-block h3 { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
 .plugin-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; flex: none; color: var(--ink); font-size: 14px; }
 .plugin-status .chip { border: 1px solid currentColor; padding: 1px 7px; }
 .plugin-status .status-ok { color: #0e7a42; }
@@ -437,10 +437,16 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 }
 .plugin-block li { display: grid; grid-template-columns: minmax(220px, max-content) minmax(0, 68ch); column-gap: 20px; align-items: baseline; padding: 4px 0; color: var(--ink-2); }
 .plugin-block .kid { color: var(--ink); font-family: var(--mono); font-size: 13px; }
+.extension-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; }
+.extension-filters fieldset { display: flex; flex-wrap: wrap; gap: 4px 14px; border: 0; padding: 0; margin: 0; }
+.extension-filters label { display: inline-flex; align-items: center; gap: 4px; }
+.extension-filters input[type="search"] { flex: 1 1 220px; min-width: 0; border: 1px solid var(--rule); background: var(--paper); padding: 5px 8px; }
+.extension-section { display: flex; flex-direction: column; gap: 12px; }
+.extension-section > h2 { font-size: 13px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-2); margin-top: 8px; }
 .skill-install .field { padding: 12px 0; }
 .skill-install .field > button { border: 1px solid var(--ink); padding: 5px 14px; margin-top: 8px; font-weight: 600; }
 .skill-preview li { display: block; padding: 10px 0; border-top: 1px solid var(--rule); }
-.skill-preview h3 { font-size: 15px; font-weight: 600; color: var(--ink); }
+.skill-preview h4 { font-size: 15px; font-weight: 600; color: var(--ink); }
 .skill-preview .kmeta { overflow-wrap: anywhere; }
 @media (max-width: 720px) {
   .plugin-block li { grid-template-columns: 1fr; row-gap: 2px; }

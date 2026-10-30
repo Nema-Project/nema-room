@@ -827,9 +827,50 @@ describe("ui api", () => {
     );
     const r = await req("POST", `/api/workspaces/${ws}/entries/${e.id}/implementation/confirm`, {});
     expect(r.status).toBe(409);
-    expect((await json(r)).error).toBe("只能确认已上报或有出入的实现");
+    expect((await json(r)).error).toBe("只能确认已上报、有出入，或提交已核对但尚未验收的实现");
     expect((await store.get(e.id))!.implementation).toBeUndefined();
     expect((await req("POST", `/api/workspaces/${ws}/entries/R-99/implementation/confirm`, {})).status).toBe(404);
+  });
+
+  test("confirms a requirement that is verified with no user yet", async () => {
+    const store = new KnowledgeStore(repoPath(dataDir, ws));
+    const evidence = { reportMessageId: "m_1", commits: ["abc1234"], inferred: false, note: null, confirmedBy: null, acceptanceReview: null, reportEvidence: null };
+    const { entry: e } = await store.upsert(
+      { kind: "requirement", title: "提交已核对", body: "b", reason: "r", basis: "stated", sourceMessages: [], implementation: { status: "verified", evidence } },
+      { author: "system" },
+    );
+    const r = await req("POST", `/api/workspaces/${ws}/entries/${e.id}/implementation/confirm`, {});
+    expect(r.status).toBe(200);
+    const saved = (await store.get(e.id))!.implementation!;
+    expect(saved.status).toBe("verified");
+    expect(saved.evidence.confirmedBy).toBe("user");
+    expect(saved.evidence.commits).toEqual(["abc1234"]);
+  });
+
+  test("clears only the review when the user accepts again", async () => {
+    const store = new KnowledgeStore(repoPath(dataDir, ws));
+    const acceptanceReview = { needed: true as const, at: "2026-10-28T00:00:00.000Z", reason: "linked_check_changed" as const };
+    const evidence = { reportMessageId: "m_1", commits: ["abc1234"], inferred: false, note: "n", confirmedBy: "user" as const, acceptanceReview, reportEvidence: null };
+    const { entry: e } = await store.upsert(
+      { kind: "requirement", title: "需要复审", body: "b", reason: "r", basis: "stated", sourceMessages: [], implementation: { status: "verified", evidence } },
+      { author: "system" },
+    );
+    const r = await req("POST", `/api/workspaces/${ws}/entries/${e.id}/implementation/confirm`, {});
+    expect(r.status).toBe(200);
+    expect((await store.get(e.id))!.implementation).toEqual({ status: "verified", evidence: { ...evidence, acceptanceReview: null } });
+  });
+
+  test("rejects confirm when the user already accepted and no review is needed", async () => {
+    const store = new KnowledgeStore(repoPath(dataDir, ws));
+    const evidence = { reportMessageId: "m_1", commits: ["abc1234"], inferred: false, note: null, confirmedBy: "user" as const, acceptanceReview: null, reportEvidence: null };
+    const { entry: e } = await store.upsert(
+      { kind: "requirement", title: "已验收", body: "b", reason: "r", basis: "stated", sourceMessages: [], implementation: { status: "verified", evidence } },
+      { author: "system" },
+    );
+    const r = await req("POST", `/api/workspaces/${ws}/entries/${e.id}/implementation/confirm`, {});
+    expect(r.status).toBe(409);
+    expect((await json(r)).error).toBe("只能确认已上报、有出入，或提交已核对但尚未验收的实现");
+    expect((await store.get(e.id))!.implementation!.evidence.confirmedBy).toBe("user");
   });
 
   test("POST /repos stores the inspected repo and GET lists it", async () => {

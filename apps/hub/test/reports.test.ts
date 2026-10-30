@@ -589,3 +589,22 @@ test("an in-progress report with no commits does not look up authors", async () 
   expect(calls.map((c) => c.method)).not.toContain("report.authors");
   void ws;
 });
+
+test("a recheck whose result is overtaken by a newer stored check neither applies nor queues", async () => {
+  const { ws, repoId } = await bind();
+  const wpId = await approvedPackage(ws, repoId);
+  const message = await addReportMessage(db, ws, "未合入", {
+    report: { ...report(), entries: [wpId], task: 1 },
+    check: { ...passing, onMain: "not-yet", touchedFiles: ["src/a.ts"], checkedAt: "2026-10-23T10:00:00.000Z" },
+  });
+  const newer: ReportCheck = { ...passing, filesOk: false, untouchedFiles: ["src/a.ts"], checkedAt: "2026-10-23T10:03:00.000Z" };
+  handlers["report.check"] = async () => {
+    // Another recheck stores a newer failing check while this one is still running.
+    await mergeReportMeta(db, message.id, { check: newer, checkError: null, checkSkipped: null });
+    return { ...passing, touchedFiles: ["src/a.ts"], checkedAt: "2026-10-23T10:02:00.000Z" };
+  };
+  await recheckReports({ db, events, daemon, dataDir }, repoId);
+  expect((await metaOf(message.id)).check).toEqual(newer);
+  expect(await taskStatus(ws, wpId)).toBe("pending");
+  expect((await listMessages(db, ws)).filter((m) => m.role === "system")).toEqual([]);
+});

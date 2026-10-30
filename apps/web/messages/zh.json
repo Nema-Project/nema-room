@@ -403,5 +403,15 @@
   "extensions.problem.duplicate-id": "这个来源里另一个 Skill 的 id 与它相同。",
   "extensions.problem.too-large": "SKILL.md 超过 256 KiB。",
   "chat.skillOffer.title": "安装 {name}？",
-  "chat.skillOffer.note": "在你点「安装」之前，不会安装任何东西。"
+  "chat.skillOffer.note": "在你点「安装」之前，不会安装任何东西。",
+  "extensions.section.installed": "已安装",
+  "extensions.section.discover": "发现与安装",
+  "extensions.filter.type": "类型",
+  "extensions.filter.all": "全部",
+  "extensions.filter.skill": "Skills",
+  "extensions.filter.mcp": "MCP",
+  "extensions.filter.plugin": "插件",
+  "extensions.search.label": "搜索扩展",
+  "extensions.search.placeholder": "名称、说明或来源",
+  "extensions.search.empty": "没有匹配的扩展。"
 }

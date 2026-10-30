@@ -26,6 +26,8 @@ Agent 读到的代码片段会随请求发送给模型服务商（OpenAI / Anthr
 
 ### 启用、停用与卸载扩展
 
+插件页分「已安装」和「发现与安装」两部分：安装状态不是 `absent` 的记录（包括安装失败的）在「已安装」，安装被取消后留下的 `absent` 记录在「发现与安装」，旁边是「安装 Skill」入口。类型筛选（全部 / Skills / MCP / 插件）按记录的 `kind` 过滤，搜索不区分大小写地匹配 `name`、`summary`、`source`、`id` 和 `provenance.repository`。两者都只在页面里过滤 `GET /api/extensions` 已经返回的列表，不发新请求。
+
 插件页每个扩展右侧有一个「停用」或「启用」按钮，改动立刻生效，不需要重启 daemon。这个开关是整台安装的，不是某个 workspace 的；workspace 里另有一套插件开关，两者都要开才可用。
 
 - **停用后，这个扩展的函数不再出现在 Agent 的工具清单里。** 新建的任务直接看不到它们，正在跑的任务在下一次取工具清单时也会少掉这些函数。直接调用一个已停用的函数会被拒绝（`403`，报「函数 X 未在本 workspace 开启」），不会落到 daemon 去执行。
@@ -126,6 +128,12 @@ nema report uninstall --agent claude   # 只删 Nema 自己的 hook 条目和 sk
 ```bash
 nema report --summary "实现了流式输出" --commits abc1234,def5678 --entries R-7,D-12 --files src/stream.ts
 echo '{"summary":"…","commits":["abc1234"]}' | nema report --json
+```
+
+进行中的工作也可以先上报：`--json` 里加 `"progress":"in_progress"`（不写就是 `completed`）。进行中上报可以没有提交；没有提交时不做提交核对，消息上会写明「这次没有做提交核对」。有提交时照常核对，但不会推进开发包任务，也不会排整理任务；完成后再发一条 `completed` 上报（至少一个提交）。
+
+```bash
+echo '{"summary":"先接好流式接口","progress":"in_progress"}' | nema report --json
 ```
 
 上报会变成聊天里的一条 `report` 消息。daemon 核对三件事：提交存在；提交在主分支上；声称改过的文件确实被这些提交改过（多改了别的文件没关系，merge 提交不算，改名按新路径算）。核对完，hub 排一个整理任务。

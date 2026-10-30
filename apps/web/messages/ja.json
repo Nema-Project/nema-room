@@ -403,5 +403,15 @@
   "extensions.problem.duplicate-id": "このソース内の別の Skill と ID が重複しています。",
   "extensions.problem.too-large": "SKILL.md が 256 KiB を超えています。",
   "chat.skillOffer.title": "{name} をインストールしますか？",
-  "chat.skillOffer.note": "「インストール」を押すまで、何もインストールされません。"
+  "chat.skillOffer.note": "「インストール」を押すまで、何もインストールされません。",
+  "extensions.section.installed": "インストール済み",
+  "extensions.section.discover": "見つけてインストール",
+  "extensions.filter.type": "種類",
+  "extensions.filter.all": "すべて",
+  "extensions.filter.skill": "Skills",
+  "extensions.filter.mcp": "MCP",
+  "extensions.filter.plugin": "プラグイン",
+  "extensions.search.label": "拡張を検索",
+  "extensions.search.placeholder": "名前、説明、ソース",
+  "extensions.search.empty": "一致する拡張はありません。"
 }

@@ -102,6 +102,33 @@ test("appends a github current that was not not_requested", async () => {
   expect((await other.meta()).github).toEqual({ current: read, history: [] });
 });
 
+test("reads the row for update inside the transaction that writes it", async () => {
+  const { db, id } = await report();
+  const log: string[] = [];
+  const recording = (inner: typeof db, inTx: boolean): typeof db => ({
+    query: (sql, params) => {
+      log.push(`${inTx ? "tx" : "db"}: ${sql.replace(/\s+/g, " ").trim()}`);
+      return inner.query(sql, params);
+    },
+    tx: (fn) => inner.tx((t) => fn(recording(t, true))),
+  });
+  await mergeReportMeta(recording(db, false), id, { authors });
+  expect(log).toHaveLength(2);
+  expect(log[0]).toMatch(/^tx: select meta from messages where id = \$1 and role = 'report' for update$/);
+  expect(log[1]).toMatch(/^tx: update messages set meta/);
+});
+
+test("a check error does not clear a stored check", async () => {
+  const { db, id, meta } = await report();
+  const stored = check();
+  await mergeReportMeta(db, id, { check: stored, checkError: null, checkSkipped: null });
+  await mergeReportMeta(db, id, { check: null, checkError: "daemon offline" });
+  const m = await meta();
+  expect(m.check).toEqual(stored);
+  expect("checkError" in m).toBe(false);
+  expect(m.checkHistory ?? []).toEqual([]);
+});
+
 test("keeps both keys when two merges run together", async () => {
   const { db, id, meta } = await report();
   await Promise.all([mergeReportMeta(db, id, { authors }), mergeReportMeta(db, id, { github: observation() })]);
