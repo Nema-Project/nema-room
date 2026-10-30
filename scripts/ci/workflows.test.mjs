@@ -340,6 +340,41 @@ test('actual npm publish shell refuses artifact scripts that differ from the tag
   assert.notEqual(result.status, 0); assert.match(result.stderr, /artifact file scripts\/release\/extra\.mjs is not in v1\.2\.3/);
 });
 
+test('actual npm dist-tag shell routes older stables to maintenance, never moves a tag backwards, and stops on an unrecognised tag', t => {
+  const cwd = mkdtempSync(join(tmpdir(), 'npm-dist-')); t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  mkdirSync(join(cwd, 'bin')); mkdirSync(join(cwd, 'artifact/scripts/desktop'), { recursive: true });
+  copyFileSync(new URL('../desktop/release-version.mjs', import.meta.url), join(cwd, 'artifact/scripts/desktop/release-version.mjs'));
+  // npm view @nema-project/nema dist-tags.<tag> answers from TAG_<tag> (empty: no such tag, as npm does).
+  writeFileSync(join(cwd, 'bin/npm'), `#!/bin/bash
+set -euo pipefail
+test "$1 $2" = "view @nema-project/nema"
+name="TAG_\${3#dist-tags.}"
+printf '%s\\n' "\${!name:-}"
+`, { mode: 0o755 });
+  const run = read('npm-publish').jobs.publish.steps.find((step) => (step.run ?? '').includes('npm publish')).run;
+  const script = run.slice(run.indexOf('# Re-read the channel dist-tag'), run.indexOf('# The tag can move after the check above.'));
+  const exec = (dist, version, tags) => spawnSync('bash', ['-c', `set -euo pipefail\n${script}\necho "dist=$dist"`], { cwd, encoding: 'utf8', env: { ...process.env, PATH: `${join(cwd, 'bin')}:${process.env.PATH}`, dist, version, ...Object.fromEntries(Object.entries(tags).map(([key, value]) => [`TAG_${key}`, value])) } });
+  let result = exec('latest', '0.1.7', { latest: '0.1.6' });
+  assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /^dist=latest$/m);
+  result = exec('latest', '0.1.7', {});
+  assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /^dist=latest$/m, 'no latest yet');
+  result = exec('latest', '0.1.7', { latest: '0.2.0' });
+  assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /^dist=maintenance$/m);
+  result = exec('latest', '0.1.7', { latest: '0.2.0', maintenance: '0.1.6' });
+  assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /^dist=maintenance$/m);
+  result = exec('latest', '0.1.7', { latest: '0.2.0', maintenance: '0.1.9' });
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /npm maintenance is 0\.1\.9, newer than 0\.1\.7/);
+  result = exec('next', '0.2.0-rc.1', { next: '0.2.0-rc.2' });
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /npm next is 0\.2\.0-rc\.2, newer than 0\.2\.0-rc\.1/);
+  result = exec('next', '0.2.0-rc.2', {});
+  assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /^dist=next$/m, 'a first prerelease has no next yet');
+  // A tag value that is not a release version is an error, never "older".
+  for (const [dist, tags] of [['latest', { latest: 'canary' }], ['latest', { latest: '0.2.0', maintenance: 'oops' }], ['next', { next: 'beta' }]]) {
+    result = exec(dist, dist === 'next' ? '0.2.0-rc.1' : '0.1.7', tags);
+    assert.notEqual(result.status, 0, JSON.stringify(tags)); assert.doesNotMatch(result.stdout, /dist=/);
+  }
+});
+
 test('release-promote runs main scripts only, treats the tag as data, and is the one pointer writer', () => {
   const promote = read('release-promote');
   const source = readFileSync(new URL('../../.github/workflows/release-promote.yml', import.meta.url), 'utf8');

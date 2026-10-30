@@ -255,13 +255,22 @@ jobs:
           # Re-read the channel dist-tag right before publishing. A failed read fails the step (set -e):
           # an unreadable tag is never treated as older. A stable version older than latest goes to
           # maintenance; a prerelease older than next is refused, since next would move backwards.
+          # newer A B prints yes or no; a value that is not a release version throws, and the assignment
+          # that captures it fails the step, so an unrecognised tag is never taken as older.
+          newer() {
+            node --input-type=module -e 'import { compareReleaseVersions } from "./artifact/scripts/desktop/release-version.mjs"; process.stdout.write(compareReleaseVersions(process.argv[1], process.argv[2]) > 0 ? "yes" : "no")' "$1" "$2"
+          }
           current=$(npm view @nema-project/nema "dist-tags.${dist}")
-          if [ -n "$current" ] && node --input-type=module -e 'import { compareReleaseVersions } from "./artifact/scripts/desktop/release-version.mjs"; process.exit(compareReleaseVersions(process.argv[1], process.argv[2]) > 0 ? 0 : 1)' "$current" "$version"; then
+          ahead=no
+          if [ -n "$current" ]; then ahead=$(newer "$current" "$version"); fi
+          if [ "$ahead" = yes ]; then
             if [ "$dist" = latest ]; then
               dist=maintenance
               # maintenance must not move backwards either: promoting older stables in descending order stops.
               held=$(npm view @nema-project/nema "dist-tags.maintenance")
-              if [ -n "$held" ] && node --input-type=module -e 'import { compareReleaseVersions } from "./artifact/scripts/desktop/release-version.mjs"; process.exit(compareReleaseVersions(process.argv[1], process.argv[2]) > 0 ? 0 : 1)' "$held" "$version"; then
+              held_ahead=no
+              if [ -n "$held" ]; then held_ahead=$(newer "$held" "$version"); fi
+              if [ "$held_ahead" = yes ]; then
                 echo "npm maintenance is ${held}, newer than ${version}; refusing to move it backwards" >&2
                 exit 1
               fi
