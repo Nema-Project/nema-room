@@ -1,5 +1,5 @@
-import { render } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { Markdown } from "@/components/Markdown";
 
 describe("Markdown", () => {
@@ -33,5 +33,23 @@ describe("Markdown", () => {
   it("allows mailto links", () => {
     const { container } = render(<Markdown source="[m](mailto:a@b.co)" />);
     expect(container.querySelector("a")?.getAttribute("href")).toBe("mailto:a@b.co");
+  });
+  it("renders a work-package marker as an entry button like the other kinds", () => {
+    const onOpenEntry = vi.fn();
+    const { container } = render(<Markdown source="按 [W-3] 和 [D-12] 来" onOpenEntry={onOpenEntry} />);
+    const buttons = [...container.querySelectorAll("button")];
+    expect(buttons.map((b) => b.textContent)).toEqual(["[W-3]", "[D-12]"]);
+    fireEvent.click(buttons[0]!);
+    expect(onOpenEntry).toHaveBeenCalledWith("W-3");
+  });
+  it("leaves [W-0] and unknown prefixes as text", () => {
+    const { container } = render(<Markdown source="[W-0] [X-1]" onOpenEntry={() => {}} />);
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.textContent).toContain("[W-0] [X-1]");
+  });
+  it("shows [W-3] as written without onOpenEntry", () => {
+    const { container } = render(<Markdown source="[W-3]" />);
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.textContent).toBe("[W-3]");
   });
 });

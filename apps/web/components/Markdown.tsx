@@ -6,7 +6,7 @@ import remarkGfm from "remark-gfm";
 
 const SAFE = /^(https?:|mailto:)/i;
 const ENTRY_HREF = "nema-entry:";
-const MARKER = /\[([RDTQSG]-[1-9]\d*)\]/g;
+const MARKER = /\[([RDTQSGW]-[1-9]\d*)\]/g;
 
 function BaseLink({ href, children }: { href?: string; children?: React.ReactNode }) {
   if (!href || !SAFE.test(href)) return <span>{children}</span>;
@@ -29,7 +29,7 @@ const plainTransform = (url: string) => (SAFE.test(url) ? url : "");
 const entryTransform = (url: string) => (url.startsWith(ENTRY_HREF) || SAFE.test(url) ? url : "");
 
 /**
- * With `onOpenEntry`, source markers such as `[R-3]` or `[D-12]` become buttons that open that entry.
+ * With `onOpenEntry`, source markers of every entry kind (R/D/T/Q/S/G/W, e.g. `[D-12]`, `[W-3]`) become buttons that open that entry.
  * Without it the text renders as written.
  */
 export function Markdown({ source, onOpenEntry }: { source: string; onOpenEntry?: (entryId: string) => void }) {

@@ -1,0 +1,1 @@
+- Work-package markers such as `[W-3]` in work-package specs and plans are now clickable links that open the entry, like `[D-12]` and the other entry kinds already were.
