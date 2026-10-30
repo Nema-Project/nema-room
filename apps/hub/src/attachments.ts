@@ -103,6 +103,37 @@ export function toAttachmentRef(view: AttachmentView): AttachmentRef {
   });
 }
 
+/** Marks staged uploads of this workspace as attached to `messageId`; anything else is a 409 and the caller rolls back. */
+export async function bindAttachments(t: Db, workspaceId: string, messageId: string, ids: string[]): Promise<AttachmentView[]> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return [];
+  const owner = await t.query("select 1 from messages where id = $1 and workspace_id = $2", [messageId, workspaceId]);
+  if (owner.length === 0) throw new AttachmentError(409, "the message is not in this workspace");
+  const rows = await t.query<Row>(
+    `update message_attachments set status = 'attached', message_id = $3, attached_at = now()
+     where id = any($1) and workspace_id = $2 and status = 'staged' returning ${COLS}`,
+    [unique, workspaceId, messageId],
+  );
+  if (rows.length !== unique.length) throw new AttachmentError(409, "attachments must be unsent uploads of this workspace");
+  const byId = new Map(rows.map((r) => [r.id, toView(r)]));
+  const views = unique.map((id) => byId.get(id)!);
+  for (const v of views) toAttachmentRef(v);
+  return views;
+}
+
+/** Attachments bound to the given messages, whatever their status, oldest upload first. */
+export async function listAttachmentsForMessages(db: Db, messageIds: string[]): Promise<Map<string, AttachmentView[]>> {
+  const out = new Map<string, AttachmentView[]>();
+  if (messageIds.length === 0) return out;
+  const rows = await db.query<Row>(`select ${COLS} from message_attachments where message_id = any($1) order by created_at, id`, [messageIds]);
+  for (const r of rows) {
+    const list = out.get(r.message_id!) ?? [];
+    list.push(toView(r));
+    out.set(r.message_id!, list);
+  }
+  return out;
+}
+
 /** NEMA_ATTACHMENTS_MAX_BYTES, or the 2 GB default. A value that is not a positive integer stops startup. */
 export function attachmentsMaxBytesFromEnv(env: NodeJS.ProcessEnv): number {
   const raw = env.NEMA_ATTACHMENTS_MAX_BYTES?.trim();
@@ -432,33 +463,12 @@ export class AttachmentStore {
   }
 
   /** Binds staged uploads to a message inside the caller's transaction. Any id that is not this workspace's staged upload fails the whole call. */
-  async bind(t: Db, workspaceId: string, messageId: string, ids: string[]): Promise<AttachmentView[]> {
-    const unique = [...new Set(ids)];
-    if (unique.length === 0) return [];
-    const owner = await t.query("select 1 from messages where id = $1 and workspace_id = $2", [messageId, workspaceId]);
-    if (owner.length === 0) throw new AttachmentError(409, "the message is not in this workspace");
-    const rows = await t.query<Row>(
-      `update message_attachments set status = 'attached', message_id = $3, attached_at = now()
-       where id = any($1) and workspace_id = $2 and status = 'staged' returning ${COLS}`,
-      [unique, workspaceId, messageId],
-    );
-    if (rows.length !== unique.length) throw new AttachmentError(409, "attachments must be unsent uploads of this workspace");
-    const byId = new Map(rows.map((r) => [r.id, toView(r)]));
-    const views = unique.map((id) => byId.get(id)!);
-    for (const v of views) toAttachmentRef(v);
-    return views;
+  bind(t: Db, workspaceId: string, messageId: string, ids: string[]): Promise<AttachmentView[]> {
+    return bindAttachments(t, workspaceId, messageId, ids);
   }
 
-  async listForMessages(db: Db, messageIds: string[]): Promise<Map<string, AttachmentView[]>> {
-    const out = new Map<string, AttachmentView[]>();
-    if (messageIds.length === 0) return out;
-    const rows = await db.query<Row>(`select ${COLS} from message_attachments where message_id = any($1) order by created_at, id`, [messageIds]);
-    for (const r of rows) {
-      const list = out.get(r.message_id!) ?? [];
-      list.push(toView(r));
-      out.set(r.message_id!, list);
-    }
-    return out;
+  listForMessages(db: Db, messageIds: string[]): Promise<Map<string, AttachmentView[]>> {
+    return listAttachmentsForMessages(db, messageIds);
   }
 
   /** D-4: bytes go now; a bound attachment keeps a tombstone, an unsent upload is dropped. Idempotent. */

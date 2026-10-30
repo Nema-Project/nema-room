@@ -8,6 +8,7 @@ import type { Implementation, ReportMessageMeta, WorkPackageMeta } from "@nema/s
 import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
 import { insertEvidenceEvent, consumeEvidenceEvent, reconcileUnconsumedEventsLocked, payloadHashFor, type EvidenceEventInput } from "./evidenceEvents.js";
 import type { Entry } from "@nema/shared";
+import { ATTACHMENT_LIMITS, messageHasBody } from "@nema/shared";
 import type { CommitMeta } from "@nema/knowledge";
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
@@ -75,11 +76,14 @@ const PatchWorkspaceBody = z.object({
   knowledgeLanguage: z.enum(KNOWLEDGE_LANGUAGES).optional(),
   archived: z.boolean().optional(),
 });
-const PostMessageBody = z.object({
-  content: z.string().refine((s) => s.trim() !== "", "must not be empty"),
-  quoteMessageId: z.string().min(1).optional(),
-  threadId: z.string().min(1).optional(),
-});
+const PostMessageBody = z
+  .object({
+    content: z.string(),
+    quoteMessageId: z.string().min(1).optional(),
+    threadId: z.string().min(1).optional(),
+    attachmentIds: z.array(z.string().min(1)).max(ATTACHMENT_LIMITS.perTaskCount).optional(),
+  })
+  .refine((b) => messageHasBody(b.content, b.attachmentIds ?? []), { message: "must not be empty", path: ["content"] });
 const PreviewRepoBody = z.object({ path: z.string().min(1) });
 const BindRepoBody = z.object({
   path: z.string().min(1),
@@ -431,19 +435,21 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/workspaces/:id/threads", async (c) => {
     const workspaceId = c.req.param("id")!;
-    const { content, quoteMessageId } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, attachmentIds } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     try {
       const created = await db.tx(async (t) => {
-        const posted = await postUserMessage(t, workspaceId, content, { quoteMessageId });
+        const posted = await postUserMessage(t, workspaceId, content, { quoteMessageId, attachmentIds });
         const title = Array.from(content.split(/\r?\n/, 1)[0]!.trim()).slice(0, 80).join("") || "新追问";
         const thread = await ensureThread(t, posted.message.id, title, "user");
         return { ...posted, thread };
       });
       const task = toUiTask(created.task);
-      events.emit(workspaceId, { type: "message.created", message: created.message });
-      events.emit(workspaceId, { type: "task.updated", task });
-      events.emit(workspaceId, { type: "thread.updated", thread: created.thread });
+      if (!created.replayed) {
+        events.emit(workspaceId, { type: "message.created", message: created.message });
+        events.emit(workspaceId, { type: "task.updated", task });
+        events.emit(workspaceId, { type: "thread.updated", thread: created.thread });
+      }
       return c.json({ message: created.message, thread: created.thread, task });
     } catch (e) {
       if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
@@ -455,15 +461,17 @@ export function uiRoutes(deps: UiDeps): Hono {
   app.post("/workspaces/:id/threads/:tid/messages", async (c) => {
     const workspaceId = c.req.param("id")!;
     const threadId = c.req.param("tid")!;
-    const { content, quoteMessageId } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, attachmentIds } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     try {
-      const { message, task: created } = await postUserMessage(db, workspaceId, content, { quoteMessageId, threadId });
+      const { message, task: created, replayed } = await postUserMessage(db, workspaceId, content, { quoteMessageId, threadId, attachmentIds });
       const task = toUiTask(created);
-      events.emit(workspaceId, { type: "message.created", message });
-      events.emit(workspaceId, { type: "task.updated", task });
-      const thread = await getThread(db, threadId);
-      if (thread) events.emit(workspaceId, { type: "thread.updated", thread });
+      if (!replayed) {
+        events.emit(workspaceId, { type: "message.created", message });
+        events.emit(workspaceId, { type: "task.updated", task });
+        const thread = await getThread(db, threadId);
+        if (thread) events.emit(workspaceId, { type: "thread.updated", thread });
+      }
       return c.json({ message, task });
     } catch (e) {
       if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
@@ -531,18 +539,20 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/workspaces/:id/messages", async (c) => {
     const id = c.req.param("id");
-    const { content, quoteMessageId, threadId } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, threadId, attachmentIds } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, id))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
-    let message, created;
+    let message, created, replayed;
     try {
-      ({ message, task: created } = await postUserMessage(db, id, content, { quoteMessageId, threadId }));
+      ({ message, task: created, replayed } = await postUserMessage(db, id, content, { quoteMessageId, threadId, attachmentIds }));
     } catch (e) {
       if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
       throw e;
     }
     const task = toUiTask(created);
-    events.emit(id, { type: "message.created", message });
-    events.emit(id, { type: "task.updated", task });
+    if (!replayed) {
+      events.emit(id, { type: "message.created", message });
+      events.emit(id, { type: "task.updated", task });
+    }
     return c.json({ message, task });
   });
 

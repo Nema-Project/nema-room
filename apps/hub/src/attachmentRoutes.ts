@@ -3,12 +3,18 @@ import { Hono, type Context } from "hono";
 import { AttachmentCapabilitiesSchema, type AttachmentView } from "@nema/shared";
 import { AttachmentError, type AttachmentStore } from "./attachments.js";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
+import type { Db } from "./db/db.js";
+import type { EventBus } from "./events.js";
+import { getMessage } from "./messages.js";
 import { daemonHttpStatus } from "./plugins.js";
 
 export type AttachmentRouteDeps = {
   store: AttachmentStore;
   daemon: DaemonRpc;
   daemonStatus: () => boolean;
+  /** With both, deleting a sent file emits message.updated so open chats show the tombstone. */
+  db?: Db;
+  events?: EventBus;
 };
 
 /** The one /api write that is not JSON. app.ts lets it past requireJson; the route checks the type itself. */
@@ -75,9 +81,27 @@ export function attachmentRoutes(deps: AttachmentRouteDeps): Hono {
     }
   });
 
+  // Each snapshot is read and emitted in turn per message, after this request's own commit, so a read that
+  // started earlier can never be emitted after a newer one and put a deleted file back on screen.
+  const emitting = new Map<string, Promise<void>>();
+  const emitCurrent = (workspaceId: string, messageId: string): Promise<void> => {
+    const { db, events } = deps;
+    if (!db || !events) return Promise.resolve();
+    const next = (emitting.get(messageId) ?? Promise.resolve()).then(async () => {
+      const message = await getMessage(db, messageId);
+      if (message) events.emit(workspaceId, { type: "message.updated", message });
+    }).catch((e) => console.error("[attachments] message.updated failed", e));
+    emitting.set(messageId, next);
+    void next.then(() => { if (emitting.get(messageId) === next) emitting.delete(messageId); });
+    return next;
+  };
+
   app.delete("/workspaces/:id/attachments/:aid", async (c) => {
     try {
-      return c.json(await deps.store.remove(c.req.param("id"), c.req.param("aid")));
+      const workspaceId = c.req.param("id");
+      const view = await deps.store.remove(workspaceId, c.req.param("aid"));
+      if (view.messageId) await emitCurrent(workspaceId, view.messageId);
+      return c.json(view);
     } catch (e) {
       return fail(c, e);
     }

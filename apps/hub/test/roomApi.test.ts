@@ -13,6 +13,8 @@ import { USER_BASIS_EVIDENCE_CODE, USER_BASIS_EVIDENCE_ERROR, roomRoutes } from 
 import { markThreadRead } from "../src/threads.js";
 import { DaemonRpcError, type DaemonRpc } from "../src/daemonRpc.js";
 import { Hono } from "hono";
+import { AttachmentStore } from "../src/attachments.js";
+import { png, uploadPng } from "./attachmentFixtures.js";
 
 let db: Db;
 let dataDir: string;
@@ -1288,4 +1290,50 @@ test("source checks and reimports project evidence on all four GET interfaces wi
   await importSourceSnapshot(db, dataDir, wsA, snapshot("C", null));
   expect((await (await req("GET", `/room/entries/${nullDecision.id}`, t.runToken)).json() as any).entry).toMatchObject({ reviewNeeded: true, freshness: "unknown" });
   expect(await readFile(nullFile, "utf8")).toBe(nullBefore);
+});
+
+describe("GET /room/attachments/:id", () => {
+  async function runningWithFile() {
+    const quotedFile = await uploadPng(db, dataDir, wsA, png(90, 3), "old.png");
+    const quoted = await postUserMessage(db, wsA, "old", { attachmentIds: [quotedFile.id] });
+    await db.query("update tasks set status = 'done' where id = $1", [quoted.task.id]);
+    const otherFile = await uploadPng(db, dataDir, wsA, png(70, 4), "other.png");
+    await postUserMessage(db, wsA, "unrelated", { attachmentIds: [otherFile.id] }).then((r) => db.query("update tasks set status = 'done' where id = $1", [r.task.id]));
+    const bytes = png(64, 5);
+    const file = await uploadPng(db, dataDir, wsA, bytes, "new.png");
+    const m = await postUserMessage(db, wsA, "look", { attachmentIds: [file.id], quoteMessageId: quoted.message.id });
+    const t = await claimNextTask(db, "d1");
+    expect(t?.id).toBe(m.task.id);
+    return { token: t!.runToken!, taskId: t!.id, file, bytes, quotedFile, otherFile };
+  }
+
+  test("serves the bytes of the task's own and quoted attachments", async () => {
+    const { token, file, bytes, quotedFile } = await runningWithFile();
+    const r = await req("GET", `/room/attachments/${file.id}`, token);
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toBe("image/png");
+    expect(Buffer.from(await r.arrayBuffer())).toEqual(bytes);
+    const q = await req("GET", `/room/attachments/${quotedFile.id}`, token);
+    expect(q.status).toBe(200);
+    expect(Buffer.from(await q.arrayBuffer())).toEqual(png(90, 3));
+  });
+
+  test("an attachment outside the delivery set is 404 even in the same workspace", async () => {
+    const { token, otherFile } = await runningWithFile();
+    expect((await req("GET", `/room/attachments/${otherFile.id}`, token)).status).toBe(404);
+    expect((await req("GET", `/room/attachments/att_doesnotexist0000`, token)).status).toBe(404);
+  });
+
+  test("a deleted attachment is 410", async () => {
+    const { token, file } = await runningWithFile();
+    await new AttachmentStore(db, dataDir).remove(wsA, file.id);
+    expect((await req("GET", `/room/attachments/${file.id}`, token)).status).toBe(410);
+  });
+
+  test("a finished task's token is refused", async () => {
+    const { token, taskId, file } = await runningWithFile();
+    await finishTask(db, taskId, { ok: true }, token);
+    expect((await req("GET", `/room/attachments/${file.id}`, token)).status).toBe(401);
+    expect((await req("GET", `/room/attachments/${file.id}`)).status).toBe(401);
+  });
 });

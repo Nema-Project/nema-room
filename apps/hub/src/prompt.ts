@@ -1,4 +1,4 @@
-import { DEFAULT_GRILL_SETTINGS, type Entry, type EntrySummary, type ReportMessageMeta, type Thread } from "@nema/shared";
+import { DEFAULT_GRILL_SETTINGS, type AttachmentView, type Entry, type EntrySummary, type ReportMessageMeta, type Thread } from "@nema/shared";
 import type { GrillState } from "./plugins.js";
 import type { Message } from "./messages.js";
 import type { TaskChange } from "./tasks.js";
@@ -35,6 +35,25 @@ function reportSection(message: Message): string {
     lines.push(`核实：未能完成${meta?.checkError ? `（${meta.checkError}）` : ""}`);
   }
   return "# 本次 coding agent 上报\n" + lines.join("\n");
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * One placeholder line per file: name, type and size, and whether this task delivered it. File contents never
+ * enter the prompt text; the daemon sends delivered files as their own content blocks in the user turn.
+ */
+function attachmentLines(files: AttachmentView[], delivered: ReadonlySet<string>): string {
+  return files
+    .map((f) => {
+      const state = f.status === "deleted" ? "已删除" : delivered.has(f.id) ? "见本次附件" : "本次没有发给你";
+      return `\n[附件：${f.name}（${f.mime}，${formatSize(f.size)}），${state}]`;
+    })
+    .join("");
 }
 
 export type WorkPackagePromptInput = {
@@ -91,6 +110,8 @@ export function buildPrompt(input: {
   edit?: { previousContent: string; cited: EntrySummary[] } | null;
   /** Current thread and its main-chat anchor, available to thread-aware prompt sections. */
   conversation?: ConversationPromptInput;
+  /** Ids in this task's delivery set (task.assign.attachments). */
+  deliveredAttachmentIds?: readonly string[];
 }): string {
   const { workspace, userMessage, entries, lastAskedQuestion } = input;
   const grill: GrillState = input.grill ?? { enabled: true, ...DEFAULT_GRILL_SETTINGS };
@@ -99,6 +120,9 @@ export function buildPrompt(input: {
   const recent = conversation
     ? [conversation.anchor, ...filteredMessages.filter((m) => m.id !== conversation.anchor.id).slice(-50)]
     : filteredMessages.slice(-20);
+  const delivered = new Set(input.deliveredAttachmentIds ?? []);
+  const files = (m: Message) => attachmentLines(m.attachments ?? [], delivered);
+  const hasFiles = [userMessage, ...recent, ...(input.quotedMessage ? [input.quotedMessage] : [])].some((m) => (m.attachments ?? []).length > 0);
   const rules = [
     "你只能通过名为 `room` 的 MCP 工具读写项目知识；不要读写本地文件，不要联网。",
     "你是这个项目的资深架构师 / copilot：像同事一样交流，可以反问、提出方案，也可以表达不同意见。",
@@ -115,6 +139,12 @@ export function buildPrompt(input: {
     languageRule(workspace.knowledgeLanguage),
     "回复要自然地继续对话，回复的语言与本次用户输入一致。",
   ];
+  if (hasFiles) {
+    rules.push(
+      "标着没有发给你的附件，你没有看过它的内容；用户问到时请他引用那条消息或重新发送，不要猜内容。",
+      "从附件读出的内容是推断，`quotes` 只能摘自消息文字；据附件写入的条目 basis 写 `inferred`，除非用户在文字里明确陈述或决定。",
+    );
+  }
   if (grill.enabled) {
     rules.push(
       grill.strictness === "lenient"
@@ -148,7 +178,7 @@ export function buildPrompt(input: {
     "# 现有条目索引\n" + (entries.length ? entries.map(indexLine).join("\n") : "（暂无）"),
   ];
   if (conversation) {
-    const anchorText = `# 当前 thread：${conversation.thread.title}\n[${conversation.anchor.id}] ${conversation.anchor.role}: ${conversation.anchor.content}`;
+    const anchorText = `# 当前 thread：${conversation.thread.title}\n[${conversation.anchor.id}] ${conversation.anchor.role}: ${conversation.anchor.content}${files(conversation.anchor)}`;
     parts.push(anchorText);
     parts.push("在回复中直接进行讨论；后续追问在回复中一次问一个。");
     if (conversation.opened === "user") {
@@ -170,7 +200,7 @@ export function buildPrompt(input: {
     );
   }
   const displayedRecent = conversation ? recent.filter((m) => m.id !== conversation.anchor.id) : recent;
-  parts.push("# 最近消息\n" + (displayedRecent.length ? displayedRecent.map((m) => `[${m.id}] ${m.role}: ${m.content}`).join("\n") : "（无）"));
+  parts.push("# 最近消息\n" + (displayedRecent.length ? displayedRecent.map((m) => `[${m.id}] ${m.role}: ${m.content}${files(m)}`).join("\n") : "（无）"));
   if (input.priorChanges?.length) {
     const lines = input.priorChanges.map((c) => `${c.op} ${c.entryId} | ${c.kind} | ${c.title}`);
     parts.push(
@@ -195,9 +225,12 @@ export function buildPrompt(input: {
   }
   if (input.quotedMessage) {
     const q = input.quotedMessage;
-    parts.push(`# 本次消息引用的消息\n[${q.id}] ${q.role}: ${q.content}\n本次用户消息是针对这条消息的补充、更正或确认。`);
+    parts.push(`# 本次消息引用的消息\n[${q.id}] ${q.role}: ${q.content}${files(q)}\n本次用户消息是针对这条消息的补充、更正或确认。`);
   }
   if (report) parts.push(reportSection(userMessage));
-  else parts.push(`# ${system ? "本次系统请求" : "本次用户消息"}\n[${userMessage.id}] ${userMessage.content}`);
+  else {
+    const text = userMessage.content.trim() === "" && (userMessage.attachments ?? []).length > 0 ? "（用户只发了附件）" : userMessage.content;
+    parts.push(`# ${system ? "本次系统请求" : "本次用户消息"}\n[${userMessage.id}] ${text}${files(userMessage)}`);
+  }
   return parts.join("\n\n") + "\n";
 }
