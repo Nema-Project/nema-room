@@ -1313,3 +1313,40 @@ describe("sending messages with attachments", () => {
     expect((await json(r)).error).toContain("合计超过 32 MB");
   });
 });
+
+describe("editing a message to empty text", () => {
+  const finish = (taskId: string) => db.query("update tasks set status = 'done' where id = $1", [taskId]);
+
+  test("is allowed while the message still has a file", async () => {
+    const a = await uploadPng(db, dataDir, ws);
+    const sent = await postUserMessage(db, ws, "caption", { attachmentIds: [a.id] });
+    await finish(sent.task.id);
+    const r = await req("PATCH", `/api/workspaces/${ws}/messages/${sent.message.id}`, { content: "" });
+    expect(r.status).toBe(200);
+    const body = await json(r);
+    expect(body.message.content).toBe("");
+    expect(body.message.attachments.map((v: { id: string }) => v.id)).toEqual([a.id]);
+  });
+
+  test("is refused when the message has no file left", async () => {
+    const plain = await postUserMessage(db, ws, "text only");
+    await finish(plain.task.id);
+    expect((await req("PATCH", `/api/workspaces/${ws}/messages/${plain.message.id}`, { content: "  " })).status).toBe(400);
+
+    const a = await uploadPng(db, dataDir, ws);
+    const sent = await postUserMessage(db, ws, "caption", { attachmentIds: [a.id] });
+    await finish(sent.task.id);
+    expect((await req("DELETE", `/api/workspaces/${ws}/attachments/${a.id}`)).status).toBe(200);
+    expect((await req("PATCH", `/api/workspaces/${ws}/messages/${sent.message.id}`, { content: "" })).status).toBe(400);
+  });
+
+  test("an edit body takes only content", async () => {
+    const plain = await postUserMessage(db, ws, "text only");
+    await finish(plain.task.id);
+    expect((await req("PATCH", `/api/workspaces/${ws}/messages/${plain.message.id}`, { content: "new", attachmentIds: ["att_0000000000000000"] })).status).toBe(400);
+  });
+
+  test("sending still refuses empty text without files", async () => {
+    expect((await req("POST", `/api/workspaces/${ws}/messages`, { content: "" })).status).toBe(400);
+  });
+});
