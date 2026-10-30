@@ -66,3 +66,16 @@ test("task.assign with limits parses; without limits parses", () => {
   expect(parseHubToDaemon({ ...base, limits: WORKPACKAGE_LIMITS })).toMatchObject({ limits: { maxModelCalls: 48, maxToolCalls: 120, timeoutMs: 1_200_000 } });
   expect(() => parseHubToDaemon({ ...base, limits: { maxModelCalls: 1 } })).toThrow();
 });
+
+test("hello accepts an optional features list", () => {
+  const hello = { type: "hello" as const, token: "t", version: "1", adapters: ["codex"], features: ["attachments"] };
+  expect(parseDaemonToHub(hello)).toEqual(hello);
+  expect(() => parseDaemonToHub({ ...hello, features: [1] })).toThrow(ZodError);
+});
+test("task.assign carries optional attachment refs with a hex sha256", () => {
+  const base = { type: "task.assign", taskId: "t1", workspaceId: "w1", adapter: "auto", confidential: false, prompt: "p", runToken: "rt", hubUrl: "http://localhost:1", pluginTools: [] };
+  const ref = { id: "att_1", kind: "pdf", mime: "application/pdf", name: "a.pdf", size: 3, sha256: "0".repeat(64), messageId: "m1" };
+  expect(parseHubToDaemon({ ...base, attachments: [ref] })).toMatchObject({ attachments: [ref] });
+  expect(parseHubToDaemon(base)).not.toHaveProperty("attachments");
+  expect(() => parseHubToDaemon({ ...base, attachments: [{ ...ref, sha256: "xyz" }] })).toThrow(ZodError);
+});

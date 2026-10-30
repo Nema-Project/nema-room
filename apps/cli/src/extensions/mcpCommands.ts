@@ -4,21 +4,25 @@
 // `mcp.json`. `secret set` and `secret clear` only touch the private credential files on this
 // computer (D-2), so a value never travels through the hub from the CLI. Bare `nema mcp` stays the
 // Room MCP server that Codex and Claude Code start.
-import { readFileSync } from "node:fs";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import type { Command } from "commander";
 import { parseMcpConfig, secretRefs, type McpValue } from "@nema/shared";
 import type { Out } from "../direct/authCommands.js";
 import { openMcpSecretStore } from "../secrets/mcp.js";
-import { readStdinLine } from "../secrets/file.js";
+import { readIntactMcpConfig } from "./mcp.js";
 import { openExtensionStore } from "./store.js";
 
 export type McpCommandDeps = {
   nemaHome: string;
+  /** The desktop app's home, for `secret set|clear --desktop`. */
+  desktopHome: string;
   hubUrl: (flag?: string) => Promise<string>;
   out: Out;
   stdin: () => NodeJS.ReadableStream;
   fetch?: typeof fetch;
+  /** Tests only: the credential store for a home. */
+  secretStore?: (home: string) => ReturnType<typeof openMcpSecretStore>;
 };
 
 const REF = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
@@ -55,7 +59,7 @@ export function registerMcpCommands(mcp: Command, deps: McpCommandDeps, exit: (c
   const fetchImpl = deps.fetch ?? fetch;
 
   async function hub(flag: string | undefined, method: string, route: string, body?: unknown): Promise<any> {
-    const base = await deps.hubUrl(flag);
+    const base = (await deps.hubUrl(flag)).replace(/\/+$/, "");
     let response: Response;
     try {
       response = await fetchImpl(`${base}/api${route}`, {
@@ -75,7 +79,7 @@ export function registerMcpCommands(mcp: Command, deps: McpCommandDeps, exit: (c
       /* not JSON */
     }
     if (response.status === 401 || response.status === 403) {
-      throw new HubError(response.status, "this hub only accepts the desktop app's own requests; use the Plugins page there (secrets can still be set with `nema mcp secret set`)");
+      throw new HubError(response.status, "this hub only accepts the desktop app's own requests; use the Plugins page there (credentials can still be written with `nema mcp secret set <id> <name> --desktop`)");
     }
     if (!response.ok) throw new HubError(response.status, typeof json?.error === "string" ? json.error : `the hub refused the request (HTTP ${response.status})`);
     return json;
@@ -115,11 +119,18 @@ export function registerMcpCommands(mcp: Command, deps: McpCommandDeps, exit: (c
     // Checked here first, so a refused value never leaves this computer.
     const config = parseMcpConfig(configFrom(flags));
     const current = await exists(flags.hub, id);
-    if (mode === "add" && current) throw new Error(`MCP server ${id} already exists; use \`nema mcp edit\``);
+    const taken = () => new Error(`MCP server ${id} already exists; use \`nema mcp edit\``);
+    if (mode === "add" && current) throw taken();
     if (mode === "edit" && !current) throw new Error(`MCP server not found: ${id}`);
     const name = flags.name ?? current?.name;
     if (!name) throw new Error("give --name");
-    await hub(flags.hub, "POST", "/extensions/mcp", { id, name, config });
+    try {
+      // An add is create-only on the daemon too, so another add that won the race is not replaced.
+      await hub(flags.hub, "POST", "/extensions/mcp", { id, name, config, ...(mode === "add" ? { create: true } : {}) });
+    } catch (error) {
+      if (mode === "add" && error instanceof HubError && error.status === 409 && /already exists/.test(error.message)) throw taken();
+      throw error;
+    }
     deps.out.log(`saved ${id}; its stored secrets: ${secretRefs(config).join(", ") || "none"} (set with \`nema mcp secret set ${id} NAME\`)`);
   }
 
@@ -131,7 +142,14 @@ export function registerMcpCommands(mcp: Command, deps: McpCommandDeps, exit: (c
 
   for (const verb of ["start", "stop"] as const) {
     mcp.command(`${verb} <id>`).description(`${verb === "start" ? "Start" : "Stop"} an MCP server`).option("--hub <url>", "hub URL")
-      .action(action(async (id: string, flags: { hub?: string }) => printStatus(await hub(flags.hub, "POST", `/extensions/${encodeURIComponent(id)}/mcp/${verb}`, {}))));
+      .action(action(async (id: string, flags: { hub?: string }) => {
+        const status = await hub(flags.hub, "POST", `/extensions/${encodeURIComponent(id)}/mcp/${verb}`, {});
+        printStatus(status);
+        // A start that did not connect is a failure for scripts, even though the hub answered.
+        if (verb === "start" && status?.connection !== "connected") {
+          throw new Error(`${id} did not connect: ${status?.connection ?? "unknown"}${status?.lastError ? ` (${status.lastError})` : ""}`);
+        }
+      }));
   }
   mcp.command("status <id>").description("Show an MCP server's connection").option("--hub <url>", "hub URL")
     .action(action(async (id: string, flags: { hub?: string }) => printStatus(await hub(flags.hub, "GET", `/extensions/${encodeURIComponent(id)}/mcp/status`))));
@@ -142,34 +160,68 @@ export function registerMcpCommands(mcp: Command, deps: McpCommandDeps, exit: (c
       for (const row of rows) deps.out.log(`${row.id}  ${row.name}  ${row.source}  ${row.useState}  ${row.mcp?.connection ?? "unknown"}`);
     }));
 
-  /** Only names the saved config references, read without writing anything the daemon owns. */
-  function referenced(id: string, name: string): void {
+  const storeOf = deps.secretStore ?? openMcpSecretStore;
+  const homeOf = (flags: { desktop?: boolean }) => (flags.desktop ? deps.desktopHome : deps.nemaHome);
+
+  /**
+   * The record's revision when the saved config references `name`. Read without writing anything
+   * the daemon owns; a config that no longer matches its record (edited by hand) is refused.
+   */
+  function referenced(home: string, id: string, name: string): string {
     if (!REF.test(name)) throw new Error("invalid secret name");
-    const root = path.join(deps.nemaHome, "extensions");
+    const root = path.join(home, "extensions");
     const record = openExtensionStore(root).list().find((row) => row.id === id);
     if (!record) throw new Error(`MCP server not found: ${id}`);
     if (record.kind !== "mcp" || record.provision !== "managed") throw new Error(`${id} is not an MCP server`);
-    let refs: string[];
-    try {
-      refs = secretRefs(parseMcpConfig(JSON.parse(readFileSync(path.join(root, "extensions", id, "mcp.json"), "utf8"))));
-    } catch {
-      throw new Error(`the config of ${id} cannot be read; save it again`);
-    }
-    if (!refs.includes(name)) throw new Error(`secret ${name} is not referenced by the config of ${id}`);
+    const config = readIntactMcpConfig(root, record);
+    if (!config) throw new Error(`mcp.json for ${id} is damaged or does not match the record; save the config again`);
+    if (!secretRefs(config).includes(name)) throw new Error(`secret ${name} is not referenced by the config of ${id}`);
+    return record.revision;
   }
 
   const secret = mcp.command("secret").description("Write or clear an MCP server credential on this computer");
   secret.command("set <id> <name>").description("Read one line from stdin into the private credential file")
-    .action(action(async (id: string, name: string) => {
-      referenced(id, name);
-      const value = await readStdinLine(deps.stdin());
-      openMcpSecretStore(deps.nemaHome).set(id, name, value);
+    .option("--desktop", "the desktop app's credentials (~/.nema/desktop) instead of ~/.nema")
+    .action(action(async (id: string, name: string, flags: { desktop?: boolean }) => {
+      const home = homeOf(flags);
+      const before = referenced(home, id, name);
+      const value = await readValueLine(deps.stdin());
+      if (value === "") throw new Error("no value on stdin");
+      const changed = new Error(`the config of ${id} changed while reading the value; run the command again`);
+      // The config may have changed while the value was typed: a new target never gets it.
+      if (referenced(home, id, name) !== before) throw changed;
+      storeOf(home).set(id, name, value);
+      // The daemon may have saved or removed the server between that check and the write. Its
+      // save prunes first, so check once more and take the value back if anything moved.
+      let after: string | null = null;
+      try {
+        after = referenced(home, id, name);
+      } catch {
+        after = null;
+      }
+      if (after !== before) {
+        openMcpSecretStore(home).clear(id, name);
+        throw changed;
+      }
       deps.out.log(`saved ${name} for ${id}; a running server uses it after a restart (\`nema mcp stop ${id}\` then \`start\`)`);
     }));
   secret.command("clear <id> <name>").description("Delete one credential file")
-    .action(action(async (id: string, name: string) => {
+    .option("--desktop", "the desktop app's credentials (~/.nema/desktop) instead of ~/.nema")
+    .action(action(async (id: string, name: string, flags: { desktop?: boolean }) => {
       if (!REF.test(name)) throw new Error("invalid secret name");
-      openMcpSecretStore(deps.nemaHome).clear(id, name);
+      storeOf(homeOf(flags)).clear(id, name);
       deps.out.log(`cleared ${name} for ${id}`);
     }));
+}
+
+/** The first line of stdin as typed: only the line ending goes, so spaces in a credential are kept. */
+async function readValueLine(stdin: NodeJS.ReadableStream): Promise<string> {
+  const lines = createInterface({ input: stdin, crlfDelay: Infinity });
+  let value = "";
+  for await (const line of lines) {
+    value = line.endsWith("\r") ? line.slice(0, -1) : line;
+    break;
+  }
+  lines.close();
+  return value;
 }

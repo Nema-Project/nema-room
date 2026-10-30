@@ -79,8 +79,8 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
     const id = requireId(params, "extensions.setUse");
     const useState = requireUseState(params);
     const current = store.list().find((row) => row.id === id);
-    // A switched-off MCP server does not keep running.
-    if (useState === "disabled" && current?.kind === "mcp") await mcp.beforeDisable(id);
+    // A switched-off MCP server does not keep running, and no start slips in before the write.
+    if (useState === "disabled" && current?.kind === "mcp") return mcp.disable(id, () => store.setUseState(id, useState));
     return store.setUseState(id, useState);
   });
   router.register("extensions.remove", async (params): Promise<ExtensionRemoval> => {

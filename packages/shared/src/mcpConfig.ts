@@ -131,11 +131,12 @@ function parseShape(input: Record<string, unknown>): McpConfig {
     const args = input.args.map((arg, index) => text(arg, `argument ${index + 1}`));
     args.forEach((value, index) => {
       // `--api-key=…`, or `--api-key …` with the value as the next argument. A credential-named
-      // switch followed by another switch or by nothing is a plain switch (`--no-auth`).
+      // switch followed by a long option (`--…`) or by nothing is a plain switch (`--no-auth`);
+      // anything else after it, even `-x`, may be its value, so it is refused.
       const joined = /^--?([A-Za-z0-9_.-]+)=/.exec(value)?.[1];
       const bare = /^--?([A-Za-z0-9_.-]+)$/.exec(value)?.[1];
       const next = args[index + 1];
-      const separate = bare !== undefined && next !== undefined && !next.startsWith("-");
+      const separate = bare !== undefined && next !== undefined && !next.startsWith("--");
       if ((joined && isCredentialSlot(joined)) || (separate && isCredentialSlot(bare))) {
         fail(`argument ${index + 1} looks like a credential; pass it through an environment variable reference`);
       }

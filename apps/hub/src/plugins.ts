@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DEFAULT_GRILL_SETTINGS, GRILL_EXTRA_RULES_MAX, PLUGINS, bundledExtensions, isCheckTime, parseMcpConfig, pluginFunction, type ExtensionRecord, type McpConfig, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
+import { DEFAULT_GRILL_SETTINGS, GRILL_EXTRA_RULES_MAX, PLUGINS, bundledExtensions, isCheckTime, parseMcpConfig, pluginFunction, secretRefs, type ExtensionRecord, type McpConfig, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import { githubTargets } from "./githubScope.js";
@@ -491,7 +491,7 @@ const MCP_CONNECTIONS = new Set(["disconnected", "connecting", "connected", "nee
 export function mcpHttpStatus(message: string): 400 | 404 | 409 | 502 | 503 {
   if (DAEMON_OFFLINE.has(message)) return 503;
   if (/^MCP server not found: /.test(message) || /^extension not found: /.test(message)) return 404;
-  if (/ is disabled; enable it first$/.test(message) || / is not an MCP server$/.test(message) || /is damaged or does not match the record/.test(message)) return 409;
+  if (/^MCP server \S+ already exists$/.test(message) || / is disabled; enable it first$/.test(message) || / is not an MCP server$/.test(message) || /is damaged or does not match the record/.test(message)) return 409;
   if (/^(invalid MCP config: |invalid extension id|invalid secret name|invalid MCP id|MCP server name must|secret .* is not referenced|extensions\.mcp\.\w+ (needs|does not take))/.test(message)) return 400;
   return 502;
 }
@@ -526,14 +526,36 @@ export async function getMcpConfig(daemon: DaemonRpc, id: string): Promise<Recor
     config = null;
   }
   const secrets = row ? mcpSlots(row.secrets) : null;
-  if (!row || row.id !== id || typeof row.name !== "string" || !config || !secrets) throw new DaemonRpcError("extensions.mcp.get returned an invalid result");
+  // One slot per reference the config makes, in its order: a missing, extra or repeated slot is a bad reply.
+  const slotsFit = config !== null && secrets !== null && JSON.stringify(secrets.map((slot) => slot.name)) === JSON.stringify(secretRefs(config));
+  if (!row || row.id !== id || typeof row.name !== "string" || !config || !secrets || !slotsFit) throw new DaemonRpcError("extensions.mcp.get returned an invalid result");
   return { id, name: row.name, config, secrets };
 }
 
-export async function saveMcpConfig(daemon: DaemonRpc, request: { id: string; name: string; config: McpConfig }): Promise<Record<string, unknown>> {
+const MCP_RECORD_KEYS = ["id", "kind", "name", "summary", "source", "revision", "provision", "installState", "useState", "availability", "externalPath", "error"];
+
+export async function saveMcpConfig(daemon: DaemonRpc, request: { id: string; name: string; config: McpConfig; create?: true }): Promise<ExtensionRecord> {
   const row = plainObject(await daemon.call("extensions.mcp.save", request));
-  if (!row || row.id !== request.id || row.kind !== "mcp" || row.provision !== "managed") throw new DaemonRpcError("extensions.mcp.save returned an invalid result");
-  return row;
+  // The whole record, exactly: the page and the CLI show it as an extension row.
+  const fits =
+    row !== null &&
+    Object.keys(row).length === MCP_RECORD_KEYS.length &&
+    MCP_RECORD_KEYS.every((key) => Object.prototype.hasOwnProperty.call(row, key)) &&
+    row.id === request.id &&
+    row.kind === "mcp" &&
+    row.name === request.name &&
+    typeof row.summary === "string" &&
+    row.source === `mcp:${request.config.transport}` &&
+    typeof row.revision === "string" &&
+    /^[0-9a-f]{12}$/.test(row.revision) &&
+    row.provision === "managed" &&
+    row.installState === "installed" &&
+    (row.useState === "enabled" || row.useState === "disabled") &&
+    row.availability === "ready" &&
+    row.externalPath === null &&
+    row.error === null;
+  if (!fits) throw new DaemonRpcError("extensions.mcp.save returned an invalid result");
+  return row as unknown as ExtensionRecord;
 }
 
 export async function startMcp(daemon: DaemonRpc, id: string): Promise<Record<string, unknown>> {

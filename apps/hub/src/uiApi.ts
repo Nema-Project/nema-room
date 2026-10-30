@@ -61,7 +61,8 @@ const InstallExtensionBody = z.strictObject({
 // The folder is on the daemon's computer, which may be Windows while the hub runs elsewhere, so
 // either kind of absolute path is accepted here and the daemon makes the real check. The path is
 // not trimmed: a folder name may begin or end with a space, and trimming would name another folder.
-const SaveMcpBody = z.strictObject({ id: z.string().min(1).max(64), name: z.string().min(1).max(128), config: z.unknown() });
+// `create: true` is an add: the daemon refuses an id that already exists instead of replacing it.
+const SaveMcpBody = z.strictObject({ id: z.string().min(1).max(64), name: z.string().min(1).max(128), config: z.unknown(), create: z.boolean().optional() });
 const EmptyBody = z.strictObject({});
 // The value is never echoed: a refused body only names the field.
 const McpSecretBody = z.strictObject({ value: z.string() });
@@ -288,14 +289,14 @@ export function uiRoutes(deps: UiDeps): Hono {
     }
   };
   app.post("/extensions/mcp", async (c) => {
-    const { id, name, config } = await body(c, SaveMcpBody);
+    const { id, name, config, create } = await body(c, SaveMcpBody);
     let parsed;
     try {
       parsed = parseMcpConfig(config);
     } catch (error) {
       throw new HttpError(400, error instanceof Error ? error.message : "invalid MCP config");
     }
-    return mcpRoute(() => saveMcpConfig(deps.daemon, { id, name, config: parsed }))(c);
+    return mcpRoute(() => saveMcpConfig(deps.daemon, { id, name, config: parsed, ...(create ? { create: true } : {}) }))(c);
   });
   app.get("/extensions/:id/mcp", mcpRoute((c) => getMcpConfig(deps.daemon, c.req.param("id")!)));
   app.get("/extensions/:id/mcp/status", mcpRoute((c) => mcpServerStatus(deps.daemon, c.req.param("id")!)));
