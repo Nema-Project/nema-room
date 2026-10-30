@@ -61,6 +61,39 @@ describe("RoomClient.fetchAttachment", () => {
     expect(r).toMatchObject({ ok: false, status: 200 });
   });
 
+  test("an oversized error body is read only up to 64 KB", async () => {
+    files.set("huge", { status: 500, type: "text/plain", body: Buffer.alloc(4 * 1024 * 1024, 0x7a) });
+    const r = await new RoomClient(hubUrl, "tok").fetchAttachment("huge");
+    expect(r).toMatchObject({ ok: false, status: 500 });
+    const error = (r as { error: string }).error;
+    expect(Buffer.byteLength(error)).toBeLessThanOrEqual(64 * 1024);
+    expect(error.startsWith("zzzz")).toBe(true);
+  });
+
+  test("an endless error body is not buffered: reading stops at the cap", async () => {
+    const endless = createServer((_req, res) => {
+      res.writeHead(500, { "content-type": "text/plain" });
+      const chunk = Buffer.alloc(16 * 1024, 0x7a);
+      const timer = setInterval(() => res.write(chunk), 1);
+      res.on("close", () => clearInterval(timer));
+    });
+    await new Promise<void>((r) => endless.listen(0, "127.0.0.1", r));
+    try {
+      const r = await new RoomClient(`http://127.0.0.1:${(endless.address() as AddressInfo).port}`, "tok").fetchAttachment("x");
+      expect(r).toMatchObject({ ok: false, status: 500 });
+      expect(Buffer.byteLength((r as { error: string }).error)).toBeLessThanOrEqual(64 * 1024);
+    } finally {
+      endless.closeAllConnections();
+      await new Promise<void>((r) => endless.close(() => r()));
+    }
+  }, 10_000);
+
+  test("a body of exactly maxBytes is accepted", async () => {
+    files.set("exact", { status: 200, type: "text/plain", body: Buffer.alloc(1024, 0x61) });
+    const r = await new RoomClient(hubUrl, "tok").fetchAttachment("exact", 1024);
+    expect(r.ok && r.bytes.length).toBe(1024);
+  });
+
   test("an unreachable hub is ok:false with status 0", async () => {
     const r = await new RoomClient("http://127.0.0.1:1", "tok").fetchAttachment("a");
     expect(r).toMatchObject({ ok: false, status: 0 });
