@@ -500,5 +500,6 @@
   "attach.reject.not_utf8": "没有添加 {name}：它不是 UTF-8 文本。",
   "attach.reject.empty": "没有添加 {name}：文件是空的。",
   "attach.reject.too_many": "没有添加 {name}：一条消息最多 {count} 个附件。",
-  "attach.reject.total_too_large": "没有添加 {name}：一条消息的附件合计最多 {total}。"
+  "attach.reject.total_too_large": "没有添加 {name}：一条消息的附件合计最多 {total}。",
+  "attach.reject.unreadable": "没有添加 {name}：无法读取这个文件。"
 }

@@ -500,5 +500,6 @@
   "attach.reject.not_utf8": "{name} was not added: it is not UTF-8 text.",
   "attach.reject.empty": "{name} was not added: the file is empty.",
   "attach.reject.too_many": "{name} was not added: a message can carry at most {count} attachments.",
-  "attach.reject.total_too_large": "{name} was not added: a message's attachments can total at most {total}."
+  "attach.reject.total_too_large": "{name} was not added: a message's attachments can total at most {total}.",
+  "attach.reject.unreadable": "{name} was not added: the file could not be read."
 }

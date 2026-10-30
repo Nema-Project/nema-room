@@ -57,10 +57,18 @@ export type TrayItem = {
 };
 
 /** Why a picked file was not added. Rendered as `attach.reject.<reason>`. */
-export type Notice = { reason: Exclude<SniffResult, { ok: true }>["reason"] | "too_many" | "total_too_large"; name: string };
+export type Notice = { reason: Exclude<SniffResult, { ok: true }>["reason"] | "too_many" | "total_too_large" | "unreadable"; name: string };
 
-/** Why the message cannot be sent yet, or null when it can. */
-export function trayBlocker(items: readonly TrayItem[], caps: CapabilityState): "uploading" | "failed" | "unsupported" | null {
+/**
+ * Why the message cannot be sent yet, or null when it can. `checking` covers picked files still
+ * being read and a capability lookup in flight: until both answer, nothing is known to be deliverable.
+ */
+export function trayBlocker(
+  items: readonly TrayItem[],
+  caps: CapabilityState,
+  checking: { files: boolean; caps: boolean } = { files: false, caps: false },
+): "checking" | "uploading" | "failed" | "unsupported" | null {
+  if (checking.files || (items.length > 0 && (checking.caps || caps.state === "loading"))) return "checking";
   if (items.some((i) => i.state === "uploading")) return "uploading";
   if (items.some((i) => i.state === "failed")) return "failed";
   if (caps.state === "ok" && items.some((i) => !isDeliverable(caps.caps, i.kind))) return "unsupported";
@@ -93,6 +101,8 @@ export function useAttachmentTray(workspaceId: string | undefined) {
   const [caps, setCaps] = useState<CapabilityState>({ state: workspaceId ? "loading" : "absent" });
   const [items, setItems] = useState<TrayItem[]>([]);
   const [notices, setNotices] = useState<Notice[]>([]);
+  const [readingFiles, setReadingFiles] = useState(0);
+  const [capsInFlight, setCapsInFlight] = useState(false);
   const itemsRef = useRef<TrayItem[]>([]);
   const capsVersion = useRef(0);
   useEffect(() => {
@@ -102,6 +112,8 @@ export function useAttachmentTray(workspaceId: string | undefined) {
   const loadCaps = useCallback(async () => {
     if (!workspaceId) return;
     const mine = ++capsVersion.current;
+    // The previous answer may be for another adapter: sending waits for this one.
+    setCapsInFlight(true);
     let next: CapabilityState;
     try {
       const found = await attachmentCapabilities();
@@ -109,10 +121,13 @@ export function useAttachmentTray(workspaceId: string | undefined) {
     } catch {
       next = { state: "unavailable" };
     }
-    if (mine === capsVersion.current) setCaps(next);
+    if (mine !== capsVersion.current) return;
+    setCaps(next);
+    setCapsInFlight(false);
   }, [workspaceId]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- marks the lookup in flight; the answer arrives after the network response
     void loadCaps();
   }, [loadCaps]);
 
@@ -147,10 +162,23 @@ export function useAttachmentTray(workspaceId: string | undefined) {
       void loadCaps(); // the adapter may have changed since the composer opened
       const rejected: Notice[] = [];
       const accepted: TrayItem[] = [];
+      // One file in memory at a time: each may be up to 20 MB. Sending waits until all are read.
+      const checks: (SniffResult | null)[] = [];
+      setReadingFiles((n) => n + 1);
+      try {
+        for (const file of files) checks.push(await precheckFile(file).catch(() => null));
+      } finally {
+        setReadingFiles((n) => n - 1);
+      }
+      // Counted after the awaits, so two quick adds cannot both fit into the same room.
       let count = itemsRef.current.length;
       let total = itemsRef.current.reduce((sum, i) => sum + i.size, 0);
-      for (const file of files) {
-        const checked = await precheckFile(file);
+      for (const [index, file] of files.entries()) {
+        const checked = checks[index];
+        if (!checked) {
+          rejected.push({ reason: "unreadable", name: file.name });
+          continue;
+        }
         if (!checked.ok) {
           rejected.push({ reason: checked.reason, name: file.name });
           continue;
@@ -210,7 +238,7 @@ export function useAttachmentTray(workspaceId: string | undefined) {
     enabled: Boolean(workspaceId) && (caps.state === "ok" || caps.state === "unavailable"),
     items,
     notices,
-    blocker: trayBlocker(items, caps),
+    blocker: trayBlocker(items, caps, { files: readingFiles > 0, caps: capsInFlight }),
     ready: ready.map((i) => ({ key: i.key, id: i.view!.id })),
     add,
     remove,

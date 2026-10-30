@@ -315,6 +315,59 @@ describe("Composer attachments", () => {
     await vi.waitFor(() => expect(onThread).toHaveBeenCalledWith("look here", ["att1"]));
   });
 
+  it("waits for a fresh capability answer before sending", async () => {
+    let answer!: (v: Awaited<ReturnType<typeof hub.attachmentCapabilities>>) => void;
+    const onSend = await mountWs();
+    vi.mocked(hub.attachmentCapabilities).mockImplementation(() => new Promise((r) => (answer = r)));
+    await userEvent.upload(picker(), pdf());
+    await screen.findByText("spec.pdf");
+    await vi.waitFor(() => expect(vi.mocked(hub.uploadAttachment)).toHaveBeenCalled());
+    await act(async () => {});
+    expect(sendButton().disabled).toBe(true);
+    fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
+    expect(onSend).not.toHaveBeenCalled();
+    await act(async () => answer({ adapter: "claude-code", image: "native", pdf: "unknown", text: "text" }));
+    expect(await screen.findByText(/claude-code/)).toBeTruthy();
+    expect(sendButton().disabled).toBe(true);
+  });
+
+  it("does not send text while a picked file is still being read", async () => {
+    const onSend = await mountWs();
+    const file = png();
+    let release!: (b: ArrayBuffer) => void;
+    vi.spyOn(file, "arrayBuffer").mockReturnValue(new Promise((r) => (release = r)));
+    await userEvent.type(box(), "with file");
+    fireEvent.change(picker(), { target: { files: [file] } });
+    await act(async () => {});
+    expect(sendButton().disabled).toBe(true);
+    fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
+    expect(onSend).not.toHaveBeenCalled();
+    await act(async () => release(Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]).buffer));
+    await vi.waitFor(() => expect(sendButton().disabled).toBe(false));
+    await userEvent.click(sendButton());
+    expect(onSend).toHaveBeenCalledWith("with file", ["att1"]);
+  });
+
+  it("says when a file cannot be read", async () => {
+    await mountWs();
+    const file = png("locked.png");
+    vi.spyOn(file, "arrayBuffer").mockRejectedValue(new DOMException("NotReadableError"));
+    await userEvent.upload(picker(), file);
+    expect((await screen.findByRole("alert")).textContent).toContain("locked.png");
+    expect(hub.uploadAttachment).not.toHaveBeenCalled();
+  });
+
+  it("keeps the eight-file limit across overlapping adds", async () => {
+    await mountWs();
+    const target = box().closest(".composer")!;
+    const batch = (from: number) => Array.from({ length: 5 }, (_, i) => png(`q${from + i}.png`));
+    fireEvent.drop(target, { dataTransfer: { files: batch(0), types: ["Files"] } });
+    fireEvent.drop(target, { dataTransfer: { files: batch(5), types: ["Files"] } });
+    await vi.waitFor(() => expect(hub.uploadAttachment).toHaveBeenCalledTimes(8));
+    await act(async () => {});
+    expect(hub.uploadAttachment).toHaveBeenCalledTimes(8);
+  });
+
   it("allows at most eight attachments", async () => {
     await mountWs();
     const files = Array.from({ length: 9 }, (_, i) => png(`p${i}.png`));

@@ -500,5 +500,6 @@
   "attach.reject.not_utf8": "{name} は追加されませんでした：UTF-8 のテキストではありません。",
   "attach.reject.empty": "{name} は追加されませんでした：ファイルが空です。",
   "attach.reject.too_many": "{name} は追加されませんでした：1 つのメッセージに添付できるのは {count} 個までです。",
-  "attach.reject.total_too_large": "{name} は追加されませんでした：1 つのメッセージの添付ファイルは合計 {total} までです。"
+  "attach.reject.total_too_large": "{name} は追加されませんでした：1 つのメッセージの添付ファイルは合計 {total} までです。",
+  "attach.reject.unreadable": "{name} は追加されませんでした：ファイルを読み込めませんでした。"
 }
