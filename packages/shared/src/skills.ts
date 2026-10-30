@@ -47,22 +47,34 @@ export function isSkillName(name: string): boolean {
 /** Built-in `/` commands of the composer (`apps/web/lib/slash.ts`); a Skill cannot take these over. */
 export const RESERVED_SLASH_NAMES: readonly string[] = ["thread", "progress", "update"];
 
-/** Reserved names plus every `diagram:<type>` command. */
+/** `/skill:<id>` always names a Skill, so a Skill whose id a built-in command takes is still callable. */
+export const SKILL_SLASH_PREFIX = "skill:";
+
+/** Built-in names, every `diagram:<type>` command, and the `skill:` prefix itself. */
 export function isReservedSlashName(id: string): boolean {
-  return RESERVED_SLASH_NAMES.includes(id) || id.startsWith("diagram:");
+  return RESERVED_SLASH_NAMES.includes(id) || id.startsWith("diagram:") || id.startsWith(SKILL_SLASH_PREFIX);
 }
 
-// An external id: a Skill name, optionally after one `<repo slug>:` prefix.
-const SEGMENT = "[a-z0-9]+(?:-[a-z0-9]+)*";
-const MANUAL = new RegExp(`^/(${SEGMENT}(?::${SEGMENT})?)(?:\\s+([\\s\\S]*))?$`);
+/** What the composer inserts for a Skill: `/<id>`, or `/skill:<id>` when the id is reserved. */
+export function skillSlashCommand(id: string): string {
+  return isReservedSlashName(id) ? `/${SKILL_SLASH_PREFIX}${id}` : `/${id}`;
+}
 
-/** A message that starts with `/skill-id`, with the rest as its arguments; `null` for anything else. */
+// An external id: a Skill name, optionally after one `<repo slug>:` prefix; `/skill:` may come first.
+const SEGMENT = "[a-z0-9]+(?:-[a-z0-9]+)*";
+const MANUAL = new RegExp(`^/(${SKILL_SLASH_PREFIX})?(${SEGMENT}(?::${SEGMENT})?)(?:\\s+([\\s\\S]*))?$`);
+
+/**
+ * A message that starts with `/skill-id` or `/skill:skill-id`, with the rest as its arguments; `null` for
+ * anything else. Without the prefix, built-in names stay with the built-in commands.
+ */
 export function parseManualSkill(content: string): { skillId: string; arguments: string } | null {
   const match = MANUAL.exec(content.trimStart());
   if (!match) return null;
-  const skillId = match[1]!;
+  const skillId = match[2]!;
   // Each part follows the Skill name rule, 64 characters at most.
   if (!skillId.split(":").every(isSkillName)) return null;
-  if (isReservedSlashName(skillId)) return null;
-  return { skillId, arguments: (match[2] ?? "").trim() };
+  if (skillId.startsWith(SKILL_SLASH_PREFIX)) return null;
+  if (!match[1] && isReservedSlashName(skillId)) return null;
+  return { skillId, arguments: (match[3] ?? "").trim() };
 }

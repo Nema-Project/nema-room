@@ -15,7 +15,7 @@ import { claudeSkillsSection, prepareClaudeSkills, type ClaudeSkillPrep } from "
 import { MIN_CLAUDE_SKILLS_VERSION, claudeSkillsSupported, claudeVersionRunner, versionAtLeast } from "../skills/claudeVersion.js";
 import type { SnapshotSkill } from "../skills/snapshot.js";
 import { readRepoSkillFile, takeTaskSnapshot } from "../skills/repoSkills.js";
-import { preloadSection, readSkillBody } from "../skills/preload.js";
+import { manualSection, preloadSection, readSkillBody } from "../skills/preload.js";
 import { settleReports, trackReport } from "../skills/reports.js";
 import { RoomClient } from "../room/client.js";
 import { readClaudeToken } from "./token.js";
@@ -140,14 +140,20 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
     // Skills never fail the task: anything that goes wrong here leaves the launch as it was.
     let skillRun: SkillRun | null = null;
+    let reports: Promise<unknown>[] = [];
     try {
-      skillRun = await this.prepareSkills(task, launch, onEvent);
+      const prepared = await this.prepareSkills(task, launch, onEvent);
+      skillRun = prepared.run;
+      reports = prepared.reports;
+      const sections: string[] = [];
       if (skillRun) {
         launch = { ...launch, args: withSkillArgs(launch.args, skillRun.prep) };
-        const copied = skillRun.prep.copied.map((id) => skillRun!.skills.get(id)!);
-        const section = [claudeSkillsSection(copied), ...(skillRun.preload ? [skillRun.preload] : [])].join("\n\n");
-        stdin = userMessage(`${task.prompt}\n\n${section}`, loaded.attachments);
+        sections.push(claudeSkillsSection(skillRun.prep.copied.map((id) => skillRun!.skills.get(id)!)));
       }
+      // A Skill called by hand comes before the thread's ones.
+      if (prepared.manual) sections.push(prepared.manual);
+      if (skillRun?.preload) sections.push(skillRun.preload);
+      if (sections.length > 0) stdin = userMessage(`${task.prompt}\n\n${sections.join("\n\n")}`, loaded.attachments);
     } catch (e) {
       skillRun = null;
       onEvent({ type: "progress", text: `Skills 准备失败，本任务不使用 Skills：${message(e)}` });
@@ -158,49 +164,62 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     } finally {
       // Reports finish before the task does, so the thread has them for its next task; a failed, timed-out
       // or stopped task reports what it did load too, and a lost report is a warning, never the outcome.
-      if (skillRun && skillRun.reports.length > 0) {
-        const reports = await settleReports(skillRun.reports, 5000);
-        if (reports.timedOut) onEvent({ type: "progress", text: "Skill 激活记录未能及时上报" });
-        else if (reports.failed > 0) onEvent({ type: "progress", text: `${reports.failed} 条 Skill 激活记录上报失败` });
+      if (reports.length > 0) {
+        const settled = await settleReports(reports, 5000);
+        if (settled.timedOut) onEvent({ type: "progress", text: "Skill 激活记录未能及时上报" });
+        else if (settled.failed > 0) onEvent({ type: "progress", text: `${settled.failed} 条 Skill 激活记录上报失败` });
       }
       rmSync(launch.runDir, { recursive: true, force: true });
     }
   }
 
-  /** Copies the task's Skills into the run dir, or null when the task runs without them. */
-  private async prepareSkills(task: TaskAssign, launch: ClaudeLaunch, onEvent: (e: TaskEvent) => void): Promise<SkillRun | null> {
+  /**
+   * Copies the task's Skills into the run dir (`run` is null when the task runs without them) and builds the
+   * section for a Skill the user called with `/name`, which goes in even then.
+   */
+  private async prepareSkills(task: TaskAssign, launch: ClaudeLaunch, onEvent: (e: TaskEvent) => void): Promise<{ run: SkillRun | null; manual: string | null; reports: Promise<unknown>[] }> {
     const snapshot = await takeTaskSnapshot({ nemaHome: this.opts.nemaHome, claudeCodeOk: true, ...(task.projectSkills ? { projectSkills: task.projectSkills } : {}) });
     if (snapshot.warnings.length > 0) onEvent({ type: "progress", text: `部分 Skill 未载入：${snapshot.warnings.join("；")}` });
-    if (snapshot.skills.length === 0) return null;
+    const room = new RoomClient(task.hubUrl, task.runToken);
+    const reports: Promise<unknown>[] = [];
+    const report = async (id: string, revision: string) => {
+      const reported = await room.reportSkillActivation(id, revision);
+      if (!reported.ok) throw new Error(reported.error);
+    };
+    const readBody = (skill: SnapshotSkill) => readSkillBody(this.opts.nemaHome, skill, readRepoSkillFile);
+    const finish = async (run: SkillRun | null) => {
+      if (!task.manualSkill) return { run, manual: null, reports };
+      const copy = (id: string) => run?.prep.skillDirs.get(id);
+      const section = await manualSection({
+        snapshot,
+        manual: task.manualSkill,
+        readBody,
+        more: (skill, at) => (copy(skill.id) ? `剩下的部分用 Read 读 ${copy(skill.id)}；正文（frontmatter 之后）的前 ${at.lines} 行已附在这里。` : ""),
+      });
+      if (section.skill) trackReport(reports, report(section.skill.id, section.skill.revision));
+      return { run, manual: section.text, reports };
+    };
+    if (snapshot.skills.length === 0) return finish(null);
     const check = this.opts.claudeSkillsOk ?? (() => claudeSkillsSupported(claudeVersionRunner(this.opts.claudeBin ?? "claude")));
     if (!(await check()).ok) {
       onEvent({ type: "progress", text: TOO_OLD });
-      return null;
+      return finish(null);
     }
     const prep = await prepareClaudeSkills({ nemaHome: this.opts.nemaHome, runDir: launch.runDir, snapshot, readRepoFile: readRepoSkillFile });
     const reasons = { budget: "超过 50 MiB", changed: "文件已改变", unreadable: "无法读取" } as const;
     if (prep.skipped.length > 0) {
       onEvent({ type: "progress", text: `部分 Skill 未载入：${prep.skipped.map((s) => `${s.id}（${reasons[s.reason]}）`).join("；")}` });
     }
-    if (prep.copied.length === 0) return null;
+    if (prep.copied.length === 0) return finish(null);
     const copied = { skills: snapshot.skills.filter((skill) => prep.copied.includes(skill.id)), warnings: [] };
     let preload: string | null = null;
-    if (task.retainedSkills && task.retainedSkills.length > 0) {
-      const section = await preloadSection({ snapshot: copied, retained: task.retainedSkills, readBody: (skill) => readSkillBody(this.opts.nemaHome, skill, readRepoSkillFile) });
+    const retained = (task.retainedSkills ?? []).filter((id) => id !== task.manualSkill?.skillId);
+    if (retained.length > 0) {
+      const section = await preloadSection({ snapshot: copied, retained, readBody });
       preload = section.text;
       if (section.dropped.length > 0) onEvent({ type: "progress", text: `这些 Skill 放不下，没有预载：${section.dropped.join("、")}` });
     }
-    const room = new RoomClient(task.hubUrl, task.runToken);
-    return {
-      prep,
-      skills: new Map(snapshot.skills.map((skill) => [skill.id, skill])),
-      preload,
-      reports: [],
-      report: async (id, revision) => {
-        const reported = await room.reportSkillActivation(id, revision);
-        if (!reported.ok) throw new Error(reported.error);
-      },
-    };
+    return finish({ prep, skills: new Map(snapshot.skills.map((skill) => [skill.id, skill])), preload, reports, report });
   }
 
   private async execute(task: TaskAssign, launch: ClaudeLaunch, onEvent: (e: TaskEvent) => void, signal: AbortSignal | undefined, stdin: string, timeoutMs: number, skillRun: SkillRun | null = null): Promise<AgentResult> {

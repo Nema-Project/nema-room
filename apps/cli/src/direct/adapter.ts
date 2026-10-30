@@ -210,6 +210,7 @@ export class CodexDirectAdapter implements AgentAdapter {
       onEvent,
       ...(task.retainedSkills ? { retained: task.retainedSkills } : {}),
       ...(task.projectSkills ? { projectSkills: task.projectSkills } : {}),
+      ...(task.manualSkill ? { manual: task.manualSkill } : {}),
       onActivated: async (id, revision) => {
         const reported = await reportRoom.reportSkillActivation(id, revision);
         if (!reported.ok) throw new Error(reported.error);

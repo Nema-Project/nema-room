@@ -721,6 +721,43 @@ describe("ClaudeCodeAdapter with Skills", () => {
     }
   });
 
+  test("a Skill called by hand goes in before the thread's, with its arguments, and is reported once; also when Claude Code is too old", async () => {
+    const commit = await withTdd();
+    const { managedSkill, skillText } = await import("../skills/helpers.js");
+    managedSkill(home, "deploy", { "SKILL.md": skillText("deploy", "Ship.", "Deploy $ARGUMENTS now.\n", "disable-model-invocation: true\n") });
+    const seen: string[] = [];
+    const hub = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        seen.push(body);
+        res.writeHead(204).end();
+      });
+    });
+    await new Promise<void>((r) => hub.listen(0, "127.0.0.1", r));
+    try {
+      const hubUrl = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+      for (const ok of [true, false]) {
+        seen.length = 0;
+        const stdinFile = join(root, `stdin-manual-${ok}.json`);
+        const bin = installFake({ mode: "lines", argvFile: join(root, `argv-manual-${ok}.json`), stdinFile, lines: [ok ? skillInit() : roomInit(), resultLine("好了")] });
+        const assigned = { ...task(`task-manual-${ok}`, "do it"), hubUrl, retainedSkills: ["tdd", "deploy"], manualSkill: { skillId: "deploy", arguments: "web" } };
+        const { result: done } = await runTask(skillAdapter(bin, ok), assigned);
+        expect(done).toEqual({ ok: true, reply: "好了" });
+        const prompt = JSON.parse(readFileSync(stdinFile, "utf8")).message.content[0].text as string;
+        expect(prompt).toContain("# 用户调用的 Skill");
+        expect(prompt).toContain("Deploy web now.");
+        expect(prompt.split('<skill_content name="deploy"').length - 1).toBe(1);
+        if (ok) expect(prompt.indexOf("# 用户调用的 Skill")).toBeLessThan(prompt.indexOf("# 已载入的 Skills"));
+        else expect(prompt).not.toContain("# 已载入的 Skills");
+        expect(seen).toEqual([JSON.stringify({ skillId: "deploy", revision: commit })]);
+      }
+    } finally {
+      hub.closeAllConnections();
+      await new Promise<void>((r) => hub.close(() => r()));
+    }
+  });
+
   test("with Skills, Bash in init still fails the run", async () => {
     await withTdd();
     const bin = installFake({ mode: "lines", argvFile: join(root, "argv-bash.json"), lines: [skillInit(["Skill", "Read", "Bash", ...CLAUDE_ROOM_TOOLS]), resultLine("x")] });

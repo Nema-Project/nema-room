@@ -360,6 +360,39 @@ describe("daemon socket", () => {
     expect(b).not.toHaveProperty("projectSkills");
   });
 
+  test("a leading /skill-name rides on its task as manualSkill; built-ins, mid-text names and others carry none", async () => {
+    await postUserMessage(db, wsA, "/tdd 写测试\n第二行");
+    await postUserMessage(db, wsA, "/thread x");
+    await postUserMessage(db, wsA, "请用 /tdd");
+    await postUserMessage(db, wsA, "/skill:thread 开");
+    await postUserMessage(db, wsA, "plain");
+    const c = await connect();
+    const seen: Record<string, unknown> = {};
+    for (let i = 0; i < 5; i++) {
+      const a = await c.next("task.assign");
+      const message = await getMessage(db, (await getTask(db, a.taskId as string))!.messageId);
+      seen[message!.content] = (a as Record<string, unknown>).manualSkill;
+      expect(a.prompt).toContain(message!.content.split("\n")[0]);
+      c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "r" });
+    }
+    expect(seen).toEqual({
+      "/tdd 写测试\n第二行": { skillId: "tdd", arguments: "写测试\n第二行" },
+      "/thread x": undefined,
+      "请用 /tdd": undefined,
+      "/skill:thread 开": { skillId: "thread", arguments: "开" },
+      plain: undefined,
+    });
+  });
+
+  test("an edited message is read again: the re-run carries the new /skill-name", async () => {
+    const m = await postUserMessage(db, wsA, "/tdd first");
+    await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
+    await editUserMessage(db, wsA, m.message.id, "/review again");
+    const c = await connect();
+    const a = await c.next("task.assign");
+    expect(a.manualSkill).toEqual({ skillId: "review", arguments: "again" });
+  });
+
   test("a reply carries the skills its task offered, and the offers are cleared once it is saved", async () => {
     const m = await postUserMessage(db, wsA, "install the pdf skill");
     const c = await connect();

@@ -2,7 +2,7 @@ import type http from "node:http";
 import { nanoid } from "nanoid";
 import { WebSocketServer, type WebSocket } from "ws";
 import { KnowledgeStore } from "@nema/knowledge";
-import { AttachmentRefSchema, WORKPACKAGE_LIMITS, parseDaemonToHub, type AgentMessageMeta, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
+import { AttachmentRefSchema, WORKPACKAGE_LIMITS, parseDaemonToHub, parseManualSkill, type AgentMessageMeta, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
 import { createConnectionRpc, DaemonRpcError, type ConnectionRpc, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
@@ -24,6 +24,14 @@ import { versionSkewMessage } from "./hubVersion.js";
 import { clearSkillOffers, listSkillOffers } from "./skillOffers.js";
 
 type ProjectSkillRepo = Awaited<ReturnType<typeof trustedSkillRepos>>[number];
+type BuiltTask = {
+  prompt: string;
+  confidential: boolean;
+  attachments: AttachmentRef[];
+  retainedSkills: string[];
+  projectSkills: ProjectSkillRepo[];
+  manualSkill: { skillId: string; arguments: string } | null;
+};
 
 export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daemonToken: string; hubUrl: string; ownedHelpers?: OwnedHelperScope; releaseVersion?: string };
 
@@ -140,7 +148,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     for (const id of ids) await emitTask(id);
   }
 
-  async function buildTaskPrompt(task: Task): Promise<{ prompt: string; confidential: boolean; attachments: AttachmentRef[]; retainedSkills: string[]; projectSkills: ProjectSkillRepo[] }> {
+  async function buildTaskPrompt(task: Task): Promise<BuiltTask> {
     const workspace = await getWorkspace(db, task.workspaceId);
     if (!workspace) throw new Error("workspace not found");
     const userMessage = await getMessage(db, task.messageId);
@@ -204,7 +212,9 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     const retained = conversationId ? await retainedSkills(db, conversationId) : [];
     // Only repositories the user trusts; the daemon reads their Skills at the main commit.
     const projectSkills = await trustedSkillRepos(db, task.workspaceId);
-    return { prompt, confidential: workspace.confidential, attachments, retainedSkills: retained, projectSkills };
+    // `/name …` at the start of the user's own message (its current text after an edit); the daemon resolves it.
+    const manual = userMessage.role === "user" && task.kind !== "workpackage" ? parseManualSkill(userMessage.content) : null;
+    return { prompt, confidential: workspace.confidential, attachments, retainedSkills: retained, projectSkills, manualSkill: manual };
   }
 
   async function saveTaskFailure(taskId: string, error: string, expectedRunToken?: string): Promise<Message | null> {
@@ -227,7 +237,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         await requeueAndEmit(conn.daemonId);
         return;
       }
-      let built: { prompt: string; confidential: boolean; attachments: AttachmentRef[]; retainedSkills: string[]; projectSkills: ProjectSkillRepo[] };
+      let built: BuiltTask;
       let pluginTools: PluginToolSpec[] = [];
       try {
         built = await buildTaskPrompt(task);
@@ -273,6 +283,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         ...(built.attachments.length > 0 ? { attachments: built.attachments } : {}),
         ...(built.retainedSkills.length > 0 ? { retainedSkills: built.retainedSkills } : {}),
         ...(built.projectSkills.length > 0 ? { projectSkills: built.projectSkills } : {}),
+        ...(built.manualSkill ? { manualSkill: built.manualSkill } : {}),
       });
       await emitTask(task.id);
       return;
