@@ -599,7 +599,8 @@ describe("installing a skill from the page", () => {
 
 describe("PluginsPage sections, filter and search", () => {
   const mixed: ExtensionRecord[] = [
-    row({ id: "code", name: "graphify", summary: "Code index" }),
+    // "code" appears only in this id, so the id search below cannot pass through another field.
+    row({ id: "code", name: "graphify", summary: "Repository index" }),
     row({ id: "github", name: "GitHub", summary: "Issues and pull requests" }),
     row({ id: "pdf", name: "pdf", kind: "skill", summary: "Fill PDF forms", provision: "managed", source: "https://github.com/acme/skills/tree/" + "a".repeat(40) + "/skills/pdf", revision: "a".repeat(40) }),
     row({ id: "notes", name: "Notes", kind: "skill", summary: "Take meeting notes", provision: "external", source: "/home/me/.claude/skills/notes", externalPath: "/home/me/.claude/skills/notes" }),
@@ -660,6 +661,11 @@ describe("PluginsPage sections, filter and search", () => {
     fireEvent.change(search, { target: { value: "nothing like this" } });
     expect(names(installedRegion())).toEqual([]);
     expect(within(installedRegion()).getByText("No extensions match.")).toBeTruthy();
+    // A match that lives only under Discover & install is a match, not "nothing matches".
+    fireEvent.change(search, { target: { value: "decks" } });
+    expect(names(installedRegion())).toEqual([]);
+    expect(names(discoverRegion())).toEqual(["Install a skill", "Found on this computer", "slides"]);
+    expect(screen.queryByText("No extensions match.")).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: "Skills" }));
     fireEvent.change(search, { target: { value: "" } });
     expect(names(installedRegion())).toEqual(["pdf", "Notes"]);

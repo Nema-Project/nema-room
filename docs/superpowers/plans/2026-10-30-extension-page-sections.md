@@ -12,6 +12,13 @@
 
 **Issue:** #75.
 
+**North star ([#45](https://github.com/Nema-Project/nema-room/issues/45)):** This work does not add project knowledge itself. It belongs in Nema Room because the extensions on this page shape what agents in a room can do and what they report. People and agents can rely on that shared understanding only if everyone can see which skills and tools are actually in use. They also need to know where each one came from and whether it works:
+- Sections and the filter make the installed set readable at a glance.
+- Attach records an external skill with its real path instead of copying it silently, so its provenance stays visible.
+- Repair reports a bundled item's real state from a check that was just run, not the shipped default.
+
+None of this claims an integration that is not shipped. A failed check is shown as missing or damaged, not hidden.
+
 ## Global Constraints
 
 - Only `extensions.*` keys are added to the three message files, and en, zh, and ja stay in sync.
