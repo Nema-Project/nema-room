@@ -35,6 +35,8 @@ export class McpStdioTransport implements Transport {
   private closing?: Promise<void>;
   private closed = false;
   private exited: Promise<void> = Promise.resolve();
+  /** Cancels an owned-helper spawn that has not finished when the transport is closed. */
+  private readonly spawnAbort = new AbortController();
   onclose?: () => void;
   onerror?: (error: Error) => void;
   onmessage?: (message: JSONRPCMessage) => void;
@@ -77,7 +79,7 @@ export class McpStdioTransport implements Transport {
 
   private async startOwned(scope: OwnedHelperScope): Promise<void> {
     const { bin, args, env, cwd } = this.launch;
-    const child = await scope.spawn(bin, args, { env, cwd, stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+    const child = await scope.spawn(bin, args, { env, cwd, stdio: ["pipe", "pipe", "ignore"], windowsHide: true, signal: this.spawnAbort.signal });
     this.child = child;
     if (this.closed) {
       child.kill("SIGTERM");
@@ -115,6 +117,7 @@ export class McpStdioTransport implements Transport {
   close(): Promise<void> {
     if (!this.closing) {
       this.closed = true;
+      this.spawnAbort.abort();
       this.closing = this.stop();
     }
     return this.closing;

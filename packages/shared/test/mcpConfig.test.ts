@@ -78,7 +78,7 @@ describe("parseMcpConfig", () => {
   });
 
   test("refuses PATH and HOME in env, which the daemon sets itself", () => {
-    for (const name of ["PATH", "Path", "HOME"]) {
+    for (const name of ["PATH", "Path", "HOME", "USERPROFILE"]) {
       rejects({ transport: "stdio", command: "node", args: [], env: { [name]: { value: "/x" } } }, new RegExp(`"${name}" is set by Nema`));
     }
   });

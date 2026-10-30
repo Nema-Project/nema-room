@@ -2,9 +2,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { parseMcpConfig, type McpConfig } from "@nema/shared";
-import { McpSupervisor, type McpStatus } from "../../src/extensions/mcp/supervisor.js";
+import { McpSupervisor, schemaDigest, type McpStatus } from "../../src/extensions/mcp/supervisor.js";
 // @ts-expect-error plain JavaScript fixture
 import { startHttpFake } from "../fixtures/fake-mcp-server.mjs";
 
@@ -115,9 +118,10 @@ describe.skipIf(!posix)("stdio (POSIX, no owned-helper scope)", () => {
     const status = await sup.start("search");
     expect(status).toMatchObject({ connection: "error" });
     expect(status.lastError).toMatch(/API_TOKEN/);
-    stdio("other", { FORWARD: { env: "NEMA_TEST_UNSET_VAR" } });
+    const other = stdio("other", { FORWARD: { env: "NEMA_TEST_UNSET_VAR" } });
     expect((await sup.start("other")).lastError).toMatch(/NEMA_TEST_UNSET_VAR/);
     expect(startCount(starts)).toBe(0);
+    expect(startCount(other.starts)).toBe(0);
   });
 
   test("a start that times out ends as an error and leaves no process or grandchild", async () => {
@@ -284,6 +288,91 @@ describe.skipIf(!posix)("stdio (POSIX, no owned-helper scope)", () => {
   });
 });
 
+describe("schemaDigest", () => {
+  test("is the sha256 of the key-sorted schema JSON and tells schemas apart", () => {
+    const schema = { type: "object", required: ["q"], properties: { q: { type: "string" }, n: { type: "number" } } };
+    const sorted = '{"properties":{"n":{"type":"number"},"q":{"type":"string"}},"required":["q"],"type":"object"}';
+    expect(schemaDigest(schema)).toBe(createHash("sha256").update(sorted).digest("hex"));
+    expect(schemaDigest({ properties: schema.properties, type: "object", required: ["q"] })).toBe(schemaDigest(schema));
+    expect(schemaDigest({ ...schema, required: [] })).not.toBe(schemaDigest(schema));
+    expect(schemaDigest({ type: "object" })).not.toBe(schemaDigest({ type: "array" }));
+  });
+
+  test("a connected server reports the digest of each tool's own schema", async () => {
+    if (!posix) return;
+    stdio("search");
+    const status = await make().start("search");
+    expect(status.tools[0]!.schemaDigest).toBe(schemaDigest({ type: "object", required: ["q"], properties: { q: { type: "string" }, n: { type: "number" } } }));
+  });
+});
+
+/** An owned-helper scope backed by plain spawn, recording what it was asked to start. */
+function fakeScope(options: { hang?: boolean } = {}) {
+  const calls: Array<{ command: string; args: string[]; env: NodeJS.ProcessEnv; signal?: AbortSignal }> = [];
+  const scope: OwnedHelperScope = {
+    spawn(command, args, opts = {}) {
+      calls.push({ command, args, env: { ...opts.env }, signal: opts.signal });
+      if (options.hang) {
+        return new Promise<OwnedHelperProcess>((_, reject) => {
+          const signal = opts.signal;
+          if (!signal) return;
+          signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
+        });
+      }
+      const child = spawn(command, args, { env: opts.env, cwd: opts.cwd, stdio: ["pipe", "pipe", "ignore"] });
+      const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((done) => child.once("close", (code, signal) => done({ code, signal })));
+      return Promise.resolve({ stdin: child.stdin, stdout: child.stdout, stderr: null, kill: (s) => child.kill(s), exited: closed, closed });
+    },
+    stopAccepting() {},
+    async drain() {},
+  };
+  return { scope, calls };
+}
+
+describe("stdio under an owned-helper scope", () => {
+  test("a stop while the scope is still spawning cancels the spawn", async () => {
+    stdio("search");
+    const { scope, calls } = fakeScope({ hang: true });
+    supervisor = new McpSupervisor({
+      nemaHome: home,
+      configs: { config: () => configs.get("search")! },
+      secrets: { resolve: () => "" },
+      ownedHelpers: scope,
+      timeoutMs: 20_000,
+    });
+    const starting = supervisor.start("search");
+    expect(await until(() => calls.length === 1)).toBe(true);
+    expect(calls[0]!.signal).toBeDefined();
+    const began = Date.now();
+    await supervisor.stop("search");
+    expect((await starting).connection).toBe("disconnected");
+    expect(Date.now() - began).toBeLessThan(3000);
+  });
+
+  test("on Windows the child's USERPROFILE is the private home too", async () => {
+    stdio("search");
+    const config = configs.get("search") as Extract<McpConfig, { transport: "stdio" }>;
+    // parseMcpConfig refuses the name; a config that got past it still cannot set it.
+    configs.set("search", { ...config, env: { ...config.env, USERPROFILE: { value: "C:\\Users\\real" } } });
+    const { scope, calls } = fakeScope({ hang: true });
+    supervisor = new McpSupervisor({
+      nemaHome: home,
+      configs: { config: () => configs.get("search")! },
+      secrets: { resolve: () => "" },
+      ownedHelpers: scope,
+      timeoutMs: 20_000,
+      platform: "win32",
+    });
+    const starting = supervisor.start("search");
+    expect(await until(() => calls.length === 1)).toBe(true);
+    const privateHome = join(home, "run", "mcp", "search", "home");
+    expect(calls[0]!.env.USERPROFILE).toBe(privateHome);
+    expect(calls[0]!.env.HOME).toBe(privateHome);
+    await supervisor.stop("search");
+    await starting;
+  });
+});
+
 describe("stdio on Windows without an owned-helper scope", () => {
   test("refuses to start and spawns nothing", async () => {
     const { starts } = stdio("search");
@@ -342,7 +431,9 @@ describe("HTTP", () => {
 });
 
 test("an unknown id reports an error status without throwing", async () => {
-  const status = await make().start("nothing");
+  const sup = make();
+  const status = await sup.start("nothing");
   expect(status).toMatchObject({ id: "nothing", connection: "error" });
-  expect(make().status("nothing")).toMatchObject({ connection: "disconnected", tools: [], server: null });
+  expect(sup.status("nothing")).toEqual(status);
+  expect(sup.status("never-started")).toMatchObject({ connection: "disconnected", tools: [], server: null });
 });

@@ -11,6 +11,8 @@ import { McpStdioTransport } from "./stdioTransport.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TOOLS = 512;
+/** Set by the supervisor for every stdio server; a config cannot replace them. */
+const RESERVED_ENV = /^(path|home|userprofile)$/i;
 
 export type McpStatus = {
   id: string;
@@ -278,12 +280,14 @@ export class McpSupervisor {
     const home = path.join(this.o.nemaHome, "run", "mcp", id, "home");
     const env: NodeJS.ProcessEnv = { ...windowsRuntimeEnv(process.env) };
     for (const [name, value] of Object.entries(config.env)) {
-      if (/^(path|home)$/i.test(name)) continue;
+      if (RESERVED_ENV.test(name)) continue;
       env[name] = this.value(id, value);
     }
     // Last, so a config can never replace them (parseMcpConfig also refuses the names).
     env.PATH = process.env.PATH ?? "";
     env.HOME = home;
+    // Windows programs (and Node's os.homedir()) read USERPROFILE, not HOME.
+    if (platform === "win32") env.USERPROFILE = home;
     mkdirSync(home, { recursive: true, mode: 0o700 });
     const command = commandSpec(config.command, config.args, env);
     return {
