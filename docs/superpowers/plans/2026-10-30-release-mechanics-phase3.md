@@ -339,8 +339,8 @@ ancestry 必须成功。第二条命令若列出下文「核对的代码」里�
 - Modify: 三份 `RELEASE.md`、`CONTRIBUTING.md`（tag 之后改为：三条工作流 → `gh workflow run release-promote.yml -f tag=v<x.y.z>` → 读 summary）
 - Add: `changelog.d/release-promote.changed.md`（一条中文 bullet：新版本的 Release 只在 npm 与两个镜像都验证通过后才成为 latest；之前公开入口保持上一版）
 
-- [ ] **Step 1:** 维护者推送任务 10–13 后，在 CI 上跑 `node --test scripts/ci/*.test.mjs scripts/release/*.test.mjs`、actionlint，全部绿。
-- [ ] **Step 2:** 不打新 tag 的演练：`gh workflow run release-promote.yml --ref main -f tag=v0.1.6`（必须在 v0.1.6 push 运行的产物过期前，约 2026-11-04）。promote 用 main 的脚本，期望每一步都识别为「已完成」（npm `same`、两个 `latest` 已是 0.1.6、Release 已发布），**不 dispatch npm-publish**，summary 全部是「already done」，不写任何东西。产物已过期时 promote 应失败关闭并点名产物过期，同样记录。
+- [x] **Step 1:** 维护者推送任务 10–13 后，在 CI 上跑 `node --test scripts/ci/*.test.mjs scripts/release/*.test.mjs`、actionlint，全部绿。
+- [x] **Step 2:** 不打新 tag 的演练：`gh workflow run release-promote.yml --ref main -f tag=v0.1.6`（必须在 v0.1.6 push 运行的产物过期前，约 2026-11-04）。promote 用 main 的脚本，期望每一步都识别为「已完成」（npm `same`、两个 `latest` 已是 0.1.6、Release 已发布），**不 dispatch npm-publish**，summary 全部是「already done」，不写任何东西。产物已过期时 promote 应失败关闭并点名产物过期，同样记录。（2026-10-30 完成：[PR #112](https://github.com/Nema-Project/nema-room/pull/112) 的 CI 与 main CI 全绿；演练 [run 41045206706](https://github.com/Nema-Project/nema-room/actions/runs/41045206706) 结果见 ROADMAP P1-09。）
 - [ ] **Step 3:** npm 的 dispatch 链路无法在旧 tag 上演练：v0.1.6 里的 `npm-publish.yml` 是旧版，dispatch 只会打包冒烟（「不一致」第 8 条）。这条链路与 trusted publishing 在 dispatch 事件下的行为，只能在第二步合入后的第一次真实发布（任务 15）观察并记录。
 - [ ] **Step 4: Commit** `docs(release): promote after the tag workflows`
 
