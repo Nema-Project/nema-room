@@ -48,12 +48,12 @@ function make(options: { timeoutMs?: number; platform?: NodeJS.Platform } = {}):
   return supervisor;
 }
 
-function stdio(id: string, env: Record<string, unknown> = {}): { record: string; starts: string } {
+function stdio(id: string, env: Record<string, unknown> = {}, command = "node"): { record: string; starts: string } {
   const record = join(home, `${id}.record.json`);
   const starts = join(home, `${id}.starts`);
   configs.set(id, parseMcpConfig({
     transport: "stdio",
-    command: "node",
+    command,
     args: [FIXTURE],
     env: { FAKE_RECORD: { value: record }, FAKE_STARTS: { value: starts }, ...env },
   }));
@@ -98,9 +98,20 @@ describe.skipIf(!posix)("stdio (POSIX, no owned-helper scope)", () => {
   });
 
   test("the child sees exactly the configured environment plus PATH and HOME", async () => {
-    const { record } = stdio("search", { API_TOKEN: { secret: "API_TOKEN" }, FORWARD: { env: "NEMA_TEST_FORWARD" }, LOG_LEVEL: { value: "info" } });
+    // Launch the Node binary itself: a `node` on PATH may be a shell shim (nvm, asdf, a distro wrapper)
+    // that adds its own variables, such as PWD or NODE_USE_SYSTEM_CA, after the supervisor hands over env.
+    const { record } = stdio("search", { API_TOKEN: { secret: "API_TOKEN" }, FORWARD: { env: "NEMA_TEST_FORWARD" }, LOG_LEVEL: { value: "info" } }, process.execPath);
     secretValues.set("search/API_TOKEN", MARK);
-    const status = await make().start("search");
+    // A variable the daemon itself has, of the kind a shim would set, is still not passed on.
+    const hostCa = process.env.NODE_USE_SYSTEM_CA;
+    process.env.NODE_USE_SYSTEM_CA = "1";
+    let status: McpStatus;
+    try {
+      status = await make().start("search");
+    } finally {
+      if (hostCa === undefined) delete process.env.NODE_USE_SYSTEM_CA;
+      else process.env.NODE_USE_SYSTEM_CA = hostCa;
+    }
     expect(status.connection).toBe("connected");
     clean(status);
     const seen = recorded(record);
