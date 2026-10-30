@@ -3,6 +3,7 @@ export * from "./workspace.js";
 export * from "./plugins.js";
 export * from "./extensions.js";
 export * from "./extensionSource.js";
+export * from "./mcpConfig.js";
 export * from "./protocol.js";
 export * from "./roomApi.js";
 export * from "./report.js";
