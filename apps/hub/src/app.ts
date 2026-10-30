@@ -8,6 +8,7 @@ import { ATTACHMENT_UPLOAD_PATH, attachmentRoutes } from "./attachmentRoutes.js"
 import { AttachmentStore } from "./attachments.js";
 import { reportRoutes } from "./reports.js";
 import { roomRoutes } from "./roomApi.js";
+import { mentionContextRoutes } from "./mentionContext.js";
 import { uiRoutes } from "./uiApi.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
@@ -83,6 +84,7 @@ export function createApp(deps: AppDeps): Hono {
   app.use("/api/*", requireJson);
   const attachments = deps.attachments ?? new AttachmentStore(deps.db, deps.dataDir);
   app.route("/api", attachmentRoutes({ store: attachments, daemon: deps.daemon, daemonStatus: deps.daemonStatus, db: deps.db, events: deps.events }));
+  app.route("/api", mentionContextRoutes({ db: deps.db }));
   app.route("/api", uiRoutes(deps));
   app.route(
     "/room",
