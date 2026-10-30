@@ -6,7 +6,7 @@ import { loadTaskAttachments, type LoadedAttachment } from "../attachments/fetch
 import { configErrorMessage, DEFAULT_BYOK_BASE_URL, loadConfig, type NemaConfig } from "../config.js";
 import type { AgentAdapter, AgentResult } from "../daemon/runner.js";
 import { RoomClient } from "../room/client.js";
-import { attachmentRejection } from "./attachmentErrors.js";
+import { attachmentRejection, type ContentBlockOwner } from "./attachmentErrors.js";
 import { AuthStore, ReloginRequiredError, UNUSABLE_FILE_MESSAGE, type Refresher } from "./authStore.js";
 import { ByokTokenSource } from "./byok.js";
 import { CodexFileTokenSource, defaultCodexHome } from "./codexLogin.js";
@@ -55,20 +55,26 @@ export type CodexDirectAdapterOptions = {
   maxRequestBytes?: number;
 };
 
-/** The attachment parts of the first user message: preamble, then each attachment (native ones labeled). */
-function attachmentParts(attachments: readonly LoadedAttachment[]): InputContentPart[] {
-  if (attachments.length === 0) return [];
+/**
+ * The attachment parts of the first user message: preamble, then each attachment (native ones labeled), and
+ * what each block of that message carries (index 0 is the user text the tool loop puts first).
+ */
+function attachmentParts(attachments: readonly LoadedAttachment[]): { parts: InputContentPart[]; blocks: ContentBlockOwner[] } {
+  if (attachments.length === 0) return { parts: [], blocks: [] };
   const parts: InputContentPart[] = [{ type: "input_text", text: attachmentPreamble() }];
+  const blocks: ContentBlockOwner[] = [null, null];
   for (const a of attachments) {
     if (a.kind === "text") {
       parts.push({ type: "input_text", text: textAttachmentBlock(a) });
+      blocks.push({ kind: a.kind, name: a.name });
       continue;
     }
     const data = `data:${a.mime};base64,${a.bytes.toString("base64")}`;
     parts.push({ type: "input_text", text: attachmentLabel(a) });
     parts.push(a.kind === "image" ? { type: "input_image", image_url: data } : { type: "input_file", filename: a.name, file_data: data });
+    blocks.push(null, { kind: a.kind, name: a.name });
   }
-  return parts;
+  return { parts, blocks };
 }
 
 class RunTimeoutError extends Error {
@@ -152,13 +158,15 @@ export class CodexDirectAdapter implements AgentAdapter {
     });
     timeout.catch(() => {});
     const timer = setTimeout(() => ac.abort(new RunTimeoutError()), task.limits?.timeoutMs ?? this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-    const execution = this.execute(task, onEvent, source, profile, ac.signal, configuredModel);
+    // What each block of the first user message carries, so a provider error that points at one block names that file.
+    const sent: { blocks?: ContentBlockOwner[] } = {};
+    const execution = this.execute(task, onEvent, source, profile, ac.signal, sent, configuredModel);
     try {
       // The race makes the timeout win even while waiting on a hub call or a token refresh.
       return await Promise.race([execution, timeout]);
     } catch (e) {
       const cause = ac.signal.reason instanceof RunTimeoutError ? ac.signal.reason : e;
-      return { ok: false, error: attachmentRejection(cause, task.attachments ?? []) ?? errorMessage(cause) };
+      return { ok: false, error: attachmentRejection(cause, task.attachments ?? [], sent.blocks) ?? errorMessage(cause) };
     } finally {
       clearTimeout(timer);
       if (!ac.signal.aborted) ac.abort(new Error("run finished"));
@@ -170,7 +178,7 @@ export class CodexDirectAdapter implements AgentAdapter {
     }
   }
 
-  private async execute(task: TaskAssign, rawOnEvent: (e: TaskEvent) => void, source: TokenSource, profile: TransportProfile, signal: AbortSignal, configuredModel?: string): Promise<AgentResult> {
+  private async execute(task: TaskAssign, rawOnEvent: (e: TaskEvent) => void, source: TokenSource, profile: TransportProfile, signal: AbortSignal, sent: { blocks?: ContentBlockOwner[] }, configuredModel?: string): Promise<AgentResult> {
     // After the run's signal fired (timeout or end) nothing more may reach the hub, even from late callbacks.
     const onEvent = (e: TaskEvent) => {
       if (!signal.aborted) rawOnEvent(e);
@@ -193,10 +201,12 @@ export class CodexDirectAdapter implements AgentAdapter {
     const now = this.opts.now ?? Date.now;
     const tools = roomTools(task.pluginTools);
 
+    const first = attachmentParts(loaded.attachments);
+    sent.blocks = first.blocks;
     const { reply } = await runToolLoop({
       instructions: task.prompt,
       userText: DIRECT_USER_TEXT,
-      userParts: attachmentParts(loaded.attachments),
+      userParts: first.parts,
       room,
       pluginTools: task.pluginTools,
       signal,

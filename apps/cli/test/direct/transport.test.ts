@@ -434,6 +434,30 @@ describe("streamResponse auth and errors", () => {
     expect(server.requests).toHaveLength(2);
   });
 
+  // One send of an image or PDF per model call: a provider may already have processed (and billed) the file.
+  const withFile = () => req({ input: [{ type: "message", role: "user", content: [
+    { type: "input_text", text: "hi" },
+    { type: "input_file", filename: "spec.pdf", file_data: "data:application/pdf;base64,JVBERi0=" },
+  ] }] });
+  const withImage = () => req({ input: [{ type: "message", role: "user", content: [
+    { type: "input_text", text: "hi" },
+    { type: "input_image", image_url: "data:image/png;base64,iVBORw0=" },
+  ] }] });
+
+  test.each([["PDF", withFile], ["image", withImage]])("a request carrying a %s is not retried after a 5xx", async (_kind, make) => {
+    server.responses(json(500, { error: { message: "oops" } }));
+    const e = (await streamResponse(make(), ctx()).catch((x: unknown) => x)) as ModelApiError;
+    expect(e).toBeInstanceOf(ModelApiError);
+    expect(e.status).toBe(500);
+    expect(server.requests).toHaveLength(1);
+  });
+
+  test("a request carrying a PDF is not retried after a connection error", async () => {
+    server.responses(reset);
+    await expect(streamResponse(withFile(), ctx())).rejects.toBeInstanceOf(ModelApiError);
+    expect(server.requests).toHaveLength(1);
+  });
+
   test("400 is not retried → ModelApiError with code and param", async () => {
     server.responses(json(400, { error: { code: "subscription_sharing_unsupported_capability", message: "unsupported", param: "reasoning" } }));
     const e = (await streamResponse(req(), ctx()).catch((x: unknown) => x)) as ModelApiError;

@@ -280,14 +280,15 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * Sends one request with the retry policy: a connection error or 5xx is retried once (except quota codes);
+ * Sends one request with the retry policy: a connection error or 5xx is retried once (except quota codes, and
+ * never when `noTransientRetry` is set: the provider may already have processed and billed what was sent);
  * a 401 forces one token refresh (passing the rejected token so a peer's rotation is reused) and is retried
  * once; a second 401 → ReloginRequiredError. Returns only an OK response.
  */
-async function send(ctx: TransportContext, url: string, init: (headers: Record<string, string>) => RequestInit): Promise<Response> {
+async function send(ctx: TransportContext, url: string, init: (headers: Record<string, string>) => RequestInit, noTransientRetry = false): Promise<Response> {
   let { accessToken, auth } = await ctx.auth.getAccessToken({ signal: ctx.signal });
   let authRetried = false;
-  let transientRetried = false;
+  let transientRetried = noTransientRetry;
   for (;;) {
     ctx.signal.throwIfAborted();
     const headers = {
@@ -504,6 +505,12 @@ function parseFrame(block: string): Record<string, unknown> | null {
   return o;
 }
 
+/** Whether a request sends an image or PDF block: one send per model call, so a file is never processed twice. */
+function carriesFile(req: ResponsesRequest): boolean {
+  return req.input.some((item) => item.type === "message" && Array.isArray(item.content)
+    && item.content.some((p) => p.type === "input_file" || p.type === "input_image"));
+}
+
 /**
  * One streaming Responses call. Text deltas go to `onTextDelta` as they arrive; the result is assembled from
  * `response.output_item.done` items. Throws ModelQuotaError / ModelApiError / ReloginRequiredError (and the
@@ -517,7 +524,7 @@ export async function streamResponse(req: ResponsesRequest, ctx: TransportContex
     method: "POST",
     headers: { ...h, "Content-Type": "application/json", Accept: "text/event-stream", session_id: req.sessionId },
     body,
-  }));
+  }), carriesFile(req));
   if (!res.body) throw new ModelApiError({ status: res.status, message: "模型接口返回了空的响应流" });
   const asm = new Assembler(ctx.onTextDelta);
   const reader = res.body.getReader();

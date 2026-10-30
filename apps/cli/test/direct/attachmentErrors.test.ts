@@ -35,8 +35,37 @@ describe("attachmentRejection", () => {
     expect(attachmentRejection(err(400, "Invalid value", "input[0].content[3]"), [ref({})])).toContain("拒绝了这份 PDF");
   });
 
-  test("5xx, 401, 429 and errors without a status are left alone", () => {
+  // input[0].content = [user text, preamble, label, file, label, image]
+  const blocks = [null, null, null, { kind: "pdf", name: "spec.pdf" }, null, { kind: "image", name: "shot.png" }] as const;
+  const two = [ref({}), ref({ id: "i", kind: "image", mime: "image/png", name: "shot.png" })];
+
+  test("a param naming one attachment block names only that attachment", () => {
+    const text = attachmentRejection(err(400, "Invalid value", "input[0].content[5]"), two, blocks)!;
+    expect(text).toContain("拒绝了这张图片（「shot.png」）");
+    expect(text).not.toContain("spec.pdf");
+  });
+
+  test("a param naming a text block is not about an attachment", () => {
+    expect(attachmentRejection(err(400, "Invalid value", "input[0].content[0]"), two, blocks)).toBeNull();
+  });
+
+  test("5xx, 401, 429 and connection errors (no status, no code) are left alone", () => {
     for (const status of [500, 401, 429, undefined]) expect(attachmentRejection(err(status, "file not supported"), [ref({})])).toBeNull();
+  });
+
+  test("a response.failed error with an unmapped code is still recognised by its wording", () => {
+    const failed = new ModelApiError({ code: "invalid_request_error", message: "invalid_request_error：File input is not supported for this model." });
+    expect(attachmentRejection(failed, [ref({})])).toContain("拒绝了这份 PDF");
+    const other = new ModelApiError({ code: "server_error", message: "server_error：Something went wrong" });
+    expect(attachmentRejection(other, [ref({})])).toBeNull();
+  });
+
+  test.each([
+    [404, "The model `llama-3.2-11b-vision-instruct` does not exist"],
+    [404, "model 'gpt-image-1' not found"],
+    [400, "vision-preview is not available in your region"],
+  ])("%i %s names a model, not the attachment", (status, message) => {
+    expect(attachmentRejection(err(status, message), [ref({ kind: "image", mime: "image/png", name: "shot.png" })])).toBeNull();
   });
 
   test("only native kinds are named; text attachments are plain text and never the cause", () => {
@@ -45,6 +74,7 @@ describe("attachmentRejection", () => {
     expect(both).toContain("「spec.pdf」");
     expect(both).toContain("「shot.png」");
     expect(both).toContain("附件");
+    expect(both).toContain("没有指出是哪一个");
   });
 
   test("quotes the provider's text and says nothing was converted or retried", () => {

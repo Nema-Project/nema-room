@@ -512,6 +512,17 @@ describe("CodexDirectAdapter attachments", () => {
     expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
   });
 
+  test("a provider pointing at one of two attachments names only that one", async () => {
+    byok();
+    // input[0].content = [user text, preamble, label, image, label, pdf]
+    server.responses(json(400, { error: { message: "Invalid value", param: "input[0].content[5]" } }));
+    const refs = [serve("img", "image", "image/png", "shot.png", png), serve("doc", "pdf", "application/pdf", "spec.pdf", pdf)];
+    const { result } = await run(adapter(), withAttachments(refs));
+    const error = (result as { error: string }).error;
+    expect(error).toContain("你的提供商或模型拒绝了这份 PDF（「spec.pdf」）");
+    expect(error).not.toContain("shot.png");
+  });
+
   test("an image the provider rejects is named as an image", async () => {
     byok();
     server.responses(json(400, { error: { message: "This model does not support image input" } }));
