@@ -299,6 +299,27 @@ test("checks an in-progress report that has commits without queueing it", async 
 const S3 = (id: string) =>
   `上报 ${id} 的提交已核对（不是验收）。把还没有用户确认的需求 implementation 设为 verified，且不要写 confirmedBy。不要改写 confirmedBy 已是 "user" 的 implementation。`;
 
+test("announces entries that cite a report when its pass state changes, and only then", async () => {
+  const { ws, repoId } = await bind();
+  const message = await addReportMessage(db, ws, "做完了", {
+    report: { ...report(), entries: [] },
+    check: { ...passing, onMain: "not-yet", checkedAt: "2026-10-23T10:00:00.000Z" },
+  });
+  const store = new KnowledgeStore(repoPath(dataDir, ws));
+  const evidence = { reportMessageId: message.id, commits: ["abcdef1"], inferred: false, note: null, confirmedBy: null };
+  const { entry: citing } = await store.upsert({ kind: "requirement", title: "引用", body: "b", reason: "r", sourceMessages: [], implementation: { status: "reported", evidence } } as never, { author: "system" });
+  const { entry: other } = await store.upsert({ kind: "requirement", title: "无关", body: "b", reason: "r", sourceMessages: [], implementation: { status: "reported", evidence: { ...evidence, reportMessageId: "m_other" } } } as never, { author: "system" });
+  const changed = () => seen.filter((x) => x.e.type === "knowledge.changed").map((x) => (x.e as { entryId: string }).entryId);
+  seen = [];
+  handlers["report.check"] = () => ({ ...passing, onMain: "not-yet", checkedAt: "2026-10-23T10:01:00.000Z" });
+  await recheckReports({ db, events, daemon, dataDir }, repoId);
+  expect(changed()).toEqual([]);
+  handlers["report.check"] = () => ({ ...passing, checkedAt: "2026-10-23T10:02:00.000Z" });
+  await recheckReports({ db, events, daemon, dataDir }, repoId);
+  expect(changed()).toContain(citing.id);
+  expect(changed()).not.toContain(other.id);
+});
+
 test("rechecks an in-progress report onto main without applying or queueing", async () => {
   const { ws, repoId } = await bind();
   const wpId = await approvedPackage(ws, repoId);

@@ -265,6 +265,7 @@
   "report.githubHead.match": "PR head 与声称一致",
   "report.githubHead.mismatch": "PR head 与声称不一致",
   "report.githubHead.not_comparable": "没有可比较的 head",
+  "report.githubNotRequested": "上报没有声称 PR，hub 没有读取 GitHub。",
   "report.githubReason": "原因：{code}",
   "report.githubTruncated": "只读到第一页 check run",
   "report.checkRunsRead": "已读到这些 check run。v1 不据此得出测试已通过。",

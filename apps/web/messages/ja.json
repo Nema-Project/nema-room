@@ -265,6 +265,7 @@
   "report.githubHead.match": "PR head は主張と一致",
   "report.githubHead.mismatch": "PR head は主張と不一致",
   "report.githubHead.not_comparable": "比較できる head がありません",
+  "report.githubNotRequested": "報告に PR の主張がないため、hub は GitHub を読み取っていません。",
   "report.githubReason": "理由：{code}",
   "report.githubTruncated": "check run は最初のページだけ読みました",
   "report.checkRunsRead": "これらの check run を読みました。v1 はこれをもってテスト通過とは結論しません。",

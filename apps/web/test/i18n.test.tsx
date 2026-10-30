@@ -248,6 +248,7 @@ describe("message files", () => {
       "report.githubHead.match": { zh: "PR head 与声称一致", ja: "PR head は主張と一致", en: "PR head matches the claim" },
       "report.githubHead.mismatch": { zh: "PR head 与声称不一致", ja: "PR head は主張と不一致", en: "PR head differs from the claim" },
       "report.githubHead.not_comparable": { zh: "没有可比较的 head", ja: "比較できる head がありません", en: "No head to compare" },
+      "report.githubNotRequested": { zh: "上报没有声称 PR，hub 没有读取 GitHub。", ja: "報告に PR の主張がないため、hub は GitHub を読み取っていません。", en: "The report claims no PR, so the hub did not read GitHub." },
       "report.githubReason": { zh: "原因：{code}", ja: "理由：{code}", en: "Reason: {code}" },
       "report.githubTruncated": { zh: "只读到第一页 check run", ja: "check run は最初のページだけ読みました", en: "Only the first page of check runs was read" },
       "report.checkRunsRead": { zh: "已读到这些 check run。v1 不据此得出测试已通过。", ja: "これらの check run を読みました。v1 はこれをもってテスト通過とは結論しません。", en: "These check runs were read. v1 does not conclude that tests passed." },

@@ -6,6 +6,13 @@ export type { AgentMessageMeta, Entry, EntrySummary, Implementation, KnowledgeLa
 export type ImplementationView = Implementation & { evidence: Implementation["evidence"] & { reports?: ReportPassState[] } };
 /** A work package task as the hub returns it: plus whether its report's check passed, derived on read. */
 export type WpTaskView = WpTask & { reportPassed?: boolean };
+/** An entry as the hub's read endpoints return it, with the derived pass-state fields. */
+export type EntryView = Omit<import("@nema/shared").Entry, "implementation" | "workpackage"> & {
+  implementation?: ImplementationView;
+  workpackage?: import("@nema/shared").WorkPackageMeta & { tasks: WpTaskView[] };
+};
+/** An entry summary as the list and timeline endpoints return it, with the derived pass-state field. */
+export type EntrySummaryView = Omit<import("@nema/shared").EntrySummary, "implementation"> & { implementation?: ImplementationView };
 
 /** Wire shapes of apps/hub (JSON over REST/SSE). Kept here because the hub package is Node-only. */
 export type Workspace = {
@@ -50,7 +57,7 @@ export type HubEvent =
   | { type: "daemon.status"; connected: boolean }
   | { type: "repo.index"; repoId: string; label: string; status: "running" | "done" | "failed" };
 
-export type EntryListItem = import("@nema/shared").EntrySummary & { isNew: boolean };
+export type EntryListItem = EntrySummaryView & { isNew: boolean };
 
 export type HistoryItem = {
   version: number;
@@ -111,4 +118,4 @@ export type WorkspacePlugin = {
 };
 
 /** A work package as the hub serves it: its entry plus the spec and plan Markdown (null until written). */
-export type WorkPackage = { entry: import("@nema/shared").Entry; spec: string | null; plan: string | null };
+export type WorkPackage = { entry: EntryView; spec: string | null; plan: string | null };

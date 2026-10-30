@@ -13,7 +13,7 @@ import { workspacePluginState } from "./plugins.js";
 import { getRepo, type Repo } from "./repos.js";
 import { insertQueuedTask, toUiTask, type Task } from "./tasks.js";
 import { repoPath } from "./workspaces.js";
-import { applyReportToWorkPackage, noteLinkedCheckChanged } from "./workpackages.js";
+import { announceCitingEntries, applyReportToWorkPackage, noteLinkedCheckChanged } from "./workpackages.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 /** A report's git check fetches main first, which can take minutes on a large repo. */
@@ -289,6 +289,10 @@ async function recheckOne(deps: ReportDeps, repo: Repo, row: { id: string; meta:
   events.emit(repo.workspaceId, { type: "message.updated", message: updated });
   // A newer check stored meanwhile wins the merge; act only on the check that is actually stored.
   if (!isDeepStrictEqual((updated.meta as ReportMessageMeta | null)?.check, check)) return;
+  // Entries citing this report show its pass state; refresh them when it flips.
+  if ((previous !== null && reportPassed(previous)) !== reportPassed(check)) {
+    await announceCitingEntries(deps, repo.workspaceId, row.id).catch((e) => console.error(`announcing entries citing ${row.id} failed`, e));
+  }
   // An in-progress report only keeps its new check, even once it is on main.
   if (row.meta.report.progress === "in_progress") return;
   if (deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);

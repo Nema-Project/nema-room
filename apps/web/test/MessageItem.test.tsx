@@ -7,7 +7,7 @@ import { I18nProvider } from "@/lib/i18n";
 import type { HubEvent, Message } from "@/lib/types";
 import { FakeEventSource } from "./FakeEventSource";
 
-vi.mock("@/lib/hub", () => ({ getEntry: vi.fn(), withdrawEntry: vi.fn(), editMessage: vi.fn(), listMessageVersions: vi.fn(), eventsUrl: (id: string) => `http://hub/workspaces/${id}/events` }));
+vi.mock("@/lib/hub", () => ({ getEntry: vi.fn(), listEntries: vi.fn(), withdrawEntry: vi.fn(), editMessage: vi.fn(), listMessageVersions: vi.fn(), eventsUrl: (id: string) => `http://hub/workspaces/${id}/events` }));
 afterEach(() => vi.unstubAllGlobals());
 
 const msg = (p: Partial<Message>): Message => ({
@@ -262,15 +262,28 @@ describe("MessageItem", () => {
       expect(screen.getAllByText("This report has no hub record of this kind.")).toHaveLength(2);
     });
 
-    it("names an entry id this workspace does not have in a quiet note", async () => {
-      vi.mocked(hub.getEntry).mockImplementation(async (_ws: string, id: string) => {
-        if (id === "R-404") throw Object.assign(new Error("entry not found: R-404"), { status: 404 });
-        return { id } as never;
-      });
-      show({ report, check });
-      expect(await screen.findByText("No entry R-404 in this workspace")).toBeTruthy();
+    it("names an entry id this workspace does not have, with one list read for every report on screen", async () => {
+      vi.mocked(hub.getEntry).mockClear();
+      vi.mocked(hub.listEntries).mockReset().mockResolvedValue([{ id: "R-1" }] as never);
+      render(
+        <I18nProvider>
+          <MessageItem message={msg({ id: "m1", role: "report", content: "a", meta: { report, check } as never })} />
+          <MessageItem message={msg({ id: "m2", role: "report", content: "b", meta: { report, check } as never })} />
+        </I18nProvider>,
+      );
+      expect(await screen.findAllByText("No entry R-404 in this workspace")).toHaveLength(2);
       expect(screen.queryByRole("button", { name: "R-404" })).toBeNull();
-      expect(screen.getByText("R-1")).toBeTruthy();
+      expect(screen.getAllByText("R-1")).toHaveLength(2);
+      expect(hub.listEntries).toHaveBeenCalledTimes(1);
+      expect(hub.getEntry).not.toHaveBeenCalled();
+    });
+
+    it("explains a GitHub read that was not requested apart from an empty read", () => {
+      const none = observation({ state: "not_requested", binding: null, headMatch: null, checkRuns: [] });
+      show({ report, check, authors, github: { current: none, history: [] } });
+      expect(screen.getByText("The report claims no PR, so the hub did not read GitHub.")).toBeTruthy();
+      expect(screen.getByText("There are no check runs from this read. There is no conclusion that tests passed.")).toBeTruthy();
+      expect(screen.queryByText("This read returned no check runs. There is no conclusion that tests passed.")).toBeNull();
     });
 
     it("an empty read says there are no check runs", () => {

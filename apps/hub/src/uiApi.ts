@@ -581,7 +581,10 @@ export function uiRoutes(deps: UiDeps): Hono {
     return c.json(summaries.map((e) => ({ ...e, isNew: fresh.has(e.id) })));
   });
 
-  app.get("/workspaces/:id/timeline", async (c) => c.json(await timeline(db, dataDir, c.req.param("id")!, deps.ownedHelpers)));
+  app.get("/workspaces/:id/timeline", async (c) => {
+    const ws = c.req.param("id")!;
+    return c.json(await withReportPass(ws, await timeline(db, dataDir, ws, deps.ownedHelpers)));
+  });
 
   const requireEntry = async (ws: string, eid: string) => {
     const entry = await store(ws).get(eid);

@@ -265,6 +265,7 @@
   "report.githubHead.match": "PR head matches the claim",
   "report.githubHead.mismatch": "PR head differs from the claim",
   "report.githubHead.not_comparable": "No head to compare",
+  "report.githubNotRequested": "The report claims no PR, so the hub did not read GitHub.",
   "report.githubReason": "Reason: {code}",
   "report.githubTruncated": "Only the first page of check runs was read",
   "report.checkRunsRead": "These check runs were read. v1 does not conclude that tests passed.",

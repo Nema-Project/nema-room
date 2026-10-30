@@ -183,7 +183,7 @@ nema wp get W-1
 
 [CLI reports and hooks](docs/guide.en.md#workflow) connect the implementation back to the room. Desktop installs use the [bundled CLI launcher](docs/guide.en.md#desktop).
 
-**`verified` means Git evidence passed or a user confirmed it.** It does not mean tests passed or acceptance criteria were met.
+**`verified` comes in two kinds.** "Commits checked" means the cited commits exist, are on main, and touch the files the report claimed; it does not mean tests passed or acceptance criteria were met. "Accepted" means you confirmed the requirement yourself. If a report you relied on changes its check later, the requirement asks for review, and "Still accept" keeps your acceptance.
 
 <a id="data-privacy-and-known-limitations"></a>
 

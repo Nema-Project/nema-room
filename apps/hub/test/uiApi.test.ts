@@ -900,6 +900,9 @@ describe("ui api", () => {
     expect(byId(grouped.id).implementation.evidence.reports).toEqual(want);
     expect(byId(single.id).implementation.evidence.reports).toEqual([{ reportMessageId: passed.id, reportPassed: true }]);
     expect(byId(none.id).implementation.evidence.reports).toEqual([]);
+    for (const e of [grouped, single, none]) await indexEntry(db, ws, e);
+    const timeline = await json(await req("GET", `/api/workspaces/${ws}/timeline`));
+    expect(timeline.find((e: { id: string }) => e.id === grouped.id).implementation.evidence.reports).toEqual(want);
     const file = await readFile(path.join(repoPath(dataDir, ws), "requirements", `${grouped.id}.md`), "utf8");
     expect(file).toContain(passed.id);
     expect(file).not.toContain("reports:");

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Markdown } from "@/components/Markdown";
 import { SkillOfferCard } from "@/components/SkillOfferCard";
-import { editMessage, getEntry, HubError, listMessageVersions, withdrawEntry } from "@/lib/hub";
+import { editMessage, getEntry, HubError, listEntries, listMessageVersions, withdrawEntry } from "@/lib/hub";
 import { formatTime } from "@/lib/format";
 import { useLocale, useT } from "@/lib/i18n";
 import { useHubEvents } from "@/lib/useHubEvents";
@@ -316,28 +316,43 @@ function ReportItem({ message, time, onOpenEntry, onQuote, onJump }: { message: 
   );
 }
 
-/** Entry ids the report names that this workspace does not have. Shown as a quiet note; nothing is created. */
+// One entry list request per workspace while it is in flight, shared by every report rendered at that moment.
+const entryIdsInFlight = new Map<string, Promise<Set<string> | null>>();
+function workspaceEntryIds(workspaceId: string): Promise<Set<string> | null> {
+  let pending = entryIdsInFlight.get(workspaceId);
+  if (!pending) {
+    pending = Promise.resolve()
+      .then(() => listEntries(workspaceId))
+      .then((list) => new Set(list.map((e) => e.id)))
+      .catch(() => null)
+      .finally(() => entryIdsInFlight.delete(workspaceId));
+    entryIdsInFlight.set(workspaceId, pending);
+  }
+  return pending;
+}
+
+/**
+ * Entry ids the report names that this workspace does not have. Shown as a quiet note; nothing is created.
+ * One list read serves every report on screen; a later knowledge change for a missing id reads again.
+ */
 function useMissingEntries(workspaceId: string, ids: string[]): Set<string> {
   const [missing, setMissing] = useState<Set<string>>(new Set());
+  const [version, setVersion] = useState(0);
   const key = ids.join(",");
+  useHubEvents(workspaceId, (event) => {
+    if (event.type === "knowledge.changed" && missing.has(event.entryId)) setVersion((v) => v + 1);
+  });
   useEffect(() => {
+    if (!key) return;
     let live = true;
-    const wanted = key ? key.split(",") : [];
-    void Promise.all(
-      wanted.map((id) =>
-        Promise.resolve().then(() => getEntry(workspaceId, id)).then(
-          () => null,
-          // Only a 404 says the entry is not there; any other failure leaves the id as a link.
-          (e: unknown) => ((e as { status?: number } | null)?.status === 404 ? id : null),
-        ),
-      ),
-    ).then((found) => {
-      if (live) setMissing(new Set(found.filter((id): id is string => id !== null)));
+    void workspaceEntryIds(workspaceId).then((known) => {
+      // A failed read leaves every id as a link rather than calling it missing.
+      if (live && known) setMissing(new Set(key.split(",").filter((id) => !known.has(id))));
     });
     return () => {
       live = false;
     };
-  }, [workspaceId, key]);
+  }, [workspaceId, key, version]);
   return missing;
 }
 
@@ -455,6 +470,7 @@ function GithubRead({ observation }: { observation: NonNullable<ReportMessageMet
     <>
       <h5 className="rsub-title">{pr !== undefined ? t("report.github", { pr }) : "GitHub"}</h5>
       {observation.headMatch && <p className={observation.headMatch === "mismatch" ? "itag red" : "kmeta"}>{t(`report.githubHead.${observation.headMatch}`)}</p>}
+      {observation.state === "not_requested" && <p className="rcheck-note">{t("report.githubNotRequested")}</p>}
       {observation.reasonCode && <p className="rcheck-note">{t("report.githubReason", { code: observation.reasonCode })}</p>}
       {observation.state === "read" && observation.checkRuns.length > 0 && (
         <div className="rrow">
