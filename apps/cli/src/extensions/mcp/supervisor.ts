@@ -7,6 +7,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { McpConfig, McpConnection, McpValue } from "@nema/shared";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { commandSpec, windowsRuntimeEnv } from "../../platform.js";
+import type { McpLeftovers } from "./leftovers.js";
 import { McpStdioTransport } from "./stdioTransport.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -31,6 +32,8 @@ export type McpSupervisorOptions = {
   timeoutMs?: number;
   /** For tests. */
   platform?: NodeJS.Platform;
+  /** Records of running stdio servers (POSIX, without the owned-helper scope). */
+  leftovers?: McpLeftovers;
 };
 
 /** A start failure whose message is safe to show: it names a slot or a condition, never a value or server output. */
@@ -77,6 +80,11 @@ export class McpSupervisor {
   private shuttingDown = false;
 
   constructor(private readonly o: McpSupervisorOptions) {}
+
+  /** Show a note on a stopped server, e.g. that a copy left by the previous daemon was stopped. */
+  note(id: string, message: string): void {
+    if (this.status(id).connection === "disconnected") this.set(id, { ...idle(id), lastError: message });
+  }
 
   status(id: string): McpStatus {
     return this.statuses.get(id) ?? idle(id);
@@ -291,7 +299,16 @@ export class McpSupervisor {
     mkdirSync(home, { recursive: true, mode: 0o700 });
     const command = commandSpec(config.command, config.args, env);
     return {
-      transport: new McpStdioTransport({ bin: command.bin, args: command.args, env, cwd: config.cwd ?? home, ownedHelpers: this.o.ownedHelpers }),
+      transport: new McpStdioTransport({
+        bin: command.bin,
+        args: command.args,
+        env,
+        cwd: config.cwd ?? home,
+        ownedHelpers: this.o.ownedHelpers,
+        ...(this.o.leftovers && !this.o.ownedHelpers && platform !== "win32"
+          ? { leftover: { record: (pid: number) => this.o.leftovers!.record(id, pid), clear: (pid: number) => this.o.leftovers!.clear(id, pid) } }
+          : {}),
+      }),
       status,
     };
   }

@@ -237,6 +237,43 @@ describe.skipIf(!posix)("start, stop and the operations around them", () => {
     expect((await ok("extensions.mcp.status", { id: "search" })).connection).toBe("disconnected");
   }, 20_000);
 
+  test("a server left running by a daemon that did not shut down is stopped on the next start, with a note", async () => {
+    await ok("extensions.mcp.save", { id: "search", name: "Search", config: { ...stdio(), env: { FAKE_RECORD: { value: record("child") } } } });
+    await ok("extensions.mcp.start", { id: "search" });
+    const pid = childPid();
+    expect(existsSync(join(home, "run", "mcp", "search", "server.json"))).toBe(true);
+    // The old daemon is gone without closing; a new one starts on the same home.
+    const next = new RpcRouter();
+    const again = registerExtensionHandlers(next, home, { mcpTimeoutMs: 10_000 });
+    try {
+      expect(await until(() => !alive(pid))).toBe(true);
+      const rpc = async (method: string, params: unknown) => next.handle({ type: "rpc.request", id: String(++seq), method, params });
+      let row: any;
+      expect(await until(() => {
+        void rpc("extensions.list", {}).then((r: any) => { row = r.result?.find((item: any) => item.id === "search"); });
+        return Boolean(row?.mcp?.lastError);
+      })).toBe(true);
+      expect(row.mcp.connection).toBe("disconnected");
+      expect(row.mcp.lastError).toMatch(/left running by the previous daemon/);
+      expect(existsSync(join(home, "run", "mcp", "search", "server.json"))).toBe(false);
+      const restarted: any = await rpc("extensions.mcp.start", { id: "search" });
+      expect(restarted.result.connection).toBe("connected");
+    } finally {
+      await again.close();
+    }
+  });
+
+  test("a server that exits on its own takes the rest of its process group with it", async () => {
+    const grandchild = join(home, "grandchild.pid");
+    await ok("extensions.mcp.save", { id: "search", name: "Search", config: { ...stdio(), env: { FAKE_RECORD: { value: record("child") }, FAKE_GRANDCHILD: { value: grandchild } } } });
+    await ok("extensions.mcp.start", { id: "search" });
+    const pid = childPid();
+    const grand = Number(readFileSync(grandchild, "utf8"));
+    process.kill(pid, "SIGKILL");
+    expect(await until(() => !alive(grand))).toBe(true);
+    expect(await until(() => !existsSync(join(home, "run", "mcp", "search", "server.json")))).toBe(true);
+  });
+
   test("remove stops the server and deletes config, secrets and record", async () => {
     await ok("extensions.mcp.save", { id: "search", name: "Search", config: stdio() });
     await ok("extensions.mcp.setSecret", { id: "search", name: "API_TOKEN", value: MARK });

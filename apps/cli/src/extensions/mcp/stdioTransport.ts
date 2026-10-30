@@ -15,6 +15,8 @@ export type McpStdioLaunch = {
   cwd: string;
   /** Desktop runtime: the guardian owns the process tree. Without it the child leads its own POSIX process group. */
   ownedHelpers?: OwnedHelperScope;
+  /** Keeps a record of the running group, so the next daemon can stop it if this one is killed. */
+  leftover?: { record(pid: number): void; clear(pid: number): void };
 };
 
 function signalGroup(pid: number | undefined, signal: NodeJS.Signals): void {
@@ -69,9 +71,16 @@ export class McpStdioTransport implements Transport {
         spawned = true;
         this.child = child;
         if (this.closed) signalGroup(child.pid, "SIGKILL");
+        else if (child.pid) this.launch.leftover?.record(child.pid);
         resolve();
       });
-      child.on("close", () => this.onclose?.());
+      child.on("close", () => {
+        // The leader is gone, on its own or stopped: nothing of its group stays behind, and there is
+        // nothing left for the next daemon to clean up.
+        if (process.platform !== "win32") signalGroup(child.pid, "SIGKILL");
+        if (child.pid) this.launch.leftover?.clear(child.pid);
+        this.onclose?.();
+      });
       child.stdin?.on("error", (error) => this.onerror?.(error));
       child.stdout?.on("data", (chunk: Buffer) => this.read(chunk));
     });
