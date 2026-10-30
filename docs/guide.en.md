@@ -122,6 +122,10 @@ Pulling pinned images, without cloning, starts at tag `v0.1.4`, the first tag th
 # 1. fetch the fixed-name compose asset for the current supported release
 curl -fsSL -o docker-compose.yml \
   https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
+#    If .env already has NEMA_IMAGE_TAG, keep it and fetch that version's asset
+#    instead of the latest one:
+#    curl -fsSL -o docker-compose.yml \
+#      https://github.com/Nema-Project/nema-room/releases/download/v<locked>/docker-compose.yml
 
 # 2. read the one version both images are pinned to; hub and web must agree
 grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
@@ -129,20 +133,17 @@ grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
 
 # 3. lock it in a local .env, using the version both greps printed
 #    NEMA_IMAGE_TAG=<that version>
-#    If .env already has NEMA_IMAGE_TAG, keep it, and fetch that version's asset
-#    instead of the latest one:
-#    curl -fsSL -o docker-compose.yml \
-#      https://github.com/Nema-Project/nema-room/releases/download/v<locked>/docker-compose.yml
+#    An existing NEMA_IMAGE_TAG stays as it is and must equal that version.
 
 # 4. start the stack
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"   # Linux and macOS only
 docker compose up -d
 
-# 5. install the host daemon at the same version
+# 5. install the host daemon at the version step 2 printed
 npm i -g @nema-project/nema@<that version>
 ```
 
-The two lines in step 2 must print the same version; if they differ, stop and do not start anything. In step 3, an `.env` that already has `NEMA_IMAGE_TAG` keeps it: do not overwrite it, and fetch that version's asset from `releases/download/v<locked>/docker-compose.yml` instead of the latest URL, because `latest` moves with each release while a versioned address stays the same as long as that release exists. The version in step 5 is the one step 2 printed, not the newest version on npm. `-L` is required: the release download address redirects. Docker Desktop on Windows does not need the export in step 4.
+The two lines in step 2 must print the same version; if they differ, stop and do not start anything. An `.env` that already has `NEMA_IMAGE_TAG` keeps it: in step 1 fetch that version's asset from `releases/download/v<locked>/docker-compose.yml` instead of the latest URL, so steps 2 and 5 read the locked version, and in step 3 do not overwrite it. `latest` moves with each release, while a versioned address stays the same as long as that release exists. The version in step 5 is the one step 2 printed, not the newest version on npm. `-L` is required: the release download address redirects. Docker Desktop on Windows does not need the export in step 4.
 
 Host ports follow `NEMA_HUB_PORT` (default 4400; the container listens on the same port) and `NEMA_WEB_PORT` (default 3000; the container still listens on 3000). The published web image reads `NEMA_HUB_URL` at start. Compose defaults that to `http://127.0.0.1:$NEMA_HUB_PORT`, so the image does not need a rebuild when the port changes.
 

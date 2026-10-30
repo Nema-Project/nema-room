@@ -98,6 +98,10 @@ clone せずにピン留めしたイメージを pull できるのは tag `v0.1.
 # 1. fetch the fixed-name compose asset for the current supported release
 curl -fsSL -o docker-compose.yml \
   https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
+#    If .env already has NEMA_IMAGE_TAG, keep it and fetch that version's asset
+#    instead of the latest one:
+#    curl -fsSL -o docker-compose.yml \
+#      https://github.com/Nema-Project/nema-room/releases/download/v<locked>/docker-compose.yml
 
 # 2. read the one version both images are pinned to; hub and web must agree
 grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
@@ -105,20 +109,17 @@ grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
 
 # 3. lock it in a local .env, using the version both greps printed
 #    NEMA_IMAGE_TAG=<that version>
-#    If .env already has NEMA_IMAGE_TAG, keep it, and fetch that version's asset
-#    instead of the latest one:
-#    curl -fsSL -o docker-compose.yml \
-#      https://github.com/Nema-Project/nema-room/releases/download/v<locked>/docker-compose.yml
+#    An existing NEMA_IMAGE_TAG stays as it is and must equal that version.
 
 # 4. start the stack
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"   # Linux and macOS only
 docker compose up -d
 
-# 5. install the host daemon at the same version
+# 5. install the host daemon at the version step 2 printed
 npm i -g @nema-project/nema@<that version>
 ```
 
-手順 2 の 2 行は同じ版を表示しなければなりません。違う場合はそこで止め、何も起動しないでください。手順 3 で `.env` にすでに `NEMA_IMAGE_TAG` があれば、その値を使い続けて上書きせず、latest ではなく `releases/download/v<locked>/docker-compose.yml` からその版の資産を取得します。latest はリリースのたびに変わりますが、版付きのアドレスはその Release がある限り変わりません。手順 5 の版は手順 2 で読んだ版で、npm の最新版ではありません。リリースのダウンロード先はリダイレクトするので `-L` は省けません。Windows の Docker Desktop では手順 4 の export は不要です。
+手順 2 の 2 行は同じ版を表示しなければなりません。違う場合はそこで止め、何も起動しないでください。`.env` にすでに `NEMA_IMAGE_TAG` があればその値を使い続けます。手順 1 では latest ではなく `releases/download/v<locked>/docker-compose.yml` からその版の資産を取得し、手順 2 と手順 5 が固定済みの版を読むようにします。手順 3 では上書きしません。latest はリリースのたびに変わりますが、版付きのアドレスはその Release がある限り変わりません。手順 5 の版は手順 2 で読んだ版で、npm の最新版ではありません。リリースのダウンロード先はリダイレクトするので `-L` は省けません。Windows の Docker Desktop では手順 4 の export は不要です。
 
 ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。`NEMA_HUB_URL` の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` で、web コンテナの起動時に読まれるので、公開イメージを再ビルドせずにアドレスを変えられます。
 

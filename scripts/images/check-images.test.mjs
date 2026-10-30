@@ -123,6 +123,18 @@ test('npm run up and the setup wizard build from source', () => {
   assert.match(setup, /devComposeUpArgs\(/);
 });
 
+test('renderComposeAsset replaces the template header with one that names the pinned version', () => {
+  assert.match(template, /^# This compose file is a template, not an installable version\.\n/);
+  const rendered = renderComposeAsset(template, '1.2.3');
+  assert.doesNotMatch(rendered, /is a template|not an installable version/);
+  assert.match(rendered, /^# Nema Room 1\.2\.3 release asset\. Hub and web are pinned to 1\.2\.3\.\n/);
+  assert.match(rendered.split('\n\n')[0], /NEMA_IMAGE_TAG=1\.2\.3/);
+  assert.match(rendered.split('\n\n')[0], /@nema-project\/nema@1\.2\.3/);
+  assert.equal(rendered.slice(rendered.indexOf('\nservices:')), template.slice(template.indexOf('\nservices:')).replaceAll('${NEMA_IMAGE_TAG:-latest}', '1.2.3'));
+  assert.equal(composeAssetVersion(rendered), '1.2.3');
+  assert.throws(() => renderComposeAsset(`services:\n# This compose file is a template, not an installable version.\n${template.slice(template.indexOf('\nservices:') + 10)}`, '1.2.3'), /template header/i);
+});
+
 test('renderComposeAsset pins both images and rejects a template without interpolation', async () => {
   assert.ok(!renderComposeAsset(template, '1.2.3').includes(':-latest'));
   assert.throws(() => renderComposeAsset('image: x:y', '1.2.3'));

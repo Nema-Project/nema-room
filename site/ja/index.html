@@ -287,11 +287,9 @@
     <h2 id="cta-h" data-reveal>ダウンロード</h2>
     <p data-reveal style="--i:1">Windows x64 と Apple シリコン向けのビルドは最新リリースにあります。Windows ではインストーラーかポータブル ZIP のどちらかを選びます。ZIP は展開して <code>Nema.exe</code> を実行します。ショートカットもアンインストーラーもありません。どちらも <code>~/.nema/desktop</code> を使います。パソコンには Git 2.31 以降が必要です。</p>
     <p data-reveal style="--i:1">ホストのコマンドは <code>nema</code> で、<code>npm i -g @nema-project/nema@&lt;locked version&gt;</code> から入ります。この数字は取得した <code>docker-compose.yml</code> の 2 つの <code>image:</code> が固定している版です。hub と web のイメージは linux/amd64 です。<a href="https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml">docker-compose.yml</a> は最新 Release の固定名の資産で、両イメージをその Release の版に固定してレンダリングしたものです。取得したら 2 つの固定が同じ版か確かめ、<code>NEMA_IMAGE_TAG=&lt;その版&gt;</code> を <code>.env</code> に書いてから起動します（既存の値があればそれを使い、<code>releases/download/v&lt;locked&gt;/docker-compose.yml</code> を取得します）。Linux と macOS では先に <code>NEMA_UID</code> と <code>NEMA_GID</code> を export します。このリポジトリを開発するときは、clone してセットアップウィザードを実行します。</p>
-    <pre data-reveal style="--i:2"><code>npm i -g @nema-project/nema@&lt;locked version&gt;
-nema --version
-
-# hub と web。linux/amd64 のみ。compose ファイルは最新 Release の固定名の資産です。
+    <pre data-reveal style="--i:2"><code># hub と web。linux/amd64 のみ。compose ファイルは最新 Release の固定名の資産です。
 curl -fsSL -o docker-compose.yml https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
+# .env に NEMA_IMAGE_TAG があればそれを使い、代わりに .../releases/download/v&lt;locked&gt;/docker-compose.yml を取得します。
 # 2 行は同じ版を表示しなければなりません。違えば止めます。
 grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
 grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
@@ -299,6 +297,9 @@ grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
 # Linux と macOS のみ。Windows の Docker Desktop では不要です。
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 docker compose up -d
+# 上の 2 行が表示した版でホストの daemon を入れます。
+npm i -g @nema-project/nema@&lt;locked version&gt;
+nema --version
 
 # またはこのリポジトリをソースからビルド
 git clone https://github.com/Nema-Project/nema-room.git

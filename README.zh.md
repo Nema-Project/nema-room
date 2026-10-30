@@ -98,6 +98,10 @@ node scripts/setup.mjs --lang zh
 # 1. fetch the fixed-name compose asset for the current supported release
 curl -fsSL -o docker-compose.yml \
   https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
+#    If .env already has NEMA_IMAGE_TAG, keep it and fetch that version's asset
+#    instead of the latest one:
+#    curl -fsSL -o docker-compose.yml \
+#      https://github.com/Nema-Project/nema-room/releases/download/v<locked>/docker-compose.yml
 
 # 2. read the one version both images are pinned to; hub and web must agree
 grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
@@ -105,20 +109,17 @@ grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
 
 # 3. lock it in a local .env, using the version both greps printed
 #    NEMA_IMAGE_TAG=<that version>
-#    If .env already has NEMA_IMAGE_TAG, keep it, and fetch that version's asset
-#    instead of the latest one:
-#    curl -fsSL -o docker-compose.yml \
-#      https://github.com/Nema-Project/nema-room/releases/download/v<locked>/docker-compose.yml
+#    An existing NEMA_IMAGE_TAG stays as it is and must equal that version.
 
 # 4. start the stack
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"   # Linux and macOS only
 docker compose up -d
 
-# 5. install the host daemon at the same version
+# 5. install the host daemon at the version step 2 printed
 npm i -g @nema-project/nema@<that version>
 ```
 
-第 2 步的两行必须打印同一个版本；不同就停下，什么都不要启动。第 3 步里，`.env` 已经有 `NEMA_IMAGE_TAG` 时沿用旧值、不要覆盖，并改从 `releases/download/v<locked>/docker-compose.yml` 取该版本的资产，不取 latest：latest 会随每次发布变化，带版本的地址在该 Release 存在期间不变。第 5 步的版本就是第 2 步读出的那个版本，不是 npm 上的最新版本。`-L` 不能省，发布页下载地址会跳转。Windows 上的 Docker Desktop 不需要第 4 步的 export。
+第 2 步的两行必须打印同一个版本；不同就停下，什么都不要启动。`.env` 已经有 `NEMA_IMAGE_TAG` 时沿用旧值：第 1 步改从 `releases/download/v<locked>/docker-compose.yml` 取该版本的资产，不取 latest，这样第 2 步和第 5 步读到的都是锁定的版本；第 3 步不要覆盖它。latest 会随每次发布变化，带版本的地址在该 Release 存在期间不变。第 5 步的版本就是第 2 步读出的那个版本，不是 npm 上的最新版本。`-L` 不能省，发布页下载地址会跳转。Windows 上的 Docker Desktop 不需要第 4 步的 export。
 
 宿主机端口跟随 `NEMA_HUB_PORT`（默认 4400，容器监听同一端口）和 `NEMA_WEB_PORT`（默认 3000，容器内仍监听 3000）。`NEMA_HUB_URL` 默认是 `http://127.0.0.1:$NEMA_HUB_PORT`，web 容器启动时读取，因此同一份已发布镜像不用重建就能换地址。
 

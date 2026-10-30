@@ -82,9 +82,28 @@ export function assertComposeAsset(text, version) {
   }
 }
 
+const TEMPLATE_HEADER = [
+  '# This compose file is a template, not an installable version.',
+  '# For public installation use the supported Release docker-compose.yml asset.',
+  '# Source development builds this tree with npm run up.',
+].join('\n');
+
+/** Header of a rendered asset. The template's own header tells readers not to install it, so it must not ship. */
+function assetHeader(version) {
+  return [
+    `# Nema Room ${version} release asset. Hub and web are pinned to ${version}.`,
+    `# Lock the version in .env as NEMA_IMAGE_TAG=${version} and install the host daemon with npm i -g @nema-project/nema@${version}.`,
+    '# Source development builds the repository template with npm run up instead.',
+  ].join('\n');
+}
+
 export function renderComposeAsset(template, version) {
   if (template.split(interpolation).length - 1 !== 2) throw new Error('Expected exactly two NEMA_IMAGE_TAG interpolations');
-  const asset = template.replaceAll(interpolation, version);
+  validateVersion(version);
+  const normalized = template.replace(/\r\n/g, '\n');
+  const headed = normalized.startsWith(`${TEMPLATE_HEADER}\n`) ? `${assetHeader(version)}${normalized.slice(TEMPLATE_HEADER.length)}` : normalized;
+  if (/is a template|not an installable version/.test(headed)) throw new Error('Template header must be the first lines of the template so the asset can replace it');
+  const asset = headed.replaceAll(interpolation, version);
   if (/\$(?:NEMA_IMAGE_TAG|\{NEMA_IMAGE_TAG(?:\}|:-))/.test(asset)) throw new Error('Residual NEMA_IMAGE_TAG interpolation');
   assertComposeAsset(asset, version);
   return asset;
