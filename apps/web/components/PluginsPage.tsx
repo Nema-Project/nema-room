@@ -1,9 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { PLUGINS, type ExtensionRecord } from "@nema/shared";
-import { listExtensions, removeExtension, setExtensionUse } from "@/lib/hub";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { PLUGINS, type ExtensionRecord, type SkillInstallJob } from "@nema/shared";
+import {
+  cancelExtensionInstall,
+  getExtensionInstall,
+  installExtension,
+  listExtensions,
+  removeExtension,
+  retryExtensionInstall,
+  setExtensionUse,
+} from "@/lib/hub";
 import { useT } from "@/lib/i18n";
+import { SkillInstallPanel } from "./SkillInstallPanel";
+
+/** Where an install was started, so its progress line shows next to that button and nowhere else. */
+type TrackedJob = SkillInstallJob & { origin: "panel" | "list" };
 
 function chipTone(kind: "provision" | "install" | "use", extension: ExtensionRecord) {
   const broken = extension.availability !== "ready" || extension.error != null;
@@ -17,8 +29,20 @@ function chipTone(kind: "provision" | "install" | "use", extension: ExtensionRec
   return "";
 }
 
-export function PluginsPage({ onClose, embedded = false }: { onClose?: () => void; embedded?: boolean }) {
+export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onClose?: () => void; embedded?: boolean; pollMs?: number }) {
   const t = useT();
+  const [jobs, setJobs] = useState<Record<string, TrackedJob>>({});
+  // One polling chain per id. Starting, cancelling or retrying bumps the id's generation, so an answer
+  // from an older chain cannot overwrite a newer state.
+  const generation = useRef(new Map<string, number>());
+  // Closing the page stops every polling chain; the installs themselves keep running in the daemon.
+  const open = useRef(true);
+  useEffect(() => {
+    open.current = true;
+    return () => {
+      open.current = false;
+    };
+  }, []);
   const [extensions, setExtensions] = useState<ExtensionRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // One pending request per extension, not one for the whole page: turning GitHub off must not grey
@@ -85,6 +109,89 @@ export function PluginsPage({ onClose, embedded = false }: { onClose?: () => voi
       );
   };
 
+  const refresh = useCallback(() => {
+    listExtensions()
+      .then((rows) => {
+        applied.current += 1;
+        setExtensions(rows);
+      })
+      .catch(() => {});
+  }, []);
+
+  const track = useCallback(
+    (job: SkillInstallJob, origin: TrackedJob["origin"]) => {
+      const mine = (generation.current.get(job.id) ?? 0) + 1;
+      generation.current.set(job.id, mine);
+      const current = () => open.current && generation.current.get(job.id) === mine;
+      const show = (next: SkillInstallJob) => setJobs((all) => ({ ...all, [next.id]: { ...next, origin } }));
+      show(job);
+      if (job.state !== "running") {
+        refresh();
+        return;
+      }
+      const poll = () => {
+        setTimeout(() => {
+          if (!current()) return;
+          getExtensionInstall(job.id)
+            .then((next) => {
+              if (!current()) return;
+              show(next);
+              if (next.state === "running") poll();
+              else refresh();
+            })
+            .catch((e: unknown) => {
+              if (current()) setActionError(e instanceof Error ? e.message : String(e));
+            });
+        }, pollMs);
+      };
+      poll();
+      refresh();
+    },
+    [pollMs, refresh],
+  );
+
+  const install = (request: { source: string; commit: string; path: string }) => {
+    setActionError(null);
+    installExtension(request)
+      .then((job) => track(job, "panel"))
+      .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e)));
+  };
+
+  const retry = (id: string) => {
+    setActionError(null);
+    retryExtensionInstall(id)
+      .then((job) => track(job, "list"))
+      .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e)));
+  };
+
+  const cancelInstall = (id: string) => {
+    setActionError(null);
+    // Stop listening to the running chain first; the cancel answer is the state to show.
+    generation.current.set(id, (generation.current.get(id) ?? 0) + 1);
+    const origin = jobs[id]?.origin ?? "list";
+    cancelExtensionInstall(id)
+      .then((job) => track(job, origin))
+      .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e)));
+  };
+
+  /** The progress line for one id where its install was started, or null. */
+  const jobLine = (id: string, where: TrackedJob["origin"]) => {
+    const job = jobs[id];
+    if (!job || job.origin !== where) return null;
+    if (job.state === "running") {
+      return (
+        <p className="plugin-note" role="status">
+          {t("extensions.job.running", { done: job.done, total: job.total })}{" "}
+          <button type="button" className="sp" onClick={() => cancelInstall(id)}>
+            {t("extensions.action.cancel-install")}
+          </button>
+        </p>
+      );
+    }
+    if (job.state === "failed") return <p className="plugin-note" role="status">{t("extensions.job.failed", { error: job.error ?? "" })}</p>;
+    return <p className="plugin-note" role="status">{t(`extensions.job.${job.state}`)}</p>;
+  };
+
   useEffect(() => {
     let cancel = false;
     const seen = applied.current;
@@ -113,6 +220,7 @@ export function PluginsPage({ onClose, embedded = false }: { onClose?: () => voi
       <div className="drawer-body">
         {error && <p className="error">{error}</p>}
         {actionError && <p className="error">{actionError}</p>}
+        <SkillInstallPanel onInstall={install} status={(id) => jobLine(id, "panel")} />
         {extensions === null && !error && <p className="kmeta">{t("common.loading")}</p>}
         {extensions?.map((extension) => {
           const plugin = PLUGINS.find((item) => item.id === extension.id);
@@ -151,6 +259,16 @@ export function PluginsPage({ onClose, embedded = false }: { onClose?: () => voi
                 )
               )}
               {extension.error === "bundled-runtime-missing" && <p className="plugin-note">{t("extensions.error.bundled-runtime-missing")}</p>}
+              {extension.provision === "managed" && extension.installState === "failed" && extension.error && <p className="plugin-note">{extension.error}</p>}
+              {extension.provision === "managed" &&
+                extension.provenance &&
+                (extension.installState === "failed" || extension.installState === "absent") &&
+                jobs[extension.id]?.state !== "running" && (
+                  <button type="button" className="sp" onClick={() => retry(extension.id)}>
+                    {t("extensions.action.retry-install")}
+                  </button>
+                )}
+              {jobLine(extension.id, "list")}
               {plugin && plugin.functions.length > 0 && (
                 <ul>
                   {plugin.functions.map((fn) => (

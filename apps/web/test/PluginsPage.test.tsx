@@ -1,11 +1,21 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionRecord } from "@nema/shared";
 import { PluginsPage } from "@/components/PluginsPage";
 import { I18nProvider } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
 
-vi.mock("@/lib/hub", () => ({ listExtensions: vi.fn(), listPlugins: vi.fn(), setExtensionUse: vi.fn(), removeExtension: vi.fn() }));
+vi.mock("@/lib/hub", () => ({
+  listExtensions: vi.fn(),
+  listPlugins: vi.fn(),
+  setExtensionUse: vi.fn(),
+  removeExtension: vi.fn(),
+  resolveExtensionSource: vi.fn(),
+  installExtension: vi.fn(),
+  getExtensionInstall: vi.fn(),
+  cancelExtensionInstall: vi.fn(),
+  retryExtensionInstall: vi.fn(),
+}));
 
 const row = (partial: Pick<ExtensionRecord, "id" | "name"> & Partial<ExtensionRecord>): ExtensionRecord => ({
   kind: "plugin",
@@ -32,6 +42,7 @@ beforeEach(() => {
   vi.mocked(hub.listExtensions).mockResolvedValue(catalog);
   vi.mocked(hub.setExtensionUse).mockReset();
   vi.mocked(hub.removeExtension).mockReset();
+  for (const fn of [hub.resolveExtensionSource, hub.installExtension, hub.getExtensionInstall, hub.cancelExtensionInstall, hub.retryExtensionInstall]) vi.mocked(fn).mockReset();
 });
 
 describe("PluginsPage", () => {
@@ -355,5 +366,123 @@ describe("PluginsPage removal", () => {
     await act(async () => {
       release({ id: "skill", removed: "managed" });
     });
+  });
+});
+
+const COMMIT = "0123456789abcdef0123456789abcdef01234567";
+const preview = {
+  repository: "https://github.com/acme/skills",
+  owner: "acme",
+  repo: "skills",
+  ref: "main",
+  commit: COMMIT,
+  license: "MIT",
+  path: null,
+  truncated: false,
+  skills: [
+    { id: "pdf", name: "pdf", description: "Fill PDF forms", path: "skills/pdf", digest: "a".repeat(40), problem: null, target: "/home/me/.nema/extensions/extensions/pdf", installed: false },
+    { id: null, name: "Word", description: "", path: "skills/word", digest: "b".repeat(40), problem: "missing-frontmatter" as const, target: null, installed: false },
+    { id: "notes", name: "notes", description: "Notes", path: "notes", digest: "c".repeat(40), problem: null, target: "/home/me/.nema/extensions/extensions/notes", installed: true },
+  ],
+};
+const job = (state: "running" | "installed" | "failed" | "cancelled", done = 0, error: string | null = null) => ({ id: "pdf", state, done, total: 3, error, commit: COMMIT, path: "skills/pdf" });
+
+function renderPage() {
+  return render(
+    <I18nProvider>
+      <PluginsPage pollMs={1} />
+    </I18nProvider>,
+  );
+}
+
+async function previewSource(source = "https://github.com/acme/skills") {
+  renderPage();
+  const input = await screen.findByLabelText("GitHub repository or skills.sh link");
+  fireEvent.change(input, { target: { value: source } });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+  });
+}
+
+describe("installing a skill from the page", () => {
+  it("previews a source pinned to its commit, with each skill's target and why a blocked one cannot be installed", async () => {
+    vi.mocked(hub.resolveExtensionSource).mockResolvedValue(preview);
+    await previewSource("  https://github.com/acme/skills  ");
+    expect(hub.resolveExtensionSource).toHaveBeenCalledWith("https://github.com/acme/skills");
+    const panel = screen.getByRole("region", { name: "Install a skill" });
+    expect(within(panel).getByText("Pinned to commit 0123456")).toBeTruthy();
+    expect(within(panel).getByText("License: MIT")).toBeTruthy();
+    const pdf = within(panel).getByText("pdf", { selector: "h3" }).closest("li")!;
+    expect(within(pdf).getByText("Fill PDF forms")).toBeTruthy();
+    expect(within(pdf).getByText("Installs to /home/me/.nema/extensions/extensions/pdf")).toBeTruthy();
+    expect((within(pdf).getByRole("button", { name: "Install" }) as HTMLButtonElement).disabled).toBe(false);
+    const word = within(panel).getByText("Word", { selector: "h3" }).closest("li")!;
+    expect(within(word).getByText("SKILL.md has no name and description, so it cannot be installed.")).toBeTruthy();
+    expect(within(word).queryByRole("button", { name: "Install" })).toBeNull();
+    const notes = within(panel).getByText("notes", { selector: "h3" }).closest("li")!;
+    expect(within(notes).getByText("Already installed")).toBeTruthy();
+    expect(within(notes).queryByRole("button", { name: "Install" })).toBeNull();
+  });
+
+  it("shows why a source could not be read", async () => {
+    vi.mocked(hub.resolveExtensionSource).mockRejectedValue(new Error("GitHub repository not found: acme/skills"));
+    await previewSource();
+    expect(await screen.findByText("GitHub repository not found: acme/skills")).toBeTruthy();
+  });
+
+  it("installs the previewed commit and folder, follows progress, and refreshes the list when it finishes", async () => {
+    vi.mocked(hub.resolveExtensionSource).mockResolvedValue(preview);
+    vi.mocked(hub.installExtension).mockResolvedValue(job("running"));
+    vi.mocked(hub.getExtensionInstall).mockResolvedValueOnce(job("running", 2)).mockResolvedValue(job("installed", 3));
+    await previewSource();
+    const installed = row({ id: "pdf", name: "pdf", kind: "skill", provision: "managed" });
+    vi.mocked(hub.listExtensions).mockResolvedValue([...catalog, installed]);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Install" }));
+    });
+    expect(hub.installExtension).toHaveBeenCalledWith({ source: "https://github.com/acme/skills", commit: COMMIT, path: "skills/pdf" });
+    expect(await screen.findByText("Install finished")).toBeTruthy();
+    expect(hub.getExtensionInstall).toHaveBeenCalledWith("pdf");
+    expect(await screen.findByRole("heading", { name: "pdf", level: 2 })).toBeTruthy();
+  });
+
+  it("cancels a running install from the page", async () => {
+    vi.mocked(hub.resolveExtensionSource).mockResolvedValue(preview);
+    vi.mocked(hub.installExtension).mockResolvedValue(job("running"));
+    let settle: (value: ReturnType<typeof job>) => void = () => {};
+    vi.mocked(hub.getExtensionInstall).mockReturnValue(new Promise((resolve) => { settle = resolve; }));
+    vi.mocked(hub.cancelExtensionInstall).mockResolvedValue(job("cancelled"));
+    await previewSource();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Install" }));
+    });
+    expect(screen.getByText("Installing 0/3")).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel install" }));
+    });
+    expect(hub.cancelExtensionInstall).toHaveBeenCalledWith("pdf");
+    expect(await screen.findByText("Install cancelled")).toBeTruthy();
+    settle(job("cancelled"));
+  });
+
+  it("shows a failed install's reason and retries it from the list", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([
+      ...catalog,
+      row({
+        id: "pdf", name: "pdf", kind: "skill", provision: "managed", installState: "failed", error: "skills/pdf/a.md does not match its Git blob hash",
+        provenance: { repository: "https://github.com/acme/skills", commit: COMMIT, path: "skills/pdf", digest: "a".repeat(40), license: null },
+      }),
+    ]);
+    vi.mocked(hub.retryExtensionInstall).mockResolvedValue(job("running"));
+    vi.mocked(hub.getExtensionInstall).mockResolvedValue(job("installed", 3));
+    renderPage();
+    const block = (await screen.findByRole("heading", { name: "pdf", level: 2 })).closest("section")!;
+    expect(within(block).getByText("skills/pdf/a.md does not match its Git blob hash")).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(within(block).getByRole("button", { name: "Retry install" }));
+    });
+    expect(hub.retryExtensionInstall).toHaveBeenCalledWith("pdf");
+    await waitFor(() => expect(hub.getExtensionInstall).toHaveBeenCalledWith("pdf"));
+    expect(await screen.findByText("Install finished")).toBeTruthy();
   });
 });
