@@ -210,6 +210,8 @@ To install a skill, paste a GitHub repository, a link to a folder or `SKILL.md` 
 
 You can also ask in chat, for example "install the pdf skill from anthropics/skills". The Agent pins the source the same way as the Preview button and puts a card under its reply with the skill's name, description, repository, commit, license, and target folder. The Agent cannot install anything itself: the skill is installed only when you press Install on the card, which goes through the same install service as the Plugins page and shows the same progress and Cancel install. If the source holds several skills, the Agent asks which one you mean. Only a message you sent can lead to an install card; system requests and coding-agent reports cannot.
 
+The page has two sections. Installed lists everything present: bundled items, skills Nema installed (a failed install stays here with its reason and Retry install), and items found outside Nema. Discover & install holds "Install a skill" and any record whose install was cancelled, which can be installed again from there. Above both, the Type choice (All, Skills, MCP, Plugins) and the search box narrow both sections at once. Search matches the name, description, source, or id, ignoring case. Neither sends anything to the hub; they only change what the page shows.
+
 <a id="data"></a>
 
 ## Data, privacy, and known limitations
