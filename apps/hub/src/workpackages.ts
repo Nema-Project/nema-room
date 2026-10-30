@@ -391,7 +391,7 @@ async function saveProgress(
             reason: `开发包 ${wp.id} 全部任务已核实`,
             implementation: {
               status: "verified",
-              evidence: { reportMessageId: lastReportMessageId, commits: [...commits], inferred: false, note: `开发包 ${wp.id} 全部任务已核实`, confirmedBy: null },
+              evidence: { reportMessageId: lastReportMessageId, commits: [...commits], inferred: false, note: `开发包 ${wp.id} 全部任务已核实`, confirmedBy: null, acceptanceReview: null, reportEvidence: null },
             },
           },
           { author: "system" },

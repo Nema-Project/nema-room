@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { KnowledgeStore } from "@nema/knowledge";
-import { HookSignal, ReportInput, reportPassed, type ReportCheck, type ReportMessageMeta } from "@nema/shared";
+import { HookSignal, ReportInput, reportPassed, type ReportCheck, type ReportMessageMeta, type StoredReport } from "@nema/shared";
 import { INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
@@ -95,7 +95,7 @@ export async function receiveReport(deps: ReportDeps, repo: Repo, report: Report
   return { messageId: message.id, done };
 }
 
-function checkParams(repo: Repo, report: ReportInput) {
+function checkParams(repo: Repo, report: StoredReport) {
   return { workspaceId: repo.workspaceId, repoId: repo.id, path: repo.path, mainBranch: repo.mainBranch, commits: report.commits, files: report.files };
 }
 

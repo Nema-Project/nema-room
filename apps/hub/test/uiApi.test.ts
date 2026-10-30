@@ -799,7 +799,7 @@ describe("ui api", () => {
     const store = new KnowledgeStore(repoPath(dataDir, ws));
     const implementation = {
       status: "reported" as const,
-      evidence: { reportMessageId: null, commits: ["abcdef1"], inferred: true, note: "从代码推断", confirmedBy: null },
+      evidence: { reportMessageId: null, commits: ["abcdef1"], inferred: true, note: "从代码推断", confirmedBy: null, acceptanceReview: null, reportEvidence: null },
     };
     const { entry: e } = await store.upsert(
       { kind: "requirement", title: "流式输出", body: "b", reason: "r", basis: "inferred", sourceMessages: [], implementation },
