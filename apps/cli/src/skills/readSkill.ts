@@ -4,6 +4,7 @@ import type { FunctionTool } from "../direct/transport.js";
 import { escapeSkillText, modelInvocable } from "./catalog.js";
 import { parseSkillFile } from "./frontmatter.js";
 import { normalizeSkillPath } from "./safeRead.js";
+import { settleReports, trackReport } from "./reports.js";
 import { MAX_SKILL_FILE_BYTES, readSnapshotFile, type RepoFileReader, type SkillSnapshot, type SnapshotReadFailure, type SnapshotSkill } from "./snapshot.js";
 
 // `read_skill`, the codex-direct activation tool (spec §2). It reads from this task's snapshot only and
@@ -93,7 +94,7 @@ function parseArgs(json: string): Args | string {
 export class SkillReader {
   private readonly allowed: Map<string, SnapshotSkill>;
   private readonly seen = new Set<string>();
-  private readonly pending: Promise<void>[] = [];
+  private readonly pending: Promise<unknown>[] = [];
   private returned = 0;
 
   constructor(
@@ -125,13 +126,12 @@ export class SkillReader {
 
   /** Waits for activation reports to finish, up to `timeoutMs`; false when some were still running. */
   async settle(timeoutMs: number): Promise<boolean> {
-    let timer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<false>((resolve) => (timer = setTimeout(() => resolve(false), timeoutMs)));
-    try {
-      return await Promise.race([Promise.allSettled(this.pending).then(() => true as const), timeout]);
-    } finally {
-      clearTimeout(timer);
-    }
+    return !(await this.settleReports(timeoutMs)).timedOut;
+  }
+
+  /** Like `settle`, and also counts the reports that failed. */
+  settleReports(timeoutMs: number): Promise<{ timedOut: boolean; failed: number }> {
+    return settleReports(this.pending, timeoutMs);
   }
 
   /** Runs one `read_skill` call; the result is the text handed back to the model. */
@@ -199,7 +199,7 @@ export class SkillReader {
     if (page.next !== null) parts.push(`（未完：下一页用 offset=${page.next}）`);
 
     this.o.onRead(`读取 Skill ${skill.id}（${skill.revision}）${rel === null ? "" : read.file.path}`);
-    if (rel === null && args.offset === 0) this.pending.push(this.o.onActivated(skill.id, skill.revision).catch(() => {}));
+    if (rel === null && args.offset === 0) trackReport(this.pending, Promise.resolve().then(() => this.o.onActivated(skill.id, skill.revision)));
     return parts.join("\n");
   }
 }

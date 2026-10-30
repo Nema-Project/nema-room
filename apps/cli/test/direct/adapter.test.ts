@@ -26,6 +26,7 @@ let hub: Server;
 let hubUrl: string;
 let hubSeen: { method?: string; url?: string; auth?: string; body: string }[];
 let hubFiles: Map<string, { status: number; type: string; body: Buffer; stall?: boolean }>;
+let hubSkillReply: { delayMs: number; status: number };
 
 const auth = (tokens = { access_token: ACCESS, refresh_token: "rt-0" }): StoredAuth => ({
   version: 1,
@@ -45,11 +46,17 @@ beforeEach(async () => {
   server = await startFakeResponsesServer();
   hubSeen = [];
   hubFiles = new Map();
+  hubSkillReply = { delayMs: 0, status: 204 };
   hub = createServer((req, res) => {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", () => {
       hubSeen.push({ method: req.method, url: req.url, auth: req.headers.authorization, body });
+      if (req.url === "/room/skills/activated") {
+        const { delayMs, status } = hubSkillReply;
+        setTimeout(() => res.writeHead(status, { "content-type": "application/json" }).end(status === 204 ? undefined : '{"error":"nope"}'), delayMs);
+        return;
+      }
       if (req.url?.startsWith("/room/attachments/")) {
         const file = hubFiles.get(decodeURIComponent(req.url.slice("/room/attachments/".length)));
         if (file?.stall) return;
@@ -188,8 +195,44 @@ describe("CodexDirectAdapter", () => {
     }
     const output = (bodies[1]!.input as { type: string; output?: string }[]).find((i) => i.type === "function_call_output")!.output!;
     expect(output).toContain(`<skill_content name="tdd" revision="${COMMIT}">\n# TDD\n\nRed, green, refactor.\n`);
-    expect(hubSeen).toEqual([]);
+    expect(hubSeen.map((h) => `${h.method} ${h.url} ${h.body}`)).toEqual([`POST /room/skills/activated {"skillId":"tdd","revision":"${COMMIT}"}`]);
     expect(events.filter((e) => e.type === "tool_call").map((e) => e.text)).toEqual([`读取 Skill tdd（${COMMIT}）`]);
+  });
+
+  test("a thread's retained Skill is preloaded, not read again and not reported", async () => {
+    login();
+    saveConfig(home, { model: "gpt-configured" });
+    const { managedSkill, skillText, COMMIT } = await import("../skills/helpers.js");
+    managedSkill(home, "tdd", { "SKILL.md": skillText("tdd", "Write the test first.", "# TDD\n") });
+    server.responses(stream([fcItem("read_skill", { name: "tdd" }, "c1")]), stream([msgItem("done")]));
+    const { result } = await run(adapter(), { ...task(), retainedSkills: ["tdd", "gone"] });
+    expect(result).toEqual({ ok: true, reply: "done" });
+    const bodies = server.requests.filter((r) => r.url === "/v1/responses").map((r) => JSON.parse(r.body) as Record<string, unknown>);
+    expect(String(bodies[0]!.instructions)).toContain(`# 已载入的 Skills\n`);
+    expect(String(bodies[0]!.instructions)).toContain(`<skill_content name="tdd" revision="${COMMIT}">\n# TDD\n\n</skill_content>`);
+    const output = (bodies[1]!.input as { type: string; output?: string }[]).find((i) => i.type === "function_call_output")!.output!;
+    expect(output).toBe("Skill tdd 的这一部分已经载入，见前文。");
+    expect(hubSeen).toEqual([]);
+  });
+
+  test("the task waits for an activation report, but not past 5 seconds, and a failed one is a warning", async () => {
+    login();
+    saveConfig(home, { model: "gpt-configured" });
+    const { managedSkill, skillText } = await import("../skills/helpers.js");
+    managedSkill(home, "tdd", { "SKILL.md": skillText("tdd") });
+    hubSkillReply = { delayMs: 300, status: 204 };
+    server.responses(stream([fcItem("read_skill", { name: "tdd" }, "c1")]), stream([msgItem("done")]));
+    const started = Date.now();
+    const slow = await run();
+    expect(slow.result).toEqual({ ok: true, reply: "done" });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(250);
+    expect(slow.events.filter((e) => e.type === "progress").map((e) => e.text)).not.toContain("Skill 激活记录未能及时上报");
+
+    hubSkillReply = { delayMs: 0, status: 500 };
+    server.responses(stream([fcItem("read_skill", { name: "tdd" }, "c1")]), stream([msgItem("done")]));
+    const failed = await run();
+    expect(failed.result).toEqual({ ok: true, reply: "done" });
+    expect(failed.events).toContainEqual({ type: "progress", text: "1 条 Skill 激活记录上报失败" });
   });
 
   test("without Skills the prompt and tools are unchanged and read_skill is unknown", async () => {

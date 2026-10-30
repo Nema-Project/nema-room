@@ -26,6 +26,17 @@ beforeEach(async () => {
 afterEach(() => new Promise<void>((r) => hub.close(() => r())));
 
 describe("RoomClient", () => {
+  test("reportSkillActivation posts the id and revision; an older hub's 404 counts as done", async () => {
+    const c = new RoomClient(hubUrl, "tok123");
+    reply = { status: 204, body: "" };
+    expect(await c.reportSkillActivation("tdd", "abc")).toMatchObject({ ok: true });
+    expect(seen.at(-1)).toMatchObject({ method: "POST", url: "/room/skills/activated", auth: "Bearer tok123", body: '{"skillId":"tdd","revision":"abc"}' });
+    reply = { status: 404, body: "Not Found" };
+    expect(await c.reportSkillActivation("tdd", "abc")).toEqual({ ok: true, json: null });
+    reply = { status: 400, body: '{"error":"bad"}' };
+    expect(await c.reportSkillActivation("tdd", "abc")).toEqual({ ok: false, status: 400, error: "bad" });
+  });
+
   test("maps calls to hub routes with the run token", async () => {
     const c = new RoomClient(hubUrl, "tok123");
     expect(await c.listEntries()).toEqual({ ok: true, json: { entries: [] } });

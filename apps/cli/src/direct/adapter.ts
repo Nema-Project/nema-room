@@ -205,6 +205,11 @@ export class CodexDirectAdapter implements AgentAdapter {
       prompt: task.prompt,
       pluginToolNames: (task.pluginTools ?? []).map((tool) => tool.name),
       onEvent,
+      ...(task.retainedSkills ? { retained: task.retainedSkills } : {}),
+      onActivated: async (id, revision) => {
+        const reported = await room.reportSkillActivation(id, revision);
+        if (!reported.ok) throw new Error(reported.error);
+      },
     });
     const instructions = skills.instructions;
     const tools = [...roomTools(task.pluginTools), ...skills.tools];
@@ -249,7 +254,11 @@ export class CodexDirectAdapter implements AgentAdapter {
       },
     });
     // Activation reports go to the hub; give them a moment, but a lost one must not fail the task.
-    if (skills.reader && !(await skills.reader.settle(5000))) onEvent({ type: "progress", text: "Skill 激活记录未能及时上报" });
+    if (skills.reader) {
+      const reports = await skills.reader.settleReports(5000);
+      if (reports.timedOut) onEvent({ type: "progress", text: "Skill 激活记录未能及时上报" });
+      else if (reports.failed > 0) onEvent({ type: "progress", text: `${reports.failed} 条 Skill 激活记录上报失败` });
+    }
     return { ok: true, reply };
   }
 

@@ -3,6 +3,7 @@ import type { FunctionTool } from "../direct/transport.js";
 import { codexCatalog } from "./catalog.js";
 import { READ_SKILL, SkillReader, readSkillTool } from "./readSkill.js";
 import { takeSnapshot, type SkillSnapshot } from "./snapshot.js";
+import { preloadSection, readSkillBody } from "./preload.js";
 
 /** What a codex-direct task adds for Skills: the catalog after the hub prompt, `read_skill`, and its reader. */
 export type DirectSkills = { instructions: string; tools: FunctionTool[]; reader: SkillReader | null; snapshot: SkillSnapshot };
@@ -19,6 +20,8 @@ export async function prepareDirectSkills(o: {
   pluginToolNames?: string[];
   onEvent: (event: TaskEvent) => void;
   onActivated?: (id: string, revision: string) => Promise<void>;
+  /** The thread's activated Skills, most recent first (`task.assign.retainedSkills`). */
+  retained?: string[];
 }): Promise<DirectSkills> {
   let snapshot: SkillSnapshot;
   try {
@@ -43,5 +46,12 @@ export async function prepareDirectSkills(o: {
     onRead: (text) => o.onEvent({ type: "tool_call", text }),
     onActivated: o.onActivated ?? (async () => {}),
   });
-  return { instructions: `${o.prompt}\n\n${catalog.text}`, tools: [tool], reader, snapshot };
+  let instructions = `${o.prompt}\n\n${catalog.text}`;
+  if (o.retained && o.retained.length > 0) {
+    const preload = await preloadSection({ snapshot, retained: o.retained, readBody: (skill) => readSkillBody(o.nemaHome, skill) });
+    for (const id of preload.loaded) reader.markLoaded(id);
+    if (preload.text) instructions += `\n\n${preload.text}`;
+    if (preload.dropped.length > 0) o.onEvent({ type: "progress", text: `这些 Skill 放不下，没有预载：${preload.dropped.join("、")}` });
+  }
+  return { instructions, tools: [tool], reader, snapshot };
 }

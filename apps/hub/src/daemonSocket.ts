@@ -9,6 +9,7 @@ import type { EventBus } from "./events.js";
 import { chooseAskedQuestion, timeline } from "./entryIndex.js";
 import { addMessage, deliverySet, getLastAskedQuestion, getMessage, listMessageVersions, listPromptMessages, listRecentMessages, messageExcerpt, type Message } from "./messages.js";
 import { associateQuestion, conversationOf, ensureThread, getThread } from "./threads.js";
+import { retainedSkills } from "./skillActivations.js";
 import { announceInterrupted } from "./interrupts.js";
 import { enabledPluginTools, grillState } from "./plugins.js";
 import { recheckReports, registerReportToken } from "./reports.js";
@@ -137,7 +138,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     for (const id of ids) await emitTask(id);
   }
 
-  async function buildTaskPrompt(task: Task): Promise<{ prompt: string; confidential: boolean; attachments: AttachmentRef[] }> {
+  async function buildTaskPrompt(task: Task): Promise<{ prompt: string; confidential: boolean; attachments: AttachmentRef[]; retainedSkills: string[] }> {
     const workspace = await getWorkspace(db, task.workspaceId);
     if (!workspace) throw new Error("workspace not found");
     const userMessage = await getMessage(db, task.messageId);
@@ -197,7 +198,9 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       ...(conversationThread && conversationAnchor ? { conversation: { thread: conversationThread, anchor: conversationAnchor, opened: conversationThread.openedBy } } : {}),
       deliveredAttachmentIds: attachments.map((a) => a.id),
     });
-    return { prompt, confidential: workspace.confidential, attachments };
+    // A thread's activated Skills come back on its next task; ids only, the daemon reads them again.
+    const retained = conversationId ? await retainedSkills(db, conversationId) : [];
+    return { prompt, confidential: workspace.confidential, attachments, retainedSkills: retained };
   }
 
   async function saveTaskFailure(taskId: string, error: string, expectedRunToken?: string): Promise<Message | null> {
@@ -220,7 +223,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         await requeueAndEmit(conn.daemonId);
         return;
       }
-      let built: { prompt: string; confidential: boolean; attachments: AttachmentRef[] };
+      let built: { prompt: string; confidential: boolean; attachments: AttachmentRef[]; retainedSkills: string[] };
       let pluginTools: PluginToolSpec[] = [];
       try {
         built = await buildTaskPrompt(task);
@@ -264,6 +267,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         pluginTools,
         ...(task.kind === "workpackage" ? { limits: { ...WORKPACKAGE_LIMITS } } : {}),
         ...(built.attachments.length > 0 ? { attachments: built.attachments } : {}),
+        ...(built.retainedSkills.length > 0 ? { retainedSkills: built.retainedSkills } : {}),
       });
       await emitTask(task.id);
       return;

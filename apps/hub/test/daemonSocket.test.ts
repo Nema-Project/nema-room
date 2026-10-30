@@ -313,6 +313,36 @@ describe("daemon socket", () => {
     expect(b).toMatchObject({ workspaceId: wsB, adapter: "auto", confidential: true });
   });
 
+  test("a thread's activated Skills ride on its tasks, newest first; main chat and record-less threads carry none", async () => {
+    await postUserMessage(db, wsA, "main chat");
+    const anchor = (await postUserMessage(db, wsA, "anchor")).message;
+    const thread = await ensureThread(db, anchor.id, "T", "user");
+    await db.query(
+      `insert into thread_skill_activations(thread_id, skill_id, last_activated_at, last_task_id, revision)
+       values ($1, 'tdd', now() - interval '1 hour', 't0', 'r'), ($1, 'pdf', now(), 't0', 'r')`,
+      [thread.id],
+    );
+    await postUserMessage(db, wsA, "in thread", { threadId: thread.id });
+    const other = (await postUserMessage(db, wsB, "other anchor")).message;
+    const otherThread = await ensureThread(db, other.id, "U", "user");
+    const c = await connect();
+    const seen: Array<{ content: string; retained: unknown }> = [];
+    for (let i = 0; i < 4; i++) {
+      const a = await c.next("task.assign");
+      const task = await getTask(db, a.taskId as string);
+      const message = await getMessage(db, task!.messageId);
+      seen.push({ content: message!.content, retained: (a as Record<string, unknown>).retainedSkills });
+      c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "r" });
+    }
+    expect(Object.fromEntries(seen.map((s) => [s.content, s.retained]))).toEqual({
+      "main chat": undefined,
+      anchor: ["pdf", "tdd"],
+      "in thread": ["pdf", "tdd"],
+      "other anchor": undefined,
+    });
+    expect(otherThread.id).toBe(other.id);
+  });
+
   test("a reply carries the skills its task offered, and the offers are cleared once it is saved", async () => {
     const m = await postUserMessage(db, wsA, "install the pdf skill");
     const c = await connect();

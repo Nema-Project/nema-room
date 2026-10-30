@@ -689,6 +689,38 @@ describe("ClaudeCodeAdapter with Skills", () => {
     expect(prompt).toContain("部分 Skill 缺少能力：tdd：子代理（context: fork）");
   });
 
+  test("a successful load is reported to the hub before the task ends; a thread's retained Skill is preloaded", async () => {
+    const commit = await withTdd();
+    const seen: string[] = [];
+    const hub = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        seen.push(`${req.method} ${req.url} ${body}`);
+        setTimeout(() => res.writeHead(204).end(), 100);
+      });
+    });
+    await new Promise<void>((r) => hub.listen(0, "127.0.0.1", r));
+    try {
+      const stdinFile = join(root, "stdin-report.json");
+      const bin = installFake({
+        mode: "lines",
+        argvFile: join(root, "argv-report.json"),
+        stdinFile,
+        lines: [skillInit(), use("t1", "Skill", { skill: "tdd" }), result("t1"), resultLine("好了")],
+      });
+      const assigned = { ...task("task-report", "do it"), hubUrl: `http://127.0.0.1:${(hub.address() as AddressInfo).port}`, retainedSkills: ["tdd"] };
+      const { result: done, events } = await runTask(skillAdapter(bin, true), assigned);
+      expect(done).toEqual({ ok: true, reply: "好了" });
+      expect(seen).toEqual([`POST /room/skills/activated {"skillId":"tdd","revision":"${commit}"}`]);
+      expect(events.filter((e) => e.type === "progress").map((e) => e.text)).not.toContain("Skill 激活记录未能及时上报");
+      expect(readFileSync(stdinFile, "utf8")).toContain(`# 已载入的 Skills\\n`);
+    } finally {
+      hub.closeAllConnections();
+      await new Promise<void>((r) => hub.close(() => r()));
+    }
+  });
+
   test("with Skills, Bash in init still fails the run", async () => {
     await withTdd();
     const bin = installFake({ mode: "lines", argvFile: join(root, "argv-bash.json"), lines: [skillInit(["Skill", "Read", "Bash", ...CLAUDE_ROOM_TOOLS]), resultLine("x")] });

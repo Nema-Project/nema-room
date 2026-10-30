@@ -1,0 +1,1 @@
+- A thread now remembers which Skills its tasks loaded and preloads them, up to 32 KB, into the thread's next task. Skills that have since been turned off or removed are skipped. The hub stores only Skill ids, versions and times.

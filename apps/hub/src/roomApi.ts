@@ -15,6 +15,7 @@ import { checkGithubCall, githubTargets } from "./githubScope.js";
 import { daemonHttpStatus, disabledExtensionIds, enabledPluginTools, recordPluginCall, withoutDisabledExtensions } from "./plugins.js";
 import { findRepoForWorkspace, listRepos } from "./repos.js";
 import { offerSkillInstall } from "./skillOffers.js";
+import { parseActivation, recordActivation } from "./skillActivations.js";
 import { getTask, recordTaskChange, resolveRunToken } from "./tasks.js";
 import { conversationOf, ensureThread, renameThread } from "./threads.js";
 import { repoPath } from "./workspaces.js";
@@ -211,6 +212,21 @@ export function roomRoutes(deps: {
     await retryBlockedPackages(db, dataDir, events, workspaceId, entry, "agent", deps.ownedHelpers);
     const body: UpsertEntryResponse = { entry, commit };
     return c.json(body);
+  });
+
+  // The daemon reports a Skill this task loaded; a thread remembers it for its next task (spec §8).
+  app.post("/skills/activated", async (c) => {
+    const { taskId } = c.get("auth");
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ error: "request body must be valid JSON" }, 400);
+    }
+    const input = parseActivation(raw);
+    if (typeof input === "string") return c.json({ error: input }, 400);
+    await recordActivation(db, { taskId, ...input });
+    return c.body(null, 204);
   });
 
   // The agent's only way into extension management: propose one previewed skill. Installing it is the
