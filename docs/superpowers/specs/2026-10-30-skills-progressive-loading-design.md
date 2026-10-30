@@ -7,7 +7,7 @@
 
 ## 如何服务 #45
 
-[#45](https://github.com/Nema-Project/nema-room/issues/45) 的判断标准是：这件事是否让人和 agent 更容易对项目保持有证据支撑的共同理解。Skills 本身不是对齐能力。它是一种把团队方法和工作约定交给 agent 的标准载体，比如怎么写 spec、怎么评审、某个领域要注意什么。这里只做其中**可核对、不越权**的部分：
+按 [#45](https://github.com/Nema-Project/nema-room/issues/45) 的判断标准衡量，Skills 本身不是对齐能力。它是一种把团队方法和工作约定交给 agent 的标准载体，比如怎么写 spec、怎么评审、某个领域要注意什么。这里只做其中**可核对、不越权**的部分：
 
 - **知道依据：** agent 用了哪个 Skill、哪个版本（提交或摘要），会在任务进度里写出来。事后能回答「当时 agent 按什么方法做的」。
 - **分清来源：** Skill 正文是第三方作者写的，既不是用户说过的话，也不是用户的决定。从 Skill 读到的内容写进知识时只能标 `inferred`，Skill 也不能授权安装、写入或放宽规则。这延续了 #45 的护栏：推断不经确认不算权威。
@@ -82,10 +82,11 @@
 
 daemon 每接一个任务，就从扩展索引取一份 **Skill 快照**。入选条件是 `kind: "skill"`、`installState: "installed"`、`useState: "enabled"`、`availability: "ready"`，并且没有标 `disable-model-invocation: true`。每个 Skill 记下：
 
-- `name`：frontmatter 的值，名字冲突时用记录 id
+- 对模型使用的名字：一律用**记录 id**。id 在索引里唯一，字符限于 `[a-z0-9-]`，所以目录和工具枚举里不会出现重名，也不会出现标记字符。frontmatter 的 `name` 与 id 不同时（例如含大写），在描述前写「（原名：…）」，原名经过转义
 - 描述：`description`，有 `when_to_use` 就接在后面
 - 记录 id、真实目录（受管 Skill 用 `ownedDirectory` 的结果，外部 Skill 用 `realpath(externalPath)`）
-- SKILL.md 的 git blob 摘要，以及 `revision`（受管 Skill 是提交，外部 Skill 是 `local`）
+- **文件清单：** Skill 内每个文件的相对路径、大小和 git blob 摘要（第 3 节第 4 项用它固定版本）。受管 Skill 的清单在安装时就有，安装器已经拿到 GitHub 树里每个文件的 blob SHA；S1 把它和记录一起保存，S1 之前装的 Skill 在第一次取快照时补算并缓存。外部 Skill 每次取快照时按大小、`mtime` 和 `ctime` 取轻量清单，SKILL.md 另算 blob 摘要
+- 版本标识：受管 Skill 用 `revision`（提交）；外部 Skill 的 `revision` 恒为 `local`，所以改用 `local@<SKILL.md 摘要前 7 位>`
 - 缺失能力列表（见第 4 节）
 
 如果快照非空，daemon 在 hub 给的 `task.prompt` 末尾追加一段：
@@ -102,7 +103,7 @@ Skill 里提到的相对路径用 `read_skill` 的 `path` 读取；Nema 不能�
 ```
 
 - 只有存在缺失能力时，才输出 `<missing>`。按 D-3 推荐，带缺失能力的 Skill 仍列入目录。
-- 描述里的 `<`、`>` 转义，控制字符去掉。这借鉴了 Claude Code 对同步 Skill 的清洗：防止描述伪装成 Nema 的结构标记。
+- 插进标记里的每个值都要转义 `&`、`<`、`>`、`"`，并去掉控制字符。这包括目录和 `<skill_content>` 里的名字、原名、描述、版本标识，以及资源清单里的路径。这借鉴了 Claude Code 对同步 Skill 的清洗：防止 Skill 的元数据闭合标签、伪造条目或说明。
 - **预算：** 整段最多 8000 字符。超出时先把每条描述等比截短，但每条至少保留 200 字符；仍然超出，就按名字顺序省略后面的 Skill，最后写一行「另有 N 个 Skill 因长度未列出」。页面也显示这条警告。
 - 快照为空时，这一段不出现，`read_skill` 也不注册。
 
@@ -118,7 +119,7 @@ Skill 里提到的相对路径用 `read_skill` 的 `path` 读取；Nema 不能�
   "parameters": {
     "type": "object",
     "properties": {
-      "name": { "type": "string", "enum": ["<快照里的名字>", "…"] },
+      "name": { "type": "string", "enum": ["<快照里的记录 id>", "…"] },
       "path": { "type": "string", "description": "Skill 内的相对路径；省略时读取 SKILL.md 正文" },
       "offset": { "type": "integer", "minimum": 0, "description": "从第几个字节继续（上次结果给出）" }
     },
@@ -128,11 +129,11 @@ Skill 里提到的相对路径用 `read_skill` 的 `path` 读取；Nema 不能�
 }
 ```
 
-- **不带 `path`：** 返回去掉 frontmatter 的正文，外面包上 `<skill_content name="…" revision="…">`。末尾写「Skill 目录：`skill://<name>/`，正文中的相对路径相对于该目录」，再附 `<skill_resources>` 清单：最多 200 项，深度不超过 4 层，跳过 `.git/` 和 `node_modules/`，资源不预读。同一任务里再读一次同一个正文，只返回「已载入，见前文」。
+- **不带 `path`：** 返回去掉 frontmatter 的正文，外面包上 `<skill_content name="…" revision="…">`。末尾写「Skill 目录：`skill://<name>/`，正文中的相对路径相对于该目录」，再附 `<skill_resources>` 清单：最多 200 项，深度不超过 4 层，跳过 `.git/` 和 `node_modules/`，资源不预读。去重只针对同一页：同一任务里再读同一个文件的同一个 `offset`，只返回「已载入，见前文」。带新 `offset` 的续读照常返回下一页，所以超过 48 KB 的正文也能读完。
 - **带 `path`：** 返回该文件的 UTF-8 文本。二进制文件（含 NUL 或不是合法 UTF-8）只返回类型和大小，并说明 Nema 不能解析或执行它。
 - **分页：** 每次最多返回 48 KB，在 UTF-8 字符边界处截断，结果里给出下一个 `offset`。这低于现有 64 KB 的工具输出上限（`room/client.ts:5-11`）。
 - **任务上限：** 一个任务里所有 `read_skill` 返回的文本合计最多 512 KB，超过后报错并说明原因。调用次数照常计入现有的 `maxToolCalls`。
-- **记录：** 每次成功读取，都发一条现有类型的任务事件 `tool_call`，文本是「读取 Skill <name>（<revision 前 7 位>）[<path>]」。
+- **记录：** 每次**成功**读取之后，由真正执行读取的一方发一条现有类型的任务事件 `tool_call`，文本是「读取 Skill <id>（<版本标识>）[<path>]」，版本标识见第 1 节。codex-direct 在 `dispatchTool` 返回成功时发。Claude Code 的读取在 `nema mcp` 子进程里执行，它没有任务事件通道，所以每次成功读取后往 `<runDir>/skill-reads.jsonl` 追加一行（0600）。适配器在流里看到对应的 `mcp__room__read_skill` 工具结果后读出这一行，再发事件。适配器自己原有的笼统工具调用事件不能当作读取成功的记录。
 
 **两种运行方式怎么接：**
 
@@ -150,14 +151,24 @@ Skill 里提到的相对路径用 `read_skill` 的 `path` 读取；Nema 不能�
 1. `name` 必须在本任务的快照里。
 2. **重新读索引：** 该记录仍然存在，仍是 `installed` 和 `enabled`。停用或卸载后，后续读取立即被拒绝（第 5 节）。
 3. **目录归属：** 受管 Skill 重新调用 `ownedDirectory(root, id)`；外部 Skill 重新取 `realpath`，必须等于记录里的路径，并且是目录。
-4. **版本：** SKILL.md 的 blob 摘要必须和快照一致。不一致就拒绝，提示「该 Skill 已更新，下个任务生效」。这对应上位规格：当前任务固定使用已取得的扩展版本。
+4. **版本（覆盖正文和资源）：** 读取的文件必须在快照清单里，读出的字节要和清单一致。受管 Skill 比 blob 摘要；外部 Skill 比大小、`mtime` 和 `ctime`，SKILL.md 和本任务已经读过的文件还要比摘要。不一致或不在清单里就拒绝，提示「该 Skill 已更新，下个任务生效」。这样一个任务里不会混用两个版本的文件。这对应上位规格：当前任务固定使用已取得的扩展版本。
 5. **路径：**
    - `path` 必须是相对路径。反斜杠统一换成 `/`，拒绝绝对路径、盘符、UNC、NUL 和 `..` 段。
-   - 从 Skill 根目录逐段 `lstat`，任何一段是符号链接就拒绝。受管安装本来就拒绝链接，外部目录里的链接一律不跟。
-   - 最终目标的 `realpath` 必须在 Skill 根目录之内，并且是普通文件。
+   - 从 Skill 根目录逐段 `lstat`，任何一段是符号链接或 Windows 重解析点就拒绝，并记下每一段的 `dev`/`ino`。受管安装本来就拒绝链接，外部目录里的链接一律不跟。
+   - **防检查与打开之间的竞争：** 打开文件时，POSIX 上带 `O_NOFOLLOW`。打开以后用 `fstat` 核对文件描述符的 `dev`/`ino`，必须等于检查时最后一段的值；再对每个上级目录重做一次 `lstat`，`dev`/`ino` 必须都没变；最后对路径再取一次 `realpath`，必须仍在 Skill 根目录之内，并且是普通文件。任何一项不符就关闭文件并拒绝。字节只从这个已经核对过的描述符读。Node 没有 `openat`，所以用打开后的复核来代替目录句柄，这样已打开的描述符不会指向根目录之外。
 6. **大小：** 单个文件最多 1 MiB。SKILL.md 仍按现有的 256 KB 上限。
 
 工具只读文件，不写入，不执行，不访问网络。扩展索引和凭据目录（`secrets/`）都不在任何 Skill 根目录之内，所以读不到。
+
+**提示词规则不是安全边界。** Skill 正文和附件、来源快照一样，都是不可信的输入，模型可能照着它调用已经开放的工具。真正的约束仍在工具这一侧，本设计不放宽其中任何一条：
+
+- `read_skill` 不带来任何新的写入或外部能力，工具集合只多了这一个只读工具。
+- 知识写入仍走 hub 的校验和 basis 规则，`confirmedBy: "user"` 只能由用户设置。
+- GitHub 写入仍要 workspace 打开 `allowWrites`，并且受命令白名单限制。
+- 插件函数仍按 workspace 的开关和停用规则提供。
+- 安装仍要用户在卡片上点「安装」。
+
+「据 Skill 内容写入的条目只能标 `inferred`」这条，hub 无法在工具边界上区分指令来源（这需要污点追踪，是 CX-02 策略引擎的范围）。所以它和附件规则一样，是提示层面的约定，事后可以从任务事件里的读取记录核对。
 
 ### 4. 支持范围和缺失能力怎么显示
 
@@ -224,13 +235,17 @@ type SkillGap = "scripts" | "allowed-tools" | "claude-code-extensions" | "paths"
   - 符号链接：中间段和末段。
   - 大小：超过 1 MiB；二进制文件。
   - 分页：offset 和 UTF-8 边界。
-  - 上限：任务累计 512 KB；同一任务内重复读正文的去重。
+  - 上限：任务累计 512 KB；同一页的去重；带新 `offset` 时续读正文。
+  - 竞争：通过注入的钩子，在检查和打开之间把路径换成链接，或者换成另一个文件，读取必须被拒绝。
+  - 版本：快照之后改动资源文件（SKILL.md 不变）、新增清单外的文件，读取都必须被拒绝。
+  - 转义：名字、原名、描述、资源路径里的 `<`、`>`、`&`、`"` 都被转义，伪造的 `</skill>` 不会生效。
   - 状态变化：读取中途停用、卸载、升级（摘要变化）；外部目录被换成链接。
 - **codex-direct：** `roomTools` 和 `dispatchTool` 在有快照时含 `read_skill`，没有快照时不含；枚举外的名字报错。
 - **Claude Code：**
   - `prepareClaudeLaunch` 写 `skills.json` 时权限为 0600，`mcp.json` 带上环境变量，允许名单含 `mcp__room__read_skill`。
   - 仍是 `--tools ""` 和 `--setting-sources ""`。
   - `nema mcp` 的 `tools/list` 和 `tools/call` 在本地处理，不请求 hub（沿用 `mcpServer.test.ts` 的写法）。
+  - 读取成功后写 `skill-reads.jsonl`，适配器据此发出带版本的事件；读取失败时不发读取事件。
 - **`extensions.list`：** `skill` 字段的缺失能力判定。
 - **Web：** Skill 行的支持范围、缺失能力和警告三种状态，中日英文案。
 - **不在单元测试范围内：** 真实模型会不会按描述去读 Skill，放到 S4 用真实模型验收。验收结果和自动测试分开写，不混为一谈。
@@ -240,7 +255,7 @@ type SkillGap = "scripts" | "allowed-tools" | "claude-code-extensions" | "paths"
 | 批次 | 内容 | 主要文件 | 依赖 |
 | --- | --- | --- | --- |
 | S0 | 共享类型 `SkillUsage`；宽松 frontmatter 解析；缺失能力判定；按规范放宽 id 规则 | `packages/shared/src/extensions.ts`、`apps/cli/src/extensions/source.ts`、`discover.ts`、`store.ts`、新文件 `apps/cli/src/extensions/skillMeta.ts` | — |
-| S1 | daemon 快照、目录文本、读取器与安全检查；`extensions.list` 附上 `skill` 字段 | 新目录 `apps/cli/src/skills/`（`snapshot.ts`、`catalog.ts`、`reader.ts`）；`handlers.ts` 只改第 69 行一处 | S0 |
+| S1 | daemon 快照（含文件清单）、目录文本、读取器与安全检查；安装时保存文件清单；`extensions.list` 附上 `skill` 字段 | 新目录 `apps/cli/src/skills/`（`snapshot.ts`、`catalog.ts`、`reader.ts`）；`apps/cli/src/extensions/install.ts`；`handlers.ts` 只改第 69 行一处 | S0 |
 | S2 | 接入两种运行方式：codex-direct 工具与派发；Claude Code 的 `nema mcp` 本地工具、`skills.json`、允许名单；prompt 追加目录；任务事件 | `apps/cli/src/direct/tools.ts`、`direct/adapter.ts`、`mcp/server.ts`、`claude/launch.ts`、`claude/adapter.ts` | S1 |
 | S3 | 插件页显示支持范围和缺失能力，停用确认文案；三语文案；`docs/guide.{en,zh,ja}.md`；changelog 片段 | `apps/web/components/PluginsPage.tsx`、`apps/web/messages/*.json`、`docs/guide.*.md`、`changelog.d/` | S0（可与 S1、S2 并行） |
 | S4 | 真实模型验收：在两种运行方式下，确认模型会按目录读取 Skill、读取资源，并在停用后被拒绝；记录到 ROADMAP 和 #75 | `ROADMAP.md` | S2、S3 |
