@@ -31,6 +31,8 @@ export type Repo = {
   lastMainSha: string | null;
   lastFetchAt: string | null;
   lastFetchError: string | null;
+  /** The user trusts this repository's Skills; they go to the agent with each task. */
+  trustSkills: boolean;
 };
 
 type Row = {
@@ -45,10 +47,11 @@ type Row = {
   last_main_sha: string | null;
   last_fetch_at: Date | string | null;
   last_fetch_error: string | null;
+  trust_skills: boolean;
 };
 
 const COLS =
-  "id, workspace_id, path, git_common_dir, label, main_branch, has_origin, remote_url, last_main_sha, last_fetch_at, last_fetch_error";
+  "id, workspace_id, path, git_common_dir, label, main_branch, has_origin, remote_url, last_main_sha, last_fetch_at, last_fetch_error, trust_skills";
 
 function timestamp(value: Date | string | null): string | null {
   if (value == null) return null;
@@ -74,6 +77,7 @@ function toRepo(row: Row): Repo {
     lastMainSha: row.last_main_sha,
     lastFetchAt: timestamp(row.last_fetch_at),
     lastFetchError: row.last_fetch_error,
+    trustSkills: row.trust_skills,
   };
 }
 
@@ -372,7 +376,7 @@ async function queueArchitectureDiagram(db: Db, events: EventBus | undefined, re
   }
 }
 
-export async function updateRepo(db: Db, repoId: string, patch: { label?: string; mainBranch?: string }, daemon: DaemonRpc): Promise<Repo> {
+export async function updateRepo(db: Db, repoId: string, patch: { label?: string; mainBranch?: string; trustSkills?: boolean }, daemon: DaemonRpc): Promise<Repo> {
   const sets: string[] = [];
   const params: unknown[] = [repoId];
   if (patch.label !== undefined) {
@@ -384,6 +388,10 @@ export async function updateRepo(db: Db, repoId: string, patch: { label?: string
     if (!isBranchName(patch.mainBranch)) throw new RepoError(400, INVALID_BRANCH);
     params.push(patch.mainBranch);
     sets.push(`main_branch = $${params.length}`);
+  }
+  if (patch.trustSkills !== undefined) {
+    params.push(patch.trustSkills);
+    sets.push(`trust_skills = $${params.length}`);
   }
   if (sets.length === 0) {
     const current = await getRepo(db, repoId);
@@ -401,6 +409,13 @@ export async function updateRepo(db: Db, repoId: string, patch: { label?: string
   const repo = toRepo(rows[0]);
   await syncBoundRepos(db, daemon);
   return repo;
+}
+
+/** The repositories whose Skills this workspace trusts, for `task.assign.projectSkills`. */
+export async function trustedSkillRepos(db: Db, workspaceId: string): Promise<Array<{ repoId: string; label: string; path: string; mainBranch: string; gitCommonDir: string }>> {
+  return (await listRepos(db, workspaceId))
+    .filter((repo) => repo.trustSkills)
+    .map((repo) => ({ repoId: repo.id, label: repo.label, path: repo.path, mainBranch: repo.mainBranch, gitCommonDir: repo.gitCommonDir }));
 }
 
 export async function unbindRepo(db: Db, daemon: DaemonRpc, repoId: string): Promise<void> {

@@ -247,7 +247,7 @@ describe("EntryDetail", () => {
     };
     vi.mocked(hub.getEntry).mockResolvedValue(diagram);
     vi.mocked(hub.listRepos).mockResolvedValue([
-      { id: "rp_a", workspaceId: "w1", path: "/src/a", gitCommonDir: "/src/a/.git", label: "backend", mainBranch: "main", hasOrigin: false, remoteUrl: null, githubTarget: null, lastMainSha: null, lastFetchAt: null, lastFetchError: null },
+      { id: "rp_a", workspaceId: "w1", path: "/src/a", gitCommonDir: "/src/a/.git", label: "backend", mainBranch: "main", hasOrigin: false, remoteUrl: null, githubTarget: null, lastMainSha: null, lastFetchAt: null, lastFetchError: null, trustSkills: false },
     ]);
     vi.mocked(hub.updateDiagram).mockResolvedValue({} as Awaited<ReturnType<typeof hub.updateDiagram>>);
     try {

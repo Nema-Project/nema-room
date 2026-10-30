@@ -29,6 +29,7 @@ const repo = (extra: Partial<Repo> & Pick<Repo, "id" | "path" | "label">): Repo 
   lastMainSha: null,
   lastFetchAt: null,
   lastFetchError: null,
+  trustSkills: false,
   ...extra,
 });
 
@@ -310,5 +311,36 @@ describe("CodeAndPlugins", () => {
     expect(hub.updateWorkspacePlugin).not.toHaveBeenCalled();
     fireEvent.change(box, { target: { value: "x".repeat(2000) } });
     expect(save.disabled).toBe(false);
+  });
+});
+
+describe("trusting a repository's Skills", () => {
+  it("is off by default, asks before turning on, and turns off without asking", async () => {
+    vi.mocked(hub.listRepos).mockResolvedValue([repo({ id: "r1", path: "/tmp/app", label: "app" })]);
+    vi.mocked(hub.updateRepo).mockImplementation(async (_id, repoId, patch) => repo({ id: repoId, path: "/tmp/app", label: "app", ...patch }));
+    mount();
+    const toggle = await screen.findByRole("checkbox", { name: "Trust this repository's Skills /tmp/app" });
+    expect((toggle as HTMLInputElement).checked).toBe(false);
+
+    await userEvent.click(toggle);
+    const dialog = screen.getByRole("group", { name: "Trust this repository's Skills /tmp/app" });
+    expect(within(dialog).getByText(/\.agents\/skills/)).toBeTruthy();
+    expect(hub.updateRepo).not.toHaveBeenCalled();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("group", { name: "Trust this repository's Skills /tmp/app" })).toBeNull();
+    expect(hub.updateRepo).not.toHaveBeenCalled();
+    expect((toggle as HTMLInputElement).checked).toBe(false);
+
+    await userEvent.click(toggle);
+    await userEvent.click(within(screen.getByRole("group", { name: "Trust this repository's Skills /tmp/app" })).getByRole("button", { name: "Trust" }));
+    expect(hub.updateRepo).toHaveBeenCalledWith("w1", "r1", { trustSkills: true });
+    const on = await screen.findByRole("checkbox", { name: "Trust this repository's Skills /tmp/app" });
+    expect((on as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText("Takes effect from the next task.")).toBeTruthy();
+
+    vi.mocked(hub.updateRepo).mockClear();
+    await userEvent.click(on);
+    expect(hub.updateRepo).toHaveBeenCalledWith("w1", "r1", { trustSkills: false });
+    expect(screen.queryByRole("group", { name: "Trust this repository's Skills /tmp/app" })).toBeNull();
   });
 });

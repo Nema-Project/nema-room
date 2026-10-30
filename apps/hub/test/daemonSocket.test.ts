@@ -343,6 +343,23 @@ describe("daemon socket", () => {
     expect(otherThread.id).toBe(other.id);
   });
 
+  test("task.assign lists only trusted repositories as projectSkills, and none when nothing is trusted", async () => {
+    await db.query(
+      `insert into workspace_repos (id, workspace_id, path, git_common_dir, label, main_branch, has_origin, remote_url, trust_skills)
+       values ('repo_t', $1, '/src/web', '/src/web/.git', 'web', 'main', false, null, true),
+              ('repo_u', $1, '/src/api', '/src/api/.git', 'api', 'main', false, null, false)`,
+      [wsA],
+    );
+    await postUserMessage(db, wsA, "a");
+    await postUserMessage(db, wsB, "b");
+    const c = await connect();
+    const a = await c.next("task.assign");
+    expect(a.projectSkills).toEqual([{ repoId: "repo_t", label: "web", path: "/src/web", mainBranch: "main", gitCommonDir: "/src/web/.git" }]);
+    c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "r" });
+    const b = await c.next("task.assign");
+    expect(b).not.toHaveProperty("projectSkills");
+  });
+
   test("a reply carries the skills its task offered, and the offers are cleared once it is saved", async () => {
     const m = await postUserMessage(db, wsA, "install the pdf skill");
     const c = await connect();

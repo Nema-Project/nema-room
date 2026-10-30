@@ -28,7 +28,7 @@ beforeEach(() => {
 
 const repo = (id: string, label: string) => ({
   id, workspaceId: "w1", path: `/src/${id}`, gitCommonDir: `/src/${id}/.git`, label, mainBranch: "main",
-  hasOrigin: false, remoteUrl: null, githubTarget: null, lastMainSha: null, lastFetchAt: null, lastFetchError: null,
+  hasOrigin: false, remoteUrl: null, githubTarget: null, lastMainSha: null, lastFetchAt: null, lastFetchError: null, trustSkills: false,
 });
 
 const mount = async (lang: "follow" | "ja" = "follow", onOpen = vi.fn()) => {

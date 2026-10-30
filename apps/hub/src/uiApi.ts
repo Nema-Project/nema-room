@@ -96,6 +96,7 @@ const BindRepoBody = z.object({
 const PatchRepoBody = z.object({
   label: z.string().trim().min(1).optional(),
   mainBranch: z.string().trim().min(1).optional(),
+  trustSkills: z.boolean().optional(),
 });
 const PatchPluginBody = z.object({
   enabled: z.boolean().optional(),
