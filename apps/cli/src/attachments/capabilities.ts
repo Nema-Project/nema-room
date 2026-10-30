@@ -10,6 +10,11 @@ type Table = Pick<AttachmentCapabilities, "image" | "pdf" | "text">;
 const CLAUDE: Table = { image: "native", pdf: "unknown", text: "text" };
 const OPENAI: Table = { image: "native", pdf: "native", text: "text" };
 const UNVERIFIED: Table = { image: "unknown", pdf: "unknown", text: "text" };
+// OpenRouter (BYOK), measured 2026-10-30 with a free vision model: images were read. PDFs were read only through
+// OpenRouter's default paid OCR (charged per page even for free models), so they stay refused.
+// See docs/reviews/2026-10-30-attachments-model-acceptance.md.
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const OPENROUTER: Table = { image: "native", pdf: "unknown", text: "text" };
 
 /** What the configured adapter can take, per attachment kind. Read fresh from config for every call. */
 export function attachmentCapabilities(config: NemaConfig): AttachmentCapabilities {
@@ -18,6 +23,7 @@ export function attachmentCapabilities(config: NemaConfig): AttachmentCapabiliti
   if (config.authMode === "siwc") return { adapter, ...OPENAI };
   // Same base URL resolution as direct/adapter.ts: only OpenAI's own endpoint is known to take files.
   if (config.authMode === "byok" && (config.byokBaseUrl ?? DEFAULT_BYOK_BASE_URL) === DEFAULT_BYOK_BASE_URL) return { adapter, ...OPENAI };
+  if (config.authMode === "byok" && config.byokBaseUrl === OPENROUTER_BASE_URL) return { adapter, ...OPENROUTER };
   return { adapter, ...UNVERIFIED };
 }
 
