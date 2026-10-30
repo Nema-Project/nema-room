@@ -277,9 +277,14 @@ export async function editUserMessage(
     if (!row) throw new MessageOpError(404, "message not found");
     if (row.role !== "user") throw new MessageOpError(400, "only user messages can be edited");
     if (content.trim() === "") {
-      // Text may only go when the message still has a file to stand on.
-      const files = (await listAttachmentsForMessages(t, [messageId])).get(messageId) ?? [];
-      if (!files.some((f) => f.status !== "deleted")) throw new MessageOpError(400, "message content must not be empty");
+      // Text may only go while the message still has a file the task can deliver. The rows are locked so a
+      // delete running at the same time waits for this edit (or this edit sees the delete). A missing file
+      // does not count: its task would only fail when the daemon fetched it.
+      const usable = await t.query(
+        "select id from message_attachments where message_id = $1 and status = 'attached' order by id for update",
+        [messageId],
+      );
+      if (usable.length === 0) throw new MessageOpError(400, "message content must not be empty");
     }
     const ws = await t.query<{ archived_at: Date | string | null }>(`select archived_at from workspaces where id = $1`, [workspaceId]);
     if (ws[0]?.archived_at) throw new ArchivedWorkspaceError();
