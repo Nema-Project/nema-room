@@ -448,6 +448,17 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .skill-preview li { display: block; padding: 10px 0; border-top: 1px solid var(--rule); }
 .skill-preview h4 { font-size: 15px; font-weight: 600; color: var(--ink); }
 .skill-preview .kmeta { overflow-wrap: anywhere; }
+/* mcp: MCP server form and controls on the Plugins page */
+.mcp-form { display: flex; flex-direction: column; gap: 8px; background: var(--paper); padding: 16px 20px 14px; }
+.mcp-form h3 { font-size: 16px; font-weight: 600; }
+.mcp-form label { display: flex; flex-direction: column; gap: 4px; }
+.mcp-form fieldset { display: flex; gap: 14px; border: 0; padding: 0; margin: 0; }
+.mcp-form fieldset label { flex-direction: row; align-items: center; }
+.mcp-form input:not([type="radio"]), .mcp-form textarea { border: 1px solid var(--rule); background: var(--paper); padding: 5px 8px; font-family: var(--mono); font-size: 13px; }
+.mcp-form > button[type="submit"] { align-self: flex-start; border: 1px solid var(--ink); padding: 5px 14px; font-weight: 600; }
+.mcp-controls { margin-top: 10px; }
+.plugin-block .mcp-secrets li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mcp-secrets input { border: 1px solid var(--rule); background: var(--paper); padding: 3px 8px; }
 @media (max-width: 720px) {
   .plugin-block li { grid-template-columns: 1fr; row-gap: 2px; }
 }
