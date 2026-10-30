@@ -84,6 +84,23 @@ jobs:
       GH_REPO: ${{ github.repository }}
       RELEASE_PROMOTE_SEES_DRAFTS: 'true'
     steps:
+      # Re-running a failed promote job reuses the successful authorize job: check the re-runner here too,
+      # before anything else runs with this job's write token.
+      - name: Require a maintainer
+        shell: bash
+        env:
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          # Both the user who dispatched and the one who re-ran must hold maintain or admin.
+          for who in "$ACTOR" "$TRIGGERING_ACTOR"; do
+            role=$(gh api "repos/${GH_REPO}/collaborators/${who}/permission" --jq .role_name) || role=""
+            case "$role" in
+              admin|maintain) echo "${who}: ${role}" ;;
+              *) echo "${who} is ${role:-unknown} on ${GH_REPO}; release-promote needs maintain or admin" >&2; exit 1 ;;
+            esac
+          done
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { parse } from 'yaml';
 import { classifyPaths } from './policy.mjs';
+import { REQUIRED_PUSH_JOBS, REQUIRED_TAG_RUN_JOBS, VERIFY_JOBS } from '../release/promote.mjs';
 const read = name => parse(readFileSync(new URL(`../../.github/workflows/${name}.yml`, import.meta.url), 'utf8'));
 const checkout = job => job.steps.filter(s => s.uses?.startsWith('actions/checkout@'));
 const expr = value => value?.replace(/^\$\{\{\s*|\s*\}\}$/g, '').trim();
@@ -221,7 +222,8 @@ test('npm publishes only when release-promote dispatches the tag, from the push 
   assert.match(origin.run, /"in_progress"/);
   assert.match(origin.run, /"Candidate preflight"/);
   assert.match(origin.run, /event=push&head_sha=\$\{SHA\}/);
-  for (const job of ['Pack and smoke nema', 'verify / Workflow lint', 'verify / Full application tests and web build', 'verify / Platform checks', 'verify / npm pack smoke']) assert.ok(origin.run.includes(`'${job}'`), job);
+  for (const job of REQUIRED_PUSH_JOBS) assert.ok(origin.run.includes(`'${job}'`), job);
+  assert.match(origin.run, /select\(\.name == \$job\)/, 'each required job by its exact name, not a prefix');
   assert.doesNotMatch(origin.run, /"skipped"/, 'no verify job may be skipped');
   // Like promote.mjs assertPushRunJobs: a jobs page that does not hold every job of the run proves nothing.
   const listed = origin.run.indexOf('total_count');
@@ -239,6 +241,8 @@ test('npm publishes only when release-promote dispatches the tag, from the push 
   assert.ok(at('npm-state.mjs "$version"') < publishAt, 'registry state before publish');
   assert.ok(at('dist-tags.${dist}') !== -1 && at('dist-tags.${dist}') < publishAt, 'channel dist-tag re-read before publish');
   assert.match(publishStep.run, /dist=maintenance/);
+  assert.ok(at('dist-tags.maintenance') > at('dist=maintenance') && at('dist-tags.maintenance') < publishAt, 'maintenance re-read before publish');
+  assert.match(publishStep.run, /npm maintenance is \$\{held\}, newer than \$\{version\}; refusing to move it backwards/);
   assert.match(publishStep.run, /refusing to move it backwards/);
   assert.ok(publishStep.run.lastIndexOf('tag moved') < publishAt);
   assert.ok(publishStep.run.lastIndexOf('tag moved') > at('dist-tags.${dist}'), 'tag re-read after the dist-tag re-read');
@@ -263,7 +267,7 @@ if [ "\${3:-}" = --jq ]; then jq -r "$4" "$file"; else cat "$file"; fi
   const sha = 'a'.repeat(40);
   const repo = 'o/r';
   const fixture = (url, body) => writeFileSync(join(cwd, 'fix', `${url.replace(/[^A-Za-z0-9]/g, '_')}.json`), JSON.stringify(body));
-  const verifyJobs = ['Pack and smoke nema', 'verify / Workflow lint', 'verify / Full application tests and web build', 'verify / Platform checks (macos-latest)', 'verify / npm pack smoke (ubuntu-latest)'].map((name) => ({ name, conclusion: 'success' }));
+  const verifyJobs = REQUIRED_PUSH_JOBS.map((name) => ({ name, conclusion: 'success' }));
   const setup = ({ title = 'Release promote v1.2.3', runs = [{ id: 7, head_branch: 'v1.2.3', conclusion: 'success' }], jobs = verifyJobs, total = jobs.length } = {}) => {
     fixture(`repos/${repo}/actions/runs/99`, { path: '.github/workflows/release-promote.yml', head_branch: 'main', status: 'in_progress', display_title: title });
     fixture(`repos/${repo}/actions/runs/99/jobs`, { total_count: 1, jobs: [{ name: 'Promote', steps: [{ name: 'Candidate preflight', conclusion: 'success' }] }] });
@@ -293,7 +297,11 @@ if [ "\${3:-}" = --jq ]; then jq -r "$4" "$file"; else cat "$file"; fi
   // A jobs page that does not hold every job of the run proves nothing, even when every listed job passed.
   setup({ total: verifyJobs.length + 1 });
   result = run();
-  assert.notEqual(result.status, 0); assert.match(result.stderr, /lists 5 of 6 jobs/); assert.equal(result.output, '');
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /lists 8 of 9 jobs/); assert.equal(result.output, '');
+  // A missing matrix leg fails even when the count agrees with the shorter answer.
+  setup({ jobs: verifyJobs.filter((job) => job.name !== 'verify / npm pack smoke (windows-latest)') });
+  result = run();
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /npm pack smoke \(windows-latest\) did not run and pass/); assert.equal(result.output, '');
   setup({ jobs: verifyJobs.map((job, i) => (i === 2 ? { ...job, conclusion: 'skipped' } : job)) });
   result = run();
   assert.notEqual(result.status, 0); assert.match(result.stderr, /Full application tests and web build did not run and pass/);
@@ -357,7 +365,12 @@ test -n "$login" || { echo "gh: unexpected $2" >&2; exit 1; }
 for pair in $ROLES; do if [ "\${pair%%=*}" = "$login" ]; then echo "\${pair#*=}"; exit 0; fi; done
 echo "gh: HTTP 404" >&2; exit 1
 `, { mode: 0o755 });
-  const script = read('release-promote').jobs.authorize.steps.find((step) => step.name === 'Require a maintainer').run;
+  const workflow = read('release-promote');
+  const script = workflow.jobs.authorize.steps.find((step) => step.name === 'Require a maintainer').run;
+  // A re-run of the promote job alone reuses authorize: promote's first step is the same check.
+  assert.equal(workflow.jobs.promote.steps[0].name, 'Require a maintainer');
+  assert.equal(workflow.jobs.promote.steps[0].run, script);
+  assert.equal(workflow.jobs.promote.steps[0].env.TRIGGERING_ACTOR, '${{ github.triggering_actor }}');
   const run = (actor, triggering, roles) => spawnSync('bash', ['-c', script], { cwd, encoding: 'utf8', env: { ...process.env, PATH: `${join(cwd, 'bin')}:${process.env.PATH}`, GH_TOKEN: 'x', GH_REPO: 'o/r', ACTOR: actor, TRIGGERING_ACTOR: triggering, ROLES: roles } });
   let result = run('owner', 'owner', 'owner=admin');
   assert.equal(result.status, 0, result.stderr);
@@ -369,6 +382,22 @@ echo "gh: HTTP 404" >&2; exit 1
   assert.notEqual(result.status, 0, 'a rerun by a writer of a maintainer run is refused'); assert.match(result.stderr, /writer is write/);
   result = run('stranger', 'stranger', 'owner=admin');
   assert.notEqual(result.status, 0, 'an unanswered permission query refuses');
+});
+
+test('promote requires every verify job and matrix leg the tag workflows define, by exact name', () => {
+  const verify = read('verify');
+  const names = Object.values(verify.jobs).flatMap((job) => {
+    const os = job.strategy?.matrix?.os;
+    return os ? os.map((value) => job.name.replace('${{ matrix.os }}', value)) : [job.name];
+  }).map((name) => `verify / ${name}`);
+  assert.deepEqual([...VERIFY_JOBS].sort(), names.sort());
+  const image = read('image-publish');
+  const imageJobs = Object.values(image.jobs).filter((job) => !job.uses).map((job) => job.name);
+  assert.deepEqual(REQUIRED_TAG_RUN_JOBS['image-publish.yml'].filter((name) => !name.startsWith('verify / ')).sort(), imageJobs.sort());
+  const desktop = read('desktop-release');
+  assert.equal(desktop.jobs.build.name, 'Build and smoke (${{ matrix.target }})');
+  const desktopFixed = Object.values(desktop.jobs).filter((job) => !job.uses && !job.strategy).map((job) => job.name);
+  for (const name of desktopFixed) assert.ok(REQUIRED_TAG_RUN_JOBS['desktop-release.yml'].includes(name), name);
 });
 
 test('windows desktop release publishes a separate portable ZIP and still smokes NSIS', () => {

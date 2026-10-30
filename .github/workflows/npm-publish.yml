@@ -182,8 +182,11 @@ jobs:
             echo "push run ${push_run}: the jobs answer lists ${counts% *} of ${counts#* } jobs" >&2
             exit 1
           fi
-          for job in 'Pack and smoke nema' 'verify / Workflow lint' 'verify / Full application tests and web build' 'verify / Platform checks' 'verify / npm pack smoke'; do
-            ok=$(jq --arg job "$job" '[.jobs[] | select(.name | startswith($job))] | (length > 0) and all(.conclusion == "success")' <<<"$jobs")
+          # Same exact names as promote.mjs REQUIRED_PUSH_JOBS: every matrix leg is its own job.
+          for job in 'Pack and smoke nema' 'verify / Workflow lint' 'verify / Full application tests and web build' \
+            'verify / Platform checks (macos-latest)' 'verify / Platform checks (windows-latest)' \
+            'verify / npm pack smoke (ubuntu-latest)' 'verify / npm pack smoke (windows-latest)' 'verify / npm pack smoke (macos-latest)'; do
+            ok=$(jq --arg job "$job" '[.jobs[] | select(.name == $job)] | (length > 0) and all(.conclusion == "success")' <<<"$jobs")
             test "$ok" = true || { echo "push run ${push_run}: ${job} did not run and pass" >&2; exit 1; }
           done
           ok=$(jq '[.jobs[] | select(.name | startswith("verify / "))] | all(.conclusion == "success")' <<<"$jobs")
@@ -248,6 +251,12 @@ jobs:
           if [ -n "$current" ] && node --input-type=module -e 'import { compareReleaseVersions } from "./artifact/scripts/desktop/release-version.mjs"; process.exit(compareReleaseVersions(process.argv[1], process.argv[2]) > 0 ? 0 : 1)' "$current" "$version"; then
             if [ "$dist" = latest ]; then
               dist=maintenance
+              # maintenance must not move backwards either: promoting older stables in descending order stops.
+              held=$(npm view @nema-project/nema "dist-tags.maintenance")
+              if [ -n "$held" ] && node --input-type=module -e 'import { compareReleaseVersions } from "./artifact/scripts/desktop/release-version.mjs"; process.exit(compareReleaseVersions(process.argv[1], process.argv[2]) > 0 ? 0 : 1)' "$held" "$version"; then
+                echo "npm maintenance is ${held}, newer than ${version}; refusing to move it backwards" >&2
+                exit 1
+              fi
             else
               echo "npm ${dist} is ${current}, newer than ${version}; refusing to move it backwards" >&2
               exit 1
