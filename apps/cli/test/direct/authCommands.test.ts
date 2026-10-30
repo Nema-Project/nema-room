@@ -144,7 +144,7 @@ describe("nema auth login", () => {
 
 type Req = { method?: string; url?: string; headers: IncomingMessage["headers"]; body: string };
 
-async function fakeApi(opts: { failResponses?: boolean; failModels?: boolean } = {}) {
+async function fakeApi(opts: { failResponses?: boolean; failModels?: boolean; openAiCatalog?: boolean } = {}) {
   const reqs: Req[] = [];
   const server: Server = createServer((req, res) => {
     let body = "";
@@ -158,6 +158,14 @@ async function fakeApi(opts: { failResponses?: boolean; failModels?: boolean } =
           return;
         }
         res.writeHead(200, { "content-type": "application/json" });
+        if (opts.openAiCatalog) {
+          // The public OpenAI-compatible shape (OpenAI, OpenRouter, vLLM, Ollama): `data[].id`, no visibility.
+          res.end(JSON.stringify({ object: "list", data: [
+            { id: "vendor/model-a", object: "model", owned_by: "vendor" },
+            { id: "vendor/model-b:free", object: "model", owned_by: "vendor" },
+          ] }));
+          return;
+        }
         res.end(JSON.stringify({ models: [
           { slug: "gpt-hidden", display_name: "Hidden", visibility: "hide" },
           { slug: "gpt-a", display_name: "GPT A", visibility: "list" },
@@ -270,6 +278,31 @@ describe("nema auth probe", () => {
       await expect(listConfiguredModels({ nemaHome: home })).resolves.toEqual(["gpt-a", "gpt-b"]);
       expect(api.reqs.map((request) => request.method)).toEqual(["GET"]);
       expect(api.reqs[0]?.headers.authorization).toBe("Bearer byok-test-key");
+    } finally {
+      await api.close();
+    }
+  });
+
+  test("BYOK lists models from an OpenAI-compatible data[].id catalog", async () => {
+    const api = await fakeApi({ openAiCatalog: true });
+    try {
+      saveConfig(home, { authMode: "byok", byokBaseUrl: api.base });
+      saveByokKey(home, "byok-test-key");
+      await expect(listConfiguredModels({ nemaHome: home })).resolves.toEqual(["vendor/model-a", "vendor/model-b:free"]);
+    } finally {
+      await api.close();
+    }
+  });
+
+  test("BYOK probe succeeds against an OpenAI-compatible data[].id catalog", async () => {
+    const api = await fakeApi({ openAiCatalog: true });
+    try {
+      saveConfig(home, { authMode: "byok", byokBaseUrl: api.base, model: "vendor/model-b:free" });
+      saveByokKey(home, "byok-test-key");
+      const c = capture();
+      expect(await authProbe({ nemaHome: home, out: c.out })).toBe(0);
+      expect(c.text()).toContain("模型：vendor/model-b:free");
+      expect(JSON.parse(api.reqs.find((r) => r.method === "POST")!.body).model).toBe("vendor/model-b:free");
     } finally {
       await api.close();
     }
