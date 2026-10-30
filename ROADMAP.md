@@ -1,6 +1,6 @@
 # 项目路线图与验收台账
 
-更新日期：2026-10-28（Asia/Tokyo）
+更新日期：2026-10-30（Asia/Tokyo）
 
 本文件承接仓库评估中提出的 TODO，作为当前待办入口。它是建议的稳定化顺序，不代表全部问题已复现，也不代表已承诺交付日期。历史设计和评审保留在 `docs/superpowers/` 与 `docs/reviews/`；遇到冲突，应以对应提交的源码、CI 和验收证据为准。
 
@@ -15,6 +15,14 @@
 - [历史桌面验收](docs/reviews/2026-10-24-desktop-validation.md)只证明其记录的提交与环境；其中“尚未发布”等结论已经过时。
 - 已合入 `main` 的近期工作：[PR #29](https://github.com/Nema-Project/nema-room/pull/29) macOS 原生红绿灯（`5ff8cf9`）；[PR #30](https://github.com/Nema-Project/nema-room/pull/30) 落实 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 的用户 basis 证据检查（`afd1456`）；[PR #31](https://github.com/Nema-Project/nema-room/pull/31) 桌面包瘦身（`76680b8`）。
 - 本次评估通过 GitHub 读取源码、配置、Actions 和 Release；未本地重跑测试。开始每项工作前须重新检查最新状态。
+
+## v0.1.6 发布准备
+
+版本号与发布说明已按 `npm run release:stamp -- 0.1.6`、`npm run release:cut -- 0.1.6` 准备；这不表示 v0.1.6 已公开发布，也不关闭下列验收项：
+
+- 这是第一个由 desktop-release 附上固定名 `docker-compose.yml` 资产的版本。发布后实测 `releases/latest/download/docker-compose.yml` 返回 200、双镜像钉在 `0.1.6`，再按发布机制第 2 期任务 10 切换公开安装链接；在那之前 README、指南与官网仍指向 v0.1.5 tag 上的 Compose 文件。
+- 合并 release PR 后，只有该合并 SHA 的 main 完整 CI 成功才可打 tag；npm、hub/web 镜像与桌面产物的发布结果分别验证。
+- Windows x64 与 macOS arm64 安装包的真机安装／覆盖升级、启动、一次 Graphify、退出与旧数据保留仍待验证；CX-03 最终验收继续跟踪。维护者已选择快速迭代，这些未完成验收不阻塞本次小版本。
 
 ## v0.1.5 发布与后续验收
 

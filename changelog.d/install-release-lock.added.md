@@ -1,1 +1,0 @@
-- Public installs resolve one released version, verify the compose file, both images, and the npm package exist, and lock that version into `.env` with `docker-compose.yml` written as a pair.

@@ -1,1 +1,0 @@
-- Control ports moved out of the default ephemeral range, and a descriptor left by the previous port formula is still accepted.
