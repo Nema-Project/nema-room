@@ -35,9 +35,11 @@ const daemonCalls: { method: string; params: unknown }[] = [];
 let daemonCall: (method: string, params: unknown) => Promise<unknown> = async () => {
   throw new DaemonRpcError("daemon 未连接");
 };
+let lastTimeoutMs: number | undefined;
 const daemon: DaemonRpc = {
-  call(method, params) {
+  call(method, params, timeoutMs) {
     daemonCalls.push({ method, params });
+    lastTimeoutMs = timeoutMs;
     return daemonCall(method, params);
   },
 };
@@ -434,6 +436,59 @@ describe("workspace plugins", () => {
       const response = await uiReq("DELETE", "/api/extensions/grill");
       expect(response.status, JSON.stringify(reply)).toBe(502);
       expect(((await response.json()) as { error: string }).error).toBe("extensions.remove returned an invalid result");
+    }
+  });
+
+  const COMMIT = "0123456789abcdef0123456789abcdef01234567";
+  const preview = {
+    repository: "https://github.com/acme/skills",
+    owner: "acme",
+    repo: "skills",
+    ref: "main",
+    commit: COMMIT,
+    license: "MIT",
+    path: null,
+    truncated: false,
+    skills: [{ id: "pdf", name: "pdf", description: "PDF forms", path: "skills/pdf", digest: "a".repeat(40), problem: null, target: "/home/x/.nema/extensions/extensions/pdf", installed: false }],
+  };
+
+  test("POST /api/extensions/resolve hands a supported source to the daemon and returns its pinned preview", async () => {
+    daemonCall = async (method, params) => {
+      expect(method).toBe("extensions.resolveSource");
+      expect(params).toEqual({ source: "https://skills.sh/acme/skills/pdf" });
+      return preview;
+    };
+    const response = await uiReq("POST", "/api/extensions/resolve", { source: "  https://skills.sh/acme/skills/pdf " });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(preview);
+    // GitHub reads take longer than an ordinary daemon call, so this one gets its own budget.
+    expect(lastTimeoutMs).toBe(60_000);
+  });
+
+  test("POST /api/extensions/resolve rejects an unsupported source as 400 without asking the daemon", async () => {
+    for (const body of [{}, { source: "" }, { source: "https://gitlab.com/acme/skills" }, { source: "acme/skills", install: true }]) {
+      const before = daemonCalls.length;
+      const response = await uiReq("POST", "/api/extensions/resolve", body);
+      expect(response.status, JSON.stringify(body)).toBe(400);
+      expect(daemonCalls.length).toBe(before);
+    }
+    const typed = await uiReq("POST", "/api/extensions/resolve", { source: "https://gitlab.com/acme/skills" });
+    expect(((await typed.json()) as { error: string }).error).toMatch(/unsupported extension source/);
+  });
+
+  test("POST /api/extensions/resolve passes a GitHub failure through and refuses a preview that is not pinned", async () => {
+    daemonCall = async () => {
+      throw new DaemonRpcError("GitHub repository not found: acme/skills");
+    };
+    const missing = await uiReq("POST", "/api/extensions/resolve", { source: "acme/skills" });
+    expect(missing.status).toBe(502);
+    expect(((await missing.json()) as { error: string }).error).toBe("GitHub repository not found: acme/skills");
+
+    for (const bad of [null, [], { ...preview, commit: "main" }, { ...preview, skills: "pdf" }, { ...preview, repository: 7 }]) {
+      daemonCall = async () => bad;
+      const response = await uiReq("POST", "/api/extensions/resolve", { source: "acme/skills" });
+      expect(response.status, JSON.stringify(bad)).toBe(502);
+      expect(((await response.json()) as { error: string }).error).toBe("extensions.resolveSource returned an invalid result");
     }
   });
 

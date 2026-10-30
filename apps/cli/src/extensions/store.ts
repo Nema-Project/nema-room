@@ -12,6 +12,19 @@ function assertId(id: string): void {
   if (!ID.test(id) || BUNDLED_IDS.has(id)) throw new Error(`invalid extension id: ${id}`);
 }
 
+const COMMIT = /^[0-9a-f]{40}$/;
+
+/**
+ * Nema's own copy of a GitHub extension is a snapshot of one commit. A branch or tag as the revision
+ * would make the record claim something that can move after the bytes were copied.
+ */
+function assertPinned(record: ExtensionRecord): void {
+  if (record.provision !== "managed") return;
+  if (/^https:\/\/(www\.)?github\.com\//i.test(record.source) && !COMMIT.test(record.revision)) {
+    throw new Error("a GitHub source must be pinned to a 40-character commit");
+  }
+}
+
 function indexPath(root: string): string {
   return path.join(root, "index.json");
 }
@@ -87,6 +100,7 @@ export function openExtensionStore(root: string) {
     },
     putManaged(record: ExtensionRecord): void {
       assertId(record.id);
+      assertPinned(record);
       if (record.provision === "managed") {
         const target = ownedDirectory(root, record.id);
         if (!existsSync(target)) mkdirSync(target);
@@ -116,6 +130,7 @@ export function openExtensionStore(root: string) {
     installManaged(record: ExtensionRecord, stagedDir: string): void {
       assertId(record.id);
       if (record.provision !== "managed") throw new Error("only a managed extension can be installed");
+      assertPinned(record);
       if (!existsSync(stagedDir) || !lstatSync(stagedDir).isDirectory()) {
         throw new Error("staged extension directory is missing");
       }

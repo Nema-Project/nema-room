@@ -306,6 +306,28 @@ export async function removeExtension(daemon: DaemonRpc, id: string): Promise<{ 
   return { id: row.id, removed };
 }
 
+/** GitHub reads take several requests; an ordinary daemon call gets 30 s, this one gets 60 s. */
+export const RESOLVE_SOURCE_TIMEOUT_MS = 60_000;
+
+/**
+ * Pin a pasted skill source to one commit and list what it contains, without installing anything.
+ *
+ * The daemon does the GitHub reads, since it is the side that will later copy the files. The hub only
+ * checks the answer is a preview pinned to a 40-character commit before the page shows it: a preview
+ * that names a branch would let the page promise one version and the install copy another.
+ */
+export async function resolveExtensionSource(daemon: DaemonRpc, source: string): Promise<Record<string, unknown>> {
+  const result = await daemon.call("extensions.resolveSource", { source }, RESOLVE_SOURCE_TIMEOUT_MS);
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    throw new DaemonRpcError("extensions.resolveSource returned an invalid result");
+  }
+  const row = result as Record<string, unknown>;
+  if (typeof row.repository !== "string" || typeof row.commit !== "string" || !/^[0-9a-f]{40}$/.test(row.commit) || !Array.isArray(row.skills)) {
+    throw new DaemonRpcError("extensions.resolveSource returned an invalid result");
+  }
+  return row;
+}
+
 /** One row per call that passed the "function is enabled" check, success or failure. */
 export async function recordPluginCall(
   db: Db,

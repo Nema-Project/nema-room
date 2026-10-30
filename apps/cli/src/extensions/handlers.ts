@@ -1,6 +1,11 @@
 import path from "node:path";
 import type { RpcRouter } from "../daemon/rpc.js";
+import { parseSkillSource } from "@nema/shared";
+import { resolveSkillSource, type SkillCandidate, type SkillResolution, type SourceFetch } from "./source.js";
 import { openExtensionStore } from "./store.js";
+
+/** Hub waits 60 s for this RPC; stop GitHub reads first so the daemon's own error reaches the page. */
+const RESOLVE_TIMEOUT_MS = 45_000;
 
 function requireId(params: unknown, method: string): string {
   const id = (params as { id?: unknown } | undefined)?.id;
@@ -16,8 +21,14 @@ function requireUseState(params: unknown): "enabled" | "disabled" {
 
 export type ExtensionRemoval = { id: string; removed: "managed" | "external" };
 
-export function registerExtensionHandlers(router: RpcRouter, nemaHome: string): void {
-  const store = openExtensionStore(path.join(nemaHome, "extensions"));
+/** A resolved source as the install preview shows it: where each skill would land, and whether it is already there. */
+export type SourcePreview = SkillResolution & { skills: Array<SkillCandidate & { target: string | null; installed: boolean }> };
+
+export type ExtensionHandlerOptions = { fetch?: SourceFetch };
+
+export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, options: ExtensionHandlerOptions = {}): void {
+  const root = path.join(nemaHome, "extensions");
+  const store = openExtensionStore(root);
   router.register("extensions.list", async () => store.list());
   // Three operations, three sets of rules, and the page may only reach two of them.
   //
@@ -39,5 +50,31 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string): 
     }
     store.detach(id);
     return { id, removed: "external" };
+  });
+  // Read-only: parse the pasted source, pin it to one commit, and list the skills at that commit. No
+  // record or directory is written, so an abandoned preview leaves nothing behind.
+  router.register("extensions.resolveSource", async (params): Promise<SourcePreview> => {
+    const raw = (params as { source?: unknown } | undefined)?.source;
+    if (typeof raw !== "string") throw new Error("extensions.resolveSource needs a string source");
+    const source = parseSkillSource(raw);
+    const fetch = options.fetch ?? (globalThis.fetch as unknown as SourceFetch);
+    let resolved: SkillResolution;
+    try {
+      resolved = await resolveSkillSource(source, { fetch, signal: AbortSignal.timeout(RESOLVE_TIMEOUT_MS) });
+    } catch (error) {
+      if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+        throw new Error(`GitHub did not answer within ${RESOLVE_TIMEOUT_MS / 1000} s`);
+      }
+      throw error;
+    }
+    const present = new Set(store.list().map((row) => row.id));
+    return {
+      ...resolved,
+      skills: resolved.skills.map((skill) => ({
+        ...skill,
+        target: skill.id ? path.join(root, "extensions", skill.id) : null,
+        installed: skill.id ? present.has(skill.id) : false,
+      })),
+    };
   });
 }

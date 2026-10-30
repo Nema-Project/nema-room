@@ -161,3 +161,50 @@ test("extensions.remove refuses an unknown id and leaves the store alone", async
   expect(after.result).toEqual(before.result);
   expect(existsSync(join(dir, "extensions", "extensions", "skill"))).toBe(true);
 });
+
+test("extensions.resolveSource previews a GitHub source pinned to one commit, with each skill's target folder", async () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-rpc-"));
+  const commit = "0123456789abcdef0123456789abcdef01234567";
+  const replies: Record<string, unknown> = {
+    "https://api.github.com/repos/acme/skills": { full_name: "acme/skills", default_branch: "main", license: null },
+    "https://api.github.com/repos/acme/skills/commits/main": { sha: commit },
+    [`https://api.github.com/repos/acme/skills/git/trees/${commit}?recursive=1`]: { tree: [{ path: "SKILL.md", type: "blob", sha: "a".repeat(40) }] },
+    [`https://raw.githubusercontent.com/acme/skills/${commit}/SKILL.md`]: "---\nname: notes\ndescription: Take notes\n---\n",
+  };
+  const fetch = async (url: string) => {
+    if (!(url in replies)) throw new Error(`unexpected fetch: ${url}`);
+    const body = replies[url];
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => body, text: async () => String(body) };
+  };
+  const router = new RpcRouter();
+  registerExtensionHandlers(router, dir, { fetch });
+  const response = await rpc(router, "r1", "extensions.resolveSource", { source: "https://github.com/acme/skills" });
+  expect(response.ok).toBe(true);
+  if (!response.ok) return;
+  expect(response.result).toMatchObject({
+    repository: "https://github.com/acme/skills",
+    commit,
+    license: null,
+    skills: [{ id: "notes", name: "notes", path: ".", target: join(dir, "extensions", "extensions", "notes"), installed: false }],
+  });
+  // A preview writes nothing: no record, no directory.
+  expect(existsSync(join(dir, "extensions", "index.json"))).toBe(false);
+  expect(existsSync(join(dir, "extensions", "extensions", "notes"))).toBe(false);
+});
+
+test("extensions.resolveSource refuses an unsupported source before fetching anything", async () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-rpc-"));
+  const asked: string[] = [];
+  const router = new RpcRouter();
+  registerExtensionHandlers(router, dir, {
+    fetch: async (url: string) => {
+      asked.push(url);
+      throw new Error("no network in tests");
+    },
+  });
+  for (const params of [{}, { source: 7 }, { source: "https://gitlab.com/acme/skills" }]) {
+    const response = await rpc(router, "r2", "extensions.resolveSource", params);
+    expect(response.ok).toBe(false);
+  }
+  expect(asked).toEqual([]);
+});
