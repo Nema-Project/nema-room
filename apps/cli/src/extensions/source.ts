@@ -114,7 +114,8 @@ export async function commitTree(owner: string, repo: string, commit: string, o:
 
 /** `name` and `description` from a SKILL.md front matter; plain and folded/literal scalars only. */
 export function skillFrontMatter(text: string): { name: string; description: string } | null {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text.slice(0, 64 * 1024));
+  // The whole accepted file may hold the front matter: callers already refuse anything over the cap.
+  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text.slice(0, MAX_SKILL_BYTES));
   if (!match) return null;
   const lines = match[1]!.split(/\r?\n/);
   const values: Record<string, string> = {};

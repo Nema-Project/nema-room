@@ -639,6 +639,8 @@ describe("workspace plugins", () => {
     };
     const response = await uiReq("POST", "/api/extensions/code/repair");
     expect(response.status).toBe(200);
+    // Longer than the packaged Graphify check's own 60 s limit, so the hub does not give up first.
+    expect(lastTimeoutMs).toBeGreaterThan(60_000);
     expect(await response.json()).toEqual(code);
     for (const bad of [null, { ...code, id: "grill" }, { ...code, provision: "managed" }, { ...code, availability: "fine" }, { ...code, checkedAt: 1 }]) {
       daemonCall = async () => bad;

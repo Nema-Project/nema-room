@@ -431,9 +431,15 @@ export async function attachExtension(daemon: DaemonRpc, folder: string): Promis
   return row;
 }
 
+/**
+ * The daemon gives the packaged Graphify check up to 60 s and the GitHub CLI check two 10 s calls,
+ * and a second Repair of the same item waits for the first; the hub waits longer than one check.
+ */
+export const REPAIR_TIMEOUT_MS = 90_000;
+
 /** Check a bundled item again; the daemon answers with the record carrying the stored result. */
 export async function repairExtension(daemon: DaemonRpc, id: string): Promise<Record<string, unknown>> {
-  const row = plainObject(await daemon.call("extensions.repair", { id }));
+  const row = plainObject(await daemon.call("extensions.repair", { id }, REPAIR_TIMEOUT_MS));
   if (
     !row ||
     row.id !== id ||

@@ -3,10 +3,25 @@ import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { MAX_DISCOVERED_SKILLS, MAX_SCANNED_ENTRIES, discoverSkills, inspectSkillFolder } from "../../src/extensions/discover.js";
+import { MAX_DISCOVERED_SKILLS, MAX_SCANNED_ENTRIES, discoverSkills, readEntries, inspectSkillFolder } from "../../src/extensions/discover.js";
 import { bundledExtensions, type ExtensionRecord } from "../../src/extensions/store.js";
 
 let home: string | undefined;
+// Folder links are junctions, which Windows creates without extra rights. A file link needs
+// Developer Mode or elevation there, so tests that need one check first.
+const canLinkFiles = (() => {
+  const probe = mkdtempSync(join(tmpdir(), "nema-link-probe-"));
+  try {
+    writeFileSync(join(probe, "a"), "");
+    symlinkSync(join(probe, "a"), join(probe, "b"), "file");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
+
 // Permission bits do not stop root, and Windows ignores them.
 const canDenyReads = process.platform !== "win32" && process.getuid?.() !== 0;
 const denied: string[] = [];
@@ -83,16 +98,16 @@ test("a link that leaves its location is listed with a problem and its SKILL.md 
   home = realpathSync(mkdtempSync(join(tmpdir(), "nema-discover-")));
   const outside = skill(join(home, "elsewhere", "secret"), "secret");
   mkdirSync(join(home, ".claude", "skills"), { recursive: true });
-  symlinkSync(outside, join(home, ".claude", "skills", "secret"), "dir");
+  symlinkSync(outside, join(home, ".claude", "skills", "secret"), "junction");
   const inside = skill(join(home, ".claude", "skills", "real"), "real");
-  symlinkSync(inside, join(home, ".claude", "skills", "alias"), "dir");
+  symlinkSync(inside, join(home, ".claude", "skills", "alias"), "junction");
   const rows = discoverSkills(home, bundledExtensions()).skills;
   expect(rows.find((row) => row.path.endsWith("secret"))).toMatchObject({ name: null, description: null, id: null, problem: "outside-location" });
   // A link to a folder in the same location resolves to that folder's real path and is listed once.
   expect(rows.filter((row) => row.path === inside)).toEqual([expect.objectContaining({ name: "real", problem: null })]);
 });
 
-test("a SKILL.md that is a link out of its folder is not read", () => {
+test.skipIf(!canLinkFiles)("a SKILL.md that is a link out of its folder is not read", () => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "nema-discover-")));
   const target = join(home, "private.md");
   writeFileSync(target, "---\nname: leaked\ndescription: x\n---\n");
@@ -168,7 +183,7 @@ test("a link to a folder whose name starts with two dots stays inside its locati
   home = realpathSync(mkdtempSync(join(tmpdir(), "nema-discover-")));
   const base = join(home, ".claude", "skills");
   const target = skill(join(base, "..notes"), "notes");
-  symlinkSync(target, join(base, "notes-link"), "dir");
+  symlinkSync(target, join(base, "notes-link"), "junction");
   const rows = discoverSkills(home, bundledExtensions()).skills;
   expect(rows).toEqual([expect.objectContaining({ path: target, name: "notes", problem: null })]);
 });
@@ -197,10 +212,10 @@ test.skipIf(!canDenyReads)("a linked skill folder whose target cannot be reached
   home = realpathSync(mkdtempSync(join(tmpdir(), "nema-discover-")));
   const base = join(home, ".claude", "skills");
   const target = skill(join(base, "vault", "notes"), "notes");
-  symlinkSync(target, join(base, "notes-link"), "dir");
+  symlinkSync(target, join(base, "notes-link"), "junction");
   chmodSync(join(base, "vault"), 0o000);
   denied.push(join(base, "vault"));
-  symlinkSync(join(base, "gone"), join(base, "dangling"), "dir");
+  symlinkSync(join(base, "gone"), join(base, "dangling"), "junction");
   const rows = discoverSkills(home, bundledExtensions()).skills;
   expect(rows.map((row) => [basename(row.path), row.problem])).toEqual([
     ["notes-link", "unreadable"],
@@ -221,4 +236,24 @@ test.skipIf(!canDenyReads)("a SKILL.md link whose target cannot be reached is un
   mkdirSync(dangling);
   symlinkSync(join(dangling, "nowhere.md"), join(dangling, "SKILL.md"), "file");
   expect(inspectSkillFolder(dangling).problem).toBe("missing-frontmatter");
+});
+
+test("the entry reader stops at its bound and says more were there", () => {
+  home = realpathSync(mkdtempSync(join(tmpdir(), "nema-discover-")));
+  for (let i = 0; i < 8; i++) writeFileSync(join(home, `e${i}`), "");
+  const capped = readEntries(home, 5);
+  expect(capped.entries).toHaveLength(5);
+  expect(capped.more).toBe(true);
+  const exact = readEntries(home, 8);
+  expect(exact.entries).toHaveLength(8);
+  expect(exact.more).toBe(false);
+});
+
+test("front matter that ends after the first 64 KiB of an accepted SKILL.md is still read", () => {
+  home = realpathSync(mkdtempSync(join(tmpdir(), "nema-discover-")));
+  const folder = join(home, "long");
+  mkdirSync(folder);
+  const description = "d".repeat(100 * 1024);
+  writeFileSync(join(folder, "SKILL.md"), `---\nname: long\ndescription: ${description}\n---\nBody\n`);
+  expect(inspectSkillFolder(folder)).toMatchObject({ name: "long", id: "long", problem: null });
 });

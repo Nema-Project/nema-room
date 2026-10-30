@@ -47,7 +47,7 @@ test("extensions.discover lists the home's skill folders against current records
 test("extensions.attach writes an external record at the real path and copies nothing", async () => {
   const { nemaHome, home, call } = setup();
   const folder = skill(join(home, "my-skills", "notes"));
-  symlinkSync(join(home, "my-skills"), join(home, "linked"), "dir");
+  symlinkSync(join(home, "my-skills"), join(home, "linked"), "junction");
   const response = await call("extensions.attach", { path: join(home, "linked", "notes") });
   expect(response.ok).toBe(true);
   if (!response.ok) return;

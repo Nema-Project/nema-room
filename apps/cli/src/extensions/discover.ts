@@ -110,7 +110,7 @@ export function placeSkill(skill: InspectedSkill, records: ExtensionRecord[]): {
 }
 
 /** Up to `limit` entries of one folder, read one at a time; `more` says the folder held others. */
-function readEntries(folder: string, limit: number): { entries: Dirent[]; more: boolean } {
+export function readEntries(folder: string, limit: number): { entries: Dirent[]; more: boolean } {
   const dir = opendirSync(folder);
   const entries: Dirent[] = [];
   try {
