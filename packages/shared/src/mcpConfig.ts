@@ -142,7 +142,12 @@ function parseShape(input: Record<string, unknown>): McpConfig {
       }
     });
     const config: McpStdioConfig = { transport: "stdio", command, args, env: parseValues(input.env, "env", ENV_NAME, "environment variable name", false) };
-    if (input.cwd !== undefined) config.cwd = text(input.cwd, "cwd");
+    if (input.cwd !== undefined) {
+      const cwd = text(input.cwd, "cwd");
+      // Checked on save, not only at start, so a config that can never start is never stored.
+      if (!/^(\/|[A-Za-z]:[\\/]|\\\\)/.test(cwd)) fail("cwd must be an absolute path");
+      config.cwd = cwd;
+    }
     return config;
   }
   if (input.transport === "http") {

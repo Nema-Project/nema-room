@@ -1,4 +1,5 @@
 import { AttachmentCapabilitiesSchema, type AttachmentCapabilities, type AttachmentView, type ExtensionRecord, type SkillDiscovery, type SkillInstallJob, type SkillSourcePreview } from "@nema/shared";
+import type { McpConfig, McpConnection } from "@nema/shared";
 import type {
   EntryListItem,
   Entry,
@@ -241,3 +242,21 @@ export async function fetchAttachmentBlob(workspaceId: string, id: string): Prom
 
 /** Delete an attachment's bytes; the hub keeps a tombstone and returns it. */
 export const deleteAttachment = (workspaceId: string, id: string) => request<AttachmentView>(att(workspaceId, id), { method: "DELETE" });
+
+// --- mcp: MCP servers on the Plugins page (D-2: credentials are write-only) ---
+/** An MCP server's state as the hub reports it. Never holds a credential value. */
+export type McpServerStatus = { id: string; connection: McpConnection; server: { name: string; version: string } | null; tools: Array<{ name: string; schemaDigest: string }>; lastError: string | null };
+const mcpUrl = (id: string) => `/extensions/${encodeURIComponent(id)}/mcp`;
+/** Save (add or replace) an MCP server config. Credential slots hold references only. */
+export const saveMcpServer = (body: { id: string; name: string; config: McpConfig; create?: boolean }) => request<ExtensionRecord>("/extensions/mcp", { method: "POST", body });
+/** The saved config for the edit form, and which secrets are set. */
+export const getMcpServer = (id: string) =>
+  request<{ id: string; name: string; config: McpConfig; secrets: Array<{ name: string; configured: boolean }> }>(mcpUrl(id));
+export const getMcpServerStatus = (id: string) => request<McpServerStatus>(`${mcpUrl(id)}/status`);
+export const startMcpServer = (id: string) => request<McpServerStatus>(`${mcpUrl(id)}/start`, { method: "POST", body: {} });
+export const stopMcpServer = (id: string) => request<McpServerStatus>(`${mcpUrl(id)}/stop`, { method: "POST", body: {} });
+/** D-2: write a credential; nothing ever reads one back. */
+export const setMcpSecret = (id: string, name: string, value: string) =>
+  request<{ id: string; name: string; configured: boolean; status: McpServerStatus }>(`${mcpUrl(id)}/secrets/${encodeURIComponent(name)}`, { method: "PUT", body: { value } });
+export const clearMcpSecret = (id: string, name: string) =>
+  request<{ id: string; name: string; configured: boolean; status: McpServerStatus }>(`${mcpUrl(id)}/secrets/${encodeURIComponent(name)}`, { method: "DELETE" });

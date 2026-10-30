@@ -211,3 +211,10 @@ test("start exits non-zero when the server did not connect", async () => {
   expect(await run(["mcp", "start", "search"])).toBe(1);
   expect(errors.join("\n")).toMatch(/needs-login/);
 });
+
+test("edit saves with create: false, so a server removed meanwhile is not recreated", async () => {
+  reply = (method) => (method === "GET" ? { status: 200, body: { id: "search", name: "Search" } } : { status: 404, body: { error: "MCP server not found: search" } });
+  expect(await run(["mcp", "edit", "search", "--url", "https://a.example/mcp"])).toBe(1);
+  expect(requests[1]).toMatchObject({ method: "POST", body: { id: "search", name: "Search", create: false } });
+  expect(errors.join("\n")).toMatch(/not found/);
+});

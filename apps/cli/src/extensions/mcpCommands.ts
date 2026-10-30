@@ -126,7 +126,7 @@ export function registerMcpCommands(mcp: Command, deps: McpCommandDeps, exit: (c
     if (!name) throw new Error("give --name");
     try {
       // An add is create-only on the daemon too, so another add that won the race is not replaced.
-      await hub(flags.hub, "POST", "/extensions/mcp", { id, name, config, ...(mode === "add" ? { create: true } : {}) });
+      await hub(flags.hub, "POST", "/extensions/mcp", { id, name, config, create: mode === "add" });
     } catch (error) {
       if (mode === "add" && error instanceof HubError && error.status === 409 && /already exists/.test(error.message)) throw taken();
       throw error;

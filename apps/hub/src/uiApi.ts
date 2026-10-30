@@ -303,7 +303,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     } catch (error) {
       throw new HttpError(400, error instanceof Error ? error.message : "invalid MCP config");
     }
-    return mcpRoute(() => saveMcpConfig(deps.daemon, { id, name, config: parsed, ...(create ? { create: true } : {}) }))(c);
+    return mcpRoute(() => saveMcpConfig(deps.daemon, { id, name, config: parsed, ...(create !== undefined ? { create } : {}) }))(c);
   });
   app.get("/extensions/:id/mcp", mcpRoute((c) => getMcpConfig(deps.daemon, c.req.param("id")!)));
   app.get("/extensions/:id/mcp/status", mcpRoute((c) => mcpServerStatus(deps.daemon, c.req.param("id")!)));
