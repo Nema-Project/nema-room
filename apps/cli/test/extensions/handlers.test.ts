@@ -363,3 +363,24 @@ test("a daemon start turns an install that was cut off into a failed one", async
   expect(status.ok).toBe(true);
   if (status.ok) expect(status.result).toMatchObject({ state: "failed", error: "interrupted: the daemon stopped before the install finished", commit, path: "notes" });
 });
+
+test("extensions.list says what each installed Skill can do under each runtime", async () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-rpc-"));
+  const { managedSkill, skillText } = await import("../skills/helpers.js");
+  managedSkill(dir, "pdf", { "SKILL.md": skillText("pdf"), "scripts/fill.py": "print(1)" });
+  const unreadable = managedSkill(dir, "gone", { "SKILL.md": skillText("gone") });
+  rmSync(unreadable, { recursive: true, force: true });
+  const router = new RpcRouter();
+  registerExtensionHandlers(router, dir);
+  const listed = await router.handle({ type: "rpc.request", id: "1", method: "extensions.list", params: {} });
+  expect(listed.ok).toBe(true);
+  if (!listed.ok) return;
+  const rows = listed.result as Array<{ id: string; skill?: { runtimes: Array<{ adapter: string; support: string; missing: string[] }> } }>;
+  const pdf = rows.find((row) => row.id === "pdf")!;
+  expect(pdf.skill?.runtimes.map((r) => [r.adapter, r.support, r.missing])).toEqual([
+    ["claude-code", "partial", ["scripts"]],
+    ["codex-direct", "partial", ["scripts"]],
+  ]);
+  expect(rows.find((row) => row.id === "gone")).not.toHaveProperty("skill");
+  expect(rows.find((row) => row.id === "grill")).not.toHaveProperty("skill");
+});

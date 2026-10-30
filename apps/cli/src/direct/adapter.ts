@@ -12,6 +12,7 @@ import { CodexFileTokenSource, defaultCodexHome } from "./codexLogin.js";
 import { DEFAULT_LIMITS, runToolLoop } from "./loop.js";
 import { siwcRefresher } from "./siwc.js";
 import { roomTools } from "./tools.js";
+import { prepareDirectSkills } from "../skills/direct.js";
 import {
   BYOK_PROFILE,
   ByokRejectedError,
@@ -189,14 +190,17 @@ export class CodexDirectAdapter implements AgentAdapter {
     const room = new RoomClient(task.hubUrl, task.runToken, signal);
     const sessionId = randomUUID();
     const now = this.opts.now ?? Date.now;
-    const tools = roomTools(task.pluginTools);
+    const skills = await prepareDirectSkills({ nemaHome: this.opts.nemaHome, prompt: task.prompt, onEvent });
+    const instructions = skills.instructions;
+    const tools = [...roomTools(task.pluginTools), ...skills.tools];
 
     const { reply } = await runToolLoop({
-      instructions: task.prompt,
+      instructions,
       userText: DIRECT_USER_TEXT,
       userParts: attachmentParts(loaded.attachments),
       room,
       pluginTools: task.pluginTools,
+      ...(skills.reader ? { skills: skills.reader } : {}),
       signal,
       ...(task.limits ? { limits: { ...DEFAULT_LIMITS, maxModelCalls: task.limits.maxModelCalls, maxToolCalls: task.limits.maxToolCalls } } : {}),
       onProgress: (text) => onEvent({ type: "tool_call", text }),
@@ -213,7 +217,7 @@ export class CodexDirectAdapter implements AgentAdapter {
         };
         try {
           return await streamResponse(
-            { model, instructions: task.prompt, input, tools, reasoning: { effort: config.reasoningEffort, summary: "auto" }, sessionId },
+            { model, instructions, input, tools, reasoning: { effort: config.reasoningEffort, summary: "auto" }, sessionId },
             {
               ...ctx,
               onTextDelta: (d) => {
@@ -227,6 +231,8 @@ export class CodexDirectAdapter implements AgentAdapter {
         }
       },
     });
+    // Activation reports go to the hub; give them a moment, but a lost one must not fail the task.
+    if (skills.reader && !(await skills.reader.settle(5000))) onEvent({ type: "progress", text: "Skill 激活记录未能及时上报" });
     return { ok: true, reply };
   }
 

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { PluginToolSpec } from "@nema/shared";
 import type { RoomClient } from "../room/client.js";
 import { dispatchTool, type RoomApi } from "./tools.js";
+import { READ_SKILL, type SkillReader } from "../skills/readSkill.js";
 import type { CollectedResponse, InputContentPart, InputItem, OutputItem, OutputTextPart, SummaryTextPart } from "./transport.js";
 import { isFunctionCall, isMessage } from "./transport.js";
 
@@ -24,6 +25,8 @@ export type ToolLoopOptions = {
   room: RoomClient | RoomApi;
   /** Plugin functions from `task.assign`. Routed through `dispatchTool`, so they count toward the tool limit. */
   pluginTools?: PluginToolSpec[];
+  /** Reads Skills for `read_skill`; only set when the task has Skills. */
+  skills?: SkillReader;
   /** Short progress notes (e.g. which Room function is being called). */
   onProgress: (text: string) => void;
   limits?: LoopLimits;
@@ -118,13 +121,14 @@ export async function runToolLoop(opts: ToolLoopOptions): Promise<{ reply: strin
       for (const c of calls) {
         if (toolCalls >= limits.maxToolCalls) throw new Error(`Agent 超出单次运行上限（工具调用 ${limits.maxToolCalls} 次）`);
         toolCalls++;
-        const r = await dispatchTool(c.name, c.arguments, opts.room, opts.pluginTools ?? []);
+        const r = await dispatchTool(c.name, c.arguments, opts.room, opts.pluginTools ?? [], opts.skills);
         signal?.throwIfAborted();
         if (!r.known) {
           unknownTools++;
           if (unknownTools > limits.maxUnknownTools) throw new Error("Agent 多次请求未提供的工具，已中止");
         } else {
-          progress(`调用 ${c.name}`);
+          // A Skill read reports itself, with the Skill and its version.
+          if (!(opts.skills && c.name === READ_SKILL)) progress(`调用 ${c.name}`);
         }
         history.push({ type: "function_call_output", call_id: c.call_id, output: r.output });
       }

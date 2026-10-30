@@ -117,6 +117,28 @@ describe("SkillInstaller", () => {
     expect(existsSync(join(root, "staging")) ? readdirSync(join(root, "staging")) : []).toEqual([]);
   });
 
+  test("an install saves the per-file manifest taken from the tree", async () => {
+    const { root, installer } = setup();
+    await installer.start(request);
+    await installer.settled("pdf");
+    const manifest = JSON.parse(readFileSync(join(root, "extensions", "pdf", ".nema-manifest.json"), "utf8"));
+    const content = (p: string) => Buffer.from(`content of ${p}\n`);
+    expect(manifest).toEqual({
+      files: [
+        { path: "SKILL.md", size: SKILL.length, blob: blobSha(SKILL), executable: false, binary: false },
+        { path: "reference/forms.md", size: content("skills/pdf/reference/forms.md").length, blob: blobSha(content("skills/pdf/reference/forms.md")), executable: false, binary: false },
+        { path: "scripts/fill.py", size: content("skills/pdf/scripts/fill.py").length, blob: blobSha(content("skills/pdf/scripts/fill.py")), executable: false, binary: false },
+      ],
+    });
+  });
+
+  test("a skill that ships its own .nema-manifest.json is refused", async () => {
+    const { store, installer } = setup([...standard(), { path: "skills/pdf/.nema-manifest.json" }]);
+    await installer.start(request);
+    await installer.settled("pdf");
+    expect(store.list().find((row) => row.id === "pdf")).toMatchObject({ installState: "failed", error: expect.stringContaining(".nema-manifest.json") });
+  });
+
   test("refuses a request that is not pinned, names no installable skill, or is already installed", async () => {
     const { installer } = setup();
     await expect(installer.start({ ...request, commit: "main" })).rejects.toThrow("install needs a 40-character commit");
