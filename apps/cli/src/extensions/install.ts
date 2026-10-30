@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseSkillSource, safeRepoPath, type ExtensionRecord, type SkillSource } from "@nema/shared";
 import { RAW, commitTree, encodePath, pinnedSkillRecord, resolveSkillSource, type SourceFetch, type TreeEntry } from "./source.js";
 import type { openExtensionStore } from "./store.js";
+import { MANIFEST_FILE, gitBlobSha, isBinary, type ManifestFile } from "../skills/manifest.js";
 
 type Store = ReturnType<typeof openExtensionStore>;
 
@@ -36,10 +36,6 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function gitBlobSha(bytes: Buffer): string {
-  return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
-}
-
 /**
  * The files of one skill folder at one commit, checked before any byte is downloaded: regular files
  * only, names safe on every platform, no two names that collide on a case-insensitive disk, and
@@ -55,6 +51,7 @@ export function skillFiles(entries: TreeEntry[], folder: string): Array<TreeEntr
     if (entry.mode === "120000") throw new Error(`${entry.path} is a symbolic link`);
     const relative = entry.path.slice(prefix.length);
     if (!safeRepoPath(relative)) throw new Error(`unsafe file name in ${entry.path}`);
+    if (relative === MANIFEST_FILE) throw new Error(`${entry.path}: ${MANIFEST_FILE} is a name Nema keeps for itself`);
     files.push({ ...entry, relative });
   }
   if (files.length > MAX_FILES) throw new Error(`${folder} has more than ${MAX_FILES} files`);
@@ -215,6 +212,7 @@ export class SkillInstaller {
       if (truncated) throw new Error(`GitHub cut the file list of ${owner}/${repo} short; it is too large to install from`);
       const files = skillFiles(entries, folder);
       job.total = files.length;
+      const manifest: ManifestFile[] = [];
       for (const file of files) {
         const response = await this.o.fetch(`${RAW}/${owner}/${repo}/${commit}/${encodePath(file.path)}`, {
           headers: { "User-Agent": "nema-extension-installer" },
@@ -231,8 +229,11 @@ export class SkillInstaller {
         const mode = file.mode === "100755" ? 0o755 : 0o644;
         writeFileSync(target, bytes, { flag: "wx", mode });
         chmodSync(target, mode);
+        manifest.push({ path: file.relative, size: bytes.length, blob: file.sha, executable: file.mode === "100755", binary: isBinary(bytes) });
         job.done += 1;
       }
+      // Every later read of this Skill is checked against these blob hashes (Skills spec §1).
+      writeFileSync(path.join(stage, MANIFEST_FILE), JSON.stringify({ files: manifest }), { flag: "wx", mode: 0o600 });
       signal.throwIfAborted();
       // Activate with the record as it is now: the person may have switched it off meanwhile.
       const current = this.o.store.list().find((row) => row.id === record.id);

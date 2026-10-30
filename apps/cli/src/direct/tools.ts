@@ -2,6 +2,7 @@ import { UpsertEntryInput, type PluginToolSpec } from "@nema/shared";
 import { z } from "zod";
 import { capText, type RoomClient, type RoomResult } from "../room/client.js";
 import type { FunctionTool } from "./transport.js";
+import { READ_SKILL, type SkillReader } from "../skills/readSkill.js";
 
 // The codex-direct model sees the five Room functions plus the task's plugin tools. Nothing else is declared,
 // and nothing else is executed. Claude's allowed names and `nema mcp` use this same list.
@@ -117,12 +118,15 @@ export async function dispatchTool(
   argsJson: string,
   room: RoomApi,
   pluginTools: PluginToolSpec[] = [],
+  skills?: SkillReader,
 ): Promise<{ output: string; known: boolean }> {
+  // Only declared when the task has Skills; it runs here in the daemon and never reaches the hub.
+  if (skills && name === READ_SKILL) return { output: capText(await skills.read(argsJson)), known: true };
   const plugin = pluginTools.find((tool) => tool.name === name);
   const isRoom = (ROOM_NAMES as readonly string[]).includes(name);
   if (!plugin && !isRoom) {
     const shown = name.length > 100 ? name.slice(0, 100) + "…" : name;
-    const allowed = [...ROOM_NAMES, ...pluginTools.map((tool) => tool.name)].join("、");
+    const allowed = [...ROOM_NAMES, ...pluginTools.map((tool) => tool.name), ...(skills ? [READ_SKILL] : [])].join("、");
     return { output: errorOutput(`未知函数 ${JSON.stringify(shown)}；只能使用 ${allowed}`), known: false };
   }
   let args: unknown;

@@ -129,3 +129,11 @@ describe("dispatchTool plugin tools", () => {
     expect(calls).toEqual([{ name: "code__read", args: { repo: "r", path: "a.ts" } }]);
   });
 });
+
+test("read_skill is only known when the task has a Skill reader", async () => {
+  const { dispatchTool } = await import("../../src/direct/tools.js");
+  const room = {} as never;
+  expect(await dispatchTool("read_skill", '{"name":"x"}', room, [])).toMatchObject({ known: false });
+  const reader = { read: async (args: string) => `read ${args}` } as never;
+  expect(await dispatchTool("read_skill", '{"name":"x"}', room, [], reader)).toEqual({ output: 'read {"name":"x"}', known: true });
+});

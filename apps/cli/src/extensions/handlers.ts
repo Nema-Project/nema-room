@@ -5,6 +5,7 @@ import { parseSkillSource } from "@nema/shared";
 import { SkillInstaller, type InstallJob } from "./install.js";
 import { resolveSkillSource, type SkillCandidate, type SkillResolution, type SourceFetch } from "./source.js";
 import { bundledExtensions, openExtensionStore, type ExtensionRecord } from "./store.js";
+import { withSkillUsage } from "../skills/snapshot.js";
 import { discoverSkills, inspectSkillFolder, placeSkill } from "./discover.js";
 import { graphifyInstallStatus } from "../repos/graphify.js";
 import { GithubGh } from "../github/gh.js";
@@ -44,6 +45,8 @@ export type ExtensionHandlerOptions = {
   ownedHelpers?: OwnedHelperScope;
   /** Connect plus `listTools` for an MCP server; for tests. */
   mcpTimeoutMs?: number;
+  /** Whether this machine's Claude Code can load Skills natively; until that check exists, assume it can. */
+  claudeSkillsOk?: () => Promise<boolean>;
 };
 
 export type ExtensionHandlers = {
@@ -69,7 +72,8 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
   router.register("extensions.list", async () => {
     // Started by the Plugins page as it loads: wait for crash recovery, so a stopped leftover's note shows.
     await mcp.recovered;
-    return store.list().map((row) => (row.kind === "mcp" && row.provision === "managed" ? { ...row, mcp: mcp.state(row) } : row));
+    const rows = store.list().map((row) => (row.kind === "mcp" && row.provision === "managed" ? { ...row, mcp: mcp.state(row) } : row));
+    return withSkillUsage(nemaHome, rows, options.claudeSkillsOk ?? (async () => true));
   });
   // Three operations, three sets of rules, and the page may only reach two of them.
   //

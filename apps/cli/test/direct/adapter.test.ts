@@ -172,6 +172,38 @@ describe("CodexDirectAdapter", () => {
     expect(body.tools.every((t) => t.type === "function" && t.strict === false)).toBe(true);
   });
 
+  test("with an enabled Skill: catalog after the hub prompt, read_skill offered and answered locally", async () => {
+    login();
+    saveConfig(home, { model: "gpt-configured" });
+    const { managedSkill, skillText, COMMIT } = await import("../skills/helpers.js");
+    managedSkill(home, "tdd", { "SKILL.md": skillText("tdd", "Write the test first.", "# TDD\n\nRed, green, refactor.\n") });
+    server.responses(stream([fcItem("read_skill", { name: "tdd" }, "c1")]), stream([msgItem("done")]));
+    const { result, events } = await run();
+    expect(result).toEqual({ ok: true, reply: "done" });
+    const bodies = server.requests.filter((r) => r.url === "/v1/responses").map((r) => JSON.parse(r.body) as Record<string, unknown>);
+    for (const b of bodies) {
+      expect(String(b.instructions).startsWith("HUB PROMPT: 规则与上下文\n\n# 可用 Skills\n")).toBe(true);
+      expect(String(b.instructions)).toContain("<skill><name>tdd</name><description>Write the test first.</description></skill>");
+      expect((b.tools as { name: string }[]).map((t) => t.name)).toEqual(["list_entries", "read_entry", "upsert_entry", "open_thread", "offer_skill_install", "read_skill"]);
+    }
+    const output = (bodies[1]!.input as { type: string; output?: string }[]).find((i) => i.type === "function_call_output")!.output!;
+    expect(output).toContain(`<skill_content name="tdd" revision="${COMMIT}">\n# TDD\n\nRed, green, refactor.\n`);
+    expect(hubSeen).toEqual([]);
+    expect(events.filter((e) => e.type === "tool_call").map((e) => e.text)).toEqual([`读取 Skill tdd（${COMMIT}）`]);
+  });
+
+  test("without Skills the prompt and tools are unchanged and read_skill is unknown", async () => {
+    login();
+    saveConfig(home, { model: "gpt-configured" });
+    server.responses(stream([fcItem("read_skill", { name: "tdd" }, "c1")]), stream([msgItem("done")]));
+    const { result } = await run();
+    expect(result).toEqual({ ok: true, reply: "done" });
+    const bodies = server.requests.filter((r) => r.url === "/v1/responses").map((r) => JSON.parse(r.body) as Record<string, unknown>);
+    expect(bodies[0]!.instructions).toBe("HUB PROMPT: 规则与上下文");
+    const output = (bodies[1]!.input as { type: string; output?: string }[]).find((i) => i.type === "function_call_output")!.output!;
+    expect(output).toContain("未知函数");
+  });
+
   test("config.model wins over the model list", async () => {
     login();
     saveConfig(home, { model: "gpt-configured", reasoningEffort: "high" });
