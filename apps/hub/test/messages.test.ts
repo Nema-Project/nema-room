@@ -352,6 +352,35 @@ describe("messages with attachments", () => {
     expect(await deliverySet(db, textOnly.task.id)).toEqual([]);
   });
 
+  test("a blank edit needs a file that can still be delivered; a missing file does not count", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const a = await stagedRow(db, ws.id);
+    const sent = await postUserMessage(db, ws.id, "caption", { attachmentIds: [a] });
+    await db.query("update tasks set status = 'done' where workspace_id = $1", [ws.id]);
+    await db.query("update message_attachments set status = 'missing' where id = $1", [a]);
+    await expect(editUserMessage(db, ws.id, sent.message.id, "")).rejects.toMatchObject({ status: 400 });
+    expect((await getMessage(db, sent.message.id))!.content).toBe("caption");
+  });
+
+  test("a blank edit locks the message's files while it checks them", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const a = await stagedRow(db, ws.id);
+    const sent = await postUserMessage(db, ws.id, "caption", { attachmentIds: [a] });
+    await db.query("update tasks set status = 'done' where workspace_id = $1", [ws.id]);
+    const log: string[] = [];
+    const record = (inner: Db): Db => ({
+      query: (sql, params) => { log.push(sql.replace(/\s+/g, " ")); return inner.query(sql, params); },
+      tx: (fn) => inner.tx((t) => fn(record(t))),
+    });
+    await editUserMessage(record(db), ws.id, sent.message.id, "");
+    const lock = log.findIndex((q) => /from message_attachments where message_id = \$1 .*for update/.test(q));
+    const update = log.findIndex((q) => /update messages set content/.test(q));
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(lock).toBeLessThan(update);
+  });
+
   test("editing keeps the attachments and allows empty text only when there are some", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");
