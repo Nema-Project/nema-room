@@ -169,7 +169,7 @@ Skill 里提到的相对路径用 `read_skill` 的 `path` 读取；Nema 不能�
   claude-config/          HOME 和 CLAUDE_CONFIG_DIR（不变）
   work/                   主工作目录（cwd）
     .claude/skills/<id>/  受管和外部 Skill 的副本
-  repo-skills/<仓库标签>/.claude/skills/<名字>/   已信任仓库的项目级 Skill 副本（第 7 节）
+  repo-skills/<仓库 slug>/.claude/skills/<名字>/   已信任仓库的项目级 Skill 副本（第 7 节）
   claude-settings.json    本任务的设置文件（0600），不在任何工作目录里
   mcp.json                不变
 ```
@@ -189,7 +189,7 @@ Skill 里提到的相对路径用 `read_skill` 的 `path` 读取；Nema 不能�
 | `--setting-sources` | `""` | `project` | 主工作目录 `.claude/skills` 和 `--add-dir` 目录的 Skill 都经 `project` 来源载入。`work/` 下除了 `.claude/skills` 没有别的文件，不会载入意外的项目设置 |
 | `--tools` | `""` | `Skill,Read` | 只开这两个内置工具。不开 Bash、Grep、Glob、Edit、Write |
 | `--allowedTools` | `mcp__room__*` | 再加 `Skill`、`Read(/.claude/skills/**)` | 规则写在 CLI 参数里时，`/path` 锚定主工作目录 |
-| `--add-dir` | 无 | 每个已信任仓库一个 `<runDir>/repo-skills/<标签>` | 只给有项目级 Skill 的仓库加 |
+| `--add-dir` | 无 | 每个已信任仓库一个 `<runDir>/repo-skills/<仓库 slug>` | 只给有项目级 Skill 的仓库加 |
 | `--settings` | 无 | `<runDir>/claude-settings.json` | 内容见下 |
 | `--disallowedTools` | `AskUserQuestion` | 不变 | |
 
@@ -241,7 +241,7 @@ hub 的规则第 127 条（「不要读写本地文件」）改成「除了 Skil
 
 | 要求 | 用的机制 | 文档 |
 | --- | --- | --- |
-| 只能读本任务的 Skill 目录 | 工作目录只有 `work/`（内容只有 `.claude/skills`）和 `--add-dir` 的 `repo-skills/<标签>`；`permissions.blockReadsOutsideWorkingDirectories: true` | [权限：工作目录](https://code.claude.com/docs/en/permissions)、[设置参考](https://code.claude.com/docs/en/settings-reference) |
+| 只能读本任务的 Skill 目录 | 工作目录只有 `work/`（内容只有 `.claude/skills`）和 `--add-dir` 的 `repo-skills/<仓库 slug>`；`permissions.blockReadsOutsideWorkingDirectories: true` | [权限：工作目录](https://code.claude.com/docs/en/permissions)、[设置参考](https://code.claude.com/docs/en/settings-reference) |
 | 不能借链接读出去 | 副本里没有链接；允许规则要求请求路径和链接目标都匹配 | [权限：符号链接](https://code.claude.com/docs/en/permissions) |
 | 不能写 | 不开 Edit、Write、NotebookEdit | [CLI 参考 `--tools`](https://code.claude.com/docs/en/cli-reference) |
 | 不能执行 | 不开 Bash、PowerShell；`disableSkillShellExecution`；`disableAllHooks` | [CLI 参考](https://code.claude.com/docs/en/cli-reference)、[设置参考](https://code.claude.com/docs/en/settings-reference) |
@@ -309,15 +309,15 @@ type SkillNote = "model-override" | "stop-not-enforced" | "reserved-slash-name";
 - 每个 Skill 的限制和安装时一样：最多 500 个文件、单文件 5 MiB、总计 20 MiB；
 - 同一个仓库里 `.agents/skills` 和 `.claude/skills` 有同名 Skill 时，取 `.agents/skills` 那个（跨客户端约定），另一个在页面上标「被同仓库的同名 Skill 覆盖」。
 
-**仓库更新后怎么生效。** 下一个任务开始时重新取主分支提交，所以新提交合进主分支后的下一个任务就用新版本。未提交、未合并的改动不生效。版本标识写成 `<仓库标签>@<提交号前 7 位>`，任务事件里能看出用的是哪个提交。
+**仓库更新后怎么生效。** 下一个任务开始时，daemon 先对这个仓库做一次 `fetchMain`（同一仓库 5 分钟内最多一次，失败就用已有的引用并警告），再取主分支提交，所以新提交合进远端主分支后，最迟 5 分钟后的下一个任务就用新版本。未提交、未合并的改动不生效。版本标识写成 `<仓库标签>@<提交号前 7 位>`，任务事件里能看出用的是哪个提交。
 
 **重名和优先级。**
 
-- 用户级（受管、外部）Skill 用不带前缀的名字。仓库里的 Skill 与用户级重名，或者两个仓库之间重名时，仓库那个用 `<仓库标签 slug>:<名字>`，两个都能用。
+- 用户级（受管、外部）Skill 用不带前缀的名字。仓库里的 Skill 与用户级重名，或者两个仓库之间重名时，仓库那个用 `<仓库 slug>:<名字>`，两个都能用。仓库 slug 由标签转成，本任务里两个仓库转出同一个 slug 时，各加 `-<仓库 id 前 6 位>`，副本目录也用这个 slug，从不直接用标签拼路径。
 - 这和 Claude Code 一致：个人 Skill 优先于项目 Skill，`--add-dir` 目录里重名的 Skill 加前缀。实现指南说的「项目级覆盖用户级」，在 Nema 里会让一个仓库的提交者悄悄替换用户自己装的 Skill，所以不采用。
-- Claude Code 下由它原生处理：用户级副本在主工作目录 `work/.claude/skills`，项目级副本在各自的 `--add-dir` 目录，重名时它自己加 `/<目录名>:<名字>` 前缀（v2.1.309+）。目录名用仓库标签 slug，所以两种运行方式的对外名字一致。
+- Claude Code 下由它原生处理：用户级副本在主工作目录 `work/.claude/skills`，项目级副本在各自的 `--add-dir` 目录，重名时它自己加 `/<目录名>:<名字>` 前缀（v2.1.309+）。目录名用上面的仓库 slug，所以两种运行方式的对外名字一致。
 
-**路径和安全限制。** 除了上面的扫描规则，读取时还有：codex-direct 按提交读 git 对象，路径规则同第 2 节；Claude Code 读的是复制出来的副本，读取限制同第 4 节。项目级 Skill 和用户级一样标为第三方内容。
+**路径和安全限制。** 除了上面的扫描规则，读取时还有：codex-direct 按提交读 git 对象的原始字节（不经过按行截断的 `readFileAtRef`），路径规则同第 2 节；Claude Code 读的是复制出来的副本，读取限制同第 4 节。项目级 Skill 和用户级一样标为第三方内容。
 
 ### 8. 激活记录与 thread 内留存（D-6）
 

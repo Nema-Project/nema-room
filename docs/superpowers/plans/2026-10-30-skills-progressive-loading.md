@@ -18,7 +18,7 @@
 
 ## 如何服务 #45
 
-见 spec「如何服务 #45」。本计划的每一批都保持那里的两条：Skill 是第三方说明，不是用户的陈述或决定；读取了哪个 Skill 的哪个版本，在任务事件里可以核对。
+[#45](https://github.com/Nema-Project/nema-room/issues/45) 的判断标准见 spec「如何服务 #45」。本计划的每一批都保持那里的两条：Skill 是第三方说明，不是用户的陈述或决定；读取了哪个 Skill 的哪个版本，在任务事件里可以核对。
 
 ## Global Constraints
 
@@ -244,7 +244,7 @@ S5、S6 谁先做都可以；任何一个都可以单独顺延到 v0.2.0 之后�
 **Interfaces:**
 - Consumes: `parseSkillFile`、`skillUsage`、`loadManifest`、`revisionOf`、`readInsideRoot`
 - Produces:
-  - `type SnapshotSkill = { id: string; source: "managed" | "external" | "repo"; recordId: string | null; repo: { repoId: string; label: string; commit: string } | null; root: string | null; meta: SkillMeta; manifest: SkillManifest; revision: string; usage: SkillUsage }`（`root` 对仓库 Skill 为 `null`，S5 填 git 读取方式）
+  - `type SnapshotSkill = { id: string; source: "managed" | "external" | "repo"; recordId: string | null; repo: { repoId: string; label: string; slug: string; path: string; commit: string } | null; root: string | null; meta: SkillMeta; manifest: SkillManifest; revision: string; usage: SkillUsage }`（`root` 对仓库 Skill 为 `null`；仓库 Skill 的文件一律经 `readRepoFile` 读，见 S5.2）
   - `type SkillSnapshot = { skills: SnapshotSkill[]; warnings: string[] }`
   - `takeSnapshot(o: { nemaHome: string; claudeCodeOk: boolean; repoSkills?: SnapshotSkill[] }): Promise<SkillSnapshot>`
   - `stillReadable(nemaHome: string, skill: SnapshotSkill): Promise<boolean>`：重读索引，确认仍是 `installed` + `enabled`，并重做 `ownedDirectory` 或 `realpath` 核对
@@ -285,7 +285,9 @@ S5、S6 谁先做都可以；任何一个都可以单独顺延到 v0.2.0 之后�
   - `escapeSkillText(s: string): string`：转义 `& < > "`，去掉控制字符
   - `codexCatalog(snapshot: SkillSnapshot): { text: string; omitted: number } | null`：没有可列出的 Skill 返回 `null`
   - `readSkillTool(snapshot: SkillSnapshot): FunctionTool | null`：`name` 是快照 id 的枚举
-  - `class SkillReader { constructor(o: { nemaHome: string; snapshot: SkillSnapshot; onActivated: (id: string, revision: string) => void; onRead: (text: string) => void }); read(args: unknown): Promise<string>; markLoaded(id: string): void }`
+  - `class SkillReader { constructor(o: { nemaHome: string; snapshot: SkillSnapshot; onActivated: (id: string, revision: string) => Promise<void>; onRead: (text: string) => void; readRepoFile?: (skill: SnapshotSkill, path: string, maxBytes: number) => Promise<Buffer> }); read(args: unknown): Promise<string>; markLoaded(id: string): void; settle(timeoutMs: number): Promise<void> }`
+    - `readRepoFile` 在 S5 前不传；快照里有仓库 Skill 而没传它时，读取这个 Skill 报错（S5.2 接上）
+    - `settle`：等所有 `onActivated` 返回的 Promise 结束，最多等 `timeoutMs`；adapter 在发 `task.finished` 之前调用 `settle(5000)`
 
 行为逐条照 spec §2：目录格式、8000 字符降级顺序、`<skill_content>` 包装、资源清单、48 KB 分页和 `offset`、同页去重、512 KB 合计、二进制只报类型和大小、每次读都过 `stillReadable` 和清单摘要。`onRead` 发 `tool_call` 任务事件「读取 Skill <id>（<版本>）[<path>]」；不带 `path`、`offset` 为 0 的成功读取再调 `onActivated`（S3 接上报告）。`markLoaded` 给 S3、S6 的预载用。
 
@@ -315,15 +317,16 @@ S5、S6 谁先做都可以；任何一个都可以单独顺延到 v0.2.0 之后�
 - Consumes: `SkillSnapshot`、`readInsideRoot`、清单摘要
 - Produces:
   - `CLAUDE_SKILL_SETTINGS`：Global Constraints 里的设置对象
-  - `prepareClaudeSkills(o: { runDir: string; snapshot: SkillSnapshot; readRepoFile?: (skill: SnapshotSkill, path: string) => Promise<Buffer> }): Promise<{ settingsPath: string; addDirs: string[]; copied: string[]; skipped: Array<{ id: string; reason: "budget" | "changed" | "unreadable" }>; skillDirs: Map<string, string> }>`
+  - `prepareClaudeSkills(o: { runDir: string; snapshot: SkillSnapshot; readRepoFile?: (skill: SnapshotSkill, path: string, maxBytes: number) => Promise<Buffer> }): Promise<ClaudeSkillPrep>`，`ClaudeSkillPrep = { settingsPath: string; addDirs: string[]; copied: string[]; skipped: Array<{ id: string; reason: "budget" | "changed" | "unreadable" }>; skillDirs: Map<string, string> }`
+    - **调用顺序：** 必须在 `prepareClaudeLaunch` 之后调用。`prepareClaudeLaunch` 开头会 `rmSync(runDir)` 再重建（`launch.ts:43-45`），所以先建目录、再复制，复制完不再清理；`runDir` 必须已存在，否则抛错
     - 用户级 Skill 复制到 `<runDir>/work/.claude/skills/<id>/`
-    - 仓库 Skill 复制到 `<runDir>/repo-skills/<label>/.claude/skills/<name>/`（S5 前没有）
+    - 仓库 Skill 复制到 `<runDir>/repo-skills/<slug>/.claude/skills/<name>/`（S5 前没有）。`slug` 取 `SnapshotSkill.repo.slug`（S5.2 保证合法且在本任务内唯一），绝不用原始标签；目录名再按 `isSkillName` 校验一次，拼出的路径 `path.resolve` 后必须仍在 `<runDir>/repo-skills/` 之下，否则跳过并记 `unreadable`
     - `skillDirs`：对外 id → 副本里 SKILL.md 的绝对路径，给激活识别用
     - 设置文件写到 `<runDir>/claude-settings.json`，0600
 
 复制时：逐文件走 `readInsideRoot` 并核对 blob，不一致就整个 Skill 跳过（`changed`）；跳过 `.claude-plugin/`；新文件 0600、目录 0700；合计超过 50 MiB 的 Skill 跳过（`budget`）。
 
-- [ ] **Step 1: 写失败测试**：两个 Skill 复制后的目录树；`.claude-plugin/plugin.json` 没有被复制；源里的链接没有被复制或跟随；超过预算的 Skill 在 `skipped`；复制前改文件 → `changed`；设置文件内容逐字等于 `CLAUDE_SKILL_SETTINGS`，权限 0600（POSIX）。
+- [ ] **Step 1: 写失败测试**：两个 Skill 复制后的目录树；`repo.slug` 为 `../x` 时跳过、不在 `runDir` 外写任何东西；`.claude-plugin/plugin.json` 没有被复制；源里的链接没有被复制或跟随；超过预算的 Skill 在 `skipped`；复制前改文件 → `changed`；设置文件内容逐字等于 `CLAUDE_SKILL_SETTINGS`，权限 0600（POSIX）。
 - [ ] **Step 2: 跑** `npx vitest run apps/cli/test/skills/claudeSkills.test.ts` → FAIL。
 - [ ] **Step 3: 实现。**
 - [ ] **Step 4: 跑** → PASS。
@@ -333,7 +336,7 @@ S5、S6 谁先做都可以；任何一个都可以单独顺延到 v0.2.0 之后�
 
 **Files:**
 - Create: `apps/cli/src/skills/claudeVersion.ts`
-- Modify: `apps/cli/src/extensions/handlers.ts` 的 S1.4 调用处只改一个参数来源（把固定的 `claudeCodeOk: true` 换成 `claudeSkillsSupported()`），不改别的
+- Modify: `apps/cli/src/extensions/handlers.ts` 的 S1.4 调用处只改一个参数来源（把固定的 `claudeCodeOk: true` 换成 `(await claudeSkillsSupported()).ok`），不改别的。版本号不进 `SkillUsage`；版本过低时缺失项 `claude-code-too-old` 的文案里写固定的门槛 `MIN_CLAUDE_SKILLS_VERSION`
 - Test: `apps/cli/test/skills/claudeVersion.test.ts`
 
 **Interfaces:**
@@ -351,7 +354,7 @@ S5、S6 谁先做都可以；任何一个都可以单独顺延到 v0.2.0 之后�
 ### Task S2.3：启动参数、工具检查和激活识别
 
 **Files:**
-- Modify: `apps/cli/src/claude/launch.ts:23-108`（`prepareClaudeLaunch` 加可选 `skills?: { settingsPath: string; addDirs: string[] }`）
+- Modify: `apps/cli/src/claude/launch.ts`（`prepareClaudeLaunch` 不变；新增 `withSkillArgs(args: string[], prep: ClaudeSkillPrep): string[]`，把 `--setting-sources` 和 `--tools` 后面的值换掉，再追加其余参数）
 - Modify: `apps/cli/src/claude/events.ts`（`init` 带 `version`、`skills`；新增 `tool_use` 详情和 `tool_result` 解析；`roomToolsOk` 接受额外允许的内置工具）
 - Modify: `apps/cli/src/claude/adapter.ts:100-220`（取快照、复制、追加 Skills 段落、允许集合加 `Skill` 和 `Read`、识别激活）
 - Modify: `apps/hub/src/prompt.ts:127`
@@ -366,7 +369,9 @@ S5、S6 谁先做都可以；任何一个都可以单独顺延到 v0.2.0 之后�
   - 新变体 `{ kind: "results"; results: Array<{ toolUseId: string; isError: boolean }> }`（来自 `type: "user"` 消息里的 `tool_result` 块）
   - `skillActivationFrom(use: { name: string; input: unknown }, skillDirs: Map<string, string>): string | null`
 
-参数和设置照 spec §3 的表：有 `skills` 时 `--setting-sources project`、`--tools Skill,Read`、`--allowedTools` 追加 `Skill,Read(/.claude/skills/**)`、每个 `addDirs` 一个 `--add-dir`、`--settings <settingsPath>`；没有 `skills` 时参数与现在逐字相同。版本不够、快照为空或复制后一个都没有时，都不传 `skills`。
+adapter 的顺序：`prepareClaudeLaunch` → `prepareClaudeSkills({ runDir: launch.runDir, … })` → `withSkillArgs(launch.args, prep)`。参数和设置照 spec §3 的表：有 Skill 时 `--setting-sources project`、`--tools Skill,Read`、`--allowedTools` 追加 `Skill,Read(/.claude/skills/**)`、每个 `addDirs` 一个 `--add-dir`、`--settings <settingsPath>`；不调用 `withSkillArgs` 时参数与现在逐字相同。版本不够、快照为空或复制后一个都没有时，都不调用它。
+
+读取批准：Claude Code 文档写明，工作目录和 `--add-dir` 目录里的读取不需要批准（[权限](https://code.claude.com/docs/en/permissions) 开头的工具类型表）。所以 `repo-skills/<slug>` 下的读取不需要另加允许规则；`Read(/.claude/skills/**)` 只是把主工作目录的情况写明。S7 Step 2 实测这一点。
 
 `roomToolsOk` 的允许集合加上 `Skill`、`Read`；`init` 里出现其他内置工具仍判失败。`init.version` 低于门槛或 `init.skills` 缺了已复制的 Skill 时，写一条进度警告，不让任务失败。
 
@@ -375,7 +380,8 @@ S5、S6 谁先做都可以；任何一个都可以单独顺延到 v0.2.0 之后�
 Skills 段落和 hub 第 127 条规则的新文字照 spec §3 逐字写。
 
 - [ ] **Step 1: 写失败测试**：
-  - `launch.test.ts`：没有 `skills` 时参数与现有测试的期望完全一样；有 `skills` 时逐项检查上面的参数，顺序固定。
+  - `launch.test.ts`：`prepareClaudeLaunch` 的参数与现有测试的期望完全一样；`withSkillArgs` 逐项检查上面的参数，顺序固定，`--setting-sources`、`--tools` 各只出现一次。
+  - `claudeSkills.test.ts` 加一例：先 `prepareClaudeLaunch` 再 `prepareClaudeSkills`，副本和设置文件都还在；`runDir` 不存在时抛错。
   - `events.test.ts`：夹具里的 `init` 解析出版本和 `skills`；`Skill` 调用和 `Read` 调用的 `uses`；`tool_result` 成功和失败。
   - `adapter.test.ts`（用现有的假 Claude 子进程写法）：`init` 里有 `Skill`、`Read` 不判失败，有 `Bash` 判失败；成功的 `Skill` 调用产生一条「读取 Skill」事件；失败的不产生；版本不够时参数与现在相同。
   - `prompt.test.ts`：第 127 条规则的新文字。
@@ -435,9 +441,11 @@ Skills 段落和 hub 第 127 条规则的新文字照 spec §3 逐字写。
 - Consumes: `SkillSnapshot`、`SkillReader.markLoaded`
 - Produces: `preloadSection(o: { snapshot: SkillSnapshot; retained: string[]; budgetBytes: 32768; readBody: (skill: SnapshotSkill) => Promise<string> }): Promise<{ text: string | null; loaded: string[]; dropped: string[] }>`
 
+报告要等：`onActivated` 返回 `reportSkillActivation` 的 Promise，adapter 在结束任务前调 `SkillReader.settle(5000)`（Claude Code 那边同样收集这些 Promise 再结束）。超时或失败写一条进度警告，不让任务失败。
+
 规则照 spec §8：不在快照里的跳过；从新到旧放，放不下就停（后面的全进 `dropped`）；格式同 `<skill_content>`；预载不报告激活。codex-direct 对 `loaded` 调 `markLoaded`；Claude Code 在 Skills 段落里写「以下 Skill 已载入，不必再调用」。
 
-- [ ] **Step 1: 写失败测试**：停用的跳过；升级后读到新正文；三个 15 KB 的 Skill 只放前两个（最新的两个）；`retained` 为空返回 `text: null`；`reportSkillActivation` 遇到 404 不抛错；codex-direct 读取正文后发了一次报告，预载的没有。
+- [ ] **Step 1: 写失败测试**：停用的跳过；升级后读到新正文；三个 15 KB 的 Skill 只放前两个（最新的两个）；`retained` 为空返回 `text: null`；`reportSkillActivation` 遇到 404 不抛错；codex-direct 读取正文后发了一次报告，预载的没有；报告的 Promise 未完成时任务不会先发 `task.finished`；报告超过 5 秒时任务照常结束并有警告。
 - [ ] **Step 2: 跑** `npx vitest run apps/cli/test/skills/preload.test.ts apps/cli/test/room/client.test.ts apps/cli/test/direct/adapter.test.ts apps/cli/test/claude/adapter.test.ts` → FAIL。
 - [ ] **Step 3: 实现。**
 - [ ] **Step 4: 跑** → PASS。
@@ -510,14 +518,16 @@ Skills 段落和 hub 第 127 条规则的新文字照 spec §3 逐字写。
 - Consumes: `mainRef`、`readFileAtRef`（`apps/cli/src/repos/git.ts:281`、`:316`）
 - Produces:
   - `scanRepoSkills(repo: { repoId: string; label: string; path: string; mainBranch: string }): Promise<{ skills: SnapshotSkill[]; warnings: string[] }>`
-  - `readRepoSkillFile(skill: SnapshotSkill, path: string): Promise<Buffer>`
-  - `repoSlug(label: string): string`（与 `skillId` 同样规则；结果是 `diagram` 时改成 `repo-diagram`）
+  - `readRepoSkillFile(skill: SnapshotSkill, path: string, maxBytes: number): Promise<Buffer>`：用 `git ls-tree -z` 找到 blob（拒绝 `120000`、`160000`），先看 `git cat-file -s` 的大小，超过 `maxBytes` 就拒绝，再用 `gitRaw(['cat-file', 'blob', sha])` 读原始字节。**不用 `readFileAtRef`**，它按 UTF-8 解码并有行数和字节截断（`git.ts:316-345`），会损坏二进制和大文件
+  - `repoSlugs(repos: Array<{ repoId: string; label: string }>): Map<string, string>`：先按 `skillId` 的规则把标签转成 slug；结果是 `diagram` 时改成 `repo-diagram`；为空时用 `repo`；本任务里两个仓库的 slug 相同时，两个都加 `-<repoId 前 6 位>`。所以仓库 Skill 的对外 id 和副本目录在本任务里一定唯一
+
+取提交前先刷新：每个仓库调 `fetchMain`（`git.ts:290`），同一仓库 5 分钟内只取一次（daemon 内存里记时间）；失败（包括没有 origin）照常用 `mainRef` 现有的引用，并写一条警告。然后 `revParse(mainRef(...))` 得到提交号，本任务内的扫描、读取、复制都用这个提交号，不再用分支名。
 
 规则照 spec §7：主分支提交固定在本任务；只看根下 `.agents/skills/<名字>/SKILL.md` 和 `.claude/skills/<名字>/SKILL.md`；`git ls-tree` 里模式 `120000` 和 `160000` 的条目拒绝；500 个文件 / 5 MiB / 20 MiB；同仓库同名取 `.agents/skills`；用户级 Skill 用不带前缀的名字，仓库 Skill 重名时用 `<slug>:<名字>`；版本标识 `<标签>@<提交前 7 位>`；清单的 blob 直接取树对象里的。git 命令都经现有 `systemGit` 封装，不读工作区。
 
-- [ ] **Step 1: 写失败测试**（每个测试 `git init` 一个临时仓库并提交）：两个目录各一个 Skill；工作区里未提交的 Skill 不出现；树里的链接被拒；子模块被拒；超过 500 个文件被拒；同仓库两个目录同名取 `.agents`；与用户级同名时加前缀；两个仓库同名时都加前缀；标签 `Diagram` 的前缀是 `repo-diagram:`；新提交后下一次扫描读到新版本。
+- [ ] **Step 1: 写失败测试**（每个测试 `git init` 一个临时仓库并提交；需要 origin 时用另一个本地裸仓库当 origin，不联网）：origin 上的新提交在下一次扫描前被取到；5 分钟内不重复取；取失败时用已有引用并有警告；图片和 2 MiB 的文件按字节原样读出；超过 5 MiB 的被拒；两个标签都转成 `web` 的仓库得到不同的 slug；两个目录各一个 Skill；工作区里未提交的 Skill 不出现；树里的链接被拒；子模块被拒；超过 500 个文件被拒；同仓库两个目录同名取 `.agents`；与用户级同名时加前缀；两个仓库同名时都加前缀；标签 `Diagram` 的前缀是 `repo-diagram:`；新提交后下一次扫描读到新版本。
 - [ ] **Step 2: 跑** `npx vitest run apps/cli/test/skills/repoSkills.test.ts apps/cli/test/skills/snapshot.test.ts` → FAIL。
-- [ ] **Step 3: 实现。** Claude Code 下把仓库 Skill 复制到 `<runDir>/repo-skills/<slug>/.claude/skills/<名字>/`，由 S2.1 的 `addDirs` 传 `--add-dir`。
+- [ ] **Step 3: 实现。** `SnapshotSkill.repo` 填 `task.assign.projectSkills` 里的 `path` 和算出的 `slug`；codex-direct 把 `readRepoSkillFile` 作为 `readRepoFile` 传给 `SkillReader`；Claude Code 把它传给 `prepareClaudeSkills`，副本放在 `<runDir>/repo-skills/<slug>/.claude/skills/<名字>/`，由 `addDirs` 传 `--add-dir`。`path` 只用作 git 的工作目录，读取前确认它仍是 hub 绑定时记录的那个仓库（`git rev-parse --git-common-dir` 不变）。
 - [ ] **Step 4: 跑** 同一条和 `apps/cli/test/skills/claudeSkills.test.ts`、`apps/cli/test/skills/readSkill.test.ts` → PASS。
 - [ ] **Step 5: Commit** `feat(cli): load project skills from trusted repos at the main commit`
 
@@ -615,7 +625,9 @@ Skills 段落和 hub 第 127 条规则的新文字照 spec §3 逐字写。
 
 ## Batch S7：真实环境验收
 
-不写新功能，只记录结果。结果写进 PR 描述和 `docs/superpowers/specs/2026-10-30-skills-progressive-loading-design.md` 末尾新加的「验收记录」一节，与自动测试分开。
+不写新功能，只记录结果。
+
+**环境：** 用一次性的环境，不用日常的 Nema：临时 `NEMA_HOME`、只为验收新建的 workspace、一个只为验收建的本地测试仓库（S5 用），Skill 也用为验收写的假 Skill。真实的模型请求会消耗用户的 Claude Code 订阅和 codex-direct 额度，**开始前要先得到用户同意**，并说明大约要发多少个任务（本批约 10 个）。结束后删除临时 `NEMA_HOME` 和测试仓库。结果写进 PR 描述和 `docs/superpowers/specs/2026-10-30-skills-progressive-loading-design.md` 末尾新加的「验收记录」一节，与自动测试分开。
 
 - [ ] **Step 1:** 记录实测的 Claude Code 版本（`claude --version`）和 codex-direct 模型。
 - [ ] **Step 2: Claude Code：** 装一个纯说明 Skill 和一个带 `references/` 的 Skill，发一个与描述相符的任务：`init` 的 `skills` 含它们；模型调用了 Skill 工具；记下 Skill 工具的输入字段名，回到 S2.3 把解析写死并更新测试；让模型读 `references/` 成功；让模型读 `claude-config/` 和用户主目录下的文件被拒；带 `` !`date` `` 的 Skill 显示占位文字；带 `.claude-plugin/` 的 Skill 没有载入插件。
