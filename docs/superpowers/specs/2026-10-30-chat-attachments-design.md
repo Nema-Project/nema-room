@@ -60,7 +60,7 @@
 | `claude-code` | `native` | `unknown`（拒绝） | `text` | 图片按官方 stream-json 示例；PDF 没有文档说明 stream-json 会转交 `document` 块。未实测 |
 | `codex-direct` + `siwc` | `native` | `native` | `text` | 按 Responses API 文档。未实测 |
 | `codex-direct` + `byok`，默认地址 | `native` | `native` | `text` | 与 `siwc` 同一个官方端点。未实测 |
-| `codex-direct` + `byok`，`https://openrouter.ai/api/v1` | 实测通过 | 读到了，但收费：保持 `unknown`（拒绝） | 实测通过（按文字发送） | 2026-10-30，`nvidia/nemotron-3.5-super-vl:free`，回复逐字给出只在文件里的暗号；`google/gemma-4-31b-it:free` 每次都 429。只有图片一格单独开 PR 改 |
+| `codex-direct` + `byok`，`https://openrouter.ai/api/v1` | 实测通过，`native` | 读到了，但收费：保持 `unknown`（拒绝） | 实测通过（按文字发送） | 2026-10-30，`nvidia/nemotron-3.5-super-vl:free`，回复逐字给出只在文件里的暗号；`google/gemma-4-31b-it:free` 每次都 429。图片一格已在单独的 PR 里改成 `native`，只认这个地址 |
 | `codex-direct` + `byok`，其他地址 | `unknown`（拒绝） | `unknown`（拒绝） | `text` | 取决于提供方 |
 | `codex-direct` + `compat` | `unknown`（拒绝） | `unknown`（拒绝） | `text` | 非公开后端；OpenRouter 的 key 用不了 `compat`。未实测 |
 
