@@ -521,7 +521,7 @@ describe("ClaudeCodeAdapter", () => {
 describe("ClaudeCodeAdapter attachments", () => {
   let hub: Server;
   let hubUrl: string;
-  let files: Map<string, { status: number; body: Buffer; type: string }>;
+  let files: Map<string, { status: number; body: Buffer; type: string; stall?: boolean }>;
   let fetched: string[];
 
   beforeEach(async () => {
@@ -530,6 +530,7 @@ describe("ClaudeCodeAdapter attachments", () => {
     hub = createServer((req, res) => {
       fetched.push(`${req.method} ${req.url} ${req.headers.authorization}`);
       const file = files.get(decodeURIComponent((req.url ?? "").replace(/^\/room\/attachments\//, "")));
+      if (file?.stall) return;
       if (!file) {
         res.writeHead(404, { "content-type": "application/json" }).end('{"error":"not in task"}');
         return;
@@ -568,7 +569,7 @@ describe("ClaudeCodeAdapter attachments", () => {
     expect(content.map((b) => b.type)).toEqual(["text", "text", "text", "image", "text"]);
     expect(content[0]).toEqual({ type: "text", text: "prompt-with-files" });
     expect(content[1]).toEqual({ type: "text", text: attachmentPreamble() });
-    expect(content[2]!.text).toContain('"name":"shot.png"');
+    expect(content[2]).toEqual({ type: "text", text: `附件信息：${JSON.stringify({ name: "shot.png", type: "image/png", sha256: image.sha256, size: image.size })}` });
     expect(content[3]).toEqual({ type: "image", source: { type: "base64", media_type: "image/png", data: png.toString("base64") } });
     expect(content[4]!.text).toContain(logText);
     expect(content[4]!.text).toMatch(/----- NEMA-ATTACHMENT-[0-9a-f]{32} BEGIN -----/);
@@ -600,6 +601,37 @@ describe("ClaudeCodeAdapter attachments", () => {
     expect(result.ok).toBe(false);
     expect((result as { error: string }).error).toContain("gone.png");
     expect((result as { error: string }).error).toContain("已被删除");
+    expect(existsSync(argvFile)).toBe(false);
+  });
+
+  test("an unsupported attachment is refused even when the Claude login is missing", async () => {
+    rmSync(claudeTokenPath(home), { force: true });
+    const pdf = serve("doc", "pdf", "application/pdf", "spec.pdf", Buffer.from("%PDF-1.7\n"));
+    const argvFile = join(root, "argv-nologin.json");
+    const bin = installFake({ mode: "lines", argvFile, lines: [roomInit(), resultLine("should-not-run")] });
+    const { result } = await runTask(createAdapter(bin), withAttachments("task-nologin", [pdf]));
+    expect(result.ok).toBe(false);
+    expect((result as { error: string }).error).toContain("spec.pdf");
+    expect(existsSync(argvFile)).toBe(false);
+  });
+
+  test("a stalled attachment download counts toward the run timeout and claude never starts", async () => {
+    const image = serve("img", "image", "image/png", "slow.png", png);
+    files.set("img", { status: 200, body: png, type: "image/png", stall: true });
+    const argvFile = join(root, "argv-stall.json");
+    const bin = installFake({ mode: "lines", argvFile, lines: [roomInit(), resultLine("should-not-run")] });
+    const { result } = await runTask(createAdapter(bin, 200), withAttachments("task-stall", [image]));
+    expect(result).toEqual({ ok: false, error: TIMED_OUT });
+    expect(existsSync(argvFile)).toBe(false);
+  });
+
+  test("a text attachment that is not UTF-8 fails with its name before claude starts", async () => {
+    const bad = serve("bad", "text", "text/plain", "bad.txt", Buffer.from([0x61, 0xc3, 0x28]));
+    const argvFile = join(root, "argv-bad.json");
+    const bin = installFake({ mode: "lines", argvFile, lines: [roomInit(), resultLine("should-not-run")] });
+    const { result } = await runTask(createAdapter(bin), withAttachments("task-bad", [bad]));
+    expect(result.ok).toBe(false);
+    expect((result as { error: string }).error).toContain("bad.txt");
     expect(existsSync(argvFile)).toBe(false);
   });
 

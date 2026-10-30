@@ -9,6 +9,7 @@ import {
   listModels,
   MAX_DIRECT_REQUEST_BYTES,
   ModelApiError,
+  REQUEST_TOO_LARGE_MESSAGE,
   ModelQuotaError,
   SIWC_PROFILE,
   streamResponse,
@@ -98,7 +99,8 @@ describe("streamResponse request", () => {
   test("a body over the cap is never sent and fails with a fixed message", async () => {
     server.responses(textStream("hello"));
     const big = req({ input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "x".repeat(2000) }] }] });
-    await expect(streamResponse(big, { ...ctx(), maxRequestBytes: 1000 })).rejects.toThrow(/超过模型一次请求的上限/);
+    await expect(streamResponse(big, { ...ctx(), maxRequestBytes: 1000 })).rejects.toThrow(new Error(REQUEST_TOO_LARGE_MESSAGE));
+    expect(REQUEST_TOO_LARGE_MESSAGE).toBe("这次任务的附件和对话合计超过模型一次请求的上限，请减少附件或不引用那条消息");
     expect(server.requests).toEqual([]);
   });
 
@@ -108,7 +110,7 @@ describe("streamResponse request", () => {
     const wide = req({ input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "汉".repeat(400) }] }] });
     // 400 characters, ~1200 bytes: a character count would pass a 1000-byte cap.
     expect(size).toBeGreaterThan(1000);
-    await expect(streamResponse(wide, { ...ctx(), maxRequestBytes: 1000 })).rejects.toThrow(/超过模型一次请求的上限/);
+    await expect(streamResponse(wide, { ...ctx(), maxRequestBytes: 1000 })).rejects.toThrow(new Error(REQUEST_TOO_LARGE_MESSAGE));
     expect(server.requests).toEqual([]);
   });
 

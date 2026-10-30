@@ -3,7 +3,7 @@ import { rmSync } from "node:fs";
 import path from "node:path";
 import { commandSpec } from "../platform.js";
 import type { TaskAssign, TaskEvent } from "@nema/shared";
-import { attachmentCapabilities } from "../attachments/capabilities.js";
+import { attachmentCapabilities, refusal } from "../attachments/capabilities.js";
 import { attachmentLabel, attachmentPreamble, textAttachmentBlock } from "../attachments/blocks.js";
 import { loadTaskAttachments, type LoadedAttachment } from "../attachments/fetch.js";
 import { configErrorMessage, loadConfig, type NemaConfig } from "../config.js";
@@ -70,13 +70,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   async run(task: TaskAssign, onEvent: (e: TaskEvent) => void, signal?: AbortSignal): Promise<AgentResult> {
     if (signal?.aborted) return { ok: false, error: "Claude 运行已中止。" };
-    let token: string;
-    try {
-      token = readClaudeToken(this.opts.nemaHome);
-    } catch (e) {
-      return { ok: false, error: message(e) };
-    }
-
     let config: NemaConfig;
     try {
       config = loadConfig(this.opts.nemaHome);
@@ -84,11 +77,33 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       return { ok: false, error: configErrorMessage(e) };
     }
     const model = config.model;
+    // An attachment Claude cannot take is refused first, before any login or launch problem (D-2 A).
+    const caps = attachmentCapabilities({ ...config, adapter: "claude-code" });
+    const refused = task.attachments?.length ? refusal(caps, task.attachments) : null;
+    if (refused) return { ok: false, error: refused };
 
-    // Refused or unreadable attachments fail the task before anything is launched (D-2 A).
-    const loaded = await loadTaskAttachments(task, attachmentCapabilities({ ...config, adapter: "claude-code" }), signal);
-    if (!loaded.ok) return { ok: false, error: loaded.error };
+    let token: string;
+    try {
+      token = readClaudeToken(this.opts.nemaHome);
+    } catch (e) {
+      return { ok: false, error: message(e) };
+    }
+
+    // The run's clock starts here: a stalled attachment download counts toward the timeout.
+    const timeoutMs = task.limits?.timeoutMs ?? this.opts.timeoutMs ?? 600_000;
+    const startedAt = Date.now();
+    const clock = AbortSignal.timeout(timeoutMs);
+    const loaded = await loadTaskAttachments(task, caps, signal ? AbortSignal.any([signal, clock]) : clock);
     if (signal?.aborted) return { ok: false, error: "Claude 运行已中止。" };
+    if (clock.aborted) return { ok: false, error: timedOutMessage(task.limits ? Math.round(task.limits.timeoutMs / 60_000) : 10) };
+    if (!loaded.ok) return { ok: false, error: loaded.error };
+    // Built before launch, so an attachment that cannot be encoded fails with its own reason.
+    let stdin: string;
+    try {
+      stdin = userMessage(task.prompt, loaded.attachments);
+    } catch (e) {
+      return { ok: false, error: message(e) };
+    }
 
     let launch: ClaudeLaunch;
     try {
@@ -110,15 +125,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
 
     try {
-      return await this.execute(task, launch, onEvent, signal, loaded.attachments);
+      return await this.execute(task, launch, onEvent, signal, stdin, Math.max(1, timeoutMs - (Date.now() - startedAt)));
     } finally {
       rmSync(launch.runDir, { recursive: true, force: true });
     }
   }
 
-  private async execute(task: TaskAssign, launch: ClaudeLaunch, onEvent: (e: TaskEvent) => void, signal: AbortSignal | undefined, attachments: readonly LoadedAttachment[]): Promise<AgentResult> {
+  private async execute(task: TaskAssign, launch: ClaudeLaunch, onEvent: (e: TaskEvent) => void, signal: AbortSignal | undefined, stdin: string, timeoutMs: number): Promise<AgentResult> {
     const bin = this.opts.claudeBin ?? "claude";
-    const timeoutMs = task.limits?.timeoutMs ?? this.opts.timeoutMs ?? 600_000;
     const maxToolCalls = task.limits?.maxToolCalls ?? MAX_TOOL_CALLS;
     const minutes = task.limits ? Math.round(task.limits.timeoutMs / 60_000) : 10;
     const allowed = new Set(claudeAllowedToolNames(task.pluginTools));
@@ -265,7 +279,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       if (owned) void closedPromise.then(onClose);
       else (child as ChildProcess).once("close", onClose);
       try {
-        child.stdin?.end(userMessage(task.prompt, attachments));
+        child.stdin?.end(stdin);
       } catch {
         // The child can exit before the prompt is written.
       }

@@ -12,7 +12,7 @@ import { loadConfig, saveConfig } from "../../src/config.js";
 import { CodexDirectAdapter } from "../../src/direct/adapter.js";
 import { AuthStore, RELOGIN_MESSAGE, type StoredAuth } from "../../src/direct/authStore.js";
 import { byokKeyPath, saveByokKey } from "../../src/direct/byok.js";
-import { COMPAT_PROFILE, SIWC_PROFILE, type TransportProfile } from "../../src/direct/transport.js";
+import { COMPAT_PROFILE, REQUEST_TOO_LARGE_MESSAGE, SIWC_PROFILE, type TransportProfile } from "../../src/direct/transport.js";
 import { json, sse, startFakeResponsesServer, type FakeResponsesServer } from "../fixtures/fake-responses-server.js";
 
 const b64u = (s: string) => Buffer.from(s).toString("base64url");
@@ -25,7 +25,7 @@ let server: FakeResponsesServer;
 let hub: Server;
 let hubUrl: string;
 let hubSeen: { method?: string; url?: string; auth?: string; body: string }[];
-let hubFiles: Map<string, { status: number; type: string; body: Buffer }>;
+let hubFiles: Map<string, { status: number; type: string; body: Buffer; stall?: boolean }>;
 
 const auth = (tokens = { access_token: ACCESS, refresh_token: "rt-0" }): StoredAuth => ({
   version: 1,
@@ -52,6 +52,7 @@ beforeEach(async () => {
       hubSeen.push({ method: req.method, url: req.url, auth: req.headers.authorization, body });
       if (req.url?.startsWith("/room/attachments/")) {
         const file = hubFiles.get(decodeURIComponent(req.url.slice("/room/attachments/".length)));
+        if (file?.stall) return;
         if (!file) res.writeHead(404, { "content-type": "application/json" }).end('{"error":"not in task"}');
         else res.writeHead(file.status, { "content-type": file.type }).end(file.body);
         return;
@@ -468,9 +469,9 @@ describe("CodexDirectAdapter attachments", () => {
       const parts = user.content;
       expect(parts.map((p) => p.type)).toEqual(["input_text", "input_text", "input_text", "input_image", "input_text", "input_file", "input_text"]);
       expect(parts[1]).toEqual({ type: "input_text", text: attachmentPreamble() });
-      expect(parts[2]!.text).toContain('"name":"shot.png"');
+      expect(parts[2]).toEqual({ type: "input_text", text: `附件信息：${JSON.stringify({ name: "shot.png", type: "image/png", sha256: refs[0]!.sha256, size: refs[0]!.size })}` });
       expect(parts[3]).toEqual({ type: "input_image", image_url: `data:image/png;base64,${png.toString("base64")}` });
-      expect(parts[4]!.text).toContain('"name":"spec.pdf"');
+      expect(parts[4]).toEqual({ type: "input_text", text: `附件信息：${JSON.stringify({ name: "spec.pdf", type: "application/pdf", sha256: refs[1]!.sha256, size: refs[1]!.size })}` });
       expect(parts[5]).toEqual({ type: "input_file", filename: "spec.pdf", file_data: `data:application/pdf;base64,${pdf.toString("base64")}` });
       expect(parts[6]!.text).toContain("SECRET-LOG-LINE");
       const boundary = /NEMA-ATTACHMENT-[0-9a-f]{32}/.exec(parts[6]!.text!)![0];
@@ -497,7 +498,7 @@ describe("CodexDirectAdapter attachments", () => {
     server.responses(stream([msgItem("should-not-run")]));
     const { result } = await run(adapter({ maxRequestBytes: 1000 }), withAttachments([serve("log", "text", "text/plain", "boot.log", Buffer.alloc(4000, 0x61))]));
     expect(result.ok).toBe(false);
-    expect((result as { error: string }).error).toContain("超过模型一次请求的上限");
+    expect(result).toEqual({ ok: false, error: REQUEST_TOO_LARGE_MESSAGE });
     expect(server.requests.filter((r) => r.url === "/v1/responses")).toEqual([]);
   });
 
@@ -515,7 +516,25 @@ describe("CodexDirectAdapter attachments", () => {
     server.responses(stream([fcItem("list_entries", {}, "c1")]), stream([msgItem("should-not-run")]));
     const { result } = await run(adapter({ maxRequestBytes: first + 10 }), withAttachments(refs()));
     expect(result.ok).toBe(false);
-    expect((result as { error: string }).error).toContain("超过模型一次请求的上限");
+    expect(result).toEqual({ ok: false, error: REQUEST_TOO_LARGE_MESSAGE });
     expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
+  });
+  test("a text attachment that is not UTF-8 fails with its name and no model request", async () => {
+    login();
+    server.models(models("gpt-first"));
+    server.responses(stream([msgItem("should-not-run")]));
+    const { result } = await run(adapter(), withAttachments([serve("bad", "text", "text/plain", "bad.txt", Buffer.from([0x61, 0xc3, 0x28]))]));
+    expect(result.ok).toBe(false);
+    expect((result as { error: string }).error).toContain("bad.txt");
+    expect(server.requests.filter((r) => r.url === "/v1/responses")).toEqual([]);
+  });
+
+  test("a stalled attachment download ends with the run timeout", async () => {
+    login();
+    const ref = serve("img", "image", "image/png", "slow.png", png);
+    hubFiles.set("img", { status: 200, type: "image/png", body: png, stall: true });
+    const { result } = await run(adapter({ timeoutMs: 200 }), withAttachments([ref]));
+    expect(result).toEqual({ ok: false, error: "Codex 直连运行超时" });
+    expect(server.requests.filter((r) => r.url === "/v1/responses")).toEqual([]);
   });
 });
