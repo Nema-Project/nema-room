@@ -3,7 +3,7 @@ import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z, ZodError } from "zod";
 import { KnowledgeStore, blameParagraphs, git, history, versionAt, parseCommitMessage } from "@nema/knowledge";
-import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, kindFromId, canonicalJson, parseSkillSource } from "@nema/shared";
+import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, kindFromId, canonicalJson, parseSkillSource, safeRepoPath } from "@nema/shared";
 import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
 import { insertEvidenceEvent, consumeEvidenceEvent, reconcileUnconsumedEventsLocked, payloadHashFor, type EvidenceEventInput } from "./evidenceEvents.js";
 import type { Entry } from "@nema/shared";
@@ -51,7 +51,8 @@ const ResolveExtensionSourceBody = z.strictObject({ source: z.string() });
 const InstallExtensionBody = z.strictObject({
   source: z.string(),
   commit: z.string().regex(/^[0-9a-f]{40}$/, "must be a 40-character commit"),
-  path: z.string().min(1),
+  // Same rule as the daemon, so a traversal or a Windows device name is a 400 here, not a 502 later.
+  path: z.string().refine((value) => value === "." || safeRepoPath(value), "must be `.` or a safe folder inside the repository"),
 });
 const PatchWorkspaceBody = z.object({
   name: z.string().trim().min(1, "must not be empty").optional(),

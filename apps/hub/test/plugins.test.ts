@@ -512,6 +512,9 @@ describe("workspace plugins", () => {
       { source: "acme/skills", commit: "main", path: "skills/pdf" },
       { source: "acme/skills", commit: COMMIT },
       { source: "acme/skills", commit: COMMIT, path: "" },
+      { source: "acme/skills", commit: COMMIT, path: "../etc" },
+      { source: "acme/skills", commit: COMMIT, path: "skills/CON" },
+      { source: "acme/skills", commit: COMMIT, path: "/abs" },
       { source: "https://gitlab.com/acme/skills", commit: COMMIT, path: "." },
       { source: "acme/skills", commit: COMMIT, path: ".", force: true },
     ]) {
@@ -537,7 +540,7 @@ describe("workspace plugins", () => {
       const ok = await uiReq(verb, url);
       expect(ok.status, url).toBe(200);
       expect(await ok.json()).toEqual(job);
-      for (const bad of [null, [], { ...job, id: "other" }, { ...job, state: "paused" }, { ...job, done: "1" }]) {
+      for (const bad of [null, [], { ...job, id: "other" }, { ...job, state: "paused" }, { ...job, done: "1" }, { ...job, error: 3 }, { id: "pdf", state: "running", done: 0, total: 0 }, { ...job, commit: "main" }, { ...job, path: 7 }]) {
         daemonCall = async () => bad;
         const response = await uiReq(verb, url);
         expect(response.status, `${url} ${JSON.stringify(bad)}`).toBe(502);

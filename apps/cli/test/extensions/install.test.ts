@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -8,6 +8,8 @@ import type { SourceFetch } from "../../src/extensions/source.js";
 import { openExtensionStore } from "../../src/extensions/store.js";
 
 const COMMIT = "0123456789abcdef0123456789abcdef01234567";
+const COMMIT_DEFAULT = "0123456789abcdef0123456789abcdef01234567";
+const COMMIT2 = "89abcdef0123456789abcdef0123456789abcdef";
 const blobSha = (bytes: Buffer) => createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
 const SKILL = Buffer.from("---\nname: pdf\ndescription: Fill PDF forms\n---\n\n# pdf\n");
 
@@ -23,14 +25,17 @@ afterEach(() => {
  * A fake GitHub holding one repository at COMMIT. Every URL must be one it knows, so nothing here can
  * reach the network. `hold` makes raw downloads wait for the request's abort signal.
  */
-function fakeRepo(entries: Entry[], o: { hold?: boolean; corrupt?: string } = {}) {
+type FakeOptions = { hold?: boolean; corrupt?: string; gate?: Promise<void>; gateResolve?: Promise<void>; commit?: string };
+
+function fakeRepo(entries: Entry[], o: FakeOptions = {}) {
+  const COMMIT = o.commit ?? COMMIT_DEFAULT;
   const asked: string[] = [];
   const blobs = new Map<string, Buffer>();
   const tree = entries.map((entry) => {
     const content = entry.content ?? Buffer.from(`content of ${entry.path}\n`);
     const encoded = entry.path.split("/").map(encodeURIComponent).join("/");
     blobs.set(`https://raw.githubusercontent.com/acme/skills/${COMMIT}/${encoded}`, o.corrupt === entry.path ? Buffer.from("tampered") : content);
-    return { path: entry.path, mode: entry.mode ?? "100644", type: entry.type ?? "blob", sha: entry.sha ?? blobSha(content), size: entry.size ?? content.length };
+    return { path: entry.path, mode: entry.mode ?? (entry.type === "tree" ? "040000" : "100644"), type: entry.type ?? "blob", sha: entry.sha ?? blobSha(content), size: entry.size ?? content.length };
   });
   const json: Record<string, unknown> = {
     "https://api.github.com/repos/acme/skills": { full_name: "acme/skills", default_branch: "main", license: { spdx_id: "MIT" } },
@@ -50,9 +55,11 @@ function fakeRepo(entries: Entry[], o: { hold?: boolean; corrupt?: string } = {}
         arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) as ArrayBuffer,
       };
     };
+    if (url.includes("/commits/") && o.gateResolve) await o.gateResolve;
     if (url in json) return reply(JSON.stringify(json[url]));
     const blob = blobs.get(url);
     if (!blob) throw new Error(`unexpected fetch: ${url}`);
+    if (o.gate && !url.endsWith("/SKILL.md")) await o.gate;
     if (o.hold && !url.endsWith("/SKILL.md")) {
       await new Promise((_, reject) => {
         if (init.signal?.aborted) reject(init.signal.reason);
@@ -72,7 +79,7 @@ const standard = (): Entry[] => [
   { path: "skills/docx/SKILL.md", content: Buffer.from("---\nname: docx\ndescription: Word\n---\n") },
 ];
 
-function setup(entries: Entry[] = standard(), o: { hold?: boolean; corrupt?: string } = {}) {
+function setup(entries: Entry[] = standard(), o: FakeOptions = {}) {
   dir = mkdtempSync(join(tmpdir(), "nema-install-"));
   const root = join(dir, "extensions");
   const store = openExtensionStore(root);
@@ -197,26 +204,111 @@ describe("SkillInstaller", () => {
     expect(installer.status("pdf")).toMatchObject({ state: "failed", error: "skills/pdf/notes.md differs from another file only in case" });
   });
 
-  test("after a restart an unfinished install is marked failed, its leftovers removed, and it can be retried", async () => {
+  test("after a restart an unfinished install is marked failed, its leftovers removed, and retried from its own record", async () => {
     const { root, store } = setup();
-    const commitSource = `https://github.com/acme/skills/tree/${COMMIT}/skills/pdf`;
+    const docx = Buffer.from("---\nname: docx\ndescription: Word\n---\n");
     store.putManaged({
-      id: "pdf", kind: "skill", name: "pdf", summary: "", source: commitSource, revision: COMMIT, provision: "managed",
+      id: "docx", kind: "skill", name: "docx", summary: "", source: `https://github.com/acme/skills/tree/${COMMIT2}/skills/docx`, revision: COMMIT2, provision: "managed",
       installState: "installing", useState: "enabled", availability: "ready", externalPath: null, error: null,
-      provenance: { repository: "https://github.com/acme/skills", commit: COMMIT, path: "skills/pdf", digest: blobSha(SKILL), license: "MIT" },
+      provenance: { repository: "https://github.com/acme/skills", commit: COMMIT2, path: "skills/docx", digest: blobSha(docx), license: "MIT" },
     });
-    writeFileSync(join(root, "extensions", "pdf", "partial.txt"), "half");
-    mkdirSync(join(root, "staging", "pdf-old"), { recursive: true });
-    writeFileSync(join(root, "staging", "pdf-old", "SKILL.md"), "half");
+    writeFileSync(join(root, "extensions", "docx", "partial.txt"), "half");
+    mkdirSync(join(root, "staging", "docx-old"), { recursive: true });
+    writeFileSync(join(root, "staging", "docx-old", "SKILL.md"), "half");
 
-    const installer = new SkillInstaller({ root, store, fetch: fakeRepo(standard()).fetch });
-    expect(installer.recover()).toEqual(["pdf"]);
-    expect(store.list().find((row) => row.id === "pdf")).toMatchObject({ installState: "failed", error: "interrupted: the daemon stopped before the install finished" });
-    expect(existsSync(join(root, "extensions", "pdf"))).toBe(false);
+    // This GitHub only knows COMMIT2, so a retry that used anything but the record would fail.
+    const github = fakeRepo([...standard().filter((entry) => !entry.path.startsWith("skills/docx")), { path: "skills/docx/SKILL.md", content: docx }, { path: "skills/docx/a.md" }], { commit: COMMIT2 });
+    const installer = new SkillInstaller({ root, store, fetch: github.fetch });
+    expect(installer.recover()).toEqual(["docx"]);
+    expect(store.list().find((row) => row.id === "docx")).toMatchObject({ installState: "failed", error: "interrupted: the daemon stopped before the install finished" });
+    expect(existsSync(join(root, "extensions", "docx"))).toBe(false);
     expect(readdirSync(join(root, "staging"))).toEqual([]);
 
-    await installer.retry("pdf");
+    await installer.retry("docx");
+    await installer.settled("docx");
+    expect(installer.status("docx")).toMatchObject({ state: "installed", commit: COMMIT2, path: "skills/docx" });
+    expect(readFileSync(join(root, "extensions", "docx", "a.md"), "utf8")).toBe("content of skills/docx/a.md\n");
+    expect(github.asked.some((url) => url.includes("skills/pdf"))).toBe(false);
+  });
+
+  test("a choice to disable the skill made while it installs survives activation, and a retry keeps it", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { store, installer } = setup(standard(), { gate });
+    await installer.start(request);
+    store.setUseState("pdf", "disabled");
+    release();
     await installer.settled("pdf");
+    expect(store.list().find((row) => row.id === "pdf")).toMatchObject({ installState: "installed", useState: "disabled" });
+
+    const failed = setup(standard(), { corrupt: "skills/pdf/scripts/fill.py" });
+    await failed.installer.start(request);
+    await failed.installer.settled("pdf");
+    failed.store.setUseState("pdf", "disabled");
+    const again = new SkillInstaller({ root: failed.root, store: failed.store, fetch: fakeRepo(standard()).fetch });
+    await again.retry("pdf");
+    await again.settled("pdf");
+    expect(failed.store.list().find((row) => row.id === "pdf")).toMatchObject({ installState: "installed", useState: "disabled" });
+  });
+
+  test("a staging folder that cannot be created fails the install instead of leaving it running", async () => {
+    const { root, store, installer } = setup();
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "staging"), "not a folder");
+    await installer.start(request);
+    await installer.settled("pdf");
+    expect(installer.status("pdf").state).toBe("failed");
+    expect(store.list().find((row) => row.id === "pdf")?.installState).toBe("failed");
+  });
+
+  test.skipIf(process.platform === "win32")("an executable file keeps its execute bit and a regular one does not get one", async () => {
+    const { root, installer } = setup([...standard(), { path: "skills/pdf/run.sh", mode: "100755" }]);
+    await installer.start(request);
+    await installer.settled("pdf");
+    expect(statSync(join(root, "extensions", "pdf", "run.sh")).mode & 0o111).not.toBe(0);
+    expect(statSync(join(root, "extensions", "pdf", "SKILL.md")).mode & 0o111).toBe(0);
+  });
+
+  test("Windows device names and names ending in a dot or space are refused", async () => {
+    for (const name of ["CON", "con.txt", "Aux.md", "nul", "COM1.log", "lpt9", "trailing.", "space "]) {
+      const { installer } = setup([...standard(), { path: `skills/pdf/${name}` }]);
+      await installer.start(request);
+      await installer.settled("pdf");
+      expect(installer.status("pdf"), name).toMatchObject({ state: "failed", error: `unsafe file name in skills/pdf/${name}` });
+      rmSync(dir!, { recursive: true, force: true });
+    }
+  });
+
+  test("a retry counts as running from the moment it is asked for, before the commit is re-read", async () => {
+    const first = setup(standard(), { corrupt: "skills/pdf/scripts/fill.py" });
+    await first.installer.start(request);
+    await first.installer.settled("pdf");
+    let release: () => void = () => {};
+    const gateResolve = new Promise<void>((resolve) => { release = resolve; });
+    const installer = new SkillInstaller({ root: first.root, store: first.store, fetch: fakeRepo(standard(), { gateResolve }).fetch });
+    const retried = installer.retry("pdf");
+    expect(installer.running("pdf")).toBe(true);
+    release();
+    await retried;
+    await installer.settled("pdf");
+    expect(installer.running("pdf")).toBe(false);
     expect(installer.status("pdf").state).toBe("installed");
+  });
+
+  test("a cancelled install still blocks removal until its cleanup has finished", async () => {
+    const { installer } = setup(standard(), { hold: true });
+    await installer.start(request);
+    installer.cancel("pdf");
+    expect(installer.running("pdf")).toBe(true);
+    await installer.settled("pdf");
+    expect(installer.running("pdf")).toBe(false);
+  });
+
+  test("status does not report an install that was removed afterwards", async () => {
+    const { store, installer } = setup();
+    await installer.start(request);
+    await installer.settled("pdf");
+    store.removeManaged("pdf");
+    expect(() => installer.status("pdf")).toThrow("pdf has no install");
   });
 });

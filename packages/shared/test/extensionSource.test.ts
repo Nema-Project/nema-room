@@ -66,3 +66,13 @@ describe("parseSkillSource", () => {
     }
   });
 });
+
+describe("safeRepoPath", () => {
+  test("accepts ordinary folders and refuses anything one platform would write elsewhere", async () => {
+    const { safeRepoPath } = await import("../src/extensionSource.js");
+    for (const ok of ["skills/pdf", "a b/c.d", "scripts/run.sh", "x/.hidden"]) expect(safeRepoPath(ok), ok).toBe(true);
+    for (const bad of ["", "/abs", "a//b", "../etc", "a/./b", "a\\b", "c:x", "q?", "CON", "x/nul.txt", "com1", "LPT3.log", "dot.", "space ", "tab\tname"]) {
+      expect(safeRepoPath(bad), bad).toBe(false);
+    }
+  });
+});

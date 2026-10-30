@@ -104,3 +104,27 @@ export function parseSkillSource(raw: string): SkillSource {
     exact: kind === "blob",
   };
 }
+
+/** Characters no file name may hold on any platform Nema runs on: separators, drive colons, reserved punctuation, controls. */
+const UNSAFE_NAME = /[\\/:*?"<>|\u0000-\u001f]/;
+/** Windows device names, which open a device instead of a file whatever the extension: `CON`, `nul.txt`, `COM1.log`. */
+const WINDOWS_DEVICE = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$/i;
+
+/** One path component that writes the same file on Linux, macOS and Windows. */
+export function safeFileName(name: string): boolean {
+  return (
+    name !== "" &&
+    name !== "." &&
+    name !== ".." &&
+    name.length <= 255 &&
+    !UNSAFE_NAME.test(name) &&
+    !WINDOWS_DEVICE.test(name) &&
+    // Windows drops a trailing dot or space, so `a.` and `a` would be the same file there.
+    !/[. ]$/.test(name)
+  );
+}
+
+/** A `/`-separated relative path inside a repository whose every component is a safe file name. */
+export function safeRepoPath(relative: string): boolean {
+  return relative.split("/").every(safeFileName);
+}

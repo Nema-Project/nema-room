@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { parseSkillSource, type ExtensionRecord, type SkillSource } from "@nema/shared";
+import { parseSkillSource, safeRepoPath, type ExtensionRecord, type SkillSource } from "@nema/shared";
 import { RAW, commitTree, encodePath, pinnedSkillRecord, resolveSkillSource, type SourceFetch, type TreeEntry } from "./source.js";
 import type { openExtensionStore } from "./store.js";
 
@@ -31,12 +31,6 @@ const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 const RESOLVE_TIMEOUT_MS = 45_000;
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 export const INTERRUPTED = "interrupted: the daemon stopped before the install finished";
-/** A name that is unsafe on any platform the daemon runs on: separators, drive colons, reserved characters, controls. */
-const UNSAFE_NAME = /[\\:*?"<>|\u0000-\u001f]/;
-
-function safeSegments(relative: string): boolean {
-  return relative.split("/").every((part) => part !== "" && part !== "." && part !== ".." && !UNSAFE_NAME.test(part) && part.length <= 255);
-}
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -60,7 +54,7 @@ export function skillFiles(entries: TreeEntry[], folder: string): Array<TreeEntr
     if (entry.type !== "blob") continue;
     if (entry.mode === "120000") throw new Error(`${entry.path} is a symbolic link`);
     const relative = entry.path.slice(prefix.length);
-    if (!safeSegments(relative)) throw new Error(`unsafe file name in ${entry.path}`);
+    if (!safeRepoPath(relative)) throw new Error(`unsafe file name in ${entry.path}`);
     files.push({ ...entry, relative });
   }
   if (files.length > MAX_FILES) throw new Error(`${folder} has more than ${MAX_FILES} files`);
@@ -78,7 +72,8 @@ export function skillFiles(entries: TreeEntry[], folder: string): Array<TreeEntr
   return files;
 }
 
-type Job = InstallJob & { controller: AbortController; promise: Promise<void> };
+/** `active` stays true until cleanup has finished, even after a cancel has been acknowledged. */
+type Job = InstallJob & { controller: AbortController; promise: Promise<void>; active: boolean };
 
 /**
  * Installs one skill folder from a pinned commit into Nema's managed directory.
@@ -90,6 +85,8 @@ type Job = InstallJob & { controller: AbortController; promise: Promise<void> };
  */
 export class SkillInstaller {
   private readonly jobs = new Map<string, Job>();
+  /** Ids a retry has claimed while it re-reads the recorded commit, before its job exists. */
+  private readonly reserved = new Set<string>();
   private readonly staging: string;
 
   constructor(private readonly o: { root: string; store: Store; fetch: SourceFetch; downloadTimeoutMs?: number }) {
@@ -105,15 +102,25 @@ export class SkillInstaller {
     return interrupted;
   }
 
+  /** True from the moment an install or retry is accepted until its cleanup has finished. */
   running(id: string): boolean {
-    return this.jobs.get(id)?.state === "running";
+    return this.reserved.has(id) || this.jobs.get(id)?.active === true;
+  }
+
+  /** Called after a removal, so a finished job is not reported for an extension that is gone. */
+  forget(id: string): void {
+    if (!this.running(id)) this.jobs.delete(id);
   }
 
   async start(request: InstallRequest): Promise<InstallJob> {
+    return this.begin(request, null);
+  }
+
+  private async begin(request: InstallRequest, reservedFor: string | null): Promise<InstallJob> {
     const { source, commit, path: folder } = request;
     if (typeof source !== "string") throw new Error("install needs a string source");
     if (typeof commit !== "string" || !COMMIT.test(commit)) throw new Error("install needs a 40-character commit");
-    if (typeof folder !== "string" || (folder !== "." && !safeSegments(folder))) throw new Error("invalid skill path");
+    if (typeof folder !== "string" || (folder !== "." && !safeRepoPath(folder))) throw new Error("invalid skill path");
     const parsed = parseSkillSource(source);
     const pinned: SkillSource = {
       via: "github",
@@ -127,8 +134,12 @@ export class SkillInstaller {
     };
     const resolution = await resolveSkillSource(pinned, { fetch: this.o.fetch, signal: AbortSignal.timeout(RESOLVE_TIMEOUT_MS) });
     if (resolution.commit !== commit) throw new Error(`${commit} resolved to a different commit`);
-    const record = pinnedSkillRecord(resolution, resolution.skills[0]!);
-    this.claim(record.id);
+    const pinnedRecord = pinnedSkillRecord(resolution, resolution.skills[0]!);
+    if (reservedFor !== null && pinnedRecord.id !== reservedFor) throw new Error(`${reservedFor} now resolves to a different skill (${pinnedRecord.id})`);
+    this.claim(pinnedRecord.id, reservedFor);
+    // A retry keeps the on/off choice made for the earlier attempt.
+    const previous = this.o.store.list().find((row) => row.id === pinnedRecord.id);
+    const record = previous ? { ...pinnedRecord, useState: previous.useState } : pinnedRecord;
     this.o.store.putManaged(record);
     return this.launch(record, resolution.owner, resolution.repo, commit, folder);
   }
@@ -137,8 +148,14 @@ export class SkillInstaller {
   async retry(id: string): Promise<InstallJob> {
     const record = this.o.store.list().find((row) => row.id === id);
     if (!record || record.provision !== "managed" || !record.provenance) throw new Error(`${id} has no install to retry`);
-    this.claim(id);
-    return this.start({ source: record.provenance.repository, commit: record.provenance.commit, path: record.provenance.path });
+    this.claim(id, null);
+    // Reserve before the first await: until the job exists, a removal must still see this id as busy.
+    this.reserved.add(id);
+    try {
+      return await this.begin({ source: record.provenance.repository, commit: record.provenance.commit, path: record.provenance.path }, id);
+    } finally {
+      this.reserved.delete(id);
+    }
   }
 
   cancel(id: string): InstallJob {
@@ -150,9 +167,10 @@ export class SkillInstaller {
   }
 
   status(id: string): InstallJob {
-    const job = this.jobs.get(id);
-    if (job) return this.snapshot(job);
     const record = this.o.store.list().find((row) => row.id === id);
+    const job = this.jobs.get(id);
+    if (job && (job.active || record)) return this.snapshot(job);
+    if (job) this.jobs.delete(id);
     if (!record || record.provision !== "managed") throw new Error(`${id} has no install`);
     const state: InstallState =
       record.installState === "installed" ? "installed" : record.installState === "failed" ? "failed" : record.installState === "absent" ? "cancelled" : "running";
@@ -165,8 +183,8 @@ export class SkillInstaller {
   }
 
   /** One install per id at a time; an installed copy is not replaced (updating is its own operation). */
-  private claim(id: string): void {
-    if (this.running(id)) throw new Error(`${id} is already being installed`);
+  private claim(id: string, reservedFor: string | null): void {
+    if (reservedFor !== id && this.running(id)) throw new Error(`${id} is already being installed`);
     const current = this.o.store.list().find((row) => row.id === id);
     if (!current) return;
     if (current.provision !== "managed") throw new Error(`${id} is taken by another extension`);
@@ -180,7 +198,7 @@ export class SkillInstaller {
 
   private launch(record: ExtensionRecord, owner: string, repo: string, commit: string, folder: string): InstallJob {
     const controller = new AbortController();
-    const job: Job = { id: record.id, state: "running", done: 0, total: 0, error: null, commit, path: folder, controller, promise: Promise.resolve() };
+    const job: Job = { id: record.id, state: "running", done: 0, total: 0, error: null, commit, path: folder, controller, promise: Promise.resolve(), active: true };
     this.jobs.set(record.id, job);
     job.promise = this.run(job, record, owner, repo, commit, folder);
     return this.snapshot(job);
@@ -189,9 +207,10 @@ export class SkillInstaller {
   private async run(job: Job, record: ExtensionRecord, owner: string, repo: string, commit: string, folder: string): Promise<void> {
     const timeout = this.o.downloadTimeoutMs ?? DOWNLOAD_TIMEOUT_MS;
     const signal = AbortSignal.any([job.controller.signal, AbortSignal.timeout(timeout)]);
-    mkdirSync(this.staging, { recursive: true });
-    const stage = mkdtempSync(path.join(this.staging, `${record.id}-`));
+    let stage: string | null = null;
     try {
+      mkdirSync(this.staging, { recursive: true });
+      stage = mkdtempSync(path.join(this.staging, `${record.id}-`));
       const { entries, truncated } = await commitTree(owner, repo, commit, { fetch: this.o.fetch, signal });
       if (truncated) throw new Error(`GitHub cut the file list of ${owner}/${repo} short; it is too large to install from`);
       const files = skillFiles(entries, folder);
@@ -208,24 +227,35 @@ export class SkillInstaller {
         const target = path.resolve(stage, ...file.relative.split("/"));
         if (!target.startsWith(stage + path.sep)) throw new Error(`unsafe file name in ${file.path}`);
         mkdirSync(path.dirname(target), { recursive: true });
-        writeFileSync(target, bytes, { flag: "wx" });
+        // Git records only "executable or not"; keep that bit so a skill's scripts still run.
+        const mode = file.mode === "100755" ? 0o755 : 0o644;
+        writeFileSync(target, bytes, { flag: "wx", mode });
+        chmodSync(target, mode);
         job.done += 1;
       }
       signal.throwIfAborted();
-      this.o.store.installManaged({ ...record, installState: "installed", error: null }, stage);
+      // Activate with the record as it is now: the person may have switched it off meanwhile.
+      const current = this.o.store.list().find((row) => row.id === record.id);
+      this.o.store.installManaged({ ...record, useState: current?.useState ?? record.useState, installState: "installed", error: null }, stage);
       job.state = "installed";
     } catch (error) {
-      if (job.controller.signal.aborted) {
-        job.state = "cancelled";
-        this.o.store.cancelInstall(record.id);
-      } else {
-        const reason = error instanceof Error && error.name === "TimeoutError" ? `download did not finish within ${Math.round(timeout / 60_000)} min` : message(error);
-        job.state = "failed";
-        job.error = reason;
-        this.o.store.failInstall(record.id, reason);
+      const cancelled = job.controller.signal.aborted;
+      const reason = cancelled
+        ? null
+        : error instanceof Error && error.name === "TimeoutError"
+          ? `download did not finish within ${Math.round(timeout / 60_000)} min`
+          : message(error);
+      job.state = cancelled ? "cancelled" : "failed";
+      job.error = reason;
+      try {
+        if (cancelled) this.o.store.cancelInstall(record.id);
+        else this.o.store.failInstall(record.id, reason!);
+      } catch {
+        // The record is already gone or no longer installing; there is nothing left to roll back.
       }
     } finally {
-      rmSync(stage, { recursive: true, force: true });
+      if (stage) rmSync(stage, { recursive: true, force: true });
+      job.active = false;
     }
   }
 }

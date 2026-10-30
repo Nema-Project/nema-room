@@ -275,7 +275,7 @@ test("extensions.install runs end to end over RPC, and remove waits for a runnin
   expect(started.result).toMatchObject({ id: "notes", state: "running" });
   const refused = await rpc(router, "i2", "extensions.remove", { id: "notes" });
   expect(refused.ok).toBe(false);
-  if (!refused.ok) expect(refused.error).toBe("notes is installing; cancel the install first");
+  if (!refused.ok) expect(refused.error).toBe("notes is installing; cancel the install and wait for it to stop first");
   release();
   let status: { state: string } = { state: "running" };
   for (let i = 0; i < 100 && status.state === "running"; i++) {
@@ -286,8 +286,67 @@ test("extensions.install runs end to end over RPC, and remove waits for a runnin
   expect(status).toMatchObject({ state: "installed", done: 2, total: 2 });
   expect(readFileSync(join(dir, "extensions", "extensions", "notes", "helper.txt"), "utf8")).toBe("helper\n");
   for (const method of ["extensions.install", "extensions.installStatus", "extensions.cancelInstall", "extensions.retryInstall"]) {
-    expect((await rpc(router, "bad", method, {})).ok, method).toBe(false);
+    const bad = await rpc(router, "bad", method, {});
+    expect(bad.ok, method).toBe(false);
+    // Refused by the handler's own check, not by the router for an unknown method.
+    if (!bad.ok) expect(bad.error, method).toMatch(/needs/);
   }
+});
+
+test("extensions.cancelInstall and extensions.retryInstall reach the installer over RPC", async () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-rpc-"));
+  const { createHash } = await import("node:crypto");
+  const commit = "0123456789abcdef0123456789abcdef01234567";
+  const skill = Buffer.from("---\nname: notes\ndescription: Take notes\n---\n");
+  const extra = Buffer.from("helper\n");
+  const sha = (bytes: Buffer) => createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+  let hold = true;
+  const replies: Record<string, Buffer> = {
+    "https://api.github.com/repos/acme/skills": Buffer.from(JSON.stringify({ full_name: "acme/skills", default_branch: "main", license: null })),
+    [`https://api.github.com/repos/acme/skills/commits/${commit}`]: Buffer.from(JSON.stringify({ sha: commit })),
+    [`https://api.github.com/repos/acme/skills/git/trees/${commit}?recursive=1`]: Buffer.from(JSON.stringify({
+      tree: [
+        { path: "notes/SKILL.md", type: "blob", mode: "100644", sha: sha(skill), size: skill.length },
+        { path: "notes/helper.txt", type: "blob", mode: "100644", sha: sha(extra), size: extra.length },
+      ],
+    })),
+    [`https://raw.githubusercontent.com/acme/skills/${commit}/notes/SKILL.md`]: skill,
+    [`https://raw.githubusercontent.com/acme/skills/${commit}/notes/helper.txt`]: extra,
+  };
+  const router = new RpcRouter();
+  registerExtensionHandlers(router, dir, {
+    fetch: async (url: string, init: { signal?: AbortSignal }) => {
+      const body = replies[url];
+      if (!body) throw new Error(`unexpected fetch: ${url}`);
+      if (url.endsWith("helper.txt") && hold) {
+        await new Promise((_, reject) => {
+          if (init.signal?.aborted) reject(init.signal.reason);
+          init.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+        });
+      }
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => JSON.parse(body.toString()), text: async () => body.toString(), arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.length) as ArrayBuffer };
+    },
+  });
+  const poll = async () => {
+    for (let i = 0; i < 200; i++) {
+      const polled = await rpc(router, "p", "extensions.installStatus", { id: "notes" });
+      const listed = await rpc(router, "l", "extensions.list", {});
+      const row = listed.ok ? (listed.result as Array<{ id: string; installState: string }>).find((r) => r.id === "notes") : undefined;
+      if (polled.ok && (polled.result as { state: string }).state !== "running" && row?.installState !== "installing") return polled.result as { state: string };
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error("install did not settle");
+  };
+  expect((await rpc(router, "a", "extensions.install", { source: "acme/skills", commit, path: "notes" })).ok).toBe(true);
+  const cancelled = await rpc(router, "b", "extensions.cancelInstall", { id: "notes" });
+  expect(cancelled.ok).toBe(true);
+  if (cancelled.ok) expect(cancelled.result).toMatchObject({ id: "notes", state: "cancelled" });
+  expect(await poll()).toMatchObject({ state: "cancelled" });
+  hold = false;
+  const retried = await rpc(router, "c", "extensions.retryInstall", { id: "notes" });
+  expect(retried.ok).toBe(true);
+  if (retried.ok) expect(retried.result).toMatchObject({ id: "notes", state: "running", commit, path: "notes" });
+  expect(await poll()).toMatchObject({ state: "installed", done: 2, total: 2 });
 });
 
 test("a daemon start turns an install that was cut off into a failed one", async () => {

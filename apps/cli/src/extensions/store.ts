@@ -184,6 +184,8 @@ export function openExtensionStore(root: string) {
       if (!current || current.provision !== "managed" || current.installState !== "installing") throw new Error("extension is not installing");
       const target = ownedDirectory(root, id);
       if (existsSync(target)) rmSync(target, { recursive: true, force: true });
+      // A crash inside installManaged can leave its half-copied sibling behind.
+      rmSync(path.join(managedPath(root, id).extensions, `.${id}.incoming`), { recursive: true, force: true });
       writeExtra(
         root,
         readExtra(root).map((row) => (row.id === id ? { ...row, installState: "failed", error } : row)),

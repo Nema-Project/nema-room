@@ -340,7 +340,10 @@ function installJob(result: unknown, method: string, id?: string): Record<string
     typeof row.state !== "string" ||
     !INSTALL_STATES.has(row.state) ||
     typeof row.done !== "number" ||
-    typeof row.total !== "number"
+    typeof row.total !== "number" ||
+    !(row.error === null || typeof row.error === "string") ||
+    !(row.commit === null || (typeof row.commit === "string" && /^[0-9a-f]{40}$/.test(row.commit))) ||
+    !(row.path === null || typeof row.path === "string")
   ) {
     throw new DaemonRpcError(`${method} returned an invalid result`);
   }

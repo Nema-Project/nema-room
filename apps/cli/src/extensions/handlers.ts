@@ -48,10 +48,11 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
     const id = requireId(params, "extensions.remove");
     const record = store.list().find((row) => row.id === id);
     if (!record) throw new Error(`extension not found: ${id}`);
-    if (installer.running(id)) throw new Error(`${id} is installing; cancel the install first`);
+    if (installer.running(id)) throw new Error(`${id} is installing; cancel the install and wait for it to stop first`);
     if (record.provision === "bundled") throw new Error("bundled extensions cannot be removed");
     if (record.provision === "managed") {
       store.removeManaged(id);
+      installer.forget(id);
       return { id, removed: "managed" };
     }
     store.detach(id);
