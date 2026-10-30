@@ -611,8 +611,24 @@ describe("workspace plugins", () => {
       throw new DaemonRpcError("cannot attach /home/x/notes: id-taken");
     };
     const taken = await uiReq("POST", "/api/extensions/attach", { path: "/home/x/notes" });
-    expect(taken.status).toBe(502);
+    // A refusal is the request's problem, not a gateway failure; the message stays the daemon's.
+    expect(taken.status).toBe(409);
     expect(((await taken.json()) as { error: string }).error).toBe("cannot attach /home/x/notes: id-taken");
+    for (const [message, status] of [
+      ["already attached: /home/x/notes", 409],
+      ["cannot attach /home/x/notes: missing-frontmatter", 422],
+      ["cannot attach /home/x/notes: not-a-folder", 422],
+      ["extensions.attach needs an absolute folder path", 400],
+      ["daemon 未连接", 503],
+      ["boom", 502],
+    ] as const) {
+      daemonCall = async () => {
+        throw new DaemonRpcError(message);
+      };
+      const refused = await uiReq("POST", "/api/extensions/attach", { path: "/home/x/notes" });
+      expect(refused.status, message).toBe(status);
+      expect(((await refused.json()) as { error: string }).error).toBe(message);
+    }
     for (const bad of [null, { ...attached, provision: "managed" }, { ...attached, externalPath: null }, { ...attached, id: 7 }]) {
       daemonCall = async () => bad;
       const response = await uiReq("POST", "/api/extensions/attach", { path: "/home/x/notes" });

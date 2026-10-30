@@ -163,27 +163,25 @@ test("a GitHub CLI check that throws marks the github item damaged", async () =>
   expect(response.ok && response.result).toMatchObject({ availability: "damaged", error: "github-cli-damaged" });
 });
 
-test("overlapping Repairs of one item run one after another, so the later one is what stays", async () => {
+test("a Repair asked for while one of the same item runs shares that check", async () => {
   const answers: Array<(value: { installed: boolean; detail: string }) => void> = [];
-  // Both checks start within the same millisecond: order must not depend on the clock.
-  const { call } = setup({
-    checkGraphify: () => new Promise((resolve) => answers.push(resolve)),
-    now: () => new Date("2026-10-30T03:00:00.000Z"),
-  });
-  const older = call("extensions.repair", { id: "code" });
-  const newer = call("extensions.repair", { id: "code" });
+  const { call } = setup({ checkGraphify: () => new Promise((resolve) => answers.push(resolve)) });
+  const first = call("extensions.repair", { id: "code" });
+  const second = call("extensions.repair", { id: "code" });
   await vi.waitFor(() => expect(answers).toHaveLength(1));
-  // The second check has not started while the first one runs.
   await new Promise((resolve) => setTimeout(resolve, 20));
+  // One check, not a queue: the second caller waits at most as long as one check takes.
   expect(answers).toHaveLength(1);
-  answers[0]!({ installed: false, detail: "" });
-  expect((await older).ok).toBe(true);
+  answers[0]!({ installed: true, detail: "" });
+  const [a, b] = await Promise.all([first, second]);
+  expect(a.ok && a.result).toMatchObject({ availability: "ready" });
+  expect(b.ok && b.result).toEqual(a.ok && a.result);
+  // Once it finished, the next Repair runs a check of its own.
+  const third = call("extensions.repair", { id: "code" });
   await vi.waitFor(() => expect(answers).toHaveLength(2));
-  answers[1]!({ installed: true, detail: "" });
-  const newest = await newer;
-  expect(newest.ok && newest.result).toMatchObject({ availability: "ready", error: null });
-  const listed = await call("extensions.list", {});
-  expect(listed.ok && (listed.result as Array<{ id: string }>).find((row) => row.id === "code")).toMatchObject({ availability: "ready" });
+  answers[1]!({ installed: false, detail: "" });
+  const c = await third;
+  expect(c.ok && c.result).toMatchObject({ availability: "missing-dependency" });
 });
 
 test("a finished check is stored even when the stored one carries a later time (clock moved back)", async () => {

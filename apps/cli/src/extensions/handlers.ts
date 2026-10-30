@@ -144,14 +144,16 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
   // Check a bundled item again and keep the result. Graphify has a packaged runtime of its own and
   // GitHub needs the `gh` CLI signed in; the others are code inside the app and are ready whenever
   // the app runs. The check time is taken before the check.
-  // One check per item at a time: a second Repair waits for the running one, so the check that
-  // started later is always the one that finishes later and stays.
-  const repairs = new Map<string, Promise<unknown>>();
+  // One check per item at a time: a Repair asked for while one of the same item runs shares that
+  // check's result instead of queueing another, so checks never overlap and no caller waits for
+  // more than one check.
+  const repairs = new Map<string, Promise<ExtensionRecord>>();
   router.register("extensions.repair", async (params): Promise<ExtensionRecord> => {
     const id = requireId(params, "extensions.repair");
     if (!BUNDLED_IDS.has(id)) throw new Error("only a bundled extension can be repaired");
-    const previous = repairs.get(id) ?? Promise.resolve();
-    const run = previous.catch(() => undefined).then(() => repair(id));
+    const running = repairs.get(id);
+    if (running) return running;
+    const run = repair(id);
     repairs.set(id, run);
     try {
       return await run;

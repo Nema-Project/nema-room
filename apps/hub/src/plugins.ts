@@ -74,6 +74,20 @@ export function daemonHttpStatus(message: string): 502 | 503 {
   return DAEMON_OFFLINE.has(message) ? 503 : 502;
 }
 
+/**
+ * The daemon refuses an attach with a message the page parses; those are the request's fault and
+ * get a 4xx (409 for a clash with an existing record, 422 for a folder that cannot be a skill).
+ * Anything else is a gateway or connection problem as before.
+ */
+export function attachHttpStatus(message: string): 400 | 409 | 422 | 502 | 503 {
+  if (message.startsWith("already attached: ")) return 409;
+  const problem = /^cannot attach .*: ([a-z-]+)$/s.exec(message)?.[1];
+  if (problem === "id-taken") return 409;
+  if (problem) return 422;
+  if (message === "extensions.attach needs an absolute folder path") return 400;
+  return daemonHttpStatus(message);
+}
+
 function stringArray(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
   if (typeof value !== "string" || value.length < 2 || value === "{}") return [];
@@ -432,8 +446,8 @@ export async function attachExtension(daemon: DaemonRpc, folder: string): Promis
 }
 
 /**
- * The daemon gives the packaged Graphify check up to 60 s and the GitHub CLI check two 10 s calls,
- * and a second Repair of the same item waits for the first; the hub waits longer than one check.
+ * The daemon gives the packaged Graphify check up to 60 s and the GitHub CLI check two 10 s calls.
+ * A second Repair of the same item shares the running check, so no call waits for more than one.
  */
 export const REPAIR_TIMEOUT_MS = 90_000;
 
