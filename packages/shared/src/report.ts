@@ -157,11 +157,11 @@ export const Implementation = z.object({
       .nullable()
       .default(null),
     /** One group per contributing report when several reports roll up into one requirement. */
-    reportEvidence: z
-      .array(z.object({ reportMessageId: z.string(), commits: z.array(z.string()) }))
-      .nullable()
-      .default(null)
-      .transform((groups) => (groups && groups.length > 0 ? groups : null)),
+    reportEvidence: z.preprocess(
+      // An empty list means no grouping, the same as a missing key.
+      (groups) => (Array.isArray(groups) && groups.length === 0 ? null : groups),
+      z.array(z.object({ reportMessageId: z.string(), commits: z.array(z.string()) })).nullable().default(null),
+    ),
   }),
 });
 export type Implementation = z.infer<typeof Implementation>;
