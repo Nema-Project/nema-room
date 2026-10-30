@@ -136,6 +136,12 @@ nema report --summary "实现了流式输出" --commits abc1234,def5678 --entrie
 echo '{"summary":"…","commits":["abc1234"]}' | nema report --json
 ```
 
+进行中的工作也可以先上报：`--json` 里加 `"progress":"in_progress"`（不写就是 `completed`）。进行中上报可以没有提交；没有提交时不做提交核对，消息上会写明「这次没有做提交核对」。有提交时照常核对，但不会推进开发包任务，也不会排整理任务；完成后再发一条 `completed` 上报（至少一个提交）。
+
+```bash
+echo '{"summary":"先接好流式接口","progress":"in_progress"}' | nema report --json
+```
+
 上报会变成聊天里的一条 `report` 消息。daemon 核对三件事：提交存在；提交在主分支上；声称改过的文件确实被这些提交改过（多改了别的文件没关系，merge 提交不算，改名按新路径算）。核对完，hub 排一个整理任务。
 
 **三种状态。** 需求条目的 `implementation` 有三种：

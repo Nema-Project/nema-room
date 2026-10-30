@@ -40,6 +40,14 @@ describe("roomTools", () => {
     const upsert = roomTools([]).find((t) => t.name === "upsert_entry");
     expect((upsert?.parameters as { required?: string[] }).required).toContain("basis");
   });
+
+  test("upsert_entry leaves the hub-kept implementation evidence keys optional", () => {
+    const upsert = roomTools([]).find((t) => t.name === "upsert_entry");
+    type Schema = { properties: Record<string, Schema>; required?: string[] };
+    const evidence = (upsert?.parameters as Schema).properties.implementation!.properties.evidence!;
+    expect(Object.keys(evidence.properties)).toEqual(expect.arrayContaining(["acceptanceReview", "reportEvidence"]));
+    expect(evidence.required).toEqual(["reportMessageId", "commits", "inferred", "note", "confirmedBy"]);
+  });
 });
 
 test("offer_skill_install takes a source and an optional path, and says it only offers", () => {

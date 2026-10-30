@@ -244,6 +244,7 @@
   "report.untouched": "未改动的文件",
   "report.checkPending": "正在检查…",
   "report.checkFailed": "无法检查：{message}",
+  "report.checkSkipped": "进行中上报还没有提交，这次没有做提交核对。",
   "impl.reported": "已上报",
   "impl.reportedInferred": "已上报（代码推断）",
   "impl.verified": "已核实",

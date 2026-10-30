@@ -481,7 +481,7 @@ describe("progress from reports", () => {
     const req = (await store().get("R-1"))!;
     expect(req.implementation).toEqual({
       status: "verified",
-      evidence: { reportMessageId: last.id, commits: ["aaaaaaa", "bbbbbbb"], inferred: false, note: `开发包 ${wp.id} 全部任务已核实`, confirmedBy: null },
+      evidence: { reportMessageId: last.id, commits: ["aaaaaaa", "bbbbbbb"], inferred: false, note: `开发包 ${wp.id} 全部任务已核实`, confirmedBy: null, acceptanceReview: null, reportEvidence: null },
     });
   });
 

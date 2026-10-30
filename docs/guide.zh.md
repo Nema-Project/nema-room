@@ -201,6 +201,8 @@ nema report --entries W-1 --task 1 --summary "Implement task 1" --commits COMMIT
 
 可选上报 hook：`nema report install --agent codex` 或 `--agent claude`。这会修改对应 Agent 的用户级 hook 配置并安装 `nema-report` skill；卸载用 `nema report uninstall --agent <agent>`。
 
+进行中的工作可以先发一条进行中上报：`echo '{"summary":"…","progress":"in_progress"}' | nema report --json`。它可以没有提交，不会推进开发包任务；完成后再发 `completed` 上报（至少一个提交）。
+
 GitHub 插件默认关闭。打开方式、`gh` 登录和写入开关见上面的桌面应用一节；Web / Compose 用的也是同一条路径。命令白名单和六个原有读取函数见技术参考。`nema auth github` 仍可把令牌写入 `~/.nema/github-token`，默认路径不读取它。
 
 插件页（左下角设置里的「插件」）给每个扩展一个「停用」/「启用」按钮，点了立刻生效，不用重启。停用一个扩展后，它的函数不再出现在 Agent 的工具清单里，直接调用会被拒绝；这个开关是整台安装的，工作区里另有一套开关，两者都要开。内置扩展停用后只记一行覆盖，出厂定义不变。Nema 自己安装的扩展旁边有「卸载」，会把它的目录一起删掉；在 Nema 之外发现的扩展只有「移出列表」，只摘掉列表里的那条记录，原件不动。内置扩展不提供卸载，只能启停。细节见技术参考的「启用、停用与卸载扩展」。

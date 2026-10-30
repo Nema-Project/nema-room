@@ -323,6 +323,8 @@ function ReportItem({ message, time, onOpenEntry, onQuote, onJump }: { message: 
             </ul>
           ) : meta?.checkError ? (
             <p className="rcheck-note">{t("report.checkFailed", { message: meta.checkError })}</p>
+          ) : meta?.checkSkipped === "in_progress_no_commits" ? (
+            <p className="rcheck-note">{t("report.checkSkipped")}</p>
           ) : (
             <p className="rcheck-note">{t("report.checkPending")}</p>
           )}

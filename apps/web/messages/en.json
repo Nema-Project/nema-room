@@ -244,6 +244,7 @@
   "report.untouched": "Files not touched",
   "report.checkPending": "Checking…",
   "report.checkFailed": "Could not check: {message}",
+  "report.checkSkipped": "This in-progress report has no commits, so no commit check was run.",
   "impl.reported": "Reported",
   "impl.reportedInferred": "Reported (inferred from code)",
   "impl.verified": "Verified",

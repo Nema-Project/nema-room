@@ -104,11 +104,43 @@ test("implementation is accepted only on requirements and round-trips", () => {
     evidence: { reportMessageId: "m_1", commits: ["abc1234"], inferred: false, note: null, confirmedBy: null },
   };
   const req = EntryFrontmatter.parse({ ...baseDecision, id: "R-1", kind: "requirement", implementation });
-  expect(req.implementation).toEqual(implementation);
-  expect(EntryFrontmatter.parse(JSON.parse(JSON.stringify(req))).implementation).toEqual(implementation);
+  const expected = { ...implementation, evidence: { ...implementation.evidence, acceptanceReview: null, reportEvidence: null } };
+  expect(req.implementation).toEqual(expected);
+  expect(EntryFrontmatter.parse(JSON.parse(JSON.stringify(req))).implementation).toEqual(expected);
   expect(EntryFrontmatter.safeParse({ ...baseDecision, implementation }).success).toBe(false);
   expect(EntryFrontmatter.safeParse({ ...baseDecision, id: "R-1", kind: "requirement", implementation: { ...implementation, status: "done" } }).success).toBe(false);
   expect(EntryFrontmatter.parse({ ...baseDecision, id: "R-1", kind: "requirement" }).implementation).toBeUndefined();
+});
+
+const legacyImplementation = {
+  status: "verified" as const,
+  evidence: { reportMessageId: "m_1", commits: ["abc1234"], inferred: false, note: null, confirmedBy: "user" as const },
+};
+
+test("reads a missing acceptanceReview as null and round-trips linked_check_changed", () => {
+  const parse = (implementation: unknown) => EntryFrontmatter.safeParse({ ...baseDecision, id: "R-1", kind: "requirement", implementation });
+  const missing = parse(legacyImplementation);
+  expect(missing.success && missing.data.implementation?.evidence.acceptanceReview).toBeNull();
+  const review = { needed: true, at: "2026-10-28T00:00:00.000Z", reason: "linked_check_changed" };
+  const withReview = { ...legacyImplementation, evidence: { ...legacyImplementation.evidence, acceptanceReview: review } };
+  const parsed = EntryFrontmatter.parse({ ...baseDecision, id: "R-1", kind: "requirement", implementation: withReview });
+  expect(parsed.implementation?.evidence.acceptanceReview).toEqual(review);
+  expect(EntryFrontmatter.parse(JSON.parse(JSON.stringify(parsed))).implementation?.evidence.acceptanceReview).toEqual(review);
+  expect(parse({ ...legacyImplementation, evidence: { ...legacyImplementation.evidence, acceptanceReview: { ...review, needed: false } } }).success).toBe(false);
+  expect(parse({ ...legacyImplementation, evidence: { ...legacyImplementation.evidence, acceptanceReview: { ...review, reason: "other" } } }).success).toBe(false);
+});
+
+test("reads a missing reportEvidence as null and round-trips groups", () => {
+  const parse = (implementation: unknown) => EntryFrontmatter.parse({ ...baseDecision, id: "R-1", kind: "requirement", implementation });
+  expect(parse(legacyImplementation).implementation?.evidence.reportEvidence).toBeNull();
+  const groups = [
+    { reportMessageId: "m_2", commits: ["bbb2222"] },
+    { reportMessageId: "m_1", commits: ["aaa1111", "ccc3333"] },
+  ];
+  const parsed = parse({ ...legacyImplementation, evidence: { ...legacyImplementation.evidence, reportEvidence: groups } });
+  expect(parsed.implementation?.evidence.reportEvidence).toEqual(groups);
+  expect(EntryFrontmatter.parse(JSON.parse(JSON.stringify(parsed))).implementation?.evidence.reportEvidence).toEqual(groups);
+  expect(parse({ ...legacyImplementation, evidence: { ...legacyImplementation.evidence, reportEvidence: [] } }).implementation?.evidence.reportEvidence).toBeNull();
 });
 
 const wpMeta = { requirements: ["R-1"], repos: ["r1"], approvedAt: null, approvedCommit: null, blockedOn: null, tasks: [] };

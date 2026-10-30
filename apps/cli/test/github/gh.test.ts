@@ -149,3 +149,101 @@ test("status tells a missing gh apart from a check that could not finish", async
   }
   finally { await signedOut.close(); }
 });
+
+const HEAD40 = "0123456789abcdef0123456789abcdef01234567";
+
+test("reads one page of check runs and marks a short page truncated", async () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-gh-profile-"));
+  const record = join(dir, "calls.jsonl");
+  const bin = fakeGh(`import { appendFileSync } from "node:fs"; const a=process.argv.slice(2); appendFileSync(${JSON.stringify(record)},JSON.stringify(a)+"\\n"); if(a.some((x)=>x.endsWith("/pulls/7"))) process.stdout.write(JSON.stringify({head:{sha:"${HEAD40.toUpperCase()}"}})); else process.stdout.write(JSON.stringify({total_count:2,check_runs:[{name:"ci",status:"completed",conclusion:"failure",html_url:"https://github.com/a/b/runs/1"}]}));`);
+  const gh = new GithubGh({ bin });
+  try {
+    const result = await gh.observePullRequest({ owner: "a", repo: "b", pr: 7, perPage: 100 });
+    expect(result).toEqual({
+      outcome: "read",
+      observedHeadSha: HEAD40,
+      checkRuns: [{ name: "ci", status: "completed", conclusion: "failure", url: "https://github.com/a/b/runs/1" }],
+      truncated: true,
+    });
+    const calls = readFileSync(record, "utf8").trim().split("\n").map((x) => JSON.parse(x) as string[]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual(["api", "--hostname", "github.com", "--method", "GET", "repos/a/b/pulls/7"]);
+    expect(calls[1]).toContain(`repos/a/b/commits/${HEAD40}/check-runs`);
+    expect(calls[1]).toContain("per_page=100");
+    expect(calls[1]!.some((x) => x.startsWith("page="))).toBe(false);
+  } finally { await gh.close(); }
+});
+
+test("a full page is not truncated and a check run without a url keeps null", async () => {
+  const bin = fakeGh(`const a=process.argv.slice(2); if(a.some((x)=>x.endsWith("/pulls/7"))) process.stdout.write(JSON.stringify({head:{sha:"${HEAD40}"}})); else process.stdout.write(JSON.stringify({total_count:1,check_runs:[{name:"ci",status:"in_progress",conclusion:null}]}));`);
+  const gh = new GithubGh({ bin });
+  try {
+    expect(await gh.observePullRequest({ owner: "a", repo: "b", pr: 7, perPage: 100 })).toEqual({
+      outcome: "read", observedHeadSha: HEAD40, checkRuns: [{ name: "ci", status: "in_progress", conclusion: null, url: null }], truncated: false,
+    });
+  } finally { await gh.close(); }
+});
+
+test("a check-runs body without total_count is marked truncated", async () => {
+  const bin = fakeGh(`const a=process.argv.slice(2); if(a.some((x)=>x.endsWith("/pulls/7"))) process.stdout.write(JSON.stringify({head:{sha:"${HEAD40}"}})); else process.stdout.write(JSON.stringify({check_runs:[]}));`);
+  const gh = new GithubGh({ bin });
+  try {
+    expect(await gh.observePullRequest({ owner: "a", repo: "b", pr: 7, perPage: 100 })).toMatchObject({ outcome: "read", checkRuns: [], truncated: true });
+  } finally { await gh.close(); }
+});
+
+test("returns out of scope on a 404 for that repo", async () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-gh-profile-"));
+  const record = join(dir, "calls.jsonl");
+  const bin = fakeGh(`import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(record)},JSON.stringify(process.argv.slice(2))+"\\n"); process.stdout.write(JSON.stringify({message:"Not Found"})); process.exit(1);`);
+  const gh = new GithubGh({ bin });
+  try {
+    expect(await gh.observePullRequest({ owner: "a", repo: "b", pr: 7, perPage: 100 })).toEqual({ outcome: "out_of_scope" });
+    expect(readFileSync(record, "utf8").trim().split("\n")).toHaveLength(1);
+  } finally { await gh.close(); }
+});
+
+test("rejects a head that is not 40 hex", async () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-gh-profile-"));
+  const record = join(dir, "calls.jsonl");
+  const bin = fakeGh(`import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(record)},"x\\n"); process.stdout.write(JSON.stringify({head:{sha:"${"ab".repeat(32)}"}}));`);
+  const gh = new GithubGh({ bin });
+  try {
+    await expect(gh.observePullRequest({ owner: "a", repo: "b", pr: 7, perPage: 100 })).rejects.toThrow("GitHub returned invalid pull request head SHA");
+    expect(readFileSync(record, "utf8").trim().split("\n")).toHaveLength(1);
+  } finally { await gh.close(); }
+});
+
+test("a failing pull request read that is not a 404 is a call failure", async () => {
+  const bin = fakeGh(`process.stderr.write("HTTP 502: Bad Gateway"); process.exit(1);`);
+  const gh = new GithubGh({ bin });
+  try {
+    await expect(gh.observePullRequest({ owner: "a", repo: "b", pr: 7, perPage: 100 })).rejects.toThrow("GitHub call failed");
+  } finally { await gh.close(); }
+});
+
+test("a check-runs body that is not the expected JSON is an invalid response", async () => {
+  const bin = fakeGh(`const a=process.argv.slice(2); if(a.some((x)=>x.endsWith("/pulls/7"))) process.stdout.write(JSON.stringify({head:{sha:"${HEAD40}"}})); else process.stdout.write("<html>");`);
+  const gh = new GithubGh({ bin });
+  try {
+    await expect(gh.observePullRequest({ owner: "a", repo: "b", pr: 7, perPage: 100 })).rejects.toThrow("GitHub returned invalid check runs");
+  } finally { await gh.close(); }
+});
+
+test("parses a check-runs page larger than the display cap", async () => {
+  const bin = fakeGh(`const a=process.argv.slice(2); if(a.some((x)=>x.endsWith("/pulls/7"))) process.stdout.write(JSON.stringify({head:{sha:"${HEAD40}"},body:"x".repeat(100000)})); else process.stdout.write(JSON.stringify({total_count:100,check_runs:Array.from({length:100},(_, i)=>({name:"ci"+i,status:"completed",conclusion:"success",html_url:null,output:{text:"y".repeat(2000)}}))}));`);
+  const gh = new GithubGh({ bin });
+  try {
+    const result = await gh.observePullRequest({ owner: "a", repo: "b", pr: 7, perPage: 100 });
+    expect(result).toMatchObject({ outcome: "read", observedHeadSha: HEAD40, truncated: false });
+    expect(result.outcome === "read" && result.checkRuns).toHaveLength(100);
+  } finally { await gh.close(); }
+});
+
+test("a response over the observation limit is an invalid response, not a cut-off parse", async () => {
+  const bin = fakeGh(`const a=process.argv.slice(2); if(a.some((x)=>x.endsWith("/pulls/7"))) process.stdout.write(JSON.stringify({head:{sha:"${HEAD40}"}})); else process.stdout.write(JSON.stringify({total_count:1,check_runs:[{name:"ci",status:"completed",conclusion:"success",output:{text:"y".repeat(300000)}}]}));`);
+  const gh = new GithubGh({ bin, observeLimitBytes: 200_000 });
+  try {
+    await expect(gh.observePullRequest({ owner: "a", repo: "b", pr: 7, perPage: 100 })).rejects.toThrow(/^GitHub returned invalid/);
+  } finally { await gh.close(); }
+});

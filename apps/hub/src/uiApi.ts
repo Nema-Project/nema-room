@@ -3,7 +3,7 @@ import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z, ZodError } from "zod";
 import { KnowledgeStore, blameParagraphs, git, history, versionAt, parseCommitMessage } from "@nema/knowledge";
-import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, kindFromId, canonicalJson, parseSkillSource, safeRepoPath } from "@nema/shared";
+import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, confirmableImplementation, kindFromId, canonicalJson, parseSkillSource, safeRepoPath } from "@nema/shared";
 import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
 import { insertEvidenceEvent, consumeEvidenceEvent, reconcileUnconsumedEventsLocked, payloadHashFor, type EvidenceEventInput } from "./evidenceEvents.js";
 import type { Entry } from "@nema/shared";
@@ -23,6 +23,8 @@ import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, repoPat
 import { attentionCounts, ensureThread, getThread, listThreads, markThreadRead, nextAttentionResult } from "./threads.js";
 import { listThreadMessages } from "./messages.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
+
+const IMPLEMENTATION_NOT_CONFIRMABLE = "只能确认已上报、有出入，或提交已核对但尚未验收的实现";
 
 export type UiDeps = {
   db: Db;
@@ -699,9 +701,16 @@ export function uiRoutes(deps: UiDeps): Hono {
     const eid = c.req.param("eid")!;
     await body(c, z.object({}));
     const current = await requireEntry(ws, eid);
-    const status = current.implementation?.status;
-    if (status !== "reported" && status !== "mismatch") throw new HttpError(409, "只能确认已上报或有出入的实现");
-    const { entry, commit } = await store(ws).confirmImplementation(eid, { author: "user" });
+    if (!current.implementation || !confirmableImplementation(current.implementation)) throw new HttpError(409, IMPLEMENTATION_NOT_CONFIRMABLE);
+    let confirmed: Awaited<ReturnType<KnowledgeStore["confirmImplementation"]>>;
+    try {
+      confirmed = await store(ws).confirmImplementation(eid, { author: "user" });
+    } catch (e) {
+      // The entry changed between the read above and the store's own check under its lock.
+      if (e instanceof Error && e.message.includes("has no implementation the user can confirm")) throw new HttpError(409, IMPLEMENTATION_NOT_CONFIRMABLE);
+      throw e;
+    }
+    const { entry, commit } = confirmed;
     try {
       await indexEntry(db, ws, entry, deps.ownedHelpers);
       events.emit(ws, { type: "knowledge.changed", entryId: entry.id });
