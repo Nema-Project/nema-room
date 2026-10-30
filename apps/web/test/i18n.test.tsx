@@ -215,6 +215,11 @@ describe("message files", () => {
       "report.notYet": { zh: "尚未合入主分支", ja: "まだメインブランチに未反映", en: "Not on main yet" },
       "report.filesOk": { zh: "文件相符", ja: "ファイル一致", en: "Files match" },
       "report.untouched": { zh: "未改动的文件", ja: "変更されていないファイル", en: "Files not touched" },
+      "report.checkSkipped": {
+        zh: "进行中上报还没有提交，这次没有做提交核对。",
+        ja: "進行中の報告にはまだコミットがありません。今回はコミット照合をしていません。",
+        en: "This in-progress report has no commits, so no commit check was run.",
+      },
       "impl.reported": { zh: "已上报", ja: "報告済み", en: "Reported" },
       "impl.reportedInferred": { zh: "已上报（代码推断）", ja: "報告済み（コードから推測）", en: "Reported (inferred from code)" },
       "impl.verified": { zh: "已核实", ja: "検証済み", en: "Verified" },
