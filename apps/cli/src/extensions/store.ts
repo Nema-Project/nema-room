@@ -1,15 +1,25 @@
 import { closeSync, cpSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeSync } from "node:fs";
 import path from "node:path";
-import { bundledExtensions, isCheckTime, type ExtensionRecord } from "@nema/shared";
+import { bundledExtensions, isCheckTime, isSkillName, type ExtensionRecord } from "@nema/shared";
 
 export type { Availability, ExtensionKind, ExtensionRecord, InstallState, Provision, UseState } from "@nema/shared";
 export { bundledExtensions } from "@nema/shared";
 
-const ID = /^[a-z][a-z0-9-]{0,63}$/;
+/** The rule MCP and plugin ids follow, and the one Skill ids followed before the Agent Skills name rule. */
+const LEGACY_ID = /^[a-z][a-z0-9-]{0,63}$/;
 const BUNDLED_IDS = new Set(bundledExtensions().map((row) => row.id));
 
+/** An id some record may already carry: either rule, so records saved under the earlier rule stay usable. */
 function assertId(id: string): void {
-  if (!ID.test(id) || BUNDLED_IDS.has(id)) throw new Error(`invalid extension id: ${id}`);
+  if (!(LEGACY_ID.test(id) || isSkillName(id)) || BUNDLED_IDS.has(id)) throw new Error(`invalid extension id: ${id}`);
+}
+
+/** A record being written: a new Skill takes the Agent Skills name rule, everything else the earlier rule. */
+function assertRecordId(root: string, record: ExtensionRecord): void {
+  assertId(record.id);
+  if (readExtra(root).some((row) => row.id === record.id)) return;
+  const ok = record.kind === "skill" ? isSkillName(record.id) : LEGACY_ID.test(record.id);
+  if (!ok) throw new Error(`invalid extension id: ${record.id}`);
 }
 
 const COMMIT = /^[0-9a-f]{40}$/;
@@ -114,7 +124,7 @@ export function openExtensionStore(root: string) {
       return [...seeds, ...rows.filter((row) => !BUNDLED_IDS.has(row.id))];
     },
     putManaged(record: ExtensionRecord): void {
-      assertId(record.id);
+      assertRecordId(root, record);
       assertPinned(record);
       if (record.provision === "managed") {
         const target = ownedDirectory(root, record.id);
@@ -143,7 +153,7 @@ export function openExtensionStore(root: string) {
       writeExtra(root, readExtra(root).filter((row) => row.id !== id));
     },
     installManaged(record: ExtensionRecord, stagedDir: string): void {
-      assertId(record.id);
+      assertRecordId(root, record);
       if (record.provision !== "managed") throw new Error("only a managed extension can be installed");
       assertPinned(record);
       if (!existsSync(stagedDir) || !lstatSync(stagedDir).isDirectory()) {
@@ -197,7 +207,7 @@ export function openExtensionStore(root: string) {
      * same id cannot both land.
      */
     attachExternal(record: ExtensionRecord): ExtensionRecord {
-      assertId(record.id);
+      assertRecordId(root, record);
       if (record.provision !== "external" || !record.externalPath || !path.isAbsolute(record.externalPath)) {
         throw new Error("an attached extension needs an absolute external path");
       }

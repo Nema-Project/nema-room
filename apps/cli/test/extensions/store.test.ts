@@ -241,3 +241,34 @@ test("failing an interrupted install also removes a half-copied incoming folder"
   expect(existsSync(join(dir, "extensions", ".skill.incoming"))).toBe(false);
   expect(store.list().find((row) => row.id === "skill")).toMatchObject({ installState: "failed", error: "interrupted" });
 });
+
+test("skill ids follow the Agent Skills name rule", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  store.putManaged(managed("3d-print"));
+  expect(store.list().find((row) => row.id === "3d-print")?.installState).toBe("installed");
+  for (const bad of ["a--b", "a-", "-a", "A"]) expect(() => store.putManaged(managed(bad)), bad).toThrow(/invalid extension id/);
+  expect(() => store.putManaged(managed("grill"))).toThrow(/invalid extension id/);
+});
+
+test("MCP and plugin records keep the earlier id rule", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  const store = openExtensionStore(dir);
+  store.putManaged({ ...managed("srv--two"), kind: "mcp" });
+  expect(store.list().some((row) => row.id === "srv--two")).toBe(true);
+  expect(() => store.putManaged({ ...managed("1srv"), kind: "mcp" })).toThrow(/invalid extension id/);
+});
+
+test("a skill saved under the earlier rule can still be listed, updated and removed", () => {
+  dir = mkdtempSync(join(tmpdir(), "nema-ext-"));
+  mkdirSync(join(dir, "extensions", "old--skill"), { recursive: true });
+  writeFileSync(join(dir, "index.json"), JSON.stringify([managed("old--skill")]));
+  const store = openExtensionStore(dir);
+  expect(store.list().some((row) => row.id === "old--skill")).toBe(true);
+  store.setUseState("old--skill", "disabled");
+  expect(store.list().find((row) => row.id === "old--skill")?.useState).toBe("disabled");
+  store.putManaged({ ...managed("old--skill"), useState: "disabled" });
+  store.removeManaged("old--skill");
+  expect(store.list().some((row) => row.id === "old--skill")).toBe(false);
+  expect(existsSync(join(dir, "extensions", "old--skill"))).toBe(false);
+});

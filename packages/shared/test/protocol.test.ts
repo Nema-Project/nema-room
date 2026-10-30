@@ -79,3 +79,20 @@ test("task.assign carries optional attachment refs with a hex sha256", () => {
   expect(parseHubToDaemon(base)).not.toHaveProperty("attachments");
   expect(() => parseHubToDaemon({ ...base, attachments: [{ ...ref, sha256: "xyz" }] })).toThrow(ZodError);
 });
+
+test("task.assign takes the optional skill fields", () => {
+  const base = { type: "task.assign", taskId: "t1", workspaceId: "w1", adapter: "codex", confidential: false, prompt: "p", runToken: "rt", hubUrl: "http://localhost:1", pluginTools: [] };
+  const plain = parseHubToDaemon(base);
+  expect(plain).not.toHaveProperty("projectSkills");
+  expect(plain).not.toHaveProperty("retainedSkills");
+  expect(plain).not.toHaveProperty("manualSkill");
+  const full = parseHubToDaemon({
+    ...base,
+    projectSkills: [{ repoId: "r1", label: "web", path: "/src/web", mainBranch: "main" }],
+    retainedSkills: ["tdd", "web:deploy"],
+    manualSkill: { skillId: "tdd", arguments: "x" },
+  });
+  expect(full).toMatchObject({ projectSkills: [{ repoId: "r1", label: "web", path: "/src/web", mainBranch: "main" }], retainedSkills: ["tdd", "web:deploy"], manualSkill: { skillId: "tdd", arguments: "x" } });
+  expect(() => parseHubToDaemon({ ...base, manualSkill: { skillId: 1, arguments: "" } })).toThrow(ZodError);
+  expect(() => parseHubToDaemon({ ...base, projectSkills: [{ repoId: "r1" }] })).toThrow(ZodError);
+});
