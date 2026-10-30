@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import type { AgentMessageMeta, ReportMessageMeta, UserMessageMeta } from "@nema/shared";
+import type { AgentMessageMeta, GithubObservation, ReportAuthors, ReportCheck, ReportMessageMeta, UserMessageMeta } from "@nema/shared";
 import type { Db } from "./db/db.js";
 import { insertQueuedTask, type Task } from "./tasks.js";
 import { conversationOf, getLastAgentMessage, getLastAskedQuestion } from "./threads.js";
@@ -199,13 +199,63 @@ export function addReportMessage(db: Db, workspaceId: string, content: string, m
   return insertMessage(db, workspaceId, "report", content, null, meta);
 }
 
-/** Replaces a report message's meta, for example once its check is stored. Returns the updated message, or null when there is no such report. */
-export async function setReportMeta(db: Db, messageId: string, meta: ReportMessageMeta): Promise<Message | null> {
-  const rows = await db.query<Row>(`update messages set meta = $2::jsonb where id = $1 and role = 'report' returning ${COLS}`, [
-    messageId,
-    JSON.stringify(meta),
-  ]);
-  return rows[0] ? toMessage(rows[0]) : null;
+/**
+ * The hub's own observations a writer may replace on a report message. `report` (the agent's claim) and
+ * `checkHistory` are not here: the claim is never rewritten, and the history is appended by the merge.
+ * `github` is the new current observation; the merge moves the previous one into `history`.
+ */
+export type ReportMetaPatch = {
+  check?: ReportCheck | null;
+  checkError?: string | null;
+  checkSkipped?: "in_progress_no_commits" | null;
+  authors?: ReportAuthors;
+  github?: GithubObservation;
+};
+
+/**
+ * Merges `patch` into a report message's meta under a row lock, so each writer lands on the latest committed
+ * row and replaces only its own keys. A replaced check is summarized into `checkHistory`; a replaced GitHub
+ * observation (other than `not_requested`) moves into `github.history`. A check older than the stored one
+ * (by `checkedAt`), or one with no `checkedAt`, leaves the check keys as they are. A key set to null is
+ * cleared. Returns the updated message, or null when there is no such report.
+ */
+export async function mergeReportMeta(db: Db, messageId: string, patch: ReportMetaPatch): Promise<Message | null> {
+  return db.tx(async (t) => {
+    const rows = await t.query<{ meta: ReportMessageMeta | null }>(`select meta from messages where id = $1 and role = 'report' for update`, [messageId]);
+    if (!rows[0]?.meta) return null;
+    const meta: ReportMessageMeta = { ...rows[0].meta };
+    const touchesCheck = "check" in patch || "checkError" in patch || "checkSkipped" in patch;
+    const stale = touchesCheck && patch.check != null && meta.check?.checkedAt != null && !(typeof patch.check.checkedAt === "string" && patch.check.checkedAt >= meta.check.checkedAt);
+    if (touchesCheck && !stale) {
+      if ("check" in patch) {
+        if (meta.check) {
+          const { onMain, commitsExist, filesOk, checkedAt, mainSha } = meta.check;
+          meta.checkHistory = [...(meta.checkHistory ?? []), { onMain, commitsExist, filesOk, checkedAt, mainSha }];
+        }
+        meta.check = patch.check ?? null;
+      }
+      if ("checkError" in patch) {
+        if (patch.checkError == null) delete meta.checkError;
+        else meta.checkError = patch.checkError;
+      }
+      if ("checkSkipped" in patch) {
+        if (patch.checkSkipped == null) delete meta.checkSkipped;
+        else meta.checkSkipped = patch.checkSkipped;
+      }
+    }
+    if (patch.authors) meta.authors = patch.authors;
+    if (patch.github) {
+      const previous = meta.github;
+      const history = [...(previous?.history ?? [])];
+      if (previous && previous.current.state !== "not_requested") history.push(previous.current);
+      meta.github = { current: patch.github, history };
+    }
+    const updated = await t.query<Row>(`update messages set meta = $2::jsonb where id = $1 and role = 'report' returning ${COLS}`, [
+      messageId,
+      JSON.stringify(meta),
+    ]);
+    return updated[0] ? toMessage(updated[0]) : null;
+  });
 }
 
 export function addMessage(

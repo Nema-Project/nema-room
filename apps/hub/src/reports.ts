@@ -6,7 +6,7 @@ import { HookSignal, ReportInput, reportPassed, type ReportCheck, type ReportMes
 import { INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
-import { ArchivedWorkspaceError, addReportMessage, postSystemTask, setReportMeta } from "./messages.js";
+import { ArchivedWorkspaceError, addReportMessage, mergeReportMeta, postSystemTask, type ReportMetaPatch } from "./messages.js";
 import { getRepo, type Repo } from "./repos.js";
 import { insertQueuedTask, toUiTask, type Task } from "./tasks.js";
 import { repoPath } from "./workspaces.js";
@@ -71,18 +71,18 @@ export async function receiveReport(deps: ReportDeps, repo: Repo, report: Report
   const message = await addReportMessage(db, repo.workspaceId, report.summary, { report, check: null });
   events.emit(repo.workspaceId, { type: "message.created", message });
   const done = (async () => {
-    let meta: ReportMessageMeta;
+    let patch: ReportMetaPatch;
     try {
       const check = (await daemon.call(
         "report.check",
         { workspaceId: repo.workspaceId, repoId: repo.id, path: repo.path, mainBranch: repo.mainBranch, commits: report.commits, files: report.files },
         REPORT_CHECK_TIMEOUT_MS,
       )) as ReportCheck;
-      meta = { report, check };
+      patch = { check, checkError: null, checkSkipped: null };
     } catch (error) {
-      meta = { report, check: null, checkError: error instanceof Error ? error.message : String(error) };
+      patch = { check: null, checkError: error instanceof Error ? error.message : String(error) };
     }
-    const updated = await setReportMeta(db, message.id, meta);
+    const updated = await mergeReportMeta(db, message.id, patch);
     if (updated) {
       events.emit(repo.workspaceId, { type: "message.updated", message: updated });
       if (deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);
@@ -141,7 +141,7 @@ export async function recheckReports(deps: ReportDeps, repoId: string): Promise<
       console.error(`re-checking report ${row.id} failed`, error);
       continue;
     }
-    const updated = await setReportMeta(db, row.id, { report: row.meta.report, check });
+    const updated = await mergeReportMeta(db, row.id, { check, checkError: null, checkSkipped: null });
     if (updated) {
       events.emit(repo.workspaceId, { type: "message.updated", message: updated });
       if (deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);

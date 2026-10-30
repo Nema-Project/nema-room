@@ -176,7 +176,7 @@ test("report creates a report message, stores the check, then queues a task", as
 
   const message = await getMessage(db, messageId);
   expect(message).toMatchObject({ workspaceId: ws, role: "report", content: "实现了流式输出", taskId: null });
-  expect(message!.meta).toEqual({ report: report(), check: null });
+  expect(message!.meta).toEqual({ report: { ...report(), progress: "completed" }, check: null });
   expect(seen.some((s) => s.ws === ws && s.e.type === "message.created" && s.e.message.id === messageId)).toBe(true);
 
   await waitFor(async () => calls.some((c) => c.method === "report.check"));
@@ -214,7 +214,7 @@ test("a report check error still queues the task with checkError", async () => {
     return queued.length > 0 ? queued : null;
   });
   expect(task).toMatchObject({ messageId });
-  expect((await getMessage(db, messageId))!.meta).toEqual({ report: report(), check: null, checkError: "没有这个提交" });
+  expect((await getMessage(db, messageId))!.meta).toEqual({ report: { ...report(), progress: "completed" }, check: null, checkError: "没有这个提交" });
 });
 
 test("an invalid report is 400 and stores nothing", async () => {
