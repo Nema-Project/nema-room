@@ -4,15 +4,36 @@ Version sections on main may describe release preparation. A version heading and
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-30
+
 ### Added
 
 - **App settings** opens from the sidebar and covers the conversation. It has Model, Plugins, General, and About. Model settings and the plugins list move there. Version, **Check for updates**, and **Check for updates automatically** move to About, and a newer release stays a link to its release page. The update banner above the conversation stays. The sidebar keeps the daemon status, night mode, and the language switch. **Settings** in the header still edits the current workspace.
 - The desktop app can open at login from **App settings → General**. A browser or Compose session still shows that control and says it cannot change it.
 
+- The Plugins page has an "Install a skill" section: paste a GitHub repository, a folder or `SKILL.md` link, or a skills.sh page, preview the pinned commit, license, and each skill's target folder or the reason it cannot be installed, then install one skill with progress and a cancel button. A failed install shows its reason and a retry button on its row. `README.md`, `README.en.md`, `README.zh.md`, `README.ja.md`, and the three guides describe the flow.
+
+- The Plugins page can now remove an extension Nema installed, deleting its own directory and index record, and take an external extension off the list while leaving the files outside Nema untouched; a bundled extension still only has the on/off switch. `README.md` and `README.en.md` describe the same three outcomes on the Plugins page.
+
+- Skills can be installed from a previewed GitHub or skills.sh source through the hub: `POST /api/extensions/install` installs one folder at the pinned commit, checks every file against its Git blob hash and the size, count, and file-name limits, and activates it atomically with its provenance. Installs report progress, can be cancelled and retried, and an install cut off by a daemon restart is marked failed and cleaned up on the next start.
+
+- The hub can preview a skill source before anything is installed: `POST /api/extensions/resolve` accepts a public GitHub repository, a `tree`/`blob` link into one, or a skills.sh page, pins it to a 40-character commit, and lists each `SKILL.md` at that commit with its name, description, Git blob digest, license, and target folder. A managed record from GitHub must now carry that commit as its revision.
+
+- Extensions can be turned on and off from the Plugins page without uninstalling them; a built-in extension keeps its shipped definition and only its on/off choice is stored.
+- A disabled extension's functions are no longer offered to the agent, and calling one is refused; the Plugins page keeps the state you chose even while the daemon is offline.
+
+- Public installs resolve one released version, verify the compose file, both images, and the npm package exist, and lock that version into `.env` with `docker-compose.yml` written as a pair.
+
 ### Changed
 
 - Markdown under `scripts/desktop/` and `scripts/images/` starts neither the desktop or image pull-request workflows nor the macOS/Windows platform checks. Code and scripts there still do. `AGENTS.md` and `CLAUDE.md` use the documentation CI lane.
 - Release preparation stamps the cli, desktop, and local package versions, and their `package-lock.json` records, with `npm run release:stamp -- <version>`. The stamp refuses before writing when those records do not already match. `npm run release:cut -- <version>` merges `changelog.d/<slug>.<category>.md` fragments into `[Unreleased]` (existing entries ahead of a category's fragments, fragments in filename order), moves `[Unreleased]` into a section dated the local cut day, and deletes each consumed fragment only after that write succeeds. Neither command commits, tags, or publishes. That date stays the cut day when the tag is created later.
+
+- Markdown-only changes take the documentation CI lane wherever the file lives, except the handful of Markdown files a package ships or a process reads at runtime; a Markdown-only pull request no longer runs the application suite.
+
+### Fixed
+
+- Control ports moved out of the default ephemeral range, and a descriptor left by the previous port formula is still accepted.
 
 ## [0.1.5] - 2026-10-28
 

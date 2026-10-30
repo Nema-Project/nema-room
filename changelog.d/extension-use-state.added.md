@@ -1,2 +1,0 @@
-- Extensions can be turned on and off from the Plugins page without uninstalling them; a built-in extension keeps its shipped definition and only its on/off choice is stored.
-- A disabled extension's functions are no longer offered to the agent, and calling one is refused; the Plugins page keeps the state you chose even while the daemon is offline.

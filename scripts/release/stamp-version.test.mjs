@@ -12,6 +12,10 @@ const script = fileURLToPath(new URL('./stamp-version.mjs', import.meta.url));
 const checkTag = fileURLToPath(new URL('../npm/check-tag.mjs', import.meta.url));
 const copied = ['apps/cli/package.json', 'apps/desktop/package.json', 'apps/local/package.json', 'package-lock.json', 'docker-compose.yml'];
 
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function git(root, args) {
   const run = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr || run.stdout);
@@ -64,12 +68,14 @@ test('an inconsistent trio fails before any write', async (t) => {
   const root = await fixture(t);
   const desktop = path.join(root, 'apps/desktop/package.json');
   const text = await readFile(desktop, 'utf8');
-  await writeFile(desktop, text.replace('"version": "0.1.5"', '"version": "0.1.4"'));
+  const current = JSON.parse(text).version;
+  const drifted = current === '0.0.1' ? '0.0.2' : '0.0.1';
+  await writeFile(desktop, text.replace(`"version": "${current}"`, `"version": "${drifted}"`));
   git(root, ['add', '.']);
   git(root, ['commit', '-qm', 'diverge desktop']);
   const before = await snapshot(root);
   const head = git(root, ['rev-parse', 'HEAD']);
-  await assert.rejects(stampVersion(root, '9.9.9'), /cli 0\.1\.5, desktop 0\.1\.4, local 0\.1\.5/);
+  await assert.rejects(stampVersion(root, '9.9.9'), new RegExp(escapeRegExp(`cli ${current}, desktop ${drifted}, local ${current}`)));
   for (const [rel, text] of before) assert.equal(await readFile(path.join(root, rel), 'utf8'), text, rel);
   assert.equal(git(root, ['status', '--porcelain']), '');
   assert.equal(git(root, ['rev-parse', 'HEAD']), head);
@@ -79,7 +85,9 @@ test('a lockfile record behind the trio is refused before any write', async (t) 
   const root = await fixture(t);
   const lockPath = path.join(root, 'package-lock.json');
   const lock = JSON.parse(await readFile(lockPath, 'utf8'));
-  lock.packages['apps/cli'].version = '0.1.4';
+  const current = lock.packages['apps/cli'].version;
+  const drifted = current === '0.0.1' ? '0.0.2' : '0.0.1';
+  lock.packages['apps/cli'].version = drifted;
   await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
   git(root, ['add', '.']);
   git(root, ['commit', '-qm', 'drift cli lock']);
@@ -87,7 +95,7 @@ test('a lockfile record behind the trio is refused before any write', async (t) 
   const head = git(root, ['rev-parse', 'HEAD']);
   await assert.rejects(
     stampVersion(root, '0.2.0'),
-    /apps\/cli: package\.json 0\.1\.5 vs package-lock\.json 0\.1\.4/,
+    new RegExp(escapeRegExp(`apps/cli: package.json ${current} vs package-lock.json ${drifted}`)),
   );
   for (const [rel, text] of before) assert.equal(await readFile(path.join(root, rel), 'utf8'), text, rel);
   assert.equal(git(root, ['status', '--porcelain']), '');

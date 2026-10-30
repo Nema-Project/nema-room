@@ -282,9 +282,16 @@ test('a CRLF fragment is normalised to LF in the cut changelog', async (t) => {
 
 test('the repository changelog can be cut in memory and the command refuses a bad argument', async () => {
   const original = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
-  const next = cutChangelogText(original, '9.9.9', '2026-10-28');
+  // Right after a release cut the repository's [Unreleased] is empty, so add one entry in memory.
+  const latest = original.match(/^## \[(\d+\.\d+\.\d+[^\]]*)\]/m)?.[1];
+  assert.ok(latest, 'the repository changelog has a released version section');
+  const withEntry = original.replace('## [Unreleased]\n', '## [Unreleased]\n\n### Added\n\n- In-memory entry for this test.\n');
+  assert.notEqual(withEntry, original);
+  const next = cutChangelogText(withEntry, '9.9.9', '2026-10-28');
   assert.match(next, /## \[Unreleased\]\n\n## \[9\.9\.9\] - 2026-10-28\n/);
-  assert.match(changelogNotes(next, '9.9.9'), /release:stamp/);
+  assert.match(changelogNotes(next, '9.9.9'), /In-memory entry for this test/);
+  assert.ok(next.indexOf('## [9.9.9]') < next.indexOf(`## [${latest}]`), 'the new section sits above the latest release');
+  assert.equal(changelogNotes(next, latest), changelogNotes(original, latest));
   assert.equal(await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8'), original);
   const run = spawnSync(process.execPath, [script, 'v0.2.0'], { cwd: repo, encoding: 'utf8' });
   assert.notEqual(run.status, 0);
