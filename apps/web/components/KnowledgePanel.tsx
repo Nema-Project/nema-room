@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { formatDay } from "@/lib/format";
 import { diagramHtmlUrl, getTimeline, listEntries, listRepos, requestWorkPackage } from "@/lib/hub";
 import { useLocale, useT } from "@/lib/i18n";
-import type { EntryListItem, EntrySummary, Implementation, KnowledgeLanguage, Repo } from "@/lib/types";
+import type { EntryListItem, EntrySummary, Implementation, ImplementationView, KnowledgeLanguage, Repo } from "@/lib/types";
 
 type Row = EntrySummary & { isNew?: boolean };
 type Group = "pending" | "workpackage" | "requirement" | "decision" | "tradeoff" | "diagram" | "source";
@@ -24,13 +24,27 @@ const domain = (url: string) => {
   }
 };
 
-/** A requirement's implementation status. Work inferred from code reads differently from a coding agent's report. */
+/**
+ * Which label a requirement's implementation gets. A user acceptance is "accepted"; `verified` without one is
+ * "commits checked" only while every cited report's check passed, and otherwise has no label at all.
+ */
+export function implLabel(implementation: ImplementationView): "accepted" | "checked" | "reported" | "inferred" | "mismatch" | null {
+  const { status, evidence } = implementation;
+  if (evidence.confirmedBy === "user") return "accepted";
+  if (status === "mismatch") return "mismatch";
+  if (status === "reported") return evidence.inferred ? "inferred" : "reported";
+  const reports = evidence.reports ?? [];
+  return reports.length > 0 && reports.every((r) => r.reportPassed) ? "checked" : null;
+}
+
+/** A requirement's implementation status. Commit checks, user acceptance and reports each read differently. */
 export function ImplTag({ implementation }: { implementation: Implementation }) {
   const t = useT();
-  const { status, evidence } = implementation;
-  const inferred = status === "reported" && evidence.inferred;
-  const cls = status === "mismatch" ? "itag red" : inferred ? "itag inferred" : status === "verified" ? "itag verified" : "itag";
-  return <span className={cls} data-testid="impl-tag">{t(inferred ? "impl.reportedInferred" : `impl.${status}`)}</span>;
+  const label = implLabel(implementation as ImplementationView);
+  if (!label) return null;
+  const cls = label === "mismatch" ? "itag red" : label === "inferred" ? "itag inferred" : label === "accepted" || label === "checked" ? "itag verified" : "itag";
+  const key = { accepted: "impl.accepted", checked: "impl.verified", reported: "impl.reported", inferred: "impl.reportedInferred", mismatch: "impl.mismatch" }[label];
+  return <span className={cls} data-testid="impl-tag">{t(key)}</span>;
 }
 
 type Props = {

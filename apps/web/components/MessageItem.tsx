@@ -178,7 +178,6 @@ function WithdrawChip({ workspaceId, entryId }: { workspaceId: string; entryId: 
   </>;
 }
 
-/** A coding agent's report: the agent's summary, then its entries, commits and the daemon's git check. */
 function QuoteBlock({ quote, onJump }: { quote: MessageQuote; onJump?: (messageId: string) => void }) {
   const t = useT();
   return (
@@ -276,18 +275,21 @@ function UserMessage({
   );
 }
 
+/**
+ * A coding agent's report in two blocks: what the agent claims, kept as sent, and what the hub checked itself
+ * (git, commit authors, the GitHub read). Neither block is acceptance, and no line here says tests passed.
+ */
 function ReportItem({ message, time, onOpenEntry, onQuote, onJump }: { message: Message; time: string; onOpenEntry?: (entryId: string) => void; onQuote?: (message: Message) => void; onJump?: (messageId: string) => void }) {
   const t = useT();
   const meta = message.meta as ReportMessageMeta | null;
   const report = meta?.report;
-  const check = meta?.check ?? null;
+  const missing = useMissingEntries(message.workspaceId, report?.entries ?? []);
   return (
     <div className="msg report" id={`msg-${message.id}`}>
       <div className="av rp" aria-hidden="true">CA</div>
       <div>
         <div className="who">
           <span className="rlabel">{t("report.label")}</span>
-          {report && <span className="ragent">{report.agent}</span>}
           <time>{time}</time>
           <button type="button" className="quiet" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
         </div>
@@ -296,7 +298,7 @@ function ReportItem({ message, time, onOpenEntry, onQuote, onJump }: { message: 
           <Markdown source={message.content} />
           {report && report.entries.length > 0 && (
             <div className="rrow">
-              {report.entries.map((id) =>
+              {report.entries.filter((id) => !missing.has(id)).map((id) =>
                 onOpenEntry ? (
                   <button key={id} type="button" className="rtag rlink" onClick={() => onOpenEntry(id)}>{id}</button>
                 ) : (
@@ -305,32 +307,169 @@ function ReportItem({ message, time, onOpenEntry, onQuote, onJump }: { message: 
               )}
             </div>
           )}
-          {report && (
-            <div className="rrow">
-              {report.commits.map((c) => <code key={c} className="rsha">{c.slice(0, 7)}</code>)}
-            </div>
-          )}
-          {check ? (
-            <ul className="rcheck">
-              <li className={check.commitsExist ? "ok" : "bad"}>
-                {t("report.commitsExist")}
-                {!check.commitsExist && check.missingCommits.length > 0 && <span className="rfiles">{check.missingCommits.map((c) => c.slice(0, 7)).join(", ")}</span>}
-              </li>
-              <li className={check.onMain === "yes" ? "ok" : "wait"}>{t(check.onMain === "yes" ? "report.onMain" : "report.notYet")}</li>
-              <li className={check.filesOk ? "ok" : "bad"}>
-                {check.filesOk ? t("report.filesOk") : `${t("report.untouched")}: ${check.untouchedFiles.join(", ")}`}
-              </li>
-            </ul>
-          ) : meta?.checkError ? (
-            <p className="rcheck-note">{t("report.checkFailed", { message: meta.checkError })}</p>
-          ) : meta?.checkSkipped === "in_progress_no_commits" ? (
-            <p className="rcheck-note">{t("report.checkSkipped")}</p>
-          ) : (
-            <p className="rcheck-note">{t("report.checkPending")}</p>
-          )}
+          {[...missing].map((id) => <p key={id} className="rcheck-note">{t("report.entryMissing", { id })}</p>)}
+          {report && <ReportClaim report={report} />}
+          {meta && <ReportHubCheck meta={meta} />}
         </div>
       </div>
     </div>
+  );
+}
+
+/** Entry ids the report names that this workspace does not have. Shown as a quiet note; nothing is created. */
+function useMissingEntries(workspaceId: string, ids: string[]): Set<string> {
+  const [missing, setMissing] = useState<Set<string>>(new Set());
+  const key = ids.join(",");
+  useEffect(() => {
+    let live = true;
+    const wanted = key ? key.split(",") : [];
+    void Promise.all(
+      wanted.map((id) =>
+        Promise.resolve().then(() => getEntry(workspaceId, id)).then(
+          () => null,
+          // Only a 404 says the entry is not there; any other failure leaves the id as a link.
+          (e: unknown) => ((e as { status?: number } | null)?.status === 404 ? id : null),
+        ),
+      ),
+    ).then((found) => {
+      if (live) setMissing(new Set(found.filter((id): id is string => id !== null)));
+    });
+    return () => {
+      live = false;
+    };
+  }, [workspaceId, key]);
+  return missing;
+}
+
+/** The agent's own account, as sent. Never relabelled as a hub check. */
+function ReportClaim({ report }: { report: NonNullable<ReportMessageMeta["report"]> }) {
+  const t = useT();
+  return (
+    <section className="rblock" data-testid="report-claim">
+      <h4 className="rblock-title">{t("report.claim")}</h4>
+      <p className="kmeta"><span className="ragent">{report.agent}</span> <span>{t("report.agentNote")}</span></p>
+      {report.commits.length > 0 && (
+        <div className="rrow">
+          {report.commits.map((c) => <code key={c} className="rsha">{c.slice(0, 7)}</code>)}
+        </div>
+      )}
+      {(report.branch || report.pr !== undefined || report.headSha) && (
+        <div className="rrow">
+          {report.branch && <span className="rtag">{t("report.claimBranch")}: {report.branch}</span>}
+          {report.pr !== undefined && <span className="rtag">PR #{report.pr}</span>}
+          {report.headSha && <span className="rtag">{t("report.claimHead")}: <code className="rsha">{report.headSha.slice(0, 12)}</code></span>}
+        </div>
+      )}
+      {(report.verified ?? []).length > 0 && (
+        <ul className="rclaims">{report.verified!.map((v) => <li key={v}>{t("report.claimVerified")}: {v}</li>)}</ul>
+      )}
+      {(report.notVerified ?? []).length > 0 && (
+        <ul className="rclaims">{report.notVerified!.map((v) => <li key={v}>{t("report.claimNotVerified")}: {v}</li>)}</ul>
+      )}
+      {(report.ci ?? []).length > 0 && (
+        <ul className="rclaims">
+          {report.ci!.map((c, i) => <li key={`${c.name}-${i}`}>{t("report.claimCi")}: {c.name}{c.conclusion ? ` (${c.conclusion})` : ""}</li>)}
+        </ul>
+      )}
+      {(report.blockers ?? []).length > 0 && (
+        <ul className="rclaims">{report.blockers!.map((b) => <li key={b}>{t("report.claimBlockers")}: {b}</li>)}</ul>
+      )}
+    </section>
+  );
+}
+
+const FAILED_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "action_required", "stale"]);
+
+/** What the hub checked itself: the three git lines, commit authors and the GitHub read, each on its own. */
+function ReportHubCheck({ meta }: { meta: ReportMessageMeta }) {
+  const t = useT();
+  const check = meta.check ?? null;
+  return (
+    <section className="rblock" data-testid="report-hub">
+      <h4 className="rblock-title">{t("report.hubCheck")}</h4>
+      {check ? (
+        <ul className="rcheck">
+          <li className={check.commitsExist ? "ok" : "bad"}>
+            {t("report.commitsExist")}
+            {!check.commitsExist && check.missingCommits.length > 0 && <span className="rfiles">{check.missingCommits.map((c) => c.slice(0, 7)).join(", ")}</span>}
+          </li>
+          <li className={check.onMain === "yes" ? "ok" : "wait"}>{t(check.onMain === "yes" ? "report.onMain" : "report.notYet")}</li>
+          <li className={check.filesOk ? "ok" : "bad"}>
+            {check.filesOk ? t("report.filesOk") : `${t("report.untouched")}: ${check.untouchedFiles.join(", ")}`}
+          </li>
+        </ul>
+      ) : meta.checkError ? (
+        <p className="rcheck-note">{t("report.checkFailed", { message: meta.checkError })}</p>
+      ) : meta.checkSkipped === "in_progress_no_commits" ? (
+        <p className="rcheck-note">{t("report.checkSkipped")}</p>
+      ) : (
+        <p className="rcheck-note">{t("report.checkPending")}</p>
+      )}
+      <div className="rsub">
+        <h5 className="rsub-title">{t("report.authors")}</h5>
+        {meta.authors ? (
+          <>
+            <ul className="rauthors">
+              {meta.authors.commits.map((c) => (
+                <li key={c.sha}>
+                  <code className="rsha">{c.sha.slice(0, 7)}</code>
+                  <span>{t("report.author")}: {c.authorName}</span> <span>{c.authorEmail}</span>
+                  <span>{t("report.committer")}: {c.committerName}</span> <span>{c.committerEmail}</span>
+                </li>
+              ))}
+            </ul>
+            {meta.authors.missing.length > 0 && <p className="rcheck-note">{t("report.authorsMissing")}: {meta.authors.missing.map((c) => c.slice(0, 7)).join(", ")}</p>}
+            <p className="kmeta">{t("report.authorsNote")}</p>
+          </>
+        ) : (
+          <p className="rcheck-note">{t("report.noRecord")}</p>
+        )}
+      </div>
+      <div className="rsub">
+        {meta.github ? (
+          <>
+            <div data-testid="github-current"><GithubRead observation={meta.github.current} /></div>
+            {meta.github.history.map((h, i) => (
+              <div key={`${h.observedAt}-${i}`} className="rhistory">
+                <span className="stag">{t("report.history")}</span>
+                <GithubRead observation={h} />
+              </div>
+            ))}
+          </>
+        ) : (
+          <>
+            <h5 className="rsub-title">GitHub</h5>
+            <p className="rcheck-note">{t("report.noRecord")}</p>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** One GitHub read. A read that failed shows only its reason; it never borrows an earlier read's runs. */
+function GithubRead({ observation }: { observation: NonNullable<ReportMessageMeta["github"]>["current"] }) {
+  const t = useT();
+  const pr = observation.binding?.pr;
+  return (
+    <>
+      <h5 className="rsub-title">{pr !== undefined ? t("report.github", { pr }) : "GitHub"}</h5>
+      {observation.headMatch && <p className={observation.headMatch === "mismatch" ? "itag red" : "kmeta"}>{t(`report.githubHead.${observation.headMatch}`)}</p>}
+      {observation.reasonCode && <p className="rcheck-note">{t("report.githubReason", { code: observation.reasonCode })}</p>}
+      {observation.state === "read" && observation.checkRuns.length > 0 && (
+        <div className="rrow">
+          {observation.checkRuns.map((run, i) => (
+            <span key={`${run.name}-${i}`} className={run.conclusion && FAILED_CONCLUSIONS.has(run.conclusion) ? "itag red" : "itag"}>
+              {run.name}: {run.conclusion ?? run.status}
+            </span>
+          ))}
+        </div>
+      )}
+      {observation.truncated && <p className="rcheck-note">{t("report.githubTruncated")}</p>}
+      <p className="kmeta">
+        {observation.state !== "read" ? t("report.checkRunsNone") : observation.checkRuns.length > 0 ? t("report.checkRunsRead") : t("report.checkRunsEmpty")}
+      </p>
+    </>
   );
 }
 

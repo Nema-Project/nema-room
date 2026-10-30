@@ -1,6 +1,11 @@
-import type { AgentMessageMeta, KnowledgeLanguage, ReportMessageMeta, Thread, UserMessageMeta } from "@nema/shared";
+import type { AgentMessageMeta, Implementation, KnowledgeLanguage, ReportMessageMeta, ReportPassState, Thread, UserMessageMeta, WpTask } from "@nema/shared";
 
 export type { AgentMessageMeta, Entry, EntrySummary, Implementation, KnowledgeLanguage, MessageQuote, ReportCheck, ReportMessageMeta, Thread, ThreadOpenedBy, UpsertEntryInput, UserMessageMeta, WorkPackageMeta, WpTask } from "@nema/shared";
+
+/** A requirement implementation as the hub returns it: plus each cited report's pass state, derived on read. */
+export type ImplementationView = Implementation & { evidence: Implementation["evidence"] & { reports?: ReportPassState[] } };
+/** A work package task as the hub returns it: plus whether its report's check passed, derived on read. */
+export type WpTaskView = WpTask & { reportPassed?: boolean };
 
 /** Wire shapes of apps/hub (JSON over REST/SSE). Kept here because the hub package is Node-only. */
 export type Workspace = {

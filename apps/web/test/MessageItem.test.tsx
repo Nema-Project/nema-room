@@ -184,6 +184,100 @@ describe("MessageItem", () => {
     expect(screen.getByText("This in-progress report has no commits, so no commit check was run.")).toBeTruthy();
     expect(screen.queryByText("Checking…")).toBeNull();
   });
+  describe("report claim and hub check", () => {
+    const report = {
+      agent: "claude-code", gitCommonDir: "/g", summary: "done", entries: ["R-1", "R-404"], commits: ["abcdef1"], files: ["src/a.ts"],
+      branch: "feat/x", pr: 7, headSha: "c".repeat(40), verified: ["unit"], notVerified: ["e2e"], blockers: ["needs review"],
+    };
+    const check = { commitsExist: true, missingCommits: [], onMain: "yes" as const, filesOk: true, untouchedFiles: [], touchedFiles: ["src/a.ts"], checkedAt: "2026-10-23T10:00:00Z", mainSha: "b".repeat(40) };
+    const authors = {
+      checkedAt: "2026-10-23T10:00:00Z", source: "git" as const, missing: [],
+      commits: [{ sha: "abcdef1", authorName: "Ann", authorEmail: "ann@example.com", committerName: "Bob", committerEmail: "bob@example.com" }],
+    };
+    const observation = (over: Record<string, unknown> = {}) => ({
+      state: "read" as const, observedAt: "2026-10-23T10:00:00Z", source: "github-plugin-read" as const,
+      binding: { repoId: "r1", owner: "o", repo: "r", pr: 7, observedHeadSha: "c".repeat(40), claimedHeadSha: "c".repeat(40) },
+      headMatch: "match" as const, truncated: false,
+      checkRuns: [{ name: "lint", status: "completed", conclusion: "failure", url: null }, { name: "unit", status: "completed", conclusion: "success", url: null }],
+      ...over,
+    });
+    const show = (meta: Record<string, unknown>, entryIds?: Set<string>) => {
+      void entryIds;
+      return render(
+        <I18nProvider>
+          <MessageItem message={msg({ role: "report", content: "done", meta: meta as never })} />
+        </I18nProvider>,
+      );
+    };
+
+    it("splits the agent claim from the hub check", () => {
+      const { container } = show({ report, check, authors, github: { current: observation(), history: [] } });
+      expect(screen.getByRole("heading", { name: "Agent claim" })).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Hub check" })).toBeTruthy();
+      expect(screen.getByText("This is the name in the report, not an authenticated identity.")).toBeTruthy();
+      expect(screen.getByText(/Agent claims this was verified/).textContent).toContain("unit");
+      expect(screen.getByText(/Agent says this was not verified/).textContent).toContain("e2e");
+      expect(screen.getByText(/needs review/)).toBeTruthy();
+      expect(screen.getByText("ann@example.com")).toBeTruthy();
+      expect(screen.getByText("bob@example.com")).toBeTruthy();
+      expect(screen.getByText("This is commit metadata, not an allow or deny decision.")).toBeTruthy();
+      expect(screen.getByText("These check runs were read. v1 does not conclude that tests passed.")).toBeTruthy();
+      const failed = screen.getByText(/lint/).closest(".itag") as HTMLElement;
+      expect(failed.classList.contains("red")).toBe(true);
+      expect(failed.closest("details")).toBeNull();
+      const passed = screen.getAllByText(/unit/).map((n) => n.closest(".itag")).find(Boolean) as HTMLElement;
+      expect(passed.classList.contains("red")).toBe(false);
+      const claim = container.querySelector("[data-testid='report-claim']") as HTMLElement;
+      const hubCheck = container.querySelector("[data-testid='report-hub']") as HTMLElement;
+      expect(claim.textContent).toContain("cccccc");
+      expect(claim.textContent).not.toContain("Commits checked");
+      expect(hubCheck.textContent).toContain("On main");
+      expect(claim.textContent).not.toContain("On main");
+    });
+
+    it("keeps the claimed head when the hub saw another head", () => {
+      const other = observation({ headMatch: "mismatch", binding: { repoId: "r1", owner: "o", repo: "r", pr: 7, observedHeadSha: "d".repeat(40), claimedHeadSha: "c".repeat(40) } });
+      const { container } = show({ report, check, authors, github: { current: other, history: [] } });
+      expect((container.querySelector("[data-testid='report-claim']") as HTMLElement).textContent).toContain("cccccc");
+      expect(screen.getByText("PR head differs from the claim")).toBeTruthy();
+    });
+
+    it("does not treat a failed read as the previous success", () => {
+      const failed = observation({ state: "unavailable", reasonCode: "gh_logged_out", headMatch: null, checkRuns: [] });
+      const old = observation({ checkRuns: [{ name: "build", status: "completed", conclusion: "success", url: null }] });
+      const { container } = show({ report, check, authors, github: { current: failed, history: [old] } });
+      expect(screen.getByText("There are no check runs from this read. There is no conclusion that tests passed.")).toBeTruthy();
+      expect(screen.getByText("History")).toBeTruthy();
+      const current = container.querySelector("[data-testid='github-current']") as HTMLElement;
+      expect(current.textContent).not.toContain("success");
+      expect(current.textContent).not.toContain("build");
+      expect(current.textContent).toContain("gh_logged_out");
+    });
+
+    it("shows the three git lines when authors and github are absent", () => {
+      show({ report: { agent: "codex", gitCommonDir: "/g", summary: "done", entries: [], commits: ["abcdef1"], files: [] }, check });
+      expect(screen.getByText("Commits exist")).toBeTruthy();
+      expect(screen.getByText("On main")).toBeTruthy();
+      expect(screen.getByText("Files match")).toBeTruthy();
+      expect(screen.getAllByText("This report has no hub record of this kind.")).toHaveLength(2);
+    });
+
+    it("names an entry id this workspace does not have in a quiet note", async () => {
+      vi.mocked(hub.getEntry).mockImplementation(async (_ws: string, id: string) => {
+        if (id === "R-404") throw Object.assign(new Error("entry not found: R-404"), { status: 404 });
+        return { id } as never;
+      });
+      show({ report, check });
+      expect(await screen.findByText("No entry R-404 in this workspace")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "R-404" })).toBeNull();
+      expect(screen.getByText("R-1")).toBeTruthy();
+    });
+
+    it("an empty read says there are no check runs", () => {
+      show({ report, check, authors, github: { current: observation({ checkRuns: [] }), history: [] } });
+      expect(screen.getByText("This read returned no check runs. There is no conclusion that tests passed.")).toBeTruthy();
+    });
+  });
   it("separates a quoted sender from the excerpt", () => {
     render(
       <I18nProvider>

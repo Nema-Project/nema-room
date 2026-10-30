@@ -195,10 +195,10 @@ describe("KnowledgePanel", () => {
     }
   });
   it("requirement rows show each implementation tag, inferred distinct from reported", async () => {
-    const impl = (status: "reported" | "verified" | "mismatch", inferred = false) => ({
+    const impl = (status: "reported" | "verified" | "mismatch", inferred = false, extra: Record<string, unknown> = {}) => ({
       status,
-      evidence: { reportMessageId: inferred ? null : "m_r", commits: ["abcdef1"], inferred, note: null, confirmedBy: null, acceptanceReview: null, reportEvidence: null },
-    });
+      evidence: { reportMessageId: inferred ? null : "m_r", commits: ["abcdef1"], inferred, note: null, confirmedBy: null, acceptanceReview: null, reportEvidence: null, reports: [{ reportMessageId: "m_r", reportPassed: true }], ...extra },
+    }) as never;
     localStorage.setItem("nema.locale", "zh");
     vi.mocked(hub.listEntries).mockResolvedValue([
       e("R-1", "requirement", "active", { title: "reported row", implementation: impl("reported") }),
@@ -206,6 +206,8 @@ describe("KnowledgePanel", () => {
       e("R-3", "requirement", "active", { title: "verified row", implementation: impl("verified") }),
       e("R-4", "requirement", "active", { title: "mismatch row", implementation: impl("mismatch") }),
       e("R-5", "requirement", "active", { title: "plain row" }),
+      e("R-6", "requirement", "active", { title: "unchecked row", implementation: impl("verified", false, { reports: [{ reportMessageId: "m_r", reportPassed: false }] }) }),
+      e("R-7", "requirement", "active", { title: "accepted row", implementation: impl("verified", false, { confirmedBy: "user" }) }),
     ]);
     try {
       await mount();
@@ -213,7 +215,9 @@ describe("KnowledgePanel", () => {
       const tag = (title: string) => row(title).querySelector("[data-testid='impl-tag']");
       expect(tag("reported row")?.textContent).toBe("已上报");
       expect(tag("inferred row")?.textContent).toBe("已上报（代码推断）");
-      expect(tag("verified row")?.textContent).toBe("已核实");
+      expect(tag("verified row")?.textContent).toBe("提交已核对");
+      expect(tag("unchecked row")).toBeNull();
+      expect(tag("accepted row")?.textContent).toBe("验收已确认");
       expect(tag("mismatch row")?.textContent).toBe("有出入");
       expect(tag("mismatch row")?.classList.contains("red")).toBe(true);
       expect(tag("reported row")?.classList.contains("red")).toBe(false);

@@ -1,16 +1,16 @@
 "use client";
 
-import { KIND_STATUSES, isStale } from "@nema/shared";
+import { KIND_STATUSES, confirmableImplementation, isStale } from "@nema/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HistoryTab } from "@/components/HistoryTab";
-import { ImplTag, groupOf } from "@/components/KnowledgePanel";
+import { ImplTag, groupOf, implLabel } from "@/components/KnowledgePanel";
 import { Markdown } from "@/components/Markdown";
 import { WhyTab } from "@/components/WhyTab";
 import { WorkPackageDetail } from "@/components/WorkPackageDetail";
 import { formatDay, formatTime } from "@/lib/format";
 import { confirmEntry, confirmImplementation, diagramHtmlUrl, getEntry, getHistory, getWhy, listEntries, listMessages, listRepos, putEntry, requestWorkPackage, updateDiagram } from "@/lib/hub";
 import { useLocale, useT } from "@/lib/i18n";
-import type { Entry, EntryListItem, HistoryItem, Message, ParagraphBlame, Repo } from "@/lib/types";
+import type { Entry, EntryListItem, HistoryItem, ImplementationView, Message, ParagraphBlame, Repo } from "@/lib/types";
 
 type Tab = "content" | "history" | "why";
 type Props = {
@@ -282,7 +282,10 @@ function GenerateWorkPackage({ workspaceId, entryId }: { workspaceId: string; en
   );
 }
 
-/** Status, evidence and, while it is not verified, the user's own confirm. Only this confirm or a passing report reaches verified. */
+/**
+ * Status, evidence and the user's own confirm. Commits checked (S9 with its scope) is not acceptance; the user
+ * accepts here. After a cited report's check changed, the same button reads "still accept" and only clears the mark.
+ */
 function ImplementationBox({ workspaceId, entryId, implementation, onJumpToMessage, onConfirmed }: {
   workspaceId: string;
   entryId: string;
@@ -293,7 +296,8 @@ function ImplementationBox({ workspaceId, entryId, implementation, onJumpToMessa
   const t = useT();
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const { status, evidence } = implementation;
+  const { evidence } = implementation;
+  const review = evidence.confirmedBy === "user" && evidence.acceptanceReview?.needed === true;
   async function confirmImpl() {
     if (busy) return;
     setBusy(true);
@@ -311,7 +315,10 @@ function ImplementationBox({ workspaceId, entryId, implementation, onJumpToMessa
     <section className="impl" aria-label={t("impl.title")}>
       <dl className="defs">
         <dt>{t("impl.title")}</dt>
-        <dd><ImplTag implementation={implementation} /></dd>
+        <dd>
+          <ImplTag implementation={implementation} />
+          {implLabel(implementation as ImplementationView) === "checked" && <p className="kmeta">{t("impl.checkedScope")}</p>}
+        </dd>
         <dt>{t("impl.evidence")}</dt>
         <dd>
           {evidence.reportMessageId && (
@@ -325,9 +332,10 @@ function ImplementationBox({ workspaceId, entryId, implementation, onJumpToMessa
           {!evidence.reportMessageId && evidence.commits.length === 0 && !evidence.note && evidence.confirmedBy !== "user" && t("detail.noValue")}
         </dd>
       </dl>
-      {(status === "reported" || status === "mismatch") && (
+      {review && <p className="rcheck-note" role="status">{t("impl.reviewNeeded")}</p>}
+      {confirmableImplementation(implementation) && (
         <div className="actions">
-          <button type="button" className="editbtn" disabled={busy} onClick={() => void confirmImpl()}>{t("impl.confirm")}</button>
+          <button type="button" className="editbtn" disabled={busy} onClick={() => void confirmImpl()}>{t(review ? "impl.stillAccept" : "impl.confirm")}</button>
         </div>
       )}
       {failure && <p className="error" role="alert">{failure}</p>}
