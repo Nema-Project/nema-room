@@ -15,6 +15,10 @@ export function capText(text: string, maxBytes = MAX_TOOL_OUTPUT_BYTES): string 
 }
 
 export type RoomResult = { ok: true; json: unknown } | { ok: false; status: number; error: string };
+export type AttachmentResult = { ok: true; bytes: Buffer; mime: string } | { ok: false; status: number; error: string };
+
+/** The largest attachment the hub stores (PDF, 20 MB): the default cap on one attachment download. */
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
 export class RoomClient {
   private readonly base: string;
@@ -51,6 +55,50 @@ export class RoomClient {
 
   callPlugin(name: string, args: unknown): Promise<RoomResult> {
     return this.call("POST", `/plugins/${encodeURIComponent(name)}`, args);
+  }
+
+  /**
+   * Raw bytes of one attachment in this task's delivery set. Reading stops once more than `maxBytes`
+   * arrive, so a wrong hub cannot make the daemon buffer an unbounded body.
+   */
+  async fetchAttachment(id: string, maxBytes = MAX_ATTACHMENT_BYTES): Promise<AttachmentResult> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.base}/room/attachments/${encodeURIComponent(id)}`, {
+        headers: { authorization: `Bearer ${this.runToken}` },
+        signal: this.signal,
+      });
+    } catch (e) {
+      return { ok: false, status: 0, error: `无法连接 hub：${e instanceof Error ? e.message : String(e)}` };
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      let err: unknown;
+      try {
+        err = (JSON.parse(text) as { error?: unknown }).error;
+      } catch {
+        // non-JSON body
+      }
+      return { ok: false, status: res.status, error: capText(typeof err === "string" ? err : text || `hub returned HTTP ${res.status}`) };
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    try {
+      const reader = res.body?.getReader();
+      while (reader) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > maxBytes) {
+          await reader.cancel().catch(() => {});
+          return { ok: false, status: res.status, error: `附件超过 ${maxBytes} 字节` };
+        }
+        chunks.push(Buffer.from(value));
+      }
+    } catch (e) {
+      return { ok: false, status: 0, error: `读取附件失败：${e instanceof Error ? e.message : String(e)}` };
+    }
+    return { ok: true, bytes: Buffer.concat(chunks), mime: res.headers.get("content-type") ?? "application/octet-stream" };
   }
 
   private async call(method: "GET" | "POST", path: string, body?: unknown): Promise<RoomResult> {
