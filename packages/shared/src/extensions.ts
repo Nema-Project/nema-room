@@ -42,7 +42,7 @@ export type ExtensionRecord = {
   checkedAt?: string;
   /** Only on MCP records, filled in by the daemon when it lists them. Holds no command line, address or value. */
   mcp?: McpRecordState;
-  /** Only on Skill records, filled in by the daemon when it lists them: what works under each runtime. */
+  /** Only on Skill records, filled in by the daemon when it lists them: its estimated support under each runtime, from a static read of its files (see `SkillRuntimeSupport`). */
   skill?: SkillUsage;
 };
 

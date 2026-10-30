@@ -116,3 +116,11 @@ test("CRLF line endings", () => {
   const r = parseSkillFile("---\r\nname: x\r\ndescription: d\r\n---\r\nbody\r\n", "x");
   expect(r).toMatchObject({ ok: true, meta: { name: "x", description: "d" }, body: "body\r\n" });
 });
+
+test("block values keep their later paragraphs", () => {
+  const folded = parseSkillFile("---\nname: tdd\ndescription: >\n  First line\n  goes on.\n\n  Second paragraph.\nlicense: MIT\n---\nbody\n", "tdd");
+  expect(folded.ok && folded.meta.description).toBe("First line goes on.\nSecond paragraph.");
+  expect(folded.ok && folded.meta.license).toBe("MIT");
+  const literal = parseSkillFile("---\nname: tdd\ndescription: |\n  One\n\n  Two\n\n---\nbody\n", "tdd");
+  expect(literal.ok && literal.meta.description).toBe("One\n\nTwo");
+});

@@ -266,6 +266,7 @@ test("a skill saved under the earlier rule can still be listed, updated and remo
   const store = openExtensionStore(dir);
   expect(store.list().some((row) => row.id === "old--skill")).toBe(true);
   store.setUseState("old--skill", "disabled");
+  expect(store.list().find((row) => row.id === "old--skill")?.useState).toBe("disabled");
   store.putManaged({ ...managed("old--skill"), useState: "disabled" });
   store.removeManaged("old--skill");
   expect(store.list().some((row) => row.id === "old--skill")).toBe(false);

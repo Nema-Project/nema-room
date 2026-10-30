@@ -62,9 +62,14 @@ function readValues(lines: string[]): Map<string, Value> {
     const key = top[1]!;
     const rest = (top[2] ?? "").trim();
     if (rest === ">" || rest === "|" || rest === ">-" || rest === "|-") {
+      // The block runs through blank lines to the last indented line; a blank line is a paragraph break.
       const block: string[] = [];
-      while (i + 1 < lines.length && indented(lines[i + 1]!)) block.push(lines[++i]!.trim());
-      values.set(key, { kind: "scalar", text: block.join(rest.startsWith(">") ? " " : "\n") });
+      while (i + 1 < lines.length && (indented(lines[i + 1]!) || lines[i + 1]!.trim() === "")) block.push(lines[++i]!.trim());
+      while (block.length > 0 && block.at(-1) === "") block.pop();
+      const text = rest.startsWith(">")
+        ? block.reduce((out, line, n) => (n === 0 ? line : line === "" ? out + "\n" : out.endsWith("\n") ? out + line : out + " " + line), "")
+        : block.join("\n");
+      values.set(key, { kind: "scalar", text });
       continue;
     }
     if (rest !== "") {

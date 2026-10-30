@@ -30,3 +30,9 @@ test("parseManualSkill leaves built-in commands alone", () => {
   expect(parseManualSkill("/progress")).toBeNull();
   expect(parseManualSkill("/diagram:flow")).toBeNull();
 });
+
+test("a / name with a part longer than 64 characters is not a Skill call", () => {
+  expect(parseManualSkill(`/${"a".repeat(64)} x`)).toEqual({ skillId: "a".repeat(64), arguments: "x" });
+  expect(parseManualSkill(`/${"a".repeat(65)} x`)).toBeNull();
+  expect(parseManualSkill(`/web:${"a".repeat(65)}`)).toBeNull();
+});

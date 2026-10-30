@@ -17,6 +17,10 @@ export type SkillGap =
 /** Something the page should say about a Skill that is not a missing capability. */
 export type SkillNote = "model-override" | "stop-not-enforced" | "reserved-slash-name";
 
+/**
+ * A static estimate for one runtime, read from the Skill's declared fields and files; Nema does not run
+ * the Skill to confirm it. `missing` and `notes` are the evidence behind `support`.
+ */
 export type SkillRuntimeSupport = {
   adapter: SkillAdapter;
   support: "full" | "partial" | "none";
@@ -57,6 +61,8 @@ export function parseManualSkill(content: string): { skillId: string; arguments:
   const match = MANUAL.exec(content.trimStart());
   if (!match) return null;
   const skillId = match[1]!;
+  // Each part follows the Skill name rule, 64 characters at most.
+  if (!skillId.split(":").every(isSkillName)) return null;
   if (isReservedSlashName(skillId)) return null;
   return { skillId, arguments: (match[2] ?? "").trim() };
 }

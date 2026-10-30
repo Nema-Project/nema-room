@@ -92,7 +92,7 @@ test("task.assign takes the optional skill fields", () => {
     retainedSkills: ["tdd", "web:deploy"],
     manualSkill: { skillId: "tdd", arguments: "x" },
   });
-  expect(full).toMatchObject({ retainedSkills: ["tdd", "web:deploy"], manualSkill: { skillId: "tdd", arguments: "x" } });
+  expect(full).toMatchObject({ projectSkills: [{ repoId: "r1", label: "web", path: "/src/web", mainBranch: "main" }], retainedSkills: ["tdd", "web:deploy"], manualSkill: { skillId: "tdd", arguments: "x" } });
   expect(() => parseHubToDaemon({ ...base, manualSkill: { skillId: 1, arguments: "" } })).toThrow(ZodError);
   expect(() => parseHubToDaemon({ ...base, projectSkills: [{ repoId: "r1" }] })).toThrow(ZodError);
 });
