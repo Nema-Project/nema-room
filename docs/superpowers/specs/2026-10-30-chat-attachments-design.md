@@ -66,7 +66,7 @@
 - 把附件交给 MCP 工具或插件。
 - 编辑消息时增删附件。改消息只改文字，附件保持不变。
 - 消息搜索按附件名或附件内容匹配。
-- 每个 workspace 的总容量配额（本版只有单条消息的上限）。
+- 按 workspace 的容量配额。本版只有每次任务的上限和一个防止写满磁盘的全局上限（见 D-1）。
 - 用模型或 OCR 在 hub 侧预处理附件。
 
 ## 已定的做法
@@ -79,7 +79,7 @@ issue 把「内联 base64」和「写进 agent 工作目录给路径」列成要
 
 1. hub 在 `task.assign` 里多带一个可选字段 `attachments: AttachmentRef[]`，每项是 `{ id, kind, mime, name, size, sha256, messageId }`，不带字节。
 2. daemon 收到任务后，用该任务的 `runToken` 请求 `GET /room/attachments/:id`，拿到字节，按适配器能力组装原生内容块（Claude 的 `image` / `document`，Responses 的 `input_image` / `input_file`）或文字块。
-3. hub 只放行「这个任务的用户消息及其引用消息」的附件。别的 id 一律 404，即使属于同一个 workspace。
+3. hub 只放行「这个任务的投递集合」里的附件：本次用户消息、它引用的消息，以及 thread 回复所在 thread 的锚点消息（见「发给 agent 的范围」）。别的 id 一律 404，即使属于同一个 workspace。
 
 理由：
 
@@ -115,6 +115,7 @@ issue 把「内联 base64」和「写进 agent 工作目录给路径」列成要
 - **类型判定看内容，不看扩展名**：图片和 PDF 按文件头判定（PNG `89 50 4E 47`、JPEG `FF D8 FF`、GIF `GIF87a` / `GIF89a`、WebP `RIFF....WEBP`、PDF `%PDF-`）。文本类要求整份能按 UTF-8 严格解码且不含 NUL。扩展名只用于显示；扩展名和判定结果冲突（例如 `.png` 里是 PDF）时拒收。浏览器给的 `Content-Type` 不作数。
 - **文件名**：只存显示用的名字，去掉路径部分和控制字符，限制长度（例如 200 个字符）。磁盘上的文件名由 hub 生成（附件 id 或内容摘要），用户给的名字永远不参与拼路径，所以不存在路径穿越。
 - **上传接口**：`POST /api/workspaces/:id/attachments`，请求体是原始字节，`Content-Type` 必须是 `application/octet-stream`。原始文件名放在请求头 `X-Nema-Filename` 里，按 UTF-8 做百分号编码；hub 解码后按下面「文件名」一条清洗，缺失或解码失败时返回 400。`application/octet-stream` 和自定义请求头都不属于 CORS 的「简单请求」，跨站页面发不出来，必须先过预检，效果和现有 `requireJson` 一样。`requireJson` 只为这一条路由放开这一种类型。仍然经过 `hostGuard`，桌面下仍然经过 `uiAuth`。hub 边读边计数，超过上限立即中止并返回 413，不先把整个请求读进内存。
+- **竞态与持久化**：上传与删除 workspace 并发时不留文件；绑定与过期清理并发时只有一方成功；thread 回复的投递集合包含锚点附件；能力接口在 daemon 离线、返回形状不对时的响应；全局上限和磁盘剩余空间不足时返回 507。
 - **桌面网关**：已核对，`apps/local/src/gateway.ts` 对代理到 hub 的 POST / PUT / PATCH 也要求 `application/json`，否则直接 415。网关要为同一条上传路径（只此一条、只 POST）放行 `application/octet-stream`，其余不变：仍然先验会话 cookie，仍然转发网关凭据，仍然流式转发请求体，不在网关里缓存整份文件。网关也按单个文件上限计数，超过就中止并返回 413，免得超大请求先穿过网关。
 - **读取接口**：`GET /api/workspaces/:id/attachments/:aid/content`。附件必须属于路径里的 workspace，否则 404。响应头：判定出的类型（文本一律 `text/plain; charset=utf-8`）、`X-Content-Type-Options: nosniff`、`Content-Disposition: attachment`、`Content-Security-Policy: sandbox; default-src 'none'`、`Cross-Origin-Resource-Policy: same-origin`、`Cache-Control: private, no-cache`。前端用 `fetch` 取回再生成 `blob:` 地址显示，不直接把 hub 地址放进 `<img src>`，这样别的网站也不能把附件嵌进它的页面。
 - **不跨 workspace**：附件 id 是随机值，所有查询都同时带 workspace id 和附件 id。发消息时引用的附件必须属于同一个 workspace，且是本人刚上传、还没挂到任何消息上的。Room 接口按任务限定（见「投递方式」）。
@@ -134,14 +135,15 @@ issue 把「内联 base64」和「写进 agent 工作目录给路径」列成要
 
 ### 发给 agent 的范围
 
-- 原生内容块只带本次用户消息的附件，加上它引用的那条消息的附件。用户想让 agent 再看一次早先的截图，引用那条消息即可。
-- 「每条消息合计 32 MB、最多 8 个」按**一次任务实际要发的附件**计算，也就是本次消息加被引用消息的附件合起来算。hub 在发消息时就检查，超过时拒绝发送，提示「本条和被引用消息的附件合计超过 32 MB，请去掉一些附件或不引用那条消息」。不会悄悄只发一部分。
+- 原生内容块只带这次任务的**投递集合**：本次用户消息的附件；它引用的那条消息的附件；如果是 thread 回复，再加上该 thread 锚点消息的附件（`prompt.ts` 本来就把锚点全文放进 thread 的提示里，附件跟着锚点走）。同一附件只发一次。用户想让 agent 再看一次早先的截图，引用那条消息即可。
+- 「每条消息合计 32 MB、最多 8 个」按**一次任务实际要发的附件**计算，也就是上面整个投递集合合起来算。hub 在发消息时就检查，超过时拒绝发送，提示「本条、被引用消息和 thread 锚点的附件合计超过 32 MB，请去掉一些附件或不引用那条消息」。不会悄悄只发一部分。
+- Direct 适配器的工具循环每次调用模型都会重发完整历史（`store: false`），附件也会随每一轮重发。v1 接受这个代价，不在后续轮次去掉附件，否则模型在调用工具之后就看不到附件了。每次任务的传输量上限是「32 MB × 本次的模型调用上限」。以后可以对 `siwc` 改用 Files API 的 `file_id` 减少重复上传，这需要先确认 `compat` 和 `byok` 的行为，本版不做。Claude Code 由它自己管理会话，本设计不控制它的重发方式。
 - `prompt` 里的「最近消息」对带附件的消息只追加一行占位，例如 `[附件：error.png（image/png，245 KB）]`，不带内容。
-- 允许只有附件、没有文字的消息。这要改两处现有的检查：`PostMessageBody`（`uiApi.ts`，主消息和 thread 回复共用）和 `postUserMessage`（`messages.ts`）今天都拒绝空白的 `content`。改成「`content` 非空，或 `attachmentIds` 至少一个」，两处用同一个判断函数。此时 `content` 存空字符串，`prompt` 里写「（用户只发了附件）」。知识条目的 `quotes` 仍然只能引用文字。编辑消息仍然要求文字非空，除非这条消息带附件。
+- 允许只有附件、没有文字的消息。这要改两处现有的检查：`PostMessageBody`（`uiApi.ts`，主消息和 thread 回复共用）和 `postUserMessage`（`messages.ts`）今天都拒绝空白的 `content`。改成「`content` 非空，或 `attachmentIds` 至少一个」，两处用同一个判断函数。此时 `content` 存空字符串，`prompt` 里写「（用户只发了附件）」。知识条目的 `quotes` 仍然只能引用文字。编辑消息仍然要求文字非空，除非这条消息带附件。前端同理：`Composer.send` 今天在去掉空白后文字为空时直接返回，要改成「文字为空且没有已上传完的附件」才返回；还有附件在上传时不能发送。
 
 ### 适配器能力的上报
 
-用户实际用哪个适配器、哪种登录方式，只有 daemon 知道（`Runner` 每次任务都重新读配置）。daemon 新增一个只读 RPC `attachments.capabilities`，按当前配置返回 `{ image, pdf, text }`，每项是 `"native" | "text" | "unsupported" | "unknown"`。输入框加附件时调用它（经 hub 转发）；daemon 不在线时显示「无法确认，发送后由 daemon 检查」。daemon 在运行任务前按同一张表再判断一次，结果以这一次为准。不支持时怎么办见 D-2。
+用户实际用哪个适配器、哪种登录方式，只有 daemon 知道（`Runner` 每次任务都重新读配置）。daemon 新增一个只读 RPC `attachments.capabilities`，按当前配置返回 `{ image, pdf, text }`，每项是 `"native" | "text" | "unsupported" | "unknown"`。hub 新增 `GET /api/daemon/attachment-capabilities`，和其他 `/api/*` 一样经过 `hostGuard`，桌面下经过 `uiAuth`；它经 `DaemonRpc` 转发给 daemon，按固定形状校验返回值，形状不对返回 502。web 的 `lib/hub.ts` 加对应函数，输入框加附件时调用；daemon 不在线时显示「无法确认，发送后由 daemon 检查」。daemon 在运行任务前按同一张表再判断一次，结果以这一次为准。不支持时怎么办见 D-2。
 
 ## 需要维护者决定的问题
 
@@ -155,11 +157,16 @@ issue 把「内联 base64」和「写进 agent 工作目录给路径」列成要
 
 **推荐 A**。理由：桌面和 Compose 都适用，不改知识仓库格式，删除容易做到彻底。代价是要处理数据库和文件的一致性。做法：
 
-- 上传时先写文件：临时文件、fsync、改名到最终位置，然后才插入记录。在两步之间崩溃，只会留下没有记录的文件，由启动时的孤儿清理删掉。不会出现有记录、没有文件的附件。
+- 上传时先写文件：写到 `<dataDir>/attachments/.staging/` 下的临时文件，fsync 文件。然后开事务，`select … for share` 锁住 workspace 行（`deleteWorkspace` 用的是 `for update`，两者互斥）；workspace 不在就删掉临时文件、返回 404。workspace 在，就把文件改名到 `<dataDir>/attachments/<workspaceId>/<附件id>`，fsync 所在目录（POSIX；Windows 上没有目录 fsync，尽力而为），再插入记录、提交。提交失败就删掉文件。在改名和提交之间崩溃，只会留下没有记录的文件，由启动时的孤儿清理删掉。目录 fsync 保证记录提交时改名已经落盘。
+- `deleteWorkspace` 在已有事务里删掉附件记录，提交后删 `<dataDir>/attachments/<id>`。因为上传要先拿到 workspace 的共享锁，删除开始后不会再有新文件写进这个目录。
 - 删除时先在事务里把记录标成已删除，提交后再删文件。在两步之间崩溃，留下的是已标删除的文件，启动时清理。
+- 删除只保证**提交之后开始的**读取拿不到字节。提交那一刻已经在传输中的下载可能传完（大多数系统上删除文件不会中断已打开的读取）。删除按钮旁的提示写明：「已经发给 agent 或模型的内容无法撤回」。
+- 状态变化都用条件更新，避免竞态：发消息绑定附件用 `update … set status='attached' where id = any($1) and status='staged' and workspace_id=$2`，更新行数不等于请求数就整笔回滚；过期清理用 `update … set status='expired' where status='staged' and created_at < now() - interval '24 hours' returning id`，只删这些返回的文件。两者不会同时拿到同一条记录。
 - 读取时文件意外不在（例如手工删了数据目录里的文件），返回 410，把记录标成 `missing`，消息里显示「附件文件已丢失」；daemon 收到 410 时让任务失败并写明原因。
 
 上传后还没随消息发出的附件（状态 `staged`）超过 24 小时自动删除。
+
+全局保护：附件总量超过 `NEMA_ATTACHMENTS_MAX_BYTES`（默认 2 GB），或数据目录所在磁盘的剩余空间低于 1 GB 时，新上传返回 507，提示用户删除附件或清理磁盘。这只是防止把 hub 所在的磁盘写满，不是按 workspace 的配额。
 
 ### D-2：当前适配器不能原生接收某类附件时怎么办
 
@@ -224,6 +231,7 @@ Composer ──POST /api/workspaces/:id/attachments (octet-stream)──▶ hub
   - `prompt.ts` 加附件占位；
   - `task.assign` 增加 `attachments`，并检查 daemon 的 `features`；
   - Room 接口 `GET /room/attachments/:id`；
+  - `GET /api/daemon/attachment-capabilities`，转发 daemon 的 `attachments.capabilities`；
   - `deleteWorkspace` 删附件目录。
 - daemon / CLI：
   - `attachments.capabilities` RPC；
@@ -266,7 +274,7 @@ Composer ──POST /api/workspaces/:id/attachments (octet-stream)──▶ hub
   - 能力表按 `adapter` 和 `authMode` 的每种组合都有用例；
   - D-2 的拒绝文案；
   - sha256 不符时拒绝；文本附件的随机边界不会出现在文件内容里（内容里预先放一个看起来像边界的字符串）；文件名只出现在 JSON 元数据行里；`byok` 非官方地址按不支持处理。
-- **web**：粘贴、拖放、选择三种入口；预览与移除；超限提示；发送失败保留草稿和附件；`MessageItem` 渲染缩略图、文件卡片和「附件已删除」；三种语言的键齐全。
+- **web**：粘贴、拖放、选择三种入口；预览与移除；超限提示；发送失败保留草稿和附件；`MessageItem` 渲染缩略图、文件卡片和「附件已删除」；只有附件、没有文字时 `Composer` 能发送，附件还在上传时不能发送；三种语言的键齐全。
 - **真实模型验收（单独记录，不算自动化测试）**：在一次性环境里，用真实的 `claude-code` 和 `codex-direct`（`siwc`，有条件时加 `compat`）各发一张图和一份 PDF，确认回复内容确实来自附件。结果写回本文件的能力表，把对应的【推断】改成实测，或者按 D-2 改成 `unsupported`。
 
 ## 验证（实现前要补的证据）
