@@ -52,13 +52,13 @@ beforeEach(async () => {
 });
 afterAll(cleanupHubDeps);
 
-async function bind(gitCommonDir = GIT_DIR, workspaceName = "A"): Promise<{ ws: string; repoId: string }> {
+async function bind(gitCommonDir = GIT_DIR, workspaceName = "A", remoteUrl: string | null = null): Promise<{ ws: string; repoId: string }> {
   const ws = (await createWorkspace(db, dataDir, workspaceName)).id;
   const repoId = `repo_${workspaceName}`;
   await db.query(
     `insert into workspace_repos (id, workspace_id, path, git_common_dir, label, main_branch, has_origin, remote_url)
-     values ($1, $2, '/real/a', $3, 'API', 'main', true, null)`,
-    [repoId, ws, gitCommonDir],
+     values ($1, $2, '/real/a', $3, 'API', 'main', true, $4)`,
+    [repoId, ws, gitCommonDir, remoteUrl],
   );
   return { ws, repoId };
 }
@@ -214,7 +214,12 @@ test("a report check error still queues the task with checkError", async () => {
     return queued.length > 0 ? queued : null;
   });
   expect(task).toMatchObject({ messageId });
-  expect((await getMessage(db, messageId))!.meta).toEqual({ report: { ...report(), progress: "completed" }, check: null, checkError: "没有这个提交" });
+  expect((await getMessage(db, messageId))!.meta).toEqual({
+    report: { ...report(), progress: "completed" },
+    check: null,
+    checkError: "没有这个提交",
+    github: { current: expect.objectContaining({ state: "not_requested", binding: null }), history: [] },
+  });
 });
 
 test("an invalid report is 400 and stores nothing", async () => {
@@ -607,4 +612,200 @@ test("a recheck whose result is overtaken by a newer stored check neither applie
   expect((await metaOf(message.id)).check).toEqual(newer);
   expect(await taskStatus(ws, wpId)).toBe("pending");
   expect((await listMessages(db, ws)).filter((m) => m.role === "system")).toEqual([]);
+});
+
+const REMOTE = "https://github.com/example/repo.git";
+const PR_HEAD = "c".repeat(40);
+const loggedIn = { code: { installed: true }, github: { installed: true, loggedIn: true, detail: "" } };
+
+async function enableGithub(ws: string): Promise<void> {
+  await db.query(`insert into workspace_plugins (workspace_id, plugin_id, enabled) values ($1, 'github', true)`, [ws]);
+}
+
+async function githubOf(messageId: string) {
+  return (await waitFor(async () => (await metaOf(messageId)).github)) as NonNullable<ReportMessageMeta["github"]>;
+}
+
+test("accepts a report with a pr when the plugin is off", async () => {
+  await bind(GIT_DIR, "A", REMOTE);
+  handlers["report.check"] = () => passing;
+  handlers["plugins.status"] = () => loggedIn;
+  const r = await post("/report", { ...report(), pr: 7 });
+  expect(r.status).toBe(202);
+  const { messageId } = (await r.json()) as { messageId: string };
+  const { current, history } = await githubOf(messageId);
+  expect(current).toMatchObject({ state: "unavailable", reasonCode: "plugin_disabled", checkRuns: [], binding: null, headMatch: null, truncated: false, source: "github-plugin-read" });
+  expect(Number.isNaN(Date.parse(current.observedAt))).toBe(false);
+  expect(history).toEqual([]);
+  expect(calls.map((c) => c.method)).not.toContain("github.observe");
+});
+
+test("leaves binding null when the routed remote is not github", async () => {
+  const { ws } = await bind();
+  await enableGithub(ws);
+  handlers["report.check"] = () => passing;
+  handlers["plugins.status"] = () => loggedIn;
+  const r = await post("/report", { ...report(), pr: 7 });
+  const { messageId } = (await r.json()) as { messageId: string };
+  const { current } = await githubOf(messageId);
+  expect(current).toMatchObject({ state: "unavailable", reasonCode: "remote_missing", binding: null, checkRuns: [] });
+  expect(calls.map((c) => c.method)).not.toContain("github.observe");
+});
+
+test("reads gh as unavailable when plugins.status throws", async () => {
+  const { ws } = await bind(GIT_DIR, "A", REMOTE);
+  await enableGithub(ws);
+  handlers["report.check"] = () => passing;
+  const r = await post("/report", { ...report(), pr: 7 });
+  expect(r.status).toBe(202);
+  const { messageId } = (await r.json()) as { messageId: string };
+  expect((await githubOf(messageId)).current).toMatchObject({ state: "unavailable", reasonCode: "gh_unavailable", binding: null });
+});
+
+test("does not request github when the report has no pr", async () => {
+  await bind(GIT_DIR, "A", REMOTE);
+  handlers["report.check"] = () => passing;
+  const r = await post("/report", report());
+  const { messageId } = (await r.json()) as { messageId: string };
+  const { current } = await githubOf(messageId);
+  expect(current.state).toBe("not_requested");
+  expect("reasonCode" in current).toBe(false);
+  expect(current.binding).toBeNull();
+  expect(calls.map((c) => c.method)).not.toContain("plugins.status");
+});
+
+test("stores a bound read and does not copy it onto the claim", async () => {
+  const { ws, repoId } = await bind(GIT_DIR, "A", REMOTE);
+  await enableGithub(ws);
+  const wpId = await approvedPackage(ws, repoId);
+  handlers["report.check"] = () => ({ ...passing, touchedFiles: ["src/a.ts"] });
+  handlers["plugins.status"] = () => loggedIn;
+  const run = { name: "ci", status: "completed", conclusion: "failure", url: "https://github.com/example/repo/runs/1" };
+  handlers["github.observe"] = () => ({ outcome: "read", observedHeadSha: PR_HEAD, checkRuns: [run], truncated: false });
+  const claimedHead = "d".repeat(40);
+  const ci = [{ name: "ci", conclusion: "success" }];
+  const r = await post("/report", { ...report(), entries: [wpId], task: 1, pr: 7, headSha: claimedHead, ci });
+  expect(r.status).toBe(202);
+  const { messageId } = (await r.json()) as { messageId: string };
+  await waitFor(async () => (await listQueuedTasks(db, ws)).length > 0);
+  const meta = await metaOf(messageId);
+  expect(meta.github!.current).toMatchObject({
+    state: "read",
+    source: "github-plugin-read",
+    binding: { repoId, owner: "example", repo: "repo", pr: 7, observedHeadSha: PR_HEAD, claimedHeadSha: claimedHead },
+    headMatch: "mismatch",
+    checkRuns: [run],
+    truncated: false,
+  });
+  expect(meta.github!.current.observedAt).toBeTruthy();
+  expect(calls.find((c) => c.method === "github.observe")!.params).toEqual({ owner: "example", repo: "repo", pr: 7, claimedHeadSha: claimedHead });
+  expect(meta.report.headSha).toBe(claimedHead);
+  expect(meta.report.ci).toEqual(ci);
+  expect(await taskStatus(ws, wpId)).toBe("verified");
+});
+
+test("compares heads only when both are exact and leaves no claim not comparable", async () => {
+  const { ws } = await bind(GIT_DIR, "A", REMOTE);
+  await enableGithub(ws);
+  handlers["report.check"] = () => passing;
+  handlers["plugins.status"] = () => loggedIn;
+  handlers["github.observe"] = () => ({ outcome: "read", observedHeadSha: PR_HEAD, checkRuns: [], truncated: true });
+  const same = (await (await post("/report", { ...report(), pr: 7, headSha: PR_HEAD })).json()) as { messageId: string };
+  expect((await githubOf(same.messageId)).current).toMatchObject({ headMatch: "match", truncated: true });
+  const none = (await (await post("/report", { ...report(), pr: 7 })).json()) as { messageId: string };
+  expect((await githubOf(none.messageId)).current).toMatchObject({ headMatch: "not_comparable", binding: { claimedHeadSha: null } });
+});
+
+test("maps a failed read to a reason and keeps the target in the binding", async () => {
+  const { ws } = await bind(GIT_DIR, "A", REMOTE);
+  await enableGithub(ws);
+  handlers["report.check"] = () => passing;
+  handlers["plugins.status"] = () => loggedIn;
+  const cases: [() => unknown, string][] = [
+    [() => ({ outcome: "out_of_scope" }), "out_of_scope"],
+    [() => { throw new DaemonRpcError("GitHub call failed"); }, "http_error"],
+    [() => { throw new DaemonRpcError("GitHub returned invalid pull request head SHA"); }, "invalid_response"],
+    [() => { throw new DaemonRpcError("GitHub call timed out"); }, "timeout"],
+  ];
+  for (const [handler, reasonCode] of cases) {
+    handlers["github.observe"] = handler;
+    const r = await post("/report", { ...report(), pr: 7 });
+    expect(r.status).toBe(202);
+    const { messageId } = (await r.json()) as { messageId: string };
+    expect((await githubOf(messageId)).current).toMatchObject({
+      state: "unavailable", reasonCode, checkRuns: [], truncated: false, headMatch: null,
+      binding: { owner: "example", repo: "repo", pr: 7, observedHeadSha: null, claimedHeadSha: null },
+    });
+  }
+});
+
+test("replaces a successful read with unavailable when the next read fails", async () => {
+  const { ws, repoId } = await bind(GIT_DIR, "A", REMOTE);
+  await enableGithub(ws);
+  handlers["report.check"] = () => ({ ...passing, onMain: "not-yet" });
+  handlers["plugins.status"] = () => loggedIn;
+  handlers["github.observe"] = () => ({ outcome: "read", observedHeadSha: PR_HEAD, checkRuns: [{ name: "ci", status: "completed", conclusion: "success", url: null }], truncated: false });
+  const { messageId } = (await (await post("/report", { ...report(), pr: 7, headSha: PR_HEAD })).json()) as { messageId: string };
+  const first = (await githubOf(messageId)).current;
+  expect(first).toMatchObject({ state: "read", headMatch: "match" });
+  await settle();
+  handlers["github.observe"] = () => {
+    throw new DaemonRpcError("GitHub call timed out");
+  };
+  handlers["report.check"] = () => ({ ...passing, onMain: "not-yet", checkedAt: "2026-10-23T10:05:00.000Z" });
+  await recheckReports({ db, events, daemon, dataDir }, repoId);
+  const { current, history } = (await metaOf(messageId)).github!;
+  expect(current).toMatchObject({ state: "unavailable", reasonCode: "timeout", checkRuns: [], headMatch: null, binding: { owner: "example", repo: "repo", observedHeadSha: null } });
+  expect(history).toEqual([first]);
+});
+
+test("labels the previous head as history when the observed head changes", async () => {
+  const { ws, repoId } = await bind(GIT_DIR, "A", REMOTE);
+  await enableGithub(ws);
+  handlers["report.check"] = () => ({ ...passing, onMain: "not-yet" });
+  handlers["plugins.status"] = () => loggedIn;
+  handlers["github.observe"] = () => ({ outcome: "read", observedHeadSha: PR_HEAD, checkRuns: [], truncated: false });
+  const { messageId } = (await (await post("/report", { ...report(), pr: 7 })).json()) as { messageId: string };
+  const first = (await githubOf(messageId)).current;
+  await settle();
+  const next = "e".repeat(40);
+  handlers["github.observe"] = () => ({ outcome: "read", observedHeadSha: next, checkRuns: [], truncated: false });
+  handlers["report.check"] = () => ({ ...passing, onMain: "not-yet", checkedAt: "2026-10-23T10:05:00.000Z" });
+  await recheckReports({ db, events, daemon, dataDir }, repoId);
+  const { current, history } = (await metaOf(messageId)).github!;
+  expect(history).toEqual([first]);
+  expect(current.binding!.observedHeadSha).toBe(next);
+});
+
+test("a recheck of a report with no pr does not read github again", async () => {
+  const { ws, repoId } = await bind(GIT_DIR, "A", REMOTE);
+  await enableGithub(ws);
+  handlers["report.check"] = () => ({ ...passing, onMain: "not-yet" });
+  handlers["plugins.status"] = () => loggedIn;
+  const { messageId } = (await (await post("/report", report())).json()) as { messageId: string };
+  const before = await githubOf(messageId);
+  await settle();
+  calls.length = 0;
+  handlers["report.check"] = () => ({ ...passing, onMain: "not-yet", checkedAt: "2026-10-23T10:05:00.000Z" });
+  await recheckReports({ db, events, daemon, dataDir }, repoId);
+  expect(calls.map((c) => c.method)).toEqual(["report.check"]);
+  expect((await metaOf(messageId)).github).toEqual(before);
+});
+
+test("does not insert an evidence event for a report or a github read", async () => {
+  const { ws, repoId } = await bind(GIT_DIR, "A", REMOTE);
+  await enableGithub(ws);
+  const count = async () => Number((await db.query<{ n: string | number }>(`select count(*) as n from evidence_events`))[0]!.n);
+  const before = await count();
+  handlers["report.check"] = () => ({ ...passing, onMain: "not-yet" });
+  handlers["plugins.status"] = () => loggedIn;
+  handlers["report.authors"] = () => ({ checkedAt: passing.checkedAt, source: "git", commits: [], missing: [] });
+  handlers["github.observe"] = () => ({ outcome: "read", observedHeadSha: PR_HEAD, checkRuns: [], truncated: false });
+  const { messageId } = (await (await post("/report", { ...report(), pr: 7 })).json()) as { messageId: string };
+  await githubOf(messageId);
+  await settle();
+  handlers["report.check"] = () => ({ ...passing, onMain: "not-yet", checkedAt: "2026-10-23T10:05:00.000Z" });
+  await recheckReports({ db, events, daemon, dataDir }, repoId);
+  expect(calls.filter((c) => c.method === "github.observe")).toHaveLength(2);
+  expect(await count()).toBe(before);
 });

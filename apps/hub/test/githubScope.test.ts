@@ -1,5 +1,5 @@
-import { describe, expect, test } from "vitest";
-import { checkGithubCall, githubTarget } from "../src/githubScope.js";
+import { describe, expect, it, test } from "vitest";
+import { checkGithubCall, githubObservationGate, githubTarget } from "../src/githubScope.js";
 
 const OWNER_REPO_ERROR = (target: string) => `只能访问本 workspace 绑定仓库的 GitHub：${target}`;
 const SEARCH_ERROR = "搜索必须且只能限定为本 workspace 绑定的仓库（repo:owner/name）";
@@ -63,4 +63,18 @@ describe("checkGithubCall", () => {
     expect(search("repo:o/r", { owner: "o", repo: "r" })).toEqual({ ok: true });
     expect(checkGithubCall("github__search_issues", {}, allowed)).toEqual({ ok: false, error: SEARCH_ERROR });
   });
+});
+
+it("gates a github read in a fixed order", () => {
+  const on = { installed: true, loggedIn: true };
+  const one = [{ owner: "example", repo: "repo" }];
+  expect(githubObservationGate({ pr: undefined, pluginEnabled: true, gh: on, targets: one })).toEqual({ state: "not_requested" });
+  expect(githubObservationGate({ pr: 7, pluginEnabled: false, gh: on, targets: one })).toEqual({ state: "unavailable", reasonCode: "plugin_disabled" });
+  expect(githubObservationGate({ pr: 7, pluginEnabled: true, gh: { installed: false, loggedIn: false }, targets: one })).toEqual({ state: "unavailable", reasonCode: "gh_unavailable" });
+  expect(githubObservationGate({ pr: 7, pluginEnabled: true, gh: { installed: true, loggedIn: false }, targets: one })).toEqual({ state: "unavailable", reasonCode: "gh_logged_out" });
+  expect(githubObservationGate({ pr: 7, pluginEnabled: true, gh: on, targets: [] })).toEqual({ state: "unavailable", reasonCode: "remote_missing" });
+  const two = githubObservationGate({ pr: 7, pluginEnabled: true, gh: on, targets: [...one, { owner: "other", repo: "repo" }] });
+  expect(two).toEqual({ state: "unavailable", reasonCode: "remote_not_unique" });
+  expect("target" in two).toBe(false);
+  expect(githubObservationGate({ pr: 7, pluginEnabled: true, gh: on, targets: one })).toEqual({ state: "read", target: one[0] });
 });

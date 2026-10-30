@@ -112,3 +112,28 @@ export function githubTargets(repos: { remoteUrl: string | null }[]): GithubTarg
   }
   return out;
 }
+
+export type GithubGateReason = "plugin_disabled" | "gh_unavailable" | "gh_logged_out" | "remote_missing" | "remote_not_unique";
+export type GithubGate =
+  | { state: "not_requested" }
+  | { state: "unavailable"; reasonCode: GithubGateReason }
+  | { state: "read"; target: GithubTarget };
+
+/**
+ * Whether the hub may read a report's claimed pull request, checked in a fixed order. `targets` is what the
+ * routed repo's remote gives (0 or 1 today); more than one is refused rather than picking one.
+ */
+export function githubObservationGate(input: {
+  pr: number | undefined;
+  pluginEnabled: boolean;
+  gh: { installed: boolean; loggedIn: boolean };
+  targets: GithubTarget[];
+}): GithubGate {
+  if (input.pr === undefined) return { state: "not_requested" };
+  if (!input.pluginEnabled) return { state: "unavailable", reasonCode: "plugin_disabled" };
+  if (!input.gh.installed) return { state: "unavailable", reasonCode: "gh_unavailable" };
+  if (!input.gh.loggedIn) return { state: "unavailable", reasonCode: "gh_logged_out" };
+  if (input.targets.length === 0) return { state: "unavailable", reasonCode: "remote_missing" };
+  if (input.targets.length > 1) return { state: "unavailable", reasonCode: "remote_not_unique" };
+  return { state: "read", target: input.targets[0]! };
+}
