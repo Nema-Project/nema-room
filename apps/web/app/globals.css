@@ -437,6 +437,11 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 }
 .plugin-block li { display: grid; grid-template-columns: minmax(220px, max-content) minmax(0, 68ch); column-gap: 20px; align-items: baseline; padding: 4px 0; color: var(--ink-2); }
 .plugin-block .kid { color: var(--ink); font-family: var(--mono); font-size: 13px; }
+.skill-install .field { padding: 12px 0; }
+.skill-install .field > button { border: 1px solid var(--ink); padding: 5px 14px; margin-top: 8px; font-weight: 600; }
+.skill-preview li { display: block; padding: 10px 0; border-top: 1px solid var(--rule); }
+.skill-preview h3 { font-size: 15px; font-weight: 600; color: var(--ink); }
+.skill-preview .kmeta { overflow-wrap: anywhere; }
 @media (max-width: 720px) {
   .plugin-block li { grid-template-columns: 1fr; row-gap: 2px; }
 }

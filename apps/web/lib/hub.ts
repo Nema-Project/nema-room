@@ -1,4 +1,4 @@
-import type { ExtensionRecord } from "@nema/shared";
+import type { ExtensionRecord, SkillInstallJob, SkillSourcePreview } from "@nema/shared";
 import type {
   EntryListItem,
   Entry,
@@ -125,6 +125,16 @@ export const setExtensionUse = (id: string, useState: "enabled" | "disabled") =>
 /** Delete a managed extension, or take an external one off the list. `removed` says which happened. */
 export const removeExtension = (id: string) =>
   request<{ id: string; removed: "managed" | "external" }>(`/extensions/${encodeURIComponent(id)}`, { method: "DELETE" });
+/** Pin a GitHub or skills.sh source to one commit and list its skills. Nothing is installed. */
+export const resolveExtensionSource = (source: string) =>
+  request<SkillSourcePreview>("/extensions/resolve", { method: "POST", body: { source } });
+/** Install one previewed skill folder at the previewed commit. Returns once the job has started. */
+export const installExtension = (body: { source: string; commit: string; path: string }) =>
+  request<SkillInstallJob>("/extensions/install", { method: "POST", body });
+const installUrl = (id: string) => `/extensions/${encodeURIComponent(id)}/install`;
+export const getExtensionInstall = (id: string) => request<SkillInstallJob>(installUrl(id));
+export const cancelExtensionInstall = (id: string) => request<SkillInstallJob>(`${installUrl(id)}/cancel`, { method: "POST", body: {} });
+export const retryExtensionInstall = (id: string) => request<SkillInstallJob>(`${installUrl(id)}/retry`, { method: "POST", body: {} });
 /** Opens the OS folder dialog in the host daemon. `path` is null when the dialog is cancelled. */
 export const pickDirectory = () => request<{ path: string | null }>("/pick-directory", { method: "POST", body: {} });
 export const listRepos = (id: string) => request<Repo[]>(`${w(id)}/repos`);

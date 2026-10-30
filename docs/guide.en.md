@@ -206,6 +206,8 @@ The GitHub plugin is off by default. How to turn it on, sign in with `gh`, and a
 
 The Plugins page (Settings, bottom left) gives every extension an Enable / Disable switch that takes effect immediately, with no restart. A disabled extension's functions stop being offered to the Agent and calling one directly is refused. The switch covers the whole install; each workspace has its own switches on top, and both have to be on. Disabling a bundled extension stores only an override row, never a change to what shipped. An extension Nema installed also has Uninstall, which deletes its directory with the record; one found outside Nema only offers Remove from list, which drops the record and leaves your files where they are. A bundled extension offers no removal, only the switch. See "Enabling, disabling and removing extensions" in the technical reference.
 
+To install a skill, paste a GitHub repository, a link to a folder or `SKILL.md` in one, or a skills.sh page into "Install a skill" at the top of the Plugins page and press Preview. The preview shows the commit the source is pinned to, the license GitHub reports, and every skill found there with the folder it would install to. A skill that cannot be installed says why. Install copies only that skill's folder at that commit; the line under it shows files done out of the total, with Cancel install while it runs. A failed install shows the reason on its row and offers Retry install, which starts again from the same commit. Only public repositories are supported for now. See "Installing a skill" in the technical reference (安装 Skill).
+
 <a id="data"></a>
 
 ## Data, privacy, and known limitations

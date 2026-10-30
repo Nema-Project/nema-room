@@ -128,3 +128,42 @@ export function safeFileName(name: string): boolean {
 export function safeRepoPath(relative: string): boolean {
   return relative.split("/").every(safeFileName);
 }
+
+/** Why a skill in a preview cannot be installed. */
+export type SkillProblem = "missing-frontmatter" | "invalid-id" | "bundled-id" | "duplicate-id" | "too-large";
+
+/** One skill in an install preview, as `POST /api/extensions/resolve` returns it. */
+export type SkillPreviewItem = {
+  id: string | null;
+  name: string;
+  description: string;
+  path: string;
+  digest: string;
+  problem: SkillProblem | null;
+  target: string | null;
+  installed: boolean;
+};
+
+/** A source pinned to one commit, with the skills found there. */
+export type SkillSourcePreview = {
+  repository: string;
+  owner: string;
+  repo: string;
+  ref: string;
+  commit: string;
+  license: string | null;
+  path: string | null;
+  truncated: boolean;
+  skills: SkillPreviewItem[];
+};
+
+/** An install as the daemon reports it while it runs and after it stops. */
+export type SkillInstallJob = {
+  id: string;
+  state: "running" | "installed" | "failed" | "cancelled";
+  done: number;
+  total: number;
+  error: string | null;
+  commit: string | null;
+  path: string | null;
+};
