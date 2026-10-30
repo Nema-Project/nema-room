@@ -375,4 +375,20 @@ describe("MessageItem attachments", () => {
     d.resolve(tomb as never);
     await vi.waitFor(() => expect(onEdited).toHaveBeenCalledWith(expect.objectContaining({ content: "v2", attachments: [tomb] })));
   });
+
+  it("keeps a tombstone when an edit response read before the delete arrives after it", async () => {
+    const tomb = { ...file, status: "deleted" as const, deletedAt: "2026-10-30T09:15:00Z" };
+    vi.mocked(hub.deleteAttachment).mockResolvedValue(tomb);
+    const onEdited = vi.fn();
+    const before = user({ content: "v1", attachments: [file] });
+    const { rerender } = show(before, onEdited);
+    await confirmDelete("err.log");
+    await vi.waitFor(() => expect(onEdited).toHaveBeenCalledTimes(1));
+    rerender(<I18nProvider><MessageItem message={{ ...before, attachments: [tomb] }} onEdited={onEdited} /></I18nProvider>);
+    vi.mocked(hub.editMessage).mockResolvedValue({ message: { ...before, content: "v2", attachments: [file] } } as never);
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(onEdited).toHaveBeenCalledTimes(2));
+    expect(onEdited.mock.calls[1]![0]).toEqual(expect.objectContaining({ content: "v2", attachments: [tomb] }));
+  });
 });

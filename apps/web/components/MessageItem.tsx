@@ -188,6 +188,17 @@ function QuoteBlock({ quote, onJump }: { quote: MessageQuote; onJump?: (messageI
   );
 }
 
+/**
+ * Deletion is final, so a response read before a delete committed (an edit racing it) must not bring
+ * the attachment back: keep the newer tombstone for any attachment the latest message has deleted.
+ */
+function keepTombstones(next: Message, current: Message): Message {
+  if (!next.attachments || !current.attachments) return next;
+  const gone = new Map(current.attachments.filter((a) => a.status === "deleted").map((a) => [a.id, a]));
+  if (gone.size === 0) return next;
+  return { ...next, attachments: next.attachments.map((a) => (a.status !== "deleted" && gone.get(a.id)) || a) };
+}
+
 function UserMessage({
   message,
   time,
@@ -223,7 +234,7 @@ function UserMessage({
     setEditError(null);
     try {
       const { message: next } = await editMessage(message.workspaceId, message.id, draft);
-      onEdited?.(next);
+      onEdited?.(keepTombstones(next, latest.current));
       setEditing(false);
       setVersions(null);
       setVersionsOpen(false);

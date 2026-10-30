@@ -6,7 +6,7 @@ import { AttachmentList } from "@/components/AttachmentList";
 import * as hub from "@/lib/hub";
 import { I18nProvider } from "@/lib/i18n";
 
-vi.mock("@/lib/hub", () => ({ fetchAttachmentBlob: vi.fn(), deleteAttachment: vi.fn() }));
+vi.mock("@/lib/hub", () => ({ fetchAttachmentBlob: vi.fn(), deleteAttachment: vi.fn(), getMessage: vi.fn() }));
 
 const view = (over: Partial<AttachmentView>): AttachmentView => ({
   id: "a1", kind: "image", mime: "image/png", name: "shot.png", size: 245 * 1024, sha256: "0123456789abcdef".repeat(4),
@@ -16,10 +16,13 @@ const mount = (attachments: AttachmentView[], canDelete = true) =>
   render(<I18nProvider><AttachmentList workspaceId="w1" attachments={attachments} canDelete={canDelete} /></I18nProvider>);
 
 let n = 0;
+const urlFor = new Map<string, unknown>();
 beforeEach(() => {
   n = 0;
+  urlFor.clear();
+  vi.mocked(hub.getMessage).mockRejectedValue(new Error("offline"));
   vi.mocked(hub.fetchAttachmentBlob).mockResolvedValue(new Blob(["x"], { type: "image/png" }));
-  vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => `blob:url-${++n}`), revokeObjectURL: vi.fn() }));
+  vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn((b: unknown) => { const u = `blob:url-${++n}`; urlFor.set(u, b); return u; }), revokeObjectURL: vi.fn() }));
 });
 afterEach(() => {
   vi.mocked(hub.fetchAttachmentBlob).mockReset();
@@ -45,7 +48,8 @@ describe("AttachmentList", () => {
   });
 
   it("shows PDFs and text files as cards and downloads on click", async () => {
-    vi.mocked(hub.fetchAttachmentBlob).mockResolvedValue(new Blob(["%PDF-1.7"], { type: "application/pdf" }));
+    const pdf = new Blob(["%PDF-1.7"], { type: "application/pdf" });
+    vi.mocked(hub.fetchAttachmentBlob).mockResolvedValue(pdf);
     const clicked: { href: string; download: string }[] = [];
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
       clicked.push({ href: this.href, download: this.download });
@@ -59,6 +63,7 @@ describe("AttachmentList", () => {
     await userEvent.click(screen.getByRole("button", { name: "Download spec.pdf" }));
     expect(hub.fetchAttachmentBlob).toHaveBeenCalledWith("w1", "p");
     expect(clicked).toEqual([{ href: "blob:url-1", download: "spec.pdf" }]);
+    expect(urlFor.get("blob:url-1")).toBe(pdf);
     click.mockRestore();
   });
 
@@ -150,5 +155,29 @@ describe("AttachmentList", () => {
     expect(await screen.findByRole("img", { name: "shot.png" })).toBeTruthy();
     expect(hub.fetchAttachmentBlob).toHaveBeenCalledTimes(1);
     expect(disconnect).toHaveBeenCalled();
+  });
+
+  const asMessage = (attachments: AttachmentView[]) => ({ id: "m1", workspaceId: "w1", attachments }) as never;
+
+  it("shows the committed tombstone when the delete request fails after the hub recorded it", async () => {
+    const tomb = view({ kind: "text", mime: "text/plain", name: "a.txt", status: "deleted", deletedAt: "2026-10-30T09:15:00Z" });
+    vi.mocked(hub.deleteAttachment).mockRejectedValue(new Error("EACCES"));
+    vi.mocked(hub.getMessage).mockResolvedValue(asMessage([tomb]));
+    const onChange = vi.fn();
+    render(<I18nProvider><AttachmentList workspaceId="w1" attachments={[view({ kind: "text", mime: "text/plain", name: "a.txt" })]} canDelete onChange={onChange} /></I18nProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "Delete a.txt" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete attachment" }));
+    expect(await screen.findByText(/Attachment deleted/)).toBeTruthy();
+    expect(hub.getMessage).toHaveBeenCalledWith("w1", "m1");
+    expect(onChange).toHaveBeenCalledWith(tomb);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("takes the deletion time from the hub when a 410 reveals a deleted file", async () => {
+    vi.mocked(hub.fetchAttachmentBlob).mockRejectedValue(Object.assign(new Error("the attachment was deleted"), { status: 410 }));
+    vi.mocked(hub.getMessage).mockResolvedValue(asMessage([view({ status: "deleted", deletedAt: "2026-10-30T09:15:00Z" })]));
+    const { container } = mount([view({})]);
+    await screen.findByText(/Attachment deleted/);
+    await vi.waitFor(() => expect(container.querySelector("time")?.getAttribute("datetime")).toBe("2026-10-30T09:15:00Z"));
   });
 });

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AttachmentView } from "@nema/shared";
 import { formatBytes } from "@/lib/attachments";
 import { formatDay, formatTime } from "@/lib/format";
-import { deleteAttachment, fetchAttachmentBlob } from "@/lib/hub";
+import { deleteAttachment, fetchAttachmentBlob, getMessage } from "@/lib/hub";
 import { useLocale, useT } from "@/lib/i18n";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -18,6 +18,29 @@ const viewable = (a: AttachmentView) => a.status === "attached" || a.status === 
 function goneAs(a: AttachmentView, e: unknown): AttachmentView | null {
   if ((e as { status?: unknown } | null)?.status !== 410) return null;
   return /deleted/i.test(message(e)) ? { ...a, status: "deleted" } : { ...a, status: "missing" };
+}
+
+/**
+ * The hub's own record of this attachment, read from its message. Used after a 410 (for the real
+ * deletion time) and after a failed delete (the tombstone may be committed even though the request
+ * failed while removing the file). Null when it cannot be read.
+ */
+async function hubView(workspaceId: string, a: AttachmentView): Promise<AttachmentView | null> {
+  if (!a.messageId) return null;
+  try {
+    const m = await getMessage(workspaceId, a.messageId);
+    return m.attachments?.find((x) => x.id === a.id) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** A 410 answer: show the guess at once, then the hub's record (with its deletion time) once read. */
+function reportGone(workspaceId: string, guess: AttachmentView, report: (next: AttachmentView) => void) {
+  report(guess);
+  void hubView(workspaceId, guess).then((v) => {
+    if (v && (v.status === "deleted" || v.status === "missing")) report(v);
+  });
 }
 
 /** Save the attachment's bytes under its name. The hub URL is fetched, never linked. */
@@ -67,7 +90,7 @@ function Thumbnail({ workspaceId, attachment, onGone }: { workspaceId: string; a
       (e) => {
         if (!live) return;
         const gone = goneAs(attachment, e);
-        if (gone) goneRef.current(gone);
+        if (gone) reportGone(workspaceId, gone, (v) => goneRef.current(v));
         else setState({ url: null, error: message(e) });
       },
     );
@@ -108,6 +131,14 @@ function Attachment({
       onChange(await deleteAttachment(workspaceId, a.id), true);
       setConfirming(false);
     } catch (e) {
+      // The hub commits the tombstone before removing the file; if only the removal failed, the
+      // attachment is deleted all the same, so show and publish that instead of an error.
+      const v = await hubView(workspaceId, a);
+      if (v?.status === "deleted") {
+        onChange(v, true);
+        setConfirming(false);
+        return;
+      }
       setError(t("attach.deleteFailed", { message: message(e) }));
     } finally {
       setBusy(false);
@@ -120,7 +151,7 @@ function Attachment({
       await download(workspaceId, a);
     } catch (e) {
       const gone = goneAs(a, e);
-      if (gone) onChange(gone, false);
+      if (gone) reportGone(workspaceId, gone, (v) => onChange(v, false));
       else setError(t("attach.loadFailed", { message: message(e) }));
     }
   }
