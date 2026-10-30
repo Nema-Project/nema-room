@@ -290,18 +290,21 @@
     <pre data-reveal style="--i:2"><code># Hub and web, linux/amd64. The compose file is a fixed-name asset of the latest release.
 curl -fsSL -o docker-compose.yml https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
 # If .env already has NEMA_IMAGE_TAG, keep it and fetch .../releases/download/v&lt;locked&gt;/docker-compose.yml instead.
-# Both lines must print the same version. Stop if they differ.
-grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
-grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
-# Put NEMA_IMAGE_TAG=&lt;that version&gt; in .env, unless .env already has one.
+# Prints the version only when hub and web agree. Stop if it prints nothing.
+NEMA_VERSION=$(grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
+WEB_VERSION=$(grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
+test -n "$NEMA_VERSION" &amp;&amp; test "$NEMA_VERSION" = "$WEB_VERSION" &amp;&amp; echo "$NEMA_VERSION"
+# Lock it in .env (an existing value stays). Stop unless it prints locked.
+grep -q '^NEMA_IMAGE_TAG=' .env 2&gt;/dev/null || printf '\nNEMA_IMAGE_TAG=%s\n' "$NEMA_VERSION" &gt;&gt; .env
+grep -qx "NEMA_IMAGE_TAG=$NEMA_VERSION" .env &amp;&amp; echo "locked $NEMA_VERSION"
 # Linux and macOS only. Docker Desktop on Windows does not need this.
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 docker compose up -d
-# Install the host daemon at the version both lines printed.
-npm i -g @nema-project/nema@&lt;locked version&gt;
+# Install the host daemon at that version.
+npm i -g "@nema-project/nema@$NEMA_VERSION"
 nema --version
-# Start the daemon and keep it running; Compose does not run it.
-nema daemon
+# Start the daemon and keep it running; Compose does not run it. Export NEMA_HUB_PORT first if .env sets it.
+nema daemon --hub "http://127.0.0.1:${NEMA_HUB_PORT:-4400}"
 
 # Or build this repository from source
 git clone https://github.com/Nema-Project/nema-room.git

@@ -290,18 +290,21 @@
     <pre data-reveal style="--i:2"><code># hub 与 web，仅 linux/amd64。compose 文件是最新 Release 的固定名资产。
 curl -fsSL -o docker-compose.yml https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
 # .env 里已有 NEMA_IMAGE_TAG 时沿用它，改取 .../releases/download/v&lt;locked&gt;/docker-compose.yml。
-# 两行必须打印同一个版本，不同就停下。
-grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
-grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
-# 把 NEMA_IMAGE_TAG=&lt;该版本&gt; 写进 .env；.env 里已有就沿用。
+# hub 和 web 版本一致时才打印版本；没打印就停下。
+NEMA_VERSION=$(grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
+WEB_VERSION=$(grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
+test -n "$NEMA_VERSION" &amp;&amp; test "$NEMA_VERSION" = "$WEB_VERSION" &amp;&amp; echo "$NEMA_VERSION"
+# 锁进 .env（已有值就沿用）；没打印 locked 就停下。
+grep -q '^NEMA_IMAGE_TAG=' .env 2&gt;/dev/null || printf '\nNEMA_IMAGE_TAG=%s\n' "$NEMA_VERSION" &gt;&gt; .env
+grep -qx "NEMA_IMAGE_TAG=$NEMA_VERSION" .env &amp;&amp; echo "locked $NEMA_VERSION"
 # 仅 Linux 和 macOS。Windows 上的 Docker Desktop 不需要这一行。
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 docker compose up -d
-# 用上面两行打印的版本安装宿主机 daemon。
-npm i -g @nema-project/nema@&lt;locked version&gt;
+# 用这个版本安装宿主机 daemon。
+npm i -g "@nema-project/nema@$NEMA_VERSION"
 nema --version
-# 启动 daemon 并保持运行；Compose 不会替你启动它。
-nema daemon
+# 启动 daemon 并保持运行；Compose 不会替你启动它。.env 设了 NEMA_HUB_PORT 时先 export 同一个值。
+nema daemon --hub "http://127.0.0.1:${NEMA_HUB_PORT:-4400}"
 
 # 或从源码构建本仓库
 git clone https://github.com/Nema-Project/nema-room.git

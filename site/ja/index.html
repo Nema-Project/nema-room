@@ -290,18 +290,21 @@
     <pre data-reveal style="--i:2"><code># hub と web。linux/amd64 のみ。compose ファイルは最新 Release の固定名の資産です。
 curl -fsSL -o docker-compose.yml https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
 # .env に NEMA_IMAGE_TAG があればそれを使い、代わりに .../releases/download/v&lt;locked&gt;/docker-compose.yml を取得します。
-# 2 行は同じ版を表示しなければなりません。違えば止めます。
-grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
-grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
-# NEMA_IMAGE_TAG=&lt;その版&gt; を .env に書きます。既にあればそのまま使います。
+# hub と web の版が一致するときだけ版を表示します。何も出なければ止めます。
+NEMA_VERSION=$(grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
+WEB_VERSION=$(grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
+test -n "$NEMA_VERSION" &amp;&amp; test "$NEMA_VERSION" = "$WEB_VERSION" &amp;&amp; echo "$NEMA_VERSION"
+# .env に固定します（既存の値はそのまま）。locked が出なければ止めます。
+grep -q '^NEMA_IMAGE_TAG=' .env 2&gt;/dev/null || printf '\nNEMA_IMAGE_TAG=%s\n' "$NEMA_VERSION" &gt;&gt; .env
+grep -qx "NEMA_IMAGE_TAG=$NEMA_VERSION" .env &amp;&amp; echo "locked $NEMA_VERSION"
 # Linux と macOS のみ。Windows の Docker Desktop では不要です。
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 docker compose up -d
-# 上の 2 行が表示した版でホストの daemon を入れます。
-npm i -g @nema-project/nema@&lt;locked version&gt;
+# その版でホストの daemon を入れます。
+npm i -g "@nema-project/nema@$NEMA_VERSION"
 nema --version
-# daemon を起動して動かし続けます。Compose は起動しません。
-nema daemon
+# daemon を起動して動かし続けます。Compose は起動しません。.env で NEMA_HUB_PORT を設定したら先に同じ値を export します。
+nema daemon --hub "http://127.0.0.1:${NEMA_HUB_PORT:-4400}"
 
 # またはこのリポジトリをソースからビルド
 git clone https://github.com/Nema-Project/nema-room.git
