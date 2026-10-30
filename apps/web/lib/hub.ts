@@ -186,6 +186,7 @@ export const saveMcpServer = (body: { id: string; name: string; config: McpConfi
 /** The saved config for the edit form, and which secrets are set. */
 export const getMcpServer = (id: string) =>
   request<{ id: string; name: string; config: McpConfig; secrets: Array<{ name: string; configured: boolean }> }>(mcpUrl(id));
+export const getMcpServerStatus = (id: string) => request<McpServerStatus>(`${mcpUrl(id)}/status`);
 export const startMcpServer = (id: string) => request<McpServerStatus>(`${mcpUrl(id)}/start`, { method: "POST", body: {} });
 export const stopMcpServer = (id: string) => request<McpServerStatus>(`${mcpUrl(id)}/stop`, { method: "POST", body: {} });
 /** D-2: write a credential; nothing ever reads one back. */

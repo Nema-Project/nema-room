@@ -121,6 +121,14 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
       );
   };
 
+  // A saved MCP server is shown from the save's own answer, so a list read that fails afterwards
+  // does not hide it; the refresh then fills in its live state.
+  const savedMcp = (record: ExtensionRecord) => {
+    applied.current += 1;
+    setExtensions((rows) => (rows ? (rows.some((item) => item.id === record.id) ? rows.map((item) => (item.id === record.id ? record : item)) : [...rows, record]) : [record]));
+    void refresh();
+  };
+
   const attached = (record: ExtensionRecord) => {
     applied.current += 1;
     setExtensions((rows) => (rows ? [...rows.filter((item) => item.id !== record.id), record] : rows));
@@ -391,7 +399,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
                 )}
               {jobLine(extension.id, "list")}
               {extension.kind === "mcp" && extension.provision === "managed" && extension.installState === "installed" && (
-                <McpServerControls extension={extension} onChanged={() => void refresh()} />
+                <McpServerControls extension={extension} onChanged={(saved) => (saved ? savedMcp(saved) : void refresh())} />
               )}
               {plugin && plugin.functions.length > 0 && (
                 <ul>
@@ -450,9 +458,9 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
           {(type === "all" || type === "mcp") &&
             (addingMcp ? (
               <McpServerForm
-                onSaved={() => {
+                onSaved={(record) => {
                   setAddingMcp(false);
-                  void refresh();
+                  savedMcp(record);
                 }}
                 onCancel={() => setAddingMcp(false)}
               />

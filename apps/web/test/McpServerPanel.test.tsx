@@ -12,6 +12,7 @@ vi.mock("@/lib/hub", () => ({
   stopMcpServer: vi.fn(),
   setMcpSecret: vi.fn(),
   clearMcpSecret: vi.fn(),
+  getMcpServerStatus: vi.fn(),
 }));
 
 const MARK = "nema-test-secret-7f3a";
@@ -36,6 +37,13 @@ describe("parseValueLines", () => {
     });
     expect(() => parseValueLines("oops")).toThrow(/oops/);
   });
+
+  it("keeps a value as typed and keeps every name as its own entry", () => {
+    expect(parseValueLines("PAD=  two spaces  \r\nEMPTY=")).toEqual({ PAD: { value: "  two spaces  " }, EMPTY: { value: "" } });
+    const parsed = parseValueLines("__proto__=x");
+    expect(Object.prototype.hasOwnProperty.call(parsed, "__proto__")).toBe(true);
+    expect(JSON.stringify(parsed)).toBe('{"__proto__":{"value":"x"}}');
+  });
 });
 
 describe("McpServerForm", () => {
@@ -46,13 +54,13 @@ describe("McpServerForm", () => {
     fireEvent.change(screen.getByLabelText("Id"), { target: { value: "search" } });
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Search" } });
     fireEvent.change(screen.getByLabelText("Command"), { target: { value: "node" } });
-    fireEvent.change(screen.getByLabelText("Arguments (one per line)"), { target: { value: "server.mjs\n--port=0" } });
+    fireEvent.change(screen.getByLabelText("Arguments (one per line)"), { target: { value: "server.mjs\n--port=0\n\n --name \n" } });
     fireEvent.change(screen.getByLabelText("Environment (NAME=value, NAME=secret:REF or NAME=env:VAR)"), { target: { value: "API_TOKEN=secret:API_TOKEN" } });
     fireEvent.click(screen.getByRole("button", { name: "Save MCP server" }));
     await waitFor(() => expect(saved).toHaveBeenCalled());
     expect(hub.saveMcpServer).toHaveBeenCalledWith({
       id: "search", name: "Search", create: true,
-      config: { transport: "stdio", command: "node", args: ["server.mjs", "--port=0"], env: { API_TOKEN: { secret: "API_TOKEN" } } },
+      config: { transport: "stdio", command: "node", args: ["server.mjs", "--port=0", "", " --name "], env: { API_TOKEN: { secret: "API_TOKEN" } } },
     });
   });
 
@@ -161,6 +169,58 @@ describe("McpServerControls", () => {
     fireEvent.change(command, { target: { value: "node" } });
     fireEvent.click(screen.getByRole("button", { name: "Save MCP server" }));
     await waitFor(() => expect(hub.saveMcpServer).toHaveBeenCalledWith({ id: "search", name: "Search", config: { transport: "stdio", command: "node", args: [], env: {} } }));
+  });
+
+  it("Stop on a connected server stops it and refreshes the row", async () => {
+    vi.mocked(hub.stopMcpServer).mockResolvedValue({ id: "search", connection: "disconnected", server: null, tools: [], lastError: null });
+    const changed = vi.fn();
+    wrap(<McpServerControls extension={record({ connection: "connected" })} onChanged={changed} />);
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(hub.stopMcpServer).toHaveBeenCalledWith("search"));
+    await waitFor(() => expect(changed).toHaveBeenCalled());
+  });
+
+  it("while a start is pending the row says Connecting and Stop can cancel it", async () => {
+    let finish!: (status: hub.McpServerStatus) => void;
+    vi.mocked(hub.startMcpServer).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    vi.mocked(hub.stopMcpServer).mockResolvedValue({ id: "search", connection: "disconnected", server: null, tools: [], lastError: null });
+    wrap(<McpServerControls extension={record()} onChanged={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    expect(await screen.findByText("Connecting")).toBeTruthy();
+    const stop = screen.getByRole("button", { name: "Stop" }) as HTMLButtonElement;
+    expect(stop.disabled).toBe(false);
+    fireEvent.click(stop);
+    await waitFor(() => expect(hub.stopMcpServer).toHaveBeenCalledWith("search"));
+    finish({ id: "search", connection: "disconnected", server: null, tools: [], lastError: null });
+    expect(await screen.findByRole("button", { name: "Start" })).toBeTruthy();
+  });
+
+  it("a running server's row checks its status while the page is open", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(hub.getMcpServerStatus).mockResolvedValue({ id: "search", connection: "error", server: null, tools: [], lastError: "the server exited" });
+      const changed = vi.fn();
+      wrap(<McpServerControls extension={record({ connection: "connected" })} onChanged={changed} />);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(hub.getMcpServerStatus).toHaveBeenCalledWith("search");
+      expect(changed).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a successful recovery save closes the form and tells the page", async () => {
+    const damaged = { ...record({ secrets: [] }), availability: "damaged" as const, error: "mcp-config-damaged" };
+    const changed = vi.fn();
+    const saved = record();
+    vi.mocked(hub.saveMcpServer).mockResolvedValue(saved);
+    wrap(<McpServerControls extension={damaged} onChanged={changed} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.change(await screen.findByLabelText("Command"), { target: { value: "node" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save MCP server" }));
+    await waitFor(() => expect(changed).toHaveBeenCalledWith(saved));
+    expect(screen.queryByRole("button", { name: "Save MCP server" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeTruthy();
   });
 });
 

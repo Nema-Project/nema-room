@@ -1,26 +1,37 @@
 "use client";
 
-import { useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import type { ExtensionRecord, McpConfig, McpValue } from "@nema/shared";
-import { clearMcpSecret, getMcpServer, saveMcpServer, setMcpSecret, startMcpServer, stopMcpServer } from "@/lib/hub";
+import { clearMcpSecret, getMcpServer, getMcpServerStatus, saveMcpServer, setMcpSecret, startMcpServer, stopMcpServer } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
 
 /** `NAME=value`, `NAME=secret:REF`, `NAME=env:VAR`, one per line; `NAME=value:…` keeps a literal that starts with a prefix. */
 export function parseValueLines(text: string): Record<string, McpValue> {
-  const out: Record<string, McpValue> = {};
+  // Entries first, then `fromEntries`, so every name (even `__proto__`) is an own property and the
+  // hub's parser, not the prototype, decides what is allowed.
+  const entries: Array<[string, McpValue]> = [];
   for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    if (!line) continue;
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (line.trim() === "") continue;
     const at = line.indexOf("=");
-    if (at <= 0) throw new Error(`NAME=VALUE expected: ${line.slice(0, 40)}`);
-    const name = line.slice(0, at);
+    const name = at > 0 ? line.slice(0, at).trim() : "";
+    if (!name) throw new Error(`NAME=VALUE expected: ${line.trim().slice(0, 40)}`);
+    // The value is kept exactly as typed, spaces included.
     const rest = line.slice(at + 1);
-    if (rest.startsWith("secret:")) out[name] = { secret: rest.slice(7) };
-    else if (rest.startsWith("env:")) out[name] = { env: rest.slice(4) };
-    else if (rest.startsWith("value:")) out[name] = { value: rest.slice(6) };
-    else out[name] = { value: rest };
+    if (rest.startsWith("secret:")) entries.push([name, { secret: rest.slice(7) }]);
+    else if (rest.startsWith("env:")) entries.push([name, { env: rest.slice(4) }]);
+    else if (rest.startsWith("value:")) entries.push([name, { value: rest.slice(6) }]);
+    else entries.push([name, { value: rest }]);
   }
-  return out;
+  return Object.fromEntries(entries);
+}
+
+/** One argument per line, as typed; only the newline that ends the last line is not an argument. */
+function argumentLines(text: string): string[] {
+  if (text === "") return [];
+  const lines = text.split("\n").map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines;
 }
 
 /** The inverse, for the edit form. A literal that looks like a reference keeps its `value:` prefix. */
@@ -62,7 +73,7 @@ export function McpServerForm({ initial, onSaved, onCancel }: { initial?: { id: 
     try {
       config =
         transport === "stdio"
-          ? { transport, command: command.trim(), args: args.split("\n").map((line) => line.trim()).filter(Boolean), ...(cwd.trim() ? { cwd: cwd.trim() } : {}), env: parseValueLines(env) }
+          ? { transport, command: command.trim(), args: argumentLines(args), ...(cwd.trim() ? { cwd: cwd.trim() } : {}), env: parseValueLines(env) }
           : { transport, url: url.trim(), headers: parseValueLines(headers) };
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -187,21 +198,49 @@ function SecretSlot({ id, name, configured, onChanged }: { id: string; name: str
 }
 
 /** Start/stop, connection, what the server reports, credential slots and Edit for one MCP record. */
-export function McpServerControls({ extension, onChanged }: { extension: ExtensionRecord; onChanged: () => void }) {
+export function McpServerControls({ extension, onChanged }: { extension: ExtensionRecord; onChanged: (saved?: ExtensionRecord) => void }) {
   const t = useT();
   const state = extension.mcp;
   const [busy, setBusy] = useState(false);
+  // A start can take as long as the server's handshake; it never blocks Stop.
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ id: string; name: string; config: McpConfig } | null>(null);
-  const connection = state?.connection ?? "disconnected";
+  const connection = starting ? "connecting" : (state?.connection ?? "disconnected");
   const running = connection === "connected" || connection === "connecting";
+  const changed = useRef(onChanged);
+  changed.current = onChanged;
+
+  // A server can exit or drop while nobody touches the page: check a running one now and then.
+  const shown = state?.connection ?? "disconnected";
+  useEffect(() => {
+    if (starting || !(shown === "connected" || shown === "connecting")) return;
+    const timer = setInterval(() => {
+      getMcpServerStatus(extension.id)
+        .then((status) => {
+          if (status.connection !== shown) changed.current();
+        })
+        .catch(() => {});
+    }, 5_000);
+    return () => clearInterval(timer);
+  }, [extension.id, shown, starting]);
+
+  const start = () => {
+    if (starting || busy) return;
+    setStarting(true);
+    setError(null);
+    startMcpServer(extension.id)
+      .then(() => changed.current())
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setStarting(false));
+  };
 
   const run = (request: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(true);
     setError(null);
     request()
-      .then(onChanged)
+      .then(() => changed.current())
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
   };
@@ -220,9 +259,9 @@ export function McpServerControls({ extension, onChanged }: { extension: Extensi
     return (
       <McpServerForm
         initial={editing}
-        onSaved={() => {
+        onSaved={(saved) => {
           setEditing(null);
-          onChanged();
+          onChanged(saved);
         }}
         onCancel={() => setEditing(null)}
       />
@@ -246,13 +285,13 @@ export function McpServerControls({ extension, onChanged }: { extension: Extensi
         <button
           type="button"
           className="sp"
-          onClick={() => run(() => startMcpServer(extension.id))}
+          onClick={start}
           disabled={busy || extension.useState === "disabled" || extension.availability === "damaged"}
         >
           {t("mcp.action.start")}
         </button>
       )}
-      <button type="button" className="sp" onClick={edit} disabled={busy}>
+      <button type="button" className="sp" onClick={edit} disabled={busy || starting}>
         {t("mcp.action.edit")}
       </button>
       {extension.useState === "disabled" && <p className="kmeta">{t("mcp.note.disabled")}</p>}
@@ -264,7 +303,7 @@ export function McpServerControls({ extension, onChanged }: { extension: Extensi
           <p className="kmeta">{t("mcp.secret.note")}</p>
           <ul className="mcp-secrets">
             {state.secrets.map((slot) => (
-              <SecretSlot key={slot.name} id={extension.id} name={slot.name} configured={slot.configured} onChanged={onChanged} />
+              <SecretSlot key={slot.name} id={extension.id} name={slot.name} configured={slot.configured} onChanged={() => changed.current()} />
             ))}
           </ul>
         </>

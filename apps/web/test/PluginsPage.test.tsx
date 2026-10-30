@@ -25,6 +25,7 @@ vi.mock("@/lib/hub", () => ({
   stopMcpServer: vi.fn(),
   setMcpSecret: vi.fn(),
   clearMcpSecret: vi.fn(),
+  getMcpServerStatus: vi.fn(),
 }));
 
 const emptyDiscovery = {
@@ -908,4 +909,23 @@ describe("PluginsPage attach and repair", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Skills" }));
     expect(screen.queryByRole("button", { name: "Add an MCP server…" })).toBeNull();
   });
+
+  it("a saved MCP server shows in the list even if the follow-up list read fails", async () => {
+    const mcpRow = row({ id: "search", name: "Search", kind: "mcp", source: "mcp:stdio", revision: "abcdef123456", provision: "managed" });
+    vi.mocked(hub.saveMcpServer).mockResolvedValue(mcpRow);
+    render(
+      <I18nProvider>
+        <PluginsPage />
+      </I18nProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Add an MCP server…" }));
+    fireEvent.change(screen.getByLabelText("Id"), { target: { value: "search" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Search" } });
+    fireEvent.change(screen.getByLabelText("Command"), { target: { value: "node" } });
+    vi.mocked(hub.listExtensions).mockRejectedValue(new Error("hub went away"));
+    fireEvent.click(screen.getByRole("button", { name: "Save MCP server" }));
+    const block = (await screen.findByRole("heading", { name: "Search" })).closest("section")!;
+    expect(within(block).getByRole("button", { name: "Start" })).toBeTruthy();
+  });
 });
+
