@@ -1,3 +1,4 @@
+import { registerAttachmentHandlers } from "../attachments/handlers.js";
 import { ClaudeCodeAdapter } from "../claude/adapter.js";
 import { loadConfig, type NemaConfig } from "../config.js";
 import { CodexDirectAdapter } from "../direct/adapter.js";
@@ -84,6 +85,7 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
     ownedHelpers: o.ownedHelpers,
     prepareRepo: (repoId, taskId) => watcher.prepare(repoId, taskId),
   });
+  registerAttachmentHandlers(rpc, o.nemaHome, o.getConfig);
   rpc.register("repos.sync", async (params) => {
     watcher.setRepos(parseReposSync(params));
     return { ok: true };

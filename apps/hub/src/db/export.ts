@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { lstat, mkdir, open, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
 import type { Pool, PoolClient } from "pg";
-import { TABLE_COLUMNS, TABLE_ORDER, type KnowledgeManifestEntry, type Snapshot, sha256, validateSnapshot } from "./snapshot.js";
+import { TABLE_COLUMNS, TABLE_ORDER, attachmentHasFile, type KnowledgeManifestEntry, type Snapshot, sha256, validateSnapshot } from "./snapshot.js";
 
 const execFileAsync = promisify(execFile);
 type Quiesced = <T>(workspaceIds: string[], copyWhileQuiesced: () => Promise<T>) => Promise<T>;
@@ -90,6 +91,41 @@ async function safeKnowledge(workspaceId: string, repoDir: string, outBundle: st
   return { workspaceId, path: `repos/${workspaceId}`, bundle: `knowledge/${workspaceId}.bundle`, sha256: bundleHash, refs, head };
 }
 
+/** The stored bytes when they are a regular, non-symlinked file that still matches its row; otherwise null. */
+async function readAttachment(file: string, row: Record<string, unknown>): Promise<Buffer | null> {
+  let fh;
+  try { fh = await open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0)); } catch { return null; }
+  try {
+    if (!(await fh.stat()).isFile()) return null;
+    const bytes = await fh.readFile();
+    return bytes.length === row.size && sha256(bytes) === row.sha256 ? bytes : null;
+  } finally { await fh.close(); }
+}
+
+/**
+ * Copy each staged or attached file into attachments/<workspace>/<id>. A file that is gone or no longer matches its
+ * hash cannot be restored: an attached row is shipped as missing (the chat keeps its placeholder), a staged row is dropped.
+ */
+async function copyAttachments(rows: Record<string, unknown>[], dataDir: string, outputDir: string): Promise<Record<string, unknown>[]> {
+  const kept: Record<string, unknown>[] = [];
+  for (const row of rows) {
+    if (!attachmentHasFile(row)) { kept.push(row); continue; }
+    const ws = String(row.workspace_id);
+    const id = String(row.id);
+    if (!/^ws_[A-Za-z0-9_-]{1,32}$/.test(ws) || !/^att_[A-Za-z0-9_-]{16}$/.test(id)) throw new Error("Invalid message attachment row");
+    const bytes = await readAttachment(path.join(dataDir, "attachments", ws, id), row);
+    if (!bytes) {
+      if (row.status === "attached") kept.push({ ...row, status: "missing" });
+      continue;
+    }
+    const dir = path.join(outputDir, "attachments", ws);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await writeFile(path.join(dir, id), bytes, { flag: "wx", mode: 0o600 });
+    kept.push(row);
+  }
+  return kept;
+}
+
 /** Export from a caller-selected Pool and directory. Caller must stop all legacy writers for the whole callback. */
 export async function exportSnapshot(options: SnapshotExportOptions): Promise<Snapshot> {
   const { pool, dataDir, outputDir, appVersion, gitPath } = options;
@@ -108,10 +144,13 @@ export async function exportSnapshot(options: SnapshotExportOptions): Promise<Sn
     for (const table of TABLE_ORDER) {
       // A date column would be read as a local-midnight Date and shift by the machine time zone; ship it as text.
       const columns = TABLE_COLUMNS[table].map((c) => (c === "business_date" ? `to_char("${c}", 'YYYY-MM-DD') as "${c}"` : `"${c}"`)).join(", ");
-      const result = await client.query(`select ${columns} from "${table}"`);
+      // Expired uploads are already gone for the user; they are not carried over.
+      const where = table === "message_attachments" ? ` where status <> 'expired'` : "";
+      const result = await client.query(`select ${columns} from "${table}"${where}`);
       rows[table] = result.rows as Record<string, unknown>[];
     }
     const workspaceIds = rows.workspaces!.map((r) => String(r.id));
+    rows.message_attachments = await copyAttachments(rows.message_attachments ?? [], dataDir, outputDir);
     const snapshot = await options.withQuiescedKnowledge(workspaceIds, async () => {
       const manifest: KnowledgeManifestEntry[] = [];
       for (const id of workspaceIds) manifest.push(await safeKnowledge(id, path.join(dataDir, "repos", id), path.join(knowledgeDir, `${id}.bundle`), gitPath, gitEnv(outputDir)));

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { ATTACHMENT_LIMITS } from "@nema/shared";
 
 export type Snapshot = {
   schemaVersion: 1;
@@ -37,10 +38,21 @@ export const TABLE_COLUMNS = {
   repo_hooks: ["id", "repo_id", "agent", "branch", "head", "session_id", "at"],
   main_moves: ["id", "repo_id", "from_sha", "to_sha", "at", "handled"],
   message_versions: ["message_id", "version", "content", "created_at"],
+  message_attachments: ["id", "workspace_id", "message_id", "kind", "mime", "name", "size", "sha256", "upload_key", "status", "created_at", "attached_at", "deleted_at"],
 } as const;
 
 /** Snapshots taken before this table existed still import. */
-const OPTIONAL_TABLES = new Set<keyof typeof TABLE_COLUMNS>(["message_versions", "threads", "question_threads", "evidence_events", "source_import_receipts", "source_freshness"]);
+const OPTIONAL_TABLES = new Set<keyof typeof TABLE_COLUMNS>(["message_versions", "threads", "question_threads", "evidence_events", "source_import_receipts", "source_freshness", "message_attachments"]);
+
+/** Same rules as AttachmentRefSchema and the message_attachments check constraints. */
+const ATTACHMENT_KINDS: Record<string, { mimes: readonly string[]; maxBytes: number }> = {
+  image: { mimes: ["image/png", "image/jpeg", "image/gif", "image/webp"], maxBytes: ATTACHMENT_LIMITS.imageBytes },
+  pdf: { mimes: ["application/pdf"], maxBytes: ATTACHMENT_LIMITS.pdfBytes },
+  text: { mimes: ["text/plain"], maxBytes: ATTACHMENT_LIMITS.textBytes },
+};
+const attachmentIdPattern = /^att_[A-Za-z0-9_-]{16}$/;
+/** Rows whose bytes travel with the snapshot under attachments/<workspace>/<id>. */
+export const attachmentHasFile = (row: Record<string, unknown>) => row.status === "staged" || row.status === "attached";
 
 export const TABLE_ORDER = Object.keys(TABLE_COLUMNS) as (keyof typeof TABLE_COLUMNS)[];
 const workspaceIdPattern = /^ws_[A-Za-z0-9_-]{1,32}$/;
@@ -145,6 +157,20 @@ export function validateSnapshot(value: unknown): Snapshot {
   for (const row of tableData.message_versions!) {
     if (typeof row.message_id !== "string" || !messageIds.has(row.message_id)) throw new Error("Snapshot contains a missing message reference");
   }
+  const attachmentIds = new Set<string>();
+  for (const row of tableData.message_attachments!) {
+    requireWorkspace(row);
+    const kind = ATTACHMENT_KINDS[String(row.kind)];
+    if (typeof row.id !== "string" || !attachmentIdPattern.test(row.id) || attachmentIds.has(row.id) || !kind || !kind.mimes.includes(String(row.mime)) ||
+        typeof row.size !== "number" || !Number.isSafeInteger(row.size) || row.size <= 0 || row.size > kind.maxBytes || !/^[0-9a-f]{64}$/.test(String(row.sha256)) ||
+        typeof row.name !== "string" || !row.name || typeof row.upload_key !== "string" || !["staged", "attached", "deleted", "missing"].includes(String(row.status)) ||
+        (row.status === "staged") !== (row.message_id == null)) throw new Error("Invalid message attachment row");
+    attachmentIds.add(row.id);
+    if (row.message_id != null) {
+      const message = messagesById.get(String(row.message_id));
+      if (!message || message.workspace_id !== row.workspace_id) throw new Error("Snapshot contains a missing message reference (message_attachments)");
+    }
+  }
   for (const [table, rows] of Object.entries(tableData)) for (const row of rows) {
     if (["task_changes", "plugin_calls"].includes(table) && row.task_id && !taskIds.has(String(row.task_id))) throw new Error(`Snapshot contains a missing task reference (${table})`);
     if (["entry_index", "diagram_status"].includes(table)) requireWorkspace(row);
@@ -175,7 +201,7 @@ export async function readSnapshot(sourceDir: string): Promise<Snapshot> {
   const info = await lstat(root);
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Snapshot source must be a real directory");
   const entries = await readdir(root);
-  if (entries.some((name) => !["snapshot.json", "knowledge"].includes(name))) throw new Error("Snapshot has unexpected top-level entries");
+  if (entries.some((name) => !["snapshot.json", "knowledge", "attachments"].includes(name))) throw new Error("Snapshot has unexpected top-level entries");
   const snapshotFile = await lstat(join(root, "snapshot.json"));
   if (!snapshotFile.isFile() || snapshotFile.isSymbolicLink()) throw new Error("Snapshot file path is unsafe");
   const snapshot = validateSnapshot(JSON.parse(await readFile(join(root, "snapshot.json"), "utf8")));
@@ -190,5 +216,42 @@ export async function readSnapshot(sourceDir: string): Promise<Snapshot> {
     const bytes = await readFile(file);
     if (sha256(bytes) !== item.sha256) throw new Error("Knowledge bundle hash mismatch");
   }
+  await verifyAttachmentFiles(join(root, "attachments"), snapshot);
   return snapshot;
+}
+
+const realDirectory = async (dir: string) => {
+  const st = await lstat(dir);
+  if (!st.isDirectory() || st.isSymbolicLink()) throw new Error("Attachment path is unsafe");
+};
+
+/** Every staged or attached row has exactly one regular file with its size and hash, and nothing else is shipped. */
+async function verifyAttachmentFiles(attachmentsRoot: string, snapshot: Snapshot): Promise<void> {
+  const expected = new Map<string, Map<string, Record<string, unknown>>>();
+  for (const row of snapshot.tableData.message_attachments ?? []) {
+    if (!attachmentHasFile(row)) continue;
+    const ws = String(row.workspace_id);
+    if (!expected.has(ws)) expected.set(ws, new Map());
+    expected.get(ws)!.set(String(row.id), row);
+  }
+  let present: string[];
+  try { await realDirectory(attachmentsRoot); present = await readdir(attachmentsRoot); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (expected.size > 0) throw new Error("Snapshot attachment files are missing");
+    return;
+  }
+  if (present.some((ws) => !expected.has(ws))) throw new Error("Snapshot has unexpected attachment entries");
+  for (const [ws, rows] of expected) {
+    const dir = join(attachmentsRoot, ws);
+    await realDirectory(dir);
+    const files = await readdir(dir);
+    if (files.some((name) => !rows.has(name))) throw new Error("Snapshot has unexpected attachment entries");
+    for (const [id, row] of rows) {
+      const file = join(dir, id);
+      const st = await lstat(file);
+      if (!st.isFile() || st.isSymbolicLink()) throw new Error("Attachment path is unsafe");
+      const bytes = await readFile(file);
+      if (bytes.length !== row.size || sha256(bytes) !== row.sha256) throw new Error("Attachment hash mismatch");
+    }
+  }
 }

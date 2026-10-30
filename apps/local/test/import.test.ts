@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,7 +19,12 @@ const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@example.test", "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false", ...args], { cwd, encoding: "utf8", windowsHide: true }).trim();
 
 /** A source database with one workspace, two tasks (one still running), a real knowledge repo and no credentials. */
-async function makeSource(withThreads = false): Promise<{ outputDir: string; shas: string[]; knowledgeHead: string }> {
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+const PNG_SHA = createHash("sha256").update(PNG).digest("hex");
+const TEXT = Buffer.from("staged note\n");
+const TEXT_SHA = createHash("sha256").update(TEXT).digest("hex");
+
+async function makeSource(withThreads = false, withAttachments = false): Promise<{ outputDir: string; shas: string[]; knowledgeHead: string }> {
   const db = await createTestDb();
   await db.query(`insert into workspaces (id, name, confidential, knowledge_language) values ('ws_a', 'Alpha', true, 'ja')`);
   await db.query(`insert into messages (id, workspace_id, role, content, meta, task_id) values ('m1', 'ws_a', 'user', '日本語の要件', '{"k":[1,2]}', null)`);
@@ -34,6 +40,23 @@ async function makeSource(withThreads = false): Promise<{ outputDir: string; sha
   await db.query(`insert into workspace_plugins (workspace_id, plugin_id, enabled, disabled_functions, settings) values ('ws_a', 'github', true, '{github__list_issues}', '{"allowWrites":true}')`);
 
   const dataDir = join(root, "legacy-data");
+  if (withAttachments) {
+    const insert = (id: string, messageId: string | null, kind: string, mime: string, size: number, sha: string, status: string) => db.query(
+      `insert into message_attachments (id, workspace_id, message_id, kind, mime, name, size, sha256, upload_key, status, attached_at)
+       values ($1, 'ws_a', $2, $3, $4, $5, $6, $7, gen_random_uuid(), $8, case when $2::text is null then null else now() end)`,
+      [id, messageId, kind, mime, `${id}.bin`, size, sha, status]);
+    await insert("att_attachedAAAAAAAA", "m1", "image", "image/png", PNG.length, PNG_SHA, "attached");
+    await insert("att_stagedBBBBBBBBBB", null, "text", "text/plain", TEXT.length, TEXT_SHA, "staged");
+    await insert("att_lostCCCCCCCCCCCC", "m1", "image", "image/png", PNG.length, PNG_SHA, "attached");
+    await insert("att_lostStagedDDDDDD", null, "image", "image/png", PNG.length, PNG_SHA, "staged");
+    await insert("att_expiredEEEEEEEEE", null, "image", "image/png", PNG.length, PNG_SHA, "expired");
+    await insert("att_deletedFFFFFFFFF", "m1", "image", "image/png", PNG.length, PNG_SHA, "deleted");
+    const dir = join(dataDir, "attachments", "ws_a");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "att_attachedAAAAAAAA"), PNG);
+    writeFileSync(join(dir, "att_stagedBBBBBBBBBB"), TEXT);
+    writeFileSync(join(dir, "att_expiredEEEEEEEEE"), PNG);
+  }
   const repo = join(dataDir, "repos", "ws_a");
   mkdirSync(repo, { recursive: true });
   git(repo, "init", "-q", "-b", "main");
@@ -217,6 +240,60 @@ describe("importLegacySnapshot", () => {
     expect(existsSync(join(homeOf(), "data", "repos", "ws_a"))).toBe(true);
     expect(await recoverInterruptedImport(homeOf())).toBe("none");
     await expect(importLegacySnapshot(outputDir, homeOf(), { gitPath })).rejects.toThrow(/not empty/i);
+  });
+});
+
+describe("attachments in snapshots", () => {
+  it("round-trips live attachment rows and files, and drops what cannot be restored", async () => {
+    const { outputDir } = await makeSource(false, true);
+    expect(readdirSync(join(outputDir, "attachments", "ws_a")).sort()).toEqual(["att_attachedAAAAAAAA", "att_stagedBBBBBBBBBB"]);
+    await importLegacySnapshot(outputDir, homeOf(), { gitPath });
+    const db = await createLocalDb(join(homeOf(), "db"));
+    try {
+      expect(await db.query("select id, message_id, status, sha256, size from message_attachments order by id")).toEqual([
+        { id: "att_attachedAAAAAAAA", message_id: "m1", status: "attached", sha256: PNG_SHA, size: PNG.length },
+        { id: "att_deletedFFFFFFFFF", message_id: "m1", status: "deleted", sha256: PNG_SHA, size: PNG.length },
+        { id: "att_lostCCCCCCCCCCCC", message_id: "m1", status: "missing", sha256: PNG_SHA, size: PNG.length },
+        { id: "att_stagedBBBBBBBBBB", message_id: null, status: "staged", sha256: TEXT_SHA, size: TEXT.length },
+      ]);
+    } finally { await db.close(); }
+    const dir = join(homeOf(), "data", "attachments", "ws_a");
+    expect(readdirSync(dir).sort()).toEqual(["att_attachedAAAAAAAA", "att_stagedBBBBBBBBBB"]);
+    expect(readFileSync(join(dir, "att_attachedAAAAAAAA"))).toEqual(PNG);
+    expect(readFileSync(join(dir, "att_stagedBBBBBBBBBB"))).toEqual(TEXT);
+  });
+
+  it("refuses a tampered, missing, extra or symlinked attachment file", async () => {
+    const { outputDir } = await makeSource(false, true);
+    const file = join(outputDir, "attachments", "ws_a", "att_attachedAAAAAAAA");
+    writeFileSync(file, Buffer.concat([PNG.subarray(0, -1), Buffer.from([9])]));
+    await expect(importLegacySnapshot(outputDir, homeOf(), { gitPath })).rejects.toThrow(/hash/i);
+    rmSync(file);
+    await expect(importLegacySnapshot(outputDir, homeOf(), { gitPath })).rejects.toThrow();
+    writeFileSync(file, PNG);
+    writeFileSync(join(outputDir, "attachments", "ws_a", "att_extraGGGGGGGGGGG"), PNG);
+    await expect(importLegacySnapshot(outputDir, homeOf(), { gitPath })).rejects.toThrow(/unexpected/i);
+    rmSync(join(outputDir, "attachments", "ws_a", "att_extraGGGGGGGGGGG"));
+    rmSync(file);
+    const outside = join(root, "outside.png");
+    writeFileSync(outside, PNG);
+    symlinkSync(outside, file);
+    await expect(importLegacySnapshot(outputDir, homeOf(), { gitPath })).rejects.toThrow(/unsafe/i);
+    expect(existsSync(join(homeOf(), "db"))).toBe(false);
+  });
+
+  it("refuses attachment rows that break the per-kind contract", async () => {
+    const { outputDir } = await makeSource(false, true);
+    const path = join(outputDir, "snapshot.json");
+    const snap = JSON.parse(readFileSync(path, "utf8"));
+    const row = snap.tableData.message_attachments.find((r: { id: string }) => r.id === "att_attachedAAAAAAAA");
+    row.mime = "image/svg+xml";
+    writeFileSync(path, JSON.stringify(snap));
+    await expect(importLegacySnapshot(outputDir, homeOf(), { gitPath })).rejects.toThrow(/attachment/i);
+    row.mime = "image/png";
+    row.message_id = "nope";
+    writeFileSync(path, JSON.stringify(snap));
+    await expect(importLegacySnapshot(outputDir, homeOf(), { gitPath })).rejects.toThrow(/message reference/i);
   });
 });
 
