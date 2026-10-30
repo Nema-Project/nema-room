@@ -5,6 +5,7 @@ import { KnowledgeStore } from "@nema/knowledge";
 import type { DaemonRpc } from "./daemonRpc.js";
 import { DaemonRpcError } from "./daemonRpc.js";
 import { createApp } from "./app.js";
+import { AttachmentStore } from "./attachments.js";
 import type { Db } from "./db/db.js";
 import { attachDaemonSocket } from "./daemonSocket.js";
 import { EventBus } from "./events.js";
@@ -33,7 +34,12 @@ export type StartHubOptions = {
   ownedHelpers?: OwnedHelperScope;
   /** When set, hello.version must equal it. Unset keeps older callers accepting any CLI version. */
   releaseVersion?: string;
+  /** NEMA_ATTACHMENTS_MAX_BYTES; the store's 2 GB default when unset. */
+  attachmentsMaxBytes?: number;
 };
+
+/** Expired uploads and leftover files are cleaned every hour after the startup pass. */
+const ATTACHMENT_SWEEP_MS = 60 * 60 * 1000;
 
 export type RunningHub = { url: string; close(): Promise<void> };
 
@@ -48,6 +54,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
   const cancelHttpStreams = new Set<() => Promise<void>>();
   let closed = false;
   let closePromise: Promise<void> | undefined;
+  let sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   try {
     // The previous process may have left tasks running. Recover before accepting HTTP or daemon traffic.
@@ -56,6 +63,13 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
     await announceInterrupted(opts.db, events, interrupted);
     await recoverUncommittedEntries(opts.db, opts.dataDir, opts.ownedHelpers);
     await reconcileWorkspaceEvidence(opts.db, opts.dataDir);
+    const attachments = new AttachmentStore(opts.db, opts.dataDir, { maxGlobalBytes: opts.attachmentsMaxBytes });
+    // Before any request: only this pass may delete files that have no row (no upload is in flight yet).
+    try {
+      await attachments.sweep({ startup: true });
+    } catch (error) {
+      console.error("attachment startup sweep failed", error);
+    }
 
     const status = { connected: () => false };
     const liveDaemon: { rpc: DaemonRpc } = {
@@ -87,6 +101,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
       port: actualPort,
       ownedHelpers: opts.ownedHelpers,
       releaseVersion: opts.releaseVersion,
+      attachments,
       ...(opts.ownedHelpers ? { archify: {
         validateDiagram: (type, spec) => validateDiagram(type, spec, opts.ownedHelpers),
         renderDiagram: (type, spec) => renderDiagram(type, spec, opts.ownedHelpers),
@@ -161,11 +176,16 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
     status.connected = attached.isConnected;
     liveDaemon.rpc = attached.rpc;
     fallback = startReportFallback(opts.db, daemon, events);
+    sweepTimer = setInterval(() => {
+      void attachments.sweep({ startup: false }).catch((error) => console.error("attachment sweep failed", error));
+    }, ATTACHMENT_SWEEP_MS);
+    sweepTimer.unref();
 
     const close = (): Promise<void> => {
       closePromise ??= (async () => {
         if (closed) return;
         closed = true;
+        clearInterval(sweepTimer);
         fallback?.stop();
         let httpClosing: Promise<void> | undefined;
         if (server?.listening) {
@@ -182,6 +202,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
     };
     return { url: hubUrl, close };
   } catch (error) {
+    clearInterval(sweepTimer);
     fallback?.stop();
     let httpClosing: Promise<void> | undefined;
     if (server?.listening) {
