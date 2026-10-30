@@ -1,0 +1,103 @@
+import { Readable } from "node:stream";
+import { Hono, type Context } from "hono";
+import { AttachmentCapabilitiesSchema, type AttachmentView } from "@nema/shared";
+import { AttachmentError, type AttachmentStore } from "./attachments.js";
+import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
+import { daemonHttpStatus } from "./plugins.js";
+
+export type AttachmentRouteDeps = {
+  store: AttachmentStore;
+  daemon: DaemonRpc;
+  daemonStatus: () => boolean;
+};
+
+/** The one /api write that is not JSON. app.ts lets it past requireJson; the route checks the type itself. */
+export const ATTACHMENT_UPLOAD_PATH = /^\/api\/workspaces\/[^/]+\/attachments$/;
+
+const empty: AsyncIterable<Uint8Array> = { async *[Symbol.asyncIterator]() {} };
+
+function fail(c: Context, e: unknown) {
+  if (e instanceof AttachmentError) return c.json({ error: e.message }, e.status);
+  throw e;
+}
+
+function contentHeaders(view: AttachmentView): Record<string, string> {
+  return {
+    // Text is never served under its own type, so an HTML or SVG-like file cannot render.
+    "content-type": view.kind === "text" ? "text/plain; charset=utf-8" : view.mime,
+    "content-length": String(view.size),
+    "x-content-type-options": "nosniff",
+    "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(view.name)}`,
+    "content-security-policy": "sandbox; default-src 'none'",
+    "cross-origin-resource-policy": "same-origin",
+    "cache-control": "private, no-cache",
+  };
+}
+
+export function attachmentRoutes(deps: AttachmentRouteDeps): Hono {
+  const app = new Hono();
+
+  app.post("/workspaces/:id/attachments", async (c) => {
+    const type = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+    if (type !== "application/octet-stream") return c.json({ error: "content-type must be application/octet-stream" }, 415);
+    const rawLength = c.req.header("content-length");
+    if (rawLength === undefined) return c.json({ error: "Content-Length is required" }, 411);
+    if (!/^\d+$/.test(rawLength.trim())) return c.json({ error: "invalid Content-Length" }, 400);
+    const rawName = c.req.header("x-nema-filename");
+    if (rawName === undefined) return c.json({ error: "X-Nema-Filename is required" }, 400);
+    let name: string;
+    try {
+      name = decodeURIComponent(rawName);
+    } catch {
+      return c.json({ error: "X-Nema-Filename must be percent-encoded UTF-8" }, 400);
+    }
+    const uploadKey = c.req.header("x-nema-upload-key");
+    if (uploadKey === undefined) return c.json({ error: "X-Nema-Upload-Key is required" }, 400);
+    try {
+      const { view, created } = await deps.store.upload(c.req.param("id"), {
+        name,
+        uploadKey,
+        contentLength: Number(rawLength.trim()),
+        body: c.req.raw.body ?? empty,
+      });
+      return c.json(view, created ? 201 : 200);
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  app.get("/workspaces/:id/attachments/:aid/content", async (c) => {
+    try {
+      const { view, stream } = await deps.store.open(c.req.param("id"), c.req.param("aid"));
+      return new Response(Readable.toWeb(stream) as ReadableStream<Uint8Array>, { status: 200, headers: contentHeaders(view) });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  app.delete("/workspaces/:id/attachments/:aid", async (c) => {
+    try {
+      return c.json(await deps.store.remove(c.req.param("id"), c.req.param("aid")));
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  app.get("/daemon/attachment-capabilities", async (c) => {
+    if (!deps.daemonStatus()) return c.json({ error: "daemon 未连接" }, 503);
+    let result: unknown;
+    try {
+      result = await deps.daemon.call("attachments.capabilities", {});
+    } catch (e) {
+      if (!(e instanceof DaemonRpcError)) throw e;
+      // A daemon from before attachments: the composer treats this like "no attachment support".
+      if (e.message.startsWith("未知方法 ")) return c.json({ error: "the connected daemon does not support attachments" }, 501);
+      return c.json({ error: e.message }, daemonHttpStatus(e.message));
+    }
+    const parsed = AttachmentCapabilitiesSchema.safeParse(result);
+    if (!parsed.success) return c.json({ error: "the daemon returned malformed attachment capabilities" }, 502);
+    return c.json(parsed.data);
+  });
+
+  return app;
+}
