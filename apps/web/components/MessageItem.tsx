@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AttachmentList } from "@/components/AttachmentList";
 import { Markdown } from "@/components/Markdown";
 import { SkillOfferCard } from "@/components/SkillOfferCard";
 import { editMessage, getEntry, HubError, listEntries, listMessageVersions, withdrawEntry } from "@/lib/hub";
@@ -187,6 +188,17 @@ function QuoteBlock({ quote, onJump }: { quote: MessageQuote; onJump?: (messageI
   );
 }
 
+/**
+ * Deletion is final, so a response read before a delete committed (an edit racing it) must not bring
+ * the attachment back: keep the newer tombstone for any attachment the latest message has deleted.
+ */
+function keepTombstones(next: Message, current: Message): Message {
+  if (!next.attachments || !current.attachments) return next;
+  const gone = new Map(current.attachments.filter((a) => a.status === "deleted").map((a) => [a.id, a]));
+  if (gone.size === 0) return next;
+  return { ...next, attachments: next.attachments.map((a) => (a.status !== "deleted" && gone.get(a.id)) || a) };
+}
+
 function UserMessage({
   message,
   time,
@@ -200,6 +212,8 @@ function UserMessage({
   onEdited?: (message: Message) => void;
   onJump?: (messageId: string) => void;
 }) {
+  const latest = useRef(message);
+  useEffect(() => { latest.current = message; }, [message]);
   const t = useT();
   const [locale] = useLocale();
   const [editing, setEditing] = useState(false);
@@ -208,6 +222,7 @@ function UserMessage({
   const [versions, setVersions] = useState<{ version: number; content: string; createdAt: string }[] | null>(null);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const quote = quoteOf(message);
+  const attachments = message.attachments ?? [];
 
   useEffect(() => {
     // Keep a cancelled edit draft aligned with a newer message object.
@@ -219,7 +234,7 @@ function UserMessage({
     setEditError(null);
     try {
       const { message: next } = await editMessage(message.workspaceId, message.id, draft);
-      onEdited?.(next);
+      onEdited?.(keepTombstones(next, latest.current));
       setEditing(false);
       setVersions(null);
       setVersionsOpen(false);
@@ -254,11 +269,23 @@ function UserMessage({
             </div>
             {editError && <p className="error" role="alert">{editError}</p>}
           </div>
-        ) : (
+        ) : message.content.trim() !== "" || attachments.length === 0 ? (
           <div className="memo">
             <Markdown source={message.content} />
           </div>
-        )}
+        ) : null}
+        <AttachmentList
+          workspaceId={message.workspaceId}
+          attachments={attachments}
+          canDelete
+          onChange={(next) => {
+            // Merge into the newest message: a delete can land after an edit or another delete.
+            const cur = latest.current;
+            const merged = { ...cur, attachments: (cur.attachments ?? []).map((x) => (x.id === next.id ? next : x)) };
+            latest.current = merged;
+            onEdited?.(merged);
+          }}
+        />
         {versionsOpen && versions && (
           <div className="versions">
             <div>{t("chat.versions")}</div>

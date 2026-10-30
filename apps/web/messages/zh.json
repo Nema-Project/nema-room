@@ -537,5 +537,16 @@
   "mcp.secret.save": "保存",
   "mcp.secret.clear": "清除",
   "mcp.tools.note": "这个服务器提供 {count} 个工具。本版本不会把它们交给 Agent。",
-  "mcp.action.add": "添加 MCP 服务器…"
+  "mcp.action.add": "添加 MCP 服务器…",
+  "attach.download": "下载",
+  "attach.downloadName": "下载 {name}",
+  "attach.loadFailed": "无法载入：{message}",
+  "attach.delete": "删除",
+  "attach.deleteName": "删除 {name}",
+  "attach.deleteNote": "删除 {name}？文件内容会从 Nema 删除，只留下名字、类型、大小和 sha256。已经发给 agent 或模型的内容无法撤回。",
+  "attach.deleteConfirm": "删除附件",
+  "attach.deleteCancel": "取消",
+  "attach.deleteFailed": "删除失败：{message}",
+  "attach.deleted": "附件已删除",
+  "attach.missing": "附件文件已丢失"
 }
