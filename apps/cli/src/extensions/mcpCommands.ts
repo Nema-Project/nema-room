@@ -21,6 +21,8 @@ export type McpCommandDeps = {
   out: Out;
   stdin: () => NodeJS.ReadableStream;
   fetch?: typeof fetch;
+  /** Tests only: the credential store for a home. */
+  secretStore?: (home: string) => ReturnType<typeof openMcpSecretStore>;
 };
 
 const REF = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
@@ -140,7 +142,14 @@ export function registerMcpCommands(mcp: Command, deps: McpCommandDeps, exit: (c
 
   for (const verb of ["start", "stop"] as const) {
     mcp.command(`${verb} <id>`).description(`${verb === "start" ? "Start" : "Stop"} an MCP server`).option("--hub <url>", "hub URL")
-      .action(action(async (id: string, flags: { hub?: string }) => printStatus(await hub(flags.hub, "POST", `/extensions/${encodeURIComponent(id)}/mcp/${verb}`, {}))));
+      .action(action(async (id: string, flags: { hub?: string }) => {
+        const status = await hub(flags.hub, "POST", `/extensions/${encodeURIComponent(id)}/mcp/${verb}`, {});
+        printStatus(status);
+        // A start that did not connect is a failure for scripts, even though the hub answered.
+        if (verb === "start" && status?.connection !== "connected") {
+          throw new Error(`${id} did not connect: ${status?.connection ?? "unknown"}${status?.lastError ? ` (${status.lastError})` : ""}`);
+        }
+      }));
   }
   mcp.command("status <id>").description("Show an MCP server's connection").option("--hub <url>", "hub URL")
     .action(action(async (id: string, flags: { hub?: string }) => printStatus(await hub(flags.hub, "GET", `/extensions/${encodeURIComponent(id)}/mcp/status`))));
@@ -151,6 +160,7 @@ export function registerMcpCommands(mcp: Command, deps: McpCommandDeps, exit: (c
       for (const row of rows) deps.out.log(`${row.id}  ${row.name}  ${row.source}  ${row.useState}  ${row.mcp?.connection ?? "unknown"}`);
     }));
 
+  const storeOf = deps.secretStore ?? openMcpSecretStore;
   const homeOf = (flags: { desktop?: boolean }) => (flags.desktop ? deps.desktopHome : deps.nemaHome);
 
   /**
@@ -177,16 +187,29 @@ export function registerMcpCommands(mcp: Command, deps: McpCommandDeps, exit: (c
       const before = referenced(home, id, name);
       const value = await readValueLine(deps.stdin());
       if (value === "") throw new Error("no value on stdin");
+      const changed = new Error(`the config of ${id} changed while reading the value; run the command again`);
       // The config may have changed while the value was typed: a new target never gets it.
-      if (referenced(home, id, name) !== before) throw new Error(`the config of ${id} changed while reading the value; run the command again`);
-      openMcpSecretStore(home).set(id, name, value);
+      if (referenced(home, id, name) !== before) throw changed;
+      storeOf(home).set(id, name, value);
+      // The daemon may have saved or removed the server between that check and the write. Its
+      // save prunes first, so check once more and take the value back if anything moved.
+      let after: string | null = null;
+      try {
+        after = referenced(home, id, name);
+      } catch {
+        after = null;
+      }
+      if (after !== before) {
+        openMcpSecretStore(home).clear(id, name);
+        throw changed;
+      }
       deps.out.log(`saved ${name} for ${id}; a running server uses it after a restart (\`nema mcp stop ${id}\` then \`start\`)`);
     }));
   secret.command("clear <id> <name>").description("Delete one credential file")
     .option("--desktop", "the desktop app's credentials (~/.nema/desktop) instead of ~/.nema")
     .action(action(async (id: string, name: string, flags: { desktop?: boolean }) => {
       if (!REF.test(name)) throw new Error("invalid secret name");
-      openMcpSecretStore(homeOf(flags)).clear(id, name);
+      storeOf(homeOf(flags)).clear(id, name);
       deps.out.log(`cleared ${name} for ${id}`);
     }));
 }

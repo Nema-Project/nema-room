@@ -24,12 +24,14 @@ beforeEach(() => {
   server = [];
   hubBase = "http://127.0.0.1:4400";
   stdinStream = null;
+  secretStore = undefined;
   reply = () => ({ status: 200, body: { id: "search", kind: "mcp", provision: "managed" } });
 });
 afterEach(() => rmSync(home, { recursive: true, force: true }));
 
 let hubBase = "http://127.0.0.1:4400";
 let stdinStream: (() => NodeJS.ReadableStream) | null = null;
+let secretStore: McpCommandDeps["secretStore"];
 
 function deps(stdin = ""): McpCommandDeps {
   return {
@@ -38,6 +40,7 @@ function deps(stdin = ""): McpCommandDeps {
     hubUrl: async () => hubBase,
     out: { log: (s) => logs.push(s), error: (s) => errors.push(s) },
     stdin: () => (stdinStream ? stdinStream() : Readable.from([stdin])),
+    ...(secretStore ? { secretStore } : {}),
     fetch: async (url, init) => {
       const method = init?.method ?? "GET";
       requests.push({ method, url: String(url), body: init?.body ? JSON.parse(String(init.body)) : undefined });
@@ -183,4 +186,28 @@ test("add maps the daemon's create-only refusal to the edit hint", async () => {
   reply = (method) => (method === "GET" ? { status: 404, body: { error: "MCP server not found: search" } } : { status: 409, body: { error: "MCP server search already exists" } });
   expect(await run(["mcp", "add", "search", "--name", "S", "--url", "https://a.example/mcp"])).toBe(1);
   expect(errors.join("\n")).toMatch(/nema mcp edit/);
+});
+
+test("a save that lands between the last check and the write still keeps the value away from the new target", async () => {
+  saveSearch(home);
+  secretStore = (h) => {
+    const real = openMcpSecretStore(h);
+    return {
+      ...real,
+      set(id: string, name: string, value: string) {
+        // The daemon saves a new target, and prunes the slot, just before this write lands.
+        openMcpConfigs({ root: join(home, "extensions"), nemaHome: home }).save("search", "Search", { transport: "stdio", command: "other", args: [], env: { API_TOKEN: { secret: "API_TOKEN" } } });
+        real.set(id, name, value);
+      },
+    };
+  };
+  expect(await run(["mcp", "secret", "set", "search", "API_TOKEN"], `${MARK}\n`)).toBe(1);
+  expect(openMcpSecretStore(home).has("search", "API_TOKEN")).toBe(false);
+  expect(errors.join("\n")).toMatch(/changed/);
+});
+
+test("start exits non-zero when the server did not connect", async () => {
+  reply = () => ({ status: 200, body: { id: "search", connection: "needs-login", server: null, tools: [], lastError: "the server asked for a login (HTTP 401)" } });
+  expect(await run(["mcp", "start", "search"])).toBe(1);
+  expect(errors.join("\n")).toMatch(/needs-login/);
 });

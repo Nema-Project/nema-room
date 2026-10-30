@@ -77,6 +77,13 @@ describe("parseMcpConfig", () => {
     expect(parseMcpConfig({ transport: "stdio", command: "server", args: ["--use-keychain"], env: {} }).transport).toBe("stdio");
   });
 
+  test("a value after a credential switch counts as its value even when it starts with a single dash", () => {
+    rejects({ transport: "stdio", command: "server", args: ["--api-key", `-${MARK}`], env: {} }, /argument 1/);
+    rejects({ transport: "stdio", command: "server", args: ["--token", "-"], env: {} }, /argument 1/);
+    // Only a long option after it shows the switch takes no value.
+    expect(parseMcpConfig({ transport: "stdio", command: "server", args: ["--no-auth", "--verbose"], env: {} }).args).toEqual(["--no-auth", "--verbose"]);
+  });
+
   test("refuses PATH and HOME in env, which the daemon sets itself", () => {
     for (const name of ["PATH", "Path", "HOME", "USERPROFILE"]) {
       rejects({ transport: "stdio", command: "node", args: [], env: { [name]: { value: "/x" } } }, new RegExp(`"${name}" is set by Nema`));

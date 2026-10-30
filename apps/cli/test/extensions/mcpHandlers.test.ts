@@ -106,6 +106,12 @@ describe("extensions.mcp.* configs and credentials", () => {
     expect((await call("extensions.mcp.save", { id: "search", name: "One", config: stdio(), create: "yes" })).error).toMatch(/create/);
   });
 
+  test("status and stop refuse an id that is not a managed MCP server", async () => {
+    expect((await call("extensions.mcp.status", { id: "nothing" })).error).toBe("MCP server not found: nothing");
+    expect((await call("extensions.mcp.stop", { id: "nothing" })).error).toBe("MCP server not found: nothing");
+    expect((await call("extensions.mcp.status", { id: "code" })).error).toBe("code is not an MCP server");
+  });
+
   test("save refuses an id held by a skill", async () => {
     openExtensionStore(join(home, "extensions")).putManaged({
       id: "notes", kind: "skill", name: "notes", summary: "", source: "nema install", revision: "abc", provision: "managed",
@@ -216,6 +222,20 @@ describe.skipIf(!posix)("start, stop and the operations around them", () => {
       rmSync(own, { recursive: true, force: true });
     }
   });
+
+  test("a stop also cancels a start still queued behind another operation", async () => {
+    const starts = join(home, "starts.log");
+    await ok("extensions.mcp.save", { id: "search", name: "Search", config: { ...stdio(), env: { FAKE_HANG: { value: "1" }, FAKE_STARTS: { value: starts } } } });
+    const first = call("extensions.mcp.start", { id: "search" });
+    const second = call("extensions.mcp.start", { id: "search" });
+    expect(await until(() => existsSync(starts))).toBe(true);
+    await ok("extensions.mcp.stop", { id: "search" });
+    const [a, b] = await Promise.all([first, second]);
+    expect(b.ok ? (b.result as any).connection : b.error).not.toBe("connecting");
+    expect(a.ok ? (a.result as any).connection : "refused").not.toBe("connected");
+    expect(readFileSync(starts, "utf8").trim().split("\n")).toHaveLength(1);
+    expect((await ok("extensions.mcp.status", { id: "search" })).connection).toBe("disconnected");
+  }, 20_000);
 
   test("remove stops the server and deletes config, secrets and record", async () => {
     await ok("extensions.mcp.save", { id: "search", name: "Search", config: stdio() });

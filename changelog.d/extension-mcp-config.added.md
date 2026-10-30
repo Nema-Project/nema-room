@@ -3,6 +3,8 @@
 - Changing a server's command, arguments, working directory, or URL clears its stored credentials. Setting or clearing a credential restarts a running server with the new value. Disabling or removing a server stops it first.
 - A stdio server gets exactly its configured environment plus `PATH` and a private `HOME` (also `USERPROFILE` on Windows). Stopping it also ends its process group. On Windows, stdio servers run only under the desktop app's owned-process scope.
 - `nema mcp add` and a save with `"create": true` refuse an id that already exists, so two adds racing for one id never replace each other.
+- `nema mcp start` exits non-zero when the server does not connect. A stop also cancels a start still waiting its turn, and `status` or `stop` for an id that is not an MCP server is an error.
+- A credential-named switch such as `--api-key` counts as taking a value unless the next argument is a long option (`--…`), so `--api-key -value` is refused like `--api-key value`.
 - HTTP servers do not follow redirects, and a 401 or 403 shows as "needs login".
 - The daemon stops every MCP server when it shuts down and starts none on its own. At start-up it marks a server whose config file is missing or changed as damaged and deletes credentials left behind by a server that no longer exists or that its saved config no longer names.
 - On the desktop app, the hub API accepts only the app's own requests, so use the Plugins page there; `nema mcp secret set|clear --desktop` writes the desktop app's credentials directly.
