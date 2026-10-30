@@ -60,11 +60,11 @@
 | `claude-code` | `native` | `unknown`（拒绝） | `text` | 图片按官方 stream-json 示例；PDF 没有文档说明 stream-json 会转交 `document` 块。未实测 |
 | `codex-direct` + `siwc` | `native` | `native` | `text` | 按 Responses API 文档。未实测 |
 | `codex-direct` + `byok`，默认地址 | `native` | `native` | `text` | 与 `siwc` 同一个官方端点。未实测 |
-| `codex-direct` + `byok`，`https://openrouter.ai/api/v1` | 实测通过，`native` | 读到了，但收费：保持 `unknown`（拒绝） | 实测通过（按文字发送） | 2026-10-30，`nvidia/nemotron-3.5-super-vl:free`，回复逐字给出只在文件里的暗号；`google/gemma-4-31b-it:free` 每次都 429。图片一格已在单独的 PR 里改成 `native`，只认这个地址 |
+| `codex-direct` + `byok`，`https://openrouter.ai/api/v1` | 实测通过，`native` | 不在这一步改，仍为 `unknown`（拒绝） | 实测通过（按文字发送） | 2026-10-30，`nvidia/nemotron-3.5-super-vl:free`，回复逐字给出只在文件里的暗号；`google/gemma-4-31b-it:free` 每次都 429。图片一格已在单独的 PR 里改成 `native`，地址归一化后比较 |
 | `codex-direct` + `byok`，其他地址 | `unknown`（拒绝） | `unknown`（拒绝） | `text` | 取决于提供方 |
 | `codex-direct` + `compat` | `unknown`（拒绝） | `unknown`（拒绝） | `text` | 非公开后端；OpenRouter 的 key 用不了 `compat`。未实测 |
 
-OpenRouter 的 PDF：Nema 发的是 `input_file`（`file_data` 为 base64 data URL）。所用模型在 OpenRouter 的模型列表里没有列 `file` 输入。按 [OpenRouter 的 PDF 文档](https://openrouter.ai/docs/guides/overview/multimodal/pdfs)，模型不能原生读文件、请求又没指定 `file-parser` 引擎时，OpenRouter 默认用 `mistral-ocr` 在服务端解析，每 1000 页收 2 美元，BYOK 也照收，记在 OpenRouter 账户上。验收后查这把 key 的用量（`GET /api/v1/key`）：当天 `usage` 为 0.014 美元，与 nemotron 收到的 7 份单页 PDF 按 0.002 美元一页正好相符（推断：这个接口不给逐次明细），图片和文本都走免费模型。所以模型虽然读到了 PDF 里的暗号，但它读到的是 OpenRouter 付费 OCR 的结果，不是模型原生读 PDF，而且每次都会悄悄扣费。按 D-2 A 的本意（用户知道 agent 实际看到什么，不出意外），PDF 这一格保持 `unknown`、运行前拒绝。以后若要放开，应在请求里显式指定免费的 `cloudflare-ai` 引擎或只对能原生读文件的模型放开，并重新实测。结论只适用于这个地址和类似的视觉模型；不支持图片的模型会在提供方那里失败。
+OpenRouter 的 PDF：Nema 发的是 `input_file`（`file_data` 为 base64 data URL）。所用模型在 OpenRouter 的模型列表里没有列 `file` 输入。按 [OpenRouter 的 PDF 文档](https://openrouter.ai/docs/guides/overview/multimodal/pdfs)，模型不能原生读文件、请求又没指定 `file-parser` 引擎时，OpenRouter 默认用 `mistral-ocr` 在服务端解析，每 1000 页收 2 美元，BYOK 也照收，记在 OpenRouter 账户上。验收后查这把 key 的用量（`GET /api/v1/key`）：当天 `usage` 为 0.014 美元，与 nemotron 收到的 7 份单页 PDF 按 0.002 美元一页正好相符（推断：这个接口不给逐次明细），图片和文本都走免费模型。这是验收时观察到的提供商行为，记录在此；它不作为 Nema 拒绝 PDF 的理由。PDF 这一格不在这一步改。结论只适用于这个地址和类似的视觉模型；不支持图片的模型会在提供方那里失败。
 
 需要用户提供凭据或环境才能补测：`claude-code`（本机 `claude` + `claude setup-token` + `nema auth claude`；PDF 的结果决定 `native` 还是 `unsupported`）、`siwc`（`nema auth login`）、默认地址的 `byok`（OpenAI API key）、`compat`（已登录 Codex CLI 的 `~/.codex/auth.json`）、其他 `byok` 提供方（逐个地址）。做法同验收清单。
 

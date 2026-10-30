@@ -23,10 +23,13 @@ describe("attachmentCapabilities", () => {
     ["codex-direct + byok without a base URL", cfg({ authMode: "byok" }), { image: "native", pdf: "native", text: "text" }],
     ["codex-direct + byok on the default base URL", cfg({ authMode: "byok", byokBaseUrl: DEFAULT_BYOK_BASE_URL }), { image: "native", pdf: "native", text: "text" }],
     ["codex-direct + byok elsewhere", cfg({ authMode: "byok", byokBaseUrl: "https://llm.example.com/v1" }), { image: "unknown", pdf: "unknown", text: "text" }],
-    // Measured 2026-10-30 (docs/reviews/2026-10-30-attachments-model-acceptance.md): images read; PDFs only via OpenRouter's paid OCR.
+    // Images measured 2026-10-30 (docs/reviews/2026-10-30-attachments-model-acceptance.md).
     ["codex-direct + byok on OpenRouter", cfg({ authMode: "byok", byokBaseUrl: "https://openrouter.ai/api/v1" }), { image: "native", pdf: "unknown", text: "text" }],
-    // Only that endpoint was measured; another path on the same host is not. (A trailing slash is removed when the
-    // config is loaded, so it is the same endpoint and classified the same.)
+    // Known providers are matched after normalization: case, default port and trailing slashes do not change the endpoint.
+    ["codex-direct + byok on OpenRouter with a trailing slash", cfg({ authMode: "byok", byokBaseUrl: "https://openrouter.ai/api/v1/" }), { image: "native", pdf: "unknown", text: "text" }],
+    ["codex-direct + byok on OpenRouter spelled differently", cfg({ authMode: "byok", byokBaseUrl: "https://OpenRouter.AI:443/api/v1//" }), { image: "native", pdf: "unknown", text: "text" }],
+    ["codex-direct + byok on the default base URL with a trailing slash", cfg({ authMode: "byok", byokBaseUrl: "https://api.openai.com/v1/" }), { image: "native", pdf: "native", text: "text" }],
+    // A different path or host is a different endpoint.
     ["codex-direct + byok on another OpenRouter path", cfg({ authMode: "byok", byokBaseUrl: "https://openrouter.ai/api/v2" }), { image: "unknown", pdf: "unknown", text: "text" }],
     ["codex-direct + byok on localhost", cfg({ authMode: "byok", byokBaseUrl: "http://127.0.0.1:8080/v1" }), { image: "unknown", pdf: "unknown", text: "text" }],
     ["codex-direct + compat", cfg({ authMode: "compat" }), { image: "unknown", pdf: "unknown", text: "text" }],
