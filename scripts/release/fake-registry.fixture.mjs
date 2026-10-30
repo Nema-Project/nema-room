@@ -148,22 +148,34 @@ export function fakeFetch(w) {
       return response(200, { object: { type: 'commit', sha: w.tags[match[1]].commit } });
     }
     if (url === 'https://api.github.com/repos/Nema-Project/nema-room') {
-      return response(200, init.headers?.Authorization ? { full_name: 'Nema-Project/nema-room', permissions: { pull: true, push: w.tokenPush } } : { full_name: 'Nema-Project/nema-room' });
+      return response(200, init.headers?.Authorization && !w.hidePermissions ? { full_name: 'Nema-Project/nema-room', permissions: { pull: true, push: w.tokenPush } } : { full_name: 'Nema-Project/nema-room' });
     }
     if (url === 'https://api.github.com/repos/Nema-Project/nema-room/releases/latest') {
       return w.latestRelease ? response(200, { tag_name: w.latestRelease }) : response(404, { message: 'Not Found' });
     }
-    if ((match = /^https:\/\/api\.github\.com\/repos\/Nema-Project\/nema-room\/releases\/tags\/(.+)$/.exec(url))) {
-      const release = w.releases[match[1]];
-      const visible = release && (!release.draft || init.headers?.Authorization);
-      if (!visible) return response(404, { message: 'Not Found' });
-      const assets = Object.keys(release.assets).map((name, id) => ({
+    const releaseBody = (tag, release) => ({
+      tag_name: tag,
+      draft: release.draft,
+      prerelease: release.prerelease,
+      assets: Object.keys(release.assets).map((name, id) => ({
         id,
         name,
-        browser_download_url: `https://github.com/Nema-Project/nema-room/releases/download/${match[1]}/${name}`,
-        url: `https://api.github.com/repos/Nema-Project/nema-room/releases/assets/${match[1]}/${name}`,
-      }));
-      return response(200, { tag_name: match[1], draft: release.draft, prerelease: release.prerelease, assets });
+        browser_download_url: `https://github.com/Nema-Project/nema-room/releases/download/${tag}/${name}`,
+        url: `https://api.github.com/repos/Nema-Project/nema-room/releases/assets/${tag}/${name}`,
+      })),
+    });
+    // Like GitHub: the by-tag endpoint serves published Releases only; drafts show up only in the list, and
+    // only for a token with push access.
+    if ((match = /^https:\/\/api\.github\.com\/repos\/Nema-Project\/nema-room\/releases\/tags\/(.+)$/.exec(url))) {
+      const release = w.releases[match[1]];
+      if (!release || release.draft) return response(404, { message: 'Not Found' });
+      return response(200, releaseBody(match[1], release));
+    }
+    if ((match = /^https:\/\/api\.github\.com\/repos\/Nema-Project\/nema-room\/releases\?per_page=100&page=(\d+)$/.exec(url))) {
+      const seesDrafts = Boolean(init.headers?.Authorization) && w.tokenPush;
+      const all = Object.entries(w.releases).filter(([, release]) => seesDrafts || !release.draft).map(([tag, release]) => releaseBody(tag, release));
+      if (w.listFails) return response(w.listFails, { message: 'nope' });
+      return response(200, all.slice((Number(match[1]) - 1) * 100, Number(match[1]) * 100));
     }
     if ((match = /^https:\/\/(?:github\.com\/Nema-Project\/nema-room\/releases\/download|api\.github\.com\/repos\/Nema-Project\/nema-room\/releases\/assets)\/([^/]+)\/(.+)$/.exec(url))) {
       const body = w.releases[match[1]]?.assets[match[2]];

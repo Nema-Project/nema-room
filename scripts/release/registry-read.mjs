@@ -234,23 +234,41 @@ async function tokenSeesDrafts(io) {
   return body?.permissions?.push === true;
 }
 
+function releaseEvidence(tag, body) {
+  const assets = (body?.assets ?? []).map((asset) => ({ name: asset.name, id: asset.id, url: asset.browser_download_url, apiUrl: asset.url }));
+  return ok({ tag, isDraft: Boolean(body?.draft), isPrerelease: Boolean(body?.prerelease), assets });
+}
+
+const RELEASE_PAGES = 10;
+
 /**
- * GitHub hides drafts with the same 404 it gives a missing release, from anonymous callers and from tokens
- * without push access. A 404 is authoritative only for a token that is known to see drafts.
+ * `GET /releases/tags/{tag}` answers only for published Releases: a draft is a 404 there for every caller,
+ * push access or not. Drafts appear only in `GET /releases`, and only for callers with push access. So a 404
+ * is followed by a full listing, and the listing is authoritative only for a token known to see drafts
+ * (`io.draftsVisible`, set by a workflow that holds contents: write, or `permissions.push` on the repo).
  */
 export function readRelease(io, tag) {
   return guard(async () => {
     const url = `${GITHUB_API}/repos/${REPOSITORY}/releases/tags/${tag}`;
     const response = await request(io, url, { headers: githubHeaders(io) });
-    if (response.status === 404) {
-      if (!io.token) return unknown(`release ${tag} is not visible anonymously: missing, or a draft; set GITHUB_TOKEN to tell`);
-      if (!(await tokenSeesDrafts(io))) return unknown(`release ${tag} is not visible to this token, which cannot be shown to see drafts: missing, or a draft`);
-      return missing(`release ${tag} does not exist`);
+    if (response.status === 200) return releaseEvidence(tag, await json(response, url));
+    if (response.status !== 404) return unknown(`${url}: HTTP ${response.status}`);
+    if (!io.token) return unknown(`release ${tag} is not visible anonymously: missing, or a draft; set GITHUB_TOKEN to tell`);
+    if (!(io.draftsVisible === true || (await tokenSeesDrafts(io)))) return unknown(`release ${tag} is not visible to this token, which cannot be shown to see drafts: missing, or a draft`);
+    const matches = [];
+    for (let page = 1; ; page += 1) {
+      if (page > RELEASE_PAGES) return unknown(`more than ${RELEASE_PAGES * 100} releases; ${tag} not found in the first ${RELEASE_PAGES} pages`);
+      const listUrl = `${GITHUB_API}/repos/${REPOSITORY}/releases?per_page=100&page=${page}`;
+      const list = await request(io, listUrl, { headers: githubHeaders(io) });
+      if (list.status !== 200) return unknown(`${listUrl}: HTTP ${list.status}`);
+      const body = await json(list, listUrl);
+      if (!Array.isArray(body)) return unknown(`${listUrl}: not a list`);
+      matches.push(...body.filter((release) => release?.tag_name === tag));
+      if (body.length < 100) break;
     }
-    if (response.status !== 200) return unknown(`${url}: HTTP ${response.status}`);
-    const body = await json(response, url);
-    const assets = (body?.assets ?? []).map((asset) => ({ name: asset.name, id: asset.id, url: asset.browser_download_url, apiUrl: asset.url }));
-    return ok({ tag, isDraft: Boolean(body?.draft), isPrerelease: Boolean(body?.prerelease), assets });
+    if (matches.length === 0) return missing(`release ${tag} does not exist`);
+    if (matches.length > 1) return unknown(`${matches.length} releases name ${tag}`);
+    return releaseEvidence(tag, matches[0]);
   });
 }
 

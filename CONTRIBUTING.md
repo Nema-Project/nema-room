@@ -87,7 +87,7 @@ npm run release:cut -- <x.y.z>
 
 然后写 ROADMAP 记录。tag 仍由维护者在 main 的 CI 已成功的 SHA 上单独创建，不从 CI 创建。
 
-tag 推送触发的 `npm-publish`、`image-publish`、`desktop-release` 三条工作流都结束后，运行只读检查 `npm run release:verify -- <x.y.z>`，把输出和退出码记进该版本的 ROADMAP 记录。退出 0 只表示产物齐全且彼此一致，不是测试、冒烟或验收结果；退出 1 会点名缺的那一项；退出 2 表示有查询没得到答复，稍后重跑，不能当作缺件，也不能当作就绪。细节见 [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md#after-the-tag-workflows)。
+tag 推送触发的 `npm-publish`、`image-publish`、`desktop-release` 三条工作流都结束后，运行只读检查 `npm run release:verify -- <x.y.z>`，把输出和退出码记进该版本的 ROADMAP 记录。退出 0 只表示产物齐全且彼此一致，不是测试、冒烟或验收结果；退出 1 会点名缺的那一项；退出 2 表示有查询没得到答复，稍后重跑，不能当作缺件，也不能当作就绪。三条工作流结束时 npm 尚未发布、两个 GHCR `latest` 未动、Release 仍是 draft，公开安装入口保持上一版。随后从 main 晋升：`gh workflow run release-promote.yml --ref main -f tag=v<x.y.z>`，读该运行的 step summary（翻了哪些指针、没翻哪些）；失败修好原因后重跑，已完成的步骤会被识别并跳过。晋升后再跑一次 `npm run release:verify -- <x.y.z>`，应退出 0，`--pointers` 全部指向新版本。细节见 [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md#after-the-tag-workflows)。
 
 ## Pull request
 

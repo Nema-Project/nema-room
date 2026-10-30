@@ -118,6 +118,44 @@ test('GitHub: an anonymous 404 may hide a draft, so it is unknown; with a token 
   assert.equal(hiddenFromWeakToken.state, 'unknown', 'a token without push access cannot see drafts, so its 404 proves nothing');
 });
 
+test('GitHub: a draft is never served by the by-tag endpoint, so it is found in the full release list', async () => {
+  const w = world();
+  w.releases['v0.1.6'].draft = true;
+  const { io: reader, calls } = io(w, { token: 'push-token' });
+  const draft = await readRelease(reader, 'v0.1.6');
+  assert.equal(draft.state, 'ok');
+  assert.equal(draft.evidence.isDraft, true);
+  assert.ok(calls.some((call) => String(call.url ?? call).includes('/releases?per_page=100&page=1')), 'the list was read');
+
+  const twice = world();
+  twice.releases['v0.1.6'].draft = true;
+  twice.releases['v0.1.6-copy'] = twice.releases['v0.1.6'];
+  const fakeFetch = io(twice, { token: 'push-token' }).io.fetchImpl;
+  const duplicated = { fetchImpl: async (url, init) => {
+    const response = await fakeFetch(url, init);
+    if (!String(url).includes('/releases?')) return response;
+    const body = await response.json();
+    return { status: 200, json: async () => body.map((release) => ({ ...release, tag_name: release.tag_name.replace('-copy', '') })) };
+  }, token: 'push-token', sleep: async () => {} };
+  assert.equal((await readRelease(duplicated, 'v0.1.6')).state, 'unknown', 'two releases on one tag cannot be told apart');
+
+  const broken = world('0.1.6', { listFails: 403 });
+  broken.releases['v0.1.6'].draft = true;
+  const failed = await readRelease(io(broken, { token: 'push-token' }).io, 'v0.1.6');
+  assert.equal(failed.state, 'unknown');
+  assert.match(failed.detail, /HTTP 403/);
+});
+
+test('GitHub: a workflow token that holds contents: write is trusted to see drafts without a permissions field', async () => {
+  // An installation token's GET /repos answer need not carry `permissions`; the list still shows it drafts.
+  const w = world('0.1.6', { hidePermissions: true });
+  w.releases['v0.1.6'].draft = true;
+  assert.equal((await readRelease(io(w, { token: 'actions-token' }).io, 'v9.9.9')).state, 'unknown');
+  const trusted = io(w, { token: 'actions-token', draftsVisible: true }).io;
+  assert.equal((await readRelease(trusted, 'v9.9.9')).state, 'missing');
+  assert.equal((await readRelease(trusted, 'v0.1.6')).evidence.isDraft, true);
+});
+
 test('the expected asset set comes from code, as v0.1.6 publishes it', () => {
   assert.deepEqual(expectedReleaseAssets('0.1.6'), [
     'Nema-0.1.6-darwin-arm64.dmg',
