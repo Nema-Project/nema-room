@@ -542,3 +542,11 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .att-retry { font-size: 12px; text-decoration: underline; }
 .att-remove { position: absolute; top: 2px; right: 4px; border: 0; background: transparent; color: var(--ink-2); font-size: 16px; cursor: pointer; }
 .att-note { margin: 4px 0 0; color: var(--ink-2); }
+/* Chat attachments (#104): attachments shown in a message. */
+.att-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+.att-card { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 360px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); }
+.att-card .att-thumb { width: 120px; height: 90px; }
+.att-card.att-gone { color: var(--ink-2); border-style: dashed; }
+.att-card time, .att-sha { color: var(--ink-3); font-size: 11px; }
+.att-confirm { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--ink-2); }
+.att-card .error { flex-basis: 100%; margin: 0; }

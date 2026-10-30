@@ -537,5 +537,16 @@
   "mcp.secret.save": "Save",
   "mcp.secret.clear": "Clear",
   "mcp.tools.note": "The server offers {count} tools. They are not given to the Agent in this release.",
-  "mcp.action.add": "Add an MCP server…"
+  "mcp.action.add": "Add an MCP server…",
+  "attach.download": "Download",
+  "attach.downloadName": "Download {name}",
+  "attach.loadFailed": "Could not load: {message}",
+  "attach.delete": "Delete",
+  "attach.deleteName": "Delete {name}",
+  "attach.deleteNote": "Delete {name}? Its content is removed from Nema; the name, type, size and sha256 stay. What was already sent to an agent or model cannot be taken back.",
+  "attach.deleteConfirm": "Delete attachment",
+  "attach.deleteCancel": "Cancel",
+  "attach.deleteFailed": "Could not delete: {message}",
+  "attach.deleted": "Attachment deleted",
+  "attach.missing": "Attachment file is missing"
 }
