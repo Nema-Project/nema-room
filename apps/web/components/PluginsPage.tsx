@@ -389,7 +389,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
           <h2 id={`${ids}-installed`}>{t("extensions.section.installed")}</h2>
           {extensions === null && !error && <p className="kmeta">{t("common.loading")}</p>}
           {installed.map(renderRow)}
-          {extensions !== null && installed.length === 0 && <p className="kmeta">{t("extensions.search.empty")}</p>}
+          {extensions !== null && installed.length === 0 && discoverable.length === 0 && <p className="kmeta">{t("extensions.search.empty")}</p>}
         </section>
         <section className="extension-section" aria-labelledby={`${ids}-discover`}>
           <h2 id={`${ids}-discover`}>{t("extensions.section.discover")}</h2>
