@@ -186,12 +186,13 @@ test("overlapping Repairs of one item run one after another, so the later one is
   expect(listed.ok && (listed.result as Array<{ id: string }>).find((row) => row.id === "code")).toMatchObject({ availability: "ready" });
 });
 
-test("a stored result newer than the one being written is kept", async () => {
+test("a finished check is stored even when the stored one carries a later time (clock moved back)", async () => {
   const { nemaHome } = setup();
   const store = openExtensionStore(join(nemaHome, "extensions"));
-  store.recordCheck("code", { availability: "ready", error: null, checkedAt: "2026-10-30T03:00:01.000Z" });
-  const kept = store.recordCheck("code", { availability: "damaged", error: "bundled-runtime-damaged", checkedAt: "2026-10-30T03:00:00.000Z" });
-  expect(kept).toMatchObject({ availability: "ready", checkedAt: "2026-10-30T03:00:01.000Z" });
+  store.recordCheck("code", { availability: "ready", error: null, checkedAt: "2099-01-01T00:00:00.000Z" });
+  const next = store.recordCheck("code", { availability: "damaged", error: "bundled-runtime-damaged", checkedAt: "2026-10-30T03:00:00.000Z" });
+  expect(next).toMatchObject({ availability: "damaged", checkedAt: "2026-10-30T03:00:00.000Z" });
+  expect(store.list().find((row) => row.id === "code")).toMatchObject({ availability: "damaged", checkedAt: "2026-10-30T03:00:00.000Z" });
 });
 
 test("a GitHub check that could not finish is reported as a failed check, not as missing or signed out", async () => {
@@ -215,8 +216,8 @@ test("a stored check with an unknown availability is ignored and the shipped see
   const root = join(nemaHome, "extensions");
   mkdirSync(root, { recursive: true });
   const seed = bundledExtensions().find((row) => row.id === "code")!;
-  for (const broken of [{ availability: "fine" }, { availability: undefined }, { availability: "ready", error: 7 }]) {
-    writeFileSync(join(root, "index.json"), JSON.stringify([{ ...seed, ...broken, checkedAt: "2026-10-30T03:00:00.000Z" }]));
+  for (const broken of [{ availability: "fine" }, { availability: undefined }, { availability: "ready", error: 7 }, { availability: "ready", error: null, checkedAt: "yesterday" }]) {
+    writeFileSync(join(root, "index.json"), JSON.stringify([{ ...seed, checkedAt: "2026-10-30T03:00:00.000Z", ...broken }]));
     const listed = await call("extensions.list", {});
     const row = listed.ok && (listed.result as Array<{ id: string }>).find((item) => item.id === "code");
     expect(row, JSON.stringify(broken)).toEqual(seed);

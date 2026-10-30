@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, lstatSync, openSync, opendirSync, readSync, realpathSync, statSync, type Dirent } from "node:fs";
+import { closeSync, fstatSync, lstatSync, openSync, opendirSync, readSync, realpathSync, statSync, type Dirent } from "node:fs";
 import path from "node:path";
 import { bundledExtensions, type AttachProblem, type DiscoveredSkill, type ExtensionRecord, type SkillDiscovery } from "@nema/shared";
 import { MAX_SKILL_BYTES, skillFrontMatter, skillId } from "./source.js";
@@ -65,7 +65,13 @@ export function inspectSkillFolder(folder: string): InspectedSkill {
     return failed(folder, "not-a-folder");
   }
   const file = path.join(real, "SKILL.md");
-  if (!existsSync(file)) return failed(real, "missing-frontmatter");
+  try {
+    lstatSync(file);
+  } catch (error) {
+    // Only "no such file" means it is missing; a folder that cannot be entered is unreadable.
+    const code = (error as NodeJS.ErrnoException).code;
+    return failed(real, code === "ENOENT" || code === "ENOTDIR" ? "missing-frontmatter" : "unreadable");
+  }
   try {
     if (lstatSync(file).isSymbolicLink() && !inside(real, realpathSync(file))) return failed(real, "outside-location");
     if (!statSync(file).isFile()) return failed(real, "missing-frontmatter");

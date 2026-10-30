@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DEFAULT_GRILL_SETTINGS, GRILL_EXTRA_RULES_MAX, PLUGINS, bundledExtensions, pluginFunction, type ExtensionRecord, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
+import { DEFAULT_GRILL_SETTINGS, GRILL_EXTRA_RULES_MAX, PLUGINS, bundledExtensions, isCheckTime, pluginFunction, type ExtensionRecord, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import { githubTargets } from "./githubScope.js";
@@ -265,7 +265,7 @@ export function extensionIndexFromDisk(nemaHome: string | undefined): ExtensionR
     // A Repair result counts only with the time it was taken, the same rule the daemon applies.
     // Same rule as the daemon's store: a string check time, a known availability, and an error that
     // is a string or null; anything else leaves the seed's values.
-    const checked = override && typeof override.checkedAt === "string" && AVAILABILITY.has(override.availability) &&
+    const checked = override && isCheckTime(override.checkedAt) && AVAILABILITY.has(override.availability) &&
       (override.error === null || typeof override.error === "string")
       ? { availability: override.availability, error: override.error, checkedAt: override.checkedAt }
       : {};

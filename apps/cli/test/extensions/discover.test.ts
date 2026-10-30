@@ -183,3 +183,12 @@ test.skipIf(!canDenyReads)("a location behind a folder that cannot be entered is
   // A location that is simply not there is still reported as not found.
   expect(found.locations[1]).toEqual({ label: "codex", path: join(home, ".codex", "skills"), found: false });
 });
+
+test.skipIf(!canDenyReads)("a skill folder that cannot be entered is unreadable, not missing its SKILL.md", () => {
+  home = realpathSync(mkdtempSync(join(tmpdir(), "nema-discover-")));
+  const locked = skill(join(home, ".claude", "skills", "locked"), "locked");
+  chmodSync(locked, 0o000);
+  denied.push(locked);
+  expect(discoverSkills(home, bundledExtensions()).skills).toEqual([expect.objectContaining({ path: locked, problem: "unreadable" })]);
+  expect(inspectSkillFolder(locked).problem).toBe("unreadable");
+});

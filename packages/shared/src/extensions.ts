@@ -43,6 +43,11 @@ export type ExtensionRecord = {
   mcp?: McpRecordState;
 };
 
+/** A Repair check time as the daemon writes it: an ISO 8601 UTC timestamp that parses as a date. */
+export function isCheckTime(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(value) && !Number.isNaN(Date.parse(value));
+}
+
 /** Why a skill folder on this computer cannot be attached. */
 export type AttachProblem = "missing-frontmatter" | "invalid-id" | "bundled-id" | "id-taken" | "outside-location" | "too-large" | "not-a-folder" | "unreadable";
 

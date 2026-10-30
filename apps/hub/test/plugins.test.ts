@@ -787,6 +787,8 @@ describe("extension list while the daemon is down", () => {
     const checked = await list(writeIndex([{ ...seed, availability: "ready", error: null, checkedAt: "2026-10-30T03:00:00.000Z" }]));
     expect(checked.find((row) => row.id === "code")).toMatchObject({ availability: "ready", error: null, checkedAt: "2026-10-30T03:00:00.000Z" });
     // The same rule as the daemon: an error that is neither a string nor null voids the stored check.
+    const malformed = await list(writeIndex([{ ...seed, availability: "ready", error: null, checkedAt: "yesterday" }]));
+    expect(malformed.find((row) => row.id === "code")).toMatchObject({ availability: "missing-dependency", error: "bundled-runtime-missing" });
     for (const error of [undefined, 7]) {
       const invalid = await list(writeIndex([{ ...seed, availability: "ready", error, checkedAt: "2026-10-30T03:00:00.000Z" }]));
       expect(invalid.find((row) => row.id === "code"), String(error)).toMatchObject({ availability: "missing-dependency", error: "bundled-runtime-missing" });
