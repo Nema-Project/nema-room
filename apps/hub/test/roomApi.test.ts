@@ -1021,11 +1021,12 @@ describe("implementation rules", () => {
     const implementation = impl("verified", { reportMessageId: passing.id, commits: ["abcdef1"] });
     const r = await req("POST", "/room/entries", t.runToken, upsert({ sourceMessages: [t.messageId, passing.id], implementation }));
     expect(r.status).toBe(200);
-    expect(((await r.json()) as any).entry.implementation).toEqual(implementation);
+    const stored = (i: ReturnType<typeof impl>) => ({ ...i, evidence: { ...i.evidence, acceptanceReview: null, reportEvidence: null } });
+    expect(((await r.json()) as any).entry.implementation).toEqual(stored(implementation));
     const inferred = impl("reported", { commits: ["abcdef1"], inferred: true });
     const r2 = await req("POST", "/room/entries", t.runToken, upsert({ sourceMessages: [t.messageId], basis: "inferred", implementation: inferred }));
     expect(r2.status).toBe(200);
-    expect(((await r2.json()) as any).entry.implementation).toEqual(inferred);
+    expect(((await r2.json()) as any).entry.implementation).toEqual(stored(inferred));
   });
 });
 

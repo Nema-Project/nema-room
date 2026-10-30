@@ -128,6 +128,7 @@ describe("nema report", () => {
       agent: "claude-code",
       gitCommonDir: realpathSync(path.join(repo, ".git")),
       summary: "做完了登录",
+      progress: "completed",
       entries: ["R-1", "D-2"],
       commits: [sha.slice(0, 7)],
       files: ["a.txt"],
