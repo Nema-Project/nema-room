@@ -72,3 +72,4 @@ Windows installers are unsigned; macOS packages are ad-hoc signed and not notari
 2. Confirm the Windows installer, the Windows portable ZIP, the macOS installer, two per-target checksum files, combined checksums, the release manifest, and `docker-compose.yml`. There is no macOS ZIP, and the Windows ZIP does not contain the installer.
 3. Verify `sha256sum -c SHA256SUMS-<version>.txt`, macOS `shasum -a 256 -c ...`, or Windows `Get-FileHash -Algorithm SHA256` against the published list.
 4. Confirm manifest commit/run identity and prerelease/latest status, then record the public URLs and results.
+5. Run `npm run release:verify -- <x.y.z>` (see [scripts/npm/RELEASE.md](../npm/RELEASE.md#after-the-tag-workflows)). It compares the asset set with the set derived from `release-manifest.mjs`, checks the manifest commit against the tag, and checks the `docker-compose.yml` hash and pin. It does not replace the anonymous download and hash checks above.

@@ -87,6 +87,8 @@ npm run release:cut -- <x.y.z>
 
 然后写 ROADMAP 记录。tag 仍由维护者在 main 的 CI 已成功的 SHA 上单独创建，不从 CI 创建。
 
+tag 推送触发的 `npm-publish`、`image-publish`、`desktop-release` 三条工作流都结束后，运行只读检查 `npm run release:verify -- <x.y.z>`，把输出和退出码记进该版本的 ROADMAP 记录。退出 0 只表示产物齐全且彼此一致，不是测试、冒烟或验收结果；退出 1 会点名缺的那一项；退出 2 表示有查询没得到答复，稍后重跑，不能当作缺件，也不能当作就绪。细节见 [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md#after-the-tag-workflows)。
+
 ## Pull request
 
 用仓库里的 pull request 模板说明原因和验证方式。一个 pull request 只做一件事。CI 通过后再请求审阅。

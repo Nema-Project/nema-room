@@ -27,7 +27,8 @@
     "down": "docker compose down",
     "logs": "docker compose logs -f hub web",
     "release:cut": "node scripts/release/cut-changelog.mjs",
-    "release:stamp": "node scripts/release/stamp-version.mjs"
+    "release:stamp": "node scripts/release/stamp-version.mjs",
+    "release:verify": "node scripts/release/verify-release.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

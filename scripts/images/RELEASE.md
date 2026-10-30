@@ -29,6 +29,10 @@ Publication does not push when any of these is true:
 
 The tag is checked again with `scripts/desktop/release-commit.mjs --verify-remote` immediately before each image push and before `latest` moves.
 
+## After the tag workflows
+
+When all three tag workflows have finished, run `npm run release:verify -- <x.y.z>` (see [scripts/npm/RELEASE.md](../npm/RELEASE.md#after-the-tag-workflows)). It reads both version tags anonymously and checks that the `linux/amd64` image's `org.opencontainers.image.version` label equals the version. The images carry no `org.opencontainers.image.revision` label, so it cannot compare an image to the tag commit. It is read-only and does not move `latest`.
+
 ## A push that stops halfway
 
 Both version tags are pushed before either `latest` tag moves. If the web push fails after the hub push, `latest` is unchanged and the pair is incomplete. Re-run the same tag workflow. The remote tag check runs again before each push. If GHCR refuses to overwrite the hub version tag, delete that package version in the package settings and re-run. Do not point `latest` at only one of the two images.
