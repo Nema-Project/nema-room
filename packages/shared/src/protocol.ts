@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AttachmentRefSchema } from "./attachments.js";
 
 const DaemonToHubSchema = z.union([
   z.object({
@@ -8,6 +9,8 @@ const DaemonToHubSchema = z.union([
     adapters: z.array(z.string()),
     /** sha256 hex of ~/.nema/report-token, sent when that file exists. */
     reportTokenHash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+    /** Optional abilities, e.g. "attachments". Older daemons send none. */
+    features: z.array(z.string()).optional(),
   }),
   z.object({
     type: z.literal("task.event"),
@@ -39,6 +42,8 @@ const HubToDaemonSchema = z.discriminatedUnion("type", [
     runToken: z.string(),
     hubUrl: z.string(),
     pluginTools: z.array(z.object({ name: z.string(), description: z.string(), parameters: z.record(z.string(), z.unknown()) })),
+    /** The task's delivery set; the daemon fetches the bytes from the Room API with runToken. */
+    attachments: z.array(AttachmentRefSchema).optional(),
     limits: z.object({ maxModelCalls: z.number().int().min(1), maxToolCalls: z.number().int().min(1), timeoutMs: z.number().int().min(1) }).optional(),
   }),
   z.object({ type: z.literal("rpc.request"), id: z.string(), method: z.string(), params: z.unknown() }),
