@@ -207,3 +207,21 @@ test("a check-runs body that is not the expected JSON is an invalid response", a
     await expect(gh.observePullRequest({ owner: "a", repo: "b", pr: 7, perPage: 100 })).rejects.toThrow("GitHub returned invalid check runs");
   } finally { await gh.close(); }
 });
+
+test("parses a check-runs page larger than the display cap", async () => {
+  const bin = fakeGh(`const a=process.argv.slice(2); if(a.some((x)=>x.endsWith("/pulls/7"))) process.stdout.write(JSON.stringify({head:{sha:"${HEAD40}"},body:"x".repeat(100000)})); else process.stdout.write(JSON.stringify({total_count:100,check_runs:Array.from({length:100},(_, i)=>({name:"ci"+i,status:"completed",conclusion:"success",html_url:null,output:{text:"y".repeat(2000)}}))}));`);
+  const gh = new GithubGh({ bin });
+  try {
+    const result = await gh.observePullRequest({ owner: "a", repo: "b", pr: 7, perPage: 100 });
+    expect(result).toMatchObject({ outcome: "read", observedHeadSha: HEAD40, truncated: false });
+    expect(result.outcome === "read" && result.checkRuns).toHaveLength(100);
+  } finally { await gh.close(); }
+});
+
+test("a response over the observation limit is an invalid response, not a cut-off parse", async () => {
+  const bin = fakeGh(`const a=process.argv.slice(2); if(a.some((x)=>x.endsWith("/pulls/7"))) process.stdout.write(JSON.stringify({head:{sha:"${HEAD40}"}})); else process.stdout.write(JSON.stringify({total_count:1,check_runs:[{name:"ci",status:"completed",conclusion:"success",output:{text:"y".repeat(300000)}}]}));`);
+  const gh = new GithubGh({ bin, observeLimitBytes: 200_000 });
+  try {
+    await expect(gh.observePullRequest({ owner: "a", repo: "b", pr: 7, perPage: 100 })).rejects.toThrow(/^GitHub returned invalid/);
+  } finally { await gh.close(); }
+});

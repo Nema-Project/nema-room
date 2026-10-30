@@ -126,7 +126,9 @@ async function recordAuthors(deps: ReportDeps, repo: Repo, messageId: string, re
   }
 }
 
-const GITHUB_OBSERVE_TIMEOUT_MS = 30_000;
+/** The daemon's read is two `gh` calls of up to 60 s each; the hub waits a little longer than both. */
+const GITHUB_OBSERVE_TIMEOUT_MS = 130_000;
+const DAEMON_TIMEOUT = "daemon 响应超时";
 
 /** Whether the workspace's GitHub plugin is on; no row means off (the plugin sends data outside). */
 async function githubPluginEnabled(db: Db, workspaceId: string): Promise<boolean> {
@@ -145,7 +147,7 @@ async function ghStatus(daemon: DaemonRpc): Promise<{ installed: boolean; logged
 
 function readFailure(error: unknown): GithubObservation["reasonCode"] {
   const message = error instanceof Error ? error.message : String(error);
-  if (message.includes("timed out")) return "timeout";
+  if (message.includes("timed out") || message === DAEMON_TIMEOUT) return "timeout";
   if (message.startsWith("GitHub returned invalid")) return "invalid_response";
   return "http_error";
 }
@@ -157,7 +159,7 @@ function readFailure(error: unknown): GithubObservation["reasonCode"] {
 export async function observeGithub(deps: ReportDeps, repo: Repo, report: StoredReport): Promise<GithubObservation> {
   const base = { source: "github-plugin-read" as const, checkRuns: [], truncated: false, headMatch: null };
   const pr = report.pr;
-  const target = githubTarget(repo.remoteUrl);
+  const target = pr === undefined ? null : githubTarget(repo.remoteUrl);
   const pluginEnabled = pr !== undefined && (await githubPluginEnabled(deps.db, repo.workspaceId));
   // plugins.status is asked only when the plugin is on, so a report never makes a gh call it does not need.
   const gh = pluginEnabled ? await ghStatus(deps.daemon) : { installed: false, loggedIn: false };
@@ -190,14 +192,26 @@ export async function observeGithub(deps: ReportDeps, repo: Repo, report: Stored
   }
 }
 
+// One hub runs per data directory, so reads of the same report are put in request order here: an older read
+// that would finish last waits instead of replacing a newer `current`.
+const githubReads = new Map<string, Promise<unknown>>();
+
 /** Reads GitHub for the report and merges it as `github.current`; the merge keeps the previous read as history. */
-async function recordGithub(deps: ReportDeps, repo: Repo, messageId: string, report: StoredReport): Promise<Message | null> {
-  try {
-    return await mergeReportMeta(deps.db, messageId, { github: await observeGithub(deps, repo, report) });
-  } catch {
-    console.error(`report ${messageId}: github observation failed`);
-    return null;
-  }
+function recordGithub(deps: ReportDeps, repo: Repo, messageId: string, report: StoredReport): Promise<Message | null> {
+  const previous = githubReads.get(messageId) ?? Promise.resolve();
+  const run = previous.then(async () => {
+    try {
+      return await mergeReportMeta(deps.db, messageId, { github: await observeGithub(deps, repo, report) });
+    } catch {
+      console.error(`report ${messageId}: github observation failed`);
+      return null;
+    }
+  });
+  githubReads.set(messageId, run);
+  void run.finally(() => {
+    if (githubReads.get(messageId) === run) githubReads.delete(messageId);
+  });
+  return run;
 }
 
 function repoParams(repo: Repo) {

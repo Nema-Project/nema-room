@@ -78,3 +78,8 @@ it("gates a github read in a fixed order", () => {
   expect("target" in two).toBe(false);
   expect(githubObservationGate({ pr: 7, pluginEnabled: true, gh: on, targets: one })).toEqual({ state: "read", target: one[0] });
 });
+
+it("reads a remote with a malformed percent escape as no GitHub target", () => {
+  expect(githubTarget("https://github.com/example/re%E0po.git")).toBeNull();
+  expect(githubTarget("https://github.com/example/%")).toBeNull();
+});

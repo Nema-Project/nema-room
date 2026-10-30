@@ -1,3 +1,5 @@
+import type { McpRecordState } from "./mcpConfig.js";
+
 export type ExtensionKind = "skill" | "mcp" | "plugin";
 export type Provision = "bundled" | "managed" | "external";
 export type InstallState = "absent" | "installing" | "installed" | "updating" | "removing" | "failed";
@@ -32,6 +34,8 @@ export type ExtensionRecord = {
   error: string | null;
   /** Only on records Nema installed from a pinned source. */
   provenance?: ExtensionProvenance;
+  /** Only on MCP records, filled in by the daemon when it lists them. Holds no command line, address or value. */
+  mcp?: McpRecordState;
 };
 
 function bundled(id: string, name: string, availability: Availability, error: string | null): ExtensionRecord {
