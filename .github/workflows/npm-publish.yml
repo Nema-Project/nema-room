@@ -2,12 +2,27 @@ name: Publish @nema-project/nema to npm
 
 # Trusted publishing (OIDC). The filename is part of the npm trusted-publisher
 # binding; do not rename it without changing the npm setting first.
-# A v* tag publishes only after verify.yml passes on that SHA. workflow_dispatch
-# builds and smokes the tarball and does not publish.
+# A v* tag push runs verify.yml, then packs and smokes the tarball and uploads
+# it as the nema-tarball artifact. It does not publish.
+# Publishing happens only when release-promote.yml dispatches this workflow on
+# the tag with promote_run_id and expected_integrity. That dispatch skips verify
+# and build, downloads the tag push run's nema-tarball (no repack), checks that
+# the promote run is live on main and passed its Candidate preflight, and
+# publishes only a tarball whose sha512 equals expected_integrity.
+# A manual dispatch without those inputs packs and smokes and does not publish.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      promote_run_id:
+        description: Set by release-promote.yml only; empty means pack and smoke without publishing
+        type: string
+        default: ''
+      expected_integrity:
+        description: sha512 integrity of the tag push run tarball, set by release-promote.yml
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -25,12 +40,14 @@ env:
 
 jobs:
   verify:
+    if: ${{ inputs.promote_run_id == '' }}
     uses: ./.github/workflows/verify.yml
     with:
       checkout_ref: ${{ github.sha }}
 
   build:
     name: Pack and smoke nema
+    if: ${{ inputs.promote_run_id == '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -99,6 +116,7 @@ jobs:
             dist-npm/nema-project-nema-*.tgz
             scripts/npm/check-tag.mjs
             scripts/desktop/release-version.mjs
+            scripts/release/npm-state.mjs
             apps/cli/package.json
             apps/desktop/package.json
             apps/local/package.json
@@ -114,18 +132,84 @@ jobs:
 
   publish:
     name: Publish to npm
-    needs: [verify, build]
-    if: ${{ github.event_name == 'push' && needs.verify.result == 'success' && needs.build.result == 'success' }}
+    # Only release-promote reaches this job: a dispatch on a tag ref that names a promote run.
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref_type == 'tag' && inputs.promote_run_id != '' }}
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
+      actions: read
       contents: read
+      id-token: write
     timeout-minutes: 15
+    # One registry queue across versions; never cancel a publish in flight.
+    concurrency:
+      group: npm-publish-registry
+      cancel-in-progress: false
     steps:
+      - name: Check the promote run and find the tag push run
+        id: origin
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          PROMOTE_RUN_ID: ${{ inputs.promote_run_id }}
+          EXPECTED_INTEGRITY: ${{ inputs.expected_integrity }}
+        run: |
+          set -euo pipefail
+          [[ "$PROMOTE_RUN_ID" =~ ^[0-9]+$ ]] || { echo "promote_run_id must be a run id" >&2; exit 1; }
+          [[ "$EXPECTED_INTEGRITY" =~ ^sha512-[A-Za-z0-9+/]{86}==$ ]] || { echo "expected_integrity must be sha512-<86 base64 chars>==" >&2; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "unexpected commit ${SHA}" >&2; exit 1; }
+          # Only a live release-promote run on main, past its Candidate preflight, may publish.
+          promote=$(gh api "repos/${REPO}/actions/runs/${PROMOTE_RUN_ID}")
+          test "$(jq -r .path <<<"$promote")" = ".github/workflows/release-promote.yml" || { echo "run ${PROMOTE_RUN_ID} is not release-promote" >&2; exit 1; }
+          test "$(jq -r .head_branch <<<"$promote")" = "main" || { echo "release-promote run ${PROMOTE_RUN_ID} is not on main" >&2; exit 1; }
+          test "$(jq -r .status <<<"$promote")" = "in_progress" || { echo "release-promote run ${PROMOTE_RUN_ID} is not in progress" >&2; exit 1; }
+          # release-promote names each run after its tag input (run-name), so a run promoting another tag cannot authorise this one.
+          test "$(jq -r .display_title <<<"$promote")" = "Release promote ${TAG}" || { echo "release-promote run ${PROMOTE_RUN_ID} is not promoting ${TAG}" >&2; exit 1; }
+          preflight=$(gh api "repos/${REPO}/actions/runs/${PROMOTE_RUN_ID}/jobs" --jq '[.jobs[].steps[] | select(.name == "Candidate preflight") | .conclusion] | join(",")')
+          test "$preflight" = "success" || { echo "release-promote run ${PROMOTE_RUN_ID} has no successful Candidate preflight (${preflight:-none})" >&2; exit 1; }
+          # The tarball comes from this tag's push run: same commit, verify and build both succeeded.
+          # The tag is data: jq gets it with --arg, never inside the filter text.
+          runs=$(gh api "repos/${REPO}/actions/workflows/npm-publish.yml/runs?event=push&head_sha=${SHA}&per_page=100")
+          # Like promote.mjs completeRuns: the newest run of the tag could sit on a page this answer does not hold.
+          if [ "$(jq '(.total_count | type) == "number" and (.workflow_runs | length) == .total_count' <<<"$runs")" != true ]; then
+            echo "npm-publish push runs at ${SHA}: the runs answer does not hold every run" >&2
+            exit 1
+          fi
+          push_run=$(jq -r --arg tag "$TAG" '[.workflow_runs[] | select(.head_branch == $tag and .conclusion == "success")] | sort_by(.id) | last | .id // empty' <<<"$runs")
+          test -n "$push_run" || { echo "no successful push run of npm-publish for ${TAG} at ${SHA}" >&2; exit 1; }
+          # A tag push runs the complete verify.yml: every verify job must have run and passed, none skipped.
+          jobs=$(gh api "repos/${REPO}/actions/runs/${push_run}/jobs?per_page=100")
+          # Like promote.mjs assertPushRunJobs: a failed job on a page this answer does not hold would go unseen.
+          counts=$(jq -r '"\(.jobs | length) \(.total_count // "none")"' <<<"$jobs")
+          if [ "$(jq '(.total_count | type) == "number" and (.jobs | length) == .total_count' <<<"$jobs")" != true ]; then
+            echo "push run ${push_run}: the jobs answer lists ${counts% *} of ${counts#* } jobs" >&2
+            exit 1
+          fi
+          # Same exact names as promote.mjs REQUIRED_PUSH_JOBS: every matrix leg is its own job.
+          for job in 'Pack and smoke nema' 'verify / Workflow lint' 'verify / Full application tests and web build' \
+            'verify / Platform checks (macos-latest)' 'verify / Platform checks (windows-latest)' \
+            'verify / npm pack smoke (ubuntu-latest)' 'verify / npm pack smoke (windows-latest)' 'verify / npm pack smoke (macos-latest)'; do
+            ok=$(jq --arg job "$job" '[.jobs[] | select(.name == $job)] | (length > 0) and all(.conclusion == "success")' <<<"$jobs")
+            test "$ok" = true || { echo "push run ${push_run}: ${job} did not run and pass" >&2; exit 1; }
+          done
+          ok=$(jq '[.jobs[] | select(.name | startswith("verify / "))] | all(.conclusion == "success")' <<<"$jobs")
+          test "$ok" = true || { echo "push run ${push_run}: a verify job did not pass" >&2; exit 1; }
+          echo "push_run=${push_run}" >> "$GITHUB_OUTPUT"
+      # What the promote run's Candidate preflight verified: this dispatch must be for exactly that.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: promote-binding
+          path: promote
+          run-id: ${{ inputs.promote_run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: nema-tarball
           path: artifact
+          run-id: ${{ steps.origin.outputs.push_run }}
+          github-token: ${{ github.token }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -137,8 +221,16 @@ jobs:
           TAG: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}
+          EXPECTED_INTEGRITY: ${{ inputs.expected_integrity }}
         run: |
           set -euo pipefail
+          # The promote run's preflight checked one tag, at one commit, with one tarball: only that may publish.
+          binding=promote/promote-binding.json
+          for field in tag commit integrity; do
+            case "$field" in tag) want="$TAG" ;; commit) want="$SHA" ;; integrity) want="$EXPECTED_INTEGRITY" ;; esac
+            got=$(jq -er --arg f "$field" '.[$f] | strings' "$binding") || { echo "promote binding has no ${field}" >&2; exit 1; }
+            test "$got" = "$want" || { echo "promote run preflighted ${field} ${got}, this dispatch is for ${want}" >&2; exit 1; }
+          done
           git init --quiet gate
           git -C gate remote add origin "https://github.com/${REPO}.git"
           # Resolve refs only. This is not a source checkout: the job still publishes the downloaded tarball.
@@ -154,8 +246,58 @@ jobs:
           fi
           git -C gate "${auth[@]}" fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
           git -C gate merge-base --is-ancestor "$SHA" refs/remotes/origin/main
+          # Only the tarball is build output. Every other artifact file runs or is read here, with the OIDC token
+          # in reach, so each must be byte-identical to the file in the tag commit checked above.
+          while IFS= read -r -d '' file; do
+            rel="${file#artifact/}"
+            case "$rel" in dist-npm/*) continue ;; esac
+            want=$(git -C gate rev-parse --verify --quiet "${SHA}:${rel}") || { echo "artifact file ${rel} is not in ${TAG}" >&2; exit 1; }
+            test "$(git -C gate hash-object "${PWD}/${file}")" = "$want" || { echo "artifact file ${rel} differs from ${TAG}" >&2; exit 1; }
+          done < <(find artifact -type f -print0)
           meta=$(node artifact/scripts/npm/check-tag.mjs "$TAG")
           dist=$(node -e 'const tag=JSON.parse(process.argv[1]).distTag; if(tag!=="latest"&&tag!=="next") throw new Error("unexpected dist-tag"); process.stdout.write(tag)' "$meta")
+          version="${TAG#v}"
+          tarball=$(find artifact/dist-npm -name 'nema-project-nema-*.tgz' | head -n 1)
+          test -n "$tarball"
+          got_integrity=$(node artifact/scripts/release/npm-state.mjs --integrity "$tarball")
+          if [ "$got_integrity" != "$EXPECTED_INTEGRITY" ]; then
+            echo "push run tarball is ${got_integrity}, release-promote expected ${EXPECTED_INTEGRITY}" >&2
+            exit 1
+          fi
+          # absent -> publish; same -> already done; different -> refuse (exit 3); cannot tell -> fail (exit 2).
+          state=$(node artifact/scripts/release/npm-state.mjs "$version" "$EXPECTED_INTEGRITY")
+          if [ "$state" = same ]; then
+            echo "${version} is already on npm with the expected tarball"
+            exit 0
+          fi
+          test "$state" = absent
+          # Re-read the channel dist-tag right before publishing. A failed read fails the step (set -e):
+          # an unreadable tag is never treated as older. A stable version older than latest goes to
+          # maintenance; a prerelease older than next is refused, since next would move backwards.
+          # newer A B prints yes or no; a value that is not a release version throws, and the assignment
+          # that captures it fails the step, so an unrecognised tag is never taken as older.
+          newer() {
+            node --input-type=module -e 'import { compareReleaseVersions } from "./artifact/scripts/desktop/release-version.mjs"; process.stdout.write(compareReleaseVersions(process.argv[1], process.argv[2]) > 0 ? "yes" : "no")' "$1" "$2"
+          }
+          current=$(npm view @nema-project/nema "dist-tags.${dist}")
+          ahead=no
+          if [ -n "$current" ]; then ahead=$(newer "$current" "$version"); fi
+          if [ "$ahead" = yes ]; then
+            if [ "$dist" = latest ]; then
+              dist=maintenance
+              # maintenance must not move backwards either: promoting older stables in descending order stops.
+              held=$(npm view @nema-project/nema "dist-tags.maintenance")
+              held_ahead=no
+              if [ -n "$held" ]; then held_ahead=$(newer "$held" "$version"); fi
+              if [ "$held_ahead" = yes ]; then
+                echo "npm maintenance is ${held}, newer than ${version}; refusing to move it backwards" >&2
+                exit 1
+              fi
+            else
+              echo "npm ${dist} is ${current}, newer than ${version}; refusing to move it backwards" >&2
+              exit 1
+            fi
+          fi
           # The tag can move after the check above. Fetch it again in this same step, immediately before publish.
           git -C gate "${auth[@]}" fetch --no-tags origin "refs/tags/${TAG}:refs/tags/${TAG}"
           got=$(git -C gate rev-parse "refs/tags/${TAG}^{}")
@@ -163,6 +305,8 @@ jobs:
             echo "tag moved: ${TAG} is ${got}, expected ${SHA}" >&2
             exit 1
           fi
-          tarball=$(find artifact/dist-npm -name 'nema-project-nema-*.tgz' | head -n 1)
-          test -n "$tarball"
-          npm publish --provenance --access public --tag "$dist" "./$tarball"
+          if ! npm publish --provenance --access public --tag "$dist" "./$tarball"; then
+            # A concurrent publish of the same tarball also counts as done; anything else fails.
+            state=$(node artifact/scripts/release/npm-state.mjs "$version" "$EXPECTED_INTEGRITY")
+            test "$state" = same
+          fi

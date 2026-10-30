@@ -1,7 +1,19 @@
 import { nanoid } from "nanoid";
-import type { AgentMessageMeta, GithubObservation, ReportAuthors, ReportCheck, ReportMessageMeta, UserMessageMeta } from "@nema/shared";
+import {
+  ATTACHMENT_LIMITS,
+  messageHasBody,
+  type AgentMessageMeta,
+  type AttachmentRef,
+  type AttachmentView,
+  type GithubObservation,
+  type ReportAuthors,
+  type ReportCheck,
+  type ReportMessageMeta,
+  type UserMessageMeta,
+} from "@nema/shared";
+import { AttachmentError, bindAttachments, listAttachmentsForMessages, toAttachmentRef } from "./attachments.js";
 import type { Db } from "./db/db.js";
-import { insertQueuedTask, type Task } from "./tasks.js";
+import { getTask, insertQueuedTask, type Task } from "./tasks.js";
 import { conversationOf, getLastAgentMessage, getLastAskedQuestion } from "./threads.js";
 
 export type Message = {
@@ -17,6 +29,8 @@ export type Message = {
   threadId: string | null;
   /** Database sequence for acknowledging exactly the rendered thread messages. */
   seq: number;
+  /** Files bound to a user message, tombstones included; [] for every other message. */
+  attachments: AttachmentView[];
 };
 
 /** An agent message: its meta, when present, is always AgentMessageMeta. */
@@ -63,7 +77,61 @@ function toMessage(r: Row): Message {
     editedAt: r.edited_at ? new Date(r.edited_at).toISOString() : null,
     threadId: r.thread_id,
     seq: Number(r.seq),
+    attachments: [],
   };
+}
+
+/** Fills `attachments` on user messages with one query; other roles never carry files. */
+async function withAttachments(db: Db, messages: Message[]): Promise<Message[]> {
+  const ids = messages.filter((m) => m.role === "user").map((m) => m.id);
+  if (ids.length === 0) return messages;
+  const byMessage = await listAttachmentsForMessages(db, ids);
+  return messages.map((m) => (byMessage.has(m.id) ? { ...m, attachments: byMessage.get(m.id)! } : m));
+}
+
+export const DELIVERY_LIMIT_MESSAGE = `本条、被引用消息和 thread 锚点的附件合计超过 32 MB 或 ${ATTACHMENT_LIMITS.perTaskCount} 个，请去掉一些附件或不引用那条消息`;
+
+/** Files of `message`, then of the message it quotes, then of its thread anchor, each once, tombstones included. */
+async function deliveryViewsFor(db: Db, message: Message): Promise<AttachmentView[]> {
+  if (message.role !== "user") return [];
+  const quoteId = (message.meta as UserMessageMeta | null)?.quote?.messageId;
+  const sources = [...new Set([message.id, ...(quoteId ? [quoteId] : []), ...(message.threadId ? [message.threadId] : [])])];
+  const byMessage = await listAttachmentsForMessages(db, sources);
+  const seen = new Set<string>();
+  const views: AttachmentView[] = [];
+  for (const source of sources) {
+    for (const view of byMessage.get(source) ?? []) {
+      if (seen.has(view.id)) continue;
+      seen.add(view.id);
+      views.push(view);
+    }
+  }
+  return views;
+}
+
+/**
+ * The attachments a task for `message` delivers. Deleted files are left out; a missing file stays in so the task
+ * fails plainly when the daemon cannot fetch it.
+ */
+async function deliverySetFor(db: Db, message: Message): Promise<AttachmentRef[]> {
+  return (await deliveryViewsFor(db, message)).filter((v) => v.status !== "deleted").map(toAttachmentRef);
+}
+
+async function taskMessage(db: Db, taskId: string): Promise<Message | null> {
+  const task = await getTask(db, taskId);
+  return task ? getMessage(db, task.messageId) : null;
+}
+
+/** Ids the room may serve to task `taskId`: its delivery set plus files deleted from it since (answered 410). */
+export async function deliveryScope(db: Db, taskId: string): Promise<Set<string>> {
+  const message = await taskMessage(db, taskId);
+  return new Set(message ? (await deliveryViewsFor(db, message)).map((v) => v.id) : []);
+}
+
+/** The attachments task `taskId` hands to the daemon (task.assign.attachments) and may fetch from the room. */
+export async function deliverySet(db: Db, taskId: string): Promise<AttachmentRef[]> {
+  const message = await taskMessage(db, taskId);
+  return message ? deliverySetFor(db, message) : [];
 }
 
 async function insertMessage(
@@ -83,29 +151,94 @@ async function insertMessage(
   return toMessage(rows[0]!);
 }
 
+export type PostUserMessageOptions = { quoteMessageId?: string; threadId?: string; attachmentIds?: string[] };
+
+/**
+ * A user message and its queued task, in one transaction. With attachment ids, the uploads are locked first: if they
+ * are already bound to one message that matches this request exactly (same files, text, quote and thread), that
+ * message and its task come back with `replayed: true` and nothing is written. Any other bound state is a 409.
+ */
 export async function postUserMessage(
   db: Db,
   workspaceId: string,
   content: string,
-  opts: { quoteMessageId?: string; threadId?: string } | string = {},
-): Promise<{ message: Message; task: Task }> {
-  if (content.trim() === "") throw new Error("message content must not be empty");
+  opts: PostUserMessageOptions | string = {},
+): Promise<{ message: Message; task: Task; replayed: boolean }> {
   const options = typeof opts === "string" ? { quoteMessageId: opts } : opts;
-  return db.tx(async (t) => {
-    let meta: UserMessageMeta | null = null;
-    if (options.threadId) {
-      const thread = await t.query<{ workspace_id: string }>("select workspace_id from threads where id=$1", [options.threadId]);
-      if (!thread[0] || thread[0].workspace_id !== workspaceId) throw new MessageOpError(400, "thread not in this workspace");
-    }
-    if (options.quoteMessageId) {
-      const quoted = await getMessage(t, options.quoteMessageId);
-      if (!quoted || quoted.workspaceId !== workspaceId) throw new MessageOpError(400, "quote: message not in this workspace");
-      meta = { quote: { messageId: quoted.id, role: quoted.role, excerpt: messageExcerpt(quoted.content) } };
-    }
-    const message = await insertMessage(t, workspaceId, "user", content, null, meta, options.threadId ?? null);
-    const task = await insertQueuedTask(t, workspaceId, message.id);
-    return { message, task };
-  });
+  const attachmentIds = [...new Set(options.attachmentIds ?? [])].sort();
+  if (!messageHasBody(content, attachmentIds)) throw new MessageOpError(400, "message content must not be empty");
+  try {
+    return await db.tx(async (t) => {
+      if (attachmentIds.length > 0) {
+        const replay = await lockForSend(t, workspaceId, content, options, attachmentIds);
+        if (replay) return { ...replay, replayed: true };
+      }
+      let meta: UserMessageMeta | null = null;
+      if (options.threadId) {
+        const thread = await t.query<{ workspace_id: string }>("select workspace_id from threads where id=$1", [options.threadId]);
+        if (!thread[0] || thread[0].workspace_id !== workspaceId) throw new MessageOpError(400, "thread not in this workspace");
+      }
+      if (options.quoteMessageId) {
+        const quoted = await getMessage(t, options.quoteMessageId);
+        if (!quoted || quoted.workspaceId !== workspaceId) throw new MessageOpError(400, "quote: message not in this workspace");
+        meta = { quote: { messageId: quoted.id, role: quoted.role, excerpt: messageExcerpt(quoted.content) } };
+      }
+      const inserted = await insertMessage(t, workspaceId, "user", content, null, meta, options.threadId ?? null);
+      const attachments = await bindAttachments(t, workspaceId, inserted.id, attachmentIds);
+      const message = { ...inserted, attachments: await reorder(t, inserted.id, attachments) };
+      const delivered = await deliverySetFor(t, message);
+      if (delivered.length > ATTACHMENT_LIMITS.perTaskCount || delivered.reduce((sum, r) => sum + r.size, 0) > ATTACHMENT_LIMITS.perTaskBytes) {
+        throw new MessageOpError(400, DELIVERY_LIMIT_MESSAGE);
+      }
+      const task = await insertQueuedTask(t, workspaceId, message.id);
+      return { message, task, replayed: false };
+    });
+  } catch (e) {
+    if (e instanceof AttachmentError) throw new MessageOpError(e.status === 404 ? 404 : e.status === 400 ? 400 : 409, e.message);
+    throw e;
+  }
+}
+
+/** Same order as listAttachmentsForMessages, so a fresh send and a later read agree. */
+async function reorder(db: Db, messageId: string, fallback: AttachmentView[]): Promise<AttachmentView[]> {
+  if (fallback.length === 0) return fallback;
+  return (await listAttachmentsForMessages(db, [messageId])).get(messageId) ?? fallback;
+}
+
+/**
+ * Locks the requested uploads (in id order, so concurrent sends queue here). Returns null when all are unsent;
+ * returns the earlier message and task when this request is a retry of it; throws 409 otherwise.
+ */
+async function lockForSend(
+  t: Db,
+  workspaceId: string,
+  content: string,
+  options: PostUserMessageOptions,
+  ids: string[],
+): Promise<{ message: Message; task: Task } | null> {
+  const rows = await t.query<{ id: string; status: string; message_id: string | null }>(
+    "select id, status, message_id from message_attachments where id = any($1) and workspace_id = $2 order by id for update",
+    [ids, workspaceId],
+  );
+  if (rows.length !== ids.length) throw new MessageOpError(409, "attachments must be unsent uploads of this workspace");
+  if (rows.every((r) => r.status === "staged")) return null;
+  const messageId = rows[0]!.message_id;
+  const conflict = new MessageOpError(409, "these attachments were already sent with a different message");
+  if (!messageId || !rows.every((r) => r.status === "attached" && r.message_id === messageId)) throw conflict;
+  const prior = await getMessage(t, messageId);
+  if (!prior || prior.workspaceId !== workspaceId || prior.role !== "user") throw conflict;
+  const boundIds = prior.attachments.map((a) => a.id).sort();
+  const priorQuote = (prior.meta as UserMessageMeta | null)?.quote?.messageId ?? null;
+  const same =
+    boundIds.length === ids.length && boundIds.every((id, i) => id === ids[i]) &&
+    prior.content === content &&
+    priorQuote === (options.quoteMessageId ?? null) &&
+    prior.threadId === (options.threadId ?? null);
+  if (!same) throw conflict;
+  const first = await t.query<{ id: string }>("select id from tasks where message_id = $1 order by seq limit 1", [messageId]);
+  const task = first[0] ? await getTask(t, first[0].id) : null;
+  if (!task) throw conflict;
+  return { message: prior, task };
 }
 
 export const EDIT_BUSY_MESSAGE = "message is still being processed";
@@ -121,7 +254,7 @@ export async function searchMessages(db: Db, workspaceId: string, q: string): Pr
     `select ${COLS} from messages where workspace_id = $1 and content ilike $2 escape '\\' order by seq desc limit 50`,
     [workspaceId, pattern],
   );
-  return rows.map(toMessage);
+  return withAttachments(db, rows.map(toMessage));
 }
 
 export async function listMessageVersions(db: Db, messageId: string): Promise<MessageVersion[]> {
@@ -138,12 +271,16 @@ export async function editUserMessage(
   messageId: string,
   content: string,
 ): Promise<{ message: Message; task: Task }> {
-  if (content.trim() === "") throw new Error("message content must not be empty");
   return db.tx(async (t) => {
     const locked = await t.query<Row>(`select ${COLS} from messages where id = $1 and workspace_id = $2 for update`, [messageId, workspaceId]);
     const row = locked[0];
     if (!row) throw new MessageOpError(404, "message not found");
     if (row.role !== "user") throw new MessageOpError(400, "only user messages can be edited");
+    if (content.trim() === "") {
+      // Text may only go when the message still has a file to stand on.
+      const files = (await listAttachmentsForMessages(t, [messageId])).get(messageId) ?? [];
+      if (!files.some((f) => f.status !== "deleted")) throw new MessageOpError(400, "message content must not be empty");
+    }
     const ws = await t.query<{ archived_at: Date | string | null }>(`select archived_at from workspaces where id = $1`, [workspaceId]);
     if (ws[0]?.archived_at) throw new ArchivedWorkspaceError();
     const busy = await t.query(`select 1 from tasks where message_id = $1 and status in ('queued', 'running') limit 1`, [messageId]);
@@ -159,7 +296,8 @@ export async function editUserMessage(
       content,
     ]);
     const task = await insertQueuedTask(t, workspaceId, messageId, "edit");
-    return { message: toMessage(updated[0]!), task };
+    const [message] = await withAttachments(t, [toMessage(updated[0]!)]);
+    return { message: message!, task };
   });
 }
 
@@ -279,12 +417,12 @@ export async function listMessages(db: Db, workspaceId: string, limit = 200): Pr
      order by seq asc`,
     [workspaceId, limit],
   );
-  return rows.map(toMessage);
+  return withAttachments(db, rows.map(toMessage));
 }
 
 export async function getMessage(db: Db, id: string): Promise<Message | null> {
   const rows = await db.query<Row>(`select ${COLS} from messages where id = $1`, [id]);
-  return rows[0] ? toMessage(rows[0]) : null;
+  return rows[0] ? (await withAttachments(db, [toMessage(rows[0])]))[0]! : null;
 }
 
 export { getLastAgentMessage, getLastAskedQuestion };
@@ -294,7 +432,7 @@ export async function listThreadMessages(db: Db, threadId: string, limit = 200):
   const rows = await db.query<Row>(
     `select * from (select ${COLS} from messages where thread_id=$1 order by seq desc limit $2) latest order by seq asc`, [threadId, limit],
   );
-  return rows.map(toMessage);
+  return withAttachments(db, rows.map(toMessage));
 }
 
 /**
@@ -311,12 +449,12 @@ export async function listRecentMessages(db: Db, workspaceId: string, excludeId:
     const replies = await db.query<Row>(`select ${COLS} from (
       select ${COLS} from messages where workspace_id=$1 and thread_id=$2 and id<>$3
       order by seq desc limit $4) r order by seq asc`, [workspaceId, threadId, excludeId, Math.min(limit, 50)]);
-    return [...(anchor ? [anchor] : []), ...replies.map(toMessage)];
+    return [...(anchor ? [anchor] : []), ...(await withAttachments(db, replies.map(toMessage)))];
   }
   const rows = await db.query<Row>(`select * from (
     select ${COLS} from messages where workspace_id=$1 and thread_id is null and id<>$2 order by seq desc limit $3
   ) m order by seq asc`, [workspaceId, excludeId, limit]);
-  return rows.map(toMessage);
+  return withAttachments(db, rows.map(toMessage));
 }
 
 export async function listPromptMessages(db: Db, workspaceId: string, userMessageId: string, limit = 20): Promise<Message[]> {
@@ -330,7 +468,7 @@ export async function listPromptMessages(db: Db, workspaceId: string, userMessag
       select ${COLS} from messages where workspace_id=$1 and thread_id=$2 and id<>$3
         and (role<>'user' or seq < $4) order by seq desc limit $5
     ) m order by seq asc`, [workspaceId, threadId, userMessageId, target.seq, Math.min(limit, 50)]);
-    return [...(anchor ? [anchor] : []), ...rows.map(toMessage)];
+    return [...(anchor ? [anchor] : []), ...(await withAttachments(db, rows.map(toMessage)))];
   }
   const rows = await db.query<Row>(
     `select * from (
@@ -341,5 +479,5 @@ export async function listPromptMessages(db: Db, workspaceId: string, userMessag
      order by seq asc`,
     [workspaceId, userMessageId, limit],
   );
-  return rows.map(toMessage);
+  return withAttachments(db, rows.map(toMessage));
 }

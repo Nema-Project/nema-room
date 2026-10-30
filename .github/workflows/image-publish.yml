@@ -8,8 +8,9 @@ name: Image publish
 # request does not publish and does not run verify.yml. A tag still runs
 # the full verify.yml suite.
 # The publish job copies the build job's OCI layout. It does not install the
-# workspace or build an image. Publish jobs share one registry queue. A stable
-# release moves latest only when this version is not older than the label on latest.
+# workspace or build an image. Publish jobs share one registry queue. This
+# workflow pushes only the version tag; release-promote.yml moves latest after
+# the whole release verifies.
 on:
   pull_request:
     paths:
@@ -307,43 +308,6 @@ jobs:
           }
           push_one hub
           push_one web
-      - name: Move latest for a stable release
-        if: needs.plan.outputs.prerelease == 'false'
-        shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/desktop/release-commit.mjs --verify-remote "refs/tags/${TAG}" "$RELEASE_COMMIT"
-          for target in hub web; do
-            "$RUNNER_TEMP/crane" digest "ghcr.io/nema-project/nema-room-${target}:${VERSION}" >/dev/null
-          done
-          decisions=()
-          for target in hub web; do
-            ref="ghcr.io/nema-project/nema-room-${target}"
-            current=""
-            if "$RUNNER_TEMP/crane" config "${ref}:latest" >"$RUNNER_TEMP/latest-config.json" 2>"$RUNNER_TEMP/latest-config.err"; then
-              node -e 'const fs=require("node:fs"); const config=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const version=config.config&&config.config.Labels&&config.config.Labels["org.opencontainers.image.version"]; if(!version){process.stderr.write("latest image has no version label\n"); process.exit(2);} process.stdout.write(version);' "$RUNNER_TEMP/latest-config.json" >"$RUNNER_TEMP/latest-version.txt"
-              current=$(tr -d "[:space:]" <"$RUNNER_TEMP/latest-version.txt")
-            elif grep -Eq 'MANIFEST_UNKNOWN|manifest unknown' "$RUNNER_TEMP/latest-config.err"; then
-              current=""
-            else
-              cat "$RUNNER_TEMP/latest-config.err" >&2
-              echo "cannot read ${ref}:latest; refusing to move latest" >&2
-              exit 1
-            fi
-            node scripts/images/check-images.mjs --move-latest "$current" "$VERSION" >"$RUNNER_TEMP/latest-decision.txt"
-            decisions+=("$(tr -d '[:space:]' <"$RUNNER_TEMP/latest-decision.txt")")
-          done
-          node scripts/desktop/release-commit.mjs --verify-remote "refs/tags/${TAG}" "$RELEASE_COMMIT"
-          i=0
-          for target in hub web; do
-            ref="ghcr.io/nema-project/nema-room-${target}"
-            if [ "${decisions[$i]}" = move ]; then
-              "$RUNNER_TEMP/crane" tag "${ref}:${VERSION}" latest
-            else
-              echo "keeping ${ref}:latest; ${VERSION} is older"
-            fi
-            i=$((i + 1))
-          done
 
   smoke:
     name: Pull published images

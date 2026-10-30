@@ -261,3 +261,28 @@ describe("runToolLoop after abort", () => {
     expect(m.inputs.length).toBe(1);
   });
 });
+
+describe("runToolLoop user parts", () => {
+  test("the first user message carries the extra parts after the user text, on every model call", async () => {
+    const { room } = stubRoom();
+    const parts = [
+      { type: "input_text" as const, text: "PREAMBLE" },
+      { type: "input_image" as const, image_url: "data:image/png;base64,AAAA" },
+      { type: "input_file" as const, filename: "spec.pdf", file_data: "data:application/pdf;base64,BBBB" },
+    ];
+    const { call, inputs } = script(done(fc("list_entries", {})), done(msg("ok")));
+    const res = await runToolLoop({ ...base(call, room), userParts: parts });
+    expect(res.reply).toBe("ok");
+    expect(inputs).toHaveLength(2);
+    for (const input of inputs) {
+      expect(input[0]).toEqual({ type: "message", role: "user", content: [{ type: "input_text", text: USER }, ...parts] });
+    }
+  });
+
+  test("without parts the first user message is unchanged", async () => {
+    const { room } = stubRoom();
+    const { call, inputs } = script(done(msg("ok")));
+    await runToolLoop(base(call, room));
+    expect(inputs[0]![0]).toEqual({ type: "message", role: "user", content: [{ type: "input_text", text: USER }] });
+  });
+});

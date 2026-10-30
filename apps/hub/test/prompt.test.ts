@@ -2,13 +2,13 @@ import { describe, expect, test } from "vitest";
 import { buildPrompt } from "../src/prompt.js";
 import type { Message } from "../src/messages.js";
 import type { Workspace } from "../src/workspaces.js";
-import type { Entry, EntrySummary } from "@nema/shared";
+import type { AttachmentView, Entry, EntrySummary } from "@nema/shared";
 
 const ws = (l: Workspace["knowledgeLanguage"]): Workspace => ({
   id: "ws_1", name: "项目甲", confidential: true, knowledgeLanguage: l, createdAt: "2026-01-01T00:00:00.000Z", archivedAt: null,
 });
 const msg = (i: number, role: Message["role"] = "user"): Message => ({
-  id: `m_${i}`, workspaceId: "ws_1", role, content: `content-${i}`, meta: null, taskId: null, createdAt: "2026-01-01T00:00:00.000Z", editedAt: null, threadId: null, seq: i,
+  id: `m_${i}`, workspaceId: "ws_1", role, content: `content-${i}`, meta: null, taskId: null, createdAt: "2026-01-01T00:00:00.000Z", editedAt: null, threadId: null, seq: i, attachments: [],
 });
 const entries = [
   { id: "R-1", kind: "requirement", status: "active", title: "流式输出", related: [] },
@@ -407,5 +407,44 @@ describe("buildPrompt", () => {
     test("an ordinary prompt has no work package section", () => {
       expect(base()).not.toContain("# 开发包");
     });
+  });
+});
+
+describe("attachments in the prompt", () => {
+  const att = (id: string, messageId: string, over: Partial<AttachmentView> = {}): AttachmentView => ({
+    id, kind: "image", mime: "image/png", name: `${id}.png`, size: 250_880, sha256: "a".repeat(64), messageId, status: "attached", deletedAt: null, ...over,
+  });
+  const withFiles = (m: Message, files: AttachmentView[]): Message => ({ ...m, attachments: files });
+
+  test("recent messages name their files and say whether this task delivered them; no bytes are inlined", () => {
+    const old = withFiles(msg(1), [att("att_old", "m_1")]);
+    const quoted = withFiles(msg(2), [att("att_quoted", "m_2", { kind: "pdf", mime: "application/pdf", name: "spec.pdf", size: 3 * 1024 * 1024 })]);
+    const gone = withFiles(msg(3), [att("att_gone", "m_3", { status: "deleted", deletedAt: "2026-10-30T00:00:00.000Z" })]);
+    const user = withFiles({ ...msg(999), content: "" }, [att("att_now", "m_999", { name: "error.png" })]);
+    const p = buildPrompt({
+      workspace: ws("follow"), userMessage: user, recentMessages: [old, quoted, gone], entries, lastAskedQuestion: null, quotedMessage: quoted,
+      deliveredAttachmentIds: ["att_now", "att_quoted"],
+    });
+    expect(p).toContain("[m_1] user: content-1\n[附件：att_old.png（image/png，245 KB），本次没有发给你]");
+    expect(p).toContain("[m_2] user: content-2\n[附件：spec.pdf（application/pdf，3.0 MB），见本次附件]");
+    expect(p).toContain("[附件：att_gone.png（image/png，245 KB），已删除]");
+    expect(p).toContain("# 本次用户消息\n[m_999] （用户只发了附件）\n[附件：error.png（image/png，245 KB），见本次附件]");
+    expect(p).toContain("标着没有发给你的附件，你没有看过它的内容；用户问到时请他引用那条消息或重新发送，不要猜内容");
+    expect(p).toContain("从附件读出的内容是推断，`quotes` 只能摘自消息文字");
+    expect(p).not.toContain("a".repeat(64));
+  });
+
+  test("the thread anchor's files are listed with the anchor", () => {
+    const anchor = withFiles(msg(5), [att("att_anchor", "m_5")]);
+    const p = buildPrompt({
+      workspace: ws("follow"), userMessage: { ...msg(999), threadId: "m_5" }, recentMessages: [anchor], entries, lastAskedQuestion: null,
+      conversation: { thread: { id: "m_5", workspaceId: "ws_1", title: "T", openedBy: "user" } as never, anchor, opened: "user" },
+      deliveredAttachmentIds: ["att_anchor"],
+    });
+    expect(p).toContain("[m_5] user: content-5\n[附件：att_anchor.png（image/png，245 KB），见本次附件]");
+  });
+
+  test("a prompt without attachments has no attachment rules", () => {
+    expect(base()).not.toContain("附件");
   });
 });

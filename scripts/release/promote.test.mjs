@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assertPushRunJobs, promote } from './promote.mjs';
+import { assertPushRunJobs, assertTagRunJobs, completeRuns, preflight, promote } from './promote.mjs';
 
 const COMMIT = 'a'.repeat(40);
 const INTEGRITY = 'sha512-EXPECTED';
@@ -18,6 +18,11 @@ function world({ version = '0.1.7', npm = 'absent', npmLatest = v('0.1.6'), npmN
   };
   const { prerelease } = { prerelease: version.includes('-') };
   const io = {
+    async tagWorkflows() {
+      state.log.push('tag workflows');
+      boom('tagWorkflows');
+      return ['image-publish push run 11: success, Pull published images passed', 'desktop-release push run 12: success'];
+    },
     async expectedIntegrity() { boom('expectedIntegrity'); return INTEGRITY; },
     async verify({ stage, expectedIntegrity }) {
       state.log.push(`verify ${stage}`);
@@ -89,8 +94,9 @@ async function run(options = {}, version = options.version ?? '0.1.7') {
 test('all steps in order: preflight, npm, final verify, hub latest, web latest, then the Release as latest', async () => {
   const { result, state, text } = await run();
   assert.equal(result.ok, true);
-  assert.deepEqual(state.log, ['verify candidate', 'npm dispatch', 'verify final', 'ghcr hub latest', 'ghcr web latest', 'release']);
+  assert.deepEqual(state.log, ['tag workflows', 'verify candidate', 'npm dispatch', 'verify final', 'ghcr hub latest', 'ghcr web latest', 'tag workflows', 'release']);
   assert.deepEqual(state.writes, ['npm dispatch', 'ghcr hub latest', 'ghcr web latest', 'release {"tag":"v0.1.7","prerelease":false,"makeLatest":true}']);
+  assert.match(text, /- image-publish push run 11: success, Pull published images passed\n- desktop-release push run 12: success/);
   assert.match(text, /npm 0\.1\.7: published by run 42; npm latest -> 0\.1\.7/);
   assert.match(text, new RegExp(`ghcr hub latest: 0\\.1\\.6 -> 0\\.1\\.7 \\(${DIGESTS.hub}\\)`));
   assert.match(text, /GitHub Release v0\.1\.7: published, latest=true/);
@@ -301,6 +307,8 @@ test('the push run must have run and passed the build job and the whole verify s
     { name: 'verify / Platform checks (macos-latest)', conclusion: 'success' },
     { name: 'verify / Platform checks (windows-latest)', conclusion: 'success' },
     { name: 'verify / npm pack smoke (ubuntu-latest)', conclusion: 'success' },
+    { name: 'verify / npm pack smoke (windows-latest)', conclusion: 'success' },
+    { name: 'verify / npm pack smoke (macos-latest)', conclusion: 'success' },
     { name: 'Publish to npm', conclusion: 'skipped' },
   ];
   assert.doesNotThrow(() => assertPushRunJobs(ok, 1, ok.length));
@@ -308,11 +316,82 @@ test('the push run must have run and passed the build job and the whole verify s
   const set = (prefix, conclusion) => ok.map((job) => (job.name.startsWith(prefix) ? { ...job, conclusion } : job));
   assert.throws(() => assertPushRunJobs(without('Pack'), 1, without('Pack').length), /Pack and smoke nema did not run and pass \(no such job\)/);
   assert.throws(() => assertPushRunJobs(without('verify / Full'), 1, without('verify / Full').length), /Full application tests and web build did not run/);
-  assert.throws(() => assertPushRunJobs(set('verify / npm pack smoke', 'skipped'), 1, set('verify / npm pack smoke', 'skipped').length), /npm pack smoke did not run and pass/);
-  assert.throws(() => assertPushRunJobs(set('verify / Platform checks (windows', 'skipped'), 1, set('verify / Platform checks (windows', 'skipped').length), /Platform checks did not run and pass/);
+  assert.throws(() => assertPushRunJobs(set('verify / npm pack smoke', 'skipped'), 1, set('verify / npm pack smoke', 'skipped').length), /npm pack smoke \(ubuntu-latest\) did not run and pass/);
+  assert.throws(() => assertPushRunJobs(set('verify / Platform checks (windows', 'skipped'), 1, set('verify / Platform checks (windows', 'skipped').length), /Platform checks \(windows-latest\) did not run and pass/);
   assert.throws(() => assertPushRunJobs([...ok, { name: 'verify / Something new', conclusion: 'skipped' }], 1, [...ok, { name: 'verify / Something new', conclusion: 'skipped' }].length), /Something new=skipped/);
   // A jobs page that does not hold every job of the run cannot prove the rest passed.
   assert.doesNotThrow(() => assertPushRunJobs(ok, 1, ok.length));
-  assert.throws(() => assertPushRunJobs(ok, 1, ok.length + 1), /lists 7 of 8 jobs/);
+  assert.throws(() => assertPushRunJobs(ok, 1, ok.length + 1), /lists 9 of 10 jobs/);
+  // Every matrix leg by its exact name: a run whose answer lacks one leg is refused even when its count agrees.
+  for (const leg of ['verify / Platform checks (windows-latest)', 'verify / npm pack smoke (macos-latest)']) {
+    const short = ok.filter((job) => job.name !== leg);
+    assert.throws(() => assertPushRunJobs(short, 1, short.length), new RegExp(`${leg.replace(/[()]/g, '\\$&')} did not run and pass \\(no such job\\)`));
+  }
   assert.throws(() => assertPushRunJobs(ok, 1, undefined), /did not report its job count/);
+});
+
+test('image-publish or desktop-release push runs that did not pass stop before verify and before any write', async () => {
+  const { result, state, text } = await run({ fail: { tagWorkflows: true } });
+  assert.equal(result.ok, false);
+  assert.deepEqual(state.log, ['tag workflows']);
+  assert.deepEqual(state.writes, []);
+  assert.match(text, /stopped:\*\* tag workflows: tagWorkflows failed/);
+  // The Candidate preflight step checks them too, before it reads the npm tarball.
+  const { state: pre, io } = world({ fail: { tagWorkflows: true } });
+  await assert.rejects(preflight({ version: '0.1.7', io }), /tagWorkflows failed/);
+  assert.deepEqual(pre.log, ['tag workflows']);
+  const { state: okState, io: okIo } = world();
+  assert.equal((await preflight({ version: '0.1.7', io: okIo })).ok, true);
+  assert.deepEqual(okState.log, ['tag workflows', 'verify candidate']);
+});
+
+test('the image-publish push run must have passed its pull smoke, the desktop run its builds and publish', () => {
+  const verify = ['verify / Workflow lint', 'verify / Full application tests and web build', 'verify / Platform checks (macos-latest)', 'verify / Platform checks (windows-latest)', 'verify / npm pack smoke (ubuntu-latest)', 'verify / npm pack smoke (windows-latest)', 'verify / npm pack smoke (macos-latest)'];
+  const image = ['Resolve release version', ...verify, 'Build and smoke images', 'Publish images', 'Pull published images'].map((name) => ({ name, conclusion: 'success' }));
+  const desktop = ['Resolve release version', ...verify, 'Build and smoke (darwin-arm64)', 'Build and smoke (win32-x64)', 'Publish release'].map((name) => ({ name, conclusion: 'success' }));
+  assert.doesNotThrow(() => assertTagRunJobs('image-publish.yml', image, 1, image.length));
+  assert.doesNotThrow(() => assertTagRunJobs('desktop-release.yml', desktop, 2, desktop.length));
+  const set = (jobs, name, conclusion) => jobs.map((job) => (job.name === name ? { ...job, conclusion } : job));
+  assert.throws(() => assertTagRunJobs('image-publish.yml', set(image, 'Pull published images', 'failure'), 1, image.length), /image-publish push run 1: Pull published images did not run and pass \(Pull published images=failure\)/);
+  assert.throws(() => assertTagRunJobs('image-publish.yml', image.filter((job) => job.name !== 'Pull published images'), 1, image.length - 1), /Pull published images did not run and pass \(no such job\)/);
+  assert.throws(() => assertTagRunJobs('desktop-release.yml', set(desktop, 'Build and smoke (win32-x64)', 'skipped'), 2, desktop.length), /Build and smoke \(win32-x64\) did not run and pass/);
+  // A missing matrix leg is refused even when total_count agrees with the shorter answer.
+  const noWin = desktop.filter((job) => job.name !== 'Build and smoke (win32-x64)');
+  assert.throws(() => assertTagRunJobs('desktop-release.yml', noWin, 2, noWin.length), /Build and smoke \(win32-x64\) did not run and pass \(no such job\)/);
+  const noPlatform = image.filter((job) => job.name !== 'verify / Platform checks (macos-latest)');
+  assert.throws(() => assertTagRunJobs('image-publish.yml', noPlatform, 1, noPlatform.length), /Platform checks \(macos-latest\) did not run and pass/);
+  assert.throws(() => assertTagRunJobs('image-publish.yml', set(image, 'verify / Workflow lint', 'cancelled'), 1, image.length), /verify \/ Workflow lint=cancelled/);
+  assert.throws(() => assertTagRunJobs('image-publish.yml', image, 1, image.length + 1), /lists 11 of 12 jobs/);
+  assert.throws(() => assertTagRunJobs('image-publish.yml', image, 1, undefined), /did not report its job count/);
+  assert.throws(() => assertTagRunJobs('npm-publish.yml', image, 1, image.length), /no job list/);
+});
+
+test('the tag workflows are checked again right before the Release is published', async () => {
+  // A desktop-release rerun started after the first check may be replacing draft assets: stop before publishing.
+  const { state, io } = world();
+  let calls = 0;
+  const first = io.tagWorkflows;
+  io.tagWorkflows = async () => {
+    calls += 1;
+    if (calls === 2) {
+      state.log.push('tag workflows');
+      throw new Error('desktop-release push run 12 is in_progress/null');
+    }
+    return first();
+  };
+  const lines = [];
+  const result = await promote({ version: '0.1.7', tag: 'v0.1.7', commit: COMMIT, io, summary: (line) => lines.push(line) });
+  assert.equal(result.ok, false);
+  assert.equal(calls, 2);
+  assert.deepEqual(state.log, ['tag workflows', 'verify candidate', 'npm dispatch', 'verify final', 'ghcr hub latest', 'ghcr web latest', 'tag workflows']);
+  assert.equal(state.draft, true, 'the Release stays a draft');
+  assert.match(lines.join('\n'), /stopped:\*\* tag workflows before the release: desktop-release push run 12 is in_progress/);
+});
+
+test('a workflow runs answer that does not hold every run of the commit is refused', () => {
+  const runs = [{ id: 1 }, { id: 2 }];
+  assert.deepEqual(completeRuns({ total_count: 2, workflow_runs: runs }, 'x'), runs);
+  assert.throws(() => completeRuns({ total_count: 21, workflow_runs: runs }, 'image-publish push runs'), /image-publish push runs: the runs answer lists 2 of 21 runs/);
+  assert.throws(() => completeRuns({ workflow_runs: runs }, 'x'), /did not report its run count/);
+  assert.throws(() => completeRuns({ total_count: 0 }, 'x'), /did not report its run count/);
 });

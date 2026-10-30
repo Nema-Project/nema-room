@@ -10,7 +10,7 @@ const CONFIG = "mcp.json";
 const DAMAGED = "mcp-config-damaged";
 
 export type McpConfigView = { id: string; name: string; config: McpConfig; secrets: Array<{ name: string; configured: boolean }> };
-export type McpReconcileResult = { damaged: string[]; removedSecrets: string[] };
+export type McpReconcileResult = { damaged: string[]; removedSecrets: string[]; clearedSlots: string[] };
 
 function digest(bytes: string): string {
   return createHash("sha256").update(bytes).digest("hex").slice(0, 12);
@@ -21,6 +21,25 @@ function assertName(name: unknown): string {
     throw new Error("MCP server name must be one line of 1 to 128 characters");
   }
   return name;
+}
+
+/**
+ * The config on disk when it still matches the record's revision, or null. Read-only and never
+ * throws, so the CLI can check a config without writing anything the daemon owns.
+ */
+export function readIntactMcpConfig(root: string, record: ExtensionRecord): McpConfig | null {
+  let bytes: string;
+  try {
+    bytes = readFileSync(path.join(ownedDirectory(root, record.id), CONFIG), "utf8");
+  } catch {
+    return null;
+  }
+  if (digest(bytes) !== record.revision) return null;
+  try {
+    return parseMcpConfig(JSON.parse(bytes));
+  } catch {
+    return null;
+  }
 }
 
 /** Same steps as the index: temp file, flush, rename. A crash leaves the old file or the new one. */
@@ -71,20 +90,8 @@ export function openMcpConfigs({ root, nemaHome }: { root: string; nemaHome: str
     return path.join(ownedDirectory(root, id), CONFIG);
   }
 
-  /** The config on disk when it still matches the record, or null. Never throws for a bad file. */
   function readIntact(record: ExtensionRecord): McpConfig | null {
-    let bytes: string;
-    try {
-      bytes = readFileSync(fileOf(record.id), "utf8");
-    } catch {
-      return null;
-    }
-    if (digest(bytes) !== record.revision) return null;
-    try {
-      return parseMcpConfig(JSON.parse(bytes));
-    } catch {
-      return null;
-    }
+    return readIntactMcpConfig(root, record);
   }
 
   function setAvailability(record: ExtensionRecord, damaged: boolean): ExtensionRecord {
@@ -172,13 +179,25 @@ export function openMcpConfigs({ root, nemaHome }: { root: string; nemaHome: str
     reconcile(): McpReconcileResult {
       const records = store.list().filter((row) => row.kind === "mcp" && row.provision === "managed");
       const damaged: string[] = [];
+      const clearedSlots: string[] = [];
       for (const record of records) {
-        if (setAvailability(record, readIntact(record) === null).availability === "damaged") damaged.push(record.id);
+        const config = readIntact(record);
+        if (setAvailability(record, config === null).availability === "damaged") damaged.push(record.id);
+        // A save cut off before it pruned leaves a value the config no longer names; it goes now.
+        if (config) {
+          const keep = new Set(secretRefs(config));
+          for (const stored of secrets.names(record.id)) {
+            if (!keep.has(stored)) {
+              secrets.clear(record.id, stored);
+              clearedSlots.push(`${record.id}/${stored}`);
+            }
+          }
+        }
       }
       const known = new Set(records.map((row) => row.id));
       const removedSecrets = secrets.ids().filter((id) => !known.has(id));
       for (const id of removedSecrets) secrets.removeAll(id);
-      return { damaged: damaged.sort(), removedSecrets };
+      return { damaged: damaged.sort(), removedSecrets, clearedSlots: clearedSlots.sort() };
     },
   };
 }

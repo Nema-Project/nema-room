@@ -7,6 +7,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import type { TaskAssign } from "@nema/shared";
+import { DAEMON_FEATURES } from "../src/attachments/capabilities.js";
 import { connectDaemon, VERSION_SKEW_ERROR } from "../src/daemon/connection.js";
 import { Runner, type AgentAdapter } from "../src/daemon/runner.js";
 
@@ -75,6 +76,16 @@ describe("daemon connection", () => {
     ws.send(JSON.stringify(task("t1")));
     expect(await ev).toMatchObject({ taskId: "t1", event: { type: "progress", text: "hi" } });
     expect(await fin).toMatchObject({ taskId: "t1", ok: true, reply: "ok!" });
+  });
+
+  test("hello advertises exactly the daemon's features", async () => {
+    const port = await start();
+    const hello = new Promise<any>((resolve) => wss.on("connection", (ws) => nextMsg(ws, "hello").then(resolve)));
+    const d = connectDaemon({ hubUrl: `http://127.0.0.1:${port}`, token: "tk", runner: new Runner([]) });
+    closers.push(() => d.close());
+    const features = (await hello).features;
+    expect(features).toEqual([...DAEMON_FEATURES]);
+    expect(features).toContain("attachments");
   });
 
   test("hello carries the real CLI version, not 0.0.0", async () => {
