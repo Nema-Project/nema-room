@@ -17,6 +17,7 @@ import { cliVersion } from "./direct/siwc.js";
 import { resolveHubTarget, runReport, runReportHook, type ReportFlags } from "./report/commands.js";
 import { runWpGet, runWpList } from "./wp/commands.js";
 import { authGithub } from "./secrets/github.js";
+import { defaultDesktopHome } from "./report/desktop.js";
 import { registerMcpCommands } from "./extensions/mcpCommands.js";
 import { installReport, REPORT_AGENTS, uninstallReport, type ReportAgent } from "./report/install.js";
 
@@ -56,7 +57,7 @@ const mcpCommand = program
     await startMcpServer({ hubUrl, runToken });
   });
 
-registerMcpCommands(mcpCommand, { nemaHome: nemaHomeDir(), hubUrl: (flag) => resolveHubTarget(flag), out: consoleOut, stdin: () => process.stdin });
+registerMcpCommands(mcpCommand, { nemaHome: nemaHomeDir(), desktopHome: defaultDesktopHome(), hubUrl: (flag) => resolveHubTarget(flag), out: consoleOut, stdin: () => process.stdin });
 
 program
   .command("doctor")

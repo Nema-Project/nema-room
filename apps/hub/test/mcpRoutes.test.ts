@@ -162,4 +162,36 @@ test("D-3: MCP records never add tools to an agent", async () => {
   const known = new Set(PLUGINS.flatMap((plugin) => plugin.functions.map((fn) => fn.name)));
   expect(names.every((name) => known.has(name))).toBe(true);
   expect(names.some((name) => name.includes("search_web"))).toBe(false);
+
 });
+
+describe("MCP save checks", () => {
+  test("a create-only save is forwarded, and the daemon's refusal is a 409", async () => {
+    answer = (method) => {
+      if (method === "extensions.mcp.save") throw new DaemonRpcError("MCP server search already exists");
+      throw new DaemonRpcError("daemon 未连接");
+    };
+    const r = await req("POST", "/api/extensions/mcp", { id: "search", name: "Search", config, create: true });
+    expect(r.status).toBe(409);
+    expect(calls[0].params.create).toBe(true);
+    expect((await req("POST", "/api/extensions/mcp", { id: "search", name: "Search", config, create: "yes" })).status).toBe(400);
+  });
+
+  test("a save row or secret slots that do not fit the config are a 502, not passed on", async () => {
+    for (const bad of [
+      { ...mcpRecord("search"), useState: "sideways" },
+      { ...mcpRecord("search"), source: "mcp:http" },
+      { ...mcpRecord("search"), extra: MARK },
+      (() => { const { revision: _r, ...rest } = mcpRecord("search"); return rest; })(),
+    ]) {
+      answer = (method) => (method === "extensions.mcp.save" ? bad : null);
+      const r = await req("POST", "/api/extensions/mcp", { id: "search", name: "Search", config });
+      expect(r.status).toBe(502);
+    }
+    for (const secrets of [[], [{ name: "OTHER", configured: true }], [{ name: "API_TOKEN", configured: true }, { name: "API_TOKEN", configured: false }]]) {
+      answer = (method, params) => (method === "extensions.mcp.get" ? { id: params.id, name: "Search", config, secrets } : null);
+      expect((await req("GET", "/api/extensions/search/mcp")).status).toBe(502);
+    }
+  });
+});
+

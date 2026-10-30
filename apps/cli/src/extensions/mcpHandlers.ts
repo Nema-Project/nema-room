@@ -76,11 +76,17 @@ export function createMcpHandlers(nemaHome: string, options: McpHandlerOptions =
 
   return {
     state,
-    /** Stop the server before the record changes use state or goes away. */
-    async beforeDisable(id: string): Promise<void> {
+    /**
+     * Stop the server and write `disabled` on its chain, so no start can run between the two: a
+     * start queued behind this one reads the record after the write and is refused.
+     */
+    async disable<T>(id: string, write: () => T | Promise<T>): Promise<T> {
       // The direct stop ends a start still waiting on the chain; the chained one waits for it to unwind.
       await supervisor.stop(id);
-      await serial(id, () => supervisor.stop(id));
+      return serial(id, async () => {
+        await supervisor.stop(id);
+        return write();
+      });
     },
     async remove(id: string): Promise<void> {
       await supervisor.stop(id);
@@ -98,12 +104,16 @@ export function createMcpHandlers(nemaHome: string, options: McpHandlerOptions =
         return configs.get(text(p, "id", "extensions.mcp.get"));
       });
       router.register("extensions.mcp.save", async (raw) => {
-        const p = params(raw, "extensions.mcp.save", ["id", "name", "config"]);
+        const p = params(raw, "extensions.mcp.save", ["id", "name", "config", "create"]);
         const id = text(p, "id", "extensions.mcp.save");
         const name = text(p, "name", "extensions.mcp.save");
         if (p.config === undefined) throw new Error("extensions.mcp.save needs a config");
+        if (p.create !== undefined && typeof p.create !== "boolean") throw new Error("extensions.mcp.save needs a boolean create");
+        const create = p.create === true;
         return serial(id, async () => {
           const existing = record(id);
+          // Checked on the chain, so of two adds racing for one id the second is refused, not merged.
+          if (create && existing) throw new Error(`MCP server ${id} already exists`);
           if (existing && (existing.kind !== "mcp" || existing.provision !== "managed")) throw new Error(`${id} is not an MCP server`);
           // A running server keeps the old config in memory: stop it before the file changes.
           if (running(id)) await supervisor.stop(id);

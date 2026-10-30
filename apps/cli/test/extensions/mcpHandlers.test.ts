@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { RpcRouter } from "../../src/daemon/rpc.js";
 import { registerExtensionHandlers } from "../../src/extensions/handlers.js";
+import { createMcpHandlers } from "../../src/extensions/mcpHandlers.js";
 import { openExtensionStore } from "../../src/extensions/store.js";
 import { openMcpSecretStore } from "../../src/secrets/mcp.js";
 
@@ -94,6 +95,17 @@ describe("extensions.mcp.* configs and credentials", () => {
     expect(response.error).toMatch(/not referenced/);
   });
 
+  test("a create-only save refuses an id that already exists, even when two race", async () => {
+    const [first, second] = await Promise.all([
+      call("extensions.mcp.save", { id: "search", name: "One", config: stdio(), create: true }),
+      call("extensions.mcp.save", { id: "search", name: "Two", config: { ...stdio(), command: "other" }, create: true }),
+    ]);
+    expect(first.ok).toBe(true);
+    expect(second.error).toBe("MCP server search already exists");
+    expect((await ok("extensions.mcp.get", { id: "search" })).name).toBe("One");
+    expect((await call("extensions.mcp.save", { id: "search", name: "One", config: stdio(), create: "yes" })).error).toMatch(/create/);
+  });
+
   test("save refuses an id held by a skill", async () => {
     openExtensionStore(join(home, "extensions")).putManaged({
       id: "notes", kind: "skill", name: "notes", summary: "", source: "nema install", revision: "abc", provision: "managed",
@@ -150,6 +162,59 @@ describe.skipIf(!posix)("start, stop and the operations around them", () => {
     await ok("extensions.setUse", { id: "search", useState: "disabled" });
     expect(await until(() => !alive(pid))).toBe(true);
     expect((await call("extensions.mcp.start", { id: "search" })).error).toMatch(/disabled/);
+  });
+
+  test("a start sent while the server is being disabled never leaves a disabled server running", async () => {
+    await ok("extensions.mcp.save", { id: "search", name: "Search", config: { ...stdio(), env: { FAKE_RECORD: { value: record("child") } } } });
+    await ok("extensions.mcp.start", { id: "search" });
+    const disabling = call("extensions.setUse", { id: "search", useState: "disabled" });
+    const starts: Array<Promise<unknown>> = [];
+    let done = false;
+    void disabling.finally(() => { done = true; });
+    // Starts at every turn until the disable has answered, so one lands between its stop and its write.
+    while (!done) {
+      starts.push(call("extensions.mcp.start", { id: "search" }));
+      await Promise.resolve();
+      await new Promise((r) => setImmediate(r));
+    }
+    starts.push(call("extensions.mcp.start", { id: "search" }));
+    expect((await disabling).ok).toBe(true);
+    await Promise.all(starts);
+    const row = (await list()).find((item) => item.id === "search");
+    expect(row.useState).toBe("disabled");
+    expect(row.mcp.connection).toBe("disconnected");
+  });
+
+  test("disable writes on the server's chain: a start queued while it runs reads the new state", async () => {
+    const own = mkdtempSync(join(tmpdir(), "nema-mcp-disable-"));
+    const mcp = createMcpHandlers(own);
+    const own_router = new RpcRouter();
+    const store = openExtensionStore(join(own, "extensions"));
+    mcp.register(own_router, (id) => store.list().find((row) => row.id === id));
+    try {
+      const rpc = async (method: string, params: unknown) => own_router.handle({ type: "rpc.request", id: String(++seq), method, params });
+      expect((await rpc("extensions.mcp.save", { id: "search", name: "Search", config: { ...stdio(), env: { FAKE_RECORD: { value: record("child") } } } })).ok).toBe(true);
+      expect((await rpc("extensions.mcp.start", { id: "search" })).ok).toBe(true);
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      let start: Promise<any> | null = null;
+      const disabling = mcp.disable("search", async () => {
+        // The write is slow; a start arriving now must wait for it.
+        start = rpc("extensions.mcp.start", { id: "search" });
+        await gate;
+        store.setUseState("search", "disabled");
+      });
+      await new Promise((r) => setTimeout(r, 50));
+      release();
+      await disabling;
+      const answer = await start!;
+      expect(answer.ok).toBe(false);
+      expect(answer.error).toMatch(/disabled/);
+      expect(mcp.state(store.list().find((row) => row.id === "search")!).connection).toBe("disconnected");
+    } finally {
+      await mcp.close();
+      rmSync(own, { recursive: true, force: true });
+    }
   });
 
   test("remove stops the server and deletes config, secrets and record", async () => {
