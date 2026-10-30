@@ -482,14 +482,67 @@ describe("CodexDirectAdapter attachments", () => {
     }
   });
 
-  test("compat with an image fails before any model or hub request", async () => {
-    saveConfig(home, { authMode: "compat" });
-    const { result } = await run(adapter(), withAttachments([serve("img", "image", "image/png", "shot.png", png)]));
+  const byok = () => {
+    saveConfig(home, { authMode: "byok", model: "m", byokBaseUrl: server.baseUrl });
+    saveByokKey(home, "sekret-key");
+  };
+
+  test("a BYOK endpoint Nema knows nothing about still gets images and PDFs in their native form", async () => {
+    byok();
+    server.responses(stream([msgItem("看过了")]));
+    const refs = [serve("img", "image", "image/png", "shot.png", png), serve("doc", "pdf", "application/pdf", "spec.pdf", pdf)];
+    const { result } = await run(adapter(), withAttachments(refs));
+    expect(result).toEqual({ ok: true, reply: "看过了" });
+    const body = JSON.parse(server.requests.find((r) => r.url === "/v1/responses")!.body) as Record<string, unknown>;
+    const parts = firstUser(body).content;
+    expect(parts.find((p) => p.type === "input_image")).toEqual({ type: "input_image", image_url: `data:image/png;base64,${png.toString("base64")}` });
+    expect(parts.find((p) => p.type === "input_file")).toEqual({ type: "input_file", filename: "spec.pdf", file_data: `data:application/pdf;base64,${pdf.toString("base64")}` });
+  });
+
+  test("a provider 4xx about the file says the provider or model rejected the PDF, quotes it, and is not retried", async () => {
+    byok();
+    server.responses(json(400, { error: { code: "invalid_request_error", message: "File input is not supported for this model.", param: "input[0].content[3]" } }));
+    const { result } = await run(adapter(), withAttachments([serve("doc", "pdf", "application/pdf", "spec.pdf", pdf)]));
     expect(result.ok).toBe(false);
-    expect((result as { error: string }).error).toContain("shot.png");
-    expect((result as { error: string }).error).toContain("codex-direct (compat)");
-    expect(server.requests).toEqual([]);
-    expect(hubSeen).toEqual([]);
+    const error = (result as { error: string }).error;
+    expect(error).toContain("你的提供商或模型拒绝了这份 PDF");
+    expect(error).toContain("spec.pdf");
+    expect(error).toContain("File input is not supported for this model.");
+    expect(error).not.toContain("Nema 不支持");
+    expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
+  });
+
+  test("a provider pointing at one of two attachments names only that one", async () => {
+    byok();
+    // input[0].content = [user text, preamble, label, image, label, pdf]
+    server.responses(json(400, { error: { message: "Invalid value", param: "input[0].content[5]" } }));
+    const refs = [serve("img", "image", "image/png", "shot.png", png), serve("doc", "pdf", "application/pdf", "spec.pdf", pdf)];
+    const { result } = await run(adapter(), withAttachments(refs));
+    const error = (result as { error: string }).error;
+    expect(error).toContain("你的提供商或模型拒绝了这份 PDF（「spec.pdf」）");
+    expect(error).not.toContain("shot.png");
+  });
+
+  test("an image the provider rejects is named as an image", async () => {
+    byok();
+    server.responses(json(400, { error: { message: "This model does not support image input" } }));
+    const { result } = await run(adapter(), withAttachments([serve("img", "image", "image/png", "shot.png", png)]));
+    expect((result as { error: string }).error).toContain("你的提供商或模型拒绝了这张图片");
+    expect((result as { error: string }).error).toContain("This model does not support image input");
+  });
+
+  test("a 4xx that does not point at the file is shown as the provider said it", async () => {
+    byok();
+    server.responses(json(404, { error: { message: "No such model: m" } }));
+    const { result } = await run(adapter(), withAttachments([serve("doc", "pdf", "application/pdf", "spec.pdf", pdf)]));
+    expect((result as { error: string }).error).toMatch(/^模型接口错误：HTTP 404.*No such model: m/);
+  });
+
+  test("without attachments a file-sounding 4xx is not translated", async () => {
+    byok();
+    server.responses(json(400, { error: { message: "File input is not supported for this model." } }));
+    const { result } = await run();
+    expect((result as { error: string }).error).toMatch(/^模型接口错误：.*File input is not supported/);
   });
 
   test("an oversized first request is never sent", async () => {

@@ -224,18 +224,25 @@ Nema does not silently switch runtimes after authentication or model failures. `
 
 ### Attachments by runtime
 
-Images and PDFs are sent as the provider's own content blocks, and only where this table says *native*. Text files are always sent as text inside the message. *Refused* combinations are named in the composer before you send, and the task fails with a one-line reason before the model is called; switch runtime or convert the file, then send again.
+Images and PDFs are sent in the provider's own native form (`input_image` / `input_file` on the Responses API, Claude's `image` block). Nema does not convert them or switch to another format; whether and how the provider or model reads them is up to the provider. Text files are always sent as text inside the message.
 
-| Runtime | Images | PDF | Text files |
-| --- | --- | --- | --- |
-| Claude Code | native | refused: not verified that Claude Code passes PDF blocks to the model | as text |
-| Sign in with ChatGPT (`siwc`) | native | native | as text |
-| BYOK with the default `https://api.openai.com/v1` | native | native | as text |
-| BYOK with `byokBaseUrl` `https://openrouter.ai/api/v1` (compared after normalization) | native: read in a real-model run with a free vision model | refused: not verified | as text |
-| BYOK with another `byokBaseUrl` | refused: depends on the provider, not verified | refused: depends on the provider, not verified | as text |
-| Codex login compatibility (`compat`) | refused: non-public backend, not verified | refused: non-public backend, not verified | as text |
+| Runtime | Images | PDF | Text files | Basis |
+| --- | --- | --- | --- | --- |
+| Claude Code | native | refused before sending: not confirmed that Claude Code passes PDF blocks to the model | as text | Docs: images follow the official stream-json example. Not run against the real model |
+| Sign in with ChatGPT (`siwc`) | native | native | as text | Docs: OpenAI Responses API. Not run against the real model |
+| BYOK with the default `https://api.openai.com/v1` | native | native | as text | Docs: as above. Not run against the real model |
+| BYOK with another `byokBaseUrl` (OpenRouter, self-hosted servers, …) | native | native | as text | Depends on the provider. Measured (2026-10-30, OpenRouter `:free` models): a vision model read the image; a text-only model got HTTP 404 from OpenRouter and Nema reported it as such. PDF not measured |
+| Codex login compatibility (`compat`) | native | native | as text | Non-public backend, no documentation. Not run against the real model |
 
-Apart from the OpenRouter image cell, the *native* cells follow the providers' published request formats and are covered by automated tests of the requests Nema builds, but have not been run against the real models. The only real-model run so far used BYOK with OpenRouter (`https://openrouter.ai/api/v1`) and is recorded in the [acceptance record](reviews/2026-10-30-attachments-model-acceptance.md): images were read, so that row sends them; its PDF cell is unchanged. The OpenRouter row needs a model that accepts images; one that does not fails at OpenRouter. No PDF is turned into text as a fallback.
+**When the provider refuses**: if the provider answers with a 4xx about the file, the task fails with "your provider or model rejected this PDF" (or "this image") and the provider's own text. Nema does not retry, fall back, or turn a PDF into text. When the provider points at one block, only that file is named; with several attachments and no such pointer, the message says the provider did not say which one. Any other error is shown as the provider worded it. A request carrying an image or PDF is not retried automatically after a 5xx or a dropped connection either, because the provider may already have processed and billed the file.
+
+**Risk**: some compatible servers silently drop a file block they do not understand instead of rejecting it. The model then answers without having read the file, and Nema cannot tell. When it matters, try a small file first that contains a word found only in that file.
+
+**Cost**: some providers parse PDFs on their side. That is the provider's own behavior and Nema does not interfere. For example, OpenRouter parses a PDF with a paid OCR engine by default when the model cannot read files itself, BYOK included; see [OpenRouter PDF Inputs](https://openrouter.ai/docs/features/multimodal/pdfs) for engines and prices.
+
+**If you need third-party PDF parsing**, you can install an MCP server or Skills for it yourself.
+
+Run-by-run real-model results are in the [acceptance record](reviews/2026-10-30-attachments-model-acceptance.md).
 
 - **Types** are decided from the file's content, and the extension must agree with it: PNG, JPEG, WebP, GIF, PDF, and strict UTF-8 text without NUL bytes. Text files also need one of these extensions, or none: txt, md, markdown, log, csv, tsv, json, jsonl, yaml, yml, toml, ini, xml, html, css, js, mjs, cjs, ts, tsx, jsx, py, rb, go, rs, java, kt, swift, c, h, cc, cpp, hpp, cs, php, sh, bash, zsh, sql, diff, patch. A file whose extension contradicts its content is refused, as are SVG, HEIC, Office documents, archives, audio, and video.
 - **Limits:** images 10 MB, PDFs 20 MB, text files 512 KB. One task takes at most 8 files and 32 MB in total, counting the message, the message it quotes, and the thread's first message. All attachments together are capped by `NEMA_ATTACHMENTS_MAX_BYTES` (default 2 GB), and an upload is refused when it would leave less than 1 GB free on the data disk. Files picked but never sent are removed after 24 hours.
