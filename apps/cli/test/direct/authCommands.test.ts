@@ -101,6 +101,17 @@ describe("nema auth status", () => {
     expect(t).not.toContain("尚未登录");
   });
 
+  test("BYOK settings under the Claude Code adapter are reported as unused, not healthy", () => {
+    saveConfig(home, { adapter: "claude-code", authMode: "byok", model: "vendor/model-b:free" });
+    saveByokKey(home, "sk-byok-secret-value");
+    const c = capture();
+    expect(authStatus({ nemaHome: home, out: c.out })).toBe(1);
+    const t = c.text();
+    expect(t).toContain("adapter：claude-code");
+    expect(t).toContain("当前 adapter 不使用 BYOK");
+    expect(t).not.toContain("sk-byok-secret-value");
+  });
+
   test("BYOK with an unusable key file reports it without printing the file", () => {
     saveConfig(home, { authMode: "byok", model: "gpt-x" });
     saveByokKey(home, "sk-byok-secret-value");

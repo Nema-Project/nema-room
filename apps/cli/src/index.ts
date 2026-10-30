@@ -126,7 +126,7 @@ auth
 
 auth
   .command("status")
-  .description("Show the login mode, account, expiry and last auth error (never prints tokens)")
+  .description("Show the login mode, account, expiry and last auth error; with authMode=byok, the base URL, model and whether the key is saved (never prints tokens or keys)")
   .action(() => {
     process.exitCode = authStatus({ nemaHome: nemaHomeDir(), out: consoleOut, codexHome: defaultCodexHome() });
   });
