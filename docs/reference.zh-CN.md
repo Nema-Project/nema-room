@@ -28,6 +28,12 @@ Agent 读到的代码片段会随请求发送给模型服务商（OpenAI / Anthr
 
 插件页分「已安装」和「发现与安装」两部分：安装状态不是 `absent` 的记录（包括安装失败的）在「已安装」，安装被取消后留下的 `absent` 记录在「发现与安装」，旁边是「安装 Skill」入口。类型筛选（全部 / Skills / MCP / 插件）按记录的 `kind` 过滤，搜索不区分大小写地匹配 `name`、`summary`、`source`、`id` 和 `provenance.repository`。两者都只在页面里过滤 `GET /api/extensions` 已经返回的列表，不发新请求。
 
+「在这台电脑上找到」调用 `GET /api/extensions/discover`（daemon RPC `extensions.discover`）：只列 `~/.claude/skills`、`~/.codex/skills`、`~/.agents/skills` 下一层的非隐藏文件夹，每项给出真实路径、位置、front matter 的 name 和 description、推导出的 id、是否已接入（有 `external` 记录的 `externalPath` 等于这个真实路径），以及无法接入时的 `problem`（`missing-frontmatter`、`invalid-id`、`bundled-id`、`id-taken`、`outside-location`、`too-large`）。指向所在位置之外的链接只列出、不读取；`SKILL.md` 是指向文件夹外的链接时同样不读取。最多列 200 项，超出时 `truncated` 为 true。
+
+「接入」调用 `POST /api/extensions/attach`，请求体 `{ "path": "<绝对路径>" }`；hub 只接受 POSIX 或 Windows 绝对路径，其余是 400。daemon（`extensions.attach`）解析真实路径，读 `SKILL.md`，写入 `provision: "external"`、`installState: "installed"`、`useState: "enabled"`、`revision: "local"`、`source` 和 `externalPath` 都是真实路径的记录，不复制文件。同一真实路径已接入时拒绝，错误为 `already attached: <路径>`；id 已被任何记录占用、不是文件夹或缺少 front matter 等情况也拒绝，错误消息以 `: <problem>` 结尾（`not-a-folder` 只会在这里出现）。
+
+「修复」调用 `POST /api/extensions/<id>/repair`（`extensions.repair`），只接受内置项。`code` 运行随包 Graphify 的 `--version` 检查：通过记为 `ready`；找不到程序记为 `missing-dependency` 和 `bundled-runtime-missing`；能找到但运行失败记为 `damaged` 和 `bundled-runtime-damaged`。其他内置项记为 `ready`。结果和 `checkedAt` 存在 `index.json` 的覆盖行里；只有带 `checkedAt` 的覆盖行才会替换种子的 `availability` 和 `error`，启停开关会保留它。daemon 离线时 hub 读磁盘索引也按同一规则。
+
 插件页每个扩展右侧有一个「停用」或「启用」按钮，改动立刻生效，不需要重启 daemon。这个开关是整台安装的，不是某个 workspace 的；workspace 里另有一套插件开关，两者都要开才可用。
 
 - **停用后，这个扩展的函数不再出现在 Agent 的工具清单里。** 新建的任务直接看不到它们，正在跑的任务在下一次取工具清单时也会少掉这些函数。直接调用一个已停用的函数会被拒绝（`403`，报「函数 X 未在本 workspace 开启」），不会落到 daemon 去执行。

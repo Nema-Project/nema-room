@@ -212,6 +212,10 @@ You can also ask in chat, for example "install the pdf skill from anthropics/ski
 
 The page has two sections. Installed lists everything present: bundled items, skills Nema installed (a failed install stays here with its reason and Retry install), and items found outside Nema. Discover & install holds "Install a skill" and any record whose install was cancelled, which can be installed again from there. Above both, the Type choice (All, Skills, MCP, Plugins) and the search box narrow both sections at once. Search matches the name, description, source, or id, ignoring case. Neither sends anything to the hub; they only change what the page shows.
 
+Under Discover & install, Found on this computer lists the skill folders directly inside `~/.claude/skills`, `~/.codex/skills`, and `~/.agents/skills`. Nema reads only each folder's `SKILL.md` front matter. Hidden folders are skipped, and a link that points outside its location is listed with a note but not read. Attach records the folder's real path as an extension found outside Nema, enabled. Nothing is copied, and Remove from list later drops only the record. A folder somewhere else can be typed in, or picked with Choose…, and attached the same way. A folder is refused when its `SKILL.md` has no name and description, when its name is taken by a built-in or another extension, or when it is already attached; the reason is shown in place.
+
+Each built-in row has Repair, shown as Check again when the item already works. For graphify it runs the packaged Graphify version check. If the check passes, the row shows "Checked: working."; if the runtime is missing or does not run, the row says so and that reinstalling Nema puts it back. The other built-in items are part of the app and are confirmed as working. The result is kept, so the page shows the last check instead of the shipped default. Repair never runs a package manager.
+
 <a id="data"></a>
 
 ## Data, privacy, and known limitations

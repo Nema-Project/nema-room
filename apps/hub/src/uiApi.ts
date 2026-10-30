@@ -14,7 +14,8 @@ import type { EventBus, HubEvent } from "./events.js";
 import { indexEntry, timeline, withDiagramStatus } from "./entryIndex.js";
 import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, editUserMessage, getMessage, listMessageVersions, listMessages, MessageOpError, postSystemTask, postUserMessage, searchMessages } from "./messages.js";
 import { vendoredArchify, type Archify } from "./diagrams.js";
-import { PluginError, daemonHttpStatus, listExtensions, pluginsForUi, cancelExtensionInstall, extensionInstallStatus, installExtension, removeExtension, resolveExtensionSource, retryExtensionInstall, setExtensionUse, setPluginState, workspacePluginState } from "./plugins.js";
+import { posix, win32 } from "node:path";
+import { PluginError, attachExtension, daemonHttpStatus, discoverExtensions, listExtensions, repairExtension, pluginsForUi, cancelExtensionInstall, extensionInstallStatus, installExtension, removeExtension, resolveExtensionSource, retryExtensionInstall, setExtensionUse, setPluginState, workspacePluginState } from "./plugins.js";
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
 import { RepoError, bindRepo, getRepo, listIndexing, listRepos, previewRepo, syncBoundRepos, unbindRepo, updateRepo } from "./repos.js";
 import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
@@ -53,6 +54,11 @@ const InstallExtensionBody = z.strictObject({
   commit: z.string().regex(/^[0-9a-f]{40}$/, "must be a 40-character commit"),
   // Same rule as the daemon, so a traversal or a Windows device name is a 400 here, not a 502 later.
   path: z.string().refine((value) => value === "." || safeRepoPath(value), "must be `.` or a safe folder inside the repository"),
+});
+// The folder is on the daemon's computer, which may be Windows while the hub runs elsewhere, so
+// either kind of absolute path is accepted here and the daemon makes the real check.
+const AttachExtensionBody = z.strictObject({
+  path: z.string().trim().refine((value) => posix.isAbsolute(value) || win32.isAbsolute(value), "must be an absolute folder path"),
 });
 const PatchWorkspaceBody = z.object({
   name: z.string().trim().min(1, "must not be empty").optional(),
@@ -240,6 +246,28 @@ export function uiRoutes(deps: UiDeps): Hono {
   app.get("/extensions/:id/install", installRoute(extensionInstallStatus));
   app.post("/extensions/:id/install/cancel", installRoute(cancelExtensionInstall));
   app.post("/extensions/:id/install/retry", installRoute(retryExtensionInstall));
+
+  app.get("/extensions/discover", async (c) => {
+    try {
+      return c.json(await discoverExtensions(deps.daemon));
+    } catch (error) {
+      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      throw error;
+    }
+  });
+
+  // Attach by reference: the daemon records the folder's real path and copies nothing.
+  app.post("/extensions/attach", async (c) => {
+    const { path: folder } = await body(c, AttachExtensionBody);
+    try {
+      return c.json(await attachExtension(deps.daemon, folder));
+    } catch (error) {
+      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      throw error;
+    }
+  });
+
+  app.post("/extensions/:id/repair", installRoute(repairExtension));
 
   app.get("/workspaces", async (c) => {
     const [list, counts] = await Promise.all([listWorkspaces(db), attentionCounts(db, dataDir)]);

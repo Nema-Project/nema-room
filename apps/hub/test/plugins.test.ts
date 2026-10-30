@@ -555,6 +555,83 @@ describe("workspace plugins", () => {
     }
   });
 
+  const discovery = {
+    locations: [{ label: "claude", path: "/home/x/.claude/skills", found: true }],
+    skills: [{ path: "/home/x/.claude/skills/notes", location: "claude", name: "notes", description: "Keeps notes", id: "notes", attached: false, problem: null }],
+    truncated: false,
+  };
+
+  test("GET /api/extensions/discover returns what the daemon found and refuses another shape", async () => {
+    daemonCall = async (method, params) => {
+      expect(method).toBe("extensions.discover");
+      expect(params).toEqual({});
+      return discovery;
+    };
+    const response = await uiReq("GET", "/api/extensions/discover");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(discovery);
+    for (const bad of [null, [], { ...discovery, skills: "x" }, { ...discovery, truncated: "no" }, { ...discovery, skills: [{ ...discovery.skills[0], path: 7 }] }, { ...discovery, skills: [{ ...discovery.skills[0], attached: "yes" }] }]) {
+      daemonCall = async () => bad;
+      const refused = await uiReq("GET", "/api/extensions/discover");
+      expect(refused.status, JSON.stringify(bad)).toBe(502);
+      expect(((await refused.json()) as { error: string }).error).toBe("extensions.discover returned an invalid result");
+    }
+  });
+
+  const attached = { id: "notes", kind: "skill", name: "notes", summary: "Keeps notes", source: "/home/x/notes", revision: "local", provision: "external", installState: "installed", useState: "enabled", availability: "ready", externalPath: "/home/x/notes", error: null };
+
+  test("POST /api/extensions/attach forwards an absolute folder and returns the external record", async () => {
+    for (const folder of ["/home/x/notes", "C:\\Users\\x\\notes"]) {
+      daemonCall = async (method, params) => {
+        expect(method).toBe("extensions.attach");
+        expect(params).toEqual({ path: folder });
+        return attached;
+      };
+      const response = await uiReq("POST", "/api/extensions/attach", { path: ` ${folder} ` });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual(attached);
+    }
+    daemonCall = async () => {
+      throw new DaemonRpcError("cannot attach /home/x/notes: id-taken");
+    };
+    const taken = await uiReq("POST", "/api/extensions/attach", { path: "/home/x/notes" });
+    expect(taken.status).toBe(502);
+    expect(((await taken.json()) as { error: string }).error).toBe("cannot attach /home/x/notes: id-taken");
+    for (const bad of [null, { ...attached, provision: "managed" }, { ...attached, externalPath: null }, { ...attached, id: 7 }]) {
+      daemonCall = async () => bad;
+      const response = await uiReq("POST", "/api/extensions/attach", { path: "/home/x/notes" });
+      expect(response.status, JSON.stringify(bad)).toBe(502);
+      expect(((await response.json()) as { error: string }).error).toBe("extensions.attach returned an invalid result");
+    }
+  });
+
+  test("POST /api/extensions/attach refuses a relative or malformed path as 400 without asking the daemon", async () => {
+    for (const body of [{}, { path: "" }, { path: "notes" }, { path: "./notes" }, { path: 7 }, { path: "/x", copy: true }]) {
+      const before = daemonCalls.length;
+      const response = await uiReq("POST", "/api/extensions/attach", body);
+      expect(response.status, JSON.stringify(body)).toBe(400);
+      expect(daemonCalls.length).toBe(before);
+    }
+  });
+
+  test("POST /api/extensions/:id/repair returns the checked bundled record for that id", async () => {
+    const code = { ...bundledExtensions().find((row) => row.id === "code")!, availability: "ready", error: null, checkedAt: "2026-10-30T03:00:00.000Z" };
+    daemonCall = async (method, params) => {
+      expect(method).toBe("extensions.repair");
+      expect(params).toEqual({ id: "code" });
+      return code;
+    };
+    const response = await uiReq("POST", "/api/extensions/code/repair");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(code);
+    for (const bad of [null, { ...code, id: "grill" }, { ...code, provision: "managed" }, { ...code, availability: "fine" }, { ...code, checkedAt: 1 }]) {
+      daemonCall = async () => bad;
+      const refused = await uiReq("POST", "/api/extensions/code/repair");
+      expect(refused.status, JSON.stringify(bad)).toBe(502);
+      expect(((await refused.json()) as { error: string }).error).toBe("extensions.repair returned an invalid result");
+    }
+  });
+
   test("GET /api/extensions returns daemon records, and bundled seeds when the daemon is down", async () => {
     const custom = [{ id: "pending", installState: "installing", provision: "managed", error: null }];
     daemonCall = async (method) => (method === "extensions.list" ? custom : {});
@@ -687,6 +764,14 @@ describe("extension list while the daemon is down", () => {
     const rows = await list(app);
     expect(rows.map((row) => row.id)).toEqual(["code", "diagram", "superpowers", "grill", "github", "remote"]);
     expect(rows.at(-1)).toMatchObject({ id: "remote", provision: "external" });
+  });
+
+  test("shows a stored Repair result for a bundled item, and ignores availability without a check time", async () => {
+    const seed = bundledExtensions().find((row) => row.id === "code")!;
+    const checked = await list(writeIndex([{ ...seed, availability: "ready", error: null, checkedAt: "2026-10-30T03:00:00.000Z" }]));
+    expect(checked.find((row) => row.id === "code")).toMatchObject({ availability: "ready", error: null, checkedAt: "2026-10-30T03:00:00.000Z" });
+    const unchecked = await list(writeIndex([{ ...seed, availability: "ready", error: null }]));
+    expect(unchecked.find((row) => row.id === "code")).toMatchObject({ availability: "missing-dependency", error: "bundled-runtime-missing" });
   });
 
   test("falls back to the seeds when the index is missing, unreadable, or not a list", async () => {

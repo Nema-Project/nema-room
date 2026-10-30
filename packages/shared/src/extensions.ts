@@ -32,6 +32,36 @@ export type ExtensionRecord = {
   error: string | null;
   /** Only on records Nema installed from a pinned source. */
   provenance?: ExtensionProvenance;
+  /**
+   * Only on a bundled item someone checked with Repair: when the check ran. Its `availability` and
+   * `error` then replace the shipped seed's; without it the seed's values stand.
+   */
+  checkedAt?: string;
+};
+
+/** Why a skill folder on this computer cannot be attached. */
+export type AttachProblem = "missing-frontmatter" | "invalid-id" | "bundled-id" | "id-taken" | "outside-location" | "too-large" | "not-a-folder";
+
+/** One skill folder found in a known location, as `GET /api/extensions/discover` returns it. */
+export type DiscoveredSkill = {
+  /** Real path of the folder; links inside the location are resolved, links out of it are not followed. */
+  path: string;
+  /** Which known location it was found in: `claude`, `codex` or `agents`. */
+  location: string;
+  name: string | null;
+  description: string | null;
+  /** Id the record would take; null when it cannot be attached (see `problem`). */
+  id: string | null;
+  /** An external record already points at this real path. */
+  attached: boolean;
+  problem: AttachProblem | null;
+};
+
+export type SkillDiscovery = {
+  locations: Array<{ label: string; path: string; found: boolean }>;
+  skills: DiscoveredSkill[];
+  /** More folders were present than the list holds. */
+  truncated: boolean;
 };
 
 function bundled(id: string, name: string, availability: Availability, error: string | null): ExtensionRecord {

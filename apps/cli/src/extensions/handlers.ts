@@ -1,9 +1,12 @@
+import { homedir } from "node:os";
 import path from "node:path";
 import type { RpcRouter } from "../daemon/rpc.js";
 import { parseSkillSource } from "@nema/shared";
 import { SkillInstaller, type InstallJob } from "./install.js";
 import { resolveSkillSource, type SkillCandidate, type SkillResolution, type SourceFetch } from "./source.js";
-import { openExtensionStore } from "./store.js";
+import { bundledExtensions, openExtensionStore, type ExtensionRecord } from "./store.js";
+import { discoverSkills, inspectSkillFolder, placeSkill } from "./discover.js";
+import { graphifyInstallStatus } from "../repos/graphify.js";
 
 /** Hub waits 60 s for this RPC; stop GitHub reads first so the daemon's own error reaches the page. */
 const RESOLVE_TIMEOUT_MS = 45_000;
@@ -25,13 +28,25 @@ export type ExtensionRemoval = { id: string; removed: "managed" | "external" };
 /** A resolved source as the install preview shows it: where each skill would land, and whether it is already there. */
 export type SourcePreview = SkillResolution & { skills: Array<SkillCandidate & { target: string | null; installed: boolean }> };
 
-export type ExtensionHandlerOptions = { fetch?: SourceFetch };
+export type ExtensionHandlerOptions = {
+  fetch?: SourceFetch;
+  /** Home directory the known skill locations are read from; the user's home in production. */
+  home?: string;
+  /** Runs the packaged Graphify version check; production passes the daemon's packaged binary. */
+  checkGraphify?: () => Promise<{ installed: boolean; detail: string }>;
+  now?: () => Date;
+};
+
+const BUNDLED_IDS = new Set(bundledExtensions().map((row) => row.id));
 
 export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, options: ExtensionHandlerOptions = {}): void {
   const root = path.join(nemaHome, "extensions");
   const store = openExtensionStore(root);
   const fetch = options.fetch ?? (globalThis.fetch as unknown as SourceFetch);
   const installer = new SkillInstaller({ root, store, fetch });
+  const home = options.home ?? homedir();
+  const checkGraphify = options.checkGraphify ?? (() => graphifyInstallStatus());
+  const now = options.now ?? (() => new Date());
   // No install can be running before the router answers, so anything still `installing` was cut off.
   installer.recover();
   router.register("extensions.list", async () => store.list());
@@ -97,4 +112,49 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
   router.register("extensions.installStatus", async (params) => installer.status(requireId(params, "extensions.installStatus")));
   router.register("extensions.cancelInstall", async (params) => installer.cancel(requireId(params, "extensions.cancelInstall")));
   router.register("extensions.retryInstall", async (params) => installer.retry(requireId(params, "extensions.retryInstall")));
+  // Read-only: what skill folders other agents keep in the known locations, and which are attached.
+  router.register("extensions.discover", async () => discoverSkills(home, store.list()));
+  // Attach a folder by reference. Nothing is copied, and Remove later only drops the record.
+  router.register("extensions.attach", async (params): Promise<ExtensionRecord> => {
+    const raw = (params as { path?: unknown } | undefined)?.path;
+    if (typeof raw !== "string" || !path.isAbsolute(raw)) throw new Error("extensions.attach needs an absolute folder path");
+    const inspected = inspectSkillFolder(raw);
+    const placed = placeSkill(inspected, store.list());
+    if (placed.attached) throw new Error(`already attached: ${inspected.path}`);
+    if (placed.problem || !placed.id) throw new Error(`cannot attach ${inspected.path}: ${placed.problem ?? "invalid-id"}`);
+    return store.attachExternal({
+      id: placed.id,
+      kind: "skill",
+      name: inspected.name!,
+      summary: inspected.description!,
+      source: inspected.path,
+      revision: "local",
+      provision: "external",
+      installState: "installed",
+      useState: "enabled",
+      availability: "ready",
+      externalPath: inspected.path,
+      error: null,
+    });
+  });
+  // Check a bundled item again and keep the result. Graphify is the one bundled item with a runtime
+  // of its own; the others are code inside the app and are ready whenever the app runs.
+  router.register("extensions.repair", async (params): Promise<ExtensionRecord> => {
+    const id = requireId(params, "extensions.repair");
+    if (!BUNDLED_IDS.has(id)) throw new Error("only a bundled extension can be repaired");
+    let availability: ExtensionRecord["availability"] = "ready";
+    let error: string | null = null;
+    if (id === "code") {
+      try {
+        if (!(await checkGraphify()).installed) {
+          availability = "missing-dependency";
+          error = "bundled-runtime-missing";
+        }
+      } catch {
+        availability = "damaged";
+        error = "bundled-runtime-damaged";
+      }
+    }
+    return store.recordCheck(id, { availability, error, checkedAt: now().toISOString() });
+  });
 }

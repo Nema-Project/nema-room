@@ -240,6 +240,8 @@ export function pluginsForUi(status: unknown): Array<PluginManifest & InstallSta
  * every extension they turned off looks enabled again. A missing or damaged index means the seeds;
  * a read here never throws, because it runs on a page that is already reporting a disconnected daemon.
  */
+const AVAILABILITY = new Set(["ready", "missing-dependency", "incompatible", "damaged"]);
+
 export function extensionIndexFromDisk(nemaHome: string | undefined): ExtensionRecord[] {
   const seeds = bundledExtensions();
   if (!nemaHome) return seeds;
@@ -259,7 +261,12 @@ export function extensionIndexFromDisk(nemaHome: string | undefined): ExtensionR
     const override = stored.get(seed.id);
     stored.delete(seed.id);
     // A seed's choice is the only thing an override may change; everything else is what shipped.
-    return override?.useState === "enabled" || override?.useState === "disabled" ? { ...seed, useState: override.useState } : seed;
+    const useState = override?.useState === "enabled" || override?.useState === "disabled" ? override.useState : seed.useState;
+    // A Repair result counts only with the time it was taken, the same rule the daemon applies.
+    const checked = override && typeof override.checkedAt === "string" && AVAILABILITY.has(override.availability)
+      ? { availability: override.availability, error: typeof override.error === "string" ? override.error : null, checkedAt: override.checkedAt }
+      : {};
+    return { ...seed, useState, ...checked };
   });
   // Managed and external extensions exist only on disk, so the index is their only record.
   return [...merged, ...[...stored.values()]];
@@ -369,6 +376,63 @@ export async function cancelExtensionInstall(daemon: DaemonRpc, id: string): Pro
 /** Retry re-resolves the recorded commit before it answers, so it gets the same budget as a start. */
 export async function retryExtensionInstall(daemon: DaemonRpc, id: string): Promise<Record<string, unknown>> {
   return installJob(await daemon.call("extensions.retryInstall", { id }, RESOLVE_SOURCE_TIMEOUT_MS), "extensions.retryInstall", id);
+}
+
+function plainObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+const nullableString = (value: unknown) => value === null || typeof value === "string";
+
+/** Skill folders the daemon found in the known locations on its computer. Read-only. */
+export async function discoverExtensions(daemon: DaemonRpc): Promise<Record<string, unknown>> {
+  const row = plainObject(await daemon.call("extensions.discover", {}));
+  const valid =
+    row &&
+    Array.isArray(row.locations) &&
+    typeof row.truncated === "boolean" &&
+    Array.isArray(row.skills) &&
+    row.skills.every((item) => {
+      const skill = plainObject(item);
+      return (
+        skill &&
+        typeof skill.path === "string" &&
+        typeof skill.location === "string" &&
+        typeof skill.attached === "boolean" &&
+        nullableString(skill.id) &&
+        nullableString(skill.name) &&
+        nullableString(skill.description) &&
+        nullableString(skill.problem)
+      );
+    });
+  if (!valid) throw new DaemonRpcError("extensions.discover returned an invalid result");
+  return row;
+}
+
+/** Attach a skill folder by reference: the daemon answers with the external record it wrote. */
+export async function attachExtension(daemon: DaemonRpc, folder: string): Promise<Record<string, unknown>> {
+  const row = plainObject(await daemon.call("extensions.attach", { path: folder }));
+  if (!row || typeof row.id !== "string" || row.provision !== "external" || row.installState !== "installed" || typeof row.externalPath !== "string") {
+    throw new DaemonRpcError("extensions.attach returned an invalid result");
+  }
+  return row;
+}
+
+/** Check a bundled item again; the daemon answers with the record carrying the stored result. */
+export async function repairExtension(daemon: DaemonRpc, id: string): Promise<Record<string, unknown>> {
+  const row = plainObject(await daemon.call("extensions.repair", { id }));
+  if (
+    !row ||
+    row.id !== id ||
+    row.provision !== "bundled" ||
+    typeof row.availability !== "string" ||
+    !AVAILABILITY.has(row.availability) ||
+    !nullableString(row.error) ||
+    typeof row.checkedAt !== "string"
+  ) {
+    throw new DaemonRpcError("extensions.repair returned an invalid result");
+  }
+  return row;
 }
 
 /** One row per call that passed the "function is enabled" check, success or failure. */

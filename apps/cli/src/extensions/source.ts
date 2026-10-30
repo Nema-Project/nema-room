@@ -55,7 +55,7 @@ const MAX_SKILLS = 50;
 /** SKILL.md files read while looking for one named skill. */
 const MAX_SCAN = 200;
 /** Larger SKILL.md files are not downloaded just to read their front matter. */
-const MAX_SKILL_BYTES = 256 * 1024;
+export const MAX_SKILL_BYTES = 256 * 1024;
 const BUNDLED_IDS = new Set(bundledExtensions().map((row) => row.id));
 
 const HEADERS = { Accept: "application/vnd.github+json", "User-Agent": "nema-extension-resolver", "X-GitHub-Api-Version": "2022-11-28" };
@@ -133,7 +133,7 @@ export function skillFrontMatter(text: string): { name: string; description: str
   return name && description ? { name, description } : null;
 }
 
-function skillId(name: string): string {
+export function skillId(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
 }
 

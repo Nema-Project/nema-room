@@ -2,8 +2,8 @@ import { ClaudeCodeAdapter } from "../claude/adapter.js";
 import { loadConfig, type NemaConfig } from "../config.js";
 import { CodexDirectAdapter } from "../direct/adapter.js";
 import { GithubGh, type GithubReader } from "../github/gh.js";
-import type { GraphifyOpts } from "../repos/graphify.js";
 import { registerExtensionHandlers } from "../extensions/handlers.js";
+import { graphifyInstallStatus, type GraphifyOpts } from "../repos/graphify.js";
 import { registerRepoHandlers } from "../repos/handlers.js";
 import { parseReposSync, RepoWatcher } from "../repos/watcher.js";
 import { connectDaemon } from "./connection.js";
@@ -53,7 +53,7 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
   const rpc = new RpcRouter();
   const graphify = { ...o.graphify, ownedHelpers: o.ownedHelpers };
   const github = o.github ?? new GithubGh({ ownedHelpers: o.ownedHelpers });
-  registerExtensionHandlers(rpc, o.nemaHome);
+  registerExtensionHandlers(rpc, o.nemaHome, { checkGraphify: () => graphifyInstallStatus(graphify) });
   let sendMessage: ((message: unknown) => boolean) | null = null;
   const watcher = new RepoWatcher({
     nemaHome: o.nemaHome,

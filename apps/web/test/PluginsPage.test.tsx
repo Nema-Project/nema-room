@@ -15,7 +15,21 @@ vi.mock("@/lib/hub", () => ({
   getExtensionInstall: vi.fn(),
   cancelExtensionInstall: vi.fn(),
   retryExtensionInstall: vi.fn(),
+  discoverExtensions: vi.fn(),
+  attachExtension: vi.fn(),
+  repairExtension: vi.fn(),
+  pickDirectory: vi.fn(),
 }));
+
+const emptyDiscovery = {
+  locations: [
+    { label: "claude", path: "/home/me/.claude/skills", found: false },
+    { label: "codex", path: "/home/me/.codex/skills", found: false },
+    { label: "agents", path: "/home/me/.agents/skills", found: false },
+  ],
+  skills: [],
+  truncated: false,
+};
 
 const row = (partial: Pick<ExtensionRecord, "id" | "name"> & Partial<ExtensionRecord>): ExtensionRecord => ({
   kind: "plugin",
@@ -43,6 +57,8 @@ beforeEach(() => {
   vi.mocked(hub.setExtensionUse).mockReset();
   vi.mocked(hub.removeExtension).mockReset();
   for (const fn of [hub.resolveExtensionSource, hub.installExtension, hub.getExtensionInstall, hub.cancelExtensionInstall, hub.retryExtensionInstall]) vi.mocked(fn).mockReset();
+  for (const fn of [hub.discoverExtensions, hub.attachExtension, hub.repairExtension, hub.pickDirectory]) vi.mocked(fn).mockReset();
+  vi.mocked(hub.discoverExtensions).mockResolvedValue(emptyDiscovery);
 });
 
 describe("PluginsPage", () => {
@@ -667,5 +683,108 @@ describe("PluginsPage sections, filter and search", () => {
     expect(screen.queryByText(/Installing [12]\/3/)).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: "All" }));
     expect(await screen.findByText(/Installing [12]\/3/)).toBeTruthy();
+  });
+});
+
+describe("PluginsPage attach and repair", () => {
+  const renderPage = () =>
+    render(
+      <I18nProvider>
+        <PluginsPage />
+      </I18nProvider>,
+    );
+  const foundRegion = () => screen.getByRole("region", { name: "Found on this computer" });
+  const notes = { path: "/home/me/.claude/skills/notes", location: "claude", name: "Notes", description: "Take meeting notes", id: "notes", attached: false, problem: null };
+  const attachedNotes = row({ id: "notes", name: "Notes", kind: "skill", summary: "Take meeting notes", provision: "external", source: notes.path, revision: "local", externalPath: notes.path });
+
+  it("lists skills found on this computer under Discover & install, with Attach or the reason it cannot be attached", async () => {
+    vi.mocked(hub.discoverExtensions).mockResolvedValue({
+      ...emptyDiscovery,
+      skills: [
+        notes,
+        { path: "/home/me/.codex/skills/grill", location: "codex", name: "grill", description: "x", id: null, attached: false, problem: "bundled-id" },
+        { path: "/home/me/.claude/skills/away", location: "claude", name: null, description: null, id: null, attached: false, problem: "outside-location" },
+      ],
+    });
+    renderPage();
+    const discover = await screen.findByRole("region", { name: "Discover & install" });
+    const found = await within(discover).findByRole("region", { name: "Found on this computer" });
+    await within(found).findByRole("button", { name: "Attach Notes" });
+    expect(within(found).getAllByRole("heading", { level: 4 }).map((h) => h.textContent)).toEqual(["Notes", "grill", "away"]);
+    expect(within(found).getByRole("button", { name: "Attach Notes" })).toBeTruthy();
+    expect(within(found).getByText("Its name is taken by a built-in extension.")).toBeTruthy();
+    expect(within(found).getByText("It links to a place outside this folder, so Nema does not read it.")).toBeTruthy();
+    expect(within(found).queryByRole("button", { name: "Attach grill" })).toBeNull();
+    expect(within(found).queryByRole("button", { name: "Attach away" })).toBeNull();
+    expect(hub.discoverExtensions).toHaveBeenCalledOnce();
+  });
+
+  it("attaching moves the skill into Installed, where it keeps Remove from list", async () => {
+    vi.mocked(hub.discoverExtensions).mockResolvedValueOnce({ ...emptyDiscovery, skills: [notes] }).mockResolvedValue({ ...emptyDiscovery, skills: [{ ...notes, attached: true }] });
+    vi.mocked(hub.attachExtension).mockResolvedValue(attachedNotes);
+    renderPage();
+    const attach = await screen.findByRole("button", { name: "Attach Notes" });
+    await act(async () => fireEvent.click(attach));
+    expect(hub.attachExtension).toHaveBeenCalledWith("/home/me/.claude/skills/notes");
+    const installed = screen.getByRole("region", { name: "Installed" });
+    const block = within(installed).getByRole("heading", { name: "Notes", level: 3 }).closest("section")!;
+    expect(within(block).getByText("Found outside Nema")).toBeTruthy();
+    expect(within(block).getByRole("button", { name: "Remove from list" })).toBeTruthy();
+    // The found list is read again and now says the folder is attached.
+    expect(await within(foundRegion()).findByText("Attached")).toBeTruthy();
+    expect(within(foundRegion()).queryByRole("button", { name: "Attach Notes" })).toBeNull();
+  });
+
+  it("attaches a folder the person typed or chose, and explains a refusal in the page's language", async () => {
+    vi.mocked(hub.pickDirectory).mockResolvedValue({ path: "/home/me/work/notes" });
+    vi.mocked(hub.attachExtension).mockRejectedValueOnce(new Error("cannot attach /home/me/work/notes: id-taken")).mockResolvedValueOnce(attachedNotes);
+    renderPage();
+    const found = await screen.findByRole("region", { name: "Found on this computer" });
+    expect(await within(found).findByText("No skill folders in /home/me/.claude/skills, /home/me/.codex/skills, /home/me/.agents/skills.")).toBeTruthy();
+    const submit = within(found).getByRole("button", { name: "Attach folder" }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    await act(async () => fireEvent.click(within(found).getByRole("button", { name: "Choose…" })));
+    const input = within(found).getByRole("textbox", { name: "Another skill folder" }) as HTMLInputElement;
+    expect(input.value).toBe("/home/me/work/notes");
+    await act(async () => fireEvent.click(submit));
+    expect(await within(found).findByText("Another extension already uses this id.")).toBeTruthy();
+    fireEvent.change(input, { target: { value: "  /home/me/work/notes  " } });
+    await act(async () => fireEvent.click(submit));
+    expect(hub.attachExtension).toHaveBeenLastCalledWith("/home/me/work/notes");
+    expect(input.value).toBe("");
+    expect(within(screen.getByRole("region", { name: "Installed" })).getByRole("heading", { name: "Notes", level: 3 })).toBeTruthy();
+  });
+
+  it("Repair checks a bundled item that is not ready and shows the stored result", async () => {
+    vi.mocked(hub.repairExtension)
+      .mockResolvedValueOnce({ ...catalog[0]!, checkedAt: "2026-10-30T03:00:00.000Z" })
+      .mockResolvedValueOnce({ ...catalog[0]!, availability: "ready", error: null, checkedAt: "2026-10-30T03:05:00.000Z" });
+    renderPage();
+    const graphify = (await screen.findByRole("heading", { name: "graphify", level: 3 })).closest("section")!;
+    expect(within(graphify).getByText("The packaged Graphify runtime is missing. It can be repaired from here.")).toBeTruthy();
+    await act(async () => fireEvent.click(within(graphify).getByRole("button", { name: "Repair" })));
+    expect(hub.repairExtension).toHaveBeenCalledWith("code");
+    expect(within(graphify).getByText(/still missing\. Reinstalling Nema puts it back/)).toBeTruthy();
+    await act(async () => fireEvent.click(within(graphify).getByRole("button", { name: "Repair" })));
+    expect(within(graphify).getByText("Checked: working.")).toBeTruthy();
+    expect(within(graphify).getByRole("button", { name: "Check again" })).toBeTruthy();
+    expect(within(graphify).queryByText(/runtime is missing/)).toBeNull();
+  });
+
+  it("every bundled row has Check again, and a refused check shows its error without changing the row", async () => {
+    vi.mocked(hub.repairExtension).mockRejectedValue(new Error("daemon 未连接"));
+    renderPage();
+    const github = (await screen.findByRole("heading", { name: "GitHub", level: 3 })).closest("section")!;
+    await act(async () => fireEvent.click(within(github).getByRole("button", { name: "Check again" })));
+    expect(await screen.findByText("daemon 未连接")).toBeTruthy();
+    expect(within(github).queryByText("Checked: working.")).toBeNull();
+    expect((within(github).getByRole("button", { name: "Check again" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("managed and external rows have no Repair button", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([...catalog, attachedNotes]);
+    renderPage();
+    const block = (await screen.findByRole("heading", { name: "Notes", level: 3 })).closest("section")!;
+    expect(within(block).queryByRole("button", { name: /Repair|Check again/ })).toBeNull();
   });
 });

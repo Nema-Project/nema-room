@@ -29,6 +29,7 @@ vi.mock("@/lib/hub", () => ({
   deleteWorkspace: vi.fn(),
   getMessage: vi.fn(),
   listExtensions: vi.fn(async () => []),
+  discoverExtensions: vi.fn(async () => ({ locations: [], skills: [], truncated: false })),
   HubError,
 }));
 vi.mock("@/lib/useHubEvents", () => ({

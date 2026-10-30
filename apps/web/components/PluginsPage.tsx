@@ -8,10 +8,12 @@ import {
   installExtension,
   listExtensions,
   removeExtension,
+  repairExtension,
   retryExtensionInstall,
   setExtensionUse,
 } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
+import { ExternalSkillsPanel } from "./ExternalSkillsPanel";
 import { SkillInstallPanel } from "./SkillInstallPanel";
 
 /** Where an install was started, so its progress line shows next to that button and nowhere else. */
@@ -92,6 +94,32 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
           return rest;
         }),
       );
+  };
+
+  /** Check a bundled item again and show the stored result in its row. */
+  const repair = (extension: ExtensionRecord) => {
+    const id = extension.id;
+    if (pending.has(id)) return;
+    setPending((ids) => new Set(ids).add(id));
+    setActionError(null);
+    repairExtension(id)
+      .then((row) => {
+        applied.current += 1;
+        setExtensions((rows) => rows?.map((item) => (item.id === row.id ? row : item)) ?? null);
+      })
+      .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e)))
+      .finally(() =>
+        setPending((ids) => {
+          const rest = new Set(ids);
+          rest.delete(id);
+          return rest;
+        }),
+      );
+  };
+
+  const attached = (record: ExtensionRecord) => {
+    applied.current += 1;
+    setExtensions((rows) => (rows ? [...rows.filter((item) => item.id !== record.id), record] : rows));
   };
 
   const remove = (extension: ExtensionRecord) => {
@@ -330,7 +358,21 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
                   </button>
                 )
               )}
-              {extension.error === "bundled-runtime-missing" && <p className="plugin-note">{t("extensions.error.bundled-runtime-missing")}</p>}
+              {/* Repair checks a bundled item again; on one that is already ready it is "Check again". */}
+              {extension.provision === "bundled" && (
+                <button type="button" className="sp" onClick={() => repair(extension)} disabled={pending.has(extension.id)}>
+                  {extension.availability === "ready" ? t("extensions.action.check-again") : t("extensions.action.repair")}
+                </button>
+              )}
+              {extension.error === "bundled-runtime-missing" && (
+                <p className="plugin-note">
+                  {t(extension.checkedAt ? "extensions.repair.still-missing" : "extensions.error.bundled-runtime-missing")}
+                </p>
+              )}
+              {extension.error === "bundled-runtime-damaged" && <p className="plugin-note">{t("extensions.repair.damaged")}</p>}
+              {extension.provision === "bundled" && extension.checkedAt && extension.availability === "ready" && (
+                <p className="kmeta">{t("extensions.repair.ready")}</p>
+              )}
               {extension.provision === "managed" && extension.installState === "failed" && extension.error && <p className="plugin-note">{extension.error}</p>}
               {extension.provision === "managed" &&
                 extension.provenance &&
@@ -394,6 +436,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
         <section className="extension-section" aria-labelledby={`${ids}-discover`}>
           <h2 id={`${ids}-discover`}>{t("extensions.section.discover")}</h2>
           <SkillInstallPanel onInstall={install} busy={(id) => busy.has(id)} status={(id) => jobLine(id, "panel")} />
+          <ExternalSkillsPanel records={extensions} onAttached={attached} />
           {discoverable.map(renderRow)}
         </section>
       </div>
