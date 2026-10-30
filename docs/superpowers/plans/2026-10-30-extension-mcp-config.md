@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**状态：草案，含待维护者确认的决定（D-1、D-2、D-3）。** 决定选定前，标了「受 D-n 阻塞」的任务不得开工，也不得由实现者替维护者选。其余任务可以先做。
+**状态：草案，含待维护者确认的决定（D-1、D-2、D-3、D-4）。** 决定选定前，标了「受 D-n 阻塞」的任务不得开工，也不得由实现者替维护者选。其余任务可以先做。
 
 **Goal:** 让用户在 Nema 里保存一个本地 stdio 或远程 HTTP 的 MCP 服务器配置，凭据只留在本机受信任层，界面只看到「已配置」；由 daemon 用现有的受管 helper 启动、连接、列出工具并停止它，停用、改配置、卸载和退出时都不留进程。
 
@@ -67,6 +67,14 @@ spec 要求 MCP 工具「经过连接、schema 校验、工具命名空间和显
 - **推荐：本计划到「已连接、工具清单与 schema 摘要已记录、页面可见」为止，不进任何 Agent 的工具集。** 交给 Agent 另开计划，与 CX-02 一起做（命名空间 `mcp__<id>__<tool>`、逐工具显式启用、schema 摘要变化后自动停用待确认、workspace 范围）。
 - 备选：本计划内就允许逐工具手动启用并交给 Agent，只限只读标注的工具。代价是在策略引擎之前绕开 ADR-04 的默认拒绝，第三方 annotations 又不能作为权限保证（spec 原文），不推荐。
 
+### D-4：谁能经 hub 写入 MCP 配置（安全边界，待维护者确认）
+
+stdio 配置等于「让宿主机上的 daemon 执行一条命令」；HTTP 配置可以把已存凭据发往配置里的地址。hub 的 `hostGuard` 只校验 `Host` 头，非浏览器调用方可以伪造；Compose 下 hub 在容器里，同一 Docker 网络上的其他容器能直接连到它，`uiAuth` 只在桌面网关里注入（`apps/local/src/runtime.ts`）。现有的 `DELETE /extensions/:id` 等路由同样没有额外鉴权，但它们不能让调用方选择要执行的命令，风险等级不同。
+
+- **推荐：fail closed。** `extensions.mcp.save`、`setSecret`、`clearSecret` 的 hub 路由只在 `uiAuth` 生效时注册（桌面）；没有 `uiAuth` 的部署（Compose、源码开发）里这些路由返回 403 并给出对应 CLI 命令，配置只能在宿主机上用 `nema mcp add / secret set` 写入，CLI 经 daemon 本机 RPC，不经 hub。`start` / `stop` / `status` / `get` 只作用于已保存的配置，不能指定命令或地址，在所有部署里都可用。此外，`save` 改动 stdio 的 `command` / `args` 或 HTTP 的 `url` 时，清掉该 id 已存的全部凭据，防止把旧凭据改发到新地址或交给新命令。
+- 备选：所有部署都允许经 hub 保存，只靠 `hostGuard` 与 `requireJson`。不推荐：它们不是鉴权。
+- 备选：给 Compose 也加一层 UI 鉴权（新令牌、登录页）。范围大，属于 P2-04 团队访问的前置设计，不在本计划内。
+
 ## 范围与非目标
 
 做：stdio 与 HTTP 两种配置的保存、校验、修改与删除；凭据按 D-1 保管、按 D-2 输入；daemon 内的启动、连接、`listTools`、停止；连接状态与工具清单展示；停用、改配置、卸载、daemon 退出时停掉对应实例。
@@ -77,15 +85,20 @@ spec 要求 MCP 工具「经过连接、schema 校验、工具命名空间和显
 - 按 npm / PyPI / GitHub 注册信息自动安装 MCP 包和生成启动配方：spec 要求，但另开计划。本计划只接受用户显式写出的启动命令和参数。
 - 把工具交给 Agent：见 D-3。
 - 发现其他客户端（Claude Code、Codex 等）的 MCP 配置并接入：属于外部发现，另开计划；不读取、不复制其他客户端的密钥。
-- POSIX 上的受管 helper 所有权：仍是 `ownedProcess.ts` 写明的独立门槛。本计划在 POSIX 用进程组停止，**不宣称** POSIX 与 Windows Job Object 等价。
+- POSIX 上的受管 helper 所有权：仍是 `ownedProcess.ts` 写明的独立门槛。本计划在 POSIX 用进程组停止，**不宣称** POSIX 与 Windows Job Object 等价：后代进程若自己 `setsid` 或换进程组，进程组信号够不到它。这是已知缺口，文档与 #75 的验收记录里都要写明，测试只覆盖留在原进程组里的后代。
 
 ## Global Constraints
 
-- 凭据值不出现在：扩展记录、`index.json`、`mcp.json`、任何 RPC / HTTP 响应、日志、错误文本、`plugin_calls`、测试快照和提交里。测试用唯一标记串（例如 `nema-test-secret-7f3a`）断言它不在任何序列化输出里。
+- 凭据值不出现在：扩展记录、`index.json`、`mcp.json`、任何 RPC / HTTP 响应、日志、错误文本、`plugin_calls`、测试快照和提交里。测试用唯一标记串（例如 `nema-test-secret-7f3a`）断言它不在任何序列化输出里。这条保证覆盖 Task 1 判定为凭据位置的字段（见「凭据位置」）；这些位置只接受 `{ secret }` 或 `{ env }` 引用，写成 `{ value }` 在 `parseMcpConfig` 就被拒绝。
 - 启动命令不经 shell：`spawn(command, args, { shell: false })`，Windows 走现有 `commandSpec`。不把 README 或注册表里的命令字符串整句执行。
-- 子进程环境是精确传入的：只给配置里的 `env`、解析后的凭据、必需的 `PATH` / `HOME`（指向 `<nemaHome>/run/mcp/<id>/home`）和 `windowsRuntimeEnv`，不继承 daemon 的全部环境，避免把 `~/.nema` 里的其他令牌或模型密钥带进第三方进程。
-- HTTP 地址：`https:` 必须；`http:` 只允许 `127.0.0.1`、`::1`、`localhost`。不跟随重定向。不允许 URL 里带用户名密码。
-- 同一 id 的启动、停止、改配置、删除串行化；改配置和删除先停实例再写文件。
+- 子进程环境是精确传入的：只给配置里的 `env`、解析后的凭据、`PATH`（**原样取 daemon 自己的 `process.env.PATH`**，与 `GithubMcp.basePath()` 一致，让 `node`、`npx` 这类裸命令能解析）、`HOME`（指向 `<nemaHome>/run/mcp/<id>/home`）和 `windowsRuntimeEnv`，不继承 daemon 的其他环境变量，避免把 `~/.nema` 里的其他令牌或模型密钥带进第三方进程。
+- HTTP 地址：`https:` 必须；`http:` 只允许 `127.0.0.1`、`::1`、`localhost`。不跟随重定向。不允许 URL 里带用户名密码、片段，或名称属于「凭据位置」敏感词的查询参数（例如 `?token=`、`?api_key=`）；这类值改用请求头引用。
+- 同一 id 的启动、停止、改配置、设置或清除凭据、删除都串行化在同一条链上。改配置和删除先停实例再写文件；设置或清除凭据时实例若在运行，先停，再用新凭据重新启动，不让运行中的进程继续用旧凭据而页面显示新状态。
+- `start` 幂等：该 id 已在 `connecting` / `connected` 时返回现有状态，不再派生进程。
+- `closeAll` 先置「关闭中」并拒绝新的 `start`，再等所有在途的 `start` 结束，停掉它们创建的实例，最后停其余实例（与 `createOwnedHelperScope.drain` 同一做法）。
+- 只有 daemon 写 `index.json` 与 `mcp.json`。CLI 子命令（`nema mcp …`）经 daemon 本机 RPC 操作，不直接改这两份文件；`nema mcp secret set` 只写凭据文件。daemon 内 store 的读改写都是同步 `fs` 调用，单进程内不会交错；跨进程写入靠「只有 daemon 写」这条约束排除。
+- 落盘顺序可恢复：保存时先原子写 `mcp.json`，再写 `index.json` 记录（`revision` 是该 `mcp.json` 内容的摘要）；删除时依次停实例、删凭据目录、删受管目录、删记录。daemon 启动时对账：记录在而 `mcp.json` 缺失或摘要不符 → `availability: "damaged"`；凭据目录在而没有对应 MCP 记录 → 删除该凭据目录。
+- Windows 上没有注入 `OwnedHelperScope`（即不是桌面运行时，例如 npm 安装的 CLI daemon）时，stdio 服务器**拒绝启动**并给出明确错误，因为没有可证明的进程树清理；HTTP 服务器不受影响。让 CLI daemon 在 Windows 上也带 guardian 另开计划。
 - 启动有超时（连接 + `listTools`），超时就停掉进程并记为「连接异常」，不留半启动的子进程。
 - 不改 `apps/hub/src/plugins.ts` 里 `enabledPluginTools` 的出工具逻辑（D-3）。
 - 并行工作：插件页 UI 线和 Skills 渐进加载线在改 `PluginsPage.tsx`、`extensions/handlers.ts`、`extensions/store.ts`、`daemon/setup.ts`。开工前看它们是否已合并；没合并就只做不碰这些文件的任务（Task 1、2、4 的新文件部分），其余等合并后在新 main 上做，不在别人的分支上改。
@@ -96,9 +109,11 @@ spec 要求 MCP 工具「经过连接、schema 校验、工具命名空间和显
 1. 任何响应、日志或错误里出现凭据值（Task 2、5、6 的标记串测试）。
 2. 停止、改配置、卸载、daemon 退出、启动超时之后还有子进程活着（Task 4 的进程存活测试，POSIX 与 Windows 分开记录）。
 3. 子进程拿到了不该有的环境变量（Task 4 的环境快照测试）。
-4. 删除越界：`removeManaged` 之外另删了凭据目录以外的路径，或凭据目录是符号链接时被跟随（Task 2、3）。
+4. 删除越界或写入越界：`removeManaged` 之外另删了凭据目录以外的路径；凭据目录或其任一上级是符号链接时被跟随（写入与删除都算，Task 2、3）；MCP 保存覆盖了同 id 的 Skill 或插件记录（Task 3）。
 5. HTTP 跟随重定向或接受了非回环的 `http:`（Task 4）。
 6. 有任何路径让 MCP 工具进了 Agent 工具集（D-3，Task 5 的回归测试）。
+7. 没有 `uiAuth` 的部署里能经 hub 写入 stdio 命令、HTTP 地址或凭据（D-4，Task 5）。
+8. 并发：重复 `start` 派生出第二个进程；`closeAll` 与在途 `start` 交错后留下进程；改凭据后运行中的进程仍用旧值（Task 4、5）。
 
 ---
 
@@ -113,10 +128,11 @@ spec 要求 MCP 工具「经过连接、schema 校验、工具命名空间和显
 - Produces:
   - `McpValue = { value: string } | { secret: string } | { env: string }`。`value` 只用于非敏感值；`secret` 是 D-1 的存储引用；`env` 是 D-1 推荐里的 C 型补充引用。
   - `McpConfig = { transport: "stdio"; command: string; args: string[]; cwd?: string; env: Record<string, McpValue> } | { transport: "http"; url: string; headers: Record<string, McpValue> }`
-  - `parseMcpConfig(input: unknown): McpConfig`：拒绝空命令、命令里带换行或 NUL、`args` 非字符串数组、`env` / 请求头名不合法（`^[A-Za-z_][A-Za-z0-9_]{0,63}$`；请求头名按 RFC 7230 token）、`secret` / `env` 引用名不合法、HTTP 地址违反 Global Constraints。
+  - `parseMcpConfig(input: unknown): McpConfig`：拒绝空命令、命令里带换行或 NUL、`args` 非字符串数组、HTTP 地址违反 Global Constraints。名称分两套规则：stdio 的环境变量名，以及 `secret` / `env` 引用名，用 `^[A-Za-z_][A-Za-z0-9_]{0,63}$`；HTTP 请求头名**不用**这条，用 RFC 7230 token（`` ^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$ ``），所以 `X-API-Key`、`Content-Type` 合法。
+  - **凭据位置**（这些位置的值只能是 `{ secret }` 或 `{ env }`，写成 `{ value }` 直接拒绝）：请求头 `Authorization`、`Proxy-Authorization`、`Cookie`；名称（不分大小写）含 `token`、`secret`、`password`、`passwd`、`key`、`auth`、`cookie`、`session`、`credential` 的环境变量和请求头。`args` 里形如 `--api-key=…`、`--token=…`、`--password=…` 这类、开关名命中同一组敏感词的参数同样拒绝，提示改用环境变量引用。这是按名称判定的保证，PR 描述和文档都要写明：名字不像凭据的普通值不在保证范围内。
   - `McpConnection = "disconnected" | "connecting" | "connected" | "needs-login" | "error"`
-  - `ExtensionRecord` 增加可选的 `mcp?: { transport: "stdio" | "http"; connection: McpConnection; tools: Array<{ name: string; schemaDigest: string }>; secrets: Array<{ name: string; configured: boolean }>; lastError: string | null }`。不含命令行、地址以外的配置细节，也不含任何值。
-- [ ] **Step 1: 写失败测试**：每条拒绝规则一例；合法 stdio / HTTP 各一例；`{ value }` 里放标记串时，`parseMcpConfig` 的错误信息不含该串。
+  - `ExtensionRecord` 增加可选的 `mcp?: { transport: "stdio" | "http"; connection: McpConnection; server: { name: string; version: string } | null; tools: Array<{ name: string; schemaDigest: string }>; secrets: Array<{ name: string; configured: boolean }>; lastError: string | null }`。`server` 取自 MCP 初始化时服务器报告的 `serverInfo`，未连接过为 `null`。不含命令行、地址以外的配置细节，也不含任何值。
+- [ ] **Step 1: 写失败测试**：每条拒绝规则一例；合法 stdio / HTTP 各一例（含 `X-API-Key` 头）；`Authorization` 头或 `API_TOKEN` 环境变量写成 `{ value }` 被拒；`?token=` 查询参数被拒；`--api-key=x` 参数被拒；`{ value }` 里放标记串时，`parseMcpConfig` 的错误信息不含该串。
 - [ ] **Step 2: 跑** `npx vitest run packages/shared/test/mcpConfig.test.ts` → FAIL（模块不存在）。
 - [ ] **Step 3: 实现**。
 - [ ] **Step 4: 跑** 同一条和 `npm run typecheck` → PASS。
@@ -131,8 +147,9 @@ spec 要求 MCP 工具「经过连接、schema 校验、工具命名空间和显
 **Interfaces（按 D-1 推荐的 A 写；选 B 时接口不变、实现换掉）:**
 - `McpSecretStore`：`set(id, name, value)`、`has(id, name): boolean`、`names(id): string[]`、`clear(id, name)`、`removeAll(id)`、`resolve(id, name): string`（只给 supervisor 调用，不注册成 RPC）。
 - 路径 `<nemaHome>/secrets/mcp/<id>/<name>`，目录 0700 / 私有 DACL；`id` 用扩展 id 规则校验，`name` 用 Task 1 的引用名规则校验，杜绝 `..`。
+- 每次 `set`、`resolve`、`clear` 之前，从 `<nemaHome>` 往下逐级 `lstat` `secrets`、`secrets/mcp`、`secrets/mcp/<id>`：任一级是符号链接（Windows 上是重解析点）就拒绝，`realpath` 之后不在 `<nemaHome>/secrets/mcp` 下也拒绝。`saveSecretLine` 只检查目标文件本身，上级目录的检查由这里补上。
 - `removeAll` 只删 `<nemaHome>/secrets/mcp/<id>`：先 `lstat`，是符号链接或解析后不在 `secrets/mcp` 下就拒绝。
-- [ ] **Step 1: 写失败测试**：写入后 POSIX 模式为 0600；`has` / `names` 不读内容；值为符号链接时 `resolve` 拒绝且错误不含路径以外的内容；`removeAll` 遇到指向外部的符号链接目录时拒绝且外部文件仍在；错误信息不含标记串。Windows 的 DACL 断言沿用 `apps/cli/test/secrets` 现有做法，只在 Windows CI 跑。
+- [ ] **Step 1: 写失败测试**：写入后 POSIX 模式为 0600；`has` / `names` 不读内容；值为符号链接时 `resolve` 拒绝且错误不含路径以外的内容；`removeAll` 遇到指向外部的符号链接目录时拒绝且外部文件仍在；`secrets/mcp` 或 `secrets/mcp/<id>` 被换成指向外部目录的符号链接时 `set` 拒绝、外部目录里没有新文件；错误信息不含标记串。Windows 的 DACL 断言沿用 `apps/cli/test/secrets` 现有做法，只在 Windows CI 跑。
 - [ ] **Step 2: 跑** `npx vitest run apps/cli/test/secrets/mcp.test.ts` → FAIL。
 - [ ] **Step 3: 实现**，复用 `saveSecretLine` / `readSecretLine`，不复制权限逻辑。
 - [ ] **Step 4: 跑** → PASS；`npm run typecheck -w apps/cli`。
@@ -145,10 +162,11 @@ spec 要求 MCP 工具「经过连接、schema 校验、工具命名空间和显
 - Test: `apps/cli/test/extensions/store.test.ts`
 
 **Interfaces:**
-- `putMcpConfig(id, name, config: McpConfig)`：建或更新 `kind: "mcp"`、`provision: "managed"`、`source: "mcp:stdio"` 或 `"mcp:http"`、`revision` 为 `mcp.json` 内容的 sha256 前 12 位的记录；把 config 原子写进 `ownedDirectory(root, id)/mcp.json`。
-- `readMcpConfig(id): McpConfig`：读回并重新经 `parseMcpConfig` 校验，文件被改坏时记录的 `availability` 为 `damaged`。
+- `putMcpConfig(id, name, config: McpConfig)`：同 id 已有记录且 `kind` 不是 `"mcp"` 时拒绝（不覆盖 Skill 或插件，也就不会在之后的 MCP 删除里删掉它们的目录）。否则建或更新 `kind: "mcp"`、`provision: "managed"`、`source: "mcp:stdio"` 或 `"mcp:http"`、`revision` 为 `mcp.json` 内容的 sha256 前 12 位的记录；把 config 原子写进 `ownedDirectory(root, id)/mcp.json`。
+- `readMcpConfig(id): McpConfig`：读回并重新经 `parseMcpConfig` 校验，文件被改坏时记录的 `availability` 为 `damaged`。它返回的配置里凭据位置只有引用，可以原样交给编辑表单。
+- `reconcileMcp()`：daemon 启动时调用，按 Global Constraints 的「落盘顺序可恢复」对账。
 - `removeManaged` 对 `kind: "mcp"` 额外调用 `McpSecretStore.removeAll(id)`（store 接收一个可选的 `onRemove(id, record)` 回调，避免 store 直接依赖 secrets 模块）。
-- [ ] **Step 1: 写失败测试**：新建、更新（revision 随内容变）、读回、`mcp.json` 被手改为非法时报 `damaged`、卸载后目录和凭据目录都不在、`index.json` 与 `mcp.json` 里没有标记串。
+- [ ] **Step 1: 写失败测试**：新建、更新（revision 随内容变）、读回、`mcp.json` 被手改为非法时报 `damaged`、卸载后目录和凭据目录都不在、`index.json` 与 `mcp.json` 里没有标记串；同 id 的 Skill 记录在时 `putMcpConfig` 拒绝且 Skill 目录完好；模拟「`mcp.json` 已写、记录未写」与「凭据目录残留」后 `reconcileMcp` 的结果。
 - [ ] **Step 2–4: 跑 FAIL → 实现 → 跑 PASS**（`npx vitest run apps/cli/test/extensions/store.test.ts`）。
 - [ ] **Step 5: Commit** `feat(extensions): save stdio and HTTP MCP configs as managed records`
 
@@ -163,17 +181,21 @@ spec 要求 MCP 工具「经过连接、schema 校验、工具命名空间和显
 **Interfaces:**
 - `new McpSupervisor({ nemaHome, store, secrets, ownedHelpers?, timeoutMs? })`
 - `start(id): Promise<McpStatus>`、`stop(id): Promise<void>`、`status(id): McpStatus`、`closeAll(): Promise<void>`
-- `McpStatus = { id, connection: McpConnection, tools: Array<{ name, schemaDigest }>, lastError: string | null }`，`schemaDigest` 是工具 `inputSchema` 规范化 JSON 的 sha256。
-- stdio：注入了 `ownedHelpers` 就走它；没有时 POSIX 用 `detached: true` 并在停止时按进程组发 `SIGTERM`、宽限后 `SIGKILL`，与 `claude/adapter.ts` 一致。环境按 Global Constraints 精确构造，凭据此时才 `resolve`。
+- `McpStatus = { id, connection: McpConnection, server: { name, version } | null, tools: Array<{ name, schemaDigest }>, lastError: string | null }`，`server` 取自 `client.getServerVersion()`，`schemaDigest` 是工具 `inputSchema` 规范化 JSON 的 sha256。
+- stdio：注入了 `ownedHelpers` 就走它；没有时 POSIX 用 `detached: true` 并在停止时按进程组发 `SIGTERM`、宽限后 `SIGKILL`，与 `claude/adapter.ts` 一致（离开进程组的后代不在保证内，见「范围与非目标」）；Windows 没有注入时拒绝启动 stdio。环境按 Global Constraints 精确构造，凭据此时才 `resolve`。
 - HTTP：MCP SDK 的 Streamable HTTP 客户端传输，请求头里放解析后的凭据，`redirect: "manual"`，遇到 3xx 记为「连接异常」；401/403 记为 `needs-login`。
-- 同一 id 的操作用一个 promise 链串行化；`stop` 在 `start` 进行中被调用时，先让 `start` 失败退出再停。
+- 同一 id 的操作用一个 promise 链串行化；`stop` 在 `start` 进行中被调用时，先让 `start` 失败退出再停。`start` 幂等、`restart(id)` 供凭据变更使用、`closeAll` 等在途 `start`，均按 Global Constraints。
 - [ ] **Step 1: 写失败测试**：
   - stdio 正常启动并列出工具，`schemaDigest` 稳定；
   - 启动超时：状态 `error`，进程已不在（POSIX 用 `process.kill(pid, 0)` 断言 ESRCH，含派生的孙进程）；
   - `stop`、`closeAll` 之后进程与孙进程都不在；
   - 子进程看到的环境只有允许的键（夹具把 `process.env` 的键名写到 stdout 的一个工具结果里），daemon 环境里放一个假 `NEMA_TEST_LEAK` 不应出现；
   - HTTP：200 正常；401 → `needs-login`；302 → `error` 且没有请求第二个地址；非回环 `http:` 在 `parseMcpConfig` 已被拒；
-  - 任何状态、错误里没有标记串。
+  - 任何状态、错误里没有标记串；
+  - 配置里写裸命令 `node` 时能启动（`PATH` 取自 daemon），而 daemon 环境里的 `NEMA_TEST_LEAK` 仍不出现；
+  - 连接后 `server` 是夹具报告的名称与版本；
+  - 连续两次 `start` 只有一个进程；`start` 进行中调用 `closeAll`，结束后没有进程；
+  - Windows 且未注入 `ownedHelpers` 时 stdio `start` 报明确错误、没有派生进程（只在 Windows CI 跑）。
 - [ ] **Step 2: 跑** `npx vitest run apps/cli/test/extensions/mcpSupervisor.test.ts` → FAIL。
 - [ ] **Step 3: 实现**。
 - [ ] **Step 4: 跑** → PASS；`npx vitest run apps/cli/test/github` 仍全过；`npm run typecheck -w apps/cli`。Windows CI 上用注入的 `createOwnedHelperScope` 再跑 stdio 用例，PR 描述里分开写 POSIX 与 Windows 的结果。
@@ -187,24 +209,25 @@ spec 要求 MCP 工具「经过连接、schema 校验、工具命名空间和显
 - Test: `apps/cli/test/extensions/handlers.test.ts`、`apps/hub/test/plugins.test.ts`、`apps/hub/test/uiApi.test.ts`
 
 **Interfaces:**
-- daemon：`extensions.mcp.save { id, name, config }`（已在运行的先停再存）、`extensions.mcp.start { id }`、`extensions.mcp.stop { id }`、`extensions.mcp.status { id }`、`extensions.mcp.setSecret { id, name, value }`（受 D-2 阻塞：选 P1 时不注册）、`extensions.mcp.clearSecret { id, name }`。
+- daemon：`extensions.mcp.get { id }`（返回 `readMcpConfig` 的结果，凭据位置只有引用和「已配置」标记，供编辑表单回填）、`extensions.mcp.save { id, name, config }`（已在运行的先停再存；改了命令、参数或地址时按 D-4 清掉该 id 的凭据）、`extensions.mcp.start { id }`、`extensions.mcp.stop { id }`、`extensions.mcp.status { id }`、`extensions.mcp.setSecret { id, name, value }`（受 D-2 阻塞：选 P1 时不注册）、`extensions.mcp.clearSecret { id, name }`。设置或清除凭据时，实例在运行就 `restart`。
 - 现有操作的连带行为：`extensions.setUse` 设为 `disabled` 时先 `stop`；`extensions.remove` 对 MCP 先 `stop` 再删；`extensions.list` 给 MCP 记录填 `mcp` 字段（连接状态取 supervisor 的内存状态，daemon 重启后都是 `disconnected`，不自动启动）。
-- hub：`POST /extensions/mcp`、`POST /extensions/:id/mcp/start`、`POST /extensions/:id/mcp/stop`、`PUT /extensions/:id/mcp/secrets/:name`（D-2）、`DELETE /extensions/:id/mcp/secrets/:name`。返回值逐字段校验，形状不对按 #85 的做法报 502。hub 不记录 `PUT` 请求体，错误路径不回显请求体。
-- [ ] **Step 1: 写失败测试**：每个 RPC 的成功与拒绝；停用和卸载会先停实例；所有响应 JSON 里没有标记串；回归：给 workspace 开着所有插件时，`enabledPluginTools` 的结果里没有任何 `mcp` 记录产生的工具（D-3）。
+- hub：`GET /extensions/:id/mcp`、`POST /extensions/mcp`、`POST /extensions/:id/mcp/start`、`POST /extensions/:id/mcp/stop`、`PUT /extensions/:id/mcp/secrets/:name`（D-2）、`DELETE /extensions/:id/mcp/secrets/:name`。返回值逐字段校验，形状不对按 #85 的做法报 502。hub 不记录 `PUT` 请求体，错误路径不回显请求体。按 D-4：`POST /extensions/mcp` 与两条 secrets 路由只在 `uiAuth` 生效时可用，否则 403 并返回对应的 CLI 命令；CLI 增加 `nema mcp add | edit | secret set | secret clear`，经 daemon 本机 RPC。
+- [ ] **Step 1: 写失败测试**：每个 RPC 的成功与拒绝；停用和卸载会先停实例；所有响应 JSON 里没有标记串；回归：给 workspace 开着所有插件时，`enabledPluginTools` 的结果里没有任何 `mcp` 记录产生的工具（D-3）；没有 `uiAuth` 时三条写入路由 403、带伪造 `Host: 127.0.0.1:<port>` 也一样（D-4）；改 HTTP 地址后旧凭据已清；运行中改凭据后进程已用新值重启。
 - [ ] **Step 2–4: FAIL → 实现 → PASS**；`npm run typecheck`；`npm test -- --maxWorkers=2`。
 - [ ] **Step 5: Commit** `feat(extensions): add MCP config, credential and start/stop operations to daemon and hub`
 
-### Task 6: 插件页（受 D-2 阻塞；等插件页 UI 线合并后做）
+### Task 6: 插件页（受 D-2、D-4 阻塞；等插件页 UI 线合并后做）
 
 **Files:**
 - Modify: `apps/web/components/PluginsPage.tsx`、`apps/web/lib/hub.ts`、`apps/web/messages/{zh,en,ja}.json`
 - Test: `apps/web/test/PluginsPage.test.tsx`、`apps/web/test/i18n.test.tsx`
 
 **Interfaces:**
-- 「添加 MCP 服务器」表单：传输方式（stdio / HTTP）；stdio 填命令、参数（每行一个）、环境变量；HTTP 填地址、请求头。每个值选「普通值 / 凭据 / 环境变量」三种之一。
+- 「添加 MCP 服务器」表单：传输方式（stdio / HTTP）；stdio 填命令、参数（每行一个）、环境变量；HTTP 填地址、请求头。每个值选「普通值 / 凭据 / 环境变量」三种之一；Task 1 的凭据位置不提供「普通值」。
+- 编辑：MCP 行提供「编辑」，用 `GET /extensions/:id/mcp` 回填表单，凭据字段只显示「已配置」，不回填值；保存时提示改命令或地址会清掉已存凭据（D-4）。没有 `uiAuth` 的部署里添加、编辑、凭据字段都换成只读说明与对应 CLI 命令。
 - 凭据字段是只写密码框，提交后清空，只显示「已配置 / 未配置」，可清除；选 P1 时改为显示 CLI 命令。
-- MCP 行显示连接状态与工具数，提供「连接 / 断开」；工具清单可展开，只读，并注明「尚未交给 Agent」（D-3）。
-- [ ] **Step 1: 写失败测试**：提交后的请求里凭据值只出现一次（发往 secrets 路由），页面状态与渲染结果里不再有它；三语键齐全；连接状态的五种文案。
+- MCP 行显示连接状态、服务器名称与版本（`server`，未连接过不显示）与工具数，提供「连接 / 断开」；工具清单可展开，只读，并注明「尚未交给 Agent」（D-3）。
+- [ ] **Step 1: 写失败测试**：提交后的请求里凭据值只出现一次（发往 secrets 路由），页面状态与渲染结果里不再有它；三语键齐全；连接状态的五种文案；编辑表单回填后凭据框为空且显示「已配置」；服务器版本出现在行内。
 - [ ] **Step 2–4: FAIL → 实现 → PASS**；`npm run lint -w apps/web`；`npm run build -w apps/web`。
 - [ ] **Step 5: Commit** `feat(web): add and connect MCP servers from the Plugins page`
 
@@ -223,9 +246,9 @@ spec 要求 MCP 工具「经过连接、schema 校验、工具命名空间和显
 | --- | --- |
 | MCP 支持 stdio 与 HTTP 配置 | 1、3、5、6 |
 | 凭据由本机保管，界面只得到已配置状态，不返回明文 | 2、5、6（标记串测试） |
-| MCP 启停使用现有受管 helper，进程不遗留 | 4、5（Windows 走 owned scope；POSIX 走进程组，另记为独立门槛） |
+| MCP 启停使用现有受管 helper，进程不遗留 | 4、5（Windows 只在有 owned scope 时启动 stdio；POSIX 走进程组，离开进程组的后代是已知缺口，另记为独立门槛） |
 | 来源安装与服务器连接是两个步骤 | 3（保存）与 4（连接）分开 |
-| 程序版本、连接状态、登录状态分别展示 | 1、5、6 |
+| 程序版本、连接状态、登录状态分别展示 | 1（`server`）、4、5、6 |
 | 配置变更与卸载停止对应实例 | 5 |
 | 工具经连接、schema 校验、命名空间、显式启用后才进 Agent | 本计划只做到连接与 schema 摘要；其余见 D-3 的后续计划 |
 
@@ -236,3 +259,5 @@ spec 要求 MCP 工具「经过连接、schema 校验、工具命名空间和显
 - 按注册信息安装 MCP 包并生成启动配方。
 - 发现并接入其他客户端的 MCP 配置（只读元数据，不复制密钥）。
 - 若 D-1 选 A，以后单独评估系统凭据库作为 `McpSecretStore` 的另一实现。
+- 让 npm 安装的 CLI daemon 在 Windows 上也带 guardian，从而能启动 stdio MCP。
+- POSIX 受管 helper 所有权（能覆盖离开进程组的后代，例如 Linux cgroup）。
