@@ -22,17 +22,12 @@ describe("attachmentCapabilities", () => {
     ["codex-direct + siwc", cfg({ authMode: "siwc" }), { image: "native", pdf: "native", text: "text" }],
     ["codex-direct + byok without a base URL", cfg({ authMode: "byok" }), { image: "native", pdf: "native", text: "text" }],
     ["codex-direct + byok on the default base URL", cfg({ authMode: "byok", byokBaseUrl: DEFAULT_BYOK_BASE_URL }), { image: "native", pdf: "native", text: "text" }],
-    ["codex-direct + byok elsewhere", cfg({ authMode: "byok", byokBaseUrl: "https://llm.example.com/v1" }), { image: "unknown", pdf: "unknown", text: "text" }],
-    // Images measured 2026-10-30 (docs/reviews/2026-10-30-attachments-model-acceptance.md).
-    ["codex-direct + byok on OpenRouter", cfg({ authMode: "byok", byokBaseUrl: "https://openrouter.ai/api/v1" }), { image: "native", pdf: "unknown", text: "text" }],
-    // Known providers are matched after normalization: case, default port and trailing slashes do not change the endpoint.
-    ["codex-direct + byok on OpenRouter with a trailing slash", cfg({ authMode: "byok", byokBaseUrl: "https://openrouter.ai/api/v1/" }), { image: "native", pdf: "unknown", text: "text" }],
-    ["codex-direct + byok on OpenRouter spelled differently", cfg({ authMode: "byok", byokBaseUrl: "https://OpenRouter.AI:443/api/v1//" }), { image: "native", pdf: "unknown", text: "text" }],
-    ["codex-direct + byok on the default base URL with a trailing slash", cfg({ authMode: "byok", byokBaseUrl: "https://api.openai.com/v1/" }), { image: "native", pdf: "native", text: "text" }],
-    // A different path or host is a different endpoint.
-    ["codex-direct + byok on another OpenRouter path", cfg({ authMode: "byok", byokBaseUrl: "https://openrouter.ai/api/v2" }), { image: "unknown", pdf: "unknown", text: "text" }],
-    ["codex-direct + byok on localhost", cfg({ authMode: "byok", byokBaseUrl: "http://127.0.0.1:8080/v1" }), { image: "unknown", pdf: "unknown", text: "text" }],
-    ["codex-direct + compat", cfg({ authMode: "compat" }), { image: "unknown", pdf: "unknown", text: "text" }],
+    // Every codex-direct login sends images and PDFs in the provider's native form; a provider that cannot read
+    // them says so, and the run reports that (direct/attachmentErrors.ts). No endpoint is singled out.
+    ["codex-direct + byok elsewhere", cfg({ authMode: "byok", byokBaseUrl: "https://llm.example.com/v1" }), { image: "native", pdf: "native", text: "text" }],
+    ["codex-direct + byok on OpenRouter", cfg({ authMode: "byok", byokBaseUrl: "https://openrouter.ai/api/v1" }), { image: "native", pdf: "native", text: "text" }],
+    ["codex-direct + byok on localhost", cfg({ authMode: "byok", byokBaseUrl: "http://127.0.0.1:8080/v1" }), { image: "native", pdf: "native", text: "text" }],
+    ["codex-direct + compat", cfg({ authMode: "compat" }), { image: "native", pdf: "native", text: "text" }],
   ])("%s", (_name, config, expected) => {
     const caps = attachmentCapabilities(config);
     expect(caps).toMatchObject(expected);
@@ -56,23 +51,22 @@ describe("refusal", () => {
     expect(refusal(caps, [])).toBeNull();
   });
 
-  test("an unknown PDF on claude-code names the adapter, the file and a way out", () => {
+  test("an unknown PDF on claude-code names the adapter, the file and a way out, without claiming it cannot be read", () => {
     const caps = attachmentCapabilities(cfg({ adapter: "claude-code" }));
-    const text = refusal(caps, [ref({}), ref({ id: "p", kind: "pdf", mime: "application/pdf", name: "spec.pdf" })]);
+    const text = refusal(caps, [ref({}), ref({ id: "p", kind: "pdf", mime: "application/pdf", name: "spec.pdf" })])!;
     expect(text).toContain("claude-code");
     expect(text).toContain("spec.pdf");
     expect(text).toContain("PDF");
+    expect(text).toContain("尚未确认");
+    expect(text).not.toContain("不能读取");
     expect(text).not.toContain("shot.png");
-    expect(text).toContain("codex-direct（siwc 登录）");
+    expect(text).toContain("codex-direct");
   });
 
-  test("compat images are refused with every file named", () => {
-    const caps = attachmentCapabilities(cfg({ authMode: "compat" }));
-    const text = refusal(caps, [ref({ name: "a.png" }), ref({ id: "b", name: "b.png" })])!;
-    expect(text).toContain("codex-direct (compat)");
-    expect(text).toContain("a.png");
-    expect(text).toContain("b.png");
-    expect(text).toContain("图片");
+  test("compat and any BYOK endpoint refuse nothing before the run", () => {
+    const refs = [ref({ name: "a.png" }), ref({ id: "p", kind: "pdf", mime: "application/pdf", name: "spec.pdf" })];
+    expect(refusal(attachmentCapabilities(cfg({ authMode: "compat" })), refs)).toBeNull();
+    expect(refusal(attachmentCapabilities(cfg({ authMode: "byok", byokBaseUrl: "https://llm.example.com/v1" })), refs)).toBeNull();
   });
 
   test("unsupported is refused too, not only unknown", () => {
@@ -100,7 +94,7 @@ describe("attachments.capabilities RPC", () => {
     const rpc = new RpcRouter();
     registerAttachmentHandlers(rpc, home);
     const res = await rpc.handle({ type: "rpc.request", id: "1", method: "attachments.capabilities", params: {} });
-    expect(res).toMatchObject({ ok: true, result: { adapter: "codex-direct (compat)", image: "unknown", pdf: "unknown", text: "text" } });
+    expect(res).toMatchObject({ ok: true, result: { adapter: "codex-direct (compat)", image: "native", pdf: "native", text: "text" } });
   });
 
   test("an unreadable config is an RPC error, not a guess", async () => {

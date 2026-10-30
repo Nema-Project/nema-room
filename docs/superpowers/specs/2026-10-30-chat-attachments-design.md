@@ -60,11 +60,13 @@
 | `claude-code` | `native` | `unknown`（拒绝） | `text` | 图片按官方 stream-json 示例；PDF 没有文档说明 stream-json 会转交 `document` 块。未实测 |
 | `codex-direct` + `siwc` | `native` | `native` | `text` | 按 Responses API 文档。未实测 |
 | `codex-direct` + `byok`，默认地址 | `native` | `native` | `text` | 与 `siwc` 同一个官方端点。未实测 |
-| `codex-direct` + `byok`，`https://openrouter.ai/api/v1` | 实测通过，`native` | 不在这一步改，仍为 `unknown`（拒绝） | 实测通过（按文字发送） | 2026-10-30，`nvidia/nemotron-3.5-super-vl:free`，回复逐字给出只在文件里的暗号；`google/gemma-4-31b-it:free` 每次都 429。图片一格已在单独的 PR 里改成 `native`，地址归一化后比较 |
-| `codex-direct` + `byok`，其他地址 | `unknown`（拒绝） | `unknown`（拒绝） | `text` | 取决于提供方 |
-| `codex-direct` + `compat` | `unknown`（拒绝） | `unknown`（拒绝） | `text` | 非公开后端；OpenRouter 的 key 用不了 `compat`。未实测 |
+| `codex-direct` + `byok`，`https://openrouter.ai/api/v1` | 实测通过，`native` | 当时为 `unknown`（拒绝）；按 D-2 修订改为 `native`，PDF 未实测 | 实测通过（按文字发送） | 2026-10-30，`nvidia/nemotron-3.5-super-vl:free`，回复逐字给出只在文件里的暗号；`google/gemma-4-31b-it:free` 每次都 429。图片一格已在单独的 PR 里改成 `native`，地址归一化后比较 |
+| `codex-direct` + `byok`，其他地址 | 当时 `unknown`（拒绝）；D-2 修订后 `native` | 当时 `unknown`（拒绝）；D-2 修订后 `native` | `text` | 取决于提供方。未实测 |
+| `codex-direct` + `compat` | 当时 `unknown`（拒绝）；D-2 修订后 `native` | 当时 `unknown`（拒绝）；D-2 修订后 `native` | `text` | 非公开后端，没有文档；OpenRouter 的 key 用不了 `compat`。未实测 |
 
-OpenRouter 的 PDF：Nema 发的是 `input_file`（`file_data` 为 base64 data URL）。所用模型在 OpenRouter 的模型列表里没有列 `file` 输入。按 [OpenRouter 的 PDF 文档](https://openrouter.ai/docs/guides/overview/multimodal/pdfs)，模型不能原生读文件、请求又没指定 `file-parser` 引擎时，OpenRouter 默认用 `mistral-ocr` 在服务端解析，每 1000 页收 2 美元，BYOK 也照收，记在 OpenRouter 账户上。验收后查这把 key 的用量（`GET /api/v1/key`）：当天 `usage` 为 0.014 美元，与 nemotron 收到的 7 份单页 PDF 按 0.002 美元一页正好相符（推断：这个接口不给逐次明细），图片和文本都走免费模型。这是验收时观察到的提供商行为，记录在此；它不作为 Nema 拒绝 PDF 的理由。PDF 这一格不在这一步改。结论只适用于这个地址和类似的视觉模型；不支持图片的模型会在提供方那里失败。
+OpenRouter 的 PDF：Nema 发的是 `input_file`（`file_data` 为 base64 data URL）。所用模型在 OpenRouter 的模型列表里没有列 `file` 输入。按 [OpenRouter 的 PDF 文档](https://openrouter.ai/docs/guides/overview/multimodal/pdfs)，模型不能原生读文件、请求又没指定 `file-parser` 引擎时，OpenRouter 默认用 `mistral-ocr` 在服务端解析，每 1000 页收 2 美元，BYOK 也照收，记在 OpenRouter 账户上。验收后查这把 key 的用量（`GET /api/v1/key`）：当天 `usage` 为 0.014 美元，与 nemotron 收到的 7 份单页 PDF 按 0.002 美元一页正好相符（推断：这个接口不给逐次明细），图片和文本都走免费模型。这是验收时观察到的提供商行为，记录在此；它不作为 Nema 拒绝 PDF 的理由（D-2 修订）。结论只适用于这个地址和类似的视觉模型；不支持图片的模型会在提供方那里失败。
+
+D-2 修订后的补测（2026-10-30 23:06 JST，只用 OpenRouter `:free` 模型，不发 PDF）见验收清单第 7 节：视觉模型逐字读出图片暗号；纯文字模型收到图片时 OpenRouter 返回 `HTTP 404：No endpoints found that support image input`，Nema 翻译为「你的提供商或模型拒绝了这张图片」并附原文；与附件无关的 400（模型 id 无效）照原样显示。
 
 需要用户提供凭据或环境才能补测：`claude-code`（本机 `claude` + `claude setup-token` + `nema auth claude`；PDF 的结果决定 `native` 还是 `unsupported`）、`siwc`（`nema auth login`）、默认地址的 `byok`（OpenAI API key）、`compat`（已登录 Codex CLI 的 `~/.codex/auth.json`）、其他 `byok` 提供方（逐个地址）。做法同验收清单。
 
@@ -172,6 +174,7 @@ issue 把「内联 base64」和「写进 agent 工作目录给路径」列成要
 
 - **D-1 选 A**：「hub 数据目录加元数据表」。字节存 `<dataDir>/attachments/<workspaceId>/<附件id>`，元数据存 `message_attachments` 表，写入和清理按 D-1 一节的做法。
 - **D-2 选 A**：「提示并明确拒绝」。只有能力表里标为 `native` 的组合发原生块；`unsupported` 和 `unknown` 都在发送前提示、运行前明确拒绝，原因写成具体的一句话。不做 PDF 抽文字降级。
+  - **2026-10-30 22:59 JST 修订**，用户原话：「我们不能假设用户也用openrouter免费版，这只是给你debug用的示例提供商，先用提供商的原生功能，不能就告诉用户他的提供商不支持，保持诚实」。随后又定下：未知的兼容服务也直接按原生格式发，提供商拒绝时如实翻译错误，不设用户开关，也不对兼容接口逐个细化。现行做法见 D-2 一节末尾的「修订」。
 - **D-3 选 A**：「经消息间接引用」。附件只属于消息；知识条目经 `quotes` / 来源消息间接指向附件，不改知识格式，不改 `evidence_events`。
 - **D-4 选 B**：「可删，留墓碑记录（接受这一例外）」。用户可以删除自己消息里的附件，字节立即删掉，保留名字、类型、大小、sha256、删除时间作为墓碑。**用户明确接受：对附件字节，不适用 AGENTS.md「更正和撤回要保留历史和来源」里「保留来源」这一条**；墓碑仍保留历史与摘要。这个例外只覆盖附件字节，不扩大到消息文字、知识条目或其他来源。
 
@@ -213,6 +216,10 @@ issue 把「内联 base64」和「写进 agent 工作目录给路径」列成要
 | C. 不检查，直接发 | 所有组合都按原生格式发，由模型接口决定成败 | 实现最少 | 有的端点可能静默丢掉不认识的内容块，违反「不静默丢弃」；报错文字由第三方决定，可能看不懂 |
 
 **推荐 A，用户已选 A**。理由：#45 要求证据可信，agent 看到的东西必须和用户以为它看到的一致；A 不加依赖，以后需要时可以再加 B 作为用户手动选择的降级。代价是部分组合下 PDF 暂时不能用。plan 里会先用真实模型实测 `claude-code` 的 PDF：通过就把它标成 `native`，不通过就按本决定处理。
+
+**修订（2026-10-30 22:59 JST，用户决定）**：`codex-direct` 的所有登录方式（`siwc`、`compat`、任意 `byok` 地址）都按提供商的原生格式发图片和 PDF（`input_image` / `input_file`），不再因为「未验证」在发送前拒绝，也不按提供商地址逐个区分。提供商或模型拒绝时，带图片或 PDF 的任务遇到 4xx、且错误指向内容块或文件，失败原因写成「你的提供商或模型拒绝了这份 PDF／这张图片（文件名）。提供商原文：…」，其他错误照原样显示。不重试，不降级，不抽文字，不转页图，不替用户选提供商的解析引擎。提供商在服务端怎么处理 PDF（例如 OpenRouter 对不能原生读文件的模型默认用付费 OCR）是提供商自己的行为，Nema 不干预，只在文档里写明可能产生费用并附 [OpenRouter 文档](https://openrouter.ai/docs/features/multimodal/pdfs)。需要第三方解析的，用户可以自行安装 MCP 或 Skills。`claude-code` 的 PDF 仍为 `unknown`：stream-json 是否原样转交 `document` 块没有文档，也没有实测。
+
+这次修订接受了方案 C 原本写下的风险：有的兼容服务可能静默丢掉不认识的内容块，模型照常回答但没读到文件，Nema 察觉不到。这一点在三语指南里如实写明，并建议先用含独有词的小文件试一下。理由（用户原话的意思）：不能假设用户用的是哪家提供商；先用提供商的原生能力，不能用时如实告诉用户。
 
 ### D-3：附件和证据、知识库的关系
 

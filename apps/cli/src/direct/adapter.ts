@@ -6,6 +6,7 @@ import { loadTaskAttachments, type LoadedAttachment } from "../attachments/fetch
 import { configErrorMessage, DEFAULT_BYOK_BASE_URL, loadConfig, type NemaConfig } from "../config.js";
 import type { AgentAdapter, AgentResult } from "../daemon/runner.js";
 import { RoomClient } from "../room/client.js";
+import { attachmentRejection } from "./attachmentErrors.js";
 import { AuthStore, ReloginRequiredError, UNUSABLE_FILE_MESSAGE, type Refresher } from "./authStore.js";
 import { ByokTokenSource } from "./byok.js";
 import { CodexFileTokenSource, defaultCodexHome } from "./codexLogin.js";
@@ -108,7 +109,7 @@ export class CodexDirectAdapter implements AgentAdapter {
     } catch (e) {
       return { ok: false, error: configErrorMessage(e) };
     }
-    // An attachment this login cannot take fails the task before any login check or request (D-2 A).
+    // An attachment this adapter cannot hand over fails the task before any login check or request (D-2).
     const refused = task.attachments?.length ? refusal(attachmentCapabilities({ ...config, adapter: "codex-direct" }), task.attachments) : null;
     if (refused) return { ok: false, error: refused };
     let source: TokenSource;
@@ -156,7 +157,8 @@ export class CodexDirectAdapter implements AgentAdapter {
       // The race makes the timeout win even while waiting on a hub call or a token refresh.
       return await Promise.race([execution, timeout]);
     } catch (e) {
-      return { ok: false, error: errorMessage(ac.signal.reason instanceof RunTimeoutError ? ac.signal.reason : e) };
+      const cause = ac.signal.reason instanceof RunTimeoutError ? ac.signal.reason : e;
+      return { ok: false, error: attachmentRejection(cause, task.attachments ?? []) ?? errorMessage(cause) };
     } finally {
       clearTimeout(timer);
       if (!ac.signal.aborted) ac.abort(new Error("run finished"));

@@ -224,18 +224,25 @@ node apps/cli/dist/index.js auth claude
 
 ### 各运行方式的附件支持
 
-图片和 PDF 以服务商自己的内容块发送，只在下表写着「原生」的组合才发。文本文件一律作为文字放进消息。「拒绝」的组合在发送前由输入框指出，任务在调用模型前失败，并给出一句具体原因；换运行方式或转换文件后再发一次。
+图片和 PDF 按提供商自己的原生格式发送（Responses API 的 `input_image` / `input_file`，Claude 的 `image` 块），Nema 不转换，也不改走别的格式。提供商或模型读不读、怎么读，由提供商决定。文本文件一律作为文字放进消息。
 
-| 运行方式 | 图片 | PDF | 文本文件 |
-| --- | --- | --- | --- |
-| Claude Code | 原生 | 拒绝：尚未确认 Claude Code 会把 PDF 块交给模型 | 转成文字 |
-| ChatGPT 登录（`siwc`） | 原生 | 原生 | 转成文字 |
-| BYOK，默认地址 `https://api.openai.com/v1` | 原生 | 原生 | 转成文字 |
-| BYOK，`byokBaseUrl` 为 `https://openrouter.ai/api/v1`（归一化后比较） | 原生：用免费视觉模型实测读到 | 拒绝：未验证 | 转成文字 |
-| BYOK，改了 `byokBaseUrl` | 拒绝：取决于服务商，未验证 | 拒绝：取决于服务商，未验证 | 转成文字 |
-| Codex 登录兼容（`compat`） | 拒绝：非公开后端，未验证 | 拒绝：非公开后端，未验证 | 转成文字 |
+| 运行方式 | 图片 | PDF | 文本文件 | 依据 |
+| --- | --- | --- | --- | --- |
+| Claude Code | 原生 | 发送前拒绝：尚未确认 Claude Code 会把 PDF 块交给模型 | 转成文字 | 文档：图片按官方 stream-json 示例。未实测 |
+| ChatGPT 登录（`siwc`） | 原生 | 原生 | 转成文字 | 文档：OpenAI Responses API。未实测 |
+| BYOK，默认地址 `https://api.openai.com/v1` | 原生 | 原生 | 转成文字 | 文档：同上。未实测 |
+| BYOK，其他 `byokBaseUrl`（OpenRouter、自建服务等） | 原生 | 原生 | 转成文字 | 取决于提供商。实测（2026-10-30，OpenRouter `:free` 模型）：视觉模型读到了图片；纯文字模型收到图片时 OpenRouter 返回 404，Nema 如实报错。PDF 未实测 |
+| Codex 登录兼容（`compat`） | 原生 | 原生 | 转成文字 | 非公开后端，没有文档。未实测 |
 
-除 OpenRouter 的图片一格外，「原生」各格依据服务商公开的请求格式，并有针对 Nema 所发请求的自动化测试，但没有用真实模型跑过。目前唯一一次真实模型验收用的是接 OpenRouter（`https://openrouter.ai/api/v1`）的 BYOK，记录在[验收记录](reviews/2026-10-30-attachments-model-acceptance.md)：图片读到了，所以这一行会发图片；PDF 这一格不变。OpenRouter 这一行要选能收图片的模型，不能收图片的模型会在 OpenRouter 那边失败。PDF 不会降级成抽取文字。
+**提供商拒绝时**：如果提供商返回 4xx、内容指向这个文件，任务失败，提示「你的提供商或模型拒绝了这份 PDF」（或「这张图片」），附上提供商的原文。Nema 不重试，不降级，也不把 PDF 转成文字。其他错误照提供商的原话显示。
+
+**风险**：有些兼容服务不认识文件块时不报错，而是悄悄丢掉。这时模型照常回答，但其实没读到文件，Nema 无从察觉。对结果要紧时，先用一份含有只在文件里出现的词的小文件试一下。
+
+**费用**：有的提供商会在服务端解析 PDF，这是提供商自己的行为，Nema 不干预。例如 OpenRouter：模型不能原生读文件时，默认用付费的 OCR 引擎解析，BYOK 也照收；引擎和价格见 [OpenRouter PDF Inputs](https://openrouter.ai/docs/features/multimodal/pdfs)。
+
+**需要第三方 PDF 解析时**，可以自行安装相关的 MCP 服务或 Skills。
+
+真实模型的逐次记录见[验收记录](reviews/2026-10-30-attachments-model-acceptance.md)。
 
 - **类型**按文件内容判断，扩展名必须与内容一致：PNG、JPEG、WebP、GIF、PDF，以及严格 UTF-8、不含 NUL 的文本。文本文件还要求没有扩展名或扩展名是以下之一：txt, md, markdown, log, csv, tsv, json, jsonl, yaml, yml, toml, ini, xml, html, css, js, mjs, cjs, ts, tsx, jsx, py, rb, go, rs, java, kt, swift, c, h, cc, cpp, hpp, cs, php, sh, bash, zsh, sql, diff, patch。扩展名和内容冲突的拒收；SVG、HEIC、Office 文档、压缩包、音频、视频也拒收。
 - **上限**：图片 10 MB，PDF 20 MB，文本文件 512 KB。一次任务最多 8 个、合计 32 MB，本条消息、它引用的消息和 thread 的第一条消息一起算。所有附件合计受 `NEMA_ATTACHMENTS_MAX_BYTES` 限制（默认 2 GB），上传后数据盘剩余会不足 1 GB 时拒收。选了但没发出的文件 24 小时后清除。

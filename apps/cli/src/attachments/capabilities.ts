@@ -1,51 +1,29 @@
 import type { AttachmentCapabilities, AttachmentKind, AttachmentRef, AttachmentSupport } from "@nema/shared";
-import { DEFAULT_BYOK_BASE_URL, type NemaConfig } from "../config.js";
+import type { NemaConfig } from "../config.js";
 
 /** Abilities this daemon advertises in `hello.features`: both adapters deliver attachments (plan B4). */
 export const DAEMON_FEATURES: readonly string[] = ["attachments"];
 
 type Table = Pick<AttachmentCapabilities, "image" | "pdf" | "text">;
 
-// Only "native" combinations get native blocks (D-2 A). "unknown" stays refused until a real-model check (plan B8).
+// D-2 (revised 2026-10-30 22:59 JST): images and PDFs go to the provider in its own native form. Whether the
+// provider or model reads them is its call; when it rejects one, the run says so with the provider's own text
+// (direct/attachmentErrors.ts). Nothing is converted or retried. "unknown" is left only where Nema cannot tell
+// that a native block reaches the model at all: Claude Code's stream-json has no documented `document` block.
 const CLAUDE: Table = { image: "native", pdf: "unknown", text: "text" };
-const OPENAI: Table = { image: "native", pdf: "native", text: "text" };
-const UNVERIFIED: Table = { image: "unknown", pdf: "unknown", text: "text" };
-// OpenRouter (BYOK): images were read in a real-model run on 2026-10-30
-// (docs/reviews/2026-10-30-attachments-model-acceptance.md). PDFs are not reclassified here.
-const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const OPENROUTER: Table = { image: "native", pdf: "unknown", text: "text" };
-
-// Compared after normalization (host case, default port, trailing slashes), not as typed.
-const sameEndpoint = (a: string, b: string): boolean => {
-  const key = (u: URL) => `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, "")}`;
-  return key(new URL(a)) === key(new URL(b));
-};
+const CODEX_DIRECT: Table = { image: "native", pdf: "native", text: "text" };
 
 /** What the configured adapter can take, per attachment kind. Read fresh from config for every call. */
 export function attachmentCapabilities(config: NemaConfig): AttachmentCapabilities {
   if (config.adapter === "claude-code") return { adapter: "claude-code", ...CLAUDE };
-  const adapter = `codex-direct (${config.authMode})`;
-  if (config.authMode === "siwc") return { adapter, ...OPENAI };
-  // Same base URL resolution as direct/adapter.ts: only OpenAI's own endpoint is known to take files.
-  if (config.authMode === "byok") {
-    const baseUrl = config.byokBaseUrl ?? DEFAULT_BYOK_BASE_URL;
-    if (sameEndpoint(baseUrl, DEFAULT_BYOK_BASE_URL)) return { adapter, ...OPENAI };
-    if (sameEndpoint(baseUrl, OPENROUTER_BASE_URL)) return { adapter, ...OPENROUTER };
-  }
-  return { adapter, ...UNVERIFIED };
+  return { adapter: `codex-direct (${config.authMode})`, ...CODEX_DIRECT };
 }
 
 const KIND_LABEL: Record<AttachmentKind, string> = { image: "图片", pdf: "PDF", text: "文本文件" };
-const SUPPORT_LABEL: Record<AttachmentSupport, string> = {
-  native: "",
-  text: "",
-  unsupported: "不支持",
-  unknown: "未经验证，按不支持处理",
-};
-// Combinations whose support is "native" today, offered as the way out.
+// Ways out that exist today. Converting a file is the user's own step; Nema does not convert.
 const ALTERNATIVES: Record<AttachmentKind, string> = {
-  image: "请切换到 claude-code 或 codex-direct（siwc 登录），或把内容转成文本后再发",
-  pdf: "请切换到 codex-direct（siwc 登录），或把内容转成图片或文本后再发",
+  image: "请切换到 claude-code 或 codex-direct，或把内容转成文本后再发",
+  pdf: "请切换到 codex-direct，或把内容转成图片或文本后再发",
   text: "请把内容直接贴进消息后再发",
 };
 
@@ -58,7 +36,10 @@ export function refusal(caps: AttachmentCapabilities, refs: readonly AttachmentR
     if (deliverable(caps[kind])) continue;
     const names = refs.filter((r) => r.kind === kind).map((r) => `「${r.name}」`);
     if (names.length === 0) continue;
-    reasons.push(`当前适配器 ${caps.adapter} 不能读取${KIND_LABEL[kind]}（${SUPPORT_LABEL[caps[kind]]}）：${names.join("、")}。${ALTERNATIVES[kind]}。`);
+    const what = caps[kind] === "unknown"
+      ? `尚未确认当前适配器 ${caps.adapter} 会把${KIND_LABEL[kind]}交给模型`
+      : `当前适配器 ${caps.adapter} 不支持${KIND_LABEL[kind]}`;
+    reasons.push(`${what}：${names.join("、")}。${ALTERNATIVES[kind]}。`);
   }
   return reasons.length === 0 ? null : reasons.join("\n");
 }

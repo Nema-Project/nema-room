@@ -220,3 +220,20 @@ console.log(`workspace ${ws.id}`);
 | 图片 | 通过：模型直接读到图里的暗号。单独开 PR，只对 `https://openrouter.ai/api/v1` 改成 `native` |
 | PDF | 内容读到了，但读的是 OpenRouter 付费 OCR 的输出，而且每次悄悄扣费。保持 `unknown`、运行前拒绝 |
 | 文本 | 通过；文本一向按文字发送（`text`），能力表本来就允许，不用改 |
+
+## 7. 2026-10-30 23:06 JST：D-2 修订后的补测（错误翻译与发送格式）
+
+D-2 在 22:59 JST 修订为「`codex-direct` 一律按原生格式发，提供商拒绝时如实翻译」（见设计记录 D-2 一节末尾）。这次补测只验证图片的发送格式和错误翻译，**不发 PDF**：免费模型都没有原生文件能力，发 PDF 会触发 OpenRouter 的付费 OCR，要先征得用户同意。
+
+做法：一次性脚本直接调用 Nema 的 `streamResponse`（`apps/cli/src/direct/transport.ts`，`stream: true`，不带 tools），`baseUrl` 为 `https://openrouter.ai/api/v1`。key 只在进程内从 `OPENROUTER_API_KEY` 读，不落盘、不打印。失败时把错误交给 `attachmentRejection`（`apps/cli/src/direct/attachmentErrors.ts`）。图片是一张 900×260 的 PNG，上面写着随机暗号 `IMG-8BB7AC`。
+
+| 开始（JST） | 模型 | 附件 | 结果 | 原文 / 回复 | Nema 显示 |
+| --- | --- | --- | --- | --- | --- |
+| 23:06:50 | `liquid/lfm-2.5-2.6b:free`（只收文字） | 图片 | 提供商拒绝 | `HTTP 404：No endpoints found that support image input` | 你的提供商或模型拒绝了这张图片（「code.png」）。提供商原文：HTTP 404：No endpoints found that support image input。Nema 按提供商的原生格式发送，没有转换，也没有重试。 |
+| 23:06:50 | `nvidia/nemotron-3.5-lightning:free`（只收文字） | 图片 | 提供商拒绝 | 同上 | 同上 |
+| 23:06:50 | `nvidia/nemotron-3.5-super-vl:free` | 图片 | 通过 | `IMG-8BB7AC` | — |
+| 23:06:51 | `nema-acceptance/no-such-model:free`（不存在） | 无 | 提供商拒绝 | `HTTP 400：… is not a valid model ID` | 不翻译，照原样显示 |
+| 23:06:51 | 同上 | 图片 | 提供商拒绝 | 同上 | 不翻译（错误与附件无关），照原样显示 |
+
+前后查 `GET /api/v1/key`：`usage` 都是 0.014 美元（第 6 节那笔），新增 0。
+
