@@ -197,7 +197,7 @@ describe("KnowledgePanel", () => {
   it("requirement rows show each implementation tag, inferred distinct from reported", async () => {
     const impl = (status: "reported" | "verified" | "mismatch", inferred = false) => ({
       status,
-      evidence: { reportMessageId: inferred ? null : "m_r", commits: ["abcdef1"], inferred, note: null, confirmedBy: null },
+      evidence: { reportMessageId: inferred ? null : "m_r", commits: ["abcdef1"], inferred, note: null, confirmedBy: null, acceptanceReview: null, reportEvidence: null },
     });
     localStorage.setItem("nema.locale", "zh");
     vi.mocked(hub.listEntries).mockResolvedValue([
