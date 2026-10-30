@@ -34,6 +34,7 @@ export class McpStdioTransport implements Transport {
   private startPromise?: Promise<void>;
   private closing?: Promise<void>;
   private closed = false;
+  private exited: Promise<void> = Promise.resolve();
   onclose?: () => void;
   onerror?: (error: Error) => void;
   onmessage?: (message: JSONRPCMessage) => void;
@@ -55,14 +56,16 @@ export class McpStdioTransport implements Transport {
     const { bin, args, env, cwd } = this.launch;
     return new Promise((resolve, reject) => {
       const child = spawn(bin, args, { env, cwd, stdio: ["pipe", "pipe", "ignore"], shell: false, windowsHide: true, detached: process.platform !== "win32" });
-      this.child = child;
       let spawned = false;
+      // Listened for from the start, so `stop` never waits for a close that already happened.
+      this.exited = new Promise<void>((done) => child.once("close", () => done()));
       child.on("error", (error) => {
         if (!spawned) reject(error);
         else this.onerror?.(error);
       });
       child.on("spawn", () => {
         spawned = true;
+        this.child = child;
         if (this.closed) signalGroup(child.pid, "SIGKILL");
         resolve();
       });
@@ -127,19 +130,18 @@ export class McpStdioTransport implements Transport {
       await child.closed;
       return;
     }
+    // `child` is set only after a successful spawn, so a command that failed to start is never waited on.
     const pid = child.pid;
-    const running = child.exitCode === null && child.signalCode === null;
-    if (running) {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-          if (process.platform === "win32") child.kill("SIGKILL");
-          else signalGroup(pid, "SIGKILL");
-        }, KILL_GRACE_MS);
-        timer.unref();
-        child.once("close", () => { clearTimeout(timer); resolve(); });
-        if (process.platform === "win32") child.kill("SIGTERM");
-        else signalGroup(pid, "SIGTERM");
-      });
+    if (child.exitCode === null && child.signalCode === null) {
+      const timer = setTimeout(() => {
+        if (process.platform === "win32") child.kill("SIGKILL");
+        else signalGroup(pid, "SIGKILL");
+      }, KILL_GRACE_MS);
+      timer.unref();
+      if (process.platform === "win32") child.kill("SIGTERM");
+      else signalGroup(pid, "SIGTERM");
+      await this.exited;
+      clearTimeout(timer);
     }
     // The leader is gone; anything still in its group goes now.
     if (process.platform !== "win32") signalGroup(pid, "SIGKILL");

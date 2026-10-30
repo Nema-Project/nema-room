@@ -224,6 +224,56 @@ describe.skipIf(!posix)("stdio (POSIX, no owned-helper scope)", () => {
     expect(startCount(starts)).toBe(0);
   });
 
+  test("a command that does not exist reports an error promptly", async () => {
+    configs.set("missing", parseMcpConfig({ transport: "stdio", command: join(home, "no-such-server"), args: [], env: {} }));
+    const began = Date.now();
+    const status = await make({ timeoutMs: 20_000 }).start("missing");
+    expect(status.connection).toBe("error");
+    expect(status.lastError).toMatch(/not found/);
+    expect(Date.now() - began).toBeLessThan(5000);
+  });
+
+  test("malformed lines on stdout are skipped, not retried", async () => {
+    stdio("noisy", { FAKE_GARBAGE: { value: "1" } });
+    const status = await make({ timeoutMs: 5000 }).start("noisy");
+    expect(status.connection).toBe("connected");
+  });
+
+  test("a stop queued before its start began is not held up by that start", async () => {
+    const { starts } = stdio("slow", { FAKE_HANG: { value: "1" } });
+    const sup = make({ timeoutMs: 20_000 });
+    const first = sup.start("other-unknown");
+    const starting = sup.start("slow");
+    const began = Date.now();
+    await sup.stop("slow");
+    expect((await starting).connection).toBe("disconnected");
+    await first;
+    expect(Date.now() - began).toBeLessThan(5000);
+    expect(startCount(starts)).toBe(0);
+  });
+
+  test("a start after a queued stop starts the server again", async () => {
+    const { starts } = stdio("search");
+    const sup = make();
+    await sup.start("search");
+    const stopping = sup.stop("search");
+    const status = await sup.start("search");
+    await stopping;
+    expect(status.connection).toBe("connected");
+    expect(sup.status("search").connection).toBe("connected");
+    expect(startCount(starts)).toBe(2);
+  });
+
+  test("the child always gets the daemon PATH and the private HOME", async () => {
+    const { record } = stdio("search");
+    const config = configs.get("search") as Extract<McpConfig, { transport: "stdio" }>;
+    // parseMcpConfig refuses these names; a config that got past it still cannot replace them.
+    configs.set("search", { ...config, env: { ...config.env, PATH: { value: "/nowhere" }, HOME: { value: "/tmp" } } });
+    await make().start("search");
+    expect(recorded(record).env.PATH).toBe(process.env.PATH);
+    expect(recorded(record).env.HOME).toBe(join(home, "run", "mcp", "search", "home"));
+  });
+
   test("a server that exits on its own is reported as an error", async () => {
     const { record } = stdio("search");
     const sup = make();

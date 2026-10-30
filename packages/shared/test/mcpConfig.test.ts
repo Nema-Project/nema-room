@@ -77,6 +77,12 @@ describe("parseMcpConfig", () => {
     expect(parseMcpConfig({ transport: "stdio", command: "server", args: ["--use-keychain"], env: {} }).transport).toBe("stdio");
   });
 
+  test("refuses PATH and HOME in env, which the daemon sets itself", () => {
+    for (const name of ["PATH", "Path", "HOME"]) {
+      rejects({ transport: "stdio", command: "node", args: [], env: { [name]: { value: "/x" } } }, new RegExp(`"${name}" is set by Nema`));
+    }
+  });
+
   test("refuses __proto__ as a name instead of losing the entry", () => {
     rejects(JSON.parse(`{"transport":"stdio","command":"node","args":[],"env":{"__proto__":{"value":"x"}}}`), /__proto__/);
     rejects(JSON.parse(`{"transport":"http","url":"https://a.example/mcp","headers":{"__proto__":{"value":"x"}}}`), /__proto__/);

@@ -5,6 +5,7 @@
 //   FAKE_HANG=1             never answer initialize
 //   FAKE_RECORD=<file>      write { keys, env, pid } at start
 //   FAKE_STARTS=<file>      append one line per start
+//   FAKE_GARBAGE=1          write a line that is not JSON before serving
 //   FAKE_GRANDCHILD=<file>  start a long-lived grandchild in the same process group and write its pid
 // HTTP: import `startHttpFake({ status, location })` from a test; it serves one stateless MCP server
 // per request, or answers every request with `status` when that is set.
@@ -70,6 +71,7 @@ async function main() {
     const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
     writeFileSync(env.FAKE_GRANDCHILD, String(child.pid));
   }
+  if (env.FAKE_GARBAGE) process.stdout.write("this is not a JSON-RPC frame\n{\"broken\": \n");
   if (env.FAKE_HANG) {
     // Read stdin so the pipe stays open, never answer.
     process.stdin.resume();

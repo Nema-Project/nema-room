@@ -71,6 +71,7 @@ export class McpSupervisor {
   private readonly instances = new Map<string, Instance>();
   private readonly attempts = new Map<string, Attempt>();
   private readonly chains = new Map<string, Promise<unknown>>();
+  private readonly stopsQueued = new Map<string, number>();
   private shuttingDown = false;
 
   constructor(private readonly o: McpSupervisorOptions) {}
@@ -83,18 +84,22 @@ export class McpSupervisor {
   start(id: string): Promise<McpStatus> {
     if (this.shuttingDown) return Promise.resolve(this.set(id, { ...idle(id), connection: "error", lastError: "the daemon is shutting down" }));
     const current = this.status(id).connection;
-    if (current === "connecting" || current === "connected") {
+    // A queued stop wins over the status it has not changed yet: start again after it.
+    if ((current === "connecting" || current === "connected") && !this.stopsQueued.get(id)) {
       // A start already queued or running answers for both callers.
       const pending = this.chains.get(id);
       return pending ? pending.then(() => this.status(id), () => this.status(id)) : Promise.resolve(this.status(id));
     }
     this.set(id, { ...idle(id), connection: "connecting" });
-    return this.enqueue(id, () => this.doStart(id));
+    // Registered now, not when the chain reaches it, so a stop queued behind it can cancel it.
+    const attempt: Attempt = { abort: new AbortController() };
+    this.attempts.set(id, attempt);
+    return this.enqueue(id, () => this.doStart(id, attempt));
   }
 
   stop(id: string): Promise<void> {
     this.attempts.get(id)?.abort.abort();
-    return this.enqueue(id, () => this.doStop(id));
+    return this.stopping(id, () => this.doStop(id));
   }
 
   /** For credential changes: a running server comes back with the new values; a stopped one stays stopped. */
@@ -103,12 +108,28 @@ export class McpSupervisor {
     const attempt = this.attempts.get(id);
     attempt?.abort.abort();
     const wasStarting = attempt !== undefined || this.status(id).connection === "connecting";
-    return this.enqueue(id, async () => {
+    return this.stopping(id, async () => {
       const wasRunning = wasStarting || this.instances.has(id);
       await this.doStop(id);
       if (!wasRunning || this.shuttingDown) return this.status(id);
       this.set(id, { ...idle(id), connection: "connecting" });
-      return this.doStart(id);
+      const next: Attempt = { abort: new AbortController() };
+      this.attempts.set(id, next);
+      return this.doStart(id, next);
+    });
+  }
+
+  /** Queue an operation that begins with a stop, counted so `start` does not mistake it for a running server. */
+  private stopping<T>(id: string, run: () => Promise<T>): Promise<T> {
+    this.stopsQueued.set(id, (this.stopsQueued.get(id) ?? 0) + 1);
+    return this.enqueue(id, async () => {
+      try {
+        return await run();
+      } finally {
+        const left = (this.stopsQueued.get(id) ?? 1) - 1;
+        if (left > 0) this.stopsQueued.set(id, left);
+        else this.stopsQueued.delete(id);
+      }
     });
   }
 
@@ -146,13 +167,15 @@ export class McpSupervisor {
     this.set(id, idle(id));
   }
 
-  private async doStart(id: string): Promise<McpStatus> {
-    if (this.instances.has(id)) return this.status(id);
-    const attempt: Attempt = { abort: new AbortController() };
-    this.attempts.set(id, attempt);
+  private async doStart(id: string, attempt: Attempt): Promise<McpStatus> {
+    if (this.instances.has(id)) {
+      if (this.attempts.get(id) === attempt) this.attempts.delete(id);
+      return this.status(id);
+    }
     let transport: Transport | undefined;
     let status: { last?: number } = {};
     try {
+      if (attempt.abort.signal.aborted) throw new StartError("stopped", "disconnected");
       if (this.shuttingDown) throw new StartError("the daemon is shutting down");
       let config: McpConfig;
       try {
@@ -253,8 +276,14 @@ export class McpSupervisor {
     }
     if (config.cwd !== undefined && !path.isAbsolute(config.cwd)) throw new StartError("cwd must be an absolute path");
     const home = path.join(this.o.nemaHome, "run", "mcp", id, "home");
-    const env: NodeJS.ProcessEnv = { ...windowsRuntimeEnv(process.env), PATH: process.env.PATH ?? "", HOME: home };
-    for (const [name, value] of Object.entries(config.env)) env[name] = this.value(id, value);
+    const env: NodeJS.ProcessEnv = { ...windowsRuntimeEnv(process.env) };
+    for (const [name, value] of Object.entries(config.env)) {
+      if (/^(path|home)$/i.test(name)) continue;
+      env[name] = this.value(id, value);
+    }
+    // Last, so a config can never replace them (parseMcpConfig also refuses the names).
+    env.PATH = process.env.PATH ?? "";
+    env.HOME = home;
     mkdirSync(home, { recursive: true, mode: 0o700 });
     const command = commandSpec(config.command, config.args, env);
     return {
