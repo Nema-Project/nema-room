@@ -78,6 +78,8 @@ function parseValues(raw: unknown, what: string, nameRule: RegExp, nameLabel: st
   if (!isObject(raw)) fail(`${what} must be an object`);
   const out: Record<string, McpValue> = {};
   for (const [name, value] of Object.entries(raw)) {
+    // A plain object would take `__proto__` as its prototype and drop the entry.
+    if (name === "__proto__") fail(`${nameLabel} "__proto__" is not allowed`);
     if (!nameRule.test(name)) fail(`invalid ${nameLabel} "${name.slice(0, 64)}"`);
     out[name] = parseValue(value, name, { header });
   }
@@ -106,17 +108,35 @@ function parseUrl(raw: unknown): string {
 /** Validate a config from an untrusted caller and return a copy holding only the known fields. */
 export function parseMcpConfig(input: unknown): McpConfig {
   if (!isObject(input)) fail("expected an object");
+  const config = parseShape(input);
+  // One file per secret name; on a case-insensitive disk `TOKEN` and `Token` would be one file.
+  const seen = new Map<string, string>();
+  for (const ref of secretRefs(config)) {
+    const other = seen.get(ref.toLowerCase());
+    if (other !== undefined && other !== ref) fail(`secret references "${other}" and "${ref}" differ only by letter case`);
+    seen.set(ref.toLowerCase(), ref);
+  }
+  return config;
+}
+
+function parseShape(input: Record<string, unknown>): McpConfig {
   if (input.transport === "stdio") {
     const command = input.command;
     if (typeof command !== "string" || command.trim() === "" || command.length > 4096 || /[\u0000\r\n]/.test(command)) {
       fail("command must be a non-empty single line");
     }
     if (!Array.isArray(input.args) || input.args.length > MAX_ARGS) fail("args must be a list of strings");
-    const args = input.args.map((arg, index) => {
-      const value = text(arg, `argument ${index + 1}`);
-      const flag = /^--?([A-Za-z0-9_.-]+)=/.exec(value)?.[1];
-      if (flag && isCredentialSlot(flag)) fail(`argument ${index + 1} looks like a credential; pass it through an environment variable reference`);
-      return value;
+    const args = input.args.map((arg, index) => text(arg, `argument ${index + 1}`));
+    args.forEach((value, index) => {
+      // `--api-key=…`, or `--api-key …` with the value as the next argument. A credential-named
+      // switch followed by another switch or by nothing is a plain switch (`--no-auth`).
+      const joined = /^--?([A-Za-z0-9_.-]+)=/.exec(value)?.[1];
+      const bare = /^--?([A-Za-z0-9_.-]+)$/.exec(value)?.[1];
+      const next = args[index + 1];
+      const separate = bare !== undefined && next !== undefined && !next.startsWith("-");
+      if ((joined && isCredentialSlot(joined)) || (separate && isCredentialSlot(bare))) {
+        fail(`argument ${index + 1} looks like a credential; pass it through an environment variable reference`);
+      }
     });
     const config: McpStdioConfig = { transport: "stdio", command, args, env: parseValues(input.env, "env", ENV_NAME, "environment variable name", false) };
     if (input.cwd !== undefined) config.cwd = text(input.cwd, "cwd");
@@ -138,13 +158,13 @@ export function secretRefs(config: McpConfig): string[] {
 
 /**
  * True when a save changes what stored credentials would be handed to: another program, other
- * arguments, another address, or another transport. A first save has nothing to compare against.
+ * arguments, another working directory, another address, or another transport. A first save has nothing to compare against.
  */
 export function mcpTargetChanged(previous: McpConfig | null, next: McpConfig): boolean {
   if (!previous) return false;
   if (previous.transport !== next.transport) return true;
   if (previous.transport === "stdio" && next.transport === "stdio") {
-    return previous.command !== next.command || previous.args.length !== next.args.length || previous.args.some((arg, i) => arg !== next.args[i]);
+    return previous.command !== next.command || previous.cwd !== next.cwd || previous.args.length !== next.args.length || previous.args.some((arg, i) => arg !== next.args[i]);
   }
   return (previous as McpHttpConfig).url !== (next as McpHttpConfig).url;
 }

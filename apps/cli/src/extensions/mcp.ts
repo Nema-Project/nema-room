@@ -115,6 +115,8 @@ export function openMcpConfigs({ root, nemaHome }: { root: string; nemaHome: str
       if (previous && (previous.kind !== "mcp" || previous.provision !== "managed")) throw new Error(`${id} is not an MCP server`);
       // D-4: stored credentials follow the program or address they were set for, not the id. A
       // previous file that cannot be read gives nothing to compare, so it counts as a change.
+      // They go before the new target is written: a save cut off here loses credentials (enter
+      // them again) rather than leaving old credentials next to a new target.
       if (previous) {
         const before = readIntact(previous);
         if (!before || mcpTargetChanged(before, config)) secrets.removeAll(id);
@@ -138,6 +140,9 @@ export function openMcpConfigs({ root, nemaHome }: { root: string; nemaHome: str
         error: null,
       };
       store.putManaged(record);
+      // A slot the config no longer names loses its value, so bringing the name back later starts empty.
+      const keep = new Set(secretRefs(config));
+      for (const stored of secrets.names(id)) if (!keep.has(stored)) secrets.clear(id, stored);
       return record;
     },
     /** The config for an edit form: credential slots hold references, plus which secrets are set. */

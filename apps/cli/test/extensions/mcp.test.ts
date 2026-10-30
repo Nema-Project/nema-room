@@ -135,6 +135,40 @@ test("changing the command, its arguments, the URL or the transport clears store
   expect(secrets.names("web")).toEqual([]);
 });
 
+test("a save prunes secrets the new config no longer references", () => {
+  const configs = open();
+  const secrets = openMcpSecretStore(home);
+  const two = { ...stdio(), env: { API_TOKEN: { secret: "API_TOKEN" }, OTHER_TOKEN: { secret: "OTHER" } } };
+  configs.save("search", "Search", two);
+  configs.setSecret("search", "API_TOKEN", MARK);
+  configs.setSecret("search", "OTHER", MARK);
+  configs.save("search", "Search", stdio());
+  expect(secrets.names("search")).toEqual(["API_TOKEN"]);
+  // Bringing the reference back does not bring the old value back.
+  configs.save("search", "Search", two);
+  expect(configs.get("search").secrets).toEqual([{ name: "API_TOKEN", configured: true }, { name: "OTHER", configured: false }]);
+});
+
+test("changing cwd clears stored secrets", () => {
+  const configs = open();
+  configs.save("search", "Search", stdio());
+  configs.setSecret("search", "API_TOKEN", MARK);
+  configs.save("search", "Search", { ...stdio(), cwd: join(home, "elsewhere") });
+  expect(openMcpSecretStore(home).names("search")).toEqual([]);
+});
+
+test("a remove cut off after the secrets went can be run again", () => {
+  const configs = open();
+  configs.save("search", "Search", stdio());
+  configs.setSecret("search", "API_TOKEN", MARK);
+  // The first steps of a remove that stopped before the record went.
+  openMcpSecretStore(home).removeAll("search");
+  rmSync(join(root, "extensions", "search"), { recursive: true });
+  expect(configs.reconcile().damaged).toEqual(["search"]);
+  configs.remove("search");
+  expect(record("search")).toBeUndefined();
+});
+
 test("a save with a damaged previous file also clears secrets", () => {
   const configs = open();
   configs.save("search", "Search", stdio());

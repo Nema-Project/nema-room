@@ -69,6 +69,24 @@ describe("parseMcpConfig", () => {
     expect(parseMcpConfig({ transport: "stdio", command: "server", args: ["--port=3000", "--verbose"], env: {} }).transport).toBe("stdio");
   });
 
+  test("refuses a credential flag followed by its value as a separate argument", () => {
+    rejects({ transport: "stdio", command: "server", args: ["--api-key", MARK], env: {} }, /argument 1/);
+    rejects({ transport: "stdio", command: "server", args: ["serve", "-token", MARK], env: {} }, /argument 2/);
+    // A credential-named switch with no value after it is a plain switch.
+    expect(parseMcpConfig({ transport: "stdio", command: "server", args: ["--no-auth", "--verbose"], env: {} }).args).toEqual(["--no-auth", "--verbose"]);
+    expect(parseMcpConfig({ transport: "stdio", command: "server", args: ["--use-keychain"], env: {} }).transport).toBe("stdio");
+  });
+
+  test("refuses __proto__ as a name instead of losing the entry", () => {
+    rejects(JSON.parse(`{"transport":"stdio","command":"node","args":[],"env":{"__proto__":{"value":"x"}}}`), /__proto__/);
+    rejects(JSON.parse(`{"transport":"http","url":"https://a.example/mcp","headers":{"__proto__":{"value":"x"}}}`), /__proto__/);
+  });
+
+  test("refuses secret references that differ only by letter case", () => {
+    rejects({ transport: "stdio", command: "node", args: [], env: { A_TOKEN: { secret: "TOKEN" }, B_TOKEN: { secret: "Token" } } }, /letter case/);
+    expect(parseMcpConfig({ transport: "stdio", command: "node", args: [], env: { A_TOKEN: { secret: "TOKEN" }, B_TOKEN: { secret: "TOKEN" } } }).transport).toBe("stdio");
+  });
+
   test("refuses malformed commands, names and values", () => {
     rejects(null, /object/);
     rejects({ transport: "sse" }, /transport/);
@@ -110,6 +128,8 @@ describe("helpers", () => {
     expect(mcpTargetChanged(stdio, parseMcpConfig({ transport: "stdio", command: "node", args: ["a"], env: { LOG: { value: "1" } } }))).toBe(false);
     expect(mcpTargetChanged(stdio, parseMcpConfig({ transport: "stdio", command: "node", args: ["b"], env: {} }))).toBe(true);
     expect(mcpTargetChanged(stdio, parseMcpConfig({ transport: "stdio", command: "deno", args: ["a"], env: {} }))).toBe(true);
+    // A relative command or argument resolves against cwd, so a new cwd can mean another program.
+    expect(mcpTargetChanged(stdio, parseMcpConfig({ transport: "stdio", command: "node", args: ["a"], cwd: "/srv/other", env: {} }))).toBe(true);
     const http = parseMcpConfig({ transport: "http", url: "https://a.example/mcp", headers: {} });
     expect(mcpTargetChanged(stdio, http)).toBe(true);
     expect(mcpTargetChanged(http, parseMcpConfig({ transport: "http", url: "https://b.example/mcp", headers: {} }))).toBe(true);
