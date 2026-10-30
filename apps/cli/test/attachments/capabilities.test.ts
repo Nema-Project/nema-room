@@ -25,7 +25,9 @@ describe("attachmentCapabilities", () => {
     ["codex-direct + byok elsewhere", cfg({ authMode: "byok", byokBaseUrl: "https://llm.example.com/v1" }), { image: "unknown", pdf: "unknown", text: "text" }],
     // Measured 2026-10-30 (docs/reviews/2026-10-30-attachments-model-acceptance.md): images read; PDFs only via OpenRouter's paid OCR.
     ["codex-direct + byok on OpenRouter", cfg({ authMode: "byok", byokBaseUrl: "https://openrouter.ai/api/v1" }), { image: "native", pdf: "unknown", text: "text" }],
-    ["codex-direct + byok on another OpenRouter path", cfg({ authMode: "byok", byokBaseUrl: "https://openrouter.ai/api/v1/" }), { image: "unknown", pdf: "unknown", text: "text" }],
+    // Only that endpoint was measured; another path on the same host is not. (A trailing slash is removed when the
+    // config is loaded, so it is the same endpoint and classified the same.)
+    ["codex-direct + byok on another OpenRouter path", cfg({ authMode: "byok", byokBaseUrl: "https://openrouter.ai/api/v2" }), { image: "unknown", pdf: "unknown", text: "text" }],
     ["codex-direct + byok on localhost", cfg({ authMode: "byok", byokBaseUrl: "http://127.0.0.1:8080/v1" }), { image: "unknown", pdf: "unknown", text: "text" }],
     ["codex-direct + compat", cfg({ authMode: "compat" }), { image: "unknown", pdf: "unknown", text: "text" }],
   ])("%s", (_name, config, expected) => {

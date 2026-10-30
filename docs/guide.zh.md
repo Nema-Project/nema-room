@@ -235,7 +235,7 @@ node apps/cli/dist/index.js auth claude
 | BYOK，改了 `byokBaseUrl` | 拒绝：取决于服务商，未验证 | 拒绝：取决于服务商，未验证 | 转成文字 |
 | Codex 登录兼容（`compat`） | 拒绝：非公开后端，未验证 | 拒绝：非公开后端，未验证 | 转成文字 |
 
-「原生」各格依据服务商公开的请求格式，并有针对 Nema 所发请求的自动化测试，但都还没有用真实模型跑过。目前唯一一次真实模型验收用的是接 OpenRouter（`https://openrouter.ai/api/v1`）的 BYOK，记录在[验收记录](reviews/2026-10-30-attachments-model-acceptance.md)：图片读到了，所以这一行会发图片；PDF 只是经 OpenRouter 默认启用的付费 OCR 读到的，所以在那里仍然拒绝。OpenRouter 这一行要选能收图片的模型，不能收图片的模型会在 OpenRouter 那边失败。PDF 不会降级成抽取文字。
+除 OpenRouter 的图片一格外，「原生」各格依据服务商公开的请求格式，并有针对 Nema 所发请求的自动化测试，但没有用真实模型跑过。目前唯一一次真实模型验收用的是接 OpenRouter（`https://openrouter.ai/api/v1`）的 BYOK，记录在[验收记录](reviews/2026-10-30-attachments-model-acceptance.md)：图片读到了，所以这一行会发图片；PDF 只是经 OpenRouter 默认启用的付费 OCR 读到的，所以在那里仍然拒绝。OpenRouter 这一行要选能收图片的模型，不能收图片的模型会在 OpenRouter 那边失败。PDF 不会降级成抽取文字。
 
 - **类型**按文件内容判断，扩展名必须与内容一致：PNG、JPEG、WebP、GIF、PDF，以及严格 UTF-8、不含 NUL 的文本。文本文件还要求没有扩展名或扩展名是以下之一：txt, md, markdown, log, csv, tsv, json, jsonl, yaml, yml, toml, ini, xml, html, css, js, mjs, cjs, ts, tsx, jsx, py, rb, go, rs, java, kt, swift, c, h, cc, cpp, hpp, cs, php, sh, bash, zsh, sql, diff, patch。扩展名和内容冲突的拒收；SVG、HEIC、Office 文档、压缩包、音频、视频也拒收。
 - **上限**：图片 10 MB，PDF 20 MB，文本文件 512 KB。一次任务最多 8 个、合计 32 MB，本条消息、它引用的消息和 thread 的第一条消息一起算。所有附件合计受 `NEMA_ATTACHMENTS_MAX_BYTES` 限制（默认 2 GB），上传后数据盘剩余会不足 1 GB 时拒收。选了但没发出的文件 24 小时后清除。
