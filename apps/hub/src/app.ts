@@ -4,6 +4,8 @@ import type { DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { Archify } from "./diagrams.js";
 import type { EventBus } from "./events.js";
+import { ATTACHMENT_UPLOAD_PATH, attachmentRoutes } from "./attachmentRoutes.js";
+import { AttachmentStore } from "./attachments.js";
 import { reportRoutes } from "./reports.js";
 import { roomRoutes } from "./roomApi.js";
 import { uiRoutes } from "./uiApi.js";
@@ -33,6 +35,8 @@ export type AppDeps = {
   ownedHelpers?: OwnedHelperScope;
   /** User-facing release version. Present on Compose and desktop hubs; absent in tests that do not pair a daemon. */
   releaseVersion?: string;
+  /** Chat attachment storage. startHub passes the one it swept at startup; tests may omit it. */
+  attachments?: AttachmentStore;
 };
 
 /**
@@ -50,6 +54,7 @@ function hostGuard(port: number): MiddlewareHandler {
 
 /** State-changing UI requests must be JSON, which a cross-site "simple" request cannot send without a preflight. */
 const requireJson: MiddlewareHandler = async (c, next) => {
+  if (c.req.method === "POST" && ATTACHMENT_UPLOAD_PATH.test(c.req.path)) return next(); // raw bytes; the route checks its own type
   if (c.req.method === "POST" || c.req.method === "PUT" || c.req.method === "PATCH") {
     const type = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
     if (type !== "application/json") return c.json({ error: "content-type must be application/json" }, 415);
@@ -76,6 +81,8 @@ export function createApp(deps: AppDeps): Hono {
   });
   if (deps.uiAuth) app.use("/api/*", deps.uiAuth);
   app.use("/api/*", requireJson);
+  const attachments = deps.attachments ?? new AttachmentStore(deps.db, deps.dataDir);
+  app.route("/api", attachmentRoutes({ store: attachments, daemon: deps.daemon, daemonStatus: deps.daemonStatus }));
   app.route("/api", uiRoutes(deps));
   app.route(
     "/room",

@@ -1,0 +1,502 @@
+import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import type { Readable } from "node:stream";
+import path from "node:path";
+import { nanoid } from "nanoid";
+import {
+  ATTACHMENT_LIMITS,
+  AttachmentRefSchema,
+  sanitizeAttachmentName,
+  sniffAttachment,
+  type AttachmentKind,
+  type AttachmentRef,
+  type AttachmentStatus,
+  type AttachmentView,
+} from "@nema/shared";
+import type { Db } from "./db/db.js";
+
+// Chat attachments (#104, spec docs/superpowers/specs/2026-10-30-chat-attachments-design.md, D-1 A / D-4 B).
+// Bytes: <dataDir>/attachments/<workspaceId>/<id>, written through <dataDir>/attachments/.staging.
+// Metadata: message_attachments. The user's file name never takes part in a path.
+
+export class AttachmentError extends Error {
+  constructor(
+    readonly status: 400 | 404 | 409 | 410 | 411 | 413 | 415 | 507,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AttachmentError";
+  }
+}
+
+export type UploadInput = {
+  /** The decoded X-Nema-Filename value; cleaned here before it is stored. */
+  name: string;
+  /** X-Nema-Upload-Key: one UUID per selected file, reused when the client retries. */
+  uploadKey: string;
+  contentLength: number;
+  body: AsyncIterable<Uint8Array>;
+};
+export type UploadResult = { view: AttachmentView; created: boolean };
+
+export type AttachmentStoreOptions = {
+  /** NEMA_ATTACHMENTS_MAX_BYTES; defaults to 2 GB. */
+  maxGlobalBytes?: number;
+  /** Free bytes on the data disk; defaults to statfs on the data directory. Tests inject a fake. */
+  freeBytes?: () => Promise<number>;
+};
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ID_RE = /^att_[A-Za-z0-9_-]{16}$/;
+const KIND_LIMIT: Record<AttachmentKind, number> = {
+  image: ATTACHMENT_LIMITS.imageBytes,
+  pdf: ATTACHMENT_LIMITS.pdfBytes,
+  text: ATTACHMENT_LIMITS.textBytes,
+};
+const LARGEST_LIMIT = Math.max(...Object.values(KIND_LIMIT));
+// Enough to tell every binary format apart by its magic bytes (WebP needs 12).
+const MAGIC_BYTES = 12;
+const FILE_STATUSES: AttachmentStatus[] = ["staged", "attached"];
+const POSIX = process.platform !== "win32";
+
+type Row = {
+  id: string;
+  workspace_id: string;
+  message_id: string | null;
+  kind: AttachmentKind;
+  mime: string;
+  name: string;
+  size: number | string;
+  sha256: string;
+  status: AttachmentStatus;
+  deleted_at: Date | string | null;
+};
+const COLS = "id, workspace_id, message_id, kind, mime, name, size, sha256, status, deleted_at";
+
+function toView(r: Row): AttachmentView {
+  const size = Number(r.size);
+  if (!Number.isSafeInteger(size)) throw new Error(`attachment ${r.id} has an invalid size`);
+  return {
+    id: r.id,
+    kind: r.kind,
+    mime: r.mime,
+    name: r.name,
+    size,
+    sha256: r.sha256,
+    messageId: r.message_id,
+    status: r.status,
+    deletedAt: r.deleted_at ? new Date(r.deleted_at).toISOString() : null,
+  };
+}
+
+/** The ref sent in task.assign. Throws unless the view is bound to a message and passes AttachmentRefSchema. */
+export function toAttachmentRef(view: AttachmentView): AttachmentRef {
+  if (view.messageId === null) throw new Error(`attachment ${view.id} is not bound to a message`);
+  return AttachmentRefSchema.parse({
+    id: view.id,
+    kind: view.kind,
+    mime: view.mime,
+    name: view.name,
+    size: view.size,
+    sha256: view.sha256,
+    messageId: view.messageId,
+  });
+}
+
+/** NEMA_ATTACHMENTS_MAX_BYTES, or the 2 GB default. A value that is not a positive integer stops startup. */
+export function attachmentsMaxBytesFromEnv(env: NodeJS.ProcessEnv): number {
+  const raw = env.NEMA_ATTACHMENTS_MAX_BYTES?.trim();
+  if (!raw) return ATTACHMENT_LIMITS.defaultGlobalBytes;
+  const n = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(n) || n <= 0) throw new Error("NEMA_ATTACHMENTS_MAX_BYTES must be a positive whole number of bytes");
+  return n;
+}
+
+function sniffError(reason: "unsupported_type" | "extension_mismatch" | "not_utf8" | "empty" | "too_large"): AttachmentError {
+  switch (reason) {
+    case "empty":
+      return new AttachmentError(400, "the file is empty");
+    case "too_large":
+      return new AttachmentError(413, "the file is larger than its type allows");
+    case "extension_mismatch":
+      return new AttachmentError(415, "the file name's extension does not match its content");
+    case "not_utf8":
+      return new AttachmentError(415, "text files must be UTF-8 without NUL bytes");
+    default:
+      return new AttachmentError(415, "unsupported file type; images (PNG, JPEG, GIF, WebP), PDF and UTF-8 text are accepted");
+  }
+}
+
+const isCode = (e: unknown, code: string) => typeof e === "object" && e !== null && (e as { code?: unknown }).code === code;
+
+async function fsyncDir(dir: string): Promise<void> {
+  if (!POSIX) return; // Windows has no directory fsync; the startup scan covers lost entries.
+  const fh = await fs.open(dir, "r");
+  try {
+    await fh.sync();
+  } finally {
+    await fh.close();
+  }
+}
+
+/** Creates a 0700 directory regardless of umask. Returns whether it was new. */
+async function privateDir(dir: string): Promise<boolean> {
+  const created = (await fs.mkdir(dir, { recursive: true, mode: 0o700 })) !== undefined;
+  if (POSIX) await fs.chmod(dir, 0o700);
+  return created;
+}
+
+export class AttachmentStore {
+  private readonly root: string;
+  private readonly staging: string;
+  private readonly maxGlobalBytes: number;
+  private readonly freeBytes: () => Promise<number>;
+  private reserved = 0;
+  private admission: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly db: Db,
+    private readonly dataDir: string,
+    opts: AttachmentStoreOptions = {},
+  ) {
+    this.root = path.join(dataDir, "attachments");
+    this.staging = path.join(this.root, ".staging");
+    this.maxGlobalBytes = opts.maxGlobalBytes ?? ATTACHMENT_LIMITS.defaultGlobalBytes;
+    this.freeBytes =
+      opts.freeBytes ??
+      (async () => {
+        const s = await fs.statfs(this.dataDir);
+        return Number(s.bavail) * Number(s.bsize);
+      });
+  }
+
+  private file(workspaceId: string, id: string): string {
+    return path.join(this.root, workspaceId, id);
+  }
+
+  /** Bytes held by files that should exist (staged and attached uploads). */
+  async usedBytes(): Promise<number> {
+    const rows = await this.db.query<{ n: string | number | null }>(
+      "select coalesce(sum(size), 0) as n from message_attachments where status = any($1)",
+      [FILE_STATUSES],
+    );
+    return Number(rows[0]?.n ?? 0);
+  }
+
+  private async workspaceGate(t: Db, workspaceId: string, lock: boolean): Promise<void> {
+    const rows = await t.query<{ archived_at: unknown }>(`select archived_at from workspaces where id = $1${lock ? " for share" : ""}`, [workspaceId]);
+    if (!rows[0]) throw new AttachmentError(404, "workspace not found");
+    if (rows[0].archived_at) throw new AttachmentError(409, "workspace is archived; unarchive it to add attachments");
+  }
+
+  private async byKey(workspaceId: string, uploadKey: string): Promise<Row | undefined> {
+    const rows = await this.db.query<Row>(`select ${COLS} from message_attachments where workspace_id = $1 and upload_key = $2`, [workspaceId, uploadKey]);
+    return rows[0];
+  }
+
+  /**
+   * Reserves `bytes` against the global quota and the free-space floor. Checks run one at a time,
+   * so concurrent uploads never share the same headroom.
+   */
+  private async reserve(bytes: number): Promise<void> {
+    const run = this.admission.then(async () => {
+      const used = await this.usedBytes();
+      if (used + this.reserved + bytes > this.maxGlobalBytes) {
+        throw new AttachmentError(507, "attachment storage is full; delete attachments or raise NEMA_ATTACHMENTS_MAX_BYTES");
+      }
+      if ((await this.freeBytes()) - this.reserved - bytes < ATTACHMENT_LIMITS.minFreeBytes) {
+        throw new AttachmentError(507, "the data disk is almost full; free some space first");
+      }
+      this.reserved += bytes;
+    });
+    this.admission = run.catch(() => {});
+    await run;
+  }
+
+  async upload(workspaceId: string, input: UploadInput): Promise<UploadResult> {
+    const name = sanitizeAttachmentName(input.name);
+    if (!name) throw new AttachmentError(400, "invalid file name");
+    if (!UUID_RE.test(input.uploadKey)) throw new AttachmentError(400, "the upload key must be a UUID");
+    const length = input.contentLength;
+    if (!Number.isSafeInteger(length) || length < 0) throw new AttachmentError(411, "Content-Length is required");
+    if (length === 0) throw new AttachmentError(400, "the file is empty");
+    if (length > LARGEST_LIMIT) throw new AttachmentError(413, "the file is larger than any attachment type allows");
+    await this.workspaceGate(this.db, workspaceId, false);
+
+    const uploadKey = input.uploadKey.toLowerCase();
+    const existing = await this.byKey(workspaceId, uploadKey);
+    // A retry stores nothing and reserves nothing; it only proves it carries the same bytes.
+    if (existing) return { view: await this.matchRetry(existing, length, input.body), created: false };
+
+    await this.reserve(length);
+    try {
+      return await this.store(workspaceId, name, uploadKey, length, input.body);
+    } finally {
+      this.reserved -= length;
+    }
+  }
+
+  private async matchRetry(existing: Row, length: number, body: AsyncIterable<Uint8Array>): Promise<AttachmentView> {
+    const view = toView(existing);
+    if (length !== view.size) throw new AttachmentError(409, "this upload key was already used for a different file");
+    const hash = createHash("sha256");
+    let count = 0;
+    for await (const chunk of body) {
+      count += chunk.length;
+      if (count > length) throw new AttachmentError(400, "the body is longer than Content-Length");
+      hash.update(chunk);
+    }
+    if (count !== length) throw new AttachmentError(400, "the body is shorter than Content-Length");
+    if (hash.digest("hex") !== view.sha256) throw new AttachmentError(409, "this upload key was already used for a different file");
+    return view;
+  }
+
+  private async store(workspaceId: string, name: string, uploadKey: string, length: number, body: AsyncIterable<Uint8Array>): Promise<UploadResult> {
+    if (await privateDir(this.root)) await fsyncDir(this.dataDir);
+    await privateDir(this.staging);
+    const tmp = path.join(this.staging, nanoid());
+    let current = tmp;
+    let written: { sha256: string; size: number } | undefined;
+    try {
+      const { sha256, kind, mime } = await this.writeStaging(tmp, name, length, body);
+      written = { sha256, size: length };
+      const id = `att_${nanoid(16)}`;
+      const final = this.file(workspaceId, id);
+      const row = await this.db.tx(async (t) => {
+        // Shares the lock deleteWorkspace takes for update: no file lands in a deleted workspace.
+        await this.workspaceGate(t, workspaceId, true);
+        const dir = path.join(this.root, workspaceId);
+        if (await privateDir(dir)) await fsyncDir(this.root);
+        await fs.rename(tmp, final);
+        current = final;
+        await fsyncDir(dir);
+        const rows = await t.query<Row>(
+          `insert into message_attachments(id, workspace_id, kind, mime, name, size, sha256, upload_key, status)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, 'staged') returning ${COLS}`,
+          [id, workspaceId, kind, mime, name, length, sha256, uploadKey],
+        );
+        return rows[0]!;
+      });
+      return { view: toView(row), created: true };
+    } catch (error) {
+      await fs.rm(current, { force: true });
+      // A concurrent request with the same key won the insert: answer like a retry.
+      if (written && isCode(error, "23505")) {
+        const winner = await this.byKey(workspaceId, uploadKey);
+        if (winner) {
+          const view = toView(winner);
+          if (view.sha256 !== written.sha256 || view.size !== written.size) {
+            throw new AttachmentError(409, "this upload key was already used for a different file");
+          }
+          return { view, created: false };
+        }
+      }
+      throw error;
+    }
+  }
+
+  private async writeStaging(tmp: string, name: string, length: number, body: AsyncIterable<Uint8Array>): Promise<{ sha256: string; kind: AttachmentKind; mime: string }> {
+    const fh = await fs.open(tmp, "wx", 0o600);
+    try {
+      if (POSIX) await fh.chmod(0o600);
+      const hash = createHash("sha256");
+      const head: Uint8Array[] = [];
+      const headCap = ATTACHMENT_LIMITS.textBytes + 1;
+      let headLength = 0;
+      let count = 0;
+      let limit: number | undefined;
+      const decideLimit = () => {
+        const first = Buffer.concat(head).subarray(0, MAGIC_BYTES);
+        const early = sniffAttachment(first, name);
+        if (!early.ok && (early.reason === "unsupported_type" || early.reason === "extension_mismatch")) throw sniffError(early.reason);
+        // Anything that is not an image or a PDF by its magic bytes can only be text.
+        limit = early.ok && early.kind !== "text" ? KIND_LIMIT[early.kind] : KIND_LIMIT.text;
+        // The real size is known up front, so an oversized file stops after its first chunk.
+        if (length > limit) throw new AttachmentError(413, "the file is larger than its type allows");
+      };
+      for await (const chunk of body) {
+        count += chunk.length;
+        if (count > length) throw new AttachmentError(400, "the body is longer than Content-Length");
+        if (headLength < headCap) {
+          const part = chunk.subarray(0, headCap - headLength);
+          head.push(part);
+          headLength += part.length;
+        }
+        if (limit === undefined && headLength >= MAGIC_BYTES) decideLimit();
+        await fh.write(chunk);
+        hash.update(chunk);
+      }
+      if (count !== length) throw new AttachmentError(400, "the body is shorter than Content-Length");
+      if (limit === undefined) decideLimit();
+      // sniffAttachment judges size by the bytes it is given; the head is at most textBytes + 1, so
+      // the per-kind limit is checked again here against the real byte count.
+      const verdict = sniffAttachment(Buffer.concat(head), name);
+      if (!verdict.ok) throw sniffError(verdict.reason);
+      if (count > KIND_LIMIT[verdict.kind]) throw new AttachmentError(413, "the file is larger than its type allows");
+      await fh.sync();
+      return { sha256: hash.digest("hex"), kind: verdict.kind, mime: verdict.mime };
+    } finally {
+      await fh.close();
+    }
+  }
+
+  private async row(t: Db, workspaceId: string, id: string, lock = false): Promise<Row | undefined> {
+    if (!ID_RE.test(id)) return undefined;
+    const rows = await t.query<Row>(`select ${COLS} from message_attachments where id = $1 and workspace_id = $2${lock ? " for update" : ""}`, [id, workspaceId]);
+    return rows[0];
+  }
+
+  private async readable(workspaceId: string, id: string): Promise<{ view: AttachmentView; file: string }> {
+    const r = await this.row(this.db, workspaceId, id);
+    if (!r) throw new AttachmentError(404, "attachment not found");
+    const view = toView(r);
+    if (view.status === "deleted") throw new AttachmentError(410, "the attachment was deleted");
+    if (view.status !== "staged" && view.status !== "attached") throw new AttachmentError(410, "the attachment file is missing");
+    return { view, file: this.file(workspaceId, id) };
+  }
+
+  private async markMissing(id: string): Promise<never> {
+    await this.db.query("update message_attachments set status = 'missing' where id = $1 and status = 'attached'", [id]);
+    throw new AttachmentError(410, "the attachment file is missing");
+  }
+
+  async open(workspaceId: string, id: string): Promise<{ view: AttachmentView; stream: Readable }> {
+    const { view, file } = await this.readable(workspaceId, id);
+    let fh: fs.FileHandle;
+    try {
+      fh = await fs.open(file, "r");
+    } catch (e) {
+      if (isCode(e, "ENOENT")) return this.markMissing(id);
+      throw e;
+    }
+    return { view, stream: fh.createReadStream() };
+  }
+
+  async readBytes(workspaceId: string, id: string): Promise<Buffer> {
+    const { file } = await this.readable(workspaceId, id);
+    try {
+      return await fs.readFile(file);
+    } catch (e) {
+      if (isCode(e, "ENOENT")) return this.markMissing(id);
+      throw e;
+    }
+  }
+
+  /** Binds staged uploads to a message inside the caller's transaction. Any id that is not this workspace's staged upload fails the whole call. */
+  async bind(t: Db, workspaceId: string, messageId: string, ids: string[]): Promise<AttachmentView[]> {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) return [];
+    const rows = await t.query<Row>(
+      `update message_attachments set status = 'attached', message_id = $3, attached_at = now()
+       where id = any($1) and workspace_id = $2 and status = 'staged' returning ${COLS}`,
+      [unique, workspaceId, messageId],
+    );
+    if (rows.length !== unique.length) throw new AttachmentError(409, "attachments must be unsent uploads of this workspace");
+    const byId = new Map(rows.map((r) => [r.id, toView(r)]));
+    const views = unique.map((id) => byId.get(id)!);
+    for (const v of views) toAttachmentRef(v);
+    return views;
+  }
+
+  async listForMessages(db: Db, messageIds: string[]): Promise<Map<string, AttachmentView[]>> {
+    const out = new Map<string, AttachmentView[]>();
+    if (messageIds.length === 0) return out;
+    const rows = await db.query<Row>(`select ${COLS} from message_attachments where message_id = any($1) order by created_at, id`, [messageIds]);
+    for (const r of rows) {
+      const list = out.get(r.message_id!) ?? [];
+      list.push(toView(r));
+      out.set(r.message_id!, list);
+    }
+    return out;
+  }
+
+  /** D-4: bytes go now; a bound attachment keeps a tombstone, an unsent upload is dropped. Idempotent. */
+  async remove(workspaceId: string, id: string): Promise<AttachmentView> {
+    const view = await this.db.tx(async (t) => {
+      const r = await this.row(t, workspaceId, id, true);
+      if (!r || r.status === "expired") throw new AttachmentError(404, "attachment not found");
+      if (r.status === "deleted") return toView(r);
+      if (r.status === "staged") {
+        await t.query("delete from message_attachments where id = $1", [id]);
+        return { ...toView(r), status: "deleted" as const, deletedAt: new Date().toISOString() };
+      }
+      const rows = await t.query<Row>(`update message_attachments set status = 'deleted', deleted_at = now() where id = $1 returning ${COLS}`, [id]);
+      return toView(rows[0]!);
+    });
+    await fs.rm(this.file(workspaceId, id), { force: true });
+    return view;
+  }
+
+  /**
+   * Expires old staged uploads and removes files whose rows say they should be gone. Only the
+   * startup pass (before the hub accepts requests) removes files without a row, the staging area,
+   * and marks lost files `missing`: an upload in flight has a file but no row yet.
+   */
+  async sweep(opts: { startup: boolean; now?: Date }): Promise<void> {
+    const cutoff = new Date((opts.now ?? new Date()).getTime() - ATTACHMENT_LIMITS.stagedTtlMs);
+    await this.db.query("update message_attachments set status = 'expired' where status = 'staged' and created_at < $1", [cutoff]);
+    const gone = await this.db.query<{ id: string; workspace_id: string; status: AttachmentStatus }>(
+      "select id, workspace_id, status from message_attachments where status in ('expired', 'deleted')",
+    );
+    for (const g of gone) await fs.rm(this.file(g.workspace_id, g.id), { force: true });
+    const expired = gone.filter((g) => g.status === "expired").map((g) => g.id);
+    if (expired.length > 0) await this.db.query("delete from message_attachments where id = any($1) and status = 'expired'", [expired]);
+    if (opts.startup) await this.startupScan();
+    await this.tightenPermissions();
+  }
+
+  private async startupScan(): Promise<void> {
+    let entries: string[];
+    try {
+      entries = await fs.readdir(this.root);
+    } catch (e) {
+      if (isCode(e, "ENOENT")) return;
+      throw e;
+    }
+    await fs.rm(this.staging, { recursive: true, force: true });
+    const workspaces = new Set((await this.db.query<{ id: string }>("select id from workspaces")).map((r) => r.id));
+    const live = await this.db.query<{ id: string; workspace_id: string; status: AttachmentStatus }>(
+      "select id, workspace_id, status from message_attachments where status = any($1)",
+      [FILE_STATUSES],
+    );
+    const expected = new Set(live.map((r) => `${r.workspace_id}/${r.id}`));
+    for (const entry of entries) {
+      if (entry === ".staging") continue;
+      const dir = path.join(this.root, entry);
+      if (!workspaces.has(entry)) {
+        await fs.rm(dir, { recursive: true, force: true });
+        continue;
+      }
+      const files = await fs.readdir(dir).catch(() => [] as string[]);
+      for (const f of files) if (!expected.has(`${entry}/${f}`)) await fs.rm(path.join(dir, f), { recursive: true, force: true });
+    }
+    for (const r of live) {
+      try {
+        await fs.access(this.file(r.workspace_id, r.id));
+      } catch {
+        if (r.status === "attached") await this.db.query("update message_attachments set status = 'missing' where id = $1 and status = 'attached'", [r.id]);
+        else await this.db.query("delete from message_attachments where id = $1 and status = 'staged'", [r.id]);
+      }
+    }
+  }
+
+  private async tightenPermissions(): Promise<void> {
+    if (!POSIX) return;
+    const walk = async (p: string): Promise<void> => {
+      let st;
+      try {
+        st = await fs.lstat(p);
+      } catch {
+        return;
+      }
+      if (st.isSymbolicLink()) return;
+      const want = st.isDirectory() ? 0o700 : 0o600;
+      if ((st.mode & 0o777) !== want) {
+        await fs.chmod(p, want).catch(() => {});
+        if (st.mode & 0o077) console.warn(`tightened permissions on ${p}`);
+      }
+      if (st.isDirectory()) for (const e of await fs.readdir(p).catch(() => [] as string[])) await walk(path.join(p, e));
+    };
+    await walk(this.root);
+  }
+}

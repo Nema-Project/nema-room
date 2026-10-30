@@ -116,6 +116,7 @@ export async function deleteWorkspace(db: Db, dataDir: string, id: string, nemaH
     await t.query("delete from tasks where workspace_id = $1", [id]);
     await t.query("delete from question_threads where workspace_id = $1", [id]);
     await t.query("delete from threads where workspace_id = $1", [id]);
+    await t.query("delete from message_attachments where workspace_id = $1", [id]);
     await t.query("delete from messages where workspace_id = $1", [id]);
     await t.query("delete from entry_index where workspace_id = $1", [id]);
     await t.query("delete from evidence_events where workspace_id = $1", [id]);
@@ -124,5 +125,7 @@ export async function deleteWorkspace(db: Db, dataDir: string, id: string, nemaH
     await t.query("delete from workspaces where id = $1", [id]);
   });
   await fs.rm(repoPath(dataDir, id), { recursive: true, force: true });
+  // Uploads take this workspace's row `for share`, so none can write here after the delete commits.
+  await fs.rm(path.join(dataDir, "attachments", id), { recursive: true, force: true });
   if (nemaHome) await fs.rm(path.join(nemaHome, "ws", id), { recursive: true, force: true });
 }

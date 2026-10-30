@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_HUB_PORT } from "./app.js";
+import { attachmentsMaxBytesFromEnv } from "./attachments.js";
 import { readHubReleaseVersion } from "./hubVersion.js";
 import { createPgDb, migrate } from "./db/db.js";
 import { startHub } from "./lifecycle.js";
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
   const port = Number(process.env.NEMA_HUB_PORT ?? DEFAULT_HUB_PORT);
   // Preserve Compose's container-wide bind; local managed hubs default to loopback.
   const hostname = process.env.NEMA_HUB_HOST || "127.0.0.1";
+  const attachmentsMaxBytes = attachmentsMaxBytesFromEnv(process.env);
   const cleanDaemonDirs = !["0", "false", "no"].includes((process.env.NEMA_HUB_CLEAN_DAEMON_DIRS ?? "1").toLowerCase());
   await mkdir(dataDir, { recursive: true });
   const daemonToken = await ensureDaemonToken(dataDir);
@@ -66,6 +68,7 @@ async function main(): Promise<void> {
       webOrigin: process.env.NEMA_WEB_ORIGIN ?? "http://localhost:3000,http://127.0.0.1:3000",
       hostname,
       cleanDaemonDirs,
+      attachmentsMaxBytes,
     });
     console.log(`nema hub listening on ${hostname}:${port} (use ${hub.url})`);
     const shutdown = () => {
