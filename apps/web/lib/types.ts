@@ -88,6 +88,8 @@ export type Repo = {
   lastMainSha: string | null;
   lastFetchAt: string | null;
   lastFetchError: string | null;
+  /** Whether this repository's committed `.agents/skills` / `.claude/skills` are given to agents. */
+  trustSkills: boolean;
 };
 
 export type PluginFunctionView = {

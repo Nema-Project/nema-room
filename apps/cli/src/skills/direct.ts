@@ -2,7 +2,8 @@ import type { TaskEvent } from "@nema/shared";
 import type { FunctionTool } from "../direct/transport.js";
 import { codexCatalog } from "./catalog.js";
 import { READ_SKILL, SkillReader, readSkillTool } from "./readSkill.js";
-import { takeSnapshot, type SkillSnapshot } from "./snapshot.js";
+import type { SkillSnapshot } from "./snapshot.js";
+import { readRepoSkillFile, takeTaskSnapshot, type ProjectSkillRepo } from "./repoSkills.js";
 import { preloadSection, readSkillBody } from "./preload.js";
 
 /** What a codex-direct task adds for Skills: the catalog after the hub prompt, `read_skill`, and its reader. */
@@ -22,11 +23,13 @@ export async function prepareDirectSkills(o: {
   onActivated?: (id: string, revision: string) => Promise<void>;
   /** The thread's activated Skills, most recent first (`task.assign.retainedSkills`). */
   retained?: string[];
+  /** Trusted repositories (`task.assign.projectSkills`). */
+  projectSkills?: ProjectSkillRepo[];
 }): Promise<DirectSkills> {
   let snapshot: SkillSnapshot;
   try {
     // Claude Code's version does not matter to codex-direct.
-    snapshot = await takeSnapshot({ nemaHome: o.nemaHome, claudeCodeOk: true });
+    snapshot = await takeTaskSnapshot({ nemaHome: o.nemaHome, claudeCodeOk: true, ...(o.projectSkills ? { projectSkills: o.projectSkills } : {}) });
   } catch (error) {
     o.onEvent({ type: "progress", text: `Skills 读取失败，本任务不使用 Skills：${error instanceof Error ? error.message : String(error)}` });
     return { instructions: o.prompt, tools: [], reader: null, snapshot: { skills: [], warnings: [] } };
@@ -43,12 +46,13 @@ export async function prepareDirectSkills(o: {
     nemaHome: o.nemaHome,
     snapshot,
     listed: catalog.listed,
+    readRepoFile: readRepoSkillFile,
     onRead: (text) => o.onEvent({ type: "tool_call", text }),
     onActivated: o.onActivated ?? (async () => {}),
   });
   let instructions = `${o.prompt}\n\n${catalog.text}`;
   if (o.retained && o.retained.length > 0) {
-    const preload = await preloadSection({ snapshot, retained: o.retained, readBody: (skill) => readSkillBody(o.nemaHome, skill) });
+    const preload = await preloadSection({ snapshot, retained: o.retained, readBody: (skill) => readSkillBody(o.nemaHome, skill, readRepoSkillFile) });
     for (const id of preload.loaded) reader.markLoaded(id);
     if (preload.text) instructions += `\n\n${preload.text}`;
     if (preload.dropped.length > 0) o.onEvent({ type: "progress", text: `这些 Skill 放不下，没有预载：${preload.dropped.join("、")}` });

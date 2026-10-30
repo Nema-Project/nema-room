@@ -158,7 +158,7 @@ export type RepoPreview = {
 export const previewRepo = (id: string, path: string) => request<RepoPreview>(`${w(id)}/repos/preview`, { method: "POST", body: { path } });
 export const bindRepo = (id: string, body: { path: string; label: string; mainBranch?: string }) =>
   request<Repo>(`${w(id)}/repos`, { method: "POST", body });
-export const updateRepo = (id: string, repoId: string, patch: { label?: string; mainBranch?: string }) =>
+export const updateRepo = (id: string, repoId: string, patch: { label?: string; mainBranch?: string; trustSkills?: boolean }) =>
   request<Repo>(`${w(id)}/repos/${encodeURIComponent(repoId)}`, { method: "PATCH", body: patch });
 export const unbindRepo = (id: string, repoId: string) => request<void>(`${w(id)}/repos/${encodeURIComponent(repoId)}`, { method: "DELETE" });
 export const listWorkspacePlugins = (id: string) => request<WorkspacePlugin[]>(`${w(id)}/plugins`);

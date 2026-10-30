@@ -17,7 +17,8 @@ export type SnapshotSkill = {
   id: string;
   source: "managed" | "external" | "repo";
   recordId: string | null;
-  repo: { repoId: string; label: string; slug: string; path: string; commit: string } | null;
+  /** A repository Skill's place: the repository, its pinned commit, and the Skill's folder in it (e.g. `.agents/skills/tdd`). */
+  repo: { repoId: string; label: string; slug: string; path: string; commit: string; dir: string } | null;
   /** The real directory of a managed or external Skill; `null` for a repository Skill (read through git). */
   root: string | null;
   meta: SkillMeta;

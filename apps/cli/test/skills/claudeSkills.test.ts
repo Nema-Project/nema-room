@@ -93,7 +93,7 @@ test("repository Skills go under repo-skills/<slug>; a bad slug writes nothing o
     id,
     source: "repo",
     root: null,
-    repo: { repoId: "r1", label: "web", slug, path: "/src/web", commit: COMMIT },
+    repo: { repoId: "r1", label: "web", slug, path: "/src/web", commit: COMMIT, dir: ".agents/skills/tdd" },
   });
   const files: Record<string, string> = { "SKILL.md": skillText("tdd") };
   const readRepoFile = async (_skill: SnapshotSkill, rel: string) => Buffer.from(files[rel]!);
