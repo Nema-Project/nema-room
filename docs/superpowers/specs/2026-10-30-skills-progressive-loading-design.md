@@ -2,7 +2,7 @@
 
 - **Issue：** [#75](https://github.com/Nema-Project/nema-room/issues/75) 验收项「Skills 按渐进方式载入，不再整体塞进提示词」
 - **上位规格：** [extension management spec](2026-10-25-extension-management-design.md) 第 72 行（「Skills 与 MCP 如何真正可用」）
-- **目标版本：** v0.1.7 发布前完成
+- **目标版本：** v0.2.0 发布前完成（下一版由 v0.1.7 改为 v0.2.0，2026-10-30 22:42 JST）
 - **核对基线：** `origin/main` `94ecb33`（Merge pull request #122）；2026-10-30 22:30 JST 对照 `f20e2d6` 复核，`handlers.ts` 行号有变的地方已按新行号写
 - **决定：** 用户在 2026-10-30 22:23–22:29 JST 定了 D-1 到 D-6，见文末「已决定的事项」
 
@@ -45,7 +45,8 @@
 
 - **Claude Code 工具检查：** `claude/adapter.ts:138` 用 `claudeAllowedToolNames` 建允许集合，`claude/events.ts:35-60` 解析流里每个 `tool_use` 块。要打开 `Skill` 和 `Read`，两处都要改。
 - **绑定仓库：** 表 `workspace_repos` 在 `apps/hub/src/db/migrations/005_repos_plugins.sql:1-14`，`path` 是 daemon 机器上的真实路径，另有 `main_branch` 和 `last_main_sha`。daemon 的 `apps/cli/src/repos/git.ts` 已有 `mainRef`（:281）、`revParse`（:312）、`readFileAtRef`（:316）、`exportSnapshot`（:403），可以按提交读文件，不碰工作区。仓库设置页是 `apps/web/components/CodeAndPlugins.tsx`。
-- **聊天输入框：** `apps/web/components/Composer.tsx`。附件区由 `AttachmentTray` 和 `useAttachmentTray` 管理（:5-7、:52），发送时附件 id 和正文分开传（`onSend(content, attachmentIds)`，:33）。键盘处理在 `onKeyDown`（:113）。
+- **聊天输入框：** `apps/web/components/Composer.tsx`。附件区由 `AttachmentTray` 和 `useAttachmentTray` 管理（:5-7、:52），发送时附件 id 和正文分开传（`onSend(content, attachmentIds)`，:33）。键盘处理在 `onKeyDown`（:113）：普通 Enter 换行，Shift+Enter 发送（:138-142）。
+- **已有的 `/` 命令菜单：** `apps/web/lib/slash.ts:11-21` 定义内置命令 `thread`、`progress`、`diagram:<类型>`、`update`。`slashToken`（:26-36）在**任意一行**行首识别 `/词`；选中后 `applySlash` 把它换成一段提示文字，不保留 `/词`。`/thread <文字>` 在发送时由前端拦截，改为开 thread（`Composer.tsx:83-84`）。thread 里的输入框不提供 `/thread`（`Composer.tsx:18-20`）。hub 不解析任何斜杠命令。
 - **迁移编号：** 现在最新的是 `014_message_attachments.sql`。
 
 ## 社区做法对照（2026-10-30 抓取）
@@ -168,7 +169,7 @@ Skill 里提到的相对路径用 `read_skill` 的 `path` 读取；Nema 不能�
   claude-config/          HOME 和 CLAUDE_CONFIG_DIR（不变）
   work/                   主工作目录（cwd）
     .claude/skills/<id>/  受管和外部 Skill 的副本
-  repo-skills/<仓库标签>/.claude/skills/<名字>/   已信任仓库的项目级 Skill 副本（第 7 节）
+  repo-skills/<仓库 slug>/.claude/skills/<名字>/   已信任仓库的项目级 Skill 副本（第 7 节）
   claude-settings.json    本任务的设置文件（0600），不在任何工作目录里
   mcp.json                不变
 ```
@@ -188,7 +189,7 @@ Skill 里提到的相对路径用 `read_skill` 的 `path` 读取；Nema 不能�
 | `--setting-sources` | `""` | `project` | 主工作目录 `.claude/skills` 和 `--add-dir` 目录的 Skill 都经 `project` 来源载入。`work/` 下除了 `.claude/skills` 没有别的文件，不会载入意外的项目设置 |
 | `--tools` | `""` | `Skill,Read` | 只开这两个内置工具。不开 Bash、Grep、Glob、Edit、Write |
 | `--allowedTools` | `mcp__room__*` | 再加 `Skill`、`Read(/.claude/skills/**)` | 规则写在 CLI 参数里时，`/path` 锚定主工作目录 |
-| `--add-dir` | 无 | 每个已信任仓库一个 `<runDir>/repo-skills/<标签>` | 只给有项目级 Skill 的仓库加 |
+| `--add-dir` | 无 | 每个已信任仓库一个 `<runDir>/repo-skills/<仓库 slug>` | 只给有项目级 Skill 的仓库加 |
 | `--settings` | 无 | `<runDir>/claude-settings.json` | 内容见下 |
 | `--disallowedTools` | `AskUserQuestion` | 不变 | |
 
@@ -240,7 +241,7 @@ hub 的规则第 127 条（「不要读写本地文件」）改成「除了 Skil
 
 | 要求 | 用的机制 | 文档 |
 | --- | --- | --- |
-| 只能读本任务的 Skill 目录 | 工作目录只有 `work/`（内容只有 `.claude/skills`）和 `--add-dir` 的 `repo-skills/<标签>`；`permissions.blockReadsOutsideWorkingDirectories: true` | [权限：工作目录](https://code.claude.com/docs/en/permissions)、[设置参考](https://code.claude.com/docs/en/settings-reference) |
+| 只能读本任务的 Skill 目录 | 工作目录只有 `work/`（内容只有 `.claude/skills`）和 `--add-dir` 的 `repo-skills/<仓库 slug>`；`permissions.blockReadsOutsideWorkingDirectories: true` | [权限：工作目录](https://code.claude.com/docs/en/permissions)、[设置参考](https://code.claude.com/docs/en/settings-reference) |
 | 不能借链接读出去 | 副本里没有链接；允许规则要求请求路径和链接目标都匹配 | [权限：符号链接](https://code.claude.com/docs/en/permissions) |
 | 不能写 | 不开 Edit、Write、NotebookEdit | [CLI 参考 `--tools`](https://code.claude.com/docs/en/cli-reference) |
 | 不能执行 | 不开 Bash、PowerShell；`disableSkillShellExecution`；`disableAllHooks` | [CLI 参考](https://code.claude.com/docs/en/cli-reference)、[设置参考](https://code.claude.com/docs/en/settings-reference) |
@@ -279,7 +280,7 @@ type SkillUsage = {
   invocation: "model-and-user" | "user-only" | "model-only";
 };
 type SkillGap = "scripts" | "shell-injection" | "allowed-tools" | "subagent" | "hooks" | "paths" | "binary-assets" | "skill-dir-variable" | "claude-code-too-old";
-type SkillNote = "model-override" | "stop-not-enforced";
+type SkillNote = "model-override" | "stop-not-enforced" | "reserved-slash-name";
 ```
 
 缺失能力只看文件判断，不猜：有 `scripts/` 或可执行文件算 `scripts`；正文里有 `` !`…` `` 或 ```` ```! ```` 算 `shell-injection`；其余按 frontmatter 字段。插件页每个 Skill 行写两行，例如「Claude Code：部分可用，缺少：执行脚本」「Nema 内置 Agent：部分可用，缺少：执行脚本、读取图片」。文案进 `apps/web/messages/{en,zh,ja}.json`。`availability` 仍只表示文件状态，不会因为装上了就写成可用。
@@ -308,15 +309,15 @@ type SkillNote = "model-override" | "stop-not-enforced";
 - 每个 Skill 的限制和安装时一样：最多 500 个文件、单文件 5 MiB、总计 20 MiB；
 - 同一个仓库里 `.agents/skills` 和 `.claude/skills` 有同名 Skill 时，取 `.agents/skills` 那个（跨客户端约定），另一个在页面上标「被同仓库的同名 Skill 覆盖」。
 
-**仓库更新后怎么生效。** 下一个任务开始时重新取主分支提交，所以新提交合进主分支后的下一个任务就用新版本。未提交、未合并的改动不生效。版本标识写成 `<仓库标签>@<提交号前 7 位>`，任务事件里能看出用的是哪个提交。
+**仓库更新后怎么生效。** 下一个任务开始时，daemon 先对这个仓库做一次 `fetchMain`（同一仓库 5 分钟内最多一次，失败就用已有的引用并警告），再取主分支提交，所以新提交合进远端主分支后，最迟 5 分钟后的下一个任务就用新版本。未提交、未合并的改动不生效。版本标识写成 `<仓库标签>@<提交号前 7 位>`，任务事件里能看出用的是哪个提交。
 
 **重名和优先级。**
 
-- 用户级（受管、外部）Skill 用不带前缀的名字。仓库里的 Skill 与用户级重名，或者两个仓库之间重名时，仓库那个用 `<仓库标签 slug>:<名字>`，两个都能用。
+- 用户级（受管、外部）Skill 用不带前缀的名字。仓库里的 Skill 与用户级重名，或者两个仓库之间重名时，仓库那个用 `<仓库 slug>:<名字>`，两个都能用。仓库 slug 由标签转成，本任务里两个仓库转出同一个 slug 时，各加 `-<仓库 id 前 6 位>`，副本目录也用这个 slug，从不直接用标签拼路径。
 - 这和 Claude Code 一致：个人 Skill 优先于项目 Skill，`--add-dir` 目录里重名的 Skill 加前缀。实现指南说的「项目级覆盖用户级」，在 Nema 里会让一个仓库的提交者悄悄替换用户自己装的 Skill，所以不采用。
-- Claude Code 下由它原生处理：用户级副本在主工作目录 `work/.claude/skills`，项目级副本在各自的 `--add-dir` 目录，重名时它自己加 `/<目录名>:<名字>` 前缀（v2.1.309+）。目录名用仓库标签 slug，所以两种运行方式的对外名字一致。
+- Claude Code 下由它原生处理：用户级副本在主工作目录 `work/.claude/skills`，项目级副本在各自的 `--add-dir` 目录，重名时它自己加 `/<目录名>:<名字>` 前缀（v2.1.309+）。目录名用上面的仓库 slug，所以两种运行方式的对外名字一致。
 
-**路径和安全限制。** 除了上面的扫描规则，读取时还有：codex-direct 按提交读 git 对象，路径规则同第 2 节；Claude Code 读的是复制出来的副本，读取限制同第 4 节。项目级 Skill 和用户级一样标为第三方内容。
+**路径和安全限制。** 除了上面的扫描规则，读取时还有：codex-direct 按提交读 git 对象的原始字节（不经过按行截断的 `readFileAtRef`），路径规则同第 2 节；Claude Code 读的是复制出来的副本，读取限制同第 4 节。项目级 Skill 和用户级一样标为第三方内容。
 
 ### 8. 激活记录与 thread 内留存（D-6）
 
@@ -357,7 +358,7 @@ type SkillNote = "model-override" | "stop-not-enforced";
 **怎么识别。** 用户消息的正文去掉开头空白后，如果第一个词是 `/` 加对外 id（`^/[a-z0-9][a-z0-9:-]*`），后面是空白或结尾，就算手动调用。之后的文字是参数。
 
 - 写在正文中间的 `/name` 不算。
-- 想写一个以斜杠开头的普通句子，可以在前面加个空格以外的字符，或者用补全菜单里的「作为文字发送」。
+- 想发一条以斜杠开头、但不是调用的消息，在 `/` 前加任意非空白字符即可（例如写成 `「/x」`）。
 - 消息正文原样保存（包括 `/name`），来源可追溯。
 
 **谁来处理。** hub 在派发任务时只做语法识别，把 `{ skillId, arguments }` 放进 `task.assign` 的可选字段 `manualSkill`。daemon 再对照本任务快照解析：
@@ -369,10 +370,17 @@ type SkillNote = "model-override" | "stop-not-enforced";
 
 **预算。** 手动调用的 Skill 最先放，不受 thread 留存的 32 KB 挤占。它的正文超过 48 KB 时截断，并提示模型用 `read_skill` 的 `offset`（codex-direct）或 Read（Claude Code）读剩下的部分。
 
+**和内置 `/` 命令共存。** 输入框已有 `/` 菜单（见「补充现状」），Skill 加进同一个菜单，不另做一个：
+
+- 菜单分两组：「命令」（内置，照旧）和「Skills」。「Skills」组只在 `/` 位于整条消息开头（前面只有空白）时出现；在其他行的行首，只有内置命令。
+- 选中内置命令，行为不变（换成提示文字）。选中 Skill，填入 `/<id> `，光标停在后面，可以接着写参数。
+- **保留名：** `thread`、`progress`、`update` 和以 `diagram:` 开头的名字留给内置命令。对外 id 与保留名相同的 Skill 不进菜单，hub 也不把这样的消息识别为手动调用，所以 `/thread <文字>` 仍然开 thread。这类 Skill 模型仍可以自己读取，插件页在它那一行写「与内置命令重名，不能用 / 调用」。仓库标签 slug 为 `diagram` 的仓库，其项目级 Skill 的前缀改用 `repo-diagram:`。
+- 前端菜单和 hub 的识别用 `packages/shared` 导出的同一份保留名清单。
+
 **补全。**
 
-- 新 UI API `GET /api/workspaces/:id/skills`：hub 调 daemon RPC `skills.catalog`，带上这个 workspace 已信任的仓库，返回对外 id、原名、描述、`invocation`、按运行方式的支持情况。`user-invocable: false` 的不返回。
-- 输入框是空的、或光标在正文开头时输入 `/`，弹出列表，按名字和描述过滤。↑↓ 选择；Enter 或 Tab 填入 `/<id> `；Esc 关闭。菜单打开时 Enter 只用于选择，菜单关闭时照常发送。
+- 新 UI API `GET /api/workspaces/:id/skills`：hub 调 daemon RPC `skills.catalog`，带上这个 workspace 已信任的仓库，返回对外 id、原名、描述、`invocation`、按运行方式的支持情况。`user-invocable: false` 的不返回。daemon 不支持这个 RPC 时（旧版本）返回空列表和 `supported: false`，菜单只有内置命令。
+- 按 id 和描述过滤。键盘沿用现有菜单：↑↓ 选择，Enter 或 Tab 选中，Esc 关闭；菜单关闭时普通 Enter 仍是换行，Shift+Enter 发送。
 - 列表在打开输入框时取一次，之后 30 秒内复用；启停或信任开关变化后，页面收到扩展状态事件时刷新。
 
 **和附件共存。** 附件仍在 `AttachmentTray` 里，和正文分开（`onSend(content, attachmentIds)` 不变）。
