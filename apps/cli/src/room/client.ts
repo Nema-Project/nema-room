@@ -49,6 +49,15 @@ export class RoomClient {
     return this.call("POST", "/extensions/offer", args);
   }
 
+  /**
+   * Tells the hub this task loaded a Skill, so a thread can keep it. A hub without the route (404) is
+   * an older hub: that counts as done.
+   */
+  async reportSkillActivation(skillId: string, revision: string): Promise<RoomResult> {
+    const result = await this.call("POST", "/skills/activated", { skillId, revision });
+    return !result.ok && result.status === 404 ? { ok: true, json: null } : result;
+  }
+
   listPluginTools(): Promise<RoomResult> {
     return this.call("GET", "/plugins");
   }
