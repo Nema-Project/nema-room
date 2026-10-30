@@ -232,8 +232,8 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
     pendingJump.current = null;
   }, [messages, jumpTick]);
 
-  async function send(content: string, quoted?: Message | null) {
-    const { message } = quoted ? await postMessage(workspaceId, content, quoted.id) : await postMessage(workspaceId, content);
+  async function send(content: string, attachmentIds: string[], quoted?: Message | null) {
+    const { message } = await postMessage(workspaceId, content, quoted?.id, attachmentIds);
     setMessages((l) => merge(l, message));
     if (quoted) setQuote(null);
   }
@@ -260,8 +260,8 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
     } catch { /* a deleted source can no longer be opened */ }
   }
 
-  async function createThreadFromComposer(content: string) {
-    const result = await createThread(workspaceId, content, quote?.id);
+  async function createThreadFromComposer(content: string, attachmentIds: string[]) {
+    const result = await createThread(workspaceId, content, quote?.id, attachmentIds);
     setMessages((cur) => merge(cur, result.message));
     setThreads((cur) => new Map(cur).set(result.thread.id, result.thread));
     setQuote(null);
@@ -352,7 +352,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
           {t("common.error", { message: error })}
         </p>
       )}
-      <Composer onSend={(content) => send(content, quote)} onThread={createThreadFromComposer} quote={quote} onClearQuote={() => setQuote(null)} />
+      <Composer workspaceId={workspaceId} onSend={(content, attachmentIds) => send(content, attachmentIds, quote)} onThread={createThreadFromComposer} quote={quote} onClearQuote={() => setQuote(null)} />
     </>
   );
 });
