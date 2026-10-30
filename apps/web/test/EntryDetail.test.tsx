@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EntryDetail } from "@/components/EntryDetail";
@@ -298,9 +298,67 @@ describe("EntryDetail", () => {
       await userEvent.click(screen.getByRole("button", { name: "确认已实现" }));
       expect(hub.confirmImplementation).toHaveBeenCalledTimes(1);
       expect(hub.confirmImplementation).toHaveBeenCalledWith("w1", "R-1");
-      expect(await screen.findByText("已核实")).toBeTruthy();
+      expect(await screen.findByText("验收已确认")).toBeTruthy();
+      expect(screen.queryByText("已核实")).toBeNull();
       expect(screen.getByText("由用户确认")).toBeTruthy();
       expect(screen.queryByRole("button", { name: "确认已实现" })).toBeNull();
+    } finally {
+      localStorage.removeItem("nema.locale");
+    }
+  });
+  it("shows a git-checked requirement as commits checked with its scope, not accepted", async () => {
+    localStorage.setItem("nema.locale", "zh");
+    vi.mocked(hub.getEntry).mockResolvedValue({
+      ...entry,
+      implementation: {
+        status: "verified",
+        evidence: { reportMessageId: "m_1", commits: ["abcdef1"], inferred: false, note: null, confirmedBy: null, acceptanceReview: null, reportEvidence: null, reports: [{ reportMessageId: "m_1", reportPassed: true }] },
+      } as never,
+    });
+    try {
+      await mount();
+      expect(screen.getByText("提交已核对")).toBeTruthy();
+      expect(screen.getByText(/^只这些提交：/)).toBeTruthy();
+      expect(screen.queryByText("验收已确认")).toBeNull();
+      expect(screen.queryByText("已核实")).toBeNull();
+    } finally {
+      localStorage.removeItem("nema.locale");
+    }
+  });
+  it("hides the commit-check label when no linked report passed", async () => {
+    localStorage.setItem("nema.locale", "zh");
+    const evidence = { reportMessageId: null, commits: ["abcdef1"], inferred: false, note: null, confirmedBy: null, acceptanceReview: null, reportEvidence: null, reports: [] };
+    vi.mocked(hub.getEntry).mockResolvedValue({ ...entry, implementation: { status: "verified", evidence } as never });
+    try {
+      await mount();
+      expect(screen.queryByText("提交已核对")).toBeNull();
+      expect(screen.queryByText("已核实")).toBeNull();
+      expect(document.querySelector("[data-testid='impl-tag']")).toBeNull();
+    } finally {
+      localStorage.removeItem("nema.locale");
+    }
+  });
+  it("offers confirm on a git-checked requirement and still-accept during review", async () => {
+    localStorage.setItem("nema.locale", "zh");
+    const base = { reportMessageId: "m_1", commits: ["abcdef1"], inferred: false, note: null, acceptanceReview: null, reportEvidence: null, reports: [{ reportMessageId: "m_1", reportPassed: true }] };
+    const show = async (evidence: Record<string, unknown>) => {
+      vi.mocked(hub.getEntry).mockResolvedValue({ ...entry, implementation: { status: "verified", evidence } as never });
+      return mount();
+    };
+    try {
+      await show({ ...base, confirmedBy: null });
+      expect(screen.getByRole("button", { name: "确认已实现" })).toBeTruthy();
+      cleanup();
+      await show({ ...base, confirmedBy: "user", acceptanceReview: { needed: true, at: "2026-10-30T00:00:00Z", reason: "linked_check_changed" } });
+      expect(screen.getByRole("button", { name: "仍确认" })).toBeTruthy();
+      expect(screen.getByText("所引上报的核对已变，验收仍在，需要复审")).toBeTruthy();
+      expect(screen.getByText("验收已确认")).toBeTruthy();
+      cleanup();
+      await show({ ...base, confirmedBy: "user" });
+      expect(screen.queryByRole("button", { name: "确认已实现" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "仍确认" })).toBeNull();
+      expect(screen.getByText("验收已确认")).toBeTruthy();
+      expect(screen.queryByText("任务已完成并确认")).toBeNull();
     } finally {
       localStorage.removeItem("nema.locale");
     }

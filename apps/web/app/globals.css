@@ -503,3 +503,10 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .thread-floating .composer { border-top: 1px solid var(--rule); }
 .thread-drag { position: absolute; height: 44px; top: 0; left: 0; right: 48px; z-index: 2; cursor: grab; }
 .thread-entry { position: absolute; inset: 48px 12px 12px; z-index: 3; background: var(--paper); overflow: auto; border: 1px solid var(--rule); border-radius: 8px; }
+.rblock { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--line, rgba(0,0,0,.08)); }
+.rblock-title { font-size: 12px; font-weight: 600; margin: 0 0 4px; }
+.rsub { margin-top: 6px; }
+.rsub-title { font-size: 11px; font-weight: 600; margin: 0 0 2px; color: var(--ink-3); }
+.rclaims, .rauthors { list-style: none; margin: 4px 0 0; padding: 0; font-size: 12px; display: grid; gap: 2px; }
+.rauthors li { display: flex; flex-wrap: wrap; gap: 6px; }
+.rhistory { margin-top: 6px; opacity: .75; }

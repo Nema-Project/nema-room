@@ -2,7 +2,8 @@ import type { ExtensionRecord, SkillInstallJob, SkillSourcePreview } from "@nema
 import type {
   EntryListItem,
   Entry,
-  EntrySummary,
+  EntrySummaryView,
+  EntryView,
   HistoryItem,
   Message,
   ParagraphBlame,
@@ -100,7 +101,7 @@ export const withdrawEntry = (id: string, entryId: string) => request<Entry>(`${
 export const getActiveTask = (id: string) =>
   request<{ running: Task | null; indexing?: { repoId: string; label: string }[] }>(`${w(id)}/tasks/active`);
 export const listEntries = (id: string) => request<EntryListItem[]>(`${w(id)}/entries`);
-export const getEntry = (id: string, eid: string) => request<Entry>(e(id, eid));
+export const getEntry = (id: string, eid: string) => request<EntryView>(e(id, eid));
 export const putEntry = (id: string, eid: string, input: Omit<UpsertEntryInput, "id">) =>
   request<Entry>(e(id, eid), { method: "PUT", body: input });
 export const confirmEntry = (id: string, eid: string) => request<Entry>(`${e(id, eid)}/confirm`, { method: "POST", body: {} });
@@ -110,7 +111,7 @@ export const confirmImplementation = (id: string, eid: string) =>
 export const getHistory = (id: string, eid: string) => request<HistoryItem[]>(`${e(id, eid)}/history`);
 export const getVersion = (id: string, eid: string, commit: string) => request<Entry>(`${e(id, eid)}/versions/${encodeURIComponent(commit)}`);
 export const getWhy = (id: string, eid: string) => request<ParagraphBlame[]>(`${e(id, eid)}/why`);
-export const getTimeline = (id: string) => request<EntrySummary[]>(`${w(id)}/timeline`);
+export const getTimeline = (id: string) => request<EntrySummaryView[]>(`${w(id)}/timeline`);
 /** The hub renders a diagram's stored spec as standalone HTML; it is opened in its own window. */
 export const diagramHtmlUrl = (id: string, gid: string) => `${base()}${w(id)}/diagrams/${encodeURIComponent(gid)}.html`;
 export const updateDiagram = (id: string, gid: string) =>

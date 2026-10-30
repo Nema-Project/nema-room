@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { z, ZodError } from "zod";
 import { KnowledgeStore, UpsertRejected, git } from "@nema/knowledge";
-import { kindFromId, reportPassed, type Entry, type Implementation, type ReportCheck, type ReportMessageMeta, type UpsertEntryInput, type WpTask } from "@nema/shared";
+import { citedReports, kindFromId, reportPassed, type Entry, type Implementation, type ReportCheck, type ReportMessageMeta, type UpsertEntryInput, type WpTask } from "@nema/shared";
 import type { DaemonRpc } from "./daemonRpc.js";
 import type { HubCallOutcome } from "./diagrams.js";
 import type { Db } from "./db/db.js";
@@ -565,6 +565,23 @@ export async function noteLinkedCheckChanged(
       if (error instanceof ReviewAlreadyNeeded) continue;
       throw error;
     }
+  }
+}
+
+/**
+ * Tells open views that entries citing this report should be re-read: its pass state changed, and the read
+ * endpoints derive `evidence.reports` and task `reportPassed` from it. Writes nothing.
+ */
+export async function announceCitingEntries(
+  deps: { dataDir?: string; events: EventBus; ownedHelpers?: OwnedHelperScope },
+  workspaceId: string,
+  messageId: string,
+): Promise<void> {
+  if (!deps.dataDir) return;
+  const entries = await new KnowledgeStore(repoPath(deps.dataDir, workspaceId), deps.ownedHelpers).listEntries();
+  for (const e of entries) {
+    const cites = (e.implementation && citedReports(e.implementation).includes(messageId)) || (e.workpackage?.tasks ?? []).some((t) => t.reportMessageId === messageId);
+    if (cites) deps.events.emit(workspaceId, { type: "knowledge.changed", entryId: e.id });
   }
 }
 

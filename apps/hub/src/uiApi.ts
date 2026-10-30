@@ -3,7 +3,8 @@ import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z, ZodError } from "zod";
 import { KnowledgeStore, blameParagraphs, git, history, versionAt, parseCommitMessage } from "@nema/knowledge";
-import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, confirmableImplementation, kindFromId, canonicalJson, parseSkillSource, safeRepoPath } from "@nema/shared";
+import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, citedReports, confirmableImplementation, kindFromId, canonicalJson, parseSkillSource, reportPassed, safeRepoPath } from "@nema/shared";
+import type { Implementation, ReportMessageMeta, WorkPackageMeta } from "@nema/shared";
 import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
 import { insertEvidenceEvent, consumeEvidenceEvent, reconcileUnconsumedEventsLocked, payloadHashFor, type EvidenceEventInput } from "./evidenceEvents.js";
 import type { Entry } from "@nema/shared";
@@ -500,7 +501,7 @@ export function uiRoutes(deps: UiDeps): Hono {
   app.get("/workspaces/:id/workpackages/:wid", async (c) => {
     const wp = await store(c.req.param("id")!).readWorkPackage(c.req.param("wid")!);
     if (!wp) throw new HttpError(404, `找不到开发包 ${c.req.param("wid")}`);
-    return c.json(wp);
+    return c.json({ ...wp, entry: (await withReportPass(c.req.param("id")!, [wp.entry]))[0] });
   });
   app.post("/workspaces/:id/workpackages/:wid/approve", async (c) => {
     const { id, wid } = await wpWorkspace(c);
@@ -537,13 +538,53 @@ export function uiRoutes(deps: UiDeps): Hono {
     return new Set(rows.map((r) => r.entry_id));
   }
 
+  /**
+   * Adds the pass state of every cited report to the response: `implementation.evidence.reports` on
+   * requirements and `reportPassed` on work package tasks. Read from each report's stored check; a missing
+   * message or check counts as not passed. Only the JSON response carries these; files never do.
+   */
+  async function withReportPass<T extends { implementation?: Implementation | undefined; workpackage?: object | undefined }>(ws: string, entries: T[]): Promise<T[]> {
+    // Summaries carry only a task count; full entries carry the tasks.
+    const tasksOf = (e: T) => (e.workpackage as Partial<WorkPackageMeta> | undefined)?.tasks;
+    const ids = new Set<string>();
+    for (const e of entries) {
+      if (e.implementation) for (const id of citedReports(e.implementation)) ids.add(id);
+      for (const t of tasksOf(e) ?? []) if (t.reportMessageId) ids.add(t.reportMessageId);
+    }
+    const passed = new Set<string>();
+    if (ids.size > 0) {
+      const rows = await db.query<{ id: string; meta: ReportMessageMeta | null }>(
+        `select id, meta from messages where workspace_id = $1 and role = 'report' and id = any($2::text[])`,
+        [ws, [...ids]],
+      );
+      for (const r of rows) if (r.meta?.check && reportPassed(r.meta.check)) passed.add(r.id);
+    }
+    return entries.map((e) => {
+      let out = e;
+      if (e.implementation) {
+        const reports = citedReports(e.implementation).map((reportMessageId) => ({ reportMessageId, reportPassed: passed.has(reportMessageId) }));
+        out = { ...out, implementation: { ...e.implementation, evidence: { ...e.implementation.evidence, reports } } };
+      }
+      const wpTasks = tasksOf(e);
+      if (wpTasks) {
+        const tasks = wpTasks.map((t) => ({ ...t, reportPassed: t.reportMessageId !== null && passed.has(t.reportMessageId) }));
+        out = { ...out, workpackage: { ...e.workpackage, tasks } };
+      }
+      return out;
+    });
+  }
+
   app.get("/workspaces/:id/entries", async (c) => {
     const ws = c.req.param("id");
     const [list, fresh] = await Promise.all([sourceEvidenceEntries(db, ws, await store(ws).listEntries()), newEntryIds(ws)]);
-    return c.json((await withDiagramStatus(db, ws, list.map(sourceEvidenceSummary))).map((e) => ({ ...e, isNew: fresh.has(e.id) })));
+    const summaries = await withReportPass(ws, await withDiagramStatus(db, ws, list.map(sourceEvidenceSummary)));
+    return c.json(summaries.map((e) => ({ ...e, isNew: fresh.has(e.id) })));
   });
 
-  app.get("/workspaces/:id/timeline", async (c) => c.json(await timeline(db, dataDir, c.req.param("id")!, deps.ownedHelpers)));
+  app.get("/workspaces/:id/timeline", async (c) => {
+    const ws = c.req.param("id")!;
+    return c.json(await withReportPass(ws, await timeline(db, dataDir, ws, deps.ownedHelpers)));
+  });
 
   const requireEntry = async (ws: string, eid: string) => {
     const entry = await store(ws).get(eid);
@@ -555,7 +596,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     const ws = c.req.param("id")!, eid = c.req.param("eid")!;
     const entry = (await sourceEvidenceEntries(db, ws, await store(ws).listEntries())).find(e => e.id === eid);
     if (!entry) throw new HttpError(404, `entry not found: ${eid}`);
-    return c.json(entry);
+    return c.json((await withReportPass(ws, [entry]))[0]);
   });
 
   app.post("/workspaces/:id/entries/:eid/withdraw", async (c) => {
