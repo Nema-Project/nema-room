@@ -153,8 +153,8 @@ test('reusable verification checks the supplied ref with the complete existing s
 function condition(value, context) {
   let source = expr(value);
   source = source.replace(/always\(\)/g, 'true').replace(/cancelled\(\)/g, 'false');
-  source = source.replace(/needs\.[\w.]+|github\.event_name/g, key => JSON.stringify(key.split('.').reduce((v,k) => v?.[k], context) ?? ''));
-  assert.match(source, /^[\s\w'"!&|=().-]+$/);
+  source = source.replace(/needs\.[\w.]+|github\.(?:event_name|ref_type|ref)\b|inputs\.\w+/g, key => JSON.stringify(key.split('.').reduce((v,k) => v?.[k], context) ?? ''));
+  assert.match(source, /^[\s\w'"!&|=().\/-]+$/);
   return Function(`"use strict"; return (${source});`)();
 }
 function assertRelease(release) {
@@ -179,12 +179,12 @@ function assertRelease(release) {
   }
 }
 
-test('npm publish uses OIDC on a verified tag and skips a dry run', () => {
+test('npm publishes only when release-promote dispatches the tag, from the push run tarball', () => {
   const workflow = read('npm-publish');
   const source = readFileSync(new URL('../../.github/workflows/npm-publish.yml', import.meta.url), 'utf8');
   assert.equal(source.includes('NPM_TOKEN'), false);
   assert.deepEqual(workflow.on.push.tags, ['v*']);
-  assert.ok(Object.hasOwn(workflow.on, 'workflow_dispatch'));
+  assert.deepEqual(Object.keys(workflow.on.workflow_dispatch.inputs).sort(), ['expected_integrity', 'promote_run_id']);
   assert.equal(workflow.on.pull_request, undefined);
   assert.equal(workflow.on.workflow_call, undefined);
   const { verify, build, publish } = workflow.jobs;
@@ -193,31 +193,96 @@ test('npm publish uses OIDC on a verified tag and skips a dry run', () => {
   assert.equal(build.permissions['id-token'], undefined);
   assert.equal(build.permissions.contents, 'read');
   assert.equal(expr(checkout(build)[0].with.ref), 'github.sha');
-  assert.ok(build.steps.some((step) => step.uses?.startsWith('actions/upload-artifact@')));
-  assert.deepEqual([...publish.needs].sort(), ['build', 'verify']);
-  assert.equal(publish.permissions['id-token'], 'write');
-  assert.equal(publish.permissions.contents, 'read');
-  assert.deepEqual(Object.keys(publish.permissions).sort(), ['contents', 'id-token']);
+  const upload = build.steps.find((step) => step.uses?.startsWith('actions/upload-artifact@'));
+  assert.match(upload.with.path, /scripts\/release\/npm-state\.mjs/);
+  // push and a plain dispatch verify, pack and smoke; a promote dispatch skips both and repacks nothing.
+  for (const job of [verify, build]) {
+    assert.equal(condition(job.if, { inputs: { promote_run_id: '' } }), true);
+    assert.equal(condition(job.if, { inputs: { promote_run_id: '123' } }), false);
+  }
+  assert.equal(publish.needs, undefined);
+  const gate = (event_name, ref_type, promote_run_id) => condition(publish.if, { github: { event_name, ref_type }, inputs: { promote_run_id } });
+  assert.equal(gate('push', 'tag', ''), false, 'a tag push never publishes');
+  assert.equal(gate('workflow_dispatch', 'tag', ''), false, 'a plain dispatch never publishes');
+  assert.equal(gate('workflow_dispatch', 'branch', '123'), false, 'a branch never publishes');
+  assert.equal(gate('workflow_dispatch', 'tag', '123'), true);
+  assert.deepEqual(publish.permissions, { actions: 'read', contents: 'read', 'id-token': 'write' });
+  assert.equal(publish.concurrency.group, 'npm-publish-registry');
+  assert.equal(publish.concurrency['cancel-in-progress'], false);
   assert.equal(checkout(publish).length, 0);
-  assert.ok(publish.steps.some((step) => step.uses?.startsWith('actions/download-artifact@')));
   const runs = publish.steps.map((step) => step.run ?? '').join('\n');
+  assert.doesNotMatch(runs, /npm ci|cli:pack|npm run build/);
+  const download = publish.steps.find((step) => step.uses?.startsWith('actions/download-artifact@'));
+  assert.equal(expr(download.with['run-id']), 'steps.origin.outputs.push_run');
+  const origin = publish.steps.find((step) => step.id === 'origin');
+  assert.ok(publish.steps.indexOf(origin) < publish.steps.indexOf(download));
+  assert.match(origin.run, /\.github\/workflows\/release-promote\.yml/);
+  assert.match(origin.run, /head_branch[\s\S]*"main"/);
+  assert.match(origin.run, /"in_progress"/);
+  assert.match(origin.run, /"Candidate preflight"/);
+  assert.match(origin.run, /event=push&head_sha=\$\{SHA\}/);
+  for (const job of ['Pack and smoke nema', 'verify / Workflow lint', 'verify / Full application tests and web build', 'verify / Platform checks', 'verify / npm pack smoke']) assert.ok(origin.run.includes(`'${job}'`), job);
+  assert.doesNotMatch(origin.run, /"skipped"/, 'no verify job may be skipped');
+  // Like promote.mjs assertPushRunJobs: a jobs page that does not hold every job of the run proves nothing.
+  const listed = origin.run.indexOf('total_count');
+  assert.ok(listed !== -1, 'the push run jobs answer is compared with total_count');
+  assert.match(origin.run, /\.total_count[\s\S]*\.jobs \| length[\s\S]*!=|\.jobs \| length[\s\S]*\.total_count/);
+  assert.ok(listed < origin.run.indexOf("for job in 'Pack and smoke nema'"), 'count checked before any job is judged');
   assert.match(runs, /check-tag\.mjs/);
   assert.match(runs, /merge-base --is-ancestor/);
   assert.match(runs, /refs\/heads\/main/);
   const publishStep = publish.steps.find((step) => (step.run ?? '').includes('npm publish'));
+  const at = (text) => publishStep.run.indexOf(text);
   const publishAt = publishStep.run.lastIndexOf('npm publish');
-  const recheckAt = publishStep.run.lastIndexOf('tag moved');
-  assert.ok(recheckAt !== -1 && recheckAt < publishAt);
-  assert.match(publishStep.run, /--tag "\$dist"/);
-  assert.match(runs, /npm publish --provenance --access public/);
+  assert.ok(at('npm-state.mjs --integrity') !== -1 && at('npm-state.mjs --integrity') < publishAt, 'integrity before publish');
+  assert.match(publishStep.run, /"\$got_integrity" != "\$EXPECTED_INTEGRITY"/);
+  assert.ok(at('npm-state.mjs "$version"') < publishAt, 'registry state before publish');
+  assert.ok(at('dist-tags.${dist}') !== -1 && at('dist-tags.${dist}') < publishAt, 'channel dist-tag re-read before publish');
+  assert.match(publishStep.run, /dist=maintenance/);
+  assert.match(publishStep.run, /refusing to move it backwards/);
+  assert.ok(publishStep.run.lastIndexOf('tag moved') < publishAt);
+  assert.ok(publishStep.run.lastIndexOf('tag moved') > at('dist-tags.${dist}'), 'tag re-read after the dist-tag re-read');
+  assert.match(publishStep.run, /npm publish --provenance --access public --tag "\$dist" "\.\/\$tarball"/);
+  assert.match(publishStep.run.slice(publishAt), /npm-state\.mjs "\$version" "\$EXPECTED_INTEGRITY"\)\n\s*test "\$state" = same/, 'a failed publish counts only if the registry now holds the same tarball');
   assert.match(publishStep.run, /nema-project-nema-\*\.tgz/);
-  assert.match(publishStep.run, /"\.\/\$tarball"/);
   assert.doesNotMatch(source, /-name 'nema-\*\.tgz'/);
-  assert.doesNotMatch(runs, /npm ci|cli:pack|npm run build/);
-  const context = (event, verifyResult) => ({ github: { event_name: event }, needs: { verify: { result: verifyResult }, build: { result: 'success' } } });
-  assert.equal(condition(publish.if, context('workflow_dispatch', 'success')), false);
-  assert.equal(condition(publish.if, context('push', 'success')), true);
-  assert.equal(condition(publish.if, context('push', 'failure')), false);
+  assertPinnedUses(workflow);
+});
+
+test('release-promote runs main scripts only, treats the tag as data, and is the one pointer writer', () => {
+  const promote = read('release-promote');
+  const source = readFileSync(new URL('../../.github/workflows/release-promote.yml', import.meta.url), 'utf8');
+  assert.deepEqual(Object.keys(promote.on), ['workflow_dispatch']);
+  assert.equal(promote.on.workflow_dispatch.inputs.tag.required, true);
+  assert.equal(promote.permissions.contents, 'read');
+  assert.equal(promote.concurrency.group, 'release-promote');
+  assert.equal(promote.concurrency['cancel-in-progress'], false);
+  const job = promote.jobs.promote;
+  assert.deepEqual(Object.keys(promote.jobs), ['promote']);
+  assert.equal(condition(job.if, { github: { ref: 'refs/heads/main' } }), true);
+  assert.equal(condition(job.if, { github: { ref: 'refs/tags/v1.2.3' } }), false);
+  assert.equal(condition(job.if, { github: { ref: 'refs/heads/feature' } }), false);
+  assert.deepEqual(job.permissions, { actions: 'write', contents: 'write', packages: 'write' });
+  assert.equal(source.includes('id-token'), false);
+  assert.equal(source.includes('NPM_TOKEN'), false);
+  assert.deepEqual([...new Set(source.match(/secrets\.[A-Za-z0-9_]+/g) ?? [])], ['secrets.GITHUB_TOKEN']);
+  for (const step of checkout(job)) {
+    assert.equal(expr(step.with.ref), 'github.sha');
+    assert.equal(step.with['persist-credentials'], false);
+  }
+  assert.doesNotMatch(source, /ref:\s*\$\{\{\s*inputs\.tag/);
+  const names = job.steps.map((step) => step.name).filter(Boolean);
+  assert.deepEqual(names.filter((name) => ['Resolve tag', 'Candidate preflight', 'Promote'].includes(name)), ['Resolve tag', 'Candidate preflight', 'Promote']);
+  const runs = job.steps.map((step) => step.run ?? '').join('\n');
+  assert.match(job.steps.find((step) => step.name === 'Resolve tag').run, /readTagCommit[\s\S]*compare\/\$\{commit\}\.\.\.\$\{GITHUB_SHA\}/);
+  assert.match(job.steps.find((step) => step.name === 'Candidate preflight').run, /promote\.mjs --preflight "\$TAG" "\$COMMIT"/);
+  assert.match(job.steps.find((step) => step.name === 'Promote').run, /promote\.mjs "\$TAG" "\$COMMIT"/);
+  // promote.mjs is the only writer: no inline crane tag, release edit, npm publish, tag or merge here.
+  assert.doesNotMatch(runs, /crane"? tag|gh release edit|npm publish|git tag|gh pr merge|git push|npm ci/);
+  assert.match(source, /CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0/);
+  const image = readFileSync(new URL('../../.github/workflows/image-publish.yml', import.meta.url), 'utf8');
+  for (const key of ['CRANE_VERSION', 'CRANE_SHA256']) assert.equal(source.match(new RegExp(`${key}: (\\S+)`))[1], image.match(new RegExp(`${key}: (\\S+)`))[1], key);
+  assertPinnedUses(promote);
 });
 
 test('windows desktop release publishes a separate portable ZIP and still smokes NSIS', () => {
@@ -237,10 +302,10 @@ test('release gates bind all stages to one SHA and fail closed on verification r
   const verify = steps.findIndex(step => step.name === 'Verify the complete asset set');
   assert.ok(stamp >= 0 && verify > stamp);
   assert.match(steps[verify].run, /compose-asset\/docker-compose\.yml/);
-  const publish = steps.find(step => step.name === 'Create or reuse draft, upload, publish');
+  const publish = steps.find(step => step.name === 'Create or reuse draft and upload');
   assert.match(publish.run, /gh release upload "\$TAG" release-assets\/\*/);
-  assert.match(publish.run, /--draft=false/);
-  assert.match(publish.run, /--verify-remote/);
+  assert.doesNotMatch(publish.run, /--draft=false/, 'release-promote publishes the draft');
+  assert.match(publish.run, /--verify-remote[\s\S]*--verify-remote/);
   const wrongRef=structuredClone(release); checkout(wrongRef.jobs.build)[0].with.ref='main'; assert.throws(()=>assertRelease(wrongRef));
   const missingVerify=structuredClone(release); missingVerify.jobs.publish.needs=['plan','build']; assert.throws(()=>assertRelease(missingVerify));
 });
@@ -285,7 +350,7 @@ test('image smoke paths are fixed and the workflow is not invented', () => {
   for (const key of ['app_tests', 'platform', 'npm_pack']) assert.notEqual(image.jobs.verify.with[key], false, key);
 });
 
-test('actual publication shell refuses a tag moved during upload before making the draft public', t => {
+test('actual draft shell refuses a tag moved during upload and never makes the draft public', t => {
   const cwd=mkdtempSync(join(tmpdir(),'publish-gate-'));t.after(()=>rmSync(cwd,{recursive:true,force:true}));
   const git=(...args)=>execFileSync('git',args,{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   git('init','-q','-b','main');git('config','user.email','fixture@example.com');git('config','user.name','Fixture');
@@ -298,19 +363,19 @@ test('actual publication shell refuses a tag moved during upload before making t
   writeFileSync(join(cwd,'bin/gh'),`#!/bin/bash
 set -euo pipefail
 case "$2" in
-  upload) if [ "$MOVE_TAG" = true ]; then git --git-dir="$REMOTE" update-ref refs/tags/v1.2.3 "$OTHER"; fi ;;
+  upload) touch "$UPLOAD_MARKER"; if [ "$MOVE_TAG" = true ]; then git --git-dir="$REMOTE" update-ref refs/tags/v1.2.3 "$OTHER"; fi ;;
   view) echo artifact.txt ;;
   edit) for arg in "$@"; do if [ "$arg" = --draft=false ]; then touch "$PUBLISH_MARKER"; fi; done ;;
 esac
 `,{mode:0o755});
-  const env={...process.env,PATH:`${join(cwd,'bin')}:${process.env.PATH}`,TAG:'v1.2.3',RELEASE_COMMIT:commit,VERSION:'1.2.3',PRERELEASE:'false',DRAFT_EXISTS:'true',MOVE_TAG:'true',REMOTE:join(cwd,'remote.git'),OTHER:other,PUBLISH_MARKER:join(cwd,'published')};
-  const script=read('desktop-release').jobs.publish.steps.find(s=>s.name==='Create or reuse draft, upload, publish').run;
+  const env={...process.env,PATH:`${join(cwd,'bin')}:${process.env.PATH}`,TAG:'v1.2.3',RELEASE_COMMIT:commit,VERSION:'1.2.3',PRERELEASE:'false',DRAFT_EXISTS:'true',MOVE_TAG:'true',REMOTE:join(cwd,'remote.git'),OTHER:other,PUBLISH_MARKER:join(cwd,'published'),UPLOAD_MARKER:join(cwd,'uploaded')};
+  const script=read('desktop-release').jobs.publish.steps.find(s=>s.name==='Create or reuse draft and upload').run;
   const run=()=>spawnSync('bash',['-c',script],{cwd,env,encoding:'utf8'});
-  let result=run();assert.notEqual(result.status,0,result.stderr);assert.match(result.stderr,/tag moved/i);assert.equal(existsSync(env.PUBLISH_MARKER),false);
+  let result=run();assert.notEqual(result.status,0,result.stderr);assert.match(result.stderr,/tag moved/i);assert.equal(existsSync(env.PUBLISH_MARKER),false);assert.doesNotMatch(result.stdout,/holds the verified asset set/);
   // The same workflow shell also refuses movement before draft operations.
   result=run();assert.notEqual(result.status,0);assert.equal(existsSync(env.PUBLISH_MARKER),false);
   git('--git-dir='+env.REMOTE,'update-ref','refs/tags/v1.2.3',commit);env.MOVE_TAG='false';
-  result=run();assert.equal(result.status,0,result.stderr);assert.equal(existsSync(env.PUBLISH_MARKER),true);
+  result=run();assert.equal(result.status,0,result.stderr);assert.equal(existsSync(env.UPLOAD_MARKER),true);assert.equal(existsSync(env.PUBLISH_MARKER),false,'the draft stays a draft');assert.match(result.stdout,/Draft v1\.2\.3 holds the verified asset set/);
 });
 
 function assertPinnedUses(doc) {
@@ -365,12 +430,10 @@ test('image publish pushes pinned GHCR images only after verify, and only from t
   assert.match(pushStep.run, /verify-remote[\s\S]*push --index/);
   assert.match(pushStep.run, /push_one hub\n\s*push_one web/);
   assert.doesNotMatch(pushStep.run, /\blatest\b/);
-  const latest = image.jobs.publish.steps.find((step) => (step.run ?? '').includes('--move-latest'));
-  assert.equal(expr(latest.if), "needs.plan.outputs.prerelease == 'false'");
-  assert.match(latest.run, /--verify-remote/);
-  assert.match(latest.run, /digest[\s\S]*--move-latest[\s\S]*--verify-remote[\s\S]*tag /);
-  assert.match(latest.run, /MANIFEST_UNKNOWN[\s\S]*refusing to move latest/);
-  assert.doesNotMatch(latest.run, /push --index/);
+  // release-promote moves latest after the whole release verifies; this workflow pushes the version tag only.
+  assert.doesNotMatch(publishText, /--move-latest/);
+  assert.doesNotMatch(publishText, /crane"? tag /);
+  assert.equal(image.jobs.publish.steps.some((step) => /latest/i.test(step.name ?? '')), false);
   const smokeText = image.jobs.smoke.steps.map((step) => step.run ?? '').join('\n');
   assert.match(smokeText, /docker compose pull/);
   assert.match(smokeText, /scripts\/images\/smoke-compose\.mjs --pull always --hub-port 4410 --web-port 3010/);
