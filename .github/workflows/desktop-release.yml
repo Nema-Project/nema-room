@@ -9,7 +9,8 @@ name: Desktop release
 # or a manual dispatch. A manual dispatch builds the chosen target(s).
 # Only a push of a v<SemVer> tag
 # reaches the publish job, which fails closed unless every target built, smoked
-# and passed desktop:validate-release.
+# and passed desktop:validate-release. The publish job stops at a verified
+# draft; release-promote.yml publishes it after npm and the images verify.
 on:
   push:
     tags: ['v*']
@@ -349,7 +350,7 @@ jobs:
       - name: Write release notes
         shell: bash
         run: node scripts/release-notes.mjs CHANGELOG.md "$VERSION" "$RELEASE_COMMIT" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > release-notes.md
-      - name: Create or reuse draft, upload, publish
+      - name: Create or reuse draft and upload
         shell: bash
         run: |
           set -euo pipefail
@@ -362,13 +363,13 @@ jobs:
             gh release edit "$TAG" --title "Nema Room $VERSION" --notes-file release-notes.md "${flags[@]}"
           fi
           gh release upload "$TAG" release-assets/* --clobber
-          # Publish only when the draft holds exactly the verified asset set.
+          # The draft must hold exactly the verified asset set; release-promote.yml publishes it later.
           expected=$(find release-assets -maxdepth 1 -type f -printf '%f\n' | sort | tr '\n' ' ')
           actual=$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort | tr '\n' ' ')
           if [ "$expected" != "$actual" ]; then
             echo "Draft assets differ from the verified set: $actual" >&2
             exit 1
           fi
-          # Upload/validation can take time; re-read the remote ref immediately before publication.
+          # Upload/validation can take time; re-read the remote ref before reporting the draft ready.
           node scripts/desktop/release-commit.mjs --verify-remote "refs/tags/$TAG" "$RELEASE_COMMIT"
-          gh release edit "$TAG" --draft=false "${flags[@]}"
+          echo "Draft $TAG holds the verified asset set; run release-promote.yml to publish it."
