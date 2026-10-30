@@ -2,7 +2,7 @@ import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { CLAUDE_ROOM_TOOLS, prepareClaudeLaunch } from "../../src/claude/launch.js";
+import { CLAUDE_ROOM_TOOLS, prepareClaudeLaunch, withSkillArgs } from "../../src/claude/launch.js";
 import { ROOM_TOOLS } from "../../src/direct/tools.js";
 
 let root: string;
@@ -50,6 +50,27 @@ describe("Claude Code launch", () => {
       command: "/usr/local/bin/node",
       args: ["/opt/nema/dist/index.js", "mcp"],
     });
+  });
+
+  test("withSkillArgs swaps sources, tools and approvals once each, then adds dirs and settings", () => {
+    const launch = prepareClaudeLaunch(options("sonnet"));
+    const before = [...launch.args];
+    const args = withSkillArgs(launch.args, { settingsPath: "/run/claude-settings.json", addDirs: ["/run/repo-skills/web-abc123", "/run/repo-skills/api-def456"] });
+    expect(launch.args).toEqual(before);
+    const value = (flag: string) => args[args.indexOf(flag) + 1];
+    expect(args.filter((a) => a === "--setting-sources")).toHaveLength(1);
+    expect(args.filter((a) => a === "--tools")).toHaveLength(1);
+    expect(value("--setting-sources")).toBe("project");
+    expect(value("--tools")).toBe("Skill,Read");
+    expect(value("--allowedTools")).toBe([...CLAUDE_ROOM_TOOLS, "Skill", "Read(/.claude/skills/**)"].join(","));
+    expect(value("--disallowedTools")).toBe("AskUserQuestion");
+    expect(args.slice(before.length)).toEqual([
+      "--add-dir", "/run/repo-skills/web-abc123",
+      "--add-dir", "/run/repo-skills/api-def456",
+      "--settings", "/run/claude-settings.json",
+    ]);
+    const unchanged = (list: string[]) => list.filter((_, i) => !["--setting-sources", "--tools", "--allowedTools"].includes(list[i - 1] ?? ""));
+    expect(unchanged(args.slice(0, before.length))).toEqual(unchanged(before));
   });
 
   test("maxTurns replaces the default --max-turns", () => {

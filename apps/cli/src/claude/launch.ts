@@ -102,3 +102,28 @@ export function prepareClaudeLaunch(o: {
 
   return { args, env, runDir, mcpPath };
 }
+
+/** The built-in tools a task with Skills gets (spec §3). */
+export const CLAUDE_SKILL_TOOLS = ["Skill", "Read"] as const;
+/** On the command line, `/path` is anchored at the main working directory. */
+export const CLAUDE_SKILL_READ_RULE = "Read(/.claude/skills/**)";
+
+/**
+ * The launch arguments for a task with Skills: `project` settings (which load the copied Skills), the
+ * Skill and Read tools, their approval, one `--add-dir` per repository, and the task's settings file.
+ * Without Skills, `prepareClaudeLaunch`'s arguments are used unchanged.
+ */
+export function withSkillArgs(args: string[], prep: { settingsPath: string; addDirs: string[] }): string[] {
+  const out = [...args];
+  const replace = (flag: string, value: (old: string) => string) => {
+    const at = out.indexOf(flag);
+    if (at < 0 || at + 1 >= out.length || out.indexOf(flag, at + 1) >= 0) throw new Error(`launch arguments: expected one ${flag}`);
+    out[at + 1] = value(out[at + 1]!);
+  };
+  replace("--setting-sources", () => "project");
+  replace("--tools", () => CLAUDE_SKILL_TOOLS.join(","));
+  replace("--allowedTools", (old) => [...(old ? old.split(",") : []), "Skill", CLAUDE_SKILL_READ_RULE].join(","));
+  for (const dir of prep.addDirs) out.push("--add-dir", dir);
+  out.push("--settings", prep.settingsPath);
+  return out;
+}

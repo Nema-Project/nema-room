@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","claude_code_version":"2.1.309","tools":["Skill","Read","mcp__room__list_entries","mcp__room__read_entry","mcp__room__upsert_entry","mcp__room__open_thread","mcp__room__offer_skill_install"],"mcp_servers":[{"name":"room","status":"connected"}],"skills":["tdd","pdf"]}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Skill","input":{"skill":"tdd"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"Launching skill: tdd"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Read","input":{"file_path":"RUNDIR/work/.claude/skills/pdf/SKILL.md"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","is_error":true,"content":"File does not exist."}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"done"}

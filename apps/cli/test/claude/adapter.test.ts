@@ -643,3 +643,68 @@ describe("ClaudeCodeAdapter attachments", () => {
     expect(fetched).toEqual([]);
   });
 });
+
+describe("ClaudeCodeAdapter with Skills", () => {
+  function skillAdapter(bin: string, ok: boolean): ClaudeCodeAdapter {
+    return new ClaudeCodeAdapter({
+      nemaHome: home,
+      cliEntry: join(root, "cli-entry.js"),
+      claudeBin: bin,
+      parentEnv: { PATH: process.env.PATH },
+      execPath: process.execPath,
+      claudeSkillsOk: async () => ({ ok, version: ok ? "2.1.309" : "2.1.200" }),
+    });
+  }
+  const skillInit = (tools: string[] = ["Skill", "Read", ...CLAUDE_ROOM_TOOLS]) =>
+    JSON.stringify({ type: "system", subtype: "init", claude_code_version: "2.1.309", tools, mcp_servers: [{ name: "room", status: "connected" }], skills: ["tdd"] });
+  const use = (id: string, name: string, input: unknown) => JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id, name, input }] } });
+  const result = (id: string, isError = false) => JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, is_error: isError, content: "x" }] } });
+
+  async function withTdd() {
+    const { managedSkill, skillText, COMMIT } = await import("../skills/helpers.js");
+    managedSkill(home, "tdd", { "SKILL.md": skillText("tdd", "Write the test first.", "# TDD\n", "context: fork\n") });
+    return COMMIT;
+  }
+
+  test("Skills are copied, Skill and Read allowed, and a successful load is reported", async () => {
+    const commit = await withTdd();
+    const argvFile = join(root, "argv-skills.json");
+    const stdinFile = join(root, "stdin-skills.json");
+    const bin = installFake({
+      mode: "lines",
+      argvFile,
+      stdinFile,
+      lines: [skillInit(), use("t1", "Skill", { skill: "tdd" }), result("t1"), use("t2", "Skill", { skill: "tdd" }), result("t2", true), resultLine("好了")],
+    });
+    const { result: done, events } = await runTask(skillAdapter(bin, true), task("task-skills", "do it"));
+    expect(done).toEqual({ ok: true, reply: "好了" });
+    expect(events.filter((e) => e.type === "tool_call").map((e) => e.text)).toEqual(["Skill", `读取 Skill tdd（${commit}）`, "Skill"]);
+    const recorded = JSON.parse(readFileSync(argvFile, "utf8")) as { argv: string[]; cwd: string };
+    const value = (flag: string) => recorded.argv[recorded.argv.indexOf(flag) + 1];
+    expect(value("--tools")).toBe("Skill,Read");
+    expect(value("--setting-sources")).toBe("project");
+    expect(value("--settings")).toBe(join(home, "run", "task-skills", "claude-settings.json"));
+    const prompt = readFileSync(stdinFile, "utf8");
+    expect(prompt).toContain("# Skills\\n本任务的 Skills 由 Claude Code 的 Skill 工具提供");
+    expect(prompt).toContain("部分 Skill 缺少能力：tdd：子代理（context: fork）");
+  });
+
+  test("with Skills, Bash in init still fails the run", async () => {
+    await withTdd();
+    const bin = installFake({ mode: "lines", argvFile: join(root, "argv-bash.json"), lines: [skillInit(["Skill", "Read", "Bash", ...CLAUDE_ROOM_TOOLS]), resultLine("x")] });
+    const { result: done } = await runTask(skillAdapter(bin, true), task("task-skills-bash", "do it"));
+    expect(done.ok).toBe(false);
+  });
+
+  test("an old Claude Code runs with the arguments it has today", async () => {
+    await withTdd();
+    const argvFile = join(root, "argv-old.json");
+    const bin = installFake({ mode: "lines", argvFile, lines: [roomInit(), resultLine("ok")] });
+    const { result: done, events } = await runTask(skillAdapter(bin, false), task("task-skills-old", "do it"));
+    expect(done).toEqual({ ok: true, reply: "ok" });
+    const recorded = JSON.parse(readFileSync(argvFile, "utf8")) as { argv: string[] };
+    expect(recorded.argv[recorded.argv.indexOf("--tools") + 1]).toBe("");
+    expect(recorded.argv).not.toContain("--settings");
+    expect(events).toContainEqual({ type: "progress", text: "Claude Code 版本过低（需要 2.1.309 或更新），本任务不使用 Skills。" });
+  });
+});
