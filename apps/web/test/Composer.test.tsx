@@ -8,6 +8,7 @@ import { I18nProvider } from "@/lib/i18n";
 
 vi.mock("@/lib/hub", () => ({
   uploadAttachment: vi.fn(),
+  deleteAttachment: vi.fn(),
   attachmentCapabilities: vi.fn(),
   HubError: class HubError extends Error {
     status: number;
@@ -165,11 +166,13 @@ describe("Composer attachments", () => {
     vi.mocked(hub.attachmentCapabilities).mockResolvedValue(allNative);
     let n = 0;
     vi.mocked(hub.uploadAttachment).mockImplementation(async (_w, file) => staged(file as File, `att${++n}`));
+    vi.mocked(hub.deleteAttachment).mockImplementation(async (_w, id) => ({ ...staged(png(), id), status: "deleted", deletedAt: "2026-10-30T00:00:00.000Z" }));
     vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:preview"), revokeObjectURL: vi.fn() }));
   });
   afterEach(() => {
     vi.mocked(hub.uploadAttachment).mockReset();
     vi.mocked(hub.attachmentCapabilities).mockReset();
+    vi.mocked(hub.deleteAttachment).mockReset();
     vi.unstubAllGlobals();
   });
   const mountWs = async (onSend: (c: string, ids: string[]) => Promise<void> = vi.fn().mockResolvedValue(undefined), onThread?: (c: string, ids: string[]) => Promise<void>) => {
@@ -313,6 +316,95 @@ describe("Composer attachments", () => {
     fireEvent.keyDown(box(), { key: "Escape" });
     fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
     await vi.waitFor(() => expect(onThread).toHaveBeenCalledWith("look here", ["att1"]));
+  });
+
+  it("waits for a fresh capability answer before sending", async () => {
+    let answer!: (v: Awaited<ReturnType<typeof hub.attachmentCapabilities>>) => void;
+    const onSend = await mountWs();
+    vi.mocked(hub.attachmentCapabilities).mockImplementation(() => new Promise((r) => (answer = r)));
+    await userEvent.upload(picker(), pdf());
+    await screen.findByText("spec.pdf");
+    await vi.waitFor(() => expect(vi.mocked(hub.uploadAttachment)).toHaveBeenCalled());
+    await act(async () => {});
+    expect(sendButton().disabled).toBe(true);
+    fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
+    expect(onSend).not.toHaveBeenCalled();
+    await act(async () => answer({ adapter: "claude-code", image: "native", pdf: "unknown", text: "text" }));
+    expect(await screen.findByText(/claude-code/)).toBeTruthy();
+    expect(sendButton().disabled).toBe(true);
+  });
+
+  it("does not send text while a picked file is still being read", async () => {
+    const onSend = await mountWs();
+    const file = png();
+    let release!: (b: ArrayBuffer) => void;
+    vi.spyOn(file, "arrayBuffer").mockReturnValue(new Promise((r) => (release = r)));
+    await userEvent.type(box(), "with file");
+    fireEvent.change(picker(), { target: { files: [file] } });
+    await act(async () => {});
+    expect(sendButton().disabled).toBe(true);
+    fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
+    expect(onSend).not.toHaveBeenCalled();
+    await act(async () => release(Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]).buffer));
+    await vi.waitFor(() => expect(sendButton().disabled).toBe(false));
+    await userEvent.click(sendButton());
+    expect(onSend).toHaveBeenCalledWith("with file", ["att1"]);
+  });
+
+  it("says when a file cannot be read", async () => {
+    await mountWs();
+    const file = png("locked.png");
+    vi.spyOn(file, "arrayBuffer").mockRejectedValue(new DOMException("NotReadableError"));
+    await userEvent.upload(picker(), file);
+    expect((await screen.findByRole("alert")).textContent).toContain("locked.png");
+    expect(hub.uploadAttachment).not.toHaveBeenCalled();
+  });
+
+  it("keeps the eight-file limit across overlapping adds", async () => {
+    await mountWs();
+    const target = box().closest(".composer")!;
+    const batch = (from: number) => Array.from({ length: 5 }, (_, i) => png(`q${from + i}.png`));
+    fireEvent.drop(target, { dataTransfer: { files: batch(0), types: ["Files"] } });
+    fireEvent.drop(target, { dataTransfer: { files: batch(5), types: ["Files"] } });
+    await vi.waitFor(() => expect(hub.uploadAttachment).toHaveBeenCalledTimes(8));
+    await act(async () => {});
+    expect(hub.uploadAttachment).toHaveBeenCalledTimes(8);
+  });
+
+  it("gives back a staged upload that is removed from the tray", async () => {
+    await mountWs();
+    await userEvent.upload(picker(), png());
+    await vi.waitFor(() => expect(sendButton().disabled).toBe(false));
+    await userEvent.click(screen.getByRole("button", { name: "Remove shot.png" }));
+    await vi.waitFor(() => expect(hub.deleteAttachment).toHaveBeenCalledWith("w1", "att1"));
+  });
+
+  it("gives back an upload that finishes after its item was removed", async () => {
+    let finish!: (v: AttachmentView) => void;
+    vi.mocked(hub.uploadAttachment).mockImplementation(() => new Promise((r) => (finish = r)));
+    await mountWs();
+    const file = png();
+    await userEvent.upload(picker(), file);
+    await screen.findByRole("progressbar", { name: "Uploading shot.png" });
+    await userEvent.click(screen.getByRole("button", { name: "Remove shot.png" }));
+    expect(hub.deleteAttachment).not.toHaveBeenCalled();
+    await act(async () => finish(staged(file, "late")));
+    await vi.waitFor(() => expect(hub.deleteAttachment).toHaveBeenCalledWith("w1", "late"));
+    expect(screen.queryByText("shot.png")).toBeNull();
+  });
+
+  it("gives back staged uploads when the composer goes away, but not sent ones", async () => {
+    const { unmount } = render(<I18nProvider><Composer workspaceId="w1" onSend={vi.fn().mockResolvedValue(undefined)} /></I18nProvider>);
+    await act(async () => {});
+    await userEvent.upload(picker(), png("sent.png"));
+    await vi.waitFor(() => expect(sendButton().disabled).toBe(false));
+    await userEvent.click(sendButton());
+    await vi.waitFor(() => expect(screen.queryByText("sent.png")).toBeNull());
+    await userEvent.upload(picker(), png("draft.png"));
+    await vi.waitFor(() => expect(sendButton().disabled).toBe(false));
+    unmount();
+    await vi.waitFor(() => expect(hub.deleteAttachment).toHaveBeenCalledTimes(1));
+    expect(hub.deleteAttachment).toHaveBeenCalledWith("w1", "att2");
   });
 
   it("allows at most eight attachments", async () => {

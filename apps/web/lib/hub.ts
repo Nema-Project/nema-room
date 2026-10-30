@@ -219,12 +219,13 @@ export async function uploadAttachment(workspaceId: string, file: Blob & { name:
 }
 
 /**
- * What the daemon's current adapter can read. Null when this hub has no attachment support (404),
- * so the composer hides the entry. Throws when the daemon is offline or answers in the wrong shape.
+ * What the daemon's current adapter can read. Null when this hub (404) or the connected daemon (501)
+ * has no attachment support, so the composer hides the entry. Throws when the daemon is offline or
+ * answers in the wrong shape.
  */
 export async function attachmentCapabilities(): Promise<AttachmentCapabilities | null> {
   const res = await fetch(`${base()}/daemon/attachment-capabilities`);
-  if (res.status === 404) return null;
+  if (res.status === 404 || res.status === 501) return null;
   if (!res.ok) throw await hubFailure(res);
   const parsed = AttachmentCapabilitiesSchema.safeParse(await res.json());
   if (!parsed.success) throw new HubError(502, "unexpected attachment capabilities");

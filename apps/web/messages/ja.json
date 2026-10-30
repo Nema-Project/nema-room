@@ -511,5 +511,6 @@
   "attach.deleteCancel": "キャンセル",
   "attach.deleteFailed": "削除できませんでした：{message}",
   "attach.deleted": "添付ファイルは削除されました",
-  "attach.missing": "添付ファイルが見つかりません"
+  "attach.missing": "添付ファイルが見つかりません",
+  "attach.reject.unreadable": "{name} は追加されませんでした：ファイルを読み込めませんでした。"
 }

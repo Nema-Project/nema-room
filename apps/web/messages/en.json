@@ -511,5 +511,6 @@
   "attach.deleteCancel": "Cancel",
   "attach.deleteFailed": "Could not delete: {message}",
   "attach.deleted": "Attachment deleted",
-  "attach.missing": "Attachment file is missing"
+  "attach.missing": "Attachment file is missing",
+  "attach.reject.unreadable": "{name} was not added: the file could not be read."
 }

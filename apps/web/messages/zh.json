@@ -511,5 +511,6 @@
   "attach.deleteCancel": "取消",
   "attach.deleteFailed": "删除失败：{message}",
   "attach.deleted": "附件已删除",
-  "attach.missing": "附件文件已丢失"
+  "attach.missing": "附件文件已丢失",
+  "attach.reject.unreadable": "没有添加 {name}：无法读取这个文件。"
 }
