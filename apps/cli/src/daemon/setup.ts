@@ -53,7 +53,11 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
   const rpc = new RpcRouter();
   const graphify = { ...o.graphify, ownedHelpers: o.ownedHelpers };
   const github = o.github ?? new GithubGh({ ownedHelpers: o.ownedHelpers });
-  registerExtensionHandlers(rpc, o.nemaHome, { checkGraphify: () => graphifyInstallStatus(graphify), checkGithub: () => github.status() });
+  const extensions = registerExtensionHandlers(rpc, o.nemaHome, {
+    checkGraphify: () => graphifyInstallStatus(graphify),
+    checkGithub: () => github.status(),
+    ownedHelpers: o.ownedHelpers,
+  });
   let sendMessage: ((message: unknown) => boolean) | null = null;
   const watcher = new RepoWatcher({
     nemaHome: o.nemaHome,
@@ -111,7 +115,8 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
     watcher,
     close() {
       if (closing) return closing;
-      const tasks = [runner.stop(), watcher.stop(), connection.close(), github.close()];
+      // MCP servers are stopped with the daemon; none is started again on the next start.
+      const tasks = [runner.stop(), watcher.stop(), connection.close(), github.close(), extensions.close()];
       closing = Promise.all(tasks).then(() => {});
       return closing;
     },

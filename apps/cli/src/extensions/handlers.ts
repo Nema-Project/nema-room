@@ -8,6 +8,8 @@ import { bundledExtensions, openExtensionStore, type ExtensionRecord } from "./s
 import { discoverSkills, inspectSkillFolder, placeSkill } from "./discover.js";
 import { graphifyInstallStatus } from "../repos/graphify.js";
 import { GithubGh } from "../github/gh.js";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
+import { createMcpHandlers } from "./mcpHandlers.js";
 
 /** Hub waits 60 s for this RPC; stop GitHub reads first so the daemon's own error reaches the page. */
 const RESOLVE_TIMEOUT_MS = 45_000;
@@ -38,11 +40,20 @@ export type ExtensionHandlerOptions = {
   /** Asks the GitHub CLI whether it is installed and signed in; production passes the daemon's reader. */
   checkGithub?: () => Promise<{ installed: boolean; loggedIn: boolean; detail: string; inconclusive?: boolean }>;
   now?: () => Date;
+  /** Desktop runtime: MCP stdio servers run under the guardian. */
+  ownedHelpers?: OwnedHelperScope;
+  /** Connect plus `listTools` for an MCP server; for tests. */
+  mcpTimeoutMs?: number;
+};
+
+export type ExtensionHandlers = {
+  /** Stops every MCP server this daemon started. */
+  close(): Promise<void>;
 };
 
 const BUNDLED_IDS = new Set(bundledExtensions().map((row) => row.id));
 
-export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, options: ExtensionHandlerOptions = {}): void {
+export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, options: ExtensionHandlerOptions = {}): ExtensionHandlers {
   const root = path.join(nemaHome, "extensions");
   const store = openExtensionStore(root);
   const fetch = options.fetch ?? (globalThis.fetch as unknown as SourceFetch);
@@ -53,7 +64,9 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
   const now = options.now ?? (() => new Date());
   // No install can be running before the router answers, so anything still `installing` was cut off.
   installer.recover();
-  router.register("extensions.list", async () => store.list());
+  const mcp = createMcpHandlers(nemaHome, { ownedHelpers: options.ownedHelpers, timeoutMs: options.mcpTimeoutMs });
+  mcp.register(router, (id) => store.list().find((row) => row.id === id));
+  router.register("extensions.list", async () => store.list().map((row) => (row.kind === "mcp" && row.provision === "managed" ? { ...row, mcp: mcp.state(row) } : row)));
   // Three operations, three sets of rules, and the page may only reach two of them.
   //
   // Use state: flip one record's switch; every provision can be turned off and on again.
@@ -62,13 +75,25 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
   // `extensions/<id>` directory goes with the record. An external one is only detached from the
   // index: the files stay exactly where the person put them. A bundled extension ships inside the
   // app, so there is nothing here to delete and the request is refused.
-  router.register("extensions.setUse", async (params) => store.setUseState(requireId(params, "extensions.setUse"), requireUseState(params)));
+  router.register("extensions.setUse", async (params) => {
+    const id = requireId(params, "extensions.setUse");
+    const useState = requireUseState(params);
+    const current = store.list().find((row) => row.id === id);
+    // A switched-off MCP server does not keep running.
+    if (useState === "disabled" && current?.kind === "mcp") await mcp.beforeDisable(id);
+    return store.setUseState(id, useState);
+  });
   router.register("extensions.remove", async (params): Promise<ExtensionRemoval> => {
     const id = requireId(params, "extensions.remove");
     const record = store.list().find((row) => row.id === id);
     if (!record) throw new Error(`extension not found: ${id}`);
     if (installer.running(id)) throw new Error(`${id} is installing; cancel the install and wait for it to stop first`);
     if (record.provision === "bundled") throw new Error("bundled extensions cannot be removed");
+    if (record.provision === "managed" && record.kind === "mcp") {
+      // Stop, then secrets, directory and record, in that order.
+      await mcp.remove(id);
+      return { id, removed: "managed" };
+    }
     if (record.provision === "managed") {
       store.removeManaged(id);
       installer.forget(id);
@@ -196,4 +221,5 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
     }
     return store.recordCheck(id, { availability, error, checkedAt });
   };
+  return { close: () => mcp.close() };
 }

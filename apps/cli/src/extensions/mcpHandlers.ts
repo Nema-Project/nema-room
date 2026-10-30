@@ -1,0 +1,160 @@
+import path from "node:path";
+import type { McpRecordState } from "@nema/shared";
+import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
+import type { RpcRouter } from "../daemon/rpc.js";
+import { openMcpSecretStore } from "../secrets/mcp.js";
+import { openMcpConfigs } from "./mcp.js";
+import { McpSupervisor, type McpStatus } from "./mcp/supervisor.js";
+import type { ExtensionRecord } from "./store.js";
+
+export type McpHandlerOptions = { ownedHelpers?: OwnedHelperScope; timeoutMs?: number };
+
+type Params = Record<string, unknown>;
+
+function params(raw: unknown, method: string, allowed: string[]): Params {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`${method} needs an object`);
+  const extra = Object.keys(raw).filter((key) => !allowed.includes(key));
+  // D-4: `start` and the others take an id, never a command or an address of their own.
+  if (extra.length > 0) throw new Error(`${method} does not take ${extra.map((key) => key.slice(0, 32)).join(", ")}`);
+  return raw as Params;
+}
+
+function text(p: Params, key: string, method: string): string {
+  const value = p[key];
+  if (typeof value !== "string" || value === "") throw new Error(`${method} needs a string ${key}`);
+  return value;
+}
+
+/**
+ * The MCP side of the extension handlers: configs, credentials and the servers' lifecycle.
+ *
+ * Every write for one id runs on one chain, and a running server is stopped before its config
+ * changes or goes away; a credential change restarts a running server so it never keeps the old
+ * value. Nothing here offers an MCP tool to the Agent (D-3).
+ */
+export function createMcpHandlers(nemaHome: string, options: McpHandlerOptions = {}) {
+  const root = path.join(nemaHome, "extensions");
+  const configs = openMcpConfigs({ root, nemaHome });
+  const secrets = openMcpSecretStore(nemaHome);
+  // The daemon is starting: nothing can be running yet, so whatever a crash left is repaired now.
+  configs.reconcile();
+  const supervisor = new McpSupervisor({ nemaHome, configs, secrets, ownedHelpers: options.ownedHelpers, timeoutMs: options.timeoutMs });
+  const chains = new Map<string, Promise<unknown>>();
+
+  function serial<T>(id: string, run: () => Promise<T>): Promise<T> {
+    const next = (chains.get(id) ?? Promise.resolve()).catch(() => {}).then(run);
+    chains.set(id, next);
+    void next.catch(() => {}).finally(() => {
+      if (chains.get(id) === next) chains.delete(id);
+    });
+    return next;
+  }
+
+  function running(id: string): boolean {
+    const connection = supervisor.status(id).connection;
+    return connection === "connected" || connection === "connecting";
+  }
+
+  /** What `extensions.list` shows for an MCP record: state and slot names, never a command line or value. */
+  function state(record: ExtensionRecord): McpRecordState {
+    const status = supervisor.status(record.id);
+    let slots: McpRecordState["secrets"] = [];
+    try {
+      slots = configs.get(record.id).secrets;
+    } catch {
+      // A damaged config has no slots to show; the record's availability already says so.
+    }
+    return {
+      transport: record.source === "mcp:http" ? "http" : "stdio",
+      connection: status.connection,
+      server: status.server,
+      tools: status.tools,
+      secrets: slots,
+      lastError: status.lastError,
+    };
+  }
+
+  return {
+    state,
+    /** Stop the server before the record changes use state or goes away. */
+    async beforeDisable(id: string): Promise<void> {
+      // The direct stop ends a start still waiting on the chain; the chained one waits for it to unwind.
+      await supervisor.stop(id);
+      await serial(id, () => supervisor.stop(id));
+    },
+    async remove(id: string): Promise<void> {
+      await supervisor.stop(id);
+      await serial(id, async () => {
+        await supervisor.stop(id);
+        configs.remove(id);
+      });
+    },
+    close(): Promise<void> {
+      return supervisor.closeAll();
+    },
+    register(router: RpcRouter, record: (id: string) => ExtensionRecord | undefined): void {
+      router.register("extensions.mcp.get", async (raw) => {
+        const p = params(raw, "extensions.mcp.get", ["id"]);
+        return configs.get(text(p, "id", "extensions.mcp.get"));
+      });
+      router.register("extensions.mcp.save", async (raw) => {
+        const p = params(raw, "extensions.mcp.save", ["id", "name", "config"]);
+        const id = text(p, "id", "extensions.mcp.save");
+        const name = text(p, "name", "extensions.mcp.save");
+        if (p.config === undefined) throw new Error("extensions.mcp.save needs a config");
+        return serial(id, async () => {
+          const existing = record(id);
+          if (existing && (existing.kind !== "mcp" || existing.provision !== "managed")) throw new Error(`${id} is not an MCP server`);
+          // A running server keeps the old config in memory: stop it before the file changes.
+          if (running(id)) await supervisor.stop(id);
+          return configs.save(id, name, p.config);
+        });
+      });
+      router.register("extensions.mcp.start", async (raw): Promise<McpStatus> => {
+        const p = params(raw, "extensions.mcp.start", ["id"]);
+        const id = text(p, "id", "extensions.mcp.start");
+        return serial(id, async () => {
+          const row = record(id);
+          if (!row) throw new Error(`MCP server not found: ${id}`);
+          if (row.kind !== "mcp" || row.provision !== "managed") throw new Error(`${id} is not an MCP server`);
+          if (row.useState === "disabled") throw new Error(`${id} is disabled; enable it first`);
+          configs.config(id);
+          return supervisor.start(id);
+        });
+      });
+      router.register("extensions.mcp.stop", async (raw): Promise<McpStatus> => {
+        const p = params(raw, "extensions.mcp.stop", ["id"]);
+        const id = text(p, "id", "extensions.mcp.stop");
+        // Not on the chain: a stop has to be able to end a start that is still waiting for its server.
+        await supervisor.stop(id);
+        return supervisor.status(id);
+      });
+      router.register("extensions.mcp.status", async (raw): Promise<McpStatus> => {
+        const p = params(raw, "extensions.mcp.status", ["id"]);
+        return supervisor.status(text(p, "id", "extensions.mcp.status"));
+      });
+      router.register("extensions.mcp.setSecret", async (raw) => {
+        const p = params(raw, "extensions.mcp.setSecret", ["id", "name", "value"]);
+        const id = text(p, "id", "extensions.mcp.setSecret");
+        const name = text(p, "name", "extensions.mcp.setSecret");
+        if (typeof p.value !== "string") throw new Error("extensions.mcp.setSecret needs a string value");
+        const value = p.value;
+        return serial(id, async () => {
+          configs.setSecret(id, name, value);
+          const status = running(id) ? await supervisor.restart(id) : supervisor.status(id);
+          return { id, name, configured: true, status };
+        });
+      });
+      router.register("extensions.mcp.clearSecret", async (raw) => {
+        const p = params(raw, "extensions.mcp.clearSecret", ["id", "name"]);
+        const id = text(p, "id", "extensions.mcp.clearSecret");
+        const name = text(p, "name", "extensions.mcp.clearSecret");
+        return serial(id, async () => {
+          configs.clearSecret(id, name);
+          const status = running(id) ? await supervisor.restart(id) : supervisor.status(id);
+          return { id, name, configured: false, status };
+        });
+      });
+    },
+  };
+}

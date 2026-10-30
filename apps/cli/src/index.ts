@@ -17,6 +17,7 @@ import { cliVersion } from "./direct/siwc.js";
 import { resolveHubTarget, runReport, runReportHook, type ReportFlags } from "./report/commands.js";
 import { runWpGet, runWpList } from "./wp/commands.js";
 import { authGithub } from "./secrets/github.js";
+import { registerMcpCommands } from "./extensions/mcpCommands.js";
 import { installReport, REPORT_AGENTS, uninstallReport, type ReportAgent } from "./report/install.js";
 
 const nemaHomeDir = () => path.join(os.homedir(), ".nema");
@@ -42,9 +43,9 @@ program
     console.log(`nema daemon connecting to ${o.hub}`);
   });
 
-program
+const mcpCommand = program
   .command("mcp")
-  .description("Run the stdio Room MCP server (used by Codex; reads NEMA_HUB_URL / NEMA_RUN_TOKEN)")
+  .description("Run the stdio Room MCP server (used by Codex; reads NEMA_HUB_URL / NEMA_RUN_TOKEN), or manage MCP servers with its subcommands")
   .action(async () => {
     const hubUrl = process.env.NEMA_HUB_URL;
     const runToken = process.env.NEMA_RUN_TOKEN;
@@ -54,6 +55,8 @@ program
     }
     await startMcpServer({ hubUrl, runToken });
   });
+
+registerMcpCommands(mcpCommand, { nemaHome: nemaHomeDir(), hubUrl: (flag) => resolveHubTarget(flag), out: consoleOut, stdin: () => process.stdin });
 
 program
   .command("doctor")
