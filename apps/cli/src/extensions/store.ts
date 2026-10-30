@@ -72,7 +72,7 @@ function managedPath(root: string, id: string): { extensions: string; target: st
 }
 
 /** Real directory for a managed id, or throw when it points outside extensions/. */
-function ownedDirectory(root: string, id: string): string {
+export function ownedDirectory(root: string, id: string): string {
   const { extensions, target } = managedPath(root, id);
   mkdirSync(extensions, { recursive: true });
   // mkdirSync accepts an existing symlink that points at a directory, so this check has to run here:

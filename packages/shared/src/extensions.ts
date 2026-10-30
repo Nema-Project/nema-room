@@ -1,3 +1,5 @@
+import type { McpRecordState } from "./mcpConfig.js";
+
 export type ExtensionKind = "skill" | "mcp" | "plugin";
 export type Provision = "bundled" | "managed" | "external";
 export type InstallState = "absent" | "installing" | "installed" | "updating" | "removing" | "failed";
@@ -37,6 +39,8 @@ export type ExtensionRecord = {
    * `error` then replace the shipped seed's; without it the seed's values stand.
    */
   checkedAt?: string;
+  /** Only on MCP records, filled in by the daemon when it lists them. Holds no command line, address or value. */
+  mcp?: McpRecordState;
 };
 
 /** Why a skill folder on this computer cannot be attached. */
