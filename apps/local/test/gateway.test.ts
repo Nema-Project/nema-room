@@ -320,7 +320,7 @@ describe("attachment upload passthrough", () => {
     const { credential, seen, gateway, session, cookie } = await setup();
     const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0x10, 0x80]);
     const response = await upload(gateway.origin, "/api/workspaces/w1/attachments", {
-      headers: { cookie, "content-type": "application/octet-stream", "x-nema-filename": "a%20b.png", "x-nema-upload-key": "4f1c1d1e-5b6a-4c7d-8e9f-0a1b2c3d4e5f", "x-nema-gateway-credential": "forged" },
+      headers: { cookie, "content-type": "application/octet-stream", "x-nema-filename": "a%20b.png", "x-nema-upload-key": "4f1c1d1e-5b6a-4c7d-8e9f-0a1b2c3d4e5f", "x-nema-gateway-credential": "forged", authorization: "Bearer browser-secret" },
       body: bytes,
     });
     expect(response.status).toBe(201);
@@ -331,6 +331,7 @@ describe("attachment upload passthrough", () => {
     expect(seen[0]!.body.equals(bytes)).toBe(true);
     expect(seen[0]!.headers[GATEWAY_CREDENTIAL_HEADER]).toBe(credential);
     expect(seen[0]!.headers.cookie).toBeUndefined();
+    expect(seen[0]!.headers.authorization).toBeUndefined();
     expect(seen[0]!.headers["content-type"]).toBe("application/octet-stream");
     expect(seen[0]!.headers["content-length"]).toBe(String(bytes.length));
     expect(seen[0]!.headers["x-nema-filename"]).toBe("a%20b.png");
