@@ -17,9 +17,15 @@ export async function tarballIntegrity(file) {
   return `sha512-${createHash('sha512').update(await readFile(file)).digest('base64')}`;
 }
 
+/** `sha512-` plus the canonical base64 of exactly 64 bytes, as npm writes it. */
+export function isSha512Integrity(value) {
+  if (typeof value !== 'string' || !/^sha512-[A-Za-z0-9+/]{86}==$/.test(value)) return false;
+  return Buffer.from(value.slice(7), 'base64').length === 64;
+}
+
 export async function npmPublishState({ version, expectedIntegrity, fetchImpl = globalThis.fetch }) {
   readReleaseVersion(`v${version}`, version);
-  if (!/^sha512-[A-Za-z0-9+/]+=*$/.test(expectedIntegrity ?? '')) throw new Error('expected integrity must be sha512-<base64>');
+  if (!isSha512Integrity(expectedIntegrity)) throw new Error('expected integrity must be sha512-<base64 of 64 bytes>');
   const url = `https://registry.npmjs.org/${PACKAGE}/${version}`;
   let response;
   try {

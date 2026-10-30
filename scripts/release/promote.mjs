@@ -108,6 +108,8 @@ export async function promote({ version, tag, commit, io, summary }) {
       if (decision === 'move' && pointer.version !== version) {
         throw new PromoteStop(`npm has ${version} but ${npmName} is ${pointer.version ?? 'absent'}; promote cannot move a dist-tag (trusted publishing only publishes). A maintainer runs: npm dist-tag add @nema-project/nema@${version} ${prerelease ? 'next' : 'latest'}`);
       }
+      // An older stable may stay under maintenance; an older prerelease has no such place and is not promoted.
+      if (prerelease && decision === 'keep') throw new PromoteStop(`npm next is ${pointer.version}, newer than ${version}; an older prerelease is not promoted`);
       if (pointer.version === version) already.push(npmName);
       await record(`npm ${version}: already published with the expected tarball; ${npmName} is ${pointer.version ?? 'absent'}`);
     } else if (npmBefore === 'absent') {
@@ -130,8 +132,11 @@ export async function promote({ version, tag, commit, io, summary }) {
       if (tagNow.state === 'version' && tagNow.version === version) {
         flipped.push(npmName);
         await record(`npm ${version}: published${by}; ${npmName} -> ${version}`);
+      } else if (!prerelease && pointerDecisions(after, version, false)['npm latest'] === 'keep') {
+        // Only an explicitly newer latest explains a stable publish that left latest alone (maintenance).
+        await record(`npm ${version}: published${by} under maintenance; ${npmName} stays ${tagNow.version}`);
       } else {
-        await record(`npm ${version}: published${by} under maintenance; ${npmName} stays ${tagNow.version ?? tagNow.state}`);
+        throw new PromoteStop(`npm ${version} is published but ${npmName} reads ${tagNow.version ?? tagNow.state}${tagNow.detail ? ` (${tagNow.detail})` : ''}; not moving any other pointer`);
       }
     } else {
       throw new PromoteStop(`npm state is ${JSON.stringify(npmBefore)}`);
@@ -184,7 +189,8 @@ export async function promote({ version, tag, commit, io, summary }) {
         makeLatest = decision === 'move';
       }
     }
-    if (!release.draft && makeLatest !== true) {
+    const flagRight = release.prerelease === undefined || release.prerelease === prerelease;
+    if (!release.draft && makeLatest !== true && flagRight) {
       if (makeLatest === null) already.push('github latest');
       if (prerelease) already.push('github release');
       await record(`GitHub Release ${tag}: already published${makeLatest === null ? ' and latest' : ''}`);
@@ -193,13 +199,15 @@ export async function promote({ version, tag, commit, io, summary }) {
       await guardTag();
       const latestFlag = makeLatest === true;
       await write('publish release', () => io.publishRelease({ tag, prerelease, makeLatest: latestFlag }), async () => {
-        if ((await io.releaseState({ tag })).draft) return false;
+        const reread = await io.releaseState({ tag });
+        if (reread.draft || reread.prerelease !== prerelease) return false;
         if (!latestFlag) return true;
-        const reread = (await io.readPointers()).github.latest;
-        return reread.state === 'version' && reread.version === version;
+        const latest = (await io.readPointers()).github.latest;
+        return latest.state === 'version' && latest.version === version;
       });
       flipped.push(prerelease ? 'github release' : latestFlag ? 'github latest' : 'github release (not latest)');
-      await record(`GitHub Release ${tag}: ${release.draft ? 'published' : 'already published, now marked latest'}${prerelease ? ' as prerelease' : ''}, latest=${latestFlag}`);
+      const what = release.draft ? 'published' : flagRight ? 'already published, now marked latest' : `already published, prerelease flag corrected to ${prerelease}`;
+      await record(`GitHub Release ${tag}: ${what}${prerelease ? ' as prerelease' : ''}, latest=${latestFlag}`);
     }
     await summary(`\npromote ${tag}: done`);
     return { ok: true, flipped, already, done };
@@ -223,13 +231,22 @@ async function run(command, args, options = {}) {
   return stdout.trim();
 }
 
-/** The push run's build job and every verify job must have run; verify may skip a matrix leg, not all of it. */
+/**
+ * A tag push runs the complete verify.yml (every input defaults to true), so every verify job must have run
+ * and passed, none skipped, and each required group must be there; the build job must have passed too.
+ */
+export const REQUIRED_PUSH_JOBS = Object.freeze(['Pack and smoke nema', 'verify / Workflow lint', 'verify / Full application tests and web build', 'verify / Platform checks', 'verify / npm pack smoke']);
+
 export function assertPushRunJobs(jobs, id) {
-  for (const prefix of ['Pack and smoke nema', 'verify / ']) {
-    const matched = jobs.filter((job) => typeof job?.name === 'string' && job.name.startsWith(prefix));
-    const passed = matched.length > 0 && matched.every((job) => ['success', 'skipped'].includes(job.conclusion)) && matched.some((job) => job.conclusion === 'success');
-    if (!passed) throw new Error(`npm-publish push run ${id}: ${prefix.trim()} did not run and pass (${matched.map((job) => `${job.name}=${job.conclusion}`).join(', ') || 'no such job'})`);
+  const named = jobs.filter((job) => typeof job?.name === 'string');
+  for (const prefix of REQUIRED_PUSH_JOBS) {
+    const matched = named.filter((job) => job.name.startsWith(prefix));
+    if (matched.length === 0 || !matched.every((job) => job.conclusion === 'success')) {
+      throw new Error(`npm-publish push run ${id}: ${prefix} did not run and pass (${matched.map((job) => `${job.name}=${job.conclusion}`).join(', ') || 'no such job'})`);
+    }
   }
+  const other = named.filter((job) => job.name.startsWith('verify / ') && job.conclusion !== 'success');
+  if (other.length) throw new Error(`npm-publish push run ${id}: ${other.map((job) => `${job.name}=${job.conclusion}`).join(', ')}`);
 }
 
 /** Finds the tag's npm-publish push run, checks it, downloads nema-tarball and hashes it. */
@@ -305,9 +322,9 @@ export function realIo({ env = process.env, fetchImpl = globalThis.fetch, versio
       await run(crane, ['tag', `${image}@${digest}`, 'latest']);
     },
     async releaseState() {
-      const view = JSON.parse(await run(gh, ['release', 'view', tag, '-R', REPOSITORY, '--json', 'isDraft,tagName']));
+      const view = JSON.parse(await run(gh, ['release', 'view', tag, '-R', REPOSITORY, '--json', 'isDraft,isPrerelease,tagName']));
       if (view.tagName !== tag) throw new Error(`release view answered ${view.tagName}`);
-      return { draft: view.isDraft };
+      return { draft: view.isDraft, prerelease: view.isPrerelease };
     },
     async publishRelease({ prerelease, makeLatest }) {
       // Set the prerelease flag from the tag both ways: a reused draft may carry a stale one.
