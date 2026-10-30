@@ -124,8 +124,8 @@ export function roomToolsOk(
 
 /**
  * Which Skill a `Skill` or `Read` call loads, or null. The `Skill` tool's input field is not documented, so
- * its one string value is matched against the task's ids and copy folder names (spec §3); anything else is
- * not guessed at. A `Read` of a copy's SKILL.md counts too.
+ * each string value is matched against the task's ids and copy folder names (spec §3), and the call counts
+ * when exactly one Skill is named; anything else is not guessed at. A `Read` of a copy's SKILL.md counts too.
  */
 export function skillActivationFrom(use: { name: string; input: unknown }, skillDirs: ReadonlyMap<string, string>): string | null {
   if (!isRecord(use.input)) return null;
@@ -137,9 +137,18 @@ export function skillActivationFrom(use: { name: string; input: unknown }, skill
     return null;
   }
   if (use.name !== "Skill") return null;
-  const values = Object.values(use.input).filter((v): v is string => typeof v === "string");
-  if (values.length !== 1) return null;
-  const wanted = values[0]!.trim().replace(/^\//, "");
+  // Arguments may ride along as other strings; the call counts when exactly one Skill is named among them.
+  const named = new Set<string>();
+  for (const value of Object.values(use.input)) {
+    if (typeof value !== "string") continue;
+    const id = skillNamed(value, skillDirs);
+    if (id) named.add(id);
+  }
+  return named.size === 1 ? [...named][0]! : null;
+}
+
+function skillNamed(value: string, skillDirs: ReadonlyMap<string, string>): string | null {
+  const wanted = value.trim().replace(/^\//, "");
   if (skillDirs.has(wanted)) return wanted;
   const byFolder = [...skillDirs].filter(([, skillFile]) => path.basename(path.dirname(skillFile)) === wanted);
   return byFolder.length === 1 ? byFolder[0]![0] : null;

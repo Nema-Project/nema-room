@@ -205,7 +205,10 @@ describe("Skill lines", () => {
     expect(skillActivationFrom({ name: "Skill", input: { command: "web-abc123:deploy" } }, dirs)).toBe("web-abc123:deploy");
     expect(skillActivationFrom({ name: "Skill", input: { skill: "deploy" } }, dirs)).toBe("web-abc123:deploy");
     expect(skillActivationFrom({ name: "Skill", input: { skill: "other" } }, dirs)).toBeNull();
-    expect(skillActivationFrom({ name: "Skill", input: { skill: "tdd", args: "x" } }, dirs)).toBeNull();
+    expect(skillActivationFrom({ name: "Skill", input: { skill: "tdd", args: "x" } }, dirs)).toBe("tdd");
+    expect(skillActivationFrom({ name: "Skill", input: { args: "write a test", skill: "/tdd" } }, dirs)).toBe("tdd");
+    expect(skillActivationFrom({ name: "Skill", input: { skill: "tdd", args: "tdd" } }, dirs)).toBe("tdd");
+    expect(skillActivationFrom({ name: "Skill", input: { skill: "tdd", args: "deploy" } }, dirs)).toBeNull();
     expect(skillActivationFrom({ name: "Skill", input: "tdd" }, dirs)).toBeNull();
     expect(skillActivationFrom({ name: "Read", input: { file_path: "/run/work/.claude/skills/tdd/SKILL.md" } }, dirs)).toBe("tdd");
     expect(skillActivationFrom({ name: "Read", input: { file_path: "/run/work/.claude/skills/tdd/notes.md" } }, dirs)).toBeNull();
