@@ -1,7 +1,10 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
+import { messageHasBody } from "@nema/shared";
+import { AttachmentTray } from "@/components/AttachmentTray";
 import { messageRoleLabel } from "@/components/MessageItem";
+import { useAttachmentTray } from "@/lib/attachments";
 import { applyFormat, type FormatKind } from "@/lib/markdownFormat";
 import { applySlash, matchingCommands, slashToken, type SlashItem } from "@/lib/slash";
 import { useT } from "@/lib/i18n";
@@ -17,6 +20,7 @@ function availableCommands(query: string, threadMode: boolean): SlashItem[] {
 }
 
 export function Composer({
+  workspaceId,
   onSend,
   quote,
   onClearQuote,
@@ -24,10 +28,12 @@ export function Composer({
   threadMode = false,
   disabled = false,
 }: {
-  onSend: (content: string) => Promise<void>;
+  /** Enables attachments: uploads are staged in this workspace. */
+  workspaceId?: string;
+  onSend: (content: string, attachmentIds: string[]) => Promise<void>;
   quote?: { role: Message["role"]; content: string } | null;
   onClearQuote?: () => void;
-  onThread?: (content: string) => Promise<void>;
+  onThread?: (content: string, attachmentIds: string[]) => Promise<void>;
   threadMode?: boolean;
   disabled?: boolean;
 }) {
@@ -41,6 +47,9 @@ export function Composer({
   const [cursor, setCursor] = useState(0);
   const [active, setActive] = useState(0);
   const [closedFor, setClosedFor] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+  const tray = useAttachmentTray(workspaceId);
   const token = slashToken(value, cursor);
   const matches = token ? availableCommands(token.query, threadMode) : [];
   const tokenKey = token ? `${token.start}:${token.query}` : "";
@@ -63,15 +72,19 @@ export function Composer({
   async function send() {
     const sent = value;
     const content = sent.trim();
-    if (!content || sending) return;
+    const attached = tray.ready;
+    const ids = attached.map((a) => a.id);
+    // Attachments still uploading, failed, or unreadable by the adapter (D-2) hold the message back.
+    if (sending || tray.blocker || !messageHasBody(content, ids)) return;
     setSending(true);
     setError(null);
     try {
       const threadText = content.match(/^\/thread\s+([\s\S]+)$/);
-      if (threadText && onThread) await onThread(threadText[1]!.trim());
-      else await onSend(content);
+      if (threadText && onThread) await onThread(threadText[1]!.trim(), ids);
+      else await onSend(content, ids);
+      tray.clear(attached.map((a) => a.key));
       // Text typed while the send was in flight stays: drop only what was sent.
-      setValue((cur) => (cur === sent ? "" : cur.startsWith(sent) ? cur.slice(sent.length).trimStart() : cur));
+      if (content !== "") setValue((cur) => (cur === sent ? "" : cur.startsWith(sent) ? cur.slice(sent.length).trimStart() : cur));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e)); // keep the draft
     } finally {
@@ -129,6 +142,28 @@ export function Composer({
     // Plain Enter keeps the textarea default: a newline.
   }
 
+  function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    const files = Array.from(e.clipboardData?.files ?? []);
+    // Office apps put a picture of copied text next to the text itself; pasting text wins.
+    if (!tray.enabled || files.length === 0 || (e.clipboardData.getData("text/plain") ?? "") !== "") return;
+    e.preventDefault();
+    void tray.add(files);
+  }
+
+  const hasFiles = (e: DragEvent) => tray.enabled && Array.from(e.dataTransfer?.types ?? []).includes("Files");
+  function onDragOver(e: DragEvent<HTMLDivElement>) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    setDragging(true);
+  }
+  function onDrop(e: DragEvent<HTMLDivElement>) {
+    setDragging(false);
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (!tray.enabled || files.length === 0) return;
+    e.preventDefault();
+    void tray.add(files);
+  }
+
   function format(kind: FormatKind) {
     const el = ref.current;
     if (!el) return;
@@ -138,7 +173,7 @@ export function Composer({
   }
 
   return (
-    <div className="composer">
+    <div className={dragging ? "composer att-drop" : "composer"} onDragOver={onDragOver} onDragLeave={() => setDragging(false)} onDrop={onDrop}>
       {quote && (
         <div className="quote-bar">
           <span>
@@ -190,7 +225,9 @@ export function Composer({
         onKeyDown={onKeyDown}
         onCompositionStart={() => (composing.current = true)}
         onCompositionEnd={() => (composing.current = false)}
+        onPaste={onPaste}
       />
+      <AttachmentTray items={tray.items} caps={tray.caps} notices={tray.notices} onRemove={tray.remove} onRetry={tray.retry} />
       {error && (
         <p className="error" role="alert">
           {t("composer.sendFailed", { message: error })}
@@ -212,9 +249,28 @@ export function Composer({
         <button type="button" className="fmt" onClick={() => format("link")}>
           {t("composer.link")}
         </button>
+        {tray.enabled && (
+          <>
+            <button type="button" className="fmt att-add" aria-label={t("attach.add")} disabled={disabled} onClick={() => picker.current?.click()}>
+              {t("attach.button")}
+            </button>
+            <input
+              ref={picker}
+              type="file"
+              multiple
+              hidden
+              aria-label={t("attach.choose")}
+              onChange={(e) => {
+                const files = Array.from(e.currentTarget.files ?? []);
+                e.currentTarget.value = "";
+                void tray.add(files);
+              }}
+            />
+          </>
+        )}
         <span className="sep">|</span>
         <span>{t("composer.hint")}</span>
-        <button type="button" className="send" disabled={sending || disabled} onClick={() => void send()}>
+        <button type="button" className="send" disabled={sending || disabled || tray.blocker !== null} onClick={() => void send()}>
           {t("composer.send")}
         </button>
       </div>

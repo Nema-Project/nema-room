@@ -106,6 +106,13 @@ describe("extensions.mcp.* configs and credentials", () => {
     expect((await call("extensions.mcp.save", { id: "search", name: "One", config: stdio(), create: "yes" })).error).toMatch(/create/);
   });
 
+  test("an edit save (create: false) never brings back a server that was removed", async () => {
+    expect((await call("extensions.mcp.save", { id: "search", name: "Search", config: stdio(), create: false })).error).toBe("MCP server not found: search");
+    expect((await list()).some((item) => item.id === "search")).toBe(false);
+    await ok("extensions.mcp.save", { id: "search", name: "Search", config: stdio() });
+    expect((await ok("extensions.mcp.save", { id: "search", name: "Renamed", config: stdio(), create: false })).name).toBe("Renamed");
+  });
+
   test("status and stop refuse an id that is not a managed MCP server", async () => {
     expect((await call("extensions.mcp.status", { id: "nothing" })).error).toBe("MCP server not found: nothing");
     expect((await call("extensions.mcp.stop", { id: "nothing" })).error).toBe("MCP server not found: nothing");

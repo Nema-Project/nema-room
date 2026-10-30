@@ -7,7 +7,9 @@ import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { EventBus } from "../src/events.js";
 import { createWorkspace, updateWorkspace } from "../src/workspaces.js";
-import { addMessage, editUserMessage, listMessages, listThreadMessages, messageExcerpt, postUserMessage, type AgentMessage } from "../src/messages.js";
+import { addMessage, deliverySet, editUserMessage, listMessages, listThreadMessages, messageExcerpt, postUserMessage, type AgentMessage } from "../src/messages.js";
+import { AttachmentRefSchema } from "@nema/shared";
+import { png, uploadPng } from "./attachmentFixtures.js";
 import { claimNextTask, finishTask, getTask, insertQueuedTask, interruptRunning, recordTaskChange, resolveRunToken } from "../src/tasks.js";
 import * as tasks from "../src/tasks.js";
 import { attachDaemonSocket } from "../src/daemonSocket.js";
@@ -1031,5 +1033,47 @@ describe("daemon socket", () => {
     expect(organize.workspaceId).toBe(wsB);
     expect(organize.limits).toBeUndefined();
     expect(organize.prompt).not.toContain("# 开发包");
+  });
+});
+
+describe("attachments in task.assign", () => {
+  test("a daemon with the attachments feature gets the delivery set, each a valid AttachmentRef", async () => {
+    const quotedFile = await uploadPng(db, dataDir, wsA, png(80), "old.png");
+    const quoted = await postUserMessage(db, wsA, "old", { attachmentIds: [quotedFile.id] });
+    await db.query("update tasks set status = 'done' where id = $1", [quoted.task.id]);
+    const file = await uploadPng(db, dataDir, wsA, png(64), "new.png");
+    const m = await postUserMessage(db, wsA, "", { attachmentIds: [file.id], quoteMessageId: quoted.message.id });
+    const c = await connect(TOKEN, ["codex-direct"], { features: ["attachments"] });
+    expect((await c.next()).type).toBe("welcome");
+    const a = await c.next("task.assign");
+    expect(a.taskId).toBe(m.task.id);
+    expect(a.attachments).toEqual(await deliverySet(db, m.task.id));
+    expect(a.attachments.map((r: { id: string }) => r.id)).toEqual([file.id, quotedFile.id]);
+    for (const ref of a.attachments) expect(AttachmentRefSchema.parse(ref)).toEqual(ref);
+    // The prompt names the files; their bytes travel only through the room route.
+    expect(a.prompt).toContain("[附件：new.png（image/png，64 B），见本次附件]");
+    expect(a.prompt).not.toContain(png(64).toString("base64"));
+  });
+
+  test("without the feature, a task with attachments fails plainly and a text task still runs", async () => {
+    const file = await uploadPng(db, dataDir, wsA);
+    const withFile = await postUserMessage(db, wsA, "see file", { attachmentIds: [file.id] });
+    const textOnly = await postUserMessage(db, wsA, "just text");
+    const c = await connect();
+    expect((await c.next()).type).toBe("welcome");
+    const a = await c.next("task.assign");
+    expect(a.taskId).toBe(textOnly.task.id);
+    expect(a.attachments).toBeUndefined();
+    await vi.waitFor(async () => expect((await getTask(db, withFile.task.id))?.status).toBe("failed"));
+    const failure = (await listMessages(db, wsA)).find((row) => row.role === "system" && row.taskId === withFile.task.id);
+    expect(failure?.content).toContain("当前 daemon 不支持附件");
+  });
+
+  test("a text-only task carries no attachments field", async () => {
+    await postUserMessage(db, wsA, "plain");
+    const c = await connect(TOKEN, ["codex-direct"], { features: ["attachments"] });
+    expect((await c.next()).type).toBe("welcome");
+    const a = await c.next("task.assign");
+    expect("attachments" in a).toBe(false);
   });
 });

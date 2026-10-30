@@ -448,6 +448,17 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .skill-preview li { display: block; padding: 10px 0; border-top: 1px solid var(--rule); }
 .skill-preview h4 { font-size: 15px; font-weight: 600; color: var(--ink); }
 .skill-preview .kmeta { overflow-wrap: anywhere; }
+/* mcp: MCP server form and controls on the Plugins page */
+.mcp-form { display: flex; flex-direction: column; gap: 8px; background: var(--paper); padding: 16px 20px 14px; }
+.mcp-form h3 { font-size: 16px; font-weight: 600; }
+.mcp-form label { display: flex; flex-direction: column; gap: 4px; }
+.mcp-form fieldset { display: flex; gap: 14px; border: 0; padding: 0; margin: 0; }
+.mcp-form fieldset label { flex-direction: row; align-items: center; }
+.mcp-form input:not([type="radio"]), .mcp-form textarea { border: 1px solid var(--rule); background: var(--paper); padding: 5px 8px; font-family: var(--mono); font-size: 13px; }
+.mcp-form > button[type="submit"] { align-self: flex-start; border: 1px solid var(--ink); padding: 5px 14px; font-weight: 600; }
+.mcp-controls { margin-top: 10px; }
+.plugin-block .mcp-secrets li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mcp-secrets input { border: 1px solid var(--rule); background: var(--paper); padding: 3px 8px; }
 @media (max-width: 720px) {
   .plugin-block li { grid-template-columns: 1fr; row-gap: 2px; }
 }
@@ -513,3 +524,21 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .rclaims, .rauthors { list-style: none; margin: 4px 0 0; padding: 0; font-size: 12px; display: grid; gap: 2px; }
 .rauthors li { display: flex; flex-wrap: wrap; gap: 6px; }
 .rhistory { margin-top: 6px; opacity: .75; }
+/* Chat attachments (#104): the composer's attachment tray. */
+.composer.att-drop { border-color: var(--accent); }
+.att-tray { padding: 0 14px 6px; font-size: 12px; }
+.att-notices p { margin: 0 0 4px; color: var(--accent); }
+.att-items { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.att-item { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 280px; padding: 6px 28px 6px 6px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); }
+.att-item.att-blocked, .att-item.att-failed { border-color: var(--accent); }
+.att-thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; }
+.att-icon { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; height: 40px; padding: 0 4px; border-radius: 4px; background: var(--rule); color: var(--ink-2); font-size: 11px; }
+.att-meta { display: flex; flex-direction: column; min-width: 0; }
+.att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; color: var(--ink); }
+.att-size { color: var(--ink-3); }
+.att-progress { display: flex; align-items: center; gap: 4px; color: var(--ink-2); }
+.att-progress progress { width: 60px; }
+.att-error, .att-warn { flex-basis: 100%; margin: 0; color: var(--accent); }
+.att-retry { font-size: 12px; text-decoration: underline; }
+.att-remove { position: absolute; top: 2px; right: 4px; border: 0; background: transparent; color: var(--ink-2); font-size: 16px; cursor: pointer; }
+.att-note { margin: 4px 0 0; color: var(--ink-2); }

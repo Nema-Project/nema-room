@@ -193,5 +193,15 @@ describe("MCP save checks", () => {
       expect((await req("GET", "/api/extensions/search/mcp")).status).toBe(502);
     }
   });
+
+  test("an edit save forwards create: false, and a missing server is a 404", async () => {
+    answer = (method) => {
+      if (method === "extensions.mcp.save") throw new DaemonRpcError("MCP server not found: search");
+      throw new DaemonRpcError("daemon 未连接");
+    };
+    const r = await req("POST", "/api/extensions/mcp", { id: "search", name: "Search", config, create: false });
+    expect(r.status).toBe(404);
+    expect(calls[0].params.create).toBe(false);
+  });
 });
 

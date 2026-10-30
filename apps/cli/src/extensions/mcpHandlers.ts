@@ -139,6 +139,8 @@ export function createMcpHandlers(nemaHome: string, options: McpHandlerOptions =
           const existing = record(id);
           // Checked on the chain, so of two adds racing for one id the second is refused, not merged.
           if (create && existing) throw new Error(`MCP server ${id} already exists`);
+          // `create: false` is an edit: a server removed meanwhile is not brought back.
+          if (p.create === false && !existing) throw new Error(`MCP server not found: ${id}`);
           if (existing && (existing.kind !== "mcp" || existing.provision !== "managed")) throw new Error(`${id} is not an MCP server`);
           // A running server keeps the old config in memory: stop it before the file changes.
           if (running(id)) await supervisor.stop(id);
