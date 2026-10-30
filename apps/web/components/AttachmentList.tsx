@@ -19,8 +19,8 @@ async function download(workspaceId: string, a: AttachmentView) {
     link.download = a.name;
     link.click();
   } finally {
-    // The click starts the download synchronously; the URL is no longer needed after this task.
-    setTimeout(() => URL.revokeObjectURL(url), 0);
+    // Some browsers read the URL after the click returns; give them time before letting go of it.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }
 }
 
