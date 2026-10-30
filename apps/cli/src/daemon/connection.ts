@@ -1,5 +1,6 @@
 import WebSocket from "ws";
 import { parseHubToDaemon } from "@nema/shared";
+import { DAEMON_FEATURES } from "../attachments/capabilities.js";
 import { cliVersion } from "../direct/siwc.js";
 import { reportTokenHash } from "../report/token.js";
 import { reconcileWorkspaceDirs, removeWorkspaceDir } from "./cleanup.js";
@@ -71,6 +72,7 @@ export function connectDaemon(opts: DaemonOpts): { close(): Promise<void> } {
         token: opts.token,
         version: opts.version ?? cliVersion(),
         adapters: opts.runner.adapterNames,
+        features: [...DAEMON_FEATURES],
         ...(hash ? { reportTokenHash: hash } : {}),
       });
     });
