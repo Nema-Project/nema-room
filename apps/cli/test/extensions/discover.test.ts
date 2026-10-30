@@ -154,3 +154,21 @@ test("reads at most a bounded number of entries per location and marks the list 
   expect(found.skills).toEqual([]);
   expect(found.truncated).toBe(true);
 });
+
+test("an attached folder stays attached when its SKILL.md later has a problem", () => {
+  home = realpathSync(mkdtempSync(join(tmpdir(), "nema-discover-")));
+  const folder = join(home, ".claude", "skills", "notes");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "SKILL.md"), "# front matter removed after attaching\n");
+  const [row] = discoverSkills(home, [...bundledExtensions(), external("notes", folder)]).skills;
+  expect(row).toMatchObject({ path: folder, attached: true, id: "notes", problem: "missing-frontmatter" });
+});
+
+test("a link to a folder whose name starts with two dots stays inside its location", () => {
+  home = realpathSync(mkdtempSync(join(tmpdir(), "nema-discover-")));
+  const base = join(home, ".claude", "skills");
+  const target = skill(join(base, "..notes"), "notes");
+  symlinkSync(target, join(base, "notes-link"), "dir");
+  const rows = discoverSkills(home, bundledExtensions()).skills;
+  expect(rows).toEqual([expect.objectContaining({ path: target, name: "notes", problem: null })]);
+});

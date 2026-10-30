@@ -163,25 +163,51 @@ test("a GitHub CLI check that throws marks the github item damaged", async () =>
   expect(response.ok && response.result).toMatchObject({ availability: "damaged", error: "github-cli-damaged" });
 });
 
-test("an older Repair that finishes last does not overwrite a newer one", async () => {
+test("overlapping Repairs of one item run one after another, so the later one is what stays", async () => {
   const answers: Array<(value: { installed: boolean; detail: string }) => void> = [];
-  let tick = 0;
+  // Both checks start within the same millisecond: order must not depend on the clock.
   const { call } = setup({
     checkGraphify: () => new Promise((resolve) => answers.push(resolve)),
-    now: () => new Date(Date.UTC(2026, 9, 30, 3, 0, tick++)),
+    now: () => new Date("2026-10-30T03:00:00.000Z"),
   });
   const older = call("extensions.repair", { id: "code" });
   const newer = call("extensions.repair", { id: "code" });
+  await vi.waitFor(() => expect(answers).toHaveLength(1));
+  // The second check has not started while the first one runs.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(answers).toHaveLength(1);
+  answers[0]!({ installed: false, detail: "" });
+  expect((await older).ok).toBe(true);
   await vi.waitFor(() => expect(answers).toHaveLength(2));
   answers[1]!({ installed: true, detail: "" });
   const newest = await newer;
-  expect(newest.ok && newest.result).toMatchObject({ availability: "ready", checkedAt: "2026-10-30T03:00:01.000Z" });
-  answers[0]!({ installed: false, detail: "" });
-  const stale = await older;
-  // The late answer gets the stored, newer result back instead of writing its own.
-  expect(stale.ok && stale.result).toMatchObject({ availability: "ready", checkedAt: "2026-10-30T03:00:01.000Z" });
+  expect(newest.ok && newest.result).toMatchObject({ availability: "ready", error: null });
   const listed = await call("extensions.list", {});
-  expect(listed.ok && (listed.result as Array<{ id: string }>).find((row) => row.id === "code")).toMatchObject({ availability: "ready", checkedAt: "2026-10-30T03:00:01.000Z" });
+  expect(listed.ok && (listed.result as Array<{ id: string }>).find((row) => row.id === "code")).toMatchObject({ availability: "ready" });
+});
+
+test("a stored result newer than the one being written is kept", async () => {
+  const { nemaHome } = setup();
+  const store = openExtensionStore(join(nemaHome, "extensions"));
+  store.recordCheck("code", { availability: "ready", error: null, checkedAt: "2026-10-30T03:00:01.000Z" });
+  const kept = store.recordCheck("code", { availability: "damaged", error: "bundled-runtime-damaged", checkedAt: "2026-10-30T03:00:00.000Z" });
+  expect(kept).toMatchObject({ availability: "ready", checkedAt: "2026-10-30T03:00:01.000Z" });
+});
+
+test("a GitHub check that could not finish is reported as a failed check, not as missing or signed out", async () => {
+  const { call } = setup({ checkGithub: async () => ({ installed: true, loggedIn: false, inconclusive: true, detail: "login status unavailable" }) });
+  const response = await call("extensions.repair", { id: "github" });
+  expect(response.ok && response.result).toMatchObject({ availability: "damaged", error: "github-cli-damaged" });
+});
+
+test("extensions.discover marks a folder attached right after extensions.attach", async () => {
+  const { home, call } = setup();
+  const folder = skill(join(home, ".claude", "skills", "notes"));
+  expect((await call("extensions.attach", { path: folder })).ok).toBe(true);
+  const found = await call("extensions.discover", {});
+  expect(found.ok && (found.result as { skills: unknown[] }).skills).toEqual([
+    expect.objectContaining({ path: folder, id: "notes", attached: true, problem: null }),
+  ]);
 });
 
 test("a stored check with an unknown availability is ignored and the shipped seed stands", async () => {

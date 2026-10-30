@@ -263,8 +263,11 @@ export function extensionIndexFromDisk(nemaHome: string | undefined): ExtensionR
     // A seed's choice is the only thing an override may change; everything else is what shipped.
     const useState = override?.useState === "enabled" || override?.useState === "disabled" ? override.useState : seed.useState;
     // A Repair result counts only with the time it was taken, the same rule the daemon applies.
-    const checked = override && typeof override.checkedAt === "string" && AVAILABILITY.has(override.availability)
-      ? { availability: override.availability, error: typeof override.error === "string" ? override.error : null, checkedAt: override.checkedAt }
+    // Same rule as the daemon's store: a string check time, a known availability, and an error that
+    // is a string or null; anything else leaves the seed's values.
+    const checked = override && typeof override.checkedAt === "string" && AVAILABILITY.has(override.availability) &&
+      (override.error === null || typeof override.error === "string")
+      ? { availability: override.availability, error: override.error, checkedAt: override.checkedAt }
       : {};
     return { ...seed, useState, ...checked };
   });

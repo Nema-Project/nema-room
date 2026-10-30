@@ -127,3 +127,25 @@ test("a failing gh command reports its exit code and stderr with token-like stri
     expect((error as Error).message).not.toContain("ghp_abcdef");
   } finally { await gh.close(); }
 });
+
+test("status tells a missing gh apart from a check that could not finish", async () => {
+  const missing = new GithubGh({ bin: join(tmpdir(), "nema-no-such-gh", "gh") });
+  try { expect(await missing.status()).toEqual({ installed: false, loggedIn: false, detail: "GitHub CLI unavailable" }); }
+  finally { await missing.close(); }
+  const brokenVersion = new GithubGh({ bin: fakeGh(`process.exit(3);`) });
+  try { expect(await brokenVersion.status()).toMatchObject({ installed: false, loggedIn: false, inconclusive: true }); }
+  finally { await brokenVersion.close(); }
+  rmSync(dir!, { recursive: true, force: true }); dir = undefined;
+  const garbled = new GithubGh({ bin: fakeGh(`const a=process.argv.slice(2); process.stdout.write(a[0]==="--version" ? "gh version 2.60.0" : "not json");`) });
+  try { expect(await garbled.status()).toMatchObject({ installed: true, loggedIn: false, inconclusive: true }); }
+  finally { await garbled.close(); }
+  rmSync(dir!, { recursive: true, force: true }); dir = undefined;
+  // gh exits 1 when nobody is signed in: that is an answer, not a failed check.
+  const signedOut = new GithubGh({ bin: fakeGh(`const a=process.argv.slice(2); if(a[0]==="--version") process.stdout.write("gh version 2.60.0"); else process.exit(1);`) });
+  try {
+    const status = await signedOut.status();
+    expect(status).toMatchObject({ installed: true, loggedIn: false });
+    expect(status.inconclusive).toBeUndefined();
+  }
+  finally { await signedOut.close(); }
+});

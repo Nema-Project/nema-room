@@ -36,7 +36,7 @@ export type ExtensionHandlerOptions = {
   /** Runs the packaged Graphify version check; production passes the daemon's packaged binary. */
   checkGraphify?: () => Promise<{ installed: boolean; detail: string }>;
   /** Asks the GitHub CLI whether it is installed and signed in; production passes the daemon's reader. */
-  checkGithub?: () => Promise<{ installed: boolean; loggedIn: boolean; detail: string }>;
+  checkGithub?: () => Promise<{ installed: boolean; loggedIn: boolean; detail: string; inconclusive?: boolean }>;
   now?: () => Date;
 };
 
@@ -143,18 +143,33 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
   });
   // Check a bundled item again and keep the result. Graphify has a packaged runtime of its own and
   // GitHub needs the `gh` CLI signed in; the others are code inside the app and are ready whenever
-  // the app runs. The check time is taken before the check, so of two overlapping checks the one
-  // started later wins.
+  // the app runs. The check time is taken before the check.
+  // One check per item at a time: a second Repair waits for the running one, so the check that
+  // started later is always the one that finishes later and stays.
+  const repairs = new Map<string, Promise<unknown>>();
   router.register("extensions.repair", async (params): Promise<ExtensionRecord> => {
     const id = requireId(params, "extensions.repair");
     if (!BUNDLED_IDS.has(id)) throw new Error("only a bundled extension can be repaired");
+    const previous = repairs.get(id) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(() => repair(id));
+    repairs.set(id, run);
+    try {
+      return await run;
+    } finally {
+      if (repairs.get(id) === run) repairs.delete(id);
+    }
+  });
+  const repair = async (id: string): Promise<ExtensionRecord> => {
     const checkedAt = now().toISOString();
     let availability: ExtensionRecord["availability"] = "ready";
     let error: string | null = null;
     if (id === "github") {
       try {
         const status = await checkGithub();
-        if (!status.installed) {
+        if (status.inconclusive) {
+          availability = "damaged";
+          error = "github-cli-damaged";
+        } else if (!status.installed) {
           availability = "missing-dependency";
           error = "github-cli-missing";
         } else if (!status.loggedIn) {
@@ -178,5 +193,5 @@ export function registerExtensionHandlers(router: RpcRouter, nemaHome: string, o
       }
     }
     return store.recordCheck(id, { availability, error, checkedAt });
-  });
+  };
 }

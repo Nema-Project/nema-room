@@ -29,7 +29,8 @@ export type InspectedSkill = { path: string; name: string | null; description: s
 
 function inside(root: string, target: string): boolean {
   const relative = path.relative(root, target);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  // Compare whole components: `..notes` is a folder inside, only `..` itself climbs out.
+  return relative === "" || (relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative));
 }
 
 function failed(folder: string, problem: AttachProblem): InspectedSkill {
@@ -50,8 +51,9 @@ function readCapped(file: string): string | null {
 }
 
 /**
- * Name, description and id of one skill folder, read from its `SKILL.md` front matter and nothing
- * else. The path comes back resolved to the folder's real path. A `SKILL.md` that is a link out of
+ * Name, description and id of one skill folder, taken from its `SKILL.md` front matter. Only that
+ * file is opened, read up to the size cap, and nothing past the front matter is kept or returned.
+ * The path comes back resolved to the folder's real path. A `SKILL.md` that is a link out of
  * the folder is not read.
  */
 export function inspectSkillFolder(folder: string): InspectedSkill {
@@ -87,12 +89,14 @@ export function inspectSkillFolder(folder: string): InspectedSkill {
 
 /**
  * Where an inspected folder stands against the records Nema already has: attached when an external
- * record names this real path, taken when another record already holds the id.
+ * record names this real path (whatever its SKILL.md says now), taken when another record already
+ * holds the id.
  */
 export function placeSkill(skill: InspectedSkill, records: ExtensionRecord[]): { attached: boolean; problem: AttachProblem | null; id: string | null } {
+  // An attached folder stays attached even if its SKILL.md changed since; the problem is still reported.
+  const record = records.find((row) => row.provision === "external" && row.externalPath === skill.path);
+  if (record) return { attached: true, problem: skill.problem, id: record.id };
   if (skill.problem || !skill.id) return { attached: false, problem: skill.problem, id: null };
-  const attached = records.some((row) => row.provision === "external" && row.externalPath === skill.path);
-  if (attached) return { attached: true, problem: null, id: skill.id };
   if (records.some((row) => row.id === skill.id)) return { attached: false, problem: "id-taken", id: null };
   return { attached: false, problem: null, id: skill.id };
 }

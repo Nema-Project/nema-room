@@ -12,7 +12,8 @@ const QUERY = "query($owner:String!,$name:String!,$number:Int!,$first:Int!,$afte
 const PARENT_QUERY = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){parent{number title url}}}}";
 const ISSUE_QUERY = "query($owner:String!,$name:String!,$first:Int!,$after:String,$states:[IssueState!],$labels:[String!],$orderBy:IssueOrder,$filterBy:IssueFilters){repository(owner:$owner,name:$name){issues(first:$first,after:$after,states:$states,labels:$labels,orderBy:$orderBy,filterBy:$filterBy){pageInfo{endCursor hasNextPage} nodes{number title state url createdAt updatedAt labels(first:100){nodes{name}}}}}}";
 
-export type GithubStatus = { installed: boolean; loggedIn: boolean; detail: string };
+/** `inconclusive` is set when the check itself failed, so `installed` / `loggedIn` are not an answer. */
+export type GithubStatus = { installed: boolean; loggedIn: boolean; detail: string; inconclusive?: true };
 export interface GithubReader {
   call(tool: string, args: object): Promise<unknown>;
   status(): Promise<GithubStatus>;
@@ -254,12 +255,18 @@ export class GithubGh implements GithubReader {
   async status(): Promise<GithubStatus> {
     let version;
     try { version = await this.execute(["--version"], { timeout: STATUS_TIMEOUT_MS }); }
-    catch { return { installed: false, loggedIn: false, detail: "GitHub CLI unavailable" }; }
-    if (version.error) return { installed: false, loggedIn: false, detail: "GitHub CLI unavailable" };
+    catch { return { installed: false, loggedIn: false, detail: "GitHub CLI unavailable", inconclusive: true }; }
+    if (version.error) {
+      // Only "no such program" means gh is not installed; a gh that starts but fails is a failed check.
+      const missing = (version.error as NodeJS.ErrnoException).code === "ENOENT";
+      return missing
+        ? { installed: false, loggedIn: false, detail: "GitHub CLI unavailable" }
+        : { installed: false, loggedIn: false, detail: "GitHub CLI unavailable", inconclusive: true };
+    }
     let auth;
     try {
       auth = await this.execute(["auth", "status", "--hostname", "github.com", "--json", "hostname,login,state,active", "--no-refresh"], { timeout: STATUS_TIMEOUT_MS });
-    } catch { return { installed: true, loggedIn: false, detail: "GitHub CLI installed; login status unavailable" }; }
+    } catch { return { installed: true, loggedIn: false, detail: "GitHub CLI installed; login status unavailable", inconclusive: true }; }
     if (auth.error) return { installed: true, loggedIn: false, detail: "GitHub CLI installed; no active github.com login or CLI upgrade required" };
     try {
       const payload = JSON.parse(auth.stdout) as { hosts?: Record<string, Array<{ active?: boolean; state?: string }>> };
@@ -267,7 +274,7 @@ export class GithubGh implements GithubReader {
       const loggedIn = accounts.some((account) => account.active === true && (!account.state || account.state === "success"));
       return { installed: true, loggedIn, detail: loggedIn ? "GitHub CLI logged in to github.com" : "GitHub CLI installed; no active github.com login" };
     } catch {
-      return { installed: true, loggedIn: false, detail: "GitHub CLI installed; login status unavailable (upgrade gh)" };
+      return { installed: true, loggedIn: false, detail: "GitHub CLI installed; login status unavailable (upgrade gh)", inconclusive: true };
     }
   }
   async close(): Promise<void> {
