@@ -107,12 +107,24 @@ export const SIWC_PROFILE: TransportProfile = {
   },
 };
 
+/**
+ * BYOK talks to the public OpenAI API or any OpenAI-compatible server (OpenRouter, vLLM, Ollama …). Their
+ * `GET /models` answers `{ object: "list", data: [{ id }] }` with no visibility field, so every non-empty `id`
+ * is kept in server order. A SIWC-style `models[]` catalog behind a custom base URL is still read as before.
+ */
 export const BYOK_PROFILE: TransportProfile = {
   baseUrl: DEFAULT_BYOK_BASE_URL,
   extraHeaders: () => ({}),
   modelsPath: "/models",
   refreshOn401: false,
-  parseModels: SIWC_PROFILE.parseModels,
+  parseModels(json: unknown): string[] {
+    const record = json && typeof json === "object" ? (json as { data?: unknown; models?: unknown }) : undefined;
+    if (record && !Array.isArray(record.data) && Array.isArray(record.models)) return SIWC_PROFILE.parseModels(json);
+    if (!record || !Array.isArray(record.data)) throw new ModelApiError({ message: "模型列表响应缺少 data 数组" });
+    return record.data
+      .map((m) => (m && typeof m === "object" ? (m as Record<string, unknown>).id : undefined))
+      .filter((id): id is string => typeof id === "string" && id !== "");
+  },
 };
 
 /**

@@ -478,6 +478,14 @@ describe("listModels", () => {
     expect(refreshCalls).toBe(1);
   });
 
+  test("BYOK_PROFILE reads the OpenAI-compatible data[].id catalog in server order", () => {
+    expect(BYOK_PROFILE.parseModels({ object: "list", data: [{ id: "b", object: "model" }, { id: "" }, { object: "model" }, { id: "a" }] })).toEqual(["b", "a"]);
+    // A SIWC-style catalog behind a custom base URL keeps working.
+    expect(BYOK_PROFILE.parseModels({ models: [{ slug: "x", visibility: "list" }, { slug: "y", visibility: "hide" }] })).toEqual(["x"]);
+    expect(() => BYOK_PROFILE.parseModels({})).toThrow(ModelApiError);
+    expect(() => BYOK_PROFILE.parseModels({ data: "nope" })).toThrow(ModelApiError);
+  });
+
   test("SIWC_PROFILE defaults", () => {
     expect(SIWC_PROFILE.baseUrl).toBe("https://api.openai.com/v1");
     expect(SIWC_PROFILE.modelsPath).toBe("/models");
