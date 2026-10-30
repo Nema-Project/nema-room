@@ -1,0 +1,1 @@
+- The `@` mention menu in the chat composer can suggest a workspace's knowledge entries, files already sent with earlier messages, and topics as you type; a new hub route (`GET /api/workspaces/:id/mention-context`) answers those suggestions, naming only ids and names and never file contents.
