@@ -10,8 +10,12 @@ export const MENTION_LIMITS = {
   threadAnchorBytes: 1024,
 } as const;
 
-/** The readable text inserted into the message body for a mention, stored as written. */
-const MentionText = z.string().min(1).max(1100);
+/**
+ * The readable text inserted into the message body for a mention, stored as written. 4096 leaves room for the
+ * longest file mention: a 1024-character path and a 40-character label inside a code span whose fence must be
+ * longer than any backtick run in them.
+ */
+const MentionText = z.string().min(1).max(4096);
 
 /**
  * A context reference the user put in a message with `@`. The body keeps the readable `text`; hub and agent
@@ -41,19 +45,29 @@ export function mentionText(m: MessageMention, labels: { repoLabel?: string; thr
     case "entry":
       return `[${m.id}]`;
     case "file":
-      return `\`${labels.repoLabel ?? m.repoId}:${m.path}\``;
+      return codeSpan(`${labels.repoLabel ?? m.repoId}:${m.path}`);
     case "thread":
       return `[话题：${labels.threadTitle ?? m.id}]`;
   }
 }
 
-/** A repository-relative path with `./` and empty segments removed; null for `..`, absolute, backslash or NUL. */
+/** A Markdown code span that a backtick inside `text` cannot close (CommonMark: a longer fence, padded if needed). */
+function codeSpan(text: string): string {
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(longest + 1);
+  const pad = text.startsWith("`") || text.endsWith("`") ? " " : "";
+  return `${fence}${pad}${text}${pad}${fence}`;
+}
+
+/** A repository-relative path with `./` and empty segments removed; null for `..`, absolute (also `C:`), backslash or NUL. */
 export function normalizeMentionPath(p: string): string | null {
   if (p.length === 0 || p.length > 1024 || p.startsWith("/") || p.includes("\\") || p.includes("\0")) return null;
   const parts: string[] = [];
   for (const seg of p.split("/")) {
     if (seg === "" || seg === ".") continue;
     if (seg === "..") return null;
+    // A Windows drive root (`C:`) as the first segment is an absolute path, not a repository path.
+    if (parts.length === 0 && /^[A-Za-z]:/.test(seg)) return null;
     parts.push(seg);
   }
   return parts.length === 0 ? null : parts.join("/");
@@ -68,6 +82,8 @@ const TIER = 100_000;
 export function fuzzyScore(query: string, candidate: string): number | null {
   const q = query.toLowerCase();
   const c = candidate.toLowerCase();
+  // Compared by code point, so characters outside the BMP (emoji, rare CJK) match as one unit.
+  const qChars = Array.from(q);
   const shortness = TIER - 1 - Math.min(c.length, TIER - 1);
   if (q.length === 0) return shortness;
   const base = c.slice(c.lastIndexOf("/") + 1);
@@ -76,7 +92,7 @@ export function fuzzyScore(query: string, candidate: string): number | null {
     if (c.startsWith(q, i)) return 2 * TIER + shortness;
   }
   let at = 0;
-  for (const ch of c) if (ch === q[at] && ++at === q.length) return TIER + shortness;
+  for (const ch of c) if (ch === qChars[at] && ++at === qChars.length) return TIER + shortness;
   return null;
 }
 

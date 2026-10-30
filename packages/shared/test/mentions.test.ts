@@ -26,7 +26,12 @@ describe("MessageMention", () => {
   test("text is required and bounded", () => {
     expect(MessageMention.safeParse({ type: "entry", id: "W-3" }).success).toBe(false);
     expect(MessageMention.safeParse({ type: "entry", id: "W-3", text: "" }).success).toBe(false);
-    expect(MessageMention.safeParse({ type: "entry", id: "W-3", text: "x".repeat(1101) }).success).toBe(false);
+    expect(MessageMention.safeParse({ type: "entry", id: "W-3", text: "x".repeat(4097) }).success).toBe(false);
+  });
+
+  test("ids and commits with a trailing newline are refused", () => {
+    expect(MessageMention.safeParse(entry("D-12\n")).success).toBe(false);
+    expect(MessageMention.safeParse(file({ commit: `${SHA}\n` })).success).toBe(false);
   });
 
   test("entry ids follow the entry id rule", () => {
@@ -71,6 +76,11 @@ describe("normalizeMentionPath", () => {
   test("rejects parent segments, absolute paths, backslashes, NUL and empty paths", () => {
     for (const p of ["../a", "a/../b", "..", "/a", "a\\b", "a\u0000b", "", ".", "./", "a".repeat(1025)]) expect(normalizeMentionPath(p), JSON.stringify(p)).toBeNull();
   });
+
+  test("rejects Windows drive-rooted paths but keeps a colon elsewhere", () => {
+    for (const p of ["C:/outside/file", "c:", "./D:/x"]) expect(normalizeMentionPath(p), p).toBeNull();
+    expect(normalizeMentionPath("docs/a:b.md")).toBe("docs/a:b.md");
+  });
 });
 
 describe("fuzzyScore", () => {
@@ -95,6 +105,11 @@ describe("fuzzyScore", () => {
     expect(rank("slash", ["apps/web/lib/slash.ts", "a/slash.ts"])).toEqual(["a/slash.ts", "apps/web/lib/slash.ts"]);
   });
 
+  test("a query with characters outside the BMP still matches as a subsequence", () => {
+    expect(fuzzyScore("😀z", "docs/😀-x/z.md")).not.toBeNull();
+    expect(fuzzyScore("𠮷野", "src/𠮷a野.ts")).not.toBeNull();
+  });
+
   test("no match is null", () => {
     expect(fuzzyScore("zzz", "apps/web/lib/slash.ts")).toBeNull();
     expect(fuzzyScore("hsals", "apps/web/lib/slash.ts")).toBeNull();
@@ -106,6 +121,23 @@ describe("mentionText", () => {
     expect(mentionText(entry("D-12"), {})).toBe("[D-12]");
     expect(mentionText(file(), { repoLabel: "web" })).toBe("`web:apps/web/lib/slash.ts`");
     expect(mentionText({ type: "thread", id: "t1", text: "x" }, { threadTitle: "发布流程" })).toBe("[话题：发布流程]");
+  });
+});
+
+describe("mentionText for any valid file", () => {
+  test("the longest path with the longest label still passes the schema", () => {
+    const m = file({ path: "p".repeat(1024) });
+    const text = mentionText(m, { repoLabel: "长".repeat(40) });
+    expect(MessageMention.safeParse({ ...m, text }).success).toBe(true);
+  });
+
+  test("a backtick in the label or path cannot close the code span early", () => {
+    expect(mentionText(file({ path: "a`b.ts" }), { repoLabel: "web" })).toBe("``web:a`b.ts``");
+    expect(mentionText(file({ path: "x``y" }), { repoLabel: "w`eb" })).toBe("```w`eb:x``y```");
+    // CommonMark strips one space on each side, so content that starts or ends with a backtick is padded.
+    expect(mentionText(file({ path: "b`" }), { repoLabel: "web" })).toBe("`` web:b` ``");
+    const worst = file({ path: "`".repeat(1024) });
+    expect(MessageMention.safeParse({ ...worst, text: mentionText(worst, { repoLabel: "长".repeat(40) }) }).success).toBe(true);
   });
 });
 

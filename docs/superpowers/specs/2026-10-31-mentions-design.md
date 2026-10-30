@@ -71,16 +71,17 @@ export const MessageMention = z.discriminatedUnion("type", [
   z.object({ type: z.literal("file"), repoId: z.string().min(1), path: z.string().min(1).max(1024), commit: z.string().regex(/^[0-9a-f]{40}$/), commitSource: z.enum(["head", "candidate"]).optional(), text: MentionTextSchema }),
   z.object({ type: z.literal("thread"), id: z.string().min(1), text: MentionTextSchema }),
 ]);
-// MentionTextSchema = z.string().min(1).max(1100): the readable text inserted into the body, stored as written.
+// MentionTextSchema = z.string().min(1).max(4096): the readable text inserted into the body, stored as written
+// (room for a 1024-char path and 40-char label inside a code span whose fence outlasts any backtick run in them).
 // UserMessageMeta gains: mentions: z.array(MessageMention).max(MENTION_LIMITS.perMessage).optional()
 export function mentionText(m: MessageMention, labels: { repoLabel?: string; threadTitle?: string }): string;
-export function normalizeMentionPath(p: string): string | null; // rejects "..", absolute paths, backslashes, NUL
+export function normalizeMentionPath(p: string): string | null; // rejects "..", absolute paths (including a C: drive root), backslashes, NUL
 export function fuzzyScore(query: string, candidate: string): number | null; // null = no match
 ```
 
 - **正文里的可读文本：**
   - 条目写 `[D-12]`，沿用现有链接渲染。
-  - 文件写 `` `label:path` ``。
+  - 文件写 `` `label:path` ``；label 或 path 含反引号时，用比其中最长的反引号串更长的围栏（CommonMark 代码段规则）。
   - 话题写 `[话题：标题]`。
   - 正文是给人看的，hub 和 agent 只认 `meta.mentions`。
 - **存下可读文本：** 每个提及带 `text`，即插入正文时的原文（由 `mentionText` 生成）。之后仓库 label 或话题标题改了，旧消息的提及仍按当时的 `text` 对应正文，不按现在的名字重建。
