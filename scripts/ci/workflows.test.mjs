@@ -240,6 +240,11 @@ test('npm publishes only when release-promote dispatches the tag, from the push 
   assert.match(publishStep.run, /"\$got_integrity" != "\$EXPECTED_INTEGRITY"/);
   assert.ok(at('npm-state.mjs "$version"') < publishAt, 'registry state before publish');
   assert.ok(at('dist-tags.${dist}') !== -1 && at('dist-tags.${dist}') < publishAt, 'channel dist-tag re-read before publish');
+  // Artifact files other than the tarball run with the OIDC token in reach: each must equal the tag commit's file first.
+  const pinned = at('hash-object');
+  assert.ok(pinned !== -1 && pinned < at('node artifact/'), 'artifact scripts are checked against the tag commit before any of them runs');
+  assert.ok(at('merge-base --is-ancestor') < pinned, 'against the tag commit already resolved and checked');
+  assert.match(publishStep.run, /dist-npm\/\*\) continue/);
   assert.match(publishStep.run, /dist=maintenance/);
   assert.ok(at('dist-tags.maintenance') > at('dist=maintenance') && at('dist-tags.maintenance') < publishAt, 'maintenance re-read before publish');
   assert.match(publishStep.run, /npm maintenance is \$\{held\}, newer than \$\{version\}; refusing to move it backwards/);
@@ -308,6 +313,31 @@ if [ "\${3:-}" = --jq ]; then jq -r "$4" "$file"; else cat "$file"; fi
   setup({ jobs: verifyJobs.filter((job) => job.name !== 'Pack and smoke nema') });
   result = run();
   assert.notEqual(result.status, 0); assert.match(result.stderr, /Pack and smoke nema did not run and pass/);
+});
+
+test('actual npm publish shell refuses artifact scripts that differ from the tag commit', t => {
+  const cwd = mkdtempSync(join(tmpdir(), 'npm-pinned-')); t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: join(cwd, 'gate'), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  mkdirSync(join(cwd, 'gate/scripts/release'), { recursive: true });
+  writeFileSync(join(cwd, 'gate/scripts/release/npm-state.mjs'), 'export const ok = true;\n');
+  git('init', '-q'); git('add', '.'); git('-c', 'user.name=F', '-c', 'user.email=f@example.com', 'commit', '-qm', 'tag');
+  const sha = git('rev-parse', 'HEAD');
+  mkdirSync(join(cwd, 'artifact/scripts/release'), { recursive: true }); mkdirSync(join(cwd, 'artifact/dist-npm'));
+  writeFileSync(join(cwd, 'artifact/dist-npm/nema-project-nema-1.2.3.tgz'), 'built');
+  const run = read('npm-publish').jobs.publish.steps.find((step) => (step.run ?? '').includes('npm publish')).run;
+  const script = run.slice(run.indexOf('# Only the tarball is build output.'), run.indexOf('done < <(find artifact -type f -print0)') + 'done < <(find artifact -type f -print0)'.length);
+  assert.ok(script.startsWith('# Only the tarball'), 'the check is one block of the publish step');
+  const exec = () => spawnSync('bash', ['-c', `set -euo pipefail\n${script}\necho pinned`], { cwd, encoding: 'utf8', env: { ...process.env, SHA: sha, TAG: 'v1.2.3' } });
+  writeFileSync(join(cwd, 'artifact/scripts/release/npm-state.mjs'), 'export const ok = true;\n');
+  let result = exec();
+  assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /pinned/);
+  writeFileSync(join(cwd, 'artifact/scripts/release/npm-state.mjs'), 'export const ok = true; /* replaced during the build */\n');
+  result = exec();
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /artifact file scripts\/release\/npm-state\.mjs differs from v1\.2\.3/);
+  writeFileSync(join(cwd, 'artifact/scripts/release/npm-state.mjs'), 'export const ok = true;\n');
+  writeFileSync(join(cwd, 'artifact/scripts/release/extra.mjs'), 'export {};\n');
+  result = exec();
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /artifact file scripts\/release\/extra\.mjs is not in v1\.2\.3/);
 });
 
 test('release-promote runs main scripts only, treats the tag as data, and is the one pointer writer', () => {

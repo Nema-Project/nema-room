@@ -227,6 +227,14 @@ jobs:
           fi
           git -C gate "${auth[@]}" fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
           git -C gate merge-base --is-ancestor "$SHA" refs/remotes/origin/main
+          # Only the tarball is build output. Every other artifact file runs or is read here, with the OIDC token
+          # in reach, so each must be byte-identical to the file in the tag commit checked above.
+          while IFS= read -r -d '' file; do
+            rel="${file#artifact/}"
+            case "$rel" in dist-npm/*) continue ;; esac
+            want=$(git -C gate rev-parse --verify --quiet "${SHA}:${rel}") || { echo "artifact file ${rel} is not in ${TAG}" >&2; exit 1; }
+            test "$(git -C gate hash-object "${PWD}/${file}")" = "$want" || { echo "artifact file ${rel} differs from ${TAG}" >&2; exit 1; }
+          done < <(find artifact -type f -print0)
           meta=$(node artifact/scripts/npm/check-tag.mjs "$TAG")
           dist=$(node -e 'const tag=JSON.parse(process.argv[1]).distTag; if(tag!=="latest"&&tag!=="next") throw new Error("unexpected dist-tag"); process.stdout.write(tag)' "$meta")
           version="${TAG#v}"
