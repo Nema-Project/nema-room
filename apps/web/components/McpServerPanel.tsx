@@ -220,24 +220,25 @@ function SecretSlot({ id, name, configured, onChanged }: { id: string; name: str
 export function McpServerControls({ extension, onChanged }: { extension: ExtensionRecord; onChanged: (saved?: ExtensionRecord) => void }) {
   const t = useT();
   // What the row shows: the list's state, updated at once by every answer and status check, so a
-  // change shows even if the list read that follows fails or another client made it.
-  const [live, setLive] = useState<McpRecordState | undefined>(extension.mcp);
-  useEffect(() => setLive(extension.mcp), [extension.mcp]);
-  const state = live;
+  // change shows even if the list read that follows fails or another client made it. An update
+  // belongs to the list state it was made on, so a newer list read replaces it.
+  const source = extension.mcp;
+  const [override, setOverride] = useState<{ on: McpRecordState | undefined; state: McpRecordState } | null>(null);
+  const state = override && override.on === source ? override.state : source;
   const base = (): McpRecordState => ({ transport: extension.source === "mcp:http" ? "http" : "stdio", connection: "disconnected", server: null, tools: [], secrets: [], lastError: null });
-  const apply = (status: McpServerStatus | undefined) => {
-    if (!status || status.id !== extension.id) return;
-    setLive((current) => {
-      const prev = current ?? base();
-      const next = { ...prev, connection: status.connection, server: status.server, tools: status.tools, lastError: status.lastError };
-      return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
+  const update = (change: (prev: McpRecordState) => McpRecordState) => {
+    setOverride((current) => {
+      const prev = current && current.on === source ? current.state : (source ?? base());
+      const next = change(prev);
+      return JSON.stringify(next) === JSON.stringify(prev) ? current : { on: source, state: next };
     });
   };
+  const apply = (status: McpServerStatus | undefined) => {
+    if (!status || status.id !== extension.id) return;
+    update((prev) => ({ ...prev, connection: status.connection, server: status.server, tools: status.tools, lastError: status.lastError }));
+  };
   const applySecret = (answer: SecretAnswer) => {
-    setLive((current) => {
-      const prev = current ?? base();
-      return { ...prev, secrets: prev.secrets.map((slot) => (slot.name === answer.name ? { ...slot, configured: answer.configured } : slot)) };
-    });
+    update((prev) => ({ ...prev, secrets: prev.secrets.map((slot) => (slot.name === answer.name ? { ...slot, configured: answer.configured } : slot)) }));
     apply(answer.status);
     changed.current();
   };
@@ -249,12 +250,16 @@ export function McpServerControls({ extension, onChanged }: { extension: Extensi
   const connection = starting ? "connecting" : (state?.connection ?? "disconnected");
   const running = connection === "connected" || connection === "connecting";
   const changed = useRef(onChanged);
-  changed.current = onChanged;
+  useEffect(() => {
+    changed.current = onChanged;
+  });
 
   // A server can exit, or be started from another tab or the CLI, while nobody touches this page:
   // every row checks its status now and then, and any changed field shows.
   const applyRef = useRef(apply);
-  applyRef.current = apply;
+  useEffect(() => {
+    applyRef.current = apply;
+  });
   useEffect(() => {
     if (starting) return;
     const timer = setInterval(() => {

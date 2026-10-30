@@ -27,7 +27,7 @@ const wrap = (node: React.ReactNode) => render(<I18nProvider>{node}</I18nProvide
 
 beforeEach(() => {
   localStorage.clear();
-  for (const fn of Object.values(hub)) if (typeof fn === "function" && "mockReset" in fn) (fn as any).mockReset();
+  for (const fn of Object.values(hub)) if (typeof fn === "function" && "mockReset" in fn) (fn as unknown as { mockReset: () => void }).mockReset();
 });
 
 describe("parseValueLines", () => {
