@@ -138,4 +138,46 @@ describe("SkillOfferCard", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Install" }));
     expect((await screen.findByRole("alert")).textContent).toBe("pdf is already installed");
   });
+
+  it("a slow first status read does not overwrite an install started meanwhile", async () => {
+    let first: (value: SkillInstallJob) => void = () => {};
+    vi.mocked(hub.getExtensionInstall).mockReset()
+      .mockReturnValueOnce(new Promise((resolve) => (first = resolve)))
+      .mockResolvedValue(job("running", { done: 1 }));
+    vi.mocked(hub.installExtension).mockResolvedValue(job("running"));
+    card();
+    await userEvent.click(await screen.findByRole("button", { name: "Install" }));
+    expect(await screen.findByRole("button", { name: "Cancel install" })).toBeTruthy();
+    await act(async () => first(job("cancelled", { total: 0 })));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByRole("button", { name: "Cancel install" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+  });
+
+  it("a cancel request that fails keeps following the install", async () => {
+    vi.mocked(hub.installExtension).mockResolvedValue(job("running"));
+    let finished = false;
+    vi.mocked(hub.getExtensionInstall).mockReset()
+      .mockRejectedValueOnce(new HubError(502, "pdf has no install"))
+      .mockImplementation(async () => (finished ? job("installed", { done: 3 }) : job("running", { done: 1 })));
+    vi.mocked(hub.cancelExtensionInstall).mockRejectedValue(new HubError(502, "daemon 响应超时"));
+    card();
+    await userEvent.click(await screen.findByRole("button", { name: "Install" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Cancel install" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("daemon 响应超时");
+    finished = true;
+    expect(await screen.findByText("Install finished")).toBeTruthy();
+  });
+
+  it("an alert from a failed status read goes away once a read succeeds", async () => {
+    vi.mocked(hub.installExtension).mockResolvedValue(job("running"));
+    vi.mocked(hub.getExtensionInstall).mockReset()
+      .mockRejectedValueOnce(new HubError(502, "pdf has no install"))
+      .mockRejectedValueOnce(new HubError(503, "daemon 未连接"))
+      .mockResolvedValue(job("installed", { done: 3 }));
+    card();
+    await userEvent.click(await screen.findByRole("button", { name: "Install" }));
+    expect(await screen.findByText("Install finished")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });

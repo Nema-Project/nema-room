@@ -1,11 +1,11 @@
-import { afterAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { Hono } from "hono";
 import { bundledExtensions } from "@nema/shared";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { createWorkspace } from "../src/workspaces.js";
 import { postSystemTask, postUserMessage } from "../src/messages.js";
-import { claimNextTask } from "../src/tasks.js";
+import { claimNextTask, finishTask } from "../src/tasks.js";
 import { EventBus } from "../src/events.js";
 import { roomRoutes } from "../src/roomApi.js";
 import { DaemonRpcError, type DaemonRpc } from "../src/daemonRpc.js";
@@ -46,6 +46,7 @@ const daemon: DaemonRpc = {
     calls.push({ method, params });
     if (method === "extensions.resolveSource") {
       if (resolved instanceof Error) throw resolved;
+      if (typeof resolved === "function") return (resolved as () => Promise<unknown>)();
       return resolved;
     }
     throw new Error(`unexpected daemon call ${method}`);
@@ -172,5 +173,54 @@ describe("POST /room/extensions/offer", () => {
     expect(await listSkillOffers(db, taskId)).toHaveLength(MAX_SKILL_OFFERS);
     await clearSkillOffers(db, taskId);
     expect(await listSkillOffers(db, taskId)).toEqual([]);
+  });
+
+  test("a source that is not a GitHub or skills.sh link is 400 and never reaches the daemon, like the page", async () => {
+    const { token } = await userTask();
+    const res = await offer(token, { source: "https://gitlab.com/acme/skills" });
+    expect(res.status).toBe(400);
+    expect(calls).toEqual([]);
+  });
+
+  test("overlapping offers still stop at the limit", async () => {
+    const { token, taskId } = await userTask();
+    for (let i = 0; i < MAX_SKILL_OFFERS - 1; i++) {
+      resolved = preview([skill(`s${i}`)]);
+      expect((await offer(token, { source: "acme/skills" })).status).toBe(200);
+    }
+    const gates: (() => void)[] = [];
+    const held = (name: string) => () => new Promise((resolve) => gates.push(() => resolve(preview([skill(name)]))));
+    resolved = held("late-a");
+    const first = offer(token, { source: "acme/skills" });
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+    resolved = held("late-b");
+    const second = offer(token, { source: "acme/skills" });
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
+    for (const open of gates) open();
+    const statuses = [(await first).status, (await second).status].sort();
+    expect(statuses).toEqual([200, 409]);
+    expect(await listSkillOffers(db, taskId)).toHaveLength(MAX_SKILL_OFFERS);
+  });
+
+  test("an offer that resolves after its task finished is refused and leaves no row behind", async () => {
+    const { token, taskId } = await userTask();
+    let open: () => void = () => {};
+    resolved = () => new Promise((resolve) => (open = () => resolve(preview([skill("pdf")]))));
+    const pending = offer(token, { source: "acme/skills" });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(await finishTask(db, taskId, { ok: true })).toBe(true);
+    open();
+    expect((await pending).status).toBe(409);
+    expect(await listSkillOffers(db, taskId)).toEqual([]);
+  });
+
+  test("a second skill with the same id from another source is refused instead of replacing the first", async () => {
+    const { token, taskId } = await userTask();
+    expect((await offer(token, { source: "acme/skills" })).status).toBe(200);
+    resolved = { ...preview([skill("pdf")]), repository: "https://github.com/other/skills", owner: "other" };
+    const res = await offer(token, { source: "other/skills" });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain("acme/skills");
+    expect((await listSkillOffers(db, taskId)).map((row) => row.source)).toEqual(["acme/skills"]);
   });
 });

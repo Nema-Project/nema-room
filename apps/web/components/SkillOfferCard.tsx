@@ -16,11 +16,15 @@ export function SkillOfferCard({ offer, pollMs = 1000 }: { offer: SkillInstallOf
   // Set when the install on this card was started here; an earlier one reads "Already installed".
   const [startedHere, setStartedHere] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Where the alert came from: a status read clears its own alert when a later read works, but not the
+  // answer to something the user pressed.
+  const [error, setError] = useState<{ text: string; from: "poll" | "action" } | null>(null);
   const inFlight = useRef(false);
   const open = useRef(true);
   // Each follow chain has a number; starting a new one (or cancelling) silences the old one.
   const chain = useRef(0);
+  // The job as last shown, so a failed cancel can pick its install back up.
+  const latest = useRef<SkillInstallJob | null>(null);
 
   useEffect(() => {
     open.current = true;
@@ -32,20 +36,24 @@ export function SkillOfferCard({ offer, pollMs = 1000 }: { offer: SkillInstallOf
   const follow = useCallback(
     (next: SkillInstallJob) => {
       const mine = ++chain.current;
+      latest.current = next;
       setJob(next);
       if (next.state !== "running") return;
       const poll = () =>
         setTimeout(() => {
           if (!open.current || chain.current !== mine) return;
           getExtensionInstall(offer.id)
-            .then((latest) => {
+            .then((now) => {
               if (!open.current || chain.current !== mine) return;
-              setJob(latest);
-              if (latest.state === "running") poll();
+              latest.current = now;
+              setJob(now);
+              // A read that works again clears the alert an earlier failed read left.
+              setError((shown) => (shown?.from === "poll" ? null : shown));
+              if (now.state === "running") poll();
             })
             .catch((e: unknown) => {
               if (!open.current || chain.current !== mine) return;
-              setError(e instanceof Error ? e.message : String(e));
+              setError({ text: e instanceof Error ? e.message : String(e), from: "poll" });
               poll();
             });
         }, pollMs);
@@ -55,11 +63,14 @@ export function SkillOfferCard({ offer, pollMs = 1000 }: { offer: SkillInstallOf
   );
 
   // What the daemon already knows about this id: a finished install, one still running, or nothing.
+  // It only applies if nothing happened on the card while it was in flight: an install started here is
+  // newer than whatever the daemon said before it.
   useEffect(() => {
     let live = true;
+    const before = chain.current;
     getExtensionInstall(offer.id)
       .then((known) => {
-        if (live) follow(known);
+        if (live && chain.current === before && !inFlight.current) follow(known);
       })
       .catch(() => {});
     return () => {
@@ -67,7 +78,7 @@ export function SkillOfferCard({ offer, pollMs = 1000 }: { offer: SkillInstallOf
     };
   }, [offer.id, follow]);
 
-  const run = (request: () => Promise<SkillInstallJob>, here: boolean) => {
+  const run = (request: () => Promise<SkillInstallJob>, here: boolean, onError?: () => void) => {
     if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
@@ -79,7 +90,9 @@ export function SkillOfferCard({ offer, pollMs = 1000 }: { offer: SkillInstallOf
         follow(next);
       })
       .catch((e: unknown) => {
-        if (open.current) setError(e instanceof Error ? e.message : String(e));
+        if (!open.current) return;
+        setError({ text: e instanceof Error ? e.message : String(e), from: "action" });
+        onError?.();
       })
       .finally(() => {
         inFlight.current = false;
@@ -89,8 +102,13 @@ export function SkillOfferCard({ offer, pollMs = 1000 }: { offer: SkillInstallOf
 
   const install = () => run(() => installExtension({ source: offer.source, commit: offer.commit, path: offer.path }), true);
   const cancel = () => {
+    if (inFlight.current) return;
+    // Stop the running chain; the cancel answer is the state to show. If the request fails, the
+    // install is still going, so follow it again.
     chain.current += 1;
-    run(() => cancelExtensionInstall(offer.id), false);
+    run(() => cancelExtensionInstall(offer.id), false, () => {
+      if (latest.current?.state === "running") follow(latest.current);
+    });
   };
 
   const state = job?.state ?? null;
@@ -126,7 +144,7 @@ export function SkillOfferCard({ offer, pollMs = 1000 }: { offer: SkillInstallOf
         )}
         {line && <span role="status">{line}</span>}
       </div>
-      {error && <p className="error" role="alert">{error}</p>}
+      {error && <p className="error" role="alert">{error.text}</p>}
     </section>
   );
 }

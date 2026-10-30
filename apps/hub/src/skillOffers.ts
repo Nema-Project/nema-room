@@ -1,4 +1,4 @@
-import { SkillInstallOffer } from "@nema/shared";
+import { parseSkillSource, SkillInstallOffer } from "@nema/shared";
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
 import { getMessage } from "./messages.js";
@@ -13,6 +13,7 @@ export const OFFER_NOTE =
   "Nothing was installed. The user sees this skill as a card under your reply and installs it only by pressing Install there. Do not say it is installed.";
 
 type Outcome = { status: 200; body: { offer: SkillInstallOffer; note: string } } | { status: 400 | 403 | 404 | 409 | 502 | 503; body: { error: string } };
+type Queryable = Pick<Db, "query">;
 
 type PreviewSkill = { id: unknown; name: unknown; description: unknown; path: unknown; problem: unknown; target: unknown; installed: unknown };
 
@@ -45,12 +46,18 @@ export async function offerSkillInstall(db: Db, daemon: DaemonRpc, taskId: strin
     return fail(400, `source must be a non-empty string of at most ${MAX_SOURCE_LENGTH} characters`);
   }
   if (path !== undefined && (typeof path !== "string" || path === "")) return fail(400, "path must be a non-empty string when given");
+  // The same check the page's preview route makes, so an unsupported link is the caller's mistake (400)
+  // and never a daemon round trip.
+  try {
+    parseSkillSource(source.trim());
+  } catch (error) {
+    return fail(400, error instanceof Error ? error.message : "unsupported skill source");
+  }
 
   const task = await getTask(db, taskId);
   const message = task && task.workspaceId === workspaceId ? await getMessage(db, task.messageId) : null;
   if (message?.role !== "user") return fail(403, "only a task started by the user's own message can offer to install a skill");
 
-  const offered = await listSkillOffers(db, taskId);
   let preview: Record<string, unknown>;
   try {
     preview = await resolveExtensionSource(daemon, source.trim());
@@ -88,22 +95,34 @@ export async function offerSkillInstall(db: Db, daemon: DaemonRpc, taskId: strin
   });
   if (!parsed.success) return invalid;
   const offer = parsed.data;
-  if (!offered.some((row) => row.id === offer.id) && offered.length >= MAX_SKILL_OFFERS) {
-    return fail(409, `a reply can offer at most ${MAX_SKILL_OFFERS} skills`);
-  }
-  await db.query(
-    `insert into task_skill_offers (task_id, skill_id, offer) values ($1, $2, $3::jsonb)
-     on conflict (task_id, skill_id) do update set offer = excluded.offer`,
-    [taskId, offer.id, JSON.stringify(offer)],
-  );
+  // Resolving takes seconds, so everything that depends on the task's other offers or on the task still
+  // running is decided here, under the task row's lock. Saving the reply takes the same lock (it
+  // finishes the task first), so an offer is either in the saved reply or refused.
+  const refused = await db.tx(async (t) => {
+    const running = await t.query(`select 1 from tasks where id = $1 and status = 'running' for update`, [taskId]);
+    if (running.length === 0) return "this task has already finished; the reply is saved without new offers";
+    const offered = await listSkillOffers(t, taskId);
+    const same = offered.find((row) => row.id === offer.id);
+    if (same) {
+      // The extension id is what gets installed, so one reply cannot hold two different skills under it.
+      if (same.source !== offer.source || same.commit !== offer.commit || same.path !== offer.path) {
+        return `${offer.id} is already offered in this reply from ${same.source} (${same.path}); only one skill per id can be installed`;
+      }
+      return null;
+    }
+    if (offered.length >= MAX_SKILL_OFFERS) return `a reply can offer at most ${MAX_SKILL_OFFERS} skills`;
+    await t.query(`insert into task_skill_offers (task_id, skill_id, offer) values ($1, $2, $3::jsonb)`, [taskId, offer.id, JSON.stringify(offer)]);
+    return null;
+  });
+  if (refused) return fail(409, refused);
   return { status: 200, body: { offer, note: OFFER_NOTE } };
 }
 
-export async function listSkillOffers(db: Db, taskId: string): Promise<SkillInstallOffer[]> {
+export async function listSkillOffers(db: Queryable, taskId: string): Promise<SkillInstallOffer[]> {
   const rows = await db.query<{ offer: unknown }>(`select offer from task_skill_offers where task_id = $1 order by created_at, skill_id`, [taskId]);
   return rows.map((row) => SkillInstallOffer.parse(typeof row.offer === "string" ? JSON.parse(row.offer) : row.offer));
 }
 
-export async function clearSkillOffers(db: Db, taskId: string): Promise<void> {
+export async function clearSkillOffers(db: Queryable, taskId: string): Promise<void> {
   await db.query(`delete from task_skill_offers where task_id = $1`, [taskId]);
 }

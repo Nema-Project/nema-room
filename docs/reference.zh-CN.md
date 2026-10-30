@@ -69,7 +69,7 @@ Agent 读到的代码片段会随请求发送给模型服务商（OpenAI / Anthr
 
 插件页顶部的「安装 Skill」：贴入来源、点「预览」、对某个 Skill 点「安装」。页面每秒查询一次任务状态，显示「安装中 已完成/总数」和「取消安装」；失败的托管扩展那一行显示失败原因和「重试安装」。关掉页面只停止查询，daemon 里的安装照常进行。
 
-聊天里的安装入口走同一个服务。Agent 有一个 Room 函数 `offer_skill_install`（参数 `source`，可选 `path`），对应 `POST /room/extensions/offer`：hub 调用同一个 `extensions.resolveSource` 固定提交，挑出一个能装的 Skill，记成这个任务的安装提议，并告诉 Agent「没有安装任何东西」。来源里有多个能装的 Skill 而没给 `path` 时返回 409 并列出各个路径；已安装或有问题的 Skill 不提议；一个任务最多提议 5 个。只有用户消息触发的任务能提议，系统请求和上报触发的任务一律 403，且不会联系 daemon。回复保存时，提议写进这条回复的 `meta.skillOffers`，聊天里显示为卡片；用户点「安装」时，页面把卡片上的来源、提交和目录原样发给下面的 `POST /api/extensions/install`。Agent 没有任何能直接安装的函数。
+聊天里的安装入口走同一个服务。Agent 有一个 Room 函数 `offer_skill_install`（参数 `source`，可选 `path`），对应 `POST /room/extensions/offer`：hub 调用同一个 `extensions.resolveSource` 固定提交，挑出一个能装的 Skill，记成这个任务的安装提议，并告诉 Agent「没有安装任何东西」。来源里有多个能装的 Skill 而没给 `path` 时返回 409 并列出各个路径；不支持的来源写法和插件页预览一样返回 400，且不会联系 daemon；已安装或有问题的 Skill 不提议；同一个回复里同一个扩展 id 只能对应一个来源，换来源再提议返回 409；一个任务最多提议 5 个。提议在任务行锁下写入：任务已经结束（回复已保存）时再提议返回 409，所以提议要么在回复里，要么被拒绝。只有用户消息触发的任务能提议，系统请求和上报触发的任务一律 403，且不会联系 daemon。回复保存时，提议写进这条回复的 `meta.skillOffers`，聊天里显示为卡片；用户点「安装」时，页面把卡片上的来源、提交和目录原样发给下面的 `POST /api/extensions/install`。Agent 没有任何能直接安装的函数。
 
 预览之后，把预览里的来源、提交和 Skill 目录原样交回去安装：`POST /api/extensions/install`，请求体 `{ "source": "...", "commit": "<40 位提交>", "path": "skills/pdf" }`（仓库根目录的 Skill 用 `"."`）。daemon 按这个提交重新核对一遍，只装这一个目录，不会换成分支上更新的提交。
 

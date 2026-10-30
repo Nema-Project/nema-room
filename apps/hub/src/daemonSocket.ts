@@ -101,7 +101,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   ): Promise<Message | null> {
     return db.tx(async (t) => {
       if (!(await finishTask(t, routing.task.id, result, expectedRunToken))) return null;
-      // The reply's meta now carries any offers; a failed task's offers are not shown at all.
+      // Read under the task row lock finishTask now holds: an offer still being written either
+      // committed first and is read here, or waits and then sees the task finished and is refused.
+      // A failed task's offers are not shown at all.
+      const offers = await listSkillOffers(t, routing.task.id);
+      if (meta && offers.length > 0) meta = { ...meta, skillOffers: offers };
       await clearSkillOffers(t, routing.task.id);
       if (routing.createThread && routing.askedQuestion) {
         await ensureThread(t, routing.taskMessage.id, routing.askedQuestion.title, "grill");
@@ -277,8 +281,6 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         changes: routing.changes,
         askedQuestion: routing.askedQuestion ? { id: routing.askedQuestion.id, title: routing.askedQuestion.title, body: routing.askedQuestion.body } : null,
       };
-      const offers = await listSkillOffers(db, m.taskId);
-      if (offers.length > 0) meta.skillOffers = offers;
       if (routing.task.kind === "edit") {
         const edited = await getMessage(db, routing.task.messageId);
         if (edited) meta.quote = { messageId: edited.id, role: edited.role, excerpt: messageExcerpt(edited.content) };
