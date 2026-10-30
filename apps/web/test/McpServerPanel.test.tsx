@@ -145,4 +145,22 @@ describe("McpServerControls", () => {
     wrap(<McpServerControls extension={{ ...record(), useState: "disabled" }} onChanged={() => {}} />);
     expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("a damaged config (cut off or edited outside Nema) is recovered by entering it again", async () => {
+    const damaged = { ...record({ secrets: [] }), availability: "damaged" as const, error: "mcp-config-damaged" };
+    wrap(<McpServerControls extension={damaged} onChanged={() => {}} />);
+    expect(screen.getByText(/missing or was changed outside Nema/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const command = (await screen.findByLabelText("Command")) as HTMLInputElement;
+    expect(command.value).toBe("");
+    expect((screen.getByLabelText("Id") as HTMLInputElement).value).toBe("search");
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Search");
+    expect(hub.getMcpServer).not.toHaveBeenCalled();
+    vi.mocked(hub.saveMcpServer).mockResolvedValue(record());
+    fireEvent.change(command, { target: { value: "node" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save MCP server" }));
+    await waitFor(() => expect(hub.saveMcpServer).toHaveBeenCalledWith({ id: "search", name: "Search", config: { transport: "stdio", command: "node", args: [], env: {} } }));
+  });
 });
+

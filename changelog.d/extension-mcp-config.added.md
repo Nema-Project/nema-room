@@ -8,5 +8,4 @@
 - HTTP servers do not follow redirects, and a 401 or 403 shows as "needs login".
 - The daemon stops every MCP server when it shuts down and starts none on its own. At start-up it marks a server whose config file is missing or changed as damaged and deletes credentials left behind by a server that no longer exists or that its saved config no longer names.
 - On the desktop app, the hub API accepts only the app's own requests, so use the Plugins page there; `nema mcp secret set|clear --desktop` writes the desktop app's credentials directly.
-- The Plugins page has Add an MCP server… under Discover & install, and each MCP server's row shows its connection, Start or Stop, Edit, the last error, the server's name and version and its tools. Each `secret:` reference gets a write-only box that shows only Set or Not set, with Save and Clear.
 - MCP tools are not offered to the Agent in this release.

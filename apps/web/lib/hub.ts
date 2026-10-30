@@ -1,4 +1,5 @@
-import type { ExtensionRecord, McpConfig, McpConnection, SkillDiscovery, SkillInstallJob, SkillSourcePreview } from "@nema/shared";
+import type { ExtensionRecord, SkillDiscovery, SkillInstallJob, SkillSourcePreview } from "@nema/shared";
+import type { McpConfig, McpConnection } from "@nema/shared";
 import type {
   EntryListItem,
   Entry,
@@ -143,21 +144,6 @@ export const attachExtension = (path: string) => request<ExtensionRecord>("/exte
 /** Check a bundled item again; the answer is the record with the stored result. */
 export const repairExtension = (id: string) =>
   request<ExtensionRecord>(`/extensions/${encodeURIComponent(id)}/repair`, { method: "POST", body: {} });
-/** An MCP server's state as the hub reports it. Never holds a credential value. */
-export type McpServerStatus = { id: string; connection: McpConnection; server: { name: string; version: string } | null; tools: Array<{ name: string; schemaDigest: string }>; lastError: string | null };
-const mcpUrl = (id: string) => `/extensions/${encodeURIComponent(id)}/mcp`;
-/** Save (add or replace) an MCP server config. Credential slots hold references only. */
-export const saveMcpServer = (body: { id: string; name: string; config: McpConfig; create?: true }) => request<ExtensionRecord>("/extensions/mcp", { method: "POST", body });
-/** The saved config for the edit form, and which secrets are set. */
-export const getMcpServer = (id: string) =>
-  request<{ id: string; name: string; config: McpConfig; secrets: Array<{ name: string; configured: boolean }> }>(mcpUrl(id));
-export const startMcpServer = (id: string) => request<McpServerStatus>(`${mcpUrl(id)}/start`, { method: "POST", body: {} });
-export const stopMcpServer = (id: string) => request<McpServerStatus>(`${mcpUrl(id)}/stop`, { method: "POST", body: {} });
-/** D-2: write a credential; nothing ever reads one back. */
-export const setMcpSecret = (id: string, name: string, value: string) =>
-  request<{ id: string; name: string; configured: boolean; status: McpServerStatus }>(`${mcpUrl(id)}/secrets/${encodeURIComponent(name)}`, { method: "PUT", body: { value } });
-export const clearMcpSecret = (id: string, name: string) =>
-  request<{ id: string; name: string; configured: boolean; status: McpServerStatus }>(`${mcpUrl(id)}/secrets/${encodeURIComponent(name)}`, { method: "DELETE" });
 /** Opens the OS folder dialog in the host daemon. `path` is null when the dialog is cancelled. */
 export const pickDirectory = () => request<{ path: string | null }>("/pick-directory", { method: "POST", body: {} });
 export const listRepos = (id: string) => request<Repo[]>(`${w(id)}/repos`);
@@ -190,3 +176,20 @@ export const regenerateWorkPackage = (id: string, wid: string) => request<{ ok: 
 export const dropWorkPackage = (id: string, wid: string) => request<Entry>(`${wp(id, wid)}/drop`, { method: "POST", body: {} });
 export const confirmWorkPackageTask = (id: string, wid: string, n: number) =>
   request<Entry>(`${wp(id, wid)}/tasks/${n}/confirm`, { method: "POST", body: {} });
+
+// --- mcp: MCP servers on the Plugins page (D-2: credentials are write-only) ---
+/** An MCP server's state as the hub reports it. Never holds a credential value. */
+export type McpServerStatus = { id: string; connection: McpConnection; server: { name: string; version: string } | null; tools: Array<{ name: string; schemaDigest: string }>; lastError: string | null };
+const mcpUrl = (id: string) => `/extensions/${encodeURIComponent(id)}/mcp`;
+/** Save (add or replace) an MCP server config. Credential slots hold references only. */
+export const saveMcpServer = (body: { id: string; name: string; config: McpConfig; create?: true }) => request<ExtensionRecord>("/extensions/mcp", { method: "POST", body });
+/** The saved config for the edit form, and which secrets are set. */
+export const getMcpServer = (id: string) =>
+  request<{ id: string; name: string; config: McpConfig; secrets: Array<{ name: string; configured: boolean }> }>(mcpUrl(id));
+export const startMcpServer = (id: string) => request<McpServerStatus>(`${mcpUrl(id)}/start`, { method: "POST", body: {} });
+export const stopMcpServer = (id: string) => request<McpServerStatus>(`${mcpUrl(id)}/stop`, { method: "POST", body: {} });
+/** D-2: write a credential; nothing ever reads one back. */
+export const setMcpSecret = (id: string, name: string, value: string) =>
+  request<{ id: string; name: string; configured: boolean; status: McpServerStatus }>(`${mcpUrl(id)}/secrets/${encodeURIComponent(name)}`, { method: "PUT", body: { value } });
+export const clearMcpSecret = (id: string, name: string) =>
+  request<{ id: string; name: string; configured: boolean; status: McpServerStatus }>(`${mcpUrl(id)}/secrets/${encodeURIComponent(name)}`, { method: "DELETE" });

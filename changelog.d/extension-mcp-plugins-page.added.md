@@ -1,0 +1,3 @@
+- The Plugins page can add an MCP server (Add an MCP server… under Discover & install, stdio or HTTP) and edit it. Each MCP server's row shows its connection, Start or Stop, Edit, the last error, the server's name and version and the tools it lists. Credential slots are written as `NAME=secret:REF` or `NAME=env:VAR`; each `secret:` reference gets a write-only box that shows only Set or Not set, with Save and Clear, and never shows a stored value. MCP tools are still not offered to the Agent.
+- A server whose config was cut off mid-save or changed outside Nema shows as damaged after a restart; Edit opens the form under the same id to enter it again, and Uninstall removes it with its credentials.
+- New text is in English, Japanese and Chinese.

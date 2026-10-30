@@ -503,7 +503,7 @@
   "mcp.action.stop": "停止",
   "mcp.action.edit": "编辑",
   "mcp.note.disabled": "启用这个服务器后才能启动。",
-  "mcp.note.damaged": "保存的配置缺失或在 Nema 之外被改动过。请编辑后重新保存。",
+  "mcp.note.damaged": "保存的配置缺失或在 Nema 之外被改动过（例如保存中途被打断）。点「编辑」重新填写，或点「卸载」删除这个服务器和它的凭据。",
   "mcp.secret.note": "凭据保存在 daemon 所在的电脑上，只能替换，不会显示。运行中的服务器会用新值重启。",
   "mcp.secret.set": "已设置",
   "mcp.secret.unset": "未设置",

@@ -110,13 +110,13 @@ hub 路由（都转发给 daemon，只有 daemon 写 `index.json` 和 `mcp.json`
 | `POST /api/extensions/mcp` | `extensions.mcp.save` | 请求体 `{ id, name, config, create? }`，hub 先校验配置，不合法 400；`create: true` 时 id 已存在返回 409 `MCP server <id> already exists`（`nema mcp add` 和插件页的添加都这样发）；运行中的服务器先停止。命令、参数、`cwd` 或地址变了会删掉已存凭据，不再被引用的凭据也会删掉 |
 | `GET /api/extensions/<id>/mcp` | `extensions.mcp.get` | 配置和 `secrets: [{ name, configured }]`，从不返回凭据值 |
 | `GET /api/extensions/<id>/mcp/status` | `extensions.mcp.status` | `{ connection, server, tools: [{ name, schemaDigest }], lastError }` |
-| `POST /api/extensions/<id>/mcp/start`、`…/stop` | `extensions.mcp.start` / `stop` | 请求体 `{}`；停用的记录不能启动（409），配置损坏也是 409 |
+| `POST /api/extensions/<id>/mcp/start`、`…/stop` | `extensions.mcp.start` / `stop` | 请求体 `{}`；停用的记录不能启动（409），配置损坏也是 409。stop 会让在它之前发出、还在排队的 start 不再启动；`nema mcp start` 在没连上时以非零状态退出 |
 | `PUT /api/extensions/<id>/mcp/secrets/<REF>` | `extensions.mcp.setSecret` | 请求体 `{ "value": "…" }`，只写不读（D-2）；运行中的服务器用新值重启 |
 | `DELETE /api/extensions/<id>/mcp/secrets/<REF>` | `extensions.mcp.clearSecret` | 删除凭据；运行中的服务器重启 |
 
-daemon 未连接 503，记录不存在 404，停用 / 不是 MCP / 配置损坏 409，请求或配置不合法 400，其余 502。`GET /api/extensions` 里的 MCP 记录多一个 `mcp` 字段（`transport`、`connection`、`server`、`tools`、`secrets`、`lastError`）。所有部署（包括 Compose）都能通过 hub 修改 MCP 配置（D-4）；桌面应用的 `/api/*` 需要应用内登录，所以 `nema mcp add/edit/start/stop/status/list` 在那里会得到 401，并提示改用插件页。`nema mcp secret set|clear` 直接写 `secrets/mcp`，不经过 hub；加 `--desktop` 时写桌面应用的 `~/.nema/desktop/secrets/mcp`。`secret set` 只去掉行尾换行，读完标准输入后会再核对一次配置摘要和引用，配置在此期间变了就不写。
+daemon 未连接 503，记录不存在 404（`status`、`stop` 也一样，不会把不存在的 id 报成未连接），停用 / 不是 MCP / 配置损坏 409，请求或配置不合法 400，其余 502。`GET /api/extensions` 里的 MCP 记录多一个 `mcp` 字段（`transport`、`connection`、`server`、`tools`、`secrets`、`lastError`）。所有部署（包括 Compose）都能通过 hub 修改 MCP 配置（D-4）；桌面应用的 `/api/*` 需要应用内登录，所以 `nema mcp add/edit/start/stop/status/list` 在那里会得到 401，并提示改用插件页。`nema mcp secret set|clear` 直接写 `secrets/mcp`，不经过 hub；加 `--desktop` 时写桌面应用的 `~/.nema/desktop/secrets/mcp`。`secret set` 只去掉行尾换行，读完标准输入后会再核对一次配置摘要和引用，配置在此期间变了就不写。
 
-stdio 服务器直接启动程序，不经过 shell。环境只有 daemon 的 `PATH`、指向私有目录 `<nema home>/run/mcp/<id>/home` 的 `HOME`（Windows 上还有同一目录的 `USERPROFILE`，以及 `SystemRoot`、`ComSpec`、`PATHEXT`、`TEMP`、`TMP`），加上配置里的变量，不继承 daemon 的其他环境变量；未设置 `cwd` 时工作目录也是这个私有目录。macOS/Linux 上停止时结束整个进程组；Windows 上 stdio 服务器只能在桌面应用里启动，由它的托管子进程范围清理进程树，Web / Compose 的 Windows daemon 会拒绝启动。daemon 退出时停掉所有 MCP 服务器；daemon 启动时检查记录：配置缺失或被改动的记为 `damaged`，没有记录的凭据目录和配置里已不再引用的凭据都会删掉，不会自动启动任何服务器。停用或卸载一个 MCP 记录会先把它停掉。
+stdio 服务器直接启动程序，不经过 shell。环境只有 daemon 的 `PATH`、指向私有目录 `<nema home>/run/mcp/<id>/home` 的 `HOME`（Windows 上还有同一目录的 `USERPROFILE`，以及 `SystemRoot`、`ComSpec`、`PATHEXT`、`TEMP`、`TMP`），加上配置里的变量，不继承 daemon 的其他环境变量；未设置 `cwd` 时工作目录也是这个私有目录。macOS/Linux 上停止时结束整个进程组；Windows 上 stdio 服务器只能在桌面应用里启动，由它的托管子进程范围清理进程树，Web / Compose 的 Windows daemon 会拒绝启动。daemon 退出时停掉所有 MCP 服务器；daemon 启动时检查记录：配置缺失或被改动的记为 `damaged`，没有记录的凭据目录和配置里已不再引用的凭据都会删掉，不会自动启动任何服务器。`damaged` 的记录在插件页上「启动」不可用，`GET …/mcp` 返回 409；「编辑」直接打开同一 id 的空表单，重新保存即恢复为 `ready`（目标视为已变，旧凭据会删掉），「卸载」则删除记录、目录和凭据。停用或卸载一个 MCP 记录会先把它停掉。
 
 HTTP 服务器不跟随重定向；服务器返回 401 或 403 时连接状态是 `needs-login`（「需要登录」）。
 

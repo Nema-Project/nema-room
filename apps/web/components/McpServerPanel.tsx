@@ -206,6 +206,16 @@ export function McpServerControls({ extension, onChanged }: { extension: Extensi
       .finally(() => setBusy(false));
   };
 
+  // A damaged config cannot be read back (the daemon refuses it), so recovery is entering it again
+  // under the same id; Uninstall on the row is the clean-up path.
+  const edit = () => {
+    if (extension.availability === "damaged") {
+      setEditing({ id: extension.id, name: extension.name, config: { transport: extension.source === "mcp:http" ? "http" : "stdio", ...(extension.source === "mcp:http" ? { url: "", headers: {} } : { command: "", args: [], env: {} }) } as McpConfig });
+      return;
+    }
+    run(() => getMcpServer(extension.id).then((view) => setEditing({ id: view.id, name: view.name, config: view.config })));
+  };
+
   if (editing) {
     return (
       <McpServerForm
@@ -242,7 +252,7 @@ export function McpServerControls({ extension, onChanged }: { extension: Extensi
           {t("mcp.action.start")}
         </button>
       )}
-      <button type="button" className="sp" onClick={() => run(() => getMcpServer(extension.id).then((view) => setEditing({ id: view.id, name: view.name, config: view.config })))} disabled={busy}>
+      <button type="button" className="sp" onClick={edit} disabled={busy}>
         {t("mcp.action.edit")}
       </button>
       {extension.useState === "disabled" && <p className="kmeta">{t("mcp.note.disabled")}</p>}
