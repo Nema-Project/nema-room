@@ -3,11 +3,13 @@ import { isDeepStrictEqual } from "node:util";
 import { createHash } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { KnowledgeStore } from "@nema/knowledge";
-import { HookSignal, ReportInput, reportPassed, type ReportCheck, type ReportMessageMeta, type StoredReport } from "@nema/shared";
+import { HookSignal, ReportInput, reportPassed, type GithubObservation, type ReportAuthors, type ReportCheck, type ReportMessageMeta, type StoredReport } from "@nema/shared";
 import { INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
-import { ArchivedWorkspaceError, addReportMessage, mergeReportMeta, postSystemTask, type ReportMetaPatch } from "./messages.js";
+import { githubObservationGate, githubTarget } from "./githubScope.js";
+import { ArchivedWorkspaceError, addReportMessage, mergeReportMeta, postSystemTask, type Message, type ReportMetaPatch } from "./messages.js";
+import { workspacePluginState } from "./plugins.js";
 import { getRepo, type Repo } from "./repos.js";
 import { insertQueuedTask, toUiTask, type Task } from "./tasks.js";
 import { repoPath } from "./workspaces.js";
@@ -77,18 +79,23 @@ export async function receiveReport(deps: ReportDeps, repo: Repo, report: Report
   const inProgress = report.progress === "in_progress";
   const done = (async () => {
     if (inProgress && report.commits.length === 0) {
-      const skipped = await mergeReportMeta(db, message.id, { check: null, checkError: null, checkSkipped: "in_progress_no_commits" });
+      let skipped = await mergeReportMeta(db, message.id, { check: null, checkError: null, checkSkipped: "in_progress_no_commits" });
+      skipped = (await recordGithub(deps, repo, message.id, report)) ?? skipped;
       if (skipped) events.emit(repo.workspaceId, { type: "message.updated", message: skipped });
       return;
     }
     let patch: ReportMetaPatch;
+    let checked = false;
     try {
       const check = (await daemon.call("report.check", checkParams(repo, report), REPORT_CHECK_TIMEOUT_MS)) as ReportCheck;
       patch = { check, checkError: null, checkSkipped: null };
+      checked = true;
     } catch (error) {
       patch = { check: null, checkError: error instanceof Error ? error.message : String(error) };
     }
-    const updated = await mergeReportMeta(db, message.id, patch);
+    let updated = await mergeReportMeta(db, message.id, patch);
+    if (checked) updated = (await recordAuthors(deps, repo, message.id, report)) ?? updated;
+    updated = (await recordGithub(deps, repo, message.id, report)) ?? updated;
     if (updated) events.emit(repo.workspaceId, { type: "message.updated", message: updated });
     if (inProgress) return;
     if (updated && deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);
@@ -103,6 +110,112 @@ export async function receiveReport(deps: ReportDeps, repo: Repo, report: Report
 /** The system task for a completed report whose commits now pass the git check. A commit check, not acceptance. */
 export function commitsCheckedTask(messageId: string): string {
   return `上报 ${messageId} 的提交已核对（不是验收）。把还没有用户确认的需求 implementation 设为 verified，且不要写 confirmedBy。不要改写 confirmedBy 已是 "user" 的 implementation。`;
+}
+
+/**
+ * Reads the commits' author and committer and merges them as `authors`. A failed read leaves `authors` unset
+ * rather than storing an empty list that would look read; the log names the message, never an email.
+ */
+async function recordAuthors(deps: ReportDeps, repo: Repo, messageId: string, report: StoredReport): Promise<Message | null> {
+  try {
+    const authors = (await deps.daemon.call("report.authors", { ...repoParams(repo), commits: report.commits }, REPORT_CHECK_TIMEOUT_MS)) as ReportAuthors;
+    return await mergeReportMeta(deps.db, messageId, { authors });
+  } catch {
+    console.error(`report ${messageId}: author lookup failed`);
+    return null;
+  }
+}
+
+/** The daemon's read is two `gh` calls of up to 60 s each; the hub waits a little longer than both. */
+const GITHUB_OBSERVE_TIMEOUT_MS = 130_000;
+const DAEMON_TIMEOUT = "daemon 响应超时";
+
+/** Whether the workspace's GitHub plugin is on; no row means off (the plugin sends data outside). */
+async function githubPluginEnabled(db: Db, workspaceId: string): Promise<boolean> {
+  const state = await workspacePluginState(db, workspaceId);
+  return state.find((item) => item.plugin.id === "github")?.enabled ?? false;
+}
+
+async function ghStatus(daemon: DaemonRpc): Promise<{ installed: boolean; loggedIn: boolean }> {
+  try {
+    const status = (await daemon.call("plugins.status", {})) as { github?: { installed?: unknown; loggedIn?: unknown } } | null;
+    return { installed: status?.github?.installed === true, loggedIn: status?.github?.loggedIn === true };
+  } catch {
+    return { installed: false, loggedIn: false };
+  }
+}
+
+function readFailure(error: unknown): GithubObservation["reasonCode"] {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("timed out") || message === DAEMON_TIMEOUT) return "timeout";
+  if (message.startsWith("GitHub returned invalid")) return "invalid_response";
+  return "http_error";
+}
+
+/**
+ * One GitHub read of the report's claimed pull request, built fresh: a failure never carries over the
+ * previous read's head or check runs. Only the routed repo's own remote is a target.
+ */
+export async function observeGithub(deps: ReportDeps, repo: Repo, report: StoredReport): Promise<GithubObservation> {
+  const base = { source: "github-plugin-read" as const, checkRuns: [], truncated: false, headMatch: null };
+  const pr = report.pr;
+  const target = pr === undefined ? null : githubTarget(repo.remoteUrl);
+  const pluginEnabled = pr !== undefined && (await githubPluginEnabled(deps.db, repo.workspaceId));
+  // plugins.status is asked only when the plugin is on, so a report never makes a gh call it does not need.
+  const gh = pluginEnabled ? await ghStatus(deps.daemon) : { installed: false, loggedIn: false };
+  const gated = githubObservationGate({ pr, pluginEnabled, gh, targets: target ? [target] : [] });
+  if (gated.state === "not_requested") return { ...base, state: "not_requested", observedAt: new Date().toISOString(), binding: null };
+  if (gated.state === "unavailable") return { ...base, state: "unavailable", reasonCode: gated.reasonCode, observedAt: new Date().toISOString(), binding: null };
+  const claimedHeadSha = report.headSha ?? null;
+  const binding = { repoId: repo.id, owner: gated.target.owner, repo: gated.target.repo, pr: pr!, observedHeadSha: null as string | null, claimedHeadSha };
+  try {
+    const result = (await deps.daemon.call("github.observe", { owner: gated.target.owner, repo: gated.target.repo, pr, claimedHeadSha }, GITHUB_OBSERVE_TIMEOUT_MS)) as
+      | { outcome: "out_of_scope" }
+      | { outcome: "read"; observedHeadSha: string; checkRuns: GithubObservation["checkRuns"]; truncated: boolean };
+    const observedAt = new Date().toISOString();
+    if (result?.outcome === "out_of_scope") return { ...base, state: "unavailable", reasonCode: "out_of_scope", observedAt, binding };
+    if (result?.outcome !== "read" || typeof result.observedHeadSha !== "string" || !/^[0-9a-f]{40}$/.test(result.observedHeadSha) || !Array.isArray(result.checkRuns)) {
+      return { ...base, state: "unavailable", reasonCode: "invalid_response", observedAt, binding };
+    }
+    const headMatch = claimedHeadSha === null ? "not_comparable" : claimedHeadSha === result.observedHeadSha ? "match" : "mismatch";
+    return {
+      state: "read",
+      source: "github-plugin-read",
+      observedAt,
+      binding: { ...binding, observedHeadSha: result.observedHeadSha },
+      headMatch,
+      checkRuns: result.checkRuns,
+      truncated: result.truncated === true,
+    };
+  } catch (error) {
+    return { ...base, state: "unavailable", reasonCode: readFailure(error), observedAt: new Date().toISOString(), binding };
+  }
+}
+
+// One hub runs per data directory, so reads of the same report are put in request order here: an older read
+// that would finish last waits instead of replacing a newer `current`.
+const githubReads = new Map<string, Promise<unknown>>();
+
+/** Reads GitHub for the report and merges it as `github.current`; the merge keeps the previous read as history. */
+function recordGithub(deps: ReportDeps, repo: Repo, messageId: string, report: StoredReport): Promise<Message | null> {
+  const previous = githubReads.get(messageId) ?? Promise.resolve();
+  const run = previous.then(async () => {
+    try {
+      return await mergeReportMeta(deps.db, messageId, { github: await observeGithub(deps, repo, report) });
+    } catch {
+      console.error(`report ${messageId}: github observation failed`);
+      return null;
+    }
+  });
+  githubReads.set(messageId, run);
+  void run.finally(() => {
+    if (githubReads.get(messageId) === run) githubReads.delete(messageId);
+  });
+  return run;
+}
+
+function repoParams(repo: Repo) {
+  return { workspaceId: repo.workspaceId, repoId: repo.id, path: repo.path, mainBranch: repo.mainBranch };
 }
 
 function checkParams(repo: Repo, report: StoredReport) {
@@ -133,7 +246,7 @@ const RECHECK_DAYS = 30;
  * A daemon error leaves that report as it was.
  */
 export async function recheckReports(deps: ReportDeps, repoId: string): Promise<void> {
-  const { db, events, daemon } = deps;
+  const { db, events } = deps;
   const repo = await getRepo(db, repoId);
   if (!repo) return;
   const rows = await db.query<{ id: string; meta: ReportMessageMeta }>(
@@ -146,29 +259,40 @@ export async function recheckReports(deps: ReportDeps, repoId: string): Promise<
     [repo.workspaceId, repo.gitCommonDir, RECHECK_DAYS],
   );
   for (const row of rows) {
-    let check: ReportCheck;
-    try {
-      check = (await daemon.call("report.check", checkParams(repo, row.meta.report), REPORT_CHECK_TIMEOUT_MS)) as ReportCheck;
-    } catch (error) {
-      console.error(`re-checking report ${row.id} failed`, error);
-      continue;
-    }
-    const previous = row.meta.check;
-    // An older result than the stored one changes nothing (the merge would refuse it too).
-    if (previous?.checkedAt && !(typeof check.checkedAt === "string" && check.checkedAt >= previous.checkedAt)) continue;
-    // Mark the review before the meta moves on: the knowledge repo and the database are not one transaction,
-    // and a failure here should leave an extra mark rather than a lost one.
-    await noteLinkedCheckChanged(db, deps.dataDir, repo.workspaceId, row.id, previous, check, row.meta.report.commits);
-    const updated = await mergeReportMeta(db, row.id, { check, checkError: null, checkSkipped: null });
-    if (!updated) continue;
-    events.emit(repo.workspaceId, { type: "message.updated", message: updated });
-    // A newer check stored meanwhile wins the merge; act only on the check that is actually stored.
-    if (!isDeepStrictEqual((updated.meta as ReportMessageMeta | null)?.check, check)) continue;
-    // An in-progress report only keeps its new check, even once it is on main.
-    if (row.meta.report.progress === "in_progress") continue;
-    if (deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);
-    if (reportPassed(check)) await queueSystemTask(db, events, repo.workspaceId, commitsCheckedTask(row.id));
+    await recheckOne(deps, repo, row);
+    // A re-run reads the claimed pull request again; the merge moves the previous read into history. A report
+    // that names no pull request already has its `not_requested` from when it was received.
+    if (row.meta.report.pr === undefined) continue;
+    const observed = await recordGithub(deps, repo, row.id, row.meta.report);
+    if (observed) events.emit(repo.workspaceId, { type: "message.updated", message: observed });
   }
+}
+
+/** Re-checks one selected report; acts on the result only if it is the check that ends up stored. */
+async function recheckOne(deps: ReportDeps, repo: Repo, row: { id: string; meta: ReportMessageMeta }): Promise<void> {
+  const { db, events, daemon } = deps;
+  let check: ReportCheck;
+  try {
+    check = (await daemon.call("report.check", checkParams(repo, row.meta.report), REPORT_CHECK_TIMEOUT_MS)) as ReportCheck;
+  } catch (error) {
+    console.error(`re-checking report ${row.id} failed`, error);
+    return;
+  }
+  const previous = row.meta.check;
+  // An older result than the stored one changes nothing (the merge would refuse it too).
+  if (previous?.checkedAt && !(typeof check.checkedAt === "string" && check.checkedAt >= previous.checkedAt)) return;
+  // Mark the review before the meta moves on: the knowledge repo and the database are not one transaction,
+  // and a failure here should leave an extra mark rather than a lost one.
+  await noteLinkedCheckChanged(db, deps.dataDir, repo.workspaceId, row.id, previous, check, row.meta.report.commits);
+  const updated = await mergeReportMeta(db, row.id, { check, checkError: null, checkSkipped: null });
+  if (!updated) return;
+  events.emit(repo.workspaceId, { type: "message.updated", message: updated });
+  // A newer check stored meanwhile wins the merge; act only on the check that is actually stored.
+  if (!isDeepStrictEqual((updated.meta as ReportMessageMeta | null)?.check, check)) return;
+  // An in-progress report only keeps its new check, even once it is on main.
+  if (row.meta.report.progress === "in_progress") return;
+  if (deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);
+  if (reportPassed(check)) await queueSystemTask(db, events, repo.workspaceId, commitsCheckedTask(row.id));
 }
 
 export type ReportFallbackOptions = {
