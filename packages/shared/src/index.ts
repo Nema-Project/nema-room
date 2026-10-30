@@ -10,3 +10,4 @@ export * from "./report.js";
 export * from "./ghCommand.js";
 export * from "./sourceEvidence.js";
 export * from "./attachments.js";
+export * from "./skills.js";

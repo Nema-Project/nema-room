@@ -1,6 +1,6 @@
 import { closeSync, fstatSync, lstatSync, openSync, opendirSync, readSync, realpathSync, statSync, type Dirent } from "node:fs";
 import path from "node:path";
-import { bundledExtensions, type AttachProblem, type DiscoveredSkill, type ExtensionRecord, type SkillDiscovery } from "@nema/shared";
+import { bundledExtensions, isSkillName, type AttachProblem, type DiscoveredSkill, type ExtensionRecord, type SkillDiscovery } from "@nema/shared";
 import { MAX_SKILL_BYTES, skillFrontMatter, skillId } from "./source.js";
 
 /** Folders other agents keep their skills in, relative to the home directory. Nema only reads them. */
@@ -22,7 +22,6 @@ export const MAX_SCANNED_ENTRIES = 2000;
 /** Same cap the GitHub preview uses for one SKILL.md. */
 const MAX_SKILL_MD_BYTES = MAX_SKILL_BYTES;
 
-const ID = /^[a-z][a-z0-9-]{0,63}$/;
 const BUNDLED_IDS = new Set(bundledExtensions().map((row) => row.id));
 
 export type InspectedSkill = { path: string; name: string | null; description: string | null; id: string | null; problem: AttachProblem | null };
@@ -91,7 +90,7 @@ export function inspectSkillFolder(folder: string): InspectedSkill {
   const meta = skillFrontMatter(text);
   if (!meta) return failed(real, "missing-frontmatter");
   const id = skillId(meta.name);
-  const problem: AttachProblem | null = !ID.test(id) ? "invalid-id" : BUNDLED_IDS.has(id) ? "bundled-id" : null;
+  const problem: AttachProblem | null = !isSkillName(id) ? "invalid-id" : BUNDLED_IDS.has(id) ? "bundled-id" : null;
   return { path: real, name: meta.name, description: meta.description, id: problem ? null : id, problem };
 }
 

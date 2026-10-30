@@ -71,7 +71,7 @@ test("each folder that cannot be attached says why", () => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "nema-discover-")));
   const base = join(home, ".claude", "skills");
   skill(join(base, "a-plain"), null);
-  skill(join(base, "b-bad"), "123");
+  skill(join(base, "b-bad"), "!!!");
   skill(join(base, "c-bundled"), "grill");
   skill(join(base, "d-taken"), "notes");
   mkdirSync(join(base, "e-empty"));
@@ -256,4 +256,11 @@ test("front matter that ends after the first 64 KiB of an accepted SKILL.md is s
   const description = "d".repeat(100 * 1024);
   writeFileSync(join(folder, "SKILL.md"), `---\nname: long\ndescription: ${description}\n---\nBody\n`);
   expect(inspectSkillFolder(folder)).toMatchObject({ name: "long", id: "long", problem: null });
+});
+
+test("a skill whose name starts with a digit can be attached", () => {
+  home = realpathSync(mkdtempSync(join(tmpdir(), "nema-discover-")));
+  skill(join(home, ".claude", "skills", "3d-print"), "3d-print");
+  const [row] = discoverSkills(home, bundledExtensions()).skills;
+  expect(row).toMatchObject({ id: "3d-print", problem: null });
 });

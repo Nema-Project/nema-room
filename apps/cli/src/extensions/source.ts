@@ -1,4 +1,4 @@
-import { bundledExtensions, type ExtensionRecord, type SkillProblem, type SkillSource } from "@nema/shared";
+import { bundledExtensions, isSkillName, type ExtensionRecord, type SkillProblem, type SkillSource } from "@nema/shared";
 
 /**
  * The slice of `fetch` the resolver needs. Production passes the global `fetch`; tests pass a fake
@@ -49,7 +49,6 @@ export type SkillResolution = {
 const API = "https://api.github.com";
 export const RAW = "https://raw.githubusercontent.com";
 const COMMIT = /^[0-9a-f]{40}$/;
-const ID = /^[a-z][a-z0-9-]{0,63}$/;
 /** Skills listed for a whole-repository preview. */
 const MAX_SKILLS = 50;
 /** SKILL.md files read while looking for one named skill. */
@@ -203,7 +202,7 @@ export async function resolveSkillSource(source: SkillSource, o: Options): Promi
     const meta = skillFrontMatter(await response.text());
     if (!meta) return { id: null, name: fallback, description: "", path: folder, digest: file.sha, problem: "missing-frontmatter" };
     const id = skillId(meta.name);
-    const problem: SkillProblem | null = !ID.test(id) ? "invalid-id" : BUNDLED_IDS.has(id) ? "bundled-id" : null;
+    const problem: SkillProblem | null = !isSkillName(id) ? "invalid-id" : BUNDLED_IDS.has(id) ? "bundled-id" : null;
     return { id: problem ? null : id, name: meta.name, description: meta.description, path: folder, digest: file.sha, problem };
   };
 
