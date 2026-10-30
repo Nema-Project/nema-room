@@ -295,12 +295,16 @@ test('the push run must have run and passed the build job and the whole verify s
     { name: 'verify / npm pack smoke (ubuntu-latest)', conclusion: 'success' },
     { name: 'Publish to npm', conclusion: 'skipped' },
   ];
-  assert.doesNotThrow(() => assertPushRunJobs(ok, 1));
+  assert.doesNotThrow(() => assertPushRunJobs(ok, 1, ok.length));
   const without = (prefix) => ok.filter((job) => !job.name.startsWith(prefix));
   const set = (prefix, conclusion) => ok.map((job) => (job.name.startsWith(prefix) ? { ...job, conclusion } : job));
-  assert.throws(() => assertPushRunJobs(without('Pack'), 1), /Pack and smoke nema did not run and pass \(no such job\)/);
-  assert.throws(() => assertPushRunJobs(without('verify / Full'), 1), /Full application tests and web build did not run/);
-  assert.throws(() => assertPushRunJobs(set('verify / npm pack smoke', 'skipped'), 1), /npm pack smoke did not run and pass/);
-  assert.throws(() => assertPushRunJobs(set('verify / Platform checks (windows', 'skipped'), 1), /Platform checks did not run and pass/);
-  assert.throws(() => assertPushRunJobs([...ok, { name: 'verify / Something new', conclusion: 'skipped' }], 1), /Something new=skipped/);
+  assert.throws(() => assertPushRunJobs(without('Pack'), 1, without('Pack').length), /Pack and smoke nema did not run and pass \(no such job\)/);
+  assert.throws(() => assertPushRunJobs(without('verify / Full'), 1, without('verify / Full').length), /Full application tests and web build did not run/);
+  assert.throws(() => assertPushRunJobs(set('verify / npm pack smoke', 'skipped'), 1, set('verify / npm pack smoke', 'skipped').length), /npm pack smoke did not run and pass/);
+  assert.throws(() => assertPushRunJobs(set('verify / Platform checks (windows', 'skipped'), 1, set('verify / Platform checks (windows', 'skipped').length), /Platform checks did not run and pass/);
+  assert.throws(() => assertPushRunJobs([...ok, { name: 'verify / Something new', conclusion: 'skipped' }], 1, [...ok, { name: 'verify / Something new', conclusion: 'skipped' }].length), /Something new=skipped/);
+  // A jobs page that does not hold every job of the run cannot prove the rest passed.
+  assert.doesNotThrow(() => assertPushRunJobs(ok, 1, ok.length));
+  assert.throws(() => assertPushRunJobs(ok, 1, ok.length + 1), /lists 7 of 8 jobs/);
+  assert.throws(() => assertPushRunJobs(ok, 1, undefined), /did not report its job count/);
 });

@@ -237,7 +237,10 @@ async function run(command, args, options = {}) {
  */
 export const REQUIRED_PUSH_JOBS = Object.freeze(['Pack and smoke nema', 'verify / Workflow lint', 'verify / Full application tests and web build', 'verify / Platform checks', 'verify / npm pack smoke']);
 
-export function assertPushRunJobs(jobs, id) {
+export function assertPushRunJobs(jobs, id, totalCount) {
+  // A failed job on a page this list does not hold would go unseen: the list must be the whole run.
+  if (!Number.isInteger(totalCount)) throw new Error(`npm-publish push run ${id}: the jobs API did not report its job count`);
+  if (jobs.length !== totalCount) throw new Error(`npm-publish push run ${id}: the jobs answer lists ${jobs.length} of ${totalCount} jobs`);
   const named = jobs.filter((job) => typeof job?.name === 'string');
   for (const prefix of REQUIRED_PUSH_JOBS) {
     const matched = named.filter((job) => job.name.startsWith(prefix));
@@ -255,8 +258,8 @@ async function pushRunIntegrity({ tag, commit, gh }) {
   const push = (runs.workflow_runs ?? []).filter((item) => item.head_branch === tag && item.conclusion === 'success').sort((a, b) => b.id - a.id)[0];
   if (!push) throw new Error(`no successful npm-publish push run for ${tag} at ${commit}`);
   // A successful run is not enough: its verify and build jobs must have run and passed.
-  const jobs = JSON.parse(await run(gh, ['api', `repos/${REPOSITORY}/actions/runs/${push.id}/jobs?per_page=100`])).jobs ?? [];
-  assertPushRunJobs(jobs, push.id);
+  const answer = JSON.parse(await run(gh, ['api', `repos/${REPOSITORY}/actions/runs/${push.id}/jobs?per_page=100`]));
+  assertPushRunJobs(answer.jobs ?? [], push.id, answer.total_count);
   const dir = await mkdtemp(path.join(tmpdir(), 'promote-npm-'));
   try {
     try {
