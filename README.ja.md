@@ -92,9 +92,37 @@ node scripts/setup.mjs --lang ja
 
 ウィザードが依存関係を確認し、CLI をビルドしてソースからサービスを起動し、モデル設定を案内します。ホストの daemon は起動したままにしてください。既存の `.env` は保持されます。`npm run up` は同じソースビルドです。Linux と macOS では、UID/GID が 1000 でもそれ以外でも、上と同じように `NEMA_UID` と `NEMA_GID` を export してから `npm run up` してください。hub がデータディレクトリへ書き込めます。Windows の Docker Desktop ではこの export は不要です。その後 [localhost:3000](http://localhost:3000) を開きます。公開用 compose ファイルにビルド手順はありません。
 
-clone せずにピン留めしたイメージを pull できるのは tag `v0.1.4` からです。この tag はイメージ公開ワークフローを含み、これらのイメージの最初の公開です（`linux/amd64`。arm64 は [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。このリポジトリのツリーにある `docker-compose.yml` はテンプレートです。hub と web の `image:` は `${NEMA_IMAGE_TAG:-latest}` の展開で、ツリーには使えるバージョンがありません。現在のリリースワークフローで版を公開すると、hub と web のイメージをその版に固定したレンダリング済み `docker-compose.yml` も添付されます。インストール時はそのバージョンをローカルの `.env` の `NEMA_IMAGE_TAG` に固定します。この資産を持つ公開済み Release はまだないため、tag `v0.1.5` から [`docker-compose.yml`](https://github.com/Nema-Project/nema-room/blob/v0.1.5/docker-compose.yml) を取得します（`curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.5/docker-compose.yml`）。この tag 上のファイルはリリースの添付ファイルではありません。Linux と macOS では同じように `NEMA_UID` と `NEMA_GID` を export します。Windows の Docker Desktop ではこの export は不要です。そのあと `docker compose up -d` を実行します。ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。`NEMA_HUB_URL` の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` で、web コンテナの起動時に読まれるので、公開イメージを再ビルドせずにアドレスを変えられます。
+clone せずにピン留めしたイメージを pull できるのは tag `v0.1.4` からです。この tag はイメージ公開ワークフローを含み、これらのイメージの最初の公開です（`linux/amd64`。arm64 は [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。このリポジトリのツリーにある `docker-compose.yml` はテンプレートです。hub と web の `image:` は `${NEMA_IMAGE_TAG:-latest}` の展開で、ツリーには使えるバージョンがありません。`v0.1.6` 以降の各 Release には、hub と web のイメージをその Release の版に固定したレンダリング済み `docker-compose.yml` が添付されます。これはその Release の固定名の資産なので、現在の版は常に [`releases/latest/download/docker-compose.yml`](https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml) にあります。インストール時はその版をローカルの `.env` の `NEMA_IMAGE_TAG` に固定します。clone しないインストール手順：
 
-公開版のインストールには、入れるバージョンに対応する上記リンクの Compose ファイルを使い、同じ版の daemon を入れます。版はそのファイルで両イメージが固定されているバージョンです。main は公開済みの成果物より先に進むことがあるため、開発には `npm run up` でソースからビルドします。成果物の公開は実機・機能の受け入れ確認の代わりにはなりません。
+```sh
+# 1. fetch the fixed-name compose asset for the current supported release
+curl -fsSL -o docker-compose.yml \
+  https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
+
+# 2. read the one version both images are pinned to; hub and web must agree
+grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
+grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
+
+# 3. lock it in a local .env, using the version both greps printed
+#    NEMA_IMAGE_TAG=<that version>
+#    If .env already has NEMA_IMAGE_TAG, keep it, and fetch that version's asset
+#    instead of the latest one:
+#    curl -fsSL -o docker-compose.yml \
+#      https://github.com/Nema-Project/nema-room/releases/download/v<locked>/docker-compose.yml
+
+# 4. start the stack
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"   # Linux and macOS only
+docker compose up -d
+
+# 5. install the host daemon at the same version
+npm i -g @nema-project/nema@<that version>
+```
+
+手順 2 の 2 行は同じ版を表示しなければなりません。違う場合はそこで止め、何も起動しないでください。手順 3 で `.env` にすでに `NEMA_IMAGE_TAG` があれば、その値を使い続けて上書きせず、latest ではなく `releases/download/v<locked>/docker-compose.yml` からその版の資産を取得します。latest はリリースのたびに変わりますが、版付きのアドレスはその Release がある限り変わりません。手順 5 の版は手順 2 で読んだ版で、npm の最新版ではありません。リリースのダウンロード先はリダイレクトするので `-L` は省けません。Windows の Docker Desktop では手順 4 の export は不要です。
+
+ホストのポートは `NEMA_HUB_PORT`（既定 4400。コンテナも同じポートで待ち受けます）と `NEMA_WEB_PORT`（既定 3000。コンテナ内は 3000 のまま）に従います。`NEMA_HUB_URL` の既定値は `http://127.0.0.1:$NEMA_HUB_PORT` で、web コンテナの起動時に読まれるので、公開イメージを再ビルドせずにアドレスを変えられます。
+
+公開版のインストールには、入れる Release の Compose 資産を使い、同じ版の daemon を入れます。版はそのファイルで両イメージが固定されているバージョンです。main は公開済みの成果物より先に進むことがあるため、開発には `npm run up` でソースからビルドします。成果物の公開は実機・機能の受け入れ確認の代わりにはなりません。
 
 [手動インストールと設定](docs/guide.ja.md#source-installation) · 環境の確認のみ：`node scripts/setup.mjs --lang ja --check`
 
@@ -105,7 +133,7 @@ npx @nema-project/nema@<hub のバージョン> --version
 npm i -g @nema-project/nema@<hub のバージョン>
 ```
 
-上のコマンドのバージョンは、取得した `docker-compose.yml` の 2 つの `image:` が固定している版です。`grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2` で表示され、`nema-room-web:` の側も同じ値を表示しなければなりません。ソースのチェックアウトでは daemon をこのツリーからビルドし、この方法ではバージョンを選びません。ソースのチェックアウトには `scripts/install/public.mjs` も入っています。公開済みの 1 つの版を解決し、その版の Compose 資産・2 つのイメージ・npm パッケージがそろっていることを確かめてから、`NEMA_IMAGE_TAG` と対応する `docker-compose.yml` をまとめて対象ディレクトリに書き込みます。まず `--check` を付けると検証だけで何も書きません。読むのはその Release 自身の `docker-compose.yml` 資産で、資産がない版は拒否します。まだその資産を持つ Release は公開されていないため、そうした版が出るまでは取得したファイルから版を読んでください。
+上のコマンドのバージョンは、取得した `docker-compose.yml` の 2 つの `image:` が固定している版です。`grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2` で表示され、`nema-room-web:` の側も同じ値を表示しなければなりません。ソースのチェックアウトでは daemon をこのツリーからビルドし、この方法ではバージョンを選びません。ソースのチェックアウトには `scripts/install/public.mjs` も入っています。公開済みの 1 つの版を解決し、その版の Compose 資産・2 つのイメージ・npm パッケージがそろっていることを確かめてから、`NEMA_IMAGE_TAG` と対応する `docker-compose.yml` をまとめて対象ディレクトリに書き込みます。まず `--check` を付けると検証だけで何も書きません。読むのはその Release 自身の `docker-compose.yml` 資産で、資産がない版は拒否します。`v0.1.6` より前の Release にはこの資産がありません。
 
 Compose はそのバージョンを `http://127.0.0.1:4400/api/version` で返します。デスクトップ版は **アプリ設定 → 情報** に表示し、ループバックの `GET /_nema/version` でも読めます。バージョンが違うと daemon は `run: npm i -g @nema-project/nema@<バージョン>` を出して再接続しません。`nema daemon` の `--hub` の既定値は `http://127.0.0.1:4400` で、トークンは `$NEMA_DATA_DIR` または `~/.nema/data` の `daemon-token` です。hub が起動時にそのファイルを書きます。Compose はホストのデータディレクトリを `/data` にマウントします。
 

@@ -286,12 +286,16 @@
   <div class="tile tile-accent cta-main">
     <h2 id="cta-h" data-reveal>下载</h2>
     <p data-reveal style="--i:1">Windows x64 和 Apple 芯片的构建在最新发布页。Windows 上在安装包和便携 ZIP 里选一个。ZIP 解压后运行 <code>Nema.exe</code>，没有快捷方式，也没有卸载程序。两者都使用 <code>~/.nema/desktop</code>。本机需要已经装好 Git 2.31 或更新版本。</p>
-    <p data-reveal style="--i:1">宿主机命令是 <code>nema</code>，用 <code>npm i -g @nema-project/nema@&lt;locked version&gt;</code> 安装。这个数字是你取到的 <code>docker-compose.yml</code> 里两个 <code>image:</code> 钉的那个版本；目前还没有东西替你把它写进 <code>.env</code>。hub 和 web 镜像是 linux/amd64。当前工作流发的 Release 也会附上一份渲染好、钉在该版本上的 <code>docker-compose.yml</code>。目前还没有已发布的 Release 带它，所以 <a href="https://github.com/Nema-Project/nema-room/blob/v0.1.5/docker-compose.yml">tag v0.1.5 上的 docker-compose.yml</a> 把镜像钉在 <code>ghcr.io/nema-project/nema-room-hub:0.1.5</code> 和 <code>ghcr.io/nema-project/nema-room-web:0.1.5</code>。先取这份文件再启动。这份 tag 上的文件不是发布页附件。Linux 和 macOS 上先导出 <code>NEMA_UID</code> 和 <code>NEMA_GID</code>。开发本仓库则克隆后运行安装向导。</p>
+    <p data-reveal style="--i:1">宿主机命令是 <code>nema</code>，用 <code>npm i -g @nema-project/nema@&lt;locked version&gt;</code> 安装。这个数字是你取到的 <code>docker-compose.yml</code> 里两个 <code>image:</code> 钉的那个版本。hub 和 web 镜像是 linux/amd64。<a href="https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml">docker-compose.yml</a> 是最新 Release 的固定名资产，渲染时双镜像都钉在该 Release 的版本上。取到后确认两处钉的版本相同，把 <code>NEMA_IMAGE_TAG=&lt;该版本&gt;</code> 写进 <code>.env</code>（已有值就沿用，并改取 <code>releases/download/v&lt;locked&gt;/docker-compose.yml</code>），再启动。Linux 和 macOS 上先导出 <code>NEMA_UID</code> 和 <code>NEMA_GID</code>。开发本仓库则克隆后运行安装向导。</p>
     <pre data-reveal style="--i:2"><code>npm i -g @nema-project/nema@&lt;locked version&gt;
 nema --version
 
-# hub 与 web，仅 linux/amd64。暂无发布附件，compose 文件从 tag v0.1.5 取。
-curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.5/docker-compose.yml
+# hub 与 web，仅 linux/amd64。compose 文件是最新 Release 的固定名资产。
+curl -fsSL -o docker-compose.yml https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
+# 两行必须打印同一个版本，不同就停下。
+grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
+grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
+# 把 NEMA_IMAGE_TAG=&lt;该版本&gt; 写进 .env；.env 里已有就沿用。
 # 仅 Linux 和 macOS。Windows 上的 Docker Desktop 不需要这一行。
 export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"
 docker compose up -d

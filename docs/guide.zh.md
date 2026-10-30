@@ -64,7 +64,7 @@ npx @nema-project/nema@<hub 版本> --version
 npm i -g @nema-project/nema@<hub 版本>
 ```
 
-上面命令里的版本，就是所取 `docker-compose.yml` 里两个 `image:` 钉的那个版本：`grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2` 打印它，`nema-room-web:` 那条必须打印同一个值。源码检出从这棵树构建 daemon，不这样选版本。源码检出里也带 `scripts/install/public.mjs`：它解析一个已发布的版本，校验该版本的 Compose 资产、两个镜像和 npm 包都在，然后把 `NEMA_IMAGE_TAG` 和配套的 `docker-compose.yml` 一起写进目标目录；先加 `--check` 跑一遍只校验不写盘。它读的是该 Release 自己的 `docker-compose.yml` 资产，资产缺席就拒绝安装——目前还没有任何已发布的 Release 带这份资产，所以在这样的版本出现之前，仍请从取到的文件里读版本。
+上面命令里的版本，就是所取 `docker-compose.yml` 里两个 `image:` 钉的那个版本：`grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2` 打印它，`nema-room-web:` 那条必须打印同一个值。源码检出从这棵树构建 daemon，不这样选版本。源码检出里也带 `scripts/install/public.mjs`：它解析一个已发布的版本，校验该版本的 Compose 资产、两个镜像和 npm 包都在，然后把 `NEMA_IMAGE_TAG` 和配套的 `docker-compose.yml` 一起写进目标目录；先加 `--check` 跑一遍只校验不写盘。它读的是该 Release 自己的 `docker-compose.yml` 资产，资产缺席就拒绝安装；`v0.1.6` 之前的 Release 都没有这份资产。
 
 Compose：`curl http://127.0.0.1:4400/api/version` 返回 `{"version":"..."}`。桌面版在**应用设置 → 关于**里显示版本，应用源地址提供 `GET /_nema/version`。版本不一致时，daemon 会打印 hub 的错误和 `run: npm i -g @nema-project/nema@<版本>`，然后停止，不会继续重连。
 
@@ -116,9 +116,37 @@ npm run up
 
 `npm run up` 用当前检出构建 hub 和 web。在 Linux 和 macOS 上，上面的 `export` 把容器用户设成当前主机用户，UID/GID 不是 1000 时也一样。Windows 上的 Docker Desktop 不需要这条 export。`NEMA_HUB_PORT`（默认 4400）同时是宿主机发布端口和 hub 的监听端口。`NEMA_WEB_PORT`（默认 3000）只改宿主机端口。web 容器启动时读取 `NEMA_HUB_URL`；compose 把它设为 `http://127.0.0.1:$NEMA_HUB_PORT`。
 
-不克隆、直接拉取钉死镜像，从 tag `v0.1.4` 开始。这个 tag 包含镜像发布工作流，也是这些镜像的第一次发布（`linux/amd64`；arm64 见 [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。本仓库树里的 `docker-compose.yml` 是模板，hub 与 web 的 `image:` 用 `${NEMA_IMAGE_TAG:-latest}` 插值，树里没有可用的版本；当前发布工作流发一个版本时，也会附上一份渲染好的 `docker-compose.yml`、双镜像都钉在那个版本上，安装时把这个版本锁进本地 `.env` 的 `NEMA_IMAGE_TAG`。目前还没有任何已发布的 Release 带这份资产，所以从 tag `v0.1.5` 取 [`docker-compose.yml`](https://github.com/Nema-Project/nema-room/blob/v0.1.5/docker-compose.yml)（`curl -fsSLO https://raw.githubusercontent.com/Nema-Project/nema-room/v0.1.5/docker-compose.yml`），它把双镜像钉在 `0.1.5`。这份 tag 上的文件不是发布页附件。Linux 和 macOS 上同样导出 `NEMA_UID` 和 `NEMA_GID`。Windows 上的 Docker Desktop 不需要这条 export。然后执行 `docker compose up -d`。宿主机端口跟随 `NEMA_HUB_PORT`（默认 4400，容器监听同一端口）和 `NEMA_WEB_PORT`（默认 3000，容器内仍监听 3000）。发布的 web 镜像在启动时读取 `NEMA_HUB_URL`。compose 默认把它设为 `http://127.0.0.1:$NEMA_HUB_PORT`，所以改端口不用重建镜像。
+不克隆、直接拉取钉死镜像，从 tag `v0.1.4` 开始。这个 tag 包含镜像发布工作流，也是这些镜像的第一次发布（`linux/amd64`；arm64 见 [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。本仓库树里的 `docker-compose.yml` 是模板，hub 与 web 的 `image:` 用 `${NEMA_IMAGE_TAG:-latest}` 插值，树里没有可用的版本。从 `v0.1.6` 起，每个 Release 都附上一份渲染好的 `docker-compose.yml`，hub 与 web 镜像都钉在该 Release 的版本上。它是该 Release 的固定名资产，所以当前版本始终在 [`releases/latest/download/docker-compose.yml`](https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml)；安装时把它的版本锁进本地 `.env` 的 `NEMA_IMAGE_TAG`。不克隆的安装步骤：
 
-公开安装请使用上面链接的、与你所装版本对应的 Compose 文件，并安装同版 daemon，版本就是该文件里两个镜像钉住的版本。main 可能领先于已发布产物；开发请用 `npm run up` 从源码构建。产物发布不代替真机或功能验收。
+```sh
+# 1. fetch the fixed-name compose asset for the current supported release
+curl -fsSL -o docker-compose.yml \
+  https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
+
+# 2. read the one version both images are pinned to; hub and web must agree
+grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
+grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2
+
+# 3. lock it in a local .env, using the version both greps printed
+#    NEMA_IMAGE_TAG=<that version>
+#    If .env already has NEMA_IMAGE_TAG, keep it, and fetch that version's asset
+#    instead of the latest one:
+#    curl -fsSL -o docker-compose.yml \
+#      https://github.com/Nema-Project/nema-room/releases/download/v<locked>/docker-compose.yml
+
+# 4. start the stack
+export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"   # Linux and macOS only
+docker compose up -d
+
+# 5. install the host daemon at the same version
+npm i -g @nema-project/nema@<that version>
+```
+
+第 2 步的两行必须打印同一个版本；不同就停下，什么都不要启动。第 3 步里，`.env` 已经有 `NEMA_IMAGE_TAG` 时沿用旧值、不要覆盖，并改从 `releases/download/v<locked>/docker-compose.yml` 取该版本的资产，不取 latest：latest 会随每次发布变化，带版本的地址在该 Release 存在期间不变。第 5 步的版本就是第 2 步读出的那个版本，不是 npm 上的最新版本。`-L` 不能省，发布页下载地址会跳转。Windows 上的 Docker Desktop 不需要第 4 步的 export。
+
+宿主机端口跟随 `NEMA_HUB_PORT`（默认 4400，容器监听同一端口）和 `NEMA_WEB_PORT`（默认 3000，容器内仍监听 3000）。发布的 web 镜像在启动时读取 `NEMA_HUB_URL`。compose 默认把它设为 `http://127.0.0.1:$NEMA_HUB_PORT`，所以改端口不用重建镜像。
+
+公开安装请使用你所装 Release 的 Compose 资产，并安装同版 daemon，版本就是该文件里两个镜像钉住的版本。main 可能领先于已发布产物；开发请用 `npm run up` 从源码构建。产物发布不代替真机或功能验收。
 
 首次使用先配置模型。使用默认认证时：
 
