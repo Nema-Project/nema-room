@@ -1,4 +1,4 @@
-import type { AgentMessageMeta, Implementation, KnowledgeLanguage, ReportMessageMeta, ReportPassState, Thread, UserMessageMeta, WpTask } from "@nema/shared";
+import type { AgentMessageMeta, AttachmentView, Implementation, KnowledgeLanguage, ReportMessageMeta, ReportPassState, Thread, UserMessageMeta, WpTask } from "@nema/shared";
 
 export type { AgentMessageMeta, Entry, EntrySummary, Implementation, KnowledgeLanguage, MessageQuote, ReportCheck, ReportMessageMeta, Thread, ThreadOpenedBy, UpsertEntryInput, UserMessageMeta, WorkPackageMeta, WpTask } from "@nema/shared";
 
@@ -37,6 +37,8 @@ export type Message = {
   editedAt: string | null;
   threadId: string | null;
   seq: number;
+  /** Files attached to a user message. Absent from hubs and events that predate attachments. */
+  attachments?: AttachmentView[];
 };
 
 export type Task = {

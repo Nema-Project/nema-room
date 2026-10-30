@@ -165,8 +165,8 @@ export function ThreadView({ workspaceId, threadId, active = true, floating = fa
     pendingScroll.current = null;
   }, [messages, anchor, entry, focusMessageId, jumpVersion, scrollWithinThread]);
 
-  async function send(content: string, quoted?: Message | null) {
-    const { message } = await postThreadMessage(workspaceId, threadId, content, quoted?.id);
+  async function send(content: string, attachmentIds: string[], quoted?: Message | null) {
+    const { message } = await postThreadMessage(workspaceId, threadId, content, quoted?.id, attachmentIds);
     setMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message].sort((a, b) => a.seq - b.seq));
     if (quoted) setQuote(null);
   }
@@ -197,7 +197,7 @@ export function ThreadView({ workspaceId, threadId, active = true, floating = fa
   }, [workspaceId, threadId, messages, onOpenThread, onOpenMainMessage]);
 
   const openEntry = (entryId: string) => setEntry({ id: entryId, history: false });
-  const onThread = async (content: string) => { await send(content); };
+  const onThread = async (content: string, attachmentIds: string[]) => { await send(content, attachmentIds); };
   return (
     <section ref={root} className={floating ? "thread-window" : "thread-page"} data-thread-id={threadId}>
       <header className="thread-header">
@@ -210,7 +210,7 @@ export function ThreadView({ workspaceId, threadId, active = true, floating = fa
         {anchor && <div className="thread-anchor"><span>{t("thread.anchor")}</span><MessageItem message={anchor} onOpenEntry={openEntry} onQuote={setQuote} onEdited={setAnchor} onJump={jump} onOpenHistory={(id) => setEntry({ id, history: true })} /></div>}
         {messages.map((message) => <MessageItem key={message.id} message={message} onOpenEntry={openEntry} onQuote={setQuote} onEdited={(next) => setMessages((current) => current.map((item) => item.id === next.id ? next : item))} onJump={jump} onOpenHistory={(id) => setEntry({ id, history: true })} />)}
       </div>
-      <Composer onSend={(content) => send(content, quote)} quote={quote} onClearQuote={() => setQuote(null)} onThread={onThread} threadMode disabled={loadError || !thread} />
+      <Composer workspaceId={workspaceId} onSend={(content, attachmentIds) => send(content, attachmentIds, quote)} quote={quote} onClearQuote={() => setQuote(null)} onThread={onThread} threadMode disabled={loadError || !thread} />
       {entry && <div className="thread-entry"><EntryDetail key={`${entry.id}:${entry.history}`} workspaceId={workspaceId} entryId={entry.id} onClose={() => setEntry(null)} onOpenEntry={openEntry} onJumpToMessage={(id) => void jump(id)} initialTab={entry.history ? "history" : "content"} /></div>}
     </section>
   );
