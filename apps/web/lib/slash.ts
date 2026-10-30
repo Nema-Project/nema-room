@@ -1,12 +1,19 @@
 import { DIAGRAM_TYPES } from "@nema/shared";
 
-/** One row in the `/` menu. Diagram types are their own rows, `diagram:architecture`. */
+/**
+ * One row in the `/` menu. Diagram types are their own rows, `diagram:architecture`. A Skill row has
+ * `skill`; its `id` is `skill:<id>` so it never shares a row id with a built-in command.
+ */
 export type SlashItem = {
   id: string;
   hint: string;
   insert: string;
   type?: string;
+  skill?: { id: string; description: string; command: string };
 };
+
+/** A Skill the composer can offer (`GET /api/workspaces/:id/skills`). */
+export type SkillRow = { id: string; description: string; command: string };
 
 export const SLASH_ITEMS: readonly SlashItem[] = [
   { id: "thread", hint: "cmd.thread", insert: "cmd.thread.insert" },
@@ -39,6 +46,20 @@ export function slashToken(value: string, cursor: number): SlashToken | null {
 export function matchingCommands(query: string): SlashItem[] {
   const q = query.toLowerCase();
   return SLASH_ITEMS.filter((item) => item.id.startsWith(q));
+}
+
+/**
+ * Built-in commands first, then Skills. Skills come only when the `/` starts the whole message, and match
+ * on their command or id prefix, or anywhere in the description.
+ */
+export function matchingItems(query: string, o: { atMessageStart: boolean; skills: readonly SkillRow[]; threadMode: boolean }): SlashItem[] {
+  const commands = matchingCommands(query).filter((item) => !o.threadMode || item.id !== "thread");
+  if (!o.atMessageStart) return commands;
+  const q = query.toLowerCase();
+  const skills = o.skills
+    .filter((s) => s.command.slice(1).startsWith(q) || s.id.startsWith(q) || s.description.toLowerCase().includes(q))
+    .map((s) => ({ id: `skill:${s.id}`, hint: s.description, insert: `${s.command} `, skill: { id: s.id, description: s.description, command: s.command } }));
+  return [...commands, ...skills];
 }
 
 /** Replace the slash token with the command's prompt. */

@@ -104,6 +104,7 @@
   "composer.send": "送信 ⇧↵",
   "composer.sendFailed": "送信に失敗しました：{message}",
   "cmd.menu": "コマンド",
+  "cmd.skills": "Skills",
   "cmd.progress": "コードを根拠に進捗を聞く",
   "cmd.diagram.architecture": "アーキテクチャ",
   "cmd.diagram.workflow": "フロー",

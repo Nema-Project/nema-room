@@ -1000,6 +1000,32 @@ describe("ui api", () => {
     expect(again.trustSkills).toBe(false);
   });
 
+  test("GET skills asks the daemon with the trusted repositories; an older daemon means supported: false", async () => {
+    await db.query(
+      `insert into workspace_repos (id, workspace_id, path, git_common_dir, label, main_branch, has_origin, remote_url, trust_skills)
+       values ('repo_t', $1, '/src/web', '/src/web/.git', 'web', 'main', false, null, true),
+              ('repo_u', $1, '/src/api', '/src/api/.git', 'api', 'main', false, null, false)`,
+      [ws],
+    );
+    const calls: unknown[] = [];
+    const row = { id: "tdd", name: "tdd", description: "d", command: "/tdd", invocation: "model-and-user", runtimes: [], repoId: null };
+    let reply: () => Promise<unknown> = async () => [row];
+    const rpc: DaemonRpc = {
+      async call(method, params) {
+        calls.push([method, params]);
+        return reply();
+      },
+    };
+    app = createApp({ db, dataDir, nemaHome, events, daemonStatus: () => true, daemon: rpc, webOrigin: "http://localhost:3000" });
+    expect(await json(await req("GET", `/api/workspaces/${ws}/skills`))).toEqual({ supported: true, skills: [row] });
+    expect(calls).toEqual([["skills.catalog", { projectSkills: [{ repoId: "repo_t", label: "web", path: "/src/web", mainBranch: "main", gitCommonDir: "/src/web/.git" }] }]]);
+    reply = () => Promise.reject(new DaemonRpcError("未知方法 skills.catalog"));
+    expect(await json(await req("GET", `/api/workspaces/${ws}/skills`))).toEqual({ supported: false, skills: [] });
+    reply = () => Promise.reject(new DaemonRpcError("daemon 未连接"));
+    expect((await req("GET", `/api/workspaces/${ws}/skills`)).status).toBe(503);
+    expect((await req("GET", `/api/workspaces/nope/skills`)).status).toBe(404);
+  });
+
   test("binding the same git common dir twice is 409 even through a different path spelling", async () => {
     const alpha = await json(await req("POST", "/api/workspaces", { name: "Alpha" }));
     const beta = await json(await req("POST", "/api/workspaces", { name: "Beta" }));

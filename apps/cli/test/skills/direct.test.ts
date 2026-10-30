@@ -41,3 +41,36 @@ test("a trusted repository's Skill is in the catalog and read from git", async (
   const out = await skills.reader!.read(JSON.stringify({ name: "deploy" }));
   expect(out).toMatch(/^<skill_content name="deploy" revision="web@[0-9a-f]{7}">\n# Deploy\n/);
 });
+
+test("a Skill called by hand: body first, before the thread's, readable though the model may not pick it, one load reported", async () => {
+  base = realpathSync(mkdtempSync(join(tmpdir(), "nema-direct-skills-")));
+  const nemaHome = join(base, "nema");
+  managedSkill(nemaHome, "deploy", { "SKILL.md": skillText("deploy", "Ship.", "Deploy $ARGUMENTS now.\n", "disable-model-invocation: true\n") });
+  managedSkill(nemaHome, "tdd", { "SKILL.md": skillText("tdd") });
+  const reported: string[] = [];
+  const skills = await prepareDirectSkills({
+    nemaHome,
+    prompt: "P",
+    manual: { skillId: "deploy", arguments: "web" },
+    retained: ["tdd", "deploy"],
+    onEvent: () => {},
+    onActivated: async (id) => void reported.push(id),
+  });
+  const text = skills.instructions;
+  expect(text).not.toContain("<name>deploy</name>");
+  expect(text).toContain("Deploy web now.");
+  expect(text.indexOf("# 用户调用的 Skill")).toBeGreaterThan(text.indexOf("<skill><name>tdd</name>"));
+  expect(text.indexOf("# 用户调用的 Skill")).toBeLessThan(text.indexOf("# 已载入的 Skills"));
+  expect(text.split('<skill_content name="deploy"').length - 1).toBe(1);
+  expect(skills.tools[0]!.parameters).toMatchObject({ properties: { name: { enum: ["tdd", "deploy"] } } });
+  expect(await skills.reader!.read(JSON.stringify({ name: "deploy" }))).toBe("Skill deploy 的这一部分已经载入，见前文。");
+  expect(await skills.reader!.settleReports(1000)).toEqual({ timedOut: false, failed: 0 });
+  expect(reported).toEqual(["deploy"]);
+});
+
+test("a Skill called by hand that is not there leaves a note; with no other Skill the prompt only gains that", async () => {
+  base = realpathSync(mkdtempSync(join(tmpdir(), "nema-direct-skills-")));
+  const skills = await prepareDirectSkills({ nemaHome: join(base, "nema"), prompt: "P", manual: { skillId: "nope", arguments: "" }, onEvent: () => {} });
+  expect(skills.instructions).toBe("P\n\n# 用户调用的 Skill\n用户调用的 Skill /nope 不存在或已停用。在回复里说明这一点。");
+  expect(skills.tools).toEqual([]);
+});

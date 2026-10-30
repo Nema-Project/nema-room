@@ -4,6 +4,7 @@ import { loadConfig, type NemaConfig } from "../config.js";
 import { CodexDirectAdapter } from "../direct/adapter.js";
 import { GithubGh, type GithubReader } from "../github/gh.js";
 import { registerExtensionHandlers } from "../extensions/handlers.js";
+import { registerSkillHandlers } from "../skills/rpc.js";
 import { graphifyInstallStatus, type GraphifyOpts } from "../repos/graphify.js";
 import { registerRepoHandlers } from "../repos/handlers.js";
 import { parseReposSync, RepoWatcher } from "../repos/watcher.js";
@@ -86,6 +87,7 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
     prepareRepo: (repoId, taskId) => watcher.prepare(repoId, taskId),
   });
   registerAttachmentHandlers(rpc, o.nemaHome, o.getConfig);
+  registerSkillHandlers(rpc, o.nemaHome);
   rpc.register("repos.sync", async (params) => {
     watcher.setRepos(parseReposSync(params));
     return { ok: true };

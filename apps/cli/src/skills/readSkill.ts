@@ -124,6 +124,12 @@ export class SkillReader {
     this.seen.add(`${id}\0\0${0}`);
   }
 
+  /** A Skill whose body reached the prompt another way (called by hand): one load, reported like a read. */
+  activated(skill: SnapshotSkill): void {
+    this.markLoaded(skill.id);
+    trackReport(this.pending, Promise.resolve().then(() => this.o.onActivated(skill.id, skill.revision)));
+  }
+
   /** Waits for activation reports to finish, up to `timeoutMs`; false when some were still running. */
   async settle(timeoutMs: number): Promise<boolean> {
     return !(await this.settleReports(timeoutMs)).timedOut;

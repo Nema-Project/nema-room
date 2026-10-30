@@ -5,11 +5,13 @@ import type { AttachmentView } from "@nema/shared";
 import { Composer } from "@/components/Composer";
 import * as hub from "@/lib/hub";
 import { I18nProvider } from "@/lib/i18n";
+import { resetSkillMenuCache } from "@/lib/skillMenu";
 
 vi.mock("@/lib/hub", () => ({
   uploadAttachment: vi.fn(),
   deleteAttachment: vi.fn(),
   attachmentCapabilities: vi.fn(),
+  listSkills: vi.fn(),
   HubError: class HubError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -413,5 +415,80 @@ describe("Composer attachments", () => {
     await userEvent.upload(picker(), files);
     expect((await screen.findByRole("alert")).textContent).toContain("p8.png");
     await vi.waitFor(() => expect(hub.uploadAttachment).toHaveBeenCalledTimes(8));
+  });
+});
+
+describe("Composer Skills menu", () => {
+  const rows = [
+    { id: "tdd", name: "tdd", description: "Write the test first.", command: "/tdd", invocation: "model-and-user", repoId: null },
+    { id: "thread", name: "thread", description: "Shares a built-in name.", command: "/skill:thread", invocation: "model-and-user", repoId: null },
+  ];
+  beforeEach(() => {
+    resetSkillMenuCache();
+    vi.mocked(hub.attachmentCapabilities).mockResolvedValue({ adapter: "codex-direct", image: "native", pdf: "native", text: "text" });
+    vi.mocked(hub.listSkills).mockResolvedValue({ supported: true, skills: rows });
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:preview"), revokeObjectURL: vi.fn() }));
+  });
+  afterEach(() => {
+    vi.mocked(hub.listSkills).mockReset();
+    vi.mocked(hub.attachmentCapabilities).mockReset();
+    vi.mocked(hub.uploadAttachment).mockReset();
+    vi.unstubAllGlobals();
+  });
+  const mountWs = async (onSend = vi.fn().mockResolvedValue(undefined), onThread?: (c: string, ids: string[]) => Promise<void>) => {
+    render(<I18nProvider><Composer workspaceId="w1" onSend={onSend} onThread={onThread} /></I18nProvider>);
+    await act(async () => {});
+    return onSend;
+  };
+
+  it("offers Skills after the commands when / starts the message, and inserts the command", async () => {
+    await mountWs();
+    await userEvent.type(box(), "/td");
+    expect(screen.getByText("Skills")).toBeTruthy();
+    await userEvent.click(screen.getByRole("option", { name: /\/tdd/ }));
+    expect(box().value).toBe("/tdd ");
+    expect(hub.listSkills).toHaveBeenCalledWith("w1");
+  });
+
+  it("a Skill with a built-in name sits under Skills as /skill:name; Enter on the command still picks the command", async () => {
+    const onThread = vi.fn().mockResolvedValue(undefined);
+    await mountWs(vi.fn().mockResolvedValue(undefined), onThread);
+    await userEvent.type(box(), "/thread");
+    const options = screen.getAllByRole("option").map((o) => o.textContent);
+    expect(options[0]).toMatch(/^\/thread/);
+    expect(options[1]).toMatch(/^\/skill:thread/);
+    await userEvent.click(screen.getAllByRole("option")[1]!);
+    expect(box().value).toBe("/skill:thread ");
+  });
+
+  it("on a later line only the built-in commands show", async () => {
+    await mountWs();
+    await userEvent.type(box(), "hello{Enter}/td");
+    expect(screen.queryByRole("option", { name: /\/tdd/ })).toBeNull();
+  });
+
+  it("an older daemon leaves only the built-in commands", async () => {
+    vi.mocked(hub.listSkills).mockResolvedValue({ supported: false, skills: [] });
+    await mountWs();
+    await userEvent.type(box(), "/");
+    expect(screen.queryByText("Skills")).toBeNull();
+    expect(screen.getByRole("option", { name: /\/thread/ })).toBeTruthy();
+  });
+
+  it("/tdd with an attachment sends both; an upload in flight still holds it back", async () => {
+    let finish!: (v: AttachmentView) => void;
+    vi.mocked(hub.uploadAttachment).mockImplementation(() => new Promise((r) => (finish = r)));
+    const onSend = await mountWs();
+    await userEvent.type(box(), "/td");
+    await userEvent.keyboard("{Enter}");
+    await userEvent.type(box(), "write it");
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], "shot.png", { type: "image/png" });
+    await userEvent.upload(screen.getByLabelText("Choose files to attach") as HTMLInputElement, file);
+    await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(onSend).not.toHaveBeenCalled();
+    await act(async () => finish({ id: "att1", kind: "image", mime: "image/png", name: "shot.png", size: file.size, sha256: "a".repeat(64), messageId: null, status: "staged", deletedAt: null }));
+    await vi.waitFor(() => expect((screen.getByRole("button", { name: /Send/ }) as HTMLButtonElement).disabled).toBe(false));
+    await userEvent.click(screen.getByRole("button", { name: /Send/ }));
+    expect(onSend).toHaveBeenCalledWith("/tdd write it", ["att1"]);
   });
 });

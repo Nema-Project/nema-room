@@ -355,7 +355,7 @@ type SkillNote = "model-override" | "stop-not-enforced" | "reserved-slash-name";
 
 ### 9. `/skill-name` 手动调用（D-5 选 B）
 
-**怎么识别。** 用户消息的正文去掉开头空白后，如果第一个词是 `/` 加对外 id（`^/[a-z0-9][a-z0-9:-]*`），后面是空白或结尾，就算手动调用。之后的文字是参数。
+**怎么识别。** 用户消息的正文去掉开头空白后，如果第一个词是 `/` 加对外 id（`^/[a-z0-9][a-z0-9:-]*`），或 `/skill:` 加对外 id，后面是空白或结尾，就算手动调用。之后的文字是参数。不带前缀时保留名不算（见下面「保留名」）。
 
 - 写在正文中间的 `/name` 不算。
 - 想发一条以斜杠开头、但不是调用的消息，在 `/` 前加任意非空白字符即可（例如写成 `「/x」`）。
@@ -373,8 +373,8 @@ type SkillNote = "model-override" | "stop-not-enforced" | "reserved-slash-name";
 **和内置 `/` 命令共存。** 输入框已有 `/` 菜单（见「补充现状」），Skill 加进同一个菜单，不另做一个：
 
 - 菜单分两组：「命令」（内置，照旧）和「Skills」。「Skills」组只在 `/` 位于整条消息开头（前面只有空白）时出现；在其他行的行首，只有内置命令。
-- 选中内置命令，行为不变（换成提示文字）。选中 Skill，填入 `/<id> `，光标停在后面，可以接着写参数。
-- **保留名：** `thread`、`progress`、`update` 和以 `diagram:` 开头的名字留给内置命令。对外 id 与保留名相同的 Skill 不进菜单，hub 也不把这样的消息识别为手动调用，所以 `/thread <文字>` 仍然开 thread。这类 Skill 模型仍可以自己读取，插件页在它那一行写「与内置命令重名，不能用 / 调用」。仓库标签 slug 为 `diagram` 的仓库，其项目级 Skill 的前缀改用 `repo-diagram:`。
+- 选中内置命令，行为不变（换成提示文字）。选中 Skill，填入 `/<id> `（重名的是 `/skill:<id> `），光标停在后面，可以接着写参数。
+- **保留名和 `/skill:` 前缀（2026-10-31 用户决定）：** `thread`、`progress`、`update` 和以 `diagram:` 开头的名字留给内置命令，内置命令优先，所以 `/thread <文字>` 仍然开 thread。`skill:` 本身也是保留前缀：`/skill:<对外 id>` 总是调用 Skill，包括与内置命令重名的。与内置命令重名的 Skill 在菜单的「Skills」组里显示为 `/skill:名字`，选中填入 `/skill:名字 `；插件页在它那一行写「用 /skill:<id> 调用」。其他 Skill 照常用 `/名字`，也接受 `/skill:名字`。项目级 Skill 写作 `/<仓库 slug>:名字`，也可以写 `/skill:<仓库 slug>:名字`。仓库标签 slug 为 `diagram` 或 `skill` 的仓库，其项目级 Skill 的前缀改用 `repo-diagram:`、`repo-skill:`。`@` 不用于 Skill，留给 mentions（#136）。
 - 前端菜单和 hub 的识别用 `packages/shared` 导出的同一份保留名清单。
 
 **补全。**

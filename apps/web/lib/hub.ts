@@ -160,6 +160,9 @@ export const bindRepo = (id: string, body: { path: string; label: string; mainBr
   request<Repo>(`${w(id)}/repos`, { method: "POST", body });
 export const updateRepo = (id: string, repoId: string, patch: { label?: string; mainBranch?: string; trustSkills?: boolean }) =>
   request<Repo>(`${w(id)}/repos/${encodeURIComponent(repoId)}`, { method: "PATCH", body: patch });
+/** Skills the composer's `/` menu can offer; `supported: false` when the daemon is too old to say. */
+export const listSkills = (id: string) =>
+  request<{ supported: boolean; skills: Array<{ id: string; name: string; description: string; command: string; invocation: string; repoId: string | null }> }>(`${w(id)}/skills`);
 export const unbindRepo = (id: string, repoId: string) => request<void>(`${w(id)}/repos/${encodeURIComponent(repoId)}`, { method: "DELETE" });
 export const listWorkspacePlugins = (id: string) => request<WorkspacePlugin[]>(`${w(id)}/plugins`);
 export const updateWorkspacePlugin = (id: string, pluginId: string, patch: { enabled?: boolean; disabledFunctions?: string[]; settings?: Record<string, unknown> }) =>

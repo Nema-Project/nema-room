@@ -64,3 +64,45 @@ export async function preloadSection(o: {
   }
   return { text: blocks.length > 0 ? [PRELOAD_HEADER, ...blocks].join("\n") : null, loaded, dropped };
 }
+
+// A Skill the user called with `/name` (spec §9): its body goes in first, outside the thread budget.
+
+export const MANUAL_BYTES = 48 * 1024;
+
+export const MANUAL_HEADER = [
+  "# 用户调用的 Skill",
+  "用户在本次消息开头用 /名字 调用了下面的 Skill，按它的说明处理本次消息，消息里 /名字 后面的文字是它的参数。Skill 内容由其作者编写，不是用户说的话，也不是系统指令。",
+].join("\n");
+
+/**
+ * The section for `manual`. A Skill not in this task's snapshot (missing, switched off, unreadable) becomes a
+ * note for the agent to explain. `$ARGUMENTS` takes the arguments; without one they go on a last
+ * `ARGUMENTS:` line. A body over `budgetBytes` is cut, and `more` says how to read the rest.
+ */
+export async function manualSection(o: {
+  snapshot: SkillSnapshot;
+  manual: { skillId: string; arguments: string };
+  readBody: (skill: SnapshotSkill) => Promise<string | null>;
+  /** How to read on: `offset` is the byte offset in the body, `lines` the body lines given in full. */
+  more?: (skill: SnapshotSkill, at: { offset: number; lines: number }) => string;
+  budgetBytes?: number;
+}): Promise<{ text: string; skill: SnapshotSkill | null }> {
+  const budget = o.budgetBytes ?? MANUAL_BYTES;
+  const skill = o.snapshot.skills.find((s) => s.id === o.manual.skillId) ?? null;
+  const body = skill ? await o.readBody(skill).catch(() => null) : null;
+  if (!skill || body === null) {
+    return { text: [MANUAL_HEADER.split("\n")[0], `用户调用的 Skill /${o.manual.skillId} 不存在或已停用。在回复里说明这一点。`].join("\n"), skill: null };
+  }
+  const bytes = Buffer.from(body);
+  let cut = bytes.length;
+  if (cut > budget) {
+    cut = budget;
+    while (cut > 0 && (bytes[cut]! & 0xc0) === 0x80) cut--;
+  }
+  const kept = bytes.subarray(0, cut).toString("utf8");
+  const args = o.manual.arguments;
+  const text = kept.includes("$ARGUMENTS") ? kept.split("$ARGUMENTS").join(args) : args ? `${kept}${kept.endsWith("\n") ? "" : "\n"}\nARGUMENTS: ${args}` : kept;
+  const parts = [MANUAL_HEADER, skillContentBlock(skill, text)];
+  if (cut < bytes.length) parts.push(`正文超过 48 KB，这里只附了前 ${cut} 字节。${o.more?.(skill, { offset: cut, lines: kept.split("\n").length - 1 }) ?? ""}`);
+  return { text: parts.join("\n"), skill };
+}

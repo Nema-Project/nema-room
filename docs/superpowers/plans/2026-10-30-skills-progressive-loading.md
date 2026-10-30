@@ -28,7 +28,7 @@
 - **Claude Code 设置文件内容固定为**：`{"permissions":{"blockReadsOutsideWorkingDirectories":true,"deny":["Read(//**/.git/**)"]},"disableSkillShellExecution":true,"disableAllHooks":true}`，文件 0600，放在 `<runDir>/claude-settings.json`。
 - **大小限制：** codex-direct 目录 8000 字符；`read_skill` 每次 48 KB，每任务合计 512 KB；单文件 1 MiB，SKILL.md 256 KB；资源清单 200 项、深度 4；Claude Code 副本每任务 50 MiB；thread 留存预载 32 KB；手动调用正文超过 48 KB 截断；项目级 Skill 每个最多 500 个文件、单文件 5 MiB、合计 20 MiB。
 - **Skill 名：** 规范规则：1-64 字符，`[a-z0-9-]`，不以连字符开头或结尾，没有连续连字符。对外 id 字符集 `[a-z0-9:-]`。
-- **保留名：** `thread`、`progress`、`update`、以 `diagram:` 开头的名字。前端和 hub 用 `packages/shared` 导出的同一个常量。
+- **保留名：** `thread`、`progress`、`update`、以 `diagram:` 开头的名字，以及 `skill:` 前缀。前端和 hub 用 `packages/shared` 导出的同一个常量。`/skill:<id>` 总是调用 Skill（2026-10-31 用户决定，见 spec §9）。
 - **协议兼容：** `task.assign` 新字段 `projectSkills`、`retainedSkills`、`manualSkill` 都是可选的；不改 `task.event` 的类型枚举。旧 hub 对 `POST /room/skills/activated` 回 404 时，daemon 忽略。
 - **测试不联网**，只用临时 `nemaHome`、临时 git 仓库、假 Skill 目录和录好的 `stream-json` 夹具，不启动真实 Claude Code，不碰真实的 `~/.claude`。
 - **避让：** 不改 `apps/cli/src/extensions/mcp*.ts`、`apps/cli/src/extensions/mcp/`、附件文档。`apps/cli/src/extensions/handlers.ts` 只改 `extensions.list` 一处：S1.4 加 `skill` 字段，S2.2 只换其中一个参数的来源。
@@ -86,7 +86,7 @@
 | S3 thread 留存 | S1、S2 | 与 S4 并行 |
 | S4 页面显示、文案、文档 | S0 | 与 S1、S2、S3 并行 |
 | S5 项目级 Skill（D-4） | S2；排在 S3 后（同改 `protocol.ts`、`daemonSocket.ts`） | 与 S6 串行 |
-| S6 `/skill-name`（D-5） | S2；排在 S3 后（同上）；不依赖 S5 | 与 S5 串行 |
+| S6 `/名字`、`/skill:名字`（D-5） | S2；排在 S3 后（同上）；不依赖 S5 | 与 S5 串行 |
 | S7 真实环境验收 | 已合并的各批 | — |
 
 S5、S6 谁先做都可以；任何一个都可以单独顺延到 v0.2.0 之后，不影响另一个。每一批一个 PR，按顺序合并；可并行的批次各开一个 worktree。
@@ -109,9 +109,9 @@ S5、S6 谁先做都可以；任何一个都可以单独顺延到 v0.2.0 之后�
   - `type SkillGap = "scripts" | "shell-injection" | "allowed-tools" | "subagent" | "hooks" | "paths" | "binary-assets" | "skill-dir-variable" | "claude-code-too-old"`
   - `type SkillNote = "model-override" | "stop-not-enforced" | "reserved-slash-name"`
   - `type SkillUsage = { runtimes: Array<{ adapter: SkillAdapter; support: "full" | "partial" | "none"; missing: SkillGap[]; notes: SkillNote[] }>; compatibility: string | null; diagnostics: string[]; invocation: "model-and-user" | "user-only" | "model-only" }`
-  - `const RESERVED_SLASH_NAMES: readonly string[] = ["thread", "progress", "update"]` 和 `isReservedSlashName(id: string): boolean`（另含 `diagram:` 前缀判断）
+  - `const RESERVED_SLASH_NAMES: readonly string[] = ["thread", "progress", "update"]` 和 `isReservedSlashName(id: string): boolean`（另含 `diagram:`、`skill:` 前缀判断）；`skillSlashCommand(id)`：保留名返回 `/skill:<id>`，其他返回 `/<id>`（S6 加）
   - `isSkillName(name: string): boolean`：Global Constraints 里的规范规则
-  - `parseManualSkill(content: string): { skillId: string; arguments: string } | null`：去掉开头空白后匹配 `^/([a-z0-9][a-z0-9:-]*)(?:\s+([\s\S]*))?$`；保留名返回 `null`；`arguments` 去掉首尾空白
+  - `parseManualSkill(content: string): { skillId: string; arguments: string } | null`：去掉开头空白后匹配 `^/(skill:)?([a-z0-9][a-z0-9:-]*)(?:\s+([\s\S]*))?$`；不带 `skill:` 时保留名返回 `null`，带了总是 Skill；`arguments` 去掉首尾空白（S0 合并时还没有 `skill:`，S6 补上）
   - `task.assign` 新字段：`projectSkills?: Array<{ repoId: string; label: string; path: string; mainBranch: string }>`、`retainedSkills?: string[]`、`manualSkill?: { skillId: string; arguments: string }`
 
 - [ ] **Step 1: 写失败测试**：
@@ -548,7 +548,7 @@ Skills 段落和 hub 第 127 条规则的新文字照 spec §3 逐字写。
 
 ---
 
-## Batch S6：`/skill-name` 手动调用（D-5）
+## Batch S6：`/名字` 手动调用（D-5）
 
 可以单独顺延到 v0.2.0 之后；不依赖 S5。
 
@@ -593,7 +593,7 @@ Skills 段落和 hub 第 127 条规则的新文字照 spec §3 逐字写。
 
 **Interfaces:**
 - Produces:
-  - RPC `skills.catalog`，参数 `{ projectSkills?: Array<{ repoId; label; path; mainBranch }> }`，返回 `Array<{ id: string; name: string; description: string; invocation: SkillUsage["invocation"]; runtimes: SkillUsage["runtimes"]; repoId: string | null }>`；`user-invocable: false` 和保留名的不返回
+  - RPC `skills.catalog`，参数 `{ projectSkills?: Array<{ repoId; label; path; mainBranch }> }`，返回 `Array<{ id: string; name: string; description: string; command: string; invocation: SkillUsage["invocation"]; runtimes: SkillUsage["runtimes"]; repoId: string | null }>`；`user-invocable: false` 的不返回；每行带 `command`（`skillSlashCommand(id)`），保留名的写成 `/skill:<id>`
   - UI API 返回 `{ supported: boolean; skills: [...] }`；daemon 报「未知方法」时 `supported: false`、`skills: []`
 
 - [ ] **Step 1: 写失败测试**：RPC 过滤规则；带信任仓库时包含仓库 Skill；hub 遇到旧 daemon 返回 `supported: false`。
@@ -613,7 +613,7 @@ Skills 段落和 hub 第 127 条规则的新文字照 spec §3 逐字写。
 - Consumes: `isReservedSlashName`（S0.1）、`GET /api/workspaces/:id/skills`
 - Produces: `SlashItem` 加可选 `skill?: { id: string; description: string }`；`matchingItems(query: string, opts: { atMessageStart: boolean; skills: SkillRow[]; threadMode: boolean }): SlashItem[]`
 
-照 spec §9「和内置 `/` 命令共存」：Skills 组只在 `/` 位于整条消息开头时出现；选中 Skill 填 `/<id> `；内置命令行为不变；键盘沿用现有逻辑（普通 Enter 换行、Shift+Enter 发送、菜单打开时 Enter/Tab 选中、Esc 关闭）；列表 30 秒内复用；附件区和发送拦截不变。
+照 spec §9「和内置 `/` 命令共存」：Skills 组只在 `/` 位于整条消息开头时出现；选中 Skill 填它的 `command` 加空格（重名的是 `/skill:<id> `）；内置命令行为不变；键盘沿用现有逻辑（普通 Enter 换行、Shift+Enter 发送、菜单打开时 Enter/Tab 选中、Esc 关闭）；列表 30 秒内复用；附件区和发送拦截不变。
 
 - [ ] **Step 1: 写失败测试**：第一行输入 `/td` 出现 `tdd`；第二行行首只有内置命令；选中后正文是 `/tdd `；`/thread x` 仍开 thread；带附件和 `/tdd` 一起发送，`onSend` 收到正文和附件 id；附件上传中不能发送；`supported: false` 时只有内置命令。
 - [ ] **Step 2: 跑** `npx vitest run apps/web/test/Composer.test.tsx apps/web/test/slash.test.ts` → FAIL。
