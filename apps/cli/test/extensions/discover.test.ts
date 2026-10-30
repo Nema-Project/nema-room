@@ -192,3 +192,33 @@ test.skipIf(!canDenyReads)("a skill folder that cannot be entered is unreadable,
   expect(discoverSkills(home, bundledExtensions()).skills).toEqual([expect.objectContaining({ path: locked, problem: "unreadable" })]);
   expect(inspectSkillFolder(locked).problem).toBe("unreadable");
 });
+
+test.skipIf(!canDenyReads)("a linked skill folder whose target cannot be reached is listed as unreadable, not dropped", () => {
+  home = realpathSync(mkdtempSync(join(tmpdir(), "nema-discover-")));
+  const base = join(home, ".claude", "skills");
+  const target = skill(join(base, "vault", "notes"), "notes");
+  symlinkSync(target, join(base, "notes-link"), "dir");
+  chmodSync(join(base, "vault"), 0o000);
+  denied.push(join(base, "vault"));
+  symlinkSync(join(base, "gone"), join(base, "dangling"), "dir");
+  const rows = discoverSkills(home, bundledExtensions()).skills;
+  expect(rows.map((row) => [basename(row.path), row.problem])).toEqual([
+    ["notes-link", "unreadable"],
+    ["vault", "unreadable"],
+  ]);
+});
+
+test.skipIf(!canDenyReads)("a SKILL.md link whose target cannot be reached is unreadable, a dangling one is missing", () => {
+  home = realpathSync(mkdtempSync(join(tmpdir(), "nema-discover-")));
+  const folder = join(home, "linked");
+  mkdirSync(join(folder, "sub"), { recursive: true });
+  writeFileSync(join(folder, "sub", "real.md"), "---\nname: linked\ndescription: x\n---\n");
+  symlinkSync(join(folder, "sub", "real.md"), join(folder, "SKILL.md"), "file");
+  chmodSync(join(folder, "sub"), 0o000);
+  denied.push(join(folder, "sub"));
+  expect(inspectSkillFolder(folder).problem).toBe("unreadable");
+  const dangling = join(home, "dangling");
+  mkdirSync(dangling);
+  symlinkSync(join(dangling, "nowhere.md"), join(dangling, "SKILL.md"), "file");
+  expect(inspectSkillFolder(dangling).problem).toBe("missing-frontmatter");
+});

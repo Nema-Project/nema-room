@@ -75,8 +75,10 @@ export function inspectSkillFolder(folder: string): InspectedSkill {
   try {
     if (lstatSync(file).isSymbolicLink() && !inside(real, realpathSync(file))) return failed(real, "outside-location");
     if (!statSync(file).isFile()) return failed(real, "missing-frontmatter");
-  } catch {
-    return failed(real, "missing-frontmatter");
+  } catch (error) {
+    // A dangling link is a missing file; a target that exists but cannot be reached is unreadable.
+    const code = (error as NodeJS.ErrnoException).code;
+    return failed(real, code === "ENOENT" || code === "ENOTDIR" ? "missing-frontmatter" : "unreadable");
   }
   let text: string | null;
   try {
@@ -165,7 +167,12 @@ export function discoverSkills(home: string, records: ExtensionRecord[]): SkillD
       if (entry.isSymbolicLink()) {
         try {
           folder = realpathSync(full);
-        } catch {
+        } catch (error) {
+          // A dangling link is nothing to list; one whose target cannot be reached is listed, unread.
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === "ENOENT" || code === "ENOTDIR") continue;
+          if (skills.length >= MAX_DISCOVERED_SKILLS) { truncated = true; break; }
+          skills.push({ path: full, location: location.label, name: null, description: null, id: null, attached: false, problem: "unreadable" });
           continue;
         }
         if (!inside(root, folder)) {

@@ -43,9 +43,14 @@ export type ExtensionRecord = {
   mcp?: McpRecordState;
 };
 
-/** A Repair check time as the daemon writes it: an ISO 8601 UTC timestamp that parses as a date. */
+/**
+ * A Repair check time exactly as the daemon writes it (`Date#toISOString()`): it has to survive a
+ * round trip, which rules out impossible dates such as February 30 that `Date.parse` would roll over.
+ */
 export function isCheckTime(value: unknown): value is string {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(value) && !Number.isNaN(Date.parse(value));
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+  const time = Date.parse(value);
+  return !Number.isNaN(time) && new Date(time).toISOString() === value;
 }
 
 /** Why a skill folder on this computer cannot be attached. */
