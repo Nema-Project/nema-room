@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { CLAUDE_ROOM_TOOLS } from "../../src/claude/launch.js";
-import { parseClaudeLine, roomToolsOk } from "../../src/claude/events.js";
+import { parseClaudeLine, roomToolsOk, skillActivationFrom } from "../../src/claude/events.js";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const TOOL_FACE = "Claude 的工具面无法确认为只有 Room：";
 
@@ -52,7 +54,7 @@ describe("Claude Code stream-json judgment", () => {
       mcp_servers: [{ name: "room", status: "connected" }, { name: "other" }],
     });
 
-    expect(parseClaudeLine(line)).toEqual({
+    expect(parseClaudeLine(line)).toMatchObject({
       kind: "init",
       tools: ["mcp__room__list_entries", "Bash"],
       mcpServers: [{ name: "room", status: "connected" }, { name: "other", status: null }],
@@ -66,13 +68,13 @@ describe("Claude Code stream-json judgment", () => {
       mcp_servers: [{ name: "room", status: "connected" }],
     });
 
-    expect(parseClaudeLine(line)).toEqual({ kind: "init", tools: null, mcpServers: [{ name: "room", status: "connected" }] });
+    expect(parseClaudeLine(line)).toMatchObject({ kind: "init", tools: null, mcpServers: [{ name: "room", status: "connected" }] });
   });
 
   test("reads a missing mcp_servers field as null", () => {
     const line = JSON.stringify({ type: "system", subtype: "init", tools: [] });
 
-    expect(parseClaudeLine(line)).toEqual({ kind: "init", tools: [], mcpServers: null });
+    expect(parseClaudeLine(line)).toMatchObject({ kind: "init", tools: [], mcpServers: null });
   });
 
   test("treats an MCP server entry without a name as unconfirmed", () => {
@@ -83,7 +85,7 @@ describe("Claude Code stream-json judgment", () => {
       mcp_servers: [{ name: "room" }, { status: "connected" }],
     });
 
-    expect(parseClaudeLine(line)).toEqual({ kind: "init", tools: [], mcpServers: null });
+    expect(parseClaudeLine(line)).toMatchObject({ kind: "init", tools: [], mcpServers: null });
   });
 
   test("surfaces a disallowed tool that follows a Room tool in the same message", () => {
@@ -97,7 +99,7 @@ describe("Claude Code stream-json judgment", () => {
       },
     });
 
-    expect(parseClaudeLine(line)).toEqual({ kind: "tools", names: [CLAUDE_ROOM_TOOLS[0], "Bash"] });
+    expect(parseClaudeLine(line)).toMatchObject({ kind: "tools", names: [CLAUDE_ROOM_TOOLS[0], "Bash"] });
   });
 
   test("reads an assistant tool_use name", () => {
@@ -106,7 +108,7 @@ describe("Claude Code stream-json judgment", () => {
       message: { content: [{ type: "tool_use", name: "Bash", input: {} }] },
     });
 
-    expect(parseClaudeLine(line)).toEqual({ kind: "tools", names: ["Bash"] });
+    expect(parseClaudeLine(line)).toMatchObject({ kind: "tools", names: ["Bash"] });
   });
 
   test("returns every parallel tool_use name in one message", () => {
@@ -121,7 +123,7 @@ describe("Claude Code stream-json judgment", () => {
       },
     });
 
-    expect(parseClaudeLine(line)).toEqual({
+    expect(parseClaudeLine(line)).toMatchObject({
       kind: "tools",
       names: [CLAUDE_ROOM_TOOLS[2], CLAUDE_ROOM_TOOLS[2], CLAUDE_ROOM_TOOLS[1]],
     });
@@ -147,7 +149,7 @@ describe("Claude Code stream-json judgment", () => {
       },
     });
 
-    expect(parseClaudeLine(line)).toEqual({ kind: "tools", names: ["Bash"] });
+    expect(parseClaudeLine(line)).toMatchObject({ kind: "tools", names: ["Bash"] });
   });
 
   test("reads the final result string", () => {
@@ -173,5 +175,39 @@ describe("Claude Code stream-json judgment", () => {
 
   test("ignores events other than init, assistant text or tool, and result", () => {
     expect(parseClaudeLine(JSON.stringify({ type: "user", message: { content: [] } }))).toEqual({ kind: "ignore" });
+  });
+});
+
+describe("Skill lines", () => {
+  const lines = readFileSync(join(import.meta.dirname, "..", "fixtures", "claude-skill-stream.jsonl"), "utf8").trim().split("\n");
+
+  test("init carries the version and the Skill list", () => {
+    expect(parseClaudeLine(lines[0]!)).toMatchObject({ kind: "init", version: "2.1.309", skills: ["tdd", "pdf"] });
+    expect(parseClaudeLine(JSON.stringify({ type: "system", subtype: "init", tools: [] }))).toMatchObject({ version: null, skills: null });
+  });
+
+  test("Skill and Read calls keep their ids and inputs", () => {
+    expect(parseClaudeLine(lines[1]!)).toEqual({ kind: "tools", names: ["Skill"], uses: [{ id: "toolu_1", name: "Skill", input: { skill: "tdd" } }] });
+    expect(parseClaudeLine(lines[3]!)).toMatchObject({ uses: [{ id: "toolu_2", name: "Read", input: { file_path: "RUNDIR/work/.claude/skills/pdf/SKILL.md" } }] });
+  });
+
+  test("tool results say which call failed", () => {
+    expect(parseClaudeLine(lines[2]!)).toEqual({ kind: "results", results: [{ toolUseId: "toolu_1", isError: false }] });
+    expect(parseClaudeLine(lines[4]!)).toEqual({ kind: "results", results: [{ toolUseId: "toolu_2", isError: true }] });
+  });
+
+  test("skillActivationFrom matches ids, copy folders and SKILL.md reads, and guesses nothing", () => {
+    const dirs = new Map([
+      ["tdd", "/run/work/.claude/skills/tdd/SKILL.md"],
+      ["web-abc123:deploy", "/run/repo-skills/web-abc123/.claude/skills/deploy/SKILL.md"],
+    ]);
+    expect(skillActivationFrom({ name: "Skill", input: { skill: "tdd" } }, dirs)).toBe("tdd");
+    expect(skillActivationFrom({ name: "Skill", input: { command: "web-abc123:deploy" } }, dirs)).toBe("web-abc123:deploy");
+    expect(skillActivationFrom({ name: "Skill", input: { skill: "deploy" } }, dirs)).toBe("web-abc123:deploy");
+    expect(skillActivationFrom({ name: "Skill", input: { skill: "other" } }, dirs)).toBeNull();
+    expect(skillActivationFrom({ name: "Skill", input: { skill: "tdd", args: "x" } }, dirs)).toBeNull();
+    expect(skillActivationFrom({ name: "Skill", input: "tdd" }, dirs)).toBeNull();
+    expect(skillActivationFrom({ name: "Read", input: { file_path: "/run/work/.claude/skills/tdd/SKILL.md" } }, dirs)).toBe("tdd");
+    expect(skillActivationFrom({ name: "Read", input: { file_path: "/run/work/.claude/skills/tdd/notes.md" } }, dirs)).toBeNull();
   });
 });

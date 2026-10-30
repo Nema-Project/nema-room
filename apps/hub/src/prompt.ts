@@ -124,7 +124,7 @@ export function buildPrompt(input: {
   const files = (m: Message) => attachmentLines(m.attachments ?? [], delivered);
   const hasFiles = [userMessage, ...recent, ...(input.quotedMessage ? [input.quotedMessage] : [])].some((m) => (m.attachments ?? []).length > 0);
   const rules = [
-    "你只能通过名为 `room` 的 MCP 工具读写项目知识；不要读写本地文件，不要联网。",
+    "你只能通过名为 `room` 的 MCP 工具读写项目知识；除了 Skill 目录里的文件，不要读写本地文件，不要联网。",
     "你是这个项目的资深架构师 / copilot：像同事一样交流，可以反问、提出方案，也可以表达不同意见。",
     "只有用户明确陈述或明确决定的内容，以及 URL，才写入知识。疑问句式的想法（例如「你觉得…？」）和询问优缺点不是陈述，不要写入。闲聊、项目问题和 memo 检查直接回答，不要写入。用户说记在讨论里或留在 thread 里，是要求不写入知识。",
     "用户明确陈述或明确决定的内容必须写入，在主聊天和 thread 中都一样。疑问句式的想法和询问优缺点不是陈述，不要写入。每次 `upsert_entry` 都要填写 `sourceMessages`（至少包含本次用户消息 id）和 `reason`。",

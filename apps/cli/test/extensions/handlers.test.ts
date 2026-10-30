@@ -371,7 +371,7 @@ test("extensions.list says what each installed Skill can do under each runtime",
   const unreadable = managedSkill(dir, "gone", { "SKILL.md": skillText("gone") });
   rmSync(unreadable, { recursive: true, force: true });
   const router = new RpcRouter();
-  registerExtensionHandlers(router, dir);
+  registerExtensionHandlers(router, dir, { claudeSkillsOk: async () => true });
   const listed = await router.handle({ type: "rpc.request", id: "1", method: "extensions.list", params: {} });
   expect(listed.ok).toBe(true);
   if (!listed.ok) return;
@@ -383,4 +383,13 @@ test("extensions.list says what each installed Skill can do under each runtime",
   ]);
   expect(rows.find((row) => row.id === "gone")).not.toHaveProperty("skill");
   expect(rows.find((row) => row.id === "grill")).not.toHaveProperty("skill");
+
+  const old = new RpcRouter();
+  registerExtensionHandlers(old, dir, { claudeSkillsOk: async () => false });
+  const listedOld = await old.handle({ type: "rpc.request", id: "2", method: "extensions.list", params: {} });
+  const pdfOld = (listedOld.ok ? (listedOld.result as typeof rows) : []).find((row) => row.id === "pdf")!;
+  expect(pdfOld.skill?.runtimes.map((r) => [r.adapter, r.support, r.missing])).toEqual([
+    ["claude-code", "none", ["claude-code-too-old"]],
+    ["codex-direct", "partial", ["scripts"]],
+  ]);
 });

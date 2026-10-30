@@ -86,6 +86,10 @@ describe("buildPrompt", () => {
     expect(p).toContain("R-1 | requirement | active | 流式输出");
     expect(p).toMatch(/Q-4 \| question \| open \| 谁审批.*2/);
   });
+
+  test("the local-files rule leaves room for Skill folders", () => {
+    expect(base()).toContain("你只能通过名为 `room` 的 MCP 工具读写项目知识；除了 Skill 目录里的文件，不要读写本地文件，不要联网。");
+  });
   test("recent messages capped at 20 (latest kept)", () => {
     const recent = Array.from({ length: 30 }, (_, i) => msg(i, i % 2 ? "agent" : "user"));
     const p = base("follow", recent);
