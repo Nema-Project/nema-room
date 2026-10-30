@@ -14,6 +14,7 @@ import {
 } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
 import { ExternalSkillsPanel } from "./ExternalSkillsPanel";
+import { McpServerControls, McpServerForm } from "./McpServerPanel";
 import { SkillInstallPanel } from "./SkillInstallPanel";
 
 /** Where an install was started, so its progress line shows next to that button and nowhere else. */
@@ -62,6 +63,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
   const [extensions, setExtensions] = useState<ExtensionRecord[] | null>(null);
   const ids = useId();
   const [type, setType] = useState<TypeFilter>("all");
+  const [addingMcp, setAddingMcp] = useState(false);
   const [query, setQuery] = useState("");
   // Found folders that pass the filter and search; a match there is a match for "nothing matches".
   const [foundMatches, setFoundMatches] = useState(0);
@@ -117,6 +119,14 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
           return rest;
         }),
       );
+  };
+
+  // A saved MCP server is shown from the save's own answer, so a list read that fails afterwards
+  // does not hide it; the refresh then fills in its live state.
+  const savedMcp = (record: ExtensionRecord) => {
+    applied.current += 1;
+    setExtensions((rows) => (rows ? (rows.some((item) => item.id === record.id) ? rows.map((item) => (item.id === record.id ? record : item)) : [...rows, record]) : [record]));
+    void refresh();
   };
 
   const attached = (record: ExtensionRecord) => {
@@ -388,6 +398,9 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
                   </button>
                 )}
               {jobLine(extension.id, "list")}
+              {extension.kind === "mcp" && extension.provision === "managed" && extension.installState === "installed" && (
+                <McpServerControls extension={extension} onChanged={(saved) => (saved ? savedMcp(saved) : void refresh())} />
+              )}
               {plugin && plugin.functions.length > 0 && (
                 <ul>
                   {plugin.functions.map((fn) => (
@@ -442,6 +455,20 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
           <h2 id={`${ids}-discover`}>{t("extensions.section.discover")}</h2>
           <SkillInstallPanel onInstall={install} busy={(id) => busy.has(id)} status={(id) => jobLine(id, "panel")} />
           <ExternalSkillsPanel records={extensions} onAttached={attached} type={type} query={query} onMatches={setFoundMatches} />
+          {(type === "all" || type === "mcp") &&
+            (addingMcp ? (
+              <McpServerForm
+                onSaved={(record) => {
+                  setAddingMcp(false);
+                  savedMcp(record);
+                }}
+                onCancel={() => setAddingMcp(false)}
+              />
+            ) : (
+              <button type="button" className="sp" onClick={() => setAddingMcp(true)}>
+                {t("mcp.action.add")}
+              </button>
+            ))}
           {discoverable.map(renderRow)}
         </section>
       </div>
