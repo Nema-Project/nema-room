@@ -49,6 +49,25 @@
 
 另外一条已核对的约束：`claude-code` 运行时关掉了 Read 等内置工具。把文件写进工作目录、只给 agent 一个路径，对它没用，除非放开 Read，而放开 Read 会扩大 agent 能碰的范围，和现在「只给 Room 工具」的做法相反。
 
+### 真实模型验收记录（B8，2026-10-30）
+
+只有一种配置跑了真实模型：`codex-direct` + `byok`，`byokBaseUrl` 为 `https://openrouter.ai/api/v1`，OpenRouter 上带 `:free` 的多模态模型。做法、样本和逐次结果见[验收清单](../../reviews/2026-10-30-attachments-model-acceptance.md)。其余组合没有可用凭据（执行环境没有 Claude Code、Codex CLI、`~/.codex/auth.json`、OpenAI key，用户的两台桌面电脑离线），一项都没测，保持原状。
+
+上表「依据」一栏里的「本机装了 Claude Code 2.1.314」「本机装了 `codex-cli 0.166.0`」是写设计时那台电脑的情况，不是这次验收的环境。
+
+| 组合 | 图片 | PDF | 文本 | 依据 |
+| --- | --- | --- | --- | --- |
+| `claude-code` | `native` | `unknown`（拒绝） | `text` | 图片按官方 stream-json 示例；PDF 没有文档说明 stream-json 会转交 `document` 块。未实测 |
+| `codex-direct` + `siwc` | `native` | `native` | `text` | 按 Responses API 文档。未实测 |
+| `codex-direct` + `byok`，默认地址 | `native` | `native` | `text` | 与 `siwc` 同一个官方端点。未实测 |
+| `codex-direct` + `byok`，`https://openrouter.ai/api/v1` | 实测通过 | 读到了，但收费：保持 `unknown`（拒绝） | 实测通过（按文字发送） | 2026-10-30，`nvidia/nemotron-3.5-super-vl:free`，回复逐字给出只在文件里的暗号；`google/gemma-4-31b-it:free` 每次都 429。只有图片一格单独开 PR 改 |
+| `codex-direct` + `byok`，其他地址 | `unknown`（拒绝） | `unknown`（拒绝） | `text` | 取决于提供方 |
+| `codex-direct` + `compat` | `unknown`（拒绝） | `unknown`（拒绝） | `text` | 非公开后端；OpenRouter 的 key 用不了 `compat`。未实测 |
+
+OpenRouter 的 PDF：Nema 发的是 `input_file`（`file_data` 为 base64 data URL）。所用模型在 OpenRouter 的模型列表里没有列 `file` 输入。按 [OpenRouter 的 PDF 文档](https://openrouter.ai/docs/guides/overview/multimodal/pdfs)，模型不能原生读文件、请求又没指定 `file-parser` 引擎时，OpenRouter 默认用 `mistral-ocr` 在服务端解析，每 1000 页收 2 美元，BYOK 也照收，记在 OpenRouter 账户上。验收后查这把 key 的用量（`GET /api/v1/key`）：当天 `usage` 为 0.014 美元，与 nemotron 收到的 7 份单页 PDF 按 0.002 美元一页正好相符（推断：这个接口不给逐次明细），图片和文本都走免费模型。所以模型虽然读到了 PDF 里的暗号，但它读到的是 OpenRouter 付费 OCR 的结果，不是模型原生读 PDF，而且每次都会悄悄扣费。按 D-2 A 的本意（用户知道 agent 实际看到什么，不出意外），PDF 这一格保持 `unknown`、运行前拒绝。以后若要放开，应在请求里显式指定免费的 `cloudflare-ai` 引擎或只对能原生读文件的模型放开，并重新实测。结论只适用于这个地址和类似的视觉模型；不支持图片的模型会在提供方那里失败。
+
+需要用户提供凭据或环境才能补测：`claude-code`（本机 `claude` + `claude setup-token` + `nema auth claude`；PDF 的结果决定 `native` 还是 `unsupported`）、`siwc`（`nema auth login`）、默认地址的 `byok`（OpenAI API key）、`compat`（已登录 Codex CLI 的 `~/.codex/auth.json`）、其他 `byok` 提供方（逐个地址）。做法同验收清单。
+
 ## 范围
 
 做：
