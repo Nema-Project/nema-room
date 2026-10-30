@@ -14,9 +14,12 @@ import { useT } from "@/lib/i18n";
  */
 export function SkillInstallPanel({
   onInstall,
+  busy,
   status,
 }: {
   onInstall: (request: { source: string; commit: string; path: string }, id: string) => void;
+  /** An install request for this id is in flight, so its button waits for the answer. */
+  busy: (id: string) => boolean;
   /** The current install line for a skill id, or null when nothing has been started for it. */
   status: (id: string) => ReactNode;
 }) {
@@ -32,6 +35,8 @@ export function SkillInstallPanel({
     if (!trimmed || loading) return;
     setLoading(true);
     setError(null);
+    // The old preview stops being installable the moment another read starts.
+    setPreview(null);
     resolveExtensionSource(trimmed)
       .then((result) => setPreview({ source: trimmed, result }))
       .catch((e: unknown) => {
@@ -47,7 +52,11 @@ export function SkillInstallPanel({
       <form className="field" onSubmit={submit}>
         <label>
           <span className="label">{t("extensions.add.label")}</span>
-          <input type="text" value={source} placeholder={t("extensions.add.placeholder")} onChange={(e) => setSource(e.target.value)} disabled={loading} />
+          <input type="text" value={source} placeholder={t("extensions.add.placeholder")} onChange={(e) => {
+              setSource(e.target.value);
+              // A preview belongs to the text it was read from; editing the text withdraws it.
+              setPreview(null);
+            }} disabled={loading} />
         </label>
         <button type="submit" className="sp" disabled={loading || !source.trim()}>
           {loading ? t("extensions.add.previewing") : t("extensions.add.preview")}
@@ -83,6 +92,7 @@ export function SkillInstallPanel({
                         <button
                           type="button"
                           className="sp"
+                          disabled={busy(skill.id!)}
                           onClick={() => onInstall({ source: preview.source, commit: preview.result.commit, path: skill.path }, skill.id!)}
                         >
                           {t("extensions.add.install")}

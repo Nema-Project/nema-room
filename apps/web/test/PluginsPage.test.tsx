@@ -436,7 +436,14 @@ describe("installing a skill from the page", () => {
     vi.mocked(hub.getExtensionInstall).mockResolvedValueOnce(job("running", 2)).mockResolvedValue(job("installed", 3));
     await previewSource();
     const installed = row({ id: "pdf", name: "pdf", kind: "skill", provision: "managed" });
-    vi.mocked(hub.listExtensions).mockResolvedValue([...catalog, installed]);
+    // The refresh when the job starts still sees the old list; only the one after it ends has the skill.
+    let finished = false;
+    vi.mocked(hub.getExtensionInstall).mockReset();
+    vi.mocked(hub.getExtensionInstall).mockResolvedValueOnce(job("running", 2)).mockImplementation(async () => {
+      finished = true;
+      return job("installed", 3);
+    });
+    vi.mocked(hub.listExtensions).mockImplementation(async () => (finished ? [...catalog, installed] : catalog));
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Install" }));
     });
@@ -484,5 +491,92 @@ describe("installing a skill from the page", () => {
     expect(hub.retryExtensionInstall).toHaveBeenCalledWith("pdf");
     await waitFor(() => expect(hub.getExtensionInstall).toHaveBeenCalledWith("pdf"));
     expect(await screen.findByText("Install finished")).toBeTruthy();
+  });
+
+  it("drops a preview as soon as the source is edited, so Install can only use what is shown", async () => {
+    vi.mocked(hub.resolveExtensionSource).mockResolvedValue(preview);
+    await previewSource();
+    expect(screen.getByRole("button", { name: "Install" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("GitHub repository or skills.sh link"), { target: { value: "https://github.com/other/skills" } });
+    expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+    expect(screen.queryByText("Pinned to commit 0123456")).toBeNull();
+  });
+
+  it("sends one install per click burst and disables the button until the daemon answers", async () => {
+    vi.mocked(hub.resolveExtensionSource).mockResolvedValue(preview);
+    let answer: (value: ReturnType<typeof job>) => void = () => {};
+    vi.mocked(hub.installExtension).mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    vi.mocked(hub.getExtensionInstall).mockResolvedValue(job("installed", 3));
+    await previewSource();
+    const button = screen.getByRole("button", { name: "Install" }) as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(button);
+      fireEvent.click(button);
+    });
+    expect(button.disabled).toBe(true);
+    expect(hub.installExtension).toHaveBeenCalledTimes(1);
+    await act(async () => answer(job("running")));
+    expect(await screen.findByText("Install finished")).toBeTruthy();
+  });
+
+  it("picks up an install that was already running when the page opened", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([...catalog, row({ id: "pdf", name: "pdf", kind: "skill", provision: "managed", installState: "installing" })]);
+    vi.mocked(hub.getExtensionInstall).mockResolvedValueOnce(job("running", 1)).mockReturnValue(new Promise(() => {}));
+    renderPage();
+    const block = (await screen.findByRole("heading", { name: "pdf", level: 2 })).closest("section")!;
+    expect(await within(block).findByText("Installing 1/3")).toBeTruthy();
+    expect(within(block).getByRole("button", { name: "Cancel install" })).toBeTruthy();
+  });
+
+  it("keeps polling after a status request fails once", async () => {
+    vi.mocked(hub.resolveExtensionSource).mockResolvedValue(preview);
+    vi.mocked(hub.installExtension).mockResolvedValue(job("running"));
+    vi.mocked(hub.getExtensionInstall).mockRejectedValueOnce(new Error("daemon 响应超时")).mockResolvedValue(job("installed", 3));
+    await previewSource();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Install" }));
+    });
+    expect(await screen.findByText("Install finished")).toBeTruthy();
+  });
+
+  it("does not let an older list answer overwrite a newer one", async () => {
+    vi.mocked(hub.resolveExtensionSource).mockResolvedValue(preview);
+    vi.mocked(hub.installExtension).mockResolvedValue(job("running"));
+    vi.mocked(hub.getExtensionInstall).mockResolvedValue(job("installed", 3));
+    await previewSource();
+    const installed = row({ id: "pdf", name: "pdf", kind: "skill", provision: "managed" });
+    let first: (rows: ExtensionRecord[]) => void = () => {};
+    vi.mocked(hub.listExtensions)
+      .mockReturnValueOnce(new Promise((resolve) => { first = resolve; }))
+      .mockResolvedValue([...catalog, installed]);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Install" }));
+    });
+    expect(await screen.findByRole("heading", { name: "pdf", level: 2 })).toBeTruthy();
+    // The refresh started with the job answers last, with the list from before the install.
+    await act(async () => first(catalog));
+    expect(screen.getByRole("heading", { name: "pdf", level: 2 })).toBeTruthy();
+  });
+
+  it("refreshes again until a cancelled install is no longer recorded as installing", async () => {
+    vi.mocked(hub.resolveExtensionSource).mockResolvedValue(preview);
+    vi.mocked(hub.installExtension).mockResolvedValue(job("running"));
+    vi.mocked(hub.getExtensionInstall).mockReturnValue(new Promise(() => {}));
+    vi.mocked(hub.cancelExtensionInstall).mockResolvedValue(job("cancelled"));
+    const provenance = { repository: "https://github.com/acme/skills", commit: COMMIT, path: "skills/pdf", digest: "a".repeat(40), license: null };
+    const installing = row({ id: "pdf", name: "pdf", kind: "skill", provision: "managed", installState: "installing", provenance });
+    const absent = { ...installing, installState: "absent" as const };
+    await previewSource();
+    let cancelled = 0;
+    vi.mocked(hub.listExtensions).mockImplementation(async () => [...catalog, cancelled > 0 && cancelled++ > 1 ? absent : installing]);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Install" }));
+    });
+    cancelled = 1;
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel install" }));
+    });
+    const block = (await screen.findByRole("heading", { name: "pdf", level: 2 })).closest("section")!;
+    expect(await within(block).findByRole("button", { name: "Retry install" })).toBeTruthy();
   });
 });
