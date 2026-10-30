@@ -8,7 +8,7 @@
 
 - 只用已有的凭据，不申请新 key，不充值，不换付费模型。免费模型限流（429）或不可用，照实记下。
 - **PDF 会花钱。**模型不能原生读文件、请求又没指定解析引擎时，OpenRouter 默认用付费的 `mistral-ocr`（每 1000 页 2 美元，BYOK 也照收）解析 PDF。Nema 不指定引擎，所以经 OpenRouter 发 PDF 会悄悄扣费（见第 6 节）。复跑时不要再发 PDF，除非确认要承担这笔费用。
-- key 只从进程环境变量 `OPENROUTER_API_KEY` 读：不打印，不写进任何文件、仓库或日志。Nema 平时把 BYOK key 存进 `~/.nema/byok-key`，所以验收时用第 2 节的临时补丁改为从环境读，不运行 `nema auth byok`。
+- key 只从进程环境变量 `OPENROUTER_API_KEY` 读：不打印，不写进任何文件、仓库或日志，而且**只交给 daemon 进程**。`npm ci`、构建、hub、web 和发送脚本都用 `env -u OPENROUTER_API_KEY` 启动，免得安装脚本或无关的服务端代码读到它。Nema 平时把 BYOK key 存进 `~/.nema/byok-key`，所以验收时用第 2 节的临时补丁改为从环境读，不运行 `nema auth byok`。
 - 补丁只在一次性检出里，**不提交、不推送**。没有设 `NEMA_ACCEPTANCE=1` 的进程和 main 的行为完全一样。
 - 结果只记真实输出。改能力表要单独开 PR，只改实测通过的那一格，而且只针对 OpenRouter 这一个地址。
 
@@ -47,19 +47,19 @@ process.once("SIGTERM", stop);
 ```bash
 git worktree add --detach /workspace/nr-acc origin/main
 cd /workspace/nr-acc
-npm ci
-npm run typecheck            # 顺带生成各包的 dist，hub 依赖 @nema/knowledge 的 dist
+env -u OPENROUTER_API_KEY npm ci
+env -u OPENROUTER_API_KEY npm run typecheck   # 顺带生成各包的 dist，hub 依赖 @nema/knowledge 的 dist
 # 应用第 2 节的临时补丁
-npm run build -w apps/cli
+env -u OPENROUTER_API_KEY npm run build -w apps/cli
 mkdir -p /tmp/nema-acc/data /tmp/nema-acc/home
 
 # hub：http://127.0.0.1:4400
-setsid nohup npx tsx /tmp/nema-acc/hub.mts > /tmp/nema-acc/hub.log 2>&1 < /dev/null &
-# daemon：HOME 指向一次性目录，不碰真实的 ~/.nema；key 从继承的环境变量读
+env -u OPENROUTER_API_KEY setsid nohup npx tsx /tmp/nema-acc/hub.mts > /tmp/nema-acc/hub.log 2>&1 < /dev/null &
+# daemon：HOME 指向一次性目录，不碰真实的 ~/.nema；只有它继承 key
 HOME=/tmp/nema-acc/home NEMA_ACCEPTANCE=1 NEMA_DATA_DIR=/tmp/nema-acc/data \
   setsid nohup node apps/cli/dist/index.js daemon --hub http://127.0.0.1:4400 > /tmp/nema-acc/daemon.log 2>&1 < /dev/null &
 # web：http://127.0.0.1:3000
-NEXT_PUBLIC_HUB_URL=http://127.0.0.1:4400 setsid nohup npm run dev -w apps/web > /tmp/nema-acc/web.log 2>&1 < /dev/null &
+env -u OPENROUTER_API_KEY NEXT_PUBLIC_HUB_URL=http://127.0.0.1:4400 setsid nohup npm run dev -w apps/web > /tmp/nema-acc/web.log 2>&1 < /dev/null &
 ```
 
 判定：`hub.log` 有 `nema hub listening (use http://127.0.0.1:4400)`；`daemon.log` 有 `[nema] daemon connected to http://127.0.0.1:4400`；`curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/` 为 200；`curl -s http://127.0.0.1:4400/api/daemon/attachment-capabilities` 返回 `{"adapter":"codex-direct (byok)",...}`。
@@ -138,7 +138,7 @@ PDF 用 14 pt 字号：最初用 24 pt，暗号末尾一个字符落在页面右
 
 ## 4. 发送与判定
 
-`/tmp/nema-acc/run.mjs <样本目录> <模型 id> [img,pdf,txt]` 用 hub 的 HTTP API（和 web 同一组路由）建一个一次性 workspace，每个样本上传后发一条只带它的消息，等 agent 回复或任务失败的 system 消息，结果追加到 `/tmp/nema-acc/results.jsonl`：
+`env -u OPENROUTER_API_KEY node /tmp/nema-acc/run.mjs <样本目录> <模型 id> [img,pdf,txt]` 用 hub 的 HTTP API（和 web 同一组路由）建一个一次性 workspace，每个样本上传后发一条只带它的消息，等 agent 回复或任务失败的 system 消息，结果追加到 `/tmp/nema-acc/results.jsonl`：
 
 ```js
 // Acceptance run: one workspace, one message per sample, via the hub HTTP API (same routes as the web).
@@ -185,7 +185,7 @@ console.log(`workspace ${ws.id}`);
 
 ## 6. 2026-10-30 的结果
 
-环境：`/workspace/nr-acc` 检出 main `94ecb33`，加第 2 节的临时补丁；hub、web、daemon 按第 1 节启动。提问固定为「附件里写的暗号是什么？只回答暗号本身。」
+环境：`/workspace/nr-acc` 检出 main `94ecb33`，加第 2 节的临时补丁；hub、web、daemon 按第 1 节启动。实测时 hub 和 web 进程也继承了 key（第 0 节的「只交给 daemon」是事后补上的），22:35 JST 已不带 key 重启。实测后把补丁 2 收紧为只放开图片（PDF 仍 `unknown`），供浏览器截图使用，免得再触发 OCR 计费。提问固定为「附件里写的暗号是什么？只回答暗号本身。」
 
 | 开始（JST） | 模型 | 样本 | 暗号 | 结果 | 回复原文 |
 | --- | --- | --- | --- | --- | --- |
