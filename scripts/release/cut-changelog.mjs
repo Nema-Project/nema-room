@@ -280,7 +280,9 @@ async function removeIfPresent(target) {
 /**
  * Compose `changelog.d` fragments into `[Unreleased]`, then cut, under the shared release lock.
  * A journal records the intended deletions before the changelog write, so a cut interrupted after
- * that write is finished by a rerun instead of being refused as a duplicate section.
+ * that write is finished by a rerun instead of being refused as a duplicate section. Every cut
+ * writes it, including a cut with no fragments: the interruption it protects against happens after
+ * the write, and only the record of that write lets a rerun tell the section is its own.
  * `options.writeFile` replaces the changelog write and `options.afterWrite` runs right after it,
  * so a failing write and an interruption before the deletions can both be injected.
  */
@@ -325,23 +327,23 @@ async function cutLocked(file, version, date, options) {
 
   const fragments = await readFragments(path.join(path.dirname(file), 'changelog.d'));
   const next = cutChangelogText(mergeFragments(before, fragments), version, date);
-  if (fragments.length > 0) {
-    const record = {
-      schemaVersion: JOURNAL_SCHEMA,
-      version,
-      date,
-      pid: process.pid,
-      createdAt: new Date().toISOString(),
-      changelogSha256: sha256(next),
-      fragments: fragments.map((fragment) => ({ name: fragment.name, sha256: sha256(fragment.raw) })),
-    };
-    await writeFile(journal, `${JSON.stringify(record, null, 2)}\n`);
-  }
+  const record = {
+    schemaVersion: JOURNAL_SCHEMA,
+    version,
+    date,
+    pid: process.pid,
+    createdAt: new Date().toISOString(),
+    changelogSha256: sha256(next),
+    fragments: fragments.map((fragment) => ({ name: fragment.name, sha256: sha256(fragment.raw) })),
+  };
+  await writeFile(journal, `${JSON.stringify(record, null, 2)}\n`);
   await write(file, next);
   if (options.afterWrite) await options.afterWrite();
   for (const fragment of fragments) await unlink(fragment.path);
-  // A pending journal from an interrupted run must not outlive a successful write that needed none.
-  if (fragments.length > 0 || pending) await removeIfPresent(journal);
+  // Only reached once this run's changelog write has landed and its deletions are done, so the
+  // journal on disk is this run's own record, even when it lists no fragments. Another cut of this
+  // tree cannot own it: they all journal under the same lock, which this run still holds.
+  await removeIfPresent(journal);
   return { wrote: true, recovered: false, kept: [] };
 }
 

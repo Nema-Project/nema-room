@@ -536,6 +536,59 @@ test('the journal is on disk before the changelog write and lists what it will d
   assert.equal(record.fragments[0].sha256, createHash('sha256').update('- Fragment added.\n', 'utf8').digest('hex'));
 });
 
+test('a cut with no fragments still journals its write and leaves no journal behind', async (t) => {
+  // `sample` carries [Unreleased] entries and no changelog.d directory, so this cut consumes nothing.
+  const file = await tempChangelog(t, sample);
+  const journal = cutJournalPath(file);
+  let record;
+  await cutChangelogFile(file, '0.2.0', '2026-10-28', {
+    writeFile: async (target, text) => {
+      record = JSON.parse(await readFile(journal, 'utf8'));
+      assert.equal(record.changelogSha256, createHash('sha256').update(text, 'utf8').digest('hex'));
+      await writeFile(target, text);
+    },
+  });
+  assert.equal(record.version, '0.2.0');
+  assert.deepEqual(record.fragments, [], 'a zero-fragment cut records an empty deletion list');
+  assert.equal(await readFile(file, 'utf8'), cutSample);
+  assert.equal(await gone(journal), true, 'the journal does not outlive the successful cut');
+});
+
+test('an interrupted cut with no fragments is finished by a rerun without rewriting the changelog', async (t) => {
+  const file = await tempChangelog(t, sample);
+  const journal = cutJournalPath(file);
+  await assert.rejects(
+    cutChangelogFile(file, '0.2.0', '2026-10-28', { afterWrite: async () => { throw new Error('stop after the write'); } }),
+    /stop after the write/,
+  );
+  const written = await readFile(file, 'utf8');
+  assert.equal(written, cutSample);
+  assert.equal(JSON.parse(await readFile(journal, 'utf8')).version, '0.2.0');
+
+  const result = await cutChangelogFile(file, '0.2.0', '2026-10-28');
+  assert.equal(result.wrote, false, 'the rerun recovers instead of rejecting the existing section');
+  assert.equal(result.recovered, true);
+  assert.deepEqual(result.kept, []);
+  assert.equal(await readFile(file, 'utf8'), written, 'the changelog is not rewritten');
+  assert.equal(await gone(journal), true);
+  assert.equal(await gone(releaseLockPath(path.dirname(file))), true);
+});
+
+test('a zero-fragment cut whose write fails keeps its journal for the rerun', async (t) => {
+  const file = await tempChangelog(t, sample);
+  const journal = cutJournalPath(file);
+  await assert.rejects(
+    cutChangelogFile(file, '0.2.0', '2026-10-28', { writeFile: async () => { throw new Error('disk full'); } }),
+    /disk full/,
+  );
+  assert.equal(await gone(journal), false, 'a failed write must not clean up the record of the attempt');
+  assert.equal(await readFile(file, 'utf8'), sample);
+  const result = await cutChangelogFile(file, '0.2.0', '2026-10-28');
+  assert.equal(result.wrote, true);
+  assert.equal(await readFile(file, 'utf8'), cutSample);
+  assert.equal(await gone(journal), true);
+});
+
 test('a pending journal does not outlive a later cut that had no fragments to delete', async (t) => {
   const file = await tempChangelog(t, emptyUnreleased);
   const fragment = await writeFragment(file, '70.added.md', '- Fragment added.\n');
