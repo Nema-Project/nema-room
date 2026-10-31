@@ -500,8 +500,12 @@ function acquireAccountsLock(nemaHome: string, waitMs: number): { lockPath: stri
       throw new Error("账户文件锁已在当前进程内持有，不能重入");
     }
     if (isStale(observed, lockPath)) {
-      takeOverStaleLock(lockPath, observed);
-      continue;
+      // True means the stale lock is gone — removed, or already vacated by a peer — so trying to create it
+      // again right away is progress. False means this waiter did not get to act: a peer replaced the lock,
+      // another waiter holds the takeover claim, or the path could not be re-read. Continuing on false would
+      // be the same judgement over and over with no deadline check and no wait between them, which burns a
+      // core and never times out. A refused takeover therefore waits like any other waiter.
+      if (takeOverStaleLock(lockPath, observed)) continue;
     }
     if (Date.now() >= deadline) {
       throw new Error(`等待账户文件锁超时，请稍后重试（若占用者已退出，可删除 ${lockPath}）`);

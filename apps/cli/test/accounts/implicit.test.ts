@@ -271,6 +271,12 @@ describe("syncDefaultAccountProjection", () => {
 
 describe("materializeImplicit hardening", () => {
   test("a failure after the move leaves no dangling state: the account file is written first", () => {
+    // This case makes a directory unwritable and expects the copy to fail. Neither holds where the platform
+    // ignores the POSIX bits: root can create inside a 0500 directory, and Windows has no such bits at all.
+    // Without this guard the test would be green for a reason unrelated to the code, which is worse than not
+    // running it — the platform that can prove it is the one that runs it.
+    if (process.platform === "win32") return;
+    if (process.getuid?.() === 0) return;
     mkdirSync(home, { recursive: true });
     writePrivateFile(join(home, "byok-key"), "fake-legacy-key");
 

@@ -23,11 +23,27 @@ const duringTakeover: Array<() => void> = [];
  */
 const whileCheckingClaim: Array<() => void> = [];
 
+/**
+ * How many times a guarded path was stat'ed, and the ceiling it must stay under.
+ *
+ * A loop that re-judges the same lock with no wait between passes cannot be caught by a timeout: the passes
+ * are synchronous, so the event loop a vitest timeout needs never runs and the test hangs instead of failing.
+ * Counting the stats the way out — the ceiling is armed only for a test that expects the loop to give up at
+ * its deadline, and throwing from inside the loop turns "spins forever" into an ordinary assertion failure.
+ */
+const statGuard = { path: "", count: 0, limit: Number.POSITIVE_INFINITY };
+
 vi.mock("node:fs", async (importOriginal) => {
   const real = await importOriginal<typeof import("node:fs")>();
   return {
     ...real,
     lstatSync: ((...args: Parameters<typeof real.lstatSync>) => {
+      if (statGuard.path !== "" && String(args[0]) === statGuard.path) {
+        statGuard.count += 1;
+        if (statGuard.count > statGuard.limit) {
+          throw new Error(`spin detected: the lock was re-judged ${statGuard.count} times without waiting`);
+        }
+      }
       // `snapshotLock` is the first thing the takeover does after it holds the claim.
       const hook = duringTakeover.shift();
       if (hook) hook();
@@ -47,6 +63,9 @@ let root: string;
 let home: string;
 beforeEach(() => {
   duringTakeover.length = 0;
+  statGuard.path = "";
+  statGuard.count = 0;
+  statGuard.limit = Number.POSITIVE_INFINITY;
   whileCheckingClaim.length = 0;
   root = mkdtempSync(join(tmpdir(), "nema-claims-"));
   home = join(root, "nema");
@@ -152,6 +171,61 @@ describe("a takeover claim that expired under its owner (review 1)", () => {
     // Our own claim is cleaned up in the same call.
     expect(existsSync(claimPath())).toBe(false);
     expect(existsSync(lock())).toBe(false);
+  });
+});
+
+describe("a stale lock this waiter cannot take over (coderabbit 1)", () => {
+  test("a refused takeover waits for the deadline instead of spinning on the same judgement", () => {
+    // The shape: the lock is stale, and another waiter holds the takeover claim, so `takeOverStaleLock`
+    // returns false on every pass while `isStale` keeps saying yes. Continuing immediately on that answer
+    // re-judges the very same file with no deadline check and no wait between passes, so the call never
+    // returns — it burns a core until the process is killed. Waiting like any other waiter is what makes the
+    // deadline reachable.
+    const observed = plantStaleLock()!;
+    const ownStart = startOf(process.pid);
+    // A claim its owner is still inside: this process, with the start time the platform reports (omitted
+    // where it reports none, in which case the claim is only young and that is enough).
+    writeFileSync(claimPath(), JSON.stringify({
+      pid: process.pid, at: Date.now(), token: "other-waiter", ...(ownStart === null ? {} : { startedAt: ownStart }),
+    }), { mode: 0o600 });
+
+    // A real wait of 150 ms at the 25 ms poll interval is about six passes; the ceiling leaves generous room
+    // for scheduling while still catching a loop that never waits at all.
+    statGuard.path = lock();
+    statGuard.count = 0;
+    statGuard.limit = 40;
+    const waitMs = 150;
+    const started = Date.now();
+    let message = "";
+    try {
+      withAccountsLock(home, () => "ran", { waitMs });
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    const elapsed = Date.now() - started;
+    statGuard.path = "";
+    expect(statGuard.count).toBeLessThanOrEqual(40);
+
+    // It gave up at its deadline, having actually waited: the old shape never got here at all.
+    expect(message).toContain("等待账户文件锁超时");
+    expect(elapsed).toBeGreaterThanOrEqual(waitMs - 10);
+    // And it acted on nothing: the stale lock and the peer's live claim are both untouched.
+    expect(readFileSync(lock(), "utf8")).toBe(staleRaw);
+    expect(JSON.parse(readFileSync(claimPath(), "utf8")).token).toBe("other-waiter");
+    expect(existsSync(lock())).toBe(true);
+    expect(observed.raw).toBe(staleRaw);
+  });
+
+  test("a takeover that succeeds is retried at once, without waiting for the poll interval", () => {
+    // The other half of the same rule: `true` means the path is free, so the caller must go straight back to
+    // creating the lock. Waiting there would turn a recoverable stale lock into a full poll delay.
+    plantStaleLock();
+    const started = Date.now();
+
+    expect(withAccountsLock(home, () => "ran")).toBe("ran");
+    // Well under LOCK_POLL_MS (25 ms) of waiting per attempt: the acquisition is immediate, not polled.
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(existsSync(lock())).toBe(false); // released again by the holder
   });
 });
 

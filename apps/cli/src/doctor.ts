@@ -148,9 +148,12 @@ async function githubMcpServerCheck(opts: DoctorOpts): Promise<DoctorCheck> {
 /**
  * Informational: credential copies an interrupted migration left under a claim name.
  *
- * They are harmless (the account already holds the credential) but they are duplicates of a secret sitting
- * where nothing reads them, so the user should know they exist and can remove them by hand. Only the names
- * are printed; never the contents.
+ * A leftover does *not* mean the account already holds the same credential. There are two ways one appears
+ * (`strandedRetireClaims`): the process died mid-retirement, or the restore failed because the legacy name
+ * was taken again — and in the second case the claimed file can be the *newer* copy while the account holds
+ * an older one. So this only reports the names and tells the user to compare before deleting: recommending
+ * removal outright could destroy the only current credential. Only the names are printed, never the
+ * contents.
  */
 function strandedClaimsCheck(opts: DoctorOpts): DoctorCheck {
   const name = "迁移遗留文件";
@@ -163,7 +166,7 @@ function strandedClaimsCheck(opts: DoctorOpts): DoctorCheck {
   return {
     name,
     ok: true, // informational: a leftover never means the current login is unusable
-    detail: `发现 ${stranded.length} 个退役过程中留下的旧凭据副本（${paths}）。账户里已经有一份，确认后可以手动删除这些文件。`,
+    detail: `发现 ${stranded.length} 个退役过程中留下的凭据副本（${paths}）。这些文件可能比账户里的更新，也可能只是重复；请先比对内容再决定保留哪一份，确认不需要的再手动删除。`,
   };
 }
 

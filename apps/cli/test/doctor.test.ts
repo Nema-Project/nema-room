@@ -309,7 +309,11 @@ describe("stranded retirement claims", () => {
     // Informational: a leftover never fails the doctor, and the row names the file so the user can look.
     expect(check.ok).toBe(true);
     expect(check.detail).toContain("auth.json.retire-123-abc");
-    expect(check.detail).toContain("旧凭据副本");
+    expect(check.detail).toContain("凭据副本");
+    // It must not promise the account already holds the same credential: a claim file left behind by a
+    // failed restore can be the newer copy, so the row asks the user to compare before deleting.
+    expect(check.detail).not.toContain("账户里已经有一份");
+    expect(check.detail).toContain("比对");
     expect(check.detail).not.toContain("credential-value");
   });
 
