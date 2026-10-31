@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { COMMIT, OTHER_COMMIT, integrityOf, io, releaseAssets, world } from './fake-registry.fixture.mjs';
-import { formatReport, main, parseArgs, pointerDecisions, readPointers, verifyRelease } from './verify-release.mjs';
+import { formatReport, main, npmPointers, parseArgs, pointerDecisions, readPointers, verifyRelease } from './verify-release.mjs';
 
 const run = (w, options = {}, extra = {}) => verifyRelease({ version: '0.1.6', io: io(w, extra).io, ...options });
 const states = (report) => Object.fromEntries(Object.entries(report.items).map(([id, item]) => [id, item.state]));
@@ -149,6 +149,48 @@ test('pointer reads: an unlabeled GHCR latest is unknown, an absent one is absen
   read = await readPointers(io(world('0.1.6', { fail: [[/dist-tags/, 500]] })).io);
   assert.equal(read.npm.latest.state, 'unknown');
   assert.equal(pointerDecisions(read, '0.1.7', false)['npm latest'], 'unknown');
+});
+
+test('a definitive dist-tags unknown reaches the pointer, so a re-reading caller does not wait for it', async () => {
+  // promote re-reads a pointer marked unknown; only a definitive answer may stop it on the first read.
+  for (const fail of [[/dist-tags/, 403], [/dist-tags/, 200, '[]']]) {
+    const read = await npmPointers(io(world('0.1.6', { fail: [fail] })).io);
+    assert.equal(read.latest.state, 'unknown', JSON.stringify(fail));
+    assert.equal(read.latest.definitive, true, 'a denial and a parsed wrong shape are both final');
+    assert.equal(read.next.definitive, true, 'both pointers come from the one answer');
+  }
+  // A read failure stays undefined rather than false, so the old pointer shape is unchanged for callers that never set it.
+  const outage = await npmPointers(io(world('0.1.6', { fail: [[/dist-tags/, 500]] })).io);
+  assert.equal(outage.latest.state, 'unknown');
+  assert.equal(outage.latest.definitive, undefined, 'a 5xx is worth another read');
+  const absent = await npmPointers(io(world()).io);
+  assert.equal(absent.latest.definitive, undefined);
+  assert.equal(absent.next.definitive, undefined);
+});
+
+test('a package npm does not have at all reads as absent pointers, not as unreadable ones', async () => {
+  // dist-tags answers 404 for a package that is not on npm: that was read, and it is an answer, so it must
+  // not be filed under unknown (which means "could not be read") like the GHCR and GitHub sources already do.
+  const pointers = await npmPointers(io(world('0.1.6', { fail: [[/dist-tags/, 404]] })).io);
+  assert.deepEqual(pointers.latest, { state: 'absent', version: null });
+  assert.deepEqual(pointers.next, { state: 'absent', version: null });
+  // An absent pointer is one promote moves; an unknown one would stop it before it ever publishes.
+  const decisions = pointerDecisions({ npm: pointers, ghcr: { hub: { state: 'version', version: '0.1.6' }, web: { state: 'version', version: '0.1.6' } }, github: { latest: { state: 'version', version: '0.1.6' } } }, '0.1.7', false);
+  assert.equal(decisions['npm latest'], 'move');
+});
+
+test('a dist-tag holding something that is not a version is a final answer, not a read to retry', async () => {
+  // The body parsed and is a tag map, so readNpmDistTags accepts it; the value itself is the wrong shape.
+  for (const latest of ['banana', null, { version: '0.1.6' }]) {
+    const pointers = await npmPointers(io(world('0.1.6', { distTags: { latest } })).io);
+    assert.equal(pointers.latest.state, 'unknown', JSON.stringify(latest));
+    assert.equal(pointers.latest.definitive, true, `${JSON.stringify(latest)} will not become a version on the next read`);
+    assert.match(pointers.latest.detail, /not a release version/);
+  }
+  // A well-formed tag is a version pointer with no flag, and a missing tag is still absent.
+  const ok = await npmPointers(io(world()).io);
+  assert.deepEqual(ok.latest, { state: 'version', version: '0.1.6' });
+  assert.deepEqual(ok.next, { state: 'absent', version: null });
 });
 
 test('the verifier is read-only', () => {

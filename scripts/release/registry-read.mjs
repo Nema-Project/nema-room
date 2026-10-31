@@ -3,6 +3,8 @@
 //   ok      - the registry positively showed the artifact
 //   missing - the registry authoritatively said it is not there (404, MANIFEST_UNKNOWN, DENIED to an anonymous reader)
 //   unknown - anything else: timeouts, 5xx, 429, unparsable bodies. Never reported as missing.
+//               An unknown may carry `evidence.definitive` when the answer is final by itself (a 401/403,
+//               or a body that parsed but is not the shape asked for): a re-reading caller must not wait.
 // Nothing here writes. The installer's release-set.mjs counts unknown as absent on purpose; a report must not.
 import { createHash } from 'node:crypto';
 import { HUB_IMAGE, WEB_IMAGE, composeAssetVersion } from '../images/check-images.mjs';
@@ -134,9 +136,13 @@ export function readNpmDistTags(io) {
     const url = `${NPM}/-/package/${NPM_PACKAGE}/dist-tags`;
     const response = await request(io, url);
     if (response.status === 404) return missing(`npm has no ${NPM_PACKAGE}`);
+    // Denial and an answer of the wrong shape are definitive: another read will not change them, so a
+    // caller that re-reads within a budget (promote) must stop at once rather than wait out the budget.
+    if (response.status === 401 || response.status === 403) return unknown(`${url}: HTTP ${response.status}`, { definitive: true, reason: 'denied' });
     if (response.status !== 200) return unknown(`${url}: HTTP ${response.status}`);
     const body = await json(response, url);
-    if (!body || typeof body !== 'object') return unknown(`${url}: not an object`);
+    // A dist-tags answer is a map of tag name to version. An array or a scalar parses but is not that map.
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return unknown(`${url}: not a tag map`, { definitive: true, reason: 'unparsable' });
     return ok({ tags: body });
   });
 }

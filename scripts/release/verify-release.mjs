@@ -158,19 +158,37 @@ function pointerFromImage(result) {
   return pointer.state === 'version' ? { ...pointer, digest: result.evidence.digest ?? null } : pointer;
 }
 
-export async function readPointers(io) {
+/** The two npm channel pointers, from one dist-tags read. `latest` and `next` share that single answer. */
+export async function npmPointers(io) {
   const tags = await readNpmDistTags(io);
   const npmPointer = (name) => {
-    if (tags.state !== 'ok') return { state: 'unknown', version: null, detail: tags.detail };
+    // A 404 on dist-tags says the package itself is not on npm, so neither tag exists: that is an absent
+    // pointer, exactly as an absent GHCR alias or Release is. It was read, and it will not change.
+    if (tags.state === 'missing') return { state: 'absent', version: null };
+    if (tags.state !== 'ok') {
+      // A definitive unknown (denial, or an answer of the wrong shape) is passed on as such: a caller that
+      // re-reads must not wait out a budget for an answer that will not change.
+      const definitive = tags.evidence?.definitive === true;
+      return { state: 'unknown', version: null, detail: tags.detail, ...(definitive ? { definitive: true } : {}) };
+    }
     const value = tags.evidence.tags[name];
-    return value === undefined ? { state: 'absent', version: null } : versionPointer(value, `npm dist-tag ${name}`);
+    if (value === undefined) return { state: 'absent', version: null };
+    // A tag the registry answers with something that is not a version (null, an object, a word) is a final
+    // answer about that tag: waiting cannot turn it into a version, so a re-reading caller must not wait.
+    const pointer = versionPointer(value, `npm dist-tag ${name}`);
+    return pointer.state === 'unknown' ? { ...pointer, definitive: true } : pointer;
   };
+  return { latest: npmPointer('latest'), next: npmPointer('next') };
+}
+
+export async function readPointers(io) {
+  const npm = await npmPointers(io);
   const latestRelease = await readLatestRelease(io);
   const github = latestRelease.state === 'ok'
     ? versionPointer(latestRelease.evidence.tag.replace(/^v/, ''), `GitHub latest release ${latestRelease.evidence.tag}`)
     : latestRelease.state === 'missing' ? { state: 'absent', version: null } : { state: 'unknown', version: null, detail: latestRelease.detail };
   return {
-    npm: { latest: npmPointer('latest'), next: npmPointer('next') },
+    npm,
     ghcr: { hub: pointerFromImage(await readImage(io, IMAGE_REPOSITORIES.hub, 'latest')), web: pointerFromImage(await readImage(io, IMAGE_REPOSITORIES.web, 'latest')) },
     github: { latest: github },
   };
