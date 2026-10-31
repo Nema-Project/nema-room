@@ -44,18 +44,17 @@ async function readHolder(lockPath) {
 
 /**
  * Delete the lock only when it still carries this call's token.
- * A lock another command created after ours disappeared is left alone.
- * `created` means this call opened the file with `wx` and has not released it, so the file is ours
- * even when the record inside it cannot be read (the write failed before the content landed).
+ * A lock another command created after ours disappeared is left alone, and an unreadable record is
+ * treated as someone else's unless this call knows it never wrote one (`ownIfUnreadable`).
  */
-async function releaseOwn(lockPath, token, created, remove) {
+async function releaseOwn(lockPath, token, ownIfUnreadable, remove) {
   let parsed;
   try {
     parsed = JSON.parse(await readFile(lockPath, 'utf8'));
   } catch (error) {
     if (error?.code === 'ENOENT') return;
     if (error instanceof SyntaxError) {
-      if (created) await remove(lockPath).catch(() => {});
+      if (ownIfUnreadable) await remove(lockPath).catch(() => {});
       return;
     }
     throw error;
@@ -94,21 +93,26 @@ export async function withReleaseLock(root, command, fn, options = {}) {
       await sleep(pollMs);
     }
   }
-  let created = false;
   try {
     const record = { schemaVersion: 1, command, pid: process.pid, token, startedAt: new Date().toISOString() };
     await handle.writeFile(`${JSON.stringify(record)}\n`);
-    created = true;
   } catch (error) {
-    await handle.close();
     // The record never landed, so no token can be compared; the file is still the one this call opened.
+    await handle.close().catch(() => {});
     await releaseOwn(lockPath, token, true, remove);
     throw error;
   }
-  await handle.close();
+  // A close failure must not leave our lock behind, and must not run `fn` without the record on disk.
+  try {
+    await handle.close();
+  } catch (error) {
+    await releaseOwn(lockPath, token, true, remove);
+    throw error;
+  }
   try {
     return await fn();
   } finally {
-    await releaseOwn(lockPath, token, created, remove);
+    // Our record landed, so an unreadable lock here belongs to someone else.
+    await releaseOwn(lockPath, token, false, remove);
   }
 }

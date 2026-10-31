@@ -193,3 +193,35 @@ test('a cleanup that cannot remove an unreadable lock does not hide the write er
     /disk full while writing the record/,
   );
 });
+
+test('a close failure still releases the lock and does not run the call', async (t) => {
+  const dir = await root(t);
+  const lock = releaseLockPath(dir);
+  const real = await import('node:fs/promises');
+  const closing = {
+    async writeFile() {},
+    async close() {
+      throw new Error('close failed');
+    },
+  };
+  await assert.rejects(
+    withReleaseLock(dir, 'release:cut', async () => assert.fail('must not run without the record closed'), {
+      open: async (target, flag) => {
+        const handle = await real.open(target, flag);
+        await handle.close();
+        return closing;
+      },
+    }),
+    /close failed/,
+  );
+  assert.equal(await exists(lock), false, 'a close failure must not leave the lock behind');
+});
+
+test('an unreadable lock is left alone when our own record did land', async (t) => {
+  const dir = await root(t);
+  const lock = releaseLockPath(dir);
+  await withReleaseLock(dir, 'release:cut', async () => {
+    await writeFile(lock, '');
+  });
+  assert.equal(await exists(lock), true, 'a lock we can no longer identify is left for a human');
+});
