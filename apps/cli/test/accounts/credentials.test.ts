@@ -39,20 +39,20 @@ function writeCodexAuth(valid: boolean): void {
 
 describe("per-account credential files", () => {
   test("saves one line with a private directory and file", () => {
-    saveAccountSecret(home, "acct_abc1234567", "key", "sk-test");
+    saveAccountSecret(home, "acct_abc1234567", "key", "fake-account-key");
 
-    expect(readAccountSecret(home, "acct_abc1234567", "key")).toBe("sk-test");
+    expect(readAccountSecret(home, "acct_abc1234567", "key")).toBe("fake-account-key");
     expectPrivate(accountSecretPath(home, "acct_abc1234567", "key"), 0o600);
     expectPrivate(accountDir(home, "acct_abc1234567"), 0o700);
   });
 
   test("refuses a multi-line value and an id that is not ours", () => {
     expect(() => saveAccountSecret(home, "acct_abc1234567", "key", "a\nb")).toThrow();
-    expect(() => saveAccountSecret(home, "../x", "key", "sk")).toThrow();
+    expect(() => saveAccountSecret(home, "../x", "key", "fake")).toThrow();
   });
 
   test("removes the whole directory, and is happy when there is nothing to remove", () => {
-    saveAccountSecret(home, "acct_abc1234567", "key", "sk-test");
+    saveAccountSecret(home, "acct_abc1234567", "key", "fake-account-key");
     removeAccountSecrets(home, "acct_abc1234567");
     expect(existsSync(accountDir(home, "acct_abc1234567"))).toBe(false);
     expect(() => removeAccountSecrets(home, "acct_abc1234567")).not.toThrow();
@@ -62,20 +62,20 @@ describe("per-account credential files", () => {
 describe("credential state per account kind", () => {
   test("byok reads its key", () => {
     expect(accountCredentialState(home, byok(), codexHome).state).toBe("missing");
-    saveAccountSecret(home, "acct_abc1234567", "key", "sk-test");
+    saveAccountSecret(home, "acct_abc1234567", "key", "fake-account-key");
     expect(accountCredentialState(home, byok(), codexHome).state).toBe("connected");
   });
 
   test("a file anyone can read is unusable, not missing", () => {
     if (process.platform === "win32") return;
-    saveAccountSecret(home, "acct_abc1234567", "key", "sk-test");
+    saveAccountSecret(home, "acct_abc1234567", "key", "fake-account-key");
     chmodSync(accountSecretPath(home, "acct_abc1234567", "key"), 0o644);
     expect(accountCredentialState(home, byok(), codexHome).state).toBe("unusable");
   });
 
   test.runIf(canSymlinkFiles)("a symlinked key is unusable", () => {
     mkdirSync(accountDir(home, "acct_abc1234567"), { recursive: true, mode: 0o700 });
-    writeFileSync(join(root, "target"), "sk");
+    writeFileSync(join(root, "target"), "fake");
     symlinkSync(join(root, "target"), accountSecretPath(home, "acct_abc1234567", "key"));
     expect(accountCredentialState(home, byok(), codexHome).state).toBe("unusable");
   });
@@ -92,7 +92,7 @@ describe("credential state per account kind", () => {
   });
 
   test("two kinds of credential in one directory is unusable", () => {
-    saveAccountSecret(home, "acct_abc1234567", "key", "sk");
+    saveAccountSecret(home, "acct_abc1234567", "key", "fake");
     saveAccountSecret(home, "acct_abc1234567", "token", "tok");
     expect(accountCredentialState(home, byok(), codexHome).state).toBe("unusable");
   });
@@ -107,7 +107,7 @@ describe("credential state per account kind", () => {
 
   test("the implicit account reads the old single-key paths", () => {
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), "sk-legacy", { mode: 0o600 });
+    writeFileSync(join(home, "byok-key"), "fake-legacy-key", { mode: 0o600 });
 
     expect(accountCredentialFiles(home, implicit())).toEqual([join(home, "byok-key")]);
     expect(accountCredentialState(home, implicit(), codexHome).state).toBe("connected");
@@ -134,16 +134,16 @@ describe("credential state per account kind", () => {
     expect(accountCredentialState(home, byok(), codexHome).state).toBe("unusable");
 
     // Control characters leak into HTTP headers, so they are invalid too.
-    writeFileSync(file, "sk\u0000x", { mode: 0o600 });
+    writeFileSync(file, "fake\u0000x", { mode: 0o600 });
     expect(accountCredentialState(home, byok(), codexHome).state).toBe("unusable");
 
-    writeFileSync(file, "sk-valid", { mode: 0o600 });
+    writeFileSync(file, "fake-valid-key", { mode: 0o600 });
     expect(accountCredentialState(home, byok(), codexHome).state).toBe("connected");
   });
 
   test("a credential file owned by another user is unusable", () => {
     if (process.platform === "win32") return;
-    saveAccountSecret(home, "acct_abc1234567", "key", "sk-test");
+    saveAccountSecret(home, "acct_abc1234567", "key", "fake-account-key");
     const real = process.getuid?.() ?? 0;
     const spy = vi.spyOn(process, "getuid").mockReturnValue(real + 1);
     try {
@@ -156,7 +156,7 @@ describe("credential state per account kind", () => {
   test("compat reports a conflicting local credential instead of connected", () => {
     writeCodexAuth(true);
     // A leftover key file in the account's directory means the account cannot be trusted as compat.
-    saveAccountSecret(home, "acct_ghi1234567", "key", "sk-leftover");
+    saveAccountSecret(home, "acct_ghi1234567", "key", "fake-leftover");
     expect(accountCredentialState(home, compat(), codexHome).state).toBe("unusable");
   });
 
@@ -179,17 +179,44 @@ describe("credential state per account kind", () => {
   test("a symlinked account directory is unusable rather than followed", () => {
     const target = join(root, "redirect");
     mkdirSync(target, { recursive: true, mode: 0o700 });
-    writeFileSync(join(target, "key"), "sk-elsewhere", { mode: 0o600 });
+    writeFileSync(join(target, "key"), "fake-elsewhere", { mode: 0o600 });
     mkdirSync(join(home, "secrets", "accounts"), { recursive: true, mode: 0o700 });
     linkDir(target, join(home, "secrets", "accounts", "acct_abc1234567"));
 
     expect(accountCredentialState(home, byok(), codexHome).state).toBe("unusable");
   });
 
+  test.runIf(canSymlinkFiles)("an implicit account under a symlinked home is unusable, not connected", () => {
+    // The account store refuses a linked home; reporting "connected" through it would claim a credential
+    // the rest of the account code will never use.
+    const realHome = join(root, "real-home");
+    mkdirSync(realHome, { recursive: true, mode: 0o700 });
+    writeFileSync(join(realHome, "byok-key"), "fake-legacy-key", { mode: 0o600 });
+    const linkedHome = join(root, "linked-home");
+    linkDir(realHome, linkedHome);
+
+    expect(() => accountCredentialFiles(linkedHome, implicit())).toThrow(/符号链接/);
+    const state = accountCredentialState(linkedHome, implicit(), codexHome);
+    expect(state.state).toBe("unusable");
+    expect(state.files).toEqual([]);
+  });
+
+  test.runIf(canSymlinkFiles)("an implicit siwc account under a linked home is unusable too", () => {
+    const realHome = join(root, "real-home-2");
+    mkdirSync(realHome, { recursive: true, mode: 0o700 });
+    writeFileSync(join(realHome, "auth.json"), "{}", { mode: 0o600 });
+    const linkedHome = join(root, "linked-home-2");
+    linkDir(realHome, linkedHome);
+
+    const account = implicit({ authMode: "siwc", baseUrl: undefined });
+    expect(() => accountCredentialFiles(linkedHome, account)).toThrow(/符号链接/);
+    expect(accountCredentialState(linkedHome, account, codexHome).state).toBe("unusable");
+  });
+
   test("states never carry a credential value", () => {
-    saveAccountSecret(home, "acct_abc1234567", "key", "sk-super-secret");
+    saveAccountSecret(home, "acct_abc1234567", "key", "fake-super-secret");
     const result = accountCredentialState(home, byok(), codexHome);
-    expect(JSON.stringify(result)).not.toContain("sk-super-secret");
-    expect(readFileSync(accountSecretPath(home, "acct_abc1234567", "key"), "utf8")).toBe("sk-super-secret");
+    expect(JSON.stringify(result)).not.toContain("fake-super-secret");
+    expect(readFileSync(accountSecretPath(home, "acct_abc1234567", "key"), "utf8")).toBe("fake-super-secret");
   });
 });

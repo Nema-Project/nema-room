@@ -576,31 +576,70 @@ describe("cross-process refresh", () => {
 });
 
 describe("AuthStore under an account directory", () => {
-  test("keeps auth.json and auth.lock in baseDir and nothing in nemaHome", () => {
+  /**
+   * A refresh is the only operation that takes the lock, so the refresher itself is the one place that
+   * observes where the lock lives while it is held. `observe` runs inside the critical section, on the
+   * same synchronous turn in which the lock file exists.
+   */
+  function observingRefresher(
+    observe: () => void,
+    token = tokenExpiringIn(3600),
+    refreshToken?: string,
+  ): Refresher {
+    return async () => {
+      observe();
+      return refreshToken === undefined ? { access_token: token } : { access_token: token, refresh_token: refreshToken };
+    };
+  }
+
+  test("a refresh takes its lock in baseDir, not in nemaHome", async () => {
     const root = mkdtempSync(join(tmpdir(), "nema-authstore-home-"));
     const accountDir = join(root, "secrets", "accounts", "acct_abc1234567");
     mkdirSync(accountDir, { recursive: true, mode: 0o700 });
-    const store = new AuthStore(root, async () => ({ access_token: tokenExpiringIn(3600) }), Date.now, { baseDir: accountDir });
+    const seen: { inBase: boolean; inHome: boolean }[] = [];
+    const store = new AuthStore(
+      root,
+      observingRefresher(() => seen.push({ inBase: existsSync(join(accountDir, "auth.lock")), inHome: existsSync(join(root, "auth.lock")) }), tokenExpiringIn(3600), "rt-2"),
+      Date.now,
+      { baseDir: accountDir },
+    );
+    store.save(auth({ access_token: tokenExpiringIn(10) }));
 
-    store.save(auth());
+    await store.getAccessToken();
 
+    // The lock was held, and it was held in the account directory: a lock under `nemaHome` would have
+    // serialized every account against each other and left the account directory unprotected.
+    expect(seen).toEqual([{ inBase: true, inHome: false }]);
+    expect(existsSync(join(accountDir, "auth.lock"))).toBe(false); // released again
     expect(existsSync(join(accountDir, "auth.json"))).toBe(true);
     expect(existsSync(join(root, "auth.json"))).toBe(false);
-    expect(store.read()?.tokens.refresh_token).toBe("rt-1");
+    expect(existsSync(join(root, "auth.lock"))).toBe(false);
+    expect(store.read()?.tokens.refresh_token).toBe("rt-2");
   });
 
-  test("two stores with different baseDirs keep separate logins", () => {
+  test("two stores with different baseDirs refresh under separate locks", async () => {
     const root = mkdtempSync(join(tmpdir(), "nema-authstore-two-"));
     const one = join(root, "one");
     const two = join(root, "two");
     mkdirSync(one, { recursive: true, mode: 0o700 });
     mkdirSync(two, { recursive: true, mode: 0o700 });
-    const a = new AuthStore(root, async () => ({ access_token: tokenExpiringIn(3600) }), Date.now, { baseDir: one });
-    const b = new AuthStore(root, async () => ({ access_token: tokenExpiringIn(3600) }), Date.now, { baseDir: two });
+    const heldDuring: Array<{ own: string; ownLocked: boolean; homeLocked: boolean }> = [];
+    const a = new AuthStore(root, observingRefresher(() => heldDuring.push({
+      own: "one", ownLocked: existsSync(join(one, "auth.lock")), homeLocked: existsSync(join(root, "auth.lock")),
+    })), Date.now, { baseDir: one });
+    const b = new AuthStore(root, observingRefresher(() => heldDuring.push({
+      own: "two", ownLocked: existsSync(join(two, "auth.lock")), homeLocked: existsSync(join(root, "auth.lock")),
+    })), Date.now, { baseDir: two });
 
-    a.save(auth({ refresh_token: "ra" }));
-    b.save(auth({ refresh_token: "rb" }));
+    a.save(auth({ refresh_token: "ra", access_token: tokenExpiringIn(10) }));
+    b.save(auth({ refresh_token: "rb", access_token: tokenExpiringIn(10) }));
+    await Promise.all([a.getAccessToken(), b.getAccessToken()]);
 
+    // Each refresh held a lock in its own directory and never in the shared home directory.
+    expect(heldDuring.sort((x, y) => x.own.localeCompare(y.own))).toEqual([
+      { own: "one", ownLocked: true, homeLocked: false },
+      { own: "two", ownLocked: true, homeLocked: false },
+    ]);
     expect(a.read()?.tokens.refresh_token).toBe("ra");
     expect(b.read()?.tokens.refresh_token).toBe("rb");
   });

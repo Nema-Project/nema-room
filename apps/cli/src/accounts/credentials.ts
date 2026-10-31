@@ -5,6 +5,8 @@ import { readCodexCliTokens } from "../direct/codexLogin.js";
 import { privateModeMatches, privateOwnerMatches } from "../secrets/permissions.js";
 import { readSecretLine } from "../secrets/file.js";
 import { accountDir } from "./store.js";
+import { hasSymlinkedComponent } from "./paths.js";
+import { legacyFileName } from "./legacy.js";
 import { IMPLICIT_ACCOUNT_ID, type Account } from "./schema.js";
 
 /**
@@ -37,12 +39,19 @@ export function accountCredentialFiles(nemaHome: string, account: Account): stri
 /**
  * The pre-accounts file for the synthesized account (D-6). These are the paths 0.2.0 used, unchanged, so
  * a user who never touches account settings keeps exactly the layout and files they had.
+ *
+ * The path is checked exactly like the account layout's: a linked home (or a linked component below it)
+ * is not a layout this store would read, so reporting a credential as connected through it would claim a
+ * file the rest of the account code refuses to touch. Throws instead; the caller reports "unusable".
  */
 function legacyFiles(nemaHome: string, account: Account): string[] {
-  if (account.adapter === "claude-code") return [path.join(nemaHome, "claude-code-token")];
-  if (account.authMode === "byok") return [path.join(nemaHome, "byok-key")];
-  if (account.authMode === "siwc") return [path.join(nemaHome, "auth.json")];
-  return [];
+  const name = legacyFileName(account);
+  if (name === null) return [];
+  const file = path.join(nemaHome, name);
+  if (hasSymlinkedComponent(nemaHome, file)) {
+    throw new Error("Nema 主目录或凭据路径是符号链接，已拒绝读取旧凭据。");
+  }
+  return [file];
 }
 
 /** True when the file is a private, owned, regular file. Symlinks, foreign owners and wider modes fail. */

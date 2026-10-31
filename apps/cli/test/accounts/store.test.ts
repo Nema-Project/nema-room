@@ -114,7 +114,7 @@ describe("account directory hardening", () => {
 
     // Reading, writing and deleting must all refuse rather than follow the link.
     expect(() => accountDir(home, "acct_abc1234567")).toThrow(/符号链接|symlink/i);
-    expect(() => saveAccountSecret(home, "acct_abc1234567", "key", "sk-test")).toThrow();
+    expect(() => saveAccountSecret(home, "acct_abc1234567", "key", "fake-account-key")).toThrow();
     expect(() => removeAccountSecrets(home, "acct_abc1234567")).toThrow();
     // The link target is untouched: nothing was written or deleted through it.
     expect(existsSync(join(elsewhere, "accounts", "acct_abc1234567", "key"))).toBe(false);
@@ -153,14 +153,14 @@ describe("account directory hardening", () => {
     linkDir(realHome, linkedHome);
 
     expect(() => accountDir(linkedHome, "acct_abc1234567")).toThrow(/符号链接|symlink/i);
-    expect(() => saveAccountSecret(linkedHome, "acct_abc1234567", "key", "sk-test")).toThrow();
+    expect(() => saveAccountSecret(linkedHome, "acct_abc1234567", "key", "fake-account-key")).toThrow();
     expect(existsSync(join(realHome, "secrets", "accounts", "acct_abc1234567", "key"))).toBe(false);
   });
 
   test("a symlinked nemaHome does not let a delete reach the link target", () => {
     const realHome = join(root, "real-home-2");
     mkdirSync(join(realHome, "secrets", "accounts", "acct_abc1234567"), { recursive: true, mode: 0o700 });
-    writeFileSync(join(realHome, "secrets", "accounts", "acct_abc1234567", "key"), "sk-keep", { mode: 0o600 });
+    writeFileSync(join(realHome, "secrets", "accounts", "acct_abc1234567", "key"), "fake-keep", { mode: 0o600 });
     const linkedHome = join(root, "linked-home-2");
     linkDir(realHome, linkedHome);
 

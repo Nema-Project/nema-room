@@ -27,7 +27,7 @@ describe("localSettings exports", () => {
   test("exposes every accounts helper the settings service needs", () => {
     for (const name of [
       "IMPLICIT_ACCOUNT_ID", "COST_TIERS", "newAccountId", "accountNameProblem", "validateAccountsFile",
-      "accountsPath", "accountDir", "readAccounts", "writeAccounts",
+      "accountsPath", "accountDir", "readAccounts", "writeAccounts", "updateAccounts", "withAccountsLock",
       "loadAccounts", "materializeImplicit", "syncDefaultAccountProjection", "applyProjection", "reconcileAccountProjection",
       "projectedAccounts", "projectionDiffers",
       "accountCredentialState", "accountCredentialFiles",

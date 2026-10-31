@@ -18,8 +18,9 @@ export {
   type AccountsFile,
   type CostTier,
 } from "./accounts/schema.js";
-export { accountsPath, accountDir, readAccounts, writeAccounts, type AccountsRead } from "./accounts/store.js";
+export { accountsPath, accountDir, readAccounts, writeAccounts, updateAccounts, withAccountsLock, type AccountsRead } from "./accounts/store.js";
 export { loadAccounts, materializeImplicit, syncDefaultAccountProjection, applyProjection, reconcileAccountProjection, type LoadedAccounts } from "./accounts/implicit.js";
+export { legacyCredentialPath, readLegacyCredential, type LegacyCredential } from "./accounts/legacy.js";
 export { projectedAccounts, projectionDiffers } from "./accounts/reconcile.js";
 export { accountCredentialFiles, accountCredentialState, type CredentialState } from "./accounts/credentials.js";
 export { saveAccountSecret, readAccountSecret, removeAccountSecrets, accountSecretPath, type AccountSecretKind } from "./secrets/accounts.js";
