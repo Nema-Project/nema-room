@@ -1,1 +1,0 @@
-- Start a message with `/name` to put that Skill's instructions into the task, with the rest of the message as its arguments. The `/` menu lists the workspace's Skills under the built-in commands when `/` starts the message. Built-in commands keep their names; a Skill with the same name is called as `/skill:name`, and `/skill:name` works for every Skill.

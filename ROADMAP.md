@@ -1,6 +1,6 @@
 # 项目路线图与验收台账
 
-更新日期：2026-10-30（Asia/Tokyo）
+更新日期：2026-10-31（Asia/Tokyo）
 
 本文件承接仓库评估中提出的 TODO，作为当前待办入口。它是建议的稳定化顺序，不代表全部问题已复现，也不代表已承诺交付日期。历史设计和评审保留在 `docs/superpowers/` 与 `docs/reviews/`；遇到冲突，应以对应提交的源码、CI 和验收证据为准。
 
@@ -15,6 +15,25 @@
 - [历史桌面验收](docs/reviews/2026-10-24-desktop-validation.md)只证明其记录的提交与环境；其中“尚未发布”等结论已经过时。
 - 已合入 `main` 的近期工作：[PR #29](https://github.com/Nema-Project/nema-room/pull/29) macOS 原生红绿灯（`5ff8cf9`）；[PR #30](https://github.com/Nema-Project/nema-room/pull/30) 落实 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 的用户 basis 证据检查（`afd1456`）；[PR #31](https://github.com/Nema-Project/nema-room/pull/31) 桌面包瘦身（`76680b8`）。
 - 本次评估通过 GitHub 读取源码、配置、Actions 和 Release；未本地重跑测试。开始每项工作前须重新检查最新状态。
+
+## v0.2.0 发布与后续验收
+
+v0.2.0 是 v0.1.6 之后的一次功能大版本：附件、`@` 提及、Skills 渐进载入与手动调用、MCP 配置与生命周期、插件页分区，以及发布机制第 3 期（tag 只验证，`release-promote` 翻指针）。
+
+发布记录（tag 之后补真实值，以下为占位）：
+
+- tag `v0.2.0` → `<TAG_COMMIT>`；该提交的 main CI：`<MAIN_CI_RUN>`。
+- 三条 tag 工作流：npm `<NPM_RUN>`、镜像 `<IMAGE_RUN>`、桌面 `<DESKTOP_RUN>`。
+- 只读检查 `npm run release:verify -- 0.2.0` 打 tag 后的首次结果：`<PRE_PROMOTE_VERIFY>`（预期退出 1，且只点名 npm）。
+- `release:verify -- --pointers 0.2.0` 的前后对照：`<POINTERS_BEFORE>` / `<POINTERS_AFTER>`。
+- 晋升：`gh workflow run release-promote.yml --ref main -f tag=v0.2.0`，运行 `<PROMOTE_RUN>`；晋升后 `release:verify -- 0.2.0` 退出 0。
+- `releases/latest/download/docker-compose.yml` 在晋升前仍是 0.1.6 的双 pin，晋升后变为 0.2.0 且带版本头。
+
+发布可用性不等于功能或真机验收完成：
+
+- 真模型验收已在 2026-10-31 完成（OpenRouter 免费模型，`codex-direct` + `byok`）：附件图片逐字读到暗号；`@` 提及的条目、附件、话题四项通过，daemon 离线时提及照常保存，引用超过 8 个附件时发送被拒。记录见 [#104 评论](https://github.com/Nema-Project/nema-room/issues/104#issuecomment-6537654518)、[#136 评论](https://github.com/Nema-Project/nema-room/issues/136#issuecomment-6537656356) 与[附件验收记录](docs/reviews/2026-10-30-attachments-model-acceptance.md) 第 8 节。没有免费模型声明 `file` 输入，PDF 未实测；`claude-code` 与 `siwc` 两种运行方式未做真模型验收。
+- Windows x64 与 macOS arm64 安装包的真机安装、覆盖升级、启动与旧数据保留仍待验证；不能用 v0.1.6 的验收代替。
+- 不自动升级：依赖 `^0.1.x` 不会解析到 0.2.0，升级需显式安装，见 CHANGELOG 的 0.2.0 节。
 
 ## v0.1.6 发布与后续验收
 

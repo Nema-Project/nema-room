@@ -1,1 +1,0 @@
-- `nema report --progress in_progress` reports unfinished work without `--json`; `--commits` may then be left out. The report skill now says so, and the room's report instructions describe `verified` as a commit check, not a test pass or the user's acceptance.

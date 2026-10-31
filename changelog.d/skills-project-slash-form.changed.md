@@ -1,1 +1,0 @@
-- A Skill from a trusted repository is inserted in the composer as `/skill:<repository>:<name>` (and `/skill:name` for one whose name a built-in command takes), matching the documented form; `/<repository>:<name>` still works.

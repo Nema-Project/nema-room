@@ -1,1 +1,0 @@
-- BYOK now reads the model list that OpenAI and OpenAI-compatible servers (OpenRouter, vLLM, Ollama and others) actually return, `{ data: [{ id }] }`. Before, `nema auth probe` failed with "模型列表响应缺少 models 数组" and the model picker in the desktop settings stayed empty, so a BYOK model could not be chosen there.

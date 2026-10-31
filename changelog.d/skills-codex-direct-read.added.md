@@ -1,1 +1,0 @@
-- codex-direct tasks now see a catalog of the enabled Skills and can load one with the new `read_skill` tool, which reads files only inside the Skill's folder, re-checks each read, and pages long files.

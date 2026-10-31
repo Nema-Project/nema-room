@@ -1,1 +1,0 @@
-- A bound repository's committed `.agents/skills` and `.claude/skills` can be given to agents. Turn on "Trust this repository's Skills" for that repository under Code & plugins; it is off by default and asks before turning on. Skills are read from the latest main-branch commit, and a name that clashes with your own Skills or another repository's gets the repository prefix.

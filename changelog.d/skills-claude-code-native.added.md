@@ -1,1 +1,0 @@
-- Claude Code tasks (Claude Code 2.1.309 or newer) now load the enabled Skills natively. Each task gets its own copy of the Skills and only the Skill and Read tools. Reads outside the task folder are blocked, and Skill shell commands and hooks are turned off.
