@@ -108,3 +108,29 @@ test('a lock replaced by another holder is not deleted by the previous caller', 
   assert.equal(await exists(lock), true, "another holder's lock survives our release");
   assert.equal(JSON.parse(await readFile(lock, 'utf8')).token, 'someone-else');
 });
+
+test('a lock whose record never landed is still removed by the caller that opened it', async (t) => {
+  const dir = await root(t);
+  const lock = releaseLockPath(dir);
+  const real = await import('node:fs/promises');
+  // The file really exists and stays empty: the record write fails after the exclusive open,
+  // so no token is on disk to compare against.
+  const broken = {
+    async writeFile() {
+      throw new Error('disk full while writing the record');
+    },
+    async close() {},
+  };
+  const release = await import('./release-lock.mjs');
+  await assert.rejects(
+    release.withReleaseLock(dir, 'release:cut', async () => assert.fail('must not run'), {
+      open: async (target, flag) => {
+        const handle = await real.open(target, flag);
+        await handle.close();
+        return broken;
+      },
+    }),
+    /disk full while writing the record/,
+  );
+  assert.equal(await exists(lock), false, 'an unreadable lock from our own failed write must not leak');
+});

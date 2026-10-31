@@ -600,3 +600,20 @@ test('a second process is told which command finishes the other version first', 
   assert.equal(await readFile(fragment, 'utf8'), '- Fragment added.\n');
   assert.equal(await gone(releaseLockPath(path.dirname(file))), true, 'a refused run still releases the lock');
 });
+
+test('a journal that names a file outside changelog.d is refused', async (t) => {
+  const file = await tempChangelog(t, emptyUnreleased);
+  const outside = path.join(path.dirname(file), 'CHANGELOG.md');
+  await writeFile(cutJournalPath(file), `${JSON.stringify({
+    schemaVersion: 1,
+    version: '0.2.0',
+    date: '2026-10-28',
+    pid: 1,
+    createdAt: '2026-10-28T00:00:00.000Z',
+    changelogSha256: '0'.repeat(64),
+    fragments: [{ name: '../CHANGELOG.md', sha256: '1'.repeat(64) }],
+  })}\n`);
+  const text = await readFile(file, 'utf8');
+  await assert.rejects(cutChangelogFile(file, '0.2.0', '2026-10-28'), /not a bare changelog\.d file name/);
+  assert.equal(await readFile(outside, 'utf8'), text);
+});

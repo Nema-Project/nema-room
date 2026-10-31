@@ -45,17 +45,23 @@ async function readHolder(lockPath) {
 /**
  * Delete the lock only when it still carries this call's token.
  * A lock another command created after ours disappeared is left alone.
+ * `created` means this call opened the file with `wx` and has not released it, so the file is ours
+ * even when the record inside it cannot be read (the write failed before the content landed).
  */
-async function releaseOwn(lockPath, token) {
+async function releaseOwn(lockPath, token, created) {
+  let parsed;
   try {
-    const parsed = JSON.parse(await readFile(lockPath, 'utf8'));
-    if (parsed?.token !== token) return;
-    await unlink(lockPath);
+    parsed = JSON.parse(await readFile(lockPath, 'utf8'));
   } catch (error) {
     if (error?.code === 'ENOENT') return;
-    if (error instanceof SyntaxError) return;
+    if (error instanceof SyntaxError) {
+      if (created) await unlink(lockPath).catch(() => {});
+      return;
+    }
     throw error;
   }
+  if (parsed?.token !== token) return;
+  await unlink(lockPath);
 }
 
 /**
@@ -70,11 +76,12 @@ export async function withReleaseLock(root, command, fn, options = {}) {
   const pollMs = options.lockPollMs ?? DEFAULT_POLL_MS;
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const token = randomUUID();
+  const openFile = options.open ?? open;
   const deadline = Date.now() + waitMs;
   let handle;
   for (;;) {
     try {
-      handle = await open(lockPath, 'wx');
+      handle = await openFile(lockPath, 'wx');
       break;
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
@@ -82,18 +89,21 @@ export async function withReleaseLock(root, command, fn, options = {}) {
       await sleep(pollMs);
     }
   }
+  let created = false;
   try {
     const record = { schemaVersion: 1, command, pid: process.pid, token, startedAt: new Date().toISOString() };
     await handle.writeFile(`${JSON.stringify(record)}\n`);
+    created = true;
   } catch (error) {
     await handle.close();
-    await releaseOwn(lockPath, token);
+    // The record never landed, so no token can be compared; the file is still the one this call opened.
+    await releaseOwn(lockPath, token, true);
     throw error;
   }
   await handle.close();
   try {
     return await fn();
   } finally {
-    await releaseOwn(lockPath, token);
+    await releaseOwn(lockPath, token, created);
   }
 }

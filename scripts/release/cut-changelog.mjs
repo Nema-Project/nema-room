@@ -218,6 +218,10 @@ function assertJournal(record, journal) {
     if (item === null || typeof item !== 'object' || typeof item.name !== 'string' || typeof item.sha256 !== 'string' || !SHA256.test(item.sha256)) {
       throw problem('has a fragment entry without a name and a hash');
     }
+    // A hand-edited journal must not be able to point the deletions outside changelog.d.
+    if (path.basename(item.name) !== item.name || !item.name.endsWith('.md')) {
+      throw problem(`names ${JSON.stringify(item.name)}, which is not a bare changelog.d file name`);
+    }
   }
   return record;
 }
