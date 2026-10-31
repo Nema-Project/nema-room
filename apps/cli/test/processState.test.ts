@@ -11,6 +11,21 @@ const posix = process.platform !== "win32";
 /** The old liveness rule, kept here so a regression in isStopped shows up as a difference between them. */
 const killAlive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
+/** The children of `pid` with their state, from one full process-table read. */
+const childrenOf = (pid: number): Array<{ pid: number; stat: string }> => {
+  // `ps -o ... --ppid` is GNU-only: macOS's ps rejects long options, and has no parent-selection
+  // flag at all (`-P` is not one there; on GNU `-P` means something else entirely). `-axo` with a
+  // ppid column is the form both document, and is the documented way to list zombies on macOS.
+  const ps = ["/bin/ps", "/usr/bin/ps"].find((candidate) => existsSync(candidate));
+  if (!ps) throw new Error("ps not found");
+  const out = spawnSync(ps, ["-axo", "pid=,stat=,ppid="], { encoding: "utf8" });
+  if (out.status !== 0) throw new Error(`ps exited ${out.status}: ${out.stderr}`);
+  return out.stdout.trim().split("\n")
+    .map((line) => line.trim().split(/\s+/))
+    .filter(([, , ppid]) => ppid === String(pid))
+    .map(([id, stat]) => ({ pid: Number(id), stat: stat ?? "" }));
+};
+
 const stateOf = (pid: number): string | null => {
   if (process.platform === "linux") {
     try {
@@ -43,14 +58,16 @@ describe("isStopped", () => {
     // its parent never waits for it. This is the state a SIGKILLed server's children reach when the
     // reaper above the test does not collect them.
     const holder = spawn("/bin/sh", ["-c", "sleep 0.05 & exec sleep 30"], { stdio: "ignore" });
+    // The parent to look under: without a pid there is nothing to query, so say so instead of
+    // passing undefined on as a child filter.
+    const holderPid = holder.pid;
+    if (holderPid === undefined) throw new Error("the holder process did not start");
     try {
       const deadline = Date.now() + 5000;
       let zombie = 0;
       while (Date.now() < deadline && zombie === 0) {
-        const found = spawnSync("/bin/sh", ["-c", `ps -o pid=,stat= --ppid ${holder.pid}`], { encoding: "utf8" }).stdout
-          .trim().split("\n").map((line) => line.trim().split(/\s+/))
-          .find(([, stat]) => stat?.startsWith("Z"));
-        if (found) zombie = Number(found[0]);
+        const found = childrenOf(holderPid).find((child) => child.stat.startsWith("Z"));
+        if (found) zombie = found.pid;
         else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
       }
       expect(zombie).toBeGreaterThan(0);
