@@ -8,10 +8,12 @@ import {
   type GithubObservation,
   type ReportAuthors,
   type ReportCheck,
+  type MessageMention,
   type ReportMessageMeta,
   type UserMessageMeta,
 } from "@nema/shared";
-import { AttachmentError, bindAttachments, listAttachmentsForMessages, toAttachmentRef } from "./attachments.js";
+import { AttachmentError, bindAttachments, listAttachmentsByIds, listAttachmentsForMessages, toAttachmentRef } from "./attachments.js";
+import { filterMentionsForEdit, mentionedAttachmentIds, validateMentions } from "./mentions.js";
 import type { Db } from "./db/db.js";
 import { getTask, insertQueuedTask, type Task } from "./tasks.js";
 import { conversationOf, getLastAgentMessage, getLastAskedQuestion } from "./threads.js";
@@ -91,21 +93,24 @@ async function withAttachments(db: Db, messages: Message[]): Promise<Message[]> 
 
 export const DELIVERY_LIMIT_MESSAGE = `本条、被引用消息和 thread 锚点的附件合计超过 32 MB 或 ${ATTACHMENT_LIMITS.perTaskCount} 个，请去掉一些附件或不引用那条消息`;
 
-/** Files of `message`, then of the message it quotes, then of its thread anchor, each once, tombstones included. */
+/** Files of `message`, of the message it quotes, of its thread anchor, then the files it mentions; each once, tombstones included. */
 async function deliveryViewsFor(db: Db, message: Message): Promise<AttachmentView[]> {
   if (message.role !== "user") return [];
-  const quoteId = (message.meta as UserMessageMeta | null)?.quote?.messageId;
+  const meta = message.meta as UserMessageMeta | null;
+  const quoteId = meta?.quote?.messageId;
   const sources = [...new Set([message.id, ...(quoteId ? [quoteId] : []), ...(message.threadId ? [message.threadId] : [])])];
   const byMessage = await listAttachmentsForMessages(db, sources);
+  // Files the message mentions travel with it too, in mention order, after its own and its quote's.
+  const mentioned = (await listAttachmentsByIds(db, message.workspaceId, mentionedAttachmentIds(meta?.mentions)));
   const seen = new Set<string>();
   const views: AttachmentView[] = [];
-  for (const source of sources) {
-    for (const view of byMessage.get(source) ?? []) {
-      if (seen.has(view.id)) continue;
-      seen.add(view.id);
-      views.push(view);
-    }
-  }
+  const push = (view: AttachmentView) => {
+    if (seen.has(view.id)) return;
+    seen.add(view.id);
+    views.push(view);
+  };
+  for (const source of sources) for (const view of byMessage.get(source) ?? []) push(view);
+  for (const view of mentioned) push(view);
   return views;
 }
 
@@ -151,7 +156,7 @@ async function insertMessage(
   return toMessage(rows[0]!);
 }
 
-export type PostUserMessageOptions = { quoteMessageId?: string; threadId?: string; attachmentIds?: string[] };
+export type PostUserMessageOptions = { quoteMessageId?: string; threadId?: string; attachmentIds?: string[]; mentions?: MessageMention[] };
 
 /**
  * A user message and its queued task, in one transaction. With attachment ids, the uploads are locked first: if they
@@ -165,6 +170,7 @@ export async function postUserMessage(
   opts: PostUserMessageOptions | string = {},
 ): Promise<{ message: Message; task: Task; replayed: boolean }> {
   const options = typeof opts === "string" ? { quoteMessageId: opts } : opts;
+  const mentions = options.mentions ?? [];
   const attachmentIds = [...new Set(options.attachmentIds ?? [])].sort();
   if (!messageHasBody(content, attachmentIds)) throw new MessageOpError(400, "message content must not be empty");
   try {
@@ -173,6 +179,7 @@ export async function postUserMessage(
         const replay = await lockForSend(t, workspaceId, content, options, attachmentIds);
         if (replay) return { ...replay, replayed: true };
       }
+      await validateMentions(t, workspaceId, content, mentions);
       let meta: UserMessageMeta | null = null;
       if (options.threadId) {
         const thread = await t.query<{ workspace_id: string }>("select workspace_id from threads where id=$1", [options.threadId]);
@@ -183,6 +190,7 @@ export async function postUserMessage(
         if (!quoted || quoted.workspaceId !== workspaceId) throw new MessageOpError(400, "quote: message not in this workspace");
         meta = { quote: { messageId: quoted.id, role: quoted.role, excerpt: messageExcerpt(quoted.content) } };
       }
+      if (mentions.length > 0) meta = { ...(meta ?? {}), mentions };
       const inserted = await insertMessage(t, workspaceId, "user", content, null, meta, options.threadId ?? null);
       const attachments = await bindAttachments(t, workspaceId, inserted.id, attachmentIds);
       const message = { ...inserted, attachments: await reorder(t, inserted.id, attachments) };
@@ -203,6 +211,13 @@ export async function postUserMessage(
 async function reorder(db: Db, messageId: string, fallback: AttachmentView[]): Promise<AttachmentView[]> {
   if (fallback.length === 0) return fallback;
   return (await listAttachmentsForMessages(db, [messageId])).get(messageId) ?? fallback;
+}
+
+/** Replay compares what a mention points at and its stored text; order matters, nothing else is looked at. */
+function sameMentions(a: readonly MessageMention[] | undefined, b: readonly MessageMention[] | undefined): boolean {
+  const left = a ?? [];
+  const right = b ?? [];
+  return left.length === right.length && left.every((m, i) => m.type === right[i]!.type && m.id === right[i]!.id && m.text === right[i]!.text);
 }
 
 /**
@@ -233,7 +248,8 @@ async function lockForSend(
     boundIds.length === ids.length && boundIds.every((id, i) => id === ids[i]) &&
     prior.content === content &&
     priorQuote === (options.quoteMessageId ?? null) &&
-    prior.threadId === (options.threadId ?? null);
+    prior.threadId === (options.threadId ?? null) &&
+    sameMentions((prior.meta as UserMessageMeta | null)?.mentions, options.mentions);
   if (!same) throw conflict;
   const first = await t.query<{ id: string }>("select id from tasks where message_id = $1 order by seq limit 1", [messageId]);
   const task = first[0] ? await getTask(t, first[0].id) : null;
@@ -296,9 +312,22 @@ export async function editUserMessage(
        from messages where id = $1`,
       [messageId],
     );
-    const updated = await t.query<Row>(`update messages set content = $2, edited_at = clock_timestamp() where id = $1 returning ${COLS}`, [
+    // A mention survives only while the text it wrote is still in the body; dropping it never drops the file.
+    const prior = toMessage(row);
+    const priorMentions = (prior.meta as UserMessageMeta | null)?.mentions ?? [];
+    const kept = filterMentionsForEdit(content, priorMentions);
+    const nextMeta: UserMessageMeta | null = kept.length > 0
+      ? { ...(prior.meta as UserMessageMeta | null), mentions: kept }
+      : prior.meta === null
+        ? null
+        : (() => {
+            const { mentions: _dropped, ...rest } = prior.meta as UserMessageMeta;
+            return Object.keys(rest).length > 0 ? rest : null;
+          })();
+    const updated = await t.query<Row>(`update messages set content = $2, meta = $3::jsonb, edited_at = clock_timestamp() where id = $1 returning ${COLS}`, [
       messageId,
       content,
+      nextMeta === null ? null : JSON.stringify(nextMeta),
     ]);
     const task = await insertQueuedTask(t, workspaceId, messageId, "edit");
     const [message] = await withAttachments(t, [toMessage(updated[0]!)]);
