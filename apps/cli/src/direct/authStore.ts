@@ -46,6 +46,20 @@ const StoredAuthSchema = z.object({
   lastAuthError: z.object({ code: z.string(), message: z.string(), at: z.string() }).optional(),
 });
 
+/**
+ * Parses a stored login from its bytes. One definition of "a login Nema accepts", shared by the store and
+ * by the account migration, which validates the exact bytes it is about to copy rather than re-reading
+ * the path (a second read could see a different file).
+ */
+export function parseStoredAuth(raw: string): StoredAuth | null {
+  try {
+    const parsed = StoredAuthSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? (parsed.data as StoredAuth) : null;
+  } catch {
+    return null;
+  }
+}
+
 export type StoredAuth = {
   version: 1;
   mode: "siwc" | "compat" | "byok";
@@ -152,8 +166,8 @@ export class AuthStore {
       } finally {
         closeSync(fd);
       }
-      const parsed = StoredAuthSchema.safeParse(JSON.parse(raw));
-      return parsed.success ? { auth: parsed.data as StoredAuth } : { auth: null, reason: "unusable" };
+      const auth = parseStoredAuth(raw);
+      return auth === null ? { auth: null, reason: "unusable" } : { auth };
     } catch (e) {
       return { auth: null, reason: (e as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unusable" };
     }

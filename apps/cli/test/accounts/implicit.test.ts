@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { loadAccounts, materializeImplicit, syncDefaultAccountProjection } from "../../src/accounts/implicit.js";
+import { projectedAccounts } from "../../src/accounts/reconcile.js";
 import { accountsPath, accountDir, readAccounts, writeAccounts } from "../../src/accounts/store.js";
 import { accountCredentialState } from "../../src/accounts/credentials.js";
 import { readAccountSecret } from "../../src/secrets/accounts.js";
@@ -30,7 +31,7 @@ const byokConfig = (over: Partial<NemaConfig> = {}): NemaConfig => ({
 describe("loadAccounts without accounts.json", () => {
   test("synthesizes one account from config and writes nothing to disk", () => {
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), "sk-legacy", { mode: 0o600 });
+    writeFileSync(join(home, "byok-key"), "fake-legacy-key", { mode: 0o600 });
 
     const loaded = loadAccounts(home, byokConfig(), codexHome);
 
@@ -84,13 +85,13 @@ describe("loadAccounts without accounts.json", () => {
 describe("materializeImplicit", () => {
   test("moves the byok key into the new account directory and stops using the old path", () => {
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), "sk-legacy", { mode: 0o600 });
+    writeFileSync(join(home, "byok-key"), "fake-legacy-key", { mode: 0o600 });
 
     const { account, movedFrom } = materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "我的账户" });
 
     expect(account.id).not.toBe(IMPLICIT_ACCOUNT_ID);
     expect(movedFrom).toBe(join(home, "byok-key"));
-    expect(readFileSync(join(accountDir(home, account.id), "key"), "utf8")).toBe("sk-legacy");
+    expect(readFileSync(join(accountDir(home, account.id), "key"), "utf8")).toBe("fake-legacy-key");
     expect(existsSync(join(home, "byok-key"))).toBe(false);
     expect(account.name).toBe("我的账户");
 
@@ -123,11 +124,11 @@ describe("materializeImplicit", () => {
   test("the moved key still resolves to the same account token the daemon will send", () => {
     // A migration that swapped in a different key would still look connected; compare the bytes.
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), "sk-original-key-value", { mode: 0o600 });
+    writeFileSync(join(home, "byok-key"), "fake-original-key", { mode: 0o600 });
 
     const { account } = materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "账户" });
 
-    expect(readAccountSecret(home, account.id, "key")).toBe("sk-original-key-value");
+    expect(readAccountSecret(home, account.id, "key")).toBe("fake-original-key");
   });
 
   test("leaves the Codex login alone for compat", () => {
@@ -187,6 +188,22 @@ describe("syncDefaultAccountProjection", () => {
     expect(syncDefaultAccountProjection([stored({ enabled: false })], byokConfig({ model: "m-2" }))).toBeNull();
   });
 
+  test("a removed config model clears the stored override", () => {
+    // 0.2.0 删掉 model 时，账户里存的那份必须一起停用，否则它会继续覆盖新选择。
+    const config = { ...byokConfig(), model: undefined };
+    expect(syncDefaultAccountProjection([stored()], config)).toEqual({
+      accountId: "acct_abc1234567",
+      patch: { model: undefined },
+    });
+    // 清干净之后就没有 patch 了。
+    expect(syncDefaultAccountProjection([stored({ model: undefined })], config)).toBeNull();
+  });
+
+  test("clearing the model is visible in projectedAccounts", () => {
+    const rows = projectedAccounts([stored()], { ...byokConfig(), model: undefined });
+    expect(rows[0]!.model).toBeUndefined();
+  });
+
   test("mirrors adapter and authMode too", () => {
     const patch = syncDefaultAccountProjection([stored({ authMode: "siwc", baseUrl: undefined })], byokConfig());
     expect(patch).toEqual({
@@ -199,17 +216,17 @@ describe("syncDefaultAccountProjection", () => {
 describe("materializeImplicit hardening", () => {
   test("a failure after the move leaves no dangling state: the account file is written first", () => {
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), "sk-legacy", { mode: 0o600 });
+    writeFileSync(join(home, "byok-key"), "fake-legacy-key", { mode: 0o600 });
 
     // A credential directory that cannot be created must fail the whole operation, leaving the legacy
     // file exactly where it was: the copy happens before anything is committed or removed.
     const badHome = join(root, "readonly");
     mkdirSync(join(badHome, "secrets", "accounts"), { recursive: true, mode: 0o700 });
-    writeFileSync(join(badHome, "byok-key"), "sk-legacy", { mode: 0o600 });
+    writeFileSync(join(badHome, "byok-key"), "fake-legacy-key", { mode: 0o600 });
     chmodSync(join(badHome, "secrets", "accounts"), 0o500);
     try {
       expect(() => materializeImplicit({ nemaHome: badHome, config: byokConfig(), codexHome, name: "x" })).toThrow();
-      expect(readFileSync(join(badHome, "byok-key"), "utf8")).toBe("sk-legacy");
+      expect(readFileSync(join(badHome, "byok-key"), "utf8")).toBe("fake-legacy-key");
       expect(existsSync(accountsPath(badHome))).toBe(false);
     } finally {
       chmodSync(join(badHome, "secrets", "accounts"), 0o700);
@@ -218,13 +235,13 @@ describe("materializeImplicit hardening", () => {
 
   test("a crash between the account write and the move recovers on the next run", () => {
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), "sk-legacy", { mode: 0o600 });
+    writeFileSync(join(home, "byok-key"), "fake-legacy-key", { mode: 0o600 });
     const now = new Date("2026-10-31T00:00:00.000Z");
     const random = () => "abcdefghij";
 
     // Simulate the crash: the account record is written and the credential is copied, never removed.
     const first = materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "账户", now, random });
-    writeFileSync(join(home, "byok-key"), "sk-legacy", { mode: 0o600 }); // the "unmoved" legacy file is back
+    writeFileSync(join(home, "byok-key"), "fake-legacy-key", { mode: 0o600 }); // the "unmoved" legacy file is back
     expect(existsSync(join(accountDir(home, first.account.id), "key"))).toBe(true);
 
     // The next materialize sees the stored account and finishes the move instead of creating a second one.
@@ -240,22 +257,22 @@ describe("materializeImplicit hardening", () => {
     // The move used to be a rename with an EXDEV fallback that read the wrong path. It is now always a
     // copy of the legacy file followed by a delete, which cannot raise EXDEV.
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), "sk-legacy", { mode: 0o600 });
+    writeFileSync(join(home, "byok-key"), "fake-legacy-key", { mode: 0o600 });
 
     const { account, movedFrom } = materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "账户" });
 
     expect(movedFrom).toBe(join(home, "byok-key"));
-    expect(readFileSync(join(accountDir(home, account.id), "key"), "utf8")).toBe("sk-legacy");
+    expect(readFileSync(join(accountDir(home, account.id), "key"), "utf8")).toBe("fake-legacy-key");
     expect(existsSync(join(home, "byok-key"))).toBe(false);
   });
 
   test("a second materialize reuses the account that already owns the legacy key", () => {
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), "sk-legacy", { mode: 0o600 });
+    writeFileSync(join(home, "byok-key"), "fake-legacy-key", { mode: 0o600 });
 
     const a = materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "first", random: () => "aaaaaaaaaa" });
     // A peer that raced us re-plants nothing but starts from the same legacy file; here we replay that.
-    writeFileSync(join(home, "byok-key"), "sk-legacy", { mode: 0o600 });
+    writeFileSync(join(home, "byok-key"), "fake-legacy-key", { mode: 0o600 });
     const b = materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "second", random: () => "bbbbbbbbbb" });
 
     // One credential, one account: the key is never duplicated into a second account.
@@ -286,8 +303,9 @@ describe("materializeImplicit hardening", () => {
   });
 
   test("two writers cannot drop each other's account", () => {
-    // Without the accounts lock, the second call reads the same snapshot as the first and rewrites the
-    // file without the first's row, leaving its credential unreferenced.
+    // Two overlapping writers are exercised for real in accounts/lock.test.ts (two child processes, one
+    // holding the lock open). This case covers the sequential path: both rows are kept and neither
+    // writer's account replaces the other.
     const one = materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "one", random: () => "dddddddddd" });
     const two = materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "two", random: () => "eeeeeeeeee" });
 
@@ -298,7 +316,7 @@ describe("materializeImplicit hardening", () => {
 
   test("the accounts lock is released after a failed write", () => {
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), "sk-legacy", { mode: 0o600 });
+    writeFileSync(join(home, "byok-key"), "fake-legacy-key", { mode: 0o600 });
     // A name that fails the account rules makes writeAccounts refuse; the lock must still be released so
     // the next attempt is not blocked.
     expect(() => materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "x".repeat(41) })).toThrow();
@@ -310,7 +328,7 @@ describe("materializeImplicit hardening", () => {
 
   test("a BYOK account without an explicit base URL still materializes", () => {
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), "sk-legacy", { mode: 0o600 });
+    writeFileSync(join(home, "byok-key"), "fake-legacy-key", { mode: 0o600 });
     const config: NemaConfig = { ...DEFAULT_CONFIG, authMode: "byok" }; // no byokBaseUrl: the default applies
 
     const { account } = materializeImplicit({ nemaHome: home, config, codexHome, name: "默认地址" });

@@ -1,9 +1,17 @@
-import { randomUUID } from "node:crypto";
-import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, rmSync, unlinkSync, writeSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { DEFAULT_BYOK_BASE_URL, type NemaConfig } from "../config.js";
-import { protectPrivatePath } from "../secrets/permissions.js";
-import { accountDir, readAccounts, writeAccounts } from "./store.js";
+import { accountsUnusableMessage, accountDir, readAccounts, updateAccounts, writeAccounts, withAccountsLock } from "./store.js";
+import {
+  accountFileName,
+  credentialFileName,
+  legacyCredentialPath,
+  legacyUnchanged,
+  readLegacyCredential,
+  removeLegacyIfUnchanged,
+  writeCredentialCopy,
+  type LegacyCredential,
+} from "./legacy.js";
 import { IMPLICIT_ACCOUNT_ID, newAccountId, type Account } from "./schema.js";
 
 /**
@@ -15,25 +23,30 @@ import { IMPLICIT_ACCOUNT_ID, newAccountId, type Account } from "./schema.js";
  * the account directory and the legacy file is removed once the account record is committed, so a crash
  * at any point leaves a usable state:
  *
- *   1. copy the credential into `secrets/accounts/<id>/` (the legacy file is untouched);
+ *   1. validate the legacy file and copy it into `secrets/accounts/<id>/`, fsyncing the file and its
+ *      directory (the legacy file is untouched);
  *   2. merge the account record into `accounts.json` and fsync it;
- *   3. remove the legacy file. If this does not happen, the next materialize finishes it.
+ *   3. remove the legacy file, but only while it is still the exact file that was copied. If it was
+ *      replaced meanwhile, the replacement is the newer credential: adopt it and retry, and if it keeps
+ *      changing leave it in place. The next materialize finishes the move.
  */
 
-/** The legacy credential path for this config, or null when the combination owns no file. */
-function legacyCredentialPath(nemaHome: string, config: NemaConfig): string | null {
-  if (config.adapter === "claude-code") return path.join(nemaHome, "claude-code-token");
-  if (config.authMode === "byok") return path.join(nemaHome, "byok-key");
-  if (config.authMode === "siwc") return path.join(nemaHome, "auth.json");
-  return null;
-}
+export type LoadedAccounts = { accounts: Account[]; implicit: boolean; unusableReason?: "symlink" | "mode" | "owner" | "corrupt" | "invalid" };
 
-/** The account-layout file name for a legacy file: `key`, `token`, or `auth.json`. */
-function accountFileName(legacy: string): string {
-  const base = path.basename(legacy);
-  if (base === "auth.json") return "auth.json";
-  if (base === "byok-key") return "key";
-  return "token";
+/**
+ * The accounts this machine has. A missing or unusable `accounts.json` yields the synthesized account so
+ * the rest of the daemon always has exactly one usable account, the way 0.2.0 always had exactly one
+ * credential.
+ */
+export function loadAccounts(nemaHome: string, config: NemaConfig, _codexHome: string, now: Date = new Date()): LoadedAccounts {
+  const read = readAccounts(nemaHome);
+  if (read.status === "ok") return { accounts: read.file.accounts, implicit: false };
+  const reason = read.status === "unusable" ? read.reason : undefined;
+  return {
+    accounts: [implicitAccount(config, now)],
+    implicit: true,
+    ...(reason !== undefined ? { unusableReason: reason } : {}),
+  };
 }
 
 function implicitAccount(config: NemaConfig, now: Date): Account {
@@ -55,117 +68,122 @@ function implicitAccount(config: NemaConfig, now: Date): Account {
   };
 }
 
-export type LoadedAccounts = { accounts: Account[]; implicit: boolean; unusableReason?: "symlink" | "mode" | "owner" | "corrupt" | "invalid" };
-
-/**
- * The accounts this machine has. A missing or unusable `accounts.json` yields the synthesized account so
- * the rest of the daemon always has exactly one usable account, the way 0.2.0 always had exactly one
- * credential.
- */
-export function loadAccounts(nemaHome: string, config: NemaConfig, _codexHome: string, now: Date = new Date()): LoadedAccounts {
-  const read = readAccounts(nemaHome);
-  if (read.status === "ok") return { accounts: read.file.accounts, implicit: false };
-  const reason = read.status === "unusable" ? read.reason : undefined;
-  return {
-    accounts: [implicitAccount(config, now)],
-    implicit: true,
-    ...(reason !== undefined ? { unusableReason: reason } : {}),
-  };
+/** The credential file this account keeps, or null for a kind that owns none (`compat`). */
+function targetFile(nemaHome: string, account: Account): string | null {
+  const name = credentialFileName(account);
+  return name === null ? null : path.join(accountDir(nemaHome, account.id), name);
 }
 
-/** True when this account was materialized from the legacy single key and still has that file to move. */
-function pendingLegacyMove(nemaHome: string, accounts: Account[], config: NemaConfig): Account | null {
-  const legacy = legacyCredentialPath(nemaHome, config);
-  if (legacy === null || !existsSync(legacy)) return null;
-  // A materialized account always has the matching credential kind; find the one the legacy file belongs to.
-  const wanted = accountFileName(legacy);
-  return accounts.find((a) => {
-    if (a.adapter !== config.adapter) return false;
-    const files = a.adapter === "claude-code" ? ["token"] : [a.authMode === "byok" ? "key" : a.authMode === "siwc" ? "auth.json" : ""];
-    return files.includes(wanted);
-  }) ?? null;
-}
-
-/** Copies the legacy credential into the account directory. Safe to repeat: the bytes are the same. */
-function copyLegacyCredential(nemaHome: string, account: Account, legacy: string, target: string): void {
-  const dir = accountDir(nemaHome, account.id);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  protectPrivatePath(dir, 0o700);
-  copyFileSync(legacy, target);
-  protectPrivatePath(target, 0o600);
-  // Read back before the caller may delete the original.
-  if (readFileSync(target, "utf8") !== readFileSync(legacy, "utf8")) throw new Error("账户凭据写入后读不回");
+/** True when this account is of the kind the legacy file holds (same adapter, same credential kind). */
+function takesLegacyFile(account: Account, legacyName: string, config: NemaConfig): boolean {
+  if (account.adapter !== config.adapter) return false;
+  return credentialFileName(account) === accountFileName(legacyName);
 }
 
 /**
- * Serializes writers of `accounts.json` across processes. The account store's own writes are atomic, but
- * "read, decide, write" is not: two daemons editing accounts at once would each write their own snapshot
- * and the later one would drop the earlier one's account. A caller that only reads needs no lock.
+ * The bytes of a regular file, or null. Refuses symlinks and non-files: comparing through a link would
+ * let a planted link make the legacy file look "already moved", and the legacy file would then be deleted
+ * while the account's "copy" is really a link back to it.
  */
-function withAccountsLock<T>(nemaHome: string, fn: () => T): T {
-  mkdirSync(nemaHome, { recursive: true, mode: 0o700 });
-  protectPrivatePath(nemaHome, 0o700);
-  const lockPath = path.join(nemaHome, "accounts.lock");
-  const token = randomUUID();
-  const deadline = Date.now() + 15_000;
-  for (;;) {
-    try {
-      const fd = openSync(lockPath, "wx", 0o600);
-      try {
-        writeSync(fd, JSON.stringify({ pid: process.pid, at: Date.now(), token }));
-        fsyncSync(fd);
-      } finally {
-        closeSync(fd);
-      }
-      break;
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-    }
-    // A lock whose holder is gone is stale; this is the same rule the auth lock uses.
-    let held = false;
-    try {
-      const raw = JSON.parse(readFileSync(lockPath, "utf8")) as { pid?: unknown };
-      held = typeof raw.pid === "number" && pidAlive(raw.pid);
-    } catch {
-      held = false;
-    }
-    if (!held) {
-      rmSync(lockPath, { force: true });
+function regularFileBytes(file: string): Buffer | null {
+  try {
+    if (!lstatSync(file).isFile()) return null;
+    return readFileSync(file);
+  } catch {
+    return null;
+  }
+}
+
+/** What an existing `accounts.json` says about a legacy file that is still on disk. */
+type LegacySituation =
+  /** Exactly one account of this kind has no credential yet: that account is waiting for this file. */
+  | { kind: "awaiting"; account: Account }
+  /** One account already holds these exact bytes: the move happened and the legacy file was re-planted. */
+  | { kind: "already-moved"; account: Account }
+  /** No account of this kind exists, so this is a fresh first edit. */
+  | { kind: "none" }
+  /** Several accounts could own it; guessing would put the credential in the wrong one. */
+  | { kind: "ambiguous"; ids: string[] }
+  /** Accounts of this kind exist and all own a different credential; none of them is this file's owner. */
+  | { kind: "conflict"; ids: string[] };
+
+/**
+ * Which account owns the legacy file, decided from what is actually on disk rather than from "the first
+ * row of the right kind". An account whose credential file exists is never a pending owner unless those
+ * bytes are exactly the legacy credential: its file is either a verified copy (the move is done) or a
+ * different credential that a guess must not overwrite.
+ */
+function legacySituation(
+  nemaHome: string,
+  accounts: Account[],
+  config: NemaConfig,
+  legacy: string,
+  legacyBytes: Buffer,
+): LegacySituation {
+  const legacyName = path.basename(legacy);
+  const matching = accounts.filter((a) => takesLegacyFile(a, legacyName, config));
+  const awaiting: Account[] = [];
+  for (const account of matching) {
+    const target = targetFile(nemaHome, account);
+    if (target === null) continue;
+    if (!existsSync(target)) {
+      awaiting.push(account);
       continue;
     }
-    if (Date.now() >= deadline) throw new Error("等待账户文件锁超时，请稍后重试");
-    // Materializing is a short synchronous step; blocking here keeps the API synchronous like the rest
-    // of the account helpers, which the settings service calls without an event loop turn.
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    const existing = regularFileBytes(target);
+    // Byte comparison, not "a file is there": a partial copy or an older credential is not this move.
+    if (existing !== null && existing.equals(legacyBytes)) return { kind: "already-moved", account };
   }
-  try {
-    return fn();
-  } finally {
-    try {
-      const raw = JSON.parse(readFileSync(lockPath, "utf8")) as { token?: unknown };
-      if (raw.token === token) unlinkSync(lockPath);
-    } catch {
-      /* a lock we cannot remove goes stale once this process exits */
-    }
-  }
+  if (matching.length === 0) return { kind: "none" };
+  // Only an account that is the *sole* candidate can be assumed to own this file. If other accounts of
+  // the same kind exist, one of them may be the file's real owner (a rollback can write the legacy path
+  // after an account was materialized), and guessing would hand the credential to the wrong account.
+  if (matching.length === 1 && awaiting.length === 1) return { kind: "awaiting", account: awaiting[0]! };
+  if (awaiting.length > 1) return { kind: "ambiguous", ids: awaiting.map((a) => a.id) };
+  return { kind: "conflict", ids: matching.map((a) => a.id) };
 }
 
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code !== "ESRCH"; // EPERM: exists, owned by someone else
-  }
-}
+/** How many times a legacy file replaced mid-move is re-read and adopted before it is left in place. */
+const LEGACY_ADOPT_ATTEMPTS = 3;
 
 /**
- * Writes the synthesized account down under a fresh id and moves the old credential into its directory.
+ * Deletes the legacy file once its bytes are safely in `account` — but only while it is still the exact
+ * file that was copied. A replacement (an older daemon or `authByok` saving a refreshed credential) is
+ * newer than our copy, so it is adopted: its bytes are copied in, and the check runs again. A file that
+ * keeps being replaced is left where it is, which loses nothing and lets the next run finish.
  *
- * Order matters for recovery: copy first, commit the account record second, delete the legacy file last.
- * A failure or crash at any step leaves either the legacy file still in place (nothing lost), or an
- * account whose credential exists while the legacy file lingers (the next call finishes the move).
+ * Returns the path the credential was retired from, or null when the legacy file could not be retired.
  */
+export function retireLegacyFile(
+  nemaHome: string,
+  account: Account,
+  initial: LegacyCredential,
+  opts: { alreadyCopied?: boolean; afterCopy?: (legacyPath: string) => void } = {},
+): string | null {
+  const name = credentialFileName(account);
+  if (name === null) return null;
+  let source = initial;
+  for (let attempt = 0; attempt < LEGACY_ADOPT_ATTEMPTS; attempt++) {
+    // The first copy may already be in place from before the commit; only a changed source needs another.
+    const copiedEarlier = attempt === 0 && opts.alreadyCopied === true;
+    if (!copiedEarlier || !legacyUnchanged(nemaHome, source)) {
+      writeCredentialCopy(nemaHome, account.id, name, source.bytes);
+    }
+    // A hook for the caller/tests to act between "copied" and "removed", which is exactly the window a
+    // peer's refresh can land in.
+    opts.afterCopy?.(source.path);
+    if (removeLegacyIfUnchanged(nemaHome, source)) return source.path;
+    // The file changed under us: it is the newer credential, so adopt it and try to retire it again.
+    try {
+      source = readLegacyCredential(nemaHome, source.path);
+    } catch {
+      // The replacement is not a credential we can vouch for (or it vanished): keep it and stop.
+      return null;
+    }
+  }
+  return null;
+}
+
 export function materializeImplicit(o: {
   nemaHome: string;
   config: NemaConfig;
@@ -186,40 +204,80 @@ function materializeLocked(o: {
   random?: () => string;
 }): { account: Account; movedFrom: string | null } {
   const existing = readAccounts(o.nemaHome);
-  if (existing.status === "ok") {
-    // A previous run may have committed the account and died before deleting the legacy file.
-    const pending = pendingLegacyMove(o.nemaHome, existing.file.accounts, o.config);
-    const legacy = legacyCredentialPath(o.nemaHome, o.config);
-    if (pending !== null && legacy !== null) {
-      const target = path.join(accountDir(o.nemaHome, pending.id), accountFileName(legacy));
-      if (!existsSync(target)) copyLegacyCredential(o.nemaHome, pending, legacy, target);
-      rmSync(legacy, { force: true });
-      return { account: pending, movedFrom: legacy };
+  if (existing.status === "unusable") {
+    // The file may hold rows and bindings that are still recoverable by hand. Replacing it with a fresh
+    // snapshot would destroy them, so refuse and say what to do instead.
+    throw new Error(accountsUnusableMessage(o.nemaHome, existing.reason));
+  }
+
+  const legacyPath = legacyCredentialPath(o.nemaHome, o.config);
+  // Validate the legacy file before deciding anything: an untrusted source stops the migration with the
+  // file untouched, rather than becoming an account credential.
+  const source = legacyPath !== null && existsSync(legacyPath) ? readLegacyCredential(o.nemaHome, legacyPath) : null;
+
+  const others = existing.status === "ok" ? existing.file.accounts : [];
+  if (source !== null) {
+    const situation = legacySituation(o.nemaHome, others, o.config, source.path, source.bytes);
+    if (situation.kind === "ambiguous") {
+      throw new Error(
+        `有多个账户（${situation.ids.join("、")}）缺少凭据文件，无法确定旧凭据属于哪一个，已保留 ${source.path} 未动。请先在设置页补齐或删除多余的账户。`,
+      );
+    }
+    if (situation.kind === "conflict") {
+      throw new Error(
+        `账户 ${situation.ids.join("、")} 的凭据与旧凭据 ${source.path} 内容不同，无法判断哪一个是新的，两边都未改动。请确认后手动处理。`,
+      );
+    }
+    if (situation.kind === "awaiting") {
+      // A previous run committed the account and died before deleting the legacy file: finish that move.
+      const movedFrom = retireLegacyFile(o.nemaHome, situation.account, source);
+      return { account: situation.account, movedFrom };
+    }
+    if (situation.kind === "already-moved") {
+      // The bytes are already stored in that account's file; retire the leftover legacy path only while
+      // it still holds exactly those bytes.
+      const movedFrom = removeLegacyIfUnchanged(o.nemaHome, source) ? source.path : null;
+      return { account: situation.account, movedFrom };
     }
   }
 
   const from = implicitAccount(o.config, o.now ?? new Date());
-  const account: Account = { ...from, id: newAccountId(o.random), name: o.name };
+  const takenIds = new Set(others.map((a) => a.id));
+  // An id names a credential directory: reusing one would copy this credential over that account's file.
+  const account: Account = {
+    ...from,
+    id: newAccountId(o.random, (id) => takenIds.has(id) || existsSync(accountDir(o.nemaHome, id))),
+    name: o.name,
+  };
 
   const bindings = existing.status === "ok" ? { ...existing.file.bindings } : {};
   for (const [scope, value] of Object.entries(bindings)) {
     if (value === IMPLICIT_ACCOUNT_ID) bindings[scope] = account.id;
   }
-  // Under the lock nothing else can commit between the read above and the write below.
-  const others = existing.status === "ok" ? existing.file.accounts : [];
-  const latestBindings = bindings;
-  const accounts = others.some((a) => a.id === account.id) ? others : [...others, account];
+  // `newAccountId` already refused every stored id; this is the belt to its braces.
+  if (others.some((a) => a.id === account.id)) throw new Error("生成的账户 id 与已有账户冲突，未写入任何数据");
+  const accounts = [...others, account];
 
-  const legacy = legacyCredentialPath(o.nemaHome, o.config);
-  let movedFrom: string | null = null;
-  if (legacy !== null && existsSync(legacy)) {
-    copyLegacyCredential(o.nemaHome, account, legacy, path.join(accountDir(o.nemaHome, account.id), accountFileName(legacy)));
-    movedFrom = legacy;
+  // 1. The credential copy is durable (file + directory fsync) before anything refers to it.
+  const name = credentialFileName(account);
+  if (source !== null && name !== null) writeCredentialCopy(o.nemaHome, account.id, name, source.bytes);
+  // 2. Only now is the account reachable from a committed record.
+  try {
+    writeAccounts(o.nemaHome, { version: 1, accounts, bindings });
+  } catch (e) {
+    // Nothing refers to that directory: the id was fresh, so the copy is this attempt's alone. Leaving it
+    // would put an unreferenced copy of the credential on disk. The legacy file is untouched either way.
+    if (source !== null && name !== null) {
+      try {
+        rmSync(accountDir(o.nemaHome, account.id), { recursive: true, force: true });
+      } catch {
+        /* best effort: the legacy file is still the authoritative copy */
+      }
+    }
+    throw e;
   }
-
-  writeAccounts(o.nemaHome, { version: 1, accounts, bindings: latestBindings });
-  // Only now is the credential reachable from a committed account record.
-  if (movedFrom !== null) rmSync(movedFrom, { force: true });
+  // 3. And only after that may the legacy file go, and only if it is still the file that was copied.
+  const movedFrom = source === null ? null : retireLegacyFile(o.nemaHome, account, source, { alreadyCopied: name !== null });
   return { account, movedFrom };
 }
 
@@ -243,7 +301,12 @@ function projectionPatch(target: Account, config: NemaConfig): Partial<Account> 
     if (target.baseUrl !== undefined) patch.baseUrl = undefined;
   }
 
-  if (config.model !== undefined && target.model !== config.model) patch.model = config.model;
+  // A model the config no longer selects must stop applying: clear it, the same way baseUrl is cleared.
+  if (config.model === undefined) {
+    if (target.model !== undefined) patch.model = undefined;
+  } else if (target.model !== config.model) {
+    patch.model = config.model;
+  }
   return patch;
 }
 
@@ -274,19 +337,22 @@ export function applyProjection(account: Account, patch: Partial<Account>): Acco
   return merged as Account;
 }
 
-/** Writes the projection into the default account. Used by the settings page when it opens, not at startup. */
+/**
+ * Writes the projection into the default account. Used by the settings page when it opens, not at startup.
+ *
+ * The read-modify-write runs under the accounts lock (`updateAccounts`), so a peer's edit between our
+ * check and our write is never replaced by a snapshot taken before it. A file that turned unusable in
+ * that window throws instead of being overwritten.
+ */
 export function reconcileAccountProjection(nemaHome: string, config: NemaConfig): boolean {
   const read = readAccounts(nemaHome);
   if (read.status !== "ok") return false;
   if (syncDefaultAccountProjection(read.file.accounts, config) === null) return false;
-  return withAccountsLock(nemaHome, () => {
-    // Re-read now that nobody else can write: a peer may have changed the file between the check and here.
-    const current = readAccounts(nemaHome);
-    if (current.status !== "ok") return false;
-    const sync = syncDefaultAccountProjection(current.file.accounts, config);
-    if (sync === null) return false;
-    const accounts = current.file.accounts.map((a) => (a.id === sync.accountId ? applyProjection(a, sync.patch) : a));
-    writeAccounts(nemaHome, { ...current.file, accounts });
-    return true;
+  const next = updateAccounts(nemaHome, (current) => {
+    if (current === null) return null;
+    const sync = syncDefaultAccountProjection(current.accounts, config);
+    if (sync === null) return null;
+    return { ...current, accounts: current.accounts.map((a) => (a.id === sync.accountId ? applyProjection(a, sync.patch) : a)) };
   });
+  return next !== null;
 }
