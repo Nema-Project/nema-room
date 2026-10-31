@@ -5,6 +5,7 @@ import {
   checkReleaseAssets,
   expectedReleaseAssets,
   readImage,
+  readNpmDistTags,
   readNpmProvenance,
   readNpmVersion,
   readRelease,
@@ -36,6 +37,38 @@ test('npm: present is ok, 404 is missing, and only authoritative answers are mis
 
   ({ io: ok } = io(world('0.1.6', { fail: [[/registry\.npmjs\.org/, 429]] })));
   assert.equal((await readNpmVersion(ok, '0.1.6')).state, 'unknown', 'rate limiting is unknown');
+});
+
+test('npm dist-tags: a denial or a parsed non-object is unknown and definitive, a read failure is not', async () => {
+  const { io: ok } = io(world());
+  assert.equal((await readNpmDistTags(ok)).state, 'ok');
+
+  for (const status of [401, 403]) {
+    const denied = io(world('0.1.6', { fail: [[/dist-tags/, status]] }));
+    const result = await readNpmDistTags(denied.io);
+    assert.equal(result.state, 'unknown', String(status));
+    assert.equal(result.evidence.definitive, true, 'a denial will not change on the next read');
+    assert.equal(denied.calls.length, 1, 'a 401/403 is not retried');
+  }
+
+  for (const body of ['[]', '"latest"']) {
+    const wrongShape = io(world('0.1.6', { fail: [[/dist-tags/, 200, body]] }));
+    const shape = await readNpmDistTags(wrongShape.io);
+    assert.equal(shape.state, 'unknown', body);
+    assert.equal(shape.evidence.definitive, true, `a parsed ${body} is not a tag map and will not change on the next read`);
+  }
+
+  // A body that did not arrive, and 5xx/429, stay retryable: they are read failures, not answers.
+  const broken = io(world('0.1.6', { fail: [[/dist-tags/, 200, '{not json']] }));
+  const unparsable = await readNpmDistTags(broken.io);
+  assert.equal(unparsable.state, 'unknown');
+  assert.equal(unparsable.evidence.definitive, undefined, 'a truncated body is worth another read');
+
+  const failing = io(world('0.1.6', { fail: [[/dist-tags/, 500]] }));
+  const serverError = await readNpmDistTags(failing.io);
+  assert.equal(serverError.state, 'unknown');
+  assert.equal(serverError.evidence.definitive, undefined);
+  assert.equal(failing.calls.length, 3, 'a 5xx is retried');
 });
 
 test('npm provenance is read from the registry and marked unverified', async () => {

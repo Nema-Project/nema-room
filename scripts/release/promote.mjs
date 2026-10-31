@@ -50,8 +50,9 @@ const UNKNOWN = 'unknown';
  * version. What must not wait: a tarball with another integrity, an answer the reader may not see (401/403),
  * an answer it cannot interpret, and a prerelease `next` already past this version.
  *
- * The tag side has only ok/missing/unknown (registry-read's own vocabulary), so an unknown pointer is
- * re-read like an absent one; once the budget is spent it is reported as unknown, never as "not written".
+ * The tag side has only ok/missing/unknown (registry-read's own vocabulary). An unknown that is a read
+ * failure is re-read like an absent pointer; one marked definitive (denial, or an answer of the wrong shape)
+ * stops at once. Once the budget is spent an unknown is reported as unknown, never as "not written".
  *
  * -> { ok: true, pointer, maintenance, waitedMs, budgetMs, reads: { package, tag } }
  *  | { ok: false, outcome, reason, waitedMs, budgetMs, reads: { package, tag }, last? }
@@ -104,6 +105,10 @@ export async function awaitNpmVisibility({ version, prerelease, expectedIntegrit
     if (pointer.state === 'version' && !shouldMoveLatest(pointer.version, version)) {
       // A newer stable pointer is maintenance, not a delay: this version was published beside it.
       return { ok: true, pointer, maintenance: true, waitedMs: spent(), budgetMs, reads };
+    }
+    if (pointer.state === 'unknown' && pointer.definitive === true) {
+      // A denial or an answer of the wrong shape will not change: waiting cannot make it readable.
+      return stop('tag-unknown', `${name} cannot be read (${pointer.detail ?? 'unknown'}); the registry gave a definitive answer, so this is not an index delay`, pointer);
     }
     note(`${name} ${pointer.version ?? pointer.state}`, pointer.detail);
     if (!(await more())) {

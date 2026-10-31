@@ -556,3 +556,22 @@ test('an unreadable answer before the publish stops without dispatching', async 
   assert.deepEqual(state.writes, []);
   assert.match(text, /cannot tell whether 0\.1\.7 is already on npm/);
 });
+
+test('a definitive dist-tag answer stops at once instead of waiting out the budget', async () => {
+  // 401/403 and a parsed body of the wrong shape cannot become readable by waiting (CodeRabbit finding 2).
+  for (const detail of ['https://registry.npmjs.org/-/package/@nema-project/nema/dist-tags: HTTP 403', 'https://registry.npmjs.org/-/package/@nema-project/nema/dist-tags: not a tag map']) {
+    const { result, state, text } = await run({ npmReads: ['same'], tagReads: [{ latest: { state: 'unknown', version: null, detail, definitive: true } }] });
+    assert.equal(result.ok, false, detail);
+    assert.deepEqual(state.sleeps, [], 'a definitive answer is not retried');
+    assert.deepEqual(state.writes, ['npm dispatch']);
+    assert.match(text, /the registry gave a definitive answer, so this is not an index delay/);
+    assert.match(text, /- npm registry after publish: unknown — /);
+  }
+});
+
+test('an unparsable tag body is re-read, unlike a denial', async () => {
+  // A body that arrived truncated is a read failure, not an answer: it is retried within the budget.
+  const { result, state } = await run({ npmReads: ['same'], tagReads: [{ latest: { state: 'unknown', version: null, detail: 'timeout' } }, { latest: v('0.1.7') }] });
+  assert.equal(result.ok, true);
+  assert.deepEqual(state.sleeps, [5_000]);
+});

@@ -7,7 +7,8 @@
 //   denied    - 401/403: the reader may not see this package; waiting cannot change that
 //   untrusted - any other answer this reader cannot interpret (other status, unparsable body, another
 //               version, no sha512 integrity); never treated as absent
-//   transient - a timeout, network error, 429 or 5xx: worth one more read within a budget
+//   transient - a timeout, network error, 429 or 5xx, or a body that did not finish arriving:
+//               worth one more read within a budget
 // Network, auth, 5xx and parse errors still throw from npmPublishState: "cannot tell" is never absent.
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -54,7 +55,13 @@ export async function probeNpmVersion({ version, expectedIntegrity, fetchImpl = 
   let body;
   try {
     body = await response.json();
-  } catch {
+  } catch (error) {
+    // The 200 headers arrived but the body did not finish: a timeout or a reset is a read failure, and
+    // another read inside the budget can still succeed. Only a body that arrived and does not parse is
+    // an answer this reader cannot trust.
+    if (!(error instanceof SyntaxError)) {
+      return { state: 'transient', detail: cannotTell(version, error instanceof Error ? error.message : String(error)) };
+    }
     return { state: 'untrusted', detail: cannotTell(version, 'unparsable registry answer') };
   }
   if (body?.version !== version || typeof body?.dist?.integrity !== 'string') {

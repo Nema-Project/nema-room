@@ -50,6 +50,27 @@ test('one read is classified so a re-read can tell "not written" from "not reada
   await assert.rejects(npmPublishState({ version: '0.1.7', expectedIntegrity: EXPECTED, fetchImpl: reply(503, {}) }), /cannot tell whether .*: HTTP 503/);
 });
 
+test('a body that never finishes arriving is transient; only a body that arrived and does not parse is untrusted', async () => {
+  const timeout = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+  const reset = new TypeError('terminated');
+  for (const failure of [timeout, reset]) {
+    const result = await probeNpmVersion({
+      version: '0.1.7',
+      expectedIntegrity: EXPECTED,
+      fetchImpl: async () => ({ status: 200, json: async () => { throw failure; } }),
+    });
+    assert.equal(result.state, 'transient', failure.message);
+    assert.match(result.detail, /cannot tell whether @nema-project\/nema@0\.1\.7 exists: /);
+  }
+  const unparsable = await probeNpmVersion({
+    version: '0.1.7',
+    expectedIntegrity: EXPECTED,
+    fetchImpl: async () => ({ status: 200, json: async () => { throw new SyntaxError('Unexpected token o in JSON'); } }),
+  });
+  assert.equal(unparsable.state, 'untrusted', 'a body that arrived and does not parse is an answer, not a read failure');
+  assert.match(unparsable.detail, /unparsable registry answer/);
+});
+
 test('inputs are strict', async () => {
   await assert.rejects(npmPublishState({ version: 'v0.1.7', expectedIntegrity: EXPECTED, fetchImpl: reply(404, {}) }));
   for (const bad of ['sha1-AAAA', 'sha512-AAAA', `${EXPECTED.slice(0, -4)}AA==`.replace(/.{2}==$/, '=='), `sha512-${Buffer.alloc(48).toString('base64')}`, `${EXPECTED} `]) {
