@@ -143,7 +143,7 @@
 - **`name` 与目录不一致只记诊断、不拒载——偏离规范。** 规范要求「Must match the parent directory name」，Claude Code 也按目录名决定命令名。Nema 的 `parseSkillFile`（第 155 行）只把不一致写进诊断，Skill 仍然加载并在菜单里按 id 出现，用户可能看到「目录叫 a、命令叫 b」。这是一处可以低成本收紧的地方。**[I]**
 - **诊断信息不面向用户——遗漏，且两处数据的可用性不同。** 逐个核实过链路：daemon 的 `skills.catalog` 返回的行里**有** `runtimes`（内含每个运行时的 `missing` 与 `notes`），但**没有** `diagnostics`（[apps/cli/src/skills/rpc.ts](../../apps/cli/src/skills/rpc.ts) 第 7–15 行的行类型只映射 id、name、description、command、invocation、runtimes、repoId；`SkillUsage.diagnostics` 留在 [packages/shared/src/skills.ts](../../packages/shared/src/skills.ts) 第 36 行，没有进这个响应）。hub 的 `GET /api/workspaces/:id/skills` 原样转交 daemon 的结果（[apps/hub/src/uiApi.ts](../../apps/hub/src/uiApi.ts) 第 387–393 行），所以 HTTP 响应里带着 `runtimes`。丢失发生在浏览器侧：`listSkills` 声明的返回类型里没有 `runtimes`（[apps/web/lib/hub.ts](../../apps/web/lib/hub.ts) 第 167–168 行），`SkillRow` 只声明 `{ id, description, command }`（[apps/web/lib/slash.ts](../../apps/web/lib/slash.ts) 第 16 行），`skillMenu.ts` 的映射也只挑这三个字段（[apps/web/lib/skillMenu.ts](../../apps/web/lib/skillMenu.ts) 第 21 行）。结论：`runtimes[].missing` 是「数据存在但被前端类型与映射丢掉」，`diagnostics` 是「daemon 根本没有返回」。两条要改的地方不同，不能合并成一句「数据已经有了」。规范与三个实现都有「装了但用不全」的可见提示需求，Nema 这里界面没接。
 - **thread 留存按「放不下的第一个起全部丢弃」——简化。** Claude Code 的做法是按最近调用逐个回填到预算上限（文档写「Re-attached skills share a combined budget of 25,000 tokens」，从最近一个开始填）。Nema 的顺序一致（最新在前），但一旦有一条放不下，后面的全部丢掉，而不是跳过它继续尝试更小的。**未实测**这条在实际使用中是否可感知。**[I]**
-- **Claude Code 复制整份 Skill 到 `runDir`——刻意。** 原生加载需要文件在磁盘上，而 Nema 不允许 Claude 读用户目录，所以复制一份到一次性的运行目录、再用 `--add-dir` 与 `--settings` 收拢读取范围。代价是 50 MiB 预算与每个任务一次复制；换来的是「Skill 改了不影响正在跑的任务」，与快照语义一致。**[I]**
+- **Claude Code 复制「符合条件的 Skill 文件」到 `runDir`——刻意。** 原生加载需要文件在磁盘上，而 Nema 不允许 Claude 读用户目录，所以复制到一次性的运行目录、再用 `--add-dir` 与 `--settings` 收拢读取范围。排除与跳过规则按代码逐条核实（[apps/cli/src/skills/claudeSkills.ts](../../apps/cli/src/skills/claudeSkills.ts)）：`.claude-plugin` 及其下所有路径**不复制**（第 39–43 行的 `skipFile`，注释写明那是 Claude Code 会当成插件连钩子与 MCP 服务器加载的目录）；单个文件超过 5 MiB（第 23 行的 `MAX_COPY_FILE_BYTES`）、读取时发现已变更或不可读（第 99–107 行）、或该 Skill 的副本会让本任务所有副本合计超过 50 MiB（第 22 行的 `CLAUDE_COPY_BUDGET`，第 91–94 行）时，**整个 Skill 一个文件也不复制**，并在进度消息里报出原因（[apps/cli/src/claude/adapter.ts](../../apps/cli/src/claude/adapter.ts) 第 209 行的三条中文原因）；id 或目录名无法拼出安全路径时同样跳过（第 51–65 行的 `copyRoot`）。所以是「整份或不复制」（第 95 行的注释原话是 so a Skill is copied whole or not at all），而不是照搬原样。换来的是「Skill 改了不影响正在跑的任务」，与快照语义一致。**[I]**
 
 ### 3.4 建议
 
@@ -410,16 +410,16 @@
 | C | Skill 的运行时缺口没有展示给用户：`runtimes[].missing` 被前端类型与映射丢掉，`diagnostics` 未被 daemon 返回 | `gaps.ts` 产出缺口；`rpc.ts` 第 7–15 行保留 `runtimes` 但不带 `diagnostics`；`hub.ts` 第 167–168 行、`slash.ts` 第 16 行、`skillMenu.ts` 第 21 行只保留三个字段 | 用户装上 Skill 后不知道它当前只能用一半 |
 | D | `name` 与目录不一致不拒载也不提示 | `apps/cli/src/skills/frontmatter.ts` 第 155 行只记诊断 | 菜单里的命令名与目录名可能不一致，用户会困惑 |
 | E | 提及因编辑失效时没有提示 | `packages/shared/src/mentions.ts` 第 85–96 行；指南第 258 行只写规则 | 用户改一句话就可能悄悄丢掉提及，agent 少拿到上下文 |
-| F | MCP 重启后不自动恢复这条设计决定没有成文理由 | 行为见 [apps/cli/src/extensions/mcpHandlers.ts](../../apps/cli/src/extensions/mcpHandlers.ts) 第 41–56 行；只有 CHANGELOG 第 35 行一句行为描述 | 与主流相反的选择缺一句「为什么」，后续改动容易反复 |
+| F | MCP 重启后不自动恢复：**行为**有记录，缺的是**设计理由** | 行为见 [docs/guide.zh.md](../guide.zh.md) 第 302 行（「之后不会自动重新启动」）、[apps/cli/src/extensions/mcpHandlers.ts](../../apps/cli/src/extensions/mcpHandlers.ts) 第 44–47 行的代码注释、[CHANGELOG.md](../../CHANGELOG.md) 第 35 行；但这三处都只写「做什么」，没有写「为什么不做」 | 与主流相反的选择缺一句「为什么」，后续改动容易反复 |
 | G | v0.2.0 不是 immutable release（仓库是否开启该策略**未核实**） | `gh release view v0.2.0` 的 `isImmutable` 为 `false`（2026-10-31 查）；这只说明这一个 release 可变，不能推出仓库策略已关 | 已发布版本的 tag 与资产仍可被改动；工作流只能在发布前重验，发布之后没有防线 |
-| H | 没有「已安装但不可用」的汇总视图 | [apps/web/components/PluginsPage.tsx](../../apps/web/components/PluginsPage.tsx) 第 379–403 行只在行内提示 | 行数多时用户找不到需要处理的项 |
-| I | MCP 的 `list_changed` 未处理（**未核实** SDK 是否透传） | `supervisor.ts` 第 211 行只 `listTools` 一次 | 连接期间服务器增减工具，页面不会更新 |
+| H | 没有「已安装但不可用」的汇总视图 | [apps/web/components/PluginsPage.tsx](../../apps/web/components/PluginsPage.tsx) 第 379–403 行只在行内提示 | 行数较多时，用户找不到需要处理的项 |
+| I | MCP 的 `list_changed` 未处理（**未核实** SDK 是否透传） | `supervisor.ts` 第 211 行只 `listTools` 一次 | 连接期间服务器增删工具时，页面不会更新 |
 | J | 附件与提及的候选规模是固定上限 | `apps/hub/src/mentionContext.ts` 第 11 行 `MENTION_POOL = 500`；`MENTION_LIMITS.menuPerGroup = 8` | 条目/文件很多的工作区里，用户可能找不到目标 |
 
 ## 11. 一页结论
 
 - 六块功能里，**与社区最大的一致**是附件的类型白名单与安全下发（OWASP）、Skills 的三级渐进披露（Agent Skills 规范、Claude Code、Codex、Cursor）、以及发布的 OIDC + provenance 基线（npm）。
-- **最大的有意偏离**有三处：附件拒绝而不降级；MCP 工具不交给 Agent（D-3）；MCP 重启后不自动恢复。三处都有清楚的「为了保护什么」，但只有前两处把理由写进了文档。
+- **最大的有意偏离**有三处：附件拒绝而不降级；MCP 工具不交给 Agent（D-3）；MCP 重启后不自动恢复。前两处的「为了保护什么」已经作为设计决定写进文档（附件设计文档 D-2、MCP 计划 D-3）；第三处的**行为**在指南、代码注释与 CHANGELOG 里都有记录，但**为什么这样做**只能从代码与行为反推，spec 与指南都没有写。
 - **最值得马上补的两处**都不是新功能：把 stdio 关停顺序改回规范（一处代码），以及开启 GitHub immutable releases（一个设置）。这两条都不改产品行为。
 - **数据已经有、界面还没接**的一处：Skill 的 `runtimes[].missing`（另有 `diagnostics` 连 daemon 都没返回）。补上它，插件页与 `/` 菜单才算把「装了但只能用一半」讲清楚。
 - **不建议**为了对齐社区而做：执行 Skill 脚本、自动拉起 MCP 服务器、tag 推送自己发布、跨注册表事务。这四件都会推翻已经记录过的取舍。
