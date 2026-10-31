@@ -10,7 +10,7 @@
 - **标注。** **[C]** 表示这一句直接引自该页面的文字（中文为译文，关键处保留英文术语）。**[I]** 表示由引文或本仓库代码推得，是我的判断，不是页面原话。**未核实** 表示这次没有拿到可核实的依据，第 9 节汇总。
 - **范围。** 只对照 v0.2.0 实际交付的东西；`tag` 提及（#162）与成员提及（#163）不在范围内，只在提及一节说明它们为什么被推后。
 - **不改东西。** 本报告是 docs-only；下面所有建议都只是建议，代码、配置、工作流一行没动。
-- **来源数量。** 33 个不同 URL；按节计（同一页用在两节时重复计）：附件 7、提及 5、Skills 6、MCP 3、插件页 2、发布 11。Discord 的 message 资源页同时用在附件与提及两节，只在来源清单里列一次。
+- **来源数量。** 34 个不同 URL，按来源清单的分组计：附件 7、`@` 提及 4、Skills 6、MCP 3、插件页 2、发布 12。Discord 的 message 资源页同时用在附件与提及两节，只在附件组里列一次。
 
 ## 1. 附件（图片 / PDF / 文本；投递上限 8 个或 32 MiB）
 
@@ -37,7 +37,7 @@
 
 ### 1.3 差距与原因
 
-- **上限比社区低，是有意的。** 单类 10 / 20 / 0.5 MiB 与每次 8 个 / 32 MiB，都远低于 Anthropic 与 OpenAI 的单请求容量，也低于 Discord 单条消息 25 MiB 的量级。Nema 的一次任务等于一条讨论消息，附件是「这次讨论的输入」而不是文件传输，所以预算按上下文成本定，不由接口能力定。**[I]** 这是刻意偏离。
+- **上限比社区低，是有意的。** 单类 10 / 20 / 0.5 MiB 与每次 8 个 / 32 MiB，都远低于 Anthropic 与 OpenAI 的单请求容量；与 Discord 相比要分开看——Nema 的单文件上限（10 / 20 / 0.5 MiB）低于 Discord 单条消息 25 MiB 的请求上限，但 Nema 每任务合计 32 MiB 反而高于这 25 MiB。Nema 的一次任务等于一条讨论消息，附件是「这次讨论的输入」而不是文件传输，所以预算按上下文成本定，不由接口能力定。**[I]** 这是刻意偏离。
 - **类型白名单与「按内容判定」与 OWASP 一致。** 拒绝 SVG 的理由对应 OWASP 列出的「客户端主动内容」威胁；文件名不参与路径、下发带 `nosniff` 与 sandbox CSP，对应 OWASP 的 handler 模式。**[I]** 一致，不需改。
 - **不重编码图片、不剥元数据——遗漏。** OWASP 明确建议对图片解码再编码并去掉不必要的元数据；Nema 是把原字节原样发给提供商（[apps/cli/src/direct/adapter.ts](../../apps/cli/src/direct/adapter.ts) 第 75 行），EXIF 里的位置、设备信息随之发出，用户在界面上看不到这件事。指南第 250 行只写了类型与上限，没有写「原样转发、元数据保留」。
 - **不做恶意文件扫描——刻意，但理由没写下来。** Slack 在文件可用前扫恶意内容；Nema 没有这一步。单用户本地部署、附件不渲染、文本强制成 `text/plain` 都能降低风险，但这些理由在 spec 或指南里都没有成文记录。**[I]**
@@ -141,7 +141,7 @@
 - **没有 `scripts/` 执行能力——刻意，且是本产品最根本的一条边界。** 规范与三个实现都把「脚本由 agent 用 bash 运行」当成正常能力；Nema 的 daemon 只给 Agent Room 工具，不开放 shell 与文件系统。因此 `read_skill` 只读正文与 Skill 目录内的文件（[apps/cli/src/skills/safeRead.ts](../../apps/cli/src/skills/safeRead.ts) 拒绝越界与链接），缺口在 `gaps.ts` 里如实列出。**[I]** 这条偏离与 #45、「不把 Nema Room 变成通用 agent 运行时」一致。
 - **`allowed-tools`、`paths`、`hooks`、`context: fork` 只解析不生效。** `frontmatter.ts` 读这些字段，但 `gaps.ts` 第 27–30 行把它们标成缺口。主流实现里 `allowed-tools` 是有实际授权效果的（Claude Code 文档写明「The grant clears when you send your next message」），Nema 若照做会等于自己发明一套工具授权模型。**[I]** 刻意。
 - **`name` 与目录不一致只记诊断、不拒载——偏离规范。** 规范要求「Must match the parent directory name」，Claude Code 也按目录名决定命令名。Nema 的 `parseSkillFile`（第 155 行）只把不一致写进诊断，Skill 仍然加载并在菜单里按 id 出现，用户可能看到「目录叫 a、命令叫 b」。这是一处可以低成本收紧的地方。**[I]**
-- **诊断信息不面向用户——遗漏。** `gaps.ts` 产出的 `runtimes[].missing` 与 `diagnostics` 进了 `skills.catalog` 的返回（[apps/cli/src/skills/rpc.ts](../../apps/cli/src/skills/rpc.ts) 第 7–15、35–48 行），但浏览器侧的 `/` 菜单只用 id、说明与命令（[apps/web/lib/slash.ts](../../apps/web/lib/slash.ts) 第 55–63 行），插件页也没有展示「这个 Skill 在当前运行时缺什么」。规范与三个实现都有「装了但用不全」的可见提示需求；Nema 的数据有了，界面没接。
+- **诊断信息不面向用户——遗漏，且两处数据的可用性不同。** 逐个核实过链路：daemon 的 `skills.catalog` 返回的行里**有** `runtimes`（内含每个运行时的 `missing` 与 `notes`），但**没有** `diagnostics`（[apps/cli/src/skills/rpc.ts](../../apps/cli/src/skills/rpc.ts) 第 7–15 行的行类型只映射 id、name、description、command、invocation、runtimes、repoId；`SkillUsage.diagnostics` 留在 [packages/shared/src/skills.ts](../../packages/shared/src/skills.ts) 第 36 行，没有进这个响应）。hub 的 `GET /api/workspaces/:id/skills` 原样转交 daemon 的结果（[apps/hub/src/uiApi.ts](../../apps/hub/src/uiApi.ts) 第 387–393 行），所以 HTTP 响应里带着 `runtimes`。丢失发生在浏览器侧：`listSkills` 声明的返回类型里没有 `runtimes`（[apps/web/lib/hub.ts](../../apps/web/lib/hub.ts) 第 167–168 行），`SkillRow` 只声明 `{ id, description, command }`（[apps/web/lib/slash.ts](../../apps/web/lib/slash.ts) 第 16 行），`skillMenu.ts` 的映射也只挑这三个字段（[apps/web/lib/skillMenu.ts](../../apps/web/lib/skillMenu.ts) 第 21 行）。结论：`runtimes[].missing` 是「数据存在但被前端类型与映射丢掉」，`diagnostics` 是「daemon 根本没有返回」。两条要改的地方不同，不能合并成一句「数据已经有了」。规范与三个实现都有「装了但用不全」的可见提示需求，Nema 这里界面没接。
 - **thread 留存按「放不下的第一个起全部丢弃」——简化。** Claude Code 的做法是按最近调用逐个回填到预算上限（文档写「Re-attached skills share a combined budget of 25,000 tokens」，从最近一个开始填）。Nema 的顺序一致（最新在前），但一旦有一条放不下，后面的全部丢掉，而不是跳过它继续尝试更小的。**未实测**这条在实际使用中是否可感知。**[I]**
 - **Claude Code 复制整份 Skill 到 `runDir`——刻意。** 原生加载需要文件在磁盘上，而 Nema 不允许 Claude 读用户目录，所以复制一份到一次性的运行目录、再用 `--add-dir` 与 `--settings` 收拢读取范围。代价是 50 MiB 预算与每个任务一次复制；换来的是「Skill 改了不影响正在跑的任务」，与快照语义一致。**[I]**
 
@@ -149,7 +149,7 @@
 
 **值得现在做**
 
-1. 把 `runtimes[].missing` 与 `diagnostics` 接到插件页（或 `/` 菜单的一行说明）：列出「这个 Skill 在当前运行时缺哪些能力」。数据已在 RPC 返回里，只差一处渲染与三语文案。
+1. 把运行时的缺口接到插件页或 `/` 菜单，但两条数据的起点不同，要分开做：(a) `runtimes[].missing` 已经在 daemon 与 hub 的响应里，只被浏览器侧的 `SkillRow` 与 `skillMenu.ts` 的映射丢掉（[apps/web/lib/slash.ts](../../apps/web/lib/slash.ts) 第 16 行、[apps/web/lib/skillMenu.ts](../../apps/web/lib/skillMenu.ts) 第 21 行），补类型与映射即可，再加渲染与三语文案；(b) `diagnostics` 连 daemon 的 `skills.catalog` 都没有返回（[apps/cli/src/skills/rpc.ts](../../apps/cli/src/skills/rpc.ts) 第 7–15 行），要先在 daemon 侧加字段，属于跨层改动，可另开一条。
 2. `name` 与目录不一致时，在菜单与插件页给出提示（现在只在内部诊断里）。若不想拒载，至少让用户看到命令名从哪来。
 
 **可以以后做**
@@ -163,7 +163,7 @@
 6. 执行 Skill 自带的脚本，或按 `allowed-tools` 自动授权工具。这会直接推翻「只给 Room 工具」的边界，属于另一个产品决定，不该由这份对照报告推动。
 7. 支持 `context: fork` / 子代理。Nema 没有子代理运行时，标注为缺口比假装支持更诚实。
 
-## 4. MCP 配置与生命周期（daemon 关停时停、重启后恢复）
+## 4. MCP 配置与生命周期（daemon 关停时停、重启后不自动恢复）
 
 ### 4.1 Nema 现在的做法
 
@@ -246,7 +246,7 @@
 
 **可以以后做**
 
-2. 安装详情里显示该 Skill 在当前运行时的缺口（复用 `skills.catalog` 的 `runtimes`），让用户在点「安装」前就知道装上是「只能用一半」。
+2. 安装详情里显示该 Skill 在当前运行时的缺口（复用 `skills.catalog` 的 `runtimes`，同样要先把它保留到 `SkillRow`），让用户在点「安装」前就知道装上是「只能用一半」。
 3. 把筛选与搜索写进 URL 或本地存储，切换页面后保留（现在刷新即重置）。
 4. 安装完成后给一句明确结果（对应 Claude Code 的四种结果：已生效 / 需要配置 / 需要重载 / 加载失败）。
 
@@ -297,7 +297,7 @@
 
 **值得现在做**
 
-1. 在仓库设置里开启 immutable releases（GitHub 的 draft → 挂资产 → 发布流程已经就位，见 desktop-release 第 353–375 行）。开启后 `gh release verify` 才有意义，v0.2.0 这样的已发布版本也不会被事后改资产。
+1. 在仓库设置里开启 immutable releases（GitHub 的 draft → 挂资产 → 发布流程已经就位，见 desktop-release 第 353–375 行）。**注意它只保护开启之后新发布的 release**：GitHub 文档写「immutability will only apply to future releases」，所以已经发出去的 v0.2.0 不会因为开了这个设置就变成不可变。v0.2.0 要另外处理——它现在的防线只有「发布前重验 tag」，之后没有再写保护；若确实需要证明这一版没被改过，只能留证据（例如记下 `gh release view v0.2.0` 的资产名与各自的 sha256、镜像 digest 与 npm integrity），或者按同一提交重新发一个新版本号，不存在「把已有 release 变成不可变」的操作。
 2. 在 `npm-publish.yml` 的头部注释里写明「OIDC 可信发布会自动生成 provenance，`--provenance` 是显式冗余」，避免后人误以为必须保留。
 
 **可以以后做**
@@ -318,10 +318,10 @@
 
 | # | 内容 | 属于哪块 | 类型 |
 | --- | --- | --- | --- |
-| 1 | 开启 GitHub immutable releases（现有 draft → 挂资产 → 发布流程已兼容） | 发布 | 仓库设置 |
+| 1 | 开启 GitHub immutable releases（只保护之后的新发布；现有 draft → 挂资产 → 发布流程已兼容） | 发布 | 仓库设置 |
 | 2 | stdio MCP 停止改成规范顺序：先关 stdin，再 `SIGTERM`，最后 `SIGKILL` | MCP | 代码 |
 | 3 | 指南补写「图片/PDF 原字节转发、元数据随之前往提供商」 | 附件 | 文档 |
-| 4 | 把 `runtimes[].missing` 与 `diagnostics` 接到插件页或 `/` 菜单 | Skills | 界面 |
+| 4 | 把 `runtimes[].missing` 接到插件页或 `/` 菜单（`diagnostics` 需先在 daemon 侧加字段，见 3.4） | Skills | 界面 |
 | 5 | 附件里「不扫恶意文件」这条已知边界与缓解措施写进安全文档 | 附件 | 文档 |
 | 6 | 把「重启后不自动启动 MCP 服务器」的理由写进 spec 或指南 | MCP | 文档 |
 | 7 | 提及因编辑失效时给一次非阻塞提示 | 提及 | 界面 |
@@ -379,12 +379,13 @@
 25. npm-dist-tag：<https://docs.npmjs.com/cli/v11/commands/npm-dist-tag>
 26. SLSA security levels v1.0：<https://slsa.dev/spec/v1.0/levels>
 27. GitHub Immutable releases：<https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases>
-28. GitHub CLI `gh release create`：<https://cli.github.com/manual/gh_release_create>
-29. GitHub Triggering a workflow：<https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow>
-30. GitHub Secure use reference：<https://docs.github.com/en/actions/reference/security/secure-use>
-31. OCI image index：<https://github.com/opencontainers/image-spec/blob/main/image-index.md>
-32. Docker Multi-platform builds：<https://docs.docker.com/build/building/multi-platform/>
-33. GitHub Container registry：<https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry>
+28. GitHub Preventing changes to your releases（「immutability will only apply to future releases」）：<https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/prevent-release-changes>
+29. GitHub CLI `gh release create`：<https://cli.github.com/manual/gh_release_create>
+30. GitHub Triggering a workflow：<https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow>
+31. GitHub Secure use reference：<https://docs.github.com/en/actions/reference/security/secure-use>
+32. OCI image index：<https://github.com/opencontainers/image-spec/blob/main/image-index.md>
+33. Docker Multi-platform builds：<https://docs.docker.com/build/building/multi-platform/>
+34. GitHub Container registry：<https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry>
 
 ## 9. 「未核实」清单
 
@@ -406,11 +407,11 @@
 | --- | --- | --- | --- |
 | A | stdio MCP 停止不按规范先关 stdin | [apps/cli/src/extensions/mcp/stdioTransport.ts](../../apps/cli/src/extensions/mcp/stdioTransport.ts) 第 155–180 行没有 `stdin.end()`；规范要求先关输入流 | 以 stdin 关闭为退出信号的服务器会被 `SIGTERM` 打断，可能留下锁文件或半写状态 |
 | B | 附件原字节转发、元数据未处理 | [apps/cli/src/direct/adapter.ts](../../apps/cli/src/direct/adapter.ts) 第 75 行；指南第 250 行没有说明 | 用户不知道图片的 EXIF 等信息随文件一起发给模型提供商 |
-| C | Skill 的运行时缺口没有展示给用户 | `apps/cli/src/skills/gaps.ts` 产出 `runtimes[].missing`，`apps/web/lib/slash.ts` 第 55–63 行与插件页都没用 | 用户装上 Skill 后不知道它当前只能用一半 |
+| C | Skill 的运行时缺口没有展示给用户：`runtimes[].missing` 被前端类型与映射丢掉，`diagnostics` 未被 daemon 返回 | `gaps.ts` 产出缺口；`rpc.ts` 第 7–15 行保留 `runtimes` 但不带 `diagnostics`；`hub.ts` 第 167–168 行、`slash.ts` 第 16 行、`skillMenu.ts` 第 21 行只保留三个字段 | 用户装上 Skill 后不知道它当前只能用一半 |
 | D | `name` 与目录不一致不拒载也不提示 | `apps/cli/src/skills/frontmatter.ts` 第 155 行只记诊断 | 菜单里的命令名与目录名可能不一致，用户会困惑 |
 | E | 提及因编辑失效时没有提示 | `packages/shared/src/mentions.ts` 第 85–96 行；指南第 258 行只写规则 | 用户改一句话就可能悄悄丢掉提及，agent 少拿到上下文 |
 | F | MCP 重启后不自动恢复这条设计决定没有成文理由 | 行为见 [apps/cli/src/extensions/mcpHandlers.ts](../../apps/cli/src/extensions/mcpHandlers.ts) 第 41–56 行；只有 CHANGELOG 第 35 行一句行为描述 | 与主流相反的选择缺一句「为什么」，后续改动容易反复 |
-| G | GitHub immutable releases 未开启 | `gh release view v0.2.0` 的 `isImmutable` 为 `false`（2026-10-31 查） | 发布后的 tag 与资产仍可被改动；工作流只能在发布前重验 |
+| G | v0.2.0 不是 immutable release（仓库是否开启该策略**未核实**） | `gh release view v0.2.0` 的 `isImmutable` 为 `false`（2026-10-31 查）；这只说明这一个 release 可变，不能推出仓库策略已关 | 已发布版本的 tag 与资产仍可被改动；工作流只能在发布前重验，发布之后没有防线 |
 | H | 没有「已安装但不可用」的汇总视图 | [apps/web/components/PluginsPage.tsx](../../apps/web/components/PluginsPage.tsx) 第 379–403 行只在行内提示 | 行数多时用户找不到需要处理的项 |
 | I | MCP 的 `list_changed` 未处理（**未核实** SDK 是否透传） | `supervisor.ts` 第 211 行只 `listTools` 一次 | 连接期间服务器增减工具，页面不会更新 |
 | J | 附件与提及的候选规模是固定上限 | `apps/hub/src/mentionContext.ts` 第 11 行 `MENTION_POOL = 500`；`MENTION_LIMITS.menuPerGroup = 8` | 条目/文件很多的工作区里，用户可能找不到目标 |
@@ -420,5 +421,5 @@
 - 六块功能里，**与社区最大的一致**是附件的类型白名单与安全下发（OWASP）、Skills 的三级渐进披露（Agent Skills 规范、Claude Code、Codex、Cursor）、以及发布的 OIDC + provenance 基线（npm）。
 - **最大的有意偏离**有三处：附件拒绝而不降级；MCP 工具不交给 Agent（D-3）；MCP 重启后不自动恢复。三处都有清楚的「为了保护什么」，但只有前两处把理由写进了文档。
 - **最值得马上补的两处**都不是新功能：把 stdio 关停顺序改回规范（一处代码），以及开启 GitHub immutable releases（一个设置）。这两条都不改产品行为。
-- **数据已经有、界面还没接**的一处：Skill 的运行时缺口。补上它，插件页与 `/` 菜单才算把「装了但只能用一半」讲清楚。
+- **数据已经有、界面还没接**的一处：Skill 的 `runtimes[].missing`（另有 `diagnostics` 连 daemon 都没返回）。补上它，插件页与 `/` 菜单才算把「装了但只能用一半」讲清楚。
 - **不建议**为了对齐社区而做：执行 Skill 脚本、自动拉起 MCP 服务器、tag 推送自己发布、跨注册表事务。这四件都会推翻已经记录过的取舍。
