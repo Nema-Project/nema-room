@@ -11,8 +11,21 @@ const ABSENT = { state: 'absent', version: null };
 const vd = (version, target) => ({ state: 'version', version, digest: DIGESTS[target] });
 
 /** A small world: registry state plus an ordered log of every read that matters and every write. */
-function world({ version = '0.1.7', npm = 'absent', npmLatest = v('0.1.6'), npmNext = ABSENT, hub = v('0.1.6'), web = v('0.1.6'), github = v('0.1.6'), draft = true, fail = {}, landsAnyway = {}, tagMovesAt = null, digests = DIGESTS, maintenance = false, releasePrerelease, latestAfterPublish } = {}) {
-  const state = { npm, npmLatest, npmNext, hub, web, github, draft, releasePrerelease, writes: [], log: [], tagChecks: 0 };
+function world({ version = '0.1.7', npm = 'absent', npmLatest = v('0.1.6'), npmNext = ABSENT, hub = v('0.1.6'), web = v('0.1.6'), github = v('0.1.6'), draft = true, fail = {}, landsAnyway = {}, tagMovesAt = null, digests = DIGESTS, maintenance = false, releasePrerelease, latestAfterPublish, npmReads, tagReads } = {}) {
+  const state = {
+    npm, npmLatest, npmNext, hub, web, github, draft, releasePrerelease, writes: [], log: [], tagChecks: 0,
+    // What the registry answers after the publish run succeeded, read by read; the last entry repeats.
+    // `null` means "the publish lands at once", which is what a fake registry without lag does.
+    npmQueue: npmReads ? [...npmReads] : null,
+    tagQueue: tagReads ? [...tagReads] : null,
+    published: false,
+    clock: 0,
+    sleeps: [],
+    npmReads: 0,
+    // Reads made after the publish run succeeded: the ones the visibility wait makes.
+    npmReadsAfterPublish: 0,
+    tagPointerReads: 0,
+  };
   const boom = (name) => {
     if (fail[name]) throw new Error(`${name} failed`);
   };
@@ -34,7 +47,29 @@ function world({ version = '0.1.7', npm = 'absent', npmLatest = v('0.1.6'), npmN
     async npmState({ expectedIntegrity }) {
       assert.equal(expectedIntegrity, INTEGRITY, 'npm is compared with the push-run integrity');
       boom('npmState');
-      return state.npm;
+      state.npmReads += 1;
+      if (state.published) state.npmReadsAfterPublish += 1;
+      if (state.npmQueue && state.published) {
+        const next = state.npmQueue.length > 1 ? state.npmQueue.shift() : state.npmQueue[0];
+        state.npm = typeof next === 'string' ? next : next.state;
+        return typeof next === 'string' ? { state: next } : next;
+      }
+      return { state: state.npm };
+    },
+    async npmPointers() {
+      boom('npmPointers');
+      state.tagPointerReads += 1;
+      if (state.tagQueue && state.published) {
+        const next = state.tagQueue.length > 1 ? state.tagQueue.shift() : state.tagQueue[0];
+        if (next.latest !== undefined) state.npmLatest = next.latest;
+        if (next.next !== undefined) state.npmNext = next.next;
+      }
+      return { latest: state.npmLatest, next: state.npmNext };
+    },
+    now: () => state.clock,
+    async sleep(ms) {
+      state.sleeps.push(ms);
+      state.clock += ms;
     },
     async dispatchNpm() {
       boom('dispatchNpm');
@@ -49,6 +84,9 @@ function world({ version = '0.1.7', npm = 'absent', npmLatest = v('0.1.6'), npmN
         state.npmLatest = v(version);
       }
       boom('waitNpm');
+      state.published = true;
+      // A scripted registry answers the reads that follow; the publish itself only exits 0.
+      if (state.npmQueue) return;
       state.npm = 'same';
       if (prerelease) state.npmNext = v(version);
       else if (latestAfterPublish !== undefined) state.npmLatest = latestAfterPublish;
@@ -168,10 +206,13 @@ test('a tag that moves before the web latest write or before the Release write s
 
 test('after the npm publish, an unreadable, absent or lagging dist-tag stops before GHCR', async () => {
   for (const latestAfterPublish of [{ state: 'unknown', version: null, detail: 'registry timed out' }, ABSENT, v('0.1.6')]) {
+    // The bounded wait re-reads each of these until the budget is spent, then stops where the old code did.
     const { result, state, text } = await run({ latestAfterPublish });
     assert.equal(result.ok, false, JSON.stringify(latestAfterPublish));
     assert.deepEqual(state.writes, ['npm dispatch']);
-    assert.match(text, /npm 0\.1\.7 is published but npm latest reads/);
+    assert.match(text, /npm publish run finished but the registry does not confirm 0\.1\.7/);
+    assert.match(text, /- npm registry after publish: (unknown|not written) — npm latest/);
+    assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000, 'the whole budget, then a stop');
   }
 });
 
@@ -394,4 +435,124 @@ test('a workflow runs answer that does not hold every run of the commit is refus
   assert.throws(() => completeRuns({ total_count: 21, workflow_runs: runs }, 'image-publish push runs'), /image-publish push runs: the runs answer lists 2 of 21 runs/);
   assert.throws(() => completeRuns({ workflow_runs: runs }, 'x'), /did not report its run count/);
   assert.throws(() => completeRuns({ total_count: 0 }, 'x'), /did not report its run count/);
+});
+
+// ---------- npm registry visibility after the publish run (issue #158) ----------
+// The publish run exiting 0 does not mean the registry serves the version: v0.2.0 answered 404 for ~18s.
+// These pin what may wait, what must not, and what the record says when the budget is spent.
+
+const DIFFERENT = { state: 'different', integrity: 'sha512-OTHER', detail: 'registry holds sha512-OTHER for 0.1.7' };
+
+test('acceptance 1: absent then same, dist-tag visible afterwards: one promote, one npm dispatch', async () => {
+  const { result, state, text } = await run({ npmReads: ['absent', 'same'], tagReads: [{ latest: ABSENT, next: ABSENT }, { latest: v('0.1.7') }] });
+  assert.equal(result.ok, true);
+  assert.deepEqual(state.writes, ['npm dispatch', 'ghcr hub latest', 'ghcr web latest', 'release {"tag":"v0.1.7","prerelease":false,"makeLatest":true}']);
+  assert.equal(state.writes.filter((write) => write === 'npm dispatch').length, 1, 'npm is dispatched once');
+  assert.equal(state.npmReadsAfterPublish, 2, 'the package was re-read, not re-published');
+  // One poll for the package (absent -> same) and one for the pointer (absent -> 0.1.7).
+  assert.match(text, /npm 0\.1\.7: published by run 42; npm latest -> 0\.1\.7 after 10000ms/);
+  assert.deepEqual(state.sleeps, [5_000, 5_000]);
+});
+
+test('acceptance 2: the package is visible at once but the dist-tag lags: bounded wait, no second publish', async () => {
+  const { result, state, text } = await run({ npmReads: ['same'], tagReads: [{ latest: v('0.1.6') }, { latest: v('0.1.6') }, { latest: v('0.1.7') }] });
+  assert.equal(result.ok, true);
+  assert.deepEqual(state.writes.slice(0, 1), ['npm dispatch']);
+  assert.equal(state.writes.filter((write) => write === 'npm dispatch').length, 1);
+  assert.equal(state.npmReadsAfterPublish, 1, 'the package was read once and never published again');
+  assert.equal(state.tagPointerReads, 3);
+  assert.deepEqual(state.sleeps, [5_000, 5_000]);
+  assert.match(text, /npm latest -> 0\.1\.7 after 10000ms/);
+});
+
+test('acceptance 3: another integrity fails at once, waits for nothing, and moves no other pointer', async () => {
+  const { result, state, text } = await run({ npmReads: [DIFFERENT] });
+  assert.equal(result.ok, false);
+  assert.deepEqual(state.sleeps, [], 'a definitive answer is not an index delay');
+  assert.equal(state.npmReadsAfterPublish, 1, 'one read is enough: this is not a lag');
+  assert.deepEqual(state.writes, ['npm dispatch']);
+  assert.match(text, /registry holds sha512-OTHER for 0\.1\.7; the registry gave a definitive answer/);
+  assert.match(text, /- npm registry after publish: different — /);
+  assert.match(text, /- not flipped: npm latest, ghcr hub latest, ghcr web latest, github latest/);
+});
+
+test('acceptance 4a: the version stays absent through the budget: a timeout, nothing else moves', async () => {
+  const { result, state, text } = await run({ npmReads: ['absent'] });
+  assert.equal(result.ok, false);
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000, 'exactly the budget');
+  assert.ok(state.sleeps.every((ms) => ms <= 5_000), 'polls stay short');
+  assert.deepEqual(state.writes, ['npm dispatch']);
+  assert.ok(!state.log.includes('verify final'));
+  assert.match(text, /the registry still answers 404 for 0\.1\.7 after 120000ms; confirmed not written/);
+  assert.match(text, /- npm registry after publish: not written — /);
+  assert.match(text, /- flipped by this run: none/);
+  assert.match(text, /- not flipped: npm latest, ghcr hub latest, ghcr web latest, github latest/);
+});
+
+test('acceptance 4b: an old dist-tag through the budget: a timeout, nothing else moves', async () => {
+  const { result, state, text } = await run({ npmReads: ['same'], tagReads: [{ latest: v('0.1.6') }] });
+  assert.equal(result.ok, false);
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000);
+  assert.deepEqual(state.writes, ['npm dispatch']);
+  assert.ok(!state.log.includes('verify final'));
+  assert.match(text, /npm latest still reads 0\.1\.6 after 120000ms; confirmed it did not move to 0\.1\.7/);
+  assert.match(text, /- npm registry after publish: not written — /);
+});
+
+test('a transient read is retried inside the budget and a later answer decides', async () => {
+  const transient = { state: 'transient', detail: 'cannot tell whether @nema-project/nema@0.1.7 exists: HTTP 503' };
+  const { result, state, text } = await run({ npmReads: [transient, transient, 'same'], tagReads: [{ latest: v('0.1.7') }] });
+  assert.equal(result.ok, true);
+  assert.deepEqual(state.sleeps, [5_000, 5_000]);
+  assert.match(text, /npm latest -> 0\.1\.7 after 10000ms/);
+});
+
+test('a registry that stays unreadable ends as unknown, never as "not written"', async () => {
+  const transient = { state: 'transient', detail: 'cannot tell whether @nema-project/nema@0.1.7 exists: HTTP 503' };
+  const { result, state, text } = await run({ npmReads: [transient] });
+  assert.equal(result.ok, false);
+  assert.deepEqual(state.writes, ['npm dispatch']);
+  assert.match(text, /whether 0\.1\.7 is published is unknown/);
+  assert.match(text, /- npm registry after publish: unknown — /);
+  assert.doesNotMatch(text, /confirmed not written|not written —/);
+});
+
+test('an unreadable dist-tag ends as unknown rather than as a pointer that did not move', async () => {
+  const { result, text } = await run({ npmReads: ['same'], tagReads: [{ latest: { state: 'unknown', version: null, detail: 'dist-tags timed out' } }] });
+  assert.equal(result.ok, false);
+  assert.match(text, /whether it points at 0\.1\.7 is unknown/);
+  assert.match(text, /- npm registry after publish: unknown — /);
+  assert.doesNotMatch(text, /confirmed it did not move/);
+});
+
+test('an answer the reader may not see or cannot interpret waits for nothing', async () => {
+  for (const denial of [{ state: 'denied', detail: 'cannot tell whether @nema-project/nema@0.1.7 exists: HTTP 403' }, { state: 'untrusted', detail: 'cannot tell whether @nema-project/nema@0.1.7 exists: unparsable registry answer' }]) {
+    const { result, state, text } = await run({ npmReads: ['absent', denial] });
+    assert.equal(result.ok, false, JSON.stringify(denial));
+    assert.deepEqual(state.sleeps, [5_000], 'one poll after the first absent answer, then no more');
+    assert.deepEqual(state.writes, ['npm dispatch']);
+    assert.match(text, /the registry gave a definitive answer, not an index delay/);
+  }
+});
+
+test('a prerelease next that moved past this version is a contradiction, not a lag', async () => {
+  const { result, state, text } = await run({ version: '0.2.0-rc.1', npmReads: ['same'], tagReads: [{ latest: v('0.1.6'), next: v('0.2.0-rc.2') }] });
+  assert.equal(result.ok, false);
+  assert.deepEqual(state.sleeps, [], 'waiting cannot explain a pointer that moved forward');
+  assert.deepEqual(state.writes, ['npm dispatch']);
+  assert.match(text, /npm next is 0\.2\.0-rc\.2, newer than 0\.2\.0-rc\.1; that is not a visibility delay/);
+});
+
+test('a stable publish beside a newer latest stays maintenance, not a delay timeout', async () => {
+  const { result, state, text } = await run({ npmReads: ['same'], tagReads: [{ latest: v('0.2.0') }], hub: vd('0.2.0', 'hub'), web: vd('0.2.0', 'web'), github: v('0.2.0') });
+  assert.equal(result.ok, true);
+  assert.deepEqual(state.sleeps, [], 'an older stable under maintenance is not a lag');
+  assert.match(text, /published by run 42 under maintenance; npm latest stays 0\.2\.0/);
+});
+
+test('an unreadable answer before the publish stops without dispatching', async () => {
+  const { result, state, text } = await run({ npm: 'transient' });
+  assert.equal(result.ok, false);
+  assert.deepEqual(state.writes, []);
+  assert.match(text, /cannot tell whether 0\.1\.7 is already on npm/);
 });

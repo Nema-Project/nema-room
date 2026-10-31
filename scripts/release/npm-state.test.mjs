@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { main, npmPublishState, tarballIntegrity } from './npm-state.mjs';
+import { main, npmPublishState, probeNpmVersion, tarballIntegrity } from './npm-state.mjs';
 
 const EXPECTED = 'sha512-tPeM3qLsKaAr/Y46xo6sjo/RpD6AvQaIL4z/FHpml19/7qPDR9R2itNhlBoL+TJuyfgTJlBSKam+az4K+KTLIQ==';
 const OTHER = 'sha512-WBQM9fuLkpBn60cFcU9GUnOBEyhwVxbOpyle0gD/abK/W01QtcFtEsDGj3RZYWrpP2UxasHjQ2plCE6FrzLYdg==';
@@ -25,6 +25,29 @@ test('an unanswered or unreadable registry throws instead of looking absent', as
   for (const fetchImpl of [reply(500, {}), reply(401, {}), reply(200, '{oops'), reply(200, { version: '0.1.8' }), async () => { throw new TypeError('fetch failed'); }]) {
     await assert.rejects(npmPublishState({ version: '0.1.7', expectedIntegrity: EXPECTED, fetchImpl }), /cannot tell whether @nema-project\/nema@0\.1\.7 exists/);
   }
+});
+
+test('one read is classified so a re-read can tell "not written" from "not readable"', async () => {
+  const probe = (fetchImpl) => probeNpmVersion({ version: '0.1.7', expectedIntegrity: EXPECTED, fetchImpl });
+  assert.equal((await probe(reply(404, {}))).state, 'absent');
+  assert.equal((await probe(reply(200, { version: '0.1.7', dist: { integrity: EXPECTED } }))).state, 'same');
+  assert.equal((await probe(reply(200, { version: '0.1.7', dist: { integrity: OTHER } }))).state, 'different');
+  // A reader that may not see the package is not a lag that waiting could fix.
+  for (const status of [401, 403]) assert.equal((await probe(reply(status, {}))).state, 'denied', String(status));
+  // 429 and 5xx are worth another read inside a budget.
+  for (const status of [429, 500, 503]) assert.equal((await probe(reply(status, {}))).state, 'transient', String(status));
+  assert.equal((await probe(async () => { throw new TypeError('fetch failed'); })).state, 'transient');
+  // An answer this reader cannot interpret is never 'absent' and never 'transient': waiting cannot fix it.
+  assert.equal((await probe(reply(200, '{oops'))).state, 'untrusted');
+  assert.equal((await probe(reply(200, { version: '0.1.8' }))).state, 'untrusted');
+  assert.equal((await probe(reply(418, {}))).state, 'untrusted');
+  // Every non-definitive state carries the same diagnostic the strict form throws.
+  for (const fetchImpl of [reply(503, {}), reply(401, {}), reply(200, '{oops')]) {
+    const result = await probe(fetchImpl);
+    assert.match(result.detail, /^cannot tell whether @nema-project\/nema@0\.1\.7 exists: /);
+  }
+  // The strict form stays strict: a non-definitive state throws that same detail.
+  await assert.rejects(npmPublishState({ version: '0.1.7', expectedIntegrity: EXPECTED, fetchImpl: reply(503, {}) }), /cannot tell whether .*: HTTP 503/);
 });
 
 test('inputs are strict', async () => {

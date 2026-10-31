@@ -16,9 +16,10 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { verifyRemoteReleaseTag } from '../desktop/release-commit.mjs';
 import { expectedTargets } from '../desktop/release-manifest.mjs';
-import { npmPublishState, tarballIntegrity } from './npm-state.mjs';
+import { shouldMoveLatest } from '../images/check-images.mjs';
+import { probeNpmVersion, tarballIntegrity } from './npm-state.mjs';
 import { IMAGE_REPOSITORIES, REPOSITORY, readRelease } from './registry-read.mjs';
-import { parseVersion, pointerDecisions, readPointers, verifyRelease } from './verify-release.mjs';
+import { npmPointers, parseVersion, pointerDecisions, readPointers, verifyRelease } from './verify-release.mjs';
 
 const exec = promisify(execFile);
 const TARGETS = Object.freeze(['hub', 'web']);
@@ -32,13 +33,96 @@ function pointerNames(prerelease) {
 
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 
+/** How long a promote run keeps re-reading npm before it calls the registry's answer final. */
+export const NPM_VISIBILITY_BUDGET_MS = 120_000;
+export const NPM_VISIBILITY_POLL_MS = 5_000;
+
+/** `not-visible` is a definitive "still not there"; `unknown` is not, and must be recorded as unknown. */
+const NOT_VISIBLE = 'not-visible';
+const UNKNOWN = 'unknown';
+
+/**
+ * Re-read npm within one budget until both the exact version and its channel pointer are visible.
+ *
+ * This only reads. It never dispatches npm-publish again and never publishes, so a rerun of promote stays
+ * the only thing that can write. What may wait is exactly what a registry index delay can explain: the
+ * exact version answering 404, a transient read failure, and a channel pointer still absent or on an older
+ * version. What must not wait: a tarball with another integrity, an answer the reader may not see (401/403),
+ * an answer it cannot interpret, and a prerelease `next` already past this version.
+ *
+ * The tag side has only ok/missing/unknown (registry-read's own vocabulary), so an unknown pointer is
+ * re-read like an absent one; once the budget is spent it is reported as unknown, never as "not written".
+ *
+ * -> { ok: true, pointer, maintenance, waitedMs, budgetMs, reads: { package, tag } }
+ *  | { ok: false, outcome, reason, waitedMs, budgetMs, reads: { package, tag }, last? }
+ */
+export async function awaitNpmVisibility({ version, prerelease, expectedIntegrity, io, budgetMs = NPM_VISIBILITY_BUDGET_MS, pollMs = NPM_VISIBILITY_POLL_MS, onPoll }) {
+  const started = io.now();
+  const deadline = started + budgetMs;
+  const reads = { package: 0, tag: 0 };
+  const spent = () => io.now() - started;
+  /** Sleep only what the budget still allows, so a stop is never later than the budget itself. */
+  const more = async () => {
+    const remaining = deadline - io.now();
+    if (remaining <= 0) return false;
+    await io.sleep(Math.min(pollMs, remaining));
+    return true;
+  };
+  /** One line per read that does not settle it: the run log then holds the last classification seen. */
+  const note = (what, detail) => {
+    if (onPoll) onPoll(`npm visibility ${spent()}ms of ${budgetMs}ms: ${what}${detail ? ` (${detail})` : ''}`);
+  };
+  const stop = (outcome, reason, last) => ({ ok: false, outcome, reason, waitedMs: spent(), budgetMs, reads, ...(last ? { last } : {}) });
+  const name = prerelease ? 'npm next' : 'npm latest';
+  let last;
+  for (;;) {
+    last = await io.npmState({ expectedIntegrity });
+    reads.package += 1;
+    if (last.state === 'same') break;
+    if (last.state === 'different' || last.state === 'denied' || last.state === 'untrusted') {
+      return stop(last.state, `${last.detail}; the registry gave a definitive answer, not an index delay`, last);
+    }
+    note(`package ${last.state}`, last.detail);
+    if (!(await more())) {
+      return last.state === 'absent'
+        ? stop(NOT_VISIBLE, `the registry still answers 404 for ${version} after ${spent()}ms; confirmed not written`, last)
+        : stop(UNKNOWN, `the registry stayed unreadable for ${spent()}ms (${last.detail}); whether ${version} is published is unknown`, last);
+    }
+  }
+  // The package is visible. The channel pointer is what a promotion claims, so it has to be visible too.
+  for (;;) {
+    const pointers = await io.npmPointers();
+    const pointer = prerelease ? pointers.next : pointers.latest;
+    reads.tag += 1;
+    if (pointer.state === 'version' && pointer.version === version) {
+      return { ok: true, pointer, maintenance: false, waitedMs: spent(), budgetMs, reads };
+    }
+    if (pointer.state === 'version' && prerelease) {
+      // `next` past this version is a contradiction, not a lag: something moved it.
+      return stop('tag-moved', `${name} is ${pointer.version}, newer than ${version}; that is not a visibility delay`, pointer);
+    }
+    if (pointer.state === 'version' && !shouldMoveLatest(pointer.version, version)) {
+      // A newer stable pointer is maintenance, not a delay: this version was published beside it.
+      return { ok: true, pointer, maintenance: true, waitedMs: spent(), budgetMs, reads };
+    }
+    note(`${name} ${pointer.version ?? pointer.state}`, pointer.detail);
+    if (!(await more())) {
+      return pointer.state === 'unknown'
+        ? stop('tag-unknown', `${name} still cannot be read after ${spent()}ms (${pointer.detail ?? 'unknown'}); whether it points at ${version} is unknown`, pointer)
+        : stop(NOT_VISIBLE, `${name} still reads ${pointer.version ?? pointer.state} after ${spent()}ms; confirmed it did not move to ${version}`, pointer);
+    }
+  }
+}
+
 /**
  * @param {object} options
  * @param {string} options.version  x.y.z or x.y.z-pre.n, already matching options.tag
  * @param {string} options.tag      v<version>
  * @param {string} options.commit   the tag commit resolved once at the start; every write re-checks it
- * @param {object} options.io       { expectedIntegrity, verify, npmState, dispatchNpm, waitNpm, readPointers,
- *                                    moveGhcrLatest, releaseState, publishRelease, verifyRemoteTag }
+ * @param {object} options.io       { expectedIntegrity, verify, npmState, npmPointers, sleep, now, dispatchNpm,
+ *                                    waitNpm, readPointers, moveGhcrLatest, releaseState, publishRelease,
+ *                                    verifyRemoteTag }
+ *   `npmState` answers with a classified read (`state` plus `detail`), not a bare string.
  * @param {(line: string) => Promise<void>|void} options.summary  appends one line to the run record
  */
 export async function promote({ version, tag, commit, io, summary }) {
@@ -49,6 +133,8 @@ export async function promote({ version, tag, commit, io, summary }) {
   const flipped = [];
   const already = [];
   const done = [];
+  // How a publish of this run ended against the registry: confirmed visible, confirmed not written, or unknown.
+  let npmAfterPublish = null;
   const record = async (line) => {
     done.push(line);
     await summary(`- ${line}`);
@@ -100,7 +186,8 @@ export async function promote({ version, tag, commit, io, summary }) {
 
     // npm: absent -> dispatch and wait; same -> already published; different -> refuse.
     const npmName = prerelease ? 'npm next' : 'npm latest';
-    const npmBefore = await step('npm state', () => io.npmState({ expectedIntegrity }));
+    const readBefore = await step('npm state', () => io.npmState({ expectedIntegrity }));
+    const npmBefore = readBefore.state;
     if (npmBefore === 'different') throw new PromoteStop(`npm already holds a different ${version} tarball; refusing`);
     if (npmBefore === 'same') {
       // Published earlier. The dist-tag must agree: OIDC publishing cannot move a dist-tag on its own.
@@ -123,31 +210,45 @@ export async function promote({ version, tag, commit, io, summary }) {
       if (prerelease && decision === 'keep') throw new PromoteStop(`npm next is ${pointers.npm.next.version}, newer than ${version}; publishing would move next backwards`);
       const before = prerelease ? pointers.npm.next : pointers.npm.latest;
       await guardTag();
-      const published = async () => (await io.npmState({ expectedIntegrity })) === 'same';
+      const published = async () => (await io.npmState({ expectedIntegrity })).state === 'same';
       const run = await write('npm publish run', async () => {
         const dispatched = await io.dispatchNpm({ tag, commit, expectedIntegrity });
         await io.waitNpm(dispatched);
         return dispatched;
       }, published);
-      if (!(await step('npm state after publish', published))) throw new PromoteStop('npm publish run finished but the registry does not hold the expected tarball');
-      const after = await step('read npm dist-tags after publish', () => io.readPointers());
-      const tagNow = prerelease ? after.npm.next : after.npm.latest;
+      // The publish run exiting 0 does not mean the registry serves the version yet (v0.2.0 stopped here
+      // after ~18s). Re-read within one budget, and record which of three states the budget ended on.
+      const visibility = await step('npm visibility after publish', () => awaitNpmVisibility({
+        version, prerelease, expectedIntegrity, io,
+        onPoll: io.log ? (line) => io.log(`${line}\n`) : undefined,
+      }));
       const by = run ? ` by run ${run.id ?? run}` : '';
-      if (decision === 'keep' && tagNow.state === 'version' && tagNow.version === version) {
+      const waited = visibility.waitedMs > 0 ? ` after ${visibility.waitedMs}ms` : '';
+      npmAfterPublish = visibility.ok
+        ? visibility.maintenance
+          ? `confirmed visible${waited}; ${npmName} stays ${visibility.pointer.version} (maintenance)`
+          : `confirmed visible${waited}`
+        : visibility.outcome === 'not-visible'
+          ? `not written — ${visibility.reason}`
+          : visibility.outcome === 'unknown' || visibility.outcome === 'tag-unknown'
+            ? `unknown — ${visibility.reason}`
+            : `${visibility.outcome} — ${visibility.reason}`;
+      if (!visibility.ok) {
+        throw new PromoteStop(`npm publish run finished but the registry does not confirm ${version}: ${visibility.reason}`);
+      }
+      if (decision === 'keep' && visibility.pointer.version === version) {
         // The pointer was newer before the dispatch: a publish that took it is a backwards move, not a promotion.
         throw new PromoteStop(`${npmName} moved backwards from ${before.version} to ${version}; a maintainer restores it with npm dist-tag add @nema-project/nema@${before.version} ${prerelease ? 'next' : 'latest'}`);
       }
-      if (tagNow.state === 'version' && tagNow.version === version) {
-        flipped.push(npmName);
-        await record(`npm ${version}: published${by}; ${npmName} -> ${version}`);
-      } else if (!prerelease && pointerDecisions(after, version, false)['npm latest'] === 'keep') {
+      if (visibility.maintenance) {
         // Only an explicitly newer latest explains a stable publish that left latest alone (maintenance).
-        await record(`npm ${version}: published${by} under maintenance; ${npmName} stays ${tagNow.version}`);
+        await record(`npm ${version}: published${by} under maintenance; ${npmName} stays ${visibility.pointer.version}`);
       } else {
-        throw new PromoteStop(`npm ${version} is published but ${npmName} reads ${tagNow.version ?? tagNow.state}${tagNow.detail ? ` (${tagNow.detail})` : ''}; not moving any other pointer`);
+        flipped.push(npmName);
+        await record(`npm ${version}: published${by}; ${npmName} -> ${version}${waited}`);
       }
     } else {
-      throw new PromoteStop(`npm state is ${JSON.stringify(npmBefore)}`);
+      throw new PromoteStop(`cannot tell whether ${version} is already on npm: ${readBefore.detail ?? npmBefore}`);
     }
 
     const final = await step('final verify', () => io.verify({ stage: 'final' }));
@@ -227,6 +328,7 @@ export async function promote({ version, tag, commit, io, summary }) {
     const live = [...flipped, ...already];
     const notFlipped = pointerNames(prerelease).filter((name) => !live.includes(name));
     await summary(`\n**promote ${tag} stopped:** ${reason}`);
+    if (npmAfterPublish) await summary(`- npm registry after publish: ${npmAfterPublish}`);
     await summary(`- flipped by this run: ${flipped.length ? flipped.join(', ') : 'none'}`);
     if (already.length) await summary(`- already on ${version} before this run: ${already.join(', ')}`);
     await summary(`- not flipped: ${notFlipped.length ? notFlipped.join(', ') : 'none'}`);
@@ -362,9 +464,12 @@ export function realIo({ env = process.env, fetchImpl = globalThis.fetch, versio
       log(`${JSON.stringify({ stage, overall: report.overall, items: Object.fromEntries(Object.entries(report.items).map(([key, item]) => [key, `${item.state}: ${item.detail}`])) }, null, 2)}\n`);
       return report;
     },
-    async npmState({ expectedIntegrity }) {
-      return (await npmPublishState({ version, expectedIntegrity, fetchImpl })).state;
-    },
+    // One classified read: the caller decides whether a non-definitive answer is worth another look.
+    npmState: ({ expectedIntegrity }) => probeNpmVersion({ version, expectedIntegrity, fetchImpl }),
+    npmPointers: () => npmPointers(readIo),
+    now: () => Date.now(),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    log,
     async dispatchNpm({ expectedIntegrity }) {
       // return_run_details (GitHub, 2026-02) answers with the created run's id: no guessing from a run list.
       const answer = JSON.parse(await run(gh, ['api', '-X', 'POST', `repos/${REPOSITORY}/actions/workflows/npm-publish.yml/dispatches`,
