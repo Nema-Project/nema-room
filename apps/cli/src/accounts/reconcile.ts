@@ -1,23 +1,28 @@
 import type { NemaConfig } from "../config.js";
-import { syncDefaultAccountProjection } from "./implicit.js";
-import { readAccounts, writeAccounts } from "./store.js";
+import { applyProjection, syncDefaultAccountProjection } from "./implicit.js";
+import { readAccounts } from "./store.js";
 import type { Account } from "./schema.js";
 
 /**
- * Applies a rollback's `config.json` edits to the default account (D-6). Called once at daemon start and
- * once when the settings page first reads: 0.2.0 can only edit the projection, so the projection wins.
+ * The default account as the projection says it should be, computed **in memory only**.
  *
- * Writes `accounts.json` and never `config.json`, so a user still on 0.2.0 sees the file it expects.
- * Returns whether the account had to change; a missing or unusable accounts file is not an error.
+ * D-6 is "synthesize on read, write only on the first edit": starting the daemon must not create or
+ * rewrite `accounts.json`, so this returns the reconciled list for the caller to use and never writes.
+ * The one place that persists a projection is the settings page, when the user actually opens it and
+ * changes something (S2).
+ *
+ * The direction is still the rollback's: 0.2.0 edits `config.json`, so after a rollback the projection
+ * wins over the stored account.
  */
-export function reconcileDefaultAccount(nemaHome: string, config: NemaConfig): boolean {
+export function projectedAccounts(accounts: Account[], config: NemaConfig): Account[] {
+  const sync = syncDefaultAccountProjection(accounts, config);
+  if (sync === null) return accounts;
+  return accounts.map((a) => (a.id === sync.accountId ? applyProjection(a, sync.patch) : a));
+}
+
+/** Whether the projection differs from the stored rows. Pure; used by the settings page to decide to save. */
+export function projectionDiffers(nemaHome: string, config: NemaConfig): boolean {
   const read = readAccounts(nemaHome);
   if (read.status !== "ok") return false;
-
-  const sync = syncDefaultAccountProjection(read.file.accounts, config);
-  if (sync === null) return false;
-
-  const accounts: Account[] = read.file.accounts.map((a) => (a.id === sync.accountId ? { ...a, ...sync.patch } : a));
-  writeAccounts(nemaHome, { ...read.file, accounts });
-  return true;
+  return syncDefaultAccountProjection(read.file.accounts, config) !== null;
 }

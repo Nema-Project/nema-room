@@ -19,7 +19,15 @@ export type CostTier = (typeof COST_TIERS)[number];
 const ID_PATTERN = /^acct_[a-z0-9]{10}$/;
 const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 
-export const AccountIdSchema = z.string().regex(ID_PATTERN, "账户 id 必须是 acct_ 加 10 位小写字母或数字");
+/**
+ * A stored account id. The reserved implicit id is refused here: it only ever names the account synthesized
+ * from `config.json` (D-6), whose files stay at the legacy paths, so a stored row carrying it would be read
+ * as that account and point at the wrong credential.
+ */
+export const AccountIdSchema = z
+  .string()
+  .regex(ID_PATTERN, "账户 id 必须是 acct_ 加 10 位小写字母或数字")
+  .refine((id) => id !== IMPLICIT_ACCOUNT_ID, "不能使用保留的账户 id");
 
 const CapabilitiesSchema = z
   .object({
@@ -99,6 +107,7 @@ export function validateAccountsFile(file: AccountsFile): string[] {
   const seenNames = new Map<string, string>();
 
   for (const account of file.accounts) {
+    if (account.id === IMPLICIT_ACCOUNT_ID) problems.push(`账户「${account.name}」：不能使用保留的账户 id`);
     if (seenIds.has(account.id)) problems.push(`账户 id 重复：${account.id}`);
     seenIds.add(account.id);
 
@@ -124,7 +133,8 @@ export function validateAccountsFile(file: AccountsFile): string[] {
 
   for (const [scope, value] of Object.entries(file.bindings)) {
     if (!SCOPE_PATTERN.test(scope)) problems.push(`绑定的 scope 不合法：${scope}（只接受 ws: 或 thread: 前缀）`);
-    if (value !== "auto" && !seenIds.has(value)) problems.push(`绑定 ${scope} 指向一个不存在的账户：${value}`);
+    if (value === IMPLICIT_ACCOUNT_ID) problems.push(`绑定 ${scope} 指向一个不存在的账户：${value}`);
+    else if (value !== "auto" && !seenIds.has(value)) problems.push(`绑定 ${scope} 指向一个不存在的账户：${value}`);
   }
 
   return problems;

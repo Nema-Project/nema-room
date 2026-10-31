@@ -3,8 +3,11 @@ import { expectPrivate } from "../nativePermissions.js";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { accountsPath, accountDir, readAccounts, writeAccounts } from "../../src/accounts/store.js";
+import { IMPLICIT_ACCOUNT_ID } from "../../src/accounts/schema.js";
+import { removeAccountSecrets, saveAccountSecret } from "../../src/secrets/accounts.js";
+import { linkDir } from "../links.js";
 import type { AccountsFile } from "../../src/accounts/schema.js";
 
 let root: string;
@@ -91,7 +94,7 @@ describe("accounts.json", () => {
 
   test("accountDir refuses an id that could escape the directory", () => {
     expect(() => accountDir(home, "../x")).toThrow();
-    expect(() => accountDir(home, "acct_0000000000")).not.toThrow();
+    expect(() => accountDir(home, "acct_abc1234567")).not.toThrow();
     expect(accountDir(home, "acct_abc1234567")).toBe(join(home, "secrets", "accounts", "acct_abc1234567"));
   });
 
@@ -99,5 +102,50 @@ describe("accounts.json", () => {
     expect(existsSync(home)).toBe(false);
     expect(readAccounts(home)).toEqual({ status: "missing" });
     expect(existsSync(home)).toBe(false);
+  });
+});
+
+describe("account directory hardening", () => {
+  test("refuses an account directory under a symlinked secrets/ parent", () => {
+    const elsewhere = join(root, "elsewhere");
+    mkdirSync(join(elsewhere, "accounts", "acct_abc1234567"), { recursive: true, mode: 0o700 });
+    mkdirSync(home, { recursive: true });
+    linkDir(elsewhere, join(home, "secrets"));
+
+    // Reading, writing and deleting must all refuse rather than follow the link.
+    expect(() => accountDir(home, "acct_abc1234567")).toThrow(/符号链接|symlink/i);
+    expect(() => saveAccountSecret(home, "acct_abc1234567", "key", "sk-test")).toThrow();
+    expect(() => removeAccountSecrets(home, "acct_abc1234567")).toThrow();
+    // The link target is untouched: nothing was written or deleted through it.
+    expect(existsSync(join(elsewhere, "accounts", "acct_abc1234567", "key"))).toBe(false);
+    expect(existsSync(join(elsewhere, "accounts", "acct_abc1234567"))).toBe(true);
+  });
+
+  test("refuses an account directory that is itself a symlink", () => {
+    const target = join(root, "redirected");
+    mkdirSync(target, { recursive: true, mode: 0o700 });
+    mkdirSync(join(home, "secrets", "accounts"), { recursive: true, mode: 0o700 });
+    linkDir(target, join(home, "secrets", "accounts", "acct_abc1234567"));
+
+    expect(() => accountDir(home, "acct_abc1234567")).toThrow(/符号链接|symlink/i);
+    expect(() => removeAccountSecrets(home, "acct_abc1234567")).toThrow();
+    expect(existsSync(target)).toBe(true);
+  });
+
+  test("a metadata file owned by another user is not trusted", () => {
+    if (process.platform === "win32") return; // no POSIX ownership here
+    writeAccounts(home, file());
+    const real = process.getuid?.() ?? 0;
+    const spy = vi.spyOn(process, "getuid").mockReturnValue(real + 1);
+    try {
+      expect(readAccounts(home)).toEqual({ status: "unusable", reason: "owner" });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readAccounts(home)).toMatchObject({ status: "ok" });
+  });
+
+  test("the reserved implicit id is not a usable account directory", () => {
+    expect(() => accountDir(home, IMPLICIT_ACCOUNT_ID)).toThrow();
   });
 });

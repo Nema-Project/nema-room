@@ -55,6 +55,17 @@ describe("account schema", () => {
     }
   });
 
+  test("rejects the reserved implicit id as a stored account", () => {
+    // The all-zero id only ever names the synthesized account, whose files stay at the legacy paths.
+    // A stored row with it would be mistaken for that account and read the wrong credential.
+    expect(AccountsFileSchema.safeParse(file([base({ id: IMPLICIT_ACCOUNT_ID })])).success).toBe(false);
+    expect(validateAccountsFile(file([base({ id: IMPLICIT_ACCOUNT_ID })])))
+      .toEqual([expect.stringContaining("保留")]);
+    // A binding may name it: that is how a workspace keeps its choice before the first edit.
+    expect(validateAccountsFile(file([base()], { "ws:w1": IMPLICIT_ACCOUNT_ID })))
+      .toEqual([expect.stringContaining("不存在")]);
+  });
+
   test("newAccountId never returns the implicit id and keeps the shape", () => {
     const ids = new Set<string>();
     for (let i = 0; i < 50; i++) {

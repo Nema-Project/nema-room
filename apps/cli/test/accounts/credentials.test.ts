@@ -1,11 +1,12 @@
 import { canSymlinkFiles } from "../links.js";
 import { expectPrivate } from "../nativePermissions.js";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { accountCredentialFiles, accountCredentialState } from "../../src/accounts/credentials.js";
 import { accountDir } from "../../src/accounts/store.js";
+import { linkDir } from "../links.js";
 import { IMPLICIT_ACCOUNT_ID, type Account } from "../../src/accounts/schema.js";
 import { accountSecretPath, readAccountSecret, removeAccountSecrets, saveAccountSecret } from "../../src/secrets/accounts.js";
 
@@ -31,7 +32,7 @@ const implicit = (over: Partial<Account> = {}): Account => byok({ id: IMPLICIT_A
 function writeCodexAuth(valid: boolean): void {
   mkdirSync(codexHome, { recursive: true });
   const body = valid
-    ? JSON.stringify({ tokens: { access_token: "eyJhbGciOiJub25lIn0.eyJleHAiOjQxMDI0NDQ4MDB9.", refresh_token: "r", account_id: "a" }, last_refresh: new Date().toISOString() })
+    ? JSON.stringify({ tokens: { access_token: "fake.codex.access.token", refresh_token: "r", account_id: "a" }, last_refresh: new Date().toISOString() })
     : "{}";
   writeFileSync(join(codexHome, "auth.json"), body, { mode: 0o600 });
 }
@@ -75,7 +76,6 @@ describe("credential state per account kind", () => {
   test.runIf(canSymlinkFiles)("a symlinked key is unusable", () => {
     mkdirSync(accountDir(home, "acct_abc1234567"), { recursive: true, mode: 0o700 });
     writeFileSync(join(root, "target"), "sk");
-    const { symlinkSync } = require("node:fs") as typeof import("node:fs");
     symlinkSync(join(root, "target"), accountSecretPath(home, "acct_abc1234567", "key"));
     expect(accountCredentialState(home, byok(), codexHome).state).toBe("unusable");
   });
@@ -111,7 +111,8 @@ describe("credential state per account kind", () => {
 
     expect(accountCredentialFiles(home, implicit())).toEqual([join(home, "byok-key")]);
     expect(accountCredentialState(home, implicit(), codexHome).state).toBe("connected");
-    expect(existsSync(accountDir(home, IMPLICIT_ACCOUNT_ID))).toBe(false);
+    // The reserved id has no credential directory at all: it only ever names the legacy paths.
+    expect(() => accountDir(home, IMPLICIT_ACCOUNT_ID)).toThrow(/保留/);
   });
 
   test("the implicit siwc account reads the old auth.json", () => {
@@ -120,6 +121,69 @@ describe("credential state per account kind", () => {
     expect(accountCredentialFiles(home, implicit({ authMode: "siwc", baseUrl: undefined }))).toEqual([join(home, "auth.json")]);
     // "{}" is not a stored login, so it reads unusable rather than connected.
     expect(accountCredentialState(home, implicit({ authMode: "siwc", baseUrl: undefined }), codexHome).state).toBe("unusable");
+  });
+
+  test("an empty or malformed key file is unusable, not connected", () => {
+    mkdirSync(accountDir(home, "acct_abc1234567"), { recursive: true, mode: 0o700 });
+    const file = accountSecretPath(home, "acct_abc1234567", "key");
+    writeFileSync(file, "", { mode: 0o600 });
+    expect(accountCredentialState(home, byok(), codexHome).state).toBe("unusable");
+
+    // Two lines is not a key either: readAccountSecret would reject it when used.
+    writeFileSync(file, "first\nsecond", { mode: 0o600 });
+    expect(accountCredentialState(home, byok(), codexHome).state).toBe("unusable");
+
+    // Control characters leak into HTTP headers, so they are invalid too.
+    writeFileSync(file, "sk\u0000x", { mode: 0o600 });
+    expect(accountCredentialState(home, byok(), codexHome).state).toBe("unusable");
+
+    writeFileSync(file, "sk-valid", { mode: 0o600 });
+    expect(accountCredentialState(home, byok(), codexHome).state).toBe("connected");
+  });
+
+  test("a credential file owned by another user is unusable", () => {
+    if (process.platform === "win32") return;
+    saveAccountSecret(home, "acct_abc1234567", "key", "sk-test");
+    const real = process.getuid?.() ?? 0;
+    const spy = vi.spyOn(process, "getuid").mockReturnValue(real + 1);
+    try {
+      expect(accountCredentialState(home, byok(), codexHome).state).toBe("unusable");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("compat reports a conflicting local credential instead of connected", () => {
+    writeCodexAuth(true);
+    // A leftover key file in the account's directory means the account cannot be trusted as compat.
+    saveAccountSecret(home, "acct_ghi1234567", "key", "sk-leftover");
+    expect(accountCredentialState(home, compat(), codexHome).state).toBe("unusable");
+  });
+
+  test("compat distinguishes an unusable Codex login from a missing one", () => {
+    expect(accountCredentialState(home, compat(), codexHome).state).toBe("missing");
+
+    // Present but unreadable: the file exists, so this is not "missing".
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(join(codexHome, "auth.json"), "{ broken", { mode: 0o600 });
+    expect(accountCredentialState(home, compat(), codexHome).state).toBe("unusable");
+
+    // Present but with no tokens.
+    writeFileSync(join(codexHome, "auth.json"), JSON.stringify({ tokens: {} }), { mode: 0o600 });
+    expect(accountCredentialState(home, compat(), codexHome).state).toBe("unusable");
+
+    writeCodexAuth(true);
+    expect(accountCredentialState(home, compat(), codexHome).state).toBe("connected");
+  });
+
+  test("a symlinked account directory is unusable rather than followed", () => {
+    const target = join(root, "redirect");
+    mkdirSync(target, { recursive: true, mode: 0o700 });
+    writeFileSync(join(target, "key"), "sk-elsewhere", { mode: 0o600 });
+    mkdirSync(join(home, "secrets", "accounts"), { recursive: true, mode: 0o700 });
+    linkDir(target, join(home, "secrets", "accounts", "acct_abc1234567"));
+
+    expect(accountCredentialState(home, byok(), codexHome).state).toBe("unusable");
   });
 
   test("states never carry a credential value", () => {

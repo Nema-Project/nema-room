@@ -1,6 +1,7 @@
-import { closeSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, fsyncSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import path from "node:path";
-import { AccountsFileSchema, validateAccountsFile, type AccountsFile } from "./schema.js";
+import { AccountsFileSchema, IMPLICIT_ACCOUNT_ID, validateAccountsFile, type AccountsFile } from "./schema.js";
+import { assertNoSymlinkedComponent } from "./paths.js";
 import { openPrivateFile, privateModeMatches, protectPrivatePath } from "../secrets/permissions.js";
 
 /**
@@ -12,16 +13,29 @@ export const accountsPath = (nemaHome: string): string => path.join(nemaHome, "a
 
 const ACCOUNT_ID = /^acct_[a-z0-9]{10}$/;
 
-/** The account's credential directory. The id is re-checked so a stored value cannot escape `secrets/`. */
+/**
+ * The account's credential directory. The id is re-checked so a stored value cannot escape `secrets/`,
+ * the reserved implicit id is refused (it only ever names the synthesized account, whose files stay at
+ * the legacy paths), and no component under `nemaHome` may be a symlink.
+ */
 export function accountDir(nemaHome: string, accountId: string): string {
   if (!ACCOUNT_ID.test(accountId)) throw new Error("账户 id 不合法");
-  return path.join(nemaHome, "secrets", "accounts", accountId);
+  if (accountId === IMPLICIT_ACCOUNT_ID) throw new Error("保留的账户 id 不能用作凭据目录");
+  const dir = path.join(nemaHome, "secrets", "accounts", accountId);
+  assertNoSymlinkedComponent(nemaHome, dir);
+  return dir;
 }
 
 export type AccountsRead =
   | { status: "ok"; file: AccountsFile }
   | { status: "missing" }
-  | { status: "unusable"; reason: "symlink" | "mode" | "corrupt" | "invalid"; problems?: string[] };
+  | { status: "unusable"; reason: "symlink" | "mode" | "owner" | "corrupt" | "invalid"; problems?: string[] };
+
+/** A private file is also this user's file: a foreign 0600 file is not a credential we should trust. */
+function ownerMatches(st: { uid?: number }, uid: number | null = process.getuid?.() ?? null): boolean {
+  if (uid === null) return true; // no POSIX ownership on this platform
+  return st.uid === undefined || st.uid === uid;
+}
 
 /**
  * Never throws: the settings page has to show why the file cannot be used. `invalid` means the rows
@@ -33,6 +47,7 @@ export function readAccounts(nemaHome: string): AccountsRead {
     const stat = lstatSync(file);
     if (stat.isSymbolicLink()) return { status: "unusable", reason: "symlink" };
     if (!privateModeMatches(stat)) return { status: "unusable", reason: "mode" };
+    if (!ownerMatches(stat)) return { status: "unusable", reason: "owner" };
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return { status: "missing" };
     return { status: "unusable", reason: "corrupt" };
@@ -44,7 +59,10 @@ export function readAccounts(nemaHome: string): AccountsRead {
     // re-checks the file actually opened.
     const fd = openPrivateFile(file);
     try {
-      if (!privateModeMatches(fstatSync(fd))) return { status: "unusable", reason: "mode" };
+      // Re-check the file actually opened, not just the one lstat named.
+      const opened = fstatSync(fd);
+      if (!privateModeMatches(opened)) return { status: "unusable", reason: "mode" };
+      if (!ownerMatches(opened)) return { status: "unusable", reason: "owner" };
       raw = readFileSync(fd, "utf8");
     } finally {
       closeSync(fd);
@@ -80,6 +98,8 @@ export function writeAccounts(nemaHome: string, file: AccountsFile): void {
   try {
     try {
       writeSync(fd, JSON.stringify(file, null, 2) + "\n");
+      // Without this an acknowledged write can be lost when the machine loses power after the rename.
+      fsyncSync(fd);
     } finally {
       closeSync(fd);
     }
@@ -92,5 +112,15 @@ export function writeAccounts(nemaHome: string, file: AccountsFile): void {
       /* ignore */
     }
     throw e;
+  }
+  try {
+    const dfd = openSync(nemaHome, "r");
+    try {
+      fsyncSync(dfd);
+    } finally {
+      closeSync(dfd);
+    }
+  } catch {
+    /* directory fsync is best effort: Windows has no equivalent */
   }
 }

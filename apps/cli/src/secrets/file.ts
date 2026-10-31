@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
-import { openPrivateFile, privateModeMatches, protectPrivatePath } from "./permissions.js";
+import { openPrivateFile, privateModeMatches, privateOwnerMatches, protectPrivatePath } from "./permissions.js";
 
 export type SecretFileErrorKind = "invalid" | "symlink" | "mode";
 
@@ -88,6 +88,7 @@ export function readSecretLine(file: string, missingMessage: string, invalidMess
     if (!st.isFile() || !privateModeMatches(st)) {
       throw new SecretFileError("mode", `${path.basename(file)} 文件权限必须是 0600`);
     }
+    if (!privateOwnerMatches(st)) throw new Error(invalidMessage);
     // Hand-written files usually end in one newline. Anything else is never echoed back.
     const value = readFileSync(fd, "utf8").replace(/\r?\n$/, "");
     if (!isValidLine(value)) throw new Error(invalidMessage);

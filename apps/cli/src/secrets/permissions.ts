@@ -60,6 +60,15 @@ export function protectPrivatePath(file: string, mode = 0o600): void {
   else chmodSync(file, mode);
 }
 
+/**
+ * A private file is also this user's file. A mode-0600 file owned by someone else is not a credential we
+ * should read or trust, so every private read checks ownership next to the mode bits.
+ */
+export function privateOwnerMatches(st: { uid?: number }, uid: number | null = process.getuid?.() ?? null): boolean {
+  if (uid === null) return true; // no POSIX ownership on Windows
+  return st.uid === undefined || st.uid === uid;
+}
+
 export function privateModeMatches(st: { mode: number }, platform: NodeJS.Platform = process.platform): boolean {
   // Windows callers must also use openPrivateFile, which checks the actual ACL.
   return platform === "win32" || (st.mode & 0o777) === 0o600;
