@@ -5,6 +5,7 @@ import type { AttachmentView } from "@nema/shared";
 import { Composer } from "@/components/Composer";
 import * as hub from "@/lib/hub";
 import { I18nProvider } from "@/lib/i18n";
+import type { MentionContextResponse } from "@/lib/mentions";
 import { resetSkillMenuCache } from "@/lib/skillMenu";
 
 vi.mock("@/lib/hub", () => ({
@@ -495,7 +496,7 @@ describe("Composer Skills menu", () => {
 });
 
 describe("Composer @ mentions", () => {
-  const ctx = {
+  const ctx: MentionContextResponse = {
     status: "ok",
     entries: [
       { id: "D-12", kind: "decision", title: "发布流程", status: "active" },
@@ -507,7 +508,7 @@ describe("Composer @ mentions", () => {
   };
 
   beforeEach(() => {
-    vi.mocked(hub.listSkills).mockResolvedValue([]);
+    vi.mocked(hub.listSkills).mockResolvedValue({ supported: true, skills: [] });
     vi.mocked(hub.searchMentionContext).mockResolvedValue(ctx);
   });
 

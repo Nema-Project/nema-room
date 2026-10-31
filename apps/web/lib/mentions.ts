@@ -67,7 +67,7 @@ export function groupCandidates(q: string, ctx: MentionContextResponse): Mention
     .slice(0, MENTION_LIMITS.menuPerGroup)
     .map((e): MentionCandidate => ({
       type: "entry", id: e.id, label: `[${e.id}]`, hint: e.title,
-      text: mentionText({ type: "entry", id: e.id, text: "" }),
+      text: mentionText({ type: "entry", id: e.id, text: "" }, {}),
     }));
   const attachments = rank(q, ctx.attachments, (a) => a.name)
     .slice(0, MENTION_LIMITS.menuPerGroup)
