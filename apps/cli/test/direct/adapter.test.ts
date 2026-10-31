@@ -1,4 +1,4 @@
-import { makePublic } from "../nativePermissions.js";
+import { makePublic, writePrivateFile } from "../nativePermissions.js";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
@@ -444,7 +444,7 @@ describe("CodexDirectAdapter", () => {
     mkdirSync(codexHome);
     const access = jwt({ exp: Math.floor(Date.now() / 1000) + 3600, "https://api.openai.com/auth": { chatgpt_account_id: "acct-zzzz" } });
     const authPath = join(codexHome, "auth.json");
-    writeFileSync(authPath, JSON.stringify({ tokens: { access_token: access, refresh_token: "rt-do-not-spend" } }));
+    writePrivateFile(authPath, JSON.stringify({ tokens: { access_token: access, refresh_token: "rt-do-not-spend" } }));
     const before = readFileSync(authPath);
     server.responses(stream([msgItem("ok")]));
     const a = new CodexDirectAdapter({

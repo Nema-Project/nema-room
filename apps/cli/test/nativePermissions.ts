@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { closeSync, statSync, chmodSync } from "node:fs";
+import { closeSync, statSync, chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { openPrivateFile } from "../src/secrets/permissions.js";
+import { openPrivateFile, protectPrivatePath } from "../src/secrets/permissions.js";
 
 /** Exercise native privacy rather than Windows' synthetic POSIX mode bits. */
 export function expectPrivate(file: string, mode = 0o600): void {
@@ -29,4 +29,18 @@ export function makePublic(file: string): void {
   if (process.platform === "win32") {
     expect(spawnSync(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "icacls.exe"), [file, "/grant", "*S-1-1-0:R"], { windowsHide: true, stdio: "ignore" }).status).toBe(0);
   } else chmodSync(file, 0o644);
+}
+
+/**
+ * Writes a credential file the way the product would: create it, then make it private for this platform.
+ *
+ * `writeFileSync(..., { mode: 0o600 })` is not enough on Windows, where the mode argument only clears the
+ * read-only bit and the DACL is inherited from the parent directory: a file created there is readable by
+ * other users, so the private-file opener refuses it. Every test fixture that the product later reads
+ * through `openPrivateFile` / `openPrivateFileChecked` has to go through this helper, or it passes on POSIX
+ * and fails on the Windows runner for a reason that has nothing to do with the code under test.
+ */
+export function writePrivateFile(file: string, data: string): void {
+  writeFileSync(file, data, { mode: 0o600 });
+  protectPrivatePath(file, 0o600);
 }

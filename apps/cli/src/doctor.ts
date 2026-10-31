@@ -17,6 +17,7 @@ import { graphifyInstallStatus, type GraphifyOpts } from "./repos/graphify.js";
 import { REPORT_AGENTS, reportHookInstalled } from "./report/install.js";
 import { reportTokenPath } from "./report/token.js";
 import { githubTokenPath, readGithubToken } from "./secrets/github.js";
+import { hasSymlinkedComponent, strandedRetireClaims } from "./accounts/paths.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -144,6 +145,31 @@ async function githubMcpServerCheck(opts: DoctorOpts): Promise<DoctorCheck> {
   }
 }
 
+/**
+ * Informational: credential copies an interrupted migration left under a claim name.
+ *
+ * A leftover does *not* mean the account already holds the same credential. There are two ways one appears
+ * (`strandedRetireClaims`): the process died mid-retirement, or the restore failed because the legacy name
+ * was taken again — and in the second case the claimed file can be the *newer* copy while the account holds
+ * an older one. So this only reports the names and tells the user to compare before deleting: recommending
+ * removal outright could destroy the only current credential. Only the names are printed, never the
+ * contents.
+ */
+function strandedClaimsCheck(opts: DoctorOpts): DoctorCheck {
+  const name = "迁移遗留文件";
+  // A linked home is not a layout the account store reads, so nothing under it is reported as a leftover:
+  // the names would describe a directory Nema refuses to use.
+  if (hasSymlinkedComponent(opts.nemaHome, opts.nemaHome)) return { name, ok: true, detail: "未检查（Nema 主目录是符号链接）" };
+  const stranded = strandedRetireClaims(opts.nemaHome);
+  if (stranded.length === 0) return { name, ok: true, detail: "无" };
+  const paths = stranded.map((file) => path.join(opts.nemaHome, file)).join("、");
+  return {
+    name,
+    ok: true, // informational: a leftover never means the current login is unusable
+    detail: `发现 ${stranded.length} 个退役过程中留下的凭据副本（${paths}）。这些文件可能比账户里的更新，也可能只是重复；请先比对内容再决定保留哪一份，确认不需要的再手动删除。`,
+  };
+}
+
 /** Informational; never reveals the token. */
 function githubTokenCheck(opts: DoctorOpts): DoctorCheck {
   const name = "GitHub 令牌";
@@ -214,6 +240,7 @@ export async function runDoctor(opts: DoctorOpts): Promise<DoctorCheck[]> {
   // Informational: the GitHub plugin is off by default.
   checks.push(await githubMcpServerCheck(opts));
   checks.push(githubTokenCheck(opts));
+  checks.push(strandedClaimsCheck(opts));
 
   return checks;
 }

@@ -60,9 +60,29 @@ export function protectPrivatePath(file: string, mode = 0o600): void {
   else chmodSync(file, mode);
 }
 
+/**
+ * A private file is also this user's file. A mode-0600 file owned by someone else is not a credential we
+ * should read or trust, so every private read checks ownership next to the mode bits.
+ */
+export function privateOwnerMatches(st: { uid?: number }, uid: number | null = process.getuid?.() ?? null): boolean {
+  if (uid === null) return true; // no POSIX ownership on Windows
+  return st.uid === undefined || st.uid === uid;
+}
+
 export function privateModeMatches(st: { mode: number }, platform: NodeJS.Platform = process.platform): boolean {
   // Windows callers must also use openPrivateFile, which checks the actual ACL.
   return platform === "win32" || (st.mode & 0o777) === 0o600;
+}
+
+/**
+ * Verify the platform's real access control for a path on its own, without opening it.
+ *
+ * POSIX mode bits are checked by the callers directly; on Windows the synthetic mode bits carry no
+ * meaning and the DACL is what decides, so anything that accepts a credential file *before* reading it
+ * (a migration deciding whether a copy is private, a login it is about to trust) has to ask here.
+ */
+export function assertPrivateAcl(file: string): void {
+  if (process.platform === "win32") windowsAcl(file, "check");
 }
 
 /** Refuse links on all platforms, and verify the Windows DACL and opened file identity. */
@@ -74,6 +94,33 @@ export function openPrivateFile(file: string): number {
     const opened = fstatSync(fd);
     if (!opened.isFile() || before.dev !== opened.dev || before.ino !== opened.ino) throw new Error("Private file changed while opening");
     if (process.platform === "win32") windowsAcl(file, "check");
+    return fd;
+  } catch (error) {
+    closeSync(fd);
+    throw error;
+  }
+}
+
+/**
+ * A private file, opened and *judged by its own descriptor*.
+ *
+ * `openPrivateFile` refuses a link, a non-regular file and a foreign Windows DACL, but it says nothing about
+ * the POSIX mode bits or the owner. A credential this process is about to send somewhere has to pass those
+ * too, and the stat that decides has to be taken from the descriptor that was opened: a path whose mode is
+ * fixed between two stats would otherwise be read through the widened one.
+ *
+ * `expectedUid` exists so the ownership rule can be exercised by a test: a file owned by somebody else cannot
+ * be produced without privilege on most hosts (and never on the Windows runner), and a test that silently
+ * skips is no test at all. Production never passes it, so the rule it applies there is unchanged: the owner
+ * of the opened file must be this process's user.
+ */
+export function openPrivateFileChecked(file: string, expectedUid: number | null = process.getuid?.() ?? null): number {
+  const fd = openPrivateFile(file);
+  try {
+    const st = fstatSync(fd);
+    if (!privateModeMatches(st) || !privateOwnerMatches(st, expectedUid)) {
+      throw new Error(`${path.basename(file)} 不是私有文件（权限或属主不符），已拒绝读取。`);
+    }
     return fd;
   } catch (error) {
     closeSync(fd);

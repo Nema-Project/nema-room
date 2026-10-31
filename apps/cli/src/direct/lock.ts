@@ -8,7 +8,27 @@ export class LockTimeoutError extends Error {
   }
 }
 
-export type LockOptions = { timeoutMs?: number; pollMs?: number; staleMs?: number };
+/** The lock is held by an operation of this same process, which a blocking waiter cannot outlast. */
+export class LockHeldByThisProcessError extends Error {
+  constructor(readonly lockPath: string) {
+    super(`Lock ${lockPath} is held by this process`);
+    this.name = "LockHeldByThisProcessError";
+  }
+}
+
+export type LockOptions = {
+  timeoutMs?: number;
+  pollMs?: number;
+  staleMs?: number;
+  /**
+   * What to do when the lock is held by *this* process (`withFileLockSync` only).
+   *
+   * Waiting is wrong there: a synchronous waiter blocks the event loop, so an async holder in the same
+   * process can never finish and the wait always runs to its timeout. "busy" reports that immediately
+   * instead, and the caller can leave the work for later.
+   */
+  whenHeldByThisProcess?: "wait" | "busy";
+};
 
 type Holder = { pid: number; at: number; token?: string };
 
@@ -76,6 +96,57 @@ function takeOver(path: string, staleRaw: string): void {
       unlinkSync(tomb);
     } catch {
       /* ignore */
+    }
+  }
+}
+
+/**
+ * The synchronous entry point for callers whose critical section cannot yield to the event loop.
+ *
+ * `withFileLock` polls with timers, which a synchronous caller cannot wait on. This variant blocks the
+ * thread instead, so it must only be used around a short synchronous step. It shares the same protocol
+ * (same lock file, same staleness rule), so an async holder and a blocking one exclude each other.
+ */
+export function withFileLockSync<T>(lockPath: string, fn: () => T, opts: LockOptions = {}): T {
+  const timeoutMs = opts.timeoutMs ?? 15_000;
+  const pollMs = opts.pollMs ?? 50;
+  const staleMs = opts.staleMs ?? 30_000;
+  const token = randomUUID();
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    try {
+      const fd = openSync(lockPath, "wx", 0o600);
+      try {
+        writeSync(fd, JSON.stringify({ pid: process.pid, at: Date.now(), token }));
+      } finally {
+        closeSync(fd);
+      }
+      break;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    const raw = readRaw(lockPath);
+    if (raw === null) continue; // released between our attempt and the read
+    if (isStale(lockPath, raw, staleMs)) {
+      takeOver(lockPath, raw);
+      continue;
+    }
+    if (opts.whenHeldByThisProcess === "busy" && parseHolder(raw)?.pid === process.pid) {
+      throw new LockHeldByThisProcessError(lockPath);
+    }
+    if (Date.now() >= deadline) throw new LockTimeoutError(lockPath, timeoutMs);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, pollMs);
+  }
+
+  try {
+    return fn();
+  } finally {
+    try {
+      const raw = readRaw(lockPath);
+      if (raw !== null && parseHolder(raw)?.token === token) unlinkSync(lockPath);
+    } catch {
+      /* best effort: a valid lock we cannot remove becomes stale once this process exits */
     }
   }
 }

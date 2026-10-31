@@ -1,0 +1,236 @@
+import { canSymlinkFiles } from "../links.js";
+import { expectPrivate, writePrivateFile } from "../nativePermissions.js";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { accountsPath, accountDir, readAccounts, writeAccounts } from "../../src/accounts/store.js";
+import { IMPLICIT_ACCOUNT_ID } from "../../src/accounts/schema.js";
+import { accountSecretPath, removeAccountSecrets, saveAccountSecret } from "../../src/secrets/accounts.js";
+import { linkDir } from "../links.js";
+import type { AccountsFile } from "../../src/accounts/schema.js";
+
+/**
+ * Runs a queued swap just before the save's first filesystem step, i.e. after any work done before the
+ * account lock was taken. `vi.mock` is hoisted above the imports, so the module under test sees the wrapper.
+ */
+const swapOnNextLock: Array<() => void> = [];
+vi.mock("node:fs", async (importOriginal) => {
+  const real = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...real,
+    openSync: ((...args: Parameters<typeof real.openSync>) => {
+      const swap = swapOnNextLock.shift();
+      if (swap) swap();
+      return (real.openSync as (...a: typeof args) => ReturnType<typeof real.openSync>)(...args);
+    }) as typeof real.openSync,
+  };
+});
+
+let root: string;
+let home: string;
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), "nema-accounts-store-"));
+  home = join(root, "nema");
+  swapOnNextLock.length = 0;
+});
+afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+const account = (over: Record<string, unknown> = {}) => ({
+  id: "acct_abc1234567",
+  name: "OpenAI 主账号",
+  enabled: true,
+  adapter: "codex-direct" as const,
+  authMode: "byok" as const,
+  baseUrl: "https://api.openai.com/v1",
+  costTier: "standard" as const,
+  order: 0,
+  createdAt: "2026-10-31T00:00:00.000Z",
+  ...over,
+});
+
+const file = (accounts: unknown[] = [account()], bindings: Record<string, string> = {}): AccountsFile =>
+  ({ version: 1, accounts, bindings }) as AccountsFile;
+
+describe("accounts.json", () => {
+  test("round-trips and stays private", () => {
+    writeAccounts(home, file([account()], { "ws:w1": "acct_abc1234567" }));
+
+    const read = readAccounts(home);
+    expect(read).toEqual({ status: "ok", file: file([account()], { "ws:w1": "acct_abc1234567" }) });
+    expectPrivate(accountsPath(home), 0o600);
+    expectPrivate(home, 0o700);
+  });
+
+  test("a missing file is not an error", () => {
+    expect(readAccounts(home)).toEqual({ status: "missing" });
+  });
+
+  test.runIf(canSymlinkFiles)("refuses a symlinked file without reading through it", () => {
+    mkdirSync(home, { recursive: true });
+    const target = join(root, "elsewhere.json");
+    writeFileSync(target, JSON.stringify(file()));
+    symlinkSync(target, accountsPath(home));
+
+    expect(readAccounts(home)).toEqual({ status: "unusable", reason: "symlink" });
+  });
+
+  test("refuses a file anyone else can read", () => {
+    if (process.platform === "win32") return; // synthetic mode bits carry no meaning here
+    writeAccounts(home, file());
+    chmodSync(accountsPath(home), 0o644);
+
+    expect(readAccounts(home)).toEqual({ status: "unusable", reason: "mode" });
+  });
+
+  test("reports broken JSON and schema failures separately", () => {
+    mkdirSync(home, { recursive: true });
+    writeFileSync(accountsPath(home), "{ not json", { mode: 0o600 });
+    expect(readAccounts(home)).toEqual({ status: "unusable", reason: "corrupt" });
+
+    writeFileSync(accountsPath(home), JSON.stringify({ version: 2, accounts: [], bindings: {} }), { mode: 0o600 });
+    expect(readAccounts(home)).toEqual({ status: "unusable", reason: "corrupt" });
+  });
+
+  test("a hand-written offset timestamp reads back as ok, not corrupt (review 7)", () => {
+    // End to end on purpose: the schema alone could accept the value while `readAccounts` still classified
+    // the file as unusable, and then the account list would be empty in the app with the data on disk.
+    mkdirSync(home, { recursive: true });
+    writeFileSync(accountsPath(home), JSON.stringify(file([account({ createdAt: "2026-10-31T09:00:00+09:00" })])), { mode: 0o600 });
+
+    const read = readAccounts(home);
+    expect(read.status).toBe("ok");
+    expect((read as { file: AccountsFile }).file.accounts[0]!.createdAt).toBe("2026-10-31T09:00:00+09:00");
+  });
+
+  test("reports a file whose rows contradict each other", () => {
+    mkdirSync(home, { recursive: true });
+    writeFileSync(accountsPath(home), JSON.stringify(file([account(), account({ name: "另一个" })])), { mode: 0o600 });
+
+    const read = readAccounts(home);
+    expect(read).toMatchObject({ status: "unusable", reason: "invalid" });
+    // The settings page shows why, so the reasons travel with the result.
+    expect((read as { problems?: string[] }).problems?.[0]).toContain("重复");
+  });
+
+  test("a refused write leaves the existing file untouched", () => {
+    writeAccounts(home, file());
+    const before = readFileSync(accountsPath(home), "utf8");
+
+    expect(() => writeAccounts(home, file([account(), account({ name: "另一个" })]))).toThrow(/重复/);
+    expect(readFileSync(accountsPath(home), "utf8")).toBe(before);
+  });
+
+  test("accountDir refuses an id that could escape the directory", () => {
+    expect(() => accountDir(home, "../x")).toThrow();
+    expect(() => accountDir(home, "acct_abc1234567")).not.toThrow();
+    expect(accountDir(home, "acct_abc1234567")).toBe(join(home, "secrets", "accounts", "acct_abc1234567"));
+  });
+
+  test("writes no file when the directory does not exist yet", () => {
+    expect(existsSync(home)).toBe(false);
+    expect(readAccounts(home)).toEqual({ status: "missing" });
+    expect(existsSync(home)).toBe(false);
+  });
+});
+
+describe("account directory hardening", () => {
+  test("refuses an account directory under a symlinked secrets/ parent", () => {
+    const elsewhere = join(root, "elsewhere");
+    mkdirSync(join(elsewhere, "accounts", "acct_abc1234567"), { recursive: true, mode: 0o700 });
+    mkdirSync(home, { recursive: true });
+    linkDir(elsewhere, join(home, "secrets"));
+
+    // Reading, writing and deleting must all refuse rather than follow the link.
+    expect(() => accountDir(home, "acct_abc1234567")).toThrow(/符号链接|symlink/i);
+    expect(() => saveAccountSecret(home, "acct_abc1234567", "key", "fake-account-key")).toThrow();
+    expect(() => removeAccountSecrets(home, "acct_abc1234567")).toThrow();
+    // The link target is untouched: nothing was written or deleted through it.
+    expect(existsSync(join(elsewhere, "accounts", "acct_abc1234567", "key"))).toBe(false);
+    expect(existsSync(join(elsewhere, "accounts", "acct_abc1234567"))).toBe(true);
+  });
+
+  test("refuses an account directory that is itself a symlink", () => {
+    const target = join(root, "redirected");
+    mkdirSync(target, { recursive: true, mode: 0o700 });
+    mkdirSync(join(home, "secrets", "accounts"), { recursive: true, mode: 0o700 });
+    linkDir(target, join(home, "secrets", "accounts", "acct_abc1234567"));
+
+    expect(() => accountDir(home, "acct_abc1234567")).toThrow(/符号链接|symlink/i);
+    expect(() => removeAccountSecrets(home, "acct_abc1234567")).toThrow();
+    expect(existsSync(target)).toBe(true);
+  });
+
+  test("a metadata file owned by another user is not trusted", () => {
+    if (process.platform === "win32") return; // no POSIX ownership here
+    writeAccounts(home, file());
+    const real = process.getuid?.() ?? 0;
+    const spy = vi.spyOn(process, "getuid").mockReturnValue(real + 1);
+    try {
+      expect(readAccounts(home)).toEqual({ status: "unusable", reason: "owner" });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readAccounts(home)).toMatchObject({ status: "ok" });
+  });
+
+  test("nemaHome itself being a symlink is refused for account directories", () => {
+    // Only components *under* nemaHome were checked before; a linked home redirected everything.
+    const realHome = join(root, "real-home");
+    mkdirSync(join(realHome, "secrets", "accounts", "acct_abc1234567"), { recursive: true, mode: 0o700 });
+    const linkedHome = join(root, "linked-home");
+    linkDir(realHome, linkedHome);
+
+    expect(() => accountDir(linkedHome, "acct_abc1234567")).toThrow(/符号链接|symlink/i);
+    expect(() => saveAccountSecret(linkedHome, "acct_abc1234567", "key", "fake-account-key")).toThrow();
+    expect(existsSync(join(realHome, "secrets", "accounts", "acct_abc1234567", "key"))).toBe(false);
+  });
+
+  test("a symlinked nemaHome does not let a delete reach the link target", () => {
+    const realHome = join(root, "real-home-2");
+    mkdirSync(join(realHome, "secrets", "accounts", "acct_abc1234567"), { recursive: true, mode: 0o700 });
+    writePrivateFile(join(realHome, "secrets", "accounts", "acct_abc1234567", "key"), "fake-keep");
+    const linkedHome = join(root, "linked-home-2");
+    linkDir(realHome, linkedHome);
+
+    expect(() => removeAccountSecrets(linkedHome, "acct_abc1234567")).toThrow();
+    expect(existsSync(join(realHome, "secrets", "accounts", "acct_abc1234567", "key"))).toBe(true);
+  });
+
+  test("a symlinked accounts.json parent is not trusted for reads or writes", () => {
+    const realHome = join(root, "real-home-3");
+    mkdirSync(realHome, { recursive: true, mode: 0o700 });
+    writeAccounts(realHome, file());
+    const linkedHome = join(root, "linked-home-3");
+    linkDir(realHome, linkedHome);
+
+    expect(readAccounts(linkedHome)).toEqual({ status: "unusable", reason: "symlink" });
+    expect(() => writeAccounts(linkedHome, file())).toThrow(/符号链接|symlink/i);
+  });
+
+  test("save refuses a symlinked account directory even when the caller resolved the path first (review 8)", () => {
+    // `accountSecretPath` asserts while resolving. When that resolution happens *outside* the lock, the
+    // assertion describes a moment that is already gone by the time the write runs: the directory can be
+    // replaced by a link in between, and the credential then lands inside the link target. The swap is
+    // injected at the lock acquisition, which is exactly the last moment before the guarded work starts.
+    const target = join(root, "swapped-in");
+    mkdirSync(target, { recursive: true, mode: 0o700 });
+    const dir = accountDir(home, "acct_abc1234567");
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // The caller resolved (and asserted) the path here. Nothing is wrong yet.
+    expect(existsSync(accountSecretPath(home, "acct_abc1234567", "key"))).toBe(false);
+
+    swapOnNextLock.push(() => {
+      rmSync(dir, { recursive: true, force: true });
+      linkDir(target, dir);
+    });
+
+    expect(() => saveAccountSecret(home, "acct_abc1234567", "key", "fake-account-key")).toThrow();
+    // Nothing was written through the link.
+    expect(existsSync(join(target, "key"))).toBe(false);
+  });
+
+  test("the reserved implicit id is not a usable account directory", () => {
+    expect(() => accountDir(home, IMPLICIT_ACCOUNT_ID)).toThrow();
+  });
+});

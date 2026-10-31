@@ -20,6 +20,9 @@ import { z } from "zod";
 import { jwtExp } from "./jwt.js";
 import { LockTimeoutError, withFileLock, type LockOptions } from "./lock.js";
 import { openPrivateFile, privateModeMatches, protectPrivatePath } from "../secrets/permissions.js";
+import { hasSymlinkedComponent } from "../accounts/paths.js";
+import { isWithin } from "../pathWithin.js";
+import { fsyncPathChain } from "../secrets/durable.js";
 
 // Nema's own direct-mode login (`<nemaHome>/auth.json`). Never reads or links ~/.codex/auth.json.
 
@@ -46,6 +49,28 @@ const StoredAuthSchema = z.object({
   lastAuthError: z.object({ code: z.string(), message: z.string(), at: z.string() }).optional(),
 });
 
+/**
+ * Parses a stored login from its bytes. One definition of "a login Nema accepts", shared by the store and
+ * by the account migration, which validates the exact bytes it is about to copy rather than re-reading
+ * the path (a second read could see a different file).
+ */
+export function parseStoredAuth(raw: string): StoredAuth | null {
+  try {
+    const parsed = StoredAuthSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? (parsed.data as StoredAuth) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when a stored record is a login SIWC can actually use: SIWC rejects compat mode, and a record with
+ * an empty refresh token cannot be refreshed, so neither is a working credential even though both parse.
+ */
+export function usableSiwcLogin(auth: Pick<StoredAuth, "mode" | "tokens">): boolean {
+  return auth.mode === "siwc" && auth.tokens.refresh_token !== "";
+}
+
 export type StoredAuth = {
   version: 1;
   mode: "siwc" | "compat" | "byok";
@@ -64,7 +89,12 @@ export type RefreshResult = { access_token: string; refresh_token?: string; id_t
 export type Refresher = (auth: StoredAuth, signal?: AbortSignal) => Promise<RefreshResult>;
 
 export const REFRESH_TIMEOUT_MS = 20_000;
-export type AuthStoreOptions = { refreshTimeoutMs?: number; lock?: LockOptions };
+export type AuthStoreOptions = {
+  refreshTimeoutMs?: number;
+  lock?: LockOptions;
+  /** Directory holding `auth.json` and `auth.lock`. Defaults to `nemaHome` (the pre-accounts layout). */
+  baseDir?: string;
+};
 
 type StatLike = { isFile(): boolean; mode: number; uid: number };
 /** A credential file is trusted only if it is a regular file, mode 0600, and (where uids exist) owned by us. */
@@ -112,6 +142,8 @@ const errMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export class AuthStore {
   private readonly file: string;
   private readonly lockPath: string;
+  /** Where `auth.json` and `auth.lock` live; `nemaHome` unless an account directory was given. */
+  private readonly dir: string;
 
   constructor(
     private readonly nemaHome: string,
@@ -119,8 +151,38 @@ export class AuthStore {
     private readonly now: () => number = Date.now,
     private readonly opts: AuthStoreOptions = {},
   ) {
-    this.file = path.join(nemaHome, "auth.json");
-    this.lockPath = path.join(nemaHome, "auth.lock");
+    // An account keeps its own login under `secrets/accounts/<id>/` (spec 2026-10-31 §3.1), so two
+    // accounts refresh without sharing a lock. Without a baseDir this is exactly the old layout.
+    //
+    // A baseDir that is (or passes through) a symlink is refused: saving would create and chmod the link
+    // target and write the login outside the account layout, which is the one thing the account directory
+    // checks exist to prevent.
+    //
+    // The walk is anchored at `nemaHome`, not at the baseDir itself. A walk from the baseDir compares the
+    // path with itself — a relative path of "" — so it only ever looked at the last component, and a linked
+    // `secrets/` or `accounts/` above the account directory was invisible to it: saving then wrote the login
+    // somewhere outside the account layout. The anchor is `nemaHome` and not the filesystem root, because
+    // `/var` and `/tmp` are links on macOS and every temporary home would then be refused.
+    //
+    // A baseDir outside `nemaHome` cannot be checked against it (the walk would only report "outside"), so
+    // that shape keeps the older last-component check. The account layout never produces one — every in-tree
+    // caller passes `secrets/accounts/<id>` — and refusing it outright would break callers that name their
+    // own login directory.
+    //
+    // "Inside" is the shared lexical rule (`isWithin`), not `startsWith("..")`. The latter reads a real
+    // directory named `..foo` under the home as outside: the walk was then anchored at the baseDir itself,
+    // which compares the path with itself and only ever inspects the last component — so a linked
+    // `nema/..foo` above the account directory went unnoticed and the save wrote the login through the link.
+    if (opts.baseDir !== undefined) {
+      const inHome = isWithin(this.nemaHome, opts.baseDir);
+      const checkedRoot = inHome ? this.nemaHome : opts.baseDir;
+      if (hasSymlinkedComponent(checkedRoot, opts.baseDir)) {
+        throw new Error("账户目录是符号链接，已拒绝使用该账户目录。");
+      }
+    }
+    this.dir = opts.baseDir ?? nemaHome;
+    this.file = path.join(this.dir, "auth.json");
+    this.lockPath = path.join(this.dir, "auth.lock");
   }
 
   /** The stored login, or null if missing, a symlink, not a regular file, not 0600, not ours, or malformed. */
@@ -142,8 +204,8 @@ export class AuthStore {
       } finally {
         closeSync(fd);
       }
-      const parsed = StoredAuthSchema.safeParse(JSON.parse(raw));
-      return parsed.success ? { auth: parsed.data as StoredAuth } : { auth: null, reason: "unusable" };
+      const auth = parseStoredAuth(raw);
+      return auth === null ? { auth: null, reason: "unusable" } : { auth };
     } catch (e) {
       return { auth: null, reason: (e as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unusable" };
     }
@@ -171,8 +233,8 @@ export class AuthStore {
 
   /** Atomic write (exclusive 0600 temp file + fsync + rename) under a 0700 directory. */
   save(auth: StoredAuth): void {
-    mkdirSync(this.nemaHome, { recursive: true, mode: 0o700 });
-    protectPrivatePath(this.nemaHome, 0o700);
+    mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+    protectPrivatePath(this.dir, 0o700);
     const tmp = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
     const fd = openSync(tmp, "wx", 0o600);
     try {
@@ -194,16 +256,11 @@ export class AuthStore {
       }
       throw e;
     }
-    try {
-      const dfd = openSync(this.nemaHome, "r");
-      try {
-        fsyncSync(dfd);
-      } finally {
-        closeSync(dfd);
-      }
-    } catch {
-      /* directory fsync is best effort */
-    }
+    // The rename above made the login durable as bytes, not as a name: the directory entry lives in the
+    // directory, and `mkdirSync` may have created several levels under `nemaHome`. Syncing only the leaf
+    // persists the login's name inside `secrets/accounts/<id>/` while the name of that directory itself can
+    // still be lost on a power cut. The chain is therefore synced from `nemaHome` down.
+    fsyncPathChain(this.nemaHome, this.dir);
   }
 
   /** Without a reason: log out (delete the file). With a reason: drop the tokens and record lastAuthError. */

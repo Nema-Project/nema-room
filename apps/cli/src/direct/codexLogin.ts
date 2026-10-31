@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
+import { closeSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { checkCodexAuth } from "../codex/isolation.js";
+import { openPrivateFileChecked } from "../secrets/permissions.js";
 import type { StoredAuth } from "./authStore.js";
 import { decodeJwtPayload, jwtExp } from "./jwt.js";
 
@@ -49,13 +50,33 @@ export function codexAccountHeaders(accessToken: string): Record<string, string>
 
 export type CodexCliTokens = { accessToken: string; refreshToken: string; accountId?: string; exp: number | null };
 
-/** Read the Codex CLI login. Throws CodexLoginError when it cannot be used. Does not write the file. */
+/**
+ * Read the Codex CLI login. Throws CodexLoginError when it cannot be used. Does not write the file.
+ *
+ * The file is opened with `openPrivateFileChecked`, which refuses a symlink, checks that the file really is
+ * a regular file, verifies the Windows DACL, and checks the POSIX mode and owner of the opened descriptor: a
+ * login other users can read is not a login Nema should send to a provider, whichever platform it is on.
+ * The tokens are taken from the bytes read through that descriptor.
+ */
 export function readCodexCliTokens(codexHome: string, now = Date.now()): CodexCliTokens {
   const checked = checkCodexAuth(codexHome);
   if (!checked.ok) throw new CodexLoginError(checked.error);
+  let raw: string;
+  try {
+    const fd = openPrivateFileChecked(checked.authPath);
+    try {
+      raw = readFileSync(fd, "utf8");
+    } finally {
+      closeSync(fd);
+    }
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ELOOP") throw new CodexLoginError(`Codex 登录文件 ${checked.authPath} 是符号链接，已拒绝读取。`);
+    throw new CodexLoginError(`无法读取 Codex 登录文件 ${checked.authPath}：${e instanceof Error ? e.message : String(e)}`);
+  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(checked.authPath, "utf8"));
+    parsed = JSON.parse(raw);
   } catch (e) {
     throw new CodexLoginError(`无法读取 Codex 登录文件 ${checked.authPath}：${e instanceof Error ? e.message : String(e)}`);
   }

@@ -1,4 +1,4 @@
-import { makePublic } from "../nativePermissions.js";
+import { makePublic, writePrivateFile } from "../nativePermissions.js";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -170,7 +170,7 @@ describe("nema auth login", () => {
     const codexHome = join(root, "codex");
     mkdirSync(codexHome);
     const access = jwt({ exp: Math.floor(Date.now() / 1000) + 3600, "https://api.openai.com/auth": { chatgpt_account_id: "acct-9876" } });
-    writeFileSync(join(codexHome, "auth.json"), JSON.stringify({ tokens: { access_token: access, refresh_token: "rt-secret" } }));
+    writePrivateFile(join(codexHome, "auth.json"), JSON.stringify({ tokens: { access_token: access, refresh_token: "rt-secret" } }));
     const c = capture();
     let opened = false;
     expect(await authLogin({ nemaHome: home, out: c.out, codexHome, openBrowser: () => { opened = true; } })).toBe(0);
