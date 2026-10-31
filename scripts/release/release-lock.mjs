@@ -1,0 +1,118 @@
+import { randomUUID } from 'node:crypto';
+import { open, readFile, unlink } from 'node:fs/promises';
+import path from 'node:path';
+
+/** Exclusive lock file at the repository root. `.git` is a file inside a worktree, so the lock cannot live there. */
+const LOCK_NAME = '.nema-release.lock';
+const DEFAULT_WAIT_MS = 5_000;
+const DEFAULT_POLL_MS = 50;
+
+/** Another release command holds the lock. Never resolved by taking the lock away from it. */
+export class ReleaseLockBusyError extends Error {
+  constructor(lockPath, holder, waitMs, command) {
+    super(
+      `${command} is blocked: another release command is already running — ${describe(holder)} holds ${lockPath}. ` +
+        `Waited ${waitMs}ms. If that process is gone, delete the lock file and run ${command} again.`,
+    );
+    this.name = 'ReleaseLockBusyError';
+    this.lockPath = lockPath;
+    this.holder = holder;
+    this.waitMs = waitMs;
+  }
+}
+
+export function releaseLockPath(root) {
+  return path.join(root, LOCK_NAME);
+}
+
+function describe(holder) {
+  if (!holder) return 'an unreadable lock file';
+  const command = typeof holder.command === 'string' ? holder.command : 'an unknown command';
+  const pid = Number.isInteger(holder.pid) ? `pid ${holder.pid}` : 'an unknown pid';
+  const startedAt = typeof holder.startedAt === 'string' ? holder.startedAt : 'an unknown time';
+  return `${command} (${pid}, started ${startedAt})`;
+}
+
+async function readHolder(lockPath) {
+  try {
+    const parsed = JSON.parse(await readFile(lockPath, 'utf8'));
+    return parsed !== null && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Delete the lock only when it still carries this call's token.
+ * A lock another command created after ours disappeared is left alone, and an unreadable record is
+ * treated as someone else's unless this call knows it never wrote one (`ownIfUnreadable`).
+ */
+async function releaseOwn(lockPath, token, ownIfUnreadable, remove) {
+  let parsed;
+  try {
+    parsed = JSON.parse(await readFile(lockPath, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    if (error instanceof SyntaxError) {
+      if (ownIfUnreadable) await remove(lockPath).catch(() => {});
+      return;
+    }
+    throw error;
+  }
+  if (parsed?.token !== token) return;
+  // The file can disappear between the read and the unlink (someone followed the delete advice),
+  // and this runs in a `finally`: a throw here would replace the run's real result.
+  await remove(lockPath).catch((error) => {
+    if (error?.code !== 'ENOENT') throw error;
+  });
+}
+
+/**
+ * Run `fn` while holding the release lock in `root`; the lock is released even when `fn` throws.
+ * A held lock is never stolen: pid liveness and file age both misjudge (a reaped pid looks dead to
+ * its parent, an unreaped one looks alive), and a wrong takeover puts two writers on one tree.
+ * `options.lockWaitMs` and `options.lockPollMs` keep that wait injectable for tests.
+ */
+export async function withReleaseLock(root, command, fn, options = {}) {
+  const lockPath = releaseLockPath(root);
+  const waitMs = options.lockWaitMs ?? DEFAULT_WAIT_MS;
+  const pollMs = options.lockPollMs ?? DEFAULT_POLL_MS;
+  const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const token = randomUUID();
+  const openFile = options.open ?? open;
+  const remove = options.unlink ?? unlink;
+  const deadline = Date.now() + waitMs;
+  let handle;
+  for (;;) {
+    try {
+      handle = await openFile(lockPath, 'wx');
+      break;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      if (Date.now() >= deadline) throw new ReleaseLockBusyError(lockPath, await readHolder(lockPath), waitMs, command);
+      await sleep(pollMs);
+    }
+  }
+  try {
+    const record = { schemaVersion: 1, command, pid: process.pid, token, startedAt: new Date().toISOString() };
+    await handle.writeFile(`${JSON.stringify(record)}\n`);
+  } catch (error) {
+    // The record never landed, so no token can be compared; the file is still the one this call opened.
+    await handle.close().catch(() => {});
+    await releaseOwn(lockPath, token, true, remove);
+    throw error;
+  }
+  // A close failure must not leave our lock behind, and must not run `fn` without the record on disk.
+  try {
+    await handle.close();
+  } catch (error) {
+    await releaseOwn(lockPath, token, true, remove);
+    throw error;
+  }
+  try {
+    return await fn();
+  } finally {
+    // Our record landed, so an unreadable lock here belongs to someone else.
+    await releaseOwn(lockPath, token, false, remove);
+  }
+}

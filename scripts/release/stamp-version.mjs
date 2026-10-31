@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readReleaseVersion } from '../desktop/release-version.mjs';
+import { withReleaseLock } from './release-lock.mjs';
 import { assertComposeAsset, assertComposeTemplate, renderComposeAsset } from '../images/check-images.mjs';
 
 const checkTagScript = fileURLToPath(new URL('../npm/check-tag.mjs', import.meta.url));
@@ -136,10 +137,16 @@ async function selfCheck(root, version) {
 }
 
 /**
- * Write the three release package versions and their lockfile records.
+ * Write the three release package versions and their lockfile records under the shared release lock,
+ * so a concurrent `release:cut` on the same tree fails instead of interleaving.
  * Does not commit, tag, or publish. A failed self-check restores the four files.
+ * `options` forwards the lock's wait and poll budget to tests.
  */
-export async function stampVersion(root, version, verify = selfCheck) {
+export async function stampVersion(root, version, verify = selfCheck, options = {}) {
+  return withReleaseLock(root, 'release:stamp', () => stampVersionLocked(root, version, verify), options);
+}
+
+async function stampVersionLocked(root, version, verify) {
   assertStrictVersion(version);
   const rels = [...PACKAGE_FILES, 'package-lock.json'];
   const originals = new Map();
