@@ -575,3 +575,12 @@ test('an unparsable tag body is re-read, unlike a denial', async () => {
   assert.equal(result.ok, true);
   assert.deepEqual(state.sleeps, [5_000]);
 });
+
+test('a dist-tag whose value is not a version stops at once, like a denial', async () => {
+  // npmPointers marks a malformed tag value definitive; the wait must not spend the budget on it.
+  const { result, state, text } = await run({ npmReads: ['same'], tagReads: [{ latest: { state: 'unknown', version: null, detail: 'npm dist-tag latest holds "banana", not a release version', definitive: true } }] });
+  assert.equal(result.ok, false);
+  assert.deepEqual(state.sleeps, [], 'a value that is not a version is not a lag');
+  assert.deepEqual(state.writes, ['npm dispatch']);
+  assert.match(text, /the registry gave a definitive answer, so this is not an index delay/);
+});

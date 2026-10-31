@@ -172,7 +172,11 @@ export async function npmPointers(io) {
       return { state: 'unknown', version: null, detail: tags.detail, ...(definitive ? { definitive: true } : {}) };
     }
     const value = tags.evidence.tags[name];
-    return value === undefined ? { state: 'absent', version: null } : versionPointer(value, `npm dist-tag ${name}`);
+    if (value === undefined) return { state: 'absent', version: null };
+    // A tag the registry answers with something that is not a version (null, an object, a word) is a final
+    // answer about that tag: waiting cannot turn it into a version, so a re-reading caller must not wait.
+    const pointer = versionPointer(value, `npm dist-tag ${name}`);
+    return pointer.state === 'unknown' ? { ...pointer, definitive: true } : pointer;
   };
   return { latest: npmPointer('latest'), next: npmPointer('next') };
 }

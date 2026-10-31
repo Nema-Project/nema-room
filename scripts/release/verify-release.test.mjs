@@ -179,6 +179,20 @@ test('a package npm does not have at all reads as absent pointers, not as unread
   assert.equal(decisions['npm latest'], 'move');
 });
 
+test('a dist-tag holding something that is not a version is a final answer, not a read to retry', async () => {
+  // The body parsed and is a tag map, so readNpmDistTags accepts it; the value itself is the wrong shape.
+  for (const latest of ['banana', null, { version: '0.1.6' }]) {
+    const pointers = await npmPointers(io(world('0.1.6', { distTags: { latest } })).io);
+    assert.equal(pointers.latest.state, 'unknown', JSON.stringify(latest));
+    assert.equal(pointers.latest.definitive, true, `${JSON.stringify(latest)} will not become a version on the next read`);
+    assert.match(pointers.latest.detail, /not a release version/);
+  }
+  // A well-formed tag is a version pointer with no flag, and a missing tag is still absent.
+  const ok = await npmPointers(io(world()).io);
+  assert.deepEqual(ok.latest, { state: 'version', version: '0.1.6' });
+  assert.deepEqual(ok.next, { state: 'absent', version: null });
+});
+
 test('the verifier is read-only', () => {
   for (const file of ['verify-release.mjs', 'registry-read.mjs']) {
     const source = readFileSync(new URL(file, import.meta.url), 'utf8');
