@@ -9,7 +9,6 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  renameSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
@@ -20,16 +19,22 @@ import { protectPrivatePath } from "../secrets/permissions.js";
 /**
  * The cross-process lock that serializes writers of `accounts.json`.
  *
- * Two things make this harder than it looks:
+ * Three things make this harder than it looks:
  *
  * 1. A lock file is created and *then* filled in, so a peer can observe it empty. Treating an unreadable
- *    lock as stale would let two writers into the critical section at once and let one drop the other's
- *    account. This lock therefore never judges a young unreadable lock stale, and the writer tries to
- *    create the file fully formed (one atomic `link`) so the window does not exist at all.
- * 2. Several waiters may decide the same lock is stale. Deleting it by path can delete a *newer* lock a
- *    peer created in the meantime, so the removal is a rename to a unique name: whatever is now in the
- *    tomb is exactly the inode that was judged, and if its content does not match what was judged the
- *    lock is put back instead of deleted.
+ *    lock as stale would let two writers into the critical section at once. This lock therefore never
+ *    judges a young unreadable lock stale, and the writer creates the file fully formed (one atomic
+ *    `link`) so the window does not exist at all on filesystems that support hard links.
+ * 2. Several waiters may decide the same lock is stale. Deleting it by path could delete a *newer* lock a
+ *    peer created in the meantime, which would leave that peer believing it holds a lock nobody else
+ *    honours.
+ * 3. Two empty locks have identical contents, so content alone cannot tell one from the other.
+ *
+ * The takeover therefore works in a claim: one waiter at a time may enter it (an exclusively created
+ * claim file), and inside it the lock is removed only if the file still has the identity (device and
+ * inode) *and* the content that were judged stale. The lock path is never vacated by the taker before
+ * that check, so a peer cannot acquire the lock mid-takeover, and a lock created after the judgement is
+ * never displaced. Releasing a claim that cannot be acquired is a plain retry.
  */
 
 export const accountsLockPath = (nemaHome: string): string => path.join(nemaHome, "accounts.lock");
@@ -42,6 +47,8 @@ const LOCK_WAIT_MS = 15_000;
  * live holder is never mistaken for a dead one.
  */
 const LOCK_PARTIAL_STALE_MS = 30_000;
+/** A takeover claim older than this was left by a taker that died mid-takeover. */
+const LOCK_CLAIM_STALE_MS = 10_000;
 const LOCK_POLL_MS = 25;
 
 /**
@@ -57,6 +64,15 @@ export function holdsAccountsLock(nemaHome: string): boolean {
 }
 
 type LockHolder = { pid: number; at: number; token: string };
+
+/**
+ * What a waiter saw when it judged a lock stale: identity and content, both checked before removal.
+ *
+ * The inode alone is not enough on its own in the presence of delete + re-create, because a filesystem may
+ * hand the same inode number back. The modification time closes that: a re-created file is a new file even
+ * when its number and its (empty) contents happen to match.
+ */
+export type LockSnapshot = { dev: bigint; ino: bigint; mtimeNs: bigint; size: bigint; raw: string };
 
 function parseLock(raw: string): LockHolder | null {
   try {
@@ -79,11 +95,33 @@ function pidAlive(pid: number): boolean {
   }
 }
 
+/** The lock as it is on disk right now, or null when it does not exist. Throws on an unreadable file. */
+function snapshotLock(lockPath: string): LockSnapshot | null {
+  let st;
+  try {
+    st = lstatSync(lockPath, { bigint: true });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw e;
+  }
+  if (st.isSymbolicLink()) throw new Error("账户文件锁路径是符号链接，已拒绝使用账户功能。");
+  let raw = "";
+  try {
+    raw = readFileSync(lockPath, "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    // Removed between the stat and the read: report "gone" rather than a half-observed lock.
+    return null;
+  }
+  return { dev: st.dev, ino: st.ino, mtimeNs: st.mtimeNs, size: st.size, raw };
+}
+
 /**
  * Creates the lock file *with its metadata already in it*. A hard link gives exactly that: `link()` is
  * atomic, fails with EEXIST when the lock is taken, and the linked inode already carries the record.
  * Filesystems without hard links fall back to exclusive create + write, which is also atomic for
- * creation; only the metadata is briefly invisible there, and the reader tolerates that.
+ * creation; only the metadata is briefly invisible there, and a young unreadable lock is never judged
+ * stale (see `isStale`).
  */
 function createLockFile(lockPath: string, body: string): boolean {
   const tmp = `${lockPath}.init-${process.pid}-${randomUUID()}`;
@@ -130,17 +168,7 @@ function createLockFileExclusive(lockPath: string, body: string): boolean {
   return true;
 }
 
-function readLockFile(lockPath: string): { raw: string; holder: LockHolder | null } | null {
-  try {
-    const raw = readFileSync(lockPath, "utf8");
-    return { raw, holder: parseLock(raw) };
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; // released between our attempt and the read
-    throw e;
-  }
-}
-
-function lockAgeMs(lockPath: string): number | null {
+function ageMs(lockPath: string): number | null {
   try {
     return Date.now() - lstatSync(lockPath).mtimeMs;
   } catch {
@@ -149,60 +177,96 @@ function lockAgeMs(lockPath: string): number | null {
 }
 
 /**
- * Removes a lock judged stale, but only while it is still the one judged. The rename is the
- * compare-and-delete Node does not offer: whatever is in the tomb is exactly one file, and if its
- * content is not what was judged stale, a peer replaced the lock meanwhile and we put it back.
- *
- * Returns true when a stale lock was actually removed.
+ * True when this observed lock may be removed. A readable lock with a live holder is never stale. An
+ * unreadable one is stale only once it is old enough that its creator cannot still be writing it: that
+ * is what keeps a lock that is merely initializing from being taken over.
  */
-export function takeOverStaleLock(lockPath: string, staleRaw: string): boolean {
-  const tomb = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
-  try {
-    renameSync(lockPath, tomb);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return false; // someone else took it over
-    throw e;
-  }
-  let removed = false;
-  try {
-    let moved: string | null = null;
-    try {
-      moved = readFileSync(tomb, "utf8");
-    } catch {
-      moved = null;
-    }
-    if (moved === staleRaw) {
-      removed = true;
-    } else {
-      // A newer lock was in place; give it back rather than deleting somebody's live lock.
-      restoreLock(tomb, lockPath);
-    }
-  } finally {
-    try {
-      unlinkSync(tomb);
-    } catch {
-      /* ignore */
-    }
-  }
-  return removed;
+function isStale(snapshot: LockSnapshot, lockPath: string): boolean {
+  const holder = parseLock(snapshot.raw);
+  if (holder === null) return (ageMs(lockPath) ?? 0) >= LOCK_PARTIAL_STALE_MS;
+  if (holder.pid === process.pid) return !heldLocks.has(lockKey(lockPath)); // an earlier process with our pid
+  return !pidAlive(holder.pid);
 }
 
 /**
- * Puts a lock we took over by mistake back. `link` fails if a newer lock already exists, which is the
- * right outcome: the peer's lock wins and ours is dropped (its owner notices on release).
+ * Enters the one-at-a-time takeover claim. `O_EXCL` makes this exclusive across processes, so at most one
+ * waiter can be inside a takeover of this lock at any moment. A claim left behind by a taker that died is
+ * removed once it is old enough, so a crashed takeover cannot wedge the file forever.
  */
-function restoreLock(tomb: string, lockPath: string): void {
-  try {
-    linkSync(tomb, lockPath);
-    return;
-  } catch {
-    /* no hard links here, or the path is taken again: try a plain exclusive copy */
+function enterTakeoverClaim(claimPath: string): boolean {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = openSync(claimPath, "wx", 0o600);
+      try {
+        writeSync(fd, JSON.stringify({ pid: process.pid, at: Date.now() }));
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      return true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    if ((ageMs(claimPath) ?? 0) < LOCK_CLAIM_STALE_MS) return false;
+    try {
+      unlinkSync(claimPath);
+    } catch {
+      /* a peer removed the abandoned claim first */
+    }
   }
+  return false;
+}
+
+/**
+ * Removes a lock judged stale, but only while the path still names the exact file that was judged: same
+ * device and inode (two empty locks look identical by content alone) and the same bytes (a lock that has
+ * since been filled in belongs to a live holder).
+ *
+ * Returns true when a stale lock was actually removed. A live lock is never displaced: the check runs
+ * before anything is removed, and while the claim is held no peer can vacate and re-create the path.
+ */
+export function takeOverStaleLock(lockPath: string, observed: LockSnapshot): boolean {
+  const claimPath = `${lockPath}.takeover`;
+  if (!enterTakeoverClaim(claimPath)) return false;
   try {
-    copyFileSync(tomb, lockPath, constants.COPYFILE_EXCL);
-  } catch {
-    /* a newer lock is in place, or this platform cannot restore it */
+    let current: LockSnapshot | null;
+    try {
+      current = snapshotLock(lockPath);
+    } catch {
+      return false; // unreadable now for a new reason: leave it to the next waiter
+    }
+    if (current === null) return true; // already gone: nothing to remove, and the caller will retry
+    if (current.dev !== observed.dev || current.ino !== observed.ino) return false; // replaced: not ours
+    if (current.mtimeNs !== observed.mtimeNs || current.size !== observed.size) return false; // re-created
+    if (current.raw !== observed.raw) return false; // filled in since the judgement: a live holder
+    try {
+      unlinkSync(lockPath);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return true;
+      throw e;
+    }
+    return true;
+  } finally {
+    try {
+      unlinkSync(claimPath);
+    } catch {
+      /* a claim we cannot remove expires: it is only an age-limited gate */
+    }
   }
+}
+
+/** True while `lockPath` still holds our token: the takeover above never displaces a live holder. */
+function stillOwns(lockPath: string, token: string): boolean {
+  try {
+    return parseLock(readFileSync(lockPath, "utf8"))?.token === token;
+  } catch {
+    return false;
+  }
+}
+
+/** Test seam: the same observation the lock makes before judging a lock stale. */
+export function snapshotLockForTest(lockPath: string): LockSnapshot | null {
+  return snapshotLock(lockPath);
 }
 
 function acquireAccountsLock(nemaHome: string, waitMs: number): { lockPath: string; token: string } {
@@ -225,30 +289,15 @@ function acquireAccountsLock(nemaHome: string, waitMs: number): { lockPath: stri
       heldLocks.add(lockKey(lockPath));
       return { lockPath, token };
     }
-    try {
-      if (lstatSync(lockPath).isSymbolicLink()) throw new Error("账户文件锁路径是符号链接，已拒绝使用账户功能。");
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "ENOENT") continue; // released between attempt and read
-      throw e;
-    }
-    const seen = readLockFile(lockPath);
-    if (seen === null) continue;
-    if (seen.holder === null) {
-      // Either its creator is between creating the file and writing its record, or it died there. Only
-      // age separates the two, so a fresh unreadable lock is waited on, never removed.
-      if ((lockAgeMs(lockPath) ?? 0) >= LOCK_PARTIAL_STALE_MS) {
-        takeOverStaleLock(lockPath, seen.raw);
-        continue;
-      }
-    } else if (seen.holder.pid === process.pid) {
-      if (!heldLocks.has(lockKey(lockPath))) {
-        // Our own pid without our mark: a lock left by a previous process that happened to have this pid.
-        takeOverStaleLock(lockPath, seen.raw);
-        continue;
-      }
+    const observed = snapshotLock(lockPath);
+    if (observed === null) continue;
+    const holder = parseLock(observed.raw);
+    // Ours, and we know it: waiting would only wait for ourselves until the deadline.
+    if (holder !== null && holder.pid === process.pid && heldLocks.has(lockKey(lockPath))) {
       throw new Error("账户文件锁已在当前进程内持有，不能重入");
-    } else if (!pidAlive(seen.holder.pid)) {
-      takeOverStaleLock(lockPath, seen.raw);
+    }
+    if (isStale(observed, lockPath)) {
+      takeOverStaleLock(lockPath, observed);
       continue;
     }
     if (Date.now() >= deadline) {
@@ -262,10 +311,8 @@ function acquireAccountsLock(nemaHome: string, waitMs: number): { lockPath: stri
 
 function releaseAccountsLock(lockPath: string, token: string): void {
   heldLocks.delete(lockKey(lockPath));
+  if (!stillOwns(lockPath, token)) return; // a lock we no longer hold is not ours to delete
   try {
-    const raw = readFileSync(lockPath, "utf8");
-    // A lock we no longer hold (taken over as stale) is not ours to delete.
-    if (parseLock(raw)?.token !== token) return;
     unlinkSync(lockPath);
   } catch {
     /* a lock we cannot remove goes stale once this process exits */
@@ -283,6 +330,9 @@ function releaseAccountsLock(lockPath: string, token: string): void {
 export function withAccountsLock<T>(nemaHome: string, fn: () => T, opts: { waitMs?: number } = {}): T {
   const { lockPath, token } = acquireAccountsLock(nemaHome, opts.waitMs ?? LOCK_WAIT_MS);
   try {
+    // The critical section only runs while the file still names us: if a taker could not restore our lock
+    // (or one ever did), running anyway is exactly the lost update this lock exists to prevent.
+    if (!stillOwns(lockPath, token)) throw new Error("账户文件锁已被其他进程接管，请重试");
     return fn();
   } finally {
     releaseAccountsLock(lockPath, token);
