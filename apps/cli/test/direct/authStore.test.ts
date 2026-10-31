@@ -574,3 +574,34 @@ describe("cross-process refresh", () => {
     expect(existsSync(lockFile())).toBe(false);
   }, 45_000);
 });
+
+describe("AuthStore under an account directory", () => {
+  test("keeps auth.json and auth.lock in baseDir and nothing in nemaHome", () => {
+    const root = mkdtempSync(join(tmpdir(), "nema-authstore-home-"));
+    const accountDir = join(root, "secrets", "accounts", "acct_abc1234567");
+    mkdirSync(accountDir, { recursive: true, mode: 0o700 });
+    const store = new AuthStore(root, async () => ({ access_token: tokenExpiringIn(3600) }), Date.now, { baseDir: accountDir });
+
+    store.save(auth());
+
+    expect(existsSync(join(accountDir, "auth.json"))).toBe(true);
+    expect(existsSync(join(root, "auth.json"))).toBe(false);
+    expect(store.read()?.tokens.refresh_token).toBe("rt-1");
+  });
+
+  test("two stores with different baseDirs keep separate logins", () => {
+    const root = mkdtempSync(join(tmpdir(), "nema-authstore-two-"));
+    const one = join(root, "one");
+    const two = join(root, "two");
+    mkdirSync(one, { recursive: true, mode: 0o700 });
+    mkdirSync(two, { recursive: true, mode: 0o700 });
+    const a = new AuthStore(root, async () => ({ access_token: tokenExpiringIn(3600) }), Date.now, { baseDir: one });
+    const b = new AuthStore(root, async () => ({ access_token: tokenExpiringIn(3600) }), Date.now, { baseDir: two });
+
+    a.save(auth({ refresh_token: "ra" }));
+    b.save(auth({ refresh_token: "rb" }));
+
+    expect(a.read()?.tokens.refresh_token).toBe("ra");
+    expect(b.read()?.tokens.refresh_token).toBe("rb");
+  });
+});

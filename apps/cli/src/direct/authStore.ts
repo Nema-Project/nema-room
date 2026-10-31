@@ -64,7 +64,12 @@ export type RefreshResult = { access_token: string; refresh_token?: string; id_t
 export type Refresher = (auth: StoredAuth, signal?: AbortSignal) => Promise<RefreshResult>;
 
 export const REFRESH_TIMEOUT_MS = 20_000;
-export type AuthStoreOptions = { refreshTimeoutMs?: number; lock?: LockOptions };
+export type AuthStoreOptions = {
+  refreshTimeoutMs?: number;
+  lock?: LockOptions;
+  /** Directory holding `auth.json` and `auth.lock`. Defaults to `nemaHome` (the pre-accounts layout). */
+  baseDir?: string;
+};
 
 type StatLike = { isFile(): boolean; mode: number; uid: number };
 /** A credential file is trusted only if it is a regular file, mode 0600, and (where uids exist) owned by us. */
@@ -112,6 +117,8 @@ const errMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export class AuthStore {
   private readonly file: string;
   private readonly lockPath: string;
+  /** Where `auth.json` and `auth.lock` live; `nemaHome` unless an account directory was given. */
+  private readonly dir: string;
 
   constructor(
     private readonly nemaHome: string,
@@ -119,8 +126,11 @@ export class AuthStore {
     private readonly now: () => number = Date.now,
     private readonly opts: AuthStoreOptions = {},
   ) {
-    this.file = path.join(nemaHome, "auth.json");
-    this.lockPath = path.join(nemaHome, "auth.lock");
+    // An account keeps its own login under `secrets/accounts/<id>/` (spec 2026-10-31 §3.1), so two
+    // accounts refresh without sharing a lock. Without a baseDir this is exactly the old layout.
+    this.dir = opts.baseDir ?? nemaHome;
+    this.file = path.join(this.dir, "auth.json");
+    this.lockPath = path.join(this.dir, "auth.lock");
   }
 
   /** The stored login, or null if missing, a symlink, not a regular file, not 0600, not ours, or malformed. */
@@ -171,8 +181,8 @@ export class AuthStore {
 
   /** Atomic write (exclusive 0600 temp file + fsync + rename) under a 0700 directory. */
   save(auth: StoredAuth): void {
-    mkdirSync(this.nemaHome, { recursive: true, mode: 0o700 });
-    protectPrivatePath(this.nemaHome, 0o700);
+    mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+    protectPrivatePath(this.dir, 0o700);
     const tmp = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
     const fd = openSync(tmp, "wx", 0o600);
     try {
@@ -195,7 +205,7 @@ export class AuthStore {
       throw e;
     }
     try {
-      const dfd = openSync(this.nemaHome, "r");
+      const dfd = openSync(this.dir, "r");
       try {
         fsyncSync(dfd);
       } finally {

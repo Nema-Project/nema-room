@@ -6,3 +6,20 @@ export { byokKeyPath, saveByokKey } from "./direct/byok.js";
 export { claudeTokenPath, saveClaudeToken } from "./claude/token.js";
 export { githubTokenPath, saveGithubToken } from "./secrets/github.js";
 export { defaultCodexHome, readCodexCliTokens } from "./direct/codexLogin.js";
+export {
+  IMPLICIT_ACCOUNT_ID,
+  COST_TIERS,
+  AccountSchema,
+  AccountsFileSchema,
+  newAccountId,
+  accountNameProblem,
+  validateAccountsFile,
+  type Account,
+  type AccountsFile,
+  type CostTier,
+} from "./accounts/schema.js";
+export { accountsPath, accountDir, readAccounts, writeAccounts, type AccountsRead } from "./accounts/store.js";
+export { loadAccounts, materializeImplicit, syncDefaultAccountProjection, type LoadedAccounts } from "./accounts/implicit.js";
+export { reconcileDefaultAccount } from "./accounts/reconcile.js";
+export { accountCredentialFiles, accountCredentialState, type CredentialState } from "./accounts/credentials.js";
+export { saveAccountSecret, readAccountSecret, removeAccountSecrets, accountSecretPath, type AccountSecretKind } from "./secrets/accounts.js";

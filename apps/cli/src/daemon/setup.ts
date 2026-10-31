@@ -1,3 +1,4 @@
+import { reconcileDefaultAccount } from "../accounts/reconcile.js";
 import { registerAttachmentHandlers } from "../attachments/handlers.js";
 import { ClaudeCodeAdapter } from "../claude/adapter.js";
 import { loadConfig, type NemaConfig } from "../config.js";
@@ -102,6 +103,14 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
     return { ok: true };
   });
   watcher.start();
+  // A rollback to 0.2.0 can only edit config.json, so its projection wins over the stored default account
+  // (spec 2026-10-31 D-6). Best effort: a bad accounts file must not stop the daemon from connecting, and
+  // nothing here is printed beyond the file name.
+  try {
+    reconcileDefaultAccount(o.nemaHome, (o.getConfig ?? (() => loadConfig(o.nemaHome)))());
+  } catch (e) {
+    console.error("[nema] accounts reconcile failed", e instanceof Error ? e.message : String(e));
+  }
   const connection = connectDaemon({
     hubUrl: o.hubUrl,
     token: o.token,
