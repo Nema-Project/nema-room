@@ -9,6 +9,8 @@ dist-npm/
 .worktrees/
 .taste-skill/
 coverage/
+.nema-release.lock
+.nema-release-cut.json
 *.log
 *.tsbuildinfo
 

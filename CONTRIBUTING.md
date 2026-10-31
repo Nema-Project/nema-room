@@ -85,6 +85,8 @@ npm run release:cut -- <x.y.z>
 
 `release:cut` 先把 `changelog.d` 里的片段按 Added、Changed、Fixed、Removed、Security 合并进 `[Unreleased]`（同一分类里原有条目在前，片段按文件名升序接在后面），再把合并后的条目移到 `## [<x.y.z>] - <当天日期>`，紧跟在空的 `[Unreleased]` 标题之后。日期是执行命令时的本地日历日，是截稿日，不是打 tag 的日期。之后不要因为实际发布日不同再改这个日期。合并之后 `[Unreleased]` 仍没有条目时命令拒绝，`CHANGELOG.md` 不变，片段也不删除。只有写入成功之后才删除这次合并掉的片段。
 
+`release:cut` 与 `release:stamp` 共用仓库根目录的排他锁 `.nema-release.lock`，两个命令同时跑时后到的一方最多等五秒，然后非零退出并点名持锁进程的 pid 与开始时间；同一版本不会写出第二份小节，片段也不会被两个进程各删一次。锁不会被自动接管（看起来已退出的 pid 可能只是还没被回收的子进程）；错误里点名的进程确实不在了，就删掉 `.nema-release.lock` 重跑。写 `CHANGELOG.md` 之前，`release:cut` 把本次版本、将要写出的 changelog 的 sha256、以及每个要删片段的文件名与 sha256 记进 `.nema-release-cut.json`，所以「changelog 已写、片段没删完」中断后重跑只补齐删除并清掉该文件，不报「小节已存在」，也不重写内容；中断之后被改过的片段会留着给下一次发布。journal 属于另一个版本时命令拒绝并点名应先跑的命令。这两个文件都在 `.gitignore` 里。
+
 然后写 ROADMAP 记录。tag 仍由维护者在 main 的 CI 已成功的 SHA 上单独创建，不从 CI 创建。
 
 tag 推送触发的 `npm-publish`、`image-publish`、`desktop-release` 三条工作流都结束后，运行只读检查 `npm run release:verify -- <x.y.z>`，把输出和退出码记进该版本的 ROADMAP 记录。退出 0 只表示产物齐全且彼此一致，不是测试、冒烟或验收结果；退出 1 会点名缺的那一项；退出 2 表示有查询没得到答复，稍后重跑，不能当作缺件，也不能当作就绪。三条工作流结束时 npm 尚未发布、两个 GHCR `latest` 未动、Release 仍是 draft，公开安装入口保持上一版；所以晋升前这次检查（带 `GITHUB_TOKEN` 才看得到 draft）预期退出 1，且只点名 npm，这是晋升的起点，不是残缺发布；点名其它项才需要先修。随后从 main 晋升：`gh workflow run release-promote.yml --ref main -f tag=v<x.y.z>`，读该运行的 step summary（翻了哪些指针、没翻哪些）；失败修好原因后重跑，已完成的步骤会被识别并跳过。晋升后再跑一次 `npm run release:verify -- <x.y.z>`，应退出 0，`--pointers` 全部指向新版本。细节见 [scripts/npm/RELEASE.md](scripts/npm/RELEASE.md#after-the-tag-workflows)。
