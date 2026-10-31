@@ -66,6 +66,16 @@ describe("account schema", () => {
       .toEqual([expect.stringContaining("不存在")]);
   });
 
+  test("newAccountId skips ids that are already taken", () => {
+    const taken = new Set(["acct_taken00000"]);
+    const seq = ["taken00000", "fresh00000"];
+    let i = 0;
+
+    expect(newAccountId(() => seq[i++]!, (id) => taken.has(id))).toBe("acct_fresh00000");
+    // 一直撞号就报错，绝不返回一个会覆盖别人凭据的 id。
+    expect(() => newAccountId(() => "taken00000", (id) => taken.has(id))).toThrow(/无法生成账户 id/);
+  });
+
   test("newAccountId never returns the implicit id and keeps the shape", () => {
     const ids = new Set<string>();
     for (let i = 0; i < 50; i++) {
@@ -112,12 +122,12 @@ describe("account schema", () => {
     expect(accountNameProblem("")).not.toBeNull();
     expect(accountNameProblem("x".repeat(41))).toContain("40");
     expect(accountNameProblem("bad\u0000name")).not.toBeNull();
-    expect(accountNameProblem("sk-abcdefghijklmnopqrstuvwxyz0123")).toContain("密钥");
+    expect(accountNameProblem("fakecredentialname0123456789abcdef")).toContain("密钥");
   });
 
   test("a name that looks like a secret is never echoed back in an error", () => {
     // The settings page shows these messages, and they can reach a log. A pasted key must not come back.
-    const secret = "sk-live-abcdefghijklmnopqrstuvwxyz";
+    const secret = "fake-test-value-not-a-real-credential";
     const problems = validateAccountsFile(file([base({ name: secret })]));
 
     expect(problems.length).toBeGreaterThan(0);
@@ -126,13 +136,90 @@ describe("account schema", () => {
   });
 
   test("a secret-like name is reported without quoting any part of it", () => {
-    const secret = "ghp_0123456789abcdefghijABCDEFGHIJ0123";
+    const secret = "fake-test-value-not-a-real-credential-2";
     const problems = validateAccountsFile(file([base({ name: secret })]));
 
-    for (const problem of problems) expect(problem).not.toMatch(/ghp_|0123456789|abcdefghij/i);
+    for (const problem of problems) expect(problem).not.toMatch(/fake-test-value|not-a-real/i);
+  });
+
+  test("a name that is not secret-like is still never echoed", () => {
+    // 粘贴进名字里的短凭据不会匹配 SECRET_LIKE，但错误消息同样不能把它带出去。
+    const pasted = "fake-test-value";
+    // 这一行本身有别的毛病（siwc 不该带 baseUrl），所以消息一定会提到它。
+    const problems = validateAccountsFile(file([base({ name: pasted, authMode: "siwc" })]));
+
+    expect(problems.join(" ")).not.toContain(pasted);
+    // 行的身份只由账户 id 指代。
+    expect(problems.join(" ")).toContain("acct_abc1234567");
+  });
+
+  test("a pasted credential in a binding value never comes back in the error", () => {
+    const pasted = "fake-test-value-not-a-real-credential";
+    const problems = validateAccountsFile(file([base()], { "ws:w1": pasted }));
+
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.join(" ")).not.toContain("fake-test-value");
+    expect(problems.join(" ")).toContain("不存在");
+  });
+
+  test("a pasted credential in a scope never comes back in the error", () => {
+    const pasted = "fake-test-value-not-a-real-credential";
+    const problems = validateAccountsFile(file([base()], { [pasted]: "auto" }));
+
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.join(" ")).not.toContain("fake-test-value");
+    expect(problems.join(" ")).toContain("scope");
+  });
+
+  test("an id that is not one of ours is never echoed either", () => {
+    // A file can carry free text in the id field too; the message must not repeat it.
+    const pasted = "fake-test-value-in-the-id-field";
+    const problems = validateAccountsFile(file([base({ id: pasted })]));
+
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.join(" ")).not.toContain(pasted);
+    expect(problems.join(" ")).toContain("id 不合法");
+  });
+
+  test("a duplicate name is reported by account id, never by name", () => {
+    const problems = validateAccountsFile(file([base(), base({ id: "acct_def1234567", name: "OPENAI 主账号" })]));
+
+    expect(problems).toEqual([expect.stringContaining("重名")]);
+    expect(problems.join(" ")).not.toContain("OPENAI");
+    expect(problems.join(" ")).not.toContain("OpenAI");
   });
 
   test("COST_TIERS lists the three tiers in order", () => {
     expect(COST_TIERS).toEqual(["low", "standard", "high"]);
+  });
+});
+
+describe("BYOK endpoint safety", () => {
+  test("an endpoint that config.json would refuse is refused in account data too", () => {
+    // API key 会被发到这个地址：远程 http、带凭据的 URL、带查询串的 URL 都不能存进来。
+    for (const baseUrl of [
+      "http://evil.example/v1",
+      "http://192.168.1.5/v1",
+      "https://user:pw@api.example.com/v1",
+      "https://api.example.com/v1?key=1",
+      "https://api.example.com/v1#frag",
+      "https://api.example.com/v1 ",
+      "ftp://api.example.com/v1",
+    ]) {
+      expect(AccountsFileSchema.safeParse(file([base({ baseUrl })])).success).toBe(false);
+      expect(validateAccountsFile(file([base({ baseUrl })])).join(" ")).toContain("https");
+    }
+  });
+
+  test("https and local http endpoints are accepted", () => {
+    for (const baseUrl of ["https://api.example.com/v1", "http://127.0.0.1:8080/v1", "http://localhost/v1"]) {
+      expect(AccountsFileSchema.safeParse(file([base({ baseUrl })])).success).toBe(true);
+      expect(validateAccountsFile(file([base({ baseUrl })]))).toEqual([]);
+    }
+  });
+
+  test("the rule is the config rule, not a copy: its message is reused verbatim", () => {
+    const problem = validateAccountsFile(file([base({ baseUrl: "http://evil.example/v1" })])).join(" ");
+    expect(problem).toContain("byokBaseUrl 只允许 https");
   });
 });
