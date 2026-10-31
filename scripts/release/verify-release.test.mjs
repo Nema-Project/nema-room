@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { COMMIT, OTHER_COMMIT, integrityOf, io, releaseAssets, world } from './fake-registry.fixture.mjs';
-import { formatReport, main, parseArgs, pointerDecisions, readPointers, verifyRelease } from './verify-release.mjs';
+import { formatReport, main, npmPointers, parseArgs, pointerDecisions, readPointers, verifyRelease } from './verify-release.mjs';
 
 const run = (w, options = {}, extra = {}) => verifyRelease({ version: '0.1.6', io: io(w, extra).io, ...options });
 const states = (report) => Object.fromEntries(Object.entries(report.items).map(([id, item]) => [id, item.state]));
@@ -149,6 +149,23 @@ test('pointer reads: an unlabeled GHCR latest is unknown, an absent one is absen
   read = await readPointers(io(world('0.1.6', { fail: [[/dist-tags/, 500]] })).io);
   assert.equal(read.npm.latest.state, 'unknown');
   assert.equal(pointerDecisions(read, '0.1.7', false)['npm latest'], 'unknown');
+});
+
+test('a definitive dist-tags unknown reaches the pointer, so a re-reading caller does not wait for it', async () => {
+  // promote re-reads a pointer marked unknown; only a definitive answer may stop it on the first read.
+  for (const fail of [[/dist-tags/, 403], [/dist-tags/, 200, '[]']]) {
+    const read = await npmPointers(io(world('0.1.6', { fail: [fail] })).io);
+    assert.equal(read.latest.state, 'unknown', JSON.stringify(fail));
+    assert.equal(read.latest.definitive, true, 'a denial and a parsed wrong shape are both final');
+    assert.equal(read.next.definitive, true, 'both pointers come from the one answer');
+  }
+  // A read failure stays undefined rather than false, so the old pointer shape is unchanged for callers that never set it.
+  const outage = await npmPointers(io(world('0.1.6', { fail: [[/dist-tags/, 500]] })).io);
+  assert.equal(outage.latest.state, 'unknown');
+  assert.equal(outage.latest.definitive, undefined, 'a 5xx is worth another read');
+  const absent = await npmPointers(io(world()).io);
+  assert.equal(absent.latest.definitive, undefined);
+  assert.equal(absent.next.definitive, undefined);
 });
 
 test('the verifier is read-only', () => {

@@ -158,19 +158,30 @@ function pointerFromImage(result) {
   return pointer.state === 'version' ? { ...pointer, digest: result.evidence.digest ?? null } : pointer;
 }
 
-export async function readPointers(io) {
+/** The two npm channel pointers, from one dist-tags read. `latest` and `next` share that single answer. */
+export async function npmPointers(io) {
   const tags = await readNpmDistTags(io);
   const npmPointer = (name) => {
-    if (tags.state !== 'ok') return { state: 'unknown', version: null, detail: tags.detail };
+    if (tags.state !== 'ok') {
+      // A definitive unknown (denial, or an answer of the wrong shape) is passed on as such: a caller that
+      // re-reads must not wait out a budget for an answer that will not change.
+      const definitive = tags.evidence?.definitive === true;
+      return { state: 'unknown', version: null, detail: tags.detail, ...(definitive ? { definitive: true } : {}) };
+    }
     const value = tags.evidence.tags[name];
     return value === undefined ? { state: 'absent', version: null } : versionPointer(value, `npm dist-tag ${name}`);
   };
+  return { latest: npmPointer('latest'), next: npmPointer('next') };
+}
+
+export async function readPointers(io) {
+  const npm = await npmPointers(io);
   const latestRelease = await readLatestRelease(io);
   const github = latestRelease.state === 'ok'
     ? versionPointer(latestRelease.evidence.tag.replace(/^v/, ''), `GitHub latest release ${latestRelease.evidence.tag}`)
     : latestRelease.state === 'missing' ? { state: 'absent', version: null } : { state: 'unknown', version: null, detail: latestRelease.detail };
   return {
-    npm: { latest: npmPointer('latest'), next: npmPointer('next') },
+    npm,
     ghcr: { hub: pointerFromImage(await readImage(io, IMAGE_REPOSITORIES.hub, 'latest')), web: pointerFromImage(await readImage(io, IMAGE_REPOSITORIES.web, 'latest')) },
     github: { latest: github },
   };
