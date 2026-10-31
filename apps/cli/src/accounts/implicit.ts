@@ -5,6 +5,7 @@ import { accountsUnusableMessage, accountDir, readAccounts, updateAccounts, writ
 import {
   accountFileName,
   credentialFileName,
+  isUsableCredentialFile,
   legacyCredentialPath,
   legacyUnchanged,
   readLegacyCredential,
@@ -81,14 +82,18 @@ function takesLegacyFile(account: Account, legacyName: string, config: NemaConfi
 }
 
 /**
- * The bytes of a regular file, or null. Refuses symlinks and non-files: comparing through a link would
- * let a planted link make the legacy file look "already moved", and the legacy file would then be deleted
- * while the account's "copy" is really a link back to it.
+ * The bytes of a credential file this layer would accept as an account's own copy, or null.
+ *
+ * It is not enough for the file to be a regular file with the right bytes: it must also be private and
+ * owned by us. A world-readable or foreign-owned copy with matching bytes means the credential is already
+ * exposed, so treating the move as complete would retire the only private copy.
  */
-function regularFileBytes(file: string): Buffer | null {
+function usableCopyBytes(file: string): Buffer | null {
   try {
-    if (!lstatSync(file).isFile()) return null;
-    return readFileSync(file);
+    const st = lstatSync(file);
+    if (!st.isFile() || st.isSymbolicLink()) return null;
+    const bytes = readFileSync(file);
+    return isUsableCredentialFile(file, st.mode, st.uid, bytes) ? bytes : null;
   } catch {
     return null;
   }
@@ -130,7 +135,7 @@ function legacySituation(
       awaiting.push(account);
       continue;
     }
-    const existing = regularFileBytes(target);
+    const existing = usableCopyBytes(target);
     // Byte comparison, not "a file is there": a partial copy or an older credential is not this move.
     if (existing !== null && existing.equals(legacyBytes)) return { kind: "already-moved", account };
   }
@@ -143,11 +148,31 @@ function legacySituation(
   return { kind: "conflict", ids: matching.map((a) => a.id) };
 }
 
+/**
+ * True when the account's credential can be written by this migration: the file is missing, or it holds
+ * exactly the bytes this migration last copied (so replacing it loses nothing).
+ *
+ * Anything else was written by somebody else — a settings save for this account is the realistic case —
+ * and it is newer than the legacy file, so the copy must not happen. The caller keeps the legacy file and
+ * reports that the move did not finish.
+ */
+function accountTargetIsReplaceable(nemaHome: string, account: Account, copiedBytes: Buffer | null): boolean {
+  const target = targetFile(nemaHome, account);
+  if (target === null) return false;
+  let existing: Buffer;
+  try {
+    existing = readFileSync(target);
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ENOENT";
+  }
+  return copiedBytes !== null && existing.equals(copiedBytes);
+}
+
 /** How many times a legacy file replaced mid-move is re-read and adopted before it is left in place. */
 const LEGACY_ADOPT_ATTEMPTS = 3;
 
 /**
- * Deletes the legacy file once its bytes are safely in `account` — but only while it is still the exact
+ * Retires the legacy file once its bytes are safely in `account` — but only while it is still the exact
  * file that was copied. A replacement (an older daemon or `authByok` saving a refreshed credential) is
  * newer than our copy, so it is adopted: its bytes are copied in, and the check runs again. A file that
  * keeps being replaced is left where it is, which loses nothing and lets the next run finish.
@@ -160,14 +185,22 @@ export function retireLegacyFile(
   initial: LegacyCredential,
   opts: { alreadyCopied?: boolean; afterCopy?: (legacyPath: string) => void } = {},
 ): string | null {
+  // Runs under the accounts lock (see `materializeImplicit`), the same lock a credential save takes, so a
+  // settings request cannot write this account's credential between the copy below and the legacy removal.
   const name = credentialFileName(account);
   if (name === null) return null;
   let source = initial;
+  // The bytes this migration itself put in the account, and therefore the only ones it may replace.
+  let copied: Buffer | null = opts.alreadyCopied === true ? initial.bytes : null;
   for (let attempt = 0; attempt < LEGACY_ADOPT_ATTEMPTS; attempt++) {
     // The first copy may already be in place from before the commit; only a changed source needs another.
     const copiedEarlier = attempt === 0 && opts.alreadyCopied === true;
     if (!copiedEarlier || !legacyUnchanged(nemaHome, source)) {
+      // Re-check the destination immediately before copying: a credential saved for this account since the
+      // situation was computed is newer than the legacy bytes and must not be replaced by them.
+      if (!accountTargetIsReplaceable(nemaHome, account, copied)) return null;
       writeCredentialCopy(nemaHome, account.id, name, source.bytes);
+      copied = source.bytes;
     }
     // A hook for the caller/tests to act between "copied" and "removed", which is exactly the window a
     // peer's refresh can land in.
@@ -347,6 +380,9 @@ export function applyProjection(account: Account, patch: Partial<Account>): Acco
  */
 export function reconcileAccountProjection(nemaHome: string, config: NemaConfig): boolean {
   const read = readAccounts(nemaHome);
+  // "false" means "nothing needed saving". An unusable file is a different answer: the settings page must
+  // not show the user a stale projection as if it had been saved, so this is an error, not a quiet false.
+  if (read.status === "unusable") throw new Error(accountsUnusableMessage(nemaHome, read.reason));
   if (read.status !== "ok") return false;
   if (syncDefaultAccountProjection(read.file.accounts, config) === null) return false;
   const next = updateAccounts(nemaHome, (current) => {

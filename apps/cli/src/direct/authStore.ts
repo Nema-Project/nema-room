@@ -60,6 +60,14 @@ export function parseStoredAuth(raw: string): StoredAuth | null {
   }
 }
 
+/**
+ * True when a stored record is a login SIWC can actually use: SIWC rejects compat mode, and a record with
+ * an empty refresh token cannot be refreshed, so neither is a working credential even though both parse.
+ */
+export function usableSiwcLogin(auth: Pick<StoredAuth, "mode" | "tokens">): boolean {
+  return auth.mode === "siwc" && auth.tokens.refresh_token !== "";
+}
+
 export type StoredAuth = {
   version: 1;
   mode: "siwc" | "compat" | "byok";

@@ -1,8 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  copyFileSync,
+  fstatSync,
+  fsyncSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs";
 import path from "node:path";
 import type { NemaConfig } from "../config.js";
-import { parseStoredAuth } from "../direct/authStore.js";
+import { parseStoredAuth, usableSiwcLogin } from "../direct/authStore.js";
 import { openPrivateFile, privateModeMatches, privateOwnerMatches, protectPrivatePath } from "../secrets/permissions.js";
 import { fsyncDirectory } from "../secrets/durable.js";
 import { accountDir } from "./store.js";
@@ -71,29 +85,44 @@ export function credentialFileName(account: Pick<Account, "adapter" | "authMode"
 }
 
 /**
- * True when the file is a link, foreign, or not a regular file: refuse before opening it. The content rule
- * is the one the account reader will apply later, so a file copied here is a file that can then be used:
- * a key or token must be one non-empty line (a credential with a control character would leak into an
- * HTTP header), and `auth.json` must be a login `AuthStore` itself accepts.
+ * The file must be a private, owned, regular file before anything is read from it.
+ *
+ * `openPrivateFile` already refuses a link and checks the Windows ACL, but the POSIX checks are made here
+ * on the very stat of the opened descriptor, so a file swapped between the two stats is caught too.
  */
 function validateLegacyShape(file: string, mode: number, uid: number): void {
   if (!privateModeMatches({ mode })) throw new Error(`${path.basename(file)} 权限不是 0600，已拒绝迁移；原文件未改动。`);
   if (!privateOwnerMatches({ uid })) throw new Error(`${path.basename(file)} 不属于当前用户，已拒绝迁移；原文件未改动。`);
 }
 
-function validateLegacyContent(file: string, bytes: Buffer): void {
-  if (path.basename(file) === "auth.json") {
-    // The exact parser the daemon uses, applied to the bytes that were just read: a login this rejects is
-    // not a credential the account could ever use, so copying it would only break authentication later.
-    if (parseStoredAuth(bytes.toString("utf8")) === null) {
-      throw new Error(`${file} 不是可用的直连登录，已拒绝迁移；原文件未改动。`);
-    }
-    return;
+/** True when every rule for a credential of this kind holds. Used for both the source and its copy. */
+export function isUsableCredentialFile(file: string, mode: number, uid: number, bytes: Buffer): boolean {
+  try {
+    validateLegacyShape(file, mode, uid);
+  } catch {
+    return false;
   }
-  // One trailing newline is how a hand-written key usually ends; anything else must be a single line.
+  return contentIsUsable(path.basename(file), bytes);
+}
+
+/**
+ * The content rule, shared by the migration and by the account reader: a key or token is one non-empty
+ * line (a credential with a control character would leak into an HTTP header), and `auth.json` must be a
+ * login the SIWC store would actually use. A syntactically valid record of the wrong mode, or with no
+ * refresh token, cannot authenticate, so copying it would only move a broken login.
+ */
+function contentIsUsable(fileName: string, bytes: Buffer): boolean {
+  if (fileName === "auth.json") {
+    const auth = parseStoredAuth(bytes.toString("utf8"));
+    return auth !== null && usableSiwcLogin(auth);
+  }
   const value = bytes.toString("utf8").replace(/\r?\n$/, "");
-  if (value === "" || CONTROL.test(value)) {
-    throw new Error(`${file} 的内容不是一行有效文本，已拒绝迁移；原文件未改动。`);
+  return value !== "" && !CONTROL.test(value);
+}
+
+function validateLegacyContent(file: string, bytes: Buffer): void {
+  if (!contentIsUsable(path.basename(file), bytes)) {
+    throw new Error(`${file} 不是可用的凭据（需要单行密钥或可用的直连登录），已拒绝迁移；原文件未改动。`);
   }
 }
 
@@ -156,21 +185,68 @@ export function legacyUnchanged(nemaHome: string, source: LegacyCredential): boo
 }
 
 /**
- * Removes the legacy file, but only while it is still the file that was copied. Returns false (and
- * deletes nothing) when a peer replaced it: the replacement is the newer credential and must survive.
+ * Retires the legacy file, but only while it is still the exact file that was copied: the name is first
+ * moved to a private claim name, the claim is then checked against the bytes that were read, and only then
+ * deleted. A file that is not that one (a newer credential saved meanwhile) is moved back into place, so a
+ * peer's write is never the thing that gets deleted.
  *
- * `unlink` cannot be made conditional in Node, so the identity is re-read immediately before it; the
- * window left is the same one every rename-free file API has, and it is why the caller also keeps the
- * account's own copy.
+ * The move is what makes this conditional: `unlink` by path is not, and between a check and an unlink a
+ * writer can replace the file. Renaming is atomic, so exactly one file ends up in the claim and its
+ * contents decide what happens next. If the restore also fails, the claim file is left on disk rather than
+ * deleted: the credential is still recoverable, and nothing has been lost.
  */
 export function removeLegacyIfUnchanged(nemaHome: string, source: LegacyCredential): boolean {
-  if (!legacyUnchanged(nemaHome, source)) return false;
+  const claim = `${source.path}.retire-${process.pid}-${randomUUID()}`;
   try {
-    unlinkSync(source.path);
+    renameSync(source.path, claim);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return false; // already gone: not ours to retire
+    throw e;
   }
-  return true;
+  const moved = readFileBytes(claim);
+  if (moved !== null && moved.equals(source.bytes)) {
+    try {
+      unlinkSync(claim);
+    } catch {
+      /* left under the claim name: recoverable, and never mistaken for the live credential */
+    }
+    return true;
+  }
+  // A newer credential was in place: put it back where its writer expects it.
+  restoreClaim(claim, source.path);
+  return false;
+}
+
+/** The bytes of a regular file, or null. Used on a claim name, which nothing else writes. */
+function readFileBytes(file: string): Buffer | null {
+  try {
+    if (!lstatSync(file).isFile()) return null;
+    return readFileSync(file);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Puts a claimed file back at its original name. `link` never replaces an existing file, so a peer that
+ * saved yet another credential in the meantime keeps theirs; an exclusive copy is the last resort on
+ * filesystems without hard links.
+ */
+function restoreClaim(claim: string, target: string): void {
+  try {
+    linkSync(claim, target);
+    unlinkSync(claim);
+    return;
+  } catch {
+    /* no hard links here, or the name is taken again */
+  }
+  try {
+    copyFileSync(claim, target, constants.COPYFILE_EXCL);
+    unlinkSync(claim);
+  } catch {
+    /* the claimed credential stays under its claim name; nothing was deleted */
+  }
 }
 
 /**
@@ -204,9 +280,14 @@ export function writeCredentialCopy(nemaHome: string, accountId: string, fileNam
     throw e;
   }
   fsyncDirectory(dir);
+  // Read back through the private opener and re-check the mode and owner of the file that landed: a copy
+  // that is world-readable or foreign-owned must fail the migration, not become an account credential.
   const check = openPrivateFile(target);
   try {
-    if (!readFileSync(check).equals(bytes)) throw new Error("账户凭据写入后读不回");
+    const st = fstatSync(check);
+    if (!privateModeMatches(st) || !privateOwnerMatches(st) || !readFileSync(check).equals(bytes)) {
+      throw new Error("账户凭据写入后校验失败");
+    }
   } finally {
     closeSync(check);
   }
