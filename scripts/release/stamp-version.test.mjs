@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { releaseLockPath } from './release-lock.mjs';
 import { assertStrictVersion, stampVersion } from './stamp-version.mjs';
 
 const repo = fileURLToPath(new URL('../..', import.meta.url));
@@ -169,4 +170,43 @@ test('refuses when the compose template cannot render at the new version', async
   await assert.rejects(stampVersion(root, '9.9.9'), /compose template failed at v9\.9\.9[\s\S]*Version files were restored/);
   for (const [rel, text] of before) assert.equal(await readFile(path.join(root, rel), 'utf8'), text, rel);
   assert.equal(git(root, ['status', '--porcelain']), '');
+});
+
+test('stamp refuses while another release command holds the shared lock', async (t) => {
+  const root = await fixture(t);
+  const before = await snapshot(root);
+  const lock = releaseLockPath(root);
+  await writeFile(lock, `${JSON.stringify({
+    schemaVersion: 1,
+    command: 'release:cut',
+    pid: 4321,
+    token: 'held-by-cut',
+    startedAt: '2026-10-31T00:00:00.000Z',
+  })}\n`);
+
+  await assert.rejects(
+    stampVersion(root, '9.9.9', undefined, { lockWaitMs: 30, lockPollMs: 5 }),
+    /release:stamp is blocked: another release command is already running — release:cut \(pid 4321/,
+  );
+  for (const [rel, text] of before) assert.equal(await readFile(path.join(root, rel), 'utf8'), text, rel);
+  assert.equal(git(root, ['status', '--porcelain', '--untracked-files=no']), '');
+  assert.equal(await readFile(lock, 'utf8'), JSON.stringify({
+    schemaVersion: 1,
+    command: 'release:cut',
+    pid: 4321,
+    token: 'held-by-cut',
+    startedAt: '2026-10-31T00:00:00.000Z',
+  }) + '\n');
+});
+
+test('stamp releases the lock after a successful run and after a failure', async (t) => {
+  const root = await fixture(t);
+  const lock = releaseLockPath(root);
+  await stampVersion(root, '9.9.9');
+  await assert.rejects(access(lock), { code: 'ENOENT' });
+  await assert.rejects(
+    stampVersion(root, '9.9.8', async () => { throw new Error('injected self-check failure'); }),
+    /injected self-check failure/,
+  );
+  await assert.rejects(access(lock), { code: 'ENOENT' });
 });
