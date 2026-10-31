@@ -39,6 +39,12 @@ describe("mentionToken", () => {
   test("a line break before the caret ends the token", () => {
     expect(mentionToken("看 @d\n第二行", 7)).toBeNull();
   });
+
+  test("the token covers the whole run, even past the caret", () => {
+    // Caret between "d" and "1": choosing a row must replace "d12", not leave "12" behind.
+    expect(mentionToken("@d12", 2)).toEqual({ query: "d12", start: 0, end: 4 });
+    expect(mentionToken("看 @d12 再说", 4)).toEqual({ query: "d12", start: 2, end: 6 });
+  });
 });
 
 describe("groupCandidates", () => {
@@ -53,9 +59,15 @@ describe("groupCandidates", () => {
     for (const g of groups) expect(g.items.length).toBeLessThanOrEqual(8);
   });
 
-  test("an exactly typed id comes first", () => {
-    const groups = groupCandidates("d-12", context());
-    expect(groups[0]!.items[0]).toMatchObject({ type: "entry", id: "D-12" });
+  test("an exactly typed id comes first even when a title matches better", () => {
+    // D-99's id is not what was typed, but its title starts with the query, so on score alone it would win.
+    const groups = groupCandidates("d-12", context({
+      entries: [
+        { id: "D-99", kind: "decision", title: "d-12 的替代方案", status: "active" },
+        { id: "D-12", kind: "decision", title: "发布流程", status: "active" },
+      ],
+    }));
+    expect(groups[0]!.items.map((i) => i.id)).toEqual(["D-12", "D-99"]);
   });
 
   test("filters by title and name", () => {

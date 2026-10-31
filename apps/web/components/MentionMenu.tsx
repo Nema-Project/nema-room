@@ -51,19 +51,35 @@ export function MentionMenu({
   active: number;
   onChoose: (candidate: MentionCandidate) => void;
   onHover: (index: number) => void;
-  /** Shown when a group is empty and the query is empty: what the menu could offer if there were any. */
-  empty: { entries: boolean; attachments: boolean };
+  /**
+   * What to say when no row is shown. `state` separates "the hub is still answering" and "the lookup failed"
+   * from a real answer; `entries`/`attachments` then say whether the workspace has any at all, and `query`
+   * lets "no match for this text" be said instead of "there is nothing here".
+   */
+  empty: {
+    entries: boolean;
+    attachments: boolean;
+    state: "idle" | "loading" | "ok" | "failed";
+    query: string;
+  };
 }) {
   const t = useT();
   const rows = groups.flatMap((g) => g.items);
   if (rows.length === 0) {
+    const message =
+      empty.state === "loading"
+        ? t("mention.looking")
+        : empty.state === "failed"
+          ? t("mention.lookupFailed")
+          : empty.query !== ""
+            ? t("mention.noMatch", { query: empty.query })
+            : [
+                empty.entries ? null : t("mention.emptyEntries"),
+                empty.attachments ? null : t("mention.emptyAttachments"),
+              ].filter(Boolean).join(" ") || t("mention.noMatch", { query: "" });
     return (
       <div className="cmdmenu ment-menu" id="mention-commands" role="listbox" aria-label={t("mention.menu")}>
-        <p className="ment-empty" role="presentation">
-          {!empty.entries ? t("mention.emptyEntries") : null}
-          {!empty.entries && !empty.attachments ? " " : null}
-          {!empty.attachments ? t("mention.emptyAttachments") : null}
-        </p>
+        <p className="ment-empty" role="presentation">{message}</p>
       </div>
     );
   }

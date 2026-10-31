@@ -523,8 +523,13 @@ describe("Composer @ mentions", () => {
     expect(await screen.findByRole("option", { name: /D-12/ })).toBeTruthy();
     expect(screen.getByRole("option", { name: /发布会截图/ })).toBeTruthy();
     await vi.waitFor(() => expect(hub.searchMentionContext).toHaveBeenCalledWith("w1", "发布"));
-    fireEvent.keyDown(box(), { key: "ArrowDown" }); // the exact-id row is first; move to the next
+    // Arrow down once and the active row really is the second one: the assertion below would fail if
+    // navigation did nothing (the first row would be inserted instead).
+    fireEvent.keyDown(box(), { key: "ArrowDown" });
+    expect(screen.getByRole("option", { name: /发布会截图/ }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("option", { name: /D-12/ }).getAttribute("aria-selected")).toBe("false");
     fireEvent.keyDown(box(), { key: "ArrowUp" });
+    expect(screen.getByRole("option", { name: /D-12/ }).getAttribute("aria-selected")).toBe("true");
     fireEvent.keyDown(box(), { key: "Enter" });
     expect(box().value).toContain("[D-12] ");
     expect(screen.getByTestId("mention-chip").textContent).toContain("[D-12]");
@@ -580,7 +585,8 @@ describe("Composer @ mentions", () => {
     vi.mocked(hub.searchMentionContext).mockResolvedValue({ status: "ok", entries: [], attachments: [], threads: [], truncated: false });
     mountWs(vi.fn().mockResolvedValue(undefined));
     await userEvent.type(box(), "@x");
-    expect(await screen.findByText(/还没有可提及的附件|no files/i)).toBeTruthy();
+    // A real answer with nothing in it and a query typed: "no match", not "the workspace has no files".
+    expect(await screen.findByText(/Nothing matches|没有与/)).toBeTruthy();
   });
 
   it("sends mentions from a /thread command too", async () => {

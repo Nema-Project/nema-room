@@ -15,7 +15,8 @@ export type MentionGroup = { kind: MentionCandidate["type"]; items: MentionCandi
 export type MentionToken = { query: string; start: number; end: number };
 
 const MAX_QUERY = 100;
-/** A run of non-space text that may follow `@`. */
+/** A run of non-space text that may follow `@`, and what ends the whole token. */
+const TOKEN_END = /\s/;
 const RUN = /[^\s]/;
 /** Characters an `@` may follow: nothing (line start), a space, or the punctuation Chinese text uses before a name. */
 const BEFORE = /[\s（(「『，。、：]/;
@@ -28,6 +29,7 @@ function inCodeBlock(value: string, at: number): boolean {
 /**
  * The `@query` token the caret is in: the nearest `@` before the caret, with nothing but a short run of
  * non-space text between them, sitting at a line start, after whitespace, or after Chinese punctuation.
+ * `end` is the end of that whole run, so choosing a row replaces the token even when the caret sits inside it.
  * `a@b`, a caret past a space, and a code block all give null.
  */
 export function mentionToken(value: string, cursor: number): MentionToken | null {
@@ -35,11 +37,14 @@ export function mentionToken(value: string, cursor: number): MentionToken | null
   const before = value.slice(0, cursor);
   const at = before.lastIndexOf("@");
   if (at < 0) return null;
-  const query = before.slice(at + 1);
-  if (query.length >= MAX_QUERY || [...query].some((ch) => !RUN.test(ch))) return null;
+  const typed = before.slice(at + 1);
+  if (typed.length >= MAX_QUERY || [...typed].some((ch) => !RUN.test(ch))) return null;
   if (at > 0 && !BEFORE.test(value[at - 1]!)) return null;
   if (inCodeBlock(value, at)) return null;
-  return { query, start: at, end: cursor };
+  // Extend to the end of the run: text after the caret belongs to the same token.
+  let end = cursor;
+  while (end < value.length && !TOKEN_END.test(value[end]!) && end - at <= MAX_QUERY) end++;
+  return { query: value.slice(at + 1, end), start: at, end };
 }
 
 /** `null` score keeps the candidate order (an empty query: the hub's newest-first). An exact id always wins. */
@@ -85,6 +90,9 @@ export function groupCandidates(q: string, ctx: MentionContextResponse): Mention
     { kind: "thread", items: threads },
   ];
 }
+
+/** How many mentions one message may carry, so the composer can refuse the next one instead of failing the send. */
+export { MENTION_LIMITS };
 
 /** The mentions whose stored text is still in the body: the same counting rule the hub applies on edit. */
 export function syncMentions(content: string, mentions: readonly MessageMention[]): MessageMention[] {

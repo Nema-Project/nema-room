@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
-import { messageHasBody, type MessageMention } from "@nema/shared";
+import { MENTION_LIMITS, messageHasBody, type MessageMention } from "@nema/shared";
 import { AttachmentTray } from "@/components/AttachmentTray";
 import { messageRoleLabel } from "@/components/MessageItem";
 import { useAttachmentTray } from "@/lib/attachments";
@@ -75,6 +75,8 @@ export function Composer({
   // The chips are the message's mentions. They follow the body: a chip whose text is gone from the body goes too.
   const [chips, setChips] = useState<MentionChip[]>([]);
   const [context, setContext] = useState<MentionContextResponse>(EMPTY_CONTEXT);
+  /** Whether the menu's answer is still on its way, failed, or a real (possibly empty) result. */
+  const [contextState, setContextState] = useState<"idle" | "loading" | "ok" | "failed">("idle");
   const [mentionActive, setMentionActive] = useState(0);
   const [mentionClosedFor, setMentionClosedFor] = useState<string | null>(null);
   const cache = useRef(new Map<string, { at: number; ctx: MentionContextResponse }>());
@@ -89,17 +91,32 @@ export function Composer({
     const hit = cache.current.get(key);
     if (hit && Date.now() - hit.at < MENTION_CACHE_MS) {
       setContext(hit.ctx);
+      setContextState("ok");
       return;
     }
+    setContextState("loading");
+    let live = true;
     const timer = setTimeout(() => {
       searchMentionContext(workspaceId, key)
         .then((ctx) => {
           cache.current.set(key, { at: Date.now(), ctx });
-          setContext(ctx);
+          // A later keystroke or another workspace may have moved on; that request owns the menu now.
+          if (live) {
+            setContext(ctx);
+            setContextState("ok");
+          }
         })
-        .catch(() => setContext(EMPTY_CONTEXT)); // the menu just shows nothing; typing and sending still work
+        .catch(() => {
+          if (live) {
+            setContext(EMPTY_CONTEXT);
+            setContextState("failed"); // the menu says it could not look; typing and sending still work
+          }
+        });
     }, MENTION_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
   }, [at, workspaceId]);
 
   const syncChips = useCallback((content: string) => {
@@ -115,6 +132,11 @@ export function Composer({
     const current = mentionToken(el?.value ?? value, caret);
     if (!current) return;
     const text = el?.value ?? value;
+    // A message carries at most MENTION_LIMITS.perMessage mentions; refuse the extra one instead of failing the send.
+    if (chips.length >= MENTION_LIMITS.perMessage) {
+      setError(t("mention.tooMany", { max: MENTION_LIMITS.perMessage }));
+      return;
+    }
     const insert = `${item.text} `;
     const next = { text: text.slice(0, current.start) + insert + text.slice(current.end), cursor: current.start + insert.length };
     setChips((cur) => [...cur, { mention: { type: item.type, id: item.id, text: item.text } as MessageMention, label: item.type === "entry" ? `[${item.id}]` : item.label }]);
@@ -127,8 +149,16 @@ export function Composer({
     const text = el?.value ?? value;
     const chip = chips[index];
     if (!chip) return;
-    // Only the first remaining occurrence: the same text may have been inserted twice on purpose.
-    const at2 = text.indexOf(chip.mention.text);
+    // Which occurrence this chip owns: the same text may have been inserted more than once on purpose, so the
+    // k-th chip with a given text takes the k-th occurrence in the body, not always the first one.
+    const k = chips.slice(0, index).filter((c) => c.mention.text === chip.mention.text).length;
+    let at2 = -1;
+    for (let seen = 0, i = text.indexOf(chip.mention.text); i !== -1; i = text.indexOf(chip.mention.text, i + chip.mention.text.length)) {
+      if (seen++ === k) {
+        at2 = i;
+        break;
+      }
+    }
     // The insertion adds one space after the text; taking the chip out takes that space too.
     const end = at2 < 0 ? -1 : at2 + chip.mention.text.length + (text[at2 + chip.mention.text.length] === " " ? 1 : 0);
     const next = at2 < 0 ? text : text.slice(0, at2) + text.slice(end);
@@ -164,7 +194,10 @@ export function Composer({
       if (threadText && onThread) await onThread(threadText[1]!.trim(), ids, mentions);
       else await onSend(content, ids, mentions);
       tray.clear(attached.map((a) => a.key));
-      setChips([]);
+      // Only the chips this send carried go; one added while it was in flight belongs to the text kept below.
+      const sentChips = new Set(chips);
+      setChips((cur) => cur.filter((c) => !sentChips.has(c)));
+      sentChips.clear();
       // Text typed while the send was in flight stays: drop only what was sent.
       if (content !== "") setValue((cur) => (cur === sent ? "" : cur.startsWith(sent) ? cur.slice(sent.length).trimStart() : cur));
     } catch (e) {
@@ -291,7 +324,12 @@ export function Composer({
           active={mentionRows.length === 0 ? 0 : mentionActive % mentionRows.length}
           onChoose={chooseMention}
           onHover={setMentionActive}
-          empty={{ entries: context.entries.length > 0, attachments: context.attachments.length > 0 }}
+          empty={{
+            entries: context.entries.length > 0,
+            attachments: context.attachments.length > 0,
+            state: contextState,
+            query: at?.query ?? "",
+          }}
         />
       )}
       {menuOpen && (

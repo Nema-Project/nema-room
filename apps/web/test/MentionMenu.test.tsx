@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MentionMenu, MentionTray } from "@/components/MentionMenu";
 import { I18nProvider } from "@/lib/i18n";
@@ -13,7 +14,7 @@ describe("MentionMenu", () => {
   it("groups the three kinds and reports clicks and hover with the flat index", () => {
     const onChoose = vi.fn();
     const onHover = vi.fn();
-    render(<I18nProvider><MentionMenu groups={groups} active={1} onChoose={onChoose} onHover={onHover} empty={{ entries: true, attachments: true }} /></I18nProvider>);
+    render(<I18nProvider><MentionMenu groups={groups} active={1} onChoose={onChoose} onHover={onHover} empty={{ entries: true, attachments: true, state: "ok", query: "" }} /></I18nProvider>);
     expect(screen.getByRole("option", { name: /D-12/ }).getAttribute("aria-selected")).toBe("false");
     expect(screen.getByRole("option", { name: /截图 1\.png/ }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByRole("listbox", { name: /mention|提及/i })).toBeTruthy();
@@ -23,10 +24,22 @@ describe("MentionMenu", () => {
     expect(onChoose).toHaveBeenCalledWith(groups[0]!.items[0]);
   });
 
-  it("says what is missing when nothing can be offered", () => {
-    render(<I18nProvider><MentionMenu groups={[{ kind: "entry", items: [] }]} active={0} onChoose={vi.fn()} onHover={vi.fn()} empty={{ entries: false, attachments: false }} /></I18nProvider>);
+  const emptyWith = (empty: { entries: boolean; attachments: boolean; state: "idle" | "loading" | "ok" | "failed"; query: string }) =>
+    render(<I18nProvider><MentionMenu groups={[{ kind: "entry", items: [] }]} active={0} onChoose={vi.fn()} onHover={vi.fn()} empty={empty} /></I18nProvider>);
+
+  it("says what is truly missing when the workspace has nothing, and never claims absence while loading", () => {
+    emptyWith({ entries: false, attachments: false, state: "ok", query: "" });
     expect(screen.queryAllByRole("option")).toHaveLength(0);
     expect(screen.getByText(/knowledge panel has no entries|知识库里还没有条目/)).toBeTruthy();
+    cleanup();
+    emptyWith({ entries: false, attachments: false, state: "loading", query: "" });
+    expect(screen.getByText(/Looking|正在查找/)).toBeTruthy();
+    cleanup();
+    emptyWith({ entries: false, attachments: false, state: "failed", query: "x" });
+    expect(screen.getByText(/Could not look up|暂时查不到/)).toBeTruthy();
+    cleanup();
+    emptyWith({ entries: true, attachments: true, state: "ok", query: "zzz" });
+    expect(screen.getByText(/Nothing matches|没有与/)).toBeTruthy();
   });
 });
 
