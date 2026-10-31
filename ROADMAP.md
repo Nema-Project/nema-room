@@ -1,6 +1,6 @@
 # 项目路线图与验收台账
 
-更新日期：2026-10-31（Asia/Tokyo）
+更新日期：2026-11-01（Asia/Tokyo）
 
 本文件承接仓库评估中提出的 TODO，作为当前待办入口。它是建议的稳定化顺序，不代表全部问题已复现，也不代表已承诺交付日期。历史设计和评审保留在 `docs/superpowers/` 与 `docs/reviews/`；遇到冲突，应以对应提交的源码、CI 和验收证据为准。
 
@@ -15,6 +15,26 @@
 - [历史桌面验收](docs/reviews/2026-10-24-desktop-validation.md)只证明其记录的提交与环境；其中“尚未发布”等结论已经过时。
 - 已合入 `main` 的近期工作：[PR #29](https://github.com/Nema-Project/nema-room/pull/29) macOS 原生红绿灯（`5ff8cf9`）；[PR #30](https://github.com/Nema-Project/nema-room/pull/30) 落实 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 的用户 basis 证据检查（`afd1456`）；[PR #31](https://github.com/Nema-Project/nema-room/pull/31) 桌面包瘦身（`76680b8`）。
 - 本次评估通过 GitHub 读取源码、配置、Actions 和 Release；未本地重跑测试。开始每项工作前须重新检查最新状态。
+
+## v0.2.1 发布与后续验收
+
+v0.2.1 是 v0.2.0 之后的小版本，不含新功能。四项都是 v0.2.0 发布后暴露的加固与修复：[#159](https://github.com/Nema-Project/nema-room/pull/159) 同一供应商多账户的第 1 阶段（账户数据与凭据），[#169](https://github.com/Nema-Project/nema-room/pull/169) `release:cut` 的并发与中断安全，[#171](https://github.com/Nema-Project/nema-room/pull/171) `mcpLeftovers` 的偶发失败，[#170](https://github.com/Nema-Project/nema-room/pull/170) `release-promote` 有界等待 npm registry 可见性。同一轮把四份 README 与三份指南里「升级到更新的次版本」那段改成 `<version>` 占位符，[#63](https://github.com/Nema-Project/nema-room/issues/63) 第六条（release PR 的安装入口与示例命令不出现写死版本号）在这个 release PR 上成立；该 issue 的其余分期不因本版改变状态。
+
+发布记录（tag 之后补真实值，以下为占位）：
+
+- tag `v0.2.1` → `<TAG_COMMIT>`；该提交的 main CI：`<MAIN_CI_RUN>`。
+- 三条 tag 工作流：npm `<NPM_RUN>`、镜像 `<IMAGE_RUN>`、桌面 `<DESKTOP_RUN>`。
+- 只读检查 `npm run release:verify -- 0.2.1` 打 tag 后的首次结果：`<PRE_PROMOTE_VERIFY>`（预期退出 1，且只点名 npm）。
+- `release:verify -- --pointers 0.2.1` 的前后对照：`<POINTERS_BEFORE>` / `<POINTERS_AFTER>`。
+- 晋升：`gh workflow run release-promote.yml --ref main -f tag=v0.2.1`，运行 `<PROMOTE_RUN>`；晋升后 `release:verify -- 0.2.1` 退出 0。
+- `releases/latest/download/docker-compose.yml` 在晋升前仍是 0.2.0 的双 pin，晋升后变为 0.2.1 且带版本头。
+
+发布可用性不等于功能或真机验收完成：
+
+- 多账户只有第 1 阶段落地（`apps/cli` 的账户数据与凭据）。设置 API、自动路由与界面属于 S2–S4，[#131](https://github.com/Nema-Project/nema-room/issues/131) 仍 OPEN 且仍在 milestone v0.2.1，所以不要把这个版本当作多账户功能可用。
+- `mcpLeftovers` 的修复在测试侧，产品代码未改；它把偶发失败归因于 fixture 读到尚未写入的 pid 文件：`Number("")` 为 0，而 POSIX 下 pid 0 指调用者自己的进程组，所以 `process.kill(0, 0)` 成功，测试就一直等到超时。该测试只在 POSIX 上运行（`describe.skipIf(!posix)`）。[#161](https://github.com/Nema-Project/nema-room/issues/161) 按此关闭。
+- registry 可见性等待有上限（`NPM_VISIBILITY_BUDGET_MS` 为 120 秒），预算耗尽仍 fail-closed 且不移动后续指针；v0.2.1 是这条路径在真实发布上的第一次使用，还没有真实发布记录。
+- Windows x64 与 macOS arm64 安装包的真机安装、覆盖升级、启动与旧数据保留仍待验证；不能用 v0.2.0 的验收代替。
 
 ## v0.2.0 发布与后续验收
 
