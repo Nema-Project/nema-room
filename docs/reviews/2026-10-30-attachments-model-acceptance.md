@@ -244,11 +244,11 @@ D-2 在 22:59 JST 修订为「`codex-direct` 一律按原生格式发，提供�
 
 环境：一次性检出 `/workspace/nr-acc2`（main `0350b53`），hub 用 PGlite，daemon 为 `codex-direct (byok)` + `https://openrouter.ai/api/v1`，全部经 hub 的 HTTP API。key 只从 daemon 自己的环境变量读取（`NEMA_ACCEPTANCE=1` 的临时补丁，验收后 `git checkout` 丢弃），未落盘、未打印。提问仍是「附件里写的暗号是什么？只回答暗号本身。」，图上是一段随机暗号，消息文字里没有。
 
-| 开始（JST） | 模型 | 附件 | 结果 | 回复原文 |
-| --- | --- | --- | --- | --- |
-| 11:01:09 | `nvidia/nemotron-3.5-super-vl:free` | sample.png | 通过 | `IMG-7AF1CB` |
-| 11:01:35 | `google/gemma-4-31b-it:free` | sample2.png | 限流 | 处理失败：模型接口错误：HTTP 429：Provider returned error |
-| 11:01:38 | `dots-studio/dots-3-note-preview:free` | sample2.png | 通过 | `IMG2-E729FF` |
+| 开始（JST） | 模型 | 附件 | 暗号 | 结果 | 回复原文 |
+| --- | --- | --- | --- | --- | --- |
+| 11:01:09 | `nvidia/nemotron-3.5-super-vl:free` | sample.png | `IMG-7AF1CB` | 通过 | `IMG-7AF1CB` |
+| 11:01:35 | `google/gemma-4-31b-it:free` | sample2.png | `IMG2-E729FF` | 限流 | 处理失败：模型接口错误：HTTP 429：Provider returned error |
+| 11:01:38 | `dots-studio/dots-3-note-preview:free` | sample2.png | `IMG2-E729FF` | 通过 | `IMG2-E729FF` |
 
 - 原生发送的图片路径在修订后仍然通过，`nemotron-3.5-super-vl` 与 `dots-3-note-preview` 都逐字读到了暗号；`gemma-4-31b-it` 继续 429。
 - **PDF 仍未测。** 2026-10-31 查 `GET https://openrouter.ai/api/v1/models`，16 个 `:free` 模型没有一个在 `architecture.input_modalities` 里声明 `file`；发 PDF 会落到 OpenRouter 的付费 OCR，按用户要求不发。PDF 一格保持「未实测」。
