@@ -83,18 +83,18 @@ export function MentionMenu({
       </div>
     );
   }
-  let index = -1;
+  // The flat index of each row across the groups, so the keyboard and the highlight agree.
+  const offset = groups.reduce<number[]>((acc, g, i) => [...acc, (acc[i - 1] ?? 0) + (groups[i - 1]?.items.length ?? 0)], []);
   return (
     <div className="cmdmenu ment-menu" id="mention-commands" role="listbox" aria-label={t("mention.menu")}>
-      {groups.map((group) =>
+      {groups.map((group, gi) =>
         group.items.length === 0 ? null : (
           <div key={group.kind}>
             <div className="cmdgroup" role="presentation">
               {t(GROUP_LABEL[group.kind])}
             </div>
-            {group.items.map((item) => {
-              index += 1;
-              const i = index;
+            {group.items.map((item, ii) => {
+              const i = offset[gi]! + ii;
               return (
                 <button
                   key={`${item.type}:${item.id}`}
