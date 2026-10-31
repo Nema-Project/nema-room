@@ -32,7 +32,7 @@ v0.2.1 是 v0.2.0 之后的小版本，不含新功能。四项都是 v0.2.0 发
 发布可用性不等于功能或真机验收完成：
 
 - 多账户只有第 1 阶段落地（`apps/cli` 的账户数据与凭据）。设置 API、自动路由与界面属于 S2–S4，[#131](https://github.com/Nema-Project/nema-room/issues/131) 仍 OPEN 且仍在 milestone v0.2.1，所以不要把这个版本当作多账户功能可用。
-- `mcpLeftovers` 的修复在测试侧，产品代码未改；它把偶发失败归因于 fixture 读到尚未写入的 pid 文件（`Number("")` 为 0，而 `process.kill(0, 0)` 恒成功），[#161](https://github.com/Nema-Project/nema-room/issues/161) 按此关闭。
+- `mcpLeftovers` 的修复在测试侧，产品代码未改；它把偶发失败归因于 fixture 读到尚未写入的 pid 文件：`Number("")` 为 0，而 POSIX 下 pid 0 指调用者自己的进程组，所以 `process.kill(0, 0)` 成功，测试就一直等到超时。该测试只在 POSIX 上运行（`describe.skipIf(!posix)`）。[#161](https://github.com/Nema-Project/nema-room/issues/161) 按此关闭。
 - registry 可见性等待有上限（`NPM_VISIBILITY_BUDGET_MS` 为 120 秒），预算耗尽仍 fail-closed 且不移动后续指针；v0.2.1 是这条路径在真实发布上的第一次使用，还没有真实发布记录。
 - Windows x64 与 macOS arm64 安装包的真机安装、覆盖升级、启动与旧数据保留仍待验证；不能用 v0.2.0 的验收代替。
 
