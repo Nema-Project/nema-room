@@ -211,7 +211,9 @@ test('after the npm publish, an unreadable, absent or lagging dist-tag stops bef
     assert.equal(result.ok, false, JSON.stringify(latestAfterPublish));
     assert.deepEqual(state.writes, ['npm dispatch']);
     assert.match(text, /npm publish run finished but the registry does not confirm 0\.1\.7/);
-    assert.match(text, /- npm registry after publish: (unknown|not written) — npm latest/);
+    const expected = latestAfterPublish.state === 'unknown' ? /- npm registry after publish: unknown — npm latest/ : /- npm registry after publish: published; channel pointer unconfirmed — npm latest/;
+    assert.match(text, expected, 'an unreadable tag is unknown; a readable tag that stayed put is not "not written"');
+    assert.doesNotMatch(text, /not written/, 'the package itself was visible, so nothing may claim it was not written');
     assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000, 'the whole budget, then a stop');
   }
 });
@@ -495,8 +497,10 @@ test('acceptance 4b: an old dist-tag through the budget: a timeout, nothing else
   assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000);
   assert.deepEqual(state.writes, ['npm dispatch']);
   assert.ok(!state.log.includes('verify final'));
-  assert.match(text, /npm latest still reads 0\.1\.6 after 120000ms; confirmed it did not move to 0\.1\.7/);
-  assert.match(text, /- npm registry after publish: not written — /);
+  assert.match(text, /npm latest still reads 0\.1\.6 after 120000ms; the package is published, but npm latest did not move to 0\.1\.7/);
+  // The exact version read back as same, so the package *was* written: only the pointer is unconfirmed.
+  assert.match(text, /- npm registry after publish: published; channel pointer unconfirmed — /);
+  assert.doesNotMatch(text, /not written/);
 });
 
 test('a transient read is retried inside the budget and a later answer decides', async () => {

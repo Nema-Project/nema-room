@@ -40,6 +40,8 @@ export const NPM_VISIBILITY_POLL_MS = 5_000;
 /** `not-visible` is a definitive "still not there"; `unknown` is not, and must be recorded as unknown. */
 const NOT_VISIBLE = 'not-visible';
 const UNKNOWN = 'unknown';
+/** The package is on npm but its channel pointer never moved: published, not "not written". */
+const TAG_NOT_CONFIRMED = 'tag-not-confirmed';
 
 /**
  * Re-read npm within one budget until both the exact version and its channel pointer are visible.
@@ -52,7 +54,8 @@ const UNKNOWN = 'unknown';
  *
  * The tag side has only ok/missing/unknown (registry-read's own vocabulary). An unknown that is a read
  * failure is re-read like an absent pointer; one marked definitive (denial, or an answer of the wrong shape)
- * stops at once. Once the budget is spent an unknown is reported as unknown, never as "not written".
+ * stops at once. Once the budget is spent an unknown is reported as unknown, never as "not written", and a
+ * package that is visible with a pointer that never moved is reported as that, not as "not written" either.
  *
  * -> { ok: true, pointer, maintenance, waitedMs, budgetMs, reads: { package, tag } }
  *  | { ok: false, outcome, reason, waitedMs, budgetMs, reads: { package, tag }, last? }
@@ -114,7 +117,7 @@ export async function awaitNpmVisibility({ version, prerelease, expectedIntegrit
     if (!(await more())) {
       return pointer.state === 'unknown'
         ? stop('tag-unknown', `${name} still cannot be read after ${spent()}ms (${pointer.detail ?? 'unknown'}); whether it points at ${version} is unknown`, pointer)
-        : stop(NOT_VISIBLE, `${name} still reads ${pointer.version ?? pointer.state} after ${spent()}ms; confirmed it did not move to ${version}`, pointer);
+        : stop(TAG_NOT_CONFIRMED, `${name} still reads ${pointer.version ?? pointer.state} after ${spent()}ms; the package is published, but ${name} did not move to ${version}`, pointer);
     }
   }
 }
@@ -138,7 +141,8 @@ export async function promote({ version, tag, commit, io, summary }) {
   const flipped = [];
   const already = [];
   const done = [];
-  // How a publish of this run ended against the registry: confirmed visible, confirmed not written, or unknown.
+  // How a publish of this run ended against the registry: confirmed visible, confirmed not written,
+  // published but its channel pointer unconfirmed, or unknown.
   let npmAfterPublish = null;
   const record = async (line) => {
     done.push(line);
@@ -235,9 +239,11 @@ export async function promote({ version, tag, commit, io, summary }) {
           : `confirmed visible${waited}`
         : visibility.outcome === 'not-visible'
           ? `not written — ${visibility.reason}`
-          : visibility.outcome === 'unknown' || visibility.outcome === 'tag-unknown'
-            ? `unknown — ${visibility.reason}`
-            : `${visibility.outcome} — ${visibility.reason}`;
+          : visibility.outcome === TAG_NOT_CONFIRMED
+            ? `published; channel pointer unconfirmed — ${visibility.reason}`
+            : visibility.outcome === 'unknown' || visibility.outcome === 'tag-unknown'
+              ? `unknown — ${visibility.reason}`
+              : `${visibility.outcome} — ${visibility.reason}`;
       if (!visibility.ok) {
         throw new PromoteStop(`npm publish run finished but the registry does not confirm ${version}: ${visibility.reason}`);
       }
