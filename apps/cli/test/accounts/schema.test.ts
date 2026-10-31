@@ -115,6 +115,23 @@ describe("account schema", () => {
     expect(accountNameProblem("sk-abcdefghijklmnopqrstuvwxyz0123")).toContain("密钥");
   });
 
+  test("a name that looks like a secret is never echoed back in an error", () => {
+    // The settings page shows these messages, and they can reach a log. A pasted key must not come back.
+    const secret = "sk-live-abcdefghijklmnopqrstuvwxyz";
+    const problems = validateAccountsFile(file([base({ name: secret })]));
+
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.join(" ")).not.toContain(secret);
+    expect(problems.join(" ")).toMatch(/密钥|凭据/);
+  });
+
+  test("a secret-like name is reported without quoting any part of it", () => {
+    const secret = "ghp_0123456789abcdefghijABCDEFGHIJ0123";
+    const problems = validateAccountsFile(file([base({ name: secret })]));
+
+    for (const problem of problems) expect(problem).not.toMatch(/ghp_|0123456789|abcdefghij/i);
+  });
+
   test("COST_TIERS lists the three tiers in order", () => {
     expect(COST_TIERS).toEqual(["low", "standard", "high"]);
   });

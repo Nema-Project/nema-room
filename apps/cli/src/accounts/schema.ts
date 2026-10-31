@@ -98,6 +98,19 @@ export function accountNameProblem(raw: string): string | null {
 }
 
 /**
+ * True when a name is the reason a row was rejected *because* it reads like a credential. Messages for
+ * such a row must not repeat the name: the settings page shows them and they can reach a log.
+ */
+function nameLooksSecret(raw: string): boolean {
+  return SECRET_LIKE.test(raw.trim());
+}
+
+/** How to name a row in an error without echoing it. A secret-like name is described, never quoted. */
+function rowLabel(account: { id: string; name: string }): string {
+  return nameLooksSecret(account.name) ? `账户 ${account.id}（名字看起来像密钥，未显示）` : `账户「${account.name}」`;
+}
+
+/**
  * Every problem with a whole file, as user-facing Chinese sentences. An empty list means it is usable.
  * This is what `readAccounts` reports as `unusable/invalid`, so each message names the offending row.
  */
@@ -105,29 +118,38 @@ export function validateAccountsFile(file: AccountsFile): string[] {
   const problems: string[] = [];
   const seenIds = new Set<string>();
   const seenNames = new Map<string, string>();
+  const seenIdsOf = new Map<string, string>();
 
   for (const account of file.accounts) {
-    if (account.id === IMPLICIT_ACCOUNT_ID) problems.push(`账户「${account.name}」：不能使用保留的账户 id`);
+    const label = rowLabel(account);
+    if (account.id === IMPLICIT_ACCOUNT_ID) problems.push(`${label}：不能使用保留的账户 id`);
     if (seenIds.has(account.id)) problems.push(`账户 id 重复：${account.id}`);
     seenIds.add(account.id);
 
     const name = account.name.toLowerCase();
     const first = seenNames.get(name);
-    if (first !== undefined) problems.push(`账户重名（不分大小写）：「${account.name}」与「${first}」`);
-    else seenNames.set(name, account.name);
+    if (first !== undefined) {
+      // Quoting both names would echo a pasted secret; describe the clash instead.
+      problems.push(nameLooksSecret(account.name) || nameLooksSecret(first)
+        ? `账户重名（不分大小写）：${account.id} 与 ${seenIdsOf.get(name) ?? "另一个账户"}`
+        : `账户重名（不分大小写）：「${account.name}」与「${first}」`);
+    } else {
+      seenNames.set(name, account.name);
+      seenIdsOf.set(name, account.id);
+    }
 
     const nameProblem = accountNameProblem(account.name);
-    if (nameProblem !== null) problems.push(`账户「${account.name}」：${nameProblem}`);
+    if (nameProblem !== null) problems.push(`${label}：${nameProblem}`);
 
     if (account.adapter === "claude-code") {
-      if (account.authMode !== undefined) problems.push(`账户「${account.name}」：claude-code 账户不应带 authMode`);
-      if (account.baseUrl !== undefined) problems.push(`账户「${account.name}」：claude-code 账户不应带 baseUrl`);
+      if (account.authMode !== undefined) problems.push(`${label}：claude-code 账户不应带 authMode`);
+      if (account.baseUrl !== undefined) problems.push(`${label}：claude-code 账户不应带 baseUrl`);
     } else if (account.authMode === undefined) {
-      problems.push(`账户「${account.name}」：codex-direct 账户必须有 authMode`);
+      problems.push(`${label}：codex-direct 账户必须有 authMode`);
     } else if (account.authMode === "byok" && account.baseUrl === undefined) {
-      problems.push(`账户「${account.name}」：byok 账户必须有 baseUrl`);
+      problems.push(`${label}：byok 账户必须有 baseUrl`);
     } else if (account.authMode !== "byok" && account.baseUrl !== undefined) {
-      problems.push(`账户「${account.name}」：${account.authMode} 账户不应带 baseUrl`);
+      problems.push(`${label}：${account.authMode} 账户不应带 baseUrl`);
     }
   }
 

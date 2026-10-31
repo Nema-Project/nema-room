@@ -145,6 +145,40 @@ describe("account directory hardening", () => {
     expect(readAccounts(home)).toMatchObject({ status: "ok" });
   });
 
+  test("nemaHome itself being a symlink is refused for account directories", () => {
+    // Only components *under* nemaHome were checked before; a linked home redirected everything.
+    const realHome = join(root, "real-home");
+    mkdirSync(join(realHome, "secrets", "accounts", "acct_abc1234567"), { recursive: true, mode: 0o700 });
+    const linkedHome = join(root, "linked-home");
+    linkDir(realHome, linkedHome);
+
+    expect(() => accountDir(linkedHome, "acct_abc1234567")).toThrow(/符号链接|symlink/i);
+    expect(() => saveAccountSecret(linkedHome, "acct_abc1234567", "key", "sk-test")).toThrow();
+    expect(existsSync(join(realHome, "secrets", "accounts", "acct_abc1234567", "key"))).toBe(false);
+  });
+
+  test("a symlinked nemaHome does not let a delete reach the link target", () => {
+    const realHome = join(root, "real-home-2");
+    mkdirSync(join(realHome, "secrets", "accounts", "acct_abc1234567"), { recursive: true, mode: 0o700 });
+    writeFileSync(join(realHome, "secrets", "accounts", "acct_abc1234567", "key"), "sk-keep", { mode: 0o600 });
+    const linkedHome = join(root, "linked-home-2");
+    linkDir(realHome, linkedHome);
+
+    expect(() => removeAccountSecrets(linkedHome, "acct_abc1234567")).toThrow();
+    expect(existsSync(join(realHome, "secrets", "accounts", "acct_abc1234567", "key"))).toBe(true);
+  });
+
+  test("a symlinked accounts.json parent is not trusted for reads or writes", () => {
+    const realHome = join(root, "real-home-3");
+    mkdirSync(realHome, { recursive: true, mode: 0o700 });
+    writeAccounts(realHome, file());
+    const linkedHome = join(root, "linked-home-3");
+    linkDir(realHome, linkedHome);
+
+    expect(readAccounts(linkedHome)).toEqual({ status: "unusable", reason: "symlink" });
+    expect(() => writeAccounts(linkedHome, file())).toThrow(/符号链接|symlink/i);
+  });
+
   test("the reserved implicit id is not a usable account directory", () => {
     expect(() => accountDir(home, IMPLICIT_ACCOUNT_ID)).toThrow();
   });

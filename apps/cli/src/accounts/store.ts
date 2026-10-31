@@ -1,7 +1,7 @@
 import { closeSync, fsyncSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import path from "node:path";
 import { AccountsFileSchema, IMPLICIT_ACCOUNT_ID, validateAccountsFile, type AccountsFile } from "./schema.js";
-import { assertNoSymlinkedComponent } from "./paths.js";
+import { assertHomeNotSymlinked, assertNoSymlinkedComponent, hasSymlinkedComponent } from "./paths.js";
 import { openPrivateFile, privateModeMatches, protectPrivatePath } from "../secrets/permissions.js";
 
 /**
@@ -43,6 +43,8 @@ function ownerMatches(st: { uid?: number }, uid: number | null = process.getuid?
  */
 export function readAccounts(nemaHome: string): AccountsRead {
   const file = accountsPath(nemaHome);
+  // A linked home means the file we would read is somebody else's; treat the whole layout as untrusted.
+  if (hasSymlinkedComponent(nemaHome, file)) return { status: "unusable", reason: "symlink" };
   try {
     const stat = lstatSync(file);
     if (stat.isSymbolicLink()) return { status: "unusable", reason: "symlink" };
@@ -90,9 +92,12 @@ export function writeAccounts(nemaHome: string, file: AccountsFile): void {
   const problems = validateAccountsFile(file);
   if (problems.length > 0) throw new Error(problems.join("；"));
 
+  // Before mkdir: creating `nemaHome` through a link would write somewhere the user did not name.
+  assertHomeNotSymlinked(nemaHome);
   mkdirSync(nemaHome, { recursive: true, mode: 0o700 });
   protectPrivatePath(nemaHome, 0o700);
   const target = accountsPath(nemaHome);
+  assertNoSymlinkedComponent(nemaHome, target);
   const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
   const fd = openSync(tmp, "wx", 0o600);
   try {

@@ -5,20 +5,27 @@ import path from "node:path";
  * Path checks shared by the account store and the credential helpers.
  *
  * `openPrivateFile` already refuses a symlinked *file*, but a link anywhere above it would still move the
- * whole directory somewhere else and `rmSync` would then delete the target. Every component between
- * `nemaHome` and the account directory is therefore checked, and the account directory itself too.
+ * whole directory somewhere else and `rmSync` would then delete the target. Every component from
+ * `nemaHome` itself down to the account directory is therefore checked.
  */
 
 const SYMLINK_REASON = "账户凭据目录的上级目录是符号链接，已拒绝。";
+const HOME_SYMLINK_REASON = "Nema 主目录是符号链接，已拒绝使用账户功能。";
 
 /**
- * True when any existing component of `target` between `root` (exclusive) and `target` (inclusive) is a
- * symlink. Components that do not exist yet are skipped: they will be created as real directories.
+ * True when `nemaHome` itself, or any existing component between it and `target`, is a symlink.
+ * `nemaHome` is included: a linked home would silently redirect every account file and every delete.
  */
-export function hasSymlinkedComponent(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
+export function hasSymlinkedComponent(nemaHome: string, target: string): boolean {
+  try {
+    if (lstatSync(nemaHome).isSymbolicLink()) return true;
+  } catch (e) {
+    // A home that does not exist yet is created as a real directory; anything else is not trusted.
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") return true;
+  }
+  const relative = path.relative(nemaHome, target);
   if (relative.startsWith("..") || path.isAbsolute(relative)) return true; // outside the tree: never allowed
-  let current = root;
+  let current = nemaHome;
   for (const part of relative.split(path.sep).filter((p) => p !== "")) {
     current = path.join(current, part);
     try {
@@ -31,7 +38,17 @@ export function hasSymlinkedComponent(root: string, target: string): boolean {
   return false;
 }
 
-/** Throws unless every component of `dir` under `root` is a real directory (or still absent). */
-export function assertNoSymlinkedComponent(root: string, dir: string): void {
-  if (hasSymlinkedComponent(root, dir)) throw new Error(SYMLINK_REASON);
+/** Throws unless `nemaHome` and every component of `dir` under it are real directories (or still absent). */
+export function assertNoSymlinkedComponent(nemaHome: string, dir: string): void {
+  if (hasSymlinkedComponent(nemaHome, dir)) throw new Error(SYMLINK_REASON);
+}
+
+/** The same check for `nemaHome` itself, with a message that names the home directory. */
+export function assertHomeNotSymlinked(nemaHome: string): void {
+  try {
+    if (lstatSync(nemaHome).isSymbolicLink()) throw new Error(HOME_SYMLINK_REASON);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw e;
+  }
 }
