@@ -48,20 +48,24 @@ async function readHolder(lockPath) {
  * `created` means this call opened the file with `wx` and has not released it, so the file is ours
  * even when the record inside it cannot be read (the write failed before the content landed).
  */
-async function releaseOwn(lockPath, token, created) {
+async function releaseOwn(lockPath, token, created, remove) {
   let parsed;
   try {
     parsed = JSON.parse(await readFile(lockPath, 'utf8'));
   } catch (error) {
     if (error?.code === 'ENOENT') return;
     if (error instanceof SyntaxError) {
-      if (created) await unlink(lockPath).catch(() => {});
+      if (created) await remove(lockPath).catch(() => {});
       return;
     }
     throw error;
   }
   if (parsed?.token !== token) return;
-  await unlink(lockPath);
+  // The file can disappear between the read and the unlink (someone followed the delete advice),
+  // and this runs in a `finally`: a throw here would replace the run's real result.
+  await remove(lockPath).catch((error) => {
+    if (error?.code !== 'ENOENT') throw error;
+  });
 }
 
 /**
@@ -77,6 +81,7 @@ export async function withReleaseLock(root, command, fn, options = {}) {
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const token = randomUUID();
   const openFile = options.open ?? open;
+  const remove = options.unlink ?? unlink;
   const deadline = Date.now() + waitMs;
   let handle;
   for (;;) {
@@ -97,13 +102,13 @@ export async function withReleaseLock(root, command, fn, options = {}) {
   } catch (error) {
     await handle.close();
     // The record never landed, so no token can be compared; the file is still the one this call opened.
-    await releaseOwn(lockPath, token, true);
+    await releaseOwn(lockPath, token, true, remove);
     throw error;
   }
   await handle.close();
   try {
     return await fn();
   } finally {
-    await releaseOwn(lockPath, token, created);
+    await releaseOwn(lockPath, token, created, remove);
   }
 }
