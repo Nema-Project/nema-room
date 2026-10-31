@@ -189,13 +189,14 @@ describe("syncDefaultAccountProjection", () => {
   });
 
   test("a removed config model clears the stored override", () => {
-    // 0.2.0 删掉 model 时，账户里存的那份必须一起停用，否则它会继续覆盖新选择。
+    // When 0.2.0 drops `model`, the stored copy must stop applying: otherwise it keeps overriding
+    // the new choice made in config.json.
     const config = { ...byokConfig(), model: undefined };
     expect(syncDefaultAccountProjection([stored()], config)).toEqual({
       accountId: "acct_abc1234567",
       patch: { model: undefined },
     });
-    // 清干净之后就没有 patch 了。
+    // Nothing left to patch once the stored value is gone.
     expect(syncDefaultAccountProjection([stored({ model: undefined })], config)).toBeNull();
   });
 

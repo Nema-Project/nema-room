@@ -72,7 +72,8 @@ describe("account schema", () => {
     let i = 0;
 
     expect(newAccountId(() => seq[i++]!, (id) => taken.has(id))).toBe("acct_fresh00000");
-    // 一直撞号就报错，绝不返回一个会覆盖别人凭据的 id。
+    // A generator that only produces taken ids fails instead of returning one that would overwrite
+    // another account's credential.
     expect(() => newAccountId(() => "taken00000", (id) => taken.has(id))).toThrow(/无法生成账户 id/);
   });
 
@@ -143,13 +144,14 @@ describe("account schema", () => {
   });
 
   test("a name that is not secret-like is still never echoed", () => {
-    // 粘贴进名字里的短凭据不会匹配 SECRET_LIKE，但错误消息同样不能把它带出去。
+    // A short credential pasted into a name does not match SECRET_LIKE, and the message still must not
+    // repeat it.
     const pasted = "fake-test-value";
-    // 这一行本身有别的毛病（siwc 不该带 baseUrl），所以消息一定会提到它。
+    // This row has an unrelated problem (siwc must not carry a baseUrl), so a message does name it.
     const problems = validateAccountsFile(file([base({ name: pasted, authMode: "siwc" })]));
 
     expect(problems.join(" ")).not.toContain(pasted);
-    // 行的身份只由账户 id 指代。
+    // A row is identified only by its account id.
     expect(problems.join(" ")).toContain("acct_abc1234567");
   });
 
@@ -196,7 +198,8 @@ describe("account schema", () => {
 
 describe("BYOK endpoint safety", () => {
   test("an endpoint that config.json would refuse is refused in account data too", () => {
-    // API key 会被发到这个地址：远程 http、带凭据的 URL、带查询串的 URL 都不能存进来。
+    // The API key is sent to this address: remote http, URLs carrying credentials, query strings and
+    // fragments must all be refused before they are stored.
     for (const baseUrl of [
       "http://evil.example/v1",
       "http://192.168.1.5/v1",
@@ -216,6 +219,18 @@ describe("BYOK endpoint safety", () => {
       expect(AccountsFileSchema.safeParse(file([base({ baseUrl })])).success).toBe(true);
       expect(validateAccountsFile(file([base({ baseUrl })]))).toEqual([]);
     }
+  });
+
+  test("a stored endpoint is normalized, so path building never doubles a slash", () => {
+    // config.json stores the normalized form (no trailing slash) and consumers append `/responses`.
+    const parsed = AccountsFileSchema.parse(file([base({ baseUrl: "https://api.example.com/v1/" })]));
+    expect(parsed.accounts[0]!.baseUrl).toBe("https://api.example.com/v1");
+    expect(`${parsed.accounts[0]!.baseUrl}/responses`).toBe("https://api.example.com/v1/responses");
+
+    // Already-normalized values are unchanged, and an unusable one is still refused rather than normalized.
+    expect(AccountsFileSchema.parse(file([base({ baseUrl: "https://api.example.com/v1" })])).accounts[0]!.baseUrl)
+      .toBe("https://api.example.com/v1");
+    expect(AccountsFileSchema.safeParse(file([base({ baseUrl: "http://evil.example/v1/" })])).success).toBe(false);
   });
 
   test("the rule is the config rule, not a copy: its message is reused verbatim", () => {

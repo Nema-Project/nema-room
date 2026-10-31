@@ -82,10 +82,10 @@ describe("legacy credential validation (review 1)", () => {
 
   test("a multi-line or empty legacy file is refused, not migrated", () => {
     plantKey("first-line\nsecond-line");
-    expect(() => materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "账户" })).toThrow(/一行/);
+    expect(() => materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "账户" })).toThrow(/单行|不可用/);
     rmSync(legacyKey());
     plantKey("");
-    expect(() => materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "账户" })).toThrow(/一行/);
+    expect(() => materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "账户" })).toThrow(/单行|不可用/);
     expect(existsSync(accountsPath(home))).toBe(false);
   });
 
@@ -222,9 +222,11 @@ describe("the legacy file is replaced during the move (review 5)", () => {
     // and then retired the path.
     expect(movedFrom).toBe(legacyKey());
     expect(existsSync(legacyKey())).toBe(false);
+    // The newest credential is what the account ends up with. Accepting the original here would let a
+    // regression that never adopts the refresh pass.
     const stored = readFileSync(join(accountDir(home, from.account.id), "key"), "utf8");
-    // The newest credential is what the account ends up with, never the stale one.
-    expect(stored === newer || stored === FAKE_KEY).toBe(true);
+    expect(stored).toBe(newer);
+    expect(stored).not.toBe(FAKE_KEY);
   });
 
   test("a legacy file that keeps changing is left in place rather than deleted", () => {

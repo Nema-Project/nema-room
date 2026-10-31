@@ -39,9 +39,22 @@ const CapabilitiesSchema = z
   .strict();
 
 /**
- * 端点校验：直接复用 `config.json` 那一份规则，不复制。BYOK 的 API key 会发到这个地址，所以一份
- * 规则松一点就等于 key 能从那条路出去。`normalizeByokBaseUrl` 抛出的文案也一并复用。
+ * Account endpoints go through the same rule as `config.json`: nothing is copied from that validation, the
+ * function itself is called. A looser rule here would be a second way for a BYOK key to leave the machine.
+ *
+ * The *normalized* value is what gets stored (`normalizeByokBaseUrl` drops a trailing slash), because
+ * consumers build request paths by appending to it: `https://host/v1/` + `/responses` would be a
+ * double-slash path. Config already stores the normalized form, so the two stay byte-identical.
  */
+function normalizedBaseUrl(raw: string): string | null {
+  try {
+    return normalizeByokBaseUrl(raw);
+  } catch {
+    return null;
+  }
+}
+
+/** The shared rule's own message, for the validation report. */
 function baseUrlProblem(raw: string): string | null {
   try {
     normalizeByokBaseUrl(raw);
@@ -58,7 +71,12 @@ export const AccountSchema = z
     enabled: z.boolean(),
     adapter: z.enum(["codex-direct", "claude-code"]),
     authMode: z.enum(["siwc", "compat", "byok"]).optional(),
-    baseUrl: z.string().min(1).optional(),
+    // A stored endpoint is normalized, so a trailing slash never survives into request path building.
+    baseUrl: z
+      .string()
+      .min(1)
+      .transform((raw) => normalizedBaseUrl(raw) ?? raw)
+      .optional(),
     model: z.string().min(1).optional(),
     /** Per-model overrides of the account's declared capabilities (layer 1 of spec §4.2). */
     modelCapabilities: z.record(z.string(), CapabilitiesSchema).optional(),

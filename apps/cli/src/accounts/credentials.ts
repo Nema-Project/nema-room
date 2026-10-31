@@ -1,6 +1,6 @@
 import { lstatSync } from "node:fs";
 import path from "node:path";
-import { AuthStore } from "../direct/authStore.js";
+import { AuthStore, usableSiwcLogin } from "../direct/authStore.js";
 import { readCodexCliTokens } from "../direct/codexLogin.js";
 import { privateModeMatches, privateOwnerMatches } from "../secrets/permissions.js";
 import { readSecretLine } from "../secrets/file.js";
@@ -85,21 +85,29 @@ function fileState(file: string): CredentialState {
 /**
  * Names of credential files this account should not have. Spec §3.2: a directory holding more than one
  * kind, or a kind that does not belong to this account, is ambiguous; none of them is trusted.
+ *
+ * Only "no such file" counts as absent. Any other failure to look (permissions, I/O) means the check did
+ * not happen, and a check that did not happen must not be reported as "none found": that would let a
+ * compat account claim connected while an unreadable conflicting credential sits in its directory.
  */
 function foreignCredentialFiles(nemaHome: string, account: Account): string[] {
   if (account.id === IMPLICIT_ACCOUNT_ID) return [];
   const dir = accountDir(nemaHome, account.id);
   const expected = path.basename(accountCredentialFiles(nemaHome, account)[0] ?? "");
-  return [KEY_FILE, TOKEN_FILE, AUTH_FILE].filter((name) => {
-    if (name === expected) return false;
+  const foreign: string[] = [];
+  for (const name of [KEY_FILE, TOKEN_FILE, AUTH_FILE]) {
+    if (name === expected) continue;
     try {
       lstatSync(path.join(dir, name));
-      return true;
-    } catch {
-      return false;
+      foreign.push(name);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw e;
     }
-  });
+  }
+  return foreign;
 }
+
 
 /** Why the Codex CLI login cannot be used, or null when it can be. */
 function codexLoginProblem(codexHome: string): "missing" | "unusable" | null {
@@ -131,14 +139,22 @@ export function accountCredentialState(
     return { state: "unusable", files: [] };
   }
 
+  let foreign: string[];
+  try {
+    foreign = foreignCredentialFiles(nemaHome, account);
+  } catch {
+    // The directory could not be inspected: an unverified account is not a connected one.
+    return { state: "unusable", files };
+  }
+
   if (account.adapter === "codex-direct" && account.authMode === "compat") {
     // A compat account owns no files, so any credential of its own contradicts what it claims to be.
-    if (foreignCredentialFiles(nemaHome, account).length > 0) return { state: "unusable", files };
+    if (foreign.length > 0) return { state: "unusable", files };
     const problem = codexLoginProblem(codexHome);
     return { state: problem === null ? "connected" : problem, files };
   }
 
-  if (foreignCredentialFiles(nemaHome, account).length > 0) return { state: "unusable", files };
+  if (foreign.length > 0) return { state: "unusable", files };
 
   const expected = files[0];
   if (expected === undefined) return { state: "missing", files };
@@ -147,7 +163,8 @@ export function accountCredentialState(
   // owner, O_NOFOLLOW open, schema), so ask it rather than half-checking the file here.
   if (account.adapter === "codex-direct" && account.authMode === "siwc") {
     const inspected = new AuthStore(nemaHome, neverRefresh, Date.now, { baseDir: path.dirname(expected) }).inspect();
-    if (inspected.auth) return { state: "connected", files };
+    // SIWC has its own requirements on top of "the file parses"; the store's parser cannot know them.
+    if (inspected.auth) return { state: usableSiwcLogin(inspected.auth) ? "connected" : "unusable", files };
     return { state: inspected.reason === "unusable" ? "unusable" : "missing", files };
   }
 
