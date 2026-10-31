@@ -20,14 +20,16 @@
 
 v0.2.0 是 v0.1.6 之后的一次功能大版本：附件、`@` 提及、Skills 渐进载入与手动调用、MCP 配置与生命周期、插件页分区，以及发布机制第 3 期（tag 只验证，`release-promote` 翻指针）。
 
-发布记录（tag 之后补真实值，以下为占位）：
+发布记录：
 
-- tag `v0.2.0` → `<TAG_COMMIT>`；该提交的 main CI：`<MAIN_CI_RUN>`。
-- 三条 tag 工作流：npm `<NPM_RUN>`、镜像 `<IMAGE_RUN>`、桌面 `<DESKTOP_RUN>`。
-- 只读检查 `npm run release:verify -- 0.2.0` 打 tag 后的首次结果：`<PRE_PROMOTE_VERIFY>`（预期退出 1，且只点名 npm）。
-- `release:verify -- --pointers 0.2.0` 的前后对照：`<POINTERS_BEFORE>` / `<POINTERS_AFTER>`。
-- 晋升：`gh workflow run release-promote.yml --ref main -f tag=v0.2.0`，运行 `<PROMOTE_RUN>`；晋升后 `release:verify -- 0.2.0` 退出 0。
-- `releases/latest/download/docker-compose.yml` 在晋升前仍是 0.1.6 的双 pin，晋升后变为 0.2.0 且带版本头。
+- tag `v0.2.0` 是 annotated tag `8d2b107bc6701a59832086080e387e81e306ed17`，解引用到 `3d676f21bac8895859016ac200fd5ef1f39a5d4f`（`release: prepare v0.2.0`，[PR #154](https://github.com/Nema-Project/nema-room/pull/154) 的合并提交）；该提交的 [main CI](https://github.com/Nema-Project/nema-room/actions/runs/41163721788) 成功。
+- 三条 tag 工作流均成功：[npm](https://github.com/Nema-Project/nema-room/actions/runs/41167014904)（`Publish to npm` 按设计 skipped，只打包与冒烟）、[镜像](https://github.com/Nema-Project/nema-room/actions/runs/41167014878)、[桌面](https://github.com/Nema-Project/nema-room/actions/runs/41167014880)（只建 draft Release）。
+- tag 之后、晋升之前：Release 是 draft（8 个资产，其 `docker-compose.yml` 已是 0.2.0 双 pin 且带版本头）；`npm view` 仍为 0.1.6；两个 GHCR 的 `latest` digest 与 0.1.6 完全相同；`releases/latest/download/docker-compose.yml` 仍是 0.1.6 双 pin。
+- 只读检查 `npm run release:verify -- 0.2.0` 在晋升前：**退出 1**，唯一 `MISSING` 是 npm（`npm has no @nema-project/nema@0.2.0`），`images` 与 `release` 为 ok，`consistency` 因 npm 未就绪标注 `UNKNOWN` 并跳过。
+- `release:verify -- --pointers 0.2.0` 的前后对照：晋升前 npm latest / ghcr hub latest / ghcr web latest / github latest 全部为 `0.1.6` 且均判定 `-> move`；晋升后四项全部为 `0.2.0`。
+- 晋升：`gh workflow run release-promote.yml --ref main -f tag=v0.2.0`，[run 41170238828](https://github.com/Nema-Project/nema-room/actions/runs/41170238828)。**第 1 次 attempt 失败并 fail-closed**：npm 发布子运行 [41170270882](https://github.com/Nema-Project/nema-room/actions/runs/41170270882) 成功，但 promote 在其后约 18 秒回读 registry，此时包仍处于索引中，于是以 `npm publish run finished but the registry does not hold the expected tarball` 停止，`flipped by this run: none`；只重跑失败的 job 后 attempt 2 成功。这一时序缺口已记录为 [#158](https://github.com/Nema-Project/nema-room/issues/158)（milestone v0.2.x），本版不因此重新晋升。
+- 晋升后 `release:verify -- 0.2.0` **退出 0**：npm integrity 为 `sha512-Z3rZ07LiIlD/…`，镜像 hub `sha256:ab15013e…` / web `sha256:69741449…`，Release 已公开且 `docker-compose.yml` pin 0.2.0，`consistency` 认定 tag、release manifest 与 npm provenance 同为 `3d676f21…`。
+- Release 于 2026-10-31 04:58:18 UTC 公开；`releases/latest/download/docker-compose.yml` 由 0.1.6 双 pin 变为 0.2.0 双 pin，并带版本头（`# Nema Room 0.2.0 release asset.`）。
 
 发布可用性不等于功能或真机验收完成：
 
