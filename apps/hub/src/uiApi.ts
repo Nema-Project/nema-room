@@ -3,7 +3,7 @@ import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z, ZodError } from "zod";
 import { KnowledgeStore, blameParagraphs, git, history, versionAt, parseCommitMessage } from "@nema/knowledge";
-import { KNOWLEDGE_LANGUAGES, UpsertEntryInput, parseMcpConfig, citedReports, confirmableImplementation, kindFromId, canonicalJson, parseSkillSource, reportPassed, safeRepoPath } from "@nema/shared";
+import { KNOWLEDGE_LANGUAGES, MessageMentions, UpsertEntryInput, parseMcpConfig, citedReports, confirmableImplementation, kindFromId, canonicalJson, parseSkillSource, reportPassed, safeRepoPath } from "@nema/shared";
 import type { Implementation, ReportMessageMeta, WorkPackageMeta } from "@nema/shared";
 import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
 import { insertEvidenceEvent, consumeEvidenceEvent, reconcileUnconsumedEventsLocked, payloadHashFor, type EvidenceEventInput } from "./evidenceEvents.js";
@@ -82,6 +82,8 @@ const PostMessageBody = z
     quoteMessageId: z.string().min(1).optional(),
     threadId: z.string().min(1).optional(),
     attachmentIds: z.array(z.string().min(1)).max(ATTACHMENT_LIMITS.perTaskCount).optional(),
+    /** `@` mentions; the hub checks that each one is this workspace's and that its text is in the body. */
+    mentions: MessageMentions.optional(),
   })
   .refine((b) => messageHasBody(b.content, b.attachmentIds ?? []), { message: "must not be empty", path: ["content"] });
 // An edit changes only the text; attachments stay as they are. Empty text is checked by editUserMessage,
@@ -455,11 +457,11 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/workspaces/:id/threads", async (c) => {
     const workspaceId = c.req.param("id")!;
-    const { content, quoteMessageId, attachmentIds } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, attachmentIds, mentions } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     try {
       const created = await db.tx(async (t) => {
-        const posted = await postUserMessage(t, workspaceId, content, { quoteMessageId, attachmentIds });
+        const posted = await postUserMessage(t, workspaceId, content, { quoteMessageId, attachmentIds, mentions });
         const title = Array.from(content.split(/\r?\n/, 1)[0]!.trim()).slice(0, 80).join("") || "新追问";
         const thread = await ensureThread(t, posted.message.id, title, "user");
         return { ...posted, thread };
@@ -481,10 +483,10 @@ export function uiRoutes(deps: UiDeps): Hono {
   app.post("/workspaces/:id/threads/:tid/messages", async (c) => {
     const workspaceId = c.req.param("id")!;
     const threadId = c.req.param("tid")!;
-    const { content, quoteMessageId, attachmentIds } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, attachmentIds, mentions } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     try {
-      const { message, task: created, replayed } = await postUserMessage(db, workspaceId, content, { quoteMessageId, threadId, attachmentIds });
+      const { message, task: created, replayed } = await postUserMessage(db, workspaceId, content, { quoteMessageId, threadId, attachmentIds, mentions });
       const task = toUiTask(created);
       if (!replayed) {
         events.emit(workspaceId, { type: "message.created", message });
@@ -559,11 +561,11 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/workspaces/:id/messages", async (c) => {
     const id = c.req.param("id");
-    const { content, quoteMessageId, threadId, attachmentIds } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, threadId, attachmentIds, mentions } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, id))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     let message, created, replayed;
     try {
-      ({ message, task: created, replayed } = await postUserMessage(db, id, content, { quoteMessageId, threadId, attachmentIds }));
+      ({ message, task: created, replayed } = await postUserMessage(db, id, content, { quoteMessageId, threadId, attachmentIds, mentions }));
     } catch (e) {
       if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
       throw e;
@@ -573,7 +575,8 @@ export function uiRoutes(deps: UiDeps): Hono {
       events.emit(id, { type: "message.created", message });
       events.emit(id, { type: "task.updated", task });
     }
-    return c.json({ message, task });
+    // `replayed` tells the composer its retry was the same send, so it can clear itself without a second message.
+    return c.json({ message, task, replayed });
   });
 
   app.post("/workspaces/:id/workpackages", async (c) => {

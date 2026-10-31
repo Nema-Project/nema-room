@@ -138,6 +138,13 @@ export async function bindAttachments(t: Db, workspaceId: string, messageId: str
   return views;
 }
 
+/** The given attachments of this workspace, whatever their status, oldest upload first. */
+export async function listAttachmentsByIds(db: Db, workspaceId: string, ids: readonly string[]): Promise<AttachmentView[]> {
+  if (ids.length === 0) return [];
+  const rows = await db.query<Row>(`select ${COLS} from message_attachments where workspace_id = $1 and id = any($2) order by created_at, id`, [workspaceId, [...ids]]);
+  return rows.map(toView);
+}
+
 /** Attachments bound to the given messages, whatever their status, oldest upload first. */
 export async function listAttachmentsForMessages(db: Db, messageIds: string[]): Promise<Map<string, AttachmentView[]>> {
   const out = new Map<string, AttachmentView[]>();

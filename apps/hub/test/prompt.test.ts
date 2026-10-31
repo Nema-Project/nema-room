@@ -451,4 +451,31 @@ describe("attachments in the prompt", () => {
   test("a prompt without attachments has no attachment rules", () => {
     expect(base()).not.toContain("附件");
   });
+
+  test("a mention section sits between the quoted message and this user message", () => {
+    const quoted = { ...msg(5, "agent"), content: "先前回复" };
+    const mentioned = { id: "D-12", kind: "decision", title: "发布流程", status: "active", body: "先灰度。" } as const;
+    const p = buildPrompt({
+      workspace: ws("follow"),
+      userMessage: msg(999),
+      recentMessages: [],
+      entries,
+      lastAskedQuestion: null,
+      quotedMessage: quoted,
+      mentions: { entries: [mentioned], attachments: [], threads: [] },
+    });
+    const quotedAt = p.indexOf("# 本次消息引用的消息");
+    const mentionsAt = p.indexOf("# 本次提及的上下文");
+    const userAt = p.indexOf("# 本次用户消息");
+    expect(quotedAt).toBeGreaterThan(-1);
+    expect(mentionsAt).toBeGreaterThan(quotedAt);
+    expect(userAt).toBeGreaterThan(mentionsAt);
+    expect(p).toContain("## 条目 [D-12] 发布流程（decision，active）");
+    expect(p).toContain("先灰度。");
+  });
+
+  test("without mentions the prompt is byte-identical to before", () => {
+    const withEmpty = buildPrompt({ workspace: ws("follow"), userMessage: msg(999), recentMessages: [], entries, lastAskedQuestion: null, mentions: { entries: [], attachments: [], threads: [] } });
+    expect(withEmpty).toBe(base());
+  });
 });
