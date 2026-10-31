@@ -21,7 +21,7 @@ beforeEach(() => {
 const mount = (props: Partial<React.ComponentProps<typeof ThreadView>> = {}) => render(<I18nProvider><ThreadView workspaceId="w1" threadId="anchor" {...props} /></I18nProvider>);
 describe("ThreadView", () => {
   it("shows the anchor and thread messages", async () => { mount(); expect(await screen.findByText("Pinned question")).toBeTruthy(); expect(screen.getByText("Reply")).toBeTruthy(); });
-  it("sends in the thread", async () => { mount(); const box = await screen.findByRole("textbox"); await userEvent.type(box, "more{Shift>}{Enter}{/Shift}"); expect(hub.postThreadMessage).toHaveBeenCalledWith("w1", "anchor", "more", undefined, []); });
+  it("sends in the thread", async () => { mount(); const box = await screen.findByRole("textbox"); await userEvent.type(box, "more{Shift>}{Enter}{/Shift}"); expect(hub.postThreadMessage).toHaveBeenCalledWith("w1", "anchor", "more", undefined, [], []); });
   it("sends attachment ids with a thread reply", async () => {
     vi.mocked(hub.attachmentCapabilities).mockResolvedValue({ adapter: "codex-direct", image: "native", pdf: "native", text: "text" });
     vi.mocked(hub.uploadAttachment).mockResolvedValue({ id: "att9", kind: "text", mime: "text/plain", name: "err.log", size: 5, sha256: "b".repeat(64), messageId: null, status: "staged", deletedAt: null });
@@ -31,7 +31,7 @@ describe("ThreadView", () => {
     const send = screen.getByRole("button", { name: /Send/ }) as HTMLButtonElement;
     await vi.waitFor(() => expect(send.disabled).toBe(false));
     await userEvent.click(send);
-    expect(hub.postThreadMessage).toHaveBeenCalledWith("w1", "anchor", "", undefined, ["att9"]);
+    expect(hub.postThreadMessage).toHaveBeenCalledWith("w1", "anchor", "", undefined, ["att9"], []);
   });
   it("marks rendered messages read on open with throughSeq", async () => { mount(); await vi.waitFor(() => expect(hub.markThreadRead).toHaveBeenCalledWith("w1", "anchor", 3)); });
   it("retains an SSE message that arrives while the initial fetch is pending", async () => {

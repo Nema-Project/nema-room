@@ -12,6 +12,7 @@ vi.mock("@/lib/hub", () => ({
   deleteAttachment: vi.fn(),
   attachmentCapabilities: vi.fn(),
   listSkills: vi.fn(),
+  searchMentionContext: vi.fn(),
   HubError: class HubError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -36,7 +37,7 @@ describe("Composer", () => {
     await userEvent.type(box(), "/thr");
     await userEvent.click(screen.getByRole("option", { name: /thread/i }));
     await userEvent.type(box(), "need details{Shift>}{Enter}{/Shift}");
-    expect(onThread).toHaveBeenCalledWith("need details", []);
+    expect(onThread).toHaveBeenCalledWith("need details", [], []);
   });
   it("thread mode selects only visible slash commands by keyboard", async () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
@@ -66,7 +67,7 @@ describe("Composer", () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
     mount(onSend);
     await userEvent.type(box(), "a{Shift>}{Enter}{/Shift}");
-    expect(onSend).toHaveBeenCalledWith("a", []);
+    expect(onSend).toHaveBeenCalledWith("a", [], []);
     await vi.waitFor(() => expect(box().value).toBe(""));
   });
   it("keeps text typed while a send is in flight", async () => {
@@ -74,7 +75,7 @@ describe("Composer", () => {
     const onSend = vi.fn(() => new Promise<void>((r) => (resolve = r)));
     mount(onSend);
     await userEvent.type(box(), "hello{Shift>}{Enter}{/Shift}");
-    expect(onSend).toHaveBeenCalledWith("hello", []);
+    expect(onSend).toHaveBeenCalledWith("hello", [], []);
     await userEvent.type(box(), " world");
     resolve();
     await vi.waitFor(() => expect((screen.getByRole("button", { name: /送信|发送|Send/ }) as HTMLButtonElement).disabled).toBe(false));
@@ -121,7 +122,7 @@ describe("Composer", () => {
     fireEvent.compositionStart(box());
     fireEvent.compositionEnd(box());
     fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
-    expect(onSend).toHaveBeenCalledWith("a", []);
+    expect(onSend).toHaveBeenCalledWith("a", [], []);
   });
   it("does not send whitespace-only content", async () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
@@ -201,7 +202,7 @@ describe("Composer attachments", () => {
     expect((await screen.findByRole("img", { name: "shot.png" }) as HTMLImageElement).src).toBe("blob:preview");
     await vi.waitFor(() => expect(sendButton().disabled).toBe(false));
     await userEvent.click(sendButton());
-    expect(onSend).toHaveBeenCalledWith("", ["att1"]);
+    expect(onSend).toHaveBeenCalledWith("", ["att1"], []);
     await vi.waitFor(() => expect(screen.queryByRole("img", { name: "shot.png" })).toBeNull());
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
   });
@@ -278,7 +279,7 @@ describe("Composer attachments", () => {
     expect(await screen.findByText(/the daemon checks/i)).toBeTruthy();
     await vi.waitFor(() => expect(sendButton().disabled).toBe(false));
     await userEvent.click(sendButton());
-    expect(onSend).toHaveBeenCalledWith("", ["att1"]);
+    expect(onSend).toHaveBeenCalledWith("", ["att1"], []);
   });
 
   it("keeps text and attachments when sending fails", async () => {
@@ -287,7 +288,7 @@ describe("Composer attachments", () => {
     await userEvent.type(box(), "look");
     await vi.waitFor(() => expect(sendButton().disabled).toBe(false));
     await userEvent.click(sendButton());
-    expect(onSend).toHaveBeenCalledWith("look", ["att1"]);
+    expect(onSend).toHaveBeenCalledWith("look", ["att1"], []);
     expect((await screen.findByRole("alert")).textContent).toContain("boom");
     expect(box().value).toBe("look");
     expect(screen.getByRole("img", { name: "shot.png" })).toBeTruthy();
@@ -306,7 +307,7 @@ describe("Composer attachments", () => {
     expect(keys[0]).toBe(keys[1]);
     await vi.waitFor(() => expect(sendButton().disabled).toBe(false));
     await userEvent.click(sendButton());
-    expect(onSend).toHaveBeenCalledWith("x", ["att1"]);
+    expect(onSend).toHaveBeenCalledWith("x", ["att1"], []);
   });
 
   it("passes attachments to a /thread command", async () => {
@@ -317,7 +318,7 @@ describe("Composer attachments", () => {
     await userEvent.type(box(), "/thread look here");
     fireEvent.keyDown(box(), { key: "Escape" });
     fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
-    await vi.waitFor(() => expect(onThread).toHaveBeenCalledWith("look here", ["att1"]));
+    await vi.waitFor(() => expect(onThread).toHaveBeenCalledWith("look here", ["att1"], []));
   });
 
   it("waits for a fresh capability answer before sending", async () => {
@@ -350,7 +351,7 @@ describe("Composer attachments", () => {
     await act(async () => release(Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]).buffer));
     await vi.waitFor(() => expect(sendButton().disabled).toBe(false));
     await userEvent.click(sendButton());
-    expect(onSend).toHaveBeenCalledWith("with file", ["att1"]);
+    expect(onSend).toHaveBeenCalledWith("with file", ["att1"], []);
   });
 
   it("says when a file cannot be read", async () => {
@@ -489,6 +490,107 @@ describe("Composer Skills menu", () => {
     await act(async () => finish({ id: "att1", kind: "image", mime: "image/png", name: "shot.png", size: file.size, sha256: "a".repeat(64), messageId: null, status: "staged", deletedAt: null }));
     await vi.waitFor(() => expect((screen.getByRole("button", { name: /Send/ }) as HTMLButtonElement).disabled).toBe(false));
     await userEvent.click(screen.getByRole("button", { name: /Send/ }));
-    expect(onSend).toHaveBeenCalledWith("/tdd write it", ["att1"]);
+    expect(onSend).toHaveBeenCalledWith("/tdd write it", ["att1"], []);
+  });
+});
+
+describe("Composer @ mentions", () => {
+  const ctx = {
+    status: "ok",
+    entries: [
+      { id: "D-12", kind: "decision", title: "发布流程", status: "active" },
+      { id: "R-3", kind: "requirement", title: "支持导出", status: "active" },
+    ],
+    attachments: [{ id: "att_1", name: "发布会截图.png", kind: "image", size: 100, messageId: "m_1", createdAt: "2026-10-30T00:00:00.000Z" }],
+    threads: [{ id: "m_2", title: "发布流程讨论", lastReplyAt: null }],
+    truncated: false,
+  };
+
+  beforeEach(() => {
+    vi.mocked(hub.listSkills).mockResolvedValue([]);
+    vi.mocked(hub.searchMentionContext).mockResolvedValue(ctx);
+  });
+
+  const mountWs = (onSend: (c: string, ids: string[], mentions?: unknown[]) => Promise<void>, extra: Record<string, unknown> = {}) =>
+    render(<I18nProvider><Composer workspaceId="w1" onSend={onSend} {...extra} /></I18nProvider>);
+
+  it("shows the three groups once the query settles, and chooses with Enter", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    mountWs(onSend);
+    await userEvent.type(box(), "@发布");
+    const menu = await screen.findByRole("listbox", { name: /mention|提及/i });
+    expect(menu).toBeTruthy();
+    expect(await screen.findByRole("option", { name: /D-12/ })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /发布会截图/ })).toBeTruthy();
+    await vi.waitFor(() => expect(hub.searchMentionContext).toHaveBeenCalledWith("w1", "发布"));
+    fireEvent.keyDown(box(), { key: "ArrowDown" }); // the exact-id row is first; move to the next
+    fireEvent.keyDown(box(), { key: "ArrowUp" });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(box().value).toContain("[D-12] ");
+    expect(screen.getByTestId("mention-chip").textContent).toContain("[D-12]");
+    fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
+    await vi.waitFor(() => expect(onSend).toHaveBeenCalledWith("[D-12]", [], [{ type: "entry", id: "D-12", text: "[D-12]" }]));
+  });
+
+  it("inserts a file mention with the 附件 text and removes both text and chip from the chip's ×", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    mountWs(onSend);
+    await userEvent.type(box(), "@截图");
+    await (await screen.findByRole("option", { name: /发布会截图/ })).click();
+    expect(box().value).toBe("`附件：发布会截图.png` ");
+    const chip = screen.getByTestId("mention-chip");
+    await userEvent.click(chip.querySelector("button")!);
+    expect(box().value).toBe("");
+    expect(screen.queryByTestId("mention-chip")).toBeNull();
+  });
+
+  it("drops the chip when its text is typed away", async () => {
+    mountWs(vi.fn().mockResolvedValue(undefined));
+    await userEvent.type(box(), "@D-12");
+    await (await screen.findByRole("option", { name: /D-12/ })).click();
+    expect(screen.getByTestId("mention-chip")).toBeTruthy();
+    await userEvent.clear(box());
+    await userEvent.type(box(), "别的");
+    expect(screen.queryByTestId("mention-chip")).toBeNull();
+  });
+
+  it("an @ in the middle of a line opens only the mention menu, and / at the start still opens commands", async () => {
+    mountWs(vi.fn().mockResolvedValue(undefined), { onThread: vi.fn().mockResolvedValue(undefined) });
+    await userEvent.type(box(), "先说一句 @发");
+    expect(await screen.findByRole("listbox", { name: /mention|提及/i })).toBeTruthy();
+    expect(screen.queryByRole("listbox", { name: /commands|命令/i })).toBeNull();
+    fireEvent.keyDown(box(), { key: "Escape" });
+    await userEvent.clear(box());
+    await userEvent.type(box(), "/thr");
+    expect(await screen.findByRole("listbox", { name: /commands|命令/i })).toBeTruthy();
+    expect(screen.queryByRole("listbox", { name: /mention|提及/i })).toBeNull();
+  });
+
+  it("does not open for an email-like a@b or inside a code fence", async () => {
+    mountWs(vi.fn().mockResolvedValue(undefined));
+    await userEvent.type(box(), "a@b");
+    expect(screen.queryByRole("listbox", { name: /mention|提及/i })).toBeNull();
+    await userEvent.clear(box());
+    await userEvent.type(box(), "```");
+    await userEvent.type(box(), "{Enter}@发");
+    expect(screen.queryByRole("listbox", { name: /mention|提及/i })).toBeNull();
+  });
+
+  it("says when there is nothing to mention yet", async () => {
+    vi.mocked(hub.searchMentionContext).mockResolvedValue({ status: "ok", entries: [], attachments: [], threads: [], truncated: false });
+    mountWs(vi.fn().mockResolvedValue(undefined));
+    await userEvent.type(box(), "@x");
+    expect(await screen.findByText(/还没有可提及的附件|no files/i)).toBeTruthy();
+  });
+
+  it("sends mentions from a /thread command too", async () => {
+    const onThread = vi.fn().mockResolvedValue(undefined);
+    mountWs(vi.fn(), { onThread });
+    await userEvent.type(box(), "/thr");
+    await userEvent.click(await screen.findByRole("option", { name: /^\/thread/ }));
+    await userEvent.type(box(), "细节 @D-12");
+    await (await screen.findByRole("option", { name: /D-12/ })).click();
+    fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
+    await vi.waitFor(() => expect(onThread).toHaveBeenCalledWith("细节 [D-12]", [], [{ type: "entry", id: "D-12", text: "[D-12]" }]));
   });
 });

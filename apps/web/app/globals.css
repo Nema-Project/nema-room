@@ -552,3 +552,7 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .att-card time, .att-sha { color: var(--ink-3); font-size: 11px; }
 .att-confirm { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--ink-2); }
 .att-card .error { flex-basis: 100%; margin: 0; }
+/* @ 提及：菜单与托盘沿用 / 菜单和附件 chip 的样式，只加一点区分。 */
+.ment-menu { max-height: 260px; }
+.ment-empty { margin: 0; padding: 8px 12px; color: var(--ink-3); font-size: 12px; }
+.ment-item .att-name { max-width: 220px; font-family: var(--mono); font-size: 12px; }

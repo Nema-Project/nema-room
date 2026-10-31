@@ -1,12 +1,15 @@
 "use client";
 
-import { Fragment, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
-import { messageHasBody } from "@nema/shared";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
+import { messageHasBody, type MessageMention } from "@nema/shared";
 import { AttachmentTray } from "@/components/AttachmentTray";
 import { messageRoleLabel } from "@/components/MessageItem";
 import { useAttachmentTray } from "@/lib/attachments";
 import { applyFormat, type FormatKind } from "@/lib/markdownFormat";
 import { applySlash, matchingItems, slashToken, type SkillRow, type SlashItem } from "@/lib/slash";
+import { MentionMenu, MentionTray, type MentionChip } from "@/components/MentionMenu";
+import { groupCandidates, mentionToken, syncMentions, type MentionCandidate, type MentionContextResponse } from "@/lib/mentions";
+import { searchMentionContext } from "@/lib/hub";
 import { useSkillRows } from "@/lib/skillMenu";
 import { useT } from "@/lib/i18n";
 import type { Message } from "@/lib/types";
@@ -15,6 +18,12 @@ function excerpt(content: string): string {
   const chars = Array.from(content);
   return chars.length <= 200 ? content : chars.slice(0, 200).join("");
 }
+
+/** How long typing in an `@` token waits before asking the hub, and how long an answer is reused. */
+const MENTION_DEBOUNCE_MS = 150;
+const MENTION_CACHE_MS = 30_000;
+/** Matches the hub's own limit on a mention query. */
+const EMPTY_CONTEXT: MentionContextResponse = { status: "ok", entries: [], attachments: [], threads: [], truncated: false };
 
 function availableItems(value: string, token: { query: string; start: number }, skills: readonly SkillRow[], threadMode: boolean): SlashItem[] {
   // Skills only when the `/` starts the whole message; other lines keep just the built-in commands.
@@ -32,10 +41,10 @@ export function Composer({
 }: {
   /** Enables attachments: uploads are staged in this workspace. */
   workspaceId?: string;
-  onSend: (content: string, attachmentIds: string[]) => Promise<void>;
+  onSend: (content: string, attachmentIds: string[], mentions?: MessageMention[]) => Promise<void>;
   quote?: { role: Message["role"]; content: string } | null;
   onClearQuote?: () => void;
-  onThread?: (content: string, attachmentIds: string[]) => Promise<void>;
+  onThread?: (content: string, attachmentIds: string[], mentions?: MessageMention[]) => Promise<void>;
   threadMode?: boolean;
   disabled?: boolean;
 }) {
@@ -53,11 +62,79 @@ export function Composer({
   const picker = useRef<HTMLInputElement>(null);
   const tray = useAttachmentTray(workspaceId);
   const token = slashToken(value, cursor);
+  // `@` owns the menu whenever the caret sits in a mention token; the `/` menu keeps its line-start rule and
+  // only yields while a mention token is open, so the two can never show at once.
+  const at = slashToken(value, cursor) === null ? mentionToken(value, cursor) : null;
   const skills = useSkillRows(workspaceId, token !== null);
   const matches = token ? availableItems(value, token, skills, threadMode) : [];
   const tokenKey = token ? `${token.start}:${token.query}` : "";
   const menuOpen = token !== null && matches.length > 0 && closedFor !== tokenKey;
   const highlighted = matches.length === 0 ? 0 : active % matches.length;
+
+  // --- @ mentions -----------------------------------------------------------------------------------------
+  // The chips are the message's mentions. They follow the body: a chip whose text is gone from the body goes too.
+  const [chips, setChips] = useState<MentionChip[]>([]);
+  const [context, setContext] = useState<MentionContextResponse>(EMPTY_CONTEXT);
+  const [mentionActive, setMentionActive] = useState(0);
+  const [mentionClosedFor, setMentionClosedFor] = useState<string | null>(null);
+  const cache = useRef(new Map<string, { at: number; ctx: MentionContextResponse }>());
+  const atKey = at ? `${at.start}:${at.query}` : "";
+  const groups = useMemo(() => (at ? groupCandidates(at.query, context) : []), [at, context]);
+  const mentionRows = useMemo(() => groups.flatMap((g) => g.items), [groups]);
+  const mentionOpen = at !== null && workspaceId !== undefined && mentionClosedFor !== atKey;
+
+  useEffect(() => {
+    if (!at || workspaceId === undefined) return;
+    const key = at.query.trim();
+    const hit = cache.current.get(key);
+    if (hit && Date.now() - hit.at < MENTION_CACHE_MS) {
+      setContext(hit.ctx);
+      return;
+    }
+    const timer = setTimeout(() => {
+      searchMentionContext(workspaceId, key)
+        .then((ctx) => {
+          cache.current.set(key, { at: Date.now(), ctx });
+          setContext(ctx);
+        })
+        .catch(() => setContext(EMPTY_CONTEXT)); // the menu just shows nothing; typing and sending still work
+    }, MENTION_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [at, workspaceId]);
+
+  const syncChips = useCallback((content: string) => {
+    setChips((cur) => {
+      const kept = syncMentions(content, cur.map((c) => c.mention));
+      return kept.map((mention) => cur.find((c) => c.mention === mention) ?? cur.find((c) => c.mention.type === mention.type && c.mention.id === mention.id)!);
+    });
+  }, []);
+
+  function chooseMention(item: MentionCandidate) {
+    const el = ref.current;
+    const caret = el?.selectionStart ?? cursor;
+    const current = mentionToken(el?.value ?? value, caret);
+    if (!current) return;
+    const text = el?.value ?? value;
+    const insert = `${item.text} `;
+    const next = { text: text.slice(0, current.start) + insert + text.slice(current.end), cursor: current.start + insert.length };
+    setChips((cur) => [...cur, { mention: { type: item.type, id: item.id, text: item.text } as MessageMention, label: item.type === "entry" ? `[${item.id}]` : item.label }]);
+    place(next.text, next.cursor);
+    setMentionActive(0);
+  }
+
+  function removeMention(index: number) {
+    const el = ref.current;
+    const text = el?.value ?? value;
+    const chip = chips[index];
+    if (!chip) return;
+    // Only the first remaining occurrence: the same text may have been inserted twice on purpose.
+    const at2 = text.indexOf(chip.mention.text);
+    // The insertion adds one space after the text; taking the chip out takes that space too.
+    const end = at2 < 0 ? -1 : at2 + chip.mention.text.length + (text[at2 + chip.mention.text.length] === " " ? 1 : 0);
+    const next = at2 < 0 ? text : text.slice(0, at2) + text.slice(end);
+    setChips((cur) => cur.filter((_, i) => i !== index));
+    place(next, Math.max(0, Math.min((el?.selectionStart ?? cursor), next.length)));
+  }
 
   useLayoutEffect(() => {
     if (pendingSel.current && ref.current) {
@@ -77,15 +154,17 @@ export function Composer({
     const content = sent.trim();
     const attached = tray.ready;
     const ids = attached.map((a) => a.id);
+    const mentions = chips.map((c) => c.mention);
     // Attachments still uploading, failed, or unreadable by the adapter (D-2) hold the message back.
     if (sending || tray.blocker || !messageHasBody(content, ids)) return;
     setSending(true);
     setError(null);
     try {
       const threadText = content.match(/^\/thread\s+([\s\S]+)$/);
-      if (threadText && onThread) await onThread(threadText[1]!.trim(), ids);
-      else await onSend(content, ids);
+      if (threadText && onThread) await onThread(threadText[1]!.trim(), ids, mentions);
+      else await onSend(content, ids, mentions);
       tray.clear(attached.map((a) => a.key));
+      setChips([]);
       // Text typed while the send was in flight stays: drop only what was sent.
       if (content !== "") setValue((cur) => (cur === sent ? "" : cur.startsWith(sent) ? cur.slice(sent.length).trimStart() : cur));
     } catch (e) {
@@ -116,6 +195,27 @@ export function Composer({
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (composing.current || e.nativeEvent.isComposing || e.keyCode === 229) return;
     const caret = e.currentTarget.selectionStart;
+    // The @ menu, when it owns the caret. Same keys as the / menu; Esc closes until the token changes.
+    const atNow = slashToken(e.currentTarget.value, caret) === null ? mentionToken(e.currentTarget.value, caret) : null;
+    const atNowKey = atNow ? `${atNow.start}:${atNow.query}` : "";
+    if (atNow && mentionClosedFor !== atNowKey) {
+      const rows = groupCandidates(atNow.query, context).flatMap((g) => g.items);
+      if (rows.length > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        setMentionActive((i) => (e.key === "ArrowDown" ? (i + 1) % rows.length : (i - 1 + rows.length) % rows.length));
+        return;
+      }
+      if (rows.length > 0 && (e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+        e.preventDefault();
+        chooseMention(rows[mentionActive % rows.length]!);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMentionClosedFor(atNowKey);
+        return;
+      }
+    }
     const current = slashToken(e.currentTarget.value, caret);
     const shown = current ? availableItems(e.currentTarget.value, current, skills, threadMode) : [];
     const open = current !== null && shown.length > 0 && closedFor !== `${current.start}:${current.query}`;
@@ -185,6 +285,15 @@ export function Composer({
           <button type="button" onClick={onClearQuote}>{t("chat.quoteRemove")}</button>
         </div>
       )}
+      {mentionOpen && !menuOpen && (
+        <MentionMenu
+          groups={groups}
+          active={mentionRows.length === 0 ? 0 : mentionActive % mentionRows.length}
+          onChoose={chooseMention}
+          onHover={setMentionActive}
+          empty={{ entries: context.entries.length > 0, attachments: context.attachments.length > 0 }}
+        />
+      )}
       {menuOpen && (
         <div className="cmdmenu" id="slash-commands" role="listbox" aria-label={t("cmd.menu")}>
           {matches.map((item, i) => (
@@ -220,6 +329,7 @@ export function Composer({
         placeholder={t("composer.placeholder")}
         aria-controls={menuOpen ? "slash-commands" : undefined}
         aria-activedescendant={menuOpen ? `slash-${matches[highlighted]?.id}` : undefined}
+        aria-label={t("composer.placeholder")}
         onChange={(e) => {
           const nextCursor = e.target.selectionStart;
           const prev = slashToken(value, cursor);
@@ -229,6 +339,11 @@ export function Composer({
           if (prev?.query !== next?.query) setActive(0);
           const nextKey = next ? `${next.start}:${next.query}` : "";
           if (closedFor && nextKey !== closedFor) setClosedFor(null);
+          const prevAt = mentionToken(value, cursor);
+          const nextAt = mentionToken(e.target.value, nextCursor);
+          if (prevAt?.query !== nextAt?.query) setMentionActive(0);
+          if (mentionClosedFor && (nextAt ? `${nextAt.start}:${nextAt.query}` : "") !== mentionClosedFor) setMentionClosedFor(null);
+          syncChips(e.target.value);
         }}
         onSelect={(e) => setCursor(e.currentTarget.selectionStart)}
         onKeyDown={onKeyDown}
@@ -236,6 +351,7 @@ export function Composer({
         onCompositionEnd={() => (composing.current = false)}
         onPaste={onPaste}
       />
+      <MentionTray chips={chips} onRemove={removeMention} />
       <AttachmentTray items={tray.items} caps={tray.caps} notices={tray.notices} onRemove={tray.remove} onRetry={tray.retry} />
       {error && (
         <p className="error" role="alert">
