@@ -101,8 +101,9 @@ export async function awaitNpmVisibility({ version, prerelease, expectedIntegrit
     if (pointer.state === 'version' && pointer.version === version) {
       return { ok: true, pointer, maintenance: false, waitedMs: spent(), budgetMs, reads };
     }
-    if (pointer.state === 'version' && prerelease) {
-      // `next` past this version is a contradiction, not a lag: something moved it.
+    if (pointer.state === 'version' && prerelease && !shouldMoveLatest(pointer.version, version)) {
+      // `next` past this version is a contradiction, not a lag: something moved it. An older `next` is the
+      // index delay this wait exists for, so it falls through and is re-read like an absent pointer.
       return stop('tag-moved', `${name} is ${pointer.version}, newer than ${version}; that is not a visibility delay`, pointer);
     }
     if (pointer.state === 'version' && !shouldMoveLatest(pointer.version, version)) {

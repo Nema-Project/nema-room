@@ -580,6 +580,22 @@ test('an unparsable tag body is re-read, unlike a denial', async () => {
   assert.deepEqual(state.sleeps, [5_000]);
 });
 
+test('an older npm next is the lag this wait exists for, not a moved pointer', async () => {
+  // rc.2 is published; next still reads rc.1 for one poll, then moves. Nothing is "newer" here.
+  const { result, state, text } = await run({ version: '0.2.0-rc.2', npmReads: ['same'], tagReads: [{ latest: v('0.1.6'), next: v('0.2.0-rc.1') }, { latest: v('0.1.6'), next: v('0.2.0-rc.2') }] });
+  assert.equal(result.ok, true);
+  assert.deepEqual(state.sleeps, [5_000], 'one poll, then the pointer arrives');
+  assert.match(text, /npm 0\.2\.0-rc\.2: published by run 42; npm next -> 0\.2\.0-rc\.2 after 5000ms/);
+});
+
+test('an older npm next that never moves times out as unconfirmed, never as "newer"', async () => {
+  const { result, state, text } = await run({ version: '0.2.0-rc.2', npmReads: ['same'], tagReads: [{ latest: v('0.1.6'), next: v('0.2.0-rc.1') }] });
+  assert.equal(result.ok, false);
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000);
+  assert.doesNotMatch(text, /newer than|tag-moved/);
+  assert.match(text, /npm next still reads 0\.2\.0-rc\.1 after 120000ms/);
+});
+
 test('a dist-tag whose value is not a version stops at once, like a denial', async () => {
   // npmPointers marks a malformed tag value definitive; the wait must not spend the budget on it.
   const { result, state, text } = await run({ npmReads: ['same'], tagReads: [{ latest: { state: 'unknown', version: null, detail: 'npm dist-tag latest holds "banana", not a release version', definitive: true } }] });
