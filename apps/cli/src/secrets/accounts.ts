@@ -3,6 +3,7 @@ import path from "node:path";
 import { accountDir } from "../accounts/store.js";
 import { withAccountsLock } from "../accounts/lock.js";
 import { protectPrivatePath } from "./permissions.js";
+import { fsyncDirectory } from "./durable.js";
 import { readSecretLine, saveSecretLine } from "./file.js";
 
 /**
@@ -31,6 +32,9 @@ export function saveAccountSecret(nemaHome: string, accountId: string, kind: Acc
   const file = accountSecretPath(nemaHome, accountId, kind);
   withAccountsLock(nemaHome, () => {
     saveSecretLine(file, value);
+    // `saveSecretLine` fsyncs the file; the directory entry the rename created lives in the directory, so
+    // without this a power cut can leave the saved credential without its name.
+    fsyncDirectory(dir);
   });
   // saveSecretLine already created the directory 0700; protect it explicitly so a pre-existing
   // directory with wider permissions is tightened rather than trusted.

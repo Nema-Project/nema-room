@@ -3,6 +3,7 @@ import {
   closeSync,
   constants,
   copyFileSync,
+  existsSync,
   fstatSync,
   fsyncSync,
   linkSync,
@@ -17,7 +18,8 @@ import {
 import path from "node:path";
 import type { NemaConfig } from "../config.js";
 import { parseStoredAuth, usableSiwcLogin } from "../direct/authStore.js";
-import { openPrivateFile, privateModeMatches, privateOwnerMatches, protectPrivatePath } from "../secrets/permissions.js";
+import { LockHeldByThisProcessError, LockTimeoutError, withFileLockSync } from "../direct/lock.js";
+import { assertPrivateAcl, openPrivateFile, privateModeMatches, privateOwnerMatches, protectPrivatePath } from "../secrets/permissions.js";
 import { fsyncDirectory } from "../secrets/durable.js";
 import { accountDir } from "./store.js";
 import { hasSymlinkedComponent } from "./paths.js";
@@ -99,6 +101,8 @@ function validateLegacyShape(file: string, mode: number, uid: number): void {
 export function isUsableCredentialFile(file: string, mode: number, uid: number, bytes: Buffer): boolean {
   try {
     validateLegacyShape(file, mode, uid);
+    // POSIX bits say nothing about who can read a file on Windows; the DACL is what has to be private.
+    assertPrivateAcl(file);
   } catch {
     return false;
   }
@@ -196,8 +200,29 @@ export function legacyUnchanged(nemaHome: string, source: LegacyCredential): boo
  * deleted: the credential is still recoverable, and nothing has been lost.
  */
 export function removeLegacyIfUnchanged(nemaHome: string, source: LegacyCredential): boolean {
+  // A SIWC login is refreshed under `<nemaHome>/auth.lock`, and a refresh in flight when the file is
+  // retired would finish by saving the rotated tokens back at the old path: the account copy would keep
+  // the pre-refresh tokens, which may already be spent. Taking the same lock makes the two orders strict,
+  // so the refresh either lands before this removal (and its bytes are re-read below) or waits for it.
+  if (path.basename(source.path) !== "auth.json") return retireLocked(nemaHome, source);
+  try {
+    return withFileLockSync(`${path.dirname(source.path)}/auth.lock`, () => retireLocked(nemaHome, source), {
+      timeoutMs: 20_000,
+      // A refresh running in this same process holds the lock across an await; blocking here would stop
+      // the event loop it needs, so this call backs off and the next materialize finishes the move.
+      whenHeldByThisProcess: "busy",
+    });
+  } catch (e) {
+    if (e instanceof LockTimeoutError || e instanceof LockHeldByThisProcessError) return false;
+    throw e;
+  }
+}
+
+function retireLocked(nemaHome: string, source: LegacyCredential): boolean {
   const claim = `${source.path}.retire-${process.pid}-${randomUUID()}`;
   try {
+    // Re-check under the lock: a refresh that held it until just now may have rotated the file, and the
+    // bytes in the claim are what decide, so the caller gets a truthful "not this one" answer.
     renameSync(source.path, claim);
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
@@ -257,8 +282,15 @@ function restoreClaim(claim: string, target: string): void {
  */
 export function writeCredentialCopy(nemaHome: string, accountId: string, fileName: string, bytes: Buffer): string {
   const dir = accountDir(nemaHome, accountId);
+  const created = !existsSync(dir);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   protectPrivatePath(dir, 0o700);
+  if (created) {
+    // The new directory's own name has to be durable too: a credential inside a directory entry that a power
+    // cut can drop is not a credential the committed account record can be said to reference.
+    fsyncDirectory(dir);
+    fsyncDirectory(path.dirname(dir));
+  }
   const target = path.join(dir, fileName);
   const tmp = `${target}.${process.pid}.${randomUUID()}.tmp`;
   const fd = openSync(tmp, "wx", 0o600);

@@ -2,7 +2,7 @@ import { lstatSync } from "node:fs";
 import path from "node:path";
 import { AuthStore, usableSiwcLogin } from "../direct/authStore.js";
 import { readCodexCliTokens } from "../direct/codexLogin.js";
-import { privateModeMatches, privateOwnerMatches } from "../secrets/permissions.js";
+import { assertPrivateAcl, privateModeMatches, privateOwnerMatches } from "../secrets/permissions.js";
 import { readSecretLine } from "../secrets/file.js";
 import { accountDir } from "./store.js";
 import { hasSymlinkedComponent } from "./paths.js";
@@ -54,11 +54,15 @@ function legacyFiles(nemaHome: string, account: Account): string[] {
   return [file];
 }
 
-/** True when the file is a private, owned, regular file. Symlinks, foreign owners and wider modes fail. */
+/**
+ * True when the file is a private, owned, regular file. Symlinks, foreign owners and wider modes fail, and
+ * on Windows the real DACL is checked: the synthetic mode bits there do not describe who can read it.
+ */
 function privateStat(file: string): boolean {
   const stat = lstatSync(file);
   if (stat.isSymbolicLink() || !stat.isFile()) return false;
   if (!privateModeMatches(stat) || !privateOwnerMatches(stat)) return false;
+  assertPrivateAcl(file);
   return true;
 }
 
@@ -91,7 +95,7 @@ function fileState(file: string): CredentialState {
  * compat account claim connected while an unreadable conflicting credential sits in its directory.
  */
 function foreignCredentialFiles(nemaHome: string, account: Account): string[] {
-  if (account.id === IMPLICIT_ACCOUNT_ID) return [];
+  if (account.id === IMPLICIT_ACCOUNT_ID) return foreignLegacyFiles(nemaHome, account);
   const dir = accountDir(nemaHome, account.id);
   const expected = path.basename(accountCredentialFiles(nemaHome, account)[0] ?? "");
   const foreign: string[] = [];
@@ -108,6 +112,32 @@ function foreignCredentialFiles(nemaHome: string, account: Account): string[] {
   return foreign;
 }
 
+
+/**
+ * The other legacy credential kinds lying beside the synthesized account's own (spec §3.2).
+ *
+ * The synthesized account reads one legacy file, but a user who switched auth mode can leave another kind
+ * behind (`byok-key` next to `auth.json`). Reading that account as connected would hide the ambiguity the
+ * same rule forbids for stored accounts, so the presence of any other kind makes it unusable. The paths are
+ * the legacy paths themselves, checked like every other account path: a link is not a credential here.
+ */
+function foreignLegacyFiles(nemaHome: string, account: Account): string[] {
+  const own = path.basename(accountCredentialFiles(nemaHome, account)[0] ?? "");
+  const foreign: string[] = [];
+  for (const legacyName of ["byok-key", "claude-code-token", "auth.json"]) {
+    if (legacyName === own) continue;
+    const file = path.join(nemaHome, legacyName);
+    if (hasSymlinkedComponent(nemaHome, file)) continue;
+    try {
+      lstatSync(file);
+      foreign.push(legacyName);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw e;
+    }
+  }
+  return foreign;
+}
 
 /** Why the Codex CLI login cannot be used, or null when it can be. */
 function codexLoginProblem(codexHome: string): "missing" | "unusable" | null {

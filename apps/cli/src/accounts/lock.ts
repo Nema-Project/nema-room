@@ -12,6 +12,7 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { assertHomeNotSymlinked, assertNoSymlinkedComponent } from "./paths.js";
 import { protectPrivatePath } from "../secrets/permissions.js";
@@ -63,7 +64,14 @@ export function holdsAccountsLock(nemaHome: string): boolean {
   return heldLocks.has(lockKey(accountsLockPath(nemaHome)));
 }
 
-type LockHolder = { pid: number; at: number; token: string };
+type LockHolder = { pid: number; at: number; token: string; startedAt?: number };
+
+/**
+ * A lock record older than this whose holder cannot be verified (it predates `startedAt`) is treated as
+ * abandoned. Long enough that no real critical section reaches it, short enough that a wedged file is
+ * recoverable in one sitting.
+ */
+const LOCK_MAX_UNVERIFIED_AGE_MS = 10 * 60_000;
 
 /**
  * What a waiter saw when it judged a lock stale: identity and content, both checked before removal.
@@ -78,10 +86,55 @@ function parseLock(raw: string): LockHolder | null {
   try {
     const v = JSON.parse(raw) as Partial<LockHolder>;
     if (typeof v.pid === "number" && Number.isInteger(v.pid) && v.pid > 0 && typeof v.token === "string" && v.token !== "") {
-      return { pid: v.pid, at: typeof v.at === "number" ? v.at : 0, token: v.token };
+      return {
+        pid: v.pid,
+        at: typeof v.at === "number" ? v.at : 0,
+        token: v.token,
+        ...(typeof v.startedAt === "number" ? { startedAt: v.startedAt } : {}),
+      };
     }
   } catch {
     /* empty, or the holder died before writing its record */
+  }
+  return null;
+}
+
+/**
+ * True when the process currently running as `pid` is the one that wrote a holder record: a reused pid
+ * belongs to a process started later than the record.
+ *
+ * The start time comes from the platform's own bookkeeping (`/proc/<pid>/stat` on Linux, `ps -o lstart` on
+ * macOS); where it cannot be read the answer is "assume it is not the same process", which only makes the
+ * lock reclaimable earlier, never later.
+ */
+function sameProcessStartedAt(pid: number, startedAt: number): boolean {
+  const actual = processStartMs(pid);
+  if (actual === null) return false;
+  // Whole-second resolution on most platforms; allow for that and for clock rounding.
+  return Math.abs(actual - startedAt) < 2_000;
+}
+
+function processStartMs(pid: number): number | null {
+  try {
+    if (process.platform === "linux") {
+      // Field 22 of /proc/<pid>/stat is the start time in clock ticks since boot. Split after the last ")"
+      // so a process name containing spaces or parentheses cannot shift the fields.
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      const ticks = Number(fields[19]);
+      if (!Number.isFinite(ticks)) return null;
+      const uptime = Number(readFileSync("/proc/uptime", "utf8").split(" ")[0]);
+      if (!Number.isFinite(uptime)) return null;
+      const hz = 100; // USER_HZ: 100 on every Linux architecture Node supports
+      return Date.now() - (uptime - ticks / hz) * 1000;
+    }
+    if (process.platform === "darwin") {
+      const out = execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: 2_000 }).trim();
+      const ms = Date.parse(out);
+      return Number.isFinite(ms) ? ms : null;
+    }
+  } catch {
+    /* the process is gone, or the platform does not expose this */
   }
   return null;
 }
@@ -177,44 +230,82 @@ function ageMs(lockPath: string): number | null {
 }
 
 /**
- * True when this observed lock may be removed. A readable lock with a live holder is never stale. An
- * unreadable one is stale only once it is old enough that its creator cannot still be writing it: that
+ * True when this observed lock may be removed.
+ *
+ * A readable lock with a live holder is normally not stale, but pids are reused: after a crash the recorded
+ * pid can belong to an unrelated process, and "the pid is alive" would then block every writer forever.
+ * The holder record therefore carries the process start time (`startedAt`), and a lock whose pid is alive
+ * *and* whose record belongs to that same process is the only one that counts as held. Records without it
+ * (written by an older build) fall back to a max-age rule so they cannot wedge the file either.
+ *
+ * An unreadable lock is stale only once it is old enough that its creator cannot still be writing it: that
  * is what keeps a lock that is merely initializing from being taken over.
  */
 function isStale(snapshot: LockSnapshot, lockPath: string): boolean {
   const holder = parseLock(snapshot.raw);
   if (holder === null) return (ageMs(lockPath) ?? 0) >= LOCK_PARTIAL_STALE_MS;
   if (holder.pid === process.pid) return !heldLocks.has(lockKey(lockPath)); // an earlier process with our pid
-  return !pidAlive(holder.pid);
+  if (!pidAlive(holder.pid)) return true;
+  if (holder.startedAt !== undefined) return !sameProcessStartedAt(holder.pid, holder.startedAt);
+  return Date.now() - holder.at >= LOCK_MAX_UNVERIFIED_AGE_MS;
 }
+
+/** Our own takeover claim: its token, so a claim that was expired and taken over is not ours any more. */
+type Claim = { path: string; token: string };
 
 /**
  * Enters the one-at-a-time takeover claim. `O_EXCL` makes this exclusive across processes, so at most one
  * waiter can be inside a takeover of this lock at any moment. A claim left behind by a taker that died is
  * removed once it is old enough, so a crashed takeover cannot wedge the file forever.
+ *
+ * The claim carries a token because it can be expired under us: a taker that pauses longer than
+ * `LOCK_CLAIM_STALE_MS` (a stopped process, a suspended laptop) loses the claim, and must then not act on
+ * the decision it made while it thought it was alone. `stillOwnsClaim` is the check for that.
  */
-function enterTakeoverClaim(claimPath: string): boolean {
+function enterTakeoverClaim(claimPath: string): Claim | null {
+  const token = randomUUID();
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const fd = openSync(claimPath, "wx", 0o600);
       try {
-        writeSync(fd, JSON.stringify({ pid: process.pid, at: Date.now() }));
+        writeSync(fd, JSON.stringify({ pid: process.pid, at: Date.now(), token }));
         fsyncSync(fd);
       } finally {
         closeSync(fd);
       }
-      return true;
+      return { path: claimPath, token };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
     }
-    if ((ageMs(claimPath) ?? 0) < LOCK_CLAIM_STALE_MS) return false;
+    if (!claimIsStale(claimPath)) return null;
     try {
       unlinkSync(claimPath);
     } catch {
       /* a peer removed the abandoned claim first */
     }
   }
-  return false;
+  return null;
+}
+
+/** True when the claim file is old enough that its owner cannot still be working, or has exited. */
+function claimIsStale(claimPath: string): boolean {
+  if ((ageMs(claimPath) ?? 0) >= LOCK_CLAIM_STALE_MS) return true;
+  try {
+    const holder = parseLock(readFileSync(claimPath, "utf8"));
+    // A claim whose process is gone is abandoned no matter how young it is.
+    return holder !== null && !pidAlive(holder.pid);
+  } catch {
+    return false;
+  }
+}
+
+/** True while the claim file still holds our token: a claim we lost is not one we may act under. */
+function stillOwnsClaim(claim: Claim): boolean {
+  try {
+    return parseLock(readFileSync(claim.path, "utf8"))?.token === claim.token;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -226,8 +317,8 @@ function enterTakeoverClaim(claimPath: string): boolean {
  * before anything is removed, and while the claim is held no peer can vacate and re-create the path.
  */
 export function takeOverStaleLock(lockPath: string, observed: LockSnapshot): boolean {
-  const claimPath = `${lockPath}.takeover`;
-  if (!enterTakeoverClaim(claimPath)) return false;
+  const claim = enterTakeoverClaim(`${lockPath}.takeover`);
+  if (claim === null) return false;
   try {
     let current: LockSnapshot | null;
     try {
@@ -239,6 +330,9 @@ export function takeOverStaleLock(lockPath: string, observed: LockSnapshot): boo
     if (current.dev !== observed.dev || current.ino !== observed.ino) return false; // replaced: not ours
     if (current.mtimeNs !== observed.mtimeNs || current.size !== observed.size) return false; // re-created
     if (current.raw !== observed.raw) return false; // filled in since the judgement: a live holder
+    // The claim can be expired and taken over by another waiter while we were paused. Acting under a claim
+    // we no longer hold is exactly how a lock created by that waiter would be deleted.
+    if (!stillOwnsClaim(claim)) return false;
     try {
       unlinkSync(lockPath);
     } catch (e) {
@@ -247,10 +341,13 @@ export function takeOverStaleLock(lockPath: string, observed: LockSnapshot): boo
     }
     return true;
   } finally {
-    try {
-      unlinkSync(claimPath);
-    } catch {
-      /* a claim we cannot remove expires: it is only an age-limited gate */
+    // Only remove the claim if it is still ours: deleting a peer's live claim would let a third waiter in.
+    if (stillOwnsClaim(claim)) {
+      try {
+        unlinkSync(claim.path);
+      } catch {
+        /* a claim we cannot remove expires: it is only an age-limited gate */
+      }
     }
   }
 }
@@ -269,6 +366,13 @@ export function snapshotLockForTest(lockPath: string): LockSnapshot | null {
   return snapshotLock(lockPath);
 }
 
+/** This process's start time, cached: it is asked for on every lock record written. */
+let ownStartCache: number | null | undefined;
+function ownStartMs(): number | undefined {
+  if (ownStartCache === undefined) ownStartCache = processStartMs(process.pid);
+  return ownStartCache ?? undefined;
+}
+
 function acquireAccountsLock(nemaHome: string, waitMs: number): { lockPath: string; token: string } {
   // Before any mkdir/chmod/write: a linked home would redirect all of them onto someone else's tree.
   assertHomeNotSymlinked(nemaHome);
@@ -282,7 +386,7 @@ function acquireAccountsLock(nemaHome: string, waitMs: number): { lockPath: stri
   assertNoSymlinkedComponent(nemaHome, lockPath);
 
   const token = randomUUID();
-  const body = JSON.stringify({ pid: process.pid, at: Date.now(), token });
+  const body = JSON.stringify({ pid: process.pid, at: Date.now(), token, startedAt: ownStartMs() });
   const deadline = Date.now() + waitMs;
   for (;;) {
     if (createLockFile(lockPath, body)) {

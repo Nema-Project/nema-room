@@ -20,6 +20,7 @@ import { z } from "zod";
 import { jwtExp } from "./jwt.js";
 import { LockTimeoutError, withFileLock, type LockOptions } from "./lock.js";
 import { openPrivateFile, privateModeMatches, protectPrivatePath } from "../secrets/permissions.js";
+import { hasSymlinkedComponent } from "../accounts/paths.js";
 
 // Nema's own direct-mode login (`<nemaHome>/auth.json`). Never reads or links ~/.codex/auth.json.
 
@@ -150,6 +151,13 @@ export class AuthStore {
   ) {
     // An account keeps its own login under `secrets/accounts/<id>/` (spec 2026-10-31 §3.1), so two
     // accounts refresh without sharing a lock. Without a baseDir this is exactly the old layout.
+    //
+    // A baseDir that is (or passes through) a symlink is refused: saving would create and chmod the link
+    // target and write the login outside the account layout, which is the one thing the account directory
+    // checks exist to prevent.
+    if (opts.baseDir !== undefined && hasSymlinkedComponent(opts.baseDir, opts.baseDir)) {
+      throw new Error("账户目录是符号链接，已拒绝使用该账户目录。");
+    }
     this.dir = opts.baseDir ?? nemaHome;
     this.file = path.join(this.dir, "auth.json");
     this.lockPath = path.join(this.dir, "auth.lock");

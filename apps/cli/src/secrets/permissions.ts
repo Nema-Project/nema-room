@@ -74,6 +74,17 @@ export function privateModeMatches(st: { mode: number }, platform: NodeJS.Platfo
   return platform === "win32" || (st.mode & 0o777) === 0o600;
 }
 
+/**
+ * Verify the platform's real access control for a path on its own, without opening it.
+ *
+ * POSIX mode bits are checked by the callers directly; on Windows the synthetic mode bits carry no
+ * meaning and the DACL is what decides, so anything that accepts a credential file *before* reading it
+ * (a migration deciding whether a copy is private, a login it is about to trust) has to ask here.
+ */
+export function assertPrivateAcl(file: string): void {
+  if (process.platform === "win32") windowsAcl(file, "check");
+}
+
 /** Refuse links on all platforms, and verify the Windows DACL and opened file identity. */
 export function openPrivateFile(file: string): number {
   const before = lstatSync(file);

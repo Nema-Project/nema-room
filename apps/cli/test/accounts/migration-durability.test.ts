@@ -57,15 +57,20 @@ describe("a copied credential is durable before the legacy file goes", () => {
     const dir = join(home, "secrets", "accounts", account.id);
 
     const fileSync = fsyncs.findIndex((p) => p.startsWith(join(dir, "key.")) || p === join(dir, "key"));
-    const dirSync = fsyncs.findIndex((p) => p === dir);
+    // The account directory itself is created before the copy lands, so its own entry has to be durable
+    // before the record can point into it; the copy's entry is synced again after the rename.
+    const firstDirSync = fsyncs.indexOf(dir);
+    const lastDirSync = fsyncs.lastIndexOf(dir);
     const recordSync = fsyncs.findIndex((p) => p.startsWith(`${accountsPath(home)}.`));
 
     expect(fileSync).toBeGreaterThanOrEqual(0);
-    expect(dirSync).toBeGreaterThanOrEqual(0);
+    expect(firstDirSync).toBeGreaterThanOrEqual(0);
     expect(recordSync).toBeGreaterThanOrEqual(0);
-    // Order is the guarantee: file bytes, then the directory entry, then the record that points at them.
-    expect(fileSync).toBeLessThan(dirSync);
-    expect(dirSync).toBeLessThan(recordSync);
+    // Order is the guarantee: the directory exists durably, then the bytes, then the entry, then the record
+    // that points at them. Nothing after the record may depend on a rename that is still only in cache.
+    expect(firstDirSync).toBeLessThan(fileSync);
+    expect(lastDirSync).toBeGreaterThan(fileSync);
+    expect(lastDirSync).toBeLessThan(recordSync);
     // Nothing was lost either way.
     expect(readFileSync(join(dir, "key"), "utf8")).toBe("test-not-a-real-key-0000");
   });
