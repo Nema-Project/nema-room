@@ -342,7 +342,8 @@ export function applyProjection(account: Account, patch: Partial<Account>): Acco
  *
  * The read-modify-write runs under the accounts lock (`updateAccounts`), so a peer's edit between our
  * check and our write is never replaced by a snapshot taken before it. A file that turned unusable in
- * that window throws instead of being overwritten.
+ * that window throws instead of being overwritten: silently reporting "nothing to do" would leave the
+ * settings page showing a projection that was never saved.
  */
 export function reconcileAccountProjection(nemaHome: string, config: NemaConfig): boolean {
   const read = readAccounts(nemaHome);
