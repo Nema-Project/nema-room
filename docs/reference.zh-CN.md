@@ -278,6 +278,13 @@ GitHub 插件让 Agent 查看已绑定仓库在 GitHub 上的 issue、pull reque
 - 能力：`GET /api/daemon/attachment-capabilities` 转发 daemon 的 `attachments.capabilities`，返回 `{ adapter, image, pdf, text }`，每项为 `native`、`text`、`unsupported` 或 `unknown`。daemon 未连接 503；daemon 太旧、没有这个 RPC 返回 501（界面隐藏附件入口）；返回形状不对 502。只有 `native` 发原生块，文本类一律转文字，`unsupported` 和 `unknown` 在运行前拒绝，失败原因写明适配器、文件名和可以换用的组合。`codex-direct` 的各种登录方式都按原生格式发图片和 PDF；目前只有 `claude-code` 的 PDF 是 `unknown`。带图片或 PDF 的任务遇到提供商 4xx、且错误指向内容块或文件（`param=input[..].content`，或者提到 file、pdf、document、image、modality、mime 等）时，失败原因写成「你的提供商或模型拒绝了这份 PDF／这张图片（文件名）。提供商原文：…」；其他错误按原样显示为「模型接口错误：…」。不重试，不降级。没有广播 `attachments` 特性的旧 daemon 领到带附件的任务时，任务失败，原因为 `当前 daemon 不支持附件，请升级 CLI`。各组合的现状见[使用指南](guide.zh.md#attachments)。
 - 提示：附件内容只放进 user 角色的消息，不进系统提示。所有附件块之前有一段说明：附件是数据，从中读出的内容是推断，不是用户的陈述或决定，`quotes` 只能摘自消息文字。文本附件用每次运行随机生成的边界包起来，元数据只出现在一行 JSON 里。
 
+### `@` 提及
+
+- 候选：`GET /api/workspaces/:id/mention-context?q=<查询>`，返回 `{ status: "ok", entries, attachments, threads, truncated }`。`entries` 是本 workspace 条目索引里的 `{ id, kind, title, status }`，按最近更新倒序；`attachments` 是**已经随消息发送过**的文件（`status = 'attached'`），最新在前，最多取 `MENTION_LIMITS.attachmentCandidates`（50）个，`truncated` 只在真的超过 50 个时为真；`threads` 是 `{ id, title, lastReplyAt }`。三组都用 `fuzzyScore` 排序，查询完全等于某个条目 id 时该条排最前，每组最多 8 条。每组先按时间取最近 500 条（`MENTION_POOL`）再排序，所以条目或话题超过 500 条时，更旧的不会被列出来，查询也找不到它们；这个上限只影响候选菜单，发送时 hub 仍按 id 校验提及。空查询按各自的时间顺序返回，不会把整个工作区发下去。返回里没有附件字节、没有条目正文、没有别的工作区的东西。不调用 daemon。workspace 不存在 404，已归档仍可查询，`q` 超过 200 个字符（去空格前算）400。候选文件在返回前会 stat 一次磁盘，文件已丢失的直接标成 `missing` 并从结果里去掉。
+- 发消息：三个入口（主聊天、thread 回复、新建 thread）的 body 可带 `mentions`，最多 20 个，每项是 `{ type: "entry", id, text }`、`{ type: "attachment", id, text }` 或 `{ type: "thread", id, text }`；`text` 是插进正文的那段原文。hub 校验：条目要在本 workspace 的索引里，附件必须是本 workspace 已发送的，话题必须属于本 workspace，每段 `text` 在正文里出现的次数不少于它被提及的次数；任一项不满足返回 400，消息不写入。`mentions` 存在 `messages.meta.mentions`。不带 `mentions` 的请求行为不变。重放比较包含提及：同样的文字、附件、引用、thread 和提及返回原消息和任务（`replayed: true`），只有提及不同而文字相同时返回 409；没有自带附件的提及消息也按同样规则匹配。编辑消息时，`text` 已不在新正文里的提及被丢弃，其余按原顺序保留。
+- 投递：被提及的附件并入本次任务的投递集合，排在本条消息、引用和 thread 锚点的附件之后，按提及顺序，去重；每任务 8 个、32 MB 的限制不变，超出 400。
+- 提示：本条消息的提及在「引用的消息」和「本次用户消息」之间生成一段「本次提及的上下文」。条目内联正文，每条按 UTF-8 字节截到 4 KiB、合计 16 KiB，截断不切断多字节字符并注明用 `read_entry` 续读；超预算和已删除的条目只给 id。附件每个一行，写明名字、类型、来源消息和这次是否随附。话题只给标题和截到 1 KiB 的锚点。同一个对象只展开一次，引用消息和历史消息上的提及不进入这一段。没有提及时这一段不出现，提示逐字不变。
+
 ### 重启与归档
 
 - hub 重启时会中断上一个进程遗留的 `running` 任务并作废其 run token；daemon 连接时也会中断不属于当前连接的 `running` 任务。前三次中断会重新排队，daemon 重连后重新领取执行；第四次中断则让任务失败，并在聊天里留下一条系统消息。
