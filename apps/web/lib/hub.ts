@@ -1,4 +1,4 @@
-import { AttachmentCapabilitiesSchema, type AttachmentCapabilities, type AttachmentView, type ExtensionRecord, type SkillDiscovery, type SkillInstallJob, type SkillSourcePreview } from "@nema/shared";
+import { AttachmentCapabilitiesSchema, type AttachmentCapabilities, type AttachmentView, type ExtensionRecord, type MessageMention, type SkillDiscovery, type SkillInstallJob, type SkillSourcePreview } from "@nema/shared";
 import type { McpConfig, McpConnection } from "@nema/shared";
 import type {
   EntryListItem,
@@ -82,10 +82,10 @@ export const archiveWorkspace = (id: string, archived: boolean) => request<Works
 export const deleteWorkspace = (id: string) => request<void>(w(id), { method: "DELETE" });
 export const listMessages = (id: string) => request<Message[]>(`${w(id)}/messages`);
 export const getMessage = (id: string, messageId: string) => request<Message>(`${w(id)}/messages/${encodeURIComponent(messageId)}`);
-export const postMessage = (id: string, content: string, quoteMessageId?: string, attachmentIds?: string[]) =>
+export const postMessage = (id: string, content: string, quoteMessageId?: string, attachmentIds?: string[], mentions?: MessageMention[]) =>
   request<{ message: Message; task: Task }>(`${w(id)}/messages`, {
     method: "POST",
-    body: messageBody(content, quoteMessageId, attachmentIds),
+    body: messageBody(content, quoteMessageId, attachmentIds, mentions),
   });
 export const editMessage = (id: string, messageId: string, content: string) =>
   request<{ message: Message; task: Task }>(`${w(id)}/messages/${encodeURIComponent(messageId)}`, { method: "PATCH", body: { content } });
@@ -94,8 +94,8 @@ export const listMessageVersions = (id: string, messageId: string) =>
 export const searchMessages = (id: string, q: string) => request<Message[]>(`${w(id)}/messages/search?q=${encodeURIComponent(q)}`);
 export const listThreads = (id: string) => request<import("./types").Thread[]>(`${w(id)}/threads`);
 export const getThreadMessages = (id: string, threadId: string) => request<{ thread: import("./types").Thread; anchor: Message; messages: Message[] }>(`${w(id)}/threads/${encodeURIComponent(threadId)}/messages`);
-export const postThreadMessage = (id: string, threadId: string, content: string, quoteMessageId?: string, attachmentIds?: string[]) => request<{ message: Message; task: Task }>(`${w(id)}/threads/${encodeURIComponent(threadId)}/messages`, { method: "POST", body: messageBody(content, quoteMessageId, attachmentIds) });
-export const createThread = (id: string, content: string, quoteMessageId?: string, attachmentIds?: string[]) => request<{ message: Message; thread: import("./types").Thread; task: Task }>(`${w(id)}/threads`, { method: "POST", body: messageBody(content, quoteMessageId, attachmentIds) });
+export const postThreadMessage = (id: string, threadId: string, content: string, quoteMessageId?: string, attachmentIds?: string[], mentions?: MessageMention[]) => request<{ message: Message; task: Task }>(`${w(id)}/threads/${encodeURIComponent(threadId)}/messages`, { method: "POST", body: messageBody(content, quoteMessageId, attachmentIds, mentions) });
+export const createThread = (id: string, content: string, quoteMessageId?: string, attachmentIds?: string[], mentions?: MessageMention[]) => request<{ message: Message; thread: import("./types").Thread; task: Task }>(`${w(id)}/threads`, { method: "POST", body: messageBody(content, quoteMessageId, attachmentIds, mentions) });
 export const markThreadRead = (id: string, threadId: string, throughSeq: number) => request<void>(`${w(id)}/threads/${encodeURIComponent(threadId)}/read`, { method: "POST", body: { throughSeq } });
 export const nextAttention = (id: string) => request<{ threadId: string } | null>(`${w(id)}/attention/next`);
 export const withdrawEntry = (id: string, entryId: string) => request<Entry>(`${e(id, entryId)}/withdraw`, { method: "POST", body: {} });
@@ -161,6 +161,9 @@ export const bindRepo = (id: string, body: { path: string; label: string; mainBr
 export const updateRepo = (id: string, repoId: string, patch: { label?: string; mainBranch?: string; trustSkills?: boolean }) =>
   request<Repo>(`${w(id)}/repos/${encodeURIComponent(repoId)}`, { method: "PATCH", body: patch });
 /** Skills the composer's `/` menu can offer; `supported: false` when the daemon is too old to say. */
+/** What the `@` menu can offer right now: this workspace's entries, already-sent files, and topics. */
+export const searchMentionContext = (id: string, q: string) =>
+  request<import("./mentions").MentionContextResponse>(`${w(id)}/mention-context?q=${encodeURIComponent(q)}`);
 export const listSkills = (id: string) =>
   request<{ supported: boolean; skills: Array<{ id: string; name: string; description: string; command: string; invocation: string; repoId: string | null }> }>(`${w(id)}/skills`);
 export const unbindRepo = (id: string, repoId: string) => request<void>(`${w(id)}/repos/${encodeURIComponent(repoId)}`, { method: "DELETE" });
@@ -183,11 +186,12 @@ export const confirmWorkPackageTask = (id: string, wid: string, n: number) =>
 // Chat attachments (#104). Uploads are raw bytes, not JSON, so they bypass request().
 
 /** A message body: the quote and the attachment ids appear only when there are some. */
-function messageBody(content: string, quoteMessageId?: string, attachmentIds?: string[]) {
+function messageBody(content: string, quoteMessageId?: string, attachmentIds?: string[], mentions?: MessageMention[]) {
   return {
     content,
     ...(quoteMessageId ? { quoteMessageId } : {}),
     ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
+    ...(mentions && mentions.length > 0 ? { mentions } : {}),
   };
 }
 
