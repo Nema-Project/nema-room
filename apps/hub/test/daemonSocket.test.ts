@@ -1116,6 +1116,51 @@ describe("daemon socket", () => {
   });
 });
 
+describe("mentions in the task prompt", () => {
+  test("a mentioned entry is inlined between the quoted message and this user message, and a mentioned file is delivered", async () => {
+    const store = new KnowledgeStore(repoPath(dataDir, wsA));
+    const { entry } = await store.upsert(
+      { kind: "decision", title: "发布流程", body: "先灰度再全量。", reason: "r", sourceMessages: [], basis: "decided" } as never,
+      { author: "user" },
+    );
+    await indexEntry(db, wsA, entry);
+    const file = await uploadPng(db, dataDir, wsA, png(70), "截图.png");
+    const earlier = await postUserMessage(db, wsA, "看这张", { attachmentIds: [file.id] });
+    await db.query("update tasks set status = 'done' where id = $1", [earlier.task.id]);
+
+    const content = `按 [${entry.id}] 来，再看 \`附件：截图.png\``;
+    const m = await postUserMessage(db, wsA, content, {
+      mentions: [
+        { type: "entry", id: entry.id, text: `[${entry.id}]` },
+        { type: "attachment", id: file.id, text: "`附件：截图.png`" },
+      ],
+    });
+    const c = await connect(TOKEN, ["codex-direct"], { features: ["attachments"] });
+    expect((await c.next()).type).toBe("welcome");
+    const a = await c.next("task.assign");
+    expect(a.taskId).toBe(m.task.id);
+    expect(a.prompt).toContain(`## 条目 [${entry.id}] 发布流程（decision，active）`);
+    expect(a.prompt).toContain("先灰度再全量。");
+    expect(a.prompt).toContain("## 附件「截图.png」（image，message ");
+    expect(a.prompt).toContain("已随本次任务投递");
+    const mentionsAt = a.prompt.indexOf("# 本次提及的上下文");
+    expect(mentionsAt).toBeGreaterThan(-1);
+    expect(a.prompt.indexOf("# 本次用户消息")).toBeGreaterThan(mentionsAt);
+    // The mentioned file really is in the delivery set.
+    expect(a.attachments?.map((x: { id: string }) => x.id)).toContain(file.id);
+    void store;
+  });
+
+  test("a message without mentions has no mention section at all", async () => {
+    const m = await postUserMessage(db, wsA, "普通消息");
+    const c = await connect();
+    expect((await c.next("welcome"))).toBeTruthy();
+    const a = await c.next("task.assign");
+    expect(a.taskId).toBe(m.task.id);
+    expect(a.prompt).not.toContain("# 本次提及的上下文");
+  });
+});
+
 describe("attachments in task.assign", () => {
   test("a daemon with the attachments feature gets the delivery set, each a valid AttachmentRef", async () => {
     const quotedFile = await uploadPng(db, dataDir, wsA, png(80), "old.png");
