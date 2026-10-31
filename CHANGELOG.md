@@ -4,6 +4,22 @@ Version sections on main may describe release preparation. A version heading and
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-01
+
+### Changed
+
+- Release preparation is safe to interrupt and cannot run twice at once. `npm run release:cut` and `npm run release:stamp` now share one repository-root lock (`.nema-release.lock`): a second run of either exits non-zero and names the process holding it, so one version can no longer produce two changelog sections or delete a shared fragment twice. Before writing `CHANGELOG.md`, `release:cut` records what it will delete in `.nema-release-cut.json`, so a cut interrupted after the write is finished by rerunning the same command: it deletes the remaining fragments and removes the journal instead of refusing with "already has a section", writes nothing twice, and keeps any fragment edited after the interruption for the next release. Every cut is recorded, including one that consumes no fragments, so a cut interrupted after its write is recoverable in that case too. The record is replaced atomically, so an interrupted run cannot leave a half-written journal that blocks recovery or destroy the record of an earlier run.
+
+### Fixed
+
+- Account credential files are now only trusted when they are private *and* owned by the user running Nema: a file another user happens to leave at mode 0600 no longer counts as a credential, and a symlink anywhere from `~/.nema` itself down to an account's directory is refused for reading, writing and deleting rather than followed. A key or token file that is empty, holds more than one line or contains control characters now shows as unusable instead of connected, and a saved Codex (compat) login that Nema cannot read shows as unusable instead of missing.
+- Opening an account's settings no longer rewrites `~/.nema/accounts.json`: the default account's projection from `config.json` is computed in memory and only saved when you actually change an account, so a machine that never edits accounts keeps exactly the files it had. Moving the old single key into an account is now a copy-then-delete that finishes on the next attempt if it is interrupted, and two Nema processes editing accounts can no longer drop each other's account.
+- A name pasted into the account form that looks like a key is rejected without Nema repeating it back in the error, so a pasted credential cannot end up in a message you copy or a log line.
+- In compat mode `~/.codex/auth.json` is refused unless it is mode 0600 and owned by the user running Nema; Nema reports it as "凭证文件不可用（权限/符号链接/损坏）", and `chmod 600 ~/.codex/auth.json` (or running `codex login` again) is what fixes it. This matters because Codex CLI only applies 0600 when it *creates* that file, so one left at 0644 stays world-readable through every rewrite.
+- An account's `createdAt` now accepts an ISO 8601 timestamp with a numeric offset such as `2026-10-31T09:00:00+09:00`, not only one ending in `Z`: a hand-edited or tool-written `~/.nema/accounts.json` no longer reads as corrupt, which had made every account disappear from the app while the data was still on disk.
+
+- `release-promote` no longer gives up when the npm registry has not indexed a just-published version yet. After the publish run reports success it re-reads the exact version and the expected `latest` (or prerelease `next`) dist-tag for up to two minutes, then continues the promotion, so a maintainer no longer has to re-run the job because of registry lag (v0.2.0's first promote attempt failed that way and a rerun succeeded). A tarball with another integrity, a 401/403, or an answer that cannot be interpreted still stops immediately. When the budget runs out the run still exits non-zero without moving any later pointer, and its summary says whether the registry confirmed the version is not there, whether the version is there but its channel pointer never moved, or whether that could not be determined.
+
 ## [0.2.0] - 2026-10-31
 
 ### Added
