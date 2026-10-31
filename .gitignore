@@ -11,6 +11,7 @@ dist-npm/
 coverage/
 .nema-release.lock
 .nema-release-cut.json
+.nema-release-cut.json.tmp
 *.log
 *.tsbuildinfo
 

@@ -589,6 +589,89 @@ test('a zero-fragment cut whose write fails keeps its journal for the rerun', as
   assert.equal(await gone(journal), true);
 });
 
+test('a pending journal is intact while the next record is written, and survives a failed rewrite', async (t) => {
+  // A record from a run whose changelog write never landed: the hash does not match the file, and the
+  // file has no section for the version, so this run goes on to record itself and replace it.
+  const stale = `${JSON.stringify({
+    schemaVersion: 1,
+    version: '0.2.0',
+    date: '2026-10-28',
+    pid: 1,
+    createdAt: '2026-10-28T00:00:00.000Z',
+    changelogSha256: '0'.repeat(64),
+    fragments: [{ name: '70.added.md', sha256: '1'.repeat(64) }],
+  }, null, 2)}\n`;
+  const file = await tempChangelog(t, sample);
+  const journal = cutJournalPath(file);
+  await writeFile(journal, stale);
+
+  // At the moment the new record is written, the pending one must still be whole on disk:
+  // a direct write would have truncated it to zero bytes by now.
+  await cutChangelogFile(file, '0.2.0', '2026-10-28', {
+    openJournalFile: async (target, flags) => {
+      assert.equal(target, `${journal}.tmp`, 'the record is written beside the journal, not over it');
+      assert.equal(flags, 'w');
+      assert.equal(await readFile(journal, 'utf8'), stale, 'the pending record is not truncated before its replacement exists');
+      const { open } = await import('node:fs/promises');
+      return open(target, flags);
+    },
+  });
+  assert.equal(await gone(journal), true, 'the successful cut clears its own record');
+  assert.equal(await gone(`${journal}.tmp`), true, 'no scratch file is left behind');
+  assert.equal(await readFile(file, 'utf8'), cutSample);
+
+  // The same run failing while recording itself must leave the pending record exactly as it was.
+  const failing = await tempChangelog(t, sample);
+  const failingJournal = cutJournalPath(failing);
+  await writeFile(failingJournal, stale);
+  await assert.rejects(
+    cutChangelogFile(failing, '0.2.0', '2026-10-28', {
+      openJournalFile: async () => { throw new Error('no space for the scratch file'); },
+    }),
+    /no space for the scratch file/,
+  );
+  assert.equal(await readFile(failingJournal, 'utf8'), stale, 'the pending record survives a failed rewrite whole');
+  assert.equal(await gone(`${failingJournal}.tmp`), true, 'a scratch file that failed is cleaned up');
+  assert.equal(await readFile(failing, 'utf8'), sample, 'no changelog was written');
+});
+
+test('the journal appears whole, by rename, before the changelog is written', async (t) => {
+  const file = await tempChangelog(t, sample);
+  const journal = cutJournalPath(file);
+  let seenInsideWrite = null;
+  let scratchInsideWrite = null;
+  await cutChangelogFile(file, '0.2.0', '2026-10-28', {
+    // Runs after the record is in place and before the changelog write, which is the window a rerun
+    // depends on: the record has to be readable there, and it has to be the whole record.
+    writeFile: async (target, text) => {
+      seenInsideWrite = JSON.parse(await readFile(journal, 'utf8')).version;
+      scratchInsideWrite = !(await gone(`${journal}.tmp`));
+      await writeFile(target, text);
+    },
+  });
+  assert.equal(seenInsideWrite, '0.2.0');
+  assert.equal(scratchInsideWrite, false, 'the scratch file is renamed onto the journal, not left beside it');
+});
+
+test('a journal torn in a direct write is unreadable and blocks the rerun it exists for', async (t) => {
+  // The shape this file would be left in by a crash inside a direct write: this is the failure the
+  // atomic replacement prevents, and the read side deliberately reports it instead of half-parsing it.
+  const file = await tempChangelog(t, sample);
+  const journal = cutJournalPath(file);
+  const complete = `${JSON.stringify({
+    schemaVersion: 1,
+    version: '0.2.0',
+    date: '2026-10-28',
+    pid: 1,
+    createdAt: '2026-10-28T00:00:00.000Z',
+    changelogSha256: '0'.repeat(64),
+    fragments: [],
+  }, null, 2)}\n`;
+  await writeFile(journal, complete.slice(0, 40));
+  await assert.rejects(cutChangelogFile(file, '0.2.0', '2026-10-28'), /is not readable/);
+  assert.equal(await readFile(file, 'utf8'), sample);
+});
+
 test('a pending journal does not outlive a later cut that had no fragments to delete', async (t) => {
   const file = await tempChangelog(t, emptyUnreleased);
   const fragment = await writeFragment(file, '70.added.md', '- Fragment added.\n');

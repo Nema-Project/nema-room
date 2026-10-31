@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { open, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { withReleaseLock } from './release-lock.mjs';
@@ -278,6 +278,38 @@ async function removeIfPresent(target) {
 }
 
 /**
+ * Replace the journal with one complete record, or leave it exactly as it was.
+ *
+ * The record is written to a scratch file beside the journal, flushed, and only then renamed over it,
+ * because a rename within one directory is atomic: a reader sees the previous record or the whole new
+ * one, never a truncated one, and a crash during the write cannot destroy a pending record this run
+ * was about to replace. A direct write to the journal has neither property — it truncates a pending
+ * record before the replacement exists, and a torn write leaves JSON that `readJournal` refuses as
+ * `is not readable`, which would block the very rerun the journal exists to enable.
+ *
+ * The file is synced so the record survives the process, not just the system call. The directory is
+ * not synced: that only matters when the machine itself stops, which is outside what this recovers.
+ */
+async function writeJournalAtomically(journal, record, options) {
+  const scratch = `${journal}.tmp`;
+  const openFile = options.openJournalFile ?? open;
+  try {
+    const handle = await openFile(scratch, 'w');
+    try {
+      await handle.writeFile(`${JSON.stringify(record, null, 2)}\n`);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(scratch, journal);
+  } catch (error) {
+    // The cut did not record itself, so the scratch must not be mistaken for one later.
+    await removeIfPresent(scratch).catch(() => {});
+    throw error;
+  }
+}
+
+/**
  * Compose `changelog.d` fragments into `[Unreleased]`, then cut, under the shared release lock.
  * A journal records the intended deletions before the changelog write, so a cut interrupted after
  * that write is finished by a rerun instead of being refused as a duplicate section. Every cut
@@ -336,7 +368,7 @@ async function cutLocked(file, version, date, options) {
     changelogSha256: sha256(next),
     fragments: fragments.map((fragment) => ({ name: fragment.name, sha256: sha256(fragment.raw) })),
   };
-  await writeFile(journal, `${JSON.stringify(record, null, 2)}\n`);
+  await writeJournalAtomically(journal, record, options);
   await write(file, next);
   if (options.afterWrite) await options.afterWrite();
   for (const fragment of fragments) await unlink(fragment.path);
