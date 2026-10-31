@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { writePrivateFile } from "../nativePermissions.js";
 import { materializeImplicit, syncDefaultAccountProjection, applyProjection } from "../../src/accounts/implicit.js";
 import { accountCredentialFiles, accountCredentialState } from "../../src/accounts/credentials.js";
 import { accountDir, accountsPath, readAccounts, updateAccounts, writeAccounts } from "../../src/accounts/store.js";
@@ -40,10 +41,10 @@ describe("a credential never reaches a message, a log line or a stored record", 
     };
     // A migration that has to fail: the name is invalid, so the commit is refused after the copy.
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), FAKE, { mode: 0o600 });
+    writePrivateFile(join(home, "byok-key"), FAKE);
     capture(() => materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome: "", name: "x".repeat(41) }));
     // A second migration with a credential that is not a valid key.
-    writeFileSync(join(home, "byok-key"), `${FAKE}\n${FAKE}`, { mode: 0o600 });
+    writePrivateFile(join(home, "byok-key"), `${FAKE}\n${FAKE}`);
     capture(() => materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome: "", name: "账户" }));
     // Reading and writing through the secret helpers.
     capture(() => readAccountSecret(home, "acct_aaaaaaaaaa", "key"));
@@ -97,7 +98,7 @@ describe("symlinks are refused on every account path", () => {
   test("credentials read, write and delete refuse a linked home", () => {
     const realHome = join(root, "real");
     mkdirSync(join(realHome, "secrets", "accounts", "acct_aaaaaaaaaa"), { recursive: true, mode: 0o700 });
-    writeFileSync(join(realHome, "secrets", "accounts", "acct_aaaaaaaaaa", "key"), FAKE, { mode: 0o600 });
+    writePrivateFile(join(realHome, "secrets", "accounts", "acct_aaaaaaaaaa", "key"), FAKE);
     const linked = join(root, "linked");
     linkDir(realHome, linked);
 
@@ -124,7 +125,7 @@ describe("symlinks are refused on every account path", () => {
   test("credential inspection refuses a linked home instead of reporting connected", () => {
     const realHome = join(root, "real-3");
     mkdirSync(realHome, { recursive: true, mode: 0o700 });
-    writeFileSync(join(realHome, "byok-key"), FAKE, { mode: 0o600 });
+    writePrivateFile(join(realHome, "byok-key"), FAKE);
     const linked = join(root, "linked-3");
     linkDir(realHome, linked);
     const implicit: Account = {
@@ -168,7 +169,7 @@ describe("BYOK endpoints cannot be an exfiltration route", () => {
 describe("a migration leaves no copy behind that nothing refers to", () => {
   test("a successful migration leaves exactly one credential copy, under the account", () => {
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), FAKE, { mode: 0o600 });
+    writePrivateFile(join(home, "byok-key"), FAKE);
 
     const { account } = materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome: "", name: "账户", random: () => "aaaaaaaaaa" });
 

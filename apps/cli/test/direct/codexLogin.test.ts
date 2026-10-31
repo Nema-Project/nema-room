@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { writePrivateFile } from "../nativePermissions.js";
 import { CodexFileTokenSource, CodexLoginError, codexAccountHeaders, readCodexCliTokens } from "../../src/direct/codexLogin.js";
 import { COMPAT_PROFILE } from "../../src/direct/transport.js";
 
@@ -21,7 +22,7 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 const writeAuth = (tokens: Record<string, string>) => {
   const path = join(codexHome, "auth.json");
-  writeFileSync(path, JSON.stringify({ tokens }));
+  writePrivateFile(path, JSON.stringify({ tokens }));
   return path;
 };
 
@@ -78,9 +79,9 @@ describe("CodexFileTokenSource", () => {
     expect(got.accessToken).toBe(first);
     expect(got.auth.mode).toBe("compat");
     const next = jwt({ exp: future() });
-    writeFileSync(path, JSON.stringify({ tokens: { access_token: next, refresh_token: "rt" } }));
+    writePrivateFile(path, JSON.stringify({ tokens: { access_token: next, refresh_token: "rt" } }));
     expect((await source.getAccessToken({ force: true, rejectedAccessToken: first })).accessToken).toBe(next);
-    writeFileSync(path, JSON.stringify({ tokens: { access_token: first, refresh_token: "rt" } }));
+    writePrivateFile(path, JSON.stringify({ tokens: { access_token: first, refresh_token: "rt" } }));
     await expect(source.getAccessToken({ force: true, rejectedAccessToken: first })).rejects.toThrow(/不会刷新/);
     expect(readFileSync(path, "utf8")).toContain(first);
   });

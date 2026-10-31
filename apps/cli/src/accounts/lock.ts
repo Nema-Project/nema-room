@@ -36,6 +36,19 @@ import { protectPrivatePath } from "../secrets/permissions.js";
  * inode) *and* the content that were judged stale. The lock path is never vacated by the taker before
  * that check, so a peer cannot acquire the lock mid-takeover, and a lock created after the judgement is
  * never displaced. Releasing a claim that cannot be acquired is a plain retry.
+ *
+ * Liveness is never relaxed to make a lock reclaimable sooner. A holder record names a pid and the process
+ * start time that belonged to it, and the record counts as live while that pid is alive and its start time
+ * is either the same or *cannot be checked*: on platforms that do not expose a start time (Windows) the
+ * answer is "unknown", and treating unknown as "dead" is what let a live holder's lock be taken over.
+ * "Unknown" therefore falls back to an age rule (`LOCK_MAX_UNVERIFIED_AGE_MS`), which is slow but never
+ * lets two writers into the critical section.
+ *
+ * The claim follows the same rule, for the same reason: a taker that is alive and whose start time can be
+ * verified keeps its claim however old the claim file is, because expiring it by age is what lets a second
+ * waiter act on a judgement made against a lock that has since been replaced — and then delete a lock
+ * somebody else just created. A claim is expired only when its holder is gone, or when the holder's start
+ * time is verifiably different (a recycled pid), or when there is no way to check and the file is old.
  */
 
 export const accountsLockPath = (nemaHome: string): string => path.join(nemaHome, "accounts.lock");
@@ -99,19 +112,22 @@ function parseLock(raw: string): LockHolder | null {
   return null;
 }
 
+/** How the platform answered "is the live pid that wrote a holder record this process or another one". */
+export type ProcessStartComparison = "same" | "different" | "unknown";
+
 /**
- * True when the process currently running as `pid` is the one that wrote a holder record: a reused pid
+ * Whether the process currently running as `pid` is the one that wrote a holder record: a reused pid
  * belongs to a process started later than the record.
  *
  * The start time comes from the platform's own bookkeeping (`/proc/<pid>/stat` on Linux, `ps -o lstart` on
- * macOS); where it cannot be read the answer is "assume it is not the same process", which only makes the
- * lock reclaimable earlier, never later.
+ * macOS). Where it cannot be read (Windows) the answer is `"unknown"`, not "different": the caller must not
+ * treat a holder it cannot check as one that died, or a live holder's lock is reclaimed underneath it.
  */
-function sameProcessStartedAt(pid: number, startedAt: number): boolean {
+export function compareProcessStart(pid: number, startedAt: number): ProcessStartComparison {
   const actual = processStartMs(pid);
-  if (actual === null) return false;
+  if (actual === null) return "unknown";
   // Whole-second resolution on most platforms; allow for that and for clock rounding.
-  return Math.abs(actual - startedAt) < 2_000;
+  return Math.abs(actual - startedAt) < 2_000 ? "same" : "different";
 }
 
 function processStartMs(pid: number): number | null {
@@ -241,14 +257,31 @@ function ageMs(lockPath: string): number | null {
  * An unreadable lock is stale only once it is old enough that its creator cannot still be writing it: that
  * is what keeps a lock that is merely initializing from being taken over.
  */
-function isStale(snapshot: LockSnapshot, lockPath: string): boolean {
+function isStale(snapshot: LockSnapshot, lockPath: string, probes: LockProbes = {}): boolean {
+  const alive = probes.alive ?? pidAlive;
+  const startComparison = probes.startedAt ?? compareProcessStart;
   const holder = parseLock(snapshot.raw);
   if (holder === null) return (ageMs(lockPath) ?? 0) >= LOCK_PARTIAL_STALE_MS;
   if (holder.pid === process.pid) return !heldLocks.has(lockKey(lockPath)); // an earlier process with our pid
-  if (!pidAlive(holder.pid)) return true;
-  if (holder.startedAt !== undefined) return !sameProcessStartedAt(holder.pid, holder.startedAt);
+  if (!alive(holder.pid)) return true;
+  if (holder.startedAt !== undefined) {
+    const verdict = startComparison(holder.pid, holder.startedAt);
+    if (verdict === "same") return false; // the very process that wrote the record is running
+    if (verdict === "different") return true; // a recycled pid: the writer is gone
+    // The platform cannot tell which process has this pid. A live holder must never be mistaken for a dead
+    // one, so only age decides — and the age rule is long enough that no live critical section reaches it.
+  }
   return Date.now() - holder.at >= LOCK_MAX_UNVERIFIED_AGE_MS;
 }
+
+/**
+ * The platform answers `isStale` needs, injectable so a test can ask about a machine that cannot report
+ * process start times (Windows) without changing what the production path uses. Nothing global is mutated.
+ */
+export type LockProbes = {
+  alive?: (pid: number) => boolean;
+  startedAt?: (pid: number, startedAt: number) => ProcessStartComparison;
+};
 
 /** Our own takeover claim: its token, so a claim that was expired and taken over is not ours any more. */
 type Claim = { path: string; token: string };
@@ -268,7 +301,9 @@ function enterTakeoverClaim(claimPath: string): Claim | null {
     try {
       const fd = openSync(claimPath, "wx", 0o600);
       try {
-        writeSync(fd, JSON.stringify({ pid: process.pid, at: Date.now(), token }));
+        // `startedAt` is what lets a later waiter tell this claim from one left behind by an older process
+        // that happened to get the same pid. It is omitted when the platform cannot report it.
+        writeSync(fd, JSON.stringify({ pid: process.pid, at: Date.now(), token, startedAt: ownStartMs() }));
         fsyncSync(fd);
       } finally {
         closeSync(fd);
@@ -287,16 +322,39 @@ function enterTakeoverClaim(claimPath: string): Claim | null {
   return null;
 }
 
-/** True when the claim file is old enough that its owner cannot still be working, or has exited. */
-function claimIsStale(claimPath: string): boolean {
-  if ((ageMs(claimPath) ?? 0) >= LOCK_CLAIM_STALE_MS) return true;
+/**
+ * True when the claim may be taken from its owner.
+ *
+ * The owner is the only waiter allowed to act on a stale judgement, so expiring a claim that a live waiter
+ * still holds is what lets a second waiter delete a lock the first one has not yet seen replaced. Age is
+ * therefore only the fallback for a claim whose owner cannot be checked: a claim is expired when its holder
+ * has exited, when the holder's start time is verifiably different (a recycled pid), or when there is no
+ * start time to check and the file is old enough that a working taker cannot be inside it.
+ */
+function claimIsStale(claimPath: string, probes: LockProbes = {}): boolean {
+  const alive = probes.alive ?? pidAlive;
+  const startComparison = probes.startedAt ?? compareProcessStart;
+  let holder: LockHolder | null;
   try {
-    const holder = parseLock(readFileSync(claimPath, "utf8"));
-    // A claim whose process is gone is abandoned no matter how young it is.
-    return holder !== null && !pidAlive(holder.pid);
+    holder = parseLock(readFileSync(claimPath, "utf8"));
   } catch {
-    return false;
+    // Gone, or never written: there is no owner to protect, and an unreadable claim is only a gate.
+    return (ageMs(claimPath) ?? 0) >= LOCK_CLAIM_STALE_MS;
   }
+  if (holder === null) return (ageMs(claimPath) ?? 0) >= LOCK_CLAIM_STALE_MS;
+  // A claim whose process is gone is abandoned no matter how young it is.
+  if (!alive(holder.pid)) return true;
+  if (holder.startedAt !== undefined) {
+    const verdict = startComparison(holder.pid, holder.startedAt);
+    // Only a *verified* mismatch expires the claim. "Unknown" (Windows cannot report a process start time)
+    // must not: the owner may well be alive and about to remove a lock, and expiring its claim is what lets a
+    // second waiter act on a judgement made against a lock that has since been replaced.
+    if (verdict === "different") return true;
+    if (verdict === "same") return false;
+  }
+  // Written by a build that had no start time, by a platform that cannot report one, or with an answer this
+  // machine could not settle: age decides, and the limit is long enough that no live taker reaches it.
+  return (ageMs(claimPath) ?? 0) >= LOCK_CLAIM_STALE_MS;
 }
 
 /** True while the claim file still holds our token: a claim we lost is not one we may act under. */
@@ -313,9 +371,23 @@ function stillOwnsClaim(claim: Claim): boolean {
  * device and inode (two empty locks look identical by content alone) and the same bytes (a lock that has
  * since been filled in belongs to a live holder).
  *
- * Returns true when a stale lock was actually removed. A live lock is never displaced: the check runs
- * before anything is removed, and while the claim is held no peer can vacate and re-create the path.
+ * Returns true when a stale lock was actually removed. A live lock is never displaced: the comparison runs
+ * twice — once when the claim is entered and once immediately before the removal — and while the claim is
+ * held no peer can vacate and re-create the path.
  */
+function sameLockAsJudged(current: LockSnapshot, observed: LockSnapshot): boolean {
+  // Device and inode: two empty locks look identical by content alone. Timestamp and size: a re-created file
+  // is a new file even when its number and its bytes happen to match. Raw bytes: a lock filled in since the
+  // judgement belongs to a live holder.
+  return (
+    current.dev === observed.dev &&
+    current.ino === observed.ino &&
+    current.mtimeNs === observed.mtimeNs &&
+    current.size === observed.size &&
+    current.raw === observed.raw
+  );
+}
+
 export function takeOverStaleLock(lockPath: string, observed: LockSnapshot): boolean {
   const claim = enterTakeoverClaim(`${lockPath}.takeover`);
   if (claim === null) return false;
@@ -327,12 +399,21 @@ export function takeOverStaleLock(lockPath: string, observed: LockSnapshot): boo
       return false; // unreadable now for a new reason: leave it to the next waiter
     }
     if (current === null) return true; // already gone: nothing to remove, and the caller will retry
-    if (current.dev !== observed.dev || current.ino !== observed.ino) return false; // replaced: not ours
-    if (current.mtimeNs !== observed.mtimeNs || current.size !== observed.size) return false; // re-created
-    if (current.raw !== observed.raw) return false; // filled in since the judgement: a live holder
+    if (!sameLockAsJudged(current, observed)) return false; // replaced: not ours to remove
     // The claim can be expired and taken over by another waiter while we were paused. Acting under a claim
     // we no longer hold is exactly how a lock created by that waiter would be deleted.
     if (!stillOwnsClaim(claim)) return false;
+    // Everything above can be interrupted (a stopped process, a suspended laptop), and a lock that changed
+    // identity or content meanwhile belongs to a live holder. The comparison is therefore repeated as the
+    // last thing before the removal, so what gets deleted is the file that was judged, not the path name.
+    let final: LockSnapshot | null;
+    try {
+      final = snapshotLock(lockPath);
+    } catch {
+      return false;
+    }
+    if (final === null) return true;
+    if (!sameLockAsJudged(final, observed)) return false;
     try {
       unlinkSync(lockPath);
     } catch (e) {
@@ -364,6 +445,24 @@ function stillOwns(lockPath: string, token: string): boolean {
 /** Test seam: the same observation the lock makes before judging a lock stale. */
 export function snapshotLockForTest(lockPath: string): LockSnapshot | null {
   return snapshotLock(lockPath);
+}
+
+/**
+ * Test seam: the stale decision with the platform's answers injected, so a test can describe a machine whose
+ * process start times cannot be read. Production reaches `isStale` through `acquireAccountsLock`, which
+ * passes no probes and therefore uses the real ones.
+ */
+export function isStaleForTest(snapshot: LockSnapshot, lockPath: string, probes: LockProbes): boolean {
+  return isStale(snapshot, lockPath, probes);
+}
+
+/**
+ * Test seam: the claim's stale decision with the platform's answers injected. `claimIsStale` runs inside a
+ * takeover, so this is the only way to ask it about a machine whose process start times cannot be read
+ * without replacing the real platform answers for the whole module.
+ */
+export function claimIsStaleForTest(claimPath: string, probes: LockProbes): boolean {
+  return claimIsStale(claimPath, probes);
 }
 
 /** This process's start time, cached: it is asked for on every lock record written. */

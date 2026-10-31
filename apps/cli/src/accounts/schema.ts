@@ -30,6 +30,9 @@ export const AccountIdSchema = z
   .regex(ID_PATTERN, "账户 id 必须是 acct_ 加 10 位小写字母或数字")
   .refine((id) => id !== IMPLICIT_ACCOUNT_ID, "不能使用保留的账户 id");
 
+/** The name limit, counted like `accountNameProblem` counts it: code points, not UTF-16 units. */
+const NAME_MAX_CODE_POINTS = 40;
+
 const CapabilitiesSchema = z
   .object({
     image: z.boolean().optional(),
@@ -42,7 +45,7 @@ const CapabilitiesSchema = z
  * Account endpoints go through the same rule as `config.json`: nothing is copied from that validation, the
  * function itself is called. A looser rule here would be a second way for a BYOK key to leave the machine.
  *
- * The *normalized* value is what gets stored (`normalizeByokBaseUrl` drops a trailing slash), because
+ * The *normalized* value is what gets stored (`normalizeByokBaseUrl` drops one trailing slash), because
  * consumers build request paths by appending to it: `https://host/v1/` + `/responses` would be a
  * double-slash path. Config already stores the normalized form, so the two stay byte-identical.
  */
@@ -67,7 +70,13 @@ function baseUrlProblem(raw: string): string | null {
 export const AccountSchema = z
   .object({
     id: AccountIdSchema,
-    name: z.string().min(1).max(40),
+    // Counted in code points, the same unit `accountNameProblem` uses. `.max(40)` counted UTF-16 units, so a
+    // name of 30 emoji (60 units) was accepted by one rule and refused by the other: the settings page and
+    // the stored-file validator disagreed about the same name.
+    name: z
+      .string()
+      .min(1)
+      .refine((value) => Array.from(value).length <= NAME_MAX_CODE_POINTS, { message: "名字最多 40 个字符" }),
     enabled: z.boolean(),
     adapter: z.enum(["codex-direct", "claude-code"]),
     authMode: z.enum(["siwc", "compat", "byok"]).optional(),
@@ -84,7 +93,14 @@ export const AccountSchema = z
     costTier: z.enum(COST_TIERS),
     /** Lower is tried first. Not a preference over costTier: it is the user's own ordering. */
     order: z.number().int().min(0),
-    createdAt: z.string().min(1),
+    // An ISO 8601 timestamp: `implicitAccount` writes `toISOString()`, and the settings page shows the value
+    // as a date. Anything a `Date` cannot parse is refused here rather than shown as "Invalid Date".
+    //
+    // A numeric offset is accepted as well as `Z` (`offset: true`). Plain `z.string().datetime()` takes only
+    // `Z`, and this file is the kind a user or another tool edits by hand: `2026-10-31T09:00:00+09:00` is a
+    // perfectly ordinary value for a user in UTC+9, and refusing it made the whole file read as corrupt, so
+    // every account disappeared from the app while the data was still on disk.
+    createdAt: z.iso.datetime({ offset: true }),
   })
   .strict()
   .superRefine((account, ctx) => {
@@ -135,7 +151,7 @@ const CONTROL = /[\u0000-\u001f\u007f]/;
 /** Why this display name cannot be used, or null. Names are user text; they are never a credential. */
 export function accountNameProblem(raw: string): string | null {
   if (raw.trim() === "") return "名字不能为空";
-  if (Array.from(raw).length > 40) return "名字最多 40 个字符";
+  if (Array.from(raw).length > NAME_MAX_CODE_POINTS) return "名字最多 40 个字符";
   if (CONTROL.test(raw)) return "名字不能包含控制字符";
   if (SECRET_LIKE.test(raw.trim())) return "这个名字看起来像密钥，换一个普通名字";
   return null;

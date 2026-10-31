@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { writePrivateFile } from "../nativePermissions.js";
 
 /**
  * The two compare-and-remove decisions in the account layer, with the race injected at the exact moment it
@@ -50,7 +51,7 @@ describe("retiring the legacy credential (review 2)", () => {
   test("a credential replaced at the moment of retirement is the one that survives", async () => {
     const { readLegacyCredential, removeLegacyIfUnchanged } = await import("../../src/accounts/legacy.js");
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), OLD, { mode: 0o600 });
+    writePrivateFile(join(home, "byok-key"), OLD);
     // The copy step read the old bytes; the writer then replaces the file before the retirement runs.
     const source = readLegacyCredential(home, join(home, "byok-key"));
     beforeRename.push(() => writeFileSync(join(home, "byok-key"), NEW, { mode: 0o600 }));
@@ -65,7 +66,7 @@ describe("retiring the legacy credential (review 2)", () => {
   test("an unchanged credential is retired", async () => {
     const { readLegacyCredential, removeLegacyIfUnchanged } = await import("../../src/accounts/legacy.js");
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), OLD, { mode: 0o600 });
+    writePrivateFile(join(home, "byok-key"), OLD);
     const source = readLegacyCredential(home, join(home, "byok-key"));
 
     expect(removeLegacyIfUnchanged(home, source)).toBe(true);
@@ -77,7 +78,7 @@ describe("retiring the legacy credential (review 2)", () => {
   test("a credential re-saved while the retirement is in flight is not overwritten by the restore", async () => {
     const { readLegacyCredential, removeLegacyIfUnchanged } = await import("../../src/accounts/legacy.js");
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), OLD, { mode: 0o600 });
+    writePrivateFile(join(home, "byok-key"), OLD);
     const source = readLegacyCredential(home, join(home, "byok-key"));
     // Two writes land: one before the move (what lands in the claim) and one after it (a new save).
     beforeRename.push(() => writeFileSync(join(home, "byok-key"), NEW, { mode: 0o600 }));

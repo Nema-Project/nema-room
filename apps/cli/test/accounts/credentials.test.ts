@@ -1,5 +1,5 @@
 import { canSymlinkFiles } from "../links.js";
-import { expectPrivate } from "../nativePermissions.js";
+import { expectPrivate, writePrivateFile } from "../nativePermissions.js";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,7 +34,7 @@ function writeCodexAuth(valid: boolean): void {
   const body = valid
     ? JSON.stringify({ tokens: { access_token: "fake.codex.access.token", refresh_token: "r", account_id: "a" }, last_refresh: new Date().toISOString() })
     : "{}";
-  writeFileSync(join(codexHome, "auth.json"), body, { mode: 0o600 });
+  writePrivateFile(join(codexHome, "auth.json"), body);
 }
 
 describe("per-account credential files", () => {
@@ -107,7 +107,7 @@ describe("credential state per account kind", () => {
 
   test("the implicit account reads the old single-key paths", () => {
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), "fake-legacy-key", { mode: 0o600 });
+    writePrivateFile(join(home, "byok-key"), "fake-legacy-key");
 
     expect(accountCredentialFiles(home, implicit())).toEqual([join(home, "byok-key")]);
     expect(accountCredentialState(home, implicit(), codexHome).state).toBe("connected");
@@ -117,7 +117,7 @@ describe("credential state per account kind", () => {
 
   test("the implicit siwc account reads the old auth.json", () => {
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "auth.json"), "{}", { mode: 0o600 });
+    writePrivateFile(join(home, "auth.json"), "{}");
     expect(accountCredentialFiles(home, implicit({ authMode: "siwc", baseUrl: undefined }))).toEqual([join(home, "auth.json")]);
     // "{}" is not a stored login, so it reads unusable rather than connected.
     expect(accountCredentialState(home, implicit({ authMode: "siwc", baseUrl: undefined }), codexHome).state).toBe("unusable");
@@ -165,11 +165,11 @@ describe("credential state per account kind", () => {
 
     // Present but unreadable: the file exists, so this is not "missing".
     mkdirSync(codexHome, { recursive: true });
-    writeFileSync(join(codexHome, "auth.json"), "{ broken", { mode: 0o600 });
+    writePrivateFile(join(codexHome, "auth.json"), "{ broken");
     expect(accountCredentialState(home, compat(), codexHome).state).toBe("unusable");
 
     // Present but with no tokens.
-    writeFileSync(join(codexHome, "auth.json"), JSON.stringify({ tokens: {} }), { mode: 0o600 });
+    writePrivateFile(join(codexHome, "auth.json"), JSON.stringify({ tokens: {} }));
     expect(accountCredentialState(home, compat(), codexHome).state).toBe("unusable");
 
     writeCodexAuth(true);
@@ -179,7 +179,7 @@ describe("credential state per account kind", () => {
   test("a symlinked account directory is unusable rather than followed", () => {
     const target = join(root, "redirect");
     mkdirSync(target, { recursive: true, mode: 0o700 });
-    writeFileSync(join(target, "key"), "fake-elsewhere", { mode: 0o600 });
+    writePrivateFile(join(target, "key"), "fake-elsewhere");
     mkdirSync(join(home, "secrets", "accounts"), { recursive: true, mode: 0o700 });
     linkDir(target, join(home, "secrets", "accounts", "acct_abc1234567"));
 
@@ -191,7 +191,7 @@ describe("credential state per account kind", () => {
     // the rest of the account code will never use.
     const realHome = join(root, "real-home");
     mkdirSync(realHome, { recursive: true, mode: 0o700 });
-    writeFileSync(join(realHome, "byok-key"), "fake-legacy-key", { mode: 0o600 });
+    writePrivateFile(join(realHome, "byok-key"), "fake-legacy-key");
     const linkedHome = join(root, "linked-home");
     linkDir(realHome, linkedHome);
 
@@ -204,7 +204,7 @@ describe("credential state per account kind", () => {
   test.runIf(canSymlinkFiles)("an implicit siwc account under a linked home is unusable too", () => {
     const realHome = join(root, "real-home-2");
     mkdirSync(realHome, { recursive: true, mode: 0o700 });
-    writeFileSync(join(realHome, "auth.json"), "{}", { mode: 0o600 });
+    writePrivateFile(join(realHome, "auth.json"), "{}");
     const linkedHome = join(root, "linked-home-2");
     linkDir(realHome, linkedHome);
 

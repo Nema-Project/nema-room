@@ -17,6 +17,7 @@ import { graphifyInstallStatus, type GraphifyOpts } from "./repos/graphify.js";
 import { REPORT_AGENTS, reportHookInstalled } from "./report/install.js";
 import { reportTokenPath } from "./report/token.js";
 import { githubTokenPath, readGithubToken } from "./secrets/github.js";
+import { hasSymlinkedComponent, strandedRetireClaims } from "./accounts/paths.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -144,6 +145,28 @@ async function githubMcpServerCheck(opts: DoctorOpts): Promise<DoctorCheck> {
   }
 }
 
+/**
+ * Informational: credential copies an interrupted migration left under a claim name.
+ *
+ * They are harmless (the account already holds the credential) but they are duplicates of a secret sitting
+ * where nothing reads them, so the user should know they exist and can remove them by hand. Only the names
+ * are printed; never the contents.
+ */
+function strandedClaimsCheck(opts: DoctorOpts): DoctorCheck {
+  const name = "迁移遗留文件";
+  // A linked home is not a layout the account store reads, so nothing under it is reported as a leftover:
+  // the names would describe a directory Nema refuses to use.
+  if (hasSymlinkedComponent(opts.nemaHome, opts.nemaHome)) return { name, ok: true, detail: "未检查（Nema 主目录是符号链接）" };
+  const stranded = strandedRetireClaims(opts.nemaHome);
+  if (stranded.length === 0) return { name, ok: true, detail: "无" };
+  const paths = stranded.map((file) => path.join(opts.nemaHome, file)).join("、");
+  return {
+    name,
+    ok: true, // informational: a leftover never means the current login is unusable
+    detail: `发现 ${stranded.length} 个退役过程中留下的旧凭据副本（${paths}）。账户里已经有一份，确认后可以手动删除这些文件。`,
+  };
+}
+
 /** Informational; never reveals the token. */
 function githubTokenCheck(opts: DoctorOpts): DoctorCheck {
   const name = "GitHub 令牌";
@@ -214,6 +237,7 @@ export async function runDoctor(opts: DoctorOpts): Promise<DoctorCheck[]> {
   // Informational: the GitHub plugin is off by default.
   checks.push(await githubMcpServerCheck(opts));
   checks.push(githubTokenCheck(opts));
+  checks.push(strandedClaimsCheck(opts));
 
   return checks;
 }

@@ -1,7 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { writePrivateFile } from "../nativePermissions.js";
 
 /**
  * Round four, finding 4: a saved credential has to be durable before `saveAccountSecret` returns, which
@@ -60,6 +61,74 @@ describe("a saved credential is durable before the save returns (review 4)", () 
     expect(readFileSync(accountSecretPath(home, "acct_aaaaaaaaaa", "key"), "utf8")).toBe("fake-key-0000");
   });
 
+  test("a newly created account directory chain is synced level by level (review 6)", async () => {
+    const { saveAccountSecret } = await import("../../src/secrets/accounts.js");
+    const { accountDir } = await import("../../src/accounts/store.js");
+
+    // Nothing exists yet, so this one save creates `nemaHome`, `secrets`, `accounts` and the account
+    // directory. Syncing only the deepest one persists the leaf's name inside its parent, not the parent's
+    // own name: a power cut can then drop `secrets/` or `accounts/` and take the credential with it.
+    saveAccountSecret(home, "acct_aaaaaaaaaa", "key", "fake-key-0000");
+
+    const dir = accountDir(home, "acct_aaaaaaaaaa");
+    const chain = [home, join(home, "secrets"), join(home, "secrets", "accounts"), dir];
+    for (const level of chain) expect(fsyncs).toContain(level);
+    // And in order, from the top down, so every name is durable before the one below it is created.
+    expect(chain.map((level) => fsyncs.indexOf(level))).toEqual([...chain.map((level) => fsyncs.indexOf(level))].sort((a, b) => a - b));
+  });
+
+  test("re-saving into an existing directory does not re-walk the chain", async () => {
+    const { saveAccountSecret } = await import("../../src/secrets/accounts.js");
+    const { accountDir } = await import("../../src/accounts/store.js");
+
+    saveAccountSecret(home, "acct_aaaaaaaaaa", "key", "fake-key-0000");
+    fsyncs.length = 0;
+    saveAccountSecret(home, "acct_aaaaaaaaaa", "key", "fake-key-1111");
+
+    // Nothing was created this time, so only the directory whose entry the rename changed is synced. The
+    // lock file and the temp file are file fsyncs, not directory ones; that distinction is the assertion.
+    const dir = accountDir(home, "acct_aaaaaaaaaa");
+    const directorySyncs = fsyncs.filter((p) => p === home || p === join(home, "secrets") || p === join(home, "secrets", "accounts") || p === dir);
+    expect(directorySyncs).toEqual([dir]);
+  });
+
+  test("deleting an account's secrets syncs the parent (review 6)", async () => {
+    const { removeAccountSecrets, saveAccountSecret } = await import("../../src/secrets/accounts.js");
+    const { accountDir } = await import("../../src/accounts/store.js");
+
+    saveAccountSecret(home, "acct_aaaaaaaaaa", "key", "fake-key-0000");
+    const dir = accountDir(home, "acct_aaaaaaaaaa");
+    fsyncs.length = 0;
+    removeAccountSecrets(home, "acct_aaaaaaaaaa");
+
+    // The removal is an entry in the parent: without the sync, a power cut can bring the credential's name
+    // back even though the account is gone. Only the lock file is synced besides it.
+    const accountsRoot = join(home, "secrets", "accounts");
+    expect(fsyncs.filter((p) => p === accountsRoot)).toEqual([accountsRoot]);
+    expect(fsyncs.filter((p) => p === dir || p === home || p === join(home, "secrets"))).toEqual([]);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  test("an AuthStore save under an account directory syncs the whole chain (review 6)", async () => {
+    const { AuthStore } = await import("../../src/direct/authStore.js");
+    const { accountDir } = await import("../../src/accounts/store.js");
+
+    // The login is written into `secrets/accounts/<id>/`, which this first save creates. Syncing only the
+    // leaf persists the login's name inside the account directory while the name of that directory can still
+    // be lost, so a power cut would take the credential with it.
+    const dir = accountDir(home, "acct_aaaaaaaaaa");
+    const store = new AuthStore(home, async () => ({ access_token: "a" }), Date.now, { baseDir: dir });
+    store.save({
+      version: 1, mode: "siwc", clientId: "c", tokens: { access_token: "a", refresh_token: "r" },
+      lastRefresh: "2026-10-01T00:00:00.000Z",
+    });
+
+    const chain = [home, join(home, "secrets"), join(home, "secrets", "accounts"), dir];
+    for (const level of chain) expect(fsyncs).toContain(level);
+    expect(chain.map((level) => fsyncs.indexOf(level))).toEqual([...chain.map((level) => fsyncs.indexOf(level))].sort((a, b) => a - b));
+    expect(readFileSync(join(dir, "auth.json"), "utf8")).toContain('"refresh_token": "r"');
+  });
+
   test("a migration also syncs the new account directory and its parent", async () => {
     const { materializeImplicit } = await import("../../src/accounts/implicit.js");
     const { accountDir } = await import("../../src/accounts/store.js");
@@ -67,7 +136,7 @@ describe("a saved credential is durable before the save returns (review 4)", () 
     const { mkdirSync, writeFileSync } = await import("node:fs");
 
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "byok-key"), "fake-legacy-key", { mode: 0o600 });
+    writePrivateFile(join(home, "byok-key"), "fake-legacy-key");
     const { account } = materializeImplicit({
       nemaHome: home,
       config: { ...DEFAULT_CONFIG, authMode: "byok", byokBaseUrl: "https://a.example.com/v1" },

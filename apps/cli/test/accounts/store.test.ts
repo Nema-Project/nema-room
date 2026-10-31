@@ -1,20 +1,38 @@
 import { canSymlinkFiles } from "../links.js";
-import { expectPrivate } from "../nativePermissions.js";
+import { expectPrivate, writePrivateFile } from "../nativePermissions.js";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { accountsPath, accountDir, readAccounts, writeAccounts } from "../../src/accounts/store.js";
 import { IMPLICIT_ACCOUNT_ID } from "../../src/accounts/schema.js";
-import { removeAccountSecrets, saveAccountSecret } from "../../src/secrets/accounts.js";
+import { accountSecretPath, removeAccountSecrets, saveAccountSecret } from "../../src/secrets/accounts.js";
 import { linkDir } from "../links.js";
 import type { AccountsFile } from "../../src/accounts/schema.js";
+
+/**
+ * Runs a queued swap just before the save's first filesystem step, i.e. after any work done before the
+ * account lock was taken. `vi.mock` is hoisted above the imports, so the module under test sees the wrapper.
+ */
+const swapOnNextLock: Array<() => void> = [];
+vi.mock("node:fs", async (importOriginal) => {
+  const real = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...real,
+    openSync: ((...args: Parameters<typeof real.openSync>) => {
+      const swap = swapOnNextLock.shift();
+      if (swap) swap();
+      return (real.openSync as (...a: typeof args) => ReturnType<typeof real.openSync>)(...args);
+    }) as typeof real.openSync,
+  };
+});
 
 let root: string;
 let home: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "nema-accounts-store-"));
   home = join(root, "nema");
+  swapOnNextLock.length = 0;
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -72,6 +90,17 @@ describe("accounts.json", () => {
 
     writeFileSync(accountsPath(home), JSON.stringify({ version: 2, accounts: [], bindings: {} }), { mode: 0o600 });
     expect(readAccounts(home)).toEqual({ status: "unusable", reason: "corrupt" });
+  });
+
+  test("a hand-written offset timestamp reads back as ok, not corrupt (review 7)", () => {
+    // End to end on purpose: the schema alone could accept the value while `readAccounts` still classified
+    // the file as unusable, and then the account list would be empty in the app with the data on disk.
+    mkdirSync(home, { recursive: true });
+    writeFileSync(accountsPath(home), JSON.stringify(file([account({ createdAt: "2026-10-31T09:00:00+09:00" })])), { mode: 0o600 });
+
+    const read = readAccounts(home);
+    expect(read.status).toBe("ok");
+    expect((read as { file: AccountsFile }).file.accounts[0]!.createdAt).toBe("2026-10-31T09:00:00+09:00");
   });
 
   test("reports a file whose rows contradict each other", () => {
@@ -160,7 +189,7 @@ describe("account directory hardening", () => {
   test("a symlinked nemaHome does not let a delete reach the link target", () => {
     const realHome = join(root, "real-home-2");
     mkdirSync(join(realHome, "secrets", "accounts", "acct_abc1234567"), { recursive: true, mode: 0o700 });
-    writeFileSync(join(realHome, "secrets", "accounts", "acct_abc1234567", "key"), "fake-keep", { mode: 0o600 });
+    writePrivateFile(join(realHome, "secrets", "accounts", "acct_abc1234567", "key"), "fake-keep");
     const linkedHome = join(root, "linked-home-2");
     linkDir(realHome, linkedHome);
 
@@ -177,6 +206,28 @@ describe("account directory hardening", () => {
 
     expect(readAccounts(linkedHome)).toEqual({ status: "unusable", reason: "symlink" });
     expect(() => writeAccounts(linkedHome, file())).toThrow(/符号链接|symlink/i);
+  });
+
+  test("save refuses a symlinked account directory even when the caller resolved the path first (review 8)", () => {
+    // `accountSecretPath` asserts while resolving. When that resolution happens *outside* the lock, the
+    // assertion describes a moment that is already gone by the time the write runs: the directory can be
+    // replaced by a link in between, and the credential then lands inside the link target. The swap is
+    // injected at the lock acquisition, which is exactly the last moment before the guarded work starts.
+    const target = join(root, "swapped-in");
+    mkdirSync(target, { recursive: true, mode: 0o700 });
+    const dir = accountDir(home, "acct_abc1234567");
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // The caller resolved (and asserted) the path here. Nothing is wrong yet.
+    expect(existsSync(accountSecretPath(home, "acct_abc1234567", "key"))).toBe(false);
+
+    swapOnNextLock.push(() => {
+      rmSync(dir, { recursive: true, force: true });
+      linkDir(target, dir);
+    });
+
+    expect(() => saveAccountSecret(home, "acct_abc1234567", "key", "fake-account-key")).toThrow();
+    // Nothing was written through the link.
+    expect(existsSync(join(target, "key"))).toBe(false);
   });
 
   test("the reserved implicit id is not a usable account directory", () => {

@@ -1,5 +1,6 @@
-import { lstatSync } from "node:fs";
+import { lstatSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { isWithin } from "../pathWithin.js";
 
 /**
  * Path checks shared by the account store and the credential helpers.
@@ -23,8 +24,10 @@ export function hasSymlinkedComponent(nemaHome: string, target: string): boolean
     // A home that does not exist yet is created as a real directory; anything else is not trusted.
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") return true;
   }
+  // A lexical containment test, not `startsWith("..")`: a real directory whose name begins with two dots
+  // (`nema/..foo`) is inside the tree, and treating it as outside skipped the walk below for it.
+  if (!isWithin(nemaHome, target)) return true; // outside the tree: never allowed
   const relative = path.relative(nemaHome, target);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) return true; // outside the tree: never allowed
   let current = nemaHome;
   for (const part of relative.split(path.sep).filter((p) => p !== "")) {
     current = path.join(current, part);
@@ -50,5 +53,41 @@ export function assertHomeNotSymlinked(nemaHome: string): void {
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
     throw e;
+  }
+}
+
+/**
+ * Credential copies left under a retirement claim name: `<name>.retire-<pid>-<uuid>`.
+ *
+ * `removeLegacyIfUnchanged` moves the legacy file to such a name before deciding whether to delete it, and
+ * restores it when the bytes turned out to be a newer credential. A crash — or a restore that failed
+ * because the name was taken again — leaves the copy under the claim name, where nothing reads it: the
+ * account has the credential, but the file is a duplicate of one sitting in a private directory.
+ *
+ * Only file *names* are returned, never their contents: the caller is a diagnostic that tells the user a
+ * leftover exists, and the file may still hold a usable credential.
+ */
+export function strandedRetireClaims(nemaHome: string): string[] {
+  // `<name>.retire-<pid>-<token>`: the pid is what makes each claim name unique per process. The token is
+  // a uuid in practice, but the shape is all this check relies on — a stricter pattern would report nothing
+  // for a claim written by an older build, which is exactly when the leftover most needs finding.
+  const CLAIM = /^.+\.retire-\d+-[^/\\]+$/;
+  let names: string[];
+  try {
+    names = readdirSync(nemaHome);
+  } catch {
+    return []; // no home yet: there is nothing stranded in it
+  }
+  return names
+    .filter((name) => CLAIM.test(name) && isRegularFile(path.join(nemaHome, name)))
+    .sort();
+}
+
+/** A claim is only reported when it is a plain file: a directory of that name holds no credential copy. */
+function isRegularFile(file: string): boolean {
+  try {
+    return lstatSync(file).isFile();
+  } catch {
+    return false;
   }
 }

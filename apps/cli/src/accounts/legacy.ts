@@ -20,7 +20,7 @@ import type { NemaConfig } from "../config.js";
 import { parseStoredAuth, usableSiwcLogin } from "../direct/authStore.js";
 import { LockHeldByThisProcessError, LockTimeoutError, withFileLockSync } from "../direct/lock.js";
 import { assertPrivateAcl, openPrivateFile, privateModeMatches, privateOwnerMatches, protectPrivatePath } from "../secrets/permissions.js";
-import { fsyncDirectory } from "../secrets/durable.js";
+import { fsyncDirectory, fsyncPathChain } from "../secrets/durable.js";
 import { accountDir } from "./store.js";
 import { hasSymlinkedComponent } from "./paths.js";
 import type { Account } from "./schema.js";
@@ -198,6 +198,11 @@ export function legacyUnchanged(nemaHome: string, source: LegacyCredential): boo
  * writer can replace the file. Renaming is atomic, so exactly one file ends up in the claim and its
  * contents decide what happens next. If the restore also fails, the claim file is left on disk rather than
  * deleted: the credential is still recoverable, and nothing has been lost.
+ *
+ * Returns true when *this call* removed the bytes it was given. That is deliberately narrower than "the
+ * legacy path is now empty": a writer can re-create the path between the move and the return, and the
+ * answer here stays about the claim this call handled. Judging the path — and adopting whatever now sits
+ * there — is the caller's job (`retireLegacyFile`).
  */
 export function removeLegacyIfUnchanged(nemaHome: string, source: LegacyCredential): boolean {
   // A SIWC login is refreshed under `<nemaHome>/auth.lock`, and a refresh in flight when the file is
@@ -218,6 +223,14 @@ export function removeLegacyIfUnchanged(nemaHome: string, source: LegacyCredenti
   }
 }
 
+/**
+ * Moves the legacy name to a claim, decides on what landed there, and reports whether this call removed the
+ * bytes it was given (see `removeLegacyIfUnchanged`).
+ *
+ * The two renames and the unlink change names inside `nemaHome`, so the directory is synced before either
+ * success path returns: a power cut that drops the deletion would put back a credential the account already
+ * holds, and one that drops the restore would leave the claim name visible instead of the legacy path.
+ */
 function retireLocked(nemaHome: string, source: LegacyCredential): boolean {
   const claim = `${source.path}.retire-${process.pid}-${randomUUID()}`;
   try {
@@ -236,10 +249,13 @@ function retireLocked(nemaHome: string, source: LegacyCredential): boolean {
     } catch {
       /* left under the claim name: recoverable, and never mistaken for the live credential */
     }
+    fsyncDirectory(nemaHome);
     return true;
   }
   // A newer credential was in place: put it back where its writer expects it.
+  // This call did not remove the bytes it was given, whatever the path ends up holding.
   restoreClaim(claim, source.path);
+  fsyncDirectory(nemaHome);
   return false;
 }
 
@@ -268,9 +284,14 @@ function restoreClaim(claim: string, target: string): void {
   }
   try {
     copyFileSync(claim, target, constants.COPYFILE_EXCL);
-    unlinkSync(claim);
   } catch {
     /* the claimed credential stays under its claim name; nothing was deleted */
+    return;
+  }
+  try {
+    unlinkSync(claim);
+  } catch {
+    /* both names now hold the bytes; the claim copy is a duplicate, not a loss */
   }
 }
 
@@ -286,10 +307,10 @@ export function writeCredentialCopy(nemaHome: string, accountId: string, fileNam
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   protectPrivatePath(dir, 0o700);
   if (created) {
-    // The new directory's own name has to be durable too: a credential inside a directory entry that a power
-    // cut can drop is not a credential the committed account record can be said to reference.
-    fsyncDirectory(dir);
-    fsyncDirectory(path.dirname(dir));
+    // Every directory name this call created has to be durable: `secrets`, `accounts` and the account
+    // directory itself may all be new, and a credential inside a directory entry that a power cut can drop
+    // is not a credential the committed account record can be said to reference.
+    fsyncPathChain(nemaHome, dir);
   }
   const target = path.join(dir, fileName);
   const tmp = `${target}.${process.pid}.${randomUUID()}.tmp`;

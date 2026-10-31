@@ -13,6 +13,7 @@ import {
   writeCredentialCopy,
   type LegacyCredential,
 } from "./legacy.js";
+import { strandedRetireClaims } from "./paths.js";
 import { IMPLICIT_ACCOUNT_ID, newAccountId, type Account } from "./schema.js";
 
 /**
@@ -32,21 +33,41 @@ import { IMPLICIT_ACCOUNT_ID, newAccountId, type Account } from "./schema.js";
  *      changing leave it in place. The next materialize finishes the move.
  */
 
-export type LoadedAccounts = { accounts: Account[]; implicit: boolean; unusableReason?: "symlink" | "mode" | "owner" | "corrupt" | "invalid" };
+export type LoadedAccounts = {
+  accounts: Account[];
+  implicit: boolean;
+  unusableReason?: "symlink" | "mode" | "owner" | "corrupt" | "invalid";
+  /**
+   * File names of credential copies left behind by an interrupted retirement (see `strandedRetireClaims`).
+   * Names only: the files may still hold a usable credential.
+   */
+  strandedRetireClaims: string[];
+};
 
 /**
- * The accounts this machine has. A missing or unusable `accounts.json` yields the synthesized account so
- * the rest of the daemon always has exactly one usable account, the way 0.2.0 always had exactly one
- * credential.
+ * The accounts this machine has, plus any retirement leftovers found beside `accounts.json`.
+ *
+ * A *missing or unusable* `accounts.json` yields the synthesized account, so a machine that never touched
+ * account settings still has the one credential 0.2.0 gave it — and so does one whose file cannot be read.
+ * That is the only case that synthesizes anything.
+ *
+ * A file that parses and validates is returned exactly as stored, **including an empty list**: emptying the
+ * list is a legal state (the user deleted every account), not a reason to invent one. Callers must
+ * therefore handle zero accounts and must not assume at least one exists.
+ *
+ * Reading stays pure: nothing is written, and the stranded claims are only listed.
  */
 export function loadAccounts(nemaHome: string, config: NemaConfig, _codexHome: string, now: Date = new Date()): LoadedAccounts {
   const read = readAccounts(nemaHome);
-  if (read.status === "ok") return { accounts: read.file.accounts, implicit: false };
+  // A home that is linked or unreadable is not a layout this store reads, so nothing under it is reported.
+  const stranded = read.status === "unusable" && read.reason === "symlink" ? [] : strandedRetireClaims(nemaHome);
+  if (read.status === "ok") return { accounts: read.file.accounts, implicit: false, strandedRetireClaims: stranded };
   const reason = read.status === "unusable" ? read.reason : undefined;
   return {
     accounts: [implicitAccount(config, now)],
     implicit: true,
     ...(reason !== undefined ? { unusableReason: reason } : {}),
+    strandedRetireClaims: stranded,
   };
 }
 
@@ -168,6 +189,20 @@ function accountTargetIsReplaceable(nemaHome: string, account: Account, copiedBy
   return copiedBytes !== null && existing.equals(copiedBytes);
 }
 
+/**
+ * True when the account's own credential file currently holds exactly `bytes`. Used to verify the
+ * `alreadyCopied` claim: a file that is missing, unreadable or different is not a copy of anything.
+ */
+function accountHoldsBytes(nemaHome: string, account: Account, bytes: Buffer): boolean {
+  const target = targetFile(nemaHome, account);
+  if (target === null) return false;
+  try {
+    return readFileSync(target).equals(bytes);
+  } catch {
+    return false;
+  }
+}
+
 /** How many times a legacy file replaced mid-move is re-read and adopted before it is left in place. */
 const LEGACY_ADOPT_ATTEMPTS = 3;
 
@@ -176,6 +211,19 @@ const LEGACY_ADOPT_ATTEMPTS = 3;
  * file that was copied. A replacement (an older daemon or `authByok` saving a refreshed credential) is
  * newer than our copy, so it is adopted: its bytes are copied in, and the check runs again. A file that
  * keeps being replaced is left where it is, which loses nothing and lets the next run finish.
+ *
+ * A writer can also re-create the legacy path *after* the claim was taken and removed: the removal then
+ * reports success, yet a newer credential is sitting at the old path and the account is still holding the
+ * bytes from before it. That is why the loop continues when the path exists again instead of returning
+ * early: the re-created file is the newest credential this machine has, so it is read, copied in, and
+ * retired in the same bounded number of attempts.
+ *
+ * `opts.alreadyCopied` is a *claim* that the account's file already holds `initial.bytes`, made by a caller
+ * that copied them in an earlier step. It is verified here and downgraded to "not copied" when it does not
+ * hold: the claim is what licenses skipping the write and going straight to the removal, so believing it
+ * wrongly would delete the only copy of bytes the account does not actually have. A downgraded claim costs
+ * one re-check of the destination, which then either copies the legacy bytes in or (when the account holds
+ * something else) leaves the legacy file alone for the next run to resolve.
  *
  * Returns the path the credential was retired from, or null when the legacy file could not be retired.
  */
@@ -190,11 +238,13 @@ export function retireLegacyFile(
   const name = credentialFileName(account);
   if (name === null) return null;
   let source = initial;
+  // The precondition, checked rather than trusted (see the doc comment): a caller can pass the flag wrongly.
+  const claimHolds = opts.alreadyCopied === true && accountHoldsBytes(nemaHome, account, initial.bytes);
   // The bytes this migration itself put in the account, and therefore the only ones it may replace.
-  let copied: Buffer | null = opts.alreadyCopied === true ? initial.bytes : null;
+  let copied: Buffer | null = claimHolds ? initial.bytes : null;
   for (let attempt = 0; attempt < LEGACY_ADOPT_ATTEMPTS; attempt++) {
     // The first copy may already be in place from before the commit; only a changed source needs another.
-    const copiedEarlier = attempt === 0 && opts.alreadyCopied === true;
+    const copiedEarlier = attempt === 0 && claimHolds;
     if (!copiedEarlier || !legacyUnchanged(nemaHome, source)) {
       // Re-check the destination immediately before copying: a credential saved for this account since the
       // situation was computed is newer than the legacy bytes and must not be replaced by them.
@@ -205,8 +255,12 @@ export function retireLegacyFile(
     // A hook for the caller/tests to act between "copied" and "removed", which is exactly the window a
     // peer's refresh can land in.
     opts.afterCopy?.(source.path);
-    if (removeLegacyIfUnchanged(nemaHome, source)) return source.path;
-    // The file changed under us: it is the newer credential, so adopt it and try to retire it again.
+    const removed = removeLegacyIfUnchanged(nemaHome, source);
+    // True means the bytes that were copied are gone from the legacy path. It does *not* mean the path is
+    // empty: a writer that raced the removal can have re-created it, and that file is newer than our copy.
+    if (removed && !existsSync(source.path)) return source.path;
+    // Either the file changed under us, or a writer re-created it after the removal. Both mean the newest
+    // credential is at the legacy path, so adopt it and try to retire it again.
     try {
       source = readLegacyCredential(nemaHome, source.path);
     } catch {
@@ -267,9 +321,12 @@ function materializeLocked(o: {
       return { account: situation.account, movedFrom };
     }
     if (situation.kind === "already-moved") {
-      // The bytes are already stored in that account's file; retire the leftover legacy path only while
-      // it still holds exactly those bytes.
-      const movedFrom = removeLegacyIfUnchanged(o.nemaHome, source) ? source.path : null;
+      // The bytes are already stored in that account's file. The leftover path still has to be retired
+      // through the same path as every other retirement: a login refreshed between this read and the
+      // removal would otherwise be removed with the old bytes, leaving the account holding a spent refresh
+      // token. `alreadyCopied` says the account's copy is these exact bytes, so the first pass has nothing
+      // to write; a re-created or changed legacy file is adopted from there.
+      const movedFrom = retireLegacyFile(o.nemaHome, situation.account, source, { alreadyCopied: true });
       return { account: situation.account, movedFrom };
     }
   }

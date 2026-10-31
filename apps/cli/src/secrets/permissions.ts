@@ -100,3 +100,30 @@ export function openPrivateFile(file: string): number {
     throw error;
   }
 }
+
+/**
+ * A private file, opened and *judged by its own descriptor*.
+ *
+ * `openPrivateFile` refuses a link, a non-regular file and a foreign Windows DACL, but it says nothing about
+ * the POSIX mode bits or the owner. A credential this process is about to send somewhere has to pass those
+ * too, and the stat that decides has to be taken from the descriptor that was opened: a path whose mode is
+ * fixed between two stats would otherwise be read through the widened one.
+ *
+ * `expectedUid` exists so the ownership rule can be exercised by a test: a file owned by somebody else cannot
+ * be produced without privilege on most hosts (and never on the Windows runner), and a test that silently
+ * skips is no test at all. Production never passes it, so the rule it applies there is unchanged: the owner
+ * of the opened file must be this process's user.
+ */
+export function openPrivateFileChecked(file: string, expectedUid: number | null = process.getuid?.() ?? null): number {
+  const fd = openPrivateFile(file);
+  try {
+    const st = fstatSync(fd);
+    if (!privateModeMatches(st) || !privateOwnerMatches(st, expectedUid)) {
+      throw new Error(`${path.basename(file)} 不是私有文件（权限或属主不符），已拒绝读取。`);
+    }
+    return fd;
+  } catch (error) {
+    closeSync(fd);
+    throw error;
+  }
+}

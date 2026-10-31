@@ -21,6 +21,8 @@ import { jwtExp } from "./jwt.js";
 import { LockTimeoutError, withFileLock, type LockOptions } from "./lock.js";
 import { openPrivateFile, privateModeMatches, protectPrivatePath } from "../secrets/permissions.js";
 import { hasSymlinkedComponent } from "../accounts/paths.js";
+import { isWithin } from "../pathWithin.js";
+import { fsyncPathChain } from "../secrets/durable.js";
 
 // Nema's own direct-mode login (`<nemaHome>/auth.json`). Never reads or links ~/.codex/auth.json.
 
@@ -155,8 +157,28 @@ export class AuthStore {
     // A baseDir that is (or passes through) a symlink is refused: saving would create and chmod the link
     // target and write the login outside the account layout, which is the one thing the account directory
     // checks exist to prevent.
-    if (opts.baseDir !== undefined && hasSymlinkedComponent(opts.baseDir, opts.baseDir)) {
-      throw new Error("账户目录是符号链接，已拒绝使用该账户目录。");
+    //
+    // The walk is anchored at `nemaHome`, not at the baseDir itself. A walk from the baseDir compares the
+    // path with itself — a relative path of "" — so it only ever looked at the last component, and a linked
+    // `secrets/` or `accounts/` above the account directory was invisible to it: saving then wrote the login
+    // somewhere outside the account layout. The anchor is `nemaHome` and not the filesystem root, because
+    // `/var` and `/tmp` are links on macOS and every temporary home would then be refused.
+    //
+    // A baseDir outside `nemaHome` cannot be checked against it (the walk would only report "outside"), so
+    // that shape keeps the older last-component check. The account layout never produces one — every in-tree
+    // caller passes `secrets/accounts/<id>` — and refusing it outright would break callers that name their
+    // own login directory.
+    //
+    // "Inside" is the shared lexical rule (`isWithin`), not `startsWith("..")`. The latter reads a real
+    // directory named `..foo` under the home as outside: the walk was then anchored at the baseDir itself,
+    // which compares the path with itself and only ever inspects the last component — so a linked
+    // `nema/..foo` above the account directory went unnoticed and the save wrote the login through the link.
+    if (opts.baseDir !== undefined) {
+      const inHome = isWithin(this.nemaHome, opts.baseDir);
+      const checkedRoot = inHome ? this.nemaHome : opts.baseDir;
+      if (hasSymlinkedComponent(checkedRoot, opts.baseDir)) {
+        throw new Error("账户目录是符号链接，已拒绝使用该账户目录。");
+      }
     }
     this.dir = opts.baseDir ?? nemaHome;
     this.file = path.join(this.dir, "auth.json");
@@ -234,16 +256,11 @@ export class AuthStore {
       }
       throw e;
     }
-    try {
-      const dfd = openSync(this.dir, "r");
-      try {
-        fsyncSync(dfd);
-      } finally {
-        closeSync(dfd);
-      }
-    } catch {
-      /* directory fsync is best effort */
-    }
+    // The rename above made the login durable as bytes, not as a name: the directory entry lives in the
+    // directory, and `mkdirSync` may have created several levels under `nemaHome`. Syncing only the leaf
+    // persists the login's name inside `secrets/accounts/<id>/` while the name of that directory itself can
+    // still be lost on a power cut. The chain is therefore synced from `nemaHome` down.
+    fsyncPathChain(this.nemaHome, this.dir);
   }
 
   /** Without a reason: log out (delete the file). With a reason: drop the tokens and record lastAuthError. */

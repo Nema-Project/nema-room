@@ -118,6 +118,49 @@ describe("account schema", () => {
       .toEqual([expect.stringContaining("不存在")]);
   });
 
+  test("the name limit is counted in code points, the same unit the problem message uses (review 7)", () => {
+    // 30 emoji are 30 characters and 60 UTF-16 units. `.max(40)` counted units, so the schema refused a name
+    // `accountNameProblem` accepted: the settings page and the stored-file validator disagreed.
+    const emoji = "😀".repeat(30);
+    expect(Array.from(emoji)).toHaveLength(30);
+    expect(emoji.length).toBe(60);
+
+    expect(accountNameProblem(emoji)).toBeNull();
+    expect(AccountsFileSchema.safeParse(file([base({ name: emoji })])).success).toBe(true);
+    expect(validateAccountsFile(file([base({ name: emoji })]))).toEqual([]);
+
+    // 41 code points is still refused by both, with the same message.
+    const tooLong = "😀".repeat(41);
+    expect(accountNameProblem(tooLong)).toContain("40");
+    const parsed = AccountsFileSchema.safeParse(file([base({ name: tooLong })]));
+    expect(parsed.success).toBe(false);
+    // The schema states the limit in the same words the validator uses, instead of zod's English default:
+    // this rule is user-facing, and the two rules describe one limit.
+    expect(JSON.stringify(parsed.error?.issues)).toContain("名字最多 40 个字符");
+    expect(validateAccountsFile(file([base({ name: tooLong })]))).toEqual([expect.stringContaining("40")]);
+  });
+
+  test("createdAt must be an ISO 8601 timestamp (review 7)", () => {
+    // Every producer writes `toISOString()`, and the settings page renders the value as a date.
+    expect(AccountsFileSchema.safeParse(file([base({ createdAt: "2026-10-31T00:00:00.000Z" })])).success).toBe(true);
+    expect(AccountsFileSchema.safeParse(file([base({ createdAt: new Date().toISOString() })])).success).toBe(true);
+    for (const bad of ["x", "", "2026-10-31", "yesterday"]) {
+      expect(AccountsFileSchema.safeParse(file([base({ createdAt: bad })])).success).toBe(false);
+    }
+  });
+
+  test("a timestamp with a numeric offset is accepted, both here and end to end", () => {
+    // `z.string().datetime()` takes only `Z`. This file is hand-editable and the user is in UTC+9, so
+    // `+09:00` is the form a human or another tool writes: refusing it made the whole file read as corrupt
+    // and every account vanished from the app while the data was still on disk.
+    const withOffset = "2026-10-31T09:00:00+09:00";
+    expect(AccountsFileSchema.safeParse(file([base({ createdAt: withOffset })])).success).toBe(true);
+    expect(AccountsFileSchema.safeParse(file([base({ createdAt: "2026-10-31T00:00:00.000Z" })])).success).toBe(true);
+    expect(AccountsFileSchema.safeParse(file([base({ createdAt: "not a date" })])).success).toBe(false);
+    // Both forms name the same instant, and a `Date` renders either.
+    expect(Date.parse(withOffset)).toBe(Date.parse("2026-10-31T00:00:00.000Z"));
+  });
+
   test("accountNameProblem explains what is wrong", () => {
     expect(accountNameProblem("OpenAI 主账号")).toBeNull();
     expect(accountNameProblem("")).not.toBeNull();

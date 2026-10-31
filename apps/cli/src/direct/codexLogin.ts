@@ -2,7 +2,7 @@ import { closeSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { checkCodexAuth } from "../codex/isolation.js";
-import { openPrivateFile } from "../secrets/permissions.js";
+import { openPrivateFileChecked } from "../secrets/permissions.js";
 import type { StoredAuth } from "./authStore.js";
 import { decodeJwtPayload, jwtExp } from "./jwt.js";
 
@@ -53,16 +53,17 @@ export type CodexCliTokens = { accessToken: string; refreshToken: string; accoun
 /**
  * Read the Codex CLI login. Throws CodexLoginError when it cannot be used. Does not write the file.
  *
- * The file is opened with `openPrivateFile`, which refuses a symlink, checks that the file really is a
- * regular file, and verifies the Windows DACL: a login other users can read is not a login Nema should
- * send to a provider. The tokens are taken from the bytes read through that descriptor.
+ * The file is opened with `openPrivateFileChecked`, which refuses a symlink, checks that the file really is
+ * a regular file, verifies the Windows DACL, and checks the POSIX mode and owner of the opened descriptor: a
+ * login other users can read is not a login Nema should send to a provider, whichever platform it is on.
+ * The tokens are taken from the bytes read through that descriptor.
  */
 export function readCodexCliTokens(codexHome: string, now = Date.now()): CodexCliTokens {
   const checked = checkCodexAuth(codexHome);
   if (!checked.ok) throw new CodexLoginError(checked.error);
   let raw: string;
   try {
-    const fd = openPrivateFile(checked.authPath);
+    const fd = openPrivateFileChecked(checked.authPath);
     try {
       raw = readFileSync(fd, "utf8");
     } finally {

@@ -6,6 +6,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { writePrivateFile } from "../nativePermissions.js";
 import { materializeImplicit, retireLegacyFile } from "../../src/accounts/implicit.js";
 import { accountDir, accountsPath, readAccounts, writeAccounts } from "../../src/accounts/store.js";
 import { readLegacyCredential } from "../../src/accounts/legacy.js";
@@ -59,7 +60,7 @@ describe("legacy credential validation (review 1)", () => {
   test.runIf(canSymlinkFiles)("a symlinked nemaHome is refused before any write", () => {
     const realHome = join(root, "real-home");
     mkdirSync(realHome, { recursive: true, mode: 0o700 });
-    writeFileSync(join(realHome, "byok-key"), FAKE_KEY, { mode: 0o600 });
+    writePrivateFile(join(realHome, "byok-key"), FAKE_KEY);
     const linkedHome = join(root, "linked-home");
     linkDir(realHome, linkedHome);
 
@@ -103,7 +104,7 @@ describe("legacy credential validation (review 1)", () => {
 
   test("an unreadable legacy siwc login is refused rather than copied", () => {
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "auth.json"), JSON.stringify({ version: 1, mode: "siwc" }), { mode: 0o600 });
+    writePrivateFile(join(home, "auth.json"), JSON.stringify({ version: 1, mode: "siwc" }));
 
     expect(() => materializeImplicit({
       nemaHome: home, config: { ...byokConfig(), authMode: "siwc", byokBaseUrl: undefined }, codexHome, name: "订阅",
@@ -122,7 +123,7 @@ describe("which account owns the legacy credential (review 3, 4)", () => {
   test("an account that already owns a different credential is never given the legacy one", () => {
     writeAccounts(home, { version: 1, accounts: [peer()], bindings: {} });
     mkdirSync(join(accountDir(home, "acct_peer123456")), { recursive: true, mode: 0o700 });
-    writeFileSync(join(accountDir(home, "acct_peer123456"), "key"), OTHER_KEY, { mode: 0o600 });
+    writePrivateFile(join(accountDir(home, "acct_peer123456"), "key"), OTHER_KEY);
     plantKey();
 
     // The peer's key is a different credential; overwriting it would destroy it. The legacy key is a
@@ -255,6 +256,49 @@ describe("the legacy file is replaced during the move (review 5)", () => {
 
     expect(movedFrom).toBeNull();
     expect(existsSync(legacyKey())).toBe(true);
+  });
+});
+
+describe("alreadyCopied is a precondition, not a promise (review 6)", () => {
+  test("a wrong alreadyCopied claim does not delete the only copy of the bytes", () => {
+    // The flag lets the retirement skip its write and go straight to the removal. Believing it wrongly would
+    // delete the legacy file while the account holds some *other* credential, and the legacy bytes would be
+    // gone from the disk entirely.
+    plantKey();
+    const { account } = materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "账户" });
+    // The account's file holds a different credential (a settings save landed after the migration), and the
+    // legacy path holds the bytes a caller then *claims* were copied in.
+    const target = join(accountDir(home, account.id), "key");
+    writeFileSync(target, OTHER_KEY, { mode: 0o600 });
+    plantKey();
+    const source = readLegacyCredential(home, legacyKey());
+
+    const movedFrom = retireLegacyFile(home, account, source, { alreadyCopied: true });
+
+    // The claim was checked and did not hold, so nothing was retired and neither copy was touched.
+    expect(movedFrom).toBeNull();
+    expect(readFileSync(legacyKey(), "utf8")).toBe(FAKE_KEY);
+    expect(readFileSync(target, "utf8")).toBe(OTHER_KEY);
+  });
+
+  test("a holding claim still retires without rewriting the account copy", () => {
+    // The verified path has to keep working: this is the normal "commit died before the delete" resume.
+    plantKey();
+    const { account } = materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "账户" });
+    const target = join(accountDir(home, account.id), "key");
+    const before = statSync(target);
+    // A rollback re-plants the legacy credential after the copy: `alreadyCopied` is true again.
+    plantKey();
+    const source = readLegacyCredential(home, legacyKey());
+
+    const movedFrom = retireLegacyFile(home, account, source, { alreadyCopied: true });
+
+    expect(movedFrom).toBe(legacyKey());
+    expect(existsSync(legacyKey())).toBe(false);
+    // No second write: the account's file is the very one that was there, unchanged.
+    const after = statSync(target);
+    expect([after.ino, after.mtimeMs]).toEqual([before.ino, before.mtimeMs]);
+    expect(readFileSync(target, "utf8")).toBe(FAKE_KEY);
   });
 });
 

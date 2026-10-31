@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { readSecretLine, saveSecretLine } from "../../src/secrets/file.js";
-import { openPrivateFile, privateModeMatches, protectPrivatePath, WINDOWS_ACL_SCRIPT } from "../../src/secrets/permissions.js";
+import { openPrivateFile, openPrivateFileChecked, privateModeMatches, protectPrivatePath, WINDOWS_ACL_SCRIPT } from "../../src/secrets/permissions.js";
 import { AuthStore, type StoredAuth } from "../../src/direct/authStore.js";
 import { ensureReportToken, reportTokenHash } from "../../src/report/token.js";
 import { readClaudeToken, saveClaudeToken } from "../../src/claude/token.js";
@@ -67,6 +67,25 @@ test("private files are regular files and retain their contents", () => {
   closeSync(fd);
   expect(statSync(file).isFile()).toBe(true);
   expect(readFileSync(file, "utf8")).toBe("placeholder");
+});
+
+test("a private file owned by another user is refused (review 6)", () => {
+  // A host cannot be made to produce a foreign-owned file without privilege (and never on the Windows
+  // runner), so the ownership rule is exercised through its injectable expectation rather than a fixture
+  // that would silently skip. The production default is this process's uid, unchanged.
+  const file = path.join(root, "owned-by-us");
+  writeFileSync(file, "placeholder", { mode: 0o600 });
+  protectPrivatePath(file);
+
+  const fd = openPrivateFileChecked(file);
+  closeSync(fd);
+
+  if (process.platform !== "win32") {
+    const foreignUid = (process.getuid?.() ?? 0) + 1;
+    expect(() => openPrivateFileChecked(file, foreignUid)).toThrow(/属主不符|私有/);
+    // The same file, judged against its real owner, still opens: the check is the owner comparison itself.
+    closeSync(openPrivateFileChecked(file, process.getuid?.() ?? null));
+  }
 });
 
 test("the Windows ACL script calls no cmdlets", () => {

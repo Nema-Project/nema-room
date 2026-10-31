@@ -1,5 +1,5 @@
 import { protectPrivatePath } from "../src/secrets/permissions.js";
-import { makePublic } from "./nativePermissions.js";
+import { makePublic, writePrivateFile } from "./nativePermissions.js";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -78,7 +78,8 @@ describe("runDoctor", () => {
     expect(rs.every((r) => r.ok), JSON.stringify(rs)).toBe(true);
     expect(byName(rs, "codex 可用").detail).toContain("9.9.9");
     expect(byName(rs, "graphify").ok).toBe(true);
-    expect(rs.length).toBe(15);
+    // Every check row, including the informational ones (the stranded-claim row is the newest).
+    expect(rs.length).toBe(16);
   });
 });
 
@@ -158,7 +159,7 @@ describe("compat login check", () => {
     mkdirSync(codexHome);
     const exp = Math.floor(Date.now() / 1000) + 3600;
     const access = jwt({ exp, "https://api.openai.com/auth": { chatgpt_account_id: "acct-4242" } });
-    writeFileSync(join(codexHome, "auth.json"), JSON.stringify({ tokens: { access_token: access, refresh_token: "SECRET-RT" } }));
+    writePrivateFile(join(codexHome, "auth.json"), JSON.stringify({ tokens: { access_token: access, refresh_token: "SECRET-RT" } }));
     const base = {
       codexBin: join(root, "no-such-codex"),
       userCodexHome: codexHome,
@@ -209,7 +210,7 @@ describe("BYOK check", () => {
 
   test("byok passes with a 0600 key and configured model without revealing the key", async () => {
     mkdirSync(join(root, "nema"));
-    writeFileSync(join(root, "nema", "byok-key"), "sekret-key", { mode: 0o600 });
+    writePrivateFile(join(root, "nema", "byok-key"), "sekret-key");
     protectPrivatePath(join(root, "nema", "byok-key"));
 
     const check = byName(await run("byok", "gpt-example"), "byok");
@@ -271,7 +272,7 @@ describe("Claude Code checks", () => {
     process.env.PATH = savedPath ? `${binDir}${delimiter}${savedPath}` : binDir;
     const nemaHome = join(root, "nema");
     mkdirSync(nemaHome);
-    writeFileSync(join(nemaHome, "claude-code-token"), "sekret-token", { mode: 0o600 });
+    writePrivateFile(join(nemaHome, "claude-code-token"), "sekret-token");
     protectPrivatePath(join(nemaHome, "claude-code-token"));
 
 
@@ -285,6 +286,36 @@ describe("Claude Code checks", () => {
     const loose = await run("claude-code");
     expect(byName(loose, "claude code token").ok).toBe(false);
     expect(JSON.stringify(loose)).not.toContain("sekret-token");
+  });
+});
+
+describe("stranded retirement claims", () => {
+  const opts = () => ({
+    codexBin: join(root, "none"),
+    userCodexHome: join(root, "none"),
+    hubUrl: "http://127.0.0.1:1",
+    tokenFile: join(root, "t"),
+    nemaHome: join(root, "nema"),
+    adapter: "codex-direct" as const,
+  });
+
+  test("a claim left by an interrupted retirement is reported by name, never by content", async () => {
+    const nemaHome = join(root, "nema");
+    mkdirSync(nemaHome);
+    writePrivateFile(join(nemaHome, "auth.json.retire-123-abc"), '{"fake":"credential-value"}');
+
+    const check = byName(await runDoctor(opts()), "迁移遗留文件");
+
+    // Informational: a leftover never fails the doctor, and the row names the file so the user can look.
+    expect(check.ok).toBe(true);
+    expect(check.detail).toContain("auth.json.retire-123-abc");
+    expect(check.detail).toContain("旧凭据副本");
+    expect(check.detail).not.toContain("credential-value");
+  });
+
+  test("no leftover is a plain 'none'", async () => {
+    mkdirSync(join(root, "nema"));
+    expect(byName(await runDoctor(opts()), "迁移遗留文件")).toMatchObject({ ok: true, detail: "无" });
   });
 });
 

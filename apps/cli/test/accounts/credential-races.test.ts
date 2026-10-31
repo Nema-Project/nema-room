@@ -9,6 +9,7 @@ import { accountCredentialState } from "../../src/accounts/credentials.js";
 import { parseStoredAuth, usableSiwcLogin } from "../../src/direct/authStore.js";
 import { saveAccountSecret } from "../../src/secrets/accounts.js";
 import { DEFAULT_CONFIG, type NemaConfig } from "../../src/config.js";
+import { writePrivateFile } from "../nativePermissions.js";
 import type { Account } from "../../src/accounts/schema.js";
 
 let root: string;
@@ -193,9 +194,9 @@ describe("an inspectable-but-unreadable directory is unusable, not empty (review
     if (process.getuid?.() === 0) return; // root ignores directory permissions
     const codexHome = join(root, "codex");
     mkdirSync(codexHome, { recursive: true });
-    writeFileSync(join(codexHome, "auth.json"), JSON.stringify({
+    writePrivateFile(join(codexHome, "auth.json"), JSON.stringify({
       tokens: { access_token: "a", refresh_token: "r", account_id: "x" }, last_refresh: new Date().toISOString(),
-    }), { mode: 0o600 });
+    }));
     mkdirSync(join(home, "secrets", "accounts", "acct_aaaaaaaaaa"), { recursive: true, mode: 0o700 });
     // The account directory cannot be listed or stat'ed.
     const { chmodSync } = await import("node:fs");

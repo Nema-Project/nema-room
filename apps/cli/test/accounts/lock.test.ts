@@ -119,6 +119,23 @@ describe("takeover removes only the lock that was judged (review 2, 4)", () => {
     expect(withAccountsLock(home, () => "ran")).toBe("ran");
   });
 
+  test("a claim whose owner is alive and verifiable survives its age, so its lock is not displaced (review 5)", () => {
+    const observed = plantLock()!;
+    const ownStart = ownProcessStart();
+    if (ownStart === null) return; // this host does not expose process start times
+    // A live waiter's claim, written the way `enterTakeoverClaim` does and 30 s old — well past the 10 s age
+    // limit. Aging it out lets a second waiter act on a judgement made against a lock that has since been
+    // replaced, and that is the delete race this test pins.
+    const claim = `${accountsLockPath(home)}.takeover`;
+    writeFileSync(claim, JSON.stringify({ pid: process.pid, at: Date.now() - 30_000, token: "live", startedAt: ownStart }), { mode: 0o600 });
+    const old = new Date(Date.now() - 30_000);
+    utimesSync(claim, old, old);
+
+    expect(takeOverStaleLock(accountsLockPath(home), observed)).toBe(false);
+    expect(existsSync(accountsLockPath(home))).toBe(true);
+    expect(JSON.parse(readFileSync(claim, "utf8")).token).toBe("live");
+  });
+
   test("a live takeover claim makes the waiter retry instead of displacing anything", () => {
     const observed = plantLock()!;
     const claim = `${accountsLockPath(home)}.takeover`;
@@ -268,3 +285,18 @@ describe("two real processes write accounts.json at once (review 15)", () => {
     expect(ids).toEqual(reported);
   }, 60_000);
 });
+
+/** This process's start time as the platform reports it, or null when it does not report one. */
+function ownProcessStart(): number | null {
+  try {
+    if (process.platform !== "linux") return null;
+    const stat = readFileSync(`/proc/${process.pid}/stat`, "utf8");
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    const ticks = Number(fields[19]);
+    const uptime = Number(readFileSync("/proc/uptime", "utf8").split(" ")[0]);
+    const value = Date.now() - (uptime - ticks / 100) * 1000;
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
