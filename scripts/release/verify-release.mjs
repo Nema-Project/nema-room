@@ -162,6 +162,9 @@ function pointerFromImage(result) {
 export async function npmPointers(io) {
   const tags = await readNpmDistTags(io);
   const npmPointer = (name) => {
+    // A 404 on dist-tags says the package itself is not on npm, so neither tag exists: that is an absent
+    // pointer, exactly as an absent GHCR alias or Release is. It was read, and it will not change.
+    if (tags.state === 'missing') return { state: 'absent', version: null };
     if (tags.state !== 'ok') {
       // A definitive unknown (denial, or an answer of the wrong shape) is passed on as such: a caller that
       // re-reads must not wait out a budget for an answer that will not change.

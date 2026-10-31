@@ -168,6 +168,17 @@ test('a definitive dist-tags unknown reaches the pointer, so a re-reading caller
   assert.equal(absent.next.definitive, undefined);
 });
 
+test('a package npm does not have at all reads as absent pointers, not as unreadable ones', async () => {
+  // dist-tags answers 404 for a package that is not on npm: that was read, and it is an answer, so it must
+  // not be filed under unknown (which means "could not be read") like the GHCR and GitHub sources already do.
+  const pointers = await npmPointers(io(world('0.1.6', { fail: [[/dist-tags/, 404]] })).io);
+  assert.deepEqual(pointers.latest, { state: 'absent', version: null });
+  assert.deepEqual(pointers.next, { state: 'absent', version: null });
+  // An absent pointer is one promote moves; an unknown one would stop it before it ever publishes.
+  const decisions = pointerDecisions({ npm: pointers, ghcr: { hub: { state: 'version', version: '0.1.6' }, web: { state: 'version', version: '0.1.6' } }, github: { latest: { state: 'version', version: '0.1.6' } } }, '0.1.7', false);
+  assert.equal(decisions['npm latest'], 'move');
+});
+
 test('the verifier is read-only', () => {
   for (const file of ['verify-release.mjs', 'registry-read.mjs']) {
     const source = readFileSync(new URL(file, import.meta.url), 'utf8');
