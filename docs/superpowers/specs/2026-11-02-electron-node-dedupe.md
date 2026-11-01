@@ -12,7 +12,7 @@ Use option A. The packaged executable (`Nema.exe`, `Contents/MacOS/Nema`, or `Ne
 
 ## Launch
 
-`runtime-manifest.json` stays schema 1 and omits `node`. `readManifest` uses `process.execPath` only when `process.versions.electron` is set or `ELECTRON_RUN_AS_NODE=1`. Otherwise it throws. A manifest that still has `node` keeps that path, so an older payload is unchanged. `desktop:make --staged` uses the same rule: a missing `node` is valid, and a present `node` must still be a file inside the payload.
+`runtime-manifest.json` stays schema 1 and omits `node`. `readManifest` uses `process.execPath` only when `process.versions.electron` is set or `ELECTRON_RUN_AS_NODE=1`. Otherwise it throws. A manifest that still has `node` keeps that path, so an older payload is unchanged. `desktop:make --staged` uses the same rule: a missing `node` is valid, and a present `node` must still be a file inside the payload. `shutdownLocalRuntime` hashes that manifest without resolving a Node binary, so a host-Node caller can stop a core whose payload omitted `node`.
 
 `childEnvironment` copies `ELECTRON_RUN_AS_NODE=1` onto the core and the managed web process. Claude and Codex MCP configs that replace the environment also receive it, because those configs do not inherit the parent environment.
 

@@ -115,13 +115,13 @@ function electronNodeProcess(): boolean {
 }
 
 /** A payload with no `node` entry runs on the Electron executable. Any present value must stay inside the payload. */
-function resolveNodePath(root: string, value: Partial<RuntimeManifest>): string {
+function resolveNodePath(root: string, value: Partial<RuntimeManifest>): string | undefined {
   if (value.node !== undefined) return manifestEntry(root, value.node, "node");
-  if (!electronNodeProcess()) throw new Error("Runtime manifest has no bundled Node, and this process is not Electron");
+  if (!electronNodeProcess()) return undefined;
   return process.execPath;
 }
 
-function readManifest(assetsDir: string): ResolvedAssets {
+function readManifestDocument(assetsDir: string): { root: string; value: RuntimeManifest } {
   let root: string;
   try { root = realpathSync.native(resolve(assetsDir)); }
   catch { throw new Error(`Runtime manifest directory is missing: ${assetsDir}`); }
@@ -135,7 +135,13 @@ function readManifest(assetsDir: string): ResolvedAssets {
     value.platform !== process.platform || value.arch !== process.arch) {
     throw new Error("Runtime manifest version, schema, platform, or architecture does not match this runtime");
   }
+  return { root, value: value as RuntimeManifest };
+}
+
+function readManifest(assetsDir: string): ResolvedAssets {
+  const { root, value } = readManifestDocument(assetsDir);
   const nodePath = resolveNodePath(root, value);
+  if (!nodePath) throw new Error("Runtime manifest has no bundled Node, and this process is not Electron");
   const corePath = manifestEntry(root, value.coreEntry, "coreEntry");
   const cliPath = manifestEntry(root, value.cliEntry, "cliEntry");
   const webPath = manifestEntry(root, value.webEntry, "webEntry");
@@ -150,7 +156,7 @@ function readManifest(assetsDir: string): ResolvedAssets {
   return { ...value as RuntimeManifest, root, nodePath, corePath, cliPath, webPath, licensesPath, ...(ownedHelperGuardianPath ? { ownedHelperGuardianPath } : {}) };
 }
 
-function installationIdentity(assets: ResolvedAssets): string {
+function installationIdentity(assets: Pick<RuntimeManifest, "version" | "platform" | "arch" | "node" | "coreEntry" | "cliEntry" | "webEntry" | "licenses" | "ownedHelperGuardian"> & { root: string }): string {
   const root = process.platform === "win32" ? assets.root.toLowerCase() : assets.root;
   const manifestIdentity = [assets.version, assets.platform, assets.arch, assets.node, assets.coreEntry, assets.cliEntry, assets.webEntry, assets.licenses, assets.ownedHelperGuardian ?? null];
   return createHash("sha256").update(JSON.stringify([root, manifestIdentity])).digest("hex");
@@ -630,10 +636,11 @@ export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<
 }
 
 export async function shutdownLocalRuntime(options: LocalRuntimeOptions & { expectedInstanceId: string; timeoutMs?: number }): Promise<{ state: "complete" }> {
-  const assets = readManifest(options.assetsDir);
+  // Shutdown only needs the installation hash. A host-Node caller can stop a core whose payload omitted `node`.
+  const assets = readManifestDocument(options.assetsDir);
   return requestInstanceShutdown(options.home ?? join(homedir(), ".nema", "desktop"), {
     expectedInstanceId: options.expectedInstanceId,
-    expectedInstallationId: installationIdentity(assets),
+    expectedInstallationId: installationIdentity({ ...assets.value, root: assets.root }),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
   });
 }

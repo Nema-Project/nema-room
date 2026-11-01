@@ -397,6 +397,6 @@ async function smoke(args) {
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   smoke(process.argv.slice(2)).catch((error) => {
     process.stderr.write(`${error.stack ?? error}\n`);
-    process.exitCode = 1;
+    process.exit(1);
   });
 }

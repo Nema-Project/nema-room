@@ -281,6 +281,30 @@ describe("managed local runtime", () => {
     }
   });
 
+  it("shuts down a node-less payload from a process that is not Electron", async () => {
+    const home = join(tempDir("nema-home-"), "shutdown-without-electron");
+    const assetsDir = testAssets();
+    const manifestPath = join(assetsDir, "runtime-manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { node?: string };
+    delete manifest.node;
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    const previous = process.env.ELECTRON_RUN_AS_NODE;
+    process.env.ELECTRON_RUN_AS_NODE = "1";
+    let runtime: Awaited<ReturnType<typeof startLocalRuntime>>;
+    try {
+      runtime = await startLocalRuntime({ home, assetsDir });
+      runtimes.push(runtime);
+    } finally {
+      if (previous === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+      else process.env.ELECTRON_RUN_AS_NODE = previous;
+    }
+    const before = await discoverInstance(home);
+    expect(before?.installationId).toBe(testInstallationId(assetsDir));
+    await expect(shutdownLocalRuntime({ home, assetsDir, expectedInstanceId: before!.instanceId, timeoutMs: 10_000 })).resolves.toMatchObject({ state: "complete" });
+    runtimes.splice(runtimes.indexOf(runtime!), 1);
+    expect(await discoverInstance(home)).toBeNull();
+  });
+
   it("retries only a spawned owner's control timeout while authenticated readiness is still starting", async () => {
     const home = join(tempDir("nema-home-"), "delayed-authenticated-owner");
     const assetsDir = testAssets();
