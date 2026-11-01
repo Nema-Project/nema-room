@@ -2,6 +2,9 @@ name: Publish @nema-project/nema to npm
 
 # Trusted publishing (OIDC). The filename is part of the npm trusted-publisher
 # binding; do not rename it without changing the npm setting first.
+# Trusted publishing already generates npm provenance through the same OIDC
+# identity. The publish step keeps `--provenance` as an explicit statement of
+# intent; removing the flag alone would not remove provenance.
 # A v* tag push runs verify.yml, then packs and smokes the tarball and uploads
 # it as the nema-tarball artifact. It does not publish.
 # Publishing happens only when release-promote.yml dispatches this workflow on
