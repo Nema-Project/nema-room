@@ -84,6 +84,11 @@ const PostMessageBody = z
     attachmentIds: z.array(z.string().min(1)).max(ATTACHMENT_LIMITS.perTaskCount).optional(),
     /** `@` mentions; the hub checks that each one is this workspace's and that its text is in the body. */
     mentions: MessageMentions.optional(),
+    /**
+     * The account this one message names (spec 2026-10-31 §5.4). An opaque id: the hub stores it on the task
+     * and forwards it; it never resolves an account, because accounts live on the daemon's machine.
+     */
+    accountId: z.string().regex(/^acct_[a-z0-9]{10}$/, "must be an account id").optional(),
   })
   .refine((b) => messageHasBody(b.content, b.attachmentIds ?? []), { message: "must not be empty", path: ["content"] });
 // An edit changes only the text; attachments stay as they are. Empty text is checked by editUserMessage,
@@ -457,11 +462,11 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/workspaces/:id/threads", async (c) => {
     const workspaceId = c.req.param("id")!;
-    const { content, quoteMessageId, attachmentIds, mentions } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, attachmentIds, mentions, accountId } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     try {
       const created = await db.tx(async (t) => {
-        const posted = await postUserMessage(t, workspaceId, content, { quoteMessageId, attachmentIds, mentions });
+        const posted = await postUserMessage(t, workspaceId, content, { quoteMessageId, attachmentIds, mentions, accountId });
         const title = Array.from(content.split(/\r?\n/, 1)[0]!.trim()).slice(0, 80).join("") || "新追问";
         const thread = await ensureThread(t, posted.message.id, title, "user");
         return { ...posted, thread };
@@ -483,10 +488,10 @@ export function uiRoutes(deps: UiDeps): Hono {
   app.post("/workspaces/:id/threads/:tid/messages", async (c) => {
     const workspaceId = c.req.param("id")!;
     const threadId = c.req.param("tid")!;
-    const { content, quoteMessageId, attachmentIds, mentions } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, attachmentIds, mentions, accountId } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     try {
-      const { message, task: created, replayed } = await postUserMessage(db, workspaceId, content, { quoteMessageId, threadId, attachmentIds, mentions });
+      const { message, task: created, replayed } = await postUserMessage(db, workspaceId, content, { quoteMessageId, threadId, attachmentIds, mentions, accountId });
       const task = toUiTask(created);
       if (!replayed) {
         events.emit(workspaceId, { type: "message.created", message });
@@ -561,11 +566,11 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/workspaces/:id/messages", async (c) => {
     const id = c.req.param("id");
-    const { content, quoteMessageId, threadId, attachmentIds, mentions } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, threadId, attachmentIds, mentions, accountId } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, id))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     let message, created, replayed;
     try {
-      ({ message, task: created, replayed } = await postUserMessage(db, id, content, { quoteMessageId, threadId, attachmentIds, mentions }));
+      ({ message, task: created, replayed } = await postUserMessage(db, id, content, { quoteMessageId, threadId, attachmentIds, mentions, accountId }));
     } catch (e) {
       if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
       throw e;

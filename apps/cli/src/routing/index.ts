@@ -22,7 +22,8 @@ import { taskNeeds } from "./capabilities.js";
  * provider 401 later.
  */
 
-export type RouteFailure = "unknown_account" | "account_disabled" | "adapter_mismatch" | "credential_missing" | "credential_unusable" | "model_missing" | "no_account" | "auto_unavailable";
+// `account_disabled` is gone: a named account is no longer refused for being disabled (see `checkNamed`).
+export type RouteFailure = "unknown_account" | "adapter_mismatch" | "credential_missing" | "credential_unusable" | "model_missing" | "no_account" | "auto_unavailable";
 
 export type RouteSource = "user_message" | "user_thread" | "user_workspace" | "default";
 
@@ -180,9 +181,12 @@ function checkNamed(
       error: `${label(account)} 属于 ${account.adapter}，这个任务按 ${adapter} 运行，不能在它上面跑。`,
     };
   }
-  if (!account.enabled) {
-    return { ok: false, failure: "account_disabled", error: `${label(account)} 已停用。请在设置页启用它，或换一个账户。` };
-  }
+  // Enabled state is deliberately not checked here. Spec step 2: a named account "is not excluded for
+  // capability, enabled state or cooldown" — the only thing that still stops it is the credential itself.
+  // Disabling an account is how a user parks it against automatic selection; it is not a reason to refuse
+  // an account they then named explicitly, and refusing would also make the setting mean two different
+  // things in two modes. The default path above still picks only enabled accounts, which is where the flag
+  // has its effect.
   // The credential is checked before anything runs, so the sentence can name the account instead of leaving a
   // provider 401 in the chat. `credentialOf` decides what "usable" means for this account kind; a key or a
   // token whose own reader has a better sentence is left to it.

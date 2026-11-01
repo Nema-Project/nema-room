@@ -87,6 +87,25 @@ describe("ui api", () => {
     expect(await json(await req("GET", `/api/workspaces/${ws}/threads`))).toHaveLength(1);
   });
 
+  test("all three send endpoints carry the account a message names onto its task", async () => {
+    // The client can name an account for one message. Every path that creates a task from a send has to
+    // forward it, or the choice is silently dropped and the task runs on a binding or the default instead.
+    const id = "acct_aaaaaaaaaa";
+    const main = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "main", accountId: id }));
+    const thread = await json(await req("POST", `/api/workspaces/${ws}/threads`, { content: "thread", accountId: id }));
+    const reply = await json(await req("POST", `/api/workspaces/${ws}/threads/${thread.thread.id}/messages`, { content: "reply", accountId: id }));
+    const stored = await db.query<{ id: string; account_id: string | null }>(
+      "select id, account_id from tasks where id = any($1)",
+      [[main.task.id, thread.task.id, reply.task.id]],
+    );
+    expect(stored.map((r) => r.account_id)).toEqual([id, id, id]);
+  });
+
+  test("a malformed account id is refused rather than stored", async () => {
+    const r = await req("POST", `/api/workspaces/${ws}/messages`, { content: "x", accountId: "not-an-account" });
+    expect(r.status).toBe(400);
+  });
+
   test("message resolver returns main and thread messages and rejects foreign ids", async () => {
     const main = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "main" }));
     const thread = await json(await req("POST", `/api/workspaces/${ws}/threads`, { content: "thread" }));

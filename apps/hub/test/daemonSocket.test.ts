@@ -123,7 +123,9 @@ function connect(token = TOKEN, adapters: string[] = ["codex-direct"], hello: Ms
       },
     };
     ws.on("open", () => {
-      client.send({ type: "hello", token, version: "0", adapters, ...hello });
+      // `accounts` is what the real daemon advertises (DAEMON_FEATURES); without it the hub now refuses to
+      // send an account-bound task, which the tests that predate the gate do not mean to exercise.
+      client.send({ type: "hello", token, version: "0", adapters, features: ["accounts"], ...hello });
       resolve(client);
     });
   });
@@ -1219,6 +1221,27 @@ describe("account choice and route decision", () => {
     const a2 = await c.next("task.assign");
     expect(a2.taskId).toBe(plain.task.id);
     expect(a2).not.toHaveProperty("accountId");
+  });
+
+  test("an account-bound task is refused for a daemon that would drop the field, not run on its default", async () => {
+    // An older daemon parses task.assign with accountId removed, so it would answer from whichever account is
+    // its default — the one thing the user did not pick. The hub fails the task and says why instead.
+    const m = await postUserMessage(db, wsA, "on the second account", { accountId: "acct_abc1234567" });
+    const c = await connect(TOKEN, ["codex-direct"], { features: [] });
+    await c.next("welcome");
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
+    expect(await c.has("task.assign")).toBe(false);
+    const system = (await listMessages(db, wsA)).find((x) => x.role === "system")!;
+    expect(system.content).toContain("不支持按账户运行任务");
+  });
+
+  test("a task that names no account still runs on a daemon without the capability", async () => {
+    // Nothing was chosen, so nothing can be substituted: the old daemon's default is the intended answer.
+    const m = await postUserMessage(db, wsA, "whatever the default is");
+    const c = await connect(TOKEN, ["codex-direct"], { features: [] });
+    const a = await c.next("task.assign");
+    expect(a).toMatchObject({ taskId: m.task.id });
+    expect(a).not.toHaveProperty("accountId");
   });
 
   test("a task that allows automatic routing says so", async () => {

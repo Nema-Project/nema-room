@@ -196,6 +196,31 @@ describe("resolveRoute leaves credentials alone", () => {
   });
 });
 
+describe("a named account is honoured as given", () => {
+  test("a disabled account runs when the user names it, and is still excluded from the default pick", () => {
+    // Spec step 2: a named account is not excluded for capability, enabled state or cooldown; only the
+    // credential is checked. Disabling parks an account against automatic selection, it does not refuse an
+    // account the user then pointed at.
+    const off = account({ ...SECOND, enabled: false });
+    const named = resolve({ accounts: [FIRST, off], task: { accountId: off.id } });
+    if (!named.ok) throw new Error(`expected ok, got ${named.failure}: ${named.error}`);
+    expect(named.account.id).toBe(off.id);
+
+    // The default path is where the flag still has its effect: it is never picked on the user's behalf.
+    const byDefault = resolve({ accounts: [off], task: {} });
+    if (byDefault.ok) throw new Error("expected failure");
+    expect(byDefault.failure).toBe("no_account");
+  });
+
+  test("a disabled account with no credential still fails, naming the credential and not the flag", () => {
+    const off = account({ ...SECOND, enabled: false });
+    const r = resolve({ accounts: [off], task: { accountId: off.id }, credential: () => "missing" });
+    if (r.ok) throw new Error("expected failure");
+    expect(r.failure).toBe("credential_missing");
+    expect(r.error).toContain(off.name);
+  });
+});
+
 describe("exclusions", () => {
   test("carries what the candidate computation set aside, for the details panel", () => {
     const r = resolve({

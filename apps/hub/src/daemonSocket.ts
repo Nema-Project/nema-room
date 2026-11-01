@@ -61,6 +61,8 @@ type TaskReplyRouting = {
 };
 
 export const NO_ATTACHMENT_SUPPORT_MESSAGE = "当前 daemon 不支持附件，请升级 CLI";
+/** An older daemon would drop `accountId` from `task.assign` and run the task on its default account. */
+export const NO_ACCOUNT_SUPPORT_MESSAGE = "当前 daemon 不支持按账户运行任务，请升级 CLI 后再指定账户";
 
 export const OLD_CLI_MESSAGE = "nema CLI 版本过旧，请运行 npm run build -w apps/cli 并重启 nema daemon";
 
@@ -258,6 +260,10 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         built = await buildTaskPrompt(task);
         // An older daemon would drop the field and answer from the text alone; fail the task instead.
         if (built.attachments.length > 0 && !conn.features.has("attachments")) throw new Error(NO_ATTACHMENT_SUPPORT_MESSAGE);
+        // Same hazard as an attachment, same answer: a daemon that does not know `accountId` parses the
+        // message by dropping it, so the task would silently run on whichever account is the default on that
+        // machine — the one thing the user did not choose. Failing here names the reason instead.
+        if (task.accountId !== null && !conn.features.has("accounts")) throw new Error(NO_ACCOUNT_SUPPORT_MESSAGE);
         pluginTools = await enabledPluginTools(db, task.workspaceId);
       } catch (e) {
         const error = e instanceof Error ? e.message : String(e);
