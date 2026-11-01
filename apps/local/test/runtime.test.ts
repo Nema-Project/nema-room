@@ -288,21 +288,34 @@ describe("managed local runtime", () => {
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { node?: string };
     delete manifest.node;
     writeFileSync(manifestPath, JSON.stringify(manifest));
-    const previous = process.env.ELECTRON_RUN_AS_NODE;
+    const agentHome = join(tempDir("nema-agent-home-"), "home");
+    mkdirSync(agentHome, { recursive: true });
+    const previous = {
+      electron: process.env.ELECTRON_RUN_AS_NODE,
+      home: process.env.HOME,
+      profile: process.env.USERPROFILE,
+    };
+    process.env.HOME = agentHome;
+    process.env.USERPROFILE = agentHome;
     process.env.ELECTRON_RUN_AS_NODE = "1";
-    let runtime: Awaited<ReturnType<typeof startLocalRuntime>>;
+    let runtime: Awaited<ReturnType<typeof startLocalRuntime>> | undefined;
     try {
       runtime = await startLocalRuntime({ home, assetsDir });
       runtimes.push(runtime);
+      delete process.env.ELECTRON_RUN_AS_NODE;
+      const before = await discoverInstance(home);
+      expect(before?.installationId).toBe(testInstallationId(assetsDir));
+      await expect(shutdownLocalRuntime({ home, assetsDir, expectedInstanceId: before!.instanceId, timeoutMs: 10_000 })).resolves.toMatchObject({ state: "complete" });
+      runtimes.splice(runtimes.indexOf(runtime), 1);
+      expect(await discoverInstance(home)).toBeNull();
     } finally {
-      if (previous === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
-      else process.env.ELECTRON_RUN_AS_NODE = previous;
+      if (previous.electron === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+      else process.env.ELECTRON_RUN_AS_NODE = previous.electron;
+      if (previous.home === undefined) delete process.env.HOME;
+      else process.env.HOME = previous.home;
+      if (previous.profile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = previous.profile;
     }
-    const before = await discoverInstance(home);
-    expect(before?.installationId).toBe(testInstallationId(assetsDir));
-    await expect(shutdownLocalRuntime({ home, assetsDir, expectedInstanceId: before!.instanceId, timeoutMs: 10_000 })).resolves.toMatchObject({ state: "complete" });
-    runtimes.splice(runtimes.indexOf(runtime!), 1);
-    expect(await discoverInstance(home)).toBeNull();
   });
 
   it("retries only a spawned owner's control timeout while authenticated readiness is still starting", async () => {
