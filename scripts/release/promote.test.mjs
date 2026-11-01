@@ -389,7 +389,8 @@ test('the push run must have run and passed the build job and the whole verify s
   const ok = [
     { name: 'Pack and smoke nema', conclusion: 'success' },
     { name: 'verify / Workflow lint', conclusion: 'success' },
-    { name: 'verify / Full application tests and web build', conclusion: 'success' },
+    ...[1, 2, 3, 4, 5, 6].map((shard) => ({ name: `verify / Application tests (${shard}/6)`, conclusion: 'success' })),
+    { name: 'verify / Application build and Compose smoke', conclusion: 'success' },
     { name: 'verify / Platform checks (macos-latest)', conclusion: 'success' },
     { name: 'verify / Platform checks (windows-latest)', conclusion: 'success' },
     { name: 'verify / npm pack smoke (ubuntu-latest)', conclusion: 'success' },
@@ -401,15 +402,15 @@ test('the push run must have run and passed the build job and the whole verify s
   const without = (prefix) => ok.filter((job) => !job.name.startsWith(prefix));
   const set = (prefix, conclusion) => ok.map((job) => (job.name.startsWith(prefix) ? { ...job, conclusion } : job));
   assert.throws(() => assertPushRunJobs(without('Pack'), 1, without('Pack').length), /Pack and smoke nema did not run and pass \(no such job\)/);
-  assert.throws(() => assertPushRunJobs(without('verify / Full'), 1, without('verify / Full').length), /Full application tests and web build did not run/);
+  assert.throws(() => assertPushRunJobs(without('verify / Application build'), 1, without('verify / Application build').length), /Application build and Compose smoke did not run/);
   assert.throws(() => assertPushRunJobs(set('verify / npm pack smoke', 'skipped'), 1, set('verify / npm pack smoke', 'skipped').length), /npm pack smoke \(ubuntu-latest\) did not run and pass/);
   assert.throws(() => assertPushRunJobs(set('verify / Platform checks (windows', 'skipped'), 1, set('verify / Platform checks (windows', 'skipped').length), /Platform checks \(windows-latest\) did not run and pass/);
   assert.throws(() => assertPushRunJobs([...ok, { name: 'verify / Something new', conclusion: 'skipped' }], 1, [...ok, { name: 'verify / Something new', conclusion: 'skipped' }].length), /Something new=skipped/);
   // A jobs page that does not hold every job of the run cannot prove the rest passed.
   assert.doesNotThrow(() => assertPushRunJobs(ok, 1, ok.length));
-  assert.throws(() => assertPushRunJobs(ok, 1, ok.length + 1), /lists 9 of 10 jobs/);
+  assert.throws(() => assertPushRunJobs(ok, 1, ok.length + 1), new RegExp(`lists ${ok.length} of ${ok.length + 1} jobs`));
   // Every matrix leg by its exact name: a run whose answer lacks one leg is refused even when its count agrees.
-  for (const leg of ['verify / Platform checks (windows-latest)', 'verify / npm pack smoke (macos-latest)']) {
+  for (const leg of ['verify / Platform checks (windows-latest)', 'verify / npm pack smoke (macos-latest)', 'verify / Application tests (4/6)']) {
     const short = ok.filter((job) => job.name !== leg);
     assert.throws(() => assertPushRunJobs(short, 1, short.length), new RegExp(`${leg.replace(/[()]/g, '\\$&')} did not run and pass \\(no such job\\)`));
   }
@@ -432,7 +433,7 @@ test('image-publish or desktop-release push runs that did not pass stop before v
 });
 
 test('the image-publish push run must have passed its pull smoke, the desktop run its builds and publish', () => {
-  const verify = ['verify / Workflow lint', 'verify / Full application tests and web build', 'verify / Platform checks (macos-latest)', 'verify / Platform checks (windows-latest)', 'verify / npm pack smoke (ubuntu-latest)', 'verify / npm pack smoke (windows-latest)', 'verify / npm pack smoke (macos-latest)'];
+  const verify = ['verify / Workflow lint', ...[1, 2, 3, 4, 5, 6].map((shard) => `verify / Application tests (${shard}/6)`), 'verify / Application build and Compose smoke', 'verify / Platform checks (macos-latest)', 'verify / Platform checks (windows-latest)', 'verify / npm pack smoke (ubuntu-latest)', 'verify / npm pack smoke (windows-latest)', 'verify / npm pack smoke (macos-latest)'];
   const image = ['Resolve release version', ...verify, 'Build and smoke images', 'Publish images', 'Pull published images'].map((name) => ({ name, conclusion: 'success' }));
   const desktop = ['Resolve release version', ...verify, 'Build and smoke (darwin-arm64)', 'Build and smoke (win32-x64)', 'Publish release'].map((name) => ({ name, conclusion: 'success' }));
   assert.doesNotThrow(() => assertTagRunJobs('image-publish.yml', image, 1, image.length));
@@ -447,7 +448,7 @@ test('the image-publish push run must have passed its pull smoke, the desktop ru
   const noPlatform = image.filter((job) => job.name !== 'verify / Platform checks (macos-latest)');
   assert.throws(() => assertTagRunJobs('image-publish.yml', noPlatform, 1, noPlatform.length), /Platform checks \(macos-latest\) did not run and pass/);
   assert.throws(() => assertTagRunJobs('image-publish.yml', set(image, 'verify / Workflow lint', 'cancelled'), 1, image.length), /verify \/ Workflow lint=cancelled/);
-  assert.throws(() => assertTagRunJobs('image-publish.yml', image, 1, image.length + 1), /lists 11 of 12 jobs/);
+  assert.throws(() => assertTagRunJobs('image-publish.yml', image, 1, image.length + 1), new RegExp(`lists ${image.length} of ${image.length + 1} jobs`));
   assert.throws(() => assertTagRunJobs('image-publish.yml', image, 1, undefined), /did not report its job count/);
   assert.throws(() => assertTagRunJobs('npm-publish.yml', image, 1, image.length), /no job list/);
 });

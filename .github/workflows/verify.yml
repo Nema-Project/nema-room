@@ -23,8 +23,9 @@ on:
         description: Workflow lint result
         value: ${{ jobs.workflow-lint.result }}
       app:
-        description: Ubuntu application test result
-        value: ${{ jobs.test.result }}
+        description: Ubuntu application test result (every test shard and the build job)
+        # A matrix job's result is failure when any leg fails. Both jobs share one `if`, so they skip together.
+        value: ${{ (jobs.unit.result == 'success' && jobs.test.result == 'success') && 'success' || ((jobs.unit.result == 'skipped' && jobs.test.result == 'skipped') && 'skipped' || 'failure') }}
       platform:
         description: Platform check result
         value: ${{ jobs.platform.result }}
@@ -92,12 +93,17 @@ jobs:
         if: runner.os == 'Windows'
         run: node --test scripts/desktop/smoke-desktop.test.mjs
 
-  test:
+  # The Vitest suite took 16 of the 18 minutes on one runner. Each shard keeps the two-worker load
+  # the suite was tuned for and runs in parallel with the build job below.
+  unit:
     if: ${{ inputs.app_tests }}
-    name: Full application tests and web build
+    name: Application tests (${{ matrix.shard }}/6)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     runs-on: ubuntu-latest
-    # Normal runs take 8-12 minutes.
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -110,13 +116,31 @@ jobs:
       - run: npm ci
       # Spawned test fixtures resolve @nema/* through compiled output, so build it first.
       - run: npm run typecheck
+      - run: npm test -- --shard=${{ matrix.shard }}/6 --maxWorkers=2
+
+  test:
+    if: ${{ inputs.app_tests }}
+    name: Application build and Compose smoke
+    runs-on: ubuntu-latest
+    # Normal runs take 2-3 minutes.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.checkout_ref }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
       - run: node --test scripts/ci/*.test.mjs scripts/images/*.test.mjs scripts/desktop/release-commit.test.mjs scripts/desktop/release.test.mjs scripts/release-notes.test.mjs scripts/release/*.test.mjs
       - run: node --test scripts/security/reporting-status.test.mjs
       - name: Desktop payload unit tests
         run: |
           node --test scripts/desktop/graphify.test.mjs scripts/desktop/graphify-languages.test.mjs scripts/desktop/payload-size.test.mjs scripts/desktop/fetch-tools.test.mjs scripts/desktop/source-materials.test.mjs scripts/desktop/after-pack.test.mjs scripts/desktop/portable-zip.test.mjs scripts/desktop/smoke-desktop.test.mjs
           node --test --test-name-pattern "payload omits Node headers" scripts/desktop/staging.test.mjs
-      - run: npm test -- --maxWorkers=2
       - run: npm run build -w apps/hub
       - run: npm run build -w apps/cli
       - run: npm run lint -w apps/web
