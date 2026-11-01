@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { assertReplaceableFfmpeg, builderCliArgs, builderConfig, parseMakeArgs, validateElectronNotices } from '../../../scripts/desktop/make.mjs';
+import { assertReplaceableFfmpeg, assertStagedRuntimeManifest, builderCliArgs, builderConfig, parseMakeArgs, stagedManifestAssetKeys, validateElectronNotices } from '../../../scripts/desktop/make.mjs';
 import { parseSmokeArgs } from '../../../scripts/desktop/smoke-desktop.mjs';
 
 describe('native Electron packaging configuration', () => {
@@ -43,6 +43,37 @@ describe('native Electron packaging configuration', () => {
       await mkdir(mac, { recursive: true });
       await writeFile(path.join(mac, 'libffmpeg.dylib'), 'ffmpeg');
       await expect(assertReplaceableFfmpeg(root, 'darwin')).resolves.toMatch(/libffmpeg\.dylib$/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('packages a staged payload that omits Node and still rejects a Node path outside the payload', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'nema-staged-manifest-'));
+    const expected = { platform: 'darwin', arch: 'arm64', version: '0.2.2' };
+    const manifest = {
+      schemaVersion: 1,
+      version: expected.version,
+      platform: expected.platform,
+      arch: expected.arch,
+      coreEntry: 'core.js',
+      cliEntry: 'cli.js',
+      webEntry: 'web.js',
+      licenses: 'runtime/licenses',
+    };
+    try {
+      await mkdir(path.join(root, 'runtime/licenses'), { recursive: true });
+      for (const name of ['core.js', 'cli.js', 'web.js']) await writeFile(path.join(root, name), name);
+      await writeFile(path.join(root, 'runtime-manifest.json'), JSON.stringify(manifest));
+      expect(stagedManifestAssetKeys(manifest, 'darwin')).not.toContain('node');
+      await expect(assertStagedRuntimeManifest(root, expected)).resolves.toMatchObject({ coreEntry: 'core.js' });
+      await writeFile(path.join(root, 'runtime-manifest.json'), JSON.stringify({ ...manifest, node: '../../Nema' }));
+      await expect(assertStagedRuntimeManifest(root, expected)).rejects.toThrow(/invalid node path/);
+      await writeFile(path.join(root, 'node-stand-in'), 'node');
+      await writeFile(path.join(root, 'runtime-manifest.json'), JSON.stringify({ ...manifest, node: 'node-stand-in' }));
+      await expect(assertStagedRuntimeManifest(root, expected)).resolves.toMatchObject({ node: 'node-stand-in' });
+      await writeFile(path.join(root, 'runtime-manifest.json'), JSON.stringify({ ...manifest, platform: 'win32', arch: 'x64' }));
+      await expect(assertStagedRuntimeManifest(root, { ...expected, platform: 'win32', arch: 'x64' })).rejects.toThrow(/invalid ownedHelperGuardian path/);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
