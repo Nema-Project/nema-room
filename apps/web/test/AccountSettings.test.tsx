@@ -255,3 +255,55 @@ describe("switching an account's kind", () => {
     expect(sent.baseUrl).toBeNull();
   });
 });
+
+describe("the synthesized account row", () => {
+  const implicit = (over: Partial<AccountView> = {}): AccountView => work({ id: "acct_0000000000", name: "Default account", implicit: true, ...over });
+
+  it.each([
+    ["a subscription account", { authMode: "siwc" as const, baseUrl: undefined }],
+    ["a keyed account", { authMode: "byok" as const }],
+    ["a Claude account", { adapter: "claude-code" as const, authMode: undefined, baseUrl: undefined }],
+  ])("offers no controls that would be refused for %s", async (_label, over) => {
+    // Every action on this row would send the reserved id, which `requestId` rejects, so each one could only
+    // ever answer 404. The row describes the setup the user already has; the provider controls above it are
+    // where that setup is changed.
+    stub({ "GET /_nema/accounts": list([implicit(over)]) });
+    mount();
+    const row = (await screen.findAllByTestId("account-row"))[0]!;
+    expect(within(row).queryByRole("button", { name: /^sign in$/i })).toBeNull();
+    expect(within(row).queryByRole("button", { name: /^edit$/i })).toBeNull();
+    expect(within(row).queryByRole("button", { name: /^delete$/i })).toBeNull();
+    expect(within(row).queryByRole("button", { name: /save key/i })).toBeNull();
+    expect(within(row).queryByLabelText(/API key|Claude Code token/i)).toBeNull();
+    // It still says what it is and what its credential state is.
+    expect(within(row).getByText("Current setup")).toBeTruthy();
+    expect(within(row).getByRole("status").textContent).toBeTruthy();
+  });
+
+  it("still lets a second account be added", async () => {
+    stub({ "GET /_nema/accounts": list([implicit()]) });
+    mount();
+    await screen.findByTestId("account-row");
+    // The way out of the single-account setup is here, not on the row.
+    expect(screen.getByRole("button", { name: /add account/i })).toBeTruthy();
+  });
+
+  it("keeps the compat explanation on a synthesized compat account", async () => {
+    stub({ "GET /_nema/accounts": list([implicit({ authMode: "compat", baseUrl: undefined })]) });
+    mount();
+    const row = (await screen.findAllByTestId("account-row"))[0]!;
+    expect(within(row).getByText(/this computer's Codex login/i)).toBeTruthy();
+  });
+
+  it("still shows a stored account's controls, so the rule is about the synthesized row only", async () => {
+    stub({ "GET /_nema/accounts": list([implicit(), work()]) });
+    mount();
+    const rows = await screen.findAllByTestId("account-row");
+    const stored = rows.find((r) => within(r).queryByText("Work"))!;
+    expect(within(stored).getByRole("button", { name: /^edit$/i })).toBeTruthy();
+    expect(within(stored).getByRole("button", { name: /^delete$/i })).toBeTruthy();
+    expect(within(stored).getByLabelText(/API key/i)).toBeTruthy();
+    const first = rows.find((r) => within(r).queryByText("Current setup"))!;
+    expect(within(first).queryByRole("button", { name: /^edit$/i })).toBeNull();
+  });
+});

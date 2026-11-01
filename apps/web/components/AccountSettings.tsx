@@ -268,6 +268,12 @@ export function AccountSettings({ onChanged }: { onChanged?: () => void }) {
             {(state.accounts ?? []).map((account) => {
               const kind = kindOf(account);
               const isDefault = account.id === state.defaultAccountId;
+              // The synthesized account has no stored row, so none of the routes can address it: the id it
+              // carries is the reserved one, which `requestId` refuses, so a login, save, edit or delete
+              // here could only ever come back "not found". The row describes the setup the user already
+              // has; the provider controls above it are where that setup is changed, and "Add account" is
+              // how they leave it behind.
+              const readOnly = account.implicit;
               return (
                 <li key={account.id} className="account-row" data-testid="account-row">
                   <div className="bar">
@@ -288,10 +294,10 @@ export function AccountSettings({ onChanged }: { onChanged?: () => void }) {
                   <p className="kmeta">{t("account.costTier")}: {t(`account.costTier.${account.costTier}`)}</p>
 
                   {kind === "compat" && <p className="help">{t("account.compatHelp")}</p>}
-                  {kind === "siwc" && (
+                  {kind === "siwc" && !readOnly && (
                     <button type="button" onClick={() => void startLogin(account.id)}>{t("account.login")}</button>
                   )}
-                  {(kind === "byok" || kind === "claude") && (
+                  {(kind === "byok" || kind === "claude") && !readOnly && (
                     <div className="field">
                       <label className="label" htmlFor={`account-secret-${account.id}`}>
                         {t(kind === "byok" ? "account.keyLabel" : "account.tokenLabel")}
@@ -317,17 +323,19 @@ export function AccountSettings({ onChanged }: { onChanged?: () => void }) {
                     </div>
                   )}
 
-                  <div className="account-actions">
-                    <button type="button" onClick={() => setDraft(draftOf(account))}>{t("account.edit")}</button>
-                    {confirming === account.id ? (
-                      <>
-                        <button type="button" onClick={() => void remove(account.id)}>{t("account.deleteConfirm")}</button>
-                        <button type="button" onClick={() => setConfirming(null)}>{t("account.cancel")}</button>
-                      </>
-                    ) : (
-                      <button type="button" onClick={() => setConfirming(account.id)}>{t("account.delete")}</button>
-                    )}
-                  </div>
+                  {!readOnly && (
+                    <div className="account-actions">
+                      <button type="button" onClick={() => setDraft(draftOf(account))}>{t("account.edit")}</button>
+                      {confirming === account.id ? (
+                        <>
+                          <button type="button" onClick={() => void remove(account.id)}>{t("account.deleteConfirm")}</button>
+                          <button type="button" onClick={() => setConfirming(null)}>{t("account.cancel")}</button>
+                        </>
+                      ) : (
+                        <button type="button" onClick={() => setConfirming(account.id)}>{t("account.delete")}</button>
+                      )}
+                    </div>
+                  )}
                   {rowError?.id === account.id && <p className="error" role="alert">{rowError.message}</p>}
                 </li>
               );
