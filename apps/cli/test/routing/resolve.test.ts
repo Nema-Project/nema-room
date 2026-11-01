@@ -177,13 +177,6 @@ describe("resolveRoute leaves credentials alone", () => {
     expect(record).not.toContain("baseUrl");
   });
 
-  test("no result carries a credential value", () => {
-    const key = "sk-very-secret-value-0123456789";
-    const withKey = account({ ...FIRST });
-    const r = resolve({ accounts: [withKey], task: { accountId: withKey.id } });
-    expect(JSON.stringify(r)).not.toContain(key);
-  });
-
   test("a failure message never repeats a credential-shaped name", () => {
     // Names are user text. One that looks like a key is refused by the schema, but a message must still not
     // repeat one that got in some other way.
