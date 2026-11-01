@@ -24,6 +24,13 @@ export type SwitchDecision = { switch: true } | { switch: false; because: string
 
 const CONTEXT = /context[_ ]length|context window|too many tokens|prompt is too long|maximum context/i;
 
+/**
+ * Turns whatever the model call threw into the routing vocabulary, reading the provider's words where the
+ * status code alone would be ambiguous (a 400 about the context window is not a 400 about a bad parameter).
+ *
+ * `startedOutput` outranks everything: once the user has seen part of an answer, switching accounts would
+ * continue one sentence with another model's, so that case is its own outcome rather than a retry.
+ */
 export function classifyFailure(e: unknown, o: { startedOutput: boolean }): RouteFailure {
   // Highest priority, whatever the error is: the user has already seen part of this answer, and a second
   // account would continue with a different model's text.

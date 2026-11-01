@@ -49,6 +49,7 @@ export type RouteRequest = {
 /** A name is user text and can be anything; one that looks like a credential is replaced by the id. */
 const SECRET_LIKE = /^[A-Za-z0-9_\-+/=]{20,}$/;
 
+/** How an account is named in a sentence. A name that looks like a credential is replaced by its id. */
 function label(account: Account): string {
   return SECRET_LIKE.test(account.name.trim()) ? `账户 ${account.id}` : `账户「${account.name}」`;
 }
@@ -70,6 +71,15 @@ function choose(task: TaskAssign, bindings: Record<string, string>): { kind: "ac
   return null;
 }
 
+/**
+ * One task, one account and one model — the whole decision in one place, in manual mode only (this batch).
+ *
+ * Order of precedence is the message, then the thread, then the workspace, then the machine's default, and
+ * the resulting record says which of those it was. A named account is honoured as given: capability,
+ * enabled state and cooldown are not consulted, only the credential, because the user already decided and
+ * a missing key is the one thing that cannot produce an answer. Automatic routing is refused here rather
+ * than approximated, so a user who asked for failover is never handed a silent single-account run.
+ */
 export function resolveRoute(req: RouteRequest): RouteResult {
   const { task, adapter } = req;
   const needs = taskNeeds(task);

@@ -32,6 +32,7 @@ export type CandidateSet = { candidates: Candidate[]; excluded: Excluded[]; empt
 /** The user's own ordering, then the declared tier, then the id — the last one only so the result is stable. */
 const TIER_RANK: Record<Account["costTier"], number> = { low: 0, standard: 1, high: 2 };
 
+/** The order the details panel and (later) automatic routing both read: explicit order, then tier, then id. */
 function byPreference(a: Candidate, b: Candidate): number {
   if (a.account.order !== b.account.order) return a.account.order - b.account.order;
   const tier = TIER_RANK[a.account.costTier] - TIER_RANK[b.account.costTier];
@@ -39,6 +40,13 @@ function byPreference(a: Candidate, b: Candidate): number {
   return a.account.id < b.account.id ? -1 : a.account.id > b.account.id ? 1 : 0;
 }
 
+/**
+ * Splits the accounts of one adapter into the ones that could take this task and the ones that could not,
+ * each exclusion carrying the reason it is shown to the user.
+ *
+ * Accounts of another adapter are dropped silently rather than excluded: they were never candidates here,
+ * and listing "not chosen because it is Claude Code" would describe a choice that does not exist.
+ */
 export function computeCandidates(o: {
   accounts: Account[];
   adapter: Account["adapter"];
