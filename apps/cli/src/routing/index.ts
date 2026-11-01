@@ -223,8 +223,10 @@ function refusalMessage(adapter: Account["adapter"], needs: TaskNeeds, excluded:
   const names = missing.map((need) => (need === "image" ? "图片" : "PDF")).join("、");
   const describe = (e: Excluded): string => label({ id: e.accountId, name: e.accountName } as Account);
   const incapable = excluded.filter((e) => e.reason === "capability");
-  if (missing.length > 0) {
-    const who = incapable.length > 0 ? `：${incapable.map(describe).join("、")} 没有声明这项能力` : "";
+  // An image or PDF on the task is not itself a capability refusal. That sentence is only honest when at
+  // least one account was set aside for capability; a cooldown or a missing credential has to name itself.
+  if (missing.length > 0 && incapable.length > 0) {
+    const who = `：${incapable.map(describe).join("、")} 没有声明这项能力`;
     return `没有账户声明支持${names}，无法自动选择${who}。请在设置页为账户打开对应的能力声明，或在这条消息上指定一个支持它的账户。`;
   }
   // No capability was the obstacle, so the other exclusions are: name them rather than say "none".

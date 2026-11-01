@@ -231,6 +231,23 @@ describe("AutoRouter attempts", () => {
     r.recordFailure("rate_limit", undefined, "gpt-actual");
     expect(r.attempts()[0]!.model).toBe("gpt-actual");
   });
+
+  test("a failure with nowhere to go is not a switch", () => {
+    const r = router({ candidates: [ONE] });
+    r.next();
+    r.recordFailure("rate_limit");
+    expect(r.next()).toBeNull();
+    expect(r.attempts()).toHaveLength(1);
+    expect(r.hasSwitched()).toBe(false);
+  });
+
+  test("moving to the next account is a switch", () => {
+    const r = router();
+    r.next();
+    r.recordFailure("rate_limit");
+    r.next();
+    expect(r.hasSwitched()).toBe(true);
+  });
 });
 
 describe("ReasoningGuard", () => {

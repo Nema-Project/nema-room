@@ -127,9 +127,16 @@ export class AutoRouter {
     }));
   }
 
-  /** Whether the task has already moved at least once, for choosing between the two automatic reason codes. */
+  /**
+   * Whether the task has already moved to a different account.
+   *
+   * A recorded failure is not a switch: the only eligible account can fail and leave the task where it
+   * started. The reason codes that mean "moved" have to look at the account, not at the attempt list.
+   */
   hasSwitched(): boolean {
-    return this.tried.length > 0;
+    const current = this.current();
+    if (current === null) return false;
+    return this.tried.some((a) => a.account.id !== current.account.id);
   }
 }
 

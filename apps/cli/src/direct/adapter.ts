@@ -238,6 +238,9 @@ class AccountPlan {
       model,
     );
     if (attempts.length === 0) return base;
+    // A failure with nowhere to move still belongs in the details panel. It is not a switch, so the reason
+    // stays the one `resolveRoute` chose (`auto_primary`) rather than a code that says another account ran.
+    if (!this.auto?.hasSwitched()) return { ...base, attempts };
     // Why automatic routing is on this account. A limit is worth its own code because it is the case the user
     // is most likely to want to understand afterwards ("it ran out and moved on"), while any other switch is a
     // generic failover. Both name the accounts that were passed over, in `attempts`.
@@ -341,6 +344,26 @@ export class CodexDirectAdapter implements AgentAdapter {
     // still deciding: which model was actually sent, and whether the user has seen any text yet.
     const sent: SentState = {};
 
+    // Built before the abort listener and the timer. `codexTransportFor` throws when the account is not a
+    // codex-direct account; doing that after `setTimeout` would leave the timer running on a run that already
+    // returned.
+    let plan: AccountPlan;
+    try {
+      plan = new AccountPlan({
+        route,
+        nemaHome: this.opts.nemaHome,
+        codexHome,
+        sent,
+        cooldowns: this.opts.cooldowns ?? new Cooldowns({ now: this.opts.now }),
+        ...(this.opts.now ? { now: this.opts.now } : {}),
+        ...(this.opts.refresher ? { refresher: this.opts.refresher } : {}),
+        ...(this.opts.profile ? { profile: this.opts.profile } : {}),
+        onEvent,
+      });
+    } catch (e) {
+      return { ok: false, error: errorMessage(e), route: routeDecision(route, route.model) };
+    }
+
     const ac = new AbortController();
     const abortFromOwner = () => ac.abort(ownerSignal?.reason ?? new Error("run stopped"));
     ownerSignal?.addEventListener("abort", abortFromOwner, { once: true });
@@ -351,17 +374,6 @@ export class CodexDirectAdapter implements AgentAdapter {
     timeout.catch(() => {});
     const timer = setTimeout(() => ac.abort(new RunTimeoutError()), task.limits?.timeoutMs ?? this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
-    const plan = new AccountPlan({
-      route,
-      nemaHome: this.opts.nemaHome,
-      codexHome,
-      sent,
-      cooldowns: this.opts.cooldowns ?? new Cooldowns({ now: this.opts.now }),
-      ...(this.opts.now ? { now: this.opts.now } : {}),
-      ...(this.opts.refresher ? { refresher: this.opts.refresher } : {}),
-      ...(this.opts.profile ? { profile: this.opts.profile } : {}),
-      onEvent,
-    });
     try {
       await plan.session.source.getAccessToken();
     } catch (e) {

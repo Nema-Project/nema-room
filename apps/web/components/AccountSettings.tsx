@@ -10,6 +10,7 @@ import {
   type AccountsList,
 } from "@/lib/accounts";
 import { ModelSettingsError } from "@/lib/modelSettings";
+import { notifyAccountsChanged } from "@/lib/useAccounts";
 import { useT } from "@/lib/i18n";
 
 /**
@@ -249,6 +250,9 @@ export function AccountSettings({ onChanged }: { onChanged?: () => void }) {
     setNotice(null);
     try {
       await accountsApi.setAutoRouting(next);
+      // The composer stays mounted under settings and has its own `useAccounts`. Its reload is the only way
+      // "Automatic" appears or disappears without leaving the page.
+      notifyAccountsChanged();
       await reload();
       onChanged?.();
     } catch (e: unknown) {

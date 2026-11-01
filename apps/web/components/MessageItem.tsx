@@ -112,14 +112,16 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
 export function RouteLine({ route }: { route: RouteDecision }) {
   const t = useT();
   const [open, setOpen] = useState(false);
-  // When the task moved, the line says so in the user's terms — "after OpenRouter 免费 was rate limited" — because
-  // "automatic, after another account hit its limit" leaves out the one fact the reader came for: which account
-  // was passed over. The reason code alone is enough only when nothing moved.
-  const moved = route.attempts !== undefined && route.attempts.length > 0;
+  // Attempts are recorded for a failure even when the task never left that account. The switched sentence is
+  // only honest when some attempt belongs to a different account than the one that answered. Each failed
+  // account keeps its own reason: the last attempt's failure does not describe the earlier ones.
+  const attempts = route.attempts ?? [];
+  const moved = attempts.some((a) => a.accountId !== route.accountId);
   const reason = moved
     ? t("route.reason.switched", {
-      accounts: route.attempts!.map((a) => a.accountName).join(t("route.reason.separator")),
-      failure: t(`route.failure.${route.attempts!.at(-1)!.failure}`),
+      attempts: attempts
+        .map((a) => t("route.reason.attempt", { account: a.accountName, failure: t(`route.failure.${a.failure}`) }))
+        .join(t("route.reason.separator")),
     })
     : t(`route.reason.${route.reason}`);
   return (

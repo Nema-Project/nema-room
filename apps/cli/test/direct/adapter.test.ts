@@ -951,6 +951,19 @@ describe("automatic routing (S4)", () => {
     expect((result as { route?: { attempts?: unknown[] } }).route!.attempts ?? []).toEqual([]);
   });
 
+  test("a rate limit with nowhere to move records the attempt and does not claim a switch", async () => {
+    writeAuto([acctA], true);
+    server.responses(json(429, { error: { code: "rate_limit_exceeded" } }));
+    const { result } = await run(auto(), { ...task(), routing: "auto" });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { route?: { reason?: string; accountId?: string; attempts?: { accountId: string; failure: string }[] } }).route)
+      .toMatchObject({
+        reason: "auto_primary",
+        accountId: acctA.id,
+        attempts: [{ accountId: acctA.id, failure: "rate_limit" }],
+      });
+  });
+
   test("a 401 does not switch accounts", async () => {
     // This is one key's problem. Moving to the next account would hide the fact that the user has to fix it.
     server.responses(json(401, { error: { code: "invalid_api_key", message: "bad key" } }));

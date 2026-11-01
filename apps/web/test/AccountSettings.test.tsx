@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountSettings } from "@/components/AccountSettings";
 import type { AccountView } from "@/lib/accounts";
 import { I18nProvider } from "@/lib/i18n";
+import { useAccounts } from "@/lib/useAccounts";
 
 /**
  * The account block of the settings page. It reads `/_nema/accounts`; when that daemon has no such route the
@@ -319,6 +320,7 @@ describe("the automatic routing switch", () => {
     expect((toggle as HTMLInputElement).checked).toBe(false);
     // The one thing a user must know before turning it on: this can send the same task to another account.
     expect(screen.getByText(/another account/i)).toBeTruthy();
+    expect(screen.getByText(/choose Automatic/i)).toBeTruthy();
   });
 
   it("turns the switch on through the accounts API and follows the answer", async () => {
@@ -341,6 +343,27 @@ describe("the automatic routing switch", () => {
     await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     expect(calls.find((c) => c.method === "PATCH")!.body).toEqual({ autoRouting: true });
     await waitFor(() => expect((screen.getByRole("checkbox", { name: /automatic routing/i }) as HTMLInputElement).checked).toBe(true));
+  });
+
+  it("refreshes an account list that was already mounted when the switch is saved", async () => {
+    let on = false;
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>((_input, init) => {
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+      if (method === "PATCH") {
+        on = (body as { autoRouting: boolean }).autoRouting;
+        return Promise.resolve(reply({ autoRouting: on }));
+      }
+      return Promise.resolve(reply({ accounts: [work(), personal()], defaultAccountId: work().id, bindings: {}, autoRouting: on }));
+    }));
+    function Probe() {
+      const { autoRouting } = useAccounts();
+      return <span data-testid="accounts-auto">{autoRouting ? "on" : "off"}</span>;
+    }
+    render(<I18nProvider><Probe /><AccountSettings onChanged={() => {}} /></I18nProvider>);
+    await waitFor(() => expect(screen.getByTestId("accounts-auto").textContent).toBe("off"));
+    await userEvent.click(await screen.findByRole("checkbox", { name: /automatic routing/i }));
+    await waitFor(() => expect(screen.getByTestId("accounts-auto").textContent).toBe("on"));
   });
 
   it("keeps showing off and says so when the save fails", async () => {

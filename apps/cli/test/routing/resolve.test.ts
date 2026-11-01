@@ -332,7 +332,7 @@ describe("automatic routing and the switch", () => {
 describe("no candidate at all (S4.3)", () => {
   /** A task carrying one image: the ability every account has to have declared for automatic mode. */
   const withImage = (p: Partial<TaskAssign> = {}): Partial<TaskAssign> => ({
-    attachments: [{ id: "a1", kind: "image", name: "shot.png", mime: "image/png", size: 3 }],
+    attachments: [{ id: "a1", kind: "image", name: "shot.png", mime: "image/png", size: 3, sha256: "a".repeat(64), messageId: "m1" }],
     ...p,
   });
 
@@ -363,7 +363,7 @@ describe("no candidate at all (S4.3)", () => {
     // (attachments/capabilities.ts). "Not declared" is not "not supported" on the settings page, but for
     // automatic selection both mean "do not pick it" — and the sentence says which of the two it was.
     const claude = account({ ...FIRST, adapter: "claude-code", authMode: undefined, baseUrl: undefined, capabilities: {} });
-    const pdf = { attachments: [{ id: "a1", kind: "pdf" as const, name: "doc.pdf", mime: "application/pdf", size: 3 }] };
+    const pdf = { attachments: [{ id: "a1", kind: "pdf" as const, name: "doc.pdf", mime: "application/pdf", size: 3, sha256: "a".repeat(64), messageId: "m1" }] };
     const r = resolve({ task: { ...pdf, routing: "auto" }, adapter: "claude-code", autoRouting: true, accounts: [claude] });
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error("expected failure");
@@ -393,6 +393,23 @@ describe("no candidate at all (S4.3)", () => {
     // The one that said no is in the exclusions, so the details panel can explain it.
     expect(r.excluded.map((e) => e.reason)).toContain("capability");
     expect(r.autoCandidates?.map((c) => c.account.id)).toEqual([capable.id]);
+  });
+
+  test("an image task excluded for another reason does not claim that no account declared image support", () => {
+    // The capability sentence is only true when an account was set aside for capability. A disabled account
+    // on an image task was excluded for the flag; telling the user to declare image support sends them to the
+    // wrong control.
+    const r = resolve({
+      task: withImage({ routing: "auto" }),
+      autoRouting: true,
+      accounts: [account({ ...FIRST, enabled: false })],
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("expected failure");
+    expect(r.failure).toBe("no_candidate");
+    expect(r.error).not.toContain("没有声明");
+    expect(r.error).toContain("disabled");
+    expect(r.error).toContain(FIRST.name);
   });
 
   test("every other exclusion is named when no capability was the problem", () => {

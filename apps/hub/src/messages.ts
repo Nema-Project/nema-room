@@ -292,6 +292,9 @@ async function lockForSend(
   // A retry that names a different account is a different request, not a replay of this one: returning the
   // earlier task would answer with the route the user had already moved away from.
   if (task.accountId !== (options.accountId ?? null)) throw conflict;
+  // Routing is part of the same choice. A retry that flips between "automatic" and "not asked" must not
+  // come back as the earlier task: that task keeps the routing it was created with.
+  if ((task.routing ?? null) !== (options.routing ?? null)) throw conflict;
   return { message: prior, task };
 }
 
