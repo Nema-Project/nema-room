@@ -20,11 +20,18 @@ function reply(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-function stubModelFetch(fetchMock: typeof fetch, statusFetchMock: typeof fetch = vi.fn<typeof fetch>().mockResolvedValue(reply({ state: "idle", error: null })), models: unknown = { models: [] }) {
+/**
+ * `accounts` defaults to `undefined`, which answers `/_nema/accounts` the way a 0.2.0 daemon does: 404. The
+ * account block then stays off the page and these cases keep measuring the page they were written for.
+ */
+function stubModelFetch(fetchMock: typeof fetch, statusFetchMock: typeof fetch = vi.fn<typeof fetch>().mockResolvedValue(reply({ state: "idle", error: null })), models: unknown = { models: [] }, accounts?: unknown) {
   vi.stubGlobal("fetch", vi.fn<typeof fetch>((input, init) => {
     const path = typeof input === "string" ? input : input instanceof URL ? input.pathname : input.url;
     if (path === "/_nema/auth/status") return statusFetchMock(input, init);
     if (path === "/_nema/models") return Promise.resolve(reply(models));
+    if (path === "/_nema/accounts") {
+      return Promise.resolve(accounts === undefined ? reply({ error: "not_found" }, 404) : reply(accounts));
+    }
     return fetchMock(input, init);
   }));
 }
