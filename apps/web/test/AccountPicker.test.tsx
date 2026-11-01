@@ -132,3 +132,13 @@ describe("AccountPicker", () => {
     expect(container.querySelector("[data-account-picker]")).toBeNull();
   });
 });
+
+describe("values this batch has no option for", () => {
+  it("shows a stored \"auto\" binding as automatic rather than as no choice", () => {
+    // Automatic routing is S4; a file written by a newer version (or by hand) must not paint the select blank.
+    const { container } = mount({ scope: "thread", threadId: "th_1", bindings: { "thread:th_1": "auto" }, value: "auto", accounts: [A, B] });
+    const select = container.querySelector("select") as HTMLSelectElement;
+    expect(select.value).toBe("auto");
+    expect(screen.getByRole("option", { name: /Automatic \(not available/i })).toBeTruthy();
+  });
+});

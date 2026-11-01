@@ -71,8 +71,12 @@ export function AccountPicker({ scope, accounts, bindings, value, onChange, thre
     }
   }
 
-  // A stored choice that names no account here can happen after a restore onto another machine. It is shown
-  // as its own entry instead of being dropped, so the page does not read as "not chosen".
+  // Two stored values have no account row to match, and neither may be displayed as something else:
+  //   - `auto` (spec §1.2, automatic routing) has no option in this batch, so a file that carries it would
+  //     otherwise paint the select as blank and read as "not chosen";
+  //   - an id that names no account here can happen after a restore onto another machine.
+  // Both get their own entry, and neither is offered as a choice.
+  const showsAuto = value === "auto";
   const missing = value !== null && value !== "auto" && !accounts.some((a) => a.id === value);
 
   return (
@@ -89,6 +93,7 @@ export function AccountPicker({ scope, accounts, bindings, value, onChange, thre
         {accounts.map((account) => (
           <option key={account.id} value={account.id}>{account.name}</option>
         ))}
+        {showsAuto && <option value="auto">{t("account.picker.auto")}</option>}
         {missing && <option value={value}>{t("account.picker.unknown", { id: value })}</option>}
       </select>
       {error && <p className="error" role="alert">{t("account.picker.failed")}</p>}
