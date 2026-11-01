@@ -20,20 +20,21 @@
 
 v0.2.1 是 v0.2.0 之后的小版本，不含新功能。四项都是 v0.2.0 发布后暴露的加固与修复：[#159](https://github.com/Nema-Project/nema-room/pull/159) 同一供应商多账户的第 1 阶段（账户数据与凭据），[#169](https://github.com/Nema-Project/nema-room/pull/169) `release:cut` 的并发与中断安全，[#171](https://github.com/Nema-Project/nema-room/pull/171) `mcpLeftovers` 的偶发失败，[#170](https://github.com/Nema-Project/nema-room/pull/170) `release-promote` 有界等待 npm registry 可见性。同一轮把四份 README 与三份指南里「升级到更新的次版本」那段改成 `<version>` 占位符，[#63](https://github.com/Nema-Project/nema-room/issues/63) 第六条（release PR 的安装入口与示例命令不出现写死版本号）在这个 release PR 上成立；该 issue 的其余分期不因本版改变状态。
 
-发布记录（tag 之后补真实值，以下为占位）：
+发布记录（tag 与 tag 之后的三条工作流已核实；晋升尚未执行，相关两行仍为待填）：
 
-- tag `v0.2.1` → `<TAG_COMMIT>`；该提交的 main CI：`<MAIN_CI_RUN>`。
-- 三条 tag 工作流：npm `<NPM_RUN>`、镜像 `<IMAGE_RUN>`、桌面 `<DESKTOP_RUN>`。
-- 只读检查 `npm run release:verify -- 0.2.1` 打 tag 后的首次结果：`<PRE_PROMOTE_VERIFY>`（预期退出 1，且只点名 npm）。
-- `release:verify -- --pointers 0.2.1` 的前后对照：`<POINTERS_BEFORE>` / `<POINTERS_AFTER>`。
-- 晋升：`gh workflow run release-promote.yml --ref main -f tag=v0.2.1`，运行 `<PROMOTE_RUN>`；晋升后 `release:verify -- 0.2.1` 退出 0。
-- `releases/latest/download/docker-compose.yml` 在晋升前仍是 0.2.0 的双 pin，晋升后变为 0.2.1 且带版本头。
+- tag `v0.2.1` 是 annotated tag `6ef80a536d3f74ccdec82817419c3ae88ea72625`，解引用到 `55edeff6b101a5c0d68a42ade2359623f2490ccb`（`release: prepare v0.2.1`，[PR #172](https://github.com/Nema-Project/nema-room/pull/172) 的合并提交）；该提交的 [main CI](https://github.com/Nema-Project/nema-room/actions/runs/41217993126) 成功（`CI gate`、`classify`、`docs`、`Workflow lint`、macOS/Windows 平台检查、三平台 pack smoke、完整应用测试与 web 构建）。
+- 三条 tag 工作流均成功：[npm](https://github.com/Nema-Project/nema-room/actions/runs/41220073049)、[镜像](https://github.com/Nema-Project/nema-room/actions/runs/41220073015)、[桌面](https://github.com/Nema-Project/nema-room/actions/runs/41220073153)（只建 draft Release）。npm 那条按设计 `Publish to npm` 为 skipped，只打包与冒烟，所以这里成功只表示 tag 阶段通过，不代表 npm 上已有 0.2.1。
+- tag 之后、晋升之前，带 `GITHUB_TOKEN` 跑 `npm run release:verify -- 0.2.1`：**退出 1**，`result: incomplete (exit 1)`。逐项为 `MISSING npm`（`npm has no @nema-project/nema@0.2.1`）、`ok images`（hub `sha256:a38b1bf9…` / web `sha256:4f50509d…`，linux/amd64）、`ok release`（Release 仍是 draft、8 个资产匹配、`docker-compose.yml` 钉 0.2.1、GitHub latest 指针未动）、`UNKNOWN consistency`（因 npm 未就绪而未检查）。不带 token 时 release 那一行是 UNKNOWN；本条记录的是带 token 的那次。
+- `release:verify -- --pointers 0.2.1` 晋升前：npm latest `0.2.0` → move、npm next `(none)` → skip、ghcr hub latest `0.2.0` → move、ghcr web latest `0.2.0` → move、github latest `0.2.0` → move；五个指针都还没动。
+- 晋升：**待晋升后填** `<PROMOTE_RUN>`：维护者仍需执行 `gh workflow run release-promote.yml --ref main -f tag=v0.2.1`，晋升后补运行编号并确认 `release:verify -- 0.2.1` 退出 0。
+- 晋升后的指针：**待晋升后填** `<POINTERS_AFTER>`；晋升前的对照值见上一条（五项均为 `0.2.0`，npm next 为 `(none)`）。
+- `releases/latest/download/docker-compose.yml` 在晋升前仍是 0.2.0 的双 pin；晋升后应变为 0.2.1 且带版本头，这一点**待晋升后核实**。
 
 发布可用性不等于功能或真机验收完成：
 
-- 多账户只有第 1 阶段落地（`apps/cli` 的账户数据与凭据）。设置 API、自动路由与界面属于 S2–S4，[#131](https://github.com/Nema-Project/nema-room/issues/131) 仍 OPEN 且仍在 milestone v0.2.1，所以不要把这个版本当作多账户功能可用。
+- 多账户只有第 1 阶段落地（`apps/cli` 的账户数据与凭据）。设置 API、自动路由与界面属于 S2–S4，所以不要把这个版本当作多账户功能可用。[#131](https://github.com/Nema-Project/nema-room/issues/131) 仍 OPEN，已从 milestone v0.2.1 移到 v0.2.2 继续做（v0.2.1 现已无 open issue）。
 - `mcpLeftovers` 的修复在测试侧，产品代码未改；它把偶发失败归因于 fixture 读到尚未写入的 pid 文件：`Number("")` 为 0，而 POSIX 下 pid 0 指调用者自己的进程组，所以 `process.kill(0, 0)` 成功，测试就一直等到超时。该测试只在 POSIX 上运行（`describe.skipIf(!posix)`）。[#161](https://github.com/Nema-Project/nema-room/issues/161) 按此关闭。
-- registry 可见性等待有上限（`NPM_VISIBILITY_BUDGET_MS` 为 120 秒），预算耗尽仍 fail-closed 且不移动后续指针；v0.2.1 是这条路径在真实发布上的第一次使用，还没有真实发布记录。
+- registry 可见性等待有上限（`NPM_VISIBILITY_BUDGET_MS` 为 120 秒），预算耗尽仍 fail-closed 且不移动后续指针。v0.2.1 的 npm 工作流已按设计在 tag 阶段跑完（`Publish to npm` 为 skipped），但**尚未晋升**，registry 上仍没有 0.2.1（`npm view @nema-project/nema@0.2.1` 返回 404，`latest` 仍是 0.2.0），所以这条等待路径还没有被这次发布真正走过，不能据此认为已验证。
 - Windows x64 与 macOS arm64 安装包的真机安装、覆盖升级、启动与旧数据保留仍待验证；不能用 v0.2.0 的验收代替。
 
 ## v0.2.0 发布与后续验收
