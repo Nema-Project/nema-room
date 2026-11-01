@@ -156,6 +156,34 @@ function codexLoginProblem(codexHome: string): "missing" | "unusable" | null {
   }
 }
 
+/**
+ * The synthesized account's own credential, judged only by its own file (D-6).
+ *
+ * The account-layout rule that "a directory may hold one kind only" is not applied to it, because that
+ * "directory" is the whole home: `config.json` lives there, and a user who switched from a key to a login
+ * has always been allowed to keep both files. Applying the rule refused runs that 0.2.0 performed.
+ *
+ * A parsed SIWC record counts as connected even when it cannot refresh. The token source has a sentence for
+ * that ("log in again"), and it is the one this account has always printed; deciding it here would replace it
+ * with the generic "file unusable".
+ */
+export function implicitCredentialState(nemaHome: string, account: Account): CredentialState {
+  // The token source of every other kind answers with its own sentence, so nothing is decided here.
+  if (account.adapter !== "codex-direct" || account.authMode !== "siwc") return "connected";
+  let file: string;
+  try {
+    const files = accountCredentialFiles(nemaHome, account);
+    const expected = files[0];
+    if (expected === undefined) return "connected";
+    file = expected;
+  } catch {
+    return "unusable";
+  }
+  const inspected = new AuthStore(nemaHome, neverRefresh, Date.now, { baseDir: path.dirname(file) }).inspect();
+  if (inspected.auth) return "connected";
+  return inspected.reason === "unusable" ? "unusable" : "missing";
+}
+
 export function accountCredentialState(
   nemaHome: string,
   account: Account,

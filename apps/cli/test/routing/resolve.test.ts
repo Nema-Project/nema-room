@@ -40,6 +40,8 @@ const task = (p: Partial<TaskAssign> = {}): TaskAssign => ({
 
 const resolve = (o: {
   task?: Partial<TaskAssign>;
+  /** The adapter the runner chose. Not read from the task or the config: the task's "auto" means nothing here. */
+  adapter?: Account["adapter"];
   accounts?: Account[];
   bindings?: Record<string, string>;
   credential?: (a: Account) => CredentialState;
@@ -50,6 +52,7 @@ const resolve = (o: {
   resolveRoute({
     task: task(o.task),
     config: o.config ?? { ...DEFAULT_CONFIG, authMode: "byok" },
+    adapter: o.adapter ?? "codex-direct",
     accounts: o.accounts ?? [FIRST, SECOND, THIRD],
     bindings: o.bindings ?? {},
     cooldowns: o.cooldowns ?? new Cooldowns({ now: () => 0 }),
@@ -235,26 +238,31 @@ describe("routeDecision", () => {
   });
 });
 
-describe("the adapter a task runs as", () => {
-  test("a task naming claude-code is routed among claude-code accounts", () => {
-    const claude = account({ id: "acct_dddddddddd", name: "Claude", adapter: "claude-code", authMode: undefined, baseUrl: undefined });
-    const r = resolve({ accounts: [FIRST, claude], task: { adapter: "claude-code", accountId: claude.id } });
+describe("the adapter the task actually runs as", () => {
+  const claude = account({ id: "acct_dddddddddd", name: "Claude", adapter: "claude-code", authMode: undefined, baseUrl: undefined });
+
+  test("a claude task is routed among claude accounts", () => {
+    const r = resolve({ adapter: "claude-code", accounts: [FIRST, claude], task: { accountId: claude.id } });
     expect(r).toMatchObject({ ok: true, reason: "user_message" });
     if (!r.ok) throw new Error("expected ok");
     expect(r.account.id).toBe(claude.id);
   });
 
-  test("\"auto\" means the configured adapter, so a claude account is not a candidate in a codex task", () => {
-    const claude = account({ id: "acct_dddddddddd", name: "Claude", adapter: "claude-code", authMode: undefined, baseUrl: undefined });
-    const r = resolve({ accounts: [claude], task: { adapter: "auto" } });
+  test("a claude task with only codex accounts fails instead of running one of them", () => {
+    const r = resolve({ adapter: "claude-code", accounts: [FIRST] });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("expected failure");
+    expect(r.failure).toBe("no_account");
+    expect(r.error).toContain("claude-code");
+  });
+
+  test("the configured adapter in config.json does not decide the route", () => {
+    // A workspace can run a claude-code task while config.json names codex-direct (the setting is a projection
+    // of the *default* account). Reading it here would route the task among the wrong adapter's accounts.
+    const r = resolve({ adapter: "codex-direct", accounts: [claude] });
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error("expected failure");
     expect(r.failure).toBe("no_account");
     expect(r.error).toContain("codex-direct");
-  });
-
-  test("the retired codex CLI name still routes to codex-direct", () => {
-    const r = resolve({ task: { adapter: "codex" } });
-    expect(r).toMatchObject({ ok: true, reason: "default" });
   });
 });

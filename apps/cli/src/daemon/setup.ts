@@ -9,6 +9,7 @@ import { graphifyInstallStatus, type GraphifyOpts } from "../repos/graphify.js";
 import { registerRepoHandlers } from "../repos/handlers.js";
 import { parseReposSync, RepoWatcher } from "../repos/watcher.js";
 import { connectDaemon } from "./connection.js";
+import { Cooldowns } from "../routing/cooldown.js";
 import { RpcRouter } from "./rpc.js";
 import { Runner } from "./runner.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
@@ -23,11 +24,20 @@ export type RunnerSetup = {
   ownedHelpers?: OwnedHelperScope;
 };
 
-/** The daemon's runner. Codex stays on the direct adapter; Claude Code is selected only when config.adapter is claude-code. */
+/**
+ * The daemon's runner. Codex stays on the direct adapter; Claude Code is selected only when config.adapter is
+ * claude-code.
+ *
+ * Both adapters share one cooldown table: spec §4.4 keeps it per process, and a rate limit learned by one of
+ * them is about the same account. Neither adapter is given an account getter here, so each reads
+ * `accounts.json` when a task starts — a change made in the settings page applies to the next task without a
+ * daemon restart.
+ */
 export function createRunner(o: RunnerSetup): Runner {
   if (!o.cliEntry) throw new Error("cliEntry is required");
-  const direct = new CodexDirectAdapter({ nemaHome: o.nemaHome, version: o.version, codexHome: o.userCodexHome });
-  const claude = new ClaudeCodeAdapter({ nemaHome: o.nemaHome, cliEntry: o.cliEntry, execPath: o.execPath ?? process.execPath, ownedHelpers: o.ownedHelpers });
+  const cooldowns = new Cooldowns();
+  const direct = new CodexDirectAdapter({ nemaHome: o.nemaHome, version: o.version, codexHome: o.userCodexHome, cooldowns });
+  const claude = new ClaudeCodeAdapter({ nemaHome: o.nemaHome, cliEntry: o.cliEntry, execPath: o.execPath ?? process.execPath, ownedHelpers: o.ownedHelpers, codexHome: o.userCodexHome, cooldowns });
   return new Runner([direct, claude], o.getConfig ?? (() => loadConfig(o.nemaHome)));
 }
 

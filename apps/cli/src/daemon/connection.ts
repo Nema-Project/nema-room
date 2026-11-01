@@ -132,7 +132,13 @@ export function connectDaemon(opts: DaemonOpts): { close(): Promise<void> } {
         opts.runner.enqueue(
           m,
           (event) => send({ type: "task.event", taskId, event }),
-          (r) => send(r.ok ? { type: "task.finished", taskId, ok: true, reply: r.reply } : { type: "task.finished", taskId, ok: false, error: r.error }),
+          (r) => send({
+            type: "task.finished",
+            taskId,
+            ...(r.ok ? { ok: true, reply: r.reply } : { ok: false, error: r.error }),
+            // Only when the adapter actually routed; an adapter that does not know about accounts sends none.
+            ...(r.route ? { route: r.route } : {}),
+          }),
         );
       } else if (m.type === "rpc.request" && opts.rpc) {
         // A running agent waits on this response, so it must not join the task queue.

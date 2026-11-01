@@ -2,7 +2,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { rmSync } from "node:fs";
 import path from "node:path";
 import { commandSpec } from "../platform.js";
-import type { TaskAssign, TaskEvent } from "@nema/shared";
+import type { RouteDecision, TaskAssign, TaskEvent } from "@nema/shared";
 import { attachmentCapabilities, refusal } from "../attachments/capabilities.js";
 import { attachmentLabel, attachmentPreamble, textAttachmentBlock } from "../attachments/blocks.js";
 import { loadTaskAttachments, type LoadedAttachment } from "../attachments/fetch.js";
@@ -19,6 +19,13 @@ import { manualSection, preloadSection, readSkillBody } from "../skills/preload.
 import { settleReports, trackReport } from "../skills/reports.js";
 import { RoomClient } from "../room/client.js";
 import { readClaudeToken } from "./token.js";
+import { defaultCodexHome } from "../direct/codexLogin.js";
+import { IMPLICIT_ACCOUNT_ID } from "../accounts/schema.js";
+import type { Account } from "../accounts/schema.js";
+import { CLAUDE_DEFAULT_MODEL, claudeTokenFor, credentialStateOf, preferredModel } from "../routing/accountAuth.js";
+import { loadRoutingAccounts } from "../routing/accountSet.js";
+import { Cooldowns } from "../routing/cooldown.js";
+import { resolveRoute, routeDecision } from "../routing/index.js";
 import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 const NOT_FOUND = "找不到 claude。请先安装 Claude Code 并把它放到 PATH 上。";
@@ -45,6 +52,12 @@ export type ClaudeCodeAdapterOptions = {
   ownedHelpers?: OwnedHelperScope;
   /** Whether this Claude Code can load Skills; production runs `claude --version` once. */
   claudeSkillsOk?: () => Promise<{ ok: boolean; version: string | null }>;
+  /** The accounts this daemon can route over; defaults to reading `accounts.json` for each task. */
+  accounts?: () => { accounts: Account[]; bindings: Record<string, string> };
+  /** Codex CLI home, needed only to report a compat account's credential state. */
+  codexHome?: string;
+  /** Cooldowns shared with the direct adapter (spec §4.4 is process-wide). */
+  cooldowns?: Cooldowns;
 };
 
 /** A task that runs with Skills: the copies, the snapshot rows they came from, and the preload text. */
@@ -90,17 +103,39 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     } catch (e) {
       return { ok: false, error: configErrorMessage(e) };
     }
-    const model = config.model;
     // An attachment Claude cannot take is refused first, before any login or launch problem (D-2 A).
     const caps = attachmentCapabilities({ ...config, adapter: "claude-code" });
     const refused = task.attachments?.length ? refusal(caps, task.attachments) : null;
     if (refused) return { ok: false, error: refused };
 
-    let token: string;
+    // Which account and model this task runs on. A Claude Code account owns a token and nothing else, so the
+    // model comes from the account when it names one and otherwise from Claude Code's own default.
+    const codexHome = this.opts.codexHome ?? defaultCodexHome();
+    let picked: { accounts: Account[]; bindings: Record<string, string> };
     try {
-      token = readClaudeToken(this.opts.nemaHome);
+      picked = this.accountSet(config);
     } catch (e) {
       return { ok: false, error: message(e) };
+    }
+    const route = resolveRoute({
+      task,
+      config,
+      adapter: "claude-code",
+      accounts: picked.accounts,
+      bindings: picked.bindings,
+      cooldowns: this.opts.cooldowns ?? new Cooldowns(),
+      credentialOf: (a) => credentialStateOf(this.opts.nemaHome, a, codexHome),
+      resolveModel: preferredModel,
+    });
+    if (!route.ok) return { ok: false, error: route.error };
+    const model = route.model === CLAUDE_DEFAULT_MODEL ? undefined : route.model;
+    const decision = (m: string): RouteDecision => routeDecision(route, m);
+
+    let token: string;
+    try {
+      token = route.account.id === IMPLICIT_ACCOUNT_ID ? readClaudeToken(this.opts.nemaHome) : claudeTokenFor(this.opts.nemaHome, route.account);
+    } catch (e) {
+      return { ok: false, error: message(e), route: decision(route.model) };
     }
 
     // The run's clock starts here: a stalled attachment download counts toward the timeout.
@@ -160,7 +195,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
 
     try {
-      return await this.execute(task, launch, onEvent, signal, stdin, Math.max(1, timeoutMs - (Date.now() - startedAt)), skillRun);
+      const result = await this.execute(task, launch, onEvent, signal, stdin, Math.max(1, timeoutMs - (Date.now() - startedAt)), skillRun);
+      // A failed launch is still a route decision worth keeping: it names the account that could not run.
+      return { ...result, route: decision(route.model) };
     } finally {
       // Reports finish before the task does, so the thread has them for its next task; a failed, timed-out
       // or stopped task reports what it did load too, and a lost report is a warning, never the outcome.
@@ -177,6 +214,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
    * Copies the task's Skills into the run dir (`run` is null when the task runs without them) and builds the
    * section for a Skill the user called with `/name`, which goes in even then.
    */
+  private accountSet(config: NemaConfig): { accounts: Account[]; bindings: Record<string, string> } {
+    if (this.opts.accounts) return this.opts.accounts();
+    return loadRoutingAccounts(this.opts.nemaHome, config, this.opts.codexHome ?? defaultCodexHome());
+  }
+
   private async prepareSkills(task: TaskAssign, launch: ClaudeLaunch, onEvent: (e: TaskEvent) => void): Promise<{ run: SkillRun | null; manual: string | null; reports: Promise<unknown>[] }> {
     const snapshot = await takeTaskSnapshot({ nemaHome: this.opts.nemaHome, claudeCodeOk: true, ...(task.projectSkills ? { projectSkills: task.projectSkills } : {}) });
     if (snapshot.warnings.length > 0) onEvent({ type: "progress", text: `部分 Skill 未载入：${snapshot.warnings.join("；")}` });

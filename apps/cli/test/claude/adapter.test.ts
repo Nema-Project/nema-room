@@ -12,6 +12,7 @@ import { CLAUDE_ROOM_TOOLS } from "../../src/claude/launch.js";
 import { ClaudeCodeAdapter } from "../../src/claude/adapter.js";
 import { claudeTokenPath, saveClaudeToken } from "../../src/claude/token.js";
 import { saveConfig } from "../../src/config.js";
+import { IMPLICIT_ACCOUNT_ID } from "../../src/accounts/schema.js";
 import type { AgentResult } from "../../src/daemon/runner.js";
 import { Runner } from "../../src/daemon/runner.js";
 
@@ -59,6 +60,9 @@ let home: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "nema-claude-adapter-test-"));
   home = join(root, "nema");
+  // A machine that runs Claude Code says so in config.json: the runner picks the adapter from that file, so
+  // this is also the state the accounts are synthesized from.
+  saveConfig(home, { adapter: "claude-code" });
   saveClaudeToken(home, TOKEN);
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
@@ -176,7 +180,7 @@ describe("ClaudeCodeAdapter", () => {
 
     const { result, events, runs } = await runTask(createAdapter(bin), assigned);
     expect(runs).toBe(0);
-    expect(result).toEqual({ ok: true, reply: "读完了" });
+    expect(result).toMatchObject({ ok: true, reply: "读完了" });
     expect(events).toContainEqual({ type: "tool_call", text: "mcp__room__code__read" });
     const recorded = JSON.parse(readFileSync(argvFile, "utf8")) as { argv: string[] };
     expect(recorded.argv[recorded.argv.indexOf("--allowedTools") + 1]?.split(",")).toEqual([
@@ -268,7 +272,7 @@ describe("ClaudeCodeAdapter", () => {
     const { result, runs } = await runTask(createAdapter(bin), task("task-bad-tool", "tidy-bad-tool"));
 
     expect(runs).toBe(0);
-    expect(result).toEqual({ ok: false, error: "Claude 调用了 Room 以外的工具 Bash，任务已中止。" });
+    expect(result).toMatchObject({ ok: false, error: "Claude 调用了 Room 以外的工具 Bash，任务已中止。" });
   });
 
   test("fails when Claude exits before init without leaking the token or prompt", async () => {
@@ -278,7 +282,7 @@ describe("ClaudeCodeAdapter", () => {
     const { result, runs } = await runTask(createAdapter(bin), assigned);
 
     expect(runs).toBe(0);
-    expect(result).toEqual({ ok: false, error: NO_INIT });
+    expect(result).toMatchObject({ ok: false, error: NO_INIT });
     if (result.ok) return;
     expect(result.error).not.toContain(TOKEN);
     expect(result.error).not.toContain(assigned.prompt);
@@ -296,7 +300,7 @@ describe("ClaudeCodeAdapter", () => {
     const { result, runs } = await runTask(createAdapter(bin), task("task-auth", "prompt-not-in-error"));
 
     expect(runs).toBe(0);
-    expect(result).toEqual({ ok: false, error: LOGIN_FAILED });
+    expect(result).toMatchObject({ ok: false, error: LOGIN_FAILED });
     if (result.ok) return;
     expect(result.error).not.toContain(TOKEN);
     expect(result.error).not.toContain(stderrLine);
@@ -320,7 +324,7 @@ describe("ClaudeCodeAdapter", () => {
     const { result, runs } = await runTask(createAdapter(bin), task("task-error-result", "prompt-not-in-error"));
 
     expect(runs).toBe(0);
-    expect(result).toEqual({ ok: false, error: RUN_FAILED });
+    expect(result).toMatchObject({ ok: false, error: RUN_FAILED });
     if (result.ok) return;
     expect(result.error).not.toContain("should-not-stick");
   });
@@ -344,7 +348,7 @@ describe("ClaudeCodeAdapter", () => {
       const { result, events, runs } = await runTask(createAdapter(bin), assigned);
 
       expect(runs).toBe(0);
-      expect(result).toEqual({ ok: true, reply: "整理好了" });
+      expect(result).toMatchObject({ ok: true, reply: "整理好了" });
       expect(events).toEqual([{ type: "progress", text: "looking" }]);
       const stdin = readFileSync(stdinFile, "utf8");
       expect(stdin).toContain(prompt);
@@ -379,7 +383,7 @@ describe("ClaudeCodeAdapter", () => {
     const { result, events, runs } = await runTask(createAdapter(bin), task("task-tools", "tidy-tools"));
 
     expect(runs).toBe(0);
-    expect(result).toEqual({ ok: false, error: TOOL_LIMIT });
+    expect(result).toMatchObject({ ok: false, error: TOOL_LIMIT });
     expect(events).toEqual(Array.from({ length: 60 }, () => ({ type: "tool_call", text: CLAUDE_ROOM_TOOLS[0] })));
   });
 
@@ -396,7 +400,7 @@ describe("ClaudeCodeAdapter", () => {
 
     const recorded = JSON.parse(readFileSync(argvFile, "utf8")) as { argv: string[] };
     expect(recorded.argv[recorded.argv.indexOf("--max-turns") + 1]).toBe("48");
-    expect(result).toEqual({ ok: false, error: "Claude 工具调用超过 3 次，任务已中止。" });
+    expect(result).toMatchObject({ ok: false, error: "Claude 工具调用超过 3 次，任务已中止。" });
     expect(events.length).toBe(3);
   });
 
@@ -417,7 +421,7 @@ describe("ClaudeCodeAdapter", () => {
     const { result, events, runs } = await runTask(createAdapter(bin), task("task-parallel", "tidy-parallel"));
 
     expect(runs).toBe(0);
-    expect(result).toEqual({ ok: false, error: TOOL_LIMIT });
+    expect(result).toMatchObject({ ok: false, error: TOOL_LIMIT });
     expect(events).toEqual(Array.from({ length: 60 }, () => ({ type: "tool_call", text: CLAUDE_ROOM_TOOLS[2] })));
   });
 
@@ -431,7 +435,7 @@ describe("ClaudeCodeAdapter", () => {
     const { result, runs } = await runTask(createAdapter(bin, 50), task("task-hang", "tidy-hang"));
 
     expect(runs).toBe(0);
-    expect(result).toEqual({ ok: false, error: TIMED_OUT });
+    expect(result).toMatchObject({ ok: false, error: TIMED_OUT });
   });
 
   test("owner cancellation kills an active fake Claude child and waits for its close", async () => {
@@ -503,7 +507,7 @@ describe("ClaudeCodeAdapter", () => {
       lines: [roomInit(), resultLine("整理好了")],
     });
     const succeeded = await runTask(createAdapter(successBin), task("task-kill-ok", "tidy-kill-ok"));
-    expect(succeeded.result).toEqual({ ok: true, reply: "整理好了" });
+    expect(succeeded.result).toMatchObject({ ok: true, reply: "整理好了" });
     await stop(successPid);
   });
 
@@ -512,7 +516,7 @@ describe("ClaudeCodeAdapter", () => {
     const { result, runs } = await runTask(createAdapter(join(root, "missing-claude")), assigned);
 
     expect(runs).toBe(0);
-    expect(result).toEqual({ ok: false, error: NOT_FOUND });
+    expect(result).toMatchObject({ ok: false, error: NOT_FOUND });
     expect(existsSync(join(home, "run", assigned.taskId))).toBe(false);
     expect(readFileSync(claudeTokenPath(home), "utf8")).toBe(TOKEN);
   });
@@ -561,7 +565,7 @@ describe("ClaudeCodeAdapter attachments", () => {
     const bin = installFake({ mode: "lines", argvFile: join(root, "argv-att.json"), stdinFile, lines: [roomInit(), resultLine("看过了")] });
     const { result } = await runTask(createAdapter(bin), withAttachments("task-att", [image, text]));
 
-    expect(result).toEqual({ ok: true, reply: "看过了" });
+    expect(result).toMatchObject({ ok: true, reply: "看过了" });
     expect(fetched).toEqual(["GET /room/attachments/img Bearer run-token", "GET /room/attachments/log Bearer run-token"]);
     const sent = JSON.parse(readFileSync(stdinFile, "utf8")) as { message: { role: string; content: Array<Record<string, any>> } };
     expect(sent.message.role).toBe("user");
@@ -585,7 +589,7 @@ describe("ClaudeCodeAdapter attachments", () => {
 
     const expected = refusal(attachmentCapabilities({ adapter: "claude-code", reasoningEffort: "medium", authMode: "siwc" }), [pdf]);
     expect(expected).toContain("spec.pdf");
-    expect(result).toEqual({ ok: false, error: expected });
+    expect(result).toMatchObject({ ok: false, error: expected });
     expect(existsSync(argvFile)).toBe(false);
     expect(fetched).toEqual([]);
     expect(existsSync(join(home, "run", assigned.taskId))).toBe(false);
@@ -621,7 +625,7 @@ describe("ClaudeCodeAdapter attachments", () => {
     const argvFile = join(root, "argv-stall.json");
     const bin = installFake({ mode: "lines", argvFile, lines: [roomInit(), resultLine("should-not-run")] });
     const { result } = await runTask(createAdapter(bin, 200), withAttachments("task-stall", [image]));
-    expect(result).toEqual({ ok: false, error: TIMED_OUT });
+    expect(result).toMatchObject({ ok: false, error: TIMED_OUT });
     expect(existsSync(argvFile)).toBe(false);
   });
 
@@ -677,7 +681,7 @@ describe("ClaudeCodeAdapter with Skills", () => {
       lines: [skillInit(), use("t1", "Skill", { skill: "tdd" }), result("t1"), use("t2", "Skill", { skill: "tdd" }), result("t2", true), resultLine("好了")],
     });
     const { result: done, events } = await runTask(skillAdapter(bin, true), task("task-skills", "do it"));
-    expect(done).toEqual({ ok: true, reply: "好了" });
+    expect(done).toMatchObject({ ok: true, reply: "好了" });
     expect(events.filter((e) => e.type === "tool_call").map((e) => e.text)).toEqual(["Skill", `读取 Skill tdd（${commit}）`, "Skill"]);
     const recorded = JSON.parse(readFileSync(argvFile, "utf8")) as { argv: string[]; cwd: string };
     const value = (flag: string) => recorded.argv[recorded.argv.indexOf(flag) + 1];
@@ -711,7 +715,7 @@ describe("ClaudeCodeAdapter with Skills", () => {
       });
       const assigned = { ...task("task-report", "do it"), hubUrl: `http://127.0.0.1:${(hub.address() as AddressInfo).port}`, retainedSkills: ["tdd"] };
       const { result: done, events } = await runTask(skillAdapter(bin, true), assigned);
-      expect(done).toEqual({ ok: true, reply: "好了" });
+      expect(done).toMatchObject({ ok: true, reply: "好了" });
       expect(seen).toEqual([`POST /room/skills/activated {"skillId":"tdd","revision":"${commit}"}`]);
       expect(events.filter((e) => e.type === "progress").map((e) => e.text)).not.toContain("Skill 激活记录未能及时上报");
       expect(readFileSync(stdinFile, "utf8")).toContain(`# 已载入的 Skills\\n`);
@@ -743,7 +747,7 @@ describe("ClaudeCodeAdapter with Skills", () => {
         const bin = installFake({ mode: "lines", argvFile: join(root, `argv-manual-${ok}.json`), stdinFile, lines: [ok ? skillInit() : roomInit(), resultLine("好了")] });
         const assigned = { ...task(`task-manual-${ok}`, "do it"), hubUrl, retainedSkills: ["tdd", "deploy"], manualSkill: { skillId: "deploy", arguments: "web" } };
         const { result: done } = await runTask(skillAdapter(bin, ok), assigned);
-        expect(done).toEqual({ ok: true, reply: "好了" });
+        expect(done).toMatchObject({ ok: true, reply: "好了" });
         const prompt = JSON.parse(readFileSync(stdinFile, "utf8")).message.content[0].text as string;
         expect(prompt).toContain("# 用户调用的 Skill");
         expect(prompt).toContain("Deploy web now.");
@@ -796,10 +800,53 @@ describe("ClaudeCodeAdapter with Skills", () => {
     const argvFile = join(root, "argv-old.json");
     const bin = installFake({ mode: "lines", argvFile, lines: [roomInit(), resultLine("ok")] });
     const { result: done, events } = await runTask(skillAdapter(bin, false), task("task-skills-old", "do it"));
-    expect(done).toEqual({ ok: true, reply: "ok" });
+    expect(done).toMatchObject({ ok: true, reply: "ok" });
     const recorded = JSON.parse(readFileSync(argvFile, "utf8")) as { argv: string[] };
     expect(recorded.argv[recorded.argv.indexOf("--tools") + 1]).toBe("");
     expect(recorded.argv).not.toContain("--settings");
     expect(events).toContainEqual({ type: "progress", text: "Claude Code 版本过低（需要 2.1.309 或更新），本任务不使用 Skills。" });
+  });
+});
+
+describe("Claude Code accounts", () => {
+  test("a named Claude account's token is the one handed to the CLI", async () => {
+    const account = { id: "acct_cccccccccc", name: "Work", enabled: true, adapter: "claude-code", model: "opus-x", costTier: "standard", order: 0, createdAt: "2026-10-31T00:00:00.000Z" };
+    writeFileSync(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [account], bindings: {} }, null, 2) + "\n", { mode: 0o600 });
+    // This account is the default one, so config.json (the projection the settings page writes) names its model.
+    saveConfig(home, { adapter: "claude-code", model: "opus-x" });
+    const dir = join(home, "secrets", "accounts", account.id);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, "token"), "account-token", { mode: 0o600 });
+    const argvFile = join(root, "argv-account.json");
+    const bin = installFake({ mode: "lines", argvFile, lines: [roomInit(), resultLine("ok")] });
+    const { result } = await runTask(createAdapter(bin), task("task-account", "hi"));
+    expect(result).toMatchObject({ ok: true, reply: "ok" });
+    const recorded = JSON.parse(readFileSync(argvFile, "utf8")) as { argv: string[]; env: Record<string, string> };
+    expect(recorded.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("account-token");
+    // The account's model is what the CLI was told to use.
+    expect(recorded.argv[recorded.argv.indexOf("--model") + 1]).toBe("opus-x");
+    expect((result as { route?: unknown }).route).toMatchObject({ accountId: account.id, accountName: "Work", model: "opus-x", reason: "default" });
+  });
+
+  test("an account whose token file is missing fails before the CLI starts", async () => {
+    const account = { id: "acct_cccccccccc", name: "Work", enabled: true, adapter: "claude-code", costTier: "standard", order: 0, createdAt: "2026-10-31T00:00:00.000Z" };
+    writeFileSync(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [account], bindings: {} }, null, 2) + "\n", { mode: 0o600 });
+    const argvFile = join(root, "argv-account-missing.json");
+    const bin = installFake({ mode: "lines", argvFile, lines: [roomInit(), resultLine("ok")] });
+    const { result } = await runTask(createAdapter(bin), task("task-account-missing", "hi"));
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { error: string }).error).toContain("Work");
+    expect(existsSync(argvFile)).toBe(false);
+  });
+
+  test("the synthesized account keeps the single token file and Claude Code's own model", async () => {
+    const argvFile = join(root, "argv-implicit.json");
+    const bin = installFake({ mode: "lines", argvFile, lines: [roomInit(), resultLine("ok")] });
+    const { result } = await runTask(createAdapter(bin), task("task-implicit", "hi"));
+    const recorded = JSON.parse(readFileSync(argvFile, "utf8")) as { argv: string[]; env: Record<string, string> };
+    expect(recorded.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(TOKEN);
+    // No model was chosen, so no `--model` is passed and none is invented in the record.
+    expect(recorded.argv).not.toContain("--model");
+    expect((result as { route?: unknown }).route).toMatchObject({ accountId: IMPLICIT_ACCOUNT_ID, model: "default" });
   });
 });

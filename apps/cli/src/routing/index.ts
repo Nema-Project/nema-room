@@ -1,9 +1,11 @@
 import type { RouteDecision, TaskAssign } from "@nema/shared";
 import type { NemaConfig } from "../config.js";
-import type { Account } from "../accounts/schema.js";
+import { IMPLICIT_ACCOUNT_ID, type Account } from "../accounts/schema.js";
 import type { CredentialState } from "../accounts/credentials.js";
 import type { Cooldowns } from "./cooldown.js";
-import { resolveAdapterName } from "../daemon/runner.js";
+import { NOT_LOGGED_IN } from "../direct/adapter.js";
+import { UNUSABLE_FILE_MESSAGE } from "../direct/authStore.js";
+import { MISSING_TOKEN } from "../claude/token.js";
 import { computeCandidates, type Excluded } from "./candidates.js";
 import { taskNeeds } from "./capabilities.js";
 
@@ -32,6 +34,12 @@ export type RouteResult =
 export type RouteRequest = {
   task: TaskAssign;
   config: NemaConfig;
+  /**
+   * The adapter that is actually running this task. Not derived from the task or the config here: the runner
+   * already chose it by name, and re-deriving it from `config.adapter` would route a Claude task among the
+   * Codex accounts whenever the file names the other adapter.
+   */
+  adapter: Account["adapter"];
   accounts: Account[];
   bindings: Record<string, string>;
   cooldowns: Cooldowns;
@@ -64,10 +72,7 @@ function choose(task: TaskAssign, bindings: Record<string, string>): { kind: "ac
 }
 
 export function resolveRoute(req: RouteRequest): RouteResult {
-  const { task } = req;
-  // The same rule the runner uses to pick the adapter, called rather than copied: a task that names one
-  // explicitly must be routed among that adapter's accounts, and "auto" means the configured one.
-  const adapter = resolveAdapterName(task.adapter, req.config) as Account["adapter"];
+  const { task, adapter } = req;
   const needs = taskNeeds(task);
 
   // Computed once for every path: the details panel shows why the other accounts were not used, whether the
@@ -119,6 +124,37 @@ export function resolveRoute(req: RouteRequest): RouteResult {
 }
 
 /**
+ * The sentence for a credential that is not there.
+ *
+ * The synthesized account keeps the wording 0.2.0 printed, including the command it names: its credential
+ * really does live at the old path, so `nema auth login` is still the thing to run. A stored account's
+ * credential is in its own directory, which none of those commands writes, so it is named and pointed at the
+ * settings page instead.
+ */
+function credentialMessage(account: Account, state: CredentialState): string {
+  if (account.id === IMPLICIT_ACCOUNT_ID) {
+    // The 0.2.0 sentence for a login that is there but cannot be trusted, verbatim: it names the one thing
+    // to run, and this account's file is the file that command rewrites.
+    if (state === "unusable") return UNUSABLE_FILE_MESSAGE;
+    if (account.adapter === "claude-code") return MISSING_TOKEN;
+    if (account.authMode === "byok") return "没有 BYOK API key。请把钥匙从标准输入交给 nema auth byok。";
+    if (account.authMode === "compat") return "没有可用的 Codex 登录。请先运行 codex login。";
+    return NOT_LOGGED_IN;
+  }
+  return state === "unusable"
+    ? `${label(account)} 的凭据不可用（权限、符号链接或内容有问题），请在设置页重新填写。`
+    : `${label(account)} 还没有凭据，请在设置页填写后再运行。`;
+}
+
+/** The same for a missing model: the old command for the synthesized account, the settings page otherwise. */
+function modelMessage(account: Account): string {
+  if (account.id === IMPLICIT_ACCOUNT_ID && account.adapter === "codex-direct" && account.authMode === "byok") {
+    return "BYOK 需要指定模型，请运行 nema config set model <名称>";
+  }
+  return `${label(account)} 没有默认模型。请在设置页为它指定一个模型。`;
+}
+
+/**
  * The checks a named (or default) account still gets. Deliberately short: capability, enabled state and
  * cooldown are not consulted for an account the user chose.
  */
@@ -138,15 +174,20 @@ function checkNamed(
   if (!account.enabled) {
     return { ok: false, failure: "account_disabled", error: `${label(account)} 已停用。请在设置页启用它，或换一个账户。` };
   }
+  // The credential is checked before anything runs, so the sentence can name the account instead of leaving a
+  // provider 401 in the chat. `credentialOf` decides what "usable" means for this account kind; a key or a
+  // token whose own reader has a better sentence is left to it.
   const state = req.credentialOf(account);
   if (state !== "connected") {
-    return state === "unusable"
-      ? { ok: false, failure: "credential_unusable", error: `${label(account)} 的凭据不可用（权限、符号链接或内容有问题），请在设置页重新填写。` }
-      : { ok: false, failure: "credential_missing", error: `${label(account)} 还没有凭据，请在设置页填写后再运行。` };
+    return {
+      ok: false,
+      failure: state === "unusable" ? "credential_unusable" : "credential_missing",
+      error: credentialMessage(account, state),
+    };
   }
   const model = req.resolveModel(account);
   if (model === null) {
-    return { ok: false, failure: "model_missing", error: `${label(account)} 没有默认模型。请在设置页为它指定一个模型。` };
+    return { ok: false, failure: "model_missing", error: modelMessage(account) };
   }
   return { ok: true, account, model, mode: "manual", reason: source };
 }

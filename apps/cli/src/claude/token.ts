@@ -21,7 +21,7 @@ import { openPrivateFile, privateModeMatches, protectPrivatePath } from "../secr
 
 const INVALID_TOKEN = "token 必须是一行非空文本";
 const SYMLINK_TOKEN = "Claude Code token 文件是符号链接，已拒绝。";
-const MISSING_TOKEN = "没有 Claude Code token。请运行 claude setup-token，再把令牌从标准输入交给 nema auth claude。";
+export const MISSING_TOKEN = "没有 Claude Code token。请运行 claude setup-token，再把令牌从标准输入交给 nema auth claude。";
 const TOKEN_MODE = "Claude Code token 文件权限必须是 0600";
 
 export const claudeTokenPath = (nemaHome: string): string => path.join(nemaHome, "claude-code-token");
