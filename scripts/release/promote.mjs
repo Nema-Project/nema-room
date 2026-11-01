@@ -609,7 +609,8 @@ async function run(command, args, options = {}) {
 /** Every job a tag push of verify.yml runs, matrix legs by exact name (workflows.test derives them from verify.yml). */
 export const VERIFY_JOBS = Object.freeze([
   'verify / Workflow lint',
-  'verify / Full application tests and web build',
+  ...[1, 2, 3, 4, 5, 6].map((shard) => `verify / Application tests (${shard}/6)`),
+  'verify / Application build and Compose smoke',
   'verify / Platform checks (macos-latest)',
   'verify / Platform checks (windows-latest)',
   'verify / npm pack smoke (ubuntu-latest)',

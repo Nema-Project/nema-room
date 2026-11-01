@@ -104,7 +104,7 @@ test('reusable verification checks the supplied ref with the complete existing s
     assert.notEqual(inputs[name].required, true, name);
   }
   assert.equal(verify.permissions.contents, 'read');
-  const jobIf = {'workflow-lint': undefined, test: 'inputs.app_tests', platform: 'inputs.platform', 'npm-pack': 'inputs.npm_pack'};
+  const jobIf = {'workflow-lint': undefined, unit: 'inputs.app_tests', test: 'inputs.app_tests', platform: 'inputs.platform', 'npm-pack': 'inputs.npm_pack'};
   for (const [name, job] of Object.entries(verify.jobs)) {
     assert.equal(expr(job.if), jobIf[name], name);
     assert.equal(job['continue-on-error'], undefined);
@@ -115,7 +115,13 @@ test('reusable verification checks the supplied ref with the complete existing s
   }
   const outputs = verify.on.workflow_call.outputs;
   assert.equal(expr(outputs.lint.value), 'jobs.workflow-lint.result');
-  assert.equal(expr(outputs.app.value), 'jobs.test.result');
+  assert.equal(expr(outputs.app.value), "(jobs.unit.result == 'success' && jobs.test.result == 'success') && 'success' || ((jobs.unit.result == 'skipped' && jobs.test.result == 'skipped') && 'skipped' || 'failure')");
+  const shards = verify.jobs.unit.strategy.matrix.shard;
+  assert.deepEqual(shards, [1, 2, 3, 4, 5, 6]);
+  assert.equal(verify.jobs.unit.strategy['fail-fast'], false);
+  const unitRuns = verify.jobs.unit.steps.map(s => s.run);
+  assert.ok(unitRuns.includes(`npm test -- --shard=${'$'}{{ matrix.shard }}/${shards.length} --maxWorkers=2`));
+  assert.ok(unitRuns.indexOf('npm run typecheck') < unitRuns.findIndex(r => (r ?? '').startsWith('npm test')));
   assert.equal(expr(outputs.platform.value), 'jobs.platform.result');
   assert.equal(expr(outputs.npm_pack.value), 'jobs.npm-pack.result');
   for (const name of ['npm-publish', 'desktop-release', 'image-publish']) {
@@ -128,8 +134,7 @@ test('reusable verification checks the supplied ref with the complete existing s
   assert.ok(verify.jobs.test.steps.some((step) => step.run === 'node --test scripts/security/reporting-status.test.mjs'));
   assert.ok(verify.jobs.test.steps.some((step) => (step.run ?? '').includes('scripts/release/*.test.mjs')));
   const runs = verify.jobs.test.steps.map(s => s.run);
-  for (const command of ['npm ci','npm run typecheck','npm test -- --maxWorkers=2','npm run build -w apps/hub','npm run build -w apps/cli','npm run lint -w apps/web','npm run build -w apps/web','npm run setup:check','npm run up','docker compose down']) assert.ok(runs.includes(command), command);
-  assert.ok(runs.indexOf('npm run typecheck') < runs.indexOf('npm test -- --maxWorkers=2'));
+  for (const command of ['npm ci','npm run typecheck','npm run build -w apps/hub','npm run build -w apps/cli','npm run lint -w apps/web','npm run build -w apps/web','npm run setup:check','npm run up','docker compose down']) assert.ok(runs.includes(command), command);
   assert.equal(verify.jobs.test.steps.find(s => s.run === 'docker compose down').if, 'always()');
   const pack = verify.jobs['npm-pack'];
   assert.deepEqual(pack.strategy.matrix.os, ['ubuntu-latest', 'windows-latest', 'macos-latest']);
@@ -310,14 +315,14 @@ if [ "\${3:-}" = --jq ]; then jq -r "$4" "$file"; else cat "$file"; fi
   // A jobs page that does not hold every job of the run proves nothing, even when every listed job passed.
   setup({ total: verifyJobs.length + 1 });
   result = run();
-  assert.notEqual(result.status, 0); assert.match(result.stderr, /lists 8 of 9 jobs/); assert.equal(result.output, '');
+  assert.notEqual(result.status, 0); assert.match(result.stderr, new RegExp(`lists ${verifyJobs.length} of ${verifyJobs.length + 1} jobs`)); assert.equal(result.output, '');
   // A missing matrix leg fails even when the count agrees with the shorter answer.
   setup({ jobs: verifyJobs.filter((job) => job.name !== 'verify / npm pack smoke (windows-latest)') });
   result = run();
   assert.notEqual(result.status, 0); assert.match(result.stderr, /npm pack smoke \(windows-latest\) did not run and pass/); assert.equal(result.output, '');
   setup({ jobs: verifyJobs.map((job, i) => (i === 2 ? { ...job, conclusion: 'skipped' } : job)) });
   result = run();
-  assert.notEqual(result.status, 0); assert.match(result.stderr, /Full application tests and web build did not run and pass/);
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /Application tests \(1\/6\) did not run and pass/);
   setup({ jobs: verifyJobs.filter((job) => job.name !== 'Pack and smoke nema') });
   result = run();
   assert.notEqual(result.status, 0); assert.match(result.stderr, /Pack and smoke nema did not run and pass/);
@@ -531,8 +536,8 @@ echo "gh: HTTP 404" >&2; exit 1
 test('promote requires every verify job and matrix leg the tag workflows define, by exact name', () => {
   const verify = read('verify');
   const names = Object.values(verify.jobs).flatMap((job) => {
-    const os = job.strategy?.matrix?.os;
-    return os ? os.map((value) => job.name.replace('${{ matrix.os }}', value)) : [job.name];
+    const [key, values] = Object.entries(job.strategy?.matrix ?? {})[0] ?? [];
+    return values ? values.map((value) => job.name.replace(`${'$'}{{ matrix.${key} }}`, String(value))) : [job.name];
   }).map((name) => `verify / ${name}`);
   assert.deepEqual([...VERIFY_JOBS].sort(), names.sort());
   const image = read('image-publish');

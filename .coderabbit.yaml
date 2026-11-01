@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Review settings for this repository. Repository rules live in AGENTS.md; the instructions below
+# point the reviewer at the ones it most often misreads, so a review round does not end in a
+# commit (and a full CI run) that undoes a deliberate convention.
+language: en-US
+reviews:
+  # Report correctness, security and contract problems; skip style nitpicks.
+  profile: chill
+  poem: false
+  path_filters:
+    - "!package-lock.json"
+    - "!vendor/**"
+  path_instructions:
+    - path: "**"
+      instructions: |
+        Follow AGENTS.md. Do not flag these deliberate conventions as defects:
+        - Chinese work-package markers such as `## 已定的做法`, `### 任务 1：`, `- 修改：`, `- 满足：` are protocol constraints, also in English and Japanese workspaces.
+        - `verified` with `confirmedBy: null` means "Commits checked", not tests passed or acceptance. Only the user sets `confirmedBy: "user"`; flag any automatic path that sets, rewrites or clears it.
+        - User statements, user decisions and agent inferences are kept distinct; corrections keep history and sources.
+        Do not suggest broad refactors, renames or formatting changes outside the lines a PR changes.
+    - path: "docs/{superpowers,reviews}/**"
+      instructions: |
+        Historical records tied to a recorded commit and environment. Only flag errors in what the PR adds; do not ask to rewrite past results.
+    - path: "apps/web/messages/*.json"
+      instructions: |
+        en.json, zh.json and ja.json must carry the same keys.
