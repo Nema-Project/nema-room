@@ -40,9 +40,8 @@ function deps(home: string, over: Partial<AccountsDeps> = {}): AccountsDeps {
   return {
     home,
     codexHome: path.join(home, "no-codex"),
-    // The routes that start a browser login or send a request are injected, so no test opens a browser.
+    // The route that starts a browser login is injected, so no test opens a browser.
     login: async () => ({ ok: true }),
-    probe: async () => ({ ok: true }),
     ...over,
   };
 }

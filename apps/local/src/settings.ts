@@ -1,7 +1,7 @@
 import { existsSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { saveConfig, loadConfig, type NemaConfig } from "@nema/cli/config";
-import { authLogin, authLogout, authProbe, defaultOpenBrowser, listConfiguredModels, ModelsListError, AuthStore, siwcRefresher, byokKeyPath, saveByokKey, claudeTokenPath, saveClaudeToken, githubTokenPath, saveGithubToken, defaultCodexHome, readCodexCliTokens, accountDir, loadAccounts } from "@nema/cli/localSettings";
+import { authLogin, authLogout, authProbe, defaultOpenBrowser, listConfiguredModels, ModelsListError, AuthStore, siwcRefresher, siwcLogin, byokKeyPath, saveByokKey, claudeTokenPath, saveClaudeToken, githubTokenPath, saveGithubToken, defaultCodexHome, readCodexCliTokens, accountDir, loadAccounts } from "@nema/cli/localSettings";
 import { handleAccounts, accountsJobsSettled, type AccountsReply, type AccountsDeps } from "./accountsApi.js";
 
 export type SettingsOperations = {
@@ -156,27 +156,35 @@ function configPatch(value: unknown): Partial<NemaConfig> | null {
 }
 
 /**
- * The browser login for one account: the same PKCE flow the single-key route runs, writing into that
- * account's own directory instead of the home. `baseDir` is what keeps two accounts' logins apart.
+ * The browser login for one account: the PKCE flow, writing into that account's own directory. `baseDir` is
+ * what keeps two accounts' logins apart.
+ *
+ * It calls `siwcLogin` rather than `authLogin` on purpose. `authLogin` first reads `config.json` and, when
+ * that says `compat`, runs the Codex-login confirmation instead — the *default* account's mode deciding what
+ * a login for a *different* account does. The route has already established that this account is `siwc`.
+ *
+ * The opener is fixed to the provider's own authorize endpoint, and callback errors are redacted from the
+ * browser page, exactly as the single-key route does it.
  */
 function accountLogin(options: SettingsServiceOptions, codexHome: string) {
   return async (account: { id: string }, signal: AbortSignal): Promise<{ ok: boolean }> => {
-    const dir = accountDir(options.home, account.id);
-    const safeOpen = (value: string) => {
-      if (!isAllowedAuthorizeUrl(value)) throw new Error("untrusted authorize URL");
-      defaultOpenBrowser(value);
-    };
-    const code = await authLogin({
-      nemaHome: options.home,
-      codexHome,
-      signal,
-      baseDir: dir,
-      requireTrustedAuthorizeUrl: true,
-      redactCallbackErrors: true,
-      out: { log: () => {}, error: () => {} },
-      openBrowser: safeOpen,
-    });
-    return { ok: code === 0 };
+    try {
+      await siwcLogin({
+        nemaHome: options.home,
+        baseDir: accountDir(options.home, account.id),
+        signal,
+        requireTrustedAuthorizeUrl: true,
+        redactCallbackErrors: true,
+        openBrowser: (value) => {
+          if (!isAllowedAuthorizeUrl(value)) throw new Error("untrusted authorize URL");
+          defaultOpenBrowser(value);
+        },
+      });
+      return { ok: true };
+    } catch {
+      // The reason never leaves this process: the route answers with a code, and the page shows its own text.
+      return { ok: false };
+    }
   };
 }
 
@@ -186,8 +194,6 @@ export function accountsDeps(home: string, codexHome: string, options?: Settings
     home,
     codexHome,
     login: options ? accountLogin(options, codexHome) : async () => ({ ok: false }),
-    // Per-account transport is the routing batch's work; the route answers `probe_not_supported` until then.
-    probe: async () => ({ ok: false }),
   };
 }
 

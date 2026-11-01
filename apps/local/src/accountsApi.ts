@@ -55,8 +55,6 @@ export type AccountsDeps = {
   codexHome: string;
   /** Runs the browser login for one account. Resolves with the outcome; it never returns a token. */
   login: (account: Account, signal: AbortSignal) => Promise<{ ok: boolean }>;
-  /** Sends one confirmation request for one account. Not wired in this batch; see `probe`. */
-  probe: (account: Account, signal: AbortSignal) => Promise<{ ok: boolean }>;
   /** Injectable for tests: the store reads. */
   readAccounts?: typeof readAccounts;
   /** Injectable for tests: the credential state. */
@@ -67,7 +65,6 @@ const ID_SHAPE = /^acct_[a-z0-9]{10}$/;
 const SCOPE_SHAPE = /^(?:ws|thread):[^\s]+$/;
 const NOT_FOUND: AccountsReply = { status: 404, body: { error: "not_found" } };
 const INVALID: AccountsReply = { status: 400, body: { error: "invalid_request" } };
-const CONFLICT: AccountsReply = { status: 409, body: { error: "mutation_conflict" } };
 const INTERNAL: AccountsReply = { status: 500, body: { error: "internal_error" } };
 
 /**
