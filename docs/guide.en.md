@@ -222,6 +222,30 @@ node apps/cli/dist/index.js auth claude
 
 Nema does not silently switch runtimes after authentication or model failures. `config get` and `auth status` show configuration and login status without printing tokens.
 
+<a id="accounts"></a>
+
+### Several accounts and automatic routing
+
+One runtime can have several accounts: for example two API keys, or a ChatGPT subscription plus an OpenRouter key. Each account is one credential, one endpoint and one default model. Manage them under **Accounts** at the bottom of **App settings → Model** in the desktop app. The Web / Compose pages do not have this section.
+
+- **Where they live:** the account list and every scope's choice are in `accounts.json` in the Nema home directory, and credentials are in `secrets/accounts/<account id>/` (the desktop app's home is `~/.nema/desktop`). They get the same protection as other credentials: `0600` on macOS/Linux, a private ACL on Windows. Neither goes into the database or to the hub. An "Existing Codex login" account stores no credential; it reads `~/.codex/auth.json` and Nema never changes that file.
+- **With one account:** the list shows a single **Current setup** row, which is your existing model setup, and no account picker appears anywhere. The first time you add or change an account, the old single credential moves into that account's directory.
+- **Deleting:** an account that a workspace or thread still selects cannot be deleted; change those choices first. The last enabled account cannot be deleted or disabled. Deleting removes the account's credential directory. An "Existing Codex login" account has none, and `~/.codex` is left alone.
+
+**Which account runs a task:** the composer, the thread title bar and the workspace settings each have an account picker. Precedence: this message > thread > workspace > global default. The global default is the first enabled account in the list. The empty choice reads **Follow the workspace** for a message or thread and **Global default** for a workspace. An account you name still runs when it is disabled; disabling only removes it from the default and from automatic choice. If the account you name does not exist or has no credential, the task fails before any request is sent and says why; it does not fall back to the default account. The same applies when `accounts.json` cannot be read (corrupt, permissions too open, or a symlink): the task fails instead of falling back to the old single credential. The reply shows which account and model ran it, and why that account was chosen.
+
+**Automatic routing** is off by default. Turning on **Automatic routing** in the account settings adds **Automatic** to the workspace, thread and message pickers; the switch alone changes no existing choice. A task set to Automatic picks an account when it starts, by your order and then by cost tier (Light → Standard → Heavy). After that:
+
+- **It switches accounts when** the current one is rate-limited (429), out of quota, gets a 5xx from the provider, or the provider says the context is too long. The task moves to the next candidate, the switch is written into the task progress, and the reply lists the accounts tried and why they failed. A rate-limited account is skipped for automatic choice for 1 minute, an out-of-quota one for 15 minutes, and one that got a 5xx for 30 seconds; a provider `Retry-After` takes precedence. After a switch, the reasoning produced under the previous account is no longer sent to the model.
+- **It does not switch on** authentication failures, content-policy refusals, malformed requests, or once the answer has started streaming. Switching there would hide a credential problem or work around the provider's policy.
+- **Claude Code accounts** are chosen once when the task starts and are not switched mid-run.
+- **Cost tier** only orders candidates. Nema does not know real prices and does no budget control.
+- **Tasks with images or PDFs** only go to an account that can take that kind of file. The checks run in this order: the account's declaration for that model → **Declared capabilities** in the account settings → what the runtime itself passes on (Claude Code is unconfirmed for PDFs and counts as not declared). The settings page shows "not declared" and "not supported" separately. When no account fits, the task fails rather than run on one that may not support the file. An account you name yourself is not checked this way.
+
+**Rolling back to 0.2.0:** the older version does not read `accounts.json`. It runs from `config.json` alone and does not see the other accounts. If the old credential has already moved into an account directory, the older version shows you as signed out; sign in or save the key again there.
+
+Switching on real accounts (real rate limits, a spent quota) has no acceptance record yet. The current evidence is automated tests against fake providers.
+
 <a id="attachments"></a>
 
 ### Attachments by runtime
@@ -248,6 +272,7 @@ Run-by-run real-model results are in the [acceptance record](reviews/2026-10-30-
 
 - **Types** are decided from the file's content, and the extension must agree with it: PNG, JPEG, WebP, GIF, PDF, and strict UTF-8 text without NUL bytes. Text files also need one of these extensions, or none: txt, md, markdown, log, csv, tsv, json, jsonl, yaml, yml, toml, ini, xml, html, css, js, mjs, cjs, ts, tsx, jsx, py, rb, go, rs, java, kt, swift, c, h, cc, cpp, hpp, cs, php, sh, bash, zsh, sql, diff, patch. A file whose extension contradicts its content is refused, as are SVG, HEIC, Office documents, archives, audio, and video.
 - **Limits:** images 10 MB, PDFs 20 MB, text files 512 KB. One task takes at most 8 files and 32 MB in total, counting the message, the message it quotes, and the thread's first message. All attachments together are capped by `NEMA_ATTACHMENTS_MAX_BYTES` (default 2 GB), and an upload is refused when it would leave less than 1 GB free on the data disk. Files picked but never sent are removed after 24 hours.
+- **Metadata:** images and PDFs are sent as their original bytes, so metadata inside the file goes to the provider too, such as the location in a photo's EXIF data or a PDF's author. Remove it yourself before uploading if you do not want it sent.
 - **What the model is told:** attachments are data. What it reads from them is its inference, not something you said or decided, and quotes in its interpretation can only come from message text.
 - **Deleting** an attachment (Delete on its card, confirmed) removes the file at once and keeps a tombstone in the message with the name, type, size, sha256, and deletion time. A file that disappeared from disk shows as missing.
 

@@ -244,6 +244,36 @@ GitHub 插件让 Agent 查看已绑定仓库在 GitHub 上的 issue、pull reque
 
 另外六个读取函数还在，也由本机 `gh` 执行：`github__pull_request_read`、`github__list_pull_requests`、`github__search_pull_requests`、`github__issue_read`、`github__list_issues`、`github__search_issues`。搜索必须且只能带一个 `repo:owner/name`。
 
+## 账户与自动路由
+
+面向用户的说明见[使用指南](guide.zh.md#accounts)，设计见 [spec](superpowers/specs/2026-10-31-multi-account-routing-design.md)。下面写实现层面的约定。spec 与代码不一致时以代码为准，例如附件能力的第 3 层：未声明时按运行方式补齐，`codex-direct` 两种都算支持，Claude Code 的 PDF 算未声明。
+
+**文件。** `<nema home>/accounts.json`（`0600`，原子替换）存 `{ version: 1, accounts, bindings, autoRouting? }`。`bindings` 的键是 `ws:<id>` 或 `thread:<id>`，值是账户 id 或 `"auto"`；没有这个键表示没有选择。凭据存在 `<nema home>/secrets/accounts/<id>/`（目录 `0700`），里面只会有一种文件：`key`（byok）、`auth.json`（siwc，另有 `auth.lock`）或 `token`（Claude Code）。`compat` 账户没有凭据目录，只读 `~/.codex/auth.json`。从 `nema home` 到账户目录，路径上任何一层是符号链接都会被拒绝，读、写、删都一样；凭据文件还必须属于当前用户。
+
+**没有 `accounts.json` 时**，按 `config.json` 加旧的单个凭据文件，在内存里合成一个隐式账户 `acct_0000000000`，不写盘。第一次新建或修改账户时才落盘，旧凭据按「复制 → 写 `accounts.json` → 删除旧文件」的顺序移进新账户目录；中途被打断时，下一次会接着完成。`config.json` 不加字段，它的 `adapter`、`authMode`、`model`、`byokBaseUrl` 会同步到排在最前、且已启用的账户上。
+
+**选择顺序**：`task.accountId`（单条消息）> `thread:<id>` > `ws:<id>` > 全局默认（`order` 最小的启用账户）。点名一个具体账户时，候选只有它，不按启用状态、能力和冷却过滤，只检查凭据；凭据不可用时，在发出请求前失败。选了 `"auto"` 而 `autoRouting` 未开启时，任务失败，不改用默认账户。自动模式的候选只含当前运行方式的账户，依次去掉：未启用的、凭据不可用的、冷却中的、能力不满足本次附件的。剩下的按 `order` → `costTier`（low → standard → high）→ `id` 排序。
+
+**错误分类**（`apps/cli/src/routing/errors.ts`），只在 `codex-direct` 的任务里切换：
+
+| 分类 | 判断依据 | 换不换 | 冷却 |
+| --- | --- | --- | --- |
+| `rate_limit` | 429，或认证接口限流 | 换 | `Retry-After`，没有则 60 秒 |
+| `quota` | `ModelQuotaError` | 换 | `Retry-After`，没有则 15 分钟 |
+| `server` | 5xx | 换 | 30 秒 |
+| `context` | 400 且文本提到上下文超长 | 换 | 无 |
+| `auth` | 401、byok 密钥被拒、需要重新登录 | 不换 | — |
+| `policy` | 403 | 不换 | — |
+| `bad_request` | 其他 4xx | 不换 | — |
+| `streaming_started` | 已经开始输出 | 不换 | — |
+| `unknown` | 无状态码，例如重试一次后仍连接失败 | 不换 | — |
+
+冷却只存在 daemon 进程内存里，重启后清空。切换之后，之前账户产生的 `reasoning.encrypted_content` 不再随历史发送。Claude Code 任务只在开始时选一次账户。
+
+**记录。** 回复的 `AgentMessageMeta.route`（`packages/shared/src/route.ts`）包含 `accountId`、`accountName`、`model`、`mode`（`manual` / `auto`）、`reason`（`user_workspace`、`user_thread`、`user_message`、`default`、`auto_primary`、`auto_failover`、`auto_after_limit`），以及可选的 `attempts` 和 `usage`。不记录 base URL、凭据、`order` 和 `costTier`。每次切换还会发一条 `progress` 事件。
+
+**设置接口**只在桌面运行时的应用源地址上提供（`apps/local/src/accountsApi.ts`）：`GET|POST|PATCH|DELETE /_nema/accounts`，以及 `POST /_nema/accounts/secret`、`/bind`、`/login`、`/probe`。删除时，账户仍被某个作用域绑定返回 409 `account_in_use`；要删的是最后一个启用账户返回 400。凭据目录删干净后才改写 `accounts.json`，删除失败时什么都不改，可以重试。`accounts.json` 读不了时返回 409 `accounts_unusable`，任务也会失败，不会退回旧凭据。
+
 ## API 与恢复
 
 ### 外部来源证据协议

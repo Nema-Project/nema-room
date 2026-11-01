@@ -67,7 +67,7 @@ Nema Room は、ソフトウェアプロジェクトの理解を揃えるため�
 | Linux / Intel Mac | [Web / Compose](#web--compose) を使用 |
 
 1. [Git 2.31 以降](https://git-scm.com/downloads)をインストールしてから、Nema Room をインストールして開きます。Node と DB は同梱されており、Docker は不要です。
-2. **アプリ設定 → モデル**で ChatGPT サブスクリプション、Claude サブスクリプション、または Responses API 互換の API キーを接続します。
+2. **アプリ設定 → モデル**で ChatGPT サブスクリプション、Claude サブスクリプション、または Responses API 互換の API キーを接続します。同じページの一番下でアカウントを追加できます。[複数アカウントと自動ルーティング](docs/guide.ja.md#accounts)を参照してください。
 3. ワークスペースを作成して議論を始めます。コードの文脈が必要になったら、ローカルリポジトリを登録します。
 
 > **プレビュー版。** Windows 版は未署名、macOS 版はアドホック署名で未公証です。リリースのチェックサムでダウンロードを確認してください。アプリは新しいリリースを知らせますが、自動ではインストールしません。更新前に `~/.nema/desktop` をバックアップしてください。初回起動、ポータブル ZIP、制限は[デスクトップガイド](docs/guide.ja.md#desktop)を参照してください。
