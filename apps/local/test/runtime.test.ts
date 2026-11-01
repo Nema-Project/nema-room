@@ -213,6 +213,111 @@ describe("managed local runtime", () => {
     expect(seen[1]?.NEMA_DESKTOP_BENCH).toBeUndefined();
   });
 
+  it("passes ELECTRON_RUN_AS_NODE into the managed core only while Electron is the Node", async () => {
+    const home = join(tempDir("nema-home-"), "electron-node");
+    const assetsDir = testAssets();
+    mkdirSync(home, { recursive: true });
+    const seen: Array<NodeJS.ProcessEnv | undefined> = [];
+    setEnsureSpawnerForTests((spec) => {
+      seen.push(spec.env);
+      throw new Error("electron-node-captured");
+    });
+    const previous = process.env.ELECTRON_RUN_AS_NODE;
+    try {
+      process.env.ELECTRON_RUN_AS_NODE = "1";
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/electron-node-captured/);
+      delete process.env.ELECTRON_RUN_AS_NODE;
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/electron-node-captured/);
+    } finally {
+      if (previous === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+      else process.env.ELECTRON_RUN_AS_NODE = previous;
+    }
+    expect(seen[0]?.ELECTRON_RUN_AS_NODE).toBe("1");
+    expect(seen[1]?.ELECTRON_RUN_AS_NODE).toBeUndefined();
+    expect(seen[0]?.NEMA_DESKTOP_BENCH).toBeUndefined();
+  });
+
+  it("uses the Electron executable when the payload does not ship Node", async () => {
+    const home = join(tempDir("nema-home-"), "no-bundled-node");
+    const assetsDir = testAssets();
+    const manifestPath = join(assetsDir, "runtime-manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { node?: string };
+    delete manifest.node;
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    mkdirSync(home, { recursive: true });
+    await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/no bundled Node/);
+    const seen: string[] = [];
+    setEnsureSpawnerForTests((spec) => {
+      seen.push(spec.nodePath);
+      throw new Error("electron-exec-captured");
+    });
+    const previous = process.env.ELECTRON_RUN_AS_NODE;
+    process.env.ELECTRON_RUN_AS_NODE = "1";
+    try {
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/electron-exec-captured/);
+    } finally {
+      if (previous === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+      else process.env.ELECTRON_RUN_AS_NODE = previous;
+    }
+    expect(seen).toEqual([process.execPath]);
+  });
+
+  it("rejects a present node path that is empty or not a string", async () => {
+    const home = join(tempDir("nema-home-"), "bad-node");
+    const assetsDir = testAssets();
+    const manifestPath = join(assetsDir, "runtime-manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { node?: unknown };
+    mkdirSync(home, { recursive: true });
+    const previous = process.env.ELECTRON_RUN_AS_NODE;
+    process.env.ELECTRON_RUN_AS_NODE = "1";
+    try {
+      for (const node of ["", "   ", null]) {
+        writeFileSync(manifestPath, JSON.stringify({ ...manifest, node }));
+        await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/invalid node path|node asset is missing/);
+      }
+    } finally {
+      if (previous === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+      else process.env.ELECTRON_RUN_AS_NODE = previous;
+    }
+  });
+
+  it("shuts down a node-less payload from a process that is not Electron", async () => {
+    const home = join(tempDir("nema-home-"), "shutdown-without-electron");
+    const assetsDir = testAssets();
+    const manifestPath = join(assetsDir, "runtime-manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { node?: string };
+    delete manifest.node;
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    const agentHome = join(tempDir("nema-agent-home-"), "home");
+    mkdirSync(agentHome, { recursive: true });
+    const previous = {
+      electron: process.env.ELECTRON_RUN_AS_NODE,
+      home: process.env.HOME,
+      profile: process.env.USERPROFILE,
+    };
+    process.env.HOME = agentHome;
+    process.env.USERPROFILE = agentHome;
+    process.env.ELECTRON_RUN_AS_NODE = "1";
+    let runtime: Awaited<ReturnType<typeof startLocalRuntime>> | undefined;
+    try {
+      runtime = await startLocalRuntime({ home, assetsDir });
+      runtimes.push(runtime);
+      delete process.env.ELECTRON_RUN_AS_NODE;
+      const before = await discoverInstance(home);
+      expect(before?.installationId).toBe(testInstallationId(assetsDir));
+      await expect(shutdownLocalRuntime({ home, assetsDir, expectedInstanceId: before!.instanceId, timeoutMs: 10_000 })).resolves.toMatchObject({ state: "complete" });
+      runtimes.splice(runtimes.indexOf(runtime), 1);
+      expect(await discoverInstance(home)).toBeNull();
+    } finally {
+      if (previous.electron === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+      else process.env.ELECTRON_RUN_AS_NODE = previous.electron;
+      if (previous.home === undefined) delete process.env.HOME;
+      else process.env.HOME = previous.home;
+      if (previous.profile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = previous.profile;
+    }
+  });
+
   it("retries only a spawned owner's control timeout while authenticated readiness is still starting", async () => {
     const home = join(tempDir("nema-home-"), "delayed-authenticated-owner");
     const assetsDir = testAssets();

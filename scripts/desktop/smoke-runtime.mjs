@@ -1,10 +1,11 @@
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, cp, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { electronExecutableRelative } from './stage-runtime.mjs';
 import { reportPayload } from './payload-size.mjs';
 import { systemGitDirectory } from './system-git.mjs';
 import { startFakeResponsesServer, sse } from '../../apps/cli/test/fixtures/fake-responses-server.ts';
@@ -25,6 +26,22 @@ function trackChildClose(child) {
   return closeEvent;
 }
 
+/** Nest a copied payload the way the packaged app does, so the launcher's Electron path stays inside the temp root. */
+export function installedSmokePaths(temporaryRoot, platform = process.platform) {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const root = p.resolve(temporaryRoot);
+  const appRoot = p.join(root, "installed runtime ' 東京");
+  const install = platform === 'darwin'
+    ? p.join(appRoot, 'Contents', 'Resources', 'payload')
+    : p.join(appRoot, 'resources', 'payload');
+  const electronPath = p.resolve(install, electronExecutableRelative(platform));
+  const escaped = p.relative(root, electronPath);
+  if (!escaped || escaped === '..' || escaped.startsWith(`..${p.sep}`) || p.isAbsolute(escaped)) {
+    throw new Error('Smoke Electron path escapes the temporary root');
+  }
+  return { install, electronPath };
+}
+
 export function validatePayloadDirectory(directory) {
   const root = path.resolve(directory);
   let manifest;
@@ -33,7 +50,7 @@ export function validatePayloadDirectory(directory) {
   if (manifest.schemaVersion !== 1 || manifest.platform !== process.platform || manifest.arch !== process.arch) {
     throw new Error('Runtime payload schema or native target does not match this host');
   }
-  for (const key of ['node', 'coreEntry', 'cliEntry', 'webEntry', 'licenses']) {
+  for (const key of ['coreEntry', 'cliEntry', 'webEntry', 'licenses', ...(manifest.node === undefined ? [] : ['node'])]) {
     const value = manifest[key];
     if (typeof value !== 'string' || !value || value.includes('\\') || path.posix.isAbsolute(value) || value.split('/').some((part) => !part || part === '.' || part === '..')) {
       throw new Error(`Runtime manifest has an invalid ${key} path`);
@@ -299,7 +316,6 @@ async function runSmoke(sourcePayload) {
   const temporaryParent = await realpath(os.tmpdir());
   const temporaryRoot = await mkdtemp(path.join(temporaryParent, temporaryPrefix));
   const temporaryIdentity = await lstat(temporaryRoot);
-  const install = path.join(temporaryRoot, "installed runtime ' 東京");
   const profile = path.join(temporaryRoot, "managed profile ' 東京");
   const home = path.join(profile, '.nema', 'desktop');
   const codexHome = path.join(temporaryRoot, 'isolated Codex home');
@@ -310,9 +326,23 @@ async function runSmoke(sourcePayload) {
   const cleanupErrors = [];
   let primaryError;
   try {
+    const installed = installedSmokePaths(temporaryRoot);
+    const install = installed.install;
+    await mkdir(path.dirname(install), { recursive: true });
     await cp(selected.root, install, { recursive: true, force: false, errorOnExist: true });
     const copied = validatePayloadDirectory(install);
-    const node = path.join(install, ...copied.manifest.node.split('/'));
+    if (!copied.manifest.node) {
+      await mkdir(path.dirname(installed.electronPath), { recursive: true });
+      // A hard link shares the host Node inode. chmod would change that binary's mode.
+      let copiedStandIn = false;
+      try { await link(process.execPath, installed.electronPath); }
+      catch {
+        await copyFile(process.execPath, installed.electronPath);
+        copiedStandIn = true;
+      }
+      if (copiedStandIn && process.platform !== 'win32') await chmod(installed.electronPath, 0o755);
+    }
+    const node = copied.manifest.node ? path.join(install, ...copied.manifest.node.split('/')) : process.execPath;
     const env = {
       // Only the user's own git and the OS directories, as a desktop app launched from the shell would see.
       PATH: [systemGitDirectory(), process.platform === 'win32' ? path.join(systemRoot, 'System32') : '/usr/bin:/bin'].join(path.delimiter),
@@ -324,6 +354,8 @@ async function runSmoke(sourcePayload) {
       USERPROFILE: profile,
       CODEX_HOME: codexHome,
       LANG: 'en_US.UTF-8',
+      // Host Node ignores this. A payload with no `node` field accepts process.execPath only when it is set.
+      ...(copied.manifest.node ? {} : { ELECTRON_RUN_AS_NODE: '1' }),
     };
     fake = await startFakeResponsesServer();
     let core = await startCore(node, copied.root, home, env, (owned) => cores.push(owned));

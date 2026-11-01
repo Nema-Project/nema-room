@@ -123,6 +123,32 @@ describe.skipIf(!posix)("stdio (POSIX, no owned-helper scope)", () => {
     expect(seen.keys).not.toContain("NEMA_TEST_LEAK");
   });
 
+  test("a stdio child of Electron keeps ELECTRON_RUN_AS_NODE even when the config clears it", async () => {
+    process.env.ELECTRON_RUN_AS_NODE = "1";
+    try {
+      const { record } = stdio("search", { ELECTRON_RUN_AS_NODE: { value: "0" } }, process.execPath);
+      const status = await make().start("search");
+      expect(status.connection).toBe("connected");
+      expect(recorded(record).env.ELECTRON_RUN_AS_NODE).toBe("1");
+    } finally {
+      delete process.env.ELECTRON_RUN_AS_NODE;
+    }
+  });
+
+  test("a stdio child of host Node keeps a configured ELECTRON_RUN_AS_NODE", async () => {
+    const previous = process.env.ELECTRON_RUN_AS_NODE;
+    delete process.env.ELECTRON_RUN_AS_NODE;
+    try {
+      const { record } = stdio("search", { ELECTRON_RUN_AS_NODE: { value: "1" } }, process.execPath);
+      const status = await make().start("search");
+      expect(status.connection).toBe("connected");
+      expect(recorded(record).env.ELECTRON_RUN_AS_NODE).toBe("1");
+    } finally {
+      if (previous === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+      else process.env.ELECTRON_RUN_AS_NODE = previous;
+    }
+  });
+
   test("a missing secret or env reference fails before anything starts, naming only the slot", async () => {
     const { starts } = stdio("search", { API_TOKEN: { secret: "API_TOKEN" } });
     const sup = make();

@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Out } from "../direct/authCommands.js";
+import { electronRunAsNode } from "../platform.js";
 import { ensureReportToken, reportTokenPath } from "./token.js";
 
 export type ReportAgent = "claude" | "codex";
@@ -35,13 +36,15 @@ function shellQuote(s: string): string {
   return /^[A-Za-z0-9_\/.,:@%+=-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-export function hookCommand(nodeBin: string, cliEntry: string, agent: ReportAgent, platform = process.platform): string {
+export function hookCommand(nodeBin: string, cliEntry: string, agent: ReportAgent, platform = process.platform, runAsNode = false): string {
   if (platform === "win32") {
     const psQuote = (value: string) => `'${value.replaceAll("'", "''")}'`;
-    const script = `& ${psQuote(nodeBin)} ${psQuote(cliEntry)} report hook --agent ${agent}; exit $LASTEXITCODE`;
+    const prefix = runAsNode ? `$env:ELECTRON_RUN_AS_NODE='1'; ` : "";
+    const script = `${prefix}& ${psQuote(nodeBin)} ${psQuote(cliEntry)} report hook --agent ${agent}; exit $LASTEXITCODE`;
     return `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(script, "utf16le").toString("base64")}`;
   }
-  return `${shellQuote(nodeBin)} ${shellQuote(cliEntry)} report hook --agent ${agent}`;
+  const prefix = runAsNode ? "ELECTRON_RUN_AS_NODE=1 " : "";
+  return `${prefix}${shellQuote(nodeBin)} ${shellQuote(cliEntry)} report hook --agent ${agent}`;
 }
 
 type Loaded = { data: Json; indent: string; newline: boolean; existed: boolean };
@@ -154,7 +157,7 @@ export function installReport(o: InstallRun): number {
 
   const before = JSON.stringify(loaded.data);
   const hooks = ((loaded.data.hooks as Json | undefined) ??= {});
-  const command = hookCommand(o.nodeBin, o.cliEntry, o.agent);
+  const command = hookCommand(o.nodeBin, o.cliEntry, o.agent, process.platform, electronRunAsNode());
   for (const ev of EVENTS) putHook(hooks, ev, command);
   if (JSON.stringify(loaded.data) === before) {
     o.out.log(`${p.settings} 里的 ${EVENTS.join("、")} 钩子已是最新`);
@@ -188,6 +191,52 @@ export function uninstallReport(o: UninstallRun): number {
     o.out.log(`已删除技能：${p.skillDir}`);
   }
   return 0;
+}
+
+const REMOVED_PAYLOAD_NODE = /runtime[/\\][A-Za-z0-9]+-[A-Za-z0-9]+[/\\]node(?:[/\\]|\s|'|"|$)/;
+
+function hookCommandText(command: string): string {
+  const encoded = /^powershell\.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ([A-Za-z0-9+/=]+)$/.exec(command);
+  return encoded ? Buffer.from(encoded[1]!, "base64").toString("utf16le") : command;
+}
+
+/** True when this Nema hook still launches the Node copy removed from `runtime/<target>/node`. */
+function pointsAtRemovedPayloadNode(hook: unknown): boolean {
+  return isNema(hook) && isObj(hook) && typeof hook.command === "string" && REMOVED_PAYLOAD_NODE.test(hookCommandText(hook.command));
+}
+
+/**
+ * Rewrite Nema hook commands that still point at the removed `runtime/<target>/node` executable.
+ * A hook installed against a host or npm Node stays as written. Does not touch the skill file or the report token.
+ * Returns the agents whose commands changed.
+ */
+export function migrateReportHooks(o: { home: string; nodeBin: string; cliEntry: string; runAsNode?: boolean }): ReportAgent[] {
+  const updated: ReportAgent[] = [];
+  for (const agent of REPORT_AGENTS) {
+    const loaded = load(agentPaths(agent, o.home).settings);
+    if (!loaded?.existed || !isObj(loaded.data.hooks)) continue;
+    const hooks = loaded.data.hooks;
+    const command = hookCommand(o.nodeBin, o.cliEntry, agent, process.platform, o.runAsNode ?? electronRunAsNode());
+    const before = JSON.stringify(hooks);
+    let saw = false;
+    for (const ev of EVENTS) {
+      const groups = hooks[ev];
+      if (!Array.isArray(groups)) continue;
+      for (const group of groups) {
+        if (!isObj(group) || !Array.isArray(group.hooks)) continue;
+        for (const hook of group.hooks) {
+          if (!pointsAtRemovedPayloadNode(hook) || !isObj(hook) || hook.command === command) continue;
+          hook.type = "command";
+          hook.command = command;
+          saw = true;
+        }
+      }
+    }
+    if (!saw || JSON.stringify(hooks) === before) continue;
+    save(agentPaths(agent, o.home).settings, loaded);
+    updated.push(agent);
+  }
+  return updated;
 }
 
 /** For `nema doctor`: whether the agent's settings carry a Nema Stop or SessionEnd hook. Never throws. */

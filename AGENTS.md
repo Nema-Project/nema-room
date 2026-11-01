@@ -31,7 +31,7 @@ Nema Room turns discussions into traceable knowledge, approved work packages, an
 | `scripts/` | Setup, release tooling, and desktop payload builds |
 | `vendor/` | Vendored snapshots, licenses, and provenance |
 
-Desktop uses a local PGlite database and bundled Node, plus system Git. Web / Compose runs PostgreSQL, hub, and web in containers with a host daemon. Do not conflate their data directories, credentials, or launch paths. Packaging details live in the [desktop build guide](scripts/desktop/README.md).
+Desktop uses a local PGlite database and Electron's Node (`ELECTRON_RUN_AS_NODE=1`), plus system Git. Web / Compose runs PostgreSQL, hub, and web in containers with a host daemon. Do not conflate their data directories, credentials, or launch paths. Packaging details live in the [desktop build guide](scripts/desktop/README.md).
 
 ## Working with other developers and agents
 

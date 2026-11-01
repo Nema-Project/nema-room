@@ -16,7 +16,7 @@
 
 ## 桌面应用（预览）
 
-桌面应用把整套服务放进一个本机程序：磁盘上的 PGlite 数据库、单实例本机核心、受保护的同源网关，以及随包的 Node。它使用你电脑上已经装好的 Git（2.31 或更新）。在 Mac 上，从访达打开时也会找到 Homebrew 和 MacPorts 的 Git。没有 Git 或版本太旧时，启动会说明原因，并给出 https://git-scm.com/downloads。不需要 Docker 或数据库服务器。**桌面版本已发布**，提供 Windows x64 和 Apple 芯片版本：[下载](https://github.com/Nema-Project/nema-room/releases/latest)。Windows 上在安装包和便携 ZIP 里选一个。
+桌面应用把整套服务放进一个本机程序：磁盘上的 PGlite 数据库、单实例本机核心、受保护的同源网关，以及 Electron 自带的 Node。它使用你电脑上已经装好的 Git（2.31 或更新）。在 Mac 上，从访达打开时也会找到 Homebrew 和 MacPorts 的 Git。没有 Git 或版本太旧时，启动会说明原因，并给出 https://git-scm.com/downloads。不需要 Docker 或数据库服务器。**桌面版本已发布**，提供 Windows x64 和 Apple 芯片版本：[下载](https://github.com/Nema-Project/nema-room/releases/latest)。Windows 上在安装包和便携 ZIP 里选一个。
 
 | 项目 | 状态 |
 | --- | --- |
@@ -43,7 +43,7 @@
 - 模型在侧栏的**应用设置 → 模型**里选择，不需要终端。提供方只有一层：ChatGPT 订阅、Claude 订阅或 API 密钥。ChatGPT 订阅可选浏览器登录或本机已有的 Codex 登录；Claude 订阅填写本机 Claude Code 令牌；API 密钥填写密钥和可选的 Responses API 地址。连上之后，从该提供方返回的列表里选模型，没有手填模型 ID 的栏。列表还在加载时，下拉框写明正在加载，并且先打不开。Claude 用官方别名，不选时沿用账号默认。每个提供方的登录各自保留。同一页可以设推理强度。没有单独的 Agent 运行时开关。
 - GitHub 插件默认关闭。在工作区的“代码与插件”里打开后，Agent 使用本机已登录的 `gh`（先在终端执行一次 `gh auth login`）。Nema 不要求也不保存 GitHub 令牌。读取随插件打开；修改 GitHub（创建和评论 issue、改标签、操作 Project）还要再打开同一页上的允许开关。Agent 只能访问该工作区绑定的 github.com 仓库。
 
-**编码 Agent 的上报钩子**：`nema report install` 写入的钩子（安装包版没有把 `nema` 放进 PATH：在安装目录的 `resources\payload` 文件夹里运行 `Nema CLI.cmd report install --agent claude`，macOS 为 `Nema CLI.command`，Linux 为 `nema-cli`；写入的钩子指向随包的 Node 与 CLI 绝对路径）使用用户级的 `~/.nema/report-token`，桌面应用启动时把它登记给本机核心。应用运行时，钩子会自动找到并验证它；**新装钩子后需要重启桌面应用**，令牌才会被登记。应用没有运行时，上报进入本地缓存（最多 5 MB、保留 7 天），下次上报时补发。
+**编码 Agent 的上报钩子**：`nema report install` 写入的钩子（安装包版没有把 `nema` 放进 PATH：在安装目录的 `resources\payload` 文件夹里运行 `Nema CLI.cmd report install --agent claude`，macOS 为 `Nema CLI.command`，Linux 为 `nema-cli`；写入的钩子指向 Electron 可执行文件（带 `ELECTRON_RUN_AS_NODE=1`）与 CLI 绝对路径。升级后，仍指向已删除的 `runtime/<target>/node` 的钩子会在下次由 Electron 启动核心时改写）使用用户级的 `~/.nema/report-token`，桌面应用启动时把它登记给本机核心。应用运行时，钩子会自动找到并验证它；**新装钩子后需要重启桌面应用**，令牌才会被登记。应用没有运行时，上报进入本地缓存（最多 5 MB、保留 7 天），下次上报时补发。
 
 **从 Web / Compose 版迁移**：目前只有库接口，没有命令行或界面入口。`exportSnapshot`（`apps/hub/src/db/export.ts`）从你指定的 PostgreSQL 连接导出，`importLegacySnapshot`（`apps/local/src/import.ts`）导入到一个**空的、未运行**的桌面数据目录。导入先在暂存目录里完整验证，失败时不改动目标；中断后用 `recoverInterruptedImport` 恢复。凭证不会被导出或导入，需要重新登录。
 

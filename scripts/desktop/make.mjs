@@ -121,6 +121,30 @@ export async function validateElectronNotices(payloadDir) {
   }
 }
 
+/** A new payload omits `node`. An older payload that still names one must keep that file inside the payload. */
+export function stagedManifestAssetKeys(manifest, platform) {
+  return ['coreEntry', 'cliEntry', 'webEntry', 'licenses', ...(platform === 'win32' ? ['ownedHelperGuardian'] : []), ...(manifest.node === undefined ? [] : ['node'])];
+}
+
+export async function assertStagedRuntimeManifest(payloadDir, expected) {
+  const manifest = JSON.parse(await readFile(path.join(payloadDir, 'runtime-manifest.json'), 'utf8'));
+  if (manifest.schemaVersion !== 1 || manifest.version !== expected.version || manifest.platform !== expected.platform || manifest.arch !== expected.arch) {
+    throw new Error('Staged runtime manifest does not match the desktop package target/version');
+  }
+  for (const key of stagedManifestAssetKeys(manifest, expected.platform)) {
+    const relative = manifest[key];
+    if (typeof relative !== 'string' || !relative || relative.includes('\\') || path.posix.isAbsolute(relative) || relative.split('/').some((part) => !part || part === '.' || part === '..')) throw new Error(`Staged runtime manifest has an invalid ${key} path`);
+    const resolved = path.resolve(payloadDir, ...relative.split('/'));
+    const rel = path.relative(payloadDir, resolved);
+    if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new Error(`Staged runtime ${key} path escapes its payload`);
+    const info = await lstat(resolved);
+    const actual = await realpath(resolved);
+    const actualRel = path.relative(await realpath(payloadDir), actual);
+    if (info.isSymbolicLink() || (key === 'licenses' ? !info.isDirectory() : !info.isFile()) || actualRel === '..' || actualRel.startsWith(`..${path.sep}`) || path.isAbsolute(actualRel)) throw new Error(`Staged runtime ${key} asset is missing or escapes its payload`);
+  }
+  return manifest;
+}
+
 async function make(args) {
   const target = parseMakeArgs(args);
   const appPackage = JSON.parse(await readFile(path.join(desktopDir, 'package.json'), 'utf8'));
@@ -129,19 +153,7 @@ async function make(args) {
   let payloadDir;
   if (target.staged) {
     payloadDir = target.staged;
-    const manifest = JSON.parse(await readFile(path.join(payloadDir, 'runtime-manifest.json'), 'utf8'));
-    if (manifest.schemaVersion !== 1 || manifest.version !== appPackage.version || manifest.platform !== target.platform || manifest.arch !== target.arch) throw new Error('Staged runtime manifest does not match the desktop package target/version');
-    for (const key of ['node', 'coreEntry', 'cliEntry', 'webEntry', 'licenses', ...(target.platform === 'win32' ? ['ownedHelperGuardian'] : [])]) {
-      const relative = manifest[key];
-      if (typeof relative !== 'string' || !relative || relative.includes('\\') || path.posix.isAbsolute(relative) || relative.split('/').some((part) => !part || part === '.' || part === '..')) throw new Error(`Staged runtime manifest has an invalid ${key} path`);
-      const resolved = path.resolve(payloadDir, ...relative.split('/'));
-      const rel = path.relative(payloadDir, resolved);
-      if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new Error(`Staged runtime ${key} path escapes its payload`);
-      const info = await lstat(resolved);
-      const actual = await realpath(resolved);
-      const actualRel = path.relative(await realpath(payloadDir), actual);
-      if (info.isSymbolicLink() || (key === 'licenses' ? !info.isDirectory() : !info.isFile()) || actualRel === '..' || actualRel.startsWith(`..${path.sep}`) || path.isAbsolute(actualRel)) throw new Error(`Staged runtime ${key} asset is missing or escapes its payload`);
-    }
+    await assertStagedRuntimeManifest(payloadDir, { platform: target.platform, arch: target.arch, version: appPackage.version });
   } else {
     const stageRoot = target.stageOut ?? path.join(repo, 'dist/desktop');
     const staged = await stageRuntime({ sourceRoot: repo, outputDir: stageRoot, platform: target.platform, arch: target.arch, version: appPackage.version });

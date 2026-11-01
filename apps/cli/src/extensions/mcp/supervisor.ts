@@ -6,7 +6,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { McpConfig, McpConnection, McpValue } from "@nema/shared";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
-import { commandSpec, windowsRuntimeEnv } from "../../platform.js";
+import { commandSpec, windowsRuntimeEnv, withElectronNode } from "../../platform.js";
 import type { McpLeftovers } from "./leftovers.js";
 import { LEFTOVER_RECORD, McpStdioTransport } from "./stdioTransport.js";
 
@@ -297,13 +297,16 @@ export class McpSupervisor {
     env.HOME = home;
     // Windows programs (and Node's os.homedir()) read USERPROFILE, not HOME.
     if (platform === "win32") env.USERPROFILE = home;
+    // Under Electron this forces Node mode after the config is copied, so a config cannot clear it.
+    // Under host Node the configured value stays, including an explicit ELECTRON_RUN_AS_NODE.
+    const childEnv = withElectronNode(env);
     mkdirSync(home, { recursive: true, mode: 0o700 });
-    const command = commandSpec(config.command, config.args, env);
+    const command = commandSpec(config.command, config.args, childEnv);
     return {
       transport: new McpStdioTransport({
         bin: command.bin,
         args: command.args,
-        env,
+        env: childEnv,
         cwd: config.cwd ?? home,
         ownedHelpers: this.o.ownedHelpers,
         ...(this.o.leftovers && !this.o.ownedHelpers && platform !== "win32"
