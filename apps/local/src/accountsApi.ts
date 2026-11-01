@@ -1,6 +1,7 @@
 import {
   AccountSchema,
   IMPLICIT_ACCOUNT_ID,
+  autoRoutingEnabled,
   validateAccountsFile,
   accountCredentialState,
   accountNameProblem,
@@ -169,7 +170,14 @@ class AccountsUnusable extends Error {
  * A missing or unusable file yields the synthesized account (D-6) and says the list is implicit. An
  * unusable file also reports why, and the caller must not offer to edit what it cannot read.
  */
-function snapshot(deps: AccountsDeps): { accounts: Account[]; implicit: boolean; unusableReason?: string; bindings: Record<string, string> } {
+function snapshot(deps: AccountsDeps): {
+  accounts: Account[];
+  implicit: boolean;
+  unusableReason?: string;
+  bindings: Record<string, string>;
+  /** Off when there is no file to read it from, and off when the file cannot be trusted. */
+  autoRouting: boolean;
+} {
   const loaded = loadAccounts(deps.home, config(deps.home), deps.codexHome);
   const read = (deps.readAccounts ?? readAccounts)(deps.home);
   const bindings = read.status === "ok" ? read.file.bindings : {};
@@ -178,6 +186,7 @@ function snapshot(deps: AccountsDeps): { accounts: Account[]; implicit: boolean;
     implicit: loaded.implicit,
     ...(loaded.unusableReason !== undefined ? { unusableReason: loaded.unusableReason } : {}),
     bindings,
+    autoRouting: read.status === "ok" && autoRoutingEnabled(read.file),
   };
 }
 
@@ -194,6 +203,9 @@ function listReply(deps: AccountsDeps): AccountsReply {
           }
         : {}),
       bindings: state.bindings,
+      // The switch is reported even when the rows cannot be read: the page can then say why the block is
+      // unavailable instead of implying automatic routing is off because nobody chose it.
+      autoRouting: state.autoRouting,
     },
   };
 }
@@ -325,6 +337,19 @@ function refusesFile(accounts: Account[], bindings: Record<string, string>): boo
   return validateAccountsFile({ version: 1, accounts, bindings }).length > 0;
 }
 
+/**
+ * A new file built from the one that is there, keeping every key this route does not own.
+ *
+ * Rebuilding a file as `{ version, accounts, bindings }` silently drops anything added later — exactly what
+ * happened to the automatic routing switch when it was introduced, which made an unrelated rename turn
+ * automatic routing off. Spreading the current file keeps this route's edits to its own subject.
+ */
+function rewrite(current: AccountsFile | null, change: { accounts?: Account[]; bindings?: Record<string, string> }): AccountsFile {
+  const accounts = change.accounts ?? current?.accounts ?? [];
+  const bindings = change.bindings ?? current?.bindings ?? {};
+  return { ...(current ?? { version: 1, accounts, bindings }), accounts, bindings };
+}
+
 function create(body: unknown, deps: AccountsDeps): AccountsReply {
   const raw = record(body);
   if (!raw || !keysAre(raw, CREATE_KEYS)) return INVALID;
@@ -367,7 +392,7 @@ function create(body: unknown, deps: AccountsDeps): AccountsReply {
       return null;
     }
     created = ordered;
-    return { version: 1, accounts: [...accounts, ordered], bindings };
+    return rewrite(current, { accounts: [...accounts, ordered], bindings });
   });
   if (refusal === "exists") return { status: 409, body: { error: "account_exists" } };
   if (refusal === "invalid") return INVALID;
@@ -375,9 +400,37 @@ function create(body: unknown, deps: AccountsDeps): AccountsReply {
   return { status: 201, body: { account: view(created, deps, false) } };
 }
 
+/**
+ * The machine-wide automatic routing switch (D-3), as its own subject.
+ *
+ * It is deliberately not a field of a row: it decides how a task is routed among accounts, not what one
+ * account is, so a request that names both is refused rather than guessed at. The two edits also take the
+ * file lock separately, and a single body answering for two writes could not say which one failed.
+ */
+function patchAutoRouting(raw: Record<string, unknown>, deps: AccountsDeps): AccountsReply {
+  if (Object.keys(raw).length !== 1) return INVALID;
+  if (typeof raw.autoRouting !== "boolean") return INVALID;
+  const state = snapshot(deps);
+  // An unreadable file is never replaced by a fresh one: its rows may still be recoverable by hand.
+  if (state.unusableReason !== undefined) return { status: 409, body: { error: "accounts_unusable", reason: state.unusableReason } };
+  // A machine that never edited account settings has no file to hold the switch, so the first flip
+  // materializes the synthesized account exactly as the first other edit does (D-6).
+  if (currentFile(deps) === null) {
+    materializeImplicit({ nemaHome: deps.home, config: config(deps.home), codexHome: deps.codexHome, name: "默认账户" });
+  }
+  const next = updateAccounts(deps.home, (current) => {
+    if (current === null) return null;
+    return { ...current, autoRouting: raw.autoRouting as boolean };
+  });
+  if (next === null) return NOT_FOUND;
+  return { status: 200, body: { autoRouting: autoRoutingEnabled(next) } };
+}
+
 function patch(body: unknown, deps: AccountsDeps): AccountsReply {
   const raw = record(body);
-  if (!raw || !keysAre(raw, PATCH_KEYS)) return INVALID;
+  if (!raw) return INVALID;
+  if ("autoRouting" in raw) return patchAutoRouting(raw, deps);
+  if (!keysAre(raw, PATCH_KEYS)) return INVALID;
   const id = requestId(raw.id);
   if (id === null) return NOT_FOUND;
   if ("name" in raw && (typeof raw.name !== "string" || accountNameProblem(raw.name) !== null)) return INVALID;
@@ -417,7 +470,7 @@ function patch(body: unknown, deps: AccountsDeps): AccountsReply {
       return null;
     }
     updated = row;
-    return { version: 1, accounts, bindings: current.bindings };
+    return rewrite(current, { accounts, bindings: current.bindings });
   });
   if (refusal === "exists") return { status: 409, body: { error: "account_exists" } };
   if (refusal === "invalid") return INVALID;
@@ -468,7 +521,7 @@ function remove(body: unknown, deps: AccountsDeps): AccountsReply {
       failure = e;
       return null;
     }
-    return { version: 1, accounts: current.accounts.filter((a) => a.id !== id), bindings: current.bindings };
+    return rewrite(current, { accounts: current.accounts.filter((a) => a.id !== id), bindings: current.bindings });
   });
   // A cleanup that failed after the removal must not look like "this account is not here": that is the
   // answer that made retrying pointless.
@@ -514,7 +567,7 @@ function bind(body: unknown, deps: AccountsDeps): AccountsReply {
     const bindings = { ...current.bindings };
     if (value === null) delete bindings[scope];
     else bindings[scope] = value;
-    return { version: 1, accounts: current.accounts, bindings };
+    return rewrite(current, { accounts: current.accounts, bindings });
   });
   if (next === null) return NOT_FOUND;
   return { status: 200, body: { scope, accountId: value } };

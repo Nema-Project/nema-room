@@ -14,6 +14,7 @@ export {
   newAccountId,
   accountNameProblem,
   validateAccountsFile,
+  autoRoutingEnabled,
   type Account,
   type AccountsFile,
   type CostTier,

@@ -117,10 +117,27 @@ export const AccountsFileSchema = z
     accounts: z.array(AccountSchema),
     /** `ws:<id>` or `thread:<id>` -> account id or "auto". A missing key means "not chosen". */
     bindings: z.record(z.string(), z.string()),
+    /**
+     * The machine-wide automatic routing switch (spec 2026-10-31 D-3). Optional and absent by default, so
+     * every `accounts.json` written before this batch reads as "off" without being rewritten.
+     *
+     * It is a property of the file rather than of an account because it decides how a *task* is routed
+     * among accounts, not what any one account is.
+     */
+    autoRouting: z.boolean().optional(),
   })
   .strict();
 
 export type AccountsFile = z.infer<typeof AccountsFileSchema>;
+
+/**
+ * Whether automatic routing is on for this file. One place rather than a `?? false` at each call site: the
+ * switch being off is what keeps the daemon from sending a task to an account the user did not name, so it
+ * is worth naming the default exactly once.
+ */
+export function autoRoutingEnabled(file: Pick<AccountsFile, "autoRouting">): boolean {
+  return file.autoRouting === true;
+}
 
 const SCOPE_PATTERN = /^(?:ws|thread):[^\s]+$/;
 

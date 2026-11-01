@@ -3,6 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { accountsApi, type AccountView } from "@/lib/accounts";
 
+/** Mounted pickers each fetch for themselves. This only tells them the list changed, so they refetch. */
+const accountListeners = new Set<() => void>();
+
+export function notifyAccountsChanged(): void {
+  for (const listener of accountListeners) listener();
+}
+
 /**
  * The accounts this machine has, for the pickers. One fetch per component that asks; the answer is small
  * (no credentials) and local, and a shared store would only add a cache to invalidate after every edit.
@@ -14,6 +21,8 @@ export type AccountsState = {
   accounts: AccountView[];
   bindings: Record<string, string>;
   defaultAccountId: string;
+  /** The machine-wide automatic routing switch (D-3). Off by default, including for an older daemon. */
+  autoRouting: boolean;
   supported: boolean;
   reload: () => void;
 };
@@ -23,10 +32,16 @@ export function useAccounts(): AccountsState {
     accounts: [],
     bindings: {},
     defaultAccountId: "",
+    autoRouting: false,
     supported: true,
   });
   const [version, setVersion] = useState(0);
   const reload = useCallback(() => setVersion((v) => v + 1), []);
+
+  useEffect(() => {
+    accountListeners.add(reload);
+    return () => { accountListeners.delete(reload); };
+  }, [reload]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -36,13 +51,16 @@ export function useAccounts(): AccountsState {
         accounts: list.accounts ?? [],
         bindings: list.bindings ?? {},
         defaultAccountId: list.defaultAccountId ?? "",
+        // An older daemon's answer has no switch in it, which reads as off — the same thing a missing key in
+        // `accounts.json` means.
+        autoRouting: list.autoRouting === true,
         supported: true,
       });
     }).catch(() => {
       if (controller.signal.aborted) return;
       // Both "older daemon" and "could not ask" leave no picker: a control whose save would fail is worse
       // than no control, and neither case has accounts to offer.
-      setState({ accounts: [], bindings: {}, defaultAccountId: "", supported: false });
+      setState({ accounts: [], bindings: {}, defaultAccountId: "", autoRouting: false, supported: false });
     });
     return () => controller.abort();
   }, [version]);

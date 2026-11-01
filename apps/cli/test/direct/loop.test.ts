@@ -98,7 +98,7 @@ describe("ROOM_TOOLS / dispatchTool", () => {
 
   test("routes known tools to the Room client", async () => {
     const { room, calls } = stubRoom({ ok: true, json: { id: "R-1" } });
-    expect(await dispatchTool("list_entries", "", room)).toEqual({ output: '{"id":"R-1"}', known: true });
+    expect(await dispatchTool("list_entries", "", room)).toEqual({ output: '{"id":"R-1"}', known: true, wrote: false });
     await dispatchTool("read_entry", '{"id":"R-1"}', room);
     await dispatchTool("upsert_entry", '{"kind":"requirement","title":"t"}', room);
     expect(calls).toEqual([{ op: "list" }, { op: "read", arg: "R-1" }, { op: "upsert", arg: { kind: "requirement", title: "t" } }]);
@@ -108,6 +108,13 @@ describe("ROOM_TOOLS / dispatchTool", () => {
     const { room } = stubRoom({ ok: false, status: 400, error: "bad kind" });
     const r = await dispatchTool("upsert_entry", "{}", room);
     expect(r.known).toBe(true);
+    expect(r.wrote).toBe(false);
+    const lost = await dispatchTool("upsert_entry", "{}", stubRoom({ ok: false, status: 0, error: "down" }).room);
+    const crashed = await dispatchTool("upsert_entry", "{}", stubRoom({ ok: false, status: 500, error: "boom" }).room);
+    const read = await dispatchTool("list_entries", "", stubRoom({ ok: false, status: 500, error: "boom" }).room);
+    expect(lost.wrote).toBe(true);
+    expect(crashed.wrote).toBe(true);
+    expect(read.wrote).toBe(false);
     expect(JSON.parse(r.output)).toMatchObject({ error: "bad kind", status: 400 });
   });
 
@@ -284,5 +291,37 @@ describe("runToolLoop user parts", () => {
     const { call, inputs } = script(done(msg("ok")));
     await runToolLoop(base(call, room));
     expect(inputs[0]![0]).toEqual({ type: "message", role: "user", content: [{ type: "input_text", text: USER }] });
+  });
+});
+
+describe("onBeforeCall", () => {
+  const reasoning = (enc: string): OutputItem => ({ type: "reasoning", id: `rs_${enc}`, summary: [{ type: "summary_text", text: "s" }], encrypted_content: enc }) as OutputItem;
+
+  test("what it returns is what is sent, and the loop keeps its own history", async () => {
+    // The hook exists so a caller can change the payload of one request without changing the conversation:
+    // automatic routing uses it to drop another account's encrypted reasoning. If it mutated the loop's own
+    // history, one filtered call would silently drop it for every later call too.
+    const seen: string[][] = [];
+    const m = script(done(reasoning("enc-1"), fc("list_entries", {}, "c1")), done(msg("done")));
+    const { room } = stubRoom();
+    await runToolLoop({
+      ...base(m.call, room),
+      onBeforeCall: (history) => {
+        seen.push(history.map((i) => i.type));
+        return history.filter((i) => i.type !== "reasoning");
+      },
+    });
+    // First call has only the user message; the second would carry the reasoning, and the hook removes it.
+    expect(seen).toEqual([["message"], ["message", "reasoning", "function_call", "function_call_output"]]);
+    expect(m.inputs[1]!.some((i) => i.type === "reasoning")).toBe(false);
+    // The loop still holds it, so a hook that changes its mind on the next call sees it again.
+    expect(seen[1]).toContain("reasoning");
+  });
+
+  test("without the hook the history is sent unchanged", async () => {
+    const m = script(done(reasoning("enc-1"), fc("list_entries", {}, "c1")), done(msg("done")));
+    const { room } = stubRoom();
+    await runToolLoop(base(m.call, room));
+    expect(m.inputs[1]!.some((i) => i.type === "reasoning")).toBe(true);
   });
 });

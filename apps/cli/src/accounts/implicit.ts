@@ -353,7 +353,9 @@ function materializeLocked(o: {
   if (source !== null && name !== null) writeCredentialCopy(o.nemaHome, account.id, name, source.bytes);
   // 2. Only now is the account reachable from a committed record.
   try {
-    writeAccounts(o.nemaHome, { version: 1, accounts, bindings });
+    // The rest of the stored file (the automatic routing switch today) is carried over: this writer only
+    // adds an account, and rebuilding the file from the keys it knows would silently reset the others.
+    writeAccounts(o.nemaHome, { ...(existing.status === "ok" ? existing.file : {}), version: 1, accounts, bindings });
   } catch (e) {
     // Nothing refers to that directory: the id was fresh, so the copy is this attempt's alone. Leaving it
     // would put an unreferenced copy of the credential on disk. The legacy file is untouched either way.

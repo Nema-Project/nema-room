@@ -2,7 +2,7 @@ import type { NemaConfig } from "../config.js";
 import { implicitAccount } from "../accounts/implicit.js";
 import { readAccounts } from "../accounts/store.js";
 import { projectedAccounts } from "../accounts/reconcile.js";
-import type { Account } from "../accounts/schema.js";
+import { autoRoutingEnabled, type Account } from "../accounts/schema.js";
 
 /**
  * The accounts this daemon can route over, read fresh for a task.
@@ -26,7 +26,18 @@ import type { Account } from "../accounts/schema.js";
  */
 const UNUSABLE = "账户设置文件不可用（{reason}），已停止运行任务以免用错账户。请修好或移走 accounts.json 后重试。";
 
-export function loadRoutingAccounts(nemaHome: string, config: NemaConfig, codexHome: string): { accounts: Account[]; bindings: Record<string, string> } {
+export type RoutingAccounts = {
+  accounts: Account[];
+  bindings: Record<string, string>;
+  /**
+   * The machine-wide automatic routing switch (D-3), from the same single read as everything else. A
+   * missing file means the switch has never been set, which is off — the shipped default, and the reason a
+   * machine that never configured accounts keeps behaving exactly as 0.2.0 did.
+   */
+  autoRouting: boolean;
+};
+
+export function loadRoutingAccounts(nemaHome: string, config: NemaConfig, codexHome: string): RoutingAccounts {
   // `codexHome` is accepted but not read here: `accounts.json` holds no credential and no Codex login, so
   // routing only needs the metadata. It stays in the signature because both adapters already hold it and
   // pass it, and because the next batch (automatic routing) needs it to tell a usable compat account from
@@ -39,7 +50,7 @@ export function loadRoutingAccounts(nemaHome: string, config: NemaConfig, codexH
   }
   if (read.status === "missing") {
     // First run, or a machine that never configured accounts: exactly what 0.2.0 did.
-    return { accounts: projectedAccounts([implicitAccount(config, new Date())], config), bindings: {} };
+    return { accounts: projectedAccounts([implicitAccount(config, new Date())], config), bindings: {}, autoRouting: false };
   }
-  return { accounts: projectedAccounts(read.file.accounts, config), bindings: read.file.bindings };
+  return { accounts: projectedAccounts(read.file.accounts, config), bindings: read.file.bindings, autoRouting: autoRoutingEnabled(read.file) };
 }

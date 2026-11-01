@@ -394,6 +394,38 @@ describe("messages with attachments", () => {
     expect(edited.task.kind).toBe("edit");
   });
 
+  test("an edit of a message that asked for automatic routing asks for it again", async () => {
+    // Automatic routing is the choice here, with no account named. An edit that dropped it would run on the
+    // thread/workspace binding or the default account, which the user did not choose.
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const sent = await postUserMessage(db, ws.id, "first try", { routing: "auto" });
+    expect(sent.task.routing).toBe("auto");
+    await db.query("update tasks set status = 'done' where workspace_id = $1", [ws.id]);
+    const edited = await editUserMessage(db, ws.id, sent.message.id, "second try");
+    expect(edited.task).toMatchObject({ kind: "edit", routing: "auto", accountId: null });
+  });
+
+  test("a retry with a different routing choice is a 409, and the same choice replays", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const plainFile = await stagedRow(db, ws.id);
+    const autoFile = await stagedRow(db, ws.id);
+    const plain = await postUserMessage(db, ws.id, "look", { attachmentIds: [plainFile] });
+    const before = await counts(db, ws.id);
+    await expect(
+      postUserMessage(db, ws.id, "look", { attachmentIds: [plainFile], routing: "auto" }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(await counts(db, ws.id)).toEqual(before);
+    expect(plain.task.routing).toBeNull();
+
+    const auto = await postUserMessage(db, ws.id, "look", { attachmentIds: [autoFile], routing: "auto" });
+    const again = await postUserMessage(db, ws.id, "look", { attachmentIds: [autoFile], routing: "auto" });
+    expect(again.replayed).toBe(true);
+    expect(again.task.id).toBe(auto.task.id);
+    expect(again.task.routing).toBe("auto");
+  });
+
   test("a retry that names a different account is a 409, not a replay of the earlier task", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");

@@ -103,6 +103,17 @@ export function roomTools(pluginTools: PluginToolSpec[]): FunctionTool[] {
 
 const errorOutput = (error: string, extra: Record<string, unknown> = {}) => JSON.stringify({ error, ...extra });
 
+/**
+ * Whether this call may have changed the Room.
+ *
+ * An explicit refusal (4xx) did not. A lost response (`status` 0) or a 5xx can arrive after the hub already
+ * committed, so a mutating call counts as a write and failover will not repeat it.
+ */
+function settled(r: RoomResult, writes: boolean): { output: string; known: true; wrote: boolean } {
+  const uncertain = !r.ok && (r.status === 0 || r.status >= 500);
+  return { output: resultOutput(r), known: true, wrote: writes && (r.ok || uncertain) };
+}
+
 /** Every output handed to the model is capped at 64 KB of UTF-8 (a truncated JSON output carries the marker). */
 function resultOutput(r: RoomResult): string {
   if (!r.ok) return capText(errorOutput(r.error, { status: r.status }));
@@ -119,40 +130,40 @@ export async function dispatchTool(
   room: RoomApi,
   pluginTools: PluginToolSpec[] = [],
   skills?: SkillReader,
-): Promise<{ output: string; known: boolean }> {
+): Promise<{ output: string; known: boolean; wrote: boolean }> {
   // Only declared when the task has Skills; it runs here in the daemon and never reaches the hub.
-  if (skills && name === READ_SKILL) return { output: capText(await skills.read(argsJson)), known: true };
+  if (skills && name === READ_SKILL) return { output: capText(await skills.read(argsJson)), known: true, wrote: false };
   const plugin = pluginTools.find((tool) => tool.name === name);
   const isRoom = (ROOM_NAMES as readonly string[]).includes(name);
   if (!plugin && !isRoom) {
     const shown = name.length > 100 ? name.slice(0, 100) + "…" : name;
     const allowed = [...ROOM_NAMES, ...pluginTools.map((tool) => tool.name), ...(skills ? [READ_SKILL] : [])].join("、");
-    return { output: errorOutput(`未知函数 ${JSON.stringify(shown)}；只能使用 ${allowed}`), known: false };
+    return { output: errorOutput(`未知函数 ${JSON.stringify(shown)}；只能使用 ${allowed}`), known: false, wrote: false };
   }
   let args: unknown;
   try {
     args = argsJson.trim() === "" ? {} : JSON.parse(argsJson);
   } catch {
-    return { output: errorOutput(`${name} 的参数不是合法的 JSON`), known: false };
+    return { output: errorOutput(`${name} 的参数不是合法的 JSON`), known: false, wrote: false };
   }
   if (!args || typeof args !== "object" || Array.isArray(args)) {
-    return { output: errorOutput(`${name} 的参数必须是 JSON 对象`), known: false };
+    return { output: errorOutput(`${name} 的参数必须是 JSON 对象`), known: false, wrote: false };
   }
-  if (plugin) return { output: resultOutput(await room.callPlugin(name, args)), known: true };
+  if (plugin) return settled(await room.callPlugin(name, args), true);
   switch (name) {
     case "list_entries":
-      return { output: resultOutput(await room.listEntries()), known: true };
+      return settled(await room.listEntries(), false);
     case "read_entry": {
       const id = (args as { id?: unknown }).id;
-      if (typeof id !== "string" || id === "") return { output: errorOutput("read_entry 需要字符串参数 id"), known: true };
-      return { output: resultOutput(await room.readEntry(id)), known: true };
+      if (typeof id !== "string" || id === "") return { output: errorOutput("read_entry 需要字符串参数 id"), known: true, wrote: false };
+      return settled(await room.readEntry(id), false);
     }
     case "upsert_entry":
-      return { output: resultOutput(await room.upsertEntry(args)), known: true };
+      return settled(await room.upsertEntry(args), true);
     case "open_thread":
-      return { output: resultOutput(await room.openThread(args)), known: true };
+      return settled(await room.openThread(args), true);
     case "offer_skill_install":
-      return { output: resultOutput(await room.offerSkillInstall(args)), known: true };
+      return settled(await room.offerSkillInstall(args), true);
   }
   throw new Error(`unreachable tool ${name}`);
 }

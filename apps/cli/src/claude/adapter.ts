@@ -23,7 +23,7 @@ import { defaultCodexHome } from "../direct/codexLogin.js";
 import { IMPLICIT_ACCOUNT_ID } from "../accounts/schema.js";
 import type { Account } from "../accounts/schema.js";
 import { CLAUDE_DEFAULT_MODEL, claudeTokenFor, credentialStateOf, preferredModel } from "../routing/accountAuth.js";
-import { loadRoutingAccounts } from "../routing/accountSet.js";
+import { loadRoutingAccounts, type RoutingAccounts } from "../routing/accountSet.js";
 import { Cooldowns } from "../routing/cooldown.js";
 import { resolveRoute, routeDecision } from "../routing/index.js";
 import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
@@ -53,7 +53,7 @@ export type ClaudeCodeAdapterOptions = {
   /** Whether this Claude Code can load Skills; production runs `claude --version` once. */
   claudeSkillsOk?: () => Promise<{ ok: boolean; version: string | null }>;
   /** The accounts this daemon can route over; defaults to reading `accounts.json` for each task. */
-  accounts?: () => { accounts: Account[]; bindings: Record<string, string> };
+  accounts?: () => RoutingAccounts;
   /** Codex CLI home, needed only to report a compat account's credential state. */
   codexHome?: string;
   /** Cooldowns shared with the direct adapter (spec §4.4 is process-wide). */
@@ -111,7 +111,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // Which account and model this task runs on. A Claude Code account owns a token and nothing else, so the
     // model comes from the account when it names one and otherwise from Claude Code's own default.
     const codexHome = this.opts.codexHome ?? defaultCodexHome();
-    let picked: { accounts: Account[]; bindings: Record<string, string> };
+    let picked: RoutingAccounts;
     try {
       picked = this.accountSet(config);
     } catch (e) {
@@ -126,6 +126,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       cooldowns: this.opts.cooldowns ?? new Cooldowns(),
       credentialOf: (a) => credentialStateOf(this.opts.nemaHome, a, codexHome),
       resolveModel: preferredModel,
+      autoRouting: picked.autoRouting,
     });
     if (!route.ok) return { ok: false, error: route.error };
     const model = route.model === CLAUDE_DEFAULT_MODEL ? undefined : route.model;
@@ -214,7 +215,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
    * Copies the task's Skills into the run dir (`run` is null when the task runs without them) and builds the
    * section for a Skill the user called with `/name`, which goes in even then.
    */
-  private accountSet(config: NemaConfig): { accounts: Account[]; bindings: Record<string, string> } {
+  private accountSet(config: NemaConfig): RoutingAccounts {
     if (this.opts.accounts) return this.opts.accounts();
     return loadRoutingAccounts(this.opts.nemaHome, config, this.opts.codexHome ?? defaultCodexHome());
   }

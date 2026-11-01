@@ -6,6 +6,7 @@ import {
   accountNameProblem,
   newAccountId,
   validateAccountsFile,
+  autoRoutingEnabled,
   type AccountsFile,
 } from "../../src/accounts/schema.js";
 
@@ -279,5 +280,28 @@ describe("BYOK endpoint safety", () => {
   test("the rule is the config rule, not a copy: its message is reused verbatim", () => {
     const problem = validateAccountsFile(file([base({ baseUrl: "http://evil.example/v1" })])).join(" ");
     expect(problem).toContain("byokBaseUrl 只允许 https");
+  });
+});
+
+describe("the automatic routing switch", () => {
+  test("is off unless the file says otherwise", () => {
+    // D-3: a file written by the settings page before this batch has no such key, and reading it must not
+    // turn automatic routing on. Every existing `accounts.json` is in that state.
+    const parsed = AccountsFileSchema.parse(file([base()]));
+    expect(parsed.autoRouting).toBeUndefined();
+    expect(autoRoutingEnabled(parsed)).toBe(false);
+    expect(autoRoutingEnabled(AccountsFileSchema.parse(file([base()], {})))).toBe(false);
+  });
+
+  test("reads a stored true as on, and a stored false as off", () => {
+    expect(autoRoutingEnabled(AccountsFileSchema.parse({ ...file([base()]), autoRouting: true }))).toBe(true);
+    expect(autoRoutingEnabled(AccountsFileSchema.parse({ ...file([base()]), autoRouting: false }))).toBe(false);
+  });
+
+  test("is a boolean and nothing else", () => {
+    // A string "true" would make the switch's state depend on how a hand-edited file was typed.
+    for (const autoRouting of ["true", 1, null, {}]) {
+      expect(AccountsFileSchema.safeParse({ ...file([base()]), autoRouting }).success).toBe(false);
+    }
   });
 });

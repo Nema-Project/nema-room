@@ -73,6 +73,7 @@ export function WorkspaceSettings({ workspace, onUpdated, onClose }: WorkspaceSe
             onChange={(next) => { setWorkspaceAccount(next); accountsState.reload(); }}
             workspaceId={workspace.id}
             supported={accountsState.supported}
+            autoRouting={accountsState.autoRouting}
           />
 
           <fieldset className="field">

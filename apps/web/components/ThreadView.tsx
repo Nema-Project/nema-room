@@ -222,6 +222,7 @@ export function ThreadView({ workspaceId, threadId, active = true, floating = fa
           onChange={(next) => { setThreadAccount(next); accountsState.reload(); }}
           threadId={threadId}
           supported={accountsState.supported}
+          autoRouting={accountsState.autoRouting}
         />
         {onClose && <button type="button" aria-label={t("common.close")} onClick={onClose}>×</button>}
       </header>

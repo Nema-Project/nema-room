@@ -112,7 +112,18 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
 export function RouteLine({ route }: { route: RouteDecision }) {
   const t = useT();
   const [open, setOpen] = useState(false);
-  const reason = t(`route.reason.${route.reason}`);
+  // Attempts are recorded for a failure even when the task never left that account. The switched sentence is
+  // only honest when some attempt belongs to a different account than the one that answered. Each failed
+  // account keeps its own reason: the last attempt's failure does not describe the earlier ones.
+  const attempts = route.attempts ?? [];
+  const moved = attempts.some((a) => a.accountId !== route.accountId);
+  const reason = moved
+    ? t("route.reason.switched", {
+      attempts: attempts
+        .map((a) => t("route.reason.attempt", { account: a.accountName, failure: t(`route.failure.${a.failure}`) }))
+        .join(t("route.reason.separator")),
+    })
+    : t(`route.reason.${route.reason}`);
   return (
     <div className="route" data-testid="route-line">
       <span>
@@ -138,7 +149,7 @@ export function RouteLine({ route }: { route: RouteDecision }) {
                 {route.attempts.map((a, i) => (
                   <li key={`${a.accountId}-${i}`}>
                     {a.accountName}
-                    {a.model ? ` · ${a.model}` : ""} — {a.failure}
+                    {a.model ? ` · ${a.model}` : ""} — {t(`route.failure.${a.failure}`)}
                   </li>
                 ))}
               </ul>

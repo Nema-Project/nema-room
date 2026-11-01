@@ -5,8 +5,8 @@ import type { CredentialState } from "../accounts/credentials.js";
 import type { Cooldowns } from "./cooldown.js";
 import { UNUSABLE_FILE_MESSAGE } from "../direct/authStore.js";
 import { BYOK_MODEL_REQUIRED, MISSING_BYOK_KEY, MISSING_CLAUDE_TOKEN, MISSING_CODEX_LOGIN, NOT_LOGGED_IN } from "./messages.js";
-import { computeCandidates, type Excluded } from "./candidates.js";
-import { taskNeeds } from "./capabilities.js";
+import { computeCandidates, type Candidate, type CandidateSet, type Excluded } from "./candidates.js";
+import { taskNeeds, type TaskNeeds } from "./capabilities.js";
 
 /**
  * Turning one task into one account and one model (spec 2026-10-31 §4.1 step 2).
@@ -22,14 +22,43 @@ import { taskNeeds } from "./capabilities.js";
  * provider 401 later.
  */
 
-// `account_disabled` is gone: a named account is no longer refused for being disabled (see `checkNamed`).
-export type RouteFailure = "unknown_account" | "adapter_mismatch" | "credential_missing" | "credential_unusable" | "model_missing" | "no_account" | "auto_unavailable";
+/**
+ * Why a task could not be given an account at all, as opposed to why one account's model call failed.
+ *
+ * Named `RouteRefusal`, not `RouteFailure`: `./errors.ts` already exports a `RouteFailure` for the *model
+ * call* classification (`rate_limit` / `quota` / ...). The two answer different questions — "could this task
+ * start" versus "did this request fail, and is another account worth trying" — and having one name for both
+ * meant an import could silently pick up the wrong vocabulary. The failure kinds keep the name because that
+ * is the one the plan and the spec use for them; this one is a refusal.
+ *
+ * `account_disabled` is gone: a named account is no longer refused for being disabled (see `checkNamed`).
+ */
+export type RouteRefusal = "unknown_account" | "adapter_mismatch" | "credential_missing" | "credential_unusable" | "model_missing" | "no_account" | "no_candidate" | "auto_unavailable";
 
-export type RouteSource = "user_message" | "user_thread" | "user_workspace" | "default";
+/**
+ * Why this account was chosen. The four user/default codes are what manual mode reports; the three automatic
+ * ones are what automatic mode reports, and they are the same vocabulary `RouteDecision.reason` uses.
+ */
+export type RouteSource = "user_message" | "user_thread" | "user_workspace" | "default" | "auto_primary";
 
 export type RouteResult =
-  | { ok: true; account: Account; model: string; mode: "manual" | "auto"; reason: RouteSource; excluded: Excluded[] }
-  | { ok: false; failure: RouteFailure; error: string; excluded: Excluded[] };
+  | {
+    ok: true;
+    account: Account;
+    model: string;
+    mode: "manual" | "auto";
+    reason: RouteSource;
+    excluded: Excluded[];
+    /**
+     * The candidates automatic routing may move to, best first, starting with `account`. Present only in
+     * automatic mode: a manual choice is the user's decision and a failover would override it.
+     *
+     * Handed back rather than recomputed by the adapter, so the list the details panel shows and the order a
+     * switch follows are the same decision.
+     */
+    autoCandidates?: Candidate[];
+  }
+  | { ok: false; failure: RouteRefusal; error: string; excluded: Excluded[] };
 
 export type RouteRequest = {
   task: TaskAssign;
@@ -45,17 +74,44 @@ export type RouteRequest = {
   cooldowns: Cooldowns;
   credentialOf: (a: Account) => CredentialState;
   resolveModel: (a: Account) => string | null;
+  /**
+   * The machine-wide automatic routing switch (D-3). Passed in rather than read from the file here, so this
+   * function stays a pure decision over its arguments and a caller cannot accidentally route automatically
+   * by forgetting to read the file.
+   */
+  autoRouting: boolean;
 };
 
 /** A name is user text and can be anything; one that looks like a credential is replaced by the id. */
 const SECRET_LIKE = /^[A-Za-z0-9_\-+/=]{20,}$/;
 
 /** How an account is named in a sentence. A name that looks like a credential is replaced by its id. */
-function label(account: Account): string {
+function label(account: Pick<Account, "id" | "name">): string {
   return SECRET_LIKE.test(account.name.trim()) ? `账户 ${account.id}` : `账户「${account.name}」`;
 }
 
-const AUTO_MESSAGE = "自动路由将在后续版本提供，本版本请指定账户或不指定（用默认账户）";
+/** The same rule for every sentence that names an account, including the failover progress line. */
+export { label as accountLabel };
+
+/** Why an account was set aside, in the user's terms. The code itself stays in `excluded` for the UI. */
+const EXCLUSION_WORDS: Record<Excluded["reason"], string> = {
+  disabled: "已停用",
+  credential_missing: "没有凭据",
+  credential_unusable: "凭据不可用",
+  compat_unreadable: "读不到 Codex 登录",
+  cooling: "刚被限流，冷却中",
+  capability: "没有声明所需能力",
+  model_missing: "没有默认模型",
+};
+
+/**
+ * The sentence for `routing: "auto"` while the switch is off.
+ *
+ * It has to be a refusal, not a fallback: automatic routing changes whose quota pays for the task and which
+ * endpoint answers it, so a user who asked for it must never get a silent single-account run instead (D-3).
+ * The second half says where the switch is, because a refusal with no way forward is just an error.
+ */
+const AUTO_OFF_MESSAGE = "自动路由未开启。请在设置页的账户分组里打开「自动路由」，或在这条消息、这个 thread、这个工作区里指定一个账户。";
 
 /**
  * The account id the choice resolves to, with where the choice came from. `"auto"` is a real value in a
@@ -97,12 +153,16 @@ export function resolveRoute(req: RouteRequest): RouteResult {
     resolveModel: req.resolveModel,
   });
 
-  if (task.routing === "auto") return { ok: false, failure: "auto_unavailable", error: AUTO_MESSAGE, excluded: set.excluded };
+  // A choice that asks for automatic routing — on this message or through a binding — is honoured only when
+  // the switch is on. With it off the request fails and says where the switch is (D-3): running the task on
+  // the default account instead would spend an account the user did not choose.
   const choice = choose(task, req.bindings);
-  if (choice !== null && choice.kind === "auto") {
-    return { ok: false, failure: "auto_unavailable", error: AUTO_MESSAGE, excluded: set.excluded };
+  if (task.routing === "auto" || choice?.kind === "auto") {
+    if (!req.autoRouting) return { ok: false, failure: "auto_unavailable", error: AUTO_OFF_MESSAGE, excluded: set.excluded };
+    return autoRoute(set, req);
   }
 
+  // The `auto` case returned above, so what is left is an account id or nothing to go on.
   if (choice === null) {
     const enabled = req.accounts
       .filter((a) => a.adapter === adapter && a.enabled)
@@ -131,6 +191,59 @@ export function resolveRoute(req: RouteRequest): RouteResult {
     };
   }
   return { ...checkNamed(target, choice.source, req, adapter), excluded: set.excluded };
+}
+
+/**
+ * Automatic mode: the first candidate answers, the rest are what a failure may move to (spec §4.2, D-4).
+ *
+ * With no candidate at all the task fails *before any request*, naming what every other account was missing.
+ * That is the whole point of D-4 A: an automatic choice must never be a guess, so an account that has not
+ * declared the ability this task needs is not picked, and the user is told which declaration to add rather
+ * than handed a provider error later.
+ */
+function autoRoute(set: CandidateSet, req: RouteRequest): RouteResult {
+  const first = set.candidates[0];
+  if (first === undefined) {
+    return { ok: false, failure: "no_candidate", error: refusalMessage(req.adapter, taskNeeds(req.task), set.excluded), excluded: set.excluded };
+  }
+  // The credential is checked for the head of the list only. The rest were filtered on it by
+  // `computeCandidates`, and a later one that has become unusable since then fails when it is tried.
+  const state = req.credentialOf(first.account);
+  if (state !== "connected") {
+    return { ok: false, failure: state === "unusable" ? "credential_unusable" : "credential_missing", error: credentialMessage(first.account, state), excluded: set.excluded };
+  }
+  return {
+    ok: true,
+    account: first.account,
+    model: first.model,
+    mode: "auto",
+    reason: "auto_primary",
+    excluded: set.excluded,
+    autoCandidates: set.candidates,
+  };
+}
+
+/**
+ * Why no account could take this task, in terms of the task's attachments.
+ *
+ * The sentence names the missing abilities and lists the accounts set aside for them, because "no account"
+ * alone leaves the user with nothing to do: the fix is either declaring the ability on an account or naming
+ * one that has it.
+ */
+function refusalMessage(adapter: Account["adapter"], needs: TaskNeeds, excluded: Excluded[]): string {
+  const missing = (["image", "pdf"] as const).filter((need) => needs[need] === true);
+  const names = missing.map((need) => (need === "image" ? "图片" : "PDF")).join("、");
+  const describe = (e: Excluded): string => label({ id: e.accountId, name: e.accountName });
+  const incapable = excluded.filter((e) => e.reason === "capability");
+  // An image or PDF on the task is not itself a capability refusal. That sentence is only honest when at
+  // least one account was set aside for capability; a cooldown or a missing credential has to name itself.
+  if (missing.length > 0 && incapable.length > 0) {
+    const who = `：${incapable.map(describe).join("、")} 没有声明这项能力`;
+    return `没有账户声明支持${names}，无法自动选择${who}。请在设置页为账户打开对应的能力声明，或在这条消息上指定一个支持它的账户。`;
+  }
+  // No capability was the obstacle, so the other exclusions are: name them rather than say "none".
+  const why = excluded.length > 0 ? `：${excluded.map((e) => `${describe(e)}（${EXCLUSION_WORDS[e.reason]}）`).join("、")}` : "";
+  return `没有可用的 ${adapter} 账户，无法自动选择${why}。请在设置页检查账户的启用状态与凭据。`;
 }
 
 /**

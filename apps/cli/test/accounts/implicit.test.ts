@@ -364,6 +364,23 @@ describe("materializeImplicit hardening", () => {
     }
   });
 
+  test("materializing keeps the automatic routing switch the file already had", () => {
+    // Every key of the stored file survives, not only the rows: dropping `autoRouting` would silently turn the
+    // switch off, and every automatic task after it would be refused.
+    const peer = {
+      id: "acct_peer123456", name: "peer", enabled: true, adapter: "codex-direct" as const, authMode: "byok" as const,
+      baseUrl: "https://peer.example.com/v1", costTier: "standard" as const, order: 0,
+      createdAt: "2026-10-31T00:00:00.000Z",
+    };
+    writeAccounts(home, { version: 1, accounts: [peer], bindings: {}, autoRouting: true });
+
+    materializeImplicit({ nemaHome: home, config: byokConfig(), codexHome, name: "mine", random: () => "dddddddddd" });
+
+    const stored = readAccounts(home);
+    expect(stored.status).toBe("ok");
+    if (stored.status === "ok") expect(stored.file.autoRouting).toBe(true);
+  });
+
   test("two writers cannot drop each other's account", () => {
     // Two overlapping writers are exercised for real in accounts/lock.test.ts (two child processes, one
     // holding the lock open). This case covers the sequential path: both rows are kept and neither

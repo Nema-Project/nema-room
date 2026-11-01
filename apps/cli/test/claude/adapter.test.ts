@@ -851,3 +851,64 @@ describe("Claude Code accounts", () => {
     expect((result as { route?: unknown }).route).toMatchObject({ accountId: IMPLICIT_ACCOUNT_ID, model: "default" });
   });
 });
+
+describe("Claude Code automatic routing (S4)", () => {
+  const account = (p: Record<string, unknown>) => ({
+    id: "acct_cccccccccc", name: "Work", enabled: true, adapter: "claude-code", model: "opus-x",
+    costTier: "standard", order: 0, createdAt: "2026-10-31T00:00:00.000Z", ...p,
+  });
+  function store(accounts: unknown[], autoRouting: boolean, bindings: Record<string, string> = {}) {
+    writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts, bindings, autoRouting }, null, 2) + "\n");
+  }
+  function token(id: string, value: string) {
+    const dir = join(home, "secrets", "accounts", id);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writePrivateFile(join(dir, "token"), value);
+  }
+
+  test("a request for automatic routing with the switch off fails before the CLI is started", async () => {
+    const a = account({ id: "acct_cccccccccc" });
+    store([a], false);
+    token(a.id, "token-a");
+    saveConfig(home, { adapter: "claude-code", model: "opus-x" });
+    const argvFile = join(root, "argv-claude-auto-off.json");
+    const bin = installFake({ mode: "lines", argvFile, lines: [roomInit(), resultLine("ok")] });
+    const { result } = await runTask(createAdapter(bin), { ...task("task-claude-auto-off", "hi"), routing: "auto" });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { error: string }).error).toContain("自动路由未开启");
+    // Nothing was launched: the refusal is a routing decision, not a failed run.
+    expect(existsSync(argvFile)).toBe(false);
+  });
+
+  test("with the switch on, automatic mode runs on the first candidate", async () => {
+    const a = account({ id: "acct_cccccccccc", name: "First", order: 0 });
+    const b = account({ id: "acct_dddddddddd", name: "Second", order: 1 });
+    store([a, b], true);
+    token(a.id, "token-a");
+    token(b.id, "token-b");
+    saveConfig(home, { adapter: "claude-code", model: "opus-x" });
+    const argvFile = join(root, "argv-claude-auto-on.json");
+    const bin = installFake({ mode: "lines", argvFile, lines: [roomInit(), resultLine("ok")] });
+    const { result } = await runTask(createAdapter(bin), { ...task("task-claude-auto-on", "hi"), routing: "auto" });
+    expect(result).toMatchObject({ ok: true, reply: "ok" });
+    const recorded = JSON.parse(readFileSync(argvFile, "utf8")) as { env: Record<string, string> };
+    expect(recorded.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("token-a");
+    expect((result as { route?: unknown }).route).toMatchObject({ accountId: a.id, mode: "auto", reason: "auto_primary" });
+  });
+
+  test("a PDF task with no account declaring PDF support fails and names the ability, without launching", async () => {
+    // Claude Code's stream-json has no documented `document` block, so its PDF support is `undeclared` at the
+    // adapter layer. Automatic mode must not pick it on a guess (D-4 A).
+    const a = account({ id: "acct_cccccccccc", name: "NoPdf", capabilities: {} });
+    store([a], true);
+    token(a.id, "token-a");
+    saveConfig(home, { adapter: "claude-code", model: "opus-x" });
+    const ref = { id: "doc", kind: "pdf" as const, mime: "application/pdf", name: "spec.pdf", size: 12, sha256: "0".repeat(64), messageId: "m1" };
+    const argvFile = join(root, "argv-claude-pdf.json");
+    const bin = installFake({ mode: "lines", argvFile, lines: [roomInit(), resultLine("ok")] });
+    const { result } = await runTask(createAdapter(bin), { ...task("task-claude-pdf", "hi"), routing: "auto", attachments: [ref] });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { error: string }).error).toContain("PDF");
+    expect(existsSync(argvFile)).toBe(false);
+  });
+});

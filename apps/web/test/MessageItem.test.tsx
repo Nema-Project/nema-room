@@ -485,3 +485,74 @@ describe("the route line", () => {
     expect(screen.getByTestId("route-usage").textContent).toBe("No token counts were reported");
   });
 });
+
+describe("the route line after a switch", () => {
+  const switched = {
+    accountId: "acct_bbbbbbbbbb",
+    accountName: "OpenAI 主账号",
+    model: "gpt-5",
+    mode: "auto",
+    reason: "auto_after_limit",
+    attempts: [{ accountId: "acct_aaaaaaaaaa", accountName: "OpenRouter 免费", model: "deepseek/xxx", failure: "rate_limit" }],
+  };
+  const show = (route: unknown) =>
+    render(<I18nProvider><MessageItem message={msg({ meta: { changes: [], askedQuestion: null, route } as never })} /></I18nProvider>);
+
+  it("names the account that was passed over and what happened to it", async () => {
+    // The acceptance criterion for S4: the reply says which account was rate limited and which one took over.
+    // A generic "automatic, after another account hit its limit" would leave out the account name, which is the
+    // only part a reader cannot derive.
+    show(switched);
+    const line = await screen.findByTestId("route-line");
+    expect(line.textContent).toContain("OpenAI 主账号");
+    expect(line.textContent).toContain("gpt-5");
+    expect(line.textContent).toContain("OpenRouter 免费");
+    expect(line.textContent).toContain("rate limited");
+  });
+
+  it("keeps the generic sentence when nothing moved", async () => {
+    show({ ...switched, reason: "auto_primary", attempts: [] });
+    const line = await screen.findByTestId("route-line");
+    expect(line.textContent).toContain("automatic, first choice");
+    // No attempts means no account to name, and naming one would be wrong.
+    expect(line.textContent).not.toContain("switched");
+  });
+
+  it("does not say the route switched when the only attempt is the account that answered", async () => {
+    show({
+      ...switched,
+      accountId: "acct_aaaaaaaaaa",
+      accountName: "OpenRouter 免费",
+      reason: "auto_primary",
+      attempts: [{ accountId: "acct_aaaaaaaaaa", accountName: "OpenRouter 免费", model: "deepseek/xxx", failure: "rate_limit" }],
+    });
+    const line = await screen.findByTestId("route-line");
+    expect(line.textContent).toContain("automatic, first choice");
+    expect(line.textContent).not.toContain("switched");
+    await userEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(screen.getByTestId("route-attempts").textContent).toContain("was rate limited");
+  });
+
+  it("pairs each failed account with its own reason", async () => {
+    show({
+      ...switched,
+      attempts: [
+        { accountId: "acct_aaaaaaaaaa", accountName: "OpenRouter 免费", model: "deepseek/xxx", failure: "quota" },
+        { accountId: "acct_cccccccccc", accountName: "Work", model: "m", failure: "server" },
+      ],
+    });
+    const line = await screen.findByTestId("route-line");
+    expect(line.textContent).toContain("OpenRouter 免费 ran out of quota");
+    expect(line.textContent).toContain("Work had a server error");
+    expect(line.textContent).not.toContain("OpenRouter 免费 had a server error");
+  });
+
+  it("translates the failure kind in the details panel instead of showing the raw code", async () => {
+    show(switched);
+    await userEvent.click(await screen.findByRole("button", { name: "Details" }));
+    const attempts = screen.getByTestId("route-attempts");
+    expect(attempts.textContent).toContain("was rate limited");
+    // `rate_limit` is a machine-readable code in the metadata, not something to put in front of a reader.
+    expect(attempts.textContent).not.toContain("rate_limit");
+  });
+});

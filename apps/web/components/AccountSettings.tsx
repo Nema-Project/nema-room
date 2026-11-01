@@ -10,6 +10,7 @@ import {
   type AccountsList,
 } from "@/lib/accounts";
 import { ModelSettingsError } from "@/lib/modelSettings";
+import { notifyAccountsChanged } from "@/lib/useAccounts";
 import { useT } from "@/lib/i18n";
 
 /**
@@ -138,6 +139,7 @@ export function AccountSettings({ onChanged }: { onChanged?: () => void }) {
   const [secret, setSecret] = useState("");
   const [confirming, setConfirming] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ id: string; message: string } | null>(null);
+  const [switchPending, setSwitchPending] = useState(false);
 
   /** Re-reads the list after a mutation. The first read is the effect below, which does its own chaining. */
   const reload = useCallback(async () => {
@@ -235,6 +237,31 @@ export function AccountSettings({ onChanged }: { onChanged?: () => void }) {
     }
   }
 
+  /**
+   * Flips the machine-wide switch (D-3).
+   *
+   * The checkbox is driven by the stored value, not by local state, so a failed write leaves it exactly where
+   * it was: a toggle that stays flipped after a refused save would tell the user automatic routing is on
+   * while the daemon still refuses every `routing: "auto"` task.
+   */
+  async function setAutoRouting(next: boolean) {
+    setSwitchPending(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await accountsApi.setAutoRouting(next);
+      // The composer stays mounted under settings and has its own `useAccounts`. Its reload is the only way
+      // "Automatic" appears or disappears without leaving the page.
+      notifyAccountsChanged();
+      await reload();
+      onChanged?.();
+    } catch (e: unknown) {
+      setError(errorKey(e));
+    } finally {
+      setSwitchPending(false);
+    }
+  }
+
   async function startLogin(id: string) {
     setError(null);
     setNotice(null);
@@ -264,6 +291,21 @@ export function AccountSettings({ onChanged }: { onChanged?: () => void }) {
         <p className="error" role="alert">{t("account.unusable", { reason: state.unusableReason ?? "" })}</p>
       ) : (
         <>
+          <div className="field account-auto">
+            <label className="field">
+              <span className="label">
+                <input
+                  type="checkbox"
+                  checked={state.autoRouting === true}
+                  disabled={switchPending}
+                  onChange={(e) => void setAutoRouting(e.target.checked)}
+                />
+                {" "}{t("account.autoRouting")}
+              </span>
+              <span className="help">{t("account.autoRoutingHelp")}</span>
+            </label>
+          </div>
+
           <ul className="account-list">
             {(state.accounts ?? []).map((account) => {
               const kind = kindOf(account);

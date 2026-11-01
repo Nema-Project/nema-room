@@ -170,6 +170,12 @@ export type PostUserMessageOptions = {
    * account actually answered) is the daemon's to report later.
    */
   accountId?: string;
+  /**
+   * This message asked for automatic routing instead of naming an account (spec §1.2). Stored on the task, not
+   * in the message's meta: like the account choice, it is the task's input. The daemon decides whether it can
+   * honour it, since the switch lives on its machine.
+   */
+  routing?: "auto";
 };
 
 /**
@@ -225,6 +231,7 @@ export async function postUserMessage(
       }
       const task = await insertQueuedTask(t, workspaceId, message.id, "organize", {
         ...(options.accountId !== undefined ? { accountId: options.accountId } : {}),
+        ...(options.routing !== undefined ? { routing: options.routing } : {}),
       });
       return { message, task, replayed: false };
     });
@@ -285,6 +292,9 @@ async function lockForSend(
   // A retry that names a different account is a different request, not a replay of this one: returning the
   // earlier task would answer with the route the user had already moved away from.
   if (task.accountId !== (options.accountId ?? null)) throw conflict;
+  // Routing is part of the same choice. A retry that flips between "automatic" and "not asked" must not
+  // come back as the earlier task: that task keeps the routing it was created with.
+  if ((task.routing ?? null) !== (options.routing ?? null)) throw conflict;
   return { message: prior, task };
 }
 
@@ -360,14 +370,17 @@ export async function editUserMessage(
       content,
       nextMeta === null ? null : JSON.stringify(nextMeta),
     ]);
-    // The edit is the same request with new text, so it runs on the account the first run used. Without
-    // this the row would be null and the edit could quietly land on a different account. The first task is
-    // read, not copied from a request field: nothing in an edit names an account.
-    const first = await t.query<{ account_id: string | null }>(
-      "select account_id from tasks where message_id = $1 order by seq limit 1",
+    // The edit is the same request with new text, so it carries the first run's routing choice: the account it
+    // named, or automatic routing. Without this the row would be null and the edit could quietly land on a
+    // different account. The first task is read, not copied from a request field: nothing in an edit names one.
+    const first = await t.query<{ account_id: string | null; routing: string | null }>(
+      "select account_id, routing from tasks where message_id = $1 order by seq limit 1",
       [messageId],
     );
-    const task = await insertQueuedTask(t, workspaceId, messageId, "edit", { accountId: first[0]?.account_id ?? null });
+    const task = await insertQueuedTask(t, workspaceId, messageId, "edit", {
+      accountId: first[0]?.account_id ?? null,
+      routing: first[0]?.routing ?? null,
+    });
     const [message] = await withAttachments(t, [toMessage(updated[0]!)]);
     return { message: message!, task };
   });

@@ -427,6 +427,7 @@ export function Composer({
           value={accountId}
           onChange={setAccountId}
           supported={accountsState.supported}
+          autoRouting={accountsState.autoRouting}
           threadId={threadId}
           disabled={disabled}
         />

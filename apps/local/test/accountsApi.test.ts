@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { handleAccounts, resetAccountsJobs, type AccountView, type AccountsDeps } from "../src/accountsApi.js";
 import { IMPLICIT_ACCOUNT_ID, accountsPath, readAccounts, removeAccountSecrets, writeAccounts } from "@nema/cli/localSettings";
 import { loadConfig, saveConfig } from "@nema/cli/config";
-import type { Account } from "@nema/cli/localSettings";
+import type { Account, AccountsFile } from "@nema/cli/localSettings";
 
 /**
  * The accounts settings API. Every test uses a temporary `nemaHome`; nothing touches the network, the real
@@ -48,6 +48,13 @@ function deps(home: string, over: Partial<AccountsDeps> = {}): AccountsDeps {
 
 const call = (home: string, method: string, pathname: string, body?: unknown, over: Partial<AccountsDeps> = {}) =>
   handleAccounts(method, pathname, body, deps(home, over));
+
+/** The stored file, as a test's subject rather than a status: an unreadable one fails here, not later. */
+function storedFile(home: string): AccountsFile {
+  const read = readAccounts(home);
+  if (read.status !== "ok") throw new Error(`accounts.json is ${read.status}, expected ok`);
+  return read.file;
+}
 
 describe("GET /_nema/accounts", () => {
   test("lists the synthesized account when accounts.json does not exist", () => {
@@ -481,5 +488,84 @@ describe("a failed credential cleanup is retryable", () => {
     expect(after.status === "ok" && after.file.accounts.map((a) => a.id)).toEqual([account().id, "acct_bbbbbbbbbb"]);
     // The link target is untouched, which is the whole point of the check.
     expect(statSync(target).isDirectory()).toBe(true);
+  });
+});
+
+describe("PATCH /_nema/accounts with the automatic routing switch", () => {
+  test("reads back as off by default and stays off after an unrelated edit", () => {
+    const home = tempHome();
+    writeAccounts(home, { version: 1, accounts: [account({ name: "Old" })], bindings: {} });
+    const reply = call(home, "PATCH", "/_nema/accounts", { id: account().id, name: "New name" });
+    expect(reply?.status).toBe(200);
+    const list = call(home, "GET", "/_nema/accounts")!.body as { autoRouting?: boolean };
+    // The switch is a property of the file, not of a row: an edit to one account must not carry it away.
+    expect(list.autoRouting).toBe(false);
+  });
+
+  test("turns the switch on and the next read sees it", () => {
+    const home = tempHome();
+    writeAccounts(home, { version: 1, accounts: [account()], bindings: {} });
+    const reply = call(home, "PATCH", "/_nema/accounts", { autoRouting: true });
+    expect(reply?.status).toBe(200);
+    expect((reply!.body as { autoRouting: boolean }).autoRouting).toBe(true);
+    expect(storedFile(home).autoRouting).toBe(true);
+    const list = call(home, "GET", "/_nema/accounts")!.body as { autoRouting: boolean };
+    expect(list.autoRouting).toBe(true);
+  });
+
+  test("turns the switch back off", () => {
+    const home = tempHome();
+    writeAccounts(home, { version: 1, accounts: [account()], bindings: {}, autoRouting: true });
+    expect(call(home, "PATCH", "/_nema/accounts", { autoRouting: false })?.status).toBe(200);
+    const list = call(home, "GET", "/_nema/accounts")!.body as { autoRouting: boolean };
+    expect(list.autoRouting).toBe(false);
+  });
+
+  test("an edit of one account leaves the switch as it was", () => {
+    // The two kinds of edit share one route. A stale page that patches a row must not reset the switch it
+    // never knew about, and a switch flip must not touch a row.
+    const home = tempHome();
+    writeAccounts(home, { version: 1, accounts: [account({ name: "Keep" })], bindings: {}, autoRouting: true });
+    expect(call(home, "PATCH", "/_nema/accounts", { id: account().id, model: "m-2" })?.status).toBe(200);
+    const after = storedFile(home);
+    expect(after.autoRouting).toBe(true);
+    expect(after.accounts[0]!.model).toBe("m-2");
+  });
+
+  test("refuses a switch value that is not a boolean", () => {
+    const home = tempHome();
+    writeAccounts(home, { version: 1, accounts: [account()], bindings: {} });
+    for (const autoRouting of ["true", 1, null]) {
+      expect(call(home, "PATCH", "/_nema/accounts", { autoRouting })?.status).toBe(400);
+    }
+  });
+
+  test("refuses a switch flip and a row edit in the same request", () => {
+    // Two different subjects in one body would make "which account did this apply to" unanswerable, and
+    // the two writes take the file lock separately.
+    const home = tempHome();
+    writeAccounts(home, { version: 1, accounts: [account()], bindings: {} });
+    expect(call(home, "PATCH", "/_nema/accounts", { id: account().id, autoRouting: true })?.status).toBe(400);
+  });
+
+  test("works before the first edit, when accounts.json does not exist yet", () => {
+    // Turning the switch on is an account setting, so it materializes the synthesized account exactly as
+    // the first other edit does — otherwise the setting would have nowhere to live.
+    const home = tempHome();
+    saveConfig(home, { adapter: "codex-direct", authMode: "byok", byokBaseUrl: "https://a.example.com/v1" });
+    expect(readAccounts(home).status).toBe("missing");
+    const reply = call(home, "PATCH", "/_nema/accounts", { autoRouting: true });
+    expect(reply?.status).toBe(200);
+    const after = storedFile(home);
+    expect(after.autoRouting).toBe(true);
+    expect(after.accounts).toHaveLength(1);
+  });
+
+  test("refuses to flip the switch on an unreadable file instead of replacing it", () => {
+    const home = tempHome();
+    writeFileSync(accountsPath(home), "{ broken", { mode: 0o600 });
+    const reply = call(home, "PATCH", "/_nema/accounts", { autoRouting: true });
+    expect(reply?.status).toBe(409);
+    expect(reply!.body).toMatchObject({ error: "accounts_unusable" });
   });
 });
