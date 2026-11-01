@@ -143,7 +143,29 @@ function waitForChildExit(child, timeoutMs) {
   });
 }
 
-async function stopApp(child) {
+function onceOrTimeout(child, event, timeoutMs) {
+  if (event === 'close' && child.benchClosed) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { child.off(event, onEvent); resolve(); }, timeoutMs);
+    const onEvent = () => { clearTimeout(timer); resolve(); };
+    child.once(event, onEvent);
+  });
+}
+
+function withTimeout(promise, timeoutMs) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    promise.then(() => { clearTimeout(timer); resolve(); }, () => { clearTimeout(timer); resolve(); });
+  });
+}
+
+/** stdio can still be flushing after exit. Wait for close, then for the log finish, before dropping the pipes. */
+async function drainBenchChild(child) {
+  if (!child.benchClosed) await onceOrTimeout(child, 'close', 5_000);
+  if (child.benchClosed && child.benchLogDone) await withTimeout(child.benchLogDone, 1_000);
+}
+
+export async function stopApp(child) {
   if (child.exitCode === null && child.signalCode === null && child.pid) {
     if (process.platform === 'win32') {
       spawnSync(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
@@ -156,11 +178,12 @@ async function stopApp(child) {
       await waitForChildExit(child, 5_000).catch(() => {});
     });
   }
+  await drainBenchChild(child);
   child.stdout?.destroy();
   child.stderr?.destroy();
 }
 
-function launch(executable, env, logPath) {
+export function launch(executable, env, logPath) {
   const log = createWriteStream(logPath, { flags: 'a' });
   const child = spawn(executable, [], {
     cwd: path.dirname(executable),
@@ -169,9 +192,19 @@ function launch(executable, env, logPath) {
     detached: true,
     windowsHide: false,
   });
+  child.benchClosed = false;
+  child.benchLogDone = new Promise((resolve) => {
+    log.once('finish', resolve);
+  });
+  log.on('error', (error) => {
+    if (error?.code !== 'ERR_STREAM_WRITE_AFTER_END') throw error;
+  });
   child.stdout?.pipe(log, { end: false });
   child.stderr?.pipe(log, { end: false });
-  child.once('exit', () => log.end());
+  child.once('close', () => {
+    child.benchClosed = true;
+    if (!log.writableEnded) log.end();
+  });
   child.unref();
   return child;
 }
@@ -180,6 +213,7 @@ async function waitForMark(logPath, mark, timeoutMs, child) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
+      await drainBenchChild(child);
       const tail = await readFile(logPath, 'utf8').catch(() => '');
       throw new Error(`Desktop app exited before ${mark} (${child.exitCode ?? child.signalCode})\n${tail.slice(-2000)}`);
     }

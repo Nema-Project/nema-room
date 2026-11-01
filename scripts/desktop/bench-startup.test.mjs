@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, chmod } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  buildReport, median, parseBenchArgs, parseDesktopMarks, parseStartupPhases, parseWindowsAcl,
-  payloadBesideApp, readPayloadCommit, summarizeSamples,
+  buildReport, launch, median, parseBenchArgs, parseDesktopMarks, parseStartupPhases, parseWindowsAcl,
+  payloadBesideApp, readPayloadCommit, stopApp, summarizeSamples,
 } from './bench-startup.mjs';
 
 const require = createRequire(import.meta.url);
@@ -56,6 +56,27 @@ test('cold and warm summaries keep a phase only when every sample has it', () =>
 
 test('summarize rejects an empty run', () => {
   assert.throws(() => summarizeSamples([]), /no samples/);
+});
+
+test('stopping the app keeps stdout that is still flushing after exit', async (t) => {
+  if (process.platform === 'win32') return;
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-bench-stop-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const line = desktopBenchLine('did-finish-load', 7);
+  const body = `${'x'.repeat(256 * 1024)}${line}`;
+  const script = path.join(root, 'write-and-exit.mjs');
+  await writeFile(script, `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(body)});\n`);
+  await chmod(script, 0o755);
+  const logPath = path.join(root, 'electron.log');
+  const child = launch(script, process.env, logPath);
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('writer did not exit')), 5_000);
+    child.once('exit', () => { clearTimeout(timer); resolve(); });
+  });
+  await stopApp(child);
+  const logged = await readFile(logPath, 'utf8');
+  assert.equal(logged.length, body.length);
+  assert.equal(logged.endsWith(line), true);
 });
 
 test('payload lookup reads the manifest beside the app and its commit', async (t) => {
