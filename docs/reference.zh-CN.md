@@ -248,9 +248,9 @@ GitHub 插件让 Agent 查看已绑定仓库在 GitHub 上的 issue、pull reque
 
 面向用户的说明见[使用指南](guide.zh.md#accounts)，设计见 [spec](superpowers/specs/2026-10-31-multi-account-routing-design.md)。下面写实现层面的约定。spec 与代码不一致时以代码为准，例如附件能力的第 3 层：未声明时按运行方式补齐，`codex-direct` 两种都算支持，Claude Code 的 PDF 算未声明。
 
-**文件。** `<nema home>/accounts.json`（`0600`，原子替换）存 `{ version: 1, accounts, bindings, autoRouting? }`。`bindings` 的键是 `ws:<id>` 或 `thread:<id>`，值是账户 id 或 `"auto"`；没有这个键表示没有选择。凭据存在 `<nema home>/secrets/accounts/<id>/`（目录 `0700`），里面只会有一种文件：`key`（byok）、`auth.json`（siwc，另有 `auth.lock`）或 `token`（Claude Code）。`compat` 账户没有凭据目录，只读 `~/.codex/auth.json`。从 `nema home` 到账户目录，路径上任何一层是符号链接都会被拒绝，读、写、删都一样；凭据文件还必须属于当前用户。
+**文件。** `<nema home>/accounts.json`（`0600`，原子替换）存 `{ version: 1, accounts, bindings, autoRouting? }`。`bindings` 的键是 `ws:<id>` 或 `thread:<id>`，值是账户 id 或 `"auto"`；没有这个键表示没有选择。凭据存在 `<nema home>/secrets/accounts/<id>/`（目录 `0700`），里面只会有一个凭据文件：`key`（byok）、`auth.json`（siwc）或 `token`（Claude Code）。siwc 账户目录里还可能有 `auth.lock`，它是刷新凭据时用的锁文件，不是凭据。`compat` 账户没有凭据目录，只读 `~/.codex/auth.json`。从 `nema home` 到账户目录，路径上任何一层是符号链接都会被拒绝，读、写、删都一样；凭据文件还必须属于当前用户。
 
-**没有 `accounts.json` 时**，按 `config.json` 加旧的单个凭据文件，在内存里合成一个隐式账户 `acct_0000000000`，不写盘。第一次新建或修改账户时才落盘，旧凭据按「复制 → 写 `accounts.json` → 删除旧文件」的顺序移进新账户目录。没有回滚：最后一步失败或被打断时，`accounts.json` 和账户目录里的副本保留，旧文件留在原处，下一次迁移时接着删除它。`config.json` 不加字段，它的 `adapter`、`authMode`、`model`、`byokBaseUrl` 会同步到排在最前、且已启用的账户上。
+**没有 `accounts.json` 时**，按 `config.json` 加旧的单个凭据文件，在内存里合成一个隐式账户 `acct_0000000000`，不写盘。第一次新建或修改账户时才落盘，旧凭据按「复制 → 写 `accounts.json` → 删除旧文件」的顺序移进新账户目录。没有回滚：最后一步失败或被打断时，`accounts.json` 和账户目录里的副本保留，旧文件留在原处。设置接口只在还没有 `accounts.json` 时迁移，所以之后不会再自动删除这个旧文件。`config.json` 不加字段，它的 `adapter`、`authMode`、`model`、`byokBaseUrl` 会同步到排在最前、且已启用的账户上。
 
 **选择顺序**：`task.accountId`（单条消息）> `thread:<id>` > `ws:<id>` > 全局默认（当前运行方式下 `order` 最小的启用账户）。点名一个具体账户时，候选只有它，不按启用状态、能力和冷却过滤；但仍检查它是否属于当前运行方式、凭据是否可用、能否解析出模型，任一项不满足就在发出请求前失败（`adapter_mismatch`、`credential_missing` / `credential_unusable`、`model_missing`，见 `apps/cli/src/routing/index.ts` 的 `checkNamed`）。选了 `"auto"` 而 `autoRouting` 未开启时，任务失败，不改用默认账户。自动模式的候选只含当前运行方式的账户，依次去掉：未启用的、凭据不可用的、冷却中的、能力不满足本次附件的。剩下的按 `order` → `costTier`（low → standard → high）→ `id` 排序。
 
@@ -272,7 +272,7 @@ GitHub 插件让 Agent 查看已绑定仓库在 GitHub 上的 issue、pull reque
 
 **记录。** 回复的 `AgentMessageMeta.route`（`packages/shared/src/route.ts`）包含 `accountId`、`accountName`、`model`、`mode`（`manual` / `auto`）、`reason`（`user_workspace`、`user_thread`、`user_message`、`default`、`auto_primary`、`auto_failover`、`auto_after_limit`），以及可选的 `attempts` 和 `usage`。不记录 base URL、凭据、`order` 和 `costTier`。每次切换还会发一条 `progress` 事件。
 
-**设置接口**只在桌面运行时的应用源地址上提供（`apps/local/src/accountsApi.ts`）：`GET|POST|PATCH|DELETE /_nema/accounts`，以及 `POST /_nema/accounts/secret`、`/bind`、`/login`、`/probe`。删除时，账户仍被某个作用域绑定返回 409 `account_in_use`；要删的是最后一个启用账户返回 400。凭据目录删干净后才改写 `accounts.json`，删除失败时什么都不改，可以重试。`accounts.json` 读不了时返回 409 `accounts_unusable`，任务也会失败，不会退回旧凭据。
+**设置接口**只在桌面运行时的应用源地址上提供（`apps/local/src/accountsApi.ts`）：`GET|POST|PATCH|DELETE /_nema/accounts`，以及 `POST /_nema/accounts/secret`、`/bind`、`/login`、`/probe`。删除时，账户仍被某个作用域绑定返回 409 `account_in_use`；要删的是最后一个启用账户返回 400。凭据目录删干净后才改写 `accounts.json`。删除失败时 `accounts.json` 不变、账户记录保留，可以重试；但凭据目录可能已经删掉了一部分。`accounts.json` 读不了时返回 409 `accounts_unusable`，任务也会失败，不会退回旧凭据。
 
 ## API 与恢复
 
