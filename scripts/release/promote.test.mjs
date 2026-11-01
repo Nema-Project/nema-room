@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assertPushRunJobs, assertTagRunJobs, completeRuns, preflight, promote } from './promote.mjs';
+import { NPM_PROVENANCE_INDEX_WINDOW_MS, NPM_VISIBILITY_BUDGET_MS, NPM_VISIBILITY_POLL_MS, assertPushRunJobs, assertTagRunJobs, completeRuns, preflight, promote } from './promote.mjs';
 
 const COMMIT = 'a'.repeat(40);
 const INTEGRITY = 'sha512-EXPECTED';
@@ -257,7 +257,7 @@ test('after the npm publish, an unreadable, absent or lagging dist-tag stops bef
     const expected = latestAfterPublish.state === 'unknown' ? /- npm registry after publish: unknown — npm latest/ : /- npm registry after publish: published; channel pointer unconfirmed — npm latest/;
     assert.match(text, expected, 'an unreadable tag is unknown; a readable tag that stayed put is not "not written"');
     assert.doesNotMatch(text, /not written/, 'the package itself was visible, so nothing may claim it was not written');
-    assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000, 'the whole budget, then a stop');
+    assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), NPM_VISIBILITY_BUDGET_MS, 'the whole budget, then a stop');
   }
 });
 
@@ -525,11 +525,11 @@ test('acceptance 3: another integrity fails at once, waits for nothing, and move
 test('acceptance 4a: the version stays absent through the budget: a timeout, nothing else moves', async () => {
   const { result, state, text } = await run({ npmReads: ['absent'] });
   assert.equal(result.ok, false);
-  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000, 'exactly the budget');
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), NPM_VISIBILITY_BUDGET_MS, 'exactly the budget');
   assert.ok(state.sleeps.every((ms) => ms <= 5_000), 'polls stay short');
   assert.deepEqual(state.writes, ['npm dispatch']);
   assert.ok(!state.log.includes('verify final'));
-  assert.match(text, /the registry still answers 404 for 0\.1\.7 after 120000ms; confirmed not written/);
+  assert.match(text, /the registry still answers 404 for 0\.1\.7 after 180000ms; confirmed not written/);
   assert.match(text, /- npm registry after publish: not written — /);
   assert.match(text, /- flipped by this run: none/);
   assert.match(text, /- not flipped: npm latest, ghcr hub latest, ghcr web latest, github latest/);
@@ -538,10 +538,10 @@ test('acceptance 4a: the version stays absent through the budget: a timeout, not
 test('acceptance 4b: an old dist-tag through the budget: a timeout, nothing else moves', async () => {
   const { result, state, text } = await run({ npmReads: ['same'], tagReads: [{ latest: v('0.1.6') }] });
   assert.equal(result.ok, false);
-  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000);
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), NPM_VISIBILITY_BUDGET_MS);
   assert.deepEqual(state.writes, ['npm dispatch']);
   assert.ok(!state.log.includes('verify final'));
-  assert.match(text, /npm latest still reads 0\.1\.6 after 120000ms; the package is published, but npm latest did not move to 0\.1\.7/);
+  assert.match(text, /npm latest still reads 0\.1\.6 after 180000ms; the package is published, but npm latest did not move to 0\.1\.7/);
   // The exact version read back as same, so the package *was* written: only the pointer is unconfirmed.
   assert.match(text, /- npm registry after publish: published; channel pointer unconfirmed — /);
   assert.doesNotMatch(text, /not written/);
@@ -635,9 +635,9 @@ test('an older npm next is the lag this wait exists for, not a moved pointer', a
 test('an older npm next that never moves times out as unconfirmed, never as "newer"', async () => {
   const { result, state, text } = await run({ version: '0.2.0-rc.2', npmReads: ['same'], tagReads: [{ latest: v('0.1.6'), next: v('0.2.0-rc.1') }] });
   assert.equal(result.ok, false);
-  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000);
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), NPM_VISIBILITY_BUDGET_MS);
   assert.doesNotMatch(text, /newer than|tag-moved/);
-  assert.match(text, /npm next still reads 0\.2\.0-rc\.1 after 120000ms/);
+  assert.match(text, /npm next still reads 0\.2\.0-rc\.1 after 180000ms/);
 });
 
 test('a dist-tag whose value is not a version stops at once, like a denial', async () => {
@@ -674,7 +674,7 @@ test('#174 acceptance: the package is visible but attestations still 404, so the
 test('#174 acceptance: the budget runs out with attestations still 404, and the outcome says "not indexed", not "absent"', async () => {
   const { result, state, text } = await run({ npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }], provenanceReads: ['pending'] });
   assert.equal(result.ok, true, 'a waitable provenance item does not stop the promotion');
-  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000, 'exactly the budget, shared with the other reads');
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), NPM_VISIBILITY_BUDGET_MS, 'exactly the budget, shared with the other reads');
   assert.deepEqual(state.writes, ['npm dispatch', 'ghcr hub latest', 'ghcr web latest', 'release {"tag":"v0.1.7","prerelease":false,"makeLatest":true}']);
   assert.match(text, /the registry declares provenance for 0\.1\.7 but has not served it after \d+ms; the attestation exists and its index has not caught up/);
   assert.match(text, /npm provenance: still a waitable item, not a gap/);
@@ -714,7 +714,7 @@ test('#174 acceptance: a provenance 404 the signals cannot rule out is waited on
     provenanceReads: ['pending'], declared: null, publishedAgoMs: null,
   });
   assert.equal(result.ok, true);
-  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000);
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), NPM_VISIBILITY_BUDGET_MS);
   assert.match(text, /the registry still answers 404 for provenance of 0\.1\.7 after \d+ms and its version document could not be read; whether an attestation exists is unconfirmed/);
   assert.doesNotMatch(text, /has not served it/, '"unconfirmed" and "not indexed yet" are different answers');
   assert.doesNotMatch(text, /declares none/, 'nothing was read, so nothing may claim the document declares none');
@@ -762,7 +762,7 @@ test('#174 acceptance: a rerun whose candidate preflight reads a still-indexing 
   assert.match(candidate.provenanceIndex.detail, /declares provenance for 0\.1\.7 but has not served it/);
   const final = state.verifyOptions.find((entry) => entry.stage === 'final');
   assert.equal(final.provenanceIndex.state, 'pending', 'and so is final verify, which would otherwise repeat the 404');
-  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000, 'one budget, not two: the candidate answer stands for the whole run');
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), NPM_VISIBILITY_BUDGET_MS, 'one budget, not two: the candidate answer stands for the whole run');
 });
 
 test('#174: a serve that lands before final verify clears the hint from both stages', async () => {
@@ -825,7 +825,7 @@ test('#174: evidence that never becomes readable is still only unconfirmed, neve
   assert.equal(result.ok, true, 'a waitable item does not stop the promotion');
   assert.match(text, /whether an attestation exists is unconfirmed/);
   assert.doesNotMatch(text, /has no provenance/);
-  assert.equal(state.declarationReads, 120_000 / 5_000 + 1, 'retried while the endpoint kept answering 404');
+  assert.equal(state.declarationReads, NPM_VISIBILITY_BUDGET_MS / NPM_VISIBILITY_POLL_MS + 1, 'retried while the endpoint kept answering 404');
 });
 
 test('#174: the evidence is not re-read once it answered, and not read at all when provenance is served', async () => {
@@ -847,7 +847,7 @@ test('#174: an old publish whose version document could not be read is unconfirm
     provenanceReads: ['pending'], declared: null, publishedAgoMs: 3_600_000,
   });
   assert.equal(result.ok, true, 'an uncertainty does not stop the promotion');
-  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000, 'it waits out the budget instead of deciding at once');
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), NPM_VISIBILITY_BUDGET_MS, 'it waits out the budget instead of deciding at once');
   assert.match(text, /its version document could not be read; whether an attestation exists is unconfirmed/);
   assert.doesNotMatch(text, /has no provenance/, 'the absence was never established');
   assert.doesNotMatch(text, /definite gap/);
@@ -865,4 +865,11 @@ test('#174: only a document that was read as declaring none makes an old version
   });
   assert.equal(result.ok, false);
   assert.deepEqual(state.sleeps, [], 'a read declaration plus an old publish is decided at once');
+});
+
+test('the npm visibility budget leaves room for provenance indexing (#174)', () => {
+  // v0.2.2 needed 117.7s of the former 120s budget; provenance alone took about 2 minutes.
+  assert.equal(NPM_VISIBILITY_BUDGET_MS, 180_000);
+  assert.equal(NPM_VISIBILITY_BUDGET_MS % NPM_VISIBILITY_POLL_MS, 0, 'the budget is a whole number of polls');
+  assert.ok(NPM_VISIBILITY_BUDGET_MS < NPM_PROVENANCE_INDEX_WINDOW_MS, 'a fresh version is still inside the index window when the budget ends');
 });

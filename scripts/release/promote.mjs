@@ -33,8 +33,11 @@ function pointerNames(prerelease) {
 
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 
-/** How long a promote run keeps re-reading npm before it calls the registry's answer final. */
-export const NPM_VISIBILITY_BUDGET_MS = 120_000;
+/**
+ * How long a promote run keeps re-reading npm before it calls the registry's answer final.
+ * v0.2.2 used 117.7s of the former 120s budget (package ~55s, then provenance ~60s), so it is 180s (#174).
+ */
+export const NPM_VISIBILITY_BUDGET_MS = 180_000;
 export const NPM_VISIBILITY_POLL_MS = 5_000;
 /**
  * How long after its publish a version's provenance can still be an index delay. A version older than
