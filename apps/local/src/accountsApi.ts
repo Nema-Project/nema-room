@@ -59,6 +59,11 @@ export type AccountsDeps = {
   readAccounts?: typeof readAccounts;
   /** Injectable for tests: the credential state. */
   credentialState?: typeof accountCredentialState;
+  /**
+   * Aborted when the owning service stops accepting work. Combined with the login's own timeout, so a
+   * browser login the user abandoned cannot hold `close()` open for its full five minutes.
+   */
+  signal?: AbortSignal;
 };
 
 const ID_SHAPE = /^acct_[a-z0-9]{10}$/;
@@ -393,7 +398,11 @@ function patch(body: unknown, deps: AccountsDeps): AccountsReply {
       return null;
     }
     const accounts = current.accounts.map((a, i) => (i === index ? row : a));
-    if (refusesFile(accounts, current.bindings)) {
+    // `remove` refuses to take the last enabled account away, because the global default is "the first
+    // enabled account" and without one there is nothing to fall back to. Disabling it through an edit
+    // reaches the same state, so it is refused the same way rather than leaving `defaultAccountId` empty.
+    const disablingLastEnabled = current.accounts[index]!.enabled && !row.enabled && !accounts.some((a) => a.enabled);
+    if (disablingLastEnabled || refusesFile(accounts, current.bindings)) {
       refusal = "invalid";
       return null;
     }
@@ -493,7 +502,11 @@ function login(body: unknown, deps: AccountsDeps): AccountsReply {
   const account = findAccount(deps, id);
   if (account === null) return NOT_FOUND;
   if (account.adapter !== "codex-direct" || account.authMode !== "siwc") return { status: 409, body: { error: "login_not_applicable" } };
-  if (!startJob(() => deps.login(account, AbortSignal.timeout(300_000)))) return { status: 409, body: { error: "job_conflict" } };
+  // The timeout is this route's own bound; the shutdown signal is the service's. Both apply: a login is
+  // abandoned either when it has run too long or when the process that owns it is going away.
+  const timeout = AbortSignal.timeout(300_000);
+  const signal = deps.signal ? AbortSignal.any([deps.signal, timeout]) : timeout;
+  if (!startJob(() => deps.login(account, signal))) return { status: 409, body: { error: "job_conflict" } };
   return { status: 202, body: { state: "running" } };
 }
 

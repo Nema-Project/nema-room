@@ -199,7 +199,10 @@ export function accountsDeps(home: string, codexHome: string, options?: Settings
 
 export function createSettingsService(options: SettingsServiceOptions): SettingsService {
   const codexHome = options.codexHome ?? process.env.CODEX_HOME ?? defaultCodexHome();
-  const accounts = accountsDeps(options.home, codexHome, options);
+  // One signal for account jobs, aborted when this service stops accepting work: a login waiting for a
+  // browser must not keep `close()` open until its own timeout.
+  const accountAbort = new AbortController();
+  const accounts = { ...accountsDeps(options.home, codexHome, options), signal: accountAbort.signal };
   const operations = options.operations ?? defaultOperations(options.home, codexHome);
   let closed = false;
   let logoutPending = false;
@@ -233,7 +236,11 @@ export function createSettingsService(options: SettingsServiceOptions): Settings
     }
   };
   const waitForJobs = async () => { const job = active; if (job) await job.promise; };
-  const stopAccepting = () => { closed = true; cancel(); };
+  const stopAccepting = () => {
+    closed = true;
+    cancel();
+    accountAbort.abort();
+  };
 
   return {
     cancel,

@@ -168,6 +168,29 @@ describe("PATCH /_nema/accounts", () => {
     expect(reply!.body).toEqual({ error: "invalid_request" });
   });
 
+  test("refuses an edit that disables the last enabled account", () => {
+    const home = tempHome();
+    writeAccounts(home, { version: 1, accounts: [account()], bindings: {} });
+    // Deleting it is refused; disabling it reaches the same state (no default) by another route.
+    const reply = call(home, "PATCH", "/_nema/accounts", { id: account().id, enabled: false });
+    expect(reply?.status).toBe(400);
+    expect(reply!.body).toEqual({ error: "invalid_request" });
+    const after = readAccounts(home);
+    expect(after.status === "ok" && after.file.accounts[0]!.enabled).toBe(true);
+  });
+
+  test("allows disabling an account while another one stays enabled", () => {
+    const home = tempHome();
+    writeAccounts(home, {
+      version: 1,
+      accounts: [account(), account({ id: "acct_bbbbbbbbbb", name: "Two", order: 1 })],
+      bindings: {},
+    });
+    const reply = call(home, "PATCH", "/_nema/accounts", { id: account().id, enabled: false });
+    expect(reply?.status).toBe(200);
+    expect((reply!.body as { account: AccountView }).account.enabled).toBe(false);
+  });
+
   test("refuses an edit on the synthesized account's id when no file exists", () => {
     const home = tempHome();
     const reply = call(home, "PATCH", "/_nema/accounts", { id: IMPLICIT_ACCOUNT_ID, name: "Mine" });

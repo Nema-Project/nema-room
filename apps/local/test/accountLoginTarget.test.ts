@@ -12,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
  */
 
 const calls: Array<{ fn: string; opts: Record<string, unknown> }> = [];
+/** When set, `siwcLogin` behaves like a browser login waiting for a person: it settles only on abort. */
+let waitForAbort: { signal?: AbortSignal } | null = null;
 
 vi.mock("@nema/cli/localSettings", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@nema/cli/localSettings")>();
@@ -19,6 +21,15 @@ vi.mock("@nema/cli/localSettings", async (importOriginal) => {
     ...actual,
     siwcLogin: async (opts: Record<string, unknown>) => {
       calls.push({ fn: "siwcLogin", opts });
+      if (waitForAbort !== null) {
+        waitForAbort.signal = opts.signal as AbortSignal | undefined;
+        await new Promise<void>((done) => {
+          const signal = opts.signal as AbortSignal | undefined;
+          if (!signal) throw new Error("login must receive a signal");
+          signal.addEventListener("abort", () => done(), { once: true });
+        });
+        throw new Error("aborted");
+      }
       return { version: 1, mode: "siwc", clientId: "c", tokens: { access_token: "", refresh_token: "" }, lastRefresh: "" };
     },
     authLogin: async (opts: Record<string, unknown>) => {
@@ -30,9 +41,11 @@ vi.mock("@nema/cli/localSettings", async (importOriginal) => {
 
 const { createSettingsService } = await import("../src/settings.js");
 const { saveConfig } = await import("@nema/cli/config");
+// The same mocked module `settings.ts` imports, so `mockImplementationOnce` reaches the route.
+
 
 const homes: string[] = [];
-beforeEach(() => { calls.length = 0; });
+beforeEach(() => { calls.length = 0; waitForAbort = null; });
 afterEach(() => {
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
@@ -78,5 +91,30 @@ describe("an account's login targets that account", () => {
     await service.waitForJobs();
     expect(calls).toEqual([]);
     expect(home).toBeTruthy();
+  });
+});
+
+describe("shutdown", () => {
+  test("closing the service aborts a login that is still waiting for a browser", async () => {
+    const home = mkdtempSync(path.join(tmpdir(), "nema-account-abort-"));
+    homes.push(home);
+    saveConfig(home, { adapter: "codex-direct", authMode: "siwc" });
+    const service = createSettingsService({ home, codexHome: path.join(home, "no-codex") });
+    const created = await service.dispatch("POST", "/_nema/accounts", { name: "Waiter", adapter: "codex-direct", authMode: "siwc" });
+    const id = (created.body as { account: { id: string } }).account.id;
+
+    // Stand in for a login that waits for a person: it settles only when its signal fires.
+    waitForAbort = {};
+    expect((await service.dispatch("POST", "/_nema/accounts/login", { id })).status).toBe(202);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const seen = waitForAbort as { signal?: AbortSignal };
+    expect(seen.signal).toBeTruthy();
+    expect(seen.signal!.aborted).toBe(false);
+    // The whole point: `close()` must not wait out the five-minute login timeout.
+    const started = Date.now();
+    await service.close();
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(seen.signal!.aborted).toBe(true);
+    waitForAbort = null;
   });
 });
