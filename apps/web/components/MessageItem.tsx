@@ -326,7 +326,7 @@ function UserMessage({
           {t("chat.you")}
           <time>{time}</time>
           <button type="button" className="quiet" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
-          <button type="button" className="quiet" onClick={() => { setDraft(message.content); setEditing(true); setEditError(null); }}>{t("chat.edit")}</button>
+          <button type="button" className="quiet" onClick={() => { setDraft(message.content); setEditing(true); setEditError(null); setDroppedMentions(0); }}>{t("chat.edit")}</button>
           {message.editedAt && <button type="button" onClick={() => void toggleVersions()}>{t("chat.edited")}</button>}
         </div>
         {quote && <QuoteBlock quote={quote} onJump={onJump} />}
