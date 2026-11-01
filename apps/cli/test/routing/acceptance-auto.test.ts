@@ -184,6 +184,21 @@ describe("S4 acceptance", () => {
     expect(routeOf(result)).toMatchObject({ mode: "manual", accountId: ONE.id });
   });
 
+  test("an adapter that was not given a cooldown table still keeps one for its next task", async () => {
+    // Omitting `cooldowns` used to build a new table for candidate selection and another for the failure
+    // record, then throw both away. The next task on the same adapter has to see the mark.
+    setAccounts(true);
+    const kept = adapter();
+    one.responses(limited);
+    two.responses(reply("first run"));
+    await kept.run(task({ routing: "auto" }), () => {});
+    two.responses(reply("second run"));
+    const second = await kept.run(task({ routing: "auto" }), () => {});
+    expect(second).toMatchObject({ ok: true, reply: "second run" });
+    expect(one.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
+    expect(routeOf(second)).toMatchObject({ accountId: TWO.id });
+  });
+
   test("the cooldown outlives the task, so the next run does not start on the account that just failed", async () => {
     setAccounts(true);
     const cooldowns = new Cooldowns();

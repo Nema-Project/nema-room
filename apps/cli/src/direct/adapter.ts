@@ -300,8 +300,15 @@ function labelFor(account: Account): string {
 
 export class CodexDirectAdapter implements AgentAdapter {
   readonly name = "codex-direct";
+  /**
+   * The cooldown table for this adapter. The daemon passes one shared by both adapters; a caller that does
+   * not still gets a single table for the life of this object, so a failure is visible to the next task.
+   */
+  private readonly cooldowns: Cooldowns;
 
-  constructor(private readonly opts: CodexDirectAdapterOptions) {}
+  constructor(private readonly opts: CodexDirectAdapterOptions) {
+    this.cooldowns = opts.cooldowns ?? new Cooldowns({ now: opts.now });
+  }
 
   async run(task: TaskAssign, onEvent: (e: TaskEvent) => void, ownerSignal?: AbortSignal): Promise<AgentResult> {
     if (ownerSignal?.aborted) return { ok: false, error: "Codex 直连运行已中止" };
@@ -332,7 +339,7 @@ export class CodexDirectAdapter implements AgentAdapter {
       adapter: "codex-direct",
       accounts: picked.accounts,
       bindings: picked.bindings,
-      cooldowns: this.opts.cooldowns ?? new Cooldowns({ now: this.opts.now }),
+      cooldowns: this.cooldowns,
       credentialOf: (a) => credentialStateOf(this.opts.nemaHome, a, codexHome),
       resolveModel: preferredModel,
       autoRouting: picked.autoRouting,
@@ -354,7 +361,7 @@ export class CodexDirectAdapter implements AgentAdapter {
         nemaHome: this.opts.nemaHome,
         codexHome,
         sent,
-        cooldowns: this.opts.cooldowns ?? new Cooldowns({ now: this.opts.now }),
+        cooldowns: this.cooldowns,
         ...(this.opts.now ? { now: this.opts.now } : {}),
         ...(this.opts.refresher ? { refresher: this.opts.refresher } : {}),
         ...(this.opts.profile ? { profile: this.opts.profile } : {}),
