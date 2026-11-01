@@ -599,8 +599,12 @@ describe("installing a skill from the page", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Cancel install" }));
     });
-    const block = (await screen.findByRole("heading", { name: "pdf", level: 3 })).closest("section")!;
-    expect(await within(block).findByRole("button", { name: "Retry install" })).toBeTruthy();
+    // A cancelled row moves from the installed list into discover, so the section
+    // captured while it still said "installing" is detached and never shows Retry.
+    await waitFor(() => {
+      const block = screen.getByRole("heading", { name: "pdf", level: 3 }).closest("section")!;
+      expect(within(block).getByRole("button", { name: "Retry install" })).toBeTruthy();
+    });
   });
 });
 
