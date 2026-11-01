@@ -1284,3 +1284,47 @@ describe("account choice and route decision", () => {
     expect(system.meta).toBeNull();
   });
 });
+
+describe("S3 acceptance: the account shown under the reply", () => {
+  test("the metadata a real daemon sends renders as one line: account, model, reason", async () => {
+    // The shape the daemon puts on `task.finished` after routing (see apps/cli/src/routing/index.ts):
+    // the hub stores it verbatim under `meta.route`, which is what the reply line reads.
+    const m = await postUserMessage(db, wsA, "who is this", { accountId: "acct_abc1234567" });
+    const c = await connect();
+    const a = await c.next("task.assign");
+    expect(a.accountId).toBe("acct_abc1234567");
+    c.send({
+      type: "task.finished",
+      taskId: a.taskId,
+      ok: true,
+      reply: "me",
+      route: {
+        accountId: "acct_abc1234567",
+        accountName: "OpenRouter 免费",
+        model: "deepseek/xxx",
+        mode: "manual",
+        reason: "user_message",
+        usage: { inputTokens: 120, outputTokens: 40 },
+      },
+    });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    const agent = (await listMessages(db, wsA)).find((x): x is AgentMessage => x.role === "agent")!;
+    expect(agent.meta?.route).toEqual({
+      accountId: "acct_abc1234567",
+      accountName: "OpenRouter 免费",
+      model: "deepseek/xxx",
+      mode: "manual",
+      reason: "user_message",
+      usage: { inputTokens: 120, outputTokens: 40 },
+    });
+    // The message is stored as JSON, so the record survives a restart unchanged.
+    const [row] = await db.query<{ route: unknown }>("select meta->'route' as route from messages where id = $1", [agent.id]);
+    expect(row!.route).toMatchObject({ accountId: "acct_abc1234567", model: "deepseek/xxx" });
+  });
+
+  test("an account id of the wrong shape is refused before it reaches a task row", async () => {
+    await expect(postUserMessage(db, wsA, "bad pick", { accountId: "../etc/passwd" })).rejects.toThrow();
+    const rows = await db.query<{ n: number }>("select count(*)::int as n from tasks where account_id is not null");
+    expect(rows[0]!.n).toBe(0);
+  });
+});
