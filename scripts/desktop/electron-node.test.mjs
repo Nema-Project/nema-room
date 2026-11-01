@@ -20,15 +20,19 @@ test('the staging probe reads Node from the Electron binary', async (t) => {
   await mkdir(path.join(root, 'node_modules/electron/dist'), { recursive: true });
   await writeFile(path.join(root, 'package.json'), JSON.stringify({ engines: { node: '>=22' } }));
   await writeFile(path.join(root, 'apps/desktop/package.json'), JSON.stringify({ devDependencies: { electron: '45.1.0' } }));
-  const name = process.platform === 'win32' ? 'electron.cmd' : 'electron';
+  const windows = process.platform === 'win32';
+  const name = windows ? 'electron.exe' : 'electron';
   await writeFile(path.join(root, 'node_modules/electron/path.txt'), `${name}\n`);
   const binary = path.join(root, 'node_modules/electron/dist', name);
-  const script = (version) => process.platform === 'win32'
-    ? `@echo off\r\n<nul set /p=${version}\r\n`
-    : `#!/bin/sh\nprintf %s "${version}"\n`;
-  await writeFile(binary, script('24.22.1'));
-  if (process.platform !== 'win32') await chmod(binary, 0o755);
-  assert.deepEqual(await readElectronNodeVersion(root), {
+  let reported = '24.22.1';
+  // spawnSync does not launch a .cmd without a shell. The production probe stays shell-free;
+  // Windows injects the version, and other platforms exec a real script.
+  const spawnImpl = windows ? () => ({ status: 0, stdout: reported, stderr: '' }) : undefined;
+  const script = (version) => `#!/bin/sh\nprintf %s "${version}"\n`;
+  await writeFile(binary, windows ? '' : script(reported));
+  if (!windows) await chmod(binary, 0o755);
+  const read = () => readElectronNodeVersion(root, spawnImpl);
+  assert.deepEqual(await read(), {
     source: 'electron',
     electronVersion: '45.1.0',
     version: '24.22.1',
@@ -36,7 +40,10 @@ test('the staging probe reads Node from the Electron binary', async (t) => {
     license: 'runtime/licenses/node',
     invocation: 'ELECTRON_RUN_AS_NODE=1',
   });
-  await writeFile(binary, script('21.0.0'));
-  if (process.platform !== 'win32') await chmod(binary, 0o755);
-  await assert.rejects(readElectronNodeVersion(root), /does not satisfy/);
+  reported = '21.0.0';
+  if (!windows) {
+    await writeFile(binary, script(reported));
+    await chmod(binary, 0o755);
+  }
+  await assert.rejects(read(), /does not satisfy/);
 });

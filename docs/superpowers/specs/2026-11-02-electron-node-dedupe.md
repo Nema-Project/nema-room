@@ -16,7 +16,7 @@ Use option A. The packaged executable (`Nema.exe`, `Contents/MacOS/Nema`, or `Ne
 
 `childEnvironment` copies `ELECTRON_RUN_AS_NODE=1` onto the core and the managed web process. Claude and Codex MCP configs that replace the environment also receive it, because those configs do not inherit the parent environment.
 
-Launchers live in the payload and exec a payload-relative Electron path: `../../Nema.exe`, `../../MacOS/Nema`, or `../../Nema`. They export the variable. The staged-payload smoke has no Electron binary beside it, so it starts the core with the host Node and does not set the variable.
+Launchers live in the payload and exec a payload-relative Electron path: `../../Nema.exe`, `../../MacOS/Nema`, or `../../Nema`. They export the variable. The staged-payload smoke has no packaged Electron beside the payload. It nests the copy in the packaged layout, puts the host Node at that relative path, and sets `ELECTRON_RUN_AS_NODE=1` so a manifest without `node` accepts `process.execPath`.
 
 The build still downloads the pinned Node 24.22.1 archive. Staging uses it for `npm ci`. The payload copy skips `node/` and keeps `runtime/licenses/node`.
 
