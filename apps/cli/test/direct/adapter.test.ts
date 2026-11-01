@@ -707,7 +707,7 @@ describe("routing a task to the account the user chose", () => {
   const acctA = { id: "acct_aaaaaaaaaa", name: "First", enabled: true, adapter: "codex-direct" as const, authMode: "byok" as const, baseUrl: "https://first.example.test/v1", model: "model-a", costTier: "standard" as const, order: 0, createdAt: "2026-10-31T00:00:00.000Z" };
 
   function writeAccounts(accounts: unknown[], bindings: Record<string, string> = {}) {
-    writeFileSync(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts, bindings }, null, 2) + "\n", { mode: 0o600 });
+    writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts, bindings }, null, 2) + "\n");
     // config.json describes the default account (D-6): its adapter, auth mode, model and endpoint are a
     // projection written when the default changes. A machine whose default account is a BYOK one says so
     // there, and the read applies that projection, so the fixture states it too.
@@ -716,7 +716,7 @@ describe("routing a task to the account the user chose", () => {
   function writeKey(id: string, value: string) {
     const dir = join(home, "secrets", "accounts", id);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    writeFileSync(join(dir, "key"), value, { mode: 0o600 });
+    writePrivateFile(join(dir, "key"), value);
   }
   const byokProfile = () => ({ ...SIWC_PROFILE, baseUrl: server.baseUrl });
 
@@ -823,12 +823,12 @@ describe("two accounts, two real endpoints (S3 acceptance)", () => {
     try {
       const a = { id: "acct_aaaaaaaaaa", name: "First", enabled: true, adapter: "codex-direct", authMode: "byok", baseUrl: server.baseUrl, model: "model-a", costTier: "standard", order: 0, createdAt: "2026-10-31T00:00:00.000Z" };
       const b = { id: "acct_bbbbbbbbbb", name: "Second", enabled: true, adapter: "codex-direct", authMode: "byok", baseUrl: other.baseUrl, model: "model-b", costTier: "standard", order: 1, createdAt: "2026-10-31T00:00:00.000Z" };
-      writeFileSync(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [a, b], bindings: { "ws:w1": b.id } }, null, 2) + "\n", { mode: 0o600 });
+      writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [a, b], bindings: { "ws:w1": b.id } }, null, 2) + "\n");
       saveConfig(home, { authMode: "byok", model: "model-a", byokBaseUrl: server.baseUrl });
       for (const [id, key] of [[a.id, "key-of-a"], [b.id, "key-of-b"]] as const) {
         const dir = join(home, "secrets", "accounts", id);
         mkdirSync(dir, { recursive: true, mode: 0o700 });
-        writeFileSync(join(dir, "key"), key, { mode: 0o600 });
+        writePrivateFile(join(dir, "key"), key);
       }
       other.responses(stream([msgItem("answered by b")]));
 
@@ -852,7 +852,7 @@ describe("a siwc account logs in with its own file", () => {
   test("two siwc accounts with different logins: the named one's token is sent", async () => {
     const first = { id: "acct_aaaaaaaaaa", name: "First", enabled: true, adapter: "codex-direct", authMode: "siwc", model: "model-a", costTier: "standard", order: 0, createdAt: "2026-10-31T00:00:00.000Z" };
     const second = { id: "acct_bbbbbbbbbb", name: "Second", enabled: true, adapter: "codex-direct", authMode: "siwc", model: "model-b", costTier: "standard", order: 1, createdAt: "2026-10-31T00:00:00.000Z" };
-    writeFileSync(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [first, second], bindings: {} }, null, 2) + "\n", { mode: 0o600 });
+    writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [first, second], bindings: {} }, null, 2) + "\n");
     saveConfig(home, { authMode: "siwc", model: "model-a" });
     const tokenFirst = jwt({ exp: Math.floor(Date.now() / 1000) + 3600, sub: "first" });
     const tokenSecond = jwt({ exp: Math.floor(Date.now() / 1000) + 3600, sub: "second" });
@@ -860,7 +860,7 @@ describe("a siwc account logs in with its own file", () => {
       const dir = join(home, "secrets", "accounts", id);
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       const record = { version: 1, mode: "siwc", clientId: "c", tokens: { access_token: token, refresh_token: "rt" }, lastRefresh: "2026-10-31T00:00:00.000Z" };
-      writeFileSync(join(dir, "auth.json"), JSON.stringify(record, null, 2) + "\n", { mode: 0o600 });
+      writePrivateFile(join(dir, "auth.json"), JSON.stringify(record, null, 2) + "\n");
     }
     server.responses(stream([msgItem("ok")]));
 

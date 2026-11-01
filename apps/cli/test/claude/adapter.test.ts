@@ -15,6 +15,7 @@ import { saveConfig } from "../../src/config.js";
 import { IMPLICIT_ACCOUNT_ID } from "../../src/accounts/schema.js";
 import type { AgentResult } from "../../src/daemon/runner.js";
 import { Runner } from "../../src/daemon/runner.js";
+import { writePrivateFile } from "../nativePermissions.js";
 
 const TOKEN = "sekret-token";
 const NOT_FOUND = "找不到 claude。请先安装 Claude Code 并把它放到 PATH 上。";
@@ -811,12 +812,12 @@ describe("ClaudeCodeAdapter with Skills", () => {
 describe("Claude Code accounts", () => {
   test("a named Claude account's token is the one handed to the CLI", async () => {
     const account = { id: "acct_cccccccccc", name: "Work", enabled: true, adapter: "claude-code", model: "opus-x", costTier: "standard", order: 0, createdAt: "2026-10-31T00:00:00.000Z" };
-    writeFileSync(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [account], bindings: {} }, null, 2) + "\n", { mode: 0o600 });
+    writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [account], bindings: {} }, null, 2) + "\n");
     // This account is the default one, so config.json (the projection the settings page writes) names its model.
     saveConfig(home, { adapter: "claude-code", model: "opus-x" });
     const dir = join(home, "secrets", "accounts", account.id);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    writeFileSync(join(dir, "token"), "account-token", { mode: 0o600 });
+    writePrivateFile(join(dir, "token"), "account-token");
     const argvFile = join(root, "argv-account.json");
     const bin = installFake({ mode: "lines", argvFile, lines: [roomInit(), resultLine("ok")] });
     const { result } = await runTask(createAdapter(bin), task("task-account", "hi"));
@@ -830,7 +831,7 @@ describe("Claude Code accounts", () => {
 
   test("an account whose token file is missing fails before the CLI starts", async () => {
     const account = { id: "acct_cccccccccc", name: "Work", enabled: true, adapter: "claude-code", costTier: "standard", order: 0, createdAt: "2026-10-31T00:00:00.000Z" };
-    writeFileSync(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [account], bindings: {} }, null, 2) + "\n", { mode: 0o600 });
+    writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [account], bindings: {} }, null, 2) + "\n");
     const argvFile = join(root, "argv-account-missing.json");
     const bin = installFake({ mode: "lines", argvFile, lines: [roomInit(), resultLine("ok")] });
     const { result } = await runTask(createAdapter(bin), task("task-account-missing", "hi"));

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { TaskAssign } from "@nema/shared";
 import { CodexDirectAdapter } from "../../src/direct/adapter.js";
 import type { Account } from "../../src/accounts/schema.js";
+import { writePrivateFile } from "../nativePermissions.js";
 import { saveConfig } from "../../src/config.js";
 import { json, sse, startFakeResponsesServer, type FakeResponsesServer } from "../fixtures/fake-responses-server.js";
 
@@ -37,12 +38,12 @@ const ONE = account({ id: "acct_aaaaaaaaaa", name: "First", baseUrl: "https://on
 const TWO = account({ id: "acct_bbbbbbbbbb", name: "Second", baseUrl: "https://two.invalid/v1", model: "model-b", order: 1 });
 
 function setAccounts(accounts: Account[] = [ONE, TWO], bindings: Record<string, string> = {}) {
-  writeFileSync(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts, bindings }, null, 2) + "\n", { mode: 0o600 });
+  writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts, bindings }, null, 2) + "\n");
 }
 function setKey(id: string, value: string) {
   const dir = join(home, "secrets", "accounts", id);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  writeFileSync(join(dir, "key"), value, { mode: 0o600 });
+  writePrivateFile(join(dir, "key"), value);
 }
 
 const task = (p: Partial<TaskAssign> = {}): TaskAssign => ({
