@@ -67,9 +67,12 @@ async function releaseItem(io, version, stage) {
   return checked;
 }
 
-async function consistencyItem(io, version, items) {
+async function consistencyItem(io, version, items, provenanceIndex) {
   const checks = [];
   const note = [];
+  // Items that are neither ok nor definitely missing: reported apart from both (issue #174).
+  const waitable = [];
+  const notes = [];
   const tag = await readTagCommit(io, `v${version}`);
   if (tag.state !== 'ok') checks.push(tag);
   const tagCommit = tag.evidence.commit ?? null;
@@ -94,8 +97,18 @@ async function consistencyItem(io, version, items) {
   }
 
   if (items.npm.state === 'ok') {
-    const provenance = await readNpmProvenance(io, version);
-    if (provenance.state !== 'ok') checks.push(provenance);
+    // Strict by default: a 404 is `missing`, so a standalone `release:verify` cannot call a version
+    // without provenance complete. Promote, which knows it just published, passes `provenanceIndex`
+    // to say a 404 there is an index delay it has already bounded; only then does the 404 become
+    // `pending` — a waitable item, reported as such and never counted as evidence.
+    const provenance = await readNpmProvenance(io, version, { when404: provenanceIndex ? 'pending' : 'missing' });
+    if (provenance.state === 'pending') {
+      // Not `missing` (the registry has not said there is none) and not `ok` (nothing was read). It joins
+      // the report as its own waitable note so the caller can tell it from a gap, and `overall` stays
+      // `complete` only because `pending` counts as ok for the result, exactly like candidate's npm item.
+      notes.push(`npm provenance is a waitable item, not a gap: ${provenanceIndex.detail ?? provenance.detail}`);
+      waitable.push('npm provenance');
+    } else if (provenance.state !== 'ok') checks.push(provenance);
     else {
       const p = provenance.evidence;
       if (p.workflowPath !== NPM_WORKFLOW) checks.push(missing(`npm provenance workflow is ${p.workflowPath}`));
@@ -114,16 +127,29 @@ async function consistencyItem(io, version, items) {
   if (result.state === 'unknown' && checks.every((c) => c.state === 'unknown' && / not checked$/.test(c.detail))) {
     result.detail = `not checked: ${checks.map((c) => c.detail.replace(/ not checked$/, '')).join(', ')} not ok`;
   }
-  if (result.state === 'ok') result.detail = `versions ${version}; tag, release manifest${items.npm.state === 'ok' ? ' and npm provenance' : ''} commit ${tagCommit}`;
+  const compared = items.npm.state === 'ok' && waitable.length === 0;
+  if (result.state === 'ok') result.detail = `versions ${version}; tag, release manifest${compared ? ' and npm provenance' : ''} commit ${tagCommit}`;
   if (note.length) result.detail = `${result.detail} (${note.join('; ')})`;
+  // A waitable item is part of the answer even when everything else is ok, and it never turns a
+  // `missing`/`unknown` result into `ok`: `combine` above only ever sees the definite checks. It is
+  // named after the sentence above so a reader cannot mistake "not served yet" for "not there".
+  if (waitable.length) {
+    result.detail = `${result.detail}. Waitable, not a gap: ${waitable.join(', ')} — ${notes.join('; ')}`;
+    result.waitable = waitable;
+  }
   return result;
 }
 
 /**
  * `io`: { fetchImpl, sleep?, token? }. stage 'final' (default) needs npm present; 'candidate' allows npm to be
  * absent and requires `expectedIntegrity` when it is present. Nothing here writes anywhere.
+ *
+ * `provenanceIndex` is the one non-strict input, and only promote passes it: an object
+ * `{ state: 'pending', detail }` saying a provenance 404 for this version is an index delay that promote
+ * has already bounded and reported. A caller that omits it — every standalone `release:verify`, and
+ * every default invocation — keeps the strict reading, where a 404 is `missing` and exit 1.
  */
-export async function verifyRelease({ version, stage = 'final', expectedIntegrity = null, io }) {
+export async function verifyRelease({ version, stage = 'final', expectedIntegrity = null, io, provenanceIndex = null }) {
   parseVersion(version);
   if (!['final', 'candidate'].includes(stage)) throw new Error(`Unknown stage ${stage}`);
   if (stage === 'candidate' && !/^sha512-/.test(expectedIntegrity ?? '')) throw new Error('candidate stage needs --expected-integrity sha512-...');
@@ -131,7 +157,7 @@ export async function verifyRelease({ version, stage = 'final', expectedIntegrit
   items.npm = await npmItem(io, version, stage, expectedIntegrity);
   items.images = await imagesItem(io, version);
   items.release = await releaseItem(io, version, stage);
-  items.consistency = await consistencyItem(io, version, items);
+  items.consistency = await consistencyItem(io, version, items, provenanceIndex);
   const states = Object.values(items).map((item) => item.state);
   const overall = states.includes('missing') ? 'incomplete' : states.includes('unknown') ? 'undetermined' : 'complete';
   return { version, stage, items, overall, exitCode: EXIT[overall] };

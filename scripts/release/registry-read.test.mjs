@@ -4,9 +4,11 @@ import { COMMIT, integrityOf, io, releaseAssets, world } from './fake-registry.f
 import {
   checkReleaseAssets,
   expectedReleaseAssets,
+  npmProvenanceDeclared,
   readImage,
   readNpmDistTags,
   readNpmProvenance,
+  readNpmPublishedAt,
   readNpmVersion,
   readRelease,
   readTagCommit,
@@ -249,4 +251,55 @@ test('the Compose asset must match the manifest hash and pin this version', asyn
   const wrongPin = await assetCheck(releaseAssets('0.1.6', { composeVersion: '0.1.5' }));
   assert.equal(wrongPin.state, 'missing');
   assert.match(wrongPin.detail, /pins 0\.1\.5, not 0\.1\.6/);
+});
+
+// ---------- provenance declaration and publish time (#174) ----------
+// Promote tells "index still catching up" from "never attested" with these two reads, so they have to
+// answer correctly against the fake registry that every other release test shares.
+
+test('#174: the version document declares provenance exactly when the endpoint would serve it', async () => {
+  const withProvenance = world();
+  const declared = await npmProvenanceDeclared(io(withProvenance).io, '0.1.6');
+  assert.equal(declared.state, 'ok');
+  assert.deepEqual(declared.evidence, { declared: true, predicateType: 'https://slsa.dev/provenance/v1' });
+
+  const without = world('0.1.6', { provenance: {} });
+  const absent = await npmProvenanceDeclared(io(without).io, '0.1.6');
+  assert.equal(absent.state, 'ok');
+  assert.deepEqual(absent.evidence, { declared: false, predicateType: null });
+
+  // A version document that is itself missing proves nothing: the publish index can lag the same way.
+  assert.equal((await npmProvenanceDeclared(io(world()).io, '9.9.9')).state, 'unknown');
+  assert.equal((await npmProvenanceDeclared(io(world('0.1.6', { fail: [[/registry\.npmjs\.org/, 503]] })).io, '0.1.6')).state, 'unknown');
+});
+
+test('#174: a 404 is pending or missing by the caller\'s choice, never missing by accident', async () => {
+  const { io: absent } = io(world('0.1.6', { provenance: {} }));
+  assert.equal((await readNpmProvenance(absent, '0.1.6')).state, 'missing', 'the default keeps verify-release strict');
+  const pending = await readNpmProvenance(absent, '0.1.6', { when404: 'pending' });
+  assert.equal(pending.state, 'pending');
+  assert.equal(pending.evidence.reason, 'not-indexed');
+  // A served attestation and an answered-but-empty body are not affected by the option.
+  assert.equal((await readNpmProvenance(io(world()).io, '0.1.6', { when404: 'pending' })).state, 'ok');
+  const empty = await readNpmProvenance(io(world('0.1.6', { fail: [[/attestations/, 200, { attestations: [] }]] })).io, '0.1.6', { when404: 'pending' });
+  assert.equal(empty.state, 'missing', 'the registry answered: no SLSA v1 attestation is a definite absence, not a pending one');
+});
+
+test('#174: the publish time comes from the packument time map, and an unreadable one is unknown', async () => {
+  const at = 1_700_000_000_000;
+  const published = await readNpmPublishedAt(io(world('0.1.6', { publishedAt: at })).io, '0.1.6');
+  assert.equal(published.state, 'ok');
+  assert.equal(published.evidence.publishedAt, at);
+
+  // A per-version map: the fake must not stamp one time onto every version (CodeRabbit, PR #177).
+  const older = 1_600_000_000_000;
+  const two = world('0.1.6', { publishedAt: { '0.1.6': at, '0.1.5': older } });
+  two.npm['0.1.5'] = two.npm['0.1.6'];
+  assert.equal((await readNpmPublishedAt(io(two).io, '0.1.6')).evidence.publishedAt, at);
+  assert.equal((await readNpmPublishedAt(io(two).io, '0.1.5')).evidence.publishedAt, older, 'each version keeps its own publish time');
+
+  // No time entry, an unreadable packument, and a version the registry does not have are all unknown:
+  // an absent signal must never be read as "so it cannot be lagging" (or as anything else).
+  assert.equal((await readNpmPublishedAt(io(world()).io, '0.1.6')).state, 'unknown');
+  assert.equal((await readNpmPublishedAt(io(world('0.1.6', { fail: [[/registry\.npmjs\.org/, 503]] })).io, '0.1.6')).state, 'unknown');
 });

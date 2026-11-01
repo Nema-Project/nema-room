@@ -27,6 +27,8 @@ const MANIFEST_ACCEPT = [
 export const ok = (evidence = {}, detail = '') => ({ state: 'ok', detail, evidence });
 export const missing = (detail, evidence = {}) => ({ state: 'missing', detail, evidence });
 export const unknown = (detail, evidence = {}) => ({ state: 'unknown', detail, evidence });
+/** Read, and the answer may still change: neither present nor authoritatively absent. */
+export const pending = (detail, evidence = {}) => ({ state: 'pending', detail, evidence });
 
 class Undetermined extends Error {}
 /** An authoritative "not there" discovered deep inside a read (a listed asset or a referenced blob answering 404). */
@@ -100,12 +102,58 @@ export function readNpmVersion(io, version) {
   });
 }
 
-/** Provenance as the registry reports it. The Sigstore bundle is not verified here. */
-export function readNpmProvenance(io, version) {
+/**
+ * Whether the registry's own version document declares provenance for this version, and which predicate
+ * type. The registry writes `dist.attestations` into the version document as part of the publish, so this
+ * is the one signal that separates "an attestation exists and its bundle index has not caught up"
+ * (declared, endpoint still 404) from "nothing was ever attested".
+ *
+ * Answers `ok({ declared })` for a document that could be read, and `unknown` for one that could not: a
+ * version document that is itself a 404 says nothing about attestations, because the publish index can be
+ * lagging in exactly the same way. So `declared: false` is only ever returned for a document that was
+ * actually read — the caller decides what that is worth (see awaitNpmProvenance).
+ */
+export function npmProvenanceDeclared(io, version) {
+  return guard(async () => {
+    const url = `${NPM}/${NPM_PACKAGE}/${version}`;
+    const response = await request(io, url);
+    if (response.status !== 200) return unknown(`${url}: HTTP ${response.status}`);
+    const body = await json(response, url);
+    const attestations = body?.dist?.attestations;
+    if (attestations && typeof attestations === 'object' && typeof attestations.url === 'string') {
+      return ok({ declared: true, predicateType: attestations.provenance?.predicateType ?? null });
+    }
+    return ok({ declared: false, predicateType: null });
+  });
+}
+
+/**
+ * Provenance as the registry reports it. The Sigstore bundle is not verified here.
+ *
+ * A 404 on the attestations endpoint has two meanings this reader cannot tell apart by itself: the
+ * version was published without provenance (final), or it was published moments ago with provenance
+ * and the endpoint's index has not caught up yet (transient: v0.2.1 answered 404 for over a minute
+ * after the package itself was readable). Guessing "final" made promote stop with `missing` right
+ * after its own publish; guessing "transient" would make a real absence wait out a budget and then
+ * report an uncertainty instead of the absence. So the caller states which it is, through `when404`:
+ *   'missing' (default) - a 404 is the answer. `verify-release` keeps exactly its old behaviour.
+ *   'pending'           - a 404 is `pending` with `evidence.reason === 'not-indexed'`, which a caller
+ *                         may re-read. Pending is not ok, so it still cannot pass for evidence; it is
+ *                         not missing either, so no caller can read it as a definitive absence.
+ *
+ * `npmProvenanceDeclared` is the deciding signal: when the version document already carries
+ * `dist.attestations`, a 404 from this endpoint can only be index lag.
+ */
+export function readNpmProvenance(io, version, { when404 = 'missing' } = {}) {
   return guard(async () => {
     const url = `${NPM}/-/npm/v1/attestations/${encodeURIComponent(NPM_PACKAGE)}@${version}`;
     const response = await request(io, url);
-    if (response.status === 404) return missing(`npm has no provenance for ${NPM_PACKAGE}@${version}`);
+    if (response.status === 404) {
+      if (when404 === 'pending') return pending(`npm has not indexed provenance for ${NPM_PACKAGE}@${version} yet`, { reason: 'not-indexed' });
+      return missing(`npm has no provenance for ${NPM_PACKAGE}@${version}`);
+    }
+    // A denial is final: another read cannot make the bundle visible.
+    if (response.status === 401 || response.status === 403) return unknown(`${url}: HTTP ${response.status}`, { definitive: true, reason: 'denied' });
     if (response.status !== 200) return unknown(`${url}: HTTP ${response.status}`);
     const body = await json(response, url);
     const slsa = (body?.attestations ?? []).find((item) => item?.predicateType === 'https://slsa.dev/provenance/v1');
@@ -128,6 +176,28 @@ export function readNpmProvenance(io, version) {
       event: definition.internalParameters?.github?.event_name ?? null,
       signatureVerified: false,
     });
+  });
+}
+
+/**
+ * When the registry says this exact version was published, from the packument's own `time` map.
+ * Promote uses it to decide whether a missing attestation can still be index lag: only a recent
+ * publish can be lagging. Answers `{ state: 'ok', evidence: { publishedAt } }` with epoch ms, or
+ * `unknown` when the packument or its time map cannot be read (which proves nothing either way).
+ */
+export function readNpmPublishedAt(io, version) {
+  return guard(async () => {
+    const url = `${NPM}/${NPM_PACKAGE}`;
+    // The full packument, not the abbreviated one: only the full document carries `time`.
+    const response = await request(io, url, { headers: { Accept: 'application/json' } });
+    if (response.status === 404) return missing(`npm has no ${NPM_PACKAGE}`);
+    if (response.status !== 200) return unknown(`${url}: HTTP ${response.status}`);
+    const body = await json(response, url);
+    const stamp = body?.time?.[version];
+    if (typeof stamp !== 'string') return unknown(`${url}: no publish time for ${version}`);
+    const publishedAt = Date.parse(stamp);
+    if (!Number.isFinite(publishedAt)) return unknown(`${url}: unreadable publish time ${JSON.stringify(stamp)} for ${version}`);
+    return ok({ version, publishedAt });
   });
 }
 
