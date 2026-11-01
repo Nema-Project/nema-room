@@ -139,7 +139,7 @@ jobs:
       - run: node --test scripts/security/reporting-status.test.mjs
       - name: Desktop payload unit tests
         run: |
-          node --test scripts/desktop/graphify.test.mjs scripts/desktop/graphify-languages.test.mjs scripts/desktop/payload-size.test.mjs scripts/desktop/fetch-tools.test.mjs scripts/desktop/source-materials.test.mjs scripts/desktop/after-pack.test.mjs scripts/desktop/portable-zip.test.mjs scripts/desktop/smoke-desktop.test.mjs
+          node --test scripts/desktop/graphify.test.mjs scripts/desktop/graphify-languages.test.mjs scripts/desktop/payload-size.test.mjs scripts/desktop/fetch-tools.test.mjs scripts/desktop/source-materials.test.mjs scripts/desktop/after-pack.test.mjs scripts/desktop/portable-zip.test.mjs scripts/desktop/smoke-desktop.test.mjs scripts/desktop/bench-startup.test.mjs
           node --test --test-name-pattern "payload omits Node headers" scripts/desktop/staging.test.mjs
       - run: npm run build -w apps/hub
       - run: npm run build -w apps/cli

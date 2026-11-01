@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { readSecretLine, saveSecretLine } from "../../src/secrets/file.js";
-import { openPrivateFile, openPrivateFileChecked, privateModeMatches, protectPrivatePath, WINDOWS_ACL_SCRIPT } from "../../src/secrets/permissions.js";
+import { openPrivateFile, openPrivateFileChecked, privateModeMatches, protectPrivatePath, recordWindowsAclBench, WINDOWS_ACL_SCRIPT } from "../../src/secrets/permissions.js";
 import { AuthStore, type StoredAuth } from "../../src/direct/authStore.js";
 import { ensureReportToken, reportTokenHash } from "../../src/report/token.js";
 import { readClaudeToken, saveClaudeToken } from "../../src/claude/token.js";
@@ -13,6 +13,23 @@ import { readClaudeToken, saveClaudeToken } from "../../src/claude/token.js";
 let root: string;
 beforeEach(() => { root = mkdtempSync(path.join(tmpdir(), "nema private-")); });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+test("desktop bench records a Windows ACL call without a path", () => {
+  const previous = process.env.NEMA_DESKTOP_BENCH;
+  const lines: string[] = [];
+  try {
+    delete process.env.NEMA_DESKTOP_BENCH;
+    recordWindowsAclBench("protect", 12, (chunk) => lines.push(chunk));
+    expect(lines).toEqual([]);
+    process.env.NEMA_DESKTOP_BENCH = "1";
+    recordWindowsAclBench("check", 34, (chunk) => lines.push(chunk));
+    expect(JSON.parse(lines[0] ?? "")).toEqual({ state: "windows-acl", action: "check", ms: 34 });
+    expect(lines[0]).not.toMatch(/[/\\]/);
+  } finally {
+    if (previous === undefined) delete process.env.NEMA_DESKTOP_BENCH;
+    else process.env.NEMA_DESKTOP_BENCH = previous;
+  }
+});
 
 test("POSIX mode checks remain strict; Windows requires separate ACL validation", () => {
   expect(privateModeMatches({ mode: 0o644 }, "linux")).toBe(false);

@@ -74,7 +74,18 @@ function initialWindowSize(screen) {
   };
 }
 
-function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, platform = process.platform, release }) {
+function desktopBenchLine(mark, ms) {
+  return `${JSON.stringify({ state: 'desktop-mark', mark, ms })}\n`;
+}
+
+function writeDesktopBench(bench, mark) {
+  if (!bench) return;
+  const line = desktopBenchLine(mark, Date.now() - bench.startedAt);
+  if (typeof bench.log === 'function') bench.log(line);
+  else process.stdout.write(line);
+}
+
+function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, platform = process.platform, release, bench }) {
   const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, session, ipcMain, screen } = electron;
   const releaseBridge = release ?? defaultReleaseBridge({ home, assetsDir, app });
   let releaseTimer;
@@ -191,6 +202,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     if (pendingMainWindow) return pendingMainWindow;
     const opening = (async () => {
       const instance = await ensureCore();
+      writeDesktopBench(bench, 'runtime-ready');
       validateRuntimeLaunchUrl(instance.launchUrl, instance.origin);
       const window = new BrowserWindow({ ...createSecureWindowOptions(instance.origin, platform), ...initialWindowSize(screen), icon: brandAsset('icon.png') });
       if (platform !== 'darwin') window.setMenu(null);
@@ -199,7 +211,11 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
       registerLoginItem({ ipcMain, app, window, runtimeOrigin: instance.origin });
       destroyWindowOnClose(window);
       handleNavigation(window, instance.origin);
-      window.once('ready-to-show', () => { if (!window.isDestroyed()) window.show(); });
+      window.once('ready-to-show', () => {
+        writeDesktopBench(bench, 'ready-to-show');
+        if (!window.isDestroyed()) window.show();
+      });
+      window.webContents.once('did-finish-load', () => writeDesktopBench(bench, 'did-finish-load'));
       window.webContents.on('render-process-gone', () => {
         if (!window.isDestroyed()) window.destroy();
       });
@@ -323,6 +339,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     app.on('window-all-closed', () => {});
     app.on('activate', () => { void createMainWindow().catch(reportError); });
     await app.whenReady();
+    writeDesktopBench(bench, 'app-ready');
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
     buildMenus();
@@ -337,4 +354,4 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
   return { createMainWindow, install, openBrowserMode, quitNema, refreshReleaseMenu };
 }
 
-module.exports = { createDesktopLifecycle, initialWindowSize, readPackagedIdentity, releaseNotice, requestReleaseCheck };
+module.exports = { createDesktopLifecycle, desktopBenchLine, initialWindowSize, readPackagedIdentity, releaseNotice, requestReleaseCheck };

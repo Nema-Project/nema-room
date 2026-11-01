@@ -77,6 +77,7 @@ function harness(overrides = {}) {
     loadRuntimeApi: async () => runtimeApi,
     platform: overrides.platform ?? process.platform,
     release: overrides.release,
+    bench: overrides.bench,
   });
   return { app, windows, trays, shell, dialog, electron, ipcHandlers, runtimeApi, lifecycle };
 }
@@ -388,6 +389,20 @@ describe('Electron shell lifecycle', () => {
     expect(show).toHaveBeenCalledOnce();
     expect(focus).toHaveBeenCalledOnce();
     expect(thread.url).toBe(`${base}?messageId=m_second`);
+  });
+
+  it('records desktop bench marks when a bench sink is attached', async () => {
+    const marks = [];
+    const value = harness({ bench: { startedAt: Date.now(), log: (line) => marks.push(JSON.parse(line)) } });
+    await value.lifecycle.install();
+    value.windows[0].emit('ready-to-show');
+    value.windows[0].webContents.emit('did-finish-load');
+    expect(marks.map((mark) => mark.mark)).toEqual(['app-ready', 'runtime-ready', 'ready-to-show', 'did-finish-load']);
+    for (const mark of marks) {
+      expect(mark.state).toBe('desktop-mark');
+      expect(mark.ms).toBeGreaterThanOrEqual(0);
+    }
+    expect(value.windows[0].show).toHaveBeenCalled();
   });
 
   it('reveals a new thread window when its first page is ready', async () => {

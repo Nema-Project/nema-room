@@ -42,16 +42,27 @@ foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.S
 if (-not $hasOwner) { throw 'Owner cannot read' }
 `;
 
+/** One JSON line, no path: the desktop bench counts these calls. Quiet unless NEMA_DESKTOP_BENCH=1. */
+export function recordWindowsAclBench(action: "protect" | "check", elapsedMs: number, write: (chunk: string) => void = (chunk) => { process.stdout.write(chunk); }): void {
+  if (process.env.NEMA_DESKTOP_BENCH !== "1") return;
+  write(`${JSON.stringify({ state: "windows-acl", action, ms: elapsedMs })}\n`);
+}
+
 function windowsAcl(file: string, action: "protect" | "check"): void {
-  const exe = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const result = spawnSync(exe, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_ACL_SCRIPT], {
-    env: { ...process.env, NEMA_PRIVATE_PATH: path.resolve(file), NEMA_PRIVATE_ACTION: action },
-    // A cold PowerShell on a busy Windows runner can take longer than a local call.
-    stdio: "ignore", windowsHide: true, timeout: 45_000,
-  });
-  if (result.error || result.status !== 0) {
-    const reason = (result.error as NodeJS.ErrnoException | undefined)?.code ?? (result.status === null ? "unknown" : `powershell exit ${result.status}`);
-    throw new Error(`${path.basename(file)}: 无法验证私有 Windows ACL / cannot verify private Windows ACL (${reason})`);
+  const started = process.env.NEMA_DESKTOP_BENCH === "1" ? Date.now() : 0;
+  try {
+    const exe = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+    const result = spawnSync(exe, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_ACL_SCRIPT], {
+      env: { ...process.env, NEMA_PRIVATE_PATH: path.resolve(file), NEMA_PRIVATE_ACTION: action },
+      // A cold PowerShell on a busy Windows runner can take longer than a local call.
+      stdio: "ignore", windowsHide: true, timeout: 45_000,
+    });
+    if (result.error || result.status !== 0) {
+      const reason = (result.error as NodeJS.ErrnoException | undefined)?.code ?? (result.status === null ? "unknown" : `powershell exit ${result.status}`);
+      throw new Error(`${path.basename(file)}: 无法验证私有 Windows ACL / cannot verify private Windows ACL (${reason})`);
+    }
+  } finally {
+    if (started) recordWindowsAclBench(action, Date.now() - started);
   }
 }
 

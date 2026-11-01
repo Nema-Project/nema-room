@@ -5,7 +5,12 @@ const { mkdirSync } = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { createDesktopLifecycle } = require('./lifecycle.cjs');
+const { createDesktopLifecycle, desktopBenchLine } = require('./lifecycle.cjs');
+
+// Baseline for optional startup marks. Other marks in this process are milliseconds after this line.
+const benchStartedAt = Date.now();
+const bench = process.env.NEMA_DESKTOP_BENCH === '1' ? { startedAt: benchStartedAt } : undefined;
+if (bench) process.stdout.write(desktopBenchLine('process-start', 0));
 
 if (process.env.NEMA_DESKTOP_DISABLE_GPU === '1') app.disableHardwareAcceleration();
 
@@ -23,6 +28,7 @@ const lifecycle = createDesktopLifecycle({
   home,
   assetsDir,
   loadRuntimeApi: () => import(pathToFileURL(path.join(assetsDir, 'app', 'node_modules', '@nema', 'local', 'dist', 'src', 'index.js')).href),
+  bench,
 });
 
 void lifecycle.install().catch((error) => {
