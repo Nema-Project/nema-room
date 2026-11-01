@@ -12,7 +12,7 @@ import { ReloginRequiredError, type Refresher } from "./authStore.js";
 import { CodexFileTokenSource, defaultCodexHome } from "./codexLogin.js";
 import { DEFAULT_LIMITS, runToolLoop } from "./loop.js";
 import { MODEL_FROM_LIST, codexTransportFor, credentialStateOf, preferredModel } from "../routing/accountAuth.js";
-import { loadRoutingAccounts } from "../routing/accountSet.js";
+import { loadRoutingAccounts, type RoutingAccounts } from "../routing/accountSet.js";
 import { Cooldowns } from "../routing/cooldown.js";
 import { resolveRoute, routeDecision, type RouteResult } from "../routing/index.js";
 import { roomTools } from "./tools.js";
@@ -58,7 +58,7 @@ export type CodexDirectAdapterOptions = {
    * The accounts this daemon can route over, read fresh for each task. Defaults to reading `accounts.json`
    * (with the synthesized account when there is none) and the `config.json` projection.
    */
-  accounts?: () => { accounts: Account[]; bindings: Record<string, string> };
+  accounts?: () => RoutingAccounts;
   /** Cooldowns shared by both adapters in one daemon process (spec §4.4 is process-wide). */
   cooldowns?: Cooldowns;
 };
@@ -134,7 +134,7 @@ export class CodexDirectAdapter implements AgentAdapter {
     if (refused) return { ok: false, error: refused };
 
     const codexHome = this.opts.codexHome ?? defaultCodexHome();
-    let picked: { accounts: Account[]; bindings: Record<string, string> } | null = null;
+    let picked: RoutingAccounts | null = null;
     let routeError: string | null = null;
     try {
       picked = this.accountSet(config);
@@ -152,6 +152,7 @@ export class CodexDirectAdapter implements AgentAdapter {
       cooldowns: this.opts.cooldowns ?? new Cooldowns({ now: this.opts.now }),
       credentialOf: (a) => credentialStateOf(this.opts.nemaHome, a, codexHome),
       resolveModel: preferredModel,
+      autoRouting: picked.autoRouting,
     });
     if (!route.ok) return routeFailure(route);
 
@@ -224,7 +225,7 @@ export class CodexDirectAdapter implements AgentAdapter {
     }
   }
 
-  private accountSet(config: NemaConfig): { accounts: Account[]; bindings: Record<string, string> } {
+  private accountSet(config: NemaConfig): RoutingAccounts {
     if (this.opts.accounts) return this.opts.accounts();
     return loadRoutingAccounts(this.opts.nemaHome, config, this.opts.codexHome ?? defaultCodexHome());
   }

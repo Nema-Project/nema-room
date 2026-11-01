@@ -48,6 +48,8 @@ const resolve = (o: {
   config?: NemaConfig;
   cooldowns?: Cooldowns;
   model?: (a: Account) => string | null;
+  /** The global switch (D-3). Off in every test that does not name it, which is the shipped default. */
+  autoRouting?: boolean;
 }) =>
   resolveRoute({
     task: task(o.task),
@@ -58,6 +60,7 @@ const resolve = (o: {
     cooldowns: o.cooldowns ?? new Cooldowns({ now: () => 0 }),
     credentialOf: o.credential ?? (() => "connected"),
     resolveModel: o.model ?? ((a) => a.model ?? null),
+    autoRouting: o.autoRouting ?? false,
   });
 
 describe("resolveRoute scope", () => {
@@ -134,12 +137,12 @@ describe("resolveRoute failures", () => {
     expect(r.error).toContain("claude-code");
   });
 
-  test("automatic routing is refused in this version and says so", () => {
+  test("automatic routing is refused while the switch is off, and says so", () => {
     const r = resolve({ task: { routing: "auto" } });
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error("expected failure");
     expect(r.failure).toBe("auto_unavailable");
-    expect(r.error).toContain("后续版本");
+    expect(r.error).toContain("自动路由未开启");
   });
 
   test("an auto binding is refused the same way, not quietly ignored", () => {
@@ -282,5 +285,46 @@ describe("the adapter the task actually runs as", () => {
     if (r.ok) throw new Error("expected failure");
     expect(r.failure).toBe("no_account");
     expect(r.error).toContain("codex-direct");
+  });
+});
+
+describe("automatic routing and the switch", () => {
+  test("a request for automatic routing fails while the switch is off, and says the switch is off", () => {
+    // S4 keeps the S3 guarantee: an explicit `routing: "auto"` never quietly becomes a single-account run.
+    // What changes is the sentence — the feature exists now, it is just not turned on.
+    const r = resolve({ task: { routing: "auto" }, autoRouting: false });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("expected failure");
+    expect(r.failure).toBe("auto_unavailable");
+    expect(r.error).toContain("自动路由未开启");
+    // The sentence has to say how to turn it on, or it is just a refusal.
+    expect(r.error).toContain("设置");
+  });
+
+  test("an \"auto\" binding fails the same way while the switch is off", () => {
+    const r = resolve({ bindings: { "ws:w1": "auto" }, autoRouting: false });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("expected failure");
+    expect(r.failure).toBe("auto_unavailable");
+    expect(r.error).toContain("自动路由未开启");
+  });
+
+  test("a thread bound to auto is not skipped in favour of the workspace binding", () => {
+    // An `auto` binding is a choice the user made. Falling through to the workspace's account instead would
+    // be the silent substitution the whole feature exists to prevent.
+    const r = resolve({ task: { threadId: "m_t" }, bindings: { "thread:m_t": "auto", "ws:w1": SECOND.id }, autoRouting: false });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("expected failure");
+    expect(r.error).toContain("自动路由未开启");
+  });
+
+  test("with the switch on, an unqualified task still runs on the default account in manual mode", () => {
+    // The switch unlocks the option; it does not make anything automatic on its own (D-3). Nothing bound and
+    // nothing named is still the default account, and the record still says so.
+    const r = resolve({ autoRouting: true });
+    if (!r.ok) throw new Error(`expected ok, got ${r.failure}: ${r.error}`);
+    expect(r.account.id).toBe(FIRST.id);
+    expect(r.mode).toBe("manual");
+    expect(r.reason).toBe("default");
   });
 });

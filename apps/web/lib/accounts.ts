@@ -33,6 +33,11 @@ export type AccountsList = {
   accounts: AccountView[];
   defaultAccountId: string;
   bindings: Record<string, string>;
+  /**
+   * The machine-wide automatic routing switch (spec 2026-10-31 D-3). Absent from an older daemon's answer,
+   * which the page reads as off — the same thing an absent key in `accounts.json` means.
+   */
+  autoRouting?: boolean;
   unusableReason?: "symlink" | "mode" | "owner" | "corrupt" | "invalid";
 };
 
@@ -125,6 +130,11 @@ export const accountsApi = {
   list: (signal?: AbortSignal) => request<AccountsList>("/_nema/accounts", "GET", undefined, signal, true),
   create: (body: AccountCreate) => request<{ account: AccountView }>("/_nema/accounts", "POST", body),
   update: (body: AccountUpdate) => request<{ account: AccountView }>("/_nema/accounts", "PATCH", body),
+  /**
+   * The automatic routing switch. Its own call, with no account id: the switch belongs to the machine, not
+   * to a row, and the server refuses a body that names both.
+   */
+  setAutoRouting: (autoRouting: boolean) => request<{ autoRouting: boolean }>("/_nema/accounts", "PATCH", { autoRouting }),
   remove: (id: string) => request<{ deleted: string }>("/_nema/accounts", "DELETE", { id }),
   /** Write-only: nothing here ever reads a value back. */
   saveSecret: (id: string, kind: "byok" | "claude", value: string) =>

@@ -141,10 +141,13 @@ describe("S3 acceptance", () => {
     }
   });
 
-  test("criterion 6: automatic routing fails with a sentence and does not run on the default", async () => {
+  test("criterion 6: automatic routing with the switch off fails with a sentence and does not run on the default", async () => {
+    // S4 makes automatic routing real, but the switch is off by default (D-3) and this fixture never turns it
+    // on. The guarantee the S3 criterion was about is unchanged: a task that asked for failover must never
+    // quietly run on one account as if it had been routed.
     const result = await adapter().run(task({ routing: "auto" }), () => {});
     expect(result).toMatchObject({ ok: false });
-    expect((result as { error: string }).error).toContain("后续版本");
+    expect((result as { error: string }).error).toContain("自动路由未开启");
     expect(one.requests).toEqual([]);
     expect(two.requests).toEqual([]);
   });

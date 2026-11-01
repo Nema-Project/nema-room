@@ -22,14 +22,24 @@ import { taskNeeds } from "./capabilities.js";
  * provider 401 later.
  */
 
-// `account_disabled` is gone: a named account is no longer refused for being disabled (see `checkNamed`).
-export type RouteFailure = "unknown_account" | "adapter_mismatch" | "credential_missing" | "credential_unusable" | "model_missing" | "no_account" | "auto_unavailable";
+/**
+ * Why a task could not be given an account at all, as opposed to why one account's model call failed.
+ *
+ * Named `RouteRefusal`, not `RouteFailure`: `./errors.ts` already exports a `RouteFailure` for the *model
+ * call* classification (`rate_limit` / `quota` / ...). The two answer different questions — "could this task
+ * start" versus "did this request fail, and is another account worth trying" — and having one name for both
+ * meant an import could silently pick up the wrong vocabulary. The failure kinds keep the name because that
+ * is the one the plan and the spec use for them; this one is a refusal.
+ *
+ * `account_disabled` is gone: a named account is no longer refused for being disabled (see `checkNamed`).
+ */
+export type RouteRefusal = "unknown_account" | "adapter_mismatch" | "credential_missing" | "credential_unusable" | "model_missing" | "no_account" | "auto_unavailable";
 
 export type RouteSource = "user_message" | "user_thread" | "user_workspace" | "default";
 
 export type RouteResult =
   | { ok: true; account: Account; model: string; mode: "manual" | "auto"; reason: RouteSource; excluded: Excluded[] }
-  | { ok: false; failure: RouteFailure; error: string; excluded: Excluded[] };
+  | { ok: false; failure: RouteRefusal; error: string; excluded: Excluded[] };
 
 export type RouteRequest = {
   task: TaskAssign;
@@ -45,6 +55,12 @@ export type RouteRequest = {
   cooldowns: Cooldowns;
   credentialOf: (a: Account) => CredentialState;
   resolveModel: (a: Account) => string | null;
+  /**
+   * The machine-wide automatic routing switch (D-3). Passed in rather than read from the file here, so this
+   * function stays a pure decision over its arguments and a caller cannot accidentally route automatically
+   * by forgetting to read the file.
+   */
+  autoRouting: boolean;
 };
 
 /** A name is user text and can be anything; one that looks like a credential is replaced by the id. */
@@ -55,7 +71,14 @@ function label(account: Account): string {
   return SECRET_LIKE.test(account.name.trim()) ? `账户 ${account.id}` : `账户「${account.name}」`;
 }
 
-const AUTO_MESSAGE = "自动路由将在后续版本提供，本版本请指定账户或不指定（用默认账户）";
+/**
+ * The sentence for `routing: "auto"` while the switch is off.
+ *
+ * It has to be a refusal, not a fallback: automatic routing changes whose quota pays for the task and which
+ * endpoint answers it, so a user who asked for it must never get a silent single-account run instead (D-3).
+ * The second half says where the switch is, because a refusal with no way forward is just an error.
+ */
+const AUTO_OFF_MESSAGE = "自动路由未开启。请在设置页的账户分组里打开「自动路由」，或在这条消息、这个 thread、这个工作区里指定一个账户。";
 
 /**
  * The account id the choice resolves to, with where the choice came from. `"auto"` is a real value in a
@@ -97,10 +120,10 @@ export function resolveRoute(req: RouteRequest): RouteResult {
     resolveModel: req.resolveModel,
   });
 
-  if (task.routing === "auto") return { ok: false, failure: "auto_unavailable", error: AUTO_MESSAGE, excluded: set.excluded };
+  if (task.routing === "auto") return { ok: false, failure: "auto_unavailable", error: AUTO_OFF_MESSAGE, excluded: set.excluded };
   const choice = choose(task, req.bindings);
   if (choice !== null && choice.kind === "auto") {
-    return { ok: false, failure: "auto_unavailable", error: AUTO_MESSAGE, excluded: set.excluded };
+    return { ok: false, failure: "auto_unavailable", error: AUTO_OFF_MESSAGE, excluded: set.excluded };
   }
 
   if (choice === null) {

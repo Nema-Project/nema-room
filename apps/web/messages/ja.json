@@ -404,6 +404,8 @@
   "model.error.probe_not_supported": "このモードでは接続テストを利用できません。",
   "model.error.service_unavailable": "設定サービスを利用できません。ローカルの Nema Room サービスを起動または再接続してから、もう一度お試しください。",
   "model.error.invalidBaseUrl": "HTTPS または localhost の URL を入力してください。",
+  "account.autoRouting": "自動ルーティング",
+  "account.autoRoutingHelp": "既定ではオフです。オンにすると、アカウントを指定していないタスクは、最初のアカウントがレート制限または枠不足になったとき別のアカウントに切り替わります。アカウントを指定したタスクは切り替わりません。切り替えは返信の下に表示されます。",
   "account.title": "アカウント",
   "account.help": "アカウントは「認証情報・接続先・既定モデル」をひと組にしたものです。ここでの内容はこのコンピューターの外に出ません。",
   "account.add": "アカウントを追加",

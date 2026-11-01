@@ -404,6 +404,8 @@
   "model.error.probe_not_supported": "Connection testing is not available for this mode.",
   "model.error.service_unavailable": "The settings service is unavailable. Start or reconnect the local Nema Room service, then retry.",
   "model.error.invalidBaseUrl": "Enter an HTTPS URL or a localhost URL.",
+  "account.autoRouting": "Automatic routing",
+  "account.autoRoutingHelp": "Off by default. When on, a task with no account chosen can move to another account if the first one is rate limited or out of quota; a task you point at one account never moves. Each switch is shown in the reply.",
   "account.title": "Accounts",
   "account.help": "Each account is one credential, one endpoint and one default model. Nothing here leaves this computer.",
   "account.add": "Add account",
