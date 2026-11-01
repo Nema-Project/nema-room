@@ -122,6 +122,60 @@ describe("PluginsPage", () => {
     expect(document.querySelector(".plugins-page.embedded")).toBeTruthy();
     expect(hub.listExtensions).toHaveBeenCalledOnce();
   });
+
+  it("shows a skill's runtime gap and a name that does not match its folder", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([
+      row({
+        id: "notes",
+        name: "other",
+        kind: "skill",
+        provision: "managed",
+        source: "local",
+        revision: "local",
+        skill: {
+          runtimes: [
+            { adapter: "claude-code", support: "partial", missing: ["scripts"], notes: [] },
+            { adapter: "codex-direct", support: "full", missing: [], notes: [] },
+          ],
+          compatibility: null,
+          diagnostics: ["name-folder-mismatch"],
+          invocation: "model-and-user",
+        },
+      }),
+    ]);
+    render(
+      <I18nProvider>
+        <PluginsPage />
+      </I18nProvider>,
+    );
+    const block = (await screen.findByRole("heading", { name: "other" })).closest("section")!;
+    expect(within(block).getByText("Claude Code is missing scripts")).toBeTruthy();
+    expect(within(block).getByText("The name does not match the folder, so the command may not match the folder name.")).toBeTruthy();
+    expect(within(block).queryByText(/Codex is missing/)).toBeNull();
+  });
+
+  it("counts unavailable installed rows and filters to them", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([
+      catalog[0]!,
+      catalog[1]!,
+      row({ id: "notes", name: "notes", kind: "skill", provision: "managed", installState: "failed", availability: "ready", error: "interrupted" }),
+    ]);
+    render(
+      <I18nProvider>
+        <PluginsPage />
+      </I18nProvider>,
+    );
+    const button = await screen.findByRole("button", { name: "2 unavailable" });
+    expect(button.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("heading", { name: "GitHub" })).toBeTruthy();
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("heading", { name: "graphify" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "notes" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "GitHub" })).toBeNull();
+    fireEvent.click(button);
+    expect(screen.getByRole("heading", { name: "GitHub" })).toBeTruthy();
+  });
 });
 
 describe("PluginsPage use state", () => {

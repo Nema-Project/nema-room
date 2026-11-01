@@ -13,6 +13,7 @@ import {
   setExtensionUse,
 } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
+import { skillLimitLines } from "@/lib/skillLimits";
 import { ExternalSkillsPanel } from "./ExternalSkillsPanel";
 import { McpServerControls, McpServerForm } from "./McpServerPanel";
 import { SkillInstallPanel } from "./SkillInstallPanel";
@@ -30,6 +31,11 @@ function chipTone(kind: "provision" | "install" | "use", extension: ExtensionRec
   }
   if (extension.useState === "enabled") return broken ? "status-bad" : "status-ok";
   return "";
+}
+
+/** Installed, but the row is already telling the user something is wrong. A switch that is simply off is not this. */
+function unavailable(extension: ExtensionRecord): boolean {
+  return extension.installState === "failed" || extension.availability !== "ready" || extension.error != null;
 }
 
 const TYPES = ["all", "skill", "mcp", "plugin"] as const;
@@ -65,6 +71,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
   const [type, setType] = useState<TypeFilter>("all");
   const [addingMcp, setAddingMcp] = useState(false);
   const [query, setQuery] = useState("");
+  const [onlyUnavailable, setOnlyUnavailable] = useState(false);
   // Found folders that pass the filter and search; a match there is a match for "nothing matches".
   const [foundMatches, setFoundMatches] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -331,7 +338,9 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
   // Present records are "installed" (a failed install stays here with its reason and Retry); a record
   // whose install was cancelled has nothing on disk, so it belongs with what can be installed.
   const shown = (extensions ?? []).filter((extension) => matches(extension, type, query));
-  const installed = shown.filter((extension) => extension.installState !== "absent");
+  const installedAll = shown.filter((extension) => extension.installState !== "absent");
+  const unavailableCount = installedAll.filter(unavailable).length;
+  const installed = onlyUnavailable && unavailableCount > 0 ? installedAll.filter(unavailable) : installedAll;
   const discoverable = shown.filter((extension) => extension.installState === "absent");
 
   const renderRow = (extension: ExtensionRecord) => {
@@ -398,6 +407,12 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
                   </button>
                 )}
               {jobLine(extension.id, "list")}
+              {extension.kind === "skill" &&
+                skillLimitLines(extension.skill, t).map((line) => (
+                  <p key={line} className="plugin-note">
+                    {line}
+                  </p>
+                ))}
               {extension.kind === "mcp" && extension.provision === "managed" && extension.installState === "installed" && (
                 <McpServerControls extension={extension} onChanged={(saved) => (saved ? savedMcp(saved) : void refresh())} />
               )}
@@ -447,6 +462,11 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
         </div>
         <section className="extension-section" aria-labelledby={`${ids}-installed`}>
           <h2 id={`${ids}-installed`}>{t("extensions.section.installed")}</h2>
+          {unavailableCount > 0 && (
+            <button type="button" className="sp" aria-pressed={onlyUnavailable} onClick={() => setOnlyUnavailable((on) => !on)}>
+              {t("extensions.unavailable", { count: unavailableCount })}
+            </button>
+          )}
           {extensions === null && !error && <p className="kmeta">{t("common.loading")}</p>}
           {installed.map(renderRow)}
           {extensions !== null && installed.length === 0 && discoverable.length === 0 && foundMatches === 0 && <p className="kmeta">{t("extensions.search.empty")}</p>}

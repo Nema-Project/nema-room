@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { MessageMention } from "@nema/shared";
 import { AttachmentList } from "@/components/AttachmentList";
 import { Markdown } from "@/components/Markdown";
 import { SkillOfferCard } from "@/components/SkillOfferCard";
 import { editMessage, getEntry, HubError, listEntries, listMessageVersions, withdrawEntry } from "@/lib/hub";
 import { formatTime } from "@/lib/format";
 import { useLocale, useT } from "@/lib/i18n";
+import { syncMentions } from "@/lib/mentions";
 import { useHubEvents } from "@/lib/useHubEvents";
 import type { AgentMessageMeta, Entry, Message, MessageQuote, ReportMessageMeta, RouteDecision } from "@/lib/types";
 
@@ -250,6 +252,12 @@ function QuoteBlock({ quote, onJump }: { quote: MessageQuote; onJump?: (messageI
  * Deletion is final, so a response read before a delete committed (an edit racing it) must not bring
  * the attachment back: keep the newer tombstone for any attachment the latest message has deleted.
  */
+function mentionsOf(message: Message): MessageMention[] {
+  const meta = message.meta;
+  if (!meta || !("mentions" in meta) || !Array.isArray(meta.mentions)) return [];
+  return meta.mentions;
+}
+
 function keepTombstones(next: Message, current: Message): Message {
   if (!next.attachments || !current.attachments) return next;
   const gone = new Map(current.attachments.filter((a) => a.status === "deleted").map((a) => [a.id, a]));
@@ -277,6 +285,7 @@ function UserMessage({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
   const [editError, setEditError] = useState<string | null>(null);
+  const [droppedMentions, setDroppedMentions] = useState(0);
   const [versions, setVersions] = useState<{ version: number; content: string; createdAt: string }[] | null>(null);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const quote = quoteOf(message);
@@ -290,10 +299,13 @@ function UserMessage({
 
   async function save() {
     setEditError(null);
+    const before = mentionsOf(message);
+    const dropped = before.length - syncMentions(draft, before).length;
     try {
       const { message: next } = await editMessage(message.workspaceId, message.id, draft);
       onEdited?.(keepTombstones(next, latest.current));
       setEditing(false);
+      setDroppedMentions(dropped);
       setVersions(null);
       setVersionsOpen(false);
     } catch (e) {
@@ -332,6 +344,11 @@ function UserMessage({
             <Markdown source={message.content} />
           </div>
         ) : null}
+        {!editing && droppedMentions > 0 && (
+          <p className="kmeta" role="status">
+            {t(droppedMentions === 1 ? "chat.mentionsDropped.one" : "chat.mentionsDropped.other", { count: droppedMentions })}
+          </p>
+        )}
         <AttachmentList
           workspaceId={message.workspaceId}
           attachments={attachments}

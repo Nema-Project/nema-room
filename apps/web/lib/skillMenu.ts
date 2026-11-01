@@ -18,7 +18,17 @@ function load(workspaceId: string, now: number): Promise<SkillRow[]> {
   // Any failure, or an older daemon, leaves only the built-in commands.
   const rows = Promise.resolve()
     .then(() => listSkills(workspaceId))
-    .then((r) => (r?.supported && Array.isArray(r.skills) ? r.skills.map((s) => ({ id: s.id, description: s.description, command: s.command })) : []))
+    .then((r) =>
+      r?.supported && Array.isArray(r.skills)
+        ? r.skills.map((s) => ({
+            id: s.id,
+            description: s.description,
+            command: s.command,
+            runtimes: Array.isArray(s.runtimes) ? s.runtimes : [],
+            diagnostics: Array.isArray(s.diagnostics) ? s.diagnostics.filter((code) => typeof code === "string") : [],
+          }))
+        : [],
+    )
     .catch(() => [] as SkillRow[]);
   cache.set(workspaceId, { at: now, rows });
   return rows;

@@ -260,6 +260,9 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .composer { position: relative; margin: 8px 28px 24px; border: 1px solid var(--composer-line); flex: none; }
 .cmdmenu { position: absolute; left: -1px; right: -1px; bottom: calc(100% + 6px); z-index: 5; max-height: 280px; overflow: auto; background: var(--paper); border: 1px solid var(--ink); }
 .cmdmenu button { display: flex; gap: 16px; width: 100%; padding: 7px 12px; align-items: baseline; }
+.cmdmenu button.has-limits { flex-wrap: wrap; }
+.cmdmenu .limits { flex: 1 0 100%; color: var(--ink-3); font-size: 12px; white-space: normal; }
+.cmdmenu button.on .limits { color: inherit; }
 .cmdmenu button.on { background: var(--ink); color: var(--on-ink); }
 .cmdmenu .cmdgroup { padding: 6px 12px 2px; font-size: 11px; letter-spacing: .06em; border-top: 1px solid var(--rule); color: var(--ink-3); }
 .cmdmenu button .hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

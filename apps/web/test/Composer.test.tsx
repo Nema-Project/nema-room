@@ -469,6 +469,32 @@ describe("Composer Skills menu", () => {
     expect(screen.queryByRole("option", { name: /\/tdd/ })).toBeNull();
   });
 
+  it("says what a Skill is missing, and when its name does not match its folder", async () => {
+    vi.mocked(hub.listSkills).mockResolvedValue({
+      supported: true,
+      skills: [{
+        id: "notes",
+        name: "other",
+        description: "Take notes.",
+        command: "/notes",
+        invocation: "model-and-user",
+        repoId: null,
+        runtimes: [
+          { adapter: "claude-code", support: "partial", missing: ["scripts"], notes: [] },
+          { adapter: "codex-direct", support: "full", missing: [], notes: [] },
+        ],
+        diagnostics: ["name-folder-mismatch"],
+      }],
+    });
+    resetSkillMenuCache();
+    await mountWs();
+    await userEvent.type(box(), "/notes");
+    const option = screen.getByRole("option", { name: /\/notes/ });
+    expect(option.textContent).toContain("Claude Code is missing scripts");
+    expect(option.textContent).toContain("does not match the folder");
+    expect(option.textContent).not.toContain("Codex is missing");
+  });
+
   it("an older daemon leaves only the built-in commands", async () => {
     vi.mocked(hub.listSkills).mockResolvedValue({ supported: false, skills: [] });
     await mountWs();
