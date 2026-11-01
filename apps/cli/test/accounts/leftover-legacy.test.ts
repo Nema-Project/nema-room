@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { materializeImplicit, retireLeftoverLegacy } from "../../src/accounts/implicit.js";
-import { accountDir, writeAccounts } from "../../src/accounts/store.js";
+import { accountDir, readAccounts, writeAccounts } from "../../src/accounts/store.js";
+import { writePrivateFile } from "../nativePermissions.js";
 import { DEFAULT_CONFIG, saveConfig, type NemaConfig } from "../../src/config.js";
 
 /**
@@ -60,6 +61,37 @@ describe("retireLeftoverLegacy (#206)", () => {
     expect(retireLeftoverLegacy(home)).toEqual([legacyKey()]);
     expect(existsSync(legacyKey())).toBe(false);
     expect(readFileSync(join(accountDir(home, account.id), "key"), "utf8")).toBe(FAKE_KEY);
+  });
+
+  test("keeps the legacy file while several accounts of its kind could own it", () => {
+    const first = interruptedMove(FAKE_KEY);
+    const read = readAccounts(home);
+    if (read.status !== "ok") throw new Error("accounts.json should be ok");
+    const second = { ...first, id: "acct_second0001", name: "账户 2", order: 1 };
+    writeAccounts(home, { ...read.file, accounts: [...read.file.accounts, second] });
+    expect(retireLeftoverLegacy(home)).toEqual([]);
+    expect(readFileSync(legacyKey(), "utf8")).toBe(FAKE_KEY);
+  });
+
+  test("does not wait for a busy auth.lock", () => {
+    const siwc: NemaConfig = { ...DEFAULT_CONFIG, authMode: "siwc" };
+    const login = JSON.stringify({
+      version: 1, mode: "siwc", clientId: "oaiapp_test",
+      tokens: { access_token: "fake-access", refresh_token: "rt-1" },
+      lastRefresh: "2026-10-01T00:00:00.000Z",
+    });
+    const legacy = join(home, "auth.json");
+    mkdirSync(home, { recursive: true });
+    writePrivateFile(legacy, login);
+    materializeImplicit({ nemaHome: home, config: siwc, codexHome: "", name: "订阅" });
+    writePrivateFile(legacy, login);
+    // A live process other than this one holds the lock, as a daemon mid-refresh would.
+    writeFileSync(join(home, "auth.lock"), JSON.stringify({ pid: process.ppid, at: Date.now(), token: "held" }), { mode: 0o600 });
+    const started = Date.now();
+    expect(retireLeftoverLegacy(home)).toEqual([]);
+    // Well under the 20 s wait a blocking retirement takes; Windows ACL checks alone cost a few seconds here.
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(readFileSync(legacy, "utf8")).toBe(login);
   });
 
   test("does nothing before the first migration", () => {

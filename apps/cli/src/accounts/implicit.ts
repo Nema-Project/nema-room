@@ -231,7 +231,7 @@ export function retireLegacyFile(
   nemaHome: string,
   account: Account,
   initial: LegacyCredential,
-  opts: { alreadyCopied?: boolean; afterCopy?: (legacyPath: string) => void } = {},
+  opts: { alreadyCopied?: boolean; afterCopy?: (legacyPath: string) => void; lockTimeoutMs?: number } = {},
 ): string | null {
   // Runs under the accounts lock (see `materializeImplicit`), the same lock a credential save takes, so a
   // settings request cannot write this account's credential between the copy below and the legacy removal.
@@ -255,7 +255,7 @@ export function retireLegacyFile(
     // A hook for the caller/tests to act between "copied" and "removed", which is exactly the window a
     // peer's refresh can land in.
     opts.afterCopy?.(source.path);
-    const removed = removeLegacyIfUnchanged(nemaHome, source);
+    const removed = removeLegacyIfUnchanged(nemaHome, source, opts.lockTimeoutMs);
     // True means the bytes that were copied are gone from the legacy path. It does *not* mean the path is
     // empty: a writer that raced the removal can have re-created it, and that file is newer than our copy.
     if (removed && !existsSync(source.path)) return source.path;
@@ -283,6 +283,9 @@ export function retireLegacyFile(
  * file loses nothing. Every other situation — no account of this kind, several candidates, a different
  * credential, an unreadable or untrusted legacy file — leaves it where it is, because guessing would hand a
  * credential to the wrong account. Returns the paths retired from.
+ *
+ * Neither lock is waited for: a busy `accounts.lock` throws (the caller leaves the file for its next write),
+ * and a busy `auth.lock` leaves that file in place.
  */
 export function retireLeftoverLegacy(nemaHome: string): string[] {
   const kinds = LEGACY_KINDS.map((kind) => ({ ...DEFAULT_CONFIG, ...kind }));
@@ -307,11 +310,17 @@ export function retireLeftoverLegacy(nemaHome: string): string[] {
       }
       const situation = legacySituation(nemaHome, existing.file.accounts, config, source.path, source.bytes);
       if (situation.kind !== "already-moved") continue;
-      const movedFrom = retireLegacyFile(nemaHome, situation.account, source, { alreadyCopied: true });
+      // Several accounts of this kind could own the file: even when one holds these bytes, retiring through
+      // it could adopt a changed legacy file into the wrong account, so the file is left alone.
+      const name = path.basename(legacyPath);
+      if (existing.file.accounts.filter((a) => takesLegacyFile(a, name, config)).length !== 1) continue;
+      // A busy auth.lock is not waited for: this runs on a settings request, and the next write tries again.
+      const movedFrom = retireLegacyFile(nemaHome, situation.account, source, { alreadyCopied: true, lockTimeoutMs: 0 });
       if (movedFrom !== null) retired.push(movedFrom);
     }
     return retired;
-  });
+    // Tried once: a settings request must not wait on another writer, and the next write tries again.
+  }, { waitMs: 0 });
 }
 
 /** The adapter and auth mode of each legacy credential file (see `legacyFileName`). */
