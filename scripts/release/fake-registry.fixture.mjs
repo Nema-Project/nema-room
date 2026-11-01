@@ -101,7 +101,12 @@ export function fakeFetch(w) {
     let match;
     if (url === 'https://registry.npmjs.org/@nema-project/nema') {
       // The packument's `time` map: promote reads it to know whether a provenance 404 can still be lag.
-      const time = w.publishedAt === undefined ? {} : { [version]: new Date(w.publishedAt).toISOString() };
+      // `publishedAt` is one epoch-ms value applied to every held version, or a map keyed by version.
+      const stamp = (published) => {
+        const at = typeof w.publishedAt === 'object' && w.publishedAt !== null ? w.publishedAt[published] : w.publishedAt;
+        return at === undefined ? null : new Date(at).toISOString();
+      };
+      const time = Object.fromEntries(Object.keys(w.npm).map((published) => [published, stamp(published)]).filter(([, at]) => at !== null));
       return response(200, { name: '@nema-project/nema', 'dist-tags': w.distTags, versions: {}, time });
     }
     if ((match = /^https:\/\/registry\.npmjs\.org\/-\/package\/@nema-project\/nema\/dist-tags$/.exec(url))) return response(200, w.distTags);
