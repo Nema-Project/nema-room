@@ -54,6 +54,20 @@ test("a trusted repository's Skills come with their repo id and prefix", async (
   ]);
 });
 
+test("catalog rows carry diagnostic codes and no paths or file contents", async () => {
+  managedSkill(nemaHome, "notes", { "SKILL.md": skillText("other", "Notes.") });
+  managedSkill(nemaHome, "tdd", { "SKILL.md": skillText("tdd", "Test first.") });
+  const out = await call({});
+  expect(out).toMatchObject({ ok: true });
+  const rows = (out as { result: Array<Record<string, unknown>> }).result;
+  const notes = rows.find((row) => row.id === "notes");
+  const tdd = rows.find((row) => row.id === "tdd");
+  expect(notes?.diagnostics).toEqual(["name-folder-mismatch"]);
+  expect(tdd?.diagnostics).toEqual([]);
+  expect(JSON.stringify(notes?.diagnostics)).not.toContain("SKILL.md");
+  expect(JSON.stringify(notes?.diagnostics)).not.toContain(nemaHome);
+});
+
 test("malformed params are an error", async () => {
   expect(await call({ projectSkills: "x" })).toMatchObject({ ok: false, error: "invalid skills params" });
   expect(await call({ projectSkills: [{ repoId: "r" }] })).toMatchObject({ ok: false, error: "invalid skills params" });

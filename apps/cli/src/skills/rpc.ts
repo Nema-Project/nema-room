@@ -11,6 +11,8 @@ export type SkillCatalogRow = {
   command: string;
   invocation: SkillUsage["invocation"];
   runtimes: SkillUsage["runtimes"];
+  /** Diagnostic codes only (`name-folder-mismatch`, …). No paths and no file contents. */
+  diagnostics: string[];
   repoId: string | null;
 };
 
@@ -43,6 +45,7 @@ export async function skillCatalog(o: { nemaHome: string; projectSkills: Project
       command: skillSlashCommand(skill.id),
       invocation: skill.usage.invocation,
       runtimes: skill.usage.runtimes,
+      diagnostics: skill.usage.diagnostics,
       repoId: skill.repo?.repoId ?? null,
     }));
 }

@@ -1,0 +1,2 @@
+- The Plugins page and the `/` menu say when a skill is missing something under a runtime, or when its name does not match its folder. The Installed section counts rows that cannot be used and can filter to them.
+- Saving an edit that drops mentions shows how many were removed, without blocking the save.

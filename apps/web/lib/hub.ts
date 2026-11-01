@@ -1,4 +1,4 @@
-import { AttachmentCapabilitiesSchema, type AttachmentCapabilities, type AttachmentView, type ExtensionRecord, type MessageMention, type SkillDiscovery, type SkillInstallJob, type SkillSourcePreview } from "@nema/shared";
+import { AttachmentCapabilitiesSchema, type AttachmentCapabilities, type AttachmentView, type ExtensionRecord, type MessageMention, type SkillDiscovery, type SkillInstallJob, type SkillSourcePreview, type SkillUsage } from "@nema/shared";
 import type { McpConfig, McpConnection } from "@nema/shared";
 import type {
   EntryListItem,
@@ -165,7 +165,7 @@ export const updateRepo = (id: string, repoId: string, patch: { label?: string; 
 export const searchMentionContext = (id: string, q: string) =>
   request<import("./mentions").MentionContextResponse>(`${w(id)}/mention-context?q=${encodeURIComponent(q)}`);
 export const listSkills = (id: string) =>
-  request<{ supported: boolean; skills: Array<{ id: string; name: string; description: string; command: string; invocation: string; repoId: string | null }> }>(`${w(id)}/skills`);
+  request<{ supported: boolean; skills: Array<{ id: string; name: string; description: string; command: string; invocation: string; repoId: string | null; runtimes?: SkillUsage["runtimes"]; diagnostics?: string[] }> }>(`${w(id)}/skills`);
 export const unbindRepo = (id: string, repoId: string) => request<void>(`${w(id)}/repos/${encodeURIComponent(repoId)}`, { method: "DELETE" });
 export const listWorkspacePlugins = (id: string) => request<WorkspacePlugin[]>(`${w(id)}/plugins`);
 export const updateWorkspacePlugin = (id: string, pluginId: string, patch: { enabled?: boolean; disabledFunctions?: string[]; settings?: Record<string, unknown> }) =>

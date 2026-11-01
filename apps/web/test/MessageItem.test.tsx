@@ -393,6 +393,35 @@ describe("MessageItem attachments", () => {
   });
 });
 
+describe("editing mentions", () => {
+  const user = (p: Partial<Message>) => msg({ role: "user", ...p });
+  const mention = { type: "entry" as const, id: "D-12", text: "[D-12]" };
+  const show = (m: Message) => render(<I18nProvider><MessageItem message={m} /></I18nProvider>);
+
+  it("says how many mentions an edit dropped, and still saves", async () => {
+    vi.mocked(hub.editMessage).mockResolvedValue({ message: user({ content: "plain" }) } as never);
+    show(user({ content: "see [D-12]", meta: { mentions: [mention] } }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const box = screen.getByRole("textbox");
+    await userEvent.clear(box);
+    await userEvent.type(box, "plain");
+    expect(screen.queryByText("Removed 1 stale mention")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Removed 1 stale mention")).toBeTruthy();
+    expect(hub.editMessage).toHaveBeenCalledWith("w1", "m1", "plain");
+  });
+
+  it("stays quiet when the edit keeps every mention", async () => {
+    vi.mocked(hub.editMessage).mockResolvedValue({ message: user({ content: "see [D-12] please", meta: { mentions: [mention] } }) } as never);
+    show(user({ content: "see [D-12]", meta: { mentions: [mention] } }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await userEvent.type(screen.getByRole("textbox"), " please");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(hub.editMessage).toHaveBeenCalled());
+    expect(screen.queryByText(/stale mention/)).toBeNull();
+  });
+});
+
 describe("the route line", () => {
   const withRoute = (route: unknown) => msg({ meta: { changes: [], askedQuestion: null, route } as never });
   const route = {

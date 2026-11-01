@@ -13,6 +13,7 @@ import { groupCandidates, mentionToken, syncMentions, type MentionCandidate, typ
 import { searchMentionContext } from "@/lib/hub";
 import { useAccounts } from "@/lib/useAccounts";
 import { useSkillRows } from "@/lib/skillMenu";
+import { skillLimitLines } from "@/lib/skillLimits";
 import { useT } from "@/lib/i18n";
 import type { Message } from "@/lib/types";
 
@@ -358,7 +359,9 @@ export function Composer({
       )}
       {menuOpen && (
         <div className="cmdmenu" id="slash-commands" role="listbox" aria-label={t("cmd.menu")}>
-          {matches.map((item, i) => (
+          {matches.map((item, i) => {
+            const limits = item.skill ? skillLimitLines(item.skill, t) : [];
+            return (
             <Fragment key={item.id}>
             {item.skill && !matches[i - 1]?.skill && (
               <div className="cmdgroup" role="presentation">
@@ -370,16 +373,18 @@ export function Composer({
               role="option"
               id={`slash-${item.id}`}
               aria-selected={i === highlighted}
-              className={i === highlighted ? "on" : ""}
+              className={[i === highlighted ? "on" : "", limits.length > 0 ? "has-limits" : ""].filter(Boolean).join(" ")}
               onMouseDown={(e) => e.preventDefault()}
               onMouseEnter={() => setActive(i)}
               onClick={() => choose(item)}
             >
               <span className="name">{item.skill ? item.skill.command : `/${item.id}`}</span>
               <span className="hint">{item.skill ? item.hint : t(item.hint)}</span>
+              {limits.length > 0 && <span className="limits">{limits.join(" · ")}</span>}
             </button>
             </Fragment>
-          ))}
+            );
+          })}
         </div>
       )}
       <textarea

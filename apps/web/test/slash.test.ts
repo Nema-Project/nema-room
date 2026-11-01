@@ -45,6 +45,15 @@ describe("Skills in the slash menu", () => {
     expect(ids(matchingItems("ship", { atMessageStart: true, skills, threadMode: false }))).toEqual(["skill:web:deploy"]);
   });
 
+  it("keeps runtime gaps and diagnostics on the skill row", () => {
+    const [row] = matchingItems("note", {
+      atMessageStart: true,
+      skills: [{ id: "notes", description: "Notes.", command: "/notes", runtimes: [{ adapter: "claude-code", missing: ["scripts"] }], diagnostics: ["name-folder-mismatch"] }],
+      threadMode: false,
+    });
+    expect(row?.skill).toMatchObject({ runtimes: [{ adapter: "claude-code", missing: ["scripts"] }], diagnostics: ["name-folder-mismatch"] });
+  });
+
   it("a Skill row inserts its command and a space", () => {
     const [row] = matchingItems("thread", { atMessageStart: true, skills, threadMode: true });
     expect(row).toMatchObject({ insert: "/skill:thread ", skill: { id: "thread" } });

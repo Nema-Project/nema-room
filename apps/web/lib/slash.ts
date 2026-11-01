@@ -9,11 +9,23 @@ export type SlashItem = {
   hint: string;
   insert: string;
   type?: string;
-  skill?: { id: string; description: string; command: string };
+  skill?: {
+    id: string;
+    description: string;
+    command: string;
+    runtimes?: ReadonlyArray<{ adapter: string; missing?: readonly string[] }>;
+    diagnostics?: readonly string[];
+  };
 };
 
-/** A Skill the composer can offer (`GET /api/workspaces/:id/skills`). */
-export type SkillRow = { id: string; description: string; command: string };
+/** A Skill the composer can offer (`GET /api/workspaces/:id/skills`). Older daemons omit the last two fields. */
+export type SkillRow = {
+  id: string;
+  description: string;
+  command: string;
+  runtimes?: ReadonlyArray<{ adapter: string; missing?: readonly string[] }>;
+  diagnostics?: readonly string[];
+};
 
 export const SLASH_ITEMS: readonly SlashItem[] = [
   { id: "thread", hint: "cmd.thread", insert: "cmd.thread.insert" },
@@ -58,7 +70,12 @@ export function matchingItems(query: string, o: { atMessageStart: boolean; skill
   const q = query.toLowerCase();
   const skills = o.skills
     .filter((s) => s.command.slice(1).startsWith(q) || s.id.startsWith(q) || s.description.toLowerCase().includes(q))
-    .map((s) => ({ id: `skill:${s.id}`, hint: s.description, insert: `${s.command} `, skill: { id: s.id, description: s.description, command: s.command } }));
+    .map((s) => ({
+      id: `skill:${s.id}`,
+      hint: s.description,
+      insert: `${s.command} `,
+      skill: { id: s.id, description: s.description, command: s.command, runtimes: s.runtimes, diagnostics: s.diagnostics },
+    }));
   return [...commands, ...skills];
 }
 
