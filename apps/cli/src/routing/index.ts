@@ -3,6 +3,7 @@ import type { NemaConfig } from "../config.js";
 import type { Account } from "../accounts/schema.js";
 import type { CredentialState } from "../accounts/credentials.js";
 import type { Cooldowns } from "./cooldown.js";
+import { resolveAdapterName } from "../daemon/runner.js";
 import { computeCandidates, type Excluded } from "./candidates.js";
 import { taskNeeds } from "./capabilities.js";
 
@@ -64,8 +65,9 @@ function choose(task: TaskAssign, bindings: Record<string, string>): { kind: "ac
 
 export function resolveRoute(req: RouteRequest): RouteResult {
   const { task } = req;
-  // The runner has already resolved "auto" to the configured adapter; this is that adapter name.
-  const adapter = req.config.adapter;
+  // The same rule the runner uses to pick the adapter, called rather than copied: a task that names one
+  // explicitly must be routed among that adapter's accounts, and "auto" means the configured one.
+  const adapter = resolveAdapterName(task.adapter, req.config) as Account["adapter"];
   const needs = taskNeeds(task);
 
   // Computed once for every path: the details panel shows why the other accounts were not used, whether the

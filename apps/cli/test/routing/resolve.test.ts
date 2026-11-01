@@ -234,3 +234,27 @@ describe("routeDecision", () => {
     expect(routeDecision(r, "m")).toMatchObject({ accountId: IMPLICIT_ACCOUNT_ID, reason: "default", mode: "manual" });
   });
 });
+
+describe("the adapter a task runs as", () => {
+  test("a task naming claude-code is routed among claude-code accounts", () => {
+    const claude = account({ id: "acct_dddddddddd", name: "Claude", adapter: "claude-code", authMode: undefined, baseUrl: undefined });
+    const r = resolve({ accounts: [FIRST, claude], task: { adapter: "claude-code", accountId: claude.id } });
+    expect(r).toMatchObject({ ok: true, reason: "user_message" });
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.account.id).toBe(claude.id);
+  });
+
+  test("\"auto\" means the configured adapter, so a claude account is not a candidate in a codex task", () => {
+    const claude = account({ id: "acct_dddddddddd", name: "Claude", adapter: "claude-code", authMode: undefined, baseUrl: undefined });
+    const r = resolve({ accounts: [claude], task: { adapter: "auto" } });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("expected failure");
+    expect(r.failure).toBe("no_account");
+    expect(r.error).toContain("codex-direct");
+  });
+
+  test("the retired codex CLI name still routes to codex-direct", () => {
+    const r = resolve({ task: { adapter: "codex" } });
+    expect(r).toMatchObject({ ok: true, reason: "default" });
+  });
+});
