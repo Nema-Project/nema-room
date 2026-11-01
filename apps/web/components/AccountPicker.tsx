@@ -20,7 +20,6 @@ import { useT } from "@/lib/i18n";
 export type AccountPickerProps = {
   scope: "message" | "thread" | "workspace";
   accounts: readonly AccountView[];
-  bindings: Record<string, string>;
   value: string | null;
   onChange: (id: string | null) => void;
   /** The thread's id, for `scope="thread"`. */
@@ -32,15 +31,16 @@ export type AccountPickerProps = {
   disabled?: boolean;
 };
 
-export function AccountPicker({ scope, accounts, bindings, value, onChange, threadId, workspaceId, supported = true, disabled = false }: AccountPickerProps) {
+export function AccountPicker({ scope, accounts, value, onChange, threadId, workspaceId, supported = true, disabled = false }: AccountPickerProps) {
   const t = useT();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(false);
 
   if (!supported) return null;
-  // One account and no stored choice: there is no decision to make, and a control that cannot change
-  // anything is noise on a page a single-account user never asked to complicate.
-  if (!pickerHasChoices(accounts, bindings)) return null;
+  // One account and nothing chosen here: there is no decision to make, and a control that cannot change
+  // anything is noise on a page a single-account user never asked to complicate. The check is this
+  // picker's own value, so a binding on one thread does not put a picker on every other scope.
+  if (!pickerHasChoices(accounts, value)) return null;
 
   const scopeId = scope === "thread" ? threadId : scope === "workspace" ? workspaceId : undefined;
   const stored = scope !== "message";

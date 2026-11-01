@@ -218,7 +218,6 @@ export function ThreadView({ workspaceId, threadId, active = true, floating = fa
         <AccountPicker
           scope="thread"
           accounts={accountsState.accounts}
-          bindings={accountsState.bindings}
           value={effectiveThreadAccount}
           onChange={(next) => { setThreadAccount(next); accountsState.reload(); }}
           threadId={threadId}

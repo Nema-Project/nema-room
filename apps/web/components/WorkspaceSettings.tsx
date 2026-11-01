@@ -69,7 +69,6 @@ export function WorkspaceSettings({ workspace, onUpdated, onClose }: WorkspaceSe
           <AccountPicker
             scope="workspace"
             accounts={accountsState.accounts}
-            bindings={accountsState.bindings}
             value={effectiveAccount}
             onChange={(next) => { setWorkspaceAccount(next); accountsState.reload(); }}
             workspaceId={workspace.id}

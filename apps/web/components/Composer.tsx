@@ -199,6 +199,7 @@ export function Composer({
     if (sending || tray.blocker || !messageHasBody(content, ids)) return;
     setSending(true);
     setError(null);
+    const chosen = accountId;
     try {
       const threadText = content.match(/^\/thread\s+([\s\S]+)$/);
       // With no choice the callback is invoked exactly as it was before accounts existed: three arguments,
@@ -219,6 +220,10 @@ export function Composer({
       sentChips.clear();
       // Text typed while the send was in flight stays: drop only what was sent.
       if (content !== "") setValue((cur) => (cur === sent ? "" : cur.startsWith(sent) ? cur.slice(sent.length).trimStart() : cur));
+      // The choice belonged to the message that just went (spec §1.2: "this message's account"), so the
+      // next one starts from the default again. A pick made while the send was in flight is left alone:
+      // it is the next message's choice, not this one's.
+      setAccountId((cur) => (cur === chosen ? null : cur));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e)); // keep the draft
     } finally {
@@ -419,7 +424,6 @@ export function Composer({
         <AccountPicker
           scope="message"
           accounts={accountsState.accounts}
-          bindings={accountsState.bindings}
           value={accountId}
           onChange={setAccountId}
           supported={accountsState.supported}
