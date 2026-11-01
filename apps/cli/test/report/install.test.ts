@@ -85,6 +85,7 @@ describe("nema report install", () => {
     const cfg = read(claudeSettings(s.home));
     expect(hookCommand(electron, ENTRY, "claude", "linux", true)).toBe(`ELECTRON_RUN_AS_NODE=1 ${electron} ${ENTRY} report hook --agent claude`);
     expect(cfg.hooks.Stop![0]!.hooks[0]!.command).toBe(hookCommand(electron, ENTRY, "claude", process.platform, true));
+    expect(cfg.hooks.SessionEnd![0]!.hooks[0]!.command).toBe(hookCommand(electron, ENTRY, "claude", process.platform, true));
     expect(migrateReportHooks({ home: s.home, nodeBin: electron, cliEntry: ENTRY, runAsNode: true })).toEqual([]);
   });
 

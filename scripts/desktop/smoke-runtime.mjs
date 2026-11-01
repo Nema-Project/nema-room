@@ -333,9 +333,14 @@ async function runSmoke(sourcePayload) {
     const copied = validatePayloadDirectory(install);
     if (!copied.manifest.node) {
       await mkdir(path.dirname(installed.electronPath), { recursive: true });
+      // A hard link shares the host Node inode. chmod would change that binary's mode.
+      let copiedStandIn = false;
       try { await link(process.execPath, installed.electronPath); }
-      catch { await copyFile(process.execPath, installed.electronPath); }
-      if (process.platform !== 'win32') await chmod(installed.electronPath, 0o755);
+      catch {
+        await copyFile(process.execPath, installed.electronPath);
+        copiedStandIn = true;
+      }
+      if (copiedStandIn && process.platform !== 'win32') await chmod(installed.electronPath, 0o755);
     }
     const node = copied.manifest.node ? path.join(install, ...copied.manifest.node.split('/')) : process.execPath;
     const env = {
