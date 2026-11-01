@@ -16,6 +16,7 @@
     "desktop:stage": "node scripts/desktop/stage-runtime.mjs",
     "desktop:make": "node scripts/desktop/make.mjs",
     "desktop:smoke": "node scripts/desktop/smoke-desktop.mjs",
+    "desktop:bench": "node scripts/desktop/bench-startup.mjs",
     "desktop:validate-release": "node scripts/desktop/validate-release.mjs",
     "desktop:collect-source-materials": "node scripts/desktop/collect-source-materials.mjs",
     "desktop:smoke-runtime": "node scripts/desktop/smoke-runtime.mjs",

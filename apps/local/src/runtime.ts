@@ -200,6 +200,8 @@ function childEnvironment(extra: Record<string, string>): NodeJS.ProcessEnv {
   // Git comes from the user's PATH: Nema runs the git they already use, with their credential helpers and SSH setup.
   env.PATH = process.env.PATH ?? process.env.Path;
   delete env.Path;
+  // The desktop startup bench times Windows ACL calls inside the core. Nothing else is copied from the parent.
+  if (process.env.NEMA_DESKTOP_BENCH === "1") env.NEMA_DESKTOP_BENCH = "1";
   return { ...env, ...extra };
 }
 

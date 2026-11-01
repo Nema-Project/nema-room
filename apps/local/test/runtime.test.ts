@@ -190,6 +190,29 @@ describe("managed local runtime", () => {
     expect(await discoverInstance(home)).toBeNull();
   });
 
+  it("passes the desktop bench flag into the managed core only while the bench is on", async () => {
+    const home = join(tempDir("nema-home-"), "bench-flag");
+    const assetsDir = testAssets();
+    mkdirSync(home, { recursive: true });
+    const seen: Array<NodeJS.ProcessEnv | undefined> = [];
+    setEnsureSpawnerForTests((spec) => {
+      seen.push(spec.env);
+      throw new Error("bench-flag-captured");
+    });
+    const previous = process.env.NEMA_DESKTOP_BENCH;
+    try {
+      process.env.NEMA_DESKTOP_BENCH = "1";
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/bench-flag-captured/);
+      delete process.env.NEMA_DESKTOP_BENCH;
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/bench-flag-captured/);
+    } finally {
+      if (previous === undefined) delete process.env.NEMA_DESKTOP_BENCH;
+      else process.env.NEMA_DESKTOP_BENCH = previous;
+    }
+    expect(seen[0]?.NEMA_DESKTOP_BENCH).toBe("1");
+    expect(seen[1]?.NEMA_DESKTOP_BENCH).toBeUndefined();
+  });
+
   it("retries only a spawned owner's control timeout while authenticated readiness is still starting", async () => {
     const home = join(tempDir("nema-home-"), "delayed-authenticated-owner");
     const assetsDir = testAssets();
