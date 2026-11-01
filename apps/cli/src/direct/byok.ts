@@ -1,12 +1,14 @@
 import path from "node:path";
 import { readSecretLine, readStdinLine, saveSecretLine, SecretFileError } from "../secrets/file.js";
+import { MISSING_BYOK_KEY } from "../routing/messages.js";
 import type { Out } from "./authCommands.js";
 import type { StoredAuth } from "./authStore.js";
 import type { TokenSource } from "./transport.js";
 
 const INVALID_KEY = "key 必须是一行非空文本";
 const SYMLINK_KEY = "BYOK key 文件是符号链接，已拒绝。";
-const MISSING_KEY = "没有 BYOK API key。请把钥匙从标准输入交给 nema auth byok。";
+/** Shared with the routing layer, so the sentence a run prints and the one the settings page shows agree. */
+const MISSING_KEY = MISSING_BYOK_KEY;
 const KEY_MODE = "BYOK key 文件权限必须是 0600";
 const INVALID_STORED_KEY = "BYOK key 文件内容无效。请重新把钥匙从标准输入交给 nema auth byok。";
 

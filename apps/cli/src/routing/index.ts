@@ -3,9 +3,8 @@ import type { NemaConfig } from "../config.js";
 import { IMPLICIT_ACCOUNT_ID, type Account } from "../accounts/schema.js";
 import type { CredentialState } from "../accounts/credentials.js";
 import type { Cooldowns } from "./cooldown.js";
-import { NOT_LOGGED_IN } from "../direct/adapter.js";
 import { UNUSABLE_FILE_MESSAGE } from "../direct/authStore.js";
-import { MISSING_TOKEN } from "../claude/token.js";
+import { BYOK_MODEL_REQUIRED, MISSING_BYOK_KEY, MISSING_CLAUDE_TOKEN, MISSING_CODEX_LOGIN, NOT_LOGGED_IN } from "./messages.js";
 import { computeCandidates, type Excluded } from "./candidates.js";
 import { taskNeeds } from "./capabilities.js";
 
@@ -136,9 +135,9 @@ function credentialMessage(account: Account, state: CredentialState): string {
     // The 0.2.0 sentence for a login that is there but cannot be trusted, verbatim: it names the one thing
     // to run, and this account's file is the file that command rewrites.
     if (state === "unusable") return UNUSABLE_FILE_MESSAGE;
-    if (account.adapter === "claude-code") return MISSING_TOKEN;
-    if (account.authMode === "byok") return "没有 BYOK API key。请把钥匙从标准输入交给 nema auth byok。";
-    if (account.authMode === "compat") return "没有可用的 Codex 登录。请先运行 codex login。";
+    if (account.adapter === "claude-code") return MISSING_CLAUDE_TOKEN;
+    if (account.authMode === "byok") return MISSING_BYOK_KEY;
+    if (account.authMode === "compat") return MISSING_CODEX_LOGIN;
     return NOT_LOGGED_IN;
   }
   return state === "unusable"
@@ -149,7 +148,7 @@ function credentialMessage(account: Account, state: CredentialState): string {
 /** The same for a missing model: the old command for the synthesized account, the settings page otherwise. */
 function modelMessage(account: Account): string {
   if (account.id === IMPLICIT_ACCOUNT_ID && account.adapter === "codex-direct" && account.authMode === "byok") {
-    return "BYOK 需要指定模型，请运行 nema config set model <名称>";
+    return BYOK_MODEL_REQUIRED;
   }
   return `${label(account)} 没有默认模型。请在设置页为它指定一个模型。`;
 }

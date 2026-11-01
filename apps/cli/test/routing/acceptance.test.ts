@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { TaskAssign } from "@nema/shared";
 import { CodexDirectAdapter } from "../../src/direct/adapter.js";
+import type { Account } from "../../src/accounts/schema.js";
 import { saveConfig } from "../../src/config.js";
 import { json, sse, startFakeResponsesServer, type FakeResponsesServer } from "../fixtures/fake-responses-server.js";
 
@@ -28,14 +29,14 @@ let hub: Server;
 let hubUrl: string;
 let hubCalls: { method?: string; url?: string }[];
 
-const account = (p: Record<string, unknown>) => ({
+const account = (p: Partial<Account> & { id: string }): Account => ({
   name: "A", enabled: true, adapter: "codex-direct", authMode: "byok", model: "model-a",
   costTier: "standard", order: 0, createdAt: "2026-10-31T00:00:00.000Z", ...p,
 });
-const ONE = account({ id: "acct_aaaaaaaaaa", name: "First", baseUrl: "", model: "model-a", order: 0 });
-const TWO = account({ id: "acct_bbbbbbbbbb", name: "Second", baseUrl: "", model: "model-b", order: 1 });
+const ONE = account({ id: "acct_aaaaaaaaaa", name: "First", baseUrl: "https://one.invalid/v1", model: "model-a", order: 0 });
+const TWO = account({ id: "acct_bbbbbbbbbb", name: "Second", baseUrl: "https://two.invalid/v1", model: "model-b", order: 1 });
 
-function setAccounts(accounts: unknown[] = [ONE, TWO], bindings: Record<string, string> = {}) {
+function setAccounts(accounts: Account[] = [ONE, TWO], bindings: Record<string, string> = {}) {
   writeFileSync(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts, bindings }, null, 2) + "\n", { mode: 0o600 });
 }
 function setKey(id: string, value: string) {

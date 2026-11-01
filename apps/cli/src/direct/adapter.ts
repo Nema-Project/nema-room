@@ -32,7 +32,7 @@ import {
 // codex-direct (spec 6.7): runs Nema's own tool loop in the daemon against the Responses API with the user's
 // Nema login. The model gets the 4 Room functions plus the task's plugin tools. Failures are reported, never retried via codex-cli.
 
-export const NOT_LOGGED_IN = "未登录直连 Codex，请在终端运行 nema auth login";
+export { NOT_LOGGED_IN } from "../routing/messages.js";
 export const RUN_TIMEOUT_MESSAGE = "Codex 直连运行超时";
 export const DIRECT_USER_TEXT = "请按上面的指令处理本次用户消息，并只通过提供的函数读写项目知识。";
 export const FALLBACK_MODEL = "gpt-5.5";

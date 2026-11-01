@@ -18,10 +18,13 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import type { Out } from "../direct/authCommands.js";
 import { openPrivateFile, privateModeMatches, protectPrivatePath } from "../secrets/permissions.js";
+// One sentence for this, shared with the routing layer's account messages: two copies drift apart the moment
+// one of them is edited.
+import { MISSING_CLAUDE_TOKEN } from "../routing/messages.js";
 
 const INVALID_TOKEN = "token 必须是一行非空文本";
 const SYMLINK_TOKEN = "Claude Code token 文件是符号链接，已拒绝。";
-export const MISSING_TOKEN = "没有 Claude Code token。请运行 claude setup-token，再把令牌从标准输入交给 nema auth claude。";
+export const MISSING_TOKEN = MISSING_CLAUDE_TOKEN;
 const TOKEN_MODE = "Claude Code token 文件权限必须是 0600";
 
 export const claudeTokenPath = (nemaHome: string): string => path.join(nemaHome, "claude-code-token");
