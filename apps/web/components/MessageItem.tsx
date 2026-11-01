@@ -112,7 +112,16 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
 export function RouteLine({ route }: { route: RouteDecision }) {
   const t = useT();
   const [open, setOpen] = useState(false);
-  const reason = t(`route.reason.${route.reason}`);
+  // When the task moved, the line says so in the user's terms — "after OpenRouter 免费 was rate limited" — because
+  // "automatic, after another account hit its limit" leaves out the one fact the reader came for: which account
+  // was passed over. The reason code alone is enough only when nothing moved.
+  const moved = route.attempts !== undefined && route.attempts.length > 0;
+  const reason = moved
+    ? t("route.reason.switched", {
+      accounts: route.attempts!.map((a) => a.accountName).join(t("route.reason.separator")),
+      failure: t(`route.failure.${route.attempts!.at(-1)!.failure}`),
+    })
+    : t(`route.reason.${route.reason}`);
   return (
     <div className="route" data-testid="route-line">
       <span>
@@ -138,7 +147,7 @@ export function RouteLine({ route }: { route: RouteDecision }) {
                 {route.attempts.map((a, i) => (
                   <li key={`${a.accountId}-${i}`}>
                     {a.accountName}
-                    {a.model ? ` · ${a.model}` : ""} — {a.failure}
+                    {a.model ? ` · ${a.model}` : ""} — {t(`route.failure.${a.failure}`)}
                   </li>
                 ))}
               </ul>
