@@ -4,15 +4,22 @@ import { McpStdioTransport } from "../../src/extensions/mcp/stdioTransport.js";
 
 const posix = process.platform !== "win32";
 
+/** Sent once the fake server's handlers are in place, so a stop never races its setup. */
+const READY = "process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'ready' }) + '\\n');";
 /** A server that quits when its input closes, as the MCP stdio shutdown expects. */
-const EXITS_ON_EOF = "process.stdin.on('end', () => process.exit(0)); process.stdin.resume();";
+const EXITS_ON_EOF = `process.stdin.on('end', () => process.exit(0)); process.stdin.resume(); ${READY}`;
 /** A server that ignores both the closed input and SIGTERM, so only SIGKILL ends it. */
-const IGNORES_EOF = "process.on('SIGTERM', () => {}); process.stdin.resume(); setInterval(() => {}, 1000);";
+const IGNORES_EOF = `process.on('SIGTERM', () => {}); process.stdin.resume(); setInterval(() => {}, 1000); ${READY}`;
 
 type Sent = { signal: string; inputEnded: boolean };
 
-function transportFor(script: string): McpStdioTransport {
-  return new McpStdioTransport({ bin: process.execPath, args: ["-e", script], env: {}, cwd: process.cwd() });
+/** Starts the fake server and resolves once it reported that its handlers are installed. */
+async function started(script: string): Promise<McpStdioTransport> {
+  const transport = new McpStdioTransport({ bin: process.execPath, args: ["-e", script], env: {}, cwd: process.cwd() });
+  const ready = new Promise<void>((done) => { transport.onmessage = () => done(); });
+  await transport.start();
+  await ready;
+  return transport;
 }
 
 function childOf(transport: McpStdioTransport): ChildProcess {
@@ -41,8 +48,7 @@ afterEach(() => {
 });
 
 test("a server that exits when its input closes is never sent SIGTERM or SIGKILL", async () => {
-  const transport = transportFor(EXITS_ON_EOF);
-  await transport.start();
+  const transport = await started(EXITS_ON_EOF);
   const child = childOf(transport);
   const sent = recordSignals(child);
   await transport.close();
@@ -54,8 +60,7 @@ test("a server that exits when its input closes is never sent SIGTERM or SIGKILL
 });
 
 test("a server that ignores its closed input is sent SIGTERM only after the input closed, then SIGKILL", async () => {
-  const transport = transportFor(IGNORES_EOF);
-  await transport.start();
+  const transport = await started(IGNORES_EOF);
   const child = childOf(transport);
   const sent = recordSignals(child);
   const began = Date.now();

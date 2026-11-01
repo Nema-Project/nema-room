@@ -27,13 +27,18 @@ export type McpStdioLaunch = {
   leftover?: { record(pid: number): void; clear(pid: number): void };
 };
 
-/** Ends the server's input and waits up to `ms` for it to exit on its own. True when it did. */
-async function endInput(stdin: Writable | null | undefined, exited: Promise<unknown>, ms: number): Promise<boolean> {
-  try { stdin?.end(); } catch { /* the pipe is already gone; the signals that follow still apply */ }
+/** Waits up to `ms` for `settled`. True when it settled in time. */
+async function within(settled: Promise<unknown>, ms: number): Promise<boolean> {
   let timer: NodeJS.Timeout | undefined;
   const late = new Promise<false>((done) => { timer = setTimeout(() => done(false), ms); timer.unref(); });
-  try { return await Promise.race([exited.then(() => true as const), late]); }
+  try { return await Promise.race([settled.then(() => true as const), late]); }
   finally { clearTimeout(timer); }
+}
+
+/** Ends the server's input and waits up to `ms` for it to exit on its own. True when it did. */
+function endInput(stdin: Writable | null | undefined, exited: Promise<unknown>, ms: number): Promise<boolean> {
+  try { stdin?.end(); } catch { /* the pipe is already gone; the signals that follow still apply */ }
+  return within(exited, ms);
 }
 
 function signalGroup(pid: number | undefined, signal: NodeJS.Signals): void {
@@ -181,7 +186,8 @@ export class McpStdioTransport implements Transport {
     // `child` is set only after a successful spawn, so a command that failed to start is never waited on.
     const pid = child.pid;
     const running = () => child.exitCode === null && child.signalCode === null;
-    if (running()) await endInput(child.stdin, this.exited, INPUT_GRACE_MS);
+    const wasRunning = running();
+    if (wasRunning) await endInput(child.stdin, this.exited, INPUT_GRACE_MS);
     if (running()) {
       const timer = setTimeout(() => {
         if (process.platform === "win32") child.kill("SIGKILL");
@@ -195,5 +201,8 @@ export class McpStdioTransport implements Transport {
     }
     // The leader is gone; anything still in its group goes now.
     if (process.platform !== "win32") signalGroup(pid, "SIGKILL");
+    // A leader that exited on EOF while a descendant still held its output: give the pipes a bounded
+    // moment to close, so `onclose` has run by the time a stop returns.
+    if (wasRunning) await within(this.exited, KILL_GRACE_MS);
   }
 }
