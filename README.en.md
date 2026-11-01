@@ -67,7 +67,7 @@ See the original statement, why it was recorded, and whether it came from you or
 | Linux / Intel Mac | Use [Web / Compose](#web--compose) |
 
 1. Install [Git 2.31 or later](https://git-scm.com/downloads), then install and open Nema Room. Node and the database are bundled; Docker is not required.
-2. Open **App settings → Model** and connect a ChatGPT subscription, a Claude subscription, or a Responses API-compatible API key.
+2. Open **App settings → Model** and connect a ChatGPT subscription, a Claude subscription, or a Responses API-compatible API key. More accounts can be added at the bottom of the same page; see [several accounts and automatic routing](docs/guide.en.md#accounts).
 3. Create a workspace and start a discussion. Bind a local repository when you want code context.
 
 > **Preview release.** Windows builds are unsigned; macOS builds are ad-hoc signed and not notarized. Verify downloads against the release checksums. The app links to newer releases but never installs them. Back up `~/.nema/desktop` before upgrading. See the [desktop guide](docs/guide.en.md#desktop) for first launch, the portable ZIP, and limitations.

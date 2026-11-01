@@ -32,6 +32,16 @@ English: this repository is public and desktop preview releases are available. R
 
 模型服务商的账号、额度、账单和条款不在本仓库的处理范围内。
 
+### 已知边界：聊天附件不做恶意内容扫描
+
+附件只检查类型和大小，**不扫描病毒或恶意内容**。上传一个带恶意内容的 PDF 或图片本身不算漏洞。现有的缓解措施如下：
+
+- 类型按文件开头的字节判断，扩展名必须与内容一致。只接受 PNG、JPEG、WebP、GIF、PDF 和严格 UTF-8 文本；SVG、Office 文档、压缩包等一律拒收（`apps/hub/src/attachments.ts`）。单个文件和每个任务都有大小上限，见[使用指南](docs/guide.zh.md#attachments)。
+- 下载时带 `Content-Disposition: attachment`、`X-Content-Type-Options: nosniff`、`Content-Security-Policy: sandbox; default-src 'none'`；文本文件一律以 `text/plain` 返回，HTML 或类似 SVG 的内容不会在页面里渲染（`apps/hub/src/attachmentRoutes.ts`）。
+- Nema 不执行附件，只把它原样交给所选的模型服务商。服务商如何解析文件由服务商决定。
+
+如果能演示附件绕过这些检查（例如被当作网页渲染、写到预定位置之外，或在本机被执行），请按漏洞报告。
+
 ## 支持的版本
 
 当前支持桌面预览版本、npm 包 `@nema-project/nema`（命令名 `nema`，与同一 tag 的桌面版版本号一致），以及 `main` 源码的 Web / Compose 运行方式。修复首先进入 `main`，随后在新的桌面版本和对应的 `@nema-project/nema` 版本中分发；不承诺对历史发布系列回移修复，也没有独立的安全维护分支。

@@ -222,6 +222,30 @@ node apps/cli/dist/index.js auth claude
 
 Nema does not silently switch runtimes after authentication or model failures. `config get` and `auth status` show configuration and login status without printing tokens.
 
+<a id="accounts"></a>
+
+### Several accounts and automatic routing
+
+One runtime can have several accounts: for example two API keys, or a ChatGPT subscription plus an OpenRouter key. Each account is one credential, one endpoint and one default model. Manage them under **Accounts** at the bottom of **App settings → Model** in the desktop app. The Web / Compose pages do not have this section.
+
+- **Where they live:** the account list and the workspace and thread choices are in `accounts.json` in the Nema home directory (a choice on a single message is recorded with that task only, not in this file), and credentials are in `secrets/accounts/<account id>/` (the desktop app's home is `~/.nema/desktop`). They get the same protection as other credentials: `0600` on macOS/Linux, a private ACL on Windows. Neither goes into the database or to the hub. An "Existing Codex login" account stores no credential; it reads `~/.codex/auth.json` and Nema never changes that file.
+- **With one account:** the list shows a single **Current setup** row, which is your existing model setup, and no account picker appears anywhere. The first time you add or change an account, the old single credential moves into that account's directory.
+- **Deleting:** an account that a workspace or thread still selects cannot be deleted; change those choices first. The last enabled account cannot be deleted or disabled. Deleting removes the account's credential directory. An "Existing Codex login" account has none, and `~/.codex` is left alone.
+
+**Which account runs a task:** the composer, the thread title bar and the workspace settings each have an account picker. Precedence: this message > thread > workspace > global default. The global default is the first enabled account in the list for the current runtime. The empty choice reads **Follow the workspace** for a message or thread and **Global default** for a workspace. An account you name still runs when it is disabled; disabling only removes it from the default and from automatic choice. If the account you name does not exist, belongs to another runtime, or has no usable credential or model, the task fails before any request is sent and says why; it does not fall back to the default account. The same applies when `accounts.json` cannot be read (corrupt, permissions too open, or a symlink): the task fails instead of falling back to the old single credential. The reply shows which account and model ran it, and why that account was chosen.
+
+**Automatic routing** is off by default. Turning on **Automatic routing** in the account settings adds **Automatic** to the workspace, thread and message pickers; the switch alone changes no existing choice. A task set to Automatic picks an account when it starts, by your order and then by cost tier (Light → Standard → Heavy). After that:
+
+- **It switches accounts when** the current one is rate-limited (429), out of quota, gets a 5xx from the provider, or the provider says the context is too long. The task moves to the next candidate, the switch is written into the task progress, and the reply lists the accounts tried and why they failed. A rate-limited account is skipped for automatic choice for 1 minute and one that got a 5xx for 30 seconds; an out-of-quota one is skipped until the quota reset time the provider gave, or 15 minutes when it gave none. An HTTP `Retry-After` on a rate limit is not read yet. After a switch, the reasoning produced under the previous account is no longer sent to the model.
+- **It does not switch on** authentication failures, content-policy refusals, malformed requests, once the answer has started streaming, or on a failure with no clear cause (for example a connection that still fails after one retry, with no status code). Switching there would hide a credential problem or work around the provider's policy.
+- **Only Nema-direct accounts (ChatGPT subscription, Existing Codex login, API key) switch mid-run.** A Claude Code account is chosen once when the task starts and is not switched.
+- **Cost tier** only orders candidates. Nema does not know real prices and does no budget control.
+- **Tasks with images or PDFs** only go to an account that can take that kind of file. The checks run in this order: the account's declaration for that model → **Declared capabilities** in the account settings → what the runtime itself passes on (Claude Code is unconfirmed for PDFs and counts as not declared). The settings page shows "not declared" and "not supported" separately. When no account fits, the task fails rather than run on one that may not support the file. An account you name yourself is not checked this way.
+
+**Rolling back to 0.2.0:** the older version does not read `accounts.json`. It runs from `config.json` alone and does not see the other accounts. If the old credential has already moved into an account directory, the older version shows you as signed out; sign in or save the key again there.
+
+Switching on real accounts (real rate limits, a spent quota) has no acceptance record yet. The current evidence is automated tests against fake providers.
+
 <a id="attachments"></a>
 
 ### Attachments by runtime
@@ -236,7 +260,7 @@ Images and PDFs are sent in the provider's own native form (`input_image` / `inp
 | BYOK with another `byokBaseUrl` (OpenRouter, self-hosted servers, …) | native | native | as text | Depends on the provider. Measured (2026-10-30, OpenRouter `:free` models): a vision model read the image; a text-only model got HTTP 404 from OpenRouter and Nema reported it as such. PDF not measured |
 | Codex login compatibility (`compat`) | native | native | as text | Non-public backend, no documentation. Not run against the real model |
 
-**When the provider refuses**: if the provider answers with a 4xx about the file, the task fails with "your provider or model rejected this PDF" (or "this image") and the provider's own text. Nema does not retry, fall back, or turn a PDF into text. When the provider points at one block, only that file is named; with several attachments and no such pointer, the message says the provider did not say which one. Any other error is shown as the provider worded it. A request carrying an image or PDF is not retried automatically after a 5xx or a dropped connection either, because the provider may already have processed and billed the file.
+**When the provider refuses**: if the provider answers with a 4xx about the file, the task fails with "your provider or model rejected this PDF" (or "this image") and the provider's own text. Nema does not retry, fall back, or turn a PDF into text. When the provider points at one block, only that file is named; with several attachments and no such pointer, the message says the provider did not say which one. Any other error is shown as the provider worded it. A request carrying an image or PDF is not retried automatically after a 5xx or a dropped connection either, because the provider may already have processed and billed the file. With automatic account routing on, a 5xx can still move the task to another account before any answer text has arrived, and that account receives the same file again.
 
 **Risk**: some compatible servers silently drop a file block they do not understand instead of rejecting it. The model then answers without having read the file, and Nema cannot tell. When it matters, try a small file first that contains a word found only in that file.
 
@@ -248,6 +272,7 @@ Run-by-run real-model results are in the [acceptance record](reviews/2026-10-30-
 
 - **Types** are decided from the file's content, and the extension must agree with it: PNG, JPEG, WebP, GIF, PDF, and strict UTF-8 text without NUL bytes. Text files also need one of these extensions, or none: txt, md, markdown, log, csv, tsv, json, jsonl, yaml, yml, toml, ini, xml, html, css, js, mjs, cjs, ts, tsx, jsx, py, rb, go, rs, java, kt, swift, c, h, cc, cpp, hpp, cs, php, sh, bash, zsh, sql, diff, patch. A file whose extension contradicts its content is refused, as are SVG, HEIC, Office documents, archives, audio, and video.
 - **Limits:** images 10 MB, PDFs 20 MB, text files 512 KB. One task takes at most 8 files and 32 MB in total, counting the message, the message it quotes, and the thread's first message. All attachments together are capped by `NEMA_ATTACHMENTS_MAX_BYTES` (default 2 GB), and an upload is refused when it would leave less than 1 GB free on the data disk. Files picked but never sent are removed after 24 hours.
+- **Metadata:** images and PDFs are sent as their original bytes, so metadata inside the file goes to the provider too, such as the location in a photo's EXIF data or a PDF's author. Remove it yourself before uploading if you do not want it sent.
 - **What the model is told:** attachments are data. What it reads from them is its inference, not something you said or decided, and quotes in its interpretation can only come from message text.
 - **Deleting** an attachment (Delete on its card, confirmed) removes the file at once and keeps a tombstone in the message with the name, type, size, sha256, and deletion time. A file that disappeared from disk shows as missing.
 
