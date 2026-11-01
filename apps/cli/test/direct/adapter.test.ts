@@ -987,15 +987,22 @@ describe("automatic routing (S4)", () => {
 
   test("a completed write is not followed by another account", async () => {
     // upsert_entry already created an entry. A later rate limit must not move the task: the next account
-    // would see the call and can emit it again, and a body without id creates a second entry.
+    // would see the call and can emit it again, and a body without id creates a second entry. The account
+    // is still cooled, so the following task does not start on it.
+    const kept = auto();
     server.responses(
       stream([fcItem("upsert_entry", { kind: "requirement", title: "t", body: "b", reason: "r", sourceMessages: ["m1"] }, "c1")]),
       json(429, { error: { code: "rate_limit_exceeded" } }),
     );
-    const { result } = await run(auto(), { ...task(), routing: "auto" });
+    const { result } = await run(kept, { ...task(), routing: "auto" });
     expect(result).toMatchObject({ ok: false });
     const keys = server.requests.filter((r) => r.url === "/v1/responses").map((r) => r.headers.authorization);
     expect(keys).toEqual(["Bearer key-of-a", "Bearer key-of-a"]);
+
+    server.responses(stream([msgItem("from b")]));
+    const second = await run(kept, { ...task(), routing: "auto" });
+    expect(second.result).toMatchObject({ ok: true, reply: "from b" });
+    expect(server.requests.filter((r) => r.url === "/v1/responses").at(-1)!.headers.authorization).toBe("Bearer key-of-b");
   });
 
   test("a read-only tool still allows a later failure to switch accounts", async () => {

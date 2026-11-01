@@ -257,11 +257,19 @@ class AccountPlan {
    */
   advance(e: unknown): boolean {
     if (this.auto === null) return false;
-    // A write already landed in the Room. Another account would see that call in the history and can emit
-    // it again; upsert without an id creates a second entry. Read-only tools do not set this.
-    if (this.o.sent.wrote === true) return false;
     const failure = classifyFailure(e, { startedOutput: this.o.sent.text === true });
     const decision = shouldSwitch(failure);
+    // A write already landed, or might have. Another account would see that call and can emit it again.
+    // The account is still cooled when the failure is one that would have moved the task, so the next task
+    // does not start on an account that just returned 429. Nothing is announced and this task does not retry.
+    if (this.o.sent.wrote === true) {
+      if (decision.switch) {
+        const now = this.o.now ?? Date.now;
+        const ms = cooldownFor(failure, providerRetryAfterMs(e, now()));
+        if (ms !== null) this.o.cooldowns.mark(this.session.account.id, ms);
+      }
+      return false;
+    }
     if (!decision.switch) return false;
     const from = this.auto.current();
     if (from === null) return false;

@@ -103,9 +103,15 @@ export function roomTools(pluginTools: PluginToolSpec[]): FunctionTool[] {
 
 const errorOutput = (error: string, extra: Record<string, unknown> = {}) => JSON.stringify({ error, ...extra });
 
-/** A successful mutating call. A refused write did not change the Room, so failover may still move. */
+/**
+ * Whether this call may have changed the Room.
+ *
+ * An explicit refusal (4xx) did not. A lost response (`status` 0) or a 5xx can arrive after the hub already
+ * committed, so a mutating call counts as a write and failover will not repeat it.
+ */
 function settled(r: RoomResult, writes: boolean): { output: string; known: true; wrote: boolean } {
-  return { output: resultOutput(r), known: true, wrote: writes && r.ok };
+  const uncertain = !r.ok && (r.status === 0 || r.status >= 500);
+  return { output: resultOutput(r), known: true, wrote: writes && (r.ok || uncertain) };
 }
 
 /** Every output handed to the model is capped at 64 KB of UTF-8 (a truncated JSON output carries the marker). */

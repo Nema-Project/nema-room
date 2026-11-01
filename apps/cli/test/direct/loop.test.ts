@@ -109,6 +109,12 @@ describe("ROOM_TOOLS / dispatchTool", () => {
     const r = await dispatchTool("upsert_entry", "{}", room);
     expect(r.known).toBe(true);
     expect(r.wrote).toBe(false);
+    const lost = await dispatchTool("upsert_entry", "{}", stubRoom({ ok: false, status: 0, error: "down" }).room);
+    const crashed = await dispatchTool("upsert_entry", "{}", stubRoom({ ok: false, status: 500, error: "boom" }).room);
+    const read = await dispatchTool("list_entries", "", stubRoom({ ok: false, status: 500, error: "boom" }).room);
+    expect(lost.wrote).toBe(true);
+    expect(crashed.wrote).toBe(true);
+    expect(read.wrote).toBe(false);
     expect(JSON.parse(r.output)).toMatchObject({ error: "bad kind", status: 400 });
   });
 
