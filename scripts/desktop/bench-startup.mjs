@@ -6,11 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const USAGE = 'Usage: desktop:bench --app <executable> [--payload <dir>] [--runs <1-20>] [--timeout-ms <ms>]';
+const USAGE = 'Usage: desktop:bench --app <executable> [--runs <1-20>] [--timeout-ms <ms>]';
 
 export function parseBenchArgs(args) {
   let app;
-  let payload;
   let runs = 3;
   let timeoutMs = 180_000;
   for (let index = 0; index < args.length; index += 1) {
@@ -18,14 +17,13 @@ export function parseBenchArgs(args) {
     const value = args[index + 1];
     if (!value || value.startsWith('--')) throw new Error(USAGE);
     if (flag === '--app') app = value;
-    else if (flag === '--payload') payload = value;
     else if (flag === '--runs' && /^[1-9]\d*$/.test(value) && Number(value) <= 20) runs = Number(value);
     else if (flag === '--timeout-ms' && /^[1-9]\d*$/.test(value)) timeoutMs = Number(value);
     else throw new Error(USAGE);
     index += 1;
   }
   if (!app) throw new Error(USAGE);
-  return { app, payload, runs, timeoutMs };
+  return { app, runs, timeoutMs };
 }
 
 export function median(values) {
@@ -120,7 +118,7 @@ export function payloadBesideApp(executable) {
     path.join(dir, '..', 'Resources', 'payload'),
   ];
   const found = candidates.find((candidate) => existsSync(path.join(candidate, 'runtime-manifest.json')));
-  if (!found) throw new Error(`No runtime payload beside ${executable}. Pass --payload.`);
+  if (!found) throw new Error(`No runtime payload beside ${executable} (resources/payload, or Contents/Resources/payload on macOS).`);
   return found;
 }
 
@@ -284,7 +282,8 @@ export async function bench(args) {
   const parsed = parseBenchArgs(args);
   const executable = path.resolve(parsed.app);
   if (!existsSync(executable)) throw new Error(`Desktop executable not found: ${executable}`);
-  const payload = parsed.payload ? path.resolve(parsed.payload) : payloadBesideApp(executable);
+  // The packaged app always loads process.resourcesPath/payload. The report commit has to be that payload.
+  const payload = payloadBesideApp(executable);
   if (!existsSync(path.join(payload, 'runtime-manifest.json'))) throw new Error(`Not a runtime payload: ${payload}`);
   const runtimeApi = await import(pathToFileURL(path.join(payload, 'app', 'node_modules', '@nema', 'local', 'dist', 'src', 'index.js')).href);
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'nema-bench-'));

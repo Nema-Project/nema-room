@@ -13,8 +13,9 @@ const require = createRequire(import.meta.url);
 const { desktopBenchLine } = require('../../apps/desktop/lifecycle.cjs');
 
 test('bench arguments require an app and bound the run count', () => {
-  assert.deepEqual(parseBenchArgs(['--app', 'Nema.exe']), { app: 'Nema.exe', payload: undefined, runs: 3, timeoutMs: 180_000 });
-  assert.equal(parseBenchArgs(['--app', 'Nema', '--runs', '1', '--timeout-ms', '50', '--payload', 'payload']).runs, 1);
+  assert.deepEqual(parseBenchArgs(['--app', 'Nema.exe']), { app: 'Nema.exe', runs: 3, timeoutMs: 180_000 });
+  assert.equal(parseBenchArgs(['--app', 'Nema', '--runs', '1', '--timeout-ms', '50']).runs, 1);
+  assert.throws(() => parseBenchArgs(['--app', 'Nema', '--payload', 'elsewhere']), /Usage/);
   assert.throws(() => parseBenchArgs([]), /Usage/);
   assert.throws(() => parseBenchArgs(['--app']), /Usage/);
   assert.throws(() => parseBenchArgs(['--app', 'Nema', '--runs', '21']), /Usage/);
@@ -69,11 +70,14 @@ test('stopping the app keeps stdout that is still flushing after exit', async (t
   await chmod(script, 0o755);
   const logPath = path.join(root, 'electron.log');
   const child = launch(script, process.env, logPath);
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('writer did not exit')), 5_000);
-    child.once('exit', () => { clearTimeout(timer); resolve(); });
-  });
-  await stopApp(child);
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('writer did not exit')), 5_000);
+      child.once('exit', () => { clearTimeout(timer); resolve(); });
+    });
+  } finally {
+    await stopApp(child);
+  }
   const logged = await readFile(logPath, 'utf8');
   assert.equal(logged.length, body.length);
   assert.equal(logged.endsWith(line), true);
@@ -94,5 +98,5 @@ test('payload lookup reads the manifest beside the app and its commit', async (t
   assert.equal(readPayloadCommit(macPayload), 'cafebabe');
   assert.equal(payloadBesideApp(path.join(root, 'Nema.app', 'Contents', 'MacOS', 'Nema')), macPayload);
   await rm(path.join(payload, 'runtime-manifest.json'));
-  assert.throws(() => payloadBesideApp(path.join(root, 'missing', 'Nema')), /Pass --payload/);
+  assert.throws(() => payloadBesideApp(path.join(root, 'missing', 'Nema')), /No runtime payload beside/);
 });
