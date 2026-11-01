@@ -124,9 +124,12 @@ function waitScope({ io, budgetMs, pollMs, onPoll }) {
  * does not prove this run's own publish is the one that landed. The publish time is a fact either way,
  * works on a rerun, and is what a reader can check afterwards.
  *
- * A version published longer ago than NPM_PROVENANCE_INDEX_WINDOW_MS, whose document declares no
- * attestation, is not lagging any more: the wait stops at once with `provenance-absent`. A 200
- * without a SLSA v1 attestation and a 401/403 are answers that cannot change, and stop at once too.
+ * A version published longer ago than NPM_PROVENANCE_INDEX_WINDOW_MS, whose document was read and
+ * declares no attestation, is not lagging any more: the wait stops at once with `provenance-absent`.
+ * An old publish whose document could not be read is *not* that — nothing was read, so it stays
+ * `provenance-unconfirmed` instead of asserting an absence and telling a maintainer to re-cut the
+ * release. A 200 without a SLSA v1 attestation and a 401/403 are answers that cannot change, and stop
+ * at once too.
  *
  * The evidence reads are retried while the endpoint keeps answering 404 and the evidence is still
  * unknown, so one unreadable packument cannot turn a definite absence into an uncertainty; once either
@@ -195,22 +198,27 @@ export async function awaitNpmProvenance({ version, io, budgetMs = NPM_VISIBILIT
     // Pending: the endpoint answered 404. Decide whether that can still change.
     await readEvidence();
     const age = publishedAt === null ? null : io.now() - publishedAt;
-    if (declaration !== true && age !== null && age > NPM_PROVENANCE_INDEX_WINDOW_MS) {
-      // Past any plausible index delay and nothing declares an attestation: this is the absence itself.
-      return result(PROVENANCE_ABSENT, `npm has no provenance for ${version}: it was published ${age}ms ago, longer than any index delay, and its version document declares none`);
+    // A definite absence needs the document to have been *read* and to carry no attestation. An old
+    // publish alone is not enough: if the document was unreadable, calling this absent would assert a
+    // fact nobody read, stop the run, and tell the maintainer to cut a new tag for a gap that may not
+    // exist (CodeRabbit, PR #177). `declaration === null` stays an uncertainty.
+    if (declaration === false && age !== null && age > NPM_PROVENANCE_INDEX_WINDOW_MS) {
+      return result(PROVENANCE_ABSENT, `npm has no provenance for ${version}: its version document was read and declares none, and it was published ${age}ms ago, longer than any index delay`);
     }
     clock.note('provenance not indexed yet', declaration === true ? 'the version document declares it' : read.detail);
     if (!(await clock.more())) {
       if (declaration === true) {
         return result(PROVENANCE_NOT_INDEXED, `the registry declares provenance for ${version} but has not served it after ${clock.spent()}ms; the attestation exists and its index has not caught up`);
       }
+      // What was actually established decides the wording: "declares none" only after reading it.
+      const read = declaration === false ? 'and its version document declares none' : 'and its version document could not be read';
       // Published within the window, or the publish time could not be read: either way it may still land.
       const fresh = age !== null && age <= NPM_PROVENANCE_INDEX_WINDOW_MS;
       return result(
         fresh ? PROVENANCE_NOT_INDEXED : PROVENANCE_UNCONFIRMED,
         fresh
-          ? `the registry has not served provenance for ${version} after ${clock.spent()}ms and declares none; it was published ${age}ms ago, so its index may still catch up`
-          : `the registry still answers 404 for provenance of ${version} after ${clock.spent()}ms and declares none; whether an attestation exists is unconfirmed`,
+          ? `the registry has not served provenance for ${version} after ${clock.spent()}ms ${read}; it was published ${age}ms ago, so its index may still catch up`
+          : `the registry still answers 404 for provenance of ${version} after ${clock.spent()}ms ${read}; whether an attestation exists is unconfirmed`,
       );
     }
   }

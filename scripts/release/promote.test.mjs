@@ -700,7 +700,7 @@ test('#174 acceptance: a version published long ago whose document declares no a
   assert.deepEqual(state.writes, ['npm dispatch'], 'nothing later moves: the gap is found where the package becomes visible');
   assert.match(text, /- flipped by this run: npm latest/, 'npm latest did move, and the record says so');
   assert.match(text, /- not flipped: ghcr hub latest, ghcr web latest, github latest/);
-  assert.match(text, /stopped:\*\* npm provenance is a definite gap: npm has no provenance for 0\.1\.7: it was published 3600000ms ago, longer than any index delay, and its version document declares none/);
+  assert.match(text, /stopped:\*\* npm provenance is a definite gap: npm has no provenance for 0\.1\.7: its version document was read and declares none, and it was published 3600000ms ago, longer than any index delay/);
   assert.match(text, /- npm provenance: a definite gap \(provenance-absent\)/);
   assert.doesNotMatch(text, /not written/, 'the package was published: nothing may claim it was not');
 });
@@ -714,8 +714,9 @@ test('#174 acceptance: a provenance 404 the signals cannot rule out is waited on
   });
   assert.equal(result.ok, true);
   assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000);
-  assert.match(text, /the registry still answers 404 for provenance of 0\.1\.7 after \d+ms and declares none; whether an attestation exists is unconfirmed/);
+  assert.match(text, /the registry still answers 404 for provenance of 0\.1\.7 after \d+ms and its version document could not be read; whether an attestation exists is unconfirmed/);
   assert.doesNotMatch(text, /has not served it/, '"unconfirmed" and "not indexed yet" are different answers');
+  assert.doesNotMatch(text, /declares none/, 'nothing was read, so nothing may claim the document declares none');
 });
 
 test('#174 acceptance: a 401/403 on provenance stops at once and never spends the budget', async () => {
@@ -834,4 +835,33 @@ test('#174: the evidence is not re-read once it answered, and not read at all wh
   const served = await run({ npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }] });
   assert.equal(served.state.declarationReads, 0, 'the happy path pays for no evidence reads at all');
   assert.equal(served.state.publishedAtReads, 0);
+});
+
+test('#174: an old publish whose version document could not be read is unconfirmed, not a definite absence (CodeRabbit, PR #177)', async () => {
+  // The inverse mistake of the previous fix: an old publish time was treated as enough to declare an
+  // absence even though the document that would prove it was never read. That asserts a fact nobody
+  // read, stops the run, and tells a maintainer to cut a new tag for a gap that may not exist.
+  const { result, state, text } = await run({
+    npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }],
+    provenanceReads: ['pending'], declared: null, publishedAgoMs: 3_600_000,
+  });
+  assert.equal(result.ok, true, 'an uncertainty does not stop the promotion');
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000, 'it waits out the budget instead of deciding at once');
+  assert.match(text, /its version document could not be read; whether an attestation exists is unconfirmed/);
+  assert.doesNotMatch(text, /has no provenance/, 'the absence was never established');
+  assert.doesNotMatch(text, /definite gap/);
+  // And final verify gets the waitable hint rather than the strict 404 the old behaviour produced.
+  const final = state.verifyOptions.find((entry) => entry.stage === 'final');
+  assert.equal(final.provenanceIndex.state, 'pending');
+});
+
+test('#174: only a document that was read as declaring none makes an old version a definite absence', async () => {
+  // The same fixture data as above except the document answered: now the absence is established and
+  // the run must stop at once. This is the pair that keeps the two outcomes from collapsing into one.
+  const { result, state } = await run({
+    npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }],
+    provenanceReads: ['pending'], declared: false, publishedAgoMs: 3_600_000,
+  });
+  assert.equal(result.ok, false);
+  assert.deepEqual(state.sleeps, [], 'a read declaration plus an old publish is decided at once');
 });
