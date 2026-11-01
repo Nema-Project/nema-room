@@ -459,6 +459,15 @@ export async function siwcLogin(opts: SiwcLoginOptions): Promise<StoredAuth> {
         accountId,
         lastRefresh: new Date().toISOString(),
       };
+      // A brand-new account has no credential yet, so nothing has created its directory: `accountDir`
+      // only validates the path. The lock file is opened with "wx", which needs the directory to be there
+      // already, and `AuthStore.save()` would only create it after the lock is held. A first login would
+      // therefore complete in the browser and then fail to store anything.
+      //
+      // The `AuthStore` constructor has already refused a symlinked component of `baseDir`, and this is
+      // the same directory it will write into, so creating it here cannot redirect the login elsewhere.
+      mkdirSync(baseDir, { recursive: true, mode: 0o700 });
+      protectPrivatePath(baseDir, 0o700);
       // AuthStore.save() is unlocked; serialize with refreshers via auth.lock.
       await withFileLock(path.join(baseDir, "auth.lock"), async () => {
         opts.signal?.throwIfAborted();

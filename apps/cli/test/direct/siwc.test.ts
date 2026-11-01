@@ -501,6 +501,26 @@ describe("siwcLogin into an account directory", () => {
     expect(existsSync(join(dir, "auth.lock"))).toBe(false); // lock released in the account directory
   });
 
+  // A brand-new siwc account has no credential, so nothing has created its directory yet. This is the
+  // case the settings page hits first, and it must not depend on the test having made the directory.
+  test("creates a baseDir that does not exist yet", async () => {
+    h = { tokenServer: await tokenOk(nonceRef), authorizeUrls: [] };
+    const dir = join(home, "secrets", "accounts", "acct_fresh00001");
+    expect(existsSync(dir)).toBe(false);
+    await siwcLogin({
+      nemaHome: home,
+      baseDir: dir,
+      port: 0,
+      endpoints: { tokenUrl: h.tokenServer.url },
+      openBrowser: browser(h, (u) => {
+        nonceRef.nonce = u.searchParams.get("nonce")!;
+        return { code: "code-fresh", state: u.searchParams.get("state")!, client_id: "oaiapp_issued123", scope: "x" };
+      }),
+    });
+    expectPrivate(join(dir, "auth.json"), 0o600);
+    expect(new AuthStore(home, siwcRefresher, Date.now, { baseDir: dir }).read()?.tokens.refresh_token).toBe("rt-secret-xyz");
+  });
+
   test("is refused for a baseDir that passes through a symlink", async () => {
     h = { tokenServer: await tokenOk(nonceRef), authorizeUrls: [] };
     const real = join(home, "elsewhere");
