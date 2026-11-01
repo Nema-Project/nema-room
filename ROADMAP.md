@@ -16,6 +16,25 @@
 - 已合入 `main` 的近期工作：[PR #29](https://github.com/Nema-Project/nema-room/pull/29) macOS 原生红绿灯（`5ff8cf9`）；[PR #30](https://github.com/Nema-Project/nema-room/pull/30) 落实 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 的用户 basis 证据检查（`afd1456`）；[PR #31](https://github.com/Nema-Project/nema-room/pull/31) 桌面包瘦身（`76680b8`）。
 - 本次评估通过 GitHub 读取源码、配置、Actions 和 Release；未本地重跑测试。开始每项工作前须重新检查最新状态。
 
+## v0.2.2 发布与后续验收
+
+v0.2.2 是 v0.2.1 之后的小版本，主要内容是同一供应商多账户的第 2–4 批：[#175](https://github.com/Nema-Project/nema-room/pull/175) 设置接口与三处账户选择器（S2），[#176](https://github.com/Nema-Project/nema-room/pull/176) daemon 按所选账户运行任务（S3，手动模式），[#178](https://github.com/Nema-Project/nema-room/pull/178) 跨账户自动路由（S4，默认关闭）。另有两项修复：[#177](https://github.com/Nema-Project/nema-room/pull/177) `release-promote` 的可见性等待覆盖 npm provenance（Refs [#174](https://github.com/Nema-Project/nema-room/issues/174)），[#180](https://github.com/Nema-Project/nema-room/pull/180) 浮动 thread 窗口里的下拉列表点开即关。[#181](https://github.com/Nema-Project/nema-room/pull/181) 只改 CI 分片，[#179](https://github.com/Nema-Project/nema-room/pull/179)、[#182](https://github.com/Nema-Project/nema-room/pull/182)、[#183](https://github.com/Nema-Project/nema-room/pull/183)、[#184](https://github.com/Nema-Project/nema-room/pull/184) 只改文档，均无用户可见片段。三个多账户片段在本 release PR 里合成一条英文片段：S2 片段写的「只存选择、任务仍由默认账户执行」和 S3 片段写的「自动路由尚未提供」在同一版本里已被后续批次取代，原样合并会自相矛盾。
+
+发布记录（tag 之后补真实值，以下为占位）：
+
+- tag `v0.2.2` → `<TAG_COMMIT>`；该提交的 main CI：`<MAIN_CI_RUN>`。
+- 三条 tag 工作流：npm `<NPM_RUN>`、镜像 `<IMAGE_RUN>`、桌面 `<DESKTOP_RUN>`。
+- 只读检查 `npm run release:verify -- 0.2.2` 打 tag 后的首次结果：`<PRE_PROMOTE_VERIFY>`（预期退出 1，且只点名 npm）。
+- `release:verify -- --pointers 0.2.2` 的前后对照：`<POINTERS_BEFORE>` / `<POINTERS_AFTER>`。
+- 晋升：`gh workflow run release-promote.yml --ref main -f tag=v0.2.2`，运行 `<PROMOTE_RUN>`；晋升后 `release:verify -- 0.2.2` 退出 0。这是 #177 的 provenance 等待在真实发布上的第一次使用，需记录首次晋升是否一次完成。
+- `releases/latest/download/docker-compose.yml` 在晋升前仍是 0.2.1 的双 pin，晋升后变为 0.2.2 且带版本头。
+
+发布可用性不等于功能或真机验收完成：
+
+- 多账户 S2–S4 的验收是临时 `nemaHome` 与假 provider 上的自动化测试（含 `test/routing/acceptance-auto.test.ts` 对两个假端点跑的 S4 七条验收标准），没有真账户或真 provider 参与；限流与额度用尽时的真实切换、真实 provider 的错误分类都还没有真机证据。[#131](https://github.com/Nema-Project/nema-room/issues/131) 仍 OPEN（milestone v0.2.2），是否在本版关闭由维护者按其验收标准决定。
+- [#174](https://github.com/Nema-Project/nema-room/issues/174) 仍 OPEN：#177 只是代码与测试层面的修复，要等本版晋升的实际结果才能判断。
+- Windows x64 与 macOS arm64 安装包的真机安装、覆盖升级、启动与旧数据保留仍待验证；不能用 v0.2.1 的验收代替。
+
 ## v0.2.1 发布与后续验收
 
 v0.2.1 是 v0.2.0 之后的小版本，不含新功能。四项都是 v0.2.0 发布后暴露的加固与修复：[#159](https://github.com/Nema-Project/nema-room/pull/159) 同一供应商多账户的第 1 阶段（账户数据与凭据），[#169](https://github.com/Nema-Project/nema-room/pull/169) `release:cut` 的并发与中断安全，[#171](https://github.com/Nema-Project/nema-room/pull/171) `mcpLeftovers` 的偶发失败，[#170](https://github.com/Nema-Project/nema-room/pull/170) `release-promote` 有界等待 npm registry 可见性。同一轮把四份 README 与三份指南里「升级到更新的次版本」那段改成 `<version>` 占位符，[#63](https://github.com/Nema-Project/nema-room/issues/63) 第六条（release PR 的安装入口与示例命令不出现写死版本号）在这个 release PR 上成立；该 issue 的其余分期不因本版改变状态。
