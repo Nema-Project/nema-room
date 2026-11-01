@@ -20,19 +20,20 @@
 
 v0.2.2 是 v0.2.1 之后的小版本，主要内容是同一供应商多账户的第 2–4 批：[#175](https://github.com/Nema-Project/nema-room/pull/175) 设置接口与三处账户选择器（S2），[#176](https://github.com/Nema-Project/nema-room/pull/176) daemon 按所选账户运行任务（S3，手动模式），[#178](https://github.com/Nema-Project/nema-room/pull/178) 跨账户自动路由（S4，默认关闭）。另有两项修复：[#177](https://github.com/Nema-Project/nema-room/pull/177) `release-promote` 的可见性等待覆盖 npm provenance（Refs [#174](https://github.com/Nema-Project/nema-room/issues/174)），[#180](https://github.com/Nema-Project/nema-room/pull/180) 浮动 thread 窗口里的下拉列表点开即关。[#181](https://github.com/Nema-Project/nema-room/pull/181) 只改 CI 分片，[#179](https://github.com/Nema-Project/nema-room/pull/179)、[#182](https://github.com/Nema-Project/nema-room/pull/182)、[#183](https://github.com/Nema-Project/nema-room/pull/183)、[#184](https://github.com/Nema-Project/nema-room/pull/184) 只改文档，均无用户可见片段。三个多账户片段在本 release PR 里合成一条英文片段：S2 片段写的「只存选择、任务仍由默认账户执行」和 S3 片段写的「自动路由尚未提供」在同一版本里已被后续批次取代，原样合并会自相矛盾。
 
-发布记录（tag 之后补真实值，以下为占位）：
+发布记录（tag、三条 tag 工作流、晋升与晋升后核验均已核实）：
 
-- tag `v0.2.2` → `<TAG_COMMIT>`；该提交的 main CI：`<MAIN_CI_RUN>`。
-- 三条 tag 工作流：npm `<NPM_RUN>`、镜像 `<IMAGE_RUN>`、桌面 `<DESKTOP_RUN>`。
-- 只读检查 `npm run release:verify -- 0.2.2` 打 tag 后的首次结果：`<PRE_PROMOTE_VERIFY>`（预期退出 1，且只点名 npm）。
-- `release:verify -- --pointers 0.2.2` 的前后对照：`<POINTERS_BEFORE>` / `<POINTERS_AFTER>`。
-- 晋升：`gh workflow run release-promote.yml --ref main -f tag=v0.2.2`，运行 `<PROMOTE_RUN>`；晋升后 `release:verify -- 0.2.2` 退出 0。这是 #177 的 provenance 等待在真实发布上的第一次使用，需记录首次晋升是否一次完成。
-- `releases/latest/download/docker-compose.yml` 在晋升前仍是 0.2.1 的双 pin，晋升后变为 0.2.2 且带版本头。
+- tag `v0.2.2` 是 annotated tag `3f98abee2e3a814ee192affa2686def68220e2fe`，解引用到 `a3806ba284fa66c59d3a551edf072430ad4a019a`（[PR #185](https://github.com/Nema-Project/nema-room/pull/185) 的合并提交）；该提交的 [main CI](https://github.com/Nema-Project/nema-room/actions/runs/41312458519) 成功。
+- 三条 tag 工作流均成功：[npm](https://github.com/Nema-Project/nema-room/actions/runs/41315201832)、[镜像](https://github.com/Nema-Project/nema-room/actions/runs/41315201831)、[桌面](https://github.com/Nema-Project/nema-room/actions/runs/41315201849)（只建 draft Release）。npm 那条按设计只打包与冒烟，npm 上的 0.2.2 由晋升 dispatch 的 [run 41317003985](https://github.com/Nema-Project/nema-room/actions/runs/41317003985) 发布。
+- tag 之后、晋升之前，带 `GITHUB_TOKEN` 跑 `npm run release:verify -- 0.2.2`：**退出 1**，`result: incomplete (exit 1)`。逐项为 `MISSING npm`（`npm has no @nema-project/nema@0.2.2`）、`ok images`（hub `sha256:d493963f…` / web `sha256:973cc7b2…`，linux/amd64）、`ok release`（仍是 draft、8 个资产匹配、`docker-compose.yml` 钉 0.2.2、GitHub latest 指针未动）、`UNKNOWN consistency`（因 npm 未就绪而未检查）。与预期一致，只点名 npm。
+- 晋升前 `release:verify -- --pointers 0.2.2`：npm latest、ghcr hub latest、ghcr web latest、github latest 均为 `0.2.1`，npm next `(none)`。晋升后这四个 `latest` 均为 `0.2.2`，npm next 仍为 `(none)`（决策列恒打印 `-> move`，读法见 v0.2.1 一节）。
+- 晋升：[run 41316950604](https://github.com/Nema-Project/nema-room/actions/runs/41316950604) **第一次即成功**，结尾 `promote v0.2.2: done`（2026-11-01T14:38:58Z）。这是 [#177](https://github.com/Nema-Project/nema-room/pull/177) 的 provenance 等待第一次在真实发布上使用，且确实被用到了：可见性等待先有约 55 秒读到 `package absent`，之后约 60 秒读到 `provenance not indexed yet (the version document declares it)`，到 `117670ms` 才同时读到 `npm latest -> 0.2.2` 与 provenance。**余量只有约 2.3 秒**（预算 `120000ms`）；v0.2.1 时 provenance 晚于发布约 1 分钟，这次约 2 分钟。预算若再被吃满，会按设计 fail-closed 停在 partial window，需人工重跑。是否放宽 `NPM_VISIBILITY_BUDGET_MS` 记在 [#174](https://github.com/Nema-Project/nema-room/issues/174)。
+- 晋升后 `npm run release:verify -- 0.2.2` **退出 0**：`result: complete (exit 0)`，四项全 `ok`。npm integrity 为 `sha512-+0eU16bNnSN4bh9lZkSIFvWQxc3D0f9hyJ9mqXNMq0/liJg+zEUeSI6yxG8HQt3/jTfLsb/vSus8beb7F3JSmg==`；Release 已公开、8 个资产匹配、`docker-compose.yml` 钉 0.2.2；`consistency` 认定 tag、release manifest 与 npm provenance 同为 `a3806ba2…`（镜像无 revision label，未比对镜像 commit；provenance 来自 registry 的 `workflow_dispatch` 记录，未验证签名）。
+- GitHub Release 于 `2026-11-01T14:38:58Z` 公开，`draft: false`、`prerelease: false`；`releases/latest/download/docker-compose.yml` 由 0.2.1 双 pin 变为 0.2.2 双 pin，首行为 `# Nema Room 0.2.2 release asset. Hub and web are pinned to 0.2.2.`
 
 发布可用性不等于功能或真机验收完成：
 
 - 多账户 S2–S4 的验收是临时 `nemaHome` 与假 provider 上的自动化测试（含 `test/routing/acceptance-auto.test.ts` 对两个假端点跑的 S4 七条验收标准），没有真账户或真 provider 参与；限流与额度用尽时的真实切换、真实 provider 的错误分类都还没有真机证据。[#131](https://github.com/Nema-Project/nema-room/issues/131) 仍 OPEN（milestone v0.2.2），是否在本版关闭由维护者按其验收标准决定。
-- [#174](https://github.com/Nema-Project/nema-room/issues/174) 仍 OPEN：#177 只是代码与测试层面的修复，要等本版晋升的实际结果才能判断。
+- [#174](https://github.com/Nema-Project/nema-room/issues/174) 仍 OPEN：本版晋升一次完成，说明 #177 让 provenance 时序问题不再被判成确定性缺失；但余量只有约 2.3 秒，预算是否足够仍待决定。
 - Windows x64 与 macOS arm64 安装包的真机安装、覆盖升级、启动与旧数据保留仍待验证；不能用 v0.2.1 的验收代替。
 
 ## v0.2.1 发布与后续验收
