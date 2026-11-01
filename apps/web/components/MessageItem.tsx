@@ -344,7 +344,8 @@ function UserMessage({
             <Markdown source={message.content} />
           </div>
         ) : null}
-        <p className={droppedMentions > 0 && !editing ? "kmeta" : undefined} role="status">
+        {/* Mounted from the first paint, so a reader hears the text when it appears. Not role=status: the chat already uses that for the offline line. */}
+        <p className={droppedMentions > 0 && !editing ? "kmeta" : undefined} aria-live="polite">
           {droppedMentions > 0 && !editing ? t(droppedMentions === 1 ? "chat.mentionsDropped.one" : "chat.mentionsDropped.other", { count: droppedMentions }) : ""}
         </p>
         <AttachmentList
