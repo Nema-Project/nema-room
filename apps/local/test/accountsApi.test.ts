@@ -381,3 +381,37 @@ describe("dispatch contract", () => {
     expect(JSON.stringify(reply!.body)).not.toContain("raw-internal-marker");
   });
 });
+
+describe("changing an account's kind", () => {
+  test("switching a keyed account to Claude drops authMode and baseUrl instead of being refused", async () => {
+    const home = tempHome();
+    writeAccounts(home, {
+      version: 1,
+      accounts: [account(), account({ id: "acct_bbbbbbbbbb", name: "Two", order: 1 })],
+      bindings: {},
+    });
+    // The edit form sends the adapter; the old kind's fields are not sent, so they must not survive.
+    const reply = call(home, "PATCH", "/_nema/accounts", { id: account().id, adapter: "claude-code" });
+    expect(reply?.status).toBe(200);
+    const updated = (reply!.body as { account: AccountView }).account;
+    expect(updated.adapter).toBe("claude-code");
+    expect(updated.authMode).toBeUndefined();
+    expect(updated.baseUrl).toBeUndefined();
+    // And it reads back, which is the real test: the file is still valid.
+    const stored = readAccounts(home);
+    expect(stored.status).toBe("ok");
+  });
+
+  test("switching back to a keyed account requires the endpoint it now needs", async () => {
+    const home = tempHome();
+    writeAccounts(home, {
+      version: 1,
+      accounts: [account({ adapter: "claude-code", authMode: undefined, baseUrl: undefined }), account({ id: "acct_bbbbbbbbbb", name: "Two", order: 1 })],
+      bindings: {},
+    });
+    // Without a base URL a byok row is invalid, so this is refused rather than stored broken.
+    expect(call(home, "PATCH", "/_nema/accounts", { id: account().id, adapter: "codex-direct", authMode: "byok" })?.status).toBe(400);
+    const ok = call(home, "PATCH", "/_nema/accounts", { id: account().id, adapter: "codex-direct", authMode: "byok", baseUrl: "https://x.example.com/v1" });
+    expect(ok?.status).toBe(200);
+  });
+});

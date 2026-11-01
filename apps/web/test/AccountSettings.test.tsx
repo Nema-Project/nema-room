@@ -234,3 +234,24 @@ describe("AccountSettings", () => {
     expect(await screen.findByText("アカウント")).toBeTruthy();
   });
 });
+
+describe("switching an account's kind", () => {
+  it("sends null for the fields the new kind does not use", async () => {
+    const calls = stub({
+      "GET /_nema/accounts": list([work()]),
+      "PATCH /_nema/accounts": () => reply({ account: work({ adapter: "claude-code", authMode: undefined, baseUrl: undefined }) }),
+    });
+    mount();
+    const row = (await screen.findAllByTestId("account-row"))[0]!;
+    await userEvent.click(within(row).getByRole("button", { name: /edit/i }));
+    await userEvent.selectOptions(screen.getByLabelText("Kind"), "claude");
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    const sent = calls.find((c) => c.method === "PATCH")!.body as Record<string, unknown>;
+    expect(sent.adapter).toBe("claude-code");
+    // A Claude account has no auth mode and no endpoint; leaving them behind makes the row invalid.
+    expect(sent.authMode).toBeNull();
+    expect(sent.baseUrl).toBeNull();
+  });
+});

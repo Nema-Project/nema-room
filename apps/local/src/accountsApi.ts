@@ -261,6 +261,14 @@ function applyPatch(account: Account, patch: Record<string, unknown>): Account {
     if (value === null || value === undefined) delete merged[key];
     else merged[key] = value;
   }
+  // Changing an account's kind has to take the old kind's fields with it, or the edit cannot be made at
+  // all: a `claude-code` row carrying `authMode` (or `baseUrl`) is refused by `validateAccountsFile`, so
+  // switching a keyed account to Claude would answer 400 and leave the row as it was. The same rule the
+  // config projection applies when a rollback switches adapter.
+  if (merged.adapter === "claude-code") {
+    delete merged.authMode;
+    delete merged.baseUrl;
+  }
   return AccountSchema.parse(merged);
 }
 

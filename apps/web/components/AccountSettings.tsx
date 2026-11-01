@@ -97,13 +97,16 @@ function bodyOf(draft: Draft, mode: "create" | "update"): Record<string, unknown
   if (baseUrl !== "") filled.baseUrl = baseUrl;
 
   if (mode === "create") return filled;
-  // An update says "clear this" explicitly, so a field the form left empty loses its stored value.
+  // An update says "clear this" explicitly, so a field the form left empty loses its stored value. `null`
+  // for the fields the new kind does not use is what removes them when the user switches kind: a
+  // `claude-code` row may not keep an `authMode`, and a row that is not a keyed account may not keep a
+  // `baseUrl`. The server applies the same rule, so an older page cannot leave one behind either.
   return {
     ...filled,
     model: filled.model ?? null,
     capabilities: filled.capabilities ?? null,
-    // Only a keyed account has an endpoint; switching kind must not leave the previous one behind.
     baseUrl: filled.baseUrl ?? null,
+    authMode: filled.authMode ?? null,
   };
 }
 
