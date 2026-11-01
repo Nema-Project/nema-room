@@ -1202,3 +1202,85 @@ describe("attachments in task.assign", () => {
     expect("attachments" in a).toBe(false);
   });
 });
+
+describe("account choice and route decision", () => {
+  test("a message that named an account sends that id down; one that named none sends no field", async () => {
+    const picked = await postUserMessage(db, wsA, "on the second account", { accountId: "acct_abc1234567" });
+    const plain = await postUserMessage(db, wsA, "on whatever the default is");
+    const c = await connect();
+    const a1 = await c.next("task.assign");
+    expect(a1).toMatchObject({ taskId: picked.task.id, accountId: "acct_abc1234567" });
+    // Nothing was said about automatic routing, so nothing is claimed about it.
+    expect(a1).not.toHaveProperty("routing");
+
+    c.send({ type: "task.finished", taskId: a1.taskId, ok: true, reply: "ok" });
+    await vi.waitFor(async () => expect((await getTask(db, picked.task.id))?.status).toBe("done"));
+
+    const a2 = await c.next("task.assign");
+    expect(a2.taskId).toBe(plain.task.id);
+    expect(a2).not.toHaveProperty("accountId");
+  });
+
+  test("a task that allows automatic routing says so", async () => {
+    const m = await postUserMessage(db, wsA, "auto please");
+    await db.query("update tasks set routing = 'auto' where id = $1", [m.task.id]);
+    const c = await connect();
+    const a1 = await c.next("task.assign");
+    expect(a1).toMatchObject({ taskId: m.task.id, routing: "auto" });
+  });
+
+  test("a thread task carries its thread id; a main-chat task carries none", async () => {
+    const mainChat = await postUserMessage(db, wsB, "plain main chat");
+    const anchor = await postUserMessage(db, wsA, "anchor");
+    await ensureThread(db, anchor.message.id, "A thread", "user");
+    const inThread = await postUserMessage(db, wsA, "reply in the thread", { threadId: anchor.message.id });
+    const c = await connect();
+    const seen = new Map<string, Msg>();
+    // Dispatch is one task at a time and the anchor now sits in its own thread, so walk the queue until the
+    // thread reply arrives instead of assuming an order across workspaces.
+    for (let i = 0; i < 4 && !seen.has(inThread.task.id); i++) {
+      const a = await c.next("task.assign");
+      seen.set(a.taskId, a);
+      c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "ok" });
+    }
+    // A main-chat message belongs to no thread, so nothing is claimed about one.
+    expect(seen.get(mainChat.task.id)).toBeDefined();
+    expect(seen.get(mainChat.task.id)).not.toHaveProperty("threadId");
+    expect(seen.get(inThread.task.id)).toMatchObject({ threadId: anchor.message.id });
+  });
+
+  test("the route the daemon reports is stored on the agent message", async () => {
+    const m = await postUserMessage(db, wsA, "who answered this");
+    const c = await connect();
+    const a = await c.next("task.assign");
+    const route = { accountId: "acct_abc1234567", accountName: "Personal", model: "gpt-5.5", mode: "manual", reason: "user_workspace" };
+    c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "me", route });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    const agent = (await listMessages(db, wsA)).find((x): x is AgentMessage => x.role === "agent")!;
+    expect(agent.meta?.route).toEqual(route);
+  });
+
+  test("an old daemon that sends no route still saves its reply", async () => {
+    const m = await postUserMessage(db, wsA, "old daemon");
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "still here" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    const agent = (await listMessages(db, wsA)).find((x): x is AgentMessage => x.role === "agent")!;
+    expect(agent.content).toBe("still here");
+    expect(agent.meta?.route).toBeUndefined();
+  });
+
+  test("a failure keeps the account out of the message but not out of the record", async () => {
+    // A failed task has no reply, so no route line; the account that failed is named by the daemon in the
+    // error text, which is what `saveTaskFailure` stores.
+    const m = await postUserMessage(db, wsA, "will fail", { accountId: "acct_abc1234567" });
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({ type: "task.finished", taskId: a.taskId, ok: false, error: "账户「Personal」还没有凭据，请在设置页填写后再运行。" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
+    const system = (await listMessages(db, wsA)).find((x) => x.role === "system")!;
+    expect(system.content).toContain("Personal");
+    expect(system.meta).toBeNull();
+  });
+});

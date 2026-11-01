@@ -32,6 +32,11 @@ type BuiltTask = {
   retainedSkills: string[];
   projectSkills: ProjectSkillRepo[];
   manualSkill: { skillId: string; arguments: string } | null;
+  /**
+   * The thread this task belongs to, when it is a thread task. The daemon looks up thread bindings by it;
+   * hub knows it already (it fetched `conversationThread`) and the daemon could only guess it from prompt text.
+   */
+  threadId: string | null;
 };
 
 export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daemonToken: string; hubUrl: string; ownedHelpers?: OwnedHelperScope; releaseVersion?: string };
@@ -221,7 +226,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     const projectSkills = await trustedSkillRepos(db, task.workspaceId);
     // `/name …` at the start of the user's own message (its current text after an edit); the daemon resolves it.
     const manual = userMessage.role === "user" && task.kind !== "workpackage" ? parseManualSkill(userMessage.content) : null;
-    return { prompt, confidential: workspace.confidential, attachments, retainedSkills: retained, projectSkills, manualSkill: manual };
+    return { prompt, confidential: workspace.confidential, attachments, retainedSkills: retained, projectSkills, manualSkill: manual, threadId: conversationId };
   }
 
   async function saveTaskFailure(taskId: string, error: string, expectedRunToken?: string): Promise<Message | null> {
@@ -291,6 +296,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         ...(built.retainedSkills.length > 0 ? { retainedSkills: built.retainedSkills } : {}),
         ...(built.projectSkills.length > 0 ? { projectSkills: built.projectSkills } : {}),
         ...(built.manualSkill ? { manualSkill: built.manualSkill } : {}),
+        // The account choice and the routing allowance travel down as they were recorded; the daemon decides
+        // what they mean, because accounts exist only on its machine (spec 2026-10-31 §5.4).
+        ...(task.accountId ? { accountId: task.accountId } : {}),
+        ...(task.routing ? { routing: "auto" as const } : {}),
+        ...(built.threadId ? { threadId: built.threadId } : {}),
       });
       await emitTask(task.id);
       return;
@@ -322,6 +332,8 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         const edited = await getMessage(db, routing.task.messageId);
         if (edited) meta.quote = { messageId: edited.id, role: edited.role, excerpt: messageExcerpt(edited.content) };
       }
+      // An older daemon sends no route; the message is stored exactly as before.
+      if (m.route) meta.route = m.route;
       msg = await saveTaskOutcome(routing, a.runToken, { ok: true }, "agent", m.reply, meta);
     } else {
       msg = await saveTaskFailure(m.taskId, m.error, a.runToken);

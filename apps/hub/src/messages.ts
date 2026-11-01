@@ -156,7 +156,21 @@ async function insertMessage(
   return toMessage(rows[0]!);
 }
 
-export type PostUserMessageOptions = { quoteMessageId?: string; threadId?: string; attachmentIds?: string[]; mentions?: MessageMention[] };
+export type PostUserMessageOptions = {
+  quoteMessageId?: string;
+  threadId?: string;
+  attachmentIds?: string[];
+  mentions?: MessageMention[];
+  /**
+   * The account the user picked for this one message (spec 2026-10-31 §5.4). Carried to the daemon, which is
+   * the only side that knows whether it exists. Shape-checked here so a free string never reaches a task row
+   * that ends up in `task.assign`.
+   */
+  accountId?: string;
+};
+
+/** The shape an account id must have to leave this process; the daemon re-checks it against its own file. */
+const ACCOUNT_ID = /^acct_[a-z0-9]{10}$/;
 
 /**
  * A user message and its queued task, in one transaction. With attachment ids, the uploads are locked first: if they
@@ -173,6 +187,9 @@ export async function postUserMessage(
   const mentions = options.mentions ?? [];
   const attachmentIds = [...new Set(options.attachmentIds ?? [])].sort();
   if (!messageHasBody(content, attachmentIds)) throw new MessageOpError(400, "message content must not be empty");
+  if (options.accountId !== undefined && !ACCOUNT_ID.test(options.accountId)) {
+    throw new MessageOpError(400, "accountId must be an account id");
+  }
   try {
     return await db.tx(async (t) => {
       if (attachmentIds.length > 0) {
@@ -198,7 +215,9 @@ export async function postUserMessage(
       if (delivered.length > ATTACHMENT_LIMITS.perTaskCount || delivered.reduce((sum, r) => sum + r.size, 0) > ATTACHMENT_LIMITS.perTaskBytes) {
         throw new MessageOpError(400, DELIVERY_LIMIT_MESSAGE);
       }
-      const task = await insertQueuedTask(t, workspaceId, message.id);
+      const task = await insertQueuedTask(t, workspaceId, message.id, "organize", {
+        ...(options.accountId !== undefined ? { accountId: options.accountId } : {}),
+      });
       return { message, task, replayed: false };
     });
   } catch (e) {
