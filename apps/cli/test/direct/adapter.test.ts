@@ -11,7 +11,7 @@ import { attachmentPreamble } from "../../src/attachments/blocks.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { loadConfig, saveConfig } from "../../src/config.js";
 import { CodexDirectAdapter } from "../../src/direct/adapter.js";
-import { AuthStore, RELOGIN_MESSAGE, type StoredAuth } from "../../src/direct/authStore.js";
+import { AuthStore, RefreshError, RELOGIN_MESSAGE, type StoredAuth } from "../../src/direct/authStore.js";
 import { byokKeyPath, saveByokKey } from "../../src/direct/byok.js";
 import { COMPAT_PROFILE, REQUEST_TOO_LARGE_MESSAGE, SIWC_PROFILE, type TransportProfile } from "../../src/direct/transport.js";
 import { json, reset, sse, startFakeResponsesServer, type FakeResponsesServer } from "../fixtures/fake-responses-server.js";
@@ -890,6 +890,44 @@ describe("a siwc account logs in with its own file", () => {
     expect(server.requests).toHaveLength(1);
     expect(server.requests[0]!.headers.authorization).toBe(`Bearer ${tokenSecond}`);
     expect(server.requests[0]!.headers.authorization).not.toBe(`Bearer ${tokenFirst}`);
+  });
+
+  test("a rate-limited login refresh moves to the next automatic account before any model request", async () => {
+    const first = { id: "acct_aaaaaaaaaa", name: "First", enabled: true, adapter: "codex-direct", authMode: "siwc", model: "model-a", costTier: "standard", order: 0, createdAt: "2026-10-31T00:00:00.000Z" };
+    const second = { id: "acct_bbbbbbbbbb", name: "Second", enabled: true, adapter: "codex-direct", authMode: "siwc", model: "model-b", costTier: "standard", order: 1, createdAt: "2026-10-31T00:00:00.000Z" };
+    writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [first, second], bindings: {}, autoRouting: true }, null, 2) + "\n");
+    saveConfig(home, { authMode: "siwc", model: "model-a" });
+    const tokenSecond = jwt({ exp: Math.floor(Date.now() / 1000) + 3600, sub: "second" });
+    const writes: [string, string][] = [
+      [first.id, jwt({ exp: Math.floor(Date.now() / 1000) - 60, sub: "first" })],
+      [second.id, tokenSecond],
+    ];
+    for (const [id, token] of writes) {
+      const dir = join(home, "secrets", "accounts", id);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const record = { version: 1, mode: "siwc", clientId: "c", tokens: { access_token: token, refresh_token: "rt" }, lastRefresh: "2026-10-31T00:00:00.000Z" };
+      writePrivateFile(join(dir, "auth.json"), JSON.stringify(record, null, 2) + "\n");
+    }
+    server.responses(stream([msgItem("from second")]));
+
+    const adapter = new CodexDirectAdapter({
+      nemaHome: home,
+      version: "9.9.9",
+      profile: profile(),
+      refresher: async () => {
+        throw new RefreshError(429, { retryAfterS: 30 });
+      },
+    });
+    const { result, events } = await run(adapter, { ...task(), routing: "auto" });
+
+    expect(result).toMatchObject({
+      ok: true,
+      reply: "from second",
+      route: { accountId: second.id, reason: "auto_after_limit", attempts: [{ accountId: first.id, failure: "rate_limit" }] },
+    });
+    expect(events.some((e) => e.type === "progress" && e.text.includes("First") && e.text.includes("Second"))).toBe(true);
+    expect(server.requests).toHaveLength(1);
+    expect(server.requests[0]!.headers.authorization).toBe(`Bearer ${tokenSecond}`);
   });
 });
 

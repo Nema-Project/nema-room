@@ -392,19 +392,25 @@ export class CodexDirectAdapter implements AgentAdapter {
     timeout.catch(() => {});
     const timer = setTimeout(() => ac.abort(new RunTimeoutError()), task.limits?.timeoutMs ?? this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
-    try {
-      await plan.session.source.getAccessToken();
-    } catch (e) {
-      // A credential that cannot produce a token fails the task here, before any model request. The message
-      // is the token source's own (it names the specific problem: a dead login, a refused key); the account it
-      // belongs to travels in `route`, so the reply line and the stored metadata still say whose credential.
-      //
-      // The model recorded is the one the account is configured with, not a stand-in: nothing was sent, and
-      // a placeholder here would put a model name in the failure line that the user never chose and no
-      // provider ever saw.
-      clearTimeout(timer);
-      ownerSignal?.removeEventListener("abort", abortFromOwner);
-      return { ok: false, error: errorMessage(e), route: plan.decision(plan.session.model ?? route.model) };
+    // A rate-limited token refresh is the account's limit, same as a 429 on the model call, so automatic
+    // routing tries the next account before any request. A dead login is not: `advance` leaves that in place.
+    for (;;) {
+      try {
+        await plan.session.source.getAccessToken();
+        break;
+      } catch (e) {
+        if (plan.advance(e)) continue;
+        // A credential that cannot produce a token fails the task here, before any model request. The message
+        // is the token source's own (it names the specific problem: a dead login, a refused key); the account it
+        // belongs to travels in `route`, so the reply line and the stored metadata still say whose credential.
+        //
+        // The model recorded is the one the account is configured with, not a stand-in: nothing was sent, and
+        // a placeholder here would put a model name in the failure line that the user never chose and no
+        // provider ever saw.
+        clearTimeout(timer);
+        ownerSignal?.removeEventListener("abort", abortFromOwner);
+        return { ok: false, error: errorMessage(e), route: plan.decision(plan.session.model ?? route.model) };
+      }
     }
     if (ownerSignal?.aborted) {
       clearTimeout(timer);
