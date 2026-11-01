@@ -186,8 +186,7 @@ export class McpStdioTransport implements Transport {
     // `child` is set only after a successful spawn, so a command that failed to start is never waited on.
     const pid = child.pid;
     const running = () => child.exitCode === null && child.signalCode === null;
-    const wasRunning = running();
-    if (wasRunning) await endInput(child.stdin, this.exited, INPUT_GRACE_MS);
+    if (running()) await endInput(child.stdin, this.exited, INPUT_GRACE_MS);
     if (running()) {
       const timer = setTimeout(() => {
         if (process.platform === "win32") child.kill("SIGKILL");
@@ -201,8 +200,8 @@ export class McpStdioTransport implements Transport {
     }
     // The leader is gone; anything still in its group goes now.
     if (process.platform !== "win32") signalGroup(pid, "SIGKILL");
-    // A leader that exited on EOF while a descendant still held its output: give the pipes a bounded
+    // A leader that has exited while a descendant still held its output: give the pipes a bounded
     // moment to close, so `onclose` has run by the time a stop returns.
-    if (wasRunning) await within(this.exited, KILL_GRACE_MS);
+    await within(this.exited, KILL_GRACE_MS);
   }
 }
