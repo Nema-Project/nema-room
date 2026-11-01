@@ -1,4 +1,4 @@
-import { copyFile, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,14 @@ import { migrate, type Db } from "../src/db/db.js";
 import { createTestDb } from "../src/db/pglite.js";
 
 const MIGRATIONS = path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/db/migrations");
-const ACCOUNT_MIGRATION = "018_task_routing.sql";
+/**
+ * The migrations this release adds. Both belong to the same batch: S2 (#175) creates `account_id` in 017 and
+ * this branch adds `routing` in 018, and they ship together, so "a database from before this release" is one
+ * that has neither.
+ */
+const ACCOUNT_MIGRATION = "017_task_account.sql";
+const ROUTING_MIGRATION = "018_task_routing.sql";
+const NEW_MIGRATIONS = [ACCOUNT_MIGRATION, ROUTING_MIGRATION];
 
 const dirs: string[] = [];
 
@@ -77,9 +84,10 @@ describe("tasks gains the account choice and the routing allowance", () => {
   });
 
   test("a data directory from before this release upgrades and keeps its tasks", async () => {
-    // The upgrade path users actually take: apply every migration but this one, add a row, then migrate.
+    // The upgrade path users actually take: apply every migration this release adds but these, add a row,
+    // then migrate.
     const earlier = await scratch("nema-migrations-before-");
-    for (const name of (await readdir(MIGRATIONS)).filter((n) => n.endsWith(".sql") && n !== ACCOUNT_MIGRATION).sort()) {
+    for (const name of (await readdir(MIGRATIONS)).filter((n) => n.endsWith(".sql") && !NEW_MIGRATIONS.includes(n)).sort()) {
       await copyFile(path.join(MIGRATIONS, name), path.join(earlier, name));
     }
     const dataDir = await scratch("nema-migrations-data-");
@@ -105,12 +113,13 @@ describe("landing after S2's task account column", () => {
   test("applying the routing migration on a database that already has account_id does not fail", async () => {
     // The plan expected S2 and S3 to touch different files; both need an account on the task row. Whichever
     // lands second must not throw, because a failing migration leaves the hub unable to start at all.
+    // 017 is S2's own file and it is on `main` now, so this order is the real one: a database that has
+    // everything except this branch's migration. No hand-written stand-in for S2's file any more — the test
+    // reads the file that actually ships.
     const earlier = await scratch("nema-migrations-s2-first-");
-    for (const name of (await readdir(MIGRATIONS)).filter((n) => n.endsWith(".sql") && n !== ACCOUNT_MIGRATION).sort()) {
+    for (const name of (await readdir(MIGRATIONS)).filter((n) => n.endsWith(".sql") && n !== ROUTING_MIGRATION).sort()) {
       await copyFile(path.join(MIGRATIONS, name), path.join(earlier, name));
     }
-    // S2's own migration, in the order the branch would have it.
-    await writeFile(path.join(earlier, "017_task_account.sql"), "alter table tasks add column account_id text;\n");
     const dataDir = await scratch("nema-migrations-s2-data-");
     const db = wrap(new PGlite(dataDir));
     await migrate(db, earlier);

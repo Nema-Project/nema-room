@@ -1418,3 +1418,40 @@ describe("editing a message to empty text", () => {
     expect((await req("POST", `/api/workspaces/${ws}/messages`, { content: "" })).status).toBe(400);
   });
 });
+
+describe("per-message account selection", () => {
+  // The id travels from the composer to the daemon through the hub. Its shape is checked here because the
+  // hub is where a malformed value would otherwise reach a task nobody can read later.
+  const ID = "acct_abc1234567";
+
+  test("accepts a well-formed account id and stores it on the task", async () => {
+    const posted = await req("POST", `/api/workspaces/${ws}/messages`, { content: "use work", accountId: ID });
+    expect(posted.status).toBe(200);
+    const { task } = await json(posted);
+    const row = await db.query<{ account_id: string | null }>("select account_id from tasks where id=$1", [task.id]);
+    expect(row[0]!.account_id).toBe(ID);
+  });
+
+  test("leaves the task's account empty when the message names none", async () => {
+    const { task } = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "plain" }));
+    const row = await db.query<{ account_id: string | null }>("select account_id from tasks where id=$1", [task.id]);
+    expect(row[0]!.account_id).toBeNull();
+  });
+
+  test.each([
+    ["the synthesized id, which no task may name", "acct_0000000000"],
+    ["an id of the wrong shape", "acct_short"],
+    ["a bare string that is not an id", "work"],
+    ["a number", 7],
+  ])("rejects %s", async (_label, accountId) => {
+    const reply = await req("POST", `/api/workspaces/${ws}/messages`, { content: "nope", accountId });
+    expect(reply.status).toBe(400);
+  });
+
+  test("carries the choice into a thread reply's task as well", async () => {
+    const created = await json(await req("POST", `/api/workspaces/${ws}/threads`, { content: "topic" }));
+    const reply = await json(await req("POST", `/api/workspaces/${ws}/threads/${created.thread.id}/messages`, { content: "again", accountId: ID }));
+    const row = await db.query<{ account_id: string | null }>("select account_id from tasks where id=$1", [reply.task.id]);
+    expect(row[0]!.account_id).toBe(ID);
+  });
+});

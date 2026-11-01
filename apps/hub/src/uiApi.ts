@@ -76,6 +76,15 @@ const PatchWorkspaceBody = z.object({
   knowledgeLanguage: z.enum(KNOWLEDGE_LANGUAGES).optional(),
   archived: z.boolean().optional(),
 });
+/**
+ * An account id as a message may name it (spec 2026-10-31 §5.4). The hub does not know which accounts exist
+ * — they live on the daemon's machine — so only the shape is checked here. The synthesized account's
+ * reserved id is refused: it names no stored account and a task may not select it.
+ */
+const AccountId = z
+  .string()
+  .regex(/^acct_[a-z0-9]{10}$/, "must be an account id")
+  .refine((id) => id !== "acct_0000000000", "must not be the reserved account id");
 const PostMessageBody = z
   .object({
     content: z.string(),
@@ -85,10 +94,10 @@ const PostMessageBody = z
     /** `@` mentions; the hub checks that each one is this workspace's and that its text is in the body. */
     mentions: MessageMentions.optional(),
     /**
-     * The account this one message names (spec 2026-10-31 §5.4). An opaque id: the hub stores it on the task
-     * and forwards it; it never resolves an account, because accounts live on the daemon's machine.
+     * The account this one message names. Carried to the task and to the daemon, which is the only side that
+     * knows whether it exists; never resolved here.
      */
-    accountId: z.string().regex(/^acct_[a-z0-9]{10}$/, "must be an account id").optional(),
+    accountId: AccountId.optional(),
   })
   .refine((b) => messageHasBody(b.content, b.attachmentIds ?? []), { message: "must not be empty", path: ["content"] });
 // An edit changes only the text; attachments stay as they are. Empty text is checked by editUserMessage,

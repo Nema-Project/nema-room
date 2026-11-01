@@ -183,6 +183,12 @@ export type SiwcLoginOptions = {
   requireTrustedAuthorizeUrl?: boolean;
   /** Hides provider and callback error text from the OAuth browser page. */
   redactCallbackErrors?: boolean;
+  /**
+   * Where `auth.json` is written; `nemaHome` when omitted. An account's login belongs in
+   * `secrets/accounts/<id>/` (spec 2026-10-31 §3.1), so the settings page passes that directory. Without
+   * this the browser flow could only ever overwrite the default account's credential.
+   */
+  baseDir?: string;
 };
 
 const b64url = (buf: Buffer) => buf.toString("base64url");
@@ -373,7 +379,8 @@ export async function siwcLogin(opts: SiwcLoginOptions): Promise<StoredAuth> {
   const authorizeUrl = opts.endpoints?.authorizeUrl ?? SIWC.authorizeUrl;
   const tokenUrl = opts.endpoints?.tokenUrl ?? SIWC.tokenUrl;
   const timeoutMs = opts.timeoutMs ?? 300_000;
-  const store = new AuthStore(nemaHome, siwcRefresher);
+  const baseDir = opts.baseDir ?? nemaHome;
+  const store = new AuthStore(nemaHome, siwcRefresher, Date.now, { baseDir });
   opts.signal?.throwIfAborted();
 
   const prior = store.read();
@@ -452,8 +459,17 @@ export async function siwcLogin(opts: SiwcLoginOptions): Promise<StoredAuth> {
         accountId,
         lastRefresh: new Date().toISOString(),
       };
+      // A brand-new account has no credential yet, so nothing has created its directory: `accountDir`
+      // only validates the path. The lock file is opened with "wx", which needs the directory to be there
+      // already, and `AuthStore.save()` would only create it after the lock is held. A first login would
+      // therefore complete in the browser and then fail to store anything.
+      //
+      // The `AuthStore` constructor has already refused a symlinked component of `baseDir`, and this is
+      // the same directory it will write into, so creating it here cannot redirect the login elsewhere.
+      mkdirSync(baseDir, { recursive: true, mode: 0o700 });
+      protectPrivatePath(baseDir, 0o700);
       // AuthStore.save() is unlocked; serialize with refreshers via auth.lock.
-      await withFileLock(path.join(nemaHome, "auth.lock"), async () => {
+      await withFileLock(path.join(baseDir, "auth.lock"), async () => {
         opts.signal?.throwIfAborted();
         store.save(auth);
       }, { timeoutMs: 15_000 });

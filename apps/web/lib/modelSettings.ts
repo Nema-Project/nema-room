@@ -17,6 +17,14 @@ export type ModelSettingsDto = {
   /** Each provider's own login. Absent on older responses; the active provider then uses `auth`. */
   credentials?: Partial<Record<CredentialKind, CredentialState>>;
   tools: Record<"claude" | "github", { available: boolean; tokenSaved: boolean }>;
+  /**
+   * The accounts block (spec 2026-10-31 §5.1). Both fields are additions: an older daemon omits them and
+   * this page then shows exactly what it showed in 0.2.0. `accounts` is absent — not empty — when the
+   * daemon has an account file it cannot read, and `unusableReason` says which way it failed.
+   */
+  accounts?: import("./accounts").AccountView[];
+  defaultAccountId?: string;
+  unusableReason?: "symlink" | "mode" | "owner" | "corrupt" | "invalid";
 };
 export type AuthJob = { state: "idle" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled"; error: "login_failed" | "probe_failed" | null };
 export type ModelsCatalog = { models: string[]; unavailable?: "not_connected" | "not_applicable" | "list_failed" };
@@ -26,7 +34,14 @@ export type SettingsPatch = Partial<Pick<ModelConfig, "adapter" | "authMode" | "
   byokBaseUrl?: string | null;
 };
 
-export type SettingsErrorCode = "invalid_request" | "job_conflict" | "login_not_applicable" | "mutation_conflict" | "probe_not_supported" | "service_unavailable";
+/**
+ * Every refusal the local settings service can name. The three account codes come from its accounts routes
+ * (`lib/accounts.ts`); the set below is the subset `/_nema/settings` itself can answer, so a code from the
+ * other routes is never mistaken for one of those.
+ */
+export type SettingsErrorCode =
+  | "invalid_request" | "job_conflict" | "login_not_applicable" | "mutation_conflict" | "probe_not_supported" | "service_unavailable"
+  | "account_exists" | "account_in_use" | "accounts_unusable";
 
 export class ModelSettingsError extends Error {
   constructor(readonly code: SettingsErrorCode) {

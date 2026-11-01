@@ -287,3 +287,52 @@ describe("authenticated settings backend", () => {
     session.close();
   });
 });
+
+describe("settings response carries the accounts block", () => {
+  test("adds accounts and defaultAccountId without changing the config keys", async () => {
+    const home = tempHome();
+    saveConfig(home, { adapter: "codex-direct", authMode: "byok", byokBaseUrl: "https://a.example.com/v1" });
+    const service = createSettingsService({ home, codexHome: path.join(home, "no-codex"), operations: ops() });
+    const body = (await service.dispatch("GET", "/_nema/settings", undefined)).body as Record<string, unknown>;
+
+    // The existing shape is unchanged: the old web reads exactly the same keys it always did.
+    expect(Object.keys(body).sort()).toEqual(["accounts", "auth", "config", "credentials", "defaultAccountId", "tools"]);
+    expect(Object.keys(body.config as object).sort()).toEqual(["adapter", "authMode", "byokBaseUrl", "reasoningEffort"]);
+    expect(Object.keys(body.auth as object).sort()).toEqual(["adapter", "credential", "mode", "state"]);
+    expect(Object.keys(body.tools as object).sort()).toEqual(["claude", "github"]);
+
+    const accounts = body.accounts as Array<Record<string, unknown>>;
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]).toMatchObject({ implicit: true, adapter: "codex-direct", authMode: "byok", credential: "missing" });
+    expect(body.defaultAccountId).toBe(accounts[0]!.id);
+  });
+
+  test("never puts a credential into the settings response", async () => {
+    const home = tempHome();
+    const service = createSettingsService({ home, codexHome: path.join(home, "no-codex"), operations: ops() });
+    const secret = "sk-settings-never-echoes-0123456789";
+    await service.dispatch("POST", "/_nema/auth/secret", { kind: "byok", value: secret });
+    const body = (await service.dispatch("GET", "/_nema/settings", undefined)).body;
+    expect(JSON.stringify(body)).not.toContain(secret);
+    expect(JSON.stringify(body)).not.toContain("sk-");
+  });
+
+  test("omits accounts when the file cannot be used, and keeps the old fields", async () => {
+    const home = tempHome();
+    writeFileSync(path.join(home, "accounts.json"), "{not json", { mode: 0o600 });
+    const service = createSettingsService({ home, codexHome: path.join(home, "no-codex"), operations: ops() });
+    const body = (await service.dispatch("GET", "/_nema/settings", undefined)).body as Record<string, unknown>;
+    expect(body.accounts).toBeUndefined();
+    expect(body.defaultAccountId).toBeUndefined();
+    expect(body.unusableReason).toBe("corrupt");
+    expect(body.config).toBeTruthy();
+  });
+
+  test("routes /_nema/accounts through the same dispatch and 404s an unknown subpath", async () => {
+    const home = tempHome();
+    const service = createSettingsService({ home, codexHome: path.join(home, "no-codex"), operations: ops() });
+    expect((await service.dispatch("GET", "/_nema/accounts", undefined)).status).toBe(200);
+    expect(await service.dispatch("GET", "/_nema/accounts/nope", undefined)).toEqual({ status: 404, body: { error: "not_found" } });
+    expect(await service.dispatch("DELETE", "/_nema/accounts", { id: "acct_aaaaaaaaaa" })).toEqual({ status: 404, body: { error: "not_found" } });
+  });
+});

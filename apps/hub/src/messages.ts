@@ -165,11 +165,19 @@ export type PostUserMessageOptions = {
    * The account the user picked for this one message (spec 2026-10-31 §5.4). Carried to the daemon, which is
    * the only side that knows whether it exists. Shape-checked here so a free string never reaches a task row
    * that ends up in `task.assign`.
+   *
+   * Stored on the task, not in the message's meta: the choice is the task's input, and the result (which
+   * account actually answered) is the daemon's to report later.
    */
   accountId?: string;
 };
 
-/** The shape an account id must have to leave this process; the daemon re-checks it against its own file. */
+/**
+ * The shape an account id must have to leave this process. The id names a directory on the daemon's machine,
+ * so an arbitrary string must never get that far. The REST layer already refuses a malformed id with its own
+ * (stricter) schema, which also refuses the synthesized account's reserved id; this is the same shape check
+ * for the callers that reach this function without going through that layer.
+ */
 const ACCOUNT_ID = /^acct_[a-z0-9]{10}$/;
 
 /**
@@ -269,6 +277,7 @@ async function lockForSend(
     priorQuote === (options.quoteMessageId ?? null) &&
     prior.threadId === (options.threadId ?? null) &&
     sameMentions((prior.meta as UserMessageMeta | null)?.mentions, options.mentions);
+  // A retry that names a different account is a different request, not a replay of this one.
   if (!same) throw conflict;
   const first = await t.query<{ id: string }>("select id from tasks where message_id = $1 order by seq limit 1", [messageId]);
   const task = first[0] ? await getTask(t, first[0].id) : null;

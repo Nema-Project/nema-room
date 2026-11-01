@@ -228,3 +228,70 @@ test('the GitHub token is used for reads and never printed', async () => {
   assert.equal(JSON.parse(out).items.release.evidence.draft, true);
   assert.doesNotMatch(out + err, /secret-value/);
 });
+
+// ---------- provenance a caller knows is still indexing (#174) ----------
+// `release:verify` is a standalone command someone runs to accept a release. Its default must not get
+// weaker: a version with no provenance is still `missing` and still exit 1. Only a caller that knows
+// the 404 is an index delay it already bounded (promote, right after its own publish) may say so.
+
+test('#174: without the new input, a provenance 404 is still missing and still exit 1', async () => {
+  // This is the behaviour every standalone `npm run release:verify -- <version>` keeps.
+  const w = world('0.1.6', { provenance: {} });
+  const report = await run(w);
+  assert.equal(report.items.consistency.state, 'missing');
+  assert.match(report.items.consistency.detail, /npm has no provenance for @nema-project\/nema@0\.1\.6/);
+  assert.doesNotMatch(report.items.consistency.detail, /waitable/);
+  assert.equal(report.overall, 'incomplete');
+  assert.equal(report.exitCode, 1);
+});
+
+test('#174: a pending provenance the caller vouched for is reported as waitable, never as missing and never as ok', async () => {
+  const w = world('0.1.6', { provenance: {} });
+  const report = await run(w, { provenanceIndex: { state: 'pending', detail: 'the registry declares provenance for 0.1.6 but has not served it after 60000ms' } });
+  // Nothing is known to be missing, so the release set is complete...
+  assert.equal(report.overall, 'complete');
+  assert.equal(report.items.consistency.state, 'ok');
+  // ...but the item is named, apart from the evidence that did agree, and never as an attestation that was read.
+  assert.match(report.items.consistency.detail, /Waitable, not a gap: npm provenance/);
+  assert.match(report.items.consistency.detail, /the registry declares provenance for 0\.1\.6 but has not served it/);
+  assert.doesNotMatch(report.items.consistency.detail, /and npm provenance commit/, 'nothing was read, so nothing may claim it was');
+  assert.deepEqual(report.items.consistency.waitable, ['npm provenance']);
+  // The old behaviour would have said "npm has no provenance"; that sentence is now impossible here.
+  assert.doesNotMatch(report.items.consistency.detail, /npm has no provenance/);
+  assert.match(formatReport(report), /^ok\s+consistency/m);
+});
+
+test('#174: a real SLSA v1 body still wins over a caller-supplied hint, and a wrong commit is still missing', async () => {
+  // The hint is about a 404 only. When the registry does serve the attestation, its content is checked
+  // exactly as before, so a hint can never paper over a disagreeing commit.
+  const served = await run(world(), { provenanceIndex: { state: 'pending', detail: 'not needed' } });
+  assert.equal(served.items.consistency.state, 'ok');
+  assert.equal(served.items.consistency.waitable, undefined, 'a served attestation is not a waitable item');
+  assert.match(served.items.consistency.detail, /npm provenance read from the registry/);
+
+  const wrong = await run(world('0.1.6', { provenance: { '0.1.6': { commit: OTHER_COMMIT, ref: 'refs/tags/v0.1.6' } } }), { provenanceIndex: { state: 'pending', detail: 'not needed' } });
+  assert.equal(wrong.items.consistency.state, 'missing');
+  assert.match(wrong.items.consistency.detail, /npm provenance commit 1{40} is not tag commit/);
+  assert.equal(wrong.exitCode, 1);
+});
+
+test('#174: the hint cannot turn another missing item into a pass', async () => {
+  // A 404 provenance is only ever waitable; everything else keeps its own verdict.
+  const w = world('0.1.6', { provenance: {} });
+  w.images['nema-project/nema-room-web']['0.1.6'].label = '0.1.5';
+  const report = await run(w, { provenanceIndex: { state: 'pending', detail: 'index delay' } });
+  assert.equal(report.items.consistency.state, 'missing');
+  assert.match(report.items.consistency.detail, /web image label is 0\.1\.5/);
+  assert.equal(report.exitCode, 1);
+});
+
+test('#174: a 401/403 on provenance is not turned into a waitable item by the hint either', async () => {
+  // A denial is a definitive answer; the hint is only about a 404.
+  const w = world('0.1.6', { fail: [[/attestations/, 403]] });
+  const report = await run(w, { provenanceIndex: { state: 'pending', detail: 'index delay' } });
+  // A denial means "could not be read", which is unknown (exit 2), never missing and never waitable.
+  assert.equal(report.items.consistency.state, 'unknown');
+  assert.match(report.items.consistency.detail, /attestations.*HTTP 403/);
+  assert.doesNotMatch(report.items.consistency.detail, /waitable/);
+  assert.equal(report.exitCode, 2);
+});
