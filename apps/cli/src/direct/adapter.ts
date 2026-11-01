@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { RouteAttempt, RouteDecision, TaskAssign, TaskEvent } from "@nema/shared";
+import type { RouteDecision, TaskAssign, TaskEvent } from "@nema/shared";
 import { attachmentCapabilities, refusal } from "../attachments/capabilities.js";
 import { attachmentLabel, attachmentPreamble, textAttachmentBlock } from "../attachments/blocks.js";
 import { loadTaskAttachments, type LoadedAttachment } from "../attachments/fetch.js";
@@ -16,8 +16,7 @@ import { loadRoutingAccounts, type RoutingAccounts } from "../routing/accountSet
 import { Cooldowns, cooldownFor } from "../routing/cooldown.js";
 import { AutoRouter, ReasoningGuard } from "../routing/auto.js";
 import { classifyFailure, shouldSwitch, type RouteFailure } from "../routing/errors.js";
-import { resolveRoute, routeDecision, type RouteResult } from "../routing/index.js";
-import type { Candidate } from "../routing/candidates.js";
+import { accountLabel, resolveRoute, routeDecision, type RouteResult } from "../routing/index.js";
 import { roomTools } from "./tools.js";
 import { prepareDirectSkills } from "../skills/direct.js";
 import {
@@ -143,7 +142,15 @@ type SentState = { blocks?: ContentBlockOwner[]; model?: string; text?: boolean;
  * A failover builds a new one rather than mutating the old: the token source is bound to a key or a login, and
  * reusing it would send the previous account's credential with the next account's model.
  */
-type Session = { account: Account; model: string | undefined; source: TokenSource; profile: TransportProfile };
+type Session = {
+  account: Account;
+  /** The model to send, once known: undefined while an account that names none has not read its catalog yet. */
+  model: string | undefined;
+  /** The account's own setting, `MODEL_FROM_LIST` included: what a record says when nothing was sent. */
+  configured: string;
+  source: TokenSource;
+  profile: TransportProfile;
+};
 
 type AccountPlanOptions = {
   route: Extract<RouteResult, { ok: true }>;
@@ -216,7 +223,7 @@ class AccountPlan {
       ...(this.o.refresher ? { refresher: this.o.refresher } : {}),
       ...(this.o.profile ? { profile: this.o.profile } : {}),
     });
-    return { account, model: model === MODEL_FROM_LIST ? undefined : model, source: transport.source, profile: transport.profile };
+    return { account, model: model === MODEL_FROM_LIST ? undefined : model, configured: model, source: transport.source, profile: transport.profile };
   }
 
   /** The history to send on the current account: everything, minus reasoning from an account the task has left. */
@@ -257,23 +264,21 @@ class AccountPlan {
    */
   advance(e: unknown): boolean {
     if (this.auto === null) return false;
-    const failure = classifyFailure(e, { startedOutput: this.o.sent.text === true });
-    const decision = shouldSwitch(failure);
-    // A write already landed, or might have. Another account would see that call and can emit it again.
-    // The account is still cooled when the failure is one that would have moved the task, so the next task
-    // does not start on an account that just returned 429. Nothing is announced and this task does not retry.
-    if (this.o.sent.wrote === true) {
-      if (decision.switch) {
-        const now = this.o.now ?? Date.now;
-        const ms = cooldownFor(failure, providerRetryAfterMs(e, now()));
-        if (ms !== null) this.o.cooldowns.mark(this.session.account.id, ms);
-      }
+    // Classified on the error alone: whether output has started decides whether the task may move, not what
+    // kind of failure this was. A limit is a limit either way, and the account is cooled for it either way.
+    const failure = classifyFailure(e, { startedOutput: false });
+    if (!shouldSwitch(failure).switch) return false;
+    const now = this.o.now ?? Date.now;
+    // A write already landed (or might have), or this model call already streamed text the user has seen.
+    // Another account must not take over: it could emit the write again, or continue the answer in another
+    // model's voice (spec §4.3). The account is still cooled, so the next task does not start on an account
+    // that just returned 429. Nothing is announced and this task does not retry.
+    if (this.o.sent.wrote === true || this.o.sent.text === true) {
+      const ms = cooldownFor(failure, providerRetryAfterMs(e, now()));
+      if (ms !== null) this.o.cooldowns.mark(this.session.account.id, ms);
       return false;
     }
-    if (!decision.switch) return false;
-    const from = this.auto.current();
-    if (from === null) return false;
-    const now = this.o.now ?? Date.now;
+    if (this.auto.current() === null) return false;
     this.auto.recordFailure(failure, providerRetryAfterMs(e, now()), this.o.sent.model);
     const next = this.auto.next();
     if (next === null) return false;
@@ -281,7 +286,6 @@ class AccountPlan {
     // built yet: leaving the old value would name the failed account's model in the next failure line.
     this.session = this.build(next.account, next.model);
     this.o.sent.model = undefined;
-    this.o.sent.text = false;
     return true;
   }
 
@@ -301,12 +305,7 @@ function switchMessage(from: Account, to: Account, failure: RouteFailure): strin
       : failure === "context"
         ? "上下文超出窗口"
         : "接口出错";
-  return `${labelFor(from)} ${why}，改用 ${labelFor(to)}`;
-}
-
-/** An account in a sentence, with a name that looks like a credential replaced by its id. */
-function labelFor(account: Account): string {
-  return /^[A-Za-z0-9_\-+/=]{20,}$/.test(account.name.trim()) ? `账户 ${account.id}` : `账户「${account.name}」`;
+  return `${accountLabel(from)} ${why}，改用 ${accountLabel(to)}`;
 }
 
 export class CodexDirectAdapter implements AgentAdapter {
@@ -409,7 +408,7 @@ export class CodexDirectAdapter implements AgentAdapter {
         // provider ever saw.
         clearTimeout(timer);
         ownerSignal?.removeEventListener("abort", abortFromOwner);
-        return { ok: false, error: errorMessage(e), route: plan.decision(plan.session.model ?? route.model) };
+        return { ok: false, error: errorMessage(e), route: plan.decision(plan.session.model ?? plan.session.configured) };
       }
     }
     if (ownerSignal?.aborted) {
@@ -430,8 +429,8 @@ export class CodexDirectAdapter implements AgentAdapter {
         ok: false,
         error: attachmentRejection(cause, task.attachments ?? [], sent.blocks) ?? errorMessage(cause),
         // `sent.model` is what reached the provider; nothing set it, so the run never got as far as a
-        // request and the account's own setting is the honest answer.
-        route: plan.decision(sent.model ?? plan.session.model ?? route.model),
+        // request and the setting of the account it ended on is the honest answer.
+        route: plan.decision(sent.model ?? plan.session.model ?? plan.session.configured),
       };
     } finally {
       clearTimeout(timer);
@@ -519,6 +518,9 @@ export class CodexDirectAdapter implements AgentAdapter {
           let text = "";
           let shown = "";
           let lastAt = -Infinity;
+          // "Output has started" is about this model call. Text an earlier call streamed and finished is part of
+          // the history the next account receives, and a switch happens between calls (spec §4.3).
+          sent.text = false;
           const flush = () => {
             if (text === shown) return;
             shown = text;
@@ -526,17 +528,19 @@ export class CodexDirectAdapter implements AgentAdapter {
             onEvent({ type: "agent_message", text: text.slice(-PROGRESS_MAX_CHARS) });
           };
           for (;;) {
-            // The model is resolved per attempt: a new account may name a different one, and an account with
-            // no default is resolved from its own catalog the first time it is used.
-            const model = plan.session.model ?? (await this.defaultModel(context()));
-            plan.session.model = model;
-            sent.model = model;
-            // Filtered again per attempt, because a switch happens *inside* this call: the loop's own
-            // `onBeforeCall` ran once, before the account changed. Filtering is idempotent — each reasoning item
-            // is tagged on first sighting and the tag decides its fate — so the two sites cannot disagree.
-            const outgoing = plan.history(input);
             // The call's text is reported even when it fails: the user has seen those characters.
             try {
+              // The model is resolved per attempt: a new account may name a different one, and an account with
+              // no default is resolved from its own catalog the first time it is used. That read is inside the
+              // `try` because it is the first request on an account a failover just moved to: its token refresh
+              // can be rate limited like any other request, which is that account's limit, not the task's end.
+              const model = plan.session.model ?? (await this.defaultModel(context()));
+              plan.session.model = model;
+              sent.model = model;
+              // Filtered again per attempt, because a switch happens *inside* this call: the loop's own
+              // `onBeforeCall` ran once, before the account changed. Filtering is idempotent — each reasoning
+              // item is tagged on first sighting and the tag decides its fate — so the two sites cannot disagree.
+              const outgoing = plan.history(input);
               const response = await streamResponse(
                 { model, instructions, input: outgoing, tools, reasoning: { effort: config.reasoningEffort, summary: "auto" }, sessionId },
                 {

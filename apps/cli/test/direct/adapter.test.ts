@@ -929,6 +929,72 @@ describe("a siwc account logs in with its own file", () => {
     expect(server.requests).toHaveLength(1);
     expect(server.requests[0]!.headers.authorization).toBe(`Bearer ${tokenSecond}`);
   });
+
+  /** siwc accounts with automatic routing on; `live` decides whose stored token is still valid. */
+  function writeSiwcAuto(accounts: { id: string; model?: string; live: boolean; name: string; order: number }[]): Map<string, string> {
+    const rows = accounts.map(({ live: _live, model, ...a }) => ({
+      ...a, enabled: true, adapter: "codex-direct", authMode: "siwc", costTier: "standard", createdAt: "2026-10-31T00:00:00.000Z",
+      ...(model !== undefined ? { model } : {}),
+    }));
+    writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: rows, bindings: {}, autoRouting: true }, null, 2) + "\n");
+    saveConfig(home, { authMode: "siwc", model: "model-a" });
+    const tokens = new Map<string, string>();
+    for (const a of accounts) {
+      const token = jwt({ exp: Math.floor(Date.now() / 1000) + (a.live ? 3600 : -60), sub: a.id });
+      tokens.set(a.id, token);
+      const dir = join(home, "secrets", "accounts", a.id);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const record = { version: 1, mode: "siwc", clientId: "c", tokens: { access_token: token, refresh_token: "rt" }, lastRefresh: "2026-10-31T00:00:00.000Z" };
+      writePrivateFile(join(dir, "auth.json"), JSON.stringify(record, null, 2) + "\n");
+    }
+    return tokens;
+  }
+  const rateLimitedRefresh = () =>
+    new CodexDirectAdapter({
+      nemaHome: home,
+      version: "9.9.9",
+      profile: profile(),
+      refresher: async () => {
+        throw new RefreshError(429, { retryAfterS: 30 });
+      },
+    });
+
+  test("a rate-limited refresh on the account a mid-run failover moved to moves on again", async () => {
+    // A is limited on its model call; B has no model, so its catalog is read with a token whose refresh is
+    // rate limited. That is B's limit, and C must still get the task.
+    const tokens = writeSiwcAuto([
+      { id: "acct_aaaaaaaaaa", name: "First", model: "model-a", live: true, order: 0 },
+      { id: "acct_bbbbbbbbbb", name: "Second", live: false, order: 1 },
+      { id: "acct_cccccccccc", name: "Third", model: "model-c", live: true, order: 2 },
+    ]);
+    server.responses(json(429, { error: { code: "rate_limit_exceeded" } }), stream([msgItem("from third")]));
+
+    const { result } = await run(rateLimitedRefresh(), { ...task(), routing: "auto" });
+
+    expect(result).toMatchObject({
+      ok: true,
+      reply: "from third",
+      route: {
+        accountId: "acct_cccccccccc",
+        attempts: [{ accountId: "acct_aaaaaaaaaa", failure: "rate_limit" }, { accountId: "acct_bbbbbbbbbb", failure: "rate_limit" }],
+      },
+    });
+    expect(server.requests.at(-1)!.headers.authorization).toBe(`Bearer ${tokens.get("acct_cccccccccc")}`);
+  });
+
+  test("a failure after a switch records the model of the account it ended on, not the first one's", async () => {
+    writeSiwcAuto([
+      { id: "acct_aaaaaaaaaa", name: "First", model: "model-a", live: false, order: 0 },
+      { id: "acct_bbbbbbbbbb", name: "Second", live: false, order: 1 },
+    ]);
+
+    const { result } = await run(rateLimitedRefresh(), { ...task(), routing: "auto" });
+
+    expect(result).toMatchObject({ ok: false, route: { accountId: "acct_bbbbbbbbbb" } });
+    // B names no model and nothing was sent, so the record carries B's own setting, never A's model.
+    expect((result as { route?: { model?: string } }).route!.model).not.toBe("model-a");
+    expect(server.requests).toHaveLength(0);
+  });
 });
 
 describe("automatic routing (S4)", () => {
@@ -1066,6 +1132,33 @@ describe("automatic routing (S4)", () => {
     const { result } = await run(auto(), { ...task(), routing: "auto" });
     expect(result).toMatchObject({ ok: false });
     expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
+  });
+
+  test("text from an earlier model call that succeeded does not stop a later call from switching", async () => {
+    // The switch happens between model calls (spec §4.3). Call 1 streamed a sentence and a read-only tool call
+    // and finished; call 2 failed before any of its own text, so another account can still take call 2.
+    server.responses(
+      stream([msgItem("let me look"), fcItem("list_entries", {}, "c1")], ["let me look"]),
+      json(429, { error: { code: "rate_limit_exceeded" } }),
+      stream([msgItem("from b")]),
+    );
+    const { result } = await run(auto(), { ...task(), routing: "auto" });
+    expect(result).toMatchObject({ ok: true, reply: "from b" });
+    const keys = server.requests.filter((r) => r.url === "/v1/responses").map((r) => r.headers.authorization);
+    expect(keys).toEqual(["Bearer key-of-a", "Bearer key-of-a", "Bearer key-of-b"]);
+  });
+
+  test("a limit after output has started does not switch, but still cools the account for the next task", async () => {
+    const cooldowns = new Cooldowns();
+    server.responses(sse([
+      { type: "response.created", response: { id: "resp" } },
+      { type: "response.output_text.delta", output_index: 0, item_id: "msg_1", delta: "half an answer" },
+      { type: "response.failed", response: { error: { code: "usage_limit_reached", message: "out" } } },
+    ]));
+    const { result } = await run(auto({ cooldowns }), { ...task(), routing: "auto" });
+    expect(result).toMatchObject({ ok: false });
+    expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
+    expect(cooldowns.until(acctA.id)).not.toBeNull();
   });
 
   test("switching accounts drops the previous account's encrypted reasoning", async () => {

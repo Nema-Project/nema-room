@@ -86,9 +86,23 @@ export type RouteRequest = {
 const SECRET_LIKE = /^[A-Za-z0-9_\-+/=]{20,}$/;
 
 /** How an account is named in a sentence. A name that looks like a credential is replaced by its id. */
-function label(account: Account): string {
+function label(account: Pick<Account, "id" | "name">): string {
   return SECRET_LIKE.test(account.name.trim()) ? `账户 ${account.id}` : `账户「${account.name}」`;
 }
+
+/** The same rule for every sentence that names an account, including the failover progress line. */
+export { label as accountLabel };
+
+/** Why an account was set aside, in the user's terms. The code itself stays in `excluded` for the UI. */
+const EXCLUSION_WORDS: Record<Excluded["reason"], string> = {
+  disabled: "已停用",
+  credential_missing: "没有凭据",
+  credential_unusable: "凭据不可用",
+  compat_unreadable: "读不到 Codex 登录",
+  cooling: "刚被限流，冷却中",
+  capability: "没有声明所需能力",
+  model_missing: "没有默认模型",
+};
 
 /**
  * The sentence for `routing: "auto"` while the switch is off.
@@ -142,16 +156,14 @@ export function resolveRoute(req: RouteRequest): RouteResult {
   // A choice that asks for automatic routing — on this message or through a binding — is honoured only when
   // the switch is on. With it off the request fails and says where the switch is (D-3): running the task on
   // the default account instead would spend an account the user did not choose.
-  const wantsAuto = task.routing === "auto" || choose(task, req.bindings)?.kind === "auto";
-  if (wantsAuto) {
+  const choice = choose(task, req.bindings);
+  if (task.routing === "auto" || choice?.kind === "auto") {
     if (!req.autoRouting) return { ok: false, failure: "auto_unavailable", error: AUTO_OFF_MESSAGE, excluded: set.excluded };
     return autoRoute(set, req);
   }
 
-  const choice = choose(task, req.bindings);
-
   // The `auto` case returned above, so what is left is an account id or nothing to go on.
-  if (choice === null || choice.kind === "auto") {
+  if (choice === null) {
     const enabled = req.accounts
       .filter((a) => a.adapter === adapter && a.enabled)
       .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
@@ -221,7 +233,7 @@ function autoRoute(set: CandidateSet, req: RouteRequest): RouteResult {
 function refusalMessage(adapter: Account["adapter"], needs: TaskNeeds, excluded: Excluded[]): string {
   const missing = (["image", "pdf"] as const).filter((need) => needs[need] === true);
   const names = missing.map((need) => (need === "image" ? "图片" : "PDF")).join("、");
-  const describe = (e: Excluded): string => label({ id: e.accountId, name: e.accountName } as Account);
+  const describe = (e: Excluded): string => label({ id: e.accountId, name: e.accountName });
   const incapable = excluded.filter((e) => e.reason === "capability");
   // An image or PDF on the task is not itself a capability refusal. That sentence is only honest when at
   // least one account was set aside for capability; a cooldown or a missing credential has to name itself.
@@ -230,7 +242,7 @@ function refusalMessage(adapter: Account["adapter"], needs: TaskNeeds, excluded:
     return `没有账户声明支持${names}，无法自动选择${who}。请在设置页为账户打开对应的能力声明，或在这条消息上指定一个支持它的账户。`;
   }
   // No capability was the obstacle, so the other exclusions are: name them rather than say "none".
-  const why = excluded.length > 0 ? `：${excluded.map((e) => `${describe(e)}（${e.reason}）`).join("、")}` : "";
+  const why = excluded.length > 0 ? `：${excluded.map((e) => `${describe(e)}（${EXCLUSION_WORDS[e.reason]}）`).join("、")}` : "";
   return `没有可用的 ${adapter} 账户，无法自动选择${why}。请在设置页检查账户的启用状态与凭据。`;
 }
 

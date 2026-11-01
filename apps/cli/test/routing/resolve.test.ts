@@ -408,7 +408,8 @@ describe("no candidate at all (S4.3)", () => {
     if (r.ok) throw new Error("expected failure");
     expect(r.failure).toBe("no_candidate");
     expect(r.error).not.toContain("没有声明");
-    expect(r.error).toContain("disabled");
+    expect(r.error).toContain("已停用");
+    expect(r.error).not.toContain("disabled");
     expect(r.error).toContain(FIRST.name);
   });
 
@@ -424,8 +425,11 @@ describe("no candidate at all (S4.3)", () => {
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error("expected failure");
     expect(r.failure).toBe("no_candidate");
-    expect(r.error).toContain("disabled");
-    expect(r.error).toContain("model_missing");
+    // Said in words the user can act on; the codes themselves stay in `excluded` for the details panel.
+    expect(r.error).toContain("已停用");
+    expect(r.error).toContain("没有默认模型");
+    expect(r.error).not.toMatch(/disabled|model_missing/);
+    expect(r.excluded.map((e) => e.reason).sort()).toEqual(["disabled", "model_missing"]);
   });
 
   test("a manual choice of the same account is still made, and is not refused for capability", () => {

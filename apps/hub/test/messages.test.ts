@@ -394,6 +394,18 @@ describe("messages with attachments", () => {
     expect(edited.task.kind).toBe("edit");
   });
 
+  test("an edit of a message that asked for automatic routing asks for it again", async () => {
+    // Automatic routing is the choice here, with no account named. An edit that dropped it would run on the
+    // thread/workspace binding or the default account, which the user did not choose.
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const sent = await postUserMessage(db, ws.id, "first try", { routing: "auto" });
+    expect(sent.task.routing).toBe("auto");
+    await db.query("update tasks set status = 'done' where workspace_id = $1", [ws.id]);
+    const edited = await editUserMessage(db, ws.id, sent.message.id, "second try");
+    expect(edited.task).toMatchObject({ kind: "edit", routing: "auto", accountId: null });
+  });
+
   test("a retry with a different routing choice is a 409, and the same choice replays", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");
