@@ -6,6 +6,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AttachmentRef, TaskAssign, TaskEvent } from "@nema/shared";
+import type { Account } from "../../src/accounts/schema.js";
 import { attachmentPreamble } from "../../src/attachments/blocks.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { loadConfig, saveConfig } from "../../src/config.js";
@@ -1080,5 +1081,84 @@ describe("automatic routing (S4)", () => {
     expect(result).toMatchObject({ ok: false });
     expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
     expect((result as { route?: { mode?: string } }).route).toMatchObject({ mode: "manual" });
+  });
+});
+
+describe("capability refusal in automatic mode (S4.3)", () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 9, 9]);
+  function serveImage(): AttachmentRef {
+    hubFiles.set("img", { status: 200, type: "image/png", body: png });
+    return { id: "img", kind: "image", mime: "image/png", name: "shot.png", size: png.length, sha256: createHash("sha256").update(png).digest("hex"), messageId: "m1" };
+  }
+  const denying = (p: Partial<Account>) => ({
+    id: "acct_aaaaaaaaaa", name: "NoImages", enabled: true, adapter: "codex-direct" as const, authMode: "byok" as const,
+    baseUrl: "https://first.example.test/v1", model: "model-a", capabilities: { image: false },
+    costTier: "standard" as const, order: 0, createdAt: "2026-10-31T00:00:00.000Z", ...p,
+  });
+
+  test("an image task with every account denying images fails before any request, naming the ability", async () => {
+    const a = denying({ id: "acct_aaaaaaaaaa", name: "NoImages" });
+    const b = denying({ id: "acct_bbbbbbbbbb", name: "AlsoNo", order: 1 });
+    writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [a, b], bindings: {}, autoRouting: true }, null, 2) + "\n");
+    saveConfig(home, { authMode: "byok", model: "model-a", byokBaseUrl: "https://first.example.test/v1" });
+    for (const id of [a.id, b.id]) {
+      const dir = join(home, "secrets", "accounts", id);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      writePrivateFile(join(dir, "key"), `key-${id}`);
+    }
+    const assigned = { ...task(), routing: "auto" as const, attachments: [serveImage()] };
+    const { result } = await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: profile(), refresher }), assigned);
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { error: string }).error).toContain("图片");
+    // Both were named, so the user knows which declaration to change.
+    expect((result as { error: string }).error).toContain("NoImages");
+    expect((result as { error: string }).error).toContain("AlsoNo");
+    // Nothing was sent, and no attachment was even downloaded: the refusal comes before any work.
+    expect(server.requests).toEqual([]);
+    expect(hubSeen.filter((h) => h.url?.startsWith("/room/attachments/"))).toEqual([]);
+  });
+
+  test("naming that same account sends the image anyway, and the provider's refusal is reported in its own words", async () => {
+    // D-4 A's other half. The user named an account that declared no image support; the request goes out, and
+    // when the provider rejects the block the run says so with the provider's own text — the same sentence the
+    // adapter produced before this batch.
+    const a = denying({ id: "acct_aaaaaaaaaa", name: "NoImages" });
+    writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [a], bindings: {}, autoRouting: true }, null, 2) + "\n");
+    saveConfig(home, { authMode: "byok", model: "model-a", byokBaseUrl: "https://first.example.test/v1" });
+    const dir = join(home, "secrets", "accounts", a.id);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writePrivateFile(join(dir, "key"), "key-of-a");
+    server.responses(json(400, { error: { message: "This model does not support image input" } }));
+    const assigned = { ...task(), accountId: a.id, attachments: [serveImage()] };
+    const { result } = await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: profile(), refresher }), assigned);
+    expect(result).toMatchObject({ ok: false });
+    const error = (result as { error: string }).error;
+    // The request did go out, and carried the image.
+    expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
+    const body = JSON.parse(server.requests.find((r) => r.url === "/v1/responses")!.body) as { input: { content: { type: string }[] }[] };
+    expect(body.input[0]!.content.some((p) => p.type === "input_image")).toBe(true);
+    // And the refusal is the same sentence the adapter produced before this batch, not a routing error.
+    expect(error).toContain("你的提供商或模型拒绝了这张图片");
+    expect(error).toContain("This model does not support image input");
+  });
+
+  test("automatic routing picks only among the accounts that declared the ability", async () => {
+    const no = denying({ id: "acct_aaaaaaaaaa", name: "NoImages", order: 0 });
+    const yes = denying({ id: "acct_bbbbbbbbbb", name: "HasImages", order: 1, capabilities: { image: true } });
+    writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [no, yes], bindings: {}, autoRouting: true }, null, 2) + "\n");
+    saveConfig(home, { authMode: "byok", model: "model-a", byokBaseUrl: "https://first.example.test/v1" });
+    for (const id of [no.id, yes.id]) {
+      const dir = join(home, "secrets", "accounts", id);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      writePrivateFile(join(dir, "key"), `key-${id}`);
+    }
+    server.responses(stream([msgItem("ok")]));
+    const assigned = { ...task(), routing: "auto" as const, attachments: [serveImage()] };
+    const { result } = await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: profile(), refresher }), assigned);
+    expect(result).toMatchObject({ ok: true });
+    // The account that said no was never tried, even though it is first in the user's order.
+    expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
+    expect(server.requests[0]!.headers.authorization).toBe(`Bearer key-${yes.id}`);
+    expect((result as { route?: { accountId?: string } }).route).toMatchObject({ accountId: yes.id });
   });
 });

@@ -328,3 +328,115 @@ describe("automatic routing and the switch", () => {
     expect(r.reason).toBe("default");
   });
 });
+
+describe("no candidate at all (S4.3)", () => {
+  /** A task carrying one image: the ability every account has to have declared for automatic mode. */
+  const withImage = (p: Partial<TaskAssign> = {}): Partial<TaskAssign> => ({
+    attachments: [{ id: "a1", kind: "image", name: "shot.png", mime: "image/png", size: 3 }],
+    ...p,
+  });
+
+  test("every account saying it cannot take images fails before any request, naming what is missing", () => {
+    // D-4 A: automatic mode refuses rather than picking an account that has said it cannot take this. The
+    // sentence has to name the ability, because that is the only thing the user can act on.
+    const r = resolve({
+      task: withImage({ routing: "auto" }),
+      autoRouting: true,
+      accounts: [
+        account({ ...FIRST, capabilities: { image: false } }),
+        account({ ...SECOND, capabilities: { image: false } }),
+      ],
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("expected failure");
+    expect(r.failure).toBe("no_candidate");
+    expect(r.error).toContain("图片");
+    // And it lists who was set aside, so the user knows which declaration to change.
+    expect(r.error).toContain(FIRST.name);
+    expect(r.error).toContain(SECOND.name);
+    // Nothing was sent: this is a refusal, not a failed request.
+    expect(r.excluded.map((e) => e.reason)).toEqual(["capability", "capability"]);
+  });
+
+  test("an ability no layer has declared is refused, and the sentence says it was not declared", () => {
+    // Claude Code has no documented `document` block, so its PDF support is `undeclared` at the adapter layer
+    // (attachments/capabilities.ts). "Not declared" is not "not supported" on the settings page, but for
+    // automatic selection both mean "do not pick it" — and the sentence says which of the two it was.
+    const claude = account({ ...FIRST, adapter: "claude-code", authMode: undefined, baseUrl: undefined, capabilities: {} });
+    const pdf = { attachments: [{ id: "a1", kind: "pdf" as const, name: "doc.pdf", mime: "application/pdf", size: 3 }] };
+    const r = resolve({ task: { ...pdf, routing: "auto" }, adapter: "claude-code", autoRouting: true, accounts: [claude] });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("expected failure");
+    expect(r.failure).toBe("no_candidate");
+    expect(r.error).toContain("PDF");
+    expect(r.error).toContain("没有声明");
+  });
+
+  test("a codex-direct account that declares nothing still takes images: the adapter can deliver them", () => {
+    // The third capability layer (spec §4.2) is the adapter's own table, and codex-direct sends native image
+    // blocks. Requiring a per-account declaration for that would make every existing account fail on its first
+    // image, which is a behaviour change the design does not ask for.
+    const r = resolve({ task: withImage({ routing: "auto" }), autoRouting: true, accounts: [account({ ...FIRST, capabilities: {} })] });
+    if (!r.ok) throw new Error(`expected ok, got ${r.failure}: ${r.error}`);
+    expect(r.account.id).toBe(FIRST.id);
+  });
+
+  test("with a declared account among them, only the declared ones are candidates", () => {
+    const capable = account({ ...THIRD, name: "Capable", capabilities: { image: true } });
+    const r = resolve({
+      task: withImage({ routing: "auto" }),
+      autoRouting: true,
+      accounts: [account({ ...FIRST, capabilities: { image: false } }), capable],
+    });
+    if (!r.ok) throw new Error(`expected ok, got ${r.failure}: ${r.error}`);
+    expect(r.account.id).toBe(capable.id);
+    // The one that said no is in the exclusions, so the details panel can explain it.
+    expect(r.excluded.map((e) => e.reason)).toContain("capability");
+    expect(r.autoCandidates?.map((c) => c.account.id)).toEqual([capable.id]);
+  });
+
+  test("every other exclusion is named when no capability was the problem", () => {
+    // Nothing was disabled for capability here; the accounts are unusable for other reasons, and the sentence
+    // must say which rather than a bare "no account".
+    const r = resolve({
+      task: { routing: "auto" },
+      autoRouting: true,
+      accounts: [account({ ...FIRST, enabled: false }), account({ ...SECOND, model: undefined })],
+      model: (a) => a.model ?? null,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("expected failure");
+    expect(r.failure).toBe("no_candidate");
+    expect(r.error).toContain("disabled");
+    expect(r.error).toContain("model_missing");
+  });
+
+  test("a manual choice of the same account is still made, and is not refused for capability", () => {
+    // D-4 A's other half: the user named an account that has not declared image support, so the request goes
+    // out anyway. What happens next is the provider's answer, reported with its own words.
+    const r = resolve({
+      task: withImage({ accountId: FIRST.id }),
+      autoRouting: true,
+      accounts: [account({ ...FIRST, capabilities: { image: false } })],
+    });
+    if (!r.ok) throw new Error(`expected ok, got ${r.failure}: ${r.error}`);
+    expect(r.account.id).toBe(FIRST.id);
+    expect(r.mode).toBe("manual");
+    // A manual route has no candidate list: nothing may move it to another account.
+    expect(r.autoCandidates).toBeUndefined();
+  });
+
+  test("naming an account on the message wins over an automatic binding", () => {
+    // Spec §1.2: "the user can still name an account on that message, and the temporary choice wins".
+    const r = resolve({
+      task: { accountId: SECOND.id },
+      bindings: { "ws:w1": "auto" },
+      autoRouting: true,
+      accounts: [FIRST, SECOND],
+    });
+    if (!r.ok) throw new Error(`expected ok, got ${r.failure}: ${r.error}`);
+    expect(r.account.id).toBe(SECOND.id);
+    expect(r.mode).toBe("manual");
+    expect(r.reason).toBe("user_message");
+  });
+});
