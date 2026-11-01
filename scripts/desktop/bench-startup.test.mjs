@@ -71,6 +71,54 @@ test('a failed spawn is recorded on the child instead of escaping the process', 
   await stopApp(child);
 });
 
+test('stopApp kills a same-group descendant after the parent exits', async (t) => {
+  if (process.platform === 'win32') return;
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-bench-group-'));
+  const pidFile = path.join(root, 'grand.pid');
+  let grandPid = 0;
+  const childRef = { current: undefined };
+  t.after(async () => {
+    if (grandPid) {
+      try { process.kill(grandPid, 'SIGKILL'); } catch { /* already gone */ }
+    }
+    const pid = childRef.current?.pid;
+    if (pid) {
+      try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
+    }
+    await rm(root, { recursive: true, force: true });
+  });
+  const grand = path.join(root, 'grand.mjs');
+  const parent = path.join(root, 'parent.mjs');
+  await writeFile(grand, `import { writeFileSync } from 'node:fs';\nprocess.on('SIGTERM', () => {});\nwriteFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nsetInterval(() => {}, 1000);\n`);
+  await writeFile(parent, `#!/usr/bin/env node\nimport { spawn } from 'node:child_process';\nconst child = spawn(process.execPath, [${JSON.stringify(grand)}], { stdio: 'ignore' });\nchild.unref();\nprocess.on('SIGTERM', () => process.exit(0));\nsetInterval(() => {}, 1000);\n`);
+  await chmod(parent, 0o755);
+  const child = launch(parent, process.env, path.join(root, 'electron.log'));
+  childRef.current = child;
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const text = await readFile(pidFile, 'utf8').catch(() => '');
+    if (/^\d+$/.test(text)) {
+      grandPid = Number(text);
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.ok(grandPid > 0);
+  await stopApp(child);
+  const gone = Date.now() + 2_000;
+  let lastError;
+  while (Date.now() < gone) {
+    try {
+      process.kill(grandPid, 0);
+    } catch (error) {
+      lastError = error;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.match(String(lastError), /ESRCH/);
+});
+
 test('stopping the app keeps stdout that is still flushing after exit', async (t) => {
   if (process.platform === 'win32') return;
   const root = await mkdtemp(path.join(os.tmpdir(), 'nema-bench-stop-'));

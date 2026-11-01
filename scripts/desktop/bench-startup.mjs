@@ -172,13 +172,25 @@ export async function stopApp(child) {
         try { process.kill(-child.pid, 'SIGTERM'); }
         catch { try { child.kill('SIGTERM'); } catch { /* already gone */ } }
       }
+      let timedOut = false;
       await waitForChildExit(child, 50_000).catch(async () => {
-        try { child.kill('SIGKILL'); } catch { /* already gone */ }
+        timedOut = true;
+        if (process.platform === 'win32') {
+          try { child.kill('SIGKILL'); } catch { /* already gone */ }
+        } else {
+          try { process.kill(-child.pid, 'SIGKILL'); }
+          catch { try { child.kill('SIGKILL'); } catch { /* already gone */ } }
+        }
         await waitForChildExit(child, 5_000).catch(() => {});
         if (child.exitCode === null && child.signalCode === null) {
           throw new Error(`Desktop app did not terminate (pid ${child.pid})`);
         }
       });
+      // The packaged core calls setsid again, so it is not in this group. Helpers that stayed
+      // in the group are. A later shutdownLocalRuntime still closes the core.
+      if (!timedOut && process.platform !== 'win32') {
+        try { process.kill(-child.pid, 'SIGKILL'); } catch { /* group already gone */ }
+      }
     }
     await drainBenchChild(child);
   } finally {
