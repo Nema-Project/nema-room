@@ -1,7 +1,8 @@
 import { existsSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { saveConfig, loadConfig, type NemaConfig } from "@nema/cli/config";
-import { authLogin, authLogout, authProbe, defaultOpenBrowser, listConfiguredModels, ModelsListError, AuthStore, siwcRefresher, byokKeyPath, saveByokKey, claudeTokenPath, saveClaudeToken, githubTokenPath, saveGithubToken, defaultCodexHome, readCodexCliTokens } from "@nema/cli/localSettings";
+import { authLogin, authLogout, authProbe, defaultOpenBrowser, listConfiguredModels, ModelsListError, AuthStore, siwcRefresher, byokKeyPath, saveByokKey, claudeTokenPath, saveClaudeToken, githubTokenPath, saveGithubToken, defaultCodexHome, readCodexCliTokens, accountDir, loadAccounts } from "@nema/cli/localSettings";
+import { handleAccounts, accountsJobsSettled, type AccountsReply, type AccountsDeps } from "./accountsApi.js";
 
 export type SettingsOperations = {
   login(options: { signal: AbortSignal }): Promise<{ ok: boolean }>;
@@ -69,6 +70,32 @@ function defaultOperations(home: string, codexHome: string): SettingsOperations 
   };
 }
 
+/**
+ * The account block of `/_nema/settings` (spec 2026-10-31 §5.1). It is *added* to the response the old web
+ * already reads: `config` keeps meaning "the current default account's projection", so the four dropdowns
+ * of 0.2.0 keep working and keep switching. Nothing here carries a credential.
+ *
+ * An unusable file yields no list at all, only the reason, so the page shows why instead of an empty block
+ * that would read as "no accounts".
+ */
+function accountsStatus(home: string, codexHome: string): Record<string, unknown> {
+  const reply = handleAccounts("GET", "/_nema/accounts", undefined, accountsDeps(home, codexHome));
+  if (!reply || reply.status !== 200) return {};
+  // Only the two fields §5.1 names (plus the reason when the file cannot be read). The bindings belong to
+  // `/_nema/accounts` alone: the settings response is what an old web reads, and it grows nothing it does
+  // not document.
+  const { accounts, defaultAccountId, unusableReason } = reply.body as {
+    accounts?: unknown;
+    defaultAccountId?: unknown;
+    unusableReason?: unknown;
+  };
+  return {
+    ...(accounts !== undefined ? { accounts } : {}),
+    ...(defaultAccountId !== undefined ? { defaultAccountId } : {}),
+    ...(unusableReason !== undefined ? { unusableReason } : {}),
+  };
+}
+
 function redactedStatus(home: string, codexHome: string): Record<string, unknown> {
   const config = loadConfig(home);
   let state: "connected" | "missing" | "unusable" = "missing";
@@ -91,6 +118,7 @@ function redactedStatus(home: string, codexHome: string): Record<string, unknown
   try { readCodexCliTokens(codexHome); compat = "connected"; } catch { compat = "missing"; }
   return {
     config,
+    ...accountsStatus(home, codexHome),
     auth: { mode: config.authMode, credential, state, adapter: config.adapter },
     credentials: {
       siwc,
@@ -127,8 +155,45 @@ function configPatch(value: unknown): Partial<NemaConfig> | null {
   return patch as Partial<NemaConfig>;
 }
 
+/**
+ * The browser login for one account: the same PKCE flow the single-key route runs, writing into that
+ * account's own directory instead of the home. `baseDir` is what keeps two accounts' logins apart.
+ */
+function accountLogin(options: SettingsServiceOptions, codexHome: string) {
+  return async (account: { id: string }, signal: AbortSignal): Promise<{ ok: boolean }> => {
+    const dir = accountDir(options.home, account.id);
+    const safeOpen = (value: string) => {
+      if (!isAllowedAuthorizeUrl(value)) throw new Error("untrusted authorize URL");
+      defaultOpenBrowser(value);
+    };
+    const code = await authLogin({
+      nemaHome: options.home,
+      codexHome,
+      signal,
+      baseDir: dir,
+      requireTrustedAuthorizeUrl: true,
+      redactCallbackErrors: true,
+      out: { log: () => {}, error: () => {} },
+      openBrowser: safeOpen,
+    });
+    return { ok: code === 0 };
+  };
+}
+
+/** The dependencies the accounts routes run against, built from the same home this service owns. */
+export function accountsDeps(home: string, codexHome: string, options?: SettingsServiceOptions): AccountsDeps {
+  return {
+    home,
+    codexHome,
+    login: options ? accountLogin(options, codexHome) : async () => ({ ok: false }),
+    // Per-account transport is the routing batch's work; the route answers `probe_not_supported` until then.
+    probe: async () => ({ ok: false }),
+  };
+}
+
 export function createSettingsService(options: SettingsServiceOptions): SettingsService {
   const codexHome = options.codexHome ?? process.env.CODEX_HOME ?? defaultCodexHome();
+  const accounts = accountsDeps(options.home, codexHome, options);
   const operations = options.operations ?? defaultOperations(options.home, codexHome);
   let closed = false;
   let logoutPending = false;
@@ -170,7 +235,7 @@ export function createSettingsService(options: SettingsServiceOptions): Settings
     waitForJobs,
     async close() {
       stopAccepting();
-      await Promise.all([waitForJobs(), logoutPromise].filter((promise): promise is Promise<void> => promise !== undefined));
+      await Promise.all([waitForJobs(), accountsJobsSettled(), logoutPromise].filter((promise): promise is Promise<void> => promise !== undefined));
     },
     async dispatch(method, pathname, body): Promise<SettingsReply> {
       if (closed) return { status: 503, body: { error: "service_closing" } };
@@ -188,6 +253,12 @@ export function createSettingsService(options: SettingsServiceOptions): Settings
             return { status: 200, body: { models: [], unavailable: reason } };
           }
         }
+        // Account settings own their own paths and answer `null` for anything else, including every path
+        // this dispatch already served: an older web calling those routes sees exactly what it did before.
+        const accountsReply: AccountsReply | null = pathname.startsWith("/_nema/accounts")
+          ? handleAccounts(method, pathname, body, accounts)
+          : null;
+        if (accountsReply) return accountsReply;
         if (method === "GET" && pathname === "/_nema/settings") return { status: 200, body: redactedStatus(options.home, codexHome) };
         if (method === "PATCH" && pathname === "/_nema/settings") {
           if (logoutPending) return { status: 409, body: { error: "mutation_conflict" } };
