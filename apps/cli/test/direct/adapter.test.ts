@@ -985,6 +985,31 @@ describe("automatic routing (S4)", () => {
     expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
   });
 
+  test("a completed write is not followed by another account", async () => {
+    // upsert_entry already created an entry. A later rate limit must not move the task: the next account
+    // would see the call and can emit it again, and a body without id creates a second entry.
+    server.responses(
+      stream([fcItem("upsert_entry", { kind: "requirement", title: "t", body: "b", reason: "r", sourceMessages: ["m1"] }, "c1")]),
+      json(429, { error: { code: "rate_limit_exceeded" } }),
+    );
+    const { result } = await run(auto(), { ...task(), routing: "auto" });
+    expect(result).toMatchObject({ ok: false });
+    const keys = server.requests.filter((r) => r.url === "/v1/responses").map((r) => r.headers.authorization);
+    expect(keys).toEqual(["Bearer key-of-a", "Bearer key-of-a"]);
+  });
+
+  test("a read-only tool still allows a later failure to switch accounts", async () => {
+    server.responses(
+      stream([fcItem("list_entries", {}, "c1")]),
+      json(429, { error: { code: "rate_limit_exceeded" } }),
+      stream([msgItem("from b")]),
+    );
+    const { result } = await run(auto(), { ...task(), routing: "auto" });
+    expect(result).toMatchObject({ ok: true, reply: "from b" });
+    const keys = server.requests.filter((r) => r.url === "/v1/responses").map((r) => r.headers.authorization);
+    expect(keys).toEqual(["Bearer key-of-a", "Bearer key-of-a", "Bearer key-of-b"]);
+  });
+
   test("once output has started, a later failure does not move the task to another account", async () => {
     // A stream that delivers text and then fails: the user already has half an answer, and a second account
     // would continue it in another model's voice.

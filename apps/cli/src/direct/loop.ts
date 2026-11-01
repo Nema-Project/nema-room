@@ -30,6 +30,11 @@ export type ToolLoopOptions = {
   /** Short progress notes (e.g. which Room function is being called). */
   onProgress: (text: string) => void;
   /**
+   * A tool call changed the Room (a successful upsert, thread open, install offer, or plugin call).
+   * Read-only calls and refused writes do not fire it.
+   */
+  onWrite?: () => void;
+  /**
    * Transforms the history immediately before each model call, and what it returns is what is sent.
    *
    * This exists for one case: automatic routing moved the task to another account, and the previous account's
@@ -134,6 +139,7 @@ export async function runToolLoop(opts: ToolLoopOptions): Promise<{ reply: strin
         if (toolCalls >= limits.maxToolCalls) throw new Error(`Agent 超出单次运行上限（工具调用 ${limits.maxToolCalls} 次）`);
         toolCalls++;
         const r = await dispatchTool(c.name, c.arguments, opts.room, opts.pluginTools ?? [], opts.skills);
+        if (r.wrote) opts.onWrite?.();
         signal?.throwIfAborted();
         if (!r.known) {
           unknownTools++;

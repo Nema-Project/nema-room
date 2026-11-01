@@ -98,7 +98,7 @@ describe("ROOM_TOOLS / dispatchTool", () => {
 
   test("routes known tools to the Room client", async () => {
     const { room, calls } = stubRoom({ ok: true, json: { id: "R-1" } });
-    expect(await dispatchTool("list_entries", "", room)).toEqual({ output: '{"id":"R-1"}', known: true });
+    expect(await dispatchTool("list_entries", "", room)).toEqual({ output: '{"id":"R-1"}', known: true, wrote: false });
     await dispatchTool("read_entry", '{"id":"R-1"}', room);
     await dispatchTool("upsert_entry", '{"kind":"requirement","title":"t"}', room);
     expect(calls).toEqual([{ op: "list" }, { op: "read", arg: "R-1" }, { op: "upsert", arg: { kind: "requirement", title: "t" } }]);
@@ -108,6 +108,7 @@ describe("ROOM_TOOLS / dispatchTool", () => {
     const { room } = stubRoom({ ok: false, status: 400, error: "bad kind" });
     const r = await dispatchTool("upsert_entry", "{}", room);
     expect(r.known).toBe(true);
+    expect(r.wrote).toBe(false);
     expect(JSON.parse(r.output)).toMatchObject({ error: "bad kind", status: 400 });
   });
 

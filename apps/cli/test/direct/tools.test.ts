@@ -73,7 +73,7 @@ test("dispatchTool offer_skill_install calls room.offerSkillInstall with the arg
     callPlugin: ok,
     offerSkillInstall: async (args: unknown): Promise<RoomResult> => { calls.push(args); return { ok: true, json: { offer: { id: "pdf" } } }; },
   };
-  expect(await dispatchTool("offer_skill_install", '{"source":"acme/skills","path":"skills/pdf"}', room)).toEqual({ output: '{"offer":{"id":"pdf"}}', known: true });
+  expect(await dispatchTool("offer_skill_install", '{"source":"acme/skills","path":"skills/pdf"}', room)).toEqual({ output: '{"offer":{"id":"pdf"}}', known: true, wrote: true });
   expect(calls).toEqual([{ source: "acme/skills", path: "skills/pdf" }]);
   expect((await dispatchTool("offer_skill_install", "[1]", room)).known).toBe(false);
 });
@@ -89,7 +89,7 @@ test("dispatchTool open_thread calls room.openThread", async () => {
     offerSkillInstall: async (): Promise<RoomResult> => ({ ok: true, json: {} }),
   };
   const result = await dispatchTool("open_thread", '{"title":"Long topic"}', room);
-  expect(result).toEqual({ output: '{"threadId":"m1"}', known: true });
+  expect(result).toEqual({ output: '{"threadId":"m1"}', known: true, wrote: true });
   expect(calls).toEqual([{ title: "Long topic" }]);
 });
 
@@ -119,7 +119,7 @@ describe("dispatchTool plugin tools", () => {
     };
 
     const listed = await dispatchTool("code__read", '{"repo":"r","path":"a.ts"}', room, [codeRead]);
-    expect(listed).toEqual({ output: '{"text":"body"}', known: true });
+    expect(listed).toEqual({ output: '{"text":"body"}', known: true, wrote: true });
     expect(calls).toEqual([{ name: "code__read", args: { repo: "r", path: "a.ts" } }]);
 
     const unknown = await dispatchTool("code__search", "{}", room, [codeRead]);
@@ -135,5 +135,5 @@ test("read_skill is only known when the task has a Skill reader", async () => {
   const room = {} as never;
   expect(await dispatchTool("read_skill", '{"name":"x"}', room, [])).toMatchObject({ known: false });
   const reader = { read: async (args: string) => `read ${args}` } as never;
-  expect(await dispatchTool("read_skill", '{"name":"x"}', room, [], reader)).toEqual({ output: 'read {"name":"x"}', known: true });
+  expect(await dispatchTool("read_skill", '{"name":"x"}', room, [], reader)).toEqual({ output: 'read {"name":"x"}', known: true, wrote: false });
 });

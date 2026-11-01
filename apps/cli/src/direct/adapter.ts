@@ -135,7 +135,7 @@ function errorMessage(e: unknown): string {
 }
 
 /** What has actually left the process, so a failure can say which model failed and whether text was seen. */
-type SentState = { blocks?: ContentBlockOwner[]; model?: string; text?: boolean };
+type SentState = { blocks?: ContentBlockOwner[]; model?: string; text?: boolean; wrote?: boolean };
 
 /**
  * One account's credential and endpoint for as long as the task runs on it.
@@ -257,6 +257,9 @@ class AccountPlan {
    */
   advance(e: unknown): boolean {
     if (this.auto === null) return false;
+    // A write already landed in the Room. Another account would see that call in the history and can emit
+    // it again; upsert without an id creates a second entry. Read-only tools do not set this.
+    if (this.o.sent.wrote === true) return false;
     const failure = classifyFailure(e, { startedOutput: this.o.sent.text === true });
     const decision = shouldSwitch(failure);
     if (!decision.switch) return false;
@@ -493,6 +496,7 @@ export class CodexDirectAdapter implements AgentAdapter {
         signal,
         ...(task.limits ? { limits: { ...DEFAULT_LIMITS, maxModelCalls: task.limits.maxModelCalls, maxToolCalls: task.limits.maxToolCalls } } : {}),
         onProgress: (text) => onEvent({ type: "tool_call", text }),
+        onWrite: () => { sent.wrote = true; },
         // Only after a switch, and only for the reasoning items: the rest of the conversation is unchanged.
         // The loop-level filter: covers the normal case, where the account changed between two loop iterations.
         onBeforeCall: (history) => plan.history(history),
