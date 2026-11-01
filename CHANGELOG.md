@@ -4,6 +4,20 @@ Version sections on main may describe release preparation. A version heading and
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-01
+
+### Added
+
+- One provider can have several accounts on the same machine, each with its own credentials, endpoint and default model. The settings page creates, renames, enables, disables and deletes accounts and stores credentials per account; the composer, a thread and a workspace each have an account picker, and the choice is recorded with the task and its binding. With a single account the interface is the same as in 0.2.0.
+- The daemon runs a task with the account you chose, and the reply shows which account and model ran it and why that account was picked (message over thread over workspace over the default account). A named account that does not exist or has no credentials fails the task before any request is sent and says which one. A named account still runs when it is disabled: disabling only removes it from default selection. When the account settings file exists but cannot be read (corrupt, permissions too open, or a symlink) the task fails with the reason instead of falling back to the default account or the old single credential. An older daemon does not understand the account fields, so a task that names an account fails there and asks you to upgrade instead of silently using the default account.
+- Account settings have an "automatic routing" switch, off by default. While it is off there is no "Auto" choice, and a task that asks for automatic routing fails saying the switch is off instead of quietly using the default account. When it is on you can choose "Auto" on a workspace, a thread or a single message: when the task starts Nema picks an account by your order, cost tier and declared capabilities, and moves to the next one when the preferred account is rate-limited or out of quota. A switch is written into the task progress (from which account to which) and the reply records the account actually used, along with the accounts tried and why they failed. Authentication failures, content-policy refusals, malformed requests and a run that has already produced output never switch accounts, and after a switch the previous attempt's reasoning is not sent to the model. For a task carrying images or PDFs, an account is an automatic candidate only when its model or account settings declare support for that kind or, when they say nothing, its adapter is known to pass that kind on (Claude Code is not, for PDFs); otherwise the task fails rather than run on an account that may not support it.
+
+### Fixed
+
+- `release-promote` no longer stops on the npm registry's provenance index lagging behind a package it just published. v0.2.1's first promotion failed this way: the version was readable and `npm latest` had already moved, but `/npm/v1/attestations` still answered 404, `release:verify` called that missing, and the run stopped leaving the two GHCR `latest` tags and the GitHub Release behind a rerun. The visibility wait now covers provenance as a third item after the package and its dist-tag, inside the same two-minute budget, so both the candidate preflight and the final verify see a settled answer instead of a timing race. A 404 there is only waited on while something shows the attestation exists — the registry's own version document already declares `dist.attestations`, or the version was published within the last five minutes — so a version that really has no provenance is still reported as having none, at once, instead of spending the budget and then being downgraded to "unknown". When the budget runs out the run record now says which of the two it is: "provenance declared but not served" (waitable, rerun when the index catches up) or "no provenance" (definite, needs a new tag). `npm run release:verify` on its own is unchanged and still treats a missing attestation as missing.
+
+- Dropdowns in a floating thread window no longer close as soon as they open. Clicking an input, a dropdown or a button no longer makes the window take focus away, and the account picker in the thread title bar is no longer covered by the drag layer.
+
 ## [0.2.1] - 2026-11-01
 
 ### Changed
