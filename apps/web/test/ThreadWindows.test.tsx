@@ -53,6 +53,24 @@ describe("ThreadWindows", () => {
     expect(document.activeElement).toBe(textarea);
     activeElement.mockRestore();
   });
+  it("keeps a select focused while the click that opens it is inside the window", async () => {
+    vi.mocked(hub.getThreadMessages).mockImplementation(async (workspaceId, id) => ({ thread: thread(workspaceId, id), anchor: message(workspaceId, id, id, 2), messages: [message(workspaceId, id, `${id}-reply`, 3)] }));
+    const ref = mount();
+    act(() => ref.current!.open("w1", "t1"));
+    await vi.waitFor(() => expect(document.querySelector('[data-thread-id="t1"] textarea')).toBeTruthy());
+    const wrapper = document.querySelector('[data-thread-id="t1"]')!.closest(".thread-floating") as HTMLElement;
+    const select = document.createElement("select");
+    select.innerHTML = "<option>alpha</option><option>beta</option>";
+    wrapper.appendChild(select);
+    select.focus();
+    const wrapperFocus = vi.spyOn(wrapper, "focus");
+    fireEvent.mouseDown(select);
+    expect(wrapperFocus).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(select);
+    wrapperFocus.mockClear();
+    fireEvent.mouseDown(wrapper.querySelector(".thread-drag")!);
+    expect(wrapperFocus).toHaveBeenCalled();
+  });
   it("stops acknowledging when focus moves outside all floating windows", async () => {
     vi.mocked(hub.getThreadMessages).mockImplementation(async (workspaceId, id) => ({ thread: thread(workspaceId, id), anchor: message(workspaceId, id, id, 2), messages: [message(workspaceId, id, `${id}-reply`, 3)] }));
     const ref = mount(); act(() => ref.current!.open("w1", "t1"));
