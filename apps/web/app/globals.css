@@ -222,6 +222,11 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .chip { display: inline-flex; gap: 6px; align-items: baseline; border: 1px solid var(--rule); padding: 3px 8px; font-size: 12px; }
 .chip b { font-family: var(--mono); font-weight: 500; font-size: 11px; }
 .chip i { font-style: normal; color: var(--ink-3); }
+/* Which account and model answered (spec 2026-10-31 §4.6): one quiet line, opening into the details. */
+.route { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; margin: 8px 0 4px; font-size: 12px; color: var(--ink-3); }
+.route .route-details { flex-basis: 100%; border-left: 2px solid var(--rule); padding: 4px 0 4px 10px; font-size: 12px; }
+.route .route-details ul { margin: 2px 0 0; padding-left: 16px; }
+.route .route-details b { font-weight: 600; }
 .ask { margin-top: 10px; border-left: 3px solid var(--accent); padding: 8px 12px; background: var(--ask-bg); }
 .ask .k { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
 .ask .q { font-weight: 600; margin-top: 2px; }

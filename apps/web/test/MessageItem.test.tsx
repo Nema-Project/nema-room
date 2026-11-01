@@ -392,3 +392,96 @@ describe("MessageItem attachments", () => {
     expect(onEdited.mock.calls[1]![0]).toEqual(expect.objectContaining({ content: "v2", attachments: [tomb] }));
   });
 });
+
+describe("the route line", () => {
+  const withRoute = (route: unknown) => msg({ meta: { changes: [], askedQuestion: null, route } as never });
+  const route = {
+    accountId: "acct_abc1234567",
+    accountName: "OpenRouter 免费",
+    model: "deepseek/xxx",
+    mode: "manual",
+    reason: "user_workspace",
+  };
+
+  it("shows the account and the model, and why it was chosen", async () => {
+    render(
+      <I18nProvider>
+        <MessageItem message={withRoute(route)} />
+      </I18nProvider>,
+    );
+    const line = await screen.findByTestId("route-line");
+    expect(line.textContent).toContain("OpenRouter 免费");
+    expect(line.textContent).toContain("deepseek/xxx");
+    expect(line.textContent).toContain("chosen in this workspace");
+  });
+
+  it("shows nothing for a message written before routing existed", async () => {
+    render(
+      <I18nProvider>
+        <MessageItem message={msg({ meta: { changes: [], askedQuestion: null } })} />
+      </I18nProvider>,
+    );
+    // The old message renders exactly as it did; no empty line, no placeholder.
+    expect(screen.queryByTestId("route-line")).toBeNull();
+  });
+
+  it("gives each reason its own sentence", async () => {
+    const reasons: Array<[string, string]> = [
+      ["user_message", "chosen for this message"],
+      ["user_thread", "chosen for this thread"],
+      ["user_workspace", "chosen in this workspace"],
+      ["default", "the default account"],
+    ];
+    for (const [reason, text] of reasons) {
+      const { unmount } = render(
+        <I18nProvider>
+          <MessageItem message={withRoute({ ...route, reason })} />
+        </I18nProvider>,
+      );
+      const line = await screen.findByTestId("route-line");
+      expect(line.textContent, reason).toContain(text);
+      unmount();
+    }
+  });
+
+  it("opens a details panel with what was tried, and only when there was more than one attempt", async () => {
+    const { unmount } = render(
+      <I18nProvider>
+        <MessageItem message={withRoute(route)} />
+      </I18nProvider>,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Details" }));
+    expect(screen.getByTestId("route-details")).toBeTruthy();
+    // Nothing was retried, so there is no attempt list to show.
+    expect(screen.queryByTestId("route-attempts")).toBeNull();
+    unmount();
+
+    render(
+      <I18nProvider>
+        <MessageItem
+          message={withRoute({
+            ...route,
+            mode: "auto",
+            reason: "auto_failover",
+            attempts: [{ accountId: "acct_0000000001", accountName: "Free key", model: "m", failure: "rate_limit" }],
+            usage: { inputTokens: 12, outputTokens: 34 },
+          })}
+        />
+      </I18nProvider>,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Details" }));
+    const attempts = screen.getByTestId("route-attempts");
+    expect(attempts.textContent).toContain("Free key");
+    expect(screen.getByTestId("route-usage").textContent).toContain("12");
+  });
+
+  it("says no usage was reported rather than showing zeros", async () => {
+    render(
+      <I18nProvider>
+        <MessageItem message={withRoute(route)} />
+      </I18nProvider>,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Details" }));
+    expect(screen.getByTestId("route-usage").textContent).toBe("No token counts were reported");
+  });
+});

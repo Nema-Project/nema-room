@@ -565,5 +565,17 @@
   "attach.deleteCancel": "キャンセル",
   "attach.deleteFailed": "削除できませんでした：{message}",
   "attach.deleted": "添付ファイルは削除されました",
-  "attach.missing": "添付ファイルが見つかりません"
+  "attach.missing": "添付ファイルが見つかりません",
+  "route.lineWithReason": "モデル：{account} · {model}（{reason}）",
+  "route.details": "詳細",
+  "route.reason.user_workspace": "このワークスペースで選択",
+  "route.reason.user_thread": "このスレッドで選択",
+  "route.reason.user_message": "このメッセージで選択",
+  "route.reason.default": "既定のアカウント",
+  "route.reason.auto_primary": "自動：第一候補",
+  "route.reason.auto_failover": "自動：別のアカウントが失敗したため",
+  "route.reason.auto_after_limit": "自動：別のアカウントが上限に達したため",
+  "route.attempts": "先に試したもの",
+  "route.usage": "{input} 入力 · {output} 出力トークン",
+  "route.noUsage": "トークン数は報告されていません"
 }

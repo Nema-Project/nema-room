@@ -8,7 +8,7 @@ import { editMessage, getEntry, HubError, listEntries, listMessageVersions, with
 import { formatTime } from "@/lib/format";
 import { useLocale, useT } from "@/lib/i18n";
 import { useHubEvents } from "@/lib/useHubEvents";
-import type { AgentMessageMeta, Entry, Message, MessageQuote, ReportMessageMeta } from "@/lib/types";
+import type { AgentMessageMeta, Entry, Message, MessageQuote, ReportMessageMeta, RouteDecision } from "@/lib/types";
 
 export function AgentAvatar() {
   return <div className="av ai">AI</div>;
@@ -94,11 +94,58 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
         {meta?.changes.filter((c) => c.kind === "workpackage").slice(0, 1).map((c) => (
           <WorkPackageCard key={c.entryId} workspaceId={message.workspaceId} entryId={c.entryId} onOpenEntry={onOpenEntry} />
         ))}
+        {meta?.route && <RouteLine route={meta.route} />}
         {meta?.skillOffers?.map((offer) => <SkillOfferCard key={offer.id} offer={offer} />)}
         {meta && (meta.askedQuestion || meta.changes.some((c) => c.kind === "question" && c.op === "add")) && (
           <AskedQuestion workspaceId={message.workspaceId} asked={meta.askedQuestion} added={meta.changes.filter((c) => c.kind === "question" && c.op === "add").map((c) => ({ id: c.entryId, title: c.title }))} />
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Which account and model answered, and why (spec 2026-10-31 §4.6, D-5). One small line under the reply,
+ * opening into what was tried and what the provider reported. A message written before routing existed has no
+ * `route` and renders exactly as it did — no empty line, no placeholder.
+ */
+export function RouteLine({ route }: { route: RouteDecision }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const reason = t(`route.reason.${route.reason}`);
+  return (
+    <div className="route" data-testid="route-line">
+      <span>
+        {t("route.lineWithReason", { account: route.accountName, model: route.model, reason })}
+      </span>
+      <button type="button" className="quiet" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        {t("route.details")}
+      </button>
+      {open && (
+        <div className="route-details" data-testid="route-details">
+          <div data-testid="route-usage">
+            {route.usage && (route.usage.inputTokens !== undefined || route.usage.outputTokens !== undefined)
+              ? t("route.usage", {
+                input: route.usage.inputTokens ?? "—",
+                output: route.usage.outputTokens ?? "—",
+              })
+              : t("route.noUsage")}
+          </div>
+          {route.attempts && route.attempts.length > 0 && (
+            <div data-testid="route-attempts">
+              <b>{t("route.attempts")}</b>
+              <ul>
+                {route.attempts.map((a, i) => (
+                  <li key={`${a.accountId}-${i}`}>
+                    {a.accountName}
+                    {a.model ? ` · ${a.model}` : ""} — {a.failure}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
