@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createSanitizedSourceSnapshot, npmCliPathFor, parseStageArgs, recordedCommit, runtimeDependencyClosure, stageRuntime, writePlatformLaunchers } from './stage-runtime.mjs';
+import { createSanitizedSourceSnapshot, electronExecutableRelative, npmCliPathFor, parseStageArgs, recordedCommit, runtimeDependencyClosure, stageRuntime, writePlatformLaunchers } from './stage-runtime.mjs';
 import { nodePayloadExcluded, toolsManifest } from './fetch-tools.mjs';
 
 async function fixture(t) {
@@ -72,7 +72,7 @@ async function fixture(t) {
     await writeFile(path.join(destination, 'licenses', 'LICENSE'), 'graphify license fixture');
     return destination;
   };
-  return { source, output, write, tools, options: { sourceRoot: source, outputDir: output, toolsRoot: path.join(source, 'node'), platform, arch, version: '0.1.0', tools, build: false, fetchGraphify: stageGraphify } };
+  return { source, output, write, tools, options: { sourceRoot: source, outputDir: output, toolsRoot: path.join(source, 'node'), platform, arch, version: '0.1.0', tools, build: false, fetchGraphify: stageGraphify, electronNode: { electronVersion: '45.1.0', nodeVersion: '24.22.1', engines: '>=22' } } };
 }
 
 test('runs the Electron installer when the binary has not been downloaded yet', async (t) => {
@@ -121,7 +121,7 @@ test('stages a relocatable manifest and all declared runtime resources from fixt
   await stageRuntime(f.options);
   const target = path.join(f.output, `${process.platform}-${process.arch}`);
   const manifest = JSON.parse(await readFile(path.join(target, 'runtime-manifest.json'), 'utf8'));
-  assert.deepEqual(Object.keys(manifest).sort(), ['arch', 'cliEntry', 'coreEntry', 'licenses', 'node', 'platform', 'schemaVersion', 'version', 'webEntry', ...(process.platform === 'win32' ? ['ownedHelperGuardian'] : [])].sort());
+  assert.deepEqual(Object.keys(manifest).sort(), ['arch', 'cliEntry', 'coreEntry', 'licenses', 'platform', 'schemaVersion', 'version', 'webEntry', ...(process.platform === 'win32' ? ['ownedHelperGuardian'] : [])].sort());
   assert.equal(manifest.schemaVersion, 1);
   assert.equal(manifest.version, '0.1.0');
   assert.equal(manifest.platform, process.platform);
@@ -130,7 +130,9 @@ test('stages a relocatable manifest and all declared runtime resources from fixt
     assert.equal(manifest.ownedHelperGuardian, 'runtime/owned-helper.exe');
     assert.equal((await readFile(path.join(target, manifest.ownedHelperGuardian), 'utf8')), 'native guardian fixture');
   } else assert.equal(manifest.ownedHelperGuardian, undefined);
-  for (const key of ['node', 'coreEntry', 'cliEntry', 'webEntry']) assert.ok((await readFile(path.join(target, manifest[key]))).length > 0, key);
+  assert.equal(manifest.node, undefined);
+  await assert.rejects(stat(path.join(target, 'runtime', `${process.platform}-${process.arch}`, 'node')));
+  for (const key of ['coreEntry', 'cliEntry', 'webEntry']) assert.ok((await readFile(path.join(target, manifest[key]))).length > 0, key);
   assert.ok((await readFile(path.join(target, manifest.licenses, 'node'))).length > 0);
   for (const file of ['web/apps/web/.next/static/chunks/a.js', 'web/apps/web/public/fonts/a.woff2', 'app/node_modules/@nema/local/package.json', 'app/node_modules/@nema/hub/dist/src/db/migrations/0001.sql', 'app/node_modules/@nema/cli/src/report/SKILL.md', 'vendor/archify/THIRD_PARTY_NOTICES.md', 'vendor/superpowers-rules/LICENSE', 'runtime/licenses/application', 'runtime/licenses/graphify-runtime/LICENSE', process.platform === 'win32' ? 'tools/graphify/graphify.exe' : 'tools/graphify/graphify']) {
     assert.ok((await readFile(path.join(target, file))).length > 0, file);
@@ -168,11 +170,17 @@ test('stages fixed native browser launchers beside the runtime manifest', async 
   assert.match(source, /--no-open/);
   const manifest = JSON.parse(await readFile(path.join(target, 'runtime-manifest.json'), 'utf8'));
   assert.equal(manifest.webEntry, 'web/apps/web/managed-parent.mjs');
-  assert.match(source, /runtime/);
+  assert.match(source, /ELECTRON_RUN_AS_NODE/);
+  assert.ok(source.includes(electronExecutableRelative(process.platform).replaceAll('/', path.sep)));
   assert.match(await readFile(path.join(target, manifest.webEntry), 'utf8'), /process\.once\("disconnect"/);
 });
 
-test('stages a CLI launcher that points at the bundled node and CLI entry', async (t) => {
+test('staging rejects an Electron Node older than engines.node', async (t) => {
+  const f = await fixture(t);
+  await assert.rejects(stageRuntime({ ...f.options, electronNode: { electronVersion: '45.1.0', nodeVersion: '21.0.0', engines: '>=22' } }), /does not satisfy/);
+});
+
+test('stages a CLI launcher that points at Electron and the CLI entry', async (t) => {
   const f = await fixture(t);
   await stageRuntime(f.options);
   const target = path.join(f.output, `${process.platform}-${process.arch}`);
@@ -180,10 +188,11 @@ test('stages a CLI launcher that points at the bundled node and CLI entry', asyn
   const source = await readFile(path.join(target, launcher), 'utf8');
   const manifest = JSON.parse(await readFile(path.join(target, 'runtime-manifest.json'), 'utf8'));
   const native = (value) => value.replaceAll('/', path.sep);
-  assert.ok(source.includes(native(manifest.node)));
+  assert.ok(source.includes(native(electronExecutableRelative(process.platform))));
+  assert.match(source, /ELECTRON_RUN_AS_NODE/);
   assert.ok(source.includes(native(manifest.cliEntry)));
   assert.equal(source.includes('{{'), false);
-  assert.match(source, process.platform === 'win32' ? /%\*/ : /"$@"/);
+  assert.match(source, process.platform === 'win32' ? /%\*/ : /"\$@"/);
   if (process.platform !== 'win32') assert.ok(((await stat(path.join(target, launcher))).mode & 0o111) !== 0);
 });
 
@@ -204,7 +213,9 @@ test('the CLI launcher forwards arguments exactly and preserves exit codes from 
   const run = (args) => windows
     ? spawnSync(path.join(process.env.SystemRoot, 'System32', 'cmd.exe'), ['/d', '/s', '/c', `"call "${cliLauncherPath}" ${args.join(' ')}"`], { cwd: payload, encoding: 'utf8', windowsVerbatimArguments: true })
     : spawnSync(cliLauncherPath, args, { cwd: payload, encoding: 'utf8' });
-  const ok = run(['0', 'report', 'install', '--agent', 'claude', '"with space"', '日本語', '--home=x']);
+  // cmd.exe strips quotes from the joined command line. A direct POSIX exec keeps each argv element, so the space is the argument itself.
+  const spaced = windows ? '"with space"' : 'with space';
+  const ok = run(['0', 'report', 'install', '--agent', 'claude', spaced, '日本語', '--home=x']);
   assert.equal(ok.status, 0, ok.stderr);
   const seen = JSON.parse(ok.stdout);
   assert.deepEqual(seen.rest, ['report', 'install', '--agent', 'claude', 'with space', '日本語', '--home=x']);
@@ -254,12 +265,13 @@ test('payload omits Node headers, npm, Corepack, sharp, and source maps', async 
   await stageRuntime(f.options);
   const target = path.join(f.output, `${process.platform}-${process.arch}`);
   const nodeDir = path.join(target, 'runtime', `${process.platform}-${process.arch}`, 'node');
-  assert.ok((await readFile(path.join(nodeDir, windows ? 'node.exe' : 'bin/node'))).length > 0);
-  assert.ok((await readFile(path.join(nodeDir, 'LICENSE'))).length > 0);
-  await assert.rejects(readFile(path.join(nodeDir, 'include/node.h')));
-  await assert.rejects(readFile(path.join(nodeDir, windows ? 'node_modules/npm/bin/npm-cli.js' : 'lib/node_modules/npm/bin/npm-cli.js')));
-  await assert.rejects(readFile(path.join(nodeDir, windows ? 'node_modules/corepack/package.json' : 'lib/node_modules/corepack/package.json')));
-  await assert.rejects(readFile(path.join(nodeDir, windows ? 'npm.cmd' : 'bin/npm')));
+  await assert.rejects(stat(nodeDir));
+  const toolsSource = JSON.parse(await readFile(path.join(target, 'runtime', `${process.platform}-${process.arch}`, 'tools-source.json'), 'utf8'));
+  assert.equal(toolsSource.node.shipped, false);
+  assert.equal(toolsSource.runtimeNode.source, 'electron');
+  assert.equal(toolsSource.runtimeNode.version, '24.22.1');
+  assert.equal(toolsSource.runtimeNode.license, 'runtime/licenses/node');
+  assert.ok((await readFile(path.join(target, 'runtime/licenses/node'))).length > 0);
   await assert.rejects(readFile(path.join(target, 'web/node_modules/sharp/index.js')));
   await assert.rejects(readFile(path.join(target, 'web/node_modules/@img/sharp-darwin/lib.js')));
   await assert.rejects(readFile(path.join(target, 'web/apps/web/.next/static/chunks/a.js.map')));
@@ -338,13 +350,13 @@ test('copies an in-tree tool symlink when the tools root is reached through a sy
     throw error;
   }
   const target = `${process.platform}-${process.arch}`;
-  const nodeDir = path.join(f.source, 'node', target, 'node');
-  const inside = path.join(nodeDir, 'inside');
-  await mkdir(inside);
+  const kept = path.join(f.source, 'node', target, 'kept');
+  const inside = path.join(kept, 'inside');
+  await mkdir(inside, { recursive: true });
   await writeFile(path.join(inside, 'keep.txt'), 'fixture');
-  await symlink(inside, path.join(nodeDir, 'linked-lib'), process.platform === 'win32' ? 'junction' : 'dir');
+  await symlink(inside, path.join(kept, 'linked-lib'), process.platform === 'win32' ? 'junction' : 'dir');
   await stageRuntime({ ...f.options, toolsRoot: linkRoot });
-  const staged = path.join(f.output, target, 'runtime', target, 'node', 'linked-lib', 'keep.txt');
+  const staged = path.join(f.output, target, 'runtime', target, 'kept', 'linked-lib', 'keep.txt');
   assert.equal(await readFile(staged, 'utf8'), 'fixture');
 });
 

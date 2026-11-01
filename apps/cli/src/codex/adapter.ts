@@ -6,6 +6,7 @@ import process from "node:process";
 // Codex runs through CodexDirectAdapter. Kept so the isolation approach can be reused for a future CLI agent.
 import type { TaskAssign, TaskEvent } from "@nema/shared";
 import type { AgentAdapter, AgentResult } from "../daemon/runner.js";
+import { withElectronNode } from "../platform.js";
 import { buildEnv, checkCodexAuth, cleanupRun, prepareIsolation, preflight, type IsolationPaths } from "./isolation.js";
 import { parseCodexLine } from "./events.js";
 
@@ -51,7 +52,7 @@ export class CodexAdapter implements AgentAdapter {
       mcp: {
         command: process.execPath,
         args: [this.opts.cliEntry, "mcp"],
-        env: { NEMA_HUB_URL: task.hubUrl, NEMA_RUN_TOKEN: task.runToken },
+        env: withElectronNode({ NEMA_HUB_URL: task.hubUrl, NEMA_RUN_TOKEN: task.runToken }),
       },
     });
     try {

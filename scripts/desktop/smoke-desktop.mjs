@@ -234,6 +234,7 @@ async function smoke(args) {
   const payload = path.join(path.dirname(executable), 'resources', 'payload');
   const manifest = JSON.parse(await readFile(path.join(payload, 'runtime-manifest.json'), 'utf8'));
   if (manifest.platform !== 'win32' || manifest.arch !== 'x64' || manifest.version !== appVersion) throw new Error('Copied app contains an unexpected runtime target/version');
+  if (manifest.node) throw new Error('Copied app still records a bundled Node path');
   const electronNotices = ['runtime/licenses/electron/LICENSE', 'runtime/licenses/electron/LICENSES.chromium.html'];
   const electronNoticeEvidence = [];
   for (const relative of electronNotices) {
@@ -304,8 +305,8 @@ async function smoke(args) {
     appProcess = undefined;
     const surviving = await waitUntil(() => runtimeApi.discoverInstance(home), 'Local core did not remain available after the Electron main process exited');
     if (surviving.instanceId !== instanceId) throw new Error('Electron main-process exit replaced the independently running core');
-    const browser = spawn(path.join(payload, ...manifest.node.split('/')), [path.join(payload, 'app/node_modules/@nema/local/dist/src/browser.js'), '--assetsDir', payload, '--no-open'], {
-      cwd: payload, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    const browser = spawn(executable, [path.join(payload, 'app/node_modules/@nema/local/dist/src/browser.js'), '--assetsDir', payload, '--no-open'], {
+      cwd: payload, env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     });
     let browserUrl = '';
     let browserErrors = '';

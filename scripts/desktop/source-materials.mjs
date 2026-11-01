@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { assertRuntimeNodeRecord } from './electron-node.mjs';
 
 const defaultPolicyPath = new URL('./source-materials-policy.json', import.meta.url);
 
@@ -395,12 +396,13 @@ export async function collectSourceMaterials({ payloadRoot, outputRoot = payload
   }
   notices.sort((a, b) => a.sourcePath.localeCompare(b.sourcePath));
   const tools = {
-    node: { version: record.node?.version, archive: record.node?.archive, sha256: record.node?.sha256, expectedArchive: expectedNode.file, expectedSha256: expectedNode.sha256, pinMatches: record.node?.version === trustedManifest.node.version && record.node?.archive === expectedNode.file && record.node?.sha256 === expectedNode.sha256 },
+    node: { version: record.node?.version, archive: record.node?.archive, sha256: record.node?.sha256, expectedArchive: expectedNode.file, expectedSha256: expectedNode.sha256, pinMatches: record.node?.version === trustedManifest.node.version && record.node?.archive === expectedNode.file && record.node?.sha256 === expectedNode.sha256, shipped: false },
+    runtimeNode: record.runtimeNode ?? null,
   };
   const productionDependencies = await inventoryProductionDependencies(payload);
   let materials = sourceMaterials;
   if (!materials) materials = [
-    { id: 'node-source', component: `Node.js ${trustedManifest.node.version}`, status: 'notice', correspondence: 'notice', reason: 'MIT. The staged Node LICENSE is the required notice.' },
+    { id: 'node-source', component: `Node.js ${trustedManifest.node.version}`, status: 'notice', correspondence: 'notice', reason: 'MIT. runtime/licenses/node is the required notice. The running binary is Electron\'s Node, not a second copy under runtime/<target>/node/.' },
     { id: 'font-sources', component: 'Inter and JetBrains Mono WOFF2 assets', status: 'notice', correspondence: 'notice', reason: 'SIL Open Font License. The OFL notices ship with the WOFF2 files.' },
   ];
   materials = await Promise.all(materials.map(async (item) => {
@@ -483,6 +485,8 @@ export async function validatePublicationEligibility(payloadRoot, { toolsManifes
   if (!nodePin) throw new Error(`Trusted tools manifest has no target pins for ${target}`);
   if (record.target !== target || record.node?.version !== trusted.node.version || record.node?.archive !== nodePin.file || record.node?.sha256 !== nodePin.sha256) throw new Error('Payload tool target/version/archive/hash does not match trusted tools manifest pins');
   if (!materials.tools?.node?.pinMatches) throw new Error('Source-material inventory has an untrusted node tool pin');
+  if (JSON.stringify(materials.tools?.runtimeNode ?? null) !== JSON.stringify(record.runtimeNode ?? null)) throw new Error('Source-material inventory does not match the Electron Node record');
+  assertRuntimeNodeRecord(record.runtimeNode);
   for (const notice of materials.notices ?? []) {
     const file = await safeFile(root, notice.bundlePath);
     if (await hashFile(file) !== notice.sha256) throw new Error(`Notice hash mismatch: ${notice.sourcePath}`);
@@ -492,7 +496,7 @@ export async function validatePublicationEligibility(payloadRoot, { toolsManifes
   const stagedNotices = await inventoryNotices(root);
   for (const notice of stagedNotices) if (!noticePaths.has(notice.sourcePath) || materials.notices.find((item) => item.sourcePath === notice.sourcePath)?.sha256 !== notice.sha256) throw new Error(`Staged notice inventory is incomplete or changed: ${notice.sourcePath}`);
   const requiredNoticePaths = [
-    (p) => /^runtime\/[^/]+\/node\//.test(p),
+    (p) => p === 'runtime/licenses/node',
     (p) => p === 'runtime/licenses/application',
     (p) => p.startsWith('vendor/archify/'),
     (p) => p.startsWith('vendor/superpowers-rules/'),

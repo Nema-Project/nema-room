@@ -1,6 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+/** Electron's executable is a GUI binary unless this is set. Real Node ignores it. */
+export function electronRunAsNode(): boolean {
+  return process.env.ELECTRON_RUN_AS_NODE === "1" || process.versions.electron !== undefined;
+}
+
+/** Copy the flag into a replacement environment so a child of Electron stays Node. */
+export function withElectronNode<T extends NodeJS.ProcessEnv>(env: T): T {
+  if (!electronRunAsNode()) return env;
+  return { ...env, ELECTRON_RUN_AS_NODE: "1" } as T;
+}
+
 export function windowsRuntimeEnv(parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   if (process.platform !== "win32") return env;

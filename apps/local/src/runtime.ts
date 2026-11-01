@@ -62,7 +62,8 @@ type RuntimeManifest = {
   version: string;
   platform: string;
   arch: string;
-  node: string;
+  /** Present only while a payload still ships its own Node. New payloads omit it and use Electron. */
+  node?: string;
   coreEntry: string;
   cliEntry: string;
   webEntry: string;
@@ -109,6 +110,17 @@ function manifestEntry(root: string, value: unknown, name: string): string {
   return actual;
 }
 
+function electronNodeProcess(): boolean {
+  return process.env.ELECTRON_RUN_AS_NODE === "1" || process.versions.electron !== undefined;
+}
+
+/** A payload with no `node` entry runs on the Electron executable. The path must not leave the payload. */
+function resolveNodePath(root: string, value: Partial<RuntimeManifest>): string {
+  if (typeof value.node === "string" && value.node.trim()) return manifestEntry(root, value.node, "node");
+  if (!electronNodeProcess()) throw new Error("Runtime manifest has no bundled Node, and this process is not Electron");
+  return process.execPath;
+}
+
 function readManifest(assetsDir: string): ResolvedAssets {
   let root: string;
   try { root = realpathSync.native(resolve(assetsDir)); }
@@ -123,7 +135,7 @@ function readManifest(assetsDir: string): ResolvedAssets {
     value.platform !== process.platform || value.arch !== process.arch) {
     throw new Error("Runtime manifest version, schema, platform, or architecture does not match this runtime");
   }
-  const nodePath = manifestEntry(root, value.node, "node");
+  const nodePath = resolveNodePath(root, value);
   const corePath = manifestEntry(root, value.coreEntry, "coreEntry");
   const cliPath = manifestEntry(root, value.cliEntry, "cliEntry");
   const webPath = manifestEntry(root, value.webEntry, "webEntry");
@@ -202,6 +214,8 @@ function childEnvironment(extra: Record<string, string>): NodeJS.ProcessEnv {
   delete env.Path;
   // The desktop startup bench times Windows ACL calls inside the core. Nothing else is copied from the parent.
   if (process.env.NEMA_DESKTOP_BENCH === "1") env.NEMA_DESKTOP_BENCH = "1";
+  // Electron is a GUI executable. Children stay Node only when this variable is set explicitly.
+  if (electronNodeProcess()) env.ELECTRON_RUN_AS_NODE = "1";
   return { ...env, ...extra };
 }
 

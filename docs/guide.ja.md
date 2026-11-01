@@ -16,7 +16,7 @@
 
 ## デスクトップアプリ（プレビュー）
 
-デスクトップアプリは、全体を 1 つのローカルプログラムにまとめます。ディスク上の PGlite データベース、単一オーナーのローカルコア、保護された同一オリジンのゲートウェイ、同梱の Node を使い、Docker もデータベースサーバーも不要です。Git は PC にインストール済みのもの（2.31 以降）を使います。macOS では Finder から開いた場合も Homebrew と MacPorts の Git を見つけます。Git がない、または古い場合は起動時にその旨を表示し、https://git-scm.com/downloads を案内します。**デスクトップ版を公開しています。** Windows x64 と Apple シリコン向けです。[ダウンロード](https://github.com/Nema-Project/nema-room/releases/latest)。Windows ではインストーラーかポータブル ZIP のどちらかを選びます。
+デスクトップアプリは、全体を 1 つのローカルプログラムにまとめます。ディスク上の PGlite データベース、単一オーナーのローカルコア、保護された同一オリジンのゲートウェイ、Electron に入っている Node を使い、Docker もデータベースサーバーも不要です。Git は PC にインストール済みのもの（2.31 以降）を使います。macOS では Finder から開いた場合も Homebrew と MacPorts の Git を見つけます。Git がない、または古い場合は起動時にその旨を表示し、https://git-scm.com/downloads を案内します。**デスクトップ版を公開しています。** Windows x64 と Apple シリコン向けです。[ダウンロード](https://github.com/Nema-Project/nema-room/releases/latest)。Windows ではインストーラーかポータブル ZIP のどちらかを選びます。
 
 | 項目 | 状態 |
 | --- | --- |
@@ -43,7 +43,7 @@
 - モデルはサイドバーの **アプリ設定 → モデル** で選びます。ターミナルは不要です。提供元は 1 段だけです：ChatGPT サブスクリプション、Claude サブスクリプション、API キー。ChatGPT サブスクリプションはブラウザーログインか、既存のローカル Codex ログインです。Claude サブスクリプションはローカルの Claude Code トークンを入力します。API キーはキーと任意の Responses API アドレスです。接続したあと、その提供元が返す一覧からモデルを選びます。モデル ID を手入力する欄はありません。一覧の読み込み中は、メニューにその旨が表示され、開くことはできません。Claude は公式エイリアスを使い、未選択のときはアカウントの既定です。提供元ごとのログインはそれぞれ残ります。同じページで推論の強さを設定できます。Agent ランタイムの別スイッチはありません。
 - GitHub プラグインは既定で無効です。ワークスペースの「コードとプラグイン」で有効にすると、Agent はサインイン済みのローカル `gh` を使います（ターミナルで一度 `gh auth login` を実行してください）。Nema は GitHub トークンを要求も保存もしません。読み取りはプラグインを有効にすると使えます。GitHub の変更（Issue の作成とコメント、ラベルの編集、Project の更新）は、同じページの許可スイッチがさらに必要です。Agent がアクセスできるのは、そのワークスペースに紐づく github.com リポジトリだけです。
 
-**コーディング Agent の報告フック**：`nema report install` が書き込むフック（パッケージ版は `nema` を PATH に置きません。インストール先の `resources\payload` フォルダーで `Nema CLI.cmd report install --agent claude` を実行します。macOS は `Nema CLI.command`、Linux は `nema-cli` です。フックは同梱の Node と CLI を絶対パスで指します）は、ユーザー単位の `~/.nema/report-token` を使い、デスクトップアプリが起動時にローカルコアへ登録します。アプリの実行中は、フックが自動的にアプリを見つけて身元を検証します。**フックを新しくインストールしたら、デスクトップアプリを再起動**してください（トークンが登録されます）。アプリが動いていない間の報告はローカルのスプール（最大 5 MB、7 日間保持）に入り、次の報告時に送られます。
+**コーディング Agent の報告フック**：`nema report install` が書き込むフック（パッケージ版は `nema` を PATH に置きません。インストール先の `resources\payload` フォルダーで `Nema CLI.cmd report install --agent claude` を実行します。macOS は `Nema CLI.command`、Linux は `nema-cli` です。フックは Electron の実行ファイル（`ELECTRON_RUN_AS_NODE=1` 付き）と CLI を絶対パスで指します。アップグレード後、削除された `runtime/<target>/node` をまだ指しているフックは、次に Electron がコアを起動するときに書き換えます）は、ユーザー単位の `~/.nema/report-token` を使い、デスクトップアプリが起動時にローカルコアへ登録します。アプリの実行中は、フックが自動的にアプリを見つけて身元を検証します。**フックを新しくインストールしたら、デスクトップアプリを再起動**してください（トークンが登録されます）。アプリが動いていない間の報告はローカルのスプール（最大 5 MB、7 日間保持）に入り、次の報告時に送られます。
 
 **Web / Compose 版からの移行**：現在はライブラリのインターフェースだけで、コマンドも画面もありません。`exportSnapshot`（`apps/hub/src/db/export.ts`）は指定した PostgreSQL 接続からエクスポートし、`importLegacySnapshot`（`apps/local/src/import.ts`）は**空で停止中**のデスクトップのデータディレクトリへインポートします。インポートはまずステージング用ディレクトリで全体を検証し、失敗しても移行先は変更されません。中断した場合は `recoverInterruptedImport` で復旧します。認証情報はエクスポートもインポートもされないため、再度サインインしてください。
 

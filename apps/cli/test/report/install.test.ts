@@ -2,7 +2,7 @@ import { expectPrivate } from "../nativePermissions.js";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { hookCommand, installReport, reportHookInstalled, uninstallReport, type ReportAgent } from "../../src/report/install.js";
+import { hookCommand, installReport, migrateReportHooks, reportHookInstalled, uninstallReport, type ReportAgent } from "../../src/report/install.js";
 import { reportTokenPath } from "../../src/report/token.js";
 import { collectOut, tmp } from "./helpers.js";
 
@@ -72,6 +72,20 @@ describe("nema report install", () => {
     // Taking Nema's entries back out gives the original bytes.
     expect(await s.undo("claude")).toBe(0);
     expect(readFileSync(claudeSettings(s.home), "utf8")).toBe(original);
+  });
+
+  test("migrate rewrites a hook that still points at the removed payload Node", async () => {
+    const s = setup();
+    mkdirSync(path.join(s.home, ".claude"), { recursive: true });
+    const oldNode = "/opt/nema/resources/payload/runtime/darwin-arm64/node/bin/node";
+    const old = hookCommand(oldNode, ENTRY, "claude");
+    writeFileSync(claudeSettings(s.home), `${JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: old }] }], SessionEnd: [{ hooks: [{ type: "command", command: old }] }] } }, null, 2)}\n`);
+    const electron = "/Applications/Nema.app/Contents/MacOS/Nema";
+    expect(migrateReportHooks({ home: s.home, nodeBin: electron, cliEntry: ENTRY, runAsNode: true })).toEqual(["claude"]);
+    const cfg = read(claudeSettings(s.home));
+    expect(hookCommand(electron, ENTRY, "claude", "linux", true)).toBe(`ELECTRON_RUN_AS_NODE=1 ${electron} ${ENTRY} report hook --agent claude`);
+    expect(cfg.hooks.Stop![0]!.hooks[0]!.command).toBe(hookCommand(electron, ENTRY, "claude", process.platform, true));
+    expect(migrateReportHooks({ home: s.home, nodeBin: electron, cliEntry: ENTRY, runAsNode: true })).toEqual([]);
   });
 
   test("install twice does not duplicate entries", async () => {

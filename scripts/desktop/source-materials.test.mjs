@@ -16,7 +16,7 @@ const rootFixture = async (t) => {
   const toolsManifest = path.join(root, 'tools-manifest.json');
   await mkdir(path.join(payload, 'runtime/win32-x64'), { recursive: true });
   await writeFile(toolsManifest, JSON.stringify({ schemaVersion: 1, node: { version: '24.22.1', archive: { 'win32-x64': { file: 'node-v24.22.1-win-x64.zip', sha256: 'a'.repeat(64) } } } }));
-  await writeFile(path.join(payload, 'runtime/win32-x64/tools-source.json'), JSON.stringify({ schemaVersion: 1, target: 'win32-x64', node: { version: '24.22.1', archive: 'node-v24.22.1-win-x64.zip', sha256: 'a'.repeat(64) }, sourceCorrespondence: { status: 'pending-task-7c' } }));
+  await writeFile(path.join(payload, 'runtime/win32-x64/tools-source.json'), JSON.stringify({ schemaVersion: 1, target: 'win32-x64', node: { version: '24.22.1', archive: 'node-v24.22.1-win-x64.zip', sha256: 'a'.repeat(64), shipped: false }, runtimeNode: { source: 'electron', electronVersion: '45.1.0', version: '24.22.1', engines: '>=22', license: 'runtime/licenses/node', invocation: 'ELECTRON_RUN_AS_NODE=1' }, sourceCorrespondence: { status: 'pending-task-7c' } }));
   await writeFile(path.join(payload, 'runtime-manifest.json'), JSON.stringify({ schemaVersion: 1, version: '0.1.0', platform: 'win32', arch: 'x64' }));
   return { root, payload, toolsManifest };
 };
@@ -25,7 +25,7 @@ const completeInputs = (sha256) => [
   { id: 'font-sources', component: 'Inter and JetBrains Mono', status: 'complete', correspondence: 'verified', version: 'fixture-fonts', immutableRef: 'fixture-commit', archiveTarget: 'win32-x64', tool: 'web', correspondenceEvidence: { basis: 'fixture font provenance mapping', fontAssetHashes: [{ path: 'web/apps/web/.next/static/media/Inter.woff2', sha256: 'aa0ac38cd3f2459bc65140b9035ec40965415e256eb7bf1a22b0ede5860b90db' }] }, sourcePath: 'arbitrary.txt', sha256 },
 ];
 const populateCompleteNotices = async (f) => {
-  const files = ['runtime/win32-x64/node/LICENSE', 'runtime/licenses/application', 'runtime/licenses/electron/LICENSE', 'runtime/licenses/electron/LICENSES.chromium.html', 'vendor/archify/LICENSE', 'vendor/superpowers-rules/LICENSE', 'app/node_modules/example/LICENSE', 'runtime/win32-x64/node/node.exe'];
+  const files = ['runtime/licenses/node', 'runtime/win32-x64/node/LICENSE', 'runtime/licenses/application', 'runtime/licenses/electron/LICENSE', 'runtime/licenses/electron/LICENSES.chromium.html', 'vendor/archify/LICENSE', 'vendor/superpowers-rules/LICENSE', 'app/node_modules/example/LICENSE', 'runtime/win32-x64/node/node.exe'];
   for (const file of files) {
     await mkdir(path.dirname(path.join(f.payload, file)), { recursive: true });
     await writeFile(path.join(f.payload, file), `fixture ${file}`);

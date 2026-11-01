@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { registerAttachmentHandlers } from "../attachments/handlers.js";
 import { ClaudeCodeAdapter } from "../claude/adapter.js";
 import { loadConfig, type NemaConfig } from "../config.js";
@@ -8,6 +9,8 @@ import { registerSkillHandlers } from "../skills/rpc.js";
 import { graphifyInstallStatus, type GraphifyOpts } from "../repos/graphify.js";
 import { registerRepoHandlers } from "../repos/handlers.js";
 import { parseReposSync, RepoWatcher } from "../repos/watcher.js";
+import { electronRunAsNode } from "../platform.js";
+import { migrateReportHooks } from "../report/install.js";
 import { connectDaemon } from "./connection.js";
 import { Cooldowns } from "../routing/cooldown.js";
 import { RpcRouter } from "./rpc.js";
@@ -61,6 +64,14 @@ export type DaemonStart = {
 
 /** Connects the daemon and answers repo RPC plus `plugin.call` and `plugins.status`. */
 export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: RepoWatcher } {
+  // Hooks installed against the removed payload Node keep that absolute path. Rewrite them once Electron is the Node.
+  if (electronRunAsNode()) {
+    try {
+      migrateReportHooks({ home: homedir(), nodeBin: o.execPath ?? process.execPath, cliEntry: o.cliEntry });
+    } catch (error) {
+      console.error("[nema] report hook migration failed", error);
+    }
+  }
   const runner = createRunner(o);
   const rpc = new RpcRouter();
   const graphify = { ...o.graphify, ownedHelpers: o.ownedHelpers };

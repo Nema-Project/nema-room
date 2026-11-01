@@ -1,0 +1,1 @@
+The desktop payload no longer ships a second Node under `runtime/<target>/node/`. The app, CLI launcher, and browser launcher run Electron's Node with `ELECTRON_RUN_AS_NODE=1`. The Node MIT notice stays at `runtime/licenses/node`. A core started that way rewrites report hooks that still point at the removed Node path.

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { PluginToolSpec } from "@nema/shared";
 import { claudeAllowedToolNames } from "../direct/tools.js";
-import { windowsRuntimeEnv } from "../platform.js";
+import { windowsRuntimeEnv, withElectronNode } from "../platform.js";
 
 export const CLAUDE_ROOM_TOOLS = [
   "mcp__room__list_entries",
@@ -50,7 +50,7 @@ export function prepareClaudeLaunch(o: {
         room: {
           command: o.execPath,
           args: [o.cliEntry, "mcp"],
-          env: { NEMA_HUB_URL: o.hubUrl, NEMA_RUN_TOKEN: o.runToken },
+          env: withElectronNode({ NEMA_HUB_URL: o.hubUrl, NEMA_RUN_TOKEN: o.runToken }),
         },
       },
     }),

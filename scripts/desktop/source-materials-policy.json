@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "policyVersion": 3,
+  "policyVersion": 4,
   "targets": {
     "win32-x64": {
       "status": "resolved",
       "components": [
-        { "id": "node-source", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/win32-x64/node/LICENSE" }], "reason": "Node.js is MIT. The LICENSE shipped inside the Node distribution is the required copyright and permission notice. npm and Corepack stay in the tool cache and are not part of the payload." },
+        { "id": "node-source", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/licenses/node" }], "reason": "Node.js is MIT. The running binary is Electron's Node. runtime/licenses/node is the required copyright and permission notice. The nodejs.org archive is a build-time pin for npm ci and is not copied into the payload." },
         { "id": "font-sources", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "upstream:inter-ofl" }, { "sourcePath": "upstream:jetbrains-mono-ofl" }], "reason": "Inter and JetBrains Mono are SIL Open Font License. The OFL text ships with the WOFF2 files; the font files are the work." },
         { "id": "electron-ffmpeg", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/licenses/electron/LICENSES.chromium.html", "mustMatch": ["ffmpeg", "LGPL v2.1"] }], "reason": "Electron ships ffmpeg under the LGPL as its own library, so it can be replaced. The Chromium notice file must name ffmpeg and LGPL v2.1." }
       ]
@@ -13,7 +13,7 @@
     "darwin-arm64": {
       "status": "resolved",
       "components": [
-        { "id": "node-source", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/darwin-arm64/node/LICENSE" }], "reason": "Node.js is MIT. The LICENSE shipped inside the Node distribution is the required copyright and permission notice. npm and Corepack stay in the tool cache and are not part of the payload." },
+        { "id": "node-source", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/licenses/node" }], "reason": "Node.js is MIT. The running binary is Electron's Node. runtime/licenses/node is the required copyright and permission notice. The nodejs.org archive is a build-time pin for npm ci and is not copied into the payload." },
         { "id": "font-sources", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "upstream:inter-ofl" }, { "sourcePath": "upstream:jetbrains-mono-ofl" }], "reason": "Inter and JetBrains Mono are SIL Open Font License. The OFL text ships with the WOFF2 files; the font files are the work." },
         { "id": "electron-ffmpeg", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/licenses/electron/LICENSES.chromium.html", "mustMatch": ["ffmpeg", "LGPL v2.1"] }], "reason": "Electron ships ffmpeg under the LGPL as its own library, so it can be replaced. The Chromium notice file must name ffmpeg and LGPL v2.1." }
       ]
@@ -21,7 +21,7 @@
     "linux-x64": {
       "status": "resolved",
       "components": [
-        { "id": "node-source", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/linux-x64/node/LICENSE" }], "reason": "Node.js is MIT. The LICENSE shipped inside the Node distribution is the required copyright and permission notice. npm and Corepack stay in the tool cache and are not part of the payload." },
+        { "id": "node-source", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/licenses/node" }], "reason": "Node.js is MIT. The running binary is Electron's Node. runtime/licenses/node is the required copyright and permission notice. The nodejs.org archive is a build-time pin for npm ci and is not copied into the payload." },
         { "id": "font-sources", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "upstream:inter-ofl" }, { "sourcePath": "upstream:jetbrains-mono-ofl" }], "reason": "Inter and JetBrains Mono are SIL Open Font License. The OFL text ships with the WOFF2 files; the font files are the work." },
         { "id": "electron-ffmpeg", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/licenses/electron/LICENSES.chromium.html", "mustMatch": ["ffmpeg", "LGPL v2.1"] }], "reason": "Electron ships ffmpeg under the LGPL as its own library, so it can be replaced. The Chromium notice file must name ffmpeg and LGPL v2.1." }
       ]
@@ -29,7 +29,7 @@
     "linux-arm64": {
       "status": "resolved",
       "components": [
-        { "id": "node-source", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/linux-arm64/node/LICENSE" }], "reason": "Node.js is MIT. The LICENSE shipped inside the Node distribution is the required copyright and permission notice. npm and Corepack stay in the tool cache and are not part of the payload." },
+        { "id": "node-source", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/licenses/node" }], "reason": "Node.js is MIT. The running binary is Electron's Node. runtime/licenses/node is the required copyright and permission notice. The nodejs.org archive is a build-time pin for npm ci and is not copied into the payload." },
         { "id": "font-sources", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "upstream:inter-ofl" }, { "sourcePath": "upstream:jetbrains-mono-ofl" }], "reason": "Inter and JetBrains Mono are SIL Open Font License. The OFL text ships with the WOFF2 files; the font files are the work." },
         { "id": "electron-ffmpeg", "status": "resolved", "obligation": "notice", "notices": [{ "sourcePath": "runtime/licenses/electron/LICENSES.chromium.html", "mustMatch": ["ffmpeg", "LGPL v2.1"] }], "reason": "Electron ships ffmpeg under the LGPL as its own library, so it can be replaced. The Chromium notice file must name ffmpeg and LGPL v2.1." }
       ]

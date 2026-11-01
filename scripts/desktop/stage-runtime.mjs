@@ -5,6 +5,7 @@ import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readElectronNodeVersion, runtimeNodeRecord } from './electron-node.mjs';
 import { fetchTools, nodePayloadExcluded, toolsManifest } from './fetch-tools.mjs';
 import { reportPayload } from './payload-size.mjs';
 import { buildOwnedHelper } from './build-owned-helper.mjs';
@@ -190,13 +191,21 @@ export function parseStageArgs(args) {
   return result;
 }
 
+/** Payload-relative path of the packaged Electron executable. `..` is intentional: the binary is outside the payload. */
+export function electronExecutableRelative(platform) {
+  if (platform === 'win32') return '..\\..\\Nema.exe';
+  if (platform === 'darwin') return '../../MacOS/Nema';
+  return '../../Nema';
+}
+
 export async function writePlatformLaunchers(payloadRoot, manifest) {
   const nativePath = (relative) => relative.replaceAll('/', path.sep);
+  const nodeRelative = manifest.node ?? electronExecutableRelative(manifest.platform);
   const names = manifest.platform === 'win32' ? ['Nema Browser.cmd', 'Nema CLI.cmd'] : manifest.platform === 'darwin' ? ['Nema Browser.command', 'Nema CLI.command'] : ['nema-browser', 'nema-cli'];
   const launcherPaths = [];
   for (const launcherName of names) {
     const launcherTemplate = path.join(scriptDir, 'templates', launcherName);
-    const launcher = (await readFile(launcherTemplate, 'utf8')).replaceAll('{{NODE_PATH}}', nativePath(manifest.node)).replaceAll('{{CLI_PATH}}', nativePath(manifest.cliEntry ?? ''));
+    const launcher = (await readFile(launcherTemplate, 'utf8')).replaceAll('{{NODE_PATH}}', nativePath(nodeRelative)).replaceAll('{{CLI_PATH}}', nativePath(manifest.cliEntry ?? ''));
     const launcherPath = path.join(payloadRoot, launcherName);
     await writeFile(launcherPath, launcher, { mode: manifest.platform === 'win32' ? 0o644 : 0o755 });
     if (manifest.platform !== 'win32') await chmod(launcherPath, 0o755);
@@ -340,6 +349,7 @@ export async function stageRuntime({
   commit,
   tools,
   build = true,
+  electronNode,
   ownedHelperBuilder = buildOwnedHelper,
   fetchGraphify = fetchGraphifyRuntime,
 } = {}) {
@@ -351,6 +361,9 @@ export async function stageRuntime({
   if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('A valid explicit application version is required');
   const localVersion = localPackage.version;
   if (version !== localVersion) throw new Error(`Requested version ${version} does not match apps/local/package.json ${localVersion}`);
+  const runtimeNode = electronNode
+    ? runtimeNodeRecord({ electronVersion: electronNode.electronVersion, nodeVersion: electronNode.nodeVersion, engines: electronNode.engines })
+    : await readElectronNodeVersion(sourceRoot);
   await ensureElectronBinary(sourceRoot);
   const electronMitLicense = await requiredFile(sourceRoot, 'node_modules/electron/dist/LICENSE', 'Electron MIT license', sourceRoot);
   const electronThirdPartyNotices = await requiredFile(sourceRoot, 'node_modules/electron/dist/LICENSES.chromium.html', 'Electron Chromium notices', sourceRoot);
@@ -426,9 +439,15 @@ export async function stageRuntime({
       await copyTree(path.join(graphifyDir, 'licenses'), put('runtime/licenses/graphify-runtime'), staging);
     }
     await copyTree(selectedToolsRoot, put(`runtime/${target}`), selectedToolsRoot, new Set(), {
-      skip: nodePayloadExcluded,
+      // The Node binary is Electron's. Keep the license and the tools-source pin; do not ship a second node/.
+      skip: (relative) => nodePayloadExcluded(relative) || relative === 'node' || relative.startsWith('node/'),
       skipRoot: selectedToolsRoot,
     });
+    const stagedToolsRecord = put(`runtime/${target}/tools-source.json`);
+    const toolsSource = JSON.parse(await readFile(stagedToolsRecord, 'utf8'));
+    toolsSource.node = { ...toolsSource.node, shipped: false, role: 'build-time npm ci; not copied into the payload' };
+    toolsSource.runtimeNode = runtimeNode;
+    await writeFile(stagedToolsRecord, `${JSON.stringify(toolsSource, null, 2)}\n`);
     if (ownedHelperPath) await copyTree(ownedHelperPath, put('runtime/owned-helper.exe'), path.dirname(ownedHelperPath));
     await copyTree(standalone, put('web'), builtRoot);
     await copyTree(staticDir, put('web/apps/web/.next/static'), builtRoot);
@@ -456,7 +475,6 @@ export async function stageRuntime({
     const manifest = {
       schemaVersion: 1, version, platform, arch,
       ...(commitId ? { commit: commitId } : {}),
-      node: `runtime/${tools.node}`,
       ...(ownedHelperPath ? { ownedHelperGuardian: 'runtime/owned-helper.exe' } : {}),
       coreEntry: 'app/node_modules/@nema/local/dist/src/index.js',
       cliEntry: 'app/node_modules/@nema/cli/dist/index.js',
@@ -472,7 +490,6 @@ export async function stageRuntime({
     await writeFile(put('runtime-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx' });
     await writePlatformLaunchers(staging, manifest);
     for (const [entry, name, directory] of [
-      [manifest.node, 'Node executable', false],
       [manifest.coreEntry, 'core entry', false], [manifest.cliEntry, 'CLI entry', false],
       [manifest.webEntry, 'Web entry', false], [manifest.licenses, 'license directory', true],
       ...(manifest.ownedHelperGuardian ? [[manifest.ownedHelperGuardian, 'Windows helper guardian executable', false]] : []),
