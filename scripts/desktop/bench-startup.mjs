@@ -164,21 +164,27 @@ async function drainBenchChild(child) {
 }
 
 export async function stopApp(child) {
-  if (child.exitCode === null && child.signalCode === null && child.pid) {
-    if (process.platform === 'win32') {
-      spawnSync(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-    } else {
-      try { process.kill(-child.pid, 'SIGTERM'); }
-      catch { try { child.kill('SIGTERM'); } catch { /* already gone */ } }
+  try {
+    if (child.exitCode === null && child.signalCode === null && child.pid) {
+      if (process.platform === 'win32') {
+        spawnSync(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      } else {
+        try { process.kill(-child.pid, 'SIGTERM'); }
+        catch { try { child.kill('SIGTERM'); } catch { /* already gone */ } }
+      }
+      await waitForChildExit(child, 50_000).catch(async () => {
+        try { child.kill('SIGKILL'); } catch { /* already gone */ }
+        await waitForChildExit(child, 5_000).catch(() => {});
+        if (child.exitCode === null && child.signalCode === null) {
+          throw new Error(`Desktop app did not terminate (pid ${child.pid})`);
+        }
+      });
     }
-    await waitForChildExit(child, 50_000).catch(async () => {
-      try { child.kill('SIGKILL'); } catch { /* already gone */ }
-      await waitForChildExit(child, 5_000).catch(() => {});
-    });
+    await drainBenchChild(child);
+  } finally {
+    child.stdout?.destroy();
+    child.stderr?.destroy();
   }
-  await drainBenchChild(child);
-  child.stdout?.destroy();
-  child.stderr?.destroy();
 }
 
 export function launch(executable, env, logPath) {
@@ -191,6 +197,10 @@ export function launch(executable, env, logPath) {
     windowsHide: false,
   });
   child.benchClosed = false;
+  child.benchSpawnError = undefined;
+  child.on('error', (error) => {
+    child.benchSpawnError = child.benchSpawnError ?? error;
+  });
   child.benchLogDone = new Promise((resolve) => {
     log.once('finish', resolve);
   });
@@ -210,6 +220,7 @@ export function launch(executable, env, logPath) {
 async function waitForMark(logPath, mark, timeoutMs, child) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (child.benchSpawnError) throw new Error(`Desktop app could not start: ${child.benchSpawnError.message}`);
     if (child.exitCode !== null || child.signalCode !== null) {
       await drainBenchChild(child);
       const tail = await readFile(logPath, 'utf8').catch(() => '');

@@ -59,6 +59,18 @@ test('summarize rejects an empty run', () => {
   assert.throws(() => summarizeSamples([]), /no samples/);
 });
 
+test('a failed spawn is recorded on the child instead of escaping the process', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-bench-spawn-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const child = launch(path.join(root, 'missing-app'), process.env, path.join(root, 'electron.log'));
+  const deadline = Date.now() + 2_000;
+  while (!child.benchSpawnError && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(child.benchSpawnError?.code, 'ENOENT');
+  await stopApp(child);
+});
+
 test('stopping the app keeps stdout that is still flushing after exit', async (t) => {
   if (process.platform === 'win32') return;
   const root = await mkdtemp(path.join(os.tmpdir(), 'nema-bench-stop-'));
