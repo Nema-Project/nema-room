@@ -14,6 +14,7 @@ import { AuthStore, RELOGIN_MESSAGE, type StoredAuth } from "../../src/direct/au
 import { byokKeyPath, saveByokKey } from "../../src/direct/byok.js";
 import { COMPAT_PROFILE, REQUEST_TOO_LARGE_MESSAGE, SIWC_PROFILE, type TransportProfile } from "../../src/direct/transport.js";
 import { json, reset, sse, startFakeResponsesServer, type FakeResponsesServer } from "../fixtures/fake-responses-server.js";
+import { Cooldowns } from "../../src/routing/cooldown.js";
 
 const b64u = (s: string) => Buffer.from(s).toString("base64url");
 const jwt = (p: Record<string, unknown>) => `${b64u(JSON.stringify({ alg: "none" }))}.${b64u(JSON.stringify(p))}.sig`;
@@ -785,13 +786,15 @@ describe("routing a task to the account the user chose", () => {
     expect(server.requests).toEqual([]);
   });
 
-  test("a request for automatic routing fails and sends nothing, instead of quietly using the default", async () => {
+  test("a request for automatic routing fails and sends nothing while the switch is off", async () => {
+    // The switch is off here (this fixture never sets it), so the S3 guarantee still holds: a task that asked
+    // for failover never quietly runs on one account as if it had been routed.
     writeAccounts([acctA, acctB]);
     writeKey(acctA.id, "key-of-a");
     writeKey(acctB.id, "key-of-b");
     const { result } = await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: byokProfile(), refresher }), { ...task(), routing: "auto" });
     expect(result).toMatchObject({ ok: false });
-    expect((result as { error: string }).error).toContain("后续版本");
+    expect((result as { error: string }).error).toContain("自动路由未开启");
     expect(server.requests).toEqual([]);
   });
 
@@ -886,5 +889,196 @@ describe("a siwc account logs in with its own file", () => {
     expect(server.requests).toHaveLength(1);
     expect(server.requests[0]!.headers.authorization).toBe(`Bearer ${tokenSecond}`);
     expect(server.requests[0]!.headers.authorization).not.toBe(`Bearer ${tokenFirst}`);
+  });
+});
+
+describe("automatic routing (S4)", () => {
+  // Two BYOK accounts on two endpoints. Each fake endpoint records the key it was called with, so "did it
+  // really move" is answered by the wire rather than by the route record alone.
+  const acctA = { id: "acct_aaaaaaaaaa", name: "First", enabled: true, adapter: "codex-direct" as const, authMode: "byok" as const, baseUrl: "https://first.example.test/v1", model: "model-a", costTier: "standard" as const, order: 0, createdAt: "2026-10-31T00:00:00.000Z" };
+  const acctB = { id: "acct_bbbbbbbbbb", name: "Second", enabled: true, adapter: "codex-direct" as const, authMode: "byok" as const, baseUrl: "https://second.example.test/v1", model: "model-b", costTier: "standard" as const, order: 1, createdAt: "2026-10-31T00:00:00.000Z" };
+
+  function writeAuto(accounts: unknown[], autoRouting: boolean, bindings: Record<string, string> = {}) {
+    writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts, bindings, autoRouting }, null, 2) + "\n");
+    saveConfig(home, { authMode: "byok", model: "model-a", byokBaseUrl: "https://first.example.test/v1" });
+  }
+  function writeKey(id: string, value: string) {
+    const dir = join(home, "secrets", "accounts", id);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writePrivateFile(join(dir, "key"), value);
+  }
+  /** The profile is overridden, so every account's request lands on one fake server; the keys tell them apart. */
+  const auto = (extra: { cooldowns?: Cooldowns } = {}) =>
+    new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: profile(), refresher, ...extra });
+
+  beforeEach(() => {
+    writeAuto([acctA, acctB], true);
+    writeKey(acctA.id, "key-of-a");
+    writeKey(acctB.id, "key-of-b");
+  });
+
+  test("the first account is rate limited: the next model call runs on the second, and the record says so", async () => {
+    server.responses(json(429, { error: { code: "rate_limit_exceeded", message: "slow down" } }), stream([msgItem("from b")]));
+    const { result } = await run(auto(), { ...task(), routing: "auto" });
+    expect(result).toMatchObject({ ok: true, reply: "from b" });
+
+    const calls = server.requests.filter((r) => r.url === "/v1/responses");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.headers.authorization).toBe("Bearer key-of-a");
+    expect(calls[1]!.headers.authorization).toBe("Bearer key-of-b");
+
+    const route = (result as { route?: { mode?: string; reason?: string; accountId?: string; attempts?: unknown[] } }).route!;
+    // A limit is its own reason code: it is the case a user most often wants to understand afterwards.
+    expect(route).toMatchObject({ mode: "auto", reason: "auto_after_limit", accountId: acctB.id });
+    expect(route.attempts).toHaveLength(1);
+    expect(route.attempts![0]).toMatchObject({ accountId: acctA.id, accountName: "First", failure: "rate_limit" });
+  });
+
+  test("the model of the account that ends up answering is the one that is sent", async () => {
+    server.responses(json(429, { error: { code: "rate_limit_exceeded" } }), stream([msgItem("ok")]));
+    const { result } = await run(auto(), { ...task(), routing: "auto" });
+    const bodies = server.requests.filter((r) => r.url === "/v1/responses").map((r) => JSON.parse(r.body) as { model: string });
+    expect(bodies.map((b) => b.model)).toEqual(["model-a", "model-b"]);
+    expect((result as { route?: { model?: string } }).route!.model).toBe("model-b");
+  });
+
+  test("automatic routing picks the first candidate when nothing fails", async () => {
+    server.responses(stream([msgItem("from a")]));
+    const { result } = await run(auto(), { ...task(), routing: "auto" });
+    expect((result as { route?: { reason?: string; accountId?: string } }).route).toMatchObject({ reason: "auto_primary", accountId: acctA.id, mode: "auto" });
+    // No switch happened, so nothing was "tried before this one".
+    expect((result as { route?: { attempts?: unknown[] } }).route!.attempts ?? []).toEqual([]);
+  });
+
+  test("a 401 does not switch accounts", async () => {
+    // This is one key's problem. Moving to the next account would hide the fact that the user has to fix it.
+    server.responses(json(401, { error: { code: "invalid_api_key", message: "bad key" } }));
+    const { result } = await run(auto(), { ...task(), routing: "auto" });
+    expect(result).toMatchObject({ ok: false });
+    // The transport already retries a 401 once after forcing a token refresh; that is unchanged, and it is not
+    // a failover. What matters is that no request ever reached the server carrying the second account's key.
+    const keys = server.requests.filter((r) => r.url === "/v1/responses").map((r) => r.headers.authorization);
+    expect(keys.every((k) => k === "Bearer key-of-a")).toBe(true);
+    expect(keys).not.toContain("Bearer key-of-b");
+    // The failure still names the account that failed.
+    expect((result as { route?: { accountId?: string } }).route).toMatchObject({ accountId: acctA.id });
+  });
+
+  test("a content-policy refusal does not switch accounts", async () => {
+    server.responses(json(403, { error: { code: "content_policy_violation", message: "no" } }));
+    const { result } = await run(auto(), { ...task(), routing: "auto" });
+    expect(result).toMatchObject({ ok: false });
+    expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
+  });
+
+  test("once output has started, a later failure does not move the task to another account", async () => {
+    // A stream that delivers text and then fails: the user already has half an answer, and a second account
+    // would continue it in another model's voice.
+    server.responses(sse([
+      { type: "response.created", response: { id: "resp" } },
+      { type: "response.output_text.delta", output_index: 0, item_id: "msg_1", delta: "half an answer" },
+      { type: "response.failed", response: { error: { code: "server_error", message: "boom" } } },
+    ]));
+    const { result } = await run(auto(), { ...task(), routing: "auto" });
+    expect(result).toMatchObject({ ok: false });
+    expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
+  });
+
+  test("switching accounts drops the previous account's encrypted reasoning", async () => {
+    // The reasoning of a failed attempt is encrypted for that key; replaying it to another account would send
+    // bytes the second one cannot decrypt (research §1.3). The second request must carry none of it.
+    const reasoning = { type: "reasoning", id: "rs_1", summary: [{ type: "summary_text", text: "thought about it" }], encrypted_content: "ENCRYPTED-BY-A" };
+    const call = (call_id: string) => ({ type: "function_call", id: `fc_${call_id}`, call_id, name: "list_entries", arguments: "{}", status: "completed" });
+    // Round 1 on A: reasoning + a tool call, so there is history worth replaying, then the second call on A
+    // is rate limited. Round 3 lands on B and must be clean.
+    server.responses(
+      sse([
+        { type: "response.created", response: { id: "r1" } },
+        { type: "response.output_item.done", output_index: 0, item: reasoning },
+        { type: "response.output_item.done", output_index: 1, item: call("c1") },
+        { type: "response.completed", response: { id: "r1", status: "completed", output: [reasoning, call("c1")] } },
+      ]),
+      json(429, { error: { code: "rate_limit_exceeded" } }),
+      stream([msgItem("done on b")]),
+    );
+    const { result } = await run(auto(), { ...task(), routing: "auto" });
+    expect(result).toMatchObject({ ok: true, reply: "done on b" });
+
+    const bodies = server.requests.filter((r) => r.url === "/v1/responses").map((r) => JSON.parse(r.body) as { input: { type: string }[] });
+    expect(bodies).toHaveLength(3);
+    // While still on A, the reasoning is replayed as before.
+    expect(bodies[1]!.input.some((i) => i.type === "reasoning")).toBe(true);
+    // On B it is gone, and so is anything carrying it.
+    expect(bodies[2]!.input.some((i) => i.type === "reasoning")).toBe(false);
+    expect(JSON.stringify(bodies[2])).not.toContain("ENCRYPTED-BY-A");
+    // The conversation itself survives: the user message and the tool call/output pair are still sent.
+    expect(bodies[2]!.input.some((i) => i.type === "message")).toBe(true);
+    expect(bodies[2]!.input.filter((i) => i.type === "function_call_output")).toHaveLength(1);
+  });
+
+  test("staying on one account keeps its reasoning, as it did before", async () => {
+    const reasoning = { type: "reasoning", id: "rs_1", summary: [], encrypted_content: "ENCRYPTED-BY-A" };
+    const call = { type: "function_call", id: "fc_1", call_id: "c1", name: "list_entries", arguments: "{}", status: "completed" };
+    server.responses(
+      sse([
+        { type: "response.created", response: { id: "r1" } },
+        { type: "response.output_item.done", output_index: 0, item: reasoning },
+        { type: "response.output_item.done", output_index: 1, item: call },
+        { type: "response.completed", response: { id: "r1", status: "completed", output: [reasoning, call] } },
+      ]),
+      stream([msgItem("done")]),
+    );
+    const { result } = await run(auto(), { ...task(), routing: "auto" });
+    expect(result).toMatchObject({ ok: true });
+    const second = JSON.parse(server.requests.filter((r) => r.url === "/v1/responses")[1]!.body) as { input: { type: string }[] };
+    expect(second.input.some((i) => i.type === "reasoning")).toBe(true);
+  });
+
+  test("a switch is announced as a progress event naming both accounts", async () => {
+    server.responses(json(429, { error: { code: "rate_limit_exceeded" } }), stream([msgItem("ok")]));
+    const { events } = await run(auto(), { ...task(), routing: "auto" });
+    const progress = events.filter((e) => e.type === "progress").map((e) => e.text);
+    const announced = progress.find((text) => text.includes("First") && text.includes("Second"));
+    expect(announced).toBeDefined();
+    // What happened, in the user's terms: the first account was limited and the second one took over.
+    expect(announced).toContain("改用");
+  });
+
+  test("when every candidate is rate limited the task fails and the attempts are all recorded", async () => {
+    server.responses(
+      json(429, { error: { code: "rate_limit_exceeded" } }),
+      json(429, { error: { code: "rate_limit_exceeded" } }),
+    );
+    const { result } = await run(auto(), { ...task(), routing: "auto" });
+    expect(result).toMatchObject({ ok: false });
+    const route = (result as { route?: { attempts?: { accountId: string }[] } }).route!;
+    expect(route.attempts!.map((a) => a.accountId)).toEqual([acctA.id, acctB.id]);
+    // Both were tried, and the error the user sees is the provider's last one, not a routing sentence.
+    expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(2);
+  });
+
+  test("a failed account is left cooling down for the next task", async () => {
+    const cooldowns = new Cooldowns();
+    server.responses(json(429, { error: { code: "rate_limit_exceeded" } }), stream([msgItem("ok")]));
+    await run(auto({ cooldowns }), { ...task(), routing: "auto" });
+    expect(cooldowns.until(acctA.id)).not.toBeNull();
+    expect(cooldowns.until(acctB.id)).toBeNull();
+  });
+
+  test("with the switch on but no account chosen, the task still runs in manual mode on the default", async () => {
+    // The switch unlocks the option; it does not make anything automatic on its own (D-3). A task that never
+    // asked for automatic routing must keep behaving exactly as it did before this batch.
+    server.responses(stream([msgItem("ok")]));
+    const { result } = await run(auto(), task());
+    expect((result as { route?: { mode?: string; reason?: string } }).route).toMatchObject({ mode: "manual", reason: "default" });
+  });
+
+  test("a named account is used even with automatic routing on, and does not move", async () => {
+    // A named account is the user's decision; automatic routing must not override it with a failover.
+    server.responses(json(429, { error: { code: "rate_limit_exceeded" } }));
+    const { result } = await run(auto(), { ...task(), accountId: acctB.id });
+    expect(result).toMatchObject({ ok: false });
+    expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
+    expect((result as { route?: { mode?: string } }).route).toMatchObject({ mode: "manual" });
   });
 });

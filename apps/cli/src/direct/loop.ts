@@ -29,6 +29,15 @@ export type ToolLoopOptions = {
   skills?: SkillReader;
   /** Short progress notes (e.g. which Room function is being called). */
   onProgress: (text: string) => void;
+  /**
+   * Transforms the history immediately before each model call, and what it returns is what is sent.
+   *
+   * This exists for one case: automatic routing moved the task to another account, and the previous account's
+   * encrypted reasoning cannot be decrypted by the new one (research §1.3). Doing it here rather than in the
+   * adapter keeps "drop the reasoning" a pure function of the history, testable on its own, instead of a loop
+   * buried in the caller. Everything else — messages, function calls, their outputs — is left alone.
+   */
+  onBeforeCall?: (history: InputItem[]) => InputItem[];
   limits?: LoopLimits;
   /** Once aborted (timeout / run end) the loop stops and emits no further progress. */
   signal?: AbortSignal;
@@ -83,7 +92,10 @@ export async function runToolLoop(opts: ToolLoopOptions): Promise<{ reply: strin
     signal?.throwIfAborted();
     if (modelCalls >= limits.maxModelCalls) throw new Error(`Agent 超出单次运行上限（模型调用 ${limits.maxModelCalls} 次）`);
     modelCalls++;
-    const res = await opts.call([...history]);
+    // `onBeforeCall` may not mutate what the loop keeps: it returns the array to send, and the loop's own
+    // history stays as it was, so one call's filtering cannot compound into the next.
+    const outgoing = opts.onBeforeCall ? opts.onBeforeCall([...history]) : [...history];
+    const res = await opts.call(outgoing);
     signal?.throwIfAborted();
 
     const calls: { call_id: string; name: string; arguments: string }[] = [];
