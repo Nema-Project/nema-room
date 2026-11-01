@@ -82,10 +82,10 @@ export const archiveWorkspace = (id: string, archived: boolean) => request<Works
 export const deleteWorkspace = (id: string) => request<void>(w(id), { method: "DELETE" });
 export const listMessages = (id: string) => request<Message[]>(`${w(id)}/messages`);
 export const getMessage = (id: string, messageId: string) => request<Message>(`${w(id)}/messages/${encodeURIComponent(messageId)}`);
-export const postMessage = (id: string, content: string, quoteMessageId?: string, attachmentIds?: string[], mentions?: MessageMention[]) =>
+export const postMessage = (id: string, content: string, quoteMessageId?: string, attachmentIds?: string[], mentions?: MessageMention[], accountId?: string | null) =>
   request<{ message: Message; task: Task }>(`${w(id)}/messages`, {
     method: "POST",
-    body: messageBody(content, quoteMessageId, attachmentIds, mentions),
+    body: messageBody(content, quoteMessageId, attachmentIds, mentions, accountId),
   });
 export const editMessage = (id: string, messageId: string, content: string) =>
   request<{ message: Message; task: Task }>(`${w(id)}/messages/${encodeURIComponent(messageId)}`, { method: "PATCH", body: { content } });
@@ -94,8 +94,8 @@ export const listMessageVersions = (id: string, messageId: string) =>
 export const searchMessages = (id: string, q: string) => request<Message[]>(`${w(id)}/messages/search?q=${encodeURIComponent(q)}`);
 export const listThreads = (id: string) => request<import("./types").Thread[]>(`${w(id)}/threads`);
 export const getThreadMessages = (id: string, threadId: string) => request<{ thread: import("./types").Thread; anchor: Message; messages: Message[] }>(`${w(id)}/threads/${encodeURIComponent(threadId)}/messages`);
-export const postThreadMessage = (id: string, threadId: string, content: string, quoteMessageId?: string, attachmentIds?: string[], mentions?: MessageMention[]) => request<{ message: Message; task: Task }>(`${w(id)}/threads/${encodeURIComponent(threadId)}/messages`, { method: "POST", body: messageBody(content, quoteMessageId, attachmentIds, mentions) });
-export const createThread = (id: string, content: string, quoteMessageId?: string, attachmentIds?: string[], mentions?: MessageMention[]) => request<{ message: Message; thread: import("./types").Thread; task: Task }>(`${w(id)}/threads`, { method: "POST", body: messageBody(content, quoteMessageId, attachmentIds, mentions) });
+export const postThreadMessage = (id: string, threadId: string, content: string, quoteMessageId?: string, attachmentIds?: string[], mentions?: MessageMention[], accountId?: string | null) => request<{ message: Message; task: Task }>(`${w(id)}/threads/${encodeURIComponent(threadId)}/messages`, { method: "POST", body: messageBody(content, quoteMessageId, attachmentIds, mentions, accountId) });
+export const createThread = (id: string, content: string, quoteMessageId?: string, attachmentIds?: string[], mentions?: MessageMention[], accountId?: string | null) => request<{ message: Message; thread: import("./types").Thread; task: Task }>(`${w(id)}/threads`, { method: "POST", body: messageBody(content, quoteMessageId, attachmentIds, mentions, accountId) });
 export const markThreadRead = (id: string, threadId: string, throughSeq: number) => request<void>(`${w(id)}/threads/${encodeURIComponent(threadId)}/read`, { method: "POST", body: { throughSeq } });
 export const nextAttention = (id: string) => request<{ threadId: string } | null>(`${w(id)}/attention/next`);
 export const withdrawEntry = (id: string, entryId: string) => request<Entry>(`${e(id, entryId)}/withdraw`, { method: "POST", body: {} });
@@ -185,13 +185,18 @@ export const confirmWorkPackageTask = (id: string, wid: string, n: number) =>
 
 // Chat attachments (#104). Uploads are raw bytes, not JSON, so they bypass request().
 
-/** A message body: the quote and the attachment ids appear only when there are some. */
-function messageBody(content: string, quoteMessageId?: string, attachmentIds?: string[], mentions?: MessageMention[]) {
+/**
+ * A message body: the quote and the attachment ids appear only when there are some. So does `accountId`:
+ * `null`/`undefined` means "no choice", which is what every message sent before this feature carries, and
+ * sending the key with null would only make an older hub reject the whole message.
+ */
+function messageBody(content: string, quoteMessageId?: string, attachmentIds?: string[], mentions?: MessageMention[], accountId?: string | null) {
   return {
     content,
     ...(quoteMessageId ? { quoteMessageId } : {}),
     ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
     ...(mentions && mentions.length > 0 ? { mentions } : {}),
+    ...(accountId ? { accountId } : {}),
   };
 }
 
