@@ -98,8 +98,17 @@ const PostMessageBody = z
      * knows whether it exists; never resolved here.
      */
     accountId: AccountId.optional(),
+    /**
+     * This message asks for automatic routing instead of naming an account (spec §1.2, D-3). The hub records
+     * the request; whether automatic routing is switched on lives in the daemon's `accounts.json`, so a
+     * message that asks for it while the switch is off fails there with a sentence rather than here.
+     */
+    routing: z.literal("auto").optional(),
   })
-  .refine((b) => messageHasBody(b.content, b.attachmentIds ?? []), { message: "must not be empty", path: ["content"] });
+  .refine((b) => messageHasBody(b.content, b.attachmentIds ?? []), { message: "must not be empty", path: ["content"] })
+  // Naming an account and asking to pick one are contradictory. Storing both would leave the daemon to decide,
+  // and whichever it decided would be a surprise to whoever reads the task row.
+  .refine((b) => !(b.accountId !== undefined && b.routing !== undefined), { message: "accountId and routing are exclusive", path: ["routing"] });
 // An edit changes only the text; attachments stay as they are. Empty text is checked by editUserMessage,
 // which allows it only while the message still has a file that is neither deleted nor missing.
 const EditMessageBody = z.strictObject({ content: z.string() });
@@ -471,11 +480,11 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/workspaces/:id/threads", async (c) => {
     const workspaceId = c.req.param("id")!;
-    const { content, quoteMessageId, attachmentIds, mentions, accountId } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, attachmentIds, mentions, accountId, routing } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     try {
       const created = await db.tx(async (t) => {
-        const posted = await postUserMessage(t, workspaceId, content, { quoteMessageId, attachmentIds, mentions, accountId });
+        const posted = await postUserMessage(t, workspaceId, content, { quoteMessageId, attachmentIds, mentions, accountId, routing });
         const title = Array.from(content.split(/\r?\n/, 1)[0]!.trim()).slice(0, 80).join("") || "新追问";
         const thread = await ensureThread(t, posted.message.id, title, "user");
         return { ...posted, thread };
@@ -497,10 +506,10 @@ export function uiRoutes(deps: UiDeps): Hono {
   app.post("/workspaces/:id/threads/:tid/messages", async (c) => {
     const workspaceId = c.req.param("id")!;
     const threadId = c.req.param("tid")!;
-    const { content, quoteMessageId, attachmentIds, mentions, accountId } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, attachmentIds, mentions, accountId, routing } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     try {
-      const { message, task: created, replayed } = await postUserMessage(db, workspaceId, content, { quoteMessageId, threadId, attachmentIds, mentions, accountId });
+      const { message, task: created, replayed } = await postUserMessage(db, workspaceId, content, { quoteMessageId, threadId, attachmentIds, mentions, accountId, routing });
       const task = toUiTask(created);
       if (!replayed) {
         events.emit(workspaceId, { type: "message.created", message });
@@ -575,11 +584,11 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/workspaces/:id/messages", async (c) => {
     const id = c.req.param("id");
-    const { content, quoteMessageId, threadId, attachmentIds, mentions, accountId } = await body(c, PostMessageBody);
+    const { content, quoteMessageId, threadId, attachmentIds, mentions, accountId, routing } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, id))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     let message, created, replayed;
     try {
-      ({ message, task: created, replayed } = await postUserMessage(db, id, content, { quoteMessageId, threadId, attachmentIds, mentions, accountId }));
+      ({ message, task: created, replayed } = await postUserMessage(db, id, content, { quoteMessageId, threadId, attachmentIds, mentions, accountId, routing }));
     } catch (e) {
       if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
       throw e;

@@ -140,15 +140,15 @@ describe("AccountPicker", () => {
   });
 });
 
-describe("values this batch has no option for", () => {
+describe("values with no account row", () => {
   it("shows a stored \"auto\" binding as automatic rather than as no choice", () => {
-    // Automatic routing is S4; a file written by a newer version (or by hand) must not paint the select blank.
+    // A binding written by a newer version (or by hand) must not paint the select blank. With the switch off it
+    // is shown as "turned off in settings" and not offered again — the daemon would refuse it — but the select
+    // still names what is stored rather than claiming "follow the workspace".
     const { container } = mount({ scope: "thread", threadId: "th_1", value: "auto", accounts: [A] });
     const select = container.querySelector("select") as HTMLSelectElement;
     expect(select.value).toBe("auto");
-    expect(screen.getByRole("option", { name: /Automatic \(not available/i })).toBeTruthy();
-    // It is a stored value being shown, not a choice offered: the select stays on it.
-    expect(container.querySelector("select")).toBeTruthy();
+    expect(screen.getByRole("option", { name: /Automatic \(turned off in settings\)/i })).toBeTruthy();
   });
 });
 
@@ -175,5 +175,80 @@ describe("the per-message choice after a send", () => {
 
     // Back to "follow the workspace" for the next message.
     await waitFor(() => expect((screen.getByLabelText("Account for this message") as HTMLSelectElement).value).toBe(""));
+  });
+});
+
+describe("the automatic option", () => {
+  it("is not offered while the switch is off", () => {
+    // D-3: with the switch off the option does not appear at all, so a user cannot pick something the daemon
+    // would refuse.
+    mount({ scope: "message", accounts: [A, B], autoRouting: false });
+    expect(screen.queryByRole("option", { name: /automatic/i })).toBeNull();
+  });
+
+  it("is offered once the switch is on", () => {
+    mount({ scope: "message", accounts: [A, B], autoRouting: true });
+    expect(screen.getByRole("option", { name: "Automatic" })).toBeTruthy();
+  });
+
+  it("is offered even for a single account, because automatic routing is still a choice", () => {
+    // One account still leaves something to decide: whether a limit may send the task elsewhere later, after
+    // the user adds a second. And a picker that never renders could not show a stored "auto" binding either.
+    mount({ scope: "message", accounts: [A], autoRouting: true });
+    expect(screen.getByRole("option", { name: "Automatic" })).toBeTruthy();
+  });
+
+  it("writes \"auto\" as a binding for a stored scope", async () => {
+    const calls: Array<{ path: string; body?: unknown }> = [];
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input, init) => {
+      const path = typeof input === "string" ? input : input instanceof URL ? input.pathname : input.url;
+      calls.push({ path, body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined });
+      return Promise.resolve(reply({ scope: "thread:th_1", accountId: "auto" }));
+    }));
+    const onChange = vi.fn();
+    mount({ scope: "thread", threadId: "th_1", value: A.id, accounts: [A], autoRouting: true, onChange });
+    await userEvent.selectOptions(screen.getByRole("combobox"), "auto");
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toEqual({ path: "/_nema/accounts/bind", body: { scope: "thread:th_1", accountId: "auto" } });
+    expect(onChange).toHaveBeenCalledWith("auto");
+  });
+
+  it("reports the per-message choice upward without writing a binding", async () => {
+    const onChange = vi.fn();
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    mount({ scope: "message", accounts: [A, B], autoRouting: true, onChange });
+    await userEvent.selectOptions(screen.getByRole("combobox"), "auto");
+    expect(onChange).toHaveBeenCalledWith("auto");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps showing a stored \"auto\" binding when the switch has since been turned off", () => {
+    // Turning the switch off must not make a thread look unbound: the binding is still there, and the daemon
+    // will say "automatic routing is not on" when the next task runs. Painting the select as "follow the
+    // workspace" would misdescribe what will happen.
+    const { container } = mount({ scope: "thread", threadId: "th_1", value: "auto", accounts: [A], autoRouting: false });
+    const select = container.querySelector("select") as HTMLSelectElement;
+    expect(select.value).toBe("auto");
+    expect(screen.getByRole("option", { name: /automatic/i })).toBeTruthy();
+  });
+});
+
+describe("sending a message with automatic routing", () => {
+  it("sends routing: \"auto\" and no account id", async () => {
+    const A2 = account("acct_aaaaaaaaaa", "A");
+    const B2 = account("acct_bbbbbbbbbb", "B", { order: 1 });
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+      const path = typeof input === "string" ? input : input instanceof URL ? input.pathname : input.url;
+      if (path === "/_nema/accounts") return Promise.resolve(reply({ accounts: [A2, B2], defaultAccountId: A2.id, bindings: {}, autoRouting: true }));
+      return Promise.resolve(reply({}));
+    }));
+    render(<I18nProvider><Composer workspaceId="ws_1" onSend={onSend} /></I18nProvider>);
+    const picker = await screen.findByLabelText("Account for this message");
+    await userEvent.selectOptions(picker, "auto");
+    await userEvent.type(screen.getByRole("textbox"), "anyone{Shift>}{Enter}{/Shift}");
+    // The auto choice travels as its own field: the two are exclusive, and the hub refuses a body with both.
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("anyone", [], [], "auto"));
   });
 });

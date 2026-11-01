@@ -28,10 +28,15 @@ export type AccountPickerProps = {
   workspaceId?: string;
   /** False when the daemon has no accounts route; the picker then stays out of the page. */
   supported?: boolean;
+  /**
+   * The machine-wide automatic routing switch (D-3). Off means no "Automatic" option at all; it does not mean
+   * a stored `auto` binding is hidden (see the render below).
+   */
+  autoRouting?: boolean;
   disabled?: boolean;
 };
 
-export function AccountPicker({ scope, accounts, value, onChange, threadId, workspaceId, supported = true, disabled = false }: AccountPickerProps) {
+export function AccountPicker({ scope, accounts, value, onChange, threadId, workspaceId, supported = true, autoRouting = false, disabled = false }: AccountPickerProps) {
   const t = useT();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(false);
@@ -40,7 +45,10 @@ export function AccountPicker({ scope, accounts, value, onChange, threadId, work
   // One account and nothing chosen here: there is no decision to make, and a control that cannot change
   // anything is noise on a page a single-account user never asked to complicate. The check is this
   // picker's own value, so a binding on one thread does not put a picker on every other scope.
-  if (!pickerHasChoices(accounts, value)) return null;
+  //
+  // With the switch on there is always a decision — "this account" or "whichever fits" — so the picker shows
+  // even for one account, and a stored `auto` binding needs no other reason to be displayable.
+  if (!pickerHasChoices(accounts, value) && !autoRouting) return null;
 
   const scopeId = scope === "thread" ? threadId : scope === "workspace" ? workspaceId : undefined;
   const stored = scope !== "message";
@@ -72,10 +80,11 @@ export function AccountPicker({ scope, accounts, value, onChange, threadId, work
   }
 
   // Two stored values have no account row to match, and neither may be displayed as something else:
-  //   - `auto` (spec §1.2, automatic routing) has no option in this batch, so a file that carries it would
-  //     otherwise paint the select as blank and read as "not chosen";
+  //   - `auto` (spec §1.2, automatic routing) is a stored choice even while the switch is off, and showing it
+  //     as "not chosen" would describe a different choice than the one on disk;
   //   - an id that names no account here can happen after a restore onto another machine.
-  // Both get their own entry, and neither is offered as a choice.
+  // Both get their own entry. `auto` is an ordinary choice once the switch is on; with the switch off it is
+  // shown but not offered (see `disabled`), because picking it again would only be refused by the daemon.
   const showsAuto = value === "auto";
   const missing = value !== null && value !== "auto" && !accounts.some((a) => a.id === value);
 
@@ -90,10 +99,11 @@ export function AccountPicker({ scope, accounts, value, onChange, threadId, work
         onChange={(e) => void choose(e.target.value)}
       >
         <option value="">{emptyLabel}</option>
+        {autoRouting && <option value="auto">{t("account.picker.auto")}</option>}
         {accounts.map((account) => (
           <option key={account.id} value={account.id}>{account.name}</option>
         ))}
-        {showsAuto && <option value="auto">{t("account.picker.auto")}</option>}
+        {showsAuto && !autoRouting && <option value="auto">{t("account.picker.autoOff")}</option>}
         {missing && <option value={value}>{t("account.picker.unknown", { id: value })}</option>}
       </select>
       {error && <p className="error" role="alert">{t("account.picker.failed")}</p>}

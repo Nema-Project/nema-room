@@ -1455,3 +1455,35 @@ describe("per-message account selection", () => {
     expect(row[0]!.account_id).toBe(ID);
   });
 });
+
+describe("per-message automatic routing", () => {
+  // A message may ask for automatic routing instead of naming an account. The hub stores that as the task's
+  // `routing` and forwards it; whether automatic routing is switched on is the daemon's business, since the
+  // switch lives in that machine's `accounts.json`.
+  test("stores \"auto\" on the task and carries no account id", async () => {
+    const posted = await req("POST", `/api/workspaces/${ws}/messages`, { content: "anyone", routing: "auto" });
+    expect(posted.status).toBe(200);
+    const { task } = await json(posted);
+    const row = await db.query<{ account_id: string | null; routing: string | null }>("select account_id, routing from tasks where id=$1", [task.id]);
+    expect(row[0]).toEqual({ account_id: null, routing: "auto" });
+  });
+
+  test("carries it into a thread reply's task as well", async () => {
+    const created = await json(await req("POST", `/api/workspaces/${ws}/threads`, { content: "topic" }));
+    const reply = await json(await req("POST", `/api/workspaces/${ws}/threads/${created.thread.id}/messages`, { content: "again", routing: "auto" }));
+    const row = await db.query<{ routing: string | null }>("select routing from tasks where id=$1", [reply.task.id]);
+    expect(row[0]!.routing).toBe("auto");
+  });
+
+  test("a message naming both an account and automatic routing is refused", async () => {
+    // They contradict each other: one says "use this account", the other says "pick one". Accepting both would
+    // leave the daemon to choose, and whichever it chose would surprise half the readers of the task row.
+    const reply = await req("POST", `/api/workspaces/${ws}/messages`, { content: "both", accountId: "acct_abc1234567", routing: "auto" });
+    expect(reply.status).toBe(400);
+  });
+
+  test.each([["an unknown value", "manual"], ["a boolean", true], ["a number", 1]])("rejects %s", async (_label, routing) => {
+    const reply = await req("POST", `/api/workspaces/${ws}/messages`, { content: "x", routing });
+    expect(reply.status).toBe(400);
+  });
+});

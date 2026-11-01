@@ -186,9 +186,12 @@ export const confirmWorkPackageTask = (id: string, wid: string, n: number) =>
 // Chat attachments (#104). Uploads are raw bytes, not JSON, so they bypass request().
 
 /**
- * A message body: the quote and the attachment ids appear only when there are some. So does `accountId`:
- * `null`/`undefined` means "no choice", which is what every message sent before this feature carries, and
- * sending the key with null would only make an older hub reject the whole message.
+ * A message body: the quote and the attachment ids appear only when there are some. So does the account
+ * choice: `null`/`undefined` means "no choice", which is what every message sent before this feature carries,
+ * and sending the key with null would only make an older hub reject the whole message.
+ *
+ * `"auto"` is not an account id (spec §1.2, D-3), so it becomes the separate `routing: "auto"` field and no
+ * `accountId` is sent. The two are exclusive; the hub refuses a body carrying both.
  */
 function messageBody(content: string, quoteMessageId?: string, attachmentIds?: string[], mentions?: MessageMention[], accountId?: string | null) {
   return {
@@ -196,7 +199,7 @@ function messageBody(content: string, quoteMessageId?: string, attachmentIds?: s
     ...(quoteMessageId ? { quoteMessageId } : {}),
     ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
     ...(mentions && mentions.length > 0 ? { mentions } : {}),
-    ...(accountId ? { accountId } : {}),
+    ...(accountId === "auto" ? { routing: "auto" } : accountId ? { accountId } : {}),
   };
 }
 

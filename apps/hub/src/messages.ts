@@ -170,6 +170,12 @@ export type PostUserMessageOptions = {
    * account actually answered) is the daemon's to report later.
    */
   accountId?: string;
+  /**
+   * This message asked for automatic routing instead of naming an account (spec §1.2). Stored on the task, not
+   * in the message's meta: like the account choice, it is the task's input. The daemon decides whether it can
+   * honour it, since the switch lives on its machine.
+   */
+  routing?: "auto";
 };
 
 /**
@@ -225,6 +231,7 @@ export async function postUserMessage(
       }
       const task = await insertQueuedTask(t, workspaceId, message.id, "organize", {
         ...(options.accountId !== undefined ? { accountId: options.accountId } : {}),
+        ...(options.routing !== undefined ? { routing: options.routing } : {}),
       });
       return { message, task, replayed: false };
     });

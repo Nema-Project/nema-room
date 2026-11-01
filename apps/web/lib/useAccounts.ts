@@ -14,6 +14,8 @@ export type AccountsState = {
   accounts: AccountView[];
   bindings: Record<string, string>;
   defaultAccountId: string;
+  /** The machine-wide automatic routing switch (D-3). Off by default, including for an older daemon. */
+  autoRouting: boolean;
   supported: boolean;
   reload: () => void;
 };
@@ -23,6 +25,7 @@ export function useAccounts(): AccountsState {
     accounts: [],
     bindings: {},
     defaultAccountId: "",
+    autoRouting: false,
     supported: true,
   });
   const [version, setVersion] = useState(0);
@@ -36,13 +39,16 @@ export function useAccounts(): AccountsState {
         accounts: list.accounts ?? [],
         bindings: list.bindings ?? {},
         defaultAccountId: list.defaultAccountId ?? "",
+        // An older daemon's answer has no switch in it, which reads as off — the same thing a missing key in
+        // `accounts.json` means.
+        autoRouting: list.autoRouting === true,
         supported: true,
       });
     }).catch(() => {
       if (controller.signal.aborted) return;
       // Both "older daemon" and "could not ask" leave no picker: a control whose save would fail is worse
       // than no control, and neither case has accounts to offer.
-      setState({ accounts: [], bindings: {}, defaultAccountId: "", supported: false });
+      setState({ accounts: [], bindings: {}, defaultAccountId: "", autoRouting: false, supported: false });
     });
     return () => controller.abort();
   }, [version]);
