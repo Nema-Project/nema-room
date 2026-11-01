@@ -1271,16 +1271,30 @@ describe("account choice and route decision", () => {
     expect(agent.meta?.route).toBeUndefined();
   });
 
-  test("a failure keeps the account out of the message but not out of the record", async () => {
-    // A failed task has no reply, so no route line; the account that failed is named by the daemon in the
-    // error text, which is what `saveTaskFailure` stores.
+  test("a failure names the account it happened on, and keeps the record", async () => {
+    // A failed task has no reply, so the route line has nowhere to go; the account and model join the
+    // failure line instead, and the same record is stored beside it for later.
     const m = await postUserMessage(db, wsA, "will fail", { accountId: "acct_abc1234567" });
     const c = await connect();
     const a = await c.next("task.assign");
-    c.send({ type: "task.finished", taskId: a.taskId, ok: false, error: "账户「Personal」还没有凭据，请在设置页填写后再运行。" });
+    const route = { accountId: "acct_abc1234567", accountName: "Personal", model: "gpt-5.5", mode: "manual", reason: "user_message" };
+    c.send({ type: "task.finished", taskId: a.taskId, ok: false, error: "订阅额度已用完", route });
     await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
     const system = (await listMessages(db, wsA)).find((x) => x.role === "system")!;
+    expect(system.content).toContain("订阅额度已用完");
     expect(system.content).toContain("Personal");
+    expect(system.content).toContain("gpt-5.5");
+    expect((system.meta as { route?: unknown } | null)?.route).toEqual(route);
+  });
+
+  test("a failure from a daemon that routed nothing reads as it always did", async () => {
+    const m = await postUserMessage(db, wsA, "plain failure");
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({ type: "task.finished", taskId: a.taskId, ok: false, error: "something broke" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
+    const system = (await listMessages(db, wsA)).find((x) => x.role === "system")!;
+    expect(system.content).toBe("处理失败：something broke");
     expect(system.meta).toBeNull();
   });
 });

@@ -134,8 +134,9 @@ test("task.finished success carries an optional route decision and round-trips i
   expect(parseDaemonToHub({ type: "task.finished", taskId: "t1", ok: true, reply: "r" })).not.toHaveProperty("route");
   const parsed = parseDaemonToHub({ type: "task.finished", taskId: "t1", ok: true, reply: "r", route });
   expect(parsed).toMatchObject({ route });
-  // A failure keeps its own shape; the account is named in the error text instead.
-  expect(() => parseDaemonToHub({ type: "task.finished", taskId: "t1", ok: false, error: "e", route })).not.toThrow();
+  // A failed task carries the route too: there is no reply to hang it on, and the hub names the account in
+  // the failure line instead.
+  expect(parseDaemonToHub({ type: "task.finished", taskId: "t1", ok: false, error: "e", route })).toMatchObject({ ok: false, error: "e", route });
 });
 
 test("a route decision with attempts and usage round-trips", () => {

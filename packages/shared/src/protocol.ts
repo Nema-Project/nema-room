@@ -32,7 +32,17 @@ const DaemonToHubSchema = z.union([
      */
     route: RouteDecisionSchema.optional(),
   }),
-  z.object({ type: z.literal("task.finished"), taskId: z.string(), ok: z.literal(false), error: z.string() }),
+  z.object({
+    type: z.literal("task.finished"),
+    taskId: z.string(),
+    ok: z.literal(false),
+    error: z.string(),
+    /**
+     * Which account and model were running when the task failed. A failed task has no reply to carry the
+     * record, and "which account failed" is the next question, so the hub folds it into the failure line.
+     */
+    route: RouteDecisionSchema.optional(),
+  }),
   z.object({ type: z.literal("rpc.response"), id: z.string(), ok: z.literal(true), result: z.unknown() }),
   z.object({ type: z.literal("rpc.response"), id: z.string(), ok: z.literal(false), error: z.string() }),
   z.object({ type: z.literal("repo.moved"), repoId: z.string(), mainRef: z.string(), from: z.string().nullable(), to: z.string() }),

@@ -2,7 +2,7 @@ import type http from "node:http";
 import { nanoid } from "nanoid";
 import { WebSocketServer, type WebSocket } from "ws";
 import { KnowledgeStore } from "@nema/knowledge";
-import { AttachmentRefSchema, WORKPACKAGE_LIMITS, parseDaemonToHub, parseManualSkill, type AgentMessageMeta, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
+import { AttachmentRefSchema, WORKPACKAGE_LIMITS, parseDaemonToHub, parseManualSkill, type AgentMessageMeta, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
 import { createConnectionRpc, DaemonRpcError, type ConnectionRpc, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
@@ -229,12 +229,15 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     return { prompt, confidential: workspace.confidential, attachments, retainedSkills: retained, projectSkills, manualSkill: manual, threadId: conversationId };
   }
 
-  async function saveTaskFailure(taskId: string, error: string, expectedRunToken?: string): Promise<Message | null> {
+  async function saveTaskFailure(taskId: string, error: string, expectedRunToken?: string, route?: RouteDecision): Promise<Message | null> {
     const routing = await taskReplyRouting(taskId);
     if (!routing) return null;
     const runToken = expectedRunToken ?? routing.task.runToken;
     if (!runToken) return null;
-    return saveTaskOutcome(routing, runToken, { ok: false, error }, "system", "处理失败：" + error);
+    // A failed task has no reply to hang the route on, so the account is named in the failure line itself
+    // (spec §1.3) and the record is kept beside it, still without any credential.
+    const account = route ? `（账户「${route.accountName}」· ${route.model}）` : "";
+    return saveTaskOutcome(routing, runToken, { ok: false, error }, "system", "处理失败：" + error + account, route ? { route } as AgentMessageMeta : undefined);
   }
 
   async function dispatchOnce(): Promise<void> {
@@ -336,7 +339,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       if (m.route) meta.route = m.route;
       msg = await saveTaskOutcome(routing, a.runToken, { ok: true }, "agent", m.reply, meta);
     } else {
-      msg = await saveTaskFailure(m.taskId, m.error, a.runToken);
+      msg = await saveTaskFailure(m.taskId, m.error, a.runToken, m.route);
     }
     if (!msg) {
       conn.assigned = null;
