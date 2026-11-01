@@ -59,6 +59,17 @@ describe("accountsApi", () => {
     await expect(accountsApi.create({ name: "x", adapter: "claude-code" })).rejects.toBeInstanceOf(ModelSettingsError);
   });
 
+  it("keeps a 404 from a mutation as that request's own refusal, not as an unsupported daemon", async () => {
+    // Only the list call asks "does this daemon have accounts?". A 404 from a delete means "that account is
+    // not here"; turning it into AccountsUnsupportedError would hide the whole block on a stale row.
+    stub(() => reply({ error: "not_found" }, 404));
+    await expect(accountsApi.list()).rejects.toBeInstanceOf(AccountsUnsupportedError);
+    const removal = await accountsApi.remove(view().id).catch((e: unknown) => e);
+    expect(removal).not.toBeInstanceOf(AccountsUnsupportedError);
+    expect(removal).toBeInstanceOf(ModelSettingsError);
+    expect((removal as ModelSettingsError).code).toBe("service_unavailable");
+  });
+
   it("treats a network failure as service_unavailable rather than as unsupported", async () => {
     vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline")));
     const failure = await accountsApi.list().catch((e: unknown) => e);

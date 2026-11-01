@@ -5,9 +5,11 @@ import {
   AccountsError,
   AccountsUnsupportedError,
   accountsApi,
+  type AccountCreate,
   type AccountView,
   type AccountsList,
 } from "@/lib/accounts";
+import { ModelSettingsError } from "@/lib/modelSettings";
 import { useT } from "@/lib/i18n";
 
 /**
@@ -66,28 +68,52 @@ function draftOf(account: AccountView): Draft {
   };
 }
 
-/** The body both create and update send; the same fields, so one form serves them. */
-function bodyOf(draft: Draft): Record<string, unknown> {
+/**
+ * The body a save sends.
+ *
+ * Empty fields are **omitted**, never sent as `null`. The stored row schema has `.optional()` on `model`,
+ * `capabilities` and `baseUrl` but not `.nullable()`, so a `null` is a validation failure — and since every
+ * kind except a keyed account with an endpoint has an empty `baseUrl`, sending `null` made create fail for
+ * almost every account. Only the update path needs `null`: that is what clears a field, and `applyPatch`
+ * drops it before the row is validated.
+ */
+function bodyOf(draft: Draft, mode: "create" | "update"): Record<string, unknown> {
   const capabilities: Record<string, unknown> = {};
   if (draft.image !== "undeclared") capabilities.image = draft.image === "yes";
   if (draft.pdf !== "undeclared") capabilities.pdf = draft.pdf === "yes";
   const tokens = draft.contextTokens.trim();
   if (tokens !== "" && /^\d+$/.test(tokens)) capabilities.contextTokens = Number(tokens);
-  const base: Record<string, unknown> = {
+
+  const model = draft.model.trim();
+  const baseUrl = draft.kind === "byok" ? draft.baseUrl.trim() : "";
+  const filled: Record<string, unknown> = {
     name: draft.name.trim(),
     adapter: draft.kind === "claude" ? "claude-code" : "codex-direct",
-    model: draft.model.trim() === "" ? null : draft.model.trim(),
     costTier: draft.costTier,
-    capabilities: Object.keys(capabilities).length > 0 ? capabilities : null,
   };
-  if (draft.kind !== "claude") base.authMode = draft.kind;
-  // Only a key account has an endpoint; the others get the field cleared so a kind switch cannot leave one.
-  base.baseUrl = draft.kind === "byok" && draft.baseUrl.trim() !== "" ? draft.baseUrl.trim() : null;
-  return base;
+  if (draft.kind !== "claude") filled.authMode = draft.kind;
+  if (model !== "") filled.model = model;
+  if (Object.keys(capabilities).length > 0) filled.capabilities = capabilities;
+  if (baseUrl !== "") filled.baseUrl = baseUrl;
+
+  if (mode === "create") return filled;
+  // An update says "clear this" explicitly, so a field the form left empty loses its stored value.
+  return {
+    ...filled,
+    model: filled.model ?? null,
+    capabilities: filled.capabilities ?? null,
+    // Only a keyed account has an endpoint; switching kind must not leave the previous one behind.
+    baseUrl: filled.baseUrl ?? null,
+  };
 }
 
+/**
+ * The message key for a failure. `ModelSettingsError` is the base class: a network failure throws that, not
+ * an `AccountsError`, and it has a code of its own. Checking only the subclass left every
+ * `service_unavailable` showing the generic sentence.
+ */
 function errorKey(error: unknown): string {
-  if (error instanceof AccountsError) return `account.error.${error.code}`;
+  if (error instanceof ModelSettingsError) return `account.error.${error.code}`;
   return "account.error.generic";
 }
 
@@ -154,10 +180,9 @@ export function AccountSettings({ onChanged }: { onChanged?: () => void }) {
     setError(null);
     setNotice(null);
     try {
-      const body = bodyOf(draft);
       const result = draft.id
-        ? await accountsApi.update({ ...body, id: draft.id } as never)
-        : await accountsApi.create(body as never);
+        ? await accountsApi.update({ ...bodyOf(draft, "update"), id: draft.id })
+        : await accountsApi.create(bodyOf(draft, "create") as AccountCreate);
       setDraft(null);
       setNotice("account.saved");
       // A key account is only usable once its key is saved, so the field appears right away.

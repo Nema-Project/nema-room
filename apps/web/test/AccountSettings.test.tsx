@@ -124,6 +124,49 @@ describe("AccountSettings", () => {
     });
   });
 
+  it("sends a create body with no null fields, because the row schema does not accept them", async () => {
+    // The bug this pins: `bodyOf` used to send `model: null`, `capabilities: null` and `baseUrl: null`, and
+    // every kind except a keyed account with an endpoint has an empty baseUrl — so create failed for almost
+    // every account. The stored-row schema is `.optional()` without `.nullable()`.
+    const accounts: AccountView[] = [];
+    const calls = stub({
+      "GET /_nema/accounts": () => reply({ accounts: [...accounts], defaultAccountId: "", bindings: {} }),
+      "POST /_nema/accounts": (body) => {
+        accounts.push(work({ id: "acct_new0000009", name: (body as { name: string }).name, authMode: "siwc", baseUrl: undefined, model: undefined, capabilities: {} }));
+        return reply({ account: accounts[0] }, 201);
+      },
+    });
+    mount();
+    await userEvent.click(await screen.findByRole("button", { name: /add account/i }));
+    await userEvent.type(screen.getByLabelText("Name"), "Signer");
+    await userEvent.selectOptions(screen.getByLabelText("Kind"), "siwc");
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.path === "/_nema/accounts")).toBe(true));
+    const sent = calls.find((c) => c.method === "POST" && c.path === "/_nema/accounts")!.body as Record<string, unknown>;
+    expect(sent).toEqual({ name: "Signer", adapter: "codex-direct", authMode: "siwc", costTier: "standard" });
+    // No key is present with a null value.
+    expect(Object.entries(sent).filter(([, v]) => v === null)).toEqual([]);
+  });
+
+  it("sends explicit nulls on an update, so a cleared field is cleared", async () => {
+    const calls = stub({
+      "GET /_nema/accounts": list([work()]),
+      "PATCH /_nema/accounts": () => reply({ account: work() }),
+    });
+    mount();
+    const row = (await screen.findAllByTestId("account-row"))[0]!;
+    await userEvent.click(within(row).getByRole("button", { name: /edit/i }));
+    // Clear the model the row had.
+    await userEvent.clear(screen.getByLabelText("Default model"));
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    const sent = calls.find((c) => c.method === "PATCH")!.body as Record<string, unknown>;
+    expect(sent.model).toBeNull();
+    expect(sent.id).toBe(work().id);
+  });
+
   it("keeps the typed name and says so when the name is taken", async () => {
     stub({
       "GET /_nema/accounts": list([work()]),

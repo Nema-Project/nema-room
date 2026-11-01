@@ -82,7 +82,12 @@ const CODES = new Set<string>([
   "service_unavailable", "account_exists", "account_in_use", "accounts_unusable",
 ]);
 
-async function request<T>(path: string, method = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
+/**
+ * `detectUnsupported` is for the one request that asks whether the feature exists at all. A 404 from a
+ * mutation means "that account is not here", which is an ordinary refusal; treating it as "this daemon has
+ * no accounts" would make the whole block disappear the first time a stale row was clicked.
+ */
+async function request<T>(path: string, method = "GET", body?: unknown, signal?: AbortSignal, detectUnsupported = false): Promise<T> {
   let response: Response;
   try {
     response = await fetch(path, {
@@ -104,9 +109,9 @@ async function request<T>(path: string, method = "GET", body?: unknown, signal?:
   } catch {
     payload = null;
   }
-  // Only a 404 on the accounts paths means the feature is absent; the daemon answers exactly that for a path
-  // it does not serve, and every other status is this request's own outcome.
-  if (response.status === 404) throw new AccountsUnsupportedError();
+  // A 404 means "no such route" only when asking for the list; the daemon answers it for paths it does not
+  // serve. Any other request answers 404 for a different reason and keeps its own handling.
+  if (detectUnsupported && response.status === 404) throw new AccountsUnsupportedError();
   if (!response.ok) {
     const record = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
     const code = typeof record.error === "string" && CODES.has(record.error) ? record.error : "service_unavailable";
@@ -117,7 +122,7 @@ async function request<T>(path: string, method = "GET", body?: unknown, signal?:
 }
 
 export const accountsApi = {
-  list: (signal?: AbortSignal) => request<AccountsList>("/_nema/accounts", "GET", undefined, signal),
+  list: (signal?: AbortSignal) => request<AccountsList>("/_nema/accounts", "GET", undefined, signal, true),
   create: (body: AccountCreate) => request<{ account: AccountView }>("/_nema/accounts", "POST", body),
   update: (body: AccountUpdate) => request<{ account: AccountView }>("/_nema/accounts", "PATCH", body),
   remove: (id: string) => request<{ deleted: string }>("/_nema/accounts", "DELETE", { id }),
@@ -129,13 +134,25 @@ export const accountsApi = {
   probe: (id: string) => request<{ state: "running" }>("/_nema/accounts/probe", "POST", { id, confirmQuotaUse: true }),
 };
 
-/** The account a scope is bound to, or null for "not chosen" (which follows the workspace, then the default). */
+/**
+ * The stored choice for a scope, exactly as stored: an account id, `"auto"`, or null for "not chosen"
+ * (which follows the workspace, then the global default).
+ *
+ * `"auto"` is passed through rather than folded into null. A picker has to show what is actually stored —
+ * the batch that unlocks automatic routing is not this one, and a thread bound to `auto` that displays
+ * "follow the workspace" reads as a different choice than the one on disk.
+ */
 export function boundAccount(bindings: Record<string, string> | undefined, scope: string): string | null {
-  const value = bindings?.[scope];
-  return value === undefined || value === "auto" ? null : value;
+  return bindings?.[scope] ?? null;
 }
 
-/** Whether a picker has anything to offer: one account and no binding means the user has no choice to make. */
-export function pickerHasChoices(accounts: readonly AccountView[], bindings: Record<string, string> | undefined): boolean {
-  return accounts.length > 1 || Object.keys(bindings ?? {}).length > 0;
+/**
+ * Whether a picker at this scope has anything to offer. Two accounts always means a choice; with one there
+ * is only something to do if *this* scope already holds a choice, which the user may want to clear.
+ *
+ * It is deliberately not "does any binding exist": one thread's binding would then put a picker on every
+ * message and every workspace, where it can neither change nor clear anything.
+ */
+export function pickerHasChoices(accounts: readonly AccountView[], current: string | null): boolean {
+  return accounts.length > 1 || current !== null;
 }
