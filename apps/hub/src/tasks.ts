@@ -12,10 +12,15 @@ export type Task = {
   error: string | null;
   /** `workpackage` tasks write a work package and run with larger limits. */
   kind: "organize" | "workpackage" | "edit";
+  /**
+   * The account this message named, or null. An opaque id that belongs to the daemon's machine: the hub
+   * carries it and never resolves it (spec 2026-10-31 §5.4). Routing uses it in S3; nothing reads it yet.
+   */
+  accountId: string | null;
 };
 
 /** Task as exposed to the web UI (REST + SSE): never carries the run token or daemon id. */
-export type UiTask = Omit<Task, "runToken" | "daemonId" | "kind">;
+export type UiTask = Omit<Task, "runToken" | "daemonId" | "kind" | "accountId">;
 
 export function toUiTask(t: Task): UiTask {
   return { id: t.id, workspaceId: t.workspaceId, messageId: t.messageId, status: t.status, error: t.error };
@@ -30,9 +35,10 @@ type Row = {
   daemon_id: string | null;
   error: string | null;
   kind: Task["kind"];
+  account_id: string | null;
 };
 
-const COLS = "id, workspace_id, message_id, status, run_token, daemon_id, error, kind";
+const COLS = "id, workspace_id, message_id, status, run_token, daemon_id, error, kind, account_id";
 
 function toTask(r: Row): Task {
   return {
@@ -44,14 +50,21 @@ function toTask(r: Row): Task {
     daemonId: r.daemon_id,
     error: r.error,
     kind: r.kind,
+    accountId: r.account_id,
   };
 }
 
-export async function insertQueuedTask(db: Db, workspaceId: string, messageId: string, kind: Task["kind"] = "organize"): Promise<Task> {
+export async function insertQueuedTask(
+  db: Db,
+  workspaceId: string,
+  messageId: string,
+  kind: Task["kind"] = "organize",
+  accountId: string | null = null,
+): Promise<Task> {
   const rows = await db.query<Row>(
-    `insert into tasks(id, workspace_id, message_id, status, kind, created_at)
-     values ($1, $2, $3, 'queued', $4, clock_timestamp()) returning ${COLS}`,
-    [`t_${nanoid(12)}`, workspaceId, messageId, kind],
+    `insert into tasks(id, workspace_id, message_id, status, kind, account_id, created_at)
+     values ($1, $2, $3, 'queued', $4, $5, clock_timestamp()) returning ${COLS}`,
+    [`t_${nanoid(12)}`, workspaceId, messageId, kind, accountId],
   );
   return toTask(rows[0]!);
 }
