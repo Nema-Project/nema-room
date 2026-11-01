@@ -229,7 +229,7 @@
     </dl>
     <div class="local-main">
       <h2 id="local-h" class="h-sec" data-reveal>あなたのパソコンだけで動く</h2>
-      <p class="lead" data-reveal style="--i:1">デスクトップ版はすべてを 1 つのアプリにまとめています。データベース、ローカルコア、Node を同梱し、Git はパソコンに入っている 2.31 以降を使います。Mac では Finder から開いたときも Homebrew と MacPorts の Git を見つけます。Docker もデータベースサーバーも不要です。議論の内容は選んだモデルプロバイダーにだけ送られ、GitHub のトークンを Nema が扱うことはありません。</p>
+      <p class="lead" data-reveal style="--i:1">デスクトップ版はすべてを 1 つのアプリにまとめています。データベース、ローカルコア、Node を同梱し、Git はパソコンに入っている 2.31 以降を使います。Docker もデータベースサーバーも不要です。議論の内容は選んだモデルプロバイダーにだけ送られ、GitHub のトークンを Nema が扱うことはありません。</p>
     </div>
   </div>
   <div class="local-row local-row-2">
@@ -257,7 +257,7 @@
   <div class="band band-head"><h2 id="faq-h" data-reveal>よくある質問</h2></div>
   <div class="band">
     <h3 data-reveal>今すぐダウンロードできますか？</h3>
-    <p data-reveal style="--i:1">できます。<a href="https://github.com/Nema-Project/nema-room/releases/latest">最新リリース</a>には Windows x64 のインストーラー、Windows のポータブル ZIP、Apple シリコン向けのディスクイメージがあります。ZIP は展開してそのまま実行するアプリです。展開して <code>Nema.exe</code> を実行します。ショートカットもアンインストーラーもありません。インストーラーと ZIP はどちらも <code>~/.nema/desktop</code> を使います。どちらか一方を選んでください。未署名のため、Windows では初回に「Windows によって PC が保護されました」と表示され、macOS では「プライバシーとセキュリティ」から開きます。アプリには Git 2.31 以降も必要です。Intel Mac 向けのデスクトップ版はありません。Linux では linux/amd64 の hub と web イメージを使うか、ソースからビルドします。</p>
+    <p data-reveal style="--i:1">できます。<a href="https://github.com/Nema-Project/nema-room/releases/latest">最新リリース</a>には Windows x64 のインストーラーまたはポータブル ZIP と、Apple シリコン向けのディスクイメージがあります。未署名のため、Windows と macOS では初回起動時に警告が出ます。Git 2.31 以降も必要です。Linux や Intel Mac では Web / Compose を使ってください。</p>
   </div>
   <div class="band band-alt">
     <h3 data-reveal>費用はかかりますか？</h3>
@@ -285,38 +285,9 @@
   <figure class="tile picture cta-side cta-left"><img src="../assets/interior-no-30-strandgade.jpg" width="1137" height="1400" alt="ハンマースホイ《ストランゲーゼ 30 番地の室内》：扉が開き、女性が背を向けてテーブルに座っている。" loading="lazy"></figure>
   <div class="tile tile-accent cta-main">
     <h2 id="cta-h" data-reveal>ダウンロード</h2>
-    <p data-reveal style="--i:1">Windows x64 と Apple シリコン向けのビルドは最新リリースにあります。Windows ではインストーラーかポータブル ZIP のどちらかを選びます。ZIP は展開して <code>Nema.exe</code> を実行します。ショートカットもアンインストーラーもありません。どちらも <code>~/.nema/desktop</code> を使います。パソコンには Git 2.31 以降が必要です。</p>
-    <p data-reveal style="--i:1">ホストのコマンドは <code>nema</code> で、<code>npm i -g @nema-project/nema@&lt;locked version&gt;</code> から入ります。この数字は取得した <code>docker-compose.yml</code> の 2 つの <code>image:</code> が固定している版です。hub と web のイメージは linux/amd64 です。<a href="https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml">docker-compose.yml</a> は最新 Release の固定名の資産で、両イメージをその Release の版に固定してレンダリングしたものです。取得したら 2 つの固定が同じ版か確かめ、<code>NEMA_IMAGE_TAG=&lt;その版&gt;</code> を <code>.env</code> に書いてから起動します（既存の値があればそれを使い、<code>releases/download/v&lt;locked&gt;/docker-compose.yml</code> を取得します）。v0.1.6 のファイルの先頭にはテンプレートの「インストール可能な版ではない」というコメントが残っていますが、固定された 2 行の <code>image:</code> が正しい情報です。v0.1.6 より前の固定にはリリース資産がないため、<code>raw.githubusercontent.com/Nema-Project/nema-room/v&lt;locked&gt;/docker-compose.yml</code> を取得します。Linux と macOS では先に <code>NEMA_UID</code> と <code>NEMA_GID</code> を export します。このリポジトリを開発するときは、clone してセットアップウィザードを実行します。</p>
-    <pre data-reveal style="--i:2"><code># hub と web。linux/amd64 のみ。compose ファイルは最新 Release の固定名の資産です。.env に NEMA_IMAGE_TAG があればその版を使います。
-NEMA_FETCHED= NEMA_LOCKED= NEMA_UP= NEMA_INSTALLED=
-NEMA_PIN=$(sed -n 's/^NEMA_IMAGE_TAG=//p' .env 2&gt;/dev/null | tail -1)
-NEMA_URL=https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
-test -n "$NEMA_PIN" \
-  &amp;&amp; NEMA_URL=https://github.com/Nema-Project/nema-room/releases/download/v$NEMA_PIN/docker-compose.yml
-{ curl -fsSL -o docker-compose.yml.download "$NEMA_URL" \
-  || { test -n "$NEMA_PIN" &amp;&amp; curl -fsSL -o docker-compose.yml.download \
-    "https://raw.githubusercontent.com/Nema-Project/nema-room/v$NEMA_PIN/docker-compose.yml"; }; } \
-  &amp;&amp; mv docker-compose.yml.download docker-compose.yml &amp;&amp; NEMA_FETCHED=1
-# hub と web が一致すれば版を、.env がその版を固定していれば locked を表示します。どちらかが出なければ止めます。
-NEMA_VERSION=$(grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
-WEB_VERSION=$(grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
-test -n "$NEMA_FETCHED" &amp;&amp; test -n "$NEMA_VERSION" &amp;&amp; test "$NEMA_VERSION" = "$WEB_VERSION" \
-  &amp;&amp; echo "$NEMA_VERSION"
-test -n "$NEMA_FETCHED" &amp;&amp; test -n "$NEMA_VERSION" &amp;&amp; test "$NEMA_VERSION" = "$WEB_VERSION" \
-  &amp;&amp; { test -n "$NEMA_PIN" || printf '\nNEMA_IMAGE_TAG=%s\n' "$NEMA_VERSION" &gt;&gt; .env; } \
-  &amp;&amp; test "$(sed -n 's/^NEMA_IMAGE_TAG=//p' .env | tail -1)" = "$NEMA_VERSION" \
-  &amp;&amp; NEMA_LOCKED=$NEMA_VERSION &amp;&amp; echo "locked $NEMA_LOCKED"
-# 各手順は前の手順が成功したときだけ実行されます。.env で NEMA_HUB_PORT や NEMA_DATA_HOST_DIR を設定したら先に同じ値を export します。
-export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"   # Linux and macOS only
-NEMA_DIR=${NEMA_DATA_HOST_DIR:-$HOME/.nema/data}
-test -n "$NEMA_LOCKED" &amp;&amp; mkdir -p -m 700 "$NEMA_DIR" &amp;&amp; test -w "$NEMA_DIR" \
-  &amp;&amp; NEMA_IMAGE_TAG=$NEMA_LOCKED docker compose up -d --wait &amp;&amp; NEMA_UP=1
-test -n "$NEMA_UP" &amp;&amp; npm i -g "@nema-project/nema@$NEMA_LOCKED" &amp;&amp; NEMA_INSTALLED=1
-# Compose は daemon を起動しません。動かし続けてください。
-test -n "$NEMA_INSTALLED" \
-  &amp;&amp; NEMA_DATA_DIR=$NEMA_DIR nema daemon --hub "http://127.0.0.1:${NEMA_HUB_PORT:-4400}"
-
-# またはこのリポジトリをソースからビルド
+    <p data-reveal style="--i:1">Windows x64 と Apple シリコン向けのビルドは最新リリースにあります。Windows ではインストーラーかポータブル ZIP のどちらかを選びます。Git 2.31 以降が必要です。</p>
+    <p data-reveal style="--i:1">Linux の場合や Nema Room を開発する場合は、Web / Compose 版をソースから動かします。クローンせずに公開イメージを使う手順は<a href="https://github.com/Nema-Project/nema-room/blob/main/docs/guide.ja.md#source-installation">インストールガイド</a>を参照してください。</p>
+    <pre data-reveal style="--i:2"><code># Web / Compose をソースから
 git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
 node scripts/setup.mjs --lang ja</code></pre>
