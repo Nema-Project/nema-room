@@ -229,7 +229,7 @@
     </dl>
     <div class="local-main">
       <h2 id="local-h" class="h-sec" data-reveal>Runs only on your computer</h2>
-      <p class="lead" data-reveal style="--i:1">The desktop app packs the whole stack into one program: the database, the local core, and Node. It uses Git 2.31 or later already installed on your machine. On a Mac, an app opened from the Finder also finds Homebrew and MacPorts Git. No Docker, and no database server. Discussion text goes only to the model provider you choose, and Nema never touches your GitHub token.</p>
+      <p class="lead" data-reveal style="--i:1">The desktop app packs the whole stack into one program: the database, the local core, and Node. It uses the Git 2.31 or later already on your machine. No Docker, no database server. Discussion text goes only to the model provider you choose, and Nema never touches your GitHub token.</p>
     </div>
   </div>
   <div class="local-row local-row-2">
@@ -257,7 +257,7 @@
   <div class="band band-head"><h2 id="faq-h" data-reveal>Questions</h2></div>
   <div class="band">
     <h3 data-reveal>Can I download it now?</h3>
-    <p data-reveal style="--i:1">Yes. The <a href="https://github.com/Nema-Project/nema-room/releases/latest">latest release</a> has a Windows x64 installer, a Windows portable ZIP, and an Apple Silicon disk image. The ZIP is the unpacked app: unzip it and run <code>Nema.exe</code>. It has no shortcuts or uninstaller. The installer and the ZIP both use <code>~/.nema/desktop</code>. Pick one. Installers are unsigned, so Windows shows “Windows protected your PC” the first time, and macOS asks you to open it from Privacy &amp; Security. The app also needs Git 2.31 or later on the machine. Intel Macs have no desktop build. On Linux, use the linux/amd64 hub and web images, or build from source.</p>
+    <p data-reveal style="--i:1">Yes. The <a href="https://github.com/Nema-Project/nema-room/releases/latest">latest release</a> has a Windows x64 installer or portable ZIP, and an Apple Silicon disk image. Builds are unsigned, so Windows and macOS warn on first launch. You also need Git 2.31 or later. On Linux or an Intel Mac, use Web / Compose.</p>
   </div>
   <div class="band band-alt">
     <h3 data-reveal>Does it cost anything?</h3>
@@ -285,38 +285,9 @@
   <figure class="tile picture cta-side cta-left"><img src="assets/interior-no-30-strandgade.jpg" width="1137" height="1400" alt="Hammershøi, Interior, Strandgade 30: a door stands open and a woman sits at a table with her back turned." loading="lazy"></figure>
   <div class="tile tile-accent cta-main">
     <h2 id="cta-h" data-reveal>Download</h2>
-    <p data-reveal style="--i:1">Windows x64 and Apple Silicon builds are on the latest release. On Windows, pick the installer or the portable ZIP. The ZIP unzips to <code>Nema.exe</code>, with no shortcuts or uninstaller. Both use <code>~/.nema/desktop</code>. The app needs Git 2.31 or later already on the machine.</p>
-    <p data-reveal style="--i:1">The host command is <code>nema</code>, from <code>npm i -g @nema-project/nema@&lt;locked version&gt;</code>. That number is the version both <code>image:</code> pins in the <code>docker-compose.yml</code> you fetched carry. Hub and web images are linux/amd64. <a href="https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml">docker-compose.yml</a> is a fixed-name asset of the latest release, rendered with both images pinned to that release's version. Fetch it, check that both pins print the same version, write <code>NEMA_IMAGE_TAG=&lt;that version&gt;</code> into <code>.env</code> (keep an existing value and fetch <code>releases/download/v&lt;locked&gt;/docker-compose.yml</code> instead), then start them. The v0.1.6 file still opens with the template's &quot;not an installable version&quot; comment; the two pinned <code>image:</code> lines are what count. A lock older than v0.1.6 has no release asset; take <code>raw.githubusercontent.com/Nema-Project/nema-room/v&lt;locked&gt;/docker-compose.yml</code> instead. On Linux and macOS, export <code>NEMA_UID</code> and <code>NEMA_GID</code> first. To develop this repository, clone it and run the setup wizard.</p>
-    <pre data-reveal style="--i:2"><code># Hub and web, linux/amd64. The compose file is a fixed-name asset of the latest release; an existing NEMA_IMAGE_TAG in .env keeps its own version.
-NEMA_FETCHED= NEMA_LOCKED= NEMA_UP= NEMA_INSTALLED=
-NEMA_PIN=$(sed -n 's/^NEMA_IMAGE_TAG=//p' .env 2&gt;/dev/null | tail -1)
-NEMA_URL=https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml
-test -n "$NEMA_PIN" \
-  &amp;&amp; NEMA_URL=https://github.com/Nema-Project/nema-room/releases/download/v$NEMA_PIN/docker-compose.yml
-{ curl -fsSL -o docker-compose.yml.download "$NEMA_URL" \
-  || { test -n "$NEMA_PIN" &amp;&amp; curl -fsSL -o docker-compose.yml.download \
-    "https://raw.githubusercontent.com/Nema-Project/nema-room/v$NEMA_PIN/docker-compose.yml"; }; } \
-  &amp;&amp; mv docker-compose.yml.download docker-compose.yml &amp;&amp; NEMA_FETCHED=1
-# Prints the version only when hub and web agree, then locked when .env holds it. Stop if either is missing.
-NEMA_VERSION=$(grep -o 'nema-room-hub:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
-WEB_VERSION=$(grep -o 'nema-room-web:[0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
-test -n "$NEMA_FETCHED" &amp;&amp; test -n "$NEMA_VERSION" &amp;&amp; test "$NEMA_VERSION" = "$WEB_VERSION" \
-  &amp;&amp; echo "$NEMA_VERSION"
-test -n "$NEMA_FETCHED" &amp;&amp; test -n "$NEMA_VERSION" &amp;&amp; test "$NEMA_VERSION" = "$WEB_VERSION" \
-  &amp;&amp; { test -n "$NEMA_PIN" || printf '\nNEMA_IMAGE_TAG=%s\n' "$NEMA_VERSION" &gt;&gt; .env; } \
-  &amp;&amp; test "$(sed -n 's/^NEMA_IMAGE_TAG=//p' .env | tail -1)" = "$NEMA_VERSION" \
-  &amp;&amp; NEMA_LOCKED=$NEMA_VERSION &amp;&amp; echo "locked $NEMA_LOCKED"
-# Each step runs only if the one before it succeeded. Export NEMA_HUB_PORT and NEMA_DATA_HOST_DIR first if .env sets them.
-export NEMA_UID="$(id -u)" NEMA_GID="$(id -g)"   # Linux and macOS only
-NEMA_DIR=${NEMA_DATA_HOST_DIR:-$HOME/.nema/data}
-test -n "$NEMA_LOCKED" &amp;&amp; mkdir -p -m 700 "$NEMA_DIR" &amp;&amp; test -w "$NEMA_DIR" \
-  &amp;&amp; NEMA_IMAGE_TAG=$NEMA_LOCKED docker compose up -d --wait &amp;&amp; NEMA_UP=1
-test -n "$NEMA_UP" &amp;&amp; npm i -g "@nema-project/nema@$NEMA_LOCKED" &amp;&amp; NEMA_INSTALLED=1
-# Compose does not run the daemon; keep it running.
-test -n "$NEMA_INSTALLED" \
-  &amp;&amp; NEMA_DATA_DIR=$NEMA_DIR nema daemon --hub "http://127.0.0.1:${NEMA_HUB_PORT:-4400}"
-
-# Or build this repository from source
+    <p data-reveal style="--i:1">Windows x64 and Apple Silicon builds are on the latest release. On Windows, pick the installer or the portable ZIP. Git 2.31 or later must already be installed.</p>
+    <p data-reveal style="--i:1">On Linux, or to develop Nema Room, run the Web / Compose version from source. To use the published images without cloning, follow the <a href="https://github.com/Nema-Project/nema-room/blob/main/docs/guide.en.md#source-installation">installation guide</a>.</p>
+    <pre data-reveal style="--i:2"><code># Web / Compose from source
 git clone https://github.com/Nema-Project/nema-room.git
 cd nema-room
 node scripts/setup.mjs --lang en</code></pre>
