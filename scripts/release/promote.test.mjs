@@ -18,7 +18,7 @@ function world({
   // Provenance (#174). `provenance` is what the attestations endpoint answers, read by read like npmReads;
   // `declared` is what the version document says (true/false/null for unreadable); `publishedAgoMs` is how
   // long before "now" this version was published (null for an unreadable publish time).
-  provenance = 'ok', provenanceReads, declared = true, publishedAgoMs = 0,
+  provenance = 'ok', provenanceReads, declared = true, publishedAgoMs = 0, evidenceFailsFirst = false,
 } = {}) {
   const state = {
     npm, npmLatest, npmNext, hub, web, github, draft, releasePrerelease, writes: [], log: [], tagChecks: 0,
@@ -29,6 +29,8 @@ function world({
     provenanceQueue: provenanceReads ? [...provenanceReads] : [provenance],
     declared,
     publishedAgoMs,
+    // Fail the first attempt at each evidence read, so a test can pin that a failure is retried.
+    evidenceFailsFirst,
     published: false,
     clock: 0,
     sleeps: [],
@@ -96,12 +98,14 @@ function world({
     async npmProvenanceDeclared() {
       boom('npmProvenanceDeclared');
       state.declarationReads += 1;
+      if (state.evidenceFailsFirst && state.declarationReads === 1) return { state: 'unknown', detail: 'https://registry.npmjs.org/@nema-project/nema/0.1.7: HTTP 503' };
       if (state.declared === null) return { state: 'unknown', detail: 'https://registry.npmjs.org/@nema-project/nema/0.1.7: HTTP 503' };
       return { state: 'ok', evidence: { declared: state.declared, predicateType: state.declared ? 'https://slsa.dev/provenance/v1' : null } };
     },
     async npmPublishedAt() {
       boom('npmPublishedAt');
       state.publishedAtReads += 1;
+      if (state.evidenceFailsFirst && state.publishedAtReads === 1) return { state: 'unknown', detail: 'https://registry.npmjs.org/@nema-project/nema: HTTP 503' };
       if (state.publishedAgoMs === null) return { state: 'unknown', detail: 'https://registry.npmjs.org/@nema-project/nema: HTTP 503' };
       return { state: 'ok', evidence: { version, publishedAt: state.clock - state.publishedAgoMs } };
     },
@@ -790,4 +794,44 @@ test('#174: a definite provenance gap never reaches final verify, so nothing can
   const { state, text } = await run({ npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }], provenanceReads: ['absent'] });
   assert.equal(state.verifyOptions.some((entry) => entry.stage === 'final'), false);
   assert.doesNotMatch(text, /waitable/);
+});
+
+test('#174: evidence that fails to read is retried, so a real absence stays definite (CodeRabbit, PR #177)', async () => {
+  // The hole: one unreadable packument was remembered as "no evidence", so a version published days ago
+  // that declares no attestation ended as `provenance-unconfirmed` — a waitable item, which promote hands
+  // to verify as a pending hint. A release with no provenance at all could then be reported complete.
+  const { result, state, text } = await run({
+    npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }],
+    provenanceReads: ['pending'],
+    // The evidence reads fail on their first attempt and then answer.
+    declared: false, publishedAgoMs: 86_400_000 * 10,
+    evidenceFailsFirst: true,
+  });
+  assert.equal(result.ok, false, 'a definite absence still stops the run');
+  assert.equal(state.declarationReads, 2, 'the failed declaration read was retried, not cached as "no evidence"');
+  assert.equal(state.publishedAtReads, 2, 'and so was the publish time');
+  assert.match(text, /npm provenance is a definite gap: npm has no provenance for 0\.1\.7/);
+  assert.doesNotMatch(text, /unconfirmed/, 'an absence recovered from evidence is never reported as an uncertainty');
+});
+
+test('#174: evidence that never becomes readable is still only unconfirmed, never called an absence', async () => {
+  // The inverse mistake: inventing "absent" from two failed reads would blame a release for a gap nobody saw.
+  const { result, state, text } = await run({
+    npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }],
+    provenanceReads: ['pending'], declared: null, publishedAgoMs: null,
+  });
+  assert.equal(result.ok, true, 'a waitable item does not stop the promotion');
+  assert.match(text, /whether an attestation exists is unconfirmed/);
+  assert.doesNotMatch(text, /has no provenance/);
+  assert.equal(state.declarationReads, 120_000 / 5_000 + 1, 'retried while the endpoint kept answering 404');
+});
+
+test('#174: the evidence is not re-read once it answered, and not read at all when provenance is served', async () => {
+  // One successful read each is enough; polling them again would only add registry traffic to the wait.
+  const settled = await run({ npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }], provenanceReads: ['pending', 'pending'], declared: true });
+  assert.equal(settled.state.declarationReads, 1);
+  assert.equal(settled.state.publishedAtReads, 0, 'a declared attestation settles it: no publish time needed');
+  const served = await run({ npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }] });
+  assert.equal(served.state.declarationReads, 0, 'the happy path pays for no evidence reads at all');
+  assert.equal(served.state.publishedAtReads, 0);
 });

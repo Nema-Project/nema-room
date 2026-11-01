@@ -128,6 +128,11 @@ function waitScope({ io, budgetMs, pollMs, onPoll }) {
  * attestation, is not lagging any more: the wait stops at once with `provenance-absent`. A 200
  * without a SLSA v1 attestation and a 401/403 are answers that cannot change, and stop at once too.
  *
+ * The evidence reads are retried while the endpoint keeps answering 404 and the evidence is still
+ * unknown, so one unreadable packument cannot turn a definite absence into an uncertainty; once either
+ * value is learned it is kept. `provenance-unconfirmed` therefore means the endpoint never stopped
+ * answering 404 *and* the evidence never became readable — never "the evidence read failed once".
+ *
  * -> { ok: true, outcome: 'ok', reason: null, waitedMs, budgetMs, reads: { provenance, declaration, publishedAt }, declaration, publishedAt }
  *  | { ok: false, outcome, reason, waitedMs, ... }
  *    outcome ∈ provenance-not-indexed (declared, not served yet)
@@ -142,19 +147,31 @@ export async function awaitNpmProvenance({ version, io, budgetMs = NPM_VISIBILIT
   let declaration = null;
   // Epoch ms of this version's publish, when the packument could be read.
   let publishedAt = null;
-  // Read once, before the first poll: both are deciding evidence about the publish that has already
-  // happened, not about the index catching up, so polling them again cannot tell the wait anything new.
-  // Reading them per poll would triple the registry traffic of a two-minute wait for nothing.
-  if (io.npmProvenanceDeclared) {
-    const declared = await io.npmProvenanceDeclared();
-    reads.declaration += 1;
-    declaration = declared?.state === 'ok' ? declared.evidence.declared === true : null;
-  }
-  if (declaration !== true && io.npmPublishedAt) {
-    const published = await io.npmPublishedAt();
-    reads.publishedAt += 1;
-    publishedAt = published?.state === 'ok' ? published.evidence.publishedAt : null;
-  }
+  /**
+   * Read the evidence that decides whether a 404 can still change: what the version document declares,
+   * and when this version was published. Only called once the endpoint has actually answered 404, so the
+   * happy path (provenance served at once) pays for none of it.
+   *
+   * A read that fails is retried on the next 404 instead of being remembered as "no evidence". Caching
+   * that failure was a real hole (CodeRabbit, PR #177): one unreadable packument turned a version that
+   * was published days ago and declares no attestation from a definite `provenance-absent` into
+   * `provenance-unconfirmed`, which promote treats as waitable and hands to verify as a pending hint —
+   * so a release with no provenance at all could be reported complete. Recovering the evidence is what
+   * keeps a real absence definite. A value already learned is never re-read.
+   */
+  const readEvidence = async () => {
+    if (declaration === null && io.npmProvenanceDeclared) {
+      const declared = await io.npmProvenanceDeclared();
+      reads.declaration += 1;
+      if (declared?.state === 'ok') declaration = declared.evidence.declared === true;
+    }
+    // A declared attestation already settles it; there is nothing a publish time would add.
+    if (declaration !== true && publishedAt === null && io.npmPublishedAt) {
+      const published = await io.npmPublishedAt();
+      reads.publishedAt += 1;
+      if (published?.state === 'ok') publishedAt = published.evidence.publishedAt;
+    }
+  };
   const result = (outcome, reason) => ({ ok: outcome === 'ok', outcome, reason, waitedMs: clock.spent(), budgetMs: clock.budgetMs, reads, declaration, publishedAt });
   for (;;) {
     const read = await io.npmProvenance();
@@ -176,6 +193,7 @@ export async function awaitNpmProvenance({ version, io, budgetMs = NPM_VISIBILIT
       continue;
     }
     // Pending: the endpoint answered 404. Decide whether that can still change.
+    await readEvidence();
     const age = publishedAt === null ? null : io.now() - publishedAt;
     if (declaration !== true && age !== null && age > NPM_PROVENANCE_INDEX_WINDOW_MS) {
       // Past any plausible index delay and nothing declares an attestation: this is the absence itself.
