@@ -13,14 +13,21 @@ export type Task = {
   /** `workpackage` tasks write a work package and run with larger limits. */
   kind: "organize" | "workpackage" | "edit";
   /**
-   * The account this message named, or null. An opaque id that belongs to the daemon's machine: the hub
-   * carries it and never resolves it (spec 2026-10-31 §5.4). Routing uses it in S3; nothing reads it yet.
+   * The account this message asked for, as the daemon will read it (spec 2026-10-31 §5.4). Opaque here: an
+   * account id means nothing to the hub, and a stale one is the daemon's to report.
    */
   accountId: string | null;
+  /** Whether this task allowed automatic routing. Only ever "auto" or null in this version. */
+  routing: string | null;
 };
 
-/** Task as exposed to the web UI (REST + SSE): never carries the run token or daemon id. */
-export type UiTask = Omit<Task, "runToken" | "daemonId" | "kind" | "accountId">;
+/**
+ * Task as exposed to the web UI (REST + SSE): never carries the run token or daemon id.
+ *
+ * The account choice stays out too. It is an input the daemon consumes, not a fact about the task's progress,
+ * and the UI that would show it (S2's picker) reads the choice from where the user made it.
+ */
+export type UiTask = Omit<Task, "runToken" | "daemonId" | "kind" | "accountId" | "routing">;
 
 export function toUiTask(t: Task): UiTask {
   return { id: t.id, workspaceId: t.workspaceId, messageId: t.messageId, status: t.status, error: t.error };
@@ -36,9 +43,10 @@ type Row = {
   error: string | null;
   kind: Task["kind"];
   account_id: string | null;
+  routing: string | null;
 };
 
-const COLS = "id, workspace_id, message_id, status, run_token, daemon_id, error, kind, account_id";
+const COLS = "id, workspace_id, message_id, status, run_token, daemon_id, error, kind, account_id, routing";
 
 function toTask(r: Row): Task {
   return {
@@ -51,6 +59,7 @@ function toTask(r: Row): Task {
     error: r.error,
     kind: r.kind,
     accountId: r.account_id,
+    routing: r.routing,
   };
 }
 
@@ -59,12 +68,12 @@ export async function insertQueuedTask(
   workspaceId: string,
   messageId: string,
   kind: Task["kind"] = "organize",
-  accountId: string | null = null,
+  choice: { accountId?: string | null; routing?: string | null } = {},
 ): Promise<Task> {
   const rows = await db.query<Row>(
-    `insert into tasks(id, workspace_id, message_id, status, kind, account_id, created_at)
-     values ($1, $2, $3, 'queued', $4, $5, clock_timestamp()) returning ${COLS}`,
-    [`t_${nanoid(12)}`, workspaceId, messageId, kind, accountId],
+    `insert into tasks(id, workspace_id, message_id, status, kind, account_id, routing, created_at)
+     values ($1, $2, $3, 'queued', $4, $5, $6, clock_timestamp()) returning ${COLS}`,
+    [`t_${nanoid(12)}`, workspaceId, messageId, kind, choice.accountId ?? null, choice.routing ?? null],
   );
   return toTask(rows[0]!);
 }

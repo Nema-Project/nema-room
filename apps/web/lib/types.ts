@@ -1,6 +1,6 @@
 import type { AgentMessageMeta, AttachmentView, Implementation, KnowledgeLanguage, ReportMessageMeta, ReportPassState, Thread, UserMessageMeta, WpTask } from "@nema/shared";
 
-export type { AgentMessageMeta, Entry, EntrySummary, Implementation, KnowledgeLanguage, MessageMention, MessageQuote, ReportCheck, ReportMessageMeta, Thread, ThreadOpenedBy, UpsertEntryInput, UserMessageMeta, WorkPackageMeta, WpTask } from "@nema/shared";
+export type { AgentMessageMeta, Entry, EntrySummary, Implementation, KnowledgeLanguage, MessageMention, MessageQuote, ReportCheck, ReportMessageMeta, RouteDecision, Thread, ThreadOpenedBy, UpsertEntryInput, UserMessageMeta, WorkPackageMeta, WpTask } from "@nema/shared";
 
 /** A requirement implementation as the hub returns it: plus each cited report's pass state, derived on read. */
 export type ImplementationView = Implementation & { evidence: Implementation["evidence"] & { reports?: ReportPassState[] } };

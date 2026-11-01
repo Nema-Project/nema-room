@@ -71,7 +71,7 @@ export function loadAccounts(nemaHome: string, config: NemaConfig, _codexHome: s
   };
 }
 
-function implicitAccount(config: NemaConfig, now: Date): Account {
+export function implicitAccount(config: NemaConfig, now: Date): Account {
   return {
     id: IMPLICIT_ACCOUNT_ID,
     name: "默认账户",

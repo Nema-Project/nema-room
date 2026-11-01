@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { EntryKindSchema } from "./entry.js";
 import { MessageMentions } from "./mentions.js";
+import { RouteDecisionSchema } from "./route.js";
 
 export const KNOWLEDGE_LANGUAGES = ["ja", "en", "zh", "follow"] as const;
 export type KnowledgeLanguage = (typeof KNOWLEDGE_LANGUAGES)[number];
@@ -62,6 +63,11 @@ export const AgentMessageMeta = z.object({
   quote: MessageQuote.optional(),
   /** Skills the agent offered to install in this reply; each waits for the user's own click. */
   skillOffers: z.array(SkillInstallOffer).optional(),
+  /**
+   * Which account and model answered, and why (spec 2026-10-31 §4.6). Optional: every message written
+   * before this field existed has no route, and none of them stops parsing.
+   */
+  route: RouteDecisionSchema.optional(),
 });
 export type AgentMessageMeta = z.infer<typeof AgentMessageMeta>;
 

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AttachmentRefSchema } from "./attachments.js";
+import { RouteDecisionSchema, type RouteDecision } from "./route.js";
 
 const DaemonToHubSchema = z.union([
   z.object({
@@ -17,8 +18,35 @@ const DaemonToHubSchema = z.union([
     taskId: z.string(),
     event: z.object({ type: z.enum(["progress", "agent_message", "tool_call"]), text: z.string() }),
   }),
-  z.object({ type: z.literal("task.finished"), taskId: z.string(), ok: z.literal(true), reply: z.string() }),
-  z.object({ type: z.literal("task.finished"), taskId: z.string(), ok: z.literal(false), error: z.string() }),
+  z.object({
+    type: z.literal("task.finished"),
+    taskId: z.string(),
+    ok: z.literal(true),
+    reply: z.string(),
+    /**
+     * Which account and model answered, and why (spec 2026-10-31 §4.6). Optional: an older daemon sends
+     * none, and the hub then stores the message without a route line.
+     *
+     * Deliberately unvalidated *here*. The route is metadata about the reply; a route this hub cannot read
+     * must cost the route line, not the reply. Validating it inside this schema would fail the whole
+     * message and drop an answer the user is waiting for. It is still validated strictly by
+     * `parseRouteDecision` at the point it is stored, so nothing unknown reaches `messages.meta`.
+     */
+    route: z.unknown().optional(),
+  }),
+  z.object({
+    type: z.literal("task.finished"),
+    taskId: z.string(),
+    ok: z.literal(false),
+    error: z.string(),
+    /**
+     * Which account and model were running when the task failed. A failed task has no reply to carry the
+     * record, and "which account failed" is the next question, so the hub folds it into the failure line.
+     * Unvalidated here for the same reason as the success branch: the error text must survive a route the
+     * hub cannot read.
+     */
+    route: z.unknown().optional(),
+  }),
   z.object({ type: z.literal("rpc.response"), id: z.string(), ok: z.literal(true), result: z.unknown() }),
   z.object({ type: z.literal("rpc.response"), id: z.string(), ok: z.literal(false), error: z.string() }),
   z.object({ type: z.literal("repo.moved"), repoId: z.string(), mainRef: z.string(), from: z.string().nullable(), to: z.string() }),
@@ -51,6 +79,18 @@ const HubToDaemonSchema = z.discriminatedUnion("type", [
     retainedSkills: z.array(z.string()).optional(),
     /** The Skill the user called with a leading `/skill-id`, and the rest of the line as its arguments. */
     manualSkill: z.object({ skillId: z.string(), arguments: z.string() }).optional(),
+    /**
+     * The account this message asked for (spec 2026-10-31 §5.4). The hub carries it down; the daemon decides
+     * what it means, because accounts exist only on the daemon's machine.
+     *
+     * Validated by shape here even though the hub cannot know whether the account exists: the id names a
+     * directory under the daemon's `secrets/accounts/`, and an arbitrary string must never get that far.
+     */
+    accountId: z.string().regex(/^acct_[a-z0-9]{10}$/).optional(),
+    /** Present only when the task may be routed automatically. S4 implements it; S3 refuses it. */
+    routing: z.literal("auto").optional(),
+    /** The thread this task belongs to; the main chat has none. The daemon looks up thread bindings by it. */
+    threadId: z.string().min(1).optional(),
   }),
   z.object({ type: z.literal("rpc.request"), id: z.string(), method: z.string(), params: z.unknown() }),
   z.object({ type: z.literal("error"), message: z.string() }),
@@ -65,6 +105,19 @@ export function parseDaemonToHub(raw: unknown): DaemonToHub {
 }
 export function parseHubToDaemon(raw: unknown): HubToDaemon {
   return HubToDaemonSchema.parse(raw);
+}
+
+/**
+ * A route decision from the wire, or `undefined` when there is none or it is not one this hub understands.
+ *
+ * Separate from the message schema on purpose (see `task.finished`). A daemon that sends a reason code
+ * from a newer protocol still gets its reply stored; only the route line is lost, because a record the hub
+ * cannot read must not be written to `messages.meta` and shown to the user as if it were understood.
+ */
+export function parseRouteDecision(raw: unknown): RouteDecision | undefined {
+  if (raw === undefined) return undefined;
+  const parsed = RouteDecisionSchema.safeParse(raw);
+  return parsed.success ? parsed.data : undefined;
 }
 
 /** Run limits of a work package generation task. Every other run keeps the daemon defaults. */

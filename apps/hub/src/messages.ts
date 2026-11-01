@@ -162,12 +162,23 @@ export type PostUserMessageOptions = {
   attachmentIds?: string[];
   mentions?: MessageMention[];
   /**
-   * The account this message named (spec 2026-10-31 §5.4). It is stored on the task, not in the message's
-   * meta: the choice is the task's input, and the result (which account actually answered) is the daemon's
-   * to report later.
+   * The account the user picked for this one message (spec 2026-10-31 §5.4). Carried to the daemon, which is
+   * the only side that knows whether it exists. Shape-checked here so a free string never reaches a task row
+   * that ends up in `task.assign`.
+   *
+   * Stored on the task, not in the message's meta: the choice is the task's input, and the result (which
+   * account actually answered) is the daemon's to report later.
    */
   accountId?: string;
 };
+
+/**
+ * The shape an account id must have to leave this process. The id names a directory on the daemon's machine,
+ * so an arbitrary string must never get that far. The REST layer already refuses a malformed id with its own
+ * (stricter) schema, which also refuses the synthesized account's reserved id; this is the same shape check
+ * for the callers that reach this function without going through that layer.
+ */
+const ACCOUNT_ID = /^acct_[a-z0-9]{10}$/;
 
 /**
  * A user message and its queued task, in one transaction. With attachment ids, the uploads are locked first: if they
@@ -184,6 +195,9 @@ export async function postUserMessage(
   const mentions = options.mentions ?? [];
   const attachmentIds = [...new Set(options.attachmentIds ?? [])].sort();
   if (!messageHasBody(content, attachmentIds)) throw new MessageOpError(400, "message content must not be empty");
+  if (options.accountId !== undefined && !ACCOUNT_ID.test(options.accountId)) {
+    throw new MessageOpError(400, "accountId must be an account id");
+  }
   try {
     return await db.tx(async (t) => {
       if (attachmentIds.length > 0) {
@@ -209,7 +223,9 @@ export async function postUserMessage(
       if (delivered.length > ATTACHMENT_LIMITS.perTaskCount || delivered.reduce((sum, r) => sum + r.size, 0) > ATTACHMENT_LIMITS.perTaskBytes) {
         throw new MessageOpError(400, DELIVERY_LIMIT_MESSAGE);
       }
-      const task = await insertQueuedTask(t, workspaceId, message.id, "organize", options.accountId ?? null);
+      const task = await insertQueuedTask(t, workspaceId, message.id, "organize", {
+        ...(options.accountId !== undefined ? { accountId: options.accountId } : {}),
+      });
       return { message, task, replayed: false };
     });
   } catch (e) {
@@ -266,6 +282,8 @@ async function lockForSend(
   const first = await t.query<{ id: string }>("select id from tasks where message_id = $1 order by seq limit 1", [messageId]);
   const task = first[0] ? await getTask(t, first[0].id) : null;
   if (!task) throw conflict;
+  // A retry that names a different account is a different request, not a replay of this one: returning the
+  // earlier task would answer with the route the user had already moved away from.
   if (task.accountId !== (options.accountId ?? null)) throw conflict;
   return { message: prior, task };
 }
@@ -342,7 +360,14 @@ export async function editUserMessage(
       content,
       nextMeta === null ? null : JSON.stringify(nextMeta),
     ]);
-    const task = await insertQueuedTask(t, workspaceId, messageId, "edit");
+    // The edit is the same request with new text, so it runs on the account the first run used. Without
+    // this the row would be null and the edit could quietly land on a different account. The first task is
+    // read, not copied from a request field: nothing in an edit names an account.
+    const first = await t.query<{ account_id: string | null }>(
+      "select account_id from tasks where message_id = $1 order by seq limit 1",
+      [messageId],
+    );
+    const task = await insertQueuedTask(t, workspaceId, messageId, "edit", { accountId: first[0]?.account_id ?? null });
     const [message] = await withAttachments(t, [toMessage(updated[0]!)]);
     return { message: message!, task };
   });

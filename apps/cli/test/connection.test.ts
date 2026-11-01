@@ -78,6 +78,34 @@ describe("daemon connection", () => {
     expect(await fin).toMatchObject({ taskId: "t1", ok: true, reply: "ok!" });
   });
 
+  test("a task's route reaches the hub on task.finished, and an unrouted adapter sends none", async () => {
+    const port = await start();
+    const route = { accountId: "acct_abc1234567", accountName: "Second", model: "m", mode: "manual" as const, reason: "user_message" as const };
+    const routed: AgentAdapter = { name: "codex-direct", async run() { return { ok: true, reply: "ok", route }; } };
+    const hello = new Promise<any>((resolve) => wss.on("connection", (ws) => nextMsg(ws, "hello").then(resolve)));
+    const d = connectDaemon({ hubUrl: `http://127.0.0.1:${port}`, token: "tk", runner: new Runner([routed]) });
+    closers.push(() => d.close());
+    await hello;
+    const ws = await waitConn(1);
+    const fin = nextMsg(ws, "task.finished");
+    ws.send(JSON.stringify(task("t1")));
+    expect(await fin).toEqual({ type: "task.finished", taskId: "t1", ok: true, reply: "ok", route });
+    for (const c of wss.clients) c.terminate();
+    await d.close();
+    closers.pop();
+
+    // An adapter that knows nothing about accounts (a third party, or an older one) sends the old shape.
+    const plain: AgentAdapter = { name: "codex-direct", async run() { return { ok: true, reply: "ok" }; } };
+    const hello2 = new Promise<any>((resolve) => wss.on("connection", (ws) => nextMsg(ws, "hello").then(resolve)));
+    const d2 = connectDaemon({ hubUrl: `http://127.0.0.1:${port}`, token: "tk", runner: new Runner([plain]) });
+    closers.push(() => d2.close());
+    await hello2;
+    const ws2 = await waitConn(2);
+    const fin2 = nextMsg(ws2, "task.finished");
+    ws2.send(JSON.stringify(task("t2")));
+    expect(await fin2).toEqual({ type: "task.finished", taskId: "t2", ok: true, reply: "ok" });
+  });
+
   test("hello advertises exactly the daemon's features", async () => {
     const port = await start();
     const hello = new Promise<any>((resolve) => wss.on("connection", (ws) => nextMsg(ws, "hello").then(resolve)));

@@ -118,14 +118,14 @@ describe("CodexDirectAdapter", () => {
 
   test("no login -> fails with the login hint, no network", async () => {
     const { result } = await run();
-    expect(result).toEqual({ ok: false, error: "未登录直连 Codex，请在终端运行 nema auth login" });
+    expect(result).toMatchObject({ ok: false, error: "未登录直连 Codex，请在终端运行 nema auth login" });
     expect(server.requests).toEqual([]);
   });
 
   test("a cleared login -> ReloginRequiredError message", async () => {
     new AuthStore(home, refresher).save({ ...auth({ access_token: "", refresh_token: "" }), lastAuthError: { code: "invalid_grant", message: "x", at: "2026-10-22T00:00:00.000Z" } });
     const { result } = await run();
-    expect(result).toEqual({ ok: false, error: RELOGIN_MESSAGE });
+    expect(result).toMatchObject({ ok: false, error: RELOGIN_MESSAGE });
   });
 
   test("full run: model from the list, Room functions, upsert via hub, reply + progress", async () => {
@@ -136,7 +136,7 @@ describe("CodexDirectAdapter", () => {
       stream([msgItem("已记录 R-1。")], ["已记录", " R-1。"]),
     );
     const { result, events } = await run();
-    expect(result).toEqual({ ok: true, reply: "已记录 R-1。" });
+    expect(result).toMatchObject({ ok: true, reply: "已记录 R-1。" });
 
     const bodies = server.requests.filter((r) => r.url === "/v1/responses").map((r) => JSON.parse(r.body) as Record<string, unknown>);
     expect(bodies.length).toBe(2);
@@ -173,7 +173,7 @@ describe("CodexDirectAdapter", () => {
     ];
     const events: TaskEvent[] = [];
     const result = await adapter().run(assigned, (e) => events.push(e));
-    expect(result).toEqual({ ok: true, reply: "ok" });
+    expect(result).toMatchObject({ ok: true, reply: "ok" });
     const body = JSON.parse(server.requests.find((r) => r.url === "/v1/responses")!.body) as { tools: { type: string; name: string; strict: boolean }[] };
     expect(body.tools.map((t) => t.name)).toEqual(["list_entries", "read_entry", "upsert_entry", "open_thread", "offer_skill_install", "code__read"]);
     expect(body.tools.every((t) => t.type === "function" && t.strict === false)).toBe(true);
@@ -186,7 +186,7 @@ describe("CodexDirectAdapter", () => {
     managedSkill(home, "tdd", { "SKILL.md": skillText("tdd", "Write the test first.", "# TDD\n\nRed, green, refactor.\n") });
     server.responses(stream([fcItem("read_skill", { name: "tdd" }, "c1")]), stream([msgItem("done")]));
     const { result, events } = await run();
-    expect(result).toEqual({ ok: true, reply: "done" });
+    expect(result).toMatchObject({ ok: true, reply: "done" });
     const bodies = server.requests.filter((r) => r.url === "/v1/responses").map((r) => JSON.parse(r.body) as Record<string, unknown>);
     for (const b of bodies) {
       expect(String(b.instructions).startsWith("HUB PROMPT: 规则与上下文\n\n# 可用 Skills\n")).toBe(true);
@@ -206,7 +206,7 @@ describe("CodexDirectAdapter", () => {
     managedSkill(home, "tdd", { "SKILL.md": skillText("tdd", "Write the test first.", "# TDD\n") });
     server.responses(stream([fcItem("read_skill", { name: "tdd" }, "c1")]), stream([msgItem("done")]));
     const { result } = await run(adapter(), { ...task(), retainedSkills: ["tdd", "gone"] });
-    expect(result).toEqual({ ok: true, reply: "done" });
+    expect(result).toMatchObject({ ok: true, reply: "done" });
     const bodies = server.requests.filter((r) => r.url === "/v1/responses").map((r) => JSON.parse(r.body) as Record<string, unknown>);
     expect(String(bodies[0]!.instructions)).toContain(`# 已载入的 Skills\n`);
     expect(String(bodies[0]!.instructions)).toContain(`<skill_content name="tdd" revision="${COMMIT}">\n# TDD\n\n</skill_content>`);
@@ -224,14 +224,14 @@ describe("CodexDirectAdapter", () => {
     server.responses(stream([fcItem("read_skill", { name: "tdd" }, "c1")]), stream([msgItem("done")]));
     const started = Date.now();
     const slow = await run();
-    expect(slow.result).toEqual({ ok: true, reply: "done" });
+    expect(slow.result).toMatchObject({ ok: true, reply: "done" });
     expect(Date.now() - started).toBeGreaterThanOrEqual(250);
     expect(slow.events.filter((e) => e.type === "progress").map((e) => e.text)).not.toContain("Skill 激活记录未能及时上报");
 
     hubSkillReply = { delayMs: 0, status: 500 };
     server.responses(stream([fcItem("read_skill", { name: "tdd" }, "c1")]), stream([msgItem("done")]));
     const failed = await run();
-    expect(failed.result).toEqual({ ok: true, reply: "done" });
+    expect(failed.result).toMatchObject({ ok: true, reply: "done" });
     expect(failed.events).toContainEqual({ type: "progress", text: "1 条 Skill 激活记录上报失败" });
   });
 
@@ -273,7 +273,7 @@ describe("CodexDirectAdapter", () => {
     saveConfig(home, { model: "gpt-configured" });
     server.responses(stream([fcItem("read_skill", { name: "tdd" }, "c1")]), stream([msgItem("done")]));
     const { result } = await run();
-    expect(result).toEqual({ ok: true, reply: "done" });
+    expect(result).toMatchObject({ ok: true, reply: "done" });
     const bodies = server.requests.filter((r) => r.url === "/v1/responses").map((r) => JSON.parse(r.body) as Record<string, unknown>);
     expect(bodies[0]!.instructions).toBe("HUB PROMPT: 规则与上下文");
     const output = (bodies[1]!.input as { type: string; output?: string }[]).find((i) => i.type === "function_call_output")!.output!;
@@ -285,7 +285,7 @@ describe("CodexDirectAdapter", () => {
     saveConfig(home, { model: "gpt-configured", reasoningEffort: "high" });
     server.responses(stream([msgItem("ok")]));
     const { result } = await run();
-    expect(result).toEqual({ ok: true, reply: "ok" });
+    expect(result).toMatchObject({ ok: true, reply: "ok" });
     expect(server.requests.some((r) => r.url === "/v1/models")).toBe(false);
     const body = JSON.parse(server.requests[0]!.body) as { model: string; reasoning: { effort: string } };
     expect(body.model).toBe("gpt-configured");
@@ -296,10 +296,10 @@ describe("CodexDirectAdapter", () => {
     login();
     server.models(json(400, { error: { code: "bad", message: "nope" } }));
     server.responses(stream([msgItem("ok")]));
-    expect((await run()).result).toEqual({ ok: true, reply: "ok" });
+    expect((await run()).result).toMatchObject({ ok: true, reply: "ok" });
     server.models(models());
     server.responses(stream([msgItem("ok")]));
-    expect((await run()).result).toEqual({ ok: true, reply: "ok" });
+    expect((await run()).result).toMatchObject({ ok: true, reply: "ok" });
     const used = server.requests.filter((r) => r.url === "/v1/responses").map((r) => (JSON.parse(r.body) as { model: string }).model);
     expect(used).toEqual(["gpt-5.5", "gpt-5.5"]);
   });
@@ -309,14 +309,14 @@ describe("CodexDirectAdapter", () => {
     saveConfig(home, { model: "m" });
     const resetsAt = new Date(2026, 9, 24, 7, 5).getTime();
     server.responses(json(429, { error: { code: "usage_limit_reached", message: "limit", resets_at: Math.floor(resetsAt / 1000) } }));
-    expect((await run()).result).toEqual({ ok: false, error: "订阅额度已用完，预计 2026-10-24 07:05 恢复" });
+    expect((await run()).result).toMatchObject({ ok: false, error: "订阅额度已用完，预计 2026-10-24 07:05 恢复" });
   });
 
   test("quota exhausted without a reset time", async () => {
     login();
     saveConfig(home, { model: "m" });
     server.responses(json(429, { error: { code: "subscription_sharing_usage_limit_exceeded", message: "limit" } }));
-    expect((await run()).result).toEqual({ ok: false, error: "订阅额度已用完" });
+    expect((await run()).result).toMatchObject({ ok: false, error: "订阅额度已用完" });
   });
 
   test("distinct Chinese messages per quota code", async () => {
@@ -330,14 +330,14 @@ describe("CodexDirectAdapter", () => {
     ];
     for (const [code, text] of cases) {
       server.responses(json(code === "subscription_sharing_usage_unavailable" ? 503 : 429, { error: { code, message: "m" } }));
-      expect((await run()).result, code).toEqual({ ok: false, error: text });
+      expect((await run()).result, code).toMatchObject({ ok: false, error: text });
     }
   });
 
   test("an untrusted credential file is reported as unusable, not as not logged in", async () => {
     login();
     makePublic(join(home, "auth.json"));
-    expect((await run()).result).toEqual({ ok: false, error: "凭证文件不可用（权限/符号链接/损坏），请重新运行 nema auth login" });
+    expect((await run()).result).toMatchObject({ ok: false, error: "凭证文件不可用（权限/符号链接/损坏），请重新运行 nema auth login" });
   });
 
   test("an upsert succeeds, then the next stream fails with a quota code: Chinese quota message, exactly one hub write, no rollback", async () => {
@@ -348,7 +348,7 @@ describe("CodexDirectAdapter", () => {
       sse([{ type: "response.failed", response: { status: "failed", error: { code: "subscription_sharing_usage_limit_exceeded", message: "limit" } } }]),
     );
     const { result } = await run();
-    expect(result).toEqual({ ok: false, error: "订阅额度已用完" });
+    expect(result).toMatchObject({ ok: false, error: "订阅额度已用完" });
     expect(hubSeen.map((s) => `${s.method} ${s.url}`)).toEqual(["POST /room/entries"]);
   });
 
@@ -370,7 +370,7 @@ describe("CodexDirectAdapter", () => {
     });
     const t0 = Date.now();
     const { result } = await run(adapter({ timeoutMs: 300 }));
-    expect(result).toEqual({ ok: false, error: "Codex 直连运行超时" });
+    expect(result).toMatchObject({ ok: false, error: "Codex 直连运行超时" });
     expect(Date.now() - t0).toBeLessThan(5000);
   });
 
@@ -397,7 +397,7 @@ describe("CodexDirectAdapter", () => {
     login();
     saveConfig(home, { model: "m" });
     for (let i = 0; i < 6; i++) server.responses(stream([fcItem("exec_command", { cmd: "id" }, `c${i}`)]));
-    expect((await run()).result).toEqual({ ok: false, error: "Agent 多次请求未提供的工具，已中止" });
+    expect((await run()).result).toMatchObject({ ok: false, error: "Agent 多次请求未提供的工具，已中止" });
     expect(hubSeen).toEqual([]);
   });
 
@@ -409,7 +409,7 @@ describe("CodexDirectAdapter", () => {
     }
     const limited = { ...task(), limits: { maxModelCalls: 3, maxToolCalls: 100, timeoutMs: 60_000 } };
     const result = await adapter().run(limited, () => {});
-    expect(result).toEqual({ ok: false, error: "Agent 超出单次运行上限（模型调用 3 次）" });
+    expect(result).toMatchObject({ ok: false, error: "Agent 超出单次运行上限（模型调用 3 次）" });
     expect(server.requests.filter((r) => r.url === "/v1/responses").length).toBe(3);
   });
 
@@ -426,7 +426,7 @@ describe("CodexDirectAdapter", () => {
     server.responses(stream([fcItem("list_entries", {}, "c1")]), stream([msgItem("不应到达")]));
     const events: TaskEvent[] = [];
     const result = await adapter({ timeoutMs: 250 }).run(task(), (e) => events.push(e));
-    expect(result).toEqual({ ok: false, error: "Codex 直连运行超时" });
+    expect(result).toMatchObject({ ok: false, error: "Codex 直连运行超时" });
     const seen = events.length;
     const modelCalls = () => server.requests.filter((r) => r.url === "/v1/responses").length;
     const seenCalls = modelCalls();
@@ -455,7 +455,7 @@ describe("CodexDirectAdapter", () => {
       refresher,
     });
     const { result } = await run(a);
-    expect(result).toEqual({ ok: true, reply: "ok" });
+    expect(result).toMatchObject({ ok: true, reply: "ok" });
     const call = server.requests.find((r) => r.url === "/v1/responses");
     expect(call?.headers.authorization).toBe(`Bearer ${access}`);
     expect(call?.headers["chatgpt-account-id"]).toBe("acct-zzzz");
@@ -470,7 +470,7 @@ describe("CodexDirectAdapter", () => {
 
     const { result } = await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", refresher }));
 
-    expect(result).toEqual({ ok: true, reply: "ok" });
+    expect(result).toMatchObject({ ok: true, reply: "ok" });
     expect(server.requests).toHaveLength(1);
     const call = server.requests[0]!;
     expect(call.url.endsWith("/responses")).toBe(true);
@@ -486,7 +486,7 @@ describe("CodexDirectAdapter", () => {
     process.env.OPENAI_API_KEY = "from-env";
     try {
       saveConfig(home, { authMode: "byok", model: "gpt-z", byokBaseUrl: server.baseUrl });
-      expect((await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", refresher }))).result).toEqual({
+      expect((await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", refresher }))).result).toMatchObject({
         ok: false,
         error: "没有 BYOK API key。请把钥匙从标准输入交给 nema auth byok。",
       });
@@ -518,7 +518,7 @@ describe("CodexDirectAdapter", () => {
 
     const { result } = await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", refresher }));
 
-    expect(result).toEqual({ ok: false, error: "API key 被拒绝，请在终端运行 nema auth byok" });
+    expect(result).toMatchObject({ ok: false, error: "API key 被拒绝，请在终端运行 nema auth byok" });
     expect((result as { error: string }).error).not.toContain("sekret-key");
     expect(server.requests).toHaveLength(1);
     expect(readFileSync(authPath)).toEqual(before);
@@ -531,7 +531,7 @@ describe("CodexDirectAdapter", () => {
 
     const { result } = await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", refresher }));
 
-    expect(result).toEqual({ ok: false, error: "BYOK key 文件内容无效。请重新把钥匙从标准输入交给 nema auth byok。" });
+    expect(result).toMatchObject({ ok: false, error: "BYOK key 文件内容无效。请重新把钥匙从标准输入交给 nema auth byok。" });
     expect(server.requests).toEqual([]);
   });
 
@@ -539,7 +539,7 @@ describe("CodexDirectAdapter", () => {
     saveByokKey(home, "sekret-key");
     makePublic(byokKeyPath(home));
 
-    expect((await run()).result).toEqual({ ok: false, error: "未登录直连 Codex，请在终端运行 nema auth login" });
+    expect((await run()).result).toMatchObject({ ok: false, error: "未登录直连 Codex，请在终端运行 nema auth login" });
     expect(server.requests).toEqual([]);
   });
 });
@@ -563,7 +563,7 @@ describe("CodexDirectAdapter attachments", () => {
     server.responses(stream([fcItem("list_entries", {}, "c1")]), stream([msgItem("看过了")]));
     const refs = [serve("img", "image", "image/png", "shot.png", png), serve("doc", "pdf", "application/pdf", "spec.pdf", pdf), serve("log", "text", "text/plain", "boot.log", log)];
     const { result } = await run(adapter(), withAttachments(refs));
-    expect(result).toEqual({ ok: true, reply: "看过了" });
+    expect(result).toMatchObject({ ok: true, reply: "看过了" });
 
     expect(hubSeen.filter((h) => h.url?.startsWith("/room/attachments/")).map((h) => `${h.url} ${h.auth}`)).toEqual([
       "/room/attachments/img Bearer run-tok", "/room/attachments/doc Bearer run-tok", "/room/attachments/log Bearer run-tok",
@@ -600,7 +600,7 @@ describe("CodexDirectAdapter attachments", () => {
     server.responses(stream([msgItem("看过了")]));
     const refs = [serve("img", "image", "image/png", "shot.png", png), serve("doc", "pdf", "application/pdf", "spec.pdf", pdf)];
     const { result } = await run(adapter(), withAttachments(refs));
-    expect(result).toEqual({ ok: true, reply: "看过了" });
+    expect(result).toMatchObject({ ok: true, reply: "看过了" });
     const body = JSON.parse(server.requests.find((r) => r.url === "/v1/responses")!.body) as Record<string, unknown>;
     const parts = firstUser(body).content;
     expect(parts.find((p) => p.type === "input_image")).toEqual({ type: "input_image", image_url: `data:image/png;base64,${png.toString("base64")}` });
@@ -659,7 +659,7 @@ describe("CodexDirectAdapter attachments", () => {
     server.responses(stream([msgItem("should-not-run")]));
     const { result } = await run(adapter({ maxRequestBytes: 1000 }), withAttachments([serve("log", "text", "text/plain", "boot.log", Buffer.alloc(4000, 0x61))]));
     expect(result.ok).toBe(false);
-    expect(result).toEqual({ ok: false, error: REQUEST_TOO_LARGE_MESSAGE });
+    expect(result).toMatchObject({ ok: false, error: REQUEST_TOO_LARGE_MESSAGE });
     expect(server.requests.filter((r) => r.url === "/v1/responses")).toEqual([]);
   });
 
@@ -677,7 +677,7 @@ describe("CodexDirectAdapter attachments", () => {
     server.responses(stream([fcItem("list_entries", {}, "c1")]), stream([msgItem("should-not-run")]));
     const { result } = await run(adapter({ maxRequestBytes: first + 10 }), withAttachments(refs()));
     expect(result.ok).toBe(false);
-    expect(result).toEqual({ ok: false, error: REQUEST_TOO_LARGE_MESSAGE });
+    expect(result).toMatchObject({ ok: false, error: REQUEST_TOO_LARGE_MESSAGE });
     expect(server.requests.filter((r) => r.url === "/v1/responses")).toHaveLength(1);
   });
   test("a text attachment that is not UTF-8 fails with its name and no model request", async () => {
@@ -695,7 +695,196 @@ describe("CodexDirectAdapter attachments", () => {
     const ref = serve("img", "image", "image/png", "slow.png", png);
     hubFiles.set("img", { status: 200, type: "image/png", body: png, stall: true });
     const { result } = await run(adapter({ timeoutMs: 200 }), withAttachments([ref]));
-    expect(result).toEqual({ ok: false, error: "Codex 直连运行超时" });
+    expect(result).toMatchObject({ ok: false, error: "Codex 直连运行超时" });
     expect(server.requests.filter((r) => r.url === "/v1/responses")).toEqual([]);
+  });
+});
+
+describe("routing a task to the account the user chose", () => {
+  // Two BYOK accounts, each with its own key and its own endpoint. The acceptance criterion for S3 is that a
+  // task naming B really reaches B's endpoint with B's key.
+  const acctB = { id: "acct_bbbbbbbbbb", name: "Second", enabled: true, adapter: "codex-direct" as const, authMode: "byok" as const, baseUrl: "https://second.example.test/v1", model: "model-b", costTier: "standard" as const, order: 1, createdAt: "2026-10-31T00:00:00.000Z" };
+  const acctA = { id: "acct_aaaaaaaaaa", name: "First", enabled: true, adapter: "codex-direct" as const, authMode: "byok" as const, baseUrl: "https://first.example.test/v1", model: "model-a", costTier: "standard" as const, order: 0, createdAt: "2026-10-31T00:00:00.000Z" };
+
+  function writeAccounts(accounts: unknown[], bindings: Record<string, string> = {}) {
+    writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts, bindings }, null, 2) + "\n");
+    // config.json describes the default account (D-6): its adapter, auth mode, model and endpoint are a
+    // projection written when the default changes. A machine whose default account is a BYOK one says so
+    // there, and the read applies that projection, so the fixture states it too.
+    saveConfig(home, { authMode: "byok", model: "model-a", byokBaseUrl: "https://first.example.test/v1" });
+  }
+  function writeKey(id: string, value: string) {
+    const dir = join(home, "secrets", "accounts", id);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writePrivateFile(join(dir, "key"), value);
+  }
+  const byokProfile = () => ({ ...SIWC_PROFILE, baseUrl: server.baseUrl });
+
+  test("a task naming account B sends B's key to B's endpoint, not A's", async () => {
+    writeAccounts([acctA, acctB]);
+    writeKey(acctA.id, "key-of-a");
+    writeKey(acctB.id, "key-of-b");
+    server.responses(stream([msgItem("from b")]));
+    const a = new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: byokProfile(), refresher });
+    const { result } = await run(a, { ...task(), accountId: acctB.id });
+    expect(result).toMatchObject({ ok: true, reply: "from b" });
+    expect(server.requests).toHaveLength(1);
+    expect(server.requests[0]!.headers.authorization).toBe("Bearer key-of-b");
+    expect((JSON.parse(server.requests[0]!.body) as { model: string }).model).toBe("model-b");
+    // The route record names the account and model that actually answered.
+    expect((result as { route?: unknown }).route).toEqual({
+      accountId: acctB.id, accountName: "Second", model: "model-b", mode: "manual", reason: "user_message",
+    });
+  });
+
+  test("no choice anywhere sends the default account's key", async () => {
+    writeAccounts([acctA, acctB]);
+    writeKey(acctA.id, "key-of-a");
+    writeKey(acctB.id, "key-of-b");
+    server.responses(stream([msgItem("from a")]));
+    const { result } = await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: byokProfile(), refresher }));
+    expect((result as { route?: { accountId?: string; reason?: string } }).route).toMatchObject({ accountId: acctA.id, reason: "default" });
+    expect(server.requests[0]!.headers.authorization).toBe("Bearer key-of-a");
+  });
+
+  test("a workspace binding is used when the message names nothing", async () => {
+    writeAccounts([acctA, acctB], { "ws:w1": acctB.id });
+    writeKey(acctA.id, "key-of-a");
+    writeKey(acctB.id, "key-of-b");
+    server.responses(stream([msgItem("ok")]));
+    const { result } = await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: byokProfile(), refresher }));
+    expect((result as { route?: unknown }).route).toMatchObject({ accountId: acctB.id, reason: "user_workspace" });
+    expect(server.requests[0]!.headers.authorization).toBe("Bearer key-of-b");
+  });
+
+  test("a thread binding beats the workspace binding", async () => {
+    writeAccounts([acctA, acctB], { "ws:w1": acctA.id, "thread:m_t": acctB.id });
+    writeKey(acctA.id, "key-of-a");
+    writeKey(acctB.id, "key-of-b");
+    server.responses(stream([msgItem("ok")]));
+    const { result } = await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: byokProfile(), refresher }), { ...task(), threadId: "m_t" });
+    expect((result as { route?: unknown }).route).toMatchObject({ accountId: acctB.id, reason: "user_thread" });
+  });
+
+  test("a named account with no credential fails and sends nothing at all", async () => {
+    writeAccounts([acctA, acctB]);
+    writeKey(acctA.id, "key-of-a");
+    // B has no key file: the task must fail here, naming B, rather than reaching a provider with A's key.
+    const { result } = await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: byokProfile(), refresher }), { ...task(), accountId: acctB.id });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { error: string }).error).toContain("Second");
+    expect(server.requests).toEqual([]);
+  });
+
+  test("a named account id this machine does not have fails and sends nothing", async () => {
+    writeAccounts([acctA]);
+    writeKey(acctA.id, "key-of-a");
+    const { result } = await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: byokProfile(), refresher }), { ...task(), accountId: "acct_zzzzzzzzzz" });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { error: string }).error).toContain("不存在");
+    expect(server.requests).toEqual([]);
+  });
+
+  test("a request for automatic routing fails and sends nothing, instead of quietly using the default", async () => {
+    writeAccounts([acctA, acctB]);
+    writeKey(acctA.id, "key-of-a");
+    writeKey(acctB.id, "key-of-b");
+    const { result } = await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: byokProfile(), refresher }), { ...task(), routing: "auto" });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { error: string }).error).toContain("后续版本");
+    expect(server.requests).toEqual([]);
+  });
+
+  test("the route record carries no endpoint and no key", async () => {
+    writeAccounts([acctA, acctB]);
+    writeKey(acctA.id, "key-of-a");
+    server.responses(stream([msgItem("ok")]));
+    const { result } = await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: byokProfile(), refresher }), { ...task(), accountId: acctA.id });
+    const record = JSON.stringify((result as { route?: unknown }).route);
+    expect(record).not.toContain("key-of-a");
+    expect(record).not.toContain("example.test");
+    expect(record).not.toContain("baseUrl");
+  });
+
+  test("a failure after routing still reports which account it was", async () => {
+    writeAccounts([acctA, acctB]);
+    writeKey(acctA.id, "key-of-a");
+    writeKey(acctB.id, "key-of-b");
+    server.responses(json(429, { error: { code: "usage_limit_reached", message: "limit" } }));
+    const { result } = await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: byokProfile(), refresher }), { ...task(), accountId: acctB.id });
+    expect(result).toMatchObject({ ok: false, error: "订阅额度已用完" });
+    expect((result as { route?: unknown }).route).toMatchObject({ accountId: acctB.id, accountName: "Second" });
+  });
+
+  test("a login that cannot refresh fails before any request, and names no model it never sent", async () => {
+    // The account's login is present and parses, so routing accepts it; using it is what fails, when the
+    // expiring access token has to be refreshed and the refresh is refused. No model was ever chosen or
+    // sent, so the record must not claim one: an earlier version put the fallback model ("gpt-5.5") here,
+    // and the hub printed it in the failure line as the model that failed.
+    new AuthStore(home, refresher).save(auth({ access_token: jwt({ exp: Math.floor(Date.now() / 1000) - 60 }), refresh_token: "rt-0" }));
+    const { result } = await run();
+    expect(result).toMatchObject({ ok: false });
+    expect(server.requests).toEqual([]);
+    const route = (result as { route?: { model?: string; accountName?: string } }).route;
+    expect(route).toBeDefined();
+    expect(route!.model).not.toBe("gpt-5.5");
+    // This account names no model of its own, so the record says the run-time choice was never resolved.
+    expect(route!.model).toBe("auto");
+  });
+});
+
+describe("two accounts, two real endpoints (S3 acceptance)", () => {
+  test("choosing B in the workspace sends the request to B's baseUrl with B's key, and to nothing else", async () => {
+    const other = await startFakeResponsesServer();
+    try {
+      const a = { id: "acct_aaaaaaaaaa", name: "First", enabled: true, adapter: "codex-direct", authMode: "byok", baseUrl: server.baseUrl, model: "model-a", costTier: "standard", order: 0, createdAt: "2026-10-31T00:00:00.000Z" };
+      const b = { id: "acct_bbbbbbbbbb", name: "Second", enabled: true, adapter: "codex-direct", authMode: "byok", baseUrl: other.baseUrl, model: "model-b", costTier: "standard", order: 1, createdAt: "2026-10-31T00:00:00.000Z" };
+      writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [a, b], bindings: { "ws:w1": b.id } }, null, 2) + "\n");
+      saveConfig(home, { authMode: "byok", model: "model-a", byokBaseUrl: server.baseUrl });
+      for (const [id, key] of [[a.id, "key-of-a"], [b.id, "key-of-b"]] as const) {
+        const dir = join(home, "secrets", "accounts", id);
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        writePrivateFile(join(dir, "key"), key);
+      }
+      other.responses(stream([msgItem("answered by b")]));
+
+      // No `profile` override: each account's own baseUrl is what the daemon uses in production.
+      const adapter = new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", refresher });
+      const { result } = await run(adapter, task());
+
+      expect(result).toMatchObject({ ok: true, reply: "answered by b" });
+      expect(other.requests).toHaveLength(1);
+      expect(server.requests).toHaveLength(0);
+      expect(other.requests[0]!.headers.authorization).toBe("Bearer key-of-b");
+      expect((JSON.parse(other.requests[0]!.body) as { model: string }).model).toBe("model-b");
+      expect((result as { route?: unknown }).route).toMatchObject({ accountId: b.id, accountName: "Second", model: "model-b", reason: "user_workspace" });
+    } finally {
+      await other.close();
+    }
+  });
+});
+
+describe("a siwc account logs in with its own file", () => {
+  test("two siwc accounts with different logins: the named one's token is sent", async () => {
+    const first = { id: "acct_aaaaaaaaaa", name: "First", enabled: true, adapter: "codex-direct", authMode: "siwc", model: "model-a", costTier: "standard", order: 0, createdAt: "2026-10-31T00:00:00.000Z" };
+    const second = { id: "acct_bbbbbbbbbb", name: "Second", enabled: true, adapter: "codex-direct", authMode: "siwc", model: "model-b", costTier: "standard", order: 1, createdAt: "2026-10-31T00:00:00.000Z" };
+    writePrivateFile(join(home, "accounts.json"), JSON.stringify({ version: 1, accounts: [first, second], bindings: {} }, null, 2) + "\n");
+    saveConfig(home, { authMode: "siwc", model: "model-a" });
+    const tokenFirst = jwt({ exp: Math.floor(Date.now() / 1000) + 3600, sub: "first" });
+    const tokenSecond = jwt({ exp: Math.floor(Date.now() / 1000) + 3600, sub: "second" });
+    for (const [id, token] of [[first.id, tokenFirst], [second.id, tokenSecond]] as const) {
+      const dir = join(home, "secrets", "accounts", id);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const record = { version: 1, mode: "siwc", clientId: "c", tokens: { access_token: token, refresh_token: "rt" }, lastRefresh: "2026-10-31T00:00:00.000Z" };
+      writePrivateFile(join(dir, "auth.json"), JSON.stringify(record, null, 2) + "\n");
+    }
+    server.responses(stream([msgItem("ok")]));
+
+    const adapter = new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", profile: profile(), refresher });
+    await run(adapter, { ...task(), accountId: second.id });
+
+    expect(server.requests).toHaveLength(1);
+    expect(server.requests[0]!.headers.authorization).toBe(`Bearer ${tokenSecond}`);
+    expect(server.requests[0]!.headers.authorization).not.toBe(`Bearer ${tokenFirst}`);
   });
 });

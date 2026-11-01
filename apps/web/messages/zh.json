@@ -633,5 +633,17 @@
   "attach.deleteCancel": "取消",
   "attach.deleteFailed": "删除失败：{message}",
   "attach.deleted": "附件已删除",
-  "attach.missing": "附件文件已丢失"
+  "attach.missing": "附件文件已丢失",
+  "route.lineWithReason": "模型：{account} · {model}（{reason}）",
+  "route.details": "详情",
+  "route.reason.user_workspace": "你在本工作区选的",
+  "route.reason.user_thread": "你在本 thread 选的",
+  "route.reason.user_message": "你在这条消息里选的",
+  "route.reason.default": "默认账户",
+  "route.reason.auto_primary": "自动：首选",
+  "route.reason.auto_failover": "自动：前一个账户失败后改用",
+  "route.reason.auto_after_limit": "自动：前一个账户被限流后改用",
+  "route.attempts": "在这之前试过",
+  "route.usage": "{input} 输入 · {output} 输出 token",
+  "route.noUsage": "供应商没有报 token 数"
 }

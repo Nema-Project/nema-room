@@ -123,7 +123,9 @@ function connect(token = TOKEN, adapters: string[] = ["codex-direct"], hello: Ms
       },
     };
     ws.on("open", () => {
-      client.send({ type: "hello", token, version: "0", adapters, ...hello });
+      // `accounts` is what the real daemon advertises (DAEMON_FEATURES); without it the hub now refuses to
+      // send an account-bound task, which the tests that predate the gate do not mean to exercise.
+      client.send({ type: "hello", token, version: "0", adapters, features: ["accounts"], ...hello });
       resolve(client);
     });
   });
@@ -1200,5 +1202,202 @@ describe("attachments in task.assign", () => {
     expect((await c.next()).type).toBe("welcome");
     const a = await c.next("task.assign");
     expect("attachments" in a).toBe(false);
+  });
+});
+
+describe("account choice and route decision", () => {
+  test("a message that named an account sends that id down; one that named none sends no field", async () => {
+    const picked = await postUserMessage(db, wsA, "on the second account", { accountId: "acct_abc1234567" });
+    const plain = await postUserMessage(db, wsA, "on whatever the default is");
+    const c = await connect();
+    const a1 = await c.next("task.assign");
+    expect(a1).toMatchObject({ taskId: picked.task.id, accountId: "acct_abc1234567" });
+    // Nothing was said about automatic routing, so nothing is claimed about it.
+    expect(a1).not.toHaveProperty("routing");
+
+    c.send({ type: "task.finished", taskId: a1.taskId, ok: true, reply: "ok" });
+    await vi.waitFor(async () => expect((await getTask(db, picked.task.id))?.status).toBe("done"));
+
+    const a2 = await c.next("task.assign");
+    expect(a2.taskId).toBe(plain.task.id);
+    expect(a2).not.toHaveProperty("accountId");
+  });
+
+  test("an account-bound task is refused for a daemon that would drop the field, not run on its default", async () => {
+    // An older daemon parses task.assign with accountId removed, so it would answer from whichever account is
+    // its default — the one thing the user did not pick. The hub fails the task and says why instead.
+    const m = await postUserMessage(db, wsA, "on the second account", { accountId: "acct_abc1234567" });
+    const c = await connect(TOKEN, ["codex-direct"], { features: [] });
+    await c.next("welcome");
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
+    expect(await c.has("task.assign")).toBe(false);
+    const system = (await listMessages(db, wsA)).find((x) => x.role === "system")!;
+    expect(system.content).toContain("不支持按账户运行任务");
+  });
+
+  test("a task that names no account still runs on a daemon without the capability", async () => {
+    // Nothing was chosen, so nothing can be substituted: the old daemon's default is the intended answer.
+    const m = await postUserMessage(db, wsA, "whatever the default is");
+    const c = await connect(TOKEN, ["codex-direct"], { features: [] });
+    const a = await c.next("task.assign");
+    expect(a).toMatchObject({ taskId: m.task.id });
+    expect(a).not.toHaveProperty("accountId");
+  });
+
+  test("a task that allows automatic routing says so", async () => {
+    const m = await postUserMessage(db, wsA, "auto please");
+    await db.query("update tasks set routing = 'auto' where id = $1", [m.task.id]);
+    const c = await connect();
+    const a1 = await c.next("task.assign");
+    expect(a1).toMatchObject({ taskId: m.task.id, routing: "auto" });
+  });
+
+  test("a thread task carries its thread id; a main-chat task carries none", async () => {
+    const mainChat = await postUserMessage(db, wsB, "plain main chat");
+    const anchor = await postUserMessage(db, wsA, "anchor");
+    await ensureThread(db, anchor.message.id, "A thread", "user");
+    const inThread = await postUserMessage(db, wsA, "reply in the thread", { threadId: anchor.message.id });
+    const c = await connect();
+    const seen = new Map<string, Msg>();
+    // Dispatch is one task at a time and the anchor now sits in its own thread, so walk the queue until the
+    // thread reply arrives instead of assuming an order across workspaces.
+    for (let i = 0; i < 4 && !seen.has(inThread.task.id); i++) {
+      const a = await c.next("task.assign");
+      seen.set(a.taskId, a);
+      c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "ok" });
+    }
+    // A main-chat message belongs to no thread, so nothing is claimed about one.
+    expect(seen.get(mainChat.task.id)).toBeDefined();
+    expect(seen.get(mainChat.task.id)).not.toHaveProperty("threadId");
+    expect(seen.get(inThread.task.id)).toMatchObject({ threadId: anchor.message.id });
+  });
+
+  test("the route the daemon reports is stored on the agent message", async () => {
+    const m = await postUserMessage(db, wsA, "who answered this");
+    const c = await connect();
+    const a = await c.next("task.assign");
+    const route = { accountId: "acct_abc1234567", accountName: "Personal", model: "gpt-5.5", mode: "manual", reason: "user_workspace" };
+    c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "me", route });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    const agent = (await listMessages(db, wsA)).find((x): x is AgentMessage => x.role === "agent")!;
+    expect(agent.meta?.route).toEqual(route);
+  });
+
+  test("an old daemon that sends no route still saves its reply", async () => {
+    const m = await postUserMessage(db, wsA, "old daemon");
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "still here" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    const agent = (await listMessages(db, wsA)).find((x): x is AgentMessage => x.role === "agent")!;
+    expect(agent.content).toBe("still here");
+    expect(agent.meta?.route).toBeUndefined();
+  });
+
+  test("a failure names the account it happened on, and keeps the record", async () => {
+    // A failed task has no reply, so the route line has nowhere to go; the account and model join the
+    // failure line instead, and the same record is stored beside it for later.
+    const m = await postUserMessage(db, wsA, "will fail", { accountId: "acct_abc1234567" });
+    const c = await connect();
+    const a = await c.next("task.assign");
+    const route = { accountId: "acct_abc1234567", accountName: "Personal", model: "gpt-5.5", mode: "manual", reason: "user_message" };
+    c.send({ type: "task.finished", taskId: a.taskId, ok: false, error: "订阅额度已用完", route });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
+    const system = (await listMessages(db, wsA)).find((x) => x.role === "system")!;
+    expect(system.content).toContain("订阅额度已用完");
+    expect(system.content).toContain("Personal");
+    expect(system.content).toContain("gpt-5.5");
+    expect((system.meta as { route?: unknown } | null)?.route).toEqual(route);
+  });
+
+  test("a route this hub cannot read costs the route line, not the reply", async () => {
+    // A daemon from a later version, or a record the hub's schema does not know. Dropping the whole
+    // message would throw away an answer the user is waiting for; the reply is kept and the route is not.
+    const m = await postUserMessage(db, wsA, "later version");
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({
+      type: "task.finished",
+      taskId: a.taskId,
+      ok: true,
+      reply: "an answer worth keeping",
+      route: { accountId: "acct_abc1234567", accountName: "Personal", model: "m", mode: "manual", reason: "invented_later" },
+    });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    const reply = (await listMessages(db, wsA)).find((x) => x.role === "agent" && x.content === "an answer worth keeping")!;
+    expect(reply).toBeDefined();
+    expect((reply.meta as { route?: unknown } | null)?.route).toBeUndefined();
+  });
+
+  test("a failure whose route cannot be read still reports the failure", async () => {
+    const m = await postUserMessage(db, wsA, "later version, failing");
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({
+      type: "task.finished",
+      taskId: a.taskId,
+      ok: false,
+      error: "订阅额度已用完",
+      route: { accountId: "acct_abc1234567", baseUrl: "https://example.test" },
+    });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
+    const system = (await listMessages(db, wsA)).find((x) => x.role === "system")!;
+    // The error survives and no unreadable account line is invented for it.
+    expect(system.content).toBe("处理失败：订阅额度已用完");
+  });
+
+  test("a failure from a daemon that routed nothing reads as it always did", async () => {
+    const m = await postUserMessage(db, wsA, "plain failure");
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({ type: "task.finished", taskId: a.taskId, ok: false, error: "something broke" });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
+    const system = (await listMessages(db, wsA)).find((x) => x.role === "system")!;
+    expect(system.content).toBe("处理失败：something broke");
+    expect(system.meta).toBeNull();
+  });
+});
+
+describe("S3 acceptance: the account shown under the reply", () => {
+  test("the metadata a real daemon sends renders as one line: account, model, reason", async () => {
+    // The shape the daemon puts on `task.finished` after routing (see apps/cli/src/routing/index.ts):
+    // the hub stores it verbatim under `meta.route`, which is what the reply line reads.
+    const m = await postUserMessage(db, wsA, "who is this", { accountId: "acct_abc1234567" });
+    const c = await connect();
+    const a = await c.next("task.assign");
+    expect(a.accountId).toBe("acct_abc1234567");
+    c.send({
+      type: "task.finished",
+      taskId: a.taskId,
+      ok: true,
+      reply: "me",
+      route: {
+        accountId: "acct_abc1234567",
+        accountName: "OpenRouter 免费",
+        model: "deepseek/xxx",
+        mode: "manual",
+        reason: "user_message",
+        usage: { inputTokens: 120, outputTokens: 40 },
+      },
+    });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    const agent = (await listMessages(db, wsA)).find((x): x is AgentMessage => x.role === "agent")!;
+    expect(agent.meta?.route).toEqual({
+      accountId: "acct_abc1234567",
+      accountName: "OpenRouter 免费",
+      model: "deepseek/xxx",
+      mode: "manual",
+      reason: "user_message",
+      usage: { inputTokens: 120, outputTokens: 40 },
+    });
+    // The message is stored as JSON, so the record survives a restart unchanged.
+    const [row] = await db.query<{ route: unknown }>("select meta->'route' as route from messages where id = $1", [agent.id]);
+    expect(row!.route).toMatchObject({ accountId: "acct_abc1234567", model: "deepseek/xxx" });
+  });
+
+  test("an account id of the wrong shape is refused before it reaches a task row", async () => {
+    await expect(postUserMessage(db, wsA, "bad pick", { accountId: "../etc/passwd" })).rejects.toThrow();
+    const rows = await db.query<{ n: number }>("select count(*)::int as n from tasks where account_id is not null");
+    expect(rows[0]!.n).toBe(0);
   });
 });

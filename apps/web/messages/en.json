@@ -633,5 +633,17 @@
   "attach.deleteCancel": "Cancel",
   "attach.deleteFailed": "Could not delete: {message}",
   "attach.deleted": "Attachment deleted",
-  "attach.missing": "Attachment file is missing"
+  "attach.missing": "Attachment file is missing",
+  "route.lineWithReason": "Model: {account} · {model} ({reason})",
+  "route.details": "Details",
+  "route.reason.user_workspace": "chosen in this workspace",
+  "route.reason.user_thread": "chosen for this thread",
+  "route.reason.user_message": "chosen for this message",
+  "route.reason.default": "the default account",
+  "route.reason.auto_primary": "automatic, first choice",
+  "route.reason.auto_failover": "automatic, after another account failed",
+  "route.reason.auto_after_limit": "automatic, after another account hit its limit",
+  "route.attempts": "Tried before this one",
+  "route.usage": "{input} input · {output} output tokens",
+  "route.noUsage": "No token counts were reported"
 }

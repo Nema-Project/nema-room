@@ -39,8 +39,10 @@ describe("attachmentCapabilities", () => {
     expect(attachmentCapabilities(cfg({ authMode: "compat" })).adapter).toBe("codex-direct (compat)");
   });
 
-  test("the daemon advertises attachments now that both adapters deliver them", () => {
-    expect(DAEMON_FEATURES).toEqual(["attachments"]);
+  test("the daemon advertises the abilities the hub gates on", () => {
+    // `attachments` because both adapters deliver them; `accounts` because the hub refuses to send an
+    // account-bound task to a daemon that would drop the field (daemonSocket's dispatch gate).
+    expect(DAEMON_FEATURES).toEqual(["attachments", "accounts"]);
   });
 });
 

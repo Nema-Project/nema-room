@@ -93,7 +93,10 @@ const PostMessageBody = z
     attachmentIds: z.array(z.string().min(1)).max(ATTACHMENT_LIMITS.perTaskCount).optional(),
     /** `@` mentions; the hub checks that each one is this workspace's and that its text is in the body. */
     mentions: MessageMentions.optional(),
-    /** The account this message names. Carried to the task and to the daemon; never resolved here. */
+    /**
+     * The account this one message names. Carried to the task and to the daemon, which is the only side that
+     * knows whether it exists; never resolved here.
+     */
     accountId: AccountId.optional(),
   })
   .refine((b) => messageHasBody(b.content, b.attachmentIds ?? []), { message: "must not be empty", path: ["content"] });

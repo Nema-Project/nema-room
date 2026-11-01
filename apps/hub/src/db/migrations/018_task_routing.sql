@@ -1,0 +1,21 @@
+-- The routing side of a task (spec 2026-10-31 §5.4): the account it asked for, and whether it allowed
+-- automatic routing.
+--
+-- `account_id` is created here too, guarded with `if not exists`. The plan assumed S2 and S3 touch different
+-- files, and they do not: both need this column on the task row, and S2 (#175) creates it in
+-- `017_task_account.sql` as `text`, nullable, no default — the same shape used here. Migrations run in
+-- filename order, so a database that has either file applied runs 017 before 018 and this statement is a
+-- no-op; this file alone is still enough where 017 is not present.
+--
+-- The guard only protects this direction. It cannot protect S2's file: `add column if not exists` matches on
+-- the name alone and silently keeps whatever type is already there, so a type that disagreed with 017 would
+-- go unnoticed. The comment above is the check — the two are `text` here and in #175 — and the test in
+-- `test/migrations.test.ts` asserts the type that survives, so a drift in either file fails a test instead
+-- of a user's first launch.
+--
+-- Both columns are nullable and nothing reads them as a requirement: an old hub's rows, and a task nobody
+-- gave an account to, are the same "not chosen". The id is opaque here — the hub cannot know whether that
+-- account exists on the daemon's machine — so the only value check is the allowance's, which this version
+-- can only ever set to "auto".
+alter table tasks add column if not exists account_id text;
+alter table tasks add column routing text null check (routing in ('auto'));

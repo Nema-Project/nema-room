@@ -1,8 +1,15 @@
 import type { AttachmentCapabilities, AttachmentKind, AttachmentRef, AttachmentSupport } from "@nema/shared";
 import type { NemaConfig } from "../config.js";
 
-/** Abilities this daemon advertises in `hello.features`: both adapters deliver attachments (plan B4). */
-export const DAEMON_FEATURES: readonly string[] = ["attachments"];
+/**
+ * Abilities this daemon advertises in `hello.features`: both adapters deliver attachments (plan B4), and
+ * both route a task to a named account (spec 2026-10-31 §5.4).
+ *
+ * `accounts` exists so a hub can refuse to send an account-bound task to a daemon that would drop the field
+ * and run it on its default credentials instead — the same silent substitution `attachments` guards against.
+ * An older daemon simply does not list it.
+ */
+export const DAEMON_FEATURES: readonly string[] = ["attachments", "accounts"];
 
 type Table = Pick<AttachmentCapabilities, "image" | "pdf" | "text">;
 

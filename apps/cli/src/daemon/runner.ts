@@ -1,7 +1,13 @@
-import type { TaskAssign, TaskEvent } from "@nema/shared";
+import type { RouteDecision, TaskAssign, TaskEvent } from "@nema/shared";
 import { configErrorMessage, DEFAULT_CONFIG, type NemaConfig } from "../config.js";
 
-export type AgentResult = { ok: true; reply: string } | { ok: false; error: string };
+/**
+ * What an adapter reports back. `route` says which account and model ran the task, on success and on failure
+ * alike: a failed task has no reply to carry it, and "which account failed" is what the user asks next.
+ */
+export type AgentResult =
+  | { ok: true; reply: string; route?: RouteDecision }
+  | { ok: false; error: string; route?: RouteDecision };
 
 export interface AgentAdapter {
   name: string;

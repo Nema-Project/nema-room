@@ -2,7 +2,7 @@ import type http from "node:http";
 import { nanoid } from "nanoid";
 import { WebSocketServer, type WebSocket } from "ws";
 import { KnowledgeStore } from "@nema/knowledge";
-import { AttachmentRefSchema, WORKPACKAGE_LIMITS, parseDaemonToHub, parseManualSkill, type AgentMessageMeta, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
+import { AttachmentRefSchema, WORKPACKAGE_LIMITS, parseDaemonToHub, parseManualSkill, parseRouteDecision, type AgentMessageMeta, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
 import { createConnectionRpc, DaemonRpcError, type ConnectionRpc, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
@@ -32,6 +32,11 @@ type BuiltTask = {
   retainedSkills: string[];
   projectSkills: ProjectSkillRepo[];
   manualSkill: { skillId: string; arguments: string } | null;
+  /**
+   * The thread this task belongs to, when it is a thread task. The daemon looks up thread bindings by it;
+   * hub knows it already (it fetched `conversationThread`) and the daemon could only guess it from prompt text.
+   */
+  threadId: string | null;
 };
 
 export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daemonToken: string; hubUrl: string; ownedHelpers?: OwnedHelperScope; releaseVersion?: string };
@@ -56,6 +61,8 @@ type TaskReplyRouting = {
 };
 
 export const NO_ATTACHMENT_SUPPORT_MESSAGE = "当前 daemon 不支持附件，请升级 CLI";
+/** An older daemon would drop `accountId` from `task.assign` and run the task on its default account. */
+export const NO_ACCOUNT_SUPPORT_MESSAGE = "当前 daemon 不支持按账户运行任务，请升级 CLI 后再指定账户";
 
 export const OLD_CLI_MESSAGE = "nema CLI 版本过旧，请运行 npm run build -w apps/cli 并重启 nema daemon";
 
@@ -221,15 +228,18 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     const projectSkills = await trustedSkillRepos(db, task.workspaceId);
     // `/name …` at the start of the user's own message (its current text after an edit); the daemon resolves it.
     const manual = userMessage.role === "user" && task.kind !== "workpackage" ? parseManualSkill(userMessage.content) : null;
-    return { prompt, confidential: workspace.confidential, attachments, retainedSkills: retained, projectSkills, manualSkill: manual };
+    return { prompt, confidential: workspace.confidential, attachments, retainedSkills: retained, projectSkills, manualSkill: manual, threadId: conversationId };
   }
 
-  async function saveTaskFailure(taskId: string, error: string, expectedRunToken?: string): Promise<Message | null> {
+  async function saveTaskFailure(taskId: string, error: string, expectedRunToken?: string, route?: RouteDecision): Promise<Message | null> {
     const routing = await taskReplyRouting(taskId);
     if (!routing) return null;
     const runToken = expectedRunToken ?? routing.task.runToken;
     if (!runToken) return null;
-    return saveTaskOutcome(routing, runToken, { ok: false, error }, "system", "处理失败：" + error);
+    // A failed task has no reply to hang the route on, so the account is named in the failure line itself
+    // (spec §1.3) and the record is kept beside it, still without any credential.
+    const account = route ? `（账户「${route.accountName}」· ${route.model}）` : "";
+    return saveTaskOutcome(routing, runToken, { ok: false, error }, "system", "处理失败：" + error + account, route ? { route } as AgentMessageMeta : undefined);
   }
 
   async function dispatchOnce(): Promise<void> {
@@ -250,6 +260,10 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         built = await buildTaskPrompt(task);
         // An older daemon would drop the field and answer from the text alone; fail the task instead.
         if (built.attachments.length > 0 && !conn.features.has("attachments")) throw new Error(NO_ATTACHMENT_SUPPORT_MESSAGE);
+        // Same hazard as an attachment, same answer: a daemon that does not know `accountId` parses the
+        // message by dropping it, so the task would silently run on whichever account is the default on that
+        // machine — the one thing the user did not choose. Failing here names the reason instead.
+        if (task.accountId !== null && !conn.features.has("accounts")) throw new Error(NO_ACCOUNT_SUPPORT_MESSAGE);
         pluginTools = await enabledPluginTools(db, task.workspaceId);
       } catch (e) {
         const error = e instanceof Error ? e.message : String(e);
@@ -291,6 +305,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         ...(built.retainedSkills.length > 0 ? { retainedSkills: built.retainedSkills } : {}),
         ...(built.projectSkills.length > 0 ? { projectSkills: built.projectSkills } : {}),
         ...(built.manualSkill ? { manualSkill: built.manualSkill } : {}),
+        // The account choice and the routing allowance travel down as they were recorded; the daemon decides
+        // what they mean, because accounts exist only on its machine (spec 2026-10-31 §5.4).
+        ...(task.accountId ? { accountId: task.accountId } : {}),
+        ...(task.routing ? { routing: "auto" as const } : {}),
+        ...(built.threadId ? { threadId: built.threadId } : {}),
       });
       await emitTask(task.id);
       return;
@@ -307,6 +326,10 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   async function onFinished(conn: Conn, m: Extract<ReturnType<typeof parseDaemonToHub>, { type: "task.finished" }>) {
     const a = conn.assigned;
     if (!a || a.taskId !== m.taskId) return;
+    // The message schema accepts any `route` so that a route this hub cannot read cannot take the reply
+    // down with it (see `parseRouteDecision`). Parsed here, at the only place it is stored: an unreadable
+    // route is dropped as metadata and its account line is not shown, but the reply or error is still saved.
+    const route = parseRouteDecision(m.route);
     let msg: Message | null;
     if (m.ok) {
       const routing = await taskReplyRouting(m.taskId);
@@ -322,9 +345,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         const edited = await getMessage(db, routing.task.messageId);
         if (edited) meta.quote = { messageId: edited.id, role: edited.role, excerpt: messageExcerpt(edited.content) };
       }
+      // An older daemon sends no route; the message is stored exactly as before.
+      if (route) meta.route = route;
       msg = await saveTaskOutcome(routing, a.runToken, { ok: true }, "agent", m.reply, meta);
     } else {
-      msg = await saveTaskFailure(m.taskId, m.error, a.runToken);
+      msg = await saveTaskFailure(m.taskId, m.error, a.runToken, route);
     }
     if (!msg) {
       conn.assigned = null;
