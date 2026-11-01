@@ -156,7 +156,18 @@ async function insertMessage(
   return toMessage(rows[0]!);
 }
 
-export type PostUserMessageOptions = { quoteMessageId?: string; threadId?: string; attachmentIds?: string[]; mentions?: MessageMention[] };
+export type PostUserMessageOptions = {
+  quoteMessageId?: string;
+  threadId?: string;
+  attachmentIds?: string[];
+  mentions?: MessageMention[];
+  /**
+   * The account this message named (spec 2026-10-31 §5.4). It is stored on the task, not in the message's
+   * meta: the choice is the task's input, and the result (which account actually answered) is the daemon's
+   * to report later.
+   */
+  accountId?: string;
+};
 
 /**
  * A user message and its queued task, in one transaction. With attachment ids, the uploads are locked first: if they
@@ -198,7 +209,7 @@ export async function postUserMessage(
       if (delivered.length > ATTACHMENT_LIMITS.perTaskCount || delivered.reduce((sum, r) => sum + r.size, 0) > ATTACHMENT_LIMITS.perTaskBytes) {
         throw new MessageOpError(400, DELIVERY_LIMIT_MESSAGE);
       }
-      const task = await insertQueuedTask(t, workspaceId, message.id);
+      const task = await insertQueuedTask(t, workspaceId, message.id, "organize", options.accountId ?? null);
       return { message, task, replayed: false };
     });
   } catch (e) {
@@ -250,10 +261,12 @@ async function lockForSend(
     priorQuote === (options.quoteMessageId ?? null) &&
     prior.threadId === (options.threadId ?? null) &&
     sameMentions((prior.meta as UserMessageMeta | null)?.mentions, options.mentions);
+  // A retry that names a different account is a different request, not a replay of this one.
   if (!same) throw conflict;
   const first = await t.query<{ id: string }>("select id from tasks where message_id = $1 order by seq limit 1", [messageId]);
   const task = first[0] ? await getTask(t, first[0].id) : null;
   if (!task) throw conflict;
+  if (task.accountId !== (options.accountId ?? null)) throw conflict;
   return { message: prior, task };
 }
 

@@ -106,6 +106,12 @@ function send(res: ServerResponse, status: number, body: string, headers: Record
 }
 
 const SETTINGS_BODY_LIMIT = 16 * 1024;
+/**
+ * The one settings path that also takes DELETE: the accounts collection, where DELETE removes an account.
+ * Named exactly, so no other settings route gained a verb (`/_nema/accounts/secret` is a POST and refuses a
+ * DELETE with the same 404 it always gave an unknown method).
+ */
+const ACCOUNTS_PATH = /^\/_nema\/accounts$/;
 async function settingsJson(req: IncomingMessage): Promise<{ value: unknown } | { error: number }> {
   const length = Number(req.headers["content-length"] ?? 0);
   if (Number.isFinite(length) && length > SETTINGS_BODY_LIMIT) return { error: 413 };
@@ -233,7 +239,10 @@ export async function startGateway(options: GatewayOptions): Promise<RunningGate
 
     if (settingsPath) {
       if (url.search !== "") return send(res, 400, JSON.stringify({ error: "invalid_request" }), { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      if (!["GET", "POST", "PATCH"].includes(req.method ?? "")) return send(res, 404, "not found", { "cache-control": "no-store" });
+      // DELETE belongs to the accounts routes only (removing an account); every other settings path keeps
+      // the three verbs it had, so nothing else gained a way to remove data through this gateway.
+      const allowed = ACCOUNTS_PATH.test(url.pathname) ? ["GET", "POST", "PATCH", "DELETE"] : ["GET", "POST", "PATCH"];
+      if (!allowed.includes(req.method ?? "")) return send(res, 404, "not found", { "cache-control": "no-store" });
       let body: unknown;
       if (req.method !== "GET") {
         const contentType = (req.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();

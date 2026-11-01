@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ModelSettingsError, modelSettingsApi, validateByokBaseUrl, type AuthJob, type ModelSettingsDto, type ModelsCatalog, type SettingMode, type SettingsPatch } from "@/lib/modelSettings";
+import { AccountSettings } from "@/components/AccountSettings";
 import { useT } from "@/lib/i18n";
 
 const JOB_POLL_MS = 800;
@@ -445,6 +446,9 @@ export function ModelSettings({ onClose, embedded = false }: { onClose?: () => v
             {jobMessage && <p role="status">{t(jobMessage)}</p>}
           </section>
 
+          {/* Last on the page, under the model groups: it is a per-machine list, not a model choice. It
+              renders nothing when the daemon has no accounts route, which leaves this page as 0.2.0 had it. */}
+          <AccountSettings onChanged={() => void refreshSettings()} />
         </>}
       </div>
     </aside>

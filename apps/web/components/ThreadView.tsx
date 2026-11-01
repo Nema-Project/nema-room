@@ -2,12 +2,15 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MessageMention } from "@nema/shared";
+import { AccountPicker } from "@/components/AccountPicker";
 import { Composer } from "@/components/Composer";
 import { EntryDetail } from "@/components/EntryDetail";
 import { MessageItem } from "@/components/MessageItem";
 import { getMessage, getThreadMessages, markThreadRead, postThreadMessage } from "@/lib/hub";
 import { threadUrl, mainMessageUrl } from "@/lib/threads";
 import { useT } from "@/lib/i18n";
+import { useAccounts } from "@/lib/useAccounts";
+import { boundAccount } from "@/lib/accounts";
 import type { HubEvent, Message, Thread } from "@/lib/types";
 import { useHubEvents } from "@/lib/useHubEvents";
 
@@ -166,8 +169,11 @@ export function ThreadView({ workspaceId, threadId, active = true, floating = fa
     pendingScroll.current = null;
   }, [messages, anchor, entry, focusMessageId, jumpVersion, scrollWithinThread]);
 
-  async function send(content: string, attachmentIds: string[], mentions?: MessageMention[], quoted?: Message | null) {
-    const { message } = await postThreadMessage(workspaceId, threadId, content, quoted?.id, attachmentIds, mentions);
+  async function send(content: string, attachmentIds: string[], mentions?: MessageMention[], quoted?: Message | null, accountId?: string | null) {
+    // Same rule as the composer: a send that names no account calls the client exactly as 0.2.0 did.
+    const { message } = accountId
+      ? await postThreadMessage(workspaceId, threadId, content, quoted?.id, attachmentIds, mentions, accountId)
+      : await postThreadMessage(workspaceId, threadId, content, quoted?.id, attachmentIds, mentions);
     setMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message].sort((a, b) => a.seq - b.seq));
     if (quoted) setQuote(null);
   }
@@ -199,10 +205,24 @@ export function ThreadView({ workspaceId, threadId, active = true, floating = fa
 
   const openEntry = (entryId: string) => setEntry({ id: entryId, history: false });
   const onThread = async (content: string, attachmentIds: string[]) => { await send(content, attachmentIds); };
+  // The thread's stored choice; changing it writes a binding on the daemon's machine, not in the hub.
+  const accountsState = useAccounts();
+  const [threadAccount, setThreadAccount] = useState<string | null>(null);
+  const threadBinding = `thread:${threadId}`;
+  const storedThreadAccount = boundAccount(accountsState.bindings, threadBinding);
+  const effectiveThreadAccount = threadAccount ?? storedThreadAccount;
   return (
     <section ref={root} className={floating ? "thread-window" : "thread-page"} data-thread-id={threadId}>
       <header className="thread-header">
         <div><b>{thread?.title ?? "…"}</b><span>{t("thread.replies", { n: thread?.replyCount ?? messages.length })}</span></div>
+        <AccountPicker
+          scope="thread"
+          accounts={accountsState.accounts}
+          value={effectiveThreadAccount}
+          onChange={(next) => { setThreadAccount(next); accountsState.reload(); }}
+          threadId={threadId}
+          supported={accountsState.supported}
+        />
         {onClose && <button type="button" aria-label={t("common.close")} onClick={onClose}>×</button>}
       </header>
       {loadError && <p className="error thread-error" role="alert">{t("thread.loadFailed")} <button type="button" onClick={() => void load()}>{t("thread.retry")}</button></p>}
@@ -211,7 +231,7 @@ export function ThreadView({ workspaceId, threadId, active = true, floating = fa
         {anchor && <div className="thread-anchor"><span>{t("thread.anchor")}</span><MessageItem message={anchor} onOpenEntry={openEntry} onQuote={setQuote} onEdited={setAnchor} onJump={jump} onOpenHistory={(id) => setEntry({ id, history: true })} /></div>}
         {messages.map((message) => <MessageItem key={message.id} message={message} onOpenEntry={openEntry} onQuote={setQuote} onEdited={(next) => setMessages((current) => current.map((item) => item.id === next.id ? next : item))} onJump={jump} onOpenHistory={(id) => setEntry({ id, history: true })} />)}
       </div>
-      <Composer workspaceId={workspaceId} onSend={(content, attachmentIds, mentions) => send(content, attachmentIds, mentions, quote)} quote={quote} onClearQuote={() => setQuote(null)} onThread={onThread} threadMode disabled={loadError || !thread} />
+      <Composer workspaceId={workspaceId} threadId={threadId} onSend={(content, attachmentIds, mentions, accountId) => send(content, attachmentIds, mentions, quote, accountId)} quote={quote} onClearQuote={() => setQuote(null)} onThread={onThread} threadMode disabled={loadError || !thread} />
       {entry && <div className="thread-entry"><EntryDetail key={`${entry.id}:${entry.history}`} workspaceId={workspaceId} entryId={entry.id} onClose={() => setEntry(null)} onOpenEntry={openEntry} onJumpToMessage={(id) => void jump(id)} initialTab={entry.history ? "history" : "content"} /></div>}
     </section>
   );

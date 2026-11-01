@@ -55,6 +55,8 @@ export async function authLogin(o: {
   signal?: AbortSignal;
   requireTrustedAuthorizeUrl?: boolean;
   redactCallbackErrors?: boolean;
+  /** The account directory to log into; `nemaHome` when omitted (spec 2026-10-31 §3.1). */
+  baseDir?: string;
 }): Promise<number> {
   let authMode: string;
   try {
@@ -74,6 +76,7 @@ export async function authLogin(o: {
       signal: o.signal,
       requireTrustedAuthorizeUrl: o.requireTrustedAuthorizeUrl,
       redactCallbackErrors: o.redactCallbackErrors,
+      baseDir: o.baseDir,
       openBrowser: (url) => {
         o.out.log(`请在浏览器中完成「Sign in with ChatGPT」登录。若浏览器没有自动打开，请访问：\n${url}`);
         try {
