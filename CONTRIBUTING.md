@@ -95,10 +95,10 @@ tag 推送触发的 `npm-publish`、`image-publish`、`desktop-release` 三条�
 
 用仓库里的 pull request 模板说明原因和验证方式。一个 pull request 只做一件事。CI 通过后再请求审阅。
 
-每次 push 都会触发一次 CI；除纯文档改动外都会重跑应用测试。所以每次 push 都要值得：
+向已开 pull request 的分支每 push 一次，就会触发一次 CI；除纯文档改动外都会重跑应用测试。所以每次 push 都要值得：
 
 - push 前先跑对应的[本地检查](#提交前)，自己看一遍 diff，让评审机器人少找到问题。
-- 本机装好并登录 [CodeRabbit CLI](https://docs.coderabbit.ai/cli/overview) 时，push 前在后台运行 `cr review --agent --base main`，等它跑完；中途停掉会丢弃这次评审。`cr usage` 显示本小时剩余评审少于两次时跳过，免得 PR 评审被限流；不要传 `--use-credits`。
+- 本机装好并登录 [CodeRabbit CLI](https://docs.coderabbit.ai/cli/overview) 时，push 前在后台运行 `cr review --agent --base main`，等它跑完；中途停掉会丢弃这次评审。`cr usage` 显示滚动一小时窗口内剩余评审少于两次时跳过，免得 PR 评审被限流；不要传 `--use-credits`。
 - CLI 的发现和 PR 上的每条评审意见都逐条判断：真缺陷就修；建议不对、超出范围或与 [AGENTS.md](AGENTS.md) 冲突时，回复理由而不改代码，回复不需要 push。修完或回复后 resolve 该 thread（GraphQL `resolveReviewThread`）：`main` 的 ruleset 在有未 resolve 的评审 thread 时阻止所有合并，包括 auto-merge。
 - 接受的修改合成一次 push。同一 ref 上进行中的 CI 会被取消，被取消的必需 job 让 `CI gate` 失败是预期行为。不要为了清掉旧 SHA 上的红叉再 push，以最新一次 push 为准。
 - 不要空等 CI，继续做本地检查，或在另一个 worktree 里做其它已授权的工作。

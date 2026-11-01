@@ -43,7 +43,7 @@ Desktop uses a local PGlite database and bundled Node, plus system Git. Web / Co
 - Use the current task's authorization for implementation. Publishing releases, merging, changing repository settings, or modifying real user data requires authorization for that action; routine read-only checks do not.
 - If work is blocked, report the exact blocker, completed changes, and remaining verification. Leave a reproducible handoff.
 
-Follow the PR loop in [CONTRIBUTING](CONTRIBUTING.md#pull-request): every push costs a CI run, so check locally (including the CodeRabbit CLI when available) before pushing, and batch review fixes into one push. Judge each review comment on its merits, fix it or reply with the reason, then resolve its thread; unresolved threads block every merge. Do not idle waiting for CI. Merge only with authorization and after `main`'s latest `CI` run passed, then prefer `gh pr merge --merge --auto`. Whoever sees `main` turn red reverts or fixes that first, before any other merge.
+Follow the PR loop in [CONTRIBUTING](CONTRIBUTING.md#pull-request): every push to a PR costs a CI run, so check locally (including the CodeRabbit CLI when available) before pushing, and batch review fixes into one push. Judge each review comment on its merits, fix it or reply with the reason, then resolve its thread; unresolved threads block every merge. Do not idle waiting for CI. Merge only with authorization and after `main`'s latest `CI` run passed, then prefer `gh pr merge --merge --auto`. Whoever sees `main` turn red reverts or fixes that first, before any other merge.
 
 ## Implementation conventions
 
