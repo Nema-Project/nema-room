@@ -1,9 +1,9 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { handleAccounts, resetAccountsJobs, type AccountView, type AccountsDeps } from "../src/accountsApi.js";
-import { IMPLICIT_ACCOUNT_ID, accountsPath, readAccounts, writeAccounts } from "@nema/cli/localSettings";
+import { IMPLICIT_ACCOUNT_ID, accountsPath, readAccounts, removeAccountSecrets, writeAccounts } from "@nema/cli/localSettings";
 import { loadConfig, saveConfig } from "@nema/cli/config";
 import type { Account } from "@nema/cli/localSettings";
 
@@ -413,5 +413,73 @@ describe("changing an account's kind", () => {
     expect(call(home, "PATCH", "/_nema/accounts", { id: account().id, adapter: "codex-direct", authMode: "byok" })?.status).toBe(400);
     const ok = call(home, "PATCH", "/_nema/accounts", { id: account().id, adapter: "codex-direct", authMode: "byok", baseUrl: "https://x.example.com/v1" });
     expect(ok?.status).toBe(200);
+  });
+});
+
+describe("a failed credential cleanup is retryable", () => {
+  test("keeps the record and the credential when the directory cannot be removed, so a retry can finish", () => {
+    const home = tempHome();
+    writeAccounts(home, {
+      version: 1,
+      accounts: [account(), account({ id: "acct_bbbbbbbbbb", name: "Two", order: 1 })],
+      bindings: {},
+    });
+    // A real credential directory, made the same way the route makes one: the test must not be able to pass
+    // because there was nothing to delete.
+    call(home, "POST", "/_nema/accounts/secret", { id: account().id, kind: "byok", value: "sk-retry-me-0123456789" });
+    const dir = path.join(home, "secrets", "accounts", account().id);
+    expect(statSync(dir).isDirectory()).toBe(true);
+
+    // First attempt: the removal fails the way a filesystem can (EACCES, EBUSY, I/O), and only once, so the
+    // retry below runs the real implementation.
+    let failures = 1;
+    const failing = deps(home, {
+      removeAccountSecrets: (h, id) => {
+        if (failures > 0) {
+          failures -= 1;
+          throw Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" });
+        }
+        removeAccountSecrets(h, id);
+      },
+    });
+    const first = handleAccounts("DELETE", "/_nema/accounts", { id: account().id }, failing);
+    expect(first?.status).toBe(500);
+    expect(first!.body).toEqual({ error: "internal_error" });
+
+    // Nothing was half-done: the record is still there, and so is the credential.
+    const afterFailure = readAccounts(home);
+    expect(afterFailure.status === "ok" && afterFailure.file.accounts.map((a) => a.id)).toEqual([account().id, "acct_bbbbbbbbbb"]);
+    expect(statSync(dir).isDirectory()).toBe(true);
+
+    // Retry with cleanup that works: it must be able to finish now, not answer "not found".
+    const second = call(home, "DELETE", "/_nema/accounts", { id: account().id });
+    expect(second?.status).toBe(200);
+    expect(second!.body).toEqual({ deleted: account().id });
+    const afterRetry = readAccounts(home);
+    expect(afterRetry.status === "ok" && afterRetry.file.accounts.map((a) => a.id)).toEqual(["acct_bbbbbbbbbb"]);
+    // No orphan directory: the retry removed the credential, not just the record.
+    expect(() => statSync(dir)).toThrow();
+  });
+
+  test("refuses to delete through a symlinked account directory, and leaves the record alone", () => {
+    const home = tempHome();
+    writeAccounts(home, {
+      version: 1,
+      accounts: [account(), account({ id: "acct_bbbbbbbbbb", name: "Two", order: 1 })],
+      bindings: {},
+    });
+    // A directory planted as a link is exactly what `accountDir` refuses; the delete must stop before
+    // `rmSync` could follow it, and must not leave the record removed with the directory still in place.
+    const target = path.join(home, "elsewhere");
+    mkdirSync(target, { recursive: true });
+    mkdirSync(path.join(home, "secrets", "accounts"), { recursive: true, mode: 0o700 });
+    symlinkSync(target, path.join(home, "secrets", "accounts", account().id), "dir");
+
+    const reply = call(home, "DELETE", "/_nema/accounts", { id: account().id });
+    expect(reply?.status).toBe(500);
+    const after = readAccounts(home);
+    expect(after.status === "ok" && after.file.accounts.map((a) => a.id)).toEqual([account().id, "acct_bbbbbbbbbb"]);
+    // The link target is untouched, which is the whole point of the check.
+    expect(statSync(target).isDirectory()).toBe(true);
   });
 });

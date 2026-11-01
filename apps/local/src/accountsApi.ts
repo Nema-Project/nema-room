@@ -59,6 +59,8 @@ export type AccountsDeps = {
   readAccounts?: typeof readAccounts;
   /** Injectable for tests: the credential state. */
   credentialState?: typeof accountCredentialState;
+  /** Injectable for tests: removing an account's credential directory. */
+  removeAccountSecrets?: typeof removeAccountSecrets;
   /**
    * Aborted when the owning service stops accepting work. Combined with the login's own timeout, so a
    * browser login the user abandoned cannot hold `close()` open for its full five minutes.
@@ -441,15 +443,37 @@ function remove(body: unknown, deps: AccountsDeps): AccountsReply {
   const enabledLeft = state.accounts.filter((a) => a.enabled && a.id !== id).length;
   if (target.enabled && enabledLeft === 0) return INVALID;
 
+  // The credential goes first, inside the same lock as the record, and the record is written only after the
+  // directory is actually gone.
+  //
+  // That order is what makes a failed cleanup retryable. Removing the record first and the directory second
+  // meant a failure (a busy file, a read-only parent, an I/O error) answered 500 while the record was
+  // already gone: the next DELETE found nothing to delete, answered 404, and the credential stayed on disk
+  // for good. Here a failure changes nothing at all — the account keeps its record and its credential, and
+  // the same DELETE simply works when the filesystem stops refusing.
+  //
+  // The other order is also the one that cannot produce the state the old comment ruled out. A crash between
+  // the two steps leaves a record whose credential directory is missing, which is reported honestly as
+  // `missing` and can be filled in again; it never leaves a row pointing at somebody else's credential,
+  // because the id is never reused (see `create`) and `accountDir` still refuses the reserved id and any
+  // symlinked component.
+  let failure: unknown = null;
   const next = updateAccounts(deps.home, (current) => {
     if (current === null) return null;
     if (!current.accounts.some((a) => a.id === id)) return null;
+    try {
+      (deps.removeAccountSecrets ?? removeAccountSecrets)(deps.home, id);
+    } catch (e) {
+      // Out of the lock and out of the file: the record stays exactly as it was.
+      failure = e;
+      return null;
+    }
     return { version: 1, accounts: current.accounts.filter((a) => a.id !== id), bindings: current.bindings };
   });
+  // A cleanup that failed after the removal must not look like "this account is not here": that is the
+  // answer that made retrying pointless.
+  if (failure !== null) return INTERNAL;
   if (next === null) return NOT_FOUND;
-  // The record is gone before the credential is: a crash in between leaves an unreferenced directory,
-  // never a row whose credential somebody else's is now sitting in. `accountDir` refuses the reserved id.
-  removeAccountSecrets(deps.home, id);
   return { status: 200, body: { deleted: id } };
 }
 
