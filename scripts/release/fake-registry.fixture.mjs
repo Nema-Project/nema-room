@@ -99,6 +99,11 @@ export function fakeFetch(w) {
     const failing = w.fail.find(([pattern]) => pattern.test(url));
     if (failing) return response(failing[1], failing[2] ?? { error: 'fail' });
     let match;
+    if (url === 'https://registry.npmjs.org/@nema-project/nema') {
+      // The packument's `time` map: promote reads it to know whether a provenance 404 can still be lag.
+      const time = w.publishedAt === undefined ? {} : { [version]: new Date(w.publishedAt).toISOString() };
+      return response(200, { name: '@nema-project/nema', 'dist-tags': w.distTags, versions: {}, time });
+    }
     if ((match = /^https:\/\/registry\.npmjs\.org\/-\/package\/@nema-project\/nema\/dist-tags$/.exec(url))) return response(200, w.distTags);
     if ((match = /^https:\/\/registry\.npmjs\.org\/-\/npm\/v1\/attestations\/%40nema-project%2Fnema@(.+)$/.exec(url))) {
       const p = w.provenance[match[1]];
@@ -106,7 +111,13 @@ export function fakeFetch(w) {
     }
     if ((match = /^https:\/\/registry\.npmjs\.org\/@nema-project\/nema\/(.+)$/.exec(url))) {
       const v = w.npm[match[1]];
-      return v ? response(200, { version: match[1], dist: { integrity: v.integrity } }) : response(404, { error: 'Not found' });
+      if (!v) return response(404, { error: 'Not found' });
+      // The real version document carries dist.attestations when the publish was attested; #174's reader
+      // reads it to tell "index still catching up" from "never attested".
+      const attestations = w.provenance[match[1]]
+        ? { url: `https://registry.npmjs.org/-/npm/v1/attestations/%40nema-project%2Fnema@${match[1]}`, provenance: { predicateType: 'https://slsa.dev/provenance/v1' } }
+        : null;
+      return response(200, { version: match[1], dist: { integrity: v.integrity, ...(attestations ? { attestations } : {}) } });
     }
     if ((match = /^https:\/\/ghcr\.io\/token\?service=ghcr\.io&scope=repository:(.+):pull$/.exec(url))) {
       if (w.denied.includes(match[1]) || !w.images[match[1]]) return response(403, { errors: [{ code: 'DENIED' }] });

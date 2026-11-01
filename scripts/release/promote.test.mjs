@@ -11,17 +11,32 @@ const ABSENT = { state: 'absent', version: null };
 const vd = (version, target) => ({ state: 'version', version, digest: DIGESTS[target] });
 
 /** A small world: registry state plus an ordered log of every read that matters and every write. */
-function world({ version = '0.1.7', npm = 'absent', npmLatest = v('0.1.6'), npmNext = ABSENT, hub = v('0.1.6'), web = v('0.1.6'), github = v('0.1.6'), draft = true, fail = {}, landsAnyway = {}, tagMovesAt = null, digests = DIGESTS, maintenance = false, releasePrerelease, latestAfterPublish, npmReads, tagReads } = {}) {
+function world({
+  version = '0.1.7', npm = 'absent', npmLatest = v('0.1.6'), npmNext = ABSENT, hub = v('0.1.6'), web = v('0.1.6'),
+  github = v('0.1.6'), draft = true, fail = {}, landsAnyway = {}, tagMovesAt = null, digests = DIGESTS, maintenance = false,
+  releasePrerelease, latestAfterPublish, npmReads, tagReads,
+  // Provenance (#174). `provenance` is what the attestations endpoint answers, read by read like npmReads;
+  // `declared` is what the version document says (true/false/null for unreadable); `publishedAgoMs` is how
+  // long before "now" this version was published (null for an unreadable publish time).
+  provenance = 'ok', provenanceReads, declared = true, publishedAgoMs = 0,
+} = {}) {
   const state = {
     npm, npmLatest, npmNext, hub, web, github, draft, releasePrerelease, writes: [], log: [], tagChecks: 0,
     // What the registry answers after the publish run succeeded, read by read; the last entry repeats.
     // `null` means "the publish lands at once", which is what a fake registry without lag does.
     npmQueue: npmReads ? [...npmReads] : null,
     tagQueue: tagReads ? [...tagReads] : null,
+    provenanceQueue: provenanceReads ? [...provenanceReads] : [provenance],
+    declared,
+    publishedAgoMs,
     published: false,
     clock: 0,
     sleeps: [],
     npmReads: 0,
+    provenanceReads: 0,
+    declarationReads: 0,
+    publishedAtReads: 0,
+    verifyOptions: [],
     // Reads made after the publish run succeeded: the ones the visibility wait makes.
     npmReadsAfterPublish: 0,
     tagPointerReads: 0,
@@ -37,8 +52,9 @@ function world({ version = '0.1.7', npm = 'absent', npmLatest = v('0.1.6'), npmN
       return ['image-publish push run 11: success, Pull published images passed', 'desktop-release push run 12: success'];
     },
     async expectedIntegrity() { boom('expectedIntegrity'); return INTEGRITY; },
-    async verify({ stage, expectedIntegrity }) {
+    async verify({ stage, expectedIntegrity, provenanceIndex }) {
       state.log.push(`verify ${stage}`);
+      state.verifyOptions.push({ stage, provenanceIndex });
       boom(`verify-${stage}`);
       if (stage === 'candidate') assert.equal(expectedIntegrity, INTEGRITY);
       const ok = stage === 'candidate' ? state.npm !== 'different' : state.npm === 'same';
@@ -65,6 +81,29 @@ function world({ version = '0.1.7', npm = 'absent', npmLatest = v('0.1.6'), npmN
         if (next.next !== undefined) state.npmNext = next.next;
       }
       return { latest: state.npmLatest, next: state.npmNext };
+    },
+    async npmProvenance() {
+      boom('npmProvenance');
+      state.provenanceReads += 1;
+      const next = state.provenanceQueue.length > 1 ? state.provenanceQueue.shift() : state.provenanceQueue[0];
+      if (next === 'ok') return { state: 'ok', detail: '', evidence: { workflowPath: '.github/workflows/npm-publish.yml', workflowRef: `refs/tags/v${version}`, commit: COMMIT, event: 'push', signatureVerified: false } };
+      if (next === 'pending') return { state: 'pending', detail: `npm has not indexed provenance for @nema-project/nema@${version} yet`, evidence: { reason: 'not-indexed' } };
+      if (next === 'denied') return { state: 'unknown', detail: 'https://registry.npmjs.org/-/npm/v1/attestations: HTTP 403', definitive: true, evidence: { definitive: true, reason: 'denied' } };
+      if (next === 'transient') return { state: 'unknown', detail: 'https://registry.npmjs.org/-/npm/v1/attestations: HTTP 503' };
+      if (next === 'absent') return { state: 'missing', detail: `npm provenance for ${version} has no SLSA v1 attestation` };
+      throw new Error(`unknown provenance answer ${JSON.stringify(next)}`);
+    },
+    async npmProvenanceDeclared() {
+      boom('npmProvenanceDeclared');
+      state.declarationReads += 1;
+      if (state.declared === null) return { state: 'unknown', detail: 'https://registry.npmjs.org/@nema-project/nema/0.1.7: HTTP 503' };
+      return { state: 'ok', evidence: { declared: state.declared, predicateType: state.declared ? 'https://slsa.dev/provenance/v1' : null } };
+    },
+    async npmPublishedAt() {
+      boom('npmPublishedAt');
+      state.publishedAtReads += 1;
+      if (state.publishedAgoMs === null) return { state: 'unknown', detail: 'https://registry.npmjs.org/@nema-project/nema: HTTP 503' };
+      return { state: 'ok', evidence: { version, publishedAt: state.clock - state.publishedAgoMs } };
     },
     now: () => state.clock,
     async sleep(ms) {
@@ -603,4 +642,152 @@ test('a dist-tag whose value is not a version stops at once, like a denial', asy
   assert.deepEqual(state.sleeps, [], 'a value that is not a version is not a lag');
   assert.deepEqual(state.writes, ['npm dispatch']);
   assert.match(text, /the registry gave a definitive answer, so this is not an index delay/);
+});
+
+// ---------- npm provenance (#174) ----------
+// v0.2.1's first promote stopped with `missing: npm has no provenance` although the attestation
+// existed: the package answered 200 for over a minute before the attestations endpoint did, and the
+// final verify that read the 404 ran after npm latest had already moved. These pin the three things
+// that must now be true: a fresh publish waits for provenance inside the same budget; a provenance
+// that could not be served is reported apart from one that does not exist; and neither is waited on
+// when it cannot change.
+
+test('#174 acceptance: the package is visible but attestations still 404, so the wait continues to success', async () => {
+  const { result, state, text } = await run({
+    npmReads: ['same'],
+    tagReads: [{ latest: v('0.1.7') }],
+    provenanceReads: ['pending', 'pending', 'ok'],
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(state.writes, ['npm dispatch', 'ghcr hub latest', 'ghcr web latest', 'release {"tag":"v0.1.7","prerelease":false,"makeLatest":true}']);
+  assert.equal(state.provenanceReads, 3, 'the attestation was re-read, not given up on');
+  assert.deepEqual(state.sleeps, [5_000, 5_000], 'two polls between the three reads');
+  assert.match(text, /npm 0\.1\.7: published by run 42; npm latest -> 0\.1\.7 after \d+ms; provenance served/);
+  assert.doesNotMatch(text, /provenance absent|no provenance/);
+});
+
+test('#174 acceptance: the budget runs out with attestations still 404, and the outcome says "not indexed", not "absent"', async () => {
+  const { result, state, text } = await run({ npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }], provenanceReads: ['pending'] });
+  assert.equal(result.ok, true, 'a waitable provenance item does not stop the promotion');
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000, 'exactly the budget, shared with the other reads');
+  assert.deepEqual(state.writes, ['npm dispatch', 'ghcr hub latest', 'ghcr web latest', 'release {"tag":"v0.1.7","prerelease":false,"makeLatest":true}']);
+  assert.match(text, /the registry declares provenance for 0\.1\.7 but has not served it after \d+ms; the attestation exists and its index has not caught up/);
+  assert.match(text, /npm provenance: still a waitable item, not a gap/);
+  // The wording that must never appear: the registry did not say there is none.
+  assert.doesNotMatch(text, /definite gap/);
+  assert.doesNotMatch(text, /no provenance/);
+  assert.doesNotMatch(text, /not written/);
+});
+
+test('#174 acceptance: a version published long ago whose document declares no attestation is missing at once, without the budget', async () => {
+  // Nothing shows an attestation exists: an old publish cannot still be indexing, so waiting is wasted
+  // and the answer is the absence itself, not an uncertainty. The run stops, but it must say what it had
+  // already done: npm latest moved, so the record names that instead of pretending nothing was published.
+  const { result, state, text } = await run({
+    npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }],
+    provenanceReads: ['pending'], declared: false, publishedAgoMs: 3_600_000,
+  });
+  assert.equal(result.ok, false, 'a definite gap stops the run');
+  assert.deepEqual(state.sleeps, [], 'no poll: this is not a lag');
+  assert.equal(state.provenanceReads, 1);
+  assert.equal(state.declarationReads, 1);
+  assert.equal(state.publishedAtReads, 1);
+  assert.equal(state.npmReadsAfterPublish, 1, 'the version was read once; the absence is what stopped it');
+  assert.deepEqual(state.writes, ['npm dispatch'], 'nothing later moves: the gap is found where the package becomes visible');
+  assert.match(text, /- flipped by this run: npm latest/, 'npm latest did move, and the record says so');
+  assert.match(text, /- not flipped: ghcr hub latest, ghcr web latest, github latest/);
+  assert.match(text, /stopped:\*\* npm provenance is a definite gap: npm has no provenance for 0\.1\.7: it was published 3600000ms ago, longer than any index delay, and its version document declares none/);
+  assert.match(text, /- npm provenance: a definite gap \(provenance-absent\)/);
+  assert.doesNotMatch(text, /not written/, 'the package was published: nothing may claim it was not');
+});
+
+test('#174 acceptance: a provenance 404 the signals cannot rule out is waited on, then reported as unconfirmed (not "not indexed")', async () => {
+  // Neither the document nor the publish time could be read, so nothing proves an attestation exists;
+  // every read is still inside the index window, so it may land. The outcome must say "unconfirmed".
+  const { result, state, text } = await run({
+    npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }],
+    provenanceReads: ['pending'], declared: null, publishedAgoMs: null,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000);
+  assert.match(text, /the registry still answers 404 for provenance of 0\.1\.7 after \d+ms and declares none; whether an attestation exists is unconfirmed/);
+  assert.doesNotMatch(text, /has not served it/, '"unconfirmed" and "not indexed yet" are different answers');
+});
+
+test('#174 acceptance: a 401/403 on provenance stops at once and never spends the budget', async () => {
+  const { result, state, text } = await run({ npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }], provenanceReads: ['denied'] });
+  assert.equal(result.ok, false);
+  assert.deepEqual(state.sleeps, [], 'a denial is not an index delay');
+  assert.equal(state.provenanceReads, 1);
+  assert.deepEqual(state.writes, ['npm dispatch'], 'nothing after npm moved');
+  assert.match(text, /npm provenance cannot be read .*HTTP 403.*; the registry gave a definitive answer, so this is not a delay/);
+  assert.match(text, /npm provenance: a definite gap \(provenance-denied\)/);
+  assert.match(text, /partial window/);
+});
+
+test('#174 acceptance: a 200 without a SLSA v1 attestation is a definite absence, and stops at once', async () => {
+  const { result, state, text } = await run({ npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }], provenanceReads: ['absent'] });
+  assert.equal(result.ok, false);
+  assert.deepEqual(state.sleeps, []);
+  assert.deepEqual(state.writes, ['npm dispatch']);
+  assert.match(text, /has no SLSA v1 attestation; the registry answered, so this is not a delay/);
+  assert.match(text, /npm provenance: a definite gap \(provenance-absent\)/);
+  assert.doesNotMatch(text, /not indexed/, 'an answered absence is never called "not indexed"');
+});
+
+test('#174: a rerun whose npm is already published settles the provenance it may have stopped on', async () => {
+  // The v0.2.1 rerun scenario: npm is there, the previous run stopped on the attestation, and the index
+  // has caught up. The rerun must read it rather than fall straight through to final verify.
+  const { result, state, text } = await run({ npm: 'same', npmLatest: v('0.1.7'), hub: vd('0.1.7', 'hub'), provenanceReads: ['pending', 'ok'] });
+  assert.equal(result.ok, true);
+  assert.equal(state.provenanceReads, 2);
+  assert.match(text, /npm 0\.1\.7: already published with the expected tarball; npm latest is 0\.1\.7/);
+  assert.match(text, /npm 0\.1\.7: provenance served after 5000ms/);
+});
+
+test('#174 acceptance: a rerun whose candidate preflight reads a still-indexing attestation is not stopped there', async () => {
+  // The v0.2.1 rerun's own Candidate preflight read the 404 at 00:28:47Z and only saw the attestation at
+  // 00:28:51Z. Both stages must be covered, so promote settles the provenance before the candidate step
+  // and tells that stage too — otherwise the run meant to finish a promotion fails at its first step.
+  const { result, state } = await run({ npm: 'same', npmLatest: v('0.1.7'), provenanceReads: ['pending'], declared: true });
+  assert.equal(result.ok, true);
+  const candidate = state.verifyOptions.find((entry) => entry.stage === 'candidate');
+  assert.equal(candidate.provenanceIndex.state, 'pending', 'the candidate stage is told the 404 is an index delay');
+  assert.match(candidate.provenanceIndex.detail, /declares provenance for 0\.1\.7 but has not served it/);
+  const final = state.verifyOptions.find((entry) => entry.stage === 'final');
+  assert.equal(final.provenanceIndex.state, 'pending', 'and so is final verify, which would otherwise repeat the 404');
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 120_000, 'one budget, not two: the candidate answer stands for the whole run');
+});
+
+test('#174: a serve that lands before final verify clears the hint from both stages', async () => {
+  // The pre-candidate settle misses the attestation, the second one finds it: final verify then reads the
+  // real thing and no stage is told to treat a 404 as a delay.
+  const { result, state, text } = await run({ npm: 'same', npmLatest: v('0.1.7'), hub: vd('0.1.7', 'hub'), web: vd('0.1.7', 'web') });
+  assert.equal(result.ok, true);
+  assert.ok(state.verifyOptions.every((entry) => entry.provenanceIndex === undefined));
+  assert.match(text, /npm 0\.1\.7: provenance served/);
+});
+
+test('#174: a candidate preflight on a version whose provenance is definite passes no hint, so it still fails properly', async () => {
+  const { result, state, text } = await run({ npm: 'same', npmLatest: v('0.1.7'), provenanceReads: ['absent'] });
+  assert.equal(result.ok, false);
+  const candidate = state.verifyOptions.find((entry) => entry.stage === 'candidate');
+  assert.equal(candidate.provenanceIndex, undefined, 'a definite gap is the strict 404 it is');
+  assert.match(text, /stopped:\*\* npm provenance is a definite gap/);
+});
+
+test('#174: an npm version that is not published yet is not asked for provenance before the candidate preflight', async () => {
+  // The ordinary first run: nothing to compare, so no read and no wait before the preflight.
+  const { result, state } = await run({ npm: 'absent' });
+  assert.equal(result.ok, true);
+  assert.equal(state.provenanceReads, 1, 'only the post-publish settle reads provenance');
+  assert.deepEqual(state.sleeps.filter((ms) => ms !== 5_000), []);
+});
+
+test('#174: a definite provenance gap never reaches final verify, so nothing can be reported as waitable', async () => {
+  // Final verify is the step that would have failed on the 404 anyway; stopping before it, with the npm
+  // move already recorded, keeps a definite gap on the same fail-closed path while naming what moved.
+  const { state, text } = await run({ npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }], provenanceReads: ['absent'] });
+  assert.equal(state.verifyOptions.some((entry) => entry.stage === 'final'), false);
+  assert.doesNotMatch(text, /waitable/);
 });
