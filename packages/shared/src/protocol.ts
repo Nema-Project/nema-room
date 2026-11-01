@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AttachmentRefSchema } from "./attachments.js";
+import { RouteDecisionSchema } from "./route.js";
 
 const DaemonToHubSchema = z.union([
   z.object({
@@ -17,7 +18,20 @@ const DaemonToHubSchema = z.union([
     taskId: z.string(),
     event: z.object({ type: z.enum(["progress", "agent_message", "tool_call"]), text: z.string() }),
   }),
-  z.object({ type: z.literal("task.finished"), taskId: z.string(), ok: z.literal(true), reply: z.string() }),
+  z.object({
+    type: z.literal("task.finished"),
+    taskId: z.string(),
+    ok: z.literal(true),
+    reply: z.string(),
+    /**
+     * Which account and model answered, and why (spec 2026-10-31 §4.6). Optional: an older daemon sends
+     * none, and the hub then stores the message without a route line.
+     *
+     * Validated strictly, like every other field here. A reason code this hub does not know is a protocol
+     * version it does not know, and `hello` already refuses a daemon whose version differs from the hub's.
+     */
+    route: RouteDecisionSchema.optional(),
+  }),
   z.object({ type: z.literal("task.finished"), taskId: z.string(), ok: z.literal(false), error: z.string() }),
   z.object({ type: z.literal("rpc.response"), id: z.string(), ok: z.literal(true), result: z.unknown() }),
   z.object({ type: z.literal("rpc.response"), id: z.string(), ok: z.literal(false), error: z.string() }),
@@ -51,6 +65,18 @@ const HubToDaemonSchema = z.discriminatedUnion("type", [
     retainedSkills: z.array(z.string()).optional(),
     /** The Skill the user called with a leading `/skill-id`, and the rest of the line as its arguments. */
     manualSkill: z.object({ skillId: z.string(), arguments: z.string() }).optional(),
+    /**
+     * The account this message asked for (spec 2026-10-31 §5.4). The hub carries it down; the daemon decides
+     * what it means, because accounts exist only on the daemon's machine.
+     *
+     * Validated by shape here even though the hub cannot know whether the account exists: the id names a
+     * directory under the daemon's `secrets/accounts/`, and an arbitrary string must never get that far.
+     */
+    accountId: z.string().regex(/^acct_[a-z0-9]{10}$/).optional(),
+    /** Present only when the task may be routed automatically. S4 implements it; S3 refuses it. */
+    routing: z.literal("auto").optional(),
+    /** The thread this task belongs to; the main chat has none. The daemon looks up thread bindings by it. */
+    threadId: z.string().min(1).optional(),
   }),
   z.object({ type: z.literal("rpc.request"), id: z.string(), method: z.string(), params: z.unknown() }),
   z.object({ type: z.literal("error"), message: z.string() }),
