@@ -183,6 +183,12 @@ export type SiwcLoginOptions = {
   requireTrustedAuthorizeUrl?: boolean;
   /** Hides provider and callback error text from the OAuth browser page. */
   redactCallbackErrors?: boolean;
+  /**
+   * Where `auth.json` is written; `nemaHome` when omitted. An account's login belongs in
+   * `secrets/accounts/<id>/` (spec 2026-10-31 §3.1), so the settings page passes that directory. Without
+   * this the browser flow could only ever overwrite the default account's credential.
+   */
+  baseDir?: string;
 };
 
 const b64url = (buf: Buffer) => buf.toString("base64url");
@@ -373,7 +379,8 @@ export async function siwcLogin(opts: SiwcLoginOptions): Promise<StoredAuth> {
   const authorizeUrl = opts.endpoints?.authorizeUrl ?? SIWC.authorizeUrl;
   const tokenUrl = opts.endpoints?.tokenUrl ?? SIWC.tokenUrl;
   const timeoutMs = opts.timeoutMs ?? 300_000;
-  const store = new AuthStore(nemaHome, siwcRefresher);
+  const baseDir = opts.baseDir ?? nemaHome;
+  const store = new AuthStore(nemaHome, siwcRefresher, Date.now, { baseDir });
   opts.signal?.throwIfAborted();
 
   const prior = store.read();
@@ -453,7 +460,7 @@ export async function siwcLogin(opts: SiwcLoginOptions): Promise<StoredAuth> {
         lastRefresh: new Date().toISOString(),
       };
       // AuthStore.save() is unlocked; serialize with refreshers via auth.lock.
-      await withFileLock(path.join(nemaHome, "auth.lock"), async () => {
+      await withFileLock(path.join(baseDir, "auth.lock"), async () => {
         opts.signal?.throwIfAborted();
         store.save(auth);
       }, { timeoutMs: 15_000 });

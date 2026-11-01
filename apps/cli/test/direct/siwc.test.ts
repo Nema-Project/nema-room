@@ -1,6 +1,6 @@
 import { expectPrivate } from "../nativePermissions.js";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { connect } from "node:net";
 import type { AddressInfo } from "node:net";
@@ -463,3 +463,54 @@ describe("siwcRefresher", () => {
   });
 });
 
+
+describe("siwcLogin into an account directory", () => {
+  let h: LoginHarness;
+  const nonceRef: { nonce?: string } = {};
+  afterEach(async () => {
+    await h?.tokenServer.close();
+    delete nonceRef.nonce;
+  });
+
+  // The settings page logs into one account at a time (S2), so the flow has to write into that account's
+  // directory. Without `baseDir` it would overwrite the default account's login while the page says the
+  // other account is the one that just signed in.
+  test("writes auth.json into baseDir and leaves the home's own login untouched", async () => {
+    h = { tokenServer: await tokenOk(nonceRef), authorizeUrls: [] };
+    const dir = join(home, "secrets", "accounts", "acct_abc1234567");
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const homeLogin = { version: 1, mode: "siwc", clientId: "oaiapp_home", tokens: { access_token: "home-at", refresh_token: "home-rt" }, lastRefresh: "2026-01-01T00:00:00.000Z" };
+    new AuthStore(home, siwcRefresher).save(homeLogin as StoredAuth);
+    const before = readFileSync(join(home, "auth.json"), "utf8");
+
+    await siwcLogin({
+      nemaHome: home,
+      baseDir: dir,
+      port: 0,
+      endpoints: { tokenUrl: h.tokenServer.url },
+      openBrowser: browser(h, (u) => {
+        nonceRef.nonce = u.searchParams.get("nonce")!;
+        return { code: "code-acct", state: u.searchParams.get("state")!, client_id: "oaiapp_issued123", scope: "x" };
+      }),
+    });
+
+    expectPrivate(join(dir, "auth.json"), 0o600);
+    expect(new AuthStore(home, siwcRefresher, Date.now, { baseDir: dir }).read()?.tokens.refresh_token).toBe("rt-secret-xyz");
+    // The default account still holds the login it had.
+    expect(readFileSync(join(home, "auth.json"), "utf8")).toBe(before);
+    expect(existsSync(join(dir, "auth.lock"))).toBe(false); // lock released in the account directory
+  });
+
+  test("is refused for a baseDir that passes through a symlink", async () => {
+    h = { tokenServer: await tokenOk(nonceRef), authorizeUrls: [] };
+    const real = join(home, "elsewhere");
+    mkdirSync(real, { recursive: true });
+    const link = join(home, "linked");
+    symlinkSync(real, link, "dir");
+    await expect(siwcLogin({
+      nemaHome: home, baseDir: join(link, "acct_abc1234567"), port: 0,
+      endpoints: { tokenUrl: h.tokenServer.url },
+      openBrowser: browser(h, () => ({ code: "c", state: "s", client_id: "c" })),
+    })).rejects.toThrow(/符号链接/);
+  });
+});
