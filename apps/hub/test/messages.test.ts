@@ -381,6 +381,32 @@ describe("messages with attachments", () => {
     expect(lock).toBeLessThan(update);
   });
 
+  test("an edit runs on the account the original message ran on", async () => {
+    // The edit is the same request with new text. Leaving account_id null would let it run on whatever the
+    // workspace defaults to now, which is a different account and possibly a different bill.
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const sent = await postUserMessage(db, ws.id, "first try", { accountId: "acct_aaaaaaaaaa" });
+    expect(sent.task.accountId).toBe("acct_aaaaaaaaaa");
+    await db.query("update tasks set status = 'done' where workspace_id = $1", [ws.id]);
+    const edited = await editUserMessage(db, ws.id, sent.message.id, "second try");
+    expect(edited.task.accountId).toBe("acct_aaaaaaaaaa");
+    expect(edited.task.kind).toBe("edit");
+  });
+
+  test("a retry that names a different account is a 409, not a replay of the earlier task", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const a = await stagedRow(db, ws.id);
+    const first = await postUserMessage(db, ws.id, "look", { attachmentIds: [a], accountId: "acct_aaaaaaaaaa" });
+    const before = await counts(db, ws.id);
+    await expect(
+      postUserMessage(db, ws.id, "look", { attachmentIds: [a], accountId: "acct_bbbbbbbbbb" }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(await counts(db, ws.id)).toEqual(before);
+    expect(first.task.accountId).toBe("acct_aaaaaaaaaa");
+  });
+
   test("editing keeps the attachments and allows empty text only when there are some", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");

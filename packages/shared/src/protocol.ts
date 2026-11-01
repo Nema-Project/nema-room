@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AttachmentRefSchema } from "./attachments.js";
-import { RouteDecisionSchema } from "./route.js";
+import { RouteDecisionSchema, type RouteDecision } from "./route.js";
 
 const DaemonToHubSchema = z.union([
   z.object({
@@ -27,10 +27,12 @@ const DaemonToHubSchema = z.union([
      * Which account and model answered, and why (spec 2026-10-31 §4.6). Optional: an older daemon sends
      * none, and the hub then stores the message without a route line.
      *
-     * Validated strictly, like every other field here. A reason code this hub does not know is a protocol
-     * version it does not know, and `hello` already refuses a daemon whose version differs from the hub's.
+     * Deliberately unvalidated *here*. The route is metadata about the reply; a route this hub cannot read
+     * must cost the route line, not the reply. Validating it inside this schema would fail the whole
+     * message and drop an answer the user is waiting for. It is still validated strictly by
+     * `parseRouteDecision` at the point it is stored, so nothing unknown reaches `messages.meta`.
      */
-    route: RouteDecisionSchema.optional(),
+    route: z.unknown().optional(),
   }),
   z.object({
     type: z.literal("task.finished"),
@@ -40,8 +42,10 @@ const DaemonToHubSchema = z.union([
     /**
      * Which account and model were running when the task failed. A failed task has no reply to carry the
      * record, and "which account failed" is the next question, so the hub folds it into the failure line.
+     * Unvalidated here for the same reason as the success branch: the error text must survive a route the
+     * hub cannot read.
      */
-    route: RouteDecisionSchema.optional(),
+    route: z.unknown().optional(),
   }),
   z.object({ type: z.literal("rpc.response"), id: z.string(), ok: z.literal(true), result: z.unknown() }),
   z.object({ type: z.literal("rpc.response"), id: z.string(), ok: z.literal(false), error: z.string() }),
@@ -101,6 +105,19 @@ export function parseDaemonToHub(raw: unknown): DaemonToHub {
 }
 export function parseHubToDaemon(raw: unknown): HubToDaemon {
   return HubToDaemonSchema.parse(raw);
+}
+
+/**
+ * A route decision from the wire, or `undefined` when there is none or it is not one this hub understands.
+ *
+ * Separate from the message schema on purpose (see `task.finished`). A daemon that sends a reason code
+ * from a newer protocol still gets its reply stored; only the route line is lost, because a record the hub
+ * cannot read must not be written to `messages.meta` and shown to the user as if it were understood.
+ */
+export function parseRouteDecision(raw: unknown): RouteDecision | undefined {
+  if (raw === undefined) return undefined;
+  const parsed = RouteDecisionSchema.safeParse(raw);
+  return parsed.success ? parsed.data : undefined;
 }
 
 /** Run limits of a work package generation task. Every other run keeps the daemon defaults. */

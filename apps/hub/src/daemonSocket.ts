@@ -2,7 +2,7 @@ import type http from "node:http";
 import { nanoid } from "nanoid";
 import { WebSocketServer, type WebSocket } from "ws";
 import { KnowledgeStore } from "@nema/knowledge";
-import { AttachmentRefSchema, WORKPACKAGE_LIMITS, parseDaemonToHub, parseManualSkill, type AgentMessageMeta, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
+import { AttachmentRefSchema, WORKPACKAGE_LIMITS, parseDaemonToHub, parseManualSkill, parseRouteDecision, type AgentMessageMeta, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
 import { createConnectionRpc, DaemonRpcError, type ConnectionRpc, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
@@ -320,6 +320,10 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   async function onFinished(conn: Conn, m: Extract<ReturnType<typeof parseDaemonToHub>, { type: "task.finished" }>) {
     const a = conn.assigned;
     if (!a || a.taskId !== m.taskId) return;
+    // The message schema accepts any `route` so that a route this hub cannot read cannot take the reply
+    // down with it (see `parseRouteDecision`). Parsed here, at the only place it is stored: an unreadable
+    // route is dropped as metadata and its account line is not shown, but the reply or error is still saved.
+    const route = parseRouteDecision(m.route);
     let msg: Message | null;
     if (m.ok) {
       const routing = await taskReplyRouting(m.taskId);
@@ -336,10 +340,10 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         if (edited) meta.quote = { messageId: edited.id, role: edited.role, excerpt: messageExcerpt(edited.content) };
       }
       // An older daemon sends no route; the message is stored exactly as before.
-      if (m.route) meta.route = m.route;
+      if (route) meta.route = route;
       msg = await saveTaskOutcome(routing, a.runToken, { ok: true }, "agent", m.reply, meta);
     } else {
-      msg = await saveTaskFailure(m.taskId, m.error, a.runToken, m.route);
+      msg = await saveTaskFailure(m.taskId, m.error, a.runToken, route);
     }
     if (!msg) {
       conn.assigned = null;

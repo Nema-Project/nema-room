@@ -273,6 +273,9 @@ async function lockForSend(
   const first = await t.query<{ id: string }>("select id from tasks where message_id = $1 order by seq limit 1", [messageId]);
   const task = first[0] ? await getTask(t, first[0].id) : null;
   if (!task) throw conflict;
+  // A retry that names a different account is a different request, not a replay of this one: returning the
+  // earlier task would answer with the route the user had already moved away from.
+  if (task.accountId !== (options.accountId ?? null)) throw conflict;
   return { message: prior, task };
 }
 
@@ -348,7 +351,14 @@ export async function editUserMessage(
       content,
       nextMeta === null ? null : JSON.stringify(nextMeta),
     ]);
-    const task = await insertQueuedTask(t, workspaceId, messageId, "edit");
+    // The edit is the same request with new text, so it runs on the account the first run used. Without
+    // this the row would be null and the edit could quietly land on a different account. The first task is
+    // read, not copied from a request field: nothing in an edit names an account.
+    const first = await t.query<{ account_id: string | null }>(
+      "select account_id from tasks where message_id = $1 order by seq limit 1",
+      [messageId],
+    );
+    const task = await insertQueuedTask(t, workspaceId, messageId, "edit", { accountId: first[0]?.account_id ?? null });
     const [message] = await withAttachments(t, [toMessage(updated[0]!)]);
     return { message: message!, task };
   });

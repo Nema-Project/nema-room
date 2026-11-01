@@ -815,6 +815,22 @@ describe("routing a task to the account the user chose", () => {
     expect(result).toMatchObject({ ok: false, error: "订阅额度已用完" });
     expect((result as { route?: unknown }).route).toMatchObject({ accountId: acctB.id, accountName: "Second" });
   });
+
+  test("a login that cannot refresh fails before any request, and names no model it never sent", async () => {
+    // The account's login is present and parses, so routing accepts it; using it is what fails, when the
+    // expiring access token has to be refreshed and the refresh is refused. No model was ever chosen or
+    // sent, so the record must not claim one: an earlier version put the fallback model ("gpt-5.5") here,
+    // and the hub printed it in the failure line as the model that failed.
+    new AuthStore(home, refresher).save(auth({ access_token: jwt({ exp: Math.floor(Date.now() / 1000) - 60 }), refresh_token: "rt-0" }));
+    const { result } = await run();
+    expect(result).toMatchObject({ ok: false });
+    expect(server.requests).toEqual([]);
+    const route = (result as { route?: { model?: string; accountName?: string } }).route;
+    expect(route).toBeDefined();
+    expect(route!.model).not.toBe("gpt-5.5");
+    // This account names no model of its own, so the record says the run-time choice was never resolved.
+    expect(route!.model).toBe("auto");
+  });
 });
 
 describe("two accounts, two real endpoints (S3 acceptance)", () => {

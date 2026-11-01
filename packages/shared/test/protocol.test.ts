@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { ZodError } from "zod";
-import { WORKPACKAGE_LIMITS, parseDaemonToHub, parseHubToDaemon } from "../src/index.js";
+import { WORKPACKAGE_LIMITS, parseDaemonToHub, parseHubToDaemon, parseRouteDecision } from "../src/index.js";
 
 test("valid task.assign parses", () => {
   const m = parseHubToDaemon({ type: "task.assign", taskId: "t1", workspaceId: "w1", adapter: "codex", confidential: false, prompt: "p", runToken: "rt", hubUrl: "http://localhost:1", pluginTools: [] });
@@ -137,6 +137,8 @@ test("task.finished success carries an optional route decision and round-trips i
   // A failed task carries the route too: there is no reply to hang it on, and the hub names the account in
   // the failure line instead.
   expect(parseDaemonToHub({ type: "task.finished", taskId: "t1", ok: false, error: "e", route })).toMatchObject({ ok: false, error: "e", route });
+  expect(parseRouteDecision(route)).toEqual(route);
+  expect(parseRouteDecision(undefined)).toBeUndefined();
 });
 
 test("a route decision with attempts and usage round-trips", () => {
@@ -151,12 +153,25 @@ test("a route decision with attempts and usage round-trips", () => {
 });
 
 test("a route decision with an unknown reason is refused rather than stored", () => {
-  expect(() => parseDaemonToHub({ type: "task.finished", taskId: "t1", ok: true, reply: "r", route: { ...route, reason: "because" } })).toThrow(ZodError);
+  // Refused where it is stored, not where the message is parsed: an unreadable route must cost the route
+  // line, not the reply the user is waiting for.
+  expect(parseRouteDecision({ ...route, reason: "because" })).toBeUndefined();
+  const parsed = parseDaemonToHub({ type: "task.finished", taskId: "t1", ok: true, reply: "r", route: { ...route, reason: "because" } });
+  expect(parsed).toMatchObject({ ok: true, reply: "r" });
+  expect(parseRouteDecision((parsed as { route?: unknown }).route)).toBeUndefined();
+});
+
+test("an unreadable route does not take the reply or the error down with it", () => {
+  // A newer daemon's route, a reason this hub has never heard of: the message still parses, so the reply is
+  // persisted and only the route is dropped.
+  const stranger = { ...route, reason: "from_a_later_version" };
+  expect(parseDaemonToHub({ type: "task.finished", taskId: "t1", ok: true, reply: "r", route: stranger })).toMatchObject({ ok: true, reply: "r" });
+  expect(parseDaemonToHub({ type: "task.finished", taskId: "t1", ok: false, error: "e", route: stranger })).toMatchObject({ ok: false, error: "e" });
 });
 
 test("a route decision refuses keys outside the agreed shape", () => {
   // The metadata is exported and shown; a stray field (a base URL, a key someone pasted) must not ride along.
-  expect(() => parseDaemonToHub({ type: "task.finished", taskId: "t1", ok: true, reply: "r", route: { ...route, baseUrl: "https://example.test" } })).toThrow(ZodError);
+  expect(parseRouteDecision({ ...route, baseUrl: "https://example.test" })).toBeUndefined();
   // task.assign drops unknown keys rather than refusing them (spec §5.4): an old daemon reading a newer
   // hub's message ignores what it does not know. Only the route record, which is stored and exported, is strict.
   expect(parseHubToDaemon({ ...assignBase, accountId: "acct_abc1234567", key: "sk-x" })).not.toHaveProperty("key");

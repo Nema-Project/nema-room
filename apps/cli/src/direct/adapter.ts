@@ -179,7 +179,11 @@ export class CodexDirectAdapter implements AgentAdapter {
       // A credential that cannot produce a token fails the task here, before any model request. The message
       // is the token source's own (it names the specific problem: a dead login, a refused key); the account it
       // belongs to travels in `route`, so the reply line and the stored metadata still say whose credential.
-      return { ok: false, error: errorMessage(e), route: decision(routedModel ?? FALLBACK_MODEL) };
+      //
+      // The model recorded is the one the account is configured with, not a stand-in: nothing was sent, and
+      // a placeholder here would put a model name in the failure line that the user never chose and no
+      // provider ever saw.
+      return { ok: false, error: errorMessage(e), route: decision(route.model) };
     }
     if (ownerSignal?.aborted) return { ok: false, error: "Codex 直连运行已中止" };
 
@@ -205,7 +209,9 @@ export class CodexDirectAdapter implements AgentAdapter {
       return {
         ok: false,
         error: attachmentRejection(cause, task.attachments ?? [], sent.blocks) ?? errorMessage(cause),
-        route: decision(sent.model ?? routedModel ?? FALLBACK_MODEL),
+        // `sent.model` is what reached the provider; nothing set it, so the run never got as far as a
+        // request and the account's own setting is the honest answer.
+        route: decision(sent.model ?? route.model),
       };
     } finally {
       clearTimeout(timer);

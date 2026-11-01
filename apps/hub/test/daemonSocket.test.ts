@@ -1287,6 +1287,42 @@ describe("account choice and route decision", () => {
     expect((system.meta as { route?: unknown } | null)?.route).toEqual(route);
   });
 
+  test("a route this hub cannot read costs the route line, not the reply", async () => {
+    // A daemon from a later version, or a record the hub's schema does not know. Dropping the whole
+    // message would throw away an answer the user is waiting for; the reply is kept and the route is not.
+    const m = await postUserMessage(db, wsA, "later version");
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({
+      type: "task.finished",
+      taskId: a.taskId,
+      ok: true,
+      reply: "an answer worth keeping",
+      route: { accountId: "acct_abc1234567", accountName: "Personal", model: "m", mode: "manual", reason: "invented_later" },
+    });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("done"));
+    const reply = (await listMessages(db, wsA)).find((x) => x.role === "agent" && x.content === "an answer worth keeping")!;
+    expect(reply).toBeDefined();
+    expect((reply.meta as { route?: unknown } | null)?.route).toBeUndefined();
+  });
+
+  test("a failure whose route cannot be read still reports the failure", async () => {
+    const m = await postUserMessage(db, wsA, "later version, failing");
+    const c = await connect();
+    const a = await c.next("task.assign");
+    c.send({
+      type: "task.finished",
+      taskId: a.taskId,
+      ok: false,
+      error: "订阅额度已用完",
+      route: { accountId: "acct_abc1234567", baseUrl: "https://example.test" },
+    });
+    await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
+    const system = (await listMessages(db, wsA)).find((x) => x.role === "system")!;
+    // The error survives and no unreadable account line is invented for it.
+    expect(system.content).toBe("处理失败：订阅额度已用完");
+  });
+
   test("a failure from a daemon that routed nothing reads as it always did", async () => {
     const m = await postUserMessage(db, wsA, "plain failure");
     const c = await connect();
