@@ -20,7 +20,7 @@ export {
   type CostTier,
 } from "./accounts/schema.js";
 export { accountsPath, accountDir, readAccounts, writeAccounts, updateAccounts, withAccountsLock, type AccountsRead } from "./accounts/store.js";
-export { loadAccounts, materializeImplicit, syncDefaultAccountProjection, applyProjection, reconcileAccountProjection, type LoadedAccounts } from "./accounts/implicit.js";
+export { loadAccounts, materializeImplicit, retireLeftoverLegacy, syncDefaultAccountProjection, applyProjection, reconcileAccountProjection, type LoadedAccounts } from "./accounts/implicit.js";
 export { legacyCredentialPath, readLegacyCredential, type LegacyCredential } from "./accounts/legacy.js";
 export { projectedAccounts, projectionDiffers } from "./accounts/reconcile.js";
 export { accountCredentialFiles, accountCredentialState, type CredentialState } from "./accounts/credentials.js";

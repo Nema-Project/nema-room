@@ -250,7 +250,7 @@ GitHub 插件让 Agent 查看已绑定仓库在 GitHub 上的 issue、pull reque
 
 **文件。** `<nema home>/accounts.json`（`0600`，原子替换）存 `{ version: 1, accounts, bindings, autoRouting? }`。`bindings` 的键是 `ws:<id>` 或 `thread:<id>`，值是账户 id 或 `"auto"`；没有这个键表示没有选择。凭据存在 `<nema home>/secrets/accounts/<id>/`（目录 `0700`），里面只会有一个凭据文件：`key`（byok）、`auth.json`（siwc）或 `token`（Claude Code）。siwc 账户目录里还可能有 `auth.lock`，它是刷新凭据时用的锁文件，不是凭据。`compat` 账户没有凭据目录，只读 `~/.codex/auth.json`。从 `nema home` 到账户目录，路径上任何一层是符号链接都会被拒绝，读、写、删都一样；凭据文件还必须属于当前用户。
 
-**没有 `accounts.json` 时**，按 `config.json` 加旧的单个凭据文件，在内存里合成一个隐式账户 `acct_0000000000`，不写盘。第一次新建或修改账户时才落盘，旧凭据按「复制 → 写 `accounts.json` → 删除旧文件」的顺序移进新账户目录。没有回滚：最后一步失败或被打断时，`accounts.json` 和账户目录里的副本保留，旧文件留在原处。设置接口只在还没有 `accounts.json` 时迁移，所以之后不会再自动删除这个旧文件。`config.json` 不加字段，它的 `adapter`、`authMode`、`model`、`byokBaseUrl` 会同步到排在最前、且已启用的账户上。
+**没有 `accounts.json` 时**，按 `config.json` 加旧的单个凭据文件，在内存里合成一个隐式账户 `acct_0000000000`，不写盘。第一次新建或修改账户时才落盘，旧凭据按「复制 → 写 `accounts.json` → 删除旧文件」的顺序移进新账户目录。没有回滚：最后一步失败或被打断时，`accounts.json` 和账户目录里的副本保留，旧文件留在原处。之后设置接口每次处理写请求（读请求不算）时都会再看一次：只要有一个账户里的凭据与旧文件逐字节相同，就按同样的方式删掉旧文件；其他情况（没有对应账户、内容不同、文件不可信）一律保留，不报错。`config.json` 不加字段，它的 `adapter`、`authMode`、`model`、`byokBaseUrl` 会同步到排在最前、且已启用的账户上。
 
 **选择顺序**：`task.accountId`（单条消息）> `thread:<id>` > `ws:<id>` > 全局默认（当前运行方式下 `order` 最小的启用账户）。点名一个具体账户时，候选只有它，不按启用状态、能力和冷却过滤；但仍检查它是否属于当前运行方式、凭据是否可用、能否解析出模型，任一项不满足就在发出请求前失败（`adapter_mismatch`、`credential_missing` / `credential_unusable`、`model_missing`，见 `apps/cli/src/routing/index.ts` 的 `checkNamed`）。选了 `"auto"` 而 `autoRouting` 未开启时，任务失败，不改用默认账户。自动模式的候选只含当前运行方式的账户，依次去掉：未启用的、凭据不可用的、冷却中的、能力不满足本次附件的。剩下的按 `order` → `costTier`（low → standard → high）→ `id` 排序。
 

@@ -1,0 +1,1 @@
+- A legacy credential file whose removal gave up during the first account migration is now removed by a later account settings change, once an account holds the same credential. Before, that copy stayed on disk for good.

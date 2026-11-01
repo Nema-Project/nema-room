@@ -7,6 +7,7 @@ import {
   accountNameProblem,
   loadAccounts,
   materializeImplicit,
+  retireLeftoverLegacy,
   newAccountId,
   readAccounts,
   removeAccountSecrets,
@@ -303,6 +304,7 @@ export function scopesBoundTo(bindings: Record<string, string>, accountId: strin
 export function handleAccounts(method: string, pathname: string, body: unknown, deps: AccountsDeps): AccountsReply | null {
   if (!pathname.startsWith("/_nema/accounts")) return null;
   const route = pathname === "/_nema/accounts" ? "collection" : pathname.slice("/_nema/accounts".length);
+  if (method !== "GET") finishLegacyMove(deps);
   try {
     if (route === "collection") {
       if (method === "GET") return listReply(deps);
@@ -321,6 +323,20 @@ export function handleAccounts(method: string, pathname: string, body: unknown, 
     // `AccountsFileSchema` and `AccountSchema` refuse what the store would refuse.
     if (e instanceof SyntaxError || (e && typeof e === "object" && "issues" in e)) return INVALID;
     return INTERNAL;
+  }
+}
+
+/**
+ * Retires a legacy credential that an earlier migration copied but could not remove (#206). The first
+ * edit's migration only runs while there is no `accounts.json`, so this is the only later chance.
+ * Best effort: a busy lock or an unreadable file leaves the legacy file for the next request, and never
+ * fails the request it rides on.
+ */
+function finishLegacyMove(deps: AccountsDeps): void {
+  try {
+    retireLeftoverLegacy(deps.home);
+  } catch {
+    /* the legacy file stays; the next settings write tries again */
   }
 }
 
