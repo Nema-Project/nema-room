@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { MENTION_LIMITS, messageHasBody, type MessageMention } from "@nema/shared";
+import { AccountPicker } from "@/components/AccountPicker";
 import { AttachmentTray } from "@/components/AttachmentTray";
 import { messageRoleLabel } from "@/components/MessageItem";
 import { useAttachmentTray } from "@/lib/attachments";
@@ -10,6 +11,7 @@ import { applySlash, matchingItems, slashToken, type SkillRow, type SlashItem } 
 import { MentionMenu, MentionTray, type MentionChip } from "@/components/MentionMenu";
 import { groupCandidates, mentionToken, syncMentions, type MentionCandidate, type MentionContextResponse } from "@/lib/mentions";
 import { searchMentionContext } from "@/lib/hub";
+import { useAccounts } from "@/lib/useAccounts";
 import { useSkillRows } from "@/lib/skillMenu";
 import { useT } from "@/lib/i18n";
 import type { Message } from "@/lib/types";
@@ -37,15 +39,18 @@ export function Composer({
   onClearQuote,
   onThread,
   threadMode = false,
+  threadId,
   disabled = false,
 }: {
   /** Enables attachments: uploads are staged in this workspace. */
   workspaceId?: string;
-  onSend: (content: string, attachmentIds: string[], mentions?: MessageMention[]) => Promise<void>;
+  onSend: (content: string, attachmentIds: string[], mentions?: MessageMention[], accountId?: string | null) => Promise<void>;
   quote?: { role: Message["role"]; content: string } | null;
   onClearQuote?: () => void;
-  onThread?: (content: string, attachmentIds: string[], mentions?: MessageMention[]) => Promise<void>;
+  onThread?: (content: string, attachmentIds: string[], mentions?: MessageMention[], accountId?: string | null) => Promise<void>;
   threadMode?: boolean;
+  /** The thread this composer posts into, when it posts into one. */
+  threadId?: string;
   disabled?: boolean;
 }) {
   const t = useT();
@@ -61,6 +66,11 @@ export function Composer({
   const [dragging, setDragging] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   const tray = useAttachmentTray(workspaceId);
+  // The per-message account choice lives only here: it travels with this send and is stored nowhere (spec
+  // §1.2). `null` means "not chosen", which the daemon resolves from the thread's and then the workspace's
+  // binding, then the global default.
+  const accountsState = useAccounts();
+  const [accountId, setAccountId] = useState<string | null>(null);
   const token = slashToken(value, cursor);
   // `@` owns the menu whenever the caret sits in a mention token; the `/` menu keeps its line-start rule and
   // only yields while a mention token is open, so the two can never show at once.
@@ -191,8 +201,17 @@ export function Composer({
     setError(null);
     try {
       const threadText = content.match(/^\/thread\s+([\s\S]+)$/);
-      if (threadText && onThread) await onThread(threadText[1]!.trim(), ids, mentions);
-      else await onSend(content, ids, mentions);
+      // With no choice the callback is invoked exactly as it was before accounts existed: three arguments,
+      // no `null`. A wrapper that ignores the new parameter therefore behaves identically, and only a send
+      // that actually names an account carries one.
+      if (threadText && onThread) {
+        if (accountId === null) await onThread(threadText[1]!.trim(), ids, mentions);
+        else await onThread(threadText[1]!.trim(), ids, mentions, accountId);
+      } else if (accountId === null) {
+        await onSend(content, ids, mentions);
+      } else {
+        await onSend(content, ids, mentions, accountId);
+      }
       tray.clear(attached.map((a) => a.key));
       // Only the chips this send carried go; one added while it was in flight belongs to the text kept below.
       const sentChips = new Set(chips);
@@ -395,6 +414,18 @@ export function Composer({
         <p className="error" role="alert">
           {t("composer.sendFailed", { message: error })}
         </p>
+      )}
+      {workspaceId !== undefined && (
+        <AccountPicker
+          scope="message"
+          accounts={accountsState.accounts}
+          bindings={accountsState.bindings}
+          value={accountId}
+          onChange={setAccountId}
+          supported={accountsState.supported}
+          threadId={threadId}
+          disabled={disabled}
+        />
       )}
       <div className="tb">
         <button type="button" className="fmt" style={{ fontWeight: 700 }} aria-label={t("composer.bold")} onClick={() => format("bold")}>

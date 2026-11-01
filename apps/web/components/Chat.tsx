@@ -233,8 +233,10 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
     pendingJump.current = null;
   }, [messages, jumpTick]);
 
-  async function send(content: string, attachmentIds: string[], mentions?: MessageMention[], quoted?: Message | null) {
-    const { message } = await postMessage(workspaceId, content, quoted?.id, attachmentIds, mentions);
+  async function send(content: string, attachmentIds: string[], mentions?: MessageMention[], quoted?: Message | null, accountId?: string | null) {
+    const { message } = accountId
+      ? await postMessage(workspaceId, content, quoted?.id, attachmentIds, mentions, accountId)
+      : await postMessage(workspaceId, content, quoted?.id, attachmentIds, mentions);
     setMessages((l) => merge(l, message));
     if (quoted) setQuote(null);
   }
@@ -261,8 +263,10 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
     } catch { /* a deleted source can no longer be opened */ }
   }
 
-  async function createThreadFromComposer(content: string, attachmentIds: string[], mentions?: MessageMention[]) {
-    const result = await createThread(workspaceId, content, quote?.id, attachmentIds, mentions);
+  async function createThreadFromComposer(content: string, attachmentIds: string[], mentions?: MessageMention[], accountId?: string | null) {
+    const result = accountId
+      ? await createThread(workspaceId, content, quote?.id, attachmentIds, mentions, accountId)
+      : await createThread(workspaceId, content, quote?.id, attachmentIds, mentions);
     setMessages((cur) => merge(cur, result.message));
     setThreads((cur) => new Map(cur).set(result.thread.id, result.thread));
     setQuote(null);
@@ -353,7 +357,7 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
           {t("common.error", { message: error })}
         </p>
       )}
-      <Composer workspaceId={workspaceId} onSend={(content, attachmentIds, mentions) => send(content, attachmentIds, mentions, quote)} onThread={createThreadFromComposer} quote={quote} onClearQuote={() => setQuote(null)} />
+      <Composer workspaceId={workspaceId} onSend={(content, attachmentIds, mentions, accountId) => send(content, attachmentIds, mentions, quote, accountId)} onThread={createThreadFromComposer} quote={quote} onClearQuote={() => setQuote(null)} />
     </>
   );
 });

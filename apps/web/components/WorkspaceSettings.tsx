@@ -1,8 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { AccountPicker } from "@/components/AccountPicker";
 import { CodeAndPlugins } from "@/components/CodeAndPlugins";
 import { updateWorkspace } from "@/lib/hub";
+import { boundAccount } from "@/lib/accounts";
+import { useAccounts } from "@/lib/useAccounts";
 import { useT } from "@/lib/i18n";
 import type { KnowledgeLanguage, Workspace, WorkspaceView } from "@/lib/types";
 
@@ -18,6 +21,12 @@ export function WorkspaceSettings({ workspace, onUpdated, onClose }: WorkspaceSe
   const t = useT();
   const [name, setName] = useState(workspace.name);
   const [error, setError] = useState<string | null>(null);
+  // The workspace's default account. It is a binding on the daemon's machine, so it is written through the
+  // accounts API and never travels to the hub database.
+  const accountsState = useAccounts();
+  const workspaceBinding = `ws:${workspace.id}`;
+  const [workspaceAccount, setWorkspaceAccount] = useState<string | null>(null);
+  const effectiveAccount = workspaceAccount ?? boundAccount(accountsState.bindings, workspaceBinding);
 
   async function save(patch: Parameters<typeof updateWorkspace>[1]) {
     setError(null);
@@ -56,6 +65,16 @@ export function WorkspaceSettings({ workspace, onUpdated, onClose }: WorkspaceSe
             </label>
             <p className="help">{t("settings.confidentialHelp")}</p>
           </div>
+
+          <AccountPicker
+            scope="workspace"
+            accounts={accountsState.accounts}
+            bindings={accountsState.bindings}
+            value={effectiveAccount}
+            onChange={(next) => { setWorkspaceAccount(next); accountsState.reload(); }}
+            workspaceId={workspace.id}
+            supported={accountsState.supported}
+          />
 
           <fieldset className="field">
             <legend className="label">{t("settings.knowledgeLanguage")}</legend>
