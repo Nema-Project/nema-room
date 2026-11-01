@@ -33,6 +33,7 @@ v0.2.1 是 v0.2.0 之后的小版本，不含新功能。四项都是 v0.2.0 发
 发布可用性不等于功能或真机验收完成：
 
 - 多账户只有第 1 阶段落地（`apps/cli` 的账户数据与凭据）。设置 API、自动路由与界面属于 S2–S4，所以不要把这个版本当作多账户功能可用。[#131](https://github.com/Nema-Project/nema-room/issues/131) 仍 OPEN，已从 milestone v0.2.1 移到 v0.2.2 继续做（v0.2.1 现已无 open issue）。
+- 同一供应商多账户的后续分批在 v0.2.2 里做。第 2 批（设置接口与界面，分支 `feat/multi-account-s2`）加了 `/_nema/accounts*`、设置页账户块和三处账户选择器，但**只存选择、不按选择路由**：daemon 仍用默认账户跑任务，选择要到第 3 批才生效。该分支的验收是临时 `nemaHome` 与假 provider 上的自测，没有真账户或真 provider 参与；第 3 批合并前不要把这个功能当作可用。
 - `mcpLeftovers` 的修复在测试侧，产品代码未改；它把偶发失败归因于 fixture 读到尚未写入的 pid 文件：`Number("")` 为 0，而 POSIX 下 pid 0 指调用者自己的进程组，所以 `process.kill(0, 0)` 成功，测试就一直等到超时。该测试只在 POSIX 上运行（`describe.skipIf(!posix)`）。[#161](https://github.com/Nema-Project/nema-room/issues/161) 按此关闭。
 - registry 可见性等待有上限（`NPM_VISIBILITY_BUDGET_MS` 为 120 秒），预算耗尽仍 fail-closed 且不移动后续指针。这条路径在 v0.2.1 上确实走了一次，但**不是无问题的通过**：首次 promote 的等待只覆盖包本体与频道 dist-tag，没覆盖 provenance。npm 发布步骤 `00:25:42Z` 完成，`00:26:45Z` 的 final verify 回读 attestations 仍得 404，被读成 `missing`，于是在已经翻动 npm latest 之后停在 partial window；到重跑的 `00:28:51Z` preflight 才读到 provenance，随后完成。也就是说等待机制起效、失败也是 fail-closed 的，但它把可恢复的时序问题判成了确定性缺失，代价是一次人工重跑和一个部分指针的窗口。跟进见 [#174](https://github.com/Nema-Project/nema-room/issues/174)（milestone v0.2.x，OPEN）。
 - Windows x64 与 macOS arm64 安装包的真机安装、覆盖升级、启动与旧数据保留仍待验证；不能用 v0.2.0 的验收代替。
