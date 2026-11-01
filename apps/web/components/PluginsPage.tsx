@@ -340,7 +340,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
   const shown = (extensions ?? []).filter((extension) => matches(extension, type, query));
   const installedAll = shown.filter((extension) => extension.installState !== "absent");
   const unavailableCount = installedAll.filter(unavailable).length;
-  const installed = onlyUnavailable && unavailableCount > 0 ? installedAll.filter(unavailable) : installedAll;
+  const installed = onlyUnavailable ? installedAll.filter(unavailable) : installedAll;
   const discoverable = shown.filter((extension) => extension.installState === "absent");
 
   const renderRow = (extension: ExtensionRecord) => {
@@ -462,7 +462,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
         </div>
         <section className="extension-section" aria-labelledby={`${ids}-installed`}>
           <h2 id={`${ids}-installed`}>{t("extensions.section.installed")}</h2>
-          {unavailableCount > 0 && (
+          {(unavailableCount > 0 || onlyUnavailable) && (
             <button type="button" className="sp" aria-pressed={onlyUnavailable} onClick={() => setOnlyUnavailable((on) => !on)}>
               {t("extensions.unavailable", { count: unavailableCount })}
             </button>

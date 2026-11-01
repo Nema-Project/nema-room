@@ -176,6 +176,28 @@ describe("PluginsPage", () => {
     fireEvent.click(button);
     expect(screen.getByRole("heading", { name: "GitHub" })).toBeTruthy();
   });
+
+  it("keeps the unavailable filter on when the search matches none of them", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([
+      catalog[0]!,
+      catalog[1]!,
+      row({ id: "notes", name: "notes", kind: "skill", provision: "managed", installState: "failed", availability: "ready", error: "interrupted" }),
+    ]);
+    render(
+      <I18nProvider>
+        <PluginsPage />
+      </I18nProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "2 unavailable" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search extensions" }), { target: { value: "GitHub" } });
+    const none = screen.getByRole("button", { name: "0 unavailable" });
+    expect(none.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByRole("heading", { name: "GitHub" })).toBeNull();
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search extensions" }), { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "2 unavailable" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByRole("heading", { name: "GitHub" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "graphify" })).toBeTruthy();
+  });
 });
 
 describe("PluginsPage use state", () => {

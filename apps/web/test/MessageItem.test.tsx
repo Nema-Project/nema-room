@@ -405,8 +405,9 @@ describe("editing mentions", () => {
     const box = screen.getByRole("textbox");
     await userEvent.clear(box);
     await userEvent.type(box, "plain");
+    expect(screen.getByRole("status").textContent).toBe("");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect((await screen.findByRole("status")).textContent).toBe("Removed 1 stale mention");
+    await vi.waitFor(() => expect(screen.getByRole("status").textContent).toBe("Removed 1 stale mention"));
     expect(hub.editMessage).toHaveBeenCalledWith("w1", "m1", "plain");
   });
 
@@ -417,7 +418,7 @@ describe("editing mentions", () => {
     await userEvent.type(screen.getByRole("textbox"), " please");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     await vi.waitFor(() => expect(hub.editMessage).toHaveBeenCalled());
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("");
   });
 });
 

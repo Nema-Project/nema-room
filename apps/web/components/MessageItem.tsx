@@ -248,16 +248,16 @@ function QuoteBlock({ quote, onJump }: { quote: MessageQuote; onJump?: (messageI
   );
 }
 
-/**
- * Deletion is final, so a response read before a delete committed (an edit racing it) must not bring
- * the attachment back: keep the newer tombstone for any attachment the latest message has deleted.
- */
 function mentionsOf(message: Message): MessageMention[] {
   const meta = message.meta;
   if (!meta || !("mentions" in meta) || !Array.isArray(meta.mentions)) return [];
   return meta.mentions;
 }
 
+/**
+ * Deletion is final, so a response read before a delete committed (an edit racing it) must not bring
+ * the attachment back: keep the newer tombstone for any attachment the latest message has deleted.
+ */
 function keepTombstones(next: Message, current: Message): Message {
   if (!next.attachments || !current.attachments) return next;
   const gone = new Map(current.attachments.filter((a) => a.status === "deleted").map((a) => [a.id, a]));
@@ -344,11 +344,9 @@ function UserMessage({
             <Markdown source={message.content} />
           </div>
         ) : null}
-        {!editing && droppedMentions > 0 && (
-          <p className="kmeta" role="status">
-            {t(droppedMentions === 1 ? "chat.mentionsDropped.one" : "chat.mentionsDropped.other", { count: droppedMentions })}
-          </p>
-        )}
+        <p className={droppedMentions > 0 && !editing ? "kmeta" : undefined} role="status">
+          {droppedMentions > 0 && !editing ? t(droppedMentions === 1 ? "chat.mentionsDropped.one" : "chat.mentionsDropped.other", { count: droppedMentions }) : ""}
+        </p>
         <AttachmentList
           workspaceId={message.workspaceId}
           attachments={attachments}
