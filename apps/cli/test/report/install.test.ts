@@ -89,6 +89,19 @@ describe("nema report install", () => {
     expect(migrateReportHooks({ home: s.home, nodeBin: electron, cliEntry: ENTRY, runAsNode: true })).toEqual([]);
   });
 
+  test("migrate leaves a host Node hook and rewrites an encoded Windows payload Node hook", async () => {
+    const s = setup();
+    mkdirSync(path.join(s.home, ".claude"), { recursive: true });
+    const host = hookCommand("/usr/local/bin/node", ENTRY, "claude");
+    const windowsOld = hookCommand("C:\\Nema\\resources\\payload\\runtime\\win32-x64\\node\\node.exe", ENTRY, "claude", "win32");
+    writeFileSync(claudeSettings(s.home), `${JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: host }] }], SessionEnd: [{ hooks: [{ type: "command", command: windowsOld }] }] } }, null, 2)}\n`);
+    const electron = "/Applications/Nema.app/Contents/MacOS/Nema";
+    expect(migrateReportHooks({ home: s.home, nodeBin: electron, cliEntry: ENTRY, runAsNode: true })).toEqual(["claude"]);
+    const cfg = read(claudeSettings(s.home));
+    expect(cfg.hooks.Stop![0]!.hooks[0]!.command).toBe(host);
+    expect(cfg.hooks.SessionEnd![0]!.hooks[0]!.command).toBe(hookCommand(electron, ENTRY, "claude", process.platform, true));
+  });
+
   test("install twice does not duplicate entries", async () => {
     const s = setup();
     await s.run("claude");

@@ -114,9 +114,9 @@ function electronNodeProcess(): boolean {
   return process.env.ELECTRON_RUN_AS_NODE === "1" || process.versions.electron !== undefined;
 }
 
-/** A payload with no `node` entry runs on the Electron executable. The path must not leave the payload. */
+/** A payload with no `node` entry runs on the Electron executable. Any present value must stay inside the payload. */
 function resolveNodePath(root: string, value: Partial<RuntimeManifest>): string {
-  if (typeof value.node === "string" && value.node.trim()) return manifestEntry(root, value.node, "node");
+  if (value.node !== undefined) return manifestEntry(root, value.node, "node");
   if (!electronNodeProcess()) throw new Error("Runtime manifest has no bundled Node, and this process is not Electron");
   return process.execPath;
 }

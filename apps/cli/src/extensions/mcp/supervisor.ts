@@ -13,7 +13,7 @@ import { LEFTOVER_RECORD, McpStdioTransport } from "./stdioTransport.js";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TOOLS = 512;
 /** Set by the supervisor for every stdio server; a config cannot replace them. */
-const RESERVED_ENV = /^(path|home|userprofile|electron_run_as_node)$/i;
+const RESERVED_ENV = /^(path|home|userprofile)$/i;
 
 export type McpStatus = {
   id: string;
@@ -297,7 +297,8 @@ export class McpSupervisor {
     env.HOME = home;
     // Windows programs (and Node's os.homedir()) read USERPROFILE, not HOME.
     if (platform === "win32") env.USERPROFILE = home;
-    // A Node script's executable is Electron. Without this, that child opens a GUI window.
+    // Under Electron this forces Node mode after the config is copied, so a config cannot clear it.
+    // Under host Node the configured value stays, including an explicit ELECTRON_RUN_AS_NODE.
     const childEnv = withElectronNode(env);
     mkdirSync(home, { recursive: true, mode: 0o700 });
     const command = commandSpec(config.command, config.args, childEnv);

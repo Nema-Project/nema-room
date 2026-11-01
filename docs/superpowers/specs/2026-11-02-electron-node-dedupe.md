@@ -26,7 +26,7 @@ Staging asks the installed Electron binary for `process.versions.node` and refus
 
 `hookCommand` prefixes `ELECTRON_RUN_AS_NODE=1` on POSIX and `$env:ELECTRON_RUN_AS_NODE='1';` inside the Windows PowerShell encoded command when the installer is itself running as Electron's Node.
 
-`startDaemon` calls `migrateReportHooks` only in that same case. It rewrites Claude and Codex hook commands that Nema owns and leaves the skill file and the report token alone. A second start with the same command changes nothing.
+`startDaemon` calls `migrateReportHooks` only in that same case. It rewrites Nema hook commands that still point at `runtime/<target>/node` and leaves host or npm hooks, the skill file, and the report token alone. A second start with the same command changes nothing.
 
 ## Not measured here
 

@@ -193,10 +193,22 @@ export function uninstallReport(o: UninstallRun): number {
   return 0;
 }
 
+const REMOVED_PAYLOAD_NODE = /runtime[/\\][A-Za-z0-9]+-[A-Za-z0-9]+[/\\]node(?:[/\\]|\s|'|"|$)/;
+
+function hookCommandText(command: string): string {
+  const encoded = /^powershell\.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ([A-Za-z0-9+/=]+)$/.exec(command);
+  return encoded ? Buffer.from(encoded[1]!, "base64").toString("utf16le") : command;
+}
+
+/** True when this Nema hook still launches the Node copy removed from `runtime/<target>/node`. */
+function pointsAtRemovedPayloadNode(hook: unknown): boolean {
+  return isNema(hook) && isObj(hook) && typeof hook.command === "string" && REMOVED_PAYLOAD_NODE.test(hookCommandText(hook.command));
+}
+
 /**
- * Rewrite installed Nema hook commands to the current Node executable.
- * An upgrade that drops `runtime/<target>/node` leaves the old absolute path in Claude and Codex settings.
- * Returns the agents whose commands changed. Does not touch the skill file or the report token.
+ * Rewrite Nema hook commands that still point at the removed `runtime/<target>/node` executable.
+ * A hook installed against a host or npm Node stays as written. Does not touch the skill file or the report token.
+ * Returns the agents whose commands changed.
  */
 export function migrateReportHooks(o: { home: string; nodeBin: string; cliEntry: string; runAsNode?: boolean }): ReportAgent[] {
   const updated: ReportAgent[] = [];
@@ -209,9 +221,16 @@ export function migrateReportHooks(o: { home: string; nodeBin: string; cliEntry:
     let saw = false;
     for (const ev of EVENTS) {
       const groups = hooks[ev];
-      if (!Array.isArray(groups) || !groups.some((g) => isObj(g) && Array.isArray(g.hooks) && g.hooks.some(isNema))) continue;
-      putHook(hooks, ev, command);
-      saw = true;
+      if (!Array.isArray(groups)) continue;
+      for (const group of groups) {
+        if (!isObj(group) || !Array.isArray(group.hooks)) continue;
+        for (const hook of group.hooks) {
+          if (!pointsAtRemovedPayloadNode(hook) || !isObj(hook) || hook.command === command) continue;
+          hook.type = "command";
+          hook.command = command;
+          saw = true;
+        }
+      }
     }
     if (!saw || JSON.stringify(hooks) === before) continue;
     save(agentPaths(agent, o.home).settings, loaded);

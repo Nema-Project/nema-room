@@ -262,6 +262,25 @@ describe("managed local runtime", () => {
     expect(seen).toEqual([process.execPath]);
   });
 
+  it("rejects a present node path that is empty or not a string", async () => {
+    const home = join(tempDir("nema-home-"), "bad-node");
+    const assetsDir = testAssets();
+    const manifestPath = join(assetsDir, "runtime-manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { node?: unknown };
+    mkdirSync(home, { recursive: true });
+    const previous = process.env.ELECTRON_RUN_AS_NODE;
+    process.env.ELECTRON_RUN_AS_NODE = "1";
+    try {
+      for (const node of ["", "   ", null]) {
+        writeFileSync(manifestPath, JSON.stringify({ ...manifest, node }));
+        await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/invalid node path|node asset is missing/);
+      }
+    } finally {
+      if (previous === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+      else process.env.ELECTRON_RUN_AS_NODE = previous;
+    }
+  });
+
   it("retries only a spawned owner's control timeout while authenticated readiness is still starting", async () => {
     const home = join(tempDir("nema-home-"), "delayed-authenticated-owner");
     const assetsDir = testAssets();
