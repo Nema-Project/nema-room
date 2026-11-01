@@ -250,16 +250,16 @@ GitHub 插件让 Agent 查看已绑定仓库在 GitHub 上的 issue、pull reque
 
 **文件。** `<nema home>/accounts.json`（`0600`，原子替换）存 `{ version: 1, accounts, bindings, autoRouting? }`。`bindings` 的键是 `ws:<id>` 或 `thread:<id>`，值是账户 id 或 `"auto"`；没有这个键表示没有选择。凭据存在 `<nema home>/secrets/accounts/<id>/`（目录 `0700`），里面只会有一种文件：`key`（byok）、`auth.json`（siwc，另有 `auth.lock`）或 `token`（Claude Code）。`compat` 账户没有凭据目录，只读 `~/.codex/auth.json`。从 `nema home` 到账户目录，路径上任何一层是符号链接都会被拒绝，读、写、删都一样；凭据文件还必须属于当前用户。
 
-**没有 `accounts.json` 时**，按 `config.json` 加旧的单个凭据文件，在内存里合成一个隐式账户 `acct_0000000000`，不写盘。第一次新建或修改账户时才落盘，旧凭据按「复制 → 写 `accounts.json` → 删除旧文件」的顺序移进新账户目录；中途被打断时，下一次会接着完成。`config.json` 不加字段，它的 `adapter`、`authMode`、`model`、`byokBaseUrl` 会同步到排在最前、且已启用的账户上。
+**没有 `accounts.json` 时**，按 `config.json` 加旧的单个凭据文件，在内存里合成一个隐式账户 `acct_0000000000`，不写盘。第一次新建或修改账户时才落盘，旧凭据按「复制 → 写 `accounts.json` → 删除旧文件」的顺序移进新账户目录。没有回滚：最后一步失败或被打断时，`accounts.json` 和账户目录里的副本保留，旧文件留在原处，下一次迁移时接着删除它。`config.json` 不加字段，它的 `adapter`、`authMode`、`model`、`byokBaseUrl` 会同步到排在最前、且已启用的账户上。
 
-**选择顺序**：`task.accountId`（单条消息）> `thread:<id>` > `ws:<id>` > 全局默认（`order` 最小的启用账户）。点名一个具体账户时，候选只有它，不按启用状态、能力和冷却过滤，只检查凭据；凭据不可用时，在发出请求前失败。选了 `"auto"` 而 `autoRouting` 未开启时，任务失败，不改用默认账户。自动模式的候选只含当前运行方式的账户，依次去掉：未启用的、凭据不可用的、冷却中的、能力不满足本次附件的。剩下的按 `order` → `costTier`（low → standard → high）→ `id` 排序。
+**选择顺序**：`task.accountId`（单条消息）> `thread:<id>` > `ws:<id>` > 全局默认（当前运行方式下 `order` 最小的启用账户）。点名一个具体账户时，候选只有它，不按启用状态、能力和冷却过滤；但仍检查它是否属于当前运行方式、凭据是否可用、能否解析出模型，任一项不满足就在发出请求前失败（`adapter_mismatch`、`credential_missing` / `credential_unusable`、`model_missing`，见 `apps/cli/src/routing/index.ts` 的 `checkNamed`）。选了 `"auto"` 而 `autoRouting` 未开启时，任务失败，不改用默认账户。自动模式的候选只含当前运行方式的账户，依次去掉：未启用的、凭据不可用的、冷却中的、能力不满足本次附件的。剩下的按 `order` → `costTier`（low → standard → high）→ `id` 排序。
 
 **错误分类**（`apps/cli/src/routing/errors.ts`），只在 `codex-direct` 的任务里切换：
 
 | 分类 | 判断依据 | 换不换 | 冷却 |
 | --- | --- | --- | --- |
-| `rate_limit` | 429，或认证接口限流 | 换 | `Retry-After`，没有则 60 秒 |
-| `quota` | `ModelQuotaError` | 换 | `Retry-After`，没有则 15 分钟 |
+| `rate_limit` | 429，或认证接口限流 | 换 | 60 秒（429 的 HTTP `Retry-After` 目前不会传到这里） |
+| `quota` | `ModelQuotaError` | 换 | 到 `ModelQuotaError.resetsAt` 为止，没有则 15 分钟 |
 | `server` | 5xx | 换 | 30 秒 |
 | `context` | 400 且文本提到上下文超长 | 换 | 无 |
 | `auth` | 401、byok 密钥被拒、需要重新登录 | 不换 | — |
