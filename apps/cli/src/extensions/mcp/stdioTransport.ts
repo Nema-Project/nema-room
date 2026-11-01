@@ -2,9 +2,15 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import type { Writable } from "node:stream";
 import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
 
-const KILL_GRACE_MS = 2000;
+/**
+ * Stopping follows the MCP stdio shutdown order: close the server's input, then SIGTERM, then SIGKILL.
+ * The two waits add up to the former 2s SIGTERM-to-SIGKILL grace, so a stop takes no longer than before.
+ */
+const INPUT_GRACE_MS = 500;
+const KILL_GRACE_MS = 1500;
 const STOPPED = "MCP server stopped";
 /** The code of the start failure when the crash-recovery record cannot be written. */
 export const LEFTOVER_RECORD = "NEMA_MCP_RECORD";
@@ -20,6 +26,20 @@ export type McpStdioLaunch = {
   /** Keeps a record of the running group, so the next daemon can stop it if this one is killed. */
   leftover?: { record(pid: number): void; clear(pid: number): void };
 };
+
+/** Waits up to `ms` for `settled`. True when it settled in time. */
+async function within(settled: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<false>((done) => { timer = setTimeout(() => done(false), ms); timer.unref(); });
+  try { return await Promise.race([settled.then(() => true as const), late]); }
+  finally { clearTimeout(timer); }
+}
+
+/** Ends the server's input and waits up to `ms` for it to exit on its own. True when it did. */
+function endInput(stdin: Writable | null | undefined, exited: Promise<unknown>, ms: number): Promise<boolean> {
+  try { stdin?.end(); } catch { /* the pipe is already gone; the signals that follow still apply */ }
+  return within(exited, ms);
+}
 
 function signalGroup(pid: number | undefined, signal: NodeJS.Signals): void {
   if (!pid) return;
@@ -158,13 +178,16 @@ export class McpStdioTransport implements Transport {
     this.buffer.clear();
     if (!child) return;
     if (!("exitCode" in child)) {
+      if (await endInput(child.stdin, child.closed, INPUT_GRACE_MS)) return;
       child.kill("SIGTERM");
       await child.closed;
       return;
     }
     // `child` is set only after a successful spawn, so a command that failed to start is never waited on.
     const pid = child.pid;
-    if (child.exitCode === null && child.signalCode === null) {
+    const running = () => child.exitCode === null && child.signalCode === null;
+    if (running()) await endInput(child.stdin, this.exited, INPUT_GRACE_MS);
+    if (running()) {
       const timer = setTimeout(() => {
         if (process.platform === "win32") child.kill("SIGKILL");
         else signalGroup(pid, "SIGKILL");
@@ -177,5 +200,8 @@ export class McpStdioTransport implements Transport {
     }
     // The leader is gone; anything still in its group goes now.
     if (process.platform !== "win32") signalGroup(pid, "SIGKILL");
+    // A leader that has exited while a descendant still held its output: give the pipes a bounded
+    // moment to close, so `onclose` has run by the time a stop returns.
+    await within(this.exited, KILL_GRACE_MS);
   }
 }
