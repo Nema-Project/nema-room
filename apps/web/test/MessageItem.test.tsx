@@ -411,6 +411,20 @@ describe("editing mentions", () => {
     expect(hub.editMessage).toHaveBeenCalledWith("w1", "m1", "plain");
   });
 
+  it("does not bring the notice back after a later edit is cancelled", async () => {
+    vi.mocked(hub.editMessage).mockResolvedValue({ message: user({ content: "plain" }) } as never);
+    show(user({ content: "see [D-12]", meta: { mentions: [mention] } }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const box = screen.getByRole("textbox");
+    await userEvent.clear(box);
+    await userEvent.type(box, "plain");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Removed 1 stale mention")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText("Removed 1 stale mention")).toBeNull();
+  });
+
   it("stays quiet when the edit keeps every mention", async () => {
     vi.mocked(hub.editMessage).mockResolvedValue({ message: user({ content: "see [D-12] please", meta: { mentions: [mention] } }) } as never);
     show(user({ content: "see [D-12]", meta: { mentions: [mention] } }));
