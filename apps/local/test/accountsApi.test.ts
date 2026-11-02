@@ -569,3 +569,31 @@ describe("PATCH /_nema/accounts with the automatic routing switch", () => {
     expect(reply!.body).toMatchObject({ error: "accounts_unusable" });
   });
 });
+
+describe("a legacy credential left by an interrupted migration (#206)", () => {
+  const FAKE_KEY = "test-not-a-real-key-0000";
+  function migrated(home: string): string {
+    saveConfig(home, { adapter: "codex-direct", authMode: "byok", byokBaseUrl: "https://a.example.com/v1" });
+    const legacy = path.join(home, "byok-key");
+    writeFileSync(legacy, FAKE_KEY, { mode: 0o600 });
+    expect(call(home, "PATCH", "/_nema/accounts", { autoRouting: false })?.status).toBe(200);
+    expect(readAccounts(home).status).toBe("ok");
+    // Put back, as a removal that gave up after the copy would have left it.
+    writeFileSync(legacy, FAKE_KEY, { mode: 0o600 });
+    return legacy;
+  }
+
+  test("the next settings write retires it", () => {
+    const home = tempHome();
+    const legacy = migrated(home);
+    expect(call(home, "PATCH", "/_nema/accounts", { autoRouting: true })?.status).toBe(200);
+    expect(() => statSync(legacy)).toThrow();
+  });
+
+  test("a read leaves it alone", () => {
+    const home = tempHome();
+    const legacy = migrated(home);
+    expect(call(home, "GET", "/_nema/accounts")?.status).toBe(200);
+    expect(readFileSync(legacy, "utf8")).toBe(FAKE_KEY);
+  });
+});

@@ -204,7 +204,7 @@ export function legacyUnchanged(nemaHome: string, source: LegacyCredential): boo
  * answer here stays about the claim this call handled. Judging the path — and adopting whatever now sits
  * there — is the caller's job (`retireLegacyFile`).
  */
-export function removeLegacyIfUnchanged(nemaHome: string, source: LegacyCredential): boolean {
+export function removeLegacyIfUnchanged(nemaHome: string, source: LegacyCredential, lockTimeoutMs = 20_000): boolean {
   // A SIWC login is refreshed under `<nemaHome>/auth.lock`, and a refresh in flight when the file is
   // retired would finish by saving the rotated tokens back at the old path: the account copy would keep
   // the pre-refresh tokens, which may already be spent. Taking the same lock makes the two orders strict,
@@ -212,7 +212,8 @@ export function removeLegacyIfUnchanged(nemaHome: string, source: LegacyCredenti
   if (path.basename(source.path) !== "auth.json") return retireLocked(nemaHome, source);
   try {
     return withFileLockSync(`${path.dirname(source.path)}/auth.lock`, () => retireLocked(nemaHome, source), {
-      timeoutMs: 20_000,
+      // 0 tries the lock once without waiting: a caller on a request path must not stall its event loop.
+      timeoutMs: lockTimeoutMs,
       // A refresh running in this same process holds the lock across an await; blocking here would stop
       // the event loop it needs, so this call backs off and the next materialize finishes the move.
       whenHeldByThisProcess: "busy",

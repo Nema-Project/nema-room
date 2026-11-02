@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
-import { DEFAULT_BYOK_BASE_URL, type NemaConfig } from "../config.js";
-import { accountsUnusableMessage, accountDir, readAccounts, updateAccounts, writeAccounts, withAccountsLock } from "./store.js";
+import { DEFAULT_BYOK_BASE_URL, DEFAULT_CONFIG, type NemaConfig } from "../config.js";
+import { accountsUnusableMessage, accountDir, accountsPath, readAccounts, updateAccounts, writeAccounts, withAccountsLock } from "./store.js";
 import {
   accountFileName,
   credentialFileName,
@@ -270,6 +270,66 @@ export function retireLegacyFile(
   }
   return null;
 }
+
+/**
+ * Finishes moves whose last step did not run (#206).
+ *
+ * `materializeImplicit` runs only while there is no `accounts.json`, so a legacy file whose removal gave up
+ * (its lock was busy or timed out) would otherwise stay on disk for good: a credential nothing reads.
+ *
+ * Every legacy kind is checked, not only the one `config.json` names now: that file follows the default
+ * account, so it can name another kind than the one that was migrated. For each kind only the
+ * `already-moved` situation is acted on: one account already holds these exact bytes, so removing the legacy
+ * file loses nothing. Every other situation — no account of this kind, several candidates, a different
+ * credential, an unreadable or untrusted legacy file — leaves it where it is, because guessing would hand a
+ * credential to the wrong account. Returns the paths retired from.
+ *
+ * Neither lock is waited for: a busy `accounts.lock` throws (the caller leaves the file for its next write),
+ * and a busy `auth.lock` leaves that file in place.
+ */
+export function retireLeftoverLegacy(nemaHome: string): string[] {
+  const kinds = LEGACY_KINDS.map((kind) => ({ ...DEFAULT_CONFIG, ...kind }));
+  // The common case is a finished move: checked before the lock, so a settings write pays nothing for it.
+  const present = kinds.filter((config) => {
+    const file = legacyCredentialPath(nemaHome, config);
+    return file !== null && existsSync(file);
+  });
+  if (present.length === 0 || !existsSync(accountsPath(nemaHome))) return [];
+  return withAccountsLock(nemaHome, () => {
+    const existing = readAccounts(nemaHome);
+    if (existing.status !== "ok") return [];
+    const retired: string[] = [];
+    for (const config of present) {
+      const legacyPath = legacyCredentialPath(nemaHome, config)!;
+      if (!existsSync(legacyPath)) continue;
+      let source: LegacyCredential;
+      try {
+        source = readLegacyCredential(nemaHome, legacyPath);
+      } catch {
+        continue;
+      }
+      const situation = legacySituation(nemaHome, existing.file.accounts, config, source.path, source.bytes);
+      if (situation.kind !== "already-moved") continue;
+      // Several accounts of this kind could own the file: even when one holds these bytes, retiring through
+      // it could adopt a changed legacy file into the wrong account, so the file is left alone.
+      const name = path.basename(legacyPath);
+      if (existing.file.accounts.filter((a) => takesLegacyFile(a, name, config)).length !== 1) continue;
+      // Removed only while it still holds the bytes the account has. Unlike `retireLegacyFile`, a changed file is
+      // never adopted: this cleanup must not rewrite an account's credential. A busy auth.lock is not waited
+      // for either: this runs on a settings request, and the next write tries again.
+      if (removeLegacyIfUnchanged(nemaHome, source, 0)) retired.push(source.path);
+    }
+    return retired;
+    // Tried once: a settings request must not wait on another writer, and the next write tries again.
+  }, { waitMs: 0 });
+}
+
+/** The adapter and auth mode of each legacy credential file (see `legacyFileName`). */
+const LEGACY_KINDS: ReadonlyArray<Pick<NemaConfig, "adapter" | "authMode">> = [
+  { adapter: "codex-direct", authMode: "byok" },
+  { adapter: "codex-direct", authMode: "siwc" },
+  { adapter: "claude-code", authMode: DEFAULT_CONFIG.authMode },
+];
 
 export function materializeImplicit(o: {
   nemaHome: string;
