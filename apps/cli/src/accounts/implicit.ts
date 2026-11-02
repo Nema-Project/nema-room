@@ -231,7 +231,7 @@ export function retireLegacyFile(
   nemaHome: string,
   account: Account,
   initial: LegacyCredential,
-  opts: { alreadyCopied?: boolean; afterCopy?: (legacyPath: string) => void; lockTimeoutMs?: number } = {},
+  opts: { alreadyCopied?: boolean; afterCopy?: (legacyPath: string) => void } = {},
 ): string | null {
   // Runs under the accounts lock (see `materializeImplicit`), the same lock a credential save takes, so a
   // settings request cannot write this account's credential between the copy below and the legacy removal.
@@ -255,7 +255,7 @@ export function retireLegacyFile(
     // A hook for the caller/tests to act between "copied" and "removed", which is exactly the window a
     // peer's refresh can land in.
     opts.afterCopy?.(source.path);
-    const removed = removeLegacyIfUnchanged(nemaHome, source, opts.lockTimeoutMs);
+    const removed = removeLegacyIfUnchanged(nemaHome, source);
     // True means the bytes that were copied are gone from the legacy path. It does *not* mean the path is
     // empty: a writer that raced the removal can have re-created it, and that file is newer than our copy.
     if (removed && !existsSync(source.path)) return source.path;
@@ -314,9 +314,10 @@ export function retireLeftoverLegacy(nemaHome: string): string[] {
       // it could adopt a changed legacy file into the wrong account, so the file is left alone.
       const name = path.basename(legacyPath);
       if (existing.file.accounts.filter((a) => takesLegacyFile(a, name, config)).length !== 1) continue;
-      // A busy auth.lock is not waited for: this runs on a settings request, and the next write tries again.
-      const movedFrom = retireLegacyFile(nemaHome, situation.account, source, { alreadyCopied: true, lockTimeoutMs: 0 });
-      if (movedFrom !== null) retired.push(movedFrom);
+      // Removed only while it still holds the bytes the account has. Unlike `retireLegacyFile`, a changed file is
+      // never adopted: this cleanup must not rewrite an account's credential. A busy auth.lock is not waited
+      // for either: this runs on a settings request, and the next write tries again.
+      if (removeLegacyIfUnchanged(nemaHome, source, 0)) retired.push(source.path);
     }
     return retired;
     // Tried once: a settings request must not wait on another writer, and the next write tries again.

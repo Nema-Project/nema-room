@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { materializeImplicit, retireLeftoverLegacy } from "../../src/accounts/implicit.js";
 import { accountDir, readAccounts, writeAccounts } from "../../src/accounts/store.js";
 import { writePrivateFile } from "../nativePermissions.js";
@@ -12,11 +12,25 @@ import { DEFAULT_CONFIG, saveConfig, type NemaConfig } from "../../src/config.js
  * a later call, but only when an account already holds exactly those bytes.
  */
 
+/** Runs once just before the next `renameSync`: the moment a writer can replace the legacy file. */
+const beforeRename: Array<() => void> = [];
+vi.mock("node:fs", async (importOriginal) => {
+  const real = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...real,
+    renameSync: ((from: Parameters<typeof real.renameSync>[0], to: Parameters<typeof real.renameSync>[1]) => {
+      beforeRename.shift()?.();
+      return real.renameSync(from, to);
+    }) as typeof real.renameSync,
+  };
+});
+
 let root: string;
 let home: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "nema-leftover-legacy-"));
   home = join(root, "nema");
+  beforeRename.length = 0;
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -92,6 +106,14 @@ describe("retireLeftoverLegacy (#206)", () => {
     // Well under the 20 s wait a blocking retirement takes; Windows ACL checks alone cost a few seconds here.
     expect(Date.now() - started).toBeLessThan(10_000);
     expect(readFileSync(legacy, "utf8")).toBe(login);
+  });
+
+  test("a legacy file replaced during the cleanup is kept, and the account is not rewritten", () => {
+    const account = interruptedMove(FAKE_KEY);
+    beforeRename.push(() => writeFileSync(legacyKey(), OTHER_KEY, { mode: 0o600 }));
+    expect(retireLeftoverLegacy(home)).toEqual([]);
+    expect(readFileSync(legacyKey(), "utf8")).toBe(OTHER_KEY);
+    expect(readFileSync(join(accountDir(home, account.id), "key"), "utf8")).toBe(FAKE_KEY);
   });
 
   test("does nothing before the first migration", () => {
