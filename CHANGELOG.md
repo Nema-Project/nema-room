@@ -4,6 +4,23 @@ Version sections on main may describe release preparation. A version heading and
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-03
+
+### Added
+
+- The Plugins page and the `/` menu say when a skill is missing something under a runtime, or when its name does not match its folder. The Installed section counts rows that cannot be used and can filter to them.
+- Saving an edit that drops mentions shows how many were removed, without blocking the save.
+
+### Changed
+
+- The desktop payload no longer ships a second Node under `runtime/<target>/node/`. The app, CLI launcher, and browser launcher run Electron's Node with `ELECTRON_RUN_AS_NODE=1`. The Node MIT notice stays at `runtime/licenses/node`. A core started that way rewrites report hooks that still point at the removed Node path.
+
+### Fixed
+
+- Stopping a stdio MCP server now closes its input first and lets it exit on its own, and only then sends SIGTERM and finally SIGKILL, following the shutdown order in the MCP specification. A stop still takes about two seconds at most.
+
+- A legacy credential file whose removal gave up during the first account migration is now removed by a later account settings change, once an account holds the same credential. Before, that copy stayed on disk for good.
+
 ## [0.2.2] - 2026-11-01
 
 ### Added
