@@ -20,18 +20,19 @@
 
 v0.2.3 是 v0.2.2 之后的小版本。用户可见的变更有四项：[#205](https://github.com/Nema-Project/nema-room/pull/205) 桌面包不再另带一份 Node，改用 Electron 自带的 Node（[#134](https://github.com/Nema-Project/nema-room/issues/134)）；[#201](https://github.com/Nema-Project/nema-room/pull/201) stdio MCP 服务器按规范顺序关停（[#190](https://github.com/Nema-Project/nema-room/issues/190)）；[#207](https://github.com/Nema-Project/nema-room/pull/207) 清理第一次账户迁移时没能删掉的旧凭据（[#206](https://github.com/Nema-Project/nema-room/issues/206)）；[#200](https://github.com/Nema-Project/nema-room/pull/200) 与 [#208](https://github.com/Nema-Project/nema-room/pull/208) 显示 skill 限制和被去掉的 mention。[#196](https://github.com/Nema-Project/nema-room/pull/196) 把 `release-promote` 的 npm 可见性预算放宽到 180 秒（Refs [#174](https://github.com/Nema-Project/nema-room/issues/174)），只影响维护者的发布流程，没有写片段。[#199](https://github.com/Nema-Project/nema-room/pull/199) 加了可重复运行的桌面启动 benchmark，[#204](https://github.com/Nema-Project/nema-room/pull/204) 只改测试，[#197](https://github.com/Nema-Project/nema-room/pull/197)、[#198](https://github.com/Nema-Project/nema-room/pull/198)、[#202](https://github.com/Nema-Project/nema-room/pull/202)、[#203](https://github.com/Nema-Project/nema-room/pull/203) 只改文档，这些都没有用户可见片段。本 release PR 在 cut 之前给 Node 去重片段补上了 bullet（缺了它 `release:cut` 会拒绝），并把 MCP 关停片段译成英文，与 changelog 的语言一致。
 
-发布记录（tag 之后补真实值，以下为占位）：
+发布记录（tag、三条 tag 工作流、晋升与晋升后核验均已核实）：
 
-- tag `v0.2.3` → `<TAG_COMMIT>`；该提交的 main CI：`<MAIN_CI_RUN>`。
-- 三条 tag 工作流：npm `<NPM_RUN>`、镜像 `<IMAGE_RUN>`、桌面 `<DESKTOP_RUN>`。
-- 只读检查 `npm run release:verify -- 0.2.3` 打 tag 后的首次结果：`<PRE_PROMOTE_VERIFY>`（预期退出 1，且只点名 npm）。
-- `release:verify -- --pointers 0.2.3` 的前后对照：`<POINTERS_BEFORE>` / `<POINTERS_AFTER>`。
-- 晋升：`gh workflow run release-promote.yml --ref main -f tag=v0.2.3`，运行 `<PROMOTE_RUN>`；晋升后 `release:verify -- 0.2.3` 退出 0。这是 #196 的 180 秒预算第一次用于真实发布，需记录可见性等待实际用了多久、首次晋升是否一次完成。
-- `releases/latest/download/docker-compose.yml` 在晋升前仍是 0.2.2 的双 pin，晋升后变为 0.2.3 且带版本头。
+- tag `v0.2.3` 是 annotated tag `e450a56ec6a8601d7f3ff7b921feef553bcb118f`，解引用到 `6ae1be243465e88772b45eaec418866d203fc11f`（[PR #209](https://github.com/Nema-Project/nema-room/pull/209) 的合并提交）；该提交的 [main CI](https://github.com/Nema-Project/nema-room/actions/runs/41591476814) 成功后才创建 tag。
+- 三条 tag 工作流均成功：[npm](https://github.com/Nema-Project/nema-room/actions/runs/41592079086)、[镜像](https://github.com/Nema-Project/nema-room/actions/runs/41592079064)、[桌面](https://github.com/Nema-Project/nema-room/actions/runs/41592079167)（只建 draft Release）。npm 那条按设计只打包与冒烟，npm 上的 0.2.3 由晋升 dispatch 的 [run 41593856788](https://github.com/Nema-Project/nema-room/actions/runs/41593856788) 发布。
+- tag 之后、晋升之前，带 `GITHUB_TOKEN` 跑 `npm run release:verify -- 0.2.3`：**退出 1**，`result: incomplete (exit 1)`。逐项为 `MISSING npm`（`npm has no @nema-project/nema@0.2.3`）、`ok images`（hub `sha256:c70eebaa…` / web `sha256:af536be2…`，linux/amd64）、`ok release`（仍是 draft、8 个资产匹配、`docker-compose.yml` 钉 0.2.3、GitHub latest 指针未动）、`UNKNOWN consistency`（因 npm 未就绪而未检查）。与预期一致，只点名 npm。
+- 晋升前 `release:verify -- --pointers 0.2.3`：npm latest、ghcr hub latest、ghcr web latest、github latest 均为 `0.2.2`，npm next `(none)`。晋升后这四个 `latest` 均为 `0.2.3`，npm next 仍为 `(none)`（决策列恒打印 `-> move`，读法见 v0.2.1 一节）。
+- 晋升：[run 41593792001](https://github.com/Nema-Project/nema-room/actions/runs/41593792001) **第一次即成功**，结尾 `promote v0.2.3: done`（2026-11-03T07:07:59Z）。这是 [#196](https://github.com/Nema-Project/nema-room/pull/196) 的 180 秒预算第一次用于真实发布：可见性等待先有约 110 秒读到 `package absent`，之后约 60 秒读到 `provenance not indexed yet (the version document declares it)`，到 `175976ms` 才同时读到 `npm latest -> 0.2.3` 与 provenance。**余量约 4 秒**（预算 `180000ms`）；按 v0.2.2 时的 120 秒预算，这次会在包本体可见之后不久耗尽。v0.2.2 是约 55 秒 absent、约 60 秒等 provenance；这次 provenance 那段同样约 60 秒，变长的是包本体可见之前的那段。预算余量的讨论记在 [#174](https://github.com/Nema-Project/nema-room/issues/174)。
+- 晋升后 `npm run release:verify -- 0.2.3` **退出 0**：`result: complete (exit 0)`，四项全 `ok`。npm integrity 为 `sha512-yel2ve6hxiku1Fp8oZjgsEeO4i0LuIGEbtNjU8200MSFkDAEDDIwwq3PuedeHR6RG8ZjX8hlTHN5zSbMUQVt9A==`，与 tag push run 的 `nema-tarball` 一致；Release 已公开、8 个资产匹配、`docker-compose.yml` 钉 0.2.3；`consistency` 认定 tag、release manifest 与 npm provenance 同为 `6ae1be24…`（镜像无 revision label，未比对镜像 commit；provenance 来自 registry 的 `workflow_dispatch` 记录，未验证签名）。
+- GitHub Release 于 `2026-11-03T07:07:58Z` 公开，`draft: false`、`prerelease: false`、`latest=true`；`releases/latest/download/docker-compose.yml` 由 0.2.2 双 pin 变为 0.2.3 双 pin，首行为 `# Nema Room 0.2.3 release asset. Hub and web are pinned to 0.2.3.`
 
 发布可用性不等于功能或真机验收完成：
 
-- Node 去重的证据是 PR #205 最后一个提交 `ff10c1e` 上的 [Desktop release run 41345394881](https://github.com/Nema-Project/nema-room/actions/runs/41345394881)：win32-x64 与 darwin-arm64 的 Build and smoke 都成功，这只验证了 CI 上的打包与冒烟。安装包的真机安装、从 0.2.2 覆盖升级、启动、旧数据保留，以及旧 report hook 改写后能否正常上报，都还没有真机证据。
+- Node 去重的证据是 PR #205 最后一个提交 `ff10c1e` 上的 [Desktop release run 41345394881](https://github.com/Nema-Project/nema-room/actions/runs/41345394881)：win32-x64 与 darwin-arm64 的 Build and smoke 都成功；tag `v0.2.3` 的[桌面工作流](https://github.com/Nema-Project/nema-room/actions/runs/41592079167)在同两个目标上再次成功。这只验证了 CI 上的打包与冒烟。安装包的真机安装、从 0.2.2 覆盖升级、启动、旧数据保留，以及旧 report hook 改写后能否正常上报，都还没有真机证据。
 - [#131](https://github.com/Nema-Project/nema-room/issues/131) 仍 OPEN（milestone v0.2.3）：[#202](https://github.com/Nema-Project/nema-room/pull/202) 补了三语指南与技术参考，但真实账户验收记录还没有。
 - [#174](https://github.com/Nema-Project/nema-room/issues/174) 与 [#189](https://github.com/Nema-Project/nema-room/issues/189) 仍 OPEN，不阻塞本版发布。
 
