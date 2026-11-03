@@ -1,6 +1,6 @@
 # 项目路线图与验收台账
 
-更新日期：2026-11-02（Asia/Tokyo）
+更新日期：2026-11-03（Asia/Tokyo）
 
 本文件承接仓库评估中提出的 TODO，作为当前待办入口。它是建议的稳定化顺序，不代表全部问题已复现，也不代表已承诺交付日期。历史设计和评审保留在 `docs/superpowers/` 与 `docs/reviews/`；遇到冲突，应以对应提交的源码、CI 和验收证据为准。
 
@@ -15,6 +15,25 @@
 - [历史桌面验收](docs/reviews/2026-10-24-desktop-validation.md)只证明其记录的提交与环境；其中“尚未发布”等结论已经过时。
 - 已合入 `main` 的近期工作：[PR #29](https://github.com/Nema-Project/nema-room/pull/29) macOS 原生红绿灯（`5ff8cf9`）；[PR #30](https://github.com/Nema-Project/nema-room/pull/30) 落实 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 的用户 basis 证据检查（`afd1456`）；[PR #31](https://github.com/Nema-Project/nema-room/pull/31) 桌面包瘦身（`76680b8`）。
 - 本次评估通过 GitHub 读取源码、配置、Actions 和 Release；未本地重跑测试。开始每项工作前须重新检查最新状态。
+
+## v0.2.3 发布与后续验收
+
+v0.2.3 是 v0.2.2 之后的小版本。用户可见的变更有四项：[#205](https://github.com/Nema-Project/nema-room/pull/205) 桌面包不再另带一份 Node，改用 Electron 自带的 Node（[#134](https://github.com/Nema-Project/nema-room/issues/134)）；[#201](https://github.com/Nema-Project/nema-room/pull/201) stdio MCP 服务器按规范顺序关停（[#190](https://github.com/Nema-Project/nema-room/issues/190)）；[#207](https://github.com/Nema-Project/nema-room/pull/207) 清理第一次账户迁移时没能删掉的旧凭据（[#206](https://github.com/Nema-Project/nema-room/issues/206)）；[#200](https://github.com/Nema-Project/nema-room/pull/200) 与 [#208](https://github.com/Nema-Project/nema-room/pull/208) 显示 skill 限制和被去掉的 mention。[#196](https://github.com/Nema-Project/nema-room/pull/196) 把 `release-promote` 的 npm 可见性预算放宽到 180 秒（Refs [#174](https://github.com/Nema-Project/nema-room/issues/174)），只影响维护者的发布流程，没有写片段。[#199](https://github.com/Nema-Project/nema-room/pull/199) 加了可重复运行的桌面启动 benchmark，[#204](https://github.com/Nema-Project/nema-room/pull/204) 只改测试，[#197](https://github.com/Nema-Project/nema-room/pull/197)、[#198](https://github.com/Nema-Project/nema-room/pull/198)、[#202](https://github.com/Nema-Project/nema-room/pull/202)、[#203](https://github.com/Nema-Project/nema-room/pull/203) 只改文档，这些都没有用户可见片段。本 release PR 在 cut 之前给 Node 去重片段补上了 bullet（缺了它 `release:cut` 会拒绝），并把 MCP 关停片段译成英文，与 changelog 的语言一致。
+
+发布记录（tag 之后补真实值，以下为占位）：
+
+- tag `v0.2.3` → `<TAG_COMMIT>`；该提交的 main CI：`<MAIN_CI_RUN>`。
+- 三条 tag 工作流：npm `<NPM_RUN>`、镜像 `<IMAGE_RUN>`、桌面 `<DESKTOP_RUN>`。
+- 只读检查 `npm run release:verify -- 0.2.3` 打 tag 后的首次结果：`<PRE_PROMOTE_VERIFY>`（预期退出 1，且只点名 npm）。
+- `release:verify -- --pointers 0.2.3` 的前后对照：`<POINTERS_BEFORE>` / `<POINTERS_AFTER>`。
+- 晋升：`gh workflow run release-promote.yml --ref main -f tag=v0.2.3`，运行 `<PROMOTE_RUN>`；晋升后 `release:verify -- 0.2.3` 退出 0。这是 #196 的 180 秒预算第一次用于真实发布，需记录可见性等待实际用了多久、首次晋升是否一次完成。
+- `releases/latest/download/docker-compose.yml` 在晋升前仍是 0.2.2 的双 pin，晋升后变为 0.2.3 且带版本头。
+
+发布可用性不等于功能或真机验收完成：
+
+- Node 去重的证据是 PR #205 最后一个提交 `ff10c1e` 上的 [Desktop release run 41345394881](https://github.com/Nema-Project/nema-room/actions/runs/41345394881)：win32-x64 与 darwin-arm64 的 Build and smoke 都成功，这只验证了 CI 上的打包与冒烟。安装包的真机安装、从 0.2.2 覆盖升级、启动、旧数据保留，以及旧 report hook 改写后能否正常上报，都还没有真机证据。
+- [#131](https://github.com/Nema-Project/nema-room/issues/131) 仍 OPEN（milestone v0.2.3）：[#202](https://github.com/Nema-Project/nema-room/pull/202) 补了三语指南与技术参考，但真实账户验收记录还没有。
+- [#174](https://github.com/Nema-Project/nema-room/issues/174) 与 [#189](https://github.com/Nema-Project/nema-room/issues/189) 仍 OPEN，不阻塞本版发布。
 
 ## v0.2.2 发布与后续验收
 
