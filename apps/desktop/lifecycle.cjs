@@ -1,6 +1,6 @@
 'use strict';
 
-const { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, isMainMessageUrl, isThreadWindowUrl, threadWindowIdentity, navigationDecision, validateRuntimeLaunchUrl } = require('./security.cjs');
+const { createDiagramWindowOptions, createSecureWindowOptions, createShellWindowOptions, isDiagramWindowUrl, isExternalHttps, isMainMessageUrl, isThreadWindowUrl, threadWindowIdentity, navigationDecision, validateRuntimeLaunchUrl } = require('./security.cjs');
 const { registerWindowControls } = require('./window-controls.cjs');
 const { registerLoginItem } = require('./login-item.cjs');
 const { mkdirSync, readFileSync, renameSync, writeFileSync } = require('node:fs');
@@ -78,6 +78,31 @@ function desktopBenchLine(mark, ms) {
   return `${JSON.stringify({ state: 'desktop-mark', mark, ms })}\n`;
 }
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
+// Paper, ink, and muted ink from apps/web/app/globals.css. The startup document uses the same pair so the handoff does not flash.
+function startupPalette(nativeTheme) {
+  if (nativeTheme?.shouldUseDarkColors === true) return { background: '#141311', foreground: '#f3f1ea', muted: '#8f8b82' };
+  return { background: '#ffffff', foreground: '#111111', muted: '#8a8a8a' };
+}
+
+function startupDocumentUrl(palette, { title, detail }) {
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>html,body{margin:0;height:100%;background:${palette.background};color:${palette.foreground};font:15px/1.45 "Helvetica Neue",Arial,sans-serif}body{-webkit-app-region:drag}main{min-height:100%;display:grid;place-items:center;text-align:center;padding:32px}h1{margin:0 0 8px;font-size:20px;font-weight:700}p{margin:0;max-width:440px;color:${palette.muted};white-space:pre-wrap;word-break:break-word}</style></head><body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(detail)}</p></main></body></html>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+function startupFailureWasShown(error) {
+  return Boolean(error && typeof error === 'object' && error.startupShown === true);
+}
+
+function markStartupShown(error) {
+  if (error && typeof error === 'object') {
+    try { error.startupShown = true; } catch { /* a frozen error still falls back to the dialog */ }
+  }
+}
+
 function writeDesktopBench(bench, mark) {
   if (!bench) return;
   const line = desktopBenchLine(mark, Date.now() - bench.startedAt);
@@ -86,7 +111,7 @@ function writeDesktopBench(bench, mark) {
 }
 
 function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, platform = process.platform, release, bench }) {
-  const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, session, ipcMain, screen } = electron;
+  const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, session, ipcMain, screen, nativeTheme } = electron;
   const releaseBridge = release ?? defaultReleaseBridge({ home, assetsDir, app });
   let releaseTimer;
   const brandAsset = (name) => path.join(__dirname, 'assets', name);
@@ -94,6 +119,10 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
   let currentInstance;
   let mainWindow;
   let pendingMainWindow;
+  let openingFailed = false;
+  let launchLoadStarted = false;
+  const shellEventsBound = new WeakSet();
+  const runtimeBound = new WeakSet();
   const threadWindows = new Map();
   const threadLoadGeneration = new WeakMap();
   let tray;
@@ -115,6 +144,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
   function reportError(error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('Nema desktop operation failed', message);
+    if (startupFailureWasShown(error)) return;
     dialog.showErrorBox('Nema Room could not open', message);
   }
 
@@ -193,37 +223,101 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     window.on('closed', () => { if (mainWindow === window) mainWindow = undefined; });
   }
 
+  function currentWindowUrl(window) {
+    return typeof window.webContents.getURL === 'function' ? window.webContents.getURL() : window.url;
+  }
+
+  function isStartupDocument(window) {
+    const current = currentWindowUrl(window);
+    return typeof current === 'string' && current.startsWith('data:');
+  }
+
+  // ponytail: static startup page only. Live startup-phase needs a channel from the detached core; issue #186.
+  function attachShell(window) {
+    if (shellEventsBound.has(window)) return;
+    shellEventsBound.add(window);
+    if (platform !== 'darwin') window.setMenu(null);
+    destroyWindowOnClose(window);
+    let sawLaunchShow = false;
+    let sawLaunchLoad = false;
+    window.on('ready-to-show', () => {
+      if (!launchLoadStarted || isStartupDocument(window) || window.isDestroyed()) return;
+      if (!sawLaunchShow) {
+        sawLaunchShow = true;
+        writeDesktopBench(bench, 'ready-to-show');
+      }
+      window.show();
+    });
+    window.webContents.on('did-finish-load', () => {
+      if (!launchLoadStarted || isStartupDocument(window) || sawLaunchLoad) return;
+      sawLaunchLoad = true;
+      writeDesktopBench(bench, 'did-finish-load');
+    });
+    window.webContents.on('render-process-gone', () => {
+      if (!window.isDestroyed()) window.destroy();
+    });
+    window.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
+      if (isMainFrame && code !== -3) console.error('Nema renderer load failed', code, description);
+    });
+  }
+
+  function bindRuntime(window, origin) {
+    if (runtimeBound.has(window)) return;
+    runtimeBound.add(window);
+    registerWindowControls({ ipcMain, window, runtimeOrigin: origin });
+    registerLoginItem({ ipcMain, app, window, runtimeOrigin: origin });
+    handleNavigation(window, origin);
+  }
+
+  function showStartup(window, palette, title, detail) {
+    if (window.isDestroyed()) return;
+    window.show();
+    void window.loadURL(startupDocumentUrl(palette, { title, detail })).catch(() => undefined);
+  }
+
   async function createMainWindow() {
-    if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow && !mainWindow.isDestroyed() && !openingFailed) {
       mainWindow.show();
       mainWindow.focus();
       return mainWindow;
     }
     if (pendingMainWindow) return pendingMainWindow;
     const opening = (async () => {
-      const instance = await ensureCore();
-      writeDesktopBench(bench, 'runtime-ready');
-      validateRuntimeLaunchUrl(instance.launchUrl, instance.origin);
-      const window = new BrowserWindow({ ...createSecureWindowOptions(instance.origin, platform), ...initialWindowSize(screen), icon: brandAsset('icon.png') });
-      if (platform !== 'darwin') window.setMenu(null);
-      mainWindow = window;
-      registerWindowControls({ ipcMain, window, runtimeOrigin: instance.origin });
-      registerLoginItem({ ipcMain, app, window, runtimeOrigin: instance.origin });
-      destroyWindowOnClose(window);
-      handleNavigation(window, instance.origin);
-      window.once('ready-to-show', () => {
-        writeDesktopBench(bench, 'ready-to-show');
-        if (!window.isDestroyed()) window.show();
-      });
-      window.webContents.once('did-finish-load', () => writeDesktopBench(bench, 'did-finish-load'));
-      window.webContents.on('render-process-gone', () => {
-        if (!window.isDestroyed()) window.destroy();
-      });
-      window.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
-        if (isMainFrame && code !== -3) console.error('Nema renderer load failed', code, description);
-      });
-      await window.loadURL(instance.launchUrl);
-      return window;
+      const palette = startupPalette(nativeTheme);
+      let window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+      if (!window) {
+        window = new BrowserWindow({
+          ...createShellWindowOptions(platform),
+          ...initialWindowSize(screen),
+          backgroundColor: palette.background,
+          show: true,
+          icon: brandAsset('icon.png'),
+        });
+        mainWindow = window;
+        attachShell(window);
+      }
+      showStartup(window, palette, 'Nema Room', 'Starting...');
+      try {
+        const instance = await ensureCore();
+        writeDesktopBench(bench, 'runtime-ready');
+        validateRuntimeLaunchUrl(instance.launchUrl, instance.origin);
+        if (window.isDestroyed()) return window;
+        bindRuntime(window, instance.origin);
+        launchLoadStarted = true;
+        await window.loadURL(instance.launchUrl);
+        openingFailed = false;
+        return window;
+      } catch (error) {
+        openingFailed = true;
+        if (!window.isDestroyed()) {
+          const message = error instanceof Error ? error.message : String(error);
+          try {
+            await window.loadURL(startupDocumentUrl(palette, { title: 'Nema Room could not open', detail: message }));
+            markStartupShown(error);
+          } catch { /* the dialog remains the fallback when the window cannot show the error */ }
+        }
+        throw error;
+      }
     })();
     pendingMainWindow = opening;
     try { return await opening; }
@@ -354,4 +448,4 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
   return { createMainWindow, install, openBrowserMode, quitNema, refreshReleaseMenu };
 }
 
-module.exports = { createDesktopLifecycle, desktopBenchLine, initialWindowSize, readPackagedIdentity, releaseNotice, requestReleaseCheck };
+module.exports = { createDesktopLifecycle, desktopBenchLine, initialWindowSize, readPackagedIdentity, releaseNotice, requestReleaseCheck, startupDocumentUrl, startupFailureWasShown, startupPalette };

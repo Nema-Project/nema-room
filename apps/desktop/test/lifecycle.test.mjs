@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { createDesktopLifecycle, initialWindowSize, readPackagedIdentity, releaseNotice, requestReleaseCheck } = require('../lifecycle.cjs');
+const { createDesktopLifecycle, initialWindowSize, readPackagedIdentity, releaseNotice, requestReleaseCheck, startupFailureWasShown } = require('../lifecycle.cjs');
+const { createSecureWindowOptions } = require('../security.cjs');
 
 function harness(overrides = {}) {
   const app = new EventEmitter();
@@ -59,6 +60,7 @@ function harness(overrides = {}) {
     session: { defaultSession: { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() } },
     ipcMain,
     nativeImage,
+    nativeTheme: overrides.nativeTheme,
   };
   let launches = 0;
   const runtimeApi = {
@@ -461,6 +463,51 @@ describe('Electron shell lifecycle', () => {
     expect(set({ sender: window.webContents, senderFrame: window.webContents.mainFrame }, { openAtLogin: false })).toEqual({ openAtLogin: false });
     expect(value.app.setLoginItemSettings).toHaveBeenCalledWith({ openAtLogin: false });
     expect(() => get({ sender: {}, senderFrame: window.webContents.mainFrame })).toThrow(/Untrusted login-item sender/);
+  });
+
+  it('shows the themed shell before the core is ready', async () => {
+    let releaseRuntime;
+    const value = harness();
+    value.runtimeApi.ensureLocalRuntime.mockImplementation(() => new Promise((resolve) => { releaseRuntime = resolve; }));
+    const opening = value.lifecycle.createMainWindow();
+    await vi.waitFor(() => expect(releaseRuntime).toEqual(expect.any(Function)));
+    expect(value.windows).toHaveLength(1);
+    expect(value.windows[0].options.show).toBe(true);
+    expect(value.windows[0].options.backgroundColor).toBe('#ffffff');
+    expect(value.windows[0].show).toHaveBeenCalled();
+    expect(value.windows[0].options.webPreferences).toEqual(createSecureWindowOptions('http://127.0.0.1:43001', process.platform).webPreferences);
+    expect(decodeURIComponent(value.windows[0].url)).toContain('Starting...');
+    releaseRuntime({
+      origin: 'http://127.0.0.1:43001',
+      launchUrl: `http://127.0.0.1:43001/_nema/launch?ticket=${'d'.repeat(64)}`,
+      instanceId: 'e7543210-bd2a-44c1-8c5c-37db1ef40123',
+      installationId: 'b'.repeat(64),
+    });
+    await opening;
+    expect(value.windows[0].url).toContain('/_nema/launch?ticket=');
+  });
+
+  it('uses the dark paper color when the native theme is dark', async () => {
+    const value = harness({ nativeTheme: { shouldUseDarkColors: true } });
+    await value.lifecycle.install();
+    expect(value.windows[0].options.backgroundColor).toBe('#141311');
+  });
+
+  it('keeps a core startup error in the window and retries that same window', async () => {
+    const value = harness();
+    const failure = new Error('git <missing> & "no"');
+    value.runtimeApi.ensureLocalRuntime.mockRejectedValueOnce(failure);
+    await expect(value.lifecycle.install()).rejects.toBe(failure);
+    expect(startupFailureWasShown(failure)).toBe(true);
+    expect(value.dialog.showErrorBox).not.toHaveBeenCalled();
+    expect(decodeURIComponent(value.windows[0].url)).toContain('git &lt;missing&gt; &amp; &quot;no&quot;');
+    expect(decodeURIComponent(value.windows[0].url)).not.toContain('git <missing>');
+    value.app.emit('activate');
+    await vi.waitFor(() => {
+      expect(value.windows).toHaveLength(1);
+      expect(value.windows[0].url).toContain('/_nema/launch?ticket=');
+    });
+    expect(value.runtimeApi.ensureLocalRuntime).toHaveBeenCalledTimes(2);
   });
 
   it('destroys a crashed renderer without stopping the shared core', async () => {

@@ -753,6 +753,67 @@ describe("managed local runtime", () => {
     runtimes.push(recovered);
   }, 60_000);
 
+  function startupPhases(text: string): Record<string, number> {
+    const phases: Record<string, number> = {};
+    for (const line of text.split("\n")) {
+      if (!line.includes("\"startup-phase\"")) continue;
+      try {
+        const value = JSON.parse(line) as { state?: string; phase?: string; ms?: number };
+        if (value.state === "startup-phase" && value.phase && typeof value.ms === "number") phases[value.phase] = value.ms;
+      } catch { /* a partial stdout chunk is not a phase line */ }
+    }
+    return phases;
+  }
+
+  it("opens the database before the managed web server accepts HTTP", async () => {
+    const assetsDir = testAssets();
+    const fixtures = join(assetsDir, "fixtures");
+    const release = join(fixtures, "web-release");
+    writeFileSync(join(fixtures, "web-wait-for-release"), "1\n");
+    const home = join(tempDir("nema-home-"), "web-db-overlap");
+    const chunks: string[] = [];
+    const original = process.stdout.write;
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      return original.call(process.stdout, chunk as string);
+    }) as typeof process.stdout.write;
+    const pending = startLocalRuntime({ home, assetsDir });
+    let settled = false;
+    try {
+      const deadline = Date.now() + 15_000;
+      let overlapped = false;
+      while (Date.now() < deadline) {
+        const phases = startupPhases(chunks.join(""));
+        if (typeof phases.db === "number" && phases.web === undefined && !existsSync(release)) {
+          overlapped = true;
+          break;
+        }
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+      }
+      expect(overlapped, chunks.join("").slice(-1500)).toBe(true);
+      writeFileSync(release, "1\n");
+      const runtime = await pending;
+      settled = true;
+      runtimes.push(runtime);
+      const done = startupPhases(chunks.join(""));
+      expect(done.db).toBeLessThan(done.web);
+    } finally {
+      process.stdout.write = original;
+      if (!existsSync(release)) writeFileSync(release, "1\n");
+      if (!settled) {
+        try { runtimes.push(await pending); } catch { /* the assertion above is the failure */ }
+      }
+    }
+  }, 45_000);
+
+  it("stops a web process that exits before listen and does not publish the home", async () => {
+    const assetsDir = testAssets();
+    writeFileSync(join(assetsDir, "fixtures", "web-exit-before-listen"), "1\n");
+    const home = join(tempDir("nema-home-"), "web-exit-before-listen");
+    await expect(startLocalRuntime({ home, assetsDir })).rejects.toThrow(/Managed Web|exited unexpectedly/);
+    expect(await discoverInstance(home)).toBeNull();
+  }, 45_000);
+
   it("recovers a committed running token on reopen and does not reclaim it during shutdown", async () => {
     const home = join(tempDir("nema-home-"), "crashed-core");
     const assetsDir = testAssets();

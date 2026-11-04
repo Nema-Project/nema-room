@@ -436,9 +436,11 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     });
     webChild.once("error", (error) => onUnexpectedWebExit(error));
     webChild.once("exit", () => onUnexpectedWebExit());
-    await httpReady(`http://127.0.0.1:${webPort}/`, webChild, WEB_READY_TIMEOUT_MS);
-    assertWebAlive();
-    phase("web");
+    // Web does not read the database. HTTP readiness overlaps DB open, hub start, and daemon connect.
+    // The gateway proxies to web, so that wait finishes before startGateway.
+    const webReady = httpReady(`http://127.0.0.1:${webPort}/`, webChild, WEB_READY_TIMEOUT_MS)
+      .then(() => { phase("web"); });
+    void webReady.catch(() => undefined);
 
     ensureOwnedDirectory(paths.home, paths.db, "database");
     db = await createLocalDb(paths.db);
@@ -476,6 +478,8 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     phase("daemon");
     settings = createSettingsService({ home: paths.home, codexHome: process.env.CODEX_HOME ?? join(homedir(), ".codex"), operations: settingsOperationsForTests });
     appRelease = createAppReleaseService({ home: paths.home, ...readBuildIdentity(assets.root, assets) });
+    await webReady;
+    assertWebAlive();
     gateway = await startGateway({
       webTarget: `http://127.0.0.1:${webPort}`,
       hubTarget: hub.url,
