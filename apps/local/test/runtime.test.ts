@@ -6,7 +6,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { closeEnsuredRuntimesForTests, setBeforeWebBudgetForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, setWebReadyTimeoutForTests, startLocalRuntime, ensureLocalRuntime, shutdownLocalRuntime, startupPhaseName } from "../src/runtime.js";
+import { closeEnsuredRuntimesForTests, launcherReadyTimeoutMs, setBeforeWebBudgetForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, setWebReadyTimeoutForTests, startLocalRuntime, ensureLocalRuntime, shutdownLocalRuntime, startupPhaseName } from "../src/runtime.js";
 import { acquireInstance, discoverInstance } from "../src/instance.js";
 import { createLocalDb } from "@nema/hub/db/local";
 import { postUserMessage } from "@nema/hub/messages";
@@ -181,6 +181,10 @@ afterEach(async () => {
 });
 
 describe("managed local runtime", () => {
+  it("gives the launcher enough time for the web budget that starts after the database", () => {
+    expect(launcherReadyTimeoutMs()).toBeGreaterThanOrEqual(20_000 + 15_000 + 10_000);
+  });
+
   it("accepts only known startup-phase messages", () => {
     expect(startupPhaseName({ type: "startup-phase", phase: "db" })).toBe("db");
     expect(startupPhaseName({ type: "startup-phase", phase: "not-a-phase" })).toBeNull();

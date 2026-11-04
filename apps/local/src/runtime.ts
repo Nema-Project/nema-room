@@ -26,7 +26,11 @@ import { createOwnedHelperScope } from "./ownedHelpers.js";
 const MANIFEST_NAME = "runtime-manifest.json";
 const WEB_READY_TIMEOUT_MS = 15_000;
 const DAEMON_READY_TIMEOUT_MS = 10_000;
-const ENSURE_READY_TIMEOUT_MS = 20_000;
+// Database, hub, and gateway. The launcher clock starts at spawn, before this work.
+const STARTUP_WORK_BUDGET_MS = 20_000;
+// Web's 15s budget starts after the database and hub, and the daemon starts after web.
+// A 20s launcher deadline would stop that core while web was still inside its own budget.
+const ENSURE_READY_TIMEOUT_MS = STARTUP_WORK_BUDGET_MS + WEB_READY_TIMEOUT_MS + DAEMON_READY_TIMEOUT_MS;
 const PROBE_INTERVAL_MS = 75;
 const ensuredChildren = new Map<string, Set<ChildProcess>>();
 
@@ -52,6 +56,11 @@ export function setRuntimeReadyHookForTests(hook: RuntimeReadyHook | undefined):
 
 export function setEnsureTimeoutForTests(timeoutMs: number | undefined): void {
   ensureTimeoutForTests = timeoutMs;
+}
+
+/** Launcher wait for a cold core. Tests shorten it through setEnsureTimeoutForTests. */
+export function launcherReadyTimeoutMs(): number {
+  return ensureTimeoutForTests ?? ENSURE_READY_TIMEOUT_MS;
 }
 
 /** Shortens only the post-database web budget. Packaged startup keeps WEB_READY_TIMEOUT_MS. */
@@ -619,7 +628,7 @@ export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<
   child.once("exit", forgetOwnedChild);
   child.once("close", forgetOwnedChild);
   child.unref();
-  const timeoutMs = ensureTimeoutForTests ?? ENSURE_READY_TIMEOUT_MS;
+  const timeoutMs = launcherReadyTimeoutMs();
   const deadline = Date.now() + timeoutMs;
   let exited = child.exitCode !== null || child.signalCode !== null;
   child.once("exit", () => { exited = true; });
