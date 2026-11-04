@@ -879,9 +879,12 @@ test('#174: a publish still inside the index window is waited on, and is absent 
     provenanceReads: ['pending'], declared: false, publishedAgoMs,
   });
   const spent = state.sleeps.reduce((sum, ms) => sum + ms, 0);
+  const age = publishedAgoMs + spent;
   assert.equal(result.ok, false, 'aging out of the window is a definite absence');
-  assert.ok(spent > 0, 'the 404 is waited on; a 300s cutoff would have stopped at once');
-  assert.ok(spent < NPM_VISIBILITY_BUDGET_MS, `stopped after ${spent}ms, before the visibility budget`);
+  // A shorter cutoff (the old 300s one, or 500s) stops while the publish is still inside the live
+  // window. The absence has to land on the poll that crosses it, not after an arbitrary extra wait.
+  assert.ok(age > NPM_PROVENANCE_INDEX_WINDOW_MS, `stopped at age ${age}ms, after the publish left the index window`);
+  assert.ok(age <= NPM_PROVENANCE_INDEX_WINDOW_MS + NPM_VISIBILITY_POLL_MS, `stopped at age ${age}ms, on the poll that crossed the window`);
   assert.match(text, /npm provenance is a definite gap: npm has no provenance for 0\.1\.7/);
   assert.match(text, /its version document was read and declares none/);
   assert.match(text, /longer than any index delay/);
