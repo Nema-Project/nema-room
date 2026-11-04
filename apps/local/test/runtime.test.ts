@@ -822,6 +822,7 @@ describe("managed local runtime", () => {
       runtimes.push(runtime);
       const done = startupPhases(chunks.join(""));
       expect(done.db).toBeLessThan(done.web);
+      expect(done.daemon).toBeGreaterThan(done.web);
     } finally {
       process.stdout.write = original;
       if (!existsSync(release)) writeFileSync(release, "1\n");

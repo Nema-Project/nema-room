@@ -66,6 +66,11 @@ function rememberWorkspace(id: string) {
   try { document.cookie = `${ROOM_COOKIE}=${id}; Path=/; SameSite=Strict; Max-Age=${ROOM_COOKIE_MAX_AGE}`; } catch { /* cookie unavailable */ }
 }
 
+function forgetWorkspace() {
+  try { localStorage.removeItem(SELECTED_KEY); } catch { /* storage unavailable */ }
+  try { document.cookie = `${ROOM_COOKIE}=; Path=/; SameSite=Strict; Max-Age=0`; } catch { /* cookie unavailable */ }
+}
+
 function writeWidth(key: string, width: number) {
   try {
     localStorage.setItem(key, String(width));
@@ -155,9 +160,13 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
     if (routeId !== null) return;
     const remembered = readRememberedWorkspace();
     if (!remembered) return;
+    if (workspaces && !workspaces.some((workspace) => workspace.id === remembered && !workspace.archived)) {
+      forgetWorkspace();
+      return;
+    }
     rememberWorkspace(remembered);
     router.replace(`/w/${encodeURIComponent(remembered)}`);
-  }, [routeId, router]);
+  }, [routeId, router, workspaces]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount: state is set once the request resolves
@@ -193,6 +202,8 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
     }
     if (!current) {
       const next = workspaces.find((w) => !w.archived);
+      if (next) rememberWorkspace(next.id);
+      else forgetWorkspace();
       router.replace(next ? `/w/${encodeURIComponent(next.id)}` : "/");
     }
   }, [workspaces, routeId, current, router]);

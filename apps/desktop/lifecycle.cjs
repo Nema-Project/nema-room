@@ -288,12 +288,14 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
   }
 
   async function createMainWindow() {
+    // A startup window already exists while the launch URL is still loading.
+    // Returning it early lets a message jump load first, and the pending launch then replaces that URL.
+    if (pendingMainWindow) return pendingMainWindow;
     if (mainWindow && !mainWindow.isDestroyed() && !openingFailed) {
       mainWindow.show();
       mainWindow.focus();
       return mainWindow;
     }
-    if (pendingMainWindow) return pendingMainWindow;
     const opening = (async () => {
       const palette = startupPalette(nativeTheme);
       let window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;

@@ -473,10 +473,10 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     });
     webChild.once("error", (error) => onUnexpectedWebExit(error));
     webChild.once("exit", () => onUnexpectedWebExit());
-    // Web does not read the database. Probes overlap DB open, hub start, and daemon connect.
-    // The readiness budget starts after that work: a cold PGlite open can use the CPU for longer
-    // than WEB_READY_TIMEOUT_MS, and Next then still needs the original budget before the gateway
-    // (which proxies to web) may start.
+    // Web does not read the database. Probes overlap DB open and hub start.
+    // The daemon stays disconnected until web answers: connecting it claims queued tasks, and a
+    // later web timeout would interrupt them. The readiness budget also starts after the database
+    // and hub, so a cold PGlite open cannot consume WEB_READY_TIMEOUT_MS before Next gets it.
     let webDeadlineAt = Number.POSITIVE_INFINITY;
     const webTimeoutMs = webReadyTimeoutForTests ?? WEB_READY_TIMEOUT_MS;
     const webReady = httpReady(`http://127.0.0.1:${webPort}/`, webChild, () => webDeadlineAt, webTimeoutMs)
@@ -500,6 +500,12 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     });
     assertWebAlive();
     phase("hub");
+    settings = createSettingsService({ home: paths.home, codexHome: process.env.CODEX_HOME ?? join(homedir(), ".codex"), operations: settingsOperationsForTests });
+    appRelease = createAppReleaseService({ home: paths.home, ...readBuildIdentity(assets.root, assets) });
+    if (beforeWebBudgetForTests) await beforeWebBudgetForTests();
+    webDeadlineAt = Date.now() + webTimeoutMs;
+    await webReady;
+    assertWebAlive();
     daemon = startDaemon({
       hubUrl: hub.url,
       token,
@@ -517,12 +523,6 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     await daemonReady(hub.url, gatewayCredential, DAEMON_READY_TIMEOUT_MS);
     assertWebAlive();
     phase("daemon");
-    settings = createSettingsService({ home: paths.home, codexHome: process.env.CODEX_HOME ?? join(homedir(), ".codex"), operations: settingsOperationsForTests });
-    appRelease = createAppReleaseService({ home: paths.home, ...readBuildIdentity(assets.root, assets) });
-    if (beforeWebBudgetForTests) await beforeWebBudgetForTests();
-    webDeadlineAt = Date.now() + webTimeoutMs;
-    await webReady;
-    assertWebAlive();
     gateway = await startGateway({
       webTarget: `http://127.0.0.1:${webPort}`,
       hubTarget: hub.url,

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceShell } from "@/components/WorkspaceShell";
 import * as hub from "@/lib/hub";
 import { I18nProvider } from "@/lib/i18n";
-import type { HubEvent } from "@/lib/types";
+import type { HubEvent, WorkspaceView } from "@/lib/types";
 
 const hubHandlers: { onEvent?: (e: HubEvent) => void; onResync?: () => void } = {};
 const { replace, scroll, showMessage, HubError, threadOpen, threadFocus, registerMainMessageHandler } = vi.hoisted(() => {
@@ -249,8 +249,8 @@ describe("WorkspaceShell knowledge wiring", () => {
   });
   it("shows a room skeleton while the workspace list is still loading", async () => {
     localStorage.setItem("nema.locale", "en");
-    let resolveList: (rows: never) => void = () => {};
-    vi.mocked(hub.listWorkspaces).mockReturnValue(new Promise((resolve) => { resolveList = resolve as (rows: never) => void; }));
+    let resolveList: (rows: WorkspaceView[]) => void = () => {};
+    vi.mocked(hub.listWorkspaces).mockReturnValue(new Promise((resolve) => { resolveList = resolve; }));
     render(<I18nProvider><WorkspaceShell routeId={null} /></I18nProvider>);
     expect(await screen.findByRole("status", { name: "Loading…" })).toBeTruthy();
     expect(screen.queryByText("Loading…")).toBeNull();
@@ -260,8 +260,8 @@ describe("WorkspaceShell knowledge wiring", () => {
 
   it("opens a remembered workspace before the list returns", async () => {
     localStorage.setItem("nema.workspace", "ws_savedroom");
-    let resolveList: (rows: never) => void = () => {};
-    vi.mocked(hub.listWorkspaces).mockReturnValue(new Promise((resolve) => { resolveList = resolve as (rows: never) => void; }));
+    let resolveList: (rows: WorkspaceView[]) => void = () => {};
+    vi.mocked(hub.listWorkspaces).mockReturnValue(new Promise((resolve) => { resolveList = resolve; }));
     replace.mockClear();
     render(<I18nProvider><WorkspaceShell routeId={null} /></I18nProvider>);
     await act(async () => {});
@@ -269,6 +269,22 @@ describe("WorkspaceShell knowledge wiring", () => {
     expect(document.cookie).toContain("nema_workspace=ws_savedroom");
     resolveList([]);
     await act(async () => {});
+  });
+
+  it("drops a remembered room that is gone and does not open it again", async () => {
+    localStorage.setItem("nema.workspace", "ws_gone");
+    document.cookie = "nema_workspace=ws_gone; Path=/";
+    vi.mocked(hub.listWorkspaces).mockResolvedValue([]);
+    replace.mockClear();
+    render(<I18nProvider><WorkspaceShell routeId="ws_gone" /></I18nProvider>);
+    await act(async () => {});
+    expect(replace).toHaveBeenCalledWith("/");
+    expect(localStorage.getItem("nema.workspace")).toBeNull();
+    expect(document.cookie).not.toContain("nema_workspace=ws_gone");
+    replace.mockClear();
+    render(<I18nProvider><WorkspaceShell routeId={null} /></I18nProvider>);
+    await act(async () => {});
+    expect(replace).not.toHaveBeenCalledWith("/w/ws_gone");
   });
 
   it("opens model settings across the main area, not the knowledge column", async () => {

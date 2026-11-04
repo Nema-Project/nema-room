@@ -514,6 +514,32 @@ describe('Electron shell lifecycle', () => {
     expect(value.runtimeApi.ensureLocalRuntime).toHaveBeenCalledTimes(2);
   });
 
+  it('loads a main-message jump after the launch that is still opening', async () => {
+    let releaseRuntime;
+    const value = harness();
+    await value.lifecycle.install();
+    const main = value.windows[0];
+    const openThread = main.webContents.setWindowOpenHandler.mock.calls[0][0];
+    openThread({ url: 'http://127.0.0.1:43001/w/ws_abc/t/m_xyz' });
+    const thread = value.windows[1];
+    main.webContents.emit('render-process-gone');
+    expect(main.destroyed).toBe(true);
+    value.runtimeApi.ensureLocalRuntime.mockImplementation(() => new Promise((resolve) => { releaseRuntime = resolve; }));
+    const messageUrl = 'http://127.0.0.1:43001/w/ws_abc#workspace=ws_abc&message=m_xyz';
+    const navigate = thread.webContents.listeners('will-navigate')[0];
+    navigate({ preventDefault: vi.fn() }, messageUrl);
+    await vi.waitFor(() => expect(value.windows.length).toBe(3));
+    const reopened = value.windows[2];
+    expect(reopened.url.startsWith('data:')).toBe(true);
+    releaseRuntime({
+      origin: 'http://127.0.0.1:43001',
+      launchUrl: `http://127.0.0.1:43001/_nema/launch?ticket=${'e'.repeat(64)}`,
+      instanceId: 'e7543210-bd2a-44c1-8c5c-37db1ef40123',
+      installationId: 'b'.repeat(64),
+    });
+    await vi.waitFor(() => expect(reopened.url).toBe(messageUrl));
+  });
+
   it('destroys a crashed renderer without stopping the shared core', async () => {
     const value = harness();
     await value.lifecycle.install();
