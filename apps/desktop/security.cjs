@@ -44,8 +44,7 @@ function secureWindowChrome(platform) {
   };
 }
 
-function createSecureWindowOptions(runtimeOrigin, platform = process.platform) {
-  if (!parseLoopbackOrigin(runtimeOrigin)) throw new Error('Expected runtime origin is not a canonical loopback origin');
+function createShellWindowOptions(platform = process.platform) {
   return {
     width: 1180,
     height: 820,
@@ -63,6 +62,11 @@ function createSecureWindowOptions(runtimeOrigin, platform = process.platform) {
       webSecurity: true,
     },
   };
+}
+
+function createSecureWindowOptions(runtimeOrigin, platform = process.platform) {
+  if (!parseLoopbackOrigin(runtimeOrigin)) throw new Error('Expected runtime origin is not a canonical loopback origin');
+  return createShellWindowOptions(platform);
 }
 
 function isExternalHttps(value) {
@@ -153,4 +157,4 @@ function navigationDecision(value, runtimeOrigin) {
   } catch { return 'block'; }
 }
 
-module.exports = { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isExternalHttps, isMainMessageUrl, isThreadWindowUrl, threadWindowIdentity, navigationDecision, usesNativeTrafficLights, validateRuntimeLaunchUrl };
+module.exports = { createDiagramWindowOptions, createSecureWindowOptions, createShellWindowOptions, isDiagramWindowUrl, isExternalHttps, isMainMessageUrl, isThreadWindowUrl, threadWindowIdentity, navigationDecision, usesNativeTrafficLights, validateRuntimeLaunchUrl };

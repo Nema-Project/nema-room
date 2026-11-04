@@ -103,6 +103,13 @@ describe("protected same-origin gateway", () => {
     expect(cookie).toMatch(/Path=\//i);
     expect(response.headers.get("location")).not.toContain(ticket);
     expect(await (await fetch(`${gateway.origin}/_nema/launch?ticket=${ticket}`, { redirect: "manual" })).status).not.toBe(303);
+    const remembered = await fetch(`${gateway.origin}/_nema/launch?ticket=${session.issueTicket()}`, { redirect: "manual", headers: { cookie: "nema_workspace=ws_savedroom" } });
+    expect(remembered.status).toBe(303);
+    expect(remembered.headers.get("location")).toBe("/w/ws_savedroom");
+    const foreign = await fetch(`${gateway.origin}/_nema/launch?ticket=${session.issueTicket()}`, { redirect: "manual", headers: { cookie: "nema_workspace=https://evil.test" } });
+    expect(foreign.headers.get("location")).toBe("/");
+    const slashed = await fetch(`${gateway.origin}/_nema/launch?ticket=${session.issueTicket()}`, { redirect: "manual", headers: { cookie: "nema_workspace=ws_savedroom/admin" } });
+    expect(slashed.headers.get("location")).toBe("/");
     expect([...log.mock.calls, ...error.mock.calls].flat().join(" ")).not.toContain(ticket);
     session.close();
   });

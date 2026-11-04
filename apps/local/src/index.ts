@@ -7,6 +7,12 @@ export { acquireInstance, discoverInstance, requestInstanceShutdown } from "./in
 export { SessionManager } from "./session.js";
 export { createGatewayCredential, createGatewayUiAuth, startGateway, GATEWAY_CREDENTIAL_HEADER, sessionCookieName } from "./gateway.js";
 
+function startupFailureDetail(error: unknown): string {
+  if (!(error instanceof Error) || !error.message) return "";
+  const cause = error.cause instanceof Error && error.cause.message ? ` (${error.cause.message})` : "";
+  return `${error.message}${cause}`;
+}
+
 function isDirectExecution(): boolean {
   const entry = process.argv[1];
   return Boolean(entry && pathToFileURL(entry).href === import.meta.url);
@@ -73,6 +79,8 @@ if (isDirectExecution()) {
       });
     }
     console.error("managed local core failed", code);
+    const detail = startupFailureDetail(error);
+    if (detail) console.error(detail);
     process.exitCode = 1;
   });
 }

@@ -1,11 +1,11 @@
 'use strict';
 
-const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, session, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, session, ipcMain, screen, nativeTheme } = require('electron');
 const { mkdirSync } = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { createDesktopLifecycle, desktopBenchLine } = require('./lifecycle.cjs');
+const { createDesktopLifecycle, desktopBenchLine, startupFailureWasShown } = require('./lifecycle.cjs');
 
 // Baseline for optional startup marks. Other marks in this process are milliseconds after this line.
 const benchStartedAt = Date.now();
@@ -24,7 +24,7 @@ if (testProfile) {
 const home = process.env.NEMA_DESKTOP_TEST_HOME || path.join(os.homedir(), '.nema', 'desktop');
 const assetsDir = path.join(process.resourcesPath, 'payload');
 const lifecycle = createDesktopLifecycle({
-  electron: { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, session, ipcMain, screen },
+  electron: { app, BrowserWindow, Menu, Tray, nativeImage, dialog, shell, session, ipcMain, screen, nativeTheme },
   home,
   assetsDir,
   loadRuntimeApi: () => import(pathToFileURL(path.join(assetsDir, 'app', 'node_modules', '@nema', 'local', 'dist', 'src', 'index.js')).href),
@@ -34,6 +34,7 @@ const lifecycle = createDesktopLifecycle({
 void lifecycle.install().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error('Nema desktop startup failed', message);
+  if (startupFailureWasShown(error)) return;
   dialog.showErrorBox('Nema Room could not open', message);
 });
 

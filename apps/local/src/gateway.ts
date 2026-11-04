@@ -89,14 +89,26 @@ function loopbackTarget(value: string, name: string): URL {
 }
 
 function sessionCookie(req: IncomingMessage, cookieName: string): string | null {
-  const raw = req.headers.cookie;
-  if (!raw) return null;
-  for (const part of raw.split(";")) {
+  return cookieValue(req.headers.cookie, cookieName);
+}
+
+function cookieValue(header: string | undefined, cookieName: string): string | null {
+  if (!header) return null;
+  for (const part of header.split(";")) {
     const separator = part.indexOf("=");
     if (separator < 0 || part.slice(0, separator).trim() !== cookieName) continue;
     return part.slice(separator + 1).trim();
   }
   return null;
+}
+
+const WORKSPACE_ID = /^ws_[A-Za-z0-9_-]{1,32}$/;
+
+/** Path-only launch target. A remembered room id may be used; anything else stays on `/`. */
+export function launchRoomPath(cookieHeader: string | undefined): string {
+  const room = cookieValue(cookieHeader, "nema_workspace");
+  if (!room || !WORKSPACE_ID.test(room)) return "/";
+  return `/w/${room}`;
 }
 
 function send(res: ServerResponse, status: number, body: string, headers: Record<string, string> = {}): void {
@@ -217,7 +229,7 @@ export async function startGateway(options: GatewayOptions): Promise<RunningGate
       const token = options.session.consumeTicket(ticket);
       if (!token) return send(res, 401, "invalid launch ticket", { "cache-control": "no-store", "referrer-policy": "no-referrer" });
       return send(res, 303, "", {
-        location: "/",
+        location: launchRoomPath(req.headers.cookie),
         "set-cookie": `${sessionCookieName(origin)}=${token}; HttpOnly; SameSite=Strict; Path=/`,
         "cache-control": "no-store",
         "referrer-policy": "no-referrer",
