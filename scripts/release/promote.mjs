@@ -35,16 +35,21 @@ const DIGEST = /^sha256:[a-f0-9]{64}$/;
 
 /**
  * How long a promote run keeps re-reading npm before it calls the registry's answer final.
- * v0.2.2 used 117.7s of the former 120s budget (package ~55s, then provenance ~60s), so it is 180s (#174).
+ * v0.2.2 used 117.7s of a 120s budget (package ~55s, then provenance ~60s), so it became 180s.
+ * v0.2.3 then used 176.0s of that 180s: the package stayed absent for ~110s and provenance for
+ * another ~60s. 360s covers another step of that package lag plus the provenance wait (#174).
+ * A package or dist-tag that is still invisible when this ends stops the run; a provenance 404
+ * that is only an index delay does not.
  */
-export const NPM_VISIBILITY_BUDGET_MS = 180_000;
+export const NPM_VISIBILITY_BUDGET_MS = 360_000;
 export const NPM_VISIBILITY_POLL_MS = 5_000;
 /**
  * How long after its publish a version's provenance can still be an index delay. A version older than
  * this whose version document declares no attestation is not lagging any more: it was published
- * without provenance (#174).
+ * without provenance (#174). It stays above the visibility budget, so a version published at the
+ * start of the wait is still inside this window when the budget ends.
  */
-export const NPM_PROVENANCE_INDEX_WINDOW_MS = 300_000;
+export const NPM_PROVENANCE_INDEX_WINDOW_MS = 600_000;
 
 /** `not-visible` is a definitive "still not there"; `unknown` is not, and must be recorded as unknown. */
 const NOT_VISIBLE = 'not-visible';
