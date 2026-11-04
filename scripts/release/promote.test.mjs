@@ -529,7 +529,7 @@ test('acceptance 4a: the version stays absent through the budget: a timeout, not
   assert.ok(state.sleeps.every((ms) => ms <= 5_000), 'polls stay short');
   assert.deepEqual(state.writes, ['npm dispatch']);
   assert.ok(!state.log.includes('verify final'));
-  assert.match(text, /the registry still answers 404 for 0\.1\.7 after 180000ms; confirmed not written/);
+  assert.match(text, new RegExp(`the registry still answers 404 for 0\\.1\\.7 after ${NPM_VISIBILITY_BUDGET_MS}ms; confirmed not written`));
   assert.match(text, /- npm registry after publish: not written — /);
   assert.match(text, /- flipped by this run: none/);
   assert.match(text, /- not flipped: npm latest, ghcr hub latest, ghcr web latest, github latest/);
@@ -541,7 +541,7 @@ test('acceptance 4b: an old dist-tag through the budget: a timeout, nothing else
   assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), NPM_VISIBILITY_BUDGET_MS);
   assert.deepEqual(state.writes, ['npm dispatch']);
   assert.ok(!state.log.includes('verify final'));
-  assert.match(text, /npm latest still reads 0\.1\.6 after 180000ms; the package is published, but npm latest did not move to 0\.1\.7/);
+  assert.match(text, new RegExp(`npm latest still reads 0\\.1\\.6 after ${NPM_VISIBILITY_BUDGET_MS}ms; the package is published, but npm latest did not move to 0\\.1\\.7`));
   // The exact version read back as same, so the package *was* written: only the pointer is unconfirmed.
   assert.match(text, /- npm registry after publish: published; channel pointer unconfirmed — /);
   assert.doesNotMatch(text, /not written/);
@@ -637,7 +637,7 @@ test('an older npm next that never moves times out as unconfirmed, never as "new
   assert.equal(result.ok, false);
   assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), NPM_VISIBILITY_BUDGET_MS);
   assert.doesNotMatch(text, /newer than|tag-moved/);
-  assert.match(text, /npm next still reads 0\.2\.0-rc\.1 after 180000ms/);
+  assert.match(text, new RegExp(`npm next still reads 0\\.2\\.0-rc\\.1 after ${NPM_VISIBILITY_BUDGET_MS}ms`));
 });
 
 test('a dist-tag whose value is not a version stops at once, like a denial', async () => {
@@ -868,8 +868,11 @@ test('#174: only a document that was read as declaring none makes an old version
 });
 
 test('the npm visibility budget leaves room for provenance indexing (#174)', () => {
-  // v0.2.2 needed 117.7s of the former 120s budget; provenance alone took about 2 minutes.
-  assert.equal(NPM_VISIBILITY_BUDGET_MS, 180_000);
+  // v0.2.2 needed 117.7s of a 120s budget. Raised to 180s, v0.2.3 then used 176.0s of that:
+  // the package stayed absent for about 110s (up from about 55s) and provenance for another 60s.
+  // 360s covers another step of that package lag plus the provenance wait, and stays inside the index window.
+  assert.equal(NPM_VISIBILITY_BUDGET_MS, 360_000);
+  assert.equal(NPM_PROVENANCE_INDEX_WINDOW_MS, 600_000);
   assert.equal(NPM_VISIBILITY_BUDGET_MS % NPM_VISIBILITY_POLL_MS, 0, 'the budget is a whole number of polls');
   assert.ok(NPM_VISIBILITY_BUDGET_MS < NPM_PROVENANCE_INDEX_WINDOW_MS, 'a fresh version is still inside the index window when the budget ends');
 });
