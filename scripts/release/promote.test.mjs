@@ -867,6 +867,27 @@ test('#174: only a document that was read as declaring none makes an old version
   assert.deepEqual(state.sleeps, [], 'a read declaration plus an old publish is decided at once');
 });
 
+test('#174: a publish still inside the index window is waited on, and is absent only once it ages past it', async () => {
+  // 450s is past the old 300s window and inside the 600s one. A cutoff left at 300s would call this
+  // a definite absence on the first 404 and sleep nothing. The decision has to follow the live window:
+  // keep re-reading while the publish is still inside it, then stop as absent once it is not, without
+  // spending the rest of the visibility budget.
+  const publishedAgoMs = 450_000;
+  assert.ok(publishedAgoMs > 300_000 && publishedAgoMs <= NPM_PROVENANCE_INDEX_WINDOW_MS);
+  const { result, state, text } = await run({
+    npmReads: ['same'], tagReads: [{ latest: v('0.1.7') }],
+    provenanceReads: ['pending'], declared: false, publishedAgoMs,
+  });
+  const spent = state.sleeps.reduce((sum, ms) => sum + ms, 0);
+  assert.equal(result.ok, false, 'aging out of the window is a definite absence');
+  assert.ok(spent > 0, 'the 404 is waited on; a 300s cutoff would have stopped at once');
+  assert.ok(spent < NPM_VISIBILITY_BUDGET_MS, `stopped after ${spent}ms, before the visibility budget`);
+  assert.match(text, /npm provenance is a definite gap: npm has no provenance for 0\.1\.7/);
+  assert.match(text, /its version document was read and declares none/);
+  assert.match(text, /longer than any index delay/);
+  assert.ok(!state.log.includes('verify final'), 'a definite gap never reaches final verify');
+});
+
 test('the npm visibility budget leaves room for provenance indexing (#174)', () => {
   // v0.2.2 needed 117.7s of a 120s budget. Raised to 180s, v0.2.3 then used 176.0s of that:
   // the package stayed absent for about 110s (up from about 55s) and provenance for another 60s.
