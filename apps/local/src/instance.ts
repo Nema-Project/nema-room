@@ -204,8 +204,8 @@ function removeDescriptorIfOwner(file: string, instanceId: string): void {
   if (owns) try { unlinkSync(file); } catch { /* another owner or OS lock won the race */ }
 }
 
-export async function acquireInstance(home?: string, requestedInstallationId?: string): Promise<InstanceLease> {
-  const paths = resolveHome(home);
+export async function acquireInstance(home?: string, requestedInstallationId?: string, options?: { homeAlreadyProtected?: boolean }): Promise<InstanceLease> {
+  const paths = resolveHome(home, options?.homeAlreadyProtected && home ? { protect: false } : undefined);
   const identity = homeIdentity(paths.home);
   const homeHash = homeHashFor(identity);
   const port = controlPortFor(identity);
@@ -389,8 +389,8 @@ async function legacyListenerAnswers(port: number): Promise<boolean> {
   }
 }
 
-export async function discoverInstance(home?: string): Promise<DiscoveredInstance | null> {
-  const paths = resolveHome(home);
+export async function discoverInstance(home?: string, options?: { homeAlreadyProtected?: boolean }): Promise<DiscoveredInstance | null> {
+  const paths = resolveHome(home, options?.homeAlreadyProtected && home ? { protect: false } : undefined);
   const identity = homeIdentity(paths.home);
   const homeHash = homeHashFor(identity);
   const descriptor = readDescriptor(paths.instance);

@@ -477,6 +477,10 @@ describe('Electron shell lifecycle', () => {
     expect(value.windows[0].show).toHaveBeenCalled();
     expect(value.windows[0].options.webPreferences).toEqual(createSecureWindowOptions('http://127.0.0.1:43001', process.platform).webPreferences);
     expect(decodeURIComponent(value.windows[0].url)).toContain('Starting...');
+    value.runtimeApi.ensureLocalRuntime.mock.calls[0][0].onStartupPhase('db');
+    value.runtimeApi.ensureLocalRuntime.mock.calls[0][0].onStartupPhase('not-a-phase');
+    expect(decodeURIComponent(value.windows[0].url)).toContain('Opening the database...');
+    expect(decodeURIComponent(value.windows[0].url)).not.toContain('not-a-phase');
     releaseRuntime({
       origin: 'http://127.0.0.1:43001',
       launchUrl: `http://127.0.0.1:43001/_nema/launch?ticket=${'d'.repeat(64)}`,

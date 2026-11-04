@@ -6,7 +6,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { closeEnsuredRuntimesForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, startLocalRuntime, ensureLocalRuntime, shutdownLocalRuntime } from "../src/runtime.js";
+import { closeEnsuredRuntimesForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, startLocalRuntime, ensureLocalRuntime, shutdownLocalRuntime, startupPhaseName } from "../src/runtime.js";
 import { acquireInstance, discoverInstance } from "../src/instance.js";
 import { createLocalDb } from "@nema/hub/db/local";
 import { postUserMessage } from "@nema/hub/messages";
@@ -179,6 +179,29 @@ afterEach(async () => {
 });
 
 describe("managed local runtime", () => {
+  it("accepts only known startup-phase messages", () => {
+    expect(startupPhaseName({ type: "startup-phase", phase: "db" })).toBe("db");
+    expect(startupPhaseName({ type: "startup-phase", phase: "not-a-phase" })).toBeNull();
+    expect(startupPhaseName({ type: "core-ready" })).toBeNull();
+    expect(startupPhaseName("db")).toBeNull();
+  });
+
+  it("reports a known child startup phase and ignores any other phase name", async () => {
+    const home = join(tempDir("nema-home-"), "phase-channel");
+    const assetsDir = testAssets();
+    mkdirSync(home, { recursive: true });
+    const seen: string[] = [];
+    setEnsureTimeoutForTests(3_000);
+    setEnsureSpawnerForTests(() => spawn(process.execPath, ["-e", [
+      "process.send({ type: 'startup-phase', phase: 'db' })",
+      "process.send({ type: 'startup-phase', phase: 'not-a-phase' })",
+      "process.send({ type: 'core-error', code: 'NEMA_LOCAL_TEST_START_FAILED', message: 'phase probe' })",
+    ].join("; ")], { stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true }));
+    ensuredHomes.push(home);
+    await expect(ensureLocalRuntime({ home, assetsDir, onStartupPhase: (phase) => seen.push(phase) })).rejects.toThrow(/phase probe/);
+    expect(seen).toEqual(["db"]);
+  });
+
   it.runIf(process.platform === "win32")("refuses a Windows payload without its helper guardian before acquiring ownership", async () => {
     const assetsDir = testAssets();
     const manifestPath = join(assetsDir, "runtime-manifest.json");

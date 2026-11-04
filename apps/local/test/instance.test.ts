@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
-import { closeSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -649,6 +649,15 @@ describe("local instance ownership and discovery", () => {
     await listenLegacyCore(home, { homeHash, port, instanceId, secret, installationId });
     await expect(acquireInstance(home, installationId)).rejects.toMatchObject({ code: "NEMA_LOCAL_OLD_OWNER_RUNNING" });
     expect(existsSync(descriptorPath(home))).toBe(true);
+  });
+
+  it("skips a second home protect when asked, and still rejects a public descriptor", async () => {
+    const home = newHome();
+    if (process.platform !== "win32") chmodSync(home, 0o755);
+    await expect(discoverInstance(home, { homeAlreadyProtected: true })).resolves.toBeNull();
+    if (process.platform !== "win32") expect(statSync(home).mode & 0o777).toBe(0o755);
+    writeFileSync(join(home, "instance.json"), "{}", { mode: 0o644 });
+    await expect(discoverInstance(home, { homeAlreadyProtected: true })).rejects.toThrow(/trusted private file|invalid/i);
   });
 });
 

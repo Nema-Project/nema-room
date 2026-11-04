@@ -66,6 +66,8 @@ vi.mock("@/components/EntryDetail", () => ({
 
 beforeEach(() => {
   window.history.replaceState(null, "", "/");
+  localStorage.removeItem("nema.workspace");
+  document.cookie = "nema_workspace=; Path=/; Max-Age=0";
   scroll.mockClear(); showMessage.mockClear();
   vi.mocked(hub.listWorkspaces).mockResolvedValue([
     { id: "w1", name: "Alpha", confidential: false, knowledgeLanguage: "follow", createdAt: "x", openQuestions: 0, archived: false },
@@ -245,6 +247,30 @@ describe("WorkspaceShell knowledge wiring", () => {
     expect(replace).toHaveBeenCalledWith("/w/w2");
     expect(screen.queryByRole("heading", { name: "Old" })).toBeNull();
   });
+  it("shows a room skeleton while the workspace list is still loading", async () => {
+    localStorage.setItem("nema.locale", "en");
+    let resolveList: (rows: never) => void = () => {};
+    vi.mocked(hub.listWorkspaces).mockReturnValue(new Promise((resolve) => { resolveList = resolve as (rows: never) => void; }));
+    render(<I18nProvider><WorkspaceShell routeId={null} /></I18nProvider>);
+    expect(await screen.findByRole("status", { name: "Loading…" })).toBeTruthy();
+    expect(screen.queryByText("Loading…")).toBeNull();
+    resolveList([]);
+    expect(await screen.findAllByText("No workspace yet. Create one in the sidebar to get started.")).toHaveLength(2);
+  });
+
+  it("opens a remembered workspace before the list returns", async () => {
+    localStorage.setItem("nema.workspace", "ws_savedroom");
+    let resolveList: (rows: never) => void = () => {};
+    vi.mocked(hub.listWorkspaces).mockReturnValue(new Promise((resolve) => { resolveList = resolve as (rows: never) => void; }));
+    replace.mockClear();
+    render(<I18nProvider><WorkspaceShell routeId={null} /></I18nProvider>);
+    await act(async () => {});
+    expect(replace).toHaveBeenCalledWith("/w/ws_savedroom");
+    expect(document.cookie).toContain("nema_workspace=ws_savedroom");
+    resolveList([]);
+    await act(async () => {});
+  });
+
   it("opens model settings across the main area, not the knowledge column", async () => {
     vi.mocked(hub.listWorkspaces).mockResolvedValue([]);
     vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({

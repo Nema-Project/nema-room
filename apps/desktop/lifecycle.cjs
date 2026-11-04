@@ -88,6 +88,19 @@ function startupPalette(nativeTheme) {
   return { background: '#ffffff', foreground: '#111111', muted: '#8a8a8a' };
 }
 
+const STARTUP_PHASE_DETAIL = {
+  begin: 'Starting...',
+  'helper-scope': 'Preparing local helpers...',
+  lease: 'Reserving the local instance...',
+  'private-files': 'Checking private files...',
+  web: 'Starting the interface...',
+  db: 'Opening the database...',
+  hub: 'Starting the hub...',
+  daemon: 'Connecting the daemon...',
+  gateway: 'Opening the gateway...',
+  published: 'Opening the room...',
+};
+
 function startupDocumentUrl(palette, { title, detail }) {
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>html,body{margin:0;height:100%;background:${palette.background};color:${palette.foreground};font:15px/1.45 "Helvetica Neue",Arial,sans-serif}body{-webkit-app-region:drag}main{min-height:100%;display:grid;place-items:center;text-align:center;padding:32px}h1{margin:0 0 8px;font-size:20px;font-weight:700}p{margin:0;max-width:440px;color:${palette.muted};white-space:pre-wrap;word-break:break-word}</style></head><body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(detail)}</p></main></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
@@ -134,9 +147,9 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     return runtimeApi;
   }
 
-  async function ensureCore() {
+  async function ensureCore(onStartupPhase) {
     const api = await getRuntimeApi();
-    const instance = await api.ensureLocalRuntime({ home, assetsDir });
+    const instance = await api.ensureLocalRuntime({ home, assetsDir, onStartupPhase });
     currentInstance = instance;
     return instance;
   }
@@ -232,7 +245,6 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     return typeof current === 'string' && current.startsWith('data:');
   }
 
-  // ponytail: static startup page only. Live startup-phase needs a channel from the detached core; issue #186.
   function attachShell(window) {
     if (shellEventsBound.has(window)) return;
     shellEventsBound.add(window);
@@ -298,7 +310,11 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
       }
       showStartup(window, palette, 'Nema Room', 'Starting...');
       try {
-        const instance = await ensureCore();
+        const instance = await ensureCore((phase) => {
+          const detail = STARTUP_PHASE_DETAIL[phase];
+          if (!detail || window.isDestroyed() || !isStartupDocument(window)) return;
+          showStartup(window, palette, 'Nema Room', detail);
+        });
         writeDesktopBench(bench, 'runtime-ready');
         validateRuntimeLaunchUrl(instance.launchUrl, instance.origin);
         if (window.isDestroyed()) return window;
