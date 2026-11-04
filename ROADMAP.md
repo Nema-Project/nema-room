@@ -34,7 +34,8 @@ v0.2.3 是 v0.2.2 之后的小版本。用户可见的变更有四项：[#205](h
 
 - Node 去重的证据是 PR #205 最后一个提交 `ff10c1e` 上的 [Desktop release run 41345394881](https://github.com/Nema-Project/nema-room/actions/runs/41345394881)：win32-x64 与 darwin-arm64 的 Build and smoke 都成功；tag `v0.2.3` 的[桌面工作流](https://github.com/Nema-Project/nema-room/actions/runs/41592079167)在同两个目标上再次成功。这只验证了 CI 上的打包与冒烟。安装包的真机安装、从 0.2.2 覆盖升级、启动、旧数据保留，以及旧 report hook 改写后能否正常上报，都还没有真机证据。
 - [#131](https://github.com/Nema-Project/nema-room/issues/131) 仍 OPEN（milestone v0.2.3）：[#202](https://github.com/Nema-Project/nema-room/pull/202) 补了三语指南与技术参考，但真实账户验收记录还没有。
-- [#174](https://github.com/Nema-Project/nema-room/issues/174) 仍 OPEN。上面这次晋升用掉 180 秒预算中的约 176 秒之后，main 把 `NPM_VISIBILITY_BUDGET_MS` 改为 360 秒、provenance 索引窗口改为 600 秒；下次真实晋升才能证明余量。[#189](https://github.com/Nema-Project/nema-room/issues/189) 仍 OPEN。两者都不阻塞本版已完成的发布。
+- [#174](https://github.com/Nema-Project/nema-room/issues/174) 仍 OPEN。上面这次晋升用掉 180 秒预算中的约 176 秒之后，main 把 `NPM_VISIBILITY_BUDGET_MS` 改为 360 秒、provenance 索引窗口改为 600 秒；下次真实晋升才能证明余量。这不阻塞本版已完成的发布。
+- [#189](https://github.com/Nema-Project/nema-room/issues/189) 已完成。v0.2.3 是开启 immutable releases 之后的第一个 Release：`gh release view v0.2.3 --json isImmutable` 为 `true`，这次晋升一次通过。`npm-publish.yml` 里 provenance 来自 trusted publishing 的注释在 `6c4137d`。v0.2.2 及更早的 Release 仍是 `isImmutable: false`，该设置不回溯。
 
 ## v0.2.2 发布与后续验收
 
