@@ -36,6 +36,8 @@ let ensureSpawnerForTests: EnsureSpawner | undefined;
 type RuntimeReadyHook = (runtime: { db: Awaited<ReturnType<typeof createLocalDb>>; home: string; dataDir: string; webPort: number; webChild: ChildProcess }) => Promise<void>;
 let runtimeReadyHookForTests: RuntimeReadyHook | undefined;
 let ensureTimeoutForTests: number | undefined;
+let webReadyTimeoutForTests: number | undefined;
+let beforeWebBudgetForTests: (() => Promise<void> | void) | undefined;
 let settingsOperationsForTests: SettingsOperations | undefined;
 
 /** Explicit source-child hook used only by process tests; release builds never set it. */
@@ -50,6 +52,16 @@ export function setRuntimeReadyHookForTests(hook: RuntimeReadyHook | undefined):
 
 export function setEnsureTimeoutForTests(timeoutMs: number | undefined): void {
   ensureTimeoutForTests = timeoutMs;
+}
+
+/** Shortens only the post-database web budget. Packaged startup keeps WEB_READY_TIMEOUT_MS. */
+export function setWebReadyTimeoutForTests(timeoutMs: number | undefined): void {
+  webReadyTimeoutForTests = timeoutMs;
+}
+
+/** Runs after hub and daemon startup, before the web readiness budget starts. */
+export function setBeforeWebBudgetForTests(hook: (() => Promise<void> | void) | undefined): void {
+  beforeWebBudgetForTests = hook;
 }
 
 /** Explicit fake auth operations for lifecycle tests; never set by packaged startup. */
@@ -261,10 +273,11 @@ function spawnWeb(assets: ResolvedAssets, port: number): ChildProcess {
   return child;
 }
 
-async function httpReady(url: string, child: ChildProcess, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+async function httpReady(url: string, child: ChildProcess, deadlineAt: () => number, timeoutMs: number): Promise<void> {
   let lastError: unknown;
-  while (Date.now() < deadline) {
+  // deadlineAt stays in the future while the database, hub, and daemon start.
+  // Counting 15s from spawn let that work consume the whole budget on a busy machine.
+  while (Date.now() < deadlineAt()) {
     if (child.exitCode !== null || child.signalCode !== null) throw new Error("Managed Web process exited before becoming ready");
     try {
       await new Promise<void>((resolveProbe, reject) => {
@@ -460,9 +473,13 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     });
     webChild.once("error", (error) => onUnexpectedWebExit(error));
     webChild.once("exit", () => onUnexpectedWebExit());
-    // Web does not read the database. HTTP readiness overlaps DB open, hub start, and daemon connect.
-    // The gateway proxies to web, so that wait finishes before startGateway.
-    const webReady = httpReady(`http://127.0.0.1:${webPort}/`, webChild, WEB_READY_TIMEOUT_MS)
+    // Web does not read the database. Probes overlap DB open, hub start, and daemon connect.
+    // The readiness budget starts after that work: a cold PGlite open can use the CPU for longer
+    // than WEB_READY_TIMEOUT_MS, and Next then still needs the original budget before the gateway
+    // (which proxies to web) may start.
+    let webDeadlineAt = Number.POSITIVE_INFINITY;
+    const webTimeoutMs = webReadyTimeoutForTests ?? WEB_READY_TIMEOUT_MS;
+    const webReady = httpReady(`http://127.0.0.1:${webPort}/`, webChild, () => webDeadlineAt, webTimeoutMs)
       .then(() => { phase("web"); });
     void webReady.catch(() => undefined);
 
@@ -502,6 +519,8 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     phase("daemon");
     settings = createSettingsService({ home: paths.home, codexHome: process.env.CODEX_HOME ?? join(homedir(), ".codex"), operations: settingsOperationsForTests });
     appRelease = createAppReleaseService({ home: paths.home, ...readBuildIdentity(assets.root, assets) });
+    if (beforeWebBudgetForTests) await beforeWebBudgetForTests();
+    webDeadlineAt = Date.now() + webTimeoutMs;
     await webReady;
     assertWebAlive();
     gateway = await startGateway({

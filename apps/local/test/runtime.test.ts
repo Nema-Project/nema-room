@@ -6,7 +6,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { closeEnsuredRuntimesForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, startLocalRuntime, ensureLocalRuntime, shutdownLocalRuntime, startupPhaseName } from "../src/runtime.js";
+import { closeEnsuredRuntimesForTests, setBeforeWebBudgetForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, setWebReadyTimeoutForTests, startLocalRuntime, ensureLocalRuntime, shutdownLocalRuntime, startupPhaseName } from "../src/runtime.js";
 import { acquireInstance, discoverInstance } from "../src/instance.js";
 import { createLocalDb } from "@nema/hub/db/local";
 import { postUserMessage } from "@nema/hub/messages";
@@ -171,6 +171,8 @@ afterEach(async () => {
   await Promise.all(ensuredHomes.splice(0).map((home) => closeEnsuredRuntimesForTests(home)));
   setEnsureSpawnerForTests(undefined);
   setEnsureTimeoutForTests(undefined);
+  setWebReadyTimeoutForTests(undefined);
+  setBeforeWebBudgetForTests(undefined);
   setRuntimeReadyHookForTests(undefined);
   setSettingsOperationsForTests(undefined);
   await Promise.all(crashChildren.splice(0).map(closeCrashChild));
@@ -826,6 +828,26 @@ describe("managed local runtime", () => {
       if (!settled) {
         try { runtimes.push(await pending); } catch { /* the assertion above is the failure */ }
       }
+    }
+  }, 45_000);
+
+  it("keeps the web readiness budget until database startup has finished", async () => {
+    // A from-spawn budget of 300ms is already gone before this hold ends. The packaged
+    // failure was that same shape: PGlite still running while Next's 15s clock expired.
+    setWebReadyTimeoutForTests(300);
+    const assetsDir = testAssets();
+    const fixtures = join(assetsDir, "fixtures");
+    const release = join(fixtures, "web-release");
+    writeFileSync(join(fixtures, "web-wait-for-release"), "1\n");
+    const home = join(tempDir("nema-home-"), "web-budget-after-db");
+    setBeforeWebBudgetForTests(async () => {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 400));
+      writeFileSync(release, "1\n");
+    });
+    try {
+      runtimes.push(await startLocalRuntime({ home, assetsDir }));
+    } finally {
+      if (!existsSync(release)) writeFileSync(release, "1\n");
     }
   }, 45_000);
 
