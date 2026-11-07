@@ -86,9 +86,9 @@
 
 行的字段不变。条目是 `id`、`kind`、`title`、`status`。附件是 `id`、`name`、`kind`、`size`、`messageId`、`createdAt`。话题是 `id`、`title`、`lastReplyAt`。没有正文、字节、hash、别的 workspace 的 id。
 
-`q` 仍在 `trim` 之前量长度，超过 200 返回 400，正文仍是 `q is longer than 200 characters`。`trim` 之后为空，包括只有空白，走空查询。
+`q` 仍在 `trim` 之前量长度，超过 200 返回 400，正文仍是 `q is longer than 200 characters`。正文含 NUL（`\0`，包括 `q=%00`）时，在当作 SQL 参数之前返回 400，正文是 `q contains a NUL character`。不把 NUL 交给 `lower($2)`，因为 PostgreSQL 的 text 不接受 NUL，否则会变成 500。`trim` 不删 NUL。`trim` 之后为空，包括只有空白，走空查询。
 
-`truncated` 改成：任意一组在切到菜单上限之前还有更多匹配，则为 `true`。它不再表示「附件超过 50」。菜单仍不显示这个字段。旧的「50 个附件不 truncated、51 个 truncated」测试改成按新含义断言。
+`truncated` 改成：任意一组在菜单上限之外还有匹配，则为 `true`。条目和话题以多出来的那一行（`LIMIT 9` 的第 9 行）为准。附件以多出来的探测行（第 17 行）为准，或者剔除缺失文件后仍多于 8 个。它不再表示「附件超过 50」。菜单仍不显示这个字段。旧的「50 个附件不 truncated、51 个 truncated」测试改成按新含义断言。
 
 错误不变。未知 workspace 404 `workspace not found`。装了 `uiAuth` 时凭据不对仍是现有的 401，本路由不单独处理。数据库失败走现有的未捕获错误，菜单用现有的 `mention.lookupFailed`。空匹配是 200 和三个空数组，不是 404。
 
@@ -120,9 +120,9 @@
 
 同一档内沿用现在的时间顺序：条目 `updated_at desc, entry_id desc`；附件 `created_at desc, id desc`；话题 `coalesce(最后一条消息的 created_at, threads.created_at) desc, id desc`。
 
-每组返回给菜单的行最多 8。条目和话题用 `LIMIT 9`：第 9 行只用来把 `truncated` 设为 true，不返回。附件先取 `menuPerGroup * 2`（16）行再 `stat`，因为缺文件的要剔除；返回其中仍存在的前 8 个。SQL 凑满这 16 行，或剔除后仍多于 8 个，则这一组算作被截断。不为了补满 8 行再查第二页。缺文件仍标 `missing`，规则与现在相同。
+每组返回给菜单的行最多 8。条目和话题用 `LIMIT 9`：第 9 行只用来把 `truncated` 设为 true，不返回。附件取 `menuPerGroup * 2 + 1`（17）行。第 17 行不返回，也不做磁盘检查；它存在则 `truncated` 为 true。前 16 行做 `stat`，缺文件的剔除后若仍多于 8 个，`truncated` 也为 true，只返回仍存在的前 8 个。不为了补满 8 行再查第二页。缺文件仍标 `missing`，规则与现在相同。
 
-空查询不加子串条件。条目和话题按上面的时间顺序 `LIMIT 9`，返回 8，第 9 行只贡献 `truncated`。附件的空查询同样先取 16 行再 `stat`。不再读取 500 或 50 作为中间池。
+空查询不加子串条件。条目和话题按上面的时间顺序 `LIMIT 9`，返回 8，第 9 行只贡献 `truncated`。附件的空查询同样先取 17 行，第 17 行只贡献 `truncated`。不再读取 500 或 50 作为中间池。
 
 子序列不再算命中。`发布` 命中 `发布流程` 和 `版本发布`。`发流` 不命中 `发布流程`。`D-12` 与 `d-12` 都把 id 为 `D-12` 的条目放在该组第一。
 
@@ -134,7 +134,7 @@
 
 Composer 保持 150ms debounce 和 30 秒缓存。缓存键是 workspace id 加去掉空白后的查询。切换 workspace 后不得复用上一个 workspace 的结果。
 
-查询或 workspace 变化时 abort 上一次请求。响应写回菜单前，workspace id 和查询必须仍是这次打开的菜单的那一对。过期响应不得覆盖较新的结果，也不得在换了 workspace 之后画出来。失败只在这次请求仍是当前请求时把状态设为 `failed`，并清空菜单数据。发送和打字不受影响，与现在相同。
+查询或 workspace 变化时 abort 上一次请求。响应写回菜单前，workspace id 和查询必须仍是这次打开的菜单的那一对。过期响应不得覆盖较新的结果，也不得在换了 workspace 之后画出来。没有命中缓存时，清空上一次的 `context`，菜单行和 Enter 选择都不得用它，直到这次结果写入；这段时间菜单用现有的 `mention.looking`。缓存命中则立刻用这份属于当前 workspace 和查询的结果。失败只在这次请求仍是当前请求时把状态设为 `failed`，并清空菜单数据。发送和打字不受影响，与现在相同。
 
 `groupCandidates` 不再调用 `fuzzyScore`，也不再按查询丢掉 hub 已经返回的行。它保持 hub 的顺序，映射菜单行，并再次切到 8，作为防御。精确 id 优先和「导出只留下 R-3」改由 hub 测试负责。web 测试改为：给定 hub 的顺序就保持该顺序；多给的行仍被切到 8；行上的 `text` 不变。
 
@@ -142,11 +142,9 @@ Composer 保持 150ms debounce 和 30 秒缓存。缓存键是 workspace id 加�
 
 ### 性能边界
 
-一次 debounced 请求最多三条带参数的语句，每条都有 `LIMIT`。响应每组最多 8 行，和现在菜单能画的一样大。空查询不再把 500 行读进 hub 进程。没有 `(workspace_id, updated_at)` 索引时，数据库仍可能先看到该 workspace 的行再取前几名。
+一次 debounced 搜索最多三条带参数且带 `LIMIT` 的候选查询。另外，每次请求还执行一条按 id 的 workspace 检查；每个未通过磁盘检查的附件再执行一条 `missing` 标记更新。附件候选查询最多取 17 行，其中最多 16 行做磁盘检查。响应每组最多 8 行，和现在菜单能画的一样大。空查询不再把 500 行读进 hub 进程。没有 `(workspace_id, updated_at)` 索引时，数据库仍可能先看到该 workspace 的行再取前几名。
 
 没有新扩展、新索引、新迁移。过滤是这个 workspace 上的扫描。`entry_index` 的主键是 `(workspace_id, entry_id)`，没有 `(workspace_id, updated_at)`。扫描变慢时，以后的升级是给这个 workspace 加匹配用的索引，不是把行数上限调大。本轮不给毫秒数：P2-02 没有基线，「不比现在慢」落在相同的 debounce、相同的菜单行数和更小的读取上限上，而不是一个新的计时门槛。
-
-附件 `stat` 最多 16 个 id。不把整个 workspace 的文件都 stat 一遍。
 
 ## 回归
 
@@ -159,12 +157,12 @@ Composer 保持 150ms debounce 和 30 秒缓存。缓存键是 workspace id 加�
 - `发布` 命中 `发布流程` 和 `版本发布`；`发流` 不命中 `发布流程`。
 - 查询 `%` 不匹配所有标题。查询 `_` 同理。
 - 9 条命中时 `truncated` 为 true 且只返回 8 条。8 条命中时为 false。空查询超过 8 条时为 true。
-- 已有的 400、404、已归档仍 200、不调用 daemon、响应不含正文和字节，保持。
+- 已有的 400、404、已归档仍 200、不调用 daemon、响应不含正文和字节，保持。含 NUL 的 `q`（包括百分号编码的 `%00`）返回 400，正文是 `q contains a NUL character`。
 
 web：
 
 - `apps/web/test/mentions.test.ts` 按上一节改 `groupCandidates`。
-- `apps/web/test/Composer.test.tsx` 增加：较慢的旧查询先返回时，菜单保持较新的查询结果；workspace id 不同的缓存不复用。debounce 仍是 150ms，现有「输入发布后请求 `w1`」的断言保持，并允许第三个 `signal` 参数。
+- `apps/web/test/Composer.test.tsx` 增加：较新的查询先返回、较慢的旧查询后返回时，菜单保持较新的查询结果；查询还没返回时，Enter 不会选中上一次的行；workspace id 不同的缓存不复用。debounce 仍是 150ms，现有「输入发布后请求 `w1`」的断言保持，并允许第三个 `signal` 参数。
 
 实现 PR 还要改 [技术参考](../../reference.zh-CN.md) 里「`@` 提及」的候选那一段，使它描述搜索而不是 500/50 的池；并加一条 `changelog.d` 片段。用法没有新的安装步骤，README 和 guide 不改。本设计 PR 不改这些文件，因为行为还没落地。
 
