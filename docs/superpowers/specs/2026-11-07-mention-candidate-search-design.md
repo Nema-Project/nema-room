@@ -134,7 +134,7 @@ Composer 保持 150ms debounce 和 30 秒缓存。缓存键是 workspace id 加�
 
 查询或 workspace 变化时 abort 上一次请求。响应写回菜单或写入缓存之前，workspace id 和查询必须仍是这次打开的菜单的那一对。过期响应不得覆盖较新的结果，不得刷新该缓存项的时间，也不得在换了 workspace 之后画出来。没有命中缓存时，清空上一次的 `context`，菜单行和 Enter 选择都不得用它，直到这次结果写入；这段时间菜单用现有的 `mention.looking`。缓存命中则立刻用这份属于当前 workspace 和查询的结果。失败只在这次请求仍是当前请求时把状态设为 `failed`，并清空菜单数据。发送和打字不受影响，与现在相同。
 
-`groupCandidates` 继续用 `fuzzyScore` 重排 hub 返回的行。子串命中是子序列的子集，这次重排不会因为「不是子序列」丢掉它们。它会丢掉 SQL `lower` 接受、JS `toLowerCase` 拒绝的行，例如查询 `İ`、标题 `i`。hub 若只返回了这种行，菜单会空，后面 JS 能命中的行也补不回来。D-1 选定后，服务端和 `groupCandidates` 必须用同一种折叠。在那之前不写「重排不会丢行」。不改三份 `messages/*.json`。空菜单如何措辞见 D-2。
+`groupCandidates` 现在会丢掉分数为负的行，再按 `fuzzyScore` 重排。查询 `报告` 时，较短的旧 `报告` 会排到较新的 `报告月报` 前面，即使 hub 按前缀档加时间把较新的那条放在前面。D-1 选定的顺序就是菜单顺序：选子串时，菜单保留服务端的前缀档加时间，不再用 `fuzzyScore` 倒过来；选要和现在打分一致的子序列时，菜单可以继续重排，但折叠和更短优先的 UTF-16 长度必须和 hub 相同。它也会丢掉 SQL `lower` 接受、JS `toLowerCase` 拒绝的行，例如查询 `İ`、标题 `i`。hub 若只返回了这种行，菜单会空。空菜单如何措辞见 D-2。
 
 ### 扫描界限
 
@@ -160,20 +160,20 @@ Composer 保持 150ms debounce 和 30 秒缓存。缓存键是 workspace id 加�
 
 web：
 
-- `apps/web/test/mentions.test.ts` 保持 `groupCandidates` 的现有重排，直到 D-1 改它。
+- `apps/web/test/mentions.test.ts` 按 D-1 断言菜单顺序。选子串时，较新的 `报告月报` 仍在较旧的 `报告` 前面。选与 `fuzzyScore` 一致的子序列时，保持现有重排，并覆盖查询 `İ` 对标题 `i` 会被丢掉、以及 `a😀😀` 与 `abcd` 的更短优先。
 - `apps/web/test/Composer.test.tsx` 增加：较新的查询先返回、较慢的旧查询后返回时，菜单保持较新的查询结果，旧响应也不改写这份缓存；查询还没返回时，Enter 不会选中上一次的行；workspace id 不同的缓存不复用。debounce 仍是 150ms，现有「输入发布后请求 `w1`」的断言保持，并允许第三个 `signal` 参数。
 
 实现 PR 还要改 [技术参考](../../reference.zh-CN.md) 里「`@` 提及」的候选那一段，使它描述搜索而不是 500/50 的池；并加一条 `changelog.d` 片段。用法没有新的安装步骤，README 和 guide 不改。本设计 PR 不改这些文件，因为行为还没落地。
 
 ## 兼容
 
-同一响应形状。旧 web 会再用 `fuzzyScore` 滤一次。子串命中一定也是子序列，所以不会被旧 web 丢掉，但 `发流` 这类结果不会出现。子序列命中和现在的打分一致时，旧 web 会留下它们。新 web 配旧 hub 时，菜单仍只看见旧的 500 条池。桌面安装包和 Compose 一起发 hub 与 web，不为此加探测字段。
+同一响应形状。已经发出的旧 web 会再用 `fuzzyScore` 滤一次，改新 web 的折叠补不了它。子串命中若也是 JS 子序列，旧 web 会留下；查询 `İ`、标题 `i` 这种只有 SQL `lower` 命中的行，旧 web 会丢掉。要让旧 web 留下 hub 返回的行，服务端折叠必须和那份 `fuzzyScore` 相同。`发流` 这类只有子序列才中的结果，旧 web 不会显示。子序列命中和现在的打分一致时，旧 web 会留下它们。新 web 配旧 hub 时，菜单仍只看见旧的 500 条池。桌面安装包和 Compose 一起发 hub 与 web，不为此加探测字段。
 
 不改 `messages.meta`。除了 D-1 若选线性函数时的那一次函数迁移，不加表结构迁移。回滚就是回到按池子截断的菜单。已经发出的提及不受影响。
 
 ## 待决定的事项
 
-有两项。实现计划等这两项和这份规格一起被验收。下面这些已经定了，不再另开：服务端过滤而不是把 500 调大、每组 8 行、不做分页、附件只搜文件名、话题只搜标题、不新增精确 id 语法、不用 `pg_trgm` 代替子序列、不把整个 workspace 读进 hub、不设毫秒门槛、不改文案、不改 [#195](https://github.com/Nema-Project/nema-room/issues/195) 的 milestone。
+有两项。实现计划等这两项和这份规格一起被验收。下面这些已经定了，不再另开：服务端过滤而不是把 500 调大、每组 8 行、不做分页、附件只搜文件名、话题只搜标题、不新增精确 id 语法、不用 `pg_trgm` 代替子序列、不把整个 workspace 读进 hub、不设毫秒门槛、不改 [#195](https://github.com/Nema-Project/nema-room/issues/195) 的 milestone。普通的查找中、失败和没有匹配仍用现有文案。只有 D-2 会把「没看完」显示成 `mention.noMatch` 时，那句新文案才跟着 D-2 一起定。
 
 ### D-1. 保留子序列，还是改成字面子串
 
