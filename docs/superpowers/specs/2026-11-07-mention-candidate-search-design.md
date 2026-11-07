@@ -134,7 +134,7 @@
 
 Composer 保持 150ms debounce 和 30 秒缓存。缓存键是 workspace id 加去掉空白后的查询。切换 workspace 后不得复用上一个 workspace 的结果。
 
-查询或 workspace 变化时 abort 上一次请求。响应写回菜单前，workspace id 和查询必须仍是这次打开的菜单的那一对。过期响应不得覆盖较新的结果，也不得在换了 workspace 之后画出来。没有命中缓存时，清空上一次的 `context`，菜单行和 Enter 选择都不得用它，直到这次结果写入；这段时间菜单用现有的 `mention.looking`。缓存命中则立刻用这份属于当前 workspace 和查询的结果。失败只在这次请求仍是当前请求时把状态设为 `failed`，并清空菜单数据。发送和打字不受影响，与现在相同。
+查询或 workspace 变化时 abort 上一次请求。响应写回菜单或写入缓存之前，workspace id 和查询必须仍是这次打开的菜单的那一对。过期响应不得覆盖较新的结果，不得刷新该缓存项的时间，也不得在换了 workspace 之后画出来。没有命中缓存时，清空上一次的 `context`，菜单行和 Enter 选择都不得用它，直到这次结果写入；这段时间菜单用现有的 `mention.looking`。缓存命中则立刻用这份属于当前 workspace 和查询的结果。失败只在这次请求仍是当前请求时把状态设为 `failed`，并清空菜单数据。发送和打字不受影响，与现在相同。
 
 `groupCandidates` 不再调用 `fuzzyScore`，也不再按查询丢掉 hub 已经返回的行。它保持 hub 的顺序，映射菜单行，并再次切到 8，作为防御。精确 id 优先和「导出只留下 R-3」改由 hub 测试负责。web 测试改为：给定 hub 的顺序就保持该顺序；多给的行仍被切到 8；行上的 `text` 不变。
 
@@ -162,7 +162,7 @@ Composer 保持 150ms debounce 和 30 秒缓存。缓存键是 workspace id 加�
 web：
 
 - `apps/web/test/mentions.test.ts` 按上一节改 `groupCandidates`。
-- `apps/web/test/Composer.test.tsx` 增加：较新的查询先返回、较慢的旧查询后返回时，菜单保持较新的查询结果；查询还没返回时，Enter 不会选中上一次的行；workspace id 不同的缓存不复用。debounce 仍是 150ms，现有「输入发布后请求 `w1`」的断言保持，并允许第三个 `signal` 参数。
+- `apps/web/test/Composer.test.tsx` 增加：较新的查询先返回、较慢的旧查询后返回时，菜单保持较新的查询结果，旧响应也不改写这份缓存；查询还没返回时，Enter 不会选中上一次的行；workspace id 不同的缓存不复用。debounce 仍是 150ms，现有「输入发布后请求 `w1`」的断言保持，并允许第三个 `signal` 参数。
 
 实现 PR 还要改 [技术参考](../../reference.zh-CN.md) 里「`@` 提及」的候选那一段，使它描述搜索而不是 500/50 的池；并加一条 `changelog.d` 片段。用法没有新的安装步骤，README 和 guide 不改。本设计 PR 不改这些文件，因为行为还没落地。
 
