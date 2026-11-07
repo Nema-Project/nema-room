@@ -268,10 +268,14 @@ function threadSql(strategy) {
             limit ${POOL}`;
   }
   if (strategy === "substring") {
-    return `select t.id, t.title
-            from threads t
-            where t.workspace_id = $1 and $2 <> '' and strpos(lower(t.title), lower($2)) > 0
-            order by (strpos(lower(t.title), lower($2)) = 1) desc, t.created_at desc, t.id desc
+    return `select id, title from (
+              select t.id, t.title, ${activity} as activity
+              from threads t
+              left join messages m on m.thread_id = t.id
+              where t.workspace_id = $1 and $2 <> '' and strpos(lower(t.title), lower($2)) > 0
+              group by t.id
+            ) s
+            order by (strpos(lower(title), lower($2)) = 1) desc, activity desc, id desc
             limit 9`;
   }
   const predicate = strategy === "subseq-regex"
@@ -547,16 +551,18 @@ async function correctness(client, fuzzyScore) {
       substringMisses: [...js].filter((id) => !substring.has(id)),
     });
   }
-  const leaked = await client.query(
-    `select entry_id from entry_index
-     where workspace_id = 'bench-tiny' and title = '最旧独特标题' and entry_id in (
-       select entry_id from entry_index where workspace_id = 'bench-other'
-     )`,
-  );
-  const otherVisible = await client.query(
-    `select count(*)::int as n from entry_index
-     where workspace_id = 'bench-tiny' and entry_id = 'D-1' and title = '最旧独特标题'`,
-  );
+  const isolation = [];
+  for (const strategy of STRATEGIES) {
+    const sql = entrySql(strategy)
+      .replaceAll("select entry_id as id, title", "select entry_id as id, workspace_id, title")
+      .replaceAll("select id, title from", "select id, workspace_id, title from");
+    const rows = await client.query(sql, paramsFor(strategy, "bench-tiny", "最旧独特标题"));
+    isolation.push({
+      strategy,
+      rows: rows.rows.length,
+      foreign: rows.rows.filter((row) => row.workspace_id !== "bench-tiny").length,
+    });
+  }
   const caseFold = [];
   for (const [title, query] of [["İstanbul", "i"], ["İstanbul", "İ"], ["i", "İ"], ["straße", "ss"], ["straße", "ß"], ["a😀b", "😀"], ["发\n流", "发流"]]) {
     const js = fuzzyScore(query, title);
@@ -575,7 +581,7 @@ async function correctness(client, fuzzyScore) {
     });
   }
   await resetData(client);
-  return { audits, otherWorkspaceRowsWithSameId: otherVisible.rows[0].n, leakedRows: leaked.rows.length, caseFold };
+  return { audits, isolation, caseFold };
 }
 
 async function environment(client) {
@@ -713,6 +719,8 @@ async function main() {
     const star = checks.audits.find((row) => row.query === ".*");
     const percent = checks.audits.find((row) => row.query === "%");
     if (generatorMiss.length) throw new Error(`predicate disagrees with fuzzyScore on generated rows: ${JSON.stringify(generatorMiss)}`);
+    const leaked = checks.isolation.filter((row) => row.foreign !== 0);
+    if (leaked.length) throw new Error(`candidate SQL returned another workspace: ${JSON.stringify(leaked)}`);
     if (!star || star.extraRegex.includes("D-plain") || star.missingFromRegex.includes("D-dot")) {
       throw new Error(`regex escape failed: ${JSON.stringify(star)}`);
     }
@@ -723,7 +731,7 @@ async function main() {
     if (!abc || abc.missingFromRegex.includes("D-case") || abc.missingFromLinear.includes("D-case") || abc.extraRegex.includes("D-plain")) {
       throw new Error(`ASCII case fold failed: ${JSON.stringify(abc)}`);
     }
-    pool = new pg.Pool({ ...benchConfig(admin), max: 16 });
+    pool = new pg.Pool({ ...benchConfig(admin), max: 16, idleTimeoutMillis: 0, statement_timeout: 20_000 });
     const held = [];
     for (let i = 0; i < 16; i += 1) held.push(await pool.connect());
     for (const heldClient of held) await heldClient.query(`set statement_timeout = '20s'`);
