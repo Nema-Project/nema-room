@@ -14,9 +14,20 @@ if (!standaloneBuild) {
   }
 }
 
+const shareHeaders = [
+  { key: "Cache-Control", value: "no-store" },
+  { key: "X-Robots-Tag", value: "noindex, nofollow" },
+  { key: "Referrer-Policy", value: "no-referrer" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Content-Security-Policy", value: "base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; connect-src 'none'" },
+];
+
 const nextConfig: NextConfig = {
   // Next 16 otherwise regenerates apps/web/AGENTS.md on `next dev`.
   agentRules: false,
+  async headers() {
+    return [{ source: "/s/:path*", headers: shareHeaders }];
+  },
   ...(standaloneBuild
     ? {
         output: "standalone",
