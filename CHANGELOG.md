@@ -4,6 +4,12 @@ Version sections on main may describe release preparation. A version heading and
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-11
+
+### Changed
+
+- The `@` menu still finds a knowledge entry, a topic, or an already-sent file when it sits past the old candidate pool, because a non-empty query is filtered in SQL. A missing file is skipped. When the attachment check has not finished, the menu does not call that no match. The menu has not been clicked in a real browser; only component tests cover it. The candidate SQL has been run on PGlite and on PostgreSQL 16. Windows x64 and macOS arm64 packaged cold starts, warm starts, and overwrite upgrades have not been accepted on those machines. Real-account acceptance for #131 has not been done either.
+
 ## [0.2.4] - 2026-11-10
 
 ### Changed
