@@ -26,7 +26,7 @@ function excerpt(content: string): string {
 const MENTION_DEBOUNCE_MS = 150;
 const MENTION_CACHE_MS = 30_000;
 /** Matches the hub's own limit on a mention query. */
-const EMPTY_CONTEXT: MentionContextResponse = { status: "ok", entries: [], attachments: [], threads: [], truncated: false };
+const EMPTY_CONTEXT: MentionContextResponse = { status: "ok", entries: [], attachments: [], threads: [], truncated: false, attachmentBudgetExhausted: false };
 
 function availableItems(value: string, token: { query: string; start: number }, skills: readonly SkillRow[], threadMode: boolean): SlashItem[] {
   // Skills only when the `/` starts the whole message; other lines keep just the built-in commands.
@@ -92,43 +92,47 @@ export function Composer({
   const [mentionClosedFor, setMentionClosedFor] = useState<string | null>(null);
   const cache = useRef(new Map<string, { at: number; ctx: MentionContextResponse }>());
   const atKey = at ? `${at.start}:${at.query}` : "";
-  const groups = useMemo(() => (at ? groupCandidates(at.query, context) : []), [at, context]);
+  const mentionQuery = at?.query ?? null;
+  const groups = useMemo(() => (mentionQuery !== null ? groupCandidates(mentionQuery, context) : []), [mentionQuery, context]);
   const mentionRows = useMemo(() => groups.flatMap((g) => g.items), [groups]);
   const mentionOpen = at !== null && workspaceId !== undefined && mentionClosedFor !== atKey;
 
   useEffect(() => {
-    if (!at || workspaceId === undefined) return;
-    const key = at.query.trim();
-    const hit = cache.current.get(key);
+    if (mentionQuery === null || workspaceId === undefined) return;
+    const query = mentionQuery.trim();
+    const cacheKey = `${workspaceId}\n${query}`;
+    const hit = cache.current.get(cacheKey);
     if (hit && Date.now() - hit.at < MENTION_CACHE_MS) {
       setContext(hit.ctx);
       setContextState("ok");
       return;
     }
+    // The previous answer belongs to another query. Enter must not pick it while this one is in flight.
+    setContext(EMPTY_CONTEXT);
     setContextState("loading");
+    const controller = new AbortController();
     let live = true;
     const timer = setTimeout(() => {
-      searchMentionContext(workspaceId, key)
+      searchMentionContext(workspaceId, query, controller.signal)
         .then((ctx) => {
-          cache.current.set(key, { at: Date.now(), ctx });
           // A later keystroke or another workspace may have moved on; that request owns the menu now.
-          if (live) {
-            setContext(ctx);
-            setContextState("ok");
-          }
+          if (!live) return;
+          if (ctx.attachmentBudgetExhausted !== true) cache.current.set(cacheKey, { at: Date.now(), ctx });
+          setContext(ctx);
+          setContextState("ok");
         })
-        .catch(() => {
-          if (live) {
-            setContext(EMPTY_CONTEXT);
-            setContextState("failed"); // the menu says it could not look; typing and sending still work
-          }
+        .catch((error: unknown) => {
+          if (!live || (error instanceof DOMException && error.name === "AbortError")) return;
+          setContext(EMPTY_CONTEXT);
+          setContextState("failed"); // the menu says it could not look; typing and sending still work
         });
     }, MENTION_DEBOUNCE_MS);
     return () => {
       live = false;
       clearTimeout(timer);
+      controller.abort();
     };
-  }, [at, workspaceId]);
+  }, [mentionQuery, workspaceId]);
 
   const syncChips = useCallback((content: string) => {
     setChips((cur) => {
@@ -354,6 +358,7 @@ export function Composer({
             attachments: context.attachments.length > 0,
             state: contextState,
             query: at?.query ?? "",
+            attachmentBudgetExhausted: context.attachmentBudgetExhausted === true,
           }}
         />
       )}

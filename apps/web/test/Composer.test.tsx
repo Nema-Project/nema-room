@@ -526,7 +526,6 @@ describe("Composer @ mentions", () => {
     status: "ok",
     entries: [
       { id: "D-12", kind: "decision", title: "发布流程", status: "active" },
-      { id: "R-3", kind: "requirement", title: "支持导出", status: "active" },
     ],
     attachments: [{ id: "att_1", name: "发布会截图.png", kind: "image", size: 100, messageId: "m_1", createdAt: "2026-10-30T00:00:00.000Z" }],
     threads: [{ id: "m_2", title: "发布流程讨论", lastReplyAt: null }],
@@ -549,7 +548,7 @@ describe("Composer @ mentions", () => {
     expect(menu).toBeTruthy();
     expect(await screen.findByRole("option", { name: /D-12/ })).toBeTruthy();
     expect(screen.getByRole("option", { name: /发布会截图/ })).toBeTruthy();
-    await vi.waitFor(() => expect(hub.searchMentionContext).toHaveBeenCalledWith("w1", "发布"));
+    await vi.waitFor(() => expect(hub.searchMentionContext).toHaveBeenCalledWith("w1", "发布", expect.any(AbortSignal)));
     // Arrow down once and the active row really is the second one: the assertion below would fail if
     // navigation did nothing (the first row would be inserted instead).
     fireEvent.keyDown(box(), { key: "ArrowDown" });
@@ -606,6 +605,93 @@ describe("Composer @ mentions", () => {
     await userEvent.type(box(), "```");
     await userEvent.type(box(), "{Enter}@发");
     expect(screen.queryByRole("listbox", { name: /mention|提及/i })).toBeNull();
+  });
+
+  it("does not reuse a mention result cached for another workspace", async () => {
+    vi.mocked(hub.searchMentionContext).mockResolvedValue(ctx);
+    const view = render(<I18nProvider><Composer workspaceId="w1" onSend={vi.fn().mockResolvedValue(undefined)} /></I18nProvider>);
+    await userEvent.type(box(), "@发布");
+    await vi.waitFor(() => expect(hub.searchMentionContext).toHaveBeenCalledWith("w1", "发布", expect.any(AbortSignal)));
+    view.rerender(<I18nProvider><Composer workspaceId="w2" onSend={vi.fn().mockResolvedValue(undefined)} /></I18nProvider>);
+    await vi.waitFor(() => expect(hub.searchMentionContext).toHaveBeenCalledWith("w2", "发布", expect.any(AbortSignal)));
+  });
+
+  it("drops a slower older query and does not let it fill the cache", async () => {
+    let resolveOld!: (value: MentionContextResponse) => void;
+    let resolveNew!: (value: MentionContextResponse) => void;
+    vi.mocked(hub.searchMentionContext).mockImplementation((_id, q) => {
+      if (q === "aaaa") return new Promise((resolve) => { resolveOld = resolve; });
+      return new Promise((resolve) => { resolveNew = resolve; });
+    });
+    mountWs(vi.fn().mockResolvedValue(undefined));
+    await userEvent.type(box(), "@aaaa");
+    await vi.waitFor(() => expect(hub.searchMentionContext).toHaveBeenCalledWith("w1", "aaaa", expect.any(AbortSignal)));
+    await userEvent.clear(box());
+    await userEvent.type(box(), "@bbbb");
+    await vi.waitFor(() => expect(hub.searchMentionContext).toHaveBeenCalledWith("w1", "bbbb", expect.any(AbortSignal)));
+    const newer: MentionContextResponse = { status: "ok", entries: [{ id: "D-2", kind: "decision", title: "新", status: "active" }], attachments: [], threads: [], truncated: false, attachmentBudgetExhausted: false };
+    const older: MentionContextResponse = { status: "ok", entries: [{ id: "D-1", kind: "decision", title: "旧", status: "active" }], attachments: [], threads: [], truncated: false, attachmentBudgetExhausted: false };
+    await act(async () => { resolveNew(newer); });
+    expect(await screen.findByRole("option", { name: /D-2/ })).toBeTruthy();
+    await act(async () => { resolveOld(older); });
+    expect(screen.queryByRole("option", { name: /D-1/ })).toBeNull();
+    await userEvent.clear(box());
+    await userEvent.type(box(), "@aaaa");
+    await vi.waitFor(() => expect(vi.mocked(hub.searchMentionContext).mock.calls.filter((call) => call[1] === "aaaa")).toHaveLength(2));
+  });
+
+  it("does not insert the previous row while the next query is still in flight", async () => {
+    let resolveNext!: (value: MentionContextResponse) => void;
+    vi.mocked(hub.searchMentionContext).mockImplementation((_id, q) => (
+      q === "发" ? Promise.resolve(ctx) : new Promise((resolve) => { resolveNext = resolve; })
+    ));
+    mountWs(vi.fn().mockResolvedValue(undefined));
+    await userEvent.type(box(), "@发");
+    expect(await screen.findByRole("option", { name: /D-12/ })).toBeTruthy();
+    await userEvent.type(box(), "布");
+    await vi.waitFor(() => expect(hub.searchMentionContext).toHaveBeenCalledWith("w1", "发布", expect.any(AbortSignal)));
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(box().value).toBe("@发布");
+    resolveNext(ctx);
+  });
+
+  it("aborts the mention request that the next query replaced", async () => {
+    const signals: AbortSignal[] = [];
+    vi.mocked(hub.searchMentionContext).mockImplementation((_id, _q, signal?: AbortSignal) => {
+      if (signal) signals.push(signal);
+      return Promise.resolve(ctx);
+    });
+    mountWs(vi.fn().mockResolvedValue(undefined));
+    await userEvent.type(box(), "@发");
+    await vi.waitFor(() => expect(signals.length).toBeGreaterThan(0));
+    await userEvent.type(box(), "布");
+    await vi.waitFor(() => expect(signals.length).toBeGreaterThan(1));
+    expect(signals[0]!.aborted).toBe(true);
+    expect(signals.at(-1)!.aborted).toBe(false);
+  });
+
+  it("does not cache an unfinished attachment scan, and says the menu is not a finished empty result", async () => {
+    vi.mocked(hub.searchMentionContext).mockResolvedValue({
+      status: "ok", entries: [], attachments: [], threads: [], truncated: true, attachmentBudgetExhausted: true,
+    });
+    mountWs(vi.fn().mockResolvedValue(undefined));
+    await userEvent.type(box(), "@zzzz");
+    expect(await screen.findByText(/Checked 50 files and have not finished\. Please enter a more specific keyword\.|已检查 50 个文件，尚未查完，请输入更具体的关键词。/)).toBeTruthy();
+    expect(screen.queryByText(/Nothing matches|没有与/)).toBeNull();
+    await userEvent.clear(box());
+    await userEvent.type(box(), "@zzzz");
+    await vi.waitFor(() => expect(vi.mocked(hub.searchMentionContext).mock.calls.filter((call) => call[1] === "zzzz")).toHaveLength(2));
+  });
+
+  it("still caches a menu that is short only because more than eight rows matched", async () => {
+    vi.mocked(hub.searchMentionContext).mockResolvedValue({ ...ctx, truncated: true, attachmentBudgetExhausted: false });
+    mountWs(vi.fn().mockResolvedValue(undefined));
+    await userEvent.type(box(), "@发布");
+    expect(await screen.findByRole("option", { name: /D-12/ })).toBeTruthy();
+    await userEvent.clear(box());
+    await userEvent.type(box(), "@发布");
+    expect(await screen.findByRole("option", { name: /D-12/ })).toBeTruthy();
+    expect(vi.mocked(hub.searchMentionContext).mock.calls.filter((call) => call[1] === "发布")).toHaveLength(1);
   });
 
   it("says when there is nothing to mention yet", async () => {
