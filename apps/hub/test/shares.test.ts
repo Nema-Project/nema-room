@@ -587,4 +587,17 @@ describe("share admin", () => {
     expect(patchLock).toBeLessThan(revoke);
     expect(log.slice(0, patchLock).some((sql) => /workspaces/i.test(sql))).toBe(false);
   });
+
+  test("a create body that is not JSON is 400", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await shareableWorkspace(db, dataDir, "Alpha");
+    const app = shareApp(db, dataDir);
+    const bad = await app.request(`${HUB}/api/workspaces/${ws.id}/shares`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{",
+    });
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ error: "request body must be valid JSON" });
+  });
 });
