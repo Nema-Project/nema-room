@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { readSecretLine, saveSecretLine } from "../../src/secrets/file.js";
-import { openPrivateFile, openPrivateFileChecked, privateModeMatches, protectPrivatePath, recordWindowsAclBench, WINDOWS_ACL_SCRIPT } from "../../src/secrets/permissions.js";
+import { openPrivateFile, openPrivateFileChecked, privateModeMatches, protectPrivatePath, recordWindowsAclBench, WINDOWS_ACL_SCRIPT, windowsAclHelperStarts } from "../../src/secrets/permissions.js";
 import { AuthStore, type StoredAuth } from "../../src/direct/authStore.js";
 import { ensureReportToken, reportTokenHash } from "../../src/report/token.js";
 import { readClaudeToken, saveClaudeToken } from "../../src/claude/token.js";
@@ -108,6 +108,46 @@ test("a private file owned by another user is refused (review 6)", () => {
 test("the Windows ACL script calls no cmdlets", () => {
   // Cmdlet autoload took ~22s per call under the managed core's filtered environment on a GitHub Windows runner.
   expect(WINDOWS_ACL_SCRIPT.match(/\b[A-Z][a-z]+-[A-Z][A-Za-z]+\b/g)).toBeNull();
+});
+
+test("the Windows ACL script serves more than one path", () => {
+  expect(WINDOWS_ACL_SCRIPT).toContain("ReadLine");
+  expect(WINDOWS_ACL_SCRIPT).not.toContain("NEMA_PRIVATE_PATH");
+});
+
+test("POSIX checks do not start a Windows ACL helper", () => {
+  const file = path.join(root, "posix-helper");
+  writeFileSync(file, "placeholder", { mode: 0o600 });
+  const before = windowsAclHelperStarts();
+  protectPrivatePath(file);
+  closeSync(openPrivateFile(file));
+  if (process.platform === "win32") expect(windowsAclHelperStarts()).toBeGreaterThan(before);
+  else expect(windowsAclHelperStarts()).toBe(before);
+});
+
+test.runIf(process.platform === "win32")("several ACL calls share one PowerShell and observe a widened DACL", () => {
+  const first = path.join(root, "shared-one");
+  const second = path.join(root, "shared-two");
+  writeFileSync(first, "placeholder-one", { mode: 0o600 });
+  writeFileSync(second, "placeholder-two", { mode: 0o600 });
+  const before = windowsAclHelperStarts();
+  protectPrivatePath(first);
+  protectPrivatePath(second);
+  closeSync(openPrivateFile(first));
+  closeSync(openPrivateFile(second));
+  const started = windowsAclHelperStarts();
+  expect(started).toBe(before === 0 ? 1 : before);
+
+  const widened = spawnSync("icacls.exe", [second, "/grant", "*S-1-1-0:R"], { stdio: "ignore", windowsHide: true });
+  expect(widened.status).toBe(0);
+  let message = "";
+  try { openPrivateFile(second); } catch (error) { message = (error as Error).message; }
+  expect(message).toMatch(/cannot verify private Windows ACL/);
+  expect(message).not.toContain("placeholder-two");
+  expect(windowsAclHelperStarts()).toBe(started);
+  protectPrivatePath(second);
+  closeSync(openPrivateFile(second));
+  expect(windowsAclHelperStarts()).toBe(started);
 });
 
 test.runIf(process.platform === "win32")("Windows ACL protects a directory and refuses a missing path or a junction", () => {
