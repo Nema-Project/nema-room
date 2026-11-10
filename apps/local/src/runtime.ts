@@ -284,6 +284,18 @@ function childEnvironment(extra: Record<string, string>): NodeJS.ProcessEnv {
   return { ...env, ...extra };
 }
 
+function deliverHubUrl(child: ChildProcess, url: string): void {
+  const note = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`hub url delivery failed: ${message}\n`);
+  };
+  try {
+    child.send({ type: "hub-url", url }, (error) => { if (error) note(error); });
+  } catch (error) {
+    note(error);
+  }
+}
+
 function spawnWeb(assets: ResolvedAssets, port: number): ChildProcess {
   const args = assets.webPath.endsWith(".mjs") || assets.webPath.endsWith(".js")
     ? [assets.webPath]
@@ -536,6 +548,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     webDeadlineAt = Date.now() + webTimeoutMs;
     await webReady;
     assertWebAlive();
+    if (webChild && hub) deliverHubUrl(webChild, hub.url);
     daemon = startDaemon({
       hubUrl: hub.url,
       token,

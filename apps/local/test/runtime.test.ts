@@ -601,6 +601,21 @@ describe("managed local runtime", () => {
     expect(runtime.createLaunchTicket()).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it("delivers the loopback hub url only after the web fixture accepts http", async () => {
+    const home = join(tempDir("nema-home-"), "hub-url");
+    const assetsDir = testAssets();
+    let hubUrl = "";
+    setRuntimeReadyHookForTests(async ({ hubUrl: url }) => { hubUrl = url; });
+    const runtime = await startLocalRuntime({ home, assetsDir });
+    runtimes.push(runtime);
+    const marker = join(assetsDir, "fixtures", "hub-url.json");
+    const deadline = Date.now() + 5_000;
+    while (!existsSync(marker) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(existsSync(marker)).toBe(true);
+    expect(JSON.parse(readFileSync(marker, "utf8"))).toEqual([{ url: hubUrl, acceptingHttp: true }]);
+    expect(hubUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  });
+
   it("cancels settings work early and drains it before releasing the runtime lease", async () => {
     const home = join(tempDir("nema-home-"), "settings-drain");
     let release!: () => void;

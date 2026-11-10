@@ -5,6 +5,7 @@ import { ATTACHMENT_LIMITS } from "@nema/shared";
 import type { MiddlewareHandler } from "hono";
 import type { AppReleaseService } from "./appRelease.js";
 import type { SessionManager } from "./session.js";
+import { SHARE_PEER_HEADER, sharePeerDecision } from "./sharePeer.js";
 import type { SettingsService } from "./settings.js";
 
 export const GATEWAY_CREDENTIAL_HEADER = "x-nema-gateway-credential";
@@ -139,8 +140,12 @@ async function settingsJson(req: IncomingMessage): Promise<{ value: unknown } | 
   catch { return { error: 400 }; }
 }
 
-function mappedTarget(pathname: string, web: URL, hub: URL): { target: URL; ui: boolean } | null {
+const SHARE_PAGE = /^\/s\/[A-Za-z0-9_-]{43}\/?$/;
+const SHARE_ENTRY = /^\/s\/[A-Za-z0-9_-]{43}\/e\/(R|D|T|Q|S|G|W)-[1-9]\d*\/?$/;
+
+function mappedTarget(pathname: string, web: URL, hub: URL): { target: URL; ui: boolean; publicShare?: boolean } | null {
   if (pathname === "/api" || pathname.startsWith("/api/")) return { target: hub, ui: false };
+  if (SHARE_PAGE.test(pathname) || SHARE_ENTRY.test(pathname)) return { target: web, ui: true, publicShare: true };
   const uiPath = pathname === "/" || /^\/w\/[A-Za-z0-9_-]+\/?$/.test(pathname) ||
     /^\/w\/[A-Za-z0-9_-]+\/t\/[A-Za-z0-9_-]+\/?$/.test(pathname) ||
     /^\/_next\/static\/.+/.test(pathname) || pathname === "/_next/image" ||
@@ -157,7 +162,7 @@ function sanitizedHeaders(source: IncomingHttpHeaders, credential?: string, bear
   const excluded = new Set([
     "host", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade",
     "cookie", "authorization", "referer", "expect", "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto",
-    GATEWAY_CREDENTIAL_HEADER,
+    GATEWAY_CREDENTIAL_HEADER, SHARE_PEER_HEADER,
   ]);
   const connection = source.connection;
   if (typeof connection === "string") {
@@ -244,7 +249,7 @@ export async function startGateway(options: GatewayOptions): Promise<RunningGate
     if (report) {
       // No cookie session here: only a well-formed bearer is forwarded, and the hub accepts just a registered report token.
       if (req.method !== reportAllowed || !/^Bearer [0-9a-f]{64}$/i.test(req.headers.authorization ?? "")) return send(res, req.method !== reportAllowed ? 405 : 401, req.method !== reportAllowed ? "method not allowed" : "unauthorized", noStore);
-    } else {
+    } else if (!mapped?.publicShare) {
       const token = sessionCookie(req, sessionCookieName(origin));
       if (!token || !options.session.isValidSession(token)) return send(res, 401, "unauthorized", noStore);
     }
@@ -274,6 +279,9 @@ export async function startGateway(options: GatewayOptions): Promise<RunningGate
     }
 
     if (mapped!.ui && req.method !== "GET" && req.method !== "HEAD") return send(res, 405, "method not allowed", { allow: "GET, HEAD" });
+    if (mapped!.publicShare && sharePeerDecision(req.socket.remoteAddress, req.headers) === "reject") {
+      return send(res, 404, "not found", { "cache-control": "no-store" });
+    }
     if (!mapped!.ui && !["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].includes(req.method ?? "")) {
       return send(res, 405, "method not allowed", { allow: "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS" });
     }

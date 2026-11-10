@@ -224,6 +224,8 @@ export async function writePlatformLaunchers(payloadRoot, manifest) {
   }
   const webParentPath = path.join(payloadRoot, 'web', 'apps', 'web', 'managed-parent.mjs');
   await cp(path.join(scriptDir, 'templates/web-parent.mjs'), webParentPath);
+  await cp(path.join(scriptDir, 'templates/share-peer-guard.mjs'), path.join(payloadRoot, 'web', 'apps', 'web', 'share-peer-guard.mjs'));
+  await cp(path.join(scriptDir, 'templates/share-peer.mjs'), path.join(payloadRoot, 'web', 'apps', 'web', 'share-peer.mjs'));
   return { launcherPath: launcherPaths[0], cliLauncherPath: launcherPaths[1], webParentPath };
 }
 

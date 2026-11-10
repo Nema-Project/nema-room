@@ -9,6 +9,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as nodeUtil from "node:util";
 import { devComposeUpArgs } from "./compose-dev.mjs";
+import { assertWebBind } from "./images/check-images.mjs";
 import { readReleaseTrio, assertReleaseTrio } from "./npm/check-tag.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
@@ -209,6 +210,8 @@ export async function main(args = process.argv.slice(2), deps = {}) {
     run("npm", ["run", "build", "-w", "apps/cli"], env);
     await mkdir(settings.dataDir, { recursive: true, mode: 0o700 });
     log(t.services);
+    const bind = process.env.NEMA_WEB_BIND !== undefined ? process.env.NEMA_WEB_BIND : fileEnv.NEMA_WEB_BIND;
+    assertWebBind(bind ? bind : "127.0.0.1");
     run("docker", devComposeUpArgs(), env);
     log(t.waiting);
     if (!await waitReady(settings)) throw new Error(t.timeout);

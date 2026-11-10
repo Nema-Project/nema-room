@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { devComposeUpArgs } from '../compose-dev.mjs';
-import { assertComposeTemplate, assertComposeAsset, renderComposeAsset, composeAssetVersion, assertImageBudget, assertPackageVersions, IMAGE_BUDGET_BYTES, shouldMoveLatest } from './check-images.mjs';
+import { assertComposeTemplate, assertComposeAsset, assertWebBind, renderComposeAsset, composeAssetVersion, assertImageBudget, assertPackageVersions, IMAGE_BUDGET_BYTES, shouldMoveLatest } from './check-images.mjs';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const template = readFileSync(new URL('../../docker-compose.yml', import.meta.url), 'utf8');
@@ -15,6 +17,8 @@ function composeConfig(files, env = {}) {
   const base = { ...process.env };
   if (!Object.hasOwn(env, 'NEMA_HUB_URL')) delete base.NEMA_HUB_URL;
   if (!Object.hasOwn(env, 'NEMA_IMAGE_TAG')) delete base.NEMA_IMAGE_TAG;
+  if (!Object.hasOwn(env, 'NEMA_SHARES_ENABLED')) delete base.NEMA_SHARES_ENABLED;
+  if (!Object.hasOwn(env, 'NEMA_WEB_BIND')) delete base.NEMA_WEB_BIND;
   const run = spawnSync('docker', ['compose', ...files.flatMap((file) => ['-f', file]), 'config', '--format', 'json'], {
     cwd: root,
     env: { ...base, ...env },
@@ -119,8 +123,51 @@ test('npm run up and the setup wizard build from source', () => {
   assert.deepEqual(devComposeUpArgs(), ['compose', '-f', 'docker-compose.yml', '-f', 'docker-compose.build.yml', 'up', '-d', '--build']);
   const up = readFileSync(new URL('../up.mjs', import.meta.url), 'utf8');
   const setup = readFileSync(new URL('../setup.mjs', import.meta.url), 'utf8');
-  assert.match(up, /devComposeUpArgs\(/);
-  assert.match(setup, /devComposeUpArgs\(/);
+  assert.match(up, /assertWebBind\([\s\S]*devComposeUpArgs\(/);
+  assert.match(setup, /assertWebBind\([\s\S]*devComposeUpArgs\(/);
+});
+
+test('share publishing stays on a private web bind and the hub switch defaults open', () => {
+  for (const value of ['127.0.0.1', '192.168.1.10', 'fd00::10']) assert.doesNotThrow(() => assertWebBind(value));
+  for (const value of ['0.0.0.0', '::', '1.2.3.4', 'example.com']) assert.throws(() => assertWebBind(value));
+  const web = template.slice(template.indexOf('\n  web:'), template.indexOf('\nvolumes:'));
+  assert.doesNotMatch(web, /0\.0\.0\.0/);
+  assert.match(template, /NEMA_HUB_URL: \$\{NEMA_HUB_URL:-http:\/\/127\.0\.0\.1:\$\{NEMA_HUB_PORT:-4400\}\}/);
+  assert.match(template, /NEMA_HUB_INTERNAL_URL: http:\/\/hub:\$\{NEMA_HUB_PORT:-4400\}/);
+  assert.match(template, /NEMA_SHARES_ENABLED: \$\{NEMA_SHARES_ENABLED:-\}/);
+  assert.match(asset, /NEMA_SHARES_ENABLED: \$\{NEMA_SHARES_ENABLED:-\}/);
+
+  const plain = composeConfig(['docker-compose.yml']);
+  assert.notEqual(plain.services.hub.environment.NEMA_SHARES_ENABLED, '0');
+  assert.equal(plain.services.web.environment.NEMA_HUB_URL, 'http://127.0.0.1:4400');
+  assert.equal(plain.services.web.environment.NEMA_HUB_INTERNAL_URL, 'http://hub:4400');
+  assert.equal(plain.services.web.ports[0].host_ip, '127.0.0.1');
+  assert.equal(plain.services.hub.ports[0].host_ip, '127.0.0.1');
+
+  const off = composeConfig(['docker-compose.yml'], { NEMA_SHARES_ENABLED: '0' });
+  assert.equal(off.services.hub.environment.NEMA_SHARES_ENABLED, '0');
+  const bound = composeConfig(['docker-compose.yml'], { NEMA_WEB_BIND: '192.168.1.10', NEMA_HUB_PORT: '4410' });
+  assert.equal(bound.services.web.ports[0].host_ip, '192.168.1.10');
+  assert.equal(bound.services.hub.ports[0].host_ip, '127.0.0.1');
+  assert.equal(bound.services.web.environment.NEMA_HUB_INTERNAL_URL, 'http://hub:4410');
+
+  const built = composeConfig(['docker-compose.yml', 'docker-compose.build.yml'], { NEMA_SHARES_ENABLED: '0', NEMA_WEB_BIND: '192.168.1.10' });
+  assert.equal(built.services.hub.environment.NEMA_SHARES_ENABLED, '0');
+  assert.equal(built.services.web.ports[0].host_ip, '192.168.1.10');
+  assert.equal(built.services.hub.ports[0].host_ip, '127.0.0.1');
+  assert.equal(built.services.hub.environment.NEMA_HUB_HOST, '0.0.0.0');
+
+  const dir = mkdtempSync(path.join(tmpdir(), 'nema-compose-asset-'));
+  const assetFile = path.join(dir, 'docker-compose.yml');
+  writeFileSync(assetFile, asset);
+  try {
+    const assetOff = composeConfig([assetFile], { NEMA_SHARES_ENABLED: '0' });
+    assert.equal(assetOff.services.hub.environment.NEMA_SHARES_ENABLED, '0');
+    const assetUnset = composeConfig([assetFile]);
+    assert.notEqual(assetUnset.services.hub.environment.NEMA_SHARES_ENABLED, '0');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('renderComposeAsset replaces the template header with one that names the pinned version', () => {
