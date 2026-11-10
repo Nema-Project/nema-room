@@ -58,7 +58,7 @@ test("POSIX mode checks do not start a Windows ACL helper", () => {
   const before = windowsAclHelperStarts();
   protectPrivatePath(file);
   closeSync(openPrivateFile(file));
-  if (process.platform === "win32") expect(windowsAclHelperStarts()).toBeGreaterThan(before);
+  if (process.platform === "win32") expect(windowsAclHelperStarts()).toBe(before === 0 ? before + 1 : before);
   else expect(windowsAclHelperStarts()).toBe(before);
 });
 
@@ -163,7 +163,7 @@ while ($true) {
   } catch {
     $message = $_.Exception.Message
     if ($null -eq $message) { $message = 'rejected' }
-    $message = $message.Replace("`r", ' ').Replace("`n", ' ')
+    $message = $message.Replace([char]13, ' ').Replace([char]10, ' ')
     [Console]::Out.WriteLine('err ' + $message)
   }
   [Console]::Out.Flush()
@@ -211,30 +211,38 @@ child.stdout.on("data", (chunk) => {
     if (waiter) waiter(line);
   }
 });
-child.on("exit", () => {
-  const waiter = waiters.shift();
-  if (waiter) waiter("err helper exited");
-});
+let childGone = false;
+function noteChildGone() {
+  if (childGone) return;
+  childGone = true;
+  Atomics.store(state, 3, 0);
+  while (waiters.length) waiters.shift()("err helper exited");
+}
+child.on("error", noteChildGone);
+child.on("exit", noteChildGone);
 function roundtrip(line) {
+  if (childGone) return Promise.resolve("err helper exited");
   return new Promise((resolve) => {
     waiters.push(resolve);
     child.stdin.write(line + "\\n");
   });
 }
 while (true) {
-  while (Atomics.load(state, 0) === 0) {
-    const waited = Atomics.waitAsync(state, 0, 0);
+  const current = Atomics.load(state, 0);
+  if (current !== 1) {
+    const waited = Atomics.waitAsync(state, 0, current);
     if (waited.async) await waited.value;
+    continue;
   }
-  if (Atomics.load(state, 0) !== 1) continue;
   const length = Atomics.load(state, 1);
   const request = bytes.subarray(16, 16 + length).toString("utf8");
-  const reply = String(await roundtrip(request)).slice(0, 400);
+  const reply = String(childGone ? "err helper exited" : await roundtrip(request)).slice(0, 400);
   const encoded = Buffer.from(reply);
   encoded.copy(bytes, 16);
   Atomics.store(state, 2, encoded.length);
   Atomics.store(state, 0, 2);
   Atomics.notify(state, 0);
+  if (childGone) break;
 }
 `;
 
@@ -249,11 +257,14 @@ function dropHelper(): void {
 }
 
 function ensureHelper(): AclHelper {
+  if (helper && Atomics.load(helper.state, 3) === 0) dropHelper();
   if (helper) return helper;
   const exe = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const sab = new SharedArrayBuffer(65536);
-  const worker = new Worker(workerSource, {
-    eval: true,
+  const state = new Int32Array(sab);
+  Atomics.store(state, 3, 1);
+  // data: URL is a module on every Node 22. eval:true was a classic script before 22.7.
+  const worker = new Worker(new URL(`data:text/javascript,${encodeURIComponent(workerSource)}`), {
     workerData: {
       exe,
       sab,
@@ -261,21 +272,34 @@ function ensureHelper(): AclHelper {
     },
   });
   worker.unref();
-  worker.on("error", () => dropHelper());
+  worker.on("exit", () => {
+    if (helper?.worker === worker) helper = undefined;
+  });
   windowsAclHelperStartCount += 1;
-  helper = { worker, state: new Int32Array(sab), bytes: Buffer.from(sab) };
+  helper = { worker, state, bytes: Buffer.from(sab) };
   return helper;
 }
 
-function askHelper(request: string): string {
+function askOnce(request: string): string {
   const current = ensureHelper();
+  if (Atomics.load(current.state, 3) === 0) return "err helper exited";
   const encoded = Buffer.from(request);
   if (encoded.length > 60000) return "err rejected";
   encoded.copy(current.bytes, 16);
   Atomics.store(current.state, 1, encoded.length);
   Atomics.store(current.state, 0, 1);
   Atomics.notify(current.state, 0);
-  const wait = Atomics.wait(current.state, 0, 1, 45_000);
+  const deadline = Date.now() + 45_000;
+  let wait: "ok" | "not-equal" | "timed-out" = "ok";
+  while (Atomics.load(current.state, 0) === 1) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      wait = "timed-out";
+      break;
+    }
+    wait = Atomics.wait(current.state, 0, 1, remaining);
+    if (wait === "timed-out") break;
+  }
   if (Atomics.load(current.state, 0) !== 2) {
     dropHelper();
     return wait === "timed-out" ? "err timeout" : "err helper exited";
@@ -283,7 +307,16 @@ function askHelper(request: string): string {
   const length = Atomics.load(current.state, 2);
   const reply = current.bytes.subarray(16, 16 + length).toString("utf8");
   Atomics.store(current.state, 0, 0);
+  Atomics.notify(current.state, 0);
+  if (Atomics.load(current.state, 3) === 0) dropHelper();
   return reply;
+}
+
+function askHelper(request: string): string {
+  const first = askOnce(request);
+  if (first !== "err helper exited") return first;
+  dropHelper();
+  return askOnce(request);
 }
 
 function windowsAcl(file: string, action: "protect" | "check"): void {
