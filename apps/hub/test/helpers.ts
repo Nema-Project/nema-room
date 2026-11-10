@@ -6,10 +6,11 @@ import type { Db } from "../src/db/db.js";
 
 const dirs: string[] = [];
 
-export async function makeHubDeps(): Promise<{ db: Db; dataDir: string }> {
+export async function makeHubDeps(): Promise<{ db: Db; dataDir: string; close: () => Promise<void> }> {
   const dataDir = await mkdtemp(path.join(tmpdir(), "nema-hub-"));
   dirs.push(dataDir);
-  return { db: await createTestDb(), dataDir };
+  const db = await createTestDb();
+  return { db, dataDir, close: () => db.close() };
 }
 
 export async function cleanupHubDeps(): Promise<void> {

@@ -61,6 +61,8 @@ export function MentionMenu({
     attachments: boolean;
     state: "idle" | "loading" | "ok" | "failed";
     query: string;
+    /** The hub stopped checking files before it had seen every match. */
+    attachmentBudgetExhausted?: boolean;
   };
 }) {
   const t = useT();
@@ -71,9 +73,11 @@ export function MentionMenu({
         ? t("mention.looking")
         : empty.state === "failed"
           ? t("mention.lookupFailed")
-          : empty.query !== ""
-            ? t("mention.noMatch", { query: empty.query })
-            : [
+          : empty.query !== "" && empty.attachmentBudgetExhausted
+            ? t("mention.notFinished", { query: empty.query })
+            : empty.query !== ""
+              ? t("mention.noMatch", { query: empty.query })
+              : [
                 empty.entries ? null : t("mention.emptyEntries"),
                 empty.attachments ? null : t("mention.emptyAttachments"),
               ].filter(Boolean).join(" ") || t("mention.noMatch", { query: "" });

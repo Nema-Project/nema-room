@@ -1,4 +1,4 @@
-import { MENTION_LIMITS, fuzzyScore, keepMentionsFor, mentionText, type MessageMention } from "@nema/shared";
+import { MENTION_LIMITS, keepMentionsFor, mentionText, type MessageMention } from "@nema/shared";
 
 /** What the hub's `mention-context` route answers (apps/hub/src/mentionContext.ts). */
 export type MentionContextResponse = {
@@ -7,6 +7,8 @@ export type MentionContextResponse = {
   attachments: Array<{ id: string; name: string; kind: string; size: number; messageId: string; createdAt: string }>;
   threads: Array<{ id: string; title: string; lastReplyAt: string | null }>;
   truncated: boolean;
+  /** Missing on an older hub. True means the attachment scan stopped with rows still unread. */
+  attachmentBudgetExhausted?: boolean;
 };
 
 export type MentionCandidate = { type: MessageMention["type"]; id: string; label: string; hint: string; text: string };
@@ -47,43 +49,24 @@ export function mentionToken(value: string, cursor: number): MentionToken | null
   return { query: value.slice(at + 1, end), start: at, end };
 }
 
-/** `null` score keeps the candidate order (an empty query: the hub's newest-first). An exact id always wins. */
-function rank<T>(q: string, items: readonly T[], text: (item: T) => string, exact?: (item: T) => boolean): T[] {
-  if (q === "") return [...items];
-  const needle = q.toLowerCase();
-  const scored = items
-    .map((item) => ({ item, score: fuzzyScore(needle, text(item)) ?? -1, exact: exact?.(item) ?? false }))
-    .filter((row) => row.score >= 0 || row.exact);
-  scored.sort((a, b) => Number(b.exact) - Number(a.exact) || b.score - a.score);
-  return scored.map((row) => row.item);
-}
-
 /**
- * The menu's three groups, at most `MENTION_LIMITS.menuPerGroup` each, every row carrying the text it writes
- * into the body. Threads sort by their last reply when nothing is typed; entries keep the hub's newest-first.
+ * The menu's three groups, at most `MENTION_LIMITS.menuPerGroup` each, in the order the hub returned.
+ * Ranking already happened in SQL; filtering here would drop rows the hub kept and could not see rows it did not.
  */
-export function groupCandidates(q: string, ctx: MentionContextResponse): MentionGroup[] {
-  const entries = rank(q, ctx.entries, (e) => `${e.id} ${e.title}`, (e) => e.id.toLowerCase() === q.toLowerCase())
-    .slice(0, MENTION_LIMITS.menuPerGroup)
-    .map((e): MentionCandidate => ({
-      type: "entry", id: e.id, label: `[${e.id}]`, hint: e.title,
-      text: mentionText({ type: "entry", id: e.id, text: "" }, {}),
-    }));
-  const attachments = rank(q, ctx.attachments, (a) => a.name)
-    .slice(0, MENTION_LIMITS.menuPerGroup)
-    .map((a): MentionCandidate => ({
-      type: "attachment", id: a.id, label: a.name, hint: a.kind,
-      text: mentionText({ type: "attachment", id: a.id, text: "" }, { attachmentName: a.name }),
-    }));
-  const ordered = q === ""
-    ? [...ctx.threads].sort((a, b) => (b.lastReplyAt ?? "").localeCompare(a.lastReplyAt ?? ""))
-    : ctx.threads;
-  const threads = rank(q, ordered, (t) => t.title)
-    .slice(0, MENTION_LIMITS.menuPerGroup)
-    .map((t): MentionCandidate => ({
-      type: "thread", id: t.id, label: t.title, hint: "话题",
-      text: mentionText({ type: "thread", id: t.id, text: "" }, { threadTitle: t.title }),
-    }));
+export function groupCandidates(_q: string, ctx: MentionContextResponse): MentionGroup[] {
+  const cap = MENTION_LIMITS.menuPerGroup;
+  const entries = ctx.entries.slice(0, cap).map((e): MentionCandidate => ({
+    type: "entry", id: e.id, label: `[${e.id}]`, hint: e.title,
+    text: mentionText({ type: "entry", id: e.id, text: "" }, {}),
+  }));
+  const attachments = ctx.attachments.slice(0, cap).map((a): MentionCandidate => ({
+    type: "attachment", id: a.id, label: a.name, hint: a.kind,
+    text: mentionText({ type: "attachment", id: a.id, text: "" }, { attachmentName: a.name }),
+  }));
+  const threads = ctx.threads.slice(0, cap).map((t): MentionCandidate => ({
+    type: "thread", id: t.id, label: t.title, hint: "话题",
+    text: mentionText({ type: "thread", id: t.id, text: "" }, { threadTitle: t.title }),
+  }));
   return [
     { kind: "entry", items: entries },
     { kind: "attachment", items: attachments },

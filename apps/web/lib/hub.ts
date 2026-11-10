@@ -50,11 +50,12 @@ export class HubError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: { method: string; body?: unknown }): Promise<T> {
+async function request<T>(path: string, init?: { method?: string; body?: unknown; signal?: AbortSignal }): Promise<T> {
   const res = await fetch(`${base()}${path}`, {
     method: init?.method ?? "GET",
     headers: init?.body !== undefined ? { "content-type": "application/json" } : undefined,
     body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+    signal: init?.signal,
   });
   if (res.status === 204) return undefined as T;
   if (!res.ok) {
@@ -162,8 +163,8 @@ export const updateRepo = (id: string, repoId: string, patch: { label?: string; 
   request<Repo>(`${w(id)}/repos/${encodeURIComponent(repoId)}`, { method: "PATCH", body: patch });
 /** Skills the composer's `/` menu can offer; `supported: false` when the daemon is too old to say. */
 /** What the `@` menu can offer right now: this workspace's entries, already-sent files, and topics. */
-export const searchMentionContext = (id: string, q: string) =>
-  request<import("./mentions").MentionContextResponse>(`${w(id)}/mention-context?q=${encodeURIComponent(q)}`);
+export const searchMentionContext = (id: string, q: string, signal?: AbortSignal) =>
+  request<import("./mentions").MentionContextResponse>(`${w(id)}/mention-context?q=${encodeURIComponent(q)}`, { signal });
 export const listSkills = (id: string) =>
   request<{ supported: boolean; skills: Array<{ id: string; name: string; description: string; command: string; invocation: string; repoId: string | null; runtimes?: SkillUsage["runtimes"]; diagnostics?: string[] }> }>(`${w(id)}/skills`);
 export const unbindRepo = (id: string, repoId: string) => request<void>(`${w(id)}/repos/${encodeURIComponent(repoId)}`, { method: "DELETE" });
