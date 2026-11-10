@@ -676,7 +676,7 @@ describe("Composer @ mentions", () => {
     });
     mountWs(vi.fn().mockResolvedValue(undefined));
     await userEvent.type(box(), "@zzzz");
-    expect(await screen.findByText(/Still checking files for “zzzz”|还在检查「zzzz」/)).toBeTruthy();
+    expect(await screen.findByText(/Checked 50 files and have not finished\. Please enter a more specific keyword\.|已检查 50 个文件，尚未查完，请输入更具体的关键词。/)).toBeTruthy();
     expect(screen.queryByText(/Nothing matches|没有与/)).toBeNull();
     await userEvent.clear(box());
     await userEvent.type(box(), "@zzzz");

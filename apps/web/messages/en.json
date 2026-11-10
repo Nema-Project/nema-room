@@ -497,7 +497,7 @@
   "mention.looking": "Looking…",
   "mention.lookupFailed": "Could not look up what can be mentioned. Typing and sending still work.",
   "mention.noMatch": "Nothing matches “{query}”.",
-  "mention.notFinished": "Still checking files for “{query}”. This is not a finished result.",
+  "mention.notFinished": "Checked 50 files and have not finished. Please enter a more specific keyword.",
   "chip.withdrawFailed": "Could not withdraw this entry.",
   "thread.loadFailed": "Could not load this thread.",
   "thread.retry": "Retry",

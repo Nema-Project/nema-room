@@ -74,7 +74,7 @@ export function MentionMenu({
         : empty.state === "failed"
           ? t("mention.lookupFailed")
           : empty.query !== "" && empty.attachmentBudgetExhausted
-            ? t("mention.notFinished", { query: empty.query })
+            ? t("mention.notFinished")
             : empty.query !== ""
               ? t("mention.noMatch", { query: empty.query })
               : [
