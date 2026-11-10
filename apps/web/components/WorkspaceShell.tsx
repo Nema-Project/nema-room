@@ -1,14 +1,16 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
-import { AppSettings } from "@/components/AppSettings";
 import { Chat, type ChatHandle } from "@/components/Chat";
 import { EntryDetail } from "@/components/EntryDetail";
 import { KnowledgePanel } from "@/components/KnowledgePanel";
 import { Sidebar } from "@/components/Sidebar";
 import { useThreadWindows } from "@/components/ThreadWindowsProvider";
-import { WorkspaceSettings } from "@/components/WorkspaceSettings";
+
+const AppSettings = dynamic(() => import("@/components/AppSettings").then((mod) => mod.AppSettings));
+const WorkspaceSettings = dynamic(() => import("@/components/WorkspaceSettings").then((mod) => mod.WorkspaceSettings));
 import { HubError, archiveWorkspace, createWorkspace, deleteWorkspace, getDaemonStatus, getMessage, listWorkspaces } from "@/lib/hub";
 import { mainMessageUrl, openThread } from "@/lib/threads";
 import { useT } from "@/lib/i18n";
@@ -16,6 +18,9 @@ import type { HubEvent, Workspace, WorkspaceView } from "@/lib/types";
 import { useHubEvents } from "@/lib/useHubEvents";
 
 const SELECTED_KEY = "nema.workspace";
+const ROOM_COOKIE = "nema_workspace";
+const ROOM_ID = /^ws_[A-Za-z0-9_-]{1,32}$/;
+const ROOM_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 const KNOW_WIDTH_KEY = "nema.knowWidth";
 const KNOW_COLLAPSED_KEY = "nema.knowCollapsed";
 const SIDE_WIDTH_KEY = "nema.sideWidth";
@@ -44,6 +49,26 @@ function writeFlag(key: string, on: boolean) {
   } catch {
     /* storage unavailable */
   }
+}
+
+function readRememberedWorkspace(): string | null {
+  try {
+    const id = localStorage.getItem(SELECTED_KEY);
+    return id && ROOM_ID.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberWorkspace(id: string) {
+  if (!ROOM_ID.test(id)) return;
+  try { localStorage.setItem(SELECTED_KEY, id); } catch { /* storage unavailable */ }
+  try { document.cookie = `${ROOM_COOKIE}=${id}; Path=/; SameSite=Strict; Max-Age=${ROOM_COOKIE_MAX_AGE}`; } catch { /* cookie unavailable */ }
+}
+
+function forgetWorkspace() {
+  try { localStorage.removeItem(SELECTED_KEY); } catch { /* storage unavailable */ }
+  try { document.cookie = `${ROOM_COOKIE}=; Path=/; SameSite=Strict; Max-Age=0`; } catch { /* cookie unavailable */ }
 }
 
 function writeWidth(key: string, width: number) {
@@ -132,6 +157,18 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   }, []);
 
   useEffect(() => {
+    if (routeId !== null) return;
+    const remembered = readRememberedWorkspace();
+    if (!remembered) return;
+    if (workspaces && !workspaces.some((workspace) => workspace.id === remembered && !workspace.archived)) {
+      forgetWorkspace();
+      return;
+    }
+    rememberWorkspace(remembered);
+    router.replace(`/w/${encodeURIComponent(remembered)}`);
+  }, [routeId, router, workspaces]);
+
+  useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount: state is set once the request resolves
     void refresh();
     try {
@@ -151,6 +188,10 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
   const wanted = routeId ?? selectedId;
   const current = active.find((w) => w.id === wanted) ?? (routeId ? null : active[0] ?? null);
 
+  useEffect(() => {
+    if (current?.id) rememberWorkspace(current.id);
+  }, [current?.id]);
+
   // `/` has no workspace of its own: move to the canonical room URL once one is known.
   // An archived or missing room is not opened; go to the next active workspace.
   useEffect(() => {
@@ -161,6 +202,8 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
     }
     if (!current) {
       const next = workspaces.find((w) => !w.archived);
+      if (next) rememberWorkspace(next.id);
+      else forgetWorkspace();
       router.replace(next ? `/w/${encodeURIComponent(next.id)}` : "/");
     }
   }, [workspaces, routeId, current, router]);
@@ -477,8 +520,15 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
             </div>
             <Chat key={current.id} ref={chat} workspaceId={current.id} connected={connected} searchOpen={searchOpen} onSearchClose={() => setSearchOpen(false)} onOpenEntry={setOpenEntry} onOpenHistory={setOpenHistory} onOpenThread={(tid, mid) => openTargetThread(current.id, tid, mid)} />
           </>
+        ) : workspaces === null && !error ? (
+          <div className="room-skeleton" role="status" aria-label={t("common.loading")}>
+            <span />
+            <span />
+            <span />
+            <span />
+          </div>
         ) : (
-          <div className="placeholder">{workspaces === null && !error ? t("common.loading") : t("main.empty")}</div>
+          <div className="placeholder">{t("main.empty")}</div>
         )}
         {error && (
           <p className="error banner" role="alert">
@@ -526,6 +576,12 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
             />
           ) : current ? (
             <KnowledgePanel key={current.id} workspaceId={current.id} knowledgeLanguage={current.knowledgeLanguage} refreshKey={panelTick} onOpen={setOpenEntry} />
+          ) : workspaces === null && !error ? (
+            <div className="room-skeleton" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </div>
           ) : (
             <div className="placeholder">{t("main.empty")}</div>
           )}

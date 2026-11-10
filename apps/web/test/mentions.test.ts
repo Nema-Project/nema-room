@@ -59,21 +59,22 @@ describe("groupCandidates", () => {
     for (const g of groups) expect(g.items.length).toBeLessThanOrEqual(8);
   });
 
-  test("an exactly typed id comes first even when a title matches better", () => {
-    // D-99's id is not what was typed, but its title starts with the query, so on score alone it would win.
-    const groups = groupCandidates("d-12", context({
+  test("keeps the hub order, including a row the old score would reject", () => {
+    // Query İ, title i: SQL lower matches and JavaScript fuzzyScore does not. The menu must not drop it.
+    const groups = groupCandidates("İ", context({
       entries: [
-        { id: "D-99", kind: "decision", title: "d-12 的替代方案", status: "active" },
-        { id: "D-12", kind: "decision", title: "发布流程", status: "active" },
+        { id: "D-1", kind: "decision", title: "i", status: "active" },
+        { id: "D-2", kind: "decision", title: "İstanbul", status: "active" },
       ],
     }));
-    expect(groups[0]!.items.map((i) => i.id)).toEqual(["D-12", "D-99"]);
+    expect(groups[0]!.items.map((i) => i.id)).toEqual(["D-1", "D-2"]);
   });
 
-  test("filters by title and name", () => {
-    expect(groupCandidates("导出", context()).find((g) => g.kind === "entry")!.items.map((i) => i.id)).toEqual(["R-3"]);
-    expect(groupCandidates("截图", context()).find((g) => g.kind === "attachment")!.items.map((i) => i.id)).toEqual(["att_1"]);
-    expect(groupCandidates("zzz", context()).every((g) => g.items.length === 0)).toBe(true);
+  test("does not filter or reorder rows the hub already chose", () => {
+    const groups = groupCandidates("zzz", context());
+    expect(groups.find((g) => g.kind === "entry")!.items.map((i) => i.id)).toEqual(["D-12", "R-3"]);
+    expect(groups.find((g) => g.kind === "attachment")!.items.map((i) => i.id)).toEqual(["att_1"]);
+    expect(groups.find((g) => g.kind === "thread")!.items.map((i) => i.id)).toEqual(["m_2"]);
   });
 
   test("gives each row the text it will write into the body", () => {
@@ -83,7 +84,7 @@ describe("groupCandidates", () => {
     expect(groups.find((g) => g.kind === "thread")!.items[0]).toMatchObject({ text: "[话题：发布流程讨论]" });
   });
 
-  test("an empty query keeps entries newest-first and threads by last reply", () => {
+  test("an empty query keeps the hub order and does not sort threads by last reply", () => {
     const groups = groupCandidates("", context({
       entries: [
         { id: "D-1", kind: "decision", title: "旧", status: "active" },
@@ -94,7 +95,7 @@ describe("groupCandidates", () => {
         { id: "m_2", title: "刚回复", lastReplyAt: "2026-10-30T00:00:00.000Z" },
       ],
     }));
-    expect(groups.find((g) => g.kind === "thread")!.items.map((i) => i.id)).toEqual(["m_2", "m_1"]);
+    expect(groups.find((g) => g.kind === "thread")!.items.map((i) => i.id)).toEqual(["m_1", "m_2"]);
     expect(groups.find((g) => g.kind === "entry")!.items.map((i) => i.id)).toEqual(["D-1", "D-2"]);
   });
 });

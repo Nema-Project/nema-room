@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { createDiagramWindowOptions, createSecureWindowOptions, isDiagramWindowUrl, isMainMessageUrl, isThreadWindowUrl, navigationDecision, usesNativeTrafficLights, validateRuntimeLaunchUrl } from '../security.cjs';
+import { createDiagramWindowOptions, createSecureWindowOptions, createShellWindowOptions, isDiagramWindowUrl, isMainMessageUrl, isThreadWindowUrl, navigationDecision, usesNativeTrafficLights, validateRuntimeLaunchUrl } from '../security.cjs';
 
 describe('Electron renderer security policy', () => {
   it('accepts only a ticket URL at the authenticated runtime origin', () => {
@@ -19,6 +19,7 @@ describe('Electron renderer security policy', () => {
         webSecurity: true,
       });
       expect(createSecureWindowOptions('http://127.0.0.1:43001', platform).title).toBe('Nema Room');
+      expect(createShellWindowOptions(platform)).toEqual(createSecureWindowOptions('http://127.0.0.1:43001', platform));
       expect(createSecureWindowOptions('http://127.0.0.1:43001', platform).autoHideMenuBar).toBe(true);
     }
   });

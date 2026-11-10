@@ -20,10 +20,11 @@ function wrap(c: Runner, inTx: boolean): Db {
   };
 }
 
-export async function createTestDb(): Promise<Db> {
-  const db = wrap(new PGlite(), false);
+export async function createTestDb(): Promise<Db & { close(): Promise<void> }> {
+  const client = new PGlite();
+  const db = wrap(client, false);
   await migrate(db);
-  return db;
+  return { ...db, close: () => client.close() };
 }
 
 export async function createLocalDb(dataDir: string): Promise<Db & { close(): Promise<void> }> {

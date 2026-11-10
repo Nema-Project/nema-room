@@ -66,7 +66,7 @@ Nema Room 是在本机运行的项目对齐副驾。需求、约束和取舍很�
 | macOS · Apple 芯片 | `.dmg` |
 | Linux / Intel Mac | 使用 [Web / Compose](#web--compose) |
 
-1. 安装 [Git 2.31 或更新版本](https://git-scm.com/downloads)，然后安装并打开 Nema Room。Node 和数据库已随包提供，无需 Docker。
+1. 安装 [Git 2.31 或更新版本](https://git-scm.com/downloads)，然后安装并打开 Nema Room。窗口会立刻出现，并在本机核心启动期间显示启动画面和当前阶段。下次打开会进入上次的工作区。Node 和数据库已随包提供，无需 Docker。
 2. 在**应用设置 → 模型**中连接 ChatGPT 订阅、Claude 订阅或兼容 Responses API 的 API 密钥。同一页底部可以再添加账户，见[多个账户与自动路由](docs/guide.zh.md#accounts)。
 3. 创建工作区，开始讨论；需要代码上下文时，再绑定本机仓库。
 

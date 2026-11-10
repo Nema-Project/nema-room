@@ -26,7 +26,11 @@ import { createOwnedHelperScope } from "./ownedHelpers.js";
 const MANIFEST_NAME = "runtime-manifest.json";
 const WEB_READY_TIMEOUT_MS = 15_000;
 const DAEMON_READY_TIMEOUT_MS = 10_000;
-const ENSURE_READY_TIMEOUT_MS = 20_000;
+// Database, hub, and gateway. The launcher clock starts at spawn, before this work.
+const STARTUP_WORK_BUDGET_MS = 20_000;
+// Web's 15s budget starts after the database and hub, and the daemon starts after web.
+// A 20s launcher deadline would stop that core while web was still inside its own budget.
+const ENSURE_READY_TIMEOUT_MS = STARTUP_WORK_BUDGET_MS + WEB_READY_TIMEOUT_MS + DAEMON_READY_TIMEOUT_MS;
 const PROBE_INTERVAL_MS = 75;
 const ensuredChildren = new Map<string, Set<ChildProcess>>();
 
@@ -36,6 +40,8 @@ let ensureSpawnerForTests: EnsureSpawner | undefined;
 type RuntimeReadyHook = (runtime: { db: Awaited<ReturnType<typeof createLocalDb>>; home: string; dataDir: string; webPort: number; webChild: ChildProcess }) => Promise<void>;
 let runtimeReadyHookForTests: RuntimeReadyHook | undefined;
 let ensureTimeoutForTests: number | undefined;
+let webReadyTimeoutForTests: number | undefined;
+let beforeWebBudgetForTests: (() => Promise<void> | void) | undefined;
 let settingsOperationsForTests: SettingsOperations | undefined;
 
 /** Explicit source-child hook used only by process tests; release builds never set it. */
@@ -50,6 +56,21 @@ export function setRuntimeReadyHookForTests(hook: RuntimeReadyHook | undefined):
 
 export function setEnsureTimeoutForTests(timeoutMs: number | undefined): void {
   ensureTimeoutForTests = timeoutMs;
+}
+
+/** Launcher wait for a cold core. Tests shorten it through setEnsureTimeoutForTests. */
+export function launcherReadyTimeoutMs(): number {
+  return ensureTimeoutForTests ?? ENSURE_READY_TIMEOUT_MS;
+}
+
+/** Shortens only the post-database web budget. Packaged startup keeps WEB_READY_TIMEOUT_MS. */
+export function setWebReadyTimeoutForTests(timeoutMs: number | undefined): void {
+  webReadyTimeoutForTests = timeoutMs;
+}
+
+/** Runs after hub and daemon startup, before the web readiness budget starts. */
+export function setBeforeWebBudgetForTests(hook: (() => Promise<void> | void) | undefined): void {
+  beforeWebBudgetForTests = hook;
 }
 
 /** Explicit fake auth operations for lifecycle tests; never set by packaged startup. */
@@ -91,7 +112,25 @@ export type LocalRuntime = {
   close(): Promise<void>;
 };
 
-export type LocalRuntimeOptions = { home?: string; assetsDir: string; webPort?: number };
+export const STARTUP_PHASES = ["begin", "helper-scope", "lease", "private-files", "web", "db", "hub", "daemon", "gateway", "published"] as const;
+
+const STARTUP_PHASE_NAMES = new Set<string>(STARTUP_PHASES);
+
+/** A launcher IPC message that names one known startup phase. Anything else is ignored. */
+export function startupPhaseName(message: unknown): string | null {
+  if (!message || typeof message !== "object") return null;
+  const value = message as { type?: unknown; phase?: unknown };
+  if (value.type !== "startup-phase" || typeof value.phase !== "string" || !STARTUP_PHASE_NAMES.has(value.phase)) return null;
+  return value.phase;
+}
+
+export type LocalRuntimeOptions = {
+  home?: string;
+  assetsDir: string;
+  webPort?: number;
+  /** Called in the launcher when the detached core reports a known phase. Not serialized into the child. */
+  onStartupPhase?: (phase: string) => void;
+};
 
 function manifestEntry(root: string, value: unknown, name: string): string {
   if (typeof value !== "string" || value.length === 0 || value.includes("\0") || value.includes("\\") || isAbsolute(value)) {
@@ -243,10 +282,11 @@ function spawnWeb(assets: ResolvedAssets, port: number): ChildProcess {
   return child;
 }
 
-async function httpReady(url: string, child: ChildProcess, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+async function httpReady(url: string, child: ChildProcess, deadlineAt: () => number, timeoutMs: number): Promise<void> {
   let lastError: unknown;
-  while (Date.now() < deadline) {
+  // deadlineAt stays in the future while the database, hub, and daemon start.
+  // Counting 15s from spawn let that work consume the whole budget on a busy machine.
+  while (Date.now() < deadlineAt()) {
     if (child.exitCode !== null || child.signalCode !== null) throw new Error("Managed Web process exited before becoming ready");
     try {
       await new Promise<void>((resolveProbe, reject) => {
@@ -330,9 +370,15 @@ function throwCleanupErrors(errors: unknown[], primary?: unknown): void {
 export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<LocalRuntime> {
   // Startup timings on stdout; a managed core discards them unless NEMA_LOCAL_CORE_LOG names a file.
   const startedAt = Date.now();
-  const phase = (name: string) => process.stdout.write(`${JSON.stringify({
-    state: "startup-phase", phase: name, ms: Date.now() - startedAt, uptimeMs: Math.round(process.uptime() * 1000),
-  })}\n`);
+  const phase = (name: string) => {
+    process.stdout.write(`${JSON.stringify({
+      state: "startup-phase", phase: name, ms: Date.now() - startedAt, uptimeMs: Math.round(process.uptime() * 1000),
+    })}\n`);
+    if (typeof process.send === "function") {
+      try { process.send({ type: "startup-phase", phase: name }); }
+      catch { /* the launcher channel is optional and may already be closed */ }
+    }
+  };
   phase("begin");
   const assets = readManifest(options.assetsDir);
   if (options.webPort !== undefined && (!Number.isInteger(options.webPort) || options.webPort < 0 || options.webPort > 65535)) {
@@ -346,7 +392,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     ? createOwnedHelperScope(assets.ownedHelperGuardianPath)
     : undefined;
   phase("helper-scope");
-  const lease = await acquireInstance(paths.home, installationIdentity(assets));
+  const lease = await acquireInstance(paths.home, installationIdentity(assets), { homeAlreadyProtected: true });
   phase("lease");
   let db: Awaited<ReturnType<typeof createLocalDb>> | undefined;
   let hub: Awaited<ReturnType<typeof startHub>> | undefined;
@@ -436,9 +482,15 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     });
     webChild.once("error", (error) => onUnexpectedWebExit(error));
     webChild.once("exit", () => onUnexpectedWebExit());
-    await httpReady(`http://127.0.0.1:${webPort}/`, webChild, WEB_READY_TIMEOUT_MS);
-    assertWebAlive();
-    phase("web");
+    // Web does not read the database. Probes overlap DB open and hub start.
+    // The daemon stays disconnected until web answers: connecting it claims queued tasks, and a
+    // later web timeout would interrupt them. The readiness budget also starts after the database
+    // and hub, so a cold PGlite open cannot consume WEB_READY_TIMEOUT_MS before Next gets it.
+    let webDeadlineAt = Number.POSITIVE_INFINITY;
+    const webTimeoutMs = webReadyTimeoutForTests ?? WEB_READY_TIMEOUT_MS;
+    const webReady = httpReady(`http://127.0.0.1:${webPort}/`, webChild, () => webDeadlineAt, webTimeoutMs)
+      .then(() => { phase("web"); });
+    void webReady.catch(() => undefined);
 
     ensureOwnedDirectory(paths.home, paths.db, "database");
     db = await createLocalDb(paths.db);
@@ -457,6 +509,12 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     });
     assertWebAlive();
     phase("hub");
+    settings = createSettingsService({ home: paths.home, codexHome: process.env.CODEX_HOME ?? join(homedir(), ".codex"), operations: settingsOperationsForTests });
+    appRelease = createAppReleaseService({ home: paths.home, ...readBuildIdentity(assets.root, assets) });
+    if (beforeWebBudgetForTests) await beforeWebBudgetForTests();
+    webDeadlineAt = Date.now() + webTimeoutMs;
+    await webReady;
+    assertWebAlive();
     daemon = startDaemon({
       hubUrl: hub.url,
       token,
@@ -474,8 +532,6 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     await daemonReady(hub.url, gatewayCredential, DAEMON_READY_TIMEOUT_MS);
     assertWebAlive();
     phase("daemon");
-    settings = createSettingsService({ home: paths.home, codexHome: process.env.CODEX_HOME ?? join(homedir(), ".codex"), operations: settingsOperationsForTests });
-    appRelease = createAppReleaseService({ home: paths.home, ...readBuildIdentity(assets.root, assets) });
     gateway = await startGateway({
       webTarget: `http://127.0.0.1:${webPort}`,
       hubTarget: hub.url,
@@ -510,7 +566,8 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
 
 export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<{ origin: string; launchUrl: string; instanceId: string; installationId: string; reused: boolean }> {
   const expectedInstallationId = installationIdentity(readManifest(options.assetsDir));
-  const existing = await discoverInstance(options.home);
+  const paths = resolveHome(options.home);
+  const existing = await discoverInstance(paths.home, { homeAlreadyProtected: true });
   if (existing) {
     if (existing.installationId !== expectedInstallationId) throw new Error("A local core from another installation owns this home");
     return { ...existing, reused: true };
@@ -518,7 +575,6 @@ export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<
   const assets = readManifest(options.assetsDir);
   // Before starting a core: without a usable system git, the desktop shows this install guidance instead.
   await requireSystemGit();
-  const paths = resolveHome(options.home);
   if (!/\.(?:mjs|js)$/i.test(assets.corePath)) throw new Error("Runtime manifest coreEntry must be compiled JavaScript");
   const childArgs = [
     assets.corePath,
@@ -544,7 +600,12 @@ export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<
   let settleSpawn!: () => void;
   const spawnSettled = new Promise<void>((resolveSpawn) => { settleSpawn = resolveSpawn; });
   if (spawned) settleSpawn();
-  child.once("message", (message: unknown) => {
+  child.on("message", (message: unknown) => {
+    const phaseName = startupPhaseName(message);
+    if (phaseName) {
+      try { options.onStartupPhase?.(phaseName); } catch { /* the shell paints this best-effort */ }
+      return;
+    }
     if (!message || typeof message !== "object") return;
     const value = message as { type?: unknown; code?: unknown; message?: unknown };
     if (value.type === "core-ready") outcome = { type: "ready" };
@@ -567,13 +628,14 @@ export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<
   child.once("exit", forgetOwnedChild);
   child.once("close", forgetOwnedChild);
   child.unref();
-  const timeoutMs = ensureTimeoutForTests ?? ENSURE_READY_TIMEOUT_MS;
+  const timeoutMs = launcherReadyTimeoutMs();
   const deadline = Date.now() + timeoutMs;
   let exited = child.exitCode !== null || child.signalCode !== null;
   child.once("exit", () => { exited = true; });
   child.once("spawn", () => { spawned = true; settleSpawn(); });
   let collisionSeen = false;
   let verifiedCore = false;
+  let descriptorAppeared = false;
   const closeLauncherChannel = () => {
     if (child.connected) {
       try { child.disconnect(); return undefined; } catch (error) { return error; }
@@ -582,40 +644,55 @@ export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<
   };
   try {
     while (Date.now() < deadline) {
-      let instance: Awaited<ReturnType<typeof discoverInstance>> = null;
-      try { instance = await discoverInstance(options.home); }
-      catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === "NEMA_LOCAL_CONTROL_TIMEOUT" && outcome?.type === "error") {
-          throw new Error(`${outcome.message} (${outcome.code})`, { cause: error });
-        }
-        if (code === "NEMA_LOCAL_CONTROL_TIMEOUT" && spawnFailure) {
-          throw new Error(`Could not spawn managed local core (${spawnFailure.message})`, { cause: spawnFailure });
-        }
-        const childIsLive = spawned && child.exitCode === null && child.signalCode === null;
-        if (code !== "NEMA_LOCAL_CONTROL_TIMEOUT" || !childIsLive) throw error;
-      }
-      if (instance && instance.installationId !== expectedInstallationId) throw new Error("A local core from another installation owns this home");
-      if (instance && outcome?.type === "ready") {
-        verifiedCore = true;
-        const channelError = closeLauncherChannel();
-        if (channelError) throw new Error("Could not release the launcher IPC channel after core readiness", { cause: channelError });
-        return { ...instance, reused: false };
-      }
-      if (instance && (collisionSeen || outcome?.type === "collision")) {
-        verifiedCore = true;
-        const channelError = closeLauncherChannel();
-        if (channelError) throw new Error("Could not release the launcher IPC channel after reusing the verified core", { cause: channelError });
-        return { ...instance, reused: true };
-      }
-      if (outcome?.type === "ready" && exited) {
-        throw new Error("Managed local core reported ready but did not publish an authenticated instance");
-      }
-      if (outcome?.type === "collision") collisionSeen = true;
       if (outcome?.type === "error") throw new Error(`${outcome.message} (${outcome.code})`);
       if (spawnFailure) throw new Error(`Could not spawn managed local core (${spawnFailure.message})`, { cause: spawnFailure });
       if (exited && !collisionSeen && !outcome) {
         throw new Error(`Managed local core exited before reporting startup status (${child.exitCode ?? child.signalCode ?? "unknown"})`);
+      }
+      if (outcome?.type === "collision") collisionSeen = true;
+      // A private-file check on every 75ms poll blocks the Electron main thread. Discover after the child
+      // reports ready or a port collision. A descriptor that appears earlier is validated once, not per poll.
+      if (outcome?.type === "ready" || collisionSeen) {
+        let instance: Awaited<ReturnType<typeof discoverInstance>> = null;
+        try { instance = await discoverInstance(paths.home); }
+        catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          const childIsLive = spawned && child.exitCode === null && child.signalCode === null;
+          // A child error or spawn failure is thrown at the top of the next pass. Swallow only a live timeout.
+          if (code !== "NEMA_LOCAL_CONTROL_TIMEOUT" || !childIsLive) throw error;
+        }
+        if (instance && instance.installationId !== expectedInstallationId) throw new Error("A local core from another installation owns this home");
+        if (instance && outcome?.type === "ready") {
+          verifiedCore = true;
+          const channelError = closeLauncherChannel();
+          if (channelError) throw new Error("Could not release the launcher IPC channel after core readiness", { cause: channelError });
+          return { ...instance, reused: false };
+        }
+        if (instance && collisionSeen) {
+          verifiedCore = true;
+          const channelError = closeLauncherChannel();
+          if (channelError) throw new Error("Could not release the launcher IPC channel after reusing the verified core", { cause: channelError });
+          return { ...instance, reused: true };
+        }
+        if (outcome?.type === "ready" && exited) {
+          throw new Error("Managed local core reported ready but did not publish an authenticated instance");
+        }
+      } else if (!descriptorAppeared) {
+        // Stat only. A private-file check runs when instance.json appears, not on every poll.
+        let present = false;
+        try { lstatSync(paths.instance); present = true; }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        if (present) {
+          descriptorAppeared = true;
+          try { await discoverInstance(paths.home, { homeAlreadyProtected: true }); }
+          catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            const childIsLive = spawned && child.exitCode === null && child.signalCode === null;
+            if (code !== "NEMA_LOCAL_CONTROL_TIMEOUT" || !childIsLive) throw error;
+          }
+        }
       }
       await new Promise<void>((resolveProbe) => setTimeout(resolveProbe, PROBE_INTERVAL_MS));
     }

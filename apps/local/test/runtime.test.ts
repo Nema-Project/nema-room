@@ -6,7 +6,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { closeEnsuredRuntimesForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, startLocalRuntime, ensureLocalRuntime, shutdownLocalRuntime } from "../src/runtime.js";
+import { closeEnsuredRuntimesForTests, launcherReadyTimeoutMs, setBeforeWebBudgetForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, setWebReadyTimeoutForTests, startLocalRuntime, ensureLocalRuntime, shutdownLocalRuntime, startupPhaseName } from "../src/runtime.js";
 import { acquireInstance, discoverInstance } from "../src/instance.js";
 import { createLocalDb } from "@nema/hub/db/local";
 import { postUserMessage } from "@nema/hub/messages";
@@ -171,6 +171,8 @@ afterEach(async () => {
   await Promise.all(ensuredHomes.splice(0).map((home) => closeEnsuredRuntimesForTests(home)));
   setEnsureSpawnerForTests(undefined);
   setEnsureTimeoutForTests(undefined);
+  setWebReadyTimeoutForTests(undefined);
+  setBeforeWebBudgetForTests(undefined);
   setRuntimeReadyHookForTests(undefined);
   setSettingsOperationsForTests(undefined);
   await Promise.all(crashChildren.splice(0).map(closeCrashChild));
@@ -179,6 +181,33 @@ afterEach(async () => {
 });
 
 describe("managed local runtime", () => {
+  it("gives the launcher enough time for the web budget that starts after the database", () => {
+    expect(launcherReadyTimeoutMs()).toBeGreaterThanOrEqual(20_000 + 15_000 + 10_000);
+  });
+
+  it("accepts only known startup-phase messages", () => {
+    expect(startupPhaseName({ type: "startup-phase", phase: "db" })).toBe("db");
+    expect(startupPhaseName({ type: "startup-phase", phase: "not-a-phase" })).toBeNull();
+    expect(startupPhaseName({ type: "core-ready" })).toBeNull();
+    expect(startupPhaseName("db")).toBeNull();
+  });
+
+  it("reports a known child startup phase and ignores any other phase name", async () => {
+    const home = join(tempDir("nema-home-"), "phase-channel");
+    const assetsDir = testAssets();
+    mkdirSync(home, { recursive: true });
+    const seen: string[] = [];
+    setEnsureTimeoutForTests(3_000);
+    setEnsureSpawnerForTests(() => spawn(process.execPath, ["-e", [
+      "process.send({ type: 'startup-phase', phase: 'db' })",
+      "process.send({ type: 'startup-phase', phase: 'not-a-phase' })",
+      "process.send({ type: 'core-error', code: 'NEMA_LOCAL_TEST_START_FAILED', message: 'phase probe' })",
+    ].join("; ")], { stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true }));
+    ensuredHomes.push(home);
+    await expect(ensureLocalRuntime({ home, assetsDir, onStartupPhase: (phase) => seen.push(phase) })).rejects.toThrow(/phase probe/);
+    expect(seen).toEqual(["db"]);
+  });
+
   it.runIf(process.platform === "win32")("refuses a Windows payload without its helper guardian before acquiring ownership", async () => {
     const assetsDir = testAssets();
     const manifestPath = join(assetsDir, "runtime-manifest.json");
@@ -752,6 +781,88 @@ describe("managed local runtime", () => {
     const recovered = await startLocalRuntime({ home, assetsDir });
     runtimes.push(recovered);
   }, 60_000);
+
+  function startupPhases(text: string): Record<string, number> {
+    const phases: Record<string, number> = {};
+    for (const line of text.split("\n")) {
+      if (!line.includes("\"startup-phase\"")) continue;
+      try {
+        const value = JSON.parse(line) as { state?: string; phase?: string; ms?: number };
+        if (value.state === "startup-phase" && value.phase && typeof value.ms === "number") phases[value.phase] = value.ms;
+      } catch { /* a partial stdout chunk is not a phase line */ }
+    }
+    return phases;
+  }
+
+  it("opens the database before the managed web server accepts HTTP", async () => {
+    const assetsDir = testAssets();
+    const fixtures = join(assetsDir, "fixtures");
+    const release = join(fixtures, "web-release");
+    writeFileSync(join(fixtures, "web-wait-for-release"), "1\n");
+    const home = join(tempDir("nema-home-"), "web-db-overlap");
+    const chunks: string[] = [];
+    const original = process.stdout.write;
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      return original.call(process.stdout, chunk as string);
+    }) as typeof process.stdout.write;
+    const pending = startLocalRuntime({ home, assetsDir });
+    let settled = false;
+    try {
+      const deadline = Date.now() + 15_000;
+      let overlapped = false;
+      while (Date.now() < deadline) {
+        const phases = startupPhases(chunks.join(""));
+        if (typeof phases.db === "number" && phases.web === undefined && !existsSync(release)) {
+          overlapped = true;
+          break;
+        }
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+      }
+      expect(overlapped, chunks.join("").slice(-1500)).toBe(true);
+      writeFileSync(release, "1\n");
+      const runtime = await pending;
+      settled = true;
+      runtimes.push(runtime);
+      const done = startupPhases(chunks.join(""));
+      expect(done.db).toBeLessThan(done.web);
+      expect(done.daemon).toBeGreaterThan(done.web);
+    } finally {
+      process.stdout.write = original;
+      if (!existsSync(release)) writeFileSync(release, "1\n");
+      if (!settled) {
+        try { runtimes.push(await pending); } catch { /* the assertion above is the failure */ }
+      }
+    }
+  }, 45_000);
+
+  it("keeps the web readiness budget until database startup has finished", async () => {
+    // A from-spawn budget of 300ms is already gone before this hold ends. The packaged
+    // failure was that same shape: PGlite still running while Next's 15s clock expired.
+    setWebReadyTimeoutForTests(300);
+    const assetsDir = testAssets();
+    const fixtures = join(assetsDir, "fixtures");
+    const release = join(fixtures, "web-release");
+    writeFileSync(join(fixtures, "web-wait-for-release"), "1\n");
+    const home = join(tempDir("nema-home-"), "web-budget-after-db");
+    setBeforeWebBudgetForTests(async () => {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 400));
+      writeFileSync(release, "1\n");
+    });
+    try {
+      runtimes.push(await startLocalRuntime({ home, assetsDir }));
+    } finally {
+      if (!existsSync(release)) writeFileSync(release, "1\n");
+    }
+  }, 45_000);
+
+  it("stops a web process that exits before listen and does not publish the home", async () => {
+    const assetsDir = testAssets();
+    writeFileSync(join(assetsDir, "fixtures", "web-exit-before-listen"), "1\n");
+    const home = join(tempDir("nema-home-"), "web-exit-before-listen");
+    await expect(startLocalRuntime({ home, assetsDir })).rejects.toThrow(/Managed Web|exited unexpectedly/);
+    expect(await discoverInstance(home)).toBeNull();
+  }, 45_000);
 
   it("recovers a committed running token on reopen and does not reclaim it during shutdown", async () => {
     const home = join(tempDir("nema-home-"), "crashed-core");

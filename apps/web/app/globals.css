@@ -150,6 +150,12 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .link:hover { color: var(--ink); }
 .tag { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--ink); padding: 1px 6px; }
 .placeholder { padding: 28px; color: var(--ink-3); }
+.room-skeleton { display: grid; align-content: start; gap: 14px; padding: 28px; }
+.room-skeleton span { display: block; height: 12px; background: var(--paper-2); }
+.room-skeleton span:first-child { width: 28%; height: 18px; }
+.room-skeleton span:nth-child(2) { width: 86%; }
+.room-skeleton span:nth-child(3) { width: 72%; }
+.room-skeleton span:nth-child(4) { width: 54%; }
 .error { color: var(--accent); font-size: 13px; }
 .error.banner { padding: 12px 28px; border-top: 1px solid var(--rule); margin-top: auto; }
 .know { background: var(--paper); min-width: 0; }

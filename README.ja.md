@@ -66,7 +66,7 @@ Nema Room は、ソフトウェアプロジェクトの理解を揃えるため�
 | macOS · Apple シリコン | `.dmg` |
 | Linux / Intel Mac | [Web / Compose](#web--compose) を使用 |
 
-1. [Git 2.31 以降](https://git-scm.com/downloads)をインストールしてから、Nema Room をインストールして開きます。Node と DB は同梱されており、Docker は不要です。
+1. [Git 2.31 以降](https://git-scm.com/downloads)をインストールしてから、Nema Room をインストールして開きます。ウィンドウはすぐ表示され、ローカルコアの起動中は起動画面と現在の段階が出ます。次に開くと、前回のワークスペースに戻ります。Node と DB は同梱されており、Docker は不要です。
 2. **アプリ設定 → モデル**で ChatGPT サブスクリプション、Claude サブスクリプション、または Responses API 互換の API キーを接続します。同じページの一番下でアカウントを追加できます。[複数アカウントと自動ルーティング](docs/guide.ja.md#accounts)を参照してください。
 3. ワークスペースを作成して議論を始めます。コードの文脈が必要になったら、ローカルリポジトリを登録します。
 
