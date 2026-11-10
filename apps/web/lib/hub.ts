@@ -95,7 +95,7 @@ export const listShares = (id: string) => request<{ shares: KnowledgeShare[] }>(
 export const createShare = (id: string, body: { note?: string; expiresAt?: string | null } = {}) =>
   request<CreatedKnowledgeShare>(`${w(id)}/shares`, { method: "POST", body });
 export const revokeShare = (id: string, shareId: string) =>
-  request<KnowledgeShare>(`${w(id)}/shares/${encodeURIComponent(shareId)}/revoke`, { method: "POST" });
+  request<KnowledgeShare>(`${w(id)}/shares/${encodeURIComponent(shareId)}/revoke`, { method: "POST", body: {} });
 export const deleteWorkspace = (id: string) => request<void>(w(id), { method: "DELETE" });
 export const listMessages = (id: string) => request<Message[]>(`${w(id)}/messages`);
 export const getMessage = (id: string, messageId: string) => request<Message>(`${w(id)}/messages/${encodeURIComponent(messageId)}`);

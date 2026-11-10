@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createShare, listShares, revokeShare, type KnowledgeShare } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
 
@@ -16,6 +16,8 @@ export function ShareKnowledge({ workspaceId, confidential, archived }: { worksp
   const [expires, setExpires] = useState("");
   const [freshUrl, setFreshUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
   const blocked = confidential || archived;
 
   useEffect(() => {
@@ -28,19 +30,22 @@ export function ShareKnowledge({ workspaceId, confidential, archived }: { worksp
   }, [workspaceId, t]);
 
   async function onCreate() {
-    setError(null);
-    const body: { note?: string; expiresAt?: string | null } = {};
-    const trimmed = note.trim();
-    if (trimmed) body.note = trimmed;
-    if (expires) {
-      const parsed = new Date(`${expires}T23:59:59`);
-      if (Number.isNaN(parsed.getTime())) {
-        setError(t("share.down"));
-        return;
-      }
-      body.expiresAt = parsed.toISOString();
-    }
+    if (creatingRef.current) return;
+    creatingRef.current = true;
+    setCreating(true);
     try {
+      setError(null);
+      const body: { note?: string; expiresAt?: string | null } = {};
+      const trimmed = note.trim();
+      if (trimmed) body.note = trimmed;
+      if (expires) {
+        const parsed = new Date(`${expires}T23:59:59`);
+        if (Number.isNaN(parsed.getTime())) {
+          setError(t("share.down"));
+          return;
+        }
+        body.expiresAt = parsed.toISOString();
+      }
       const created = await createShare(workspaceId, body);
       setFreshUrl(`${location.origin}/s/${created.token}`);
       setShares((current) => [{
@@ -54,6 +59,9 @@ export function ShareKnowledge({ workspaceId, confidential, archived }: { worksp
       setExpires("");
     } catch (reason) {
       setError(failureText(reason, t("share.disabled"), t("share.down")));
+    } finally {
+      creatingRef.current = false;
+      setCreating(false);
     }
   }
 
@@ -90,7 +98,7 @@ export function ShareKnowledge({ workspaceId, confidential, archived }: { worksp
         <span className="label">{t("share.expires")}</span>
         <input type="date" value={expires} onChange={(event) => setExpires(event.target.value)} disabled={blocked} />
       </label>
-      <button type="button" className="settings-action" onClick={() => void onCreate()} disabled={blocked}>{t("share.create")}</button>
+      <button type="button" className="settings-action" onClick={() => void onCreate()} disabled={blocked || creating}>{t("share.create")}</button>
       {freshUrl && (
         <div className="field">
           <p className="help">{t("share.shownOnce")}</p>
