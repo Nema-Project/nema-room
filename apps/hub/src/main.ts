@@ -69,6 +69,7 @@ async function main(): Promise<void> {
       hostname,
       cleanDaemonDirs,
       attachmentsMaxBytes,
+      sharesEnabled: process.env.NEMA_SHARES_ENABLED !== "0",
     });
     console.log(`nema hub listening on ${hostname}:${port} (use ${hub.url})`);
     const shutdown = () => {

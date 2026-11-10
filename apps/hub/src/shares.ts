@@ -10,10 +10,11 @@ const NOTE_MAX = 200;
 const ExpiresAt = z.iso.datetime({ offset: true });
 
 export class ShareInputError extends Error {
-  readonly status = 400 as const;
-  constructor(message: string) {
+  readonly status: 400 | 404 | 409;
+  constructor(message: string, status: 400 | 404 | 409 = 400) {
     super(message);
     this.name = "ShareInputError";
+    this.status = status;
   }
 }
 
@@ -98,7 +99,7 @@ function cleanExpiresAt(expiresAt: string | null | undefined): string | null {
   return parsed.data;
 }
 
-/** Inserts one share. Expiry is compared with the database clock, not a caller-supplied date. */
+/** Inserts one share. The workspace row is locked so a confidential or archive patch cannot race the insert. */
 export async function createShare(
   db: Db,
   workspaceId: string,
@@ -107,14 +108,24 @@ export async function createShare(
   const note = cleanNote(input.note);
   const expiresAt = cleanExpiresAt(input.expiresAt);
   const token = randomBytes(32).toString("base64url");
-  const rows = await db.query<ShareSqlRow>(
-    `insert into knowledge_shares (id, workspace_id, token_hash, note, expires_at)
-     select $1, $2, $3, $4, $5::timestamptz
-     where $5::timestamptz is null or $5::timestamptz > now()
-     returning id, workspace_id, note, expires_at, revoked_at, created_at`,
-    [`ks_${nanoid(16)}`, workspaceId, sha256(token), note, expiresAt],
-  );
-  const row = rows[0];
+  const row = await db.tx(async (tx) => {
+    const locked = await tx.query<{ confidential: boolean; archived_at: Date | string | null }>(
+      "select confidential, archived_at from workspaces where id = $1 for update",
+      [workspaceId],
+    );
+    const workspace = locked[0];
+    if (!workspace) throw new ShareInputError("workspace not found", 404);
+    if (workspace.confidential) throw new ShareInputError("confidential workspace cannot be shared", 409);
+    if (workspace.archived_at) throw new ShareInputError("archived workspace cannot be shared", 409);
+    const rows = await tx.query<ShareSqlRow>(
+      `insert into knowledge_shares (id, workspace_id, token_hash, note, expires_at)
+       select $1, $2, $3, $4, $5::timestamptz
+       where $5::timestamptz is null or $5::timestamptz > now()
+       returning id, workspace_id, note, expires_at, revoked_at, created_at`,
+      [`ks_${nanoid(16)}`, workspaceId, sha256(token), note, expiresAt],
+    );
+    return rows[0];
+  });
   if (!row) throw new ShareInputError("expiresAt must be later than now");
   return { ...toShareRow(row), token };
 }

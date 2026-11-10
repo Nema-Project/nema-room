@@ -36,6 +36,8 @@ export type StartHubOptions = {
   releaseVersion?: string;
   /** NEMA_ATTACHMENTS_MAX_BYTES; the store's 2 GB default when unset. */
   attachmentsMaxBytes?: number;
+  /** `false` only when NEMA_SHARES_ENABLED is exactly "0". Omitted stays on. */
+  sharesEnabled?: boolean;
 };
 
 /** Expired uploads and leftover files are cleaned every hour after the startup pass. */
@@ -101,6 +103,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
       port: actualPort,
       ownedHelpers: opts.ownedHelpers,
       releaseVersion: opts.releaseVersion,
+      sharesEnabled: opts.sharesEnabled,
       attachments,
       ...(opts.ownedHelpers ? { archify: {
         validateDiagram: (type, spec) => validateDiagram(type, spec, opts.ownedHelpers),
