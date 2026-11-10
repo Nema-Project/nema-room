@@ -184,7 +184,8 @@ test.runIf(process.platform === "win32")("several ACL calls share one PowerShell
   closeSync(openPrivateFile(first));
   closeSync(openPrivateFile(second));
   const started = windowsAclHelperStarts();
-  expect(started).toBe(before === 0 ? 1 : before);
+  // The fake-executable test drops the helper, so the first real call may start one. These four calls still share it.
+  expect([before, before + 1]).toContain(started);
 
   const widened = spawnSync("icacls.exe", [second, "/grant", "*S-1-1-0:R"], { stdio: "ignore", windowsHide: true });
   expect(widened.status).toBe(0);
