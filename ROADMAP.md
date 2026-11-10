@@ -1,6 +1,6 @@
 # 项目路线图与验收台账
 
-更新日期：2026-11-10（Asia/Tokyo）
+更新日期：2026-11-11（Asia/Tokyo）
 
 本文件承接仓库评估中提出的 TODO，作为当前待办入口。它是建议的稳定化顺序，不代表全部问题已复现，也不代表已承诺交付日期。历史设计和评审保留在 `docs/superpowers/` 与 `docs/reviews/`；遇到冲突，应以对应提交的源码、CI 和验收证据为准。
 
@@ -15,6 +15,26 @@
 - [历史桌面验收](docs/reviews/2026-10-24-desktop-validation.md)只证明其记录的提交与环境；其中“尚未发布”等结论已经过时。
 - 已合入 `main` 的近期工作：[PR #29](https://github.com/Nema-Project/nema-room/pull/29) macOS 原生红绿灯（`5ff8cf9`）；[PR #30](https://github.com/Nema-Project/nema-room/pull/30) 落实 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 的用户 basis 证据检查（`afd1456`）；[PR #31](https://github.com/Nema-Project/nema-room/pull/31) 桌面包瘦身（`76680b8`）。
 - 本次评估通过 GitHub 读取源码、配置、Actions 和 Release；未本地重跑测试。开始每项工作前须重新检查最新状态。
+
+## v0.2.5 发布准备
+
+v0.2.5 是 v0.2.4 之后的小版本。用户可见的变更只有一项：[#219](https://github.com/Nema-Project/nema-room/pull/219) 在 SQL 里搜索提及候选（[#195](https://github.com/Nema-Project/nema-room/issues/195)）。同一段 `v0.2.4..main` 里，[#215](https://github.com/Nema-Project/nema-room/pull/215) 是设计与基准记录，[#218](https://github.com/Nema-Project/nema-room/pull/218) 只补 v0.2.4 的发布记录，都没有用户可见片段。本 release PR 在 cut 之前把提及片段改成英文，与 changelog 的语言一致，并写明菜单还没在真实浏览器里点过。
+
+发布记录（tag 之后补真实值，以下为占位；本 PR 不打 tag、不跑 promote）：
+
+- tag `v0.2.5` → `<TAG_COMMIT>`；该提交的 main CI：`<MAIN_CI_RUN>`。
+- 三条 tag 工作流：npm `<NPM_RUN>`、镜像 `<IMAGE_RUN>`、桌面 `<DESKTOP_RUN>`。
+- 只读检查 `npm run release:verify -- 0.2.5` 打 tag 后的首次结果：`<PRE_PROMOTE_VERIFY>`（预期退出 1，且只点名 npm）。
+- `release:verify -- --pointers 0.2.5` 的前后对照：`<POINTERS_BEFORE>` / `<POINTERS_AFTER>`。
+- 晋升：`gh workflow run release-promote.yml --ref main -f tag=v0.2.5`，运行 `<PROMOTE_RUN>`；晋升后 `release:verify -- 0.2.5` 退出 0。需记录可见性等待实际用了多久、首次晋升是否一次完成。
+- `releases/latest/download/docker-compose.yml` 在晋升前仍是 0.2.4 的双 pin，晋升后变为 0.2.5 且带版本头。
+
+发布可用性不等于功能或真机验收完成：
+
+- `@` 菜单没有在真实浏览器里点过，只有组件测试覆盖。
+- 候选 SQL 在 PGlite 和 PostgreSQL 16 上测过。hub 测试在 PGlite 上跑了随包查询（含 UTF-16 长度排序）。PostgreSQL 16.15 上计时的是设计脚本的候选 SQL，长度排序用的是 `char_length`，不是随包的 UTF-16 长度；随包的那条长度表达式没有在 PostgreSQL 上计时，桌面 PGlite 的延迟也没有测。
+- Windows x64 与 macOS arm64 安装包的冷启动、暖启动和覆盖升级都还没有真机验收。Linux 上的生命周期测试、runtime 重叠测试和桌面打包冒烟不能代替这两台机器上的安装包。
+- [#131](https://github.com/Nema-Project/nema-room/issues/131) 的真实账户验收还没有。现有证据仍是假 provider 上的自动化测试。
 
 ## v0.2.4 发布与后续验收
 
