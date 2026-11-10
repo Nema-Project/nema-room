@@ -407,7 +407,7 @@ git commit -m "ci: sample desktop database and Windows ACL startup cost"
 
 - [ ] **Step 2: Update P1-10**
 
-In the P1-10 matter cell, replace the sentence that says cold-start PGlite migration, merging ACL checks into one PowerShell, and packaged benches are all undone. State that Windows ACL checks in one process share one PowerShell and each check still runs; a pre-built PGlite directory was not shipped (D-1 choice B in [the spec](docs/superpowers/specs/2026-11-10-desktop-startup-remainder-design.md)); packaged `desktop:bench` numbers are still absent. Add the spec and plan links next to the existing startup spec links. Leave status 进行中. Leave the acceptance cell's packaged-bench sentence. Append an execution row dated 2026-11-10 for P1-10 pointing at this implementation PR, target version 未承诺, and say the Windows shared-process test is the ACL evidence while packaged bench and the PGlite template remain open.
+In the P1-10 matter cell, replace the sentence that says cold-start PGlite migration, merging ACL checks into one PowerShell, and packaged benches are all undone. State that Windows ACL checks in one process share one PowerShell and each check still runs; a pre-built PGlite directory was not shipped (D-1 choice B in [the spec](../specs/2026-11-10-desktop-startup-remainder-design.md)); packaged `desktop:bench` numbers are still absent. Add the spec and plan links next to the existing startup spec links. Leave status 进行中. Leave the acceptance cell's packaged-bench sentence. Append an execution row dated 2026-11-10 for P1-10 pointing at this implementation PR, target version 未承诺, and say the Windows shared-process test is the ACL evidence while packaged bench and the PGlite template remain open.
 
 - [ ] **Step 3: Commit**
 
