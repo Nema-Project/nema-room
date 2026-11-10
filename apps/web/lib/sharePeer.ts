@@ -98,3 +98,22 @@ export function sharePeerDecision(peer: string | null | undefined, headers: Head
   if (hasForwardingHeader(headers) || !peer || !isPrivateSharePeer(peer)) return "reject";
   return "allow";
 }
+
+/**
+ * Next writes these from the socket and Host before a page reads `headers()`.
+ * The process guard and the desktop gateway still reject a client copy on the raw request.
+ */
+const NEXT_INJECTED_HEADERS = new Set(["x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-port"]);
+
+export function headersForSharePage(headers: HeaderBag): HeaderBag {
+  if (typeof Headers !== "undefined" && headers instanceof Headers) {
+    const copy = new Headers(headers);
+    for (const name of NEXT_INJECTED_HEADERS) copy.delete(name);
+    return copy;
+  }
+  const copy: Record<string, string | string[] | undefined> = { ...headers };
+  for (const key of Object.keys(copy)) {
+    if (NEXT_INJECTED_HEADERS.has(key.toLowerCase())) delete copy[key];
+  }
+  return copy;
+}

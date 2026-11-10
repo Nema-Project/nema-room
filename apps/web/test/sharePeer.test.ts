@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isPrivateSharePeer, sharePeerDecision } from "@/lib/sharePeer";
+import { headersForSharePage, isPrivateSharePeer, sharePeerDecision } from "@/lib/sharePeer";
 
 describe("share peer", () => {
   it("allows one address from each private prefix", () => {
@@ -24,6 +24,14 @@ describe("share peer", () => {
     expect(sharePeerDecision("::1", { "cf-connecting-ip": "10.0.0.1" })).toBe("reject");
     expect(sharePeerDecision("fd00::1", { "true-client-ip": "10.0.0.1" })).toBe("reject");
     expect(sharePeerDecision("192.168.0.1", { "x-forwarded-host": "share.example" })).toBe("reject");
+    const injected = {
+      "x-forwarded-for": "127.0.0.1",
+      "x-forwarded-host": "127.0.0.1:3000",
+      "x-forwarded-proto": "http",
+      "x-forwarded-port": "3000",
+    };
+    expect(sharePeerDecision("127.0.0.1", headersForSharePage(injected))).toBe("allow");
+    expect(sharePeerDecision("127.0.0.1", headersForSharePage({ ...injected, forwarded: "for=127.0.0.1" }))).toBe("reject");
   });
 
   it("rejects a missing peer", () => {
