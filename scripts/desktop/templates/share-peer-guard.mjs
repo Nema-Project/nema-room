@@ -12,6 +12,7 @@ export function installSharePeerGuard() {
   const emit = proto.emit;
   proto.emit = function (event, req, res, ...rest) {
     if (event === "request" && req && res) {
+      if (req.headers) delete req.headers[SHARE_PEER_HEADER];
       const path = String(req.url ?? "").split("?")[0];
       if (path === "/s" || path.startsWith("/s/")) {
         if (sharePeerDecision(req.socket?.remoteAddress, req.headers ?? {}) === "reject") {
@@ -25,11 +26,8 @@ export function installSharePeerGuard() {
           res.end(body);
           return true;
         }
-        if (req.headers) {
-          delete req.headers[SHARE_PEER_HEADER];
-          const peer = req.socket?.remoteAddress;
-          if (peer) req.headers[SHARE_PEER_HEADER] = peer;
-        }
+        const peer = req.socket?.remoteAddress;
+        if (req.headers && peer) req.headers[SHARE_PEER_HEADER] = peer;
       }
     }
     return emit.call(this, event, req, res, ...rest);
