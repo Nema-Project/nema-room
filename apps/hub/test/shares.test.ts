@@ -55,8 +55,10 @@ describe("knowledge share rows", () => {
     await revokeShare(db, ws.id, a.id);
     expect(await resolveShare(db, a.token)).toEqual({ found: true, available: false });
     expect(await resolveShare(db, b.token)).toEqual({ found: true, available: true, workspaceId: ws.id, workspaceName: "Alpha" });
+    await updateWorkspace(db, ws.id, { confidential: true });
     await updateWorkspace(db, ws.id, { confidential: false });
     expect(await resolveShare(db, a.token)).toEqual({ found: true, available: false });
+    expect(await resolveShare(db, b.token)).toEqual({ found: true, available: true, workspaceId: ws.id, workspaceName: "Alpha" });
     expect(await resolveShare(db, "a".repeat(43))).toEqual({ found: false });
     const other = await shareableWorkspace(db, dataDir, "Beta");
     expect(await revokeShare(db, other.id, a.id)).toBeNull();
