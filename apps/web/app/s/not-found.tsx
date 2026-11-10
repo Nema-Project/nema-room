@@ -1,3 +1,5 @@
+import { ShareUnavailable } from "@/components/ShareView";
+
 export default function ShareNotFound() {
-  return <p>This link is not available.</p>;
+  return <ShareUnavailable />;
 }
