@@ -81,9 +81,9 @@ git diff --name-only 9b8a4287fdde3f3d52721ee43ede19c61b1e0772..origin/main -- ap
 ## M3：文案和参考
 
 - [ ] 三份 `apps/web/messages/*.json` 加上同一键，句子与规格表格一致，不改别的键：
-  - zh：`还在检查「{query}」的文件，这不是一份找完的结果。`
-  - en：`Still checking files for “{query}”. This is not a finished result.`
-  - ja：`「{query}」のファイルをまだ確認しています。これは探し終わった結果ではありません。`
+  - zh：`已检查 50 个文件，尚未查完，请输入更具体的关键词。`
+  - en：`Checked 50 files and have not finished. Please enter a more specific keyword.`
+  - ja：`50件のファイルを確認しましたが、まだ探し終わっていません。より具体的なキーワードを入力してください。`
 - [ ] `docs/reference.zh-CN.md` 的「`@` 提及」候选段改成：查询在 SQL 里按子序列搜索，不再先取 500 或 50；`truncated` 表示菜单不是全部匹配，或附件 `stat` 用满 50 次且后面还有行；`attachmentBudgetExhausted` 只表示后一种；返回前对排序后的附件最多 `stat` 50 次，跳过缺失文件，直到 8 个还在的文件。不写响应时间承诺。
 - [ ] 新增 `changelog.d/mention-candidate-search.changed.md`，一段中文，说明超过原来的候选池仍能用 `@` 搜到条目、话题和已发送的文件，缺失文件会跳过，没找完时菜单不会说成没有匹配。
 - [ ] `npm run lint -w apps/web`。README、guide、milestone、tag 都不改。

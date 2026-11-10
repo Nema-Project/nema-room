@@ -102,7 +102,7 @@
 
 | 键 | zh | en | ja |
 | --- | --- | --- | --- |
-| `mention.notFinished` | 还在检查「{query}」的文件，这不是一份找完的结果。 | Still checking files for “{query}”. This is not a finished result. | 「{query}」のファイルをまだ確認しています。これは探し終わった結果ではありません。 |
+| `mention.notFinished` | 已检查 50 个文件，尚未查完，请输入更具体的关键词。 | Checked 50 files and have not finished. Please enter a more specific keyword. | 50件のファイルを確認しましたが、まだ探し終わっていません。より具体的なキーワードを入力してください。 |
 
 任一有行时只显示那些行，不显示这句，也不显示 `mention.noMatch`。找完了的空结果仍用 `mention.noMatch`。请求还在飞用 `mention.looking`，失败用 `mention.lookupFailed`。
 
