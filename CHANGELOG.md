@@ -4,6 +4,12 @@ Version sections on main may describe release preparation. A version heading and
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-10
+
+### Changed
+
+- The desktop app shows a startup window before its local core is ready, and that window shows the phase the core reports. A failed start leaves the error in the window. The local web server starts while the database is opening. The next launch opens the workspace this machine last used, and the room list shows a skeleton until the list returns. Settings and the plugins panel load when they are opened. While the core is starting, private-file checks no longer run on every poll. Windows x64 and macOS arm64 packaged cold starts, warm starts, and overwrite upgrades have not been accepted on those machines. Real-account acceptance for #131 has not been done either.
+
 ## [0.2.3] - 2026-11-03
 
 ### Added

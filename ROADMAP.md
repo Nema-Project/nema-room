@@ -1,6 +1,6 @@
 # 项目路线图与验收台账
 
-更新日期：2026-11-03（Asia/Tokyo）
+更新日期：2026-11-10（Asia/Tokyo）
 
 本文件承接仓库评估中提出的 TODO，作为当前待办入口。它是建议的稳定化顺序，不代表全部问题已复现，也不代表已承诺交付日期。历史设计和评审保留在 `docs/superpowers/` 与 `docs/reviews/`；遇到冲突，应以对应提交的源码、CI 和验收证据为准。
 
@@ -15,6 +15,24 @@
 - [历史桌面验收](docs/reviews/2026-10-24-desktop-validation.md)只证明其记录的提交与环境；其中“尚未发布”等结论已经过时。
 - 已合入 `main` 的近期工作：[PR #29](https://github.com/Nema-Project/nema-room/pull/29) macOS 原生红绿灯（`5ff8cf9`）；[PR #30](https://github.com/Nema-Project/nema-room/pull/30) 落实 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 的用户 basis 证据检查（`afd1456`）；[PR #31](https://github.com/Nema-Project/nema-room/pull/31) 桌面包瘦身（`76680b8`）。
 - 本次评估通过 GitHub 读取源码、配置、Actions 和 Release；未本地重跑测试。开始每项工作前须重新检查最新状态。
+
+## v0.2.4 发布准备
+
+v0.2.4 是 v0.2.3 之后的小版本。用户可见的变更只有一项：[#213](https://github.com/Nema-Project/nema-room/pull/213) 桌面启动窗口与等待体验（[#186](https://github.com/Nema-Project/nema-room/issues/186) 的已合并子集）。同一段时间合入的 [#216](https://github.com/Nema-Project/nema-room/pull/216) 是验收记录，[#214](https://github.com/Nema-Project/nema-room/pull/214) 只补 v0.2.3 的发布记录，都没有用户可见片段。[#211](https://github.com/Nema-Project/nema-room/pull/211) 把 `release-promote` 的 npm 可见性预算改为 360 秒、provenance 索引窗口改为 600 秒（Refs [#174](https://github.com/Nema-Project/nema-room/issues/174)），只影响维护者的发布流程，没有写片段，也还没有被一次真实晋升使用。本 release PR 在 cut 之前把启动片段改成英文，与 changelog 的语言一致，并写明尚未做的真机验收。[#195](https://github.com/Nema-Project/nema-room/issues/195) 提及搜索还没有实现，不在这一版。P1-10 仍是进行中：冷启动迁移、多次 ACL 合并，以及打包基准都还没做。
+
+发布记录（tag 之后补真实值，以下为占位；本 PR 不打 tag、不跑 promote）：
+
+- tag `v0.2.4` → `<TAG_COMMIT>`；该提交的 main CI：`<MAIN_CI_RUN>`。
+- 三条 tag 工作流：npm `<NPM_RUN>`、镜像 `<IMAGE_RUN>`、桌面 `<DESKTOP_RUN>`。
+- 只读检查 `npm run release:verify -- 0.2.4` 打 tag 后的首次结果：`<PRE_PROMOTE_VERIFY>`（预期退出 1，且只点名 npm）。
+- `release:verify -- --pointers 0.2.4` 的前后对照：`<POINTERS_BEFORE>` / `<POINTERS_AFTER>`。
+- 晋升：`gh workflow run release-promote.yml --ref main -f tag=v0.2.4`，运行 `<PROMOTE_RUN>`；晋升后 `release:verify -- 0.2.4` 退出 0。360 秒预算还没有用于真实发布，需记录可见性等待实际用了多久、首次晋升是否一次完成。
+- `releases/latest/download/docker-compose.yml` 在晋升前仍是 0.2.3 的双 pin，晋升后变为 0.2.4 且带版本头。
+
+发布可用性不等于功能或真机验收完成：
+
+- Windows x64 与 macOS arm64 安装包的冷启动、暖启动和覆盖升级都还没有真机验收。Linux 上的生命周期测试、runtime 重叠测试和桌面打包冒烟不能代替这两台机器上的安装包。验收记录见 [v0.2.4 acceptance](docs/reviews/2026-11-07-v0-2-4-acceptance.md)。
+- [#131](https://github.com/Nema-Project/nema-room/issues/131) 的真实账户验收还没有。现有证据仍是假 provider 上的自动化测试。
 
 ## v0.2.3 发布与后续验收
 
@@ -224,3 +242,4 @@ P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实现已�
 | 2026-11-04 | P2-09 | 维护者 | [issue #132](https://github.com/Nema-Project/nema-room/issues/132) / [PR #213](https://github.com/Nema-Project/nema-room/pull/213) | v0.3.1 | 不在本轮实现。排期从 v0.3.x 改为 v0.3.1。D-1～D-4、D-6 仍待决定，开工前先写 spec |
 | 2026-11-04 | P1-10 | Cursor Agent | [issue #186](https://github.com/Nema-Project/nema-room/issues/186) / [PR #213](https://github.com/Nema-Project/nema-room/pull/213) | 未承诺 | web 就绪预算改到数据库和 hub 之后再计算。daemon 改到 web 就绪后连接。已删除的上次工作区不再和 `/` 来回跳。证据是 runtime 重叠测试、WorkspaceShell 测试和桌面生命周期测试 |
 | 2026-11-04 | P1-10 | Cursor Agent | [issue #186](https://github.com/Nema-Project/nema-room/issues/186) / [PR #213](https://github.com/Nema-Project/nema-room/pull/213) | 未承诺 | 启动器等待从 20 秒改为 45 秒，盖过数据库和 hub 之后的 15 秒 web 预算，以及其后的 10 秒 daemon 预算。否则启动器会在 web 仍在预算内时停掉核心 |
+| 2026-11-10 | P1-10 | Cursor Agent | [issue #186](https://github.com/Nema-Project/nema-room/issues/186) / [PR #213](https://github.com/Nema-Project/nema-room/pull/213) | v0.2.4 | 准备发布已合并的启动窗口子集和文档。P1-10 仍是进行中。Windows x64 与 macOS arm64 安装包的冷启动、暖启动和覆盖升级没有真机验收。[#131](https://github.com/Nema-Project/nema-room/issues/131) 的真实账户验收没有。[#195](https://github.com/Nema-Project/nema-room/issues/195) 不在本版。tag 尚未创建 |
