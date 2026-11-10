@@ -93,6 +93,8 @@ COPY --from=web-build /app/apps/web/public ./apps/web/public
 COPY apps/web/app/fonts/inter/OFL.txt /app/licenses/fonts/inter/OFL.txt
 COPY apps/web/app/fonts/jetbrains-mono/OFL.txt /app/licenses/fonts/jetbrains-mono/OFL.txt
 COPY scripts/images/web-entrypoint.sh /entrypoint.sh
+COPY scripts/desktop/templates/share-peer-guard.mjs /opt/nema/share-peer-guard.mjs
+COPY scripts/desktop/templates/share-peer.mjs /opt/nema/share-peer.mjs
 RUN chmod 0755 /entrypoint.sh
 USER node
 EXPOSE 3000
