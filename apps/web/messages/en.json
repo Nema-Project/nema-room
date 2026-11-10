@@ -677,5 +677,7 @@
   "route.failure.unknown": "failed",
   "route.attempts": "Tried before this one",
   "route.usage": "{input} input · {output} output tokens",
-  "route.noUsage": "No token counts were reported"
+  "route.noUsage": "No token counts were reported",
+  "share.linkUnavailable": "This link is not available.",
+  "share.temporarilyUnavailable": "Sharing is temporarily unavailable."
 }
