@@ -6,12 +6,13 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { closeEnsuredRuntimesForTests, launcherReadyTimeoutMs, setBeforeWebBudgetForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, setWebReadyTimeoutForTests, startLocalRuntime, ensureLocalRuntime, shutdownLocalRuntime, startupPhaseName } from "../src/runtime.js";
-import { acquireInstance, discoverInstance } from "../src/instance.js";
+import { closeEnsuredRuntimesForTests, launcherReadyTimeoutMs, setBeforeWebBudgetForTests, setDiscoverInstanceForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, setShutdownLocalRuntimeForTests, setWebReadyTimeoutForTests, startLocalRuntime, ensureLocalRuntime, shutdownLocalRuntime, startupPhaseName } from "../src/runtime.js";
+import { acquireInstance, discoverInstance, type DiscoveredInstance } from "../src/instance.js";
 import { createLocalDb } from "@nema/hub/db/local";
 import { postUserMessage } from "@nema/hub/messages";
 import { claimNextTask, getTask, resolveRunToken } from "@nema/hub/tasks";
-import { createWorkspace } from "@nema/hub/workspaces";
+import { createShare } from "../../hub/src/shares.js";
+import { createWorkspace, updateWorkspace } from "@nema/hub/workspaces";
 import { protectPrivatePath } from "@nema/cli/secrets/permissions";
 
 const testHomeDirs: string[] = [];
@@ -174,6 +175,8 @@ afterEach(async () => {
   setWebReadyTimeoutForTests(undefined);
   setBeforeWebBudgetForTests(undefined);
   setRuntimeReadyHookForTests(undefined);
+  setDiscoverInstanceForTests(undefined);
+  setShutdownLocalRuntimeForTests(undefined);
   setSettingsOperationsForTests(undefined);
   await Promise.all(crashChildren.splice(0).map(closeCrashChild));
   await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()));
@@ -241,6 +244,206 @@ describe("managed local runtime", () => {
     expect(seen[0]?.NEMA_DESKTOP_BENCH).toBe("1");
     expect(seen[1]?.NEMA_DESKTOP_BENCH).toBeUndefined();
   });
+
+  it("copies NEMA_SHARES_ENABLED into the managed core, including 0", async () => {
+    const home = join(tempDir("nema-home-"), "share-switch");
+    const assetsDir = testAssets();
+    mkdirSync(home, { recursive: true });
+    const seen: Array<NodeJS.ProcessEnv | undefined> = [];
+    setEnsureSpawnerForTests((spec) => {
+      seen.push(spec.env);
+      throw new Error("share-switch-captured");
+    });
+    const previous = process.env.NEMA_SHARES_ENABLED;
+    try {
+      process.env.NEMA_SHARES_ENABLED = "0";
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/share-switch-captured/);
+      delete process.env.NEMA_SHARES_ENABLED;
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/share-switch-captured/);
+    } finally {
+      if (previous === undefined) delete process.env.NEMA_SHARES_ENABLED;
+      else process.env.NEMA_SHARES_ENABLED = previous;
+    }
+    expect(seen[0]?.NEMA_SHARES_ENABLED).toBe("0");
+    expect(seen[1]?.NEMA_SHARES_ENABLED).toBeUndefined();
+  });
+
+  function oldCore(assetsDir: string): DiscoveredInstance {
+    return {
+      origin: "http://127.0.0.1:9",
+      launchUrl: "http://127.0.0.1:9/_nema/launch?ticket=old",
+      instanceId: "inst-old",
+      installationId: testInstallationId(assetsDir),
+    };
+  }
+
+  it("keeps reusing a core when the share switch is unset or 1", async () => {
+    const home = join(tempDir("nema-home-"), "share-reuse-on");
+    const assetsDir = testAssets();
+    mkdirSync(home, { recursive: true });
+    const previous = process.env.NEMA_SHARES_ENABLED;
+    let shutdowns = 0;
+    setDiscoverInstanceForTests(async () => oldCore(assetsDir));
+    setShutdownLocalRuntimeForTests(async () => { shutdowns += 1; return { state: "complete" }; });
+    try {
+      delete process.env.NEMA_SHARES_ENABLED;
+      const unset = await ensureLocalRuntime({ home, assetsDir });
+      expect(unset).toMatchObject({ reused: true, instanceId: "inst-old" });
+      process.env.NEMA_SHARES_ENABLED = "1";
+      const enabled = await ensureLocalRuntime({ home, assetsDir });
+      expect(enabled).toMatchObject({ reused: true, instanceId: "inst-old" });
+      expect(shutdowns).toBe(0);
+    } finally {
+      if (previous === undefined) delete process.env.NEMA_SHARES_ENABLED;
+      else process.env.NEMA_SHARES_ENABLED = previous;
+    }
+  });
+
+  it("does not reuse an old core when sharing is turned off", async () => {
+    const home = join(tempDir("nema-home-"), "share-reuse-off");
+    const assetsDir = testAssets();
+    mkdirSync(home, { recursive: true });
+    const previous = process.env.NEMA_SHARES_ENABLED;
+    let visible = true;
+    const seen: Array<NodeJS.ProcessEnv | undefined> = [];
+    setDiscoverInstanceForTests(async () => visible ? oldCore(assetsDir) : null);
+    setShutdownLocalRuntimeForTests(async () => { visible = false; return { state: "complete" }; });
+    setEnsureSpawnerForTests((spec) => {
+      seen.push(spec.env);
+      throw new Error("share-switch-captured");
+    });
+    setEnsureTimeoutForTests(3_000);
+    try {
+      process.env.NEMA_SHARES_ENABLED = "0";
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/share-switch-captured/);
+    } finally {
+      if (previous === undefined) delete process.env.NEMA_SHARES_ENABLED;
+      else process.env.NEMA_SHARES_ENABLED = previous;
+    }
+    expect(seen[0]?.NEMA_SHARES_ENABLED).toBe("0");
+    expect(visible).toBe(false);
+  });
+
+  it("refuses the old core when shutdown fails after sharing is turned off", async () => {
+    const home = join(tempDir("nema-home-"), "share-reuse-stuck");
+    const assetsDir = testAssets();
+    mkdirSync(home, { recursive: true });
+    const previous = process.env.NEMA_SHARES_ENABLED;
+    setDiscoverInstanceForTests(async () => oldCore(assetsDir));
+    setShutdownLocalRuntimeForTests(async () => { throw new Error("stop failed"); });
+    try {
+      process.env.NEMA_SHARES_ENABLED = "0";
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/sharing remains enabled/);
+    } finally {
+      if (previous === undefined) delete process.env.NEMA_SHARES_ENABLED;
+      else process.env.NEMA_SHARES_ENABLED = previous;
+    }
+  });
+
+  it("restarts after an owner collision when sharing is turned off", async () => {
+    const home = join(tempDir("nema-home-"), "share-collision");
+    const assetsDir = testAssets();
+    mkdirSync(home, { recursive: true });
+    const previous = process.env.NEMA_SHARES_ENABLED;
+    let visible = false;
+    const seen: Array<NodeJS.ProcessEnv | undefined> = [];
+    let spawns = 0;
+    setDiscoverInstanceForTests(async () => visible ? oldCore(assetsDir) : null);
+    setShutdownLocalRuntimeForTests(async () => { visible = false; return { state: "complete" }; });
+    setEnsureTimeoutForTests(3_000);
+    setEnsureSpawnerForTests((spec) => {
+      spawns += 1;
+      seen.push(spec.env);
+      if (spawns === 1) {
+        visible = true;
+        return spawn(process.execPath, ["-e", "process.send({ type: 'core-error', code: 'NEMA_LOCAL_OWNER_COLLISION' })"], {
+          stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true,
+        });
+      }
+      throw new Error("share-switch-captured");
+    });
+    try {
+      process.env.NEMA_SHARES_ENABLED = "0";
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/share-switch-captured/);
+    } finally {
+      if (previous === undefined) delete process.env.NEMA_SHARES_ENABLED;
+      else process.env.NEMA_SHARES_ENABLED = previous;
+    }
+    expect(seen.map((env) => env?.NEMA_SHARES_ENABLED)).toEqual(["0", "0"]);
+    expect(visible).toBe(false);
+  });
+
+  it("does not restart forever when sharing stays off and the next core also collides", async () => {
+    const home = join(tempDir("nema-home-"), "share-collision-twice");
+    const assetsDir = testAssets();
+    mkdirSync(home, { recursive: true });
+    const previous = process.env.NEMA_SHARES_ENABLED;
+    let visible = false;
+    setDiscoverInstanceForTests(async () => visible ? oldCore(assetsDir) : null);
+    setShutdownLocalRuntimeForTests(async () => { visible = false; return { state: "complete" }; });
+    setEnsureTimeoutForTests(3_000);
+    setEnsureSpawnerForTests(() => {
+      visible = true;
+      return spawn(process.execPath, ["-e", "process.send({ type: 'core-error', code: 'NEMA_LOCAL_OWNER_COLLISION' })"], {
+        stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true,
+      });
+    });
+    try {
+      process.env.NEMA_SHARES_ENABLED = "0";
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/sharing remains enabled/);
+    } finally {
+      if (previous === undefined) delete process.env.NEMA_SHARES_ENABLED;
+      else process.env.NEMA_SHARES_ENABLED = previous;
+    }
+  });
+
+  it("does not return the colliding core when shutdown fails", async () => {
+    const home = join(tempDir("nema-home-"), "share-collision-stuck");
+    const assetsDir = testAssets();
+    mkdirSync(home, { recursive: true });
+    const previous = process.env.NEMA_SHARES_ENABLED;
+    let visible = false;
+    setDiscoverInstanceForTests(async () => visible ? oldCore(assetsDir) : null);
+    setShutdownLocalRuntimeForTests(async () => { throw new Error("stop failed"); });
+    setEnsureTimeoutForTests(3_000);
+    setEnsureSpawnerForTests(() => {
+      visible = true;
+      return spawn(process.execPath, ["-e", "process.send({ type: 'core-error', code: 'NEMA_LOCAL_OWNER_COLLISION' })"], {
+        stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true,
+      });
+    });
+    try {
+      process.env.NEMA_SHARES_ENABLED = "0";
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/sharing remains enabled/);
+    } finally {
+      if (previous === undefined) delete process.env.NEMA_SHARES_ENABLED;
+      else process.env.NEMA_SHARES_ENABLED = previous;
+    }
+  });
+
+  it("serves an existing share as not found when the core starts with sharing off", async () => {
+    const previous = process.env.NEMA_SHARES_ENABLED;
+    process.env.NEMA_SHARES_ENABLED = "0";
+    const home = join(tempDir("nema-home-"), "share-off-core");
+    let hubUrl = "";
+    let token = "";
+    setRuntimeReadyHookForTests(async (runtime) => {
+      hubUrl = runtime.hubUrl;
+      const ws = await createWorkspace(runtime.db, runtime.dataDir, "Alpha");
+      await updateWorkspace(runtime.db, ws.id, { confidential: false });
+      token = (await createShare(runtime.db, ws.id, {})).token;
+    });
+    try {
+      const runtime = await startLocalRuntime({ home, assetsDir: testAssets() });
+      runtimes.push(runtime);
+      const response = await fetch(`${hubUrl}/share/${token}`);
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "not found" });
+    } finally {
+      if (previous === undefined) delete process.env.NEMA_SHARES_ENABLED;
+      else process.env.NEMA_SHARES_ENABLED = previous;
+    }
+  }, 60_000);
 
   it("passes ELECTRON_RUN_AS_NODE into the managed core only while Electron is the Node", async () => {
     const home = join(tempDir("nema-home-"), "electron-node");
