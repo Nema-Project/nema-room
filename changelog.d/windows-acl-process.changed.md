@@ -1,0 +1,1 @@
+- On Windows, private-file checks during desktop startup share one PowerShell process per app process. A file that is no longer private is still rejected. Cold-start database initialization and packaged Windows and macOS startup numbers are unchanged.
