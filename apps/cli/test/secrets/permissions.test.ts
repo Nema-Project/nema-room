@@ -138,9 +138,10 @@ process.stdin.on("data", (chunk) => {
     const line = pending.slice(0, nl).replace(/\\r$/, "");
     pending = pending.slice(nl + 1);
     if (!line) continue;
-    process.stdout.write("ok\\n");
+    process.stdout.write("ok\\n", () => {
+      if (mode === "once") process.exit(0);
+    });
     lines += 1;
-    if (mode === "once") process.exit(0);
   }
 });
 `;
@@ -159,15 +160,22 @@ test("a dead ACL helper is replaced without waiting out the timeout", () => {
     use("once");
     const replaced = windowsAclHelperStarts();
     expect(submitWindowsAclForTests("check one")).toBe("ok");
-    const afterFirst = windowsAclHelperStarts();
-    expect(afterFirst).toBeGreaterThan(replaced);
-    expect(submitWindowsAclForTests("check two")).toBe("ok");
-    expect(windowsAclHelperStarts()).toBeGreaterThan(afterFirst);
+    expect(windowsAclHelperStarts()).toBeGreaterThan(replaced);
+    const observed = Date.now();
+    const second = submitWindowsAclForTests("check two");
+    expect(["ok", "err helper exited"]).toContain(second);
+    if (second === "err helper exited") {
+      expect(Date.now() - observed).toBeLessThan(5_000);
+      expect(submitWindowsAclForTests("check three")).toBe("ok");
+    }
+    expect(windowsAclHelperStarts()).toBeGreaterThan(replaced);
 
     use("die");
+    const beforeDie = windowsAclHelperStarts();
     const started = Date.now();
     expect(submitWindowsAclForTests("check one")).toBe("err helper exited");
     expect(Date.now() - started).toBeLessThan(5_000);
+    expect(windowsAclHelperStarts()).toBe(beforeDie + 1);
   } finally {
     setWindowsAclExecutableForTests(undefined);
   }

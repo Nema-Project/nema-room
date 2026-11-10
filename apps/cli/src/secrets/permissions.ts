@@ -223,10 +223,9 @@ function askOnce(request: string): string {
 }
 
 function askHelper(request: string): string {
-  const first = askOnce(request);
-  if (first !== "err helper exited") return first;
-  dropHelper();
-  return askOnce(request);
+  const reply = askOnce(request);
+  if (reply === "err helper exited") dropHelper();
+  return reply;
 }
 
 /** Drives the helper without a Windows ACL. The executable comes from setWindowsAclExecutableForTests. */
