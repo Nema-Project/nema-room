@@ -25,8 +25,8 @@ v0.2.5 是 v0.2.4 之后的小版本。用户可见的变更只有一项：[#219
 - tag `v0.2.5` → `<TAG_COMMIT>`；该提交的 main CI：`<MAIN_CI_RUN>`。
 - 三条 tag 工作流：npm `<NPM_RUN>`、镜像 `<IMAGE_RUN>`、桌面 `<DESKTOP_RUN>`。
 - 三条 tag 工作流都结束后，用能看到 draft 的 `GITHUB_TOKEN` 跑 `npm run release:verify -- 0.2.5` 的首次结果：`<PRE_PROMOTE_VERIFY>`（预期退出 1，且只点名 npm。没有这份 token 时，draft Release 会被读成 unknown，那个退出 1 不能当成「只缺 npm」）。
-- `release:verify -- --pointers 0.2.5` 的前后对照：`<POINTERS_BEFORE>` / `<POINTERS_AFTER>`。
-- 晋升：`gh workflow run release-promote.yml --ref main -f tag=v0.2.5`，运行 `<PROMOTE_RUN>`；晋升后 `release:verify -- 0.2.5` 退出 0。需记录可见性等待实际用了多久、首次晋升是否一次完成。
+- `npm run release:verify -- --pointers 0.2.5` 的前后对照：`<POINTERS_BEFORE>` / `<POINTERS_AFTER>`。
+- 晋升：`gh workflow run release-promote.yml --ref main -f tag=v0.2.5`，运行 `<PROMOTE_RUN>`；晋升后 `npm run release:verify -- 0.2.5` 退出 0。需记录可见性等待实际用了多久、首次晋升是否一次完成。
 - `releases/latest/download/docker-compose.yml` 在晋升前仍是 0.2.4 的双 pin，晋升后变为 0.2.5 且带版本头。
 
 发布可用性不等于功能或真机验收完成：
