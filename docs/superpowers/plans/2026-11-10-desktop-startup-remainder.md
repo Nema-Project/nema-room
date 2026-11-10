@@ -218,6 +218,7 @@ function noteChildGone() {
   Atomics.store(state, 3, 0);
   while (waiters.length) waiters.shift()("err helper exited");
 }
+child.stdin.on("error", noteChildGone);
 child.on("error", noteChildGone);
 child.on("exit", noteChildGone);
 function roundtrip(line) {
@@ -272,6 +273,9 @@ function ensureHelper(): AclHelper {
     },
   });
   worker.unref();
+  worker.on("error", () => {
+    if (helper?.worker === worker) dropHelper();
+  });
   worker.on("exit", () => {
     if (helper?.worker === worker) helper = undefined;
   });
