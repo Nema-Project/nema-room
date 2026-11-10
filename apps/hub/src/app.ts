@@ -8,6 +8,7 @@ import { ATTACHMENT_UPLOAD_PATH, attachmentRoutes } from "./attachmentRoutes.js"
 import { AttachmentStore } from "./attachments.js";
 import { reportRoutes } from "./reports.js";
 import { roomRoutes } from "./roomApi.js";
+import { shareRoutes } from "./shareRoutes.js";
 import { mentionContextRoutes } from "./mentionContext.js";
 import { uiRoutes } from "./uiApi.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
@@ -33,6 +34,8 @@ export type AppDeps = {
   archify?: Archify;
   /** Port the hub listens on; only `127.0.0.1:<port>` and `localhost:<port>` are accepted as Host. */
   port?: number;
+  /** `false` hides public share reads. Omitted stays on. */
+  sharesEnabled?: boolean;
   ownedHelpers?: OwnedHelperScope;
   /** User-facing release version. Present on Compose and desktop hubs; absent in tests that do not pair a daemon. */
   releaseVersion?: string;
@@ -66,6 +69,14 @@ const requireJson: MiddlewareHandler = async (c, next) => {
 export function createApp(deps: AppDeps): Hono {
   const app = new Hono();
   const guard = hostGuard(deps.port ?? DEFAULT_HUB_PORT);
+  app.use("/share", guard);
+  app.use("/share/*", guard);
+  app.route("/share", shareRoutes({
+    db: deps.db,
+    dataDir: deps.dataDir,
+    sharesEnabled: deps.sharesEnabled !== false,
+    ownedHelpers: deps.ownedHelpers,
+  }));
   app.use("/api/*", guard);
   app.use("/room/*", guard);
   app.use("/report", guard);
