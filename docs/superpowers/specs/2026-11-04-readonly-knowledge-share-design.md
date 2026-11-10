@@ -127,6 +127,8 @@ hub 进程内记忆，单进程，重启清空。不做成配置项。
 
 `NEMA_SHARES_ENABLED` 未设置或为 `1` 时允许分享。设为 `0` 时：创建返回 403，公开读取返回与无效链接相同的 404，已有行不删除。列表和撤销仍然可用，方便关掉之后把链接作废。桌面与 Compose 都读这个变量。测试通过 `createApp` 的依赖注入，不依赖进程环境。
 
+变量必须真的到达 hub 进程。Compose 的 hub `environment` 写成 `NEMA_SHARES_ENABLED: ${NEMA_SHARES_ENABLED:-}`。仓库模板和 `renderComposeAsset` 生成的 Release `docker-compose.yml` 都保留这一行：操作者设成 `0` 时容器里是 `0`，未设置时不是 `0`。桌面 launcher 的 `childEnvironment`（`apps/local/src/runtime.ts`）在变量有定义时原样复制进 core，包括 `0`。`apps/desktop/lifecycle.cjs` 调用的 `ensureLocalRuntime` 用的就是这份过滤后的环境。同进程的 `startLocalRuntime` 读得到当前进程的变量，但不能代替这次复制。
+
 ## 数据
 
 新迁移 `apps/hub/src/db/migrations/019_knowledge_shares.sql`：

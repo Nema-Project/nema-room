@@ -35,7 +35,7 @@
 | `apps/hub/src/shareAdmin.ts` | 主人的列表、创建、撤销 |
 | `apps/hub/src/app.ts` | 挂上 `/share` 的 hostGuard 与两条路由；`sharesEnabled` 依赖 |
 | `apps/hub/src/uiApi.ts` | 保密/归档与撤销放进同一事务 |
-| `apps/hub/src/lifecycle.ts`、`apps/hub/src/main.ts`、`apps/local/src/runtime.ts` | 总开关进入 `StartHubOptions`；Compose 与桌面两条启动都传入 |
+| `apps/hub/src/lifecycle.ts`、`apps/hub/src/main.ts`、`apps/local/src/runtime.ts` | 总开关进入 `StartHubOptions`。`main.ts` 与 core 内的 `runtime.ts` 都读取。桌面 launcher 的 `childEnvironment` 把 `NEMA_SHARES_ENABLED` 原样复制进 core，包括 `0` |
 | `apps/hub/test/shares.test.ts` | 存储、投影、路由、泄露、Host、撤销 |
 | `apps/local/test/migration.test.ts` | 快照拒绝 `knowledge_shares` |
 | `apps/web/lib/shareHub.ts` | 服务端内部请求；校验 URL；不转发访客头 |
@@ -46,7 +46,7 @@
 | `apps/web/components/ShareView.tsx` | 只读列表与正文 |
 | `apps/local/src/gateway.ts` | `/s/...` 无会话转发 |
 | `apps/local/src/runtime.ts`、`scripts/desktop/templates/web-parent.mjs` | web 接受 HTTP 之后把回环 URL 交给 web 进程 |
-| `docker-compose.yml` | `NEMA_HUB_INTERNAL_URL` |
+| `docker-compose.yml` | web 的 `NEMA_HUB_INTERNAL_URL`；hub 的 `NEMA_SHARES_ENABLED: ${NEMA_SHARES_ENABLED:-}`，Release 资产保留这一行 |
 | 三语 messages、四份 README、三份 guide、`docs/reference.zh-CN.md`、`SECURITY.md`、`changelog.d/`、`ROADMAP.md` | 文档 |
 
 ---
@@ -271,7 +271,9 @@ test("marking confidential revokes active links in one step", async () => {
 
 再覆盖：归档同样撤销且取消归档不恢复；保密工作区 POST 创建为 409；`sharesEnabled: false` 时 POST 为 403，GET 列表与 POST revoke 仍 200；重复 revoke 为 200。
 
-桌面启动：`apps/local/test/runtime.test.ts` 在 `startLocalRuntime` 之前把 `NEMA_SHARES_ENABLED` 设为 `0`。`runtimeReadyHookForTests` 要能拿到 `hub.url`。钩子里写入一条分享行，再以回环 Host 请求 `GET /share/<token>`，得到与无效链接相同的 404。测完删掉该变量。
+桌面 core：`apps/local/test/runtime.test.ts` 在同进程 `startLocalRuntime` 之前把 `NEMA_SHARES_ENABLED` 设为 `0`。`runtimeReadyHookForTests` 要能拿到 `hub.url`。钩子里写入一条分享行，再以回环 Host 请求 `GET /share/<token>`，得到与无效链接相同的 404。测完删掉该变量。这个用例只证明 core 进程里已经有该变量时 hub 会关掉分享。
+
+桌面 launcher：同一文件里已有 bench flag 用例，用 `setEnsureSpawnerForTests` 截获 `ensureLocalRuntime` 的 `spec.env`。`NEMA_SHARES_ENABLED=0` 时该字段必须是 `"0"`；删掉变量后再调一次，该字段必须是 `undefined`。这才经过 `childEnvironment`。同进程用例不能代替它。
 
 并发：同时 `createShare` 和把同一工作区 PATCH 成 `confidential: true`，等两边都结束，再 PATCH 回 `confidential: false`。创建若返回 409，`knowledge_shares` 里不能有 `revoked_at is null` 的行；创建若返回 token，`resolveShare` 必须是 `{ found: true, available: false }`。归档走同一断言。PGlite 一次只跑一个事务（`apps/hub/test/messages.test.ts` 已写明真正的重叠要 PostgreSQL），所以这条不能单独证明两个连接的交错。再用那个文件里的 `record` 包装记下 SQL：`createShare` 与这次限制性 PATCH 的事务里，第一条对 `workspaces` 的语句都是 `select ... for update`，分享行的 `insert` 发生在同一事务、且在锁之后。事务外先读 `confidential` 再插入的写法过不了这条。
 
@@ -312,7 +314,9 @@ const updated = await db.tx(async (tx) => {
 
 `deleteWorkspace` 已经用 `select id from workspaces where id = $1 for update`。`updateWorkspace` 只对传入的 `Db` 执行 `query`，把 `tx` 传进去不会再开一个事务。`db.tx` 在 `pg` 和 PGlite 上都会把嵌套调用并进外层事务。不要复制 `updateWorkspace` 的 UPDATE。锁要在读状态和插入之前拿到，并持有到事务提交：先提交的创建会被随后的撤销扫到；先提交的保密或归档会让还在等待的创建看到新状态并返回 409。公开读取时再查一次保密和归档，那不是这把锁的替代。事务只包住这把锁、`updateWorkspace` 和 `revokeActiveShares`。取消归档后通知排队任务，以及 `syncBoundRepos`，仍放在事务提交之后；不要把 daemon 调用放进这把锁。
 
-总开关进 `StartHubOptions`，再由 `startHub` 传给 `createApp`。桌面不走 `main.ts`：`apps/local/src/runtime.ts` 直接调用 `startHub`（约第 499 行），现在的选项里没有这个字段。`main.ts` 与 `runtime.ts` 都传 `sharesEnabled: process.env.NEMA_SHARES_ENABLED !== "0"`。缺省仍是开启。`NEMA_SHARES_ENABLED=0` 时桌面 hub 上已有链接的公开读取也是 404。
+总开关进 `StartHubOptions`，再由 `startHub` 传给 `createApp`。桌面不走 `main.ts`：core 里的 `apps/local/src/runtime.ts` 直接调用 `startHub`（约第 499 行），现在的选项里没有这个字段。`main.ts` 与 core 内的 `runtime.ts` 都传 `sharesEnabled: process.env.NEMA_SHARES_ENABLED !== "0"`。缺省仍是开启。`NEMA_SHARES_ENABLED=0` 时桌面 hub 上已有链接的公开读取也是 404。
+
+`childEnvironment`（同文件约第 251 行）只复制一份白名单，外加 `NEMA_DESKTOP_BENCH` 为 `1` 时的那一项，以及 Electron 的 `ELECTRON_RUN_AS_NODE`。`ensureLocalRuntime`（约第 586 行）用 `childEnvironment({})` 启动 core。桌面 `apps/desktop/lifecycle.cjs` 走的是 `ensureLocalRuntime`。父进程把 `NEMA_SHARES_ENABLED` 设成 `0` 时，子进程现在看不到它，分享会保持开启。变量有定义时原样复制，包括 `0`。未设置时不写入。不要只在值为 `1` 时复制：那是 bench flag 的写法，用在这里会把 `0` 丢掉。
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -477,7 +481,7 @@ git commit -m "feat(web): render a read-only knowledge share page"
 - `POST /s/${"a".repeat(43)}` 为 405。
 - `Host` 不是网关 origin 时仍是 403。
 
-`check-images` 断言 web 环境包含 `NEMA_HUB_INTERNAL_URL: http://hub:${NEMA_HUB_PORT:-4400}`，并且原有 `NEMA_HUB_URL` 断言不变。
+`check-images` 断言 web 环境包含 `NEMA_HUB_INTERNAL_URL: http://hub:${NEMA_HUB_PORT:-4400}`，并且原有 `NEMA_HUB_URL` 断言不变。`assertComposeShape` 要求 hub 块包含 `NEMA_SHARES_ENABLED: ${NEMA_SHARES_ENABLED:-}`。`renderComposeAsset` 只替换镜像标签和文件头，Release 资产必须留下这一行。`check-images.test.mjs` 对模板和这份资产都跑 `docker compose config`：环境里 `NEMA_SHARES_ENABLED=0` 时 `services.hub.environment.NEMA_SHARES_ENABLED` 是 `"0"`；未设置时不是 `"0"`。`docker-compose.build.yml` 不覆盖 hub 的 environment，合并后的源码 Compose 做同样的断言。
 
 `fake-web.mjs` 在 `listen` 之前同步记录收到的 `{ type: "hub-url" }`。runtime 测试断言这条消息在 fixture 开始接受 HTTP 之后才到达，且 `url` 等于这次临时端口 hub 的回环地址。
 
@@ -500,6 +504,8 @@ process.on("message", (message) => {
   }
 });
 ```
+
+hub 的 environment 增加 `NEMA_SHARES_ENABLED: ${NEMA_SHARES_ENABLED:-}`。Compose 不会把宿主机上没写进 `environment` 的变量送进容器。现在 hub 块没有这一行，操作者设成 `0` 时容器里该变量是未设置，`!== "0"` 仍为真，已有链接还能读。空默认值让未设置保持为空，分享保持开启。不要写成 `:-1`：那会在操作者明确设 `0` 之前就打不开关闭。
 
 `runtime.ts` 不要在 `startHub` 返回时立刻 `webChild.send`。v0.2.4 起 `httpReady` 与 `createLocalDb`、`startHub` 重叠，那个时刻子进程可能还停在 `await import("./server.js")`。已有的 `await webReady` 在 `startHub` 之后，表示子进程已经接受回环 HTTP；监听器又在 import 之前，所以在 `await webReady` 之后发送一次 `{ type: "hub-url", url: hub.url }`。发送失败只记日志，不把 hub URL 写进日志以外的公开响应。`apps/local/test/fixtures/fake-web.mjs` 在开始监听之前同步记下收到的 `hub-url`。runtime 测试断言这条消息在 fixture 接受 HTTP 之后到达，且 `url` 等于这次 `startHub({ port: 0 })` 的回环地址。
 
