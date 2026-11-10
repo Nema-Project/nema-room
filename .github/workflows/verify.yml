@@ -82,6 +82,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run typecheck -w apps/cli
+      - name: Source startup sample
+        run: node --conditions=development --import tsx scripts/ci/startup-sample.mjs
       - run: node --test scripts/setup.test.mjs scripts/release-notes.test.mjs
       - run: node scripts/setup.mjs --help
       - name: Native credentials, command execution, and authentication
