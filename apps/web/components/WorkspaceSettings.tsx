@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AccountPicker } from "@/components/AccountPicker";
 import { CodeAndPlugins } from "@/components/CodeAndPlugins";
+import { ShareKnowledge } from "@/components/ShareKnowledge";
 import { updateWorkspace } from "@/lib/hub";
 import { boundAccount } from "@/lib/accounts";
 import { useAccounts } from "@/lib/useAccounts";
@@ -89,6 +90,7 @@ export function WorkspaceSettings({ workspace, onUpdated, onClose }: WorkspaceSe
 
           {error && <p className="error" role="alert">{error}</p>}
         </section>
+        <ShareKnowledge workspaceId={workspace.id} confidential={workspace.confidential} archived={workspace.archived} />
         <CodeAndPlugins workspaceId={workspace.id} />
       </div>
     </aside>
