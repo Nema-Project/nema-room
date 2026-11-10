@@ -156,6 +156,8 @@ hub 进程内记忆，单进程，重启清空。不做成配置项。
 
 变量必须真的到达 hub 进程。Compose 的 hub `environment` 写成 `NEMA_SHARES_ENABLED: ${NEMA_SHARES_ENABLED:-}`。仓库模板和 `renderComposeAsset` 生成的 Release `docker-compose.yml` 都保留这一行：操作者设成 `0` 时容器里是 `0`，未设置时不是 `0`。桌面 launcher 的 `childEnvironment`（`apps/local/src/runtime.ts`）在变量有定义时原样复制进 core，包括 `0`。`apps/desktop/lifecycle.cjs` 调用的 `ensureLocalRuntime` 用的就是这份过滤后的环境。同进程的 `startLocalRuntime` 读得到当前进程的变量，但不能代替这次复制。
 
+已在运行的 core 不会因为 launcher 改了环境就改开关。`ensureLocalRuntime` 有两条复用，都发生在新环境生效之前：开头 `discoverInstance` 已经找到实例就返回 `reused: true`；新 core 报 `NEMA_LOCAL_OWNER_COLLISION` 之后再发现那个实例，也返回 `reused: true`。`instance.json` 不记录总开关，也没有一条通道去改正在运行的 hub。所以 launcher 设成 `0` 时，这两条复用都不能原样返回。先用已有的 `shutdownLocalRuntime` 停掉那个 core，再按过滤后的环境启动。停不掉就拒绝复用，错误写明分享在正在运行的 core 上仍然开着。未设置不是 `0`。未设置或 `1` 仍然可以复用，不要把未设置当成关闭。
+
 ## 数据
 
 新迁移 `apps/hub/src/db/migrations/019_knowledge_shares.sql`：

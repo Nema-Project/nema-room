@@ -321,6 +321,10 @@ const updated = await db.tx(async (tx) => {
 
 `childEnvironment`（同文件约第 251 行）只复制一份白名单，外加 `NEMA_DESKTOP_BENCH` 为 `1` 时的那一项，以及 Electron 的 `ELECTRON_RUN_AS_NODE`。`ensureLocalRuntime`（约第 586 行）用 `childEnvironment({})` 启动 core。桌面 `apps/desktop/lifecycle.cjs` 走的是 `ensureLocalRuntime`。父进程把 `NEMA_SHARES_ENABLED` 设成 `0` 时，子进程现在看不到它，分享会保持开启。变量有定义时原样复制，包括 `0`。未设置时不写入。不要只在值为 `1` 时复制：那是 bench flag 的写法，用在这里会把 `0` 丢掉。
 
+复用不会把新环境送进旧 core。第一条在 `discoverInstance` 命中时直接返回（约第 571 行）。第二条在新 core 报 `NEMA_LOCAL_OWNER_COLLISION` 之后返回已有实例（约第 675 行）。`instance.json` 不记录总开关。launcher 的 `NEMA_SHARES_ENABLED` 明确为 `0` 时，这两条都不能返回 `reused: true`。先 `shutdownLocalRuntime` 停掉旧 core，再启动，新进程的环境里该变量是 `"0"`。停不掉就抛错，消息写明 sharing remains enabled，不要带着旧 core 继续。未设置与 `0` 必须分开：未设置或 `1` 仍可复用。
+
+`runtime.test.ts` 覆盖这两条。先有一个未设置该变量时就绪的 core，再以 `NEMA_SHARES_ENABLED=0` 调用 `ensureLocalRuntime`。直接命中和碰撞命中都不是 `reused: true` 指向旧 core。停得掉时，新 core 的 `spec.env.NEMA_SHARES_ENABLED` 是 `"0"`。注入的 shutdown 失败时，错误消息包含 `sharing remains enabled`，并且没有返回旧实例。测完恢复环境变量。
+
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `npx vitest run apps/hub/test/shares.test.ts apps/hub/test/uiApi.test.ts apps/local/test/runtime.test.ts`
