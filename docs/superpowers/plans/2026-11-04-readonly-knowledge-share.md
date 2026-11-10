@@ -13,7 +13,9 @@
 ## Global Constraints
 
 - 对照 spec 的 D-1 到 D-10，实现不得改这些选择。
-- `hostGuard` 的允许名单仍然只有 `127.0.0.1:<port>` 与 `localhost:<port>`。`/share` 也走它。
+- `hostGuard` 的允许名单仍然只有 `127.0.0.1:<port>` 与 `localhost:<port>`。`/share` 也走它。不把局域网地址加进去。
+- 一条链接分享整个知识库（D-1，用户已确认 2026-11-11）。不做部分条目分享。
+- 分享页只允许 D-4 的内网来源（用户已确认 2026-11-11）。不支持公网、隧道、反向代理。来源是 TCP 对端，不是 `X-Forwarded-For`。这些转发头出现就拒绝，并且不向 hub 发请求。hub 的宿主机端口保持 `127.0.0.1`。
 - 分享 token 不是 `/api`、`/room`、`/report` 的凭据。公开页不 import `@/lib/hub`，HTML 不含 `window.__NEMA_HUB_URL__`。
 - 明文 token 只出现在创建响应。不进日志、错误正文、快照。
 - `knowledge_shares` 不加入 `TABLE_COLUMNS` / `OPTIONAL_TABLES`。
@@ -39,6 +41,7 @@
 | `apps/hub/test/shares.test.ts` | 存储、投影、路由、泄露、Host、撤销 |
 | `apps/local/test/migration.test.ts` | 快照拒绝 `knowledge_shares` |
 | `apps/web/lib/shareHub.ts` | 服务端内部请求；校验 URL；不转发访客头 |
+| `apps/web/lib/sharePeer.ts` | 内网来源判断。不读转发头 |
 | `apps/web/app/(room)/layout.tsx` | 从根 layout 移来的私有壳 |
 | `apps/web/app/(room)/page.tsx` 与 `(room)/w/**` | 现有页面，URL 不变 |
 | `apps/web/app/s/layout.tsx`、`s/[token]/page.tsx`、`s/[token]/e/[eid]/page.tsx` | 公开页 |
@@ -46,7 +49,7 @@
 | `apps/web/components/ShareView.tsx` | 只读列表与正文 |
 | `apps/local/src/gateway.ts` | `/s/...` 无会话转发 |
 | `apps/local/src/runtime.ts`、`scripts/desktop/templates/web-parent.mjs` | web 接受 HTTP 之后把回环 URL 交给 web 进程 |
-| `docker-compose.yml` | web 的 `NEMA_HUB_INTERNAL_URL`；hub 的 `NEMA_SHARES_ENABLED: ${NEMA_SHARES_ENABLED:-}`，Release 资产保留这一行 |
+| `docker-compose.yml` | web 的 `NEMA_HUB_INTERNAL_URL`；hub 的 `NEMA_SHARES_ENABLED: ${NEMA_SHARES_ENABLED:-}`，Release 资产保留这一行；web 的 `host_ip` 是 `${NEMA_WEB_BIND:-127.0.0.1}`，hub 宿主机端口仍是 `127.0.0.1` |
 | 三语 messages、四份 README、三份 guide、`docs/reference.zh-CN.md`、`SECURITY.md`、`changelog.d/`、`ROADMAP.md` | 文档 |
 
 ---
@@ -192,7 +195,7 @@ test("share routes reject writes and do not accept the gateway credential", asyn
 });
 ```
 
-再断言：撤销后下一次 GET 是 404，正文是 `{"error":"not found"}`；过期、保密、归档、`sharesEnabled: false` 的正文与「没有这个 token」相同；带 `uiAuth` 的应用上，无凭据的 `GET /share/...` 仍是 200，无凭据的 `GET /api/workspaces` 仍是 401。
+再断言：撤销后下一次 GET 是 404，正文是 `{"error":"not found"}`；过期、保密、归档、`sharesEnabled: false` 的正文与「没有这个 token」相同；带 `uiAuth` 的应用上，无凭据的 `GET /share/...` 仍是 200，无凭据的 `GET /api/workspaces` 仍是 401。`Host: 192.168.1.5:4400` 与 `Host: hub:4400` 也是 403，hostGuard 不因为 D-4 的局域网来源而放行。
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -398,7 +401,7 @@ git commit -m "fix(hub): rate-limit share reads and keep tokens out of snapshots
 
 **Files:**
 
-- Create: `apps/web/lib/shareHub.ts`
+- Create: `apps/web/lib/shareHub.ts`、`apps/web/lib/sharePeer.ts`
 - Create: `apps/web/app/s/layout.tsx`
 - Create: `apps/web/app/s/[token]/page.tsx`
 - Create: `apps/web/app/s/[token]/e/[eid]/page.tsx`
@@ -408,7 +411,7 @@ git commit -m "fix(hub): rate-limit share reads and keep tokens out of snapshots
 - Move: `apps/web/app/page.tsx` → `apps/web/app/(room)/page.tsx`
 - Move: `apps/web/app/w/**` → `apps/web/app/(room)/w/**`
 - Modify: `apps/web/test/page.test.tsx`、`apps/web/next.config.ts`
-- Test: `apps/web/test/shareHub.test.ts`、`apps/web/test/ShareView.test.tsx`
+- Test: `apps/web/test/shareHub.test.ts`、`apps/web/test/sharePeer.test.ts`、`apps/web/test/ShareView.test.tsx`
 
 **Interfaces:**
 
@@ -426,17 +429,21 @@ git commit -m "fix(hub): rate-limit share reads and keep tokens out of snapshots
 
 用 `node:http` 的测试桩或把 `request` 函数注入 `fetchShare`。不要为了测试去改 hub。
 
+`sharePeer.test.ts` 按 spec D-4 的表断言 `isPrivateSharePeer` 与 `sharePeerDecision(peer, headers)`。允许前缀各至少一个地址。`8.8.8.8`、`172.32.0.1`、`100.64.0.1`、`203.0.113.5`、`2001:db8::1`、`::ffff:8.8.8.8` 是 `reject`。`::ffff:192.168.0.5`、`fd00::1`、`fe80::1`、`fe80::1%eth0`、`::1`、`127.0.0.1` 是 `allow`。对端 `10.1.2.3` 带 `X-Forwarded-For` 是 `reject`。对端 `203.0.113.5` 且头里是 `10.0.0.5` 也是 `reject`，不能按头放行。`sharePeerDecision` 为 `reject` 时页面不调用 `fetchShare`。
+
 `ShareView.test.tsx` 渲染一条条目，断言没有 textbox、没有 button 名称匹配发送/确认/编辑，链接指向 `/s/<token>/e/D-1`。
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `npx vitest run apps/web/test/shareHub.test.ts apps/web/test/ShareView.test.tsx`
+Run: `npx vitest run apps/web/test/shareHub.test.ts apps/web/test/sharePeer.test.ts apps/web/test/ShareView.test.tsx`
 
 Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-`shareHub.ts` 用 `node:http`，按 spec 校验 URL 和 2 MiB / 10 秒上限。`next.config.ts` 的 `headers()` 给 `/s/:path*` 加上 spec D-9 的五个响应头。
+`sharePeer.ts` 导出 `isPrivateSharePeer(address: string): boolean` 与 `sharePeerDecision(peer: string | null | undefined, headers: Headers | Record<string, string | string[] | undefined>): "allow" | "reject"`。转发头名是 `x-forwarded-for`、`forwarded`、`x-real-ip`、`cf-connecting-ip`、`true-client-ip`、`x-forwarded-host`，大小写不敏感，出现即 `reject`，不解析值。不要调用 `NextRequest.ip`。
+
+`shareHub.ts` 用 `node:http`，按 spec 校验 URL 和 2 MiB / 10 秒上限。`next.config.ts` 的 `headers()` 给 `/s/:path*` 加上 spec D-9 的五个响应头。分享页在调用 `fetchShare` 之前先看 `sharePeerDecision`，`reject` 时渲染与无效链接相同的 404，不请求 hub。
 
 根 layout 只留 html、字体、`globals.css`、`I18nProvider`。私有壳移到 `(room)/layout.tsx`。`page.test.tsx` 的 import 改为 `@/app/(room)/page`。
 
@@ -444,14 +451,14 @@ Expected: FAIL
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `npx vitest run apps/web/test/shareHub.test.ts apps/web/test/ShareView.test.tsx apps/web/test/page.test.tsx`
+Run: `npx vitest run apps/web/test/shareHub.test.ts apps/web/test/sharePeer.test.ts apps/web/test/ShareView.test.tsx apps/web/test/page.test.tsx`
 
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/web/lib/shareHub.ts apps/web/app apps/web/components/ShareView.tsx apps/web/test apps/web/next.config.ts
+git add apps/web/lib/shareHub.ts apps/web/lib/sharePeer.ts apps/web/app apps/web/components/ShareView.tsx apps/web/test apps/web/next.config.ts
 git commit -m "feat(web): render a read-only knowledge share page"
 ```
 
@@ -462,8 +469,8 @@ git commit -m "feat(web): render a read-only knowledge share page"
 **Files:**
 
 - Modify: `apps/local/src/gateway.ts`、`apps/local/test/gateway.test.ts`
-- Modify: `apps/local/src/runtime.ts`、`apps/local/test/runtime.test.ts`、`apps/local/test/fixtures/fake-web.mjs`、`scripts/desktop/templates/web-parent.mjs`
-- Modify: `docker-compose.yml`、`scripts/images/check-images.mjs`、`scripts/images/check-images.test.mjs`
+- Modify: `apps/local/src/runtime.ts`、`apps/local/test/runtime.test.ts`、`apps/local/test/fixtures/fake-web.mjs`、`scripts/desktop/templates/web-parent.mjs`、`scripts/images/web-entrypoint.sh`
+- Modify: `docker-compose.yml`、`scripts/images/check-images.mjs`、`scripts/images/check-images.test.mjs`、`scripts/up.mjs`、`scripts/setup.mjs`
 
 **Interfaces:**
 
@@ -479,9 +486,12 @@ git commit -m "feat(web): render a read-only knowledge share page"
 - 无 cookie 的 `GET /api/workspaces` 仍是 401，且 hub 收到 0 次请求。
 - `GET /s/short` 不联系 web，404。
 - `POST /s/${"a".repeat(43)}` 为 405。
-- `Host` 不是网关 origin 时仍是 403。
+- `Host` 不是网关 origin 时仍是 403。网关继续只听 `127.0.0.1`，Host 继续只接受 `127.0.0.1:<gatewayPort>`。
+- 回环上的 `GET /s/${"a".repeat(43)}` 只要带了 `X-Forwarded-For`，就是 404，web 收到 0 次。头的值即使是 `10.0.0.1` 也不放行。
 
 `check-images` 断言 web 环境包含 `NEMA_HUB_INTERNAL_URL: http://hub:${NEMA_HUB_PORT:-4400}`，并且原有 `NEMA_HUB_URL` 断言不变。`assertComposeShape` 要求 hub 块包含 `NEMA_SHARES_ENABLED: ${NEMA_SHARES_ENABLED:-}`。`renderComposeAsset` 只替换镜像标签和文件头，Release 资产必须留下这一行。`check-images.test.mjs` 对模板和这份资产都跑 `docker compose config`：环境里 `NEMA_SHARES_ENABLED=0` 时 `services.hub.environment.NEMA_SHARES_ENABLED` 是 `"0"`；未设置时不是 `"0"`。`docker-compose.build.yml` 不覆盖 hub 的 environment，合并后的源码 Compose 做同样的断言。
+
+`assertWebBind` 接受 `127.0.0.1`、`192.168.1.10`、`fd00::10`，拒绝 `0.0.0.0`、`::`、`1.2.3.4`、`example.com`。web 端口改成长写法，`host_ip` 是 `${NEMA_WEB_BIND:-127.0.0.1}`。`NEMA_WEB_BIND=192.168.1.10` 时解析结果的 `host_ip` 是该地址。hub 的发布地址仍是 `127.0.0.1`，模板里不能出现把 web 发布到字面量 `0.0.0.0` 的行。非法绑定在 `npm run up` 之前失败。
 
 `fake-web.mjs` 在 `listen` 之前同步记录收到的 `{ type: "hub-url" }`。runtime 测试断言这条消息在 fixture 开始接受 HTTP 之后才到达，且 `url` 等于这次临时端口 hub 的回环地址。
 
@@ -493,7 +503,9 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-`mappedTarget` 增加 spec 里的两条正则，返回 `{ target: web, ui: true, publicShare: true }`。`handle` 里 `publicShare` 跳过会话检查。非 GET/HEAD 在转发前 405。
+`mappedTarget` 增加 spec 里的两条正则，返回 `{ target: web, ui: true, publicShare: true }`。`handle` 里 `publicShare` 跳过会话检查。非 GET/HEAD 在转发前 405。`/s` 与 `/s/` 在转发前调用 `sharePeerDecision(req.socket.remoteAddress, req.headers)`。结果是 `reject` 时直接 404，`Cache-Control: no-store`，正文 `not found`，不联系 web。网关仍然 `listen(port, "127.0.0.1")`，不读取 `NEMA_WEB_BIND`。
+
+`web-parent.mjs` 与 `scripts/images/web-entrypoint.sh` 在加载 `server.js` 之前包装 `http.Server` 的 `request`：路径是 `/s` 或以 `/s/` 开头时，用 `req.socket.remoteAddress` 和原始头调用同一个 `sharePeerDecision`。`reject` 时写 404 与 `Cache-Control: no-store`，正文 `not found`，不把请求交给 Next，也不请求 hub。其余路径原样交给 Next。不要读 `NextRequest.ip`。容器内 `HOSTNAME` 仍是 `0.0.0.0`；局域网范围只由宿主机的 `host_ip` 和这道对端判断决定。
 
 `web-parent.mjs` 在 `await import("./server.js")` 之前注册监听。今天这个文件只在 import 之后发送 `{ type: "managed-web-ready", port }`，没有入站监听：
 
@@ -504,6 +516,8 @@ process.on("message", (message) => {
   }
 });
 ```
+
+web 端口改为长写法，`host_ip: ${NEMA_WEB_BIND:-127.0.0.1}`，`published: ${NEMA_WEB_PORT:-3000}`，`target: 3000`。`assertWebBind` 放在 `scripts/images/check-images.mjs`，按 D-4 拒绝 `0.0.0.0`、`::`、公网地址和域名。`scripts/up.mjs` 与 `scripts/setup.mjs` 在调用 `devComposeUpArgs()` 之前调用它。hub 的宿主机端口一行不改。
 
 hub 的 environment 增加 `NEMA_SHARES_ENABLED: ${NEMA_SHARES_ENABLED:-}`。Compose 不会把宿主机上没写进 `environment` 的变量送进容器。现在 hub 块没有这一行，操作者设成 `0` 时容器里该变量是未设置，`!== "0"` 仍为真，已有链接还能读。空默认值让未设置保持为空，分享保持开启。不要写成 `:-1`：那会在操作者明确设 `0` 之前就打不开关闭。
 
@@ -518,7 +532,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/local/src/gateway.ts apps/local/src/runtime.ts apps/local/test/gateway.test.ts apps/local/test/runtime.test.ts apps/local/test/fixtures/fake-web.mjs scripts/desktop/templates/web-parent.mjs docker-compose.yml scripts/images/check-images.mjs scripts/images/check-images.test.mjs
+git add apps/local/src/gateway.ts apps/local/src/runtime.ts apps/local/test/gateway.test.ts apps/local/test/runtime.test.ts apps/local/test/fixtures/fake-web.mjs scripts/desktop/templates/web-parent.mjs scripts/images/web-entrypoint.sh docker-compose.yml scripts/images/check-images.mjs scripts/images/check-images.test.mjs scripts/up.mjs scripts/setup.mjs
 git commit -m "feat(local): serve knowledge shares without a desktop session"
 ```
 
@@ -639,7 +653,7 @@ Run:
 
 ```bash
 npm run typecheck
-npx vitest run apps/hub/test/shares.test.ts apps/hub/test/uiApi.test.ts apps/local/test/migration.test.ts apps/local/test/gateway.test.ts apps/web/test/shareHub.test.ts apps/web/test/ShareView.test.tsx apps/web/test/ShareKnowledge.test.tsx apps/web/test/page.test.tsx
+npx vitest run apps/hub/test/shares.test.ts apps/hub/test/uiApi.test.ts apps/local/test/migration.test.ts apps/local/test/gateway.test.ts apps/web/test/shareHub.test.ts apps/web/test/sharePeer.test.ts apps/web/test/ShareView.test.tsx apps/web/test/ShareKnowledge.test.tsx apps/web/test/page.test.tsx
 npm run lint -w apps/web
 ```
 
@@ -653,4 +667,4 @@ Expected: 构建成功。抽查生成的分享路由不依赖 `NEXT_PUBLIC_HUB_U
 
 - [ ] **Step 3: 不在本期的项保持未做**
 
-确认 diff 里没有 users 表、分享密码、部分条目分享、图 HTML、桌面公网 Host 白名单。`ROADMAP.md` 的 P2-04 不是「已完成」。
+确认 diff 里没有 users 表、分享密码、部分条目分享、图 HTML、桌面公网 Host 白名单、桌面局域网绑定、信任 `X-Forwarded-For` 的放行。`ROADMAP.md` 的 P2-04 不是「已完成」。

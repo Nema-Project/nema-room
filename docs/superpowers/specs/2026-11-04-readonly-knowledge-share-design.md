@@ -2,7 +2,7 @@
 
 日期：2026-11-04。Issue：[Nema-Project/nema-room#165](https://github.com/Nema-Project/nema-room/issues/165)。产品判断标准：[Nema-Project/nema-room#45](https://github.com/Nema-Project/nema-room/issues/45)。
 
-**状态**：设计。D-2、D-3、D-5 到 D-10 已按审阅修订。D-1 与 D-4 仍待确认，这两节的正文保持原决定，确认之前不改写。实现不得改这些选择。本文件不改生产代码。实施计划见 [plan](../plans/2026-11-04-readonly-knowledge-share.md)。
+**状态**：设计。D-2、D-3、D-5 到 D-10 已按审阅修订。D-1 与 D-4 已由用户在 2026-11-11 确认。实现不得改这些选择。本文件不改生产代码。实施计划见 [plan](../plans/2026-11-04-readonly-knowledge-share.md)。
 
 **设计所对照的 HEAD**：`1bb9389b66f086b0ad27879851b3a6a9cfcebda5`（`origin/main`）。标为「已核对」的行为是在这个 SHA 上读代码得到的。2026-11-10 复核时，main 上已有 v0.2.4 的桌面启动重叠，以及 [#219](https://github.com/Nema-Project/nema-room/pull/219) 的提及候选搜索。main 没有名为 v0.2.5 的发布记录。
 
@@ -31,7 +31,7 @@
 
 ## 已考虑的做法
 
-1. **推荐：公开页只在 web origin，hub 的分享接口仍只认回环 Host。** 访客打开 `https://<web 主机>/s/<token>`。Next 服务端用 `node:http` 请求 hub 的 `/share/<token>`，并把 `Host` 设为 `127.0.0.1:<hub 端口>`。`hostGuard` 一行不放宽。浏览器不连接 hub，也不持有 `uiAuth` 凭据。桌面网关把 `/s/...` 加入白名单且不要求会话。这是下面采用的做法。
+1. **推荐：公开页只在 web origin，hub 的分享接口仍只认回环 Host。** 访客打开 `{web origin}/s/<token>`。这个 origin 只在回环或局域网，见 D-4。Next 服务端用 `node:http` 请求 hub 的 `/share/<token>`，并把 `Host` 设为 `127.0.0.1:<hub 端口>`。`hostGuard` 一行不放宽。浏览器不连接 hub，也不持有 `uiAuth` 凭据。桌面网关把 `/s/...` 加入白名单且不要求会话。这是下面采用的做法。
 2. **给 `/share` 单独放开 hostGuard，让浏览器直连 hub。** 公开链接就能打到 hub 端口。hub 一旦被发布到公网，分享接口和错误配置的其他路由暴露面绑在一起。DNS rebinding 的防护也会变成「这条前缀例外」。不采用。
 3. **hub 再监听一个只提供分享的端口。** 多一个必须保持回环或被误发布的端口，HTML 还要在 hub 里重做一套。不采用。
 
@@ -41,7 +41,7 @@
 
 ### D-1 分享粒度
 
-一条链接覆盖该 workspace **当前知识库的全部条目**。不能只分享一部分，也不能按 kind 过滤。不存在「父条目公开、子条目未公开」。
+用户已确认 2026-11-11。一条链接分享该 workspace **当前知识库的全部条目**。不做部分条目分享，也不按 kind 过滤。不存在「父条目公开、子条目未公开」。
 
 ### D-2 有效期与撤销
 
@@ -57,11 +57,38 @@
 
 ### D-4 对外暴露
 
-访客只访问 **web 的 origin**。hub 端口保持今天的发布方式（宿主机回环）。分享 URL 是 `{web origin}/s/{token}`，由主人浏览器的 `location.origin` 拼出来，不写进 hub。
+用户已确认 2026-11-11。分享页只允许内网或局域网访问。不支持公网，不做隧道，不做公网转发。
 
-- 默认 Compose 和桌面都只绑 `127.0.0.1`，所以链接只在那台机器上打得开。这是支持的用法。
-- 要给另一台机器看，操作者只把 **web 端口** 用反向代理或明确的端口绑定公布出去，并保持 hub 不公布。本 spec 不增加隧道，也不给桌面网关加「允许的公网 Host」。桌面网关现有的 Host 检查继续只接受 `127.0.0.1:<gatewayPort>`。把桌面公布到公网仍然不是支持的用法（`SECURITY.md` 已有这条边界）。
-- `hostGuard` 的允许名单不变，仍然只有 `127.0.0.1:<port>` 与 `localhost:<port>`，并且 `/share` 也走这道检查。用 `Host: hub:4400` 或任何外部域名访问 `/share` 仍然 403。
+访客仍只打开 **web 的 origin**。分享 URL 是 `{web origin}/s/{token}`，由主人浏览器的 `location.origin` 拼出来，不写进 hub。主人若从 `127.0.0.1` 打开设置，复制出去的就是回环 URL，只能在那台机器上打开。hub 的宿主机端口保持 `127.0.0.1`，没有把 hub 改到局域网或公网的变量。浏览器不连接 hub。
+
+`hostGuard` 只做最小放行：允许名单不增加地址，仍然只有 `127.0.0.1:<port>` 与 `localhost:<port>`，并且 `/share` 也走这道检查。用局域网地址、`Host: hub:4400` 或任何外部域名访问 `/share` 仍然 403。桌面网关的 Host 检查也不放宽，仍然只接受 `127.0.0.1:<gatewayPort>`。
+
+来源看接受访客连接的那个 TCP 对端，不看转发头。判断前去掉 IPv6 zone id（`fe80::1%eth0` 按 `fe80::1`）。不解析域名。允许：
+
+- IPv4：`127.0.0.0/8`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`169.254.0.0/16`。
+- IPv6：`::1/128`、`fc00::/7`、`fe80::/10`。
+- IPv4 映射地址 `::ffff:0:0/96` 先取出末 32 位，再按 IPv4 名单判断。`::ffff:8.8.8.8` 拒绝，`::ffff:10.0.0.1` 允许。
+
+其余拒绝。其中包括 `0.0.0.0/8`、`100.64.0.0/10`（CGNAT）、多播、保留、广播、未指定地址 `::`、文档网段（`192.0.2.0/24`、`198.51.100.0/24`、`203.0.113.0/24`、`2001:db8::/32`）、全局单播，以及 6to4、Teredo、NAT64。
+
+绑定：
+
+- `NEMA_WEB_BIND` 默认 `127.0.0.1`，只决定 web 宿主机端口的 `host_ip`。hub 的宿主机端口不读它，仍然是 `127.0.0.1:${NEMA_HUB_PORT:-4400}:${NEMA_HUB_PORT:-4400}`。
+- 值必须是上面名单里的一个具体地址，不带方括号、不带端口。拒绝 `0.0.0.0`、`::`、公网地址、域名和空字符串。启动检查 `assertWebBind` 失败时不把 Compose 拉起来。
+- `docker-compose.yml` 的 web 端口用长写法：`host_ip: ${NEMA_WEB_BIND:-127.0.0.1}`，`published: ${NEMA_WEB_PORT:-3000}`，`target: 3000`。这样 IPv6 地址不必先加方括号。容器内 Next 仍听 `0.0.0.0:3000`（`scripts/images/web-entrypoint.sh` 把 `HOSTNAME` 设成 `0.0.0.0`）。那是容器自己的套接字，不是宿主机暴露。
+- 桌面网关继续 `listen(port, "127.0.0.1")`（`apps/local/src/gateway.ts`）。本期不把桌面绑到局域网。桌面分享只在本机回环可用。
+
+转发头：
+
+- 不读取 `X-Forwarded-For`、`Forwarded`、`X-Real-IP`、`CF-Connecting-IP`、`True-Client-IP`、`X-Forwarded-Host` 的内容，也不用它们把来源改写成私网地址。
+- 这些头出现任何一个就拒绝。局域网代理、隧道或伪造的 `X-Forwarded-For: 10.0.0.1` 都不能把公网来源变成允许。
+- 不用 `NextRequest.ip`。Next 会用 `X-Forwarded-For` 填充它。
+
+Docker 默认的 userland-proxy 会把 web 进程看到的对端换成桥网关。桥地址落在私网里，第二道判断会误放行。本期不在 web 前面加代理，包括这层代理、反向代理和隧道。把 `NEMA_WEB_BIND` 设成局域网地址之前，操作者必须在 Docker 守护进程关闭 userland-proxy，让 iptables 保留访客来源。仓库里的检查不能替守护进程关闭它。对端不在允许名单时，运行时仍然拒绝。
+
+拒绝行为：在向 hub 发请求之前完成。不查分享表，不占 hub 的限流桶。HTTP 404，`Cache-Control: no-store`，正文与无效链接相同，不用单独的 403 文案，避免向公网扫描者确认路径或 token。包装层在 Next 处理 `/s` 与 `/s/` 之前读 `req.socket.remoteAddress`。`apps/web/lib/sharePeer.ts` 是纯函数。`web-parent.mjs` 与 `web-entrypoint.sh` 在加载 `server.js` 之前装上这层判断。
+
+测试要覆盖：允许前缀各至少一个地址；`8.8.8.8`、`172.32.0.1`、`100.64.0.1`、`203.0.113.5`、`2001:db8::1`、`::ffff:8.8.8.8` 拒绝；`::ffff:192.168.0.5`、`fd00::1`、`fe80::1`、`::1`、`127.0.0.1` 通过；`fe80::1%eth0` 按链路本地通过。对端是 `10.1.2.3` 且带 `X-Forwarded-For` 仍拒绝。对端是 `203.0.113.5` 且头里写着 `10.0.0.5` 仍拒绝，不能按头放行。公网对端即使 token 有效也不调用 hub。桌面网关上，回环请求 `/s/...` 只要带了 `X-Forwarded-For` 就是 404，web 收到 0 次。`Host: 192.168.1.5:<port>` 与 `Host: hub:4400` 访问 hub 的 `/share` 都是 403。`assertWebBind` 接受 `127.0.0.1`、`192.168.1.10`、`fd00::10`，拒绝 `0.0.0.0`、`::`、`1.2.3.4`、`example.com`。`NEMA_WEB_BIND=192.168.1.10` 时解析后的 web `host_ip` 是该地址，hub 的发布地址仍是 `127.0.0.1`。
 
 ### D-5 限流
 
@@ -242,9 +269,9 @@ NEMA_HUB_INTERNAL_URL: http://hub:${NEMA_HUB_PORT:-4400}
 实现时改这些文字，本 spec 先定稿：
 
 - `README.md` 与 `README.en.md` 第 121 行改成同一句英文：分享链接可以只读查看一个工作区的知识库；仍然没有公开的多用户认证，没有多设备同步、托管备份或团队账号。两份文件保持逐字节相同。`README.zh.md`、`README.ja.md` 表达同一事实。
-- `docs/guide.{zh,en,ja}.md` 的数据与隐私一节写：如何创建、如何撤销、对方能看到知识条目（含摘录）、看不到聊天、任务、附件和设置；链接即权限，泄露链接等于泄露这份知识库；默认只在本机回环打得开；公布出去的是 web，不是 hub；保密工作区不能分享，打开保密会撤销已有链接；`NEMA_SHARES_ENABLED=0` 关闭新建和公开读取。
+- `docs/guide.{zh,en,ja}.md` 的数据与隐私一节写：如何创建、如何撤销、对方能看到知识条目（含摘录）、看不到聊天、任务、附件和设置；链接即权限，泄露链接等于泄露这份知识库；默认只在本机回环打得开；局域网只通过 `NEMA_WEB_BIND` 绑定 web，不支持公网、隧道和反向代理；hub 不公布；保密工作区不能分享，打开保密会撤销已有链接；`NEMA_SHARES_ENABLED=0` 关闭新建和公开读取。
 - `docs/reference.zh-CN.md` 的 Host 一段补上：`/share` 同样只接受回环 Host；web 服务端用内部 URL 连接，并自己发送 `Host: 127.0.0.1:<port>`。不要写成 hostGuard 已对公网放行。
-- `SECURITY.md` 的已知边界加一条：分享链接是 capability URL；持有链接即可读取该知识库的公开投影；撤销后的下一次请求必须失败。能绕过撤销、用分享页读到聊天或附件、或借公开页把 `/api` 暴露到非回环 Host，才是漏洞。
+- `SECURITY.md` 的已知边界加一条：分享链接是 capability URL；持有链接即可读取该知识库的公开投影；撤销后的下一次请求必须失败。分享页只接受 D-4 的内网来源，不信任转发头，hub 不对局域网或公网发布。能绕过撤销、用分享页读到聊天或附件、借公开页把 `/api` 暴露到非回环 Host、或从公网来源读到分享页，才是漏洞。
 - `changelog.d/readonly-knowledge-share.added.md`，一条中文 bullet。
 - `ROADMAP.md` 的 P2-04 仍是「进行中」，直到验收证据落地。可以链接本 spec，不能标已完成。
 
@@ -254,7 +281,8 @@ NEMA_HUB_INTERNAL_URL: http://hub:${NEMA_HUB_PORT:-4400}
 - 撤销、过期、归档、保密、删除工作区之后，下一次公开读取是 404，不需要重启。另一条未撤销的链接仍是 200。
 - 创建与「改为保密或归档」叠在一起时，两者都结束后再把该标志改回去，公开读取仍是 404，且不留下 `revoked_at is null` 的分享行。hub 测试用的 PGlite 一次只跑一个事务，所以这条用同时发起的两个调用，加上对 `for update` 锁语句的断言；真正的语句重叠只在 PostgreSQL 的两个连接上发生。
 - 公开响应的正文不含本 spec「不出现」清单里的字段和播种字符串。`POST/PUT/PATCH/DELETE /share/...` 为 405，且知识文件与分享行都不变化。
-- `Host` 不是回环时，有效 token 也是 403。`uiAuth` 缺失不阻止 `/share`，也不让分享 token 调用 `/api`。
+- `Host` 不是回环时，有效 token 也是 403。`Host: 192.168.1.5:<port>` 同样 403。`uiAuth` 缺失不阻止 `/share`，也不让分享 token 调用 `/api`。
+- 公网对端、带转发头的请求、以及 `NEMA_WEB_BIND` 的非法值，按 D-4 的测试表拒绝。公网对端不产生 hub 请求。
 - 桌面网关：无 cookie 的合法 `/s/<token>` 到达 web；无 cookie 的 `/api/workspaces` 仍是 401；cookie 没有被转发；错误形状不到达 web。
 - 分享页 HTML 不含 `__NEMA_HUB_URL__`，含 `noindex`，并带 `connect-src 'none'`。
 - 无效链接的 404 正文在「没有这个哈希」「已撤销」「已过期」「已保密」「已归档」五种情况下相同。
@@ -263,4 +291,4 @@ NEMA_HUB_INTERNAL_URL: http://hub:${NEMA_HUB_PORT:-4400}
 
 ## 不在本期
 
-账号、登录、成员表、`messages.author_user_id`、按人授权、成员提及（#163）、分享密码、部分条目分享、图的 HTML、历史与 blame、桌面公网 Host 白名单、隧道、跨进程限流、把会话 cookie 改成 `__Host-`。
+账号、登录、成员表、`messages.author_user_id`、按人授权、成员提及（#163）、分享密码、部分条目分享、图的 HTML、历史与 blame、桌面公网 Host 白名单、桌面局域网绑定、隧道、反向代理、信任 `X-Forwarded-For`、跨进程限流、把会话 cookie 改成 `__Host-`。
