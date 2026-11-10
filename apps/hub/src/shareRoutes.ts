@@ -3,7 +3,7 @@ import { KnowledgeStore } from "@nema/knowledge";
 import { kindFromId } from "@nema/shared";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import type { Db } from "./db/db.js";
-import { SHARE_TOKEN_RE, resolveShare, toPublicEntry, toPublicSummary } from "./shares.js";
+import { SHARE_TOKEN_RE, resolveShare, shareReadNow, shareTokenHash, takeShareSlot, toPublicEntry, toPublicSummary } from "./shares.js";
 import { repoPath } from "./workspaces.js";
 
 const NOT_FOUND = { error: "not found" };
@@ -16,6 +16,11 @@ export function shareRoutes(deps: { db: Db; dataDir: string; sharesEnabled: bool
     // Shape and the master switch are not secrets. Both answer before any share lookup.
     if (!SHARE_TOKEN_RE.test(token) || !deps.sharesEnabled) return c.json(NOT_FOUND, 404);
     const resolution = await resolveShare(deps.db, token);
+    const allowed = takeShareSlot(resolution.found ? "known" : "unknown", resolution.found ? shareTokenHash(token) : "unknown", shareReadNow());
+    if (!allowed) {
+      c.header("retry-after", "60");
+      return c.json({ error: "too many requests" }, 429);
+    }
     if (!resolution.found || !resolution.available) return c.json(NOT_FOUND, 404);
     const store = new KnowledgeStore(repoPath(deps.dataDir, resolution.workspaceId), deps.ownedHelpers);
     if (entryId === undefined) {

@@ -6,7 +6,7 @@ import { createApp } from "../src/app.js";
 import type { Db } from "../src/db/db.js";
 import { EventBus } from "../src/events.js";
 import { postUserMessage } from "../src/messages.js";
-import { createShare, listShares, resolveShare, revokeActiveShares, revokeShare, toPublicEntry, toPublicSummary } from "../src/shares.js";
+import { createShare, listShares, resetShareRateForTests, resolveShare, revokeActiveShares, revokeShare, setShareNowForTests, shareTokenHash, takeShareSlot, toPublicEntry, toPublicSummary } from "../src/shares.js";
 import { createWorkspace, repoPath, updateWorkspace, type Workspace } from "../src/workspaces.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 
@@ -599,5 +599,81 @@ describe("share admin", () => {
     });
     expect(bad.status).toBe(400);
     expect(await bad.json()).toEqual({ error: "request body must be valid JSON" });
+  });
+});
+
+describe("share read rate limit", () => {
+  afterEach(() => {
+    resetShareRateForTests();
+    setShareNowForTests(undefined);
+  });
+
+  async function hit(app: ReturnType<typeof shareApp>, token: string) {
+    return app.request(`${HUB}/share/${token}`, { headers: { host: "127.0.0.1:4400" } });
+  }
+
+  test("unknown-token floods do not block a live token", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await shareableWorkspace(db, dataDir, "Alpha");
+    const created = await createShare(db, ws.id, {});
+    const app = shareApp(db, dataDir);
+    resetShareRateForTests();
+    for (let i = 0; i < 600; i++) await hit(app, "a".repeat(43));
+    const blocked = await hit(app, "b".repeat(43));
+    expect(blocked.status).toBe(429);
+    const live = await hit(app, created.token);
+    expect(live.status).toBe(200);
+  });
+
+  test("the 121st read of one live token is limited", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await shareableWorkspace(db, dataDir, "Alpha");
+    const created = await createShare(db, ws.id, {});
+    const app = shareApp(db, dataDir);
+    setShareNowForTests(() => 1_700_000_000_000);
+    const key = shareTokenHash(created.token);
+    for (let i = 0; i < 120; i++) expect(takeShareSlot("known", key, 1_700_000_000_000)).toBe(true);
+    const blocked = await hit(app, created.token);
+    expect(blocked.status).toBe(429);
+    expect(await blocked.json()).toEqual({ error: "too many requests" });
+    expect(blocked.headers.get("retry-after")).toBe("60");
+    setShareNowForTests(() => 1_700_000_000_000 + 60_000);
+    expect((await hit(app, created.token)).status).toBe(200);
+  });
+
+  test("a revoked token uses its own bucket and leaves unknown tokens at 404", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await shareableWorkspace(db, dataDir, "Alpha");
+    const created = await createShare(db, ws.id, {});
+    await revokeShare(db, ws.id, created.id);
+    const app = shareApp(db, dataDir);
+    setShareNowForTests(() => 1_700_000_000_000);
+    const key = shareTokenHash(created.token);
+    for (let i = 0; i < 120; i++) expect(takeShareSlot("known", key, 1_700_000_000_000)).toBe(true);
+    const blocked = await hit(app, created.token);
+    expect(blocked.status).toBe(429);
+    expect(await blocked.json()).toEqual({ error: "too many requests" });
+    const unseen = await hit(app, "c".repeat(43));
+    expect(unseen.status).toBe(404);
+    expect(await unseen.json()).toEqual({ error: "not found" });
+  });
+
+  test("a malformed token and a disabled switch do not consume a bucket", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await shareableWorkspace(db, dataDir, "Alpha");
+    const created = await createShare(db, ws.id, {});
+    const off = shareApp(db, dataDir, { sharesEnabled: false });
+    for (let i = 0; i < 601; i++) expect((await hit(off, created.token)).status).toBe(404);
+    for (let i = 0; i < 601; i++) expect((await hit(off, "not-a-token")).status).toBe(404);
+    const on = shareApp(db, dataDir);
+    expect((await hit(on, created.token)).status).toBe(200);
+    expect((await hit(on, "d".repeat(43))).status).toBe(404);
+  });
+
+  test("drops the oldest rate key after 10000 distinct tokens", () => {
+    resetShareRateForTests();
+    for (let i = 0; i < 10_000; i++) expect(takeShareSlot("known", `k${i}`, 0)).toBe(true);
+    expect(takeShareSlot("known", "fresh", 0)).toBe(true);
+    for (let i = 0; i < 120; i++) expect(takeShareSlot("known", "k0", 0)).toBe(true);
   });
 });
