@@ -35,7 +35,7 @@
 | `apps/hub/src/shareAdmin.ts` | 主人的列表、创建、撤销 |
 | `apps/hub/src/app.ts` | 挂上 `/share` 的 hostGuard 与两条路由；`sharesEnabled` 依赖 |
 | `apps/hub/src/uiApi.ts` | 保密/归档与撤销放进同一事务 |
-| `apps/hub/src/main.ts` | 从 `NEMA_SHARES_ENABLED` 读总开关 |
+| `apps/hub/src/lifecycle.ts`、`apps/hub/src/main.ts`、`apps/local/src/runtime.ts` | 总开关进入 `StartHubOptions`；Compose 与桌面两条启动都传入 |
 | `apps/hub/test/shares.test.ts` | 存储、投影、路由、泄露、Host、撤销 |
 | `apps/local/test/migration.test.ts` | 快照拒绝 `knowledge_shares` |
 | `apps/web/lib/shareHub.ts` | 服务端内部请求；校验 URL；不转发访客头 |
@@ -72,8 +72,8 @@
   - `type PublicSummary` 与 `type PublicEntry`（字段仅限 spec D-6）
   - `toPublicSummary(entry: Entry): PublicSummary`
   - `toPublicEntry(entry: Entry): PublicEntry`
-  - `type ShareResolution = { found: false } | { found: true; available: false } | { found: true; available: true; workspaceName: string }`
-  - `resolveShare(db, token): Promise<ShareResolution>`。不接收 `enabled`。总开关由路由在查库前处理。不可用时不返回 `workspaceName`。
+  - `type ShareResolution = { found: false } | { found: true; available: false } | { found: true; available: true; workspaceId: string; workspaceName: string }`
+  - `resolveShare(db, token): Promise<ShareResolution>`。不接收 `enabled`。总开关由路由在查库前处理。不可用时不返回 `workspaceId` 或 `workspaceName`。`workspaceId` 只给 `repoPath` 用，不进入公开 JSON。
   - `SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/`
 
 - [ ] **Step 1: 写失败测试**
@@ -95,10 +95,10 @@ test("revoke is immediate and does not revive", async () => {
   const ws = await createWorkspace(db, dataDir, "Alpha");
   const a = await createShare(db, ws.id, {});
   const b = await createShare(db, ws.id, {});
-  expect(await resolveShare(db, a.token)).toEqual({ found: true, available: true, workspaceName: "Alpha" });
+  expect(await resolveShare(db, a.token)).toEqual({ found: true, available: true, workspaceId: ws.id, workspaceName: "Alpha" });
   await revokeShare(db, ws.id, a.id);
   expect(await resolveShare(db, a.token)).toEqual({ found: true, available: false });
-  expect(await resolveShare(db, b.token)).toEqual({ found: true, available: true, workspaceName: "Alpha" });
+  expect(await resolveShare(db, b.token)).toEqual({ found: true, available: true, workspaceId: ws.id, workspaceName: "Alpha" });
   await updateWorkspace(db, ws.id, { confidential: false });
   expect(await resolveShare(db, a.token)).toEqual({ found: true, available: false });
   expect(await resolveShare(db, "a".repeat(43))).toEqual({ found: false });
@@ -118,7 +118,7 @@ Expected: FAIL，`createShare` 未定义或表不存在。
 迁移用 spec 里的 SQL。`shares.ts` 只按哈希取出一行，可用性在同一条 SQL 里用数据库的 `now()` 算成布尔值，不要把不可用行过滤掉：
 
 ```sql
-select w.name,
+select w.id, w.name,
        (s.revoked_at is null
         and (s.expires_at is null or s.expires_at > now())
         and w.archived_at is null
@@ -128,7 +128,7 @@ join workspaces w on w.id = s.workspace_id
 where s.token_hash = $1
 ```
 
-没有行就是 `{ found: false }`。有行就是 `{ found: true, available }`，只有 `available` 为真才带 `workspaceName`。`toPublicEntry` 显式构造对象，禁止展开 `Entry`。工作包任务只留 `n`、`title`、`status`。图只留 `diagram.type`。实现状态只留 `implementation.status`。公开状态用条目上的 `dropped`，不要写成 `withdrawn`。
+没有行就是 `{ found: false }`。有行就是 `{ found: true, available }`，只有 `available` 为真才带 `workspaceId` 和 `workspaceName`。`repoPath` 的第二参是 workspace id（`apps/hub/src/workspaces.ts`），名字不能当目录。`toPublicEntry` 显式构造对象，禁止展开 `Entry`。工作包任务只留 `n`、`title`、`status`。图只留 `diagram.type`。实现状态只留 `implementation.status`。公开状态用条目上的 `dropped`，不要写成 `withdrawn`。
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -202,7 +202,7 @@ Expected: FAIL，404 或路由不存在。
 
 - [ ] **Step 3: 实现路由**
 
-`shareRoutes` 用同一个处理函数注册 GET 和 HEAD。token 不匹配 `SHARE_TOKEN_RE` 时 404，不查库。总开关关闭时 404，不查库，也不要为了限流去调用 `resolveShare`。`found: false` 与 `available: false` 都是 404，正文都是 `{"error":"not found"}`，都不带工作区名。单条先解析分享，不可用同样 404；可用之后再 `kindFromId(eid)`，失败也是 404。不要调用 `withReportPass`、`sourceEvidenceEntries`、`history`、`blameParagraphs`、`versionAt`。每个响应 `c.header("cache-control", "no-store")`。
+`shareRoutes` 用同一个处理函数注册 GET 和 HEAD。token 不匹配 `SHARE_TOKEN_RE` 时 404，不查库。总开关关闭时 404，不查库，也不要为了限流去调用 `resolveShare`。`found: false` 与 `available: false` 都是 404，正文都是 `{"error":"not found"}`，都不带工作区名或 workspace id。单条先解析分享，不可用同样 404；可用之后用 `repoPath(dataDir, resolution.workspaceId)` 打开 `KnowledgeStore`，再 `kindFromId(eid)`，失败也是 404。不要调用 `withReportPass`、`sourceEvidenceEntries`、`history`、`blameParagraphs`、`versionAt`。每个响应 `c.header("cache-control", "no-store")`。
 
 `app.ts`：
 
@@ -234,8 +234,8 @@ git commit -m "feat(hub): add loopback-only knowledge share reads"
 **Files:**
 
 - Create: `apps/hub/src/shareAdmin.ts`
-- Modify: `apps/hub/src/app.ts`、`apps/hub/src/uiApi.ts`、`apps/hub/src/main.ts`
-- Test: `apps/hub/test/shares.test.ts`
+- Modify: `apps/hub/src/app.ts`、`apps/hub/src/uiApi.ts`、`apps/hub/src/lifecycle.ts`、`apps/hub/src/main.ts`、`apps/local/src/runtime.ts`
+- Test: `apps/hub/test/shares.test.ts`、`apps/local/test/runtime.test.ts`
 
 **Interfaces:**
 
@@ -270,6 +270,8 @@ test("marking confidential revokes active links in one step", async () => {
 ```
 
 再覆盖：归档同样撤销且取消归档不恢复；保密工作区 POST 创建为 409；`sharesEnabled: false` 时 POST 为 403，GET 列表与 POST revoke 仍 200；重复 revoke 为 200。
+
+桌面启动：`apps/local/test/runtime.test.ts` 在 `startLocalRuntime` 之前把 `NEMA_SHARES_ENABLED` 设为 `0`。`runtimeReadyHookForTests` 要能拿到 `hub.url`。钩子里写入一条分享行，再以回环 Host 请求 `GET /share/<token>`，得到与无效链接相同的 404。测完删掉该变量。
 
 并发：同时 `createShare` 和把同一工作区 PATCH 成 `confidential: true`，等两边都结束，再 PATCH 回 `confidential: false`。创建若返回 409，`knowledge_shares` 里不能有 `revoked_at is null` 的行；创建若返回 token，`resolveShare` 必须是 `{ found: true, available: false }`。归档走同一断言。PGlite 一次只跑一个事务（`apps/hub/test/messages.test.ts` 已写明真正的重叠要 PostgreSQL），所以这条不能单独证明两个连接的交错。再用那个文件里的 `record` 包装记下 SQL：`createShare` 与这次限制性 PATCH 的事务里，第一条对 `workspaces` 的语句都是 `select ... for update`，分享行的 `insert` 发生在同一事务、且在锁之后。事务外先读 `confidential` 再插入的写法过不了这条。
 
@@ -310,18 +312,18 @@ const updated = await db.tx(async (tx) => {
 
 `deleteWorkspace` 已经用 `select id from workspaces where id = $1 for update`。`updateWorkspace` 只对传入的 `Db` 执行 `query`，把 `tx` 传进去不会再开一个事务。`db.tx` 在 `pg` 和 PGlite 上都会把嵌套调用并进外层事务。不要复制 `updateWorkspace` 的 UPDATE。锁要在读状态和插入之前拿到，并持有到事务提交：先提交的创建会被随后的撤销扫到；先提交的保密或归档会让还在等待的创建看到新状态并返回 409。公开读取时再查一次保密和归档，那不是这把锁的替代。事务只包住这把锁、`updateWorkspace` 和 `revokeActiveShares`。取消归档后通知排队任务，以及 `syncBoundRepos`，仍放在事务提交之后；不要把 daemon 调用放进这把锁。
 
-`main.ts`：`sharesEnabled: process.env.NEMA_SHARES_ENABLED !== "0"`。
+总开关进 `StartHubOptions`，再由 `startHub` 传给 `createApp`。桌面不走 `main.ts`：`apps/local/src/runtime.ts` 直接调用 `startHub`（约第 499 行），现在的选项里没有这个字段。`main.ts` 与 `runtime.ts` 都传 `sharesEnabled: process.env.NEMA_SHARES_ENABLED !== "0"`。缺省仍是开启。`NEMA_SHARES_ENABLED=0` 时桌面 hub 上已有链接的公开读取也是 404。
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `npx vitest run apps/hub/test/shares.test.ts apps/hub/test/uiApi.test.ts`
+Run: `npx vitest run apps/hub/test/shares.test.ts apps/hub/test/uiApi.test.ts apps/local/test/runtime.test.ts`
 
 Expected: PASS。`uiApi.test.ts` 里已有的工作区 PATCH 用例仍通过。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/hub/src/shareAdmin.ts apps/hub/src/app.ts apps/hub/src/uiApi.ts apps/hub/src/main.ts apps/hub/test/shares.test.ts
+git add apps/hub/src/shareAdmin.ts apps/hub/src/app.ts apps/hub/src/uiApi.ts apps/hub/src/lifecycle.ts apps/hub/src/main.ts apps/local/src/runtime.ts apps/hub/test/shares.test.ts apps/local/test/runtime.test.ts
 git commit -m "feat(hub): manage knowledge share links"
 ```
 

@@ -164,7 +164,7 @@ create index knowledge_shares_workspace on knowledge_shares (workspace_id);
   保密 409 `{ error: "confidential workspace cannot be shared" }`。  
   归档 409 `{ error: "archived workspace cannot be shared" }`。  
   总开关关闭 403 `{ error: "sharing disabled" }`。  
-  `expiresAt` 缺失、不是时间或不是将来时间：400。`note` 超长：400。
+  `expiresAt` 可以不带。带了但不是带时区的 ISO 时间，或不晚于数据库 `now()`：400。`note` 超长：400。
 - `POST /api/workspaces/:id/shares/:shareId/revoke`  
   正文 `{}`。该工作区的行存在则 200，并保证 `revokedAt` 非空（重复撤销仍是 200）。别的工作区或不存在：404。
 
@@ -176,6 +176,7 @@ create index knowledge_shares_workspace on knowledge_shares (workspace_id);
 
 - `GET /share/:token` → `{ workspaceName, entries: PublicSummary[] }`
 - `GET /share/:token/entries/:eid` → `PublicEntry`
+- 路由内部保留 workspace id，只把它交给 `repoPath(dataDir, workspaceId)`。公开 JSON 不包含这个 id。
 - 只允许 GET 与 HEAD。其他方法 405，`Allow: GET, HEAD`。没有写入路由。
 - token 形状不对、哈希不存在、已撤销、已过期、工作区保密或已归档、总开关关闭、条目 id 不存在：一律 404 `{ error: "not found" }`。不区分原因，正文也不含工作区名称。
 - 有效 token 下的条目 id 形状不合法，同样 404，不先透露 token 有效。
