@@ -65,6 +65,18 @@ describe("ShareKnowledge", () => {
     expect(hub.revokeShare).toHaveBeenCalledWith("w1", "ks_1");
   });
 
+  it("does not send a second create while the first request is open", async () => {
+    let finish: (value: Awaited<ReturnType<typeof hub.createShare>>) => void = () => {};
+    vi.mocked(hub.createShare).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const user = userEvent.setup();
+    renderShare();
+    const button = await screen.findByRole("button", { name: "Create link" });
+    await user.click(button);
+    await user.click(button);
+    expect(hub.createShare).toHaveBeenCalledTimes(1);
+    finish({ id: "ks_1", token, note: null, expiresAt: null, revokedAt: null, createdAt: "2026-11-10T00:00:00.000Z" });
+  });
+
   it("disables create while the workspace is confidential", async () => {
     renderShare({ confidential: true });
     expect((await screen.findByRole("button", { name: "Create link" }) as HTMLButtonElement).disabled).toBe(true);
