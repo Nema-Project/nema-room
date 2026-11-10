@@ -111,7 +111,7 @@ child.stdout.on("data", (chunk) => {
     if (waiter) waiter(line);
   }
 });
-child.stdin.on("error", () => {});
+child.stdin.on("error", noteChildGone);
 child.on("error", noteChildGone);
 child.on("exit", noteChildGone);
 function roundtrip(line) {
