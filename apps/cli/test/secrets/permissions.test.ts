@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { readSecretLine, saveSecretLine } from "../../src/secrets/file.js";
-import { openPrivateFile, openPrivateFileChecked, privateModeMatches, protectPrivatePath, recordWindowsAclBench, WINDOWS_ACL_SCRIPT, windowsAclHelperStarts } from "../../src/secrets/permissions.js";
+import { openPrivateFile, openPrivateFileChecked, privateModeMatches, protectPrivatePath, recordWindowsAclBench, setWindowsAclExecutableForTests, submitWindowsAclForTests, WINDOWS_ACL_SCRIPT, windowsAclHelperStarts } from "../../src/secrets/permissions.js";
 import { AuthStore, type StoredAuth } from "../../src/direct/authStore.js";
 import { ensureReportToken, reportTokenHash } from "../../src/report/token.js";
 import { readClaudeToken, saveClaudeToken } from "../../src/claude/token.js";
@@ -121,8 +121,56 @@ test("POSIX checks do not start a Windows ACL helper", () => {
   const before = windowsAclHelperStarts();
   protectPrivatePath(file);
   closeSync(openPrivateFile(file));
-  if (process.platform === "win32") expect(windowsAclHelperStarts()).toBeGreaterThan(before);
+  if (process.platform === "win32") expect(windowsAclHelperStarts()).toBe(before === 0 ? before + 1 : before);
   else expect(windowsAclHelperStarts()).toBe(before);
+});
+
+const fakeAcl = `
+const mode = process.argv[2];
+if (mode === "die") process.exit(1);
+let lines = 0;
+process.stdin.setEncoding("utf8");
+let pending = "";
+process.stdin.on("data", (chunk) => {
+  pending += chunk;
+  let nl;
+  while ((nl = pending.indexOf("\\n")) !== -1) {
+    const line = pending.slice(0, nl).replace(/\\r$/, "");
+    pending = pending.slice(nl + 1);
+    if (!line) continue;
+    process.stdout.write("ok\\n");
+    lines += 1;
+    if (mode === "once") process.exit(0);
+  }
+});
+`;
+
+test("a dead ACL helper is replaced without waiting out the timeout", () => {
+  const script = path.join(root, "fake-acl.mjs");
+  writeFileSync(script, fakeAcl);
+  const use = (mode: string) => setWindowsAclExecutableForTests({ exe: process.execPath, args: [script, mode] });
+  try {
+    use("stay");
+    const shared = windowsAclHelperStarts();
+    expect(submitWindowsAclForTests("check one")).toBe("ok");
+    expect(submitWindowsAclForTests("check two")).toBe("ok");
+    expect(windowsAclHelperStarts()).toBe(shared + 1);
+
+    use("once");
+    const replaced = windowsAclHelperStarts();
+    expect(submitWindowsAclForTests("check one")).toBe("ok");
+    const afterFirst = windowsAclHelperStarts();
+    expect(afterFirst).toBeGreaterThan(replaced);
+    expect(submitWindowsAclForTests("check two")).toBe("ok");
+    expect(windowsAclHelperStarts()).toBeGreaterThan(afterFirst);
+
+    use("die");
+    const started = Date.now();
+    expect(submitWindowsAclForTests("check one")).toBe("err helper exited");
+    expect(Date.now() - started).toBeLessThan(5_000);
+  } finally {
+    setWindowsAclExecutableForTests(undefined);
+  }
 });
 
 test.runIf(process.platform === "win32")("several ACL calls share one PowerShell and observe a widened DACL", () => {
