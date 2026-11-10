@@ -1,6 +1,10 @@
+import { createRequire } from "node:module";
 import { describe, expect, test } from "vitest";
 import { sharePeerDecision as sourceDecision } from "../src/sharePeer.js";
-import { sharePeerDecision as plainDecision } from "../../../scripts/desktop/templates/share-peer.mjs";
+
+const plainDecision = (createRequire(import.meta.url)("../../../scripts/desktop/templates/share-peer.mjs") as {
+  sharePeerDecision: typeof sourceDecision;
+}).sharePeerDecision;
 
 const cases: Array<[string | null, Record<string, string>]> = [
   ["127.0.0.1", {}],
