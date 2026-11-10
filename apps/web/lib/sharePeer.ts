@@ -111,9 +111,10 @@ export function headersForSharePage(headers: HeaderBag): HeaderBag {
     for (const name of NEXT_INJECTED_HEADERS) copy.delete(name);
     return copy;
   }
-  const copy: Record<string, string | string[] | undefined> = { ...headers };
-  for (const key of Object.keys(copy)) {
-    if (NEXT_INJECTED_HEADERS.has(key.toLowerCase())) delete copy[key];
+  const source = headers as Record<string, string | string[] | undefined>;
+  const copy: Record<string, string | string[] | undefined> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (!NEXT_INJECTED_HEADERS.has(key.toLowerCase())) copy[key] = value;
   }
   return copy;
 }
