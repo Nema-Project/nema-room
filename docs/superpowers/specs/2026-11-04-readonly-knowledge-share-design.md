@@ -2,9 +2,9 @@
 
 日期：2026-11-04。Issue：[Nema-Project/nema-room#165](https://github.com/Nema-Project/nema-room/issues/165)。产品判断标准：[Nema-Project/nema-room#45](https://github.com/Nema-Project/nema-room/issues/45)。
 
-**状态**：设计，待审。下面 D-1 到 D-10 是本 spec 对 #165「必须先定的事」和已核实风险的决定。实现不得改这些选择。本文件不改生产代码。实施计划见 [plan](../plans/2026-11-04-readonly-knowledge-share.md)。
+**状态**：设计。D-2、D-3、D-5 到 D-10 已按审阅修订。D-1 与 D-4 仍待确认，这两节的正文保持原决定，确认之前不改写。实现不得改这些选择。本文件不改生产代码。实施计划见 [plan](../plans/2026-11-04-readonly-knowledge-share.md)。
 
-**设计所对照的 HEAD**：`28a47fa1ccf9b805926fe1a82ae92b275639b895`（`origin/main`）。标为「已核对」的行为是在这个 SHA 上读代码得到的。
+**设计所对照的 HEAD**：`1bb9389b66f086b0ad27879851b3a6a9cfcebda5`（`origin/main`）。标为「已核对」的行为是在这个 SHA 上读代码得到的。2026-11-10 复核时，main 上已有 v0.2.4 的桌面启动重叠，以及 [#219](https://github.com/Nema-Project/nema-room/pull/219) 的提及候选搜索。main 没有名为 v0.2.5 的发布记录。
 
 ## 如何服务 #45
 
@@ -16,12 +16,13 @@
 
 - 没有分享实现。`apps/hub/src` 与 `apps/web` 里没有公开知识链接。
 - 知识在每个 workspace 自己的 Git 仓库里，`KnowledgeStore`（`packages/knowledge/src/store.ts`），路径是 `repoPath(dataDir, workspaceId)`（`apps/hub/src/workspaces.ts`）。
-- 已登录 UI 用 `GET /api/workspaces/:id/entries` 与 `GET /api/workspaces/:id/entries/:eid`（`apps/hub/src/uiApi.ts`）。单条响应是完整 `Entry`，并经 `withReportPass` 去 `messages` 表补报告是否通过。这条响应不能原样公开。
-- `hostGuard`（`apps/hub/src/app.ts`）只允许 `Host` 为 `127.0.0.1:<port>` 或 `localhost:<port>`。它防的是 DNS rebinding：恶意页把域名重新解析到 `127.0.0.1` 时，浏览器仍发送 `Host: evil.example:<port>`。Node 的 `fetch` 不允许调用方改 `Host`。
+- 已登录 UI 用 `GET /api/workspaces/:id/entries` 与 `GET /api/workspaces/:id/entries/:eid`（`apps/hub/src/uiApi.ts`）。两条都先经 `sourceEvidenceEntries`。列表再收成 `sourceEvidenceSummary`（摘要加上 `freshness`、`reviewNeeded`、`unconfirmedSnapshot`）并带 `isNew`。单条保留条目本身和同一组来源证据。两条都经 `withReportPass`，从 `messages` 里 `role = 'report'` 的行补报告是否通过。这两条响应都不能原样公开。
+- `hostGuard`（`apps/hub/src/app.ts`）只允许 `Host` 为 `127.0.0.1:<port>` 或 `localhost:<port>`。它防的是 DNS rebinding：恶意页把域名重新解析到 `127.0.0.1` 时，浏览器仍发送 `Host: evil.example:<port>`。Node 的 `fetch` 不允许调用方改 `Host`。它挂在 `/api/*`、`/room/*`、`/report` 与 `/report/*`，不是全局中间件，所以 `/share` 要单独再挂同一个函数。
 - `uiAuth` 只在桌面网关下挂在 `/api/*` 上（`apps/local/src/gateway.ts` 的 `createGatewayUiAuth`）。它比对一份 256 位十六进制共享凭据，不认人。Compose 的 hub 没有这道门。`/room` 用任务 run token，`/report` 用 report token。
 - `report_tokens`（`apps/hub/src/db/migrations/008_reports.sql`）只存 sha256。明文 token 不入库。快照导入拒绝未知表，因此 `report_tokens` 进不了快照（`apps/local/test/migration.test.ts`）。
 - 桌面只有一个回环入口。网关要求会话 cookie（`nema_session_<port>`，`Path=/`，HttpOnly，SameSite=Strict），并自己再查一次 Host 必须是 `127.0.0.1:<gatewayPort>`。`/api/*` 才注入网关凭据。cookie 不会被转发给上游（`sanitizedHeaders` 丢掉 `cookie`）。`mappedTarget` 只放行 `/`、`/w/...`、`/w/.../t/...` 和少量静态文件。
-- 桌面先起 web、再起 hub，hub 端口是临时端口（`apps/local/src/runtime.ts` 里 `startHub({ port: 0 })`）。web 进程启动时还不知道 hub 端口。托管 web 的父进程是 `scripts/desktop/templates/web-parent.mjs`，和 Next 服务同一进程，已有 IPC。
+- 桌面仍先拉起 web 进程，hub 端口仍是临时端口（`apps/local/src/runtime.ts` 里 `startHub({ port: 0 })`），web 进程启动时还不知道 hub 端口。v0.2.4 之后这不再是「等 web 的 HTTP 就绪，再启动 hub」：`spawnWeb` 之后，`httpReady` 与 `createLocalDb`、`startHub` 重叠，15 秒预算从数据库和 hub 这段结束才开始计。托管 web 的父进程仍是 `scripts/desktop/templates/web-parent.mjs`（`stdio` 含 `ipc`）。它今天只在 Next 开始服务之后向外发送 `{ type: "managed-web-ready", port }`，自己没有 `message` 监听。没有监听器时，已经派发的 `message` 不会被保留。
+- 提及候选已经是服务端查询：`GET /api/workspaces/:id/mention-context`（`apps/hub/src/mentionContext.ts`）。`apps/web/lib/hub.ts` 的 `searchMentionContext` 只多了一个 `AbortSignal`。该路由在 `/api` 下：桌面仍走网关和 `uiAuth`，Compose 仍用 `hubUrl()` 跨源。公开页不调用它。这是 [#195](https://github.com/Nema-Project/nema-room/issues/195) / [#219](https://github.com/Nema-Project/nema-room/pull/219)，不是 [#163](https://github.com/Nema-Project/nema-room/issues/163) 的成员提及。
 - Compose 把 hub、web 都只绑在宿主机 `127.0.0.1`（`docker-compose.yml`）。浏览器跨源直连 hub（`apps/web/lib/hub.ts` 的 `hubUrl()`）。web 容器里的 `127.0.0.1:4400` 不是 hub。hub 在容器内监听 `0.0.0.0`，`NEMA_HUB_PORT` 与发布端口相同，所以宿主机上的 Host 仍然是 `127.0.0.1:<port>`。
 - `workspace.confidential` 今天只是侧栏标记。设置文案写明第一版没有跨项目功能，开关是预留（`apps/web/messages/en.json` 的 `settings.confidentialHelp`）。
 - 根 layout（`apps/web/app/layout.tsx`）对所有页面注入 `window.__NEMA_HUB_URL__`、标题栏、更新横幅和 `ThreadWindowsProvider`。分享页如果挂在这棵树下，会把私有壳和 hub 地址送进公开 HTML。
@@ -67,7 +68,7 @@
 hub 进程内记忆，单进程，重启清空。不做成配置项。
 
 - 总开关关闭时直接 404，不查库。开关是操作者配置，不是要隐藏的秘密。
-- 形如合法 token 时先按哈希查库。没有这个哈希：所有未命中共用一个桶，60 秒最多 600 次，超过返回 429。有这个哈希（不论是否已撤销、过期、归档、保密）：这个哈希自己一个桶，60 秒最多 120 次。
+- 形如合法 token 时先按哈希查库。查库结果要分开表示「没有这个哈希」和「哈希在，但已撤销、过期、归档或保密」。没有这个哈希：所有未命中共用一个桶，60 秒最多 600 次，超过返回 429。有这个哈希（不论是否已撤销、过期、归档、保密）：这个哈希自己一个桶，60 秒最多 120 次。两种结果的 HTTP 正文仍然相同，不透露是哪一种。
 - 未命中的洪水不能把一条有效链接的桶打满，所以不能在查库之前用未命中桶拒绝请求。
 - 合法 token 的形状检查失败（长度或字符不对）直接 404，不查库，不计入桶。
 - 429 的正文是 `{ "error": "too many requests" }`，带 `Retry-After: 60`。日志不写 token，也不写哈希。
@@ -95,7 +96,7 @@ hub 进程内记忆，单进程，重启清空。不做成配置项。
 
 图只公开 `diagramType` 和条目正文，不渲染 archify HTML。
 
-**保密工作区不能分享。** `confidential = true` 时创建返回 409。把工作区改成保密或归档时，同一事务里把该工作区所有 `revoked_at is null` 的行写成已撤销。公开读取在撤销之外再检查一次：工作区保密、已归档，或行已撤销、已过期，都是同一种 404。取消保密或取消归档不会把这些行改回有效。
+**保密工作区不能分享。** `confidential = true` 时创建返回 409。把工作区改成保密或归档时，同一事务里把该工作区所有 `revoked_at is null` 的行写成已撤销。创建和这次更新必须先锁同一行 `workspaces`（`select ... for update`，与 `deleteWorkspace` 已用的锁相同）。插入分享行、更新工作区、撤销分享都在持有该锁的同一事务里完成，不能先读 `confidential` / `archived_at` 再在锁外插入。先提交的一方胜出：先插入的行会被这次更新撤销；更新先提交则创建返回 409，不插入。公开读取在撤销之外再检查一次：工作区保密、已归档，或行已撤销、已过期，都是同一种 404。这次检查不能代替上面的锁。取消保密或取消归档不会把这些行改回有效，包括在这个窗口里插进去、又被撤销的行。
 
 这改变了 `confidential` 今天「只是预留标记」的行为。三语文案要改成：打开保密会立刻撤销已发出的分享链接，并且不能新建。它仍然不是操作系统隔离，也不是离线模式。
 
@@ -167,7 +168,7 @@ create index knowledge_shares_workspace on knowledge_shares (workspace_id);
 - `POST /api/workspaces/:id/shares/:shareId/revoke`  
   正文 `{}`。该工作区的行存在则 200，并保证 `revokedAt` 非空（重复撤销仍是 200）。别的工作区或不存在：404。
 
-`PATCH /api/workspaces/:id` 在把 `confidential` 设为 true 或 `archived` 设为 true 时，与工作区更新同一事务撤销该工作区全部分享。
+`PATCH /api/workspaces/:id` 在把 `confidential` 设为 true 或 `archived` 设为 true 时，先对 `workspaces` 行 `for update`，再与工作区更新同一事务撤销该工作区全部分享。`updateWorkspace` 已接受 `Db`，调用方把事务客户端传进去，不另写一条更新 SQL。
 
 ### hub 公开读取，只给 Next 服务端
 
@@ -180,7 +181,7 @@ create index knowledge_shares_workspace on knowledge_shares (workspace_id);
 - 有效 token 下的条目 id 形状不合法，同样 404，不先透露 token 有效。
 - 以上响应都带 `Cache-Control: no-store`。
 
-条目顺序与 `KnowledgeStore.listEntries()` 相同。状态为 withdrawn 的条目照样列出，状态字段可见。
+条目顺序与 `KnowledgeStore.listEntries()` 相同（按 kind，再按编号，不过滤状态）。`KnowledgeStore.withdraw()` 写入的状态值是 `dropped`；`packages/shared/src/entry.ts` 的 `KIND_STATUSES` 也只有 `dropped`，没有 `withdrawn`。状态为 `dropped` 的条目照样列出，状态字段可见。
 
 ### web 页面
 
@@ -206,7 +207,7 @@ NEMA_HUB_INTERNAL_URL: http://hub:${NEMA_HUB_PORT:-4400}
 
 保留现有 `NEMA_HUB_URL`（那是浏览器用的地址）。`scripts/images/check-images.mjs` 现有断言继续成立，并增加对这一行的断言。
 
-桌面：`web-parent.mjs` 在 import Next 之前监听 IPC `{ type: "hub-url", url }`，写入 `process.env.NEMA_HUB_INTERNAL_URL`。`runtime.ts` 在 `startHub` 成功后 `webChild.send(...)`。hub 尚未通知时，分享页 503。`hub.url` 已是回环地址，符合上面的 URL 规则。
+桌面：`web-parent.mjs` 在 `await import("./server.js")` 之前监听 IPC `{ type: "hub-url", url }`，写入 `process.env.NEMA_HUB_INTERNAL_URL`。`runtime.ts` 在已有的 `await webReady` 之后才 `webChild.send({ type: "hub-url", url: hub.url })`，只发一次。不要在 `startHub` 一返回就发：那时 `httpReady` 还可能在和 hub 启动重叠，子进程可能还没注册监听器。`webReady` 表示子进程已经在回环地址上接受 HTTP；监听器又写在 import 之前，所以此时发送不会落空。发送失败只记日志，不把 hub URL 写进公开响应。hub 尚未通知时，分享页 503。`hub.url` 已是回环地址，符合上面的 URL 规则。
 
 开发模式（web 与 hub 都在宿主机）不设变量，默认 `http://127.0.0.1:4400` 即可。
 
@@ -248,6 +249,7 @@ NEMA_HUB_INTERNAL_URL: http://hub:${NEMA_HUB_PORT:-4400}
 
 - 创建之后数据库没有明文 token，只有 sha256。
 - 撤销、过期、归档、保密、删除工作区之后，下一次公开读取是 404，不需要重启。另一条未撤销的链接仍是 200。
+- 创建与「改为保密或归档」叠在一起时，两者都结束后再把该标志改回去，公开读取仍是 404，且不留下 `revoked_at is null` 的分享行。hub 测试用的 PGlite 一次只跑一个事务，所以这条用同时发起的两个调用，加上对 `for update` 锁语句的断言；真正的语句重叠只在 PostgreSQL 的两个连接上发生。
 - 公开响应的正文不含本 spec「不出现」清单里的字段和播种字符串。`POST/PUT/PATCH/DELETE /share/...` 为 405，且知识文件与分享行都不变化。
 - `Host` 不是回环时，有效 token 也是 403。`uiAuth` 缺失不阻止 `/share`，也不让分享 token 调用 `/api`。
 - 桌面网关：无 cookie 的合法 `/s/<token>` 到达 web；无 cookie 的 `/api/workspaces` 仍是 401；cookie 没有被转发；错误形状不到达 web。

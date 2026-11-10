@@ -17,7 +17,8 @@
 - 分享 token 不是 `/api`、`/room`、`/report` 的凭据。公开页不 import `@/lib/hub`，HTML 不含 `window.__NEMA_HUB_URL__`。
 - 明文 token 只出现在创建响应。不进日志、错误正文、快照。
 - `knowledge_shares` 不加入 `TABLE_COLUMNS` / `OPTIONAL_TABLES`。
-- 保密工作区不能新建分享；打开保密或归档会在同一事务撤销未撤销的行。取消保密或取消归档不恢复这些行。
+- 保密工作区不能新建分享；打开保密或归档会在同一事务撤销未撤销的行。取消保密或取消归档不恢复这些行。创建和这次更新都先 `select ... from workspaces where id = $1 for update`，插入或撤销发生在持有该锁的同一事务里。
+- `resolveShare` 区分「没有这个哈希」和「哈希在但不可用」。两种对外都是同一种 404。已知哈希（含不可用）走自己的限流桶；未命中走共用桶。
 - 公开 404 正文在「无此哈希 / 已撤销 / 已过期 / 保密 / 归档 / 总开关关闭」时相同：`{ "error": "not found" }`，并带 `Cache-Control: no-store`。
 - UI 文案同时改 `apps/web/messages/{en,zh,ja}.json`。`README.md` 与 `README.en.md` 逐字节相同。
 - 用户可见变化写 `changelog.d/readonly-knowledge-share.added.md`（一条 `- ` 开头的中文 bullet，无标题）。不直接改 `CHANGELOG.md`。
@@ -44,7 +45,7 @@
 | `apps/web/components/ShareKnowledge.tsx` | 设置里的创建、复制、撤销 |
 | `apps/web/components/ShareView.tsx` | 只读列表与正文 |
 | `apps/local/src/gateway.ts` | `/s/...` 无会话转发 |
-| `apps/local/src/runtime.ts`、`scripts/desktop/templates/web-parent.mjs` | hub 起来后把回环 URL 交给 web 进程 |
+| `apps/local/src/runtime.ts`、`scripts/desktop/templates/web-parent.mjs` | web 接受 HTTP 之后把回环 URL 交给 web 进程 |
 | `docker-compose.yml` | `NEMA_HUB_INTERNAL_URL` |
 | 三语 messages、四份 README、三份 guide、`docs/reference.zh-CN.md`、`SECURITY.md`、`changelog.d/`、`ROADMAP.md` | 文档 |
 
@@ -71,7 +72,8 @@
   - `type PublicSummary` 与 `type PublicEntry`（字段仅限 spec D-6）
   - `toPublicSummary(entry: Entry): PublicSummary`
   - `toPublicEntry(entry: Entry): PublicEntry`
-  - `resolveShare(db, token, opts: { enabled: boolean }): Promise<{ workspaceName: string } | null>`
+  - `type ShareResolution = { found: false } | { found: true; available: false } | { found: true; available: true; workspaceName: string }`
+  - `resolveShare(db, token): Promise<ShareResolution>`。不接收 `enabled`。总开关由路由在查库前处理。不可用时不返回 `workspaceName`。
   - `SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/`
 
 - [ ] **Step 1: 写失败测试**
@@ -93,16 +95,17 @@ test("revoke is immediate and does not revive", async () => {
   const ws = await createWorkspace(db, dataDir, "Alpha");
   const a = await createShare(db, ws.id, {});
   const b = await createShare(db, ws.id, {});
-  expect(await resolveShare(db, a.token, { enabled: true })).toEqual({ workspaceName: "Alpha" });
+  expect(await resolveShare(db, a.token)).toEqual({ found: true, available: true, workspaceName: "Alpha" });
   await revokeShare(db, ws.id, a.id);
-  expect(await resolveShare(db, a.token, { enabled: true })).toBeNull();
-  expect(await resolveShare(db, b.token, { enabled: true })).toEqual({ workspaceName: "Alpha" });
+  expect(await resolveShare(db, a.token)).toEqual({ found: true, available: false });
+  expect(await resolveShare(db, b.token)).toEqual({ found: true, available: true, workspaceName: "Alpha" });
   await updateWorkspace(db, ws.id, { confidential: false });
-  expect(await resolveShare(db, a.token, { enabled: true })).toBeNull();
+  expect(await resolveShare(db, a.token)).toEqual({ found: true, available: false });
+  expect(await resolveShare(db, "a".repeat(43))).toEqual({ found: false });
 });
 ```
 
-再写：过期时间为过去则 `createShare` 抛 400；`expiresAt` 已过则 `resolveShare` 为 null；`enabled: false` 为 null；保密或归档为 null；`toPublicEntry` 去掉 `messageId`、`snapshotHash`、`sourceMessages`、`repoId`、`files`。
+再写：过期时间为过去则 `createShare` 抛 400；`expiresAt` 已过、保密、归档都是 `{ found: true, available: false }`，不是 `{ found: false }`；`toPublicEntry` 去掉 `messageId`、`snapshotHash`、`sourceMessages`、`repoId`、`files`。总开关不进 `resolveShare`。
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -112,20 +115,20 @@ Expected: FAIL，`createShare` 未定义或表不存在。
 
 - [ ] **Step 3: 写迁移与实现**
 
-迁移用 spec 里的 SQL。`shares.ts` 的查找只认这一条：
+迁移用 spec 里的 SQL。`shares.ts` 只按哈希取出一行，可用性在同一条 SQL 里用数据库的 `now()` 算成布尔值，不要把不可用行过滤掉：
 
 ```sql
-select w.name
+select w.name,
+       (s.revoked_at is null
+        and (s.expires_at is null or s.expires_at > now())
+        and w.archived_at is null
+        and w.confidential = false) as available
 from knowledge_shares s
 join workspaces w on w.id = s.workspace_id
 where s.token_hash = $1
-  and s.revoked_at is null
-  and (s.expires_at is null or s.expires_at > now())
-  and w.archived_at is null
-  and w.confidential = false
 ```
 
-`enabled === false` 时不查库，直接 null。`toPublicEntry` 显式构造对象，禁止展开 `Entry`。工作包任务只留 `n`、`title`、`status`。图只留 `diagram.type`。实现状态只留 `implementation.status`。
+没有行就是 `{ found: false }`。有行就是 `{ found: true, available }`，只有 `available` 为真才带 `workspaceName`。`toPublicEntry` 显式构造对象，禁止展开 `Entry`。工作包任务只留 `n`、`title`、`status`。图只留 `diagram.type`。实现状态只留 `implementation.status`。公开状态用条目上的 `dropped`，不要写成 `withdrawn`。
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -199,7 +202,7 @@ Expected: FAIL，404 或路由不存在。
 
 - [ ] **Step 3: 实现路由**
 
-`shareRoutes` 用同一个处理函数注册 GET 和 HEAD。token 不匹配 `SHARE_TOKEN_RE` 时 404，不查库。总开关关闭时 404，不查库。`resolveShare` 为 null 时 404。单条先解析分享，再 `kindFromId(eid)`，失败也是 404。不要调用 `withReportPass`、`sourceEvidenceEntries`、`history`、`blameParagraphs`、`versionAt`。每个响应 `c.header("cache-control", "no-store")`。
+`shareRoutes` 用同一个处理函数注册 GET 和 HEAD。token 不匹配 `SHARE_TOKEN_RE` 时 404，不查库。总开关关闭时 404，不查库，也不要为了限流去调用 `resolveShare`。`found: false` 与 `available: false` 都是 404，正文都是 `{"error":"not found"}`，都不带工作区名。单条先解析分享，不可用同样 404；可用之后再 `kindFromId(eid)`，失败也是 404。不要调用 `withReportPass`、`sourceEvidenceEntries`、`history`、`blameParagraphs`、`versionAt`。每个响应 `c.header("cache-control", "no-store")`。
 
 `app.ts`：
 
@@ -257,16 +260,18 @@ test("marking confidential revokes active links in one step", async () => {
   await app.request(`/api/workspaces/${ws.id}`, {
     method: "PATCH", headers: { host: "127.0.0.1:4400", "content-type": "application/json" }, body: JSON.stringify({ confidential: true }),
   });
-  expect(await resolveShare(db, created.token, { enabled: true })).toBeNull();
+  expect(await resolveShare(db, created.token)).toEqual({ found: true, available: false });
   const again = await app.request(`/api/workspaces/${ws.id}`, {
     method: "PATCH", headers: { host: "127.0.0.1:4400", "content-type": "application/json" }, body: JSON.stringify({ confidential: false }),
   });
   expect(again.status).toBe(200);
-  expect(await resolveShare(db, created.token, { enabled: true })).toBeNull();
+  expect(await resolveShare(db, created.token)).toEqual({ found: true, available: false });
 });
 ```
 
 再覆盖：归档同样撤销且取消归档不恢复；保密工作区 POST 创建为 409；`sharesEnabled: false` 时 POST 为 403，GET 列表与 POST revoke 仍 200；重复 revoke 为 200。
+
+并发：同时 `createShare` 和把同一工作区 PATCH 成 `confidential: true`，等两边都结束，再 PATCH 回 `confidential: false`。创建若返回 409，`knowledge_shares` 里不能有 `revoked_at is null` 的行；创建若返回 token，`resolveShare` 必须是 `{ found: true, available: false }`。归档走同一断言。PGlite 一次只跑一个事务（`apps/hub/test/messages.test.ts` 已写明真正的重叠要 PostgreSQL），所以这条不能单独证明两个连接的交错。再用那个文件里的 `record` 包装记下 SQL：`createShare` 与这次限制性 PATCH 的事务里，第一条对 `workspaces` 的语句都是 `select ... for update`，分享行的 `insert` 发生在同一事务、且在锁之后。事务外先读 `confidential` 再插入的写法过不了这条。
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -276,17 +281,34 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-`shareAdmin.ts` 按 spec 的状态码。`uiApi` 的 PATCH 在 `confidential === true` 或 `archived === true` 时：
+`shareAdmin.ts` 按 spec 的状态码。`createShare` 自己开事务，不信任事务外读到的工作区状态：
+
+```ts
+await db.tx(async (tx) => {
+  const locked = await tx.query<{ confidential: boolean; archived_at: string | null }>(
+    "select confidential, archived_at from workspaces where id = $1 for update",
+    [workspaceId],
+  );
+  if (!locked[0]) throw new HttpError(404, "workspace not found");
+  if (locked[0].confidential) throw new HttpError(409, "confidential workspace cannot be shared");
+  if (locked[0].archived_at) throw new HttpError(409, "archived workspace cannot be shared");
+  // insert knowledge_shares on tx, then return the created row
+});
+```
+
+`uiApi` 的 PATCH 在更新之前锁同一行。限制性更新把撤销放进这个事务；其他 PATCH 也先拿这把锁，避免创建插在更新和撤销之间：
 
 ```ts
 const updated = await db.tx(async (tx) => {
+  const locked = await tx.query<{ id: string }>("select id from workspaces where id = $1 for update", [id]);
+  if (!locked[0]) throw new HttpError(404, `workspace not found: ${id}`);
   const row = await updateWorkspace(tx, id, clean);
   if (clean.confidential === true || clean.archived === true) await revokeActiveShares(tx, id);
   return row;
 });
 ```
 
-`updateWorkspace` 已经接受 `Db`。确认 `db.tx` 传出的客户端满足 `updateWorkspace` 的查询接口；若事务客户端类型不同，给 `updateWorkspace` 的 `db` 参数用已有的事务类型，不要复制一份更新 SQL。
+`deleteWorkspace` 已经用 `select id from workspaces where id = $1 for update`。`updateWorkspace` 只对传入的 `Db` 执行 `query`，把 `tx` 传进去不会再开一个事务。`db.tx` 在 `pg` 和 PGlite 上都会把嵌套调用并进外层事务。不要复制 `updateWorkspace` 的 UPDATE。锁要在读状态和插入之前拿到，并持有到事务提交：先提交的创建会被随后的撤销扫到；先提交的保密或归档会让还在等待的创建看到新状态并返回 409。公开读取时再查一次保密和归档，那不是这把锁的替代。事务只包住这把锁、`updateWorkspace` 和 `revokeActiveShares`。取消归档后通知排队任务，以及 `syncBoundRepos`，仍放在事务提交之后；不要把 daemon 调用放进这把锁。
 
 `main.ts`：`sharesEnabled: process.env.NEMA_SHARES_ENABLED !== "0"`。
 
@@ -331,7 +353,7 @@ test("unknown-token floods do not block a live token", async () => {
 });
 ```
 
-用注入的时钟把一条已知哈希打到 121 次，第 121 次 429，且正文是 `{ "error": "too many requests" }`，`retry-after` 为 `60`。
+用注入的时钟把一条已知哈希打到 121 次，第 121 次 429，且正文是 `{ "error": "too many requests" }`，`retry-after` 为 `60`。再对一条已撤销的 token 做同样的 121 次：第 121 次仍是 429，而这 121 次不占用 unknown 桶，另一个从未见过的 43 字符 token 仍然是 404。`found: false` 与 `available: false` 的 404 正文相同。
 
 快照：
 
@@ -347,7 +369,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-路由顺序：形状非法 → 404；总开关关闭 → 404；按哈希查库；未命中计入 unknown 桶，命中计入 known 桶。桶满返回 429，否则继续原来的 404 或 200。Map 超过 10_000 个 key 时删掉最旧的。注释写明：进程内、重启丢失、不跨实例。
+路由顺序：形状非法 → 404，不查库，不占桶；总开关关闭 → 404，不查库，不占桶；`resolveShare`；`found: false` 计入 unknown 桶，`found: true`（不论 `available`）计入该 token 的 sha256 桶。桶满返回 429。未满时 `available: false` 与 `found: false` 都是同一种 404，`available: true` 才是 200。Map 超过 10_000 个 key 时删掉最旧的。注释写明：进程内、重启丢失、不跨实例。不要在查库之前用 unknown 桶拒绝请求。
 
 不要把 `knowledge_shares` 加入 `snapshot.ts`。
 
@@ -434,7 +456,7 @@ git commit -m "feat(web): render a read-only knowledge share page"
 **Files:**
 
 - Modify: `apps/local/src/gateway.ts`、`apps/local/test/gateway.test.ts`
-- Modify: `apps/local/src/runtime.ts`、`scripts/desktop/templates/web-parent.mjs`
+- Modify: `apps/local/src/runtime.ts`、`apps/local/test/runtime.test.ts`、`apps/local/test/fixtures/fake-web.mjs`、`scripts/desktop/templates/web-parent.mjs`
 - Modify: `docker-compose.yml`、`scripts/images/check-images.mjs`、`scripts/images/check-images.test.mjs`
 
 **Interfaces:**
@@ -455,9 +477,11 @@ git commit -m "feat(web): render a read-only knowledge share page"
 
 `check-images` 断言 web 环境包含 `NEMA_HUB_INTERNAL_URL: http://hub:${NEMA_HUB_PORT:-4400}`，并且原有 `NEMA_HUB_URL` 断言不变。
 
+`fake-web.mjs` 在 `listen` 之前同步记录收到的 `{ type: "hub-url" }`。runtime 测试断言这条消息在 fixture 开始接受 HTTP 之后才到达，且 `url` 等于这次临时端口 hub 的回环地址。
+
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `npx vitest run apps/local/test/gateway.test.ts && node --test scripts/images/check-images.test.mjs`
+Run: `npx vitest run apps/local/test/gateway.test.ts apps/local/test/runtime.test.ts && node --test scripts/images/check-images.test.mjs`
 
 Expected: FAIL
 
@@ -465,7 +489,7 @@ Expected: FAIL
 
 `mappedTarget` 增加 spec 里的两条正则，返回 `{ target: web, ui: true, publicShare: true }`。`handle` 里 `publicShare` 跳过会话检查。非 GET/HEAD 在转发前 405。
 
-`web-parent.mjs` 在 `import("./server.js")` 之前：
+`web-parent.mjs` 在 `await import("./server.js")` 之前注册监听。今天这个文件只在 import 之后发送 `{ type: "managed-web-ready", port }`，没有入站监听：
 
 ```js
 process.on("message", (message) => {
@@ -475,18 +499,18 @@ process.on("message", (message) => {
 });
 ```
 
-`runtime.ts` 在 hub 启动成功后发送 `{ type: "hub-url", url: hub.url }`。发送失败只记日志，不把 hub URL 写进日志以外的公开响应。
+`runtime.ts` 不要在 `startHub` 返回时立刻 `webChild.send`。v0.2.4 起 `httpReady` 与 `createLocalDb`、`startHub` 重叠，那个时刻子进程可能还停在 `await import("./server.js")`。已有的 `await webReady` 在 `startHub` 之后，表示子进程已经接受回环 HTTP；监听器又在 import 之前，所以在 `await webReady` 之后发送一次 `{ type: "hub-url", url: hub.url }`。发送失败只记日志，不把 hub URL 写进日志以外的公开响应。`apps/local/test/fixtures/fake-web.mjs` 在开始监听之前同步记下收到的 `hub-url`。runtime 测试断言这条消息在 fixture 接受 HTTP 之后到达，且 `url` 等于这次 `startHub({ port: 0 })` 的回环地址。
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `npx vitest run apps/local/test/gateway.test.ts && node --test scripts/images/check-images.test.mjs`
+Run: `npx vitest run apps/local/test/gateway.test.ts apps/local/test/runtime.test.ts && node --test scripts/images/check-images.test.mjs`
 
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/local/src/gateway.ts apps/local/src/runtime.ts apps/local/test/gateway.test.ts scripts/desktop/templates/web-parent.mjs docker-compose.yml scripts/images/check-images.mjs scripts/images/check-images.test.mjs
+git add apps/local/src/gateway.ts apps/local/src/runtime.ts apps/local/test/gateway.test.ts apps/local/test/runtime.test.ts apps/local/test/fixtures/fake-web.mjs scripts/desktop/templates/web-parent.mjs docker-compose.yml scripts/images/check-images.mjs scripts/images/check-images.test.mjs
 git commit -m "feat(local): serve knowledge shares without a desktop session"
 ```
 
