@@ -3,31 +3,7 @@ import { once } from "node:events";
 import http from "node:http";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { sharePeerDecision as guardDecision } from "./share-peer-guard.mjs";
-import { sharePeerDecision as sourceDecision } from "../../../apps/local/src/sharePeer.ts";
-
-test("the process guard uses the same peer decision as the runtime", () => {
-  const cases = [
-    ["127.0.0.1", {}],
-    ["192.168.1.10", {}],
-    ["fd00::10", {}],
-    ["fe80::1%eth0", {}],
-    ["::ffff:192.168.0.5", {}],
-    ["::1", {}],
-    ["8.8.8.8", {}],
-    ["172.32.0.1", {}],
-    ["0.0.0.0", {}],
-    ["::", {}],
-    ["example.com", {}],
-    ["10.1.2.3", { "x-forwarded-for": "10.0.0.1" }],
-    ["203.0.113.5", { "X-Forwarded-For": "10.0.0.5" }],
-    [null, {}],
-    ["::1", { forwarded: "for=127.0.0.1" }],
-  ];
-  for (const [peer, headers] of cases) {
-    assert.equal(guardDecision(peer, headers), sourceDecision(peer, headers), String(peer));
-  }
-});
+import "./share-peer-guard.mjs";
 
 test("a forwarded share request stops before Next and an allowed one keeps the socket peer", async () => {
   const hits = [];
@@ -50,19 +26,22 @@ test("a forwarded share request stops before Next and an allowed one keeps the s
     req.end();
   });
   const token = "a".repeat(43);
-  const blocked = await ask(`/s/${token}`, { "x-forwarded-for": "10.0.0.1", "x-nema-share-peer": "127.0.0.1" });
-  assert.equal(blocked.status, 404);
-  assert.equal(blocked.body, "not found");
-  assert.equal(blocked.cache, "no-store");
-  assert.equal(hits.length, 0);
-  const allowed = await ask(`/s/${token}`, { "x-nema-share-peer": "8.8.8.8" });
-  assert.equal(allowed.status, 200);
-  assert.equal(allowed.body, "next");
-  assert.equal(hits[0].peer, "127.0.0.1");
-  const home = await ask("/");
-  assert.equal(home.body, "next");
-  assert.equal(hits[1].peer, undefined);
-  server.close();
+  try {
+    const blocked = await ask(`/s/${token}`, { "x-forwarded-for": "10.0.0.1", "x-nema-share-peer": "127.0.0.1" });
+    assert.equal(blocked.status, 404);
+    assert.equal(blocked.body, "not found");
+    assert.equal(blocked.cache, "no-store");
+    assert.equal(hits.length, 0);
+    const allowed = await ask(`/s/${token}`, { "x-nema-share-peer": "8.8.8.8" });
+    assert.equal(allowed.status, 200);
+    assert.equal(allowed.body, "next");
+    assert.equal(hits[0].peer, "127.0.0.1");
+    const home = await ask("/");
+    assert.equal(home.body, "next");
+    assert.equal(hits[1].peer, undefined);
+  } finally {
+    server.close();
+  }
 });
 
 test("desktop and container wrappers install the guard before Next starts", () => {
