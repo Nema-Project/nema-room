@@ -218,3 +218,59 @@ export function toPublicEntry(entry: Entry): PublicEntry {
   }
   return projected;
 }
+
+const SHARE_RATE_WINDOW_MS = 60_000;
+const SHARE_RATE_MAX_KEYS = 10_000;
+const shareHits = new Map<string, number[]>();
+let shareNowForTests: (() => number) | undefined;
+
+export function shareTokenHash(token: string): string {
+  return sha256(token);
+}
+
+export function resetShareRateForTests(): void {
+  shareHits.clear();
+}
+
+export function setShareNowForTests(clock: (() => number) | undefined): void {
+  shareNowForTests = clock;
+}
+
+export function shareReadNow(): number {
+  return shareNowForTests ? shareNowForTests() : Date.now();
+}
+
+function shareRateLimit(kind: "known" | "unknown"): number {
+  switch (kind) {
+    case "known":
+      return 120;
+    case "unknown":
+      return 600;
+    default: {
+      const unreachable: never = kind;
+      return unreachable;
+    }
+  }
+}
+
+/**
+ * In-process only. A restart clears the map, and another hub process has its own.
+ * Past 10_000 keys the oldest key is dropped; a shared store is the upgrade if more than one hub serves shares.
+ */
+export function takeShareSlot(kind: "known" | "unknown", key: string, now: number): boolean {
+  const bucketKey = kind === "unknown" ? "unknown" : key;
+  const recent = (shareHits.get(bucketKey) ?? []).filter((at) => now - at < SHARE_RATE_WINDOW_MS);
+  if (recent.length >= shareRateLimit(kind)) {
+    shareHits.set(bucketKey, recent);
+    return false;
+  }
+  recent.push(now);
+  shareHits.delete(bucketKey);
+  shareHits.set(bucketKey, recent);
+  while (shareHits.size > SHARE_RATE_MAX_KEYS) {
+    const oldest = shareHits.keys().next().value;
+    if (oldest === undefined) break;
+    shareHits.delete(oldest);
+  }
+  return true;
+}
