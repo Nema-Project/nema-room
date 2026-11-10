@@ -36,9 +36,14 @@ test("a forwarded share request stops before Next and an allowed one keeps the s
     assert.equal(allowed.status, 200);
     assert.equal(allowed.body, "next");
     assert.equal(hits[0].peer, "127.0.0.1");
-    const home = await ask("/");
+    const home = await ask("/", { "x-nema-share-peer": "127.0.0.1" });
     assert.equal(home.body, "next");
     assert.equal(hits[1].peer, undefined);
+    for (const path of [`/./s/${token}`, `/x/../s/${token}`, `/%2e/s/${token}`]) {
+      const disguised = await ask(path, { "x-nema-share-peer": "127.0.0.1" });
+      assert.equal(disguised.body, "next", path);
+      assert.equal(hits.at(-1).peer, undefined, path);
+    }
   } finally {
     server.close();
   }
