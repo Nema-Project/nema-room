@@ -25,8 +25,14 @@ export function shareAdminRoutes(deps: { db: Db; sharesEnabled: boolean }): Hono
 
   app.post("/workspaces/:id/shares", async (c) => {
     if (!deps.sharesEnabled) return c.json({ error: "sharing disabled" }, 403);
+    let raw: unknown;
     try {
-      const body = createBody.parse(await c.req.json());
+      raw = await c.req.json();
+    } catch {
+      return c.json({ error: "request body must be valid JSON" }, 400);
+    }
+    try {
+      const body = createBody.parse(raw);
       const created = await createShare(deps.db, c.req.param("id"), body);
       return c.json({
         id: created.id,
