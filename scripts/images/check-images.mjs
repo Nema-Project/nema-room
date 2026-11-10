@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { compareReleaseVersions, readPackageVersion, readReleaseVersion } from '../desktop/release-version.mjs';
+import { isPrivateSharePeer } from '../desktop/templates/share-peer.mjs';
 
 export const HUB_IMAGE = 'ghcr.io/nema-project/nema-room-hub';
 export const WEB_IMAGE = 'ghcr.io/nema-project/nema-room-web';
@@ -27,6 +28,13 @@ function serviceBlocks(text) {
   return blocks;
 }
 
+/** Refuse a public, unspecified, or hostname bind. Private and loopback addresses match the share peer allowlist. */
+export function assertWebBind(value) {
+  if (typeof value !== 'string' || !isPrivateSharePeer(value)) {
+    throw new Error(`NEMA_WEB_BIND must be a loopback or private address: ${value}`);
+  }
+}
+
 export function assertComposeShape(text) {
   const services = serviceBlocks(text);
   for (const name of ['hub', 'web']) {
@@ -37,11 +45,20 @@ export function assertComposeShape(text) {
   if (!services.hub.includes('127.0.0.1:${NEMA_HUB_PORT:-4400}:${NEMA_HUB_PORT:-4400}')) {
     throw new Error('Published hub port must default to ${NEMA_HUB_PORT:-4400} on the host and in the container');
   }
-  if (!services.web.includes('127.0.0.1:${NEMA_WEB_PORT:-3000}:3000')) {
-    throw new Error('Published web port must default to ${NEMA_WEB_PORT:-3000}');
+  if (!services.web.includes('host_ip: ${NEMA_WEB_BIND:-127.0.0.1}')) {
+    throw new Error('Published web port must bind ${NEMA_WEB_BIND:-127.0.0.1}');
+  }
+  if (!services.web.includes('published: ${NEMA_WEB_PORT:-3000}') || !services.web.includes('target: 3000')) {
+    throw new Error('Published web port must default to ${NEMA_WEB_PORT:-3000} and target 3000');
   }
   if (!services.web.includes('NEMA_HUB_URL: ${NEMA_HUB_URL:-http://127.0.0.1:${NEMA_HUB_PORT:-4400}}')) {
     throw new Error('Published web NEMA_HUB_URL must follow NEMA_HUB_PORT');
+  }
+  if (!services.web.includes('NEMA_HUB_INTERNAL_URL: http://hub:${NEMA_HUB_PORT:-4400}')) {
+    throw new Error('Published web NEMA_HUB_INTERNAL_URL must follow NEMA_HUB_PORT');
+  }
+  if (!services.hub.includes('NEMA_SHARES_ENABLED: ${NEMA_SHARES_ENABLED:-}')) {
+    throw new Error('Published hub must pass NEMA_SHARES_ENABLED through, defaulting empty');
   }
   if (!/image:\s*postgres:17\b/.test(services.postgres ?? '')) throw new Error('postgres image must stay postgres:17');
   if (!services.hub.includes('/api/daemon/status') || !services.web.includes('127.0.0.1:3000')) {

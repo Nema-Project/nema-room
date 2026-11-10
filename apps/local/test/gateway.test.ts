@@ -456,3 +456,61 @@ describe("attachment upload passthrough", () => {
     session.close();
   });
 });
+
+describe("public knowledge share paths", () => {
+  test("proxies a valid share link without a session and never forwards cookies or a public peer", async () => {
+    let webHits = 0;
+    let seen: http.IncomingHttpHeaders | undefined;
+    const webTarget = await listen((req, res) => {
+      webHits += 1;
+      seen = req.headers;
+      res.end(`web:${req.url}`);
+    });
+    let hubHits = 0;
+    const hubTarget = await listen((_req, res) => {
+      hubHits += 1;
+      res.end("hub");
+    });
+    const session = new SessionManager();
+    const credential = createGatewayCredential();
+    const gateway = await startGateway({ webTarget, hubTarget, session, port: 0, privateGatewayCredential: credential });
+    gateways.push(gateway);
+    const token = "a".repeat(43);
+
+    const share = await fetch(`${gateway.origin}/s/${token}`, {
+      headers: { cookie: "nema_session_9=secret", "x-nema-gateway-credential": credential, "x-nema-share-peer": "8.8.8.8" },
+    });
+    expect(share.status).toBe(200);
+    expect(await share.text()).toBe(`web:/s/${token}`);
+    expect(seen?.cookie).toBeUndefined();
+    expect(seen?.[GATEWAY_CREDENTIAL_HEADER]).toBeUndefined();
+    expect(seen?.["x-nema-share-peer"]).toBeUndefined();
+    expect(hubHits).toBe(0);
+    expect(gateway.origin.startsWith("http://127.0.0.1:")).toBe(true);
+
+    const entry = await fetch(`${gateway.origin}/s/${token}/e/D-1`);
+    expect(entry.status).toBe(200);
+    expect(await entry.text()).toBe(`web:/s/${token}/e/D-1`);
+
+    const beforeMiss = webHits;
+    expect((await fetch(`${gateway.origin}/s/short`)).status).toBe(404);
+    expect((await fetch(`${gateway.origin}/s/${token}/e/D-0`)).status).toBe(404);
+    expect(webHits).toBe(beforeMiss);
+
+    const beforeApi = hubHits;
+    expect((await fetch(`${gateway.origin}/api/workspaces`)).status).toBe(401);
+    expect(hubHits).toBe(beforeApi);
+
+    expect((await fetch(`${gateway.origin}/s/${token}`, { method: "POST" })).status).toBe(405);
+
+    const beforeForward = webHits;
+    const forwarded = await rawRequest(gateway.origin, `/s/${token}`, { "x-forwarded-for": "10.0.0.1" });
+    expect(forwarded.status).toBe(404);
+    expect(forwarded.body).toBe("not found");
+    expect(forwarded.headers["cache-control"]).toBe("no-store");
+    expect(webHits).toBe(beforeForward);
+
+    expect((await rawRequest(gateway.origin, `/s/${token}`, { host: "192.168.1.5" })).status).toBe(403);
+    session.close();
+  });
+});

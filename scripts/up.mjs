@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import * as nodeUtil from "node:util";
 import { devComposeUpArgs } from "./compose-dev.mjs";
+import { assertWebBind } from "./images/check-images.mjs";
 import { setupSettings } from "./setup.mjs";
 
 try {
@@ -14,6 +15,8 @@ try {
   const s = setupSettings(config);
   await mkdir(s.dataDir, { recursive: true });
   const env = { ...process.env, NEMA_DATA_HOST_DIR: s.dataDir, NEMA_HUB_PORT: s.port, NEMA_UID: s.uid, NEMA_GID: s.gid };
+  const bind = process.env.NEMA_WEB_BIND !== undefined ? process.env.NEMA_WEB_BIND : config.NEMA_WEB_BIND;
+  assertWebBind(bind ? bind : "127.0.0.1");
   const result = spawnSync("docker", devComposeUpArgs(), { cwd: root, env, stdio: "inherit", windowsHide: true });
   if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;

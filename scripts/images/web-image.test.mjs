@@ -26,6 +26,8 @@ test('web build bakes the published hub URL and enables standalone before the Ne
   const flag = webBuild.indexOf('ENV NEMA_DOCKER_WEB=1');
   const build = webBuild.indexOf('npm run build -w apps/web');
   assert.ok(flag !== -1 && build !== -1 && flag < build, 'NEMA_DOCKER_WEB must be set before next build');
+  const peer = webBuild.indexOf('COPY apps/local/src/sharePeer.ts apps/local/src/sharePeer.ts');
+  assert.ok(peer !== -1 && peer < build, 'the share peer source must be present before next build');
 });
 
 test('web runtime copies the standalone server, static assets, and public files', () => {
