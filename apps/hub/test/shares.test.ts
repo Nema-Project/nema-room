@@ -93,10 +93,11 @@ describe("knowledge share rows", () => {
     expect(await resolveShare(db, hidden.token)).toEqual({ found: true, available: false });
     await updateWorkspace(db, ws.id, { confidential: false });
 
-    await updateWorkspace(db, ws.id, { archived: true });
-    expect(await resolveShare(db, hidden.token)).toEqual({ found: true, available: false });
     const omitted = await createShare(db, ws.id, {});
     expect(omitted.expiresAt).toBeNull();
+    await updateWorkspace(db, ws.id, { archived: true });
+    expect(await resolveShare(db, hidden.token)).toEqual({ found: true, available: false });
+    expect(await resolveShare(db, omitted.token)).toEqual({ found: true, available: false });
     await updateWorkspace(db, ws.id, { archived: false });
     expect(await resolveShare(db, omitted.token)).toEqual({ found: true, available: true, workspaceId: ws.id, workspaceName: "Alpha" });
   });
@@ -417,5 +418,173 @@ describe("public share routes", () => {
     expect((await off.request(`${HUB}/share/${created.token}`)).status).toBe(404);
     expect((await off.request(`${HUB}/share/not-a-token`)).status).toBe(404);
     expect(lookups).toBe(0);
+  });
+});
+
+describe("share admin", () => {
+  test("create returns the token once and list never does", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await shareableWorkspace(db, dataDir, "Alpha");
+    const app = shareApp(db, dataDir);
+    const created = await app.request(`${HUB}/api/workspaces/${ws.id}/shares`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ note: "ada" }),
+    });
+    expect(created.status).toBe(201);
+    const payload = await created.json() as { token: string };
+    const listed = await app.request(`${HUB}/api/workspaces/${ws.id}/shares`);
+    expect(listed.status).toBe(200);
+    expect(JSON.stringify(await listed.json())).not.toContain(payload.token);
+  });
+
+  test("marking confidential revokes active links in one step", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await shareableWorkspace(db, dataDir, "Alpha");
+    const created = await createShare(db, ws.id, {});
+    const app = shareApp(db, dataDir);
+    const marked = await app.request(`${HUB}/api/workspaces/${ws.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confidential: true }),
+    });
+    expect(marked.status).toBe(200);
+    expect(await resolveShare(db, created.token)).toEqual({ found: true, available: false });
+    const again = await app.request(`${HUB}/api/workspaces/${ws.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confidential: false }),
+    });
+    expect(again.status).toBe(200);
+    expect(await resolveShare(db, created.token)).toEqual({ found: true, available: false });
+  });
+
+  test("archiving revokes links and unarchiving does not restore them", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await shareableWorkspace(db, dataDir, "Alpha");
+    const created = await createShare(db, ws.id, {});
+    const app = shareApp(db, dataDir);
+    expect((await app.request(`${HUB}/api/workspaces/${ws.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ archived: true }),
+    })).status).toBe(200);
+    expect(await resolveShare(db, created.token)).toEqual({ found: true, available: false });
+    expect((await app.request(`${HUB}/api/workspaces/${ws.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ archived: false }),
+    })).status).toBe(200);
+    expect(await resolveShare(db, created.token)).toEqual({ found: true, available: false });
+  });
+
+  test("confidential and archived workspaces cannot create a share", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const secret = await createWorkspace(db, dataDir, "Secret");
+    const app = shareApp(db, dataDir);
+    const denied = await app.request(`${HUB}/api/workspaces/${secret.id}/shares`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(denied.status).toBe(409);
+    expect(await denied.json()).toEqual({ error: "confidential workspace cannot be shared" });
+    const open = await shareableWorkspace(db, dataDir, "Open");
+    await updateWorkspace(db, open.id, { archived: true });
+    const archived = await app.request(`${HUB}/api/workspaces/${open.id}/shares`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(archived.status).toBe(409);
+    expect(await archived.json()).toEqual({ error: "archived workspace cannot be shared" });
+  });
+
+  test("a disabled switch blocks create and still allows list and revoke", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await shareableWorkspace(db, dataDir, "Alpha");
+    const created = await createShare(db, ws.id, { note: "keep" });
+    const app = shareApp(db, dataDir, { sharesEnabled: false });
+    const blocked = await app.request(`${HUB}/api/workspaces/${ws.id}/shares`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(blocked.status).toBe(403);
+    expect(await blocked.json()).toEqual({ error: "sharing disabled" });
+    expect((await app.request(`${HUB}/api/workspaces/${ws.id}/shares`)).status).toBe(200);
+    const revoked = await app.request(`${HUB}/api/workspaces/${ws.id}/shares/${created.id}/revoke`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(revoked.status).toBe(200);
+    const again = await app.request(`${HUB}/api/workspaces/${ws.id}/shares/${created.id}/revoke`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(again.status).toBe(200);
+    expect(await resolveShare(db, created.token)).toEqual({ found: true, available: false });
+  });
+
+  test("a create racing a confidential patch leaves no live share", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await shareableWorkspace(db, dataDir, "Alpha");
+    const app = shareApp(db, dataDir);
+    const [created, patched] = await Promise.all([
+      createShare(db, ws.id, {}).then((row) => ({ ok: true as const, token: row.token }), (error: { status?: number }) => ({ ok: false as const, status: error.status })),
+      app.request(`${HUB}/api/workspaces/${ws.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ confidential: true }),
+      }),
+    ]);
+    expect(patched.status).toBe(200);
+    expect((await app.request(`${HUB}/api/workspaces/${ws.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confidential: false }),
+    })).status).toBe(200);
+    const live = await db.query("select id from knowledge_shares where revoked_at is null");
+    if (!created.ok) {
+      expect(created.status).toBe(409);
+      expect(live).toEqual([]);
+    } else {
+      expect(await resolveShare(db, created.token)).toEqual({ found: true, available: false });
+      expect(live).toEqual([]);
+    }
+  });
+
+  test("create and a restrictive patch lock the workspace row before writing", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await shareableWorkspace(db, dataDir, "Alpha");
+    const log: string[] = [];
+    const record = (inner: Db): Db => ({
+      query: (sql, params) => {
+        log.push(sql.replace(/\s+/g, " ").trim());
+        return inner.query(sql, params);
+      },
+      tx: (fn) => inner.tx((tx) => fn(record(tx))),
+    });
+    await createShare(record(db), ws.id, {});
+    const createLock = log.findIndex((sql) => /from workspaces where id = \$1 for update/i.test(sql));
+    const insert = log.findIndex((sql) => /insert into knowledge_shares/i.test(sql));
+    expect(createLock).toBeGreaterThanOrEqual(0);
+    expect(createLock).toBeLessThan(insert);
+    expect(log.slice(0, createLock).some((sql) => /workspaces/i.test(sql))).toBe(false);
+
+    log.length = 0;
+    const app = shareApp(record(db), dataDir);
+    expect((await app.request(`${HUB}/api/workspaces/${ws.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ archived: true }),
+    })).status).toBe(200);
+    const patchLock = log.findIndex((sql) => /from workspaces where id = \$1 for update/i.test(sql));
+    const revoke = log.findIndex((sql) => /update knowledge_shares/i.test(sql));
+    expect(patchLock).toBeGreaterThanOrEqual(0);
+    expect(patchLock).toBeLessThan(revoke);
+    expect(log.slice(0, patchLock).some((sql) => /workspaces/i.test(sql))).toBe(false);
   });
 });
