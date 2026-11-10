@@ -290,6 +290,7 @@ GitHub 插件让 Agent 查看已绑定仓库在 GitHub 上的 issue、pull reque
 
 ### Hub 的本机访问限制
 
+- `/share` 同样只接受回环 Host（`127.0.0.1:<端口>` 或 `localhost:<端口>`）。局域网地址、`Host: hub:<端口>` 和其他 Host 都是 403。web 服务端用内部 URL（`NEMA_HUB_INTERNAL_URL`）连接 hub，并自己发送 `Host: 127.0.0.1:<port>`。hostGuard 没有因为分享而放行公网。
 - hub 只接受 `Host` 为 `127.0.0.1:<NEMA_HUB_PORT>` 或 `localhost:<NEMA_HUB_PORT>` 的 `/api`、`/room` 请求，其他 Host 一律 403（防 DNS rebinding）。因此请用这两个名字之一访问 hub；daemon 的 WebSocket `/daemon` 不受影响，仍靠 daemon token 认证。compose 模式下浏览器和 daemon 经由发布到 `127.0.0.1` 的端口访问容器里的 hub，`Host` 依旧是 `127.0.0.1:<端口>` / `localhost:<端口>`，所以容器内端口必须与发布端口一致。`docker-compose.yml` 把宿主机端口、容器端口和 `NEMA_HUB_PORT` 都写成 `${NEMA_HUB_PORT:-4400}`。`NEMA_WEB_PORT`（默认 3000）只改 web 的宿主机端口，容器内仍监听 3000。web 容器启动时读取 `NEMA_HUB_URL`，compose 默认把它设成 `http://127.0.0.1:${NEMA_HUB_PORT:-4400}`。源码构建（`npm run up`，合并 `docker-compose.build.yml`）使用同一组插值，改端口不用重建 web。镜像里的 `NEXT_PUBLIC_HUB_URL` 只是回退值，默认仍是 `http://127.0.0.1:4400`。
 - `/api` 下的 POST / PUT / PATCH 必须带 `content-type: application/json`，否则返回 415（挡住跨站的“简单请求”）。
 - 用户在界面里修改条目（`PUT /api/workspaces/:id/entries/:eid`）时，请求里的 `basis` 和 `confirmed` 会被忽略：决策写成 `decided`，其他类型写成 `stated`，并刷新确认时间。`POST /api/workspaces/:id/entries/:eid/confirm` 的 body 为 `{}`，返回确认后的条目，重新索引并发出 `knowledge.changed`；条目不存在时返回 404。界面这两条不检查当前任务的用户消息。

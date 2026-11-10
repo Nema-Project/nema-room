@@ -42,6 +42,10 @@ English: this repository is public and desktop preview releases are available. R
 
 如果能演示附件绕过这些检查（例如被当作网页渲染、写到预定位置之外，或在本机被执行），请按漏洞报告。
 
+### 已知边界：只读知识库分享链接
+
+分享链接是 capability URL。持有链接即可读取该知识库的公开投影；撤销后的下一次请求必须失败。分享页只接受内网和局域网来源，不信任转发头，hub 不对局域网或公网发布。能绕过撤销、用分享页读到聊天或附件、借公开页把 `/api` 暴露到非回环 Host、或从公网来源读到分享页，才是漏洞。
+
 ## 支持的版本
 
 当前支持桌面预览版本、npm 包 `@nema-project/nema`（命令名 `nema`，与同一 tag 的桌面版版本号一致），以及 `main` 源码的 Web / Compose 运行方式。修复首先进入 `main`，随后在新的桌面版本和对应的 `@nema-project/nema` 版本中分发；不承诺对历史发布系列回移修复，也没有独立的安全维护分支。
