@@ -131,6 +131,7 @@ export async function fetchLatestRelease(current: string, options: {
       signal: controller.signal,
       headers: {
         accept: "application/vnd.github+json",
+        "x-github-api-version": "2026-03-10",
         "user-agent": "Nema-Room",
       },
     });
