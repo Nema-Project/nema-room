@@ -125,6 +125,8 @@ node scripts/setup.mjs --lang zh
 <a id="模型运行方式"></a>
 <a id="开发与升级"></a>
 
+源码开发：`npm run dev -w apps/web` 显式启用 `NEMA_SHARE_SOURCE_DEV=1`，web 绑定 `127.0.0.1`。仅开发模式下，缺少包装层 peer header 时改查实际 TCP 对端是否为私网地址。生产仍必须有包装层 header；此选项不启用公网分享。
+
 ## 文档与反馈
 
 | 文档 | 内容 |

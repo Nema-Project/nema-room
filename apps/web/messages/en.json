@@ -679,5 +679,8 @@
   "route.usage": "{input} input · {output} output tokens",
   "route.noUsage": "No token counts were reported",
   "share.linkUnavailable": "This link is not available.",
-  "share.temporarilyUnavailable": "Sharing is temporarily unavailable."
+  "share.temporarilyUnavailable": "Sharing is temporarily unavailable.",
+  "share.entryStatus": "Entry status",
+  "share.acceptedByUser": "Accepted by user",
+  "share.commitsCheckedOnly": "Commits checked only"
 }

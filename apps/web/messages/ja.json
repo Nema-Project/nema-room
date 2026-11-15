@@ -679,5 +679,8 @@
   "route.usage": "{input} 入力 · {output} 出力トークン",
   "route.noUsage": "トークン数は報告されていません",
   "share.linkUnavailable": "このリンクは使えません。",
-  "share.temporarilyUnavailable": "共有は一時的に使えません。"
+  "share.temporarilyUnavailable": "共有は一時的に使えません。",
+  "share.entryStatus": "項目の状態",
+  "share.acceptedByUser": "ユーザーが受け入れ済み",
+  "share.commitsCheckedOnly": "コミットの確認のみ"
 }

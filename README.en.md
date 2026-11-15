@@ -125,6 +125,8 @@ More: [storage, backups, and limitations](docs/guide.en.md#data) · [plugins, sk
 <a id="model-runtimes"></a>
 <a id="development-and-upgrades"></a>
 
+Source development: `npm run dev -w apps/web` explicitly enables `NEMA_SHARE_SOURCE_DEV=1` and binds web to `127.0.0.1`. Only in development, a missing wrapper peer header falls back to the actual private TCP peer. Production still requires the wrapper header; this option does not enable public sharing.
+
 ## Documentation and feedback
 
 | Resource | Contents |

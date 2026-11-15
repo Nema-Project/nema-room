@@ -367,6 +367,8 @@ npm run db:up
 npm run dev
 ```
 
+源码开发：`npm run dev -w apps/web` 显式启用 `NEMA_SHARE_SOURCE_DEV=1`，web 绑定 `127.0.0.1`。仅开发模式下，缺少包装层 peer header 时改查实际 TCP 对端是否为私网地址。生产仍必须有包装层 header；此选项不启用公网分享。
+
 另开终端启动 `node apps/cli/dist/index.js daemon`。不要同时运行 Compose 的 hub/web，端口会冲突。
 
 ```bash

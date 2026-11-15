@@ -367,6 +367,8 @@ npm run db:up
 npm run dev
 ```
 
+ソース開発では `npm run dev -w apps/web` が `NEMA_SHARE_SOURCE_DEV=1` を明示的に有効にし、web を `127.0.0.1` にバインドします。開発モードでのみ、ラッパーの peer ヘッダーがない場合に実際の TCP 接続元がプライベートアドレスか確認します。本番はラッパーのヘッダーが必須で、この設定は公開インターネットでの共有を有効にしません。
+
 別の端末で `node apps/cli/dist/index.js daemon` を起動します。Compose の hub/web との同時起動はポートが競合します。
 
 ```bash

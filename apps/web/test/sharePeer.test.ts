@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { headersForSharePage, isPrivateSharePeer, sharePeerDecision } from "@/lib/sharePeer";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { headersForSharePage, isPrivateSharePeer, sharePagePeerDecision, sharePeerDecision } from "@/lib/sharePeer";
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("share peer", () => {
   it("allows one address from each private prefix", () => {
@@ -37,5 +39,19 @@ describe("share peer", () => {
   it("rejects a missing peer", () => {
     expect(sharePeerDecision(null, {})).toBe("reject");
     expect(sharePeerDecision(undefined, {})).toBe("reject");
+  });
+
+  it("requires both explicit dev opt-in and a private actual socket peer", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("NEMA_SHARE_SOURCE_DEV", "0");
+    expect(sharePagePeerDecision(null, {}, "127.0.0.1")).toBe("reject");
+    vi.stubEnv("NEMA_SHARE_SOURCE_DEV", "1");
+    expect(sharePagePeerDecision(null, {}, "127.0.0.1")).toBe("allow");
+    expect(sharePagePeerDecision(null, {}, "8.8.8.8")).toBe("reject");
+    expect(sharePagePeerDecision(null, {}, undefined)).toBe("reject");
+    expect(sharePagePeerDecision(null, { forwarded: "for=127.0.0.1" }, "127.0.0.1")).toBe("reject");
+    expect(sharePagePeerDecision("8.8.8.8", {}, "127.0.0.1")).toBe("reject");
+    vi.stubEnv("NODE_ENV", "production");
+    expect(sharePagePeerDecision(null, {}, "127.0.0.1")).toBe("reject");
   });
 });

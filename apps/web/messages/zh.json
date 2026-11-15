@@ -679,5 +679,8 @@
   "route.usage": "{input} 输入 · {output} 输出 token",
   "route.noUsage": "供应商没有报 token 数",
   "share.linkUnavailable": "这个链接不可用。",
-  "share.temporarilyUnavailable": "分享暂时不可用。"
+  "share.temporarilyUnavailable": "分享暂时不可用。",
+  "share.entryStatus": "条目状态",
+  "share.acceptedByUser": "用户已验收",
+  "share.commitsCheckedOnly": "仅核对了提交"
 }
