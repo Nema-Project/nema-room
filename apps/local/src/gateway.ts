@@ -145,7 +145,10 @@ const SHARE_ENTRY = /^\/s\/[A-Za-z0-9_-]{43}\/e\/(R|D|T|Q|S|G|W)-[1-9]\d*\/?$/;
 
 function mappedTarget(pathname: string, web: URL, hub: URL): { target: URL; ui: boolean; publicShare?: boolean } | null {
   if (pathname === "/api" || pathname.startsWith("/api/")) return { target: hub, ui: false };
-  if (SHARE_PAGE.test(pathname) || SHARE_ENTRY.test(pathname)) return { target: web, ui: true, publicShare: true };
+  // Only build assets are public alongside /s/. Brand resources such as
+  // /icon.png stay behind the session check (see the brand-resources test).
+  const shareAsset = /^\/_next\/static\/.+/.test(pathname);
+  if (SHARE_PAGE.test(pathname) || SHARE_ENTRY.test(pathname) || shareAsset) return { target: web, ui: true, publicShare: true };
   const uiPath = pathname === "/" || /^\/w\/[A-Za-z0-9_-]+\/?$/.test(pathname) ||
     /^\/w\/[A-Za-z0-9_-]+\/t\/[A-Za-z0-9_-]+\/?$/.test(pathname) ||
     /^\/_next\/static\/.+/.test(pathname) || pathname === "/_next/image" ||

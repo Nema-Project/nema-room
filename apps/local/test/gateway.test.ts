@@ -497,6 +497,17 @@ describe("public knowledge share paths", () => {
     expect((await fetch(`${gateway.origin}/s/${token}/e/D-0`)).status).toBe(404);
     expect(webHits).toBe(beforeMiss);
 
+    for (const asset of ["/_next/static/chunks/share.js", "/_next/static/css/share.css"]) {
+      const response = await fetch(`${gateway.origin}${asset}`);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe(`web:${asset}`);
+      expect((await rawRequest(gateway.origin, asset, { forwarded: "for=127.0.0.1" })).status).toBe(404);
+    }
+    for (const route of ["/", "/w/w1", "/_next/image", "/_next/static", "/api/workspaces", "/icon.png"]) {
+      expect((await fetch(`${gateway.origin}${route}`)).status).toBe(route === "/_next/static" ? 404 : 401);
+    }
+    expect((await fetch(`${gateway.origin}/_next/static/chunks/share.js`, { method: "POST" })).status).toBe(405);
+
     const beforeApi = hubHits;
     expect((await fetch(`${gateway.origin}/api/workspaces`)).status).toBe(401);
     expect(hubHits).toBe(beforeApi);
