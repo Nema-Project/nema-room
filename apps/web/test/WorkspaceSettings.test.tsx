@@ -8,6 +8,9 @@ import type { WorkspaceView } from "@/lib/types";
 
 vi.mock("@/lib/hub", () => ({
   updateWorkspace: vi.fn(),
+  listShares: vi.fn(async () => ({ shares: [] })),
+  createShare: vi.fn(),
+  revokeShare: vi.fn(),
   listRepos: vi.fn(),
   pickDirectory: vi.fn(),
   bindRepo: vi.fn(),

@@ -80,6 +80,22 @@ export const createWorkspace = (name: string) => request<Workspace>("/workspaces
 export const updateWorkspace = (id: string, patch: Partial<Pick<Workspace, "name" | "confidential" | "knowledgeLanguage">>) =>
   request<Workspace>(w(id), { method: "PATCH", body: patch });
 export const archiveWorkspace = (id: string, archived: boolean) => request<Workspace>(w(id), { method: "PATCH", body: { archived } });
+
+export type KnowledgeShare = {
+  id: string;
+  note: string | null;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+};
+
+export type CreatedKnowledgeShare = KnowledgeShare & { token: string };
+
+export const listShares = (id: string) => request<{ shares: KnowledgeShare[] }>(`${w(id)}/shares`);
+export const createShare = (id: string, body: { note?: string; expiresAt?: string | null } = {}) =>
+  request<CreatedKnowledgeShare>(`${w(id)}/shares`, { method: "POST", body });
+export const revokeShare = (id: string, shareId: string) =>
+  request<KnowledgeShare>(`${w(id)}/shares/${encodeURIComponent(shareId)}/revoke`, { method: "POST", body: {} });
 export const deleteWorkspace = (id: string) => request<void>(w(id), { method: "DELETE" });
 export const listMessages = (id: string) => request<Message[]>(`${w(id)}/messages`);
 export const getMessage = (id: string, messageId: string) => request<Message>(`${w(id)}/messages/${encodeURIComponent(messageId)}`);
