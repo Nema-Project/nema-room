@@ -106,9 +106,9 @@ hub 进程内记忆，单进程，重启清空。不做成配置项。
 
 公开投影只有知识本身，并且每次都从 `KnowledgeStore` 读当前文件，不读 `messages`、`tasks`、附件、线程、插件、仓库、设置。
 
-列表每条只有：`id`、`kind`、`title`、`status`、`businessDate`、`basis`、`confirmedAt`，加上存在时的 `priority`、`url`、`related`、`implementationStatus`（`reported` | `verified` | `mismatch`）、`diagramType`、`workpackage: { blockedOn, taskCount }`。
+列表每条只有：`id`、`kind`、`title`、`status`、`businessDate`、`basis`、`confirmedAt`，加上存在时的 `priority`、`url`、`related`、`implementationStatus`（`reported` | `verified` | `mismatch`）、`implementationAccepted`（布尔，`confirmedBy === "user"`）、`implementationInferred`（布尔，来自 `evidence.inferred`）、`diagramType`、`workpackage: { blockedOn, taskCount }`。后两个布尔与 `implementationStatus` 一起出现：`verified` 只表示“提交已核对”，不能让外部读者把它读成用户验收，所以验收和推断必须单独公开。
 
-单条在列表字段之外再加上：`body`、`quotes: { text }[]`（去掉 `messageId`）、`sourceRefs: { sourceEntryId, locator?, quote? }[]`（去掉 `revision` 与 `snapshotHash`）、工作包任务的 `{ n, title, status }[]`。
+单条在列表字段之外再加上：`body`、`quotes: { text }[]`（去掉 `messageId`）、`sourceRefs: { sourceEntryId, locator?, quote? }[]`（去掉 `revision` 与 `snapshotHash`）、工作包任务的 `{ n, title, status, inferred }[]`。
 
 这些字段不出现在公开 JSON 里，测试要断言它们的名字和播种的私有字符串都不在响应正文中：
 

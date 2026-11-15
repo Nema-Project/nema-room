@@ -224,7 +224,7 @@ describe("public knowledge projection", () => {
     expect(toPublicEntry(pack).workpackage).toEqual({
       blockedOn: "Q-1",
       taskCount: 1,
-      tasks: [{ n: 1, title: "Write the page", status: "pending" }],
+      tasks: [{ n: 1, title: "Write the page", status: "pending", inferred: false }],
     });
     const packJson = JSON.stringify(toPublicEntry(pack));
     expect(packJson).not.toContain("secret/file.ts");
@@ -235,6 +235,66 @@ describe("public knowledge projection", () => {
     expect(toPublicSummary(question).priority).toBe(2);
     const source = baseEntry({ id: "S-1", kind: "source", status: "active", url: "https://example.com/doc", basis: "stated" });
     expect(toPublicSummary(source).url).toBe("https://example.com/doc");
+  });
+
+  test("keeps commits-checked apart from user acceptance and passes inferred flags through", () => {
+    const requirement = (confirmedBy: "user" | null, inferred: boolean) => baseEntry({
+      id: "R-2",
+      kind: "requirement",
+      status: "active",
+      implementation: {
+        status: "verified",
+        evidence: {
+          reportMessageId: null,
+          commits: ["abc1234dead"],
+          inferred,
+          note: null,
+          confirmedBy,
+          acceptanceReview: null,
+          reportEvidence: null,
+        },
+      },
+    });
+
+    const checked = toPublicSummary(requirement(null, false));
+    expect(checked).toMatchObject({ implementationStatus: "verified", implementationAccepted: false, implementationInferred: false });
+    expect(toPublicEntry(requirement(null, false))).toMatchObject({ implementationAccepted: false });
+
+    const accepted = toPublicEntry(requirement("user", true));
+    expect(accepted).toMatchObject({ implementationStatus: "verified", implementationAccepted: true, implementationInferred: true });
+    expect(JSON.stringify(accepted)).not.toContain("confirmedBy");
+
+    const plain = toPublicSummary(baseEntry({ id: "D-3", kind: "decision", status: "active" }));
+    expect(plain).not.toHaveProperty("implementationAccepted");
+    expect(plain).not.toHaveProperty("implementationInferred");
+
+    const task = (n: number, inferred: boolean) => ({
+      n,
+      title: `Task ${n}`,
+      satisfies: ["R-2"],
+      files: [],
+      status: "reported" as const,
+      inferred,
+      reportMessageId: null,
+      confirmedBy: null,
+    });
+    const pack = baseEntry({
+      id: "W-2",
+      kind: "workpackage",
+      status: "draft",
+      workpackage: {
+        requirements: ["R-2"],
+        repos: [],
+        approvedAt: null,
+        approvedCommit: null,
+        blockedOn: null,
+        tasks: [task(1, true), task(2, false)],
+      },
+    });
+    expect(toPublicEntry(pack).workpackage?.tasks).toEqual([
+      { n: 1, title: "Task 1", status: "reported", inferred: true },
+      { n: 2, title: "Task 2", status: "reported", inferred: false },
+    ]);
   });
 });
 

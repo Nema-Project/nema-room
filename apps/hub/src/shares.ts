@@ -40,6 +40,10 @@ export type PublicSummary = {
   priority?: 1 | 2 | 3;
   url?: string;
   implementationStatus?: "reported" | "verified" | "mismatch";
+  /** True only when the user accepted the implementation; `verified` alone means commits checked. */
+  implementationAccepted?: boolean;
+  /** True when the implementation was inferred from code on main with no report. */
+  implementationInferred?: boolean;
   diagramType?: NonNullable<Entry["diagram"]>["type"];
   workpackage?: { blockedOn: string | null; taskCount: number };
 };
@@ -50,7 +54,7 @@ export type PublicEntry = Omit<PublicSummary, "workpackage"> & {
   body: string;
   quotes: { text: string }[];
   sourceRefs: PublicSourceRef[];
-  workpackage?: { blockedOn: string | null; taskCount: number; tasks: { n: number; title: string; status: "pending" | "reported" | "verified" | "mismatch" }[] };
+  workpackage?: { blockedOn: string | null; taskCount: number; tasks: { n: number; title: string; status: "pending" | "reported" | "verified" | "mismatch"; inferred: boolean }[] };
 };
 
 export type ShareResolution =
@@ -177,7 +181,11 @@ export function toPublicSummary(entry: Entry): PublicSummary {
   };
   if (entry.priority !== undefined) summary.priority = entry.priority;
   if (entry.url !== undefined) summary.url = entry.url;
-  if (entry.implementation) summary.implementationStatus = entry.implementation.status;
+  if (entry.implementation) {
+    summary.implementationStatus = entry.implementation.status;
+    summary.implementationAccepted = entry.implementation.evidence.confirmedBy === "user";
+    summary.implementationInferred = entry.implementation.evidence.inferred;
+  }
   if (entry.diagram) summary.diagramType = entry.diagram.type;
   if (entry.workpackage) {
     summary.workpackage = { blockedOn: entry.workpackage.blockedOn, taskCount: entry.workpackage.tasks.length };
@@ -202,7 +210,7 @@ export function toPublicEntry(entry: Entry): PublicEntry {
     projected.workpackage = {
       blockedOn: entry.workpackage.blockedOn,
       taskCount: entry.workpackage.tasks.length,
-      tasks: entry.workpackage.tasks.map((task) => ({ n: task.n, title: task.title, status: task.status })),
+      tasks: entry.workpackage.tasks.map((task) => ({ n: task.n, title: task.title, status: task.status, inferred: task.inferred })),
     };
   }
   return projected;
