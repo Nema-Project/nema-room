@@ -21,6 +21,7 @@ import { PluginError, clearMcpSecret, getMcpConfig, mcpHttpStatus, mcpServerStat
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
 import { RepoError, bindRepo, getRepo, listIndexing, listRepos, previewRepo, syncBoundRepos, trustedSkillRepos, unbindRepo, updateRepo } from "./repos.js";
 import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
+import { revokeActiveShares } from "./shares.js";
 import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, repoPath, updateWorkspace } from "./workspaces.js";
 import { attentionCounts, ensureThread, getThread, listThreads, markThreadRead, nextAttentionResult } from "./threads.js";
 import { listThreadMessages } from "./messages.js";
@@ -371,25 +372,31 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.patch("/workspaces/:id", async (c) => {
     const id = c.req.param("id");
-    if (!(await getWorkspace(db, id))) throw new HttpError(404, `workspace not found: ${id}`);
     const patch = await body(c, PatchWorkspaceBody);
     const clean: Parameters<typeof updateWorkspace>[2] = {};
     if (patch.name !== undefined) clean.name = patch.name;
     if (patch.confidential !== undefined) clean.confidential = patch.confidential;
     if (patch.knowledgeLanguage !== undefined) clean.knowledgeLanguage = patch.knowledgeLanguage;
     if (patch.archived !== undefined) clean.archived = patch.archived;
+    let updated: Awaited<ReturnType<typeof updateWorkspace>>;
     try {
-      const updated = await updateWorkspace(db, id, clean);
-      if (clean.archived === false) {
-        // Queued tasks were parked while archived; announce them so the dispatcher picks them up.
-        for (const t of await listQueuedTasks(db, id)) events.emit(id, { type: "task.updated", task: toUiTask(t) });
-      }
-      // Archiving stops watching this workspace's repos; unarchiving resumes it.
-      if (clean.archived !== undefined) await syncBoundRepos(db, deps.daemon);
-      return c.json({ ...updated, archived: updated.archivedAt != null });
+      updated = await db.tx(async (tx) => {
+        const locked = await tx.query<{ id: string }>("select id from workspaces where id = $1 for update", [id]);
+        if (!locked[0]) throw new HttpError(404, `workspace not found: ${id}`);
+        const row = await updateWorkspace(tx, id, clean);
+        if (clean.confidential === true || clean.archived === true) await revokeActiveShares(tx, id);
+        return row;
+      });
     } catch (e) {
       workspaceError(e);
     }
+    if (clean.archived === false) {
+      // Queued tasks were parked while archived; announce them so the dispatcher picks them up.
+      for (const t of await listQueuedTasks(db, id)) events.emit(id, { type: "task.updated", task: toUiTask(t) });
+    }
+    // Archiving stops watching this workspace's repos; unarchiving resumes it.
+    if (clean.archived !== undefined) await syncBoundRepos(db, deps.daemon);
+    return c.json({ ...updated, archived: updated.archivedAt != null });
   });
 
   app.delete("/workspaces/:id", async (c) => {

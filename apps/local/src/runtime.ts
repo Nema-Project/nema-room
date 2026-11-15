@@ -15,7 +15,7 @@ import { startDaemon } from "@nema/cli/daemon/setup";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { openPrivateFile, privateModeMatches, protectPrivatePath } from "@nema/cli/secrets/permissions";
 import { requireSystemGit } from "@nema/cli/systemGit";
-import { acquireInstance, discoverInstance, requestInstanceShutdown, type InstanceLease } from "./instance.js";
+import { acquireInstance, discoverInstance, requestInstanceShutdown, type DiscoveredInstance, type InstanceLease } from "./instance.js";
 import { resolveHome } from "./paths.js";
 import { createGatewayCredential, createGatewayUiAuth, startGateway, type RunningGateway } from "./gateway.js";
 import { SessionManager } from "./session.js";
@@ -37,8 +37,12 @@ const ensuredChildren = new Map<string, Set<ChildProcess>>();
 type EnsureSpawnSpec = { nodePath: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv };
 type EnsureSpawner = (spec: EnsureSpawnSpec) => ChildProcess;
 let ensureSpawnerForTests: EnsureSpawner | undefined;
-type RuntimeReadyHook = (runtime: { db: Awaited<ReturnType<typeof createLocalDb>>; home: string; dataDir: string; webPort: number; webChild: ChildProcess }) => Promise<void>;
+type RuntimeReadyHook = (runtime: { db: Awaited<ReturnType<typeof createLocalDb>>; home: string; dataDir: string; webPort: number; webChild: ChildProcess; hubUrl: string }) => Promise<void>;
 let runtimeReadyHookForTests: RuntimeReadyHook | undefined;
+type DiscoverHook = typeof discoverInstance;
+let discoverInstanceForTests: DiscoverHook | undefined;
+type ShutdownHook = (options: LocalRuntimeOptions & { expectedInstanceId: string; timeoutMs?: number }) => Promise<{ state: "complete" }>;
+let shutdownLocalRuntimeForTests: ShutdownHook | undefined;
 let ensureTimeoutForTests: number | undefined;
 let webReadyTimeoutForTests: number | undefined;
 let beforeWebBudgetForTests: (() => Promise<void> | void) | undefined;
@@ -76,6 +80,20 @@ export function setBeforeWebBudgetForTests(hook: (() => Promise<void> | void) | 
 /** Explicit fake auth operations for lifecycle tests; never set by packaged startup. */
 export function setSettingsOperationsForTests(operations: SettingsOperations | undefined): void {
   settingsOperationsForTests = operations;
+}
+
+/** Replaces instance discovery for reuse tests. Release builds never set it. */
+export function setDiscoverInstanceForTests(hook: DiscoverHook | undefined): void {
+  discoverInstanceForTests = hook;
+}
+
+/** Replaces core shutdown for the share-switch reuse tests. Release builds never set it. */
+export function setShutdownLocalRuntimeForTests(hook: ShutdownHook | undefined): void {
+  shutdownLocalRuntimeForTests = hook;
+}
+
+function findInstance(home?: string, options?: { homeAlreadyProtected?: boolean }): Promise<DiscoveredInstance | null> {
+  return (discoverInstanceForTests ?? discoverInstance)(home, options);
 }
 
 type RuntimeManifest = {
@@ -257,8 +275,10 @@ function childEnvironment(extra: Record<string, string>): NodeJS.ProcessEnv {
   // Git comes from the user's PATH: Nema runs the git they already use, with their credential helpers and SSH setup.
   env.PATH = process.env.PATH ?? process.env.Path;
   delete env.Path;
-  // The desktop startup bench times Windows ACL calls inside the core. Nothing else is copied from the parent.
+  // The desktop startup bench times Windows ACL calls inside the core.
   if (process.env.NEMA_DESKTOP_BENCH === "1") env.NEMA_DESKTOP_BENCH = "1";
+  // Copy the share switch whenever the parent set it, including "0". Copying only "1" would leave sharing on.
+  if (process.env.NEMA_SHARES_ENABLED !== undefined) env.NEMA_SHARES_ENABLED = process.env.NEMA_SHARES_ENABLED;
   // Electron is a GUI executable. Children stay Node only when this variable is set explicitly.
   if (electronNodeProcess()) env.ELECTRON_RUN_AS_NODE = "1";
   return { ...env, ...extra };
@@ -506,6 +526,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
       uiAuth: createGatewayUiAuth(gatewayCredential),
       ownedHelpers: helperScope,
       releaseVersion: assets.version,
+      sharesEnabled: !sharingDisabled(),
     });
     assertWebAlive();
     phase("hub");
@@ -542,10 +563,10 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
       appRelease,
     });
     assertWebAlive();
-    if (runtimeReadyHookForTests && db && webChild) await runtimeReadyHookForTests({ db, home: paths.home, dataDir: paths.data, webPort, webChild });
+    if (runtimeReadyHookForTests && db && webChild && hub) await runtimeReadyHookForTests({ db, home: paths.home, dataDir: paths.data, webPort, webChild, hubUrl: hub.url });
     assertWebAlive();
     phase("gateway");
-    await lease.publish({ origin: gateway.origin, createLaunchUrl: () => `${gateway!.origin}/_nema/launch?ticket=${sessionManager.issueTicket()}` });
+    await lease.publish({ origin: gateway.origin, sharesEnabled: !sharingDisabled(), createLaunchUrl: () => `${gateway!.origin}/_nema/launch?ticket=${sessionManager.issueTicket()}` });
     assertWebAlive();
     phase("published");
 
@@ -564,13 +585,44 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
   }
 }
 
+function sharingDisabled(): boolean {
+  return process.env.NEMA_SHARES_ENABLED === "0";
+}
+
+/**
+ * A running core must be replaced only when sharing is now off and that core may still serve shares.
+ * A core that recorded `sharesEnabled: false` is reused, so reopening a window does not restart it.
+ * A core without the field (an older build) counts as possibly sharing and is restarted; the new core
+ * records the switch, and `sharingRestart` caps the restart at one attempt, so this cannot loop.
+ */
+function mustStopForSharing(instance: DiscoveredInstance): boolean {
+  return sharingDisabled() && instance.sharesEnabled !== false;
+}
+
+function instanceResult(instance: DiscoveredInstance): { origin: string; launchUrl: string; instanceId: string; installationId: string } {
+  return { origin: instance.origin, launchUrl: instance.launchUrl, instanceId: instance.instanceId, installationId: instance.installationId };
+}
+
+async function stopReusedCore(options: LocalRuntimeOptions, instanceId: string): Promise<void> {
+  try {
+    await (shutdownLocalRuntimeForTests ?? shutdownLocalRuntime)({ ...options, expectedInstanceId: instanceId });
+  } catch (error) {
+    throw new Error("sharing remains enabled", { cause: error });
+  }
+}
+
 export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<{ origin: string; launchUrl: string; instanceId: string; installationId: string; reused: boolean }> {
+  return ensureLocalRuntimeAttempt(options, false);
+}
+
+async function ensureLocalRuntimeAttempt(options: LocalRuntimeOptions, sharingRestart: boolean): Promise<{ origin: string; launchUrl: string; instanceId: string; installationId: string; reused: boolean }> {
   const expectedInstallationId = installationIdentity(readManifest(options.assetsDir));
   const paths = resolveHome(options.home);
-  const existing = await discoverInstance(paths.home, { homeAlreadyProtected: true });
+  const existing = await findInstance(paths.home, { homeAlreadyProtected: true });
   if (existing) {
     if (existing.installationId !== expectedInstallationId) throw new Error("A local core from another installation owns this home");
-    return { ...existing, reused: true };
+    if (!mustStopForSharing(existing)) return { ...instanceResult(existing), reused: true };
+    await stopReusedCore(options, existing.instanceId);
   }
   const assets = readManifest(options.assetsDir);
   // Before starting a core: without a usable system git, the desktop shows this install guidance instead.
@@ -654,7 +706,7 @@ export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<
       // reports ready or a port collision. A descriptor that appears earlier is validated once, not per poll.
       if (outcome?.type === "ready" || collisionSeen) {
         let instance: Awaited<ReturnType<typeof discoverInstance>> = null;
-        try { instance = await discoverInstance(paths.home); }
+        try { instance = await findInstance(paths.home); }
         catch (error) {
           const code = (error as NodeJS.ErrnoException).code;
           const childIsLive = spawned && child.exitCode === null && child.signalCode === null;
@@ -666,13 +718,21 @@ export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<
           verifiedCore = true;
           const channelError = closeLauncherChannel();
           if (channelError) throw new Error("Could not release the launcher IPC channel after core readiness", { cause: channelError });
-          return { ...instance, reused: false };
+          return { ...instanceResult(instance), reused: false };
         }
         if (instance && collisionSeen) {
+          if (mustStopForSharing(instance)) {
+            await stopReusedCore(options, instance.instanceId);
+            const channelError = closeLauncherChannel();
+            if (channelError) throw new Error("Could not release the launcher IPC channel after stopping the shared core", { cause: channelError });
+            await stopChild(child);
+            if (sharingRestart) throw new Error("sharing remains enabled");
+            return ensureLocalRuntimeAttempt(options, true);
+          }
           verifiedCore = true;
           const channelError = closeLauncherChannel();
           if (channelError) throw new Error("Could not release the launcher IPC channel after reusing the verified core", { cause: channelError });
-          return { ...instance, reused: true };
+          return { ...instanceResult(instance), reused: true };
         }
         if (outcome?.type === "ready" && exited) {
           throw new Error("Managed local core reported ready but did not publish an authenticated instance");
@@ -686,7 +746,7 @@ export async function ensureLocalRuntime(options: LocalRuntimeOptions): Promise<
         }
         if (present) {
           descriptorAppeared = true;
-          try { await discoverInstance(paths.home, { homeAlreadyProtected: true }); }
+          try { await findInstance(paths.home, { homeAlreadyProtected: true }); }
           catch (error) {
             const code = (error as NodeJS.ErrnoException).code;
             const childIsLive = spawned && child.exitCode === null && child.signalCode === null;
