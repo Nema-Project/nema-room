@@ -71,6 +71,11 @@ export async function getWorkspace(db: Db, id: string): Promise<Workspace | null
   return rows[0] ? toWorkspace(rows[0]) : null;
 }
 
+/**
+ * Does not revoke knowledge shares. Making a workspace confidential or archiving it must go through the
+ * PATCH /workspaces/:id route in uiApi.ts, or call revokeActiveShares in the same transaction: revocation
+ * is enforced there, and without it a share hidden by the read-time check returns once the flag is cleared.
+ */
 export async function updateWorkspace(
   db: Db,
   id: string,

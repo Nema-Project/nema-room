@@ -80,7 +80,10 @@ describe("knowledge share rows", () => {
     expect(await db.query("select count(*)::int as n from knowledge_shares")).toEqual([{ n: 1 }]);
   });
 
-  test("expired, confidential, and archived shares stay found but unavailable", async () => {
+  // Helper level only: resolveShare checks availability at read time. Revocation on a confidential or
+  // archived transition happens in the PATCH route, so updateWorkspace here leaves rows unrevoked on purpose;
+  // the route-level tests cover that a share does not come back after un-archiving or un-confidential.
+  test("the read-time check hides shares while expired, confidential, or archived", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await shareableWorkspace(db, dataDir, "Alpha");
     const expiring = await createShare(db, ws.id, { expiresAt: "2999-01-01T00:00:00.000Z" });
@@ -98,8 +101,6 @@ describe("knowledge share rows", () => {
     await updateWorkspace(db, ws.id, { archived: true });
     expect(await resolveShare(db, hidden.token)).toEqual({ found: true, available: false });
     expect(await resolveShare(db, omitted.token)).toEqual({ found: true, available: false });
-    await updateWorkspace(db, ws.id, { archived: false });
-    expect(await resolveShare(db, omitted.token)).toEqual({ found: true, available: true, workspaceId: ws.id, workspaceName: "Alpha" });
   });
 
   test("lists shares without the token, newest first", async () => {

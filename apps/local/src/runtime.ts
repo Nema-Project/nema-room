@@ -526,7 +526,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
       uiAuth: createGatewayUiAuth(gatewayCredential),
       ownedHelpers: helperScope,
       releaseVersion: assets.version,
-      sharesEnabled: process.env.NEMA_SHARES_ENABLED !== "0",
+      sharesEnabled: !sharingDisabled(),
     });
     assertWebAlive();
     phase("hub");
@@ -566,7 +566,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
     if (runtimeReadyHookForTests && db && webChild && hub) await runtimeReadyHookForTests({ db, home: paths.home, dataDir: paths.data, webPort, webChild, hubUrl: hub.url });
     assertWebAlive();
     phase("gateway");
-    await lease.publish({ origin: gateway.origin, createLaunchUrl: () => `${gateway!.origin}/_nema/launch?ticket=${sessionManager.issueTicket()}` });
+    await lease.publish({ origin: gateway.origin, sharesEnabled: !sharingDisabled(), createLaunchUrl: () => `${gateway!.origin}/_nema/launch?ticket=${sessionManager.issueTicket()}` });
     assertWebAlive();
     phase("published");
 
@@ -589,6 +589,20 @@ function sharingDisabled(): boolean {
   return process.env.NEMA_SHARES_ENABLED === "0";
 }
 
+/**
+ * A running core must be replaced only when sharing is now off and that core may still serve shares.
+ * A core that recorded `sharesEnabled: false` is reused, so reopening a window does not restart it.
+ * A core without the field (an older build) counts as possibly sharing and is restarted; the new core
+ * records the switch, and `sharingRestart` caps the restart at one attempt, so this cannot loop.
+ */
+function mustStopForSharing(instance: DiscoveredInstance): boolean {
+  return sharingDisabled() && instance.sharesEnabled !== false;
+}
+
+function instanceResult(instance: DiscoveredInstance): { origin: string; launchUrl: string; instanceId: string; installationId: string } {
+  return { origin: instance.origin, launchUrl: instance.launchUrl, instanceId: instance.instanceId, installationId: instance.installationId };
+}
+
 async function stopReusedCore(options: LocalRuntimeOptions, instanceId: string): Promise<void> {
   try {
     await (shutdownLocalRuntimeForTests ?? shutdownLocalRuntime)({ ...options, expectedInstanceId: instanceId });
@@ -607,7 +621,7 @@ async function ensureLocalRuntimeAttempt(options: LocalRuntimeOptions, sharingRe
   const existing = await findInstance(paths.home, { homeAlreadyProtected: true });
   if (existing) {
     if (existing.installationId !== expectedInstallationId) throw new Error("A local core from another installation owns this home");
-    if (!sharingDisabled()) return { ...existing, reused: true };
+    if (!mustStopForSharing(existing)) return { ...instanceResult(existing), reused: true };
     await stopReusedCore(options, existing.instanceId);
   }
   const assets = readManifest(options.assetsDir);
@@ -704,10 +718,10 @@ async function ensureLocalRuntimeAttempt(options: LocalRuntimeOptions, sharingRe
           verifiedCore = true;
           const channelError = closeLauncherChannel();
           if (channelError) throw new Error("Could not release the launcher IPC channel after core readiness", { cause: channelError });
-          return { ...instance, reused: false };
+          return { ...instanceResult(instance), reused: false };
         }
         if (instance && collisionSeen) {
-          if (sharingDisabled()) {
+          if (mustStopForSharing(instance)) {
             await stopReusedCore(options, instance.instanceId);
             const channelError = closeLauncherChannel();
             if (channelError) throw new Error("Could not release the launcher IPC channel after stopping the shared core", { cause: channelError });
@@ -718,7 +732,7 @@ async function ensureLocalRuntimeAttempt(options: LocalRuntimeOptions, sharingRe
           verifiedCore = true;
           const channelError = closeLauncherChannel();
           if (channelError) throw new Error("Could not release the launcher IPC channel after reusing the verified core", { cause: channelError });
-          return { ...instance, reused: true };
+          return { ...instanceResult(instance), reused: true };
         }
         if (outcome?.type === "ready" && exited) {
           throw new Error("Managed local core reported ready but did not publish an authenticated instance");

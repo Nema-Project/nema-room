@@ -33,11 +33,14 @@ interface Descriptor {
   controlOrigin: string;
   origin: string;
   secret: string;
+  /** NEMA_SHARES_ENABLED as this core started it. Absent in descriptors written before the switch was recorded. */
+  sharesEnabled?: boolean;
 }
 
 interface Published {
   origin: string;
   createLaunchUrl: () => string;
+  sharesEnabled?: boolean;
 }
 
 export interface InstanceLease {
@@ -54,6 +57,8 @@ export interface DiscoveredInstance {
   launchUrl: string;
   instanceId: string;
   installationId: string;
+  /** The share switch the core started with; undefined when an older core did not record it. */
+  sharesEnabled?: boolean;
 }
 
 export interface ShutdownOptions {
@@ -111,7 +116,8 @@ function readDescriptor(file: string): Descriptor | null {
       typeof value.installationId !== "string" || !/^[0-9a-f]{64}$/.test(value.installationId) ||
       !Number.isSafeInteger(value.pid) || (value.pid ?? 0) < 1 ||
       typeof value.controlOrigin !== "string" || typeof value.origin !== "string" ||
-      typeof value.secret !== "string" || !/^[0-9a-f]{64}$/.test(value.secret)) throw new Error("Instance descriptor is invalid");
+      typeof value.secret !== "string" || !/^[0-9a-f]{64}$/.test(value.secret) ||
+      (value.sharesEnabled !== undefined && typeof value.sharesEnabled !== "boolean")) throw new Error("Instance descriptor is invalid");
     return value as Descriptor;
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("Unsupported local owner protocol")) throw error;
@@ -341,7 +347,7 @@ export async function acquireInstance(home?: string, requestedInstallationId?: s
       if (!isLoopbackOrigin(value.origin)) throw new Error("UI origin must be a local HTTP origin");
       published = value;
       try {
-        atomicWriteDescriptor(paths.instance, { schemaVersion: 1, protocol: PROTOCOL, homeHash, instanceId, installationId, pid: process.pid, controlOrigin, origin: value.origin, secret: descriptorSecret });
+        atomicWriteDescriptor(paths.instance, { schemaVersion: 1, protocol: PROTOCOL, homeHash, instanceId, installationId, pid: process.pid, controlOrigin, origin: value.origin, secret: descriptorSecret, ...(value.sharesEnabled === undefined ? {} : { sharesEnabled: value.sharesEnabled }) });
       } catch (error) { published = undefined; throw error; }
     },
     setShutdownHandler(handler) {
@@ -427,7 +433,13 @@ export async function discoverInstance(home?: string, options?: { homeAlreadyPro
   if (launch.origin !== descriptor.origin || launch.instanceId !== descriptor.instanceId || typeof launch.launchUrl !== "string" || !validLaunchUrl(launch.launchUrl, descriptor.origin)) {
     throw new Error("Authenticated local launch response is invalid");
   }
-  return { origin: descriptor.origin, launchUrl: launch.launchUrl, instanceId: descriptor.instanceId, installationId: descriptor.installationId };
+  return {
+    origin: descriptor.origin,
+    launchUrl: launch.launchUrl,
+    instanceId: descriptor.instanceId,
+    installationId: descriptor.installationId,
+    ...(descriptor.sharesEnabled === undefined ? {} : { sharesEnabled: descriptor.sharesEnabled }),
+  };
 }
 
 function writeShutdownReceipt(home: string, result: { homeHash: string; instanceId: string; installationId: string; requestId: string; state: "complete" | "error"; message: string }, secret: string): void {

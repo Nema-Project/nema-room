@@ -299,6 +299,55 @@ describe("managed local runtime", () => {
     }
   });
 
+  it("reuses a core this launcher started with sharing off instead of restarting it", async () => {
+    const home = join(tempDir("nema-home-"), "share-reuse-recorded-off");
+    const assetsDir = testAssets();
+    mkdirSync(home, { recursive: true });
+    const previous = process.env.NEMA_SHARES_ENABLED;
+    let shutdowns = 0;
+    let spawns = 0;
+    setDiscoverInstanceForTests(async () => ({ ...oldCore(assetsDir), sharesEnabled: false }));
+    setShutdownLocalRuntimeForTests(async () => { shutdowns += 1; return { state: "complete" }; });
+    setEnsureSpawnerForTests(() => { spawns += 1; throw new Error("must not spawn"); });
+    try {
+      process.env.NEMA_SHARES_ENABLED = "0";
+      const first = await ensureLocalRuntime({ home, assetsDir });
+      const second = await ensureLocalRuntime({ home, assetsDir });
+      expect(first).toEqual({ ...oldCore(assetsDir), reused: true });
+      expect(second).toMatchObject({ reused: true, instanceId: "inst-old" });
+    } finally {
+      if (previous === undefined) delete process.env.NEMA_SHARES_ENABLED;
+      else process.env.NEMA_SHARES_ENABLED = previous;
+    }
+    expect(shutdowns).toBe(0);
+    expect(spawns).toBe(0);
+  });
+
+  it("restarts a core recorded with sharing on when the switch is now off", async () => {
+    const home = join(tempDir("nema-home-"), "share-reuse-recorded-on");
+    const assetsDir = testAssets();
+    mkdirSync(home, { recursive: true });
+    const previous = process.env.NEMA_SHARES_ENABLED;
+    let visible = true;
+    const seen: Array<NodeJS.ProcessEnv | undefined> = [];
+    setDiscoverInstanceForTests(async () => visible ? { ...oldCore(assetsDir), sharesEnabled: true } : null);
+    setShutdownLocalRuntimeForTests(async () => { visible = false; return { state: "complete" }; });
+    setEnsureSpawnerForTests((spec) => {
+      seen.push(spec.env);
+      throw new Error("share-switch-captured");
+    });
+    setEnsureTimeoutForTests(3_000);
+    try {
+      process.env.NEMA_SHARES_ENABLED = "0";
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/share-switch-captured/);
+    } finally {
+      if (previous === undefined) delete process.env.NEMA_SHARES_ENABLED;
+      else process.env.NEMA_SHARES_ENABLED = previous;
+    }
+    expect(visible).toBe(false);
+    expect(seen.map((env) => env?.NEMA_SHARES_ENABLED)).toEqual(["0"]);
+  });
+
   it("does not reuse an old core when sharing is turned off", async () => {
     const home = join(tempDir("nema-home-"), "share-reuse-off");
     const assetsDir = testAssets();
