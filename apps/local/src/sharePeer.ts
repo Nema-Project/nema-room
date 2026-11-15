@@ -99,6 +99,12 @@ export function sharePeerDecision(peer: string | null | undefined, headers: Head
   return "allow";
 }
 
+/** Only source dev may substitute the actual socket peer for the wrapper header. */
+export function sharePagePeerDecision(peer: string | null | undefined, headers: HeaderBag, socketPeer?: string): "allow" | "reject" {
+  const sourceDev = process.env.NODE_ENV === "development" && process.env.NEMA_SHARE_SOURCE_DEV === "1";
+  return sharePeerDecision(!peer && sourceDev ? socketPeer : peer, headers);
+}
+
 /**
  * Next writes these from the socket and Host before a page reads `headers()`.
  * The process guard and the desktop gateway still reject a client copy on the raw request.
