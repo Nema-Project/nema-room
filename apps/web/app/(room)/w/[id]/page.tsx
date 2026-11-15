@@ -12,6 +12,7 @@ function safeDecode(v: string) {
 }
 
 export default function WorkspaceRoom() {
-  const { id } = useParams<{ id: string }>();
-  return <WorkspaceShell routeId={safeDecode(id)} />;
+  const params = useParams<{ id: string }>();
+  if (!params?.id) return null;
+  return <WorkspaceShell routeId={safeDecode(params.id)} />;
 }

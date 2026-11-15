@@ -125,6 +125,8 @@ Discussion → Requirements + decisions → Approved spec + plan → Coding agen
 <a id="モデルの実行方式"></a>
 <a id="開発とアップグレード"></a>
 
+ソース開発では `npm run dev -w apps/web` が `NEMA_SHARE_SOURCE_DEV=1` を明示的に有効にし、web を `127.0.0.1` にバインドします。開発モードでのみ、ラッパーの peer ヘッダーがない場合に実際の TCP 接続元がプライベートアドレスか確認します。本番はラッパーのヘッダーが必須で、この設定は公開インターネットでの共有を有効にしません。
+
 ## ドキュメントとフィードバック
 
 | ドキュメント | 内容 |

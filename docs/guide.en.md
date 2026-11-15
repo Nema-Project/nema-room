@@ -368,6 +368,8 @@ npm run db:up
 npm run dev
 ```
 
+Source development: `npm run dev -w apps/web` explicitly enables `NEMA_SHARE_SOURCE_DEV=1` and binds web to `127.0.0.1`. Only in development, a missing wrapper peer header falls back to the actual private TCP peer. Production still requires the wrapper header; this option does not enable public sharing.
+
 Start `node apps/cli/dist/index.js daemon` in another terminal. Do not also run the Compose hub/web: their ports overlap.
 
 ```bash
