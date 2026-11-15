@@ -74,6 +74,8 @@ ENV NEMA_DOCKER_WEB=1
 COPY tsconfig.base.json ./
 COPY packages/shared packages/shared
 COPY apps/web apps/web
+# apps/web/lib/sharePeer.ts re-exports this file. The web stage does not copy the local package.
+COPY apps/local/src/sharePeer.ts apps/local/src/sharePeer.ts
 RUN npx tsc -b packages/shared && npm run build -w apps/web
 
 # ---- web runtime ----
@@ -93,6 +95,8 @@ COPY --from=web-build /app/apps/web/public ./apps/web/public
 COPY apps/web/app/fonts/inter/OFL.txt /app/licenses/fonts/inter/OFL.txt
 COPY apps/web/app/fonts/jetbrains-mono/OFL.txt /app/licenses/fonts/jetbrains-mono/OFL.txt
 COPY scripts/images/web-entrypoint.sh /entrypoint.sh
+COPY scripts/desktop/templates/share-peer-guard.mjs /opt/nema/share-peer-guard.mjs
+COPY scripts/desktop/templates/share-peer.mjs /opt/nema/share-peer.mjs
 RUN chmod 0755 /entrypoint.sh
 USER node
 EXPOSE 3000

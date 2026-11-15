@@ -32,4 +32,13 @@ if (existsSync(sibling("web-wait-for-release"))) {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
-server.listen(Number(process.env.PORT), "127.0.0.1");
+let acceptingHttp = false;
+const hubUrlDeliveries = [];
+if (process.connected) {
+  process.on("message", (message) => {
+    if (!message || typeof message !== "object" || message.type !== "hub-url" || typeof message.url !== "string") return;
+    hubUrlDeliveries.push({ url: message.url, acceptingHttp });
+    writeFileSync(sibling("hub-url.json"), JSON.stringify(hubUrlDeliveries));
+  });
+}
+server.listen(Number(process.env.PORT), "127.0.0.1", () => { acceptingHttp = true; });

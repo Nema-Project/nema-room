@@ -36,6 +36,7 @@ services:
       NEMA_HUB_HOST: 0.0.0.0
       NEMA_HUB_PORT: ${NEMA_HUB_PORT:-4400}
       NEMA_WEB_ORIGIN: http://localhost:${NEMA_WEB_PORT:-3000},http://127.0.0.1:${NEMA_WEB_PORT:-3000}
+      NEMA_SHARES_ENABLED: ${NEMA_SHARES_ENABLED:-}
       # The hub cannot see the host's ~/.nema/ws; the daemon removes those dirs itself.
       NEMA_HUB_CLEAN_DAEMON_DIRS: "0"
     ports:
@@ -58,8 +59,12 @@ services:
         condition: service_healthy
     environment:
       NEMA_HUB_URL: ${NEMA_HUB_URL:-http://127.0.0.1:${NEMA_HUB_PORT:-4400}}
+      NEMA_HUB_INTERNAL_URL: http://hub:${NEMA_HUB_PORT:-4400}
     ports:
-      - "127.0.0.1:${NEMA_WEB_PORT:-3000}:3000"
+      - host_ip: ${NEMA_WEB_BIND:-127.0.0.1}
+        published: ${NEMA_WEB_PORT:-3000}
+        target: 3000
+        protocol: tcp
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
