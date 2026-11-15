@@ -65,4 +65,8 @@ describe("snapshot allowlist and references", () => {
   it("rejects report-token hashes instead of migrating credential material", () => {
     expect(() => validateSnapshot({ ...empty, tableData: { ...empty.tableData, report_tokens: [{ hash: "a".repeat(64) }] } })).toThrow(/table/i);
   });
+
+  it("rejects knowledge share rows instead of copying tokens into a snapshot", () => {
+    expect(() => validateSnapshot({ ...empty, tableData: { ...empty.tableData, knowledge_shares: [{ id: "ks_abcdefghijklmnop" }] } })).toThrow(/table/i);
+  });
 });
