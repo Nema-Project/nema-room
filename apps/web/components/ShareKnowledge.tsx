@@ -18,19 +18,23 @@ export function ShareKnowledge({ workspaceId, confidential, archived }: { worksp
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false);
-  const blocked = confidential || archived;
+  const mutationEpoch = useRef(0);
+  const [serverDisabled, setServerDisabled] = useState(false);
+  const blocked = confidential || archived || serverDisabled;
 
   useEffect(() => {
     let cancelled = false;
+    // A completed mutation makes any earlier list snapshot stale, including errors.
+    const epoch = mutationEpoch.current;
     listShares(workspaceId).then(
-      (result) => { if (!cancelled) setShares(result.shares); },
-      (reason: unknown) => { if (!cancelled) setError(failureText(reason, t("share.disabled"), t("share.down"))); },
+      (result) => { if (!cancelled && epoch === mutationEpoch.current) setShares(result.shares); },
+      (reason: unknown) => { if (!cancelled && epoch === mutationEpoch.current) setError(failureText(reason, t("share.disabled"), t("share.down"))); },
     );
     return () => { cancelled = true; };
   }, [workspaceId, t]);
 
   async function onCreate() {
-    if (creatingRef.current) return;
+    if (creatingRef.current || blocked) return;
     creatingRef.current = true;
     setCreating(true);
     try {
@@ -47,6 +51,7 @@ export function ShareKnowledge({ workspaceId, confidential, archived }: { worksp
         body.expiresAt = parsed.toISOString();
       }
       const created = await createShare(workspaceId, body);
+      mutationEpoch.current += 1;
       setFreshUrl(`${location.origin}/s/${created.token}`);
       setShares((current) => [{
         id: created.id,
@@ -58,6 +63,10 @@ export function ShareKnowledge({ workspaceId, confidential, archived }: { worksp
       setNote("");
       setExpires("");
     } catch (reason) {
+      if (typeof reason === "object" && reason !== null && "status" in reason && reason.status === 403) {
+        mutationEpoch.current += 1;
+        setServerDisabled(true);
+      }
       setError(failureText(reason, t("share.disabled"), t("share.down")));
     } finally {
       creatingRef.current = false;
@@ -69,8 +78,13 @@ export function ShareKnowledge({ workspaceId, confidential, archived }: { worksp
     setError(null);
     try {
       const revoked = await revokeShare(workspaceId, shareId);
+      mutationEpoch.current += 1;
       setShares((current) => current.map((share) => share.id === shareId ? revoked : share));
     } catch (reason) {
+      if (typeof reason === "object" && reason !== null && "status" in reason && reason.status === 403) {
+        mutationEpoch.current += 1;
+        setServerDisabled(true);
+      }
       setError(failureText(reason, t("share.disabled"), t("share.down")));
     }
   }
@@ -110,6 +124,8 @@ export function ShareKnowledge({ workspaceId, confidential, archived }: { worksp
       <ul>
         {shares.map((share) => (
           <li key={share.id}>
+            <span>{t("share.identifier", { id: share.id.slice(-9) })}</span>{" "}
+            <span>{t("share.createdAt")}: <time dateTime={share.createdAt}>{share.createdAt}</time></span>{" "}
             {share.note && <span>{share.note}</span>}
             {share.expiresAt && <span>{share.expiresAt}</span>}
             {share.revokedAt

@@ -696,5 +696,7 @@
   "share.temporarilyUnavailable": "共有は一時的に使えません。",
   "share.entryStatus": "項目の状態",
   "share.acceptedByUser": "ユーザーが受け入れ済み",
-  "share.commitsCheckedOnly": "コミットの確認のみ"
+  "share.commitsCheckedOnly": "コミットの確認のみ",
+  "share.identifier": "リンク {id}",
+  "share.createdAt": "作成日時"
 }

@@ -696,5 +696,7 @@
   "share.temporarilyUnavailable": "Sharing is temporarily unavailable.",
   "share.entryStatus": "Entry status",
   "share.acceptedByUser": "Accepted by user",
-  "share.commitsCheckedOnly": "Commits checked only"
+  "share.commitsCheckedOnly": "Commits checked only",
+  "share.identifier": "Link {id}",
+  "share.createdAt": "Created"
 }

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareKnowledge } from "@/components/ShareKnowledge";
@@ -81,4 +81,48 @@ describe("ShareKnowledge", () => {
     renderShare({ confidential: true });
     expect((await screen.findByRole("button", { name: "Create link" }) as HTMLButtonElement).disabled).toBe(true);
   });
+  it("keeps a newly created link when an earlier list GET finishes late", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof hub.listShares>>) => void;
+    vi.mocked(hub.listShares).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    vi.mocked(hub.createShare).mockResolvedValue({ id: "ks_new", token, note: "new link", expiresAt: null, revokedAt: null, createdAt: "2026-11-10T00:00:00.000Z" });
+    renderShare();
+    await userEvent.click(await screen.findByRole("button", { name: "Create link" }));
+    expect(await screen.findByText("new link")).toBeTruthy();
+    await act(async () => { finish({ shares: [] }); });
+    expect(screen.getByText("new link")).toBeTruthy();
+  });
+
+  it("keeps create disabled after a 403", async () => {
+    vi.mocked(hub.createShare).mockRejectedValue({ status: 403 });
+    renderShare();
+    const button = await screen.findByRole("button", { name: "Create link" });
+    await userEvent.click(button);
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Sharing is turned off on this server.");
+    expect(button).toHaveProperty("disabled", true);
+    await userEvent.click(button);
+    expect(hub.createShare).toHaveBeenCalledTimes(1);
+  });
+
+  it("identifies links with their creation time and short id", async () => {
+    vi.mocked(hub.listShares).mockResolvedValue({ shares: [{ id: "ks_123456789abcdef", note: null, expiresAt: null, revokedAt: null, createdAt: "2026-11-10T00:00:00.000Z" }] });
+    renderShare();
+    expect(await screen.findByText("Link 789abcdef")).toBeTruthy();
+    expect(screen.getByText("2026-11-10T00:00:00.000Z").getAttribute("datetime")).toBe("2026-11-10T00:00:00.000Z");
+  });
+
+  it("keeps revocation when a list started before the mutation resolves late", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof hub.listShares>>) => void;
+    vi.mocked(hub.listShares).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const share = { id: "ks_new", note: "new link", expiresAt: null, revokedAt: null, createdAt: "2026-11-10T00:00:00.000Z" };
+    vi.mocked(hub.createShare).mockResolvedValue({ ...share, token });
+    vi.mocked(hub.revokeShare).mockResolvedValue({ ...share, revokedAt: "2026-11-10T01:00:00.000Z" });
+    renderShare();
+    await userEvent.click(await screen.findByRole("button", { name: "Create link" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Revoke" }));
+    expect(await screen.findByText("Revoked")).toBeTruthy();
+    await act(async () => { finish({ shares: [share] }); });
+    expect(screen.getByText("Revoked")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Revoke" })).toBeNull();
+  });
+
 });
