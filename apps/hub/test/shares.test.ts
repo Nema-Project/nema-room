@@ -679,6 +679,8 @@ describe("share read rate limit", () => {
     const created = await createShare(db, ws.id, {});
     const app = shareApp(db, dataDir);
     resetShareRateForTests();
+    // A fixed clock keeps all 601 reads in one window however slow the runner is.
+    setShareNowForTests(() => 1_700_000_000_000);
     for (let i = 0; i < 600; i++) await hit(app, "a".repeat(43));
     const blocked = await hit(app, "b".repeat(43));
     expect(blocked.status).toBe(429);
@@ -724,6 +726,7 @@ describe("share read rate limit", () => {
     const ws = await shareableWorkspace(db, dataDir, "Alpha");
     const created = await createShare(db, ws.id, {});
     const off = shareApp(db, dataDir, { sharesEnabled: false });
+    setShareNowForTests(() => 1_700_000_000_000);
     for (let i = 0; i < 601; i++) expect((await hit(off, created.token)).status).toBe(404);
     for (let i = 0; i < 601; i++) expect((await hit(off, "not-a-token")).status).toBe(404);
     const on = shareApp(db, dataDir);
