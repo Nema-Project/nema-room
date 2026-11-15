@@ -118,7 +118,7 @@ In a bound code repository, a coding agent retrieves the package with `nema wp l
 - **Models receive context.** Chat, knowledge, attachments, and code returned by tools go to your selected model provider. Local storage does not mean offline inference.
 - **Extensions are yours to switch.** Enable, disable, install, or remove extensions, skills, and MCP servers on the Plugins page. The Installed section counts rows that cannot be used. A skill says when a runtime is missing something, or when its name does not match its folder. MCP tools are not offered to the agent in this release.
 - **GitHub is opt-in.** The plugin uses your signed-in local `gh` and is limited to bound repositories. Writes need a separate workspace opt-in.
-- **Built for local use.** There is no public multi-user authentication. Multi-device sync, managed backups, and team access are not available yet.
+- **Built for local use.** A share link can grant read-only access to one workspace knowledge base. There is still no public multi-user authentication. Multi-device sync, managed backups, and team accounts are not available yet.
 
 More: [storage, backups, and limitations](docs/guide.en.md#data) · [plugins, skills, and MCP](docs/guide.en.md#models) · [attachments](docs/guide.en.md#attachments). A copy of this source repository is not an application-data backup.
 
