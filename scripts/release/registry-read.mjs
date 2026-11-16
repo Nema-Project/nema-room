@@ -7,7 +7,7 @@
 //               or a body that parsed but is not the shape asked for): a re-reading caller must not wait.
 // Nothing here writes. The installer's release-set.mjs counts unknown as absent on purpose; a report must not.
 import { createHash } from 'node:crypto';
-import { HUB_IMAGE, WEB_IMAGE, composeAssetVersion } from '../images/check-images.mjs';
+import { HUB_IMAGE, WEB_IMAGE, composeAssetVersion, assertMultiarchManifest, INDEX_MEDIA_TYPES, shouldMoveLatest } from '../images/check-images.mjs';
 import { checksumFileName, expectedAssets, expectedTargets } from '../desktop/release-manifest.mjs';
 
 export const REPOSITORY = 'Nema-Project/nema-room';
@@ -237,12 +237,8 @@ async function ghcrGet(io, token, repository, kind, reference, accept) {
   return { url, response };
 }
 
-/**
- * Resolve <repository>:<reference> anonymously down to its linux/amd64 image and read the version label.
- * The published index is nested: top index -> child index (no platform) -> linux/amd64 manifest plus an
- * unknown/unknown attestation entry. Up to three index levels are followed.
- */
-export function readImage(io, repository, reference) {
+/** Read the complete index anonymously; keep its top digest for platform-neutral promotion. */
+export function readImage(io, repository, reference, { allowLegacy = false } = {}) {
   return guard(async () => {
     const auth = await ghcrToken(io, repository);
     if (auth.denied) return missing(`ghcr.io/${repository} is not anonymously readable (DENIED)`, { reason: 'denied' });
@@ -251,33 +247,70 @@ export function readImage(io, repository, reference) {
     if (top.response.status === 401 || top.response.status === 403) return missing(`ghcr.io/${repository}:${reference} is not anonymously readable`, { reason: 'denied' });
     if (top.response.status !== 200) return unknown(`${top.url}: HTTP ${top.response.status}`);
     const digest = top.response.headers?.get?.('docker-content-digest') ?? null;
-    let manifest = await json(top.response, top.url);
-    for (let depth = 0; depth < 3 && Array.isArray(manifest?.manifests); depth += 1) {
-      const entries = manifest.manifests;
-      const platform = entries.find((entry) => entry?.platform?.os === 'linux' && entry?.platform?.architecture === 'amd64');
-      const nested = entries.filter((entry) => !entry?.platform && /index|manifest\.list/.test(entry?.mediaType ?? ''));
-      const next = platform ?? (nested.length === 1 ? nested[0] : null);
-      if (!next) return missing(`ghcr.io/${repository}:${reference} has no linux/amd64 image`, { reason: 'no-platform' });
-      const child = await ghcrGet(io, auth.token, repository, 'manifests', next.digest, MANIFEST_ACCEPT);
-      if (child.response.status === 404) return missing(`ghcr.io/${repository}:${reference} references ${next.digest}, which does not exist`, { reason: 'broken' });
-      if (child.response.status !== 200) return unknown(`${child.url}: HTTP ${child.response.status}`);
-      manifest = await json(child.response, child.url);
-      if (platform) manifest = { ...manifest, platformDigest: next.digest };
+    const manifest = await json(top.response, top.url);
+    const leaves = [];
+    const fetched = new Map();
+    async function get(kind, ref) {
+      const key = `${kind}/${ref}`;
+      if (fetched.has(key)) return fetched.get(key);
+      const child = await ghcrGet(io, auth.token, repository, kind, ref, kind === 'manifests' ? MANIFEST_ACCEPT : undefined);
+      if (child.response.status === 404) throw new Error(`references ${kind} ${ref}, which does not exist`);
+      if (child.response.status !== 200) throw new Undetermined(`${child.url}: HTTP ${child.response.status}`);
+      const body = await json(child.response, child.url);
+      fetched.set(key, body);
+      return body;
     }
-    const configDigest = manifest?.config?.digest;
-    if (!configDigest) return missing(`ghcr.io/${repository}:${reference} has no linux/amd64 image config`, { reason: 'no-platform' });
-    const config = await ghcrGet(io, auth.token, repository, 'blobs', configDigest);
-    if (config.response.status === 404) return missing(`ghcr.io/${repository}:${reference} references config ${configDigest}, which does not exist`, { reason: 'broken' });
-    if (config.response.status !== 200) return unknown(`${config.url}: HTTP ${config.response.status}`);
-    const body = await json(config.response, config.url);
-    const labels = body?.config?.Labels ?? {};
-    return ok({
-      reference: `ghcr.io/${repository}:${reference}`,
-      digest,
-      platformDigest: manifest.platformDigest ?? null,
-      label: labels['org.opencontainers.image.version'] ?? null,
-      revision: labels['org.opencontainers.image.revision'] ?? null,
-    });
+    async function walk(index, depth, parentPlatform = null) {
+      if (depth >= 3 || !INDEX_MEDIA_TYPES.includes(index?.mediaType) || index?.schemaVersion !== 2 || !Array.isArray(index?.manifests)) {
+        throw new Error('Expected an OCI index or Docker manifest list within three index levels');
+      }
+      if (index.manifests.length > 32) throw new Error('Image index has too many descriptors');
+      for (const entry of index.manifests) {
+        const platform = `${entry?.platform?.os}/${entry?.platform?.architecture}`;
+        if (platform === 'unknown/unknown') continue;
+        if (parentPlatform && entry?.platform && platform !== parentPlatform) throw new Error('Image descriptor disagrees with parent platform');
+        if (INDEX_MEDIA_TYPES.includes(entry?.mediaType)) {
+          await walk(await get('manifests', entry.digest), depth + 1, entry?.platform ? platform : parentPlatform);
+        } else if (platform === 'linux/amd64' || platform === 'linux/arm64') {
+          leaves.push(entry);
+        }
+      }
+    }
+    try {
+      await walk(manifest, 0);
+      const platforms = {};
+      for (const arch of ['amd64', 'arm64']) {
+        const key = `linux/${arch}`;
+        const entries = leaves.filter((entry) => entry.platform.os === 'linux' && entry.platform.architecture === arch);
+        if (entries.length > 1) throw new Error(`Duplicate ${key} image`);
+        if (!entries.length) continue;
+        const entry = entries[0];
+        if (!['application/vnd.oci.image.manifest.v1+json', 'application/vnd.docker.distribution.manifest.v2+json'].includes(entry.mediaType)) throw new Error(`Invalid ${key} image manifest`);
+        const image = await get('manifests', entry.digest);
+        if (!image?.config?.digest) throw new Error(`No ${key} image config`);
+        const config = await get('blobs', image.config.digest);
+        if (config.os !== 'linux' || config.architecture !== arch) throw new Error(`${key} image config platform disagrees with descriptor`);
+        const labels = config.config?.Labels ?? {};
+        platforms[key] = { digest: entry.digest, label: labels['org.opencontainers.image.version'] ?? null, revision: labels['org.opencontainers.image.revision'] ?? null };
+      }
+      const amd64 = platforms['linux/amd64'];
+      const arm64 = platforms['linux/arm64'];
+      // Existing aliases must remain orderable during the first multiarch promotion. This
+      // exception cannot validate a candidate, or a newer/same-version damaged latest.
+      let legacy = false;
+      if (allowLegacy && reference === 'latest' && amd64 && !arm64 && amd64.label) {
+        try { legacy = shouldMoveLatest(amd64.label, '0.2.6'); } catch { /* malformed labels fail closed below */ }
+      }
+      if (!amd64) throw new Error('no linux/amd64 image');
+      if (!arm64 && !legacy) throw new Error('no linux/arm64 image');
+      if (arm64 && amd64.label !== arm64.label) throw new Error('linux/amd64 and linux/arm64 version labels disagree');
+      if (!legacy) assertMultiarchManifest({ schemaVersion: 2, mediaType: manifest.mediaType, manifests: leaves });
+      return ok({ reference: `ghcr.io/${repository}:${reference}`, digest, platformDigest: amd64.digest,
+        label: amd64.label, revision: amd64.revision, platforms, legacy });
+    } catch (error) {
+      if (error instanceof Undetermined) throw error;
+      return missing(`ghcr.io/${repository}:${reference}: ${error.message}`, { reason: 'invalid-index' });
+    }
   });
 }
 

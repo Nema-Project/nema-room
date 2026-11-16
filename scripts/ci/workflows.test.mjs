@@ -541,7 +541,7 @@ test('promote requires every verify job and matrix leg the tag workflows define,
   }).map((name) => `verify / ${name}`);
   assert.deepEqual([...VERIFY_JOBS].sort(), names.sort());
   const image = read('image-publish');
-  const imageJobs = Object.values(image.jobs).filter((job) => !job.uses).map((job) => job.name);
+  const imageJobs = Object.values(image.jobs).filter((job) => !job.uses).flatMap((job) => job.strategy ? job.strategy.matrix.include.map(({ arch }) => job.name.replace('${{ matrix.arch }}', arch)) : [job.name]);
   assert.deepEqual(REQUIRED_TAG_RUN_JOBS['image-publish.yml'].filter((name) => !name.startsWith('verify / ')).sort(), imageJobs.sort());
   const desktop = read('desktop-release');
   assert.equal(desktop.jobs.build.name, 'Build and smoke (${{ matrix.target }})');
@@ -679,12 +679,12 @@ test('image publish pushes pinned GHCR images only after verify, and only from t
     assert.equal(condition(image.jobs.smoke.if, {needs: {publish: {result}}}), result === 'success');
   }
   const buildText = image.jobs.build.steps.map((step) => `${step.name ?? ''}\n${step.run ?? ''}`).join('\n');
-  assert.match(buildText, /linux\/amd64/);
+  assert.match(buildText, /--platform "linux\/\$ARCH"/);
   assert.match(buildText, /provenance=mode=max/);
   assert.match(buildText, /sbom=true/);
   assert.match(buildText, /--pull never/);
   const publishText = image.jobs.publish.steps.map((step) => step.run ?? '').join('\n');
-  assert.doesNotMatch(publishText, /docker build/);
+  assert.doesNotMatch(publishText, /docker build(?:\s|$)|docker buildx build/);
   assert.doesNotMatch(publishText, /npm ci/);
   assert.match(publishText, /release-commit\.mjs --verify-remote/);
   assert.match(publishText, /push --index/);

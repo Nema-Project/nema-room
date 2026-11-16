@@ -295,3 +295,26 @@ test('#174: a 401/403 on provenance is not turned into a waitable item by the hi
   assert.doesNotMatch(report.items.consistency.detail, /waitable/);
   assert.equal(report.exitCode, 2);
 });
+
+test('image consistency requires arm64 for both version repositories', async () => {
+  for (const target of ['hub', 'web']) {
+    const w = world();
+    w.images[`nema-project/nema-room-${target}`]['0.1.6'].arches = ['amd64'];
+    const report = await run(w);
+    assert.equal(report.items.images.state, 'missing');
+    assert.equal(report.exitCode, 1);
+    assert.match(report.items.images.detail, /linux\/arm64/);
+  }
+});
+
+test('latest ordering labels legacy pointers explicitly and rejects a damaged newer index', async () => {
+  const w = world();
+  w.images['nema-project/nema-room-hub'].latest = { label: '0.2.6', arches: ['amd64'] };
+  let pointers = await readPointers(io(w).io);
+  assert.equal(pointers.ghcr.hub.legacy, true);
+  assert.equal(pointerDecisions(pointers, '0.2.7', false)['ghcr hub latest'], 'move');
+  w.images['nema-project/nema-room-hub'].latest.label = '0.2.8';
+  pointers = await readPointers(io(w).io);
+  assert.equal(pointers.ghcr.hub.state, 'unknown');
+  assert.equal(pointerDecisions(pointers, '0.2.7', false)['ghcr hub latest'], 'unknown');
+});

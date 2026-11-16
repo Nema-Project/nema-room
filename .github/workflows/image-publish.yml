@@ -7,6 +7,7 @@ name: Image publish
 # Markdown directly in that folder or in a subfolder does not. The pull
 # request does not publish and does not run verify.yml. A tag still runs
 # the full verify.yml suite.
+# Native amd64 and arm64 builds each smoke their OCI bytes.
 # The publish job copies the build job's OCI layout. It does not install the
 # workspace or build an image. Publish jobs share one registry queue. This
 # workflow pushes only the version tag; release-promote.yml moves latest after
@@ -140,15 +141,24 @@ jobs:
       checkout_ref: ${{ needs.plan.outputs.commit }}
 
   build:
-    name: Build and smoke images
+    name: Build and smoke images (${{ matrix.arch }})
     needs: [plan, verify]
     if: >-
       ${{ !cancelled() && needs.plan.result == 'success' &&
           (needs.verify.result == 'success' ||
            (needs.plan.outputs.verification_required == 'false' && needs.verify.result == 'skipped')) }}
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     env:
+      ARCH: ${{ matrix.arch }}
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -161,14 +171,19 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           driver: docker-container
-      - name: Install crane
+      - name: Install native OCI archive loader
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+      - name: Verify native runner
         shell: bash
         run: |
           set -euo pipefail
-          archive="go-containerregistry_Linux_x86_64.tar.gz"
-          curl -fsSL -o "$RUNNER_TEMP/$archive" "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/${archive}"
-          echo "${CRANE_SHA256}  $RUNNER_TEMP/$archive" | sha256sum -c -
-          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" crane
+          case "$ARCH" in
+            amd64) test "$(uname -m)" = x86_64 ;;
+            arm64) test "$(uname -m)" = aarch64 ;;
+            *) exit 1 ;;
+          esac
       - name: Build OCI layouts
         shell: bash
         run: |
@@ -179,7 +194,7 @@ jobs:
             name="nema-room-${target}"
             dest="$RUNNER_TEMP/oci/${name}.tar"
             args=(
-              --platform linux/amd64
+              --platform "linux/$ARCH"
               --provenance=mode=max
               --sbom=true
               --build-arg "IMAGE_VERSION=${VERSION}"
@@ -197,33 +212,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # The docker exporter cannot write a provenance index. Load this build's OCI
-          # layout through a localhost registry so the smoke uses the bytes that publish.
-          docker rm -f nema-layout-registry >/dev/null 2>&1 || true
-          docker run -d --name nema-layout-registry -p 127.0.0.1:55000:5000 \
-            registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
-          ready=0
-          attempt=0
-          while [ "$attempt" -lt 30 ]; do
-            attempt=$((attempt + 1))
-            if curl -fsS http://127.0.0.1:55000/v2/ >/dev/null; then
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-          test "$ready" = 1
+          # Load the runnable image from these exact attested OCI bytes. The archive
+          # still includes the provenance/SBOM that the publisher copies to GHCR.
           for target in hub web; do
             name="nema-room-${target}"
-            layout="$RUNNER_TEMP/layout/${name}"
-            rm -rf "$layout"
-            mkdir -p "$layout"
-            tar -xf "$RUNNER_TEMP/oci/${name}.tar" -C "$layout"
-            "$RUNNER_TEMP/crane" push --index --insecure "$layout" "localhost:55000/${name}:${VERSION}"
-            docker pull "localhost:55000/${name}:${VERSION}"
-            docker tag "localhost:55000/${name}:${VERSION}" "ghcr.io/nema-project/${name}:${VERSION}"
+            image="ghcr.io/nema-project/${name}:${VERSION}"
+            skopeo copy --override-os linux --override-arch "$ARCH" "oci-archive:$RUNNER_TEMP/oci/${name}.tar" "docker-daemon:${image}"
+            test "$(docker image inspect --format '{{.Architecture}}' "$image")" = "$ARCH"
           done
-          docker rm -f nema-layout-registry
           docker image inspect --format '{{.Size}}' "ghcr.io/nema-project/nema-room-hub:${VERSION}" >"$RUNNER_TEMP/hub.size"
           docker image inspect --format '{{.Size}}' "ghcr.io/nema-project/nema-room-web:${VERSION}" >"$RUNNER_TEMP/web.size"
           node scripts/images/check-images.mjs --budget hub "$(tr -d '[:space:]' <"$RUNNER_TEMP/hub.size")" web "$(tr -d '[:space:]' <"$RUNNER_TEMP/web.size")"
@@ -238,7 +234,7 @@ jobs:
       - name: Upload OCI layouts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: nema-image-layouts
+          name: nema-image-layouts-${{ matrix.arch }}
           path: ${{ runner.temp }}/oci/
           if-no-files-found: error
           retention-days: 1
@@ -273,8 +269,11 @@ jobs:
       - name: Download OCI layouts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: nema-image-layouts
+          pattern: nema-image-layouts-*
           path: oci
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver: docker-container
       - name: Install crane
         shell: bash
         run: |
@@ -299,21 +298,40 @@ jobs:
           push_one() {
             target="$1"
             name="nema-room-${target}"
+            image="ghcr.io/nema-project/${name}"
+            sources=()
+            for arch in amd64 arm64; do
+              layout="$RUNNER_TEMP/layout/${name}-${arch}"
+              rm -rf "$layout"
+              mkdir -p "$layout"
+              tar -xf "oci/nema-image-layouts-${arch}/${name}.tar" -C "$layout"
+              node scripts/images/check-images.mjs --flatten-layout "$layout"
+              node scripts/desktop/release-commit.mjs --verify-remote "refs/tags/${TAG}" "$RELEASE_COMMIT"
+              "$RUNNER_TEMP/crane" push --index "$layout" "${image}:${VERSION}-${arch}"
+              digest=$("$RUNNER_TEMP/crane" digest "${image}:${VERSION}-${arch}")
+              [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+              sources+=("${image}@${digest}")
+            done
             node scripts/desktop/release-commit.mjs --verify-remote "refs/tags/${TAG}" "$RELEASE_COMMIT"
-            layout="$RUNNER_TEMP/layout/${name}"
-            rm -rf "$layout"
-            mkdir -p "$layout"
-            tar -xf "oci/${name}.tar" -C "$layout"
-            "$RUNNER_TEMP/crane" push --index "$layout" "ghcr.io/nema-project/${name}:${VERSION}"
+            docker buildx imagetools create --tag "${image}:${VERSION}" "${sources[@]}"
           }
           push_one hub
           push_one web
+          node scripts/images/check-images.mjs --registry "$VERSION"
 
   smoke:
-    name: Pull published images
+    name: Pull published images (${{ matrix.arch }})
     needs: [plan, publish]
     if: needs.publish.result == 'success'
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     permissions:
       contents: read
@@ -335,14 +353,24 @@ jobs:
       - name: Pull pinned images
         shell: bash
         env:
+          ARCH: ${{ matrix.arch }}
           NEMA_IMAGE_TAG: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
           test -n "$NEMA_IMAGE_TAG"
+          case "$ARCH" in
+            amd64) test "$(uname -m)" = x86_64 ;;
+            arm64) test "$(uname -m)" = aarch64 ;;
+            *) exit 1 ;;
+          esac
           docker compose pull
+          for target in hub web; do
+            test "$(docker image inspect --format '{{.Architecture}}' "ghcr.io/nema-project/nema-room-${target}:${NEMA_IMAGE_TAG}")" = "$ARCH"
+          done
       - name: Smoke the pulled images
         shell: bash
         env:
+          ARCH: ${{ matrix.arch }}
           NEMA_IMAGE_TAG: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail

@@ -649,7 +649,7 @@ export function assertPushRunJobs(jobs, id, totalCount) {
 
 /** Jobs the image and desktop push runs of a tag must have run and passed; verify-release cannot see them. */
 export const REQUIRED_TAG_RUN_JOBS = Object.freeze({
-  'image-publish.yml': Object.freeze(['Resolve release version', ...VERIFY_JOBS, 'Build and smoke images', 'Publish images', 'Pull published images']),
+  'image-publish.yml': Object.freeze(['Resolve release version', ...VERIFY_JOBS, ...['amd64', 'arm64'].map((arch) => `Build and smoke images (${arch})`), 'Publish images', ...['amd64', 'arm64'].map((arch) => `Pull published images (${arch})`)]),
   'desktop-release.yml': Object.freeze(['Resolve release version', ...VERIFY_JOBS, ...expectedTargets.map((target) => `Build and smoke (${target})`), 'Publish release']),
 });
 

@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { compareReleaseVersions, readPackageVersion, readReleaseVersion } from '../desktop/release-version.mjs';
@@ -7,6 +7,46 @@ import { isPrivateSharePeer } from '../desktop/templates/share-peer.mjs';
 export const HUB_IMAGE = 'ghcr.io/nema-project/nema-room-hub';
 export const WEB_IMAGE = 'ghcr.io/nema-project/nema-room-web';
 export const IMAGE_BUDGET_BYTES = 800 * 1048576;
+
+export const IMAGE_PLATFORMS = Object.freeze(['linux/amd64', 'linux/arm64']);
+export const INDEX_MEDIA_TYPES = Object.freeze([
+  'application/vnd.oci.image.index.v1+json',
+  'application/vnd.docker.distribution.manifest.list.v2+json',
+]);
+
+/** Attestations are not runnable platforms. Duplicate platform choices are ambiguous. */
+export function assertMultiarchManifest(manifest) {
+  if (manifest?.schemaVersion !== 2 || !INDEX_MEDIA_TYPES.includes(manifest?.mediaType) || !Array.isArray(manifest?.manifests)) {
+    throw new Error('Expected an OCI index or Docker manifest list');
+  }
+  for (const platform of IMAGE_PLATFORMS) {
+    const entries = manifest.manifests.filter((entry) => `${entry?.platform?.os}/${entry?.platform?.architecture}` === platform);
+    if (entries.length !== 1) throw new Error(`Expected exactly one ${platform} image, found ${entries.length}`);
+    if (!/^sha256:[a-f0-9]{64}$/.test(entries[0].digest ?? '')) throw new Error(`Invalid ${platform} digest`);
+    if (!['application/vnd.oci.image.manifest.v1+json', 'application/vnd.docker.distribution.manifest.v2+json'].includes(entries[0].mediaType)) {
+      throw new Error(`Expected a runnable ${platform} image manifest`);
+    }
+  }
+}
+
+/** Remove the OCI archive's single index envelope without changing image/attestation blobs. */
+export async function flattenOciLayout(root) {
+  const file = path.join(root, 'index.json');
+  let index = JSON.parse(await readFile(file, 'utf8'));
+  for (let depth = 0; depth < 3; depth += 1) {
+    if (!INDEX_MEDIA_TYPES.includes(index?.mediaType) || !Array.isArray(index.manifests)) throw new Error('Invalid OCI layout index');
+    const children = index.manifests.filter((entry) => INDEX_MEDIA_TYPES.includes(entry?.mediaType));
+    if (!children.length) {
+      await writeFile(file, `${JSON.stringify(index)}\n`);
+      return;
+    }
+    if (index.manifests.length !== 1) throw new Error('Ambiguous OCI layout envelope');
+    const digest = children[0].digest;
+    if (!/^sha256:[a-f0-9]{64}$/.test(digest ?? '')) throw new Error('Invalid OCI envelope digest');
+    index = JSON.parse(await readFile(path.join(root, 'blobs', 'sha256', digest.slice(7)), 'utf8'));
+  }
+  throw new Error('Too many OCI layout index levels');
+}
 
 function serviceBlocks(text) {
   const blocks = {};
@@ -209,6 +249,27 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       process.stdout.write(`${decision}\n`);
     } else if (lines) {
       for (const line of lines) process.stdout.write(`${line}\n`);
+    } else if (process.argv[2] === '--flatten-layout') {
+      const [root, extra] = process.argv.slice(3);
+      if (!root || extra) throw new Error('Usage: check-images.mjs --flatten-layout <directory>');
+      await flattenOciLayout(root);
+    } else if (process.argv[2] === '--manifest') {
+      const [file, extra] = process.argv.slice(3);
+      if (!file || extra) throw new Error('Usage: check-images.mjs --manifest <json-file>');
+      assertMultiarchManifest(JSON.parse(await readFile(file, 'utf8')));
+      process.stdout.write('image manifest: linux/amd64 and linux/arm64 ok\n');
+    } else if (process.argv[2] === '--registry') {
+      const [reference, extra] = process.argv.slice(3);
+      if (!reference || extra) throw new Error('Usage: check-images.mjs --registry <version-or-latest>');
+      if (reference !== 'latest') validateVersion(reference);
+      const { readImage, IMAGE_REPOSITORIES } = await import('../release/registry-read.mjs');
+      for (const repository of Object.values(IMAGE_REPOSITORIES)) {
+        const result = await readImage({ fetchImpl: fetch }, repository, reference);
+        if (result.state !== 'ok') throw new Error(`${result.state}: ${result.detail}`);
+        if (!result.evidence.label || (reference !== 'latest' && result.evidence.label !== reference)) throw new Error(`${repository}: wrong or absent version label`);
+        validateVersion(result.evidence.label);
+        process.stdout.write(`${repository}:${reference} ${result.evidence.digest}: linux/amd64 and linux/arm64 ok\n`);
+      }
     } else if (process.argv[2] === '--asset') {
       const [, , , file, version, extra] = process.argv;
       if (!file || !version || extra) throw new Error('Usage: check-images.mjs --asset <file> <version>');
