@@ -1,1 +1,0 @@
-Public knowledge shares now show status, provenance, implementation acceptance and inferred tasks; upstream failures return HTTP 503 during SSR. Source development explicitly opts into socket-peer checks while production remains fail-closed.
