@@ -100,6 +100,8 @@ Delivery is a loop: commit reports come back into the discussion.
 4. **Approve** — review the package, then let your coding agent retrieve it. Editing or regenerating a package revokes approval.
 5. **Track** — bring commit reports and their Git evidence back into the discussion.
 
+Type `@` to search knowledge entries, sent files, and topics across the workspace. With no keyword, use **Next mention candidates** or **Page Down** to browse older targets, eight per group per page, including targets beyond the first 500. Mentions are context pointers and do not change decisions.
+
 ```text
 Discussion → Requirements + decisions → Approved spec + plan → Coding agent
                       ↑                                           │

@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createApp } from "../src/app.js";
 import type { DaemonRpc } from "../src/daemonRpc.js";
 import type { Db } from "../src/db/db.js";
@@ -16,14 +16,18 @@ let ws: string;
 let app: ReturnType<typeof createApp>;
 let attachments: AttachmentStore;
 let n = 0;
+let closeDb: () => Promise<void> = async () => {};
 
 beforeEach(async () => {
-  ({ db, dataDir } = await makeHubDeps());
+  const deps = await makeHubDeps();
+  ({ db, dataDir } = deps);
+  closeDb = deps.close;
   ws = (await createWorkspace(db, dataDir, "A")).id;
   const daemon: DaemonRpc = { call: () => Promise.reject(new Error("unexpected daemon call")) };
   attachments = new AttachmentStore(db, dataDir, { freeBytes: async () => 1e15 });
   app = createApp({ db, dataDir, events: new EventBus(), daemonStatus: () => true, daemon, attachments });
-});
+}, 30_000);
+afterEach(async () => { await closeDb(); });
 afterAll(cleanupHubDeps);
 
 const png = () => {

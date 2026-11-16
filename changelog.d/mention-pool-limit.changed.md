@@ -1,0 +1,1 @@
+- @ mentions can now browse targets beyond the first 500 candidates in bounded pages of knowledge entries, sent files, and topics.

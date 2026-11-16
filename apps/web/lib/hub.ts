@@ -179,8 +179,8 @@ export const updateRepo = (id: string, repoId: string, patch: { label?: string; 
   request<Repo>(`${w(id)}/repos/${encodeURIComponent(repoId)}`, { method: "PATCH", body: patch });
 /** Skills the composer's `/` menu can offer; `supported: false` when the daemon is too old to say. */
 /** What the `@` menu can offer right now: this workspace's entries, already-sent files, and topics. */
-export const searchMentionContext = (id: string, q: string, signal?: AbortSignal) =>
-  request<import("./mentions").MentionContextResponse>(`${w(id)}/mention-context?q=${encodeURIComponent(q)}`, { signal });
+export const searchMentionContext = (id: string, q: string, signal?: AbortSignal, cursor?: string) =>
+  request<import("./mentions").MentionContextResponse>(`${w(id)}/mention-context?q=${encodeURIComponent(q)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal });
 export const listSkills = (id: string) =>
   request<{ supported: boolean; skills: Array<{ id: string; name: string; description: string; command: string; invocation: string; repoId: string | null; runtimes?: SkillUsage["runtimes"]; diagnostics?: string[] }> }>(`${w(id)}/skills`);
 export const unbindRepo = (id: string, repoId: string) => request<void>(`${w(id)}/repos/${encodeURIComponent(repoId)}`, { method: "DELETE" });

@@ -499,6 +499,7 @@
   "chip.history": "历史",
   "cmd.thread": "打开追问线程",
   "cmd.thread.insert": "/thread ",
+  "mention.nextPage": "下一页提及候选（Page Down）",
   "mention.menu": "提及",
   "mention.tray": "提及",
   "mention.entries": "知识条目",

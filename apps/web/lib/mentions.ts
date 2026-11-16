@@ -7,6 +7,8 @@ export type MentionContextResponse = {
   attachments: Array<{ id: string; name: string; kind: string; size: number; messageId: string; createdAt: string }>;
   threads: Array<{ id: string; title: string; lastReplyAt: string | null }>;
   truncated: boolean;
+  /** Empty-query browse continuation; absent on older hubs or at the end. */
+  nextCursor?: string;
   /** Missing on an older hub. True means the attachment scan stopped with rows still unread. */
   attachmentBudgetExhausted?: boolean;
 };

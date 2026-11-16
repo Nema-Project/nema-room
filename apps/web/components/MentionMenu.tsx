@@ -38,19 +38,21 @@ export function MentionTray({ chips, onRemove }: { chips: readonly MentionChip[]
 
 /**
  * The `@` menu: one listbox with the three groups (entries, files, topics). Rows are chosen by click, Enter or
- * Tab; ↑/↓ move; Esc closes. It never renders when every group is empty.
+ * Tab; ↑/↓ move; Esc closes. Empty pages can still offer a browse continuation.
  */
 export function MentionMenu({
   groups,
   active,
   onChoose,
   onHover,
+  onNext,
   empty,
 }: {
   groups: readonly MentionGroup[];
   active: number;
   onChoose: (candidate: MentionCandidate) => void;
   onHover: (index: number) => void;
+  onNext?: () => void;
   /**
    * What to say when no row is shown. `state` separates "the hub is still answering" and "the lookup failed"
    * from a real answer; `entries`/`attachments` then say whether the workspace has any at all, and `query`
@@ -66,6 +68,11 @@ export function MentionMenu({
   };
 }) {
   const t = useT();
+  const next = onNext && (
+    <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={onNext}>
+      {t("mention.nextPage")}
+    </button>
+  );
   const rows = groups.flatMap((g) => g.items);
   if (rows.length === 0) {
     const message =
@@ -73,7 +80,7 @@ export function MentionMenu({
         ? t("mention.looking")
         : empty.state === "failed"
           ? t("mention.lookupFailed")
-          : empty.query !== "" && empty.attachmentBudgetExhausted
+          : empty.attachmentBudgetExhausted
             ? t("mention.notFinished")
             : empty.query !== ""
               ? t("mention.noMatch", { query: empty.query })
@@ -82,43 +89,49 @@ export function MentionMenu({
                 empty.attachments ? null : t("mention.emptyAttachments"),
               ].filter(Boolean).join(" ") || t("mention.noMatch", { query: "" });
     return (
-      <div className="cmdmenu ment-menu" id="mention-commands" role="listbox" aria-label={t("mention.menu")}>
-        <p className="ment-empty" role="presentation">{message}</p>
+      <div className="cmdmenu ment-menu">
+        <div id="mention-commands" role="listbox" aria-label={t("mention.menu")}>
+          <p className="ment-empty" role="presentation">{message}</p>
+        </div>
+        {next}
       </div>
     );
   }
   // The flat index of each row across the groups, so the keyboard and the highlight agree.
   const offset = groups.reduce<number[]>((acc, g, i) => [...acc, (acc[i - 1] ?? 0) + (groups[i - 1]?.items.length ?? 0)], []);
   return (
-    <div className="cmdmenu ment-menu" id="mention-commands" role="listbox" aria-label={t("mention.menu")}>
-      {groups.map((group, gi) =>
-        group.items.length === 0 ? null : (
-          <div key={group.kind}>
-            <div className="cmdgroup" role="presentation">
-              {t(GROUP_LABEL[group.kind])}
+    <div className="cmdmenu ment-menu">
+      <div id="mention-commands" role="listbox" aria-label={t("mention.menu")}>
+        {groups.map((group, gi) =>
+          group.items.length === 0 ? null : (
+            <div key={group.kind}>
+              <div className="cmdgroup" role="presentation">
+                {t(GROUP_LABEL[group.kind])}
+              </div>
+              {group.items.map((item, ii) => {
+                const i = offset[gi]! + ii;
+                return (
+                  <button
+                    key={`${item.type}:${item.id}`}
+                    type="button"
+                    role="option"
+                    id={`mention-${item.type}-${item.id}`}
+                    aria-selected={i === active}
+                    className={i === active ? "on" : ""}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onMouseEnter={() => onHover(i)}
+                    onClick={() => onChoose(item)}
+                  >
+                    <span className="name">{item.label}</span>
+                    <span className="hint">{item.hint}</span>
+                  </button>
+                );
+              })}
             </div>
-            {group.items.map((item, ii) => {
-              const i = offset[gi]! + ii;
-              return (
-                <button
-                  key={`${item.type}:${item.id}`}
-                  type="button"
-                  role="option"
-                  id={`mention-${item.type}-${item.id}`}
-                  aria-selected={i === active}
-                  className={i === active ? "on" : ""}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onMouseEnter={() => onHover(i)}
-                  onClick={() => onChoose(item)}
-                >
-                  <span className="name">{item.label}</span>
-                  <span className="hint">{item.hint}</span>
-                </button>
-              );
-            })}
-          </div>
-        ),
-      )}
+          ),
+        )}
+      </div>
+      {next}
     </div>
   );
 }
