@@ -1,6 +1,6 @@
 # 项目路线图与验收台账
 
-更新日期：2026-11-11（Asia/Tokyo）
+更新日期：2026-11-16（Asia/Tokyo）
 
 本文件承接仓库评估中提出的 TODO，作为当前待办入口。它是建议的稳定化顺序，不代表全部问题已复现，也不代表已承诺交付日期。历史设计和评审保留在 `docs/superpowers/` 与 `docs/reviews/`；遇到冲突，应以对应提交的源码、CI 和验收证据为准。
 
@@ -15,6 +15,25 @@
 - [历史桌面验收](docs/reviews/2026-10-24-desktop-validation.md)只证明其记录的提交与环境；其中“尚未发布”等结论已经过时。
 - 已合入 `main` 的近期工作：[PR #29](https://github.com/Nema-Project/nema-room/pull/29) macOS 原生红绿灯（`5ff8cf9`）；[PR #30](https://github.com/Nema-Project/nema-room/pull/30) 落实 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 的用户 basis 证据检查（`afd1456`）；[PR #31](https://github.com/Nema-Project/nema-room/pull/31) 桌面包瘦身（`76680b8`）。
 - 本次评估通过 GitHub 读取源码、配置、Actions 和 Release；未本地重跑测试。开始每项工作前须重新检查最新状态。
+
+## v0.3.0 准备
+
+版本映射原定 v0.3.0 承载 P2-04 第一期（只读分享 viewer），该内容已提前在 v0.2.6 发布（见下一节）；[#165](https://github.com/Nema-Project/nema-room/issues/165) 仍开着，待验收记录。维护者于 2026-11-16 重新定 v0.3.0 的范围：以稳定化清尾为主，外加两份新功能 spec；实现与验收在本节记录，完成一项勾一项。
+
+进本版（清尾）：
+
+- [ ] 待做：[#174](https://github.com/Nema-Project/nema-room/issues/174) `release-promote` 可见性加固。provenance 等待已由 [#177](https://github.com/Nema-Project/nema-room/pull/177) / [#211](https://github.com/Nema-Project/nema-room/pull/211) 落地；剩余的是包本体可见性：v0.2.6 晋升时注册表处理约 13 分钟，超过 360 秒预算，第一次 promote 失败（记录见 v0.2.6 一节）。目标：发布分发运行已成功且 integrity 对版时，注册表滞后不再被判成确定性失败；预算与等待结构以实现 PR 的证据为准。
+- [ ] 待做：[#195](https://github.com/Nema-Project/nema-room/issues/195) 提及候选收尾。非空查询的服务端 SQL 搜索已由 [#219](https://github.com/Nema-Project/nema-room/pull/219) 在 v0.2.5 落地；剩余的是空查询浏览只返回一页、没有继续翻页的路径（`MENTION_POOL = 500` 只剩在未被菜单调用的列表 helper 里）。验收沿用该 issue：超过上限的工作区里能找到第 501 条之后的目标，菜单响应不比现在差。
+- [ ] 待做：[#194](https://github.com/Nema-Project/nema-room/issues/194) MCP `tools/list_changed`：先核实 `@modelcontextprotocol/sdk` 是否投递该通知并记录出处；投递才实现连接期间刷新，本版不把 MCP 工具交给 Agent，这一点不变。
+- [ ] 待做：[#50](https://github.com/Nema-Project/nema-room/issues/50) hub/web 镜像增加 linux/arm64：按该 issue 的流程先写 spec 与 plan（原生 arm64 runner、双架构各自构建冒烟后合 manifest list、保留 #44 的指针安全规则），再实现；`check-images` 与 compose 冒烟覆盖两种架构，文档去掉「仅 amd64」。
+- [ ] 待做：[#131](https://github.com/Nema-Project/nema-room/issues/131) S5 验收与 CX-03 最终验收：按维护者 2026-11-16 定的测试政策，真实环境验收在本机 VM 走 Compose 路线（web + hub + PostgreSQL），用已登录的真实 Agent 账户执行；验收记录写回对应 issue 与本文件。桌面端不做主动实机测试（同为该政策），桌面问题等用户反馈 issue 再处理。
+
+只写 spec（实现另行排期）：
+
+- [ ] 待做：[#163](https://github.com/Nema-Project/nema-room/issues/163) 身份模型（D11-A）：users / workspace_members / `messages.author_user_id` / 认证给出身份 / 成员提及语义与投递 / 撤销与审计。spec 列出需维护者决定的 D 项（尤其提及语义二选一），决定前不实现。
+- [ ] 待做：[#162](https://github.com/Nema-Project/nema-room/issues/162) 知识条目 tag（D10-A）：frontmatter `tags` 与归一化、索引存储选型、面板按 tag 筛、提及菜单 tag 组与投递语义、prompt 索引段预算。spec/plan 里写清选型理由。
+
+明确不进本版：[#132](https://github.com/Nema-Project/nema-room/issues/132) 轻量化发布（P2-09，已排 v0.3.1，spec 未写）；[#56](https://github.com/Nema-Project/nema-room/issues/56) 依赖大版本（P2-07，已排 v0.4.x）；[#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub（方向调研，未立项实现）；P1-10 打包 bench 与其他桌面实机验收（按上述测试政策不主动做）；[#232](https://github.com/Nema-Project/nema-room/pull/232)（外部 fork PR，维护者已搁置）。
 
 ## v0.2.6 发布与后续验收
 
@@ -183,7 +202,7 @@ v0.1.5 已公开发布：npm、hub/web 镜像与桌面产物的发布流水线�
 - **P2**：稳定化后的能力扩展。
 - 状态统一使用：待核实、待办、进行中、阻塞、已完成、延期。
 - 所有负责人暂为“待认领”；除下一条版本映射已写明的事项外，目标版本暂未承诺。认领时补充负责人、Issue/PR 和目标版本。
-- 版本映射（2026-10-31 定，2026-11-02 调整，2026-11-04 再调整）：v0.2.x 承载 0.2 系列小修与 Node 去重（[#134](https://github.com/Nema-Project/nema-room/issues/134)）；v0.3.0 承载只读分享知识库（P2-04 第一期）；v0.3.1 承载轻量化发布（P2-09）；v0.4.x 承载依赖大版本升级（P2-07）。
+- 版本映射（2026-10-31 定，2026-11-02 调整，2026-11-04 再调整，2026-11-16 再调整）：v0.2.x 承载 0.2 系列小修与 Node 去重（[#134](https://github.com/Nema-Project/nema-room/issues/134)）；v0.3.0 原定承载只读分享知识库（P2-04 第一期），该内容已提前在 v0.2.6 发布，2026-11-16 改为稳定化清尾（#174、#195、#194、#50、#131 S5 与 CX-03 验收）加 #163 / #162 两份 spec，见「v0.3.0 准备」一节；v0.3.1 承载轻量化发布（P2-09）；v0.4.x 承载依赖大版本升级（P2-07）。
 - 只有满足验收标准并附上对应提交、测试或人工验收记录，才能标记已完成。变更优先级或延期时记录原因。
 - 发布前更新本文件，并同步 README、CHANGELOG、SECURITY 与官网。历史报告不改写为新的验收结果。
 - 同步与团队功能尚未具备前置条件时，不与稳定化任务同时扩张。
@@ -240,7 +259,7 @@ P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实现已�
 | P2-01 | 签名、公证与更新体验 | 待办 | 正式签名与 macOS 公证可验证；P0-04 已于 2026-10-27 完成，再设计自动更新、失败恢复与版本兼容。版本号展示和只读的稳定版提示（issue #35）不计入本项 |
 | P2-02 | 规模与可诊断性 | 待办 | 建立大仓库、长会话、大量知识条目的耗时和资源基线；提供脱敏诊断导出；确保不含 token、密钥或默认导出私有讨论内容 |
 | P2-03 | 多设备同步 | 待办 | 先完成备份恢复与数据权威来源定义；设计冲突解决和一致性模型，再确定实现范围 |
-| P2-04 | [#165](https://github.com/Nema-Project/nema-room/issues/165) 只读分享知识库（P2-04 第一期 viewer，v0.3.0）。第一阶段只做分享链接的只读浏览，不做账号、登录与成员表；完整身份模型（users / workspace_members / messages.author_user_id、按人授权与撤销）留到后续阶段。规格见 [readonly knowledge share spec](docs/superpowers/specs/2026-11-04-readonly-knowledge-share-design.md)，计划见 [readonly knowledge share plan](docs/superpowers/plans/2026-11-04-readonly-knowledge-share.md) | 进行中 | 先设计身份、授权、撤销与审计；不得直接把当前单用户本地服务暴露为多人服务。2026-10-31 收窄为第一期只读分享：分享链接可撤销、撤销后立即失效，只暴露知识条目，不暴露聊天/任务/附件/设置；完整身份模型留到后续阶段。规格已写。D-1（整库）与 D-4（仅局域网，不支持公网）已由用户在 2026-11-11 确认。实现与验收尚未落地。 |
+| P2-04 | [#165](https://github.com/Nema-Project/nema-room/issues/165) 只读分享知识库（P2-04 第一期 viewer）。第一阶段只做分享链接的只读浏览，不做账号、登录与成员表；完整身份模型（users / workspace_members / messages.author_user_id、按人授权与撤销）留到后续阶段。规格见 [readonly knowledge share spec](docs/superpowers/specs/2026-11-04-readonly-knowledge-share-design.md)，计划见 [readonly knowledge share plan](docs/superpowers/plans/2026-11-04-readonly-knowledge-share.md) | 进行中 | 先设计身份、授权、撤销与审计；不得直接把当前单用户本地服务暴露为多人服务。2026-10-31 收窄为第一期只读分享：分享链接可撤销、撤销后立即失效，只暴露知识条目，不暴露聊天/任务/附件/设置；完整身份模型留到后续阶段。规格已写。D-1（整库）与 D-4（仅局域网，不支持公网）已由用户在 2026-11-11 确认。第一期已由 #223–#231 实现并随 v0.2.6 发布（2026-11-16）；#165 仍开着，待验收记录。后续阶段的身份模型由 [#163](https://github.com/Nema-Project/nema-room/issues/163)（D11-A）承接，spec 排在 v0.3.0。 |
 | P2-05 | [#25](https://github.com/Nema-Project/nema-room/issues/25) 外部连接器 Epic。设计见 [connector architecture v0.2](docs/design/connector-architecture-v0.2.md) | 进行中 | CX-01、CX-03 已实现，CX-03 待最终验收；CX-02、CX-04、CX-05、CX-06、CX-07、CX-08、CX-09、CX-10 尚未开始 |
 | P2-06 | [#75](https://github.com/Nema-Project/nema-room/issues/75) 扩展管理：Skills/MCP/插件的安装、卸载与启停。规格见 [extension management spec](docs/superpowers/specs/2026-10-25-extension-management-design.md)，计划见 [extension management plan](docs/superpowers/plans/2026-10-25-extension-management.md) | 进行中 | 已完成：启停（[PR #84](https://github.com/Nema-Project/nema-room/pull/84)）；卸载受管扩展、移出外部项，内置项不可卸载（[PR #85](https://github.com/Nema-Project/nema-room/pull/85)）；GitHub / skills.sh 来源钉到固定提交后预览（[PR #86](https://github.com/Nema-Project/nema-room/pull/86)）；按钉住的提交安装 Skill，带进度、取消、重试，重启时把未完成的安装标为中断（[PR #87](https://github.com/Nema-Project/nema-room/pull/87)）；插件页安装入口（[PR #88](https://github.com/Nema-Project/nema-room/pull/88)）；聊天里的安装卡片，需用户确认，与页面走同一服务（[PR #90](https://github.com/Nema-Project/nema-room/pull/90)）。剩余：已安装 / 发现分区、类型筛选与搜索；外部项接入；内置项修复；Skills 渐进载入；MCP 的 stdio / HTTP 配置、本机凭据保管与启停。进度见 [#75 评论](https://github.com/Nema-Project/nema-room/issues/75#issuecomment-6514317610) |
 | P2-07 | [#56](https://github.com/Nema-Project/nema-room/issues/56) 依赖体检的剩余项：ESLint 9→10、TypeScript 5.9→7、Node 22→24，以及内置 Python 从 3.11 换线到 3.13/3.14。该 issue 中的桌面 Python 升 3.11.18、基础镜像 trixie 化与移除 Vue 图标已由 PR #57、#58 完成。2026-10-31 排期改为 v0.4.x（原与轻量化发布一同放在 v0.3.0） | 待办 | 各升级单独 PR；内置 Python 换线需按 spec/plan 单独立项。范围以该 issue 为准 |
