@@ -14,7 +14,7 @@ Version sections on main may describe release preparation. A version heading and
 
 - Public knowledge-share projections distinguish a user-accepted implementation from one whose commits were only checked, exposing implementationAccepted and implementationInferred plus the inferred flag on work-package tasks.
 
-- On Windows, private-file checks during desktop startup share one PowerShell process per app process. A file that is no longer private is still rejected. Cold-start database initialization and packaged Windows and macOS startup numbers are unchanged.
+- On Windows, private-file checks during desktop startup share one PowerShell process per app process. A file that is no longer private is still rejected. Startup timing has no recorded before-and-after measurement, and packaged Windows x64 and macOS arm64 startup remains unmeasured.
 
 ### Fixed
 
