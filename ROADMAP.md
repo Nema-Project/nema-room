@@ -16,17 +16,17 @@
 - 已合入 `main` 的近期工作：[PR #29](https://github.com/Nema-Project/nema-room/pull/29) macOS 原生红绿灯（`5ff8cf9`）；[PR #30](https://github.com/Nema-Project/nema-room/pull/30) 落实 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 的用户 basis 证据检查（`afd1456`）；[PR #31](https://github.com/Nema-Project/nema-room/pull/31) 桌面包瘦身（`76680b8`）。
 - 本次评估通过 GitHub 读取源码、配置、Actions 和 Release；未本地重跑测试。开始每项工作前须重新检查最新状态。
 
-## v0.2.6 发布准备
+## v0.2.6 发布与后续验收
 
-v0.2.6 是 v0.2.5 之后的功能版本，主体是只读知识库分享：[#223](https://github.com/Nema-Project/nema-room/pull/223) 的哈希令牌、[#224](https://github.com/Nema-Project/nema-room/pull/224)–[#227](https://github.com/Nema-Project/nema-room/pull/227) 的 hub 投影与签发、[#228](https://github.com/Nema-Project/nema-room/pull/228)–[#230](https://github.com/Nema-Project/nema-room/pull/230) 的公开分享页、桌面网关与设置列表、[#231](https://github.com/Nema-Project/nema-room/pull/231) 的四语指南；同一段 `v0.2.5..main` 里还有 [#222](https://github.com/Nema-Project/nema-room/pull/222) 的 Windows ACL 子进程监管与收尸。七条 changelog 片段在本 PR cut 进 `[0.2.6]`：片段在 cut 前统一成英文项目符号（发布记录与 changelog 的语言一致），其中三条 review 修复片段按出货行为改写措辞、内容不丢。公开投影区分「用户已验收」与「只核对过提交」（`implementationAccepted` / `implementationInferred`），分享默认只开本机回环；局域网出货形态与前提写在指南里。
+v0.2.6 是 v0.2.5 之后的功能版本，主体是只读知识库分享：[#223](https://github.com/Nema-Project/nema-room/pull/223) 的哈希令牌、[#224](https://github.com/Nema-Project/nema-room/pull/224)–[#227](https://github.com/Nema-Project/nema-room/pull/227) 的 hub 投影与签发、[#228](https://github.com/Nema-Project/nema-room/pull/228)–[#230](https://github.com/Nema-Project/nema-room/pull/230) 的公开分享页、桌面网关与设置列表、[#231](https://github.com/Nema-Project/nema-room/pull/231) 的四语指南；同一段 `v0.2.5..main` 里还有 [#222](https://github.com/Nema-Project/nema-room/pull/222) 的 Windows ACL 子进程监管与收尸。七条 changelog 片段已在发布准备 PR [#233](https://github.com/Nema-Project/nema-room/pull/233) cut 进 `[0.2.6]`：片段在 cut 前统一成英文项目符号（与 changelog 的语言一致），其中三条 review 修复片段按出货行为改写措辞、内容不丢。公开投影区分「用户已验收」与「只核对过提交」（`implementationAccepted` / `implementationInferred`），分享默认只开本机回环；局域网出货形态与前提写在指南里。
 
-发布记录（tag 之后补真实值，以下为占位；本 PR 不打 tag、不跑 promote）：
+发布记录（2026-11-16 晋升后回填）：
 
-- tag `v0.2.6` → `<TAG_COMMIT>`；该提交的 main CI：`<MAIN_CI_RUN>`。
-- 三条 tag 工作流：npm `<NPM_RUN>`、镜像 `<IMAGE_RUN>`、桌面 `<DESKTOP_RUN>`。
-- 三条 tag 工作流都结束后，用能看到 draft 的 `GITHUB_TOKEN` 跑 `npm run release:verify -- 0.2.6` 的首次结果：`<PRE_PROMOTE_VERIFY>`（预期退出 1，且只点名 npm。没有这份 token 时，draft Release 会被读成 unknown，那个退出 1 不能当成「只缺 npm」）。
-- `npm run release:verify -- --pointers 0.2.6` 的前后对照：`<POINTERS_BEFORE>` / `<POINTERS_AFTER>`。
-- 晋升：`gh workflow run release-promote.yml --ref main -f tag=v0.2.6`，运行 `<PROMOTE_RUN>`；晋升后 `npm run release:verify -- 0.2.6` 退出 0。需记录可见性等待实际用了多久、首次晋升是否一次完成。注意 tag 与晋升间隔不要超过 5 天：npm tarball 工件的保留期就是 5 天（v0.2.5 晋升时曾因此先重跑过 tag 的 npm-publish 运行）。
+- tag `v0.2.6` → `bafbef591328e83d6c13a4b65e680483622672ab`（[#233](https://github.com/Nema-Project/nema-room/pull/233) 的合并提交）；该提交的 main CI：运行 [43804578733](https://github.com/Nema-Project/nema-room/actions/runs/43804578733)，success。
+- 三条 tag 工作流全 success：npm [43805535086](https://github.com/Nema-Project/nema-room/actions/runs/43805535086)、镜像 [43805535099](https://github.com/Nema-Project/nema-room/actions/runs/43805535099)、桌面 [43805535134](https://github.com/Nema-Project/nema-room/actions/runs/43805535134)（桌面运行结束后 draft Release 带齐 8 项资产）。
+- 三条 tag 工作流都结束后，用能看到 draft 的 `GITHUB_TOKEN` 跑 `npm run release:verify -- 0.2.6` 的首次结果：退出 1，只点名 npm（`npm has no @nema-project/nema@0.2.6`）；镜像 ok（hub `sha256:ff9c2851…`、web `sha256:887dd566…`，linux/amd64），release ok（仍是 draft、8 项资产对版、资产里的 `docker-compose.yml` 已 pin 0.2.6、GitHub latest 指针未动），consistency 因 npm 未发布记为 UNKNOWN。
+- `npm run release:verify -- --pointers 0.2.6` 的前后对照：晋升前 npm latest、ghcr hub latest、ghcr web latest、github latest 都是 0.2.5，npm next 为空；晋升后四者都是 0.2.6。
+- 晋升没有一次完成：第一次 `gh workflow run release-promote.yml --ref main -f tag=v0.2.6` 的运行 [43807519999](https://github.com/Nema-Project/nema-room/actions/runs/43807519999) 在可见性等待处失败。它的发布分发运行 [43807624746](https://github.com/Nema-Project/nema-room/actions/runs/43807624746) 实际已发布成功（日志有 `+ @nema-project/nema@0.2.6`，integrity `sha512-VGV6gZz8…` 与预期一致，provenance 已写入透明日志），但注册表处理用了约 13 分钟才让该版本可查，超过 promote 的 360 秒可见性预算（发布后约 9 分钟时仍答 404）；promote 因此停下，它自己没有翻转任何指针（运行总结 flipped: none）、Release 保持 draft。npm latest 不归 promote 翻转，需要分开记：发布步骤以 `--tag latest` 发布，版本在注册表可见时 npm 的 latest 就已指向 0.2.6；ghcr hub/web 的 latest 与 GitHub latest 只由 promote 后段与 Release 公开移动，当时仍是 0.2.5。等注册表能查到 0.2.6 后重新分发 promote，运行 [43808943051](https://github.com/Nema-Project/nema-room/actions/runs/43808943051) 全程 success；Release 于 2026-11-16T05:15:24Z 公开，晋升后 `npm run release:verify -- 0.2.6` 退出 0，四项全 ok（npm integrity `sha512-VGV6gZz8l3APwHGofOnQIc+4i3Ouni9LhN2db9iZmKMDf5OfdzpZjJhlun2ZpdmaFW7KlM2fLH3wKI1mDnsDPw==`；tag、release 清单与 npm provenance 提交同为 `bafbef5…`）。
 - `releases/latest/download/docker-compose.yml` 在晋升前仍是 0.2.5 的双 pin，晋升后变为 0.2.6 且带版本头。
 
 发布可用性不等于功能或真机验收完成：
