@@ -7,10 +7,12 @@
 //   FAKE_STARTS=<file>      append one line per start
 //   FAKE_GARBAGE=1          write a line that is not JSON before serving
 //   FAKE_GRANDCHILD=<file>  start a long-lived grandchild in the same process group and write its pid
+//   FAKE_TOOLS_FILE=<file>  read the tool count from this file on every tools/list, and send
+//                           notifications/tools/list_changed whenever its content changes
 // HTTP: import `startHttpFake({ status, location })` from a test; it serves one stateless MCP server
 // per request, or answers every request with `status` when that is set.
 import { spawn } from "node:child_process";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -18,10 +20,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
-function makeServer(count) {
-  const server = new Server({ name: "fake-mcp", version: "1.2.3" }, { capabilities: { tools: {} } });
+function makeServer(count, { listChanged = false } = {}) {
+  const server = new Server({ name: "fake-mcp", version: "1.2.3" }, { capabilities: { tools: listChanged ? { listChanged: true } : {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: Array.from({ length: count }, (_, i) => ({
+    tools: Array.from({ length: typeof count === "function" ? count() : count }, (_, i) => ({
       name: `tool_${i + 1}`,
       description: `fake tool ${i + 1}`,
       inputSchema: { type: "object", required: ["q"], properties: { q: { type: "string" }, n: { type: "number" } } },
@@ -76,6 +78,20 @@ async function main() {
     // Read stdin so the pipe stays open, never answer.
     process.stdin.resume();
     await new Promise(() => {});
+  }
+  if (env.FAKE_TOOLS_FILE) {
+    const file = env.FAKE_TOOLS_FILE;
+    const read = () => (existsSync(file) ? readFileSync(file, "utf8").trim() : "");
+    let seen = read();
+    const server = makeServer(() => Number(read() || 0), { listChanged: true });
+    await server.connect(new StdioServerTransport());
+    setInterval(() => {
+      const now = read();
+      if (now === seen) return;
+      seen = now;
+      void server.sendToolListChanged().catch(() => {});
+    }, 25).unref();
+    return;
   }
   await makeServer(Number(env.FAKE_TOOLS ?? 2)).connect(new StdioServerTransport());
 }

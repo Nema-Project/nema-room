@@ -1,0 +1,1 @@
+- A connected MCP server that announces `notifications/tools/list_changed` now has its tool list fetched again, so the extensions list shows tools it added or removed without a restart; the tools are still only shown, not given to agents.

@@ -4,6 +4,7 @@ import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { McpConfig, McpConnection, McpValue } from "@nema/shared";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { commandSpec, windowsRuntimeEnv, withElectronNode } from "../../platform.js";
@@ -48,7 +49,18 @@ type Instance = {
   transport: Transport;
   /** Set once `stop` or `closeAll` has asked this instance to end. */
   ending: boolean;
+  /** A `tools/list` refresh is running for this instance. */
+  refreshing: boolean;
+  /** The server said its tools changed while a refresh was running or before the start finished. */
+  refreshAgain: boolean;
 };
+
+type ListedTools = Awaited<ReturnType<Client["listTools"]>>;
+
+/** What the server reports is untrusted: keep the list and the names bounded. */
+function toolsOf(listed: ListedTools): McpStatus["tools"] {
+  return listed.tools.slice(0, MAX_TOOLS).map((tool) => ({ name: String(tool.name).slice(0, 128), schemaDigest: schemaDigest(tool.inputSchema) }));
+}
 
 type Attempt = { abort: AbortController };
 
@@ -198,8 +210,11 @@ export class McpSupervisor {
       status = built.status;
       const client = new Client({ name: "nema-daemon", version: "0.1.0" });
       client.onerror = () => {};
-      const instance: Instance = { client, transport, ending: false };
+      const instance: Instance = { client, transport, ending: false, refreshing: false, refreshAgain: false };
       const timeoutMs = this.o.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      // Registered before connecting so a change announced during the start is not lost; it is
+      // fetched once the start has recorded its own list.
+      client.setNotificationHandler(ToolListChangedNotificationSchema, () => this.refreshTools(id, instance));
       const signal = AbortSignal.any([attempt.abort.signal, AbortSignal.timeout(timeoutMs)]);
       const aborted = new Promise<never>((_, reject) => {
         const fail = () => reject(attempt.abort.signal.aborted ? new StartError("stopped", "disconnected") : new StartError(`the server did not answer within ${Math.round(timeoutMs / 1000)} s`));
@@ -218,14 +233,15 @@ export class McpSupervisor {
         void instance.transport.close().catch(() => {});
         this.set(id, { ...this.status(id), connection: "error", lastError: "the server exited" });
       };
-      return this.set(id, {
+      const connected = this.set(id, {
         id,
         connection: "connected",
         server: info ? { name: String(info.name).slice(0, 200), version: String(info.version).slice(0, 100) } : null,
-        // What the server reports is untrusted: keep the list and the names bounded.
-        tools: listed.tools.slice(0, MAX_TOOLS).map((tool) => ({ name: String(tool.name).slice(0, 128), schemaDigest: schemaDigest(tool.inputSchema) })),
+        tools: toolsOf(listed),
         lastError: null,
       });
+      if (instance.refreshAgain) this.refreshTools(id, instance);
+      return connected;
     } catch (error) {
       await transport?.close().catch(() => {});
       const failure = this.classify(error, status.last);
@@ -233,6 +249,43 @@ export class McpSupervisor {
     } finally {
       if (this.attempts.get(id) === attempt) this.attempts.delete(id);
     }
+  }
+
+  /**
+   * The server announced `notifications/tools/list_changed`: list its tools again and record them,
+   * so `extensions.list` shows the new list. One refresh runs per instance; announcements that
+   * arrive meanwhile collapse into one more. An instance that was stopped, replaced or has exited
+   * never writes. The list is still only recorded, never handed to an agent (D-3).
+   */
+  private refreshTools(id: string, instance: Instance): void {
+    if (instance.ending) return;
+    if (instance.refreshing || this.instances.get(id) !== instance) {
+      // Before the start has recorded this instance, doStart picks the flag up.
+      instance.refreshAgain = true;
+      return;
+    }
+    instance.refreshing = true;
+    const timeoutMs = this.o.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const current = () => !instance.ending && this.instances.get(id) === instance;
+    void (async () => {
+      try {
+        do {
+          instance.refreshAgain = false;
+          let listed: ListedTools;
+          try {
+            listed = await instance.client.listTools(undefined, { timeout: timeoutMs });
+          } catch {
+            // Keep the last list; a later announcement or restart can recover it.
+            if (current()) this.set(id, { ...this.status(id), lastError: "the server announced new tools but could not list them" });
+            continue;
+          }
+          if (!current()) return;
+          this.set(id, { ...this.status(id), tools: toolsOf(listed), lastError: null });
+        } while (instance.refreshAgain && current());
+      } finally {
+        instance.refreshing = false;
+      }
+    })();
   }
 
   private classify(error: unknown, httpStatus: number | undefined): StartError {

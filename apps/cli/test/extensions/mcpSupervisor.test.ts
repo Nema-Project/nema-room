@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -322,6 +322,30 @@ describe.skipIf(!posix)("stdio (POSIX, no owned-helper scope)", () => {
     process.kill(recorded(record).pid, "SIGKILL");
     expect(await until(() => sup.status("search").connection === "error")).toBe(true);
     expect(sup.status("search").lastError).toMatch(/exited/);
+  });
+
+  test("tools added or removed after connecting are recorded when the server announces list_changed", async () => {
+    const toolsFile = join(home, "tools.count");
+    writeFileSync(toolsFile, "1");
+    const { starts } = stdio("search", { FAKE_TOOLS_FILE: { value: toolsFile } });
+    const sup = make();
+    const names = () => sup.status("search").tools.map((tool) => tool.name);
+    expect((await sup.start("search")).tools.map((tool) => tool.name)).toEqual(["tool_1"]);
+
+    writeFileSync(toolsFile, "3");
+    expect(await until(() => names().length === 3)).toBe(true);
+    expect(names()).toEqual(["tool_1", "tool_2", "tool_3"]);
+    expect(sup.status("search").tools.every((tool) => /^[0-9a-f]{64}$/.test(tool.schemaDigest))).toBe(true);
+
+    writeFileSync(toolsFile, "1");
+    expect(await until(() => names().length === 1)).toBe(true);
+    expect(names()).toEqual(["tool_1"]);
+    // The same connection, refreshed in place: no restart, still connected, no error.
+    expect(sup.status("search")).toMatchObject({ connection: "connected", lastError: null, server: { name: "fake-mcp", version: "1.2.3" } });
+    expect(startCount(starts)).toBe(1);
+
+    await sup.stop("search");
+    expect(sup.status("search").tools).toEqual([]);
   });
 });
 
