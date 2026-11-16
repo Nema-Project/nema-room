@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { NPM_PROVENANCE_INDEX_WINDOW_MS, NPM_VISIBILITY_BUDGET_MS, NPM_VISIBILITY_POLL_MS, assertPushRunJobs, assertTagRunJobs, completeRuns, preflight, promote } from './promote.mjs';
+import { readFileSync } from 'node:fs';
+import { parse } from 'yaml';
+import { NPM_PACKAGE_VISIBILITY_BUDGET_MS, NPM_PROVENANCE_INDEX_WINDOW_MS, NPM_VISIBILITY_BUDGET_MS, NPM_VISIBILITY_POLL_MS, assertPushRunJobs, assertTagRunJobs, completeRuns, preflight, promote } from './promote.mjs';
 
 const COMMIT = 'a'.repeat(40);
 const INTEGRITY = 'sha512-EXPECTED';
@@ -522,17 +524,84 @@ test('acceptance 3: another integrity fails at once, waits for nothing, and move
   assert.match(text, /- not flipped: npm latest, ghcr hub latest, ghcr web latest, github latest/);
 });
 
-test('acceptance 4a: the version stays absent through the budget: a timeout, nothing else moves', async () => {
+test('acceptance 4a: the version stays absent through the package budget: a timeout, nothing else moves', async () => {
+  // Fail-closed stays: a version that never appears still stops the run, only after the package budget.
   const { result, state, text } = await run({ npmReads: ['absent'] });
   assert.equal(result.ok, false);
-  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), NPM_VISIBILITY_BUDGET_MS, 'exactly the budget');
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), NPM_PACKAGE_VISIBILITY_BUDGET_MS, 'exactly the package budget');
   assert.ok(state.sleeps.every((ms) => ms <= 5_000), 'polls stay short');
   assert.deepEqual(state.writes, ['npm dispatch']);
   assert.ok(!state.log.includes('verify final'));
-  assert.match(text, new RegExp(`the registry still answers 404 for 0\\.1\\.7 after ${NPM_VISIBILITY_BUDGET_MS}ms; confirmed not written`));
-  assert.match(text, /- npm registry after publish: not written — /);
+  assert.equal(state.tagPointerReads, 0, 'the pointer is never read while the package is invisible');
+  assert.equal(state.provenanceReads, 0);
+  assert.match(text, new RegExp(`the registry still answers 404 for 0\\.1\\.7 ${NPM_PACKAGE_VISIBILITY_BUDGET_MS}ms after the publish run succeeded; not confirmed written`));
+  assert.match(text, /Rerun promote once npm serves 0\.1\.7/);
+  // A successful publish run followed by 404s is not evidence that nothing was written.
+  assert.doesNotMatch(text, /confirmed not written|not written —/);
+  assert.match(text, /- npm registry after publish: not visible — /);
   assert.match(text, /- flipped by this run: none/);
   assert.match(text, /- not flipped: npm latest, ghcr hub latest, ghcr web latest, github latest/);
+});
+
+/** The registry answers 404 for the version for `ms` after the publish run, then serves it. */
+const absentFor = (ms) => [...Array(ms / NPM_VISIBILITY_POLL_MS).fill('absent'), 'same'];
+/** v0.2.6 (run 43807624746): published at 05:02:33Z, served about 13 minutes later. */
+const V026_PACKAGE_LAG_MS = 780_000;
+
+test('#174 v0.2.6: a package that stays 404 for ~780s after a successful publish is waited on, not called a failure', async () => {
+  assert.ok(V026_PACKAGE_LAG_MS > NPM_VISIBILITY_BUDGET_MS, 'the old shared 360s budget stopped on exactly this');
+  const { result, state, text } = await run({ npmReads: absentFor(V026_PACKAGE_LAG_MS), tagReads: [{ latest: v('0.1.7') }] });
+  assert.equal(result.ok, true);
+  assert.deepEqual(state.writes, ['npm dispatch', 'ghcr hub latest', 'ghcr web latest', 'release {"tag":"v0.1.7","prerelease":false,"makeLatest":true}']);
+  assert.equal(state.writes.filter((write) => write === 'npm dispatch').length, 1, 'read again, never published again');
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), V026_PACKAGE_LAG_MS);
+  assert.match(text, new RegExp(`npm 0\\.1\\.7: published by run 42; npm latest -> 0\\.1\\.7 after ${V026_PACKAGE_LAG_MS}ms; provenance served`));
+});
+
+test('#174: the pointer and provenance budget starts when the package appears, so a slow package cannot spend it', async () => {
+  const { result, state, text } = await run({ npmReads: absentFor(V026_PACKAGE_LAG_MS), tagReads: [{ latest: v('0.1.6') }] });
+  assert.equal(result.ok, false);
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), V026_PACKAGE_LAG_MS + NPM_VISIBILITY_BUDGET_MS, 'the package lag, then the whole pointer budget');
+  assert.match(text, new RegExp(`npm latest still reads 0\\.1\\.6 after ${NPM_VISIBILITY_BUDGET_MS}ms; the package is published`));
+  assert.match(text, /- npm registry after publish: published; channel pointer unconfirmed — /);
+});
+
+test('#174: an integrity mismatch after a long 404 still stops on the read that shows it', async () => {
+  const { result, state, text } = await run({ npmReads: [...Array(100).fill('absent'), DIFFERENT] });
+  assert.equal(result.ok, false);
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), 100 * NPM_VISIBILITY_POLL_MS, 'no wait after the definitive answer');
+  assert.deepEqual(state.writes, ['npm dispatch']);
+  assert.match(text, /- npm registry after publish: different — /);
+});
+
+test('#174: a version this run saw appear is fresh to the provenance index, however old its publish time', async () => {
+  // v0.2.6 became visible ~780s after its publish, past the 600s index window. Judged by publish time
+  // alone, a document declaring no attestation would be a definite gap at once, with npm latest moved.
+  // The registry was not serving the version a moment ago, so the window counts from its appearance.
+  const { result, state, text } = await run({
+    npmReads: absentFor(V026_PACKAGE_LAG_MS), tagReads: [{ latest: v('0.1.7') }],
+    provenanceReads: ['pending'], declared: false, publishedAgoMs: V026_PACKAGE_LAG_MS,
+  });
+  assert.ok(V026_PACKAGE_LAG_MS > NPM_PROVENANCE_INDEX_WINDOW_MS);
+  assert.equal(result.ok, true, 'a waitable provenance item does not stop the promotion');
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), V026_PACKAGE_LAG_MS + NPM_VISIBILITY_BUDGET_MS);
+  assert.match(text, new RegExp(`it was first served ${NPM_VISIBILITY_BUDGET_MS}ms ago \\(published ${V026_PACKAGE_LAG_MS + NPM_VISIBILITY_BUDGET_MS}ms ago\\), so its index may still catch up`));
+  assert.doesNotMatch(text, /definite gap/);
+  const final = state.verifyOptions.find((entry) => entry.stage === 'final');
+  assert.equal(final.provenanceIndex.state, 'pending');
+});
+
+test('#174: an unreadable registry that then serves the version sets no freshness anchor', async () => {
+  // Only a 404 shows the registry was not serving the version; a read that failed shows nothing, so an
+  // old publish whose document declares no attestation stays a definite gap.
+  const transient = { state: 'transient', detail: 'cannot tell whether @nema-project/nema@0.1.7 exists: HTTP 503' };
+  const { result, state, text } = await run({
+    npmReads: [...Array(V026_PACKAGE_LAG_MS / NPM_VISIBILITY_POLL_MS).fill(transient), 'same'], tagReads: [{ latest: v('0.1.7') }],
+    provenanceReads: ['pending'], declared: false, publishedAgoMs: V026_PACKAGE_LAG_MS,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(state.sleeps.reduce((sum, ms) => sum + ms, 0), V026_PACKAGE_LAG_MS, 'no provenance wait');
+  assert.match(text, new RegExp(`declares none, and it was published ${V026_PACKAGE_LAG_MS}ms ago, longer than any index delay`));
 });
 
 test('acceptance 4b: an old dist-tag through the budget: a timeout, nothing else moves', async () => {
@@ -891,12 +960,30 @@ test('#174: a publish still inside the index window is waited on, and is absent 
   assert.ok(!state.log.includes('verify final'), 'a definite gap never reaches final verify');
 });
 
-test('the npm visibility budget leaves room for provenance indexing (#174)', () => {
-  // v0.2.2 needed 117.7s of a 120s budget. Raised to 180s, v0.2.3 then used 176.0s of that:
-  // the package stayed absent for about 110s (up from about 55s) and provenance for another 60s.
-  // 360s covers another step of that package lag plus the provenance wait, and stays inside the index window.
+test('the npm visibility budgets follow the recorded registry lag (#174)', () => {
+  // How long the package alone stayed 404 after a successful publish run, per release (ROADMAP records).
+  const packageLagMs = { 'v0.2.2': 55_000, 'v0.2.3': 110_000, 'v0.2.4': 298_536, 'v0.2.6': 780_000 };
+  const worst = Math.max(...Object.values(packageLagMs));
+  assert.equal(NPM_PACKAGE_VISIBILITY_BUDGET_MS, 1_800_000);
+  // Each recorded step grew the worst case ×2 to ×2.7. The budget covers one more step at ×2, not the
+  // worst ratio: a run that stops after it fails closed, and a rerun finishes the promotion.
+  assert.ok(NPM_PACKAGE_VISIBILITY_BUDGET_MS >= 2 * worst, `the package budget covers twice the worst recorded lag (${worst}ms)`);
+  // After the package was served, pointer and provenance took at most ~60s more (v0.2.3); 360s keeps 6×.
   assert.equal(NPM_VISIBILITY_BUDGET_MS, 360_000);
   assert.equal(NPM_PROVENANCE_INDEX_WINDOW_MS, 600_000);
-  assert.equal(NPM_VISIBILITY_BUDGET_MS % NPM_VISIBILITY_POLL_MS, 0, 'the budget is a whole number of polls');
-  assert.ok(NPM_VISIBILITY_BUDGET_MS < NPM_PROVENANCE_INDEX_WINDOW_MS, 'a fresh version is still inside the index window when the budget ends');
+  for (const budget of [NPM_PACKAGE_VISIBILITY_BUDGET_MS, NPM_VISIBILITY_BUDGET_MS]) {
+    assert.equal(budget % NPM_VISIBILITY_POLL_MS, 0, 'each budget is a whole number of polls');
+  }
+  assert.ok(NPM_VISIBILITY_BUDGET_MS < NPM_PROVENANCE_INDEX_WINDOW_MS, 'a version that appears when the pointer/provenance wait starts is still inside the index window when it ends');
+});
+
+test('the promote job outlasts its own worst-case npm waits (#174)', () => {
+  // A budget the job timeout cuts short would end as a cancelled job with no run record.
+  const workflow = (name) => parse(readFileSync(new URL(`../../.github/workflows/${name}.yml`, import.meta.url), 'utf8'));
+  const promoteJobMs = workflow('release-promote').jobs.promote['timeout-minutes'] * 60_000;
+  const publishJobMs = workflow('npm-publish').jobs.publish['timeout-minutes'] * 60_000;
+  // Worst case, all in one job: a pre-candidate provenance settle, the publish job, the package wait,
+  // then the pointer/provenance wait. Leave at least 15 minutes for queueing and everything else.
+  const worstWaitMs = NPM_VISIBILITY_BUDGET_MS + publishJobMs + NPM_PACKAGE_VISIBILITY_BUDGET_MS + NPM_VISIBILITY_BUDGET_MS;
+  assert.ok(worstWaitMs + 15 * 60_000 <= promoteJobMs, `${worstWaitMs}ms of waits must fit in the ${promoteJobMs}ms promote job with 15 minutes to spare`);
 });

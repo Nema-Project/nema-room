@@ -34,20 +34,44 @@ function pointerNames(prerelease) {
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 
 /**
- * How long a promote run keeps re-reading npm before it calls the registry's answer final.
- * v0.2.2 used 117.7s of a 120s budget (package ~55s, then provenance ~60s), so it became 180s.
- * v0.2.3 then used 176.0s of that 180s: the package stayed absent for ~110s and provenance for
- * another ~60s. 360s covers another step of that package lag plus the provenance wait (#174).
- * A package or dist-tag that is still invisible when this ends stops the run; a provenance 404
- * that is only an index delay does not.
+ * How long promote keeps re-reading the exact version after an npm-publish run that concluded success,
+ * while the registry still answers 404 (or cannot be read) for it. This is its own budget, separate
+ * from NPM_VISIBILITY_BUDGET_MS below, because the two lags it was sharing behave differently (#174).
+ *
+ * How long the package itself stayed absent after a successful publish, per release:
+ *   v0.2.2 ~55s, v0.2.3 ~110s, v0.2.4 ~298.5s (package, tag and provenance arrived together),
+ *   v0.2.6 ~780s (run 43807624746 published at 05:02:33Z; still 404 when promote gave up at 360s).
+ * The worst case grew by ×2–×2.7 per data point and is not bounded by anything we control. 1800s
+ * (30 min) is 2.3× the worst observed and covers one more step at the low end of that growth.
+ *
+ * Why waiting long here is cheap: the wait only starts after the publish run concluded success, it
+ * only reads, and nothing after npm moves while it runs. A version that really was never written
+ * still fails closed — later, not differently. An integrity mismatch, 401/403 or an uninterpretable
+ * answer still stops on the first read. Misjudging lag as failure costs a stopped run and a manual
+ * rerun (v0.2.6). The promote job's `timeout-minutes` must hold the npm-publish job, this budget and
+ * the one below; promote.test.mjs checks that against both workflow files.
+ */
+export const NPM_PACKAGE_VISIBILITY_BUDGET_MS = 1_800_000;
+/**
+ * How long promote keeps re-reading the channel dist-tag and the provenance once the version is
+ * served, and the bound of a provenance settle on a rerun. It starts when the package becomes
+ * visible, not when the publish run ends, so a slow package cannot use it up.
+ * History while package and provenance shared one budget: v0.2.2 used 117.7s of 120s, v0.2.3 used
+ * 176.0s of 180s (the package ~110s, provenance another ~60s). After the package was visible, the
+ * dist-tag and provenance took at most ~60s more in every recorded release (v0.2.4: none extra).
+ * 360s keeps six times that. A dist-tag still not visible when this ends stops the run; a
+ * provenance 404 that is only an index delay does not.
  */
 export const NPM_VISIBILITY_BUDGET_MS = 360_000;
 export const NPM_VISIBILITY_POLL_MS = 5_000;
 /**
- * How long after its publish a version's provenance can still be an index delay. A version older than
- * this whose version document declares no attestation is not lagging any more: it was published
- * without provenance (#174). It stays above the visibility budget, so a version published at the
- * start of the wait is still inside this window when the budget ends.
+ * How long after it became available a version's provenance can still be an index delay. A version
+ * older than this whose version document declares no attestation is not lagging any more: it was
+ * published without provenance (#174). Its clock starts at the publish time, or — when this run read
+ * the version as absent and then saw it appear — at that appearance, since a registry that had not
+ * served the version yet gives no reason to expect its attestation indexed (v0.2.6 became visible
+ * ~780s after its publish, already past this window). The window stays above NPM_VISIBILITY_BUDGET_MS,
+ * so a version that appears at the start of that wait is still inside it when the wait ends.
  */
 export const NPM_PROVENANCE_INDEX_WINDOW_MS = 600_000;
 
@@ -93,7 +117,7 @@ export function provenanceNote(provenance) {
  * One budget, one clock: the wait phases below share a deadline and one run-log format, so a stop is
  * never later than the budget and every line carries the time already spent.
  */
-function waitScope({ io, budgetMs, pollMs, onPoll }) {
+function waitScope({ io, budgetMs, pollMs, onPoll, label = 'npm visibility' }) {
   const started = io.now();
   const deadline = started + budgetMs;
   return {
@@ -108,7 +132,7 @@ function waitScope({ io, budgetMs, pollMs, onPoll }) {
     },
     /** One line per read that does not settle it: the run log then holds the last classification seen. */
     note(what, detail) {
-      if (onPoll) onPoll(`npm visibility ${io.now() - started}ms of ${budgetMs}ms: ${what}${detail ? ` (${detail})` : ''}`);
+      if (onPoll) onPoll(`${label} ${io.now() - started}ms of ${budgetMs}ms: ${what}${detail ? ` (${detail})` : ''}`);
     },
   };
 }
@@ -144,6 +168,12 @@ function waitScope({ io, budgetMs, pollMs, onPoll }) {
  * value is learned it is kept. `provenance-unconfirmed` therefore means the endpoint never stopped
  * answering 404 *and* the evidence never became readable — never "the evidence read failed once".
  *
+ * `appearedAt` (epoch ms) is set only by the post-publish wait, and only when it read the version as
+ * absent and then saw it served. The age is then counted from the later of that and the publish time:
+ * a version the registry was not serving moments ago is fresh to its index, however old its `time`
+ * entry (v0.2.6 appeared ~780s after its publish). A version served on the first read gets no such
+ * anchor, so an old version a rerun or a concurrent publish finds is still judged by its publish time.
+ *
  * -> { ok: true, outcome: 'ok', reason: null, waitedMs, budgetMs, reads: { provenance, declaration, publishedAt }, declaration, publishedAt }
  *  | { ok: false, outcome, reason, waitedMs, ... }
  *    outcome ∈ provenance-not-indexed (declared, not served yet)
@@ -151,7 +181,7 @@ function waitScope({ io, budgetMs, pollMs, onPoll }) {
  *            | provenance-absent     (definitely none: not lagging any more, or the body has no SLSA v1)
  *            | provenance-denied     (401/403: this reader may not see it)
  */
-export async function awaitNpmProvenance({ version, io, budgetMs = NPM_VISIBILITY_BUDGET_MS, pollMs = NPM_VISIBILITY_POLL_MS, onPoll, scope = null }) {
+export async function awaitNpmProvenance({ version, io, budgetMs = NPM_VISIBILITY_BUDGET_MS, pollMs = NPM_VISIBILITY_POLL_MS, onPoll, scope = null, appearedAt = null }) {
   const clock = scope ?? waitScope({ io, budgetMs, pollMs, onPoll });
   const reads = { provenance: 0, declaration: 0, publishedAt: 0 };
   // What the version document last said: true (declares attestations), false (it does not), null (unread).
@@ -205,13 +235,16 @@ export async function awaitNpmProvenance({ version, io, budgetMs = NPM_VISIBILIT
     }
     // Pending: the endpoint answered 404. Decide whether that can still change.
     await readEvidence();
-    const age = publishedAt === null ? null : io.now() - publishedAt;
+    // Fresh since the publish, or since this run saw an absent version appear, whichever is later.
+    const anchored = publishedAt !== null && appearedAt !== null && appearedAt > publishedAt;
+    const age = publishedAt === null ? null : io.now() - (anchored ? appearedAt : publishedAt);
+    const since = anchored ? `first served ${age}ms ago (published ${io.now() - publishedAt}ms ago)` : `published ${age}ms ago`;
     // A definite absence needs the document to have been *read* and to carry no attestation. An old
     // publish alone is not enough: if the document was unreadable, calling this absent would assert a
     // fact nobody read, stop the run, and tell the maintainer to cut a new tag for a gap that may not
     // exist (CodeRabbit, PR #177). `declaration === null` stays an uncertainty.
     if (declaration === false && age !== null && age > NPM_PROVENANCE_INDEX_WINDOW_MS) {
-      return result(PROVENANCE_ABSENT, `npm has no provenance for ${version}: its version document was read and declares none, and it was published ${age}ms ago, longer than any index delay`);
+      return result(PROVENANCE_ABSENT, `npm has no provenance for ${version}: its version document was read and declares none, and it was ${since}, longer than any index delay`);
     }
     clock.note('provenance not indexed yet', declaration === true ? 'the version document declares it' : read.detail);
     if (!(await clock.more())) {
@@ -225,7 +258,7 @@ export async function awaitNpmProvenance({ version, io, budgetMs = NPM_VISIBILIT
       return result(
         fresh ? PROVENANCE_NOT_INDEXED : PROVENANCE_UNCONFIRMED,
         fresh
-          ? `the registry has not served provenance for ${version} after ${clock.spent()}ms ${read}; it was published ${age}ms ago, so its index may still catch up`
+          ? `the registry has not served provenance for ${version} after ${clock.spent()}ms ${read}; it was ${since}, so its index may still catch up`
           : `the registry still answers 404 for provenance of ${version} after ${clock.spent()}ms ${read}; whether an attestation exists is unconfirmed`,
       );
     }
@@ -254,42 +287,69 @@ export async function awaitNpmProvenance({ version, io, budgetMs = NPM_VISIBILIT
  * moved is exactly the partial window #174 is about), and a definite `provenance-absent` /
  * `provenance-denied` stops — but with npm latest already moved, so the caller must still report that.
  *
- * -> { ok: true, pointer, maintenance, waitedMs, budgetMs, reads: { package, tag, provenance }, provenance }
- *  | { ok: false, outcome, reason, waitedMs, budgetMs, reads: { package, tag, provenance }, last? }
+ * Two budgets, one after the other (#174). The package gets `packageBudgetMs` to appear; the channel
+ * pointer and the provenance then share `budgetMs`, counted from the read that found the package.
+ * They were one budget until v0.2.6, whose package alone stayed 404 for ~780s after a successful
+ * publish and used up the whole 360s before the pointer or provenance were ever read. The two lags
+ * are separate: only the package one has grown release over release (see the constants above).
+ * `waitedMs` is the whole wait; `packageWaitedMs` is the part spent on the package.
+ *
+ * A package still 404 when its budget ends stops the run, as before, but the record no longer says
+ * "confirmed not written": the publish run concluded success, so what the registry shows is that it has
+ * not *confirmed* the version, which a rerun after it appears will finish.
+ *
+ * -> { ok: true, pointer, maintenance, waitedMs, packageWaitedMs, budgetMs, packageBudgetMs, reads: { package, tag, provenance }, provenance }
+ *  | { ok: false, outcome, reason, waitedMs, packageWaitedMs, budgetMs, packageBudgetMs, reads: { package, tag, provenance }, last? }
  *    outcome ∈ not-visible | unknown | tag-not-confirmed | tag-moved | tag-unknown
  */
-export async function awaitNpmVisibility({ version, prerelease, expectedIntegrity, io, budgetMs = NPM_VISIBILITY_BUDGET_MS, pollMs = NPM_VISIBILITY_POLL_MS, onPoll }) {
-  const clock = waitScope({ io, budgetMs, pollMs, onPoll });
+export async function awaitNpmVisibility({ version, prerelease, expectedIntegrity, io, budgetMs = NPM_VISIBILITY_BUDGET_MS, packageBudgetMs = NPM_PACKAGE_VISIBILITY_BUDGET_MS, pollMs = NPM_VISIBILITY_POLL_MS, onPoll }) {
+  const started = io.now();
+  const packageClock = waitScope({ io, budgetMs: packageBudgetMs, pollMs, onPoll, label: 'npm package visibility' });
+  // Started once the package is served; until then nothing is spent from the pointer/provenance budget.
+  let clock = null;
+  let packageWaitedMs = 0;
   const reads = { package: 0, tag: 0, provenance: 0 };
-  const stop = (outcome, reason, last) => ({ ok: false, outcome, reason, waitedMs: clock.spent(), budgetMs, reads, ...(last ? { last } : {}) });
+  const timing = () => ({ waitedMs: io.now() - started, packageWaitedMs, budgetMs, packageBudgetMs });
+  const stop = (outcome, reason, last) => ({ ok: false, outcome, reason, ...timing(), reads, ...(last ? { last } : {}) });
   const name = prerelease ? 'npm next' : 'npm latest';
+  // When this run read the version as absent and then saw it served: the provenance window's anchor.
+  let appearedAt = null;
   /**
    * The version and its channel are served. The provenance has to be settled before final verify is
    * asked: a lagging bundle index there is what stopped v0.2.1's first promote after npm latest moved.
    */
   const withProvenance = async (pointer, maintenance) => {
-    const provenance = await awaitNpmProvenance({ version, io, onPoll, scope: clock });
+    const provenance = await awaitNpmProvenance({ version, io, onPoll, scope: clock, appearedAt });
     reads.provenance = provenance.reads.provenance;
     // `ok` is about the package and its channel pointer only: those are visible. The provenance is its
     // own field, because a definite gap must still be reported after npm latest has moved (the caller
     // stopped *because of provenance*, not because npm was missing) — see promote()'s npm step.
-    return { ok: true, pointer, maintenance, waitedMs: clock.spent(), budgetMs, reads, provenance };
+    return { ok: true, pointer, maintenance, ...timing(), reads, provenance };
   };
   let last;
+  let sawAbsent = false;
   for (;;) {
     last = await io.npmState({ expectedIntegrity });
     reads.package += 1;
     if (last.state === 'same') break;
     if (last.state === 'different' || last.state === 'denied' || last.state === 'untrusted') {
+      packageWaitedMs = packageClock.spent();
       return stop(last.state, `${last.detail}; the registry gave a definitive answer, not an index delay`, last);
     }
-    clock.note(`package ${last.state}`, last.detail);
-    if (!(await clock.more())) {
+    if (last.state === 'absent') sawAbsent = true;
+    packageClock.note(`package ${last.state}`, last.detail);
+    if (!(await packageClock.more())) {
+      packageWaitedMs = packageClock.spent();
       return last.state === 'absent'
-        ? stop(NOT_VISIBLE, `the registry still answers 404 for ${version} after ${clock.spent()}ms; confirmed not written`, last)
-        : stop(UNKNOWN, `the registry stayed unreadable for ${clock.spent()}ms (${last.detail}); whether ${version} is published is unknown`, last);
+        ? stop(NOT_VISIBLE, `the registry still answers 404 for ${version} ${packageClock.spent()}ms after the publish run succeeded; not confirmed written. Rerun promote once npm serves ${version}: it finds the publish and finishes the pointers`, last)
+        : stop(UNKNOWN, `the registry stayed unreadable for ${packageClock.spent()}ms (${last.detail}); whether ${version} is published is unknown`, last);
     }
   }
+  packageWaitedMs = packageClock.spent();
+  // Only a 404 seen by this run proves the registry was not serving the version until now; an
+  // unreadable answer does not, so it sets no anchor.
+  if (sawAbsent) appearedAt = io.now();
+  clock = waitScope({ io, budgetMs, pollMs, onPoll });
   // The package is visible. The channel pointer is what a promotion claims, so it has to be visible too.
   for (;;) {
     const pointers = await io.npmPointers();
@@ -465,7 +525,8 @@ export async function promote({ version, tag, commit, io, summary }) {
         return dispatched;
       }, published);
       // The publish run exiting 0 does not mean the registry serves the version yet (v0.2.0 stopped here
-      // after ~18s). Re-read within one budget, and record which of three states the budget ended on.
+      // after ~18s, v0.2.6 after 360s of a ~780s lag). Re-read within the package budget, then the
+      // pointer/provenance budget, and record which state the wait ended on.
       const visibility = await step('npm visibility after publish', () => awaitNpmVisibility({
         version, prerelease, expectedIntegrity, io,
         onPoll: io.log ? (line) => io.log(`${line}\n`) : undefined,
@@ -479,7 +540,8 @@ export async function promote({ version, tag, commit, io, summary }) {
           ? `confirmed visible${waited}; ${npmName} stays ${visibility.pointer.version} (maintenance); ${provenanceAfterPublish}`
           : `confirmed visible${waited}; ${provenanceAfterPublish}`
         : visibility.outcome === 'not-visible'
-          ? `not written — ${visibility.reason}`
+          // The publish run succeeded, so a 404 throughout is "not visible", never proof it was not written.
+          ? `not visible — ${visibility.reason}`
           : visibility.outcome === TAG_NOT_CONFIRMED
             ? `published; channel pointer unconfirmed — ${visibility.reason}`
             : visibility.outcome === 'unknown' || visibility.outcome === 'tag-unknown'
