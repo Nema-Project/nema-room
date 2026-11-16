@@ -4,6 +4,28 @@ Version sections on main may describe release preparation. A version heading and
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-11-16
+
+### Added
+
+- A workspace can issue read-only knowledge share links. Visitors can read knowledge entries only; they cannot see chat, tasks, attachments or settings, and a revoked link stops working on the next request. By default shares open only on this machine's loopback address.
+
+### Changed
+
+- Public knowledge-share projections distinguish a user-accepted implementation from one whose commits were only checked, exposing implementationAccepted and implementationInferred plus the inferred flag on work-package tasks.
+
+- On Windows, private-file checks during desktop startup share one PowerShell process per app process. A file that is no longer private is still rejected. Cold-start database initialization and packaged Windows and macOS startup numbers are unchanged.
+
+### Fixed
+
+- Public knowledge shares show status, provenance, implementation acceptance and inferred tasks; when the hub cannot be reached the share page answers HTTP 503 instead of a success page. Source development opts into socket-peer checks explicitly; production stays fail-closed.
+
+- Public share pages load their static bundles through the local gateway without a session, while private routes and brand resources still require one and peer checks still apply.
+
+- A share creation or revocation is no longer undone when an earlier list request finishes late; a sharing-disabled answer persists in the settings list, and links are identified by creation time and short ID.
+
+- Turning knowledge sharing off no longer restarts the local core on every desktop window reopen; a reused core restarts only when its recorded sharing state differs from the current switch.
+
 ## [0.2.5] - 2026-11-11
 
 ### Changed

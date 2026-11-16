@@ -1,1 +1,0 @@
-Public knowledge-share projections now distinguish a user-accepted implementation from one whose commits were only checked, exposing implementationAccepted and implementationInferred plus the inferred flag on work-package tasks.
