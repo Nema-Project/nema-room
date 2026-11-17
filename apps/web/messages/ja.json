@@ -499,6 +499,7 @@
   "chip.history": "履歴",
   "cmd.thread": "追いかけスレッドを開く",
   "cmd.thread.insert": "/thread ",
+  "mention.nextPage": "次のメンション候補（Page Down）",
   "mention.menu": "メンション",
   "mention.tray": "メンション",
   "mention.entries": "ナレッジ",

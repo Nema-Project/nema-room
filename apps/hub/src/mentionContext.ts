@@ -1,14 +1,9 @@
 import { Hono } from "hono";
+import { z } from "zod";
 import { MENTION_LIMITS } from "@nema/shared";
 import type { AttachmentStore } from "./attachments.js";
 import type { Db } from "./db/db.js";
 import { getWorkspace } from "./workspaces.js";
-
-/**
- * How many rows the list helpers read. The `@` menu does not use this pool:
- * a typed query is filtered in SQL, and an empty query returns one page.
- */
-export const MENTION_POOL = 500;
 
 const MAX_QUERY_LENGTH = 200;
 
@@ -26,47 +21,29 @@ export type MentionContext = {
   threads: MentionThread[];
   /** True when the menu is not every match, or the attachment stat budget stopped early with rows left. */
   truncated: boolean;
+  /** Opaque continuation for empty-query browsing; absent when all groups are exhausted. */
+  nextCursor?: string;
   /** True only when 50 attachment stats were used and a later matching row was not opened. */
   attachmentBudgetExhausted: boolean;
 };
 
-/** The workspace's own entries, newest first by the index's update clock, at most `limit` of them. */
-export async function listMentionEntries(db: Db, workspaceId: string, limit = MENTION_POOL): Promise<MentionEntry[]> {
-  const rows = await db.query<{ entry_id: string; kind: string; title: string; status: string }>(
-    `select entry_id, kind, title, status from entry_index where workspace_id = $1 order by updated_at desc, entry_id desc limit $2`,
-    [workspaceId, limit],
-  );
-  return rows.map((r) => ({ id: r.entry_id, kind: r.kind, title: r.title, status: r.status }));
+// Browse cursors retain the database's microseconds; JS Date would skip rows within one millisecond.
+const Position = z.object({
+  at: z.string().datetime().refine((at) => !at.startsWith("0000")),
+  id: z.string().min(1).max(256).refine((id) => !id.includes("\0")),
+});
+type Position = z.infer<typeof Position>;
+const BrowseCursor = z.object({
+  workspaceId: z.string(),
+  entries: Position.nullable(), threads: Position.nullable(), attachments: Position.nullable(),
+});
+type BrowseCursor = z.infer<typeof BrowseCursor>;
+type BrowseRow = { browse_at: string };
+function clock(expr: string): string {
+  return `to_char(${expr} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 }
-
-/** The workspace's topics, newest activity first, at most `limit` of them. One grouped query, not one per thread. */
-export async function listMentionThreads(db: Db, workspaceId: string, limit = MENTION_POOL): Promise<MentionThread[]> {
-  const rows = await db.query<{ id: string; title: string; last_reply_at: Date | string | null }>(
-    `select t.id, t.title, max(m.created_at) as last_reply_at
-     from threads t left join messages m on m.thread_id = t.id
-     where t.workspace_id = $1 group by t.id
-     order by coalesce(max(m.created_at), t.created_at) desc, t.id desc limit $2`,
-    [workspaceId, limit],
-  );
-  return rows.map((r) => ({ id: r.id, title: r.title, lastReplyAt: r.last_reply_at ? new Date(r.last_reply_at).toISOString() : null }));
-}
-
-/**
- * Files already sent with a message in this workspace, newest first. Staged uploads, deleted files and files
- * that went missing are left out: a mention has to point at something the agent can still be given.
- */
-export async function listMentionAttachments(db: Db, workspaceId: string, limit: number): Promise<{ items: MentionAttachment[]; more: boolean }> {
-  // One row past the limit says whether anything was left out, so exactly `limit` files is not "truncated".
-  const rows = await db.query<{ id: string; name: string; kind: string; size: number; message_id: string; created_at: Date | string }>(
-    `select id, name, kind, size, message_id, created_at from message_attachments
-     where workspace_id = $1 and status = 'attached' and message_id is not null
-     order by created_at desc, id desc limit $2`,
-    [workspaceId, limit + 1],
-  );
-  return {
-    items: rows.slice(0, limit).map((r) => ({ id: r.id, name: r.name, kind: r.kind, size: r.size, messageId: r.message_id, createdAt: new Date(r.created_at).toISOString() })),
-    more: rows.length > limit,
-  };
+function position(row: BrowseRow, id: string): Position {
+  return { at: row.browse_at, id };
 }
 
 const MENU = MENTION_LIMITS.menuPerGroup;
@@ -99,8 +76,8 @@ function tierOrder(folded: string): string {
   end desc, ${utf16Units(folded)} asc`;
 }
 
-type EntryRow = { entry_id: string; kind: string; title: string; status: string };
-type ThreadRow = { id: string; title: string; last_reply_at: Date | string | null };
+type EntryRow = { browse_at?: string; entry_id: string; kind: string; title: string; status: string };
+type ThreadRow = { browse_at?: string; id: string; title: string; last_reply_at: Date | string | null };
 type AttachmentRow = { id: string; name: string; kind: string; size: number; message_id: string; created_at: Date | string };
 
 function toEntry(r: EntryRow): MentionEntry {
@@ -113,11 +90,13 @@ function toAttachment(r: AttachmentRow): MentionAttachment {
   return { id: r.id, name: r.name, kind: r.kind, size: r.size, messageId: r.message_id, createdAt: new Date(r.created_at).toISOString() };
 }
 
-async function searchEntries(db: Db, workspaceId: string, folded: string | null, pattern: string | null): Promise<{ items: MentionEntry[]; more: boolean }> {
+async function searchEntries(db: Db, workspaceId: string, folded: string | null, pattern: string | null, after?: Position): Promise<{ items: MentionEntry[]; more: boolean; next: Position | null }> {
   const rows = folded === null
-    ? await db.query<EntryRow>(
-        `select entry_id, kind, title, status from entry_index where workspace_id = $1 order by updated_at desc, entry_id desc limit $2`,
-        [workspaceId, MENU + 1],
+    ? await db.query<EntryRow & BrowseRow>(
+        `select entry_id, kind, title, status, ${clock("updated_at")} as browse_at from entry_index
+         where workspace_id = $1 and ($3::timestamptz is null or (updated_at, entry_id) < ($3::timestamptz, $4::text))
+         order by updated_at desc, entry_id desc limit $2`,
+        [workspaceId, MENU + 1, after?.at ?? null, after?.id ?? null],
       )
     : await db.query<EntryRow>(
         `select entry_id, kind, title, status from (
@@ -129,17 +108,22 @@ async function searchEntries(db: Db, workspaceId: string, folded: string | null,
          limit $4`,
         [workspaceId, folded, pattern, MENU + 1],
       );
-  return { items: rows.slice(0, MENU).map(toEntry), more: rows.length > MENU };
+  const last = rows[MENU - 1];
+  return {
+    items: rows.slice(0, MENU).map(toEntry), more: rows.length > MENU,
+    next: folded === null && rows.length > MENU && last?.browse_at ? { at: last.browse_at, id: last.entry_id } : null,
+  };
 }
 
-async function searchThreads(db: Db, workspaceId: string, folded: string | null, pattern: string | null): Promise<{ items: MentionThread[]; more: boolean }> {
+async function searchThreads(db: Db, workspaceId: string, folded: string | null, pattern: string | null, after?: Position): Promise<{ items: MentionThread[]; more: boolean; next: Position | null }> {
   const rows = folded === null
-    ? await db.query<ThreadRow>(
-        `select t.id, t.title, max(m.created_at) as last_reply_at
+    ? await db.query<ThreadRow & BrowseRow>(
+        `select t.id, t.title, max(m.created_at) as last_reply_at, ${clock("coalesce(max(m.created_at), t.created_at)")} as browse_at
          from threads t left join messages m on m.thread_id = t.id
          where t.workspace_id = $1 group by t.id
+         having $3::timestamptz is null or (coalesce(max(m.created_at), t.created_at), t.id) < ($3::timestamptz, $4::text)
          order by coalesce(max(m.created_at), t.created_at) desc, t.id desc limit $2`,
-        [workspaceId, MENU + 1],
+        [workspaceId, MENU + 1, after?.at ?? null, after?.id ?? null],
       )
     : await db.query<ThreadRow>(
         `select t.id, t.title, max(m.created_at) as last_reply_at
@@ -150,16 +134,21 @@ async function searchThreads(db: Db, workspaceId: string, folded: string | null,
          limit $4`,
         [workspaceId, folded, pattern, MENU + 1],
       );
-  return { items: rows.slice(0, MENU).map(toThread), more: rows.length > MENU };
+  const last = rows[MENU - 1];
+  return {
+    items: rows.slice(0, MENU).map(toThread), more: rows.length > MENU,
+    next: folded === null && rows.length > MENU && last?.browse_at ? { at: last.browse_at, id: last.id } : null,
+  };
 }
 
-async function searchAttachmentRows(db: Db, workspaceId: string, folded: string | null, pattern: string | null): Promise<AttachmentRow[]> {
+async function searchAttachmentRows(db: Db, workspaceId: string, folded: string | null, pattern: string | null, after?: Position): Promise<AttachmentRow[]> {
   if (folded === null) {
-    return db.query<AttachmentRow>(
-      `select id, name, kind, size, message_id, created_at from message_attachments
+    return db.query<AttachmentRow & BrowseRow>(
+      `select id, name, kind, size, message_id, created_at, ${clock("created_at")} as browse_at from message_attachments
        where workspace_id = $1 and status = 'attached' and message_id is not null
+         and ($3::timestamptz is null or (created_at, id) < ($3::timestamptz, $4::text))
        order by created_at desc, id desc limit $2`,
-      [workspaceId, STAT_BUDGET + 1],
+      [workspaceId, STAT_BUDGET + 1, after?.at ?? null, after?.id ?? null],
     );
   }
   return db.query<AttachmentRow>(
@@ -179,10 +168,10 @@ async function searchAttachmentRows(db: Db, workspaceId: string, folded: string 
  * Open files in rank order, one id at a time, and stop at 8 that still exist or at 50 stats.
  * The 51st row is only a sign that something remains; it is not stated and not returned.
  */
-async function takeAvailable(store: AttachmentStore | undefined, workspaceId: string, rows: readonly AttachmentRow[]): Promise<{ items: MentionAttachment[]; more: boolean; exhausted: boolean }> {
+async function takeAvailable(store: AttachmentStore | undefined, workspaceId: string, rows: readonly AttachmentRow[]): Promise<{ items: MentionAttachment[]; more: boolean; exhausted: boolean; consumed: number }> {
   if (!store) {
     const items = rows.slice(0, MENU).map(toAttachment);
-    return { items, more: rows.length > items.length, exhausted: false };
+    return { items, more: rows.length > items.length, exhausted: false, consumed: items.length };
   }
   const items: MentionAttachment[] = [];
   let stats = 0;
@@ -195,23 +184,30 @@ async function takeAvailable(store: AttachmentStore | undefined, workspaceId: st
     if (ok.has(row.id)) items.push(toAttachment(row));
   }
   const more = index < rows.length;
-  return { items, more, exhausted: stats >= STAT_BUDGET && more };
+  return { items, more, exhausted: stats >= STAT_BUDGET && more, consumed: index };
 }
 
 /**
  * What the `@` menu can offer in this workspace: entries, sent attachments and threads, at most
  * `MENTION_LIMITS.menuPerGroup` of each. A typed query is filtered in SQL. No daemon is involved.
  */
-export async function mentionContext(db: Db, workspaceId: string, q: string, attachments?: AttachmentStore): Promise<MentionContext> {
+export async function mentionContext(db: Db, workspaceId: string, q: string, attachments?: AttachmentStore, cursor?: BrowseCursor): Promise<MentionContext> {
   const folded = q === "" ? null : (await db.query<{ folded: string }>("select lower($1::text) as folded", [q]))[0]?.folded ?? "";
   const pattern = folded === null ? null : subsequencePattern(folded);
   const [entries, threads, attachmentRows] = await Promise.all([
-    searchEntries(db, workspaceId, folded, pattern),
-    searchThreads(db, workspaceId, folded, pattern),
-    searchAttachmentRows(db, workspaceId, folded, pattern),
+    cursor?.entries === null ? { items: [], more: false, next: null } : searchEntries(db, workspaceId, folded, pattern, cursor?.entries),
+    cursor?.threads === null ? { items: [], more: false, next: null } : searchThreads(db, workspaceId, folded, pattern, cursor?.threads),
+    cursor?.attachments === null ? [] : searchAttachmentRows(db, workspaceId, folded, pattern, cursor?.attachments),
   ]);
   const files = await takeAvailable(attachments, workspaceId, attachmentRows);
+  const lastFile = attachmentRows[files.consumed - 1];
+  const next: BrowseCursor = {
+    workspaceId, entries: entries.next, threads: threads.next,
+    attachments: folded === null && files.more && lastFile ? position(lastFile as AttachmentRow & BrowseRow, lastFile.id) : null,
+  };
   return {
+    ...(folded === null && (entries.more || threads.more || files.more)
+      ? { nextCursor: Buffer.from(JSON.stringify(next)).toString("base64url") } : {}),
     status: "ok",
     entries: entries.items,
     attachments: files.items,
@@ -236,9 +232,20 @@ export function mentionContextRoutes(deps: { db: Db; attachments: AttachmentStor
     // PostgreSQL text cannot store NUL; refuse it before it becomes a 500. `%00` is the same character.
     if (hasNulQuery(c.req.url, raw)) return c.json({ error: "q contains a NUL character" }, 400);
     const q = raw.trim();
+    let cursor: BrowseCursor | undefined;
+    const encoded = c.req.query("cursor");
+    if (encoded !== undefined) {
+      try {
+        if (q !== "" || encoded.length > 2048) throw new Error("invalid cursor");
+        cursor = BrowseCursor.parse(JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")));
+        if (cursor.workspaceId !== workspaceId) throw new Error("wrong workspace");
+      } catch {
+        return c.json({ error: "invalid browse cursor" }, 400);
+      }
+    }
     // An archived workspace can still be searched: its messages stay readable.
     if (!(await getWorkspace(deps.db, workspaceId))) return c.json({ error: "workspace not found" }, 404);
-    return c.json(await mentionContext(deps.db, workspaceId, q, deps.attachments));
+    return c.json(await mentionContext(deps.db, workspaceId, q, deps.attachments, cursor));
   });
   return app;
 }

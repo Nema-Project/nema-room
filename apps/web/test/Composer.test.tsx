@@ -563,6 +563,45 @@ describe("Composer @ mentions", () => {
     await vi.waitFor(() => expect(onSend).toHaveBeenCalledWith("[D-12]", [], [{ type: "entry", id: "D-12", text: "[D-12]" }]));
   });
 
+  it("browses the next bounded page and selects a target beyond the old pool", async () => {
+    vi.mocked(hub.searchMentionContext).mockImplementation(async (_id, q, _signal, cursor) => {
+      if (q !== "") return ctx;
+      return cursor ? { ...ctx, entries: [{ id: "D-513", kind: "decision", title: "Late target", status: "active" }], nextCursor: undefined }
+        : { ...ctx, nextCursor: "browse-next" };
+    });
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    mountWs(onSend);
+    await userEvent.type(box(), "@");
+    await userEvent.click(await screen.findByRole("button", { name: /Next mention candidates/ }));
+    expect(await screen.findByRole("option", { name: /D-513/ })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /D-12/ })).toBeNull();
+    fireEvent.keyDown(box(), { key: "Enter" });
+    fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
+    await vi.waitFor(() => expect(onSend).toHaveBeenCalledWith("[D-513]", [], [{ type: "entry", id: "D-513", text: "[D-513]" }]));
+  });
+
+  it("resets browse continuation when the query changes and ignores a late browse response", async () => {
+    let finish!: (ctx: MentionContextResponse) => void;
+    vi.mocked(hub.searchMentionContext).mockImplementation(async (_id, q, _signal, cursor) => {
+      if (cursor) return new Promise((resolve) => { finish = resolve; });
+      return q === "" ? { ...ctx, nextCursor: "browse-next" } : ctx;
+    });
+    mountWs(vi.fn().mockResolvedValue(undefined));
+    await userEvent.type(box(), "@");
+    fireEvent.keyDown(box(), { key: "PageDown" });
+    // Wait for the first page before using the browse keyboard shortcut.
+    await screen.findByRole("button", { name: /Next mention candidates/ });
+    fireEvent.keyDown(box(), { key: "PageDown" });
+    await vi.waitFor(() => expect(finish).toEqual(expect.any(Function)));
+    await userEvent.type(box(), "typed");
+    expect(await screen.findByRole("option", { name: /D-12/ })).toBeTruthy();
+    await act(async () => finish({ ...ctx, entries: [{ id: "D-513", kind: "decision", title: "Late", status: "active" }] }));
+    expect(screen.queryByRole("option", { name: /D-513/ })).toBeNull();
+    await userEvent.clear(box());
+    await userEvent.type(box(), "@");
+    expect(await screen.findByRole("button", { name: /Next mention candidates/ })).toBeTruthy();
+  });
+
   it("inserts a file mention with the 附件 text and removes both text and chip from the chip's ×", async () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
     mountWs(onSend);

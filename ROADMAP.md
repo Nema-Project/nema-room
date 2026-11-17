@@ -22,18 +22,25 @@
 
 进本版（清尾）：
 
-- [ ] 待做：[#174](https://github.com/Nema-Project/nema-room/issues/174) `release-promote` 可见性加固。provenance 等待已由 [#177](https://github.com/Nema-Project/nema-room/pull/177) / [#211](https://github.com/Nema-Project/nema-room/pull/211) 落地；剩余的是包本体可见性：v0.2.6 晋升时注册表处理约 13 分钟，超过 360 秒预算，第一次 promote 失败（记录见 v0.2.6 一节）。目标：发布分发运行已成功且 integrity 对版时，注册表滞后不再被判成确定性失败；预算与等待结构以实现 PR 的证据为准。
-- [ ] 待做：[#195](https://github.com/Nema-Project/nema-room/issues/195) 提及候选收尾。非空查询的服务端 SQL 搜索已由 [#219](https://github.com/Nema-Project/nema-room/pull/219) 在 v0.2.5 落地；剩余的是空查询浏览只返回一页、没有继续翻页的路径（`MENTION_POOL = 500` 只剩在未被菜单调用的列表 helper 里）。验收沿用该 issue：超过上限的工作区里能找到第 501 条之后的目标，菜单响应不比现在差。
-- [ ] 待做：[#194](https://github.com/Nema-Project/nema-room/issues/194) MCP `tools/list_changed`：先核实 `@modelcontextprotocol/sdk` 是否投递该通知并记录出处；投递才实现连接期间刷新，本版不把 MCP 工具交给 Agent，这一点不变。
+- [x] 完成：[#174](https://github.com/Nema-Project/nema-room/issues/174) `release-promote` 可见性加固。provenance 等待已由 [#177](https://github.com/Nema-Project/nema-room/pull/177) / [#211](https://github.com/Nema-Project/nema-room/pull/211) 落地；剩余的是包本体可见性：v0.2.6 晋升时注册表处理约 13 分钟，超过 360 秒预算，第一次 promote 失败（记录见 v0.2.6 一节）。目标：发布分发运行已成功且 integrity 对版时，注册表滞后不再被判成确定性失败；预算与等待结构以实现 PR 的证据为准。
+- [x] 完成：[#195](https://github.com/Nema-Project/nema-room/issues/195) 提及候选收尾。非空查询的服务端 SQL 搜索已由 [#219](https://github.com/Nema-Project/nema-room/pull/219) 在 v0.2.5 落地；剩余的是空查询浏览只返回一页、没有继续翻页的路径（`MENTION_POOL = 500` 只剩在未被菜单调用的列表 helper 里）。验收沿用该 issue：超过上限的工作区里能找到第 501 条之后的目标，菜单响应不比现在差。
+- [x] 完成：[#194](https://github.com/Nema-Project/nema-room/issues/194) MCP `tools/list_changed`：先核实 `@modelcontextprotocol/sdk` 是否投递该通知并记录出处；投递才实现连接期间刷新，本版不把 MCP 工具交给 Agent，这一点不变。
 - [ ] 待做：[#50](https://github.com/Nema-Project/nema-room/issues/50) hub/web 镜像增加 linux/arm64：按该 issue 的流程先写 spec 与 plan（原生 arm64 runner、双架构各自构建冒烟后合 manifest list、保留 #44 的指针安全规则），再实现；`check-images` 与 compose 冒烟覆盖两种架构，文档去掉「仅 amd64」。
 - [ ] 待做：[#131](https://github.com/Nema-Project/nema-room/issues/131) S5 验收与 CX-03 最终验收：按维护者 2026-11-16 定的测试政策，真实环境验收在本机 VM 走 Compose 路线（web + hub + PostgreSQL），用已登录的真实 Agent 账户执行；验收记录写回对应 issue 与本文件。桌面端不做主动实机测试（同为该政策），桌面问题等用户反馈 issue 再处理。
 
 只写 spec（实现另行排期）：
 
-- [ ] 待做：[#163](https://github.com/Nema-Project/nema-room/issues/163) 身份模型（D11-A）：users / workspace_members / `messages.author_user_id` / 认证给出身份 / 成员提及语义与投递 / 撤销与审计。spec 列出需维护者决定的 D 项（尤其提及语义二选一），决定前不实现。
-- [ ] 待做：[#162](https://github.com/Nema-Project/nema-room/issues/162) 知识条目 tag（D10-A）：frontmatter `tags` 与归一化、索引存储选型、面板按 tag 筛、提及菜单 tag 组与投递语义、prompt 索引段预算。spec/plan 里写清选型理由。
+- [x] 完成：[#163](https://github.com/Nema-Project/nema-room/issues/163) 身份模型（D11-A）：users / workspace_members / `messages.author_user_id` / 认证给出身份 / 成员提及语义与投递 / 撤销与审计。spec 列出需维护者决定的 D 项（尤其提及语义二选一），决定前不实现。
+- [x] 完成：[#162](https://github.com/Nema-Project/nema-room/issues/162) 知识条目 tag（D10-A）：frontmatter `tags` 与归一化、索引存储选型、面板按 tag 筛、提及菜单 tag 组与投递语义、prompt 索引段预算。spec/plan 里写清选型理由。
 
 明确不进本版：[#132](https://github.com/Nema-Project/nema-room/issues/132) 轻量化发布（P2-09，已排 v0.3.1，spec 未写）；[#56](https://github.com/Nema-Project/nema-room/issues/56) 依赖大版本（P2-07，已排 v0.4.x）；[#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub（方向调研，未立项实现）；P1-10 打包 bench 与其他桌面实机验收（按上述测试政策不主动做）；[#232](https://github.com/Nema-Project/nema-room/pull/232)（外部 fork PR，维护者已搁置）。
+
+## 提及候选后续（#195，未发布）
+
+[#219](https://github.com/Nema-Project/nema-room/pull/219) 已让非空查询在整个工作区的 SQL 中搜索；遗留的 `MENTION_POOL = 500` 只供未被菜单调用的列表 helper 使用。当前工作树删除这些 helper，并给空查询增加按时间戳与 id 继续浏览的游标和菜单下一页入口；每组仍最多 8 个指针，每次最多检查 50 个附件，不改变条目决策或状态。这让大型工作区里的既有证据可以继续被引用，符合 [产品北极星 #45](https://github.com/Nema-Project/nema-room/issues/45)。
+
+本地回归覆盖每组 513 个目标，逐页找到第 501 条之后的条目、话题与附件，并检查每页条数和附件检查预算；另覆盖时间戳并列、微秒精度、工作区隔离及过期页面响应。验证命令与剩余限制在本次交付报告中记录。尚未合入或发布，未做真实浏览器、原生桌面或 PostgreSQL 延迟验收；不把这些自动化测试当成真机或性能验收。
+
 
 ## v0.2.6 发布与后续验收
 

@@ -93,6 +93,16 @@ export function Composer({
   const cache = useRef(new Map<string, { at: number; ctx: MentionContextResponse }>());
   const atKey = at ? `${at.start}:${at.query}` : "";
   const mentionQuery = at?.query ?? null;
+  const browseKey = `${workspaceId}\n${mentionQuery}`;
+  const [browsePage, setBrowsePage] = useState<{ key: string; cursor: string } | null>(null);
+  const browseCursor = browsePage?.key === browseKey ? browsePage.cursor : undefined;
+  // Reset during render so returning to a query starts at its first page.
+  if (browsePage && browsePage.key !== browseKey) setBrowsePage(null);
+  function nextMentionPage() {
+    if (!context.nextCursor || contextState !== "ok") return;
+    setBrowsePage({ key: browseKey, cursor: context.nextCursor });
+    setMentionActive(0);
+  }
   const groups = useMemo(() => (mentionQuery !== null ? groupCandidates(mentionQuery, context) : []), [mentionQuery, context]);
   const mentionRows = useMemo(() => groups.flatMap((g) => g.items), [groups]);
   const mentionOpen = at !== null && workspaceId !== undefined && mentionClosedFor !== atKey;
@@ -100,8 +110,8 @@ export function Composer({
   useEffect(() => {
     if (mentionQuery === null || workspaceId === undefined) return;
     const query = mentionQuery.trim();
-    const cacheKey = `${workspaceId}\n${query}`;
-    const hit = cache.current.get(cacheKey);
+    const cacheKey = `${workspaceId}\n${query}\n${browseCursor ?? ""}`;
+    const hit = browseCursor ? undefined : cache.current.get(cacheKey);
     if (hit && Date.now() - hit.at < MENTION_CACHE_MS) {
       setContext(hit.ctx);
       setContextState("ok");
@@ -113,11 +123,14 @@ export function Composer({
     const controller = new AbortController();
     let live = true;
     const timer = setTimeout(() => {
-      searchMentionContext(workspaceId, query, controller.signal)
+      const request = browseCursor
+        ? searchMentionContext(workspaceId, query, controller.signal, browseCursor)
+        : searchMentionContext(workspaceId, query, controller.signal);
+      request
         .then((ctx) => {
           // A later keystroke or another workspace may have moved on; that request owns the menu now.
           if (!live) return;
-          if (ctx.attachmentBudgetExhausted !== true) cache.current.set(cacheKey, { at: Date.now(), ctx });
+          if (!browseCursor && ctx.attachmentBudgetExhausted !== true) cache.current.set(cacheKey, { at: Date.now(), ctx });
           setContext(ctx);
           setContextState("ok");
         })
@@ -132,7 +145,7 @@ export function Composer({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [mentionQuery, workspaceId]);
+  }, [mentionQuery, workspaceId, browseCursor]);
 
   const syncChips = useCallback((content: string) => {
     setChips((cur) => {
@@ -261,6 +274,11 @@ export function Composer({
     const atNow = slashToken(e.currentTarget.value, caret) === null ? mentionToken(e.currentTarget.value, caret) : null;
     const atNowKey = atNow ? `${atNow.start}:${atNow.query}` : "";
     if (atNow && mentionClosedFor !== atNowKey) {
+      if (e.key === "PageDown" && context.nextCursor) {
+        e.preventDefault();
+        nextMentionPage();
+        return;
+      }
       const rows = groupCandidates(atNow.query, context).flatMap((g) => g.items);
       if (rows.length > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
         e.preventDefault();
@@ -353,6 +371,7 @@ export function Composer({
           active={mentionRows.length === 0 ? 0 : mentionActive % mentionRows.length}
           onChoose={chooseMention}
           onHover={setMentionActive}
+          onNext={contextState === "ok" && context.nextCursor ? nextMentionPage : undefined}
           empty={{
             entries: context.entries.length > 0,
             attachments: context.attachments.length > 0,

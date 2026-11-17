@@ -24,6 +24,16 @@ describe("MentionMenu", () => {
     expect(onChoose).toHaveBeenCalledWith(groups[0]!.items[0]);
   });
 
+  it("offers continuation when an empty browse page exhausted the attachment budget", () => {
+    const onNext = vi.fn();
+    render(<I18nProvider><MentionMenu groups={[]} active={0} onChoose={vi.fn()} onHover={vi.fn()} onNext={onNext}
+      empty={{ entries: false, attachments: false, state: "ok", query: "", attachmentBudgetExhausted: true }} /></I18nProvider>);
+    expect(screen.getByText(/Checked 50 files|已检查 50 个文件/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Next mention candidates|下一页提及候选/ }));
+    expect(onNext).toHaveBeenCalledOnce();
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+  });
+
   const emptyWith = (empty: { entries: boolean; attachments: boolean; state: "idle" | "loading" | "ok" | "failed"; query: string }) =>
     render(<I18nProvider><MentionMenu groups={[{ kind: "entry", items: [] }]} active={0} onChoose={vi.fn()} onHover={vi.fn()} empty={empty} /></I18nProvider>);
 

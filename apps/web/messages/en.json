@@ -499,6 +499,7 @@
   "chip.history": "History",
   "cmd.thread": "Open a follow-up thread",
   "cmd.thread.insert": "/thread ",
+  "mention.nextPage": "Next mention candidates (Page Down)",
   "mention.menu": "Mentions",
   "mention.tray": "Mentions",
   "mention.entries": "Knowledge",

@@ -201,18 +201,12 @@ describe("GET /api/workspaces/:id/mention-context", () => {
     expect(body.attachments.map((a) => a.id)).toEqual([sent.id]);
   });
 
-  test("keeps at most 8 per group and reports 50 attachment candidates as truncated", async () => {
+  test("keeps at most 8 entries per group alongside sent attachments", async () => {
     for (let i = 1; i <= 10; i++) await insertEntry(`D-${i}`, "decision", `条目 ${i}`);
     for (let i = 1; i <= 3; i++) await sentAttachment(`附件 ${i}.png`);
     const body = (await (await search("")).json()) as Body;
     expect(body.entries).toHaveLength(8);
     expect(body.attachments).toHaveLength(3);
-
-    const { listMentionAttachments } = await import("../src/mentionContext.js");
-    expect((await listMentionAttachments(db, ws, 50)).items).toHaveLength(3);
-    expect(await listMentionAttachments(db, ws, 50)).toMatchObject({ more: false });
-    expect((await listMentionAttachments(db, ws, 2)).items).toHaveLength(2);
-    expect((await listMentionAttachments(db, ws, 2)).more).toBe(true);
   });
 
   test("an empty query lists the most recent of each group instead of a whole workspace", async () => {
@@ -275,6 +269,78 @@ describe("GET /api/workspaces/:id/mention-context", () => {
     await updateWorkspace(db, ws, { archived: true });
     expect((await (await search("一")).json()) as Body).toMatchObject({ status: "ok" });
     expect((await search("x".repeat(201))).status).toBe(400);
+  });
+
+  test("browses beyond 501 targets in bounded empty-query pages", async () => {
+    await db.query(`insert into entry_index(workspace_id, entry_id, kind, title, status, updated_at)
+      select $1, 'D-' || i, 'decision', 'Browse ' || i, 'active', timestamp '2020-01-01' + i * interval '1 microsecond'
+      from generate_series(1, 513) i`, [ws]);
+    const oldestThread = await insertThreadAt("Oldest browse topic", 0);
+    await insertThreads(Array.from({ length: 512 }, (_, i) => ({ title: `Topic ${i}`, seconds: i + 1 })));
+    const oldestFile = await plantedAttachment("Oldest browse.png", 0, true);
+    await db.query(`insert into message_attachments(id, workspace_id, message_id, kind, mime, name, size, sha256, upload_key, status, created_at)
+      select 'browse_' || i, $1, $2, 'image', 'image/png', 'Gone ' || i, 100, $3, ('00000000-0000-4000-8000-' || lpad(i::text, 12, '0'))::uuid, 'attached',
+        timestamp '2020-01-01' + i * interval '1 second' from generate_series(1, 512) i`,
+      [ws, (await db.query<{ message_id: string }>(`select message_id from message_attachments where id = $1`, [oldestFile]))[0]!.message_id, "ab".repeat(32)]);
+    const available = vi.spyOn(attachments, "available");
+    const seen = { entries: new Set<string>(), threads: new Set<string>(), attachments: new Set<string>() };
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      available.mockClear();
+      const res = await app.request(`${HUB}/api/workspaces/${ws}/mention-context?q=${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+      expect(res.status).toBe(200);
+      const page = await res.json() as Body & { nextCursor?: string };
+      for (const group of ["entries", "threads", "attachments"] as const) {
+        expect(page[group].length).toBeLessThanOrEqual(8);
+        for (const item of page[group]) {
+          expect(seen[group].has(item.id as string)).toBe(false);
+          seen[group].add(item.id as string);
+        }
+      }
+      expect(available.mock.calls.length).toBeLessThanOrEqual(50);
+      pages++;
+      cursor = page.nextCursor;
+      if (pages === 1) expect(cursor).toEqual(expect.any(String));
+      expect(pages).toBeLessThan(100);
+    } while (cursor);
+    expect(seen.entries.size).toBe(513);
+    expect(seen.entries.has("D-1")).toBe(true);
+    expect(seen.threads.size).toBe(513);
+    expect(seen.threads.has(oldestThread)).toBe(true);
+    expect([...seen.attachments]).toEqual([oldestFile]);
+  }, 30_000);
+
+  test("browse cursors keep tied timestamps and every available attachment between pages", async () => {
+    for (let i = 1; i <= 17; i++) {
+      await insertEntryAt(`D-${i}`, `Tied entry ${i}`, 0);
+      await plantedAttachment(`Tied file ${i}.png`, 0, true);
+    }
+    await insertThreads(Array.from({ length: 17 }, (_, i) => ({ title: `Tied topic ${i}`, seconds: 0 })));
+    const first = await json("") as Body & { nextCursor: string };
+    const other = (await createWorkspace(db, dataDir, "Other")).id;
+    expect((await app.request(`${HUB}/api/workspaces/${other}/mention-context?cursor=${encodeURIComponent(first.nextCursor)}`)).status).toBe(400);
+    expect((await app.request(`${HUB}/api/workspaces/${ws}/mention-context?q=typed&cursor=${encodeURIComponent(first.nextCursor)}`)).status).toBe(400);
+    const pages = [first];
+    while (pages.at(-1)!.nextCursor) {
+      const res = await app.request(`${HUB}/api/workspaces/${ws}/mention-context?cursor=${encodeURIComponent(pages.at(-1)!.nextCursor)}`);
+      expect(res.status).toBe(200);
+      pages.push(await res.json() as typeof first);
+      expect(pages.length).toBeLessThan(5);
+    }
+    expect(pages.map((p) => p.entries.length)).toEqual([8, 8, 1]);
+    expect(pages.map((p) => p.attachments.length)).toEqual([8, 8, 1]);
+    expect(pages.map((p) => p.threads.length)).toEqual([8, 8, 1]);
+    expect(new Set(pages.flatMap((p) => p.threads.map((e) => e.id))).size).toBe(17);
+    expect(new Set(pages.flatMap((p) => p.entries.map((e) => e.id))).size).toBe(17);
+    expect(new Set(pages.flatMap((p) => p.attachments.map((e) => e.id))).size).toBe(17);
+    expect(pages.at(-1)!.truncated).toBe(false);
+  });
+
+  test("rejects malformed browse cursors and cursors on typed queries", async () => {
+    for (const suffix of ["cursor=garbage", "cursor=%7B%7D", "q=typed&cursor=garbage"]) {
+      expect((await app.request(`${HUB}/api/workspaces/${ws}/mention-context?${suffix}`)).status).toBe(400);
+    }
   });
 
   test("finds an entry and a thread outside the old pool, and not another workspace's row", async () => {
