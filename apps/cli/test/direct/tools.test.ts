@@ -36,9 +36,11 @@ describe("roomTools", () => {
     });
   });
 
-  test("upsert_entry parameters list basis as required", () => {
+  test("upsert_entry requires basis and sourceMessages while keeping bounded tags", () => {
     const upsert = roomTools([]).find((t) => t.name === "upsert_entry");
-    expect((upsert?.parameters as { required?: string[] }).required).toContain("basis");
+    const schema = upsert!.parameters as { required?: string[]; properties: Record<string, unknown> };
+    expect(schema.required).toEqual(expect.arrayContaining(["basis", "sourceMessages"]));
+    expect(schema.properties.tags).toMatchObject({ type: "array", maxItems: 8 });
   });
 
   test("upsert_entry leaves the hub-kept implementation evidence keys optional", () => {

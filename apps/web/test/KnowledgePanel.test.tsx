@@ -301,3 +301,23 @@ it("keeps the clear action when refresh removes the final tag", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Clear tag filter" }));
   expect(screen.getByText("title R-1")).toBeTruthy();
 });
+
+
+it("clears requirement selections when applying, switching, and clearing tag filters", async () => {
+  vi.mocked(hub.listEntries).mockResolvedValue([
+    e("R-1", "requirement", "active", { tags: ["api"] }),
+    e("R-2", "requirement", "active", { tags: ["web"] }),
+  ]);
+  await mount();
+  await userEvent.click(screen.getByRole("button", { name: "Select requirements" }));
+  await userEvent.click(screen.getByRole("checkbox", { name: "R-1" }));
+  for (const [filter, selected] of [["#web", "R-2"], ["#api", "R-1"], ["Clear tag filter", "R-1"]]) {
+    await userEvent.click(screen.getByRole("button", { name: filter }));
+    const generate = screen.queryByRole("button", { name: "Generate for selected" });
+    // A filter may also close selection mode; either way hidden selections cannot be submitted.
+    if (generate) expect((generate as HTMLButtonElement).disabled).toBe(true);
+    if (!screen.queryByRole("checkbox")) await userEvent.click(screen.getByRole("button", { name: "Select requirements" }));
+    expect((screen.getByRole("checkbox", { name: selected }) as HTMLInputElement).checked).toBe(false);
+    await userEvent.click(screen.getByRole("checkbox", { name: selected }));
+  }
+});

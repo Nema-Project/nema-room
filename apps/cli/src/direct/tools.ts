@@ -21,9 +21,9 @@ function upsertParameters(): Record<string, unknown> {
   const schema = withOptionalEvidence(raw);
   const properties = schema.properties as Record<string, Record<string, unknown>>;
   properties.tags = { ...properties.tags, maxItems: TAG_LIMITS.perEntry };
-  // UpsertEntryInput keeps basis optional for UI edits; the Agent must always state it.
+  // UI defaults stay optional in input mode; the Agent must state basis and sourceMessages.
   const required = Array.isArray(schema.required) ? (schema.required as string[]) : [];
-  return { ...schema, required: required.includes("basis") ? required : [...required, "basis"] };
+  return { ...schema, required: [...new Set([...required, "basis", "sourceMessages"])] };
 }
 
 // The implementation evidence keys the hub fills itself default to null; the Agent need not send them.

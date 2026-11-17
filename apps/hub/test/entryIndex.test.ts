@@ -1,9 +1,11 @@
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { KnowledgeStore } from "@nema/knowledge";
 import { createWorkspace, repoPath } from "../src/workspaces.js";
-import { chooseAskedQuestion, indexEntry, openQuestionCounts, timeline, topOpenQuestion } from "../src/entryIndex.js";
+import { backfillEntryTags, chooseAskedQuestion, indexEntry, openQuestionCounts, timeline, topOpenQuestion } from "../src/entryIndex.js";
 
 let db: Db;
 let dataDir: string;
@@ -95,4 +97,25 @@ test("indexEntry writes tags and exactly equal timestamps on insert and update",
   await check(["api"]);
   await indexEntry(db, wsA, { ...entry, tags: [] });
   await check([]);
+});
+
+
+test.each([null, "2000-01-01T00:00:00.000Z"])("backfill preserves unreadable entries and retries after access is restored (stamp %s)", async (stamp) => {
+  const entry = await add(wsA, { kind: "requirement", title: "Tagged", tags: ["real"] });
+  await db.query("update entry_index set tags=$2, tags_indexed_at=$3 where workspace_id=$1", [wsA, ["previous"], stamp]);
+  const file = path.join(repoPath(dataDir, wsA), "requirements", `${entry.id}.md`);
+  const contents = await readFile(file);
+  // A directory at the file path deterministically makes readFile fail, even as root.
+  await rm(file);
+  await mkdir(file);
+  const before = await db.query("select tags, tags_indexed_at from entry_index where workspace_id=$1", [wsA]);
+  try {
+    await backfillEntryTags(db, dataDir);
+    expect(await db.query("select tags, tags_indexed_at from entry_index where workspace_id=$1", [wsA])).toEqual(before);
+  } finally {
+    await rm(file, { recursive: true });
+    await writeFile(file, contents);
+  }
+  await backfillEntryTags(db, dataDir);
+  expect(await db.query("select tags, tags_indexed_at >= updated_at as fresh from entry_index where workspace_id=$1", [wsA])).toEqual([{ tags: ["real"], fresh: true }]);
 });

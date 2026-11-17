@@ -106,7 +106,8 @@ export async function backfillEntryTags(db: Db, dataDir: string, ownedHelpers?: 
         `update entry_index set
            tags = array(select jsonb_array_elements_text(coalesce($2::jsonb -> entry_id, '[]'::jsonb))),
            tags_indexed_at = clock_timestamp()
-         where workspace_id = $1 and (tags_indexed_at is null or tags_indexed_at < updated_at)`,
+         where workspace_id = $1 and ($2::jsonb ? entry_id)
+           and (tags_indexed_at is null or tags_indexed_at < updated_at)`,
         [workspaceId, JSON.stringify(tags)],
       );
     } catch {

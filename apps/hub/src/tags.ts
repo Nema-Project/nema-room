@@ -14,14 +14,17 @@ export async function workspaceTags(db: Db, workspaceId: string): Promise<string
 
 /** Must be invoked by KnowledgeStore.upsert, while its repository lock is held. */
 export function tagGuard(db: Db, workspaceId: string, author: "agent" | "user"): UpsertGuard {
-  return async ({ input }) => {
+  return async ({ existing, input }) => {
     if (input.tags === undefined) return;
-    const existing = new Set(await workspaceTags(db, workspaceId));
-    const introduced = input.tags.filter(tag => !existing.has(tag));
+    const vocabulary = new Set(await workspaceTags(db, workspaceId));
+    const ownTags = new Set(existing?.tags ?? []);
+    const introduced = input.tags.filter(tag => !vocabulary.has(tag) && !ownTags.has(tag));
     if (author === "agent" && introduced.length > 0) {
       throw new UpsertRejected(400, "新 tag 需要用户先在面板里创建");
     }
-    if (existing.size + introduced.length > TAG_LIMITS.perWorkspace) {
+    const resulting = new Set([...vocabulary].filter(tag => !ownTags.has(tag)));
+    for (const tag of input.tags) resulting.add(tag);
+    if (resulting.size > TAG_LIMITS.perWorkspace) {
       throw new UpsertRejected(400, `Workspace tag limit: ${TAG_LIMITS.perWorkspace}`);
     }
   };

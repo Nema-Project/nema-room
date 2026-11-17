@@ -20,7 +20,7 @@ frontmatter 的 `tags: [payment-flow, 支付]` 默认为 `[]`，非空才写入�
 
 从本版本起，改写文件保留未知的顶层 frontmatter 键及其 YAML 值，不校验、不进入摘要；已知键被省略时不会从旧文件恢复。YAML 日期按解析后的同一时刻保留，不保证原文本拼写。这不能修复已经发布的旧版本：降级后旧 hub 改写条目仍会删除 tags，Git 历史可供手动恢复。
 
-迁移 `021_entry_index_tags.sql` 给 `entry_index` 增加可空 `tags text[]`、`tags_indexed_at timestamptz`。`indexEntry` 用同一个时间戳写 `updated_at` 与 `tags_indexed_at`。启动在恢复未提交条目后选择 `tags_indexed_at is null or tags_indexed_at < updated_at` 的工作区，读文件回填；文件已消失的行写空数组。回填可重复，一个工作区失败只记警告，不阻止其他工作区启动。这两列不进入快照，知识 Git bundle 保留文件标签，导入后由回填恢复派生列。
+迁移 `021_entry_index_tags.sql` 给 `entry_index` 增加可空 `tags text[]`、`tags_indexed_at timestamptz`。`indexEntry` 用同一个时间戳写 `updated_at` 与 `tags_indexed_at`。Room 与 UI 的 upsert 在仓库锁释放前补记索引；索引失败只记错误，不改变已提交写入的成功响应。启动在恢复未提交条目后选择 `tags_indexed_at is null or tags_indexed_at < updated_at` 的工作区，读文件回填；未读到的条目保留原标签和时间戳，下次启动重试。回填可重复，一个工作区失败只记警告，不阻止其他工作区启动。这两列不进入快照，知识 Git bundle 保留文件标签，导入后由回填恢复派生列。
 
 prompt 的 `# 现有条目索引` 后先列 `# 现有 tags` 词表，按有效条目数降序、标签字典序排列，整个词表段最多 2048 UTF-8 字节；完整标签放不下时写 ` …（另有 N 个，用 list_entries 查看）`。有效索引行追加 ` | tags: a, b`，每行最多 96 字节，超出以 ` +N` 表示。全部标注最多 4096 字节，从最近的最后一行向前分配，较早行不足时省略标注。任何标签省略都会显示「部分条目的 tags 未列出，用 list_entries 或 read_entry 查看」。无标签时 prompt 逐字节不变，编辑消息的被引用条目列表仍用原索引行。
 

@@ -128,7 +128,7 @@ function WorkspaceKnowledgePanel({ workspaceId, knowledgeLanguage, onOpen, refre
       <div className="kp-body">
         {error && <p className="error" role="alert">{t("know.loadFailed", { message: error })}</p>}
         {selectedTag && loaded && filtered(loaded)?.length === 0 ? <p className="placeholder">{t("tags.empty")}</p> : view === "kind" ? (
-          <ByKind workspaceId={workspaceId} entries={filtered(entries)} repos={repos} onOpen={onOpen} onOpenDiagram={openDiagram} />
+          <ByKind key={selectedTag ?? ""} workspaceId={workspaceId} entries={filtered(entries)} repos={repos} onOpen={onOpen} onOpenDiagram={openDiagram} />
         ) : (
           <ByTime entries={filtered(timeline)} onOpen={onOpen} />
         )}

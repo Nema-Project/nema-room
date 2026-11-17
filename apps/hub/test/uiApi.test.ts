@@ -1,3 +1,4 @@
+import { checkConcurrentUpsertIndex } from "./upsertIndexHarness.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1518,4 +1519,31 @@ describe("tag write rules", () => {
     expect((await store.get(entry.id))!.tags).toEqual(["api"]);
     expect(await db.query("select tags from entry_index where workspace_id=$1 and entry_id=$2", [ws, entry.id])).toEqual([{ tags: ["api"] }]);
   });
+});
+
+
+test("UI concurrent upserts publish tags before releasing the repository lock", async () => {
+  const store = new KnowledgeStore(repoPath(dataDir, ws));
+  const seed = await store.upsert({ kind: "requirement", title: "T", body: "b", reason: "r", sourceMessages: [] }, { author: "user" });
+  await indexEntry(db, ws, seed.entry);
+  await checkConcurrentUpsertIndex(db, ws, store, tags => req("PUT", `/api/workspaces/${ws}/entries/${seed.entry.id}`,
+    { kind: "requirement", title: "T", body: "b", reason: "r", tags }));
+  expect(await db.query("select consumed_commit from evidence_events where workspace_id=$1 and consumed_commit is null", [ws])).toEqual([]);
+});
+
+test("UI indexing failure in the commit hook still returns the durable entry", async () => {
+  const store = new KnowledgeStore(repoPath(dataDir, ws));
+  const seed = await store.upsert({ kind: "requirement", title: "T", body: "b", reason: "r", sourceMessages: [] }, { author: "user" });
+  const query = db.query.bind(db);
+  const failure = vi.spyOn(db, "query").mockImplementation((sql, params) => {
+    if (sql.includes("insert into entry_index")) throw new Error("index unavailable");
+    return query(sql, params);
+  });
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const response = await req("PUT", `/api/workspaces/${ws}/entries/${seed.entry.id}`, { kind: "requirement", title: "Kept", body: "b", reason: "r", tags: ["api"] });
+    expect(response.status).toBe(200);
+    expect((await store.get(seed.entry.id))!.tags).toEqual(["api"]);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^ui upsert: post-commit bookkeeping failed for R-1 \(commit /), expect.any(Error));
+  } finally { failure.mockRestore(); log.mockRestore(); }
 });

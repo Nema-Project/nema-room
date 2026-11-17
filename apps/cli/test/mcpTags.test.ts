@@ -15,6 +15,7 @@ test.each([{ tags: undefined }, { tags: [] }])("MCP exposes tags and reports old
   await client.connect(clientTransport);
   try {
     const upsert = (await client.listTools()).tools.find(tool => tool.name === "upsert_entry")!;
+    expect(upsert.inputSchema.required).toEqual(expect.arrayContaining(["basis", "sourceMessages"]));
     expect(upsert.inputSchema.properties?.tags).toMatchObject({ type: "array", maxItems: 8, items: { type: "string" } });
     const result = await client.callTool({ name: "upsert_entry", arguments: { tags: ["api"] } });
     expect(result.isError).toBeFalsy();

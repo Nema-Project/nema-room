@@ -812,13 +812,24 @@ export function uiRoutes(deps: UiDeps): Hono {
     // Implementation is kept as stored: the user changes it only through the implementation confirm.
     const { implementation: _implementation, ...edit } = parsed.data;
     const audit = confirmation(ws, "put");
+    let writtenEntry: Entry;
     const { entry, commit } = await store(ws).upsert(
       { ...edit, basis: parsed.data.kind === "decision" ? "decided" : "stated", confirmed: true },
-      audit.meta, tagGuard(db, ws, "user"), audit.prepare, audit.consume,
+      audit.meta, tagGuard(db, ws, "user"), async (entry, existing) => {
+        writtenEntry = entry;
+        return audit.prepare(entry, existing);
+      }, async (commit) => {
+        await audit.consume(commit);
+        // Publish before releasing the repo lock so the next guard sees this write.
+        try {
+          await indexEntry(db, ws, writtenEntry, deps.ownedHelpers);
+        } catch (e) {
+          console.error(`ui upsert: post-commit bookkeeping failed for ${writtenEntry.id} (commit ${commit})`, e);
+        }
+      },
     );
     // The commit is durable; bookkeeping failures must not fail the request.
     try {
-      await indexEntry(db, ws, entry, deps.ownedHelpers);
       events.emit(ws, { type: "knowledge.changed", entryId: entry.id });
     } catch (e) {
       console.error(`ui upsert: post-commit bookkeeping failed for ${entry.id} (commit ${commit})`, e);
