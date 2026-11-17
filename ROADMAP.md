@@ -18,12 +18,12 @@
 
 ## v0.3.1 准备
 
-维护者于 2026-11-18 定 v0.3.1 范围为 milestone 中的两项：[#132](https://github.com/Nema-Project/nema-room/issues/132) 轻量化发布与 [#186](https://github.com/Nema-Project/nema-room/issues/186) 桌面启动。两份 spec 已起草（本 PR），D 项待维护者定案后写实施计划。
+维护者于 2026-11-18 定 v0.3.1 范围为 milestone 中的两项：[#132](https://github.com/Nema-Project/nema-room/issues/132) 轻量化发布与 [#186](https://github.com/Nema-Project/nema-room/issues/186) 桌面启动。两份 spec 已起草并合入（PR #260）；D 项已于 2026-11-18 由维护者全部按 spec 推荐定案，实施计划随定案记录一并编写。
 
 进本版：
 
-- [ ] 待做：[#132](https://github.com/Nema-Project/nema-room/issues/132) 轻量化发布。Node 去重已由 [#134](https://github.com/Nema-Project/nema-room/pull/134) 完成（v0.3.0 桌面 payload 实测 node 0.0 MiB），剩余范围只有 Graphify：spec 为 [2026-11-18 轻量化发布设计](docs/superpowers/specs/2026-11-18-lightweight-release-design.md)——按当前 main 实测，Graphify 占 payload 约 62%（122 MiB），改为第一次用到时经确认按需下载、按 `graphify-lock.json` 的 sha256 逐文件校验、原子安装到 `~/.nema/runtime/graphify/<lock-hash>/`，另提供可侧载的离线组件包（Nema 不再分发）；npm 与 Compose 用户借此第一次能用上 Graphify。D-1～D-4、D-6 待定案（spec 内均为推荐：A / B / A / B / A），D-5 已由 #134 解决。
-- [ ] 待做：[#186](https://github.com/Nema-Project/nema-room/issues/186) 桌面启动剩余项。逐条核实后，issue 的主体已在此前版本交付（启动窗口与失败呈现 [#213](https://github.com/Nema-Project/nema-room/pull/213)、web 与 DB 重叠启动、ACL 单进程 helper 且每次校验仍执行、阶段进度回传、直达上次工作区、骨架屏），issue 中的 v0.2.1 耗时表已过时；spec 为 [2026-11-18 桌面启动设计](docs/superpowers/specs/2026-11-18-desktop-startup-design.md)，剩余工作流为 W1 渲染端首屏负载分析与非首屏面板懒加载、W2 冷启动 DB 以 CI 采样复核（只评估）、W3 打包基准验收口径收尾、W4 启动链剩余串行段只测量。D-1～D-7 待定案（spec 内均为推荐）。验收按 2026-11-16 测试政策：基准脚本与 CI 平台 runner 采样加自动化测试，不做桌面实机主动测试。
+- [ ] 待做：[#132](https://github.com/Nema-Project/nema-room/issues/132) 轻量化发布。Node 去重已由 [#134](https://github.com/Nema-Project/nema-room/pull/134) 完成（v0.3.0 桌面 payload 实测 node 0.0 MiB），剩余范围只有 Graphify：spec 为 [2026-11-18 轻量化发布设计](docs/superpowers/specs/2026-11-18-lightweight-release-design.md)——按当前 main 实测，Graphify 占 payload 约 62%（122 MiB），改为第一次用到时经确认按需下载、按 `graphify-lock.json` 的 sha256 逐文件校验、原子安装到 `~/.nema/runtime/graphify/<lock-hash>/`，另提供可侧载的离线组件包（Nema 不再分发）；npm 与 Compose 用户借此第一次能用上 Graphify。D-1～D-4、D-6 已于 2026-11-18 全部按推荐定案（A / B / A / B / A），D-5 已由 #134 解决；实施计划为 [2026-11-18 轻量化发布实施计划](docs/superpowers/plans/2026-11-18-lightweight-release.md)。
+- [ ] 待做：[#186](https://github.com/Nema-Project/nema-room/issues/186) 桌面启动剩余项。逐条核实后，issue 的主体已在此前版本交付（启动窗口与失败呈现 [#213](https://github.com/Nema-Project/nema-room/pull/213)、web 与 DB 重叠启动、ACL 单进程 helper 且每次校验仍执行、阶段进度回传、直达上次工作区、骨架屏），issue 中的 v0.2.1 耗时表已过时；spec 为 [2026-11-18 桌面启动设计](docs/superpowers/specs/2026-11-18-desktop-startup-design.md)，剩余工作流为 W1 渲染端首屏负载分析与非首屏面板懒加载、W2 冷启动 DB 以 CI 采样复核（只评估）、W3 打包基准验收口径收尾、W4 启动链剩余串行段只测量。D-1～D-7 已于 2026-11-18 全部按推荐定案；实施计划为 [2026-11-18 桌面启动实施计划](docs/superpowers/plans/2026-11-18-desktop-startup.md)。验收按 2026-11-16 测试政策：基准脚本与 CI 平台 runner 采样加自动化测试，不做桌面实机主动测试。
 
 明确不进本版：[#56](https://github.com/Nema-Project/nema-room/issues/56) 依赖大版本（维持 v0.4.x）；#186 中已交付的部分不重开（ACL 批量合并、预置数据目录、独立启动窗口等已决事项见 spec 的「不再重开」一节）。
 
