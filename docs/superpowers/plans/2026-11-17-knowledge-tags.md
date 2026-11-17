@@ -367,11 +367,14 @@ The spec predates the browse cursor (`e75ec4e`, after the spec's HEAD `f21843e`)
 This task requires its own authorization.
 
 - [x] **Upgrade:** upgrade the old data directory. Record the migration and the first-start backfill time. Confirm that untagged entry files are byte-identical before and after one UI edit of another entry, using `git -C <repo> diff` on them.
-- [x] **Create tags in the panel:** add `支付` and `Payment Flow` to two entries in the panel. Expect them stored as `支付` and `payment-flow`, with a commit `Author: user`. Try an invalid tag and expect an inline error.
-- [x] **Filter:**
+- [ ] **Create tags in the panel:** add `支付` and `Payment Flow` to two entries in the panel. Expect them stored as `支付` and `payment-flow`, with a commit `Author: user`. Try an invalid tag and expect an inline error.
+  - 2026-11-17 run: NOT done in the panel UI (no browser can reach the VM loopback; the cloud browser refuses 127.0.0.1 navigation). The same operations were performed through the UI's own upsert API: `支付` stored as `支付`, `Payment Flow` folded to `payment-flow`, commit trailer `Author: user`, invalid tag rejected with HTTP 400 and the validation message. The literal panel interaction remains unverified.
+- [ ] **Filter:**
   - Single-select the tag in the panel. Both views filter. Switching workspace clears the filter.
-- [x] **Mention expansion:**
+  - 2026-11-17 run: NOT done in the panel UI (same environment limit). Evidence held: the entries list API returns per-entry tags, and the panel behaviour is covered by the web test suite (KnowledgePanel, including the filter/selection regression tests). The server-side share-page filter was verified with curl (see Share). The literal panel interaction remains unverified.
+- [ ] **Mention expansion:**
   - In the composer type `@支` and choose the tag. The body gets `#支付：[…]`, and the stored message's `meta.mentions` contains only `entry` items.
+  - 2026-11-17 run: the composer selection itself was NOT performed in the UI (same environment limit). A message carrying the composer's exact expansion output (body `#支付：[R-1] [R-3]`, entry-only mentions) was posted through the API and stored with entry-only `meta.mentions`; the prompt evidence and agent steps below were then verified live. The literal composer interaction remains unverified.
   - Capture the prompt: it has the `# 现有 tags` section and ` | tags:` on the active lines.
   - Ask the agent to tag another entry `支付` and expect success with `Author: agent`.
   - Ask it to use a brand-new tag and expect the 400 explanation in the agent's tool result.
@@ -384,4 +387,4 @@ This task requires its own authorization.
 
 ## Execution evidence
 
-Tasks 1–11 implemented and merged 2026-11-17 (PR #250 Task 1; PR #251 Tasks 2–11 including the CodeRabbit review fixes and the backfill missing/unreadable reconciliation). Task 12 real-environment acceptance executed 2026-11-17 under the maintainer's authorization, on a source deployment in the maintenance VM (old data directory from main c3c41be, upgraded to main 7132ff2): migration 021 + first-start backfill verified against a pre-tagged file, panel-path tag creation and folding, invalid-tag 400, mention expansion with entry-only stored mentions, prompt tag annotations quoted verbatim by the agent, D-5 new-tag refusal, share page tags with server-side ?tag= filtering, and unknown-frontmatter preservation. Full record: https://github.com/Nema-Project/nema-room/issues/162#issuecomment-6945885353 — #162 closed on this evidence.
+Tasks 1–11 implemented and merged 2026-11-17 (PR #250 Task 1; PR #251 Tasks 2–11 including the CodeRabbit review fixes and the backfill missing/unreadable reconciliation). Task 12 real-environment acceptance executed 2026-11-17 under the maintainer's authorization, on a source deployment in the maintenance VM (old data directory from main c3c41be, upgraded to main 7132ff2): migration 021 + first-start backfill verified against a pre-tagged file, panel-path tag creation and folding, invalid-tag 400, mention expansion with entry-only stored mentions, prompt tag annotations quoted verbatim by the agent, D-5 new-tag refusal, share page tags with server-side ?tag= filtering, and unknown-frontmatter preservation. Full record: https://github.com/Nema-Project/nema-room/issues/162#issuecomment-6945885353, with an addendum listing the commands run and the corrections above. #162 is closed for the implementation; the three UI-interaction steps (panel create, panel filter, composer selection) remain open as literal verifications, blocked in this environment because no browser can reach the VM loopback — they are enumerated above for anyone running a local deployment with a browser.
