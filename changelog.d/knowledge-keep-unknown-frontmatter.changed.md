@@ -1,1 +1,0 @@
-- Knowledge entry rewrites now preserve unknown frontmatter fields, so hubs with this change no longer drop fields written by newer hubs that they do not know.

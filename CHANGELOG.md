@@ -4,6 +4,26 @@ Version sections on main may describe release preparation. A version heading and
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-18
+
+### Added
+
+- Claude Code tasks can use the daemon's HTTP(S) proxy settings with `nema config set proxyEnv forward`; API-connection failures are now reported as such.
+
+- Messages now record which local user wrote them, and each workspace keeps an audited member list; nothing changes for a single user, older messages are not backfilled, a display name can be set in App settings, and there is still no multi-user login.
+
+- Knowledge entries can carry tags: filter the panel by a tag, pick a tag in @ to mention its active entries, and see tags on share pages.
+
+- Hub and web images are published for linux/arm64 as well as linux/amd64.
+
+### Changed
+
+- Knowledge entry rewrites now preserve unknown frontmatter fields, so hubs with this change no longer drop fields written by newer hubs that they do not know.
+
+- A connected MCP server that announces `notifications/tools/list_changed` now has its tool list fetched again, so the extensions list shows tools it added or removed without a restart; the tools are still only shown, not given to agents.
+
+- @ mentions can now browse targets beyond the first 500 candidates in bounded pages of knowledge entries, sent files, and topics.
+
 ## [0.2.6] - 2026-11-16
 
 ### Added

@@ -1,1 +1,0 @@
-- Claude Code tasks can use the daemon's HTTP(S) proxy settings with `nema config set proxyEnv forward`; API-connection failures are now reported as such.

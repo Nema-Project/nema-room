@@ -1,1 +1,0 @@
-- Hub and web images are published for linux/arm64 as well as linux/amd64.
