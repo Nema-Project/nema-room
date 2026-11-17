@@ -4,7 +4,9 @@ import { useEffect, useId, useRef, useState, useSyncExternalStore, type Keyboard
 import { AppReleaseAbout } from "@/components/AppRelease";
 import { ModelSettings } from "@/components/ModelSettings";
 import { PluginsPage } from "@/components/PluginsPage";
+import { getMe, updateMe } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
+import { invalidateRosters } from "@/lib/members";
 
 const TABS = ["model", "plugins", "general", "about"] as const;
 type SettingsTab = (typeof TABS)[number];
@@ -113,6 +115,72 @@ function LoginItemSetting() {
   );
 }
 
+const DISPLAY_NAME_MAX = 64;
+
+/**
+ * The local user's display name (#163 D-3). Empty saves null, which the UI shows as the localized "me". It is
+ * not a login: Phase 1 has exactly one local user, and the name reaches a prompt only with two or more members.
+ */
+function DisplayNameSetting() {
+  const t = useT();
+  const helpId = useId();
+  const inputId = useId();
+  const [loaded, setLoaded] = useState(false);
+  const [value, setValue] = useState("");
+  const [state, setState] = useState<"idle" | "saving" | "saved" | "tooLong" | "error">("idle");
+
+  useEffect(() => {
+    let live = true;
+    Promise.resolve().then(() => getMe()).then((me) => {
+      if (!live) return;
+      setValue(me?.displayName ?? "");
+      setLoaded(true);
+    }).catch(() => {
+      // An older hub has no /api/me: the field stays disabled rather than offering a save that cannot work.
+      if (live) setState("error");
+    });
+    return () => { live = false; };
+  }, []);
+
+  async function save() {
+    const trimmed = value.trim();
+    if (Array.from(trimmed).length > DISPLAY_NAME_MAX) { setState("tooLong"); return; }
+    setState("saving");
+    try {
+      const me = await updateMe(trimmed === "" ? null : trimmed);
+      setValue(me.displayName ?? "");
+      invalidateRosters();
+      setState("saved");
+    } catch {
+      setState("error");
+    }
+  }
+
+  return (
+    <section className="app-settings-section" aria-labelledby="app-settings-name-title">
+      <h2 id="app-settings-name-title" className="label">{t("appSettings.displayName")}</h2>
+      <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
+        <input
+          id={inputId}
+          type="text"
+          value={value}
+          placeholder={t("mention.me")}
+          disabled={!loaded}
+          aria-labelledby="app-settings-name-title"
+          aria-describedby={helpId}
+          aria-invalid={state === "tooLong" ? true : undefined}
+          onChange={(event) => { setValue(event.target.value); if (state !== "saving") setState("idle"); }}
+        />
+        <button type="submit" disabled={!loaded || state === "saving"}>{t("appSettings.displayNameSave")}</button>
+      </form>
+      <p id={helpId} className="help">{t("appSettings.displayNameHelp")}</p>
+      {state === "saved" && <p className="help" role="status">{t("appSettings.displayNameSaved")}</p>}
+      {state === "tooLong" && <p className="error" role="alert">{t("appSettings.displayNameTooLong")}</p>}
+      {state === "error" && loaded && <p className="error" role="alert">{t("appSettings.displayNameError")}</p>}
+    </section>
+  );
+}
+
 export function AppSettings({ onClose }: { onClose: () => void }) {
   const t = useT();
   const [tab, setTab] = useState<SettingsTab>("model");
@@ -201,7 +269,12 @@ export function AppSettings({ onClose }: { onClose: () => void }) {
             >
               {id === "model" && <ModelSettings embedded />}
               {id === "plugins" && <PluginsPage embedded />}
-              {id === "general" && <LoginItemSetting />}
+              {id === "general" && (
+                <>
+                  <DisplayNameSetting />
+                  <LoginItemSetting />
+                </>
+              )}
               {id === "about" && (
                 <section className="app-settings-section">
                   <AppReleaseAbout />

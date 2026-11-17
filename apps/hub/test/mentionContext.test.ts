@@ -508,3 +508,44 @@ test("tag overflow truncates without a browse cursor and null tags never contrib
   expect(result.truncated).toBe(true);
   expect(result).not.toHaveProperty("nextCursor");
 });
+
+describe("members group (#163)", () => {
+  async function addUser(id: string, name: string | null, workspace = ws) {
+    await db.query("insert into users(id,display_name) values ($1,$2) on conflict do nothing", [id, name]);
+    await db.query("insert into workspace_members(workspace_id,user_id,role,added_by) values ($1,$2,'member','usr_local')", [workspace, id]);
+  }
+  const members = async (q: string) => ((await (await search(q)).json()) as any).members as { id: string; displayName: string | null; role: string }[];
+
+  test("is empty with a single active member, for empty and typed queries", async () => {
+    expect(await members("")).toEqual([]);
+    expect(await members("u")).toEqual([]);
+  });
+
+  test("lists active members only, never another workspace's, and matches null names as empty text", async () => {
+    await addUser("usr_zhang", "张三");
+    await addUser("usr_gone", "Gone");
+    await db.query("update workspace_members set removed_at=now(),removed_by='usr_local' where user_id='usr_gone'");
+    const other = (await createWorkspace(db, dataDir, "B")).id;
+    await addUser("usr_other", "张其他", other);
+    expect(await members("")).toEqual([
+      { id: "usr_local", displayName: null, role: "owner" },
+      { id: "usr_zhang", displayName: "张三", role: "member" },
+    ]);
+    expect((await members("张")).map((m) => m.id)).toEqual(["usr_zhang"]);
+    expect(await members("gone")).toEqual([]);
+    // Removing the second member leaves one active member: the group disappears.
+    await db.query("update workspace_members set removed_at=now(),removed_by='usr_local' where user_id='usr_zhang'");
+    expect(await members("")).toEqual([]);
+  });
+
+  test("is computed on the first page only and comes after threads", async () => {
+    await addUser("usr_zhang", "张三");
+    for (let i = 0; i < 9; i++) await insertEntry(`D-${i + 1}`, "decision", `条目 ${i}`);
+    const first = (await (await search("")).json()) as any;
+    const groups = ["entries", "tags", "attachments", "threads", "members"];
+    expect(Object.keys(first).filter((k) => groups.includes(k))).toEqual(groups);
+    expect(first.members).toHaveLength(2);
+    const res = await app.request(`${HUB}/api/workspaces/${ws}/mention-context?cursor=${encodeURIComponent(first.nextCursor)}`);
+    expect(((await res.json()) as any).members).toEqual([]);
+  });
+});

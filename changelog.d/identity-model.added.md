@@ -1,0 +1,1 @@
+- Messages now record which local user wrote them, and each workspace keeps an audited member list; nothing changes for a single user, older messages are not backfilled, a display name can be set in App settings, and there is still no multi-user login.

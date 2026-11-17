@@ -71,6 +71,58 @@ describe("snapshot allowlist and references", () => {
   });
 });
 
+describe("identity tables (#163)", () => {
+  const ws = { id: "ws_a", name: "A", confidential: true, knowledge_language: "follow" };
+  const manifest = [{ workspaceId: "ws_a", path: "repos/ws_a", bundle: "knowledge/ws_a.bundle", sha256: "a".repeat(64), refs: {}, head: "a".repeat(40) }];
+  const good = () => ({
+    ...empty,
+    tableData: {
+      ...empty.tableData,
+      users: [{ id: "usr_local", display_name: null }, { id: "usr_zhang", display_name: "张三" }],
+      workspaces: [ws],
+      workspace_members: [
+        { workspace_id: "ws_a", user_id: "usr_local", role: "owner", added_by: null, removed_at: null, removed_by: null },
+        { workspace_id: "ws_a", user_id: "usr_zhang", role: "member", added_by: "usr_local", removed_at: "2026-11-17T00:00:00.000Z", removed_by: "usr_local" },
+      ],
+      member_events: [
+        { id: "mev_seed_ws_a", workspace_id: "ws_a", user_id: "usr_local", kind: "added", actor_user_id: null, detail: null },
+        { id: "mev_rename", workspace_id: null, user_id: "usr_zhang", kind: "renamed", actor_user_id: "usr_zhang", detail: { from: null, to: "张三" } },
+      ],
+      messages: [{ id: "m1", workspace_id: "ws_a", role: "user", content: "x", author_user_id: "usr_zhang" }, { id: "m2", workspace_id: "ws_a", role: "agent", content: "y", author_user_id: null }],
+    },
+    knowledgeManifest: manifest,
+  });
+  const mutate = (fn: (data: any) => void) => { const s = good(); fn(s.tableData); return s; };
+
+  it("accepts the identity tables and message authors", () => {
+    expect(validateSnapshot(good()).tableData.users).toHaveLength(2);
+  });
+  it("accepts a snapshot without identity tables", () => {
+    expect(validateSnapshot(empty).tableData.workspace_members).toEqual([]);
+  });
+  it.each<[string, (data: any) => void, RegExp]>([
+    ["an author missing from users", (d) => { d.messages[0].author_user_id = "usr_ghost"; }, /user reference/],
+    ["an author on a non-user message", (d) => { d.messages[1].author_user_id = "usr_local"; }, /author/],
+    ["an unknown role", (d) => { d.workspace_members[0].role = "viewer"; }, /member row/],
+    ["an unknown event kind", (d) => { d.member_events[0].kind = "deleted"; }, /event row/],
+    ["a member of a missing workspace", (d) => { d.workspace_members[0].workspace_id = "ws_missing"; }, /workspace/],
+    ["a member who is not a user", (d) => { d.workspace_members[0].user_id = "usr_ghost"; }, /user reference/],
+    ["an event for a missing workspace", (d) => { d.member_events[0].workspace_id = "ws_missing"; }, /workspace/],
+    ["an event for a missing user", (d) => { d.member_events[0].user_id = "usr_ghost"; }, /user reference/],
+    ["a half-removed member", (d) => { d.workspace_members[1].removed_by = null; }, /member row/],
+    ["a bad user id", (d) => { d.users[1].id = "bob"; }, /user id/],
+    ["a 65-character display name", (d) => { d.users[1].display_name = "x".repeat(65); }, /display name/],
+    ["an empty display name", (d) => { d.users[1].display_name = ""; }, /display name/],
+  ])("rejects %s", (_name, fn, error) => {
+    expect(() => validateSnapshot(mutate(fn))).toThrow(error);
+  });
+  it("names the tables an older validator does not know (the documented rollback limit)", () => {
+    // Spec §快照与恢复: a new snapshot does not import into an older version, same as message_attachments did.
+    const before = [...Object.keys(empty.tableData), "message_versions", "threads", "question_threads", "evidence_events", "source_import_receipts", "source_freshness", "message_attachments"];
+    expect(Object.keys(validateSnapshot(good()).tableData).filter((t) => !before.includes(t)).sort()).toEqual(["member_events", "users", "workspace_members"]);
+  });
+});
+
 it("entry index tags remain outside the snapshot column allowlist", () => {
   for (const column of ["tags", "tags_indexed_at"]) {
     expect(() => validateSnapshot({ ...empty, tableData: { ...empty.tableData, entry_index: [{ [column]: null }] } })).toThrow(/column/i);

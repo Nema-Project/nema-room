@@ -179,6 +179,11 @@ export const updateRepo = (id: string, repoId: string, patch: { label?: string; 
   request<Repo>(`${w(id)}/repos/${encodeURIComponent(repoId)}`, { method: "PATCH", body: patch });
 /** Skills the composer's `/` menu can offer; `supported: false` when the daemon is too old to say. */
 /** What the `@` menu can offer right now: this workspace's entries, already-sent files, and topics. */
+/** A workspace roster row (#163), removed members included so old authors still render. */
+export type WorkspaceMember = { userId: string; displayName: string | null; role: "owner" | "member"; removedAt: string | null };
+export const listMembers = (id: string) => request<WorkspaceMember[]>(`${w(id)}/members`);
+export const getMe = () => request<{ userId: string; displayName: string | null }>("/me");
+export const updateMe = (displayName: string | null) => request<{ userId: string; displayName: string | null }>("/me", { method: "PATCH", body: { displayName } });
 export const searchMentionContext = (id: string, q: string, signal?: AbortSignal, cursor?: string) =>
   request<import("./mentions").MentionContextResponse>(`${w(id)}/mention-context?q=${encodeURIComponent(q)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal });
 export const listSkills = (id: string) =>

@@ -55,8 +55,29 @@ describe("groupCandidates", () => {
       threads: Array.from({ length: 12 }, (_, i) => ({ id: `m_${i}`, title: `话题 ${i}`, lastReplyAt: null })),
     });
     const groups = groupCandidates("", many);
-    expect(groups.map((g) => g.kind)).toEqual(["entry", "tag", "attachment", "thread"]);
+    expect(groups.map((g) => g.kind)).toEqual(["entry", "tag", "attachment", "thread", "member"]);
     for (const g of groups) expect(g.items.length).toBeLessThanOrEqual(8);
+  });
+
+  test("members come after threads, name a null-name local user with the localized me, and insert @name (#163)", () => {
+    const groups = groupCandidates("", context({
+      members: [
+        { id: "usr_local", displayName: null, role: "owner" },
+        { id: "usr_zhang", displayName: "张三", role: "member" },
+      ],
+    }), { me: "我" });
+    expect(groups.at(-1)!.kind).toBe("member");
+    expect(groups.at(-1)!.items.map((i) => ({ type: i.type, id: i.id, label: i.label, text: i.text }))).toEqual([
+      { type: "member", id: "usr_local", label: "我", text: "@我" },
+      { type: "member", id: "usr_zhang", label: "张三", text: "@张三" },
+    ]);
+  });
+
+  test("an older hub without members, or a single-member workspace, offers no member rows", () => {
+    const old = context();
+    delete (old as { members?: unknown }).members;
+    expect(groupCandidates("", old).find((g) => g.kind === "member")!.items).toEqual([]);
+    expect(groupCandidates("", context({ members: [] })).find((g) => g.kind === "member")!.items).toEqual([]);
   });
 
   test("keeps the hub order, including a row the old score would reject", () => {
@@ -123,5 +144,5 @@ test("tag expansion is atomic and contains only entry mentions", () => {
   const entries = context().entries;
   expect(expandTag("支付", entries, 1)).toEqual({ error: "tooMany", count: 2 });
   expect(expandTag("支付", entries, 2)).toEqual({ text: "#支付：[D-12] [R-3]", mentions: [{ type: "entry", id: "D-12", text: "[D-12]" }, { type: "entry", id: "R-3", text: "[R-3]" }] });
-  expect(groupCandidates("", context({ tags: [{ tag: "支付", active: 2, inactive: 1 }] })).map(g => g.kind)).toEqual(["entry", "tag", "attachment", "thread"]);
+  expect(groupCandidates("", context({ tags: [{ tag: "支付", active: 2, inactive: 1 }] })).map(g => g.kind)).toEqual(["entry", "tag", "attachment", "thread", "member"]);
 });

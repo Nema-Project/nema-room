@@ -564,6 +564,20 @@ describe("Composer @ mentions", () => {
     await vi.waitFor(() => expect(onSend).toHaveBeenCalledWith("[D-12]", [], [{ type: "entry", id: "D-12", text: "[D-12]" }]));
   });
 
+  it("chooses a member: inserts @name, or the localized me for a null name, and sends a member mention (#163)", async () => {
+    vi.mocked(hub.searchMentionContext).mockResolvedValue({
+      ...ctx, entries: [], attachments: [], threads: [],
+      members: [{ id: "usr_local", displayName: null, role: "owner" }, { id: "usr_zhang", displayName: "张三", role: "member" }],
+    });
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    mountWs(onSend);
+    await userEvent.type(box(), "@");
+    expect(await screen.findByRole("option", { name: /^Me/ })).toBeTruthy();
+    await userEvent.click(screen.getByRole("option", { name: /张三/ }));
+    fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
+    await vi.waitFor(() => expect(onSend).toHaveBeenCalledWith("@张三", [], [{ type: "member", id: "usr_zhang", text: "@张三" }]));
+  });
+
   it("browses the next bounded page and selects a target beyond the old pool", async () => {
     vi.mocked(hub.searchMentionContext).mockImplementation(async (_id, q, _signal, cursor) => {
       if (q !== "") return ctx;

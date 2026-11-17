@@ -4,7 +4,7 @@ import { useT } from "@/lib/i18n";
 import type { MentionCandidate, MentionGroup } from "@/lib/mentions";
 import type { MessageMention } from "@nema/shared";
 
-const GROUP_LABEL = { entry: "mention.entries", tag: "tags.title", attachment: "mention.attachments", thread: "mention.threads" } as const;
+const GROUP_LABEL = { entry: "mention.entries", tag: "tags.title", attachment: "mention.attachments", thread: "mention.threads", member: "mention.members" } as const;
 
 /** A mention the composer will send, shown above the box the way an attachment chip is. */
 export type MentionChip = { mention: MessageMention; label: string };

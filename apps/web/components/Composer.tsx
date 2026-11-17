@@ -26,7 +26,7 @@ function excerpt(content: string): string {
 const MENTION_DEBOUNCE_MS = 150;
 const MENTION_CACHE_MS = 30_000;
 /** Matches the hub's own limit on a mention query. */
-const EMPTY_CONTEXT: MentionContextResponse = { status: "ok", entries: [], tags: [], attachments: [], threads: [], truncated: false, attachmentBudgetExhausted: false };
+const EMPTY_CONTEXT: MentionContextResponse = { status: "ok", entries: [], tags: [], attachments: [], threads: [], members: [], truncated: false, attachmentBudgetExhausted: false };
 
 function availableItems(value: string, token: { query: string; start: number }, skills: readonly SkillRow[], threadMode: boolean): SlashItem[] {
   // Skills only when the `/` starts the whole message; other lines keep just the built-in commands.
@@ -103,7 +103,8 @@ export function Composer({
     setBrowsePage({ key: browseKey, cursor: context.nextCursor });
     setMentionActive(0);
   }
-  const groups = useMemo(() => (mentionQuery !== null ? groupCandidates(mentionQuery, context) : []), [mentionQuery, context]);
+  const meLabel = t("mention.me");
+  const groups = useMemo(() => (mentionQuery !== null ? groupCandidates(mentionQuery, context, { me: meLabel }) : []), [mentionQuery, context, meLabel]);
   const mentionRows = useMemo(() => groups.flatMap((g) => g.items), [groups]);
   const mentionOpen = at !== null && workspaceId !== undefined && mentionClosedFor !== atKey;
 
@@ -302,7 +303,7 @@ export function Composer({
         nextMentionPage();
         return;
       }
-      const rows = groupCandidates(atNow.query, context).flatMap((g) => g.items);
+      const rows = groupCandidates(atNow.query, context, { me: meLabel }).flatMap((g) => g.items);
       if (rows.length > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
         e.preventDefault();
         setMentionActive((i) => (e.key === "ArrowDown" ? (i + 1) % rows.length : (i - 1 + rows.length) % rows.length));

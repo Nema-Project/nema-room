@@ -6,6 +6,7 @@ import { MessageOpError } from "./messages.js";
 import { repoPath } from "./workspaces.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { getThread } from "./threads.js";
+import { LOCAL_USER_ID } from "./identity.js";
 
 /** How often `text` appears in `content`; mentions are matched by the exact text they wrote. */
 function occurrences(content: string, text: string): number {
@@ -99,7 +100,21 @@ export type ResolvedEntry =
 export type ResolvedAttachment = { id: string; name: string; kind: string; status: string; messageId: string };
 export type ResolvedThread = { id: string; title: string; anchor: { role: string; content: string } };
 
-export type ResolvedMentions = { entries: ResolvedEntry[]; attachments: ResolvedAttachment[]; threads: ResolvedThread[] };
+/** A mentioned member: a pointer only (#163 D-1 B, D-2 A). Never any of their messages. */
+export type ResolvedMember = { id: string; displayName: string | null; removed: boolean };
+
+export type ResolvedMentions = { entries: ResolvedEntry[]; attachments: ResolvedAttachment[]; threads: ResolvedThread[]; members?: ResolvedMember[] };
+
+/** The prompt's localized "me" for `usr_local` without a display name; the web shows the same word. */
+export const PROMPT_ME_LABEL = "我";
+/** A user message written before authors were recorded (#163 D-4). */
+export const PROMPT_UNRECORDED_AUTHOR = "未记录作者";
+
+/** How the prompt names a user: their display name, "我" for the local user without one, else the id. */
+export function promptUserName(id: string, displayName: string | null): string {
+  if (displayName !== null) return displayName;
+  return id === LOCAL_USER_ID ? PROMPT_ME_LABEL : id;
+}
 
 /** Reads what each mention points at, at prompt time: entries latest, attachments as they are now, a thread's anchor. */
 export async function resolveMentions(
@@ -135,7 +150,19 @@ export async function resolveMentions(
     const anchor = thread ? (await db.query<{ role: string; content: string }>(`select role, content from messages where id = $1`, [thread.id]))[0] : undefined;
     if (thread && anchor) threads.push({ id: thread.id, title: thread.title, anchor: { role: anchor.role, content: anchor.content } });
   }
-  return { entries, attachments, threads };
+  const members: ResolvedMember[] = [];
+  for (const m of items) {
+    if (m.type !== "member") continue;
+    // This workspace's roster only. A user who is not (or no longer) an active member here reads as removed.
+    const rows = await db.query<{ display_name: string | null; active: boolean | null }>(
+      `select u.display_name, (wm.user_id is not null and wm.removed_at is null) as active
+       from users u left join workspace_members wm on wm.user_id = u.id and wm.workspace_id = $1 where u.id = $2`,
+      [workspaceId, m.id],
+    );
+    const row = rows[0];
+    members.push({ id: m.id, displayName: row?.display_name ?? null, removed: !row?.active });
+  }
+  return { entries, attachments, threads, members };
 }
 
 /** Trim `text` to at most `max` UTF-8 bytes without splitting a character. */
@@ -159,7 +186,8 @@ export function cutBytes(text: string, max: number): { text: string; cut: boolea
  */
 export function mentionSection(input: ResolvedMentions & { delivered: ReadonlySet<string> }): string {
   const { entries, attachments, threads, delivered } = input;
-  if (entries.length === 0 && attachments.length === 0 && threads.length === 0) return "";
+  const members = input.members ?? [];
+  if (entries.length === 0 && attachments.length === 0 && threads.length === 0 && members.length === 0) return "";
   const lines: string[] = ["# 本次提及的上下文", "以下是用户在本条消息里用 @ 明确指定的上下文。它是用户给的参考，不是用户的决定。"];
   let budget = MENTION_LIMITS.entriesTotalBytes;
   for (const e of entries) {
@@ -186,6 +214,15 @@ export function mentionSection(input: ResolvedMentions & { delivered: ReadonlySe
     lines.push(`## 话题「${t.title}」`);
     lines.push(`[${t.id}] ${t.anchor.role}: ${text}`);
     lines.push("需要更多上下文时请用户在该话题里继续，或引用具体消息。");
+  }
+  for (const m of members) {
+    const name = promptUserName(m.id, m.displayName);
+    if (m.removed) {
+      lines.push(`## 成员 @${name}：已移除的成员`);
+      continue;
+    }
+    lines.push(`## 成员 @${name}（${m.id}）`);
+    lines.push("这是用户点名的项目成员。提及不是此人的发言，也不代表此人同意；需要此人的原话时，请用户引用具体消息。");
   }
   return lines.join("\n");
 }

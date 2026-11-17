@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppSettings } from "@/components/AppSettings";
@@ -6,7 +6,12 @@ import { resetAppReleaseForTests } from "@/components/AppRelease";
 import { I18nProvider } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
 
-vi.mock("@/lib/hub", () => ({ listExtensions: vi.fn(async () => []), discoverExtensions: vi.fn(async () => ({ locations: [], skills: [], truncated: false })) }));
+vi.mock("@/lib/hub", () => ({
+  listExtensions: vi.fn(async () => []),
+  discoverExtensions: vi.fn(async () => ({ locations: [], skills: [], truncated: false })),
+  getMe: vi.fn(async () => ({ userId: "usr_local", displayName: null })),
+  updateMe: vi.fn(async (displayName: string | null) => ({ userId: "usr_local", displayName })),
+}));
 
 const offer = { version: "0.2.0", url: "https://github.com/Nema-Project/nema-room/releases/tag/v0.2.0" };
 
@@ -171,5 +176,37 @@ describe("AppSettings", () => {
     expect((document.getElementById("app-settings-panel-model")?.querySelector("[aria-label='Reasoning effort']") as HTMLSelectElement).value).toBe("high");
     await userEvent.click(screen.getByRole("tab", { name: "Model" }));
     expect((screen.getByRole("combobox", { name: "Reasoning effort" }) as HTMLSelectElement).value).toBe("high");
+  });
+
+  describe("display name (#163)", () => {
+    async function openGeneral() {
+      renderSettings();
+      await userEvent.click(screen.getByRole("tab", { name: "General" }));
+      const input = await screen.findByRole("textbox", { name: "Display name" }) as HTMLInputElement;
+      await waitFor(() => expect(input.disabled).toBe(false));
+      return input;
+    }
+
+    it("saves a trimmed name through PATCH /api/me and clears it back to null", async () => {
+      const input = await openGeneral();
+      expect(input.value).toBe("");
+      await userEvent.type(input, "  张三  ");
+      await userEvent.click(screen.getByRole("button", { name: "Save name" }));
+      await waitFor(() => expect(hub.updateMe).toHaveBeenLastCalledWith("张三"));
+      expect(await screen.findByText("Display name saved.")).toBeTruthy();
+      expect(input.value).toBe("张三");
+      await userEvent.clear(input);
+      await userEvent.click(screen.getByRole("button", { name: "Save name" }));
+      await waitFor(() => expect(hub.updateMe).toHaveBeenLastCalledWith(null));
+    });
+
+    it("refuses a name longer than 64 characters without calling the hub", async () => {
+      vi.mocked(hub.updateMe).mockClear();
+      const input = await openGeneral();
+      fireEvent.change(input, { target: { value: "x".repeat(65) } });
+      await userEvent.click(screen.getByRole("button", { name: "Save name" }));
+      expect((await screen.findByRole("alert")).textContent).toBe("A display name can be at most 64 characters.");
+      expect(hub.updateMe).not.toHaveBeenCalled();
+    });
   });
 });

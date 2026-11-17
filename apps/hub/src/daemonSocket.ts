@@ -10,6 +10,7 @@ import { chooseAskedQuestion, timeline } from "./entryIndex.js";
 import { addMessage, deliverySet, getLastAskedQuestion, getMessage, listMessageVersions, listPromptMessages, listRecentMessages, messageExcerpt, type Message } from "./messages.js";
 import { associateQuestion, conversationOf, ensureThread, getThread } from "./threads.js";
 import { resolveMentions } from "./mentions.js";
+import { listMembers } from "./members.js";
 import { retainedSkills } from "./skillActivations.js";
 import { announceInterrupted } from "./interrupts.js";
 import { enabledPluginTools, grillState } from "./plugins.js";
@@ -207,6 +208,12 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     const resolved = userMeta?.mentions?.length
       ? await resolveMentions(db, dataDir, task.workspaceId, userMeta.mentions, { ...(deps.ownedHelpers ? { ownedHelpers: deps.ownedHelpers } : {}) })
       : null;
+    // The roster once per task: names for recent user messages, only shown with two or more active members.
+    const roster = await listMembers(db, task.workspaceId);
+    const authors = {
+      names: new Map(roster.map((m) => [m.userId, m.displayName] as const)),
+      multiMember: roster.filter((m) => m.removedAt === null).length >= 2,
+    };
     const prompt = await buildPrompt({
       workspace,
       userMessage,
@@ -221,6 +228,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       ...(conversationThread && conversationAnchor ? { conversation: { thread: conversationThread, anchor: conversationAnchor, opened: conversationThread.openedBy } } : {}),
       deliveredAttachmentIds: attachments.map((a) => a.id),
       ...(resolved ? { mentions: resolved } : {}),
+      authors,
     });
     // A thread's activated Skills come back on its next task; ids only, the daemon reads them again.
     const retained = conversationId ? await retainedSkills(db, conversationId) : [];

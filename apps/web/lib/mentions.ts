@@ -1,4 +1,5 @@
 import { MENTION_LIMITS, keepMentionsFor, mentionText, type MessageMention } from "@nema/shared";
+import { memberName } from "@/lib/members";
 
 /** What the hub's `mention-context` route answers (apps/hub/src/mentionContext.ts). */
 export type MentionContextResponse = {
@@ -7,6 +8,8 @@ export type MentionContextResponse = {
   tags?: Array<{ tag: string; active: number; inactive: number }>;
   attachments: Array<{ id: string; name: string; kind: string; size: number; messageId: string; createdAt: string }>;
   threads: Array<{ id: string; title: string; lastReplyAt: string | null }>;
+  /** Active members (#163); the hub sends rows only when the workspace has two or more. Missing on an older hub. */
+  members?: Array<{ id: string; displayName: string | null; role: "owner" | "member" }>;
   truncated: boolean;
   /** Empty-query browse continuation; absent on older hubs or at the end. */
   nextCursor?: string;
@@ -53,10 +56,11 @@ export function mentionToken(value: string, cursor: number): MentionToken | null
 }
 
 /**
- * The menu's three groups, at most `MENTION_LIMITS.menuPerGroup` each, in the order the hub returned.
+ * The menu's groups, at most `MENTION_LIMITS.menuPerGroup` each, in the order the hub returned.
  * Ranking already happened in SQL; filtering here would drop rows the hub kept and could not see rows it did not.
+ * `labels.me` names the local user without a display name (`@Me`), the same word the chat uses.
  */
-export function groupCandidates(_q: string, ctx: MentionContextResponse): MentionGroup[] {
+export function groupCandidates(_q: string, ctx: MentionContextResponse, labels: { me: string } = { me: "me" }): MentionGroup[] {
   const cap = MENTION_LIMITS.menuPerGroup;
   const entries = ctx.entries.slice(0, cap).map((e): MentionCandidate => ({
     type: "entry", id: e.id, label: `[${e.id}]`, hint: e.title,
@@ -75,6 +79,11 @@ export function groupCandidates(_q: string, ctx: MentionContextResponse): Mentio
     { kind: "tag", items: (ctx.tags ?? []).slice(0, cap).map(t => ({ type: "tag", id: t.tag, label: `#${t.tag}`, hint: "", text: "", active: t.active, inactive: t.inactive })) },
     { kind: "attachment", items: attachments },
     { kind: "thread", items: threads },
+    // Empty unless the workspace has two or more active members (#163 D-1): the hub decides, and an older hub sends none.
+    { kind: "member", items: (ctx.members ?? []).slice(0, cap).map((m): MentionCandidate => {
+      const name = memberName(m.id, m.displayName, labels.me);
+      return { type: "member", id: m.id, label: name, hint: "", text: mentionText({ type: "member", id: m.id, text: "" }, { memberName: name }) };
+    }) },
   ];
 }
 

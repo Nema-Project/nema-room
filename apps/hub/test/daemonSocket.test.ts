@@ -302,6 +302,31 @@ describe("daemon socket", () => {
     expect(assigned.prompt).not.toContain("first wording");
   });
 
+  test("recent user messages name their author only once the workspace has two active members (#163)", async () => {
+    const single = await postUserMessage(db, wsA, "solo note", { authorUserId: "usr_local" });
+    await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
+    await db.query("insert into users(id,display_name) values ('usr_zhang','张三')");
+    await db.query("insert into workspace_members(workspace_id,user_id,role,added_by) values ($1,'usr_zhang','member','usr_local')", [wsA]);
+    await postUserMessage(db, wsA, "from zhang", { authorUserId: "usr_zhang" });
+    await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
+    await postUserMessage(db, wsA, "按 @张三 的说法", { authorUserId: "usr_local", mentions: [{ type: "member", id: "usr_zhang", text: "@张三" }] });
+    const c = await connect();
+    const assigned = await c.next("task.assign");
+    expect(assigned.prompt).toContain(`[${single.message.id}] user(我): solo note`);
+    expect(assigned.prompt).toContain("user(张三): from zhang");
+    expect(assigned.prompt).toContain("## 成员 @张三（usr_zhang）");
+  });
+
+  test("a single-member workspace keeps the plain user label (#163)", async () => {
+    const first = await postUserMessage(db, wsA, "solo note", { authorUserId: "usr_local" });
+    await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
+    await postUserMessage(db, wsA, "next", { authorUserId: "usr_local" });
+    const c = await connect();
+    const assigned = await c.next("task.assign");
+    expect(assigned.prompt).toContain(`[${first.message.id}] user: solo note`);
+    expect(assigned.prompt).not.toContain("user(");
+  });
+
   test("assign carries confidential from the workspace setting", async () => {
     await updateWorkspace(db, wsA, { confidential: false });
     await updateWorkspace(db, wsB, { confidential: true });
