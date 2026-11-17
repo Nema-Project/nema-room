@@ -346,6 +346,15 @@ Each built-in row has Repair, shown as Check again when the item already works. 
 
 <a id="data"></a>
 
+### Knowledge tags
+
+Open an entry in the knowledge panel and choose **Edit**. Enter comma-separated tags and a reason, review the normalized preview, then save. Tags use NFKC normalization, lowercase letters, and hyphens for whitespace. Each tag can have up to 32 code points, each entry up to 8 tags, and each workspace up to 200 distinct tags. Tags start with a letter or number and may contain letters, combining marks, numbers, `_`, `.` and `-`; entry IDs are reserved. Agents may reuse existing tags; a user must create each new tag in the panel first. Omitting tags on an update preserves them; an empty list clears them.
+
+Choose one tag above the panel to filter either the kind or timeline view; choose it again or clear the filter to show everything. Switching workspace clears it. Type `@` and search for a tag to expand it into text such as `#payment：[D-3] [R-7]`. Only active entries are included, and each becomes an ordinary entry mention. A message has 20 mention slots in total: if the tag needs more than the remaining slots, nothing is inserted and a notice explains why. The tag group is on the first candidate page only.
+
+Tags are public on share pages. Select a tag link there to filter the server-rendered list. Tags are navigation and never change a decision or implementation acceptance. Downgrading to an older version can remove tags from entries it rewrites; Git history retains the earlier tags for manual recovery.
+
+
 ## Data, privacy, and known limitations
 
 | Default location | Contents |

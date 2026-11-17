@@ -4,7 +4,7 @@ import { useT } from "@/lib/i18n";
 import type { MentionCandidate, MentionGroup } from "@/lib/mentions";
 import type { MessageMention } from "@nema/shared";
 
-const GROUP_LABEL = { entry: "mention.entries", attachment: "mention.attachments", thread: "mention.threads" } as const;
+const GROUP_LABEL = { entry: "mention.entries", tag: "tags.title", attachment: "mention.attachments", thread: "mention.threads" } as const;
 
 /** A mention the composer will send, shown above the box the way an attachment chip is. */
 export type MentionChip = { mention: MessageMention; label: string };
@@ -47,7 +47,9 @@ export function MentionMenu({
   onHover,
   onNext,
   empty,
+  remaining = 20,
 }: {
+  remaining?: number;
   groups: readonly MentionGroup[];
   active: number;
   onChoose: (candidate: MentionCandidate) => void;
@@ -116,6 +118,7 @@ export function MentionMenu({
                     type="button"
                     role="option"
                     id={`mention-${item.type}-${item.id}`}
+                    disabled={item.type === "tag" && (item.active ?? 0) > remaining}
                     aria-selected={i === active}
                     className={i === active ? "on" : ""}
                     onMouseDown={(e) => e.preventDefault()}
@@ -123,7 +126,7 @@ export function MentionMenu({
                     onClick={() => onChoose(item)}
                   >
                     <span className="name">{item.label}</span>
-                    <span className="hint">{item.hint}</span>
+                    <span className="hint">{item.type === "tag" ? t("tags.mentionCount", { active: item.active ?? 0 }) + ((item.inactive ?? 0) > 0 ? t("tags.inactiveCount", { inactive: item.inactive! }) : "") : item.hint}</span>
                   </button>
                 );
               })}
@@ -131,6 +134,7 @@ export function MentionMenu({
           ),
         )}
       </div>
+      {rows.filter(item => item.type === "tag" && (item.active ?? 0) > remaining).map(item => <p key={item.id} className="notice" role="status">{t("tags.tooMany", { count: item.active!, remaining })}</p>)}
       {next}
     </div>
   );

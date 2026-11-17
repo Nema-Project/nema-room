@@ -40,6 +40,38 @@ async function commitLegacy(): Promise<void> {
 }
 
 describe("KnowledgeStore", () => {
+  test("scanEntryFileIds inventories filenames without parsing and excludes work package documents", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await writeFile(path.join(dir, "requirements", "R-1.md"), LEGACY);
+    await writeFile(path.join(dir, "decisions", "D-2.md"), "invalid entry");
+    // Like an unreadable file, this path is present but cannot be read as an entry.
+    await mkdir(path.join(dir, "questions", "Q-3.md"));
+    await writeFile(path.join(dir, "workpackages", "WP-1.md"), "invalid entry");
+    await writeFile(path.join(dir, "workpackages", "WP-1.spec.md"), "spec");
+    await writeFile(path.join(dir, "workpackages", "WP-1.plan.md"), "plan");
+    await writeFile(path.join(dir, "diagrams", "DG-1.json"), "{}");
+    const scan = await s.scanEntryFileIds();
+    expect(scan.complete).toBe(true);
+    expect(scan.ids.sort()).toEqual(["D-2", "Q-3", "R-1", "WP-1"]);
+  });
+
+  test.each([
+    { failure: "missing", complete: true },
+    { failure: "not-directory", complete: false },
+  ])("scanEntryFileIds reports complete=$complete for a $failure kind directory", async ({ failure, complete }) => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await writeFile(path.join(dir, "requirements", "R-1.md"), LEGACY);
+    const kindDir = path.join(dir, "questions");
+    // ENOENT / ENOTDIR are deterministic even where chmod cannot deny directory access.
+    await rm(kindDir, { recursive: true });
+    if (failure === "not-directory") await writeFile(kindDir, "not a directory");
+    const scan = await s.scanEntryFileIds();
+    expect(scan.complete).toBe(complete);
+    expect(scan.ids).toEqual(["R-1"]);
+  });
+
   test("init creates dirs and an init commit", async () => {
     const s = new KnowledgeStore(dir);
     await s.init();
@@ -1027,7 +1059,7 @@ describe("unknown frontmatter preservation", () => {
     }
     const file = path.join(dir, folder, `${id}.md`);
     // Put future keys before the known ones to verify they move to the end on rewrite.
-    await writeFile(file, raw.replace("---\n", `---\n${unknown}`));
+    await writeFile(file, raw.replace("---\n", `---\ntags: [api]\n${unknown}`));
     switch (operation) {
       case "upsert": await s.upsert(req("legacy", { id, body: "updated" }), { author: "agent" }); break;
       case "confirm": await s.confirm(id, { author: "user" }); break;
@@ -1043,6 +1075,8 @@ describe("unknown frontmatter preservation", () => {
       }
     }
     const { data } = matter(await readFile(file, "utf8"));
+    expect((await s.get(id))!.tags).toEqual(["api"]);
+    expect(data.tags).toEqual(["api"]);
     expect(data.future_field).toEqual({ a: [1, 2] });
     expect(data.x_note).toBe("hi");
     expect(Object.keys(data).slice(-2)).toEqual(["future_field", "x_note"]);
@@ -1084,5 +1118,40 @@ describe("unknown frontmatter preservation", () => {
     const date = matter(await readFile(file, "utf8")).data.future_date;
     expect(date).toBeInstanceOf(Date);
     expect(date.toISOString()).toBe("2026-11-17T10:34:56.000Z");
+  });
+});
+
+describe("knowledge tags", () => {
+  test.each(['[Payment Flow, "d-3", 支付, 支付]', 'hello'])("lenient read of %s retains the entry and warns without values", async (tags) => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    const file = path.join(dir, "requirements", "R-1.md");
+    await writeFile(file, LEGACY.replace("related: []", `tags: ${tags}\nrelated: []`));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const entries = await s.list();
+      expect(entries).toHaveLength(1);
+      expect(entries[0]!.tags).toEqual(tags === "hello" ? [] : ["payment-flow", "支付"]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]!.join(" ")).toContain(file);
+      expect(warn.mock.calls[0]!.join(" ")).not.toMatch(/Payment Flow|d-3|支付|hello/);
+    } finally { warn.mockRestore(); }
+  });
+  test("upsert normalizes, preserves omitted tags, and clears known tags", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    const first = await s.upsert(req("t", { tags: ["API", "api"] }), { author: "user" });
+    expect(first.entry.tags).toEqual(["api"]);
+    expect((await s.list())[0]!.tags).toEqual(["api"]);
+    await s.upsert(req("t", { id: "R-1" }), { author: "agent" });
+    expect((await s.get("R-1"))!.tags).toEqual(["api"]);
+    await s.upsert(req("t", { id: "R-1", tags: [] }), { author: "user" });
+    expect((await s.get("R-1"))!.tags).toEqual([]);
+    expect(await readFile(path.join(dir, "requirements", "R-1.md"), "utf8")).not.toContain("tags:");
+  });
+  test("new work packages have no tags", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    expect((await s.createWorkPackage({ title: "wp", requirements: [], repos: [], reason: "r", sourceMessages: [] }, { author: "agent" })).tags).toEqual([]);
   });
 });

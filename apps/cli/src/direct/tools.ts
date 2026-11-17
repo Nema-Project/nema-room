@@ -1,6 +1,6 @@
-import { UpsertEntryInput, type PluginToolSpec } from "@nema/shared";
+import { TAG_LIMITS, UpsertEntryInput, type PluginToolSpec } from "@nema/shared";
 import { z } from "zod";
-import { capText, type RoomClient, type RoomResult } from "../room/client.js";
+import { capText, withTagSupportNotice, type RoomClient, type RoomResult } from "../room/client.js";
 import type { FunctionTool } from "./transport.js";
 import { READ_SKILL, type SkillReader } from "../skills/readSkill.js";
 
@@ -17,11 +17,13 @@ const ROOM_NAMES = ["list_entries", "read_entry", "upsert_entry", "open_thread",
  * accepts for non-strict functions; the hub re-validates every upsert anyway.
  */
 function upsertParameters(): Record<string, unknown> {
-  const { $schema: _drop, ...raw } = z.toJSONSchema(UpsertEntryInput) as Record<string, unknown>;
+  const { $schema: _drop, ...raw } = z.toJSONSchema(UpsertEntryInput, { io: "input" }) as Record<string, unknown>;
   const schema = withOptionalEvidence(raw);
-  // UpsertEntryInput keeps basis optional for UI edits; the Agent must always state it.
+  const properties = schema.properties as Record<string, Record<string, unknown>>;
+  properties.tags = { ...properties.tags, maxItems: TAG_LIMITS.perEntry };
+  // UI defaults stay optional in input mode; the Agent must state basis and sourceMessages.
   const required = Array.isArray(schema.required) ? (schema.required as string[]) : [];
-  return { ...schema, required: required.includes("basis") ? required : [...required, "basis"] };
+  return { ...schema, required: [...new Set([...required, "basis", "sourceMessages"])] };
 }
 
 // The implementation evidence keys the hub fills itself default to null; the Agent need not send them.
@@ -159,7 +161,7 @@ export async function dispatchTool(
       return settled(await room.readEntry(id), false);
     }
     case "upsert_entry":
-      return settled(await room.upsertEntry(args), true);
+      return settled(withTagSupportNotice(args, await room.upsertEntry(args)), true);
     case "open_thread":
       return settled(await room.openThread(args), true);
     case "offer_skill_install":

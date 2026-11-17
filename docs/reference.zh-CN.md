@@ -12,6 +12,20 @@
 
 来源超过 90 天没有确认，会标成可能过时；其他类型不会。任务中断后最多重试 3 次，第四次中断就失败，并在聊天里留下一条系统消息。崩溃留下的未提交条目，会变成作者为 `system` 的 recover 提交。
 
+## 知识条目 tags 与格式兼容
+
+frontmatter 的 `tags: [payment-flow, 支付]` 默认为 `[]`，非空才写入文件；摘要始终返回 `tags`。共享的 `normalizeTag` 按顺序执行 NFKC、首尾去空白、内部连续空白换成 `-`、`toLowerCase()`、字符集校验、拒绝条目 ID、码点长度校验。同一条目规范化后去重并保留首次顺序。字符集为 `^[\p{L}\p{N}][\p{L}\p{M}\p{N}_.-]*$`（Unicode）；拒绝 `^(r|d|t|q|s|g|w)-[1-9]\d*$`。上限是每个标签 32 码点、每条 8 个、每工作区 200 个不同标签。
+
+写入严格校验，非法标签返回 400 并说明值和原因。读取宽容：非法标签丢弃，只警告文件名，不记录标签值，也不会隐藏条目。用户可以创建新标签，agent 只能复用工作区已有标签，否则 400「新 tag 需要用户先在面板里创建」。省略 `tags` 保留原值，`[]` 清空。工作区计数依赖索引；提交后的索引补记失败时可能暂时少算。
+
+从本版本起，改写文件保留未知的顶层 frontmatter 键及其 YAML 值，不校验、不进入摘要；已知键被省略时不会从旧文件恢复。YAML 日期按解析后的同一时刻保留，不保证原文本拼写。这不能修复已经发布的旧版本：降级后旧 hub 改写条目仍会删除 tags，Git 历史可供手动恢复。
+
+迁移 `021_entry_index_tags.sql` 给 `entry_index` 增加可空 `tags text[]`、`tags_indexed_at timestamptz`。`indexEntry` 用同一个时间戳写 `updated_at` 与 `tags_indexed_at`。Room 与 UI 的 upsert 在仓库锁释放前补记索引；索引失败只记错误，不改变已提交写入的成功响应。启动在恢复未提交条目后选择 `tags_indexed_at is null or tags_indexed_at < updated_at` 的工作区，读文件回填：成功解析的条目按文件标签更新并刷新时间戳；文件路径仍存在但无法读取或解析的条目保留原标签和时间戳，下次启动重试；文件已不存在的过期索引行清空标签为 `[]` 并刷新时间戳，不再保持过期。文件清单扫描不解析内容，使用与条目读取相同的类型目录、`.md` 筛选和开发包 spec/plan 排除规则；缺失的类型目录（`ENOENT`）视为空；任一类型目录因非缺失错误无法列出时，扫描不完整，跳过整个工作区并记警告，保留所有原标签和时间戳。回填可重复，一个工作区失败只记警告，不阻止其他工作区启动。这两列不进入快照，知识 Git bundle 保留文件标签，导入后由回填恢复派生列。
+
+prompt 的 `# 现有条目索引` 后先列 `# 现有 tags` 词表，按有效条目数降序、标签字典序排列，整个词表段最多 2048 UTF-8 字节；完整标签放不下时写 ` …（另有 N 个，用 list_entries 查看）`。有效索引行追加 ` | tags: a, b`，每行最多 96 字节，超出以 ` +N` 表示。全部标注最多 4096 字节，从最近的最后一行向前分配，较早行不足时省略标注。任何标签省略都会显示「部分条目的 tags 未列出，用 list_entries 或 read_entry 查看」。无标签时 prompt 逐字节不变，编辑消息的被引用条目列表仍用原索引行。
+
+分享公开投影只在非空时添加 `tags`，未标记条目的响应保持原样。分享页 `?tag=` 先规范化再在服务端筛选；无效或未知标签显示空结果，标签链接不发客户端请求。新 CLI 对带 tags 的写入响应检查 `entry.tags` 是否存在；旧 hub 缺少此字段时工具结果提示「hub 不支持 tags，tags 未写入」。
+
 ## Code repositories and plugins
 
 在 workspace 设置里绑定仓库。daemon 在线时会检查这条路径并建立索引。Graphify 从安装包的 `tools/graphify/` 读取（Windows 为 `graphify.exe`）。未注入路径时，先认 `NEMA_GRAPHIFY_BIN`，否则用 `NEMA_PAYLOAD_ROOT` 或 Node 可执行文件旁边的同一相对路径。不从 PATH 查找，运行时也不下载。`desktop:stage` 会按锁定的 CPython 3.11.18 和 graphifyy 0.9.95 放入这份文件，启动器只用相对路径。打包的解释器是 `python/bin/python3.11`。Tree-sitter 语法保留 JavaScript、TypeScript、TSX、Python、Go、Rust、Java、C、C++、C#、Ruby、PHP、Swift、Kotlin、Bash 和 JSON。这个锁定版本没有 YAML、TOML、HTML、CSS、Markdown 的语法包。缺语法时跳过该文件并警告，提取仍会结束。缺失时 doctor 和插件页显示 `随包的 Graphify 运行环境缺失`。插件页那句写成「可在此修复」，页面上只有这句说明，没有下载或修复操作。
@@ -315,7 +329,10 @@ GitHub 插件让 Agent 查看已绑定仓库在 GitHub 上的 issue、pull reque
 
 ### `@` 提及
 
-- 候选：`GET /api/workspaces/:id/mention-context?q=<查询>`，返回 `{ status: "ok", entries, attachments, threads, truncated, attachmentBudgetExhausted }`。`entries` 是本 workspace 条目索引里的 `{ id, kind, title, status }`；`attachments` 是**已经随消息发送过**的文件（`status = 'attached'`）；`threads` 是 `{ id, title, lastReplyAt }`。查询在 SQL 里按子序列搜索，不再先取 500 或 50。比较文本是条目的 id 加空格加标题、附件的文件名、话题的标题；精确条目 id 排在其它档之前，每组最多 8 条。`truncated` 表示菜单不是全部匹配，或附件 `stat` 用满 50 次且后面还有行；`attachmentBudgetExhausted` 只表示后一种。返回前对排序后的附件最多 `stat` 50 次，跳过缺失文件，直到 8 个还在的文件。空查询按各自的时间顺序返回，不会把整个工作区发下去；有后续候选时额外返回 `nextCursor`，用 `?q=&cursor=<nextCursor>` 继续浏览，每组仍最多 8 条，每次请求最多检查 50 个附件。游标按时间戳和 id 翻页，绑定工作区，非法游标或非空查询携带游标返回 400。浏览期间条目更新、话题新回复会改变排序，游标不是快照；重新打开菜单可刷新。返回里没有附件字节、没有条目正文、没有别的工作区的东西。不调用 daemon。workspace 不存在 404，已归档仍可查询，`q` 超过 200 个字符（去空格前算）400，`q` 含 NUL（包括 `%00`）400，正文是 `q contains a NUL character`。发送时 hub 仍按 id 校验提及。
+- 标签组：`tags: { tag, active, inactive }[]`，位于条目后、附件前，每组最多 8 行，多查第 9 行以设置 `truncated`。匹配复用子序列和档位排序，平局按有效数降序、标签升序。仅首个无游标页面返回标签组，游标页返回 `tags: []`；标签组的更多匹配不生成 `nextCursor`，未回填的 null 行不参与计数。
+- `GET /api/workspaces/:id/tags/:tag/entries` 规范化路径标签，非法值返回 400，未知工作区返回 404。返回 `{ entries: { id, kind, title, status }[] }`，仅含本工作区有效条目，按 kind 与编号排序，无正文。Composer 展开为 `#支付：[D-3] [R-7]`；meta 只保存普通 `entry` 提及。超过剩余的 20 个提及名额时完全不插入，绝不截断。
+
+- 候选：`GET /api/workspaces/:id/mention-context?q=<查询>`，返回 `{ status: "ok", entries, tags, attachments, threads, truncated, attachmentBudgetExhausted }`。`entries` 是本 workspace 条目索引里的 `{ id, kind, title, status }`；`attachments` 是**已经随消息发送过**的文件（`status = 'attached'`）；`threads` 是 `{ id, title, lastReplyAt }`。查询在 SQL 里按子序列搜索，不再先取 500 或 50。比较文本是条目的 id 加空格加标题、附件的文件名、话题的标题；精确条目 id 排在其它档之前，每组最多 8 条。`truncated` 表示菜单不是全部匹配，或附件 `stat` 用满 50 次且后面还有行；`attachmentBudgetExhausted` 只表示后一种。返回前对排序后的附件最多 `stat` 50 次，跳过缺失文件，直到 8 个还在的文件。空查询按各自的时间顺序返回，不会把整个工作区发下去；有后续候选时额外返回 `nextCursor`，用 `?q=&cursor=<nextCursor>` 继续浏览，每组仍最多 8 条，每次请求最多检查 50 个附件。游标按时间戳和 id 翻页，绑定工作区，非法游标或非空查询携带游标返回 400。浏览期间条目更新、话题新回复会改变排序，游标不是快照；重新打开菜单可刷新。返回里没有附件字节、没有条目正文、没有别的工作区的东西。不调用 daemon。workspace 不存在 404，已归档仍可查询，`q` 超过 200 个字符（去空格前算）400，`q` 含 NUL（包括 `%00`）400，正文是 `q contains a NUL character`。发送时 hub 仍按 id 校验提及。
 - 提及浏览索引迁移 `020_mention_browse_indexes.sql` 只增加索引，不改数据或格式，旧版本应用仍可读写。正常回退应用时保留索引即可；迁移在事务内执行，建索引失败可修复原因后重试，不会留下半套索引或修改候选数据。不要对真实用户数据做恢复测试。
 - 发消息：三个入口（主聊天、thread 回复、新建 thread）的 body 可带 `mentions`，最多 20 个，每项是 `{ type: "entry", id, text }`、`{ type: "attachment", id, text }` 或 `{ type: "thread", id, text }`；`text` 是插进正文的那段原文。hub 校验：条目要在本 workspace 的索引里，附件必须是本 workspace 已发送的，话题必须属于本 workspace，每段 `text` 在正文里出现的次数不少于它被提及的次数；任一项不满足返回 400，消息不写入。`mentions` 存在 `messages.meta.mentions`。不带 `mentions` 的请求行为不变。重放比较包含提及：同样的文字、附件、引用、thread 和提及返回原消息和任务（`replayed: true`），只有提及不同而文字相同时返回 409；没有自带附件的提及消息也按同样规则匹配。编辑消息时，`text` 已不在新正文里的提及被丢弃，其余按原顺序保留。
 - 投递：被提及的附件并入本次任务的投递集合，排在本条消息、引用和 thread 锚点的附件之后，按提及顺序，去重；每任务 8 个、32 MB 的限制不变，超出 400。

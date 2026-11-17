@@ -9,8 +9,8 @@ import { useAttachmentTray } from "@/lib/attachments";
 import { applyFormat, type FormatKind } from "@/lib/markdownFormat";
 import { applySlash, matchingItems, slashToken, type SkillRow, type SlashItem } from "@/lib/slash";
 import { MentionMenu, MentionTray, type MentionChip } from "@/components/MentionMenu";
-import { groupCandidates, mentionToken, syncMentions, type MentionCandidate, type MentionContextResponse } from "@/lib/mentions";
-import { searchMentionContext } from "@/lib/hub";
+import { expandTag, groupCandidates, mentionToken, syncMentions, type MentionCandidate, type MentionContextResponse } from "@/lib/mentions";
+import { searchMentionContext, tagEntries } from "@/lib/hub";
 import { useAccounts } from "@/lib/useAccounts";
 import { useSkillRows } from "@/lib/skillMenu";
 import { skillLimitLines } from "@/lib/skillLimits";
@@ -26,7 +26,7 @@ function excerpt(content: string): string {
 const MENTION_DEBOUNCE_MS = 150;
 const MENTION_CACHE_MS = 30_000;
 /** Matches the hub's own limit on a mention query. */
-const EMPTY_CONTEXT: MentionContextResponse = { status: "ok", entries: [], attachments: [], threads: [], truncated: false, attachmentBudgetExhausted: false };
+const EMPTY_CONTEXT: MentionContextResponse = { status: "ok", entries: [], tags: [], attachments: [], threads: [], truncated: false, attachmentBudgetExhausted: false };
 
 function availableItems(value: string, token: { query: string; start: number }, skills: readonly SkillRow[], threadMode: boolean): SlashItem[] {
   // Skills only when the `/` starts the whole message; other lines keep just the built-in commands.
@@ -154,12 +154,35 @@ export function Composer({
     });
   }, []);
 
-  function chooseMention(item: MentionCandidate) {
+  const tagRequest = useRef(0);
+  const draft = useRef({ workspaceId, value, chips });
+  useLayoutEffect(() => { draft.current = { workspaceId, value, chips }; }, [workspaceId, value, chips]);
+
+  async function chooseMention(item: MentionCandidate) {
     const el = ref.current;
     const caret = el?.selectionStart ?? cursor;
     const current = mentionToken(el?.value ?? value, caret);
     if (!current) return;
     const text = el?.value ?? value;
+    if (item.type === "tag") {
+      if (!workspaceId) return;
+      const remaining = MENTION_LIMITS.perMessage - chips.length;
+      if ((item.active ?? 0) > remaining) { setError(t("tags.tooMany", { count: item.active!, remaining })); return; }
+      const request = ++tagRequest.current;
+      try {
+        const result = await tagEntries(workspaceId, item.id);
+        // A late response must not overwrite typing, a different room, or a later selection.
+        if (request !== tagRequest.current || draft.current.workspaceId !== workspaceId || ref.current?.value !== text) return;
+        const slots = MENTION_LIMITS.perMessage - draft.current.chips.length;
+        const expanded = expandTag(item.id, result.entries, slots);
+        if ("error" in expanded) { setError(t("tags.tooMany", { count: expanded.count, remaining: slots })); return; }
+        const insert = expanded.text + " ";
+        setChips(cur => [...cur, ...expanded.mentions.map(mention => ({ mention, label: mention.text }))]);
+        place(text.slice(0, current.start) + insert + text.slice(current.end), current.start + insert.length);
+        setMentionActive(0);
+      } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+      return;
+    }
     // A message carries at most MENTION_LIMITS.perMessage mentions; refuse the extra one instead of failing the send.
     if (chips.length >= MENTION_LIMITS.perMessage) {
       setError(t("mention.tooMany", { max: MENTION_LIMITS.perMessage }));
@@ -368,6 +391,7 @@ export function Composer({
       {mentionOpen && !menuOpen && (
         <MentionMenu
           groups={groups}
+          remaining={MENTION_LIMITS.perMessage - chips.length}
           active={mentionRows.length === 0 ? 0 : mentionActive % mentionRows.length}
           onChoose={chooseMention}
           onHover={setMentionActive}

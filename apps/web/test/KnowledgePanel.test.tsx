@@ -9,7 +9,7 @@ import type { EntryListItem } from "@/lib/types";
 vi.mock("@/lib/hub", async (orig) => ({ ...(await orig<typeof import("@/lib/hub")>()), listEntries: vi.fn(), getTimeline: vi.fn(), listRepos: vi.fn(), requestWorkPackage: vi.fn() }));
 
 const e = (id: string, kind: EntryListItem["kind"], status: EntryListItem["status"], extra: Partial<EntryListItem> = {}): EntryListItem => ({
-  id, kind, status, title: `title ${id}`, businessDate: null, related: [], isNew: false, basis: null, confirmedAt: null, ...extra,
+  id, kind, status, title: `title ${id}`, businessDate: null, tags: [], related: [], isNew: false, basis: null, confirmedAt: null, ...extra,
 });
 const entries: EntryListItem[] = [
   e("R-1", "requirement", "active", { isNew: true, businessDate: "2026-10-21", related: ["Q-1"] }),
@@ -249,6 +249,40 @@ describe("KnowledgePanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Generate for selected" }));
     expect((await screen.findByRole("alert")).textContent).toBe("还没有绑定仓库");
   });
+  it.each(["success", "failure"])("preserves pending work-package requests and %s feedback across tag-filter changes", async (outcome) => {
+    vi.mocked(hub.listEntries).mockResolvedValue([
+      e("R-1", "requirement", "active", { tags: ["api", "web"] }),
+    ]);
+    let resolve!: (value: Awaited<ReturnType<typeof hub.requestWorkPackage>>) => void;
+    let reject!: (reason: Error) => void;
+    vi.mocked(hub.requestWorkPackage).mockImplementationOnce(() => new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    }));
+    await mount();
+    await userEvent.click(screen.getByRole("button", { name: "Select requirements" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "R-1" }));
+    await userEvent.click(screen.getByRole("button", { name: "Generate for selected" }));
+
+    for (const filter of ["#api", "#web", "Clear tag filter"]) {
+      await userEvent.click(screen.getByRole("button", { name: filter }));
+      await userEvent.click(screen.getByRole("button", { name: "Select requirements" }));
+      await userEvent.click(screen.getByRole("checkbox", { name: "R-1" }));
+      expect((screen.getByRole("button", { name: "Generate for selected" }) as HTMLButtonElement).disabled).toBe(true);
+    }
+
+    await act(async () => {
+      if (outcome === "success") resolve({ id: "W-1" } as never);
+      else reject(new Error("Request failed"));
+    });
+    const role = outcome === "success" ? "status" : "alert";
+    const feedback = outcome === "success" ? "Requested work package W-1" : "Request failed";
+    expect(screen.getByRole(role).textContent).toBe(feedback);
+    for (const filter of ["#api", "#web", "Clear tag filter"]) {
+      await userEvent.click(screen.getByRole("button", { name: filter }));
+      expect(screen.getByRole(role).textContent).toBe(feedback);
+    }
+  });
   it("the group shows status tags and 待澄清 with the question link", async () => {
     const wp = (id: string, status: EntryListItem["status"], blockedOn: string | null) =>
       e(id, "workpackage", status, { workpackage: { blockedOn, taskCount: 2 } });
@@ -268,4 +302,56 @@ describe("KnowledgePanel", () => {
     await userEvent.click(within(row).getByRole("button", { name: /Needs answers/ }));
     expect(onOpen).toHaveBeenCalledWith("Q-1");
   });
+});
+
+
+it("single tag filters both views and clears with workspace change", async () => {
+  const tagged = [e("R-1", "requirement", "active", { tags: ["api", "b", "c", "d"] }), e("D-1", "decision", "active", { tags: ["other"] })];
+  vi.mocked(hub.listEntries).mockResolvedValue(tagged);
+  vi.mocked(hub.getTimeline).mockResolvedValue(tagged);
+  const { rerender } = await mount();
+  expect(screen.getByText("+1")).toBeTruthy();
+  const url = window.location.href;
+  await userEvent.click(screen.getByRole("button", { name: "#api" }));
+  expect(screen.queryByText("title D-1")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Timeline" }));
+  expect(screen.queryByText("title D-1")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "#api" }));
+  expect(await screen.findByText("title D-1")).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "#api" }));
+  rerender(<I18nProvider><KnowledgePanel workspaceId="w2" knowledgeLanguage="follow" onOpen={vi.fn()} /></I18nProvider>);
+  expect(await screen.findByText("title D-1")).toBeTruthy();
+  expect(window.location.href).toBe(url);
+});
+
+
+it("keeps the clear action when refresh removes the final tag", async () => {
+  vi.mocked(hub.listEntries).mockResolvedValue([e("R-1", "requirement", "active", { tags: ["api"] })]);
+  const { rerender } = await mount();
+  await userEvent.click(screen.getByRole("button", { name: "#api" }));
+  vi.mocked(hub.listEntries).mockResolvedValue([e("R-1", "requirement", "active")]);
+  rerender(<I18nProvider><KnowledgePanel workspaceId="w1" knowledgeLanguage="follow" refreshKey={1} onOpen={vi.fn()} /></I18nProvider>);
+  expect(await screen.findByText("No entries match this tag.")).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "Clear tag filter" }));
+  expect(screen.getByText("title R-1")).toBeTruthy();
+});
+
+
+it("clears requirement selections when applying, switching, and clearing tag filters", async () => {
+  vi.mocked(hub.listEntries).mockResolvedValue([
+    e("R-1", "requirement", "active", { tags: ["api"] }),
+    e("R-2", "requirement", "active", { tags: ["web"] }),
+  ]);
+  await mount();
+  await userEvent.click(screen.getByRole("button", { name: "Select requirements" }));
+  await userEvent.click(screen.getByRole("checkbox", { name: "R-1" }));
+  for (const [filter, selected] of [["#web", "R-2"], ["#api", "R-1"], ["Clear tag filter", "R-1"]]) {
+    await userEvent.click(screen.getByRole("button", { name: filter }));
+    const generate = screen.queryByRole("button", { name: "Generate for selected" });
+    // A filter may also close selection mode; either way hidden selections cannot be submitted.
+    if (generate) expect((generate as HTMLButtonElement).disabled).toBe(true);
+    if (!screen.queryByRole("checkbox")) await userEvent.click(screen.getByRole("button", { name: "Select requirements" }));
+    expect((screen.getByRole("checkbox", { name: selected }) as HTMLInputElement).checked).toBe(false);
+    await userEvent.click(screen.getByRole("checkbox", { name: selected }));
+  }
 });

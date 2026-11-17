@@ -14,6 +14,7 @@ vi.mock("@/lib/hub", () => ({
   attachmentCapabilities: vi.fn(),
   listSkills: vi.fn(),
   searchMentionContext: vi.fn(),
+  tagEntries: vi.fn(),
   HubError: class HubError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -751,4 +752,51 @@ describe("Composer @ mentions", () => {
     fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
     await vi.waitFor(() => expect(onThread).toHaveBeenCalledWith("细节 [D-12]", [], [{ type: "entry", id: "D-12", text: "[D-12]" }]));
   });
+});
+
+
+it("expands tags to ordinary entry mentions for an old hub", async () => {
+  vi.mocked(hub.searchMentionContext).mockResolvedValue({ status: "ok", entries: [], tags: [{ tag: "支付", active: 2, inactive: 1 }], attachments: [], threads: [], truncated: false });
+  vi.mocked(hub.tagEntries).mockResolvedValue({ entries: [{ id: "D-3", kind: "decision", title: "Decision", status: "active" }, { id: "R-7", kind: "requirement", title: "Requirement", status: "active" }] });
+  const onSend = vi.fn().mockResolvedValue(undefined);
+  render(<I18nProvider><Composer workspaceId="tag-workspace" onSend={onSend} /></I18nProvider>);
+  await userEvent.type(box(), "@支付");
+  await userEvent.click(await screen.findByRole("option", { name: /#支付/ }));
+  expect(box().value).toBe("#支付：[D-3] [R-7] ");
+  await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
+  expect(onSend).toHaveBeenCalledWith("#支付：[D-3] [R-7]", [], [{ type: "entry", id: "D-3", text: "[D-3]" }, { type: "entry", id: "R-7", text: "[R-7]" }]);
+});
+
+it("disables an oversized tag and explains why without inserting", async () => {
+  vi.mocked(hub.searchMentionContext).mockResolvedValue({ status: "ok", entries: [], tags: [{ tag: "large", active: 21, inactive: 0 }], attachments: [], threads: [], truncated: false });
+  render(<I18nProvider><Composer workspaceId="large-workspace" onSend={vi.fn()} /></I18nProvider>);
+  await userEvent.type(box(), "@large");
+  const row = await screen.findByRole("option", { name: /#large/ });
+  expect((row as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText(/21.*20/)).toBeTruthy();
+  expect(box().value).toBe("@large");
+});
+
+it("refuses a tag whose fetched entries outgrow the remaining slots", async () => {
+  vi.mocked(hub.searchMentionContext).mockResolvedValue({ status: "ok", entries: [], tags: [{ tag: "growing", active: 1, inactive: 0 }], attachments: [], threads: [], truncated: false });
+  vi.mocked(hub.tagEntries).mockResolvedValue({ entries: Array.from({ length: 21 }, (_, i) => ({ id: `R-${i + 1}`, kind: "requirement", title: "Growing", status: "active" })) });
+  render(<I18nProvider><Composer workspaceId="growing-workspace" onSend={vi.fn()} /></I18nProvider>);
+  await userEvent.type(box(), "@growing");
+  await userEvent.click(await screen.findByRole("option", { name: /#growing/ }));
+  expect(box().value).toBe("@growing");
+  expect(screen.queryAllByTestId("mention-chip")).toHaveLength(0);
+  expect(screen.getByText(/21.*20/)).toBeTruthy();
+});
+
+it("does not overwrite typing with a late tag expansion", async () => {
+  vi.mocked(hub.searchMentionContext).mockResolvedValue({ status: "ok", entries: [], tags: [{ tag: "late", active: 1, inactive: 0 }], attachments: [], threads: [], truncated: false });
+  let finish!: (value: Awaited<ReturnType<typeof hub.tagEntries>>) => void;
+  vi.mocked(hub.tagEntries).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  render(<I18nProvider><Composer workspaceId="late-workspace" onSend={vi.fn()} /></I18nProvider>);
+  await userEvent.type(box(), "@late");
+  await userEvent.click(await screen.findByRole("option", { name: /#late/ }));
+  await userEvent.type(box(), " more");
+  await act(async () => finish({ entries: [{ id: "R-1", kind: "requirement", title: "Late", status: "active" }] }));
+  expect(box().value).toBe("@late more");
+  expect(screen.queryAllByTestId("mention-chip")).toHaveLength(0);
 });

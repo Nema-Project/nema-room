@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TagSchema, TAG_LIMITS } from "./tags.js";
 import { Implementation } from "./report.js";
 import { SourceRef, SourceRevision, SourceSnapshot } from "./sourceEvidence.js";
 
@@ -190,6 +191,7 @@ export const EntryFrontmatter = z
     status: StatusSchema,
     businessDate: BusinessDate,
     related: z.array(z.string()),
+    tags: z.array(z.string()).default([]),
     sourceMessages: z.array(z.string()),
     sourceSnapshot: SourceSnapshot.optional(),
     sourceRefs: z.array(SourceRef).max(10).default([]),
@@ -213,7 +215,7 @@ export const EntryFrontmatter = z
 export type EntryFrontmatter = z.infer<typeof EntryFrontmatter>;
 
 export type Entry = EntryFrontmatter & { body: string };
-export type EntrySummary = Pick<Entry, "id" | "kind" | "title" | "status" | "businessDate" | "priority" | "url" | "related" | "basis" | "confirmedAt"> & {
+export type EntrySummary = Pick<Entry, "id" | "kind" | "title" | "status" | "businessDate" | "priority" | "url" | "related" | "tags" | "basis" | "confirmedAt"> & {
   /** Diagrams only: which repo it draws and what kind of diagram it is. */
   diagram?: Pick<DiagramMeta, "repoId" | "type">;
   /** Diagrams only, filled in by the hub: main moved under one of its node paths since it was drawn. */
@@ -239,6 +241,7 @@ export const UpsertEntryInput = z
     status: StatusSchema.optional(),
     businessDate: BusinessDate.optional(),
     related: z.array(z.string()).optional(),
+    tags: z.array(TagSchema).transform(tags => [...new Set(tags)]).pipe(z.array(z.string()).max(TAG_LIMITS.perEntry)).optional(),
     sourceMessages: z.array(z.string()).default([]),
     sourceRefs: z.array(SourceRef).max(10).optional(),
     url: HttpUrl.optional(),

@@ -106,7 +106,9 @@ hub 进程内记忆，单进程，重启清空。不做成配置项。
 
 公开投影只有知识本身，并且每次都从 `KnowledgeStore` 读当前文件，不读 `messages`、`tasks`、附件、线程、插件、仓库、设置。
 
-列表每条只有：`id`、`kind`、`title`、`status`、`businessDate`、`basis`、`confirmedAt`，加上存在时的 `priority`、`url`、`related`、`implementationStatus`（`reported` | `verified` | `mismatch`）、`implementationAccepted`（布尔，`confirmedBy === "user"`）、`implementationInferred`（布尔，来自 `evidence.inferred`）、`diagramType`、`workpackage: { blockedOn, taskCount }`。后两个布尔与 `implementationStatus` 一起出现：`verified` 只表示“提交已核对”，不能让外部读者把它读成用户验收，所以验收和推断必须单独公开。
+列表每条只有：`id`、`kind`、`title`、`status`、`businessDate`、`basis`、`confirmedAt`，加上存在时的 `tags`（非空时）、`priority`、`url`、`related`、`implementationStatus`（`reported` | `verified` | `mismatch`）、`implementationAccepted`（布尔，`confirmedBy === "user"`）、`implementationInferred`（布尔，来自 `evidence.inferred`）、`diagramType`、`workpackage: { blockedOn, taskCount }`。后两个布尔与 `implementationStatus` 一起出现：`verified` 只表示“提交已核对”，不能让外部读者把它读成用户验收，所以验收和推断必须单独公开。
+
+2026-11-17 起按 [knowledge tags](../specs/2026-11-16-knowledge-tags-design.md) D-7 公开 `tags`；公开列表可按 tag 服务端筛选。
 
 单条在列表字段之外再加上：`body`、`quotes: { text }[]`（去掉 `messageId`）、`sourceRefs: { sourceEntryId, locator?, quote? }[]`（去掉 `revision` 与 `snapshotHash`）、工作包任务的 `{ n, title, status, inferred }[]`。
 

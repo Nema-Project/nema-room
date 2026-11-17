@@ -699,5 +699,16 @@
   "share.acceptedByUser": "用户已验收",
   "share.commitsCheckedOnly": "仅核对了提交",
   "share.identifier": "链接 {id}",
-  "share.createdAt": "创建时间"
+  "share.createdAt": "创建时间",
+  "tags.title": "标签",
+  "tags.clear": "清除标签筛选",
+  "tags.empty": "没有符合此标签的条目。",
+  "tags.filter": "按标签筛选",
+  "tags.edit": "编辑标签",
+  "tags.help": "标签用逗号分隔，空白会转为连字符。",
+  "tags.invalid": "标签“{tag}”无效：使用 1–{max} 个字母、组合符、数字、_、. 或 -，以字母或数字开头，且不能是条目 ID。",
+  "tags.limit": "每条条目最多 {max} 个标签。",
+  "tags.mentionCount": " · {active} 条",
+  "tags.inactiveCount": "（另有 {inactive} 条已失效）",
+  "tags.tooMany": "此标签有 {count} 条有效条目，但只剩 {remaining} 个提及名额。未插入任何内容。"
 }

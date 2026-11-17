@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createLocalDb, createTestDb } from "@nema/hub/db/local";
 import { exportSnapshot } from "@nema/hub/db/export";
 import { importLegacySnapshot, recoverInterruptedImport } from "../src/import.js";
+import { backfillEntryTags } from "../../hub/src/entryIndex.js";
+import { KnowledgeStore } from "@nema/knowledge";
 import { acquireInstance } from "../src/instance.js";
 
 const gitPath = execFileSync(process.platform === "win32" ? "where" : "which", ["git"], { encoding: "utf8" }).split("\n")[0]!.trim();
@@ -24,7 +26,7 @@ const PNG_SHA = createHash("sha256").update(PNG).digest("hex");
 const TEXT = Buffer.from("staged note\n");
 const TEXT_SHA = createHash("sha256").update(TEXT).digest("hex");
 
-async function makeSource(withThreads = false, withAttachments = false): Promise<{ outputDir: string; shas: string[]; knowledgeHead: string }> {
+async function makeSource(withThreads = false, withAttachments = false, withTags = false): Promise<{ outputDir: string; shas: string[]; knowledgeHead: string }> {
   const db = await createTestDb();
   await db.query(`insert into workspaces (id, name, confidential, knowledge_language) values ('ws_a', 'Alpha', true, 'ja')`);
   await db.query(`insert into messages (id, workspace_id, role, content, meta, task_id) values ('m1', 'ws_a', 'user', '日本語の要件', '{"k":[1,2]}', null)`);
@@ -67,6 +69,12 @@ async function makeSource(withThreads = false, withAttachments = false): Promise
   git(repo, "commit", "-q", "-am", "two");
   git(repo, "tag", "v1", first);
 
+  if (withTags) {
+    mkdirSync(join(repo, "requirements"), { recursive: true });
+    writeFileSync(join(repo, "requirements", "R-1.md"), "---\nid: R-1\nkind: requirement\ntitle: Tagged\nstatus: active\nbusiness_date: null\nrelated: []\nsource_messages: []\ntags: [api]\n---\n\nbody\n");
+    git(repo, "add", "."); git(repo, "commit", "-q", "-m", "Tag entry");
+    await db.query("update entry_index set entry_id='R-1',tags='{api}',tags_indexed_at=clock_timestamp()");
+  }
   const pool = {
     async connect() {
       return {
@@ -87,6 +95,24 @@ async function makeSource(withThreads = false, withAttachments = false): Promise
 const homeOf = () => join(root, "home");
 
 describe("importLegacySnapshot", () => {
+  it("exports no tag index columns, imports nulls, and backfills tagged knowledge", async () => {
+    const { outputDir } = await makeSource(false, false, true);
+    const snapshot = JSON.parse(readFileSync(join(outputDir, "snapshot.json"), "utf8"));
+    for (const row of snapshot.tableData.entry_index) {
+      expect(row).not.toHaveProperty("tags");
+      expect(row).not.toHaveProperty("tags_indexed_at");
+    }
+    await importLegacySnapshot(outputDir, homeOf(), { gitPath });
+    const db = await createLocalDb(join(homeOf(), "db"));
+    try {
+      expect(await db.query("select tags,tags_indexed_at from entry_index")).toEqual([{ tags: null, tags_indexed_at: null }]);
+      const store = new KnowledgeStore(join(homeOf(), "data", "repos", "ws_a"));
+      expect((await store.get("R-1"))!.tags).toEqual(["api"]);
+      await backfillEntryTags(db, join(homeOf(), "data"));
+      expect(await db.query("select tags, tags_indexed_at is not null as indexed from entry_index")).toEqual([{ tags: ["api"], indexed: true }]);
+    } finally { await db.close(); }
+  });
+
   it("marks restored unconsumed events not consumable", async () => {
     const { outputDir } = await makeSource();
     const snapshotPath = join(outputDir, "snapshot.json");

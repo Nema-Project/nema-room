@@ -38,6 +38,7 @@ export type PublicSummary = {
   basis: Entry["basis"];
   confirmedAt: string | null;
   related: string[];
+  tags?: string[];
   priority?: 1 | 2 | 3;
   url?: string;
   implementationStatus?: "reported" | "verified" | "mismatch";
@@ -190,6 +191,7 @@ export function toPublicSummary(entry: Entry): PublicSummary {
     confirmedAt: entry.confirmedAt,
     related: entry.related,
   };
+  if (entry.tags?.length) summary.tags = entry.tags;
   if (entry.priority !== undefined) summary.priority = entry.priority;
   if (entry.url !== undefined) summary.url = entry.url;
   if (entry.implementation) {

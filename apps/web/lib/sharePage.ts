@@ -1,3 +1,4 @@
+import { normalizeTag } from "@nema/shared";
 import type { GetServerSidePropsContext, GetServerSidePropsResult } from "next";
 import type { ShareEntryView, ShareListEntry } from "@/components/ShareView";
 import { fetchShare } from "./shareHub";
@@ -8,6 +9,7 @@ export type SharePageProps = {
   workspaceName: string;
   entries: ShareListEntry[];
   entry?: ShareEntryView;
+  selectedTag?: string;
   temporary?: boolean;
 };
 
@@ -20,6 +22,7 @@ function isSummary(value: unknown): value is ShareListEntry {
   for (const key of ["status", "implementationStatus"]) {
     if (value[key] !== undefined && typeof value[key] !== "string") return false;
   }
+  if (value.tags !== undefined && (!Array.isArray(value.tags) || !value.tags.every(tag => typeof tag === "string"))) return false;
   if (value.basis != null && typeof value.basis !== "string") return false;
   if (value.confirmedAt != null && typeof value.confirmedAt !== "string") return false;
   for (const key of ["implementationAccepted", "implementationInferred"]) {
@@ -60,5 +63,8 @@ export async function loadSharePage(context: GetServerSidePropsContext): Promise
     res.statusCode = 503;
     return { props: { token, workspaceName: "", entries: [], temporary: true } };
   }
-  return { props: { token, ...list.body, ...(entry ? { entry: entry.body as ShareEntryView } : {}) } };
+  const rawTag = context.query?.tag;
+  const selectedTag = rawTag === undefined ? undefined : typeof rawTag === "string" ? normalizeTag(rawTag) ?? "" : "";
+  const entries = selectedTag === undefined ? list.body.entries : list.body.entries.filter(item => item.tags?.includes(selectedTag));
+  return { props: { token, ...list.body, entries, ...(selectedTag !== undefined ? { selectedTag } : {}), ...(entry ? { entry: entry.body as ShareEntryView } : {}) } };
 }

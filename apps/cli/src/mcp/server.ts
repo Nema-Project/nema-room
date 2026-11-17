@@ -3,7 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { PluginToolSpec } from "@nema/shared";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { RoomClient, type RoomResult } from "../room/client.js";
+import { withTagSupportNotice, RoomClient, type RoomResult } from "../room/client.js";
 import { roomTools } from "../direct/tools.js";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -74,7 +74,7 @@ export async function startMcpServer(opts: { hubUrl: string; runToken: string },
       }
       return toToolResult(await room.readEntry(id));
     }
-    if (name === "upsert_entry") return toToolResult(await room.upsertEntry(args));
+    if (name === "upsert_entry") return toToolResult(withTagSupportNotice(args, await room.upsertEntry(args)));
     if (name === "open_thread") return toToolResult(await room.openThread(args));
     if (name === "offer_skill_install") return toToolResult(await room.offerSkillInstall(args));
     return { content: [{ type: "text", text: `未知函数 ${name}` }], isError: true };

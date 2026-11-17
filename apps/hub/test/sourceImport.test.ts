@@ -130,3 +130,15 @@ it("preserves timeout, offline and unavailable observations after reimport", asy
     expect(await readFreshness()).toEqual({ freshness: unavailable ? "unavailable" : "unknown", reviewNeeded: unavailable });
   }
 });
+
+it("source re-import preserves tags in knowledge and the index", async () => {
+  await run();
+  await withRepoLock(repo, async () => {
+    const entry = (await store.get("S-1"))!;
+    await store.writeImportedSource({ ...entry, tags: ["api"] });
+  });
+  const next = await run(snapshot("Tagged again"));
+  expect(next.entry.tags).toEqual(["api"]);
+  expect((await store.get("S-1"))!.tags).toEqual(["api"]);
+  expect(await db.query("select tags from entry_index where workspace_id=$1", [ws])).toEqual([{ tags: ["api"] }]);
+});

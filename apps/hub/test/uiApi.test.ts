@@ -1,3 +1,4 @@
+import { checkConcurrentUpsertIndex } from "./upsertIndexHarness.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1486,4 +1487,63 @@ describe("per-message automatic routing", () => {
     const reply = await req("POST", `/api/workspaces/${ws}/messages`, { content: "x", routing });
     expect(reply.status).toBe(400);
   });
+});
+
+describe("tag write rules", () => {
+  test("UI stores normalized tags, preserves old-web edits, and rejects invalid or excess tags", async () => {
+    const { entry } = await new KnowledgeStore(repoPath(dataDir, ws)).upsert({ kind: "requirement", title: "T", body: "b", reason: "r", sourceMessages: [] }, { author: "user" });
+    const url = `/api/workspaces/${ws}/entries/${entry.id}`;
+    const input = { kind: "requirement", title: "T", body: "b", reason: "r" };
+    const saved = await req("PUT", url, { ...input, tags: [" ＡＰＩ ", "Payment Flow", "api"] });
+    expect(saved.status).toBe(200);
+    expect((await json(saved)).tags).toEqual(["api", "payment-flow"]);
+    expect((await req("PUT", url, input)).status).toBe(200);
+    expect(await db.query("select tags from entry_index where workspace_id=$1", [ws])).toEqual([{ tags: ["api", "payment-flow"] }]);
+    const invalid = await req("PUT", url, { ...input, tags: ["a/b"] });
+    expect(invalid.status).toBe(400);
+    expect((await json(invalid)).error).toMatch(/a\/b.*letter/);
+    expect((await req("PUT", url, { ...input, tags: Array.from({ length: 9 }, (_, i) => `tag${i}`) })).status).toBe(400);
+    await db.query("update entry_index set tags=array(select 'tag'||n from generate_series(1,200) n) where workspace_id=$1", [ws]);
+    const limit = await req("PUT", url, { ...input, tags: ["new-tag"] });
+    expect(limit.status).toBe(400);
+    const message = (await json(limit)).error;
+    expect(message).toContain("200");
+    expect(message).not.toMatch(/tag1|new-tag/);
+  });
+
+  test.each(["confirm", "withdraw", "implementation/confirm"])("%s retains tags in the file and index", async (action) => {
+    const store = new KnowledgeStore(repoPath(dataDir, ws));
+    const { entry } = await store.upsert({ kind: "requirement", title: "T", body: "b", reason: "r", sourceMessages: [], tags: ["api"], implementation: { status: "reported", evidence: { reportMessageId: null, commits: [], inferred: true, note: null, confirmedBy: null } } } as never, { author: "user" });
+    const response = await req("POST", `/api/workspaces/${ws}/entries/${entry.id}/${action}`, {});
+    expect(response.status).toBe(200);
+    expect((await store.get(entry.id))!.tags).toEqual(["api"]);
+    expect(await db.query("select tags from entry_index where workspace_id=$1 and entry_id=$2", [ws, entry.id])).toEqual([{ tags: ["api"] }]);
+  });
+});
+
+
+test("UI concurrent upserts publish tags before releasing the repository lock", async () => {
+  const store = new KnowledgeStore(repoPath(dataDir, ws));
+  const seed = await store.upsert({ kind: "requirement", title: "T", body: "b", reason: "r", sourceMessages: [] }, { author: "user" });
+  await indexEntry(db, ws, seed.entry);
+  await checkConcurrentUpsertIndex(db, ws, store, tags => req("PUT", `/api/workspaces/${ws}/entries/${seed.entry.id}`,
+    { kind: "requirement", title: "T", body: "b", reason: "r", tags }));
+  expect(await db.query("select consumed_commit from evidence_events where workspace_id=$1 and consumed_commit is null", [ws])).toEqual([]);
+});
+
+test("UI indexing failure in the commit hook still returns the durable entry", async () => {
+  const store = new KnowledgeStore(repoPath(dataDir, ws));
+  const seed = await store.upsert({ kind: "requirement", title: "T", body: "b", reason: "r", sourceMessages: [] }, { author: "user" });
+  const query = db.query.bind(db);
+  const failure = vi.spyOn(db, "query").mockImplementation((sql, params) => {
+    if (sql.includes("insert into entry_index")) throw new Error("index unavailable");
+    return query(sql, params);
+  });
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const response = await req("PUT", `/api/workspaces/${ws}/entries/${seed.entry.id}`, { kind: "requirement", title: "Kept", body: "b", reason: "r", tags: ["api"] });
+    expect(response.status).toBe(200);
+    expect((await store.get(seed.entry.id))!.tags).toEqual(["api"]);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^ui upsert: post-commit bookkeeping failed for R-1 \(commit /), expect.any(Error));
+  } finally { failure.mockRestore(); log.mockRestore(); }
 });

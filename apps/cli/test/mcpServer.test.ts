@@ -8,8 +8,10 @@ import { startMcpServer } from "../src/mcp/server.js";
 let hub: Server, hubUrl: string, status = 200, seen: { method?: string; url?: string; auth?: string; body: string }[] = [];
 let plugins: { name: string; description: string; parameters: Record<string, unknown> }[] = [];
 let pluginListStatus = 200;
+let upsertResponse: object | undefined;
 beforeEach(async () => {
   status = 200;
+  upsertResponse = undefined;
   seen = [];
   plugins = [];
   pluginListStatus = 200;
@@ -21,6 +23,11 @@ beforeEach(async () => {
       if (req.method === "GET" && req.url === "/room/plugins") {
         res.writeHead(pluginListStatus, { "content-type": "application/json" });
         res.end(pluginListStatus === 200 ? JSON.stringify({ tools: plugins }) : '{"error":"plugin list failed"}');
+        return;
+      }
+      if (req.method === "POST" && req.url === "/room/entries" && upsertResponse) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(upsertResponse));
         return;
       }
       res.writeHead(status, { "content-type": "application/json" });
@@ -122,4 +129,15 @@ describe("room mcp server", () => {
     expect(r.isError).toBe(true);
     expect(JSON.stringify(r.content)).toContain("missing or invalid run token");
   });
+});
+
+
+test.each([{ tags: undefined }, { tags: [] }])("MCP tag schema and old-hub notice (%j)", async ({ tags }) => {
+  upsertResponse = { entry: { id: "R-1", ...(tags === undefined ? {} : { tags }) } };
+  const c = await connect();
+  const tool = (await c.listTools()).tools.find(t => t.name === "upsert_entry")!;
+  expect((tool.inputSchema as any).properties.tags).toMatchObject({ type: "array", maxItems: 8 });
+  const result = await c.callTool({ name: "upsert_entry", arguments: { tags: ["api"] } });
+  expect(JSON.stringify(result).includes("hub 不支持 tags，tags 未写入")).toBe(tags === undefined);
+  await c.close();
 });

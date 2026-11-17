@@ -207,3 +207,51 @@ test("startup sweeps attachment leftovers before serving and passes the quota to
   });
   expect(res.status).toBe(507);
 });
+
+test("tag backfill repeats for stale rows, fills missing files, and isolates failed workspaces", async () => {
+  const { root, db } = await fixture();
+  const dataDir = path.join(root, "data");
+  const { backfillEntryTags } = await import("../src/entryIndex.js");
+  const { KnowledgeStore } = await import("@nema/knowledge");
+  const { repoPath } = await import("../src/workspaces.js");
+  const good = await createWorkspace(db, dataDir, "Good");
+  const bad = await createWorkspace(db, dataDir, "Missing repo");
+  await rm(repoPath(dataDir, bad.id), { recursive: true, force: true });
+  const store = new KnowledgeStore(repoPath(dataDir, good.id));
+  const input = { kind: "requirement" as const, title: "tagged", body: "b", reason: "r", sourceMessages: [], tags: ["api"] };
+  await store.upsert(input, { author: "user" });
+  for (const [ws, id] of [[good.id, "R-1"], [good.id, "R-99"], [bad.id, "R-1"]]) {
+    await db.query("insert into entry_index(workspace_id,entry_id,kind,title,status) values ($1,$2,'requirement','Old','active')", [ws, id]);
+  }
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await backfillEntryTags(db, dataDir);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(bad.id));
+    expect(await db.query("select entry_id,tags from entry_index where workspace_id=$1 order by entry_id", [good.id])).toEqual([{ entry_id: "R-1", tags: ["api"] }, { entry_id: "R-99", tags: [] }]);
+    const stale = () => db.query("select distinct workspace_id from entry_index where workspace_id=$1 and (tags_indexed_at is null or tags_indexed_at < updated_at)", [good.id]);
+    await db.query("delete from entry_index where workspace_id=$1", [bad.id]);
+    await backfillEntryTags(db, dataDir);
+    expect(await db.query("select distinct workspace_id from entry_index where tags_indexed_at is null or tags_indexed_at < updated_at")).toEqual([]);
+    expect(await stale()).toEqual([]);
+    await store.upsert({ ...input, id: "R-1", tags: ["payment"] }, { author: "user" });
+    await db.query("update entry_index set updated_at=clock_timestamp() where workspace_id=$1", [good.id]);
+    expect(await stale()).toEqual([{ workspace_id: good.id }]);
+    await backfillEntryTags(db, dataDir);
+    expect(await stale()).toEqual([]);
+    expect(await db.query("select tags from entry_index where workspace_id=$1 and entry_id='R-1'", [good.id])).toEqual([{ tags: ["payment"] }]);
+  } finally { warn.mockRestore(); }
+});
+
+test("startup backfills tags before attempting to listen", async () => {
+  const { root, db } = await fixture();
+  const dataDir = path.join(root, "data");
+  const { startHub } = await import("../src/lifecycle.js");
+  const { KnowledgeStore } = await import("@nema/knowledge");
+  const { repoPath } = await import("../src/workspaces.js");
+  const ws = await createWorkspace(db, dataDir, "Startup tags");
+  await new KnowledgeStore(repoPath(dataDir, ws.id)).upsert({ kind: "requirement", title: "Tagged", body: "b", reason: "r", sourceMessages: [], tags: ["api"] }, { author: "user" });
+  await db.query("insert into entry_index(workspace_id,entry_id,kind,title,status) values ($1,'R-1','requirement','Old','active')", [ws.id]);
+  // An invalid port fails at listen without requiring sandbox socket permissions.
+  await expect(startHub({ db, dataDir, nemaHome: path.join(root, "home"), daemonToken: "fake", port: -1, webOrigin: "http://localhost:3000" })).rejects.toThrow();
+  expect(await db.query("select tags from entry_index where workspace_id=$1", [ws.id])).toEqual([{ tags: ["api"] }]);
+});

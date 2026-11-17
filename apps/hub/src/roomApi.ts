@@ -1,3 +1,4 @@
+import { tagGuard } from "./tags.js";
 import { Readable } from "node:stream";
 import { Hono } from "hono";
 import { sourceEvidenceEntries, sourceEvidenceSummary } from "./sourceFreshness.js";
@@ -174,15 +175,26 @@ export function roomRoutes(deps: {
       return c.json({ error: `entry not found: ${input.id}` }, 404);
     }
     let result;
+    let writtenEntry: Entry;
     try {
       // All evidence checks use the entry read under this same repository lock.
       result = await ks.upsert(input, { author: "agent", taskId }, async ({ existing, input: locked }) => {
+        await tagGuard(db, workspaceId, "agent")({ existing, input: locked });
         // The implementation is judged against the entry read under this lock, so a user confirmation that
         // landed after the Agent read the entry is never overwritten.
         const withImplementation = await guardStoredImplementation(db, workspaceId, existing, locked);
         const guarded = applyActiveDecisionGuard(existing, withImplementation, byId);
         await assertCurrentTaskUserEvidence(db, taskId, workspaceId, existing, guarded);
         return await applyExternalEvidenceGuard(db, taskId, workspaceId, ks, existing, guarded);
+      }, async (entry) => {
+        writtenEntry = entry;
+      }, async (commit) => {
+        // Publish before releasing the repo lock so the next guard sees this write.
+        try {
+          await indexEntry(db, workspaceId, writtenEntry, deps.ownedHelpers);
+        } catch (e) {
+          console.error(`room upsert: post-commit bookkeeping failed for ${writtenEntry.id} (commit ${commit})`, e);
+        }
       });
     } catch (e) {
       if (e instanceof UpsertRejected) {
@@ -203,7 +215,6 @@ export function roomRoutes(deps: {
     const { entry, commit, op } = result;
     // The commit is durable; failures below must not make the Agent retry (duplicate entry).
     try {
-      await indexEntry(db, workspaceId, entry, deps.ownedHelpers);
       await recordTaskChange(db, taskId, { entryId: entry.id, kind: entry.kind, title: entry.title, op });
       events.emit(workspaceId, { type: "knowledge.changed", entryId: entry.id });
     } catch (e) {

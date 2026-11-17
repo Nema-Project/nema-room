@@ -14,7 +14,7 @@ vi.mock("@/lib/hub", () => ({
 
 const entry: Entry = {
   id: "R-1", kind: "requirement", title: "Refund window", status: "active", businessDate: "2026-10-21",
-  related: ["Q-4"], sourceMessages: ["m_1", "m_2"], body: "Refunds within **7 days**.",
+  tags: [], related: ["Q-4"], sourceMessages: ["m_1", "m_2"], body: "Refunds within **7 days**.",
   basis: null, ingestedAt: null, confirmedAt: null, confirmedRevision: null, sourceRefs: [], quotes: [],
 };
 const hist = [
@@ -29,7 +29,7 @@ beforeEach(() => {
   vi.mocked(hub.putEntry).mockResolvedValue(entry);
   vi.mocked(hub.confirmEntry).mockResolvedValue(entry);
   vi.mocked(hub.listEntries).mockResolvedValue([
-    { id: "Q-4", kind: "question", title: "q4", status: "resolved", businessDate: null, related: [], priority: 2, isNew: false, basis: null, confirmedAt: null },
+    { id: "Q-4", kind: "question", title: "q4", status: "resolved", businessDate: null, tags: [], related: [], priority: 2, isNew: false, basis: null, confirmedAt: null },
   ]);
   vi.mocked(hub.listMessages).mockResolvedValue(
     ["m_1", "m_2"].map((id, i) => ({ id, workspaceId: "w1", role: "user" as const, content: `message ${id}`, meta: null, taskId: null, createdAt: "2026-10-21T14:00:00Z", editedAt: null, threadId: null, seq: i + 1 })),
@@ -242,7 +242,7 @@ describe("EntryDetail", () => {
   it("the update button posts and shows 已排队更新", async () => {
     localStorage.setItem("nema.locale", "zh");
     const diagram: Entry = {
-      ...entry, id: "G-1", kind: "diagram", title: "系统架构", related: [], sourceMessages: [], body: "后端的模块。",
+      ...entry, id: "G-1", kind: "diagram", title: "系统架构", tags: [], related: [], sourceMessages: [], body: "后端的模块。",
       diagram: { repoId: "rp_a", type: "architecture", sourceCommits: { rp_a: "0123456789abcdef0123" }, nodePaths: { api: ["src/api"], db: ["src/db"], ui: ["web"] } },
     };
     vi.mocked(hub.getEntry).mockResolvedValue(diagram);
@@ -401,4 +401,30 @@ describe("EntryDetail", () => {
     expect(screen.getByRole("tab", { name: "Overview" })).toBeTruthy();
     expect(hub.getWorkPackage).toHaveBeenCalledWith("w1", "W-1");
   });
+});
+
+
+it("normalizes tag previews and saves tags, refusing invalid input", async () => {
+  await mount();
+  await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+  await userEvent.type(screen.getByLabelText("Tags"), "Payment Flow");
+  expect(screen.getByText("#payment-flow")).toBeTruthy();
+  await userEvent.type(screen.getByLabelText("Reason for change"), "organize");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(hub.putEntry).toHaveBeenCalledWith("w1", "R-1", expect.objectContaining({ tags: ["payment-flow"] }));
+});
+
+it("invalid tags never save and a server rejection is shown", async () => {
+  await mount();
+  await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+  await userEvent.type(screen.getByLabelText("Tags"), "#bad");
+  await userEvent.type(screen.getByLabelText("Reason for change"), "organize");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(hub.putEntry).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toBeTruthy();
+  await userEvent.clear(screen.getByLabelText("Tags"));
+  await userEvent.type(screen.getByLabelText("Tags"), "api");
+  vi.mocked(hub.putEntry).mockRejectedValueOnce(new Error("workspace tag limit reached"));
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByText(/workspace tag limit reached/)).toBeTruthy();
 });

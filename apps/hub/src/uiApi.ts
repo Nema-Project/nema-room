@@ -1,8 +1,9 @@
+import { tagGuard } from "./tags.js";
 import { sourceEvidenceEntries, sourceEvidenceSummary } from "./sourceFreshness.js";
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z, ZodError } from "zod";
-import { KnowledgeStore, blameParagraphs, git, history, versionAt, parseCommitMessage } from "@nema/knowledge";
+import { KnowledgeStore, UpsertRejected, blameParagraphs, git, history, versionAt, parseCommitMessage } from "@nema/knowledge";
 import { KNOWLEDGE_LANGUAGES, MessageMentions, UpsertEntryInput, parseMcpConfig, citedReports, confirmableImplementation, kindFromId, canonicalJson, parseSkillSource, reportPassed, safeRepoPath } from "@nema/shared";
 import type { Implementation, ReportMessageMeta, WorkPackageMeta } from "@nema/shared";
 import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
@@ -176,6 +177,7 @@ export function uiRoutes(deps: UiDeps): Hono {
   const app = new Hono();
 
   app.onError((e, c) => {
+    if (e instanceof UpsertRejected) return c.json({ error: e.message }, e.status);
     if (e instanceof HttpError) return c.json({ error: e.message }, e.status);
     if (e instanceof ArchivedWorkspaceError) return c.json({ error: e.message }, 409);
     if (e instanceof WorkPackageError) return c.json({ error: e.message }, e.status);
@@ -810,13 +812,24 @@ export function uiRoutes(deps: UiDeps): Hono {
     // Implementation is kept as stored: the user changes it only through the implementation confirm.
     const { implementation: _implementation, ...edit } = parsed.data;
     const audit = confirmation(ws, "put");
+    let writtenEntry: Entry;
     const { entry, commit } = await store(ws).upsert(
       { ...edit, basis: parsed.data.kind === "decision" ? "decided" : "stated", confirmed: true },
-      audit.meta, undefined, audit.prepare, audit.consume,
+      audit.meta, tagGuard(db, ws, "user"), async (entry, existing) => {
+        writtenEntry = entry;
+        return audit.prepare(entry, existing);
+      }, async (commit) => {
+        await audit.consume(commit);
+        // Publish before releasing the repo lock so the next guard sees this write.
+        try {
+          await indexEntry(db, ws, writtenEntry, deps.ownedHelpers);
+        } catch (e) {
+          console.error(`ui upsert: post-commit bookkeeping failed for ${writtenEntry.id} (commit ${commit})`, e);
+        }
+      },
     );
     // The commit is durable; bookkeeping failures must not fail the request.
     try {
-      await indexEntry(db, ws, entry, deps.ownedHelpers);
       events.emit(ws, { type: "knowledge.changed", entryId: entry.id });
     } catch (e) {
       console.error(`ui upsert: post-commit bookkeeping failed for ${entry.id} (commit ${commit})`, e);

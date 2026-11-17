@@ -21,6 +21,7 @@ async function shareableWorkspace(db: Db, dataDir: string, name: string): Promis
 function baseEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "kind" | "status">): Entry {
   return {
     title: "Ship the share",
+    tags: [],
     businessDate: null,
     related: ["D-2"],
     sourceMessages: ["secret-chat-marker"],
@@ -332,6 +333,7 @@ describe("public share routes", () => {
       {
         kind: "decision",
         title: "Ship it",
+        tags: ["支付"],
         body: "visible body",
         reason: "record",
         sourceMessages: ["secret-chat-marker"],
@@ -371,6 +373,7 @@ describe("public share routes", () => {
     const body = await res.text();
     expect(body).toContain("Alpha");
     expect(body).toContain("Ship it");
+    expect(JSON.parse(body).entries.find((e: { id: string }) => e.id === decision.entry.id).tags).toEqual(["支付"]);
     expect(body).not.toContain("secret-chat-marker");
     expect(body).not.toContain("secret/path.ts");
     expect(body).not.toContain("secret/file.ts");
@@ -381,6 +384,7 @@ describe("public share routes", () => {
     const entryBody = await entry.text();
     expect(entry.status).toBe(200);
     expect(entryBody).toContain("public quote");
+    expect(JSON.parse(entryBody).tags).toEqual(["支付"]);
     expect(entryBody).not.toContain("messageId");
     expect(entryBody).not.toContain("snapshotHash");
     expect(entryBody).not.toContain("rev-secret");
@@ -740,4 +744,14 @@ describe("share read rate limit", () => {
     expect(takeShareSlot("known", "fresh", 0)).toBe(true);
     for (let i = 0; i < 120; i++) expect(takeShareSlot("known", "k0", 0)).toBe(true);
   });
+});
+
+
+test("tags alone extend the public allow-list and empty tags preserve its shape", () => {
+  const plain = baseEntry({ id: "R-1", kind: "requirement", status: "active" });
+  expect(toPublicSummary(plain)).not.toHaveProperty("tags");
+  const tagged = baseEntry({ id: "R-1", kind: "requirement", status: "active", tags: ["支付"], sourceMessages: ["private-message"] });
+  expect(toPublicSummary(tagged)).toEqual({ ...toPublicSummary(plain), tags: ["支付"] });
+  expect(toPublicEntry(tagged).tags).toEqual(["支付"]);
+  expect(JSON.stringify(toPublicEntry(tagged))).not.toMatch(/sourceMessages|messageId|private-message/);
 });

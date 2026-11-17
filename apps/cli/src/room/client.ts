@@ -17,6 +17,18 @@ export function capText(text: string, maxBytes = MAX_TOOL_OUTPUT_BYTES): string 
 export type RoomResult = { ok: true; json: unknown } | { ok: false; status: number; error: string };
 export type AttachmentResult = { ok: true; bytes: Buffer; mime: string } | { ok: false; status: number; error: string };
 
+/** Keep both tool transports honest when an older hub silently drops tags. */
+export function withTagSupportNotice(input: unknown, result: RoomResult): RoomResult {
+  if (!result.ok || !input || typeof input !== "object" || !("tags" in input)) return result;
+  const body = result.json;
+  if (body && typeof body === "object" && "entry" in body && body.entry && typeof body.entry === "object" && !("tags" in body.entry)) {
+    // Put the notice first so the direct transport's output cap cannot cut it off.
+    const { notice: _oldNotice, ...response } = body as Record<string, unknown>;
+    return { ok: true, json: { notice: "hub 不支持 tags，tags 未写入", ...response } };
+  }
+  return result;
+}
+
 /** The largest attachment the hub stores (PDF, 20 MB): the default cap on one attachment download. */
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 

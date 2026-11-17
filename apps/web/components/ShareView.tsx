@@ -6,6 +6,7 @@ import { useT } from "@/lib/i18n";
 export type ShareListEntry = {
   id: string;
   title: string;
+  tags?: string[];
   body?: string;
   status?: string;
   basis?: string | null;
@@ -38,6 +39,7 @@ function ShareMetadata({ entry }: { entry: ShareListEntry }) {
     : entry.implementationStatus ? t(`impl.${entry.implementationStatus}`) : null;
   return (
     <dl>
+      {!!entry.tags?.length && <><dt>{t("tags.title")}</dt><dd>{entry.tags.map(tag => <a key={tag} href={`?tag=${encodeURIComponent(tag)}`}>#{tag} </a>)}</dd></>}
       {entry.status && <><dt>{t("share.entryStatus")}</dt><dd>{t(`${statusKey}.${entry.status}`)}</dd></>}
       {entry.basis && <><dt>{t("detail.basis")}</dt><dd>{t(`basis.${entry.basis}`)}</dd></>}
       {entry.confirmedAt && <><dt>{t("detail.confirmedAt")}</dt><dd><time dateTime={entry.confirmedAt}>{entry.confirmedAt}</time></dd></>}
@@ -59,16 +61,20 @@ export function ShareView({
   workspaceName,
   entries,
   entry,
+  selectedTag,
 }: {
   token: string;
   workspaceName: string;
   entries: ShareListEntry[];
   entry?: ShareEntryView;
+  selectedTag?: string;
 }) {
   const t = useT();
   return (
     <main>
       <h1>{workspaceName}</h1>
+      {selectedTag !== undefined && <a href="?">{t("tags.clear")}</a>}
+      {!entries.length && <p>{t("tags.empty")}</p>}
       <ul>
         {entries.map((item) => (
           <li key={item.id}>

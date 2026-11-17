@@ -4,6 +4,7 @@ import { MENTION_LIMITS, keepMentionsFor, mentionText, type MessageMention } fro
 export type MentionContextResponse = {
   status: "ok";
   entries: Array<{ id: string; kind: string; title: string; status: string }>;
+  tags?: Array<{ tag: string; active: number; inactive: number }>;
   attachments: Array<{ id: string; name: string; kind: string; size: number; messageId: string; createdAt: string }>;
   threads: Array<{ id: string; title: string; lastReplyAt: string | null }>;
   truncated: boolean;
@@ -13,7 +14,7 @@ export type MentionContextResponse = {
   attachmentBudgetExhausted?: boolean;
 };
 
-export type MentionCandidate = { type: MessageMention["type"]; id: string; label: string; hint: string; text: string };
+export type MentionCandidate = { type: MessageMention["type"] | "tag"; active?: number; inactive?: number; id: string; label: string; hint: string; text: string };
 export type MentionGroup = { kind: MentionCandidate["type"]; items: MentionCandidate[] };
 
 export type MentionToken = { query: string; start: number; end: number };
@@ -71,6 +72,7 @@ export function groupCandidates(_q: string, ctx: MentionContextResponse): Mentio
   }));
   return [
     { kind: "entry", items: entries },
+    { kind: "tag", items: (ctx.tags ?? []).slice(0, cap).map(t => ({ type: "tag", id: t.tag, label: `#${t.tag}`, hint: "", text: "", active: t.active, inactive: t.inactive })) },
     { kind: "attachment", items: attachments },
     { kind: "thread", items: threads },
   ];
@@ -82,4 +84,12 @@ export { MENTION_LIMITS };
 /** The mentions whose stored text is still in the body: the same counting rule the hub applies on edit. */
 export function syncMentions(content: string, mentions: readonly MessageMention[]): MessageMention[] {
   return keepMentionsFor(content, mentions);
+}
+
+
+/** Expand a navigation tag to the exact entry pointers visible at selection time. Never truncate. */
+export function expandTag(tag: string, entries: MentionContextResponse["entries"], remaining: number): { text: string; mentions: MessageMention[] } | { error: "tooMany"; count: number } {
+  if (entries.length > remaining) return { error: "tooMany", count: entries.length };
+  const mentions: MessageMention[] = entries.map(entry => ({ type: "entry", id: entry.id, text: `[${entry.id}]` }));
+  return { text: `#${tag}：${mentions.map(m => m.text).join(" ")}`, mentions };
 }

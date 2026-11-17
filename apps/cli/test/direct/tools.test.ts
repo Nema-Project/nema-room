@@ -36,9 +36,11 @@ describe("roomTools", () => {
     });
   });
 
-  test("upsert_entry parameters list basis as required", () => {
+  test("upsert_entry requires basis and sourceMessages while keeping bounded tags", () => {
     const upsert = roomTools([]).find((t) => t.name === "upsert_entry");
-    expect((upsert?.parameters as { required?: string[] }).required).toContain("basis");
+    const schema = upsert!.parameters as { required?: string[]; properties: Record<string, unknown> };
+    expect(schema.required).toEqual(expect.arrayContaining(["basis", "sourceMessages"]));
+    expect(schema.properties.tags).toMatchObject({ type: "array", maxItems: 8 });
   });
 
   test("upsert_entry leaves the hub-kept implementation evidence keys optional", () => {
@@ -136,4 +138,27 @@ test("read_skill is only known when the task has a Skill reader", async () => {
   expect(await dispatchTool("read_skill", '{"name":"x"}', room, [])).toMatchObject({ known: false });
   const reader = { read: async (args: string) => `read ${args}` } as never;
   expect(await dispatchTool("read_skill", '{"name":"x"}', room, [], reader)).toEqual({ output: 'read {"name":"x"}', known: true, wrote: false });
+});
+
+
+test("upsert tag schema is a bounded array", () => {
+  const schema = roomTools([]).find(t => t.name === "upsert_entry")!.parameters as any;
+  expect(schema.properties.tags).toMatchObject({ type: "array", maxItems: 8, items: { type: "string" } });
+});
+
+test.each([{ tags: undefined }, { tags: [] }])("upsert tool notices an old hub only when tags are absent (%j)", async ({ tags }) => {
+  const ok = async (): Promise<RoomResult> => ({ ok: true, json: { entry: { id: "R-1", ...(tags === undefined ? {} : { tags }) } } });
+  const room = { listEntries: ok, readEntry: ok, upsertEntry: ok, openThread: ok, callPlugin: ok, offerSkillInstall: ok };
+  const result = await dispatchTool("upsert_entry", JSON.stringify({ tags: ["api"] }), room);
+  expect(result.output.includes("hub 不支持 tags，tags 未写入")).toBe(tags === undefined);
+  const plain = await dispatchTool("upsert_entry", "{}", room);
+  expect(plain.output).not.toContain("hub 不支持 tags");
+});
+
+test("old-hub tag notice survives truncation of a large entry", async () => {
+  const ok = async (): Promise<RoomResult> => ({ ok: true, json: { entry: { id: "R-1", body: "x".repeat(128 * 1024) } } });
+  const room = { listEntries: ok, readEntry: ok, upsertEntry: ok, openThread: ok, callPlugin: ok, offerSkillInstall: ok };
+  const result = await dispatchTool("upsert_entry", '{"tags":["api"]}', room);
+  expect(result.output).toContain("hub 不支持 tags，tags 未写入");
+  expect(result.output).toContain("已截断");
 });

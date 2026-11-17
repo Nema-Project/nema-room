@@ -34,6 +34,7 @@ Nema Room is a local copilot for keeping a software project aligned. Requests, c
 
 ## Why Nema Room
 
+- **Navigate by tags.** Label knowledge entries, filter the panel by one tag, expand a tag in `@` into active entry mentions, and browse tags on share pages.
 - **Align understanding.** Bring scattered notes into one record. When a statement conflicts with an active decision, the copilot asks in a thread and waits for you.
 - **Keep the reasoning.** Requirements, decisions, tradeoffs, and open questions retain their sources. User statements and agent inferences stay distinguishable.
 - **Version your knowledge.** Changes have Git history. Correct or retract an entry without erasing where it came from.
