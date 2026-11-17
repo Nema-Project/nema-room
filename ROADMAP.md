@@ -233,7 +233,7 @@ v0.1.5 已公开发布：npm、hub/web 镜像与桌面产物的发布流水线�
 
 ## 下一项
 
-P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实现已由 PR #54 合入，最终验收已于 2026-11-17 完成（记录见 [#25 评论](https://github.com/Nema-Project/nema-room/issues/25#issuecomment-6936006267)，spec §515 第 1–8 条均有通过证据，三套测试在当前 main 上 44/44 通过）；设计已随 [PR #27](https://github.com/Nema-Project/nema-room/pull/27) 合入，实施前置 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 已由 [PR #30](https://github.com/Nema-Project/nema-room/pull/30) 完成。它不代替 P0-01、P0-02。
+P0-01 与 P0-02 仍在进行中。连接器侧刚完成的是 CX-03：实现已由 PR #54 合入，最终验收已于 2026-11-17 完成（记录见 [#25 评论](https://github.com/Nema-Project/nema-room/issues/25#issuecomment-6936006267)，spec §515 第 1–8 条均有通过证据，三套测试在当前 main 上 44/44 通过）；下一项尚未选定。设计已随 [PR #27](https://github.com/Nema-Project/nema-room/pull/27) 合入，实施前置 [issue #28](https://github.com/Nema-Project/nema-room/issues/28) 已由 [PR #30](https://github.com/Nema-Project/nema-room/pull/30) 完成。它不代替 P0-01、P0-02。
 
 | ID | 事项与依据 | 状态 | 验收标准 |
 | --- | --- | --- | --- |
@@ -314,3 +314,4 @@ P0-01 与 P0-02 仍在进行中。连接器侧的下一项是 CX-03：实现已�
 | 2026-11-10 | P1-10 | Cursor Agent | [PR #217](https://github.com/Nema-Project/nema-room/pull/217) | v0.2.4 | 已发布。annotated tag `v0.2.4` 解引用到 `1b05a4c3`。Windows x64 与 macOS arm64 安装包的冷启动、暖启动和覆盖升级仍没有真机验收。[#131](https://github.com/Nema-Project/nema-room/issues/131) 的真实账户验收仍没有。P1-10 仍是进行中 |
 | 2026-11-10 | 174 | Cursor Agent | [issue #174](https://github.com/Nema-Project/nema-room/issues/174) / [PR #211](https://github.com/Nema-Project/nema-room/pull/211) | v0.2.4 | 360 秒预算第一次用于真实晋升。[run 42818088692](https://github.com/Nema-Project/nema-room/actions/runs/42818088692) 一次成功。npm latest 与 provenance 在 `298536ms`（298.5 秒，约占 360 秒预算的 83%）后同时可见。不改变该 issue 的状态 |
 | 2026-11-10 | P1-10 | Cursor Agent | [issue #186](https://github.com/Nema-Project/nema-room/issues/186) / [PR #222](https://github.com/Nema-Project/nema-room/pull/222) | 未承诺 | Windows 上同一次进程里的私有文件 ACL 共用一个 PowerShell，每次检查仍然执行。放宽后的 DACL 仍会被拒绝。不预置 PGlite 数据目录。平台 CI 记录源码级冷/暖 `createLocalDb` 与 Windows 空 PowerShell 对照，不是打包后的安装包 bench。P1-10 仍是进行中 |
+| 2026-11-17 | CX-03 | Muse | [issue #25](https://github.com/Nema-Project/nema-room/issues/25) | v0.3.0 | 最终验收完成：spec §515 第 1–8 条均有通过证据，三套测试（sourceImport / evidenceEvents / sourceFreshness）在当前 main 上 44/44 通过，`docs/reference.zh-CN.md` 逐项核对一致，记录见 [#25 评论](https://github.com/Nema-Project/nema-room/issues/25#issuecomment-6936006267)。状态改为已完成 |
