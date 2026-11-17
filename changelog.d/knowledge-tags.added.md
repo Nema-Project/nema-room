@@ -1,1 +1,0 @@
-- Knowledge entries can carry tags: filter the panel by a tag, pick a tag in @ to mention its active entries, and see tags on share pages.
