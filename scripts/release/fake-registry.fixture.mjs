@@ -1,4 +1,5 @@
-// Test-only fake of npm, GHCR and the GitHub API, shaped like the real v0.1.6 answers.
+// Test-only fake of npm, GHCR and the GitHub API. The two-platform images are synthetic,
+// not a claim about the architectures of historical v0.1.6 artifacts.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { renderComposeAsset } from '../images/check-images.mjs';
@@ -8,6 +9,8 @@ const template = readFileSync(new URL('../../docker-compose.yml', import.meta.ur
 export const COMMIT = '280b224589ae13d4db99a4481bcd0baf58cf273d';
 export const OTHER_COMMIT = '1111111111111111111111111111111111111111';
 export const integrityOf = (text) => `sha512-${createHash('sha512').update(text).digest('base64')}`;
+
+export const imageDigest = (value) => `sha256:${createHash('sha256').update(value).digest('hex')}`;
 
 const response = (status, body, headers = {}) => ({
   status,
@@ -132,28 +135,31 @@ export function fakeFetch(w) {
       const [, repository, kind, reference] = match;
       if (init.headers?.Authorization !== `Bearer token-${repository}`) return response(401, { errors: [{ code: 'UNAUTHORIZED' }] });
       const images = w.images[repository] ?? {};
+      const lookup = (prefix) => Object.keys(images).flatMap((ref) => ['amd64', 'arm64'].map((arch) => ({ ref, arch }))).find(({ ref, arch }) => imageDigest(`${prefix}-${arch}-${ref}`) === reference);
       if (kind === 'blobs') {
-        const ref = reference.replace(/^sha256:config-/, '');
+        const { ref, arch } = lookup('config') ?? {};
         const image = images[ref];
-        if (image?.brokenConfig) return response(404, { errors: [{ code: 'BLOB_UNKNOWN' }] });
+        if (!image || image.brokenConfig || image[`${arch}BrokenConfig`]) return response(404, { errors: [{ code: 'BLOB_UNKNOWN' }] });
+        const label = Object.hasOwn(image, `${arch}Label`) ? image[`${arch}Label`] : image.label;
         const labels = { 'org.opencontainers.image.source': 'https://github.com/Nema-Project/nema-room' };
-        if (image?.label) labels['org.opencontainers.image.version'] = image.label;
-        return response(200, { os: 'linux', architecture: 'amd64', config: { Labels: labels } });
+        if (label) labels['org.opencontainers.image.version'] = label;
+        return response(200, { os: 'linux', architecture: image[`${arch}Architecture`] ?? arch, config: { Labels: labels } });
       }
-      if (reference.startsWith('sha256:child-')) {
-        const ref = reference.slice('sha256:child-'.length);
-        if (images[ref]?.brokenChild) return response(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] });
-        const entries = [];
-        if (!images[ref]?.noPlatform) entries.push({ mediaType: 'application/vnd.oci.image.manifest.v1+json', digest: `sha256:amd64-${ref}`, platform: { os: 'linux', architecture: 'amd64' } });
-        entries.push({ mediaType: 'application/vnd.oci.image.manifest.v1+json', digest: `sha256:att-${ref}`, platform: { os: 'unknown', architecture: 'unknown' } });
+      const childRef = Object.keys(images).find((ref) => imageDigest(`child-${ref}`) === reference);
+      if (childRef) {
+        const image = images[childRef];
+        if (image.brokenChild) return response(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] });
+        const entries = (image.noPlatform ? [] : image.arches ?? ['amd64', 'arm64']).map((arch) => ({
+          mediaType: 'application/vnd.oci.image.manifest.v1+json', digest: imageDigest(`image-${arch}-${childRef}`), platform: { os: 'linux', architecture: arch },
+        }));
+        if (image.duplicate) entries.push(entries[0]);
+        entries.push({ mediaType: 'application/vnd.oci.image.manifest.v1+json', digest: imageDigest(`att-${childRef}`), platform: { os: 'unknown', architecture: 'unknown' } });
         return response(200, { schemaVersion: 2, mediaType: 'application/vnd.oci.image.index.v1+json', manifests: entries });
       }
-      if (reference.startsWith('sha256:amd64-')) {
-        const ref = reference.slice('sha256:amd64-'.length);
-        return response(200, { schemaVersion: 2, config: { digest: `sha256:config-${ref}` }, layers: [] });
-      }
+      const leaf = lookup('image');
+      if (leaf) return response(200, { schemaVersion: 2, config: { digest: imageDigest(`config-${leaf.arch}-${leaf.ref}`) }, layers: [] });
       if (!images[reference]) return response(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] });
-      return response(200, { schemaVersion: 2, mediaType: 'application/vnd.oci.image.index.v1+json', manifests: [{ mediaType: 'application/vnd.oci.image.index.v1+json', digest: `sha256:child-${reference}` }] }, { 'docker-content-digest': `sha256:top-${reference}` });
+      return response(200, { schemaVersion: 2, mediaType: 'application/vnd.oci.image.index.v1+json', manifests: [{ mediaType: 'application/vnd.oci.image.index.v1+json', digest: imageDigest(`child-${reference}`), ...(images[reference].parentPlatform ? { platform: images[reference].parentPlatform } : {}) }] }, { 'docker-content-digest': imageDigest(`top-${reference}`) });
     }
     if ((match = /^https:\/\/api\.github\.com\/repos\/Nema-Project\/nema-room\/git\/ref\/tags\/(.+)$/.exec(url))) {
       const tag = w.tags[match[1]];

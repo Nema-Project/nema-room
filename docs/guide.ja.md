@@ -117,7 +117,7 @@ npm run up
 
 `npm run up` はこのチェックアウトから hub と web をビルドします。Linux と macOS では、上の `export` は UID/GID が 1000 かどうかに関係なく、コンテナのユーザーをホストのユーザーにします。Windows の Docker Desktop ではこの export は不要です。`NEMA_HUB_PORT`（既定 4400）は公開されるホストのポートと hub の待受ポートの両方です。`NEMA_WEB_PORT`（既定 3000）はホストのポートだけを変えます。web コンテナは起動時に `NEMA_HUB_URL` を読み、compose はそれを `http://127.0.0.1:$NEMA_HUB_PORT` にします。
 
-clone せずにピン留めしたイメージを pull できるのは tag `v0.1.4` からです。この tag はイメージ公開ワークフローを含み、これらのイメージの最初の公開です（`linux/amd64`。arm64 は [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。このリポジトリのツリーにある `docker-compose.yml` はテンプレートで、hub と web の `image:` は `${NEMA_IMAGE_TAG:-latest}` の展開なので、ツリーには使えるバージョンがありません。`v0.1.6` 以降の各 Release には、hub と web のイメージをその Release の版に固定したレンダリング済み `docker-compose.yml` が添付されます。これはその Release の固定名の資産なので、現在の版は常に [`releases/latest/download/docker-compose.yml`](https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml) にあります。インストール時はその版をローカルの `.env` の `NEMA_IMAGE_TAG` に固定します。clone しないインストール手順：
+clone せずにピン留めしたイメージを pull できるのは tag `v0.1.4` からです。この tag はイメージ公開ワークフローを含み、これらのイメージの最初の公開です。多アーキテクチャのワークフローで公開するリリースは `linux/amd64` と `linux/arm64` に対応し、Docker がホストのアーキテクチャを自動選択します。過去のリリースタグは変わらず、arm64 を含まない場合があります。このリポジトリのツリーにある `docker-compose.yml` はテンプレートで、hub と web の `image:` は `${NEMA_IMAGE_TAG:-latest}` の展開なので、ツリーには使えるバージョンがありません。`v0.1.6` 以降の各 Release には、hub と web のイメージをその Release の版に固定したレンダリング済み `docker-compose.yml` が添付されます。これはその Release の固定名の資産なので、現在の版は常に [`releases/latest/download/docker-compose.yml`](https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml) にあります。インストール時はその版をローカルの `.env` の `NEMA_IMAGE_TAG` に固定します。clone しないインストール手順：
 
 ```sh
 # 1. fetch the compose asset. With no NEMA_IMAGE_TAG in .env this is the

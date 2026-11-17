@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { COMMIT, integrityOf, io, releaseAssets, world } from './fake-registry.fixture.mjs';
+import { COMMIT, imageDigest, integrityOf, io, releaseAssets, world } from './fake-registry.fixture.mjs';
 import {
   checkReleaseAssets,
   expectedReleaseAssets,
@@ -93,7 +93,7 @@ test('GHCR: walks the nested index to the linux/amd64 version label', async () =
   assert.equal(result.state, 'ok');
   assert.equal(result.evidence.label, '0.1.6');
   assert.equal(result.evidence.revision, null, 'the published images carry no revision label');
-  assert.equal(result.evidence.platformDigest, 'sha256:amd64-0.1.6');
+  assert.equal(result.evidence.platformDigest, imageDigest('image-amd64-0.1.6'));
 });
 
 test('GHCR: missing tag, denied anonymous access and an attestation-only index are missing; token outage is unknown', async () => {
@@ -302,4 +302,44 @@ test('#174: the publish time comes from the packument time map, and an unreadabl
   // an absent signal must never be read as "so it cannot be lagging" (or as anything else).
   assert.equal((await readNpmPublishedAt(io(world()).io, '0.1.6')).state, 'unknown');
   assert.equal((await readNpmPublishedAt(io(world('0.1.6', { fail: [[/registry\.npmjs\.org/, 503]] })).io, '0.1.6')).state, 'unknown');
+});
+
+test('GHCR: both platform configs are evidence; missing arm64 is rejected', async () => {
+  const w = world();
+  const complete = await readImage(io(w).io, HUB, 'latest');
+  assert.deepEqual(Object.keys(complete.evidence.platforms).sort(), ['linux/amd64', 'linux/arm64']);
+  w.images[HUB].latest.arches = ['amd64'];
+  const missing = await readImage(io(w).io, HUB, 'latest');
+  assert.equal(missing.state, 'missing');
+  assert.match(missing.detail, /linux\/arm64/);
+});
+
+test('GHCR: legacy amd64 latest is allowed only for ordering through 0.2.6', async () => {
+  const w = world();
+  w.images[HUB].latest = { label: '0.2.6', arches: ['amd64'] };
+  assert.equal((await readImage(io(w).io, HUB, 'latest')).state, 'missing');
+  const legacy = await readImage(io(w).io, HUB, 'latest', { allowLegacy: true });
+  assert.equal(legacy.state, 'ok');
+  assert.equal(legacy.evidence.legacy, true);
+  w.images[HUB].latest.label = '0.2.7';
+  assert.equal((await readImage(io(w).io, HUB, 'latest', { allowLegacy: true })).state, 'missing');
+  w.images[HUB]['0.1.6'] = { label: '0.1.6', arches: ['amd64'] };
+  assert.equal((await readImage(io(w).io, HUB, '0.1.6', { allowLegacy: true })).state, 'missing');
+});
+
+test('GHCR: arm64 label or config mismatch and duplicate descriptors fail closed', async () => {
+  for (const override of [{ arm64Label: '0.1.5' }, { arm64Architecture: 'amd64' }, { duplicate: true }]) {
+    const w = world();
+    Object.assign(w.images[HUB]['0.1.6'], override);
+    const result = await readImage(io(w).io, HUB, '0.1.6');
+    assert.equal(result.state, 'missing', JSON.stringify(override));
+  }
+});
+
+test('GHCR: a platform-labelled parent cannot hide a conflicting runnable child', async () => {
+  const w = world();
+  w.images[HUB]['0.1.6'].parentPlatform = { os: 'linux', architecture: 'arm64' };
+  const result = await readImage(io(w).io, HUB, '0.1.6');
+  assert.equal(result.state, 'missing');
+  assert.match(result.detail, /parent platform/);
 });

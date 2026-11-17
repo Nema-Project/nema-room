@@ -52,7 +52,7 @@ async function imagesItem(io, version) {
   const hub = await readImage(io, IMAGE_REPOSITORIES.hub, version);
   const web = await readImage(io, IMAGE_REPOSITORIES.web, version);
   const result = combine([hub, web], () => ({ hub: hub.evidence, web: web.evidence }));
-  if (result.state === 'ok') result.detail = `hub ${hub.evidence.platformDigest ?? hub.evidence.digest}, web ${web.evidence.platformDigest ?? web.evidence.digest} (linux/amd64)`;
+  if (result.state === 'ok') result.detail = `hub ${hub.evidence.digest}, web ${web.evidence.digest} (linux/amd64, linux/arm64)`;
   return result;
 }
 
@@ -181,7 +181,7 @@ function pointerFromImage(result) {
   if (!result.evidence.label) return { state: 'unknown', version: null, detail: `${result.evidence.reference} has no version label` };
   const pointer = versionPointer(result.evidence.label, result.evidence.reference);
   // The digest lets promote tell "latest has this version's label" from "latest is the verified index".
-  return pointer.state === 'version' ? { ...pointer, digest: result.evidence.digest ?? null } : pointer;
+  return pointer.state === 'version' ? { ...pointer, digest: result.evidence.digest ?? null, ...(result.evidence.legacy ? { legacy: true } : {}) } : pointer;
 }
 
 /** The two npm channel pointers, from one dist-tags read. `latest` and `next` share that single answer. */
@@ -215,7 +215,7 @@ export async function readPointers(io) {
     : latestRelease.state === 'missing' ? { state: 'absent', version: null } : { state: 'unknown', version: null, detail: latestRelease.detail };
   return {
     npm,
-    ghcr: { hub: pointerFromImage(await readImage(io, IMAGE_REPOSITORIES.hub, 'latest')), web: pointerFromImage(await readImage(io, IMAGE_REPOSITORIES.web, 'latest')) },
+    ghcr: { hub: pointerFromImage(await readImage(io, IMAGE_REPOSITORIES.hub, 'latest', { allowLegacy: true })), web: pointerFromImage(await readImage(io, IMAGE_REPOSITORIES.web, 'latest', { allowLegacy: true })) },
     github: { latest: github },
   };
 }
@@ -258,7 +258,7 @@ export function formatReport(report) {
 }
 
 function describePointer(pointer) {
-  if (pointer.state === 'version') return pointer.version;
+  if (pointer.state === 'version') return `${pointer.version}${pointer.legacy ? ' (legacy linux/amd64; ordering only)' : ''}`;
   if (pointer.state === 'absent') return '(none)';
   return `UNKNOWN (${pointer.detail ?? 'unavailable'})`;
 }

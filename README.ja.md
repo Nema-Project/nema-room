@@ -88,7 +88,7 @@ node scripts/setup.mjs --lang ja
 
 ウィザードが依存関係を確認し、ソースからビルドしてサービスを起動し、モデル設定を案内します。既存の `.env` は保持されます。ホストの daemon を起動したままにして、[localhost:3000](http://localhost:3000) を開きます。確認のみ：`node scripts/setup.mjs --lang ja --check`。
 
-**クローンせずに使う。** `v0.1.6` 以降の各リリースには、hub と web のイメージ（`linux/amd64`）をそのバージョンに固定した `docker-compose.yml` が付きます。ホストの daemon は `npm i -g @nema-project/nema@<バージョン>` で同じバージョンを入れます。hub、web、daemon は一致している必要があり、自動では更新されません。手順のスクリプト、更新方法、ポートは[インストールガイド](docs/guide.ja.md#source-installation)と [Web / Compose の動作条件](docs/guide.ja.md#requirements)を参照してください。
+**クローンせずに使う。** `v0.1.6` 以降の各リリースには、hub と web のイメージをそのバージョンに固定した `docker-compose.yml` が付きます。多アーキテクチャのワークフローで公開するリリースは `linux/amd64` と `linux/arm64` に対応し、Docker がホストのアーキテクチャを自動選択します。過去のリリースタグは変わらず、arm64 を含まない場合があります。ホストの daemon は `npm i -g @nema-project/nema@<バージョン>` で同じバージョンを入れます。hub、web、daemon は一致している必要があり、自動では更新されません。手順のスクリプト、更新方法、ポートは[インストールガイド](docs/guide.ja.md#source-installation)と [Web / Compose の動作条件](docs/guide.ja.md#requirements)を参照してください。
 
 ## 議論から実装まで
 

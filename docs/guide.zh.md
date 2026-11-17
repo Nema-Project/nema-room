@@ -117,7 +117,7 @@ npm run up
 
 `npm run up` 用当前检出构建 hub 和 web。在 Linux 和 macOS 上，上面的 `export` 把容器用户设成当前主机用户，UID/GID 不是 1000 时也一样。Windows 上的 Docker Desktop 不需要这条 export。`NEMA_HUB_PORT`（默认 4400）同时是宿主机发布端口和 hub 的监听端口。`NEMA_WEB_PORT`（默认 3000）只改宿主机端口。web 容器启动时读取 `NEMA_HUB_URL`；compose 把它设为 `http://127.0.0.1:$NEMA_HUB_PORT`。
 
-不克隆、直接拉取钉死镜像，从 tag `v0.1.4` 开始。这个 tag 包含镜像发布工作流，也是这些镜像的第一次发布（`linux/amd64`；arm64 见 [issue #50](https://github.com/Nema-Project/nema-room/issues/50)）。本仓库树里的 `docker-compose.yml` 是模板，hub 与 web 的 `image:` 用 `${NEMA_IMAGE_TAG:-latest}` 插值，树里没有可用的版本。从 `v0.1.6` 起，每个 Release 都附上一份渲染好的 `docker-compose.yml`，hub 与 web 镜像都钉在该 Release 的版本上。它是该 Release 的固定名资产，所以当前版本始终在 [`releases/latest/download/docker-compose.yml`](https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml)；安装时把它的版本锁进本地 `.env` 的 `NEMA_IMAGE_TAG`。不克隆的安装步骤：
+不克隆、直接拉取钉死镜像，从 tag `v0.1.4` 开始。这个 tag 包含镜像发布工作流，也是这些镜像的第一次发布。多架构工作流发布的版本支持 `linux/amd64` 和 `linux/arm64`，Docker 会自动选择宿主机架构。旧版本 tag 不变，可能不含 arm64。本仓库树里的 `docker-compose.yml` 是模板，hub 与 web 的 `image:` 用 `${NEMA_IMAGE_TAG:-latest}` 插值，树里没有可用的版本。从 `v0.1.6` 起，每个 Release 都附上一份渲染好的 `docker-compose.yml`，hub 与 web 镜像都钉在该 Release 的版本上。它是该 Release 的固定名资产，所以当前版本始终在 [`releases/latest/download/docker-compose.yml`](https://github.com/Nema-Project/nema-room/releases/latest/download/docker-compose.yml)；安装时把它的版本锁进本地 `.env` 的 `NEMA_IMAGE_TAG`。不克隆的安装步骤：
 
 ```sh
 # 1. fetch the compose asset. With no NEMA_IMAGE_TAG in .env this is the

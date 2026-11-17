@@ -436,13 +436,13 @@ test('image-publish or desktop-release push runs that did not pass stop before v
 
 test('the image-publish push run must have passed its pull smoke, the desktop run its builds and publish', () => {
   const verify = ['verify / Workflow lint', ...[1, 2, 3, 4, 5, 6].map((shard) => `verify / Application tests (${shard}/6)`), 'verify / Application build and Compose smoke', 'verify / Platform checks (macos-latest)', 'verify / Platform checks (windows-latest)', 'verify / npm pack smoke (ubuntu-latest)', 'verify / npm pack smoke (windows-latest)', 'verify / npm pack smoke (macos-latest)'];
-  const image = ['Resolve release version', ...verify, 'Build and smoke images', 'Publish images', 'Pull published images'].map((name) => ({ name, conclusion: 'success' }));
+  const image = ['Resolve release version', ...verify, 'Build and smoke images (amd64)', 'Build and smoke images (arm64)', 'Publish images', 'Pull published images (amd64)', 'Pull published images (arm64)'].map((name) => ({ name, conclusion: 'success' }));
   const desktop = ['Resolve release version', ...verify, 'Build and smoke (darwin-arm64)', 'Build and smoke (win32-x64)', 'Publish release'].map((name) => ({ name, conclusion: 'success' }));
   assert.doesNotThrow(() => assertTagRunJobs('image-publish.yml', image, 1, image.length));
   assert.doesNotThrow(() => assertTagRunJobs('desktop-release.yml', desktop, 2, desktop.length));
   const set = (jobs, name, conclusion) => jobs.map((job) => (job.name === name ? { ...job, conclusion } : job));
-  assert.throws(() => assertTagRunJobs('image-publish.yml', set(image, 'Pull published images', 'failure'), 1, image.length), /image-publish push run 1: Pull published images did not run and pass \(Pull published images=failure\)/);
-  assert.throws(() => assertTagRunJobs('image-publish.yml', image.filter((job) => job.name !== 'Pull published images'), 1, image.length - 1), /Pull published images did not run and pass \(no such job\)/);
+  assert.throws(() => assertTagRunJobs('image-publish.yml', set(image, 'Pull published images (arm64)', 'failure'), 1, image.length), /image-publish push run 1: Pull published images \(arm64\) did not run and pass \(Pull published images \(arm64\)=failure\)/);
+  assert.throws(() => assertTagRunJobs('image-publish.yml', image.filter((job) => job.name !== 'Pull published images (arm64)'), 1, image.length - 1), /Pull published images \(arm64\) did not run and pass \(no such job\)/);
   assert.throws(() => assertTagRunJobs('desktop-release.yml', set(desktop, 'Build and smoke (win32-x64)', 'skipped'), 2, desktop.length), /Build and smoke \(win32-x64\) did not run and pass/);
   // A missing matrix leg is refused even when total_count agrees with the shorter answer.
   const noWin = desktop.filter((job) => job.name !== 'Build and smoke (win32-x64)');
