@@ -129,7 +129,10 @@ test("backfill preserves the whole workspace when a kind directory cannot be lis
   const snapshot = () => db.query("select entry_id,tags,tags_indexed_at from entry_index where workspace_id=$1 order by entry_id", [wsA]);
   const before = await snapshot();
   const kindDir = path.join(repoPath(dataDir, wsA), "questions");
+  // A regular file at the directory path makes readdir fail with ENOTDIR, even as root;
+  // a merely missing directory is normal (empty kind) and must not abort the scan.
   await rm(kindDir, { recursive: true });
+  await writeFile(kindDir, "");
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   try {
     await backfillEntryTags(db, dataDir);
@@ -138,6 +141,7 @@ test("backfill preserves the whole workspace when a kind directory cannot be lis
     expect(await db.query("select tags,tags_indexed_at >= updated_at as fresh from entry_index where workspace_id=$1", [wsB])).toEqual([{ tags: ["other"], fresh: true }]);
   } finally {
     warn.mockRestore();
+    await rm(kindDir);
     await mkdir(kindDir);
   }
   await backfillEntryTags(db, dataDir);

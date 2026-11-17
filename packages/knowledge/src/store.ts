@@ -453,7 +453,7 @@ export class KnowledgeStore {
     });
   }
 
-  /** Inventory entry paths without reading them; an unlistable kind directory makes absence uncertain. */
+  /** Inventory entry paths without reading them; missing kind directories are empty, other listing failures make absence uncertain. */
   async scanEntryFileIds(): Promise<{ ids: string[]; complete: boolean }> {
     const ids: string[] = [];
     let complete = true;
@@ -463,8 +463,8 @@ export class KnowledgeStore {
         for (const name of names) {
           if (name.endsWith(".md") && !WP_DOC_FILE.test(name)) ids.push(name.slice(0, -3));
         }
-      } catch {
-        complete = false;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") complete = false;
       }
     }
     return { ids, complete };

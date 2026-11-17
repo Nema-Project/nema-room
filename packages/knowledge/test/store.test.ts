@@ -56,7 +56,10 @@ describe("KnowledgeStore", () => {
     expect(scan.ids.sort()).toEqual(["D-2", "Q-3", "R-1", "WP-1"]);
   });
 
-  test.each(["missing", "not-directory"])("scanEntryFileIds reports an incomplete scan for a %s kind directory", async (failure) => {
+  test.each([
+    { failure: "missing", complete: true },
+    { failure: "not-directory", complete: false },
+  ])("scanEntryFileIds reports complete=$complete for a $failure kind directory", async ({ failure, complete }) => {
     const s = new KnowledgeStore(dir);
     await s.init();
     await writeFile(path.join(dir, "requirements", "R-1.md"), LEGACY);
@@ -65,8 +68,8 @@ describe("KnowledgeStore", () => {
     await rm(kindDir, { recursive: true });
     if (failure === "not-directory") await writeFile(kindDir, "not a directory");
     const scan = await s.scanEntryFileIds();
-    expect(scan.complete).toBe(false);
-    expect(scan.ids).toContain("R-1");
+    expect(scan.complete).toBe(complete);
+    expect(scan.ids).toEqual(["R-1"]);
   });
 
   test("init creates dirs and an init commit", async () => {
