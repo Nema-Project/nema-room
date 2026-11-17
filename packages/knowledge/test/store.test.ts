@@ -40,6 +40,35 @@ async function commitLegacy(): Promise<void> {
 }
 
 describe("KnowledgeStore", () => {
+  test("scanEntryFileIds inventories filenames without parsing and excludes work package documents", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await writeFile(path.join(dir, "requirements", "R-1.md"), LEGACY);
+    await writeFile(path.join(dir, "decisions", "D-2.md"), "invalid entry");
+    // Like an unreadable file, this path is present but cannot be read as an entry.
+    await mkdir(path.join(dir, "questions", "Q-3.md"));
+    await writeFile(path.join(dir, "workpackages", "WP-1.md"), "invalid entry");
+    await writeFile(path.join(dir, "workpackages", "WP-1.spec.md"), "spec");
+    await writeFile(path.join(dir, "workpackages", "WP-1.plan.md"), "plan");
+    await writeFile(path.join(dir, "diagrams", "DG-1.json"), "{}");
+    const scan = await s.scanEntryFileIds();
+    expect(scan.complete).toBe(true);
+    expect(scan.ids.sort()).toEqual(["D-2", "Q-3", "R-1", "WP-1"]);
+  });
+
+  test.each(["missing", "not-directory"])("scanEntryFileIds reports an incomplete scan for a %s kind directory", async (failure) => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await writeFile(path.join(dir, "requirements", "R-1.md"), LEGACY);
+    const kindDir = path.join(dir, "questions");
+    // ENOENT / ENOTDIR are deterministic even where chmod cannot deny directory access.
+    await rm(kindDir, { recursive: true });
+    if (failure === "not-directory") await writeFile(kindDir, "not a directory");
+    const scan = await s.scanEntryFileIds();
+    expect(scan.complete).toBe(false);
+    expect(scan.ids).toContain("R-1");
+  });
+
   test("init creates dirs and an init commit", async () => {
     const s = new KnowledgeStore(dir);
     await s.init();

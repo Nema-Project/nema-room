@@ -453,6 +453,23 @@ export class KnowledgeStore {
     });
   }
 
+  /** Inventory entry paths without reading them; an unlistable kind directory makes absence uncertain. */
+  async scanEntryFileIds(): Promise<{ ids: string[]; complete: boolean }> {
+    const ids: string[] = [];
+    let complete = true;
+    for (const kind of KINDS) {
+      try {
+        const names = await readdir(path.join(this.repoDir, KIND_DIR[kind]));
+        for (const name of names) {
+          if (name.endsWith(".md") && !WP_DOC_FILE.test(name)) ids.push(name.slice(0, -3));
+        }
+      } catch {
+        complete = false;
+      }
+    }
+    return { ids, complete };
+  }
+
   private async readAll(): Promise<Entry[]> {
     const out: Entry[] = [];
     for (const kind of KINDS) {

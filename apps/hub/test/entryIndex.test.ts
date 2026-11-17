@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { afterAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import type { Db } from "../src/db/db.js";
 import { KnowledgeStore } from "@nema/knowledge";
@@ -118,4 +118,31 @@ test.each([null, "2000-01-01T00:00:00.000Z"])("backfill preserves unreadable ent
   }
   await backfillEntryTags(db, dataDir);
   expect(await db.query("select tags, tags_indexed_at >= updated_at as fresh from entry_index where workspace_id=$1", [wsA])).toEqual([{ tags: ["real"], fresh: true }]);
+});
+
+test("backfill preserves the whole workspace when a kind directory cannot be listed", async () => {
+  await add(wsA, { kind: "requirement", title: "Tagged", tags: ["real"] });
+  await add(wsB, { kind: "requirement", title: "Other workspace", tags: ["other"] });
+  await db.query("insert into entry_index(workspace_id,entry_id,kind,title,status,tags,updated_at) values ($1,'R-99','requirement','Deleted','active',$2,clock_timestamp())", [wsA, ["deleted"]]);
+  await db.query("update entry_index set tags_indexed_at=null");
+  await db.query("update entry_index set tags=$2 where workspace_id=$1 and entry_id='R-1'", [wsA, ["previous"]]);
+  const snapshot = () => db.query("select entry_id,tags,tags_indexed_at from entry_index where workspace_id=$1 order by entry_id", [wsA]);
+  const before = await snapshot();
+  const kindDir = path.join(repoPath(dataDir, wsA), "questions");
+  await rm(kindDir, { recursive: true });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await backfillEntryTags(db, dataDir);
+    expect(await snapshot()).toEqual(before);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(wsA));
+    expect(await db.query("select tags,tags_indexed_at >= updated_at as fresh from entry_index where workspace_id=$1", [wsB])).toEqual([{ tags: ["other"], fresh: true }]);
+  } finally {
+    warn.mockRestore();
+    await mkdir(kindDir);
+  }
+  await backfillEntryTags(db, dataDir);
+  expect(await db.query("select entry_id,tags,tags_indexed_at >= updated_at as fresh from entry_index where workspace_id=$1 order by entry_id", [wsA])).toEqual([
+    { entry_id: "R-1", tags: ["real"], fresh: true },
+    { entry_id: "R-99", tags: [], fresh: true },
+  ]);
 });

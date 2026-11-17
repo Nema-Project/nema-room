@@ -96,12 +96,24 @@ export async function backfillEntryTags(db: Db, dataDir: string, ownedHelpers?: 
   for (const { workspace_id: workspaceId } of workspaces) {
     try {
       const repo = repoPath(dataDir, workspaceId);
-      // listEntries tolerates missing kind folders; a missing/unreadable repository is a failure,
-      // rather than evidence that every indexed file was deleted.
+      // A missing/unreadable repository or kind directory is not evidence of deleted entries.
       await access(repo, constants.R_OK | constants.X_OK);
       if (!(await stat(repo)).isDirectory()) throw new Error("repository is not a directory");
-      const entries = await new KnowledgeStore(repo, ownedHelpers).listEntries();
+      const store = new KnowledgeStore(repo, ownedHelpers);
+      const inventory = await store.scanEntryFileIds();
+      if (!inventory.complete) throw new Error("entry file inventory is incomplete");
+      const candidates = await db.query<{ entry_id: string }>(
+        `select entry_id from entry_index where workspace_id = $1
+           and (tags_indexed_at is null or tags_indexed_at < updated_at)`,
+        [workspaceId],
+      );
+      const entries = await store.listEntries();
       const tags = Object.fromEntries(entries.map(entry => [entry.id, entry.tags]));
+      const present = new Set(inventory.ids);
+      for (const { entry_id: id } of candidates) {
+        // Present but unparseable entries retain their tags and stamp for a later retry.
+        if (!Object.hasOwn(tags, id) && !present.has(id)) tags[id] = [];
+      }
       await db.query(
         `update entry_index set
            tags = array(select jsonb_array_elements_text(coalesce($2::jsonb -> entry_id, '[]'::jsonb))),
