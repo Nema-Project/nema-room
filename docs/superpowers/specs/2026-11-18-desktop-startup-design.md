@@ -61,7 +61,7 @@ issue 的四条验收建议里：启动画面 1s 内出现、失败在窗口内�
 
 ### W2 冷启动 DB 复核（只评估）
 
-- **做法**：取 `verify.yml` 平台 job 日志里 `scripts/ci/startup-sample.mjs` 的 JSON，读其 fresh-process 冷/热 `createLocalDb` 总时长，与 2026-11-10 设计在 Linux 主机上的数字（冷中位 1605ms、热中位 264ms，其中迁移约 102/61ms）并列记录在本 issue。注意单次运行每个平台只产一份冷样本，D-3 要用的中位数不能取自单份日志：须跨最近至少 5 次独立运行收集 `windows-latest` 与 `macos-latest` 各自的冷总时长，排序后取中间值（样本数为 5 时即第 3 个），热总时长同口径附记。若 Windows 冷开销显著高于 Linux（例如两倍以上），再单独立项讨论预置数据目录（2026-11-10 的 D-1 方案 A）及其恢复方案。
+- **做法**：取 `verify.yml` 平台 job 日志里 `scripts/ci/startup-sample.mjs` 的 JSON，读其 fresh-process 冷/热总时长（样本的 `totalMs`：PGlite 构造与迁移的重新计时，与 `createLocalDb` 同一分解、并非该函数的直接计时；2026-11-10 基线同口径，下文与 D-3 的两倍判据都指这个数），与 2026-11-10 设计在 Linux 主机上的数字（冷中位 1605ms、热中位 264ms，其中迁移约 102/61ms）并列记录在本 issue。注意单次运行每个平台只产一份冷样本，D-3 要用的中位数不能取自单份日志：须跨最近至少 5 次独立运行收集 `windows-latest` 与 `macos-latest` 各自的冷总时长，排序后取中间值（样本数为 5 时即第 3 个），热总时长同口径附记。若 Windows 冷开销显著高于 Linux（例如两倍以上），再单独立项讨论预置数据目录（2026-11-10 的 D-1 方案 A）及其恢复方案。
 - **预期收益**：本版不产生速度收益，产出的是「改或不改」的依据数字。
 - **风险**：无（只读 CI 日志与记录）。注意 CI runner 的冷数字含 WASM 首次编译，与用户机器同口径，但 runner 性能波动大，只看量级不看个位数。
 - **依赖**：`startup-sample` 已在 `verify.yml` 平台 job 中运行（已核对，`.github/workflows/verify.yml` :86）。
@@ -75,7 +75,7 @@ issue 的四条验收建议里：启动画面 1s 内出现、失败在窗口内�
 
 ### W4 启动链剩余串行段（只测量，不改造）
 
-- **做法**：用 core 自身的 `startup-phase` 打点看 lease 与 private-files 两段的量级：`startLocalRuntime`（`apps/local/src/runtime.ts` :428、:503）把每个阶段连同 elapsed ms 写成 JSON 行到 stdout，`apps/local/test/runtime.test.ts` 的 `startupPhases` 助手正是解析这些行取每阶段 ms（该测试集由 CI 平台 job 承载），托管 core 场景下也可用 `NEMA_LOCAL_CORE_LOG` 把这份 stdout 落盘后读取；CI 的 `startup-sample` 不产 `startup-phase` 行，不作本项来源。两段在 web spawn 之前，issue 旧表里合计约 1.2–1.8s，但那是含旧 ACL 行为的 v0.2.1 数字。本版不改顺序：web spawn 提前到 lease 之前会动到实例所有权与 teardown 语义，收益未经证实不动。
+- **做法**：用 core 自身的 `startup-phase` 打点看 lease 与 private-files 两段的量级：`startLocalRuntime`（`apps/local/src/runtime.ts` :428、:503）把每个阶段连同 elapsed ms 写成 JSON 行到 stdout，`apps/local/test/runtime.test.ts` 的 `startupPhases` 助手正是解析这些行取每阶段 ms（该测试集在 CI 的 ubuntu 单元分片中运行，不在平台 job；平台侧的阶段采样由实施计划新增的采样承载脚本在 `verify.yml` 平台 job 中产出并保存在 job 日志里），托管 core 场景下也可用 `NEMA_LOCAL_CORE_LOG` 把这份 stdout 落盘后读取；CI 的 `startup-sample` 不产 `startup-phase` 行，不作本项来源。两段在 web spawn 之前，issue 旧表里合计约 1.2–1.8s，但那是含旧 ACL 行为的 v0.2.1 数字。本版不改顺序：web spawn 提前到 lease 之前会动到实例所有权与 teardown 语义，收益未经证实不动。
 - **预期收益**：无直接收益；若两段在新数字里仍占大头，下一版再立项。
 - **风险**：无。
 - **依赖**：无。
@@ -151,7 +151,7 @@ ACL 校验语义不得放松，这一点在 2026-11-10 设计里已论证过一�
 - **W1**：`apps/web` 构建产物的 chunk 清单前后对照随 PR 给出（首屏入口 chunk 的字节数变化可查）；被拆分的非首屏面板有按需加载的组件测试或构建证据；`WorkspaceShell` 骨架与直达行为的既有测试保持全绿。
 - **W2**：#186 上留一条评估记录，含按 W2 口径从至少 5 次 `verify.yml` 运行收集的 `startup-sample` 冷/热 `createLocalDb` 中位数（`windows-latest` 与 `macos-latest`）、与 2026-11-10 Linux 数字的对照、以及「触发/不触发预置目录立项」的结论。没有这条记录，W2 不算完成。
 - **W3**：ROADMAP P1-10 的验收行改写为新口径并注明打包数字的主动放弃；#186 按新口径逐项对账后关闭或保留明确的剩余项。
-- **回归线（既有能力不许退）**：窗口在 `ensureLocalRuntime` 返回前已显示且背景色随主题；启动失败时错误出现在启动窗口文档内而非只有模态框；子进程回报 `db` 阶段时启动文档显示对应文案；web 被挡住时 `startup-phase` 的 `db` 可早于 `web`；Windows 上一次启动内 ACL helper 启动次数为每进程 1 次且 8 次校验逐次执行，放宽 ACL 后再次打开仍抛 `cannot verify private Windows ACL`（既有测试集，CI 平台 job 承载）。
+- **回归线（既有能力不许退）**：窗口在 `ensureLocalRuntime` 返回前已显示且背景色随主题；启动失败时错误出现在启动窗口文档内而非只有模态框；子进程回报 `db` 阶段时启动文档显示对应文案；web 被挡住时 `startup-phase` 的 `db` 可早于 `web`；Windows 上一次启动内 ACL helper 启动次数为每进程 1 次、校验逐次执行且无缓存；校验次数随描述文件状态而变，不是固定值：启动时无残留描述文件（全新 home，或上次已正常关闭并清除）时为 2026-11-10 逐项点名的 8 次（父进程 3 + core 5），此状态下 `readDescriptor` 的 `openPrivateFile` 在 `lstat` 阶段即因文件不存在而失败、不产生校验；启动时残留上次未正常关闭留下的有效描述文件时，父进程发现路径的 `readDescriptor`、`acquireInstance` 的 `readDescriptor` 与 `removeDescriptorIfOwner` 各多执行 1 次校验（至少多 3 次），总数不再是 8——不变量是「每次打开都实际校验」，不是某个与状态无关的总数。放宽 ACL 后再次打开仍抛 `cannot verify private Windows ACL`（既有测试集，CI 平台 job 承载）。
 - **启动画面时限**：issue 的「点击后 1s 内出现启动画面」保留为目标而非门槛——它只能在打包应用上测，本版以 lifecycle 测试中「窗口先于 core 就绪显示」的既有断言为据，并在 W2/W3 的记录里注明该时限未在真实硬件上复测。
 
 ## 不做的事

@@ -8,7 +8,7 @@
 - W1 在 `apps/web` 内完成：先用现有构建产物量出首屏 chunk 构成，再只把非首屏面板改成 `next/dynamic` 按需加载，沿用 `WorkspaceShell.tsx` 里 `AppSettings`/`WorkspaceSettings` 已有的拆分形态。首屏组件（`Chat`、`EntryDetail`、`KnowledgePanel`、`Sidebar`）保持静态，除非分析证据表明其中有可分离的非首屏部分。
 - W2 不写代码：从 CI 平台 runner 的 `startup-sample` 输出收集样本，按规格口径算中位数，记录回 #186，并按 D-3 的两倍规则给出「触发/不触发另行立项」的结论。
 - W3 只改文档与状态记录：ROADMAP P1-10 的验收行改写为 D-6 口径，#186 逐项对账。
-- W4 不写代码：用 core 自身的 `startup-phase` 打点记录 lease 与 private-files 两段的量级，不动启动顺序。
+- W4 不改生产代码（只给平台 job 补一条采样承载）：用 core 自身的 `startup-phase` 打点记录 lease 与 private-files 两段的量级，不动启动顺序。
 
 **Tech Stack:** Next.js（`apps/web`）、TypeScript、Vitest、GitHub Actions（`verify.yml` 平台 job、`scripts/ci/startup-sample.mjs`）、`apps/local` 运行时测试。
 
@@ -86,7 +86,7 @@
 **Files:** 无代码改动。数据源：`verify.yml` 平台 job 日志中 `scripts/ci/startup-sample.mjs` 的 JSON 输出（`.github/workflows/verify.yml` :86 起的平台 job）。记录去向：issue #186 评论。
 
 **口径（规格 W2，不得变通）：**
-- 每个平台（`windows-latest`、`macos-latest`）跨最近至少 5 次独立的 `verify.yml` 运行收集冷 `createLocalDb` 总时长，排序后取中间值（5 个样本取第 3 个）为冷中位；热总时长同口径附记。
+- 每个平台（`windows-latest`、`macos-latest`）跨最近至少 5 次独立的 `verify.yml` 运行收集冷样本，排序后取中间值（5 个样本取第 3 个）为冷中位；热样本同口径附记。先把样本数字的定义写死：`startup-sample.mjs` 并不调用 `createLocalDb`——它在 fresh process 里重演其两步（`new PGlite(dir)` 并等 `waitReady` 得 `readyMs`，再跑 hub 的 `migrate` 得 `migrateMs`），本计划以其 `totalMs` 作为 `createLocalDb` 总时长的代理量；下文「冷/热总时长」一律指这个 `totalMs`，2026-11-10 的 Linux 基线同为 ready + migrate 的分解数字、同一口径可比，D-3 的两倍判定也只对 `totalMs` 做。
 - 对照基线：2026-11-10 设计在 Linux 主机上的数字——冷中位 1605ms、热中位 264ms（其中迁移约 102/61ms）。
 - D-3 判定：windows-latest 冷中位达到 Linux 冷中位约两倍（≈3210ms 量级）→ 结论为「触发」，另行立项讨论预置数据目录（2026-11-10 的 D-1 方案 A）及其恢复方案；未达到 → 结论为「不触发」，维持选 B，本项关闭。
 
@@ -100,11 +100,11 @@
 
 **Spec:** W4、D-1（只测量不改造）；安全不变量第 4 条。
 
-**Files:** 无代码改动。数据源：core 自身写到 stdout 的 `startup-phase` JSON 行（`apps/local/src/runtime.ts` :428 的 `lease`、:503 的 `private-files`，每行带 elapsed ms），由 `apps/local/test/runtime.test.ts` 的 `startupPhases` 助手解析（该测试集由 CI 平台 job 承载）；托管 core 场景可用 `NEMA_LOCAL_CORE_LOG` 落盘后读取。`scripts/ci/startup-sample.mjs` 不产 `startup-phase` 行，不作本项来源。
+**Files:** 不改生产代码；唯一的仓库改动是给 W4 补测量承载：新增 `scripts/ci/startup-phase-sample.mjs` 与 `.github/workflows/verify.yml` 平台 job 的一个采样步骤。数据源：core 自身写到 stdout 的 `startup-phase` JSON 行（`apps/local/src/runtime.ts` :428 的 `lease`、:503 的 `private-files`；每行 `ms` 是自 `startedAt` 起的累计值，不是单段时长）。先纠正一处旧说法：`apps/local/test/runtime.test.ts` 只在 Linux 的 unit 分片里运行，不在平台 job 内，其 `startupPhases` 助手解析出的 ms 只供测试内断言、不落任何记录——平台 job 今天不产 `startup-phase` 样本，它只能作行格式的参照，不能作本项来源；`NEMA_LOCAL_CORE_LOG` 落盘是打包/手工路径的手段，同样不作 CI 来源。本项的采样路径就是新增的那一步：新脚本仿 `startup-sample.mjs` 的形态（fresh 子进程 + tsx，一次性临时目录），用与 `runtime.test.ts` 的 `testAssets()` 相同的造法备假 assets 与一次性 home，进程内启动一次 `startLocalRuntime`，让 `startup-phase` 行原样落到 stdout 后关闭运行时；平台 job 在两平台各跑一次，行随 job 日志保存，记录引 run id 为出处。这是新增采样承载，不改 `startup-sample` 的测量内容、不改启动顺序与校验路径。`scripts/ci/startup-sample.mjs` 不产 `startup-phase` 行，不作本项来源。
 
-**产出：** 一条记录（贴 #186 或随 Task 5 的 PR），含 lease 与 private-files 两段在 CI 平台 job 中的量级（平台、样本出处、ms 范围/中位），以及与 issue 旧表（v0.2.1、含旧 ACL 行为，合计约 1.2–1.8s）的对照说明。
+**产出：** 一条记录（贴 #186 或随 Task 5 的 PR），含 lease 与 private-files 两段在 CI 平台 job 中的量级（平台、样本出处、段时长范围/中位），以及与 issue 旧表（v0.2.1、含旧 ACL 行为，合计约 1.2–1.8s）的对照说明。
 
-- [ ] 从最近 CI 平台 job 的运行时测试输出或 `NEMA_LOCAL_CORE_LOG` 采集样本中，提取两段的 elapsed ms。
+- [ ] 落地采样路径（见上）：脚本与平台 job 步骤就位后，从最近至少 5 次平台 job 运行的采样步骤输出中提取各阶段累计 `ms`，相邻相减得段时长——lease 段 = `lease.ms` − `helper-scope.ms`，private-files 段 = `private-files.ms` − `lease.ms`；`ms` 是累计值，直接当段时长会把前段重复计入。
 - [ ] 按平台汇总量级，注明样本数与出处（run id）。
 - [ ] 写明结论：两段在新数字里是否仍占启动大头；无论结论如何，本版不改顺序、不做优化——若占大头，只建议下一版立项。
 - [ ] 记录贴到 #186（授权要求同 Task 3）。
@@ -116,7 +116,7 @@
 **Files:** `ROADMAP.md`（P1-10 条目）；issue #186 的对账评论。`scripts/desktop/bench-startup.mjs` 与 `scripts/ci/startup-sample.mjs` 本身不改。
 
 **改动：**
-- P1-10 验收行改写为 D-6 口径：Electron 侧行为由 lifecycle 自动化测试 + `desktop-mark` 打点覆盖；平台 DB/ACL 数字由 `startup-sample` 在 CI 平台 runner 持续记录（注明它只测 fresh-process 的 `createLocalDb` 冷/热总时长与 Windows ACL 微基准，不启动 core、不产 `startup-phase` 行）；core 各阶段时长来自 core stdout 的 `startup-phase` 行，由 `desktop:bench` 从 core 日志解析、由本地运行时测试解析断言；`desktop:bench` 为手工可选工具，引用数字注机型与安装包 SHA，不作合并门槛。
+- P1-10 验收行改写为 D-6 口径：Electron 侧行为由 lifecycle 自动化测试 + `desktop-mark` 打点覆盖；平台 DB/ACL 数字由 `startup-sample` 在 CI 平台 runner 持续记录（注明它只测 fresh-process 的 PGlite 就绪 + 迁移总时长——即 `createLocalDb` 两步的代理量，定义见 Task 3 口径——与 Windows ACL 微基准，不启动 core、不产 `startup-phase` 行）；core 各阶段时长来自 core stdout 的 `startup-phase` 行，由 `desktop:bench` 从 core 日志解析、由本地运行时测试解析断言；`desktop:bench` 为手工可选工具，引用数字注机型与安装包 SHA，不作合并门槛。
 - 改写中明说口径取舍：打包态的 Electron 启动、`requireSystemGit`、首帧时间继续没有数字；打包应用在真实用户硬件上的冷/热数字仍未采集，是按维护者 2026-11-16 测试政策主动放弃的证据，不是遗漏。
 - Task 1–4 的证据齐备后，P1-10 状态按 ROADMAP 状态词改为已完成（完成标记只依据验收证据，不因单个子任务落地提前标）。
 - #186 按新口径逐项对账：issue 五个问题逐条写明「已由哪个 PR/哪条证据关闭」或「剩余什么、归哪个任务/新 issue」。
@@ -130,11 +130,11 @@
 **Spec:** 规格「验收」一节、D-1、D-6。
 
 **关闭 #186 需要齐备的证据（逐项核对，缺一不可）：**
-- W1：Task 2 的 PR 已合并，含 chunk 前后对照（首屏入口 chunk 字节数可查）、被拆面板的按需加载测试、`apps/web` 既有测试与 lint/build 全绿；无新文案或三语文案齐备。
+- W1：以下两条满足其一即可——(a) Task 2 的 PR 已合并，含 chunk 前后对照（首屏入口 chunk 字节数可查）、被拆面板的按需加载测试、`apps/web` 既有测试与 lint/build 全绿；无新文案或三语文案齐备。(b) Task 1 分析经评审确认没有值得拆的候选、Task 2 按 Task 1 的约定跳过：以该分析记录（逐项不拆依据，以及 D-7 确认结论——`listWorkspaces()` 只发起一次、骨架覆盖等待期）加 `apps/web` 既有测试与 lint/build 全绿作为 W1 的关闭证据。
 - W2：#186 上有 Task 3 的评估记录（两平台 ≥5 次运行的冷/热中位、Linux 对照、D-3 触发/不触发结论）。
 - W3：ROADMAP P1-10 已按新口径改写并标已完成；#186 对账评论齐备。
 - W4：#186 上有 Task 4 的 lease/private-files 量级记录（只测量，无改造声明属实——本计划所有 PR 的 diff 不含启动顺序与校验路径改动）。
-- 回归线（既有能力不许退，全部由既有自动化测试承载、CI 平台 job 运行）：窗口在 `ensureLocalRuntime` 返回前已显示且背景色随主题；启动失败时错误出现在启动窗口文档内而非只有模态框；子进程回报 `db` 阶段时启动文档显示对应文案；web 被挡住时 `startup-phase` 的 `db` 可早于 `web`；Windows 上一次启动内 ACL helper 启动次数为每进程 1 次且 8 次校验逐次执行，放宽 ACL 后再次打开仍抛 `cannot verify private Windows ACL`。
+- 回归线（既有能力不许退，全部由既有自动化测试承载、CI 平台 job 运行）：窗口在 `ensureLocalRuntime` 返回前已显示且背景色随主题；启动失败时错误出现在启动窗口文档内而非只有模态框；子进程回报 `db` 阶段时启动文档显示对应文案；web 被挡住时 `startup-phase` 的 `db` 可早于 `web`；Windows 上一次启动内 ACL helper 启动次数为每进程 1 次、校验逐次执行且无缓存，次数按描述文件状态区分（无残留时 8 次；残留有效描述文件时读取与清除各多执行校验、至少多 3 次，口径见规格「验收」回归线），放宽 ACL 后再次打开仍抛 `cannot verify private Windows ACL`。
 - 诚实限定随关闭评论写明：issue 的「点击后 1s 内出现启动画面」只以 lifecycle 测试中「窗口先于 core 就绪显示」的既有断言为据，未在真实硬件上复测；打包数字未采集是政策性放弃（D-6）。
 
 - [ ] 逐项核对上列证据，缺项回到对应任务补齐，不降低标准凑关闭。

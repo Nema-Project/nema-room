@@ -46,7 +46,7 @@
 - 任务 2：篡改任一字节必须整次作废且不产生 active；「已改名、未写 current.json」这一点中断后重试必须自愈（复用或替换），不许要求手工删目录；改坏已落盘目录里的一个文件后重跑，坏目录被识别并替换、永不被激活。
 - 任务 3：解析顺序与状态区分。尤其 `apps/local/src/runtime.ts` 现在写死传 payload 内的 graphify bin——改后桌面 daemon 不得再指向不存在的随包路径；lock-hash 不一致时不得回退到旧版组件。
 - 任务 4：确认弹窗显示的大小与锁内 `size` 汇总一致；拒绝后不反复弹窗；失败只禁用图谱功能，无全局报错。
-- 任务 6：按 spec §5 的篡改用例——「改过的启动器 + 与之自洽的 manifest」必须导入失败且不产生 active 目录；归档集合与受信锁当前 target 条目恰好相等，多一个少一个都拒绝。
+- 任务 6：按 spec §5 的篡改用例——「改过的启动器（替换归档形式）+ 与之自洽的 manifest」必须导入失败且不产生 active 目录；另附预组装目录的形态按规则忽略、永不执行（断言 active 里的启动器来自安装器）；归档集合与受信锁当前 target 条目恰好相等，多一个少一个都拒绝。
 - 任务 5：payload 断言真的能拦住回归（把 graphify 塞回 staging 时发布检查变红），而不只是数字变小。
 
 ---
@@ -84,7 +84,7 @@
 - `installComponent(name, { confirm?, onProgress?, signal? }): Promise<ComponentStatus>`：只实现 `graphify` 一个组件名，未知组件名报错。进度事件含已下载/总量字节与当前文件名；`signal` 取消后清理 staging 并回到安装前状态。
 - `componentBin(name, env?): string | null`：返回 active 且 lock-hash 与当前锁一致时的启动器路径，否则 null（供任务 3 的解析改造调用）。
 - 下载规则（spec §4）：默认直连锁内 url；`NEMA_GRAPHIFY_PYTHON_MIRROR` 替换 python 条目 url 的来源前缀，`NEMA_GRAPHIFY_PYPI_BASE` 替换 wheels 的 files.pythonhosted.org 前缀；遵循 `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`，桌面形态可复用 #242 `proxyEnv` 的同一组变量（`apps/cli/src/config.ts` 的配置语义）；认 `NODE_EXTRA_CA_CERTS` 与 `SSL_CERT_FILE`。Node 内置 fetch 不读代理变量，下载器显式处理（用 undici 的 ProxyAgent / EnvHttpProxyAgent 或等价做法，实现时按仓库现有依赖定）。重试与超时按全局约束。
-- 安装流程（spec §3）：下载到 `~/.nema/runtime/graphify/<lock-hash>.staging/` → 逐文件 sha256 与 `size` 校验（任一不符整次作废）→ 解压 → 放入启动器（Windows 用随主程序资源的预构建 launcher，POSIX 写 shell 脚本）→ 自检（启动器可执行且 `python -m graphify --version` 成功）→ 改名为 `<lock-hash>` → 原子改写 `current.json`（`{ "active": ..., "previous": ... }`）。改名目标已存在时走 verify-or-replace：先核对该目录组装完整性并跑自检，全过则删 staging、跳过改名、直接写 `current.json` 复用；任一不过则整目录删除后改名到位。已存在目录恰为 current 记着的 active/previous 时同理。
+- 安装流程（spec §3）：下载到 `~/.nema/runtime/graphify/<lock-hash>.staging/` → 逐文件 sha256 与 `size` 校验（任一不符整次作废）→ 解压 → 放入启动器（Windows 用随主程序资源的预构建 launcher，POSIX 写 shell 脚本）→ 自检（启动器可执行且 `python -m graphify --version` 成功）→ 改名为 `<lock-hash>` → 原子改写 `current.json`（`{ "active": ..., "previous": ... }`）。改名目标已存在时走 verify-or-replace，且复用必须先过字节级核对、核对通过前不许执行已存在目录里的任何东西：锁只钉归档字节、没有组装后逐文件哈希表，完整性核对的口径因此定为——把已存在目录与本次刚由经锁校验的归档组装出的 staging 逐文件比对（文件集合恰好相等，且每个文件的 sha256 与 `size` 都一致；启动器按随主程序资源或安装器写出的规范字节比对）；全部一致才视为同一把已验归档的组装，删 staging、跳过改名、直接写 `current.json` 复用，自检结论用本次 staging 已通过的那次，不另跑已存在目录的启动器。任一文件缺失或不一致即整目录判无效、走替换；替换不得先毁掉 `current.json` 仍指向的目录：已存在目录恰为 current 记着的 active/previous 时，先把它改名到一旁的备份名（如 `<lock-hash>.replaced-<随机后缀>`），再把 staging 改名到位并原子改写 `current.json`，两步都成功后才删备份；改名或写指针任一步失败，则清掉未完成的 staging、把备份改回原名，`current.json` 保持原样、旧版继续可用。不被 current 指向的孤儿目录可直接整目录删除后改名到位。
 - 保留策略：保留 active 与 previous 两版，下一次成功安装后清理其余 `<lock-hash>` 目录。
 - 安装前磁盘空间检查与离线开关（`NEMA_GRAPHIFY_OFFLINE=1` / 配置 `components.offline`）按全局约束；musl 平台直接报 `unsupported-platform`（以 libc 检测为准，实现时按 Node 既有报告方式定）。
 
@@ -93,7 +93,7 @@
   - 用本地假源（本地 HTTP 服务或注入的 fetch 替身）走通完整安装：目录落 `<lock-hash>`、`current.json` 指向它、自检通过、状态变 `installed`。
   - **篡改字节：** 假源把任一文件改一个字节（sha256 或 size 对不上），安装失败、不产生 `<lock-hash>` 目录、`current.json` 不变、状态为 `failed` 且原因 `hash-mismatch`。
   - **中途中断：** 下载中途取消/杀掉，staging 被清，已有 active 版本仍可执行（用假二进制断言 `componentBin` 仍指向旧版）。
-  - **中断恢复（spec 验收项）：** 在「staging 已改名为 `<lock-hash>`、`current.json` 尚未写入」这一点中断（测试里直接构造该目录状态），再次安装必须成功并以该版为 active，不要求手工删目录；把已落盘 `<lock-hash>` 目录改坏一个文件后重跑，坏目录被识别并替换、不得被激活。
+  - **中断恢复（spec 验收项）：** 在「staging 已改名为 `<lock-hash>`、`current.json` 尚未写入」这一点中断（测试里直接构造该目录状态），再次安装必须成功并以该版为 active，不要求手工删目录；把已落盘 `<lock-hash>` 目录改坏一个文件后重跑，坏目录被识别并替换、不得被激活。复用判定另测：已存在目录与本次 staging 逐文件一致（集合、sha256、`size` 全对）才走复用，且断言其假启动器在核对通过前零执行（复用不靠跑它自检）；已存在目录恰为 active 且被判无效时，注入「staging 改名到位失败」，断言 `current.json` 不变、旧目录被备份恢复且仍可执行，替换与指针更新都成功后备份才被清理。
   - 镜像变量：两个镜像变量指向本地假源时，全程不访问上游域名且校验通过；假源给错字节时校验失败。
   - 代理变量被下载器 honor（假代理断言请求经过它）；离线开关打开时零下载尝试、直接报 `offline`。
   - 保留策略：连续装三版后只剩 active 与 previous。
@@ -142,7 +142,7 @@
 
 **Spec：** §7（README 原则修订在任务 8）、§8（发布流程衔接）、验收「体积」。
 
-**依赖：** 任务 3（运行时解析已改到组件仓库；先瘦身会让新版桌面包的图谱功能无处找 bin）。任务 4 不阻塞本任务。
+**依赖：** 任务 3（运行时解析已改到组件仓库；先瘦身会让新版桌面包的图谱功能无处找 bin）。任务 4 不阻塞本任务的代码合入，但有发布门禁：含本任务（slim payload）的版本，在任务 4（首次使用确认 UX）与任务 6（`nema components install`）落地前不得发布——否则用户拿到不含 Graphify 的 payload 却没有任何安装入口，D-4 定的确认路径也无从谈起；本任务须与任务 4、6 同版发布，任务 9 验收按此核对。
 
 **文件：** `scripts/desktop/stage-runtime.mjs`（:449 起的 `fetchGraphify` 组装段）、`scripts/desktop/payload-size.mjs`（graphify 一节的口径）、`scripts/desktop/validate-release.mjs` 与/或 `scripts/desktop/release.test.mjs`、`scripts/desktop/staging.test.mjs`、桌面发布流程里跑发布检查的入口（实现时按现有 workflow 落点）。
 
@@ -176,7 +176,7 @@
   - pack 产出的包：解开后归档与假源字节逐项一致，manifest 字段只有允许的索引项，不含组装目录。
   - import 正常路径：断网替身下导入成功，产出与在线安装同构（同 lock-hash 目录、`current.json` 一致），图谱自检通过。
   - lock-hash 或 target 不符的包被拒绝并给出明确原因；归档多一个/少一个都被拒绝。
-  - **篡改验收（spec §5/验收）：** 把包改成「改过的启动器（以预组装目录或替换归档形式）+ 与之自洽的 manifest」，导入必须失败且不产生 active 目录。
+  - **篡改验收（spec §5/验收）：** 分两形，与导入规则对齐：① 归档被替换或改了字节（改过的启动器以替换归档形式混入）+ 与之自洽的 manifest——归档与受信锁对不上，导入必须失败且不产生 active 目录；② 包内归档全部是锁内原样、只是另附一个含改过启动器的预组装目录——按导入规则该目录一律忽略、永不执行、不进入组装产物，导入成败只由归档决定（归档全对则导入成功），并断言 active 目录里的启动器是安装器按随主程序资源/规范文本放入的那一份，不是包里那份。
   - `install` 在离线开关打开时零下载并明确报错；`--yes` 与交互确认两条路径都覆盖。
 - [ ] 运行测试确认失败，实现后重跑至全绿；跑 `npm run typecheck -w apps/cli`。
 
@@ -217,7 +217,7 @@
 - [ ] **下载与校验（自动化证据）：** 任务 2 的篡改字节、中途中断、中断恢复（改名后未写 current.json、改坏已落盘文件）测试全绿记录在案。
 - [ ] **干净环境首次触发：** 无随包 graphify 的构建产物上第一次触发图谱功能，确认弹窗出现且显示大小与锁内 `size` 汇总一致；确认后装成 `<lock-hash>` 目录、`current.json` 指向它、图谱构建跑通。
 - [ ] **镜像变量：** 两个镜像变量指向本地假源，下载全程不访问上游域名且校验通过；假源给错字节时校验失败（任务 2 测试证据 + 一次真实形态复跑）。
-- [ ] **离线导入：** 在 A 机 `nema components pack graphify` 制包，拷到断网的 B 机（同平台）导入成功、图谱可用；lock-hash 或 target 不符的包被拒绝并给出明确原因；「改过的启动器 + 自洽 manifest」的包导入失败且不产生 active 目录。
+- [ ] **离线导入：** 在 A 机 `nema components pack graphify` 制包，拷到断网的 B 机（同平台）导入成功、图谱可用；lock-hash 或 target 不符的包被拒绝并给出明确原因；「改过的启动器以替换归档混入 + 自洽 manifest」的包导入失败且不产生 active 目录（另附预组装目录的包按规则忽略该目录、只由归档决定成败）。
 - [ ] **降级：** 下载必失败的环境（黑洞代理）里应用正常启动与使用非图谱功能，图谱入口显示失败原因与重试/导入出口，无全局报错弹窗。
 - [ ] **多形态：** npm 全新安装的 daemon（含 Linux x64/arm64 宿主机）走通确认→下载→可用；Compose 形态的宿主机 daemon 同样走通。
 - [ ] **风险项实测记录：** macOS 上下载所得 Python 是否受 Gatekeeper/隔离属性影响（实测结论写进发布记录，不只假设 Node 下载不带 quarantine）；Windows 杀软误报只能记录与提示，不作为勾选条件。
