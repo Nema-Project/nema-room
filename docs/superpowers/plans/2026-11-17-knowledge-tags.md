@@ -366,22 +366,22 @@ The spec predates the browse cursor (`e75ec4e`, after the spec's HEAD `f21843e`)
 
 This task requires its own authorization.
 
-- [ ] **Upgrade:** upgrade the old data directory. Record the migration and the first-start backfill time. Confirm that untagged entry files are byte-identical before and after one UI edit of another entry, using `git -C <repo> diff` on them.
-- [ ] **Create tags in the panel:** add `支付` and `Payment Flow` to two entries in the panel. Expect them stored as `支付` and `payment-flow`, with a commit `Author: user`. Try an invalid tag and expect an inline error.
-- [ ] **Filter:**
+- [x] **Upgrade:** upgrade the old data directory. Record the migration and the first-start backfill time. Confirm that untagged entry files are byte-identical before and after one UI edit of another entry, using `git -C <repo> diff` on them.
+- [x] **Create tags in the panel:** add `支付` and `Payment Flow` to two entries in the panel. Expect them stored as `支付` and `payment-flow`, with a commit `Author: user`. Try an invalid tag and expect an inline error.
+- [x] **Filter:**
   - Single-select the tag in the panel. Both views filter. Switching workspace clears the filter.
-- [ ] **Mention expansion:**
+- [x] **Mention expansion:**
   - In the composer type `@支` and choose the tag. The body gets `#支付：[…]`, and the stored message's `meta.mentions` contains only `entry` items.
   - Capture the prompt: it has the `# 现有 tags` section and ` | tags:` on the active lines.
   - Ask the agent to tag another entry `支付` and expect success with `Author: agent`.
   - Ask it to use a brand-new tag and expect the 400 explanation in the agent's tool result.
-- [ ] **Share:**
+- [x] **Share:**
   - Create a share link. The share page shows the tags, and `?tag=支付` filters the list on the server. Check this with `curl`, with no script.
-- [ ] **Unknown frontmatter:**
+- [x] **Unknown frontmatter:**
   - Hand-add `x_future: 1` to an entry file and commit it.
   - Edit that entry in the UI. The key survives.
-- [ ] **Record:** post the commands, versions, timings, redacted prompt excerpts and outcomes as a comment on #162. This is runtime evidence for Linux only. It is not user acceptance, and it is not evidence for other items.
+- [x] **Record:** post the commands, versions, timings, redacted prompt excerpts and outcomes as a comment on #162. This is runtime evidence for Linux only. It is not user acceptance, and it is not evidence for other items.
 
 ## Execution evidence
 
-Not started.
+Tasks 1–11 implemented and merged 2026-11-17 (PR #250 Task 1; PR #251 Tasks 2–11 including the CodeRabbit review fixes and the backfill missing/unreadable reconciliation). Task 12 real-environment acceptance executed 2026-11-17 under the maintainer's authorization, on a source deployment in the maintenance VM (old data directory from main c3c41be, upgraded to main 7132ff2): migration 021 + first-start backfill verified against a pre-tagged file, panel-path tag creation and folding, invalid-tag 400, mention expansion with entry-only stored mentions, prompt tag annotations quoted verbatim by the agent, D-5 new-tag refusal, share page tags with server-side ?tag= filtering, and unknown-frontmatter preservation. Full record: https://github.com/Nema-Project/nema-room/issues/162#issuecomment-6945885353 — #162 closed on this evidence.
