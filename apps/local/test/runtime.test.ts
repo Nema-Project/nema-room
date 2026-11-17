@@ -1137,7 +1137,7 @@ describe("managed local runtime", () => {
     mkdirSync(join(home, "data"), { recursive: true });
     const crashedDb = await createLocalDb(join(home, "db"));
     const workspace = await createWorkspace(crashedDb, join(home, "data"), "crash recovery");
-    const posted = await postUserMessage(crashedDb, workspace.id, "committed before core crash");
+    const posted = await postUserMessage(crashedDb, workspace.id, "committed before core crash", { authorUserId: "usr_local" });
     const running = await claimNextTask(crashedDb, "crashed-daemon");
     expect(running?.runToken).toMatch(/^[0-9a-f]{64}$/);
     await crashedDb.query("update workspaces set archived_at = now() where id = $1", [workspace.id]);

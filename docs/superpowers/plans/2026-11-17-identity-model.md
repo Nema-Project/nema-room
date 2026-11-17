@@ -63,10 +63,10 @@ Identity does not depend on any tags code. If identity is scheduled first, nothi
 
 **Interfaces:** Produce the exact SQL from the spec: `users` (id check `^usr_[A-Za-z0-9_-]{1,32}$`, `display_name` 1–64 chars or null), `workspace_members` (PK `(workspace_id, user_id)`, `on delete cascade` from `workspaces`, role check, removed pair check), `member_events` (append-only, kind check), `messages.author_user_id` with `messages_author_role_check`, and the three idempotent seed inserts (`usr_local`, one owner row per workspace, `mev_seed_<workspace id>`).
 
-- [ ] Add failing tests to `migrations.test.ts`. Seed a DB at the previous migration with two workspaces and user/agent/report messages, then run `migrate`. Expect: `usr_local` exists with null `display_name`; each workspace has exactly one `owner` row for `usr_local`; each has one `mev_seed_<id>` `added` event with null actor; every existing message has `author_user_id is null`. Then rerun the seed statements: no error, and the row counts do not change. Insert a non-user message with an author: rejected by `messages_author_role_check`. A `display_name` of 65 characters or `''` is rejected, and an id `bob` is rejected.
-- [ ] Run `npx vitest run apps/hub/test/migrations.test.ts` and confirm that the new cases fail.
-- [ ] Write the migration. Do not add `not null` to `author_user_id`, and do not backfill it.
-- [ ] Rerun the test above and `npx vitest run apps/hub/test/upgradeRecovery.test.ts apps/hub/test/persistentDb.test.ts`. Expect them to pass.
+- [x] Add failing tests to `migrations.test.ts`. Seed a DB at the previous migration with two workspaces and user/agent/report messages, then run `migrate`. Expect: `usr_local` exists with null `display_name`; each workspace has exactly one `owner` row for `usr_local`; each has one `mev_seed_<id>` `added` event with null actor; every existing message has `author_user_id is null`. Then rerun the seed statements: no error, and the row counts do not change. Insert a non-user message with an author: rejected by `messages_author_role_check`. A `display_name` of 65 characters or `''` is rejected, and an id `bob` is rejected.
+- [x] Run `npx vitest run apps/hub/test/migrations.test.ts` and confirm that the new cases fail.
+- [x] Write the migration. Do not add `not null` to `author_user_id`, and do not backfill it.
+- [x] Rerun the test above and `npx vitest run apps/hub/test/upgradeRecovery.test.ts apps/hub/test/persistentDb.test.ts`. Expect them to pass.
 
 ### Task 2: `uiAuth` becomes an identity provider
 
@@ -76,12 +76,12 @@ Identity does not depend on any tags code. If identity is scheduled first, nothi
 
 **Interfaces:** Produce `type Identity = { userId: string }`, `type IdentityProvider = (c: Context) => Promise<Identity | null>`, `LOCAL_USER_ID = "usr_local"`, `localIdentity: IdentityProvider`, and a Hono variable typing (`c.get("identity")`). `AppDeps.identity?: IdentityProvider` replaces `uiAuth`. `createGatewayIdentity(credential): IdentityProvider` replaces `createGatewayUiAuth`. It keeps the 64-hex validation and the `timingSafeEqual` comparison.
 
-- [ ] Add failing tests:
+- [x] Add failing tests:
   - `identity.test.ts`: with no provider, `GET /api/workspaces` succeeds and a probe route sees `usr_local`. A provider that returns null yields 401 `{ error: "unauthorized" }`. Sending `x-nema-user-id: usr_evil` (and `x-nema-user`) changes nothing. `/api/version` stays reachable without identity, as it is today, and `/share/*`, `/room/*` and `/report` are not wrapped.
   - `gateway.test.ts`: the right credential resolves to `usr_local`, and a wrong, malformed or missing credential returns 401.
-- [ ] Run `npx vitest run apps/hub/test/identity.test.ts apps/local/test/gateway.test.ts` and confirm that the new cases fail.
-- [ ] Implement. Mount the identity middleware exactly where `deps.uiAuth` is mounted today: after `/api/version`, before `requireJson`. Update the five hub test files to pass `identity:` providers with the same accept/reject behaviour they had with `uiAuth`. Do not touch `hostGuard` or the gateway's Host/listen code.
-- [ ] Rerun the tests above with `npx vitest run apps/hub/test/lifecycle.test.ts apps/hub/test/uiApi.test.ts apps/hub/test/shares.test.ts apps/hub/test/attachmentRoutes.test.ts apps/hub/test/mcpRoutes.test.ts apps/local/test/runtime.test.ts` and `npm run typecheck`. Expect everything to pass, and expect the existing host-guard assertions to stay unchanged.
+- [x] Run `npx vitest run apps/hub/test/identity.test.ts apps/local/test/gateway.test.ts` and confirm that the new cases fail.
+- [x] Implement. Mount the identity middleware exactly where `deps.uiAuth` is mounted today: after `/api/version`, before `requireJson`. Update the five hub test files to pass `identity:` providers with the same accept/reject behaviour they had with `uiAuth`. Do not touch `hostGuard` or the gateway's Host/listen code.
+- [x] Rerun the tests above with `npx vitest run apps/hub/test/lifecycle.test.ts apps/hub/test/uiApi.test.ts apps/hub/test/shares.test.ts apps/hub/test/attachmentRoutes.test.ts apps/hub/test/mcpRoutes.test.ts apps/local/test/runtime.test.ts` and `npm run typecheck`. Expect everything to pass, and expect the existing host-guard assertions to stay unchanged.
 
 ### Task 3: Message authorship and owner seeding on create
 
@@ -91,18 +91,18 @@ Identity does not depend on any tags code. If identity is scheduled first, nothi
 
 **Interfaces:** `Message.authorUserId: string | null`. `PostUserMessageOptions.authorUserId: string` (required, because a user message must carry an author). `editUserMessage(db, ws, id, content, actorUserId)`. `createWorkspace(…, ownerUserId = LOCAL_USER_ID)`.
 
-- [ ] Add failing tests:
+- [x] Add failing tests:
   - All three entry points stamp `author_user_id = 'usr_local'`: main chat (`POST /messages`), new thread (`POST /threads`), and thread reply (`POST /threads/:tid/messages`).
   - `addMessage`, `postSystemTask` and the report insert stay null.
   - An attachment replay (the `lockForSend` path) returns the original message with its author.
   - Edit is checked against a second user inserted directly in the test. A non-author gets 403. On a null-author message, an owner may edit and a `member` gets 403.
   - `createWorkspace` inserts the owner row and one `added` audit event in the same transaction as the workspace row. Force a failure after the workspace insert and assert that neither row remains.
-- [ ] Run `npx vitest run apps/hub/test/messages.test.ts apps/hub/test/uiApi.test.ts apps/hub/test/threads.test.ts apps/hub/test/workspaces.test.ts` and confirm that the new cases fail.
-- [ ] Implement:
+- [x] Run `npx vitest run apps/hub/test/messages.test.ts apps/hub/test/uiApi.test.ts apps/hub/test/threads.test.ts apps/hub/test/workspaces.test.ts` and confirm that the new cases fail.
+- [x] Implement:
   - Read the author only from `c.get("identity").userId`, never from the request body.
   - `insertMessage` takes the author as an explicit parameter, and only the `"user"` role passes a non-null value.
   - Wrap the workspace insert and the membership/audit inserts in one `db.tx`. Today `createWorkspace` runs a bare insert after `KnowledgeStore.init()`. Keep the init before the transaction.
-- [ ] Rerun and confirm it passes.
+- [x] Rerun and confirm it passes.
 
 ### Task 4: Members module, management routes and audit
 
@@ -124,7 +124,7 @@ Identity does not depend on any tags code. If identity is scheduled first, nothi
 
 The spec names only the remove and events routes explicitly. The list, add, role, `GET /api/me` and `PATCH /api/me` routes are the minimum that the spec's add/role/audit text, D-3 ("用户可以在设置里改名") and the D-4/D-7 rendering need. The supervisor should confirm them (see the report).
 
-- [ ] Add failing tests with a second user (`usr_test2`) inserted directly:
+- [x] Add failing tests with a second user (`usr_test2`) inserted directly:
   - A non-owner gets 403 on add, role and remove.
   - Removing writes exactly one audit row, keeps the `users` row and leaves message authors untouched.
   - Removing or demoting the last owner returns 409.
@@ -133,9 +133,9 @@ The spec names only the remove and events routes explicitly. The list, add, role
   - No route can update or delete `member_events`. Assert that the router has no such handlers.
   - Rename writes `renamed`, rejects 65 characters with 400, and `null` resets the name.
   - Error bodies contain no display name.
-- [ ] Run `npx vitest run apps/hub/test/members.test.ts` and confirm that the new cases fail.
-- [ ] Implement the module and routes. No route accepts a user id from a header.
-- [ ] Rerun and confirm it passes.
+- [x] Run `npx vitest run apps/hub/test/members.test.ts` and confirm that the new cases fail.
+- [x] Implement the module and routes. No route accepts a user id from a header.
+- [x] Rerun and confirm it passes.
 
 ### Task 5: Shared `member` mention contract and hub validation
 
@@ -145,15 +145,15 @@ The spec names only the remove and events routes explicitly. The list, add, role
 
 **Interfaces:** A new union branch, `z.object({ type: z.literal("member"), id: z.string().regex(/^usr_[A-Za-z0-9_-]{1,32}$/), text: MentionText })`. `mentionText` gains a `memberName?: string` label (`@${memberName}`). The fallback for a null name is supplied by the web from i18n, not by shared code.
 
-- [ ] Add failing tests:
+- [x] Add failing tests:
   - Shared: the member branch parses, and a bad id (`usr_`, `user_x`, 33 characters) fails.
   - Hub: mentioning an active member of this workspace succeeds. A member of another workspace returns 400, a removed member returns 400, and an unknown id returns 400. In each failing case no message row is written.
   - The existing "text must appear" counting applies to member text.
   - An edit (`editUserMessage`) that keeps a mention of a member removed after the original send still succeeds, and the kept mention stays in `meta.mentions`. Read the edit path first. If it re-runs `validateMentions` on kept mentions, limit the roster check to mentions that are new in this edit.
   - Replay comparison (`lockForSend`) treats `type`, `id` and `text` as the identity of a mention.
-- [ ] Run `npx vitest run packages/shared/test/mentions.test.ts apps/hub/test/mentions.test.ts apps/hub/test/messages.test.ts` and confirm that the new cases fail.
-- [ ] Implement it, and fix every exhaustive `switch` the typecheck reports (`npm run typecheck`).
-- [ ] Rerun and confirm it passes.
+- [x] Run `npx vitest run packages/shared/test/mentions.test.ts apps/hub/test/mentions.test.ts apps/hub/test/messages.test.ts` and confirm that the new cases fail.
+- [x] Implement it, and fix every exhaustive `switch` the typecheck reports (`npm run typecheck`).
+- [x] Rerun and confirm it passes.
 
 ### Task 6: `@` menu members group
 

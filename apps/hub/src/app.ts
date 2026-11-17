@@ -1,3 +1,4 @@
+import { localIdentity, type IdentityProvider } from "./identity.js";
 import { Hono, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import type { DaemonRpc } from "./daemonRpc.js";
@@ -10,6 +11,7 @@ import { reportRoutes } from "./reports.js";
 import { roomRoutes } from "./roomApi.js";
 import { shareAdminRoutes } from "./shareAdmin.js";
 import { shareRoutes } from "./shareRoutes.js";
+import { memberRoutes } from "./memberRoutes.js";
 import { mentionContextRoutes } from "./mentionContext.js";
 import { uiRoutes } from "./uiApi.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
@@ -29,8 +31,8 @@ export type AppDeps = {
   /** Late-bound in main.ts, the same way `daemonStatus` is. */
   daemon: DaemonRpc;
   webOrigin?: string;
-  /** Optional gate for browser UI/API traffic; room and report authentication stay separate. */
-  uiAuth?: MiddlewareHandler;
+  /** Identity provider for browser UI/API traffic; room and report authentication stay separate. */
+  identity?: IdentityProvider;
   /** Diagram validation and rendering; defaults to the vendored archify. Tests inject a fake. */
   archify?: Archify;
   /** Port the hub listens on; only `127.0.0.1:<port>` and `localhost:<port>` are accepted as Host. */
@@ -92,11 +94,17 @@ export function createApp(deps: AppDeps): Hono {
     if (!deps.releaseVersion) return c.json({ error: "version unavailable" }, 404);
     return c.json({ version: deps.releaseVersion });
   });
-  if (deps.uiAuth) app.use("/api/*", deps.uiAuth);
+  app.use("/api/*", async (c, next) => {
+    const identity = await (deps.identity ?? localIdentity)(c);
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    c.set("identity", identity);
+    await next();
+  });
   app.use("/api/*", requireJson);
   const attachments = deps.attachments ?? new AttachmentStore(deps.db, deps.dataDir);
   app.route("/api", attachmentRoutes({ store: attachments, daemon: deps.daemon, daemonStatus: deps.daemonStatus, db: deps.db, events: deps.events }));
   app.route("/api", mentionContextRoutes({ db: deps.db, attachments }));
+  app.route("/api", memberRoutes({ db: deps.db }));
   app.route("/api", uiRoutes(deps));
   app.route("/api", shareAdminRoutes({ db: deps.db, sharesEnabled: deps.sharesEnabled !== false }));
   app.route(

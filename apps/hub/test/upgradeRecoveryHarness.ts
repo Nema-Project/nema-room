@@ -82,9 +82,9 @@ export async function seedPriorHome(home: string): Promise<void> {
   try {
     const dataDir = path.join(home, "data");
     const workspace = await createWorkspace(db, dataDir, "prior");
-    const main = await postUserMessage(db, workspace.id, "old main chat");
+    const main = await postUserMessage(db, workspace.id, "old main chat", { authorUserId: "usr_local" });
     await addMessage(db, workspace.id, "agent", "old reply", { taskId: main.task.id, meta: { changes: [], askedQuestion: null } });
-    const anchor = await postUserMessage(db, workspace.id, "old thread anchor");
+    const anchor = await postUserMessage(db, workspace.id, "old thread anchor", { authorUserId: "usr_local" });
     await ensureThread(db, anchor.message.id, "old thread", "user");
     await addMessage(db, workspace.id, "agent", "old thread reply", { threadId: anchor.message.id, meta: { changes: [], askedQuestion: null } });
     const store = new KnowledgeStore(repoPath(dataDir, workspace.id));

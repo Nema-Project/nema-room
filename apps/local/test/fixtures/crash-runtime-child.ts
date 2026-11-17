@@ -12,7 +12,7 @@ setRuntimeReadyHookForTests(async ({ db, dataDir, webPort, webChild }) => {
   void webChild;
   process.stdout.write(`${JSON.stringify({ phase: "web-port", port: webPort })}\n`);
   const workspace = await createWorkspace(db, dataDir, "process crash fixture");
-  const posted = await postUserMessage(db, workspace.id, "committed running token before forced core exit");
+  const posted = await postUserMessage(db, workspace.id, "committed running token before forced core exit", { authorUserId: "usr_local" });
   const running = await claimNextTask(db, "test-crashed-daemon");
   if (!running?.runToken) throw new Error("could not seed a running token");
   await db.query("update workspaces set archived_at = now() where id = $1", [workspace.id]);

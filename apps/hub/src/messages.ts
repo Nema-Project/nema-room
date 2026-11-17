@@ -22,6 +22,7 @@ export type Message = {
   id: string;
   workspaceId: string;
   role: "user" | "agent" | "system" | "report";
+  authorUserId: string | null;
   content: string;
   /** Agent messages carry AgentMessageMeta; report messages carry ReportMessageMeta; user messages may carry UserMessageMeta. */
   meta: AgentMessageMeta | ReportMessageMeta | UserMessageMeta | null;
@@ -42,6 +43,7 @@ type Row = {
   id: string;
   workspace_id: string;
   role: Message["role"];
+  author_user_id: string | null;
   content: string;
   meta: Message["meta"];
   task_id: string | null;
@@ -51,7 +53,7 @@ type Row = {
   seq: number | string;
 };
 
-const COLS = "id, workspace_id, role, content, meta, task_id, created_at, edited_at, thread_id, seq";
+const COLS = "id, workspace_id, role, content, meta, task_id, created_at, edited_at, thread_id, seq, author_user_id";
 
 export function messageExcerpt(content: string, max = 200): string {
   return Array.from(content).slice(0, max).join("");
@@ -59,7 +61,7 @@ export function messageExcerpt(content: string, max = 200): string {
 
 export class MessageOpError extends Error {
   constructor(
-    public status: 400 | 404 | 409,
+    public status: 400 | 403 | 404 | 409,
     message: string,
   ) {
     super(message);
@@ -72,6 +74,7 @@ function toMessage(r: Row): Message {
     id: r.id,
     workspaceId: r.workspace_id,
     role: r.role,
+    authorUserId: r.author_user_id,
     content: r.content,
     meta: r.meta ?? null,
     taskId: r.task_id,
@@ -143,20 +146,22 @@ async function insertMessage(
   db: Db,
   workspaceId: string,
   role: Message["role"],
+  authorUserId: string | null,
   content: string,
   taskId: string | null,
   meta: Message["meta"],
   threadId: string | null = null,
 ): Promise<Message> {
   const rows = await db.query<Row>(
-    `insert into messages(id, workspace_id, role, content, meta, task_id, created_at, thread_id)
-     values ($1, $2, $3, $4, $5::jsonb, $6, clock_timestamp(), $7) returning ${COLS}`,
-    [`m_${nanoid(12)}`, workspaceId, role, content, meta === null ? null : JSON.stringify(meta), taskId, threadId],
+    `insert into messages(id, workspace_id, role, content, meta, task_id, created_at, thread_id, author_user_id)
+     values ($1, $2, $3, $4, $5::jsonb, $6, clock_timestamp(), $7, $8) returning ${COLS}`,
+    [`m_${nanoid(12)}`, workspaceId, role, content, meta === null ? null : JSON.stringify(meta), taskId, threadId, authorUserId],
   );
   return toMessage(rows[0]!);
 }
 
 export type PostUserMessageOptions = {
+  authorUserId: string;
   quoteMessageId?: string;
   threadId?: string;
   attachmentIds?: string[];
@@ -195,9 +200,8 @@ export async function postUserMessage(
   db: Db,
   workspaceId: string,
   content: string,
-  opts: PostUserMessageOptions | string = {},
+  options: PostUserMessageOptions,
 ): Promise<{ message: Message; task: Task; replayed: boolean }> {
-  const options = typeof opts === "string" ? { quoteMessageId: opts } : opts;
   const mentions = options.mentions ?? [];
   const attachmentIds = [...new Set(options.attachmentIds ?? [])].sort();
   if (!messageHasBody(content, attachmentIds)) throw new MessageOpError(400, "message content must not be empty");
@@ -222,7 +226,7 @@ export async function postUserMessage(
         meta = { quote: { messageId: quoted.id, role: quoted.role, excerpt: messageExcerpt(quoted.content) } };
       }
       if (mentions.length > 0) meta = { ...(meta ?? {}), mentions };
-      const inserted = await insertMessage(t, workspaceId, "user", content, null, meta, options.threadId ?? null);
+      const inserted = await insertMessage(t, workspaceId, "user", options.authorUserId, content, null, meta, options.threadId ?? null);
       const attachments = await bindAttachments(t, workspaceId, inserted.id, attachmentIds);
       const message = { ...inserted, attachments: await reorder(t, inserted.id, attachments) };
       const delivered = await deliverySetFor(t, message);
@@ -327,12 +331,19 @@ export async function editUserMessage(
   workspaceId: string,
   messageId: string,
   content: string,
+  actorUserId: string,
 ): Promise<{ message: Message; task: Task }> {
   return db.tx(async (t) => {
     const locked = await t.query<Row>(`select ${COLS} from messages where id = $1 and workspace_id = $2 for update`, [messageId, workspaceId]);
     const row = locked[0];
     if (!row) throw new MessageOpError(404, "message not found");
     if (row.role !== "user") throw new MessageOpError(400, "only user messages can be edited");
+    if (row.author_user_id !== actorUserId) {
+      const owner = row.author_user_id === null
+        ? await t.query("select 1 from workspace_members where workspace_id=$1 and user_id=$2 and role='owner' and removed_at is null", [workspaceId, actorUserId])
+        : [];
+      if (owner.length === 0) throw new MessageOpError(403, "message edit forbidden");
+    }
     if (content.trim() === "") {
       // Text may only go while the message still has a file the task can deliver. The rows are locked so a
       // delete running at the same time waits for this edit (or this edit sees the delete). A missing file
@@ -411,7 +422,7 @@ export async function postSystemTask(
     const ws = await t.query<{ archived_at: Date | string | null }>(`select archived_at from workspaces where id = $1`, [workspaceId]);
     if (!ws[0]) throw new Error(`workspace not found: ${workspaceId}`);
     if (ws[0].archived_at) throw new ArchivedWorkspaceError();
-    const message = await insertMessage(t, workspaceId, "system", content, null, null);
+    const message = await insertMessage(t, workspaceId, "system", null, content, null, null);
     const task = await insertQueuedTask(t, workspaceId, message.id, opts.kind ?? "organize");
     return { message, task };
   });
@@ -419,7 +430,7 @@ export async function postSystemTask(
 
 /** A coding agent's report, stored before its check runs. Its task is queued separately, once the check is stored. */
 export function addReportMessage(db: Db, workspaceId: string, content: string, meta: ReportMessageMeta): Promise<Message> {
-  return insertMessage(db, workspaceId, "report", content, null, meta);
+  return insertMessage(db, workspaceId, "report", null, content, null, meta);
 }
 
 /**
@@ -492,7 +503,7 @@ export function addMessage(
   content: string,
   opts: { taskId?: string; meta?: AgentMessageMeta; threadId?: string | null } = {},
 ): Promise<Message> {
-  return insertMessage(db, workspaceId, role, content, opts.taskId ?? null, opts.meta ?? null, opts.threadId ?? null);
+  return insertMessage(db, workspaceId, role, null, content, opts.taskId ?? null, opts.meta ?? null, opts.threadId ?? null);
 }
 
 /** Latest `limit` messages, returned oldest first. */
@@ -543,7 +554,7 @@ export async function listRecentMessages(db: Db, workspaceId: string, excludeId:
 }
 
 export async function listPromptMessages(db: Db, workspaceId: string, userMessageId: string, limit = 20): Promise<Message[]> {
-  const targetRows = await db.query<{ id:string; workspace_id:string; role:Message["role"]; content:string; meta:Message["meta"]; task_id:string|null; created_at:Date|string; edited_at:Date|string|null; thread_id:string|null; seq:number }>(`select ${COLS} from messages where id=$1 and workspace_id=$2`, [userMessageId, workspaceId]);
+  const targetRows = await db.query<Row>(`select ${COLS} from messages where id=$1 and workspace_id=$2`, [userMessageId, workspaceId]);
   const target = targetRows[0];
   if (!target) return [];
   const threadId = await conversationOf(db, toMessage(target));

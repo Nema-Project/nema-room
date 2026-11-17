@@ -59,7 +59,7 @@ beforeEach(async () => {
 afterAll(cleanupHubDeps);
 
 async function runningTaskFor(ws: string) {
-  const m = await postUserMessage(db, ws, "memo");
+  const m = await postUserMessage(db, ws, "memo", { authorUserId: "usr_local" });
   const t = await claimNextTask(db, "d1");
   expect(t?.workspaceId).toBe(ws);
   return { runToken: t!.runToken!, taskId: t!.id, messageId: m.message.id };
@@ -122,14 +122,14 @@ describe("room api", () => {
   });
 
   test("open_thread from a thread task renames that thread", async () => {
-    const anchor = await postUserMessage(db, wsA, "anchor");
+    const anchor = await postUserMessage(db, wsA, "anchor", { authorUserId: "usr_local" });
     const t0 = await claimNextTask(db, "d1");
     await req("POST", "/room/threads", t0!.runToken!, { title: "Original" });
     await finishTask(db, t0!.id, { ok: true });
-    const nested = await postUserMessage(db, wsA, "reply task", { threadId: anchor.message.id });
+    const nested = await postUserMessage(db, wsA, "reply task", { authorUserId: "usr_local", threadId: anchor.message.id });
     const task = await claimNextTask(db, "d2");
     expect(task?.id).toBe(nested.task.id);
-    const secondReply = await postUserMessage(db, wsA, "second reply", { threadId: anchor.message.id });
+    const secondReply = await postUserMessage(db, wsA, "second reply", { authorUserId: "usr_local", threadId: anchor.message.id });
     const firstSeq = await db.query<{ seq: number }>("select seq from messages where id=$1", [nested.message.id]);
     await markThreadRead(db, anchor.message.id, firstSeq[0]!.seq);
     const seen: HubEvent[] = [];
@@ -183,7 +183,7 @@ describe("room api", () => {
 
   test("empty sourceMessages or another workspace's message → 400", async () => {
     const ta = await runningTaskFor(wsA);
-    const other = await postUserMessage(db, wsB, "b memo");
+    const other = await postUserMessage(db, wsB, "b memo", { authorUserId: "usr_local" });
     const e1 = await req("POST", "/room/entries", ta.runToken, upsert({ sourceMessages: [] }));
     expect(e1.status).toBe(400);
     expect(((await e1.json()) as any).error).toContain("sourceMessages");
@@ -236,7 +236,7 @@ describe("room api", () => {
 
   test("rejects a quote whose message is not cited", async () => {
     const t = await runningTaskFor(wsA);
-    const other = await postUserMessage(db, wsA, "other memo");
+    const other = await postUserMessage(db, wsA, "other memo", { authorUserId: "usr_local" });
     const r = await req("POST", "/room/entries", t.runToken, upsert({
       sourceMessages: [t.messageId],
       quotes: [{ messageId: other.message.id, text: "other memo" }],
@@ -247,7 +247,7 @@ describe("room api", () => {
 
   test("a quote matches the current text or any stored version", async () => {
     const t = await runningTaskFor(wsA);
-    const m = await postUserMessage(db, wsA, "current text");
+    const m = await postUserMessage(db, wsA, "current text", { authorUserId: "usr_local" });
     await db.query(`insert into message_versions(message_id, version, content) values ($1, 1, $2)`, [m.message.id, "the old wording"]);
     const fromOld = await req("POST", "/room/entries", t.runToken, upsert({
       sourceMessages: [t.messageId, m.message.id],
@@ -272,7 +272,7 @@ describe("room api", () => {
   test("rejects a quote that is not verbatim, including collapsed whitespace", async () => {
     const t = await runningTaskFor(wsA);
     const content = "先流式\n\n  后面再说多轮 **别动** tool";
-    const m = await postUserMessage(db, wsA, content);
+    const m = await postUserMessage(db, wsA, content, { authorUserId: "usr_local" });
     const ok = await req("POST", "/room/entries", t.runToken, upsert({
       sourceMessages: [t.messageId, m.message.id],
       quotes: [{ messageId: m.message.id, text: "后面再说多轮 **别动**" }],
@@ -485,7 +485,7 @@ describe("user basis evidence", () => {
 
   test("rejects a new stated entry that cites a user message from another task", async () => {
     const t = await runningTaskFor(wsA);
-    const other = await postUserMessage(db, wsA, "a different request");
+    const other = await postUserMessage(db, wsA, "a different request", { authorUserId: "usr_local" });
     const r = await req("POST", "/room/entries", t.runToken, upsert({
       basis: "stated",
       sourceMessages: [other.message.id],
@@ -523,7 +523,7 @@ describe("user basis evidence", () => {
     await seedActiveDecision(t.runToken, t.messageId);
     const file = entryPath(wsA, "decision", "D-1");
     const before = await readFile(file);
-    const other = await postUserMessage(db, wsA, "some other user message");
+    const other = await postUserMessage(db, wsA, "some other user message", { authorUserId: "usr_local" });
     const r = await req("POST", "/room/entries", t.runToken, upsert({
       id: "D-1",
       kind: "decision",
@@ -566,7 +566,7 @@ describe("user basis evidence", () => {
   });
 
   test("rejects a decided entry from a system task that cites an older user message", async () => {
-    const user = await postUserMessage(db, wsA, "earlier user");
+    const user = await postUserMessage(db, wsA, "earlier user", { authorUserId: "usr_local" });
     const userTask = await claimNextTask(db, "d-user");
     expect(userTask?.workspaceId).toBe(wsA);
     await finishTask(db, userTask!.id, { ok: true });
@@ -728,7 +728,7 @@ describe("user basis evidence", () => {
   });
 
   test("rejects a decided entry from a report task that cites an older user message", async () => {
-    const user = await postUserMessage(db, wsA, "earlier user");
+    const user = await postUserMessage(db, wsA, "earlier user", { authorUserId: "usr_local" });
     const userTask = await claimNextTask(db, "d-report-user");
     expect(userTask?.workspaceId).toBe(wsA);
     await finishTask(db, userTask!.id, { ok: true });
@@ -1296,13 +1296,13 @@ test("source checks and reimports project evidence on all four GET interfaces wi
 describe("GET /room/attachments/:id", () => {
   async function runningWithFile() {
     const quotedFile = await uploadPng(db, dataDir, wsA, png(90, 3), "old.png");
-    const quoted = await postUserMessage(db, wsA, "old", { attachmentIds: [quotedFile.id] });
+    const quoted = await postUserMessage(db, wsA, "old", { authorUserId: "usr_local", attachmentIds: [quotedFile.id] });
     await db.query("update tasks set status = 'done' where id = $1", [quoted.task.id]);
     const otherFile = await uploadPng(db, dataDir, wsA, png(70, 4), "other.png");
-    await postUserMessage(db, wsA, "unrelated", { attachmentIds: [otherFile.id] }).then((r) => db.query("update tasks set status = 'done' where id = $1", [r.task.id]));
+    await postUserMessage(db, wsA, "unrelated", { authorUserId: "usr_local", attachmentIds: [otherFile.id] }).then((r) => db.query("update tasks set status = 'done' where id = $1", [r.task.id]));
     const bytes = png(64, 5);
     const file = await uploadPng(db, dataDir, wsA, bytes, "new.png");
-    const m = await postUserMessage(db, wsA, "look", { attachmentIds: [file.id], quoteMessageId: quoted.message.id });
+    const m = await postUserMessage(db, wsA, "look", { authorUserId: "usr_local", attachmentIds: [file.id], quoteMessageId: quoted.message.id });
     const t = await claimNextTask(db, "d1");
     expect(t?.id).toBe(m.task.id);
     return { token: t!.runToken!, taskId: t!.id, file, bytes, quotedFile, otherFile };

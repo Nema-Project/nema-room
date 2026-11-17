@@ -60,7 +60,7 @@ async function insertRepo(label: string) {
 }
 
 async function runToken() {
-  await postUserMessage(db, ws, "写开发包");
+  await postUserMessage(db, ws, "写开发包", { authorUserId: "usr_local" });
   const task = await claimNextTask(db, "d1");
   return task!.runToken!;
 }

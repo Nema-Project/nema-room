@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -146,15 +147,15 @@ test("close waits for asynchronous cancellation of a response returned after shu
     daemonToken: "test-token",
     port: 0,
     webOrigin: "http://localhost:3000",
-    uiAuth: async () => {
+    identity: async () => {
       enterHandler();
       await handlerGate;
-      return new Response(new ReadableStream<Uint8Array>({
+      throw new HTTPException(200, { res: new Response(new ReadableStream<Uint8Array>({
         cancel: async () => {
           enterCancellation();
           await cancellationGate;
         },
-      }));
+      })) });
     },
   });
   running.push(hub);

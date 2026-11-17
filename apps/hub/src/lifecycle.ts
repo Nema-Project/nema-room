@@ -1,6 +1,6 @@
 import http from "node:http";
 import { getRequestListener } from "@hono/node-server";
-import type { MiddlewareHandler } from "hono";
+import type { IdentityProvider } from "./identity.js";
 import { KnowledgeStore } from "@nema/knowledge";
 import type { DaemonRpc } from "./daemonRpc.js";
 import { DaemonRpcError } from "./daemonRpc.js";
@@ -26,7 +26,7 @@ export type StartHubOptions = {
   daemonToken: string;
   port: number;
   webOrigin: string;
-  uiAuth?: MiddlewareHandler;
+  identity?: IdentityProvider;
   /** Docker Compose publishes the container port on host loopback and requires this container bind. */
   hostname?: string;
   /** Set false when the daemon owns its own workspace directories, as in Compose. */
@@ -100,7 +100,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
       daemonStatus: () => status.connected(),
       daemon,
       webOrigin: opts.webOrigin,
-      uiAuth: opts.uiAuth,
+      identity: opts.identity,
       port: actualPort,
       ownedHelpers: opts.ownedHelpers,
       releaseVersion: opts.releaseVersion,

@@ -64,7 +64,7 @@ beforeEach(async () => {
 afterAll(cleanupHubDeps);
 
 async function userTask() {
-  await postUserMessage(db, ws, "install the pdf skill from acme/skills");
+  await postUserMessage(db, ws, "install the pdf skill from acme/skills", { authorUserId: "usr_local" });
   const task = await claimNextTask(db, "d1");
   return { token: task!.runToken!, taskId: task!.id };
 }

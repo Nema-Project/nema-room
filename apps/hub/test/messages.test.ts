@@ -189,13 +189,13 @@ describe("messages with attachments", () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");
     const a = await uploadPng(db, dataDir, ws.id);
-    const { message, task, replayed } = await postUserMessage(db, ws.id, "", { attachmentIds: [a.id] });
+    const { message, task, replayed } = await postUserMessage(db, ws.id, "", { authorUserId: "usr_local", attachmentIds: [a.id] });
     expect(replayed).toBe(false);
     expect(message.content).toBe("");
     expect(message.attachments).toEqual([{ ...a, status: "attached", messageId: message.id }]);
     expect(task.messageId).toBe(message.id);
-    await expect(postUserMessage(db, ws.id, "  ", { attachmentIds: [] })).rejects.toMatchObject({ status: 400 });
-    await expect(postUserMessage(db, ws.id, "")).rejects.toThrow();
+    await expect(postUserMessage(db, ws.id, "  ", { authorUserId: "usr_local", attachmentIds: [] })).rejects.toMatchObject({ status: 400 });
+    await expect(postUserMessage(db, ws.id, "", { authorUserId: "usr_local" })).rejects.toThrow();
   });
 
   test("the delivery set over 32 MB or over 8 files is refused with the spec's wording", async () => {
@@ -203,30 +203,30 @@ describe("messages with attachments", () => {
     const ws = await createWorkspace(db, dataDir, "Alpha");
     const MB = 1024 * 1024;
     const big = [await stagedRow(db, ws.id, "pdf", 17 * MB), await stagedRow(db, ws.id, "pdf", 16 * MB)];
-    await expect(postUserMessage(db, ws.id, "x", { attachmentIds: big })).rejects.toMatchObject({ status: 400, message: expect.stringContaining("合计超过 32 MB") });
+    await expect(postUserMessage(db, ws.id, "x", { authorUserId: "usr_local", attachmentIds: big })).rejects.toMatchObject({ status: 400, message: expect.stringContaining("合计超过 32 MB") });
     // Nothing was bound: both uploads are still unsent.
     expect((await db.query<{ status: string }>("select status from message_attachments where id = any($1)", [big])).map((r) => r.status)).toEqual(["staged", "staged"]);
     expect(await counts(db, ws.id)).toEqual({ messages: 0, tasks: 0 });
 
     // The quoted message's attachments count too.
     const five = await Promise.all([1, 2, 3, 4, 5].map(() => stagedRow(db, ws.id, "image", 1000)));
-    const quoted = await postUserMessage(db, ws.id, "five", { attachmentIds: five });
+    const quoted = await postUserMessage(db, ws.id, "five", { authorUserId: "usr_local", attachmentIds: five });
     const four = await Promise.all([1, 2, 3, 4].map(() => stagedRow(db, ws.id, "image", 1000)));
-    await expect(postUserMessage(db, ws.id, "more", { attachmentIds: four, quoteMessageId: quoted.message.id })).rejects.toMatchObject({ status: 400, message: expect.stringContaining("合计超过 32 MB") });
+    await expect(postUserMessage(db, ws.id, "more", { authorUserId: "usr_local", attachmentIds: four, quoteMessageId: quoted.message.id })).rejects.toMatchObject({ status: 400, message: expect.stringContaining("合计超过 32 MB") });
     const three = four.slice(0, 3);
-    const ok = await postUserMessage(db, ws.id, "more", { attachmentIds: three, quoteMessageId: quoted.message.id });
+    const ok = await postUserMessage(db, ws.id, "more", { authorUserId: "usr_local", attachmentIds: three, quoteMessageId: quoted.message.id });
     expect(ok.message.attachments).toHaveLength(3);
   });
 
   test("a retry of the same request returns the original message and task", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");
-    const quoted = await postUserMessage(db, ws.id, "q");
+    const quoted = await postUserMessage(db, ws.id, "q", { authorUserId: "usr_local" });
     const a = await stagedRow(db, ws.id);
     const b = await stagedRow(db, ws.id);
-    const first = await postUserMessage(db, ws.id, "look", { attachmentIds: [a, b], quoteMessageId: quoted.message.id });
+    const first = await postUserMessage(db, ws.id, "look", { authorUserId: "usr_local", attachmentIds: [a, b], quoteMessageId: quoted.message.id });
     const before = await counts(db, ws.id);
-    const again = await postUserMessage(db, ws.id, "look", { attachmentIds: [b, a], quoteMessageId: quoted.message.id });
+    const again = await postUserMessage(db, ws.id, "look", { authorUserId: "usr_local", attachmentIds: [b, a], quoteMessageId: quoted.message.id });
     expect(again.replayed).toBe(true);
     expect(again.message.id).toBe(first.message.id);
     expect(again.task.id).toBe(first.task.id);
@@ -237,24 +237,24 @@ describe("messages with attachments", () => {
   test("a retry that differs in any way is a 409 and changes nothing", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");
-    const quoted = await postUserMessage(db, ws.id, "q");
-    const anchor = await postUserMessage(db, ws.id, "anchor");
+    const quoted = await postUserMessage(db, ws.id, "q", { authorUserId: "usr_local" });
+    const anchor = await postUserMessage(db, ws.id, "anchor", { authorUserId: "usr_local" });
     await ensureThread(db, anchor.message.id, "t", "user");
     const a = await stagedRow(db, ws.id);
     const b = await stagedRow(db, ws.id);
-    const first = await postUserMessage(db, ws.id, "look", { attachmentIds: [a, b], quoteMessageId: quoted.message.id });
+    const first = await postUserMessage(db, ws.id, "look", { authorUserId: "usr_local", attachmentIds: [a, b], quoteMessageId: quoted.message.id });
     const before = await counts(db, ws.id);
     const fresh = await stagedRow(db, ws.id);
     const variants: Parameters<typeof postUserMessage>[3][] = [
-      { attachmentIds: [a], quoteMessageId: quoted.message.id },
-      { attachmentIds: [a, b, fresh], quoteMessageId: quoted.message.id },
-      { attachmentIds: [a, fresh], quoteMessageId: quoted.message.id },
-      { attachmentIds: [a, b] },
-      { attachmentIds: [a, b], quoteMessageId: anchor.message.id },
-      { attachmentIds: [a, b], quoteMessageId: quoted.message.id, threadId: anchor.message.id },
+      { authorUserId: "usr_local", attachmentIds: [a], quoteMessageId: quoted.message.id },
+      { authorUserId: "usr_local", attachmentIds: [a, b, fresh], quoteMessageId: quoted.message.id },
+      { authorUserId: "usr_local", attachmentIds: [a, fresh], quoteMessageId: quoted.message.id },
+      { authorUserId: "usr_local", attachmentIds: [a, b] },
+      { authorUserId: "usr_local", attachmentIds: [a, b], quoteMessageId: anchor.message.id },
+      { authorUserId: "usr_local", attachmentIds: [a, b], quoteMessageId: quoted.message.id, threadId: anchor.message.id },
     ];
     for (const v of variants) await expect(postUserMessage(db, ws.id, "look", v)).rejects.toMatchObject({ status: 409 });
-    await expect(postUserMessage(db, ws.id, "look again", { attachmentIds: [a, b], quoteMessageId: quoted.message.id })).rejects.toMatchObject({ status: 409 });
+    await expect(postUserMessage(db, ws.id, "look again", { authorUserId: "usr_local", attachmentIds: [a, b], quoteMessageId: quoted.message.id })).rejects.toMatchObject({ status: 409 });
     expect(await counts(db, ws.id)).toEqual(before);
     expect(await bound(db, first.message.id)).toEqual([a, b].sort());
     expect((await db.query<{ status: string }>("select status from message_attachments where id = $1", [fresh]))[0]!.status).toBe("staged");
@@ -265,16 +265,16 @@ describe("messages with attachments", () => {
     const ws = await createWorkspace(db, dataDir, "Alpha");
     const other = await createWorkspace(db, dataDir, "Beta");
     const foreign = await stagedRow(db, other.id);
-    await expect(postUserMessage(db, ws.id, "x", { attachmentIds: [foreign] })).rejects.toMatchObject({ status: 409 });
-    await expect(postUserMessage(db, ws.id, "x", { attachmentIds: ["att_doesnotexist0000"] })).rejects.toMatchObject({ status: 409 });
+    await expect(postUserMessage(db, ws.id, "x", { authorUserId: "usr_local", attachmentIds: [foreign] })).rejects.toMatchObject({ status: 409 });
+    await expect(postUserMessage(db, ws.id, "x", { authorUserId: "usr_local", attachmentIds: ["att_doesnotexist0000"] })).rejects.toMatchObject({ status: 409 });
     expect(await counts(db, ws.id)).toEqual({ messages: 0, tasks: 0 });
   });
 
   test("the same text sent twice without attachments is two messages", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");
-    const one = await postUserMessage(db, ws.id, "same", { attachmentIds: [] });
-    const two = await postUserMessage(db, ws.id, "same");
+    const one = await postUserMessage(db, ws.id, "same", { authorUserId: "usr_local", attachmentIds: [] });
+    const two = await postUserMessage(db, ws.id, "same", { authorUserId: "usr_local" });
     expect(one.message.id).not.toBe(two.message.id);
     expect(await counts(db, ws.id)).toEqual({ messages: 2, tasks: 2 });
   });
@@ -285,8 +285,8 @@ describe("messages with attachments", () => {
     const a = await stagedRow(db, ws.id);
     const b = await stagedRow(db, ws.id);
     const [x, y] = await Promise.all([
-      postUserMessage(db, ws.id, "go", { attachmentIds: [a, b] }),
-      postUserMessage(db, ws.id, "go", { attachmentIds: [b, a] }),
+      postUserMessage(db, ws.id, "go", { authorUserId: "usr_local", attachmentIds: [a, b] }),
+      postUserMessage(db, ws.id, "go", { authorUserId: "usr_local", attachmentIds: [b, a] }),
     ]);
     expect(x.message.id).toBe(y.message.id);
     expect(x.task.id).toBe(y.task.id);
@@ -306,7 +306,7 @@ describe("messages with attachments", () => {
       query: (sql, params) => { log.push(sql.replace(/\s+/g, " ")); return inner.query(sql, params); },
       tx: (fn) => inner.tx((t) => fn(record(t))),
     });
-    await postUserMessage(record(db), ws.id, "go", { attachmentIds: [b, a] });
+    await postUserMessage(record(db), ws.id, "go", { authorUserId: "usr_local", attachmentIds: [b, a] });
     const lock = log.findIndex((q) => /from message_attachments where id = any\(\$1\) and workspace_id = \$2 order by id for update/.test(q));
     const insert = log.findIndex((q) => /insert into messages/.test(q));
     expect(lock).toBeGreaterThanOrEqual(0);
@@ -317,12 +317,12 @@ describe("messages with attachments", () => {
   test("lists carry attachments; messages without any carry []", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");
-    const plain = await postUserMessage(db, ws.id, "plain");
+    const plain = await postUserMessage(db, ws.id, "plain", { authorUserId: "usr_local" });
     const a = await uploadPng(db, dataDir, ws.id);
-    const withFile = await postUserMessage(db, ws.id, "pic", { attachmentIds: [a.id] });
+    const withFile = await postUserMessage(db, ws.id, "pic", { authorUserId: "usr_local", attachmentIds: [a.id] });
     await ensureThread(db, plain.message.id, "t", "user");
     const b = await uploadPng(db, dataDir, ws.id);
-    const reply = await postUserMessage(db, ws.id, "", { attachmentIds: [b.id], threadId: plain.message.id });
+    const reply = await postUserMessage(db, ws.id, "", { authorUserId: "usr_local", attachmentIds: [b.id], threadId: plain.message.id });
     const main = await listMessages(db, ws.id);
     expect(main.find((m) => m.id === plain.message.id)!.attachments).toEqual([]);
     expect(ids(main.find((m) => m.id === withFile.message.id)!.attachments)).toEqual([a.id]);
@@ -335,20 +335,20 @@ describe("messages with attachments", () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");
     const [p, q, r, s] = await Promise.all([1, 2, 3, 4].map(() => stagedRow(db, ws.id, "image", 100)));
-    const anchor = await postUserMessage(db, ws.id, "anchor", { attachmentIds: [p] });
+    const anchor = await postUserMessage(db, ws.id, "anchor", { authorUserId: "usr_local", attachmentIds: [p] });
     await ensureThread(db, anchor.message.id, "t", "user");
-    const quoted = await postUserMessage(db, ws.id, "quoted", { attachmentIds: [q, s], threadId: anchor.message.id });
+    const quoted = await postUserMessage(db, ws.id, "quoted", { authorUserId: "usr_local", attachmentIds: [q, s], threadId: anchor.message.id });
     await new AttachmentStore(db, dataDir).remove(ws.id, s);
-    const reply = await postUserMessage(db, ws.id, "", { attachmentIds: [r], threadId: anchor.message.id, quoteMessageId: quoted.message.id });
+    const reply = await postUserMessage(db, ws.id, "", { authorUserId: "usr_local", attachmentIds: [r], threadId: anchor.message.id, quoteMessageId: quoted.message.id });
     const set = await deliverySet(db, reply.task.id);
     expect(set.map((x) => x.id)).toEqual([r, q, p]);
     expect(set.map((x) => x.messageId)).toEqual([reply.message.id, quoted.message.id, anchor.message.id]);
     for (const ref of set) expect(AttachmentRefSchema.parse(ref)).toEqual(ref);
     // Quoting the anchor itself does not deliver its files twice.
     const t = await stagedRow(db, ws.id, "image", 100);
-    const again = await postUserMessage(db, ws.id, "x", { attachmentIds: [t], threadId: anchor.message.id, quoteMessageId: anchor.message.id });
+    const again = await postUserMessage(db, ws.id, "x", { authorUserId: "usr_local", attachmentIds: [t], threadId: anchor.message.id, quoteMessageId: anchor.message.id });
     expect((await deliverySet(db, again.task.id)).map((x) => x.id)).toEqual([t, p]);
-    const textOnly = await postUserMessage(db, ws.id, "no files");
+    const textOnly = await postUserMessage(db, ws.id, "no files", { authorUserId: "usr_local" });
     expect(await deliverySet(db, textOnly.task.id)).toEqual([]);
   });
 
@@ -356,10 +356,10 @@ describe("messages with attachments", () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");
     const a = await stagedRow(db, ws.id);
-    const sent = await postUserMessage(db, ws.id, "caption", { attachmentIds: [a] });
+    const sent = await postUserMessage(db, ws.id, "caption", { authorUserId: "usr_local", attachmentIds: [a] });
     await db.query("update tasks set status = 'done' where workspace_id = $1", [ws.id]);
     await db.query("update message_attachments set status = 'missing' where id = $1", [a]);
-    await expect(editUserMessage(db, ws.id, sent.message.id, "")).rejects.toMatchObject({ status: 400 });
+    await expect(editUserMessage(db, ws.id, sent.message.id, "", "usr_local")).rejects.toMatchObject({ status: 400 });
     expect((await getMessage(db, sent.message.id))!.content).toBe("caption");
   });
 
@@ -367,14 +367,14 @@ describe("messages with attachments", () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");
     const a = await stagedRow(db, ws.id);
-    const sent = await postUserMessage(db, ws.id, "caption", { attachmentIds: [a] });
+    const sent = await postUserMessage(db, ws.id, "caption", { authorUserId: "usr_local", attachmentIds: [a] });
     await db.query("update tasks set status = 'done' where workspace_id = $1", [ws.id]);
     const log: string[] = [];
     const record = (inner: Db): Db => ({
       query: (sql, params) => { log.push(sql.replace(/\s+/g, " ")); return inner.query(sql, params); },
       tx: (fn) => inner.tx((t) => fn(record(t))),
     });
-    await editUserMessage(record(db), ws.id, sent.message.id, "");
+    await editUserMessage(record(db), ws.id, sent.message.id, "", "usr_local");
     const lock = log.findIndex((q) => /from message_attachments where message_id = \$1 .*for update/.test(q));
     const update = log.findIndex((q) => /update messages set content/.test(q));
     expect(lock).toBeGreaterThanOrEqual(0);
@@ -386,10 +386,10 @@ describe("messages with attachments", () => {
     // workspace defaults to now, which is a different account and possibly a different bill.
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");
-    const sent = await postUserMessage(db, ws.id, "first try", { accountId: "acct_aaaaaaaaaa" });
+    const sent = await postUserMessage(db, ws.id, "first try", { authorUserId: "usr_local", accountId: "acct_aaaaaaaaaa" });
     expect(sent.task.accountId).toBe("acct_aaaaaaaaaa");
     await db.query("update tasks set status = 'done' where workspace_id = $1", [ws.id]);
-    const edited = await editUserMessage(db, ws.id, sent.message.id, "second try");
+    const edited = await editUserMessage(db, ws.id, sent.message.id, "second try", "usr_local");
     expect(edited.task.accountId).toBe("acct_aaaaaaaaaa");
     expect(edited.task.kind).toBe("edit");
   });
@@ -399,10 +399,10 @@ describe("messages with attachments", () => {
     // thread/workspace binding or the default account, which the user did not choose.
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");
-    const sent = await postUserMessage(db, ws.id, "first try", { routing: "auto" });
+    const sent = await postUserMessage(db, ws.id, "first try", { authorUserId: "usr_local", routing: "auto" });
     expect(sent.task.routing).toBe("auto");
     await db.query("update tasks set status = 'done' where workspace_id = $1", [ws.id]);
-    const edited = await editUserMessage(db, ws.id, sent.message.id, "second try");
+    const edited = await editUserMessage(db, ws.id, sent.message.id, "second try", "usr_local");
     expect(edited.task).toMatchObject({ kind: "edit", routing: "auto", accountId: null });
   });
 
@@ -411,16 +411,16 @@ describe("messages with attachments", () => {
     const ws = await createWorkspace(db, dataDir, "Alpha");
     const plainFile = await stagedRow(db, ws.id);
     const autoFile = await stagedRow(db, ws.id);
-    const plain = await postUserMessage(db, ws.id, "look", { attachmentIds: [plainFile] });
+    const plain = await postUserMessage(db, ws.id, "look", { authorUserId: "usr_local", attachmentIds: [plainFile] });
     const before = await counts(db, ws.id);
     await expect(
-      postUserMessage(db, ws.id, "look", { attachmentIds: [plainFile], routing: "auto" }),
+      postUserMessage(db, ws.id, "look", { authorUserId: "usr_local", attachmentIds: [plainFile], routing: "auto" }),
     ).rejects.toMatchObject({ status: 409 });
     expect(await counts(db, ws.id)).toEqual(before);
     expect(plain.task.routing).toBeNull();
 
-    const auto = await postUserMessage(db, ws.id, "look", { attachmentIds: [autoFile], routing: "auto" });
-    const again = await postUserMessage(db, ws.id, "look", { attachmentIds: [autoFile], routing: "auto" });
+    const auto = await postUserMessage(db, ws.id, "look", { authorUserId: "usr_local", attachmentIds: [autoFile], routing: "auto" });
+    const again = await postUserMessage(db, ws.id, "look", { authorUserId: "usr_local", attachmentIds: [autoFile], routing: "auto" });
     expect(again.replayed).toBe(true);
     expect(again.task.id).toBe(auto.task.id);
     expect(again.task.routing).toBe("auto");
@@ -430,10 +430,10 @@ describe("messages with attachments", () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");
     const a = await stagedRow(db, ws.id);
-    const first = await postUserMessage(db, ws.id, "look", { attachmentIds: [a], accountId: "acct_aaaaaaaaaa" });
+    const first = await postUserMessage(db, ws.id, "look", { authorUserId: "usr_local", attachmentIds: [a], accountId: "acct_aaaaaaaaaa" });
     const before = await counts(db, ws.id);
     await expect(
-      postUserMessage(db, ws.id, "look", { attachmentIds: [a], accountId: "acct_bbbbbbbbbb" }),
+      postUserMessage(db, ws.id, "look", { authorUserId: "usr_local", attachmentIds: [a], accountId: "acct_bbbbbbbbbb" }),
     ).rejects.toMatchObject({ status: 409 });
     expect(await counts(db, ws.id)).toEqual(before);
     expect(first.task.accountId).toBe("acct_aaaaaaaaaa");
@@ -443,12 +443,61 @@ describe("messages with attachments", () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "Alpha");
     const a = await stagedRow(db, ws.id);
-    const withFile = await postUserMessage(db, ws.id, "text", { attachmentIds: [a] });
-    const plain = await postUserMessage(db, ws.id, "text");
+    const withFile = await postUserMessage(db, ws.id, "text", { authorUserId: "usr_local", attachmentIds: [a] });
+    const plain = await postUserMessage(db, ws.id, "text", { authorUserId: "usr_local" });
     await db.query("update tasks set status = 'done' where workspace_id = $1", [ws.id]);
-    const edited = await editUserMessage(db, ws.id, withFile.message.id, "");
+    const edited = await editUserMessage(db, ws.id, withFile.message.id, "", "usr_local");
     expect(edited.message.content).toBe("");
     expect(ids(edited.message.attachments)).toEqual([a]);
-    await expect(editUserMessage(db, ws.id, plain.message.id, " ")).rejects.toMatchObject({ status: 400 });
+    await expect(editUserMessage(db, ws.id, plain.message.id, " ", "usr_local")).rejects.toMatchObject({ status: 400 });
   });
+});
+
+test("user authors survive replay; non-user messages have no author", async () => {
+  const { db, dataDir } = await makeHubDeps();
+  const ws = await createWorkspace(db, dataDir, "Authors");
+  const file = await uploadPng(db, dataDir, ws.id);
+  const options = { authorUserId: "usr_local", attachmentIds: [file.id] };
+  const sent = await postUserMessage(db, ws.id, "hi", options);
+  const replay = await postUserMessage(db, ws.id, "hi", options);
+  expect(sent.message.authorUserId).toBe("usr_local");
+  expect(replay.message).toEqual(sent.message);
+  expect(replay.replayed).toBe(true);
+  expect((await postSystemTask(db, ws.id, "system")).message.authorUserId).toBeNull();
+  expect((await addReportMessage(db, ws.id, "report", { report: reportInput, check: null })).authorUserId).toBeNull();
+  const { addMessage } = await import("../src/messages.js");
+  expect((await addMessage(db, ws.id, "agent", "reply")).authorUserId).toBeNull();
+});
+
+test("only the author can edit; historical messages require an active owner", async () => {
+  const { db, dataDir } = await makeHubDeps();
+  const ws = await createWorkspace(db, dataDir, "Authors");
+  await db.query("insert into users(id) values ('usr_test2')");
+  await db.query("insert into workspace_members(workspace_id,user_id,role) values ($1,'usr_test2','member')", [ws.id]);
+  const sent = await postUserMessage(db, ws.id, "hi", { authorUserId: "usr_local" });
+  await db.query("update tasks set status='done' where id=$1", [sent.task.id]);
+  await expect(editUserMessage(db, ws.id, sent.message.id, "bad", "usr_test2")).rejects.toMatchObject({ status: 403 });
+  expect((await getMessage(db, sent.message.id))?.content).toBe("hi");
+  await db.query("update messages set author_user_id=null where id=$1", [sent.message.id]);
+  await expect(editUserMessage(db, ws.id, sent.message.id, "bad", "usr_test2")).rejects.toMatchObject({ status: 403 });
+  expect((await editUserMessage(db, ws.id, sent.message.id, "old edited", "usr_local")).message.authorUserId).toBeNull();
+});
+
+test("removed-member mentions survive edit and replay, comparing type, id and text", async () => {
+  const { db, dataDir } = await makeHubDeps();
+  const ws = await createWorkspace(db, dataDir, "Mentions");
+  await db.query("insert into users(id) values ('usr_test2')");
+  await db.query("insert into workspace_members(workspace_id,user_id,role) values ($1,'usr_test2','member')", [ws.id]);
+  const file = await uploadPng(db, dataDir, ws.id);
+  const mention = { type: "member" as const, id: "usr_test2", text: "@Name" };
+  const options = { authorUserId: "usr_local", attachmentIds: [file.id], mentions: [mention] };
+  const original = await postUserMessage(db, ws.id, "@Name @Other", options);
+  await db.query("update workspace_members set removed_at=now(),removed_by='usr_local' where user_id='usr_test2'");
+  expect((await postUserMessage(db, ws.id, "@Name @Other", options)).replayed).toBe(true);
+  for (const next of [{ ...mention, id: "usr_local" }, { ...mention, text: "@Other" }, { ...mention, type: "thread" as const }]) {
+    await expect(postUserMessage(db, ws.id, "@Name @Other", { ...options, mentions: [next] })).rejects.toMatchObject({ status: 409 });
+  }
+  await db.query("update tasks set status='done' where id=$1", [original.task.id]);
+  const edited = await editUserMessage(db, ws.id, original.message.id, "@Name amended", "usr_local");
+  expect((edited.message.meta as any).mentions).toEqual([mention]);
 });

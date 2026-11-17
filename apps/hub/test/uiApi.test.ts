@@ -67,7 +67,7 @@ async function legacyQuestion() {
   return r.entry;
 }
 async function doneTask(fn: (taskId: string) => Promise<void>) {
-  await postUserMessage(db, ws, "memo");
+  await postUserMessage(db, ws, "memo", { authorUserId: "usr_local" });
   const t = (await claimNextTask(db, "d1"))!;
   await fn(t.id);
   await finishTask(db, t.id, { ok: true });
@@ -353,7 +353,7 @@ describe("ui api", () => {
     expect((await req("DELETE", "/api/workspaces/ws_missing0001")).status).toBe(404);
     expect((await req("DELETE", "/api/workspaces/not-a-workspace")).status).toBe(400);
 
-    await postUserMessage(db, ws, "memo");
+    await postUserMessage(db, ws, "memo", { authorUserId: "usr_local" });
     const running = (await claimNextTask(db, "d1"))!;
     const busyPatch = await req("PATCH", `/api/workspaces/${ws}`, { archived: true });
     expect(busyPatch.status).toBe(409);
@@ -450,7 +450,7 @@ describe("ui api", () => {
 
   test("tasks/active returns the running task or null", async () => {
     expect(await json(await req("GET", `/api/workspaces/${ws}/tasks/active`))).toEqual({ running: null, indexing: [] });
-    await postUserMessage(db, ws, "memo");
+    await postUserMessage(db, ws, "memo", { authorUserId: "usr_local" });
     expect(await json(await req("GET", `/api/workspaces/${ws}/tasks/active`))).toEqual({ running: null, indexing: [] }); // queued only
     const t = (await claimNextTask(db, "d1"))!;
     const r = await json(await req("GET", `/api/workspaces/${ws}/tasks/active`));
@@ -709,9 +709,9 @@ describe("ui api", () => {
   test("a room token cannot confirm through the gated ui route", async () => {
     const e = await inferredEntry({ kind: "decision", title: "D" });
     app = createApp({ db, dataDir, events, daemonStatus: () => true, daemon,
-      uiAuth: async (c, next) => {
-        if (c.req.header("x-nema-gateway-credential") !== "fake-gateway") return c.json({ error: "Unauthorized" }, 401);
-        await next();
+      identity: async (c) => {
+        if (c.req.header("x-nema-gateway-credential") !== "fake-gateway") return null;
+        return { userId: "usr_local" };
       },
     });
     expect((await req("POST", `/api/workspaces/${ws}/entries/${e.id}/confirm`, {}, { Authorization: "Bearer fake-run-token" })).status).toBe(401);
@@ -1388,7 +1388,7 @@ describe("editing a message to empty text", () => {
 
   test("is allowed while the message still has a file", async () => {
     const a = await uploadPng(db, dataDir, ws);
-    const sent = await postUserMessage(db, ws, "caption", { attachmentIds: [a.id] });
+    const sent = await postUserMessage(db, ws, "caption", { authorUserId: "usr_local", attachmentIds: [a.id] });
     await finish(sent.task.id);
     const r = await req("PATCH", `/api/workspaces/${ws}/messages/${sent.message.id}`, { content: "" });
     expect(r.status).toBe(200);
@@ -1398,19 +1398,19 @@ describe("editing a message to empty text", () => {
   });
 
   test("is refused when the message has no file left", async () => {
-    const plain = await postUserMessage(db, ws, "text only");
+    const plain = await postUserMessage(db, ws, "text only", { authorUserId: "usr_local" });
     await finish(plain.task.id);
     expect((await req("PATCH", `/api/workspaces/${ws}/messages/${plain.message.id}`, { content: "  " })).status).toBe(400);
 
     const a = await uploadPng(db, dataDir, ws);
-    const sent = await postUserMessage(db, ws, "caption", { attachmentIds: [a.id] });
+    const sent = await postUserMessage(db, ws, "caption", { authorUserId: "usr_local", attachmentIds: [a.id] });
     await finish(sent.task.id);
     expect((await req("DELETE", `/api/workspaces/${ws}/attachments/${a.id}`)).status).toBe(200);
     expect((await req("PATCH", `/api/workspaces/${ws}/messages/${sent.message.id}`, { content: "" })).status).toBe(400);
   });
 
   test("an edit body takes only content", async () => {
-    const plain = await postUserMessage(db, ws, "text only");
+    const plain = await postUserMessage(db, ws, "text only", { authorUserId: "usr_local" });
     await finish(plain.task.id);
     expect((await req("PATCH", `/api/workspaces/${ws}/messages/${plain.message.id}`, { content: "new", attachmentIds: ["att_0000000000000000"] })).status).toBe(400);
   });
@@ -1546,4 +1546,11 @@ test("UI indexing failure in the commit hook still returns the durable entry", a
     expect((await store.get(seed.entry.id))!.tags).toEqual(["api"]);
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/^ui upsert: post-commit bookkeeping failed for R-1 \(commit /), expect.any(Error));
   } finally { failure.mockRestore(); log.mockRestore(); }
+});
+
+test("all three user entry points stamp the provider identity, ignoring the body and headers", async () => {
+  const main = await json(await req("POST", `/api/workspaces/${ws}/messages`, { content: "Main", authorUserId: "usr_evil" }, { "x-nema-user-id": "usr_evil" }));
+  const thread = await json(await req("POST", `/api/workspaces/${ws}/threads`, { content: "Topic" }));
+  const reply = await json(await req("POST", `/api/workspaces/${ws}/threads/${thread.thread.id}/messages`, { content: "Reply" }));
+  for (const result of [main, thread, reply]) expect(result.message.authorUserId).toBe("usr_local");
 });

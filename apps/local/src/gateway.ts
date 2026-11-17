@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import http, { type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 import { Transform } from "node:stream";
 import { ATTACHMENT_LIMITS } from "@nema/shared";
-import type { MiddlewareHandler } from "hono";
+import { LOCAL_USER_ID, type IdentityProvider } from "@nema/hub/identity";
 import type { AppReleaseService } from "./appRelease.js";
 import type { SessionManager } from "./session.js";
 import { SHARE_PEER_HEADER, sharePeerDecision } from "./sharePeer.js";
@@ -50,7 +50,7 @@ export type GatewayOptions = {
   hubTarget: string;
   session: SessionManager;
   port: number;
-  /** Private credential shared with the hub's uiAuth middleware, never sent to the browser. */
+  /** Private credential shared with the hub's identity provider, never sent to the browser. */
   privateGatewayCredential: string;
   settings?: SettingsService;
   appRelease?: AppReleaseService;
@@ -63,17 +63,17 @@ export function createGatewayCredential(): string {
   return randomBytes(32).toString("hex");
 }
 
-/** Hono uiAuth gate for direct hub UI/API access. Keep room/report auth separate. */
-export function createGatewayUiAuth(credential: string): MiddlewareHandler {
+/** Hub identity provider for direct hub UI/API access. Keep room/report auth separate. */
+export function createGatewayIdentity(credential: string): IdentityProvider {
   if (!/^[0-9a-f]{64}$/.test(credential)) throw new Error("Gateway credential must be a 256-bit hex value");
   const expected = Buffer.from(credential, "hex");
-  return async (context, next) => {
+  return async (context) => {
     const value = context.req.header(GATEWAY_CREDENTIAL_HEADER) ?? "";
     const actual = /^[0-9a-f]{64}$/.test(value) ? Buffer.from(value, "hex") : Buffer.alloc(0);
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
-      return context.json({ error: "unauthorized" }, 401);
+      return null;
     }
-    await next();
+    return { userId: LOCAL_USER_ID };
   };
 }
 

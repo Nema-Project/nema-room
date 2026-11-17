@@ -3,6 +3,7 @@ import path from "node:path";
 import { nanoid } from "nanoid";
 import { KnowledgeStore } from "@nema/knowledge";
 import { KNOWLEDGE_LANGUAGES, type KnowledgeLanguage } from "@nema/shared";
+import { LOCAL_USER_ID } from "./identity.js";
 import type { Db } from "./db/db.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
@@ -53,12 +54,16 @@ function checkLanguage(l: string): KnowledgeLanguage {
   return l as KnowledgeLanguage;
 }
 
-export async function createWorkspace(db: Db, dataDir: string, name: string, ownedHelpers?: OwnedHelperScope): Promise<Workspace> {
+export async function createWorkspace(db: Db, dataDir: string, name: string, ownedHelpers?: OwnedHelperScope, ownerUserId = LOCAL_USER_ID): Promise<Workspace> {
   const n = checkName(name);
   const id = `ws_${nanoid(12)}`;
   await new KnowledgeStore(repoPath(dataDir, id), ownedHelpers).init();
-  const rows = await db.query<Row>(`insert into workspaces(id, name) values ($1, $2) returning ${COLS}`, [id, n]);
-  return toWorkspace(rows[0]!);
+  return db.tx(async (t) => {
+    const rows = await t.query<Row>(`insert into workspaces(id, name) values ($1, $2) returning ${COLS}`, [id, n]);
+    await t.query("insert into workspace_members(workspace_id,user_id,role,added_by) values ($1,$2,'owner',$2)", [id, ownerUserId]);
+    await t.query("insert into member_events(id,workspace_id,user_id,kind,actor_user_id) values ($1,$2,$3,'added',$3)", [`mev_${nanoid(16)}`, id, ownerUserId]);
+    return toWorkspace(rows[0]!);
+  });
 }
 
 export async function listWorkspaces(db: Db): Promise<Workspace[]> {

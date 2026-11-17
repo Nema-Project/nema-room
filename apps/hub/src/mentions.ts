@@ -34,7 +34,14 @@ export async function validateMentions(db: Db, workspaceId: string, content: str
   const seenText = new Map<string, number>();
   for (const m of mentions) seenText.set(m.text, (seenText.get(m.text) ?? 0) + 1);
   for (const [text, needed] of seenText) {
-    if (occurrences(content, text) < needed) throw new MessageOpError(400, `提及的「${text}」在正文里出现的次数不够`);
+    if (occurrences(content, text) < needed) throw new MessageOpError(400, mentions.some(m => m.type === "member" && m.text === text) ? "member mention text count mismatch" : `提及的「${text}」在正文里出现的次数不够`);
+  }
+  const memberIds = [...new Set(mentions.filter(m => m.type === "member").map(m => m.id))];
+  if (memberIds.length > 0) {
+    const rows = await db.query<{ user_id: string }>(
+      "select user_id from workspace_members where workspace_id=$1 and removed_at is null and user_id=any($2)", [workspaceId, memberIds]);
+    const found = new Set(rows.map(r => r.user_id));
+    if (memberIds.some(id => !found.has(id))) throw new MessageOpError(400, "mentioned member is not active in this workspace");
   }
   const entryIds = [...new Set(mentions.filter((m) => m.type === "entry").map((m) => m.id))];
   if (entryIds.length > 0) {

@@ -137,12 +137,12 @@ describe("MCP routes", () => {
     expect((await req("GET", "/api/extensions/search/mcp")).status).toBe(502);
   });
 
-  test("with uiAuth on, MCP writes without the credential are refused before the daemon", async () => {
+  test("with identity on, MCP writes without the credential are refused before the daemon", async () => {
     app = createApp({
       db, dataDir, events: new EventBus(), daemonStatus: () => true, daemon,
-      uiAuth: async (c, next) => {
-        if (c.req.header("x-nema-gateway-credential") !== "fake-gateway") return c.json({ error: "Unauthorized" }, 401);
-        await next();
+      identity: async (c) => {
+        if (c.req.header("x-nema-gateway-credential") !== "fake-gateway") return null;
+        return { userId: "usr_local" };
       },
     });
     calls.length = 0;

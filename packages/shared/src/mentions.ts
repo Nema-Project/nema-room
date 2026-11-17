@@ -29,14 +29,17 @@ export const MessageMention = z.discriminatedUnion("type", [
     text: MentionText,
   }),
   z.object({ type: z.literal("thread"), id: z.string().min(1), text: MentionText }),
+  z.object({ type: z.literal("member"), id: z.string().regex(/^usr_[A-Za-z0-9_-]{1,32}$/), text: MentionText }),
 ]);
 export type MessageMention = z.infer<typeof MessageMention>;
 
 export const MessageMentions = z.array(MessageMention).max(MENTION_LIMITS.perMessage);
 
 /** The readable text a mention puts into the body: `[D-12]`, `` `附件：名字` `` or `[话题：标题]`. */
-export function mentionText(m: MessageMention, labels: { attachmentName?: string; threadTitle?: string }): string {
+export function mentionText(m: MessageMention, labels: { attachmentName?: string; threadTitle?: string; memberName?: string }): string {
   switch (m.type) {
+    case "member":
+      return `@${labels.memberName ?? m.id}`;
     case "entry":
       return `[${m.id}]`;
     case "attachment":

@@ -355,3 +355,23 @@ describe("resolveMentions", () => {
   });
 });
 
+
+test("member mentions require an active roster row in this workspace and exact text counts", async () => {
+  await db.query("insert into users(id) values ('usr_active'),('usr_removed'),('usr_elsewhere')");
+  const other = await createWorkspace(db, dataDir, "Elsewhere");
+  await db.query("insert into workspace_members(workspace_id,user_id,role) values ($1,'usr_active','member'),($1,'usr_removed','member'),($2,'usr_elsewhere','member')", [ws, other.id]);
+  await db.query("update workspace_members set removed_at=now(),removed_by='usr_local' where user_id='usr_removed'");
+  const { postUserMessage } = await import("../src/messages.js");
+  for (const id of ["usr_removed", "usr_elsewhere", "usr_unknown"]) {
+    const before = await db.query("select id from messages where workspace_id=$1", [ws]);
+    const res = await app.request(`${HUB}/api/workspaces/${ws}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ content: "@Name", mentions: [{ type: "member", id, text: "@Name" }] }) });
+    expect(res.status).toBe(400);
+    expect(await res.text()).not.toContain(id);
+    expect(await db.query("select id from messages where workspace_id=$1", [ws])).toEqual(before);
+  }
+  const mention = { type: "member" as const, id: "usr_active", text: "@Name" };
+  await expect(postUserMessage(db, ws, "@Name", { authorUserId: "usr_local", mentions: [mention, mention] })).rejects.toMatchObject({ status: 400 });
+  const res = await app.request(`${HUB}/api/workspaces/${ws}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ content: "@Name", mentions: [mention] }) });
+  expect(res.status).toBe(200);
+  expect((await res.json() as any).message.meta.mentions).toEqual([mention]);
+});

@@ -82,7 +82,7 @@ async function insertRepo(workspaceId: string, label: string, remoteUrl: string 
 }
 
 async function runningTask(workspaceId = wsA) {
-  await postUserMessage(db, workspaceId, "memo");
+  await postUserMessage(db, workspaceId, "memo", { authorUserId: "usr_local" });
   const task = await claimNextTask(db, "d1");
   expect(task?.workspaceId).toBe(workspaceId);
   return { runToken: task!.runToken!, taskId: task!.id };
@@ -716,7 +716,7 @@ describe("workspace plugins", () => {
 
   test("task.assign carries the enabled plugin tools", async () => {
     const repo = await insertRepo(wsA, "api");
-    await postUserMessage(db, wsA, "look at login");
+    await postUserMessage(db, wsA, "look at login", { authorUserId: "usr_local" });
     const server = http.createServer();
     const sockets: WebSocket[] = [];
     attachDaemonSocket(server, { db, dataDir, events, daemonToken: "tok", hubUrl: "http://hub.test" });

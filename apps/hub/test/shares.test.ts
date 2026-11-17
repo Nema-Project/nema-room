@@ -304,7 +304,7 @@ describe("public knowledge projection", () => {
 const HUB = "http://127.0.0.1:4400";
 const NOT_FOUND = { error: "not found" };
 
-function shareApp(db: Db, dataDir: string, extra: { sharesEnabled?: boolean; uiAuth?: boolean } = {}) {
+function shareApp(db: Db, dataDir: string, extra: { sharesEnabled?: boolean; identity?: boolean } = {}) {
   return createApp({
     db,
     dataDir,
@@ -312,11 +312,11 @@ function shareApp(db: Db, dataDir: string, extra: { sharesEnabled?: boolean; uiA
     daemonStatus: () => true,
     daemon: { call: () => Promise.reject(new Error("daemon offline")) },
     ...(extra.sharesEnabled === false ? { sharesEnabled: false } : {}),
-    ...(extra.uiAuth
+    ...(extra.identity
       ? {
-          uiAuth: async (c, next) => {
-            if (c.req.header("x-nema-gateway-credential") !== "fake-gateway") return c.json({ error: "Unauthorized" }, 401);
-            await next();
+          identity: async (c) => {
+            if (c.req.header("x-nema-gateway-credential") !== "fake-gateway") return null;
+            return { userId: "usr_local" };
           },
         }
       : {}),
@@ -327,7 +327,7 @@ describe("public share routes", () => {
   test("public share omits chat and private entry fields", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await shareableWorkspace(db, dataDir, "Alpha");
-    await postUserMessage(db, ws.id, "secret-chat-marker");
+    await postUserMessage(db, ws.id, "secret-chat-marker", { authorUserId: "usr_local" });
     const store = new KnowledgeStore(repoPath(dataDir, ws.id));
     const decision = await store.upsert(
       {
@@ -460,11 +460,11 @@ describe("public share routes", () => {
     expect((await app.request(`${HUB}/share/${"short"}`)).status).toBe(404);
   });
 
-  test("uiAuth does not cover share reads", async () => {
+  test("identity does not cover share reads", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await shareableWorkspace(db, dataDir, "Alpha");
     const created = await createShare(db, ws.id, {});
-    const app = shareApp(db, dataDir, { uiAuth: true });
+    const app = shareApp(db, dataDir, { identity: true });
     expect((await app.request(`${HUB}/share/${created.token}`)).status).toBe(200);
     expect((await app.request(`${HUB}/api/workspaces`)).status).toBe(401);
   });

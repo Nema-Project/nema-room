@@ -79,8 +79,8 @@ describe("upload route", () => {
     expect(res.status).toBe(403);
   });
 
-  test("uiAuth still guards the upload", async () => {
-    const guarded = createApp({ db, dataDir, events: new EventBus(), daemonStatus: () => true, daemon, attachments, uiAuth: async (c, next) => (c.req.header("x-ok") ? next() : c.json({ error: "unauthorized" }, 401)) });
+  test("identity still guards the upload", async () => {
+    const guarded = createApp({ db, dataDir, events: new EventBus(), daemonStatus: () => true, daemon, attachments, identity: async (c) => (c.req.header("x-ok") ? { userId: "usr_local" } : null) });
     const res = await guarded.request(`${HUB}/api/workspaces/${ws}/attachments`, { method: "POST", headers: { "content-type": "application/octet-stream", "content-length": "100", "x-nema-filename": "a.png", "x-nema-upload-key": key() }, body: png() });
     expect(res.status).toBe(401);
   });
@@ -171,7 +171,7 @@ describe("deleting a sent attachment", () => {
     const events = new EventBus();
     const local = createApp({ db, dataDir, events, daemonStatus: () => true, daemon: { call: (m, p, t) => daemon.call(m, p, t) }, attachments });
     const view = (await (await upload(png())).json()) as AttachmentView;
-    const { message } = await postUserMessage(db, ws, "pic", { attachmentIds: [view.id] });
+    const { message } = await postUserMessage(db, ws, "pic", { authorUserId: "usr_local", attachmentIds: [view.id] });
     const seen: HubEvent[] = [];
     events.subscribe(ws, (e) => seen.push(e));
     const res = await local.request(`${HUB}/api/workspaces/${ws}/attachments/${view.id}`, { method: "DELETE" });
@@ -202,7 +202,7 @@ describe("deleting a sent attachment", () => {
     const local = createApp({ db: gated, dataDir, events, daemonStatus: () => true, daemon: { call: (m, p, t) => daemon.call(m, p, t) }, attachments });
     const a = (await (await upload(png())).json()) as AttachmentView;
     const b = (await (await upload(png())).json()) as AttachmentView;
-    const { message } = await postUserMessage(db, ws, "pair", { attachmentIds: [a.id, b.id] });
+    const { message } = await postUserMessage(db, ws, "pair", { authorUserId: "usr_local", attachmentIds: [a.id, b.id] });
     const updates: AttachmentView[][] = [];
     events.subscribe(ws, (e) => {
       if (e.type !== "message.updated" || e.message.id !== message.id) return;
@@ -221,7 +221,7 @@ describe("deleting a sent attachment", () => {
     const events = new EventBus();
     const local = createApp({ db, dataDir, events, daemonStatus: () => true, daemon: { call: (m, p, t) => daemon.call(m, p, t) }, attachments });
     const view = (await (await upload(png())).json()) as AttachmentView;
-    const { message } = await postUserMessage(db, ws, "pic", { attachmentIds: [view.id] });
+    const { message } = await postUserMessage(db, ws, "pic", { authorUserId: "usr_local", attachmentIds: [view.id] });
     // A non-empty directory where the file was: removing it without `recursive` fails after the commit.
     const file = path.join(dataDir, "attachments", ws, view.id);
     await rm(file, { force: true });

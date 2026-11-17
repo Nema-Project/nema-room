@@ -68,7 +68,7 @@ test("a daemon advertising attachments gets refs it can fetch and verify with it
   const ws = (await createWorkspace(db, dataDir, "A")).id;
   const bytes = png(3000, 9);
   const file = await uploadPng(db, dataDir, ws, bytes, "截图 1.png");
-  await postUserMessage(db, ws, "", { attachmentIds: [file.id] });
+  await postUserMessage(db, ws, "", { authorUserId: "usr_local", attachmentIds: [file.id] });
 
   const assign = await daemonAssign(["attachments"]);
   expect(assign.hubUrl).toBe(hubUrl);
@@ -91,8 +91,8 @@ test("a daemon advertising attachments gets refs it can fetch and verify with it
 test("without the feature the hub never assigns a task with attachments", async () => {
   const ws = (await createWorkspace(db, dataDir, "A")).id;
   const file = await uploadPng(db, dataDir, ws);
-  await postUserMessage(db, ws, "with file", { attachmentIds: [file.id] });
-  const textOnly = await postUserMessage(db, ws, "plain");
+  await postUserMessage(db, ws, "with file", { authorUserId: "usr_local", attachmentIds: [file.id] });
+  const textOnly = await postUserMessage(db, ws, "plain", { authorUserId: "usr_local" });
   const assign = await daemonAssign([]);
   expect(assign.taskId).toBe(textOnly.task.id);
   expect(assign.attachments).toBeUndefined();
