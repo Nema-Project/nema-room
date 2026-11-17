@@ -49,3 +49,9 @@ describe("ShareView", () => {
   });
 
 });
+
+
+it("renders tag chips as plain navigation links", () => {
+  render(<I18nProvider><ShareView token={token} workspaceName="Alpha" entries={[{ id: "D-1", title: "Tagged", tags: ["支付"] }]} /></I18nProvider>);
+  expect(screen.getByRole("link", { name: "#支付" }).getAttribute("href")).toBe("?tag=%E6%94%AF%E4%BB%98");
+});

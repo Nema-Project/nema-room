@@ -292,3 +292,7 @@ export const setMcpSecret = (id: string, name: string, value: string) =>
   request<{ id: string; name: string; configured: boolean; status: McpServerStatus }>(`${mcpUrl(id)}/secrets/${encodeURIComponent(name)}`, { method: "PUT", body: { value } });
 export const clearMcpSecret = (id: string, name: string) =>
   request<{ id: string; name: string; configured: boolean; status: McpServerStatus }>(`${mcpUrl(id)}/secrets/${encodeURIComponent(name)}`, { method: "DELETE" });
+
+
+export const tagEntries = (id: string, tag: string) =>
+  request<{ entries: import("./mentions").MentionContextResponse["entries"] }>(`${w(id)}/tags/${encodeURIComponent(tag)}/entries`);

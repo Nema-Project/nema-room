@@ -77,3 +77,16 @@ describe("MentionTray", () => {
     expect(container.textContent).toBe("");
   });
 });
+
+it("labels tags in Chinese after entries and disables overflow", () => {
+  localStorage.setItem("nema.locale", "zh");
+  const onChoose = vi.fn();
+  const tagged = [...groups.slice(0, 1), { kind: "tag" as const, items: [{ type: "tag" as const, id: "支付", label: "#支付", hint: "", text: "", active: 5, inactive: 2 }] }, ...groups.slice(1)];
+  render(<I18nProvider><MentionMenu groups={tagged} active={0} onChoose={onChoose} onHover={vi.fn()} remaining={4} empty={{ entries: true, attachments: true, state: "ok", query: "" }} /></I18nProvider>);
+  const row = screen.getByRole("option", { name: /#支付.*5 条（另有 2 条已失效）/ });
+  expect(screen.getAllByRole("option")[1]).toBe(row);
+  expect((row as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(row);
+  expect(onChoose).not.toHaveBeenCalled();
+  localStorage.removeItem("nema.locale");
+});

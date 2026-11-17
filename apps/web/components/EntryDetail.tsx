@@ -1,6 +1,6 @@
 "use client";
 
-import { KIND_STATUSES, confirmableImplementation, isStale } from "@nema/shared";
+import { KIND_STATUSES, normalizeTag, TAG_LIMITS, confirmableImplementation, isStale } from "@nema/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HistoryTab } from "@/components/HistoryTab";
 import { ImplTag, groupOf, implLabel } from "@/components/KnowledgePanel";
@@ -134,6 +134,7 @@ function PlainEntryDetail({ workspaceId, entryId, onClose, onJumpToMessage, refr
           <span className="stag">{t(`status.${entry.status}`)}</span>
         </div>
         <h2 className="detail-title">{entry.title}</h2>
+        {!!entry.tags?.length && <p>{entry.tags.map(tag => `#${tag}`).join(" ")}</p>}
         <div className="tabs" role="tablist">
           {(["content", "history", "why"] as const).map((k) => (
             <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
@@ -392,11 +393,18 @@ function EditForm({ entry, workspaceId, onCancel, onSaved }: { entry: Entry; wor
   const [body, setBody] = useState(entry.body);
   const [status, setStatus] = useState<string>(entry.status);
   const [date, setDate] = useState(entry.businessDate ?? "");
+  const [tagText, setTagText] = useState((entry.tags ?? []).join(", "));
+  const rawTags = tagText.trim() ? tagText.split(/[,，]/).map(tag => tag.trim()) : [];
+  const normalized = rawTags.map(normalizeTag);
+  const tags = [...new Set(normalized.filter((tag): tag is string => tag !== null))];
+  const invalid = rawTags.find((_, i) => normalized[i] === null);
+  const tagError = invalid !== undefined ? t("tags.invalid", { tag: invalid, max: TAG_LIMITS.tagChars }) : tags.length > TAG_LIMITS.perEntry ? t("tags.limit", { max: TAG_LIMITS.perEntry }) : null;
   const [reason, setReason] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function save() {
+    if (tagError) return;
     if (!reason.trim()) {
       setFormError(t("edit.reasonRequired"));
       return;
@@ -409,6 +417,7 @@ function EditForm({ entry, workspaceId, onCancel, onSaved }: { entry: Entry; wor
         body,
         status: status as Entry["status"],
         businessDate: date || null,
+        tags,
         related: entry.related,
         sourceMessages: entry.sourceMessages,
         ...(entry.url !== undefined ? { url: entry.url } : {}),
@@ -442,6 +451,13 @@ function EditForm({ entry, workspaceId, onCancel, onSaved }: { entry: Entry; wor
         <span>{t("edit.date")}</span>
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
       </label>
+      <label>
+        <span>{t("tags.title")}</span>
+        <input type="text" value={tagText} onChange={e => { setTagText(e.target.value); setFormError(null); }} aria-describedby="tag-help" />
+      </label>
+      <p id="tag-help">{t("tags.help")}</p>
+      {!!tags.length && <p>{tags.map(tag => `#${tag}`).join(" ")}</p>}
+      {tagError && <p className="error" role="alert">{tagError}</p>}
       <label>
         <span>{t("edit.reason")}</span>
         <input type="text" value={reason} maxLength={500} onChange={(e) => { setReason(e.target.value); setFormError(null); }} />

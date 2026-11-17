@@ -9,7 +9,7 @@ import type { Entry, HistoryItem } from "@/lib/types";
 vi.mock("@/lib/hub", () => ({ getVersion: vi.fn() }));
 
 const base: Entry = {
-  id: "R-1", kind: "requirement", title: "t", status: "active", businessDate: null, related: [], sourceMessages: [], body: "",
+  id: "R-1", kind: "requirement", title: "t", status: "active", businessDate: null, tags: [], related: [], sourceMessages: [], body: "",
   basis: null, ingestedAt: null, confirmedAt: null, confirmedRevision: null, sourceRefs: [], quotes: [],
 };
 const h = (version: number, author: HistoryItem["author"]): HistoryItem => ({

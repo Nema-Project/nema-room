@@ -699,5 +699,16 @@
   "share.acceptedByUser": "ユーザーが受け入れ済み",
   "share.commitsCheckedOnly": "コミットの確認のみ",
   "share.identifier": "リンク {id}",
-  "share.createdAt": "作成日時"
+  "share.createdAt": "作成日時",
+  "tags.title": "タグ",
+  "tags.clear": "タグの絞り込みを解除",
+  "tags.empty": "このタグに一致する項目はありません。",
+  "tags.filter": "タグで絞り込む",
+  "tags.edit": "タグを編集",
+  "tags.help": "タグはカンマで区切ります。空白はハイフンになります。",
+  "tags.invalid": "タグ「{tag}」が無効です。1–{max} 文字の文字・結合記号・数字・_・.・- を使い、文字か数字で始め、項目 ID を避けてください。",
+  "tags.limit": "項目ごとのタグは {max} 個までです。",
+  "tags.mentionCount": " · {active} 件",
+  "tags.inactiveCount": "（無効 {inactive} 件）",
+  "tags.tooMany": "このタグには有効な項目が {count} 件ありますが、残りのメンション枠は {remaining} 件です。挿入しませんでした。"
 }

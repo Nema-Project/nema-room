@@ -699,5 +699,16 @@
   "share.acceptedByUser": "Accepted by user",
   "share.commitsCheckedOnly": "Commits checked only",
   "share.identifier": "Link {id}",
-  "share.createdAt": "Created"
+  "share.createdAt": "Created",
+  "tags.title": "Tags",
+  "tags.clear": "Clear tag filter",
+  "tags.empty": "No entries match this tag.",
+  "tags.filter": "Filter by tag",
+  "tags.edit": "Edit tags",
+  "tags.help": "Separate tags with commas. Spaces become hyphens.",
+  "tags.invalid": "Invalid tag \"{tag}\": use 1–{max} letters, marks, numbers, _, . or -; start with a letter or number and avoid entry IDs.",
+  "tags.limit": "Use at most {max} tags per entry.",
+  "tags.mentionCount": " · {active} entries",
+  "tags.inactiveCount": " ({inactive} inactive)",
+  "tags.tooMany": "This tag has {count} active entries, but only {remaining} mention slots remain. Nothing was inserted."
 }

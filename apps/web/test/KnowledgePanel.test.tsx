@@ -9,7 +9,7 @@ import type { EntryListItem } from "@/lib/types";
 vi.mock("@/lib/hub", async (orig) => ({ ...(await orig<typeof import("@/lib/hub")>()), listEntries: vi.fn(), getTimeline: vi.fn(), listRepos: vi.fn(), requestWorkPackage: vi.fn() }));
 
 const e = (id: string, kind: EntryListItem["kind"], status: EntryListItem["status"], extra: Partial<EntryListItem> = {}): EntryListItem => ({
-  id, kind, status, title: `title ${id}`, businessDate: null, related: [], isNew: false, basis: null, confirmedAt: null, ...extra,
+  id, kind, status, title: `title ${id}`, businessDate: null, tags: [], related: [], isNew: false, basis: null, confirmedAt: null, ...extra,
 });
 const entries: EntryListItem[] = [
   e("R-1", "requirement", "active", { isNew: true, businessDate: "2026-10-21", related: ["Q-1"] }),
@@ -268,4 +268,36 @@ describe("KnowledgePanel", () => {
     await userEvent.click(within(row).getByRole("button", { name: /Needs answers/ }));
     expect(onOpen).toHaveBeenCalledWith("Q-1");
   });
+});
+
+
+it("single tag filters both views and clears with workspace change", async () => {
+  const tagged = [e("R-1", "requirement", "active", { tags: ["api", "b", "c", "d"] }), e("D-1", "decision", "active", { tags: ["other"] })];
+  vi.mocked(hub.listEntries).mockResolvedValue(tagged);
+  vi.mocked(hub.getTimeline).mockResolvedValue(tagged);
+  const { rerender } = await mount();
+  expect(screen.getByText("+1")).toBeTruthy();
+  const url = window.location.href;
+  await userEvent.click(screen.getByRole("button", { name: "#api" }));
+  expect(screen.queryByText("title D-1")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Timeline" }));
+  expect(screen.queryByText("title D-1")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "#api" }));
+  expect(await screen.findByText("title D-1")).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "#api" }));
+  rerender(<I18nProvider><KnowledgePanel workspaceId="w2" knowledgeLanguage="follow" onOpen={vi.fn()} /></I18nProvider>);
+  expect(await screen.findByText("title D-1")).toBeTruthy();
+  expect(window.location.href).toBe(url);
+});
+
+
+it("keeps the clear action when refresh removes the final tag", async () => {
+  vi.mocked(hub.listEntries).mockResolvedValue([e("R-1", "requirement", "active", { tags: ["api"] })]);
+  const { rerender } = await mount();
+  await userEvent.click(screen.getByRole("button", { name: "#api" }));
+  vi.mocked(hub.listEntries).mockResolvedValue([e("R-1", "requirement", "active")]);
+  rerender(<I18nProvider><KnowledgePanel workspaceId="w1" knowledgeLanguage="follow" refreshKey={1} onOpen={vi.fn()} /></I18nProvider>);
+  expect(await screen.findByText("No entries match this tag.")).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "Clear tag filter" }));
+  expect(screen.getByText("title R-1")).toBeTruthy();
 });

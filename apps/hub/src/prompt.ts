@@ -1,4 +1,4 @@
-import { DEFAULT_GRILL_SETTINGS, type AttachmentView, type Entry, type EntrySummary, type ReportMessageMeta, type Thread } from "@nema/shared";
+import { INACTIVE_STATUSES, DEFAULT_GRILL_SETTINGS, type AttachmentView, type Entry, type EntrySummary, type ReportMessageMeta, type Thread } from "@nema/shared";
 import type { GrillState } from "./plugins.js";
 import type { Message } from "./messages.js";
 import type { TaskChange } from "./tasks.js";
@@ -17,6 +17,38 @@ function indexLine(e: EntrySummary): string {
   if (e.kind === "question" && e.status === "open" && e.priority !== undefined) line += ` | priority ${e.priority}`;
   if (e.basis === "inferred") line += " | inferred";
   return line;
+}
+
+/** Fit whole tags, reserving the omission count before accepting another tag. */
+function budgetTags(tags: string[], prefix: string, separator: string, budget: number, suffix: (n: number) => string): { text: string; lost: boolean } {
+  for (let count = tags.length; count >= 0; count--) {
+    const text = prefix + tags.slice(0, count).join(separator) + (count < tags.length ? suffix(tags.length - count) : "");
+    if (Buffer.byteLength(text, "utf8") <= budget) return { text, lost: count < tags.length };
+  }
+  return { text: "", lost: true };
+}
+
+export function tagIndex(entries: EntrySummary[]): { vocabulary: string | null; lines: Map<string, string>; omitted: boolean } {
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    for (const tag of entry.tags ?? []) counts.set(tag, (counts.get(tag) ?? 0) + ((INACTIVE_STATUSES as readonly string[]).includes(entry.status) ? 0 : 1));
+  }
+  const lines = new Map<string, string>();
+  if (!counts.size) return { vocabulary: null, lines, omitted: false };
+  const tags = [...counts.keys()].sort((a, b) => counts.get(b)! - counts.get(a)! || (a < b ? -1 : a > b ? 1 : 0));
+  const vocabulary = budgetTags(tags.map(t => `#${t}`), "# 现有 tags\n", " ", 2048, n => ` …（另有 ${n} 个，用 list_entries 查看）`).text;
+  let remaining = 4096;
+  let omitted = false;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if ((INACTIVE_STATUSES as readonly string[]).includes(entry.status) || !entry.tags?.length) continue;
+    const annotation = budgetTags(entry.tags, " | tags: ", ", ", 96, n => ` +${n}`);
+    if (Buffer.byteLength(annotation.text, "utf8") > remaining) { omitted = true; remaining = 0; continue; }
+    lines.set(entry.id, annotation.text);
+    remaining -= Buffer.byteLength(annotation.text, "utf8");
+    omitted ||= annotation.lost;
+  }
+  return { vocabulary, lines, omitted };
 }
 
 function reportSection(message: Message): string {
@@ -175,10 +207,11 @@ export function buildPrompt(input: {
       rules.push(`本上报属于开发包 ${wps[0]} 的任务 ${rep.task}；任务状态由系统根据核实结果设置，不要用 workpackage__ 函数改它。`);
     }
   }
+  const tags = tagIndex(entries);
   const parts: string[] = [
     "# 规则\n" + rules.map((r, i) => `${i + 1}. ${r}`).join("\n"),
     `# Workspace\n${workspace.name}`,
-    "# 现有条目索引\n" + (entries.length ? entries.map(indexLine).join("\n") : "（暂无）"),
+    "# 现有条目索引\n" + (tags.vocabulary ? tags.vocabulary + "\n" : "") + (entries.length ? entries.map(e => indexLine(e) + (tags.lines.get(e.id) ?? "")).join("\n") : "（暂无）") + (tags.omitted ? "\n部分条目的 tags 未列出，用 list_entries 或 read_entry 查看" : ""),
   ];
   if (conversation) {
     const anchorText = `# 当前 thread：${conversation.thread.title}\n[${conversation.anchor.id}] ${conversation.anchor.role}: ${conversation.anchor.content}${files(conversation.anchor)}`;

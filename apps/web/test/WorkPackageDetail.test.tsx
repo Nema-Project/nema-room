@@ -15,7 +15,7 @@ const task = (n: number, extra: Partial<WpTask> = {}): WpTask => ({
   n, title: `task ${n}`, satisfies: ["R-3"], files: [], status: "pending", inferred: false, reportMessageId: null, confirmedBy: null, ...extra,
 });
 const wpEntry = (status: Entry["status"], tasks: WpTask[], blockedOn: string | null = null): Entry => ({
-  id: "W-2", kind: "workpackage", title: "Refund package", status, businessDate: null, related: [], sourceMessages: [], body: "",
+  id: "W-2", kind: "workpackage", title: "Refund package", status, businessDate: null, tags: [], related: [], sourceMessages: [], body: "",
   basis: null, ingestedAt: null, confirmedAt: null, confirmedRevision: null, sourceRefs: [], quotes: [],
   workpackage: { requirements: ["R-3", "R-5"], repos: ["r1"], approvedAt: null, approvedCommit: null, blockedOn, tasks },
 });

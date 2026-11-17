@@ -124,13 +124,13 @@
 - `UpsertEntryInput.tags: z.array(TagSchema).max(TAG_LIMITS.perEntry).optional()`. Deduplicate after normalization, and apply the max to the deduplicated list.
 - `EntrySummary.tags: string[]`.
 
-- [ ] Add failing tests:
+- [x] Add failing tests:
   - `" ＡＰＩ "` becomes `api`, `Payment Flow` becomes `payment-flow`, and `支付` stays `支付`. A Devanagari tag with combining marks is accepted.
   - `d-12`, `a[b]`, `#x`, `a,b`, `a/b`, `@x`, `-x` and an empty string are rejected, and so is a tag of 33 code points. A 32-code-point tag of astral characters is accepted, because the limit counts code points.
   - `["API", "api"]` keeps one tag. Nine distinct tags fail the max.
   - `EntryFrontmatter.parse` without `tags` gives `[]`.
-- [ ] Run `npx vitest run packages/shared/test/tags.test.ts packages/shared/test/entry.test.ts` and confirm that the new cases fail.
-- [ ] Implement it, then rerun. Run `npm run typecheck`: `Entry` now requires `tags`, so fix every typed `Entry` literal the typecheck reports in source and tests. In tests use `tags: []`; do not loosen the type.
+- [x] Run `npx vitest run packages/shared/test/tags.test.ts packages/shared/test/entry.test.ts` and confirm that the new cases fail.
+- [x] Implement it, then rerun. Run `npm run typecheck`: `Entry` now requires `tags`, so fix every typed `Entry` literal the typecheck reports in source and tests. In tests use `tags: []`; do not loosen the type.
 
 ### Task 3: Store read/write of tags
 
@@ -138,7 +138,7 @@
 
 **Files:** `packages/knowledge/src/store.ts` (`toFile`, `fromFile`, `summarizeEntry` `:295`, `upsert` `:522-590`, `writeDiagram` `:593`, `createWorkPackage` `:647`), `packages/knowledge/test/store.test.ts`.
 
-- [ ] Add failing tests:
+- [x] Add failing tests:
   - A file with `tags: [Payment Flow, "d-3", 支付, 支付]` reads as `["payment-flow", "支付"]`. It logs one warning that names the file but not the tag values, and the entry stays in `list()`.
   - A non-array `tags: hello` reads as `[]` with a warning.
   - `toFile` omits `tags` when it is empty, so an untagged legacy fixture stays byte-identical across a rewrite.
@@ -149,8 +149,8 @@
     - `createWorkPackage` writes `[]`.
     - `withdraw`, `confirm`, `confirmImplementation`, `writeWorkPackageDoc` and `setWorkPackageMeta` keep the tags through their `...existing` spread.
   - `tags` is now a known key in Task 1's set: a tagged file is not duplicated as an "unknown" key.
-- [ ] Run `npx vitest run packages/knowledge/test/store.test.ts` and confirm that the new cases fail.
-- [ ] Implement it, then rerun and confirm it passes.
+- [x] Run `npx vitest run packages/knowledge/test/store.test.ts` and confirm that the new cases fail.
+- [x] Implement it, then rerun and confirm it passes.
 
 ### Task 4: Migration, `indexEntry` and repeatable backfill
 
@@ -163,7 +163,7 @@
 - `indexEntry` takes one timestamp, through a CTE or a `values` row with a single `clock_timestamp()`, and uses it for both `updated_at` and `tags_indexed_at`. It writes `tags = $n::text[]`.
 - `backfillEntryTags(db, dataDir, ownedHelpers?)`.
 
-- [ ] Add failing tests:
+- [x] Add failing tests:
   - Migration: the columns exist and are null on old rows. Applying it again is a no-op.
   - `indexEntry`: `tags` is written and `tags_indexed_at = updated_at` holds exactly.
   - Backfill:
@@ -172,9 +172,9 @@
     - Simulate an old hub with `update entry_index set updated_at = clock_timestamp()`. The next start re-reads that workspace.
     - A workspace whose repository is unreadable logs a warning and does not block startup or the other workspaces.
   - Snapshot: exported JSON has no `tags`/`tags_indexed_at` keys. An imported database starts with null columns and gets backfilled. Cover this with `apps/local/test/import.test.ts` and `apps/local/test/migration.test.ts`.
-- [ ] Run `npx vitest run apps/hub/test/migrations.test.ts apps/hub/test/entryIndex.test.ts apps/hub/test/lifecycle.test.ts apps/local/test/import.test.ts apps/local/test/migration.test.ts` and confirm that the new cases fail.
-- [ ] Implement it, then rerun.
-- [ ] **Measure:** time the first backfill of a workspace with 1000 entries (a throwaway script or a skipped-by-default bench test) and record the number for the PR description. If it is above 1 s, move the backfill to after `listen`, in the background, and make the `tags` group and the limit count return empty/zero for un-backfilled workspaces until it finishes (spec §回填). Add a test for that mode.
+- [x] Run `npx vitest run apps/hub/test/migrations.test.ts apps/hub/test/entryIndex.test.ts apps/hub/test/lifecycle.test.ts apps/local/test/import.test.ts apps/local/test/migration.test.ts` and confirm that the new cases fail.
+- [x] Implement it, then rerun.
+- [x] **Measure:** time the first backfill of a workspace with 1000 entries (a throwaway script or a skipped-by-default bench test) and record the number for the PR description. If it is above 1 s, move the backfill to after `listen`, in the background, and make the `tags` group and the limit count return empty/zero for un-backfilled workspaces until it finishes (spec §回填). Add a test for that mode.
 
 ### Task 5: Hub write rules — limits, D-5 C, path coverage
 
@@ -194,7 +194,7 @@
 - Agent path: any new tag throws `UpsertRejected(400, "新 tag 需要用户先在面板里创建")`.
 - Both paths: if the existing count plus the new tags exceeds 200, it throws `UpsertRejected(400, …)`. The message states only the limit.
 
-- [ ] Add failing tests:
+- [x] Add failing tests:
   - UI PUT normalizes and stores tags. An invalid tag returns 400 naming the tag and the reason. A ninth tag returns 400. The 201st distinct tag in a workspace returns 400, and the message does not list other tags.
   - Room upsert:
     - A tag that does not exist yet returns 400 with the D-5 message.
@@ -207,8 +207,8 @@
     - Source re-import (`sourceImport.ts`).
     - A UI edit made by the old web, which omits `tags`.
   - `indexEntry` callers write the tags (assert `entry_index.tags` after each path).
-- [ ] Run `npx vitest run apps/hub/test/uiApi.test.ts apps/hub/test/roomApi.test.ts apps/hub/test/sourceImport.test.ts apps/hub/test/diagrams.test.ts apps/hub/test/workpackages.test.ts` and confirm that the new cases fail.
-- [ ] Implement it, then rerun and confirm it passes.
+- [x] Run `npx vitest run apps/hub/test/uiApi.test.ts apps/hub/test/roomApi.test.ts apps/hub/test/sourceImport.test.ts apps/hub/test/diagrams.test.ts apps/hub/test/workpackages.test.ts` and confirm that the new cases fail.
+- [x] Implement it, then rerun and confirm it passes.
 
 ### Task 6: `@` menu tag group and tag-entries route
 
@@ -222,14 +222,14 @@
 
 The spec predates the browse cursor (`e75ec4e`, after the spec's HEAD `f21843e`). This plan computes the `tags` group only on the first page (no cursor) and returns `[]` on cursor pages. `tags.more` contributes to `truncated` but not to `nextCursor`. Confirm with the supervisor (see the report).
 
-- [ ] Add failing tests:
+- [x] Add failing tests:
   - Counts split into active and inactive. Subsequence matching works for CJK and Latin. Another workspace's tags never appear.
   - An un-backfilled (`null`) row contributes nothing.
   - The group order in the JSON is entries, tags, attachments, threads.
   - A cursor page returns `tags: []`.
   - The tag-entries route excludes `superseded`/`dropped`/`resolved` entries and has the right order. It cannot read across workspaces.
-- [ ] Run `npx vitest run apps/hub/test/mentionContext.test.ts` and confirm that the new cases fail.
-- [ ] Implement it, then rerun and confirm it passes.
+- [x] Run `npx vitest run apps/hub/test/mentionContext.test.ts` and confirm that the new cases fail.
+- [x] Implement it, then rerun and confirm it passes.
 
 ### Task 7: Prompt vocabulary and per-line tags within budget
 
@@ -239,7 +239,7 @@ The spec predates the browse cursor (`e75ec4e`, after the spec's HEAD `f21843e`)
 
 **Interfaces:** `tagIndex(entries: EntrySummary[]): { vocabulary: string | null; lines: Map<string, string>; omitted: boolean }`. It is pure, has its own unit tests, and is used only for the `# 现有条目索引` section. The edit-cited list at `:217` keeps plain `indexLine`.
 
-- [ ] Add failing tests:
+- [x] Add failing tests:
   - With no entry tagged, the prompt is byte-identical to a fixture captured from current `main` before the change.
   - Vocabulary:
     - It comes after the index header, as the spec places it (`# 现有 tags`, one line `#a #b …`).
@@ -252,8 +252,8 @@ The spec predates the browse cursor (`e75ec4e`, after the spec's HEAD `f21843e`)
     - The total across all annotations is ≤ 4096 bytes, allocated from the last line backwards. Older lines lose their tags first.
     - When any line lost tags, the notice line 「部分条目的 tags 未列出，用 list_entries 或 read_entry 查看」 appears.
   - Multi-byte cases: CJK and emoji tags at the exact boundary.
-- [ ] Run `npx vitest run apps/hub/test/prompt.test.ts` and confirm that the new cases fail.
-- [ ] Implement it, then rerun and confirm it passes. `daemonSocket.ts` already passes `timeline()`, whose summaries now carry `tags`. Run `npx vitest run apps/hub/test/daemonSocket.test.ts` and confirm it still passes.
+- [x] Run `npx vitest run apps/hub/test/prompt.test.ts` and confirm that the new cases fail.
+- [x] Implement it, then rerun and confirm it passes. `daemonSocket.ts` already passes `timeline()`, whose summaries now carry `tags`. Run `npx vitest run apps/hub/test/daemonSocket.test.ts` and confirm it still passes.
 
 ### Task 8: Share projection, share design update, share-page tag filter (D-7)
 
@@ -269,20 +269,20 @@ The spec predates the browse cursor (`e75ec4e`, after the spec's HEAD `f21843e`)
 
 **Interfaces:** `PublicSummary.tags?: string[]`, present only when non-empty, like `priority`/`url`. Existing untagged public responses then stay byte-identical, and the exact-shape test at `:143` keeps passing unchanged. `PublicEntry` inherits it. The share page reads `?tag=`, normalizes it with `normalizeTag`, and filters the list on the server. An invalid or unknown tag shows the empty state; it is not an error. The tag links are plain `<a href="?tag=…">` with no client fetch.
 
-- [ ] Add failing tests:
+- [x] Add failing tests:
   - Hub: a tagged entry's public list item and entry JSON include `tags`. An untagged one has no `tags` key. Existing hidden-field lists still pass. Add a seeded check that the tags projection did not drag in a neighbouring private field (`sourceMessages`, `messageId`).
   - Web:
     - `?tag=支付` filters the server-rendered list. `?tag=Ｐayment` normalizes.
     - A tag that does not exist shows the empty state.
     - The tag chips are links, and no new client fetch is made.
-- [ ] Run `npx vitest run apps/hub/test/shares.test.ts apps/web/test/sharePage.test.ts apps/web/test/ShareView.test.tsx` and confirm that the new cases fail.
-- [ ] Implement it.
-- [ ] Amend the share design §D-6:
+- [x] Run `npx vitest run apps/hub/test/shares.test.ts apps/web/test/sharePage.test.ts apps/web/test/ShareView.test.tsx` and confirm that the new cases fail.
+- [x] Implement it.
+- [x] Amend the share design §D-6:
   - Add `tags` (present when non-empty) to the 列表每条 field list.
   - Add one dated note: 「2026-11-17 起按 [knowledge tags](../specs/2026-11-16-knowledge-tags-design.md) D-7 公开 `tags`；公开列表可按 tag 服务端筛选。」
   - Do not edit the 不出现 list except to keep it accurate.
   - Keep the edit to those lines. The share design is a recorded spec, so amend it, do not rewrite it.
-- [ ] Rerun the tests, then run `npm run lint -w apps/web`.
+- [x] Rerun the tests, then run `npm run lint -w apps/web`.
 
 ### Task 9: CLI — tool schema and old-hub notice
 
@@ -290,12 +290,12 @@ The spec predates the browse cursor (`e75ec4e`, after the spec's HEAD `f21843e`)
 
 **Files:** `apps/cli/src/direct/tools.ts` (`z.toJSONSchema(UpsertEntryInput)` at `:15-22`, the upsert call at `:162`), `apps/cli/src/mcp/server.ts` (`:77`), `apps/cli/src/room/client.ts` (`:39`), `apps/cli/test/direct/tools.test.ts` or the nearest existing tools test, and `apps/cli/test/mcp/*` if present (find the files with `grep -rln upsert_entry apps/cli/test`).
 
-- [ ] Add failing tests:
+- [x] Add failing tests:
   - The generated `upsert_entry` schema contains `tags` (array, `maxItems` 8). It stays valid for both the codex-direct and MCP paths.
   - When an `upsert_entry` call includes `tags` and the hub response's `entry` has no `tags` key, as with an old hub, the tool result text says 「hub 不支持 tags，tags 未写入」. That way the agent does not believe the tags were saved.
   - When the response has `tags`, no notice is added.
-- [ ] Run the identified CLI test files with `npx vitest run …` and confirm that the new cases fail.
-- [ ] Implement it, then rerun. Run `npm run typecheck -w apps/cli`.
+- [x] Run the identified CLI test files with `npx vitest run …` and confirm that the new cases fail.
+- [x] Implement it, then rerun. Run `npm run typecheck -w apps/cli`.
 
 ### Task 10: Web — edit tags, panel filter, tag group expansion
 
@@ -310,7 +310,7 @@ The spec predates the browse cursor (`e75ec4e`, after the spec's HEAD `f21843e`)
 - `apps/web/messages/{en,zh,ja}.json`.
 - Tests: `apps/web/test/EntryDetail.test.tsx`, `KnowledgePanel.test.tsx`, `MentionMenu.test.tsx`, `Composer.test.tsx`, `mentions.test.ts`, `i18n.test.tsx`.
 
-- [ ] Add failing tests:
+- [x] Add failing tests:
   - **EntryDetail:** adding `Payment Flow` previews as `payment-flow`. An invalid tag shows the reason and does not save. Saving sends `tags`. When the server returns 400, the server's message is shown.
   - **KnowledgePanel:**
     - The filter bar lists the tags of the loaded entries, ordered by active count.
@@ -326,8 +326,8 @@ The spec predates the browse cursor (`e75ec4e`, after the spec's HEAD `f21843e`)
     - A response from an old hub without `tags` behaves like `[]`.
     - Sending the expanded message to a mock old hub still succeeds, because it holds plain entry mentions only.
   - **i18n:** every new key exists in all three files.
-- [ ] Run `npx vitest run apps/web/test/EntryDetail.test.tsx apps/web/test/KnowledgePanel.test.tsx apps/web/test/MentionMenu.test.tsx apps/web/test/Composer.test.tsx apps/web/test/mentions.test.ts apps/web/test/i18n.test.tsx` and confirm that the new cases fail.
-- [ ] Implement it, then rerun. Run `npm run lint -w apps/web` and `npm run build -w apps/web`.
+- [x] Run `npx vitest run apps/web/test/EntryDetail.test.tsx apps/web/test/KnowledgePanel.test.tsx apps/web/test/MentionMenu.test.tsx apps/web/test/Composer.test.tsx apps/web/test/mentions.test.ts apps/web/test/i18n.test.tsx` and confirm that the new cases fail.
+- [x] Implement it, then rerun. Run `npm run lint -w apps/web` and `npm run build -w apps/web`.
 
 ### Task 11: Docs, changelog, roadmap and full verification
 
@@ -335,24 +335,26 @@ The spec predates the browse cursor (`e75ec4e`, after the spec's HEAD `f21843e`)
 
 **Files:** `docs/guide.en.md`, `docs/guide.zh.md`, `docs/guide.ja.md`, `docs/reference.zh-CN.md` (the entry-format and `@` mention sections), `README.md`, `README.en.md`, `README.zh.md`, `README.ja.md` (feature list), `changelog.d/knowledge-tags.added.md`, `ROADMAP.md` (post-merge note only).
 
-- [ ] **Guides (three languages, equivalent):** how to add tags in the panel, single-tag filtering, what choosing a tag in `@` inserts (only active entries), the 20-mention limit and its notice, that agents may only reuse existing tags, the limits 32/8/200, that share pages show tags, and that downgrading to an older version can drop tags from entries it rewrites (Git history keeps them).
-- [ ] **Reference:**
+- [x] **Guides (three languages, equivalent):** how to add tags in the panel, single-tag filtering, what choosing a tag in `@` inserts (only active entries), the 20-mention limit and its notice, that agents may only reuse existing tags, the limits 32/8/200, that share pages show tags, and that downgrading to an older version can drop tags from entries it rewrites (Git history keeps them).
+- [x] **Reference:**
   - The `tags` frontmatter, normalization rules and limits.
   - The lenient-read/strict-write split.
   - The D-8 unknown-key preservation rule, including that it does not protect against already-released versions.
   - The `entry_index` columns and backfill condition, and that the columns stay out of snapshots.
   - The `mention-context` `tags` group, the tag-entries route, and the first-page-only cursor behaviour.
   - The prompt sections and budgets.
-- [ ] **READMEs:** add one feature-list line to all four. Keep `README.md` and `README.en.md` byte-identical (`cmp README.md README.en.md`).
-- [ ] **Changelog:** write `changelog.d/knowledge-tags.added.md` with one bullet, for example: `- Knowledge entries can carry tags: filter the panel by a tag, pick a tag in @ to mention its active entries, and see tags on share pages.`
-- [ ] **Roadmap:** after merge only, add a note to the #162 line in `ROADMAP.md` (`:35`) that implementation merged, with the PR link and the remaining acceptance. Do not mark acceptance that has not happened.
-- [ ] **Full verification:**
+- [x] **READMEs:** add one feature-list line to all four. Keep `README.md` and `README.en.md` byte-identical (`cmp README.md README.en.md`).
+- [x] **Changelog:** write `changelog.d/knowledge-tags.added.md` with one bullet, for example: `- Knowledge entries can carry tags: filter the panel by a tag, pick a tag in @ to mention its active entries, and see tags on share pages.`
+- [x] **Roadmap:** after merge only, add a note to the #162 line in `ROADMAP.md` (`:35`) that implementation merged, with the PR link and the remaining acceptance. Do not mark acceptance that has not happened.
+- [x] **Full verification:**
   - Run `npm run typecheck`, then `npm run typecheck -w apps/cli`, then `npm test -- --maxWorkers=2`, then `npm run lint -w apps/web && npm run build -w apps/web`. Expect all of them to pass. Report any environment-specific failure by name, and do not weaken a test.
   - CI's Windows/macOS job also runs the desktop data-directory upgrade harness, which exercises the migration and the backfill.
-- [ ] **Docs check:**
+- [x] **Docs check:**
   - Write the changed Markdown paths, including the share design, into a JSON array file and run `node scripts/ci/docs-check.mjs <file>`, then `git diff --check`.
   - Run the CodeRabbit CLI if it is available.
   - Review the final diff against #162's acceptance list (spec §验收).
+
+**Local execution note (2026-11-17, Tasks 6–11):** checkboxes above record the implementation and attempted verification steps, not acceptance. Tasks 2–5 were already committed on this branch. No commit, push, merge, identity work or Task 12 acceptance was performed. The ROADMAP note remains deferred until merge, as its step requires a PR link. Root and CLI typechecks, standalone web typecheck, targeted hub/web/direct-tool suites and docs checks were run. Socket-based MCP tests are blocked by sandbox `EPERM` on `listen`; web compilation succeeds but Next.js fails to parse TypeScript `--showConfig` output. The full suite was interrupted after MCP socket errors and failures in CLI permissions/repository-handler suites; those latter failures were not checked against the starting commit. See the [local execution record](../../reviews/2026-11-17-knowledge-tags-tasks6-11.md). The supervisor must rerun the complete suite/build and native acceptance authoritatively. The tag editor follows the existing ordinary-entry edit affordance; diagram/work-package detail editors are unchanged because generic entry PUT does not preserve their specialized metadata.
 
 ### Task 12: Real-environment acceptance (separately authorized)
 

@@ -74,3 +74,15 @@ it.each([null, {}, { ...entry, quotes: [null] }, { ...entry, workpackage: { task
   expect(await loadSharePage(test.context)).toMatchObject({ props: { temporary: true } });
   expect(test.res.statusCode).toBe(503);
 });
+
+
+it.each([["支付", "D-1"], ["Ｐayment", "R-1"], ["missing", null], ["#bad", null]])("filters tags on the server (%s)", async (tag, id) => {
+  const entries = [{ id: "D-1", title: "Chinese", tags: ["支付"] }, { id: "R-1", title: "Latin", tags: ["payment"] }];
+  const fetch = vi.fn(async () => ({ statusCode: 200, body: Buffer.from(JSON.stringify({ workspaceName: "Alpha", entries })) }));
+  setShareFetchForTests(fetch);
+  const test = context();
+  test.context.query = { tag: tag! };
+  const result = await loadSharePage(test.context);
+  expect(result).toMatchObject({ props: { entries: entries.filter(e => e.id === id) } });
+  expect(fetch).toHaveBeenCalledTimes(1);
+});

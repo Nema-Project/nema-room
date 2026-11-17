@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
-import { buildPrompt } from "../src/prompt.js";
+import { buildPrompt, tagIndex } from "../src/prompt.js";
 import type { Message } from "../src/messages.js";
 import type { Workspace } from "../src/workspaces.js";
 import type { AttachmentView, Entry, EntrySummary } from "@nema/shared";
@@ -19,6 +20,9 @@ const base = (l: Workspace["knowledgeLanguage"] = "follow", recent: Message[] = 
   buildPrompt({ workspace: ws(l), userMessage: msg(999), recentMessages: recent, entries, lastAskedQuestion: last });
 
 describe("buildPrompt", () => {
+  test("untagged prompt is byte-identical to pre-tags main fixture", () => {
+    expect(base()).toBe(readFileSync(new URL("./fixtures/untagged-prompt.txt", import.meta.url), "utf8"));
+  });
   test("an edit shows the previous text and the entries it produced", () => {
     const userMessage = { ...msg(999), content: "revised" };
     const section = [
@@ -477,5 +481,51 @@ describe("attachments in the prompt", () => {
   test("without mentions the prompt is byte-identical to before", () => {
     const withEmpty = buildPrompt({ workspace: ws("follow"), userMessage: msg(999), recentMessages: [], entries, lastAskedQuestion: null, mentions: { entries: [], attachments: [], threads: [] } });
     expect(withEmpty).toBe(base());
+  });
+});
+
+
+describe("tagIndex UTF-8 budgets", () => {
+  const tagged = (id: string, tags: string[], status = "active") => ({ ...entries[0]!, id, tags, status }) as EntrySummary;
+  test("no tags adds nothing", () => {
+    expect(tagIndex(entries)).toEqual({ vocabulary: null, lines: new Map(), omitted: false });
+  });
+  test("orders vocabulary by active count, annotates only active entries", () => {
+    const result = tagIndex([tagged("R-1", ["支付", "api"]), tagged("R-2", ["支付"]), tagged("R-3", ["old"], "superseded")]);
+    expect(result.vocabulary).toBe("# 现有 tags\n#支付 #api #old");
+    expect(result.lines.get("R-1")).toBe(" | tags: 支付, api");
+    expect(result.lines.has("R-3")).toBe(false);
+  });
+  test("whole tags fit vocabulary and annotation budgets, newest lines win", () => {
+    const tags = Array.from({ length: 200 }, (_, i) => `支付${i}`.padEnd(20, "界"));
+    const rows = Array.from({ length: 100 }, (_, i) => tagged(`R-${i}`, tags.slice(i, i + 8)));
+    const result = tagIndex(rows);
+    expect(Buffer.byteLength(result.vocabulary!)).toBeLessThanOrEqual(2048);
+    expect(result.vocabulary).toMatch(/…（另有 \d+ 个，用 list_entries 查看）$/);
+    const annotations = [...result.lines.values()];
+    expect(annotations.every(a => Buffer.byteLength(a) <= 96)).toBe(true);
+    expect(annotations.reduce((n, a) => n + Buffer.byteLength(a), 0)).toBeLessThanOrEqual(4096);
+    expect(result.lines.has("R-99")).toBe(true);
+    expect(result.lines.has("R-0")).toBe(false);
+    expect(result.omitted).toBe(true);
+    for (const annotation of annotations) {
+      const values = annotation.replace(/^ \| tags: /, "").replace(/ \+\d+$/, "");
+      if (values) expect(values.split(", ").every(t => tags.includes(t))).toBe(true);
+    }
+  });
+  test("four-byte code points fit an exact 96-byte annotation without splitting a tag", () => {
+    // Exercise the byte helper directly; emoji is not a valid stored tag under D-3.
+    const emoji = "😀".repeat(21);
+    const result = tagIndex([tagged("R-1", [emoji, "api"])]);
+    expect(result.lines.get("R-1")).toBe(` | tags: ${emoji} +1`);
+    expect(Buffer.byteLength(result.lines.get("R-1")!)).toBe(96);
+  });
+  test("partial annotations include a count and prompt notice", () => {
+    const rows = [tagged("R-1", ["支付".repeat(14), "𐐀".repeat(20), "api"])];
+    const result = tagIndex(rows);
+    expect(result.lines.get("R-1")).toMatch(/ \+2$/);
+    const prompt = buildPrompt({ workspace: ws("follow"), userMessage: msg(999), recentMessages: [], entries: rows, lastAskedQuestion: null });
+    expect(prompt).toContain("部分条目的 tags 未列出，用 list_entries 或 read_entry 查看");
+    expect(prompt).toContain("# 现有条目索引\n# 现有 tags");
   });
 });

@@ -466,3 +466,45 @@ describe("GET /api/workspaces/:id/mention-context", () => {
     expect(await encoded.json()).toEqual({ error: "q contains a NUL character" });
   });
 });
+
+
+test("tag groups count active rows, search and browse only the first page", async () => {
+  for (let i = 1; i <= 10; i++) await insertEntry(`D-${i}`, "decision", "Tagged", i === 2 ? "superseded" : "active");
+  await db.query(`update entry_index set tags = array['payment-flow', '支付流程'] where workspace_id = $1`, [ws]);
+  const other = (await createWorkspace(db, dataDir, "Other")).id;
+  await insertEntryAt("D-99", "Other", 0, other);
+  await db.query(`update entry_index set tags = array['private'] where workspace_id = $1`, [other]);
+  const first = await (await search("")).json() as any;
+  expect(first.tags).toEqual([{ tag: "payment-flow", active: 9, inactive: 1 }, { tag: "支付流程", active: 9, inactive: 1 }]);
+  expect(Object.keys(first).filter(k => ["entries", "tags", "attachments", "threads"].includes(k))).toEqual(["entries", "tags", "attachments", "threads"]);
+  expect((await (await search("pmt")).json() as any).tags.map((t: any) => t.tag)).toEqual(["payment-flow"]);
+  expect((await (await search("支流")).json() as any).tags.map((t: any) => t.tag)).toEqual(["支付流程"]);
+  const next = await app.request(`${HUB}/api/workspaces/${ws}/mention-context?cursor=${first.nextCursor}`);
+  expect((await next.json() as any).tags).toEqual([]);
+});
+
+test("tag entries are normalized, active, ordered, scoped and body-free", async () => {
+  for (const [id, kind, status] of [["D-10", "decision", "active"], ["R-7", "requirement", "active"], ["D-2", "decision", "active"], ["T-1", "task", "dropped"], ["Q-1", "question", "resolved"]]) {
+    await insertEntry(id!, kind!, "Tagged", status!);
+  }
+  await db.query(`update entry_index set tags = array['payment'] where workspace_id = $1`, [ws]);
+  const res = await app.request(`${HUB}/api/workspaces/${ws}/tags/Ｐayment/entries`);
+  expect(res.status).toBe(200);
+  expect((await res.json() as any).entries.map((e: any) => e.id)).toEqual(["R-7", "D-2", "D-10"]);
+  expect((await app.request(`${HUB}/api/workspaces/${ws}/tags/%23bad/entries`)).status).toBe(400);
+  expect((await app.request(`${HUB}/api/workspaces/missing/tags/payment/entries`)).status).toBe(404);
+  const other = (await createWorkspace(db, dataDir, "Other")).id;
+  expect(await (await app.request(`${HUB}/api/workspaces/${other}/tags/payment/entries`)).json()).toEqual({ entries: [] });
+});
+
+
+test("tag overflow truncates without a browse cursor and null tags never contribute", async () => {
+  await insertEntry("R-1", "requirement", "Tagged");
+  await insertEntry("D-1", "decision", "Unbackfilled");
+  await db.query(`update entry_index set tags = $2::text[] where workspace_id = $1 and entry_id = 'R-1'`, [ws, Array.from({ length: 9 }, (_, i) => `tag${i}`)]);
+  const result = await (await search("")).json() as any;
+  expect(result.tags).toHaveLength(8);
+  expect(result.tags.every((tag: any) => tag.active === 1 && tag.inactive === 0)).toBe(true);
+  expect(result.truncated).toBe(true);
+  expect(result).not.toHaveProperty("nextCursor");
+});

@@ -55,8 +55,13 @@ type Props = {
   refreshKey?: number;
 };
 
-export function KnowledgePanel({ workspaceId, knowledgeLanguage, onOpen, refreshKey = 0 }: Props) {
+export function KnowledgePanel(props: Props) {
+  return <WorkspaceKnowledgePanel key={props.workspaceId} {...props} />;
+}
+
+function WorkspaceKnowledgePanel({ workspaceId, knowledgeLanguage, onOpen, refreshKey = 0 }: Props) {
   const t = useT();
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [view, setView] = useState<"kind" | "time">("kind");
   const [entries, setEntries] = useState<EntryListItem[] | null>(null);
   const [timeline, setTimeline] = useState<EntrySummary[] | null>(null);
@@ -97,6 +102,11 @@ export function KnowledgePanel({ workspaceId, knowledgeLanguage, onOpen, refresh
     window.open(diagramHtmlUrl(workspaceId, gid), "_blank", "noopener");
   }, [workspaceId]);
 
+  const loaded = view === "kind" ? entries : timeline;
+  const counts = new Map<string, number>();
+  for (const entry of loaded ?? []) for (const tag of entry.tags ?? []) counts.set(tag, (counts.get(tag) ?? 0) + (inactive(entry.status) ? 0 : 1));
+  const tags = [...counts.keys()].sort((a, b) => counts.get(b)! - counts.get(a)! || a.localeCompare(b));
+  const filtered = <T extends EntrySummary,>(rows: T[] | null) => selectedTag ? rows?.filter(row => row.tags?.includes(selectedTag)) ?? null : rows;
   return (
     <div className="kp" lang={knowledgeLanguage === "follow" ? undefined : knowledgeLanguage}>
       <div className="bar kp-bar">
@@ -110,12 +120,17 @@ export function KnowledgePanel({ workspaceId, knowledgeLanguage, onOpen, refresh
           </button>
         </div>
       </div>
+      {(tags.length > 0 || selectedTag) && <div className="tag-filter" role="group" aria-label={t("tags.filter")}>
+        <span>{t("tags.filter")}</span>
+        {tags.map(tag => <button key={tag} type="button" aria-pressed={selectedTag === tag} onClick={() => setSelectedTag(selectedTag === tag ? null : tag)}>#{tag}</button>)}
+        {selectedTag && <button type="button" onClick={() => setSelectedTag(null)}>{t("tags.clear")}</button>}
+      </div>}
       <div className="kp-body">
         {error && <p className="error" role="alert">{t("know.loadFailed", { message: error })}</p>}
-        {view === "kind" ? (
-          <ByKind workspaceId={workspaceId} entries={entries} repos={repos} onOpen={onOpen} onOpenDiagram={openDiagram} />
+        {selectedTag && loaded && filtered(loaded)?.length === 0 ? <p className="placeholder">{t("tags.empty")}</p> : view === "kind" ? (
+          <ByKind workspaceId={workspaceId} entries={filtered(entries)} repos={repos} onOpen={onOpen} onOpenDiagram={openDiagram} />
         ) : (
-          <ByTime entries={timeline} onOpen={onOpen} />
+          <ByTime entries={filtered(timeline)} onOpen={onOpen} />
         )}
       </div>
     </div>
@@ -257,6 +272,7 @@ function DiagramRow({ entry, onOpen, onOpenDiagram, dim }: { entry: Row; onOpen:
           <span className="ext" aria-hidden="true">↗</span>
         </button>
         {entry.isNew && <span className="newtag">{t("know.new")}</span>}
+        <RowTags tags={entry.tags ?? []} />
         {meta.length > 0 && <div className="kmeta">{meta.join(" · ")}</div>}
       </div>
     </div>
@@ -322,8 +338,15 @@ function EntryRow({ entry, onOpen, onOpenQuestion, select, dim }: { entry: Row; 
         {entry.url && (
           <a className="ext" href={entry.url} target="_blank" rel="noopener noreferrer" aria-label={`${entry.title} (${domain(entry.url)})`}>↗</a>
         )}
+        <RowTags tags={entry.tags ?? []} />
         {meta.length > 0 && <div className="kmeta">{meta.join(" · ")}</div>}
       </div>
     </div>
   );
+}
+
+
+function RowTags({ tags }: { tags: string[] }) {
+  if (!tags.length) return null;
+  return <div className="kmeta">{tags.slice(0, 3).map(tag => <span key={tag} className="rtag">#{tag}</span>)}{tags.length > 3 && <span>+{tags.length - 3}</span>}</div>;
 }

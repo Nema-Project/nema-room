@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { MENTION_LIMITS } from "@nema/shared";
+import { MENTION_LIMITS, INACTIVE_STATUSES, ENTRY_KINDS, normalizeTag } from "@nema/shared";
 import type { AttachmentStore } from "./attachments.js";
 import type { Db } from "./db/db.js";
 import { getWorkspace } from "./workspaces.js";
@@ -17,6 +17,7 @@ export type MentionThread = { id: string; title: string; lastReplyAt: string | n
 export type MentionContext = {
   status: "ok";
   entries: MentionEntry[];
+  tags: { tag: string; active: number; inactive: number }[];
   attachments: MentionAttachment[];
   threads: MentionThread[];
   /** True when the menu is not every match, or the attachment stat budget stopped early with rows left. */
@@ -115,6 +116,18 @@ async function searchEntries(db: Db, workspaceId: string, folded: string | null,
   };
 }
 
+async function searchTags(db: Db, workspaceId: string, folded: string | null, pattern: string | null) {
+  const rows = await db.query<{ tag: string; active: number; inactive: number }>(
+    `select tag, count(*) filter (where not (status = any($5::text[])))::int as active,
+       count(*) filter (where status = any($5::text[]))::int as inactive
+     from entry_index cross join lateral unnest(tags) as tag
+     where workspace_id = $1 and ($2::text is null or lower(tag) ~ $3)
+     group by tag order by ${folded === null ? "" : tierOrder("lower(tag)") + ","} active desc, tag asc limit $4`,
+    [workspaceId, folded, pattern, MENU + 1, [...INACTIVE_STATUSES]],
+  );
+  return { items: rows.slice(0, MENU), more: rows.length > MENU };
+}
+
 async function searchThreads(db: Db, workspaceId: string, folded: string | null, pattern: string | null, after?: Position): Promise<{ items: MentionThread[]; more: boolean; next: Position | null }> {
   const rows = folded === null
     ? await db.query<ThreadRow & BrowseRow>(
@@ -194,10 +207,11 @@ async function takeAvailable(store: AttachmentStore | undefined, workspaceId: st
 export async function mentionContext(db: Db, workspaceId: string, q: string, attachments?: AttachmentStore, cursor?: BrowseCursor): Promise<MentionContext> {
   const folded = q === "" ? null : (await db.query<{ folded: string }>("select lower($1::text) as folded", [q]))[0]?.folded ?? "";
   const pattern = folded === null ? null : subsequencePattern(folded);
-  const [entries, threads, attachmentRows] = await Promise.all([
+  const [entries, threads, attachmentRows, tags] = await Promise.all([
     cursor?.entries === null ? { items: [], more: false, next: null } : searchEntries(db, workspaceId, folded, pattern, cursor?.entries),
     cursor?.threads === null ? { items: [], more: false, next: null } : searchThreads(db, workspaceId, folded, pattern, cursor?.threads),
     cursor?.attachments === null ? [] : searchAttachmentRows(db, workspaceId, folded, pattern, cursor?.attachments),
+    cursor ? { items: [], more: false } : searchTags(db, workspaceId, folded, pattern),
   ]);
   const files = await takeAvailable(attachments, workspaceId, attachmentRows);
   const lastFile = attachmentRows[files.consumed - 1];
@@ -210,9 +224,10 @@ export async function mentionContext(db: Db, workspaceId: string, q: string, att
       ? { nextCursor: Buffer.from(JSON.stringify(next)).toString("base64url") } : {}),
     status: "ok",
     entries: entries.items,
+    tags: tags.items,
     attachments: files.items,
     threads: threads.items,
-    truncated: entries.more || threads.more || files.more,
+    truncated: entries.more || tags.more || threads.more || files.more,
     attachmentBudgetExhausted: files.exhausted,
   };
 }
@@ -246,6 +261,19 @@ export function mentionContextRoutes(deps: { db: Db; attachments: AttachmentStor
     // An archived workspace can still be searched: its messages stay readable.
     if (!(await getWorkspace(deps.db, workspaceId))) return c.json({ error: "workspace not found" }, 404);
     return c.json(await mentionContext(deps.db, workspaceId, q, deps.attachments, cursor));
+  });
+  app.get("/workspaces/:id/tags/:tag/entries", async (c) => {
+    const workspaceId = c.req.param("id");
+    const tag = normalizeTag(c.req.param("tag"));
+    if (tag === null) return c.json({ error: "invalid tag" }, 400);
+    if (!(await getWorkspace(deps.db, workspaceId))) return c.json({ error: "workspace not found" }, 404);
+    const rows = await deps.db.query<EntryRow>(
+      `select entry_id, kind, title, status from entry_index
+       where workspace_id = $1 and $2 = any(tags) and not (status = any($3::text[]))
+       order by array_position($4::text[], kind), substring(entry_id from '[0-9]+$')::int`,
+      [workspaceId, tag, [...INACTIVE_STATUSES], [...ENTRY_KINDS]],
+    );
+    return c.json({ entries: rows.map(toEntry) });
   });
   return app;
 }

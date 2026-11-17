@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { groupCandidates, mentionToken, syncMentions, type MentionContextResponse } from "@/lib/mentions";
+import { expandTag, groupCandidates, mentionToken, syncMentions, type MentionContextResponse } from "@/lib/mentions";
 
 const context = (over: Partial<MentionContextResponse> = {}): MentionContextResponse => ({
   status: "ok",
@@ -48,14 +48,14 @@ describe("mentionToken", () => {
 });
 
 describe("groupCandidates", () => {
-  test("groups are entries, attachments, threads, at most 8 each", () => {
+  test("groups are entries, tags, attachments, threads, at most 8 each", () => {
     const many = context({
       entries: Array.from({ length: 12 }, (_, i) => ({ id: `D-${i + 1}`, kind: "decision", title: `条目 ${i + 1}`, status: "active" })),
       attachments: Array.from({ length: 12 }, (_, i) => ({ id: `att_${i}`, name: `文件 ${i}.png`, kind: "image", size: 1, messageId: "m", createdAt: "" })),
       threads: Array.from({ length: 12 }, (_, i) => ({ id: `m_${i}`, title: `话题 ${i}`, lastReplyAt: null })),
     });
     const groups = groupCandidates("", many);
-    expect(groups.map((g) => g.kind)).toEqual(["entry", "attachment", "thread"]);
+    expect(groups.map((g) => g.kind)).toEqual(["entry", "tag", "attachment", "thread"]);
     for (const g of groups) expect(g.items.length).toBeLessThanOrEqual(8);
   });
 
@@ -116,4 +116,12 @@ describe("syncMentions", () => {
   test("keeps a mention whose stored text survives even if the file was renamed", () => {
     expect(syncMentions("看 `附件：旧名字.png`", [{ ...att, text: "`附件：旧名字.png`" }])).toHaveLength(1);
   });
+});
+
+
+test("tag expansion is atomic and contains only entry mentions", () => {
+  const entries = context().entries;
+  expect(expandTag("支付", entries, 1)).toEqual({ error: "tooMany", count: 2 });
+  expect(expandTag("支付", entries, 2)).toEqual({ text: "#支付：[D-12] [R-3]", mentions: [{ type: "entry", id: "D-12", text: "[D-12]" }, { type: "entry", id: "R-3", text: "[R-3]" }] });
+  expect(groupCandidates("", context({ tags: [{ tag: "支付", active: 2, inactive: 1 }] })).map(g => g.kind)).toEqual(["entry", "tag", "attachment", "thread"]);
 });
