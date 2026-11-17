@@ -70,3 +70,9 @@ describe("snapshot allowlist and references", () => {
     expect(() => validateSnapshot({ ...empty, tableData: { ...empty.tableData, knowledge_shares: [{ id: "ks_abcdefghijklmnop" }] } })).toThrow(/table/i);
   });
 });
+
+it("entry index tags remain outside the snapshot column allowlist", () => {
+  for (const column of ["tags", "tags_indexed_at"]) {
+    expect(() => validateSnapshot({ ...empty, tableData: { ...empty.tableData, entry_index: [{ [column]: null }] } })).toThrow(/column/i);
+  }
+});

@@ -1,3 +1,5 @@
+import { access, stat } from "node:fs/promises";
+import { constants } from "node:fs";
 import type { Entry, EntrySummary } from "@nema/shared";
 import { KnowledgeStore } from "@nema/knowledge";
 import type { Db } from "./db/db.js";
@@ -6,12 +8,14 @@ import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 export async function indexEntry(db: Db, workspaceId: string, entry: Entry, ownedHelpers?: OwnedHelperScope): Promise<void> {
   await db.query(
-    `insert into entry_index(workspace_id, entry_id, kind, title, status, priority, business_date, updated_at)
-     values ($1,$2,$3,$4,$5,$6,$7,clock_timestamp())
+    `with stamp as materialized (select clock_timestamp() as at)
+     insert into entry_index(workspace_id, entry_id, kind, title, status, priority, business_date, updated_at, tags, tags_indexed_at)
+     select $1,$2,$3,$4,$5,$6,$7,stamp.at,$8::text[],stamp.at from stamp
      on conflict (workspace_id, entry_id) do update set
        kind = excluded.kind, title = excluded.title, status = excluded.status,
-       priority = excluded.priority, business_date = excluded.business_date, updated_at = clock_timestamp()`,
-    [workspaceId, entry.id, entry.kind, entry.title, entry.status, entry.priority ?? null, entry.businessDate],
+       priority = excluded.priority, business_date = excluded.business_date, updated_at = excluded.updated_at,
+       tags = excluded.tags, tags_indexed_at = excluded.tags_indexed_at`,
+    [workspaceId, entry.id, entry.kind, entry.title, entry.status, entry.priority ?? null, entry.businessDate, entry.tags],
   );
 }
 
@@ -76,4 +80,38 @@ export async function topOpenQuestion(db: Db, dataDir: string, workspaceId: stri
     if (e) return e;
   }
   return null;
+}
+
+/** Rebuild derived tag columns after upgrades, snapshot imports, or writes by an older hub. */
+export async function backfillEntryTags(db: Db, dataDir: string, ownedHelpers?: OwnedHelperScope): Promise<void> {
+  let workspaces: { workspace_id: string }[];
+  try {
+    workspaces = await db.query<{ workspace_id: string }>(
+      "select distinct workspace_id from entry_index where tags_indexed_at is null or tags_indexed_at < updated_at",
+    );
+  } catch {
+    console.warn("failed to list workspaces for tag backfill");
+    return;
+  }
+  for (const { workspace_id: workspaceId } of workspaces) {
+    try {
+      const repo = repoPath(dataDir, workspaceId);
+      // listEntries tolerates missing kind folders; a missing/unreadable repository is a failure,
+      // rather than evidence that every indexed file was deleted.
+      await access(repo, constants.R_OK | constants.X_OK);
+      if (!(await stat(repo)).isDirectory()) throw new Error("repository is not a directory");
+      const entries = await new KnowledgeStore(repo, ownedHelpers).listEntries();
+      const tags = Object.fromEntries(entries.map(entry => [entry.id, entry.tags]));
+      await db.query(
+        `update entry_index set
+           tags = array(select jsonb_array_elements_text(coalesce($2::jsonb -> entry_id, '[]'::jsonb))),
+           tags_indexed_at = clock_timestamp()
+         where workspace_id = $1 and (tags_indexed_at is null or tags_indexed_at < updated_at)`,
+        [workspaceId, JSON.stringify(tags)],
+      );
+    } catch {
+      // Error objects may contain file contents. Log only the workspace, never tag values.
+      console.warn(`failed to backfill entry tags in ${workspaceId}`);
+    }
+  }
 }

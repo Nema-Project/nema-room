@@ -1,3 +1,4 @@
+import { tagGuard } from "./tags.js";
 import { Readable } from "node:stream";
 import { Hono } from "hono";
 import { sourceEvidenceEntries, sourceEvidenceSummary } from "./sourceFreshness.js";
@@ -177,6 +178,7 @@ export function roomRoutes(deps: {
     try {
       // All evidence checks use the entry read under this same repository lock.
       result = await ks.upsert(input, { author: "agent", taskId }, async ({ existing, input: locked }) => {
+        await tagGuard(db, workspaceId, "agent")({ existing, input: locked });
         // The implementation is judged against the entry read under this lock, so a user confirmation that
         // landed after the Agent read the entry is never overwritten.
         const withImplementation = await guardStoredImplementation(db, workspaceId, existing, locked);

@@ -1487,3 +1487,35 @@ describe("per-message automatic routing", () => {
     expect(reply.status).toBe(400);
   });
 });
+
+describe("tag write rules", () => {
+  test("UI stores normalized tags, preserves old-web edits, and rejects invalid or excess tags", async () => {
+    const { entry } = await new KnowledgeStore(repoPath(dataDir, ws)).upsert({ kind: "requirement", title: "T", body: "b", reason: "r", sourceMessages: [] }, { author: "user" });
+    const url = `/api/workspaces/${ws}/entries/${entry.id}`;
+    const input = { kind: "requirement", title: "T", body: "b", reason: "r" };
+    const saved = await req("PUT", url, { ...input, tags: [" ＡＰＩ ", "Payment Flow", "api"] });
+    expect(saved.status).toBe(200);
+    expect((await json(saved)).tags).toEqual(["api", "payment-flow"]);
+    expect((await req("PUT", url, input)).status).toBe(200);
+    expect(await db.query("select tags from entry_index where workspace_id=$1", [ws])).toEqual([{ tags: ["api", "payment-flow"] }]);
+    const invalid = await req("PUT", url, { ...input, tags: ["a/b"] });
+    expect(invalid.status).toBe(400);
+    expect((await json(invalid)).error).toMatch(/a\/b.*letter/);
+    expect((await req("PUT", url, { ...input, tags: Array.from({ length: 9 }, (_, i) => `tag${i}`) })).status).toBe(400);
+    await db.query("update entry_index set tags=array(select 'tag'||n from generate_series(1,200) n) where workspace_id=$1", [ws]);
+    const limit = await req("PUT", url, { ...input, tags: ["new-tag"] });
+    expect(limit.status).toBe(400);
+    const message = (await json(limit)).error;
+    expect(message).toContain("200");
+    expect(message).not.toMatch(/tag1|new-tag/);
+  });
+
+  test.each(["confirm", "withdraw", "implementation/confirm"])("%s retains tags in the file and index", async (action) => {
+    const store = new KnowledgeStore(repoPath(dataDir, ws));
+    const { entry } = await store.upsert({ kind: "requirement", title: "T", body: "b", reason: "r", sourceMessages: [], tags: ["api"], implementation: { status: "reported", evidence: { reportMessageId: null, commits: [], inferred: true, note: null, confirmedBy: null } } } as never, { author: "user" });
+    const response = await req("POST", `/api/workspaces/${ws}/entries/${entry.id}/${action}`, {});
+    expect(response.status).toBe(200);
+    expect((await store.get(entry.id))!.tags).toEqual(["api"]);
+    expect(await db.query("select tags from entry_index where workspace_id=$1 and entry_id=$2", [ws, entry.id])).toEqual([{ tags: ["api"] }]);
+  });
+});

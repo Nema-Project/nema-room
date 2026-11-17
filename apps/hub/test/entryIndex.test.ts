@@ -88,3 +88,11 @@ describe("entry index", () => {
     expect(await topOpenQuestion(db, dataDir, wsA)).toBeNull();
   });
 });
+
+test("indexEntry writes tags and exactly equal timestamps on insert and update", async () => {
+  const entry = await add(wsA, { kind: "requirement", title: "Tagged", tags: ["api"] });
+  const check = async (tags: string[]) => expect(await db.query("select tags, tags_indexed_at = updated_at as same from entry_index where workspace_id=$1", [wsA])).toEqual([{ tags, same: true }]);
+  await check(["api"]);
+  await indexEntry(db, wsA, { ...entry, tags: [] });
+  await check([]);
+});

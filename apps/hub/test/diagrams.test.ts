@@ -1,3 +1,5 @@
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { Hono } from "hono";
 import { KnowledgeStore, git, history } from "@nema/knowledge";
@@ -163,6 +165,8 @@ describe("diagram plugin", () => {
     const repo = await insertRepo(wsA, "api");
     const task = await runningTask();
     expect((await roomReq("POST", "/room/plugins/diagram__save", task.runToken, saveArgs(repo.label))).status).toBe(200);
+    const file = path.join(repoPath(dataDir, wsA), "diagrams/G-1.md");
+    await writeFile(file, (await readFile(file, "utf8")).replace("---\n", "---\ntags: [api]\n"));
     const spec2 = { title: "Nema v2", nodes: [] };
     const res = await roomReq(
       "POST",
@@ -176,6 +180,8 @@ describe("diagram plugin", () => {
     expect((await store.list()).map((e) => e.id)).toEqual(["G-1"]);
     expect(await store.get("G-1")).toMatchObject({ title: "系统架构 v2", diagram: { nodePaths: {} } });
     expect(await store.readDiagramSpec("G-1")).toEqual(spec2);
+    expect((await store.get("G-1"))!.tags).toEqual(["api"]);
+    expect(await db.query("select tags from entry_index where workspace_id=$1", [wsA])).toEqual([{ tags: ["api"] }]);
     expect((await history(repoPath(dataDir, wsA), "G-1"))[0]).toMatchObject({ op: "update", reason: "画图：系统架构 v2" });
 
     const missing = await roomReq("POST", "/room/plugins/diagram__save", task.runToken, saveArgs(repo.label, { id: "G-7" }));

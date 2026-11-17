@@ -10,7 +10,7 @@ import type { Db } from "./db/db.js";
 import { attachDaemonSocket } from "./daemonSocket.js";
 import { EventBus } from "./events.js";
 import { announceInterrupted } from "./interrupts.js";
-import { indexEntry } from "./entryIndex.js";
+import { backfillEntryTags, indexEntry } from "./entryIndex.js";
 import { startReportFallback } from "./reports.js";
 import { interruptRunning } from "./tasks.js";
 import { listWorkspaces, repoPath, type Workspace } from "./workspaces.js";
@@ -64,6 +64,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
     if (interrupted.requeued.length > 0) console.log(`requeued ${interrupted.requeued.length} task(s) left running by the previous hub process`);
     await announceInterrupted(opts.db, events, interrupted);
     await recoverUncommittedEntries(opts.db, opts.dataDir, opts.ownedHelpers);
+    await backfillEntryTags(opts.db, opts.dataDir, opts.ownedHelpers);
     await reconcileWorkspaceEvidence(opts.db, opts.dataDir);
     const attachments = new AttachmentStore(opts.db, opts.dataDir, { maxGlobalBytes: opts.attachmentsMaxBytes });
     // Before any request: only this pass may delete files that have no row (no upload is in flight yet).

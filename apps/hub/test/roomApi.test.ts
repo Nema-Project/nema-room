@@ -1337,3 +1337,32 @@ describe("GET /room/attachments/:id", () => {
     expect((await req("GET", `/room/attachments/${file.id}`)).status).toBe(401);
   });
 });
+
+test("agent tags require UI-created vocabulary, then preserve and clear under the room guard", async () => {
+  const { runToken, messageId } = await runningTaskFor(wsA);
+  const input = upsert({ basis: "inferred", sourceMessages: [messageId], tags: ["api"] });
+  const rejected = await req("POST", "/room/entries", runToken, input);
+  expect(rejected.status).toBe(400);
+  expect(await rejected.json()).toEqual({ error: "新 tag 需要用户先在面板里创建" });
+  const { createApp } = await import("../src/app.js");
+  const { indexEntry } = await import("../src/entryIndex.js");
+  const { git } = await import("@nema/knowledge");
+  const store = new KnowledgeStore(repoPath(dataDir, wsA));
+  const seed = await store.upsert({ kind: "requirement", title: "Seed", body: "b", reason: "r", sourceMessages: [] }, { author: "user" });
+  await indexEntry(db, wsA, seed.entry);
+  const ui = createApp({ db, dataDir, events, daemonStatus: () => true, daemon, webOrigin: "http://localhost:3000" });
+  const uiResponse = await ui.request(`http://127.0.0.1:4400/api/workspaces/${wsA}/entries/${seed.entry.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "requirement", title: "Seed", body: "b", reason: "tag", tags: ["API"] }) });
+  expect(uiResponse.status).toBe(200);
+  const saved = await req("POST", "/room/entries", runToken, input);
+  expect(saved.status).toBe(200);
+  const result = await saved.json() as any;
+  const id = result.entry.id;
+  expect((await git(repoPath(dataDir, wsA), ["log", "-1", "--format=%B"]))).toContain("Author: agent");
+  for (const tags of [undefined, []]) {
+    const payload = { ...input, id, tags };
+    expect((await req("POST", "/room/entries", runToken, payload)).status).toBe(200);
+    const expected = tags ?? ["api"];
+    expect((await store.get(id))!.tags).toEqual(expected);
+    expect(await db.query("select tags from entry_index where workspace_id=$1 and entry_id=$2", [wsA, id])).toEqual([{ tags: expected }]);
+  }
+});

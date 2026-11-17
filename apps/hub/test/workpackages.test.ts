@@ -1,3 +1,5 @@
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { Hono } from "hono";
 import { KnowledgeStore } from "@nema/knowledge";
@@ -303,6 +305,26 @@ describe("approve, edit, regenerate, drop", () => {
     await store().writeWorkPackageDoc(wp.id, "plan", plan("- 新建：api:src/a.ts"), {}, "p", [], { author: "user" });
     return wp;
   }
+
+  test("tagged packages retain indexed tags through docs, metadata and approval", async () => {
+    const wp = await newPackage();
+    const file = path.join(repoPath(dataDir, ws), "workpackages", `${wp.id}.md`);
+    await writeFile(file, (await readFile(file, "utf8")).replace("---\n", "---\ntags: [api]\n"));
+    const token = await runToken();
+    const check = async () => {
+      expect((await store().get(wp.id))!.tags).toEqual(["api"]);
+      expect(await db.query("select tags from entry_index where workspace_id=$1 and entry_id=$2", [ws, wp.id])).toEqual([{ tags: ["api"] }]);
+    };
+    for (const [name, markdown] of [["workpackage__save_spec", GOOD_SPEC], ["workpackage__save_plan", plan("- 新建：api:src/a.ts")]]) {
+      const response = await call(token, name, { id: wp.id, markdown });
+      expect(response.json).toEqual({ result: { ok: true } });
+      await check();
+    }
+    expect((await send("POST", `${wp.id}/approve`)).status).toBe(200);
+    await check();
+    expect((await call(token, "workpackage__mark_task_inferred", { id: wp.id, task: 1, commits: ["abc1234"] })).json).toEqual({ result: { ok: true } });
+    await check();
+  });
 
   test("approve needs spec and plan and records the commit", async () => {
     const wp = await newPackage();

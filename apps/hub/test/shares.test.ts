@@ -21,6 +21,7 @@ async function shareableWorkspace(db: Db, dataDir: string, name: string): Promis
 function baseEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "kind" | "status">): Entry {
   return {
     title: "Ship the share",
+    tags: [],
     businessDate: null,
     related: ["D-2"],
     sourceMessages: ["secret-chat-marker"],

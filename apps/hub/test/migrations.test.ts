@@ -142,3 +142,22 @@ describe("landing after S2's task account column", () => {
     expect(await columnNames(db, "tasks")).toEqual(expect.arrayContaining(["account_id", "routing"]));
   });
 });
+
+test("021 tags migration upgrades old rows with nulls and can be applied twice", async () => {
+  const earlier = await scratch("nema-before-tags-");
+  for (const name of (await readdir(MIGRATIONS)).filter(n => n.endsWith(".sql") && n !== "021_entry_index_tags.sql").sort()) {
+    await copyFile(path.join(MIGRATIONS, name), path.join(earlier, name));
+  }
+  const client = new PGlite();
+  const db = wrap(client);
+  try {
+    await migrate(db, earlier);
+    await db.query("insert into workspaces(id,name) values ('ws_tags','Tags')");
+    await db.query("insert into entry_index(workspace_id,entry_id,kind,title,status) values ('ws_tags','R-1','requirement','Old','active')");
+    expect(await columnNames(db, "entry_index")).not.toContain("tags");
+    await migrate(db);
+    const { readFile } = await import("node:fs/promises");
+    await db.query(await readFile(path.join(MIGRATIONS, "021_entry_index_tags.sql"), "utf8"));
+    expect(await db.query("select tags,tags_indexed_at from entry_index")).toEqual([{ tags: null, tags_indexed_at: null }]);
+  } finally { await client.close(); }
+});

@@ -4,6 +4,7 @@ import path from "node:path";
 import matter from "gray-matter";
 import {
   EntryFrontmatter,
+  normalizeTagList,
   KIND_DIR,
   KIND_PREFIX,
   UpsertEntryInput,
@@ -103,7 +104,7 @@ function mergeQuotes(existing: Quote[], incoming: Quote[]): Quote[] {
 }
 
 const KNOWN_FRONTMATTER_KEYS: ReadonlySet<string> = new Set([
-  "id", "kind", "title", "status", "business_date", "related", "source_messages",
+  "id", "kind", "title", "status", "business_date", "related", "source_messages", "tags",
   "url", "priority", "diagram", "implementation", "workpackage", "source_snapshot",
   "source_refs", "confirmed_revision", "basis", "ingested_at", "confirmed_at", "quotes",
 ]);
@@ -123,6 +124,7 @@ function toFile(e: Entry, preserved: Record<string, unknown> = {}): string {
     related: e.related,
     source_messages: e.sourceMessages,
   };
+  if (e.tags.length > 0) data.tags = e.tags;
   if (e.url !== undefined) data.url = e.url;
   if (e.priority !== undefined) data.priority = e.priority;
   if (e.diagram !== undefined) {
@@ -192,8 +194,10 @@ function toFile(e: Entry, preserved: Record<string, unknown> = {}): string {
   return matter.stringify("", { ...data, ...preserved }) + e.body;
 }
 
-export function fromFile(raw: string): Entry {
+export function fromFile(raw: string, file = "<entry>"): Entry {
   const { data, content } = matter(raw);
+  const { tags, dropped } = normalizeTagList(data.tags);
+  if (dropped.length > 0) console.warn(`[knowledge] dropped invalid tags in entry file ${file}`);
   const fm = EntryFrontmatter.parse({
     id: data.id,
     kind: data.kind,
@@ -201,6 +205,7 @@ export function fromFile(raw: string): Entry {
     status: data.status,
     businessDate: data.business_date ?? null,
     related: data.related ?? [],
+    tags,
     sourceMessages: data.source_messages ?? [],
     url: data.url ?? undefined,
     priority: data.priority ?? undefined,
@@ -311,6 +316,7 @@ export function summarizeEntry(e: Entry): EntrySummary {
     status: e.status,
     businessDate: e.businessDate,
     related: e.related,
+    tags: e.tags,
     basis: e.basis,
     confirmedAt: e.confirmedAt,
   };
@@ -460,7 +466,7 @@ export class KnowledgeStore {
         if (!n.endsWith(".md") || WP_DOC_FILE.test(n)) continue;
         const file = path.join(this.repoDir, KIND_DIR[kind], n);
         try {
-          out.push(fromFile(await readCompleteFile(file)));
+          out.push(fromFile(await readCompleteFile(file), file));
         } catch (err) {
           // One unreadable/corrupt entry must not hide every other entry.
           console.warn(`[knowledge] skipping unparseable entry file ${file}: ${err instanceof Error ? err.message : String(err)}`);
@@ -511,7 +517,7 @@ export class KnowledgeStore {
     const kind = kindFromId(id);
     if (!kind) return null;
     try {
-      return fromFile(await readCompleteFile(this.filePath(id, kind)));
+      return fromFile(await readCompleteFile(this.filePath(id, kind)), this.filePath(id, kind));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw err;
@@ -570,6 +576,7 @@ export class KnowledgeStore {
           status: input.status ?? existing?.status ?? DEFAULT_STATUS[input.kind],
           businessDate: input.businessDate !== undefined ? input.businessDate : (existing?.businessDate ?? null),
           related: input.related ?? existing?.related ?? [],
+          tags: input.tags ?? existing?.tags ?? [],
           // Provenance accumulates across updates.
           sourceMessages: [...new Set([...(existing?.sourceMessages ?? []), ...input.sourceMessages])],
           url: input.url ?? existing?.url,
@@ -624,6 +631,7 @@ export class KnowledgeStore {
           status: existing?.status ?? DEFAULT_STATUS.diagram,
           businessDate: existing?.businessDate ?? null,
           related: existing?.related ?? [],
+          tags: existing?.tags ?? [],
           sourceMessages: [...new Set([...(existing?.sourceMessages ?? []), ...input.sourceMessages])],
           diagram: input.diagram,
           basis: existing?.basis ?? null,
@@ -667,6 +675,7 @@ export class KnowledgeStore {
           status: DEFAULT_STATUS.workpackage,
           businessDate: null,
           related: [],
+          tags: [],
           sourceMessages: [...new Set(input.sourceMessages)],
           workpackage: { requirements: input.requirements, repos: input.repos, approvedAt: null, approvedCommit: null, blockedOn: null, tasks: [] },
           basis: null,
@@ -909,7 +918,7 @@ export class KnowledgeStore {
   private async readRecoverable(rel: string): Promise<Entry | null> {
     const file = path.join(this.repoDir, rel);
     try {
-      return fromFile(await readCompleteFile(file));
+      return fromFile(await readCompleteFile(file), file);
     } catch (err) {
       console.warn(`[knowledge] skipping unparseable entry file ${rel}: ${err instanceof Error ? err.message : String(err)}`);
       return null;

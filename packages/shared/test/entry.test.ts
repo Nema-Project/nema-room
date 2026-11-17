@@ -204,3 +204,7 @@ test("validates source refs and exposes only refs through upsert", () => {
     expect(UpsertEntryInput.safeParse({ ...baseUpsert, sourceRefs: refs }).success).toBe(false);
   }
 });
+
+test("legacy frontmatter defaults tags to empty", () => {
+  expect(EntryFrontmatter.parse(baseDecision).tags).toEqual([]);
+});
