@@ -43,7 +43,8 @@
 ### 1. 组件模型与锁
 
 - 唯一可选组件：`graphify`。组件的事实来源仍是 `scripts/desktop/graphify-lock.json`，随主程序发布，运行时从随包资源读取（桌面 payload、npm 包内各一份，内容一致）。
-- `<lock-hash>` 定义为：对当前平台 target 的锁条目（python 条目 + wheels 数组，含 url 与 sha256）做规范化 JSON 序列化后的 sha256 十六进制全串。同一锁在同一平台恒定同值；锁的任何一项变化都会产生新目录。
+- `<lock-hash>` 定义为：对当前平台 target（键为 `${platform}-${arch}`，取值见下一条）的锁条目（python 条目 + wheels 数组，含 url 与 sha256）做规范化 JSON 序列化后的 sha256 十六进制全串。同一锁在同一平台恒定同值；锁的任何一项变化都会产生新目录。
+- target 矩阵：锁共四个 target——`win32-x64`、`darwin-arm64`（桌面现有两项）与本设计新增的 `linux-x64`、`linux-arm64`。新增 Linux 两项与桌面 target 走同一制锁流程、同版本来源：CPython 仍取 python-build-standalone 同一钉住版本（`20261026` 版上游同时发布 `x86_64-unknown-linux-gnu` 与 `aarch64-unknown-linux-gnu` 的 install_only 构建，2026-11-18 已核对存在）；wheels 取同一依赖集的 manylinux 变体，逐项钉 url 与 sha256（并按下一条记 `size`）。Linux 只取 glibc（gnu）变体；musl 环境（如 Alpine）视为不支持的平台，组件不可用并如实提示。桌面 payload 的 target 仍只有 win32/darwin 两项——Linux target 只存在于锁里，供 npm/Compose 形态运行在 Linux 宿主机上的 daemon 经同一下载器取用（今天的 `fetchGraphify` 对 Linux 是静默跳过、运行时只认随包目录，npm/Compose 用户根本没有可用来源）；`<lock-hash>` 定义对四个 target 一视同仁，Linux 宿主机有自己的 lock-hash 取值域。
 - 锁文件补 `size` 字段：`fetch-graphify.mjs` 在 staging/制包时已实际下载每个文件，顺手把字节数写回锁（制锁流程的一部分，CI 校验锁内 size 与实际下载一致）。运行时确认弹窗与进度条用它，不临时发 HEAD 请求猜大小。
 
 ### 2. 下载时机与确认 UX（D-4 = B）
@@ -64,8 +65,9 @@
 ```
 
 - 流程：下载到 staging → 逐文件 sha256 校验（与锁比对，任一不符整次作废）→ 解压到 staging → 跑一次自检（启动器可执行且 `python -m graphify --version` 成功）→ 目录改名为 `<lock-hash>` → 原子改写 `current.json` 切换 active。任何一步失败删 staging，已 active 的旧版不受影响。
+- 改名目标已存在时的恢复（verify-or-replace）：若 `<lock-hash>` 在改名前已存在（上次安装在改名后、写 `current.json` 前中断留下的孤儿目录，或清理未及的残留），绝不直接改名覆盖——改名到已存在的非空目录在 POSIX 与 Windows 上都会失败，重试不能靠用户手工删目录才恢复。处理规则：先对该目录核对组装完整性（应含的文件无一缺失）并跑自检——该目录只可能来自安装器自己上一次已验归档的组装中断，或来路不明，两者都不凭目录名取信；完整性与自检全部通过才视为一次已完成但未激活的安装，删掉本次 staging、跳过改名、直接写 `current.json` 切换（复用）；任一项不过则整目录删除，再把 staging 改名到位（替换）。已存在目录恰为 `current.json` 记着的 active/previous 时同理：核对通过即视为已装好、直接结束，不过按损坏处理、删除后走完整安装。
 - 保留策略：保留 active 与 previous 两版，其余 `<lock-hash>` 目录在下一次成功安装后清理（沿用社区共识的自动清理旧版本）。
-- 启动器：Windows 沿用现行编译好的 launcher 逻辑改为随组件生成（staging 时的 C 编译不在用户机器上发生——launcher 是锁内一个预构建小二进制，还是由安装器写出的脚本，属于实施计划要定的实现细节；约束是用户机器上不要求编译器）；macOS 沿用 shell 脚本形态。
+- 启动器：Windows 沿用现行编译好的 launcher 逻辑改为随组件生成（staging 时的 C 编译不在用户机器上发生——launcher 是锁内一个预构建小二进制，还是由安装器写出的脚本，属于实施计划要定的实现细节；约束是用户机器上不要求编译器）；macOS 与 Linux 沿用 shell 脚本形态。
 - 运行时查找顺序（改 `packagedGraphifyBin` 一带）：`NEMA_GRAPHIFY_BIN`（显式覆盖，最优先）→ `~/.nema/runtime/graphify/<current active>` 且其 lock-hash 与当前主程序锁一致 → 随包 `tools/graphify`（仅过渡期旧版 payload，新版不再随包）→ 未安装。lock-hash 不一致（主程序已升级、组件未跟上）时视为未安装并走第 2 节流程，不拿旧版凑数。
 
 ### 4. 下载源、镜像、代理与 CA（D-3 = A）
@@ -77,10 +79,11 @@
 
 ### 5. 离线组件包（D-2 = B）
 
-- 形态：一个 `.nema-component` 包（本质 tar），内含按第 3 节布局打好的组件目录与 `manifest.json`（组件名、target、lock-hash、每文件 sha256 与 size、制作工具版本）。
-- 制作：提供 `nema components pack graphify`（在能联网的机器上运行：按锁下载、校验、组装、打包），组织可把包放进内网文件共享自行分发。包的制作方即分发方，许可证义务由制作方承担（见风险一节）；Nema 的 Release 不附带此包。
-- 导入：设置页选文件，或 `nema components import <file>`。导入时全量校验 manifest 与每文件 sha256，且 lock-hash 必须等于当前主程序锁的 lock-hash、target 必须等于当前平台，否则拒绝并说明；校验通过后按第 3 节同一路径落盘与切换，不要求联网。
-- 离线包与在线下载产出物完全同构，运行时不区分来源。
+- 形态：一个 `.nema-component` 包（本质 tar），内含**按锁下载的原始归档原样**（python 归档与全部 wheels，逐字节与上游下载一致）与 `manifest.json`。包内不放组装好的组件目录——组装只在导入端、由安装器自己完成（见导入一条）。这样离线路径与在线路径共用同一条信任链：锁钉的是归档字节，两种来源都先验归档、再组装，不存在「组装后文件」这一层需要另行背书的东西。
+- manifest 只是不可信的索引，不是信任来源。它可以声明：组件名、target、一份**声称的** lock-hash、制作工具版本、归档清单（文件名与 size，供进度显示与完整性预检）。导入器必须把这些声明逐项与随主程序发布的受信锁（`graphify-lock.json`）核对，任一不符即拒绝；但 manifest 里的任何哈希都不作数——导入器不读 manifest 的哈希放行任何文件，本设计也不设「组装后逐文件哈希表」这类信任输入。一个 manifest 与自身完全自洽的包（例如换掉启动器再把 manifest 哈希改到对上）不因此获得任何信任。
+- 制作：提供 `nema components pack graphify`（在能联网的机器上运行：按锁下载、逐项校验、把原始归档原样打包；组装不在制包端发生），组织可把包放进内网文件共享自行分发。包的制作方即分发方，许可证义务由制作方承担（见风险一节）；Nema 的 Release 不附带此包。
+- 导入：设置页选文件，或 `nema components import <file>`。导入器以随主程序的受信锁为准绳：取当前平台 target 条目，包内归档集合必须与该条目恰好相等（python 归档与每个 wheel 都在、无多余归档），逐个按锁校验 sha256 与 `size`；manifest 声称的 lock-hash 必须等于当前平台按受信锁算出的 lock-hash、target 必须等于当前平台，否则拒绝并说明。归档全量校验通过后，走第 3 节与在线下载完全相同的组装路径（解压到 staging → 自检 → 改名 → 原子切换），不要求联网；包内若另有预组装目录或脚本，一律忽略、永不执行。信任链条因此闭合在受信锁上：能被执行的每个字节都可溯源到一把经锁校验的归档。
+- 离线导入与在线下载的产出物完全同构（同一批受锁校验的归档、同一条组装路径），运行时不区分来源。
 
 ### 6. 失败降级与提示
 
@@ -132,17 +135,18 @@ Codex、Claude Code 继续不打包、不代装。状态/设置页显示检测�
 **下载与校验**
 
 - 自动化测试：锁内任一文件的字节被篡改时，安装必须失败且不产生 active 目录；下载中途中断（杀进程/断网模拟）后，staging 被清、既有 active 版本（如有）仍可正常执行 graphify。
+- 中断恢复测试：在「staging 已改名为 `<lock-hash>`、`current.json` 尚未写入」这一点杀掉安装，再次触发安装必须成功并以该版为 active（校验复用或删除重装均可），不许要求手工删目录；把已落盘的 `<lock-hash>` 目录改坏一个文件后重跑安装，坏目录必须被识别并替换，不得被激活。
 - 干净环境（无随包 graphify 的构建产物）首次触发图谱功能：确认弹窗出现且显示的大小与锁内 size 汇总一致；确认后装成 `<lock-hash>` 目录，`current.json` 指向它，图谱构建跑通。
 - 镜像变量生效测试：把两个镜像变量指向本地假源，下载全程不访问上游域名且校验通过；假源给错字节时校验失败。
 
 **离线导入**
 
-- 在 A 机 `nema components pack graphify` 制包，拷到断网的 B 机（同平台）导入成功，图谱功能可用；lock-hash 或 target 不符的包被拒绝并给出明确原因。
+- 在 A 机 `nema components pack graphify` 制包，拷到断网的 B 机（同平台）导入成功，图谱功能可用；lock-hash 或 target 不符的包被拒绝并给出明确原因；把包的构成换成「改过的启动器 + 与之自洽的 manifest」时导入必须失败（归档与受信锁对不上）且不产生 active 目录。
 
 **降级与多形态**
 
 - 下载必失败的环境（黑洞代理）里：应用正常启动与使用非图谱功能，图谱入口显示失败原因与重试/导入出口，无全局报错弹窗。
-- npm 全新安装的 daemon（无桌面 payload）走通同一套确认→下载→可用流程；Compose 形态的宿主机 daemon 同样走通。
+- npm 全新安装的 daemon（无桌面 payload，含运行在 Linux x64/arm64 宿主机上的）走通同一套确认→下载→可用流程；Compose 形态的宿主机 daemon 同样走通。
 
 以上为静态检查与自动化测试之外的真实环境验收项；桌面真机验收按维护者 2026-11-16 测试政策不主动做，桌面部分以 CI 的 staging/smoke 与上述可测项为准，问题等用户反馈。
 

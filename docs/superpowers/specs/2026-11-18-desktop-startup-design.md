@@ -43,7 +43,7 @@
 
 已落地：启动链接带 `nema_workspace` cookie 时直接进入上次的工作区（ROADMAP P1-10 验收行已记录 `nema_workspace=ws_…` 进入 `/w/ws_…`）；`WorkspaceShell` 在列表返回前渲染骨架（`room-skeleton`，`apps/web/components/WorkspaceShell.tsx` :524），不再是纯文字；`AppSettings` 与 `WorkspaceSettings` 已改 `next/dynamic`（:12-13）。仍成立的剩余：
 
-- 无记忆工作区（首次运行、cookie 缺失或房间已删）时，`/` 仍先 `listWorkspaces()` 再 `router.replace('/w/<id>')`（`WorkspaceShell.tsx` :152、:200），一跳还在，只是被骨架遮住了大半感知。
+- 无记忆工作区时，`/` 仍先 `listWorkspaces()` 再 `router.replace('/w/<id>')`（`WorkspaceShell.tsx` :152、:200），一跳还在，只是被骨架遮住了大半感知。这里的「无记忆」指 localStorage 里没有记忆 ID（首次运行或记忆已清除），或记忆 ID 已失效（房间已删/归档，要等列表返回才确认并清除）；cookie 缺失本身不算——cookie 缺失但 localStorage 仍有有效 ID 时，shell 在列表返回前就已跳转（:159-169 的 effect 在 `workspaces` 尚为 null 时即 `router.replace`）。
 - 首屏组件 `Chat`、`EntryDetail`、`KnowledgePanel`、`Sidebar` 仍是静态 import（:6-9）。它们是首屏内容，静态未必错；但 issue 点名的 v0.2.1 大 chunk（457KB 等）构成从未分析，#134 与其后的依赖变化后 chunk 现状也没有新数字。**先测量再决定拆不拆，见 W1。**
 
 ### 6. issue 验收建议的落实情况
@@ -61,21 +61,21 @@ issue 的四条验收建议里：启动画面 1s 内出现、失败在窗口内�
 
 ### W2 冷启动 DB 复核（只评估）
 
-- **做法**：取 `verify.yml` 平台 job 日志里 `scripts/ci/startup-sample.mjs` 的 JSON（`windows-latest` 与 `macos-latest` 各一份），读其 fresh-process 冷/热 `createLocalDb` 总时长，与 2026-11-10 设计在 Linux 主机上的数字（冷中位 1605ms、热中位 264ms，其中迁移约 102/61ms）并列记录在本 issue。若 Windows 冷开销显著高于 Linux（例如两倍以上），再单独立项讨论预置数据目录（2026-11-10 的 D-1 方案 A）及其恢复方案。
+- **做法**：取 `verify.yml` 平台 job 日志里 `scripts/ci/startup-sample.mjs` 的 JSON，读其 fresh-process 冷/热 `createLocalDb` 总时长，与 2026-11-10 设计在 Linux 主机上的数字（冷中位 1605ms、热中位 264ms，其中迁移约 102/61ms）并列记录在本 issue。注意单次运行每个平台只产一份冷样本，D-3 要用的中位数不能取自单份日志：须跨最近至少 5 次独立运行收集 `windows-latest` 与 `macos-latest` 各自的冷总时长，排序后取中间值（样本数为 5 时即第 3 个），热总时长同口径附记。若 Windows 冷开销显著高于 Linux（例如两倍以上），再单独立项讨论预置数据目录（2026-11-10 的 D-1 方案 A）及其恢复方案。
 - **预期收益**：本版不产生速度收益，产出的是「改或不改」的依据数字。
 - **风险**：无（只读 CI 日志与记录）。注意 CI runner 的冷数字含 WASM 首次编译，与用户机器同口径，但 runner 性能波动大，只看量级不看个位数。
 - **依赖**：`startup-sample` 已在 `verify.yml` 平台 job 中运行（已核对，`.github/workflows/verify.yml` :86）。
 
 ### W3 打包基准的口径收尾
 
-- **做法**：不在 CI 里新增打包+bench 的 job（打包耗时与产物分发成本高，且 CI runner 不是用户硬件，数字的代表性有限）。改为把 P1-10 与 #186 的验收口径正式改写为：Electron 侧行为由 lifecycle 自动化测试 + `desktop-mark` 打点覆盖；core 阶段与平台数字由 `startup-sample` 在 CI 平台 runner 持续记录；`desktop:bench` 保留为手工工具，发布说明或 issue 中引用数字时必须注明机器与安装包 SHA，且不作为合并门槛。
+- **做法**：不在 CI 里新增打包+bench 的 job（打包耗时与产物分发成本高，且 CI runner 不是用户硬件，数字的代表性有限）。改为把 P1-10 与 #186 的验收口径正式改写为：Electron 侧行为由 lifecycle 自动化测试 + `desktop-mark` 打点覆盖；平台 DB/ACL 数字由 `startup-sample` 在 CI 平台 runner 持续记录（它只测 fresh-process 的 `createLocalDb` 冷/热总时长与 Windows ACL 微基准，不启动 core、不产 `startup-phase` 行）；core 各阶段时长来自 core 自身写到 stdout 的 `startup-phase` 行，由 `desktop:bench` 从 core 日志解析、由本地运行时测试解析断言，不是 `startup-sample` 的产物；`desktop:bench` 保留为手工工具，发布说明或 issue 中引用数字时必须注明机器与安装包 SHA，且不作为合并门槛。
 - **预期收益**：P1-10 可以据此收尾，不再无限期挂着一条按现行政策不会执行的验收。
 - **风险**：口径放宽是真实取舍——打包态的 Electron 启动、`requireSystemGit`、首帧时间将继续没有数字。本文把这点写明，而不是假装 sample 等于打包基准。
 - **依赖**：维护者对 D-6 的决定。
 
 ### W4 启动链剩余串行段（只测量，不改造）
 
-- **做法**：用 `startup-phase` 现有打点看 lease 与 private-files 两段在 CI sample/测试中的量级（它们在 web spawn 之前，issue 旧表里合计约 1.2–1.8s，但那是含旧 ACL 行为的 v0.2.1 数字）。本版不改顺序：web spawn 提前到 lease 之前会动到实例所有权与 teardown 语义，收益未经证实不动。
+- **做法**：用 core 自身的 `startup-phase` 打点看 lease 与 private-files 两段的量级：`startLocalRuntime`（`apps/local/src/runtime.ts` :428、:503）把每个阶段连同 elapsed ms 写成 JSON 行到 stdout，`apps/local/test/runtime.test.ts` 的 `startupPhases` 助手正是解析这些行取每阶段 ms（该测试集由 CI 平台 job 承载），托管 core 场景下也可用 `NEMA_LOCAL_CORE_LOG` 把这份 stdout 落盘后读取；CI 的 `startup-sample` 不产 `startup-phase` 行，不作本项来源。两段在 web spawn 之前，issue 旧表里合计约 1.2–1.8s，但那是含旧 ACL 行为的 v0.2.1 数字。本版不改顺序：web spawn 提前到 lease 之前会动到实例所有权与 teardown 语义，收益未经证实不动。
 - **预期收益**：无直接收益；若两段在新数字里仍占大头，下一版再立项。
 - **风险**：无。
 - **依赖**：无。
@@ -98,7 +98,7 @@ issue 的四条验收建议里：启动画面 1s 内出现、失败在窗口内�
 
 ### D-3 冷启动 DB：只评估还是做改造
 
-**建议**：只做评估（W2）。沿用 2026-11-10 的 D-1 选 B 作为当前决定，用 CI 平台数字复核一次并把数字记回 #186；只有当 `windows-latest` 的冷 `createLocalDb` 中位量级明显高于 Linux 数字（建议阈值：两倍）时，才另行立项预置数据目录。
+**建议**：只做评估（W2）。沿用 2026-11-10 的 D-1 选 B 作为当前决定，用 CI 平台数字复核一次并把数字记回 #186；只有当 `windows-latest` 的冷 `createLocalDb` 中位（口径见 W2：跨至少 5 次独立 CI 运行收集的冷样本，排序取中间值）量级明显高于 Linux 数字（建议阈值：两倍）时，才另行立项预置数据目录。
 **理由**：已测证据显示冷开销主要是 PGlite 初始化而非迁移，预置目录在 Linux 主机上只省约 1.0s，却引入模板与 PGlite 版本/迁移集绑定、半成品目录恢复、载荷体积三项长期义务。没有 Windows 数字之前不付这笔账。
 
 ### D-4 启动画面：独立窗口还是同窗口
@@ -135,7 +135,7 @@ ACL 校验语义不得放松，这一点在 2026-11-10 设计里已论证过一�
 全部证据按维护者 2026-11-16 的测试政策产生：**不安排真实 Windows/macOS 硬件测试**；数字来自基准脚本与 CI 平台 runner（`windows-latest`、`macos-latest`），行为来自自动化测试。
 
 - **W1**：`apps/web` 构建产物的 chunk 清单前后对照随 PR 给出（首屏入口 chunk 的字节数变化可查）；被拆分的非首屏面板有按需加载的组件测试或构建证据；`WorkspaceShell` 骨架与直达行为的既有测试保持全绿。
-- **W2**：#186 上留一条评估记录，含 `verify.yml` 两份平台 job 日志中 `startup-sample` 的冷/热 `createLocalDb` 数字、与 2026-11-10 Linux 数字的对照、以及「触发/不触发预置目录立项」的结论。没有这条记录，W2 不算完成。
+- **W2**：#186 上留一条评估记录，含按 W2 口径从至少 5 次 `verify.yml` 运行收集的 `startup-sample` 冷/热 `createLocalDb` 中位数（`windows-latest` 与 `macos-latest`）、与 2026-11-10 Linux 数字的对照、以及「触发/不触发预置目录立项」的结论。没有这条记录，W2 不算完成。
 - **W3**：ROADMAP P1-10 的验收行改写为新口径并注明打包数字的主动放弃；#186 按新口径逐项对账后关闭或保留明确的剩余项。
 - **回归线（既有能力不许退）**：窗口在 `ensureLocalRuntime` 返回前已显示且背景色随主题；启动失败时错误出现在启动窗口文档内而非只有模态框；子进程回报 `db` 阶段时启动文档显示对应文案；web 被挡住时 `startup-phase` 的 `db` 可早于 `web`；Windows 上一次启动内 ACL helper 启动次数为每进程 1 次且 8 次校验逐次执行，放宽 ACL 后再次打开仍抛 `cannot verify private Windows ACL`（既有测试集，CI 平台 job 承载）。
 - **启动画面时限**：issue 的「点击后 1s 内出现启动画面」保留为目标而非门槛——它只能在打包应用上测，本版以 lifecycle 测试中「窗口先于 core 就绪显示」的既有断言为据，并在 W2/W3 的记录里注明该时限未在真实硬件上复测。
