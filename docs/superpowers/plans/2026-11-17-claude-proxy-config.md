@@ -72,13 +72,13 @@
 
 ### Task 4: Docs, changelog, roadmap and full verification
 
-**Files:** `docs/guide.en.md`, `docs/guide.zh.md`, `docs/guide.ja.md`, `docs/reference.zh-CN.md`, `changelog.d/claude-proxy-env.added.md`, `ROADMAP.md`.
+**Files:** `docs/guide.en.md`, `docs/guide.zh.md`, `docs/guide.ja.md`, `docs/reference.zh-CN.md`, `README.md`, `README.en.md`, `README.zh.md`, `README.ja.md`, `changelog.d/claude-proxy-env.added.md`, `ROADMAP.md` (post-merge step only).
 
 - [ ] In the three guides, after the "Configure Claude Code" block (around line 217-223), add `config set proxyEnv forward` / `off`. Cover the default, the eight variables, the fact that the daemon's own environment supplies the values, the credential-in-URL warning, that no CA variables are forwarded, the downgrade step, and that desktop does not expose the setting. Keep the three languages equivalent.
 - [ ] In `docs/reference.zh-CN.md`, add one paragraph: the field, the strict-schema rollback rule, the forwarded set and Windows case rule, the connection classification and what it does not cover.
-- [ ] Confirm that the READMEs need no change: `grep -n "config set" README*.md` should return nothing. Note the result in the PR.
+- [ ] Update the four READMEs (`README.md`, `README.en.md`, `README.zh.md`, `README.ja.md`): add a short proxy note to the configuration/usage part — on a machine whose only egress is a proxy, `nema config set proxyEnv forward` lets Claude Code tasks reach the API. AGENTS.md requires configuration changes in all four READMEs; keep `README.md` and `README.en.md` byte-identical (verify with `cmp`) and the language versions equivalent.
 - [ ] Write `changelog.d/claude-proxy-env.added.md` with exactly one bullet, for example: `- Claude Code tasks can use the daemon's HTTP(S) proxy settings with \`nema config set proxyEnv forward\`; API-connection failures are now reported as such.`
-- [ ] At `ROADMAP.md` line 29 (#131), append that the #242 fix is merged (with a PR link) and the Claude-family full run is still pending. Do not mark #131 or S5.2 complete in this task.
+- [ ] After the implementation PR has merged (not before — the note must not claim a merge that has not happened): at `ROADMAP.md` line 29 (#131), append that the #242 fix is merged (with the PR link) and the Claude-family full run is still pending. Do not mark #131 or S5.2 complete in this task.
 - [ ] Run `npm run typecheck`, then `npm run typecheck -w apps/cli`, then `npm test -- --maxWorkers=2`. Expect all of them to pass. Report any failure tied to the environment by name; do not weaken a test to get past it.
 - [ ] Docs check: write the changed Markdown paths into a JSON array file, then run `node scripts/ci/docs-check.mjs <that-file>`, `node --test scripts/ci/docs-check.test.mjs` if the checker changed, and `git diff --check`. Expect no errors. Run the CodeRabbit CLI if it is available, and review the final diff.
 

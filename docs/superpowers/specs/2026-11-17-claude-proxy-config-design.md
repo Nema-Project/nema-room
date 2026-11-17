@@ -107,7 +107,7 @@ With `forward`, the Claude Code child, and any process it starts, can read the p
 
 - `docs/guide.{en,zh,ja}.md`, in the "Configure Claude Code" part next to the existing `config set adapter claude-code` block: describe `config set proxyEnv forward|off`, the eight variables, the default, the credential note, the missing CA variables, the downgrade step, and that desktop does not expose it. Keep the three languages equivalent.
 - `docs/reference.zh-CN.md`: one paragraph on the field, the strict-schema rollback rule, the forwarded set, and the connection-failure classification with its limits.
-- The READMEs do not document `config set`, so they need no change. The plan records this check.
+- `README.md`, `README.en.md`, `README.zh.md`, `README.ja.md`: add a short proxy note to the configuration/usage part — on a machine whose only egress is a proxy, `nema config set proxyEnv forward` lets Claude Code tasks reach the API. The READMEs do not mention `config set` today, but that does not exempt this change: AGENTS.md requires configuration changes to be reflected in all four READMEs and the affected guide sections, with the two English READMEs identical.
 - `changelog.d/claude-proxy-env.added.md`: one English bullet.
 - `ROADMAP.md`: after the code merges, note at the #131 item (line 29) that the #242 fix is merged and the Claude-family full run is still pending. Mark the S5.2 Claude gap closed and #131 ready to close only after the real-environment acceptance below is recorded on #131.
 
