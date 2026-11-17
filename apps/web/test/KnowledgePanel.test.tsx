@@ -249,6 +249,40 @@ describe("KnowledgePanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Generate for selected" }));
     expect((await screen.findByRole("alert")).textContent).toBe("还没有绑定仓库");
   });
+  it.each(["success", "failure"])("preserves pending work-package requests and %s feedback across tag-filter changes", async (outcome) => {
+    vi.mocked(hub.listEntries).mockResolvedValue([
+      e("R-1", "requirement", "active", { tags: ["api", "web"] }),
+    ]);
+    let resolve!: (value: Awaited<ReturnType<typeof hub.requestWorkPackage>>) => void;
+    let reject!: (reason: Error) => void;
+    vi.mocked(hub.requestWorkPackage).mockImplementationOnce(() => new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    }));
+    await mount();
+    await userEvent.click(screen.getByRole("button", { name: "Select requirements" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "R-1" }));
+    await userEvent.click(screen.getByRole("button", { name: "Generate for selected" }));
+
+    for (const filter of ["#api", "#web", "Clear tag filter"]) {
+      await userEvent.click(screen.getByRole("button", { name: filter }));
+      await userEvent.click(screen.getByRole("button", { name: "Select requirements" }));
+      await userEvent.click(screen.getByRole("checkbox", { name: "R-1" }));
+      expect((screen.getByRole("button", { name: "Generate for selected" }) as HTMLButtonElement).disabled).toBe(true);
+    }
+
+    await act(async () => {
+      if (outcome === "success") resolve({ id: "W-1" } as never);
+      else reject(new Error("Request failed"));
+    });
+    const role = outcome === "success" ? "status" : "alert";
+    const feedback = outcome === "success" ? "Requested work package W-1" : "Request failed";
+    expect(screen.getByRole(role).textContent).toBe(feedback);
+    for (const filter of ["#api", "#web", "Clear tag filter"]) {
+      await userEvent.click(screen.getByRole("button", { name: filter }));
+      expect(screen.getByRole(role).textContent).toBe(feedback);
+    }
+  });
   it("the group shows status tags and 待澄清 with the question link", async () => {
     const wp = (id: string, status: EntryListItem["status"], blockedOn: string | null) =>
       e(id, "workpackage", status, { workpackage: { blockedOn, taskCount: 2 } });

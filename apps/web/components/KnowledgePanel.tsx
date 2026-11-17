@@ -128,7 +128,7 @@ function WorkspaceKnowledgePanel({ workspaceId, knowledgeLanguage, onOpen, refre
       <div className="kp-body">
         {error && <p className="error" role="alert">{t("know.loadFailed", { message: error })}</p>}
         {selectedTag && loaded && filtered(loaded)?.length === 0 ? <p className="placeholder">{t("tags.empty")}</p> : view === "kind" ? (
-          <ByKind key={selectedTag ?? ""} workspaceId={workspaceId} entries={filtered(entries)} repos={repos} onOpen={onOpen} onOpenDiagram={openDiagram} />
+          <ByKind selectedTag={selectedTag} workspaceId={workspaceId} entries={filtered(entries)} repos={repos} onOpen={onOpen} onOpenDiagram={openDiagram} />
         ) : (
           <ByTime entries={filtered(timeline)} onOpen={onOpen} />
         )}
@@ -137,9 +137,9 @@ function WorkspaceKnowledgePanel({ workspaceId, knowledgeLanguage, onOpen, refre
   );
 }
 
-type ByKindProps = { workspaceId: string; entries: EntryListItem[] | null; repos: Repo[]; onOpen: (id: string) => void; onOpenDiagram: (id: string) => void };
+type ByKindProps = { selectedTag: string | null; workspaceId: string; entries: EntryListItem[] | null; repos: Repo[]; onOpen: (id: string) => void; onOpenDiagram: (id: string) => void };
 
-function ByKind({ workspaceId, entries, repos, onOpen, onOpenDiagram }: ByKindProps) {
+function ByKind({ selectedTag, workspaceId, entries, repos, onOpen, onOpenDiagram }: ByKindProps) {
   const t = useT();
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [selecting, setSelecting] = useState(false);
@@ -147,6 +147,11 @@ function ByKind({ workspaceId, entries, repos, onOpen, onOpenDiagram }: ByKindPr
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [requested, setRequested] = useState<string | null>(null);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset selection on filter changes while preserving request state
+    setSelecting(false);
+    setChecked(new Set());
+  }, [selectedTag]);
   const toggle = (id: string) =>
     setChecked((c) => {
       const next = new Set(c);
