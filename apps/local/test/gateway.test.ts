@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { startGateway, ATTACHMENT_UPLOAD_MAX_BYTES, uploadByteCounter, createGatewayCredential, createGatewayUiAuth, GATEWAY_CREDENTIAL_HEADER, sessionCookieName } from "../src/gateway.js";
+import { startGateway, ATTACHMENT_UPLOAD_MAX_BYTES, uploadByteCounter, createGatewayCredential, createGatewayIdentity, GATEWAY_CREDENTIAL_HEADER, sessionCookieName } from "../src/gateway.js";
 import { SessionManager } from "../src/session.js";
 
 const servers: http.Server[] = [];
@@ -158,7 +158,10 @@ describe("protected same-origin gateway", () => {
     const webOrigin = await listen((req, res) => res.end(`web:${req.url}`));
     const credential = createGatewayCredential();
     const app = new Hono();
-    app.use("/api/*", createGatewayUiAuth(credential));
+    app.use("/api/*", async (c, next) => {
+      if (!await createGatewayIdentity(credential)(c)) return c.json({ error: "unauthorized" }, 401);
+      await next();
+    });
     app.get("/api/workspaces", (c) => c.text("[]", 200, { "content-type": "application/json" }));
     app.get("/", (c) => c.text("hub home"));
     let seen: Headers | undefined;
@@ -524,4 +527,22 @@ describe("public knowledge share paths", () => {
     expect((await rawRequest(gateway.origin, `/s/${token}`, { host: "192.168.1.5" })).status).toBe(403);
     session.close();
   });
+});
+
+test("gateway identity resolves only a valid private credential to usr_local", async () => {
+  const provider = createGatewayIdentity("a".repeat(64));
+  const app = new Hono();
+  app.use("/api/*", async (c, next) => {
+    const identity = await provider(c);
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    c.set("identity", identity);
+    await next();
+  });
+  app.get("/api/probe", c => c.json(c.get("identity")));
+  for (const value of [undefined, "b".repeat(64), "bad", "A".repeat(64)]) {
+    expect((await app.request("/api/probe", { headers: value ? { [GATEWAY_CREDENTIAL_HEADER]: value } : {} })).status).toBe(401);
+  }
+  const ok = await app.request("/api/probe", { headers: { [GATEWAY_CREDENTIAL_HEADER]: "a".repeat(64), "x-nema-user-id": "usr_evil" } });
+  expect(await ok.json()).toEqual({ userId: "usr_local" });
+  expect(() => createGatewayIdentity("bad")).toThrow();
 });

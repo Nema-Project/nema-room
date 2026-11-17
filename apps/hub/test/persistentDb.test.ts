@@ -36,7 +36,7 @@ describe("persistent PGlite database", () => {
     const dataDir = await makeDir();
     const db = await makeDb(dataDir);
     const workspace = await createWorkspace(db, dataDir, "persisted");
-    const { message, task } = await postUserMessage(db, workspace.id, "remember this");
+    const { message, task } = await postUserMessage(db, workspace.id, "remember this", { authorUserId: "usr_local" });
     await addMessage(db, workspace.id, "agent", "saved response", { taskId: task.id, meta: { changes: [], askedQuestion: null } });
     await db.query(
       "insert into workspace_plugins(workspace_id, plugin_id, enabled, disabled_functions, settings) values ($1, 'grill', true, '{}', $2::jsonb)",
@@ -79,9 +79,9 @@ describe("persistent PGlite database", () => {
     const db = await makeDb(dataDir);
     const workspaceA = await createWorkspace(db, dataDir, "A");
     const workspaceB = await createWorkspace(db, dataDir, "B");
-    const first = await postUserMessage(db, workspaceA.id, "A first");
-    await postUserMessage(db, workspaceA.id, "A second");
-    const second = await postUserMessage(db, workspaceB.id, "B first");
+    const first = await postUserMessage(db, workspaceA.id, "A first", { authorUserId: "usr_local" });
+    await postUserMessage(db, workspaceA.id, "A second", { authorUserId: "usr_local" });
+    const second = await postUserMessage(db, workspaceB.id, "B first", { authorUserId: "usr_local" });
 
     const claims = await Promise.all([claimNextTask(db, "daemon-a"), claimNextTask(db, "daemon-b")]);
     const claimed = claims.filter((task) => task !== null);

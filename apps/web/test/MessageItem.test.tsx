@@ -7,7 +7,7 @@ import { I18nProvider } from "@/lib/i18n";
 import type { HubEvent, Message } from "@/lib/types";
 import { FakeEventSource } from "./FakeEventSource";
 
-vi.mock("@/lib/hub", () => ({ fetchAttachmentBlob: vi.fn(), deleteAttachment: vi.fn(), getEntry: vi.fn(), listEntries: vi.fn(), withdrawEntry: vi.fn(), editMessage: vi.fn(), listMessageVersions: vi.fn(), eventsUrl: (id: string) => `http://hub/workspaces/${id}/events` }));
+vi.mock("@/lib/hub", () => ({ fetchAttachmentBlob: vi.fn(), deleteAttachment: vi.fn(), getEntry: vi.fn(), listEntries: vi.fn(), withdrawEntry: vi.fn(), editMessage: vi.fn(), listMessageVersions: vi.fn(), listMembers: vi.fn(async () => []), getMe: vi.fn(async () => ({ userId: "usr_local", displayName: null })), eventsUrl: (id: string) => `http://hub/workspaces/${id}/events` }));
 afterEach(() => vi.unstubAllGlobals());
 
 const msg = (p: Partial<Message>): Message => ({
@@ -597,5 +597,59 @@ describe("the route line after a switch", () => {
     expect(attempts.textContent).toContain("was rate limited");
     // `rate_limit` is a machine-readable code in the metadata, not something to put in front of a reader.
     expect(attempts.textContent).not.toContain("rate_limit");
+  });
+});
+
+describe("MessageItem authors (#163)", () => {
+  const member = (userId: string, displayName: string | null, role: "owner" | "member" = "member", removedAt: string | null = null) => ({ userId, displayName, role, removedAt });
+  const show = (m: Message) => render(<I18nProvider><MessageItem message={m} /></I18nProvider>);
+  const who = (container: HTMLElement) => container.querySelector(".who")!;
+
+  it("with one active member, null and usr_local authors both read You", async () => {
+    vi.mocked(hub.listMembers).mockResolvedValue([member("usr_local", null, "owner")]);
+    const first = show(msg({ id: "a1", workspaceId: "w-solo", role: "user", content: "old", authorUserId: null }));
+    const second = show(msg({ id: "a2", workspaceId: "w-solo", role: "user", content: "new", authorUserId: "usr_local" }));
+    await vi.waitFor(() => expect(hub.listMembers).toHaveBeenCalledWith("w-solo"));
+    expect(who(first.container).textContent).toContain("You");
+    expect(who(second.container).textContent).toContain("You");
+    expect(screen.queryByText("Author not recorded")).toBeNull();
+  });
+
+  it("with two active members names others, marks removed authors and says when no author was recorded", async () => {
+    vi.mocked(hub.listMembers).mockResolvedValue([
+      member("usr_local", null, "owner"), member("usr_zhang", "张三"), member("usr_gone", "Gone", "member", "2026-11-17T00:00:00.000Z"),
+    ]);
+    const mine = show(msg({ id: "b1", workspaceId: "w-two", role: "user", content: "mine", authorUserId: "usr_local" }));
+    const theirs = show(msg({ id: "b2", workspaceId: "w-two", role: "user", content: "theirs", authorUserId: "usr_zhang" }));
+    const unknown = show(msg({ id: "b3", workspaceId: "w-two", role: "user", content: "old", authorUserId: null }));
+    const removed = show(msg({ id: "b4", workspaceId: "w-two", role: "user", content: "bye", authorUserId: "usr_gone" }));
+    await vi.waitFor(() => expect(who(theirs.container).textContent).toContain("张三"));
+    expect(who(mine.container).textContent).toContain("You");
+    expect(who(unknown.container).textContent).toContain("Author not recorded");
+    expect(who(removed.container).textContent).toContain("Gone");
+    expect(who(removed.container).textContent).toContain("(removed)");
+  });
+
+  it("marks a stored mention of a removed member without rewriting the body", async () => {
+    vi.mocked(hub.listMembers).mockResolvedValue([
+      member("usr_local", null, "owner"), member("usr_zhang", "张三"), member("usr_gone", "Gone", "member", "2026-11-17T00:00:00.000Z"),
+    ]);
+    const content = "按 @Gone 和 @张三 的说法";
+    const { container } = show(msg({
+      id: "c1", workspaceId: "w-removed", role: "user", content, authorUserId: "usr_local",
+      meta: { mentions: [{ type: "member", id: "usr_gone", text: "@Gone" }, { type: "member", id: "usr_zhang", text: "@张三" }] } as Message["meta"],
+    }));
+    const chips = await screen.findByTestId("removed-member-mentions");
+    expect(chips.textContent).toContain("@Gone");
+    expect(chips.textContent).toContain("(removed)");
+    expect(chips.textContent).not.toContain("@张三");
+    expect(container.textContent).toContain(content);
+  });
+
+  it("an older hub without the roster routes still shows You", async () => {
+    vi.mocked(hub.listMembers).mockRejectedValue(new Error("404"));
+    const { container } = show(msg({ id: "d1", workspaceId: "w-old", role: "user", content: "x" }));
+    await vi.waitFor(() => expect(hub.listMembers).toHaveBeenCalledWith("w-old"));
+    expect(who(container).textContent).toContain("You");
   });
 });

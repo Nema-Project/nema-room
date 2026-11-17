@@ -84,7 +84,7 @@ describe("workspaces", () => {
     const codex = path.join(nemaHome, "ws", ws.id, "codex-home");
     mkdirSync(codex, { recursive: true });
     link(outsideAuth, path.join(codex, "auth.json"));
-    await postUserMessage(db, ws.id, "memo");
+    await postUserMessage(db, ws.id, "memo", { authorUserId: "usr_local" });
     const task = (await claimNextTask(db, "d1"))!;
     await recordTaskChange(db, task.id, { entryId: "R-1", kind: "requirement", title: "t", op: "add" });
     expect(await finishTask(db, task.id, { ok: true })).toBe(true);
@@ -123,7 +123,7 @@ describe("workspaces", () => {
     const { db, dataDir } = await makeHubDeps();
     const nemaHome = await mkdtemp(path.join(tmpdir(), "nema-home-"));
     const ws = await createWorkspace(db, dataDir, "A");
-    await postUserMessage(db, ws.id, "memo");
+    await postUserMessage(db, ws.id, "memo", { authorUserId: "usr_local" });
     const task = (await claimNextTask(db, "d1"))!;
     await expect(deleteWorkspace(db, dataDir, ws.id, nemaHome)).rejects.toThrow("workspace is busy");
     await expect(updateWorkspace(db, ws.id, { archived: true })).rejects.toThrow("workspace is busy");
@@ -136,7 +136,7 @@ describe("workspaces", () => {
   it("archive keeps queued tasks parked (not claimable) until unarchived", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await createWorkspace(db, dataDir, "A");
-    const { task } = await postUserMessage(db, ws.id, "memo");
+    const { task } = await postUserMessage(db, ws.id, "memo", { authorUserId: "usr_local" });
     expect((await updateWorkspace(db, ws.id, { archived: true })).archivedAt).toBeTruthy();
     expect(await getTask(db, task.id)).toMatchObject({ status: "queued" });
     expect(await claimNextTask(db, "d1")).toBeNull();
@@ -148,7 +148,7 @@ describe("workspaces", () => {
     const { db, dataDir } = await makeHubDeps();
     const nemaHome = await mkdtemp(path.join(tmpdir(), "nema-home-"));
     const ws = await createWorkspace(db, dataDir, "A");
-    const { task } = await postUserMessage(db, ws.id, "memo");
+    const { task } = await postUserMessage(db, ws.id, "memo", { authorUserId: "usr_local" });
     await recordTaskChange(db, task.id, { entryId: "R-1", kind: "requirement", title: "t", op: "add" });
     await deleteWorkspace(db, dataDir, ws.id, nemaHome);
     expect(await getWorkspace(db, ws.id)).toBeNull();
@@ -190,4 +190,21 @@ describe("Db.tx nesting", () => {
     });
     expect(await count(db)).toBe(2);
   });
+});
+
+it("creates an owner and audit atomically, rolling back a failure after the workspace insert", async () => {
+  const { db, dataDir } = await makeHubDeps();
+  const ws = await createWorkspace(db, dataDir, "Roster");
+  expect(await db.query("select user_id,role,added_by from workspace_members where workspace_id=$1", [ws.id])).toEqual([{ user_id: "usr_local", role: "owner", added_by: "usr_local" }]);
+  expect(await db.query("select kind,user_id,actor_user_id from member_events where workspace_id=$1", [ws.id])).toEqual([{ kind: "added", user_id: "usr_local", actor_user_id: "usr_local" }]);
+  const failing = (inner: typeof db): typeof db => ({
+    query: (sql, params) => {
+      if (sql.includes("insert into member_events")) throw new Error("forced audit failure");
+      return inner.query(sql, params);
+    },
+    tx: fn => inner.tx(t => fn(failing(t as typeof db))),
+  });
+  await expect(createWorkspace(failing(db), dataDir, "Rollback")).rejects.toThrow("forced audit failure");
+  expect(await db.query("select name from workspaces")).toEqual([{ name: "Roster" }]);
+  expect(await db.query("select count(*)::int as n from workspace_members")).toEqual([{ n: 1 }]);
 });

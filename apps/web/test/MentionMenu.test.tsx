@@ -24,6 +24,20 @@ describe("MentionMenu", () => {
     expect(onChoose).toHaveBeenCalledWith(groups[0]!.items[0]);
   });
 
+  it("shows no members group when it is empty, and puts it after topics when present (#163)", () => {
+    const { unmount } = render(<I18nProvider><MentionMenu groups={[...groups, { kind: "member", items: [] }]} active={0} onChoose={vi.fn()} onHover={vi.fn()} empty={{ entries: true, attachments: true, state: "ok", query: "" }} /></I18nProvider>);
+    expect(screen.queryByText("Members")).toBeNull();
+    unmount();
+    const onChoose = vi.fn();
+    const member = { type: "member" as const, id: "usr_zhang", label: "张三", hint: "", text: "@张三" };
+    render(<I18nProvider><MentionMenu groups={[...groups, { kind: "member", items: [member] }]} active={0} onChoose={onChoose} onHover={vi.fn()} empty={{ entries: true, attachments: true, state: "ok", query: "" }} /></I18nProvider>);
+    const headers = Array.from(document.querySelectorAll(".cmdgroup")).map((h) => h.textContent);
+    expect(headers.at(-1)).toBe("Members");
+    expect(headers.indexOf("Members")).toBeGreaterThan(headers.indexOf("Topics"));
+    fireEvent.click(screen.getByRole("option", { name: /张三/ }));
+    expect(onChoose).toHaveBeenCalledWith(member);
+  });
+
   it("offers continuation when an empty browse page exhausted the attachment budget", () => {
     const onNext = vi.fn();
     render(<I18nProvider><MentionMenu groups={[]} active={0} onChoose={vi.fn()} onHover={vi.fn()} onNext={onNext}

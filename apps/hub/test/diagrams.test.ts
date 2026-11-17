@@ -78,7 +78,7 @@ async function insertRepo(workspaceId: string, label: string, sha: string | null
 }
 
 async function runningTask(workspaceId = wsA) {
-  await postUserMessage(db, workspaceId, "画一张架构图");
+  await postUserMessage(db, workspaceId, "画一张架构图", { authorUserId: "usr_local" });
   const task = await claimNextTask(db, "d1");
   expect(task?.workspaceId).toBe(workspaceId);
   return { runToken: task!.runToken!, taskId: task!.id, messageId: task!.messageId };

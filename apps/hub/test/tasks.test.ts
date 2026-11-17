@@ -35,16 +35,16 @@ afterAll(cleanupHubDeps);
 
 describe("tasks", () => {
   test("a queued edit task is allowed", async () => {
-    const { message } = await postUserMessage(db, wsA, "memo");
+    const { message } = await postUserMessage(db, wsA, "memo", { authorUserId: "usr_local" });
     const task = await insertQueuedTask(db, wsA, message.id, "edit");
     expect(task.kind).toBe("edit");
     expect((await listMessages(db, wsA))[0]!.editedAt).toBeNull();
   });
 
   test("per-workspace serial, cross-workspace parallel", async () => {
-    const a1 = await postUserMessage(db, wsA, "memo 1");
-    const a2 = await postUserMessage(db, wsA, "memo 2");
-    const b1 = await postUserMessage(db, wsB, "memo b");
+    const a1 = await postUserMessage(db, wsA, "memo 1", { authorUserId: "usr_local" });
+    const a2 = await postUserMessage(db, wsA, "memo 2", { authorUserId: "usr_local" });
+    const b1 = await postUserMessage(db, wsB, "memo b", { authorUserId: "usr_local" });
     const t1 = await claimNextTask(db, "d1");
     expect(t1?.id).toBe(a1.task.id);
     const t2 = await claimNextTask(db, "d1");
@@ -55,7 +55,7 @@ describe("tasks", () => {
   });
 
   test("run token valid only while running", async () => {
-    const a = await postUserMessage(db, wsA, "m");
+    const a = await postUserMessage(db, wsA, "m", { authorUserId: "usr_local" });
     const t = await claimNextTask(db, "d1");
     expect(t?.runToken).toMatch(/^[0-9a-f]{64}$/);
     expect(t?.daemonId).toBe("d1");
@@ -65,7 +65,7 @@ describe("tasks", () => {
   });
 
   test("requeueDaemonTasks returns running tasks to queue with a new token on reclaim", async () => {
-    await postUserMessage(db, wsA, "m");
+    await postUserMessage(db, wsA, "m", { authorUserId: "usr_local" });
     const t = await claimNextTask(db, "d1");
     expect(await requeueDaemonTasks(db, "d1")).toBe(1);
     const again = await claimNextTask(db, "d2");
@@ -74,9 +74,9 @@ describe("tasks", () => {
   });
 
   test("requeueAllRunning (hub startup) requeues every running task and kills its run token", async () => {
-    const a = await postUserMessage(db, wsA, "a");
-    const b = await postUserMessage(db, wsB, "b");
-    await postUserMessage(db, wsA, "a2");
+    const a = await postUserMessage(db, wsA, "a", { authorUserId: "usr_local" });
+    const b = await postUserMessage(db, wsB, "b", { authorUserId: "usr_local" });
+    await postUserMessage(db, wsA, "a2", { authorUserId: "usr_local" });
     const ta = (await claimNextTask(db, "d_old1"))!;
     const tb = (await claimNextTask(db, "d_old2"))!;
     expect((await interruptRunning(db, "all")).requeued.sort()).toEqual([a.task.id, b.task.id].sort());
@@ -91,8 +91,8 @@ describe("tasks", () => {
   });
 
   test("requeueRunningExcept keeps the given daemon's running task", async () => {
-    await postUserMessage(db, wsA, "a");
-    await postUserMessage(db, wsB, "b");
+    await postUserMessage(db, wsA, "a", { authorUserId: "usr_local" });
+    await postUserMessage(db, wsB, "b", { authorUserId: "usr_local" });
     const ta = (await claimNextTask(db, "d_old"))!;
     const tb = (await claimNextTask(db, "d_cur"))!;
     expect((await interruptRunning(db, { exceptDaemonId: "d_cur" })).requeued).toEqual([ta.id]);
@@ -101,7 +101,7 @@ describe("tasks", () => {
   });
 
   test("the fourth interruption fails the task with INTERRUPTED_ERROR", async () => {
-    await postUserMessage(db, wsA, "m");
+    await postUserMessage(db, wsA, "m", { authorUserId: "usr_local" });
     const t = (await claimNextTask(db, "d1"))!;
     for (let i = 0; i < 3; i++) {
       expect(await interruptRunning(db, "all")).toEqual({ requeued: [t.id], failed: [] });
@@ -120,8 +120,8 @@ describe("tasks", () => {
   });
 
   test("interruptions are counted per task and scoped by daemon", async () => {
-    await postUserMessage(db, wsA, "a");
-    await postUserMessage(db, wsB, "b");
+    await postUserMessage(db, wsA, "a", { authorUserId: "usr_local" });
+    await postUserMessage(db, wsB, "b", { authorUserId: "usr_local" });
     const ta = (await claimNextTask(db, "dA"))!;
     const tb = (await claimNextTask(db, "dB"))!;
     expect(await interruptRunning(db, { daemonId: "dA" })).toEqual({ requeued: [ta.id], failed: [] });
@@ -138,7 +138,7 @@ describe("tasks", () => {
   });
 
   test("a normal failure is not retried", async () => {
-    await postUserMessage(db, wsA, "m");
+    await postUserMessage(db, wsA, "m", { authorUserId: "usr_local" });
     const t = (await claimNextTask(db, "d1"))!;
     expect(await finishTask(db, t.id, { ok: false, error: "boom" })).toBe(true);
     const [row] = await db.query<{ status: string; interruptions: number }>(
@@ -149,7 +149,7 @@ describe("tasks", () => {
   });
 
   test("claimNextTask skips archived workspaces", async () => {
-    const a = await postUserMessage(db, wsA, "a");
+    const a = await postUserMessage(db, wsA, "a", { authorUserId: "usr_local" });
     await db.query("update workspaces set archived_at = now() where id = $1", [wsA]);
     expect(await claimNextTask(db, "d1")).toBeNull();
     await db.query("update workspaces set archived_at = null where id = $1", [wsA]);
@@ -157,7 +157,7 @@ describe("tasks", () => {
   });
 
   test("task changes are merged per entry", async () => {
-    const a = await postUserMessage(db, wsA, "m");
+    const a = await postUserMessage(db, wsA, "m", { authorUserId: "usr_local" });
     await recordTaskChange(db, a.task.id, { entryId: "R-1", kind: "requirement", title: "x", op: "add" });
     await recordTaskChange(db, a.task.id, { entryId: "R-1", kind: "requirement", title: "x2", op: "update" });
     await recordTaskChange(db, a.task.id, { entryId: "R-2", kind: "requirement", title: "y", op: "update" });
@@ -168,16 +168,16 @@ describe("tasks", () => {
   });
 
   test("empty message rejected; content kept verbatim", async () => {
-    await expect(postUserMessage(db, wsA, "   ")).rejects.toThrow();
+    await expect(postUserMessage(db, wsA, "   ", { authorUserId: "usr_local" })).rejects.toThrow();
     const raw = "  a\n\n**b**  ";
-    const { message } = await postUserMessage(db, wsA, raw);
+    const { message } = await postUserMessage(db, wsA, raw, { authorUserId: "usr_local" });
     expect(message.content).toBe(raw);
     const list = await listMessages(db, wsA);
     expect(list[0]!.content).toBe(raw);
   });
 
   test("listMessages oldest first, agent messages carry meta", async () => {
-    const { message, task } = await postUserMessage(db, wsA, "q");
+    const { message, task } = await postUserMessage(db, wsA, "q", { authorUserId: "usr_local" });
     await addMessage(db, wsA, "agent", "done", { taskId: task.id, meta: { changes: [] } as never });
     const list = await listMessages(db, wsA);
     expect(list.map((m) => m.role)).toEqual(["user", "agent"]);
@@ -186,7 +186,7 @@ describe("tasks", () => {
   });
 
   test("finishTask only affects running tasks and honours the run token", async () => {
-    await postUserMessage(db, wsA, "m");
+    await postUserMessage(db, wsA, "m", { authorUserId: "usr_local" });
     const t = await claimNextTask(db, "d1");
     await requeueDaemonTasks(db, "d1");
     expect(await finishTask(db, t!.id, { ok: true }, t!.runToken!)).toBe(false);
@@ -202,15 +202,15 @@ describe("tasks", () => {
 
   // NOTE: PGlite serializes these calls, so FOR UPDATE SKIP LOCKED itself is only exercised on real Postgres.
   test("concurrent claims: one workspace yields exactly one claim", async () => {
-    await postUserMessage(db, wsA, "1");
-    await postUserMessage(db, wsA, "2");
+    await postUserMessage(db, wsA, "1", { authorUserId: "usr_local" });
+    await postUserMessage(db, wsA, "2", { authorUserId: "usr_local" });
     const r = await Promise.all([claimNextTask(db, "d1"), claimNextTask(db, "d2")]);
     expect(r.filter((x) => x !== null)).toHaveLength(1);
   });
 
   test("concurrent claims: two workspaces yield two claims", async () => {
-    await postUserMessage(db, wsA, "1");
-    await postUserMessage(db, wsB, "2");
+    await postUserMessage(db, wsA, "1", { authorUserId: "usr_local" });
+    await postUserMessage(db, wsB, "2", { authorUserId: "usr_local" });
     const r = await Promise.all([claimNextTask(db, "d1"), claimNextTask(db, "d2")]);
     expect(r.filter((x) => x !== null)).toHaveLength(2);
     expect(new Set(r.map((x) => x!.id)).size).toBe(2);

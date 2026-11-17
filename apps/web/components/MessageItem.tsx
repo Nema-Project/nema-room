@@ -9,6 +9,7 @@ import { editMessage, getEntry, HubError, listEntries, listMessageVersions, with
 import { formatTime } from "@/lib/format";
 import { useLocale, useT } from "@/lib/i18n";
 import { syncMentions } from "@/lib/mentions";
+import { authorLabel, memberName, removedMemberMentions, useWorkspaceRoster } from "@/lib/members";
 import { useHubEvents } from "@/lib/useHubEvents";
 import type { AgentMessageMeta, Entry, Message, MessageQuote, ReportMessageMeta, RouteDecision } from "@/lib/types";
 
@@ -281,6 +282,7 @@ function UserMessage({
   const latest = useRef(message);
   useEffect(() => { latest.current = message; }, [message]);
   const t = useT();
+  const roster = useWorkspaceRoster(message.workspaceId);
   const [locale] = useLocale();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
@@ -318,12 +320,18 @@ function UserMessage({
     setVersionsOpen((open) => !open);
   }
 
+  const author = authorLabel(roster, message.authorUserId);
+  const who = author.kind === "you" ? t("chat.you")
+    : author.kind === "unknown" ? t("chat.unknownAuthor")
+      : memberName(author.userId, author.displayName, t("mention.me"));
+  const removedMentions = removedMemberMentions(roster, mentionsOf(message));
   return (
     <div className="msg" id={`msg-${message.id}`}>
-      <div className="av me">{t("chat.you")}</div>
+      <div className={author.kind === "you" ? "av me" : "av"}>{author.kind === "you" ? t("chat.you") : author.kind === "unknown" ? "?" : Array.from(who)[0]}</div>
       <div>
         <div className="who">
-          {t("chat.you")}
+          {who}
+          {author.kind === "member" && author.removed && <span className="kmeta">{t("chat.removedMember")}</span>}
           <time>{time}</time>
           <button type="button" className="quiet" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
           <button type="button" className="quiet" onClick={() => { setDraft(message.content); setEditing(true); setEditError(null); setDroppedMentions(0); }}>{t("chat.edit")}</button>
@@ -344,6 +352,16 @@ function UserMessage({
             <Markdown source={message.content} />
           </div>
         ) : null}
+        {removedMentions.length > 0 && (
+          <div className="changes" data-testid="removed-member-mentions">
+            {removedMentions.map((m) => (
+              <span className="chip removed" key={`${m.type}-${m.id}`}>
+                <s>{m.text}</s>
+                <i>{t("chat.removedMember")}</i>
+              </span>
+            ))}
+          </div>
+        )}
         {/* Mounted from the first paint, so a reader hears the text when it appears. Not role=status: the chat already uses that for the offline line. */}
         <p className={droppedMentions > 0 && !editing ? "kmeta" : undefined} aria-live="polite">
           {droppedMentions > 0 && !editing ? t(droppedMentions === 1 ? "chat.mentionsDropped.one" : "chat.mentionsDropped.other", { count: droppedMentions }) : ""}

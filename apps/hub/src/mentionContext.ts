@@ -13,6 +13,8 @@ export type MentionEntry = { id: string; kind: string; title: string; status: st
 export type MentionAttachment = { id: string; name: string; kind: string; size: number; messageId: string; createdAt: string };
 /** A topic: its title and when it was last replied to. Its anchor body comes at prompt time. */
 export type MentionThread = { id: string; title: string; lastReplyAt: string | null };
+/** An active member of this workspace. A null name is shown with the localized "me" label by the web. */
+export type MentionMember = { id: string; displayName: string | null; role: "owner" | "member" };
 
 export type MentionContext = {
   status: "ok";
@@ -20,6 +22,8 @@ export type MentionContext = {
   tags: { tag: string; active: number; inactive: number }[];
   attachments: MentionAttachment[];
   threads: MentionThread[];
+  /** Active members; empty unless the workspace has two or more. First page only: never part of a browse cursor. */
+  members: MentionMember[];
   /** True when the menu is not every match, or the attachment stat budget stopped early with rows left. */
   truncated: boolean;
   /** Opaque continuation for empty-query browsing; absent when all groups are exhausted. */
@@ -154,6 +158,28 @@ async function searchThreads(db: Db, workspaceId: string, folded: string | null,
   };
 }
 
+/**
+ * Members only appear once the workspace has two or more active members (#163 D-1): a group that can only
+ * offer yourself is noise. A null display name is matched as empty text, so it is listed for an empty query only.
+ */
+async function searchMembers(db: Db, workspaceId: string, folded: string | null, pattern: string | null): Promise<{ items: MentionMember[]; more: boolean }> {
+  const [count] = await db.query<{ n: number }>(
+    "select count(*)::int as n from workspace_members where workspace_id = $1 and removed_at is null", [workspaceId]);
+  if ((count?.n ?? 0) < 2) return { items: [], more: false };
+  const rows = await db.query<{ user_id: string; display_name: string | null; role: MentionMember["role"] }>(
+    `select user_id, display_name, role from (
+       select m.user_id, u.display_name, m.role, m.added_at, lower(coalesce(u.display_name, '')) as folded
+       from workspace_members m join users u on u.id = m.user_id
+       where m.workspace_id = $1 and m.removed_at is null
+     ) s
+     where $2::text is null or folded ~ $3
+     order by ${folded === null ? "" : tierOrder("folded") + ","} added_at asc, user_id asc
+     limit $4`,
+    [workspaceId, folded, pattern, MENU + 1],
+  );
+  return { items: rows.slice(0, MENU).map((r) => ({ id: r.user_id, displayName: r.display_name, role: r.role })), more: rows.length > MENU };
+}
+
 async function searchAttachmentRows(db: Db, workspaceId: string, folded: string | null, pattern: string | null, after?: Position): Promise<AttachmentRow[]> {
   if (folded === null) {
     return db.query<AttachmentRow & BrowseRow>(
@@ -207,11 +233,12 @@ async function takeAvailable(store: AttachmentStore | undefined, workspaceId: st
 export async function mentionContext(db: Db, workspaceId: string, q: string, attachments?: AttachmentStore, cursor?: BrowseCursor): Promise<MentionContext> {
   const folded = q === "" ? null : (await db.query<{ folded: string }>("select lower($1::text) as folded", [q]))[0]?.folded ?? "";
   const pattern = folded === null ? null : subsequencePattern(folded);
-  const [entries, threads, attachmentRows, tags] = await Promise.all([
+  const [entries, threads, attachmentRows, tags, members] = await Promise.all([
     cursor?.entries === null ? { items: [], more: false, next: null } : searchEntries(db, workspaceId, folded, pattern, cursor?.entries),
     cursor?.threads === null ? { items: [], more: false, next: null } : searchThreads(db, workspaceId, folded, pattern, cursor?.threads),
     cursor?.attachments === null ? [] : searchAttachmentRows(db, workspaceId, folded, pattern, cursor?.attachments),
     cursor ? { items: [], more: false } : searchTags(db, workspaceId, folded, pattern),
+    cursor ? { items: [], more: false } : searchMembers(db, workspaceId, folded, pattern),
   ]);
   const files = await takeAvailable(attachments, workspaceId, attachmentRows);
   const lastFile = attachmentRows[files.consumed - 1];
@@ -227,7 +254,8 @@ export async function mentionContext(db: Db, workspaceId: string, q: string, att
     tags: tags.items,
     attachments: files.items,
     threads: threads.items,
-    truncated: entries.more || tags.more || threads.more || files.more,
+    members: members.items,
+    truncated: entries.more || tags.more || threads.more || files.more || members.more,
     attachmentBudgetExhausted: files.exhausted,
   };
 }

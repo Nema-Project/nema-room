@@ -124,6 +124,7 @@ In a bound code repository, a coding agent retrieves the package with `nema wp l
 - **Extensions are yours to switch.** Enable, disable, install, or remove extensions, skills, and MCP servers on the Plugins page. The Installed section counts rows that cannot be used. A skill says when a runtime is missing something, or when its name does not match its folder. MCP tools are not offered to the agent in this release.
 - **GitHub is opt-in.** The plugin uses your signed-in local `gh` and is limited to bound repositories. Writes need a separate workspace opt-in.
 - **Built for local use.** A share link can grant read-only access to one workspace knowledge base. There is still no public multi-user authentication. Multi-device sync, managed backups, and team accounts are not available yet.
+- **Messages record their author.** A single user sees no change, and older messages are not backfilled. A display name set in App settings → General reaches the model only when a workspace has two or more members, and share pages never show people.
 
 More: [storage, backups, and limitations](docs/guide.en.md#data) · [plugins, skills, and MCP](docs/guide.en.md#models) · [attachments](docs/guide.en.md#attachments). A copy of this source repository is not an application-data backup.
 

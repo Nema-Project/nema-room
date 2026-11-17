@@ -26,7 +26,7 @@ const PNG_SHA = createHash("sha256").update(PNG).digest("hex");
 const TEXT = Buffer.from("staged note\n");
 const TEXT_SHA = createHash("sha256").update(TEXT).digest("hex");
 
-async function makeSource(withThreads = false, withAttachments = false, withTags = false): Promise<{ outputDir: string; shas: string[]; knowledgeHead: string }> {
+async function makeSource(withThreads = false, withAttachments = false, withTags = false, seed?: (db: Awaited<ReturnType<typeof createTestDb>>) => Promise<void>): Promise<{ outputDir: string; shas: string[]; knowledgeHead: string }> {
   const db = await createTestDb();
   await db.query(`insert into workspaces (id, name, confidential, knowledge_language) values ('ws_a', 'Alpha', true, 'ja')`);
   await db.query(`insert into messages (id, workspace_id, role, content, meta, task_id) values ('m1', 'ws_a', 'user', '日本語の要件', '{"k":[1,2]}', null)`);
@@ -75,6 +75,7 @@ async function makeSource(withThreads = false, withAttachments = false, withTags
     git(repo, "add", "."); git(repo, "commit", "-q", "-m", "Tag entry");
     await db.query("update entry_index set entry_id='R-1',tags='{api}',tags_indexed_at=clock_timestamp()");
   }
+  if (seed) await seed(db);
   const pool = {
     async connect() {
       return {
@@ -266,6 +267,66 @@ describe("importLegacySnapshot", () => {
     expect(existsSync(join(homeOf(), "data", "repos", "ws_a"))).toBe(true);
     expect(await recoverInterruptedImport(homeOf())).toBe("none");
     await expect(importLegacySnapshot(outputDir, homeOf(), { gitPath })).rejects.toThrow(/not empty/i);
+  });
+});
+
+describe("identity in snapshots (#163)", () => {
+  const identity = async (db: Awaited<ReturnType<typeof createTestDb>>) => {
+    await db.query("insert into users (id, display_name) values ('usr_zhang', '张三')");
+    await db.query("insert into workspace_members (workspace_id, user_id, role) values ('ws_a', 'usr_local', 'owner')");
+    await db.query("insert into workspace_members (workspace_id, user_id, role, added_by, removed_at, removed_by) values ('ws_a', 'usr_zhang', 'member', 'usr_local', now(), 'usr_local')");
+    await db.query("insert into member_events (id, workspace_id, user_id, kind, actor_user_id) values ('mev_seed_ws_a', 'ws_a', 'usr_local', 'added', null), ('mev_x', 'ws_a', 'usr_zhang', 'removed', 'usr_local')");
+    await db.query("update messages set author_user_id = 'usr_zhang' where id = 'm1'");
+  };
+
+  it("exports the identity tables and imports them without a duplicate local user", async () => {
+    const { outputDir } = await makeSource(false, false, false, identity);
+    const snapshot = JSON.parse(readFileSync(join(outputDir, "snapshot.json"), "utf8"));
+    expect(Object.keys(snapshot.tableData).slice(0, 4)).toEqual(["users", "workspaces", "workspace_members", "member_events"]);
+    expect(snapshot.tableData.messages[0].author_user_id).toBe("usr_zhang");
+    await importLegacySnapshot(outputDir, homeOf(), { gitPath });
+    const db = await createLocalDb(join(homeOf(), "db"));
+    try {
+      expect(await db.query("select id, display_name from users order by id")).toEqual([{ id: "usr_local", display_name: null }, { id: "usr_zhang", display_name: "张三" }]);
+      expect(await db.query("select user_id, role, removed_by from workspace_members order by user_id")).toEqual([
+        { user_id: "usr_local", role: "owner", removed_by: null },
+        { user_id: "usr_zhang", role: "member", removed_by: "usr_local" },
+      ]);
+      expect(await db.query("select id from member_events order by id")).toEqual([{ id: "mev_seed_ws_a" }, { id: "mev_x" }]);
+      expect(await db.query("select id, author_user_id from messages")).toEqual([{ id: "m1", author_user_id: "usr_zhang" }]);
+    } finally { await db.close(); }
+  });
+
+  it("imports an older snapshot without identity and seeds the local owner", async () => {
+    const { outputDir } = await makeSource();
+    const snapshotPath = join(outputDir, "snapshot.json");
+    const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));
+    for (const table of ["users", "workspace_members", "member_events"]) delete snapshot.tableData[table];
+    for (const message of snapshot.tableData.messages) delete message.author_user_id;
+    writeFileSync(snapshotPath, JSON.stringify(snapshot));
+    await importLegacySnapshot(outputDir, homeOf(), { gitPath });
+    const db = await createLocalDb(join(homeOf(), "db"));
+    try {
+      expect(await db.query("select id, display_name from users")).toEqual([{ id: "usr_local", display_name: null }]);
+      expect(await db.query("select workspace_id, user_id, role from workspace_members")).toEqual([{ workspace_id: "ws_a", user_id: "usr_local", role: "owner" }]);
+      expect(await db.query("select id, kind, actor_user_id from member_events")).toEqual([{ id: "mev_seed_ws_a", kind: "added", actor_user_id: null }]);
+      expect(await db.query("select author_user_id from messages")).toEqual([{ author_user_id: null }]);
+    } finally { await db.close(); }
+  });
+
+  it("re-exports an imported home with the same identity rows", async () => {
+    const { outputDir } = await makeSource(false, false, false, identity);
+    const first = JSON.parse(readFileSync(join(outputDir, "snapshot.json"), "utf8"));
+    await importLegacySnapshot(outputDir, homeOf(), { gitPath });
+    const db = await createLocalDb(join(homeOf(), "db"));
+    try {
+      const pool = { async connect() { return { async query(sql: string, params?: unknown[]) { return { rows: await db.query(sql, params) }; }, release() {} }; } } as unknown as Pool;
+      const again = join(root, "snapshot-again");
+      await exportSnapshot({ pool, dataDir: join(homeOf(), "data"), outputDir: again, appVersion: "0.1.0", gitPath, withQuiescedKnowledge: (_ids, copy) => copy() });
+      const second = JSON.parse(readFileSync(join(again, "snapshot.json"), "utf8"));
+      for (const table of ["users", "workspace_members", "member_events"]) expect(second.tableData[table]).toEqual(first.tableData[table]);
+      expect(second.tableData.messages.map((m: any) => m.author_user_id)).toEqual(first.tableData.messages.map((m: any) => m.author_user_id));
+    } finally { await db.close(); }
   });
 });
 

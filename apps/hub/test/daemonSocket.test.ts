@@ -240,7 +240,7 @@ describe("daemon socket", () => {
   });
 
   test("a daemon reporting only the legacy adapter is refused (error + close), tasks stay queued", async () => {
-    await postUserMessage(db, wsA, "hi");
+    await postUserMessage(db, wsA, "hi", { authorUserId: "usr_local" });
     const c = await connect(TOKEN, ["codex"]);
     const m = await c.next("error");
     expect(m.message).toBe("nema CLI 版本过旧，请运行 npm run build -w apps/cli 并重启 nema daemon");
@@ -250,7 +250,7 @@ describe("daemon socket", () => {
   });
 
   test("an edit task quotes the previous text and the reply points back at it", async () => {
-    const original = await postUserMessage(db, wsA, "original");
+    const original = await postUserMessage(db, wsA, "original", { authorUserId: "usr_local" });
     await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
     await addMessage(db, wsA, "agent", "which one", {
       meta: { changes: [], askedQuestion: { id: "Q-1", title: "进度", body: "到哪了" } },
@@ -259,9 +259,9 @@ describe("daemon socket", () => {
       { kind: "requirement", title: "进度说明", body: "b", reason: "r", basis: "stated", sourceMessages: [original.message.id] } as never,
       { author: "agent" },
     );
-    await postUserMessage(db, wsA, "later note");
+    await postUserMessage(db, wsA, "later note", { authorUserId: "usr_local" });
     await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
-    await editUserMessage(db, wsA, original.message.id, "middle");
+    await editUserMessage(db, wsA, original.message.id, "middle", "usr_local");
     const c = await connect();
     const failed = await c.next("task.assign");
     c.send({ type: "task.finished", taskId: failed.taskId, ok: false, error: "boom" });
@@ -270,7 +270,7 @@ describe("daemon socket", () => {
       expect(system?.content).toContain("boom");
       expect(system?.meta).toBeNull();
     });
-    const second = await editUserMessage(db, wsA, original.message.id, "latest");
+    const second = await editUserMessage(db, wsA, original.message.id, "latest", "usr_local");
     events.emit(wsA, { type: "task.updated", task: { id: second.task.id, workspaceId: wsA, messageId: original.message.id, status: "queued", error: null } });
     const again = await c.next("task.assign");
     expect(again.prompt).toContain(`[${original.message.id}] 旧版本：middle`);
@@ -290,11 +290,11 @@ describe("daemon socket", () => {
   });
 
   test("a quote in the prompt is the message's current text", async () => {
-    const target = await postUserMessage(db, wsA, "first wording");
+    const target = await postUserMessage(db, wsA, "first wording", { authorUserId: "usr_local" });
     await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
-    await editUserMessage(db, wsA, target.message.id, "rewritten wording");
+    await editUserMessage(db, wsA, target.message.id, "rewritten wording", "usr_local");
     await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
-    await postUserMessage(db, wsA, "I meant the architecture", target.message.id);
+    await postUserMessage(db, wsA, "I meant the architecture", { authorUserId: "usr_local", quoteMessageId: target.message.id });
     const c = await connect();
     const assigned = await c.next("task.assign");
     expect(assigned.prompt).toContain("# 本次消息引用的消息");
@@ -302,11 +302,36 @@ describe("daemon socket", () => {
     expect(assigned.prompt).not.toContain("first wording");
   });
 
+  test("recent user messages name their author only once the workspace has two active members (#163)", async () => {
+    const single = await postUserMessage(db, wsA, "solo note", { authorUserId: "usr_local" });
+    await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
+    await db.query("insert into users(id,display_name) values ('usr_zhang','张三')");
+    await db.query("insert into workspace_members(workspace_id,user_id,role,added_by) values ($1,'usr_zhang','member','usr_local')", [wsA]);
+    await postUserMessage(db, wsA, "from zhang", { authorUserId: "usr_zhang" });
+    await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
+    await postUserMessage(db, wsA, "按 @张三 的说法", { authorUserId: "usr_local", mentions: [{ type: "member", id: "usr_zhang", text: "@张三" }] });
+    const c = await connect();
+    const assigned = await c.next("task.assign");
+    expect(assigned.prompt).toContain(`[${single.message.id}] user(我): solo note`);
+    expect(assigned.prompt).toContain("user(张三): from zhang");
+    expect(assigned.prompt).toContain("## 成员 @张三（usr_zhang）");
+  });
+
+  test("a single-member workspace keeps the plain user label (#163)", async () => {
+    const first = await postUserMessage(db, wsA, "solo note", { authorUserId: "usr_local" });
+    await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
+    await postUserMessage(db, wsA, "next", { authorUserId: "usr_local" });
+    const c = await connect();
+    const assigned = await c.next("task.assign");
+    expect(assigned.prompt).toContain(`[${first.message.id}] user: solo note`);
+    expect(assigned.prompt).not.toContain("user(");
+  });
+
   test("assign carries confidential from the workspace setting", async () => {
     await updateWorkspace(db, wsA, { confidential: false });
     await updateWorkspace(db, wsB, { confidential: true });
-    await postUserMessage(db, wsA, "open");
-    await postUserMessage(db, wsB, "secret");
+    await postUserMessage(db, wsA, "open", { authorUserId: "usr_local" });
+    await postUserMessage(db, wsB, "secret", { authorUserId: "usr_local" });
     const c = await connect();
     const a = await c.next("task.assign");
     expect(a).toMatchObject({ workspaceId: wsA, adapter: "auto", confidential: false });
@@ -316,16 +341,16 @@ describe("daemon socket", () => {
   });
 
   test("a thread's activated Skills ride on its tasks, newest first; main chat and record-less threads carry none", async () => {
-    await postUserMessage(db, wsA, "main chat");
-    const anchor = (await postUserMessage(db, wsA, "anchor")).message;
+    await postUserMessage(db, wsA, "main chat", { authorUserId: "usr_local" });
+    const anchor = (await postUserMessage(db, wsA, "anchor", { authorUserId: "usr_local" })).message;
     const thread = await ensureThread(db, anchor.id, "T", "user");
     await db.query(
       `insert into thread_skill_activations(thread_id, skill_id, last_activated_at, last_task_id, revision)
        values ($1, 'tdd', now() - interval '1 hour', 't0', 'r'), ($1, 'pdf', now(), 't0', 'r')`,
       [thread.id],
     );
-    await postUserMessage(db, wsA, "in thread", { threadId: thread.id });
-    const other = (await postUserMessage(db, wsB, "other anchor")).message;
+    await postUserMessage(db, wsA, "in thread", { authorUserId: "usr_local", threadId: thread.id });
+    const other = (await postUserMessage(db, wsB, "other anchor", { authorUserId: "usr_local" })).message;
     const otherThread = await ensureThread(db, other.id, "U", "user");
     const c = await connect();
     const seen: Array<{ content: string; retained: unknown }> = [];
@@ -352,8 +377,8 @@ describe("daemon socket", () => {
               ('repo_u', $1, '/src/api', '/src/api/.git', 'api', 'main', false, null, false)`,
       [wsA],
     );
-    await postUserMessage(db, wsA, "a");
-    await postUserMessage(db, wsB, "b");
+    await postUserMessage(db, wsA, "a", { authorUserId: "usr_local" });
+    await postUserMessage(db, wsB, "b", { authorUserId: "usr_local" });
     const c = await connect();
     const a = await c.next("task.assign");
     expect(a.projectSkills).toEqual([{ repoId: "repo_t", label: "web", path: "/src/web", mainBranch: "main", gitCommonDir: "/src/web/.git" }]);
@@ -363,11 +388,11 @@ describe("daemon socket", () => {
   });
 
   test("a leading /skill-name rides on its task as manualSkill; built-ins, mid-text names and others carry none", async () => {
-    await postUserMessage(db, wsA, "/tdd 写测试\n第二行");
-    await postUserMessage(db, wsA, "/thread x");
-    await postUserMessage(db, wsA, "请用 /tdd");
-    await postUserMessage(db, wsA, "/skill:thread 开");
-    await postUserMessage(db, wsA, "plain");
+    await postUserMessage(db, wsA, "/tdd 写测试\n第二行", { authorUserId: "usr_local" });
+    await postUserMessage(db, wsA, "/thread x", { authorUserId: "usr_local" });
+    await postUserMessage(db, wsA, "请用 /tdd", { authorUserId: "usr_local" });
+    await postUserMessage(db, wsA, "/skill:thread 开", { authorUserId: "usr_local" });
+    await postUserMessage(db, wsA, "plain", { authorUserId: "usr_local" });
     const c = await connect();
     const seen: Record<string, unknown> = {};
     for (let i = 0; i < 5; i++) {
@@ -387,16 +412,16 @@ describe("daemon socket", () => {
   });
 
   test("an edited message is read again: the re-run carries the new /skill-name", async () => {
-    const m = await postUserMessage(db, wsA, "/tdd first");
+    const m = await postUserMessage(db, wsA, "/tdd first", { authorUserId: "usr_local" });
     await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
-    await editUserMessage(db, wsA, m.message.id, "/review again");
+    await editUserMessage(db, wsA, m.message.id, "/review again", "usr_local");
     const c = await connect();
     const a = await c.next("task.assign");
     expect(a.manualSkill).toEqual({ skillId: "review", arguments: "again" });
   });
 
   test("a reply carries the skills its task offered, and the offers are cleared once it is saved", async () => {
-    const m = await postUserMessage(db, wsA, "install the pdf skill");
+    const m = await postUserMessage(db, wsA, "install the pdf skill", { authorUserId: "usr_local" });
     const c = await connect();
     expect((await c.next()).type).toBe("welcome");
     const a = await c.next("task.assign");
@@ -420,7 +445,7 @@ describe("daemon socket", () => {
   });
 
   test("a reply without offers has no skillOffers field", async () => {
-    const m = await postUserMessage(db, wsA, "hello");
+    const m = await postUserMessage(db, wsA, "hello", { authorUserId: "usr_local" });
     const c = await connect();
     expect((await c.next()).type).toBe("welcome");
     const a = await c.next("task.assign");
@@ -432,8 +457,8 @@ describe("daemon socket", () => {
 
   test("dispatches, stores agent reply with meta, completes, dispatches next", async () => {
     await updateWorkspace(db, wsA, { confidential: false });
-    const m1 = await postUserMessage(db, wsA, "first");
-    const m2 = await postUserMessage(db, wsA, "second");
+    const m1 = await postUserMessage(db, wsA, "first", { authorUserId: "usr_local" });
+    const m2 = await postUserMessage(db, wsA, "second", { authorUserId: "usr_local" });
     const status: boolean[] = [];
     events.subscribeAll((ws, e) => e.type === "daemon.status" && status.push(e.connected));
     const c = await connect();
@@ -464,7 +489,7 @@ describe("daemon socket", () => {
 
   test("the asked card is a question this task opened, not an older higher-priority one", async () => {
     const older = await addQuestion(wsA, 1);
-    const m1 = await postUserMessage(db, wsA, "where is the doc");
+    const m1 = await postUserMessage(db, wsA, "where is the doc", { authorUserId: "usr_local" });
     const created = await addQuestion(wsA, 3);
     await recordTaskChange(db, m1.task.id, { entryId: created.id, kind: "question", title: created.title, op: "add" });
     const c = await connect();
@@ -482,7 +507,7 @@ describe("daemon socket", () => {
     const threadId = await nextAttention(db, dataDir, wsA);
     expect(threadId).toBeTruthy();
     expect(await getQuestionThread(db, wsA, q.id)).toBe(threadId);
-    const answer = await postUserMessage(db, wsA, "Here is the answer", { threadId: threadId! });
+    const answer = await postUserMessage(db, wsA, "Here is the answer", { authorUserId: "usr_local", threadId: threadId! });
     const c = await connect();
     const assignment = await c.next("task.assign");
     expect(assignment.taskId).toBe(answer.task.id);
@@ -494,7 +519,7 @@ describe("daemon socket", () => {
   });
 
   test("a main-chat task that adds a question replies in a new thread on its message", async () => {
-    const m = await postUserMessage(db, wsA, "unclear request");
+    const m = await postUserMessage(db, wsA, "unclear request", { authorUserId: "usr_local" });
     const q = await addQuestion(wsA, 2);
     await recordTaskChange(db, m.task.id, { entryId: q.id, kind: "question", title: q.title, op: "add" });
     const c = await connect();
@@ -519,7 +544,7 @@ describe("daemon socket", () => {
     const updatedTasks = [] as Array<{ message: Awaited<ReturnType<typeof postUserMessage>>; questionId: string }>;
     for (const status of ["open", "resolved", "dropped"] as const) {
       const q = await store.upsert({ kind: "question", title: `Updated ${status}`, body: "b", status, priority: 1, reason: "r", sourceMessages: [] } as never, { author: "agent" });
-      const message = await postUserMessage(db, wsA, `update ${status}`);
+      const message = await postUserMessage(db, wsA, `update ${status}`, { authorUserId: "usr_local" });
       await recordTaskChange(db, message.task.id, { entryId: q.entry.id, kind: "question", title: q.entry.title, op: "update" });
       updatedTasks.push({ message, questionId: q.entry.id });
     }
@@ -534,10 +559,10 @@ describe("daemon socket", () => {
   });
 
   test("thread replies associate every touched open question once and keep existing links", async () => {
-    const m = await postUserMessage(db, wsA, "several questions");
+    const m = await postUserMessage(db, wsA, "several questions", { authorUserId: "usr_local" });
     const q1 = await addQuestion(wsA, 1);
     const q2 = await addQuestion(wsA, 2);
-    const oldAnchor = await postUserMessage(db, wsA, "old topic");
+    const oldAnchor = await postUserMessage(db, wsA, "old topic", { authorUserId: "usr_local" });
     await ensureThread(db, oldAnchor.message.id, "Existing", "user");
     await associateQuestion(db, wsA, q2.id, oldAnchor.message.id);
     await recordTaskChange(db, m.task.id, { entryId: q1.id, kind: "question", title: q1.title, op: "add" });
@@ -552,7 +577,7 @@ describe("daemon socket", () => {
   });
 
   test("a main-chat task with no question and no open_thread stays in main chat with null askedQuestion", async () => {
-    const m = await postUserMessage(db, wsA, "ordinary");
+    const m = await postUserMessage(db, wsA, "ordinary", { authorUserId: "usr_local" });
     const c = await connect();
     const a = await c.next("task.assign");
     c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "ordinary reply" });
@@ -563,10 +588,10 @@ describe("daemon socket", () => {
   });
 
   test("reply goes to the thread when the task message is in a thread", async () => {
-    const anchor = await postUserMessage(db, wsA, "anchor");
+    const anchor = await postUserMessage(db, wsA, "anchor", { authorUserId: "usr_local" });
     await ensureThread(db, anchor.message.id, "Thread", "user");
     await db.query("update tasks set status='done' where id=$1", [anchor.task.id]);
-    const m = await postUserMessage(db, wsA, "thread follow-up", { threadId: anchor.message.id });
+    const m = await postUserMessage(db, wsA, "thread follow-up", { authorUserId: "usr_local", threadId: anchor.message.id });
     const c = await connect();
     const a = await c.next("task.assign");
     c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "thread reply" });
@@ -576,7 +601,7 @@ describe("daemon socket", () => {
   });
 
   test("a thread opened during the task receives its reply, with no main-chat agent message", async () => {
-    const m = await postUserMessage(db, wsA, "open while running");
+    const m = await postUserMessage(db, wsA, "open while running", { authorUserId: "usr_local" });
     const c = await connect();
     const a = await c.next("task.assign");
     await ensureThread(db, m.message.id, "Opened by tool", "agent");
@@ -587,7 +612,7 @@ describe("daemon socket", () => {
   });
 
   test("failure message stays in a thread", async () => {
-    const m = await postUserMessage(db, wsA, "fail here");
+    const m = await postUserMessage(db, wsA, "fail here", { authorUserId: "usr_local" });
     await ensureThread(db, m.message.id, "Failure", "agent");
     const c = await connect();
     const a = await c.next("task.assign");
@@ -597,7 +622,7 @@ describe("daemon socket", () => {
   });
 
   test("daemon failure opens a grill thread for a touched open question", async () => {
-    const m = await postUserMessage(db, wsA, "fails after asking");
+    const m = await postUserMessage(db, wsA, "fails after asking", { authorUserId: "usr_local" });
     const q = await addQuestion(wsA, 1);
     await recordTaskChange(db, m.task.id, { entryId: q.id, kind: "question", title: q.title, op: "add" });
     const c = await connect();
@@ -610,7 +635,7 @@ describe("daemon socket", () => {
   });
 
   test("prompt failure routes a retained question from an interrupted attempt", async () => {
-    const m = await postUserMessage(db, wsA, "first attempt asks");
+    const m = await postUserMessage(db, wsA, "first attempt asks", { authorUserId: "usr_local" });
     const first = await connect();
     await first.next("task.assign");
     const q = await addQuestion(wsA, 1);
@@ -628,7 +653,7 @@ describe("daemon socket", () => {
   });
 
   test("failure associates a touched open question with its existing thread", async () => {
-    const m = await postUserMessage(db, wsA, "thread failure asks");
+    const m = await postUserMessage(db, wsA, "thread failure asks", { authorUserId: "usr_local" });
     await ensureThread(db, m.message.id, "Existing topic", "user");
     const q = await addQuestion(wsA, 2);
     await recordTaskChange(db, m.task.id, { entryId: q.id, kind: "question", title: q.title, op: "update" });
@@ -641,7 +666,7 @@ describe("daemon socket", () => {
   });
 
   test("retry reuses the thread opened during the first run and stores one reply", async () => {
-    const m = await postUserMessage(db, wsA, "interrupted");
+    const m = await postUserMessage(db, wsA, "interrupted", { authorUserId: "usr_local" });
     const first = await connect();
     await first.next("task.assign");
     await ensureThread(db, m.message.id, "Opened during run", "agent");
@@ -658,7 +683,7 @@ describe("daemon socket", () => {
   });
 
   test("a reply insert failure rolls back task, thread, and associations before retry succeeds", async () => {
-    const m = await postUserMessage(db, wsA, "atomic reply");
+    const m = await postUserMessage(db, wsA, "atomic reply", { authorUserId: "usr_local" });
     const q = await addQuestion(wsA, 1);
     await recordTaskChange(db, m.task.id, { entryId: q.id, kind: "question", title: q.title, op: "add" });
     const c = await connect();
@@ -702,10 +727,10 @@ describe("daemon socket", () => {
   });
 
   test("editing an anchor and a report that adds a question reply in their threads", async () => {
-    const anchor = await postUserMessage(db, wsA, "original");
+    const anchor = await postUserMessage(db, wsA, "original", { authorUserId: "usr_local" });
     await ensureThread(db, anchor.message.id, "Anchor", "agent");
     await db.query("update tasks set status='done' where id=$1", [anchor.task.id]);
-    const edited = await editUserMessage(db, wsA, anchor.message.id, "corrected");
+    const edited = await editUserMessage(db, wsA, anchor.message.id, "corrected", "usr_local");
     const c = await connect();
     const editAssignment = await c.next("task.assign");
     expect(editAssignment.taskId).toBe(edited.task.id);
@@ -730,7 +755,7 @@ describe("daemon socket", () => {
 
   test("grill off keeps a question-adding task reply in main chat", async () => {
     await db.query(`insert into workspace_plugins (workspace_id, plugin_id, enabled) values ($1, 'grill', false)`, [wsA]);
-    const m = await postUserMessage(db, wsA, "no grill");
+    const m = await postUserMessage(db, wsA, "no grill", { authorUserId: "usr_local" });
     const q = await addQuestion(wsA, 1);
     await recordTaskChange(db, m.task.id, { entryId: q.id, kind: "question", title: q.title, op: "add" });
     const c = await connect();
@@ -742,7 +767,7 @@ describe("daemon socket", () => {
   });
 
   test("with grill-me off the finished message has no asked question", async () => {
-    const m1 = await postUserMessage(db, wsA, "first");
+    const m1 = await postUserMessage(db, wsA, "first", { authorUserId: "usr_local" });
     await db.query(`insert into workspace_plugins (workspace_id, plugin_id, enabled) values ($1, 'grill', false)`, [wsA]);
     await addQuestion(wsA, 1);
     const c = await connect();
@@ -757,7 +782,7 @@ describe("daemon socket", () => {
   });
 
   test("hub restart: startup requeue unwedges a task left running and re-dispatches it with a fresh token", async () => {
-    const m = await postUserMessage(db, wsA, "survive restart");
+    const m = await postUserMessage(db, wsA, "survive restart", { authorUserId: "usr_local" });
     // The previous hub process had handed this task to a daemon, then died.
     const stale = (await claimNextTask(db, "d_previous_process"))!;
     expect(stale.status).toBe("running");
@@ -773,7 +798,7 @@ describe("daemon socket", () => {
   });
 
   test("daemon hello requeues running rows owned by another daemon id and re-dispatches them", async () => {
-    const m = await postUserMessage(db, wsA, "orphan");
+    const m = await postUserMessage(db, wsA, "orphan", { authorUserId: "usr_local" });
     const stale = (await claimNextTask(db, "d_ghost"))!;
     const seen: string[] = [];
     const payloads: unknown[] = [];
@@ -797,8 +822,8 @@ describe("daemon socket", () => {
   });
 
   test("global serial across workspaces", async () => {
-    const a = await postUserMessage(db, wsA, "a");
-    const b = await postUserMessage(db, wsB, "b");
+    const a = await postUserMessage(db, wsA, "a", { authorUserId: "usr_local" });
+    const b = await postUserMessage(db, wsB, "b", { authorUserId: "usr_local" });
     const c = await connect();
     const first = await c.next("task.assign");
     expect(first.taskId).toBe(a.task.id);
@@ -808,8 +833,8 @@ describe("daemon socket", () => {
   });
 
   test("ignores task.finished for a task not assigned to the connection", async () => {
-    const a = await postUserMessage(db, wsA, "a");
-    const b = await postUserMessage(db, wsB, "b");
+    const a = await postUserMessage(db, wsA, "a", { authorUserId: "usr_local" });
+    const b = await postUserMessage(db, wsB, "b", { authorUserId: "usr_local" });
     const c = await connect();
     await c.next("task.assign");
     c.send({ type: "task.finished", taskId: b.task.id, ok: true, reply: "bogus" });
@@ -821,12 +846,12 @@ describe("daemon socket", () => {
 
   test("follow-up: prompt includes last asked question", async () => {
     const q = await addQuestion(wsA, 1);
-    const first = await postUserMessage(db, wsA, "hello");
+    const first = await postUserMessage(db, wsA, "hello", { authorUserId: "usr_local" });
     await addMessage(db, wsA, "agent", "reply", {
       taskId: first.task.id,
       meta: { changes: [], askedQuestion: { id: q.id, title: q.title, body: q.body } },
     });
-    await postUserMessage(db, wsA, "postgres");
+    await postUserMessage(db, wsA, "postgres", { authorUserId: "usr_local" });
     const c = await connect();
     await c.next("task.assign"); // first task
     c.send({ type: "task.finished", taskId: first.task.id, ok: true, reply: "r" });
@@ -838,11 +863,11 @@ describe("daemon socket", () => {
   test("prompt uses latest agent message's question and includes newer agent replies, excludes later user messages", async () => {
     const q1 = await addQuestion(wsA, 1);
     const q2 = await addQuestion(wsA, 2);
-    const u0 = await postUserMessage(db, wsA, "zero");
+    const u0 = await postUserMessage(db, wsA, "zero", { authorUserId: "usr_local" });
     await addMessage(db, wsA, "agent", "OLDER-REPLY", { taskId: u0.task.id, meta: { changes: [], askedQuestion: { id: q1.id, title: q1.title, body: q1.body } } });
-    const u1 = await postUserMessage(db, wsA, "current-msg");
+    const u1 = await postUserMessage(db, wsA, "current-msg", { authorUserId: "usr_local" });
     await addMessage(db, wsA, "agent", "NEWER-REPLY", { taskId: u0.task.id, meta: { changes: [], askedQuestion: { id: q2.id, title: q2.title, body: q2.body } } });
-    await postUserMessage(db, wsA, "LATER-USER");
+    await postUserMessage(db, wsA, "LATER-USER", { authorUserId: "usr_local" });
     await db.query("update tasks set status = 'done' where id = $1", [u0.task.id]);
     const c = await connect();
     const a = await c.next("task.assign");
@@ -857,10 +882,10 @@ describe("daemon socket", () => {
   test("a named answer targets that question, not the latest follow-up", async () => {
     const q1 = await addQuestion(wsA, 1);
     const q2 = await addQuestion(wsA, 2);
-    const u0 = await postUserMessage(db, wsA, "zero");
+    const u0 = await postUserMessage(db, wsA, "zero", { authorUserId: "usr_local" });
     await addMessage(db, wsA, "agent", "asked-q2", { taskId: u0.task.id, meta: { changes: [], askedQuestion: { id: q2.id, title: q2.title, body: q2.body } } });
     await db.query("update tasks set status = 'done' where id = $1", [u0.task.id]);
-    const u1 = await postUserMessage(db, wsA, `回答 ${q1.id}：\n里程碑二`);
+    const u1 = await postUserMessage(db, wsA, `回答 ${q1.id}：\n里程碑二`, { authorUserId: "usr_local" });
     const c = await connect();
     const a = await c.next("task.assign");
     expect(a.taskId).toBe(u1.task.id);
@@ -871,7 +896,7 @@ describe("daemon socket", () => {
   });
 
   test("prompt build failure: system message once, task failed, no stuck running", async () => {
-    const a = await postUserMessage(db, wsA, "a");
+    const a = await postUserMessage(db, wsA, "a", { authorUserId: "usr_local" });
     await ensureThread(db, a.message.id, "Prompt error", "agent");
     failTimeline.on = true;
     const c = await connect();
@@ -885,7 +910,7 @@ describe("daemon socket", () => {
   });
 
   test("disconnect emits task.updated queued for the requeued task", async () => {
-    const a = await postUserMessage(db, wsA, "a");
+    const a = await postUserMessage(db, wsA, "a", { authorUserId: "usr_local" });
     const seen: string[] = [];
     events.subscribeAll((_w, e) => e.type === "task.updated" && e.task.id === a.task.id && seen.push(e.task.status));
     const c = await connect();
@@ -897,7 +922,7 @@ describe("daemon socket", () => {
   });
 
   test("disconnect requeues; reconnect gets same task with new runToken", async () => {
-    const a = await postUserMessage(db, wsA, "a");
+    const a = await postUserMessage(db, wsA, "a", { authorUserId: "usr_local" });
     const c1 = await connect();
     const a1 = await c1.next("task.assign");
     c1.ws.terminate();
@@ -911,7 +936,7 @@ describe("daemon socket", () => {
   });
 
   test("second daemon replaces the first", async () => {
-    const a = await postUserMessage(db, wsA, "a");
+    const a = await postUserMessage(db, wsA, "a", { authorUserId: "usr_local" });
     const c1 = await connect();
     await c1.next("task.assign");
     const c2 = await connect();
@@ -922,8 +947,8 @@ describe("daemon socket", () => {
   });
 
   test("failure: system message, task failed, next dispatched", async () => {
-    const a = await postUserMessage(db, wsA, "a");
-    const b = await postUserMessage(db, wsB, "b");
+    const a = await postUserMessage(db, wsA, "a", { authorUserId: "usr_local" });
+    const b = await postUserMessage(db, wsB, "b", { authorUserId: "usr_local" });
     const c = await connect();
     await c.next("task.assign");
     c.send({ type: "task.finished", taskId: a.task.id, ok: false, error: "boom" });
@@ -936,7 +961,7 @@ describe("daemon socket", () => {
   test("a dispatch race requeues without spending a retry", async () => {
     const c1 = await connect();
     await c1.next("welcome");
-    const posted = await postUserMessage(db, wsA, "race");
+    const posted = await postUserMessage(db, wsA, "race", { authorUserId: "usr_local" });
     let c2: Client | null = null;
     let firstToken: string | null = null;
     const realClaim = tasks.claimNextTask;
@@ -970,7 +995,7 @@ describe("daemon socket", () => {
   test("a second hello during prompt build does not spend a retry", async () => {
     const c1 = await connect();
     await c1.next("welcome");
-    const posted = await postUserMessage(db, wsA, "unsent");
+    const posted = await postUserMessage(db, wsA, "unsent", { authorUserId: "usr_local" });
     const gate = pausePromptBuild();
     events.emit(wsA, { type: "task.updated", task: posted.task });
     await gate.entered;
@@ -987,7 +1012,7 @@ describe("daemon socket", () => {
   test("a disconnect during prompt build does not spend a retry", async () => {
     const c1 = await connect();
     await c1.next("welcome");
-    const posted = await postUserMessage(db, wsA, "unsent");
+    const posted = await postUserMessage(db, wsA, "unsent", { authorUserId: "usr_local" });
     const gate = pausePromptBuild();
     events.emit(wsA, { type: "task.updated", task: posted.task });
     await gate.entered;
@@ -1010,13 +1035,13 @@ describe("daemon socket", () => {
       const anchor = await addMessage(db, wsA, "agent", "thread anchor");
       const thread = await ensureThread(db, anchor.id, "Follow-up", "user");
       threadId = thread.id;
-      taskId = (await postUserMessage(db, wsA, "thread member", { threadId: thread.id })).task.id;
+      taskId = (await postUserMessage(db, wsA, "thread member", { authorUserId: "usr_local", threadId: thread.id })).task.id;
     } else if (scenario === "anchor whose thread was opened after submission") {
-      const anchor = await postUserMessage(db, wsA, "main anchor");
+      const anchor = await postUserMessage(db, wsA, "main anchor", { authorUserId: "usr_local" });
       taskId = anchor.task.id;
       threadId = (await ensureThread(db, anchor.message.id, "Opened before interruption", "user")).id;
     } else {
-      const anchor = await postUserMessage(db, wsA, "main task");
+      const anchor = await postUserMessage(db, wsA, "main task", { authorUserId: "usr_local" });
       taskId = anchor.task.id;
       threadId = null;
     }
@@ -1085,7 +1110,7 @@ describe("daemon socket", () => {
   test("new task enqueued later is dispatched via task.updated", async () => {
     const c = await connect();
     await c.next("welcome");
-    const a = await postUserMessage(db, wsA, "late");
+    const a = await postUserMessage(db, wsA, "late", { authorUserId: "usr_local" });
     events.emit(wsA, { type: "task.updated", task: a.task });
     expect((await c.next("task.assign")).taskId).toBe(a.task.id);
   });
@@ -1109,7 +1134,7 @@ describe("daemon socket", () => {
     expect(wp.prompt).toContain("# 开发包 W-1");
     expect(wp.prompt).toContain("repo_a（api）");
     c.send({ type: "task.finished", taskId: wp.taskId, ok: true, reply: "r" });
-    await postUserMessage(db, wsB, "plain");
+    await postUserMessage(db, wsB, "plain", { authorUserId: "usr_local" });
     events.emit(wsB, { type: "task.updated", task: { id: "x", workspaceId: wsB, messageId: "x", status: "queued", error: null } });
     const organize = await c.next("task.assign");
     expect(organize.workspaceId).toBe(wsB);
@@ -1127,11 +1152,11 @@ describe("mentions in the task prompt", () => {
     );
     await indexEntry(db, wsA, entry);
     const file = await uploadPng(db, dataDir, wsA, png(70), "截图.png");
-    const earlier = await postUserMessage(db, wsA, "看这张", { attachmentIds: [file.id] });
+    const earlier = await postUserMessage(db, wsA, "看这张", { authorUserId: "usr_local", attachmentIds: [file.id] });
     await db.query("update tasks set status = 'done' where id = $1", [earlier.task.id]);
 
     const content = `按 [${entry.id}] 来，再看 \`附件：截图.png\``;
-    const m = await postUserMessage(db, wsA, content, {
+    const m = await postUserMessage(db, wsA, content, { authorUserId: "usr_local",
       mentions: [
         { type: "entry", id: entry.id, text: `[${entry.id}]` },
         { type: "attachment", id: file.id, text: "`附件：截图.png`" },
@@ -1154,7 +1179,7 @@ describe("mentions in the task prompt", () => {
   });
 
   test("a message without mentions has no mention section at all", async () => {
-    const m = await postUserMessage(db, wsA, "普通消息");
+    const m = await postUserMessage(db, wsA, "普通消息", { authorUserId: "usr_local" });
     const c = await connect();
     expect((await c.next("welcome"))).toBeTruthy();
     const a = await c.next("task.assign");
@@ -1166,10 +1191,10 @@ describe("mentions in the task prompt", () => {
 describe("attachments in task.assign", () => {
   test("a daemon with the attachments feature gets the delivery set, each a valid AttachmentRef", async () => {
     const quotedFile = await uploadPng(db, dataDir, wsA, png(80), "old.png");
-    const quoted = await postUserMessage(db, wsA, "old", { attachmentIds: [quotedFile.id] });
+    const quoted = await postUserMessage(db, wsA, "old", { authorUserId: "usr_local", attachmentIds: [quotedFile.id] });
     await db.query("update tasks set status = 'done' where id = $1", [quoted.task.id]);
     const file = await uploadPng(db, dataDir, wsA, png(64), "new.png");
-    const m = await postUserMessage(db, wsA, "", { attachmentIds: [file.id], quoteMessageId: quoted.message.id });
+    const m = await postUserMessage(db, wsA, "", { authorUserId: "usr_local", attachmentIds: [file.id], quoteMessageId: quoted.message.id });
     const c = await connect(TOKEN, ["codex-direct"], { features: ["attachments"] });
     expect((await c.next()).type).toBe("welcome");
     const a = await c.next("task.assign");
@@ -1184,8 +1209,8 @@ describe("attachments in task.assign", () => {
 
   test("without the feature, a task with attachments fails plainly and a text task still runs", async () => {
     const file = await uploadPng(db, dataDir, wsA);
-    const withFile = await postUserMessage(db, wsA, "see file", { attachmentIds: [file.id] });
-    const textOnly = await postUserMessage(db, wsA, "just text");
+    const withFile = await postUserMessage(db, wsA, "see file", { authorUserId: "usr_local", attachmentIds: [file.id] });
+    const textOnly = await postUserMessage(db, wsA, "just text", { authorUserId: "usr_local" });
     const c = await connect();
     expect((await c.next()).type).toBe("welcome");
     const a = await c.next("task.assign");
@@ -1197,7 +1222,7 @@ describe("attachments in task.assign", () => {
   });
 
   test("a text-only task carries no attachments field", async () => {
-    await postUserMessage(db, wsA, "plain");
+    await postUserMessage(db, wsA, "plain", { authorUserId: "usr_local" });
     const c = await connect(TOKEN, ["codex-direct"], { features: ["attachments"] });
     expect((await c.next()).type).toBe("welcome");
     const a = await c.next("task.assign");
@@ -1207,8 +1232,8 @@ describe("attachments in task.assign", () => {
 
 describe("account choice and route decision", () => {
   test("a message that named an account sends that id down; one that named none sends no field", async () => {
-    const picked = await postUserMessage(db, wsA, "on the second account", { accountId: "acct_abc1234567" });
-    const plain = await postUserMessage(db, wsA, "on whatever the default is");
+    const picked = await postUserMessage(db, wsA, "on the second account", { authorUserId: "usr_local", accountId: "acct_abc1234567" });
+    const plain = await postUserMessage(db, wsA, "on whatever the default is", { authorUserId: "usr_local" });
     const c = await connect();
     const a1 = await c.next("task.assign");
     expect(a1).toMatchObject({ taskId: picked.task.id, accountId: "acct_abc1234567" });
@@ -1226,7 +1251,7 @@ describe("account choice and route decision", () => {
   test("an account-bound task is refused for a daemon that would drop the field, not run on its default", async () => {
     // An older daemon parses task.assign with accountId removed, so it would answer from whichever account is
     // its default — the one thing the user did not pick. The hub fails the task and says why instead.
-    const m = await postUserMessage(db, wsA, "on the second account", { accountId: "acct_abc1234567" });
+    const m = await postUserMessage(db, wsA, "on the second account", { authorUserId: "usr_local", accountId: "acct_abc1234567" });
     const c = await connect(TOKEN, ["codex-direct"], { features: [] });
     await c.next("welcome");
     await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
@@ -1237,7 +1262,7 @@ describe("account choice and route decision", () => {
 
   test("a task that names no account still runs on a daemon without the capability", async () => {
     // Nothing was chosen, so nothing can be substituted: the old daemon's default is the intended answer.
-    const m = await postUserMessage(db, wsA, "whatever the default is");
+    const m = await postUserMessage(db, wsA, "whatever the default is", { authorUserId: "usr_local" });
     const c = await connect(TOKEN, ["codex-direct"], { features: [] });
     const a = await c.next("task.assign");
     expect(a).toMatchObject({ taskId: m.task.id });
@@ -1245,7 +1270,7 @@ describe("account choice and route decision", () => {
   });
 
   test("a task that allows automatic routing says so", async () => {
-    const m = await postUserMessage(db, wsA, "auto please");
+    const m = await postUserMessage(db, wsA, "auto please", { authorUserId: "usr_local" });
     await db.query("update tasks set routing = 'auto' where id = $1", [m.task.id]);
     const c = await connect();
     const a1 = await c.next("task.assign");
@@ -1253,10 +1278,10 @@ describe("account choice and route decision", () => {
   });
 
   test("a thread task carries its thread id; a main-chat task carries none", async () => {
-    const mainChat = await postUserMessage(db, wsB, "plain main chat");
-    const anchor = await postUserMessage(db, wsA, "anchor");
+    const mainChat = await postUserMessage(db, wsB, "plain main chat", { authorUserId: "usr_local" });
+    const anchor = await postUserMessage(db, wsA, "anchor", { authorUserId: "usr_local" });
     await ensureThread(db, anchor.message.id, "A thread", "user");
-    const inThread = await postUserMessage(db, wsA, "reply in the thread", { threadId: anchor.message.id });
+    const inThread = await postUserMessage(db, wsA, "reply in the thread", { authorUserId: "usr_local", threadId: anchor.message.id });
     const c = await connect();
     const seen = new Map<string, Msg>();
     // Dispatch is one task at a time and the anchor now sits in its own thread, so walk the queue until the
@@ -1273,7 +1298,7 @@ describe("account choice and route decision", () => {
   });
 
   test("the route the daemon reports is stored on the agent message", async () => {
-    const m = await postUserMessage(db, wsA, "who answered this");
+    const m = await postUserMessage(db, wsA, "who answered this", { authorUserId: "usr_local" });
     const c = await connect();
     const a = await c.next("task.assign");
     const route = { accountId: "acct_abc1234567", accountName: "Personal", model: "gpt-5.5", mode: "manual", reason: "user_workspace" };
@@ -1284,7 +1309,7 @@ describe("account choice and route decision", () => {
   });
 
   test("an old daemon that sends no route still saves its reply", async () => {
-    const m = await postUserMessage(db, wsA, "old daemon");
+    const m = await postUserMessage(db, wsA, "old daemon", { authorUserId: "usr_local" });
     const c = await connect();
     const a = await c.next("task.assign");
     c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "still here" });
@@ -1297,7 +1322,7 @@ describe("account choice and route decision", () => {
   test("a failure names the account it happened on, and keeps the record", async () => {
     // A failed task has no reply, so the route line has nowhere to go; the account and model join the
     // failure line instead, and the same record is stored beside it for later.
-    const m = await postUserMessage(db, wsA, "will fail", { accountId: "acct_abc1234567" });
+    const m = await postUserMessage(db, wsA, "will fail", { authorUserId: "usr_local", accountId: "acct_abc1234567" });
     const c = await connect();
     const a = await c.next("task.assign");
     const route = { accountId: "acct_abc1234567", accountName: "Personal", model: "gpt-5.5", mode: "manual", reason: "user_message" };
@@ -1313,7 +1338,7 @@ describe("account choice and route decision", () => {
   test("a route this hub cannot read costs the route line, not the reply", async () => {
     // A daemon from a later version, or a record the hub's schema does not know. Dropping the whole
     // message would throw away an answer the user is waiting for; the reply is kept and the route is not.
-    const m = await postUserMessage(db, wsA, "later version");
+    const m = await postUserMessage(db, wsA, "later version", { authorUserId: "usr_local" });
     const c = await connect();
     const a = await c.next("task.assign");
     c.send({
@@ -1330,7 +1355,7 @@ describe("account choice and route decision", () => {
   });
 
   test("a failure whose route cannot be read still reports the failure", async () => {
-    const m = await postUserMessage(db, wsA, "later version, failing");
+    const m = await postUserMessage(db, wsA, "later version, failing", { authorUserId: "usr_local" });
     const c = await connect();
     const a = await c.next("task.assign");
     c.send({
@@ -1347,7 +1372,7 @@ describe("account choice and route decision", () => {
   });
 
   test("a failure from a daemon that routed nothing reads as it always did", async () => {
-    const m = await postUserMessage(db, wsA, "plain failure");
+    const m = await postUserMessage(db, wsA, "plain failure", { authorUserId: "usr_local" });
     const c = await connect();
     const a = await c.next("task.assign");
     c.send({ type: "task.finished", taskId: a.taskId, ok: false, error: "something broke" });
@@ -1362,7 +1387,7 @@ describe("S3 acceptance: the account shown under the reply", () => {
   test("the metadata a real daemon sends renders as one line: account, model, reason", async () => {
     // The shape the daemon puts on `task.finished` after routing (see apps/cli/src/routing/index.ts):
     // the hub stores it verbatim under `meta.route`, which is what the reply line reads.
-    const m = await postUserMessage(db, wsA, "who is this", { accountId: "acct_abc1234567" });
+    const m = await postUserMessage(db, wsA, "who is this", { authorUserId: "usr_local", accountId: "acct_abc1234567" });
     const c = await connect();
     const a = await c.next("task.assign");
     expect(a.accountId).toBe("acct_abc1234567");
@@ -1396,7 +1421,7 @@ describe("S3 acceptance: the account shown under the reply", () => {
   });
 
   test("an account id of the wrong shape is refused before it reaches a task row", async () => {
-    await expect(postUserMessage(db, wsA, "bad pick", { accountId: "../etc/passwd" })).rejects.toThrow();
+    await expect(postUserMessage(db, wsA, "bad pick", { authorUserId: "usr_local", accountId: "../etc/passwd" })).rejects.toThrow();
     const rows = await db.query<{ n: number }>("select count(*)::int as n from tasks where account_id is not null");
     expect(rows[0]!.n).toBe(0);
   });

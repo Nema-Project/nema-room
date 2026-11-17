@@ -28,11 +28,11 @@ beforeEach(async () => {
 afterAll(cleanupHubDeps);
 
 async function threadTask() {
-  const anchor = (await postUserMessage(db, ws, "anchor")).message;
+  const anchor = (await postUserMessage(db, ws, "anchor", { authorUserId: "usr_local" })).message;
   const first = await claimNextTask(db, "d1");
   await finishTask(db, first!.id, { ok: true });
   const thread = await ensureThread(db, anchor.id, "Topic", "user");
-  await postUserMessage(db, ws, "in the thread", { threadId: thread.id });
+  await postUserMessage(db, ws, "in the thread", { authorUserId: "usr_local", threadId: thread.id });
   const task = await claimNextTask(db, "d1");
   return { threadId: thread.id, anchorTaskId: first!.id, taskId: task!.id, token: task!.runToken! };
 }
@@ -61,7 +61,7 @@ describe("thread Skill activations", () => {
     await finishTask(db, taskId, { ok: true });
     expect(await recordActivation(db, { taskId: anchorTaskId, skillId: "tdd", revision: "r" })).toBe("recorded");
     expect(await retainedSkills(db, threadId)).toEqual(["tdd"]);
-    await postUserMessage(db, ws, "main chat");
+    await postUserMessage(db, ws, "main chat", { authorUserId: "usr_local" });
     const main = await claimNextTask(db, "d1");
     expect(await recordActivation(db, { taskId: main!.id, skillId: "pdf", revision: "r" })).toBe("not-thread");
     expect(await db.query("select 1 from thread_skill_activations where skill_id='pdf'")).toEqual([]);

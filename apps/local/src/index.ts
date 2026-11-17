@@ -5,7 +5,7 @@ export { startLocalRuntime, ensureLocalRuntime, shutdownLocalRuntime } from "./r
 export type { LocalRuntime, LocalRuntimeOptions } from "./runtime.js";
 export { acquireInstance, discoverInstance, requestInstanceShutdown } from "./instance.js";
 export { SessionManager } from "./session.js";
-export { createGatewayCredential, createGatewayUiAuth, startGateway, GATEWAY_CREDENTIAL_HEADER, sessionCookieName } from "./gateway.js";
+export { createGatewayCredential, createGatewayIdentity, startGateway, GATEWAY_CREDENTIAL_HEADER, sessionCookieName } from "./gateway.js";
 
 function startupFailureDetail(error: unknown): string {
   if (!(error instanceof Error) || !error.message) return "";

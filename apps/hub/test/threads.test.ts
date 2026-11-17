@@ -19,13 +19,13 @@ beforeEach(async () => {
 afterAll(cleanupHubDeps);
 
 async function openThread(title = "Topic") {
-  const anchor = (await postUserMessage(db, ws, "anchor")).message;
+  const anchor = (await postUserMessage(db, ws, "anchor", { authorUserId: "usr_local" })).message;
   return { anchor, thread: await ensureThread(db, anchor.id, title, "user") };
 }
 
 describe("thread store and conversation context", () => {
   test("ensureThread is idempotent and retains the first title", async () => {
-    const anchor = (await postUserMessage(db, ws, "anchor")).message;
+    const anchor = (await postUserMessage(db, ws, "anchor", { authorUserId: "usr_local" })).message;
     const first = await ensureThread(db, anchor.id, "First", "user");
     const second = await ensureThread(db, anchor.id, "Second", "agent");
     expect(second).toMatchObject({ id: first.id, title: "First", openedBy: "user" });
@@ -99,7 +99,7 @@ describe("thread store and conversation context", () => {
 
   test("question lookup infers every question created by the original thread task", async () => {
     const { thread } = await openThread();
-    const { task, message } = await postUserMessage(db, ws, "question task", { threadId: thread.id });
+    const { task, message } = await postUserMessage(db, ws, "question task", { authorUserId: "usr_local", threadId: thread.id });
     await recordTaskChange(db, task.id, { entryId: "Q-1", kind: "question", title: "Unselected", op: "add" });
     await recordTaskChange(db, task.id, { entryId: "Q-2", kind: "question", title: "Selected", op: "add" });
     await addMessage(db, ws, "agent", "ask", { taskId: task.id, meta: { changes: [], askedQuestion: { id: "Q-2", title: "Q", body: "?" } } });
@@ -109,21 +109,21 @@ describe("thread store and conversation context", () => {
   });
 
   test("a main-chat-created question stays legacy when selected by a thread task", async () => {
-    const original = await postUserMessage(db, ws, "create question in main chat");
+    const original = await postUserMessage(db, ws, "create question in main chat", { authorUserId: "usr_local" });
     await recordTaskChange(db, original.task.id, { entryId: "Q-MAIN", kind: "question", title: "Original", op: "add" });
     const { thread } = await openThread();
-    const later = await postUserMessage(db, ws, "select prior question", { threadId: thread.id });
+    const later = await postUserMessage(db, ws, "select prior question", { authorUserId: "usr_local", threadId: thread.id });
     await addMessage(db, ws, "agent", "selected", { taskId: later.task.id, meta: { changes: [], askedQuestion: { id: "Q-MAIN", title: "Original", body: "?" } } });
     expect(await getQuestionThread(db, ws, "Q-MAIN")).toBeNull();
   });
 
   test("posting a thread reply validates workspace and main chat excludes replies", async () => {
     const { thread } = await openThread();
-    const posted = await postUserMessage(db, ws, "reply", { threadId: thread.id });
+    const posted = await postUserMessage(db, ws, "reply", { authorUserId: "usr_local", threadId: thread.id });
     expect(posted.message.threadId).toBe(thread.id);
     expect((await listThreads(db, ws))[0]!.replyCount).toBe(1);
-    await expect(postUserMessage(db, otherWs, "wrong workspace", { threadId: thread.id })).rejects.toMatchObject({ status: 400 });
-    const main = await postUserMessage(db, ws, "main");
+    await expect(postUserMessage(db, otherWs, "wrong workspace", { authorUserId: "usr_local", threadId: thread.id })).rejects.toMatchObject({ status: 400 });
+    const main = await postUserMessage(db, ws, "main", { authorUserId: "usr_local" });
     expect((await listPromptMessages(db, ws, main.message.id)).map((m) => m.id)).not.toContain(posted.message.id);
   });
 
@@ -140,13 +140,13 @@ describe("thread store and conversation context", () => {
   });
 
   test("main prompt excludes thread messages and thread prompt is anchor plus latest 50", async () => {
-    const main = (await postUserMessage(db, ws, "main anchor")).message;
+    const main = (await postUserMessage(db, ws, "main anchor", { authorUserId: "usr_local" })).message;
     const { anchor, thread } = await openThread();
     for (let i=0;i<52;i++) {
       const reply = await addMessage(db, ws, "agent", `reply ${i}`);
       await db.query("update messages set thread_id=$2 where id=$1", [reply.id, thread.id]);
     }
-    const future = await postUserMessage(db, ws, "future queued reply", { threadId: thread.id });
+    const future = await postUserMessage(db, ws, "future queued reply", { authorUserId: "usr_local", threadId: thread.id });
     expect((await listPromptMessages(db, ws, main.id)).map((m) => m.content)).not.toContain("reply 51");
     const context = await listPromptMessages(db, ws, anchor.id, 100);
     expect(context).toHaveLength(51);
@@ -166,9 +166,9 @@ describe("thread store and conversation context", () => {
   });
 
   test("terminal interruption failures go to each task's current thread and update its aggregate", async () => {
-    const anchor = await postUserMessage(db, ws, "main anchor");
+    const anchor = await postUserMessage(db, ws, "main anchor", { authorUserId: "usr_local" });
     const thread = await ensureThread(db, anchor.message.id, "Follow-up", "user");
-    const member = await postUserMessage(db, ws, "thread member", { threadId: thread.id });
+    const member = await postUserMessage(db, ws, "thread member", { authorUserId: "usr_local", threadId: thread.id });
     const events = new EventBus();
     const observed: string[] = [];
     events.subscribe(ws, (event) => { observed.push(event.type); });

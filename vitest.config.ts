@@ -26,6 +26,7 @@ alias["@nema/cli/report/desktop"] = `${root}apps/cli/src/report/desktop.ts`;
 alias["@nema/hub/db/local"] = `${root}apps/hub/src/db/pglite.ts`;
 alias["@nema/hub/db/snapshot"] = `${root}apps/hub/src/db/snapshot.ts`;
 alias["@nema/hub/db/export"] = `${root}apps/hub/src/db/export.ts`;
+alias["@nema/hub/identity"] = `${root}apps/hub/src/identity.ts`;
 alias["@nema/hub/events"] = `${root}apps/hub/src/events.ts`;
 alias["@nema/hub/interrupts"] = `${root}apps/hub/src/interrupts.ts`;
 alias["@nema/hub/lifecycle"] = `${root}apps/hub/src/lifecycle.ts`;

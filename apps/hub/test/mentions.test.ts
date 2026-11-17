@@ -355,3 +355,47 @@ describe("resolveMentions", () => {
   });
 });
 
+
+test("member mentions require an active roster row in this workspace and exact text counts", async () => {
+  await db.query("insert into users(id) values ('usr_active'),('usr_removed'),('usr_elsewhere')");
+  const other = await createWorkspace(db, dataDir, "Elsewhere");
+  await db.query("insert into workspace_members(workspace_id,user_id,role) values ($1,'usr_active','member'),($1,'usr_removed','member'),($2,'usr_elsewhere','member')", [ws, other.id]);
+  await db.query("update workspace_members set removed_at=now(),removed_by='usr_local' where user_id='usr_removed'");
+  const { postUserMessage } = await import("../src/messages.js");
+  for (const id of ["usr_removed", "usr_elsewhere", "usr_unknown"]) {
+    const before = await db.query("select id from messages where workspace_id=$1", [ws]);
+    const res = await app.request(`${HUB}/api/workspaces/${ws}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ content: "@Name", mentions: [{ type: "member", id, text: "@Name" }] }) });
+    expect(res.status).toBe(400);
+    expect(await res.text()).not.toContain(id);
+    expect(await db.query("select id from messages where workspace_id=$1", [ws])).toEqual(before);
+  }
+  const mention = { type: "member" as const, id: "usr_active", text: "@Name" };
+  await expect(postUserMessage(db, ws, "@Name", { authorUserId: "usr_local", mentions: [mention, mention] })).rejects.toMatchObject({ status: 400 });
+  const res = await app.request(`${HUB}/api/workspaces/${ws}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ content: "@Name", mentions: [mention] }) });
+  expect(res.status).toBe(200);
+  expect((await res.json() as any).message.meta.mentions).toEqual([mention]);
+});
+
+test("member mentions resolve against this workspace's roster only and never carry the member's messages", async () => {
+  await db.query("insert into users(id,display_name) values ('usr_active','张三'),('usr_removed','Gone'),('usr_elsewhere','Else')");
+  const other = await createWorkspace(db, dataDir, "Elsewhere");
+  await db.query("insert into workspace_members(workspace_id,user_id,role) values ($1,'usr_active','member'),($1,'usr_removed','member'),($2,'usr_elsewhere','member')", [ws, other.id]);
+  await db.query("update workspace_members set removed_at=now(),removed_by='usr_local' where user_id='usr_removed'");
+  // An older message by the mentioned member: D-2 A means none of it reaches the mention section.
+  await db.query("insert into messages(id,workspace_id,role,content,author_user_id) values ('m_marker',$1,'user','DISTINCT_MARKER_163','usr_active')", [ws]);
+  const resolved = await resolveMentions(db, dataDir, ws, [
+    { type: "member", id: "usr_active", text: "@张三" },
+    { type: "member", id: "usr_removed", text: "@Gone" },
+    { type: "member", id: "usr_elsewhere", text: "@Else" },
+  ]);
+  expect(resolved.members).toEqual([
+    { id: "usr_active", displayName: "张三", removed: false },
+    { id: "usr_removed", displayName: "Gone", removed: true },
+    { id: "usr_elsewhere", displayName: "Else", removed: true },
+  ]);
+  const section = mentionSection({ ...resolved, delivered: new Set() });
+  expect(section).toContain("## 成员 @张三（usr_active）");
+  expect(section).toContain("## 成员 @Gone：已移除的成员");
+  expect(section).not.toContain("DISTINCT_MARKER_163");
+  expect(section).not.toContain("usr_removed");
+});

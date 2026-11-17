@@ -133,7 +133,7 @@ const PatchPluginBody = z.object({
 
 class HttpError extends Error {
   constructor(
-    public status: 400 | 404 | 409,
+    public status: 400 | 403 | 404 | 409,
     message: string,
   ) {
     super(message);
@@ -357,7 +357,7 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.post("/workspaces", async (c) => {
     const { name } = await body(c, CreateWorkspaceBody);
-    const created = await createWorkspace(db, dataDir, name, deps.ownedHelpers);
+    const created = await createWorkspace(db, dataDir, name, deps.ownedHelpers, c.get("identity").userId);
     return c.json({ ...created, archived: created.archivedAt != null });
   });
 
@@ -493,7 +493,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     try {
       const created = await db.tx(async (t) => {
-        const posted = await postUserMessage(t, workspaceId, content, { quoteMessageId, attachmentIds, mentions, accountId, routing });
+        const posted = await postUserMessage(t, workspaceId, content, { authorUserId: c.get("identity").userId, quoteMessageId, attachmentIds, mentions, accountId, routing });
         const title = Array.from(content.split(/\r?\n/, 1)[0]!.trim()).slice(0, 80).join("") || "新追问";
         const thread = await ensureThread(t, posted.message.id, title, "user");
         return { ...posted, thread };
@@ -518,7 +518,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     const { content, quoteMessageId, attachmentIds, mentions, accountId, routing } = await body(c, PostMessageBody);
     if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     try {
-      const { message, task: created, replayed } = await postUserMessage(db, workspaceId, content, { quoteMessageId, threadId, attachmentIds, mentions, accountId, routing });
+      const { message, task: created, replayed } = await postUserMessage(db, workspaceId, content, { authorUserId: c.get("identity").userId, quoteMessageId, threadId, attachmentIds, mentions, accountId, routing });
       const task = toUiTask(created);
       if (!replayed) {
         events.emit(workspaceId, { type: "message.created", message });
@@ -573,7 +573,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     const id = c.req.param("id")!;
     const { content } = await body(c, EditMessageBody);
     try {
-      const { message, task: created } = await editUserMessage(db, id, c.req.param("messageId")!, content);
+      const { message, task: created } = await editUserMessage(db, id, c.req.param("messageId")!, content, c.get("identity").userId);
       const task = toUiTask(created);
       events.emit(id, { type: "message.updated", message });
       events.emit(id, { type: "task.updated", task });
@@ -597,7 +597,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     if ((await getWorkspace(db, id))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     let message, created, replayed;
     try {
-      ({ message, task: created, replayed } = await postUserMessage(db, id, content, { quoteMessageId, threadId, attachmentIds, mentions, accountId, routing }));
+      ({ message, task: created, replayed } = await postUserMessage(db, id, content, { authorUserId: c.get("identity").userId, quoteMessageId, threadId, attachmentIds, mentions, accountId, routing }));
     } catch (e) {
       if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
       throw e;

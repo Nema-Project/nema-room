@@ -231,7 +231,7 @@ test("bind, index, and one fetch tick follow origin/main without touching the wo
     });
     await finishTask(db, diagramTask, { ok: false, error: "not under test" });
 
-    await postUserMessage(db, workspace.id, "memo");
+    await postUserMessage(db, workspace.id, "memo", { authorUserId: "usr_local" });
     const task = await claimNextTask(db, "d1");
     expect(task?.runToken).toBeTruthy();
     const token = task!.runToken!;

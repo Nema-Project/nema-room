@@ -17,7 +17,7 @@ import { openPrivateFile, privateModeMatches, protectPrivatePath } from "@nema/c
 import { requireSystemGit } from "@nema/cli/systemGit";
 import { acquireInstance, discoverInstance, requestInstanceShutdown, type DiscoveredInstance, type InstanceLease } from "./instance.js";
 import { resolveHome } from "./paths.js";
-import { createGatewayCredential, createGatewayUiAuth, startGateway, type RunningGateway } from "./gateway.js";
+import { createGatewayCredential, createGatewayIdentity, startGateway, type RunningGateway } from "./gateway.js";
 import { SessionManager } from "./session.js";
 import { createAppReleaseService, readBuildIdentity, type AppReleaseService } from "./appRelease.js";
 import { createSettingsService, type SettingsOperations, type SettingsService } from "./settings.js";
@@ -535,7 +535,7 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
       daemonToken: token,
       port: 0,
       webOrigin: `http://127.0.0.1:${publicPort}`,
-      uiAuth: createGatewayUiAuth(gatewayCredential),
+      identity: createGatewayIdentity(gatewayCredential),
       ownedHelpers: helperScope,
       releaseVersion: assets.version,
       sharesEnabled: !sharingDisabled(),

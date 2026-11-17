@@ -6,6 +6,7 @@ import { createApp } from "../src/app.js";
 import type { Db } from "../src/db/db.js";
 import { EventBus } from "../src/events.js";
 import { postUserMessage } from "../src/messages.js";
+import { claimNextTask, finishTask } from "../src/tasks.js";
 import { createShare, listShares, resetShareRateForTests, resolveShare, revokeActiveShares, revokeShare, setShareNowForTests, shareTokenHash, takeShareSlot, toPublicEntry, toPublicSummary } from "../src/shares.js";
 import { createWorkspace, repoPath, updateWorkspace, type Workspace } from "../src/workspaces.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
@@ -157,7 +158,7 @@ describe("public knowledge projection", () => {
     expect(entry.sourceRefs).toEqual([{ sourceEntryId: "S-1", locator: "L1", quote: "quoted bit" }]);
     expect(entry.body).toBe("visible body");
     const json = JSON.stringify(entry);
-    for (const hidden of ["secret-chat-marker", "m-secret", "rev-secret", "messageId", "snapshotHash", "sourceMessages", "ingestedAt", "confirmedRevision"]) {
+    for (const hidden of ["secret-chat-marker", "m-secret", "rev-secret", "messageId", "snapshotHash", "sourceMessages", "ingestedAt", "confirmedRevision", "usr_"]) {
       expect(json).not.toContain(hidden);
     }
 
@@ -304,7 +305,7 @@ describe("public knowledge projection", () => {
 const HUB = "http://127.0.0.1:4400";
 const NOT_FOUND = { error: "not found" };
 
-function shareApp(db: Db, dataDir: string, extra: { sharesEnabled?: boolean; uiAuth?: boolean } = {}) {
+function shareApp(db: Db, dataDir: string, extra: { sharesEnabled?: boolean; identity?: boolean } = {}) {
   return createApp({
     db,
     dataDir,
@@ -312,11 +313,11 @@ function shareApp(db: Db, dataDir: string, extra: { sharesEnabled?: boolean; uiA
     daemonStatus: () => true,
     daemon: { call: () => Promise.reject(new Error("daemon offline")) },
     ...(extra.sharesEnabled === false ? { sharesEnabled: false } : {}),
-    ...(extra.uiAuth
+    ...(extra.identity
       ? {
-          uiAuth: async (c, next) => {
-            if (c.req.header("x-nema-gateway-credential") !== "fake-gateway") return c.json({ error: "Unauthorized" }, 401);
-            await next();
+          identity: async (c) => {
+            if (c.req.header("x-nema-gateway-credential") !== "fake-gateway") return null;
+            return { userId: "usr_local" };
           },
         }
       : {}),
@@ -327,7 +328,7 @@ describe("public share routes", () => {
   test("public share omits chat and private entry fields", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await shareableWorkspace(db, dataDir, "Alpha");
-    await postUserMessage(db, ws.id, "secret-chat-marker");
+    await postUserMessage(db, ws.id, "secret-chat-marker", { authorUserId: "usr_local" });
     const store = new KnowledgeStore(repoPath(dataDir, ws.id));
     const decision = await store.upsert(
       {
@@ -392,6 +393,31 @@ describe("public share routes", () => {
     expect(missingEntry.status).toBe(404);
     expect(await missingEntry.json()).toEqual(NOT_FOUND);
     expect(JSON.stringify(NOT_FOUND)).not.toContain("Alpha");
+  });
+
+  test("public share responses carry no user ids or display names (#163 D-9)", async () => {
+    const { db, dataDir } = await makeHubDeps();
+    const ws = await shareableWorkspace(db, dataDir, "Alpha");
+    await db.query("insert into users (id, display_name) values ('usr_marker', 'IdentityMarker')");
+    await db.query("insert into workspace_members (workspace_id, user_id, role, added_by) values ($1, 'usr_marker', 'member', 'usr_local')", [ws.id]);
+    await db.query("update users set display_name = 'LocalIdentityMarker' where id = 'usr_local'");
+    const first = await postUserMessage(db, ws.id, "from local", { authorUserId: "usr_local" });
+    await finishTask(db, (await claimNextTask(db, "d1"))!.id, { ok: true });
+    const second = await postUserMessage(db, ws.id, "from marker", { authorUserId: "usr_marker" });
+    const store = new KnowledgeStore(repoPath(dataDir, ws.id));
+    const decision = await store.upsert(
+      { kind: "decision", title: "Ship it", body: "visible body", reason: "record", sourceMessages: [first.message.id, second.message.id], quotes: [{ messageId: second.message.id, text: "from marker" }] },
+      { author: "user" },
+    );
+    const created = await createShare(db, ws.id, {});
+    const app = shareApp(db, dataDir);
+    for (const path of [`/share/${created.token}`, `/share/${created.token}/entries/${decision.entry.id}`]) {
+      const res = await app.request(`${HUB}${path}`);
+      expect(res.status).toBe(200);
+      const body = await res.text();
+      expect(body).not.toContain("usr_");
+      expect(body).not.toContain("IdentityMarker");
+    }
   });
 
   test("wrong host is forbidden even with a live token", async () => {
@@ -460,11 +486,11 @@ describe("public share routes", () => {
     expect((await app.request(`${HUB}/share/${"short"}`)).status).toBe(404);
   });
 
-  test("uiAuth does not cover share reads", async () => {
+  test("identity does not cover share reads", async () => {
     const { db, dataDir } = await makeHubDeps();
     const ws = await shareableWorkspace(db, dataDir, "Alpha");
     const created = await createShare(db, ws.id, {});
-    const app = shareApp(db, dataDir, { uiAuth: true });
+    const app = shareApp(db, dataDir, { identity: true });
     expect((await app.request(`${HUB}/share/${created.token}`)).status).toBe(200);
     expect((await app.request(`${HUB}/api/workspaces`)).status).toBe(401);
   });

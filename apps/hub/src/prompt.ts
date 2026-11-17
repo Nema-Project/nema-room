@@ -2,7 +2,7 @@ import { INACTIVE_STATUSES, DEFAULT_GRILL_SETTINGS, type AttachmentView, type En
 import type { GrillState } from "./plugins.js";
 import type { Message } from "./messages.js";
 import type { TaskChange } from "./tasks.js";
-import { mentionSection, type ResolvedMentions } from "./mentions.js";
+import { PROMPT_UNRECORDED_AUTHOR, mentionSection, promptUserName, type ResolvedMentions } from "./mentions.js";
 import type { Workspace } from "./workspaces.js";
 
 const LANG_NAME = { ja: "日本語", en: "English", zh: "中文" } as const;
@@ -147,6 +147,11 @@ export function buildPrompt(input: {
   deliveredAttachmentIds?: readonly string[];
   /** What this message mentions with `@`, already read: entries, their files and topics (spec §3). */
   mentions?: ResolvedMentions;
+  /**
+   * The workspace roster's names (removed members included). Recent user messages name their author only when
+   * `multiMember` (two or more active members); otherwise that section is byte-identical to before (#163 D-9).
+   */
+  authors?: { names: ReadonlyMap<string, string | null>; multiMember: boolean };
 }): string {
   const { workspace, userMessage, entries, lastAskedQuestion } = input;
   const grill: GrillState = input.grill ?? { enabled: true, ...DEFAULT_GRILL_SETTINGS };
@@ -236,7 +241,13 @@ export function buildPrompt(input: {
     );
   }
   const displayedRecent = conversation ? recent.filter((m) => m.id !== conversation.anchor.id) : recent;
-  parts.push("# 最近消息\n" + (displayedRecent.length ? displayedRecent.map((m) => `[${m.id}] ${m.role}: ${m.content}${files(m)}`).join("\n") : "（无）"));
+  const authors = input.authors?.multiMember ? input.authors.names : null;
+  const speaker = (m: Message): string => {
+    if (!authors || m.role !== "user") return m.role;
+    const id = m.authorUserId;
+    return `user(${id === null ? PROMPT_UNRECORDED_AUTHOR : promptUserName(id, authors.get(id) ?? null)})`;
+  };
+  parts.push("# 最近消息\n" + (displayedRecent.length ? displayedRecent.map((m) => `[${m.id}] ${speaker(m)}: ${m.content}${files(m)}`).join("\n") : "（无）"));
   if (input.priorChanges?.length) {
     const lines = input.priorChanges.map((c) => `${c.op} ${c.entryId} | ${c.kind} | ${c.title}`);
     parts.push(

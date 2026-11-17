@@ -9,7 +9,7 @@ const ws = (l: Workspace["knowledgeLanguage"]): Workspace => ({
   id: "ws_1", name: "项目甲", confidential: true, knowledgeLanguage: l, createdAt: "2026-01-01T00:00:00.000Z", archivedAt: null,
 });
 const msg = (i: number, role: Message["role"] = "user"): Message => ({
-  id: `m_${i}`, workspaceId: "ws_1", role, content: `content-${i}`, meta: null, taskId: null, createdAt: "2026-01-01T00:00:00.000Z", editedAt: null, threadId: null, seq: i, attachments: [],
+  id: `m_${i}`, workspaceId: "ws_1", authorUserId: null, role, content: `content-${i}`, meta: null, taskId: null, createdAt: "2026-01-01T00:00:00.000Z", editedAt: null, threadId: null, seq: i, attachments: [],
 });
 const entries = [
   { id: "R-1", kind: "requirement", status: "active", title: "流式输出", related: [] },
@@ -527,5 +527,52 @@ describe("tagIndex UTF-8 budgets", () => {
     const prompt = buildPrompt({ workspace: ws("follow"), userMessage: msg(999), recentMessages: [], entries: rows, lastAskedQuestion: null });
     expect(prompt).toContain("部分条目的 tags 未列出，用 list_entries 或 read_entry 查看");
     expect(prompt).toContain("# 现有条目索引\n# 现有 tags");
+  });
+});
+
+describe("identity in the prompt (#163)", () => {
+  const authored = (i: number, authorUserId: string | null, role: Message["role"] = "user"): Message => ({ ...msg(i, role), authorUserId });
+  const recent = [authored(1, null), authored(2, "usr_local"), authored(3, null, "agent"), authored(4, null, "report"), authored(5, "usr_zhang"), authored(6, null, "system")];
+  const names = new Map<string, string | null>([["usr_local", null], ["usr_zhang", "张三"], ["usr_gone", "Gone"]]);
+  const quotedMessage = authored(7, "usr_zhang");
+  const mentions = {
+    entries: [], attachments: [],
+    threads: [{ id: "m_t", title: "话题", anchor: { role: "user", content: "anchor" } }],
+  };
+  const build = (authors?: { names: Map<string, string | null>; multiMember: boolean }) =>
+    buildPrompt({ workspace: ws("follow"), userMessage: msg(999), recentMessages: recent, entries, lastAskedQuestion: null, quotedMessage, mentions, ...(authors ? { authors } : {}) });
+
+  test("a single-member workspace is byte-identical to a prompt built without identity", () => {
+    const before = build();
+    expect(build({ names, multiMember: false })).toBe(before);
+    expect(before).toContain("# 最近消息\n[m_1] user: content-1\n[m_2] user: content-2\n[m_3] agent: content-3\n[m_4] report: content-4\n[m_5] user: content-5\n[m_6] system: content-6");
+    // With nothing in recent messages, the pre-tags fixture still holds when the single-member roster is passed.
+    expect(buildPrompt({ workspace: ws("follow"), userMessage: msg(999), recentMessages: [], entries, lastAskedQuestion: null, authors: { names, multiMember: false } }))
+      .toBe(readFileSync(new URL("./fixtures/untagged-prompt.txt", import.meta.url), "utf8"));
+  });
+
+  test("two or more members name the author of recent user messages only", () => {
+    const p = build({ names, multiMember: true });
+    expect(p).toContain([
+      "[m_1] user(未记录作者): content-1",
+      "[m_2] user(我): content-2",
+      "[m_3] agent: content-3",
+      "[m_4] report: content-4",
+      "[m_5] user(张三): content-5",
+      "[m_6] system: content-6",
+    ].join("\n"));
+    // The quote and thread anchor lines are outside D-9's scope and stay as they were.
+    expect(p).toContain("# 本次消息引用的消息\n[m_7] user: content-7");
+    expect(p).toContain("[m_t] user: anchor");
+  });
+
+  test("a mentioned member is a pointer with no utterances; a removed member gets one line", () => {
+    const p = buildPrompt({
+      workspace: ws("follow"), userMessage: { ...msg(999), content: "按 @张三 的说法 @Gone" }, recentMessages: [], entries, lastAskedQuestion: null,
+      mentions: { entries: [], attachments: [], threads: [], members: [{ id: "usr_zhang", displayName: "张三", removed: false }, { id: "usr_gone", displayName: "Gone", removed: true }] },
+    });
+    expect(p).toContain("## 成员 @张三（usr_zhang）\n这是用户点名的项目成员。提及不是此人的发言，也不代表此人同意；需要此人的原话时，请用户引用具体消息。");
+    expect(p).toContain("## 成员 @Gone：已移除的成员");
+    expect(p).not.toContain("usr_gone");
   });
 });

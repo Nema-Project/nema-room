@@ -110,7 +110,11 @@ async function loadDatabase(dbDir: string, snapshot: Snapshot): Promise<void> {
       if (!found) throw new Error(`Snapshot column is not in the current schema: ${table}.${column}`);
       return found;
     };
+    const seeded: Record<string, number> = {};
     await db.tx(async (tx) => {
+      // The staging database is freshly migrated, so the identity migration already seeded `usr_local`. Nothing
+      // references it yet; drop it so a snapshot's own `usr_local` row loads without a key conflict (#163).
+      await tx.query("delete from users where id = 'usr_local'");
       for (const table of TABLE_ORDER) {
         const tableRows = snapshot.tableData[table]!;
         // Thread messages reference their main-chat anchor in messages.thread_id.
@@ -147,6 +151,22 @@ async function loadDatabase(dbDir: string, snapshot: Snapshot): Promise<void> {
           await tx.query(`insert into "${table}" (${names.map((n) => `"${n}"`).join(", ")}) values (${placeholders.join(", ")})`, values);
         }
       }
+      // The migration's idempotent seed, again, for snapshots taken before identity existed: the local user and
+      // an owner row plus a seed audit event for every workspace that has no members. Authors stay null (D-4).
+      seeded.users = (await tx.query("insert into users (id) values ('usr_local') on conflict do nothing returning id")).length;
+      const owners = await tx.query<{ workspace_id: string }>(
+        `insert into workspace_members (workspace_id, user_id, role)
+           select w.id, 'usr_local', 'owner' from workspaces w
+           where not exists (select 1 from workspace_members m where m.workspace_id = w.id)
+         on conflict do nothing returning workspace_id`,
+      );
+      seeded.workspace_members = owners.length;
+      seeded.member_events = (await tx.query(
+        `insert into member_events (id, workspace_id, user_id, kind, actor_user_id)
+           select 'mev_seed_' || id, id, 'usr_local', 'added', null from workspaces where id = any($1::text[])
+         on conflict do nothing returning id`,
+        [owners.map((o) => o.workspace_id)],
+      )).length;
       const serials = await tx.query<{ table_name: string; column_name: string }>(
         `select c.table_name, c.column_name from information_schema.columns c
            where c.table_schema = 'public' and pg_get_serial_sequence('"' || c.table_name || '"', c.column_name) is not null`,
@@ -159,7 +179,8 @@ async function loadDatabase(dbDir: string, snapshot: Snapshot): Promise<void> {
     });
     for (const table of TABLE_ORDER) {
       const [count] = await db.query<{ n: string }>(`select count(*)::text as n from "${table}"`);
-      if (Number(count?.n) !== snapshot.tableData[table]!.length) throw new Error(`Imported row count differs from the snapshot: ${table}`);
+      // Identity tables hold the snapshot's rows plus exactly what the re-seed added; every other table is exact.
+      if (Number(count?.n) !== snapshot.tableData[table]!.length + (seeded[table] ?? 0)) throw new Error(`Imported row count differs from the snapshot: ${table}`);
     }
   } finally {
     await db.close();

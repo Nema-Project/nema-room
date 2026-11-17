@@ -166,3 +166,11 @@ describe("keepMentionsFor", () => {
     expect(keepMentionsFor("`附件：截图 1.png` 和 [D-1]", [d, a])).toEqual([d, a]);
   });
 });
+
+test("member mentions are id pointers with caller-supplied localized labels", () => {
+  const member = { type: "member" as const, id: "usr_local", text: "@Me" };
+  expect(MessageMention.safeParse(member).success).toBe(true);
+  expect(mentionText(member, { memberName: "Me" })).toBe("@Me");
+  for (const id of ["usr_", "user_x", `usr_${"x".repeat(33)}`]) expect(MessageMention.safeParse({ ...member, id }).success).toBe(false);
+  for (const type of ["unknown", "file", "tag"]) expect(MessageMention.safeParse({ ...member, type }).success).toBe(false);
+});

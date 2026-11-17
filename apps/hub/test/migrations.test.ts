@@ -161,3 +161,39 @@ test("021 tags migration upgrades old rows with nulls and can be applied twice",
     expect(await db.query("select tags,tags_indexed_at from entry_index")).toEqual([{ tags: null, tags_indexed_at: null }]);
   } finally { await client.close(); }
 });
+
+test("022 identity upgrades without guessing historical authors and seeds idempotently", async () => {
+  const earlier = await scratch("nema-before-identity-");
+  for (const name of (await readdir(MIGRATIONS)).filter(n => n.endsWith(".sql") && n < "022").sort()) {
+    await copyFile(path.join(MIGRATIONS, name), path.join(earlier, name));
+  }
+  const client = new PGlite();
+  const db = wrap(client);
+  try {
+    await migrate(db, earlier);
+    await db.query("insert into workspaces(id,name) values ('ws_a','A'),('ws_b','B')");
+    await db.query("insert into messages(id,workspace_id,role,content) values ('m1','ws_a','user','old'),('m2','ws_b','agent','old'),('m3','ws_b','report','old')");
+    await migrate(db);
+    expect(await db.query("select id,display_name from users")).toEqual([{ id: "usr_local", display_name: null }]);
+    expect(await db.query("select workspace_id,user_id,role from workspace_members order by workspace_id")).toEqual([
+      { workspace_id: "ws_a", user_id: "usr_local", role: "owner" }, { workspace_id: "ws_b", user_id: "usr_local", role: "owner" },
+    ]);
+    expect(await db.query("select id,kind,actor_user_id from member_events order by id")).toEqual([
+      { id: "mev_seed_ws_a", kind: "added", actor_user_id: null }, { id: "mev_seed_ws_b", kind: "added", actor_user_id: null },
+    ]);
+    expect(await db.query("select author_user_id from messages")).toEqual(Array(3).fill({ author_user_id: null }));
+    const { readFile } = await import("node:fs/promises");
+    const sql = await readFile(path.join(MIGRATIONS, "022_identity.sql"), "utf8");
+    await db.query(sql.slice(sql.indexOf("insert into users")));
+    await migrate(db);
+    expect(await db.query("select count(*)::int as n from member_events")).toEqual([{ n: 2 }]);
+    expect(await db.query("select count(*)::int as n from workspace_members")).toEqual([{ n: 2 }]);
+    for (const role of ["agent", "system", "report"]) {
+      await expect(db.query("insert into messages(id,workspace_id,role,content,author_user_id) values ($1,'ws_a',$2,'bad','usr_local')", [`bad_${role}`, role])).rejects.toThrow("messages_author_role_check");
+    }
+    for (const name of ["", "x".repeat(65)]) {
+      await expect(db.query("insert into users(id,display_name) values ('usr_bad',$1)", [name])).rejects.toThrow();
+    }
+    await expect(db.query("insert into users(id) values ('bob')")).rejects.toThrow();
+  } finally { await client.close(); }
+});

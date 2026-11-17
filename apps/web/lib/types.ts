@@ -29,6 +29,8 @@ export type Message = {
   id: string;
   workspaceId: string;
   role: "user" | "agent" | "system" | "report";
+  /** Who wrote a user message (#163). Null for older messages and every non-user role; absent from older hubs. */
+  authorUserId?: string | null;
   content: string;
   /** User messages may carry UserMessageMeta; agent messages carry AgentMessageMeta; report messages carry ReportMessageMeta. */
   meta: AgentMessageMeta | ReportMessageMeta | UserMessageMeta | null;

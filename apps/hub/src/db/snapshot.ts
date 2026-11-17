@@ -20,12 +20,16 @@ export type KnowledgeManifestEntry = {
   head: string;
 };
 
+// Key order is insert order on import: users before anything that references them (members, events, message authors).
 export const TABLE_COLUMNS = {
+  users: ["id", "display_name", "created_at"],
   workspaces: ["id", "name", "confidential", "knowledge_language", "created_at", "archived_at"],
+  workspace_members: ["workspace_id", "user_id", "role", "added_at", "added_by", "removed_at", "removed_by"],
+  member_events: ["id", "workspace_id", "user_id", "kind", "actor_user_id", "detail", "created_at"],
   evidence_events: ["id", "workspace_id", "kind", "entry_id", "target_basis", "revision", "content_hash", "refs_hash", "snapshot_hash", "payload_hash", "actor", "created_at", "consumed_commit", "consumed_at", "consumable"],
   source_import_receipts: ["workspace_id", "provider", "resource_id", "revision_key", "content_hash", "entry_id", "phase", "knowledge_commit", "created_at"],
   source_freshness: ["workspace_id", "entry_id", "freshness", "checked_revision", "reason", "checked_at"],
-  messages: ["id", "workspace_id", "role", "content", "meta", "task_id", "created_at", "seq", "edited_at", "thread_id"],
+  messages: ["id", "workspace_id", "role", "content", "meta", "task_id", "created_at", "seq", "edited_at", "thread_id", "author_user_id"],
   threads: ["id", "workspace_id", "title", "opened_by", "last_read_seq", "created_at"],
   question_threads: ["workspace_id", "question_id", "thread_id"],
   tasks: ["id", "workspace_id", "message_id", "status", "run_token", "daemon_id", "error", "created_at", "started_at", "finished_at", "seq", "interruptions", "kind"],
@@ -42,7 +46,10 @@ export const TABLE_COLUMNS = {
 } as const;
 
 /** Snapshots taken before this table existed still import. */
-const OPTIONAL_TABLES = new Set<keyof typeof TABLE_COLUMNS>(["message_versions", "threads", "question_threads", "evidence_events", "source_import_receipts", "source_freshness", "message_attachments"]);
+const OPTIONAL_TABLES = new Set<keyof typeof TABLE_COLUMNS>(["message_versions", "threads", "question_threads", "evidence_events", "source_import_receipts", "source_freshness", "message_attachments", "users", "workspace_members", "member_events"]);
+/** Tables the import re-seeds after loading rows (#163): their counts may exceed the snapshot's. */
+export const IDENTITY_TABLES = ["users", "workspace_members", "member_events"] as const;
+const userIdPattern = /^usr_[A-Za-z0-9_-]{1,32}$/;
 
 /** Same rules as AttachmentRefSchema and the message_attachments check constraints. */
 const ATTACHMENT_KINDS: Record<string, { mimes: readonly string[]; maxBytes: number }> = {
@@ -129,6 +136,34 @@ export function validateSnapshot(value: unknown): Snapshot {
     if (typeof row.id !== "string" || messageIds.has(row.id) || typeof row.content !== "string" || !["user", "agent", "system", "report"].includes(String(row.role))) throw new Error("Invalid message row");
     messageIds.add(row.id);
     if (row.workspace_id !== null && row.workspace_id !== undefined) requireWorkspace(row);
+  }
+  // Identity (#163): same rules as the 022 check constraints and foreign keys.
+  const userIds = new Set<string>();
+  for (const row of tableData.users!) {
+    if (typeof row.id !== "string" || !userIdPattern.test(row.id) || userIds.has(row.id)) throw new Error("Invalid or duplicate user id");
+    if (row.display_name != null && (typeof row.display_name !== "string" || Array.from(row.display_name).length < 1 || Array.from(row.display_name).length > 64)) throw new Error("Invalid user display name");
+    userIds.add(row.id);
+  }
+  const optionalUser = (value: unknown) => value == null || (typeof value === "string" && userIds.has(value));
+  const memberKeys = new Set<string>();
+  for (const row of tableData.workspace_members!) {
+    requireWorkspace(row);
+    const key = `${String(row.workspace_id)}\0${String(row.user_id)}`;
+    if (typeof row.user_id !== "string" || !userIds.has(row.user_id) || !optionalUser(row.added_by) || !optionalUser(row.removed_by)) throw new Error("Snapshot contains a missing user reference (workspace_members)");
+    if (!["owner", "member"].includes(String(row.role)) || (row.removed_at == null) !== (row.removed_by == null) || memberKeys.has(key)) throw new Error("Invalid workspace member row");
+    memberKeys.add(key);
+  }
+  const memberEventIds = new Set<string>();
+  for (const row of tableData.member_events!) {
+    if (row.workspace_id != null) requireWorkspace(row);
+    if (typeof row.user_id !== "string" || !userIds.has(row.user_id) || !optionalUser(row.actor_user_id)) throw new Error("Snapshot contains a missing user reference (member_events)");
+    if (typeof row.id !== "string" || !row.id || memberEventIds.has(row.id) || !["added", "removed", "role_changed", "renamed"].includes(String(row.kind))) throw new Error("Invalid member event row");
+    memberEventIds.add(row.id);
+  }
+  for (const row of tableData.messages!) {
+    if (row.author_user_id == null) continue;
+    if (row.role !== "user") throw new Error("Only user messages can have an author");
+    if (typeof row.author_user_id !== "string" || !userIds.has(row.author_user_id)) throw new Error("Snapshot contains a missing user reference (messages)");
   }
   const messagesById = new Map(tableData.messages!.map((row) => [String(row.id), row]));
   for (const row of tableData.messages!) {
