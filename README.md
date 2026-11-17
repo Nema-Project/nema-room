@@ -88,6 +88,8 @@ node scripts/setup.mjs --lang en
 
 The wizard checks dependencies, builds from source, starts the services, and guides model setup. It preserves an existing `.env`. Keep the host daemon running, then open [localhost:3000](http://localhost:3000). Read-only check: `node scripts/setup.mjs --lang en --check`.
 
+On a host whose only egress is a proxy, `nema config set proxyEnv forward` lets Claude Code tasks use the daemon's proxy environment to reach the API. Forwarding is off by default; see [proxy configuration and rollback](docs/guide.en.md#models).
+
 **Without cloning.** Each release from `v0.1.6` attaches a `docker-compose.yml` whose hub and web images are pinned to that release. Releases produced by the multi-architecture workflow support `linux/amd64` and `linux/arm64`; Docker selects the host architecture automatically. Older release tags are unchanged and may lack arm64. Install the host daemon at the same version with `npm i -g @nema-project/nema@<version>`: hub, web, and daemon must match, and nothing upgrades on its own. The step-by-step script, upgrades, and ports are in the [installation guide](docs/guide.en.md#source-installation) and [Web / Compose requirements](docs/guide.en.md#requirements).
 
 ## From discussion to delivery

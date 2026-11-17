@@ -1,12 +1,13 @@
-import { configErrorMessage, loadConfig, saveConfig, type NemaConfig } from "./config.js";
+import { configErrorMessage, loadConfig, proxyEnvMode, saveConfig, type NemaConfig } from "./config.js";
 import type { Out } from "./direct/authCommands.js";
 
 // `nema config get|set` over ~/.nema/config.json. Only these keys exist; values are validated before anything is written.
 
-export const CONFIG_KEYS = ["adapter", "model", "reasoningEffort", "authMode", "byokBaseUrl"] as const;
+export const CONFIG_KEYS = ["adapter", "model", "reasoningEffort", "authMode", "byokBaseUrl", "proxyEnv"] as const;
 type ConfigKey = (typeof CONFIG_KEYS)[number];
 
 const ENUMS: Partial<Record<ConfigKey, readonly string[]>> = {
+  proxyEnv: ["off", "forward"],
   adapter: ["codex-direct", "claude-code"],
   reasoningEffort: ["low", "medium", "high"],
   authMode: ["siwc", "compat", "byok"],
@@ -29,10 +30,10 @@ export function configGet(o: { nemaHome: string; out: Out; key?: string }): numb
     return 1;
   }
   if (o.key !== undefined) {
-    o.out.log(String(config[o.key as ConfigKey] ?? ""));
+    o.out.log(String(o.key === "proxyEnv" ? proxyEnvMode(config) : config[o.key as ConfigKey] ?? ""));
     return 0;
   }
-  for (const k of CONFIG_KEYS) o.out.log(`${k}=${config[k] ?? ""}`);
+  for (const k of CONFIG_KEYS) o.out.log(`${k}=${k === "proxyEnv" ? proxyEnvMode(config) : config[k] ?? ""}`);
   return 0;
 }
 
@@ -61,7 +62,7 @@ export function configSet(o: { nemaHome: string; out: Out; key: string; value: s
     return 1;
   }
   try {
-    saveConfig(o.nemaHome, { [o.key]: o.value } as Partial<NemaConfig>);
+    saveConfig(o.nemaHome, { [o.key]: o.key === "proxyEnv" && o.value === "off" ? undefined : o.value } as Partial<NemaConfig>);
   } catch (e) {
     o.out.error(`无法保存配置：${msg(e)}`);
     return 1;

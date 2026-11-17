@@ -1,9 +1,9 @@
 import { expectPrivate } from "./nativePermissions.js";
-import { closeSync, mkdtempSync, rmSync, statSync, writeFileSync, readdirSync } from "node:fs";
+import { closeSync, mkdtempSync, rmSync, statSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { DEFAULT_BYOK_BASE_URL, DEFAULT_CONFIG, loadConfig, saveConfig } from "../src/config.js";
+import { DEFAULT_BYOK_BASE_URL, DEFAULT_CONFIG, configErrorMessage, proxyEnvMode, loadConfig, saveConfig } from "../src/config.js";
 import { openPrivateFile } from "../src/secrets/permissions.js";
 
 let home: string;
@@ -75,4 +75,29 @@ test("saveConfig rejects unknown keys and invalid values", () => {
 test("loadConfig rejects a corrupt file instead of silently defaulting", () => {
   writeFileSync(join(home, "config.json"), "{not json");
   expect(() => loadConfig(home)).toThrow();
+});
+
+test.each([undefined, "off", "forward"] as const)("proxyEnv accepts %j on load and save", (proxyEnv) => {
+  writeFileSync(join(home, "config.json"), JSON.stringify({ proxyEnv }));
+  expect(loadConfig(home).proxyEnv).toBe(proxyEnv);
+  expect(proxyEnvMode(loadConfig(home))).toBe(proxyEnv ?? "off");
+  expect(saveConfig(home, { proxyEnv }).proxyEnv).toBe(proxyEnv);
+});
+
+test.each(["on", "", true])("proxyEnv rejects %j on load and save with a field diagnostic", (proxyEnv) => {
+  const check = (fn: () => unknown) => {
+    let error: unknown;
+    try { fn(); } catch (e) { error = e; }
+    expect(error).toBeDefined();
+    expect(configErrorMessage(error)).toContain("proxyEnv：");
+  };
+  check(() => saveConfig(home, { proxyEnv } as never));
+  writeFileSync(join(home, "config.json"), JSON.stringify({ proxyEnv }));
+  check(() => loadConfig(home));
+});
+
+test("clearing proxyEnv removes the stored key for rollback", () => {
+  saveConfig(home, { proxyEnv: "forward" });
+  saveConfig(home, { proxyEnv: undefined });
+  expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8"))).not.toHaveProperty("proxyEnv");
 });

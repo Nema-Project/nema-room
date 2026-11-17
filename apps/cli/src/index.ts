@@ -150,14 +150,14 @@ const config = program.command("config").description("Show or change Nema's loca
 
 config
   .command("get [key]")
-  .description("Print one setting, or all of them (adapter, model, reasoningEffort, authMode)")
+  .description("Print one setting, or all of them (adapter, model, reasoningEffort, authMode, byokBaseUrl, proxyEnv (off|forward))")
   .action((key: string | undefined) => {
     process.exitCode = configGet({ nemaHome: nemaHomeDir(), out: consoleOut, key });
   });
 
 config
   .command("set <key> <value>")
-  .description("Set adapter (codex-direct | claude-code), model, reasoningEffort (low|medium|high), authMode (siwc|compat|byok) or byokBaseUrl")
+  .description("Set adapter (codex-direct | claude-code), model, reasoningEffort (low|medium|high), authMode (siwc|compat|byok), byokBaseUrl or proxyEnv (off|forward)")
   .action((key: string, value: string) => {
     process.exitCode = configSet({ nemaHome: nemaHomeDir(), out: consoleOut, key, value });
   });

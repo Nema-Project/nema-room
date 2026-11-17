@@ -33,11 +33,14 @@ const ConfigSchema = z
     model: z.string().min(1).optional(),
     reasoningEffort: z.enum(["low", "medium", "high"]),
     authMode: z.enum(["siwc", "compat", "byok"]),
+    proxyEnv: z.enum(["off", "forward"]).optional(),
     byokBaseUrl: z.string().transform(normalizeByokBaseUrl).optional(),
   })
   .strict();
 
 export type NemaConfig = z.infer<typeof ConfigSchema>;
+export type ProxyEnvMode = "off" | "forward";
+export const proxyEnvMode = (c: Pick<NemaConfig, "proxyEnv">): ProxyEnvMode => c.proxyEnv ?? "off";
 
 /** The one default config: used by loadConfig and by the Runner when no config getter is given. */
 export const DEFAULT_CONFIG: Readonly<NemaConfig> = Object.freeze({ adapter: "codex-direct", reasoningEffort: "medium", authMode: "siwc" });

@@ -15,8 +15,12 @@ export type ClaudeLine =
   | { kind: "tools"; names: string[]; uses: ToolUse[] }
   | { kind: "results"; results: ToolResult[] }
   | { kind: "result"; text: string }
-  | { kind: "failure" }
+  | { kind: "failure"; text: string | null }
   | { kind: "ignore" };
+
+export function isApiConnectionFailure(text: string | null): boolean {
+  return text !== null && /Unable to connect to API|Connection error|\b(ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPROTO|ENOTFOUND|EAI_AGAIN)\b/i.test(text);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -101,7 +105,7 @@ export function parseClaudeLine(line: string): ClaudeLine {
   if (value.type === "result") {
     const subtype = value.subtype;
     if (value.is_error === true || (typeof subtype === "string" && subtype.startsWith("error_"))) {
-      return { kind: "failure" };
+      return { kind: "failure", text: typeof value.result === "string" ? value.result : null };
     }
     if (typeof value.result === "string") return { kind: "result", text: value.result };
   }

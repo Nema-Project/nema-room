@@ -110,3 +110,30 @@ test("a corrupt config.json gives a Chinese message for config set and auth logi
   expect(await authLogin({ nemaHome: home, out: o2.out })).toBe(1);
   expect(o2.errors.join("\n")).toMatch(/^配置文件 ~\/\.nema\/config\.json 无法读取：/);
 });
+
+test("config proxyEnv forward persists and off removes the key", () => {
+  const o = out();
+  expect(configSet({ nemaHome: home, out: o.out, key: "proxyEnv", value: "forward" })).toBe(0);
+  expect(loadConfig(home).proxyEnv).toBe("forward");
+  expect(configSet({ nemaHome: home, out: o.out, key: "proxyEnv", value: "off" })).toBe(0);
+  expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8"))).not.toHaveProperty("proxyEnv");
+  expect(o.lines).toContain("已设置 proxyEnv=off");
+});
+
+test("config proxyEnv refuses invalid values without writing", () => {
+  saveConfig(home, { model: "keep" });
+  const before = readFileSync(join(home, "config.json"), "utf8");
+  const o = out();
+  expect(configSet({ nemaHome: home, out: o.out, key: "proxyEnv", value: "on" })).toBe(1);
+  expect(o.errors).toEqual(['proxyEnv 的值必须是 off | forward（收到 "on"）']);
+  expect(readFileSync(join(home, "config.json"), "utf8")).toBe(before);
+});
+
+test("config get proxyEnv defaults to effective off, including the full list", () => {
+  const o = out();
+  expect(configGet({ nemaHome: home, out: o.out, key: "proxyEnv" })).toBe(0);
+  expect(o.lines).toEqual(["off"]);
+  const all = out();
+  expect(configGet({ nemaHome: home, out: all.out })).toBe(0);
+  expect(all.lines).toContain("proxyEnv=off");
+});

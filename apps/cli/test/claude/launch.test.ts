@@ -2,7 +2,7 @@ import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { CLAUDE_ROOM_TOOLS, prepareClaudeLaunch, withSkillArgs } from "../../src/claude/launch.js";
+import { CLAUDE_PROXY_ENV_KEYS, CLAUDE_ROOM_TOOLS, prepareClaudeLaunch, withSkillArgs } from "../../src/claude/launch.js";
 import { ROOM_TOOLS } from "../../src/direct/tools.js";
 
 let root: string;
@@ -176,4 +176,49 @@ describe("Claude Code launch", () => {
       expect(readFileSync(sentinel, "utf8")).toBe("keep");
     }
   });
+});
+
+const proxyNames = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"];
+const proxyParent = () => ({
+  ...options().parentEnv,
+  ...Object.fromEntries(proxyNames.map((key) => [key, "value-" + key])),
+  SSL_CERT_FILE: "ca", NODE_EXTRA_CA_CERTS: "ca", FOO: "decoy", HTTP_PROXY_EXTRA: "decoy",
+  HOME: "wrong-home", CLAUDE_CONFIG_DIR: "wrong-config", CLAUDE_CODE_OAUTH_TOKEN: "wrong-token",
+});
+
+test("forward copies exactly the eight proxy names while preserving fixed launch values", () => {
+  expect([...CLAUDE_PROXY_ENV_KEYS]).toEqual(proxyNames);
+  const launch = prepareClaudeLaunch({ ...options(), parentEnv: proxyParent(), proxyEnv: "forward" });
+  for (const key of proxyNames) expect(launch.env[key]).toBe("value-" + key);
+  for (const key of ["SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "FOO", "HTTP_PROXY_EXTRA"]) expect(launch.env).not.toHaveProperty(key);
+  expect(launch.env.HOME).toBe(join(launch.runDir, "claude-config"));
+  expect(launch.env.CLAUDE_CONFIG_DIR).toBe(launch.env.HOME);
+  expect(launch.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("claude-token");
+  expect(launch.proxyEnv).toBe("forward");
+});
+
+test("off and omitted proxyEnv produce identical scrubbed environments", () => {
+  const o = { ...options(), parentEnv: proxyParent() };
+  const off = prepareClaudeLaunch({ ...o, proxyEnv: "off" });
+  const omitted = prepareClaudeLaunch(o);
+  for (const key of proxyNames) expect(off.env).not.toHaveProperty(key);
+  expect(omitted.env).toEqual(off.env);
+  expect(off.proxyEnv).toBe("off");
+  expect(omitted.proxyEnv).toBe("off");
+});
+
+test("forward adds only proxy names defined in the parent", () => {
+  const launch = prepareClaudeLaunch({ ...options(), parentEnv: { https_proxy: "only", HTTP_PROXY: undefined }, proxyEnv: "forward" });
+  expect(proxyNames.filter((key) => launch.env[key] !== undefined)).toEqual(["https_proxy"]);
+  expect(launch.env.https_proxy).toBe("only");
+});
+
+test.runIf(process.platform === "win32")("forward preserves mixed-case Windows proxy names", () => {
+  const launch = prepareClaudeLaunch({ ...options(), parentEnv: { Http_Proxy: "mixed" }, proxyEnv: "forward" });
+  expect(launch.env.Http_Proxy).toBe("mixed");
+});
+
+test.runIf(process.platform !== "win32")("forward matches proxy names exactly on POSIX", () => {
+  const launch = prepareClaudeLaunch({ ...options(), parentEnv: { Http_Proxy: "mixed" }, proxyEnv: "forward" });
+  expect(launch.env).not.toHaveProperty("Http_Proxy");
 });

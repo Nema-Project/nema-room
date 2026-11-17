@@ -221,6 +221,18 @@ claude setup-token
 node apps/cli/dist/index.js auth claude
 ```
 
+プロキシ経由でしか外部に接続できないホストでは、Claude Code タスクへの転送を明示的に有効にできます。
+
+```bash
+nema config set proxyEnv forward
+# 転送を無効化（ダウングレード前にも実行して設定キーを削除）：
+nema config set proxyEnv off
+```
+
+標準は `off` です。`forward` は daemon 自身の環境から `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY`、`http_proxy`、`https_proxy`、`all_proxy`、`no_proxy` だけを次のタスクにコピーします。daemon の再起動は不要です。POSIX では名前を完全一致で、Windows では大文字小文字を区別せず照合し、元の表記を保ちます。設定にはモードだけを保存し、プロキシ URL は保存しません。代替手段として `config.json` の `proxyEnv` を `"forward"` または `"off"` に手動編集できます。キーがない場合も `off` です。
+
+プロキシ URL に認証情報が含まれる場合、有効化すると Claude 子プロセスとその配下のプロセスが読み取れます。プロキシは通信のメタデータを、TLS 検査を行う場合は内容も観測できます。子プロセスのツール制限は OS のサンドボックスではありません。`SSL_CERT_FILE`、`NODE_EXTRA_CA_CERTS` などの CA 変数は転送しません。独自 CA の信頼設定は別途行ってください。このフィールドを知らない版に戻す前に `nema config set proxyEnv off` を実行するかキーを手動削除してください。旧版の厳密なスキーマは明示的な `"off"` も拒否します。デスクトップ設定にはこの項目がなく、デスクトップランタイムは別のデータディレクトリを使うため、このコマンドでは設定できません。
+
 認証や呼び出しに失敗しても、別の実行方式に自動で切り替えません。`config get` と `auth status` で設定と認証状態を確認できます。トークンは表示しません。
 
 <a id="accounts"></a>

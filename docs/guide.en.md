@@ -221,6 +221,18 @@ claude setup-token
 node apps/cli/dist/index.js auth claude
 ```
 
+On a host whose only egress is a proxy, opt in for Claude Code tasks:
+
+```bash
+nema config set proxyEnv forward
+# Disable forwarding (also remove the config key before downgrading):
+nema config set proxyEnv off
+```
+
+The default is `off`. With `forward`, the next task copies only `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, `http_proxy`, `https_proxy`, `all_proxy` and `no_proxy` from the daemon's own environment; restarting the daemon is unnecessary. Names match exactly on POSIX and case-insensitively on Windows, preserving their original casing. Config stores only the mode, never proxy URLs. As a fallback, hand-edit `proxyEnv` in `config.json` to `"forward"` or `"off"`; an absent key means `off`.
+
+Proxy URLs may contain credentials: opting in lets the Claude child and any processes it starts read them. A proxy can observe traffic metadata and, with TLS inspection, content. The restricted child tools are not an operating-system sandbox. No CA variables, including `SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS`, are forwarded; configure custom CA trust separately. Before downgrading to a build without this field, run `nema config set proxyEnv off` or delete the key by hand: older strict schemas reject even an explicit `"off"`. Desktop settings do not expose this option, and the desktop runtime uses a separate data directory, so this command does not configure it.
+
 Nema does not silently switch runtimes after authentication or model failures. `config get` and `auth status` show configuration and login status without printing tokens.
 
 <a id="accounts"></a>

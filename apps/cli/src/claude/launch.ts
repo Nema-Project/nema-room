@@ -1,6 +1,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { ProxyEnvMode } from "../config.js";
 import type { PluginToolSpec } from "@nema/shared";
 import { claudeAllowedToolNames } from "../direct/tools.js";
 import { windowsRuntimeEnv, withElectronNode } from "../platform.js";
@@ -13,7 +14,10 @@ export const CLAUDE_ROOM_TOOLS = [
   "mcp__room__offer_skill_install",
 ] as const;
 
+export const CLAUDE_PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"] as const;
+
 export type ClaudeLaunch = {
+  proxyEnv: ProxyEnvMode;
   args: string[];
   env: NodeJS.ProcessEnv;
   runDir: string;
@@ -30,6 +34,7 @@ export function prepareClaudeLaunch(o: {
   cliEntry: string;
   execPath: string;
   parentEnv: NodeJS.ProcessEnv;
+  proxyEnv?: ProxyEnvMode;
   pluginTools?: PluginToolSpec[];
   /** `--max-turns`; defaults to 24. */
   maxTurns?: number;
@@ -60,6 +65,13 @@ export function prepareClaudeLaunch(o: {
   const env: NodeJS.ProcessEnv = windowsRuntimeEnv(o.parentEnv);
   for (const key of ["PATH", "LANG", "LC_ALL", "TERM"] as const) {
     if (o.parentEnv[key] !== undefined) env[key] = o.parentEnv[key];
+  }
+  const proxyEnv = o.proxyEnv ?? "off";
+  if (proxyEnv === "forward") {
+    for (const [key, value] of Object.entries(o.parentEnv)) {
+      const name = process.platform === "win32" ? key.toUpperCase() : key;
+      if (value !== undefined && (CLAUDE_PROXY_ENV_KEYS as readonly string[]).includes(name)) env[key] = value;
+    }
   }
   Object.assign(env, {
     TMPDIR: tmpdir(),
@@ -100,7 +112,7 @@ export function prepareClaudeLaunch(o: {
   ];
   if (o.model !== undefined) args.push("--model", o.model);
 
-  return { args, env, runDir, mcpPath };
+  return { args, env, runDir, mcpPath, proxyEnv };
 }
 
 /** The built-in tools a task with Skills gets (spec §3). */
