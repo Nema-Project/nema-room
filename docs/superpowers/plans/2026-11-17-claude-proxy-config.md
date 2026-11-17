@@ -86,11 +86,11 @@
 
 **Needs:** a proxy-only-egress VM, a real logged-in Claude account (`claude setup-token` + `nema auth claude`), and the Compose deployment or the equivalent source deployment used for #131. The daemon is started with `HTTPS_PROXY`/`NO_PROXY` in its environment.
 
-- [ ] With `proxyEnv` absent, start a `claude-code` task from a thread. Expect failure with the `off` message. Capture the failing stream-json line (redact hosts and credentials) and compare it with the Task 3 fixture.
-- [ ] Run `nema config set proxyEnv forward`. Do not restart the daemon. Expect the same task to complete end to end and its reply to appear in the thread.
-- [ ] Run `nema config set proxyEnv off` and confirm that `config.json` no longer has the key.
-- [ ] Record the commands, versions, the redacted line and the outcome on #131. Then update `ROADMAP.md` line 29 to close the S5.2 Claude-family gap. This is runtime evidence, not test or acceptance evidence for other items, and it covers Linux only.
+- [x] With `proxyEnv` absent, start a `claude-code` task from a thread. Expect failure with the `off` message. Capture the failing stream-json line (redact hosts and credentials) and compare it with the Task 3 fixture.
+- [x] Run `nema config set proxyEnv forward`. Do not restart the daemon. Expect the same task to complete end to end and its reply to appear in the thread.
+- [x] Run `nema config set proxyEnv off` and confirm that `config.json` no longer has the key.
+- [x] Record the commands, versions, the redacted line and the outcome on #131. Then update `ROADMAP.md` line 29 to close the S5.2 Claude-family gap. This is runtime evidence, not test or acceptance evidence for other items, and it covers Linux only.
 
 ## Execution evidence
 
-Not started.
+Tasks 1–4 implemented in PR #246 (merged 2026-11-17, `0c5cbf5`); supervisor-verified locally: typecheck pass, targeted suites 157 passed / 1 skipped (win32-only), full CI green. Task 5 executed 2026-11-17 in the proxy-only-egress VM (source deployment from main `0c5cbf5`, real Claude account): with `proxyEnv` absent the task failed with the new `off` message (the classifier matched the real Claude Code output; the run directory is cleaned on completion, so the raw stream-json line was not retained — the fixture stands as written in Task 3); after `nema config set proxyEnv forward` with no daemon restart, the same task completed end to end and its reply landed in the thread; `config set proxyEnv off` removed the key. Records: #242 comment 6940468232, #131 comment 6940469368; #242 and #131 both closed; the ROADMAP S5 item was ticked in the follow-up docs PR.
