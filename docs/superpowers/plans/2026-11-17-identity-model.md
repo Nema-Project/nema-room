@@ -281,6 +281,7 @@ The spec predates the browse cursor (`e75ec4e`, after the spec's HEAD `f21843e`)
   - The distinctive older message is absent unless it falls inside the recent window.
   - The agent reply does not claim the member was notified or agreed.
   - Remove the member through the API: a new mention returns 400, the old message still renders the mention as removed, and editing the old message keeps it.
+  - [ ] Browser-literal remainder (pending a browser-equipped local deployment, 2026-11-18): pick the member in the real `@` menu and send; confirm the single-member workspace shows no member group in the real menu; confirm the removed member's mention renders as removed in the chat UI. The API- and prompt-level contract above was verified with the composer's exact payload and the mention-context responses the menu renders (see the #163 acceptance comment); the hub-side invariant for the last point (the stored mention is kept and the roster marks the member removed) is verified, the visual rendering is not.
 - [x] Export a snapshot and import it into a fresh desktop home (or the equivalent import path). Expect the authors and roster to survive.
 - [x] Confirm that there is no new listener: `ss -ltnp` shows the same ports and bind addresses as before the upgrade.
 - [x] Record the commands, versions, redacted prompt excerpts and outcomes as a comment on #163. This is runtime evidence for Linux only. It is not user acceptance, and it is not evidence for other items.
