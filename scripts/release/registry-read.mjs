@@ -7,7 +7,7 @@
 //               or a body that parsed but is not the shape asked for): a re-reading caller must not wait.
 // Nothing here writes. The installer's release-set.mjs counts unknown as absent on purpose; a report must not.
 import { createHash } from 'node:crypto';
-import { HUB_IMAGE, WEB_IMAGE, composeAssetVersion, assertMultiarchManifest, INDEX_MEDIA_TYPES, shouldMoveLatest } from '../images/check-images.mjs';
+import { HUB_IMAGE, WEB_IMAGE, composeAssetVersion, assertMultiarchManifest, INDEX_MEDIA_TYPES, shouldMoveLatest } from '../images/image-model.mjs';
 import { checksumFileName, expectedAssets, expectedTargets } from '../desktop/release-manifest.mjs';
 
 export const REPOSITORY = 'Nema-Project/nema-room';

@@ -1,33 +1,32 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { compareReleaseVersions, readPackageVersion, readReleaseVersion } from '../desktop/release-version.mjs';
+import { readPackageVersion, readReleaseVersion } from '../desktop/release-version.mjs';
 import { isPrivateSharePeer } from '../desktop/templates/share-peer.mjs';
+import {
+  HUB_IMAGE,
+  WEB_IMAGE,
+  IMAGE_PLATFORMS,
+  INDEX_MEDIA_TYPES,
+  assertMultiarchManifest,
+  assertSingleImageKey,
+  composeAssetVersion,
+  serviceBlocks,
+  shouldMoveLatest,
+  validateVersion,
+} from './image-model.mjs';
 
-export const HUB_IMAGE = 'ghcr.io/nema-project/nema-room-hub';
-export const WEB_IMAGE = 'ghcr.io/nema-project/nema-room-web';
+export {
+  HUB_IMAGE,
+  WEB_IMAGE,
+  IMAGE_PLATFORMS,
+  INDEX_MEDIA_TYPES,
+  assertMultiarchManifest,
+  composeAssetVersion,
+  shouldMoveLatest,
+};
+
 export const IMAGE_BUDGET_BYTES = 800 * 1048576;
-
-export const IMAGE_PLATFORMS = Object.freeze(['linux/amd64', 'linux/arm64']);
-export const INDEX_MEDIA_TYPES = Object.freeze([
-  'application/vnd.oci.image.index.v1+json',
-  'application/vnd.docker.distribution.manifest.list.v2+json',
-]);
-
-/** Attestations are not runnable platforms. Duplicate platform choices are ambiguous. */
-export function assertMultiarchManifest(manifest) {
-  if (manifest?.schemaVersion !== 2 || !INDEX_MEDIA_TYPES.includes(manifest?.mediaType) || !Array.isArray(manifest?.manifests)) {
-    throw new Error('Expected an OCI index or Docker manifest list');
-  }
-  for (const platform of IMAGE_PLATFORMS) {
-    const entries = manifest.manifests.filter((entry) => `${entry?.platform?.os}/${entry?.platform?.architecture}` === platform);
-    if (entries.length !== 1) throw new Error(`Expected exactly one ${platform} image, found ${entries.length}`);
-    if (!/^sha256:[a-f0-9]{64}$/.test(entries[0].digest ?? '')) throw new Error(`Invalid ${platform} digest`);
-    if (!['application/vnd.oci.image.manifest.v1+json', 'application/vnd.docker.distribution.manifest.v2+json'].includes(entries[0].mediaType)) {
-      throw new Error(`Expected a runnable ${platform} image manifest`);
-    }
-  }
-}
 
 /** Remove the OCI archive's single index envelope without changing image/attestation blobs. */
 export async function flattenOciLayout(root) {
@@ -46,26 +45,6 @@ export async function flattenOciLayout(root) {
     index = JSON.parse(await readFile(path.join(root, 'blobs', 'sha256', digest.slice(7)), 'utf8'));
   }
   throw new Error('Too many OCI layout index levels');
-}
-
-function serviceBlocks(text) {
-  const blocks = {};
-  let name = null;
-  for (const line of text.split('\n')) {
-    const header = line.match(/^  ([A-Za-z0-9_-]+):\s*$/);
-    if (header) {
-      name = header[1];
-      blocks[name] = '';
-      continue;
-    }
-    if (!name) continue;
-    if (line.startsWith('    ') || line.trim() === '' || line.trim().startsWith('#')) {
-      blocks[name] += `${line}\n`;
-      continue;
-    }
-    if (!line.startsWith(' ') && !line.startsWith('#')) name = null;
-  }
-  return blocks;
 }
 
 /** Refuse a public, unspecified, or hostname bind. Private and loopback addresses match the share peer allowlist. */
@@ -107,15 +86,6 @@ export function assertComposeShape(text) {
 }
 
 const interpolation = '${NEMA_IMAGE_TAG:-latest}';
-
-function assertSingleImageKey(block, name) {
-  if ((block?.match(/^    image\s*:/gm) ?? []).length !== 1) throw new Error(`${name} must have exactly one image key`);
-}
-
-function validateVersion(version) {
-  if (typeof version !== 'string' || version.startsWith('v')) throw new Error(`Not a release version: ${version}`);
-  readReleaseVersion(`v${version}`, version);
-}
 
 export function assertComposeTemplate(text) {
   assertComposeShape(text);
@@ -166,19 +136,6 @@ export function renderComposeAsset(template, version) {
   return asset;
 }
 
-export function composeAssetVersion(text) {
-  const services = serviceBlocks(text);
-  const versions = [['hub', HUB_IMAGE], ['web', WEB_IMAGE]].map(([name, image]) => {
-    assertSingleImageKey(services[name], name);
-    const line = (services[name] ?? '').split('\n').map(line => line.trim()).find(line => line.startsWith(`image: ${image}:`));
-    if (!line) throw new Error(`Published compose is missing ${image}`);
-    return line.slice(`image: ${image}:`.length);
-  });
-  if (versions[0] !== versions[1]) throw new Error(`Image versions differ: hub ${versions[0]}, web ${versions[1]}`);
-  validateVersion(versions[0]);
-  return versions[0];
-}
-
 /** Tag shape plus desktop, local, and cli versions. Failures name all three versions. */
 export function assertPackageVersions({ tag, desktop, local, cli }) {
   let version;
@@ -191,12 +148,6 @@ export function assertPackageVersions({ tag, desktop, local, cli }) {
     throw new Error(`Release ${tag} does not match desktop ${desktop}, local ${local}, cli ${cli}`);
   }
   return version;
-}
-
-/** True when `next` should replace the tag `latest` currently labels as `current`. An empty current means latest is absent. */
-export function shouldMoveLatest(current, next) {
-  if (current == null || current === '') return true;
-  return compareReleaseVersions(current, next) <= 0;
 }
 
 /** `bytes` is `docker image inspect` Size. Returns the line the build log prints. */
