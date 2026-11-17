@@ -272,20 +272,21 @@ The spec predates the browse cursor (`e75ec4e`, after the spec's HEAD `f21843e`)
 
 **Needs:** a VM with a source deployment of the merged `main` (Compose or `npm run dev` plus the daemon), a real logged-in model account, and an existing data directory from the previous release that has workspaces and messages. The data must be disposable, never the user's `~/.nema`. This task requires its own authorization.
 
-- [ ] Upgrade the old data directory. Confirm that the migration ran once, that `usr_local` owns every workspace, and that old messages have null authors and still show "you".
-- [ ] **Single-user invisibility.** In one workspace, check the `@` menu (no member group), the chat (unchanged) and a captured prompt (the daemon task log or a debug capture). Compare the prompt with the pre-upgrade build for the same message, and record whether they are byte-identical.
-- [ ] **Member mention contract at the prompt level.** Seed a second user and roster row directly in the database (`psql`), as Phase 1 has no invite path. Write a distinctive message as that user (SQL insert with `author_user_id`). Then, from the browser, `@`-mention that member and send. Expect:
+- [x] Upgrade the old data directory. Confirm that the migration ran once, that `usr_local` owns every workspace, and that old messages have null authors and still show "you".
+- [x] **Single-user invisibility.** In one workspace, check the `@` menu (no member group), the chat (unchanged) and a captured prompt (the daemon task log or a debug capture). Compare the prompt with the pre-upgrade build for the same message, and record whether they are byte-identical.
+- [x] **Member mention contract at the prompt level.** Seed a second user and roster row directly in the database (`psql`), as Phase 1 has no invite path. Write a distinctive message as that user (SQL insert with `author_user_id`). Then, from the browser, `@`-mention that member and send. Expect:
   - The member group appears.
   - `meta.mentions` holds the `member` record.
   - The captured prompt shows `## 成员 @…` and `user(name):` in the recent messages.
   - The distinctive older message is absent unless it falls inside the recent window.
   - The agent reply does not claim the member was notified or agreed.
   - Remove the member through the API: a new mention returns 400, the old message still renders the mention as removed, and editing the old message keeps it.
-- [ ] Export a snapshot and import it into a fresh desktop home (or the equivalent import path). Expect the authors and roster to survive.
-- [ ] Confirm that there is no new listener: `ss -ltnp` shows the same ports and bind addresses as before the upgrade.
-- [ ] Record the commands, versions, redacted prompt excerpts and outcomes as a comment on #163. This is runtime evidence for Linux only. It is not user acceptance, and it is not evidence for other items.
+- [x] Export a snapshot and import it into a fresh desktop home (or the equivalent import path). Expect the authors and roster to survive.
+- [x] Confirm that there is no new listener: `ss -ltnp` shows the same ports and bind addresses as before the upgrade.
+- [x] Record the commands, versions, redacted prompt excerpts and outcomes as a comment on #163. This is runtime evidence for Linux only. It is not user acceptance, and it is not evidence for other items.
 
 ## Execution evidence
 
 - Tasks 1–5: commit `4e992cd`.
-- Tasks 6–12 (working tree, not committed): see [execution note](../../reviews/2026-11-17-identity-tasks6-12.md). Unticked steps there are not done or not verified: the red-phase runs of Tasks 6–8 and 10 were not recorded, and the web/CLI/full-suite/docs-check runs of Tasks 10–12 were blocked by the executing session's permissions. The `ROADMAP.md` note is post-merge and belongs to the supervisor. Task 13 is not started.
+- Tasks 6–12: commit history on `feat/163-identity`, merged as PR #254 (`04e2a07`); see [execution note](../../reviews/2026-11-17-identity-tasks6-12.md). The supervisor re-ran the blocked checks before merging (typecheck, 600+ hub/local tests, full web suite 611, lint, build, docs check — all green; one stale group-order assertion fixed).
+- Task 13: executed 2026-11-18 under the maintainer's authorization; full record on [#163](https://github.com/Nema-Project/nema-room/issues/163#issuecomment-6952474813), and #163 is closed. Method notes: the run began on real PostgreSQL 16, but the VM was replaced mid-run and the database was lost, so the full sequence was re-run on the product's own PGlite stack (desktop local-runtime database, same hub code and migrations); the second user was seeded with a PGlite script (no `psql` on the VM image); the member mention was sent with the composer's exact API payload because no browser can reach the VM loopback (the same substitution recorded on #162); the old-vs-new prompt comparison is not literally byte-identical — the only differences are the conversation's own growth (history window and message ids), with zero identity-attributable differences.
