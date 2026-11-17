@@ -31,8 +31,8 @@
 
 只写 spec（实现另行排期）：
 
-- [x] 完成：[#163](https://github.com/Nema-Project/nema-room/issues/163) 身份模型（D11-A）：users / workspace_members / `messages.author_user_id` / 认证给出身份 / 成员提及语义与投递 / 撤销与审计。spec 的 D 项已于 2026-11-17 由维护者全部按推荐定案（提及语义选 B：引用其发言、只给指针），实施计划另行编写。
-- [x] 完成：[#162](https://github.com/Nema-Project/nema-room/issues/162) 知识条目 tag（D10-A）：frontmatter `tags` 与归一化、索引存储选型、面板按 tag 筛、提及菜单 tag 组与投递语义、prompt 索引段预算。spec/plan 里写清选型理由。spec 的 D 项已于 2026-11-17 由维护者全部按推荐定案，实施计划另行编写。
+- [x] 完成：[#163](https://github.com/Nema-Project/nema-room/issues/163) 身份模型（D11-A）：users / workspace_members / `messages.author_user_id` / 认证给出身份 / 成员提及语义与投递 / 撤销与审计。spec 的 D 项已于 2026-11-17 由维护者全部按推荐定案（提及语义选 B：引用其发言、只给指针），实施计划已编写并合并（[PR #249](https://github.com/Nema-Project/nema-room/pull/249)），实现待派发。
+- [x] 完成：[#162](https://github.com/Nema-Project/nema-room/issues/162) 知识条目 tag（D10-A）：frontmatter `tags` 与归一化、索引存储选型、面板按 tag 筛、提及菜单 tag 组与投递语义、prompt 索引段预算。spec/plan 里写清选型理由。spec 的 D 项已于 2026-11-17 由维护者全部按推荐定案，实施计划另行编写。实现已于 2026-11-17 合并（未知 frontmatter 键保留为 [PR #250](https://github.com/Nema-Project/nema-room/pull/250)，其余 Tasks 2–11 为 [PR #251](https://github.com/Nema-Project/nema-room/pull/251)）；实环境验收（实施计划 Task 12）待单独授权后执行。已知限制：图表与工作包详情页只展示 tag、不提供编辑（其保存路径会丢失专用元数据，需另行改造）。
 
 明确不进本版：[#132](https://github.com/Nema-Project/nema-room/issues/132) 轻量化发布（P2-09，已排 v0.3.1，spec 未写）；[#56](https://github.com/Nema-Project/nema-room/issues/56) 依赖大版本（P2-07，已排 v0.4.x）；[#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub（方向调研，未立项实现）；P1-10 打包 bench 与其他桌面实机验收（按上述测试政策不主动做）；[#232](https://github.com/Nema-Project/nema-room/pull/232)（外部 fork PR，维护者已搁置）。
 
