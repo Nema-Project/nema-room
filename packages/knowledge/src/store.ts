@@ -102,7 +102,18 @@ function mergeQuotes(existing: Quote[], incoming: Quote[]): Quote[] {
   return out;
 }
 
-function toFile(e: Entry): string {
+const KNOWN_FRONTMATTER_KEYS: ReadonlySet<string> = new Set([
+  "id", "kind", "title", "status", "business_date", "related", "source_messages",
+  "url", "priority", "diagram", "implementation", "workpackage", "source_snapshot",
+  "source_refs", "confirmed_revision", "basis", "ingested_at", "confirmed_at", "quotes",
+]);
+
+function unknownFrontmatter(raw: string): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(matter(raw).data)
+    .filter(([key]) => !KNOWN_FRONTMATTER_KEYS.has(key)));
+}
+
+function toFile(e: Entry, preserved: Record<string, unknown> = {}): string {
   const data: Record<string, unknown> = {
     id: e.id,
     kind: e.kind,
@@ -178,7 +189,7 @@ function toFile(e: Entry): string {
   }));
   if (e.confirmedRevision !== null) data.confirmed_revision = e.confirmedRevision;
   // Frontmatter block only; body is appended verbatim so it round-trips exactly.
-  return matter.stringify("", data) + e.body;
+  return matter.stringify("", { ...data, ...preserved }) + e.body;
 }
 
 export function fromFile(raw: string): Entry {
@@ -856,7 +867,7 @@ export class KnowledgeStore {
     extra: { file: string; content: string }[] = [],
   ): Promise<string> {
     // `system` commits come from the hub itself (work package progress from report checks).
-    const writes = [{ file: this.filePath(entry.id, entry.kind), content: toFile(entry) }, ...extra];
+    const writes = [{ file: this.filePath(entry.id, entry.kind), content: "" }, ...extra];
     const rels = writes.map((w) => path.relative(this.repoDir, w.file));
     const previous: (string | null)[] = [];
     for (const w of writes) {
@@ -868,6 +879,8 @@ export class KnowledgeStore {
         previous.push(null);
       }
     }
+    // Keep future fields on disk only; they never become part of Entry or an API.
+    writes[0]!.content = toFile(entry, previous[0] == null ? {} : unknownFrontmatter(previous[0]));
     try {
       for (const w of writes) await replaceFile(w.file, w.content);
       await this.git(["add", "--", ...rels]);

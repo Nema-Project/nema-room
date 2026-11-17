@@ -99,14 +99,14 @@
 - `Entry`, `EntrySummary`, `UpsertEntryResponse` (`packages/shared/src/roomApi.ts:5`) and the share projection therefore never see them. That satisfies "不参与校验，不进入 EntrySummary" without widening any API.
 - `recoverUncommitted` commits files as they are on disk, so it needs no change.
 
-- [ ] Add failing tests to `store.test.ts`:
+- [x] Add failing tests to `store.test.ts`:
   - A legacy fixture with no unknown keys is byte-identical after an `upsert` that changes nothing but the body. Compare with the pre-change output for the same entry.
   - A fixture with `future_field: {a: [1, 2]}` and `x_note: "hi"`. After each of `upsert`, `confirm`, `withdraw`, `confirmImplementation`, `writeDiagram` (diagram fixture), `writeWorkPackageDoc`, `setWorkPackageMeta` (work-package fixture) and `writeImportedSource` (source fixture), the file still has both keys with equal YAML values, after the known keys and in their original order.
   - A file whose `basis: null` was written by hand stays without `basis` after a rewrite. A known key that is omitted is not resurrected.
   - `get()` returns an `Entry` with no unknown key on it, and `summarizeEntry` has none either.
   - A YAML date value under an unknown key round-trips to the same instant. Assert the actual behaviour of gray-matter/js-yaml and document it.
-- [ ] Run `npx vitest run packages/knowledge/test/store.test.ts` and confirm that the new cases fail.
-- [ ] Implement it, then rerun. Also run `npx vitest run packages/knowledge/test/history.test.ts apps/hub/test/sourceImport.test.ts apps/hub/test/workpackages.test.ts apps/hub/test/diagrams.test.ts` and `npm run typecheck`. Expect everything to pass with no existing assertion changed.
+- [x] Run `npx vitest run packages/knowledge/test/store.test.ts` and confirm that the new cases fail.
+- [x] Implement it, then rerun. Also run `npx vitest run packages/knowledge/test/history.test.ts apps/hub/test/sourceImport.test.ts apps/hub/test/workpackages.test.ts apps/hub/test/diagrams.test.ts` and `npm run typecheck`. Expect everything to pass with no existing assertion changed.
 
 ### Task 2: Shared tag normalization, limits and schema fields
 

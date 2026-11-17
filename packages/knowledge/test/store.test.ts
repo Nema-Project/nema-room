@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { fromFile } from "../src/store.js";
-import { KnowledgeStore, RepoLockReentryError, UpsertRejected, git, history, parseCommitMessage } from "../src/index.js";
+import matter from "gray-matter";
+import { fromFile, summarizeEntry } from "../src/store.js";
+import { KnowledgeStore, RepoLockReentryError, UpsertRejected, git, history, parseCommitMessage, withRepoLock } from "../src/index.js";
 
 let dir: string;
 beforeEach(async () => {
@@ -972,5 +973,116 @@ describe("source evidence files", () => {
   test("rejects unsupported snapshot schema versions and invalid reference hashes", () => {
     expect(() => fromFile(snapshotFile().replace("schema_version: 1", "schema_version: 2"))).toThrow();
     expect(() => fromFile(snapshotFile().replace("    snapshot_hash:", "    ignored_hash:"))).toThrow();
+  });
+});
+
+
+describe("unknown frontmatter preservation", () => {
+  const unknown = 'future_field: {a: [1, 2]}\nx_note: "hi"\n';
+  const withFrontmatter = (raw: string, fields: string) => raw.replace("---\n\n", `${fields}---\n\n`);
+
+  test("a body-only legacy upsert keeps the pre-change frontmatter bytes", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await commitLegacy();
+    await s.upsert(req("legacy", { id: "R-1", body: "updated\n" }), { author: "agent" });
+    // This literal legacy serialization was produced before unknown-key preservation.
+    expect(await readFile(path.join(dir, "requirements", "R-1.md"), "utf8"))
+      .toBe(LEGACY.replace("kept\n", "updated\n"));
+  });
+
+  test.each([
+    "upsert", "confirm", "withdraw", "confirmImplementation", "writeDiagram",
+    "writeWorkPackageDoc", "setWorkPackageMeta", "writeImportedSource",
+  ] as const)("%s preserves unknown YAML values after known keys in original order", async (operation) => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    let id = "R-1";
+    let folder = "requirements";
+    let raw = LEGACY;
+    if (operation === "writeDiagram") {
+      await s.writeDiagram(diagramInput({ v: 1 }), { author: "agent" });
+      id = "G-1";
+      folder = "diagrams";
+      raw = await readFile(path.join(dir, folder, `${id}.md`), "utf8");
+    } else if (operation === "writeWorkPackageDoc" || operation === "setWorkPackageMeta") {
+      await s.createWorkPackage({ title: "package", requirements: [], repos: [], reason: "r", sourceMessages: [] }, { author: "agent" });
+      id = "W-1";
+      folder = "workpackages";
+      raw = await readFile(path.join(dir, folder, `${id}.md`), "utf8");
+    } else if (operation === "writeImportedSource") {
+      id = "S-1";
+      folder = "sources";
+      raw = snapshotFile();
+    } else if (operation === "confirmImplementation") {
+      raw = withFrontmatter(raw, `implementation:
+  status: reported
+  evidence:
+    report_message_id: m_1
+    commits: [abc1234]
+    inferred: false
+    note: null
+    confirmed_by: null
+`);
+    }
+    const file = path.join(dir, folder, `${id}.md`);
+    // Put future keys before the known ones to verify they move to the end on rewrite.
+    await writeFile(file, raw.replace("---\n", `---\n${unknown}`));
+    switch (operation) {
+      case "upsert": await s.upsert(req("legacy", { id, body: "updated" }), { author: "agent" }); break;
+      case "confirm": await s.confirm(id, { author: "user" }); break;
+      case "withdraw": await s.withdraw(id, { author: "user" }); break;
+      case "confirmImplementation": await s.confirmImplementation(id, { author: "user" }); break;
+      case "writeDiagram": await s.writeDiagram({ ...diagramInput({ v: 2 }), id, body: "redrawn" }, { author: "agent" }); break;
+      case "writeWorkPackageDoc": await s.writeWorkPackageDoc(id, "spec", "# spec\n", {}, "r", [], { author: "agent" }); break;
+      case "setWorkPackageMeta": await s.setWorkPackageMeta(id, { blockedOn: "R-2" }, "r", { author: "system" }); break;
+      case "writeImportedSource": {
+        const entry = (await s.get(id))!;
+        await withRepoLock(dir, () => s.writeImportedSource({ ...entry, body: "re-imported" }));
+        break;
+      }
+    }
+    const { data } = matter(await readFile(file, "utf8"));
+    expect(data.future_field).toEqual({ a: [1, 2] });
+    expect(data.x_note).toBe("hi");
+    expect(Object.keys(data).slice(-2)).toEqual(["future_field", "x_note"]);
+  });
+
+  test("a deliberately omitted known null key is not restored", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    const file = path.join(dir, "requirements", "R-1.md");
+    await writeFile(file, withFrontmatter(LEGACY, "basis: null\n" + unknown));
+    await s.upsert(req("legacy", { id: "R-1", body: "updated" }), { author: "agent" });
+    const { data } = matter(await readFile(file, "utf8"));
+    expect(data).not.toHaveProperty("basis");
+    expect(data.future_field).toEqual({ a: [1, 2] });
+  });
+
+  test("get and summarizeEntry never expose unknown frontmatter", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await writeFile(path.join(dir, "requirements", "R-1.md"), withFrontmatter(LEGACY, unknown));
+    const entry = (await s.get("R-1"))!;
+    for (const value of [entry, summarizeEntry(entry)]) {
+      expect(value).not.toHaveProperty("future_field");
+      expect(value).not.toHaveProperty("x_note");
+    }
+  });
+
+  test("an unknown YAML timestamp round-trips as a Date at the same instant", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    const file = path.join(dir, "requirements", "R-1.md");
+    const raw = withFrontmatter(LEGACY, "future_date: 2026-11-17T12:34:56+02:00\n");
+    // gray-matter's js-yaml parses unquoted timestamps as Date objects; dumping
+    // normalizes the offset to UTC, preserving the instant rather than YAML text.
+    expect(matter(raw).data.future_date).toBeInstanceOf(Date);
+    expect(matter(raw).data.future_date.toISOString()).toBe("2026-11-17T10:34:56.000Z");
+    await writeFile(file, raw);
+    await s.upsert(req("legacy", { id: "R-1", body: "updated" }), { author: "agent" });
+    const date = matter(await readFile(file, "utf8")).data.future_date;
+    expect(date).toBeInstanceOf(Date);
+    expect(date.toISOString()).toBe("2026-11-17T10:34:56.000Z");
   });
 });
