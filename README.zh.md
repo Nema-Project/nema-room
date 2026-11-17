@@ -88,6 +88,8 @@ node scripts/setup.mjs --lang zh
 
 向导检查依赖、从源码构建并启动服务，再引导配置模型；已有 `.env` 会保留。保持本机 daemon 运行，然后打开 [localhost:3000](http://localhost:3000)。只检查环境：`node scripts/setup.mjs --lang zh --check`。
 
+如果机器只能经代理出网，`nema config set proxyEnv forward` 可让 Claude Code 任务使用 daemon 环境中的代理连接 API。默认不转发，详见[代理配置与降级](docs/guide.zh.md#models)。
+
 **不克隆安装。** 从 `v0.1.6` 起，每个 Release 都附带一份 `docker-compose.yml`，hub 与 web 镜像钉在该版本上。多架构工作流发布的版本支持 `linux/amd64` 和 `linux/arm64`，Docker 会自动选择宿主机架构。旧版本 tag 不变，可能不含 arm64。宿主机 daemon 用 `npm i -g @nema-project/nema@<版本>` 安装同一版本：hub、web 和 daemon 必须一致，且不会自动升级。分步脚本、升级方法和端口说明见[安装指南](docs/guide.zh.md#source-installation)与 [Web / Compose 环境要求](docs/guide.zh.md#requirements)。
 
 ## 从讨论到交付

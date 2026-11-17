@@ -6,9 +6,9 @@ import type { RouteDecision, TaskAssign, TaskEvent } from "@nema/shared";
 import { attachmentCapabilities, refusal } from "../attachments/capabilities.js";
 import { attachmentLabel, attachmentPreamble, textAttachmentBlock } from "../attachments/blocks.js";
 import { loadTaskAttachments, type LoadedAttachment } from "../attachments/fetch.js";
-import { configErrorMessage, loadConfig, type NemaConfig } from "../config.js";
+import { configErrorMessage, loadConfig, proxyEnvMode, type NemaConfig } from "../config.js";
 import type { AgentAdapter, AgentResult } from "../daemon/runner.js";
-import { parseClaudeLine, roomToolsOk, skillActivationFrom } from "./events.js";
+import { isApiConnectionFailure, parseClaudeLine, roomToolsOk, skillActivationFrom } from "./events.js";
 import { claudeAllowedToolNames } from "../direct/tools.js";
 import { CLAUDE_SKILL_TOOLS, prepareClaudeLaunch, withSkillArgs, type ClaudeLaunch } from "./launch.js";
 import { claudeSkillsSection, prepareClaudeSkills, type ClaudeSkillPrep } from "../skills/claudeSkills.js";
@@ -36,6 +36,8 @@ const timedOutMessage = (minutes: number) => `Claude 运行超过 ${minutes} 分
 const NO_INIT = "Claude 没有给出工具面就退出了。";
 const NO_REPLY = "Claude 没有返回回复。";
 const RUN_FAILED = "Claude 运行失败，任务已中止。";
+const CONNECTION_FAILED_OFF = "Claude 连不上 Anthropic API（网络或 API 连接失败），任务已中止。如果这台机器只能经代理出网，请运行 nema config set proxyEnv forward，让 Claude 子进程使用 daemon 环境里的代理变量。";
+const CONNECTION_FAILED_FORWARD = "Claude 连不上 Anthropic API（网络或 API 连接失败），任务已中止。已转发 daemon 环境里的代理变量，请检查代理地址、NO_PROXY 与网络。";
 const LOGIN_FAILED = "Claude 登录失败。请重新运行 claude setup-token，再把令牌从标准输入交给 nema auth claude。";
 const MAX_TOOL_CALLS = 60;
 const STDERR_CAP = 8 * 1024;
@@ -167,6 +169,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         cliEntry: this.opts.cliEntry,
         execPath: this.opts.execPath ?? process.execPath,
         parentEnv: this.opts.parentEnv ?? process.env,
+        proxyEnv: proxyEnvMode(config),
         pluginTools: task.pluginTools,
         ...(task.limits ? { maxTurns: task.limits.maxModelCalls } : {}),
       });
@@ -343,7 +346,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
             return finish({ ok: false, error: `Claude 调用了 Room 以外的工具 ${outside}，任务已中止。` });
           }
         }
-        if (ev.kind === "failure") return finish({ ok: false, error: RUN_FAILED });
+        if (ev.kind === "failure") {
+          const error = isApiConnectionFailure(ev.text)
+            ? launch.proxyEnv === "forward" ? CONNECTION_FAILED_FORWARD : CONNECTION_FAILED_OFF
+            : RUN_FAILED;
+          return finish({ ok: false, error });
+        }
         if (ev.kind === "init") {
           if (initSeen) return;
           initSeen = true;

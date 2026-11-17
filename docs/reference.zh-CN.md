@@ -136,6 +136,10 @@ HTTP 服务器不跟随重定向；服务器返回 401 或 403 时连接状态�
 
 **vendored archify。** 渲染和校验用的是仓库里的 `vendor/archify/`，当前是 archify v3.2.0（提交 `208acba`），纯 Node 运行，不联网。升级时：克隆新 tag，替换 `vendor/archify/` 里的目录，更新 `vendor/archify/VENDORED.md` 里的 tag、提交和日期，再跑 `npx vitest run apps/hub/test/archify.test.ts`。已经存下的图不用改：HTML 不落盘，重启 hub 后再打开，就用新版本重新渲染。
 
+## Claude Code 代理环境
+
+Claude Code 的 `config.json` 可选字段 `proxyEnv: "off" | "forward"` 默认（含缺省）为 `off`；`nema config set proxyEnv forward` 只从 daemon 环境转发 `HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy`，POSIX 精确匹配，Windows 不区分大小写且保留原始名称，不转发 CA 变量。`config set proxyEnv off` 删除该键；降级前必须这样做或手动删除，否则旧版严格 schema 会拒绝该键，连显式的 `"off"` 也不兼容。失败的 stream-json `result` 文本匹配 `Unable to connect to API`、`Connection error` 或独立的 `ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPROTO|ENOTFOUND|EAI_AGAIN`（不区分大小写）时，返回固定的 API 连接失败消息：off 提示开启转发，forward 提示检查代理、NO_PROXY 与网络，不回显原始文本或 stderr。401、429、5xx、无连接错误文本的 `error_max_turns` 仍用通用失败消息；仅 stderr 报错、init 前退出及 onClose 路径不在此分类范围内。此分类不证明真实代理可用；桌面设置不提供该选项。
+
 ## Coding agent reports
 
 编码 Agent（Claude Code、Codex）做完活后，可以把结果报给 Nema。Nema 不用模型，只用 git 核对这份上报，再跟踪每条需求的实现状态。

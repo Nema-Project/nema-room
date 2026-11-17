@@ -912,3 +912,27 @@ describe("Claude Code automatic routing (S4)", () => {
     expect(existsSync(argvFile)).toBe(false);
   });
 });
+
+test.each([
+  [undefined, "Claude 连不上 Anthropic API（网络或 API 连接失败），任务已中止。如果这台机器只能经代理出网，请运行 nema config set proxyEnv forward，让 Claude 子进程使用 daemon 环境里的代理变量。"],
+  ["forward", "Claude 连不上 Anthropic API（网络或 API 连接失败），任务已中止。已转发 daemon 环境里的代理变量，请检查代理地址、NO_PROXY 与网络。"],
+] as const)("connection failure uses the fixed message for proxyEnv %j", async (proxyEnv, error) => {
+  if (proxyEnv) saveConfig(home, { proxyEnv });
+  const raw = "API Error: Unable to connect to API (ECONNREFUSED) http://user:secret@proxy.invalid";
+  const bin = installFake({
+    mode: "lines", argvFile: join(root, "proxy-argv.json"),
+    lines: [roomInit(), JSON.stringify({ type: "result", is_error: true, result: raw })],
+  });
+  const result = await createAdapter(bin).run(task("proxy-failure", "p"), () => {});
+  expect(result).toMatchObject({ ok: false, error });
+  expect(JSON.stringify(result)).not.toContain("ECONNREFUSED");
+  expect(JSON.stringify(result)).not.toContain("user:secret");
+});
+
+test("HTTP API errors retain the generic run failure", async () => {
+  const bin = installFake({
+    mode: "lines", argvFile: join(root, "http-error-argv.json"),
+    lines: [roomInit(), JSON.stringify({ type: "result", is_error: true, result: "API Error: 401" })],
+  });
+  expect(await createAdapter(bin).run(task("http-failure", "p"), () => {})).toMatchObject({ ok: false, error: RUN_FAILED });
+});

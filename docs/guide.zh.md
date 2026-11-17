@@ -221,6 +221,18 @@ claude setup-token
 node apps/cli/dist/index.js auth claude
 ```
 
+如果机器只能经代理出网，可为 Claude Code 任务显式开启转发：
+
+```bash
+nema config set proxyEnv forward
+# 关闭转发（降级前也应运行此命令以删除配置项）：
+nema config set proxyEnv off
+```
+
+默认是 `off`。`forward` 只把 daemon 自身环境中的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY`、`http_proxy`、`https_proxy`、`all_proxy` 和 `no_proxy` 复制给下一个任务，不必重启 daemon。POSIX 上名称精确匹配，Windows 上不区分大小写并保留原始名称。配置只保存模式，不保存代理 URL。手动编辑的备用方式是在 `config.json` 中设置 `proxyEnv` 为 `"forward"` 或 `"off"`；缺少该键也表示 `off`。
+
+代理 URL 可能包含凭据：开启后，Claude 子进程及其启动的进程都能读取它们。代理能观察流量元数据，进行 TLS 检查时还能看到内容。子进程的工具限制不是操作系统沙箱。不转发 `SSL_CERT_FILE`、`NODE_EXTRA_CA_CERTS` 等 CA 变量；自定义 CA 信任需另行配置。降级到不认识该字段的版本前，先运行 `nema config set proxyEnv off` 或手动删除该键：旧版严格 schema 连显式的 `"off"` 也会拒绝。桌面设置不提供此选项，桌面运行时使用独立数据目录，因此此命令不会配置桌面运行时。
+
 认证或调用失败时不会静默切换运行方式。用 `config get`、`auth status` 查看配置与登录状态，不显示令牌。
 
 <a id="accounts"></a>

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { CLAUDE_ROOM_TOOLS } from "../../src/claude/launch.js";
-import { parseClaudeLine, roomToolsOk, skillActivationFrom } from "../../src/claude/events.js";
+import { isApiConnectionFailure, parseClaudeLine, roomToolsOk, skillActivationFrom } from "../../src/claude/events.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -158,7 +158,7 @@ describe("Claude Code stream-json judgment", () => {
     expect(parseClaudeLine(line)).toEqual({ kind: "result", text: "整理好了" });
   });
 
-  test("drops an error result instead of keeping its text", () => {
+  test("retains error result text for private classification", () => {
     const line = JSON.stringify({
       type: "result",
       subtype: "error_max_turns",
@@ -166,7 +166,7 @@ describe("Claude Code stream-json judgment", () => {
       result: "should-not-stick",
     });
 
-    expect(parseClaudeLine(line)).toEqual({ kind: "failure" });
+    expect(parseClaudeLine(line)).toEqual({ kind: "failure", text: "should-not-stick" });
   });
 
   test("ignores a line that is not JSON", () => {
@@ -213,4 +213,17 @@ describe("Skill lines", () => {
     expect(skillActivationFrom({ name: "Read", input: { file_path: "/run/work/.claude/skills/tdd/SKILL.md" } }, dirs)).toBe("tdd");
     expect(skillActivationFrom({ name: "Read", input: { file_path: "/run/work/.claude/skills/tdd/notes.md" } }, dirs)).toBeNull();
   });
+});
+
+test.each([undefined, null, 42, {}])("failure without string result %j has null text", (result) => {
+  expect(parseClaudeLine(JSON.stringify({ type: "result", subtype: "error_max_turns", result }))).toEqual({ kind: "failure", text: null });
+});
+
+test.each(["Unable to connect to API", "Connection error", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPROTO", "ENOTFOUND", "EAI_AGAIN"])("classifies API connection failure %s case-insensitively", (text) => {
+  expect(isApiConnectionFailure(text)).toBe(true);
+  expect(isApiConnectionFailure("API Error: " + text.toLowerCase() + " (request failed)")).toBe(true);
+});
+
+test.each(["401 Unauthorized", "429", "Overloaded 529", "error_max_turns", null, "XECONNREFUSEDX"])("does not classify %j as a connection failure", (text) => {
+  expect(isApiConnectionFailure(text)).toBe(false);
 });
