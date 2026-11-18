@@ -6,9 +6,9 @@ import { rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { activate, acquireInstallLock, installComponent, verifyArchives, type InstallOptions } from "../../src/components/install.js";
+import { activate, acquireInstallLock, installComponent, verifyArchives, verifyLockHeld, type InstallOptions } from "../../src/components/install.js";
 import { lockHash } from "../../src/components/lock.js";
-import { componentBin, componentStatus, readPointer, writePointer, type ComponentEnv } from "../../src/components/store.js";
+import { componentBin, componentStatus, readFailure, readPointer, writePointer, type ComponentEnv } from "../../src/components/store.js";
 import type { ComponentStatus, InstallProgress } from "../../src/components/types.js";
 import { fakeComponent, fakeSource, writeLock, type FakeComponent, type FakeSource } from "./fixtures.js";
 
@@ -298,6 +298,42 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(readdirSync(graphifyRoot()).filter((name) => name.includes(".replaced-"))).toEqual([]);
   });
 
+  test("activation aborts and restores the previous version when its lock is displaced", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    expect((await install(env)).state).toBe("installed");
+    const hash = lockHash(component.target);
+    writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.11"), "tampered\n");
+    const atFirstMove = deferred();
+    const releaseMove = deferred();
+    const reinstall = install(env, {
+      force: true,
+      hooks: {
+        rename: async (from, to) => {
+          await rename(from, to);
+          if (from === path.join(graphifyRoot(), hash)) {
+            atFirstMove.resolve();
+            await releaseMove.promise;
+          }
+        },
+      },
+    });
+    await atFirstMove.promise;
+    // Displace the installer's lock between activation's two moves, as the takeover race
+    // does: its record is moved aside and another installer claims the freed path.
+    const lockFile = path.join(graphifyRoot(), ".install.lock");
+    renameSync(lockFile, `${lockFile}.stale-test`);
+    writeFileSync(lockFile, `${2 ** 22 + 1}:foreign`);
+    releaseMove.resolve();
+    // The install reports the still-serving previous version (its failure record is what
+    // shows the abort); the replacement itself must not have been published.
+    expect(await reinstall).toMatchObject({ state: "installed" });
+    expect(readFailure(graphifyRoot())).toMatchObject({ reason: "self-check", lockHash: hash });
+    expect(readFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.11"), "utf8")).toBe("tampered\n");
+    expect(readdirSync(graphifyRoot()).filter((name) => name.includes(".replaced-"))).toEqual([]);
+  });
+
   test("a damaged previous version is replaced when the app goes back to its lock", async () => {
     const first = fakeComponent(execLog, "one");
     const second = fakeComponent(execLog, "two");
@@ -433,7 +469,7 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     // Current code never creates an empty record (the owner is linked complete), so an
     // empty file can only be a leftover: the atomic takeover protocol claims it.
     writeFileSync(file, "");
-    const release = await acquireInstallLock(graphifyRoot());
+    const { release } = await acquireInstallLock(graphifyRoot());
     expect(readFileSync(file, "utf8")).toMatch(new RegExp(`^${process.pid}:`));
     await release();
     expect(existsSync(file)).toBe(false);
@@ -447,7 +483,7 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     expect(readFileSync(file, "utf8")).toBe(String(process.pid));
     // A PID above the kernel's maximum can never be a live process.
     writeFileSync(file, String(2 ** 22 + 123_456));
-    const release = await acquireInstallLock(graphifyRoot());
+    const { release } = await acquireInstallLock(graphifyRoot());
     await release();
     expect(existsSync(file)).toBe(false);
   });
@@ -455,7 +491,7 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
   test("releasing a lock never removes a successor's lock", async () => {
     mkdirSync(graphifyRoot(), { recursive: true });
     const file = path.join(graphifyRoot(), ".install.lock");
-    const release = await acquireInstallLock(graphifyRoot());
+    const { release } = await acquireInstallLock(graphifyRoot());
     // A successor took the lock over (the holder's record was replaced out from under it).
     writeFileSync(file, `${process.pid}:successor-token`);
     await release();
@@ -465,12 +501,12 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
   test("two contenders racing for the lock leave exactly one holder", async () => {
     mkdirSync(graphifyRoot(), { recursive: true });
     const results = await Promise.allSettled([acquireInstallLock(graphifyRoot()), acquireInstallLock(graphifyRoot())]);
-    const winners = results.filter((r) => r.status === "fulfilled") as PromiseFulfilledResult<() => Promise<void>>[];
+    const winners = results.filter((r) => r.status === "fulfilled") as PromiseFulfilledResult<{ release: () => Promise<void>; token: string }>[];
     const losers = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
     expect(winners).toHaveLength(1);
     expect(losers).toHaveLength(1);
     expect((losers[0]?.reason as Error).message).toMatch(/already running/);
-    await winners[0]!.value();
+    await winners[0]!.value.release();
     expect(existsSync(path.join(graphifyRoot(), ".install.lock"))).toBe(false);
   });
 
@@ -480,14 +516,32 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
       const file = path.join(graphifyRoot(), ".install.lock");
       writeFileSync(file, String(2 ** 22 + 123_456));
       const results = await Promise.allSettled([acquireInstallLock(graphifyRoot()), acquireInstallLock(graphifyRoot())]);
-      const winners = results.filter((r) => r.status === "fulfilled") as PromiseFulfilledResult<() => Promise<void>>[];
+      const winners = results.filter((r) => r.status === "fulfilled") as PromiseFulfilledResult<{ release: () => Promise<void>; token: string }>[];
       const losers = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
       expect(winners).toHaveLength(1);
       expect(losers).toHaveLength(1);
       expect((losers[0]?.reason as Error).message).toMatch(/already running/);
-      await winners[0]!.value();
+      await winners[0]!.value.release();
       expect(existsSync(file)).toBe(false);
       rmSync(graphifyRoot(), { recursive: true, force: true });
     }
+  });
+
+  test("a holder displaced by the takeover race fails its ownership check", async () => {
+    mkdirSync(graphifyRoot(), { recursive: true });
+    const file = path.join(graphifyRoot(), ".install.lock");
+    const holder = await acquireInstallLock(graphifyRoot());
+    // Replay the takeover interleave: a taker moves the holder's record aside while a
+    // third installer claims the freed path; the taker's non-replacing restore refuses
+    // to clobber the new claim, so the holder's record is stranded.
+    renameSync(file, `${file}.stale-test`);
+    const successor = await acquireInstallLock(graphifyRoot());
+    await expect(verifyLockHeld(graphifyRoot(), holder.token)).rejects.toThrow(/Lost the component install lock/);
+    await expect(verifyLockHeld(graphifyRoot(), successor.token)).resolves.toBeUndefined();
+    // The displaced holder's release must not remove the successor's lock.
+    await holder.release();
+    expect(readFileSync(file, "utf8")).toBe(successor.token);
+    await successor.release();
+    expect(existsSync(file)).toBe(false);
   });
 });

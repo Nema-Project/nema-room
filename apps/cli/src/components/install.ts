@@ -64,6 +64,8 @@ export type InstallHooks = {
   freeBytes?: (dir: string) => Promise<number>;
   /** Runs the staged launcher and returns its version text. */
   selfCheck?: (launcher: string) => Promise<string>;
+  /** Abort unless the install lock still carries this install's token (holder re-validation). */
+  verifyLockHeld?: () => Promise<void>;
   rename?: (from: string, to: string) => Promise<void>;
   writePointer?: (root: string, pointer: Pointer) => Promise<void>;
   /** The prebuilt Windows launcher shipped with the program. */
@@ -392,6 +394,14 @@ export async function activate(root: string, lockHash: string, staging: string, 
   if (!LOCK_HASH.test(lockHash)) throw new Error(`Not a lock-hash: ${lockHash}`);
   const move = hooks.rename ?? rename;
   const point = hooks.writePointer ?? writePointer;
+  const verify = hooks.verifyLockHeld ?? (async () => {});
+  // The holder re-validates before publishing: if another installer displaced its lock
+  // (see takeOverStaleLock), it aborts here instead of activating alongside that installer.
+  await verify();
+  const checkedPoint = async (r: string, p: Pointer): Promise<void> => {
+    await verify();
+    await point(r, p);
+  };
   const final = path.join(root, lockHash);
   const pointer = readPointer(root);
   const next: Pointer = { active: lockHash, previous: pointer.active && pointer.active !== lockHash ? pointer.active : pointer.previous };
@@ -401,27 +411,30 @@ export async function activate(root: string, lockHash: string, staging: string, 
   });
   if (!existing) {
     await move(staging, final);
-    await point(root, next);
+    await checkedPoint(root, next);
     return "renamed";
   }
   if (existing.isDirectory() && !existing.isSymbolicLink() && (await sameTree(final, staging))) {
     await rm(staging, { recursive: true, force: true });
-    await point(root, next);
+    await checkedPoint(root, next);
     return "reused";
   }
   if (pointer.active !== lockHash && pointer.previous !== lockHash) {
     await rm(final, { recursive: true, force: true });
     await move(staging, final);
-    await point(root, next);
+    await checkedPoint(root, next);
     return "replaced-orphan";
   }
   const backup = path.join(root, `${lockHash}.replaced-${randomBytes(6).toString("hex")}`);
   await move(final, backup);
+  // Re-validate between the two moves: a displaced holder must stop before placing its
+  // staging, while the backup can still be restored by the catch below.
+  await verify();
   let placed = false;
   try {
     await move(staging, final);
     placed = true;
-    await point(root, next);
+    await checkedPoint(root, next);
   } catch (error) {
     if (placed) await rm(final, { recursive: true, force: true });
     await move(backup, final);
@@ -521,6 +534,11 @@ async function linkClaim(file: string, token: string): Promise<boolean> {
  * Move the judged-stale lock aside atomically. Returns the aside path when the moved record
  * is still the one judged stale; otherwise restores it and returns null (a live installer
  * owns it after all, or another contender won the rename).
+ *
+ * The restore is a non-replacing link: if a fresh installer claimed the path in the gap,
+ * the link fails with EEXIST instead of clobbering its claim. The moved record is then
+ * stranded and inert — its holder notices at its next ownership check and aborts — so it
+ * is dropped rather than restored over the new claim.
  */
 async function takeOverStaleLock(file: string, judged: LockOwner): Promise<string | null> {
   const stale = `${file}.stale-${process.pid}-${randomBytes(6).toString("hex")}`;
@@ -532,14 +550,39 @@ async function takeOverStaleLock(file: string, judged: LockOwner): Promise<strin
   }
   const content = await readFile(stale, "utf8").catch(() => null);
   if (content === null || content !== judged.content) {
-    await rename(stale, file).catch(() => {});
+    if (content !== null) {
+      // Restore the moved record without replacing a claim made in the gap.
+      const temp = `${file}.claim-${process.pid}-${randomBytes(6).toString("hex")}`;
+      await writeFile(temp, content);
+      try {
+        await link(temp, file);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      } finally {
+        await rm(temp, { force: true });
+      }
+    }
+    await rm(stale, { force: true });
     return null;
   }
   return stale;
 }
 
+/**
+ * Fail unless the lock file still carries `token`. The holder calls this before every
+ * mutation that another installer could corrupt (staging removal, activation) so a holder
+ * whose lock was displaced by the takeover race above aborts instead of installing
+ * alongside the installer that displaced it.
+ */
+export async function verifyLockHeld(root: string, token: string): Promise<void> {
+  const current = await readFile(path.join(root, LOCK_FILE), "utf8").catch(() => null);
+  if (current !== token) {
+    throw new Error("Lost the component install lock to another installer; aborting the install");
+  }
+}
+
 /** One install at a time per component directory, across processes. Exported for tests. */
-export async function acquireInstallLock(root: string): Promise<() => Promise<void>> {
+export async function acquireInstallLock(root: string): Promise<{ release: () => Promise<void>; token: string }> {
   const file = path.join(root, LOCK_FILE);
   const token = claimToken();
   const release = async (): Promise<void> => {
@@ -547,7 +590,7 @@ export async function acquireInstallLock(root: string): Promise<() => Promise<vo
     if (current === token) await rm(file, { force: true });
   };
   for (let attempt = 0; attempt < 4; attempt++) {
-    if (await linkClaim(file, token)) return release;
+    if (await linkClaim(file, token)) return { release, token };
     const owner = await readLockOwner(file);
     if (!owner) continue; // Vanished between the claim attempt and the read; retry the claim.
     const pid = ownerPid(owner.content);
@@ -560,7 +603,7 @@ export async function acquireInstallLock(root: string): Promise<() => Promise<vo
     if (!stale) continue; // Lost the rename race, or the record revived; re-loop and re-judge.
     if (await linkClaim(file, token)) {
       await rm(stale, { force: true });
-      return release;
+      return { release, token };
     }
     // A fresh installer claimed the path in the gap; drop the dead record we moved aside.
     await rm(stale, { force: true });
@@ -610,7 +653,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
   // Recovery runs before the lock is taken: once this install holds the lock, readers skip
   // recovery (see recoverReplacementsSync), and so would this call.
   recoverReplacementsSync(root);
-  const release = await acquireInstallLock(root);
+  const { release, token } = await acquireInstallLock(root);
   const progress: InstallProgress = { phase: "download", downloadedBytes: 0, totalBytes, file: null };
   const emit = (update: Partial<InstallProgress> = {}) => {
     Object.assign(progress, update);
@@ -620,6 +663,9 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
   const staging = path.join(root, `${lockHash}.staging`);
   try {
     emit();
+    // Re-validate before the first mutation of shared state: a takeover that displaced
+    // this install's lock must abort here, not after wiping another installer's staging.
+    await verifyLockHeld(root, token);
     await rm(staging, { recursive: true, force: true });
     await checkDiskSpace(root, totalBytes, hooks);
     const archivesDir = path.join(staging, ".archives");
@@ -644,7 +690,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
     await (hooks.selfCheck ?? defaultSelfCheck)(path.join(staging, launcherName(platform.platform)));
     throwIfAborted(o.signal);
     emit({ phase: "activate" });
-    await activate(root, lockHash, staging, hooks);
+    await activate(root, lockHash, staging, { ...hooks, verifyLockHeld: () => verifyLockHeld(root, token) });
     await clearFailure(root);
     await prune(root, readPointer(root));
   } catch (error) {

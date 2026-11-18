@@ -20,7 +20,8 @@ vi.mock("node:fs", async (importOriginal) => {
       const stream = realCreateWriteStream(...args);
       if (state.failFlush) {
         const originalEnd = stream.end.bind(stream) as (...args: unknown[]) => unknown;
-        // All parameters optional: the override must satisfy every `end` overload.
+        // All parameters optional and returning the stream: the override must satisfy
+        // every `end` overload.
         stream.end = ((...endArgs: unknown[]) => {
           originalEnd(...endArgs);
           // Fail the flush after the response has ended: the next microtask runs before
@@ -28,6 +29,7 @@ vi.mock("node:fs", async (importOriginal) => {
           queueMicrotask(() =>
             stream.emit("error", Object.assign(new Error("No space left on device"), { code: "ENOSPC" })),
           );
+          return stream;
         }) as typeof stream.end;
       }
       return stream;

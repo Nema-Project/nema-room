@@ -331,7 +331,9 @@ describe("graphify resolution order", () => {
       expect(resolved.status?.state).toBe("failed");
       if (resolved.status?.state === "failed") expect(resolved.status.reason).toBe("lock-unreadable");
     }
-    const status = await graphifyInstallStatus({ components });
+    // Isolate from a developer machine's NEMA_GRAPHIFY_BIN override, which would resolve
+    // before the malformed lock is ever read.
+    const status = await withGraphifyEnv({}, async () => graphifyInstallStatus({ components }));
     expect(status.installed).toBe(false);
     expect(status.state).toBe("failed");
     expect(status.reason).toBe("lock-unreadable");
