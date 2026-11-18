@@ -1,6 +1,9 @@
 import { AttachmentCapabilitiesSchema, type AttachmentCapabilities, type AttachmentView, type ExtensionRecord, type MessageMention, type SkillDiscovery, type SkillInstallJob, type SkillSourcePreview, type SkillUsage } from "@nema/shared";
 import type { McpConfig, McpConnection } from "@nema/shared";
 import type {
+  AgentCliStatus,
+  ComponentName,
+  ComponentView,
   EntryListItem,
   Entry,
   EntrySummaryView,
@@ -137,6 +140,17 @@ export const updateDiagram = (id: string, gid: string) =>
 export const eventsUrl = (id: string) => `${base()}${w(id)}/events`;
 
 export const listPlugins = () => request<PluginCatalogItem[]>("/plugins");
+
+/** Optional components the host daemon installs on demand. Only a confirmed offer's lock-hash starts a download. */
+export const getComponents = () => request<{ components: ComponentView[] }>("/components");
+export const installComponent = (name: ComponentName, lockHash: string) =>
+  request<ComponentView>(`/components/${encodeURIComponent(name)}/install`, { method: "POST", body: { confirmed: true, lockHash } });
+export const cancelComponentInstall = (name: ComponentName) =>
+  request<ComponentView>(`/components/${encodeURIComponent(name)}/cancel`, { method: "POST", body: {} });
+export const updateComponentSettings = (name: ComponentName, patch: { pythonMirror?: string | null; pypiBase?: string | null; offline?: boolean }) =>
+  request<ComponentView>(`/components/${encodeURIComponent(name)}/settings`, { method: "PATCH", body: patch });
+/** Codex / Claude Code on the daemon's PATH. Detection only: Nema never installs them. */
+export const getAgentClis = () => request<{ agents: AgentCliStatus[] }>("/agent-clis");
 export const listExtensions = () => request<ExtensionRecord[]>("/extensions");
 /** Flip one extension's use state. The daemon owns the record; the page only asks for the change. */
 export const setExtensionUse = (id: string, useState: "enabled" | "disabled") =>

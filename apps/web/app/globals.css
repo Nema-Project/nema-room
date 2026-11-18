@@ -98,6 +98,13 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .confirm p { margin: 8px 0 14px; }
 .confirm .actions { display: flex; gap: 8px; justify-content: flex-end; }
 .confirm .actions button { border: 1px solid var(--ink); padding: 5px 14px; background: var(--paper); font: inherit; font-weight: 700; }
+.confirm.component-offer { width: min(440px, calc(100vw - 32px)); }
+.confirm.component-offer progress { width: 100%; }
+.component-offer-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0 12px; }
+.component-offer-facts dt { color: var(--ink-2); }
+.component-offer-facts dd { margin: 0; overflow-wrap: anywhere; }
+.component-entry.unavailable > .kmeta, .component-entry.unavailable > .help { opacity: 0.6; }
+.component-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px; }
 .ws.add-form { flex-wrap: wrap; align-items: center; gap: 0 2px; }
 .ws.add-form input { flex: 1; min-width: 0; width: auto; border: 0; border-bottom: 1px solid var(--ink); background: transparent; padding: 0 0 2px; outline: none; }
 .ws.add-form input:disabled { opacity: .65; }

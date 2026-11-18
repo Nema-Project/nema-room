@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import { GraphifyEntry } from "@/components/ComponentsSettings";
 import { formatDay, formatTime } from "@/lib/format";
 import { bindRepo, listPlugins, listRepos, listWorkspacePlugins, pickDirectory, previewRepo, unbindRepo, updateRepo, updateWorkspacePlugin, type RepoPreview } from "@/lib/hub";
 import { useLocale, useT, type Locale } from "@/lib/i18n";
@@ -36,6 +37,7 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
   const [formError, setFormError] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [graphAction, setGraphAction] = useState(0);
 
   useEffect(() => {
     let cancel = false;
@@ -100,6 +102,8 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
     try {
       const created = await bindRepo(workspaceId, { path: preview.root, label: trimmedLabel, mainBranch: preview.defaultBranch });
       setRepos((list) => [...(list ?? []), created]);
+      // Binding starts the repository's graph build: the first real Graphify call, so the offer may open here.
+      setGraphAction((n) => n + 1);
       setPreview(null);
       setLabel("");
       setFormError(null);
@@ -143,6 +147,8 @@ export function CodeAndPlugins({ workspaceId }: { workspaceId: string }) {
     <>
     <section className="code-section settings-group">
       <h2 className="label">{t("code.title")}</h2>
+
+      <GraphifyEntry offerSignal={graphAction} />
 
       <h3 className="label">{t("code.repos")}</h3>
       {(repos ?? []).map((repo) => (

@@ -19,6 +19,7 @@ vi.mock("@/lib/hub", () => ({
   listPlugins: vi.fn(),
   listWorkspacePlugins: vi.fn(),
   updateWorkspacePlugin: vi.fn(),
+  getComponents: vi.fn(async () => ({ components: [] })),
 }));
 
 const workspace: WorkspaceView = {

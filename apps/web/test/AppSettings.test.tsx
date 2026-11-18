@@ -11,6 +11,8 @@ vi.mock("@/lib/hub", () => ({
   discoverExtensions: vi.fn(async () => ({ locations: [], skills: [], truncated: false })),
   getMe: vi.fn(async () => ({ userId: "usr_local", displayName: null })),
   updateMe: vi.fn(async (displayName: string | null) => ({ userId: "usr_local", displayName })),
+  getComponents: vi.fn(async () => ({ components: [] })),
+  getAgentClis: vi.fn(async () => ({ agents: [] })),
 }));
 
 const offer = { version: "0.2.0", url: "https://github.com/Nema-Project/nema-room/releases/tag/v0.2.0" };
@@ -56,7 +58,7 @@ describe("AppSettings", () => {
     expect(screen.queryByRole("dialog", { name: "Model settings" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Model settings" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
-    for (const [id, name] of [["model", "Model"], ["plugins", "Plugins"], ["general", "General"], ["about", "About"]] as const) {
+    for (const [id, name] of [["model", "Model"], ["plugins", "Plugins"], ["components", "Components"], ["general", "General"], ["about", "About"]] as const) {
       expect(document.getElementById(`app-settings-panel-${id}`)).toBeTruthy();
       expect(screen.getByRole("tab", { name }).getAttribute("aria-controls")).toBe(`app-settings-panel-${id}`);
       expect(document.getElementById(`app-settings-panel-${id}`)?.hidden).toBe(id !== "model");
@@ -73,6 +75,14 @@ describe("AppSettings", () => {
     expect(model.tabIndex).toBe(-1);
     expect(await screen.findByRole("heading", { name: "Extensions" })).toBeTruthy();
     expect(hub.listExtensions).toHaveBeenCalledTimes(1);
+    // The component status is asked only when its tab opens, never with the settings page itself.
+    expect(hub.getComponents).not.toHaveBeenCalled();
+
+    await userEvent.keyboard("{ArrowDown}");
+    expect(screen.getByRole("tab", { name: "Components" }).getAttribute("aria-selected")).toBe("true");
+    expect(await screen.findByRole("heading", { name: "Components", level: 2 })).toBeTruthy();
+    await waitFor(() => expect(hub.getComponents).toHaveBeenCalled());
+    await waitFor(() => expect(hub.getAgentClis).toHaveBeenCalledTimes(1));
 
     await userEvent.keyboard("{ArrowDown}");
     expect(screen.getByRole("tab", { name: "General" }).getAttribute("aria-selected")).toBe("true");

@@ -1,0 +1,151 @@
+"use client";
+
+// One shared view of the optional Graphify component for every place that shows it (settings, the code
+// section's graph entry). It is fetched when such a place is shown, never at app start, and polled only while
+// an install runs. A decline is remembered per lock-hash, so the same version is offered again only when the
+// person presses install themselves.
+import { useEffect, useSyncExternalStore } from "react";
+import { cancelComponentInstall, getComponents, installComponent, updateComponentSettings } from "./hub";
+import type { ComponentView } from "./types";
+
+export type ComponentsSnapshot = {
+  graphify: ComponentView | null;
+  /** The hub or daemon could not answer; graph entries say so quietly and the rest of the app carries on. */
+  error: string | null;
+  loaded: boolean;
+};
+
+const EMPTY: ComponentsSnapshot = { graphify: null, error: null, loaded: false };
+export const POLL_MS = 1000;
+export const DECLINED_KEY = "nema.components.declined.graphify";
+
+let snapshot: ComponentsSnapshot = EMPTY;
+const listeners = new Set<() => void>();
+let inflight: Promise<ComponentsSnapshot> | null = null;
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+function publish(next: ComponentsSnapshot): void {
+  snapshot = next;
+  for (const listener of listeners) listener();
+  schedulePoll();
+}
+
+function schedulePoll(): void {
+  if (pollTimer || listeners.size === 0 || snapshot.graphify?.status.state !== "installing") return;
+  pollTimer = setTimeout(() => {
+    pollTimer = null;
+    void refreshComponents();
+  }, POLL_MS);
+}
+
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+function accept(view: ComponentView): void {
+  publish({ graphify: view, error: null, loaded: true });
+}
+
+export function refreshComponents(): Promise<ComponentsSnapshot> {
+  if (inflight) return inflight;
+  inflight = Promise.resolve()
+    .then(() => getComponents())
+    .then((body) => {
+      const next = { graphify: body.components.find((row) => row.name === "graphify") ?? null, error: null, loaded: true };
+      publish(next);
+      return next;
+    })
+    .catch((error: unknown) => {
+      const next = { ...snapshot, error: message(error), loaded: true };
+      publish(next);
+      return next;
+    })
+    .finally(() => {
+      inflight = null;
+    });
+  return inflight;
+}
+
+/** Starts the download the person just confirmed: the lock-hash of the offer they saw, nothing else. */
+export async function startGraphifyInstall(lockHash: string): Promise<void> {
+  clearDeclined();
+  accept(await installComponent("graphify", lockHash));
+}
+
+export async function cancelGraphifyInstall(): Promise<void> {
+  accept(await cancelComponentInstall("graphify"));
+}
+
+export async function saveGraphifySettings(patch: { pythonMirror?: string | null; pypiBase?: string | null; offline?: boolean }): Promise<void> {
+  accept(await updateComponentSettings("graphify", patch));
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  schedulePoll();
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0 && pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  };
+}
+
+const getSnapshot = () => snapshot;
+const getServerSnapshot = () => EMPTY;
+
+/** The shared component view; each component that shows it asks the daemon once when it mounts. */
+export function useComponents(): ComponentsSnapshot {
+  const current = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  useEffect(() => {
+    void refreshComponents();
+  }, []);
+  return current;
+}
+
+export function declinedLockHash(): string | null {
+  try {
+    return localStorage.getItem(DECLINED_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function rememberDeclined(lockHash: string): void {
+  try {
+    localStorage.setItem(DECLINED_KEY, lockHash);
+  } catch {
+    /* storage unavailable: the offer may come back on the next graph action, which is still the person's own */
+  }
+}
+
+function clearDeclined(): void {
+  try {
+    localStorage.removeItem(DECLINED_KEY);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/**
+ * Whether a graph action (binding a repository starts its graph build) may open the offer by itself: the
+ * component is missing, outdated or failed for a reason a download can fix, and this lock was not declined.
+ */
+export function shouldOfferOnGraphAction(view: ComponentView | null): boolean {
+  if (!view?.offer) return false;
+  const status = view.status;
+  if (status.state === "installed" || status.state === "installing") return false;
+  if (status.state === "failed" && (status.reason === "offline" || status.reason === "unsupported-platform" || status.reason === "lock-unreadable")) return false;
+  return declinedLockHash() !== view.offer.lockHash;
+}
+
+/** MiB with one decimal, the unit the desktop release notes use for payload sizes. */
+export function formatMiB(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+export function resetComponentsForTests(): void {
+  snapshot = EMPTY;
+  inflight = null;
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = null;
+}
