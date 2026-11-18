@@ -30,14 +30,19 @@ function tarHeader(entry: TarEntry, size: number): Buffer {
   return h;
 }
 
-export function tarGz(entries: TarEntry[]): Buffer {
+/** An uncompressed ustar archive; names must fit the 100-byte field. */
+export function tar(entries: TarEntry[]): Buffer {
   const parts: Buffer[] = [];
   for (const entry of entries) {
     const body = entry.type === "dir" || entry.type === "symlink" ? Buffer.alloc(0) : Buffer.from(entry.body ?? "");
     parts.push(tarHeader(entry, body.length), body, Buffer.alloc((512 - (body.length % 512)) % 512));
   }
   parts.push(Buffer.alloc(1024));
-  return gzipSync(Buffer.concat(parts));
+  return Buffer.concat(parts);
+}
+
+export function tarGz(entries: TarEntry[]): Buffer {
+  return gzipSync(tar(entries));
 }
 
 /** A stored (uncompressed) ZIP; the extractor does not check CRCs. */

@@ -66,6 +66,49 @@ function offlineSetting(env: NodeJS.ProcessEnv, saved: boolean | undefined): Set
   return { value: saved === true, source: saved === true ? "config" : null, config: saved === true };
 }
 
+/** The installer's environment for a config: saved mirrors where no variable is set, the saved offline switch. */
+export function componentEnvFor(cfg: NemaConfig, processEnv: NodeJS.ProcessEnv = process.env, components: Omit<ComponentEnv, "env" | "offline"> = {}): ComponentEnv {
+  return { ...components, env: componentProcessEnv(cfg, processEnv), offline: cfg.components?.offline === true };
+}
+
+/**
+ * Status, install offer and settings for one component, read from the store and the shipped lock. Shared by
+ * the daemon's `components.status` and the `nema components` CLI, which works without a running daemon.
+ */
+export function componentView(
+  name: ComponentName,
+  o: { cfg: NemaConfig; processEnv?: NodeJS.ProcessEnv; components?: Omit<ComponentEnv, "env" | "offline"> },
+): ComponentView {
+  const processEnv = o.processEnv ?? process.env;
+  const cfg = o.cfg;
+  const env = componentEnvFor(cfg, processEnv, o.components);
+  const settings = {
+    pythonMirror: stringSetting(processEnv, PYTHON_MIRROR_ENV, cfg.components?.pythonMirror),
+    pypiBase: stringSetting(processEnv, PYPI_BASE_ENV, cfg.components?.pypiBase),
+    offline: offlineSetting(processEnv, cfg.components?.offline),
+  };
+  let status: ComponentStatus;
+  let offer: ComponentOffer | null = null;
+  let offerError: string | undefined;
+  try {
+    status = componentStatusSync(name, env);
+    const resolved = resolveTarget(readLock(env.lockPath ?? shippedLockPath()), env.platform);
+    if (resolved.ok) {
+      try {
+        const hosts = [...new Set(sourceUrls(resolved.target, env.env ?? {}).map((url) => new URL(url).host))];
+        offer = { lockHash: resolved.lockHash, totalBytes: resolved.totalBytes, location: componentRoot(name, env), hosts };
+      } catch (error) {
+        offerError = error instanceof Error ? error.message : String(error);
+      }
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    status = { state: "failed", name, lockHash: null, reason: "lock-unreadable", detail, at: null };
+    offerError = detail;
+  }
+  return { name, status, offer, ...(offerError !== undefined ? { offerError } : {}), settings };
+}
+
 export type ComponentRpcOptions = {
   nemaHome: string;
   getConfig?: () => NemaConfig;
@@ -95,45 +138,16 @@ export function registerComponentHandlers(rpc: RpcRouter, o: ComponentRpcOptions
   const config = () => (o.getConfig ?? (() => loadConfig(o.nemaHome)))();
   const running = new Map<ComponentName, { controller: AbortController; done: Promise<unknown> }>();
 
-  const componentEnv = (cfg: NemaConfig): ComponentEnv => ({
-    ...o.components,
-    env: componentProcessEnv(cfg, o.env ?? process.env),
-    offline: cfg.components?.offline === true,
-  });
+  const componentEnv = (cfg: NemaConfig): ComponentEnv => componentEnvFor(cfg, o.env ?? process.env, o.components);
 
   function view(name: ComponentName): ComponentView {
-    const cfg = config();
-    const env = componentEnv(cfg);
-    const processEnv = o.env ?? process.env;
-    const settings = {
-      pythonMirror: stringSetting(processEnv, PYTHON_MIRROR_ENV, cfg.components?.pythonMirror),
-      pypiBase: stringSetting(processEnv, PYPI_BASE_ENV, cfg.components?.pypiBase),
-      offline: offlineSetting(processEnv, cfg.components?.offline),
-    };
-    let status: ComponentStatus;
-    let offer: ComponentOffer | null = null;
-    let offerError: string | undefined;
-    try {
-      status = componentStatusSync(name, env);
-      const resolved = resolveTarget(readLock(env.lockPath ?? shippedLockPath()), env.platform);
-      if (resolved.ok) {
-        try {
-          const hosts = [...new Set(sourceUrls(resolved.target, env.env ?? {}).map((url) => new URL(url).host))];
-          offer = { lockHash: resolved.lockHash, totalBytes: resolved.totalBytes, location: componentRoot(name, env), hosts };
-        } catch (error) {
-          offerError = error instanceof Error ? error.message : String(error);
-        }
-      }
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      status = { state: "failed", name, lockHash: null, reason: "lock-unreadable", detail, at: null };
-      offerError = detail;
-    }
+    const current = componentView(name, { cfg: config(), processEnv: o.env ?? process.env, components: o.components });
     // Between the request and the installer taking its lock, the store does not know yet; this process does.
-    if (running.has(name) && status.state !== "installing" && offer) {
-      status = { state: "installing", name, lockHash: offer.lockHash, progress: { phase: "download", downloadedBytes: 0, totalBytes: offer.totalBytes, file: null } };
+    if (running.has(name) && current.status.state !== "installing" && current.offer) {
+      const { offer } = current;
+      return { ...current, status: { state: "installing", name, lockHash: offer.lockHash, progress: { phase: "download", downloadedBytes: 0, totalBytes: offer.totalBytes, file: null } } };
     }
-    return { name, status, offer, ...(offerError !== undefined ? { offerError } : {}), settings };
+    return current;
   }
 
   rpc.register("components.status", async () => ({ components: [view("graphify")] }));

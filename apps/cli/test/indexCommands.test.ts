@@ -137,3 +137,10 @@ test("config get proxyEnv defaults to effective off, including the full list", (
   expect(configGet({ nemaHome: home, out: all.out })).toBe(0);
   expect(all.lines).toContain("proxyEnv=off");
 });
+
+test("index.ts registers `nema components` (status, install, pack, import) beside the other command groups", () => {
+  const index = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
+  expect(index).toMatch(/import \{ registerComponentsCommands \} from "\.\/components\/componentsCommands\.js";/);
+  expect(index).toMatch(/\.command\("components"\)/);
+  expect(index).toMatch(/registerComponentsCommands\(componentsCommand, \{ nemaHome: nemaHomeDir\(\), out: consoleOut, stdin: \(\) => process\.stdin, version: cliVersion\(\) \}\);/);
+});
