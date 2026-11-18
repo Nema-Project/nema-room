@@ -500,6 +500,45 @@ describe("Settings → Components", () => {
     expect(within(dialog).queryByText("Graphify is installed. Graph features are ready.")).toBeNull();
     expect(within(dialog).queryByText("The reinstall was cancelled; the installed copy is unchanged.")).toBeNull();
   });
+
+  it("a rejected retry from the cancelled panel keeps the cancellation and shows the error", async () => {
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
+    answer(installed);
+    vi.mocked(hub.installComponent).mockRejectedValue(new Error("hub unreachable"));
+    vi.mocked(hub.installComponent).mockResolvedValueOnce(view({ state: "installing", progress }));
+    vi.mocked(hub.cancelComponentInstall).mockResolvedValue({ ...installed, cancelled: true });
+    renderSettings();
+    await userEvent.click(await screen.findByRole("button", { name: "Reinstall" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Cancel download" }));
+    expect(await within(dialog).findByText("The reinstall was cancelled; the installed copy is unchanged.")).toBeTruthy();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+    // The retry never started: the panel stays the cancelled one and carries the error.
+    expect((await within(dialog).findByRole("alert")).textContent).toContain("hub unreachable");
+    expect(within(dialog).getByText("The reinstall was cancelled; the installed copy is unchanged.")).toBeTruthy();
+    expect(within(dialog).queryByText("Graphify is installed. Graph features are ready.")).toBeNull();
+  });
+
+  it("a rejected retry from the unknown-outcome panel keeps the status and shows the error", async () => {
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
+    answer(installed);
+    vi.mocked(hub.installComponent).mockRejectedValue(new Error("hub unreachable"));
+    vi.mocked(hub.installComponent).mockResolvedValueOnce(view({ state: "installing", progress }));
+    vi.mocked(hub.cancelComponentInstall).mockResolvedValue(installed);
+    renderSettings();
+    await userEvent.click(await screen.findByRole("button", { name: "Reinstall" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Cancel download" }));
+    expect(await within(dialog).findByText("Installed: Graphify 0.9.95 (Python 3.11.18).")).toBeTruthy();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+    expect((await within(dialog).findByRole("alert")).textContent).toContain("hub unreachable");
+    expect(within(dialog).getByText("Installed: Graphify 0.9.95 (Python 3.11.18).")).toBeTruthy();
+    expect(within(dialog).queryByText("Graphify is installed. Graph features are ready.")).toBeNull();
+  });
 });
 
 describe("component copy", () => {

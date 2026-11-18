@@ -159,7 +159,10 @@ describe.skipIf(process.platform === "win32")("install", () => {
     expect(await failing.run("install", "graphify", "--yes", "--force")).toBe(1);
     expect(failing.errors.join("\n")).toContain("the reinstall failed (the self-check failed)");
     expect(failing.errors.join("\n")).toContain("injected: could not move staging into place");
-    expect(failing.errors.join("\n")).toContain("is unchanged");
+    // The current status is reported separately, as it now stands — with no claim that the
+    // copy now installed is the one the attempt saw, or that it is unchanged.
+    expect(failing.errors.join("\n")).toContain("graphify: installed");
+    expect(failing.errors.join("\n")).not.toContain("is unchanged");
 
     const again = harness(component, { env: source.env() });
     expect(await again.run("status")).toBe(0);
@@ -186,8 +189,11 @@ describe.skipIf(process.platform === "win32")("install", () => {
       },
     });
     expect(await h.run("install", "graphify", "--yes")).toBe(1);
-    expect(h.errors.join("\n")).toContain("last attempt failed: network error");
+    // Both messages: the attempt's failure, reported as the first install it was — and the
+    // current status, which another process has since made installed.
+    expect(h.errors.join("\n")).toContain("the install failed (network error)");
     expect(h.errors.join("\n")).not.toContain("the reinstall failed");
+    expect(h.errors.join("\n")).toContain("graphify: installed");
   });
 
   test("cancelling a reinstall reports the cancel, not the still-installed copy", async () => {

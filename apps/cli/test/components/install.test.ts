@@ -8,7 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { activate, acquireInstallLock, installComponent, verifyArchives, verifyLockHeld, type InstallOptions } from "../../src/components/install.js";
 import { lockHash } from "../../src/components/lock.js";
-import { componentBin, componentStatus, readFailure, readPointer, writePointer, type ComponentEnv } from "../../src/components/store.js";
+import { componentBin, componentStatus, readFailure, readInstallGeneration, readPointer, writePointer, type ComponentEnv } from "../../src/components/store.js";
 import type { ComponentStatus, InstallProgress } from "../../src/components/types.js";
 import { fakeComponent, fakeSource, writeLock, type FakeComponent, type FakeSource } from "./fixtures.js";
 
@@ -68,7 +68,7 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     const status = await install(env, { onProgress: (p) => progress.push(p) });
     expect(status).toMatchObject({ state: "installed", lockHash: hash, path: path.join(graphifyRoot(), hash) });
     expect(readPointer(graphifyRoot())).toEqual({ active: hash, previous: null });
-    expect(readdirSync(graphifyRoot()).sort()).toEqual(["current.json", hash].sort());
+    expect(readdirSync(graphifyRoot()).sort()).toEqual(["current.json", "install-generation", hash].sort());
     const launcher = componentBin("graphify", env);
     expect(launcher).toBe(path.join(graphifyRoot(), hash, "graphify"));
     expect(execFileSync(launcher!, ["--version"], { encoding: "utf8" }).trim()).toBe("graphify 0.9.95-a");
@@ -418,8 +418,12 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     const component = fakeComponent(execLog);
     const source = await serve(component);
     const env = envFor(component, source);
-    expect(await install(env, { expectedLockHash: "0".repeat(64) })).toMatchObject({ state: "failed", reason: "offer-changed", lockHash: null });
+    expect(await install(env, { expectedLockHash: "0".repeat(64) })).toMatchObject({ state: "failed", reason: "offer-changed", lockHash: lockHash(component.target) });
     expect(source.requests).toEqual([]);
+    // The refusal is recorded, so status polling (which never sees the install's return value)
+    // reports the confirm-again outcome too.
+    expect(await componentStatus(env)).toMatchObject({ state: "failed", reason: "offer-changed" });
+    expect(readFailure(graphifyRoot())).toMatchObject({ reason: "offer-changed", lockHash: lockHash(component.target) });
     expect(await install(env, { expectedLockHash: lockHash(component.target) })).toMatchObject({ state: "installed" });
   });
 
@@ -464,6 +468,54 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(logged).toHaveLength(1);
     expect(String(logged[0]![0])).toContain("cleanup failed");
     expect(readPointer(graphifyRoot()).active).toBe(lockHash(component.target));
+  });
+
+  test("a backup-removal error after the pointer commits still reports the install", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    const hash = lockHash(component.target);
+    expect(await install(env)).toMatchObject({ state: "installed" });
+    // Damage the installed tree so the reinstall replaces the referenced copy (the path whose
+    // post-commit step removes the backup).
+    writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.11"), "tampered\n");
+    const logged: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args);
+    };
+    try {
+      const status = await install(env, {
+        force: true,
+        hooks: {
+          rm: async () => {
+            throw new Error("injected: could not remove the replaced copy");
+          },
+        },
+      });
+      expect(status).toMatchObject({ state: "installed" });
+    } finally {
+      console.error = original;
+    }
+    expect(logged).toHaveLength(1);
+    expect(String(logged[0]![0])).toContain("removing the replaced copy failed");
+    expect(readPointer(graphifyRoot()).active).toBe(hash);
+    // The leftover replaced copy does not linger either: the status read that produced the
+    // result above ran the replacement recovery, which finishes the interrupted cleanup.
+    expect(readdirSync(graphifyRoot()).some((name) => name.includes(".replaced-"))).toBe(false);
+  });
+
+  test("each committed install bumps the install generation; a failed attempt does not", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    expect(readInstallGeneration(graphifyRoot())).toBe(0);
+    expect(await install(env)).toMatchObject({ state: "installed" });
+    expect(readInstallGeneration(graphifyRoot())).toBe(1);
+    // A same-version repair rewrites the pointer with identical content; the generation is
+    // what still changes, so a refusal recorded from an earlier read can tell it happened.
+    expect(await install(env, { force: true })).toMatchObject({ state: "installed" });
+    expect(readInstallGeneration(graphifyRoot())).toBe(2);
   });
 
   test("too little disk space stops before the download and names the shortfall", async () => {

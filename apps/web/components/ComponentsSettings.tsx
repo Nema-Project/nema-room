@@ -143,7 +143,6 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
     if (!offer) return;
     setBusy(true);
     setRequestError(null);
-    setCancelOutcome(null);
     try {
       // A retry after a failed repair is a repair again, even if this dialog opened as a plain install.
       // The cancelled-outcome Retry passes its intent explicitly: over an installed copy an unforced
@@ -151,6 +150,9 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
       // stay unforced.
       const repair = repairOverride ?? (force || (status?.state === "installed" && status.lastFailure !== undefined));
       await startGraphifyInstall(offer.lockHash, { force: repair });
+      // The cancel outcome is cleared only now: a rejected retry keeps the panel it was
+      // retried from, so its error shows there instead of falling through to "done".
+      setCancelOutcome(null);
       setStep("follow");
     } catch (err) {
       setRequestError(err instanceof Error ? err.message : String(err));
@@ -265,6 +267,7 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
         ) : (
           <>
             <p role="status">{t("components.done")}</p>
+            {requestError && <p className="error" role="alert">{requestError}</p>}
             <div className="actions">
               <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
             </div>

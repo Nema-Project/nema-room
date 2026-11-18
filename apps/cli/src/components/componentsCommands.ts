@@ -190,15 +190,17 @@ export function registerComponentsCommands(components: Command, deps: Components
       return 130;
     }
     const current = view(status.name, cfg);
-    // The reinstall reading requires the attempt itself to have started from an installed copy:
-    // a failed first install is not renamed a reinstall just because another process installed
-    // the component before this read.
-    if (status.state === "failed" && before?.state === "installed" && current.status.state === "installed") {
-      // A failed reinstall: the old copy still serves, so the failure is reported on its own terms
-      // instead of the "not installed" lines the failed view would print.
-      deps.out.error(`${status.name}: the reinstall failed (${REASONS[status.reason]}); the installed copy at ${current.status.path} is unchanged.`);
+    if (status.state === "failed") {
+      // The attempt's outcome and the store's status are reported separately. Whether this was a
+      // reinstall comes from the attempt's own pre-read (`before`), and the current status is
+      // printed as it now stands: the pre-read happened outside the installer lock, so this
+      // command cannot claim the copy now installed is the one the attempt saw, or that it is
+      // unchanged — another process may have installed or repaired it in the meantime.
+      const attempt = before?.state === "installed" ? "reinstall" : "install";
+      deps.out.error(`${status.name}: the ${attempt} failed (${REASONS[status.reason]}).`);
       deps.out.error(`  detail: ${status.detail}`);
       if (status.at) deps.out.error(`  at: ${status.at}`);
+      for (const line of formatComponentView(current)) deps.out.error(line);
       return 1;
     }
     for (const line of formatComponentView({ ...current, status })) deps.out.error(line);

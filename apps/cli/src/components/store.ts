@@ -132,6 +132,24 @@ export async function writePointer(root: string, pointer: Pointer): Promise<void
   await writeFileAtomic(path.join(root, "current.json"), `${JSON.stringify(pointer, null, 2)}\n`);
 }
 
+/**
+ * How many installs have committed in this store. A same-version repair rewrites the pointer with
+ * identical content, so the pointer alone cannot tell "repaired since you looked" from "untouched";
+ * this counter can. It is bumped under the install lock after each activation commits.
+ */
+export function readInstallGeneration(root: string): number {
+  try {
+    const raw = Number.parseInt(readFileSync(path.join(root, "install-generation"), "utf8").trim(), 10);
+    return Number.isInteger(raw) && raw >= 0 ? raw : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function bumpInstallGeneration(root: string): Promise<void> {
+  await writeFileAtomic(path.join(root, "install-generation"), `${readInstallGeneration(root) + 1}\n`);
+}
+
 export type FailureRecord = { lockHash: string; reason: FailureReason; detail: string; at: string };
 
 export function readFailure(root: string): FailureRecord | null {

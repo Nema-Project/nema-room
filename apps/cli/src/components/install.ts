@@ -17,6 +17,7 @@ import { downloadWithRetry, sourceUrl, sourceUrls } from "./download.js";
 import { readLock, resolveTarget, shippedLockPath, shippedWindowsLauncherPath, type LockFile, type LockTarget, type PlatformInfo } from "./lock.js";
 import {
   assertComponent,
+  bumpInstallGeneration,
   clearFailure,
   componentRoot,
   componentStatusSync,
@@ -24,6 +25,7 @@ import {
   launcherName,
   LOCK_HASH,
   OFFLINE_DETAIL,
+  readInstallGeneration,
   readPointer,
   recoverReplacementsSync,
   setInstalling,
@@ -68,6 +70,8 @@ export type InstallHooks = {
   /** Abort unless the install lock still carries this install's token (holder re-validation). */
   verifyLockHeld?: () => Promise<void>;
   rename?: (from: string, to: string) => Promise<void>;
+  /** Removes a directory tree; activation uses it for the post-commit removal of the replaced copy. */
+  rm?: (target: string) => Promise<void>;
   writePointer?: (root: string, pointer: Pointer) => Promise<void>;
   /** The prebuilt Windows launcher shipped with the program. */
   windowsLauncher?: string;
@@ -460,7 +464,13 @@ export async function activate(root: string, lockHash: string, staging: string, 
     await move(backup, final);
     throw error;
   }
-  await rm(backup, { recursive: true, force: true });
+  // The pointer has committed: the replacement is the installed copy. Removing the replaced one
+  // is cleanup — its failure is logged, never reported as the install's outcome.
+  try {
+    await (hooks.rm ?? ((target: string) => rm(target, { recursive: true, force: true })))(backup);
+  } catch (cleanupError) {
+    console.error("[nema] component activation committed, but removing the replaced copy failed", cleanupError);
+  }
   return "replaced-referenced";
 }
 
@@ -651,7 +661,7 @@ function prepare(name: string, env: ComponentEnv, allowOffline: boolean, expecte
   // The confirmation was for one lock's download; a lock that resolves differently since (the
   // program was upgraded in between) is not what was confirmed and must be confirmed again.
   if (expectedLockHash !== undefined && resolved.lockHash !== expectedLockHash) {
-    return { state: "failed", name, lockHash: null, reason: "offer-changed", detail: "the component offer changed; confirm again", at: null };
+    return { state: "failed", name, lockHash: resolved.lockHash, reason: "offer-changed", detail: "the component offer changed; confirm again", at: null };
   }
   if (!allowOffline && isOffline(env)) return componentStatusSync(name, env);
   return { name, env, root: componentRoot(name, env), target: resolved.target, lockHash: resolved.lockHash, totalBytes: resolved.totalBytes, platform };
@@ -672,15 +682,19 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
     if (o.force === true && prepared.state === "installed" && isOffline(env)) {
       const attemptFailure = { reason: "offline" as const, detail: OFFLINE_DETAIL, at: new Date().toISOString() };
       const root = componentRoot(prepared.name, env);
-      // The record is written under the install lock, with the state rechecked there: a repair
-      // running in another process owns the status while it runs, and one that already finished
-      // must not be handed this attempt's failure. When the lock cannot be taken, the running
+      // The record is written under the install lock, and only if no install has committed since
+      // this attempt read the store: the install generation snapshotted here changes on every
+      // commit, so a repair that completed after this attempt began — even of the same version,
+      // which the lock-hash recheck cannot tell apart — keeps its own cleared record instead of
+      // being stamped with this attempt's failure. When the lock cannot be taken, the running
       // install's outcome stands and this attempt is only returned to its caller.
+      const generation = readInstallGeneration(root);
       try {
+        await mkdir(root, { recursive: true });
         const { release } = await acquireInstallLock(root);
         try {
           const now = componentStatusSync(prepared.name, env);
-          if (now.state === "installed" && now.lockHash === prepared.lockHash) {
+          if (now.state === "installed" && now.lockHash === prepared.lockHash && readInstallGeneration(root) === generation) {
             await writeFailure(root, { lockHash: prepared.lockHash, ...attemptFailure });
           }
         } finally {
@@ -690,6 +704,30 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
         // Another installer holds the lock; its outcome defines the shared status.
       }
       return { state: "failed", name: prepared.name, lockHash: prepared.lockHash, ...attemptFailure };
+    }
+    // A confirmation for a lock that has since changed is refused before any download. The refusal
+    // is recorded like any other attempt outcome: daemon installs run in the background and their
+    // returned status is discarded, so an unrecorded refusal would never reach status polling.
+    if (prepared.state === "failed" && prepared.reason === "offer-changed" && prepared.lockHash) {
+      const at = new Date().toISOString();
+      const root = componentRoot(prepared.name, env);
+      try {
+        await mkdir(root, { recursive: true });
+        const { release } = await acquireInstallLock(root);
+        try {
+          // Only while the refusal still describes the store: a copy installed under the current
+          // lock in the meantime has resolved the situation, and its status stands.
+          const now = componentStatusSync(prepared.name, env);
+          if (now.state !== "installed" && now.lockHash === prepared.lockHash) {
+            await writeFailure(root, { lockHash: prepared.lockHash, reason: prepared.reason, detail: prepared.detail, at });
+          }
+        } finally {
+          await release();
+        }
+      } catch {
+        // Another installer holds the lock; its outcome defines the shared status.
+      }
+      return { ...prepared, at };
     }
     return prepared;
   }
@@ -758,8 +796,14 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
         throwIfAborted(o.signal);
       },
     });
-    // The pointer has committed: the install has happened. Cleanup errors from here are reported
-    // separately and never turn the result into a failure or a cancel.
+    // The pointer has committed: the install has happened. Recording the commit (the generation
+    // is how a later refusal tells a completed repair from the state it read) and cleanup errors
+    // from here are reported separately and never turn the result into a failure or a cancel.
+    try {
+      await bumpInstallGeneration(root);
+    } catch (cleanupError) {
+      console.error(`[nema] component ${prepared.name} installed, but recording the install failed`, cleanupError);
+    }
     try {
       await clearFailure(root);
       await prune(root, readPointer(root));
