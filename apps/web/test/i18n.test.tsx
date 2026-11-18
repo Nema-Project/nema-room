@@ -182,9 +182,9 @@ describe("message files", () => {
         en: "Only the list entry goes away; the files outside Nema stay exactly as they are.",
       },
       "extensions.error.bundled-runtime-missing": {
-        zh: "随包的 Graphify 运行环境缺失，可在此修复。",
-        ja: "同梱の Graphify 実行環境がありません。ここから修復できます。",
-        en: "The packaged Graphify runtime is missing. It can be repaired from here.",
+        zh: "Graphify 组件未安装。请在应用设置 → 组件里安装，或运行 `nema components install graphify`。",
+        ja: "Graphify コンポーネントがインストールされていません。アプリ設定 → コンポーネントでインストールするか、`nema components install graphify` を実行してください。",
+        en: "The Graphify component is not installed. Install it from App settings → Components, or run `nema components install graphify`.",
       },
       "plugins.local": { zh: "仅本机", ja: "ローカルのみ", en: "Local only" },
       "plugins.external": { zh: "会外发", ja: "外部送信あり", en: "Sends data out" },

@@ -1,0 +1,1 @@
+- Graphify is no longer bundled with the desktop app: it downloads on first use of a graph feature after a size confirmation, verified against the shipped lock, with offline component packs (`nema components pack` / `import`) for air-gapped setups, and npm and Compose host daemons on Windows, macOS, and glibc Linux can now install it the same way.
