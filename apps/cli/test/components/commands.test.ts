@@ -116,6 +116,28 @@ describe.skipIf(process.platform === "win32")("install", () => {
     expect(again.lines.join("\n")).toContain(`location: ${path.join(store(), hash)}`);
   });
 
+  test("--force reinstalls the installed version; without it the install is a no-op", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const h = harness(component, { env: source.env() });
+    expect(await h.run("install", "graphify", "--yes")).toBe(0);
+    const hash = lockHash(component.target);
+    const firstRequests = source.requests.length;
+    expect(firstRequests).toBeGreaterThan(0);
+
+    const again = harness(component, { env: source.env() });
+    expect(await again.run("install", "graphify", "--yes")).toBe(0);
+    expect(again.lines.join("\n")).toContain("already installed");
+    expect(again.lines.join("\n")).toContain("nema components install graphify --force");
+    expect(source.requests.length).toBe(firstRequests);
+
+    const force = harness(component, { env: source.env() });
+    expect(await force.run("install", "graphify", "--yes", "--force")).toBe(0);
+    expect(force.lines.join("\n")).toContain("reinstalls the current version");
+    expect(source.requests.length).toBeGreaterThan(firstRequests);
+    expect(readPointer(store()).active).toBe(hash);
+  });
+
   test("an interactive yes installs; a no or a closed stdin downloads nothing", async () => {
     const component = fakeComponent(execLog);
     const source = await serve(component);

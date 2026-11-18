@@ -66,12 +66,37 @@ function runBin(bin, args, cwd, env = process.env) {
   return result.stdout;
 }
 
+/** Release hosts the shipped lock is built for. Anything else (musl Linux, other arches) cannot install Graphify. */
+export const SUPPORTED_RELEASE_HOSTS = new Set(['win32-x64', 'darwin-arm64', 'linux-x64', 'linux-arm64']);
+
+/** Linux without a glibc runtime version in Node's diagnostic report is musl (Alpine and friends). */
+export function detectMusl() {
+  if (process.platform !== 'linux') return false;
+  const report = process.report?.getReport?.();
+  return typeof report?.header?.glibcVersionRuntime !== 'string';
+}
+
+/**
+ * Whether this host can install Graphify, decided from the host itself — never from the packed lock,
+ * so a lock that dropped a target cannot make the smoke pass on a host it left behind.
+ */
+export function releaseHost(info = {}) {
+  const platform = info.platform ?? process.platform;
+  const arch = info.arch ?? process.arch;
+  const musl = info.musl ?? (platform === 'linux' ? detectMusl() : false);
+  const key = `${platform}-${arch}`;
+  return { platform, arch, musl, key, supported: SUPPORTED_RELEASE_HOSTS.has(key) && !musl };
+}
+
 /**
  * The installed package reads its shipped Graphify lock and reports the component without downloading:
  * `nema components status --json` against an empty home. A lock missing from the package shows up as
- * `lock-unreadable`; an installed component in an empty home would mean it read the wrong store.
+ * `lock-unreadable`; an installed component in an empty home would mean it read the wrong store. On a
+ * supported release host the package must also offer a download: a lock without this host's target would
+ * otherwise report `unsupported-platform` and the smoke would pass a package that cannot install Graphify.
  */
-export function assertComponentStatus(stdout) {
+export function assertComponentStatus(stdout, info = {}) {
+  const host = releaseHost(info);
   let view;
   try {
     view = JSON.parse(stdout);
@@ -82,6 +107,13 @@ export function assertComponentStatus(stdout) {
   if (view?.name !== 'graphify' || typeof status?.state !== 'string') throw new Error(`unexpected components status:\n${stdout}`);
   if (status.state === 'failed' && status.reason === 'lock-unreadable') throw new Error(`the packed CLI cannot read its Graphify lock: ${status.detail}`);
   if (status.state === 'installed' || status.state === 'installing') throw new Error(`an empty home reported graphify ${status.state}`);
+  if (host.supported) {
+    if (status.state !== 'not-installed' || !(view.offer?.totalBytes > 0)) {
+      throw new Error(`a supported release host (${host.key}) must offer a Graphify download; got ${status.state}${status.state === 'failed' ? ` (${status.reason})` : ''}:\n${stdout}`);
+    }
+  } else if (status.state === 'failed' && status.reason === 'unsupported-platform') {
+    return view;
+  }
   if (status.state === 'not-installed' && !(view.offer?.totalBytes > 0)) throw new Error(`no download offer for an installable platform:\n${stdout}`);
   return view;
 }

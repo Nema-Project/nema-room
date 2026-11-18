@@ -207,14 +207,17 @@ export function registerComponentsCommands(components: Command, deps: Components
     .description("Download, verify and install an optional component after showing its size; --yes skips the question")
     .argument("<name>", `component name (${COMPONENT_NAMES.join(", ")})`)
     .option("-y, --yes", "install without asking (for scripts)")
-    .action(async (rawName: string, flags: { yes?: boolean }) => {
+    .option("--force", "reinstall the current version over the installed copy (repair)")
+    .action(async (rawName: string, flags: { yes?: boolean; force?: boolean }) => {
       await run(async (signal) => {
         const name = nameArg(rawName);
         const cfg = config();
         const current = view(name, cfg);
         const { status } = current;
-        if (status.state === "installed") {
+        // Without --force an installed component stays put: the repair path is the reinstall below.
+        if (status.state === "installed" && !flags.force) {
           deps.out.log(`${name} is already installed (lock-hash ${status.lockHash}) at ${status.path}`);
+          deps.out.log(`Reinstall it with: nema components install ${name} --force`);
           return 0;
         }
         if (status.state === "installing") {
@@ -237,6 +240,7 @@ export function registerComponentsCommands(components: Command, deps: Components
         }
         const confirm = async (offer: InstallOffer): Promise<boolean> => {
           deps.out.log(`Component: ${offer.name} (lock-hash ${offer.lockHash})`);
+          if (flags.force) deps.out.log("This reinstalls the current version over the installed copy.");
           deps.out.log(`Download: ${size(offer.totalBytes)} from ${offer.hosts.join(", ")}`);
           deps.out.log(`Install location: ${offer.location}`);
           deps.out.log("Every archive is checked against the sha256 and size in the lock shipped with Nema before it is unpacked.");
@@ -251,6 +255,7 @@ export function registerComponentsCommands(components: Command, deps: Components
           env: envFor(cfg),
           signal,
           hooks: deps.hooks,
+          force: flags.force === true,
           onProgress: progressPrinter(deps.out),
           confirm: async (offer) => {
             const yes = await confirm(offer);

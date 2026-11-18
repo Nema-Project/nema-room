@@ -143,8 +143,8 @@ export const listPlugins = () => request<PluginCatalogItem[]>("/plugins");
 
 /** Optional components the host daemon installs on demand. Only a confirmed offer's lock-hash starts a download. */
 export const getComponents = () => request<{ components: ComponentView[] }>("/components");
-export const installComponent = (name: ComponentName, lockHash: string) =>
-  request<ComponentView>(`/components/${encodeURIComponent(name)}/install`, { method: "POST", body: { confirmed: true, lockHash } });
+export const installComponent = (name: ComponentName, lockHash: string, force?: boolean) =>
+  request<ComponentView>(`/components/${encodeURIComponent(name)}/install`, { method: "POST", body: { confirmed: true, lockHash, ...(force === true ? { force: true } : {}) } });
 export const cancelComponentInstall = (name: ComponentName) =>
   request<ComponentView>(`/components/${encodeURIComponent(name)}/cancel`, { method: "POST", body: {} });
 export const updateComponentSettings = (name: ComponentName, patch: { pythonMirror?: string | null; pypiBase?: string | null; offline?: boolean }) =>

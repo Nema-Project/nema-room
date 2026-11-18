@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { assertVersion, bumpInstalledPackage, installedBin, localTarballArg, parseSmokeArgs } from './smoke-pack.mjs';
+import { assertComponentStatus, assertVersion, bumpInstalledPackage, installedBin, localTarballArg, parseSmokeArgs, releaseHost } from './smoke-pack.mjs';
 
 test('parseSmokeArgs reads the tarball and optional hub flags', () => {
   assert.deepEqual(parseSmokeArgs(['nema-project-nema-0.1.3.tgz']), {
@@ -50,4 +50,31 @@ test('--expect-skew bumps the installed package version by one patch', async (t)
   await writeFile(pkgPath, JSON.stringify({ name: '@nema-project/nema', version: '0.1.3' }));
   assert.equal(await bumpInstalledPackage(root), '0.1.4');
   assert.equal(JSON.parse(await readFile(pkgPath, 'utf8')).version, '0.1.4');
+});
+
+test('assertComponentStatus requires a download offer on a supported release host', () => {
+  const host = { platform: 'linux', arch: 'x64', musl: false };
+  const notInstalled = (totalBytes) => JSON.stringify({ name: 'graphify', status: { state: 'not-installed' }, offer: { totalBytes } });
+  assert.equal(assertComponentStatus(notInstalled(123), host).status.state, 'not-installed');
+  assert.throws(() => assertComponentStatus(notInstalled(0), host), /must offer a Graphify download/);
+  const unsupported = JSON.stringify({ name: 'graphify', status: { state: 'failed', reason: 'unsupported-platform', detail: 'No Graphify build is pinned for linux-x64' } });
+  assert.throws(() => assertComponentStatus(unsupported, host), /must offer a Graphify download/);
+  assert.throws(() => assertComponentStatus(JSON.stringify({ name: 'graphify', status: { state: 'installed' } }), host), /empty home reported graphify installed/);
+});
+
+test('assertComponentStatus allows unsupported-platform on a genuinely unsupported host', () => {
+  const unsupported = JSON.stringify({ name: 'graphify', status: { state: 'failed', reason: 'unsupported-platform', detail: 'musl' } });
+  assert.equal(assertComponentStatus(unsupported, { platform: 'linux', arch: 'x64', musl: true }).status.state, 'failed');
+  assert.equal(assertComponentStatus(unsupported, { platform: 'linux', arch: 'riscv64', musl: false }).status.state, 'failed');
+  const unreadable = JSON.stringify({ name: 'graphify', status: { state: 'failed', reason: 'lock-unreadable', detail: 'nope' } });
+  assert.throws(() => assertComponentStatus(unreadable, { platform: 'linux', arch: 'x64', musl: true }), /cannot read its Graphify lock/);
+});
+
+test('releaseHost reads support from the host, not the packed lock', () => {
+  assert.equal(releaseHost({ platform: 'linux', arch: 'x64', musl: false }).supported, true);
+  assert.equal(releaseHost({ platform: 'linux', arch: 'arm64', musl: false }).supported, true);
+  assert.equal(releaseHost({ platform: 'darwin', arch: 'arm64' }).supported, true);
+  assert.equal(releaseHost({ platform: 'win32', arch: 'x64' }).supported, true);
+  assert.equal(releaseHost({ platform: 'linux', arch: 'x64', musl: true }).supported, false);
+  assert.equal(releaseHost({ platform: 'linux', arch: 'riscv64' }).supported, false);
 });

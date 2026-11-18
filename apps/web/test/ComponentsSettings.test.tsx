@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ComponentsSettings, GraphifyEntry } from "@/components/ComponentsSettings";
-import { DECLINED_KEY, formatMiB, resetComponentsForTests } from "@/lib/components";
+import { DECLINED_KEY, formatMiB, refreshComponents, resetComponentsForTests, startGraphifyInstall } from "@/lib/components";
 import { I18nProvider } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
 import type { ComponentStatus, ComponentView } from "@/lib/types";
@@ -140,6 +140,27 @@ describe("graph entry and first-use offer", () => {
     expect(await screen.findByRole("dialog", { name: "Download Graphify?" })).toBeTruthy();
   });
 
+  it("discards a status response that predates an install and re-fetches the fresh state", async () => {
+    const progress = { phase: "download", downloadedBytes: 0, totalBytes: LOCK_TOTAL, file: null };
+    const installing = view({ state: "installing", progress });
+    // The first GET starts before the install and answers after it.
+    let resolveStale!: (value: { components: ComponentView[] }) => void;
+    const stale = new Promise<{ components: ComponentView[] }>((resolve) => {
+      resolveStale = resolve;
+    });
+    vi.mocked(hub.getComponents).mockReturnValueOnce(stale);
+    const first = refreshComponents();
+    vi.mocked(hub.installComponent).mockResolvedValue(installing);
+    const started = startGraphifyInstall(LOCK_HASH);
+    // The re-fetch after the stale answer sees the install running.
+    vi.mocked(hub.getComponents).mockResolvedValue({ components: [installing] });
+    resolveStale({ components: [view({ state: "not-installed" })] });
+    await started;
+    const result = await first;
+    expect(result.graphify?.status.state).toBe("installing");
+    expect(statusCalls()).toBeGreaterThanOrEqual(2);
+  });
+
   it("confirming sends the offered lock-hash, then shows progress with the current file and a cancel", async () => {
     answer(view({ state: "not-installed" }));
     const progress = { phase: "download", downloadedBytes: 10 * 1024 * 1024, totalBytes: LOCK_TOTAL, file: FIXTURE_LOCK_TARGET.python.file };
@@ -265,6 +286,19 @@ describe("Settings → Components", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Install" }));
     const dialog = await screen.findByRole("dialog", { name: "Download Graphify?" });
     expect(within(dialog).getByTestId("component-offer-size").textContent).toBe("33.6 MiB");
+  });
+
+  it("an installed component offers a repair that reinstalls the same version with force", async () => {
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    answer(installed);
+    vi.mocked(hub.installComponent).mockResolvedValue(installed);
+    renderSettings();
+    expect(await screen.findByText("Installed: Graphify 0.9.95 (Python 3.11.18).")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Reinstall" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    expect(hub.installComponent).toHaveBeenCalledWith("graphify", LOCK_HASH, true);
   });
 });
 

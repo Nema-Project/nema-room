@@ -23,6 +23,8 @@ let snapshot: ComponentsSnapshot = EMPTY;
 const listeners = new Set<() => void>();
 let inflight: Promise<ComponentsSnapshot> | null = null;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
+/** Bumped by every mutation (install/cancel/settings) so a GET started before it is discarded, not published. */
+let mutationEpoch = 0;
 
 function publish(next: ComponentsSnapshot): void {
   snapshot = next;
@@ -44,37 +46,58 @@ function accept(view: ComponentView): void {
   publish({ graphify: view, error: null, loaded: true });
 }
 
+/**
+ * The one shared GET, joined by every caller. A response that predates a mutation (an install that started
+ * after this GET) is discarded and fetched once more: publishing it would overwrite the newer `installing`
+ * state with `not-installed` and stop the poll, losing progress and cancel access while the installer runs.
+ */
 export function refreshComponents(): Promise<ComponentsSnapshot> {
   if (inflight) return inflight;
-  inflight = Promise.resolve()
-    .then(() => getComponents())
-    .then((body) => {
+  const seen = mutationEpoch;
+  const task = (async (): Promise<ComponentsSnapshot> => {
+    try {
+      const body = await getComponents();
       const next = { graphify: body.components.find((row) => row.name === "graphify") ?? null, error: null, loaded: true };
+      if (seen !== mutationEpoch) {
+        inflight = null;
+        return refreshComponents();
+      }
       publish(next);
       return next;
-    })
-    .catch((error: unknown) => {
+    } catch (error: unknown) {
       const next = { ...snapshot, error: message(error), loaded: true };
+      if (seen !== mutationEpoch) {
+        inflight = null;
+        return refreshComponents();
+      }
       publish(next);
       return next;
-    })
-    .finally(() => {
-      inflight = null;
-    });
-  return inflight;
+    }
+  })();
+  inflight = task;
+  void task.finally(() => {
+    if (inflight === task) inflight = null;
+  });
+  return task;
 }
 
 /** Starts the download the person just confirmed: the lock-hash of the offer they saw, nothing else. */
-export async function startGraphifyInstall(lockHash: string): Promise<void> {
+export async function startGraphifyInstall(lockHash: string, opts: { force?: boolean } = {}): Promise<void> {
+  // The epoch moves before the POST is sent: a GET already in flight must not publish its older answer
+  // over the `installing` state this call is about to produce.
+  mutationEpoch += 1;
   clearDeclined();
-  accept(await installComponent("graphify", lockHash));
+  // The third argument is passed only for a repair: existing callers assert the two-argument call.
+  accept(await (opts.force === true ? installComponent("graphify", lockHash, true) : installComponent("graphify", lockHash)));
 }
 
 export async function cancelGraphifyInstall(): Promise<void> {
+  mutationEpoch += 1;
   accept(await cancelComponentInstall("graphify"));
 }
 
 export async function saveGraphifySettings(patch: { pythonMirror?: string | null; pypiBase?: string | null; offline?: boolean }): Promise<void> {
+  mutationEpoch += 1;
   accept(await updateComponentSettings("graphify", patch));
 }
 
@@ -146,6 +169,7 @@ export function formatMiB(bytes: number): string {
 export function resetComponentsForTests(): void {
   snapshot = EMPTY;
   inflight = null;
+  mutationEpoch = 0;
   if (pollTimer) clearTimeout(pollTimer);
   pollTimer = null;
 }

@@ -9,7 +9,7 @@ const COMPONENT = z.enum(["graphify"]);
 const LOCK_HASH = z.string().regex(/^[a-f0-9]{64}$/);
 
 /** `confirmed` must be the literal true: the page sends it only after the person accepted the shown size. */
-const InstallBody = z.object({ confirmed: z.literal(true), lockHash: LOCK_HASH }).strict();
+const InstallBody = z.object({ confirmed: z.literal(true), lockHash: LOCK_HASH, force: z.boolean().optional() }).strict();
 const SettingsBody = z
   .object({
     pythonMirror: z.string().max(2048).nullable().optional(),
@@ -62,7 +62,7 @@ export function componentRoutes(deps: { daemon: DaemonRpc }): Hono {
     if (!name.success) return c.json({ error: "unknown component" }, 404);
     const body = await json(c, InstallBody);
     if (!body.ok) return body.response;
-    return pass(c, "components.install", { name: name.data, confirmed: true, lockHash: body.data.lockHash });
+    return pass(c, "components.install", { name: name.data, confirmed: true, lockHash: body.data.lockHash, ...(body.data.force === true ? { force: true } : {}) });
   });
 
   app.post("/components/:name/cancel", async (c) => {

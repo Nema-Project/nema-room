@@ -1,5 +1,5 @@
 // The daemon's component RPC with a fixture lock and a fake installer: no download, no real ~/.nema.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -7,6 +7,7 @@ import { detectAgentClis } from "../../src/agentClis.js";
 import { componentProcessEnv, registerComponentHandlers, type ComponentRpcOptions, type ComponentView } from "../../src/components/rpc.js";
 import type { InstallOptions } from "../../src/components/install.js";
 import { lockHash } from "../../src/components/lock.js";
+import { launcherName } from "../../src/components/store.js";
 import type { ComponentStatus } from "../../src/components/types.js";
 import { RpcRouter } from "../../src/daemon/rpc.js";
 import { fakeComponent, writeLock, type FakeComponent } from "./fixtures.js";
@@ -118,6 +119,26 @@ describe("components.install", () => {
     gate.resolve(notInstalled());
     await vi.waitFor(async () => expect((await status()).status.state).toBe("not-installed"));
     expect(install).toHaveBeenCalledTimes(1);
+  });
+
+  test("force reinstalls an installed component; without it the install is a no-op", async () => {
+    // Seed the store as installed: the active pointer's launcher file is what the status reads.
+    const hash = lockHash(component.target);
+    const dir = path.join(runtimeRoot, "graphify", hash);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, launcherName(process.platform)), "#!/bin/sh\nexit 0\n");
+    writeFileSync(path.join(runtimeRoot, "graphify", "current.json"), JSON.stringify({ active: hash }));
+    expect((await setup().status()).status.state).toBe("installed");
+
+    const install = vi.fn(async (_name: string, _o: InstallOptions) => notInstalled());
+    const { call } = setup({ install });
+    const current = (await call("components.install", { name: "graphify", confirmed: true, lockHash: hash })) as ComponentView;
+    expect(current.status.state).toBe("installed");
+    expect(install).not.toHaveBeenCalled();
+
+    await call("components.install", { name: "graphify", confirmed: true, lockHash: hash, force: true });
+    await vi.waitFor(() => expect(install).toHaveBeenCalledTimes(1));
+    expect(install.mock.calls[0]![1].force).toBe(true);
   });
 
   test("cancel aborts the running install", async () => {

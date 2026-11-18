@@ -69,8 +69,8 @@ export function statusText(status: ComponentStatus, t: T): string {
   }
 }
 
-/** Retry and import are the exits after a failure; install is the way in otherwise. Platform and lock problems have none. */
-function actionsFor(view: ComponentView): { install: boolean; retry: boolean; import: boolean; cancel: boolean } {
+/** Retry and import are the exits after a failure; install is the way in otherwise. Platform and lock problems have none. Repair re-downloads the installed version over itself. */
+function actionsFor(view: ComponentView): { install: boolean; retry: boolean; import: boolean; cancel: boolean; repair: boolean } {
   const status = view.status;
   const canDownload = view.offer !== null && !(status.state === "failed" && (status.reason === "offline" || status.reason === "unsupported-platform" || status.reason === "lock-unreadable"));
   return {
@@ -78,6 +78,7 @@ function actionsFor(view: ComponentView): { install: boolean; retry: boolean; im
     retry: canDownload && status.state === "failed",
     import: status.state === "failed" ? status.reason !== "unsupported-platform" && status.reason !== "lock-unreadable" : status.state !== "installed" && status.state !== "installing",
     cancel: status.state === "installing",
+    repair: canDownload && status.state === "installed",
   };
 }
 
@@ -105,8 +106,10 @@ function FailureDetail({ status }: { status: Extract<ComponentStatus, { state: "
 /**
  * The offer, then the download it starts. Opens on the confirm step unless an install is already running.
  * "Not now" remembers the decline for this lock, so the same version is not offered again unasked.
+ * With `force` the dialog is a repair: it re-downloads the installed version over itself, and declining
+ * it remembers nothing (the component is already installed; there is no offer to suppress).
  */
-export function GraphifyInstallDialog({ onClose }: { onClose: () => void }) {
+export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () => void; force?: boolean }) {
   const t = useT();
   const titleId = useId();
   const { graphify, error } = useComponents();
@@ -136,7 +139,7 @@ export function GraphifyInstallDialog({ onClose }: { onClose: () => void }) {
     setBusy(true);
     setRequestError(null);
     try {
-      await startGraphifyInstall(offer.lockHash);
+      await startGraphifyInstall(offer.lockHash, { force });
       setStep("follow");
     } catch (err) {
       setRequestError(err instanceof Error ? err.message : String(err));
@@ -146,7 +149,7 @@ export function GraphifyInstallDialog({ onClose }: { onClose: () => void }) {
   }
 
   function decline() {
-    if (offer) rememberDeclined(offer.lockHash);
+    if (offer && !force) rememberDeclined(offer.lockHash);
     onClose();
   }
 
@@ -167,8 +170,8 @@ export function GraphifyInstallDialog({ onClose }: { onClose: () => void }) {
   } else if (step === "confirm" && status?.state !== "installing") {
     body = offer ? (
       <>
-        <h2 id={titleId}>{t("components.offer.title")}</h2>
-        <p>{t("components.offer.body")}</p>
+        <h2 id={titleId}>{t(force ? "components.offer.reinstallTitle" : "components.offer.title")}</h2>
+        <p>{t(force ? "components.offer.reinstallBody" : "components.offer.body")}</p>
         <dl className="component-offer-facts">
           <dt>{t("components.offer.component")}</dt>
           <dd>{t("components.graphify.name")}</dd>
@@ -262,7 +265,7 @@ export function GraphifyInstallDialog({ onClose }: { onClose: () => void }) {
 }
 
 /** Status line plus its way in or out, shared by the graph entry and the settings section. */
-function GraphifyStatusRow({ view, onOpen, compact }: { view: ComponentView; onOpen: () => void; compact?: boolean }) {
+function GraphifyStatusRow({ view, onOpen, compact }: { view: ComponentView; onOpen: (force: boolean) => void; compact?: boolean }) {
   const t = useT();
   const [showImport, setShowImport] = useState(false);
   const actions = actionsFor(view);
@@ -275,9 +278,10 @@ function GraphifyStatusRow({ view, onOpen, compact }: { view: ComponentView; onO
       {status.state === "failed" && !compact && <FailureDetail status={status} />}
       {status.state === "installing" && <progress value={status.progress.downloadedBytes} max={Math.max(status.progress.totalBytes, 1)} aria-label={t("components.progress.title")} />}
       <div className="component-actions">
-        {actions.install && <button type="button" className="settings-action" onClick={onOpen}>{t("components.install")}</button>}
-        {actions.retry && <button type="button" className="settings-action" onClick={onOpen}>{t("components.retry")}</button>}
-        {actions.cancel && <button type="button" className="settings-action" onClick={onOpen}>{t("components.showProgress")}</button>}
+        {actions.install && <button type="button" className="settings-action" onClick={() => onOpen(false)}>{t("components.install")}</button>}
+        {actions.retry && <button type="button" className="settings-action" onClick={() => onOpen(false)}>{t("components.retry")}</button>}
+        {actions.cancel && <button type="button" className="settings-action" onClick={() => onOpen(false)}>{t("components.showProgress")}</button>}
+        {actions.repair && <button type="button" className="settings-action" onClick={() => onOpen(true)}>{t("components.reinstall")}</button>}
         {actions.import && <button type="button" className="settings-action" onClick={() => setShowImport((open) => !open)} aria-expanded={showImport}>{t("components.import")}</button>}
       </div>
       {showImport && <ImportHelp />}
@@ -292,7 +296,7 @@ function GraphifyStatusRow({ view, onOpen, compact }: { view: ComponentView; onO
 export function GraphifyEntry({ offerSignal = 0 }: { offerSignal?: number }) {
   const t = useT();
   const { graphify, error, loaded } = useComponents();
-  const [open, setOpen] = useState(false);
+  const [dialog, setDialog] = useState<null | "install" | "repair">(null);
   const handled = useRef(offerSignal);
 
   useEffect(() => {
@@ -300,7 +304,7 @@ export function GraphifyEntry({ offerSignal = 0 }: { offerSignal?: number }) {
     handled.current = offerSignal;
     let live = true;
     void refreshComponents().then((next) => {
-      if (live && shouldOfferOnGraphAction(next.graphify)) setOpen(true);
+      if (live && shouldOfferOnGraphAction(next.graphify)) setDialog("install");
     });
     return () => {
       live = false;
@@ -313,11 +317,11 @@ export function GraphifyEntry({ offerSignal = 0 }: { offerSignal?: number }) {
     <div className="graph-entry">
       <h3 className="label">{t("components.graphEntry")}</h3>
       {graphify ? (
-        <GraphifyStatusRow view={graphify} onOpen={() => setOpen(true)} compact />
+        <GraphifyStatusRow view={graphify} onOpen={(force) => setDialog(force ? "repair" : "install")} compact />
       ) : (
         <p className="kmeta">{error ? t("components.state.unknown", { error }) : t("components.state.checking")}</p>
       )}
-      {open && <GraphifyInstallDialog onClose={() => setOpen(false)} />}
+      {dialog && <GraphifyInstallDialog force={dialog === "repair"} onClose={() => setDialog(null)} />}
     </div>
   );
 }
@@ -432,7 +436,7 @@ function AgentClis() {
 export function ComponentsSettings() {
   const t = useT();
   const { graphify, error, loaded } = useComponents();
-  const [open, setOpen] = useState(false);
+  const [dialog, setDialog] = useState<null | "install" | "repair">(null);
 
   return (
     <section className="app-settings-section components-settings" aria-labelledby="app-settings-components-title">
@@ -441,7 +445,7 @@ export function ComponentsSettings() {
       <p className="help">{t("components.graphify.purpose")}</p>
       {graphify ? (
         <>
-          <GraphifyStatusRow view={graphify} onOpen={() => setOpen(true)} />
+          <GraphifyStatusRow view={graphify} onOpen={(force) => setDialog(force ? "repair" : "install")} />
           {graphify.offer && <p className="kmeta">{t("components.offer.location")}: <span className="kid">{`${graphify.offer.location.replace(/[\\/]+$/, "")}/`}</span></p>}
           {graphify.offerError && <p className="kmeta">{t("components.offerUnavailable", { error: graphify.offerError })}</p>}
           <MirrorSettings key={`${graphify.settings.pythonMirror.config ?? ""}|${graphify.settings.pypiBase.config ?? ""}`} view={graphify} />
@@ -452,7 +456,7 @@ export function ComponentsSettings() {
         !loaded && <p className="kmeta">{t("common.loading")}</p>
       )}
       <AgentClis />
-      {open && <GraphifyInstallDialog onClose={() => setOpen(false)} />}
+      {dialog && <GraphifyInstallDialog force={dialog === "repair"} onClose={() => setDialog(null)} />}
     </section>
   );
 }

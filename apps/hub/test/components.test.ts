@@ -56,6 +56,18 @@ describe("component routes", () => {
     expect(calls).toEqual([{ method: "components.status", params: {}, timeoutMs: COMPONENT_RPC_TIMEOUT_MS }]);
   });
 
+  test("a repair install forwards force: true to the daemon; a plain install sends no force flag", async () => {
+    answer = async () => view("installed");
+    const plain = await req(app, "POST", "/api/components/graphify/install", { confirmed: true, lockHash: LOCK_HASH });
+    expect(plain.status).toBe(200);
+    expect(calls).toEqual([{ method: "components.install", params: { name: "graphify", confirmed: true, lockHash: LOCK_HASH }, timeoutMs: COMPONENT_RPC_TIMEOUT_MS }]);
+
+    calls.length = 0;
+    const repair = await req(app, "POST", "/api/components/graphify/install", { confirmed: true, lockHash: LOCK_HASH, force: true });
+    expect(repair.status).toBe(200);
+    expect(calls).toEqual([{ method: "components.install", params: { name: "graphify", confirmed: true, lockHash: LOCK_HASH, force: true }, timeoutMs: COMPONENT_RPC_TIMEOUT_MS }]);
+  });
+
   test("an install reaches the daemon only with confirmed: true and the offered lock-hash", async () => {
     expect((await req(app, "POST", "/api/components/graphify/install", {})).status).toBe(400);
     expect((await req(app, "POST", "/api/components/graphify/install", { confirmed: false, lockHash: LOCK_HASH })).status).toBe(400);

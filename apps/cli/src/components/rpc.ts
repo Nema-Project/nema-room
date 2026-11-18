@@ -158,7 +158,10 @@ export function registerComponentHandlers(rpc: RpcRouter, o: ComponentRpcOptions
     if ((params as { confirmed?: unknown } | null)?.confirmed !== true) throw new Error("component install needs the user's confirmation");
     if (running.has(name)) return view(name);
     const current = view(name);
-    if (current.status.state === "installed" || current.status.state === "installing") return current;
+    // An installed component stays put unless the caller asked for a repair: `force` re-downloads, re-verifies
+    // and re-activates the same version. An install already running is never started twice.
+    const force = (params as { force?: unknown } | null)?.force === true;
+    if (current.status.state === "installing" || (current.status.state === "installed" && !force)) return current;
     if (!current.offer) throw new Error(current.offerError ?? (current.status.state === "failed" ? current.status.detail : "component cannot be installed here"));
     // The yes was for one lock's download; a different one (the program was upgraded meanwhile) is asked again.
     const expected = (params as { lockHash?: unknown }).lockHash;
@@ -166,7 +169,7 @@ export function registerComponentHandlers(rpc: RpcRouter, o: ComponentRpcOptions
     const controller = new AbortController();
     const install = o.install ?? installComponent;
     const done = Promise.resolve()
-      .then(() => install(name, { env: componentEnv(config()), signal: controller.signal }))
+      .then(() => install(name, { env: componentEnv(config()), signal: controller.signal, force }))
       .catch((error) => {
         // The installer records named failures itself; this is what slipped past it (an unreadable lock, a bad mirror).
         console.error(`[nema] component install ${name} failed`, error);
