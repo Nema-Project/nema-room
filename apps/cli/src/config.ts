@@ -27,6 +27,33 @@ export function normalizeByokBaseUrl(raw: string): string {
   return raw.endsWith("/") ? raw.slice(0, -1) : raw;
 }
 
+const MIRROR_URL_ERROR = "镜像地址只允许 http(s) URL，且不能带账号、查询串或片段";
+
+/** A component mirror base: an http(s) URL without credentials, query or fragment; trailing slashes are dropped. */
+export function normalizeMirrorUrl(raw: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(MIRROR_URL_ERROR);
+  }
+  if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username !== "" || url.password !== "" || raw.includes("?") || raw.includes("#") || raw !== raw.trim()) {
+    throw new Error(MIRROR_URL_ERROR);
+  }
+  return raw.replace(/\/+$/, "");
+}
+
+const MirrorUrl = z.string().transform(normalizeMirrorUrl);
+
+/**
+ * Optional components. `offline: true` forbids every component download (as NEMA_GRAPHIFY_OFFLINE=1 does).
+ * `pythonMirror` / `pypiBase` are the settings-page form of NEMA_GRAPHIFY_PYTHON_MIRROR / NEMA_GRAPHIFY_PYPI_BASE;
+ * a set environment variable wins over them.
+ */
+export const ComponentsConfigSchema = z
+  .object({ offline: z.boolean().optional(), pythonMirror: MirrorUrl.optional(), pypiBase: MirrorUrl.optional() })
+  .strict();
+
 const ConfigSchema = z
   .object({
     adapter: z.enum(["codex-direct", "claude-code"]),
@@ -35,8 +62,7 @@ const ConfigSchema = z
     authMode: z.enum(["siwc", "compat", "byok"]),
     proxyEnv: z.enum(["off", "forward"]).optional(),
     byokBaseUrl: z.string().transform(normalizeByokBaseUrl).optional(),
-    /** Optional components. `offline: true` forbids every component download (as NEMA_GRAPHIFY_OFFLINE=1 does). */
-    components: z.object({ offline: z.boolean().optional() }).strict().optional(),
+    components: ComponentsConfigSchema.optional(),
   })
   .strict();
 
