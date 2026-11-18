@@ -45,14 +45,43 @@ export function launcherName(platform: NodeJS.Platform): string {
 const REPLACED_DIR = /^([a-f0-9]{64})\.replaced-[a-f0-9]+$/;
 
 /**
+ * Whether the component directory's install lock is held by a live installer, in this
+ * process or another. The lock is held for the whole install (see installFromSource), so
+ * a live owner means an installer may be between the two moves of `activate`.
+ */
+function installLockHeldByLiveOwner(root: string): boolean {
+  let content: string;
+  try {
+    content = readFileSync(path.join(root, ".install.lock"), "utf8");
+  } catch {
+    return false; // No lock file: no installer is running.
+  }
+  const pid = Number(content.split(":")[0]?.trim());
+  if (!Number.isInteger(pid) || pid <= 0) return true; // Unparseable: cannot prove no installer is running.
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (probe) {
+    return (probe as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
  * Undo a replacement cut off midway (a crash between moving the old directory aside and
  * publishing its replacement): a backup whose `<lock-hash>` is gone goes back into place;
  * a backup beside a present `<lock-hash>` is stale (that directory is the self-checked
  * replacement) and is removed. Best effort and synchronous, so every reader — status,
  * bin resolution, install — heals the store before answering instead of reporting the
  * component missing until the next install happens to run.
+ *
+ * Recovery is skipped while a live installer holds the install lock: the installer owns
+ * the backups between its two moves, and a reader restoring or deleting one would break
+ * its rollback. A lock whose owner is dead means the installer is gone, so recovery
+ * proceeds; a missing or dead lock is the crash case this exists for.
  */
 export function recoverReplacementsSync(root: string): void {
+  if (installLockHeldByLiveOwner(root)) return;
   let names: string[];
   try {
     names = readdirSync(root);

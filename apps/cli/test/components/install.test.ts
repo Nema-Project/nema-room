@@ -1,14 +1,14 @@
 // Installer tests against a local fake upstream reached only through the mirror variables. The fake
 // python is a shell script, so the suite runs on POSIX; Windows uses the shipped launcher binary.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { activate, acquireInstallLock, installComponent, verifyArchives, type InstallOptions } from "../../src/components/install.js";
 import { lockHash } from "../../src/components/lock.js";
-import { componentBin, componentStatus, readPointer, type ComponentEnv } from "../../src/components/store.js";
+import { componentBin, componentStatus, readPointer, writePointer, type ComponentEnv } from "../../src/components/store.js";
 import type { ComponentStatus, InstallProgress } from "../../src/components/types.js";
 import { fakeComponent, fakeSource, writeLock, type FakeComponent, type FakeSource } from "./fixtures.js";
 
@@ -31,6 +31,14 @@ afterEach(async () => {
 
 const graphifyRoot = () => path.join(runtimeRoot, "graphify");
 const ran = () => readFileSync(execLog, "utf8").split("\n").filter(Boolean);
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
 
 async function serve(...components: FakeComponent[]): Promise<FakeSource> {
   const source = await fakeSource(...components);
@@ -216,6 +224,80 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(readdirSync(graphifyRoot()).filter((name) => name.includes(".replaced-"))).toEqual([]);
   });
 
+  test("readers do not restore the backup while activation is between its two moves", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    expect((await install(env)).state).toBe("installed");
+    const hash = lockHash(component.target);
+    // Tamper the installed tree so the next install replaces the referenced version.
+    writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.11"), "tampered\n");
+    const atFirstMove = deferred();
+    const releaseMove = deferred();
+    const reinstall = install(env, {
+      force: true,
+      hooks: {
+        rename: async (from, to) => {
+          await rename(from, to);
+          if (from === path.join(graphifyRoot(), hash)) {
+            // Pause after the first move: the active directory is aside as a backup and
+            // the replacement is not placed yet.
+            atFirstMove.resolve();
+            await releaseMove.promise;
+          }
+        },
+      },
+    });
+    await atFirstMove.promise;
+    // The active directory is aside as a backup and the replacement is not placed yet.
+    // A status/bin read must leave the backup alone for activation's rollback.
+    const backup = readdirSync(graphifyRoot()).find((name) => name.includes(".replaced-"))!;
+    expect(backup).toBeDefined();
+    expect((await componentStatus(env)).state).toBe("installing");
+    expect(componentBin("graphify", env)).toBeNull();
+    expect(existsSync(path.join(graphifyRoot(), backup))).toBe(true);
+    expect(existsSync(path.join(graphifyRoot(), hash))).toBe(false);
+    releaseMove.resolve();
+    expect((await reinstall).state).toBe("installed");
+    expect(readdirSync(graphifyRoot()).filter((name) => name.includes(".replaced-"))).toEqual([]);
+  });
+
+  test("readers do not delete the backup while staging is placed but the pointer is unwritten", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    expect((await install(env)).state).toBe("installed");
+    const hash = lockHash(component.target);
+    writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.11"), "tampered\n");
+    const atPointer = deferred();
+    const releasePointer = deferred();
+    let paused = false;
+    const reinstall = install(env, {
+      force: true,
+      hooks: {
+        writePointer: async (r, p) => {
+          if (!paused) {
+            paused = true;
+            atPointer.resolve();
+            await releasePointer.promise;
+          }
+          await writePointer(r, p);
+        },
+      },
+    });
+    await atPointer.promise;
+    // Staging is already at <hash> and the backup still exists; the pointer still names
+    // the old directory. A reader must not prune the backup activation may need to roll back to.
+    const backup = readdirSync(graphifyRoot()).find((name) => name.includes(".replaced-"))!;
+    expect(backup).toBeDefined();
+    expect(existsSync(path.join(graphifyRoot(), hash))).toBe(true);
+    expect((await componentStatus(env)).state).toBe("installing");
+    expect(existsSync(path.join(graphifyRoot(), backup))).toBe(true);
+    releasePointer.resolve();
+    expect((await reinstall).state).toBe("installed");
+    expect(readdirSync(graphifyRoot()).filter((name) => name.includes(".replaced-"))).toEqual([]);
+  });
+
   test("a damaged previous version is replaced when the app goes back to its lock", async () => {
     const first = fakeComponent(execLog, "one");
     const second = fakeComponent(execLog, "two");
@@ -345,22 +427,14 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     expect(componentBin("graphify", env)).toBe(path.join(graphifyRoot(), hash, "graphify"));
   });
 
-  test("a fresh empty lock owner is another installer starting, never stale", async () => {
+  test("a fresh empty lock owner is a legacy leftover and is taken over, not treated as live", async () => {
     mkdirSync(graphifyRoot(), { recursive: true });
     const file = path.join(graphifyRoot(), ".install.lock");
+    // Current code never creates an empty record (the owner is linked complete), so an
+    // empty file can only be a leftover: the atomic takeover protocol claims it.
     writeFileSync(file, "");
-    await expect(acquireInstallLock(graphifyRoot())).rejects.toThrow(/already running/);
-    expect(readFileSync(file, "utf8")).toBe("");
-  });
-
-  test("an abandoned empty lock owner is taken over once it is older than the startup grace", async () => {
-    mkdirSync(graphifyRoot(), { recursive: true });
-    const file = path.join(graphifyRoot(), ".install.lock");
-    writeFileSync(file, "");
-    const longAgo = new Date(Date.now() - 120_000);
-    utimesSync(file, longAgo, longAgo);
     const release = await acquireInstallLock(graphifyRoot());
-    expect(readFileSync(file, "utf8")).toBe(String(process.pid));
+    expect(readFileSync(file, "utf8")).toMatch(new RegExp(`^${process.pid}:`));
     await release();
     expect(existsSync(file)).toBe(false);
   });
@@ -376,5 +450,44 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     const release = await acquireInstallLock(graphifyRoot());
     await release();
     expect(existsSync(file)).toBe(false);
+  });
+
+  test("releasing a lock never removes a successor's lock", async () => {
+    mkdirSync(graphifyRoot(), { recursive: true });
+    const file = path.join(graphifyRoot(), ".install.lock");
+    const release = await acquireInstallLock(graphifyRoot());
+    // A successor took the lock over (the holder's record was replaced out from under it).
+    writeFileSync(file, `${process.pid}:successor-token`);
+    await release();
+    expect(readFileSync(file, "utf8")).toBe(`${process.pid}:successor-token`);
+  });
+
+  test("two contenders racing for the lock leave exactly one holder", async () => {
+    mkdirSync(graphifyRoot(), { recursive: true });
+    const results = await Promise.allSettled([acquireInstallLock(graphifyRoot()), acquireInstallLock(graphifyRoot())]);
+    const winners = results.filter((r) => r.status === "fulfilled") as PromiseFulfilledResult<() => Promise<void>>[];
+    const losers = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+    expect(winners).toHaveLength(1);
+    expect(losers).toHaveLength(1);
+    expect((losers[0]?.reason as Error).message).toMatch(/already running/);
+    await winners[0]!.value();
+    expect(existsSync(path.join(graphifyRoot(), ".install.lock"))).toBe(false);
+  });
+
+  test("two takers racing a stale lock leave exactly one holder", async () => {
+    for (let round = 0; round < 5; round++) {
+      mkdirSync(graphifyRoot(), { recursive: true });
+      const file = path.join(graphifyRoot(), ".install.lock");
+      writeFileSync(file, String(2 ** 22 + 123_456));
+      const results = await Promise.allSettled([acquireInstallLock(graphifyRoot()), acquireInstallLock(graphifyRoot())]);
+      const winners = results.filter((r) => r.status === "fulfilled") as PromiseFulfilledResult<() => Promise<void>>[];
+      const losers = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+      expect(winners).toHaveLength(1);
+      expect(losers).toHaveLength(1);
+      expect((losers[0]?.reason as Error).message).toMatch(/already running/);
+      await winners[0]!.value();
+      expect(existsSync(file)).toBe(false);
+      rmSync(graphifyRoot(), { recursive: true, force: true });
+    }
   });
 });

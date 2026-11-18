@@ -8,7 +8,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, statfs, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, link, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, statfs, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { windowsRuntimeEnv } from "../platform.js";
@@ -458,11 +458,24 @@ async function checkDiskSpace(root: string, downloadBytes: number, hooks: Instal
 }
 
 /**
- * How long an empty or unparseable lock owner record is treated as an installer that is
- * still starting up. Creating the file and writing the PID are two steps, so a contender
- * can observe the gap; a record younger than this is never judged abandoned.
+ * Cross-process install lock, held for the whole install. Ownership is a token of the form
+ * `<pid>:<random>`, published atomically: the record is written to a unique temp file and
+ * then `link(2)`ed onto the lock path, so a reader never observes a half-written record
+ * (the old create-then-write gap is what let a contender delete a live lock).
+ *
+ * A stale lock is taken over only through an atomic rename: exactly one contender wins
+ * `rename(lock, lock.stale-*)`; the winner re-reads the renamed record and claims only if
+ * it is still the record it judged stale — a record that changed under it is restored and
+ * left alone. The release removes the lock only when it still carries the holder's token,
+ * so a successor's lock is never deleted. All of this holds among current-code installers;
+ * a pre-change binary caught in its own create/write window cannot participate in the
+ * protocol and is the only residual race.
  */
-const LOCK_OWNER_GRACE_MS = 10_000;
+const LOCK_FILE = ".install.lock";
+
+function claimToken(): string {
+  return `${process.pid}:${randomBytes(6).toString("hex")}`;
+}
 
 type LockOwner = { content: string; ino: number; mtimeMs: number };
 
@@ -475,6 +488,11 @@ async function readLockOwner(file: string): Promise<LockOwner | null> {
   }
 }
 
+function ownerPid(content: string): number | null {
+  const pid = Number(content.split(":")[0]?.trim());
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
 function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -484,35 +502,69 @@ function pidAlive(pid: number): boolean {
   }
 }
 
+/** Publish `token` as the lock owner. Returns true when this call won the atomic link. */
+async function linkClaim(file: string, token: string): Promise<boolean> {
+  const temp = `${file}.claim-${process.pid}-${randomBytes(6).toString("hex")}`;
+  await writeFile(temp, token);
+  try {
+    await link(temp, file);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    return false;
+  } finally {
+    await rm(temp, { force: true });
+  }
+}
+
 /**
- * One install at a time per component directory, across processes. A lock left by a dead
- * process is taken over, but only after re-reading the owner record and finding it
- * unchanged, so a fresh lock created in between is never removed. An empty or
- * unparseable record counts as "an installer is starting" while it is fresh, and as
- * abandoned only once it is older than the grace window. Exported for tests.
+ * Move the judged-stale lock aside atomically. Returns the aside path when the moved record
+ * is still the one judged stale; otherwise restores it and returns null (a live installer
+ * owns it after all, or another contender won the rename).
  */
+async function takeOverStaleLock(file: string, judged: LockOwner): Promise<string | null> {
+  const stale = `${file}.stale-${process.pid}-${randomBytes(6).toString("hex")}`;
+  try {
+    await rename(file, stale);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  const content = await readFile(stale, "utf8").catch(() => null);
+  if (content === null || content !== judged.content) {
+    await rename(stale, file).catch(() => {});
+    return null;
+  }
+  return stale;
+}
+
+/** One install at a time per component directory, across processes. Exported for tests. */
 export async function acquireInstallLock(root: string): Promise<() => Promise<void>> {
-  const file = path.join(root, ".install.lock");
+  const file = path.join(root, LOCK_FILE);
+  const token = claimToken();
+  const release = async (): Promise<void> => {
+    const current = await readFile(file, "utf8").catch(() => null);
+    if (current === token) await rm(file, { force: true });
+  };
   for (let attempt = 0; attempt < 4; attempt++) {
-    try {
-      await writeFile(file, String(process.pid), { flag: "wx" });
-      return () => rm(file, { force: true });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const owner = await readLockOwner(file);
-      if (!owner) continue; // Vanished between the create attempt and the read; retry the create.
-      const pid = Number(owner.content.trim());
-      if (Number.isInteger(pid) && pid > 0) {
-        if (pid === process.pid || pidAlive(pid)) throw new Error("Another Graphify install is already running");
-      } else if (Date.now() - owner.mtimeMs < LOCK_OWNER_GRACE_MS) {
-        throw new Error("Another Graphify install is already running");
-      }
-      // Stale or abandoned: remove it only if it is still exactly the record judged above.
-      const again = await readLockOwner(file);
-      if (again && again.ino === owner.ino && again.content === owner.content && again.mtimeMs === owner.mtimeMs) {
-        await rm(file, { force: true });
-      }
+    if (await linkClaim(file, token)) return release;
+    const owner = await readLockOwner(file);
+    if (!owner) continue; // Vanished between the claim attempt and the read; retry the claim.
+    const pid = ownerPid(owner.content);
+    if (pid !== null && (pid === process.pid || pidAlive(pid))) {
+      throw new Error("Another Graphify install is already running");
     }
+    // Dead owner, or a legacy record with no live writer (current code never writes one):
+    // take it over through the atomic rename protocol, never by remove-then-create.
+    const stale = await takeOverStaleLock(file, owner);
+    if (!stale) continue; // Lost the rename race, or the record revived; re-loop and re-judge.
+    if (await linkClaim(file, token)) {
+      await rm(stale, { force: true });
+      return release;
+    }
+    // A fresh installer claimed the path in the gap; drop the dead record we moved aside.
+    await rm(stale, { force: true });
+    throw new Error("Another Graphify install is already running");
   }
   throw new Error("Could not take the component install lock");
 }
@@ -555,6 +607,9 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
     if (!(await o.confirm(offer))) return before;
   }
   await mkdir(root, { recursive: true });
+  // Recovery runs before the lock is taken: once this install holds the lock, readers skip
+  // recovery (see recoverReplacementsSync), and so would this call.
+  recoverReplacementsSync(root);
   const release = await acquireInstallLock(root);
   const progress: InstallProgress = { phase: "download", downloadedBytes: 0, totalBytes, file: null };
   const emit = (update: Partial<InstallProgress> = {}) => {
@@ -565,7 +620,6 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
   const staging = path.join(root, `${lockHash}.staging`);
   try {
     emit();
-    recoverReplacementsSync(root);
     await rm(staging, { recursive: true, force: true });
     await checkDiskSpace(root, totalBytes, hooks);
     const archivesDir = path.join(staging, ".archives");
