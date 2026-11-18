@@ -167,6 +167,32 @@ describe.skipIf(process.platform === "win32")("install", () => {
     expect(readPointer(store()).active).toBe(hash);
   });
 
+  test("cancelling a reinstall reports the cancel, not the still-installed copy", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const h = harness(component, { env: source.env() });
+    expect(await h.run("install", "graphify", "--yes")).toBe(0);
+    const hash = lockHash(component.target);
+
+    let interrupt: (() => void) | undefined;
+    const cancelling = harness(component, {
+      env: source.env(),
+      onInterrupt: (cb) => {
+        interrupt = cb;
+        return () => {};
+      },
+      // The installer's contract after a cancelled repair: no failure record; it resolves with the
+      // status from before — the old copy, still installed. The command must not call that a success.
+      install: async () => {
+        interrupt?.();
+        return { state: "installed", name: "graphify", lockHash: hash, version: { graphifyy: "0.9.95", python: "3.11.18" }, path: path.join(store(), hash), launcher: path.join(store(), hash, "graphify") } as const;
+      },
+    });
+    expect(await cancelling.run("install", "graphify", "--yes", "--force")).toBe(130);
+    expect(cancelling.errors.join("\n")).toContain("Cancelled");
+    expect(cancelling.lines.join("\n")).not.toContain("is installed");
+  });
+
   test("an interactive yes installs; a no or a closed stdin downloads nothing", async () => {
     const component = fakeComponent(execLog);
     const source = await serve(component);

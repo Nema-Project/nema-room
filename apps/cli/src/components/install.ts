@@ -23,6 +23,7 @@ import {
   isOffline,
   launcherName,
   LOCK_HASH,
+  OFFLINE_DETAIL,
   readPointer,
   recoverReplacementsSync,
   setInstalling,
@@ -643,7 +644,17 @@ function prepare(name: string, env: ComponentEnv, allowOffline: boolean): Prepar
 export async function installFromSource(name: string, source: ArchiveSource, o: InstallOptions & { allowOffline?: boolean } = {}): Promise<ComponentStatus> {
   const env = o.env ?? {};
   const prepared = prepare(name, env, o.allowOffline === true);
-  if (!("root" in prepared)) return prepared;
+  if (!("root" in prepared)) {
+    // Offline with a version installed, prepare answers the installed status: a plain install has
+    // nothing to do, but a forced reinstall was asked to download and could not. Report that attempt
+    // — and record it, so the installed status carries it — instead of reporting the old copy.
+    if (o.force === true && prepared.state === "installed" && isOffline(env)) {
+      const attemptFailure = { reason: "offline" as const, detail: OFFLINE_DETAIL, at: new Date().toISOString() };
+      await writeFailure(componentRoot(prepared.name, env), { lockHash: prepared.lockHash, ...attemptFailure });
+      return { state: "failed", name: prepared.name, lockHash: prepared.lockHash, ...attemptFailure };
+    }
+    return prepared;
+  }
   const { root, target, lockHash, totalBytes, platform } = prepared;
   const hooks = o.hooks ?? {};
   const before = componentStatusSync(prepared.name, env);

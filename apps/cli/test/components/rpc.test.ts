@@ -5,12 +5,12 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { detectAgentClis } from "../../src/agentClis.js";
 import { componentProcessEnv, registerComponentHandlers, type ComponentRpcOptions, type ComponentView } from "../../src/components/rpc.js";
-import type { InstallOptions } from "../../src/components/install.js";
+import { installComponent, type InstallOptions } from "../../src/components/install.js";
 import { lockHash } from "../../src/components/lock.js";
 import { launcherName } from "../../src/components/store.js";
 import type { ComponentStatus } from "../../src/components/types.js";
 import { RpcRouter } from "../../src/daemon/rpc.js";
-import { fakeComponent, writeLock, type FakeComponent } from "./fixtures.js";
+import { fakeComponent, fakeSource, writeLock, type FakeComponent } from "./fixtures.js";
 
 let root: string;
 let nemaHome: string;
@@ -139,6 +139,25 @@ describe("components.install", () => {
     await call("components.install", { name: "graphify", confirmed: true, lockHash: hash, force: true });
     await vi.waitFor(() => expect(install).toHaveBeenCalledTimes(1));
     expect(install.mock.calls[0]![1].force).toBe(true);
+  });
+
+  test.skipIf(process.platform === "win32")("a forced reinstall while offline lands on the installed status as a failed attempt", async () => {
+    // The real installer against the fake source: seed a real install while online.
+    const source = await fakeSource(component);
+    try {
+      const seeded = await installComponent("graphify", { env: { env: source.env(), runtimeRoot, lockPath, platform } });
+      expect(seeded.state).toBe("installed");
+      const requests = source.requests.length;
+      // Offline now: the repair cannot download, and the status must say so instead of "ready".
+      const { call, status } = setup({ env: { ...source.env(), NEMA_GRAPHIFY_OFFLINE: "1" } });
+      await call("components.install", { name: "graphify", confirmed: true, lockHash: lockHash(component.target), force: true });
+      await vi.waitFor(async () => {
+        expect((await status()).status).toMatchObject({ state: "installed", lastFailure: { reason: "offline" } });
+      });
+      expect(source.requests).toHaveLength(requests);
+    } finally {
+      await source.close();
+    }
   });
 
   test("cancel aborts the running install", async () => {

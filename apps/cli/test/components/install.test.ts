@@ -394,6 +394,23 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(source.requests).toEqual([]);
   });
 
+  test("a forced reinstall while offline reports the attempt, not the installed copy", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    expect(await install(env)).toMatchObject({ state: "installed" });
+    const requests = source.requests.length;
+    const offline = envFor(component, source, { offline: true });
+    // A plain install still has nothing to do; the repair is the one that must not read as done.
+    expect(await install(offline)).toMatchObject({ state: "installed" });
+    const attempt = await install(offline, { force: true });
+    expect(attempt).toMatchObject({ state: "failed", reason: "offline", lockHash: lockHash(component.target) });
+    expect(source.requests).toHaveLength(requests);
+    // The installed status carries the failed attempt, so polling consumers see it too.
+    expect(await componentStatus(offline)).toMatchObject({ state: "installed", lastFailure: { reason: "offline" } });
+    expect(readPointer(graphifyRoot()).active).toBe(lockHash(component.target));
+  });
+
   test("too little disk space stops before the download and names the shortfall", async () => {
     const component = fakeComponent(execLog);
     const source = await serve(component);

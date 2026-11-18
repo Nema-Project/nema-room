@@ -347,6 +347,32 @@ describe("Settings → Components", () => {
     expect(within(dialog).getByRole("button", { name: "Retry" })).toBeTruthy();
     expect(within(dialog).queryByText("Graphify is installed. Graph features are ready.")).toBeNull();
   });
+
+  it("offline mode offers no reinstall for an installed component", async () => {
+    const base = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    answer({ ...base, settings: { ...base.settings, offline: { value: true, source: "env", config: false } } });
+    renderSettings();
+    expect(await screen.findByText("Installed: Graphify 0.9.95 (Python 3.11.18).")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Reinstall" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+  });
+
+  it("cancelling a repair reports the cancel instead of calling the old copy ready", async () => {
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
+    answer(installed);
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
+    vi.mocked(hub.cancelComponentInstall).mockResolvedValue(installed);
+    renderSettings();
+    await userEvent.click(await screen.findByRole("button", { name: "Reinstall" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    expect(hub.installComponent).toHaveBeenCalledWith("graphify", LOCK_HASH, true);
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Cancel download" }));
+    expect(hub.cancelComponentInstall).toHaveBeenCalledWith("graphify");
+    expect(await within(dialog).findByText("The reinstall was cancelled; the installed copy is unchanged.")).toBeTruthy();
+    expect(within(dialog).queryByText("Graphify is installed. Graph features are ready.")).toBeNull();
+  });
 });
 
 describe("component copy", () => {

@@ -49,6 +49,7 @@
   "components.state.checking": "Checking the code graph component…",
   "components.state.installed": "Installed: Graphify {version} (Python {python}).",
   "components.state.repairFailed": "The last reinstall failed: {reason}.",
+  "components.state.repairCancelled": "The reinstall was cancelled; the installed copy is unchanged.",
   "components.state.installing": "Installing Graphify… {done} of {total}",
   "components.state.notInstalled": "Graphify is not installed. Repository indexing and code search need it.",
   "components.state.lockMismatch": "The installed Graphify was made for another version of Nema and is turned off. Install the matching version to use graph features.",

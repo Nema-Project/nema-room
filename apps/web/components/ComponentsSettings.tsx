@@ -71,10 +71,10 @@ export function statusText(status: ComponentStatus, t: T): string {
   }
 }
 
-/** Retry and import are the exits after a failure; install is the way in otherwise. Platform and lock problems have none. Repair re-downloads the installed version over itself. */
+/** Retry and import are the exits after a failure; install is the way in otherwise. Platform and lock problems have none. Repair re-downloads the installed version over itself. With downloads turned off, import is the only way in or out. */
 function actionsFor(view: ComponentView): { install: boolean; retry: boolean; import: boolean; cancel: boolean; repair: boolean } {
   const status = view.status;
-  const canDownload = view.offer !== null && !(status.state === "failed" && (status.reason === "offline" || status.reason === "unsupported-platform" || status.reason === "lock-unreadable"));
+  const canDownload = view.offer !== null && !view.settings.offline.value && !(status.state === "failed" && (status.reason === "offline" || status.reason === "unsupported-platform" || status.reason === "lock-unreadable"));
   return {
     install: canDownload && (status.state === "not-installed" || status.state === "lock-mismatch"),
     retry: canDownload && status.state === "failed",
@@ -119,6 +119,8 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
   const [showImport, setShowImport] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** This dialog cancelled the running attempt: an installed status afterwards is the old copy, not a finished repair. */
+  const [cancelled, setCancelled] = useState(false);
   const firstButton = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -140,6 +142,7 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
     if (!offer) return;
     setBusy(true);
     setRequestError(null);
+    setCancelled(false);
     try {
       // A retry after a failed repair is a repair again, even if this dialog opened as a plain install.
       const repair = force || (status?.state === "installed" && status.lastFailure !== undefined);
@@ -161,6 +164,7 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
     setBusy(true);
     try {
       await cancelGraphifyInstall();
+      setCancelled(true);
     } catch (err) {
       setRequestError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -228,7 +232,15 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
             <p role="alert">{t("components.state.repairFailed", { reason: t(REASON_KEY[status.lastFailure.reason]) })}</p>
             <div className="actions">
               <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
-              {offer && <button type="button" disabled={busy} onClick={() => void confirm()}>{t("components.retry")}</button>}
+              {actionsFor(graphify).repair && <button type="button" disabled={busy} onClick={() => void confirm()}>{t("components.retry")}</button>}
+            </div>
+          </>
+        ) : cancelled ? (
+          <>
+            <p role="status">{t("components.state.repairCancelled")}</p>
+            <div className="actions">
+              <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
+              {actionsFor(graphify).repair && <button type="button" disabled={busy} onClick={() => void confirm()}>{t("components.retry")}</button>}
             </div>
           </>
         ) : (

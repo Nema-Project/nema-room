@@ -38,6 +38,9 @@ export function isOffline(env: ComponentEnv = {}): boolean {
   return env.offline === true || (typeof raw === "string" && ["1", "true", "yes"].includes(raw.trim().toLowerCase()));
 }
 
+/** Why a download cannot happen while the offline switch is on; shared by the status and the installer. */
+export const OFFLINE_DETAIL = "Downloads are turned off (NEMA_GRAPHIFY_OFFLINE or components.offline); import an offline component pack instead";
+
 export function launcherName(platform: NodeJS.Platform): string {
   return platform === "win32" ? "graphify.exe" : "graphify";
 }
@@ -224,7 +227,7 @@ export function componentStatusSync(name: ComponentName = "graphify", env: Compo
       name,
       lockHash: resolved.lockHash,
       reason: "offline",
-      detail: "Downloads are turned off (NEMA_GRAPHIFY_OFFLINE or components.offline); import an offline component pack instead",
+      detail: OFFLINE_DETAIL,
       at: null,
       ...(stale ? { installedLockHash: stale } : {}),
     };
