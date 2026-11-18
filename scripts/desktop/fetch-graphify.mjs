@@ -344,7 +344,22 @@ function compileWindowsLauncher(sourceRoot, output) {
 }
 
 /**
+ * Build the Windows Graphify launcher (a KB-scale Nema binary, not part of any upstream archive) at `output`.
+ * Desktop staging ships it beside the CLI's Graphify lock; the component installer copies it into each
+ * installed version, so a user's machine never needs a compiler.
+ */
+export async function buildGraphifyLauncher({ sourceRoot, output }) {
+  if (!sourceRoot || !output) throw new Error('The Graphify launcher build needs a source root and an output path');
+  await mkdir(path.dirname(output), { recursive: true });
+  compileWindowsLauncher(sourceRoot, output);
+  return output;
+}
+
+/**
  * Download the pinned CPython and graphifyy wheels into `destination`.
+ * Desktop staging no longer calls this: Graphify is an on-demand component installed through
+ * apps/cli/src/components, and the payload carries only its lock and the Windows launcher. It stays for
+ * lock making, size recording and component packs.
  * Linux is not a desktop release target, so it leaves the directory untouched. The lock's Linux targets
  * exist for the npm/Compose host daemon, which installs them through apps/cli/src/components.
  */

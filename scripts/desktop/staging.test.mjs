@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { createSanitizedSourceSnapshot, electronExecutableRelative, npmCliPathFor, parseStageArgs, recordedCommit, runtimeDependencyClosure, stageRuntime, writePlatformLaunchers } from './stage-runtime.mjs';
 import { nodePayloadExcluded, toolsManifest } from './fetch-tools.mjs';
+import { checkSlimPayload, payloadSizeLines, SLIM_PAYLOAD_TOTAL_MIB } from './payload-size.mjs';
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nema-stage-fixture-'));
@@ -67,14 +68,13 @@ async function fixture(t) {
   const nodePin = toolsManifest.node.archive[target];
   await write(`node/${target}/tools-source.json`, JSON.stringify({ target, node: { version: toolsManifest.node.version, archive: nodePin.file, sha256: nodePin.sha256 }, sourceCorrespondence: { status: 'pending-task-7c' } }));
   const tools = { node: `${target}/node/${windows ? 'node.exe' : 'bin/node'}`, ...(windows ? { ownedHelperGuardian: `${target}/owned-helper.exe` } : {}), licenses: { node: `${target}/node/LICENSE`, sourceRecord: `${target}/tools-source.json` } };
-  const stageGraphify = async ({ destination, platform: graphifyPlatform }) => {
-    await mkdir(destination, { recursive: true });
-    await writeFile(path.join(destination, graphifyPlatform === 'win32' ? 'graphify.exe' : 'graphify'), 'graphify fixture');
-    await mkdir(path.join(destination, 'licenses'), { recursive: true });
-    await writeFile(path.join(destination, 'licenses', 'LICENSE'), 'graphify license fixture');
-    return destination;
+  // Windows only: stands in for the clang build of scripts/desktop/graphify-launcher.c.
+  const graphifyLauncherBuilder = async ({ output }) => {
+    await mkdir(path.dirname(output), { recursive: true });
+    await writeFile(output, 'graphify launcher fixture');
+    return output;
   };
-  return { source, output, write, tools, options: { sourceRoot: source, outputDir: output, toolsRoot: path.join(source, 'node'), platform, arch, version: '0.1.0', tools, build: false, fetchGraphify: stageGraphify, electronNode: { electronVersion: '45.1.0', nodeVersion: '24.22.1', engines: '>=22' } } };
+  return { source, output, write, tools, options: { sourceRoot: source, outputDir: output, toolsRoot: path.join(source, 'node'), platform, arch, version: '0.1.0', tools, build: false, graphifyLauncherBuilder, electronNode: { electronVersion: '45.1.0', nodeVersion: '24.22.1', engines: '>=22' } } };
 }
 
 test('runs the Electron installer when the binary has not been downloaded yet', async (t) => {
@@ -136,7 +136,7 @@ test('stages a relocatable manifest and all declared runtime resources from fixt
   await assert.rejects(stat(path.join(target, 'runtime', `${process.platform}-${process.arch}`, 'node')));
   for (const key of ['coreEntry', 'cliEntry', 'webEntry']) assert.ok((await readFile(path.join(target, manifest[key]))).length > 0, key);
   assert.ok((await readFile(path.join(target, manifest.licenses, 'node'))).length > 0);
-  for (const file of ['web/apps/web/.next/static/chunks/a.js', 'web/apps/web/public/fonts/a.woff2', 'app/node_modules/@nema/local/package.json', 'app/node_modules/@nema/hub/dist/src/db/migrations/0001.sql', 'app/node_modules/@nema/cli/src/report/SKILL.md', 'vendor/archify/THIRD_PARTY_NOTICES.md', 'vendor/superpowers-rules/LICENSE', 'runtime/licenses/application', 'runtime/licenses/graphify-runtime/LICENSE', process.platform === 'win32' ? 'tools/graphify/graphify.exe' : 'tools/graphify/graphify']) {
+  for (const file of ['web/apps/web/.next/static/chunks/a.js', 'web/apps/web/public/fonts/a.woff2', 'app/node_modules/@nema/local/package.json', 'app/node_modules/@nema/hub/dist/src/db/migrations/0001.sql', 'app/node_modules/@nema/cli/src/report/SKILL.md', 'vendor/archify/THIRD_PARTY_NOTICES.md', 'vendor/superpowers-rules/LICENSE', 'runtime/licenses/application']) {
     assert.ok((await readFile(path.join(target, file))).length > 0, file);
   }
   await assert.rejects(readFile(path.join(target, 'app/node_modules/@nema/local/dist/src/test/runtime.test.js')));
@@ -145,6 +145,40 @@ test('stages a relocatable manifest and all declared runtime resources from fixt
   assert.equal(files.includes('.env'), false);
   assert.equal(files.includes('.git'), false);
   assert.equal(await readFile(path.join(target, 'app/node_modules/@nema/cli/dist/resources/graphify-lock.json'), 'utf8'), await readFile(path.join(f.source, 'scripts/desktop/graphify-lock.json'), 'utf8'));
+});
+
+test('stages a slim payload: no Graphify runtime or its licenses, only the lock and (Windows) the launcher resource', async (t) => {
+  const f = await fixture(t);
+  await stageRuntime({ ...f.options, fetchGraphify: async () => { throw new Error('staging must not assemble Graphify'); } });
+  const target = path.join(f.output, `${process.platform}-${process.arch}`);
+  await assert.rejects(stat(path.join(target, 'tools/graphify')), { code: 'ENOENT' });
+  await assert.rejects(stat(path.join(target, 'runtime/licenses/graphify-runtime')), { code: 'ENOENT' });
+  assert.ok((await readFile(path.join(target, 'app/node_modules/@nema/cli/dist/resources/graphify-lock.json'))).length > 0);
+  const launcher = path.join(target, 'app/node_modules/@nema/cli/dist/resources/graphify-launcher.exe');
+  if (process.platform === 'win32') assert.equal(await readFile(launcher, 'utf8'), 'graphify launcher fixture');
+  else await assert.rejects(stat(launcher), { code: 'ENOENT' });
+  const sections = await checkSlimPayload(target);
+  assert.equal(sections.graphify, 0);
+  assert.ok(sections.total <= SLIM_PAYLOAD_TOTAL_MIB * 1048576);
+  assert.match(payloadSizeLines(sections).lines.join('\n'), /^payload size: graphify 0\.0 MiB$/m);
+});
+
+test('the release check turns red when a tools/graphify is put back into a staged payload', async (t) => {
+  const f = await fixture(t);
+  await stageRuntime(f.options);
+  const target = path.join(f.output, `${process.platform}-${process.arch}`);
+  await checkSlimPayload(target);
+  await mkdir(path.join(target, 'tools/graphify'), { recursive: true });
+  await writeFile(path.join(target, 'tools/graphify', process.platform === 'win32' ? 'graphify.exe' : 'graphify'), 'regressed graphify');
+  await assert.rejects(checkSlimPayload(target), /Payload contains tools\/graphify/);
+  // The release workflow's own entry point blocks it too, before any source-material check runs.
+  const cli = spawnSync(process.execPath, [path.join(import.meta.dirname, 'validate-release.mjs'), target, `${process.platform}-${process.arch}`, '0.1.0'], { encoding: 'utf8' });
+  assert.equal(cli.status, 1, cli.stdout + cli.stderr);
+  assert.match(cli.stderr, /Release blocked: Payload contains tools\/graphify/);
+  // An empty directory or a bare file at that path is the same regression.
+  await rm(path.join(target, 'tools/graphify'), { recursive: true });
+  await writeFile(path.join(target, 'tools/graphify'), '');
+  await assert.rejects(checkSlimPayload(target), /Payload contains tools\/graphify/);
 });
 
 test('refuses a CLI Graphify lock that drifted from the repository lock', async (t) => {

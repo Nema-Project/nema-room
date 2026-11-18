@@ -2,13 +2,19 @@ import { lstat, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-/** Warn-only ceilings in MiB. A warning must not fail the build. */
+/**
+ * Warn-only ceilings in MiB. A warning must not fail the build; the release gate is `checkSlimPayload`.
+ * Graphify is an on-demand component (#132), so any graphify bytes at all are worth a warning.
+ */
 export const PAYLOAD_BUDGETS_MIB = {
   node: 135,
-  graphify: 175,
+  graphify: 0,
   web: 30,
-  total: 620,
+  total: 80,
 };
+
+/** The release gate's ceiling for a whole payload (spec acceptance: every target at most 80 MiB). */
+export const SLIM_PAYLOAD_TOTAL_MIB = 80;
 
 const SECTION_KEYS = ['node', 'graphify', 'web', 'total'];
 
@@ -67,6 +73,26 @@ export async function measurePayload(root) {
 
 export async function reportPayload(root, stdout = process.stdout, stderr = process.stderr) {
   return writePayloadSizeLines(await measurePayload(root), stdout, stderr);
+}
+
+/**
+ * Fails when the payload is not the slim one: Graphify is downloaded on first use, so `tools/graphify` must be
+ * absent (as a directory, file or link), the graphify section must measure 0, and, unless `maxTotalMiB` is
+ * null, the whole payload must fit the slim budget. Returns the measured sections.
+ */
+export async function checkSlimPayload(root, { maxTotalMiB = SLIM_PAYLOAD_TOTAL_MIB } = {}) {
+  const bundled = path.join(root, 'tools', 'graphify');
+  const found = await lstat(bundled).catch((error) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (found) throw new Error(`Payload contains tools/graphify (${bundled}); Graphify is an on-demand component and must not ship in the payload`);
+  const sections = await measurePayload(root);
+  if (sections.graphify !== 0) throw new Error(`Payload graphify section is ${(sections.graphify / 1048576).toFixed(1)} MiB; it must be 0`);
+  if (maxTotalMiB !== null && sections.total > maxTotalMiB * 1048576) {
+    throw new Error(`Payload total ${(sections.total / 1048576).toFixed(1)} MiB exceeds the ${maxTotalMiB} MiB slim-payload limit`);
+  }
+  return sections;
 }
 
 export async function reportPackagedArtifacts(directory, stdout = process.stdout) {
