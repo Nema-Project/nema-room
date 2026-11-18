@@ -27,6 +27,7 @@ const REASON_TEXT: Record<FailureReason, string> = {
   "unsupported-platform": "平台不支持",
   offline: "离线模式",
   "disk-space": "磁盘空间不足",
+  "lock-unreadable": "组件锁无法读取",
 };
 
 function stateOf(status: ComponentStatus | null): Exclude<GraphifyState, "installed"> {
@@ -40,6 +41,7 @@ export function unavailableMessage(status: ComponentStatus | null): string {
   if (!status || status.state === "not-installed" || status.state === "installed") return `Graphify 组件未安装。${install}`;
   if (status.state === "installing") return "Graphify 组件正在安装，安装完成后再试";
   if (status.state === "lock-mismatch") return `已安装的 Graphify 组件与当前版本的 Nema 不匹配，已停用。${install}`;
+  if (status.reason === "lock-unreadable") return `Graphify 组件锁无法读取：${status.detail}。这是 Nema 自身的分发损坏，重新安装 Nema 后再试`;
   if (status.reason === "unsupported-platform") return `此平台不支持 Graphify 组件：${status.detail}`;
   const disabled = status.installedLockHash ? "旧版本组件已停用。" : "";
   if (status.reason === "offline") return `Graphify 组件未安装，组件下载已关闭（离线模式）。${disabled}请导入离线组件包`;
@@ -122,8 +124,17 @@ export function resolveGraphify(env: NodeJS.ProcessEnv = process.env, opts: Pick
   let status: ComponentStatus | null = null;
   try {
     status = componentStatusSync("graphify", components);
-  } catch {
-    // An unreadable shipped lock still means "not installed" here; doctor and status show the lock error.
+  } catch (error) {
+    // An unreadable shipped lock is not "not installed": installing cannot fix it, so the
+    // resolution carries the lock error itself and status/doctor show it as such.
+    status = {
+      state: "failed",
+      name: "graphify",
+      lockHash: null,
+      reason: "lock-unreadable",
+      detail: error instanceof Error ? error.message : String(error),
+      at: null,
+    };
   }
   return { found: false, state: stateOf(status), status };
 }

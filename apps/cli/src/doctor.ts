@@ -118,6 +118,8 @@ async function graphifyCheck(opts: DoctorOpts): Promise<DoctorCheck> {
   try {
     const status = await graphifyInstallStatus(opts.graphify);
     if (status.installed) return { name, ok: true, detail: status.detail };
+    // The lock-error detail is a complete sentence of its own; the state label would misname it.
+    if (status.reason === "lock-unreadable") return { name, ok: true, detail: status.detail };
     return { name, ok: true, detail: `${GRAPHIFY_STATE_LABEL[status.state] ?? status.state}：${status.detail}` };
   } catch (e) {
     return { name, ok: true, detail: msg(e) };

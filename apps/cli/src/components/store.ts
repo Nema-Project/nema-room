@@ -1,7 +1,7 @@
 // The component store under ~/.nema/runtime/<name>/: one `<lock-hash>/` directory per installed
 // version, `current.json` naming the active and previous ones, and the last failed attempt.
 import { randomBytes } from "node:crypto";
-import { lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -40,6 +40,36 @@ export function isOffline(env: ComponentEnv = {}): boolean {
 
 export function launcherName(platform: NodeJS.Platform): string {
   return platform === "win32" ? "graphify.exe" : "graphify";
+}
+
+const REPLACED_DIR = /^([a-f0-9]{64})\.replaced-[a-f0-9]+$/;
+
+/**
+ * Undo a replacement cut off midway (a crash between moving the old directory aside and
+ * publishing its replacement): a backup whose `<lock-hash>` is gone goes back into place;
+ * a backup beside a present `<lock-hash>` is stale (that directory is the self-checked
+ * replacement) and is removed. Best effort and synchronous, so every reader — status,
+ * bin resolution, install — heals the store before answering instead of reporting the
+ * component missing until the next install happens to run.
+ */
+export function recoverReplacementsSync(root: string): void {
+  let names: string[];
+  try {
+    names = readdirSync(root);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const match = REPLACED_DIR.exec(name);
+    if (!match) continue;
+    const original = path.join(root, match[1]!);
+    try {
+      if (existsSync(original)) rmSync(path.join(root, name), { recursive: true, force: true });
+      else renameSync(path.join(root, name), original);
+    } catch {
+      // A later read or install runs the same recovery.
+    }
+  }
 }
 
 export type Pointer = { active: string | null; previous: string | null };
@@ -117,6 +147,7 @@ export function componentBin(name: string, env: ComponentEnv = {}): string | nul
     const resolved = resolveTarget(readLock(env.lockPath ?? shippedLockPath()), env.platform);
     if (!resolved.ok) return null;
     const root = componentRoot(name, env);
+    recoverReplacementsSync(root);
     if (readPointer(root).active !== resolved.lockHash) return null;
     const launcher = path.join(root, resolved.lockHash, launcherName(env.platform?.platform ?? process.platform));
     return regularFile(launcher) ? launcher : null;
@@ -134,6 +165,7 @@ export function componentStatusSync(name: ComponentName = "graphify", env: Compo
     return { state: "failed", name, lockHash: null, reason: "unsupported-platform", detail: resolved.detail, at: null };
   }
   const root = componentRoot(name, env);
+  recoverReplacementsSync(root);
   const running = installing.get(root);
   if (running && running.lockHash === resolved.lockHash) return { state: "installing", name, lockHash: resolved.lockHash, progress: { ...running.progress } };
   const pointer = readPointer(root);

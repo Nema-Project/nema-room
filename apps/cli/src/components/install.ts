@@ -24,6 +24,7 @@ import {
   launcherName,
   LOCK_HASH,
   readPointer,
+  recoverReplacementsSync,
   setInstalling,
   writeFailure,
   writePointer,
@@ -379,22 +380,6 @@ export async function sameTree(existing: string, staged: string): Promise<boolea
   return true;
 }
 
-const REPLACED = /^([a-f0-9]{64})\.replaced-[a-f0-9]+$/;
-
-/**
- * Undo a replacement cut off midway. A backup whose `<lock-hash>` is gone goes back into place; a backup
- * beside a present `<lock-hash>` is stale (that directory is the self-checked replacement) and is removed.
- */
-async function recoverReplacements(root: string): Promise<void> {
-  for (const name of await readdir(root).catch(() => [] as string[])) {
-    const match = REPLACED.exec(name);
-    if (!match) continue;
-    const original = path.join(root, match[1]!);
-    if (await exists(original)) await rm(path.join(root, name), { recursive: true, force: true });
-    else await rename(path.join(root, name), original);
-  }
-}
-
 export type ActivationOutcome = "renamed" | "reused" | "replaced-orphan" | "replaced-referenced";
 
 /**
@@ -472,27 +457,61 @@ async function checkDiskSpace(root: string, downloadBytes: number, hooks: Instal
   }
 }
 
-/** One install at a time per component directory, across processes. A lock left by a dead process is taken over. */
-async function acquireInstallLock(root: string): Promise<() => Promise<void>> {
+/**
+ * How long an empty or unparseable lock owner record is treated as an installer that is
+ * still starting up. Creating the file and writing the PID are two steps, so a contender
+ * can observe the gap; a record younger than this is never judged abandoned.
+ */
+const LOCK_OWNER_GRACE_MS = 10_000;
+
+type LockOwner = { content: string; ino: number; mtimeMs: number };
+
+async function readLockOwner(file: string): Promise<LockOwner | null> {
+  try {
+    const [info, content] = await Promise.all([lstat(file), readFile(file, "utf8")]);
+    return { content, ino: info.ino, mtimeMs: info.mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (probe) {
+    return (probe as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * One install at a time per component directory, across processes. A lock left by a dead
+ * process is taken over, but only after re-reading the owner record and finding it
+ * unchanged, so a fresh lock created in between is never removed. An empty or
+ * unparseable record counts as "an installer is starting" while it is fresh, and as
+ * abandoned only once it is older than the grace window. Exported for tests.
+ */
+export async function acquireInstallLock(root: string): Promise<() => Promise<void>> {
   const file = path.join(root, ".install.lock");
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     try {
       await writeFile(file, String(process.pid), { flag: "wx" });
       return () => rm(file, { force: true });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const pid = Number((await readFile(file, "utf8").catch(() => "")).trim());
-      let alive = false;
-      if (Number.isInteger(pid) && pid > 0 && pid !== process.pid) {
-        try {
-          process.kill(pid, 0);
-          alive = true;
-        } catch (probe) {
-          alive = (probe as NodeJS.ErrnoException).code === "EPERM";
-        }
+      const owner = await readLockOwner(file);
+      if (!owner) continue; // Vanished between the create attempt and the read; retry the create.
+      const pid = Number(owner.content.trim());
+      if (Number.isInteger(pid) && pid > 0) {
+        if (pid === process.pid || pidAlive(pid)) throw new Error("Another Graphify install is already running");
+      } else if (Date.now() - owner.mtimeMs < LOCK_OWNER_GRACE_MS) {
+        throw new Error("Another Graphify install is already running");
       }
-      if (alive || pid === process.pid) throw new Error("Another Graphify install is already running");
-      await rm(file, { force: true });
+      // Stale or abandoned: remove it only if it is still exactly the record judged above.
+      const again = await readLockOwner(file);
+      if (again && again.ino === owner.ino && again.content === owner.content && again.mtimeMs === owner.mtimeMs) {
+        await rm(file, { force: true });
+      }
     }
   }
   throw new Error("Could not take the component install lock");
@@ -546,7 +565,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
   const staging = path.join(root, `${lockHash}.staging`);
   try {
     emit();
-    await recoverReplacements(root);
+    recoverReplacementsSync(root);
     await rm(staging, { recursive: true, force: true });
     await checkDiskSpace(root, totalBytes, hooks);
     const archivesDir = path.join(staging, ".archives");

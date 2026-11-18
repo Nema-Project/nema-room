@@ -470,7 +470,12 @@ export async function refreshGraphifyLock({ lock = graphifyLock, cacheDir, fetch
   if (!cacheDir) throw new Error('refreshGraphifyLock needs a cacheDir');
   const pinned = async (entry) => {
     const actual = await measure(entry.file, entry.url, cacheDir, fetchImpl);
-    if (entry.sha256 && actual.sha256 !== entry.sha256) throw new Error(`${entry.file}: downloaded sha256 ${actual.sha256} does not match the pin ${entry.sha256}`);
+    if (entry.sha256 && actual.sha256 !== entry.sha256) {
+      // Bytes that failed verification never stay in the cache: a later run would keep
+      // re-reading them as the download for this file.
+      await rm(path.join(cacheDir, entry.file), { force: true });
+      throw new Error(`${entry.file}: downloaded sha256 ${actual.sha256} does not match the pin ${entry.sha256}`);
+    }
     log(`${entry.file} ${actual.size}`);
     return actual;
   };
@@ -487,6 +492,18 @@ export async function refreshGraphifyLock({ lock = graphifyLock, cacheDir, fetch
     for (const wheel of pin.wheels) wheels.push(withSize(wheel, await pinned(wheel)));
     targets[key] = { python, wheels };
   }
+  // Linux targets the lock already has are refreshed exactly like the two above:
+  // re-downloaded and required to hash to their pins. Only a target the lock does not
+  // have yet is derived from upstream below, so a refresh can never silently move an
+  // existing Linux pin.
+  for (const key of Object.keys(LINUX_BUILDS)) {
+    const pin = lock.targets[key];
+    if (!pin) continue;
+    const python = withSize(pin.python, await pinned(pin.python));
+    const wheels = [];
+    for (const wheel of pin.wheels) wheels.push(withSize(wheel, await pinned(wheel)));
+    targets[key] = { python, wheels };
+  }
 
   const sumsUrl = `https://github.com/astral-sh/python-build-standalone/releases/download/${lock.cpythonRelease}/SHA256SUMS`;
   const upstreamSums = new Map();
@@ -497,10 +514,14 @@ export async function refreshGraphifyLock({ lock = graphifyLock, cacheDir, fetch
   const template = targets['win32-x64'].wheels;
   const releases = new Map();
   for (const [key, { triple, machine }] of Object.entries(LINUX_BUILDS)) {
+    if (targets[key]) continue; // Already pinned in the lock; refreshed above.
     const file = `cpython-${lock.python}+${lock.cpythonRelease}-${triple}-install_only.tar.gz`;
     const url = `https://github.com/astral-sh/python-build-standalone/releases/download/${lock.cpythonRelease}/${file.replace('+', '%2B')}`;
     const actual = await pinned({ file, url });
-    if (upstreamSums.get(file) !== actual.sha256) throw new Error(`${file}: downloaded sha256 ${actual.sha256} disagrees with upstream SHA256SUMS (${upstreamSums.get(file) ?? 'not listed'})`);
+    if (upstreamSums.get(file) !== actual.sha256) {
+      await rm(path.join(cacheDir, file), { force: true });
+      throw new Error(`${file}: downloaded sha256 ${actual.sha256} disagrees with upstream SHA256SUMS (${upstreamSums.get(file) ?? 'not listed'})`);
+    }
     const python = { file, url, sha256: actual.sha256, size: actual.size, format: 'tar.gz' };
     const wheels = [];
     for (const wheel of template) {
@@ -515,8 +536,14 @@ export async function refreshGraphifyLock({ lock = graphifyLock, cacheDir, fetch
       }
       const chosen = pickManylinuxWheel(wheel.file, releases.get(project), machine);
       const measured = await pinned({ file: chosen.filename, url: chosen.url });
-      if (chosen.digests?.sha256 !== measured.sha256) throw new Error(`${chosen.filename}: downloaded sha256 disagrees with the PyPI index`);
-      if (chosen.size !== undefined && chosen.size !== measured.size) throw new Error(`${chosen.filename}: downloaded size disagrees with the PyPI index`);
+      if (chosen.digests?.sha256 !== measured.sha256) {
+        await rm(path.join(cacheDir, chosen.filename), { force: true });
+        throw new Error(`${chosen.filename}: downloaded sha256 disagrees with the PyPI index`);
+      }
+      if (chosen.size !== undefined && chosen.size !== measured.size) {
+        await rm(path.join(cacheDir, chosen.filename), { force: true });
+        throw new Error(`${chosen.filename}: downloaded size disagrees with the PyPI index`);
+      }
       wheels.push({ file: chosen.filename, url: chosen.url, sha256: measured.sha256, size: measured.size });
     }
     targets[key] = { python, wheels };

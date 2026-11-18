@@ -12,7 +12,8 @@ export type FailureReason =
   | "self-check"
   | "unsupported-platform"
   | "offline"
-  | "disk-space";
+  | "disk-space"
+  | "lock-unreadable";
 
 export type InstallPhase = "download" | "verify" | "extract" | "self-check" | "activate";
 

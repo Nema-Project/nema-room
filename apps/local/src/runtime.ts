@@ -279,6 +279,8 @@ function childEnvironment(extra: Record<string, string>): NodeJS.ProcessEnv {
   if (process.env.NEMA_DESKTOP_BENCH === "1") env.NEMA_DESKTOP_BENCH = "1";
   // Copy the share switch whenever the parent set it, including "0". Copying only "1" would leave sharing on.
   if (process.env.NEMA_SHARES_ENABLED !== undefined) env.NEMA_SHARES_ENABLED = process.env.NEMA_SHARES_ENABLED;
+  // The core resolves the Graphify override itself; dropping it here would silently ignore a valid override.
+  if (process.env.NEMA_GRAPHIFY_BIN !== undefined) env.NEMA_GRAPHIFY_BIN = process.env.NEMA_GRAPHIFY_BIN;
   // Electron is a GUI executable. Children stay Node only when this variable is set explicitly.
   if (electronNodeProcess()) env.ELECTRON_RUN_AS_NODE = "1";
   return { ...env, ...extra };

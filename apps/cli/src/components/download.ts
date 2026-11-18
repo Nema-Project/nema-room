@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import { createWriteStream, readFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import { finished } from "node:stream/promises";
 import http, { type IncomingMessage } from "node:http";
 import https from "node:https";
 import type { Socket } from "node:net";
@@ -259,6 +260,17 @@ export async function downloadOnce(rawUrl: string, dest: string, o: DownloadOpti
           res.destroy();
           out.destroy();
         };
+        // The download settles only when the file stream has fully flushed: a write
+        // failure that surfaces after the response ends (ENOSPC) must still fail the
+        // download instead of returning metadata for a partial file.
+        finished(out).then(
+          () => {
+            if (settled) return;
+            settled = true;
+            resolve();
+          },
+          (error) => fail(error),
+        );
         res.on("data", (chunk: Buffer) => {
           if (settled) return;
           size += chunk.length;
@@ -273,11 +285,7 @@ export async function downloadOnce(rawUrl: string, dest: string, o: DownloadOpti
             out.once("drain", () => res.resume());
           }
         });
-        res.once("end", () => {
-          if (settled) return;
-          settled = true;
-          out.end(() => resolve());
-        });
+        res.once("end", () => out.end());
         res.once("aborted", () => fail(new ComponentInstallError("network", `Connection to ${url.host} closed mid-download`)));
         res.once("error", (error) => fail(o.signal?.aborted ? abortError() : error instanceof ComponentInstallError ? error : new ComponentInstallError("network", `${url.host}: ${error.message}`)));
         out.once("error", (error) => fail(error));

@@ -319,6 +319,25 @@ describe("graphify resolution order", () => {
     const { components, launcher } = storeWith("a");
     expect(packagedGraphifyBin({}, { components, payloadRoot: join(root, "slim-payload") })).toBe(launcher);
   });
+
+  test("an unreadable shipped lock is a lock error, not 'not installed'", async () => {
+    const badLock = join(root, "lock-broken.json");
+    writeFileSync(badLock, "{ not json");
+    const components: ComponentEnv = { runtimeRoot: join(root, "runtime"), lockPath: badLock, platform: machine() };
+    const resolved = resolveGraphify({}, { components, payloadRoot: join(root, "no-payload") });
+    expect(resolved.found).toBe(false);
+    if (!resolved.found) {
+      expect(resolved.state).toBe("failed");
+      expect(resolved.status?.state).toBe("failed");
+      if (resolved.status?.state === "failed") expect(resolved.status.reason).toBe("lock-unreadable");
+    }
+    const status = await graphifyInstallStatus({ components });
+    expect(status.installed).toBe(false);
+    expect(status.state).toBe("failed");
+    expect(status.reason).toBe("lock-unreadable");
+    expect(status.detail).toContain("组件锁无法读取");
+    expect(status.detail).not.toContain("请在设置页安装");
+  });
 });
 
 describe("graphify install status", () => {

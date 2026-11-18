@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -181,6 +181,30 @@ test('lock refresh refuses an existing pin whose bytes changed upstream', async 
   t.after(() => rm(root, { recursive: true, force: true }));
   const upstream = fakeUpstream({ 'numpy-2.4.6-cp311-cp311-win_amd64.whl': Buffer.from('tampered') });
   await assert.rejects(refreshGraphifyLock({ lock: upstream.lock, cacheDir: path.join(root, 'cache'), fetchImpl: upstream.fetchImpl }), /does not match the pin/);
+});
+
+test('lock refresh validates existing Linux pins instead of re-deriving them', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-graphify-refresh-linux-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const upstream = fakeUpstream();
+  const first = await refreshGraphifyLock({ lock: upstream.lock, cacheDir: path.join(root, 'cache-1'), fetchImpl: upstream.fetchImpl });
+  const linuxWheel = 'numpy-2.4.6-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl';
+  const tampered = fakeUpstream({ [linuxWheel]: Buffer.from('tampered') });
+  await assert.rejects(refreshGraphifyLock({ lock: first, cacheDir: path.join(root, 'cache-2'), fetchImpl: tampered.fetchImpl }), /does not match the pin/);
+  const honest = fakeUpstream();
+  const second = await refreshGraphifyLock({ lock: first, cacheDir: path.join(root, 'cache-3'), fetchImpl: honest.fetchImpl });
+  assert.deepEqual(second.targets['linux-x64'], first.targets['linux-x64']);
+  assert.deepEqual(second.targets['linux-arm64'], first.targets['linux-arm64']);
+});
+
+test('lock refresh drops cache bytes that failed verification', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-graphify-refresh-cache-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cacheDir = path.join(root, 'cache');
+  const wheel = 'numpy-2.4.6-cp311-cp311-win_amd64.whl';
+  const upstream = fakeUpstream({ [wheel]: Buffer.from('tampered') });
+  await assert.rejects(refreshGraphifyLock({ lock: upstream.lock, cacheDir, fetchImpl: upstream.fetchImpl }), /does not match the pin/);
+  assert.equal((await readdir(cacheDir)).includes(wheel), false);
 });
 
 test('launcher sources name only the bundled Python', async () => {

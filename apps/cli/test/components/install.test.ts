@@ -1,12 +1,12 @@
 // Installer tests against a local fake upstream reached only through the mirror variables. The fake
 // python is a shell script, so the suite runs on POSIX; Windows uses the shipped launcher binary.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { activate, installComponent, verifyArchives, type InstallOptions } from "../../src/components/install.js";
+import { activate, acquireInstallLock, installComponent, verifyArchives, type InstallOptions } from "../../src/components/install.js";
 import { lockHash } from "../../src/components/lock.js";
 import { componentBin, componentStatus, readPointer, type ComponentEnv } from "../../src/components/store.js";
 import type { ComponentStatus, InstallProgress } from "../../src/components/types.js";
@@ -239,7 +239,9 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     await install(env);
     const hash = lockHash(component.target);
     renameSync(path.join(graphifyRoot(), hash), path.join(graphifyRoot(), `${hash}.replaced-abc123`));
-    expect(componentBin("graphify", env)).toBeNull();
+    // Readers heal the interrupted replacement too: resolving the bin puts the backup
+    // back instead of reporting the component missing until an install happens to run.
+    expect(componentBin("graphify", env)).toBe(path.join(graphifyRoot(), hash, "graphify"));
     expect(await install(env)).toMatchObject({ state: "installed" });
     expect(readdirSync(graphifyRoot()).filter((name) => name.includes(".replaced-"))).toEqual([]);
   });
@@ -323,5 +325,56 @@ describe("installer contracts", () => {
 
   test("activation refuses a name that is not a lock-hash", async () => {
     await expect(activate(root, "../escape", path.join(root, "staging"))).rejects.toThrow(/lock-hash/);
+  });
+});
+
+describe.skipIf(process.platform === "win32")("install lock and interrupted replacements", () => {
+  test("a status read restores a replacement cut off by a crash, without an install", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    const hash = lockHash(component.target);
+    expect((await install(env)).state).toBe("installed");
+    // A crash mid-replacement: the active directory was moved aside, its replacement
+    // never landed, and current.json still names the hash.
+    renameSync(path.join(graphifyRoot(), hash), path.join(graphifyRoot(), `${hash}.replaced-cafebabe`));
+    expect(existsSync(path.join(graphifyRoot(), hash))).toBe(false);
+    const status = await componentStatus(env);
+    expect(status.state).toBe("installed");
+    expect(existsSync(path.join(graphifyRoot(), hash, "graphify"))).toBe(true);
+    expect(componentBin("graphify", env)).toBe(path.join(graphifyRoot(), hash, "graphify"));
+  });
+
+  test("a fresh empty lock owner is another installer starting, never stale", async () => {
+    mkdirSync(graphifyRoot(), { recursive: true });
+    const file = path.join(graphifyRoot(), ".install.lock");
+    writeFileSync(file, "");
+    await expect(acquireInstallLock(graphifyRoot())).rejects.toThrow(/already running/);
+    expect(readFileSync(file, "utf8")).toBe("");
+  });
+
+  test("an abandoned empty lock owner is taken over once it is older than the startup grace", async () => {
+    mkdirSync(graphifyRoot(), { recursive: true });
+    const file = path.join(graphifyRoot(), ".install.lock");
+    writeFileSync(file, "");
+    const longAgo = new Date(Date.now() - 120_000);
+    utimesSync(file, longAgo, longAgo);
+    const release = await acquireInstallLock(graphifyRoot());
+    expect(readFileSync(file, "utf8")).toBe(String(process.pid));
+    await release();
+    expect(existsSync(file)).toBe(false);
+  });
+
+  test("a lock owned by a live process is respected; a dead owner's lock is taken over", async () => {
+    mkdirSync(graphifyRoot(), { recursive: true });
+    const file = path.join(graphifyRoot(), ".install.lock");
+    writeFileSync(file, String(process.pid));
+    await expect(acquireInstallLock(graphifyRoot())).rejects.toThrow(/already running/);
+    expect(readFileSync(file, "utf8")).toBe(String(process.pid));
+    // A PID above the kernel's maximum can never be a live process.
+    writeFileSync(file, String(2 ** 22 + 123_456));
+    const release = await acquireInstallLock(graphifyRoot());
+    await release();
+    expect(existsSync(file)).toBe(false);
   });
 });
