@@ -178,7 +178,9 @@ export function registerComponentHandlers(rpc: RpcRouter, o: ComponentRpcOptions
     const install = o.install ?? installComponent;
     const job: { controller: AbortController; done: Promise<unknown>; aborted: boolean } = { controller, done: Promise.resolve(), aborted: false };
     job.done = Promise.resolve()
-      .then(() => install(name, { env: componentEnv(config()), signal: controller.signal, force }))
+      // The confirmed hash goes to the installer as well: it re-reads the lock in prepare, and a
+      // lock that changed since the confirmation must not be installed under the old yes.
+      .then(() => install(name, { env: componentEnv(config()), signal: controller.signal, force, expectedLockHash: typeof expected === "string" ? expected : undefined }))
       .catch((error) => {
         // A cancel is the caller's outcome, not an installer failure: remember it for the cancel
         // answer instead of logging it. Anything else is what slipped past the installer (an

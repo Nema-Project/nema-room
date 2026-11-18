@@ -1,6 +1,6 @@
 // `nema components status | install | pack | import`, run in-process against temp stores, a fixture lock and a
 // local fake upstream. No daemon is involved: the CLI reads and writes the component store itself.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -164,7 +164,30 @@ describe.skipIf(process.platform === "win32")("install", () => {
     const again = harness(component, { env: source.env() });
     expect(await again.run("status")).toBe(0);
     expect(again.lines.join("\n")).toContain("graphify: installed");
+    // The text status shows the failed repair too, not just the installed state.
+    expect(again.lines.join("\n")).toContain("last reinstall failed: the self-check failed");
     expect(readPointer(store()).active).toBe(hash);
+  });
+
+  test("a failed first install is not called a reinstall when another process installs first", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const hash = lockHash(component.target);
+    const h = harness(component, {
+      env: source.env(),
+      // The attempt fails; by the time the result is reported, another process has installed the
+      // component. The report must stay about this attempt.
+      install: async () => {
+        const dir = path.join(store(), hash);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(path.join(dir, "graphify"), "#!/bin/sh\nexit 0\n");
+        writeFileSync(path.join(store(), "current.json"), JSON.stringify({ active: hash }));
+        return { state: "failed", name: "graphify", lockHash: hash, reason: "network", detail: "connect ECONNREFUSED", at: "2026-11-18T00:00:00.000Z" } as const;
+      },
+    });
+    expect(await h.run("install", "graphify", "--yes")).toBe(1);
+    expect(h.errors.join("\n")).toContain("last attempt failed: network error");
+    expect(h.errors.join("\n")).not.toContain("the reinstall failed");
   });
 
   test("cancelling a reinstall reports the cancel, not the still-installed copy", async () => {

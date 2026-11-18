@@ -104,9 +104,17 @@ export async function cancelGraphifyInstall(): Promise<ComponentView> {
   return view;
 }
 
+/** Settings saves run one at a time: overlapping saves could otherwise publish out of order. */
+let settingsQueue: Promise<void> = Promise.resolve();
+
 export async function saveGraphifySettings(patch: { pythonMirror?: string | null; pypiBase?: string | null; offline?: boolean }): Promise<void> {
   mutationEpoch += 1;
-  accept(await updateComponentSettings("graphify", patch));
+  const task = settingsQueue.then(async () => {
+    accept(await updateComponentSettings("graphify", patch));
+  });
+  // The queue runs past a failed save; the failure itself still reaches this save's caller.
+  settingsQueue = task.catch(() => {});
+  return task;
 }
 
 function subscribe(listener: () => void): () => void {
@@ -163,6 +171,8 @@ function clearDeclined(): void {
  */
 export function shouldOfferOnGraphAction(view: ComponentView | null): boolean {
   if (!view?.offer) return false;
+  // Downloads are off: the confirmation could not start one. Import stays available in the row.
+  if (view.settings.offline.value) return false;
   const status = view.status;
   if (status.state === "installed" || status.state === "installing") return false;
   if (status.state === "failed" && (status.reason === "offline" || status.reason === "unsupported-platform" || status.reason === "lock-unreadable")) return false;

@@ -103,18 +103,21 @@ export function assertComponentStatus(stdout, info = {}) {
   } catch {
     throw new Error(`nema components status --json printed no JSON:\n${stdout}`);
   }
+  // The offer's size must be a number the CLI actually computed: a string would pass a `> 0`
+  // comparison by coercion and let a malformed status through.
+  const hasDownloadOffer = (v) => typeof v.offer?.totalBytes === 'number' && Number.isFinite(v.offer.totalBytes) && v.offer.totalBytes > 0;
   const status = view?.status;
   if (view?.name !== 'graphify' || typeof status?.state !== 'string') throw new Error(`unexpected components status:\n${stdout}`);
   if (status.state === 'failed' && status.reason === 'lock-unreadable') throw new Error(`the packed CLI cannot read its Graphify lock: ${status.detail}`);
   if (status.state === 'installed' || status.state === 'installing') throw new Error(`an empty home reported graphify ${status.state}`);
   if (host.supported) {
-    if (status.state !== 'not-installed' || !(view.offer?.totalBytes > 0)) {
+    if (status.state !== 'not-installed' || !hasDownloadOffer(view)) {
       throw new Error(`a supported release host (${host.key}) must offer a Graphify download; got ${status.state}${status.state === 'failed' ? ` (${status.reason})` : ''}:\n${stdout}`);
     }
   } else if (status.state === 'failed' && status.reason === 'unsupported-platform') {
     return view;
   }
-  if (status.state === 'not-installed' && !(view.offer?.totalBytes > 0)) throw new Error(`no download offer for an installable platform:\n${stdout}`);
+  if (status.state === 'not-installed' && !hasDownloadOffer(view)) throw new Error(`no download offer for an installable platform:\n${stdout}`);
   return view;
 }
 

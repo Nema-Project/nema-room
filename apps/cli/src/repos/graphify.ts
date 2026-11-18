@@ -28,6 +28,7 @@ const REASON_TEXT: Record<FailureReason, string> = {
   offline: "离线模式",
   "disk-space": "磁盘空间不足",
   "lock-unreadable": "组件锁无法读取",
+  "offer-changed": "组件内容已变更，需要重新确认",
 };
 
 function stateOf(status: ComponentStatus | null): Exclude<GraphifyState, "installed"> {

@@ -57,6 +57,7 @@ test('assertComponentStatus requires a download offer on a supported release hos
   const notInstalled = (totalBytes) => JSON.stringify({ name: 'graphify', status: { state: 'not-installed' }, offer: { totalBytes } });
   assert.equal(assertComponentStatus(notInstalled(123), host).status.state, 'not-installed');
   assert.throws(() => assertComponentStatus(notInstalled(0), host), /must offer a Graphify download/);
+  assert.throws(() => assertComponentStatus(notInstalled('123'), host), /must offer a Graphify download/);
   const unsupported = JSON.stringify({ name: 'graphify', status: { state: 'failed', reason: 'unsupported-platform', detail: 'No Graphify build is pinned for linux-x64' } });
   assert.throws(() => assertComponentStatus(unsupported, host), /must offer a Graphify download/);
   assert.throws(() => assertComponentStatus(JSON.stringify({ name: 'graphify', status: { state: 'installed' } }), host), /empty home reported graphify installed/);

@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ComponentsSettings, GraphifyEntry } from "@/components/ComponentsSettings";
-import { DECLINED_KEY, formatMiB, refreshComponents, resetComponentsForTests, startGraphifyInstall } from "@/lib/components";
+import { DECLINED_KEY, formatMiB, refreshComponents, resetComponentsForTests, saveGraphifySettings, startGraphifyInstall } from "@/lib/components";
 import { I18nProvider } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
 import type { ComponentStatus, ComponentView } from "@/lib/types";
@@ -217,6 +217,53 @@ describe("graph entry and first-use offer", () => {
     expect(hub.cancelComponentInstall).toHaveBeenCalledWith("graphify");
   });
 
+  it("retrying a cancelled repair from the progress dialog sends a forced repair", async () => {
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
+    // A repair started elsewhere is already running; this dialog only follows it (force=false).
+    answer(view({ state: "installing", progress }));
+    vi.mocked(hub.cancelComponentInstall).mockResolvedValue({ ...installed, cancelled: true });
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
+    renderEntry();
+    await userEvent.click(await screen.findByRole("button", { name: "Show progress" }));
+    const dialog = await screen.findByRole("dialog", { name: "Installing Graphify" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel download" }));
+    expect(await within(dialog).findByText("The reinstall was cancelled; the installed copy is unchanged.")).toBeTruthy();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+    // Over an installed copy only a forced install is a retry of the repair.
+    expect(hub.installComponent).toHaveBeenCalledWith("graphify", LOCK_HASH, true);
+  });
+
+  it("settings saves are serialized, so a slower earlier save cannot publish over a later one", async () => {
+    answer(view({ state: "not-installed" }));
+    await refreshComponents();
+    const deferred = <T,>() => {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    };
+    const first = deferred<ComponentView>();
+    const second = deferred<ComponentView>();
+    const mirrorView = view({ state: "not-installed" });
+    const offlineView = { ...view({ state: "not-installed" }), settings: { ...view({ state: "not-installed" }).settings, offline: { value: true, source: "config" as const, config: true } } };
+    vi.mocked(hub.updateComponentSettings).mockImplementation((_name, patch) => (patch.offline === true ? second.promise : first.promise));
+    const save1 = saveGraphifySettings({ pythonMirror: "https://mirror.example" });
+    const save2 = saveGraphifySettings({ offline: true });
+    // The second save is not even sent until the first answer arrives.
+    await Promise.resolve();
+    expect(hub.updateComponentSettings).toHaveBeenCalledTimes(1);
+    first.resolve(mirrorView);
+    await save1;
+    expect(hub.updateComponentSettings).toHaveBeenCalledTimes(2);
+    second.resolve(offlineView);
+    await save2;
+    answer(offlineView);
+    const snapshot = await refreshComponents();
+    expect(snapshot.graphify?.settings.offline.value).toBe(true);
+  });
+
   it("a failure greys only the graph entry, names the cause, and offers retry and import without a global error", async () => {
     answer(failed("network", "connect ECONNREFUSED"));
     const { container } = renderEntry();
@@ -388,6 +435,69 @@ describe("Settings → Components", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
     await userEvent.click(await within(dialog).findByRole("button", { name: "Cancel download" }));
     expect(await within(dialog).findByText("Graphify is installed. Graph features are ready.")).toBeTruthy();
+    expect(within(dialog).queryByText("The reinstall was cancelled; the installed copy is unchanged.")).toBeNull();
+  });
+
+  it("a repair failure recorded during the attempt arrives through a later status read", async () => {
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const failedRepair = view({
+      state: "installed",
+      version: { graphifyy: "0.9.95", python: "3.11.18" },
+      path: "/p",
+      launcher: "/p/graphify",
+      lastFailure: { reason: "network", detail: "connect ECONNREFUSED", at: "2026-11-18T00:00:00.000Z" },
+    });
+    const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
+    answer(installed);
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
+    renderSettings();
+    await userEvent.click(await screen.findByRole("button", { name: "Reinstall" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    expect(hub.installComponent).toHaveBeenCalledWith("graphify", LOCK_HASH, true);
+    // The attempt's own failure is not in the POST answer; the next status read carries it.
+    answer(failedRepair);
+    await refreshComponents();
+    expect((await within(dialog).findByRole("alert")).textContent).toContain("The last reinstall failed: network error.");
+    expect(within(dialog).getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+
+  it("a confirmed cancellation is shown before a previous repair failure", async () => {
+    const withFailure = view({
+      state: "installed",
+      version: { graphifyy: "0.9.95", python: "3.11.18" },
+      path: "/p",
+      launcher: "/p/graphify",
+      lastFailure: { reason: "network", detail: "connect ECONNREFUSED", at: "2026-11-18T00:00:00.000Z" },
+    });
+    const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
+    answer(withFailure);
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
+    vi.mocked(hub.cancelComponentInstall).mockResolvedValue({ ...withFailure, cancelled: true });
+    renderSettings();
+    await userEvent.click(await screen.findByRole("button", { name: "Reinstall" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Cancel download" }));
+    // The retry was cancelled; the older failure stays in the status row but is not this outcome.
+    expect(await within(dialog).findByText("The reinstall was cancelled; the installed copy is unchanged.")).toBeTruthy();
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+  });
+
+  it("a cancel answer without an outcome shows the status, not a completion", async () => {
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
+    answer(installed);
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
+    // No `cancelled` field: another client stopped the job first, so this dialog cannot know.
+    vi.mocked(hub.cancelComponentInstall).mockResolvedValue(installed);
+    renderSettings();
+    await userEvent.click(await screen.findByRole("button", { name: "Reinstall" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Cancel download" }));
+    expect(await within(dialog).findByText("Installed: Graphify 0.9.95 (Python 3.11.18).")).toBeTruthy();
+    expect(within(dialog).queryByText("Graphify is installed. Graph features are ready.")).toBeNull();
     expect(within(dialog).queryByText("The reinstall was cancelled; the installed copy is unchanged.")).toBeNull();
   });
 });

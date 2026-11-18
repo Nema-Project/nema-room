@@ -13,7 +13,8 @@ export type FailureReason =
   | "unsupported-platform"
   | "offline"
   | "disk-space"
-  | "lock-unreadable";
+  | "lock-unreadable"
+  | "offer-changed";
 
 export type InstallPhase = "download" | "verify" | "extract" | "self-check" | "activate";
 

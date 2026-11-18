@@ -48,6 +48,7 @@ const REASONS: Record<FailureReason, string> = {
   offline: "downloads are turned off",
   "disk-space": "not enough disk space",
   "lock-unreadable": "the shipped lock is unreadable",
+  "offer-changed": "the component offer changed; confirm again",
 };
 
 const INSTALL_HINT = "nema components install graphify";
@@ -65,6 +66,11 @@ export function formatComponentView(view: ComponentView): string[] {
       lines.push(`  lock-hash: ${status.lockHash}`);
       lines.push(`  location: ${status.path}`);
       lines.push(`  launcher: ${status.launcher}`);
+      if (status.lastFailure) {
+        lines.push(`  last reinstall failed: ${REASONS[status.lastFailure.reason]}`);
+        lines.push(`  detail: ${status.lastFailure.detail}`);
+        lines.push(`  at: ${status.lastFailure.at}`);
+      }
       break;
     case "installing":
       lines.push(`${status.name}: installing (${status.progress.phase}, ${size(status.progress.downloadedBytes)} of ${size(status.progress.totalBytes)})`);
@@ -174,7 +180,7 @@ export function registerComponentsCommands(components: Command, deps: Components
     }
   }
 
-  function reportResult(status: ComponentStatus, cfg: NemaConfig, signal: AbortSignal): number {
+  function reportResult(status: ComponentStatus, cfg: NemaConfig, signal: AbortSignal, before?: ComponentStatus): number {
     if (status.state === "installed") {
       deps.out.log(`${status.name} is installed (lock-hash ${status.lockHash}) at ${status.path}`);
       return 0;
@@ -184,7 +190,10 @@ export function registerComponentsCommands(components: Command, deps: Components
       return 130;
     }
     const current = view(status.name, cfg);
-    if (status.state === "failed" && current.status.state === "installed") {
+    // The reinstall reading requires the attempt itself to have started from an installed copy:
+    // a failed first install is not renamed a reinstall just because another process installed
+    // the component before this read.
+    if (status.state === "failed" && before?.state === "installed" && current.status.state === "installed") {
       // A failed reinstall: the old copy still serves, so the failure is reported on its own terms
       // instead of the "not installed" lines the failed view would print.
       deps.out.error(`${status.name}: the reinstall failed (${REASONS[status.reason]}); the installed copy at ${current.status.path} is unchanged.`);
@@ -276,7 +285,7 @@ export function registerComponentsCommands(components: Command, deps: Components
           deps.out.error(`${name} was not installed.`);
           return 1;
         }
-        return reportResult(result, cfg, signal);
+        return reportResult(result, cfg, signal, status);
       });
     });
 
@@ -318,6 +327,7 @@ export function registerComponentsCommands(components: Command, deps: Components
       await run(async (signal) => {
         const name: ComponentName = "graphify";
         const cfg = config();
+        const before = view(name, cfg).status;
         const importPack = deps.importPack ?? importComponent;
         try {
           const result = await importPack(name, file, {
@@ -333,7 +343,7 @@ export function registerComponentsCommands(components: Command, deps: Components
               }
             },
           });
-          return reportResult(result.status, cfg, signal);
+          return reportResult(result.status, cfg, signal, before);
         } catch (error) {
           if (error instanceof PackRejectedError) {
             deps.out.error(`Pack rejected: ${error.message}`);

@@ -82,6 +82,8 @@ export type InstallOptions = {
   hooks?: InstallHooks;
   /** Run even when the current lock's version is already active: a repair that re-checks it against fresh archives. */
   force?: boolean;
+  /** The lock-hash the caller confirmed (the daemon's install RPC): prepare refuses a lock that resolves differently. */
+  expectedLockHash?: string;
 };
 
 /** Puts the archives of `target` into `archivesDir`. Whatever it writes is verified against the lock afterwards. */
@@ -412,7 +414,14 @@ export async function activate(root: string, lockHash: string, staging: string, 
   });
   if (!existing) {
     await move(staging, final);
-    await checkedPoint(root, next);
+    try {
+      await checkedPoint(root, next);
+    } catch (error) {
+      // Nothing has published this tree (no pointer names it) and this attempt still owns it:
+      // take it back out rather than leaving a full runtime behind as an orphan.
+      await rm(final, { recursive: true, force: true });
+      throw error;
+    }
     return "renamed";
   }
   if (existing.isDirectory() && !existing.isSymbolicLink() && (await sameTree(final, staging))) {
@@ -423,7 +432,14 @@ export async function activate(root: string, lockHash: string, staging: string, 
   if (pointer.active !== lockHash && pointer.previous !== lockHash) {
     await rm(final, { recursive: true, force: true });
     await move(staging, final);
-    await checkedPoint(root, next);
+    try {
+      await checkedPoint(root, next);
+    } catch (error) {
+      // Same unpublished case: the replaced tree was an orphan no pointer named, and this attempt
+      // still owns the new one — remove it rather than leaving it behind.
+      await rm(final, { recursive: true, force: true });
+      throw error;
+    }
     return "replaced-orphan";
   }
   const backup = path.join(root, `${lockHash}.replaced-${randomBytes(6).toString("hex")}`);
@@ -626,12 +642,17 @@ function classify(error: unknown): { reason: FailureReason; detail: string } {
 type Prepared = { name: ComponentName; env: ComponentEnv; root: string; target: LockTarget; lockHash: string; totalBytes: number; platform: PlatformInfo };
 
 /** Platform and offline checks. Returns the status to answer with when no install can start. */
-function prepare(name: string, env: ComponentEnv, allowOffline: boolean): Prepared | ComponentStatus {
+function prepare(name: string, env: ComponentEnv, allowOffline: boolean, expectedLockHash?: string): Prepared | ComponentStatus {
   assertComponent(name);
   const lock = readLock(env.lockPath ?? shippedLockPath());
   const platform = env.platform ?? { platform: process.platform, arch: process.arch };
   const resolved = resolveTarget(lock, platform);
   if (!resolved.ok) return { state: "failed", name, lockHash: null, reason: "unsupported-platform", detail: resolved.detail, at: null };
+  // The confirmation was for one lock's download; a lock that resolves differently since (the
+  // program was upgraded in between) is not what was confirmed and must be confirmed again.
+  if (expectedLockHash !== undefined && resolved.lockHash !== expectedLockHash) {
+    return { state: "failed", name, lockHash: null, reason: "offer-changed", detail: "the component offer changed; confirm again", at: null };
+  }
   if (!allowOffline && isOffline(env)) return componentStatusSync(name, env);
   return { name, env, root: componentRoot(name, env), target: resolved.target, lockHash: resolved.lockHash, totalBytes: resolved.totalBytes, platform };
 }
@@ -643,14 +664,31 @@ function prepare(name: string, env: ComponentEnv, allowOffline: boolean): Prepar
  */
 export async function installFromSource(name: string, source: ArchiveSource, o: InstallOptions & { allowOffline?: boolean } = {}): Promise<ComponentStatus> {
   const env = o.env ?? {};
-  const prepared = prepare(name, env, o.allowOffline === true);
+  const prepared = prepare(name, env, o.allowOffline === true, o.expectedLockHash);
   if (!("root" in prepared)) {
     // Offline with a version installed, prepare answers the installed status: a plain install has
     // nothing to do, but a forced reinstall was asked to download and could not. Report that attempt
     // — and record it, so the installed status carries it — instead of reporting the old copy.
     if (o.force === true && prepared.state === "installed" && isOffline(env)) {
       const attemptFailure = { reason: "offline" as const, detail: OFFLINE_DETAIL, at: new Date().toISOString() };
-      await writeFailure(componentRoot(prepared.name, env), { lockHash: prepared.lockHash, ...attemptFailure });
+      const root = componentRoot(prepared.name, env);
+      // The record is written under the install lock, with the state rechecked there: a repair
+      // running in another process owns the status while it runs, and one that already finished
+      // must not be handed this attempt's failure. When the lock cannot be taken, the running
+      // install's outcome stands and this attempt is only returned to its caller.
+      try {
+        const { release } = await acquireInstallLock(root);
+        try {
+          const now = componentStatusSync(prepared.name, env);
+          if (now.state === "installed" && now.lockHash === prepared.lockHash) {
+            await writeFailure(root, { lockHash: prepared.lockHash, ...attemptFailure });
+          }
+        } finally {
+          await release();
+        }
+      } catch {
+        // Another installer holds the lock; its outcome defines the shared status.
+      }
       return { state: "failed", name: prepared.name, lockHash: prepared.lockHash, ...attemptFailure };
     }
     return prepared;
@@ -709,16 +747,25 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
     emit({ phase: "activate" });
     // The abort signal is part of activation's ownership check: a cancel that lands before the
     // pointer write stops activation at its verify points, and activation's own rollback puts the
-    // previous version back — the cancel never leaves a half-replaced tree behind.
+    // previous version back — the cancel never leaves a half-replaced tree behind. The signal is
+    // checked again after the lock read, so a cancel that arrives during that read still stops
+    // the pointer write instead of being reported as a completed install.
     await activate(root, lockHash, staging, {
       ...hooks,
       verifyLockHeld: async () => {
         throwIfAborted(o.signal);
         await verifyLockHeld(root, token);
+        throwIfAborted(o.signal);
       },
     });
-    await clearFailure(root);
-    await prune(root, readPointer(root));
+    // The pointer has committed: the install has happened. Cleanup errors from here are reported
+    // separately and never turn the result into a failure or a cancel.
+    try {
+      await clearFailure(root);
+      await prune(root, readPointer(root));
+    } catch (cleanupError) {
+      console.error(`[nema] component ${prepared.name} installed, but post-install cleanup failed`, cleanupError);
+    }
   } catch (error) {
     await rm(staging, { recursive: true, force: true });
     // A cancel is the caller's outcome, not a failed attempt: no record, and the abort propagates

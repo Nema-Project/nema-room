@@ -29,6 +29,7 @@ const REASON_KEY: Record<ComponentFailureReason, string> = {
   offline: "components.reason.offline",
   "unsupported-platform": "components.reason.unsupportedPlatform",
   "lock-unreadable": "components.reason.lockUnreadable",
+  "offer-changed": "components.reason.offerChanged",
 };
 
 /** A next step per cause, so network, proxy and checksum failures read differently. */
@@ -119,8 +120,8 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
   const [showImport, setShowImport] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  /** This dialog cancelled the running attempt: an installed status afterwards is the old copy, not a finished repair. */
-  const [cancelled, setCancelled] = useState(false);
+  /** How this dialog's cancel ended: really cancelled, completed anyway, or unknown (the daemon had no job left to stop). Null until this dialog cancels. */
+  const [cancelOutcome, setCancelOutcome] = useState<"cancelled" | "completed" | "unknown" | null>(null);
   const firstButton = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -138,14 +139,17 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
   const offer = graphify?.offer ?? null;
   const status = graphify?.status ?? null;
 
-  async function confirm() {
+  async function confirm(repairOverride?: boolean) {
     if (!offer) return;
     setBusy(true);
     setRequestError(null);
-    setCancelled(false);
+    setCancelOutcome(null);
     try {
       // A retry after a failed repair is a repair again, even if this dialog opened as a plain install.
-      const repair = force || (status?.state === "installed" && status.lastFailure !== undefined);
+      // The cancelled-outcome Retry passes its intent explicitly: over an installed copy an unforced
+      // install is a no-op, so only a forced one is a retry of the repair. First-install retries
+      // stay unforced.
+      const repair = repairOverride ?? (force || (status?.state === "installed" && status.lastFailure !== undefined));
       await startGraphifyInstall(offer.lockHash, { force: repair });
       setStep("follow");
     } catch (err) {
@@ -165,8 +169,10 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
     try {
       // The daemon says whether the attempt really stopped: a cancel that landed after the
       // install completed answers `cancelled: false`, and the finished install is what shows.
+      // An absent field means the daemon had no job left to stop (another client stopped it
+      // first): the outcome is unknown, which is not a completion either.
       const view = await cancelGraphifyInstall();
-      setCancelled(view.cancelled === true);
+      setCancelOutcome(view.cancelled === true ? "cancelled" : view.cancelled === false ? "completed" : "unknown");
     } catch (err) {
       setRequestError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -229,20 +235,31 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
     body = (
       <>
         <h2 id={titleId}>{t("components.graphify.name")}</h2>
-        {status.lastFailure ? (
+        {cancelOutcome === "cancelled" ? (
+          <>
+            <p role="status">{t("components.state.repairCancelled")}</p>
+            {requestError && <p className="error" role="alert">{requestError}</p>}
+            <div className="actions">
+              <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
+              {actionsFor(graphify).repair && <button type="button" disabled={busy} onClick={() => void confirm(true)}>{t("components.retry")}</button>}
+            </div>
+          </>
+        ) : status.lastFailure ? (
           <>
             <p role="alert">{t("components.state.repairFailed", { reason: t(REASON_KEY[status.lastFailure.reason]) })}</p>
+            {requestError && <p className="error" role="alert">{requestError}</p>}
             <div className="actions">
               <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
               {actionsFor(graphify).repair && <button type="button" disabled={busy} onClick={() => void confirm()}>{t("components.retry")}</button>}
             </div>
           </>
-        ) : cancelled ? (
+        ) : cancelOutcome === "unknown" ? (
           <>
-            <p role="status">{t("components.state.repairCancelled")}</p>
+            <p>{statusText(status, t)}</p>
+            {requestError && <p className="error" role="alert">{requestError}</p>}
             <div className="actions">
               <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
-              {actionsFor(graphify).repair && <button type="button" disabled={busy} onClick={() => void confirm()}>{t("components.retry")}</button>}
+              {actionsFor(graphify).repair && <button type="button" disabled={busy} onClick={() => void confirm(true)}>{t("components.retry")}</button>}
             </div>
           </>
         ) : (

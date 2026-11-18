@@ -195,6 +195,14 @@ describe("components.install", () => {
     expect(after.cancelled).toBe(true);
   });
 
+  test("passes the confirmed lock-hash to the installer", async () => {
+    const install = vi.fn(async (_name: string, _o: InstallOptions) => notInstalled());
+    const { call } = setup({ install });
+    await call("components.install", { name: "graphify", confirmed: true, lockHash: lockHash(component.target) });
+    await vi.waitFor(() => expect(install).toHaveBeenCalledTimes(1));
+    expect(install.mock.calls[0]![1].expectedLockHash).toBe(lockHash(component.target));
+  });
+
   test("passes the offline setting and the saved mirrors to the installer", async () => {
     const install = vi.fn(async (_name: string, _o: InstallOptions) => notInstalled());
     const { call } = setup({ install });

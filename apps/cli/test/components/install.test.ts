@@ -414,6 +414,58 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(readPointer(graphifyRoot()).active).toBe(lockHash(component.target));
   });
 
+  test("a lock that changed since the caller's confirmation is refused before any download", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    expect(await install(env, { expectedLockHash: "0".repeat(64) })).toMatchObject({ state: "failed", reason: "offer-changed", lockHash: null });
+    expect(source.requests).toEqual([]);
+    expect(await install(env, { expectedLockHash: lockHash(component.target) })).toMatchObject({ state: "installed" });
+  });
+
+  test("a cancel after the staging move but before the pointer write removes the unpublished tree", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    const hash = lockHash(component.target);
+    const controller = new AbortController();
+    const status = await install(env, {
+      signal: controller.signal,
+      hooks: {
+        rename: async (from, to) => {
+          await rename(from, to);
+          if (to === path.join(graphifyRoot(), hash)) controller.abort();
+        },
+      },
+    }).catch((error: unknown) => error);
+    expect(status).toBeInstanceOf(Error);
+    expect((status as Error).name).toBe("AbortError");
+    expect(existsSync(path.join(graphifyRoot(), hash))).toBe(false);
+    expect(existsSync(path.join(graphifyRoot(), "current.json"))).toBe(false);
+  });
+
+  test("a cleanup error after the pointer commits still reports the install, and logs the cleanup failure", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    expect(await install(env)).toMatchObject({ state: "installed" });
+    // A directory where the failure record belongs makes clearing it fail after activation commits.
+    mkdirSync(path.join(graphifyRoot(), "last-failure.json"));
+    const logged: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args);
+    };
+    try {
+      expect(await install(env, { force: true })).toMatchObject({ state: "installed" });
+    } finally {
+      console.error = original;
+    }
+    expect(logged).toHaveLength(1);
+    expect(String(logged[0]![0])).toContain("cleanup failed");
+    expect(readPointer(graphifyRoot()).active).toBe(lockHash(component.target));
+  });
+
   test("too little disk space stops before the download and names the shortfall", async () => {
     const component = fakeComponent(execLog);
     const source = await serve(component);

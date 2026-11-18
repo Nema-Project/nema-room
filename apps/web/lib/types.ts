@@ -122,7 +122,8 @@ export type ComponentFailureReason =
   | "unsupported-platform"
   | "offline"
   | "disk-space"
-  | "lock-unreadable";
+  | "lock-unreadable"
+  | "offer-changed";
 
 export type ComponentProgress = {
   phase: "download" | "verify" | "extract" | "self-check" | "activate";
