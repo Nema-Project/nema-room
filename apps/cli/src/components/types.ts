@@ -36,6 +36,8 @@ export type ComponentStatus =
       /** The `<lock-hash>` directory. */
       path: string;
       launcher: string;
+      /** The last repair attempt for this version failed; the installed copy still serves. */
+      lastFailure?: { reason: FailureReason; detail: string; at: string };
     }
   | {
       state: "not-installed";

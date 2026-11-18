@@ -42,7 +42,13 @@ function schedulePoll(): void {
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/**
+ * A mutation's answer. The epoch moves here as well as when the request was sent: a GET that started
+ * after the request but was answered by the daemon before the daemon registered the install would
+ * otherwise publish its older `not-installed` over this `installing` state and stop the poll.
+ */
 function accept(view: ComponentView): void {
+  mutationEpoch += 1;
   publish({ graphify: view, error: null, loaded: true });
 }
 

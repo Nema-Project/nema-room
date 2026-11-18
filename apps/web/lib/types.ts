@@ -132,7 +132,7 @@ export type ComponentProgress = {
 };
 
 export type ComponentStatus =
-  | { state: "installed"; name: ComponentName; lockHash: string; version: { graphifyy: string; python: string }; path: string; launcher: string }
+  | { state: "installed"; name: ComponentName; lockHash: string; version: { graphifyy: string; python: string }; path: string; launcher: string; lastFailure?: { reason: ComponentFailureReason; detail: string; at: string } }
   | { state: "not-installed"; name: ComponentName; lockHash: string }
   | { state: "lock-mismatch"; name: ComponentName; lockHash: string; installedLockHash: string }
   | { state: "failed"; name: ComponentName; lockHash: string | null; reason: ComponentFailureReason; detail: string; at: string | null; installedLockHash?: string }

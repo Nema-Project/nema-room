@@ -201,7 +201,9 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
         },
       },
     });
-    expect(failing).toMatchObject({ state: "installed", path: active });
+    expect(failing).toMatchObject({ state: "failed", reason: "self-check", lockHash: hash });
+    // The attempt failed, but the still-serving previous version is what the store reports.
+    expect(await componentStatus(env)).toMatchObject({ state: "installed", path: active, lastFailure: { reason: "self-check" } });
     expect(readFileSync(path.join(graphifyRoot(), "current.json"), "utf8")).toBe(pointerBefore);
     expect(readFileSync(damaged, "utf8")).toBe("# damaged\n");
     expect(execFileSync(path.join(active, "graphify"), ["--version"], { encoding: "utf8" }).trim()).toBe("graphify 0.9.95-a");
@@ -328,9 +330,10 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     renameSync(lockFile, `${lockFile}.stale-test`);
     writeFileSync(lockFile, `${process.pid}:foreign`);
     releaseMove.resolve();
-    // The install reports the still-serving previous version (its failure record is what
-    // shows the abort); the replacement itself must not have been published.
-    expect(await reinstall).toMatchObject({ state: "installed" });
+    // The attempt reports its failure (its failure record is what shows the abort); the store still
+    // reports the still-serving previous version, and the replacement itself was not published.
+    expect(await reinstall).toMatchObject({ state: "failed", reason: "self-check", lockHash: hash });
+    expect(await componentStatus(env)).toMatchObject({ state: "installed", lastFailure: { reason: "self-check" } });
     expect(readFailure(graphifyRoot())).toMatchObject({ reason: "self-check", lockHash: hash });
     expect(readFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.11"), "utf8")).toBe("tampered\n");
     expect(readdirSync(graphifyRoot()).filter((name) => name.includes(".replaced-"))).toEqual([]);

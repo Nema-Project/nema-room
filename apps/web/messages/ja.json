@@ -48,6 +48,7 @@
   "components.graphEntry": "コードグラフ",
   "components.state.checking": "コードグラフのコンポーネントを確認しています…",
   "components.state.installed": "インストール済み：Graphify {version}（Python {python}）。",
+  "components.state.repairFailed": "前回の再インストールに失敗しました：{reason}。",
   "components.state.installing": "Graphify をインストール中… {done} / {total}",
   "components.state.notInstalled": "Graphify はインストールされていません。リポジトリのインデックスとコード検索に必要です。",
   "components.state.lockMismatch": "インストール済みの Graphify は別バージョンの Nema 用のため、無効になっています。グラフ機能を使うには対応するバージョンをインストールしてください。",

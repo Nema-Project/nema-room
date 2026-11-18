@@ -183,7 +183,16 @@ export function registerComponentsCommands(components: Command, deps: Components
       deps.out.error("Cancelled; the partial download was removed and the previous state is unchanged.");
       return 130;
     }
-    for (const line of formatComponentView({ ...view(status.name, cfg), status })) deps.out.error(line);
+    const current = view(status.name, cfg);
+    if (status.state === "failed" && current.status.state === "installed") {
+      // A failed reinstall: the old copy still serves, so the failure is reported on its own terms
+      // instead of the "not installed" lines the failed view would print.
+      deps.out.error(`${status.name}: the reinstall failed (${REASONS[status.reason]}); the installed copy at ${current.status.path} is unchanged.`);
+      deps.out.error(`  detail: ${status.detail}`);
+      if (status.at) deps.out.error(`  at: ${status.at}`);
+      return 1;
+    }
+    for (const line of formatComponentView({ ...current, status })) deps.out.error(line);
     return 1;
   }
 

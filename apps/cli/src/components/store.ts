@@ -200,6 +200,9 @@ export function componentStatusSync(name: ComponentName = "graphify", env: Compo
   const pointer = readPointer(root);
   const launcher = path.join(root, resolved.lockHash, launcherName(env.platform?.platform ?? process.platform));
   if (pointer.active === resolved.lockHash && regularFile(launcher)) {
+    // The installed copy serves, but a repair attempt for this same version may have failed after it:
+    // carry that failure so callers can show it instead of reporting the repair as a success.
+    const failure = readFailure(root);
     return {
       state: "installed",
       name,
@@ -207,6 +210,7 @@ export function componentStatusSync(name: ComponentName = "graphify", env: Compo
       version: { graphifyy: lock.graphifyy, python: lock.python },
       path: path.join(root, resolved.lockHash),
       launcher,
+      ...(failure && failure.lockHash === resolved.lockHash ? { lastFailure: { reason: failure.reason, detail: failure.detail, at: failure.at } } : {}),
     };
   }
   const stale = pointer.active && pointer.active !== resolved.lockHash ? pointer.active : undefined;

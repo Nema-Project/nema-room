@@ -138,6 +138,35 @@ describe.skipIf(process.platform === "win32")("install", () => {
     expect(readPointer(store()).active).toBe(hash);
   });
 
+  test("a failed --force reinstall exits 1, names the failure, and leaves the old version installed", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const h = harness(component, { env: source.env() });
+    expect(await h.run("install", "graphify", "--yes")).toBe(0);
+    const hash = lockHash(component.target);
+    // Tamper the installed tree so the reinstall cannot take the identical-tree reuse path.
+    writeFileSync(path.join(store(), hash, "python", "lib", "python3.11", "os.py"), "# damaged\n");
+
+    const failing = harness(component, {
+      env: source.env(),
+      hooks: {
+        ...quick,
+        rename: async () => {
+          throw new Error("injected: could not move staging into place");
+        },
+      },
+    });
+    expect(await failing.run("install", "graphify", "--yes", "--force")).toBe(1);
+    expect(failing.errors.join("\n")).toContain("the reinstall failed (the self-check failed)");
+    expect(failing.errors.join("\n")).toContain("injected: could not move staging into place");
+    expect(failing.errors.join("\n")).toContain("is unchanged");
+
+    const again = harness(component, { env: source.env() });
+    expect(await again.run("status")).toBe(0);
+    expect(again.lines.join("\n")).toContain("graphify: installed");
+    expect(readPointer(store()).active).toBe(hash);
+  });
+
   test("an interactive yes installs; a no or a closed stdin downloads nothing", async () => {
     const component = fakeComponent(execLog);
     const source = await serve(component);

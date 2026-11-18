@@ -664,6 +664,9 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
     o.onProgress?.({ ...progress });
   };
   const staging = path.join(root, `${lockHash}.staging`);
+  // The attempt's own outcome, reported separately from the store status: a failed reinstall over an
+  // intact version must read as a failure, not as the still-serving old version.
+  let attemptFailure: { reason: FailureReason; detail: string; at: string } | null = null;
   try {
     emit();
     // Re-validate before the first mutation of shared state: a takeover that displaced
@@ -700,13 +703,27 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
     await rm(staging, { recursive: true, force: true });
     if (!isAbort(error) && !o.signal?.aborted) {
       const { reason, detail } = classify(error);
-      await writeFailure(root, { lockHash, reason, detail, at: new Date().toISOString() });
+      attemptFailure = { reason, detail, at: new Date().toISOString() };
+      await writeFailure(root, { lockHash, ...attemptFailure });
     }
   } finally {
     setInstalling(root, lockHash, null);
     await release();
   }
-  return componentStatusSync(prepared.name, env);
+  const status = componentStatusSync(prepared.name, env);
+  if (attemptFailure) {
+    const pointer = readPointer(root);
+    return {
+      state: "failed",
+      name: prepared.name,
+      lockHash,
+      reason: attemptFailure.reason,
+      detail: attemptFailure.detail,
+      at: attemptFailure.at,
+      ...(pointer.active && pointer.active !== lockHash ? { installedLockHash: pointer.active } : {}),
+    };
+  }
+  return status;
 }
 
 /**

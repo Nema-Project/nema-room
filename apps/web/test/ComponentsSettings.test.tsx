@@ -161,6 +161,44 @@ describe("graph entry and first-use offer", () => {
     expect(statusCalls()).toBeGreaterThanOrEqual(2);
   });
 
+  it("a retry GET that captured not-installed before the daemon started the install is discarded once the install is accepted", async () => {
+    const progress = { phase: "download", downloadedBytes: 0, totalBytes: LOCK_TOTAL, file: null };
+    const installing = view({ state: "installing", progress });
+    // GET1 starts before the install; the retry GET2 starts after GET1 is discarded and is answered
+    // by the daemon before the daemon registers the install.
+    let resolveGet1!: (value: { components: ComponentView[] }) => void;
+    let resolveGet2!: (value: { components: ComponentView[] }) => void;
+    const get1 = new Promise<{ components: ComponentView[] }>((resolve) => {
+      resolveGet1 = resolve;
+    });
+    const get2 = new Promise<{ components: ComponentView[] }>((resolve) => {
+      resolveGet2 = resolve;
+    });
+    vi.mocked(hub.getComponents).mockReturnValueOnce(get1).mockReturnValueOnce(get2);
+    const first = refreshComponents();
+    let resolveInstall!: (value: ComponentView) => void;
+    const installStarted = new Promise<ComponentView>((resolve) => {
+      resolveInstall = resolve;
+    });
+    vi.mocked(hub.installComponent).mockReturnValue(installStarted);
+    const started = startGraphifyInstall(LOCK_HASH);
+    vi.mocked(hub.getComponents).mockResolvedValue({ components: [installing] });
+    resolveGet1({ components: [view({ state: "not-installed" })] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(statusCalls()).toBe(2);
+    // The POST resolves: installing is accepted.
+    resolveInstall(installing);
+    await started;
+    // A poll joins the in-flight retry GET2; it answers the pre-install state, so it is discarded
+    // and the fresh fetch reports the install running.
+    const polled = refreshComponents();
+    resolveGet2({ components: [view({ state: "not-installed" })] });
+    const result = await polled;
+    expect(result.graphify?.status.state).toBe("installing");
+    expect(statusCalls()).toBe(3);
+    await first;
+  });
+
   it("confirming sends the offered lock-hash, then shows progress with the current file and a cancel", async () => {
     answer(view({ state: "not-installed" }));
     const progress = { phase: "download", downloadedBytes: 10 * 1024 * 1024, totalBytes: LOCK_TOTAL, file: FIXTURE_LOCK_TARGET.python.file };
@@ -288,17 +326,26 @@ describe("Settings → Components", () => {
     expect(within(dialog).getByTestId("component-offer-size").textContent).toBe("33.6 MiB");
   });
 
-  it("an installed component offers a repair that reinstalls the same version with force", async () => {
-    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+  it("a failed repair shows the failure with the installed version and offers another try", async () => {
+    const installed = view({
+      state: "installed",
+      version: { graphifyy: "0.9.95", python: "3.11.18" },
+      path: "/p",
+      launcher: "/p/graphify",
+      lastFailure: { reason: "self-check", detail: "injected", at: "2026-11-18T00:00:00.000Z" },
+    });
     answer(installed);
     vi.mocked(hub.installComponent).mockResolvedValue(installed);
     renderSettings();
-    expect(await screen.findByText("Installed: Graphify 0.9.95 (Python 3.11.18).")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+    expect(await screen.findByText("Installed: Graphify 0.9.95 (Python 3.11.18). The last reinstall failed: the installed component failed its self-check.")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Reinstall" }));
     const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
     expect(hub.installComponent).toHaveBeenCalledWith("graphify", LOCK_HASH, true);
+    // The repair failed again: the dialog says so and offers another try instead of "installed".
+    expect((await within(dialog).findByRole("alert")).textContent).toContain("The last reinstall failed: the installed component failed its self-check.");
+    expect(within(dialog).getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(within(dialog).queryByText("Graphify is installed. Graph features are ready.")).toBeNull();
   });
 });
 

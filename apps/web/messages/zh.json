@@ -48,6 +48,7 @@
   "components.graphEntry": "代码图谱",
   "components.state.checking": "正在检查代码图谱组件…",
   "components.state.installed": "已安装：Graphify {version}（Python {python}）。",
+  "components.state.repairFailed": "上次重新安装失败：{reason}。",
   "components.state.installing": "正在安装 Graphify… {done} / {total}",
   "components.state.notInstalled": "Graphify 未安装。仓库索引与代码检索需要它。",
   "components.state.lockMismatch": "已安装的 Graphify 属于另一个版本的 Nema，已停用。安装与当前版本匹配的组件后才能使用图谱功能。",

@@ -51,8 +51,10 @@ const PHASE_KEY = {
 /** One sentence for the state. A version for another lock is described as turned off, never as still in use. */
 export function statusText(status: ComponentStatus, t: T): string {
   switch (status.state) {
-    case "installed":
-      return t("components.state.installed", { version: status.version.graphifyy, python: status.version.python });
+    case "installed": {
+      const base = t("components.state.installed", { version: status.version.graphifyy, python: status.version.python });
+      return status.lastFailure ? `${base} ${t("components.state.repairFailed", { reason: t(REASON_KEY[status.lastFailure.reason]) })}` : base;
+    }
     case "installing":
       return t("components.state.installing", { done: formatMiB(status.progress.downloadedBytes), total: formatMiB(status.progress.totalBytes) });
     case "not-installed":
@@ -139,7 +141,9 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
     setBusy(true);
     setRequestError(null);
     try {
-      await startGraphifyInstall(offer.lockHash, { force });
+      // A retry after a failed repair is a repair again, even if this dialog opened as a plain install.
+      const repair = force || (status?.state === "installed" && status.lastFailure !== undefined);
+      await startGraphifyInstall(offer.lockHash, { force: repair });
       setStep("follow");
     } catch (err) {
       setRequestError(err instanceof Error ? err.message : String(err));
@@ -219,10 +223,22 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
     body = (
       <>
         <h2 id={titleId}>{t("components.graphify.name")}</h2>
-        <p role="status">{t("components.done")}</p>
-        <div className="actions">
-          <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
-        </div>
+        {status.lastFailure ? (
+          <>
+            <p role="alert">{t("components.state.repairFailed", { reason: t(REASON_KEY[status.lastFailure.reason]) })}</p>
+            <div className="actions">
+              <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
+              {offer && <button type="button" disabled={busy} onClick={() => void confirm()}>{t("components.retry")}</button>}
+            </div>
+          </>
+        ) : (
+          <>
+            <p role="status">{t("components.done")}</p>
+            <div className="actions">
+              <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
+            </div>
+          </>
+        )}
       </>
     );
   } else if (status?.state === "failed") {
