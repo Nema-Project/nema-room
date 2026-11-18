@@ -207,7 +207,9 @@ async function runPluginCall(nemaHome: string, call: PluginCall, github: GithubR
 }
 
 /**
- * `graphify` is for tests: production passes the packaged binary, not a PATH lookup.
+ * `graphify` is resolved per call (env, component store, older payload), never by PATH; tests pass a fake `bin`.
+ * When none is installed, code calls fail with GraphifyUnavailableError, whose message names the state and
+ * `nema components install graphify`; nothing is downloaded from here.
  * `github` is the daemon's GitHub provider; the authenticated `gh` CLI is the production default.
  * `prepareRepo` refreshes that repo before a code call. The daemon passes the watcher.
  */

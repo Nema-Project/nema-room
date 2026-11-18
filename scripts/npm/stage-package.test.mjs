@@ -27,6 +27,13 @@ const cliPackage = {
   },
 };
 
+const LOCK_FIXTURE = '{"fixture":"graphify lock"}\n';
+
+async function writeLock(root) {
+  await mkdir(path.join(root, 'scripts/desktop'), { recursive: true });
+  await writeFile(path.join(root, 'scripts/desktop/graphify-lock.json'), LOCK_FIXTURE);
+}
+
 async function temp(t) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'nema-stage-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -60,6 +67,7 @@ test('stage copies the runtime files and packs a tarball', async (t) => {
   await writeFile(path.join(cliDir, 'dist/index.js'), 'export const bin = true;\n');
   await writeFile(path.join(cliDir, 'src/report/SKILL.md'), '# skill\n');
   await writeFile(path.join(root, 'LICENSE'), 'MIT\n');
+  await writeLock(root);
   const outDir = path.join(root, 'dist-npm');
   const staged = await stagePackage({ root, cliDir, licensePath: path.join(root, 'LICENSE'), outDir });
   const manifest = JSON.parse(await readFile(path.join(staged.dir, 'package.json'), 'utf8'));
@@ -71,6 +79,25 @@ test('stage copies the runtime files and packs a tarball', async (t) => {
   assert.equal(existsSync(path.join(staged.dir, 'src/report/SKILL.md')), true);
   assert.equal(existsSync(path.join(staged.dir, 'LICENSE')), true);
   assert.equal(existsSync(path.join(staged.dir, 'vendor')), false);
+  assert.equal(await readFile(path.join(staged.dir, 'dist/resources/graphify-lock.json'), 'utf8'), LOCK_FIXTURE);
+  const packed = spawnSync('tar', ['-tzf', staged.tarball], { encoding: 'utf8' });
+  assert.equal(packed.status, 0, packed.stderr);
+  assert.match(packed.stdout, /^package\/dist\/resources\/graphify-lock\.json$/m);
+});
+
+test('stage replaces a stale lock left in the CLI build with the repository lock', async (t) => {
+  const root = await temp(t);
+  const cliDir = path.join(root, 'apps/cli');
+  await mkdir(path.join(cliDir, 'dist/resources'), { recursive: true });
+  await mkdir(path.join(cliDir, 'src/report'), { recursive: true });
+  await writeFile(path.join(cliDir, 'package.json'), JSON.stringify(cliPackage));
+  await writeFile(path.join(cliDir, 'dist/index.js'), 'export {};\n');
+  await writeFile(path.join(cliDir, 'dist/resources/graphify-lock.json'), '{"stale":true}\n');
+  await writeFile(path.join(cliDir, 'src/report/SKILL.md'), '# skill\n');
+  await writeFile(path.join(root, 'LICENSE'), 'MIT\n');
+  await writeLock(root);
+  const staged = await stagePackage({ root, cliDir, licensePath: path.join(root, 'LICENSE'), outDir: path.join(root, 'out') });
+  assert.equal(await readFile(path.join(staged.dir, 'dist/resources/graphify-lock.json'), 'utf8'), LOCK_FIXTURE);
 });
 
 test('CLI runtime does not ship vendored files', async (t) => {
@@ -84,13 +111,16 @@ test('CLI runtime does not ship vendored files', async (t) => {
   await writeFile(path.join(cliDir, 'dist/index.js'), 'export {};\n');
   await writeFile(path.join(cliDir, 'src/report/SKILL.md'), '# skill\n');
   await writeFile(path.join(root, 'LICENSE'), 'MIT\n');
+  await writeLock(root);
   await writeFile(path.join(root, 'vendor/archify/LICENSE'), 'upstream\n');
   const staged = await stagePackage({ root, cliDir, licensePath: path.join(root, 'LICENSE'), outDir: path.join(root, 'out') });
   assert.equal(existsSync(path.join(staged.dir, 'vendor')), false);
   const packed = spawnSync('tar', ['-tzf', staged.tarball], { encoding: 'utf8' });
   assert.equal(packed.status, 0, packed.stderr);
   assert.equal(packed.stdout.includes('vendor/'), false);
-  assert.equal(/node(?:\.exe)?$|python|graphify/m.test(packed.stdout), false);
+  // The lock is a KB-sized index of upstream archives; no runtime, interpreter or Graphify payload ships.
+  const shipped = packed.stdout.split('\n').filter((line) => line !== 'package/dist/resources/graphify-lock.json').join('\n');
+  assert.equal(/node(?:\.exe)?$|python|graphify/m.test(shipped), false);
   const info = await stat(staged.tarball);
   assert.ok(info.size > 0);
   assert.match(staged.sizeLine, new RegExp(`npm package size: ${info.size}`));
@@ -105,6 +135,7 @@ test('npm install exposes the nema bin and npx runs the scoped package', async (
   await writeFile(path.join(cliDir, 'dist/index.js'), '#!/usr/bin/env node\nprocess.stdout.write("nema-bin-ok\\n");\n');
   await writeFile(path.join(cliDir, 'src/report/SKILL.md'), '# skill\n');
   await writeFile(path.join(root, 'LICENSE'), 'MIT\n');
+  await writeLock(root);
   const staged = await stagePackage({ root, cliDir, licensePath: path.join(root, 'LICENSE'), outDir: path.join(root, 'dist-npm') });
   assert.equal(path.basename(staged.tarball), 'nema-project-nema-0.1.3.tgz');
   const installDir = path.join(root, 'install');

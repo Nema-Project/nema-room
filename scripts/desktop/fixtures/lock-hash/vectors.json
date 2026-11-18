@@ -1,0 +1,50 @@
+{
+  "about": "Lock-hash vectors shared by scripts/desktop/graphify.test.mjs and apps/cli/test/components/lock.test.ts. `canonical` names the file holding the exact canonical bytes (no trailing newline); `sha256` is `sha256sum` of that file.",
+  "vectors": [
+    {
+      "name": "keys sorted, wheel order kept",
+      "canonical": "order.canonical",
+      "sha256": "42fc549883da3fd60cd256a735438ea60f218498547c2d94d85a4cbec8fe296c",
+      "target": {
+        "python": {
+          "url": "https://example.invalid/cpython-fixture.tar.gz",
+          "size": 3,
+          "file": "cpython-fixture.tar.gz",
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "format": "tar.gz"
+        },
+        "wheels": [
+          {
+            "url": "https://example.invalid/zeta-1.0-py3-none-any.whl",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "file": "zeta-1.0-py3-none-any.whl",
+            "size": 2
+          },
+          {
+            "size": 1,
+            "file": "alpha-1.0-py3-none-any.whl",
+            "url": "https://example.invalid/alpha-1.0-py3-none-any.whl",
+            "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          }
+        ]
+      }
+    },
+    {
+      "name": "uppercase key sorts first, target keys other than python and wheels are not hashed",
+      "canonical": "extra-keys.canonical",
+      "sha256": "f4f7a67fc62e2899a49039b24043ce43a65eea94784470da55d8cc30a3bca20d",
+      "target": {
+        "wheels": [],
+        "note": "not part of the hash",
+        "python": {
+          "url": "https://example.invalid/py%2Bbuild.tar.gz",
+          "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "format": "tar.gz",
+          "file": "py.tar.gz",
+          "size": 123456789,
+          "Extra": "x"
+        }
+      }
+    }
+  ]
+}

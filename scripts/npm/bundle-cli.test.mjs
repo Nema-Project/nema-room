@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { bundleCli } from './bundle-cli.mjs';
+import { bundleCli, copyCliResources } from './bundle-cli.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const sharedMarker = 'nema-local-v1';
@@ -107,6 +107,16 @@ test('bundle keeps CLI files in place and emits @nema/shared once', async (t) =>
   const textsByFile = new Map();
   for (const file of files) textsByFile.set(file, await readFile(file, 'utf8'));
   assertBundledShape(dist, textsByFile);
+});
+
+test('the CLI build ships the repository Graphify lock byte for byte under dist/resources', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-bundle-lock-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const dist = path.join(root, 'dist');
+  await mkdir(dist, { recursive: true });
+  const { lock } = await copyCliResources({ distDir: dist });
+  assert.equal(lock, path.join(dist, 'resources', 'graphify-lock.json'));
+  assert.deepEqual(await readFile(lock), await readFile(path.join(repo, 'scripts/desktop/graphify-lock.json')));
 });
 
 test('real dist modules that read import.meta.url stay on their original paths', async (t) => {

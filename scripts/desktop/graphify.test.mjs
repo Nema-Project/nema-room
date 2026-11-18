@@ -1,41 +1,210 @@
 import assert from 'node:assert/strict';
-import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { dedupePythonInterpreters, fetchGraphify, graphifyLock, homePathFiles, machoLoadNames, materializeSymlinks, POSIX_GRAPHIFY_LAUNCHER, prunePythonRuntime, pythonLicensePath, rejectMachinePaths, removeUnreferencedLibpython } from './fetch-graphify.mjs';
+import { createHash } from 'node:crypto';
+import { canonicalJson, dedupePythonInterpreters, fetchGraphify, GRAPHIFY_LOCK_TARGETS, graphifyLock, graphifyLockHash, homePathFiles, machoLoadNames, manylinuxGlibc, materializeSymlinks, parseWheelName, pickManylinuxWheel, POSIX_GRAPHIFY_LAUNCHER, prunePythonRuntime, pythonLicensePath, refreshGraphifyLock, rejectMachinePaths, removeUnreferencedLibpython } from './fetch-graphify.mjs';
+import { downloadVerified } from './fetch-tools.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
-test('graphify lock pins the release targets and no install path', async () => {
+const KEPT_PREFIXES = ['graphifyy-', 'networkx-', 'numpy-', 'pyyaml-', 'rapidfuzz-', 'tree_sitter-', 'tree_sitter_bash-', 'tree_sitter_c-', 'tree_sitter_c_sharp-', 'tree_sitter_cpp-', 'tree_sitter_go-', 'tree_sitter_java-', 'tree_sitter_javascript-', 'tree_sitter_json-', 'tree_sitter_kotlin-', 'tree_sitter_php-', 'tree_sitter_python-', 'tree_sitter_ruby-', 'tree_sitter_rust-', 'tree_sitter_swift-', 'tree_sitter_typescript-'];
+const DROPPED_PREFIXES = ['tree_sitter_elixir-', 'tree_sitter_fortran-', 'tree_sitter_groovy-', 'tree_sitter_julia-', 'tree_sitter_lua-', 'tree_sitter_objc-', 'tree_sitter_powershell-', 'tree_sitter_scala-', 'tree_sitter_verilog-', 'tree_sitter_zig-'];
+const PYTHON_TRIPLES = {
+  'win32-x64': 'x86_64-pc-windows-msvc',
+  'darwin-arm64': 'aarch64-apple-darwin',
+  'linux-x64': 'x86_64-unknown-linux-gnu',
+  'linux-arm64': 'aarch64-unknown-linux-gnu',
+};
+
+test('graphify lock pins the four targets and no install path', async () => {
   const raw = await readFile(path.join(scriptDir, 'graphify-lock.json'), 'utf8');
   assert.equal(raw.includes('Users'), false);
   assert.equal(raw.includes('AppData'), false);
   assert.equal(graphifyLock.graphifyy, '0.9.95');
   assert.equal(graphifyLock.python, '3.11.18');
+  assert.equal(graphifyLock.cpythonRelease, '20261026');
   assert.equal(graphifyLock.extras.length, 0);
   assert.equal(graphifyLock.sourceCorrespondence.status, 'pending-task-7c');
-  for (const key of ['win32-x64', 'darwin-arm64']) {
+  assert.deepEqual(Object.keys(graphifyLock.targets), GRAPHIFY_LOCK_TARGETS);
+  for (const key of GRAPHIFY_LOCK_TARGETS) {
     const pin = graphifyLock.targets[key];
-    assert.equal(pin.wheels.length, 21);
+    assert.ok(pin, key);
+    assert.equal(pin.wheels.length, 21, key);
     const files = pin.wheels.map((wheel) => wheel.file);
-    for (const prefix of ['graphifyy-', 'networkx-', 'numpy-', 'pyyaml-', 'rapidfuzz-', 'tree_sitter-', 'tree_sitter_bash-', 'tree_sitter_c-', 'tree_sitter_c_sharp-', 'tree_sitter_cpp-', 'tree_sitter_go-', 'tree_sitter_java-', 'tree_sitter_javascript-', 'tree_sitter_json-', 'tree_sitter_kotlin-', 'tree_sitter_php-', 'tree_sitter_python-', 'tree_sitter_ruby-', 'tree_sitter_rust-', 'tree_sitter_swift-', 'tree_sitter_typescript-']) {
-      assert.equal(files.some((file) => file.startsWith(prefix)), true, prefix);
-    }
-    for (const prefix of ['tree_sitter_elixir-', 'tree_sitter_fortran-', 'tree_sitter_groovy-', 'tree_sitter_julia-', 'tree_sitter_lua-', 'tree_sitter_objc-', 'tree_sitter_powershell-', 'tree_sitter_scala-', 'tree_sitter_verilog-', 'tree_sitter_zig-']) {
-      assert.equal(files.some((file) => file.startsWith(prefix)), false, prefix);
-    }
+    for (const prefix of KEPT_PREFIXES) assert.equal(files.some((file) => file.startsWith(prefix)), true, `${key} ${prefix}`);
+    for (const prefix of DROPPED_PREFIXES) assert.equal(files.some((file) => file.startsWith(prefix)), false, `${key} ${prefix}`);
     assert.equal(pin.python.format, 'tar.gz');
-    assert.match(pin.python.url, /^https:\/\/github\.com\/astral-sh\/python-build-standalone\//);
+    assert.equal(pin.python.file, `cpython-3.11.18+20261026-${PYTHON_TRIPLES[key]}-install_only.tar.gz`, key);
+    assert.match(pin.python.url, /^https:\/\/github\.com\/astral-sh\/python-build-standalone\/releases\/download\/20261026\//);
     assert.match(pin.python.sha256, /^[a-f0-9]{64}$/);
     for (const wheel of pin.wheels) {
       assert.match(wheel.url, /^https:\/\/files\.pythonhosted\.org\/packages\//);
       assert.match(wheel.sha256, /^[a-f0-9]{64}$/);
+      assert.equal(wheel.url.endsWith(`/${wheel.file}`), true, wheel.file);
     }
   }
   assert.equal(graphifyLock.targets['win32-x64'].python.sha256, '75cb501dc11c7b55c6b447c58e4910bce5b1f609f1017328b4f3a858dfaf5428');
   assert.equal(graphifyLock.targets['darwin-arm64'].python.sha256, 'cba3455e18516fbe8668cff2820c9b6a53447c552d612443c2b2fb60d390a908');
+});
+
+test('every lock file entry records a positive integer size and target file names are unique', () => {
+  for (const key of GRAPHIFY_LOCK_TARGETS) {
+    const pin = graphifyLock.targets[key];
+    assert.ok(pin, key);
+    const entries = [pin.python, ...pin.wheels];
+    for (const entry of entries) assert.equal(Number.isSafeInteger(entry.size) && entry.size > 0, true, `${key} ${entry.file} size ${entry.size}`);
+    const names = entries.map((entry) => entry.file);
+    assert.equal(new Set(names).size, names.length, key);
+  }
+});
+
+test('Linux targets pin only glibc manylinux wheels for their machine, with the same wheel set as win32-x64', () => {
+  const windows = graphifyLock.targets['win32-x64'].wheels.map((wheel) => parseWheelName(wheel.file));
+  for (const [key, machine] of [['linux-x64', 'x86_64'], ['linux-arm64', 'aarch64']]) {
+    const pin = graphifyLock.targets[key];
+    assert.ok(pin, key);
+    const wheels = pin.wheels.map((wheel) => parseWheelName(wheel.file));
+    assert.deepEqual(wheels.map((wheel) => [wheel.name.toLowerCase(), wheel.version, wheel.python, wheel.abi]), windows.map((wheel) => [wheel.name.toLowerCase(), wheel.version, wheel.python, wheel.abi]), key);
+    for (const wheel of wheels) {
+      if (wheel.platform === 'any') continue;
+      const tags = wheel.platform.split('.');
+      assert.equal(tags.some((tag) => tag.startsWith('musllinux')), false, `${key} ${wheel.name}`);
+      assert.equal(tags.some((tag) => manylinuxGlibc(tag, machine)), true, `${key} ${wheel.name} ${wheel.platform}`);
+    }
+  }
+});
+
+test('lock-hash matches the shared fixture vectors', async () => {
+  const dir = path.join(scriptDir, 'fixtures', 'lock-hash');
+  const { vectors } = JSON.parse(await readFile(path.join(dir, 'vectors.json'), 'utf8'));
+  assert.ok(vectors.length >= 2);
+  for (const vector of vectors) {
+    const canonical = await readFile(path.join(dir, vector.canonical), 'utf8');
+    assert.equal(canonicalJson({ python: vector.target.python, wheels: vector.target.wheels }), canonical, vector.name);
+    assert.equal(sha256(canonical), vector.sha256, vector.name);
+    assert.equal(graphifyLockHash(vector.target), vector.sha256, vector.name);
+  }
+  assert.throws(() => canonicalJson({ size: Number.NaN }), /lock-hash/);
+  assert.throws(() => canonicalJson({ size: undefined }), /lock-hash/);
+});
+
+test('a download whose length differs from the pinned size is refused, cached or fresh', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-graphify-size-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bytes = Buffer.from('archive-bytes');
+  const asset = { file: 'a.whl', url: 'https://example.invalid/a.whl', sha256: sha256(bytes), size: bytes.length + 1 };
+  await assert.rejects(downloadVerified(asset, path.join(root, 'fresh'), async () => new Response(bytes)), /size mismatch/);
+  await mkdir(path.join(root, 'cached'));
+  await writeFile(path.join(root, 'cached', 'a.whl'), bytes);
+  await assert.rejects(downloadVerified(asset, path.join(root, 'cached'), async () => new Response(bytes)), /size mismatch/);
+  assert.equal(await downloadVerified({ ...asset, size: bytes.length }, path.join(root, 'cached'), async () => { throw new Error('no fetch'); }), path.join(root, 'cached', 'a.whl'));
+});
+
+test('manylinux selection takes the oldest glibc for the machine and never musl', () => {
+  assert.deepEqual(manylinuxGlibc('manylinux_2_28_x86_64', 'x86_64'), [2, 28]);
+  assert.deepEqual(manylinuxGlibc('manylinux2014_aarch64', 'aarch64'), [2, 17]);
+  assert.equal(manylinuxGlibc('manylinux2014_aarch64', 'x86_64'), null);
+  assert.equal(manylinuxGlibc('musllinux_1_2_x86_64', 'x86_64'), null);
+  const files = [
+    'numpy-2.4.6-cp311-cp311-musllinux_1_2_x86_64.whl',
+    'numpy-2.4.6-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl',
+    'numpy-2.4.6-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl',
+    'numpy-2.4.6-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl',
+    'numpy-2.4.6-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl',
+  ].map((filename) => ({ filename, packagetype: 'bdist_wheel' }));
+  assert.equal(pickManylinuxWheel('numpy-2.4.6-cp311-cp311-win_amd64.whl', files, 'x86_64').filename, 'numpy-2.4.6-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl');
+  assert.equal(pickManylinuxWheel('numpy-2.4.6-cp311-cp311-win_amd64.whl', files, 'aarch64').filename, 'numpy-2.4.6-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl');
+  assert.throws(() => pickManylinuxWheel('numpy-2.4.6-cp311-cp311-win_amd64.whl', files.slice(0, 1), 'x86_64'), /No manylinux/);
+});
+
+/** A fake upstream: CPython archives, SHA256SUMS, PyPI JSON and wheel bytes, all local. */
+function fakeUpstream(overrides = {}) {
+  const body = (name) => Buffer.from(`bytes of ${name}`);
+  const pyFile = (triple) => `cpython-3.11.18+20261026-${triple}-install_only.tar.gz`;
+  const files = new Map();
+  const add = (url, name) => files.set(url, overrides[name] ?? body(name));
+  const release = 'https://github.com/astral-sh/python-build-standalone/releases/download/20261026';
+  for (const triple of Object.values(PYTHON_TRIPLES)) add(`${release}/${pyFile(triple).replace('+', '%2B')}`, pyFile(triple));
+  const linuxWheels = ['x86_64', 'aarch64'].map((machine) => `numpy-2.4.6-cp311-cp311-manylinux_2_17_${machine}.manylinux2014_${machine}.whl`);
+  for (const name of ['graphifyy-0.9.95-py3-none-any.whl', 'numpy-2.4.6-cp311-cp311-win_amd64.whl', 'numpy-2.4.6-cp311-cp311-macosx_11_0_arm64.whl', ...linuxWheels]) {
+    add(`https://files.pythonhosted.org/packages/x/${name}`, name);
+  }
+  const sums = Object.values(PYTHON_TRIPLES).map((triple) => `${sha256(body(pyFile(triple)))}  ${pyFile(triple)}`).join('\n');
+  files.set(`${release}/SHA256SUMS`, Buffer.from(`${sums}\n`));
+  files.set('https://pypi.org/pypi/numpy/2.4.6/json', Buffer.from(JSON.stringify({
+    urls: [...linuxWheels, 'numpy-2.4.6-cp311-cp311-musllinux_1_2_x86_64.whl'].map((filename) => ({
+      filename, packagetype: 'bdist_wheel', url: `https://files.pythonhosted.org/packages/x/${filename}`, size: body(filename).length, digests: { sha256: sha256(body(filename)) },
+    })),
+  })));
+  const requested = [];
+  const fetchImpl = async (url) => {
+    requested.push(url);
+    const bytes = files.get(url);
+    return bytes ? new Response(bytes) : new Response('missing', { status: 404 });
+  };
+  const entry = (url, name) => ({ file: name, url, sha256: sha256(body(name)) });
+  const target = (triple, numpy) => ({
+    python: { ...entry(`${release}/${pyFile(triple).replace('+', '%2B')}`, pyFile(triple)), format: 'tar.gz' },
+    wheels: [entry('https://files.pythonhosted.org/packages/x/graphifyy-0.9.95-py3-none-any.whl', 'graphifyy-0.9.95-py3-none-any.whl'), entry(`https://files.pythonhosted.org/packages/x/${numpy}`, numpy)],
+  });
+  const lock = {
+    schemaVersion: 1, graphifyy: '0.9.95', python: '3.11.18', cpythonRelease: '20261026', extras: [], sourceCorrespondence: { status: 'pending-task-7c' },
+    targets: { 'win32-x64': target(PYTHON_TRIPLES['win32-x64'], 'numpy-2.4.6-cp311-cp311-win_amd64.whl'), 'darwin-arm64': target(PYTHON_TRIPLES['darwin-arm64'], 'numpy-2.4.6-cp311-cp311-macosx_11_0_arm64.whl') },
+  };
+  return { lock, fetchImpl, requested, body };
+}
+
+test('lock refresh records downloaded sizes and pins the Linux targets from a fake upstream', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-graphify-refresh-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const upstream = fakeUpstream();
+  const next = await refreshGraphifyLock({ lock: upstream.lock, cacheDir: path.join(root, 'cache'), fetchImpl: upstream.fetchImpl });
+  assert.deepEqual(Object.keys(next.targets), GRAPHIFY_LOCK_TARGETS);
+  for (const key of GRAPHIFY_LOCK_TARGETS) {
+    for (const entry of [next.targets[key].python, ...next.targets[key].wheels]) {
+      assert.equal(entry.size, upstream.body(entry.file).length, `${key} ${entry.file}`);
+      assert.equal(entry.sha256, sha256(upstream.body(entry.file)), `${key} ${entry.file}`);
+    }
+  }
+  assert.deepEqual(Object.keys(next.targets['win32-x64'].python), ['file', 'url', 'sha256', 'size', 'format']);
+  assert.equal(next.targets['linux-arm64'].wheels[1].file, 'numpy-2.4.6-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl');
+  assert.equal(next.targets['linux-x64'].wheels[0].url, upstream.lock.targets['win32-x64'].wheels[0].url);
+  assert.equal(upstream.requested.some((url) => url.includes('musllinux')), false);
+});
+
+test('lock refresh refuses an existing pin whose bytes changed upstream', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-graphify-refresh-bad-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const upstream = fakeUpstream({ 'numpy-2.4.6-cp311-cp311-win_amd64.whl': Buffer.from('tampered') });
+  await assert.rejects(refreshGraphifyLock({ lock: upstream.lock, cacheDir: path.join(root, 'cache'), fetchImpl: upstream.fetchImpl }), /does not match the pin/);
+});
+
+test('lock refresh validates existing Linux pins instead of re-deriving them', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-graphify-refresh-linux-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const upstream = fakeUpstream();
+  const first = await refreshGraphifyLock({ lock: upstream.lock, cacheDir: path.join(root, 'cache-1'), fetchImpl: upstream.fetchImpl });
+  const linuxWheel = 'numpy-2.4.6-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl';
+  const tampered = fakeUpstream({ [linuxWheel]: Buffer.from('tampered') });
+  await assert.rejects(refreshGraphifyLock({ lock: first, cacheDir: path.join(root, 'cache-2'), fetchImpl: tampered.fetchImpl }), /does not match the pin/);
+  const honest = fakeUpstream();
+  const second = await refreshGraphifyLock({ lock: first, cacheDir: path.join(root, 'cache-3'), fetchImpl: honest.fetchImpl });
+  assert.deepEqual(second.targets['linux-x64'], first.targets['linux-x64']);
+  assert.deepEqual(second.targets['linux-arm64'], first.targets['linux-arm64']);
+});
+
+test('lock refresh drops cache bytes that failed verification', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-graphify-refresh-cache-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cacheDir = path.join(root, 'cache');
+  const wheel = 'numpy-2.4.6-cp311-cp311-win_amd64.whl';
+  const upstream = fakeUpstream({ [wheel]: Buffer.from('tampered') });
+  await assert.rejects(refreshGraphifyLock({ lock: upstream.lock, cacheDir, fetchImpl: upstream.fetchImpl }), /does not match the pin/);
+  assert.equal((await readdir(cacheDir)).includes(wheel), false);
 });
 
 test('launcher sources name only the bundled Python', async () => {

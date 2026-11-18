@@ -35,6 +35,8 @@ const ConfigSchema = z
     authMode: z.enum(["siwc", "compat", "byok"]),
     proxyEnv: z.enum(["off", "forward"]).optional(),
     byokBaseUrl: z.string().transform(normalizeByokBaseUrl).optional(),
+    /** Optional components. `offline: true` forbids every component download (as NEMA_GRAPHIFY_OFFLINE=1 does). */
+    components: z.object({ offline: z.boolean().optional() }).strict().optional(),
   })
   .strict();
 

@@ -268,6 +268,29 @@ describe("managed local runtime", () => {
     expect(seen[1]?.NEMA_SHARES_ENABLED).toBeUndefined();
   });
 
+  it("copies NEMA_GRAPHIFY_BIN into the managed core", async () => {
+    const home = join(tempDir("nema-home-"), "graphify-override");
+    const assetsDir = testAssets();
+    mkdirSync(home, { recursive: true });
+    const seen: Array<NodeJS.ProcessEnv | undefined> = [];
+    setEnsureSpawnerForTests((spec) => {
+      seen.push(spec.env);
+      throw new Error("graphify-override-captured");
+    });
+    const previous = process.env.NEMA_GRAPHIFY_BIN;
+    try {
+      process.env.NEMA_GRAPHIFY_BIN = "/opt/custom/graphify";
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/graphify-override-captured/);
+      delete process.env.NEMA_GRAPHIFY_BIN;
+      await expect(ensureLocalRuntime({ home, assetsDir })).rejects.toThrow(/graphify-override-captured/);
+    } finally {
+      if (previous === undefined) delete process.env.NEMA_GRAPHIFY_BIN;
+      else process.env.NEMA_GRAPHIFY_BIN = previous;
+    }
+    expect(seen[0]?.NEMA_GRAPHIFY_BIN).toBe("/opt/custom/graphify");
+    expect(seen[1]?.NEMA_GRAPHIFY_BIN).toBeUndefined();
+  });
+
   function oldCore(assetsDir: string): DiscoveredInstance {
     return {
       origin: "http://127.0.0.1:9",

@@ -771,7 +771,7 @@ process.stdout.write("graphify 1.2.3\\n");
     type: "rpc.response",
     id: "st",
     ok: true,
-    result: { code: { installed: true, detail: "graphify 1.2.3" }, github: GITHUB_MISSING },
+    result: { code: { installed: true, detail: "graphify 1.2.3", state: "installed", source: "explicit" }, github: GITHUB_MISSING },
   });
   expect(readFileSync(record, "utf8")).toBe("--version\n");
 
@@ -781,7 +781,7 @@ process.stdout.write("graphify 1.2.3\\n");
     type: "rpc.response",
     id: "st2",
     ok: true,
-    result: { code: { installed: false, detail: "随包的 Graphify 运行环境缺失" }, github: GITHUB_MISSING },
+    result: { code: { installed: false, state: "not-installed", detail: expect.stringContaining("nema components install graphify") }, github: GITHUB_MISSING },
   });
 });
 

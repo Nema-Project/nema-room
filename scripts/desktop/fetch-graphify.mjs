@@ -10,6 +10,29 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const lockPath = path.join(scriptDir, 'graphify-lock.json');
 export const graphifyLock = JSON.parse(await readFile(lockPath, 'utf8').then((text) => text.replace(/^\uFEFF/, '')));
 
+/** Every lock target, in the order the lock file lists them. Linux targets serve npm/Compose hosts only. */
+export const GRAPHIFY_LOCK_TARGETS = ['win32-x64', 'darwin-arm64', 'linux-x64', 'linux-arm64'];
+
+/**
+ * Canonical JSON for the lock-hash: object keys sorted by UTF-16 code unit, arrays kept in order, no
+ * whitespace, values as JSON.stringify writes them. apps/cli/src/components/lock.ts must produce the
+ * same bytes; both sides assert the vectors in scripts/desktop/fixtures/lock-hash-vectors.json.
+ */
+export function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  if (typeof value === 'string' || typeof value === 'boolean' || value === null) return JSON.stringify(value);
+  if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value);
+  throw new Error(`Value cannot be part of a lock-hash: ${String(value)}`);
+}
+
+/** `<lock-hash>`: sha256 hex of the canonical JSON of one target's python entry and wheels array. */
+export function graphifyLockHash(pin) {
+  return createHash('sha256').update(canonicalJson({ python: pin.python, wheels: pin.wheels })).digest('hex');
+}
+
 /** POSIX launcher. The Python path is relative to this file, never a developer install. */
 export const POSIX_GRAPHIFY_LAUNCHER = `#!/bin/sh
 set -eu
@@ -322,16 +345,14 @@ function compileWindowsLauncher(sourceRoot, output) {
 
 /**
  * Download the pinned CPython and graphifyy wheels into `destination`.
- * Linux is not a desktop release target, so it leaves the directory untouched.
- * ponytail: the pin covers win32-x64 and darwin-arm64 only; add a lock target before staging those elsewhere.
+ * Linux is not a desktop release target, so it leaves the directory untouched. The lock's Linux targets
+ * exist for the npm/Compose host daemon, which installs them through apps/cli/src/components.
  */
 export async function fetchGraphify({ platform, arch, destination, cacheDir, sourceRoot, fetchImpl = fetch } = {}) {
   const key = `${platform}-${arch}`;
+  if (platform === 'linux') return null;
   const pin = graphifyLock.targets[key];
-  if (!pin) {
-    if (platform === 'linux') return null;
-    throw new Error(`No pinned Graphify runtime for ${key}`);
-  }
+  if (!pin) throw new Error(`No pinned Graphify runtime for ${key}`);
   if (!destination || !cacheDir || !sourceRoot) throw new Error('Graphify staging needs a destination, cache, and source root');
   destination = path.resolve(destination);
   await mkdir(destination, { recursive: true });
@@ -367,4 +388,177 @@ export async function fetchGraphify({ platform, arch, destination, cacheDir, sou
   }
   await rejectMachinePaths(destination, upstream);
   return destination;
+}
+
+const LINUX_BUILDS = {
+  'linux-x64': { triple: 'x86_64-unknown-linux-gnu', machine: 'x86_64' },
+  'linux-arm64': { triple: 'aarch64-unknown-linux-gnu', machine: 'aarch64' },
+};
+
+/** `{name}-{version}(-{build})?-{python}-{abi}-{platform}.whl`, the wheel file name convention. */
+export function parseWheelName(file) {
+  if (!file.endsWith('.whl')) throw new Error(`Not a wheel: ${file}`);
+  const parts = file.slice(0, -4).split('-');
+  if (parts.length !== 5 && parts.length !== 6) throw new Error(`Unparseable wheel name: ${file}`);
+  const [name, version] = parts;
+  const [python, abi, platform] = parts.slice(-3);
+  return { name, version, python, abi, platform };
+}
+
+/** Lowest glibc a manylinux platform tag needs on `machine`, as [major, minor]; null for any other tag (musllinux included). */
+export function manylinuxGlibc(tag, machine) {
+  const modern = new RegExp(`^manylinux_(\\d+)_(\\d+)_${machine}$`).exec(tag);
+  if (modern) return [Number(modern[1]), Number(modern[2])];
+  const legacy = { manylinux1: [2, 5], manylinux2010: [2, 12], manylinux2014: [2, 17] };
+  const old = new RegExp(`^(manylinux1|manylinux2010|manylinux2014)_${machine}$`).exec(tag);
+  return old ? legacy[old[1]] : null;
+}
+
+const compareGlibc = (a, b) => a[0] - b[0] || a[1] - b[1];
+
+/**
+ * The glibc wheel for `machine` with the same name, version, python and abi tags as `template`.
+ * Among several, the one that needs the oldest glibc, so the lock runs on the widest set of hosts.
+ */
+export function pickManylinuxWheel(template, releaseFiles, machine) {
+  const want = parseWheelName(template);
+  const candidates = [];
+  for (const entry of releaseFiles) {
+    if (entry.packagetype !== undefined && entry.packagetype !== 'bdist_wheel') continue;
+    if (!entry.filename?.endsWith('.whl')) continue;
+    const got = parseWheelName(entry.filename);
+    if (got.version !== want.version || got.python !== want.python || got.abi !== want.abi) continue;
+    if (got.name.toLowerCase() !== want.name.toLowerCase()) continue;
+    const tags = got.platform.split('.');
+    if (tags.some((tag) => tag.startsWith('musllinux'))) continue;
+    const glibc = tags.map((tag) => manylinuxGlibc(tag, machine)).filter(Boolean).sort(compareGlibc)[0];
+    if (glibc) candidates.push({ entry, glibc });
+  }
+  candidates.sort((a, b) => compareGlibc(a.glibc, b.glibc) || a.entry.filename.localeCompare(b.entry.filename));
+  if (!candidates.length) throw new Error(`No manylinux ${machine} wheel matches ${template}`);
+  return candidates[0].entry;
+}
+
+async function fetchOk(url, fetchImpl) {
+  const response = await fetchImpl(url);
+  if (!response.ok) throw new Error(`Download failed (${response.status}): ${url}`);
+  return response;
+}
+
+/**
+ * Real bytes for one lock file, cached by file name under `cacheDir`. Returns the digest and length
+ * of what was actually downloaded; nothing here is taken from an index or typed in.
+ */
+async function measure(file, url, cacheDir, fetchImpl) {
+  const cached = path.join(cacheDir, file);
+  let bytes = await readFile(cached).catch((error) => { if (error.code !== 'ENOENT') throw error; return null; });
+  if (!bytes) {
+    bytes = Buffer.from(await (await fetchOk(url, fetchImpl)).arrayBuffer());
+    await mkdir(cacheDir, { recursive: true });
+    await writeFile(`${cached}.partial`, bytes);
+    await rename(`${cached}.partial`, cached);
+  }
+  return { sha256: sha256(bytes), size: bytes.length };
+}
+
+/**
+ * Regenerate the lock: every existing pin is downloaded again, must still hash to its pinned sha256,
+ * and gains `size` from the downloaded bytes; the Linux targets are pinned from the same CPython
+ * release and the manylinux variants of the win32-x64 wheel set. Throws on any disagreement.
+ */
+export async function refreshGraphifyLock({ lock = graphifyLock, cacheDir, fetchImpl = fetch, pypiBase = 'https://pypi.org', log = () => {} } = {}) {
+  if (!cacheDir) throw new Error('refreshGraphifyLock needs a cacheDir');
+  const pinned = async (entry) => {
+    const actual = await measure(entry.file, entry.url, cacheDir, fetchImpl);
+    if (entry.sha256 && actual.sha256 !== entry.sha256) {
+      // Bytes that failed verification never stay in the cache: a later run would keep
+      // re-reading them as the download for this file.
+      await rm(path.join(cacheDir, entry.file), { force: true });
+      throw new Error(`${entry.file}: downloaded sha256 ${actual.sha256} does not match the pin ${entry.sha256}`);
+    }
+    log(`${entry.file} ${actual.size}`);
+    return actual;
+  };
+  const withSize = (entry, actual) => {
+    const { file, url, sha256: hash, size: _old, ...rest } = entry;
+    return { file, url, sha256: hash ?? actual.sha256, size: actual.size, ...rest };
+  };
+  const targets = {};
+  for (const key of ['win32-x64', 'darwin-arm64']) {
+    const pin = lock.targets[key];
+    if (!pin) throw new Error(`The lock has no ${key} target to refresh`);
+    const python = withSize(pin.python, await pinned(pin.python));
+    const wheels = [];
+    for (const wheel of pin.wheels) wheels.push(withSize(wheel, await pinned(wheel)));
+    targets[key] = { python, wheels };
+  }
+  // Linux targets the lock already has are refreshed exactly like the two above:
+  // re-downloaded and required to hash to their pins. Only a target the lock does not
+  // have yet is derived from upstream below, so a refresh can never silently move an
+  // existing Linux pin.
+  for (const key of Object.keys(LINUX_BUILDS)) {
+    const pin = lock.targets[key];
+    if (!pin) continue;
+    const python = withSize(pin.python, await pinned(pin.python));
+    const wheels = [];
+    for (const wheel of pin.wheels) wheels.push(withSize(wheel, await pinned(wheel)));
+    targets[key] = { python, wheels };
+  }
+
+  const sumsUrl = `https://github.com/astral-sh/python-build-standalone/releases/download/${lock.cpythonRelease}/SHA256SUMS`;
+  const upstreamSums = new Map();
+  for (const line of (await (await fetchOk(sumsUrl, fetchImpl)).text()).split('\n')) {
+    const match = /^([a-f0-9]{64})\s+\*?(\S+)$/.exec(line.trim());
+    if (match) upstreamSums.set(match[2], match[1]);
+  }
+  const template = targets['win32-x64'].wheels;
+  const releases = new Map();
+  for (const [key, { triple, machine }] of Object.entries(LINUX_BUILDS)) {
+    if (targets[key]) continue; // Already pinned in the lock; refreshed above.
+    const file = `cpython-${lock.python}+${lock.cpythonRelease}-${triple}-install_only.tar.gz`;
+    const url = `https://github.com/astral-sh/python-build-standalone/releases/download/${lock.cpythonRelease}/${file.replace('+', '%2B')}`;
+    const actual = await pinned({ file, url });
+    if (upstreamSums.get(file) !== actual.sha256) {
+      await rm(path.join(cacheDir, file), { force: true });
+      throw new Error(`${file}: downloaded sha256 ${actual.sha256} disagrees with upstream SHA256SUMS (${upstreamSums.get(file) ?? 'not listed'})`);
+    }
+    const python = { file, url, sha256: actual.sha256, size: actual.size, format: 'tar.gz' };
+    const wheels = [];
+    for (const wheel of template) {
+      const parsed = parseWheelName(wheel.file);
+      if (parsed.platform === 'any') {
+        wheels.push(wheel);
+        continue;
+      }
+      const project = `${parsed.name.replaceAll('_', '-').toLowerCase()}/${parsed.version}`;
+      if (!releases.has(project)) {
+        releases.set(project, (await (await fetchOk(`${pypiBase}/pypi/${project}/json`, fetchImpl)).json()).urls ?? []);
+      }
+      const chosen = pickManylinuxWheel(wheel.file, releases.get(project), machine);
+      const measured = await pinned({ file: chosen.filename, url: chosen.url });
+      if (chosen.digests?.sha256 !== measured.sha256) {
+        await rm(path.join(cacheDir, chosen.filename), { force: true });
+        throw new Error(`${chosen.filename}: downloaded sha256 disagrees with the PyPI index`);
+      }
+      if (chosen.size !== undefined && chosen.size !== measured.size) {
+        await rm(path.join(cacheDir, chosen.filename), { force: true });
+        throw new Error(`${chosen.filename}: downloaded size disagrees with the PyPI index`);
+      }
+      wheels.push({ file: chosen.filename, url: chosen.url, sha256: measured.sha256, size: measured.size });
+    }
+    targets[key] = { python, wheels };
+  }
+  return { ...lock, targets };
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) && process.argv[2] === 'refresh-lock') {
+  const cacheIndex = process.argv.indexOf('--cache');
+  const cacheDir = cacheIndex > 0 ? path.resolve(process.argv[cacheIndex + 1]) : path.join(os.tmpdir(), 'nema-graphify-lock-cache');
+  refreshGraphifyLock({ cacheDir, log: (line) => process.stdout.write(`${line}\n`) })
+    .then((next) => writeFile(lockPath, `${JSON.stringify(next, null, 2)}\n`))
+    .then(() => process.stdout.write(`wrote ${lockPath}\n`))
+    .catch((error) => {
+      process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+      process.exitCode = 1;
+    });
 }

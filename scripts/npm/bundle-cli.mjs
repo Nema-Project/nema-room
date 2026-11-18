@@ -1,4 +1,4 @@
-import { rm } from 'node:fs/promises';
+import { copyFile, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readdirSync, statSync } from 'node:fs';
@@ -67,8 +67,20 @@ export async function bundleCli({ distDir = path.join(repoRoot, 'apps/cli/dist')
   return { distDir: abs, entryPoints };
 }
 
+/**
+ * Copy the files the CLI reads at run time but does not compile: today the Graphify lock, which the
+ * component installer treats as its only trust root. Desktop staging and the npm stage both ship
+ * `dist/` as a whole, so this one copy reaches both.
+ */
+export async function copyCliResources({ distDir = path.join(repoRoot, 'apps/cli/dist'), lockSource = path.join(repoRoot, 'scripts/desktop/graphify-lock.json') } = {}) {
+  const target = path.join(path.resolve(distDir), 'resources', 'graphify-lock.json');
+  await mkdir(path.dirname(target), { recursive: true });
+  await copyFile(lockSource, target);
+  return { lock: target };
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  bundleCli().catch((error) => {
+  bundleCli().then(() => copyCliResources()).catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   });

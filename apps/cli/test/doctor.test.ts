@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AuthStore, type StoredAuth } from "../src/direct/authStore.js";
 import { defaultTokenFile, runDoctor as realRunDoctor, type DoctorOpts } from "../src/doctor.js";
 import type { GraphifyOpts } from "../src/repos/graphify.js";
+import { lockHash } from "../src/components/lock.js";
+import { fakeComponent, writeLock } from "./components/fixtures.js";
 
 /** What the doctor says about a private file: the mode on POSIX, the DACL on Windows. */
 const privateWording = process.platform === "win32" ? "ACL" : "0600";
@@ -335,11 +337,8 @@ describe("graphify check", () => {
 
   test("reports graphify version or the install hint without failing", async () => {
     const missing = byName(await runDoctor(opts()), "graphify");
-    expect(missing).toMatchObject({
-      name: "graphify 可用",
-      ok: true,
-      detail: "随包的 Graphify 运行环境缺失",
-    });
+    expect(missing).toMatchObject({ name: "graphify 可用", ok: true });
+    expect(missing.detail).toMatch(/^未安装：.*nema components install graphify/);
 
     const bin = join(root, "graphify");
     writeFileSync(bin, '#!/usr/bin/env node\nconsole.log("graphify 9.9.9");\n');
@@ -347,6 +346,44 @@ describe("graphify check", () => {
     fake.bin = bin;
     const present = byName(await runDoctor(opts()), "graphify");
     expect(present).toMatchObject({ name: "graphify 可用", ok: true, detail: "graphify 9.9.9" });
+  });
+
+  test("tells not installed, installed for another lock and installed apart", async () => {
+    const savedBin = process.env.NEMA_GRAPHIFY_BIN;
+    const savedPayload = process.env.NEMA_PAYLOAD_ROOT;
+    delete process.env.NEMA_GRAPHIFY_BIN;
+    process.env.NEMA_PAYLOAD_ROOT = join(root, "slim-payload");
+    try {
+      const machine = { platform: process.platform, arch: process.arch, musl: false };
+      const installed = fakeComponent("/dev/null", "installed");
+      const shippedNew = fakeComponent("/dev/null", "new");
+      const runtimeRoot = join(root, "runtime");
+      const store = (lock: typeof installed) => ({ runtimeRoot, lockPath: writeLock(join(root, `lock-${lockHash(lock.target)}.json`), lock), platform: machine });
+
+      fake = { components: store(installed) };
+      expect(byName(await runDoctor(opts()), "graphify").detail).toMatch(/^未安装：/);
+
+      const hash = lockHash(installed.target);
+      mkdirSync(join(runtimeRoot, "graphify", hash), { recursive: true });
+      const launcher = join(runtimeRoot, "graphify", hash, process.platform === "win32" ? "graphify.exe" : "graphify");
+      writeFileSync(launcher, '#!/usr/bin/env node\nconsole.log("graphify component 1.0");\n');
+      chmodSync(launcher, 0o755);
+      writeFileSync(join(runtimeRoot, "graphify", "current.json"), JSON.stringify({ active: hash, previous: null }));
+
+      fake = { components: store(shippedNew) };
+      const mismatch = byName(await runDoctor(opts()), "graphify");
+      expect(mismatch).toMatchObject({ ok: true, detail: expect.stringMatching(/^版本不匹配（已停用）：/) });
+
+      if (process.platform !== "win32") {
+        fake = { components: store(installed) };
+        expect(byName(await runDoctor(opts()), "graphify")).toMatchObject({ ok: true, detail: "graphify component 1.0" });
+      }
+    } finally {
+      if (savedBin === undefined) delete process.env.NEMA_GRAPHIFY_BIN;
+      else process.env.NEMA_GRAPHIFY_BIN = savedBin;
+      if (savedPayload === undefined) delete process.env.NEMA_PAYLOAD_ROOT;
+      else process.env.NEMA_PAYLOAD_ROOT = savedPayload;
+    }
   });
 });
 

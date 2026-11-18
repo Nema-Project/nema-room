@@ -434,6 +434,11 @@ export async function stageRuntime({
     await requiredFile(builtRoot, 'apps/local/dist/src/index.js', 'compiled core entry');
     await requiredFile(builtRoot, 'apps/cli/dist/index.js', 'compiled CLI entry');
     await requiredFile(builtRoot, 'apps/cli/src/report/SKILL.md', 'report SKILL.md');
+    // The component installer trusts only the lock shipped with the app; it must be the repository's lock byte for byte.
+    const shippedLock = await readFile(await requiredFile(builtRoot, 'apps/cli/dist/resources/graphify-lock.json', 'CLI Graphify lock'));
+    if (!shippedLock.equals(await readFile(path.join(sourceRoot, 'scripts/desktop/graphify-lock.json')))) {
+      throw new Error('apps/cli/dist/resources/graphify-lock.json differs from scripts/desktop/graphify-lock.json; rebuild the CLI');
+    }
     await requiredFile(builtRoot, 'LICENSE', 'application license');
     for (const file of REQUIRED_VENDOR) await requiredFile(builtRoot, file, file.includes('LICENSE') || file.includes('NOTICE') ? 'vendor license or notice' : 'vendor runtime resource');
     const pgliteRoot = path.join(builtRoot, 'node_modules/@electric-sql/pglite');

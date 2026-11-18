@@ -53,7 +53,10 @@ export type DaemonStart = {
   getConfig?: () => NemaConfig;
   cliEntry: string;
   execPath?: string;
-  /** For tests: production passes the packaged `tools/graphify` binary, not a PATH lookup. */
+  /**
+   * Graphify resolution. Tests pass a fake `bin`; desktop passes its `payloadRoot` (older payloads may still
+   * carry tools/graphify); otherwise the component store is used. Never a PATH lookup.
+   */
   graphify?: GraphifyOpts;
   /** Explicit provider injection for tests or callers; production uses the signed-in `gh` CLI. */
   github?: GithubReader;
