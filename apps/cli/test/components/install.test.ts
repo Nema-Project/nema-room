@@ -122,8 +122,11 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
       controller.abort();
       return true;
     };
-    const status = await install(newEnv, { signal: controller.signal });
-    expect(status).toMatchObject({ state: "lock-mismatch", installedLockHash: oldHash });
+    const status = await install(newEnv, { signal: controller.signal }).catch((error: unknown) => error);
+    // A cancel throws the abort error instead of resolving with a status a caller could read as
+    // the outcome; the store is exactly as it was before the attempt.
+    expect(status).toBeInstanceOf(Error);
+    expect((status as Error).name).toBe("AbortError");
     expect(existsSync(path.join(graphifyRoot(), `${lockHash(newer.target)}.staging`))).toBe(false);
     expect(existsSync(path.join(graphifyRoot(), "last-failure.json"))).toBe(false);
     expect(readPointer(graphifyRoot()).active).toBe(oldHash);

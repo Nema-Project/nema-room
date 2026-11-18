@@ -355,6 +355,8 @@ describe("Settings → Components", () => {
     expect(await screen.findByText("Installed: Graphify 0.9.95 (Python 3.11.18).")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Reinstall" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+    // Import is the one repair path left while downloads are off, so it stays.
+    expect(screen.getByRole("button", { name: "Import offline pack" })).toBeTruthy();
   });
 
   it("cancelling a repair reports the cancel instead of calling the old copy ready", async () => {
@@ -362,7 +364,7 @@ describe("Settings → Components", () => {
     const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
     answer(installed);
     vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
-    vi.mocked(hub.cancelComponentInstall).mockResolvedValue(installed);
+    vi.mocked(hub.cancelComponentInstall).mockResolvedValue({ ...installed, cancelled: true });
     renderSettings();
     await userEvent.click(await screen.findByRole("button", { name: "Reinstall" }));
     const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
@@ -372,6 +374,21 @@ describe("Settings → Components", () => {
     expect(hub.cancelComponentInstall).toHaveBeenCalledWith("graphify");
     expect(await within(dialog).findByText("The reinstall was cancelled; the installed copy is unchanged.")).toBeTruthy();
     expect(within(dialog).queryByText("Graphify is installed. Graph features are ready.")).toBeNull();
+  });
+
+  it("a cancel that landed after the repair completed shows the finished install", async () => {
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
+    answer(installed);
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
+    vi.mocked(hub.cancelComponentInstall).mockResolvedValue({ ...installed, cancelled: false });
+    renderSettings();
+    await userEvent.click(await screen.findByRole("button", { name: "Reinstall" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Cancel download" }));
+    expect(await within(dialog).findByText("Graphify is installed. Graph features are ready.")).toBeTruthy();
+    expect(within(dialog).queryByText("The reinstall was cancelled; the installed copy is unchanged.")).toBeNull();
   });
 });
 

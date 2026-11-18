@@ -38,12 +38,20 @@ export type ComponentView = {
   offer: ComponentOffer | null;
   /** Why no offer could be made (an unusable mirror address, an unreadable lock). */
   offerError?: string;
+  /**
+   * Set only on a `components.cancel` answer: whether the attempt it stopped really was cancelled.
+   * An install that completed anyway (the cancel landed after activation) answers `false`, so the
+   * caller reports the finished install, not a cancel.
+   */
+  cancelled?: boolean;
   settings: {
     pythonMirror: Setting<string | null>;
     pypiBase: Setting<string | null>;
     offline: Setting<boolean>;
   };
 };
+
+const isAbort = (error: unknown) => error instanceof Error && error.name === "AbortError";
 
 const nonEmpty = (value: string | undefined): value is string => typeof value === "string" && value.trim() !== "";
 
@@ -136,7 +144,7 @@ function nameParam(params: unknown): ComponentName {
  */
 export function registerComponentHandlers(rpc: RpcRouter, o: ComponentRpcOptions): { close(): Promise<void> } {
   const config = () => (o.getConfig ?? (() => loadConfig(o.nemaHome)))();
-  const running = new Map<ComponentName, { controller: AbortController; done: Promise<unknown> }>();
+  const running = new Map<ComponentName, { controller: AbortController; done: Promise<unknown>; aborted: boolean }>();
 
   const componentEnv = (cfg: NemaConfig): ComponentEnv => componentEnvFor(cfg, o.env ?? process.env, o.components);
 
@@ -168,27 +176,32 @@ export function registerComponentHandlers(rpc: RpcRouter, o: ComponentRpcOptions
     if (expected !== undefined && expected !== current.offer.lockHash) throw new Error("the component offer changed; confirm again");
     const controller = new AbortController();
     const install = o.install ?? installComponent;
-    const done = Promise.resolve()
+    const job: { controller: AbortController; done: Promise<unknown>; aborted: boolean } = { controller, done: Promise.resolve(), aborted: false };
+    job.done = Promise.resolve()
       .then(() => install(name, { env: componentEnv(config()), signal: controller.signal, force }))
       .catch((error) => {
-        // The installer records named failures itself; this is what slipped past it (an unreadable lock, a bad mirror).
-        console.error(`[nema] component install ${name} failed`, error);
+        // A cancel is the caller's outcome, not an installer failure: remember it for the cancel
+        // answer instead of logging it. Anything else is what slipped past the installer (an
+        // unreadable lock, a bad mirror).
+        if (isAbort(error)) job.aborted = true;
+        else console.error(`[nema] component install ${name} failed`, error);
       })
       .finally(() => {
         running.delete(name);
       });
-    running.set(name, { controller, done });
+    running.set(name, job);
     return view(name);
   });
 
   rpc.register("components.cancel", async (params) => {
     const name = nameParam(params);
     const job = running.get(name);
-    if (job) {
-      job.controller.abort();
-      await job.done;
-    }
-    return view(name);
+    if (!job) return view(name);
+    job.controller.abort();
+    await job.done;
+    // Whether the attempt really stopped: a cancel that landed after activation finds a finished
+    // install, and the answer says so instead of letting the caller report a cancel that was not.
+    return { ...view(name), cancelled: job.aborted };
   });
 
   rpc.register("components.configure", async (params) => {

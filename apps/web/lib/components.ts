@@ -97,9 +97,11 @@ export async function startGraphifyInstall(lockHash: string, opts: { force?: boo
   accept(await (opts.force === true ? installComponent("graphify", lockHash, true) : installComponent("graphify", lockHash)));
 }
 
-export async function cancelGraphifyInstall(): Promise<void> {
+export async function cancelGraphifyInstall(): Promise<ComponentView> {
   mutationEpoch += 1;
-  accept(await cancelComponentInstall("graphify"));
+  const view = await cancelComponentInstall("graphify");
+  accept(view);
+  return view;
 }
 
 export async function saveGraphifySettings(patch: { pythonMirror?: string | null; pypiBase?: string | null; offline?: boolean }): Promise<void> {

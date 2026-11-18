@@ -376,7 +376,10 @@ export async function importComponent(name: string, file: string, o: ImportOptio
         );
       }
     };
-    const status = await installFromSource(name, source, { ...o, env, allowOffline: true });
+    // Importing a pack is an explicit install of its contents: `force` makes it repair an installed
+    // copy of the same version (a damaged tree is replaced; an intact one is reused by activation),
+    // which is also the only repair path while downloads are off.
+    const status = await installFromSource(name, source, { ...o, env, allowOffline: true, force: true });
     return { status, ignored };
   } finally {
     await fh.close();

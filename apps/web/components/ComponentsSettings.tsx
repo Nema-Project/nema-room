@@ -78,7 +78,7 @@ function actionsFor(view: ComponentView): { install: boolean; retry: boolean; im
   return {
     install: canDownload && (status.state === "not-installed" || status.state === "lock-mismatch"),
     retry: canDownload && status.state === "failed",
-    import: status.state === "failed" ? status.reason !== "unsupported-platform" && status.reason !== "lock-unreadable" : status.state !== "installed" && status.state !== "installing",
+    import: status.state === "failed" ? status.reason !== "unsupported-platform" && status.reason !== "lock-unreadable" : status.state !== "installing" && (status.state !== "installed" || view.settings.offline.value),
     cancel: status.state === "installing",
     repair: canDownload && status.state === "installed",
   };
@@ -163,8 +163,10 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
   async function cancel() {
     setBusy(true);
     try {
-      await cancelGraphifyInstall();
-      setCancelled(true);
+      // The daemon says whether the attempt really stopped: a cancel that landed after the
+      // install completed answers `cancelled: false`, and the finished install is what shows.
+      const view = await cancelGraphifyInstall();
+      setCancelled(view.cancelled === true);
     } catch (err) {
       setRequestError(err instanceof Error ? err.message : String(err));
     } finally {

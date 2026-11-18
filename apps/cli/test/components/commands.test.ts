@@ -172,7 +172,6 @@ describe.skipIf(process.platform === "win32")("install", () => {
     const source = await serve(component);
     const h = harness(component, { env: source.env() });
     expect(await h.run("install", "graphify", "--yes")).toBe(0);
-    const hash = lockHash(component.target);
 
     let interrupt: (() => void) | undefined;
     const cancelling = harness(component, {
@@ -181,15 +180,17 @@ describe.skipIf(process.platform === "win32")("install", () => {
         interrupt = cb;
         return () => {};
       },
-      // The installer's contract after a cancelled repair: no failure record; it resolves with the
-      // status from before — the old copy, still installed. The command must not call that a success.
+      // The installer's contract after a cancelled repair: it throws the abort error (no failure
+      // record; the previous state is unchanged). The command must not call that a success.
       install: async () => {
         interrupt?.();
-        return { state: "installed", name: "graphify", lockHash: hash, version: { graphifyy: "0.9.95", python: "3.11.18" }, path: path.join(store(), hash), launcher: path.join(store(), hash, "graphify") } as const;
+        const error = new Error("The operation was aborted");
+        error.name = "AbortError";
+        throw error;
       },
     });
     expect(await cancelling.run("install", "graphify", "--yes", "--force")).toBe(130);
-    expect(cancelling.errors.join("\n")).toContain("Cancelled");
+    expect(cancelling.errors.join("\n")).toContain("Cancelled; nothing was changed.");
     expect(cancelling.lines.join("\n")).not.toContain("is installed");
   });
 

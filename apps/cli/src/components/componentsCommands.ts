@@ -175,15 +175,13 @@ export function registerComponentsCommands(components: Command, deps: Components
   }
 
   function reportResult(status: ComponentStatus, cfg: NemaConfig, signal: AbortSignal): number {
-    // A cancelled attempt reports as a cancel even when a previous version still serves: checking
-    // `installed` first would call a cancelled reinstall a success.
-    if (signal.aborted) {
-      deps.out.error("Cancelled; the partial download was removed and the previous state is unchanged.");
-      return 130;
-    }
     if (status.state === "installed") {
       deps.out.log(`${status.name} is installed (lock-hash ${status.lockHash}) at ${status.path}`);
       return 0;
+    }
+    if (signal.aborted) {
+      deps.out.error("Cancelled; the partial download was removed and the previous state is unchanged.");
+      return 130;
     }
     const current = view(status.name, cfg);
     if (status.state === "failed" && current.status.state === "installed") {

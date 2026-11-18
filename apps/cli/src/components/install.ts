@@ -639,7 +639,7 @@ function prepare(name: string, env: ComponentEnv, allowOffline: boolean): Prepar
 /**
  * The one assembly path shared by online install and offline import: archives from `source`, verified
  * against the lock, assembled, self-checked and activated. Failures leave the previous state untouched
- * and are recorded; a cancel leaves no record.
+ * and are recorded; a cancel leaves no record and throws the abort error instead of resolving.
  */
 export async function installFromSource(name: string, source: ArchiveSource, o: InstallOptions & { allowOffline?: boolean } = {}): Promise<ComponentStatus> {
   const env = o.env ?? {};
@@ -707,16 +707,29 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
     await (hooks.selfCheck ?? defaultSelfCheck)(path.join(staging, launcherName(platform.platform)));
     throwIfAborted(o.signal);
     emit({ phase: "activate" });
-    await activate(root, lockHash, staging, { ...hooks, verifyLockHeld: () => verifyLockHeld(root, token) });
+    // The abort signal is part of activation's ownership check: a cancel that lands before the
+    // pointer write stops activation at its verify points, and activation's own rollback puts the
+    // previous version back — the cancel never leaves a half-replaced tree behind.
+    await activate(root, lockHash, staging, {
+      ...hooks,
+      verifyLockHeld: async () => {
+        throwIfAborted(o.signal);
+        await verifyLockHeld(root, token);
+      },
+    });
     await clearFailure(root);
     await prune(root, readPointer(root));
   } catch (error) {
     await rm(staging, { recursive: true, force: true });
-    if (!isAbort(error) && !o.signal?.aborted) {
-      const { reason, detail } = classify(error);
-      attemptFailure = { reason, detail, at: new Date().toISOString() };
-      await writeFailure(root, { lockHash, ...attemptFailure });
-    }
+    // A cancel is the caller's outcome, not a failed attempt: no record, and the abort propagates
+    // instead of resolving with the previous status — resolving would let a caller report a
+    // cancelled repair as a success. An abort that lands after activation has completed never
+    // reaches this catch (nothing past the pointer write checks the signal), so a finished
+    // install still resolves as installed.
+    if (isAbort(error) || o.signal?.aborted) throw abortError();
+    const { reason, detail } = classify(error);
+    attemptFailure = { reason, detail, at: new Date().toISOString() };
+    await writeFailure(root, { lockHash, ...attemptFailure });
   } finally {
     setInstalling(root, lockHash, null);
     await release();
@@ -740,7 +753,8 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
 /**
  * Download, verify, assemble and activate `name` for this platform. Only `graphify` exists; any other
  * name throws. Resolves with the resulting status: `installed`, `failed` with a reason, or (after a
- * decline or a cancel) the status from before.
+ * decline) the status from before. A cancel throws the abort error: the previous state is unchanged
+ * and nothing is recorded.
  */
 export async function installComponent(name: string, o: InstallOptions = {}): Promise<ComponentStatus> {
   return installFromSource(name, downloadArchives, o);

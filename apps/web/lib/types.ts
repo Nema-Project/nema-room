@@ -146,6 +146,8 @@ export type ComponentView = {
   /** What a confirmed install downloads: the lock's summed sizes, the store directory and the hosts it contacts. */
   offer: { lockHash: string; totalBytes: number; location: string; hosts: string[] } | null;
   offerError?: string;
+  /** Set only on a cancel answer: whether the attempt it stopped really was cancelled (false when it had already completed). */
+  cancelled?: boolean;
   settings: {
     pythonMirror: ComponentSetting<string | null>;
     pypiBase: ComponentSetting<string | null>;

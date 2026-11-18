@@ -176,6 +176,25 @@ describe.skipIf(process.platform === "win32")("nema components import", () => {
     expect(await componentStatus(target)).toMatchObject({ state: "installed" });
   });
 
+  test("importing again repairs a damaged installed copy, offline", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const maker = envFor(component, "maker", source.env());
+    const { file } = await packComponent("graphify", { dir: root, env: maker, hooks: quick, toolVersion: "t" });
+    await source.close();
+    sources = sources.filter((s) => s !== source);
+    const target = envFor(component, "importer", {}, { offline: true });
+    const hash = lockHash(component.target);
+    expect((await importComponent("graphify", file, { env: target, hooks: quick })).status).toMatchObject({ state: "installed" });
+    // Damage the installed tree; a second import of the same pack is the offline repair path.
+    const damaged = path.join(storeDir(target), hash, "python", "lib", "python3.11", "os.py");
+    writeFileSync(damaged, "# damaged\n");
+    const repaired = await importComponent("graphify", file, { env: target, hooks: quick });
+    expect(repaired.status).toMatchObject({ state: "installed", lockHash: hash });
+    expect(readFileSync(damaged, "utf8")).not.toContain("damaged");
+    expect(readPointer(storeDir(target)).active).toBe(hash);
+  });
+
   test("rejects a pack for another lock-hash or target, naming why, and changes nothing", async () => {
     const component = fakeComponent(execLog);
     const env = envFor(component, "importer", {}, { offline: true });

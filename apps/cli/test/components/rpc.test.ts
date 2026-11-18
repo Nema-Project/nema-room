@@ -174,6 +174,25 @@ describe("components.install", () => {
     const after = (await call("components.cancel", { name: "graphify" })) as ComponentView;
     expect(signal?.aborted).toBe(true);
     expect(after.status.state).toBe("not-installed");
+    // This installer resolved despite the abort: the cancel answer says the attempt did not stop.
+    expect(after.cancelled).toBe(false);
+  });
+
+  test("a cancel whose installer throws the abort answers cancelled: true", async () => {
+    const install = vi.fn((_name: string, o: InstallOptions) => {
+      return new Promise<ComponentStatus>((_resolve, reject) => {
+        o.signal?.addEventListener("abort", () => {
+          const error = new Error("The operation was aborted");
+          error.name = "AbortError";
+          reject(error);
+        });
+      });
+    });
+    const { call } = setup({ install });
+    await call("components.install", { name: "graphify", confirmed: true });
+    await vi.waitFor(() => expect(install).toHaveBeenCalledTimes(1));
+    const after = (await call("components.cancel", { name: "graphify" })) as ComponentView;
+    expect(after.cancelled).toBe(true);
   });
 
   test("passes the offline setting and the saved mirrors to the installer", async () => {
