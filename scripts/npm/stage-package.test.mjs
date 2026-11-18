@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFile, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -155,4 +155,88 @@ test('npm install exposes the nema bin and npx runs the scoped package', async (
   const viaNpx = spawnSync(exec.bin, exec.args, { cwd: installDir, encoding: 'utf8' });
   assert.equal(viaNpx.status, 0, viaNpx.stderr || viaNpx.stdout);
   assert.match(viaNpx.stdout, /nema-bin-ok/);
+});
+
+async function fakeCli(root) {
+  const cliDir = path.join(root, 'apps/cli');
+  await mkdir(path.join(cliDir, 'dist/components'), { recursive: true });
+  await mkdir(path.join(cliDir, 'src/report'), { recursive: true });
+  await writeFile(path.join(cliDir, 'package.json'), JSON.stringify(cliPackage));
+  await writeFile(path.join(cliDir, 'dist/index.js'), 'export {};\n');
+  for (const name of ['install', 'lock', 'download', 'store', 'pack', 'componentsCommands']) await writeFile(path.join(cliDir, `dist/components/${name}.js`), 'export {};\n');
+  await writeFile(path.join(cliDir, 'src/report/SKILL.md'), '# skill\n');
+  await writeFile(path.join(root, 'LICENSE'), 'MIT\n');
+  await writeLock(root);
+  return cliDir;
+}
+
+const fakeLauncher = (size = 4096) => Buffer.concat([Buffer.from('MZ'), Buffer.alloc(size - 2, 0x90)]);
+
+test('the npm package carries the lock, the installer and the Windows launcher, and nothing large', async (t) => {
+  const root = await temp(t);
+  const cliDir = await fakeCli(root);
+  const launcher = path.join(root, 'graphify-launcher.exe');
+  await writeFile(launcher, fakeLauncher());
+  const staged = await stagePackage({ root, cliDir, licensePath: path.join(root, 'LICENSE'), outDir: path.join(root, 'out'), windowsLauncher: launcher, requireWindowsLauncher: true });
+  assert.deepEqual(await readFile(path.join(staged.dir, 'dist/resources/graphify-launcher.exe')), fakeLauncher());
+  assert.equal(staged.windowsLauncherBytes, 4096);
+  const listed = spawnSync('tar', ['-tzf', staged.tarball], { encoding: 'utf8' });
+  assert.equal(listed.status, 0, listed.stderr);
+  const names = listed.stdout.trim().split('\n');
+  for (const name of ['package/dist/resources/graphify-lock.json', 'package/dist/resources/graphify-launcher.exe', 'package/dist/components/install.js', 'package/dist/components/lock.js', 'package/dist/components/pack.js', 'package/dist/components/componentsCommands.js']) {
+    assert.ok(names.includes(name), name);
+  }
+  // Only the lock and the launcher are Graphify resources; no runtime, interpreter or wheel ships.
+  assert.deepEqual(names.filter((name) => /graphify|python|\.whl$|\.tar\.gz$/.test(name)).sort(), ['package/dist/resources/graphify-launcher.exe', 'package/dist/resources/graphify-lock.json']);
+  // Nothing large: every staged file (what npm pack read) stays KB-scale.
+  const sizes = [];
+  const walk = async (dir) => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) await walk(file);
+      else sizes.push([path.relative(staged.dir, file), (await stat(file)).size]);
+    }
+  };
+  await walk(staged.dir);
+  for (const [name, size] of sizes) assert.ok(size < 1024 * 1024, `${name} is ${size} bytes`);
+});
+
+test('the launcher can be compiled during the stage and the scratch copy is removed', async (t) => {
+  const root = await temp(t);
+  const cliDir = await fakeCli(root);
+  const outDir = path.join(root, 'out');
+  const calls = [];
+  const buildWindowsLauncher = async ({ sourceRoot, output }) => {
+    calls.push(sourceRoot);
+    await writeFile(output, fakeLauncher(2048));
+  };
+  const staged = await stagePackage({ root, cliDir, licensePath: path.join(root, 'LICENSE'), outDir, windowsLauncher: 'build', requireWindowsLauncher: true, buildWindowsLauncher });
+  assert.deepEqual(calls, [root]);
+  assert.equal((await stat(path.join(staged.dir, 'dist/resources/graphify-launcher.exe'))).size, 2048);
+  assert.equal(existsSync(path.join(outDir, 'graphify-launcher.exe')), false);
+});
+
+test('a release pack without the launcher fails; a dev pack leaves it out, never shipping a stale copy', async (t) => {
+  const root = await temp(t);
+  const cliDir = await fakeCli(root);
+  await mkdir(path.join(cliDir, 'dist/resources'), { recursive: true });
+  await writeFile(path.join(cliDir, 'dist/resources/graphify-launcher.exe'), fakeLauncher());
+  await assert.rejects(
+    stagePackage({ root, cliDir, licensePath: path.join(root, 'LICENSE'), outDir: path.join(root, 'out'), requireWindowsLauncher: true }),
+    /needs the Windows Graphify launcher/,
+  );
+  const staged = await stagePackage({ root, cliDir, licensePath: path.join(root, 'LICENSE'), outDir: path.join(root, 'out') });
+  assert.equal(existsSync(path.join(staged.dir, 'dist/resources/graphify-launcher.exe')), false);
+  assert.equal(staged.windowsLauncherBytes, 0);
+});
+
+test('a launcher that is not a small Windows executable is refused', async (t) => {
+  const root = await temp(t);
+  const cliDir = await fakeCli(root);
+  const notPe = path.join(root, 'not-pe.exe');
+  await writeFile(notPe, '#!/bin/sh\necho hi\n');
+  await assert.rejects(stagePackage({ root, cliDir, licensePath: path.join(root, 'LICENSE'), outDir: path.join(root, 'out'), windowsLauncher: notPe }), /not a Windows executable/);
+  const huge = path.join(root, 'huge.exe');
+  await writeFile(huge, fakeLauncher(2 * 1024 * 1024));
+  await assert.rejects(stagePackage({ root, cliDir, licensePath: path.join(root, 'LICENSE'), outDir: path.join(root, 'out'), windowsLauncher: huge }), /expected a KB-scale binary/);
 });

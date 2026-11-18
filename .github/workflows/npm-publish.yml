@@ -65,7 +65,15 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
+      # The package carries the prebuilt Windows Graphify launcher (a KB-scale Nema binary from
+      # scripts/desktop/graphify-launcher.c), so Windows hosts never need a compiler.
+      - name: Install the MinGW-w64 cross compiler
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
       - run: npm run cli:pack
+        env:
+          NEMA_NPM_WINDOWS_LAUNCHER: build
+          NEMA_NPM_REQUIRE_WINDOWS_LAUNCHER: '1'
+          NEMA_WINDOWS_NATIVE_CC: x86_64-w64-mingw32-gcc
       - name: Smoke packed CLI
         shell: bash
         run: |

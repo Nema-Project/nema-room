@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFile, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -60,10 +60,30 @@ export async function bumpInstalledPackage(installDir) {
   return pkg.version;
 }
 
-function runBin(bin, args, cwd) {
-  const result = spawnSync(bin, args, { cwd, encoding: 'utf8', shell: process.platform === 'win32', windowsHide: true });
+function runBin(bin, args, cwd, env = process.env) {
+  const result = spawnSync(bin, args, { cwd, env, encoding: 'utf8', shell: process.platform === 'win32', windowsHide: true });
   if (result.status !== 0) throw new Error(result.stderr || result.stdout || `${bin} failed`);
   return result.stdout;
+}
+
+/**
+ * The installed package reads its shipped Graphify lock and reports the component without downloading:
+ * `nema components status --json` against an empty home. A lock missing from the package shows up as
+ * `lock-unreadable`; an installed component in an empty home would mean it read the wrong store.
+ */
+export function assertComponentStatus(stdout) {
+  let view;
+  try {
+    view = JSON.parse(stdout);
+  } catch {
+    throw new Error(`nema components status --json printed no JSON:\n${stdout}`);
+  }
+  const status = view?.status;
+  if (view?.name !== 'graphify' || typeof status?.state !== 'string') throw new Error(`unexpected components status:\n${stdout}`);
+  if (status.state === 'failed' && status.reason === 'lock-unreadable') throw new Error(`the packed CLI cannot read its Graphify lock: ${status.detail}`);
+  if (status.state === 'installed' || status.state === 'installing') throw new Error(`an empty home reported graphify ${status.state}`);
+  if (status.state === 'not-installed' && !(view.offer?.totalBytes > 0)) throw new Error(`no download offer for an installable platform:\n${stdout}`);
+  return view;
 }
 
 function waitForOutput(child, pattern, timeoutMs) {
@@ -125,6 +145,11 @@ export async function smokePack(options, { cliVersion = undefined, timeoutMs = 2
   const installJs = path.join(root, 'node_modules', '@nema-project', 'nema', 'dist', 'report', 'install.js');
   const skill = fileURLToPath(new URL('../../src/report/SKILL.md', pathToFileURL(installJs)));
   await readFile(skill, 'utf8');
+  const home = path.join(root, 'home');
+  await mkdir(home, { recursive: true });
+  const componentEnv = { ...process.env, HOME: home, USERPROFILE: home, NEMA_GRAPHIFY_BIN: '' };
+  const components = assertComponentStatus(runBin(bin, ['components', 'status', '--json'], root, componentEnv));
+  process.stdout.write(`nema components status: graphify ${components.status.state}${components.status.reason ? ` (${components.status.reason})` : ''}\n`);
   if (options.expectSkew) await bumpInstalledPackage(root);
   if (!options.hubUrl) return { root, version: printed.trim() };
   const child = spawn(bin, ['daemon', '--hub', options.hubUrl, '--token-file', options.tokenFile], {
