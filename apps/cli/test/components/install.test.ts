@@ -518,6 +518,61 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(readInstallGeneration(graphifyRoot())).toBe(2);
   });
 
+  test("a failed generation update keeps the previous failure record instead of clearing it", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    expect(await install(env)).toMatchObject({ state: "installed" });
+    // Seed a failure record with a failed repair attempt.
+    const failing = await install(env, {
+      force: true,
+      hooks: {
+        selfCheck: async () => {
+          throw new Error("injected self-check failure");
+        },
+      },
+    });
+    expect(failing).toMatchObject({ state: "failed", reason: "self-check" });
+    expect(readFailure(graphifyRoot())).toMatchObject({ reason: "self-check" });
+    // Sabotage the generation record: a directory at its path makes the atomic replace fail.
+    rmSync(path.join(graphifyRoot(), "install-generation"));
+    mkdirSync(path.join(graphifyRoot(), "install-generation"));
+    const logged: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args);
+    };
+    try {
+      expect(await install(env, { force: true })).toMatchObject({ state: "installed" });
+    } finally {
+      console.error = original;
+    }
+    expect(logged.some((args) => String(args[0]).includes("recording the install failed"))).toBe(true);
+    // The repair committed, but with its commit unrecorded the earlier failure record is kept:
+    // clearing it would leave a repaired copy that an older refusal's generation check cannot
+    // tell apart from an unrepaired one.
+    expect(readFailure(graphifyRoot())).toMatchObject({ reason: "self-check" });
+    expect(await componentStatus(env)).toMatchObject({ state: "installed", lastFailure: { reason: "self-check" } });
+  });
+
+  test("a lock-release failure after a committed install still reports the install and frees the lock", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    const status = await install(env, {
+      hooks: {
+        removeLockFile: async () => {
+          throw new Error("injected: could not remove the lock");
+        },
+      },
+    });
+    expect(status).toMatchObject({ state: "installed" });
+    // The un-removable claim was tombstoned into a record no acquirer reads as a live owner,
+    // so the next install takes it over instead of waiting on a lock nobody holds.
+    expect(readFileSync(path.join(graphifyRoot(), ".install.lock"), "utf8")).toContain("released");
+    expect(await install(env)).toMatchObject({ state: "installed" });
+  });
+
   test("too little disk space stops before the download and names the shortfall", async () => {
     const component = fakeComponent(execLog);
     const source = await serve(component);

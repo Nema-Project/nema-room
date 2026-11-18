@@ -72,6 +72,8 @@ export type InstallHooks = {
   rename?: (from: string, to: string) => Promise<void>;
   /** Removes a directory tree; activation uses it for the post-commit removal of the replaced copy. */
   rm?: (target: string) => Promise<void>;
+  /** Removes the install lock file on release; tests use it to fail the release after a commit. */
+  removeLockFile?: (file: string) => Promise<void>;
   writePointer?: (root: string, pointer: Pointer) => Promise<void>;
   /** The prebuilt Windows launcher shipped with the program. */
   windowsLauncher?: string;
@@ -612,12 +614,24 @@ export async function verifyLockHeld(root: string, token: string): Promise<void>
 }
 
 /** One install at a time per component directory, across processes. Exported for tests. */
-export async function acquireInstallLock(root: string): Promise<{ release: () => Promise<void>; token: string }> {
+export async function acquireInstallLock(root: string, seams: { removeLockFile?: (file: string) => Promise<void> } = {}): Promise<{ release: () => Promise<void>; token: string }> {
   const file = path.join(root, LOCK_FILE);
   const token = claimToken();
+  const removeLockFile = seams.removeLockFile ?? ((target: string) => rm(target, { force: true }));
   const release = async (): Promise<void> => {
     const current = await readFile(file, "utf8").catch(() => null);
-    if (current === token) await rm(file, { force: true });
+    if (current !== token) return;
+    try {
+      await removeLockFile(file);
+    } catch {
+      // The claim must not outlive the install as a live lock held by this (possibly long-lived)
+      // process: overwrite it with a record no acquirer reads as a live owner, so the next
+      // installer takes it over through the stale-lock protocol instead of waiting on a lock
+      // nobody holds. Best effort — release never throws.
+      if ((await readFile(file, "utf8").catch(() => null)) === token) {
+        await writeFile(file, "released\n").catch(() => {});
+      }
+    }
   };
   for (let attempt = 0; attempt < 4; attempt++) {
     if (await linkClaim(file, token)) return { release, token };
@@ -674,6 +688,14 @@ function prepare(name: string, env: ComponentEnv, allowOffline: boolean, expecte
  */
 export async function installFromSource(name: string, source: ArchiveSource, o: InstallOptions & { allowOffline?: boolean } = {}): Promise<ComponentStatus> {
   const env = o.env ?? {};
+  assertComponent(name);
+  // Snapshot the install generation before any status read below. The offline refusal records
+  // its failure only if the generation is unchanged when it writes; a repair that commits after
+  // this snapshot — even of the same version — bumps it, so the refusal cannot stamp a state it
+  // never saw. Reading the generation after the status would reopen exactly that window. The
+  // read fails safe: an unreadable or corrupt counter reads as 0, and any commit rewrites it,
+  // so a mismatch suppresses the record rather than allowing a stale one.
+  const generationAtStart = readInstallGeneration(componentRoot(name, env));
   const prepared = prepare(name, env, o.allowOffline === true, o.expectedLockHash);
   if (!("root" in prepared)) {
     // Offline with a version installed, prepare answers the installed status: a plain install has
@@ -683,18 +705,17 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
       const attemptFailure = { reason: "offline" as const, detail: OFFLINE_DETAIL, at: new Date().toISOString() };
       const root = componentRoot(prepared.name, env);
       // The record is written under the install lock, and only if no install has committed since
-      // this attempt read the store: the install generation snapshotted here changes on every
-      // commit, so a repair that completed after this attempt began — even of the same version,
-      // which the lock-hash recheck cannot tell apart — keeps its own cleared record instead of
-      // being stamped with this attempt's failure. When the lock cannot be taken, the running
-      // install's outcome stands and this attempt is only returned to its caller.
-      const generation = readInstallGeneration(root);
+      // this attempt began: the generation snapshotted at entry (before the status read) changes
+      // on every commit, so a repair that completed after this attempt began — even of the same
+      // version, which the lock-hash recheck cannot tell apart — keeps its own cleared record
+      // instead of being stamped with this attempt's failure. When the lock cannot be taken, the
+      // running install's outcome stands and this attempt is only returned to its caller.
       try {
         await mkdir(root, { recursive: true });
         const { release } = await acquireInstallLock(root);
         try {
           const now = componentStatusSync(prepared.name, env);
-          if (now.state === "installed" && now.lockHash === prepared.lockHash && readInstallGeneration(root) === generation) {
+          if (now.state === "installed" && now.lockHash === prepared.lockHash && readInstallGeneration(root) === generationAtStart) {
             await writeFailure(root, { lockHash: prepared.lockHash, ...attemptFailure });
           }
         } finally {
@@ -743,7 +764,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
   // Recovery runs before the lock is taken: once this install holds the lock, readers skip
   // recovery (see recoverReplacementsSync), and so would this call.
   recoverReplacementsSync(root);
-  const { release, token } = await acquireInstallLock(root);
+  const { release, token } = await acquireInstallLock(root, { removeLockFile: hooks.removeLockFile });
   const progress: InstallProgress = { phase: "download", downloadedBytes: 0, totalBytes, file: null };
   const emit = (update: Partial<InstallProgress> = {}) => {
     Object.assign(progress, update);
@@ -799,13 +820,18 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
     // The pointer has committed: the install has happened. Recording the commit (the generation
     // is how a later refusal tells a completed repair from the state it read) and cleanup errors
     // from here are reported separately and never turn the result into a failure or a cancel.
+    let commitRecorded = false;
     try {
       await bumpInstallGeneration(root);
+      commitRecorded = true;
     } catch (cleanupError) {
-      console.error(`[nema] component ${prepared.name} installed, but recording the install failed`, cleanupError);
+      console.error(`[nema] component ${prepared.name} installed, but recording the install failed; the previous failure record is kept`, cleanupError);
     }
     try {
-      await clearFailure(root);
+      // The failure record is cleared only when the commit was recorded: clearing it while the
+      // generation stayed put would leave a repaired copy that a refusal written from an older
+      // read cannot tell apart from an unrepaired one.
+      if (commitRecorded) await clearFailure(root);
       await prune(root, readPointer(root));
     } catch (cleanupError) {
       console.error(`[nema] component ${prepared.name} installed, but post-install cleanup failed`, cleanupError);
@@ -823,7 +849,13 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
     await writeFailure(root, { lockHash, ...attemptFailure });
   } finally {
     setInstalling(root, lockHash, null);
-    await release();
+    // Releasing the lock is post-commit bookkeeping: its failure must not replace the install's
+    // outcome — least of all turn a committed install into an error, or into a cancellation
+    // claiming nothing changed. release() already tombstones a lock file it cannot remove and
+    // does not throw; this catch is the last resort, logged and swallowed either way.
+    await release().catch((releaseError: unknown) => {
+      console.error(`[nema] component ${prepared.name} install finished, but releasing the install lock failed`, releaseError);
+    });
   }
   const status = componentStatusSync(prepared.name, env);
   if (attemptFailure) {
