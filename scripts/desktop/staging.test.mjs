@@ -48,6 +48,8 @@ async function fixture(t) {
   }
   await write('apps/hub/dist/src/db/migrations/0001.sql');
   await write('apps/cli/src/report/SKILL.md');
+  await write('scripts/desktop/graphify-lock.json', '{"fixture":"lock"}\n');
+  await write('apps/cli/dist/resources/graphify-lock.json', '{"fixture":"lock"}\n');
   await write('vendor/archify/LICENSE'); await write('vendor/archify/THIRD_PARTY_NOTICES.md'); await write('vendor/archify/bin/archify.mjs');
   await write('vendor/superpowers-rules/LICENSE'); await write('vendor/superpowers-rules/spec-rules.md'); await write('vendor/superpowers-rules/plan-rules.md');
   await write(`node/${target}/node/${windows ? 'node.exe' : 'bin/node'}`); await write(`node/${target}/node/LICENSE`);
@@ -142,6 +144,16 @@ test('stages a relocatable manifest and all declared runtime resources from fixt
   const files = await readdir(target);
   assert.equal(files.includes('.env'), false);
   assert.equal(files.includes('.git'), false);
+  assert.equal(await readFile(path.join(target, 'app/node_modules/@nema/cli/dist/resources/graphify-lock.json'), 'utf8'), await readFile(path.join(f.source, 'scripts/desktop/graphify-lock.json'), 'utf8'));
+});
+
+test('refuses a CLI Graphify lock that drifted from the repository lock', async (t) => {
+  const f = await fixture(t);
+  await f.write('apps/cli/dist/resources/graphify-lock.json', '{"fixture":"stale"}\n');
+  await assert.rejects(stageRuntime(f.options), /differs from scripts\/desktop\/graphify-lock\.json/);
+  await f.write('apps/cli/dist/resources/graphify-lock.json', '{"fixture":"lock"}\n');
+  await rm(path.join(f.source, 'apps/cli/dist/resources/graphify-lock.json'));
+  await assert.rejects(stageRuntime(f.options), /CLI Graphify lock/);
 });
 
 test('requires the Windows helper guardian artifact before writing the manifest', async (t) => {

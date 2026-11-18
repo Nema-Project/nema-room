@@ -1,16 +1,59 @@
 // Runs graphify against a code snapshot. The child sees only PATH, LANG, and a HOME under the
 // snapshot, so it cannot read the user's git config, credentials, or the rest of the environment.
 import { execFile, type ChildProcess, type ExecException } from "node:child_process";
+import { lstatSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { commandSpec, windowsRuntimeEnv } from "../platform.js";
+import { componentBin, componentStatusSync, type ComponentEnv } from "../components/store.js";
+import type { ComponentStatus, FailureReason } from "../components/types.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { runHelperFile } from "@nema/shared/ownedHelper";
 
 const MAX_OUT = 65_536;
 const MAX_BUFFER = 256 * 1024 * 1024;
-const INSTALL_HINT = "随包的 Graphify 运行环境缺失";
+
+export const INSTALL_COMMAND = "nema components install graphify";
+
+/** What a caller can tell apart: usable, never installed, installed for another lock (disabled), or a failed last attempt. */
+export type GraphifyState = "installed" | "not-installed" | "lock-mismatch" | "failed" | "installing";
+
+const REASON_TEXT: Record<FailureReason, string> = {
+  network: "网络错误",
+  proxy: "代理错误",
+  "hash-mismatch": "下载内容与锁不一致",
+  "self-check": "自检失败",
+  "unsupported-platform": "平台不支持",
+  offline: "离线模式",
+  "disk-space": "磁盘空间不足",
+};
+
+function stateOf(status: ComponentStatus | null): Exclude<GraphifyState, "installed"> {
+  if (!status || status.state === "installed") return "not-installed";
+  return status.state;
+}
+
+/** One sentence per state, each with the way out. A lock mismatch says the old version is off, never that it is still used. */
+export function unavailableMessage(status: ComponentStatus | null): string {
+  const install = `请在设置页安装，或运行 ${INSTALL_COMMAND}`;
+  if (!status || status.state === "not-installed" || status.state === "installed") return `Graphify 组件未安装。${install}`;
+  if (status.state === "installing") return "Graphify 组件正在安装，安装完成后再试";
+  if (status.state === "lock-mismatch") return `已安装的 Graphify 组件与当前版本的 Nema 不匹配，已停用。${install}`;
+  if (status.reason === "unsupported-platform") return `此平台不支持 Graphify 组件：${status.detail}`;
+  const disabled = status.installedLockHash ? "旧版本组件已停用。" : "";
+  if (status.reason === "offline") return `Graphify 组件未安装，组件下载已关闭（离线模式）。${disabled}请导入离线组件包`;
+  return `Graphify 组件未安装（上次安装失败：${REASON_TEXT[status.reason]}，${status.detail}）。${disabled}重试：${INSTALL_COMMAND}`;
+}
+
+/** Graphify cannot run here. `state` and `status` say why; the message is the one shown to people and agents. */
+export class GraphifyUnavailableError extends Error {
+  readonly code = "graphify-unavailable";
+  constructor(readonly state: Exclude<GraphifyState, "installed">, readonly status: ComponentStatus | null, message = unavailableMessage(status)) {
+    super(message);
+    this.name = "GraphifyUnavailableError";
+  }
+}
 
 export function graphifyEnv(snapshotRoot: string): NodeJS.ProcessEnv {
   return {
@@ -25,10 +68,18 @@ export function graphifyEnv(snapshotRoot: string): NodeJS.ProcessEnv {
 
 /**
  * Where graphify is and how long a call may run. Tests pass a fake binary.
- * An omitted `bin` is the packaged file, never a `PATH` lookup.
+ * An omitted `bin` is resolved by `resolveGraphify`, never by a `PATH` lookup.
  * Read at call time, so a caller may fill the object in after handing it over.
  */
-export type GraphifyOpts = { bin?: string; timeoutMs?: number; ownedHelpers?: OwnedHelperScope };
+export type GraphifyOpts = {
+  bin?: string;
+  timeoutMs?: number;
+  ownedHelpers?: OwnedHelperScope;
+  /** Component store and lock to resolve against; tests pass temp directories. */
+  components?: ComponentEnv;
+  /** A desktop payload root that may still hold `tools/graphify` (payloads from before on-demand install). */
+  payloadRoot?: string;
+};
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -40,20 +91,58 @@ const DEFAULT_TIMEOUT_MS = 60_000;
  */
 export const EXTRACT_TIMEOUT_MS = 180_000;
 
-/** `tools/graphify/graphify` under the payload, or `NEMA_GRAPHIFY_BIN` when that is set. */
-export function packagedGraphifyBin(env: NodeJS.ProcessEnv = process.env): string {
-  const name = process.platform === "win32" ? "graphify.exe" : "graphify";
+export type GraphifyResolution =
+  | { found: true; bin: string; source: "env" | "component" | "payload" }
+  | { found: false; state: Exclude<GraphifyState, "installed">; status: ComponentStatus | null };
+
+function regularFile(file: string): boolean {
+  try {
+    const info = lstatSync(file);
+    return info.isFile() && !info.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Which graphify to run, in order: `NEMA_GRAPHIFY_BIN`; the component store's active version when its
+ * lock-hash is the shipped lock's; `tools/graphify` in an older desktop payload; otherwise not installed,
+ * with the component status saying why. A version installed for another lock is never used. No PATH lookup.
+ */
+export function resolveGraphify(env: NodeJS.ProcessEnv = process.env, opts: Pick<GraphifyOpts, "components" | "payloadRoot"> = {}): GraphifyResolution {
   const fromEnv = env.NEMA_GRAPHIFY_BIN;
-  if (typeof fromEnv === "string" && fromEnv !== "") return fromEnv;
-  const root = typeof env.NEMA_PAYLOAD_ROOT === "string" && env.NEMA_PAYLOAD_ROOT !== ""
-    ? env.NEMA_PAYLOAD_ROOT
-    : path.dirname(process.execPath);
-  return path.join(root, "tools", "graphify", name);
+  if (typeof fromEnv === "string" && fromEnv !== "") return { found: true, bin: fromEnv, source: "env" };
+  const components: ComponentEnv = { env, ...opts.components };
+  const component = componentBin("graphify", components);
+  if (component) return { found: true, bin: component, source: "component" };
+  const payloadRoot = opts.payloadRoot
+    ?? (typeof env.NEMA_PAYLOAD_ROOT === "string" && env.NEMA_PAYLOAD_ROOT !== "" ? env.NEMA_PAYLOAD_ROOT : path.dirname(process.execPath));
+  const payload = path.join(payloadRoot, "tools", "graphify", process.platform === "win32" ? "graphify.exe" : "graphify");
+  if (regularFile(payload)) return { found: true, bin: payload, source: "payload" };
+  let status: ComponentStatus | null = null;
+  try {
+    status = componentStatusSync("graphify", components);
+  } catch {
+    // An unreadable shipped lock still means "not installed" here; doctor and status show the lock error.
+  }
+  return { found: false, state: stateOf(status), status };
+}
+
+/** The graphify `resolveGraphify` picks, or null when none is installed. */
+export function packagedGraphifyBin(env: NodeJS.ProcessEnv = process.env, opts: Pick<GraphifyOpts, "components" | "payloadRoot"> = {}): string | null {
+  const resolved = resolveGraphify(env, opts);
+  return resolved.found ? resolved.bin : null;
 }
 
 function graphifyBin(opts?: GraphifyOpts): string {
-  return opts?.bin || packagedGraphifyBin();
+  if (opts?.bin) return opts.bin;
+  const resolved = resolveGraphify(process.env, opts ?? {});
+  if (!resolved.found) throw new GraphifyUnavailableError(resolved.state, resolved.status);
+  return resolved.bin;
 }
+
+/** The binary was resolved but is gone (or an explicit `bin` never existed). */
+const missingBinary = () => new GraphifyUnavailableError("not-installed", null);
 
 function graphifyTimeout(opts?: GraphifyOpts): number {
   const n = opts?.timeoutMs;
@@ -120,7 +209,7 @@ function runGraphify(snapshotRoot: string, args: string[], cwd: string, opts?: G
     }, opts.ownedHelpers).then((result) => {
       if (result.error) {
         const code = exitCode(result.error as ExecException);
-        if (code === "missing") throw new Error(INSTALL_HINT);
+        if (code === "missing") throw missingBinary();
         if (code === "killed") throw new Error("graphify 已中断");
         return { code, stdout: result.stdout, stderr: result.stderr };
       }
@@ -151,7 +240,7 @@ function runGraphify(snapshotRoot: string, args: string[], cwd: string, opts?: G
         }
         const code = exitCode(error);
         if (code === "missing") {
-          reject(new Error(INSTALL_HINT));
+          reject(missingBinary());
           return;
         }
         if (code === "killed") {
@@ -203,16 +292,40 @@ export async function queryIndex(
   return finish(await runGraphify(snapshotRoot, [kind, ...args, "--graph", graphJson(snapshotRoot)], snapshotRoot, opts));
 }
 
-/** Version text when `graphify --version` runs; the install hint when the binary is missing. */
-export async function graphifyInstallStatus(opts?: GraphifyOpts): Promise<{ installed: boolean; detail: string }> {
+export type GraphifyInstallStatus = {
+  installed: boolean;
+  /** The version text when installed; otherwise the sentence for `state`, with the way out. */
+  detail: string;
+  state: GraphifyState;
+  /** Why the last attempt failed, when `state` is `failed`. */
+  reason?: FailureReason;
+  /** Which resolution step supplied the binary; `explicit` for a caller-given `bin`. */
+  source?: "explicit" | "env" | "component" | "payload";
+};
+
+/**
+ * Resolution first, so a missing, mismatched or failed component is reported as such without running
+ * anything; then `graphify --version` on what was found. A binary that runs but fails still throws.
+ */
+export async function graphifyInstallStatus(opts?: GraphifyOpts): Promise<GraphifyInstallStatus> {
+  let source: GraphifyInstallStatus["source"] = "explicit";
+  let call = opts;
+  if (!opts?.bin) {
+    const resolved = resolveGraphify(process.env, opts ?? {});
+    if (!resolved.found) {
+      const reason = resolved.status?.state === "failed" ? resolved.status.reason : undefined;
+      return { installed: false, detail: unavailableMessage(resolved.status), state: resolved.state, ...(reason ? { reason } : {}) };
+    }
+    source = resolved.source;
+    call = { ...opts, bin: resolved.bin };
+  }
   const dir = await mkdtemp(path.join(tmpdir(), "nema-graphify-version-"));
   try {
     await mkdir(path.join(dir, "home"), { recursive: true });
-    const detail = finish(await runGraphify(dir, ["--version"], dir, opts)).trim();
-    return { installed: true, detail };
+    const detail = finish(await runGraphify(dir, ["--version"], dir, call)).trim();
+    return { installed: true, detail, state: "installed", source };
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    if (message === INSTALL_HINT) return { installed: false, detail: message };
+    if (e instanceof GraphifyUnavailableError) return { installed: false, detail: e.message, state: e.state };
     throw e;
   } finally {
     await rm(dir, { recursive: true, force: true });

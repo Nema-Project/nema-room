@@ -199,12 +199,18 @@ export async function rejectSymlinkPath(directory) {
     throw new Error(`Configured directory path contains a symlink or non-directory: ${cursor}`);
   }
 }
+/** A pin that records `size` must match it byte for byte; older pins without one skip the check. */
+function sizeMismatch(asset, actual) {
+  return asset.size !== undefined && asset.size !== actual;
+}
+
 export async function downloadVerified(asset, cacheDir, fetchImpl = fetch) {
   await mkdir(cacheDir, { recursive: true });
   const finalPath = await ensureInsideRoot(cacheDir, path.join(cacheDir, asset.file));
   try {
     const info = await lstat(finalPath);
     if (!info.isFile() || info.isSymbolicLink()) throw new Error(`Cache artifact is not a regular file: ${asset.file}`);
+    if (sizeMismatch(asset, info.size)) throw new Error(`Cached artifact size mismatch: ${asset.file}`);
     if (await sha256File(finalPath) !== asset.sha256) throw new Error(`Cached artifact checksum mismatch: ${asset.file}`);
     return finalPath;
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -212,6 +218,7 @@ export async function downloadVerified(asset, cacheDir, fetchImpl = fetch) {
   if (!response.ok) throw new Error(`Tool download failed (${response.status}): ${asset.url}`);
   const bytes = Buffer.from(await response.arrayBuffer());
   if (createHash('sha256').update(bytes).digest('hex') !== asset.sha256) throw new Error(`Downloaded artifact checksum mismatch: ${asset.file}`);
+  if (sizeMismatch(asset, bytes.length)) throw new Error(`Downloaded artifact size mismatch: ${asset.file} is ${bytes.length} bytes, the pin says ${asset.size}`);
   const temporary = `${finalPath}.${process.pid}.${Date.now()}.partial`;
   try { await writeFile(temporary, bytes, { flag: 'wx' }); await rename(temporary, finalPath); }
   finally { await rm(temporary, { force: true }); }

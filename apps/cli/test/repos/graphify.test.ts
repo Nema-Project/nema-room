@@ -4,9 +4,12 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { unexpectedEnvKeys } from "../windowsEnv.js";
 import { commitWithSymlink } from "./gitSymlink.js";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { lockHash } from "../../src/components/lock.js";
+import type { ComponentEnv } from "../../src/components/store.js";
 import { changedFiles } from "../../src/repos/git.js";
-import { EXTRACT_TIMEOUT_MS, buildIndex, graphifyInstallStatus, queryIndex, updateIndex, type GraphifyOpts } from "../../src/repos/graphify.js";
+import { EXTRACT_TIMEOUT_MS, GraphifyUnavailableError, buildIndex, graphifyInstallStatus, packagedGraphifyBin, queryIndex, resolveGraphify, updateIndex, type GraphifyOpts } from "../../src/repos/graphify.js";
+import { fakeComponent, writeLock } from "../components/fixtures.js";
 import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 let root: string;
@@ -195,38 +198,46 @@ process.stdout.write("x".repeat(70000));
   expect(Buffer.byteLength(text)).toBe(65_536);
 });
 
-test("a missing graphify binary gives the install hint", async () => {
+test("a missing graphify binary is reported as a not-installed component with the install command", async () => {
   const snapshot = join(root, "snap");
   mkdirSync(snapshot);
   fake.bin = join(snapshot, "missing-graphify");
-  await expect(buildIndex(snapshot, fake)).rejects.toThrow("随包的 Graphify 运行环境缺失");
+  const error = await buildIndex(snapshot, fake).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(GraphifyUnavailableError);
+  expect(error).toMatchObject({ code: "graphify-unavailable", state: "not-installed" });
+  expect((error as Error).message).toContain("nema components install graphify");
 });
 
-test("a missing packaged runtime does not run graphify from PATH", async () => {
-  const savedPath = process.env.PATH;
-  const savedBin = process.env.NEMA_GRAPHIFY_BIN;
-  const savedPayload = process.env.NEMA_PAYLOAD_ROOT;
+/** Runs `body` with NEMA_GRAPHIFY_BIN and NEMA_PAYLOAD_ROOT cleared (or set), restoring them afterwards. */
+async function withGraphifyEnv<T>(values: { bin?: string; payload?: string; path?: string }, body: () => Promise<T>): Promise<T> {
+  const saved = { PATH: process.env.PATH, NEMA_GRAPHIFY_BIN: process.env.NEMA_GRAPHIFY_BIN, NEMA_PAYLOAD_ROOT: process.env.NEMA_PAYLOAD_ROOT };
+  if (values.bin === undefined) delete process.env.NEMA_GRAPHIFY_BIN;
+  else process.env.NEMA_GRAPHIFY_BIN = values.bin;
+  process.env.NEMA_PAYLOAD_ROOT = values.payload ?? join(root, "empty-payload");
+  if (values.path !== undefined) process.env.PATH = values.path;
+  try {
+    return await body();
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+test("with nothing installed graphify is not run from PATH", async () => {
   const marker = join(root, "path-ran");
   const dir = join(root, "path-bin");
   mkdirSync(dir);
   writeFileSync(join(dir, "graphify"), `#!/usr/bin/env node\nrequire("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran\\n");\nprocess.stdout.write("from-path\\n");\n`, { mode: 0o755 });
   chmodSync(join(dir, "graphify"), 0o755);
-  process.env.PATH = `${dir}${delimiter}${savedPath ?? ""}`;
-  delete process.env.NEMA_GRAPHIFY_BIN;
-  process.env.NEMA_PAYLOAD_ROOT = join(root, "empty-payload");
   const snapshot = join(root, "snap-path");
   mkdirSync(snapshot);
-  try {
-    await expect(buildIndex(snapshot)).rejects.toThrow("随包的 Graphify 运行环境缺失");
-    expect(existsSync(marker)).toBe(false);
-  } finally {
-    if (savedPath === undefined) delete process.env.PATH;
-    else process.env.PATH = savedPath;
-    if (savedBin === undefined) delete process.env.NEMA_GRAPHIFY_BIN;
-    else process.env.NEMA_GRAPHIFY_BIN = savedBin;
-    if (savedPayload === undefined) delete process.env.NEMA_PAYLOAD_ROOT;
-    else process.env.NEMA_PAYLOAD_ROOT = savedPayload;
-  }
+  const store = emptyStore();
+  await withGraphifyEnv({ path: `${dir}${delimiter}${process.env.PATH ?? ""}` }, async () => {
+    await expect(buildIndex(snapshot, { components: store })).rejects.toMatchObject({ code: "graphify-unavailable", state: "not-installed" });
+  });
+  expect(existsSync(marker)).toBe(false);
 });
 
 test("managed graphify install status treats a missing binary as not installed", async () => {
@@ -236,9 +247,106 @@ test("managed graphify install status treats a missing binary as not installed",
     async drain() {},
   };
 
-  await expect(graphifyInstallStatus({ bin: join(root, "missing-graphify"), ownedHelpers: missingScope })).resolves.toEqual({
+  await expect(graphifyInstallStatus({ bin: join(root, "missing-graphify"), ownedHelpers: missingScope })).resolves.toMatchObject({
     installed: false,
-    detail: "随包的 Graphify 运行环境缺失",
+    state: "not-installed",
+    detail: expect.stringContaining("nema components install graphify"),
+  });
+});
+
+const machine = () => ({ platform: process.platform, arch: process.arch, musl: false });
+
+/** A component store whose lock has no installed version. */
+function emptyStore(variant = "empty"): ComponentEnv {
+  const component = fakeComponent("/dev/null", variant);
+  return { runtimeRoot: join(root, "runtime"), lockPath: writeLock(join(root, `lock-${variant}.json`), component), platform: machine() };
+}
+
+/** A component store with `variant` active and a fake launcher that prints its name; `lockVariant` picks the lock the program ships. */
+function storeWith(variant: string, lockVariant = variant): { components: ComponentEnv; launcher: string } {
+  const installed = fakeComponent("/dev/null", variant);
+  const hash = lockHash(installed.target);
+  const dir = join(root, "runtime", "graphify", hash);
+  mkdirSync(dir, { recursive: true });
+  const launcher = join(dir, process.platform === "win32" ? "graphify.exe" : "graphify");
+  writeFileSync(launcher, `#!/usr/bin/env node\nconsole.log("graphify component ${variant}");\n`, { mode: 0o755 });
+  chmodSync(launcher, 0o755);
+  writeFileSync(join(root, "runtime", "graphify", "current.json"), JSON.stringify({ active: hash, previous: null }));
+  const shipped = fakeComponent("/dev/null", lockVariant);
+  return { components: { runtimeRoot: join(root, "runtime"), lockPath: writeLock(join(root, `lock-${lockVariant}.json`), shipped), platform: machine() }, launcher };
+}
+
+function payloadWithGraphify(): string {
+  const payload = join(root, "old-payload");
+  const bin = join(payload, "tools", "graphify", process.platform === "win32" ? "graphify.exe" : "graphify");
+  mkdirSync(join(payload, "tools", "graphify"), { recursive: true });
+  writeFileSync(bin, "#!/usr/bin/env node\nconsole.log(\"graphify payload\");\n", { mode: 0o755 });
+  chmodSync(bin, 0o755);
+  return payload;
+}
+
+describe("graphify resolution order", () => {
+  test("NEMA_GRAPHIFY_BIN wins over an installed component", () => {
+    const { components } = storeWith("a");
+    expect(resolveGraphify({ NEMA_GRAPHIFY_BIN: "/explicit/graphify" }, { components })).toEqual({ found: true, bin: "/explicit/graphify", source: "env" });
+  });
+
+  test("the component store wins over a payload that still carries tools/graphify", () => {
+    const { components, launcher } = storeWith("a");
+    expect(resolveGraphify({}, { components, payloadRoot: payloadWithGraphify() })).toEqual({ found: true, bin: launcher, source: "component" });
+  });
+
+  test("a component installed for another lock is never returned", () => {
+    const { components, launcher } = storeWith("old", "new");
+    const resolved = resolveGraphify({}, { components, payloadRoot: join(root, "new-payload-without-graphify") });
+    expect(resolved).toMatchObject({ found: false, state: "lock-mismatch" });
+    expect(JSON.stringify(resolved)).not.toContain(launcher);
+    expect(packagedGraphifyBin({}, { components, payloadRoot: join(root, "new-payload-without-graphify") })).toBeNull();
+  });
+
+  test("an older payload's tools/graphify is the fallback when no component is installed", () => {
+    const payload = payloadWithGraphify();
+    expect(resolveGraphify({}, { components: emptyStore(), payloadRoot: payload })).toMatchObject({ found: true, source: "payload", bin: join(payload, "tools", "graphify", process.platform === "win32" ? "graphify.exe" : "graphify") });
+  });
+
+  test("with nothing installed the result is not installed, not a payload path", () => {
+    const resolved = resolveGraphify({ NEMA_PAYLOAD_ROOT: join(root, "new-payload") }, { components: emptyStore() });
+    expect(resolved).toMatchObject({ found: false, state: "not-installed", status: { state: "not-installed" } });
+    expect(packagedGraphifyBin({ NEMA_PAYLOAD_ROOT: join(root, "new-payload") }, { components: emptyStore() })).toBeNull();
+  });
+
+  test("a desktop payload without tools/graphify resolves the component store", () => {
+    const { components, launcher } = storeWith("a");
+    expect(packagedGraphifyBin({}, { components, payloadRoot: join(root, "slim-payload") })).toBe(launcher);
+  });
+});
+
+describe("graphify install status", () => {
+  test("not installed, installed for another lock, and installed are three different answers", async () => {
+    await withGraphifyEnv({}, async () => {
+      const missing = await graphifyInstallStatus({ components: emptyStore() });
+      expect(missing).toMatchObject({ installed: false, state: "not-installed", detail: expect.stringContaining("nema components install graphify") });
+
+      const mismatch = await graphifyInstallStatus({ components: storeWith("old", "new").components });
+      expect(mismatch).toMatchObject({ installed: false, state: "lock-mismatch", detail: expect.stringContaining("已停用") });
+      expect(mismatch.detail).not.toBe(missing.detail);
+    });
+  });
+
+  test.skipIf(process.platform === "win32")("an installed component reports its version and source", async () => {
+    await withGraphifyEnv({}, async () => {
+      expect(await graphifyInstallStatus({ components: storeWith("a").components })).toEqual({ installed: true, state: "installed", detail: "graphify component a", source: "component" });
+    });
+  });
+
+  test("a failed last attempt is reported with its reason", async () => {
+    const components = emptyStore("failing");
+    const hash = lockHash(fakeComponent("/dev/null", "failing").target);
+    mkdirSync(join(root, "runtime", "graphify"), { recursive: true });
+    writeFileSync(join(root, "runtime", "graphify", "last-failure.json"), JSON.stringify({ lockHash: hash, reason: "proxy", detail: "Proxy p:3128 refused", at: "2026-11-18T00:00:00.000Z" }));
+    await withGraphifyEnv({}, async () => {
+      expect(await graphifyInstallStatus({ components })).toMatchObject({ installed: false, state: "failed", reason: "proxy", detail: expect.stringContaining("代理错误") });
+    });
   });
 });
 

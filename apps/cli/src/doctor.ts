@@ -34,7 +34,7 @@ export type DoctorOpts = {
   /** Defaults to siwc. compat reads the Codex CLI login instead of ~/.nema/auth.json. */
   authMode?: NemaConfig["authMode"];
   model?: NemaConfig["model"];
-  /** For tests: production passes nothing and runs `graphify` from PATH. */
+  /** For tests: production passes nothing and resolves graphify like the daemon (env, component store, old payload). */
   graphify?: GraphifyOpts;
   /** Home dir holding ~/.claude and ~/.codex for the report-hook rows. Defaults to os.homedir(). */
   agentHome?: string;
@@ -102,12 +102,23 @@ function claudeTokenCheck(opts: DoctorOpts): DoctorCheck {
   }
 }
 
-/** Informational. A missing binary is the install hint, never a failed check. */
+const GRAPHIFY_STATE_LABEL: Record<string, string> = {
+  "not-installed": "未安装",
+  "lock-mismatch": "版本不匹配（已停用）",
+  failed: "上次安装失败",
+  installing: "安装中",
+};
+
+/**
+ * Informational: Graphify is an optional component, so no state fails the doctor. The detail names the
+ * state (installed version, not installed, installed for another lock, failed) and the way to install.
+ */
 async function graphifyCheck(opts: DoctorOpts): Promise<DoctorCheck> {
   const name = "graphify 可用";
   try {
     const status = await graphifyInstallStatus(opts.graphify);
-    return { name, ok: true, detail: status.detail };
+    if (status.installed) return { name, ok: true, detail: status.detail };
+    return { name, ok: true, detail: `${GRAPHIFY_STATE_LABEL[status.state] ?? status.state}：${status.detail}` };
   } catch (e) {
     return { name, ok: true, detail: msg(e) };
   }

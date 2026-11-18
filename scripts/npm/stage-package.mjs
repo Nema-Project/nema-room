@@ -42,6 +42,9 @@ export async function stagePackage({
   await rm(dir, { recursive: true, force: true });
   await mkdir(path.join(dir, 'src/report'), { recursive: true });
   await cp(path.join(cliDir, 'dist'), path.join(dir, 'dist'), { recursive: true });
+  // The component installer's only trust root: always the repository lock, never a stale build copy.
+  await mkdir(path.join(dir, 'dist/resources'), { recursive: true });
+  await cp(path.join(root, 'scripts/desktop/graphify-lock.json'), path.join(dir, 'dist/resources/graphify-lock.json'));
   await cp(path.join(cliDir, 'src/report/SKILL.md'), path.join(dir, 'src/report/SKILL.md'));
   await cp(licensePath, path.join(dir, 'LICENSE'));
   await writeFile(path.join(dir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
