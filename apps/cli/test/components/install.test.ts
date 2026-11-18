@@ -321,10 +321,12 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     });
     await atFirstMove.promise;
     // Displace the installer's lock between activation's two moves, as the takeover race
-    // does: its record is moved aside and another installer claims the freed path.
+    // does: its record is moved aside and another installer claims the freed path. The
+    // displacing token carries a live pid, so later recovery is skipped while it is held
+    // and only activation's own rollback can restore the previous version.
     const lockFile = path.join(graphifyRoot(), ".install.lock");
     renameSync(lockFile, `${lockFile}.stale-test`);
-    writeFileSync(lockFile, `${2 ** 22 + 1}:foreign`);
+    writeFileSync(lockFile, `${process.pid}:foreign`);
     releaseMove.resolve();
     // The install reports the still-serving previous version (its failure record is what
     // shows the abort); the replacement itself must not have been published.

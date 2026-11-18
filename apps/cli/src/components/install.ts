@@ -427,11 +427,14 @@ export async function activate(root: string, lockHash: string, staging: string, 
   }
   const backup = path.join(root, `${lockHash}.replaced-${randomBytes(6).toString("hex")}`);
   await move(final, backup);
-  // Re-validate between the two moves: a displaced holder must stop before placing its
-  // staging, while the backup can still be restored by the catch below.
-  await verify();
   let placed = false;
   try {
+    // Re-validate between the two moves, inside the try: a displaced holder must stop
+    // before placing its staging, and the catch below restores the backup. Checked here
+    // rather than before the try, a failed check would leave the active directory missing
+    // with only a later recovery to restore it — and that recovery is skipped while a
+    // live installer holds the lock.
+    await verify();
     await move(staging, final);
     placed = true;
     await checkedPoint(root, next);
