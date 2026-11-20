@@ -1,7 +1,7 @@
 // Installer tests against a local fake upstream reached only through the mirror variables. The fake
 // python is a shell script, so the suite runs on POSIX; Windows uses the shipped launcher binary.
 import { execFileSync, spawn } from "node:child_process";
-import { cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -201,7 +201,6 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
       hooks: {
         rename: async (from, to) => {
           if (from.endsWith(".staging") && to === active) throw new Error("injected: could not move staging into place");
-          await rename(from, to);
         },
       },
     });
@@ -219,8 +218,6 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
       hooks: {
         writePointer: async (dir, pointer) => {
           seenBackup.push(readdirSync(dir).some((name) => name.includes(".replaced-")));
-          const { writePointer } = await import("../../src/components/store.js");
-          await writePointer(dir, pointer);
         },
       },
     });
@@ -240,13 +237,14 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.11"), "tampered\n");
     const atFirstMove = deferred();
     const releaseMove = deferred();
+    let renames = 0;
     const reinstall = install(env, {
       force: true,
       hooks: {
-        rename: async (from, to) => {
-          await rename(from, to);
-          if (from === path.join(graphifyRoot(), hash)) {
-            // Pause after the first move: the active directory is aside as a backup and
+        rename: async () => {
+          renames += 1;
+          if (renames === 2) {
+            // Pause before the placement: the active directory is aside as a backup and
             // the replacement is not placed yet.
             atFirstMove.resolve();
             await releaseMove.promise;
@@ -287,7 +285,6 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
             atPointer.resolve();
             await releasePointer.promise;
           }
-          await writePointer(r, p);
         },
       },
     });
@@ -313,12 +310,16 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.11"), "tampered\n");
     const atFirstMove = deferred();
     const releaseMove = deferred();
+    let renames = 0;
     const reinstall = install(env, {
       force: true,
       hooks: {
-        rename: async (from, to) => {
-          await rename(from, to);
-          if (from === path.join(graphifyRoot(), hash)) {
+        rename: async () => {
+          renames += 1;
+          if (renames === 1) {
+            // Pause before the first move: the displacement below lands while the
+            // active directory is still in place, and the re-validation between the
+            // two moves catches it — the placement never runs.
             atFirstMove.resolve();
             await releaseMove.promise;
           }
@@ -326,7 +327,7 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
       },
     });
     await atFirstMove.promise;
-    // Displace the installer's lock between activation's two moves, as the takeover race
+    // Displace the installer's lock before activation's first move, as the takeover race
     // does: its record is moved aside and another installer claims the freed path. The
     // displacing token carries a live pid, so later recovery is skipped while it is held.
     const lockFile = path.join(graphifyRoot(), ".install.lock");
@@ -336,10 +337,10 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     // The attempt reports its failure (its failure record is what shows the abort). But the
     // displaced attempt rolls nothing back: once its lock is gone, the tree it was placing may
     // already be the successor's published runtime, so the shared directory is left to the
-    // successor or to recovery under the install lock. The displacement landed between
-    // activation's two moves, so the active directory is missing and the replaced copy waits
-    // as a backup; while the successor's lock is held, recovery stays skipped and the status
-    // surfaces the recorded failure.
+    // successor or to recovery under the install lock. The displacement landed before the
+    // first move, so the re-validation between the two moves caught it: the active
+    // directory is missing and the replaced copy waits as a backup; while the successor's
+    // lock is held, recovery stays skipped and the status surfaces the recorded failure.
     expect(await reinstall).toMatchObject({ state: "failed", reason: "self-check", lockHash: hash });
     expect(await componentStatus(env)).toMatchObject({ state: "failed", reason: "self-check" });
     expect(readFailure(graphifyRoot())).toMatchObject({ reason: "self-check", lockHash: hash });
@@ -395,13 +396,16 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     const controller = new AbortController();
     const atFirstMove = deferred();
     const releaseMove = deferred();
+    let renames = 0;
     const reinstall = install(env, {
       force: true,
       signal: controller.signal,
       hooks: {
-        rename: async (from, to) => {
-          await rename(from, to);
-          if (from === path.join(graphifyRoot(), hash)) {
+        rename: async () => {
+          renames += 1;
+          if (renames === 2) {
+            // Pause before the placement: the active directory is aside as a backup and
+            // the replacement is not placed yet.
             atFirstMove.resolve();
             await releaseMove.promise;
           }
@@ -633,14 +637,12 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     let renames = 0;
     const atRestoreMove = deferred();
     const releaseRestoreMove = deferred();
-    const realRename = rename;
     const renameHook = async (from: string, to: string) => {
       renames += 1;
       if (renames === 4) {
         atRestoreMove.resolve();
         await releaseRestoreMove.promise;
       }
-      await realRename(from, to);
     };
     const outcome = activate(dir, hash, staging, { verifyLockHeld, rename: renameHook }).catch((error: unknown) => error);
     await atRestoreMove.promise;
@@ -686,14 +688,12 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     let renames = 0;
     const atRemoval = deferred();
     const releaseRemoval = deferred();
-    const realRename = rename;
     const renameHook = async (from: string, to: string) => {
       renames += 1;
       if (renames === 2) {
         atRemoval.resolve();
         await releaseRemoval.promise;
       }
-      await realRename(from, to);
     };
     const outcome = activate(dir, hash, staging, {
       verifyLockHeld: async () => {},
@@ -744,14 +744,12 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     let renames = 0;
     const atRemoval = deferred();
     const releaseRemoval = deferred();
-    const realRename = rename;
     const renameHook = async (from: string, to: string) => {
       renames += 1;
       if (renames === 2) {
         atRemoval.resolve();
         await releaseRemoval.promise;
       }
-      await realRename(from, to);
     };
     const outcome = activate(dir, hash, staging, {
       verifyLockHeld,
@@ -812,10 +810,8 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
       if (readInstallLockToken(dir) !== holder.token) throw new Error("lock lost");
     };
     let renames = 0;
-    const realRename = rename;
     const renameHook = async (from: string, to: string) => {
       renames += 1;
-      await realRename(from, to);
     };
     const outcome = activate(dir, hash, staging, {
       verifyLockHeld,
@@ -851,7 +847,7 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     await successor.release();
   });
 
-  test("a successor that published between the pre-check and the rename-aside gets its tree back", async () => {
+  test("a successor that published between the pre-check and the rename-aside leaves the tree in place", async () => {
     const component = fakeComponent(execLog);
     const hash = lockHash(component.target);
     const dir = graphifyRoot();
@@ -864,11 +860,13 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     const lockPath = writeLock(path.join(root, "lock.json"), component);
     const env = { runtimeRoot, lockPath, platform: { platform: process.platform, arch: process.arch, musl: false } };
     // The rollback attempt holds a real lock. The removal passes its pre-check, then
-    // pauses at the rename-aside. A successor publishes during the pause — directly,
+    // pauses at the rename-aside seam. A successor publishes during the pause — directly,
     // bypassing the tree mutex the way a pre-change binary would (it does not know
-    // about the mutex): the post-check's rename-back is the defense in depth that
-    // still closes that case. An in-protocol successor (through activate) cannot
-    // publish here at all — it waits for the mutex, which the next test covers.
+    // about the mutex): the re-check after the seam is what catches it, so the
+    // rename-aside is skipped and the published tree stays in place. An in-protocol
+    // successor (through activate) cannot publish here at all — it waits for the mutex,
+    // which the next test covers. The post-rename re-verification stays as defense in
+    // depth for a publication that lands after the re-check but before the rename.
     const holder = await acquireInstallLock(dir);
     let calls = 0;
     const atPostCheck = deferred();
@@ -884,14 +882,12 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     let renames = 0;
     const atAside = deferred();
     const releaseAside = deferred();
-    const realRename = rename;
     const renameHook = async (from: string, to: string) => {
       renames += 1;
       if (renames === 2) {
         atAside.resolve();
         await releaseAside.promise;
       }
-      await realRename(from, to);
     };
     const outcome = activate(dir, hash, staging, {
       verifyLockHeld,
@@ -905,13 +901,13 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     const successor = await acquireInstallLock(dir);
     await writePointer(dir, { active: hash, previous: null });
     releaseAside.resolve();
-    // Immediately after the rename-aside, while the successor's lock is live: the
-    // tree is aside, so the pointer names a missing directory and the launcher is
-    // unavailable — the window the pre-check cannot close for a publication that
-    // bypassed the mutex. The post-check's rename-back is what closes it.
+    // At the re-check after the seam, while the successor's lock is live: the
+    // rename-aside has not run yet, so the successor's published tree is still in
+    // place and the launcher is available — the window the pre-check cannot close
+    // for a publication that bypassed the mutex. The re-check is what closes it.
     await atPostCheck.promise;
     expect(readPointer(dir).active).toBe(hash);
-    expect(componentBin("graphify", env)).toBeNull();
+    expect(componentBin("graphify", env)).toBe(path.join(final, "graphify"));
     expect(readInstallLockToken(dir)).toBe(successor.token);
     releasePostCheck.resolve();
     const error = await outcome;
@@ -952,14 +948,12 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     let renames = 0;
     const atAside = deferred();
     const releaseAside = deferred();
-    const realRename = rename;
     const renameHook = async (from: string, to: string) => {
       renames += 1;
       if (renames === 2) {
         atAside.resolve();
         await releaseAside.promise;
       }
-      await realRename(from, to);
     };
     const outcome = activate(dir, hash, staging, {
       verifyLockHeld,
@@ -1093,7 +1087,6 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
       signal: controller.signal,
       hooks: {
         rename: async (from, to) => {
-          await rename(from, to);
           if (to === path.join(graphifyRoot(), hash)) controller.abort();
         },
       },
@@ -1944,13 +1937,11 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     // lock file.
     const atPlacement = deferred();
     const releasePlacement = deferred();
-    const realRename = rename;
     const renameHook = async (from: string, to: string) => {
       if (from === staging && to === path.join(dir, hash)) {
         atPlacement.resolve();
         await releasePlacement.promise;
       }
-      await realRename(from, to);
     };
     let successorToken: string | null = null;
     const verifyLockHeld = async () => {
@@ -2032,13 +2023,11 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     // will reuse the restored tree instead of replacing it.
     const atPlacement = deferred();
     const releasePlacement = deferred();
-    const realRename = rename;
     const renameHook = async (from: string, to: string) => {
       if (from === staging && to === path.join(dir, hash)) {
         atPlacement.resolve();
         await releasePlacement.promise;
       }
-      await realRename(from, to);
     };
     let successorToken: string | null = null;
     const verifyLockHeld = async () => {
@@ -2121,13 +2110,11 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     // will reuse the restored tree instead of replacing it.
     const atPlacement = deferred();
     const releasePlacement = deferred();
-    const realRename = rename;
     const renameHook = async (from: string, to: string) => {
       if (from === staging && to === path.join(dir, hash)) {
         atPlacement.resolve();
         await releasePlacement.promise;
       }
-      await realRename(from, to);
     };
     let successorToken: string | null = null;
     let calls = 0;
@@ -2234,13 +2221,11 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     // will reuse the restored tree instead of replacing it.
     const atPlacement = deferred();
     const releasePlacement = deferred();
-    const realRename = rename;
     const renameHook = async (from: string, to: string) => {
       if (from === staging && to === path.join(dir, hash)) {
         atPlacement.resolve();
         await releasePlacement.promise;
       }
-      await realRename(from, to);
     };
     let successorToken: string | null = null;
     let calls = 0;
@@ -2397,13 +2382,11 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     // will reuse the restored tree instead of replacing it.
     const atPlacement = deferred();
     const releasePlacement = deferred();
-    const realRename = rename;
     const renameHook = async (from: string, to: string) => {
       if (from === staging && to === path.join(dir, hash)) {
         atPlacement.resolve();
         await releasePlacement.promise;
       }
-      await realRename(from, to);
     };
     let successorToken: string | null = null;
     const verifyLockHeld = async () => {
@@ -2420,8 +2403,11 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
         atWriting.resolve();
         await releaseWriting.promise;
       }
-      await writePointer(r, p);
     };
+    // The pointer file's inode, captured before the successor runs: the successor's
+    // write must never land, so the file the setup wrote stays byte- and
+    // inode-identical (writeFileAtomic would replace it with a new inode).
+    const pointerIno = statSync(path.join(dir, "current.json")).ino;
     const outcome = activate(dir, hash, staging, { verifyLockHeld, rename: renameHook, writePointer: writePointerHook }).catch((error: unknown) => error);
     await atPlacement.promise;
     // The contender runs in a child process and pauses after reading the stale
@@ -2526,10 +2512,12 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
       const aside = readdirSync(dir).filter((name) => name.startsWith(".tree.lock.stale-"));
       expect(aside).toHaveLength(1);
       expect(readFileSync(path.join(dir, aside[0]!), "utf8")).toMatch(new RegExp(`^${process.pid}:`));
-      // The recovery finishes. The successor's pointer write now completes — but
-      // the post-write token check refuses the publication: its tree-lock claim was
-      // displaced while the write was in progress, so it aborts instead of
-      // returning "reused" with the pointer naming a missing directory.
+      // The recovery finishes. The successor's pointer write now resumes — but the
+      // guard right before the rename refuses it: its tree-lock claim was displaced
+      // while the write was paused, so it aborts instead of returning "reused" with
+      // the pointer naming a missing directory. The write never lands: the pointer
+      // file keeps the inode the setup wrote (the pointer still names the hash
+      // because the setup wrote it, not because the successor published it).
       releaseUndo();
       await waitForFile(resultFile, childErr);
       expect(await childDone).toBe(0);
@@ -2538,6 +2526,7 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toContain("tree lock");
       expect(readPointer(dir).active).toBe(hash);
+      expect(statSync(path.join(dir, "current.json")).ino).toBe(pointerIno);
       expect(existsSync(path.join(dir, hash))).toBe(false);
       expect(readFileSync(path.join(dir, backupName, "marker"), "utf8")).toBe("backup\n");
     } finally {
@@ -2550,6 +2539,71 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
       contender.kill();
       third?.release();
     }
+  });
+
+  test("a successor that commits before a delayed pointer write does not lose its pointer", async () => {
+    // Two different versions in the same component root: A publishes hash A, B
+    // publishes hash B. A pauses in its pointer-write seam after passing its token
+    // check; B then displaces both of A's locks, claims them, and commits. When A
+    // resumes, the guard right before its rename must refuse the write — A must not
+    // overwrite B's pointer.
+    const componentA = fakeComponent(execLog, "a");
+    const componentB = fakeComponent(execLog, "b");
+    const hashA = lockHash(componentA.target);
+    const hashB = lockHash(componentB.target);
+    expect(hashA).not.toBe(hashB);
+    const dir = graphifyRoot();
+    mkdirSync(dir, { recursive: true });
+    const stagingA = path.join(dir, "staging-a");
+    mkdirSync(stagingA, { recursive: true });
+    writeFileSync(path.join(stagingA, "marker"), "a\n");
+    const stagingB = path.join(dir, "staging-b");
+    mkdirSync(stagingB, { recursive: true });
+    writeFileSync(path.join(stagingB, "marker"), "b\n");
+    const holder = await acquireInstallLock(dir);
+    const verifyA = async () => {
+      if (readInstallLockToken(dir) !== holder.token) throw new Error("lock lost");
+    };
+    let writePaused = false;
+    const atWriting = deferred();
+    const releaseWriting = deferred();
+    const outcome = activate(dir, hashA, stagingA, {
+      verifyLockHeld: verifyA,
+      writePointer: async () => {
+        if (!writePaused) {
+          writePaused = true;
+          atWriting.resolve();
+          await releaseWriting.promise;
+        }
+      },
+    }).catch((error: unknown) => error);
+    await atWriting.promise;
+    // A is paused in its pointer-write seam, after its token check. Displace both of
+    // its locks the way a delayed takeover's rename does, and let B claim them and
+    // commit a different version.
+    renameSync(path.join(dir, ".install.lock"), path.join(dir, ".install.lock.displaced"));
+    renameSync(path.join(dir, ".tree.lock"), path.join(dir, ".tree.lock.displaced"));
+    const successor = acquireInstallLockSync(dir);
+    const successorOutcome = await activate(dir, hashB, stagingB, {
+      verifyLockHeld: async () => {
+        if (readInstallLockToken(dir) !== successor!.token) throw new Error("lock lost");
+      },
+    });
+    expect(successorOutcome).toBe("renamed");
+    expect(readPointer(dir).active).toBe(hashB);
+    const pointerIno = statSync(path.join(dir, "current.json")).ino;
+    // A resumes: the guard right before its rename re-checks both locks, finds them
+    // lost, and refuses the write — so B's pointer stands while B still holds the
+    // install lock, and the pointer file keeps the inode B's write created.
+    releaseWriting.resolve();
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    expect(readPointer(dir).active).toBe(hashB);
+    expect(statSync(path.join(dir, "current.json")).ino).toBe(pointerIno);
+    expect(readInstallLockToken(dir)).toBe(successor!.token);
+    await holder.release();
+    expect(readInstallLockToken(dir)).toBe(successor!.token);
+    await successor!.release();
   });
 
   test("a rollback does not restore over a successor's live tree", async () => {
@@ -2627,7 +2681,7 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     await successor.release();
   });
 
-  test("a successor publishing after the rollback's last token read still ends with the launcher available", async () => {
+  test("a successor publishing after the rollback's last token read leaves the tree in place", async () => {
     const component = fakeComponent(execLog);
     const hash = lockHash(component.target);
     const dir = graphifyRoot();
@@ -2644,7 +2698,7 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     const lockPath = writeLock(path.join(root, "lock.json"), component);
     const env = { runtimeRoot, lockPath, platform: { platform: process.platform, arch: process.arch, musl: false } };
     // The rollback attempt holds a real lock. Its removal pauses at the rename-aside
-    // — after its last token read — while holding the tree mutex. A successor then
+    // seam — after its last token read — while holding the tree mutex. A successor then
     // displaces both locks the way a delayed takeover's rename does (the lock files
     // are renamed aside directly, as the install-lock tests do) and publishes the
     // same tree by reusing it, before the rollback's rename runs.
@@ -2655,14 +2709,12 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     let renames = 0;
     const atAside = deferred();
     const releaseAside = deferred();
-    const realRename = rename;
     const renameHook = async (from: string, to: string) => {
       renames += 1;
       if (renames === 2) {
         atAside.resolve();
         await releaseAside.promise;
       }
-      await realRename(from, to);
     };
     const outcome = activate(dir, hash, staging, {
       verifyLockHeld,
@@ -2672,9 +2724,8 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
       rename: renameHook,
     }).catch((error: unknown) => error);
     await atAside.promise;
-    // The rollback's tree is aside in the test's view only once the rename runs; at
-    // this point it is still at final and unpublished. Displace both locks, let the
-    // successor claim them, and publish by reusing the rollback's placed tree.
+    // The rollback's tree is still at final and unpublished. Displace both locks, let
+    // the successor claim them, and publish by reusing the rollback's placed tree.
     renameSync(path.join(dir, ".install.lock"), path.join(dir, ".install.lock.displaced"));
     renameSync(path.join(dir, ".tree.lock"), path.join(dir, ".tree.lock.displaced"));
     const successor = acquireInstallLockSync(dir);
@@ -2686,15 +2737,17 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     expect(successorOutcome).toBe("reused");
     expect(readPointer(dir).active).toBe(hash);
     expect(componentBin("graphify", env)).toBe(path.join(final, "graphify"));
-    // The rollback resumes: its rename-aside moves the successor's published tree
-    // aside, so the launcher is briefly unavailable — but its post-rename check
-    // finds both locks lost and renames the tree back (three renames: the placement,
-    // the aside, and the rename-back). Once the rollback finishes, the launcher is
-    // available again and the successor's tree stands.
+    const publishedIno = statSync(final).ino;
+    // The rollback resumes: its re-check after the seam finds both locks lost, so
+    // the rename-aside is skipped and the successor's published tree stays in place
+    // — the launcher is never unavailable. The seam ran (two hook calls: the
+    // placement and the aside), but the aside's real rename never ran, so no backup
+    // is left aside.
     releaseAside.resolve();
     const error = await outcome;
     expect(error).toBeInstanceOf(Error);
-    expect(renames).toBe(3);
+    expect(renames).toBe(2);
+    expect(statSync(final).ino).toBe(publishedIno);
     expect(readFileSync(path.join(final, "marker"), "utf8")).toBe("new\n");
     expect(readPointer(dir).active).toBe(hash);
     expect(componentBin("graphify", env)).toBe(path.join(final, "graphify"));

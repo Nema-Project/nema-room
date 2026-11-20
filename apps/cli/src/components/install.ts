@@ -75,6 +75,7 @@ export type InstallHooks = {
   selfCheck?: (launcher: string) => Promise<string>;
   /** Abort unless the install lock still carries this install's token (holder re-validation). */
   verifyLockHeld?: () => Promise<void>;
+  /** A pre-rename seam: runs before the production code performs the rename (tests pause or count here). A hook that throws aborts the move. The hook must not rename itself — the production code renames after it returns. */
   rename?: (from: string, to: string) => Promise<void>;
   /** Removes a directory tree; activation uses it for the post-commit removal of the replaced copy. */
   rm?: (target: string) => Promise<void>;
@@ -90,6 +91,7 @@ export type InstallHooks = {
   beforeAcquire?: () => Promise<void>;
   /** Writes the generation counter and high-water files for a claim; tests fail the counter write through it to exercise a real partial claim. */
   writeGenerationFile?: (file: string, body: string) => Promise<void>;
+  /** A pre-write seam: runs before the production code writes the pointer (tests pause or fail the write here). A hook that throws aborts the write. The hook must not write the pointer itself — the production code writes it after the hook returns, guarded by a re-check of both locks immediately before the rename. */
   writePointer?: (root: string, pointer: Pointer) => Promise<void>;
   /** The prebuilt Windows launcher shipped with the program. */
   windowsLauncher?: string;
@@ -417,9 +419,29 @@ export type ActivationOutcome = "renamed" | "reused" | "replaced-orphan" | "repl
  */
 export async function activate(root: string, lockHash: string, staging: string, hooks: InstallHooks = {}): Promise<ActivationOutcome> {
   if (!LOCK_HASH.test(lockHash)) throw new Error(`Not a lock-hash: ${lockHash}`);
-  const move = hooks.rename ?? rename;
-  const point = hooks.writePointer ?? writePointer;
   const verify = hooks.verifyLockHeld ?? (async () => {});
+  // The rename hook is a pre-rename seam: tests pause or count here, and the
+  // production code performs the rename after it returns. A hook that throws
+  // aborts the move. The hook must not rename itself — a caller that needs a
+  // check between the seam and the rename does it explicitly (removePlaced).
+  const move = async (from: string, to: string): Promise<void> => {
+    await hooks.rename?.(from, to);
+    await rename(from, to);
+  };
+  // The writePointer hook is a pre-write seam: tests pause or fail the write
+  // here. The production code performs the real write after it returns, guarded
+  // by a re-check of both locks immediately before the rename: a successor can
+  // publish while this attempt is paused in the seam, and the guard keeps this
+  // attempt from overwriting the successor's pointer.
+  const point = async (r: string, p: Pointer, treeLock: TreeLock): Promise<void> => {
+    await hooks.writePointer?.(r, p);
+    await writePointer(r, p, async () => {
+      await verify();
+      if (readTreeLockToken(r) !== treeLock.token) {
+        throw new Error("Lost the component tree lock to another installer; aborting the install");
+      }
+    });
+  };
   // The holder re-validates before publishing: if another installer displaced its lock
   // (see takeOverStaleLock), it aborts here instead of activating alongside that installer.
   await verify();
@@ -432,15 +454,11 @@ export async function activate(root: string, lockHash: string, staging: string, 
     if (readTreeLockToken(r) !== treeLock.token) {
       throw new Error("Lost the component tree lock to another installer; aborting the install");
     }
-    await point(r, p);
-    // The write above is asynchronous, so a displacement can land while it is in
-    // progress: a successor that passes the check above, then loses its tree lock
-    // to a recovery that moves the tree back, would otherwise return success with
-    // the pointer naming a missing directory. Re-check both locks after the write
-    // and refuse the publication when either moved. The pointer may already have
-    // been written, but the install fails (retryable) and the state is recoverable:
-    // the backup still exists and the pointer names the hash, so a later read
-    // restores the tree.
+    await point(r, p, treeLock);
+    // The write above is guarded right before its rename, so a displacement during
+    // the write is refused there instead of landing. This re-check stays as defense
+    // in depth for a displacement that lands after the guard but before the write
+    // returns: the install fails (retryable) rather than reporting success.
     await verify();
     if (readTreeLockToken(r) !== treeLock.token) {
       throw new Error("Lost the component tree lock to another installer; aborting the install");
@@ -501,14 +519,15 @@ export async function activate(root: string, lockHash: string, staging: string, 
   // in between, the aside copy keeps its `.replaced-` name and recovery restores or
   // removes it under the lock.
   //
-  // The check-and-rename is protected by the tree mutex, held from before the
-  // pre-check through the delete or restore: a successor's pointer write waits while
-  // this removal holds it, so a successor cannot publish in the gap between the
-  // pre-check and the rename-aside — the published tree stays in place and
-  // componentBin stays available throughout the rollback. The post-rename
-  // re-verification stays as defense in depth: a successor that claimed the install
-  // lock (which needs no mutex) but has not yet acquired the tree mutex is caught
-  // there, and its tree goes back.
+  // The tree mutex does not close the check-to-rename gap by itself: a delayed
+  // stale-lock takeover can displace this attempt's claim after the pre-check, and a
+  // successor can then publish before the rename-aside runs. So the rename-aside runs
+  // the pre-rename seam first and re-checks ownership after it returns — a successor
+  // that published during the seam is caught there, and its tree is left in place
+  // instead of being moved aside, so componentBin stays available throughout the
+  // rollback. The post-rename re-verification stays as defense in depth: a successor
+  // that claimed the install lock (which needs no mutex) but has not yet acquired the
+  // tree mutex is caught there, and its tree goes back.
   const removePlaced = async (heldTreeLock?: TreeLock): Promise<void> => {
     let ownLock: TreeLock | null = null;
     let treeLock = heldTreeLock ?? null;
@@ -531,8 +550,21 @@ export async function activate(root: string, lockHash: string, staging: string, 
       if (!(await stillOwnsTree())) return;
       if (readTreeLockToken(root) !== treeLock.token) return;
       const trash = path.join(root, `${lockHash}.replaced-${randomBytes(6).toString("hex")}`);
+      // Run the pre-rename seam, then re-check ownership before the rename itself: a
+      // successor can publish after the checks above (a delayed takeover displacing
+      // both locks in between). If it did, leave its published tree in place instead
+      // of moving it aside — the launcher stays available, and this attempt's own
+      // tree is left as a backup for recovery. The seam must not rename itself; the
+      // production code renames after it returns.
       try {
-        await move(final, trash);
+        await hooks.rename?.(final, trash);
+      } catch {
+        return; // The move failed: nothing of this attempt's to remove.
+      }
+      if (!(await stillOwnsTree())) return;
+      if (readTreeLockToken(root) !== treeLock.token) return;
+      try {
+        await rename(final, trash);
       } catch {
         return; // Nothing movable at `final`: nothing of this attempt's to remove.
       }

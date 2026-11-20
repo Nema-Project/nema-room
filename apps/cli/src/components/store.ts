@@ -531,19 +531,23 @@ export function readPointer(root: string): Pointer {
   }
 }
 
-/** Write a sibling temp file, then rename it over `path`: readers see the old or the new file, never half of one. */
-export async function writeFileAtomic(file: string, body: string): Promise<void> {
+/** Write a sibling temp file, then rename it over `path`: readers see the old or the new file, never half of one.
+ * `beforeRename` runs after the temp write and immediately before the rename: a caller that
+ * must not overwrite a file another installer published meanwhile uses it to re-check its
+ * locks and abort (the temp file is removed by the finally). */
+export async function writeFileAtomic(file: string, body: string, beforeRename?: () => Promise<void> | void): Promise<void> {
   const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   try {
     await writeFile(temp, body, { flag: "wx" });
+    await beforeRename?.();
     await rename(temp, file);
   } finally {
     await rm(temp, { force: true });
   }
 }
 
-export async function writePointer(root: string, pointer: Pointer): Promise<void> {
-  await writeFileAtomic(path.join(root, "current.json"), `${JSON.stringify(pointer, null, 2)}\n`);
+export async function writePointer(root: string, pointer: Pointer, beforeRename?: () => Promise<void> | void): Promise<void> {
+  await writeFileAtomic(path.join(root, "current.json"), `${JSON.stringify(pointer, null, 2)}\n`, beforeRename);
 }
 
 /**
