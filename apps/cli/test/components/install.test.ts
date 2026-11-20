@@ -430,6 +430,53 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(readFileSync(path.join(graphifyRoot(), backups[0]!, "python", "bin", "python3.11"), "utf8")).toBe("tampered\n");
   });
 
+  test("a displacement after the ownership read does not let rollback remove the successor's tree", async () => {
+    const hash = "a".repeat(64);
+    const dir = mkdtempSync(path.join(root, "activate-"));
+    const final = path.join(dir, hash);
+    mkdirSync(final, { recursive: true });
+    writeFileSync(path.join(final, "marker"), "old\n");
+    await writePointer(dir, { active: hash, previous: null });
+    const staging = path.join(dir, "staging");
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(path.join(staging, "marker"), "new\n");
+    // The ownership read (the checked-point check) succeeds, then a successor displaces the
+    // attempt and publishes its own tree before the rollback's re-check.
+    let calls = 0;
+    let displaced = false;
+    const atOwnershipRead = deferred();
+    const releaseOwnershipRead = deferred();
+    const verifyLockHeld = async () => {
+      calls += 1;
+      if (calls === 3) {
+        // The checked-point check: the lock read passes, then the cancel lands.
+        atOwnershipRead.resolve();
+        await releaseOwnershipRead.promise;
+        throw Object.assign(new Error("aborted"), { name: "AbortError" });
+      }
+      if (displaced) throw new Error("Lost the component install lock to another installer; aborting the install");
+    };
+    const outcome = activate(dir, hash, staging, { verifyLockHeld }).catch((error: unknown) => error);
+    await atOwnershipRead.promise;
+    // The successor publishes its tree at the active directory while this attempt is paused
+    // between its ownership read and its rollback.
+    rmSync(final, { recursive: true, force: true });
+    mkdirSync(final, { recursive: true });
+    writeFileSync(path.join(final, "marker"), "successor\n");
+    displaced = true;
+    releaseOwnershipRead.resolve();
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).name).toBe("AbortError");
+    // The rollback was skipped: the successor's tree stands, the backup stays aside for
+    // recovery, and the pointer still names the hash.
+    expect(readFileSync(path.join(final, "marker"), "utf8")).toBe("successor\n");
+    const backups = readdirSync(dir).filter((name) => name.includes(".replaced-"));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(path.join(dir, backups[0]!, "marker"), "utf8")).toBe("old\n");
+    expect(readPointer(dir).active).toBe(hash);
+  });
+
   test("a damaged previous version is replaced when the app goes back to its lock", async () => {
     const first = fakeComponent(execLog, "one");
     const second = fakeComponent(execLog, "two");
@@ -651,6 +698,14 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     const generation = readInstallGeneration(graphifyRoot());
     expect(generation).not.toBeNull();
     expect(generation!).toBeGreaterThan(1);
+    // A second loss reseeds again — and the new value must differ from the first reseed:
+    // the seed is random, so two losses can never restore the same generation.
+    const firstReseed = generation;
+    rmSync(path.join(graphifyRoot(), "install-generation"), { force: true });
+    expect(await install(env, { force: true })).toMatchObject({ state: "installed" });
+    const secondReseed = readInstallGeneration(graphifyRoot());
+    expect(secondReseed).not.toBeNull();
+    expect(secondReseed).not.toBe(firstReseed);
     // Recording still works after the reseed: a fresh offline refusal is recorded, because
     // nothing intervened since its own snapshot.
     const offline = envFor(component, source, { offline: true });
@@ -658,12 +713,84 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(readFailure(graphifyRoot())).toMatchObject({ reason: "offline" });
   });
 
+  test("an offline refusal does not overwrite a failure when a repair was in progress at its snapshot", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    expect(await install(env)).toMatchObject({ state: "installed" });
+    // Seed the record a failed repair leaves behind.
+    const failing = await install(env, {
+      force: true,
+      hooks: {
+        selfCheck: async () => {
+          throw new Error("injected self-check failure");
+        },
+      },
+    });
+    expect(failing).toMatchObject({ state: "failed", reason: "self-check" });
+    // A repair in another process holds the lock while this attempt begins: it claimed its
+    // generation before this attempt's snapshot, so the generation alone cannot tell the
+    // attempt that a repair is running.
+    const lockFile = path.join(graphifyRoot(), ".install.lock");
+    writeFileSync(lockFile, `${process.pid}:repair`);
+    const offline = envFor(component, source, { offline: true });
+    // Start the refusal: its entry snapshot (generation, lock held) runs synchronously up
+    // to the first await, so releasing the lock below lands between the snapshot and the write.
+    const refusedPromise = install(offline, { force: true });
+    // The repair commits and releases the lock in the meantime.
+    rmSync(lockFile, { force: true });
+    const refused = await refusedPromise;
+    // The refusal still reaches its own caller, but it must not overwrite the record the
+    // repair left: the generation matches, yet a repair was in progress at the snapshot.
+    expect(refused).toMatchObject({ state: "failed", reason: "offline" });
+    expect(readFailure(graphifyRoot())).toMatchObject({ reason: "self-check" });
+  });
+
+  test("an offline refusal delayed across a repair and a counter loss does not write a stale failure", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    expect(await install(env)).toMatchObject({ state: "installed" });
+    // Seed the record a failed repair leaves behind.
+    const failing = await install(env, {
+      force: true,
+      hooks: {
+        selfCheck: async () => {
+          throw new Error("injected self-check failure");
+        },
+      },
+    });
+    expect(failing).toMatchObject({ state: "failed", reason: "self-check" });
+    // A repair in another process holds the lock while this attempt begins.
+    const lockFile = path.join(graphifyRoot(), ".install.lock");
+    writeFileSync(lockFile, `${process.pid}:repair`);
+    const offline = envFor(component, source, { offline: true });
+    // Start the refusal: its entry snapshot runs synchronously up to the first await.
+    const refusedPromise = install(offline, { force: true });
+    // The repair commits in the meantime and its counter file is lost and reseeded: the
+    // writes below stand in for the repair's commit (a cleared record and a fresh
+    // generation), made synchronously so the interleaving is deterministic.
+    rmSync(lockFile, { force: true });
+    rmSync(path.join(graphifyRoot(), "install-generation"), { force: true });
+    writeFileSync(path.join(graphifyRoot(), "install-generation"), "123456789\n");
+    rmSync(path.join(graphifyRoot(), "last-failure.json"), { force: true });
+    const refused = await refusedPromise;
+    // The refusal still reaches its own caller, but it must not stamp the repaired store
+    // with its failure: the generation changed, and a repair was in progress at the snapshot.
+    expect(refused).toMatchObject({ state: "failed", reason: "offline" });
+    expect(readFailure(graphifyRoot())).toBeNull();
+  });
+
   test("an offer-changed refusal does not overwrite a failure recorded by an intervening install, even with an identical timestamp", async () => {
     const component = fakeComponent(execLog);
     const source = await serve(component);
     const env = envFor(component, source);
     const hash = lockHash(component.target);
-    expect(await install(env)).toMatchObject({ state: "installed" });
+    // No install: the component is not installed, so the refusal is not skipped for that
+    // reason — only the generation check can suppress the write. The counter is seeded by
+    // hand to stand in for a prior install's claim.
+    mkdirSync(graphifyRoot(), { recursive: true });
+    writeFileSync(path.join(graphifyRoot(), "install-generation"), "1\n");
     // Freeze the clock so the seeded record's timestamp is exactly the one the refusal
     // will generate: if ordering still ran on timestamps, this refusal would overwrite it.
     vi.useFakeTimers();

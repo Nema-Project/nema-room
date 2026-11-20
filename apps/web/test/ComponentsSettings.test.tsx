@@ -410,6 +410,22 @@ describe("Settings → Components", () => {
     expect(hub.updateComponentSettings).toHaveBeenCalledWith("graphify", { pythonMirror: "https://mirror.example/python", pypiBase: "https://saved.example" });
   });
 
+  it("turning offline mode off in settings shows the fresh status instead of the old offline failure", async () => {
+    const offline = view({ state: "failed", reason: "offline", detail: "Downloads are turned off", at: "2026-11-18T00:00:00.000Z" });
+    answer({ ...offline, settings: { ...offline.settings, offline: { value: true, source: "config" as const, config: true } } });
+    await refreshComponents();
+    // The save turns offline mode off; the daemon's answer carries the fresh status.
+    const fresh = view({ state: "not-installed" });
+    vi.mocked(hub.updateComponentSettings).mockResolvedValue(fresh);
+    await saveGraphifySettings({ offline: false });
+    // Read the published snapshot back without a successful GET overwriting it either way:
+    // a failed refresh keeps the current view and only records the error.
+    vi.mocked(hub.getComponents).mockRejectedValue(new Error("hub unreachable"));
+    const snapshot = await refreshComponents();
+    expect(snapshot.graphify?.status.state).toBe("not-installed");
+    expect(snapshot.graphify?.settings.offline.value).toBe(false);
+  });
+
   it("the settings entry opens the same offer", async () => {
     answer(view({ state: "not-installed" }));
     renderSettings();

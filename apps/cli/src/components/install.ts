@@ -21,6 +21,7 @@ import {
   clearFailure,
   componentRoot,
   componentStatusSync,
+  installLockHeldByLiveOwner,
   isOffline,
   launcherName,
   LOCK_HASH,
@@ -424,6 +425,21 @@ export async function activate(root: string, lockHash: string, staging: string, 
       () => false,
     );
   };
+  // Re-verify immediately before mutating: ownsTree's read and the rollback are separated by
+  // awaits a successor can use to displace this attempt (a delayed stale-lock takeover can
+  // move the lock aside after the read). A re-read alone cannot close that window completely,
+  // but a protocol takeover re-validates the judged owner after moving the record aside and
+  // restores it when it changed (see takeOverStaleLock), so after a successful re-read no
+  // protocol takeover can displace the attempt before the mutation. An AbortError from the
+  // check still proves ownership: the composed check reads the lock before the signal.
+  const stillOwnsTree = async (): Promise<boolean> => {
+    try {
+      await verify();
+      return true;
+    } catch (error) {
+      return isAbort(error);
+    }
+  };
   const final = path.join(root, lockHash);
   const pointer = readPointer(root);
   const next: Pointer = { active: lockHash, previous: pointer.active && pointer.active !== lockHash ? pointer.active : pointer.previous };
@@ -438,7 +454,9 @@ export async function activate(root: string, lockHash: string, staging: string, 
     } catch (error) {
       // Nothing has published this tree (no pointer names it). Take it back out only while this
       // attempt still owns it — after a lost lock it may be the successor's published runtime.
-      if (await ownsTree(error)) await rm(final, { recursive: true, force: true });
+      // The ownership is re-checked right before the removal: the read behind ownsTree and
+      // this mutation are separated by awaits a successor can use to displace the attempt.
+      if ((await ownsTree(error)) && (await stillOwnsTree())) await rm(final, { recursive: true, force: true });
       throw error;
     }
     return "renamed";
@@ -455,8 +473,8 @@ export async function activate(root: string, lockHash: string, staging: string, 
       await checkedPoint(root, next);
     } catch (error) {
       // Same unpublished case as above: the replaced tree was an orphan no pointer named.
-      // Remove the new one only while this attempt still owns it.
-      if (await ownsTree(error)) await rm(final, { recursive: true, force: true });
+      // Remove the new one only while this attempt still owns it, re-checked before the removal.
+      if ((await ownsTree(error)) && (await stillOwnsTree())) await rm(final, { recursive: true, force: true });
       throw error;
     }
     return "replaced-orphan";
@@ -477,7 +495,8 @@ export async function activate(root: string, lockHash: string, staging: string, 
   } catch (error) {
     // Restore the backup only while this attempt still owns the tree: after a lost lock the
     // placed tree may be the successor's published runtime, and the backup stays for recovery.
-    if (await ownsTree(error)) {
+    // The ownership is re-checked right before the restore, for the same displacement window.
+    if ((await ownsTree(error)) && (await stillOwnsTree())) {
       if (placed) await rm(final, { recursive: true, force: true });
       await move(backup, final);
     }
@@ -724,12 +743,19 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
   // is then null, and the refusal is recorded only if the counter is still missing at the
   // recheck — a claim in the meantime makes it present and breaks the equality, and an
   // unreadable counter throws out of the recheck into the branch's catch instead of writing.
+  // The generation alone cannot tell a repair already in progress from nothing happening: a
+  // repair claims its generation before activation, so a refusal that begins while the repair
+  // runs reads the claimed generation and would see it unchanged after the repair commits.
+  // Snapshot whether a live installer holds the lock too, and never record when one did — the
+  // repair's own outcome defines the shared status.
   let generationAtStart: number | null;
+  let lockHeldAtStart: boolean;
   try {
     generationAtStart = readInstallGeneration(componentRoot(name, env));
   } catch {
     generationAtStart = null;
   }
+  lockHeldAtStart = installLockHeldByLiveOwner(componentRoot(name, env));
   const prepared = prepare(name, env, o.allowOffline === true, o.expectedLockHash);
   if (!("root" in prepared)) {
     // Offline with a version installed, prepare answers the installed status: a plain install has
@@ -749,7 +775,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
         const { release } = await acquireInstallLock(root);
         try {
           const now = componentStatusSync(prepared.name, env);
-          if (now.state === "installed" && now.lockHash === prepared.lockHash && readInstallGeneration(root) === generationAtStart) {
+          if (now.state === "installed" && now.lockHash === prepared.lockHash && !lockHeldAtStart && readInstallGeneration(root) === generationAtStart) {
             await writeFailure(root, { lockHash: prepared.lockHash, ...attemptFailure });
           }
         } finally {
@@ -778,7 +804,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
           // comparison fail and the newer outcome stand. Wall-clock timestamps cannot order
           // this: two records can share one millisecond, and a clock adjustment can reorder them.
           const now = componentStatusSync(prepared.name, env);
-          if (now.state !== "installed" && now.lockHash === prepared.lockHash && readInstallGeneration(root) === generationAtStart) {
+          if (now.state !== "installed" && now.lockHash === prepared.lockHash && !lockHeldAtStart && readInstallGeneration(root) === generationAtStart) {
             await writeFailure(root, { lockHash: prepared.lockHash, reason: prepared.reason, detail: prepared.detail, at });
           }
         } finally {
@@ -815,13 +841,16 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
   // intact version must read as a failure, not as the still-serving old version.
   let attemptFailure: { reason: FailureReason; detail: string; at: string } | null = null;
   try {
-    emit();
-    // Claim this attempt's generation before any shared state changes: the marker is recorded
-    // under the lock before activation, so a refusal snapshotted before it can tell the attempt
-    // intervened even if this attempt later fails. If the claim itself fails (an unreadable or
-    // unrecordable counter), the attempt aborts here — before touching the store — instead of
-    // committing an install no later refusal can detect.
+    // Claim this attempt's generation before any shared state changes — including the progress
+    // callback, which can throw: the marker is recorded under the lock before activation, so a
+    // refusal snapshotted before it can tell the attempt intervened even if this attempt later
+    // fails. If the claim itself fails (an unreadable or unrecordable counter), the attempt
+    // aborts here — before touching the store — instead of committing an install no later
+    // refusal can detect. Claiming after the progress callback would leave a failure recorded
+    // by the callback's throw, or by a failed claim, under an unchanged generation, which an
+    // older refusal could then overwrite.
     await claimInstallGeneration(root);
+    emit();
     // Re-validate before the first mutation of shared state: a takeover that displaced
     // this install's lock must abort here, not after wiping another installer's staging.
     await verifyLockHeld(root, token);

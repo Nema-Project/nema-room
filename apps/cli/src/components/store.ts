@@ -1,6 +1,6 @@
 // The component store under ~/.nema/runtime/<name>/: one `<lock-hash>/` directory per installed
 // version, `current.json` naming the active and previous ones, and the last failed attempt.
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -52,7 +52,7 @@ const REPLACED_DIR = /^([a-f0-9]{64})\.replaced-[a-f0-9]+$/;
  * process or another. The lock is held for the whole install (see installFromSource), so
  * a live owner means an installer may be between the two moves of `activate`.
  */
-function installLockHeldByLiveOwner(root: string): boolean {
+export function installLockHeldByLiveOwner(root: string): boolean {
   let content: string;
   try {
     content = readFileSync(path.join(root, ".install.lock"), "utf8");
@@ -173,13 +173,13 @@ export function readInstallGeneration(root: string): number | null {
  * attempt before touching the store.
  *
  * A counter missing from a store with an active copy (its file was lost, never removed by
- * this code) reseeds from the wall clock: no earlier small counter value can equal it, so a
- * refusal snapshotted before the loss still sees a change. A store with no active copy
- * starts at 1 as before.
+ * this code) reseeds from a random 48-bit value, not the wall clock: a clock value can repeat
+ * across two losses, and a repeated seed would let a refusal snapshotted before the loss pass
+ * the equality check after a later repair. A store with no active copy starts at 1 as before.
  */
 export async function claimInstallGeneration(root: string): Promise<number> {
   const current = readInstallGeneration(root);
-  const base = current ?? (readPointer(root).active === null ? 0 : Date.now());
+  const base = current ?? (readPointer(root).active === null ? 0 : randomInt(2, 2 ** 48));
   const next = base + 1;
   await writeFileAtomic(path.join(root, "install-generation"), `${next}\n`);
   return next;

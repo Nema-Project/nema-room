@@ -59,16 +59,22 @@ function accept(view: ComponentView): void {
  * the poll. The answer is authoritative for the settings it changed and for the offer those
  * settings imply — a mirror change moves the download hosts, so a confirmation built from a
  * stale offer would show the old hosts while the download contacts the new ones. Merge those
- * into the current view and keep the current install state.
+ * into the current view, and take the answer's status too when it is still current: turning
+ * offline mode off can move the status from a recorded offline failure to not-installed, and
+ * keeping the old status would hide Install until a refresh. The status is current only when
+ * nothing newer arrived since the save was sent (an install or cancel that landed in between
+ * owns the lifecycle state) and no install is running now.
  */
-function acceptSettings(view: ComponentView): void {
+function acceptSettings(view: ComponentView, sentEpoch: number): void {
+  const arrivedEpoch = mutationEpoch;
   mutationEpoch += 1;
   const current = snapshot.graphify;
   if (!current) {
     publish({ graphify: view, error: null, loaded: true });
     return;
   }
-  publish({ graphify: { ...current, settings: view.settings, offer: view.offer, offerError: view.offerError }, error: null, loaded: true });
+  const status = current.status.state === "installing" || arrivedEpoch !== sentEpoch ? current.status : view.status;
+  publish({ graphify: { ...current, settings: view.settings, offer: view.offer, offerError: view.offerError, status }, error: null, loaded: true });
 }
 
 /**
@@ -129,7 +135,10 @@ let settingsQueue: Promise<void> = Promise.resolve();
 export async function saveGraphifySettings(patch: { pythonMirror?: string | null; pypiBase?: string | null; offline?: boolean }): Promise<void> {
   mutationEpoch += 1;
   const task = settingsQueue.then(async () => {
-    acceptSettings(await updateComponentSettings("graphify", patch));
+    // The epoch is captured when the save is actually sent, not when it was queued: the
+    // answer's status is current only if nothing newer arrived after this point.
+    const sentEpoch = mutationEpoch;
+    acceptSettings(await updateComponentSettings("graphify", patch), sentEpoch);
   });
   // The queue runs past a failed save; the failure itself still reaches this save's caller.
   settingsQueue = task.catch(() => {});
