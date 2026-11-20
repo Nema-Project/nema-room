@@ -17,7 +17,7 @@ import { downloadWithRetry, sourceUrl, sourceUrls } from "./download.js";
 import { readLock, resolveTarget, shippedLockPath, shippedWindowsLauncherPath, type LockFile, type LockTarget, type PlatformInfo } from "./lock.js";
 import {
   assertComponent,
-  bumpInstallGeneration,
+  claimInstallGeneration,
   clearFailure,
   componentRoot,
   componentStatusSync,
@@ -25,7 +25,6 @@ import {
   launcherName,
   LOCK_HASH,
   OFFLINE_DETAIL,
-  readFailure,
   readInstallGeneration,
   readPointer,
   recoverReplacementsSync,
@@ -722,8 +721,9 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
   // this snapshot — even of the same version — bumps it, so the refusal cannot stamp a state it
   // never saw. Reading the generation after the status would reopen exactly that window.
   // A store whose counter is missing or unreadable cannot anchor the comparison: the snapshot
-  // is then null and the refusal is never recorded — when a commit cannot be detected, the
-  // write is refused rather than risked.
+  // is then null, and the refusal is recorded only if the counter is still missing at the
+  // recheck — a claim in the meantime makes it present and breaks the equality, and an
+  // unreadable counter throws out of the recheck into the branch's catch instead of writing.
   let generationAtStart: number | null;
   try {
     generationAtStart = readInstallGeneration(componentRoot(name, env));
@@ -749,7 +749,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
         const { release } = await acquireInstallLock(root);
         try {
           const now = componentStatusSync(prepared.name, env);
-          if (now.state === "installed" && now.lockHash === prepared.lockHash && generationAtStart !== null && readInstallGeneration(root) === generationAtStart) {
+          if (now.state === "installed" && now.lockHash === prepared.lockHash && readInstallGeneration(root) === generationAtStart) {
             await writeFailure(root, { lockHash: prepared.lockHash, ...attemptFailure });
           }
         } finally {
@@ -771,12 +771,14 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
         const { release } = await acquireInstallLock(root);
         try {
           // Only while the refusal still describes the store: a copy installed under the current
-          // lock in the meantime has resolved the situation, and its status stands. A failure a
-          // newer attempt already recorded stands too — this refusal is the older event, even
-          // when both are about the same lock.
+          // lock in the meantime has resolved the situation, and its status stands. And only
+          // while no install attempt intervened since this attempt began: the generation claimed
+          // under the lock before every activation is strictly increasing, so any attempt that
+          // started after this refusal's entry snapshot — even one that failed — makes the
+          // comparison fail and the newer outcome stand. Wall-clock timestamps cannot order
+          // this: two records can share one millisecond, and a clock adjustment can reorder them.
           const now = componentStatusSync(prepared.name, env);
-          const recorded = readFailure(root);
-          if (now.state !== "installed" && now.lockHash === prepared.lockHash && (!recorded || recorded.at <= at)) {
+          if (now.state !== "installed" && now.lockHash === prepared.lockHash && readInstallGeneration(root) === generationAtStart) {
             await writeFailure(root, { lockHash: prepared.lockHash, reason: prepared.reason, detail: prepared.detail, at });
           }
         } finally {
@@ -814,6 +816,12 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
   let attemptFailure: { reason: FailureReason; detail: string; at: string } | null = null;
   try {
     emit();
+    // Claim this attempt's generation before any shared state changes: the marker is recorded
+    // under the lock before activation, so a refusal snapshotted before it can tell the attempt
+    // intervened even if this attempt later fails. If the claim itself fails (an unreadable or
+    // unrecordable counter), the attempt aborts here — before touching the store — instead of
+    // committing an install no later refusal can detect.
+    await claimInstallGeneration(root);
     // Re-validate before the first mutation of shared state: a takeover that displaced
     // this install's lock must abort here, not after wiping another installer's staging.
     await verifyLockHeld(root, token);
@@ -843,36 +851,24 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
     emit({ phase: "activate" });
     // The abort signal is part of activation's ownership check: a cancel that lands before the
     // pointer write stops activation at its verify points, and activation's own rollback puts the
-    // previous version back — the cancel never leaves a half-replaced tree behind. The signal is
-    // checked again after the lock read, so a cancel that arrives during that read still stops
-    // the pointer write instead of being reported as a completed install.
+    // previous version back — the cancel never leaves a half-replaced tree behind. The lock is
+    // read before the signal: an AbortError from this check then means the attempt still held
+    // the lock when it was cancelled, which is what activation's ownership-bound rollback
+    // relies on. A successor that claimed the lock first makes the lock read fail instead, so
+    // a later cancellation cannot mistake the lost lock for ownership.
     await activate(root, lockHash, staging, {
       ...hooks,
       verifyLockHeld: async () => {
-        throwIfAborted(o.signal);
         await verifyLockHeld(root, token);
         throwIfAborted(o.signal);
       },
     });
-    // The pointer has committed: the install has happened. Recording the commit (the generation
-    // is how a later refusal tells a completed repair from the state it read) and cleanup errors
-    // from here are reported separately and never turn the result into a failure or a cancel.
-    let commitRecorded = false;
+    // The pointer has committed: the install has happened. Clearing the failure record and
+    // pruning are cleanup — their failures are logged, never reported as the install's outcome.
+    // The generation was already claimed before activation, so a refusal snapshotted before
+    // this attempt cannot mistake the repaired store for the state it read.
     try {
-      await bumpInstallGeneration(root);
-      commitRecorded = true;
-    } catch (cleanupError) {
-      console.error(`[nema] component ${prepared.name} installed, but recording the install failed; the previous failure record is kept`, cleanupError);
-      // The counter can no longer be trusted to change on a later commit either — its update
-      // just failed. Remove it, so later generation snapshots read "unknown" and refusals stop
-      // recording instead of comparing against a value that may silently stay put.
-      await rm(path.join(root, "install-generation"), { force: true }).catch(() => {});
-    }
-    try {
-      // The failure record is cleared only when the commit was recorded: clearing it while the
-      // generation stayed put would leave a repaired copy that a refusal written from an older
-      // read cannot tell apart from an unrepaired one.
-      if (commitRecorded) await clearFailure(root);
+      await clearFailure(root);
       await prune(root, readPointer(root));
     } catch (cleanupError) {
       console.error(`[nema] component ${prepared.name} installed, but post-install cleanup failed`, cleanupError);

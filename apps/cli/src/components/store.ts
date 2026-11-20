@@ -59,6 +59,10 @@ function installLockHeldByLiveOwner(root: string): boolean {
   } catch {
     return false; // No lock file: no installer is running.
   }
+  // The exact tombstone a release writes when it cannot remove its claim: the installer is
+  // gone, so recovery must not be stalled by it. It has to be recognized before the PID
+  // parse — "released" parses as no pid, which the fallback below reads as a live owner.
+  if (content === "released\n") return false;
   const pid = Number(content.split(":")[0]?.trim());
   if (!Number.isInteger(pid) || pid <= 0) return true; // Unparseable: cannot prove no installer is running.
   if (pid === process.pid) return true;
@@ -135,11 +139,13 @@ export async function writePointer(root: string, pointer: Pointer): Promise<void
 /**
  * How many installs have committed in this store, or null when no install has committed yet.
  * A same-version repair rewrites the pointer with identical content, so the pointer alone
- * cannot tell "repaired since you looked" from "untouched"; this counter can. It is bumped
- * under the install lock after each activation commits.
+ * cannot tell "repaired since you looked" from "untouched"; this counter can. It is claimed
+ * under the install lock before activation, so it advances whenever an install starts — not
+ * only when one commits — and a refusal can tell an intervening attempt happened even when
+ * that attempt failed.
  *
  * Only a missing counter reads as uninitialized. An existing counter that cannot be read or
- * validated throws: treating it as 0 could let a later bump rewrite the generation a repair
+ * validated throws: treating it as 0 could let a later claim rewrite the generation a repair
  * already used, and callers comparing generations would see "unchanged" after a commit.
  */
 export function readInstallGeneration(root: string): number | null {
@@ -159,9 +165,24 @@ export function readInstallGeneration(root: string): number | null {
   return parsed;
 }
 
-export async function bumpInstallGeneration(root: string): Promise<void> {
+/**
+ * Records a new generation under the install lock, before activation. The value is strictly
+ * increasing across successful claims, so it can never be reused by a later attempt — the
+ * case that let a delayed refusal write a stale failure after a failed update and a repair.
+ * If the counter cannot be read or written, the claim throws and the caller aborts the
+ * attempt before touching the store.
+ *
+ * A counter missing from a store with an active copy (its file was lost, never removed by
+ * this code) reseeds from the wall clock: no earlier small counter value can equal it, so a
+ * refusal snapshotted before the loss still sees a change. A store with no active copy
+ * starts at 1 as before.
+ */
+export async function claimInstallGeneration(root: string): Promise<number> {
   const current = readInstallGeneration(root);
-  await writeFileAtomic(path.join(root, "install-generation"), `${(current ?? 0) + 1}\n`);
+  const base = current ?? (readPointer(root).active === null ? 0 : Date.now());
+  const next = base + 1;
+  await writeFileAtomic(path.join(root, "install-generation"), `${next}\n`);
+  return next;
 }
 
 export type FailureRecord = { lockHash: string; reason: FailureReason; detail: string; at: string };

@@ -290,9 +290,15 @@ describe("graph entry and first-use offer", () => {
     vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing" }));
     await startGraphifyInstall(LOCK_HASH);
     // The settings answer was composed before the install started: its lifecycle state is
-    // stale, but its settings are the ones the person just saved.
+    // stale, but its settings — and the offer those settings imply, since the mirror moved
+    // the download hosts — are the ones the person just saved.
     const stale = view({ state: "not-installed" });
-    resolveSettings({ ...stale, settings: { ...stale.settings, pythonMirror: { value: "https://mirror.example", source: "config" as const, config: "https://mirror.example" } } });
+    const staleOffer = stale.offer ?? { lockHash: LOCK_HASH, totalBytes: LOCK_TOTAL, location: "", hosts: [] };
+    resolveSettings({
+      ...stale,
+      settings: { ...stale.settings, pythonMirror: { value: "https://mirror.example", source: "config" as const, config: "https://mirror.example" } },
+      offer: { ...staleOffer, hosts: ["mirror.example"] },
+    });
     await save;
     // Read the published snapshot back without a successful GET overwriting it either way:
     // a failed refresh keeps the current view and only records the error.
@@ -300,6 +306,7 @@ describe("graph entry and first-use offer", () => {
     const snapshot = await refreshComponents();
     expect(snapshot.graphify?.status.state).toBe("installing");
     expect(snapshot.graphify?.settings.pythonMirror.value).toBe("https://mirror.example");
+    expect(snapshot.graphify?.offer?.hosts).toEqual(["mirror.example"]);
   });
 
   it("a failure greys only the graph entry, names the cause, and offers retry and import without a global error", async () => {
@@ -459,6 +466,26 @@ describe("Settings → Components", () => {
     expect(hub.cancelComponentInstall).toHaveBeenCalledWith("graphify");
     expect(await within(dialog).findByText("The reinstall was cancelled; the installed copy is unchanged.")).toBeTruthy();
     expect(within(dialog).queryByText("Graphify is installed. Graph features are ready.")).toBeNull();
+  });
+
+  it("a failed cancellation followed by a successful retry shows no error next to the cancel", async () => {
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
+    answer(installed);
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
+    vi.mocked(hub.cancelComponentInstall).mockRejectedValueOnce(new Error("hub unreachable"));
+    vi.mocked(hub.cancelComponentInstall).mockResolvedValue({ ...installed, cancelled: true });
+    renderSettings();
+    await userEvent.click(await screen.findByRole("button", { name: "Reinstall" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    // The first cancel fails: its error is shown.
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Cancel download" }));
+    expect((await within(dialog).findByRole("alert")).textContent).toContain("hub unreachable");
+    // The retry succeeds: the cancel is reported, and the first attempt's error is gone.
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel download" }));
+    expect(await within(dialog).findByText("The reinstall was cancelled; the installed copy is unchanged.")).toBeTruthy();
+    expect(within(dialog).queryByRole("alert")).toBeNull();
   });
 
   it("a cancel that landed after the repair completed shows the finished install", async () => {

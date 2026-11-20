@@ -56,8 +56,10 @@ function accept(view: ComponentView): void {
  * A settings save's answer. The view it carries was composed when the daemon processed the
  * request, so its lifecycle state can predate an install or cancel that landed while the save
  * was in flight: publishing it whole would hide the progress and the Cancel button, and stop
- * the poll. The answer is authoritative for the settings it changed — merge those into the
- * current view and keep the current lifecycle state.
+ * the poll. The answer is authoritative for the settings it changed and for the offer those
+ * settings imply — a mirror change moves the download hosts, so a confirmation built from a
+ * stale offer would show the old hosts while the download contacts the new ones. Merge those
+ * into the current view and keep the current install state.
  */
 function acceptSettings(view: ComponentView): void {
   mutationEpoch += 1;
@@ -66,7 +68,7 @@ function acceptSettings(view: ComponentView): void {
     publish({ graphify: view, error: null, loaded: true });
     return;
   }
-  publish({ graphify: { ...current, settings: view.settings }, error: null, loaded: true });
+  publish({ graphify: { ...current, settings: view.settings, offer: view.offer, offerError: view.offerError }, error: null, loaded: true });
 }
 
 /**
