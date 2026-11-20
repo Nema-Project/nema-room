@@ -26,6 +26,7 @@ import {
   launcherName,
   LOCK_HASH,
   OFFLINE_DETAIL,
+  acquirePointerFence,
   acquireTreeLock,
   readFailure,
   readInstallGeneration,
@@ -108,6 +109,14 @@ export type InstallHooks = {
    */
   renamePointerFinal?: (from: string, to: string) => Promise<void>;
   /**
+   * A pre-rename seam after the pointer-write fence is acquired: runs after the last
+   * guard and identity check, holding the fence, and before the real rename (tests
+   * pause here, after the last check, to let another installer try to publish — it
+   * blocks on the fence, so its pointer cannot land until this rename is done). The
+   * hook must not rename itself.
+   */
+  renamePointerFence?: (from: string, to: string) => Promise<void>;
+  /**
    * A pre-rename seam for a rollback's rename-aside: runs after the ownership re-check
    * and before the real rename (tests pause here, after the final check, to let another
    * installer publish). Ownership is re-checked after the seam, before the rename, so
@@ -123,6 +132,14 @@ export type InstallHooks = {
    * itself.
    */
   renamePlacedFinal?: (from: string, to: string) => Promise<void>;
+  /**
+   * A pre-rename seam after the rollback's pointer-write fence is acquired: runs after
+   * the final ownership and identity re-check, holding the fence, and before the real
+   * rename-aside (tests pause here, after the last check, to let another installer try
+   * to publish — it blocks on the fence, so its pointer cannot land until this
+   * rename is done). The hook must not rename itself.
+   */
+  renameFence?: (from: string, to: string) => Promise<void>;
   /** The prebuilt Windows launcher shipped with the program. */
   windowsLauncher?: string;
 };
@@ -467,7 +484,10 @@ export async function activate(root: string, lockHash: string, staging: string, 
   // seam, or during the temp write, is caught before its pointer can be overwritten.
   // The rename seams run after the guard, before the real rename, so a successor
   // that publishes while the rename itself is delayed is caught by the guard's
-  // second run and by the pointer-identity check after the seams.
+  // second run and by the pointer-identity check after the seams. The pointer-write
+  // fence is acquired just before the rename and held only for it: a successor's
+  // pointer write waits while this rename runs, so it cannot land its pointer
+  // between the last check and the rename.
   const point = async (r: string, p: Pointer, treeLock: TreeLock): Promise<void> => {
     await hooks.writePointer?.(r, p);
     await verify();
@@ -475,7 +495,7 @@ export async function activate(root: string, lockHash: string, staging: string, 
       if (readTreeLockToken(r) !== treeLock.token) {
         throw new Error("Lost the component tree lock to another installer; aborting the install");
       }
-    }, hooks.renamePointer, hooks.renamePointerFinal);
+    }, hooks.renamePointer, hooks.renamePointerFinal, hooks.renamePointerFence);
   };
   // The holder re-validates before publishing: if another installer displaced its lock
   // (see takeOverStaleLock), it aborts here instead of activating alongside that installer.
@@ -574,6 +594,17 @@ export async function activate(root: string, lockHash: string, staging: string, 
         return; // Cannot prove exclusion: leave the tree for recovery under the lock.
       }
     }
+    // The pointer-write fence is acquired just before the rename-aside (below, after
+    // the last re-check) and held through the post-rename re-verification and the
+    // rename-back or delete: a successor's pointer write — the step that makes its
+    // tree published — waits while this removal's rename runs, so it cannot publish
+    // between this removal's final check and its rename; and this removal waits while
+    // a successor is writing its pointer, so it cannot move a tree that was just
+    // published. The fence is not held during the seams, so a successor can still
+    // publish during one (and the re-check after the seam catches it). Lock order is
+    // tree mutex first, then the fence (a pointer write runs inside the tree mutex,
+    // so no path acquires them in the opposite order).
+    let fence: { release: () => void; token: string } | null = null;
     try {
       // Check ownership BEFORE the rename-aside: if the lock is already lost, the tree
       // at `final` may be a successor's published runtime — moving it aside would leave
@@ -651,6 +682,29 @@ export async function activate(root: string, lockHash: string, staging: string, 
         return; // The move failed: nothing of this attempt's to remove.
       }
       if (!(await ownsPlaced())) return;
+      // Fence the rename-aside itself against a successor: acquire the fence, then
+      // re-check ownership and the identities once more — a successor that published
+      // before the fence was acquired is caught here — and only then rename. A
+      // successor's pointer write waits while this rename runs, so it cannot publish
+      // between this final check and the rename; and this rename waits while a
+      // successor is writing its pointer, so it cannot move a tree that was just
+      // published. The fence is held through the post-rename re-verification and the
+      // rename-back or delete below, and released in the finally.
+      try {
+        fence = await acquirePointerFence(root);
+      } catch {
+        return; // Cannot prove exclusion: leave the tree for recovery under the lock.
+      }
+      if (!(await ownsPlaced())) return;
+      // A pre-rename seam after the fence is acquired: a test can pause here, after
+      // the last check, holding the fence, to let another installer try to publish —
+      // it blocks on the fence, so its pointer cannot land until this rename is done.
+      // After the seam, the rename runs in the same block.
+      try {
+        await hooks.renameFence?.(final, trash);
+      } catch {
+        return; // The move failed: nothing of this attempt's to remove.
+      }
       try {
         await rename(final, trash);
       } catch {
@@ -673,6 +727,7 @@ export async function activate(root: string, lockHash: string, staging: string, 
         });
       }
     } finally {
+      fence?.release();
       ownLock?.release();
     }
   };

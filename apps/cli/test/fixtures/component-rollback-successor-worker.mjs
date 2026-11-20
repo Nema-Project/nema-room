@@ -31,6 +31,7 @@ renameSync(path.join(job.root, ".install.lock"), path.join(job.root, ".install.l
 renameSync(path.join(job.root, ".tree.lock"), path.join(job.root, ".tree.lock.displaced"));
 const holder = acquireInstallLockSync(job.root);
 if (!holder) throw new Error("successor could not claim the install lock");
+writeFileSync(path.join(job.controlDir, "claimed"), `${process.pid}\n`);
 const outcome = await activate(job.root, job.hash, job.staging, {
   verifyLockHeld: async () => {
     if (readInstallLockToken(job.root) !== holder.token) throw new Error("lock lost");

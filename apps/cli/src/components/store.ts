@@ -392,6 +392,83 @@ export async function acquireTreeLock(root: string, timeoutMs = TREE_LOCK_TIMEOU
 }
 
 /**
+ * The pointer-write fence: a third lock file that serializes pointer writes against
+ * each other and against a rollback's removal. It is a separate file from the install
+ * lock and the tree mutex because it fences a different operation: the install lock
+ * is held for the whole install (so a successor can displace it and publish while a
+ * writer is between its final check and its rename), and the tree mutex is held for
+ * the activation's critical section (so a successor can displace it the same way) —
+ * neither can keep a successor's pointer write out of a writer's rename. The fence is
+ * held only for the pointer write itself (a few file operations) and for a rollback's
+ * removal, so a successor's pointer write waits while a writer or a rollback holds it,
+ * and a writer's or rollback's rename waits while a successor is writing its pointer:
+ * a displaced writer cannot overwrite a successor, because the successor's write
+ * happens after the writer's fence is released (and the writer's guard and identity
+ * check refuse it first if the successor already displaced its locks), and a rollback
+ * cannot move a tree a successor is publishing, because the successor's pointer write
+ * — the step that makes the tree published — waits for the fence.
+ *
+ * Ownership is a `<pid>:<random>` token published with the same atomic link as the
+ * install lock, with the same stale-takeover protocol for a dead holder. A live holder
+ * releases it in milliseconds (the pointer write and the removal are a few file
+ * operations), so the wait is bounded (5s): the async acquisition throws on timeout,
+ * and callers fail the install rather than proceeding unprotected. The fence is never
+ * held across a placement move or a download. Lock order is always tree mutex first,
+ * then the fence: a pointer write runs inside the tree mutex, and a rollback acquires
+ * the tree mutex before the fence — so no path acquires them in the opposite order.
+ */
+const POINTER_FENCE_FILE = ".pointer.fence";
+const POINTER_FENCE_TIMEOUT_MS = 5_000;
+
+export type PointerFence = { release: () => void; token: string };
+
+function pointerFenceFile(root: string): string {
+  return path.join(root, POINTER_FENCE_FILE);
+}
+
+/** One claim attempt: "won" when the link landed, "live" when a live owner holds it. */
+function tryClaimPointerFenceSync(file: string, token: string): "won" | "live" {
+  if (linkClaimSync(file, token)) return "won";
+  const owner = readLockOwnerSync(file);
+  if (!owner) return "live"; // Vanished between the claim attempt and the read; retry.
+  const pid = ownerPidSync(owner.content);
+  if (pid !== null && (pid === process.pid || pidAliveSync(pid))) return "live";
+  const stale = takeOverStaleLockSync(file, owner);
+  if (!stale) return "live"; // Lost the rename race, or the record revived; retry.
+  if (linkClaimSync(file, token)) {
+    rmSync(stale, { force: true });
+    return "won";
+  }
+  return "live";
+}
+
+/** The pointer-write fence's current token, or null when the file is missing or unreadable. */
+export function readPointerFenceToken(root: string): string | null {
+  try {
+    const content = readFileSync(pointerFenceFile(root), "utf8").trim();
+    return content === "" ? null : content;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Acquire the pointer-write fence, waiting up to `timeoutMs` for a live holder. Throws
+ * on timeout: the caller fails the install rather than proceeding unprotected.
+ */
+export async function acquirePointerFence(root: string, timeoutMs = POINTER_FENCE_TIMEOUT_MS): Promise<PointerFence> {
+  const file = pointerFenceFile(root);
+  const token = `${process.pid}:${randomBytes(6).toString("hex")}`;
+  const release = (): void => releaseLockFileSync(file, token);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (tryClaimPointerFenceSync(file, token) === "won") return { release, token };
+    if (Date.now() >= deadline) throw new Error(`Timed out acquiring the component pointer fence in ${root}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+/**
  * Undo a replacement cut off midway (a crash between moving the old directory aside and
  * publishing its replacement): a backup whose `<lock-hash>` is gone goes back into place;
  * a backup beside a present `<lock-hash>` is stale (that directory is the self-checked
@@ -546,17 +623,22 @@ export function readPointer(root: string): Pointer {
  * identity check run again after the seam, before the real rename. `finalSeam` is a
  * second pre-rename seam, after that re-check: a test can pause there, after the final
  * guard, to let another installer publish, and the guard and the identity check run
- * once more after it, before the rename. After that last check, the rename runs in the
- * same block — there is no seam left to pause on, so a displacement landing in that
- * final step cannot be orchestrated; the post-write re-check in the caller stays as
- * defense in depth for it. The seams must not rename themselves; the production code
- * renames after they return. */
+ * once more after it, before the rename. `acquireFence`, when given, is called after
+ * that last check and immediately before the rename: the fence it returns is held only
+ * for the rename itself, so a successor's write waits while this rename runs and this
+ * rename waits while a successor is writing — the rename is fenced against a successor
+ * that publishes after the last check, while the seams stay usable (a successor can
+ * still publish during a seam, and the re-check after the seam catches it). The fence
+ * is released in the finally, even when the rename throws. The seams must not rename
+ * themselves; the production code renames after they return. */
 export async function writeFileAtomic(
   file: string,
   body: string,
   beforeRename?: () => void,
   renameSeam?: (from: string, to: string) => Promise<void>,
   finalSeam?: (from: string, to: string) => Promise<void>,
+  acquireFence?: () => Promise<() => void>,
+  fenceSeam?: (from: string, to: string) => Promise<void>,
 ): Promise<void> {
   const identity = (path: string): string | null => {
     const info = statSync(path, { throwIfNoEntry: false });
@@ -570,6 +652,7 @@ export async function writeFileAtomic(
     }
   };
   const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  let releaseFence: (() => void) | null = null;
   try {
     await writeFile(temp, body, { flag: "wx" });
     check();
@@ -577,8 +660,20 @@ export async function writeFileAtomic(
     check();
     await finalSeam?.(temp, file);
     check();
+    // Fence the rename itself against a successor: a successor's write waits while
+    // this rename runs, and this rename waits while a successor is writing — so a
+    // successor that publishes after the last check cannot land its pointer between
+    // that check and this rename. The fence is held only for the rename, not for the
+    // seams above, so a successor can still publish during a seam (and the re-check
+    // after the seam catches it). `fenceSeam` is a pre-rename seam after the fence is
+    // acquired: a test can pause there, after the last check, holding the fence, to
+    // let another installer try to publish — it blocks on the fence, so its pointer
+    // cannot land until this rename is done.
+    releaseFence = (await acquireFence?.()) ?? null;
+    await fenceSeam?.(temp, file);
     await rename(temp, file);
   } finally {
+    releaseFence?.();
     await rm(temp, { force: true });
   }
 }
@@ -589,8 +684,24 @@ export async function writePointer(
   beforeRename?: () => void,
   renameSeam?: (from: string, to: string) => Promise<void>,
   finalSeam?: (from: string, to: string) => Promise<void>,
+  fenceSeam?: (from: string, to: string) => Promise<void>,
 ): Promise<void> {
-  await writeFileAtomic(path.join(root, "current.json"), `${JSON.stringify(pointer, null, 2)}\n`, beforeRename, renameSeam, finalSeam);
+  // The pointer-write fence is passed through to the atomic write, which acquires it
+  // just before the rename and releases it right after: a successor's pointer write
+  // waits while this rename runs, and this rename waits while a successor is writing
+  // its pointer — so a successor that publishes after the last check cannot land its
+  // pointer between that check and this rename. The fence is not held during the
+  // seams, so a successor can still publish during one (and the re-check after the
+  // seam catches it), and a rollback's removal can still be tested the same way.
+  await writeFileAtomic(
+    path.join(root, "current.json"),
+    `${JSON.stringify(pointer, null, 2)}\n`,
+    beforeRename,
+    renameSeam,
+    finalSeam,
+    () => acquirePointerFence(root).then((fence) => fence.release),
+    fenceSeam,
+  );
 }
 
 /**
