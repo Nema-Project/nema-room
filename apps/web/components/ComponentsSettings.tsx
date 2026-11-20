@@ -122,6 +122,8 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
   const [busy, setBusy] = useState(false);
   /** How this dialog's cancel ended: really cancelled, completed anyway, or unknown (the daemon had no job left to stop). Null until this dialog cancels. */
   const [cancelOutcome, setCancelOutcome] = useState<"cancelled" | "completed" | "unknown" | null>(null);
+  /** The lock the person last confirmed in this dialog: a direct Retry is only for that offer. */
+  const confirmedLockHash = useRef<string | null>(null);
   const firstButton = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -141,6 +143,7 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
 
   async function confirm(repairOverride?: boolean) {
     if (!offer) return;
+    confirmedLockHash.current = offer.lockHash;
     setBusy(true);
     setRequestError(null);
     try {
@@ -290,8 +293,8 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
         <div className="actions">
           <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
           {actions.import && <button type="button" onClick={() => setShowImport(true)}>{t("components.import")}</button>}
-          {/* An offer-changed failure means the lock moved after the person confirmed: the replacement offer has to be shown and confirmed before anything downloads. Other failures are for the offer already confirmed, so they retry directly. */}
-          {actions.retry && <button type="button" disabled={busy} onClick={() => (status.reason === "offer-changed" ? setStep("confirm") : void confirm())}>{t("components.retry")}</button>}
+          {/* The replacement offer has to be shown and confirmed before anything downloads — not only when the daemon refused with offer-changed, but whenever the current offer is not the one the person confirmed: a concurrent installer may have recorded a failure for a different lock, and the dialog must not retry that lock sight unseen. Other failures are for the offer already confirmed, so they retry directly. */}
+          {actions.retry && <button type="button" disabled={busy} onClick={() => (status.reason === "offer-changed" || offer?.lockHash !== confirmedLockHash.current ? setStep("confirm") : void confirm())}>{t("components.retry")}</button>}
         </div>
       </>
     );

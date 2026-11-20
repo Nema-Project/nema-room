@@ -25,8 +25,17 @@ let inflight: Promise<ComponentsSnapshot> | null = null;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 /** Bumped by every mutation (install/cancel/settings) so a GET started before it is discarded, not published. */
 let mutationEpoch = 0;
+/**
+ * Bumped whenever a published view carries a different lifecycle state than the one it
+ * replaces. A settings answer's status is current only if no lifecycle publication landed
+ * while the save was in flight — a poll does not move mutationEpoch, so the mutation epoch
+ * alone cannot tell a settings answer that a newer GET already published the install's
+ * outcome.
+ */
+let statusEpoch = 0;
 
 function publish(next: ComponentsSnapshot): void {
+  if (next.graphify?.status.state !== snapshot.graphify?.status.state) statusEpoch += 1;
   snapshot = next;
   for (const listener of listeners) listener();
   schedulePoll();
@@ -62,19 +71,26 @@ function accept(view: ComponentView): void {
  * into the current view, and take the answer's status too when it is still current: turning
  * offline mode off can move the status from a recorded offline failure to not-installed, and
  * keeping the old status would hide Install until a refresh. The status is current only when
- * nothing newer arrived since the save was sent (an install or cancel that landed in between
- * owns the lifecycle state) and no install is running now.
+ * nothing newer arrived since the save was sent (an install, cancel, or another save that
+ * landed in between owns the lifecycle state), no lifecycle publication landed in between
+ * (a poll does not move the mutation epoch), and no install is running now. The offer is
+ * applied only while it is still the offer the person was shown: an install or cancel that
+ * published a newer offer (a different lock) while the save was in flight must not be
+ * overwritten with the older one this answer carries.
  */
-function acceptSettings(view: ComponentView, sentEpoch: number): void {
+function acceptSettings(view: ComponentView, sentEpoch: number, sentStatusEpoch: number): void {
   const arrivedEpoch = mutationEpoch;
+  const arrivedStatusEpoch = statusEpoch;
   mutationEpoch += 1;
   const current = snapshot.graphify;
   if (!current) {
     publish({ graphify: view, error: null, loaded: true });
     return;
   }
-  const status = current.status.state === "installing" || arrivedEpoch !== sentEpoch ? current.status : view.status;
-  publish({ graphify: { ...current, settings: view.settings, offer: view.offer, offerError: view.offerError, status }, error: null, loaded: true });
+  const status = current.status.state === "installing" || arrivedEpoch !== sentEpoch || arrivedStatusEpoch !== sentStatusEpoch ? current.status : view.status;
+  const offer = view.offer && (!current.offer || current.offer.lockHash === view.offer.lockHash) ? view.offer : current.offer;
+  const offerError = offer === view.offer ? view.offerError : current.offerError;
+  publish({ graphify: { ...current, settings: view.settings, offer, offerError, status }, error: null, loaded: true });
 }
 
 /**
@@ -133,12 +149,15 @@ export async function cancelGraphifyInstall(): Promise<ComponentView> {
 let settingsQueue: Promise<void> = Promise.resolve();
 
 export async function saveGraphifySettings(patch: { pythonMirror?: string | null; pypiBase?: string | null; offline?: boolean }): Promise<void> {
-  mutationEpoch += 1;
   const task = settingsQueue.then(async () => {
-    // The epoch is captured when the save is actually sent, not when it was queued: the
-    // answer's status is current only if nothing newer arrived after this point.
+    // The invalidation happens when the save is actually sent, not when it is queued:
+    // queueing a second save must not invalidate the first save's answer. The epochs are
+    // captured here, at send time, so the answer's status is judged against what arrived
+    // after this point.
+    mutationEpoch += 1;
     const sentEpoch = mutationEpoch;
-    acceptSettings(await updateComponentSettings("graphify", patch), sentEpoch);
+    const sentStatusEpoch = statusEpoch;
+    acceptSettings(await updateComponentSettings("graphify", patch), sentEpoch, sentStatusEpoch);
   });
   // The queue runs past a failed save; the failure itself still reaches this save's caller.
   settingsQueue = task.catch(() => {});
@@ -216,6 +235,7 @@ export function resetComponentsForTests(): void {
   snapshot = EMPTY;
   inflight = null;
   mutationEpoch = 0;
+  statusEpoch = 0;
   if (pollTimer) clearTimeout(pollTimer);
   pollTimer = null;
 }

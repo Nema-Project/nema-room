@@ -56,8 +56,11 @@ export function installLockHeldByLiveOwner(root: string): boolean {
   let content: string;
   try {
     content = readFileSync(path.join(root, ".install.lock"), "utf8");
-  } catch {
-    return false; // No lock file: no installer is running.
+  } catch (error) {
+    // Only a missing file proves no installer is running. A permission or I/O error is
+    // inconclusive: the store directory may still permit renames, so recovery must not
+    // treat the store as free.
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? false : true;
   }
   // The exact tombstone a release writes when it cannot remove its claim: the installer is
   // gone, so recovery must not be stalled by it. It has to be recognized before the PID
@@ -87,7 +90,7 @@ export function installLockHeldByLiveOwner(root: string): boolean {
  * its rollback. A lock whose owner is dead means the installer is gone, so recovery
  * proceeds; a missing or dead lock is the crash case this exists for.
  */
-export function recoverReplacementsSync(root: string): void {
+export function recoverReplacementsSync(root: string, seams: { beforeMove?: () => void } = {}): void {
   if (installLockHeldByLiveOwner(root)) return;
   let names: string[];
   try {
@@ -100,6 +103,11 @@ export function recoverReplacementsSync(root: string): void {
     if (!match) continue;
     const original = path.join(root, match[1]!);
     try {
+      // Re-check immediately before moving: an installer can claim the lock after the
+      // listing (taking over a tombstone) and own the backup by the time this runs.
+      // Moving it back would occupy the path its activation is about to place staging at.
+      seams.beforeMove?.();
+      if (installLockHeldByLiveOwner(root)) return;
       if (existsSync(original)) rmSync(path.join(root, name), { recursive: true, force: true });
       else renameSync(path.join(root, name), original);
     } catch {
@@ -173,16 +181,30 @@ export function readInstallGeneration(root: string): number | null {
  * attempt before touching the store.
  *
  * A counter missing from a store with an active copy (its file was lost, never removed by
- * this code) reseeds from a random 48-bit value, not the wall clock: a clock value can repeat
- * across two losses, and a repeated seed would let a refusal snapshotted before the loss pass
- * the equality check after a later repair. A store with no active copy starts at 1 as before.
+ * this code) reseeds from a high-water file this claim maintains on every successful claim:
+ * the reseed is one past the highest generation ever claimed, so two losses can never
+ * restore the same value. A random 48-bit draw is only the last resort when the high-water
+ * file is gone too. A store with no active copy starts at 1 as before.
  */
 export async function claimInstallGeneration(root: string): Promise<number> {
   const current = readInstallGeneration(root);
-  const base = current ?? (readPointer(root).active === null ? 0 : randomInt(2, 2 ** 48));
+  const base = current ?? (readPointer(root).active === null ? 0 : (readInstallGenerationHighWater(root) ?? randomInt(2, 2 ** 48)));
   const next = base + 1;
   await writeFileAtomic(path.join(root, "install-generation"), `${next}\n`);
+  await writeFileAtomic(path.join(root, "install-generation-high-water"), `${next}\n`);
   return next;
+}
+
+/** The highest generation ever claimed in this store, or null when no claim recorded one. */
+function readInstallGenerationHighWater(root: string): number | null {
+  try {
+    const text = readFileSync(path.join(root, "install-generation-high-water"), "utf8").trim();
+    const parsed = Number.parseInt(text, 10);
+    if (!Number.isInteger(parsed) || parsed < 0 || String(parsed) !== text) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 export type FailureRecord = { lockHash: string; reason: FailureReason; detail: string; at: string };

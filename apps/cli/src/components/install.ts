@@ -26,6 +26,7 @@ import {
   launcherName,
   LOCK_HASH,
   OFFLINE_DETAIL,
+  readFailure,
   readInstallGeneration,
   readPointer,
   recoverReplacementsSync,
@@ -33,6 +34,7 @@ import {
   writeFailure,
   writePointer,
   type ComponentEnv,
+  type FailureRecord,
   type Pointer,
 } from "./store.js";
 import { ComponentInstallError, type ComponentName, type ComponentStatus, type FailureReason, type InstallProgress } from "./types.js";
@@ -495,10 +497,12 @@ export async function activate(root: string, lockHash: string, staging: string, 
   } catch (error) {
     // Restore the backup only while this attempt still owns the tree: after a lost lock the
     // placed tree may be the successor's published runtime, and the backup stays for recovery.
-    // The ownership is re-checked right before the restore, for the same displacement window.
+    // The ownership is re-checked right before the restore, for the same displacement window,
+    // and again immediately before the restore move: the removal and the move are separated
+    // by awaits a successor can use to displace the attempt and publish its own tree.
     if ((await ownsTree(error)) && (await stillOwnsTree())) {
       if (placed) await rm(final, { recursive: true, force: true });
-      await move(backup, final);
+      if (await stillOwnsTree()) await move(backup, final);
     }
     throw error;
   }
@@ -608,10 +612,24 @@ async function linkClaim(file: string, token: string): Promise<boolean> {
  * stranded and inert — its holder notices at its next ownership check and aborts — so it
  * is dropped rather than restored over the new claim.
  */
-async function takeOverStaleLock(file: string, judged: LockOwner): Promise<string | null> {
+/**
+ * Move a stale lock record aside so a fresh claim can take the path. The judged owner was
+ * read when the lock was first inspected; re-validate it immediately before renaming, because
+ * a live installer may have claimed the path since. Renaming a live holder's record aside
+ * would let a successor claim the vacant path in the gap before the restore below, and the
+ * restore cannot put the holder's record back once a successor's claim is in place (EEXIST).
+ * Returns the moved record's path, or null when the takeover must not proceed.
+ */
+export async function takeOverStaleLock(
+  file: string,
+  judged: LockOwner,
+  renameFile: (from: string, to: string) => Promise<void> = rename,
+): Promise<string | null> {
+  const current = await readFile(file, "utf8").catch(() => null);
+  if (current !== judged.content) return null;
   const stale = `${file}.stale-${process.pid}-${randomBytes(6).toString("hex")}`;
   try {
-    await rename(file, stale);
+    await renameFile(file, stale);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
@@ -650,7 +668,7 @@ export async function verifyLockHeld(root: string, token: string): Promise<void>
 }
 
 /** One install at a time per component directory, across processes. Exported for tests. */
-export async function acquireInstallLock(root: string, seams: { removeLockFile?: (file: string) => Promise<void> } = {}): Promise<{ release: () => Promise<void>; token: string }> {
+export async function acquireInstallLock(root: string, seams: { removeLockFile?: (file: string) => Promise<void>; renameLockFile?: (from: string, to: string) => Promise<void> } = {}): Promise<{ release: () => Promise<void>; token: string }> {
   const file = path.join(root, LOCK_FILE);
   const token = claimToken();
   const removeLockFile = seams.removeLockFile ?? ((target: string) => rm(target, { force: true }));
@@ -689,7 +707,7 @@ export async function acquireInstallLock(root: string, seams: { removeLockFile?:
     }
     // Dead owner, or a legacy record with no live writer (current code never writes one):
     // take it over through the atomic rename protocol, never by remove-then-create.
-    const stale = await takeOverStaleLock(file, owner);
+    const stale = await takeOverStaleLock(file, owner, seams.renameLockFile);
     if (!stale) continue; // Lost the rename race, or the record revived; re-loop and re-judge.
     if (await linkClaim(file, token)) {
       await rm(stale, { force: true });
@@ -710,6 +728,14 @@ function classify(error: unknown): { reason: FailureReason; detail: string } {
 }
 
 type Prepared = { name: ComponentName; env: ComponentEnv; root: string; target: LockTarget; lockHash: string; totalBytes: number; platform: PlatformInfo };
+
+/** Whether two failure records describe the same attempt outcome, field by field. */
+function sameFailure(a: FailureRecord | null, b: FailureRecord | null): boolean {
+  return (
+    a === b ||
+    (a !== null && b !== null && a.lockHash === b.lockHash && a.reason === b.reason && a.detail === b.detail && a.at === b.at)
+  );
+}
 
 /** Platform and offline checks. Returns the status to answer with when no install can start. */
 function prepare(name: string, env: ComponentEnv, allowOffline: boolean, expectedLockHash?: string): Prepared | ComponentStatus {
@@ -748,8 +774,13 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
   // runs reads the claimed generation and would see it unchanged after the repair commits.
   // Snapshot whether a live installer holds the lock too, and never record when one did — the
   // repair's own outcome defines the shared status.
+  // Snapshot the failure record as well: a refusal records only if the record is unchanged
+  // when it writes. A later attempt that records its own failure — including one whose
+  // generation claim failed, so the generation never advanced — changes the record, and the
+  // older refusal must not stamp over it.
   let generationAtStart: number | null;
   let lockHeldAtStart: boolean;
+  const failureAtStart: FailureRecord | null = readFailure(componentRoot(name, env));
   try {
     generationAtStart = readInstallGeneration(componentRoot(name, env));
   } catch {
@@ -775,7 +806,13 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
         const { release } = await acquireInstallLock(root);
         try {
           const now = componentStatusSync(prepared.name, env);
-          if (now.state === "installed" && now.lockHash === prepared.lockHash && !lockHeldAtStart && readInstallGeneration(root) === generationAtStart) {
+          if (
+            now.state === "installed" &&
+            now.lockHash === prepared.lockHash &&
+            !lockHeldAtStart &&
+            readInstallGeneration(root) === generationAtStart &&
+            sameFailure(failureAtStart, readFailure(root))
+          ) {
             await writeFailure(root, { lockHash: prepared.lockHash, ...attemptFailure });
           }
         } finally {
@@ -804,7 +841,13 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
           // comparison fail and the newer outcome stand. Wall-clock timestamps cannot order
           // this: two records can share one millisecond, and a clock adjustment can reorder them.
           const now = componentStatusSync(prepared.name, env);
-          if (now.state !== "installed" && now.lockHash === prepared.lockHash && !lockHeldAtStart && readInstallGeneration(root) === generationAtStart) {
+          if (
+            now.state !== "installed" &&
+            now.lockHash === prepared.lockHash &&
+            !lockHeldAtStart &&
+            readInstallGeneration(root) === generationAtStart &&
+            sameFailure(failureAtStart, readFailure(root))
+          ) {
             await writeFailure(root, { lockHash: prepared.lockHash, reason: prepared.reason, detail: prepared.detail, at });
           }
         } finally {

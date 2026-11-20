@@ -6,9 +6,9 @@ import { rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { activate, acquireInstallLock, installComponent, verifyArchives, verifyLockHeld, type InstallOptions } from "../../src/components/install.js";
+import { activate, acquireInstallLock, installComponent, takeOverStaleLock, verifyArchives, verifyLockHeld, type InstallOptions } from "../../src/components/install.js";
 import { lockHash } from "../../src/components/lock.js";
-import { componentBin, componentStatus, readFailure, readInstallGeneration, readPointer, recoverReplacementsSync, writeFailure, writePointer, type ComponentEnv } from "../../src/components/store.js";
+import { componentBin, componentStatus, installLockHeldByLiveOwner, readFailure, readInstallGeneration, readPointer, recoverReplacementsSync, writeFailure, writePointer, type ComponentEnv } from "../../src/components/store.js";
 import type { ComponentStatus, InstallProgress } from "../../src/components/types.js";
 import { fakeComponent, fakeSource, writeLock, type FakeComponent, type FakeSource } from "./fixtures.js";
 
@@ -68,7 +68,7 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     const status = await install(env, { onProgress: (p) => progress.push(p) });
     expect(status).toMatchObject({ state: "installed", lockHash: hash, path: path.join(graphifyRoot(), hash) });
     expect(readPointer(graphifyRoot())).toEqual({ active: hash, previous: null });
-    expect(readdirSync(graphifyRoot()).sort()).toEqual(["current.json", "install-generation", hash].sort());
+    expect(readdirSync(graphifyRoot()).sort()).toEqual(["current.json", "install-generation", "install-generation-high-water", hash].sort());
     const launcher = componentBin("graphify", env);
     expect(launcher).toBe(path.join(graphifyRoot(), hash, "graphify"));
     expect(execFileSync(launcher!, ["--version"], { encoding: "utf8" }).trim()).toBe("graphify 0.9.95-a");
@@ -477,6 +477,52 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(readPointer(dir).active).toBe(hash);
   });
 
+  test("a displacement after the final ownership read does not let rollback move the backup over the successor's tree", async () => {
+    const hash = "a".repeat(64);
+    const successorHash = "b".repeat(64);
+    const dir = mkdtempSync(path.join(root, "activate-"));
+    const final = path.join(dir, hash);
+    mkdirSync(final, { recursive: true });
+    writeFileSync(path.join(final, "marker"), "old\n");
+    await writePointer(dir, { active: hash, previous: null });
+    const staging = path.join(dir, "staging");
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(path.join(staging, "marker"), "new\n");
+    // The final ownership read (call 4) passes and the placed tree is removed; the
+    // pre-move re-check (call 5) is where the attempt is paused.
+    let calls = 0;
+    let displaced = false;
+    const atPreMoveRead = deferred();
+    const releasePreMoveRead = deferred();
+    const verifyLockHeld = async () => {
+      calls += 1;
+      if (calls === 3) throw Object.assign(new Error("aborted"), { name: "AbortError" });
+      if (calls === 5) {
+        atPreMoveRead.resolve();
+        await releasePreMoveRead.promise;
+      }
+      if (displaced) throw new Error("Lost the component install lock to another installer; aborting the install");
+    };
+    const outcome = activate(dir, hash, staging, { verifyLockHeld }).catch((error: unknown) => error);
+    await atPreMoveRead.promise;
+    // A successor displaces the attempt and publishes its tree while the re-check is paused.
+    mkdirSync(final, { recursive: true });
+    writeFileSync(path.join(final, "marker"), "successor\n");
+    await writePointer(dir, { active: successorHash, previous: hash });
+    displaced = true;
+    releasePreMoveRead.resolve();
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).name).toBe("AbortError");
+    // The restore move was skipped: the successor's tree stands, the backup stays aside
+    // for recovery, and the pointer still names the successor.
+    expect(readFileSync(path.join(final, "marker"), "utf8")).toBe("successor\n");
+    const backups = readdirSync(dir).filter((name) => name.includes(".replaced-"));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(path.join(dir, backups[0]!, "marker"), "utf8")).toBe("old\n");
+    expect(readPointer(dir).active).toBe(successorHash);
+  });
+
   test("a damaged previous version is replaced when the app goes back to its lock", async () => {
     const first = fakeComponent(execLog, "one");
     const second = fakeComponent(execLog, "two");
@@ -698,14 +744,15 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     const generation = readInstallGeneration(graphifyRoot());
     expect(generation).not.toBeNull();
     expect(generation!).toBeGreaterThan(1);
-    // A second loss reseeds again — and the new value must differ from the first reseed:
-    // the seed is random, so two losses can never restore the same generation.
+    // A second loss reseeds again — and the new value must be strictly greater than the
+    // first reseed: the reseed is one past the highest generation ever claimed, so two
+    // losses can never restore the same generation.
     const firstReseed = generation;
     rmSync(path.join(graphifyRoot(), "install-generation"), { force: true });
     expect(await install(env, { force: true })).toMatchObject({ state: "installed" });
     const secondReseed = readInstallGeneration(graphifyRoot());
     expect(secondReseed).not.toBeNull();
-    expect(secondReseed).not.toBe(firstReseed);
+    expect(secondReseed!).toBeGreaterThan(firstReseed!);
     // Recording still works after the reseed: a fresh offline refusal is recorded, because
     // nothing intervened since its own snapshot.
     const offline = envFor(component, source, { offline: true });
@@ -761,24 +808,71 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
       },
     });
     expect(failing).toMatchObject({ state: "failed", reason: "self-check" });
-    // A repair in another process holds the lock while this attempt begins.
-    const lockFile = path.join(graphifyRoot(), ".install.lock");
-    writeFileSync(lockFile, `${process.pid}:repair`);
     const offline = envFor(component, source, { offline: true });
-    // Start the refusal: its entry snapshot runs synchronously up to the first await.
+    // Start the refusal with no installer running: its entry snapshot (generation 2, no
+    // live lock, the seeded record) runs synchronously up to the first await, so the
+    // generation check alone must suppress the write — the live-lock guard cannot save it,
+    // and the record is deliberately left alone so the record guard cannot save it either.
+    // This case must fail if the generation comparison is removed.
     const refusedPromise = install(offline, { force: true });
-    // The repair commits in the meantime and its counter file is lost and reseeded: the
-    // writes below stand in for the repair's commit (a cleared record and a fresh
-    // generation), made synchronously so the interleaving is deterministic.
-    rmSync(lockFile, { force: true });
+    // The repair's counter file is lost and reseeded in the meantime: the writes below
+    // stand in for the repair's claim, made synchronously so the interleaving is
+    // deterministic.
     rmSync(path.join(graphifyRoot(), "install-generation"), { force: true });
     writeFileSync(path.join(graphifyRoot(), "install-generation"), "123456789\n");
-    rmSync(path.join(graphifyRoot(), "last-failure.json"), { force: true });
     const refused = await refusedPromise;
     // The refusal still reaches its own caller, but it must not stamp the repaired store
-    // with its failure: the generation changed, and a repair was in progress at the snapshot.
+    // with its failure: the generation changed.
+    expect(refused).toMatchObject({ state: "failed", reason: "offline" });
+    expect(readFailure(graphifyRoot())).toMatchObject({ reason: "self-check" });
+  });
+
+  test("a same-version repair that commits after an offline refusal's snapshot leaves no stale failure", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    expect(await install(env)).toMatchObject({ state: "installed" });
+    // Seed the record a failed repair leaves behind.
+    const failing = await install(env, {
+      force: true,
+      hooks: {
+        selfCheck: async () => {
+          throw new Error("injected self-check failure");
+        },
+      },
+    });
+    expect(failing).toMatchObject({ state: "failed", reason: "self-check" });
+    // Start a real same-version repair; while it runs, an offline refusal begins. The
+    // repair holds the lock until it commits and clears the record.
+    const repair = install(env, { force: true });
+    const offline = envFor(component, source, { offline: true });
+    const refused = await install(offline, { force: true });
+    expect(await repair).toMatchObject({ state: "installed" });
+    // The refusal still reaches its own caller, but the repair's cleared record stands:
+    // the refusal never wrote a stale failure over it.
     expect(refused).toMatchObject({ state: "failed", reason: "offline" });
     expect(readFailure(graphifyRoot())).toBeNull();
+  });
+
+  test("an older refusal does not overwrite a failure recorded by a newer attempt", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    const hash = lockHash(component.target);
+    // No install: the component is not installed, so the refusal is not skipped for that
+    // reason — only the generation and record checks can suppress the write.
+    mkdirSync(graphifyRoot(), { recursive: true });
+    // Start the older refusal: its entry snapshot (no generation, no failure record) runs
+    // synchronously up to the first await.
+    const refusedPromise = install(env, { expectedLockHash: "0".repeat(64) });
+    // A newer attempt records its failure in the meantime. The synchronous write stands
+    // in for the newer attempt's record — the file is the mechanism's state.
+    writeFileSync(path.join(graphifyRoot(), "last-failure.json"), JSON.stringify({ lockHash: hash, reason: "offline", detail: "newer attempt failed", at: new Date().toISOString() }));
+    const refused = await refusedPromise;
+    expect(refused).toMatchObject({ state: "failed", reason: "offer-changed", lockHash: hash });
+    // The newer attempt's record stands: the older refusal did not stamp over it, even
+    // though the generation is unchanged (the newer attempt never claimed one).
+    expect(readFailure(graphifyRoot())).toMatchObject({ reason: "offline", detail: "newer attempt failed" });
   });
 
   test("an offer-changed refusal does not overwrite a failure recorded by an intervening install, even with an identical timestamp", async () => {
@@ -933,6 +1027,58 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     expect(status.state).toBe("installed");
     expect(existsSync(path.join(graphifyRoot(), hash, "graphify"))).toBe(true);
     expect(componentBin("graphify", env)).toBe(path.join(graphifyRoot(), hash, "graphify"));
+  });
+
+  test("a takeover whose judged owner changed does not move the live record aside", async () => {
+    mkdirSync(graphifyRoot(), { recursive: true });
+    const file = path.join(graphifyRoot(), ".install.lock");
+    // The record changed hands after the judgment: a live installer claimed it.
+    writeFileSync(file, `${process.pid}:live`);
+    let renames = 0;
+    const moved = await takeOverStaleLock(
+      file,
+      { content: String(2 ** 22 + 123_456), ino: 0, mtimeMs: 0 },
+      async (from, to) => {
+        renames += 1;
+        await rename(from, to);
+      },
+    );
+    expect(moved).toBeNull();
+    expect(renames).toBe(0);
+    expect(readFileSync(file, "utf8")).toBe(`${process.pid}:live`);
+    expect(readdirSync(graphifyRoot())).toHaveLength(1);
+  });
+
+  test("a lock that cannot be read is treated as a live owner, not a free store", () => {
+    const dir = graphifyRoot();
+    mkdirSync(dir, { recursive: true });
+    // The lock path is a directory: reading it fails with EISDIR, not ENOENT.
+    mkdirSync(path.join(dir, ".install.lock"), { recursive: true });
+    const backup = path.join(dir, `${"c".repeat(64)}.replaced-abcdef`);
+    mkdirSync(backup, { recursive: true });
+    writeFileSync(path.join(backup, "marker"), "kept\n");
+    expect(installLockHeldByLiveOwner(dir)).toBe(true);
+    // Recovery must not move the backup while the lock's state is inconclusive.
+    recoverReplacementsSync(dir);
+    expect(existsSync(path.join(dir, "c".repeat(64)))).toBe(false);
+    expect(existsSync(path.join(backup, "marker"))).toBe(true);
+  });
+
+  test("recovery does not move a backup a live installer claimed after the listing", () => {
+    const dir = graphifyRoot();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, ".install.lock"), "released\n");
+    const backup = path.join(dir, `${"c".repeat(64)}.replaced-abcdef`);
+    mkdirSync(backup, { recursive: true });
+    writeFileSync(path.join(backup, "marker"), "kept\n");
+    recoverReplacementsSync(dir, {
+      beforeMove: () => {
+        // An installer takes over the tombstone and claims the lock while recovery lists.
+        writeFileSync(path.join(dir, ".install.lock"), `${process.pid}:installer`);
+      },
+    });
+    expect(existsSync(path.join(dir, "c".repeat(64)))).toBe(false);
+    expect(existsSync(path.join(backup, "marker"))).toBe(true);
   });
 
   test("recovery restores a backup when the lock file is only a release tombstone", async () => {
