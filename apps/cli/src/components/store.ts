@@ -535,11 +535,18 @@ export function readPointer(root: string): Pointer {
  * `beforeRename` is synchronous and runs immediately before the rename, in the same block:
  * no await separates the guard from the rename, so no interleaving can be orchestrated
  * between them — a guard that throws aborts the write (the temp file is removed by the
- * finally). A caller that needs an asynchronous check runs it before calling this function. */
-export async function writeFileAtomic(file: string, body: string, beforeRename?: () => void): Promise<void> {
+ * finally). A caller that needs an asynchronous check runs it before calling this function.
+ * `renameSeam` is a pre-rename seam: a test can pause there, after the guard, to let
+ * another installer publish. The guard runs again after the seam, before the real rename,
+ * so a publication that landed during the pause is caught and the write is refused
+ * instead of overwriting it. The seam must not rename itself; the production code
+ * renames after it returns. */
+export async function writeFileAtomic(file: string, body: string, beforeRename?: () => void, renameSeam?: (from: string, to: string) => Promise<void>): Promise<void> {
   const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   try {
     await writeFile(temp, body, { flag: "wx" });
+    beforeRename?.();
+    await renameSeam?.(temp, file);
     beforeRename?.();
     await rename(temp, file);
   } finally {
@@ -547,8 +554,8 @@ export async function writeFileAtomic(file: string, body: string, beforeRename?:
   }
 }
 
-export async function writePointer(root: string, pointer: Pointer, beforeRename?: () => void): Promise<void> {
-  await writeFileAtomic(path.join(root, "current.json"), `${JSON.stringify(pointer, null, 2)}\n`, beforeRename);
+export async function writePointer(root: string, pointer: Pointer, beforeRename?: () => void, renameSeam?: (from: string, to: string) => Promise<void>): Promise<void> {
+  await writeFileAtomic(path.join(root, "current.json"), `${JSON.stringify(pointer, null, 2)}\n`, beforeRename, renameSeam);
 }
 
 /**
