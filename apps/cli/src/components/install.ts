@@ -452,6 +452,34 @@ export async function activate(root: string, lockHash: string, staging: string, 
       return isAbort(error);
     }
   };
+  // The staging directory's identity, captured before any move: a rename preserves the
+  // inode, so a tree at `final` is provably the one this attempt placed only while its
+  // inode still matches the staging directory's.
+  const stagingStat = await lstat(staging).catch(() => null);
+  // Removal of the tree this attempt placed at `final`. Even immediately after a
+  // successful stillOwnsTree, a plain recursive removal is not safe: a successor can
+  // publish in the gap between the check and the removal and lose its live tree. So
+  // rename first — the rename takes whatever tree is at `final` at that instant — and
+  // delete only the tree whose inode proves it is the staging directory this attempt
+  // moved into place. A successor's tree is renamed back; if the path was claimed again
+  // in between, the aside copy keeps its `.replaced-` name and recovery restores or
+  // removes it under the lock.
+  const removePlaced = async (): Promise<void> => {
+    const trash = path.join(root, `${lockHash}.replaced-${randomBytes(6).toString("hex")}`);
+    try {
+      await move(final, trash);
+    } catch {
+      return; // Nothing movable at `final`: nothing of this attempt's to remove.
+    }
+    const aside = await lstat(trash).catch(() => null);
+    if (aside && stagingStat && aside.dev === stagingStat.dev && aside.ino === stagingStat.ino) {
+      await rm(trash, { recursive: true, force: true });
+    } else {
+      await move(trash, final).catch(() => {
+        // The path was claimed again in between: leave the aside copy for recovery.
+      });
+    }
+  };
   const final = path.join(root, lockHash);
   const pointer = readPointer(root);
   const next: Pointer = { active: lockHash, previous: pointer.active && pointer.active !== lockHash ? pointer.active : pointer.previous };
@@ -468,7 +496,7 @@ export async function activate(root: string, lockHash: string, staging: string, 
       // attempt still owns it — after a lost lock it may be the successor's published runtime.
       // The ownership is re-checked right before the removal: the read behind ownsTree and
       // this mutation are separated by awaits a successor can use to displace the attempt.
-      if ((await ownsTree(error)) && (await stillOwnsTree())) await rm(final, { recursive: true, force: true });
+      if ((await ownsTree(error)) && (await stillOwnsTree())) await removePlaced();
       throw error;
     }
     return "renamed";
@@ -486,7 +514,7 @@ export async function activate(root: string, lockHash: string, staging: string, 
     } catch (error) {
       // Same unpublished case as above: the replaced tree was an orphan no pointer named.
       // Remove the new one only while this attempt still owns it, re-checked before the removal.
-      if ((await ownsTree(error)) && (await stillOwnsTree())) await rm(final, { recursive: true, force: true });
+      if ((await ownsTree(error)) && (await stillOwnsTree())) await removePlaced();
       throw error;
     }
     return "replaced-orphan";
@@ -511,7 +539,7 @@ export async function activate(root: string, lockHash: string, staging: string, 
     // and again immediately before the restore move: the removal and the move are separated
     // by awaits a successor can use to displace the attempt and publish its own tree.
     if ((await ownsTree(error)) && (await stillOwnsTree())) {
-      if (placed) await rm(final, { recursive: true, force: true });
+      if (placed) await removePlaced();
       if (await stillOwnsTree()) await move(backup, final);
     }
     throw error;

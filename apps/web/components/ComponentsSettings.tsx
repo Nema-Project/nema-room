@@ -167,9 +167,9 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
     }
   }
 
-  /** A Retry over an installed copy: when the person confirmed an offer in this dialog and the current offer is not it, show the replacement offer first — the same check as the failed panel's Retry. The cancelled and unknown outcomes carry their explicit forced-repair intent through the confirm step. When nothing was confirmed in this dialog (it only followed an install started elsewhere), the Retry is for the offer shown and goes directly. */
+  /** A Retry over an installed copy: when the person confirmed an offer in this dialog and the current offer is not it, show the replacement offer first — the same check as the failed panel's Retry. The cancelled and unknown outcomes carry their explicit forced-repair intent through the confirm step. When nothing was confirmed in this dialog (it only followed an install started elsewhere), the Retry is for the offer shown and goes directly. An unverified offer (a status read failed, so the snapshot carries an error) also goes through the confirm step, which blocks confirmation until a fresh read succeeds. */
   function retryInstalled(forceRepair?: boolean) {
-    if (confirmedLockHash.current !== null && offer?.lockHash !== confirmedLockHash.current) {
+    if (error !== null || (confirmedLockHash.current !== null && offer?.lockHash !== confirmedLockHash.current)) {
       pendingRepair.current = forceRepair;
       setStep("confirm");
     } else {
@@ -304,12 +304,13 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
         <p role="alert">{statusText(status, t)}</p>
         <FailureDetail status={status} />
         {showImport && <ImportHelp />}
+        {error && <p className="error" role="alert">{t("components.state.unknown", { error })}</p>}
         {requestError && <p className="error" role="alert">{requestError}</p>}
         <div className="actions">
           <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
           {actions.import && <button type="button" onClick={() => setShowImport(true)}>{t("components.import")}</button>}
-          {/* The replacement offer has to be shown and confirmed before anything downloads — not only when the daemon refused with offer-changed, but whenever the current offer is not the one the person confirmed: a concurrent installer may have recorded a failure for a different lock, and the dialog must not retry that lock sight unseen. When nothing was confirmed in this dialog, the Retry is for the offer shown and goes directly. Other failures are for the offer already confirmed, so they retry directly. */}
-          {actions.retry && <button type="button" disabled={busy} onClick={() => (status.reason === "offer-changed" || (confirmedLockHash.current !== null && offer?.lockHash !== confirmedLockHash.current) ? setStep("confirm") : void confirm())}>{t("components.retry")}</button>}
+          {/* The replacement offer has to be shown and confirmed before anything downloads — not only when the daemon refused with offer-changed, but whenever the current offer is not the one the person confirmed: a concurrent installer may have recorded a failure for a different lock, and the dialog must not retry that lock sight unseen. An unverified offer (a status read failed, so the snapshot carries an error) goes through the confirm step the same way: it shows the error and blocks confirmation until a fresh read succeeds. When nothing was confirmed in this dialog, the Retry is for the offer shown and goes directly. Other failures are for the offer already confirmed, so they retry directly. */}
+          {actions.retry && <button type="button" disabled={busy} onClick={() => (status.reason === "offer-changed" || error !== null || (confirmedLockHash.current !== null && offer?.lockHash !== confirmedLockHash.current) ? setStep("confirm") : void confirm())}>{t("components.retry")}</button>}
         </div>
       </>
     );

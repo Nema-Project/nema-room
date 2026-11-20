@@ -639,6 +639,46 @@ describe("Settings → Components", () => {
     expect(snapshot.graphify?.settings.pythonMirror.value).toBe("https://mirror.example");
   });
 
+  it("a settings answer does not restore an older offer when the fresh read's offer changed", async () => {
+    answer(view({ state: "not-installed" }));
+    await refreshComponents();
+    // Another client starts an install: the PATCH captures installing with the current offer.
+    const progress = { phase: "download", downloadedBytes: 0, totalBytes: LOCK_TOTAL, file: null };
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
+    await startGraphifyInstall(LOCK_HASH);
+    let resolveSettings!: (value: ComponentView) => void;
+    vi.mocked(hub.updateComponentSettings).mockImplementation(
+      () =>
+        new Promise<ComponentView>((resolve) => {
+          resolveSettings = resolve;
+        }),
+    );
+    const save = saveGraphifySettings({ pythonMirror: "https://mirror.example" });
+    await Promise.resolve();
+    expect(hub.updateComponentSettings).toHaveBeenCalledTimes(1);
+    // A delayed GET publishes not-installed with the same (older) offer, so the save
+    // reconciles against a fresh read.
+    vi.mocked(hub.getComponents).mockResolvedValue({ components: [view({ state: "not-installed" })] });
+    await refreshComponents();
+    // The settings answer carries installing with the older offer: the published and answer
+    // offers agree, but the lock changed again while the PATCH was in flight, so the fresh
+    // read's offer is the newer lock and must decide.
+    const stale = view({ state: "installing", progress });
+    resolveSettings({
+      ...stale,
+      settings: { ...stale.settings, pythonMirror: { value: "https://mirror.example", source: "config" as const, config: "https://mirror.example" } },
+    });
+    const newHash = "d".repeat(64);
+    const freshView = view({ state: "installing", progress }, { offer: { lockHash: newHash, totalBytes: LOCK_TOTAL, location: "/home/u/.nema/runtime/graphify", hosts: ["new.example"] } });
+    vi.mocked(hub.getComponents).mockResolvedValue({ components: [freshView] });
+    await save;
+    vi.mocked(hub.getComponents).mockRejectedValue(new Error("hub unreachable"));
+    const snapshot = await refreshComponents();
+    expect(snapshot.graphify?.offer?.lockHash).toBe(newHash);
+    expect(snapshot.graphify?.status.state).toBe("installing");
+    expect(snapshot.graphify?.settings.pythonMirror.value).toBe("https://mirror.example");
+  });
+
   it("a failed conflict refresh keeps the error visible and blocks confirmation until a fresh read succeeds", async () => {
     // A terminal state, so no poll runs: the refresh must happen explicitly.
     answer(view({ state: "not-installed" }));
@@ -675,6 +715,53 @@ describe("Settings → Components", () => {
     expect(hub.installComponent).not.toHaveBeenCalled();
     // A fresh read succeeds: the error clears and confirmation is available again.
     answer(view({ state: "not-installed" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect((within(dialog).getByRole("button", { name: "Download and install" }) as HTMLButtonElement).disabled).toBe(false));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    expect(hub.installComponent).toHaveBeenCalledWith("graphify", LOCK_HASH);
+  });
+
+  it("a failed conflict refresh while the dialog follows an install keeps the failed panel's Retry from confirming the unverified offer", async () => {
+    answer(view({ state: "not-installed" }));
+    const progress = { phase: "download", downloadedBytes: 0, totalBytes: LOCK_TOTAL, file: null };
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
+    renderSettings();
+    await userEvent.click(await screen.findByRole("button", { name: "Install" }));
+    const dialog = await screen.findByRole("dialog", { name: "Download Graphify?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    expect(hub.installComponent).toHaveBeenCalledWith("graphify", LOCK_HASH);
+    vi.mocked(hub.installComponent).mockClear();
+    // The install the dialog is following fails: the poll publishes the failure.
+    answer(failed("network"));
+    await refreshComponents();
+    // A settings save whose answer carries a different offer refreshes to decide, and the
+    // refresh fails: the snapshot keeps the failed status and gains the error.
+    let resolveSettings!: (value: ComponentView) => void;
+    vi.mocked(hub.updateComponentSettings).mockImplementation(
+      () =>
+        new Promise<ComponentView>((resolve) => {
+          resolveSettings = resolve;
+        }),
+    );
+    const save = saveGraphifySettings({ pythonMirror: "https://mirror.example" });
+    await Promise.resolve();
+    expect(hub.updateComponentSettings).toHaveBeenCalledTimes(1);
+    const stale = { ...failed("network"), offer: { lockHash: "d".repeat(64), totalBytes: LOCK_TOTAL, location: "/home/u/.nema/runtime/graphify", hosts: ["new.example"] } };
+    resolveSettings({
+      ...stale,
+      settings: { ...stale.settings, pythonMirror: { value: "https://mirror.example", source: "config" as const, config: "https://mirror.example" } },
+    });
+    vi.mocked(hub.getComponents).mockRejectedValue(new Error("hub unreachable"));
+    await save;
+    // The failed panel shows the refresh error, and its Retry goes to the confirm step
+    // instead of confirming the unverified offer directly.
+    expect(within(dialog).getByText("Component status is unavailable: hub unreachable")).toBeTruthy();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+    expect(hub.installComponent).not.toHaveBeenCalled();
+    const confirmButton = within(dialog).getByRole("button", { name: "Download and install" });
+    expect((confirmButton as HTMLButtonElement).disabled).toBe(true);
+    // A fresh read succeeds: the error clears and confirmation is available again.
+    answer(failed("network"));
     await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
     await waitFor(() => expect((within(dialog).getByRole("button", { name: "Download and install" }) as HTMLButtonElement).disabled).toBe(false));
     await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));

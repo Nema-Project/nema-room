@@ -87,7 +87,9 @@ function accept(view: ComponentView): void {
  * reconciled the same way: it may be a delayed GET's older observation (a GET that captured
  * not-installed before an install started can publish after the PATCH's answer was composed),
  * and keeping it would miss the active install and stop the poll. The fresh read is issued
- * after the PATCH's answer arrived, so the daemon has registered the install by then. When
+ * after the PATCH's answer arrived, so the daemon has registered the install by then. The
+ * fresh read also decides the offer whenever its own offer disagrees with the answer's —
+ * the lock may have changed again while the PATCH was in flight. When
  * the refresh itself cannot reach the daemon, the published offer stands — it came from a
  * real daemon response — but the refresh's error stays visible instead of being cleared:
  * the offer is unverified until a fresh read succeeds, and the dialog will not confirm it.
@@ -108,7 +110,15 @@ async function acceptSettings(view: ComponentView, sentEpoch: number, sentStatus
   if (statusStale || conflict) {
     const fresh = await refreshComponents();
     if (!fresh.error && fresh.graphify) {
-      if (conflict) {
+      // The fresh read decides the offer whenever its offer disagrees with the answer's:
+      // the lock may have changed again while the PATCH was in flight (or the offer
+      // vanished), and restoring the answer's older offer would leave a stale lock on the
+      // page that the daemon then rejects at confirm time.
+      const freshOfferDiffers =
+        (fresh.graphify.offer && view.offer && fresh.graphify.offer.lockHash !== view.offer.lockHash) ||
+        (!fresh.graphify.offer && view.offer) ||
+        (fresh.graphify.offer && !view.offer);
+      if (conflict || freshOfferDiffers) {
         publish({ graphify: { ...fresh.graphify, settings: view.settings }, error: null, loaded: true });
       } else {
         // Only the status needed reconciling: the answer's offer is authoritative while the

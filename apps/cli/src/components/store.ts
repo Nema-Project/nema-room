@@ -261,7 +261,7 @@ function takeOverStaleLockSync(file: string, judged: LockOwnerSync): string | nu
  * re-checked immediately before each move, so a claim that lands after the listing still
  * stops the move.
  */
-export function recoverReplacementsSync(root: string, opts: { ownToken?: string; beforeMove?: () => void } = {}): void {
+export function recoverReplacementsSync(root: string, opts: { ownToken?: string; beforeMove?: () => void; afterCheck?: () => void } = {}): void {
   let names: string[];
   try {
     names = readdirSync(root);
@@ -291,8 +291,32 @@ export function recoverReplacementsSync(root: string, opts: { ownToken?: string;
         // Moving it back would occupy the path its activation is about to place staging at.
         opts.beforeMove?.();
         if (installLockHeldByLiveOwner(root) && readInstallLockToken(root) !== myToken) return;
-        if (existsSync(original)) rmSync(path.join(root, name), { recursive: true, force: true });
-        else renameSync(path.join(root, name), original);
+        opts.afterCheck?.();
+        if (existsSync(original)) {
+          rmSync(path.join(root, name), { recursive: true, force: true });
+          if (readInstallLockToken(root) !== myToken) return;
+        } else {
+          const backupPath = path.join(root, name);
+          const backupStat = lstatSync(backupPath);
+          renameSync(backupPath, original);
+          // The lock can still be displaced between the re-check and the move: a delayed
+          // takeover's rename landing late moves this recovery's lock aside, and a third
+          // installer claims the gap. If the token at the path is no longer this
+          // recovery's, the restore landed inside that installer's activation window —
+          // undo it (the tree at the destination is still the backup tree; its inode
+          // proves it, and a placement against the occupied path would have failed) and
+          // stop: the backup is this recovery's to restore only while it holds the lock.
+          if (readInstallLockToken(root) !== myToken) {
+            let placed: ReturnType<typeof lstatSync> | null = null;
+            try {
+              placed = lstatSync(original);
+            } catch {
+              placed = null;
+            }
+            if (placed && placed.dev === backupStat.dev && placed.ino === backupStat.ino) renameSync(original, backupPath);
+            return;
+          }
+        }
       } catch {
         // A later read or install runs the same recovery.
       }
