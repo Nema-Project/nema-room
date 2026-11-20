@@ -26,6 +26,7 @@ import {
   launcherName,
   LOCK_HASH,
   OFFLINE_DETAIL,
+  acquireTreeLock,
   readFailure,
   readInstallGeneration,
   readPointer,
@@ -36,6 +37,7 @@ import {
   type ComponentEnv,
   type FailureRecord,
   type Pointer,
+  type TreeLock,
 } from "./store.js";
 import { ComponentInstallError, type ComponentName, type ComponentStatus, type FailureReason, type InstallProgress } from "./types.js";
 
@@ -424,6 +426,20 @@ export async function activate(root: string, lockHash: string, staging: string, 
     await verify();
     await point(r, p);
   };
+  // The tree mutex serializes this attempt's critical sections against another
+  // installer's activation and against read-path recovery's restore/undo: the
+  // sameTree check through the pointer write, and a rollback's removal/restore.
+  // The placement move itself needs no mutex — a destination that appears meanwhile
+  // is handled by the retry below. A caller that already holds the mutex (the
+  // referenced branch) passes it to removePlaced instead of re-acquiring it.
+  const withTreeLock = async <T>(fn: (lock: TreeLock) => Promise<T>): Promise<T> => {
+    const lock = await acquireTreeLock(root);
+    try {
+      return await fn(lock);
+    } finally {
+      lock.release();
+    }
+  };
   // Rollback is ownership-bound. A tree this attempt placed may be taken back out (and a backup
   // restored) only while the attempt still owns the install: its own cancellation, or a failure
   // while the lock is still held. Once the lock is lost, a successor may already have published
@@ -464,34 +480,55 @@ export async function activate(root: string, lockHash: string, staging: string, 
   // moved into place. A successor's tree is renamed back; if the path was claimed again
   // in between, the aside copy keeps its `.replaced-` name and recovery restores or
   // removes it under the lock.
-  const removePlaced = async (): Promise<void> => {
-    // Check ownership BEFORE the rename-aside: if the lock is already lost, the tree
-    // at `final` may be a successor's published runtime — moving it aside would leave
-    // the pointer naming a missing directory until the rename-back, and a process that
-    // stops in between strands it there (read-path recovery skips a live owner). The
-    // post-rename re-verification below still covers a successor that publishes
-    // between this check and the rename.
-    if (!(await stillOwnsTree())) return;
-    const trash = path.join(root, `${lockHash}.replaced-${randomBytes(6).toString("hex")}`);
-    try {
-      await move(final, trash);
-    } catch {
-      return; // Nothing movable at `final`: nothing of this attempt's to remove.
+  //
+  // The check-and-rename is protected by the tree mutex, held from before the
+  // pre-check through the delete or restore: a successor's pointer write waits while
+  // this removal holds it, so a successor cannot publish in the gap between the
+  // pre-check and the rename-aside — the published tree stays in place and
+  // componentBin stays available throughout the rollback. The post-rename
+  // re-verification stays as defense in depth: a successor that claimed the install
+  // lock (which needs no mutex) but has not yet acquired the tree mutex is caught
+  // there, and its tree goes back.
+  const removePlaced = async (heldTreeLock?: TreeLock): Promise<void> => {
+    let ownLock: TreeLock | null = null;
+    let treeLock = heldTreeLock ?? null;
+    if (!treeLock) {
+      try {
+        treeLock = await acquireTreeLock(root);
+        ownLock = treeLock;
+      } catch {
+        return; // Cannot prove exclusion: leave the tree for recovery under the lock.
+      }
     }
-    const aside = await lstat(trash).catch(() => null);
-    const inodeMatches = aside !== null && stagingStat !== null && aside.dev === stagingStat.dev && aside.ino === stagingStat.ino;
-    // The inode proves the tree is the staging directory this attempt placed — but not
-    // that it is still this attempt's: a successor can reuse that same directory (its
-    // staging is byte-identical) and publish a pointer to it after this attempt's last
-    // ownership check. So re-verify the lock after the rename-aside, while the tree is
-    // out of the way: if the lock is lost, the tree is the successor's published
-    // runtime and goes back.
-    if (inodeMatches && (await stillOwnsTree())) {
-      await rm(trash, { recursive: true, force: true });
-    } else {
-      await move(trash, final).catch(() => {
-        // The path was claimed again in between: leave the aside copy for recovery.
-      });
+    try {
+      // Check ownership BEFORE the rename-aside: if the lock is already lost, the tree
+      // at `final` may be a successor's published runtime — moving it aside would leave
+      // the pointer naming a missing directory until the rename-back, and a process that
+      // stops in between strands it there (read-path recovery skips a live owner).
+      if (!(await stillOwnsTree())) return;
+      const trash = path.join(root, `${lockHash}.replaced-${randomBytes(6).toString("hex")}`);
+      try {
+        await move(final, trash);
+      } catch {
+        return; // Nothing movable at `final`: nothing of this attempt's to remove.
+      }
+      const aside = await lstat(trash).catch(() => null);
+      const inodeMatches = aside !== null && stagingStat !== null && aside.dev === stagingStat.dev && aside.ino === stagingStat.ino;
+      // The inode proves the tree is the staging directory this attempt placed — but not
+      // that it is still this attempt's: a successor can reuse that same directory (its
+      // staging is byte-identical) and publish a pointer to it after this attempt's last
+      // ownership check. So re-verify the lock after the rename-aside, while the tree is
+      // out of the way: if the lock is lost, the tree is the successor's published
+      // runtime and goes back.
+      if (inodeMatches && (await stillOwnsTree())) {
+        await rm(trash, { recursive: true, force: true });
+      } else {
+        await move(trash, final).catch(() => {
+          // The path was claimed again in between: leave the aside copy for recovery.
+        });
+      }
+    } finally {
+      ownLock?.release();
     }
   };
   const final = path.join(root, lockHash);
@@ -522,7 +559,7 @@ export async function activate(root: string, lockHash: string, staging: string, 
     }
     if (placed) {
       try {
-        await checkedPoint(root, next);
+        await withTreeLock(() => checkedPoint(root, next));
       } catch (error) {
         // Nothing has published this tree (no pointer names it). Take it back out only while this
         // attempt still owns it — after a lost lock it may be the successor's published runtime.
@@ -538,49 +575,65 @@ export async function activate(root: string, lockHash: string, staging: string, 
   // above) or the re-read finds nothing and the placement error is rethrown. The
   // guard is here so the compiler can see it.
   if (!existing) throw new Error("unreachable: the destination was checked immediately before the placement");
-  if (existing.isDirectory() && !existing.isSymbolicLink() && (await sameTree(final, staging))) {
-    await rm(staging, { recursive: true, force: true });
-    await checkedPoint(root, next);
-    return "reused";
+  if (existing.isDirectory() && !existing.isSymbolicLink()) {
+    // The reuse decision and the pointer write run under the tree mutex: a successor
+    // between this sameTree check and its pointer write holds the mutex, and read-path
+    // recovery's post-move check waits for it — so the recovery cannot undo a restore
+    // out from under an install that is about to commit the restored tree.
+    const reused = await withTreeLock(async () => {
+      if (!(await sameTree(final, staging))) return false;
+      await rm(staging, { recursive: true, force: true });
+      await checkedPoint(root, next);
+      return true;
+    });
+    if (reused) return "reused";
   }
   if (pointer.active !== lockHash && pointer.previous !== lockHash) {
-    await rm(final, { recursive: true, force: true });
-    await move(staging, final);
-    try {
-      await checkedPoint(root, next);
-    } catch (error) {
-      // Same unpublished case as above: the replaced tree was an orphan no pointer named.
-      // Remove the new one only while this attempt still owns it, re-checked before the removal.
-      if ((await ownsTree(error)) && (await stillOwnsTree())) await removePlaced();
-      throw error;
-    }
+    await withTreeLock(async (treeLock) => {
+      await rm(final, { recursive: true, force: true });
+      await move(staging, final);
+      try {
+        await checkedPoint(root, next);
+      } catch (error) {
+        // Same unpublished case as above: the replaced tree was an orphan no pointer named.
+        // Remove the new one only while this attempt still owns it, re-checked before the removal.
+        // The removal reuses the mutex this branch already holds.
+        if ((await ownsTree(error)) && (await stillOwnsTree())) await removePlaced(treeLock);
+        throw error;
+      }
+    });
     return "replaced-orphan";
   }
   const backup = path.join(root, `${lockHash}.replaced-${randomBytes(6).toString("hex")}`);
-  await move(final, backup);
-  let placed = false;
-  try {
-    // Re-validate between the two moves, inside the try: a displaced holder must stop
-    // before placing its staging, and the catch below restores the backup. Checked here
-    // rather than before the try, a failed check would leave the active directory missing
-    // with only a later recovery to restore it — and that recovery is skipped while a
-    // live installer holds the lock.
-    await verify();
-    await move(staging, final);
-    placed = true;
-    await checkedPoint(root, next);
-  } catch (error) {
-    // Restore the backup only while this attempt still owns the tree: after a lost lock the
-    // placed tree may be the successor's published runtime, and the backup stays for recovery.
-    // The ownership is re-checked right before the restore, for the same displacement window,
-    // and again immediately before the restore move: the removal and the move are separated
-    // by awaits a successor can use to displace the attempt and publish its own tree.
-    if ((await ownsTree(error)) && (await stillOwnsTree())) {
-      if (placed) await removePlaced();
-      if (await stillOwnsTree()) await move(backup, final);
+  // The replacement's moves and the pointer write run under the tree mutex: moving
+  // the active tree aside while a successor publishes it would leave the pointer
+  // naming a missing directory, and the rollback below reuses the same mutex.
+  await withTreeLock(async (treeLock) => {
+    await move(final, backup);
+    let placed = false;
+    try {
+      // Re-validate between the two moves, inside the try: a displaced holder must stop
+      // before placing its staging, and the catch below restores the backup. Checked here
+      // rather than before the try, a failed check would leave the active directory missing
+      // with only a later recovery to restore it — and that recovery is skipped while a
+      // live installer holds the lock.
+      await verify();
+      await move(staging, final);
+      placed = true;
+      await checkedPoint(root, next);
+    } catch (error) {
+      // Restore the backup only while this attempt still owns the tree: after a lost lock the
+      // placed tree may be the successor's published runtime, and the backup stays for recovery.
+      // The ownership is re-checked right before the restore, for the same displacement window,
+      // and again immediately before the restore move: the removal and the move are separated
+      // by awaits a successor can use to displace the attempt and publish its own tree.
+      if ((await ownsTree(error)) && (await stillOwnsTree())) {
+        if (placed) await removePlaced(treeLock);
+        if (await stillOwnsTree()) await move(backup, final);
+      }
+      throw error;
     }
-    throw error;
-  }
+  });
   // The pointer has committed: the replacement is the installed copy. Removing the replaced one
   // is cleanup — its failure is logged, never reported as the install's outcome.
   try {

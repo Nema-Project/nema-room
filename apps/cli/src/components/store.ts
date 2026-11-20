@@ -241,6 +241,122 @@ function takeOverStaleLockSync(file: string, judged: LockOwnerSync): string | nu
 }
 
 /**
+ * Cross-process tree mutex, held only for the tree's critical sections: an activation's
+ * sameTree check through its pointer write, a rollback's removal/restore, and read-path
+ * recovery's post-move check and undo. It is a second lock file because the install lock
+ * cannot do this job: a successor can displace the install lock (a delayed stale-lock
+ * takeover moves the record aside) and then publish, so an ownership re-check alone can
+ * never close the gap between the check and the rename-aside — a successor that publishes
+ * in that gap has its live tree moved aside, and if the rollback stops before the
+ * rename-back, read-path recovery skips the successor's live lock and the pointer dangles.
+ * The mutex serializes the publication against the removal instead: a successor's pointer
+ * write waits while a rollback holds it, and a rollback's removal waits while a successor
+ * is between its sameTree check and its pointer write, so a published tree is never moved
+ * and an in-progress reuse is never undone.
+ *
+ * Ownership is a `<pid>:<random>` token published with the same atomic link as the
+ * install lock, with the same stale-takeover protocol for a dead holder. A live holder
+ * releases it in milliseconds (the critical sections are a few file operations), so the
+ * wait is bounded (5s): the async acquisition throws on timeout, the sync one returns
+ * null, and callers treat that as "leave the tree alone" rather than proceeding
+ * unprotected. The mutex is never held across a placement move or a download, so a
+ * recovery that needs it is never blocked behind an installer waiting for a restore.
+ */
+const TREE_LOCK_FILE = ".tree.lock";
+const TREE_LOCK_TIMEOUT_MS = 5_000;
+
+export type TreeLock = { release: () => void; token: string };
+
+function treeLockFile(root: string): string {
+  return path.join(root, TREE_LOCK_FILE);
+}
+
+function releaseLockFileSync(file: string, token: string): void {
+  let handle: number;
+  try {
+    handle = openSync(file, "r+");
+  } catch {
+    return;
+  }
+  try {
+    let current: string | null = null;
+    try {
+      current = readFileSync(handle, "utf8");
+    } catch {
+      current = null;
+    }
+    if (current !== token) return;
+    try {
+      rmSync(file, { force: true });
+    } catch {
+      try {
+        ftruncateSync(handle, 0);
+        writeSync(handle, "released\n", 0, "utf8");
+      } catch {
+        // Best effort — release never throws.
+      }
+    }
+  } finally {
+    try {
+      closeSync(handle);
+    } catch {
+      // Best effort.
+    }
+  }
+}
+
+/** One claim attempt: "won" when the link landed, "live" when a live owner holds it. */
+function tryClaimTreeLockSync(file: string, token: string): "won" | "live" {
+  if (linkClaimSync(file, token)) return "won";
+  const owner = readLockOwnerSync(file);
+  if (!owner) return "live"; // Vanished between the claim attempt and the read; retry.
+  const pid = ownerPidSync(owner.content);
+  if (pid !== null && (pid === process.pid || pidAliveSync(pid))) return "live";
+  const stale = takeOverStaleLockSync(file, owner);
+  if (!stale) return "live"; // Lost the rename race, or the record revived; retry.
+  if (linkClaimSync(file, token)) {
+    rmSync(stale, { force: true });
+    return "won";
+  }
+  return "live";
+}
+
+const treeLockWaitCell = new Int32Array(new SharedArrayBuffer(4));
+
+/**
+ * Acquire the tree mutex synchronously, waiting up to `timeoutMs` for a live holder.
+ * Returns null on timeout: the caller leaves the tree alone instead of proceeding
+ * unprotected. The wait blocks this thread, so callers hold it only briefly.
+ */
+export function acquireTreeLockSync(root: string, timeoutMs = TREE_LOCK_TIMEOUT_MS): TreeLock | null {
+  const file = treeLockFile(root);
+  const token = `${process.pid}:${randomBytes(6).toString("hex")}`;
+  const release = (): void => releaseLockFileSync(file, token);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (tryClaimTreeLockSync(file, token) === "won") return { release, token };
+    if (Date.now() >= deadline) return null;
+    Atomics.wait(treeLockWaitCell, 0, 0, 10);
+  }
+}
+
+/**
+ * Acquire the tree mutex, waiting up to `timeoutMs` for a live holder. Throws on
+ * timeout: the caller fails the install rather than proceeding unprotected.
+ */
+export async function acquireTreeLock(root: string, timeoutMs = TREE_LOCK_TIMEOUT_MS): Promise<TreeLock> {
+  const file = treeLockFile(root);
+  const token = `${process.pid}:${randomBytes(6).toString("hex")}`;
+  const release = (): void => releaseLockFileSync(file, token);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (tryClaimTreeLockSync(file, token) === "won") return { release, token };
+    if (Date.now() >= deadline) throw new Error(`Timed out acquiring the component tree lock in ${root}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+/**
  * Undo a replacement cut off midway (a crash between moving the old directory aside and
  * publishing its replacement): a backup whose `<lock-hash>` is gone goes back into place;
  * a backup beside a present `<lock-hash>` is stale (that directory is the self-checked
@@ -316,8 +432,21 @@ export function recoverReplacementsSync(root: string, opts: { ownToken?: string;
           // runtime, and the undo would move it away from under the pointer. The pointer
           // file is replaced on every write, so a changed inode or mtime after the
           // restore, with the pointer still naming this version, means it was published.
+          //
+          // A second exception the pointer check cannot see: a successor between its
+          // sameTree check and its pointer write. Its staging is already deleted and it
+          // is about to publish the restored tree, but the pointer has not changed yet —
+          // so the undo would move the tree out from under the install that is about to
+          // commit it. The tree mutex closes that interval: the successor holds it from
+          // its sameTree check through its pointer write, and this post-move check waits
+          // for it before deciding. If the mutex cannot be acquired, skip the undo: the
+          // restored tree stays in place, which is the safe direction — a later recovery
+          // or install sorts out a tree that was never published.
           if (readInstallLockToken(root) !== myToken) {
-            let placed: ReturnType<typeof lstatSync> | null = null;
+            const treeLock = acquireTreeLockSync(root);
+            if (!treeLock) continue;
+            try {
+              let placed: ReturnType<typeof lstatSync> | null = null;
             try {
               placed = lstatSync(original);
             } catch {
@@ -330,6 +459,9 @@ export function recoverReplacementsSync(root: string, opts: { ownToken?: string;
             const republished = pointerChanged && readPointer(root).active === match[1];
             if (!republished && placed && placed.dev === backupStat.dev && placed.ino === backupStat.ino) renameSync(original, backupPath);
             return;
+            } finally {
+              treeLock.release();
+            }
           }
         }
       } catch {

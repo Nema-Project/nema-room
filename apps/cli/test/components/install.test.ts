@@ -864,7 +864,11 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     const lockPath = writeLock(path.join(root, "lock.json"), component);
     const env = { runtimeRoot, lockPath, platform: { platform: process.platform, arch: process.arch, musl: false } };
     // The rollback attempt holds a real lock. The removal passes its pre-check, then
-    // pauses at the rename-aside; a successor publishes during the pause.
+    // pauses at the rename-aside. A successor publishes during the pause — directly,
+    // bypassing the tree mutex the way a pre-change binary would (it does not know
+    // about the mutex): the post-check's rename-back is the defense in depth that
+    // still closes that case. An in-protocol successor (through activate) cannot
+    // publish here at all — it waits for the mutex, which the next test covers.
     const holder = await acquireInstallLock(dir);
     let calls = 0;
     const atPostCheck = deferred();
@@ -903,8 +907,8 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     releaseAside.resolve();
     // Immediately after the rename-aside, while the successor's lock is live: the
     // tree is aside, so the pointer names a missing directory and the launcher is
-    // unavailable — the window the pre-check cannot close, because the successor
-    // published after it passed. The post-check's rename-back is what closes it.
+    // unavailable — the window the pre-check cannot close for a publication that
+    // bypassed the mutex. The post-check's rename-back is what closes it.
     await atPostCheck.promise;
     expect(readPointer(dir).active).toBe(hash);
     expect(componentBin("graphify", env)).toBeNull();
@@ -919,6 +923,79 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     await holder.release();
     expect(readInstallLockToken(dir)).toBe(successor.token);
     await successor.release();
+  });
+
+  test("a successor activating while the rollback holds the tree mutex waits, then publishes cleanly", async () => {
+    const component = fakeComponent(execLog);
+    const hash = lockHash(component.target);
+    const dir = graphifyRoot();
+    mkdirSync(dir, { recursive: true });
+    const final = path.join(dir, hash);
+    const staging = path.join(dir, "staging");
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(path.join(staging, "marker"), "new\n");
+    writeFileSync(path.join(staging, "graphify"), "#!/bin/sh\necho graphify\n");
+    const successorStaging = path.join(dir, "staging-successor");
+    mkdirSync(successorStaging, { recursive: true });
+    writeFileSync(path.join(successorStaging, "marker"), "new\n");
+    writeFileSync(path.join(successorStaging, "graphify"), "#!/bin/sh\necho graphify\n");
+    const lockPath = writeLock(path.join(root, "lock.json"), component);
+    const env = { runtimeRoot, lockPath, platform: { platform: process.platform, arch: process.arch, musl: false } };
+    // The rollback attempt holds a real lock. Its removal pauses at the rename-aside
+    // while holding the tree mutex; a successor activating in between must wait for
+    // the mutex instead of publishing in the gap, so the rollback removes only its
+    // own unpublished tree and the successor's tree is never moved aside.
+    const holder = await acquireInstallLock(dir);
+    const verifyLockHeld = async () => {
+      if (readInstallLockToken(dir) !== holder.token) throw new Error("lock lost");
+    };
+    let renames = 0;
+    const atAside = deferred();
+    const releaseAside = deferred();
+    const realRename = rename;
+    const renameHook = async (from: string, to: string) => {
+      renames += 1;
+      if (renames === 2) {
+        atAside.resolve();
+        await releaseAside.promise;
+      }
+      await realRename(from, to);
+    };
+    const outcome = activate(dir, hash, staging, {
+      verifyLockHeld,
+      writePointer: async () => {
+        throw new Error("pointer write failed");
+      },
+      rename: renameHook,
+    }).catch((error: unknown) => error);
+    await atAside.promise;
+    // The successor activates through the normal path (no hooks: it holds no install
+    // lock). Its tree is at final, so it re-reads and then must wait for the tree
+    // mutex before its sameTree check and pointer write.
+    let successorDone = false;
+    const successorOutcome = activate(dir, hash, successorStaging).then((result) => {
+      successorDone = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(successorDone).toBe(false);
+    // While the rollback is paused, the successor has not published: the version was
+    // never active, so the launcher is unavailable — but nothing of the successor's
+    // was moved aside either.
+    expect(componentBin("graphify", env)).toBeNull();
+    releaseAside.resolve();
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    // The rollback removed only its own unpublished tree (two renames: the placement
+    // and the aside — no rename-back), and the successor then placed and published
+    // its own staging cleanly.
+    expect(await successorOutcome).toBe("replaced-orphan");
+    expect(renames).toBe(2);
+    expect(readFileSync(path.join(final, "marker"), "utf8")).toBe("new\n");
+    expect(readPointer(dir).active).toBe(hash);
+    expect(componentBin("graphify", env)).toBe(path.join(final, "graphify"));
+    expect(readdirSync(dir).filter((name) => name.includes(".replaced-"))).toEqual([]);
+    await holder.release();
   });
 
   test("a damaged previous version is replaced when the app goes back to its lock", async () => {
@@ -2024,6 +2101,116 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
       expect(readdirSync(dir).filter((name) => name.includes(".replaced-"))).toEqual([]);
     } finally {
       releaseChild();
+      child.kill();
+      third?.release();
+    }
+  });
+
+  test("recovery waits for an in-progress reuse instead of undoing it", async () => {
+    const hash = "e".repeat(64);
+    const dir = mkdtempSync(path.join(root, "recover-"));
+    const backupName = `${hash}.replaced-abc123`;
+    mkdirSync(path.join(dir, backupName), { recursive: true });
+    writeFileSync(path.join(dir, backupName, "marker"), "backup\n");
+    await writePointer(dir, { active: hash, previous: null });
+    const staging = path.join(dir, "staging");
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(path.join(staging, "marker"), "backup\n");
+    // The successor's activation starts while the destination is missing and pauses
+    // at its placement move. Its staging is byte-identical to the backup, so it
+    // will reuse the restored tree instead of replacing it.
+    const atPlacement = deferred();
+    const releasePlacement = deferred();
+    const realRename = rename;
+    const renameHook = async (from: string, to: string) => {
+      if (from === staging && to === path.join(dir, hash)) {
+        atPlacement.resolve();
+        await releasePlacement.promise;
+      }
+      await realRename(from, to);
+    };
+    let successorToken: string | null = null;
+    let calls = 0;
+    const atPointerWrite = deferred();
+    const releasePointerWrite = deferred();
+    const verifyLockHeld = async () => {
+      calls += 1;
+      // The second verification is the checkedPoint's: pause there, after the
+      // sameTree check and the staging removal, but before the pointer write — the
+      // successor is mid-reuse and holds the tree mutex.
+      if (calls === 2) {
+        atPointerWrite.resolve();
+        await releasePointerWrite.promise;
+      }
+      if (successorToken && readInstallLockToken(dir) !== successorToken) throw new Error("lock lost");
+    };
+    const outcome = activate(dir, hash, staging, { verifyLockHeld, rename: renameHook }).catch((error: unknown) => error);
+    await atPlacement.promise;
+    // Recovery runs in a child process and pauses after its restore move. While it is
+    // paused, its lock is displaced the way a delayed takeover's rename displaces it,
+    // and the successor claims the vacant path.
+    const controlDir = path.join(root, "inflight-control");
+    mkdirSync(controlDir, { recursive: true });
+    const resultFile = path.join(root, "inflight-result.json");
+    const jobFile = path.join(root, "inflight-job.json");
+    writeFileSync(jobFile, JSON.stringify({ root: dir, controlDir, resultFile }));
+    const worker = fileURLToPath(new URL("../fixtures/component-recovery-worker.mjs", import.meta.url));
+    const cliDir = fileURLToPath(new URL("../..", import.meta.url));
+    const child = spawn(process.execPath, ["--import", "tsx", worker, jobFile], { cwd: cliDir, stdio: ["ignore", "pipe", "pipe"] });
+    let childErr = "";
+    child.stderr!.on("data", (d) => (childErr += d));
+    const childDone = new Promise<number | null>((resolve) => child.on("exit", resolve));
+    const waitForFile = async (file: string) => {
+      const end = Date.now() + 15_000;
+      while (!existsSync(file)) {
+        if (Date.now() > end) throw new Error(`timed out waiting for ${file}; child stderr: ${childErr}`);
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    };
+    let third: { release: () => void; token: string } | null = null;
+    let released = false;
+    const releaseChild = () => {
+      if (!released) {
+        released = true;
+        writeFileSync(path.join(controlDir, "release"), "");
+      }
+    };
+    try {
+      await waitForFile(path.join(controlDir, "restored"));
+      expect(readFileSync(path.join(dir, hash, "marker"), "utf8")).toBe("backup\n");
+      renameSync(path.join(dir, ".install.lock"), path.join(dir, ".install.lock.displaced"));
+      third = acquireInstallLockSync(dir);
+      successorToken = third!.token;
+      // The placement resumes: the destination is now occupied by the restored backup,
+      // so the move fails and the activation re-reads it. The restored tree matches
+      // the staging, so the activation reuses it — and pauses before its pointer write.
+      releasePlacement.resolve();
+      await atPointerWrite.promise;
+      // The recovery is released while the successor is mid-reuse: its post-move check
+      // must wait for the tree mutex instead of undoing the restore out from under
+      // the install that is about to commit the tree. Give it time to reach the
+      // check, then confirm the restored tree is still in place.
+      releaseChild();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(readFileSync(path.join(dir, hash, "marker"), "utf8")).toBe("backup\n");
+      expect(existsSync(resultFile)).toBe(false);
+      // The successor writes the pointer and returns "reused"; the recovery's
+      // post-move check then acquires the mutex, sees the pointer was rewritten
+      // after the restore, and skips the undo.
+      releasePointerWrite.resolve();
+      expect(await outcome).toBe("reused");
+      expect(readFileSync(path.join(dir, hash, "marker"), "utf8")).toBe("backup\n");
+      expect(readPointer(dir).active).toBe(hash);
+      expect(readInstallLockToken(dir)).toBe(third!.token);
+      await waitForFile(resultFile);
+      expect(await childDone).toBe(0);
+      expect(readFileSync(path.join(dir, hash, "marker"), "utf8")).toBe("backup\n");
+      expect(readPointer(dir).active).toBe(hash);
+      expect(readInstallLockToken(dir)).toBe(third!.token);
+      expect(readdirSync(dir).filter((name) => name.includes(".replaced-"))).toEqual([]);
+    } finally {
+      releaseChild();
+      releasePointerWrite.resolve();
       child.kill();
       third?.release();
     }
