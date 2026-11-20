@@ -1311,10 +1311,22 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     });
     expect(failing).toMatchObject({ state: "failed", reason: "self-check" });
     // Start a real same-version repair; while it runs, an offline refusal begins. The
-    // repair holds the lock until it commits and clears the record.
+    // repair holds the lock until it commits and clears the record. The refusal waits
+    // in beforeAcquire for the repair to commit before acquiring the lock: without
+    // this, the two installs race for the lock and the repair's loss surfaces as an
+    // unhandled rejection (the repair is only awaited after the refusal). The
+    // refusal's entry snapshot is already taken before beforeAcquire, so the repair's
+    // commit still lands after it.
     const repair = install(env, { force: true });
     const offline = envFor(component, source, { offline: true });
-    const refused = await install(offline, { force: true });
+    const refused = await install(offline, {
+      force: true,
+      hooks: {
+        beforeAcquire: async () => {
+          await repair;
+        },
+      },
+    });
     expect(await repair).toMatchObject({ state: "installed" });
     // The refusal still reaches its own caller, but the repair's cleared record stands:
     // the refusal never wrote a stale failure over it.
@@ -2545,8 +2557,8 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     // Two different versions in the same component root: A publishes hash A, B
     // publishes hash B. A pauses in its pointer-write seam after passing its token
     // check; B then displaces both of A's locks, claims them, and commits. When A
-    // resumes, the guard right before its rename must refuse the write — A must not
-    // overwrite B's pointer.
+    // resumes, the lock re-check after the seam finds them lost and refuses the
+    // write before it starts — A must not overwrite B's pointer.
     const componentA = fakeComponent(execLog, "a");
     const componentB = fakeComponent(execLog, "b");
     const hashA = lockHash(componentA.target);
@@ -2592,10 +2604,75 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     expect(successorOutcome).toBe("renamed");
     expect(readPointer(dir).active).toBe(hashB);
     const pointerIno = statSync(path.join(dir, "current.json")).ino;
-    // A resumes: the guard right before its rename re-checks both locks, finds them
-    // lost, and refuses the write — so B's pointer stands while B still holds the
+    // A resumes: the lock re-check after the seam finds them lost and refuses the
+    // write before it starts — so B's pointer stands while B still holds the
     // install lock, and the pointer file keeps the inode B's write created.
     releaseWriting.resolve();
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    expect(readPointer(dir).active).toBe(hashB);
+    expect(statSync(path.join(dir, "current.json")).ino).toBe(pointerIno);
+    expect(readInstallLockToken(dir)).toBe(successor!.token);
+    await holder.release();
+    expect(readInstallLockToken(dir)).toBe(successor!.token);
+    await successor!.release();
+  });
+
+  test("a successor that publishes while the pointer write re-checks its lock keeps its pointer", async () => {
+    // Two different versions in the same component root: A publishes hash A, B
+    // publishes hash B. A passes its token check and reaches the lock re-check that
+    // runs after the write seam and before the write; it pauses there. B then
+    // displaces both of A's locks, claims them, and commits. When A resumes, the
+    // re-check finds its install lock lost and aborts before the write starts — so
+    // B's pointer stands while B still holds the install lock. This is the last
+    // asynchronous seam before the write: after this re-check, the synchronous guard
+    // and the rename run in the same block, so no interleaving can be orchestrated
+    // between them.
+    const componentA = fakeComponent(execLog, "a");
+    const componentB = fakeComponent(execLog, "b");
+    const hashA = lockHash(componentA.target);
+    const hashB = lockHash(componentB.target);
+    expect(hashA).not.toBe(hashB);
+    const dir = graphifyRoot();
+    mkdirSync(dir, { recursive: true });
+    const stagingA = path.join(dir, "staging-a");
+    mkdirSync(stagingA, { recursive: true });
+    writeFileSync(path.join(stagingA, "marker"), "a\n");
+    const stagingB = path.join(dir, "staging-b");
+    mkdirSync(stagingB, { recursive: true });
+    writeFileSync(path.join(stagingB, "marker"), "b\n");
+    const holder = await acquireInstallLock(dir);
+    let calls = 0;
+    const atRecheck = deferred();
+    const releaseRecheck = deferred();
+    const verifyA = async () => {
+      calls += 1;
+      // The third verification is the re-check in the pointer write, after the seam
+      // and before the write: the first is the activation entry, the second the
+      // checked-point check.
+      if (calls === 3) {
+        atRecheck.resolve();
+        await releaseRecheck.promise;
+      }
+      if (readInstallLockToken(dir) !== holder.token) throw new Error("lock lost");
+    };
+    const outcome = activate(dir, hashA, stagingA, { verifyLockHeld: verifyA }).catch((error: unknown) => error);
+    await atRecheck.promise;
+    // A is paused in the pointer write's lock re-check, after its token check and
+    // before the write. Displace both of its locks the way a delayed takeover's
+    // rename does, and let B claim them and commit a different version.
+    renameSync(path.join(dir, ".install.lock"), path.join(dir, ".install.lock.displaced"));
+    renameSync(path.join(dir, ".tree.lock"), path.join(dir, ".tree.lock.displaced"));
+    const successor = acquireInstallLockSync(dir);
+    const successorOutcome = await activate(dir, hashB, stagingB, {
+      verifyLockHeld: async () => {
+        if (readInstallLockToken(dir) !== successor!.token) throw new Error("lock lost");
+      },
+    });
+    expect(successorOutcome).toBe("renamed");
+    expect(readPointer(dir).active).toBe(hashB);
+    const pointerIno = statSync(path.join(dir, "current.json")).ino;
+    releaseRecheck.resolve();
     const error = await outcome;
     expect(error).toBeInstanceOf(Error);
     expect(readPointer(dir).active).toBe(hashB);
@@ -2744,6 +2821,104 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     // placement and the aside), but the aside's real rename never ran, so no backup
     // is left aside.
     releaseAside.resolve();
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    expect(renames).toBe(2);
+    expect(statSync(final).ino).toBe(publishedIno);
+    expect(readFileSync(path.join(final, "marker"), "utf8")).toBe("new\n");
+    expect(readPointer(dir).active).toBe(hash);
+    expect(componentBin("graphify", env)).toBe(path.join(final, "graphify"));
+    expect(readdirSync(dir).filter((name) => name.includes(".replaced-"))).toEqual([]);
+    expect(readInstallLockToken(dir)).toBe(successor!.token);
+    await holder.release();
+    expect(readInstallLockToken(dir)).toBe(successor!.token);
+    await successor!.release();
+  });
+
+  test("a successor that publishes during the rollback's final re-check leaves the tree in place", async () => {
+    const component = fakeComponent(execLog);
+    const hash = lockHash(component.target);
+    const dir = graphifyRoot();
+    mkdirSync(dir, { recursive: true });
+    const final = path.join(dir, hash);
+    const staging = path.join(dir, "staging");
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(path.join(staging, "marker"), "new\n");
+    writeFileSync(path.join(staging, "graphify"), "#!/bin/sh\necho graphify\n");
+    const successorStaging = path.join(dir, "staging-successor");
+    mkdirSync(successorStaging, { recursive: true });
+    writeFileSync(path.join(successorStaging, "marker"), "new\n");
+    writeFileSync(path.join(successorStaging, "graphify"), "#!/bin/sh\necho graphify\n");
+    const lockPath = writeLock(path.join(root, "lock.json"), component);
+    const env = { runtimeRoot, lockPath, platform: { platform: process.platform, arch: process.arch, musl: false } };
+    // The rollback attempt holds a real lock. Its removal pauses at the rename-aside
+    // seam, then proceeds to the re-check after the seam — and pauses inside that
+    // re-check's lock verification. A successor publishes during that pause, after
+    // the seam and before the token check: it displaces both locks the way a delayed
+    // takeover's rename does, claims them, and publishes the same tree by reusing
+    // it. When the re-check resumes, the token check after it finds both locks lost
+    // and the rename-aside is skipped — the published tree stays in place. This is
+    // the last asynchronous seam before the token check: after it, the token check
+    // and the rename run in the same block, so no interleaving can be orchestrated
+    // between them.
+    const holder = await acquireInstallLock(dir);
+    let calls = 0;
+    const atRecheck = deferred();
+    const releaseRecheck = deferred();
+    const verifyLockHeld = async () => {
+      calls += 1;
+      // The sixth verification is the re-check after the rename-aside seam: the first
+      // is the activation entry, the second the checked-point check, the third the
+      // rollback's ownership read, the fourth its re-verification, the fifth the
+      // removal's pre-check.
+      if (calls === 6) {
+        atRecheck.resolve();
+        await releaseRecheck.promise;
+      }
+      if (readInstallLockToken(dir) !== holder.token) throw new Error("lock lost");
+    };
+    let renames = 0;
+    const atAside = deferred();
+    const releaseAside = deferred();
+    const renameHook = async (from: string, to: string) => {
+      renames += 1;
+      if (renames === 2) {
+        atAside.resolve();
+        await releaseAside.promise;
+      }
+    };
+    const outcome = activate(dir, hash, staging, {
+      verifyLockHeld,
+      writePointer: async () => {
+        throw new Error("pointer write failed");
+      },
+      rename: renameHook,
+    }).catch((error: unknown) => error);
+    await atAside.promise;
+    // The rollback's tree is still at final and unpublished. Let the removal proceed
+    // to its re-check after the seam, and pause inside that re-check's verification.
+    releaseAside.resolve();
+    await atRecheck.promise;
+    // The successor publishes during the re-check: it displaces both locks, claims
+    // them, and publishes the same tree by reusing the rollback's placed tree.
+    renameSync(path.join(dir, ".install.lock"), path.join(dir, ".install.lock.displaced"));
+    renameSync(path.join(dir, ".tree.lock"), path.join(dir, ".tree.lock.displaced"));
+    const successor = acquireInstallLockSync(dir);
+    const successorOutcome = await activate(dir, hash, successorStaging, {
+      verifyLockHeld: async () => {
+        if (readInstallLockToken(dir) !== successor!.token) throw new Error("lock lost");
+      },
+    });
+    expect(successorOutcome).toBe("reused");
+    expect(readPointer(dir).active).toBe(hash);
+    expect(componentBin("graphify", env)).toBe(path.join(final, "graphify"));
+    const publishedIno = statSync(final).ino;
+    // The re-check resumes: its token check finds both locks lost, so the
+    // rename-aside is skipped and the successor's published tree stays in place —
+    // the launcher is never unavailable, checked while the successor's install lock
+    // is live. The seam ran (two hook calls: the placement and the aside), but the
+    // aside's real rename never ran, so no backup is left aside.
+    releaseRecheck.resolve();
     const error = await outcome;
     expect(error).toBeInstanceOf(Error);
     expect(renames).toBe(2);

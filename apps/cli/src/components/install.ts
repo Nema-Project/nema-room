@@ -429,14 +429,16 @@ export async function activate(root: string, lockHash: string, staging: string, 
     await rename(from, to);
   };
   // The writePointer hook is a pre-write seam: tests pause or fail the write
-  // here. The production code performs the real write after it returns, guarded
-  // by a re-check of both locks immediately before the rename: a successor can
-  // publish while this attempt is paused in the seam, and the guard keeps this
-  // attempt from overwriting the successor's pointer.
+  // here. The production code performs the real write after it returns. The
+  // install lock is re-checked (asynchronously) after the seam, before the write;
+  // the tree mutex is re-checked by a synchronous guard that runs in the same
+  // block as the rename, so no interleaving can be orchestrated between the guard
+  // and the rename: a successor that published while this attempt was paused in the
+  // seam, or during the temp write, is caught before its pointer can be overwritten.
   const point = async (r: string, p: Pointer, treeLock: TreeLock): Promise<void> => {
     await hooks.writePointer?.(r, p);
-    await writePointer(r, p, async () => {
-      await verify();
+    await verify();
+    await writePointer(r, p, () => {
       if (readTreeLockToken(r) !== treeLock.token) {
         throw new Error("Lost the component tree lock to another installer; aborting the install");
       }
