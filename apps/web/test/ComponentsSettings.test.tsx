@@ -429,6 +429,11 @@ describe("Settings → Components", () => {
   it("a settings answer that lands after a poll published the install's outcome keeps the polled status", async () => {
     answer(view({ state: "not-installed" }));
     await refreshComponents();
+    // The install starts before the save is sent: the mutation epoch it moves cannot mask
+    // the status guard, which must be the only thing preserving the polled outcome.
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing" }));
+    await startGraphifyInstall(LOCK_HASH);
     let resolveSettings!: (value: ComponentView) => void;
     vi.mocked(hub.updateComponentSettings).mockImplementation(
       () =>
@@ -439,11 +444,7 @@ describe("Settings → Components", () => {
     const save = saveGraphifySettings({ pythonMirror: "https://mirror.example" });
     await Promise.resolve();
     expect(hub.updateComponentSettings).toHaveBeenCalledTimes(1);
-    // The install starts and finishes while the PATCH is still in flight; a poll
-    // publishes the installed outcome before the settings answer arrives.
-    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
-    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing" }));
-    await startGraphifyInstall(LOCK_HASH);
+    // A poll publishes the installed outcome before the settings answer arrives.
     vi.mocked(hub.getComponents).mockResolvedValue({ components: [installed] });
     await refreshComponents();
     // The settings answer was composed while the install was running: its lifecycle
@@ -464,6 +465,36 @@ describe("Settings → Components", () => {
     expect(snapshot.graphify?.offer?.hosts).toEqual(["mirror.example"]);
   });
 
+  it("a settings answer does not restore a stale installing state a same-state poll already replaced", async () => {
+    answer(view({ state: "not-installed" }));
+    await refreshComponents();
+    let resolveSettings!: (value: ComponentView) => void;
+    vi.mocked(hub.updateComponentSettings).mockImplementation(
+      () =>
+        new Promise<ComponentView>((resolve) => {
+          resolveSettings = resolve;
+        }),
+    );
+    const save = saveGraphifySettings({ pythonMirror: "https://mirror.example" });
+    await Promise.resolve();
+    expect(hub.updateComponentSettings).toHaveBeenCalledTimes(1);
+    // Another client started and cancelled an install while the PATCH was in flight; a
+    // poll publishes the same not-installed state the snapshot already had — a fresh
+    // observation all the same, so it must invalidate the PATCH's stale installing.
+    vi.mocked(hub.getComponents).mockResolvedValue({ components: [view({ state: "not-installed" })] });
+    await refreshComponents();
+    const stale = view({ state: "installing" });
+    resolveSettings({
+      ...stale,
+      settings: { ...stale.settings, pythonMirror: { value: "https://mirror.example", source: "config" as const, config: "https://mirror.example" } },
+    });
+    await save;
+    vi.mocked(hub.getComponents).mockRejectedValue(new Error("hub unreachable"));
+    const snapshot = await refreshComponents();
+    expect(snapshot.graphify?.status.state).toBe("not-installed");
+    expect(snapshot.graphify?.settings.pythonMirror.value).toBe("https://mirror.example");
+  });
+
   it("a settings answer does not restore an older offer after the lock changed", async () => {
     answer(view({ state: "not-installed" }));
     await refreshComponents();
@@ -482,8 +513,10 @@ describe("Settings → Components", () => {
     const newer = view({ state: "installing", progress: { phase: "download", downloadedBytes: 0, totalBytes: LOCK_TOTAL, file: null } }, { offer: { lockHash: newHash, totalBytes: LOCK_TOTAL, location: "/home/u/.nema/runtime/graphify", hosts: ["new.example"] } });
     vi.mocked(hub.installComponent).mockResolvedValue(newer);
     await startGraphifyInstall(newHash);
-    // The settings answer carries the older offer; the snapshot must keep the newer one.
+    // The settings answer carries the older offer; the save refreshes and takes the
+    // fresh read's newer offer instead of restoring the older one.
     const stale = view({ state: "not-installed" });
+    vi.mocked(hub.getComponents).mockResolvedValue({ components: [newer] });
     resolveSettings({
       ...stale,
       settings: { ...stale.settings, pythonMirror: { value: "https://mirror.example", source: "config" as const, config: "https://mirror.example" } },
@@ -495,6 +528,77 @@ describe("Settings → Components", () => {
     expect(snapshot.graphify?.offer?.hosts).toEqual(["new.example"]);
     expect(snapshot.graphify?.settings.pythonMirror.value).toBe("https://mirror.example");
     expect(snapshot.graphify?.status.state).toBe("installing");
+  });
+
+  it("a settings answer whose offer conflicts with a newer one takes the fresh read's offer", async () => {
+    answer(view({ state: "not-installed" }));
+    await refreshComponents();
+    let resolveSettings!: (value: ComponentView) => void;
+    vi.mocked(hub.updateComponentSettings).mockImplementation(
+      () =>
+        new Promise<ComponentView>((resolve) => {
+          resolveSettings = resolve;
+        }),
+    );
+    const save = saveGraphifySettings({ pythonMirror: "https://mirror.example" });
+    await Promise.resolve();
+    expect(hub.updateComponentSettings).toHaveBeenCalledTimes(1);
+    // An install for a newer lock publishes its offer while the PATCH is in flight.
+    const newHash = "d".repeat(64);
+    const newer = view({ state: "installing", progress: { phase: "download", downloadedBytes: 0, totalBytes: LOCK_TOTAL, file: null } }, { offer: { lockHash: newHash, totalBytes: LOCK_TOTAL, location: "/home/u/.nema/runtime/graphify", hosts: ["new.example"] } });
+    vi.mocked(hub.installComponent).mockResolvedValue(newer);
+    await startGraphifyInstall(newHash);
+    // The settings answer carries the older offer: neither it nor the published one is
+    // provably current, so the save refreshes and takes the read's offer.
+    const stale = view({ state: "not-installed" });
+    resolveSettings({
+      ...stale,
+      settings: { ...stale.settings, pythonMirror: { value: "https://mirror.example", source: "config" as const, config: "https://mirror.example" } },
+    });
+    // The fresh read returns a third offer: the daemon's current one, not the answer's
+    // older one or the published newer one.
+    const freshHash = "e".repeat(64);
+    const fresh = view({ state: "not-installed" }, { offer: { lockHash: freshHash, totalBytes: LOCK_TOTAL, location: "/home/u/.nema/runtime/graphify", hosts: ["fresh.example"] } });
+    vi.mocked(hub.getComponents).mockResolvedValue({ components: [fresh] });
+    await save;
+    vi.mocked(hub.getComponents).mockRejectedValue(new Error("hub unreachable"));
+    const snapshot = await refreshComponents();
+    expect(snapshot.graphify?.offer?.lockHash).toBe(freshHash);
+    expect(snapshot.graphify?.offer?.hosts).toEqual(["fresh.example"]);
+    expect(snapshot.graphify?.settings.pythonMirror.value).toBe("https://mirror.example");
+    expect(snapshot.graphify?.status.state).toBe("not-installed");
+  });
+
+  it("a settings answer with no offer takes the fresh read's offer and error", async () => {
+    // A terminal state, so no poll runs: the refresh must happen explicitly.
+    answer(view({ state: "not-installed" }));
+    await refreshComponents();
+    let resolveSettings!: (value: ComponentView) => void;
+    vi.mocked(hub.updateComponentSettings).mockImplementation(
+      () =>
+        new Promise<ComponentView>((resolve) => {
+          resolveSettings = resolve;
+        }),
+    );
+    const save = saveGraphifySettings({ pythonMirror: "https://mirror.example" });
+    await Promise.resolve();
+    // The answer carries no offer and a new offer error (the lock is unreadable).
+    const stale = view({ state: "not-installed" });
+    resolveSettings({
+      ...stale,
+      offer: null,
+      offerError: "the lock file is corrupt",
+      settings: { ...stale.settings, pythonMirror: { value: "https://mirror.example", source: "config" as const, config: "https://mirror.example" } },
+    });
+    // The fresh read confirms there is no offer and carries the same error.
+    const fresh = view({ state: "not-installed" }, { offer: null, offerError: "the lock file is corrupt" });
+    vi.mocked(hub.getComponents).mockResolvedValue({ components: [fresh] });
+    await save;
+    vi.mocked(hub.getComponents).mockRejectedValue(new Error("hub unreachable"));
+    const snapshot = await refreshComponents();
+    expect(snapshot.graphify?.offer).toBeNull();
+    expect(snapshot.graphify?.offerError).toBe("the lock file is corrupt");
+    expect(snapshot.graphify?.settings.pythonMirror.value).toBe("https://mirror.example");
   });
 
   it("queueing a second save does not invalidate the first save's answer", async () => {
@@ -594,14 +698,19 @@ describe("Settings → Components", () => {
     answer(installed);
     vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
     vi.mocked(hub.cancelComponentInstall).mockRejectedValueOnce(new Error("hub unreachable"));
-    vi.mocked(hub.cancelComponentInstall).mockResolvedValue({ ...installed, cancelled: true });
+    vi.mocked(hub.cancelComponentInstall).mockImplementation(async () => {
+      // The cancel succeeded: a poll after this must read installed, not the installing
+      // view a poll scheduled before the cancel would otherwise republish.
+      vi.mocked(hub.getComponents).mockResolvedValue({ components: [installed] });
+      return { ...installed, cancelled: true };
+    });
     renderSettings();
     await userEvent.click(await screen.findByRole("button", { name: "Reinstall" }));
     const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
-    // A poll during the test must not flip the dialog to installed: the GET mock now
-    // returns the installing view until the cancel succeeds.
+    // A poll during the test must not flip the dialog to installed: the GET mock returns
+    // the installing view from before the install click until the cancel succeeds.
     vi.mocked(hub.getComponents).mockResolvedValue({ components: [view({ state: "installing", progress })] });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
     // The first cancel fails: its error is shown.
     await userEvent.click(await within(dialog).findByRole("button", { name: "Cancel download" }));
     expect((await within(dialog).findByRole("alert")).textContent).toContain("hub unreachable");
@@ -768,6 +877,65 @@ describe("Settings → Components", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
     expect(hub.installComponent).toHaveBeenCalledTimes(1);
     expect(within(dialog).getByTestId("component-offer-size").textContent).toContain(formatMiB(LOCK_TOTAL));
+  });
+  it("a repair retry after a failure for a different offer shows the replacement offer first", async () => {
+    const installed = view({
+      state: "installed",
+      version: { graphifyy: "0.9.95", python: "3.11.18" },
+      path: "/p",
+      launcher: "/p/graphify",
+      lastFailure: { reason: "self-check", detail: "injected", at: "2026-11-18T00:00:00.000Z" },
+    });
+    answer(installed);
+    vi.mocked(hub.installComponent).mockResolvedValue(installed);
+    renderSettings();
+    await userEvent.click(await screen.findByRole("button", { name: "Reinstall" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    expect(hub.installComponent).toHaveBeenCalledWith("graphify", LOCK_HASH, true);
+    // A concurrent installer recorded a failure for a different lock: the dialog's offer
+    // is now the replacement, and the repair Retry must show it before downloading.
+    const replacementHash = "d".repeat(64);
+    const replacement = view({
+      state: "installed",
+      version: { graphifyy: "0.9.95", python: "3.11.18" },
+      path: "/p",
+      launcher: "/p/graphify",
+      lastFailure: { reason: "self-check", detail: "injected", at: "2026-11-18T00:00:00.000Z" },
+    }, { offer: { lockHash: replacementHash, totalBytes: LOCK_TOTAL, location: "/home/u/.nema/runtime/graphify", hosts: ["new.example"] } });
+    vi.mocked(hub.getComponents).mockResolvedValue({ components: [replacement] });
+    await refreshComponents();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+    expect(hub.installComponent).toHaveBeenCalledTimes(1);
+    expect(within(dialog).getByTestId("component-offer-size").textContent).toContain(formatMiB(LOCK_TOTAL));
+  });
+
+  it("a cancelled repair retry for a different offer confirms the replacement and still forces the repair", async () => {
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
+    answer(installed);
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
+    vi.mocked(hub.cancelComponentInstall).mockResolvedValue({ ...installed, cancelled: true });
+    renderSettings();
+    await userEvent.click(await screen.findByRole("button", { name: "Reinstall" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    expect(hub.installComponent).toHaveBeenCalledWith("graphify", LOCK_HASH, true);
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Cancel download" }));
+    expect(await within(dialog).findByText("The reinstall was cancelled; the installed copy is unchanged.")).toBeTruthy();
+    // A concurrent installer recorded a failure for a different lock: the dialog's offer
+    // is now the replacement, and the cancelled Retry must show it before downloading.
+    const replacementHash = "d".repeat(64);
+    const replacement = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" }, { offer: { lockHash: replacementHash, totalBytes: LOCK_TOTAL, location: "/home/u/.nema/runtime/graphify", hosts: ["new.example"] } });
+    vi.mocked(hub.getComponents).mockResolvedValue({ components: [replacement] });
+    await refreshComponents();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+    expect(hub.installComponent).toHaveBeenCalledTimes(1);
+    expect(within(dialog).getByTestId("component-offer-size").textContent).toContain(formatMiB(LOCK_TOTAL));
+    // Confirming the replacement still forces the repair: an unforced install over an
+    // installed copy would be a no-op.
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    expect(hub.installComponent).toHaveBeenCalledWith("graphify", replacementHash, true);
   });
 });
 

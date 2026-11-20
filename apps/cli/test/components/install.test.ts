@@ -1,14 +1,14 @@
 // Installer tests against a local fake upstream reached only through the mirror variables. The fake
 // python is a shell script, so the suite runs on POSIX; Windows uses the shipped launcher binary.
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { activate, acquireInstallLock, installComponent, takeOverStaleLock, verifyArchives, verifyLockHeld, type InstallOptions } from "../../src/components/install.js";
 import { lockHash } from "../../src/components/lock.js";
-import { componentBin, componentStatus, installLockHeldByLiveOwner, readFailure, readInstallGeneration, readPointer, recoverReplacementsSync, writeFailure, writePointer, type ComponentEnv } from "../../src/components/store.js";
+import { componentBin, componentStatus, installLockHeldByLiveOwner, readFailure, readInstallGeneration, readInstallLockToken, readPointer, recoverReplacementsSync, writeFailure, writePointer, type ComponentEnv } from "../../src/components/store.js";
 import type { ComponentStatus, InstallProgress } from "../../src/components/types.js";
 import { fakeComponent, fakeSource, writeLock, type FakeComponent, type FakeSource } from "./fixtures.js";
 
@@ -523,6 +523,88 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(readPointer(dir).active).toBe(successorHash);
   });
 
+  test("a takeover delayed after its ownership read does not let rollback move the backup over the successor's tree", async () => {
+    const hash = "a".repeat(64);
+    const successorHash = "b".repeat(64);
+    const dir = mkdtempSync(path.join(root, "activate-"));
+    const final = path.join(dir, hash);
+    mkdirSync(final, { recursive: true });
+    writeFileSync(path.join(final, "marker"), "old\n");
+    await writePointer(dir, { active: hash, previous: null });
+    const staging = path.join(dir, "staging");
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(path.join(staging, "marker"), "new\n");
+    // The holder's activation is cancelled at its checked point; its rollback is paused
+    // at the pre-move re-check, after the final ownership read passed.
+    let calls = 0;
+    let displaced = false;
+    const atPreMoveRead = deferred();
+    const releasePreMoveRead = deferred();
+    const verifyLockHeld = async () => {
+      calls += 1;
+      if (calls === 3) throw Object.assign(new Error("aborted"), { name: "AbortError" });
+      if (calls === 5) {
+        atPreMoveRead.resolve();
+        await releasePreMoveRead.promise;
+      }
+      if (displaced) throw new Error("Lost the component install lock to another installer; aborting the install");
+    };
+    const outcome = activate(dir, hash, staging, { verifyLockHeld }).catch((error: unknown) => error);
+    await atPreMoveRead.promise;
+    // A stale lock for the takeover to judge: a contender reads it and pauses before its
+    // rename, after the pre-rename re-validation.
+    const lockFile = path.join(dir, ".install.lock");
+    writeFileSync(lockFile, String(2 ** 22 + 123_456));
+    const atRename = deferred();
+    const releaseRename = deferred();
+    const afterRename = deferred();
+    const releaseAfterRename = deferred();
+    let renamed = false;
+    const renameFile = async (from: string, to: string) => {
+      if (!renamed) {
+        atRename.resolve();
+        await releaseRename.promise;
+        await rename(from, to);
+        renamed = true;
+        afterRename.resolve();
+        await releaseAfterRename.promise;
+      } else {
+        await rename(from, to);
+      }
+    };
+    const takeover = takeOverStaleLock(lockFile, { content: String(2 ** 22 + 123_456), ino: 0, mtimeMs: 0 }, renameFile);
+    await atRename.promise;
+    // Another contender replaces the record with a live holder's claim.
+    const live = await acquireInstallLock(dir);
+    // The delayed rename moves the live claim aside.
+    releaseRename.resolve();
+    await afterRename.promise;
+    // A successor claims the vacant path and publishes its tree while the takeover's
+    // restore is still paused.
+    const successor = await acquireInstallLock(dir);
+    mkdirSync(final, { recursive: true });
+    writeFileSync(path.join(final, "marker"), "successor\n");
+    await writePointer(dir, { active: successorHash, previous: hash });
+    releaseAfterRename.resolve();
+    expect(await takeover).toBeNull();
+    // The takeover's restore could not put the live claim back (the successor's claim is
+    // in place); the holder's rollback resumes and must skip the restore move.
+    displaced = true;
+    releasePreMoveRead.resolve();
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).name).toBe("AbortError");
+    expect(readFileSync(path.join(final, "marker"), "utf8")).toBe("successor\n");
+    const backups = readdirSync(dir).filter((name) => name.includes(".replaced-"));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(path.join(dir, backups[0]!, "marker"), "utf8")).toBe("old\n");
+    expect(readPointer(dir).active).toBe(successorHash);
+    // The successor's lock is live while its tree stands.
+    expect(readInstallLockToken(dir)).toBe(successor.token);
+    await successor.release();
+    await live.release();
+  });
+
   test("a damaged previous version is replaced when the app goes back to its lock", async () => {
     const first = fakeComponent(execLog, "one");
     const second = fakeComponent(execLog, "two");
@@ -854,6 +936,77 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(readFailure(graphifyRoot())).toBeNull();
   });
 
+  test("a refusal paused after its snapshot does not write after a repair commits and clears the record", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    expect(await install(env)).toMatchObject({ state: "installed" });
+    // Seed the record a failed repair leaves behind.
+    const failing = await install(env, {
+      force: true,
+      hooks: {
+        selfCheck: async () => {
+          throw new Error("injected self-check failure");
+        },
+      },
+    });
+    expect(failing).toMatchObject({ state: "failed", reason: "self-check" });
+    // A partial claim left the high-water ahead of the counter: the counter still reads 1,
+    // the high-water reads 2. The writes below stand in for a claim whose counter write
+    // failed after its high-water write.
+    writeFileSync(path.join(graphifyRoot(), "install-generation"), "1\n");
+    writeFileSync(path.join(graphifyRoot(), "install-generation-high-water"), "2\n");
+    // A stale lock for the refusal's acquire to take over: the refusal pauses inside the
+    // takeover, after its entry snapshot (generation 1, the seeded record, no live lock).
+    const lockFile = path.join(graphifyRoot(), ".install.lock");
+    writeFileSync(lockFile, String(2 ** 22 + 123_456));
+    const atTakeover = deferred();
+    const releaseTakeover = deferred();
+    const offline = envFor(component, source, { offline: true });
+    const refusedPromise = install(offline, {
+      force: true,
+      hooks: {
+        renameLockFile: async (from, to) => {
+          atTakeover.resolve();
+          await releaseTakeover.promise;
+          await rename(from, to);
+        },
+      },
+    });
+    await atTakeover.promise;
+    // The counter is lost while the refusal is paused; a real same-version repair then
+    // commits: it reseeds from the high-water (generation 3, not a reuse of 2) and clears
+    // the record.
+    rmSync(path.join(graphifyRoot(), "install-generation"), { force: true });
+    expect(await install(env, { force: true })).toMatchObject({ state: "installed" });
+    expect(readInstallGeneration(graphifyRoot())).toBe(3);
+    expect(readFailure(graphifyRoot())).toBeNull();
+    // Resume the refusal: it takes the released lock and reaches its recheck after the
+    // repair's commit — the generation changed, so it must not write a stale failure.
+    releaseTakeover.resolve();
+    const refused = await refusedPromise;
+    expect(refused).toMatchObject({ state: "failed", reason: "offline" });
+    expect(readFailure(graphifyRoot())).toBeNull();
+  });
+
+  test("a claim whose high-water write fails leaves the counter unchanged", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    expect(await install(env)).toMatchObject({ state: "installed" });
+    expect(readInstallGeneration(graphifyRoot())).toBe(1);
+    // Sabotage the high-water file: the claim writes it first, so a failed write aborts
+    // the attempt before the counter is touched.
+    rmSync(path.join(graphifyRoot(), "install-generation-high-water"));
+    mkdirSync(path.join(graphifyRoot(), "install-generation-high-water"));
+    expect(await install(env, { force: true })).toMatchObject({ state: "failed", reason: "self-check" });
+    expect(readInstallGeneration(graphifyRoot())).toBe(1);
+    // And the counter still advances normally on the next repair.
+    rmSync(path.join(graphifyRoot(), "install-generation-high-water"), { recursive: true });
+    expect(await install(env, { force: true })).toMatchObject({ state: "installed" });
+    expect(readInstallGeneration(graphifyRoot())).toBe(2);
+  });
+
   test("an older refusal does not overwrite a failure recorded by a newer attempt", async () => {
     const component = fakeComponent(execLog);
     const source = await serve(component);
@@ -901,6 +1054,37 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
       const refused = await refusedPromise;
       expect(refused).toMatchObject({ state: "failed", reason: "offer-changed", lockHash: hash });
       expect(readFailure(graphifyRoot())).toMatchObject({ reason: "network", detail: "newer attempt failed" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("an older refusal does not overwrite an identical failure record rewritten after its snapshot", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    const hash = lockHash(component.target);
+    mkdirSync(graphifyRoot(), { recursive: true });
+    // Freeze the clock so the seeded record's timestamp is exactly the one the refusal
+    // will generate: lock, reason, detail and timestamp are all identical, and only the
+    // revision distinguishes the rewrite.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-20T00:00:00.000Z"));
+    try {
+      // Seed the record the refusal will snapshot: its revision is stamped by writeFailure.
+      await writeFailure(graphifyRoot(), { lockHash: hash, reason: "network", detail: "newer attempt failed", at: new Date().toISOString() });
+      const before = readFailure(graphifyRoot())!;
+      // Start the older refusal: its entry snapshot runs synchronously up to the first await.
+      const refusedPromise = install(env, { expectedLockHash: "0".repeat(64) });
+      // A newer attempt rewrites the identical record in the meantime — same lock, reason,
+      // detail and timestamp, but a fresh revision. The synchronous write stands in for
+      // the newer attempt's record.
+      writeFileSync(path.join(graphifyRoot(), "last-failure.json"), `${JSON.stringify({ lockHash: hash, reason: "network", detail: "newer attempt failed", at: new Date().toISOString(), revision: "0000000000000001" }, null, 2)}\n`);
+      const refused = await refusedPromise;
+      expect(refused).toMatchObject({ state: "failed", reason: "offer-changed", lockHash: hash });
+      const after = readFailure(graphifyRoot())!;
+      expect(after.revision).toBe("0000000000000001");
+      expect(after.revision).not.toBe(before.revision);
     } finally {
       vi.useRealTimers();
     }
@@ -1079,6 +1263,41 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     });
     expect(existsSync(path.join(dir, "c".repeat(64)))).toBe(false);
     expect(existsSync(path.join(backup, "marker"))).toBe(true);
+  });
+
+  test("recovery under the install lock blocks a waiting installer from acquiring it", async () => {
+    const dir = graphifyRoot();
+    mkdirSync(dir, { recursive: true });
+    const backup = path.join(dir, `${"c".repeat(64)}.replaced-abcdef`);
+    mkdirSync(backup, { recursive: true });
+    writeFileSync(path.join(backup, "marker"), "kept\n");
+    // Claim the lock as the installer would, then run recovery with that token: the
+    // recovery holds the lock while it moves the backup.
+    const { token, release } = await acquireInstallLock(dir);
+    try {
+      let held = false;
+      recoverReplacementsSync(dir, {
+        ownToken: token,
+        beforeMove: () => {
+          // A waiting installer tries to claim the lock while recovery holds it: the
+          // atomic link must fail because the path is occupied.
+          const probe = `${path.join(dir, ".install.lock")}.probe-${process.pid}`;
+          writeFileSync(probe, "probe");
+          try {
+            linkSync(probe, path.join(dir, ".install.lock"));
+          } catch (error) {
+            held = (error as NodeJS.ErrnoException).code === "EEXIST";
+          } finally {
+            rmSync(probe, { force: true });
+          }
+        },
+      });
+      expect(held).toBe(true);
+      expect(existsSync(path.join(dir, "c".repeat(64)))).toBe(true);
+      expect(readFileSync(path.join(dir, "c".repeat(64), "marker"), "utf8")).toBe("kept\n");
+    } finally {
+      await release();
+    }
   });
 
   test("recovery restores a backup when the lock file is only a release tombstone", async () => {

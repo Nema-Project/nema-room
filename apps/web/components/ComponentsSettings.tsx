@@ -124,6 +124,8 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
   const [cancelOutcome, setCancelOutcome] = useState<"cancelled" | "completed" | "unknown" | null>(null);
   /** The lock the person last confirmed in this dialog: a direct Retry is only for that offer. */
   const confirmedLockHash = useRef<string | null>(null);
+  /** The forced-repair intent a Retry hands to the confirm step when it redirects there. */
+  const pendingRepair = useRef<boolean | undefined>(undefined);
   const firstButton = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -150,8 +152,9 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
       // A retry after a failed repair is a repair again, even if this dialog opened as a plain install.
       // The cancelled-outcome Retry passes its intent explicitly: over an installed copy an unforced
       // install is a no-op, so only a forced one is a retry of the repair. First-install retries
-      // stay unforced.
-      const repair = repairOverride ?? (force || (status?.state === "installed" && status.lastFailure !== undefined));
+      // stay unforced. A Retry that redirected to the confirm step leaves its intent here.
+      const repair = repairOverride ?? pendingRepair.current ?? (force || (status?.state === "installed" && status.lastFailure !== undefined));
+      pendingRepair.current = undefined;
       await startGraphifyInstall(offer.lockHash, { force: repair });
       // The cancel outcome is cleared only now: a rejected retry keeps the panel it was
       // retried from, so its error shows there instead of falling through to "done".
@@ -161,6 +164,16 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
       setRequestError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** A Retry over an installed copy: when the person confirmed an offer in this dialog and the current offer is not it, show the replacement offer first — the same check as the failed panel's Retry. The cancelled and unknown outcomes carry their explicit forced-repair intent through the confirm step. When nothing was confirmed in this dialog (it only followed an install started elsewhere), the Retry is for the offer shown and goes directly. */
+  function retryInstalled(forceRepair?: boolean) {
+    if (confirmedLockHash.current !== null && offer?.lockHash !== confirmedLockHash.current) {
+      pendingRepair.current = forceRepair;
+      setStep("confirm");
+    } else {
+      void confirm(forceRepair);
     }
   }
 
@@ -249,7 +262,7 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
             {requestError && <p className="error" role="alert">{requestError}</p>}
             <div className="actions">
               <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
-              {actionsFor(graphify).repair && <button type="button" disabled={busy} onClick={() => void confirm(true)}>{t("components.retry")}</button>}
+              {actionsFor(graphify).repair && <button type="button" disabled={busy} onClick={() => retryInstalled(true)}>{t("components.retry")}</button>}
             </div>
           </>
         ) : status.lastFailure ? (
@@ -258,7 +271,7 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
             {requestError && <p className="error" role="alert">{requestError}</p>}
             <div className="actions">
               <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
-              {actionsFor(graphify).repair && <button type="button" disabled={busy} onClick={() => void confirm()}>{t("components.retry")}</button>}
+              {actionsFor(graphify).repair && <button type="button" disabled={busy} onClick={() => retryInstalled()}>{t("components.retry")}</button>}
             </div>
           </>
         ) : cancelOutcome === "unknown" ? (
@@ -267,7 +280,7 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
             {requestError && <p className="error" role="alert">{requestError}</p>}
             <div className="actions">
               <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
-              {actionsFor(graphify).repair && <button type="button" disabled={busy} onClick={() => void confirm(true)}>{t("components.retry")}</button>}
+              {actionsFor(graphify).repair && <button type="button" disabled={busy} onClick={() => retryInstalled(true)}>{t("components.retry")}</button>}
             </div>
           </>
         ) : (
@@ -293,8 +306,8 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
         <div className="actions">
           <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
           {actions.import && <button type="button" onClick={() => setShowImport(true)}>{t("components.import")}</button>}
-          {/* The replacement offer has to be shown and confirmed before anything downloads — not only when the daemon refused with offer-changed, but whenever the current offer is not the one the person confirmed: a concurrent installer may have recorded a failure for a different lock, and the dialog must not retry that lock sight unseen. Other failures are for the offer already confirmed, so they retry directly. */}
-          {actions.retry && <button type="button" disabled={busy} onClick={() => (status.reason === "offer-changed" || offer?.lockHash !== confirmedLockHash.current ? setStep("confirm") : void confirm())}>{t("components.retry")}</button>}
+          {/* The replacement offer has to be shown and confirmed before anything downloads — not only when the daemon refused with offer-changed, but whenever the current offer is not the one the person confirmed: a concurrent installer may have recorded a failure for a different lock, and the dialog must not retry that lock sight unseen. When nothing was confirmed in this dialog, the Retry is for the offer shown and goes directly. Other failures are for the offer already confirmed, so they retry directly. */}
+          {actions.retry && <button type="button" disabled={busy} onClick={() => (status.reason === "offer-changed" || (confirmedLockHash.current !== null && offer?.lockHash !== confirmedLockHash.current) ? setStep("confirm") : void confirm())}>{t("components.retry")}</button>}
         </div>
       </>
     );

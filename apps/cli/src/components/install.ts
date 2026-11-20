@@ -77,6 +77,8 @@ export type InstallHooks = {
   rm?: (target: string) => Promise<void>;
   /** Removes the install lock file on release; tests use it to fail the release after a commit. */
   removeLockFile?: (file: string) => Promise<void>;
+  /** Renames the install lock file during a stale-lock takeover; tests pause it to interleave another installer. */
+  renameLockFile?: (from: string, to: string) => Promise<void>;
   writePointer?: (root: string, pointer: Pointer) => Promise<void>;
   /** The prebuilt Windows launcher shipped with the program. */
   windowsLauncher?: string;
@@ -729,11 +731,17 @@ function classify(error: unknown): { reason: FailureReason; detail: string } {
 
 type Prepared = { name: ComponentName; env: ComponentEnv; root: string; target: LockTarget; lockHash: string; totalBytes: number; platform: PlatformInfo };
 
-/** Whether two failure records describe the same attempt outcome, field by field. */
+/** Whether two failure records describe the same attempt outcome, field by field. The revision is stamped fresh on every write, so an identical rewrite — same lock, reason, detail and timestamp — still counts as a different record. */
 function sameFailure(a: FailureRecord | null, b: FailureRecord | null): boolean {
   return (
     a === b ||
-    (a !== null && b !== null && a.lockHash === b.lockHash && a.reason === b.reason && a.detail === b.detail && a.at === b.at)
+    (a !== null &&
+      b !== null &&
+      a.lockHash === b.lockHash &&
+      a.reason === b.reason &&
+      a.detail === b.detail &&
+      a.at === b.at &&
+      a.revision === b.revision)
   );
 }
 
@@ -803,7 +811,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
       // running install's outcome stands and this attempt is only returned to its caller.
       try {
         await mkdir(root, { recursive: true });
-        const { release } = await acquireInstallLock(root);
+        const { release } = await acquireInstallLock(root, { renameLockFile: o.hooks?.renameLockFile });
         try {
           const now = componentStatusSync(prepared.name, env);
           if (
@@ -831,7 +839,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
       const root = componentRoot(prepared.name, env);
       try {
         await mkdir(root, { recursive: true });
-        const { release } = await acquireInstallLock(root);
+        const { release } = await acquireInstallLock(root, { renameLockFile: o.hooks?.renameLockFile });
         try {
           // Only while the refusal still describes the store: a copy installed under the current
           // lock in the meantime has resolved the situation, and its status stands. And only
@@ -869,10 +877,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
     if (!(await o.confirm(offer))) return before;
   }
   await mkdir(root, { recursive: true });
-  // Recovery runs before the lock is taken: once this install holds the lock, readers skip
-  // recovery (see recoverReplacementsSync), and so would this call.
-  recoverReplacementsSync(root);
-  const { release, token } = await acquireInstallLock(root, { removeLockFile: hooks.removeLockFile });
+  const { release, token } = await acquireInstallLock(root, { removeLockFile: hooks.removeLockFile, renameLockFile: hooks.renameLockFile });
   const progress: InstallProgress = { phase: "download", downloadedBytes: 0, totalBytes, file: null };
   const emit = (update: Partial<InstallProgress> = {}) => {
     Object.assign(progress, update);
@@ -884,6 +889,12 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
   // intact version must read as a failure, not as the still-serving old version.
   let attemptFailure: { reason: FailureReason; detail: string; at: string } | null = null;
   try {
+    // Recovery runs under the lock this install already holds, with its own token: the
+    // installer that owns the backups is the one healing them, and no other installer can
+    // take the lock in between and reach activation while recovery moves a backup. Running
+    // it before the lock was taken let a waiting installer pass the lock check, pause, and
+    // resume into another installer's activation.
+    recoverReplacementsSync(root, { ownToken: token });
     // Claim this attempt's generation before any shared state changes — including the progress
     // callback, which can throw: the marker is recorded under the lock before activation, so a
     // refusal snapshotted before it can tell the attempt intervened even if this attempt later

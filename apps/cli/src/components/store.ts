@@ -78,6 +78,21 @@ export function installLockHeldByLiveOwner(root: string): boolean {
 }
 
 /**
+ * The install lock's current token, or null when the lock file is missing or unreadable.
+ * Recovery uses it to tell its own lock from another installer's: a live owner other than
+ * the caller means an installer is running, while the caller's own token means recovery
+ * runs under the lock it already holds.
+ */
+export function readInstallLockToken(root: string): string | null {
+  try {
+    const content = readFileSync(path.join(root, ".install.lock"), "utf8").trim();
+    return content === "" ? null : content;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Undo a replacement cut off midway (a crash between moving the old directory aside and
  * publishing its replacement): a backup whose `<lock-hash>` is gone goes back into place;
  * a backup beside a present `<lock-hash>` is stale (that directory is the self-checked
@@ -88,10 +103,17 @@ export function installLockHeldByLiveOwner(root: string): boolean {
  * Recovery is skipped while a live installer holds the install lock: the installer owns
  * the backups between its two moves, and a reader restoring or deleting one would break
  * its rollback. A lock whose owner is dead means the installer is gone, so recovery
- * proceeds; a missing or dead lock is the crash case this exists for.
+ * proceeds; a missing or dead lock is the crash case this exists for. When the caller
+ * already holds the lock (`ownToken`), recovery runs under it instead of skipping itself:
+ * the installer that owns the backups is the one healing them, and no other installer can
+ * take the lock in between. The lock is re-checked immediately before each move, so a
+ * claim that lands after the listing still stops the move — but that check alone does not
+ * serialize recovery with activation across processes: a recovery that pauses after it can
+ * still resume into another installer's activation. Callers that hold the lock must pass
+ * their token; callers that do not hold it keep the re-check as their only guard.
  */
-export function recoverReplacementsSync(root: string, seams: { beforeMove?: () => void } = {}): void {
-  if (installLockHeldByLiveOwner(root)) return;
+export function recoverReplacementsSync(root: string, opts: { ownToken?: string; beforeMove?: () => void } = {}): void {
+  if (installLockHeldByLiveOwner(root) && readInstallLockToken(root) !== opts.ownToken) return;
   let names: string[];
   try {
     names = readdirSync(root);
@@ -106,8 +128,8 @@ export function recoverReplacementsSync(root: string, seams: { beforeMove?: () =
       // Re-check immediately before moving: an installer can claim the lock after the
       // listing (taking over a tombstone) and own the backup by the time this runs.
       // Moving it back would occupy the path its activation is about to place staging at.
-      seams.beforeMove?.();
-      if (installLockHeldByLiveOwner(root)) return;
+      opts.beforeMove?.();
+      if (installLockHeldByLiveOwner(root) && readInstallLockToken(root) !== opts.ownToken) return;
       if (existsSync(original)) rmSync(path.join(root, name), { recursive: true, force: true });
       else renameSync(path.join(root, name), original);
     } catch {
@@ -185,13 +207,18 @@ export function readInstallGeneration(root: string): number | null {
  * the reseed is one past the highest generation ever claimed, so two losses can never
  * restore the same value. A random 48-bit draw is only the last resort when the high-water
  * file is gone too. A store with no active copy starts at 1 as before.
+ *
+ * The high-water file is written first: a claim that fails after it still leaves the
+ * high-water ahead of the counter, so a later reseed cannot reuse the failed claim's
+ * generation. Writing the counter first would let a failed high-water write leave a counter
+ * a later reseed could repeat.
  */
 export async function claimInstallGeneration(root: string): Promise<number> {
   const current = readInstallGeneration(root);
   const base = current ?? (readPointer(root).active === null ? 0 : (readInstallGenerationHighWater(root) ?? randomInt(2, 2 ** 48)));
   const next = base + 1;
-  await writeFileAtomic(path.join(root, "install-generation"), `${next}\n`);
   await writeFileAtomic(path.join(root, "install-generation-high-water"), `${next}\n`);
+  await writeFileAtomic(path.join(root, "install-generation"), `${next}\n`);
   return next;
 }
 
@@ -207,7 +234,7 @@ function readInstallGenerationHighWater(root: string): number | null {
   }
 }
 
-export type FailureRecord = { lockHash: string; reason: FailureReason; detail: string; at: string };
+export type FailureRecord = { lockHash: string; reason: FailureReason; detail: string; at: string; revision?: string };
 
 export function readFailure(root: string): FailureRecord | null {
   try {
@@ -219,8 +246,14 @@ export function readFailure(root: string): FailureRecord | null {
   }
 }
 
+/**
+ * Records the last failed attempt. Every record carries a fresh revision, so two records
+ * with identical lock, reason, detail and timestamp are still distinguishable: a refusal
+ * that snapshots the record can tell a rewrite apart from the record it read, even when
+ * the newer attempt's generation claim failed and the generation is unchanged.
+ */
 export async function writeFailure(root: string, record: FailureRecord): Promise<void> {
-  await writeFileAtomic(path.join(root, "last-failure.json"), `${JSON.stringify(record, null, 2)}\n`);
+  await writeFileAtomic(path.join(root, "last-failure.json"), `${JSON.stringify({ ...record, revision: randomBytes(8).toString("hex") }, null, 2)}\n`);
 }
 
 export async function clearFailure(root: string): Promise<void> {

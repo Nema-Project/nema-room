@@ -26,16 +26,20 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null;
 /** Bumped by every mutation (install/cancel/settings) so a GET started before it is discarded, not published. */
 let mutationEpoch = 0;
 /**
- * Bumped whenever a published view carries a different lifecycle state than the one it
- * replaces. A settings answer's status is current only if no lifecycle publication landed
- * while the save was in flight — a poll does not move mutationEpoch, so the mutation epoch
- * alone cannot tell a settings answer that a newer GET already published the install's
- * outcome.
+ * Bumped whenever a published view carries a fresh lifecycle observation — a new status
+ * object, even when it carries the same state as the one it replaces. A settings answer's
+ * status is current only if no lifecycle publication landed while the save was in flight: a
+ * poll does not move mutationEpoch, so the mutation epoch alone cannot tell a settings
+ * answer that a newer GET already published the install's outcome. A GET that republishes
+ * `not-installed` after another client cancelled an install still proves the install is
+ * over, and a settings answer carrying the stale `installing` it captured before that
+ * cancellation must not restore it. A failed GET publishes the unchanged snapshot, so it
+ * never moves this epoch.
  */
 let statusEpoch = 0;
 
 function publish(next: ComponentsSnapshot): void {
-  if (next.graphify?.status.state !== snapshot.graphify?.status.state) statusEpoch += 1;
+  if (next.graphify && next.graphify.status !== snapshot.graphify?.status) statusEpoch += 1;
   snapshot = next;
   for (const listener of listeners) listener();
   schedulePoll();
@@ -76,9 +80,14 @@ function accept(view: ComponentView): void {
  * (a poll does not move the mutation epoch), and no install is running now. The offer is
  * applied only while it is still the offer the person was shown: an install or cancel that
  * published a newer offer (a different lock) while the save was in flight must not be
- * overwritten with the older one this answer carries.
+ * overwritten with the older one this answer carries. When the answer's offer and the
+ * published one disagree — different locks, or one side has no offer at all — neither is
+ * provably current, so a fresh read decides instead of leaving a stale lock, mirror hosts,
+ * or a discarded offer error in place. When the refresh itself cannot reach the daemon,
+ * the published offer stands: it came from a real daemon response, and the refresh's error
+ * is already visible.
  */
-function acceptSettings(view: ComponentView, sentEpoch: number, sentStatusEpoch: number): void {
+async function acceptSettings(view: ComponentView, sentEpoch: number, sentStatusEpoch: number): Promise<void> {
   const arrivedEpoch = mutationEpoch;
   const arrivedStatusEpoch = statusEpoch;
   mutationEpoch += 1;
@@ -88,6 +97,15 @@ function acceptSettings(view: ComponentView, sentEpoch: number, sentStatusEpoch:
     return;
   }
   const status = current.status.state === "installing" || arrivedEpoch !== sentEpoch || arrivedStatusEpoch !== sentStatusEpoch ? current.status : view.status;
+  const conflict =
+    (current.offer && view.offer && current.offer.lockHash !== view.offer.lockHash) || (!current.offer && view.offer) || (current.offer && !view.offer);
+  if (conflict) {
+    const fresh = await refreshComponents();
+    if (!fresh.error && fresh.graphify) {
+      publish({ graphify: { ...fresh.graphify, settings: view.settings }, error: null, loaded: true });
+      return;
+    }
+  }
   const offer = view.offer && (!current.offer || current.offer.lockHash === view.offer.lockHash) ? view.offer : current.offer;
   const offerError = offer === view.offer ? view.offerError : current.offerError;
   publish({ graphify: { ...current, settings: view.settings, offer, offerError, status }, error: null, loaded: true });
@@ -157,7 +175,7 @@ export async function saveGraphifySettings(patch: { pythonMirror?: string | null
     mutationEpoch += 1;
     const sentEpoch = mutationEpoch;
     const sentStatusEpoch = statusEpoch;
-    acceptSettings(await updateComponentSettings("graphify", patch), sentEpoch, sentStatusEpoch);
+    await acceptSettings(await updateComponentSettings("graphify", patch), sentEpoch, sentStatusEpoch);
   });
   // The queue runs past a failed save; the failure itself still reaches this save's caller.
   settingsQueue = task.catch(() => {});
