@@ -532,30 +532,65 @@ export function readPointer(root: string): Pointer {
 }
 
 /** Write a sibling temp file, then rename it over `path`: readers see the old or the new file, never half of one.
- * `beforeRename` is synchronous and runs immediately before the rename, in the same block:
- * no await separates the guard from the rename, so no interleaving can be orchestrated
- * between them — a guard that throws aborts the write (the temp file is removed by the
- * finally). A caller that needs an asynchronous check runs it before calling this function.
- * `renameSeam` is a pre-rename seam: a test can pause there, after the guard, to let
- * another installer publish. The guard runs again after the seam, before the real rename,
- * so a publication that landed during the pause is caught and the write is refused
- * instead of overwriting it. The seam must not rename itself; the production code
- * renames after it returns. */
-export async function writeFileAtomic(file: string, body: string, beforeRename?: () => void, renameSeam?: (from: string, to: string) => Promise<void>): Promise<void> {
+ * The write is a compare-and-swap on the target's identity: the target's inode and
+ * mtime are captured before the temp write, and re-checked before the rename, so a
+ * successor that republished the target in between is caught and the write is refused
+ * instead of overwriting it. This detects a publication directly — not only through
+ * the locks — so it also catches a writer that published without displacing this
+ * attempt's locks. `beforeRename` is synchronous and runs immediately before the
+ * rename, in the same block: no await separates the guard from the rename, so no
+ * interleaving can be orchestrated between them — a guard that throws aborts the write
+ * (the temp file is removed by the finally). A caller that needs an asynchronous check
+ * runs it before calling this function. `renameSeam` is a pre-rename seam: a test can
+ * pause there, after the guard, to let another installer publish. The guard and the
+ * identity check run again after the seam, before the real rename. `finalSeam` is a
+ * second pre-rename seam, after that re-check: a test can pause there, after the final
+ * guard, to let another installer publish, and the guard and the identity check run
+ * once more after it, before the rename. After that last check, the rename runs in the
+ * same block — there is no seam left to pause on, so a displacement landing in that
+ * final step cannot be orchestrated; the post-write re-check in the caller stays as
+ * defense in depth for it. The seams must not rename themselves; the production code
+ * renames after they return. */
+export async function writeFileAtomic(
+  file: string,
+  body: string,
+  beforeRename?: () => void,
+  renameSeam?: (from: string, to: string) => Promise<void>,
+  finalSeam?: (from: string, to: string) => Promise<void>,
+): Promise<void> {
+  const identity = (path: string): string | null => {
+    const info = statSync(path, { throwIfNoEntry: false });
+    return info === undefined ? null : `${info.ino}:${info.mtimeMs}`;
+  };
+  const before = identity(file);
+  const check = (): void => {
+    beforeRename?.();
+    if (identity(file) !== before) {
+      throw new Error(`The target changed while writing ${file}; refusing to overwrite it`);
+    }
+  };
   const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   try {
     await writeFile(temp, body, { flag: "wx" });
-    beforeRename?.();
+    check();
     await renameSeam?.(temp, file);
-    beforeRename?.();
+    check();
+    await finalSeam?.(temp, file);
+    check();
     await rename(temp, file);
   } finally {
     await rm(temp, { force: true });
   }
 }
 
-export async function writePointer(root: string, pointer: Pointer, beforeRename?: () => void, renameSeam?: (from: string, to: string) => Promise<void>): Promise<void> {
-  await writeFileAtomic(path.join(root, "current.json"), `${JSON.stringify(pointer, null, 2)}\n`, beforeRename, renameSeam);
+export async function writePointer(
+  root: string,
+  pointer: Pointer,
+  beforeRename?: () => void,
+  renameSeam?: (from: string, to: string) => Promise<void>,
+  finalSeam?: (from: string, to: string) => Promise<void>,
+): Promise<void> {
+  await writeFileAtomic(path.join(root, "current.json"), `${JSON.stringify(pointer, null, 2)}\n`, beforeRename, renameSeam, finalSeam);
 }
 
 /**
