@@ -433,6 +433,18 @@ export async function activate(root: string, lockHash: string, staging: string, 
       throw new Error("Lost the component tree lock to another installer; aborting the install");
     }
     await point(r, p);
+    // The write above is asynchronous, so a displacement can land while it is in
+    // progress: a successor that passes the check above, then loses its tree lock
+    // to a recovery that moves the tree back, would otherwise return success with
+    // the pointer naming a missing directory. Re-check both locks after the write
+    // and refuse the publication when either moved. The pointer may already have
+    // been written, but the install fails (retryable) and the state is recoverable:
+    // the backup still exists and the pointer names the hash, so a later read
+    // restores the tree.
+    await verify();
+    if (readTreeLockToken(r) !== treeLock.token) {
+      throw new Error("Lost the component tree lock to another installer; aborting the install");
+    }
   };
   // The tree mutex serializes this attempt's critical sections against another
   // installer's activation and against read-path recovery's restore/undo: the

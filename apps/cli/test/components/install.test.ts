@@ -2379,6 +2379,179 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     }
   });
 
+  test("a displacement during the pointer write is refused instead of returning reused", async () => {
+    const hash = "e".repeat(64);
+    const dir = mkdtempSync(path.join(root, "recover-"));
+    const backupName = `${hash}.replaced-abc123`;
+    mkdirSync(path.join(dir, backupName), { recursive: true });
+    writeFileSync(path.join(dir, backupName, "marker"), "backup\n");
+    await writePointer(dir, { active: hash, previous: null });
+    const staging = path.join(dir, "staging");
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(path.join(staging, "marker"), "backup\n");
+    // A stale tree-lock record: the contender below reads it, judges it stale, and
+    // pauses before its rename — while a live successor claims the path in the gap.
+    writeFileSync(path.join(dir, ".tree.lock"), "released\n");
+    // The successor's activation starts while the destination is missing and pauses
+    // at its placement move. Its staging is byte-identical to the backup, so it
+    // will reuse the restored tree instead of replacing it.
+    const atPlacement = deferred();
+    const releasePlacement = deferred();
+    const realRename = rename;
+    const renameHook = async (from: string, to: string) => {
+      if (from === staging && to === path.join(dir, hash)) {
+        atPlacement.resolve();
+        await releasePlacement.promise;
+      }
+      await realRename(from, to);
+    };
+    let successorToken: string | null = null;
+    const verifyLockHeld = async () => {
+      if (successorToken && readInstallLockToken(dir) !== successorToken) throw new Error("lock lost");
+    };
+    // The successor pauses inside its pointer write — after the token check, while
+    // the write is in progress — so the displacement below lands in that interval.
+    let writePaused = false;
+    const atWriting = deferred();
+    const releaseWriting = deferred();
+    const writePointerHook = async (r: string, p: { active: string | null; previous: string | null }) => {
+      if (!writePaused) {
+        writePaused = true;
+        atWriting.resolve();
+        await releaseWriting.promise;
+      }
+      await writePointer(r, p);
+    };
+    const outcome = activate(dir, hash, staging, { verifyLockHeld, rename: renameHook, writePointer: writePointerHook }).catch((error: unknown) => error);
+    await atPlacement.promise;
+    // The contender runs in a child process and pauses after reading the stale
+    // record, before its rename. The recovery runs in a second child process and
+    // pauses after its restore move.
+    const cliDir = fileURLToPath(new URL("../..", import.meta.url));
+    const takeoverControl = path.join(root, "takeover-control");
+    mkdirSync(takeoverControl, { recursive: true });
+    const takeoverResult = path.join(root, "takeover-result.json");
+    const takeoverJob = path.join(root, "takeover-job.json");
+    writeFileSync(takeoverJob, JSON.stringify({ root: dir, controlDir: takeoverControl, resultFile: takeoverResult }));
+    const takeoverWorker = fileURLToPath(new URL("../fixtures/component-tree-takeover-worker.mjs", import.meta.url));
+    const contender = spawn(process.execPath, ["--import", "tsx", takeoverWorker, takeoverJob], { cwd: cliDir, stdio: ["ignore", "pipe", "pipe"] });
+    let contenderErr = "";
+    contender.stderr!.on("data", (d) => (contenderErr += d));
+    const contenderDone = new Promise<number | null>((resolve) => contender.on("exit", resolve));
+    const controlDir = path.join(root, "gap-control");
+    mkdirSync(controlDir, { recursive: true });
+    const resultFile = path.join(root, "gap-result.json");
+    const jobFile = path.join(root, "gap-job.json");
+    writeFileSync(jobFile, JSON.stringify({ root: dir, controlDir, resultFile, afterUndo: "undone" }));
+    const worker = fileURLToPath(new URL("../fixtures/component-recovery-worker.mjs", import.meta.url));
+    const child = spawn(process.execPath, ["--import", "tsx", worker, jobFile], { cwd: cliDir, stdio: ["ignore", "pipe", "pipe"] });
+    let childErr = "";
+    child.stderr!.on("data", (d) => (childErr += d));
+    const childDone = new Promise<number | null>((resolve) => child.on("exit", resolve));
+    const waitForFile = async (file: string, err = "") => {
+      const end = Date.now() + 15_000;
+      while (!existsSync(file)) {
+        if (Date.now() > end) throw new Error(`timed out waiting for ${file}; child stderr: ${err}`);
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    };
+    let third: { release: () => void; token: string } | null = null;
+    let released = false;
+    const releaseChild = () => {
+      if (!released) {
+        released = true;
+        writeFileSync(path.join(controlDir, "release"), "");
+      }
+    };
+    let undoReleased = false;
+    const releaseUndo = () => {
+      if (!undoReleased) {
+        undoReleased = true;
+        writeFileSync(path.join(controlDir, "release-undo"), "");
+      }
+    };
+    let takeoverRenameReleased = false;
+    const releaseTakeoverRename = () => {
+      if (!takeoverRenameReleased) {
+        takeoverRenameReleased = true;
+        writeFileSync(path.join(takeoverControl, "release-rename"), "");
+      }
+    };
+    let takeoverRestoreReleased = false;
+    const releaseTakeoverRestore = () => {
+      if (!takeoverRestoreReleased) {
+        takeoverRestoreReleased = true;
+        writeFileSync(path.join(takeoverControl, "release-restore"), "");
+      }
+    };
+    let writingReleased = false;
+    const releaseWritingOnce = () => {
+      if (!writingReleased) {
+        writingReleased = true;
+        releaseWriting.resolve();
+      }
+    };
+    try {
+      await waitForFile(path.join(takeoverControl, "judged"), contenderErr);
+      await waitForFile(path.join(controlDir, "restored"), childErr);
+      expect(readFileSync(path.join(dir, hash, "marker"), "utf8")).toBe("backup\n");
+      renameSync(path.join(dir, ".install.lock"), path.join(dir, ".install.lock.displaced"));
+      third = acquireInstallLockSync(dir);
+      successorToken = third!.token;
+      // The placement resumes: the destination is now occupied by the restored backup,
+      // so the move fails and the activation re-reads it. The restored tree matches
+      // the staging, so the activation reuses it — claiming the tree lock by taking
+      // over the stale record the contender already judged, passing its token check,
+      // and pausing inside its pointer write.
+      releasePlacement.resolve();
+      await atWriting.promise;
+      // The contender resumes: its delayed rename moves the successor's live tree
+      // lock aside. It pauses before restoring it, and the recovery claims the
+      // vacant path in the gap — then undoes the restore while still holding the
+      // tree mutex, so the contender's restore must fail against its live claim.
+      releaseTakeoverRename();
+      await waitForFile(path.join(takeoverControl, "renamed"), contenderErr);
+      releaseChild();
+      await waitForFile(path.join(controlDir, "undone"), childErr);
+      expect(readFileSync(path.join(dir, backupName, "marker"), "utf8")).toBe("backup\n");
+      expect(existsSync(path.join(dir, hash))).toBe(false);
+      // The contender resumes: its restore fails (the recovery's claim is at the
+      // path), so it must NOT delete the successor's live claim — the aside file
+      // survives, carrying the successor's token.
+      releaseTakeoverRestore();
+      await waitForFile(takeoverResult, contenderErr);
+      expect(await contenderDone).toBe(0);
+      const takeover = JSON.parse(readFileSync(takeoverResult, "utf8"));
+      expect(takeover.won).toBe(false);
+      const aside = readdirSync(dir).filter((name) => name.startsWith(".tree.lock.stale-"));
+      expect(aside).toHaveLength(1);
+      expect(readFileSync(path.join(dir, aside[0]!), "utf8")).toMatch(new RegExp(`^${process.pid}:`));
+      // The recovery finishes. The successor's pointer write now completes — but
+      // the post-write token check refuses the publication: its tree-lock claim was
+      // displaced while the write was in progress, so it aborts instead of
+      // returning "reused" with the pointer naming a missing directory.
+      releaseUndo();
+      await waitForFile(resultFile, childErr);
+      expect(await childDone).toBe(0);
+      releaseWritingOnce();
+      const error = await outcome;
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("tree lock");
+      expect(readPointer(dir).active).toBe(hash);
+      expect(existsSync(path.join(dir, hash))).toBe(false);
+      expect(readFileSync(path.join(dir, backupName, "marker"), "utf8")).toBe("backup\n");
+    } finally {
+      releaseChild();
+      releaseUndo();
+      releaseTakeoverRename();
+      releaseTakeoverRestore();
+      releaseWritingOnce();
+      child.kill();
+      contender.kill();
+      third?.release();
+    }
+  });
+
   test("a rollback does not restore over a successor's live tree", async () => {
     const component = fakeComponent(execLog);
     const hash = lockHash(component.target);
@@ -2452,6 +2625,84 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     await holder.release();
     expect(readInstallLockToken(dir)).toBe(successor.token);
     await successor.release();
+  });
+
+  test("a successor publishing after the rollback's last token read still ends with the launcher available", async () => {
+    const component = fakeComponent(execLog);
+    const hash = lockHash(component.target);
+    const dir = graphifyRoot();
+    mkdirSync(dir, { recursive: true });
+    const final = path.join(dir, hash);
+    const staging = path.join(dir, "staging");
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(path.join(staging, "marker"), "new\n");
+    writeFileSync(path.join(staging, "graphify"), "#!/bin/sh\necho graphify\n");
+    const successorStaging = path.join(dir, "staging-successor");
+    mkdirSync(successorStaging, { recursive: true });
+    writeFileSync(path.join(successorStaging, "marker"), "new\n");
+    writeFileSync(path.join(successorStaging, "graphify"), "#!/bin/sh\necho graphify\n");
+    const lockPath = writeLock(path.join(root, "lock.json"), component);
+    const env = { runtimeRoot, lockPath, platform: { platform: process.platform, arch: process.arch, musl: false } };
+    // The rollback attempt holds a real lock. Its removal pauses at the rename-aside
+    // — after its last token read — while holding the tree mutex. A successor then
+    // displaces both locks the way a delayed takeover's rename does (the lock files
+    // are renamed aside directly, as the install-lock tests do) and publishes the
+    // same tree by reusing it, before the rollback's rename runs.
+    const holder = await acquireInstallLock(dir);
+    const verifyLockHeld = async () => {
+      if (readInstallLockToken(dir) !== holder.token) throw new Error("lock lost");
+    };
+    let renames = 0;
+    const atAside = deferred();
+    const releaseAside = deferred();
+    const realRename = rename;
+    const renameHook = async (from: string, to: string) => {
+      renames += 1;
+      if (renames === 2) {
+        atAside.resolve();
+        await releaseAside.promise;
+      }
+      await realRename(from, to);
+    };
+    const outcome = activate(dir, hash, staging, {
+      verifyLockHeld,
+      writePointer: async () => {
+        throw new Error("pointer write failed");
+      },
+      rename: renameHook,
+    }).catch((error: unknown) => error);
+    await atAside.promise;
+    // The rollback's tree is aside in the test's view only once the rename runs; at
+    // this point it is still at final and unpublished. Displace both locks, let the
+    // successor claim them, and publish by reusing the rollback's placed tree.
+    renameSync(path.join(dir, ".install.lock"), path.join(dir, ".install.lock.displaced"));
+    renameSync(path.join(dir, ".tree.lock"), path.join(dir, ".tree.lock.displaced"));
+    const successor = acquireInstallLockSync(dir);
+    const successorOutcome = await activate(dir, hash, successorStaging, {
+      verifyLockHeld: async () => {
+        if (readInstallLockToken(dir) !== successor!.token) throw new Error("lock lost");
+      },
+    });
+    expect(successorOutcome).toBe("reused");
+    expect(readPointer(dir).active).toBe(hash);
+    expect(componentBin("graphify", env)).toBe(path.join(final, "graphify"));
+    // The rollback resumes: its rename-aside moves the successor's published tree
+    // aside, so the launcher is briefly unavailable — but its post-rename check
+    // finds both locks lost and renames the tree back (three renames: the placement,
+    // the aside, and the rename-back). Once the rollback finishes, the launcher is
+    // available again and the successor's tree stands.
+    releaseAside.resolve();
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    expect(renames).toBe(3);
+    expect(readFileSync(path.join(final, "marker"), "utf8")).toBe("new\n");
+    expect(readPointer(dir).active).toBe(hash);
+    expect(componentBin("graphify", env)).toBe(path.join(final, "graphify"));
+    expect(readdirSync(dir).filter((name) => name.includes(".replaced-"))).toEqual([]);
+    expect(readInstallLockToken(dir)).toBe(successor!.token);
+    await holder.release();
+    expect(readInstallLockToken(dir)).toBe(successor!.token);
+    await successor!.release();
   });
 
   test("recovery restores a backup when the lock file is only a release tombstone", async () => {
