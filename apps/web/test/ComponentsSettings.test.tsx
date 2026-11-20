@@ -237,6 +237,15 @@ describe("graph entry and first-use offer", () => {
   it("settings saves are serialized, so a slower earlier save cannot publish over a later one", async () => {
     answer(view({ state: "not-installed" }));
     await refreshComponents();
+    // A live store subscriber: the settings section's offline toggle reads the published
+    // snapshot, so what it shows is what the saves published — no GET involved.
+    render(
+      <I18nProvider>
+        <ComponentsSettings />
+      </I18nProvider>,
+    );
+    const offlineToggle = (await screen.findByRole("checkbox", { name: en["components.offline"] })) as HTMLInputElement;
+    expect(offlineToggle.checked).toBe(false);
     const deferred = <T,>() => {
       let resolve!: (value: T) => void;
       const promise = new Promise<T>((r) => {
@@ -259,9 +268,38 @@ describe("graph entry and first-use offer", () => {
     expect(hub.updateComponentSettings).toHaveBeenCalledTimes(2);
     second.resolve(offlineView);
     await save2;
-    answer(offlineView);
+    // The second PATCH response itself published the settings: the toggle shows offline mode
+    // with no refresh in between, while the GET fixture still returns the pre-save view.
+    await waitFor(() => expect(offlineToggle.checked).toBe(true));
+  });
+
+  it("a settings answer that lands after an install started keeps the install state and takes the settings", async () => {
+    answer(view({ state: "not-installed" }));
+    await refreshComponents();
+    let resolveSettings!: (value: ComponentView) => void;
+    vi.mocked(hub.updateComponentSettings).mockImplementation(
+      () =>
+        new Promise<ComponentView>((resolve) => {
+          resolveSettings = resolve;
+        }),
+    );
+    const save = saveGraphifySettings({ pythonMirror: "https://mirror.example" });
+    await Promise.resolve();
+    expect(hub.updateComponentSettings).toHaveBeenCalledTimes(1);
+    // The install starts and publishes its state while the PATCH is still in flight.
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing" }));
+    await startGraphifyInstall(LOCK_HASH);
+    // The settings answer was composed before the install started: its lifecycle state is
+    // stale, but its settings are the ones the person just saved.
+    const stale = view({ state: "not-installed" });
+    resolveSettings({ ...stale, settings: { ...stale.settings, pythonMirror: { value: "https://mirror.example", source: "config" as const, config: "https://mirror.example" } } });
+    await save;
+    // Read the published snapshot back without a successful GET overwriting it either way:
+    // a failed refresh keeps the current view and only records the error.
+    vi.mocked(hub.getComponents).mockRejectedValue(new Error("hub unreachable"));
     const snapshot = await refreshComponents();
-    expect(snapshot.graphify?.settings.offline.value).toBe(true);
+    expect(snapshot.graphify?.status.state).toBe("installing");
+    expect(snapshot.graphify?.settings.pythonMirror.value).toBe("https://mirror.example");
   });
 
   it("a failure greys only the graph entry, names the cause, and offers retry and import without a global error", async () => {
@@ -538,6 +576,28 @@ describe("Settings → Components", () => {
     expect((await within(dialog).findByRole("alert")).textContent).toContain("hub unreachable");
     expect(within(dialog).getByText("Installed: Graphify 0.9.95 (Python 3.11.18).")).toBeTruthy();
     expect(within(dialog).queryByText("Graphify is installed. Graph features are ready.")).toBeNull();
+  });
+
+  it("an offer-changed failure shows the replacement offer before the retry downloads anything", async () => {
+    answer(view({ state: "not-installed" }));
+    // The install the person confirmed is refused because the lock moved meanwhile: the
+    // attempt's answer is the offer-changed failure, carrying the replacement offer.
+    vi.mocked(hub.installComponent).mockResolvedValue(failed("offer-changed", "The component offer changed after it was shown; nothing was downloaded."));
+    renderSettings();
+    await userEvent.click(await screen.findByRole("button", { name: "Install" }));
+    const dialog = await screen.findByRole("dialog", { name: "Download Graphify?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    expect(hub.installComponent).toHaveBeenCalledTimes(1);
+    // The follow step shows the failure — and its Retry must not submit the replacement
+    // offer sight unseen: it goes back to the confirmation panel, and nothing more is sent.
+    expect((await within(dialog).findByRole("alert")).textContent).toContain("the component offer changed; confirm again");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+    expect(hub.installComponent).toHaveBeenCalledTimes(1);
+    expect(within(dialog).getByTestId("component-offer-size").textContent).toContain(formatMiB(LOCK_TOTAL));
+    // Confirming the shown offer is what starts the next download.
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    await waitFor(() => expect(hub.installComponent).toHaveBeenCalledTimes(2));
+    expect(hub.installComponent).toHaveBeenLastCalledWith("graphify", LOCK_HASH);
   });
 });
 

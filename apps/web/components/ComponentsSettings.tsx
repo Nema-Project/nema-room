@@ -167,6 +167,9 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
   }
 
   async function cancel() {
+    // A retry of the cancel starts clean: an earlier attempt's error must not sit next to
+    // this attempt's confirmed outcome. A failure of this attempt sets its own error below.
+    setRequestError(null);
     setBusy(true);
     try {
       // The daemon says whether the attempt really stopped: a cancel that landed after the
@@ -287,7 +290,8 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
         <div className="actions">
           <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
           {actions.import && <button type="button" onClick={() => setShowImport(true)}>{t("components.import")}</button>}
-          {actions.retry && <button type="button" disabled={busy} onClick={() => void confirm()}>{t("components.retry")}</button>}
+          {/* An offer-changed failure means the lock moved after the person confirmed: the replacement offer has to be shown and confirmed before anything downloads. Other failures are for the offer already confirmed, so they retry directly. */}
+          {actions.retry && <button type="button" disabled={busy} onClick={() => (status.reason === "offer-changed" ? setStep("confirm") : void confirm())}>{t("components.retry")}</button>}
         </div>
       </>
     );

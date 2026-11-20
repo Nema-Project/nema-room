@@ -8,7 +8,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { chmod, copyFile, cp, link, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, statfs, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, link, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, rename, rm, statfs, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { windowsRuntimeEnv } from "../platform.js";
@@ -25,6 +25,7 @@ import {
   launcherName,
   LOCK_HASH,
   OFFLINE_DETAIL,
+  readFailure,
   readInstallGeneration,
   readPointer,
   recoverReplacementsSync,
@@ -411,6 +412,19 @@ export async function activate(root: string, lockHash: string, staging: string, 
     await verify();
     await point(r, p);
   };
+  // Rollback is ownership-bound. A tree this attempt placed may be taken back out (and a backup
+  // restored) only while the attempt still owns the install: its own cancellation, or a failure
+  // while the lock is still held. Once the lock is lost, a successor may already have published
+  // the same directory — removing it, or moving the backup over it, would delete the live
+  // runtime the pointer names. What an attempt leaves behind unpublished is recovery's job,
+  // under the lock.
+  const ownsTree = async (error: unknown): Promise<boolean> => {
+    if (isAbort(error)) return true;
+    return verify().then(
+      () => true,
+      () => false,
+    );
+  };
   const final = path.join(root, lockHash);
   const pointer = readPointer(root);
   const next: Pointer = { active: lockHash, previous: pointer.active && pointer.active !== lockHash ? pointer.active : pointer.previous };
@@ -423,9 +437,9 @@ export async function activate(root: string, lockHash: string, staging: string, 
     try {
       await checkedPoint(root, next);
     } catch (error) {
-      // Nothing has published this tree (no pointer names it) and this attempt still owns it:
-      // take it back out rather than leaving a full runtime behind as an orphan.
-      await rm(final, { recursive: true, force: true });
+      // Nothing has published this tree (no pointer names it). Take it back out only while this
+      // attempt still owns it — after a lost lock it may be the successor's published runtime.
+      if (await ownsTree(error)) await rm(final, { recursive: true, force: true });
       throw error;
     }
     return "renamed";
@@ -441,9 +455,9 @@ export async function activate(root: string, lockHash: string, staging: string, 
     try {
       await checkedPoint(root, next);
     } catch (error) {
-      // Same unpublished case: the replaced tree was an orphan no pointer named, and this attempt
-      // still owns the new one — remove it rather than leaving it behind.
-      await rm(final, { recursive: true, force: true });
+      // Same unpublished case as above: the replaced tree was an orphan no pointer named.
+      // Remove the new one only while this attempt still owns it.
+      if (await ownsTree(error)) await rm(final, { recursive: true, force: true });
       throw error;
     }
     return "replaced-orphan";
@@ -462,8 +476,12 @@ export async function activate(root: string, lockHash: string, staging: string, 
     placed = true;
     await checkedPoint(root, next);
   } catch (error) {
-    if (placed) await rm(final, { recursive: true, force: true });
-    await move(backup, final);
+    // Restore the backup only while this attempt still owns the tree: after a lost lock the
+    // placed tree may be the successor's published runtime, and the backup stays for recovery.
+    if (await ownsTree(error)) {
+      if (placed) await rm(final, { recursive: true, force: true });
+      await move(backup, final);
+    }
     throw error;
   }
   // The pointer has committed: the replacement is the installed copy. Removing the replaced one
@@ -619,18 +637,28 @@ export async function acquireInstallLock(root: string, seams: { removeLockFile?:
   const token = claimToken();
   const removeLockFile = seams.removeLockFile ?? ((target: string) => rm(target, { force: true }));
   const release = async (): Promise<void> => {
-    const current = await readFile(file, "utf8").catch(() => null);
-    if (current !== token) return;
+    // Open the claim once, without truncating it: the token is verified through this handle
+    // and, if removal fails, the tombstone is written through the same handle. A path-based
+    // re-check and write could be fooled by a delayed stale-lock takeover moving the verified
+    // file aside and a successor claiming the path in between — the write would land on the
+    // successor's token and break its ownership checks.
+    const handle = await open(file, "r+").catch(() => null);
+    if (!handle) return;
     try {
-      await removeLockFile(file);
-    } catch {
-      // The claim must not outlive the install as a live lock held by this (possibly long-lived)
-      // process: overwrite it with a record no acquirer reads as a live owner, so the next
-      // installer takes it over through the stale-lock protocol instead of waiting on a lock
-      // nobody holds. Best effort — release never throws.
-      if ((await readFile(file, "utf8").catch(() => null)) === token) {
-        await writeFile(file, "released\n").catch(() => {});
+      const current = await handle.readFile("utf8").catch(() => null);
+      if (current !== token) return;
+      try {
+        await removeLockFile(file);
+      } catch {
+        // The claim must not outlive the install as a live lock held by this (possibly
+        // long-lived) process: overwrite it, through the verified handle, with a record no
+        // acquirer reads as a live owner, so the next installer takes it over through the
+        // stale-lock protocol instead. Best effort — release never throws.
+        await handle.truncate(0).catch(() => {});
+        await handle.write("released\n", 0, "utf8").catch(() => {});
       }
+    } finally {
+      await handle.close().catch(() => {});
     }
   };
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -692,10 +720,16 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
   // Snapshot the install generation before any status read below. The offline refusal records
   // its failure only if the generation is unchanged when it writes; a repair that commits after
   // this snapshot — even of the same version — bumps it, so the refusal cannot stamp a state it
-  // never saw. Reading the generation after the status would reopen exactly that window. The
-  // read fails safe: an unreadable or corrupt counter reads as 0, and any commit rewrites it,
-  // so a mismatch suppresses the record rather than allowing a stale one.
-  const generationAtStart = readInstallGeneration(componentRoot(name, env));
+  // never saw. Reading the generation after the status would reopen exactly that window.
+  // A store whose counter is missing or unreadable cannot anchor the comparison: the snapshot
+  // is then null and the refusal is never recorded — when a commit cannot be detected, the
+  // write is refused rather than risked.
+  let generationAtStart: number | null;
+  try {
+    generationAtStart = readInstallGeneration(componentRoot(name, env));
+  } catch {
+    generationAtStart = null;
+  }
   const prepared = prepare(name, env, o.allowOffline === true, o.expectedLockHash);
   if (!("root" in prepared)) {
     // Offline with a version installed, prepare answers the installed status: a plain install has
@@ -715,7 +749,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
         const { release } = await acquireInstallLock(root);
         try {
           const now = componentStatusSync(prepared.name, env);
-          if (now.state === "installed" && now.lockHash === prepared.lockHash && readInstallGeneration(root) === generationAtStart) {
+          if (now.state === "installed" && now.lockHash === prepared.lockHash && generationAtStart !== null && readInstallGeneration(root) === generationAtStart) {
             await writeFailure(root, { lockHash: prepared.lockHash, ...attemptFailure });
           }
         } finally {
@@ -737,9 +771,12 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
         const { release } = await acquireInstallLock(root);
         try {
           // Only while the refusal still describes the store: a copy installed under the current
-          // lock in the meantime has resolved the situation, and its status stands.
+          // lock in the meantime has resolved the situation, and its status stands. A failure a
+          // newer attempt already recorded stands too — this refusal is the older event, even
+          // when both are about the same lock.
           const now = componentStatusSync(prepared.name, env);
-          if (now.state !== "installed" && now.lockHash === prepared.lockHash) {
+          const recorded = readFailure(root);
+          if (now.state !== "installed" && now.lockHash === prepared.lockHash && (!recorded || recorded.at <= at)) {
             await writeFailure(root, { lockHash: prepared.lockHash, reason: prepared.reason, detail: prepared.detail, at });
           }
         } finally {
@@ -826,6 +863,10 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
       commitRecorded = true;
     } catch (cleanupError) {
       console.error(`[nema] component ${prepared.name} installed, but recording the install failed; the previous failure record is kept`, cleanupError);
+      // The counter can no longer be trusted to change on a later commit either — its update
+      // just failed. Remove it, so later generation snapshots read "unknown" and refusals stop
+      // recording instead of comparing against a value that may silently stay put.
+      await rm(path.join(root, "install-generation"), { force: true }).catch(() => {});
     }
     try {
       // The failure record is cleared only when the commit was recorded: clearing it while the

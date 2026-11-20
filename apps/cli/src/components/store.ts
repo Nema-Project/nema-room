@@ -133,21 +133,35 @@ export async function writePointer(root: string, pointer: Pointer): Promise<void
 }
 
 /**
- * How many installs have committed in this store. A same-version repair rewrites the pointer with
- * identical content, so the pointer alone cannot tell "repaired since you looked" from "untouched";
- * this counter can. It is bumped under the install lock after each activation commits.
+ * How many installs have committed in this store, or null when no install has committed yet.
+ * A same-version repair rewrites the pointer with identical content, so the pointer alone
+ * cannot tell "repaired since you looked" from "untouched"; this counter can. It is bumped
+ * under the install lock after each activation commits.
+ *
+ * Only a missing counter reads as uninitialized. An existing counter that cannot be read or
+ * validated throws: treating it as 0 could let a later bump rewrite the generation a repair
+ * already used, and callers comparing generations would see "unchanged" after a commit.
  */
-export function readInstallGeneration(root: string): number {
+export function readInstallGeneration(root: string): number | null {
+  const file = path.join(root, "install-generation");
+  let raw: string;
   try {
-    const raw = Number.parseInt(readFileSync(path.join(root, "install-generation"), "utf8").trim(), 10);
-    return Number.isInteger(raw) && raw >= 0 ? raw : 0;
-  } catch {
-    return 0;
+    raw = readFileSync(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
   }
+  const text = raw.trim();
+  const parsed = Number.parseInt(text, 10);
+  if (!Number.isInteger(parsed) || parsed < 0 || String(parsed) !== text) {
+    throw new Error(`Invalid install generation in ${file}: ${JSON.stringify(raw)}`);
+  }
+  return parsed;
 }
 
 export async function bumpInstallGeneration(root: string): Promise<void> {
-  await writeFileAtomic(path.join(root, "install-generation"), `${readInstallGeneration(root) + 1}\n`);
+  const current = readInstallGeneration(root);
+  await writeFileAtomic(path.join(root, "install-generation"), `${(current ?? 0) + 1}\n`);
 }
 
 export type FailureRecord = { lockHash: string; reason: FailureReason; detail: string; at: string };

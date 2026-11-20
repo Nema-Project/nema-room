@@ -53,6 +53,23 @@ function accept(view: ComponentView): void {
 }
 
 /**
+ * A settings save's answer. The view it carries was composed when the daemon processed the
+ * request, so its lifecycle state can predate an install or cancel that landed while the save
+ * was in flight: publishing it whole would hide the progress and the Cancel button, and stop
+ * the poll. The answer is authoritative for the settings it changed — merge those into the
+ * current view and keep the current lifecycle state.
+ */
+function acceptSettings(view: ComponentView): void {
+  mutationEpoch += 1;
+  const current = snapshot.graphify;
+  if (!current) {
+    publish({ graphify: view, error: null, loaded: true });
+    return;
+  }
+  publish({ graphify: { ...current, settings: view.settings }, error: null, loaded: true });
+}
+
+/**
  * The one shared GET, joined by every caller. A response that predates a mutation (an install that started
  * after this GET) is discarded and fetched once more: publishing it would overwrite the newer `installing`
  * state with `not-installed` and stop the poll, losing progress and cancel access while the installer runs.
@@ -110,7 +127,7 @@ let settingsQueue: Promise<void> = Promise.resolve();
 export async function saveGraphifySettings(patch: { pythonMirror?: string | null; pypiBase?: string | null; offline?: boolean }): Promise<void> {
   mutationEpoch += 1;
   const task = settingsQueue.then(async () => {
-    accept(await updateComponentSettings("graphify", patch));
+    acceptSettings(await updateComponentSettings("graphify", patch));
   });
   // The queue runs past a failed save; the failure itself still reaches this save's caller.
   settingsQueue = task.catch(() => {});
