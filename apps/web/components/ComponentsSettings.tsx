@@ -220,10 +220,12 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
           <dd className="kid">{offer.hosts.join(", ")}</dd>
         </dl>
         <p className="help">{t("components.offer.declineNote")}</p>
+        {error && <p className="error" role="alert">{t("components.state.unknown", { error })}</p>}
         {requestError && <p className="error" role="alert">{requestError}</p>}
         <div className="actions">
           <button type="button" ref={firstButton} onClick={decline}>{t("components.offer.decline")}</button>
-          <button type="button" disabled={busy} onClick={() => void confirm()}>{t("components.offer.confirm")}</button>
+          {error && <button type="button" disabled={busy} onClick={() => void refreshComponents()}>{t("components.retry")}</button>}
+          <button type="button" disabled={busy || error !== null} onClick={() => void confirm()}>{t("components.offer.confirm")}</button>
         </div>
       </>
     ) : (
@@ -516,6 +518,7 @@ export function ComponentsSettings() {
       {graphify ? (
         <>
           <GraphifyStatusRow view={graphify} onOpen={(force) => setDialog(force ? "repair" : "install")} />
+          {error && <p className="error" role="alert">{t("components.state.unknown", { error })}</p>}
           {graphify.offer && <p className="kmeta">{t("components.offer.location")}: <span className="kid">{`${graphify.offer.location.replace(/[\\/]+$/, "")}/`}</span></p>}
           {graphify.offerError && <p className="kmeta">{t("components.offerUnavailable", { error: graphify.offerError })}</p>}
           <MirrorSettings key={`${graphify.settings.pythonMirror.config ?? ""}|${graphify.settings.pypiBase.config ?? ""}`} view={graphify} />

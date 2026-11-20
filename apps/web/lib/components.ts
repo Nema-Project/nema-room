@@ -83,9 +83,14 @@ function accept(view: ComponentView): void {
  * overwritten with the older one this answer carries. When the answer's offer and the
  * published one disagree — different locks, or one side has no offer at all — neither is
  * provably current, so a fresh read decides instead of leaving a stale lock, mirror hosts,
- * or a discarded offer error in place. When the refresh itself cannot reach the daemon,
- * the published offer stands: it came from a real daemon response, and the refresh's error
- * is already visible.
+ * or a discarded offer error in place. A lifecycle publication that landed in between is
+ * reconciled the same way: it may be a delayed GET's older observation (a GET that captured
+ * not-installed before an install started can publish after the PATCH's answer was composed),
+ * and keeping it would miss the active install and stop the poll. The fresh read is issued
+ * after the PATCH's answer arrived, so the daemon has registered the install by then. When
+ * the refresh itself cannot reach the daemon, the published offer stands — it came from a
+ * real daemon response — but the refresh's error stays visible instead of being cleared:
+ * the offer is unverified until a fresh read succeeds, and the dialog will not confirm it.
  */
 async function acceptSettings(view: ComponentView, sentEpoch: number, sentStatusEpoch: number): Promise<void> {
   const arrivedEpoch = mutationEpoch;
@@ -96,19 +101,28 @@ async function acceptSettings(view: ComponentView, sentEpoch: number, sentStatus
     publish({ graphify: view, error: null, loaded: true });
     return;
   }
-  const status = current.status.state === "installing" || arrivedEpoch !== sentEpoch || arrivedStatusEpoch !== sentStatusEpoch ? current.status : view.status;
+  const statusStale = current.status.state !== "installing" && (arrivedEpoch !== sentEpoch || arrivedStatusEpoch !== sentStatusEpoch);
   const conflict =
     (current.offer && view.offer && current.offer.lockHash !== view.offer.lockHash) || (!current.offer && view.offer) || (current.offer && !view.offer);
-  if (conflict) {
+  let refreshError: string | null = null;
+  if (statusStale || conflict) {
     const fresh = await refreshComponents();
     if (!fresh.error && fresh.graphify) {
-      publish({ graphify: { ...fresh.graphify, settings: view.settings }, error: null, loaded: true });
+      if (conflict) {
+        publish({ graphify: { ...fresh.graphify, settings: view.settings }, error: null, loaded: true });
+      } else {
+        // Only the status needed reconciling: the answer's offer is authoritative while the
+        // locks match, and the fresh read's offer would discard the mirror change it carries.
+        publish({ graphify: { ...current, settings: view.settings, offer: view.offer, offerError: view.offerError, status: fresh.graphify.status }, error: null, loaded: true });
+      }
       return;
     }
+    refreshError = fresh.error;
   }
+  const status = current.status.state === "installing" || arrivedEpoch !== sentEpoch || arrivedStatusEpoch !== sentStatusEpoch ? current.status : view.status;
   const offer = view.offer && (!current.offer || current.offer.lockHash === view.offer.lockHash) ? view.offer : current.offer;
   const offerError = offer === view.offer ? view.offerError : current.offerError;
-  publish({ graphify: { ...current, settings: view.settings, offer, offerError, status }, error: null, loaded: true });
+  publish({ graphify: { ...current, settings: view.settings, offer, offerError, status }, error: refreshError, loaded: true });
 }
 
 /**

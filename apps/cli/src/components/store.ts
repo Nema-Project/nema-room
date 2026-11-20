@@ -1,7 +1,7 @@
 // The component store under ~/.nema/runtime/<name>/: one `<lock-hash>/` directory per installed
 // version, `current.json` naming the active and previous ones, and the last failed attempt.
 import { randomBytes, randomInt } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { closeSync, existsSync, ftruncateSync, linkSync, lstatSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -93,6 +93,154 @@ export function readInstallLockToken(root: string): string | null {
 }
 
 /**
+ * The synchronous form of the install lock, for the synchronous recovery path below:
+ * claim it (link a temp file onto the lock path — exactly one claimant wins), taking over
+ * a dead owner's record with the same pre-rename re-validation and post-rename content
+ * check as the async claim, and release only the caller's own token (writing the
+ * "released" tombstone through the verified handle when removal fails). Returns null when
+ * a live owner holds the lock. Recovery holds the lock while it moves backups, so no
+ * installer can take the lock in between and reach activation while recovery restores one.
+ */
+export function acquireInstallLockSync(root: string): { release: () => void; token: string } | null {
+  const file = path.join(root, ".install.lock");
+  const token = `${process.pid}:${randomBytes(6).toString("hex")}`;
+  const release = (): void => {
+    let handle: number;
+    try {
+      handle = openSync(file, "r+");
+    } catch {
+      return;
+    }
+    try {
+      let current: string | null = null;
+      try {
+        current = readFileSync(handle, "utf8");
+      } catch {
+        current = null;
+      }
+      if (current !== token) return;
+      try {
+        rmSync(file, { force: true });
+      } catch {
+        try {
+          ftruncateSync(handle, 0);
+          writeSync(handle, "released\n", 0, "utf8");
+        } catch {
+          // Best effort — release never throws.
+        }
+      }
+    } finally {
+      try {
+        closeSync(handle);
+      } catch {
+        // Best effort.
+      }
+    }
+  };
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (linkClaimSync(file, token)) return { release, token };
+    const owner = readLockOwnerSync(file);
+    if (!owner) continue; // Vanished between the claim attempt and the read; retry the claim.
+    const pid = ownerPidSync(owner.content);
+    if (pid !== null && (pid === process.pid || pidAliveSync(pid))) return null;
+    const stale = takeOverStaleLockSync(file, owner);
+    if (!stale) continue; // Lost the rename race, or the record revived; re-loop and re-judge.
+    if (linkClaimSync(file, token)) {
+      rmSync(stale, { force: true });
+      return { release, token };
+    }
+    rmSync(stale, { force: true });
+    return null; // A fresh installer claimed the path in the gap.
+  }
+  return null;
+}
+
+function ownerPidSync(content: string): number | null {
+  const pid = Number(content.split(":")[0]?.trim());
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+function pidAliveSync(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (probe) {
+    return (probe as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Publish `token` as the lock owner. Returns true when this call won the atomic link. */
+function linkClaimSync(file: string, token: string): boolean {
+  const temp = `${file}.claim-${process.pid}-${randomBytes(6).toString("hex")}`;
+  writeFileSync(temp, token, { flag: "wx" });
+  try {
+    linkSync(temp, file);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    return false;
+  } finally {
+    rmSync(temp, { force: true });
+  }
+}
+
+type LockOwnerSync = { content: string; ino: number; mtimeMs: number };
+
+function readLockOwnerSync(file: string): LockOwnerSync | null {
+  try {
+    const info = lstatSync(file);
+    const content = readFileSync(file, "utf8");
+    return { content, ino: info.ino, mtimeMs: info.mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Move the judged-stale lock aside synchronously, with the same re-validation and
+ * non-replacing restore as the async takeover: returns the aside path when the moved
+ * record is still the one judged stale, otherwise restores it and returns null.
+ */
+function takeOverStaleLockSync(file: string, judged: LockOwnerSync): string | null {
+  let current: string | null;
+  try {
+    current = readFileSync(file, "utf8");
+  } catch {
+    current = null;
+  }
+  if (current !== judged.content) return null;
+  const stale = `${file}.stale-${process.pid}-${randomBytes(6).toString("hex")}`;
+  try {
+    renameSync(file, stale);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  let content: string | null;
+  try {
+    content = readFileSync(stale, "utf8");
+  } catch {
+    content = null;
+  }
+  if (content === null || content !== judged.content) {
+    if (content !== null) {
+      const temp = `${file}.claim-${process.pid}-${randomBytes(6).toString("hex")}`;
+      writeFileSync(temp, content);
+      try {
+        linkSync(temp, file);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      } finally {
+        rmSync(temp, { force: true });
+      }
+    }
+    rmSync(stale, { force: true });
+    return null;
+  }
+  return stale;
+}
+
+/**
  * Undo a replacement cut off midway (a crash between moving the old directory aside and
  * publishing its replacement): a backup whose `<lock-hash>` is gone goes back into place;
  * a backup beside a present `<lock-hash>` is stale (that directory is the self-checked
@@ -106,35 +254,51 @@ export function readInstallLockToken(root: string): string | null {
  * proceeds; a missing or dead lock is the crash case this exists for. When the caller
  * already holds the lock (`ownToken`), recovery runs under it instead of skipping itself:
  * the installer that owns the backups is the one healing them, and no other installer can
- * take the lock in between. The lock is re-checked immediately before each move, so a
- * claim that lands after the listing still stops the move — but that check alone does not
- * serialize recovery with activation across processes: a recovery that pauses after it can
- * still resume into another installer's activation. Callers that hold the lock must pass
- * their token; callers that do not hold it keep the re-check as their only guard.
+ * take the lock in between. Every other caller claims the lock synchronously here — the
+ * read path cannot await the async lock — and releases it when the recovery is done, so a
+ * recovery that pauses after its final check still holds the lock while it moves a backup
+ * and no installer can take the lock in between and reach activation. The lock is
+ * re-checked immediately before each move, so a claim that lands after the listing still
+ * stops the move.
  */
 export function recoverReplacementsSync(root: string, opts: { ownToken?: string; beforeMove?: () => void } = {}): void {
-  if (installLockHeldByLiveOwner(root) && readInstallLockToken(root) !== opts.ownToken) return;
   let names: string[];
   try {
     names = readdirSync(root);
   } catch {
     return;
   }
-  for (const name of names) {
-    const match = REPLACED_DIR.exec(name);
-    if (!match) continue;
-    const original = path.join(root, match[1]!);
-    try {
-      // Re-check immediately before moving: an installer can claim the lock after the
-      // listing (taking over a tombstone) and own the backup by the time this runs.
-      // Moving it back would occupy the path its activation is about to place staging at.
-      opts.beforeMove?.();
-      if (installLockHeldByLiveOwner(root) && readInstallLockToken(root) !== opts.ownToken) return;
-      if (existsSync(original)) rmSync(path.join(root, name), { recursive: true, force: true });
-      else renameSync(path.join(root, name), original);
-    } catch {
-      // A later read or install runs the same recovery.
+  const backups = names.filter((name) => REPLACED_DIR.test(name));
+  if (backups.length === 0) return;
+  // Claim the lock, or recognize the caller's own: a live owner other than the caller
+  // means an installer is running — skip, and let it heal the store itself.
+  let held: { release: () => void; token: string } | null = null;
+  let myToken: string | undefined = opts.ownToken;
+  if (readInstallLockToken(root) !== opts.ownToken && installLockHeldByLiveOwner(root)) return;
+  if (opts.ownToken === undefined) {
+    held = acquireInstallLockSync(root);
+    if (!held) return;
+    myToken = held.token;
+  }
+  try {
+    for (const name of backups) {
+      const match = REPLACED_DIR.exec(name);
+      if (!match) continue;
+      const original = path.join(root, match[1]!);
+      try {
+        // Re-check immediately before moving: an installer can claim the lock after the
+        // listing (taking over a tombstone) and own the backup by the time this runs.
+        // Moving it back would occupy the path its activation is about to place staging at.
+        opts.beforeMove?.();
+        if (installLockHeldByLiveOwner(root) && readInstallLockToken(root) !== myToken) return;
+        if (existsSync(original)) rmSync(path.join(root, name), { recursive: true, force: true });
+        else renameSync(path.join(root, name), original);
+      } catch {
+        // A later read or install runs the same recovery.
+      }
     }
+  } finally {
+    held?.release();
   }
 }
 
@@ -213,12 +377,23 @@ export function readInstallGeneration(root: string): number | null {
  * generation. Writing the counter first would let a failed high-water write leave a counter
  * a later reseed could repeat.
  */
-export async function claimInstallGeneration(root: string): Promise<number> {
+/**
+ * Claim the generation this attempt will commit under, or throw when it cannot be
+ * recorded. The high-water file is written first: a claim that fails after it still
+ * leaves the high-water ahead of the counter, so a later reseed cannot reuse the failed
+ * claim's generation, and a high-water write failure aborts the attempt before the
+ * counter is touched. `write` is the file writer (tests fail the counter write through
+ * it to exercise a real partial claim); it defaults to the atomic writer.
+ */
+export async function claimInstallGeneration(
+  root: string,
+  write: (file: string, body: string) => Promise<void> = writeFileAtomic,
+): Promise<number> {
   const current = readInstallGeneration(root);
   const base = current ?? (readPointer(root).active === null ? 0 : (readInstallGenerationHighWater(root) ?? randomInt(2, 2 ** 48)));
   const next = base + 1;
-  await writeFileAtomic(path.join(root, "install-generation-high-water"), `${next}\n`);
-  await writeFileAtomic(path.join(root, "install-generation"), `${next}\n`);
+  await write(path.join(root, "install-generation-high-water"), `${next}\n`);
+  await write(path.join(root, "install-generation"), `${next}\n`);
   return next;
 }
 

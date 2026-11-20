@@ -79,6 +79,14 @@ export type InstallHooks = {
   removeLockFile?: (file: string) => Promise<void>;
   /** Renames the install lock file during a stale-lock takeover; tests pause it to interleave another installer. */
   renameLockFile?: (from: string, to: string) => Promise<void>;
+  /**
+   * Runs between an attempt's entry snapshot (generation, live-lock, failure record) and
+   * its lock acquisition; tests pause a refusal there so another installer can claim its
+   * generation and commit before the refusal reaches its recheck.
+   */
+  beforeAcquire?: () => Promise<void>;
+  /** Writes the generation counter and high-water files for a claim; tests fail the counter write through it to exercise a real partial claim. */
+  writeGenerationFile?: (file: string, body: string) => Promise<void>;
   writePointer?: (root: string, pointer: Pointer) => Promise<void>;
   /** The prebuilt Windows launcher shipped with the program. */
   windowsLauncher?: string;
@@ -811,6 +819,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
       // running install's outcome stands and this attempt is only returned to its caller.
       try {
         await mkdir(root, { recursive: true });
+        await o.hooks?.beforeAcquire?.();
         const { release } = await acquireInstallLock(root, { renameLockFile: o.hooks?.renameLockFile });
         try {
           const now = componentStatusSync(prepared.name, env);
@@ -839,6 +848,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
       const root = componentRoot(prepared.name, env);
       try {
         await mkdir(root, { recursive: true });
+        await o.hooks?.beforeAcquire?.();
         const { release } = await acquireInstallLock(root, { renameLockFile: o.hooks?.renameLockFile });
         try {
           // Only while the refusal still describes the store: a copy installed under the current
@@ -903,7 +913,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
     // refusal can detect. Claiming after the progress callback would leave a failure recorded
     // by the callback's throw, or by a failed claim, under an unchanged generation, which an
     // older refusal could then overwrite.
-    await claimInstallGeneration(root);
+    await claimInstallGeneration(root, hooks.writeGenerationFile);
     emit();
     // Re-validate before the first mutation of shared state: a takeover that displaced
     // this install's lock must abort here, not after wiping another installer's staging.

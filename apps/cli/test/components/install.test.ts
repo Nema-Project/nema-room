@@ -8,7 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { activate, acquireInstallLock, installComponent, takeOverStaleLock, verifyArchives, verifyLockHeld, type InstallOptions } from "../../src/components/install.js";
 import { lockHash } from "../../src/components/lock.js";
-import { componentBin, componentStatus, installLockHeldByLiveOwner, readFailure, readInstallGeneration, readInstallLockToken, readPointer, recoverReplacementsSync, writeFailure, writePointer, type ComponentEnv } from "../../src/components/store.js";
+import { acquireInstallLockSync, componentBin, componentStatus, installLockHeldByLiveOwner, readFailure, readInstallGeneration, readInstallLockToken, readPointer, recoverReplacementsSync, writeFailure, writeFileAtomic, writePointer, type ComponentEnv } from "../../src/components/store.js";
 import type { ComponentStatus, InstallProgress } from "../../src/components/types.js";
 import { fakeComponent, fakeSource, writeLock, type FakeComponent, type FakeSource } from "./fixtures.js";
 
@@ -525,7 +525,6 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
 
   test("a takeover delayed after its ownership read does not let rollback move the backup over the successor's tree", async () => {
     const hash = "a".repeat(64);
-    const successorHash = "b".repeat(64);
     const dir = mkdtempSync(path.join(root, "activate-"));
     const final = path.join(dir, hash);
     mkdirSync(final, { recursive: true });
@@ -580,11 +579,12 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     releaseRename.resolve();
     await afterRename.promise;
     // A successor claims the vacant path and publishes its tree while the takeover's
-    // restore is still paused.
+    // restore is still paused. It is a same-version repair, so its tree is the same final
+    // directory and the pointer still names that lock-hash.
     const successor = await acquireInstallLock(dir);
     mkdirSync(final, { recursive: true });
     writeFileSync(path.join(final, "marker"), "successor\n");
-    await writePointer(dir, { active: successorHash, previous: hash });
+    await writePointer(dir, { active: hash, previous: null });
     releaseAfterRename.resolve();
     expect(await takeover).toBeNull();
     // The takeover's restore could not put the live claim back (the successor's claim is
@@ -598,11 +598,73 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     const backups = readdirSync(dir).filter((name) => name.includes(".replaced-"));
     expect(backups).toHaveLength(1);
     expect(readFileSync(path.join(dir, backups[0]!, "marker"), "utf8")).toBe("old\n");
-    expect(readPointer(dir).active).toBe(successorHash);
+    expect(readPointer(dir).active).toBe(hash);
     // The successor's lock is live while its tree stands.
     expect(readInstallLockToken(dir)).toBe(successor.token);
     await successor.release();
     await live.release();
+  });
+
+  test("a takeover and publication after the final ownership check does not let rollback replace the successor's tree", async () => {
+    const hash = "a".repeat(64);
+    const dir = mkdtempSync(path.join(root, "activate-"));
+    const final = path.join(dir, hash);
+    mkdirSync(final, { recursive: true });
+    writeFileSync(path.join(final, "marker"), "old\n");
+    await writePointer(dir, { active: hash, previous: null });
+    const staging = path.join(dir, "staging");
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(path.join(staging, "marker"), "new\n");
+    // The holder's activation is cancelled at its checked point. Its rollback passes the
+    // final ownership check and pauses at the restore move, after the check returned — the
+    // check and the mutation are separated by the move's own hook.
+    let calls = 0;
+    const verifyLockHeld = async () => {
+      calls += 1;
+      if (calls === 3) throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    };
+    // The restore move is the third rename (final -> backup, staging -> final, backup -> final).
+    let renames = 0;
+    const atRestoreMove = deferred();
+    const releaseRestoreMove = deferred();
+    const realRename = rename;
+    const renameHook = async (from: string, to: string) => {
+      renames += 1;
+      if (renames === 3) {
+        atRestoreMove.resolve();
+        await releaseRestoreMove.promise;
+      }
+      await realRename(from, to);
+    };
+    const outcome = activate(dir, hash, staging, { verifyLockHeld, rename: renameHook }).catch((error: unknown) => error);
+    await atRestoreMove.promise;
+    // A delayed stale-lock takeover moves the holder's (dead) record aside, and a successor
+    // claims the vacant path and publishes the same final directory while the rollback is
+    // paused at the move. It is a same-version repair, so its tree is the same final
+    // directory and the pointer still names that lock-hash.
+    const lockFile = path.join(dir, ".install.lock");
+    writeFileSync(lockFile, String(2 ** 22 + 123_456));
+    const stale = await takeOverStaleLock(lockFile, { content: String(2 ** 22 + 123_456), ino: 0, mtimeMs: 0 });
+    expect(stale).not.toBeNull();
+    const successor = await acquireInstallLock(dir);
+    mkdirSync(final, { recursive: true });
+    writeFileSync(path.join(final, "marker"), "successor\n");
+    await writePointer(dir, { active: hash, previous: null });
+    // The restore move resumes: renaming the backup over the successor's non-empty tree
+    // fails, so the rollback cannot replace it — and the failure is the install's outcome,
+    // not a deleted successor.
+    releaseRestoreMove.resolve();
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    expect(readFileSync(path.join(final, "marker"), "utf8")).toBe("successor\n");
+    expect(readPointer(dir).active).toBe(hash);
+    // The successor's lock is live while its tree stands.
+    expect(readInstallLockToken(dir)).toBe(successor.token);
+    await successor.release();
+    // The backup stays aside for recovery: the rollback could not restore it.
+    const backups = readdirSync(dir).filter((name) => name.includes(".replaced-"));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(path.join(dir, backups[0]!, "marker"), "utf8")).toBe("old\n");
   });
 
   test("a damaged previous version is replaced when the app goes back to its lock", async () => {
@@ -989,6 +1051,119 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(readFailure(graphifyRoot())).toBeNull();
   });
 
+  test("a refusal snapshotted while a repair runs does not write after the repair commits", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    expect(await install(env)).toMatchObject({ state: "installed" });
+    // No failure record: the only guard that can suppress the write is the live-lock snapshot.
+    expect(readFailure(graphifyRoot())).toBeNull();
+    // Start a real same-version repair and pause it after its generation claim: the
+    // claim's counter write is the last step before the first progress emit, so the
+    // repair holds the lock and has claimed generation 2 while the status still reads
+    // installed (no installing marker yet) — the refusal can then reach its offline branch.
+    const atClaim = deferred();
+    const releaseClaim = deferred();
+    const repair = install(env, {
+      force: true,
+      hooks: {
+        writeGenerationFile: async (file: string, body: string) => {
+          await writeFileAtomic(file, body);
+          if (path.basename(file) === "install-generation") {
+            atClaim.resolve();
+            await releaseClaim.promise;
+          }
+        },
+      },
+    });
+    await atClaim.promise;
+    expect(readInstallGeneration(graphifyRoot())).toBe(2);
+    // Start the offline refusal: it snapshots generation 2, a live lock held, and no record,
+    // then pauses before its lock acquisition.
+    const atAcquire = deferred();
+    const releaseAcquire = deferred();
+    const offline = envFor(component, source, { offline: true });
+    const refusedPromise = install(offline, {
+      force: true,
+      hooks: {
+        beforeAcquire: async () => {
+          atAcquire.resolve();
+          await releaseAcquire.promise;
+        },
+      },
+    });
+    await atAcquire.promise;
+    // Let the repair commit and release, then resume the refusal: it takes the free lock and
+    // reaches its recheck with the generation unchanged (the repair claimed before the refusal
+    // snapshotted it) and no record to compare — only the live-lock snapshot suppresses the
+    // write. The repair runs as a separate installer in this process, not a separate OS
+    // process: a child process's claim is not observable to the parent without a protocol
+    // the CLI does not have, and the ordering the test enforces is the same.
+    releaseClaim.resolve();
+    expect(await repair).toMatchObject({ state: "installed" });
+    releaseAcquire.resolve();
+    const refused = await refusedPromise;
+    expect(refused).toMatchObject({ state: "failed", reason: "offline" });
+    expect(readFailure(graphifyRoot())).toBeNull();
+  });
+
+  test("a refusal does not write after a real partial claim and a repair commit", async () => {
+    const component = fakeComponent(execLog);
+    const source = await serve(component);
+    const env = envFor(component, source);
+    expect(await install(env)).toMatchObject({ state: "installed" });
+    // A real partial claim: a repair whose counter write fails after its high-water write.
+    // The write seam fails only the counter file, so the high-water records 2 while the
+    // counter stays at 1 — no hand-written claim state.
+    const partial = await install(env, {
+      force: true,
+      hooks: {
+        writeGenerationFile: async (file: string, body: string) => {
+          if (path.basename(file) === "install-generation") throw new Error("injected counter write failure");
+          await writeFileAtomic(file, body);
+        },
+      },
+    });
+    expect(partial).toMatchObject({ state: "failed", reason: "self-check" });
+    expect(readInstallGeneration(graphifyRoot())).toBe(1);
+    expect(readFileSync(path.join(graphifyRoot(), "install-generation-high-water"), "utf8").trim()).toBe("2");
+    const recordAtSnapshot = readFailure(graphifyRoot())!;
+    // A stale lock for the refusal's acquire to take over: the refusal pauses inside the
+    // takeover, after its entry snapshot (generation 1, the claim failure's record, no live lock).
+    const lockFile = path.join(graphifyRoot(), ".install.lock");
+    writeFileSync(lockFile, String(2 ** 22 + 123_456));
+    const atTakeover = deferred();
+    const releaseTakeover = deferred();
+    const offline = envFor(component, source, { offline: true });
+    const refusedPromise = install(offline, {
+      force: true,
+      hooks: {
+        renameLockFile: async (from, to) => {
+          atTakeover.resolve();
+          await releaseTakeover.promise;
+          await rename(from, to);
+        },
+      },
+    });
+    await atTakeover.promise;
+    // The counter is lost while the refusal is paused; a real same-version repair then
+    // commits: it reseeds from the high-water (generation 3, not a reuse of 2) and clears
+    // the record. The record is restored with its original revision so the record guard
+    // passes at the refusal's recheck — the generation comparison is the only suppressor,
+    // and removing it would let the refusal overwrite the restored record.
+    rmSync(path.join(graphifyRoot(), "install-generation"), { force: true });
+    expect(await install(env, { force: true })).toMatchObject({ state: "installed" });
+    expect(readInstallGeneration(graphifyRoot())).toBe(3);
+    expect(readFailure(graphifyRoot())).toBeNull();
+    writeFileSync(path.join(graphifyRoot(), "last-failure.json"), `${JSON.stringify(recordAtSnapshot, null, 2)}\n`);
+    // Resume the refusal: it takes the released lock and reaches its recheck after the
+    // repair's commit — the generation changed, so it must not write a stale failure.
+    releaseTakeover.resolve();
+    const refused = await refusedPromise;
+    expect(refused).toMatchObject({ state: "failed", reason: "offline" });
+    expect(readFailure(graphifyRoot())).toEqual(recordAtSnapshot);
+  });
+
   test("a claim whose high-water write fails leaves the counter unchanged", async () => {
     const component = fakeComponent(execLog);
     const source = await serve(component);
@@ -1298,6 +1473,33 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     } finally {
       await release();
     }
+  });
+
+  test("a read-path recovery claims the install lock while it moves a backup", () => {
+    const dir = graphifyRoot();
+    mkdirSync(dir, { recursive: true });
+    const backup = path.join(dir, `${"c".repeat(64)}.replaced-abcdef`);
+    mkdirSync(backup, { recursive: true });
+    writeFileSync(path.join(backup, "marker"), "kept\n");
+    // The read path has no token of its own: it claims the lock synchronously before moving
+    // the backup, so an installer that tries to claim it in the meantime is refused and its
+    // recovery never runs — the backup stays in place until the read path restores it. The
+    // read path is synchronous, so no async installer can interleave during the move; the
+    // exclusion is proved with a synchronous claim attempt inside the move's seam, which is
+    // the same link-based protocol the async acquire uses.
+    let claimDuringMove: { release: () => void; token: string } | null | "unset" = "unset";
+    recoverReplacementsSync(dir, {
+      beforeMove: () => {
+        claimDuringMove = acquireInstallLockSync(dir);
+      },
+    });
+    expect(claimDuringMove).toBeNull();
+    expect(existsSync(path.join(dir, "c".repeat(64)))).toBe(true);
+    expect(readFileSync(path.join(dir, "c".repeat(64), "marker"), "utf8")).toBe("kept\n");
+    // After the recovery releases, the lock is free again.
+    const claim = acquireInstallLockSync(dir);
+    expect(claim).not.toBeNull();
+    claim!.release();
   });
 
   test("recovery restores a backup when the lock file is only a release tombstone", async () => {

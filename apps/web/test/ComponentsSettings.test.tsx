@@ -601,6 +601,84 @@ describe("Settings → Components", () => {
     expect(snapshot.graphify?.settings.pythonMirror.value).toBe("https://mirror.example");
   });
 
+  it("a settings answer does not keep a delayed not-installed publication over an active install", async () => {
+    answer(view({ state: "not-installed" }));
+    await refreshComponents();
+    // Another client starts an install: the PATCH captures installing.
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing" }));
+    await startGraphifyInstall(LOCK_HASH);
+    let resolveSettings!: (value: ComponentView) => void;
+    vi.mocked(hub.updateComponentSettings).mockImplementation(
+      () =>
+        new Promise<ComponentView>((resolve) => {
+          resolveSettings = resolve;
+        }),
+    );
+    const save = saveGraphifySettings({ pythonMirror: "https://mirror.example" });
+    await Promise.resolve();
+    expect(hub.updateComponentSettings).toHaveBeenCalledTimes(1);
+    // A GET that captured not-installed before the install started publishes late: its
+    // response is the daemon's older observation, and the page must not keep it over the
+    // active install.
+    vi.mocked(hub.getComponents).mockResolvedValue({ components: [view({ state: "not-installed" })] });
+    await refreshComponents();
+    // The settings answer carries the installing state the PATCH captured.
+    const stale = view({ state: "installing" });
+    resolveSettings({
+      ...stale,
+      settings: { ...stale.settings, pythonMirror: { value: "https://mirror.example", source: "config" as const, config: "https://mirror.example" } },
+    });
+    // The save reconciles with a fresh read: the daemon's current state is installing, and
+    // the poll resumes from it.
+    vi.mocked(hub.getComponents).mockResolvedValue({ components: [view({ state: "installing" })] });
+    await save;
+    vi.mocked(hub.getComponents).mockRejectedValue(new Error("hub unreachable"));
+    const snapshot = await refreshComponents();
+    expect(snapshot.graphify?.status.state).toBe("installing");
+    expect(snapshot.graphify?.settings.pythonMirror.value).toBe("https://mirror.example");
+  });
+
+  it("a failed conflict refresh keeps the error visible and blocks confirmation until a fresh read succeeds", async () => {
+    // A terminal state, so no poll runs: the refresh must happen explicitly.
+    answer(view({ state: "not-installed" }));
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing" }));
+    renderSettings();
+    await screen.findByRole("button", { name: "Install" });
+    let resolveSettings!: (value: ComponentView) => void;
+    vi.mocked(hub.updateComponentSettings).mockImplementation(
+      () =>
+        new Promise<ComponentView>((resolve) => {
+          resolveSettings = resolve;
+        }),
+    );
+    const save = saveGraphifySettings({ pythonMirror: "https://mirror.example" });
+    await Promise.resolve();
+    expect(hub.updateComponentSettings).toHaveBeenCalledTimes(1);
+    // The settings answer carries a different offer (the lock changed while the PATCH was in
+    // flight): the save refreshes to decide, and the refresh fails.
+    const stale = view({ state: "not-installed" }, { offer: { lockHash: "d".repeat(64), totalBytes: LOCK_TOTAL, location: "/home/u/.nema/runtime/graphify", hosts: ["new.example"] } });
+    resolveSettings({
+      ...stale,
+      settings: { ...stale.settings, pythonMirror: { value: "https://mirror.example", source: "config" as const, config: "https://mirror.example" } },
+    });
+    vi.mocked(hub.getComponents).mockRejectedValue(new Error("hub unreachable"));
+    await save;
+    // The settings page shows the refresh's error beside the published (unverified) offer.
+    expect(await screen.findByText("Component status is unavailable: hub unreachable")).toBeTruthy();
+    // The dialog will not confirm the unverified offer until a fresh read succeeds.
+    await userEvent.click(screen.getByRole("button", { name: "Install" }));
+    const dialog = await screen.findByRole("dialog", { name: "Download Graphify?" });
+    const confirm = within(dialog).getByRole("button", { name: "Download and install" });
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
+    expect(hub.installComponent).not.toHaveBeenCalled();
+    // A fresh read succeeds: the error clears and confirmation is available again.
+    answer(view({ state: "not-installed" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect((within(dialog).getByRole("button", { name: "Download and install" }) as HTMLButtonElement).disabled).toBe(false));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    expect(hub.installComponent).toHaveBeenCalledWith("graphify", LOCK_HASH);
+  });
+
   it("queueing a second save does not invalidate the first save's answer", async () => {
     const offline = view({ state: "failed", reason: "offline", detail: "Downloads are turned off", at: "2026-11-18T00:00:00.000Z" });
     answer({ ...offline, settings: { ...offline.settings, offline: { value: true, source: "config" as const, config: true } } });
