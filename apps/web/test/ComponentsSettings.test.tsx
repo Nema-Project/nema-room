@@ -605,7 +605,8 @@ describe("Settings → Components", () => {
     answer(view({ state: "not-installed" }));
     await refreshComponents();
     // Another client starts an install: the PATCH captures installing.
-    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing" }));
+    const progress = { phase: "download", downloadedBytes: 0, totalBytes: LOCK_TOTAL, file: null };
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
     await startGraphifyInstall(LOCK_HASH);
     let resolveSettings!: (value: ComponentView) => void;
     vi.mocked(hub.updateComponentSettings).mockImplementation(
@@ -641,7 +642,8 @@ describe("Settings → Components", () => {
   it("a failed conflict refresh keeps the error visible and blocks confirmation until a fresh read succeeds", async () => {
     // A terminal state, so no poll runs: the refresh must happen explicitly.
     answer(view({ state: "not-installed" }));
-    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing" }));
+    const progress = { phase: "download", downloadedBytes: 0, totalBytes: LOCK_TOTAL, file: null };
+    vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
     renderSettings();
     await screen.findByRole("button", { name: "Install" });
     let resolveSettings!: (value: ComponentView) => void;
