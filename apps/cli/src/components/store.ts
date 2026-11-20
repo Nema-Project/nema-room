@@ -1,7 +1,7 @@
 // The component store under ~/.nema/runtime/<name>/: one `<lock-hash>/` directory per installed
 // version, `current.json` naming the active and previous ones, and the last failed attempt.
 import { randomBytes, randomInt } from "node:crypto";
-import { closeSync, existsSync, ftruncateSync, linkSync, lstatSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, ftruncateSync, linkSync, lstatSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -298,6 +298,7 @@ export function recoverReplacementsSync(root: string, opts: { ownToken?: string;
         } else {
           const backupPath = path.join(root, name);
           const backupStat = lstatSync(backupPath);
+          const pointerBefore = statSync(path.join(root, "current.json"), { throwIfNoEntry: false });
           renameSync(backupPath, original);
           // Test seam: a test can pause here, between the restore move and the
           // post-move token re-check, and let another installer displace this
@@ -310,6 +311,11 @@ export function recoverReplacementsSync(root: string, opts: { ownToken?: string;
           // undo it (the tree at the destination is still the backup tree; its inode
           // proves it, and a placement against the occupied path would have failed) and
           // stop: the backup is this recovery's to restore only while it holds the lock.
+          // One exception: if the installer reused the restored tree and published it,
+          // the destination still holds the backup tree by inode — but it is now a live
+          // runtime, and the undo would move it away from under the pointer. The pointer
+          // file is replaced on every write, so a changed inode or mtime after the
+          // restore, with the pointer still naming this version, means it was published.
           if (readInstallLockToken(root) !== myToken) {
             let placed: ReturnType<typeof lstatSync> | null = null;
             try {
@@ -317,7 +323,12 @@ export function recoverReplacementsSync(root: string, opts: { ownToken?: string;
             } catch {
               placed = null;
             }
-            if (placed && placed.dev === backupStat.dev && placed.ino === backupStat.ino) renameSync(original, backupPath);
+            const pointerAfter = statSync(path.join(root, "current.json"), { throwIfNoEntry: false });
+            const pointerChanged =
+              pointerAfter !== undefined &&
+              (pointerBefore === undefined || pointerAfter.ino !== pointerBefore.ino || pointerAfter.mtimeMs !== pointerBefore.mtimeMs);
+            const republished = pointerChanged && readPointer(root).active === match[1];
+            if (!republished && placed && placed.dev === backupStat.dev && placed.ino === backupStat.ino) renameSync(original, backupPath);
             return;
           }
         }

@@ -465,6 +465,13 @@ export async function activate(root: string, lockHash: string, staging: string, 
   // in between, the aside copy keeps its `.replaced-` name and recovery restores or
   // removes it under the lock.
   const removePlaced = async (): Promise<void> => {
+    // Check ownership BEFORE the rename-aside: if the lock is already lost, the tree
+    // at `final` may be a successor's published runtime — moving it aside would leave
+    // the pointer naming a missing directory until the rename-back, and a process that
+    // stops in between strands it there (read-path recovery skips a live owner). The
+    // post-rename re-verification below still covers a successor that publishes
+    // between this check and the rename.
+    if (!(await stillOwnsTree())) return;
     const trash = path.join(root, `${lockHash}.replaced-${randomBytes(6).toString("hex")}`);
     try {
       await move(final, trash);
