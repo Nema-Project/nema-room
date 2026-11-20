@@ -261,6 +261,7 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
         {cancelOutcome === "cancelled" ? (
           <>
             <p role="status">{t("components.state.repairCancelled")}</p>
+            {error && <p className="error" role="alert">{t("components.state.unknown", { error })}</p>}
             {requestError && <p className="error" role="alert">{requestError}</p>}
             <div className="actions">
               <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
@@ -270,6 +271,7 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
         ) : status.lastFailure ? (
           <>
             <p role="alert">{t("components.state.repairFailed", { reason: t(REASON_KEY[status.lastFailure.reason]) })}</p>
+            {error && <p className="error" role="alert">{t("components.state.unknown", { error })}</p>}
             {requestError && <p className="error" role="alert">{requestError}</p>}
             <div className="actions">
               <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>
@@ -279,6 +281,7 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
         ) : cancelOutcome === "unknown" ? (
           <>
             <p>{statusText(status, t)}</p>
+            {error && <p className="error" role="alert">{t("components.state.unknown", { error })}</p>}
             {requestError && <p className="error" role="alert">{requestError}</p>}
             <div className="actions">
               <button type="button" ref={firstButton} onClick={onClose}>{t("components.close")}</button>

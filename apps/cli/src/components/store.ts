@@ -261,7 +261,7 @@ function takeOverStaleLockSync(file: string, judged: LockOwnerSync): string | nu
  * re-checked immediately before each move, so a claim that lands after the listing still
  * stops the move.
  */
-export function recoverReplacementsSync(root: string, opts: { ownToken?: string; beforeMove?: () => void; afterCheck?: () => void } = {}): void {
+export function recoverReplacementsSync(root: string, opts: { ownToken?: string; beforeMove?: () => void; afterCheck?: () => void; afterMove?: () => void } = {}): void {
   let names: string[];
   try {
     names = readdirSync(root);
@@ -299,6 +299,10 @@ export function recoverReplacementsSync(root: string, opts: { ownToken?: string;
           const backupPath = path.join(root, name);
           const backupStat = lstatSync(backupPath);
           renameSync(backupPath, original);
+          // Test seam: a test can pause here, between the restore move and the
+          // post-move token re-check, and let another installer displace this
+          // recovery's lock and claim the gap while the restored tree is in place.
+          opts.afterMove?.();
           // The lock can still be displaced between the re-check and the move: a delayed
           // takeover's rename landing late moves this recovery's lock aside, and a third
           // installer claims the gap. If the token at the path is no longer this

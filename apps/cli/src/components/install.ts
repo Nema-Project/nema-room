@@ -472,7 +472,14 @@ export async function activate(root: string, lockHash: string, staging: string, 
       return; // Nothing movable at `final`: nothing of this attempt's to remove.
     }
     const aside = await lstat(trash).catch(() => null);
-    if (aside && stagingStat && aside.dev === stagingStat.dev && aside.ino === stagingStat.ino) {
+    const inodeMatches = aside !== null && stagingStat !== null && aside.dev === stagingStat.dev && aside.ino === stagingStat.ino;
+    // The inode proves the tree is the staging directory this attempt placed — but not
+    // that it is still this attempt's: a successor can reuse that same directory (its
+    // staging is byte-identical) and publish a pointer to it after this attempt's last
+    // ownership check. So re-verify the lock after the rename-aside, while the tree is
+    // out of the way: if the lock is lost, the tree is the successor's published
+    // runtime and goes back.
+    if (inodeMatches && (await stillOwnsTree())) {
       await rm(trash, { recursive: true, force: true });
     } else {
       await move(trash, final).catch(() => {
@@ -483,24 +490,47 @@ export async function activate(root: string, lockHash: string, staging: string, 
   const final = path.join(root, lockHash);
   const pointer = readPointer(root);
   const next: Pointer = { active: lockHash, previous: pointer.active && pointer.active !== lockHash ? pointer.active : pointer.previous };
-  const existing = await lstat(final).catch((error: NodeJS.ErrnoException) => {
+  let existing = await lstat(final).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return null;
     throw error;
   });
   if (!existing) {
-    await move(staging, final);
+    let placed = false;
     try {
-      await checkedPoint(root, next);
+      await move(staging, final);
+      placed = true;
     } catch (error) {
-      // Nothing has published this tree (no pointer names it). Take it back out only while this
-      // attempt still owns it — after a lost lock it may be the successor's published runtime.
-      // The ownership is re-checked right before the removal: the read behind ownsTree and
-      // this mutation are separated by awaits a successor can use to displace the attempt.
-      if ((await ownsTree(error)) && (await stillOwnsTree())) await removePlaced();
-      throw error;
+      // The destination appeared between the read and the move: recovery restored a
+      // backup there (or another installer published) while this attempt was placing.
+      // Do not fail the install for a destination that is now occupied — re-read and
+      // take the existing-tree path below, which reuses it, replaces an orphan, or
+      // moves it aside as the referenced version's backup. A destination that is still
+      // missing is a real placement failure, and the error stands.
+      const now = await lstat(final).catch((err: NodeJS.ErrnoException) => {
+        if (err.code === "ENOENT") return null;
+        throw err;
+      });
+      if (!now) throw error;
+      existing = now;
     }
-    return "renamed";
+    if (placed) {
+      try {
+        await checkedPoint(root, next);
+      } catch (error) {
+        // Nothing has published this tree (no pointer names it). Take it back out only while this
+        // attempt still owns it — after a lost lock it may be the successor's published runtime.
+        // The ownership is re-checked right before the removal: the read behind ownsTree and
+        // this mutation are separated by awaits a successor can use to displace the attempt.
+        if ((await ownsTree(error)) && (await stillOwnsTree())) await removePlaced();
+        throw error;
+      }
+      return "renamed";
+    }
   }
+  // Unreachable by construction: a missing destination either places (and returns
+  // above) or the re-read finds nothing and the placement error is rethrown. The
+  // guard is here so the compiler can see it.
+  if (!existing) throw new Error("unreachable: the destination was checked immediately before the placement");
   if (existing.isDirectory() && !existing.isSymbolicLink() && (await sameTree(final, staging))) {
     await rm(staging, { recursive: true, force: true });
     await checkedPoint(root, next);

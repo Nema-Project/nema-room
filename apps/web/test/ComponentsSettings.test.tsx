@@ -831,6 +831,59 @@ describe("Settings → Components", () => {
     expect(within(dialog).queryByText("Graphify is installed. Graph features are ready.")).toBeNull();
   });
 
+  it("an installed repair with a failed refresh shows the snapshot error in the repair panel and does not retry directly", async () => {
+    const installed = view({
+      state: "installed",
+      version: { graphifyy: "0.9.95", python: "3.11.18" },
+      path: "/p",
+      launcher: "/p/graphify",
+      lastFailure: { reason: "self-check", detail: "injected", at: "2026-11-18T00:00:00.000Z" },
+    });
+    answer(installed);
+    vi.mocked(hub.installComponent).mockResolvedValue(installed);
+    renderSettings();
+    expect(await screen.findByText("Installed: Graphify 0.9.95 (Python 3.11.18). The last reinstall failed: the installed component failed its self-check.")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Reinstall" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    expect(hub.installComponent).toHaveBeenCalledWith("graphify", LOCK_HASH, true);
+    vi.mocked(hub.installComponent).mockClear();
+    // The repair failed again: the dialog shows the repair panel.
+    expect((await within(dialog).findByRole("alert")).textContent).toContain("The last reinstall failed");
+    // A settings save whose answer carries a different offer refreshes to decide, and the
+    // refresh fails: the snapshot keeps the installed status and gains the error.
+    let resolveSettings!: (value: ComponentView) => void;
+    vi.mocked(hub.updateComponentSettings).mockImplementation(
+      () =>
+        new Promise<ComponentView>((resolve) => {
+          resolveSettings = resolve;
+        }),
+    );
+    const save = saveGraphifySettings({ pythonMirror: "https://mirror.example" });
+    await Promise.resolve();
+    expect(hub.updateComponentSettings).toHaveBeenCalledTimes(1);
+    const stale = { ...installed, offer: { lockHash: "d".repeat(64), totalBytes: LOCK_TOTAL, location: "/home/u/.nema/runtime/graphify", hosts: ["new.example"] } };
+    resolveSettings({
+      ...stale,
+      settings: { ...stale.settings, pythonMirror: { value: "https://mirror.example", source: "config" as const, config: "https://mirror.example" } },
+    });
+    vi.mocked(hub.getComponents).mockRejectedValue(new Error("hub unreachable"));
+    await save;
+    // The repair panel shows the refresh error, and its Retry goes to the confirm step
+    // instead of retrying the unverified offer directly.
+    expect(within(dialog).getByText("Component status is unavailable: hub unreachable")).toBeTruthy();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+    expect(hub.installComponent).not.toHaveBeenCalled();
+    const confirmButton = within(dialog).getByRole("button", { name: "Download and install" });
+    expect((confirmButton as HTMLButtonElement).disabled).toBe(true);
+    // A fresh read succeeds: the error clears and confirmation is available again.
+    answer(installed);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect((within(dialog).getByRole("button", { name: "Download and install" }) as HTMLButtonElement).disabled).toBe(false));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
+    expect(hub.installComponent).toHaveBeenCalledWith("graphify", LOCK_HASH, true);
+  });
+
   it("offline mode offers no reinstall for an installed component", async () => {
     const base = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
     answer({ ...base, settings: { ...base.settings, offline: { value: true, source: "env", config: false } } });
