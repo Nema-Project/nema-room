@@ -2216,6 +2216,244 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     }
   });
 
+  test("a delayed tree-lock takeover does not destroy a live successor's claim", async () => {
+    const hash = "e".repeat(64);
+    const dir = mkdtempSync(path.join(root, "recover-"));
+    const backupName = `${hash}.replaced-abc123`;
+    mkdirSync(path.join(dir, backupName), { recursive: true });
+    writeFileSync(path.join(dir, backupName, "marker"), "backup\n");
+    await writePointer(dir, { active: hash, previous: null });
+    const staging = path.join(dir, "staging");
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(path.join(staging, "marker"), "backup\n");
+    // A stale tree-lock record: the contender below reads it, judges it stale, and
+    // pauses before its rename — while a live successor claims the path in the gap.
+    writeFileSync(path.join(dir, ".tree.lock"), "released\n");
+    // The successor's activation starts while the destination is missing and pauses
+    // at its placement move. Its staging is byte-identical to the backup, so it
+    // will reuse the restored tree instead of replacing it.
+    const atPlacement = deferred();
+    const releasePlacement = deferred();
+    const realRename = rename;
+    const renameHook = async (from: string, to: string) => {
+      if (from === staging && to === path.join(dir, hash)) {
+        atPlacement.resolve();
+        await releasePlacement.promise;
+      }
+      await realRename(from, to);
+    };
+    let successorToken: string | null = null;
+    let calls = 0;
+    const atPointerWrite = deferred();
+    const releasePointerWrite = deferred();
+    const verifyLockHeld = async () => {
+      calls += 1;
+      // The second verification is the checkedPoint's: pause there, after the
+      // sameTree check and the staging removal, but before the pointer write — the
+      // successor is mid-reuse and holds the tree mutex.
+      if (calls === 2) {
+        atPointerWrite.resolve();
+        await releasePointerWrite.promise;
+      }
+      if (successorToken && readInstallLockToken(dir) !== successorToken) throw new Error("lock lost");
+    };
+    const outcome = activate(dir, hash, staging, { verifyLockHeld, rename: renameHook }).catch((error: unknown) => error);
+    await atPlacement.promise;
+    // The contender runs in a child process and pauses after reading the stale
+    // record, before its rename. The recovery runs in a second child process and
+    // pauses after its restore move.
+    const cliDir = fileURLToPath(new URL("../..", import.meta.url));
+    const takeoverControl = path.join(root, "takeover-control");
+    mkdirSync(takeoverControl, { recursive: true });
+    const takeoverResult = path.join(root, "takeover-result.json");
+    const takeoverJob = path.join(root, "takeover-job.json");
+    writeFileSync(takeoverJob, JSON.stringify({ root: dir, controlDir: takeoverControl, resultFile: takeoverResult }));
+    const takeoverWorker = fileURLToPath(new URL("../fixtures/component-tree-takeover-worker.mjs", import.meta.url));
+    const contender = spawn(process.execPath, ["--import", "tsx", takeoverWorker, takeoverJob], { cwd: cliDir, stdio: ["ignore", "pipe", "pipe"] });
+    let contenderErr = "";
+    contender.stderr!.on("data", (d) => (contenderErr += d));
+    const contenderDone = new Promise<number | null>((resolve) => contender.on("exit", resolve));
+    const controlDir = path.join(root, "gap-control");
+    mkdirSync(controlDir, { recursive: true });
+    const resultFile = path.join(root, "gap-result.json");
+    const jobFile = path.join(root, "gap-job.json");
+    writeFileSync(jobFile, JSON.stringify({ root: dir, controlDir, resultFile, afterUndo: "undone" }));
+    const worker = fileURLToPath(new URL("../fixtures/component-recovery-worker.mjs", import.meta.url));
+    const child = spawn(process.execPath, ["--import", "tsx", worker, jobFile], { cwd: cliDir, stdio: ["ignore", "pipe", "pipe"] });
+    let childErr = "";
+    child.stderr!.on("data", (d) => (childErr += d));
+    const childDone = new Promise<number | null>((resolve) => child.on("exit", resolve));
+    const waitForFile = async (file: string, err = "") => {
+      const end = Date.now() + 15_000;
+      while (!existsSync(file)) {
+        if (Date.now() > end) throw new Error(`timed out waiting for ${file}; child stderr: ${err}`);
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    };
+    let third: { release: () => void; token: string } | null = null;
+    let released = false;
+    const releaseChild = () => {
+      if (!released) {
+        released = true;
+        writeFileSync(path.join(controlDir, "release"), "");
+      }
+    };
+    let undoReleased = false;
+    const releaseUndo = () => {
+      if (!undoReleased) {
+        undoReleased = true;
+        writeFileSync(path.join(controlDir, "release-undo"), "");
+      }
+    };
+    let takeoverRenameReleased = false;
+    const releaseTakeoverRename = () => {
+      if (!takeoverRenameReleased) {
+        takeoverRenameReleased = true;
+        writeFileSync(path.join(takeoverControl, "release-rename"), "");
+      }
+    };
+    let takeoverRestoreReleased = false;
+    const releaseTakeoverRestore = () => {
+      if (!takeoverRestoreReleased) {
+        takeoverRestoreReleased = true;
+        writeFileSync(path.join(takeoverControl, "release-restore"), "");
+      }
+    };
+    try {
+      await waitForFile(path.join(takeoverControl, "judged"), contenderErr);
+      await waitForFile(path.join(controlDir, "restored"), childErr);
+      expect(readFileSync(path.join(dir, hash, "marker"), "utf8")).toBe("backup\n");
+      renameSync(path.join(dir, ".install.lock"), path.join(dir, ".install.lock.displaced"));
+      third = acquireInstallLockSync(dir);
+      successorToken = third!.token;
+      // The placement resumes: the destination is now occupied by the restored backup,
+      // so the move fails and the activation re-reads it. The restored tree matches
+      // the staging, so the activation reuses it — claiming the tree lock by taking
+      // over the stale record the contender already judged, and pausing before its
+      // pointer write.
+      releasePlacement.resolve();
+      await atPointerWrite.promise;
+      // The contender resumes: its delayed rename moves the successor's live tree
+      // lock aside. It pauses before restoring it, and the recovery claims the
+      // vacant path in the gap — then undoes the restore while still holding the
+      // tree mutex, so the contender's restore must fail against its live claim.
+      releaseTakeoverRename();
+      await waitForFile(path.join(takeoverControl, "renamed"), contenderErr);
+      releaseChild();
+      await waitForFile(path.join(controlDir, "undone"), childErr);
+      expect(readFileSync(path.join(dir, backupName, "marker"), "utf8")).toBe("backup\n");
+      expect(existsSync(path.join(dir, hash))).toBe(false);
+      // The contender resumes: its restore fails (the recovery's claim is at the
+      // path), so it must NOT delete the successor's live claim — the aside file
+      // survives, carrying the successor's token.
+      releaseTakeoverRestore();
+      await waitForFile(takeoverResult, contenderErr);
+      expect(await contenderDone).toBe(0);
+      const takeover = JSON.parse(readFileSync(takeoverResult, "utf8"));
+      expect(takeover.won).toBe(false);
+      const aside = readdirSync(dir).filter((name) => name.startsWith(".tree.lock.stale-"));
+      expect(aside).toHaveLength(1);
+      expect(readFileSync(path.join(dir, aside[0]!), "utf8")).toMatch(new RegExp(`^${process.pid}:`));
+      // The recovery finishes, and the successor's pointer write is refused: its
+      // tree-lock claim was displaced, so it aborts instead of publishing a pointer
+      // to the missing tree.
+      releaseUndo();
+      await waitForFile(resultFile, childErr);
+      expect(await childDone).toBe(0);
+      releasePointerWrite.resolve();
+      const error = await outcome;
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("tree lock");
+      expect(readPointer(dir).active).toBe(hash);
+      expect(existsSync(path.join(dir, hash))).toBe(false);
+      expect(readFileSync(path.join(dir, backupName, "marker"), "utf8")).toBe("backup\n");
+    } finally {
+      releaseChild();
+      releaseUndo();
+      releaseTakeoverRename();
+      releaseTakeoverRestore();
+      releasePointerWrite.resolve();
+      child.kill();
+      contender.kill();
+      third?.release();
+    }
+  });
+
+  test("a rollback does not restore over a successor's live tree", async () => {
+    const component = fakeComponent(execLog);
+    const hash = lockHash(component.target);
+    const dir = graphifyRoot();
+    mkdirSync(dir, { recursive: true });
+    const final = path.join(dir, hash);
+    const successorTree = path.join(dir, "successor-tree");
+    mkdirSync(successorTree, { recursive: true });
+    writeFileSync(path.join(successorTree, "marker"), "successor\n");
+    writeFileSync(path.join(successorTree, "graphify"), "#!/bin/sh\necho graphify\n");
+    const successorStaging = path.join(dir, "staging-successor");
+    mkdirSync(successorStaging, { recursive: true });
+    writeFileSync(path.join(successorStaging, "marker"), "successor-new\n");
+    writeFileSync(path.join(successorStaging, "graphify"), "#!/bin/sh\necho graphify\n");
+    const rollbackStaging = path.join(dir, "staging");
+    mkdirSync(rollbackStaging, { recursive: true });
+    writeFileSync(path.join(rollbackStaging, "marker"), "rollback\n");
+    writeFileSync(path.join(rollbackStaging, "graphify"), "#!/bin/sh\necho graphify\n");
+    const lockPath = writeLock(path.join(root, "lock.json"), component);
+    const env = { runtimeRoot, lockPath, platform: { platform: process.platform, arch: process.arch, musl: false } };
+    // The rollback attempt holds a real lock. The successor's tree is published at
+    // final first (placed and pointed to directly, the test setup), so the
+    // rollback's referenced branch moves it aside and pauses at the re-validation
+    // before placing its own staging.
+    const holder = await acquireInstallLock(dir);
+    let calls = 0;
+    const atRevalidate = deferred();
+    const releaseRevalidate = deferred();
+    const verifyLockHeld = async () => {
+      calls += 1;
+      if (calls === 2) {
+        atRevalidate.resolve();
+        await releaseRevalidate.promise;
+      }
+      if (readInstallLockToken(dir) !== holder.token) throw new Error("lock lost");
+    };
+    renameSync(successorTree, final);
+    await writePointer(dir, { active: hash, previous: null });
+    expect(componentBin("graphify", env)).toBe(path.join(final, "graphify"));
+    const outcome = activate(dir, hash, rollbackStaging, {
+      verifyLockHeld,
+      writePointer: async () => {
+        throw new Error("pointer write failed");
+      },
+    }).catch((error: unknown) => error);
+    await atRevalidate.promise;
+    // The successor displaces the rollback's install lock the way a delayed takeover's
+    // rename does, claims the vacant path, and re-publishes its new tree at final
+    // (which the rollback's move vacated). While its install lock is live, the
+    // launcher must resolve to the successor's tree — the rollback must not restore
+    // over it.
+    renameSync(path.join(dir, ".install.lock"), path.join(dir, ".install.lock.displaced"));
+    const successor = await acquireInstallLock(dir);
+    renameSync(successorStaging, final);
+    await writePointer(dir, { active: hash, previous: null });
+    expect(readInstallLockToken(dir)).toBe(successor.token);
+    expect(componentBin("graphify", env)).toBe(path.join(final, "graphify"));
+    expect(readFileSync(path.join(final, "marker"), "utf8")).toBe("successor-new\n");
+    releaseRevalidate.resolve();
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    // The rollback's restore was skipped (its install lock is lost): the successor's
+    // new tree stands, the launcher still resolves to it, and the original tree
+    // stays aside as the backup for recovery.
+    expect(readFileSync(path.join(final, "marker"), "utf8")).toBe("successor-new\n");
+    expect(componentBin("graphify", env)).toBe(path.join(final, "graphify"));
+    const backups = readdirSync(dir).filter((name) => name.includes(".replaced-"));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(path.join(dir, backups[0]!, "marker"), "utf8")).toBe("successor\n");
+    expect(readInstallLockToken(dir)).toBe(successor.token);
+    await holder.release();
+    expect(readInstallLockToken(dir)).toBe(successor.token);
+    await successor.release();
+  });
+
   test("recovery restores a backup when the lock file is only a release tombstone", async () => {
     const hash = "b".repeat(64);
     const root = graphifyRoot();

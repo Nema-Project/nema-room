@@ -200,8 +200,24 @@ function readLockOwnerSync(file: string): LockOwnerSync | null {
  * Move the judged-stale lock aside synchronously, with the same re-validation and
  * non-replacing restore as the async takeover: returns the aside path when the moved
  * record is still the one judged stale, otherwise restores it and returns null.
+ *
+ * The re-check read and the rename are separate operations, so a live claim can replace
+ * the stale record in between and be moved aside by the delayed rename. The restore
+ * (a non-replacing link) puts it back — unless a third claim landed in the gap between
+ * the rename and the restore, in which case the link fails and the moved record must
+ * NOT be deleted: it is the live holder's only copy of its claim, and deleting it would
+ * destroy the lock it still holds. The holder detects the displacement via its token
+ * check and aborts; the aside file stays as litter (a later cleanup can remove
+ * `.stale-*` files whose owners are dead).
  */
-function takeOverStaleLockSync(file: string, judged: LockOwnerSync): string | null {
+export type TakeoverSeams = {
+  /** Called after the re-check read, before the rename — a test can pause here. */
+  beforeRename?: () => void;
+  /** Called after the rename, before the restore-link attempt — a test can pause here. */
+  afterRename?: () => void;
+};
+
+function takeOverStaleLockSync(file: string, judged: LockOwnerSync, seams: TakeoverSeams = {}): string | null {
   let current: string | null;
   try {
     current = readFileSync(file, "utf8");
@@ -210,12 +226,14 @@ function takeOverStaleLockSync(file: string, judged: LockOwnerSync): string | nu
   }
   if (current !== judged.content) return null;
   const stale = `${file}.stale-${process.pid}-${randomBytes(6).toString("hex")}`;
+  seams.beforeRename?.();
   try {
     renameSync(file, stale);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
+  seams.afterRename?.();
   let content: string | null;
   try {
     content = readFileSync(stale, "utf8");
@@ -226,15 +244,22 @@ function takeOverStaleLockSync(file: string, judged: LockOwnerSync): string | nu
     if (content !== null) {
       const temp = `${file}.claim-${process.pid}-${randomBytes(6).toString("hex")}`;
       writeFileSync(temp, content);
+      let restored = false;
       try {
         linkSync(temp, file);
+        restored = true;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       } finally {
         rmSync(temp, { force: true });
       }
+      // Only remove the aside file when the restore landed (the same inode is now at
+      // the lock path, so the aside name is redundant). When it failed, the aside
+      // file is the live holder's only copy of its claim: leave it in place.
+      if (restored) rmSync(stale, { force: true });
     }
-    rmSync(stale, { force: true });
+    // When the moved record could not be read, leave the aside file too: it may be a
+    // live claim whose read failed, and deleting it could destroy that holder's lock.
     return null;
   }
   return stale;
@@ -306,13 +331,13 @@ function releaseLockFileSync(file: string, token: string): void {
 }
 
 /** One claim attempt: "won" when the link landed, "live" when a live owner holds it. */
-function tryClaimTreeLockSync(file: string, token: string): "won" | "live" {
+function tryClaimTreeLockSync(file: string, token: string, seams: TakeoverSeams = {}): "won" | "live" {
   if (linkClaimSync(file, token)) return "won";
   const owner = readLockOwnerSync(file);
   if (!owner) return "live"; // Vanished between the claim attempt and the read; retry.
   const pid = ownerPidSync(owner.content);
   if (pid !== null && (pid === process.pid || pidAliveSync(pid))) return "live";
-  const stale = takeOverStaleLockSync(file, owner);
+  const stale = takeOverStaleLockSync(file, owner, seams);
   if (!stale) return "live"; // Lost the rename race, or the record revived; retry.
   if (linkClaimSync(file, token)) {
     rmSync(stale, { force: true });
@@ -328,15 +353,25 @@ const treeLockWaitCell = new Int32Array(new SharedArrayBuffer(4));
  * Returns null on timeout: the caller leaves the tree alone instead of proceeding
  * unprotected. The wait blocks this thread, so callers hold it only briefly.
  */
-export function acquireTreeLockSync(root: string, timeoutMs = TREE_LOCK_TIMEOUT_MS): TreeLock | null {
+export function acquireTreeLockSync(root: string, timeoutMs = TREE_LOCK_TIMEOUT_MS, seams: TakeoverSeams = {}): TreeLock | null {
   const file = treeLockFile(root);
   const token = `${process.pid}:${randomBytes(6).toString("hex")}`;
   const release = (): void => releaseLockFileSync(file, token);
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    if (tryClaimTreeLockSync(file, token) === "won") return { release, token };
+    if (tryClaimTreeLockSync(file, token, seams) === "won") return { release, token };
     if (Date.now() >= deadline) return null;
     Atomics.wait(treeLockWaitCell, 0, 0, 10);
+  }
+}
+
+/** The tree mutex's current token, or null when the file is missing or unreadable. */
+export function readTreeLockToken(root: string): string | null {
+  try {
+    const content = readFileSync(treeLockFile(root), "utf8").trim();
+    return content === "" ? null : content;
+  } catch {
+    return null;
   }
 }
 
@@ -377,7 +412,7 @@ export async function acquireTreeLock(root: string, timeoutMs = TREE_LOCK_TIMEOU
  * re-checked immediately before each move, so a claim that lands after the listing still
  * stops the move.
  */
-export function recoverReplacementsSync(root: string, opts: { ownToken?: string; beforeMove?: () => void; afterCheck?: () => void; afterMove?: () => void } = {}): void {
+export function recoverReplacementsSync(root: string, opts: { ownToken?: string; beforeMove?: () => void; afterCheck?: () => void; afterMove?: () => void; afterUndo?: () => void } = {}): void {
   let names: string[];
   try {
     names = readdirSync(root);
@@ -446,6 +481,12 @@ export function recoverReplacementsSync(root: string, opts: { ownToken?: string;
             const treeLock = acquireTreeLockSync(root);
             if (!treeLock) continue;
             try {
+              // The mutex claim itself can be displaced by a delayed stale-lock
+              // takeover (its record moved aside, a third claim landing before the
+              // restore): if this recovery's token is no longer at the path, another
+              // installer may be publishing — skip the undo and stop, leaving the
+              // restored tree in place.
+              if (readTreeLockToken(root) !== treeLock.token) return;
               let placed: ReturnType<typeof lstatSync> | null = null;
             try {
               placed = lstatSync(original);
@@ -458,6 +499,10 @@ export function recoverReplacementsSync(root: string, opts: { ownToken?: string;
               (pointerBefore === undefined || pointerAfter.ino !== pointerBefore.ino || pointerAfter.mtimeMs !== pointerBefore.mtimeMs);
             const republished = pointerChanged && readPointer(root).active === match[1];
             if (!republished && placed && placed.dev === backupStat.dev && placed.ino === backupStat.ino) renameSync(original, backupPath);
+            // Test seam: a test can pause here, after the undo decision and while
+            // this recovery still holds the tree mutex, and let another installer
+            // attempt a takeover in the gap.
+            opts.afterUndo?.();
             return;
             } finally {
               treeLock.release();

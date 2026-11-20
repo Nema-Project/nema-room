@@ -30,6 +30,7 @@ import {
   readFailure,
   readInstallGeneration,
   readPointer,
+  readTreeLockToken,
   recoverReplacementsSync,
   setInstalling,
   writeFailure,
@@ -422,8 +423,15 @@ export async function activate(root: string, lockHash: string, staging: string, 
   // The holder re-validates before publishing: if another installer displaced its lock
   // (see takeOverStaleLock), it aborts here instead of activating alongside that installer.
   await verify();
-  const checkedPoint = async (r: string, p: Pointer): Promise<void> => {
+  const checkedPoint = async (r: string, p: Pointer, treeLock: TreeLock): Promise<void> => {
     await verify();
+    // The tree mutex proves no other installer is publishing or removing in between:
+    // if this attempt's claim was displaced (a delayed stale-lock takeover moved it
+    // aside and a third claim landed before the restore), abort the publication
+    // instead of pointing at a tree another installer may have moved.
+    if (readTreeLockToken(r) !== treeLock.token) {
+      throw new Error("Lost the component tree lock to another installer; aborting the install");
+    }
     await point(r, p);
   };
   // The tree mutex serializes this attempt's critical sections against another
@@ -505,7 +513,11 @@ export async function activate(root: string, lockHash: string, staging: string, 
       // at `final` may be a successor's published runtime — moving it aside would leave
       // the pointer naming a missing directory until the rename-back, and a process that
       // stops in between strands it there (read-path recovery skips a live owner).
+      // The tree mutex itself is checked too: if this attempt's claim was displaced
+      // (a delayed stale-lock takeover moved it aside), another installer may be
+      // publishing, and the removal must not run.
       if (!(await stillOwnsTree())) return;
+      if (readTreeLockToken(root) !== treeLock.token) return;
       const trash = path.join(root, `${lockHash}.replaced-${randomBytes(6).toString("hex")}`);
       try {
         await move(final, trash);
@@ -519,8 +531,9 @@ export async function activate(root: string, lockHash: string, staging: string, 
       // staging is byte-identical) and publish a pointer to it after this attempt's last
       // ownership check. So re-verify the lock after the rename-aside, while the tree is
       // out of the way: if the lock is lost, the tree is the successor's published
-      // runtime and goes back.
-      if (inodeMatches && (await stillOwnsTree())) {
+      // runtime and goes back. The tree mutex is re-checked the same way: a claim
+      // displaced after the rename-aside means another installer may have published.
+      if (inodeMatches && (await stillOwnsTree()) && readTreeLockToken(root) === treeLock.token) {
         await rm(trash, { recursive: true, force: true });
       } else {
         await move(trash, final).catch(() => {
@@ -559,7 +572,7 @@ export async function activate(root: string, lockHash: string, staging: string, 
     }
     if (placed) {
       try {
-        await withTreeLock(() => checkedPoint(root, next));
+        await withTreeLock((treeLock) => checkedPoint(root, next, treeLock));
       } catch (error) {
         // Nothing has published this tree (no pointer names it). Take it back out only while this
         // attempt still owns it — after a lost lock it may be the successor's published runtime.
@@ -580,10 +593,10 @@ export async function activate(root: string, lockHash: string, staging: string, 
     // between this sameTree check and its pointer write holds the mutex, and read-path
     // recovery's post-move check waits for it — so the recovery cannot undo a restore
     // out from under an install that is about to commit the restored tree.
-    const reused = await withTreeLock(async () => {
+    const reused = await withTreeLock(async (treeLock) => {
       if (!(await sameTree(final, staging))) return false;
       await rm(staging, { recursive: true, force: true });
-      await checkedPoint(root, next);
+      await checkedPoint(root, next, treeLock);
       return true;
     });
     if (reused) return "reused";
@@ -593,7 +606,7 @@ export async function activate(root: string, lockHash: string, staging: string, 
       await rm(final, { recursive: true, force: true });
       await move(staging, final);
       try {
-        await checkedPoint(root, next);
+        await checkedPoint(root, next, treeLock);
       } catch (error) {
         // Same unpublished case as above: the replaced tree was an orphan no pointer named.
         // Remove the new one only while this attempt still owns it, re-checked before the removal.
@@ -620,7 +633,7 @@ export async function activate(root: string, lockHash: string, staging: string, 
       await verify();
       await move(staging, final);
       placed = true;
-      await checkedPoint(root, next);
+      await checkedPoint(root, next, treeLock);
     } catch (error) {
       // Restore the backup only while this attempt still owns the tree: after a lost lock the
       // placed tree may be the successor's published runtime, and the backup stays for recovery.
@@ -765,18 +778,24 @@ export async function takeOverStaleLock(
   const content = await readFile(stale, "utf8").catch(() => null);
   if (content === null || content !== judged.content) {
     if (content !== null) {
-      // Restore the moved record without replacing a claim made in the gap.
+      // Restore the moved record without replacing a claim made in the gap. If that
+      // link fails (EEXIST — a third claim landed between the rename and the restore),
+      // do NOT delete the aside file: it is the live holder's only copy of its claim,
+      // and deleting it would destroy the lock it still holds. The holder detects the
+      // displacement via its token check and aborts; the aside file stays as litter.
       const temp = `${file}.claim-${process.pid}-${randomBytes(6).toString("hex")}`;
       await writeFile(temp, content);
+      let restored = false;
       try {
         await link(temp, file);
+        restored = true;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       } finally {
         await rm(temp, { force: true });
       }
+      if (restored) await rm(stale, { force: true });
     }
-    await rm(stale, { force: true });
     return null;
   }
   return stale;

@@ -29,5 +29,16 @@ recoverReplacementsSync(job.root, {
     writeFileSync(path.join(job.controlDir, "restored"), `${process.pid}\n`);
     waitFor(path.join(job.controlDir, "release"), 120_000);
   },
+  // Optional: when the job names an afterUndo marker, pause again after the undo
+  // decision, while this recovery still holds the tree mutex, so the parent can let
+  // another installer attempt a takeover in the gap. Jobs that omit it behave as before.
+  ...(job.afterUndo
+    ? {
+        afterUndo: () => {
+          writeFileSync(path.join(job.controlDir, job.afterUndo), `${process.pid}\n`);
+          waitFor(path.join(job.controlDir, "release-undo"), 120_000);
+        },
+      }
+    : {}),
 });
 writeFileSync(job.resultFile, `${JSON.stringify({ done: true })}\n`);
