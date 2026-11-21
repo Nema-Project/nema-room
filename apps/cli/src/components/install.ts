@@ -193,15 +193,16 @@ export type InstallHooks = {
    */
   renameAfterCheck?: (from: string, to: string) => Promise<void>;
   /**
-   * A test-only pre-rename seam after the rollback's real last check: runs after the
-   * final ownership and fence-identity check and before the real rename-aside, with
-   * no re-check after it (tests pause here, after the true final check, to rehearse
-   * the remaining ordering — a competitor that read a stale fence record, paused,
-   * and then renamed the rollback's live fence aside after the rollback verified it,
-   * letting a successor publish before the rename. The production re-check before
-   * this seam stays: it is the mechanism that leaves a possibly-published tree in
-   * place, and this seam only exists so a test can exercise the interval after it
-   * without removing it. The hook must not rename itself.
+   * A pre-rename seam after the rollback's last ownership and fence-identity check,
+   * delaying the actual rename-aside: runs after the final check and before the real
+   * rename (tests pause here, after the check, to let another installer publish —
+   * ownership and the fence identity are re-checked once more after it, before the
+   * rename, so a publication that landed during the pause leaves the tree in place).
+   * The re-check is what preserves a published tree during the rollback: it
+   * distinguishes this attempt's own cancelled tree (which still holds its install
+   * and tree locks) from a successor's published tree (which displaced those locks).
+   * The rename itself is synchronous, so the last check and the rename are in the
+   * same block with no await between them. The hook must not rename itself.
    */
   renameAfterFinalCheck?: (from: string, to: string) => Promise<void>;
   /**
@@ -814,23 +815,25 @@ export async function activate(root: string, lockHash: string, staging: string, 
       }
       if (!(await ownsPlaced())) return;
       if (!verifyPointerFence(root, fence)) return;
-      // A test-only pre-rename seam after the real last check, with no re-check
-      // after it: a test can pause here, after the true final check, to rehearse the
-      // remaining ordering — a competitor that read a stale fence record, paused, and
-      // then renamed this attempt's live fence aside after it verified the fence,
-      // letting a successor publish before the rename. The production re-check above
-      // stays: it is the mechanism that leaves a possibly-published tree in place.
-      // If a successor published during this seam, the rename-aside below moves the
-      // successor's active tree aside, and the post-rename re-verification restores
-      // it (the rename-back), so the end state is consistent and componentBin
-      // resolves once the successor publishes. The rename itself is synchronous, so
-      // the last check and the rename are in the same block with no await between
-      // them.
+      // A pre-rename seam after the last ownership and fence-identity check: a test
+      // can pause here, after the check, to let another installer publish. Ownership
+      // and the fence identity are re-checked once more after it, before the real
+      // rename, so a publication that landed during the pause leaves the tree in
+      // place. The re-check is what preserves a published tree during the rollback:
+      // it distinguishes this attempt's own cancelled tree (which still holds its
+      // install and tree locks, so the re-check passes and the rename-aside runs to
+      // remove it and restore the old tree from backup) from a successor's published
+      // tree (which displaced those locks, so the re-check fails and the tree stays
+      // — a pointer-name check cannot tell them apart, because both name the same
+      // lock-hash). The rename itself is synchronous, so the last check and the
+      // rename are in the same block with no await between them.
       try {
         await hooks.renameAfterFinalCheck?.(final, trash);
       } catch {
         return; // The move failed: nothing of this attempt's to remove.
       }
+      if (!(await ownsPlaced())) return;
+      if (!verifyPointerFence(root, fence)) return;
       try {
         renameSync(final, trash);
       } catch {

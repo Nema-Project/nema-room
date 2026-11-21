@@ -4038,7 +4038,7 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     }
   });
 
-  test("a successor in another process that publishes after the rollback's final check, with no re-check, leaves the tree restored", async () => {
+  test("a successor in another process that publishes after the rollback's final check leaves the tree in place", async () => {
     const component = fakeComponent(execLog);
     const hash = lockHash(component.target);
     const dir = graphifyRoot();
@@ -4055,31 +4055,27 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     const lockPath = writeLock(path.join(root, "lock.json"), component);
     const env = { runtimeRoot, lockPath, platform: { platform: process.platform, arch: process.arch, musl: false } };
     // The rollback attempt holds a real lock. Its removal passes its ownership
-    // re-checks and the fence-identity check, and pauses at the test-only
-    // after-final-check seam, after the true final check, with no re-check before
-    // the rename-aside. A successor in another process then displaces both locks and
-    // the fence the way delayed stale-lock takeovers' renames do, claims them, and
-    // publishes the same tree by reusing it. The test waits for the publication
-    // (not just the claim) before resuming the rollback, so the successor has
-    // definitely published before the rollback resumes. When the rollback resumes,
-    // there is no re-check to stop it: it renames the tree aside (moving the
-    // successor's active tree to trash), and the post-rename re-verification finds
-    // its locks lost, so it renames the tree back. The tree is restored to final,
-    // the launcher resolves, and no backup is left aside — checked while the
-    // successor's install lock is live in its own process. The production re-check
-    // before this seam stays: it is the mechanism that leaves a possibly-published
-    // tree in place in the normal path (the round-28 test covers it); this seam
-    // only exists so a test can exercise the interval after it without removing it.
-    // The successor's pointer write blocks on the fence, which the rollback holds
-    // through the rename-aside, the re-verification, and the rename-back — but the
-    // successor displaced the rollback's fence first and claimed a new one, so it
-    // publishes during the seam. Between the rename-aside and the rename-back the
-    // launcher does not resolve (the tree is at trash, not final); the rename-back
-    // restores it, and the test checks both. A pointer-name check was tried here
-    // and reverted: it cannot tell this attempt's own cancelled tree (which the
-    // rollback must remove and restore from backup) from a successor's published
-    // tree, because both name the same lock-hash — it broke the cancellation
-    // rollback test, which expects the old tree back.
+    // re-checks and the fence-identity check, and pauses at the pre-rename seam,
+    // after the check, to let another installer publish. A successor in another
+    // process then displaces both locks and the fence the way delayed stale-lock
+    // takeovers' renames do, claims them, and publishes the same tree by reusing it.
+    // The test waits for the publication (not just the claim) before resuming the
+    // rollback, so the successor has definitely published before the rollback
+    // resumes — and it checks that the launcher resolves while the rollback is
+    // still paused, after the successor published, so componentBin stays available
+    // before any restoration. When the rollback resumes, the re-check after the seam
+    // (ownership via the install and tree lock tokens, plus the pointer and tree
+    // identities) finds the successor displaced its locks, so it leaves the tree in
+    // place and returns, without renaming it aside at all. There is no tree-aside
+    // window and no restoration to wait for: the launcher stays available
+    // throughout, checked while the successor's install lock is live in its own
+    // process. The re-check is what preserves the published tree: it distinguishes
+    // this attempt's own cancelled tree (which still holds its locks, so the
+    // re-check passes and the rename-aside runs) from a successor's published tree
+    // (which displaced those locks, so the re-check fails and the tree stays). A
+    // pointer-name check cannot tell them apart, because both name the same
+    // lock-hash — it was tried in round 31 and reverted for breaking the
+    // cancellation rollback test.
     const holder = await acquireInstallLock(dir);
     const verifyLockHeld = async () => {
       if (readInstallLockToken(dir) !== holder.token) throw new Error("lock lost");
@@ -4096,8 +4092,6 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     };
     const atFinal = deferred();
     const releaseFinal = deferred();
-    const atAfterAside = deferred();
-    const releaseAfterAside = deferred();
     const outcome = activate(dir, hash, staging, {
       verifyLockHeld,
       writePointer: async () => {
@@ -4107,10 +4101,6 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
       renameAfterFinalCheck: async () => {
         atFinal.resolve();
         await releaseFinal.promise;
-      },
-      renameAfterAside: async () => {
-        atAfterAside.resolve();
-        await releaseAfterAside.promise;
       },
     }).catch((error: unknown) => error);
     await atAside.promise;
@@ -4145,30 +4135,26 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
       // The successor claimed the install lock in its own process, displaced the
       // rollback's fence, and published the same tree by reusing it. Wait for the
       // publication (not just the claim) before resuming the rollback, so the
-      // successor has definitely published before the rollback resumes.
+      // successor has definitely published before the rollback resumes — and check
+      // that the launcher resolves while the rollback is still paused, after the
+      // successor published, so componentBin stays available before any restoration.
       await waitForFile(path.join(controlDir, "published"));
       const successorToken = readInstallLockToken(dir);
       expect(successorToken).not.toBe(holder.token);
       expect(successorToken).not.toBeNull();
-      // The rollback resumes with no re-check: it renames the tree aside, then pauses
-      // at the after-aside seam, after the rename-aside and before the post-rename
-      // re-verification and rename-back. The launcher does not resolve during that
-      // window — the tree is at trash, not final — checked while the successor's
-      // install lock is live.
-      releaseFinal.resolve();
-      await atAfterAside.promise;
       expect(readPointer(dir).active).toBe(hash);
-      expect(componentBin("graphify", env)).toBeNull();
-      // Release the after-aside seam: the post-rename re-verification finds the
-      // rollback's locks lost, and it renames the tree back. The aside seam ran (two
-      // hook calls: the placement and the aside), and the rename-back ran too (a
-      // third hook call), so the tree is back at final and no backup is left aside.
-      releaseAfterAside.resolve();
+      expect(componentBin("graphify", env)).toBe(path.join(final, "graphify"));
+      // The rollback resumes: the re-check after the seam finds the successor
+      // displaced its locks, so it leaves the tree in place and returns, without
+      // renaming it aside at all. The aside seam ran (two hook calls: the placement
+      // and the aside), but the rename-aside never ran and there is no rename-back,
+      // so the tree stays at final and no backup is left aside.
+      releaseFinal.resolve();
       const error = await outcome;
       expect(error).toBeInstanceOf(Error);
-      expect(renames).toBe(3);
+      expect(renames).toBe(2);
       // The successor published in its own process and still holds its install lock:
-      // the launcher is available (its tree was restored to final) while that lock
+      // the launcher is available (its tree was never moved aside) while that lock
       // is live, and no backup is left aside.
       expect(readInstallLockToken(dir)).toBe(successorToken);
       expect(readPointer(dir).active).toBe(hash);
@@ -4180,12 +4166,62 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     } finally {
       releaseAside.resolve();
       releaseFinal.resolve();
-      releaseAfterAside.resolve();
       writeFileSync(path.join(controlDir, "release"), "release\n");
       await childDone;
       expect(JSON.parse(readFileSync(resultFile, "utf8"))).toMatchObject({ outcome: "reused" });
       child.kill();
     }
+  });
+
+  test("a rollback whose locks are lost after the rename-aside restores the tree", async () => {
+    const component = fakeComponent(execLog);
+    const hash = lockHash(component.target);
+    const dir = graphifyRoot();
+    mkdirSync(dir, { recursive: true });
+    const final = path.join(dir, hash);
+    const staging = path.join(dir, "staging");
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(path.join(staging, "marker"), "new\n");
+    writeFileSync(path.join(staging, "graphify"), "#!/bin/sh\necho graphify\n");
+    // The rollback attempt holds a real lock. Its removal passes its ownership
+    // re-checks and the fence-identity check, renames the tree aside, and pauses at
+    // the after-aside seam, after the rename-aside and before the post-rename
+    // re-verification. The test then displaces both locks the way delayed stale-lock
+    // takeovers' renames do (a direct rename, since a same-process contender cannot
+    // judge this process's lock dead and a protocol takeover cannot displace a live
+    // owner). When the rollback resumes, the re-verification finds its locks lost,
+    // so it renames the tree back. The tree is restored to final and no backup is
+    // left aside. This is the defense-in-depth path: the re-check after the final
+    // seam normally leaves a published tree in place (the previous test), but if the
+    // locks are lost after the rename-aside already ran, the rename-back still
+    // restores the tree instead of leaving it stranded aside.
+    const holder = await acquireInstallLock(dir);
+    const verifyLockHeld = async () => {
+      if (readInstallLockToken(dir) !== holder.token) throw new Error("lock lost");
+    };
+    const atAfterAside = deferred();
+    const releaseAfterAside = deferred();
+    const outcome = activate(dir, hash, staging, {
+      verifyLockHeld,
+      writePointer: async () => {
+        throw new Error("pointer write failed");
+      },
+      renameAfterAside: async () => {
+        atAfterAside.resolve();
+        await releaseAfterAside.promise;
+      },
+    }).catch((error: unknown) => error);
+    await atAfterAside.promise;
+    // The tree is aside at trash, not final. Displace both locks, then release the
+    // seam: the re-verification finds the locks lost and renames the tree back.
+    renameSync(path.join(dir, ".install.lock"), path.join(dir, ".install.lock.displaced"));
+    renameSync(path.join(dir, ".tree.lock"), path.join(dir, ".tree.lock.displaced"));
+    releaseAfterAside.resolve();
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    expect(readFileSync(path.join(final, "marker"), "utf8")).toBe("new\n");
+    expect(readdirSync(dir).filter((name) => name.includes(".replaced-"))).toEqual([]);
+    await holder.release();
   });
 
   test("recovery restores a backup when the lock file is only a release tombstone", async () => {
