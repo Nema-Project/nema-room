@@ -32,6 +32,10 @@ node scripts/npm/check-tag.mjs v0.1.3
 
 `check-tag.mjs` fails when the tag is not `v` plus strict SemVer, or when `apps/cli`, `apps/desktop`, and `apps/local` are not equal to each other and to the tag.
 
+## Graphify resources in the package
+
+The package carries the Graphify lock and installer but no Python or wheels; Graphify downloads on first use (see the [user guide](../../docs/guide.en.md#components)). It also carries the prebuilt Windows Graphify launcher at `dist/resources/graphify-launcher.exe`, a KB-scale Nema binary, so Windows hosts never need a compiler. `NEMA_NPM_WINDOWS_LAUNCHER` names a built launcher file, or `build` to compile `scripts/desktop/graphify-launcher.c` during the pack (`NEMA_WINDOWS_NATIVE_CC` picks the compiler, for example a MinGW-w64 cross compiler on Linux). With it unset, the pack prints `npm package Windows Graphify launcher: not included`, and Graphify installs on Windows hosts then fail with a named reason. `NEMA_NPM_REQUIRE_WINDOWS_LAUNCHER=1` makes a pack without the launcher fail. `npm-publish.yml` sets both (`build` and `1`), so the pack it publishes always has the launcher. Measured during #132: the published v0.3.0 package unpacked to 850,982 bytes; the staged package with the lock and installer, before the launcher was added, unpacked to 1,014,774 bytes.
+
 ## Release preparation
 
 Feature pull requests record user-visible notes as `changelog.d/<slug>.<category>.md` fragments (`category` is `added`, `changed`, `fixed`, `removed`, or `security`). Those fragments are the source of truth between releases. Do not edit `## [Unreleased]` directly. When the fragments are complete, set the release version from the repository root:

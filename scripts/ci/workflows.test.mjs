@@ -722,3 +722,14 @@ test('image publish pushes pinned GHCR images only after verify, and only from t
   const verifyRaw = readFileSync(new URL('../../.github/workflows/verify.yml', import.meta.url), 'utf8');
   assert.match(verifyRaw, /scripts\/images\/\*\.test\.mjs/);
 });
+
+test('the npm release pack carries the Windows Graphify launcher, cross-compiled on Linux', () => {
+  const { build } = read('npm-publish').jobs;
+  const pack = build.steps.find((step) => step.run === 'npm run cli:pack');
+  assert.ok(pack, 'the build job packs the CLI');
+  assert.equal(pack.env.NEMA_NPM_WINDOWS_LAUNCHER, 'build');
+  assert.equal(pack.env.NEMA_NPM_REQUIRE_WINDOWS_LAUNCHER, '1');
+  assert.equal(pack.env.NEMA_WINDOWS_NATIVE_CC, 'x86_64-w64-mingw32-gcc');
+  const compiler = build.steps.findIndex((step) => /apt-get install .*gcc-mingw-w64-x86-64/.test(step.run ?? ''));
+  assert.ok(compiler >= 0 && compiler < build.steps.indexOf(pack), 'the cross compiler is installed before the pack');
+});

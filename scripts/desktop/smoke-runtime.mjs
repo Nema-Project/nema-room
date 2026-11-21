@@ -1,6 +1,6 @@
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { chmod, copyFile, cp, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, cp, link, lstat, mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -195,42 +195,20 @@ async function cliLauncherUsage(payload, env) {
   if (!/Usage:.*report install/.test(stdout) || !stdout.includes('--agent')) throw new Error(`CLI launcher did not print report install usage: ${stdout}`);
 }
 
-async function graphifyExtractOnce(install, env) {
-  const launcher = path.join(install, 'tools', 'graphify', process.platform === 'win32' ? 'graphify.exe' : 'graphify');
-  const info = await lstat(launcher).catch(() => null);
-  if (!info) {
-    if (process.platform === 'linux') return;
-    throw new Error('Packaged Graphify launcher is missing');
+/**
+ * Graphify is an on-demand component (#132): the installed payload must not carry tools/graphify, and must
+ * carry what the component installer needs instead — the lock beside the CLI and, on Windows, the launcher.
+ * Running Graphify itself needs a confirmed download and is not part of this offline smoke.
+ */
+async function slimGraphifyPayload(install) {
+  if (await lstat(path.join(install, 'tools', 'graphify')).catch(() => null)) throw new Error('Installed payload still carries tools/graphify');
+  const resources = path.join(install, 'app', 'node_modules', '@nema', 'cli', 'dist', 'resources');
+  const lock = await lstat(path.join(resources, 'graphify-lock.json')).catch(() => null);
+  if (!lock?.isFile()) throw new Error('Installed payload is missing the CLI Graphify lock');
+  if (process.platform === 'win32') {
+    const launcher = await lstat(path.join(resources, 'graphify-launcher.exe')).catch(() => null);
+    if (!launcher?.isFile() || launcher.size === 0) throw new Error('Installed payload is missing the Windows Graphify launcher resource');
   }
-  const corpus = path.join(path.dirname(install), 'graphify-smoke');
-  await mkdir(corpus, { recursive: true });
-  await writeFile(path.join(corpus, 'hello.js'), 'function smokeGreet() { return 1; }\n');
-  await writeFile(path.join(corpus, 'chip.v'), 'module chip; endmodule\n');
-  const child = spawn(launcher, ['extract', corpus, '--code-only'], {
-    cwd: corpus,
-    env: { ...env, GRAPHIFY_BACKEND: 'none', PYTHONNOUSERSITE: '1' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
-  trackChildClose(child);
-  let stdout = '';
-  let stderr = '';
-  let spawnError;
-  child.once('error', (error) => { spawnError = error; });
-  child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
-  child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
-  try { await waitForChildClose(child, 120_000); }
-  catch (error) {
-    if (child.exitCode === null && child.signalCode === null) child.kill();
-    await waitForChildClose(child, 5_000).catch(() => {});
-    throw new Error(`Graphify extract did not finish: ${stderr}`, { cause: error });
-  }
-  const output = `${stdout}\n${stderr}`;
-  if (spawnError || child.exitCode !== 0) throw new Error(`Graphify extract failed (${child.exitCode ?? spawnError?.message}): ${output}`);
-  if (output.includes('Traceback')) throw new Error(`Graphify extract crashed: ${output}`);
-  if (!/verilog/i.test(output) || !output.includes('not installed')) throw new Error(`Graphify extract did not skip the missing verilog grammar: ${output}`);
-  const graph = await readFile(path.join(corpus, 'graphify-out', 'graph.json'), 'utf8');
-  if (!graph.includes('smokeGreet')) throw new Error('Graphify extract did not index smokeGreet');
 }
 
 export async function closeCore(core) {
@@ -364,7 +342,7 @@ async function runSmoke(sourcePayload) {
     const secondUrl = await browserLaunch(node, install, env);
     if (new URL(firstUrl).origin !== new URL(secondUrl).origin) throw new Error('Duplicate browser launch did not reuse the same local runtime');
     await cliLauncherUsage(install, env);
-    await graphifyExtractOnce(install, env);
+    await slimGraphifyPayload(install);
     const descriptorBefore = JSON.parse(await readFile(path.join(home, 'instance.json'), 'utf8'));
     if (descriptorBeforeLaunches.instanceId !== descriptorBefore.instanceId || descriptorBeforeLaunches.pid !== descriptorBefore.pid) throw new Error('Duplicate browser launches did not share the same authenticated runtime owner');
     const { cookie, html } = await ticketSession(core.origin, firstUrl);

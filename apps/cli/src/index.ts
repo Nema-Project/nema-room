@@ -20,6 +20,7 @@ import { runWpGet, runWpList } from "./wp/commands.js";
 import { authGithub } from "./secrets/github.js";
 import { defaultDesktopHome } from "./report/desktop.js";
 import { registerMcpCommands } from "./extensions/mcpCommands.js";
+import { registerComponentsCommands } from "./components/componentsCommands.js";
 import { installReport, REPORT_AGENTS, uninstallReport, type ReportAgent } from "./report/install.js";
 
 const nemaHomeDir = () => path.join(os.homedir(), ".nema");
@@ -61,6 +62,12 @@ const mcpCommand = program
   });
 
 registerMcpCommands(mcpCommand, { nemaHome: nemaHomeDir(), desktopHome: defaultDesktopHome(), hubUrl: (flag) => resolveHubTarget(flag), out: consoleOut, stdin: () => process.stdin });
+
+const componentsCommand = program
+  .command("components")
+  .description("Optional components (Graphify): status, install after a size confirmation, and offline packs (pack / import)");
+
+registerComponentsCommands(componentsCommand, { nemaHome: nemaHomeDir(), out: consoleOut, stdin: () => process.stdin, version: cliVersion() });
 
 program
   .command("doctor")

@@ -11,6 +11,14 @@ export class DaemonRpcError extends Error {
 /** Plugin calls and index builds may run graphify on a whole repo, which takes minutes, not seconds. */
 export const INDEX_RPC_TIMEOUT_MS = 300_000;
 
+/**
+ * Component RPCs answer from the store or start a background install and return at once; the download itself
+ * never runs inside an RPC (its progress is read back through `components.status`). A cancel waits for the
+ * installer to clean its staging, and agent detection runs `--version` with a 10-second limit, so the default
+ * 30 seconds covers both; a longer limit would only hide a stuck daemon.
+ */
+export const COMPONENT_RPC_TIMEOUT_MS = 30_000;
+
 export interface DaemonRpc {
   call(method: string, params: unknown, timeoutMs?: number): Promise<unknown>;
 }

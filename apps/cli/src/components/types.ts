@@ -13,7 +13,8 @@ export type FailureReason =
   | "unsupported-platform"
   | "offline"
   | "disk-space"
-  | "lock-unreadable";
+  | "lock-unreadable"
+  | "offer-changed";
 
 export type InstallPhase = "download" | "verify" | "extract" | "self-check" | "activate";
 
@@ -36,6 +37,8 @@ export type ComponentStatus =
       /** The `<lock-hash>` directory. */
       path: string;
       launcher: string;
+      /** The last repair attempt for this version failed; the installed copy still serves. */
+      lastFailure?: { reason: FailureReason; detail: string; at: string };
     }
   | {
       state: "not-installed";

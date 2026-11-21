@@ -81,7 +81,7 @@ describe("PluginsPage", () => {
     expect(within(graphify).getByText("Bundled with the app")).toBeTruthy();
     expect(within(graphify).getByText("Installed").classList.contains("status-bad")).toBe(true);
     expect(within(graphify).getByText("Enabled").classList.contains("status-bad")).toBe(true);
-    expect(within(graphify).getByText("The packaged Graphify runtime is missing. It can be repaired from here.")).toBeTruthy();
+    expect(within(graphify).getByText("The Graphify component is not installed. Install it from App settings → Components, or run `nema components install graphify`.")).toBeTruthy();
     expect(within(graphify).queryByText(/uv tool install/)).toBeNull();
     expect(within(graphify).getByText("code__search")).toBeTruthy();
     expect(screen.getByText("Sends data out").classList.contains("red")).toBe(true);
@@ -855,10 +855,10 @@ describe("PluginsPage attach and repair", () => {
       .mockResolvedValueOnce({ ...catalog[0]!, availability: "ready", error: null, checkedAt: "2026-10-30T03:05:00.000Z" });
     renderPage();
     const graphify = (await screen.findByRole("heading", { name: "graphify", level: 3 })).closest("section")!;
-    expect(within(graphify).getByText("The packaged Graphify runtime is missing. It can be repaired from here.")).toBeTruthy();
+    expect(within(graphify).getByText("The Graphify component is not installed. Install it from App settings → Components, or run `nema components install graphify`.")).toBeTruthy();
     await act(async () => fireEvent.click(within(graphify).getByRole("button", { name: "Repair" })));
     expect(hub.repairExtension).toHaveBeenCalledWith("code");
-    expect(within(graphify).getByText(/still missing\. Reinstalling Nema puts it back/)).toBeTruthy();
+    expect(within(graphify).getByText(/still not installed\. Install it from App settings/)).toBeTruthy();
     await act(async () => fireEvent.click(within(graphify).getByRole("button", { name: "Repair" })));
     expect(within(graphify).getByText("Checked: working.")).toBeTruthy();
     expect(within(graphify).getByRole("button", { name: "Check again" })).toBeTruthy();

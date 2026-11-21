@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkSlimPayload } from './payload-size.mjs';
 import { validatePublicationEligibility } from './source-materials.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -13,6 +14,11 @@ export function parseReleaseValidationArgs(args) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const args = parseReleaseValidationArgs(process.argv.slice(2));
+    // Graphify downloads on first use (#132): a payload that carries tools/graphify again is blocked before
+    // anything else is checked. The 80 MiB total stays a warn-only budget (payload-size.mjs) measured at
+    // acceptance (plan Task 9), not a release gate: it must not block a release for unrelated payload growth.
+    const sections = await checkSlimPayload(args.payloadRoot, { maxTotalMiB: null });
+    process.stdout.write(`Slim payload: graphify 0.0 MiB, total ${(sections.total / 1048576).toFixed(1)} MiB\n`);
     const trustedManifest = path.join(scriptDir, 'tools-manifest.json');
     const result = await validatePublicationEligibility(args.payloadRoot, { ...args, toolsManifestPath: trustedManifest });
     process.stdout.write(`Release eligible: ${result.target} ${result.appVersion}; ${result.materialCount} source materials, ${result.noticeCount} notices\n`);

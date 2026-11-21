@@ -111,6 +111,59 @@ export type PluginCatalogItem = {
   loggedIn?: boolean;
 };
 
+/** Mirrors the daemon's component status (apps/cli/src/components/types.ts and rpc.ts). */
+export type ComponentName = "graphify";
+
+export type ComponentFailureReason =
+  | "network"
+  | "proxy"
+  | "hash-mismatch"
+  | "self-check"
+  | "unsupported-platform"
+  | "offline"
+  | "disk-space"
+  | "lock-unreadable"
+  | "offer-changed";
+
+export type ComponentProgress = {
+  phase: "download" | "verify" | "extract" | "self-check" | "activate";
+  downloadedBytes: number;
+  totalBytes: number;
+  file: string | null;
+};
+
+export type ComponentStatus =
+  | { state: "installed"; name: ComponentName; lockHash: string; version: { graphifyy: string; python: string }; path: string; launcher: string; lastFailure?: { reason: ComponentFailureReason; detail: string; at: string } }
+  | { state: "not-installed"; name: ComponentName; lockHash: string }
+  | { state: "lock-mismatch"; name: ComponentName; lockHash: string; installedLockHash: string }
+  | { state: "failed"; name: ComponentName; lockHash: string | null; reason: ComponentFailureReason; detail: string; at: string | null; installedLockHash?: string }
+  | { state: "installing"; name: ComponentName; lockHash: string; progress: ComponentProgress };
+
+export type ComponentSetting<T> = { value: T; source: "env" | "config" | null; config: T };
+
+export type ComponentView = {
+  name: ComponentName;
+  status: ComponentStatus;
+  /** What a confirmed install downloads: the lock's summed sizes, the store directory and the hosts it contacts. */
+  offer: { lockHash: string; totalBytes: number; location: string; hosts: string[] } | null;
+  offerError?: string;
+  /** Set only on a cancel answer: whether the attempt it stopped really was cancelled (false when it had already completed). */
+  cancelled?: boolean;
+  settings: {
+    pythonMirror: ComponentSetting<string | null>;
+    pypiBase: ComponentSetting<string | null>;
+    offline: ComponentSetting<boolean>;
+  };
+};
+
+export type AgentCliStatus = {
+  id: "codex" | "claude-code";
+  command: string;
+  installed: boolean;
+  version: string | null;
+  installUrl: string;
+};
+
 export type WorkspacePlugin = {
   plugin: {
     id: string;

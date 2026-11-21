@@ -2,13 +2,14 @@
 
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { AppReleaseAbout } from "@/components/AppRelease";
+import { ComponentsSettings } from "@/components/ComponentsSettings";
 import { ModelSettings } from "@/components/ModelSettings";
 import { PluginsPage } from "@/components/PluginsPage";
 import { getMe, updateMe } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
 import { invalidateRosters } from "@/lib/members";
 
-const TABS = ["model", "plugins", "general", "about"] as const;
+const TABS = ["model", "plugins", "components", "general", "about"] as const;
 type SettingsTab = (typeof TABS)[number];
 
 type LoginItemBridge = {
@@ -224,6 +225,7 @@ export function AppSettings({ onClose }: { onClose: () => void }) {
   const labels: Record<SettingsTab, string> = {
     model: t("appSettings.tab.model"),
     plugins: t("appSettings.tab.plugins"),
+    components: t("appSettings.tab.components"),
     general: t("appSettings.tab.general"),
     about: t("appSettings.tab.about"),
   };
@@ -269,6 +271,8 @@ export function AppSettings({ onClose }: { onClose: () => void }) {
             >
               {id === "model" && <ModelSettings embedded />}
               {id === "plugins" && <PluginsPage embedded />}
+              {/* Mounted only while selected: its status read and agent check run when the person opens it, not with settings. */}
+              {id === "components" && selected && <ComponentsSettings />}
               {id === "general" && (
                 <>
                   <DisplayNameSetting />

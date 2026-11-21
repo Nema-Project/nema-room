@@ -14,6 +14,7 @@ import { shareRoutes } from "./shareRoutes.js";
 import { memberRoutes } from "./memberRoutes.js";
 import { mentionContextRoutes } from "./mentionContext.js";
 import { uiRoutes } from "./uiApi.js";
+import { componentRoutes } from "./components.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 export const DEFAULT_HUB_PORT = 4400;
@@ -105,6 +106,7 @@ export function createApp(deps: AppDeps): Hono {
   app.route("/api", attachmentRoutes({ store: attachments, daemon: deps.daemon, daemonStatus: deps.daemonStatus, db: deps.db, events: deps.events }));
   app.route("/api", mentionContextRoutes({ db: deps.db, attachments }));
   app.route("/api", memberRoutes({ db: deps.db }));
+  app.route("/api", componentRoutes({ daemon: deps.daemon }));
   app.route("/api", uiRoutes(deps));
   app.route("/api", shareAdminRoutes({ db: deps.db, sharesEnabled: deps.sharesEnabled !== false }));
   app.route(

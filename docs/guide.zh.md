@@ -16,7 +16,7 @@
 
 ## 桌面应用（预览）
 
-桌面应用把整套服务放进一个本机程序：磁盘上的 PGlite 数据库、单实例本机核心、受保护的同源网关，以及 Electron 自带的 Node。它使用你电脑上已经装好的 Git（2.31 或更新）。在 Mac 上，从访达打开时也会找到 Homebrew 和 MacPorts 的 Git。没有 Git 或版本太旧时，启动会说明原因，并给出 https://git-scm.com/downloads。不需要 Docker 或数据库服务器。**桌面版本已发布**，提供 Windows x64 和 Apple 芯片版本：[下载](https://github.com/Nema-Project/nema-room/releases/latest)。Windows 上在安装包和便携 ZIP 里选一个。
+桌面应用把整套服务放进一个本机程序：磁盘上的 PGlite 数据库、单实例本机核心、受保护的同源网关，以及 Electron 自带的 Node。它使用你电脑上已经装好的 Git（2.31 或更新）。在 Mac 上，从访达打开时也会找到 Homebrew 和 MacPorts 的 Git。没有 Git 或版本太旧时，启动会说明原因，并给出 https://git-scm.com/downloads。不需要 Docker 或数据库服务器。代码图谱组件（Graphify）不在安装包里：第一次有图谱功能用到它时，经你确认下载大小后才下载，也可以改为离线导入，见[代码图谱组件](#components)。**桌面版本已发布**，提供 Windows x64 和 Apple 芯片版本：[下载](https://github.com/Nema-Project/nema-room/releases/latest)。Windows 上在安装包和便携 ZIP 里选一个。
 
 | 项目 | 状态 |
 | --- | --- |
@@ -294,7 +294,7 @@ nema config set proxyEnv off
 ## 从讨论到交付
 
 1. **讨论**：发送记录，在知识面板检查、确认、修正或撤回 Agent 的理解。可以引用任意一条消息，修改自己的消息（旧内容会保留，Agent 会按新内容重新整理），或按关键词搜索这个工作区。输入 `@` 打开提及菜单：按顺序是知识条目、已经发送过的文件、话题。选中一项会把可读的写法插进正文——条目是 `[D-12]`，文件是 `附件：截图 1.png`，话题是 `[话题：标题]`——并在输入框上方出现一个 chip；点它的 × 会连同正文里的那段一起删掉，手动删掉正文里那段时 chip 也会消失。`@D-12` 这样直接打出条目 id 时，这一条排在最前。`@` 只在行首、空白之后或 `「『（` 和 `，。、：` 之后打开，`a@b` 和代码块里不打开；`/` 菜单的规则不变，两个菜单不会同时出现。发送时被提及的条目正文会随消息交给 Agent（每条最多 4 KiB、合计 16 KiB，超出的只给 id 让它自己读），被提及的文件和本条消息自己的附件一样随任务发送（仍受每任务 8 个、32 MB 的限制），话题只给标题和开头一段。每条消息最多 20 个提及；提及只是你指定的上下文，不会改变条目的状态。保存编辑后，如果正文改动让提及失效，会显示一行「已移除 N 个失效的提及」，保存不会被拦住。输入 `/` 打开命令菜单。图的类型直接列在里面，例如 `/diagram:sequence`，继续打字会收窄列表。输入 `/thread` 可开始新的长讨论；当你要求比较方案或权衡利弊且尚未决定时，Agent 会先把当前对话移到 thread 里讨论。thread 在独立窗口中打开，侧栏未读徽标会带你跳到下一个待处理 thread。Agent 像 copilot 同事一样交流：memo 检查、闲聊、疑问句式的想法和询问优缺点只回答、不写入知识；把内容留在讨论或 thread 里也是不写入。主聊与 thread 使用相同的记录规则。比较方案且尚未决定时不新建 question 条目。没有明确决定时会先提问；若用户没有明确推翻已有决定，Agent 保留原决定并在当前 thread 中追问。明确推翻时，旧决定标记为已取代并记录新决定。也可以问进度，或更新已有的图。 输入 `@` 可在整个工作区搜索知识条目、已发送的文件和话题。不输入关键词时，使用 **下一页提及候选** 或 **Page Down** 浏览更早的目标，每页每组最多八条，也能找到前 500 条之外的目标。提及只是上下文指针，不会改变决策。
-2. **连接代码**：在设置里用系统文件夹选择器绑定本机 Git 仓库。选中后先显示远程地址和识别到的主分支，名字用文件夹名，不用手填；名字冲突时才改。对话框由本机 daemon 打开。Windows 用资源管理器式的选择器。Graphify 从安装包的 `tools/graphify/` 读取，不从 PATH 安装，也不在运行时下载。`desktop:stage` 按锁定的 CPython 3.11.18 和 graphifyy 0.9.95 放入这份文件，启动器只用相对路径。打包的解释器是 `python/bin/python3.11`。Tree-sitter 语法保留 JavaScript、TypeScript、TSX、Python、Go、Rust、Java、C、C++、C#、Ruby、PHP、Swift、Kotlin、Bash 和 JSON。这个锁定版本没有 YAML、TOML、HTML、CSS、Markdown 的语法包。缺语法时跳过该文件并警告，提取仍会结束。缺失时索引和代码搜索会报 `随包的 Graphify 运行环境缺失`，插件页显示同一句说明。那里的「修复」只会重新检查，不能补回运行环境。绑定仓库时会建一次索引。完整提取可能要几分钟。索引进度会显示在聊天里，结束后说明可以开始问代码。架构图在这次索引结束后才画，画的时候也有进度。之后 daemon 不按时钟 `git fetch`：一次任务第一次读取该仓库的代码时才拉取主分支，并读取已提交快照，不包含未提交修改。同一次任务里之后的读取沿用这一次的结果。
+2. **连接代码**：在设置里用系统文件夹选择器绑定本机 Git 仓库。选中后先显示远程地址和识别到的主分支，名字用文件夹名，不用手填；名字冲突时才改。对话框由本机 daemon 打开。Windows 用资源管理器式的选择器。索引和代码搜索运行 Graphify（锁定的 CPython 3.11.18 和 graphifyy 0.9.95）。它是可选组件，不从 PATH 安装，也不在安装包里。绑定仓库是第一个用到它的操作，所以在还没装它的机器上，Nema 会先询问再下载，见[代码图谱组件](#components)。Tree-sitter 语法保留 JavaScript、TypeScript、TSX、Python、Go、Rust、Java、C、C++、C#、Ruby、PHP、Swift、Kotlin、Bash 和 JSON。这个锁定版本没有 YAML、TOML、HTML、CSS、Markdown 的语法包。缺语法时跳过该文件并警告，提取仍会结束。没有该组件时，索引和代码搜索会说明原因和安装方法，例如 `Graphify 组件未安装。请在设置页安装，或运行 nema components install graphify`；工作区其余功能照常可用。绑定仓库时会建一次索引。完整提取可能要几分钟。索引进度会显示在聊天里，结束后说明可以开始问代码。架构图在这次索引结束后才画，画的时候也有进度。之后 daemon 不按时钟 `git fetch`：一次任务第一次读取该仓库的代码时才拉取主分支，并读取已提交快照，不包含未提交修改。同一次任务里之后的读取沿用这一次的结果。
 3. **生成开发包**：选择 active 需求，开启 `superpowers` 后生成 spec 与 plan。`grill-me` 可因信息不足创建问题并阻塞生成。在聊天里那条追问下回答后，生成自动重试。
 4. **批准与交接**：人工审阅批准，再由编码 Agent 获取。编辑或重新生成会撤销批准。
 5. **上报与核验**：记录 `reported`、`verified`、`mismatch`。**引用的每条上报都通过 Git 核对时，`verified` 显示为「提交已核对」，不代表测试通过、功能正确或需求验收完成；你自己确认需求后显示为「验收已确认」。** 「提交已核对」的需求可以由你确认。之后所引上报的核对变了，需求会标出需要复审，「仍确认」只清掉这个标记。你确认的开发包任务显示「任务已完成并确认」，这不是需求验收。聊天里每条上报把 agent 的声称和 hub 的核实分开显示（Git 三项、提交作者、GitHub 读取；失败的 check run 标红）。
@@ -341,7 +341,29 @@ MCP 服务器在「发现与安装」里用「添加 MCP 服务器…」添加�
 
 终端里也能做同样的事：`nema mcp add <id> --name <name> --command <cmd> [--arg …] [--env NAME=…]`（HTTP 用 `--url` 和 `--header`）、`nema mcp edit`、`nema mcp list`、`nema mcp status <id>`、`nema mcp start <id>`、`nema mcp stop <id>`、`nema mcp secret set <id> <name>`（从标准输入读值）和 `nema mcp secret clear <id> <name>`。不带子命令的 `nema mcp` 仍然是 Codex 和 Claude 启动的 Room MCP 服务器。桌面应用的 hub API 需要应用内登录，所以那里请用插件页；`nema mcp secret set|clear --desktop` 直接写桌面应用的凭据文件。`nema mcp add` 会拒绝已存在的 ID，`secret set` 按输入原样保存这一行。
 
-每个内置项都有「修复」，已经正常时显示为「重新检查」。对 graphify，它会运行随包 Graphify 的版本检查：通过时显示「已检查：可以使用。」；运行环境缺失或无法运行时，会说明情况，并提示重新安装 Nema 即可恢复。对 GitHub，它会询问 GitHub CLI（`gh`）是否已安装、是否已登录 github.com，并说明缺的是哪一项。其他内置项是应用本身的一部分，检查后确认可用。检查结果会保存，页面显示最近一次检查的结果，而不是出厂默认值。「修复」不会运行任何包管理器。
+每个内置项都有「修复」，已经正常时显示为「重新检查」。对 graphify，它会检查 Graphify 组件是否已安装、能否运行：可以时显示「已检查：可以使用。」；不行时说明组件未安装，或已安装但无法运行，并指向**应用设置 → 组件**或 `nema components install graphify`（见[代码图谱组件](#components)）。对 GitHub，它会询问 GitHub CLI（`gh`）是否已安装、是否已登录 github.com，并说明缺的是哪一项。其他内置项是应用本身的一部分，检查后确认可用。检查结果会保存，页面显示最近一次检查的结果，而不是出厂默认值。「修复」不会运行任何包管理器。
+
+<a id="components"></a>
+
+### 代码图谱组件（Graphify）
+
+仓库索引、代码搜索和架构图需要 Graphify。它是可选组件：桌面安装包、npm 包和 Compose 镜像里都没有它；对话、知识、开发包和分享不依赖它。
+
+- **何时下载。** 启动应用、打开工作区都不会下载。第一次真正调用 Graphify 时（例如绑定仓库，会开始建索引）先弹出确认框，写明组件名、下载总大小（按锁汇总）、安装位置 `~/.nema/runtime/graphify/` 和下载来源域名。默认来源是 `github.com`（python-build-standalone 的 CPython）和 `files.pythonhosted.org`（Python wheels）；Nema 不镜像、不转发这些文件。选**暂不**后图谱功能保持不可用，这个应用或浏览器会针对该组件版本记住你的选择，不再自动弹出；之后可从代码图谱入口或**应用设置 → 组件**安装。
+- **校验与目录。** 每个归档解压前都按这一版 Nema 随附的锁核对 SHA-256 和大小；任一不符，整次作废。每个版本装到 `~/.nema/runtime/graphify/<lock-hash>/`，同目录的 `current.json` 记录当前启用的版本。只有全部文件通过校验并跑过自检的版本才会启用，装坏的版本永远不会被使用。保留上一版，更早的版本在下一次安装成功后清理。Nema 升级改了锁时，旧版本会停用而不是继续用，下一次图谱调用会重新询问。桌面、npm 和 Compose 的宿主机 daemon 共用这一个目录。
+- **失败。** 下载、校验或自检失败只会停用图谱功能，不弹全局错误。确认框和**应用设置 → 组件**会说明原因（网络、代理、校验和不符、自检、磁盘空间），并给出**重试**和**导入离线组件包**两个出口。进度显示已下载字节和当前文件，可以取消；取消或失败都不留下半成品。`nema doctor` 报告同样的状态。
+- **应用设置 → 组件**显示组件状态、大小、安装位置和来源、两个下载镜像和离线开关。这里还显示运行 daemon 的机器的 `PATH` 上有没有 Codex CLI 和 Claude Code：有就显示版本，没有就给出官方安装说明的链接。Nema 不打包、也不代装 Agent CLI。
+- **镜像、代理与证书。** `NEMA_GRAPHIFY_PYTHON_MIRROR` 替换 Python 归档地址的 `https://github.com/astral-sh/python-build-standalone/releases/download` 前缀，`NEMA_GRAPHIFY_PYPI_BASE` 替换 wheels 的 `https://files.pythonhosted.org` 前缀。设置页的镜像字段保存的是同样的值（daemon 配置里的 `components.pythonMirror` 和 `components.pypiBase`）；环境变量已设置时以环境变量为准，页面也会标明。镜像只改地址：仍按锁里的 SHA-256 校验，镜像给出不同的字节只会校验失败，什么都不装。下载使用 daemon 环境里的 `HTTPS_PROXY`、`HTTP_PROXY` 和 `NO_PROXY`，并额外信任 `NODE_EXTRA_CA_CERTS` 与 `SSL_CERT_FILE` 指向的 CA 文件。单个文件失败最多重试三次（间隔 1、2、4 秒），请求 60 秒没有数据即失败，不做断点续传。下载前会检查磁盘能否放下下载内容加解压后的文件，不够时说明差多少。
+- **离线开关。** `NEMA_GRAPHIFY_OFFLINE=1` 或设置页的开关（`components.offline`）禁止一切组件下载。环境变量优先于开关。这时请改用离线组件包。
+- **终端。** `nema components` 直接操作同一个目录，不需要 daemon 在运行。桌面应用里经随包的 CLI 启动器运行（在 `resources\payload` 里运行 `Nema CLI.cmd components status`；macOS 用 `Nema CLI.command`）。
+  - `nema components status [--json]` 显示状态、lock-hash、安装位置、下载大小与来源域名，以及镜像和离线设置各自的来源。
+  - `nema components install graphify` 先显示大小、来源域名和安装位置，再问 `[y/N]`；`--yes` 跳过询问，供脚本使用。不在终端里又没有 `--yes` 时拒绝执行。回答否、离线开关打开或平台不支持时退出码为 1，不下载任何东西。Ctrl-C 取消并删除下载了一半的内容。
+  - `nema components pack graphify [-o <file>]` 在能联网的机器上运行：按锁下载这台机器平台对应的归档，逐个校验，原样写进一个 `.nema-component` 文件。它就是这些归档加一份 `manifest.json` 的普通 tar 包，包里不做任何组装。
+  - `nema components import <file>` 不联网，从组件包安装。准绳是这一版 Nema 随附的锁，不是包本身：包里的归档必须恰好等于本平台在锁里的条目，不缺也不多，每个都符合锁里的 SHA-256 和大小；manifest 里的 target 和 lock-hash 也必须与本平台和这把锁一致。manifest 只是索引，里面的哈希一律不作数。包里的其他内容（例如预先组装好的目录或脚本）会列为已忽略，永远不会解压或执行。归档随后走与在线安装相同的组装步骤。来自其他 Nema 版本或其他平台的包会被拒绝并说明原因，什么都不改。
+- **组件包由谁分发。** Nema 不发布组件包。谁制作并转交组件包，谁就是分发方。包里是各自许可证下的上游归档：python-build-standalone 的 CPython（连同该构建所含各库的许可证）和 Python wheels。转发这些文件的许可证义务由制包方承担。
+- **npm 与 Compose。** npm 包里只多了锁、安装器和一个很小的预编译 Windows 启动器（增量在 KB 级）。npm 安装的 daemon 与 Compose 的宿主机 daemon 走同一流程：第一次图谱调用报告 Graphify 未安装，你在 web 界面的确认框里或用 `nema components install graphify` 安装。Compose 下 daemon 运行在宿主机上，组件装到宿主机的 `~/.nema/runtime/graphify/`；hub 和 web 镜像不增加任何东西，也不需要在容器里安装什么。
+- **平台。** 锁里有 Windows x64、Apple 芯片的 macOS，以及使用 glibc 的 Linux x64 和 arm64。其他平台，包括 Alpine 这类 musl Linux 和 Intel Mac，会报告为不支持，不下载任何东西。
+- **自备 Graphify。** `NEMA_GRAPHIFY_BIN` 仍可指向你自己管理的 Graphify，并优先于组件。本次改动之前的桌面安装若仍带有 `tools/graphify`，只在没有安装组件时使用它。
 
 <a id="data"></a>
 

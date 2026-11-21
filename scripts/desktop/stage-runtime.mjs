@@ -7,9 +7,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readElectronNodeVersion, runtimeNodeRecord } from './electron-node.mjs';
 import { fetchTools, nodePayloadExcluded, toolsManifest } from './fetch-tools.mjs';
-import { reportPayload } from './payload-size.mjs';
+import { checkSlimPayload, reportPayload } from './payload-size.mjs';
 import { buildOwnedHelper } from './build-owned-helper.mjs';
-import { fetchGraphify as fetchGraphifyRuntime } from './fetch-graphify.mjs';
+import { buildGraphifyLauncher } from './fetch-graphify.mjs';
+
+/** Beside the CLI's Graphify lock; apps/cli/src/components/lock.ts `shippedWindowsLauncherPath` reads it here. */
+const PAYLOAD_GRAPHIFY_LAUNCHER = 'app/node_modules/@nema/cli/dist/resources/graphify-launcher.exe';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRoot = path.resolve(scriptDir, '../..');
@@ -364,7 +367,7 @@ export async function stageRuntime({
   build = true,
   electronNode,
   ownedHelperBuilder = buildOwnedHelper,
-  fetchGraphify = fetchGraphifyRuntime,
+  graphifyLauncherBuilder = buildGraphifyLauncher,
 } = {}) {
   sourceRoot = path.resolve(sourceRoot);
   outputDir = path.resolve(outputDir);
@@ -451,11 +454,9 @@ export async function stageRuntime({
     const staging = path.join(tempRoot, 'payload');
     const put = (relative) => path.join(staging, ...safeRelative(relative, 'payload').slice(0));
     await mkdir(staging, { recursive: true });
-    const graphifyDir = await fetchGraphify({ platform, arch, destination: put('tools/graphify'), cacheDir: path.join(toolCache, 'graphify'), sourceRoot });
-    if (graphifyDir) {
-      await requiredFile(staging, platform === 'win32' ? 'tools/graphify/graphify.exe' : 'tools/graphify/graphify', 'packaged Graphify launcher', staging);
-      await copyTree(path.join(graphifyDir, 'licenses'), put('runtime/licenses/graphify-runtime'), staging);
-    }
+    // Graphify is not part of the payload (#132): the daemon downloads it on first use after the person confirms,
+    // checked against the lock that ships in the CLI's dist/resources. Its licenses travel with the component
+    // (the installer copies them into each <lock-hash>/licenses), not into runtime/licenses.
     await copyTree(selectedToolsRoot, put(`runtime/${target}`), selectedToolsRoot, new Set(), {
       // The Node binary is Electron's. Keep the license and the tools-source pin; do not ship a second node/.
       skip: (relative) => nodePayloadExcluded(relative) || relative === 'node' || relative.startsWith('node/'),
@@ -479,6 +480,13 @@ export async function stageRuntime({
       await copyCompiledDist(path.join(builtRoot, distPath), put(`${destination}/dist`), builtRoot);
     }
     await copyTree(path.join(builtRoot, 'apps/cli/src/report/SKILL.md'), put('app/node_modules/@nema/cli/src/report/SKILL.md'), builtRoot);
+    await requiredFile(staging, 'app/node_modules/@nema/cli/dist/resources/graphify-lock.json', 'staged CLI Graphify lock', staging);
+    if (platform === 'win32') {
+      // The KB-scale Windows launcher the component installer places in each Graphify version; built here so
+      // no user machine needs a compiler. macOS and Linux get the installer's shell launcher instead.
+      await graphifyLauncherBuilder({ sourceRoot, output: put(PAYLOAD_GRAPHIFY_LAUNCHER) });
+      await requiredFile(staging, PAYLOAD_GRAPHIFY_LAUNCHER, 'Windows Graphify launcher resource', staging);
+    }
     await copyTree(path.join(builtRoot, 'vendor/archify'), put('vendor/archify'), builtRoot);
     await copyTree(path.join(builtRoot, 'vendor/superpowers-rules'), put('vendor/superpowers-rules'), builtRoot);
     // Next's standalone trace supplies Web dependencies under web/. The core gets only what the runtime
@@ -525,6 +533,9 @@ export async function stageRuntime({
     };
     await pruneStagedPayload(staging);
     await copyCheck(staging);
+    // Fail closed if anything puts Graphify back into the payload. The size ceiling is the release gate's
+    // (validate-release.mjs); staging only reports the total.
+    await checkSlimPayload(staging, { maxTotalMiB: null });
     const owner = randomUUID();
     let claimed = false;
     let identity;

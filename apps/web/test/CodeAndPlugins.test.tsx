@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CodeAndPlugins } from "@/components/CodeAndPlugins";
+import { resetComponentsForTests } from "@/lib/components";
 import { formatDay, formatTime } from "@/lib/format";
 import { I18nProvider } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
@@ -17,6 +18,7 @@ vi.mock("@/lib/hub", () => ({
   listPlugins: vi.fn(),
   listWorkspacePlugins: vi.fn(),
   updateWorkspacePlugin: vi.fn(),
+  getComponents: vi.fn(async () => ({ components: [] })),
 }));
 
 const repo = (extra: Partial<Repo> & Pick<Repo, "id" | "path" | "label">): Repo => ({
@@ -342,5 +344,35 @@ describe("trusting a repository's Skills", () => {
     await userEvent.click(on);
     expect(hub.updateRepo).toHaveBeenCalledWith("w1", "r1", { trustSkills: false });
     expect(screen.queryByRole("group", { name: "Trust this repository's Skills /tmp/app" })).toBeNull();
+  });
+});
+
+describe("CodeAndPlugins graph entry", () => {
+  const notInstalled = {
+    name: "graphify" as const,
+    status: { state: "not-installed" as const, name: "graphify" as const, lockHash: "e".repeat(64) },
+    offer: { lockHash: "e".repeat(64), totalBytes: 2 * 1024 * 1024, location: "/home/u/.nema/runtime/graphify", hosts: ["github.com"] },
+    settings: {
+      pythonMirror: { value: null, source: null, config: null },
+      pypiBase: { value: null, source: null, config: null },
+      offline: { value: false, source: null, config: false },
+    },
+  };
+
+  beforeEach(() => {
+    resetComponentsForTests();
+    vi.mocked(hub.getComponents).mockReset();
+    vi.mocked(hub.getComponents).mockResolvedValue({ components: [notInstalled] });
+  });
+
+  it("shows the graph entry without prompting, and binding a repository (its first graph build) opens the offer", async () => {
+    vi.mocked(hub.bindRepo).mockResolvedValueOnce(repo({ id: "r1", path: "/real/app", label: "app" }));
+    mount();
+    expect(await screen.findByText("Graphify is not installed. Repository indexing and code search need it.")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    expect(await screen.findByRole("dialog", { name: "Download Graphify?" })).toBeTruthy();
+    expect(screen.getByText("2.0 MiB")).toBeTruthy();
   });
 });

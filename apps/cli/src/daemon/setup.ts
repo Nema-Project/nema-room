@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { registerAttachmentHandlers } from "../attachments/handlers.js";
+import { registerComponentHandlers, type ComponentRpcOptions } from "../components/rpc.js";
 import { ClaudeCodeAdapter } from "../claude/adapter.js";
 import { loadConfig, type NemaConfig } from "../config.js";
 import { CodexDirectAdapter } from "../direct/adapter.js";
@@ -60,6 +61,8 @@ export type DaemonStart = {
   graphify?: GraphifyOpts;
   /** Explicit provider injection for tests or callers; production uses the signed-in `gh` CLI. */
   github?: GithubReader;
+  /** Component RPC seams (store root, lock, installer, agent CLI detection); production uses the defaults. */
+  components?: Omit<ComponentRpcOptions, "nemaHome" | "getConfig">;
   /** Where the report token the hub should accept lives; defaults to `nemaHome`. */
   reportTokenHome?: string;
   ownedHelpers?: OwnedHelperScope;
@@ -110,6 +113,8 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
     ownedHelpers: o.ownedHelpers,
     prepareRepo: (repoId, taskId) => watcher.prepare(repoId, taskId),
   });
+  // Status and a confirmed install only: nothing here runs at start-up or when a workspace opens.
+  const components = registerComponentHandlers(rpc, { ...o.components, nemaHome: o.nemaHome, getConfig: o.getConfig });
   registerAttachmentHandlers(rpc, o.nemaHome, o.getConfig);
   registerSkillHandlers(rpc, o.nemaHome);
   rpc.register("repos.sync", async (params) => {
@@ -144,7 +149,7 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
     close() {
       if (closing) return closing;
       // MCP servers are stopped with the daemon; none is started again on the next start.
-      const tasks = [runner.stop(), watcher.stop(), connection.close(), github.close(), extensions.close()];
+      const tasks = [runner.stop(), watcher.stop(), connection.close(), github.close(), extensions.close(), components.close()];
       closing = Promise.all(tasks).then(() => {});
       return closing;
     },
