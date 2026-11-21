@@ -206,6 +206,16 @@ export type InstallHooks = {
    */
   renameAfterFinalCheck?: (from: string, to: string) => Promise<void>;
   /**
+   * A test-only pre-rename seam after the final re-check and before the real
+   * rename-aside: runs after the last ownership and fence-identity re-check and
+   * before the rename (tests pause here, after the re-check, to let another
+   * installer publish — there is no re-check after it, so a publication that
+   * landed during the pause is not caught before the rename: the rename-aside
+   * runs, the post-rename re-verification finds the locks lost, and the tree is
+   * renamed back. The hook must not rename itself.
+   */
+  renameAfterRecheck?: (from: string, to: string) => Promise<void>;
+  /**
    * A test-only seam after the rollback's rename-aside and before its post-rename
    * re-verification and rename-back: runs after the tree was moved aside and before
    * the code decides whether to delete it or rename it back (tests pause here, with
@@ -834,6 +844,17 @@ export async function activate(root: string, lockHash: string, staging: string, 
       }
       if (!(await ownsPlaced())) return;
       if (!verifyPointerFence(root, fence)) return;
+      // A test-only pre-rename seam after the final re-check, before the real
+      // rename-aside: a test can pause here, after the re-check, to let another
+      // installer publish. There is no re-check after it: the rename-aside runs, the
+      // post-rename re-verification finds the locks lost, and the tree is renamed
+      // back. The rename itself is synchronous, so the last check and the rename are
+      // in the same block with no await between them.
+      try {
+        await hooks.renameAfterRecheck?.(final, trash);
+      } catch {
+        return; // The move failed: nothing of this attempt's to remove.
+      }
       try {
         renameSync(final, trash);
       } catch {
