@@ -420,7 +420,7 @@ export async function acquireTreeLock(root: string, timeoutMs = TREE_LOCK_TIMEOU
 const POINTER_FENCE_FILE = ".pointer.fence";
 const POINTER_FENCE_TIMEOUT_MS = 5_000;
 
-export type PointerFence = { release: () => void; token: string };
+export type PointerFence = { release: () => void; token: string; ino: number };
 
 function pointerFenceFile(root: string): string {
   return path.join(root, POINTER_FENCE_FILE);
@@ -453,8 +453,30 @@ export function readPointerFenceToken(root: string): string | null {
 }
 
 /**
+ * Whether the fence file still carries this holder's claim: the token must match and
+ * the file must be the same inode the holder claimed. A delayed stale-lock takeover
+ * can move a live fence aside (its stale-record read and its rename are separate
+ * operations), and a successor can then claim the path with a new file: the token
+ * check alone catches a successor's claim, and the inode check catches a file that
+ * was replaced even if its token happens to match. A takeover that moved the fence
+ * aside and restored it (via a hard link) keeps the same inode, so a restored fence
+ * still verifies.
+ */
+export function verifyPointerFence(root: string, fence: PointerFence): boolean {
+  try {
+    const info = statSync(pointerFenceFile(root));
+    if (info.ino !== fence.ino) return false;
+    return readPointerFenceToken(root) === fence.token;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Acquire the pointer-write fence, waiting up to `timeoutMs` for a live holder. Throws
- * on timeout: the caller fails the install rather than proceeding unprotected.
+ * on timeout: the caller fails the install rather than proceeding unprotected. The
+ * returned fence carries the inode the claim landed on, so a holder can verify it
+ * still holds the same file before its rename.
  */
 export async function acquirePointerFence(root: string, timeoutMs = POINTER_FENCE_TIMEOUT_MS): Promise<PointerFence> {
   const file = pointerFenceFile(root);
@@ -462,7 +484,15 @@ export async function acquirePointerFence(root: string, timeoutMs = POINTER_FENC
   const release = (): void => releaseLockFileSync(file, token);
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    if (tryClaimPointerFenceSync(file, token) === "won") return { release, token };
+    if (tryClaimPointerFenceSync(file, token) === "won") {
+      try {
+        return { release, token, ino: statSync(file).ino };
+      } catch {
+        // Displaced between the claim and the stat: retry rather than trusting a
+        // claim whose file is already gone.
+        continue;
+      }
+    }
     if (Date.now() >= deadline) throw new Error(`Timed out acquiring the component pointer fence in ${root}`);
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -633,31 +663,46 @@ export function readPointer(root: string): Pointer {
  * rename waits while a successor is writing — the rename is fenced against a successor
  * that publishes after the last check, while the seams stay usable (a successor can
  * still publish during a seam, and the re-check after the seam catches it). The fence
- * is released in the finally, even when the rename throws. The seams must not rename
- * themselves; the production code renames after they return. */
+ * is released in the finally, even when the rename throws. `fenceSeam` is a pre-rename
+ * seam after the fence is acquired: a test can pause there, after the last check,
+ * holding the fence, to let another installer try to publish — it blocks on the fence,
+ * so its pointer cannot land until this rename is done. The guard, the identity check,
+ * and the fence-identity check run once more after the seam, before the rename: a
+ * successor that published — or a delayed takeover that displaced the fence — between
+ * the last check and the fence acquisition is caught here, so the fence is not acquired
+ * and then trusted blindly. `finalRenameSeam` is a pre-rename seam after that last
+ * check: a test can pause there, after the final check, to let another installer
+ * publish, and the guard, the identity check, and the fence-identity check run once
+ * more after it, before the rename. The seams must not rename themselves; the
+ * production code renames after they return. */
 export async function writeFileAtomic(
   file: string,
   body: string,
   beforeRename?: () => void,
   renameSeam?: (from: string, to: string) => Promise<void>,
   finalSeam?: (from: string, to: string) => Promise<void>,
-  acquireFence?: () => Promise<() => void>,
+  acquireFence?: () => Promise<{ release: () => void; verify: () => boolean } | null>,
   fenceSeam?: (from: string, to: string) => Promise<void>,
   beforeFenceSeam?: (from: string, to: string) => Promise<void>,
+  finalRenameSeam?: (from: string, to: string) => Promise<void>,
 ): Promise<void> {
   const identity = (path: string): string | null => {
     const info = statSync(path, { throwIfNoEntry: false });
     return info === undefined ? null : `${info.ino}:${info.mtimeMs}`;
   };
   const before = identity(file);
+  const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  let releaseFence: (() => void) | null = null;
+  let verifyFence: (() => boolean) | null = null;
   const check = (): void => {
     beforeRename?.();
     if (identity(file) !== before) {
       throw new Error(`The target changed while writing ${file}; refusing to overwrite it`);
     }
+    if (verifyFence !== null && !verifyFence()) {
+      throw new Error(`Lost the component pointer fence to another installer; refusing to overwrite ${file}`);
+    }
   };
-  const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  let releaseFence: (() => void) | null = null;
   try {
     await writeFile(temp, body, { flag: "wx" });
     check();
@@ -674,12 +719,20 @@ export async function writeFileAtomic(
     // after the seam catches it). `fenceSeam` is a pre-rename seam after the fence is
     // acquired: a test can pause there, after the last check, holding the fence, to
     // let another installer try to publish — it blocks on the fence, so its pointer
-    // cannot land until this rename is done. The guard and the identity check run
-    // once more after the seam, before the rename: a successor that published between
-    // the last check and the fence acquisition — while this write was waiting for the
-    // fence — is caught here, so the fence is not acquired and then trusted blindly.
-    releaseFence = (await acquireFence?.()) ?? null;
+    // cannot land until this rename is done. The guard, the identity check, and the
+    // fence-identity check run once more after the seam, before the rename: a
+    // successor that published — or a delayed takeover that displaced the fence —
+    // between the last check and the fence acquisition is caught here, so the fence
+    // is not acquired and then trusted blindly. `finalRenameSeam` is a pre-rename
+    // seam after that last check: a test can pause there, after the final check, to
+    // let another installer publish, and the checks run once more after it, before
+    // the rename.
+    const fence = await acquireFence?.();
+    releaseFence = fence?.release ?? null;
+    verifyFence = fence?.verify ?? null;
     await fenceSeam?.(temp, file);
+    check();
+    await finalRenameSeam?.(temp, file);
     check();
     await rename(temp, file);
   } finally {
@@ -696,6 +749,7 @@ export async function writePointer(
   finalSeam?: (from: string, to: string) => Promise<void>,
   fenceSeam?: (from: string, to: string) => Promise<void>,
   beforeFenceSeam?: (from: string, to: string) => Promise<void>,
+  finalRenameSeam?: (from: string, to: string) => Promise<void>,
 ): Promise<void> {
   // The pointer-write fence is passed through to the atomic write, which acquires it
   // just before the rename and releases it right after: a successor's pointer write
@@ -704,8 +758,9 @@ export async function writePointer(
   // pointer between that check and this rename. The fence is not held during the
   // seams, so a successor can still publish during one (and the re-check after the
   // seam catches it), and a rollback's removal can still be tested the same way. The
-  // guard and the identity check run once more after the fence is acquired, before
-  // the rename, so a publication that landed while this write was waiting for the
+  // guard, the identity check, and the fence-identity check run once more after the
+  // fence is acquired, before the rename, so a publication — or a delayed takeover
+  // that displaced the fence — that landed while this write was waiting for the
   // fence is caught there.
   await writeFileAtomic(
     path.join(root, "current.json"),
@@ -713,9 +768,13 @@ export async function writePointer(
     beforeRename,
     renameSeam,
     finalSeam,
-    () => acquirePointerFence(root).then((fence) => fence.release),
+    async () => {
+      const fence = await acquirePointerFence(root);
+      return { release: fence.release, verify: () => verifyPointerFence(root, fence) };
+    },
     fenceSeam,
     beforeFenceSeam,
+    finalRenameSeam,
   );
 }
 

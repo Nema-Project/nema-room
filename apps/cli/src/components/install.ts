@@ -31,15 +31,16 @@ import {
   readFailure,
   readInstallGeneration,
   readPointer,
-  readPointerFenceToken,
   readTreeLockToken,
   recoverReplacementsSync,
   setInstalling,
+  verifyPointerFence,
   writeFailure,
   writePointer,
   type ComponentEnv,
   type FailureRecord,
   type Pointer,
+  type PointerFence,
   type TreeLock,
 } from "./store.js";
 import { ComponentInstallError, type ComponentName, type ComponentStatus, type FailureReason, type InstallProgress } from "./types.js";
@@ -126,6 +127,15 @@ export type InstallHooks = {
    * is caught). The hook must not rename itself.
    */
   renameBeforeFence?: (from: string, to: string) => Promise<void>;
+  /**
+   * A pre-rename seam after the final guard, identity, and fence-identity check:
+   * runs after the last check and before the real rename (tests pause here, after the
+   * final check, to let another installer publish — the guard, the identity check,
+   * and the fence-identity check run once more after it, before the rename, so a
+   * publication or a fence displacement that landed after the final check is caught).
+   * The hook must not rename itself.
+   */
+  renamePointerAfterCheck?: (from: string, to: string) => Promise<void>;
   /**
    * A pre-rename seam for a rollback's rename-aside: runs after the ownership re-check
    * and before the real rename (tests pause here, after the final check, to let another
@@ -497,9 +507,10 @@ export async function activate(root: string, lockHash: string, staging: string, 
   // second run and by the pointer-identity check after the seams. The pointer-write
   // fence is acquired just before the rename and held only for it: a successor's
   // pointer write waits while this rename runs, so it cannot land its pointer
-  // between the last check and the rename — and the guard and the identity check run
-  // once more after the fence is acquired, before the rename, so a publication that
-  // landed while this write was waiting for the fence is caught there.
+  // between the last check and the rename — and the guard, the identity check, and
+  // the fence-identity check run once more after the fence is acquired, before the
+  // rename, so a publication or a fence displacement that landed while this write
+  // was waiting for the fence is caught there.
   const point = async (r: string, p: Pointer, treeLock: TreeLock): Promise<void> => {
     await hooks.writePointer?.(r, p);
     await verify();
@@ -507,7 +518,7 @@ export async function activate(root: string, lockHash: string, staging: string, 
       if (readTreeLockToken(r) !== treeLock.token) {
         throw new Error("Lost the component tree lock to another installer; aborting the install");
       }
-    }, hooks.renamePointer, hooks.renamePointerFinal, hooks.renamePointerFence, hooks.renameBeforeFence);
+    }, hooks.renamePointer, hooks.renamePointerFinal, hooks.renamePointerFence, hooks.renameBeforeFence, hooks.renamePointerAfterCheck);
   };
   // The holder re-validates before publishing: if another installer displaced its lock
   // (see takeOverStaleLock), it aborts here instead of activating alongside that installer.
@@ -616,7 +627,7 @@ export async function activate(root: string, lockHash: string, staging: string, 
     // publish during one (and the re-check after the seam catches it). Lock order is
     // tree mutex first, then the fence (a pointer write runs inside the tree mutex,
     // so no path acquires them in the opposite order).
-    let fence: { release: () => void; token: string } | null = null;
+    let fence: PointerFence | null = null;
     try {
       // Check ownership BEFORE the rename-aside: if the lock is already lost, the tree
       // at `final` may be a successor's published runtime — moving it aside would leave
@@ -708,22 +719,27 @@ export async function activate(root: string, lockHash: string, staging: string, 
         return; // Cannot prove exclusion: leave the tree for recovery under the lock.
       }
       if (!(await ownsPlaced())) return;
-      // A pre-rename seam after the fence is acquired: a test can pause here, after
-      // the last check, holding the fence, to let another installer try to publish —
-      // it blocks on the fence, so its pointer cannot land until this rename is done.
-      // After the seam, the rename runs in the same block.
-      try {
-        await hooks.renameFence?.(final, trash);
-      } catch {
-        return; // The move failed: nothing of this attempt's to remove.
-      }
       // Re-check the fence itself before the rename: a delayed stale-lock takeover
       // can move this attempt's live fence aside after it was acquired (the takeover
       // judged the fence stale before this attempt claimed it, and its rename lands
       // later), and a successor can then claim the fence and publish before this
       // rename moves the tree. If the fence file no longer carries this attempt's
-      // token, the fence is lost and the tree stays in place.
-      if (readPointerFenceToken(root) !== fence.token) return;
+      // token and inode, the fence is lost and the tree stays in place.
+      if (!verifyPointerFence(root, fence)) return;
+      // A pre-rename seam after the fence-identity check: a test can pause here,
+      // after the last check, holding the fence, to let another installer try to
+      // publish — it blocks on the fence, so its pointer cannot land until this
+      // rename is done. Ownership and the fence identity are re-checked after the
+      // seam, before the rename, so a displacement that landed during the pause —
+      // including a delayed takeover that moved the fence aside after the last check
+      // — leaves the tree in place.
+      try {
+        await hooks.renameFence?.(final, trash);
+      } catch {
+        return; // The move failed: nothing of this attempt's to remove.
+      }
+      if (!(await ownsPlaced())) return;
+      if (!verifyPointerFence(root, fence)) return;
       try {
         await rename(final, trash);
       } catch {

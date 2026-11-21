@@ -2966,6 +2966,79 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     await successor!.release();
   });
 
+  test("a successor that publishes after the pointer's final check keeps its pointer", async () => {
+    // Two different versions in the same component root: A publishes hash A, B
+    // publishes hash B. A passes its final guard, identity, and fence-identity check
+    // and pauses at the after-check seam, after the final check and before the real
+    // rename, holding the fence. B then displaces A's install lock, tree lock, and
+    // fence the way delayed takeovers' renames do, claims them, publishes its
+    // pointer, and releases the fence. When A resumes, the re-check after the seam —
+    // the guard, the pointer-identity compare-and-swap, and the fence-identity check
+    // — finds its tree lock lost, its fence displaced, and the pointer republished,
+    // and refuses the write: the rename never runs, so B's pointer stands while B
+    // holds the install lock, and the pointer file keeps the inode B's write created.
+    // This is the interval after the final check, with the rename itself delayed: the
+    // fence alone does not close it (a delayed takeover can displace the fence), so
+    // the re-check after the seam is what protects the publication.
+    const componentA = fakeComponent(execLog, "a");
+    const componentB = fakeComponent(execLog, "b");
+    const hashA = lockHash(componentA.target);
+    const hashB = lockHash(componentB.target);
+    expect(hashA).not.toBe(hashB);
+    const dir = graphifyRoot();
+    mkdirSync(dir, { recursive: true });
+    const stagingA = path.join(dir, "staging-a");
+    mkdirSync(stagingA, { recursive: true });
+    writeFileSync(path.join(stagingA, "marker"), "a\n");
+    const stagingB = path.join(dir, "staging-b");
+    mkdirSync(stagingB, { recursive: true });
+    writeFileSync(path.join(stagingB, "marker"), "b\n");
+    const holder = await acquireInstallLock(dir);
+    const verifyA = async () => {
+      if (readInstallLockToken(dir) !== holder.token) throw new Error("lock lost");
+    };
+    let renamePaused = false;
+    const atRename = deferred();
+    const releaseRename = deferred();
+    const outcome = activate(dir, hashA, stagingA, {
+      verifyLockHeld: verifyA,
+      renamePointerAfterCheck: async () => {
+        if (!renamePaused) {
+          renamePaused = true;
+          atRename.resolve();
+          await releaseRename.promise;
+        }
+      },
+    }).catch((error: unknown) => error);
+    await atRename.promise;
+    // A is paused at its after-check seam, after its final check and before the real
+    // rename, holding the fence. Displace its install lock, tree lock, and fence the
+    // way delayed takeovers' renames do, and let B claim them and publish a different
+    // version before A resumes.
+    renameSync(path.join(dir, ".install.lock"), path.join(dir, ".install.lock.displaced"));
+    renameSync(path.join(dir, ".tree.lock"), path.join(dir, ".tree.lock.displaced"));
+    renameSync(path.join(dir, ".pointer.fence"), path.join(dir, ".pointer.fence.displaced"));
+    const successor = acquireInstallLockSync(dir);
+    const successorOutcome = await activate(dir, hashB, stagingB, {
+      verifyLockHeld: async () => {
+        if (readInstallLockToken(dir) !== successor!.token) throw new Error("lock lost");
+      },
+    });
+    expect(successorOutcome).toBe("renamed");
+    expect(readPointer(dir).active).toBe(hashB);
+    const pointerIno = statSync(path.join(dir, "current.json")).ino;
+    releaseRename.resolve();
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("tree lock");
+    expect(readPointer(dir).active).toBe(hashB);
+    expect(statSync(path.join(dir, "current.json")).ino).toBe(pointerIno);
+    expect(readInstallLockToken(dir)).toBe(successor!.token);
+    await holder.release();
+    expect(readInstallLockToken(dir)).toBe(successor!.token);
+    await successor!.release();
+  });
+
   test("a rollback does not restore over a successor's live tree", async () => {
     const component = fakeComponent(execLog);
     const hash = lockHash(component.target);
@@ -3539,15 +3612,15 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
       const successorToken = readInstallLockToken(dir);
       expect(successorToken).not.toBe(holder.token);
       expect(successorToken).not.toBeNull();
-      // The rollback resumes: its rename-aside runs, then the post-rename
-      // re-verification finds its locks lost and restores the tree, and it releases
-      // the fence. The successor's pointer write then acquires the fence and
-      // publishes. The rename hook ran three times: the placement, the aside seam,
-      // and the rename-back that restored the tree after the re-verification failed.
+      // The rollback resumes: the ownership and fence-identity re-check after the
+      // seam finds its locks lost, so the rename-aside is skipped and the successor's
+      // published tree stays in place. The aside seam ran (two hook calls: the
+      // placement and the aside), but the aside's real rename never ran, so no backup
+      // is left aside and no rename-back is needed.
       releaseFence.resolve();
       const error = await outcome;
       expect(error).toBeInstanceOf(Error);
-      expect(renames).toBe(3);
+      expect(renames).toBe(2);
       await waitForFile(path.join(controlDir, "published"));
       // The successor published in its own process and still holds its install lock:
       // the launcher is available (its tree stands at final) while that lock is live.
