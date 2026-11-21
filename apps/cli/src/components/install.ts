@@ -31,6 +31,7 @@ import {
   readFailure,
   readInstallGeneration,
   readPointer,
+  readPointerFenceToken,
   readTreeLockToken,
   recoverReplacementsSync,
   setInstalling,
@@ -116,6 +117,15 @@ export type InstallHooks = {
    * hook must not rename itself.
    */
   renamePointerFence?: (from: string, to: string) => Promise<void>;
+  /**
+   * A pre-rename seam before the pointer-write fence is acquired: runs after the last
+   * guard and identity check and before fence acquisition (tests pause here, after
+   * the last check and before the fence, to let another installer publish — the guard
+   * and the identity check run once more after the fence is acquired, before the
+   * rename, so a publication that landed while this write was waiting for the fence
+   * is caught). The hook must not rename itself.
+   */
+  renameBeforeFence?: (from: string, to: string) => Promise<void>;
   /**
    * A pre-rename seam for a rollback's rename-aside: runs after the ownership re-check
    * and before the real rename (tests pause here, after the final check, to let another
@@ -487,7 +497,9 @@ export async function activate(root: string, lockHash: string, staging: string, 
   // second run and by the pointer-identity check after the seams. The pointer-write
   // fence is acquired just before the rename and held only for it: a successor's
   // pointer write waits while this rename runs, so it cannot land its pointer
-  // between the last check and the rename.
+  // between the last check and the rename — and the guard and the identity check run
+  // once more after the fence is acquired, before the rename, so a publication that
+  // landed while this write was waiting for the fence is caught there.
   const point = async (r: string, p: Pointer, treeLock: TreeLock): Promise<void> => {
     await hooks.writePointer?.(r, p);
     await verify();
@@ -495,7 +507,7 @@ export async function activate(root: string, lockHash: string, staging: string, 
       if (readTreeLockToken(r) !== treeLock.token) {
         throw new Error("Lost the component tree lock to another installer; aborting the install");
       }
-    }, hooks.renamePointer, hooks.renamePointerFinal, hooks.renamePointerFence);
+    }, hooks.renamePointer, hooks.renamePointerFinal, hooks.renamePointerFence, hooks.renameBeforeFence);
   };
   // The holder re-validates before publishing: if another installer displaced its lock
   // (see takeOverStaleLock), it aborts here instead of activating alongside that installer.
@@ -705,6 +717,13 @@ export async function activate(root: string, lockHash: string, staging: string, 
       } catch {
         return; // The move failed: nothing of this attempt's to remove.
       }
+      // Re-check the fence itself before the rename: a delayed stale-lock takeover
+      // can move this attempt's live fence aside after it was acquired (the takeover
+      // judged the fence stale before this attempt claimed it, and its rename lands
+      // later), and a successor can then claim the fence and publish before this
+      // rename moves the tree. If the fence file no longer carries this attempt's
+      // token, the fence is lost and the tree stays in place.
+      if (readPointerFenceToken(root) !== fence.token) return;
       try {
         await rename(final, trash);
       } catch {

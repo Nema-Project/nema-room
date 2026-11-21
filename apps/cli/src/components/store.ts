@@ -623,8 +623,12 @@ export function readPointer(root: string): Pointer {
  * identity check run again after the seam, before the real rename. `finalSeam` is a
  * second pre-rename seam, after that re-check: a test can pause there, after the final
  * guard, to let another installer publish, and the guard and the identity check run
- * once more after it, before the rename. `acquireFence`, when given, is called after
- * that last check and immediately before the rename: the fence it returns is held only
+ * once more after it, before the rename. `beforeFenceSeam` is a pre-rename seam after
+ * that last check and before the fence is acquired: a test can pause there, after the
+ * last check and before fence acquisition, to let another installer publish — the
+ * guard and the identity check run once more after the fence is acquired, before the
+ * rename, so a publication that landed while this write was waiting for the fence is
+ * caught. `acquireFence`, when given, is called after that last check and immediately before the rename: the fence it returns is held only
  * for the rename itself, so a successor's write waits while this rename runs and this
  * rename waits while a successor is writing — the rename is fenced against a successor
  * that publishes after the last check, while the seams stay usable (a successor can
@@ -639,6 +643,7 @@ export async function writeFileAtomic(
   finalSeam?: (from: string, to: string) => Promise<void>,
   acquireFence?: () => Promise<() => void>,
   fenceSeam?: (from: string, to: string) => Promise<void>,
+  beforeFenceSeam?: (from: string, to: string) => Promise<void>,
 ): Promise<void> {
   const identity = (path: string): string | null => {
     const info = statSync(path, { throwIfNoEntry: false });
@@ -660,6 +665,7 @@ export async function writeFileAtomic(
     check();
     await finalSeam?.(temp, file);
     check();
+    await beforeFenceSeam?.(temp, file);
     // Fence the rename itself against a successor: a successor's write waits while
     // this rename runs, and this rename waits while a successor is writing — so a
     // successor that publishes after the last check cannot land its pointer between
@@ -668,9 +674,13 @@ export async function writeFileAtomic(
     // after the seam catches it). `fenceSeam` is a pre-rename seam after the fence is
     // acquired: a test can pause there, after the last check, holding the fence, to
     // let another installer try to publish — it blocks on the fence, so its pointer
-    // cannot land until this rename is done.
+    // cannot land until this rename is done. The guard and the identity check run
+    // once more after the seam, before the rename: a successor that published between
+    // the last check and the fence acquisition — while this write was waiting for the
+    // fence — is caught here, so the fence is not acquired and then trusted blindly.
     releaseFence = (await acquireFence?.()) ?? null;
     await fenceSeam?.(temp, file);
+    check();
     await rename(temp, file);
   } finally {
     releaseFence?.();
@@ -685,6 +695,7 @@ export async function writePointer(
   renameSeam?: (from: string, to: string) => Promise<void>,
   finalSeam?: (from: string, to: string) => Promise<void>,
   fenceSeam?: (from: string, to: string) => Promise<void>,
+  beforeFenceSeam?: (from: string, to: string) => Promise<void>,
 ): Promise<void> {
   // The pointer-write fence is passed through to the atomic write, which acquires it
   // just before the rename and releases it right after: a successor's pointer write
@@ -692,7 +703,10 @@ export async function writePointer(
   // its pointer — so a successor that publishes after the last check cannot land its
   // pointer between that check and this rename. The fence is not held during the
   // seams, so a successor can still publish during one (and the re-check after the
-  // seam catches it), and a rollback's removal can still be tested the same way.
+  // seam catches it), and a rollback's removal can still be tested the same way. The
+  // guard and the identity check run once more after the fence is acquired, before
+  // the rename, so a publication that landed while this write was waiting for the
+  // fence is caught there.
   await writeFileAtomic(
     path.join(root, "current.json"),
     `${JSON.stringify(pointer, null, 2)}\n`,
@@ -701,6 +715,7 @@ export async function writePointer(
     finalSeam,
     () => acquirePointerFence(root).then((fence) => fence.release),
     fenceSeam,
+    beforeFenceSeam,
   );
 }
 

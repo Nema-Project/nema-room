@@ -29,6 +29,17 @@ const { acquireInstallLockSync, readInstallLockToken } = await import("../../src
 // Displace both locks the way a delayed takeover's rename does, then claim them.
 renameSync(path.join(job.root, ".install.lock"), path.join(job.root, ".install.lock.displaced"));
 renameSync(path.join(job.root, ".tree.lock"), path.join(job.root, ".tree.lock.displaced"));
+if (job.displaceFence) {
+  // Also displace the pointer-write fence the way a delayed fence takeover's rename
+  // does: a rollback that already holds the fence loses it, and its fence-token
+  // re-check before the rename-aside must catch that and leave the tree in place.
+  // The fence file may not exist yet (no pointer write has run); ignore that.
+  try {
+    renameSync(path.join(job.root, ".pointer.fence"), path.join(job.root, ".pointer.fence.displaced"));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
 const holder = acquireInstallLockSync(job.root);
 if (!holder) throw new Error("successor could not claim the install lock");
 writeFileSync(path.join(job.controlDir, "claimed"), `${process.pid}\n`);
