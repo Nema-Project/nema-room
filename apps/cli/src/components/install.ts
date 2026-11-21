@@ -204,6 +204,16 @@ export type InstallHooks = {
    * without removing it. The hook must not rename itself.
    */
   renameAfterFinalCheck?: (from: string, to: string) => Promise<void>;
+  /**
+   * A test-only seam after the rollback's rename-aside and before its post-rename
+   * re-verification and rename-back: runs after the tree was moved aside and before
+   * the code decides whether to delete it or rename it back (tests pause here, with
+   * the tree out of the way, to check what a reader observes during that window —
+   * the launcher does not resolve while the tree is aside, because componentBin
+   * requires the tree at its final path; the rename-back restores it. The hook must
+   * not rename itself; if it throws, the re-verification and rename-back still run.
+   */
+  renameAfterAside?: (from: string, to: string) => Promise<void>;
   /** The prebuilt Windows launcher shipped with the program. */
   windowsLauncher?: string;
 };
@@ -825,6 +835,18 @@ export async function activate(root: string, lockHash: string, staging: string, 
         renameSync(final, trash);
       } catch {
         return; // Nothing movable at `final`: nothing of this attempt's to remove.
+      }
+      // A test-only seam after the rename-aside and before the post-rename
+      // re-verification and rename-back: a test can pause here, with the tree out of
+      // the way, to check what a reader observes during that window. The launcher
+      // does not resolve while the tree is aside (componentBin requires the tree at
+      // its final path); the rename-back restores it. If the seam throws, the
+      // re-verification and rename-back still run — the rename already happened, so
+      // returning here would strand the tree aside.
+      try {
+        await hooks.renameAfterAside?.(final, trash);
+      } catch {
+        // Continue to the re-verification and rename-back below.
       }
       const aside = await lstat(trash).catch(() => null);
       const inodeMatches = aside !== null && stagingStat !== null && aside.dev === stagingStat.dev && aside.ino === stagingStat.ino;
