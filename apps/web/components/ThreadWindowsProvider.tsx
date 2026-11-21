@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ThreadWindowsHandle } from "@/components/ThreadWindows";
 import { mainMessageUrl } from "@/lib/threads";
 import type { Message } from "@/lib/types";
@@ -25,10 +25,8 @@ type QueuedCall =
 /** Owns floating thread windows above route pages so workspace changes do not destroy them. */
 export function ThreadWindowsProvider({ children }: { children: ReactNode }) {
   const [HostComponent, setHostComponent] = useState<ThreadWindowsComponent | null>(null);
-  // The handle object is recreated on every host render, so it lives in a ref;
-  // hostReady only flips on the null-to-handle transition to trigger the flush.
+  // The handle object is recreated on every host render, so it lives in a ref.
   const hostRef = useRef<ThreadWindowsHandle | null>(null);
-  const [hostReady, setHostReady] = useState(false);
   const loading = useRef<Promise<void> | null>(null);
   const pending = useRef<QueuedCall[]>([]);
   const mainMessageHandler = useRef<MainMessageHandler | null>(null);
@@ -51,22 +49,20 @@ export function ThreadWindowsProvider({ children }: { children: ReactNode }) {
       });
   }, []);
 
+  // The queue drains here, synchronously in the ref callback that stores the
+  // handle — not in a later effect. A call that arrives after the handle is
+  // stored goes straight to the host, so draining later would let it overtake
+  // the queued calls and break their in-order delivery.
   const setHost = useCallback((handle: ThreadWindowsHandle | null) => {
     hostRef.current = handle;
-    setHostReady(handle !== null);
-  }, []);
-
-  // Deliver calls queued while the floating layer was still loading, in order.
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host || pending.current.length === 0) return;
+    if (!handle || pending.current.length === 0) return;
     const queued = pending.current;
     pending.current = [];
     for (const call of queued) {
-      if (call.kind === "open") host.open(call.workspaceId, call.threadId, call.messageId);
-      else host.focus(call.workspaceId, call.threadId);
+      if (call.kind === "open") handle.open(call.workspaceId, call.threadId, call.messageId);
+      else handle.focus(call.workspaceId, call.threadId);
     }
-  }, [hostReady]);
+  }, []);
 
   const open = useCallback<ThreadWindowsHandle["open"]>(
     (workspaceId, threadId, messageId) => {
