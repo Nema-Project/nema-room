@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { MessageMention } from "@nema/shared";
 import { AccountPicker } from "@/components/AccountPicker";
 import { Composer } from "@/components/Composer";
-import { EntryDetail } from "@/components/EntryDetail";
+import { EntryDetailLazy } from "@/components/EntryDetailLazy";
 import { MessageItem } from "@/components/MessageItem";
 import { getMessage, getThreadMessages, markThreadRead, postThreadMessage } from "@/lib/hub";
 import { threadUrl, mainMessageUrl } from "@/lib/threads";
@@ -233,7 +233,7 @@ export function ThreadView({ workspaceId, threadId, active = true, floating = fa
         {messages.map((message) => <MessageItem key={message.id} message={message} onOpenEntry={openEntry} onQuote={setQuote} onEdited={(next) => setMessages((current) => current.map((item) => item.id === next.id ? next : item))} onJump={jump} onOpenHistory={(id) => setEntry({ id, history: true })} />)}
       </div>
       <Composer workspaceId={workspaceId} threadId={threadId} onSend={(content, attachmentIds, mentions, accountId) => send(content, attachmentIds, mentions, quote, accountId)} quote={quote} onClearQuote={() => setQuote(null)} onThread={onThread} threadMode disabled={loadError || !thread} />
-      {entry && <div className="thread-entry"><EntryDetail key={`${entry.id}:${entry.history}`} workspaceId={workspaceId} entryId={entry.id} onClose={() => setEntry(null)} onOpenEntry={openEntry} onJumpToMessage={(id) => void jump(id)} initialTab={entry.history ? "history" : "content"} /></div>}
+      {entry && <div className="thread-entry"><EntryDetailLazy key={`${entry.id}:${entry.history}`} workspaceId={workspaceId} entryId={entry.id} onClose={() => setEntry(null)} onOpenEntry={openEntry} onJumpToMessage={(id) => void jump(id)} initialTab={entry.history ? "history" : "content"} /></div>}
     </section>
   );
 }

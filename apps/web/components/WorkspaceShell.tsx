@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 import { Chat, type ChatHandle } from "@/components/Chat";
-import { EntryDetail } from "@/components/EntryDetail";
+import { EntryDetailLazy } from "@/components/EntryDetailLazy";
 import { KnowledgePanel } from "@/components/KnowledgePanel";
 import { Sidebar } from "@/components/Sidebar";
 import { useThreadWindows } from "@/components/ThreadWindowsProvider";
@@ -564,7 +564,7 @@ export function WorkspaceShell({ routeId }: { routeId: string | null }) {
         ) : (
         <aside className="know">
           {current && openEntry ? (
-            <EntryDetail
+            <EntryDetailLazy
               key={`${current.id}/${openEntry}/${openState.tab ?? "content"}`}
               workspaceId={current.id}
               entryId={openEntry}

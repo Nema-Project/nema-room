@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "@/components/Sidebar";
 import { ThreadWindowsProvider, useThreadWindows } from "@/components/ThreadWindowsProvider";
@@ -25,6 +25,26 @@ function RemountingRoutes() {
   const [workspaceId, setWorkspaceId] = useState("w1");
   return <RoutePage key={workspaceId} workspaceId={workspaceId} navigate={setWorkspaceId} />;
 }
+function BurstOpener() {
+  const host = useThreadWindows();
+  return (
+    <button
+      onClick={() => {
+        host.open("w1", "t1");
+        host.open("w1", "t2");
+      }}
+    >
+      Open two threads
+    </button>
+  );
+}
+function EffectOpener() {
+  const host = useThreadWindows();
+  useEffect(() => {
+    host.open("w1", "t9");
+  }, [host]);
+  return null;
+}
 beforeEach(() => {
   FakeEventSource.reset(); vi.stubGlobal("EventSource", FakeEventSource);
   vi.spyOn(document, "hasFocus").mockReturnValue(true);
@@ -37,13 +57,28 @@ describe("persistent floating thread host", () => {
   it("keeps A's window through route remount and opens B's attention target in B", async () => {
     render(<I18nProvider><ThreadWindowsProvider><RemountingRoutes /></ThreadWindowsProvider></I18nProvider>);
     await userEvent.click(screen.getByRole("button", { name: "Open A thread" }));
-    await vi.waitFor(() => expect(document.querySelector('[data-thread-id="t1"]')).toBeTruthy());
+    await vi.waitFor(() => expect(document.querySelector('[data-thread-id="t1"]')).toBeTruthy(), { timeout: 5000 });
     expect(document.activeElement?.closest(".thread-floating")).toBe(document.querySelector('[data-thread-id="t1"]')?.closest(".thread-floating"));
     await userEvent.click(screen.getByRole("button", { name: /next unread thread/i }));
-    await vi.waitFor(() => expect(document.querySelector('[data-thread-id="t2"]')).toBeTruthy());
+    await vi.waitFor(() => expect(document.querySelector('[data-thread-id="t2"]')).toBeTruthy(), { timeout: 5000 });
     expect(document.querySelector('[data-thread-id="t1"]')).toBeTruthy();
     expect(hub.getThreadMessages).toHaveBeenCalledWith("w2", "t2");
     expect(document.querySelectorAll(".thread-floating")).toHaveLength(2);
     expect(document.querySelector('[data-thread-id="t2"]')?.closest(".thread-floating")?.classList.contains("active")).toBe(true);
+  });
+
+  it("delivers opens queued while the floating layer is still loading, in order", async () => {
+    render(<I18nProvider><ThreadWindowsProvider><BurstOpener /></ThreadWindowsProvider></I18nProvider>);
+    // Neither call can reach the host yet: the layer's chunk loads on the first
+    // open, so both calls must be queued and flushed once it mounts.
+    await userEvent.click(screen.getByRole("button", { name: "Open two threads" }));
+    await vi.waitFor(() => expect(document.querySelectorAll(".thread-floating")).toHaveLength(2), { timeout: 5000 });
+    expect(document.querySelector('[data-thread-id="t1"]')).toBeTruthy();
+    expect(document.querySelector('[data-thread-id="t2"]')?.closest(".thread-floating")?.classList.contains("active")).toBe(true);
+  });
+
+  it("opens a window requested from a mount effect, before any user interaction", async () => {
+    render(<I18nProvider><ThreadWindowsProvider><EffectOpener /></ThreadWindowsProvider></I18nProvider>);
+    await vi.waitFor(() => expect(document.querySelector('[data-thread-id="t9"]')).toBeTruthy(), { timeout: 5000 });
   });
 });
