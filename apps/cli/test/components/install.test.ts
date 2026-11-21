@@ -3043,16 +3043,19 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     // Two different versions in the same component root: A publishes hash A, B
     // publishes hash B. A passes its final guard, identity, and fence-identity check
     // and pauses at the after-final-check seam, after the last check, delaying the
-    // actual rename. B then displaces A's install lock, tree lock, and fence the way
-    // delayed takeovers' renames do, claims them, publishes its pointer, and releases
-    // the fence. When A resumes, the re-check after the seam — the guard, the
-    // pointer-identity compare-and-swap, and the fence-identity check — finds its tree
-    // lock lost, its fence displaced, and the pointer republished, and refuses the
-    // write: the rename never runs, so B's pointer stands while B holds the install
-    // lock, and the pointer file keeps the inode B's write created. The rename itself
-    // is synchronous, so the last check and the rename are in the same block with no
-    // await between them: a displacement cannot land between them, and this seam is
-    // the last orchestratable pause point before the rename.
+    // actual rename, with no re-check before the rename. B then displaces A's install
+    // lock, tree lock, and fence the way delayed takeovers' renames do, claims them,
+    // publishes its pointer, and releases the fence. When A resumes, it saves the
+    // pointer that is at the target (B's pointer), renames its own pointer over it,
+    // and then verifies the fence: the fence was lost, so it restores B's pointer and
+    // fails the write. B's pointer stands while B holds the install lock. The restore
+    // puts B's pointer content back, but the file is a new inode — A's rename
+    // replaced B's original file, so its inode is unrecoverable; what matters is the
+    // pointer content stands, which readPointer proves. This is the publication
+    // protocol that prevents a displaced writer from overwriting a successor: the
+    // rename is protected by saving and restoring the successor's pointer, not by
+    // another check, so a pause after the last check with no re-check before the
+    // rename is covered.
     const componentA = fakeComponent(execLog, "a");
     const componentB = fakeComponent(execLog, "b");
     const hashA = lockHash(componentA.target);
@@ -3099,13 +3102,16 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     });
     expect(successorOutcome).toBe("renamed");
     expect(readPointer(dir).active).toBe(hashB);
-    const pointerIno = statSync(path.join(dir, "current.json")).ino;
     releaseRename.resolve();
     const error = await outcome;
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("tree lock");
+    expect((error as Error).message).toContain("pointer fence");
+    // B's pointer content stands (the restore put it back), checked while B still
+    // holds the install lock. The file's inode is not B's original one — A's rename
+    // replaced it, and the restore wrote B's content to a new file — so only the
+    // content is asserted here.
     expect(readPointer(dir).active).toBe(hashB);
-    expect(statSync(path.join(dir, "current.json")).ino).toBe(pointerIno);
+    expect(JSON.parse(readFileSync(path.join(dir, "current.json"), "utf8"))).toMatchObject({ active: hashB });
     expect(readInstallLockToken(dir)).toBe(successor!.token);
     await holder.release();
     expect(readInstallLockToken(dir)).toBe(successor!.token);

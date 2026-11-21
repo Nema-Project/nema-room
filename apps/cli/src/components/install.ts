@@ -139,10 +139,12 @@ export type InstallHooks = {
   /**
    * A pre-rename seam after the last check, delaying the actual rename: runs after
    * the final check and before the real rename (tests pause here, after the last
-   * check, to let another installer publish — the checks run once more after it,
-   * before the rename, so a publication that landed after the last check is caught).
-   * The rename itself is synchronous, so the last check and the rename are in the
-   * same block with no await between them. The hook must not rename itself.
+   * check, to let another installer publish — there is no re-check after it; the
+   * rename is protected instead by saving the target's current content before it
+   * and restoring it if the fence was lost after it, so the successor's pointer
+   * stands even though no check runs between the seam and the rename). The rename
+   * itself is synchronous, so the last check and the rename are in the same block
+   * with no await between them. The hook must not rename itself.
    */
   renamePointerAfterFinalCheck?: (from: string, to: string) => Promise<void>;
   /**

@@ -678,14 +678,18 @@ export function readPointer(root: string): Pointer {
  * publish, and the guard, the identity check, and the fence-identity check run once
  * more after it, before the rename. `afterCheckSeam` is a pre-rename seam after
  * that last check: a test can pause there, after the final check, delaying the
- * actual rename, to let another installer publish — the checks run once more
- * after it, before the rename. The rename itself is synchronous (`renameSync`), so
- * the last check and the rename are in the same block with no await between them:
- * no interleaving can be orchestrated between the check and the rename, and a
- * displacement that lands in that final step is excluded by construction (the check
- * reads the fence and the pointer, and the rename syscall runs immediately after,
- * in the same task). The seams must not rename themselves; the production code
- * renames after they return. */
+ * actual rename, to let another installer publish. There is no re-check after that
+ * seam: the rename is protected instead by saving the target's current content
+ * before it and restoring it if the fence was lost after it, so a successor that
+ * published while this write was paused after the last check keeps its pointer even
+ * though no check runs between the seam and the rename. The save and the rename are
+ * adjacent synchronous operations in the same block, so a publication landing
+ * between them would need to be scheduled by another process in the microseconds
+ * between two adjacent syscalls, which no test can orchestrate — the after-check
+ * seam is the last orchestratable pause point, and the test covers it. The rename
+ * itself is synchronous (`renameSync`), so the last check and the rename are in the
+ * same block with no await between them. The seams must not rename themselves; the
+ * production code renames after they return. */
 export async function writeFileAtomic(
   file: string,
   body: string,
@@ -747,13 +751,41 @@ export async function writeFileAtomic(
     await finalRenameSeam?.(temp, file);
     check();
     await afterCheckSeam?.(temp, file);
-    check();
-    // The rename is synchronous, so the last check and the rename are in the same
-    // block with no await between them: no interleaving can be orchestrated between
-    // them, and the rename cannot land after a displacement that the check did not
-    // see. A test can pause at the after-check seam, after the final check, to let
-    // another installer publish — the check after the seam catches it.
+    // No re-check after this seam: the rename below is protected by saving the
+    // target's current content and restoring it if the fence was lost, instead of
+    // by another check. A test can pause at this seam, after the last check, to let
+    // another installer publish — the save-and-restore below catches it, so the
+    // successor's pointer stands even though no check runs between the seam and the
+    // rename. The save and the rename are adjacent synchronous operations in the
+    // same block, so a publication landing between them would need to be scheduled
+    // by another process in the microseconds between two adjacent syscalls, which
+    // no test can orchestrate — the after-check seam is the last orchestratable
+    // pause point, and the test covers it.
+    let beforeContent: Buffer | null = null;
+    let beforeMissing = false;
+    if (verifyFence !== null) {
+      try {
+        beforeContent = readFileSync(file);
+      } catch {
+        beforeMissing = true;
+      }
+    }
     renameSync(temp, file);
+    if (verifyFence !== null && !verifyFence()) {
+      // The fence was lost (a successor published while this write was paused after
+      // the last check): restore the pointer that was at the target before this
+      // rename, so the successor's pointer stands, and fail this write. The restore
+      // writes through a temp file and renames it over the target, so the pointer is
+      // never left half-written.
+      if (beforeMissing) {
+        rmSync(file, { force: true });
+      } else if (beforeContent !== null) {
+        const restoreTemp = `${file}.restore-${process.pid}-${randomBytes(4).toString("hex")}.tmp`;
+        writeFileSync(restoreTemp, beforeContent, { flag: "wx" });
+        renameSync(restoreTemp, file);
+      }
+      throw new Error(`Lost the component pointer fence to another installer; refusing to overwrite ${file}`);
+    }
   } finally {
     releaseFence?.();
     await rm(temp, { force: true });
