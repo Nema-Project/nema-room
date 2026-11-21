@@ -79,6 +79,8 @@
 - [x] 若出现新 UI 文案：三语 `messages/*.json` 同步补齐并在 PR 里点名；没有新文案则在 PR 里明说三语文件未动。
 - [x] 加 changelog 片段；开 PR，描述写清分析依据、拆分清单、前后数字与未拆项的理由。
 
+**执行记录（2026-11-21，[PR #266](https://github.com/Nema-Project/nema-room/pull/266)）：** 实际加载机制与上文设想不同：条目详情子树与浮窗线程层最终都用普通 `import()` 按挂载/首次打开加载，未用 `next/dynamic`——后者的 ref 落在 loadable 包装层上、拿不到浮窗层的命令式句柄，且模块级 React.lazy loadable 会缓存一次失败的 import、关掉重开也不重试（评审第一轮指出）。条目详情改为每次挂载发起新 import，失败走既有错误呈现，并以可注入 loader 的真实 import 失败回归测试锁定。拆分清单与首屏前后数字见 PR #266。
+
 ### Task 3: W2 冷启动 DB 评估记录（只评估，不写代码）
 
 **Spec:** W2、D-3。
