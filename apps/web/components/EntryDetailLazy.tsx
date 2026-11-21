@@ -69,13 +69,24 @@ class EntryDetailErrorBoundary extends Component<
  * import attempt and reopening after a failed load retries it. A rejected
  * import is reported through the detail column's error presentation; the
  * boundary below covers a throw while the loaded component renders.
+ *
+ * The loader is an optional prop (defaulting to the real import) so tests can
+ * drive the rejection path directly: a rejected module mock cannot be made
+ * to succeed on a second import within one test file.
  */
-export function EntryDetailLazy(props: EntryDetailProps) {
+type EntryDetailModule = { EntryDetail: ComponentType<EntryDetailProps> };
+type EntryDetailLoader = () => Promise<EntryDetailModule>;
+const defaultEntryDetailLoader: EntryDetailLoader = () => import("@/components/EntryDetail");
+
+export function EntryDetailLazy({
+  loadEntryDetail = defaultEntryDetailLoader,
+  ...props
+}: EntryDetailProps & { loadEntryDetail?: EntryDetailLoader }) {
   const [Loaded, setLoaded] = useState<ComponentType<EntryDetailProps> | null>(null);
   const [loadError, setLoadError] = useState<Error | null>(null);
   useEffect(() => {
     let cancelled = false;
-    import("@/components/EntryDetail").then(
+    loadEntryDetail().then(
       (mod) => {
         if (!cancelled) setLoaded(() => mod.EntryDetail);
       },
@@ -86,7 +97,7 @@ export function EntryDetailLazy(props: EntryDetailProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadEntryDetail]);
   if (loadError) return <EntryDetailLoadError message={loadError.message} onClose={props.onClose} />;
   return (
     <EntryDetailErrorBoundary onClose={props.onClose}>
