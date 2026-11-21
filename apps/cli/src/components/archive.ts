@@ -83,7 +83,17 @@ function tarName(header: Buffer): string {
   return prefix ? `${prefix}/${name}` : name;
 }
 
-export async function extractTarGz(compressed: Buffer, destination: string): Promise<void> {
+/**
+ * The key under which the TAR symlink checks compare absolute paths. Case is folded only where the default
+ * filesystem is case-insensitive (Windows, macOS); elsewhere `N/FOO` and `n/foo` are distinct paths, and
+ * folding would mistake a case-differing symlink target for a chain.
+ */
+export function archivePathKey(absolutePath: string, platform: NodeJS.Platform): string {
+  return platform === "win32" || platform === "darwin" ? absolutePath.toLowerCase() : absolutePath;
+}
+
+export async function extractTarGz(compressed: Buffer, destination: string, platform: NodeJS.Platform = process.platform): Promise<void> {
+  const key = (absolutePath: string) => archivePathKey(absolutePath, platform);
   const dest = path.resolve(destination);
   await mkdir(dest, { recursive: true });
   const data = gunzipSync(compressed);
@@ -113,10 +123,10 @@ export async function extractTarGz(compressed: Buffer, destination: string): Pro
     else if (type === "1") throw new Error(`TAR hard links are not supported: ${name}`);
     else throw new Error(`Unsupported TAR entry type ${type}: ${name}`);
   }
-  const linkPaths = new Set(links.map(({ rel }) => path.resolve(dest, rel).toLowerCase()));
+  const linkPaths = new Set(links.map(({ rel }) => key(path.resolve(dest, rel))));
   for (const rel of [...entries.map(({ rel }) => rel), ...links.map(({ rel }) => rel)]) {
     for (let parent = path.dirname(rel); parent !== "."; parent = path.dirname(parent)) {
-      if (linkPaths.has(path.resolve(dest, parent).toLowerCase())) throw new Error(`TAR symlink parent is not supported: ${rel}`);
+      if (linkPaths.has(key(path.resolve(dest, parent)))) throw new Error(`TAR symlink parent is not supported: ${rel}`);
     }
   }
   // Regular files first, so no archive symlink can redirect a later write.
@@ -135,7 +145,7 @@ export async function extractTarGz(compressed: Buffer, destination: string): Pro
     const target = path.resolve(dest, path.dirname(rel), link);
     if (target !== dest && !target.startsWith(`${dest}${path.sep}`)) throw new Error(`Unsafe TAR symlink traversal: ${rel}`);
     for (let parent = target; parent !== dest; parent = path.dirname(parent)) {
-      if (linkPaths.has(parent.toLowerCase())) throw new Error(`TAR symlink chain is not supported: ${rel}`);
+      if (linkPaths.has(key(parent))) throw new Error(`TAR symlink chain is not supported: ${rel}`);
     }
     await mkdir(path.dirname(within(dest, rel)), { recursive: true });
     await symlink(link, within(dest, rel));

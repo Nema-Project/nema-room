@@ -1,0 +1,1 @@
+- Fixed Graphify component installation on Linux hosts: the archive extractor no longer mistakes a case-differing symlink target in the pinned CPython archive for a symlink chain.
