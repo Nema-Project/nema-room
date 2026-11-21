@@ -66,7 +66,7 @@
 
 - [x] 先写失败测试（`scripts/desktop/graphify.test.mjs`）：四个 target 齐全；每个文件条目都有正整数 `size`；同一 target 内文件名不重复；lock-hash 夹具向量（给定固定条目 JSON，期望固定哈希串）。
 - [x] 运行 `node --test scripts/desktop/graphify.test.mjs`，确认新断言失败。
-- [x] 扩展制锁流程：下载 Linux 两项的 python 与 manylinux wheels，逐项钉 url、sha256 并把实际字节数写回 `size`；既有两项一并补 `size`（以实际下载为准，不手填）。CI 校验锁内 `size` 与实际下载一致（沿用现有锁校验入口，补 size 断言）。
+- [ ] 扩展制锁流程：下载 Linux 两项的 python 与 manylinux wheels，逐项钉 url、sha256 并把实际字节数写回 `size`；既有两项一并补 `size`（以实际下载为准，不手填）。CI 校验锁内 `size` 与实际下载一致（沿用现有锁校验入口，补 size 断言）。
 - [x] 实现锁分发复制与一致性测试；确认桌面 staging 与 npm pack 各带一份锁。
 - [x] 重跑 `node --test scripts/desktop/graphify.test.mjs scripts/desktop/graphify-languages.test.mjs scripts/desktop/fetch-tools.test.mjs` 与新增一致性测试，全部通过。注意：本机无 Docker/网络受限时，真实下载制锁这一步要在能联网的环境跑，跑不到的部分在 PR 里如实标注，不拿手填数字冒充实测。
 
@@ -217,7 +217,7 @@
 - [x] **下载与校验（自动化证据）：** 任务 2 的篡改字节、中途中断、中断恢复（改名后未写 current.json、改坏已落盘文件）测试全绿记录在案。
 - [ ] **干净环境首次触发：** 无随包 graphify 的构建产物上第一次触发图谱功能，确认弹窗出现且显示大小与锁内 `size` 汇总一致；确认后装成 `<lock-hash>` 目录、`current.json` 指向它、图谱构建跑通。
 - [x] **镜像变量：** 两个镜像变量指向本地假源，下载全程不访问上游域名且校验通过；假源给错字节时校验失败（任务 2 测试证据 + 一次真实形态复跑）。
-- [x] **离线导入：** 在 A 机 `nema components pack graphify` 制包，拷到断网的 B 机（同平台）导入成功、图谱可用；lock-hash 或 target 不符的包被拒绝并给出明确原因；「改过的启动器以替换归档混入 + 自洽 manifest」的包导入失败且不产生 active 目录（另附预组装目录的包按规则忽略该目录、只由归档决定成败）。
+- [ ] **离线导入：** 在 A 机 `nema components pack graphify` 制包，拷到断网的 B 机（同平台）导入成功、图谱可用；lock-hash 或 target 不符的包被拒绝并给出明确原因；「改过的启动器以替换归档混入 + 自洽 manifest」的包导入失败且不产生 active 目录（另附预组装目录的包按规则忽略该目录、只由归档决定成败）。
 - [ ] **降级：** 下载必失败的环境（黑洞代理）里应用正常启动与使用非图谱功能，图谱入口显示失败原因与重试/导入出口，无全局报错弹窗。
 - [ ] **多形态：** npm 全新安装的 daemon（含 Linux x64/arm64 宿主机）走通确认→下载→可用；Compose 形态的宿主机 daemon 同样走通。
 - [x] **风险项实测记录：** macOS 上下载所得 Python 是否受 Gatekeeper/隔离属性影响（实测结论写进发布记录，不只假设 Node 下载不带 quarantine）；Windows 杀软误报只能记录与提示，不作为勾选条件。
@@ -225,4 +225,4 @@
 
 ## 执行证据
 
-任务 1–3 由 PR #262 合入，任务 4–8 由 PR #263 合入，任务 9 验收中发现的 Linux 安装 bug 由 PR #269 修复后随 v0.3.1 发布。验收记录见 [#132 评论 7063961084](https://github.com/Nema-Project/nema-room/issues/132#issuecomment-7063961084)（发布前部分：自动化测试 168 项全绿、镜像/离线/降级/npm 形态实跑）与 [#132 评论 7064590698](https://github.com/Nema-Project/nema-room/issues/132#issuecomment-7064590698)（体积实测与关闭记录）。任务 9 未勾选项及原因：体积（payload 达标——win32-x64 75.1 MiB、darwin-arm64 72.9 MiB、graphify 0.0 MiB；安装包上限未达，差额构成为 Electron 本体量级，详见关闭记录）、干净环境首次触发与降级（网页端逐字呈现未验，本 VM 无浏览器可达回环）、多形态（Compose 容器栈未跑，本 VM 无 Docker；宿主机 daemon 路径已由 npm 形态实跑覆盖）。
+任务 1–3 由 PR #262 合入，任务 4–8 由 PR #263 合入，任务 9 验收中发现的 Linux 安装 bug 由 PR #269 修复后随 v0.3.1 发布。验收记录见 [#132 评论 7063961084](https://github.com/Nema-Project/nema-room/issues/132#issuecomment-7063961084)（发布前部分：自动化测试 168 项全绿、镜像/离线/降级/npm 形态实跑）与 [#132 评论 7064590698](https://github.com/Nema-Project/nema-room/issues/132#issuecomment-7064590698)（体积实测与关闭记录）。任务 9 未勾选项及原因：体积（payload 达标——win32-x64 75.1 MiB、darwin-arm64 72.9 MiB、graphify 0.0 MiB；安装包上限未达，差额构成为 Electron 本体量级，详见关闭记录）、干净环境首次触发与降级（网页端逐字呈现未验，本 VM 无浏览器可达回环）、多形态（Compose 容器栈未跑，本 VM 无 Docker；宿主机 daemon 路径已由 npm 形态实跑覆盖）、离线导入（导入、安装与启动器执行均实跑，但条目里的「图谱可用」未在本 VM 字面跑通——无 PostgreSQL/Docker 起不了完整图谱构建，与首次触发项同一口径不勾）。另：任务 1 的制锁流程一项经发布记录评审指出后不勾——`size` 确由制锁时实际下载写回且安装期按锁逐文件校验 sha256 与 size，但「CI 校验锁内 size 与实际下载一致」这条断言并不存在（CI 只断言 size 为正整数），按原文不达标。
