@@ -696,7 +696,11 @@ export function readPointer(root: string): Pointer {
  * the rename and the restore, but the end state is the successor's pointer. The
  * rename itself is synchronous (`renameSync`), so the last check and the rename are
  * in the same block with no await between them. The seams must not rename
- * themselves; the production code renames after they return. */
+ * themselves; the production code renames after they return. The residual window
+ * between the last re-read and the rename (a successor publishing in that interval
+ * is overwritten and the restore reinstates the older pointer) is accepted risk,
+ * tracked in #264, which also records the OS-backed locking design that would
+ * close it. */
 export async function writeFileAtomic(
   file: string,
   body: string,

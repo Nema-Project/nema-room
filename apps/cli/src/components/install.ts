@@ -849,7 +849,11 @@ export async function activate(root: string, lockHash: string, staging: string, 
       // installer publish. There is no re-check after it: the rename-aside runs, the
       // post-rename re-verification finds the locks lost, and the tree is renamed
       // back. The rename itself is synchronous, so the last check and the rename are
-      // in the same block with no await between them.
+      // in the same block with no await between them. The residual window between
+      // the last re-check and the rename (a successor publishing in that interval
+      // has its tree renamed aside and then back, so the launcher is briefly
+      // unavailable) is accepted risk, tracked in #264, which also records the
+      // OS-backed locking design that would close it.
       try {
         await hooks.renameAfterRecheck?.(final, trash);
       } catch {
