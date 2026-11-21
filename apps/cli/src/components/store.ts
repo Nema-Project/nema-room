@@ -242,16 +242,19 @@ function takeOverStaleLockSync(file: string, judged: LockOwnerSync, seams: Takeo
   }
   if (content === null || content !== judged.content) {
     if (content !== null) {
-      const temp = `${file}.claim-${process.pid}-${randomBytes(6).toString("hex")}`;
-      writeFileSync(temp, content);
+      // Restore the displaced record itself by linking it back to the lock path, so
+      // the restored claim keeps the displaced file's inode: a holder that recorded
+      // that inode (its fence-token and inode check) still verifies it, and a
+      // successor that claimed the path in between is not overwritten (the link
+      // fails with EEXIST and the aside file stays as litter). Writing a new temp
+      // file with the same content would give the restored claim a new inode, and a
+      // holder checking the inode would wrongly conclude its fence was lost.
       let restored = false;
       try {
-        linkSync(temp, file);
+        linkSync(stale, file);
         restored = true;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      } finally {
-        rmSync(temp, { force: true });
       }
       // Only remove the aside file when the restore landed (the same inode is now at
       // the lock path, so the aside name is redundant). When it failed, the aside
@@ -673,8 +676,16 @@ export function readPointer(root: string): Pointer {
  * and then trusted blindly. `finalRenameSeam` is a pre-rename seam after that last
  * check: a test can pause there, after the final check, to let another installer
  * publish, and the guard, the identity check, and the fence-identity check run once
- * more after it, before the rename. The seams must not rename themselves; the
- * production code renames after they return. */
+ * more after it, before the rename. `afterCheckSeam` is a pre-rename seam after
+ * that last check: a test can pause there, after the final check, delaying the
+ * actual rename, to let another installer publish — the checks run once more
+ * after it, before the rename. The rename itself is synchronous (`renameSync`), so
+ * the last check and the rename are in the same block with no await between them:
+ * no interleaving can be orchestrated between the check and the rename, and a
+ * displacement that lands in that final step is excluded by construction (the check
+ * reads the fence and the pointer, and the rename syscall runs immediately after,
+ * in the same task). The seams must not rename themselves; the production code
+ * renames after they return. */
 export async function writeFileAtomic(
   file: string,
   body: string,
@@ -685,6 +696,7 @@ export async function writeFileAtomic(
   fenceSeam?: (from: string, to: string) => Promise<void>,
   beforeFenceSeam?: (from: string, to: string) => Promise<void>,
   finalRenameSeam?: (from: string, to: string) => Promise<void>,
+  afterCheckSeam?: (from: string, to: string) => Promise<void>,
 ): Promise<void> {
   const identity = (path: string): string | null => {
     const info = statSync(path, { throwIfNoEntry: false });
@@ -734,7 +746,14 @@ export async function writeFileAtomic(
     check();
     await finalRenameSeam?.(temp, file);
     check();
-    await rename(temp, file);
+    await afterCheckSeam?.(temp, file);
+    check();
+    // The rename is synchronous, so the last check and the rename are in the same
+    // block with no await between them: no interleaving can be orchestrated between
+    // them, and the rename cannot land after a displacement that the check did not
+    // see. A test can pause at the after-check seam, after the final check, to let
+    // another installer publish — the check after the seam catches it.
+    renameSync(temp, file);
   } finally {
     releaseFence?.();
     await rm(temp, { force: true });
@@ -750,6 +769,7 @@ export async function writePointer(
   fenceSeam?: (from: string, to: string) => Promise<void>,
   beforeFenceSeam?: (from: string, to: string) => Promise<void>,
   finalRenameSeam?: (from: string, to: string) => Promise<void>,
+  afterCheckSeam?: (from: string, to: string) => Promise<void>,
 ): Promise<void> {
   // The pointer-write fence is passed through to the atomic write, which acquires it
   // just before the rename and releases it right after: a successor's pointer write
@@ -775,6 +795,7 @@ export async function writePointer(
     fenceSeam,
     beforeFenceSeam,
     finalRenameSeam,
+    afterCheckSeam,
   );
 }
 

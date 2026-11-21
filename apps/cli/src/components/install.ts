@@ -7,7 +7,7 @@
 // never executed; the directory current.json points at is only removed once its replacement is in place.
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, renameSync } from "node:fs";
 import { chmod, copyFile, cp, link, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, rename, rm, statfs, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -137,6 +137,15 @@ export type InstallHooks = {
    */
   renamePointerAfterCheck?: (from: string, to: string) => Promise<void>;
   /**
+   * A pre-rename seam after the last check, delaying the actual rename: runs after
+   * the final check and before the real rename (tests pause here, after the last
+   * check, to let another installer publish — the checks run once more after it,
+   * before the rename, so a publication that landed after the last check is caught).
+   * The rename itself is synchronous, so the last check and the rename are in the
+   * same block with no await between them. The hook must not rename itself.
+   */
+  renamePointerAfterFinalCheck?: (from: string, to: string) => Promise<void>;
+  /**
    * A pre-rename seam for a rollback's rename-aside: runs after the ownership re-check
    * and before the real rename (tests pause here, after the final check, to let another
    * installer publish). Ownership is re-checked after the seam, before the rename, so
@@ -160,6 +169,17 @@ export type InstallHooks = {
    * rename is done). The hook must not rename itself.
    */
   renameFence?: (from: string, to: string) => Promise<void>;
+  /**
+   * A pre-rename seam after the rollback's last check, delaying the actual
+   * rename-aside: runs after the final ownership and fence-identity check and before
+   * the real rename (tests pause here, after the last check, to let another installer
+   * publish — ownership and the fence identity are re-checked once more after it,
+   * before the rename, so a displacement that landed after the last check leaves the
+   * tree in place). The rename itself is synchronous, so the last check and the
+   * rename are in the same block with no await between them. The hook must not
+   * rename itself.
+   */
+  renameAfterCheck?: (from: string, to: string) => Promise<void>;
   /** The prebuilt Windows launcher shipped with the program. */
   windowsLauncher?: string;
 };
@@ -510,7 +530,9 @@ export async function activate(root: string, lockHash: string, staging: string, 
   // between the last check and the rename — and the guard, the identity check, and
   // the fence-identity check run once more after the fence is acquired, before the
   // rename, so a publication or a fence displacement that landed while this write
-  // was waiting for the fence is caught there.
+  // was waiting for the fence is caught there. The rename itself is synchronous,
+  // so the last check and the rename are in the same block with no await between
+  // them: a displacement cannot land between them.
   const point = async (r: string, p: Pointer, treeLock: TreeLock): Promise<void> => {
     await hooks.writePointer?.(r, p);
     await verify();
@@ -518,7 +540,7 @@ export async function activate(root: string, lockHash: string, staging: string, 
       if (readTreeLockToken(r) !== treeLock.token) {
         throw new Error("Lost the component tree lock to another installer; aborting the install");
       }
-    }, hooks.renamePointer, hooks.renamePointerFinal, hooks.renamePointerFence, hooks.renameBeforeFence, hooks.renamePointerAfterCheck);
+    }, hooks.renamePointer, hooks.renamePointerFinal, hooks.renamePointerFence, hooks.renameBeforeFence, hooks.renamePointerAfterCheck, hooks.renamePointerAfterFinalCheck);
   };
   // The holder re-validates before publishing: if another installer displaced its lock
   // (see takeOverStaleLock), it aborts here instead of activating alongside that installer.
@@ -740,8 +762,21 @@ export async function activate(root: string, lockHash: string, staging: string, 
       }
       if (!(await ownsPlaced())) return;
       if (!verifyPointerFence(root, fence)) return;
+      // A pre-rename seam after the last check, delaying the actual rename-aside: a
+      // test can pause here, after the final check, to let another installer publish
+      // — ownership and the fence identity are re-checked once more after it, before
+      // the rename, so a displacement that landed after the last check leaves the
+      // tree in place. The rename itself is synchronous, so the last check and the
+      // rename are in the same block with no await between them.
       try {
-        await rename(final, trash);
+        await hooks.renameAfterCheck?.(final, trash);
+      } catch {
+        return; // The move failed: nothing of this attempt's to remove.
+      }
+      if (!(await ownsPlaced())) return;
+      if (!verifyPointerFence(root, fence)) return;
+      try {
+        renameSync(final, trash);
       } catch {
         return; // Nothing movable at `final`: nothing of this attempt's to remove.
       }
