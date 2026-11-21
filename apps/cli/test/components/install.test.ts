@@ -4071,7 +4071,11 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     // write blocks on the fence, which the rollback holds through the rename-aside,
     // the re-verification, and the rename-back, so the successor cannot publish
     // during the tree-aside window — it publishes after the rollback releases the
-    // fence, which is after the rename-back.
+    // fence, which is after the rename-back. A pointer-name check was tried here
+    // and reverted: it cannot tell this attempt's own cancelled tree (which the
+    // rollback must remove and restore from backup) from a successor's published
+    // tree, because both name the same lock-hash — it broke the cancellation
+    // rollback test, which expects the old tree back.
     const holder = await acquireInstallLock(dir);
     const verifyLockHeld = async () => {
       if (readInstallLockToken(dir) !== holder.token) throw new Error("lock lost");
