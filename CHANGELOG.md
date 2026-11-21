@@ -4,6 +4,18 @@ Version sections on main may describe release preparation. A version heading and
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-21
+
+### Changed
+
+- Web: the entry detail subtree (entry detail, work package detail, history and why tabs) and the floating thread window layer now load on demand when first opened instead of shipping in the room's first-load JavaScript; a failed panel load shows the existing error presentation, and thread window opens requested while the layer loads are queued and delivered once it is ready.
+
+- Graphify is no longer bundled with the desktop app: it downloads on first use of a graph feature after a size confirmation, verified against the shipped lock, with offline component packs (`nema components pack` / `import`) for air-gapped setups, and npm and Compose host daemons on Windows x64, macOS arm64, and glibc Linux x64/arm64 can now install it the same way. An installed component that stops running can be reinstalled as a repair from Settings → Components (Reinstall) or with `nema components install graphify --force`; a repair that fails, is cancelled, or cannot download (offline mode) is reported as such, never as a successful reinstall, and importing a component pack also repairs an installed copy of the same version (the offline repair path).
+
+### Fixed
+
+- Fixed Graphify component installation on Linux hosts: the archive extractor no longer mistakes a case-differing symlink target in the pinned CPython archive for a symlink chain.
+
 ## [0.3.0] - 2026-11-18
 
 ### Added
