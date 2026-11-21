@@ -64,11 +64,11 @@
 - `<lock-hash>`：对当前平台 target 条目（python 条目 + wheels 数组，含 url、sha256、size）做规范化 JSON 序列化后的 sha256 十六进制全串。规范化规则（键排序、数组保序）在本任务里以代码定死（`scripts/desktop/fetch-graphify.mjs` 导出或 scripts 侧共享函数），任务 2 的运行时实现必须与它逐字节一致——用同一组夹具向量在两侧测试里各断言一遍。
 - 锁的运行时分发：构建/打包时把 `graphify-lock.json` 复制为 CLI 包内资源（桌面 payload 与 npm 包各一份）。落点与读取方式在实现时按现有资源约定定（参考 `apps/local` 读 build identity 的方式与 CLI 包的 `files` 配置），并有测试断言两份与 `scripts/desktop/graphify-lock.json` 逐字节一致，防漂移。
 
-- [ ] 先写失败测试（`scripts/desktop/graphify.test.mjs`）：四个 target 齐全；每个文件条目都有正整数 `size`；同一 target 内文件名不重复；lock-hash 夹具向量（给定固定条目 JSON，期望固定哈希串）。
-- [ ] 运行 `node --test scripts/desktop/graphify.test.mjs`，确认新断言失败。
-- [ ] 扩展制锁流程：下载 Linux 两项的 python 与 manylinux wheels，逐项钉 url、sha256 并把实际字节数写回 `size`；既有两项一并补 `size`（以实际下载为准，不手填）。CI 校验锁内 `size` 与实际下载一致（沿用现有锁校验入口，补 size 断言）。
-- [ ] 实现锁分发复制与一致性测试；确认桌面 staging 与 npm pack 各带一份锁。
-- [ ] 重跑 `node --test scripts/desktop/graphify.test.mjs scripts/desktop/graphify-languages.test.mjs scripts/desktop/fetch-tools.test.mjs` 与新增一致性测试，全部通过。注意：本机无 Docker/网络受限时，真实下载制锁这一步要在能联网的环境跑，跑不到的部分在 PR 里如实标注，不拿手填数字冒充实测。
+- [x] 先写失败测试（`scripts/desktop/graphify.test.mjs`）：四个 target 齐全；每个文件条目都有正整数 `size`；同一 target 内文件名不重复；lock-hash 夹具向量（给定固定条目 JSON，期望固定哈希串）。
+- [x] 运行 `node --test scripts/desktop/graphify.test.mjs`，确认新断言失败。
+- [x] 扩展制锁流程：下载 Linux 两项的 python 与 manylinux wheels，逐项钉 url、sha256 并把实际字节数写回 `size`；既有两项一并补 `size`（以实际下载为准，不手填）。CI 校验锁内 `size` 与实际下载一致（沿用现有锁校验入口，补 size 断言）。
+- [x] 实现锁分发复制与一致性测试；确认桌面 staging 与 npm pack 各带一份锁。
+- [x] 重跑 `node --test scripts/desktop/graphify.test.mjs scripts/desktop/graphify-languages.test.mjs scripts/desktop/fetch-tools.test.mjs` 与新增一致性测试，全部通过。注意：本机无 Docker/网络受限时，真实下载制锁这一步要在能联网的环境跑，跑不到的部分在 PR 里如实标注，不拿手填数字冒充实测。
 
 ### 任务 2：共享组件安装器模块
 
@@ -88,7 +88,7 @@
 - 保留策略：保留 active 与 previous 两版，下一次成功安装后清理其余 `<lock-hash>` 目录。
 - 安装前磁盘空间检查与离线开关（`NEMA_GRAPHIFY_OFFLINE=1` / 配置 `components.offline`）按全局约束；musl 平台直接报 `unsupported-platform`（以 libc 检测为准，实现时按 Node 既有报告方式定）。
 
-- [ ] 先写失败测试：
+- [x] 先写失败测试：
   - lock-hash 与任务 1 的夹具向量一致；未知平台/ musl 报告 `unsupported-platform`。
   - 用本地假源（本地 HTTP 服务或注入的 fetch 替身）走通完整安装：目录落 `<lock-hash>`、`current.json` 指向它、自检通过、状态变 `installed`。
   - **篡改字节：** 假源把任一文件改一个字节（sha256 或 size 对不上），安装失败、不产生 `<lock-hash>` 目录、`current.json` 不变、状态为 `failed` 且原因 `hash-mismatch`。
@@ -97,8 +97,8 @@
   - 镜像变量：两个镜像变量指向本地假源时，全程不访问上游域名且校验通过；假源给错字节时校验失败。
   - 代理变量被下载器 honor（假代理断言请求经过它）；离线开关打开时零下载尝试、直接报 `offline`。
   - 保留策略：连续装三版后只剩 active 与 previous。
-- [ ] 运行新增测试，确认失败。
-- [ ] 实现 `lock.ts`、`download.ts`、`install.ts`、`store.ts`，重跑测试至全绿；再跑 `npm run typecheck -w apps/cli` 与 `npx vitest run apps/cli/test/repos`（确认没碰坏既有 graphify 调用）。
+- [x] 运行新增测试，确认失败。
+- [x] 实现 `lock.ts`、`download.ts`、`install.ts`、`store.ts`，重跑测试至全绿；再跑 `npm run typecheck -w apps/cli` 与 `npx vitest run apps/cli/test/repos`（确认没碰坏既有 graphify 调用）。
 
 ### 任务 3：graphify 解析改造与状态呈现
 
@@ -115,8 +115,8 @@
 - 图谱调用（索引构建/查询）在未安装时返回明确的「组件未安装」状态给 hub，而不是含糊的执行失败；daemon 无 UI 时按 spec §2 提示 `nema components install graphify`。
 - `apps/local/src/runtime.ts` 不再写死 payload bin：桌面 daemon 改为不传 `bin`（走 CLI 统一解析），或传组件仓库解析结果；二选一在实现时定，但结果必须是新版 payload（无 `tools/graphify`）下桌面图谱功能走组件仓库。
 
-- [ ] 先写失败测试：四种解析顺序各一例（env 覆盖优先于组件仓库；组件仓库优先于随包；锁不一致时不返回旧版组件路径；全无时报告未安装而非随包路径）；`graphifyInstallStatus` 对未安装/锁不一致/已装三态返回不同结果；doctor 输出区分三态。
-- [ ] 运行测试确认失败，实现后重跑至全绿；跑 `npm run typecheck` 与 `npx vitest run apps/cli/test` 的相关子集（repos、daemon、doctor）。
+- [x] 先写失败测试：四种解析顺序各一例（env 覆盖优先于组件仓库；组件仓库优先于随包；锁不一致时不返回旧版组件路径；全无时报告未安装而非随包路径）；`graphifyInstallStatus` 对未安装/锁不一致/已装三态返回不同结果；doctor 输出区分三态。
+- [x] 运行测试确认失败，实现后重跑至全绿；跑 `npm run typecheck` 与 `npx vitest run apps/cli/test` 的相关子集（repos、daemon、doctor）。
 
 ### 任务 4：首次使用 UX（确认、进度、失败降级、设置页入口）
 
@@ -135,8 +135,8 @@
 - 设置页「组件」区：显示当前状态（已装版本/未装/失败原因）、安装/重试/导入离线包入口、镜像字段（落到与环境变量同一配置，环境变量优先）。同一区域顺带呈现 D-6 的 Agent CLI 检测结果（已装显示版本，未装给官方安装方式链接与一句话说明，仅检测与引导）。
 - CLI 侧无 UI 路径已由任务 6 的 `nema components install` 承接；本任务只保证 daemon 被图谱调用命中未安装时返回可行动的状态，不静默下载。
 
-- [ ] 先写失败测试：hub 透传组件状态与安装进度事件；web 确认框大小数字与锁汇总一致（用夹具锁断言）；拒绝后再次触发图谱功能才提示、普通页面浏览不弹窗；失败后图谱入口置灰且原因文案按原因区分，非图谱功能不受影响（至少断言状态面与文案键齐全、三语键对齐）。
-- [ ] 运行测试确认失败，实现后重跑；跑 `npm run lint -w apps/web` 与 `npm run build -w apps/web`。
+- [x] 先写失败测试：hub 透传组件状态与安装进度事件；web 确认框大小数字与锁汇总一致（用夹具锁断言）；拒绝后再次触发图谱功能才提示、普通页面浏览不弹窗；失败后图谱入口置灰且原因文案按原因区分，非图谱功能不受影响（至少断言状态面与文案键齐全、三语键对齐）。
+- [x] 运行测试确认失败，实现后重跑；跑 `npm run lint -w apps/web` 与 `npm run build -w apps/web`。
 
 ### 任务 5：桌面 payload 瘦身与发布断言
 
@@ -153,9 +153,9 @@
 - 发布检查新增断言：payload 不含 `tools/graphify`；`payload size:` 的 graphify 一项消失或为 0。断言要真能拦回归（见审查重点）。
 - 体积目标（spec 验收，首个含本改动的发布实测，任务 9 勾）：每 target payload 合计 ≤ 80 MiB（基线 win32-x64 196.7、darwin-arm64 193.7）；dmg ≤ 95 MiB（基线 165.7）、NSIS exe ≤ 80 MiB（基线 136.0）、Windows zip ≤ 90 MiB（基线 199.0）。
 
-- [ ] 先写失败测试/断言：staging 产物不含 `tools/graphify`；把一个假 `tools/graphify` 塞进 payload 后发布检查必须变红；payload-size 输出里 graphify 为 0/缺席且合计 ≤ 80 MiB（在本机能跑的 staging 子集上断言，跑不到的原生部分如实标注）。
-- [ ] 运行 `node --test scripts/desktop/staging.test.mjs scripts/desktop/release.test.mjs scripts/desktop/payload-size.test.mjs`（以仓库实际文件名为准）确认新断言先失败、实现后通过。
-- [ ] 移除 staging 的 graphify 组装段与其专属校验，保留 `fetch-graphify.mjs` 本体（制锁、记 size、`components pack` 复用）。
+- [x] 先写失败测试/断言：staging 产物不含 `tools/graphify`；把一个假 `tools/graphify` 塞进 payload 后发布检查必须变红；payload-size 输出里 graphify 为 0/缺席且合计 ≤ 80 MiB（在本机能跑的 staging 子集上断言，跑不到的原生部分如实标注）。
+- [x] 运行 `node --test scripts/desktop/staging.test.mjs scripts/desktop/release.test.mjs scripts/desktop/payload-size.test.mjs`（以仓库实际文件名为准）确认新断言先失败、实现后通过。
+- [x] 移除 staging 的 graphify 组装段与其专属校验，保留 `fetch-graphify.mjs` 本体（制锁、记 size、`components pack` 复用）。
 
 ### 任务 6：CLI `nema components pack` / `import`（含 install / status）
 
@@ -172,13 +172,13 @@
 - `nema components pack graphify`：在能联网的机器上按锁下载、逐项校验 sha256 与 `size`，把**原始归档原样**打成一个 `.nema-component`（tar）包：内含 python 归档与全部 wheels 加 `manifest.json`。manifest 只声明组件名、target、一份声称的 lock-hash、制包工具版本、归档清单（文件名与 size）。制包端不组装、不放组装好的目录。制包文档义务（制作方即分发方、许可证责任）写进命令输出与任务 8 的文档。
 - `nema components import <file>`：以随主程序的受信锁为准绳——取当前平台 target 条目，包内归档集合必须与该条目**恰好相等**（都在、无多余），逐个按锁校验 sha256 与 `size`；manifest 声称的 lock-hash 必须等于按受信锁算出的 lock-hash、target 必须等于当前平台，否则拒绝并说明原因。manifest 的哈希一律不读、不作放行依据。全量校验通过后走任务 2 与在线下载完全相同的组装路径（解压到 staging → 自检 → 改名 → 原子切换），不要求联网。包内预组装目录或脚本一律忽略、永不执行。
 
-- [ ] 先写失败测试：
+- [x] 先写失败测试：
   - pack 产出的包：解开后归档与假源字节逐项一致，manifest 字段只有允许的索引项，不含组装目录。
   - import 正常路径：断网替身下导入成功，产出与在线安装同构（同 lock-hash 目录、`current.json` 一致），图谱自检通过。
   - lock-hash 或 target 不符的包被拒绝并给出明确原因；归档多一个/少一个都被拒绝。
   - **篡改验收（spec §5/验收）：** 分两形，与导入规则对齐：① 归档被替换或改了字节（改过的启动器以替换归档形式混入）+ 与之自洽的 manifest——归档与受信锁对不上，导入必须失败且不产生 active 目录；② 包内归档全部是锁内原样、只是另附一个含改过启动器的预组装目录——按导入规则该目录一律忽略、永不执行、不进入组装产物，导入成败只由归档决定（归档全对则导入成功），并断言 active 目录里的启动器是安装器按随主程序资源/规范文本放入的那一份，不是包里那份。
   - `install` 在离线开关打开时零下载并明确报错；`--yes` 与交互确认两条路径都覆盖。
-- [ ] 运行测试确认失败，实现后重跑至全绿；跑 `npm run typecheck -w apps/cli`。
+- [x] 运行测试确认失败，实现后重跑至全绿；跑 `npm run typecheck -w apps/cli`。
 
 ### 任务 7：npm / Compose 宿主机 daemon 路径
 
@@ -193,8 +193,8 @@
 - Compose 形态：daemon 在宿主机（与 npm 同一路径），容器内的 hub/web 不受影响；不需要给镜像加任何东西。把这条写进任务 8 的指南，避免误以为要在容器里装组件。
 - `nema doctor` 的 graphify 检查在 npm 形态下同样区分三态（任务 3 已覆盖实现，这里做形态侧验证）。
 
-- [ ] 先写失败测试/检查：npm pack 清单断言（锁与 launcher 资源在包内、无多余大文件）；以临时目录模拟 npm 全新安装的 daemon 数据目录，走通「未安装 → install → 自检通过 → `componentBin` 可用」全链（用假源，不访问上游），平台参数分别取 linux-x64 与 linux-arm64 的夹具锁。
-- [ ] 运行测试确认失败，实现后重跑；在 PR 里记录 npm 包体积增量实测。
+- [x] 先写失败测试/检查：npm pack 清单断言（锁与 launcher 资源在包内、无多余大文件）；以临时目录模拟 npm 全新安装的 daemon 数据目录，走通「未安装 → install → 自检通过 → `componentBin` 可用」全链（用假源，不访问上游），平台参数分别取 linux-x64 与 linux-arm64 的夹具锁。
+- [x] 运行测试确认失败，实现后重跑；在 PR 里记录 npm 包体积增量实测。
 
 ### 任务 8：文档与 changelog
 
@@ -204,25 +204,25 @@
 
 **文件：** `scripts/desktop/README.md`（第 35 行一带）、`README.md`、`README.en.md`、`README.zh.md`、`README.ja.md`、`docs/guide.en.md`、`docs/guide.zh.md`、`docs/guide.ja.md`、`changelog.d/graphify-on-demand.changed.md`（类别在实现时按仓库惯例定，`added`/`changed` 二选一）。
 
-- [ ] **桌面 README 原则修订（spec §7 的英文原文要点照落）：** 把「This is a build-time fetch. First launch does not download Graphify, uv, or Python.」一段改为：Graphify 不属于 payload；它是可选组件——第一次使用图谱功能时、经用户确认下载大小后，daemon 从上游按 `graphify-lock.json` 下载、逐文件验 SHA-256 后再解压、装到 `~/.nema/runtime/graphify/<lock-hash>/`；首次启动本身什么都不下载；uv 从不参与，Python 只作为该组件的一部分出现；下载失败或被拒绝时只有图谱功能不可用。整段关于 staging 下载 Graphify 的旧描述改为指向组件模型。
-- [ ] **四份 README 与三份指南（三语等价）：** 把「桌面版自带 Graphify」一类表述改为「首次使用图谱功能时按需下载，可离线导入」；写清：触发时机与确认、安装位置、镜像变量（`NEMA_GRAPHIFY_PYTHON_MIRROR`、`NEMA_GRAPHIFY_PYPI_BASE`）、代理与企业 CA、离线开关、`nema components` 四个子命令、离线包的制作与分发责任（制作方即分发方，许可证义务归制作方，含 python-build-standalone 的组件许可证说明）、npm/Compose（含 Linux 宿主机）的同一流程、musl 不支持。`README.md` 与 `README.en.md` 保持逐字节相同（`cmp` 断言）。
-- [ ] **Changelog：** `changelog.d/` 写一个片段，每行以 `- ` 开头，一条英文要点，例如：`- Graphify is no longer bundled with the desktop app: it downloads on first use of a graph feature after a size confirmation, verified against the shipped lock, with offline component packs for air-gapped setups.`
-- [ ] 跑文档检查（见任务 9 的命令口径）与 `git diff --check`；ROADMAP 的 #132 行状态只在合并后按验收证据更新，不在本任务里提前标完成。
+- [x] **桌面 README 原则修订（spec §7 的英文原文要点照落）：** 把「This is a build-time fetch. First launch does not download Graphify, uv, or Python.」一段改为：Graphify 不属于 payload；它是可选组件——第一次使用图谱功能时、经用户确认下载大小后，daemon 从上游按 `graphify-lock.json` 下载、逐文件验 SHA-256 后再解压、装到 `~/.nema/runtime/graphify/<lock-hash>/`；首次启动本身什么都不下载；uv 从不参与，Python 只作为该组件的一部分出现；下载失败或被拒绝时只有图谱功能不可用。整段关于 staging 下载 Graphify 的旧描述改为指向组件模型。
+- [x] **四份 README 与三份指南（三语等价）：** 把「桌面版自带 Graphify」一类表述改为「首次使用图谱功能时按需下载，可离线导入」；写清：触发时机与确认、安装位置、镜像变量（`NEMA_GRAPHIFY_PYTHON_MIRROR`、`NEMA_GRAPHIFY_PYPI_BASE`）、代理与企业 CA、离线开关、`nema components` 四个子命令、离线包的制作与分发责任（制作方即分发方，许可证义务归制作方，含 python-build-standalone 的组件许可证说明）、npm/Compose（含 Linux 宿主机）的同一流程、musl 不支持。`README.md` 与 `README.en.md` 保持逐字节相同（`cmp` 断言）。
+- [x] **Changelog：** `changelog.d/` 写一个片段，每行以 `- ` 开头，一条英文要点，例如：`- Graphify is no longer bundled with the desktop app: it downloads on first use of a graph feature after a size confirmation, verified against the shipped lock, with offline component packs for air-gapped setups.`
+- [x] 跑文档检查（见任务 9 的命令口径）与 `git diff --check`；ROADMAP 的 #132 行状态只在合并后按验收证据更新，不在本任务里提前标完成。
 
 ### 任务 9：最终验收（单独授权）
 
 **Spec：** 验收标准全节。本任务需要维护者单独授权后执行；桌面真机验收按维护者 2026-11-16 测试政策不主动做，桌面部分以 CI 的 staging/smoke 与下列可测项为准，packaged bench 保持手动/可选，问题等用户反馈。**诚实证据规则：没有证据不勾 checkbox；静态检查、自动化测试、真实环境验收三者分开记录，不互相冒充；跑不到的项写明环境限制与缺口，不勾。**
 
 - [ ] **体积：** 首个含本改动的发布（或等价的发布构建）实测——`payload size:` 中 graphify 一项消失或为 0；每 target payload 合计 ≤ 80 MiB；dmg ≤ 95 MiB、NSIS exe ≤ 80 MiB、Windows zip ≤ 90 MiB（以 `gh release view` 资产 size 核对）。未达标时在发布记录里写明差额构成，不勾。
-- [ ] **下载与校验（自动化证据）：** 任务 2 的篡改字节、中途中断、中断恢复（改名后未写 current.json、改坏已落盘文件）测试全绿记录在案。
+- [x] **下载与校验（自动化证据）：** 任务 2 的篡改字节、中途中断、中断恢复（改名后未写 current.json、改坏已落盘文件）测试全绿记录在案。
 - [ ] **干净环境首次触发：** 无随包 graphify 的构建产物上第一次触发图谱功能，确认弹窗出现且显示大小与锁内 `size` 汇总一致；确认后装成 `<lock-hash>` 目录、`current.json` 指向它、图谱构建跑通。
-- [ ] **镜像变量：** 两个镜像变量指向本地假源，下载全程不访问上游域名且校验通过；假源给错字节时校验失败（任务 2 测试证据 + 一次真实形态复跑）。
-- [ ] **离线导入：** 在 A 机 `nema components pack graphify` 制包，拷到断网的 B 机（同平台）导入成功、图谱可用；lock-hash 或 target 不符的包被拒绝并给出明确原因；「改过的启动器以替换归档混入 + 自洽 manifest」的包导入失败且不产生 active 目录（另附预组装目录的包按规则忽略该目录、只由归档决定成败）。
+- [x] **镜像变量：** 两个镜像变量指向本地假源，下载全程不访问上游域名且校验通过；假源给错字节时校验失败（任务 2 测试证据 + 一次真实形态复跑）。
+- [x] **离线导入：** 在 A 机 `nema components pack graphify` 制包，拷到断网的 B 机（同平台）导入成功、图谱可用；lock-hash 或 target 不符的包被拒绝并给出明确原因；「改过的启动器以替换归档混入 + 自洽 manifest」的包导入失败且不产生 active 目录（另附预组装目录的包按规则忽略该目录、只由归档决定成败）。
 - [ ] **降级：** 下载必失败的环境（黑洞代理）里应用正常启动与使用非图谱功能，图谱入口显示失败原因与重试/导入出口，无全局报错弹窗。
 - [ ] **多形态：** npm 全新安装的 daemon（含 Linux x64/arm64 宿主机）走通确认→下载→可用；Compose 形态的宿主机 daemon 同样走通。
-- [ ] **风险项实测记录：** macOS 上下载所得 Python 是否受 Gatekeeper/隔离属性影响（实测结论写进发布记录，不只假设 Node 下载不带 quarantine）；Windows 杀软误报只能记录与提示，不作为勾选条件。
-- [ ] **记录：** 把命令、版本、体积数字、测试与实测结果按「静态检查 / 自动化测试 / 真实验收」分开写成发布记录（PR 或 #132 评论），ROADMAP 的 #132 行只按这份证据更新状态。
+- [x] **风险项实测记录：** macOS 上下载所得 Python 是否受 Gatekeeper/隔离属性影响（实测结论写进发布记录，不只假设 Node 下载不带 quarantine）；Windows 杀软误报只能记录与提示，不作为勾选条件。
+- [x] **记录：** 把命令、版本、体积数字、测试与实测结果按「静态检查 / 自动化测试 / 真实验收」分开写成发布记录（PR 或 #132 评论），ROADMAP 的 #132 行只按这份证据更新状态。
 
 ## 执行证据
 
-（实现阶段填写：每个任务的命令与结果、未验证项与环境限制。未执行前留空，不预先声称任何结果。）
+任务 1–3 由 PR #262 合入，任务 4–8 由 PR #263 合入，任务 9 验收中发现的 Linux 安装 bug 由 PR #269 修复后随 v0.3.1 发布。验收记录见 [#132 评论 7063961084](https://github.com/Nema-Project/nema-room/issues/132#issuecomment-7063961084)（发布前部分：自动化测试 168 项全绿、镜像/离线/降级/npm 形态实跑）与 [#132 评论 7064590698](https://github.com/Nema-Project/nema-room/issues/132#issuecomment-7064590698)（体积实测与关闭记录）。任务 9 未勾选项及原因：体积（payload 达标——win32-x64 75.1 MiB、darwin-arm64 72.9 MiB、graphify 0.0 MiB；安装包上限未达，差额构成为 Electron 本体量级，详见关闭记录）、干净环境首次触发与降级（网页端逐字呈现未验，本 VM 无浏览器可达回环）、多形态（Compose 容器栈未跑，本 VM 无 Docker；宿主机 daemon 路径已由 npm 形态实跑覆盖）。
