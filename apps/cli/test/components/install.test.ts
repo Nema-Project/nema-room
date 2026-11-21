@@ -3118,6 +3118,86 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     await successor!.release();
   });
 
+  test("a successor that publishes after the snapshot, delaying the rename, keeps its pointer", async () => {
+    // Two different versions in the same component root: A publishes hash A, B
+    // publishes hash B. A passes its final guard, identity, and fence-identity check,
+    // saves the pointer that is at the target, and pauses at the after-snapshot seam,
+    // after the snapshot and before the rename, with no re-check before the rename.
+    // B then displaces A's install lock, tree lock, and fence the way delayed
+    // takeovers' renames do, claims them, publishes its pointer, and releases the
+    // fence. When A resumes, it re-reads the target immediately before the rename,
+    // in the same synchronous block, so the saved content is B's pointer (published
+    // during the pause), not the old one: it renames its own pointer over B's, verifies
+    // the fence, finds it lost, and restores B's pointer. B's pointer content stands
+    // while B holds the install lock. A reader can still observe A's pointer in the
+    // brief moment between the rename and the restore, but the end state is B's
+    // pointer. The re-read and the rename are adjacent synchronous operations, so a
+    // publication landing between them would need to be scheduled by another process
+    // in the microseconds between two adjacent syscalls, which no test can
+    // orchestrate — the after-snapshot seam is the last orchestratable pause point,
+    // and the test covers it.
+    const componentA = fakeComponent(execLog, "a");
+    const componentB = fakeComponent(execLog, "b");
+    const hashA = lockHash(componentA.target);
+    const hashB = lockHash(componentB.target);
+    expect(hashA).not.toBe(hashB);
+    const dir = graphifyRoot();
+    mkdirSync(dir, { recursive: true });
+    const stagingA = path.join(dir, "staging-a");
+    mkdirSync(stagingA, { recursive: true });
+    writeFileSync(path.join(stagingA, "marker"), "a\n");
+    const stagingB = path.join(dir, "staging-b");
+    mkdirSync(stagingB, { recursive: true });
+    writeFileSync(path.join(stagingB, "marker"), "b\n");
+    const holder = await acquireInstallLock(dir);
+    const verifyA = async () => {
+      if (readInstallLockToken(dir) !== holder.token) throw new Error("lock lost");
+    };
+    let snapshotPaused = false;
+    const atSnapshot = deferred();
+    const releaseSnapshot = deferred();
+    const outcome = activate(dir, hashA, stagingA, {
+      verifyLockHeld: verifyA,
+      renamePointerAfterSnapshot: async () => {
+        if (!snapshotPaused) {
+          snapshotPaused = true;
+          atSnapshot.resolve();
+          await releaseSnapshot.promise;
+        }
+      },
+    }).catch((error: unknown) => error);
+    await atSnapshot.promise;
+    // A is paused at its after-snapshot seam, after the snapshot and before the
+    // rename. Displace its install lock, tree lock, and fence the way delayed
+    // takeovers' renames do, and let B claim them and publish a different version
+    // before A resumes.
+    renameSync(path.join(dir, ".install.lock"), path.join(dir, ".install.lock.displaced"));
+    renameSync(path.join(dir, ".tree.lock"), path.join(dir, ".tree.lock.displaced"));
+    renameSync(path.join(dir, ".pointer.fence"), path.join(dir, ".pointer.fence.displaced"));
+    const successor = acquireInstallLockSync(dir);
+    const successorOutcome = await activate(dir, hashB, stagingB, {
+      verifyLockHeld: async () => {
+        if (readInstallLockToken(dir) !== successor!.token) throw new Error("lock lost");
+      },
+    });
+    expect(successorOutcome).toBe("renamed");
+    expect(readPointer(dir).active).toBe(hashB);
+    releaseSnapshot.resolve();
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("pointer fence");
+    // B's pointer content stands (the re-read captured it and the restore put it
+    // back), checked while B still holds the install lock. The file's inode is not
+    // B's original one — A's rename replaced it, and the restore wrote B's content
+    // to a new file — so only the content is asserted here.
+    expect(readPointer(dir).active).toBe(hashB);
+    expect(JSON.parse(readFileSync(path.join(dir, "current.json"), "utf8"))).toMatchObject({ active: hashB });
+    expect(readInstallLockToken(dir)).toBe(successor!.token);
+    await holder.release();
+    expect(readInstallLockToken(dir)).toBe(successor!.token);
+    await successor!.release();
+  });
+
   test("a rollback does not restore over a successor's live tree", async () => {
     const component = fakeComponent(execLog);
     const hash = lockHash(component.target);
@@ -3951,6 +4031,132 @@ describe.skipIf(process.platform === "win32")("install lock and interrupted repl
     } finally {
       releaseAside.resolve();
       releaseRename.resolve();
+      writeFileSync(path.join(controlDir, "release"), "release\n");
+      await childDone;
+      expect(JSON.parse(readFileSync(resultFile, "utf8"))).toMatchObject({ outcome: "reused" });
+      child.kill();
+    }
+  });
+
+  test("a successor in another process that publishes after the rollback's final check, with no re-check, leaves the tree restored", async () => {
+    const component = fakeComponent(execLog);
+    const hash = lockHash(component.target);
+    const dir = graphifyRoot();
+    mkdirSync(dir, { recursive: true });
+    const final = path.join(dir, hash);
+    const staging = path.join(dir, "staging");
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(path.join(staging, "marker"), "new\n");
+    writeFileSync(path.join(staging, "graphify"), "#!/bin/sh\necho graphify\n");
+    const successorStaging = path.join(dir, "staging-successor");
+    mkdirSync(successorStaging, { recursive: true });
+    writeFileSync(path.join(successorStaging, "marker"), "new\n");
+    writeFileSync(path.join(successorStaging, "graphify"), "#!/bin/sh\necho graphify\n");
+    const lockPath = writeLock(path.join(root, "lock.json"), component);
+    const env = { runtimeRoot, lockPath, platform: { platform: process.platform, arch: process.arch, musl: false } };
+    // The rollback attempt holds a real lock. Its removal passes its ownership
+    // re-checks and the fence-identity check, and pauses at the test-only
+    // after-final-check seam, after the true final check, with no re-check before
+    // the rename-aside. A successor in another process then displaces both locks and
+    // the fence the way delayed stale-lock takeovers' renames do, claims them, and
+    // publishes the same tree by reusing it. When the rollback resumes, there is no
+    // re-check to stop it: it renames the tree aside (moving the successor's active
+    // tree to trash), and the post-rename re-verification finds its locks lost, so
+    // it renames the tree back. The tree is restored to final, the launcher resolves,
+    // and no backup is left aside — checked while the successor's install lock is
+    // live in its own process. The production re-check before this seam stays: it is
+    // the mechanism that leaves a possibly-published tree in place in the normal
+    // path (the round-28 test covers it); this seam only exists so a test can
+    // exercise the interval after it without removing it. The successor's pointer
+    // write blocks on the fence, which the rollback holds through the rename-aside,
+    // the re-verification, and the rename-back, so the successor cannot publish
+    // during the tree-aside window — it publishes after the rollback releases the
+    // fence, which is after the rename-back.
+    const holder = await acquireInstallLock(dir);
+    const verifyLockHeld = async () => {
+      if (readInstallLockToken(dir) !== holder.token) throw new Error("lock lost");
+    };
+    let renames = 0;
+    const atAside = deferred();
+    const releaseAside = deferred();
+    const renameHook = async (from: string, to: string) => {
+      renames += 1;
+      if (renames === 2) {
+        atAside.resolve();
+        await releaseAside.promise;
+      }
+    };
+    const atFinal = deferred();
+    const releaseFinal = deferred();
+    const outcome = activate(dir, hash, staging, {
+      verifyLockHeld,
+      writePointer: async () => {
+        throw new Error("pointer write failed");
+      },
+      rename: renameHook,
+      renameAfterFinalCheck: async () => {
+        atFinal.resolve();
+        await releaseFinal.promise;
+      },
+    }).catch((error: unknown) => error);
+    await atAside.promise;
+    // The rollback's tree is still at final and unpublished. Let the removal pass
+    // its ownership re-checks and the fence-identity check, and pause at the
+    // after-final-check seam, after the true final check, with no re-check before
+    // the rename-aside.
+    releaseAside.resolve();
+    await atFinal.promise;
+    // The successor runs in a child process: it displaces both locks and the fence,
+    // claims them, and publishes the same tree by reusing the rollback's placed
+    // tree, then waits (holding its install lock) until the parent releases it.
+    const cliDir = fileURLToPath(new URL("../..", import.meta.url));
+    const controlDir = path.join(root, "rollback-final-check-control");
+    mkdirSync(controlDir, { recursive: true });
+    const resultFile = path.join(root, "rollback-final-check-result.json");
+    const jobFile = path.join(root, "rollback-final-check-job.json");
+    writeFileSync(jobFile, JSON.stringify({ root: dir, hash, staging: successorStaging, controlDir, resultFile, displaceFence: true }));
+    const worker = fileURLToPath(new URL("../fixtures/component-rollback-successor-worker.mjs", import.meta.url));
+    const child = spawn(process.execPath, ["--import", "tsx", worker, jobFile], { cwd: cliDir, stdio: ["ignore", "pipe", "pipe"] });
+    let childErr = "";
+    child.stderr!.on("data", (d) => (childErr += d));
+    const childDone = new Promise<number | null>((resolve) => child.on("exit", resolve));
+    const waitForFile = async (file: string) => {
+      const end = Date.now() + 15_000;
+      while (!existsSync(file)) {
+        if (Date.now() > end) throw new Error(`timed out waiting for ${file}; child stderr: ${childErr}`);
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    };
+    try {
+      // The successor claimed the install lock in its own process and displaced the
+      // rollback's fence; it is publishing the same tree by reusing it.
+      await waitForFile(path.join(controlDir, "claimed"));
+      const successorToken = readInstallLockToken(dir);
+      expect(successorToken).not.toBe(holder.token);
+      expect(successorToken).not.toBeNull();
+      // The rollback resumes with no re-check: it renames the tree aside, the
+      // post-rename re-verification finds its locks lost, and it renames the tree
+      // back. The aside seam ran (two hook calls: the placement and the aside), and
+      // the rename-back ran too (a third hook call), so the tree is back at final
+      // and no backup is left aside.
+      releaseFinal.resolve();
+      const error = await outcome;
+      expect(error).toBeInstanceOf(Error);
+      expect(renames).toBe(3);
+      await waitForFile(path.join(controlDir, "published"));
+      // The successor published in its own process and still holds its install lock:
+      // the launcher is available (its tree was restored to final) while that lock
+      // is live, and no backup is left aside.
+      expect(readInstallLockToken(dir)).toBe(successorToken);
+      expect(readPointer(dir).active).toBe(hash);
+      expect(componentBin("graphify", env)).toBe(path.join(final, "graphify"));
+      expect(readFileSync(path.join(final, "marker"), "utf8")).toBe("new\n");
+      expect(readdirSync(dir).filter((name) => name.includes(".replaced-"))).toEqual([]);
+      await holder.release();
+      expect(readInstallLockToken(dir)).toBe(successorToken);
+    } finally {
+      releaseAside.resolve();
+      releaseFinal.resolve();
       writeFileSync(path.join(controlDir, "release"), "release\n");
       await childDone;
       expect(JSON.parse(readFileSync(resultFile, "utf8"))).toMatchObject({ outcome: "reused" });

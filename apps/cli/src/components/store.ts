@@ -683,13 +683,20 @@ export function readPointer(root: string): Pointer {
  * before it and restoring it if the fence was lost after it, so a successor that
  * published while this write was paused after the last check keeps its pointer even
  * though no check runs between the seam and the rename. The save and the rename are
- * adjacent synchronous operations in the same block, so a publication landing
- * between them would need to be scheduled by another process in the microseconds
- * between two adjacent syscalls, which no test can orchestrate — the after-check
- * seam is the last orchestratable pause point, and the test covers it. The rename
- * itself is synchronous (`renameSync`), so the last check and the rename are in the
- * same block with no await between them. The seams must not rename themselves; the
- * production code renames after they return. */
+ * separate operations, so a successor can publish between them: `afterSnapshotSeam`
+ * is a pre-rename seam after the snapshot and before the rename — a test can pause
+ * there, after the snapshot, to let another installer publish — and the target is
+ * re-read after it, immediately before the rename, in the same synchronous block, so
+ * a publication during that seam is captured in the saved content and the restore
+ * puts the successor's pointer back, not the old one. A publication landing between
+ * that re-read and the rename would need to be scheduled by another process in the
+ * microseconds between two adjacent syscalls, which no test can orchestrate — the
+ * after-snapshot seam is the last orchestratable pause point, and the test covers
+ * it. A reader can still observe this writer's pointer in the brief moment between
+ * the rename and the restore, but the end state is the successor's pointer. The
+ * rename itself is synchronous (`renameSync`), so the last check and the rename are
+ * in the same block with no await between them. The seams must not rename
+ * themselves; the production code renames after they return. */
 export async function writeFileAtomic(
   file: string,
   body: string,
@@ -701,6 +708,7 @@ export async function writeFileAtomic(
   beforeFenceSeam?: (from: string, to: string) => Promise<void>,
   finalRenameSeam?: (from: string, to: string) => Promise<void>,
   afterCheckSeam?: (from: string, to: string) => Promise<void>,
+  afterSnapshotSeam?: (from: string, to: string) => Promise<void>,
 ): Promise<void> {
   const identity = (path: string): string | null => {
     const info = statSync(path, { throwIfNoEntry: false });
@@ -756,17 +764,36 @@ export async function writeFileAtomic(
     // by another check. A test can pause at this seam, after the last check, to let
     // another installer publish — the save-and-restore below catches it, so the
     // successor's pointer stands even though no check runs between the seam and the
-    // rename. The save and the rename are adjacent synchronous operations in the
-    // same block, so a publication landing between them would need to be scheduled
-    // by another process in the microseconds between two adjacent syscalls, which
-    // no test can orchestrate — the after-check seam is the last orchestratable
-    // pause point, and the test covers it.
+    // rename. The save and the rename are separate operations, so a successor can
+    // publish between them: the target is re-read after the after-snapshot seam
+    // below, immediately before the rename, in the same synchronous block, so a
+    // publication during that seam is captured in the saved content and the restore
+    // puts the successor's pointer back, not the old one. A reader can still observe
+    // this writer's pointer in the brief moment between the rename and the restore,
+    // but the end state is the successor's pointer.
     let beforeContent: Buffer | null = null;
     let beforeMissing = false;
     if (verifyFence !== null) {
       try {
         beforeContent = readFileSync(file);
       } catch {
+        beforeMissing = true;
+      }
+    }
+    await afterSnapshotSeam?.(temp, file);
+    // Re-read the target immediately before the rename, in the same synchronous
+    // block: a successor that published after the snapshot (during the seam above)
+    // is captured here, so the restore below puts the successor's pointer back. A
+    // publication landing between this re-read and the rename would need to be
+    // scheduled by another process in the microseconds between two adjacent syscalls,
+    // which no test can orchestrate — the after-snapshot seam is the last
+    // orchestratable pause point, and the test covers it.
+    if (verifyFence !== null) {
+      try {
+        beforeContent = readFileSync(file);
+        beforeMissing = false;
+      } catch {
+        beforeContent = null;
         beforeMissing = true;
       }
     }
@@ -802,6 +829,7 @@ export async function writePointer(
   beforeFenceSeam?: (from: string, to: string) => Promise<void>,
   finalRenameSeam?: (from: string, to: string) => Promise<void>,
   afterCheckSeam?: (from: string, to: string) => Promise<void>,
+  afterSnapshotSeam?: (from: string, to: string) => Promise<void>,
 ): Promise<void> {
   // The pointer-write fence is passed through to the atomic write, which acquires it
   // just before the rename and releases it right after: a successor's pointer write
@@ -828,6 +856,7 @@ export async function writePointer(
     beforeFenceSeam,
     finalRenameSeam,
     afterCheckSeam,
+    afterSnapshotSeam,
   );
 }
 
