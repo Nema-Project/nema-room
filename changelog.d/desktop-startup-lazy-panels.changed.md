@@ -1,0 +1,1 @@
+- Web: the entry detail subtree (entry detail, work package detail, history and why tabs) and the floating thread window layer now load on demand when first opened instead of shipping in the room's first-load JavaScript; a failed panel load shows the existing error presentation, and thread window opens requested while the layer loads are queued and delivered once it is ready.
