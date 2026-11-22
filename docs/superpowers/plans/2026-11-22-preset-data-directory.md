@@ -37,33 +37,33 @@
 
 ### 任务 2：种子生成器与构建断言
 
-- [ ] 先写失败测试：`schema_migrations` 集合与迁移文件集合不等时生成器报错；归档解开后目录可被 PGlite 打开且 `migrate` 零待执行。
-- [ ] 实现 `make-preset-db.mjs`：用构建产物（与 staging 同一份 hub 构建）对临时目录 `createLocalDb` → 查询 `schema_migrations` 与迁移目录文件集合比对 → `close()` → 打归档 → 打印归档字节数。
-- [ ] 生成器在归档字节数 >10 MiB 时以非零退出（D-6 的体积门在生成端先拦一道）。
-- [ ] 本机（Linux）跑通生成器与测试全绿；真实归档在本机解开后 `createLocalDb` 打开成功、状态正常。
+- [x] 先写失败测试：`schema_migrations` 集合与迁移文件集合不等时生成器报错；归档解开后目录可被 PGlite 打开且 `migrate` 零待执行。
+- [x] 实现 `make-preset-db.mjs`：用构建产物（与 staging 同一份 hub 构建）对临时目录 `createLocalDb` → 查询 `schema_migrations` 与迁移目录文件集合比对 → `close()` → 打归档 → 打印归档字节数。
+- [x] 生成器在归档字节数 >10 MiB 时以非零退出（D-6 的体积门在生成端先拦一道）。
+- [x] 本机（Linux）跑通生成器与测试全绿；真实归档在本机解开后 `createLocalDb` 打开成功、状态正常。
 
 ### 任务 3：staging 与清单集成
 
-- [ ] `stage-runtime.mjs` 在组装载荷时调生成器（仅桌面两 target；沿用既有「拒绝非原生 target 在本机 staging」的口径，生成器只在原生 runner 上跑），归档落到载荷固定相对路径，清单写可选条目 `presetDb`。
-- [ ] `payload-size.mjs` 新增 `preset-db` 段：归档计入 total 并单列一行 `payload size: preset-db X MiB`；`checkSlimPayload` 对该段 >10 MiB 硬失败。补 `payload-size.test.mjs` 用例。
+- [x] `stage-runtime.mjs` 在组装载荷时调生成器（仅桌面两 target；沿用既有「拒绝非原生 target 在本机 staging」的口径，生成器只在原生 runner 上跑），归档落到载荷固定相对路径，清单写可选条目 `presetDb`。
+- [x] `payload-size.mjs` 新增 `preset-db` 段：归档计入 total 并单列一行 `payload size: preset-db X MiB`；`checkSlimPayload` 对该段 >10 MiB 硬失败。补 `payload-size.test.mjs` 用例。
 - [ ] staging 相关既有测试全绿；本机 Linux staging 仍按既有口径失败于非原生 target（不为本项改这条），以 CI 平台 job 的 staging 成功为集成证据。
 
 ### 任务 4：运行时落地（种子规则与回退）
 
-- [ ] 先写失败测试（`apps/local/test/presetDb.test.ts`）：db 目录不存在 + 归档完好 → 落地后 PGlite 可打开且迁移零待执行；归档损坏/含逃逸路径 → 返回未落地、半成品清净、随后全量 `createLocalDb` 成功；db 目录已存在 → 函数不被调用或立即返回、既有内容逐字节不变。
-- [ ] 实现 `presetDb.ts`：解开到 `<home>/db.preset-<随机>` 临时目录，成功后 `renameSync` 就位；任何异常清掉临时目录并返回未落地。归档安全规则与组件安装器同口径（拒绝绝对路径、`..`、符号链接逃逸）。
-- [ ] `runtime.ts` 接入：种子检查必须放在现有 `ensureOwnedDirectory(paths.home, paths.db, "database")`（runtime.ts:529，紧临 `createLocalDb` 之前）**之前**——该调用会先把 db 目录建出来，检查若排在其后，种子条件永不成立。顺序为：清单条目缺失 → 跳过；存在且 db 目录不存在 → 先落地种子，随后既有 `ensureOwnedDirectory` 照常执行（对已落地的目录做真实目录校验与 0700 保护，其 mkdir 对已存在目录无操作），再 `createLocalDb`。成败各留一条诊断（成功记 `preset-db: seeded`、回退记原因）；`db` 阶段与既有 phase 名不变。
-- [ ] `apps/local` 与 `apps/hub` 测试全绿，根 `typecheck` 与 CLI 型检查通过。
+- [x] 先写失败测试（`apps/local/test/presetDb.test.ts`）：db 目录不存在 + 归档完好 → 落地后 PGlite 可打开且迁移零待执行；归档损坏/含逃逸路径 → 返回未落地、半成品清净、随后全量 `createLocalDb` 成功；db 目录已存在 → 函数不被调用或立即返回、既有内容逐字节不变。
+- [x] 实现 `presetDb.ts`：解开到 `<home>/db.preset-<随机>` 临时目录，成功后 `renameSync` 就位；任何异常清掉临时目录并返回未落地。归档安全规则与组件安装器同口径（拒绝绝对路径、`..`、符号链接逃逸）。
+- [x] `runtime.ts` 接入：种子检查必须放在现有 `ensureOwnedDirectory(paths.home, paths.db, "database")`（runtime.ts:529，紧临 `createLocalDb` 之前）**之前**——该调用会先把 db 目录建出来，检查若排在其后，种子条件永不成立。顺序为：清单条目缺失 → 跳过；存在且 db 目录不存在 → 先落地种子，随后既有 `ensureOwnedDirectory` 照常执行（对已落地的目录做真实目录校验与 0700 保护，其 mkdir 对已存在目录无操作），再 `createLocalDb`。成败各留一条诊断（成功记 `preset-db: seeded`、回退记原因）；`db` 阶段与既有 phase 名不变。
+- [x] `apps/local` 与 `apps/hub` 测试全绿，根 `typecheck` 与 CLI 型检查通过。
 
 ### 任务 5：startup-sample 预置口径
 
-- [ ] `startup-sample.mjs` 增加 `preset` 子进程模式：父进程先按任务 2 的同口径现生成种子归档，子进程的计时从落地开始：`preset.totalMs` = 落地耗时 + `new PGlite` 就绪 + `migrate`，并单列 `landingMs`（另保留 `readyMs`/`migrateMs` 分项），冷/热字段保持原样。验收比较的必须是含落地的 `totalMs`——真实首次运行付的是全程。
+- [x] `startup-sample.mjs` 增加 `preset` 子进程模式：父进程先按任务 2 的同口径现生成种子归档，子进程的计时从落地开始：`preset.totalMs` = 落地耗时 + `new PGlite` 就绪 + `migrate`，并单列 `landingMs`（另保留 `readyMs`/`migrateMs` 分项），冷/热字段保持原样。验收比较的必须是含落地的 `totalMs`——真实首次运行付的是全程。
 - [ ] verify.yml 平台 job 无需改动即带出新字段（若其断言/汇总对 JSON 形状有校验则同步更新）；在本项 PR 的 CI 运行上确认 windows/macos 两个平台 job 的日志各有一行带 `preset` 的 JSON。
 
 ### 任务 6：文档与 changelog
 
-- [ ] 核对四份 README、桌面 README 与三份指南中「数据目录/首次启动」段落：本项无用户可见的安装/配置/用法变化时，只在桌面 README 的数据目录段补一句首次运行种子与回退行为；有出入按实际改齐。
-- [ ] 加 changelog 片段 `changelog.d/preset-db-startup.changed.md`（每行以 "- " 开头）。
+- [x] 核对四份 README、桌面 README 与三份指南中「数据目录/首次启动」段落：本项无用户可见的安装/配置/用法变化时，只在桌面 README 的数据目录段补一句首次运行种子与回退行为；有出入按实际改齐。
+- [x] 加 changelog 片段 `changelog.d/preset-db-startup.changed.md`（每行以 "- " 开头）。
 
 ### 任务 7：验收与收口（#265）
 
@@ -74,3 +74,23 @@
 ## 执行证据
 
 （实现阶段填写：每个任务的命令与结果、未验证项与环境限制。未执行前留空，不预先声称任何结果。）
+
+**2026-11-22 实现轮（任务 2–6 代码、测试、文档；分支 `feat/265-preset-db`，未提交、未推送）**
+
+- 已写代码（未经执行验证，上面所有复选框因此保持未勾）：
+  - 任务 2：`scripts/desktop/make-preset-db.mjs`（生成器：`createLocalDb` → `schema_migrations` 与迁移文件集合相等断言 → ustar+gzip 打包，无 pax 头 → >10 MiB 非零退出）；`make-preset-db.test.mjs`（集合断言、归档往返后 `createLocalDb` 打开且 `applied_at` 全早于打开时刻、集合不等失败不留输出、体积门、命令非零退出、拒绝符号链接）；verify.yml `test` job 在 hub/CLI 构建后跑该测试。
+  - 任务 3：`stage-runtime.mjs` 用已暂存的 hub（`app/node_modules/@nema/hub`）在原生 runner 上生成 `preset/preset-db.tar.gz`，清单写可选 `presetDb`；`presetDbBuilder` 可注入（fixture 测试的 PGlite 是替身）；`payload-size.mjs` 新增 `preset-db` 段（计入 total、单列一行），`checkSlimPayload` 对 >10 MiB 硬失败（release 校验同样经过它）；`make.mjs` 的打包前清单校验在 `presetDb` 存在时校验其为载荷内文件。非原生 target 的 staging 拒绝未改。
+  - 任务 4：`apps/local/src/presetDb.ts`（解到 `<home>/db.preset-<随机>` 后 `renameSync` 就位；失败清场返回未落地）；归档解开**复用** `apps/cli/src/components/archive.ts` 的 `extractTarGz`（`@nema/cli` 新增 `./components/archive` 导出；`@nema/local` 原本就依赖 `@nema/cli`，方向不变）；`runtime.ts` 在 `ensureOwnedDirectory(paths.home, paths.db, "database")` **之前**检查并落地；清单条目解析失败只停用种子、不阻塞启动；诊断为核心 stdout 既有 JSON 行通道上的一行 `{"state":"preset-db","result":"seeded","ms":…}` 或 `{"state":"preset-db","result":"fallback","reason":…}`。`createLocalDb`/`migrate` 未改。
+  - 任务 5：`startup-sample.mjs` 增 `generate`/`preset` 子进程模式；JSON 行增 `preset`：`landingMs`、`readyMs`、`migrateMs`、`totalMs`（含落地）、`appliedOnOpen`、`archiveBytes`，以及供 D-2 形态比较的 `copyLandingMs`（同一份种子松散树拷贝到兄弟目录再改名，每次运行一次）；冷/热字段不变。
+  - 任务 6：`apps/desktop` 下没有 README；桌面构建指南 `scripts/desktop/README.md` 没有数据目录段，在其列举清单条目的「Managed payload staging」段补了 `presetDb`/首次运行种子/回退，在载荷记账句补了 `preset-db` 硬上限。三份指南的「数据位置」与升级段在本项后仍然正确，未改；四份 README 未改。changelog 片段 `changelog.d/preset-db-startup.changed.md`。
+- 已执行的检查：`git diff --check`（已跟踪文件）无输出。
+- **未执行（阻塞）**：本轮会话的权限模式不允许执行脚本或写 git——`node --test`、`npx tsc -b`、`npx vitest`、`npm run build -w apps/hub`、`git add` 均要求人工批准而本会话无人可批。因此生成器本机端到端、归档字节数、全部单测、根 typecheck 与 CLI typecheck、`startup-sample` 本机运行、docs-check 均未跑，没有任何结果可记。本机 `apps/hub/dist` 迁移副本是旧的（20 个，源码 22 个），跑生成器测试前须先 `npm run build -w apps/hub`。
+
+**2026-11-22 监督验证（Muse 在本机逐项执行，Linux 开发 VM，1.5 CPU）**
+
+- 构建：`npm run build -w apps/hub`、`npm run build -w apps/cli` 均成功（hub 的 dist 迁移副本已刷新为 22 个）。
+- 任务 2：`node --test scripts/desktop/make-preset-db.test.mjs` 7/7 通过，含端到端一条：生成的种子落地后 `createLocalDb` 打开、零迁移待执行；集合不等与超体积均失败且不写出。归档实测 4,828,237 字节（约 4.6 MiB，`startup-sample` 同口径读数），低于 D-6 的 10 MiB 上限。
+- 任务 3：`node --test scripts/desktop/payload-size.test.mjs scripts/desktop/staging.test.mjs` 与 vitest 的 `apps/desktop/test/make.test.mjs` 全绿（staging 的种子构建走可注入替身；原生 target 的真实 staging 证据待本 PR 的 CI 平台 job——任务 3 第三条因此暂不勾）。
+- 任务 4：`npx vitest run --project @nema/local --maxWorkers=1` 全量 18 个文件 278 通过、1 跳过（既有跳过），含新增 `presetDb.test.ts` 与 `runtime.test.ts` 的种子用例；根 `npx tsc -b` 与 `npm run typecheck -w apps/cli` 均通过。apps/hub 无文件改动，其套件未重跑。
+- 任务 5：`node --test scripts/ci/startup-sample.test.mjs` 2/2 通过；本机实跑一行 JSON：cold totalMs 4372、warm 674、preset{landingMs 323、totalMs 858、appliedOnOpen 0、copyLandingMs 218、archiveBytes 4828237}。本机被限流（冷口径远高于 CI Linux 基线），只作形状与量级参考；windows/macos 平台 job 的 JSON 待本 PR 的 CI（任务 5 第二条、任务 1 暂不勾）。
+- 任务 6：docs-check 对本计划通过；README/指南经实现轮核对后未改（原文仍正确），桌面构建指南的补记见实现轮记录。

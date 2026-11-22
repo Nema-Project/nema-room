@@ -10,13 +10,20 @@ export const PAYLOAD_BUDGETS_MIB = {
   node: 135,
   graphify: 0,
   web: 30,
+  'preset-db': 10,
   total: 80,
 };
 
 /** The release gate's ceiling for a whole payload (spec acceptance: every target at most 80 MiB). */
 export const SLIM_PAYLOAD_TOTAL_MIB = 80;
 
-const SECTION_KEYS = ['node', 'graphify', 'web', 'total'];
+/** #265 D-6: the first-run database seed is at most 10 MiB per target. Unlike the warnings, this always fails. */
+export const PRESET_DB_MAX_MIB = 10;
+
+/** Payload directory holding the first-run database seed (the manifest's `presetDb` lives inside it). */
+const PRESET_DB_DIR = 'preset';
+
+const SECTION_KEYS = ['node', 'graphify', 'web', 'preset-db', 'total'];
 
 export async function directoryBytes(root) {
   let total = 0;
@@ -62,13 +69,14 @@ export function writePayloadSizeLines(sections, stdout = process.stdout, stderr 
 export async function measurePayload(root) {
   const manifest = JSON.parse(await readFile(path.join(root, 'runtime-manifest.json'), 'utf8'));
   const target = `${manifest.platform}-${manifest.arch}`;
-  const [node, graphify, web, total] = await Promise.all([
+  const [node, graphify, web, presetDb, total] = await Promise.all([
     directoryBytes(path.join(root, 'runtime', target, 'node')),
     directoryBytes(path.join(root, 'tools', 'graphify')),
     directoryBytes(path.join(root, 'web')),
+    directoryBytes(path.join(root, PRESET_DB_DIR)),
     directoryBytes(root),
   ]);
-  return { node, graphify, web, total };
+  return { node, graphify, web, 'preset-db': presetDb, total };
 }
 
 export async function reportPayload(root, stdout = process.stdout, stderr = process.stderr) {
@@ -78,9 +86,10 @@ export async function reportPayload(root, stdout = process.stdout, stderr = proc
 /**
  * Fails when the payload is not the slim one: Graphify is downloaded on first use, so `tools/graphify` must be
  * absent (as a directory, file or link), the graphify section must measure 0, and, unless `maxTotalMiB` is
- * null, the whole payload must fit the slim budget. Returns the measured sections.
+ * null, the whole payload must fit the slim budget. The first-run database seed must fit `maxPresetDbMiB`
+ * (10 MiB, #265 D-6) whatever `maxTotalMiB` is. Returns the measured sections.
  */
-export async function checkSlimPayload(root, { maxTotalMiB = SLIM_PAYLOAD_TOTAL_MIB } = {}) {
+export async function checkSlimPayload(root, { maxTotalMiB = SLIM_PAYLOAD_TOTAL_MIB, maxPresetDbMiB = PRESET_DB_MAX_MIB } = {}) {
   const bundled = path.join(root, 'tools', 'graphify');
   const found = await lstat(bundled).catch((error) => {
     if (error.code === 'ENOENT') return null;
@@ -89,6 +98,9 @@ export async function checkSlimPayload(root, { maxTotalMiB = SLIM_PAYLOAD_TOTAL_
   if (found) throw new Error(`Payload contains tools/graphify (${bundled}); Graphify is an on-demand component and must not ship in the payload`);
   const sections = await measurePayload(root);
   if (sections.graphify !== 0) throw new Error(`Payload graphify section is ${(sections.graphify / 1048576).toFixed(1)} MiB; it must be 0`);
+  if (sections['preset-db'] > maxPresetDbMiB * 1048576) {
+    throw new Error(`Payload preset-db section ${(sections['preset-db'] / 1048576).toFixed(1)} MiB exceeds the ${maxPresetDbMiB} MiB limit`);
+  }
   if (maxTotalMiB !== null && sections.total > maxTotalMiB * 1048576) {
     throw new Error(`Payload total ${(sections.total / 1048576).toFixed(1)} MiB exceeds the ${maxTotalMiB} MiB slim-payload limit`);
   }

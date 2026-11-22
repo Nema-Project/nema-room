@@ -22,6 +22,7 @@ import { SessionManager } from "./session.js";
 import { createAppReleaseService, readBuildIdentity, type AppReleaseService } from "./appRelease.js";
 import { createSettingsService, type SettingsOperations, type SettingsService } from "./settings.js";
 import { createOwnedHelperScope } from "./ownedHelpers.js";
+import { seedPresetDb } from "./presetDb.js";
 
 const MANIFEST_NAME = "runtime-manifest.json";
 const WEB_READY_TIMEOUT_MS = 15_000;
@@ -108,6 +109,8 @@ type RuntimeManifest = {
   webEntry: string;
   licenses: string;
   ownedHelperGuardian?: string;
+  /** Desktop payloads only: the first-run database seed archive (#265). Absent means no seed. */
+  presetDb?: string;
   commit?: string;
   build?: { commit?: string };
 };
@@ -120,6 +123,9 @@ type ResolvedAssets = RuntimeManifest & {
   webPath: string;
   licensesPath: string;
   ownedHelperGuardianPath?: string;
+  presetDbPath?: string;
+  /** Why a present `presetDb` entry is unusable. The seed is an optimization, so this never fails startup. */
+  presetDbError?: string;
 };
 
 export type LocalRuntime = {
@@ -210,7 +216,43 @@ function readManifest(assetsDir: string): ResolvedAssets {
     (ownedHelperGuardianPath !== undefined && !existsSync(ownedHelperGuardianPath))) {
     throw new Error("Runtime manifest references a missing asset");
   }
-  return { ...value as RuntimeManifest, root, nodePath, corePath, cliPath, webPath, licensesPath, ...(ownedHelperGuardianPath ? { ownedHelperGuardianPath } : {}) };
+  const preset = resolvePresetDb(root, value);
+  return { ...value as RuntimeManifest, root, nodePath, corePath, cliPath, webPath, licensesPath, ...(ownedHelperGuardianPath ? { ownedHelperGuardianPath } : {}), ...preset };
+}
+
+/** The optional seed entry is checked like every other asset, but a bad one only disables seeding. */
+function resolvePresetDb(root: string, value: Partial<RuntimeManifest>): { presetDbPath?: string; presetDbError?: string } {
+  if (value.presetDb === undefined) return {};
+  try {
+    const presetDbPath = manifestEntry(root, value.presetDb, "presetDb");
+    if (!lstatSync(presetDbPath).isFile()) return { presetDbError: "Runtime manifest presetDb is not a file" };
+    return { presetDbPath };
+  } catch (error) {
+    return { presetDbError: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * First run only (#265): when the payload ships a seed and `<home>/db` does not exist, land the seed there so
+ * `createLocalDb` finds every migration applied. Runs before the database directory is created. An existing
+ * directory, or one that cannot be inspected, is left to the unchanged path below. Writes one diagnostic line
+ * either way it ran; a failed seed leaves no partial directory, and startup continues with a full initialization.
+ */
+async function seedFirstRunDatabase(assets: ResolvedAssets, dbDir: string): Promise<void> {
+  if (assets.presetDbPath === undefined && assets.presetDbError === undefined) return;
+  try {
+    lstatSync(dbDir);
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") return;
+  }
+  const started = Date.now();
+  const result = assets.presetDbPath === undefined
+    ? { seeded: false as const, reason: assets.presetDbError ?? "Runtime manifest presetDb is unusable" }
+    : await seedPresetDb(assets.presetDbPath, dbDir);
+  process.stdout.write(`${JSON.stringify(result.seeded
+    ? { state: "preset-db", result: "seeded", ms: Date.now() - started }
+    : { state: "preset-db", result: "fallback", reason: result.reason })}\n`);
 }
 
 function installationIdentity(assets: Pick<RuntimeManifest, "version" | "platform" | "arch" | "node" | "coreEntry" | "cliEntry" | "webEntry" | "licenses" | "ownedHelperGuardian"> & { root: string }): string {
@@ -526,6 +568,8 @@ export async function startLocalRuntime(options: LocalRuntimeOptions): Promise<L
       .then(() => { phase("web"); });
     void webReady.catch(() => undefined);
 
+    // Before ensureOwnedDirectory: it creates the directory, after which there would be nothing to seed.
+    await seedFirstRunDatabase(assets, paths.db);
     ensureOwnedDirectory(paths.home, paths.db, "database");
     db = await createLocalDb(paths.db);
     assertWebAlive();

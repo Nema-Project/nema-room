@@ -1,11 +1,11 @@
-import { copyFileSync, cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { closeEnsuredRuntimesForTests, launcherReadyTimeoutMs, setBeforeWebBudgetForTests, setDiscoverInstanceForTests, setEnsureSpawnerForTests, setEnsureTimeoutForTests, setRuntimeReadyHookForTests, setSettingsOperationsForTests, setShutdownLocalRuntimeForTests, setWebReadyTimeoutForTests, startLocalRuntime, ensureLocalRuntime, shutdownLocalRuntime, startupPhaseName } from "../src/runtime.js";
 import { acquireInstance, discoverInstance, type DiscoveredInstance } from "../src/instance.js";
 import { createLocalDb } from "@nema/hub/db/local";
@@ -14,6 +14,7 @@ import { claimNextTask, getTask, resolveRunToken } from "@nema/hub/tasks";
 import { createShare } from "../../hub/src/shares.js";
 import { createWorkspace, updateWorkspace } from "@nema/hub/workspaces";
 import { protectPrivatePath } from "@nema/cli/secrets/permissions";
+import { writeSeedArchive } from "./presetFixture.js";
 
 const testHomeDirs: string[] = [];
 const runtimes: Array<{ close(): Promise<void> }> = [];
@@ -1182,5 +1183,101 @@ describe("managed local runtime", () => {
       const counts = await reopened.query<{ interruptions: number }>("select interruptions from tasks where id = $1", [posted.task.id]);
       expect(counts[0]?.interruptions).toBe(1);
     } finally { await reopened.close(); }
+  });
+});
+
+describe("first-run database seed (#265)", () => {
+  let seedDir: string;
+  let seed: string;
+
+  beforeAll(async () => {
+    seedDir = mkdtempSync(join(tmpdir(), "nema-runtime-seed-"));
+    seed = join(seedDir, "preset-db.tar.gz");
+    await writeSeedArchive(seed);
+  }, 60_000);
+
+  afterAll(() => rmSync(seedDir, { recursive: true, force: true }));
+
+  /** Adds the optional manifest entry; `source` null leaves the named file missing. */
+  function withPresetDb(assetsDir: string, source: string | null): string {
+    const entry = "preset/preset-db.tar.gz";
+    if (source) {
+      mkdirSync(join(assetsDir, "preset"), { recursive: true });
+      copyFileSync(source, join(assetsDir, entry));
+    }
+    const manifestPath = join(assetsDir, "runtime-manifest.json");
+    writeFileSync(manifestPath, JSON.stringify({ ...JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>, presetDb: entry }));
+    return assetsDir;
+  }
+
+  /** Starts a runtime and returns the `preset-db` diagnostic lines it wrote to stdout. */
+  async function startCapturing(home: string, assetsDir: string): Promise<{ lines: Array<Record<string, unknown>>; startedAt: Date }> {
+    const lines: Array<Record<string, unknown>> = [];
+    const write = vi.spyOn(process.stdout, "write");
+    const startedAt = new Date();
+    try {
+      runtimes.push(await startLocalRuntime({ home, assetsDir }));
+    } finally {
+      for (const [chunk] of write.mock.calls) {
+        for (const line of String(chunk).split("\n")) {
+          if (!line.includes("\"preset-db\"")) continue;
+          lines.push(JSON.parse(line) as Record<string, unknown>);
+        }
+      }
+      write.mockRestore();
+    }
+    return { lines, startedAt };
+  }
+
+  it("does nothing extra when the payload has no presetDb entry", async () => {
+    const home = join(tempDir("nema-home-"), "no-seed");
+    const { lines } = await startCapturing(home, testAssets());
+    expect(lines).toEqual([]);
+    expect(existsSync(join(home, "db", "PG_VERSION"))).toBe(true);
+  });
+
+  it("seeds a fresh home before the database opens, and migrate finds nothing to apply", async () => {
+    const home = join(tempDir("nema-home-"), "seeded");
+    let applied: Array<{ name: string; applied_at: string | Date }> = [];
+    setRuntimeReadyHookForTests(async ({ db }) => {
+      applied = await db.query<{ name: string; applied_at: string | Date }>("select name, applied_at from schema_migrations");
+    });
+    const { lines, startedAt } = await startCapturing(home, withPresetDb(testAssets(), seed));
+    expect(lines).toEqual([{ state: "preset-db", result: "seeded", ms: expect.any(Number) }]);
+    expect(applied.length).toBeGreaterThan(0);
+    for (const row of applied) expect(new Date(row.applied_at).getTime()).toBeLessThan(startedAt.getTime());
+    expect(readdirSync(home).filter((name) => name.startsWith("db.preset-"))).toEqual([]);
+  });
+
+  it("falls back to a full initialization with one diagnostic when the seed is corrupt", async () => {
+    const home = join(tempDir("nema-home-"), "corrupt-seed");
+    const corrupt = join(seedDir, "corrupt.tar.gz");
+    writeFileSync(corrupt, "not a gzip stream");
+    const { lines } = await startCapturing(home, withPresetDb(testAssets(), corrupt));
+    expect(lines).toEqual([{ state: "preset-db", result: "fallback", reason: expect.any(String) }]);
+    expect(existsSync(join(home, "db", "PG_VERSION"))).toBe(true);
+    expect(readdirSync(home).filter((name) => name.startsWith("db.preset-"))).toEqual([]);
+  });
+
+  it("does not block startup when the manifest names a seed file that is missing", async () => {
+    const home = join(tempDir("nema-home-"), "missing-seed");
+    const { lines } = await startCapturing(home, withPresetDb(testAssets(), null));
+    expect(lines).toEqual([{ state: "preset-db", result: "fallback", reason: expect.stringMatching(/presetDb/) }]);
+    expect(existsSync(join(home, "db", "PG_VERSION"))).toBe(true);
+  });
+
+  it("leaves an existing database alone", async () => {
+    const home = join(tempDir("nema-home-"), "existing-db");
+    mkdirSync(join(home, "data"), { recursive: true });
+    const existing = await createLocalDb(join(home, "db"));
+    const workspace = await createWorkspace(existing, join(home, "data"), "kept across the seed check");
+    await existing.close();
+    let found = 0;
+    setRuntimeReadyHookForTests(async ({ db }) => {
+      found = (await db.query("select id from workspaces where id = $1", [workspace.id])).length;
+    });
+    const { lines } = await startCapturing(home, withPresetDb(testAssets(), seed));
+    expect(lines).toEqual([]);
+    expect(found).toBe(1);
   });
 });

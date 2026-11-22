@@ -10,6 +10,7 @@ import { fetchTools, nodePayloadExcluded, toolsManifest } from './fetch-tools.mj
 import { checkSlimPayload, reportPayload } from './payload-size.mjs';
 import { buildOwnedHelper } from './build-owned-helper.mjs';
 import { buildGraphifyLauncher } from './fetch-graphify.mjs';
+import { makePresetDb, PRESET_DB_PAYLOAD_PATH } from './make-preset-db.mjs';
 
 /** Beside the CLI's Graphify lock; apps/cli/src/components/lock.ts `shippedWindowsLauncherPath` reads it here. */
 const PAYLOAD_GRAPHIFY_LAUNCHER = 'app/node_modules/@nema/cli/dist/resources/graphify-launcher.exe';
@@ -368,6 +369,7 @@ export async function stageRuntime({
   electronNode,
   ownedHelperBuilder = buildOwnedHelper,
   graphifyLauncherBuilder = buildGraphifyLauncher,
+  presetDbBuilder = makePresetDb,
 } = {}) {
   sourceRoot = path.resolve(sourceRoot);
   outputDir = path.resolve(outputDir);
@@ -497,6 +499,15 @@ export async function stageRuntime({
     for (const name of [...await runtimeDependencyClosure(builtRoot, runtimeDirs)].sort()) {
       await copyTree(path.join(rootModules, ...name.split('/')), put(`app/node_modules/${name}`), builtRoot);
     }
+    // First-run database seed (#265), built on this native runner by the staged hub itself, so the seed's
+    // schema_migrations must equal exactly the migration files this payload ships. Over 10 MiB fails staging.
+    const stagedHub = put('app/node_modules/@nema/hub');
+    await presetDbBuilder({
+      hubRoot: stagedHub,
+      output: put(PRESET_DB_PAYLOAD_PATH),
+      migrationsDir: path.join(stagedHub, 'dist', 'src', 'db', 'migrations'),
+    });
+    await requiredFile(staging, PRESET_DB_PAYLOAD_PATH, 'preset database seed', staging);
     const commitId = recordedCommit(sourceRoot, commit);
     const manifest = {
       schemaVersion: 1, version, platform, arch,
@@ -506,6 +517,7 @@ export async function stageRuntime({
       cliEntry: 'app/node_modules/@nema/cli/dist/index.js',
       webEntry: 'web/apps/web/managed-parent.mjs',
       licenses: 'runtime/licenses',
+      presetDb: PRESET_DB_PAYLOAD_PATH,
     };
     // Provide a single manifest license directory while retaining the complete distributions and notices.
     await mkdir(put('runtime/licenses'), { recursive: true });
@@ -518,6 +530,7 @@ export async function stageRuntime({
     for (const [entry, name, directory] of [
       [manifest.coreEntry, 'core entry', false], [manifest.cliEntry, 'CLI entry', false],
       [manifest.webEntry, 'Web entry', false], [manifest.licenses, 'license directory', true],
+      [manifest.presetDb, 'preset database seed', false],
       ...(manifest.ownedHelperGuardian ? [[manifest.ownedHelperGuardian, 'Windows helper guardian executable', false]] : []),
     ]) {
       if (directory) await requireDirectory(path.join(staging, ...safeRelative(entry, name)), name, staging);

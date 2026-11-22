@@ -147,6 +147,9 @@ jobs:
           node --test --test-name-pattern "payload omits Node headers" scripts/desktop/staging.test.mjs
       - run: npm run build -w apps/hub
       - run: npm run build -w apps/cli
+      - name: Desktop first-run database seed generator
+        # Needs the compiled hub with its copied migrations and the compiled CLI archive module.
+        run: node --test scripts/desktop/make-preset-db.test.mjs
       - run: npm run lint -w apps/web
       - run: npm run build -w apps/web
       - name: Check installer prerequisites

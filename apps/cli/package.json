@@ -12,6 +12,11 @@
     "src/report/SKILL.md"
   ],
   "exports": {
+    "./components/archive": {
+      "development": "./src/components/archive.ts",
+      "types": "./dist/components/archive.d.ts",
+      "import": "./dist/components/archive.js"
+    },
     "./config": {
       "development": "./src/config.ts",
       "types": "./dist/config.d.ts",

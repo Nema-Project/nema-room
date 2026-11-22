@@ -121,9 +121,12 @@ export async function validateElectronNotices(payloadDir) {
   }
 }
 
-/** A new payload omits `node`. An older payload that still names one must keep that file inside the payload. */
+/**
+ * A new payload omits `node`. An older payload that still names one must keep that file inside the payload.
+ * `presetDb` (the first-run database seed, #265) is optional; when named it must be a file inside the payload.
+ */
 export function stagedManifestAssetKeys(manifest, platform) {
-  return ['coreEntry', 'cliEntry', 'webEntry', 'licenses', ...(platform === 'win32' ? ['ownedHelperGuardian'] : []), ...(manifest.node === undefined ? [] : ['node'])];
+  return ['coreEntry', 'cliEntry', 'webEntry', 'licenses', ...(platform === 'win32' ? ['ownedHelperGuardian'] : []), ...(manifest.node === undefined ? [] : ['node']), ...(manifest.presetDb === undefined ? [] : ['presetDb'])];
 }
 
 export async function assertStagedRuntimeManifest(payloadDir, expected) {
