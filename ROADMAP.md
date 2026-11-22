@@ -32,7 +32,7 @@
 进本版：
 
 - [ ] 待做：[#56](https://github.com/Nema-Project/nema-room/issues/56) 依赖大版本升级（P2-07）：ESLint 9→10、TypeScript 5.9→7、Node 22→24、内置 Python 从 3.11 换线到 3.13/3.14。各升级单独 PR；Python 换线需按 spec/plan 单独立项，且 graphify 已改为按需组件，换线涉及 `graphify-lock.json` 重新制锁与四 target 归档复核。
-- [ ] 待做：[#265](https://github.com/Nema-Project/nema-room/issues/265) 预置数据目录（P2-11）。2026-11-22 维护者按推荐立项并排入本版：spec 为 [2026-11-22 预置数据目录设计](docs/superpowers/specs/2026-11-22-preset-data-directory-design.md)，D-1～D-7 已于 2026-11-22 全部按推荐定案；实施计划为 [2026-11-22 预置数据目录实施计划](docs/superpowers/plans/2026-11-22-preset-data-directory.md)；触发证据为 windows 冷启动 DB 中位 3484ms ≈ Linux 基线 2.17 倍（#186 W2 评估）。
+- [ ] 完成：[#265](https://github.com/Nema-Project/nema-room/issues/265) 预置数据目录（P2-11）。2026-11-22 维护者按推荐立项并排入本版：spec 为 [2026-11-22 预置数据目录设计](docs/superpowers/specs/2026-11-22-preset-data-directory-design.md)，D-1～D-7 已于 2026-11-22 全部按推荐定案；实施计划为 [2026-11-22 预置数据目录实施计划](docs/superpowers/plans/2026-11-22-preset-data-directory.md)；触发证据为 windows 冷启动 DB 中位 3484ms ≈ Linux 基线 2.17 倍（#186 W2 评估）。已于 2026-11-23 完成并关闭：实现由 PR #277 合入（种子生成器、staging 集成、运行时落地、采样口径），合入后 main 分支 5 份 Windows 样本预置首次总耗时中位 1419ms（≤1600ms、较基线降 59.3%），`appliedOnOpen` 均为 0，种子归档约 4.6 MiB，验收记录见 #265。
 
 未排期（不进本版）：[#264](https://github.com/Nema-Project/nema-room/issues/264) 组件安装器 OS 锁（P2-10）、[#25](https://github.com/Nema-Project/nema-room/issues/25) 连接器 Epic 后续 CX 项（P2-05）、[#32](https://github.com/Nema-Project/nema-room/issues/32) 设计参考。远程 hub 与多人（[#167](https://github.com/Nema-Project/nema-room/issues/167)）已排 v0.3.3，见下一节。
 
@@ -296,7 +296,7 @@ v0.1.5 已公开发布：npm、hub/web 镜像与桌面产物的发布流水线�
 
 ## 下一项
 
-P0-01 与 P0-02 仍在进行中。v0.3.1 已于 2026-11-21 发布，milestone v0.3.1 关闭；下一版 v0.3.2 目前只含 [#56](https://github.com/Nema-Project/nema-room/issues/56)（P2-07 依赖大版本，2026-11-22 由 v0.4.x 迁移，v0.4.x 已取消）。未排期的后续项已登记在 P2 表：[#264](https://github.com/Nema-Project/nema-room/issues/264) 组件安装器 OS 锁（P2-10）、[#265](https://github.com/Nema-Project/nema-room/issues/265) 预置数据目录立项讨论（P2-11）、[#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub 方向调研（P2-12）；[#25](https://github.com/Nema-Project/nema-room/issues/25) 连接器 Epic 的后续 CX 项与 [#32](https://github.com/Nema-Project/nema-room/issues/32) 设计参考仍开放。下一项由维护者选定。连接器侧最近完成的是 CX-03：实现已由 PR #54 合入，最终验收已于 2026-11-17 完成（记录见 [#25 评论](https://github.com/Nema-Project/nema-room/issues/25#issuecomment-6936006267)，spec §515 第 1–8 条均有通过证据，三套测试在当前 main 上 44/44 通过）。
+P0-01 与 P0-02 仍在进行中。v0.3.1 已于 2026-11-21 发布，milestone v0.3.1 关闭；下一版 v0.3.2 的 [#265](https://github.com/Nema-Project/nema-room/issues/265) 预置数据目录（P2-11）已于 2026-11-23 完成并关闭，目前只剩 [#56](https://github.com/Nema-Project/nema-room/issues/56)（P2-07 依赖大版本，2026-11-22 由 v0.4.x 迁移，v0.4.x 已取消）。未排期的后续项已登记在 P2 表：[#264](https://github.com/Nema-Project/nema-room/issues/264) 组件安装器 OS 锁（P2-10）、[#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub 方向调研（P2-12）；[#25](https://github.com/Nema-Project/nema-room/issues/25) 连接器 Epic 的后续 CX 项与 [#32](https://github.com/Nema-Project/nema-room/issues/32) 设计参考仍开放。下一项由维护者选定。连接器侧最近完成的是 CX-03：实现已由 PR #54 合入，最终验收已于 2026-11-17 完成（记录见 [#25 评论](https://github.com/Nema-Project/nema-room/issues/25#issuecomment-6936006267)，spec §515 第 1–8 条均有通过证据，三套测试在当前 main 上 44/44 通过）。
 
 | ID | 事项与依据 | 状态 | 验收标准 |
 | --- | --- | --- | --- |
@@ -337,7 +337,7 @@ P0-01 与 P0-02 仍在进行中。v0.3.1 已于 2026-11-21 发布，milestone v0
 | P2-08 | [#50](https://github.com/Nema-Project/nema-room/issues/50) hub/web 镜像增加 linux/arm64（多架构 manifest）。[规格](docs/superpowers/specs/2026-11-16-multiarch-images-design.md)、[计划](docs/superpowers/plans/2026-11-16-multiarch-images.md) | 已完成 | 已实现原生双架构构建与冒烟矩阵、manifest 合成和发布校验；本地 fixture 检查不等于发布验收。arm64 runner、GHCR 合成与匿名拉取仍待实际运行验证 该验证已随 v0.3.0 发布完成：GHCR 双架构 manifest 合成与匿名拉取端到端核对，#50 于 2026-11-18 关闭；v0.3.1 的 `release:verify` 再次确认双架构。 |
 | P2-09 | [#132](https://github.com/Nema-Project/nema-room/issues/132) 轻量化发布：大组件按需下载与离线组件包。2026-10-31 从 v0.3.0 提前到 v0.2.x；2026-11-02 改排 v0.3.x，其中 Node 去重已拆到 [#134](https://github.com/Nema-Project/nema-room/issues/134)，留在 v0.2.x。2026-11-04 改排 v0.3.1。已于 v0.3.1 完成并发版（PR #262、#263、#269），#132 已关闭 | 已完成 | 按 #132 的 spec 与验收标准验收，记录见 #132；体积的 payload 口径达标（75.1 / 72.9 MiB、graphify 0），安装包上限未达、差额构成记在 #132 关闭记录 |
 | P2-10 | [#264](https://github.com/Nema-Project/nema-room/issues/264) 组件安装器跨进程发布/回滚窗口的 OS 锁方案。#263 评审中确认的两个竞态窗口（指针发布、回滚改名）已按维护者决定接受为残余风险并记录在该 issue；本项是其后续 | 待办 | 按 #264 的设计评估并实现 OS 级锁（fcntl / LockFileEx 或等价方案），或经评估后正式维持现状；两个窗口有回归测试或明确的不可测说明。未排期 |
-| P2-11 | [#265](https://github.com/Nema-Project/nema-room/issues/265) 预置数据目录（方案 A）立项讨论。#186 的 W2 评估触发 D-3：windows-latest 冷启动 DB 中位 3484ms 约为 Linux 基线 2.17 倍 | 待办 | 已于 2026-11-22 由维护者按推荐立项并排入 v0.3.2：先写 spec 并按 #45 北极星说明价值，D 项定案后按计划实现 |
+| P2-11 | [#265](https://github.com/Nema-Project/nema-room/issues/265) 预置数据目录（方案 A）立项讨论。#186 的 W2 评估触发 D-3：windows-latest 冷启动 DB 中位 3484ms 约为 Linux 基线 2.17 倍 | 已完成 | 已于 2026-11-22 由维护者按推荐立项并排入 v0.3.2，spec 与实施计划定案后由 PR #277 实现并合入；合入后 5 份 Windows 样本预置首次中位 1419ms（D-6：≤1600ms、较基线降 59.3%），种子归档约 4.6 MiB，#265 已于 2026-11-23 验收并关闭 |
 | P2-12 | [#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub 方向调研：hub 作为远程综合主机、多个 daemon 互享 | 待办 | 已于 2026-11-22 由维护者定案排入 v0.3.3：代码现状调研已完成（五个主要缺口记在 #167），下一步起草 spec 并定案 D 项，范围覆盖远程部署、daemon 接入与多人身份执行面 |
 
 ## 仓库演进原则
@@ -386,3 +386,4 @@ P0-01 与 P0-02 仍在进行中。v0.3.1 已于 2026-11-21 发布，milestone v0
 | 2026-11-22 | — | Muse | 本文件 / GitHub issues | — | ROADMAP 与 issue 对账整理：P1-09（#63）、P2-04（#165/#163）、P2-06（#75）、P2-08（#50）按各自关闭记录改为已完成；新增 P2-10（#264）、P2-11（#265）、P2-12（#167）三行登记未排期后续；「当前阶段与证据」「下一项」与 #195 一节按 v0.3.1 发布后的状态更新 |
 | 2026-11-22 | P2-07 | 维护者 | [issue #56](https://github.com/Nema-Project/nema-room/issues/56) | v0.3.2 | 排期迁移：维护者决定取消 v0.4.x（原定事项已无要做的），#56 的依赖大版本升级整体改排 v0.3.2；v0.3.2 milestone 已建、#56 已迁移、v0.4.x milestone 已关闭 |
 | 2026-11-22 | P2-11 / P2-12 | 维护者 | [issue #265](https://github.com/Nema-Project/nema-room/issues/265) / [issue #167](https://github.com/Nema-Project/nema-room/issues/167) | v0.3.2 / v0.3.3 | 后续排期定案：#265 预置数据目录立项并排入 v0.3.2（与 #56 同版先发）；远程 hub 与多人（#167）排入新建的 v0.3.3 milestone，置于 v0.3.2 之后；#264 维持未排期 |
+| 2026-11-23 | P2-11 | Muse | [issue #265](https://github.com/Nema-Project/nema-room/issues/265) / PR #277 | v0.3.2 | #265 实现合入并验收关闭：合入后 5 份 Windows 样本预置首次中位 1419ms 通过 D-6，种子归档约 4.6 MiB；P2-11 改已完成，v0.3.2 只剩 #56 |

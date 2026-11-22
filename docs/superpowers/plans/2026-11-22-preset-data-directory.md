@@ -31,9 +31,9 @@
 
 ### 任务 1：D-2 形态实测（归档解压 vs 整树拷贝）
 
-- [ ] 在 windows-latest 的 CI 环境实测同一份种子内容两种落地形态的耗时：单归档解压到目标目录就绪、整树拷贝到目标目录就绪，各至少 5 次取中位；macOS 同口径参考。
-- [ ] 把实测数字与结论记进本任务的 PR 描述与 #265 评论。若归档形态不慢于拷贝（预期），按 D-2 定案走归档；若拷贝显著更快且实现不更复杂，改选 B 并在 spec 的 D-2 状态行下补记改选理由（不改定案本身，需维护者知情）。
-- [ ] 若改选 B（松散目录），任务 2–5 中一切「归档」按「种子目录树」读：生成器产出目录树（体积门按全树字节数计）、清单条目指向该目录、落地为整树拷贝、采样口径测拷贝落地；安全口径不变（拷贝同样拒绝符号链接逃逸）。本条即 B 形态下任务 2–5 的对应步骤，不另立任务。
+- [x] 在 windows-latest 的 CI 环境实测同一份种子内容两种落地形态的耗时：单归档解压到目标目录就绪、整树拷贝到目标目录就绪，各至少 5 次取中位；macOS 同口径参考。
+- [x] 把实测数字与结论记进本任务的 PR 描述与 #265 评论。若归档形态不慢于拷贝（预期），按 D-2 定案走归档；若拷贝显著更快且实现不更复杂，改选 B 并在 spec 的 D-2 状态行下补记改选理由（不改定案本身，需维护者知情）。
+- [x] 若改选 B（松散目录），任务 2–5 中一切「归档」按「种子目录树」读：生成器产出目录树（体积门按全树字节数计）、清单条目指向该目录、落地为整树拷贝、采样口径测拷贝落地；安全口径不变（拷贝同样拒绝符号链接逃逸）。本条即 B 形态下任务 2–5 的对应步骤，不另立任务。
 
 ### 任务 2：种子生成器与构建断言
 
@@ -46,7 +46,7 @@
 
 - [x] `stage-runtime.mjs` 在组装载荷时调生成器（仅桌面两 target；沿用既有「拒绝非原生 target 在本机 staging」的口径，生成器只在原生 runner 上跑），归档落到载荷固定相对路径，清单写可选条目 `presetDb`。
 - [x] `payload-size.mjs` 新增 `preset-db` 段：归档计入 total 并单列一行 `payload size: preset-db X MiB`；`checkSlimPayload` 对该段 >10 MiB 硬失败。补 `payload-size.test.mjs` 用例。
-- [ ] staging 相关既有测试全绿；本机 Linux staging 仍按既有口径失败于非原生 target（不为本项改这条），以 CI 平台 job 的 staging 成功为集成证据。
+- [x] staging 相关既有测试全绿；本机 Linux staging 仍按既有口径失败于非原生 target（不为本项改这条），以 CI 平台 job 的 staging 成功为集成证据。
 
 ### 任务 4：运行时落地（种子规则与回退）
 
@@ -58,7 +58,7 @@
 ### 任务 5：startup-sample 预置口径
 
 - [x] `startup-sample.mjs` 增加 `preset` 子进程模式：父进程先按任务 2 的同口径现生成种子归档，子进程的计时从落地开始：`preset.totalMs` = 落地耗时 + `new PGlite` 就绪 + `migrate`，并单列 `landingMs`（另保留 `readyMs`/`migrateMs` 分项），冷/热字段保持原样。验收比较的必须是含落地的 `totalMs`——真实首次运行付的是全程。
-- [ ] verify.yml 平台 job 无需改动即带出新字段（若其断言/汇总对 JSON 形状有校验则同步更新）；在本项 PR 的 CI 运行上确认 windows/macos 两个平台 job 的日志各有一行带 `preset` 的 JSON。
+- [x] verify.yml 平台 job 无需改动即带出新字段（若其断言/汇总对 JSON 形状有校验则同步更新）；在本项 PR 的 CI 运行上确认 windows/macos 两个平台 job 的日志各有一行带 `preset` 的 JSON。
 
 ### 任务 6：文档与 changelog
 
@@ -67,9 +67,9 @@
 
 ### 任务 7：验收与收口（#265）
 
-- [ ] 取实现合入后 windows-latest 最近 5 次含 `preset` 口径的 CI 样本，中位（取含落地耗时的 `preset.totalMs`）对照 D-6：≤1600ms 量级且较 3484ms 至少降一半；种子归档两 target 实测大小对照 ≤10 MiB 上限，均记进 #265 验收评论。任一不达：按 spec D-6 回到定案，不带病收口。
-- [ ] 在 #265 贴验收记录（自动化测试、CI 数字、载荷记账三类证据分开写；注明桌面真机未测是政策决定），达标后关闭 #265。
-- [ ] ROADMAP：P2-11 改已完成、v0.3.2 一节 #265 行按验收结果更新，执行记录补一行。
+- [x] 取实现合入后 windows-latest 最近 5 次含 `preset` 口径的 CI 样本，中位（取含落地耗时的 `preset.totalMs`）对照 D-6：≤1600ms 量级且较 3484ms 至少降一半；种子归档两 target 实测大小对照 ≤10 MiB 上限，均记进 #265 验收评论。任一不达：按 spec D-6 回到定案，不带病收口。
+- [x] 在 #265 贴验收记录（自动化测试、CI 数字、载荷记账三类证据分开写；注明桌面真机未测是政策决定），达标后关闭 #265。
+- [x] ROADMAP：P2-11 改已完成、v0.3.2 一节 #265 行按验收结果更新，执行记录补一行。
 
 ## 执行证据
 
@@ -94,3 +94,10 @@
 - 任务 4：`npx vitest run --project @nema/local --maxWorkers=1` 全量 18 个文件 278 通过、1 跳过（既有跳过），含新增 `presetDb.test.ts` 与 `runtime.test.ts` 的种子用例；根 `npx tsc -b` 与 `npm run typecheck -w apps/cli` 均通过。apps/hub 无文件改动，其套件未重跑。
 - 任务 5：`node --test scripts/ci/startup-sample.test.mjs` 2/2 通过；本机实跑一行 JSON：cold totalMs 4372、warm 674、preset{landingMs 323、totalMs 858、appliedOnOpen 0、copyLandingMs 218、archiveBytes 4828237}。本机被限流（冷口径远高于 CI Linux 基线），只作形状与量级参考；windows/macos 平台 job 的 JSON 待本 PR 的 CI（任务 5 第二条、任务 1 暂不勾）。
 - 任务 6：docs-check 对本计划通过；README/指南经实现轮核对后未改（原文仍正确），桌面构建指南的补记见实现轮记录。
+
+**2026-11-23 验收收口（Muse，5 份合入后 main 样本）**
+
+- 任务 1：形态结论以合入后 5 份 Windows 样本（CI run 45032739644 / 45032811052 / 45034035968 / 45034633144 / 45035216897）定案：归档落地耗时 716 / 998 / 1291 / 860 / 941 ms（中位 941），整树拷贝 952 / 1706 / 1544 / 697 / 1480 ms（中位 1480）。归档在 4/5 份样本中更快、中位快约 36%，D-2 的归档形态确认，无需改选 B。macOS 的 PR 样本同向（归档 573 vs 拷贝 815 ms）。
+- 任务 3：PR #277 的 Build and smoke（win32-x64、darwin-arm64）均以原生 runner 真实生成种子并通过 payload 记账（preset-db 各 4.6 MiB，total win 79.7 / mac 77.5 MiB，均在 80 MiB 上限内）。
+- 任务 5：PR #277 与合入后 main 运行的 windows/macos 平台 job 日志各有一行含 `preset` 的 JSON，字段齐备（landingMs/totalMs/appliedOnOpen/copyLandingMs/archiveBytes）。
+- 任务 7：5 份合入后 Windows 样本的预置首次总耗时 1090 / 1126 / 1419 / 1510 / 1693 ms，中位 **1419 ms** ≤ D-6 的 1600 ms，且较 3484 ms 基线降 59.3%（≥50%）；`appliedOnOpen` 5 份均为 0；种子归档 4,827,790–4,828,260 字节（约 4.6 MiB）≤ 10 MiB。同期冷启动中位 3062 ms（较基线仅低 12.1%，runner 波动，不计入验收口径）。验收记录贴在 #265（验收评论 + 一条数字归属更正：59.3% 是预置中位相对基线的降幅，不是冷启动中位的），#265 已于 2026-11-23 关闭。桌面真机未测（2026-11-16 测试政策）。
