@@ -23,6 +23,7 @@ alias["@nema/shared/ownedHelper"] = `${root}packages/shared/src/ownedHelper.ts`;
 alias["@nema/shared/localInstance"] = `${root}packages/shared/src/localInstance.ts`;
 alias["@nema/cli/secrets/permissions"] = `${root}apps/cli/src/secrets/permissions.ts`;
 alias["@nema/cli/report/desktop"] = `${root}apps/cli/src/report/desktop.ts`;
+alias["@nema/cli/components/archive"] = `${root}apps/cli/src/components/archive.ts`;
 alias["@nema/hub/db/local"] = `${root}apps/hub/src/db/pglite.ts`;
 alias["@nema/hub/db/snapshot"] = `${root}apps/hub/src/db/snapshot.ts`;
 alias["@nema/hub/db/export"] = `${root}apps/hub/src/db/export.ts`;
