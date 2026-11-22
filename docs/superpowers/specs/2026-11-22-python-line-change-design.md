@@ -1,0 +1,63 @@
+# 内置 Python 换线：3.11 → 3.14（graphify 组件运行时）
+
+日期：2026-11-22。Issue：[Nema-Project/nema-room#56](https://github.com/Nema-Project/nema-room/issues/56)（中期项「内置 Python 换线 3.11 → 3.13 或 3.14」，该 issue 要求按 spec/plan 单独立项）。产品判断标准：[Nema-Project/nema-room#45](https://github.com/Nema-Project/nema-room/issues/45)。前置工作：[2026-11-18 轻量发布设计](2026-11-18-lightweight-release-design.md)（graphify 自 v0.3.1 起为按需组件，锁由组件安装器消费）。相关：ROADMAP P2-07（v0.3.2）；#56 其余三条大版本线（ESLint 10、TypeScript 7、Node 24）各走单独 PR，不在本 spec 范围。
+
+**状态**：设计稿。D-1 到 D-5 均附本文推荐，待维护者定案；定案前不写实施计划、不动锁与生产代码。
+
+**设计所对照的 HEAD**：`867a3e2`（`main`，#265 合入之后）。标为「已核对」的仓库事实是在这个 SHA 上读代码得到的；生态事实（python-build-standalone 构建、PyPI 元数据与 wheel 可用性）为 2026-11-22 当日在线核对，逐项注明来源。
+
+## 如何服务 #45
+
+#45 要求共享理解的载体本身可长期维护。内置 Python 是 graphify 知识图谱组件的运行时，它的版本线决定这条链路还能安全运行多久：3.11 将于 2027 年 10 月结束上游支持，届时 CPython 与全部 ABI wheel 的安全更新同时断供。本项把运行时换到仍在长期支持窗口内的新线，使「讨论 → 知识图谱」这条既有能力不因运行时过期而变成无维护的负债。它不新增功能、不改变图谱的输入输出与用户操作。
+
+## 现状核实（已核对）
+
+### 锁与消费方
+
+- `scripts/desktop/graphify-lock.json`：graphifyy 0.9.95、Python 3.11.18、python-build-standalone 构建 `20261026`、四个 target（win32-x64、darwin-arm64、linux-x64、linux-arm64），每个 target 一份 CPython 归档加 21 个 wheel。
+- 21 个 wheel 里只有 4 个是 ABI 绑定的：numpy 2.4.6、pyyaml 6.0.3、rapidfuzz 3.14.6、tree_sitter 0.25.2（文件名带 `cp311` 标签）；其余 17 个（graphifyy 本体、networkx、tree_sitter_* 语言包）是 `py3-none-any`/abi3，换线时原样沿用。
+- 锁的消费方是组件安装器（`apps/cli/src/components/`，v0.3.1 起）：按锁下载 CPython 归档与 wheel、校验 sha256、解开组装成组件运行时；锁同时被打进 npm 包与桌面 staging。换线即按 #132 Task 1 已建立的制锁流程，对新 CPython 构建重新生成这份锁（四 target 的归档与 ABI wheel 重新选版、重新钉 sha256 与字节数）。
+- `python3.11` 的字面量散落在安装路径上：`apps/cli/src/components/install.ts`（启动器模板 `bin/python3.11`、canonical 解释器路径、LICENSE 路径候选）与 `scripts/desktop/fetch-graphify.mjs`（同一启动器与裁剪逻辑，制锁/源码对应路径），外加 `scripts/desktop/graphify.test.mjs` 与组件测试 fixture（`apps/cli/test/components/fixtures.ts` 等）里写死的 `cp311` 文件名与版本断言。
+
+### 生态可用性（2026-11-22 在线核对）
+
+- python-build-standalone 最新发布 `20261110` 提供 **CPython 3.14.10**（同发布亦有 3.13.18），四个 target 的普通 `install_only` 归档齐备（x86_64-pc-windows-msvc、aarch64-apple-darwin、x86_64/aarch64-unknown-linux-gnu），与现锁所用归档形态一致。
+- graphifyy 0.9.95 的 PyPI 元数据 `requires_python >=3.10`，无上限，3.14 可直接安装；其依赖约束（tree-sitter `>=0.25,<0.26` 等）与现锁钉住的版本相容。
+- 四个 ABI 包在**现钉版本**上都有 cp314 wheel（PyPI 当日核对：numpy 2.4.6 有 21 个、pyyaml 6.0.3 有 18 个、rapidfuzz 3.14.6 有 30 个、tree_sitter 0.25.2 有 7 个）。也就是说换线不需要顺带升任何包的版本——只换 ABI 标签与 CPython 归档。这把本项的风险压到「重新制锁 + 重新验证」，而不是「换线 + 升包」的复合变更。
+
+### 3.11 的时间线
+
+3.11 线已于 #56 的前置工作升到 3.11.18（2026-10 的紧急安全版，PR #57），堵洞完成；换线是计划内动作而非应急：3.11 上游支持到 2027 年 10 月，3.14 线支持到约 2030 年 10 月（按 CPython 五年支持惯例推算，实施时以 PEP/发布公告为准）。
+
+## 设计
+
+### 换线动作（锁的再生）
+
+1. 选定 D-1 的目标线与 D-2 的解释器命名方式后，按既有制锁流程生成新锁：`cpythonRelease` 换为含目标 CPython 的 python-build-standalone 发布（如 3.14.10 对应的 `20261110`），四 target 的 CPython 归档重新钉 sha256/字节数；17 个纯 wheel 不动；4 个 ABI wheel 换同版本的 cp314 文件并重新钉 sha256/字节数；`python` 字段写新版本（如 `3.14.10`）。
+2. 安装器与制锁脚本中的 `python3.11` 字面量按 D-2 处理；测试 fixture 与断言中的 `cp311`/版本字面量同步更新（这部分是机械替换，逐处列入实施计划的清点表）。
+3. 组件的安装、校验、状态报告路径本身不改语义：锁的 sha256 校验、归档安全处理、离线包导入规则全部沿用 v0.3.1 已验收的形态。
+
+### 已安装组件的迁移语义
+
+用户机器上已按旧锁装好的 graphify 组件（3.11 运行时）在换线版本升级后如何处理，是本项唯一的用户可见语义问题。组件安装器以锁的身份（版本+哈希）识别已装组件；新锁到达后，旧组件与新锁不匹配，按既有「锁不匹配即视为未装/待重装」的语义处理——即下一次触发图谱时按新锁重新下载安装，用户数据（已生成的图谱文件在工作区内，不在组件目录里）不受影响。本 spec 不新增迁移逻辑，实施计划须把这条语义写成自动化测试：旧锁装好的组件在新锁下被识别为不匹配、重装后在新解释器上可运行、工作区图谱文件不被触碰。
+
+### 验证形态
+
+- 组件测试套件（`apps/cli` components）全绿，fixture 换到新线的真实文件名。
+- linux-x64 真实归档端到端（沿用 #132 Task 9 的本地镜像方法）：按新锁下载→校验→自检→激活，`graphify --version`/状态输出报告新 Python 版本，并对一份小语料实际跑一次图谱抽取（3.11 时代未在 VM 内跑过完整的经 hub 图谱构建，此处只要求组件本体在新解释器上能执行抽取，不扩大到 hub 链路）。
+- 其余三 target 以 CI 的 staging/pack 冒烟为准（锁的四 target 校验和在制锁时由真实下载产生，不是手填）。
+- 桌面真机不主动测（2026-11-16 测试政策）。
+
+## D 项（待维护者定案，附推荐）
+
+- **D-1 目标线**：3.13 还是 3.14？**推荐：3.14（实施时取该线最新补丁版，本文核对时为 3.14.10）。** 理由：四个 ABI 包在现钉版本上都有 cp314 wheel，换 3.14 不附带任何升包；支持期比 3.13 多约一年；#56 原文排除的只是刚发布的 3.15，3.14 已发布一年、生态成熟。若实施时发现某个钉住版本实际缺目标平台的 cp314 wheel，按「先在同大版本内取有 wheel 的最近版本、仍不行才退 3.13」的顺序处理并记录，不静默换包大版本。
+- **D-2 解释器命名**：把 `python3.11` 字面量简单改成 `python3.14`，还是改为从锁的 `python` 字段派生？**推荐：派生。** 安装器本来就读锁，由锁的版本生成 `python3.<minor>` 与 LICENSE 路径，下一条线再换时代码零改动；`fetch-graphify.mjs` 同步派生。派生规则写成纯函数并单测（输入 `3.14.10` 输出 `python3.14`）。
+- **D-3 graphifyy 版本**：保持 0.9.95，还是顺带升级？**推荐：保持。** 本项只换运行时线；graphifyy 升级有自己的行为面（抽取结果变化），与换线分开评估。若 0.9.95 在 3.14 上实测不能运行（元数据说能，但以实测为准），则把「升到能运行的最近 graphifyy 版本」作为本项的附带变更回到定案，不自行扩大。
+- **D-4 已装组件语义**：按既有锁不匹配语义自动重装（见「已安装组件的迁移语义」），不写专门迁移。**推荐：按此定案**，并以自动化测试钉住（旧组件被识别不匹配、重装后可运行、工作区图谱不受影响）。
+- **D-5 与 #56 其余三线的关系**：本项独立成 PR，与 ESLint/TypeScript/Node 三线互不阻塞、互不捆绑。**推荐：按此定案**（与 #56 拆分评论的建议顺序一致，Python 线走自己的 spec→plan→实现）。
+
+## 不在范围
+
+- ESLint 9→10、TypeScript 5.9→7、Node 22→24：#56 的其余三条线，各自单独 PR，不经本 spec。
+- graphify 组件的体积、下载时机、离线包形态：v0.3.1 已定案，不重开。
+- 图谱抽取质量与 graphifyy 功能变化：不在本项评价范围（D-3 的例外情形除外）。
