@@ -33,6 +33,7 @@
 
 - [ ] 在 windows-latest 的 CI 环境实测同一份种子内容两种落地形态的耗时：单归档解压到目标目录就绪、整树拷贝到目标目录就绪，各至少 5 次取中位；macOS 同口径参考。
 - [ ] 把实测数字与结论记进本任务的 PR 描述与 #265 评论。若归档形态不慢于拷贝（预期），按 D-2 定案走归档；若拷贝显著更快且实现不更复杂，改选 B 并在 spec 的 D-2 状态行下补记改选理由（不改定案本身，需维护者知情）。
+- [ ] 若改选 B（松散目录），任务 2–5 中一切「归档」按「种子目录树」读：生成器产出目录树（体积门按全树字节数计）、清单条目指向该目录、落地为整树拷贝、采样口径测拷贝落地；安全口径不变（拷贝同样拒绝符号链接逃逸）。本条即 B 形态下任务 2–5 的对应步骤，不另立任务。
 
 ### 任务 2：种子生成器与构建断言
 
@@ -51,12 +52,12 @@
 
 - [ ] 先写失败测试（`apps/local/test/presetDb.test.ts`）：db 目录不存在 + 归档完好 → 落地后 PGlite 可打开且迁移零待执行；归档损坏/含逃逸路径 → 返回未落地、半成品清净、随后全量 `createLocalDb` 成功；db 目录已存在 → 函数不被调用或立即返回、既有内容逐字节不变。
 - [ ] 实现 `presetDb.ts`：解开到 `<home>/db.preset-<随机>` 临时目录，成功后 `renameSync` 就位；任何异常清掉临时目录并返回未落地。归档安全规则与组件安装器同口径（拒绝绝对路径、`..`、符号链接逃逸）。
-- [ ] `runtime.ts` 接入：清单条目缺失 → 跳过；存在且 db 不存在 → 落地，成败各留一条诊断（成功记 `preset-db: seeded`、回退记原因）；`db` 阶段的顺序与既有 phase 名不变。
+- [ ] `runtime.ts` 接入：种子检查必须放在现有 `ensureOwnedDirectory(paths.home, paths.db, "database")`（runtime.ts:529，紧临 `createLocalDb` 之前）**之前**——该调用会先把 db 目录建出来，检查若排在其后，种子条件永不成立。顺序为：清单条目缺失 → 跳过；存在且 db 目录不存在 → 先落地种子，随后既有 `ensureOwnedDirectory` 照常执行（对已落地的目录做真实目录校验与 0700 保护，其 mkdir 对已存在目录无操作），再 `createLocalDb`。成败各留一条诊断（成功记 `preset-db: seeded`、回退记原因）；`db` 阶段与既有 phase 名不变。
 - [ ] `apps/local` 与 `apps/hub` 测试全绿，根 `typecheck` 与 CLI 型检查通过。
 
 ### 任务 5：startup-sample 预置口径
 
-- [ ] `startup-sample.mjs` 增加 `preset` 子进程模式：父进程先按任务 2 的同口径现生成种子归档，子进程在全新目录落地种子后测 `new PGlite` + `migrate`，JSON 行输出 `preset: { readyMs, migrateMs, totalMs }`，冷/热字段保持原样。
+- [ ] `startup-sample.mjs` 增加 `preset` 子进程模式：父进程先按任务 2 的同口径现生成种子归档，子进程的计时从落地开始：`preset.totalMs` = 落地耗时 + `new PGlite` 就绪 + `migrate`，并单列 `landingMs`（另保留 `readyMs`/`migrateMs` 分项），冷/热字段保持原样。验收比较的必须是含落地的 `totalMs`——真实首次运行付的是全程。
 - [ ] verify.yml 平台 job 无需改动即带出新字段（若其断言/汇总对 JSON 形状有校验则同步更新）；在本项 PR 的 CI 运行上确认 windows/macos 两个平台 job 的日志各有一行带 `preset` 的 JSON。
 
 ### 任务 6：文档与 changelog
@@ -66,7 +67,7 @@
 
 ### 任务 7：验收与收口（#265）
 
-- [ ] 取实现合入后 windows-latest 最近 5 次含 `preset` 口径的 CI 样本，中位对照 D-6：≤1600ms 量级且较 3484ms 至少降一半；种子归档两 target 实测大小对照 ≤10 MiB 上限，均记进 #265 验收评论。任一不达：按 spec D-6 回到定案，不带病收口。
+- [ ] 取实现合入后 windows-latest 最近 5 次含 `preset` 口径的 CI 样本，中位（取含落地耗时的 `preset.totalMs`）对照 D-6：≤1600ms 量级且较 3484ms 至少降一半；种子归档两 target 实测大小对照 ≤10 MiB 上限，均记进 #265 验收评论。任一不达：按 spec D-6 回到定案，不带病收口。
 - [ ] 在 #265 贴验收记录（自动化测试、CI 数字、载荷记账三类证据分开写；注明桌面真机未测是政策决定），达标后关闭 #265。
 - [ ] ROADMAP：P2-11 改已完成、v0.3.2 一节 #265 行按验收结果更新，执行记录补一行。
 
