@@ -72,6 +72,15 @@ describe('native Electron packaging configuration', () => {
       await writeFile(path.join(root, 'node-stand-in'), 'node');
       await writeFile(path.join(root, 'runtime-manifest.json'), JSON.stringify({ ...manifest, node: 'node-stand-in' }));
       await expect(assertStagedRuntimeManifest(root, expected)).resolves.toMatchObject({ node: 'node-stand-in' });
+      // The optional first-run seed is checked only when named, and then like any other file asset.
+      expect(stagedManifestAssetKeys(manifest, 'darwin')).not.toContain('presetDb');
+      await writeFile(path.join(root, 'runtime-manifest.json'), JSON.stringify({ ...manifest, presetDb: 'preset/preset-db.tar.gz' }));
+      await expect(assertStagedRuntimeManifest(root, expected)).rejects.toThrow();
+      await mkdir(path.join(root, 'preset'), { recursive: true });
+      await writeFile(path.join(root, 'preset/preset-db.tar.gz'), 'seed');
+      await expect(assertStagedRuntimeManifest(root, expected)).resolves.toMatchObject({ presetDb: 'preset/preset-db.tar.gz' });
+      await writeFile(path.join(root, 'runtime-manifest.json'), JSON.stringify({ ...manifest, presetDb: '../seed.tar.gz' }));
+      await expect(assertStagedRuntimeManifest(root, expected)).rejects.toThrow(/invalid presetDb path/);
       await writeFile(path.join(root, 'runtime-manifest.json'), JSON.stringify({ ...manifest, platform: 'win32', arch: 'x64' }));
       await expect(assertStagedRuntimeManifest(root, { ...expected, platform: 'win32', arch: 'x64' })).rejects.toThrow(/invalid ownedHelperGuardian path/);
     } finally {
