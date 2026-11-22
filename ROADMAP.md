@@ -32,7 +32,7 @@
 进本版：
 
 - [ ] 待做：[#56](https://github.com/Nema-Project/nema-room/issues/56) 依赖大版本升级（P2-07）：ESLint 9→10、TypeScript 5.9→7、Node 22→24、内置 Python 从 3.11 换线到 3.13/3.14。各升级单独 PR；Python 换线需按 spec/plan 单独立项，且 graphify 已改为按需组件，换线涉及 `graphify-lock.json` 重新制锁与四 target 归档复核。
-- [ ] 待做：[#265](https://github.com/Nema-Project/nema-room/issues/265) 预置数据目录（P2-11）。2026-11-22 维护者按推荐立项并排入本版：先写 spec（预置形态、与迁移/升级/既有数据的语义、验收口径）与 D 项定案，再按计划实现；触发证据为 windows 冷启动 DB 中位 3484ms ≈ Linux 基线 2.17 倍（#186 W2 评估）。
+- [ ] 待做：[#265](https://github.com/Nema-Project/nema-room/issues/265) 预置数据目录（P2-11）。2026-11-22 维护者按推荐立项并排入本版：spec 为 [2026-11-22 预置数据目录设计](docs/superpowers/specs/2026-11-22-preset-data-directory-design.md)，D-1～D-7 已于 2026-11-22 全部按推荐定案；实施计划为 [2026-11-22 预置数据目录实施计划](docs/superpowers/plans/2026-11-22-preset-data-directory.md)；触发证据为 windows 冷启动 DB 中位 3484ms ≈ Linux 基线 2.17 倍（#186 W2 评估）。
 
 未排期（不进本版）：[#264](https://github.com/Nema-Project/nema-room/issues/264) 组件安装器 OS 锁（P2-10）、[#25](https://github.com/Nema-Project/nema-room/issues/25) 连接器 Epic 后续 CX 项（P2-05）、[#32](https://github.com/Nema-Project/nema-room/issues/32) 设计参考。远程 hub 与多人（[#167](https://github.com/Nema-Project/nema-room/issues/167)）已排 v0.3.3，见下一节。
 
