@@ -296,7 +296,7 @@ v0.1.5 已公开发布：npm、hub/web 镜像与桌面产物的发布流水线�
 
 ## 下一项
 
-P0-01 与 P0-02 仍在进行中。v0.3.1 已于 2026-11-21 发布，milestone v0.3.1 关闭；下一版 v0.3.2 的 [#265](https://github.com/Nema-Project/nema-room/issues/265) 预置数据目录（P2-11）已于 2026-11-23 完成并关闭，目前只剩 [#56](https://github.com/Nema-Project/nema-room/issues/56)（P2-07 依赖大版本，2026-11-22 由 v0.4.x 迁移，v0.4.x 已取消）。未排期的后续项已登记在 P2 表：[#264](https://github.com/Nema-Project/nema-room/issues/264) 组件安装器 OS 锁（P2-10）、[#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub 方向调研（P2-12）；[#25](https://github.com/Nema-Project/nema-room/issues/25) 连接器 Epic 的后续 CX 项与 [#32](https://github.com/Nema-Project/nema-room/issues/32) 设计参考仍开放。下一项由维护者选定。连接器侧最近完成的是 CX-03：实现已由 PR #54 合入，最终验收已于 2026-11-17 完成（记录见 [#25 评论](https://github.com/Nema-Project/nema-room/issues/25#issuecomment-6936006267)，spec §515 第 1–8 条均有通过证据，三套测试在当前 main 上 44/44 通过）。
+P0-01 与 P0-02 仍在进行中。v0.3.1 已于 2026-11-21 发布，milestone v0.3.1 关闭；下一版 v0.3.2 的 [#265](https://github.com/Nema-Project/nema-room/issues/265) 预置数据目录（P2-11）已于 2026-11-23 完成并关闭，目前只剩 [#56](https://github.com/Nema-Project/nema-room/issues/56)（P2-07 依赖大版本，2026-11-22 由 v0.4.x 迁移，v0.4.x 已取消）。未排期的后续项已登记在 P2 表：[#264](https://github.com/Nema-Project/nema-room/issues/264) 组件安装器 OS 锁（P2-10）；[#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub 与多人（P2-12）已排入 v0.3.3，不在未排期之列；[#25](https://github.com/Nema-Project/nema-room/issues/25) 连接器 Epic 的后续 CX 项与 [#32](https://github.com/Nema-Project/nema-room/issues/32) 设计参考仍开放。下一项由维护者选定。连接器侧最近完成的是 CX-03：实现已由 PR #54 合入，最终验收已于 2026-11-17 完成（记录见 [#25 评论](https://github.com/Nema-Project/nema-room/issues/25#issuecomment-6936006267)，spec §515 第 1–8 条均有通过证据，三套测试在当前 main 上 44/44 通过）。
 
 | ID | 事项与依据 | 状态 | 验收标准 |
 | --- | --- | --- | --- |
