@@ -58,7 +58,7 @@
 
 ## Web / Compose の動作条件
 
-ホストの daemon は npm パッケージ `@nema-project/nema` です（Node.js ≥ 22）。コマンド名は `nema` です。`@nema-project/nema@0.1.3` は 2026-10-27 に npm へ公開されました。この手動の初回公開は [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md) に記録しています。`v0.1.4` は trusted publisher による最初の公開です。実行中の hub と同じバージョンを入れます。
+ホストの daemon は npm パッケージ `@nema-project/nema` です（Node.js ≥ 24）。コマンド名は `nema` です。`@nema-project/nema@0.1.3` は 2026-10-27 に npm へ公開されました。この手動の初回公開は [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md) に記録しています。`v0.1.4` は trusted publisher による最初の公開です。実行中の hub と同じバージョンを入れます。
 
 ```sh
 npx @nema-project/nema@<hub のバージョン> --version
@@ -75,7 +75,7 @@ Compose では `curl http://127.0.0.1:4400/api/version` が `{"version":"..."}` 
 
 | 項目 | 条件 |
 | --- | --- |
-| ローカルツール | Node.js ≥ 22（npm を含む）、Git |
+| ローカルツール | Node.js ≥ 24（npm を含む）、Git |
 | コンテナ | Docker と Docker Compose v2 |
 | モデル | 下記の実行方式を一つ設定。利用可否、上限、料金はプロバイダーによる |
 | ストレージ | ローカル SSD を推奨。プロジェクト、知識 Git リポジトリ、DB を NAS/SMB 共有に置くことは非推奨 |

@@ -58,7 +58,7 @@ Current stabilization priorities and acceptance evidence are tracked in the [roa
 
 ## Web / Compose requirements
 
-The host daemon is the npm package `@nema-project/nema` (Node.js ≥ 22). The command name is `nema`. `@nema-project/nema@0.1.3` was published on 2026-10-27. That manual first publish is recorded in [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md). `v0.1.4` is the first trusted-publisher publish. Install the same version as the running hub:
+The host daemon is the npm package `@nema-project/nema` (Node.js ≥ 24). The command name is `nema`. `@nema-project/nema@0.1.3` was published on 2026-10-27. That manual first publish is recorded in [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md). `v0.1.4` is the first trusted-publisher publish. Install the same version as the running hub:
 
 ```sh
 npx @nema-project/nema@<hub version> --version
@@ -75,7 +75,7 @@ Running the Web / Compose stack from this repository still uses the source wizar
 
 | Item | Requirement |
 | --- | --- |
-| Local tools | Node.js ≥ 22 with npm, Git |
+| Local tools | Node.js ≥ 24 with npm, Git |
 | Containers | Docker and Docker Compose v2 |
 | Model access | Configure a runtime below; availability, quotas, and charges depend on the provider |
 | Storage | Prefer a local SSD; avoid NAS/SMB shares for the project, knowledge Git repositories, and database |
