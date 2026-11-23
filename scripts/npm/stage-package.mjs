@@ -24,7 +24,7 @@ export function derivePublishManifest(pkg) {
     type: 'module',
     bin: { nema: 'dist/index.js' },
     files: ['dist', 'src/report/SKILL.md', 'LICENSE'],
-    engines: { node: '>=22' },
+    engines: { node: '>=24' },
     repository: { type: 'git', url: `git+${REPOSITORY}.git` },
     dependencies,
   };

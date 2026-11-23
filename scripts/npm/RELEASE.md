@@ -10,7 +10,7 @@ Done on 2026-10-27. A maintainer published `@nema-project/nema@0.1.3` with their
 
 The npm org `nema-project` already existed, and the publisher's npm account was a member of that org. Source checkouts update with the repository, so there is no previously published daemon that still prints `npm i -g nema@<version>`.
 
-The commands below are the record of that publish, from a clean checkout of the release commit, with Node.js 22 or later:
+The commands below are the record of that publish, from a clean checkout of the release commit, with Node.js 24 or later:
 
 ```sh
 npm run cli:pack

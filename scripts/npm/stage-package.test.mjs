@@ -45,7 +45,7 @@ test('publish manifest is the scoped nema app, not the private workspace package
   assert.equal(manifest.name, '@nema-project/nema');
   assert.equal(manifest.private, undefined);
   assert.deepEqual(manifest.bin, { nema: 'dist/index.js' });
-  assert.equal(manifest.engines.node, '>=22');
+  assert.equal(manifest.engines.node, '>=24');
   assert.match(JSON.stringify(manifest.repository), /https:\/\/github\.com\/Nema-Project\/nema-room/);
   assert.equal(Object.hasOwn(manifest, 'exports'), false);
   assert.equal(manifest.version, '0.1.3');

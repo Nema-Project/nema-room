@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-/** `engines.node` in this repo is a major floor (`>=22`). Other ranges are refused rather than guessed. */
+/** `engines.node` in this repo is a major floor (`>=24`). Other ranges are refused rather than guessed. */
 export function assertElectronNodeEngines(nodeVersion, range) {
   const match = /^>=(\d+)$/.exec(String(range ?? '').trim());
   if (!match) throw new Error(`Unsupported engines.node range: ${range}`);

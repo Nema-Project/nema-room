@@ -1,0 +1,1 @@
+- 开发与运行基线升级到 Node.js 24：仓库的 engines 下限、CI 与发布工作流、Docker 镜像统一改为 Node 24；桌面端内置的 Electron 45 本就运行 Node 24.22.1，不受影响。使用 npm 全局安装 CLI 的用户需要 Node.js 24 或更高。

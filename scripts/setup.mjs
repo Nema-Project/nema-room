@@ -17,7 +17,7 @@ const CLI = path.join(ROOT, "apps/cli/dist/index.js");
 export const TEXT = {
   en: {
     title: "Nema Room setup",
-    node: "Node.js 22 or newer is required.", missing: "Required tool unavailable:", docker: "Docker is not running or this user cannot access it.",
+    node: "Node.js 24 or newer is required.", missing: "Required tool unavailable:", docker: "Docker is not running or this user cannot access it.",
     config: "Existing .env will be preserved. Setup uses these host settings:", data: "Data directory", hub: "Hub URL", uid: "Container UID/GID", checkout: "Version built from this checkout",
     proceed: "Install dependencies, build the CLI, and build/start the Compose services?", stopped: "Cancelled. No installation changes were made.",
     env: "Created .env from .env.example.", install: "Installing dependencies and building the CLI…", services: "Building and starting PostgreSQL, hub, and web…",
@@ -36,7 +36,7 @@ export const TEXT = {
   },
   zh: {
     title: "Nema Room 安装向导",
-    node: "需要 Node.js 22 或以上版本。", missing: "缺少必需工具：", docker: "Docker 未启动，或当前用户无权访问。",
+    node: "需要 Node.js 24 或以上版本。", missing: "缺少必需工具：", docker: "Docker 未启动，或当前用户无权访问。",
     config: "已有 .env 会保留。向导将使用以下本机设置：", data: "数据目录", hub: "Hub 地址", uid: "容器 UID/GID", checkout: "本检出构建的版本",
     proceed: "安装依赖、构建 CLI 并构建/启动 Compose 服务？", stopped: "已取消，未执行安装变更。",
     env: "已从 .env.example 创建 .env。", install: "正在安装依赖并构建 CLI……", services: "正在构建并启动 PostgreSQL、hub 和 web……",
@@ -55,7 +55,7 @@ export const TEXT = {
   },
   ja: {
     title: "Nema Room セットアップ",
-    node: "Node.js 22 以上が必要です。", missing: "必要なツールがありません：", docker: "Docker が停止中、または現在のユーザーにアクセス権がありません。",
+    node: "Node.js 24 以上が必要です。", missing: "必要なツールがありません：", docker: "Docker が停止中、または現在のユーザーにアクセス権がありません。",
     config: "既存の .env は保持します。以下のホスト設定を使用します：", data: "データ保存先", hub: "Hub URL", uid: "コンテナ UID/GID", checkout: "このチェックアウトでビルドするバージョン",
     proceed: "依存関係と CLI をビルドし、Compose サービスをビルド・起動しますか？", stopped: "キャンセルしました。インストールによる変更はありません。",
     env: ".env.example から .env を作成しました。", install: "依存関係をインストールし、CLI をビルドしています…", services: "PostgreSQL、hub、web をビルド・起動しています…",
@@ -173,13 +173,13 @@ export async function main(args = process.argv.slice(2), deps = {}) {
   const fail = deps.error ?? ((line) => console.error(line));
   const options = parseOptions(args);
   if (options.help) {
-    log("node scripts/setup.mjs [--lang en|zh|ja] [--check]\n--check: read-only prerequisites and configuration check; no installation.\nWindows / macOS / Linux: Node.js >= 22, npm, Git, Docker + Compose v2.");
+    log("node scripts/setup.mjs [--lang en|zh|ja] [--check]\n--check: read-only prerequisites and configuration check; no installation.\nWindows / macOS / Linux: Node.js >= 24, npm, Git, Docker + Compose v2.");
     return;
   }
   const t = TEXT[options.lang];
   log(`\n${t.title}\n`);
   try {
-    if (+process.versions.node.split(".")[0] < 22) throw new Error(t.node);
+    if (+process.versions.node.split(".")[0] < 24) throw new Error(t.node);
     for (const [bin, argv] of [["npm", ["--version"]], ["git", ["--version"]], ["docker", ["compose", "version"]]]) {
       const command = setupCommand(bin, argv);
       const result = spawn(command.bin, command.args, { stdio: "ignore", windowsHide: true });
