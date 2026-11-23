@@ -77,7 +77,7 @@ Nema Room は、ソフトウェアプロジェクトの理解を揃えるため�
 
 ### Web / Compose
 
-PostgreSQL、hub、web はコンテナで、daemon はホストで動きます。Windows、macOS、Linux で **Node.js ≥ 22**、**Git**、**Docker**、**Docker Compose v2** が必要です。
+PostgreSQL、hub、web はコンテナで、daemon はホストで動きます。Windows、macOS、Linux で **Node.js ≥ 24**、**Git**、**Docker**、**Docker Compose v2** が必要です。
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git

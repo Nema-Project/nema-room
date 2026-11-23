@@ -6,7 +6,7 @@ Nema Room 是在本机运行的需求讨论室，采用 [MIT License](LICENSE)�
 
 ## 开发环境
 
-需要 Node.js 22 或更高、npm 和 Git。开发模式只用 Docker 跑 PostgreSQL。
+需要 Node.js 24 或更高、npm 和 Git。开发模式只用 Docker 跑 PostgreSQL。
 
 ```bash
 npm ci

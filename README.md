@@ -77,7 +77,7 @@ See the original statement, why it was recorded, and whether it came from you or
 
 ### Web / Compose
 
-PostgreSQL, the hub, and web run in containers; the daemon runs on your host. You need **Node.js ≥ 22**, **Git**, **Docker**, and **Docker Compose v2** on Windows, macOS, or Linux.
+PostgreSQL, the hub, and web run in containers; the daemon runs on your host. You need **Node.js ≥ 24**, **Git**, **Docker**, and **Docker Compose v2** on Windows, macOS, or Linux.
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git

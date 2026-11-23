@@ -58,7 +58,7 @@
 
 ## Web / Compose 环境要求
 
-宿主机 daemon 是 npm 包 `@nema-project/nema`，命令名是 `nema`（Node.js ≥ 22）。`@nema-project/nema@0.1.3` 已于 2026-10-27 发布到 npm，这次手动的第一次发布记录在 [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md)。`v0.1.4` 是受信发布者的第一次发布。安装与正在运行的 hub 相同的版本：
+宿主机 daemon 是 npm 包 `@nema-project/nema`，命令名是 `nema`（Node.js ≥ 24）。`@nema-project/nema@0.1.3` 已于 2026-10-27 发布到 npm，这次手动的第一次发布记录在 [scripts/npm/RELEASE.md](../scripts/npm/RELEASE.md)。`v0.1.4` 是受信发布者的第一次发布。安装与正在运行的 hub 相同的版本：
 
 ```sh
 npx @nema-project/nema@<hub 版本> --version
@@ -75,7 +75,7 @@ Compose：`curl http://127.0.0.1:4400/api/version` 返回 `{"version":"..."}`。
 
 | 项目 | 要求 |
 | --- | --- |
-| 本机工具 | Node.js ≥ 22（含 npm）、Git |
+| 本机工具 | Node.js ≥ 24（含 npm）、Git |
 | 容器 | Docker、Docker Compose v2 |
 | 模型 | 配置下文的一种运行方式；可用性、额度与费用由服务商决定 |
 | 存储 | 建议本机 SSD，不建议把项目、知识 Git 仓库或数据库放在 NAS/SMB 共享盘 |

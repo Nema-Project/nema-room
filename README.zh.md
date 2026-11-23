@@ -77,7 +77,7 @@ Nema Room 是在本机运行的项目对齐副驾。需求、约束和取舍很�
 
 ### Web / Compose
 
-PostgreSQL、hub 和 web 运行在容器里，daemon 运行在本机。需要 **Node.js ≥ 22**、**Git**、**Docker** 和 **Docker Compose v2**，系统可以是 Windows、macOS 或 Linux。
+PostgreSQL、hub 和 web 运行在容器里，daemon 运行在本机。需要 **Node.js ≥ 24**、**Git**、**Docker** 和 **Docker Compose v2**，系统可以是 Windows、macOS 或 Linux。
 
 ```sh
 git clone https://github.com/Nema-Project/nema-room.git

@@ -21,7 +21,7 @@ body:
     id: node
     attributes:
       label: Node.js 版本
-      description: 运行 `node -v`。需要 Node.js 22 或更高。
+      description: 运行 `node -v`。需要 Node.js 24 或更高。
       placeholder: v22.x.x
     validations:
       required: true

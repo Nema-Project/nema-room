@@ -48,7 +48,7 @@ env:
   # actions/download-artifact    9000827ccba6bdab643e8b6fd33ac0654aef8333  v8.0.2
   # docker/setup-buildx-action   f87e5991a6d7451dcb8d9637bfbc97413f497069  v4.4.1
   # docker/login-action          81c6f93d4bc991e510b342a00b419b3bb4efc5c6  v4.7.0
-  NODE_VERSION: 22
+  NODE_VERSION: 24
   CRANE_VERSION: 0.22.1
   CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
 
