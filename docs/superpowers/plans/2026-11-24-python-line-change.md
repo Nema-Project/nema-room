@@ -11,7 +11,7 @@
 ## 全局约束
 
 - 只换线，不升包：graphifyy 与全部 wheel 的版本与定案时一致；若某个 ABI wheel 在目标平台实际缺 cp314 文件，按 spec D-1 的回退顺序（同大版本内取有 wheel 的最近版本 → 仍不行退 3.13）处理并记录，不静默换大版本。
-- 锁只能由 `refresh-lock` 从真实下载生成：禁止手写 sha256/字节数。刷新后逐 target 核对：CPython 归档文件名含 `3.14.x+<release>`、ABI wheel 文件名含 `cp314`、纯 wheel 与旧锁逐字节一致（文件名与 sha256 不变）。
+- 锁只能由 `refresh-lock` 从真实下载生成：禁止手写 sha256/字节数。刷新后逐 target 核对：CPython 归档文件名含所选目标线的 `<版本>+<发布号>`、ABI wheel 文件名含该线的 ABI 标签（`cp314`；回退 3.13 时 `cp313`）、纯 wheel 与旧锁逐字节一致（文件名与 sha256 不变）。
 - 安装器与 hub 的行为语义不变：锁校验、归档安全、离线包、自检、激活的规则一律沿用；本计划只允许改「解释器名字符串从哪来」（D-2 派生）与测试 fixture 的字面量。
 - 解释器名派生是纯函数：输入锁的 `python` 版本（如 `3.14.10`），输出 `python3.14`；非法输入显式抛错，不回退到任何写死值。
 - 已装组件语义（D-4）：新锁下旧组件呈 `lock-mismatch` 被停用，图谱请求以 `GraphifyUnavailableError` 报错并指引手动安装；用户手动重装后按新锁运行。不改成自动重装，不新增迁移代码；工作区内的图谱文件不被触碰。以自动化测试钉住。
@@ -19,7 +19,7 @@
 
 ## 文件与职责（预计）
 
-- `scripts/desktop/graphify-lock.json`：任务 1 再生（模板字段先改：`python`、`cpythonRelease`、四 target 的 CPython 归档文件名/URL、四个 ABI wheel 的模板文件名 cp311→cp314，再跑 `refresh-lock` 回写全部 sha256/字节数）。
+- `scripts/desktop/graphify-lock.json`：任务 1 再生（模板字段先改：`python`、`cpythonRelease`、四 target 的 CPython 归档文件名/URL、四个 ABI wheel 的模板文件名 cp311→所选目标线标签（cp314；回退时 cp313），再跑 `refresh-lock` 回写全部 sha256/字节数）。
 - `apps/cli/src/components/install.ts`：任务 2 改为从锁派生解释器名（启动器模板、canonical 路径、LICENSE 候选）；派生函数放同文件或 `lock.ts`，以现有模块边界为准。
 - `scripts/desktop/fetch-graphify.mjs`：任务 2 同步派生（其 POSIX 启动器与裁剪逻辑）。
 - `scripts/desktop/graphify.test.mjs`、`apps/cli/test/components/*`：任务 3 更新字面量与 fixture；任务 4 在 components 测试加已装组件语义用例。
@@ -39,7 +39,7 @@
 
 ### 任务 3：测试字面量与 fixture 清点
 
-- [ ] 以 grep 清点 `cp311`、`3\.11\.18`、`cpython-3.11` 在 `apps/cli/test`、`scripts` 中的全部出现，逐处更新到新线（fixture 的 wheel 文件名换 cp314 对应名，断言的版本号换新版）。
+- [ ] 以 grep 清点 `cp311`、`3\.11\.18`、`cpython-3.11` 在 `apps/cli/test`、`scripts` 中的全部出现，逐处更新到新线（fixture 的 wheel 文件名换所选目标线对应的标签名（cp314；回退时 cp313），断言的版本号换新版）。
 - [ ] 受影响测试全绿：`apps/cli` components 相关套件、`scripts/desktop/graphify.test.mjs`、`graphify-languages.test.mjs`、bundle/stage-package 中引用锁的测试。
 
 ### 任务 4：已装组件语义（D-4）
