@@ -25,8 +25,8 @@ test('graphify lock pins the four targets and no install path', async () => {
   assert.equal(raw.includes('Users'), false);
   assert.equal(raw.includes('AppData'), false);
   assert.equal(graphifyLock.graphifyy, '0.9.95');
-  assert.equal(graphifyLock.python, '3.11.18');
-  assert.equal(graphifyLock.cpythonRelease, '20261026');
+  assert.equal(graphifyLock.python, '3.14.10');
+  assert.equal(graphifyLock.cpythonRelease, '20261123');
   assert.equal(graphifyLock.extras.length, 0);
   assert.equal(graphifyLock.sourceCorrespondence.status, 'pending-task-7c');
   assert.deepEqual(Object.keys(graphifyLock.targets), GRAPHIFY_LOCK_TARGETS);
@@ -38,8 +38,8 @@ test('graphify lock pins the four targets and no install path', async () => {
     for (const prefix of KEPT_PREFIXES) assert.equal(files.some((file) => file.startsWith(prefix)), true, `${key} ${prefix}`);
     for (const prefix of DROPPED_PREFIXES) assert.equal(files.some((file) => file.startsWith(prefix)), false, `${key} ${prefix}`);
     assert.equal(pin.python.format, 'tar.gz');
-    assert.equal(pin.python.file, `cpython-3.11.18+20261026-${PYTHON_TRIPLES[key]}-install_only.tar.gz`, key);
-    assert.match(pin.python.url, /^https:\/\/github\.com\/astral-sh\/python-build-standalone\/releases\/download\/20261026\//);
+    assert.equal(pin.python.file, `cpython-3.14.10+20261123-${PYTHON_TRIPLES[key]}-install_only.tar.gz`, key);
+    assert.match(pin.python.url, /^https:\/\/github\.com\/astral-sh\/python-build-standalone\/releases\/download\/20261123\//);
     assert.match(pin.python.sha256, /^[a-f0-9]{64}$/);
     for (const wheel of pin.wheels) {
       assert.match(wheel.url, /^https:\/\/files\.pythonhosted\.org\/packages\//);
@@ -47,8 +47,8 @@ test('graphify lock pins the four targets and no install path', async () => {
       assert.equal(wheel.url.endsWith(`/${wheel.file}`), true, wheel.file);
     }
   }
-  assert.equal(graphifyLock.targets['win32-x64'].python.sha256, '75cb501dc11c7b55c6b447c58e4910bce5b1f609f1017328b4f3a858dfaf5428');
-  assert.equal(graphifyLock.targets['darwin-arm64'].python.sha256, 'cba3455e18516fbe8668cff2820c9b6a53447c552d612443c2b2fb60d390a908');
+  assert.equal(graphifyLock.targets['win32-x64'].python.sha256, 'c2344c6f2c1e86852d5f747e5bb61f45315fd369547a75cc24f04efee5da55c1');
+  assert.equal(graphifyLock.targets['darwin-arm64'].python.sha256, '167ad04069d3c43f087d995336e36b879ec2ad8dfcf99112c034350240d9ecdb');
 });
 
 test('every lock file entry records a positive integer size and target file names are unique', () => {
@@ -110,33 +110,33 @@ test('manylinux selection takes the oldest glibc for the machine and never musl'
   assert.equal(manylinuxGlibc('manylinux2014_aarch64', 'x86_64'), null);
   assert.equal(manylinuxGlibc('musllinux_1_2_x86_64', 'x86_64'), null);
   const files = [
-    'numpy-2.4.6-cp311-cp311-musllinux_1_2_x86_64.whl',
-    'numpy-2.4.6-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl',
-    'numpy-2.4.6-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl',
+    'numpy-2.4.6-cp314-cp314-musllinux_1_2_x86_64.whl',
+    'numpy-2.4.6-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl',
+    'numpy-2.4.6-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl',
     'numpy-2.4.6-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl',
-    'numpy-2.4.6-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl',
+    'numpy-2.4.6-cp314-cp314-manylinux_2_17_aarch64.manylinux2014_aarch64.whl',
   ].map((filename) => ({ filename, packagetype: 'bdist_wheel' }));
-  assert.equal(pickManylinuxWheel('numpy-2.4.6-cp311-cp311-win_amd64.whl', files, 'x86_64').filename, 'numpy-2.4.6-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl');
-  assert.equal(pickManylinuxWheel('numpy-2.4.6-cp311-cp311-win_amd64.whl', files, 'aarch64').filename, 'numpy-2.4.6-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl');
-  assert.throws(() => pickManylinuxWheel('numpy-2.4.6-cp311-cp311-win_amd64.whl', files.slice(0, 1), 'x86_64'), /No manylinux/);
+  assert.equal(pickManylinuxWheel('numpy-2.4.6-cp314-cp314-win_amd64.whl', files, 'x86_64').filename, 'numpy-2.4.6-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl');
+  assert.equal(pickManylinuxWheel('numpy-2.4.6-cp314-cp314-win_amd64.whl', files, 'aarch64').filename, 'numpy-2.4.6-cp314-cp314-manylinux_2_17_aarch64.manylinux2014_aarch64.whl');
+  assert.throws(() => pickManylinuxWheel('numpy-2.4.6-cp314-cp314-win_amd64.whl', files.slice(0, 1), 'x86_64'), /No manylinux/);
 });
 
 /** A fake upstream: CPython archives, SHA256SUMS, PyPI JSON and wheel bytes, all local. */
 function fakeUpstream(overrides = {}) {
   const body = (name) => Buffer.from(`bytes of ${name}`);
-  const pyFile = (triple) => `cpython-3.11.18+20261026-${triple}-install_only.tar.gz`;
+  const pyFile = (triple) => `cpython-3.14.10+20261123-${triple}-install_only.tar.gz`;
   const files = new Map();
   const add = (url, name) => files.set(url, overrides[name] ?? body(name));
-  const release = 'https://github.com/astral-sh/python-build-standalone/releases/download/20261026';
+  const release = 'https://github.com/astral-sh/python-build-standalone/releases/download/20261123';
   for (const triple of Object.values(PYTHON_TRIPLES)) add(`${release}/${pyFile(triple).replace('+', '%2B')}`, pyFile(triple));
-  const linuxWheels = ['x86_64', 'aarch64'].map((machine) => `numpy-2.4.6-cp311-cp311-manylinux_2_17_${machine}.manylinux2014_${machine}.whl`);
-  for (const name of ['graphifyy-0.9.95-py3-none-any.whl', 'numpy-2.4.6-cp311-cp311-win_amd64.whl', 'numpy-2.4.6-cp311-cp311-macosx_11_0_arm64.whl', ...linuxWheels]) {
+  const linuxWheels = ['x86_64', 'aarch64'].map((machine) => `numpy-2.4.6-cp314-cp314-manylinux_2_17_${machine}.manylinux2014_${machine}.whl`);
+  for (const name of ['graphifyy-0.9.95-py3-none-any.whl', 'numpy-2.4.6-cp314-cp314-win_amd64.whl', 'numpy-2.4.6-cp314-cp314-macosx_11_0_arm64.whl', ...linuxWheels]) {
     add(`https://files.pythonhosted.org/packages/x/${name}`, name);
   }
   const sums = Object.values(PYTHON_TRIPLES).map((triple) => `${sha256(body(pyFile(triple)))}  ${pyFile(triple)}`).join('\n');
   files.set(`${release}/SHA256SUMS`, Buffer.from(`${sums}\n`));
   files.set('https://pypi.org/pypi/numpy/2.4.6/json', Buffer.from(JSON.stringify({
-    urls: [...linuxWheels, 'numpy-2.4.6-cp311-cp311-musllinux_1_2_x86_64.whl'].map((filename) => ({
+    urls: [...linuxWheels, 'numpy-2.4.6-cp314-cp314-musllinux_1_2_x86_64.whl'].map((filename) => ({
       filename, packagetype: 'bdist_wheel', url: `https://files.pythonhosted.org/packages/x/${filename}`, size: body(filename).length, digests: { sha256: sha256(body(filename)) },
     })),
   })));
@@ -152,8 +152,8 @@ function fakeUpstream(overrides = {}) {
     wheels: [entry('https://files.pythonhosted.org/packages/x/graphifyy-0.9.95-py3-none-any.whl', 'graphifyy-0.9.95-py3-none-any.whl'), entry(`https://files.pythonhosted.org/packages/x/${numpy}`, numpy)],
   });
   const lock = {
-    schemaVersion: 1, graphifyy: '0.9.95', python: '3.11.18', cpythonRelease: '20261026', extras: [], sourceCorrespondence: { status: 'pending-task-7c' },
-    targets: { 'win32-x64': target(PYTHON_TRIPLES['win32-x64'], 'numpy-2.4.6-cp311-cp311-win_amd64.whl'), 'darwin-arm64': target(PYTHON_TRIPLES['darwin-arm64'], 'numpy-2.4.6-cp311-cp311-macosx_11_0_arm64.whl') },
+    schemaVersion: 1, graphifyy: '0.9.95', python: '3.14.10', cpythonRelease: '20261123', extras: [], sourceCorrespondence: { status: 'pending-task-7c' },
+    targets: { 'win32-x64': target(PYTHON_TRIPLES['win32-x64'], 'numpy-2.4.6-cp314-cp314-win_amd64.whl'), 'darwin-arm64': target(PYTHON_TRIPLES['darwin-arm64'], 'numpy-2.4.6-cp314-cp314-macosx_11_0_arm64.whl') },
   };
   return { lock, fetchImpl, requested, body };
 }
@@ -171,7 +171,7 @@ test('lock refresh records downloaded sizes and pins the Linux targets from a fa
     }
   }
   assert.deepEqual(Object.keys(next.targets['win32-x64'].python), ['file', 'url', 'sha256', 'size', 'format']);
-  assert.equal(next.targets['linux-arm64'].wheels[1].file, 'numpy-2.4.6-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl');
+  assert.equal(next.targets['linux-arm64'].wheels[1].file, 'numpy-2.4.6-cp314-cp314-manylinux_2_17_aarch64.manylinux2014_aarch64.whl');
   assert.equal(next.targets['linux-x64'].wheels[0].url, upstream.lock.targets['win32-x64'].wheels[0].url);
   assert.equal(upstream.requested.some((url) => url.includes('musllinux')), false);
 });
@@ -179,7 +179,7 @@ test('lock refresh records downloaded sizes and pins the Linux targets from a fa
 test('lock refresh refuses an existing pin whose bytes changed upstream', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nema-graphify-refresh-bad-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const upstream = fakeUpstream({ 'numpy-2.4.6-cp311-cp311-win_amd64.whl': Buffer.from('tampered') });
+  const upstream = fakeUpstream({ 'numpy-2.4.6-cp314-cp314-win_amd64.whl': Buffer.from('tampered') });
   await assert.rejects(refreshGraphifyLock({ lock: upstream.lock, cacheDir: path.join(root, 'cache'), fetchImpl: upstream.fetchImpl }), /does not match the pin/);
 });
 
@@ -188,7 +188,7 @@ test('lock refresh validates existing Linux pins instead of re-deriving them', a
   t.after(() => rm(root, { recursive: true, force: true }));
   const upstream = fakeUpstream();
   const first = await refreshGraphifyLock({ lock: upstream.lock, cacheDir: path.join(root, 'cache-1'), fetchImpl: upstream.fetchImpl });
-  const linuxWheel = 'numpy-2.4.6-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl';
+  const linuxWheel = 'numpy-2.4.6-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl';
   const tampered = fakeUpstream({ [linuxWheel]: Buffer.from('tampered') });
   await assert.rejects(refreshGraphifyLock({ lock: first, cacheDir: path.join(root, 'cache-2'), fetchImpl: tampered.fetchImpl }), /does not match the pin/);
   const honest = fakeUpstream();
@@ -201,7 +201,7 @@ test('lock refresh drops cache bytes that failed verification', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nema-graphify-refresh-cache-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const cacheDir = path.join(root, 'cache');
-  const wheel = 'numpy-2.4.6-cp311-cp311-win_amd64.whl';
+  const wheel = 'numpy-2.4.6-cp314-cp314-win_amd64.whl';
   const upstream = fakeUpstream({ [wheel]: Buffer.from('tampered') });
   await assert.rejects(refreshGraphifyLock({ lock: upstream.lock, cacheDir, fetchImpl: upstream.fetchImpl }), /does not match the pin/);
   assert.equal((await readdir(cacheDir)).includes(wheel), false);
@@ -211,7 +211,7 @@ test('launcher sources name only the bundled Python', async () => {
   const source = await readFile(path.join(scriptDir, 'graphify-launcher.c'), 'utf8');
   assert.match(source, /python\\python\.exe/);
   assert.equal(source.includes('Users'), false);
-  assert.match(POSIX_GRAPHIFY_LAUNCHER, /python\/bin\/python3\.11/);
+  assert.match(POSIX_GRAPHIFY_LAUNCHER, /python\/bin\/python3\.14/);
   assert.equal(POSIX_GRAPHIFY_LAUNCHER.includes('Users'), false);
 });
 
@@ -231,9 +231,9 @@ test('refuses a Graphify download whose bytes do not match the pin', async (t) =
 test('replaces an in-tree symlink with the target file', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nema-graphify-link-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await writeFile(path.join(root, 'python3.11'), 'python-bytes');
+  await writeFile(path.join(root, 'python3.14'), 'python-bytes');
   try {
-    await symlink('python3.11', path.join(root, 'python3'));
+    await symlink('python3.14', path.join(root, 'python3'));
   } catch (error) {
     if (error.code === 'EPERM' || error.code === 'ENOTSUP') {
       t.skip('creating a symlink needs extra privilege');
@@ -255,9 +255,9 @@ test('finds the CPython license in the Windows and Unix install_only layouts', a
   await writeFile(path.join(windows, 'LICENSE.txt'), 'psf');
   assert.equal(await pythonLicensePath(windows), path.join(windows, 'LICENSE.txt'));
   const unix = path.join(root, 'unix', 'python');
-  await mkdir(path.join(unix, 'lib', 'python3.11'), { recursive: true });
-  await writeFile(path.join(unix, 'lib', 'python3.11', 'LICENSE.txt'), 'psf');
-  assert.equal(await pythonLicensePath(unix), path.join(unix, 'lib', 'python3.11', 'LICENSE.txt'));
+  await mkdir(path.join(unix, 'lib', 'python3.14'), { recursive: true });
+  await writeFile(path.join(unix, 'lib', 'python3.14', 'LICENSE.txt'), 'psf');
+  assert.equal(await pythonLicensePath(unix), path.join(unix, 'lib', 'python3.14', 'LICENSE.txt'));
   await assert.rejects(pythonLicensePath(path.join(root, 'missing')), /CPython LICENSE\.txt/);
 });
 
@@ -307,10 +307,10 @@ test('prunes debug symbols, installers and Tcl/Tk but keeps the runtime and lice
   for (const file of windowsGone) assert.equal(await exists(file), false, file);
   for (const file of windowsKept) assert.equal(await exists(file), true, file);
 
-  const unixGone = ['mac/lib/python3.11/tkinter/__init__.py', 'mac/lib/python3.11/ensurepip/__init__.py', 'mac/lib/python3.11/lib-dynload/_tkinter.cpython-311-darwin.so',
-    'mac/lib/python3.11/site-packages/pip/__init__.py', 'mac/lib/tcl9.0/init.tcl', 'mac/lib/tk9.0/tk.tcl', 'mac/lib/libtcl9.0.dylib', 'mac/lib/libtcl9tk9.0.dylib'];
-  const unixKept = ['mac/bin/python3', 'mac/lib/libpython3.11.dylib', 'mac/lib/python3.11/LICENSE.txt', 'mac/lib/python3.11/lib-dynload/_ctypes.cpython-311-darwin.so',
-    'mac/lib/python3.11/site-packages/numpy/__init__.py'];
+  const unixGone = ['mac/lib/python3.14/tkinter/__init__.py', 'mac/lib/python3.14/ensurepip/__init__.py', 'mac/lib/python3.14/lib-dynload/_tkinter.cpython-311-darwin.so',
+    'mac/lib/python3.14/site-packages/pip/__init__.py', 'mac/lib/tcl9.0/init.tcl', 'mac/lib/tk9.0/tk.tcl', 'mac/lib/libtcl9.0.dylib', 'mac/lib/libtcl9tk9.0.dylib'];
+  const unixKept = ['mac/bin/python3', 'mac/lib/libpython3.14.dylib', 'mac/lib/python3.14/LICENSE.txt', 'mac/lib/python3.14/lib-dynload/_ctypes.cpython-311-darwin.so',
+    'mac/lib/python3.14/site-packages/numpy/__init__.py'];
   for (const file of [...unixGone, ...unixKept]) await touch(file);
   await prunePythonRuntime(path.join(root, 'mac'), 'darwin');
   for (const file of unixGone) assert.equal(await exists(file), false, file);
@@ -336,15 +336,15 @@ function macho64(commands) {
 }
 
 test('macho load names ignore an id command and read a FAT slice', () => {
-  assert.deepEqual(machoLoadNames(macho64([{ cmd: 0x0d, name: 'libpython3.11.dylib' }])), []);
-  const slice = macho64([{ cmd: 0x0c, name: 'libpython3.11.dylib' }]);
+  assert.deepEqual(machoLoadNames(macho64([{ cmd: 0x0d, name: 'libpython3.14.dylib' }])), []);
+  const slice = macho64([{ cmd: 0x0c, name: 'libpython3.14.dylib' }]);
   const fat = Buffer.alloc(8 + 20 + slice.length);
   fat.writeUInt32BE(0xcafebabe, 0);
   fat.writeUInt32BE(1, 4);
   fat.writeUInt32BE(slice.length, 8 + 12);
   fat.writeUInt32BE(28, 8 + 8);
   slice.copy(fat, 28);
-  assert.deepEqual(machoLoadNames(fat), ['libpython3.11.dylib']);
+  assert.deepEqual(machoLoadNames(fat), ['libpython3.14.dylib']);
   assert.deepEqual(machoLoadNames(Buffer.from('not macho!!')), []);
 });
 
@@ -353,11 +353,11 @@ test('dedupe removes only byte-identical python copies', async (t) => {
   t.after(() => rm(root, { recursive: true, force: true }));
   const bin = path.join(root, 'bin');
   await mkdir(bin);
-  await writeFile(path.join(bin, 'python3.11'), 'same-bytes');
+  await writeFile(path.join(bin, 'python3.14'), 'same-bytes');
   await writeFile(path.join(bin, 'python'), 'same-bytes');
   await writeFile(path.join(bin, 'python3'), 'same-bytes');
   assert.deepEqual(await dedupePythonInterpreters(root), ['python', 'python3']);
-  assert.equal(await readFile(path.join(bin, 'python3.11'), 'utf8'), 'same-bytes');
+  assert.equal(await readFile(path.join(bin, 'python3.14'), 'utf8'), 'same-bytes');
   await assert.rejects(lstat(path.join(bin, 'python')));
   await writeFile(path.join(bin, 'python3'), 'different');
   await assert.rejects(dedupePythonInterpreters(root), /not a byte copy/);
@@ -370,16 +370,16 @@ test('libpython is removed only when no Mach-O loads it', async (t) => {
   const python = path.join(root, 'python');
   await mkdir(path.join(python, 'bin'), { recursive: true });
   await mkdir(path.join(python, 'lib'), { recursive: true });
-  await writeFile(path.join(python, 'bin', 'python3.11'), macho64([]));
-  await writeFile(path.join(python, 'lib', 'libpython3.11.dylib'), 'library');
-  await writeFile(path.join(python, 'lib', 'extension.so'), macho64([{ cmd: 0x0c, name: 'libpython3.11.dylib' }]));
+  await writeFile(path.join(python, 'bin', 'python3.14'), macho64([]));
+  await writeFile(path.join(python, 'lib', 'libpython3.14.dylib'), 'library');
+  await writeFile(path.join(python, 'lib', 'extension.so'), macho64([{ cmd: 0x0c, name: 'libpython3.14.dylib' }]));
   assert.equal(await removeUnreferencedLibpython(python), false);
-  assert.equal(await readFile(path.join(python, 'lib', 'libpython3.11.dylib'), 'utf8'), 'library');
+  assert.equal(await readFile(path.join(python, 'lib', 'libpython3.14.dylib'), 'utf8'), 'library');
   await writeFile(path.join(python, 'lib', 'extension.so'), macho64([]));
   assert.equal(await removeUnreferencedLibpython(python), true);
-  await assert.rejects(lstat(path.join(python, 'lib', 'libpython3.11.dylib')));
-  await writeFile(path.join(python, 'lib', 'libpython3.11.dylib'), 'library');
+  await assert.rejects(lstat(path.join(python, 'lib', 'libpython3.14.dylib')));
+  await writeFile(path.join(python, 'lib', 'libpython3.14.dylib'), 'library');
   await writeFile(path.join(python, 'lib', 'broken.so'), Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0, 0, 0, 1]));
   assert.equal(await removeUnreferencedLibpython(python), false);
-  assert.equal(await readFile(path.join(python, 'lib', 'libpython3.11.dylib'), 'utf8'), 'library');
+  assert.equal(await readFile(path.join(python, 'lib', 'libpython3.14.dylib'), 'utf8'), 'library');
 });
