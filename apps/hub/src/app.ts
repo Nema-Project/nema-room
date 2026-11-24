@@ -1,5 +1,6 @@
 import { localIdentity, sessionIdentity, type IdentityProvider } from "./identity.js";
-import { authRoutes } from "./authRoutes.js";
+import { authRoutes, authSessionRoutes } from "./authRoutes.js";
+import type { LoginThrottle } from "./loginThrottle.js";
 import { Hono, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import type { DaemonRpc } from "./daemonRpc.js";
@@ -53,6 +54,8 @@ export type AppDeps = {
   remoteAuth?: boolean;
   /** One-time bootstrap token from main.ts; only read when remoteAuth is on and no account exists yet. */
   bootstrapToken?: string;
+  /** Login rate limiting for /api/auth/login; omitted creates one per app. Tests inject a fixed clock. */
+  loginThrottle?: LoginThrottle;
 };
 
 /**
@@ -109,7 +112,7 @@ export function createApp(deps: AppDeps): Hono {
     // Like /share: unauthenticated by design, but still behind hostGuard and CORS. Mounted before the
     // identity middleware so a request that matches here never needs a session.
     app.use("/api/auth/*", requireJson);
-    app.route("/api/auth", authRoutes({ db: deps.db, dataDir: deps.dataDir, bootstrapToken: deps.bootstrapToken }));
+    app.route("/api/auth", authRoutes({ db: deps.db, dataDir: deps.dataDir, bootstrapToken: deps.bootstrapToken, loginThrottle: deps.loginThrottle }));
   }
   app.use("/api/*", async (c, next) => {
     const resolved = await identity(c);
@@ -118,6 +121,8 @@ export function createApp(deps: AppDeps): Hono {
     await next();
   });
   app.use("/api/*", requireJson);
+  // Logout, invites and administrator actions need the session the middleware above resolved.
+  if (deps.remoteAuth) app.route("/api/auth", authSessionRoutes({ db: deps.db }));
   const attachments = deps.attachments ?? new AttachmentStore(deps.db, deps.dataDir);
   app.route("/api", attachmentRoutes({ store: attachments, daemon: deps.daemon, daemonStatus: deps.daemonStatus, db: deps.db, events: deps.events }));
   app.route("/api", mentionContextRoutes({ db: deps.db, attachments }));

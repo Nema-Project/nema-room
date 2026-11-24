@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { ARGON2ID_PARAMS, MAX_PASSWORD_BYTES, hashPassword, verifyPassword } from "../src/passwords.js";
 
 /** PHC string: $argon2id$v=19$m=<KiB>,t=<iterations>,p=<lanes>$<salt>$<hash> */
@@ -58,5 +58,29 @@ describe("passwords (#167, D-3 argon2id)", () => {
     for (const bad of ["", "pw", "$argon2i$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA", "$argon2id$garbage", "$2b$10$abcdefghijklmnopqrstuv"]) {
       expect(await verifyPassword("pw", bad), bad).toBe(false);
     }
+    // Well-formed PHC shape, but parameters or lengths argon2 would refuse: still a mismatch, not a throw.
+    const [, , , , salt, digest] = hash.split("$");
+    for (const params of ["m=1,t=2,p=1", "m=19456,t=0,p=1", "m=19456,t=2,p=0", "m=7,t=2,p=1", "m=99999999999,t=2,p=1"]) {
+      const bad = `$argon2id$v=19$${params}$${salt}$${digest}`;
+      await expect(verifyPassword("pw", bad), bad).resolves.toBe(false);
+    }
+    await expect(verifyPassword("pw", `$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$${digest}`), "short salt").resolves.toBe(false);
+    await expect(verifyPassword("pw", `$argon2id$v=19$m=19456,t=2,p=1$${salt}$aGk`), "short hash").resolves.toBe(false);
   });
+});
+
+test("an argon2 fault on well-formed input rejects instead of answering false, so it is not counted as a wrong password", async () => {
+  const hash = await hashPassword("pw");
+  vi.resetModules();
+  vi.doMock("hash-wasm", () => ({ argon2id: async () => { throw new Error("injected argon2 fault"); } }));
+  try {
+    const faulty = await import("../src/passwords.js");
+    await expect(faulty.verifyPassword("pw", hash)).rejects.toThrow(/injected argon2 fault/);
+    // Input that never reaches argon2 is still answered without touching it.
+    expect(await faulty.verifyPassword("", hash)).toBe(false);
+    expect(await faulty.verifyPassword("pw", "not a hash")).toBe(false);
+  } finally {
+    vi.doUnmock("hash-wasm");
+    vi.resetModules();
+  }
 });

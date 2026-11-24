@@ -162,10 +162,10 @@ test("021 tags migration upgrades old rows with nulls and can be applied twice",
   } finally { await client.close(); }
 });
 
-/** #167 phase two foundations: credentials/sessions, invites/auth events, daemon registry. */
-const REMOTE_MIGRATIONS = ["023_user_credentials_sessions.sql", "024_invites_auth_events.sql", "025_daemons.sql"];
+/** #167 phase two: credentials/sessions, invites/auth events, daemon registry, credential resets. */
+const REMOTE_MIGRATIONS = ["023_user_credentials_sessions.sql", "024_invites_auth_events.sql", "025_daemons.sql", "026_credential_resets.sql"];
 
-describe("023–025 remote-form tables (#167)", () => {
+describe("023–026 remote-form tables (#167)", () => {
   const H = (c: string) => c.repeat(64);
 
   test("a 022 database upgrades, keeps usr_local and its data, and gains the empty tables", async () => {
@@ -189,10 +189,10 @@ describe("023–025 remote-form tables (#167)", () => {
       expect(await db.query("select workspace_id,user_id,role from workspace_members order by workspace_id")).toEqual(before.members);
       expect(await db.query("select id,kind from member_events order by id")).toEqual(before.events);
       expect(await db.query("select id,author_user_id from messages")).toEqual([{ id: "m_keep", author_user_id: "usr_local" }]);
-      for (const table of ["user_credentials", "sessions", "invites", "auth_events", "daemons", "daemon_registration_codes", "daemon_events"]) {
+      for (const table of ["user_credentials", "sessions", "invites", "auth_events", "daemons", "daemon_registration_codes", "daemon_events", "credential_resets"]) {
         expect(await db.query(`select count(*)::int as n from ${table}`), table).toEqual([{ n: 0 }]);
       }
-      expect((await db.query<{ name: string }>("select name from schema_migrations order by name")).map((r) => r.name).slice(-3)).toEqual(REMOTE_MIGRATIONS);
+      expect((await db.query<{ name: string }>("select name from schema_migrations order by name")).map((r) => r.name).slice(-REMOTE_MIGRATIONS.length)).toEqual(REMOTE_MIGRATIONS);
       await migrate(db);
     } finally { await client.close(); }
   });
@@ -206,6 +206,7 @@ describe("023–025 remote-form tables (#167)", () => {
     expect(await columnNames(db, "daemons")).toEqual(["created_at", "credential_hash", "id", "label", "last_seen_at", "owner_user_id", "revoked_at"]);
     expect(await columnNames(db, "daemon_registration_codes")).toEqual(["code_hash", "created_at", "expires_at", "id", "owner_user_id", "used_at", "used_by_daemon_id"]);
     expect(await columnNames(db, "daemon_events")).toEqual(["actor_user_id", "created_at", "daemon_id", "detail", "id", "kind", "owner_user_id"]);
+    expect(await columnNames(db, "credential_resets")).toEqual(["code_hash", "created_at", "created_by", "expires_at", "id", "used_at", "user_id"]);
   });
 
   test("foreign keys, uniqueness and kind checks hold", async () => {
@@ -239,6 +240,10 @@ describe("023–025 remote-form tables (#167)", () => {
     await db.query("insert into daemon_events(id,daemon_id,owner_user_id,kind) values ('dev_unknown',null,'usr_local','rejected')");
     await expect(db.query("insert into daemon_events(id,owner_user_id,kind) values ('dev_bad','usr_local','connected')")).rejects.toThrow();
     await expect(db.query("insert into daemon_events(id,daemon_id,owner_user_id,kind) values ('dev_ghost','dmn_ghost','usr_local','revoked')")).rejects.toThrow();
+
+    await db.query("insert into credential_resets(id,user_id,code_hash,created_by,expires_at) values ('crs_1','usr_local',$1,'usr_local',now())", [H("4")]);
+    await expect(db.query("insert into credential_resets(id,user_id,code_hash,created_by,expires_at) values ('crs_2','usr_local',$1,'usr_local',now())", [H("4")])).rejects.toThrow();
+    await expect(db.query("insert into credential_resets(id,user_id,code_hash,created_by,expires_at) values ('crs_3','usr_ghost',$1,'usr_local',now())", [H("5")])).rejects.toThrow();
 
     // member_events keeps its own four kinds: the new audit kinds are not smuggled into it (#163 semantics).
     await expect(db.query("insert into member_events(id,user_id,kind) values ('mev_bad','usr_local','account_created')")).rejects.toThrow();

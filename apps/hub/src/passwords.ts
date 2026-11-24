@@ -43,27 +43,40 @@ export async function hashPassword(password: string, params: Params = ARGON2ID_P
 
 const PHC = /^\$argon2id\$v=19\$m=(\d+),t=(\d+),p=(\d+)\$([A-Za-z0-9+/]+)\$([A-Za-z0-9+/]+)$/;
 
+/** wasm32 memory tops out at 4 GiB, so a larger `m` can never be computed: it is a malformed hash. */
+const MAX_MEMORY_KIB = 4 * 1024 * 1024;
+
+/**
+ * True when the password matches, false when it does not or when the input cannot be checked (empty or
+ * oversized password, a stored hash that is not a well-formed argon2id PHC string, or parameters argon2
+ * would refuse). Those are all answered like a wrong password. A fault inside argon2 on well-formed input
+ * (the wasm module failing to load or allocate) is not an answer, so it rejects instead: the caller must
+ * not count it as a failed login.
+ */
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  try {
-    const bytes = passwordBytes(password);
-    if (bytes.length === 0 || bytes.length > MAX_PASSWORD_BYTES) return false;
-    const match = PHC.exec(stored);
-    if (!match) return false;
-    const [, m, t, p, saltB64, hashB64] = match;
-    const salt = Buffer.from(saltB64, "base64");
-    const expected = Buffer.from(hashB64, "base64");
-    if (salt.length === 0 || expected.length === 0) return false;
-    const actual = await argon2id({
-      password: bytes,
-      salt,
-      parallelism: Number(p),
-      iterations: Number(t),
-      memorySize: Number(m),
-      hashLength: expected.length,
-      outputType: "binary",
-    });
-    return timingSafeEqual(Buffer.from(actual), expected);
-  } catch {
-    return false;
-  }
+  const bytes = passwordBytes(password);
+  if (bytes.length === 0 || bytes.length > MAX_PASSWORD_BYTES) return false;
+  const match = PHC.exec(stored);
+  if (!match) return false;
+  const [, m, t, p, saltB64, hashB64] = match;
+  const memoryKiB = Number(m);
+  const iterations = Number(t);
+  const parallelism = Number(p);
+  const salt = Buffer.from(saltB64!, "base64");
+  const expected = Buffer.from(hashB64!, "base64");
+  // hash-wasm's own preconditions, checked here so a malformed hash is a mismatch rather than a throw.
+  if (salt.length < 8 || expected.length < 4) return false;
+  if (!Number.isSafeInteger(iterations) || iterations < 1) return false;
+  if (!Number.isSafeInteger(parallelism) || parallelism < 1) return false;
+  if (!Number.isSafeInteger(memoryKiB) || memoryKiB < 8 * parallelism || memoryKiB > MAX_MEMORY_KIB) return false;
+  const actual = await argon2id({
+    password: bytes,
+    salt,
+    parallelism,
+    iterations,
+    memorySize: memoryKiB,
+    hashLength: expected.length,
+    outputType: "binary",
+  });
+  return timingSafeEqual(Buffer.from(actual), expected);
 }

@@ -44,8 +44,8 @@ export const TABLE_COLUMNS = {
   message_versions: ["message_id", "version", "content", "created_at"],
   message_attachments: ["id", "workspace_id", "message_id", "kind", "mime", "name", "size", "sha256", "upload_key", "status", "created_at", "attached_at", "deleted_at"],
   // Remote form (#167). Long-lived account and daemon records travel like `users` does, carrying only hashes.
-  // sessions, invites and daemon_registration_codes are short-lived secrets and are deliberately absent: after an
-  // import people sign in again, are re-invited, and daemons are re-registered.
+  // sessions, invites, credential_resets and daemon_registration_codes are short-lived secrets and are deliberately
+  // absent: after an import people sign in again, are re-invited or re-reset, and daemons are re-registered.
   user_credentials: ["user_id", "password_hash", "created_at", "updated_at"],
   auth_events: ["id", "user_id", "kind", "actor_user_id", "detail", "created_at"],
   daemons: ["id", "owner_user_id", "label", "credential_hash", "created_at", "last_seen_at", "revoked_at"],
@@ -54,8 +54,8 @@ export const TABLE_COLUMNS = {
 
 /** Snapshots taken before this table existed still import. */
 const OPTIONAL_TABLES = new Set<keyof typeof TABLE_COLUMNS>(["message_versions", "threads", "question_threads", "evidence_events", "source_import_receipts", "source_freshness", "message_attachments", "users", "workspace_members", "member_events", "user_credentials", "auth_events", "daemons", "daemon_events"]);
-// Tables that exist in the database but never enter a snapshot (#167): sessions, invites and
-// daemon_registration_codes — short-lived credentials, re-issued after an import instead.
+// Tables that exist in the database but never enter a snapshot (#167): sessions, invites, credential_resets
+// and daemon_registration_codes — short-lived credentials, re-issued after an import instead.
 const AUTH_EVENT_KINDS = ["account_created", "invite_created", "invite_used", "login_locked", "sessions_revoked", "bootstrap_completed"];
 const DAEMON_EVENT_KINDS = ["registered", "revoked", "rejected"];
 /** Tables the import re-seeds after loading rows (#163): their counts may exceed the snapshot's. */

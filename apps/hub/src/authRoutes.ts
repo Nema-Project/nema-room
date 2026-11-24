@@ -1,46 +1,155 @@
-// #167 remote form: unauthenticated account endpoints, mounted at /api/auth ahead of the /api/* identity
-// middleware (after hostGuard and CORS), only when the hub runs with remoteAuth. Login lands in task 5.
-import { Hono } from "hono";
-import { setCookie } from "hono/cookie";
+// #167 remote form account endpoints, only mounted when the hub runs with remoteAuth.
+// - authRoutes: unauthenticated (bootstrap, login, invite acceptance, reset redemption). Mounted at /api/auth
+//   ahead of the /api/* identity middleware, after hostGuard and CORS, like /share.
+// - authSessionRoutes: need a session (logout, invites, administrator actions). Mounted at /api/auth after
+//   the identity middleware, so a request without a valid session gets the usual 401.
+import { Hono, type Context } from "hono";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
 import {
+  AuthError,
   BootstrapClosedError,
   SESSION_COOKIE,
   SESSION_TTL_MS,
+  acceptCredentialReset,
+  acceptInvite,
   bootstrapTokenMatches,
   completeBootstrap,
+  createCredentialReset,
+  createInvite,
   isBootstrapped,
+  issueSessionIfCredentialUnchanged,
+  listInvites,
+  passwordHashFor,
+  recordLoginLocked,
   removeBootstrapToken,
+  revokeSession,
+  revokeUserSessions,
 } from "./auth.js";
 import type { Db } from "./db/db.js";
-import { MAX_PASSWORD_BYTES, hashPassword } from "./passwords.js";
+import { LoginThrottle } from "./loginThrottle.js";
+import { MAX_PASSWORD_BYTES, hashPassword, verifyPassword } from "./passwords.js";
 
 export type AuthRouteDeps = {
   db: Db;
   dataDir: string;
   /** The one-time token main.ts wrote to `<dataDir>/bootstrap-token`; absent once bootstrapped. */
   bootstrapToken?: string;
+  /** Login rate limiting; tests inject one with a fake clock. */
+  loginThrottle?: LoginThrottle;
+  /** Produces the decoy hash for unknown accounts; tests inject a failing one. */
+  hashDecoy?: () => Promise<string>;
+  /** Checks a password against a stored hash; tests inject a throwing one to simulate a verifier fault. */
+  verifyPassword?: (password: string, stored: string) => Promise<boolean>;
 };
 
-const BootstrapBody = z.object({
-  token: z.string().min(1).max(256),
-  displayName: z.string().trim().min(1).max(64),
-  password: z.string().refine((p) => {
-    const bytes = Buffer.byteLength(p, "utf8");
-    return bytes > 0 && bytes <= MAX_PASSWORD_BYTES;
-  }, `password must be 1-${MAX_PASSWORD_BYTES} bytes`),
-}).strict();
+const Password = z.string().refine((p) => {
+  const bytes = Buffer.byteLength(p, "utf8");
+  return bytes > 0 && bytes <= MAX_PASSWORD_BYTES;
+}, `password must be 1-${MAX_PASSWORD_BYTES} bytes`);
+const DisplayName = z.string().trim().min(1).max(64);
+const Code = z.string().min(1).max(256);
+
+const BootstrapBody = z.object({ token: Code, displayName: DisplayName, password: Password }).strict();
+/** `account` is the login identifier; today it is the userId returned when the account was created. */
+const LoginBody = z.object({ account: z.string().min(1).max(64), password: Password }).strict();
+const AcceptInviteBody = z.object({ code: Code, displayName: DisplayName, password: Password }).strict();
+const AcceptResetBody = z.object({ code: Code, password: Password }).strict();
+const CreateInviteBody = z.object({ workspaceId: z.string().min(1).max(64).nullable().optional() }).strict();
+
+/** One message for an unknown account and a wrong password, so login does not reveal which accounts exist. */
+export const INVALID_CREDENTIALS = "invalid credentials";
+/** A locked account or source (429). Locks apply to unknown accounts too, so this reveals no account either. */
+export const LOGIN_LOCKED = "too many failed attempts; try again later";
+
+/**
+ * Cookie attributes for every session the hub signs (bootstrap, invite, login) and for clearing it.
+ * `secure` is a parameter so the deployment form decides it; these routes only exist in the remote form,
+ * which always requires https or an encrypted overlay (spec D-8), so every caller passes true. Browsers
+ * still accept Secure cookies from http://localhost. Task 13 re-checks this when the Host allowlist opens.
+ */
+export function sessionCookieOptions(secure: boolean) {
+  return { httpOnly: true, secure, sameSite: "Lax" as const, path: "/" };
+}
+
+function setSessionCookie(c: Context, token: string): void {
+  setCookie(c, SESSION_COOKIE, token, { ...sessionCookieOptions(true), maxAge: Math.floor(SESSION_TTL_MS / 1000) });
+}
+
+async function readBody<T>(c: Context, schema: z.ZodType<T>): Promise<T | null> {
+  const parsed = schema.safeParse(await c.req.json().catch(() => undefined));
+  return parsed.success ? parsed.data : null;
+}
+
+function authFailure(c: Context, error: unknown) {
+  if (error instanceof AuthError) return c.json({ error: error.message }, error.status);
+  throw error;
+}
+
+const hashDecoy = () => hashPassword("decoy password for accounts without credentials");
+
+/**
+ * A hash to verify against when the account has no credential row, so both paths cost one argon2id run.
+ * Concurrent first logins share one pending hash; a failed hash is not cached, so the next login retries.
+ */
+function decoyCache(make: () => Promise<string>): () => Promise<string> {
+  let cached: Promise<string> | undefined;
+  return () => {
+    if (!cached) {
+      const pending = make();
+      cached = pending;
+      pending.catch(() => {
+        if (cached === pending) cached = undefined;
+      });
+    }
+    return cached;
+  };
+}
+
+/**
+ * Writes a login_locked audit event. A failed write is logged and swallowed: the lock is already in force
+ * and the response must not depend on the audit. The log line is fixed text plus the scope and, when the
+ * error carries one, its SQLSTATE-style code. The error message is never logged, because a driver message
+ * can quote the parameters (the account string) it failed on.
+ */
+async function auditLock(db: Db, userId: string | null, detail: { scope: "account" | "source"; source?: string }): Promise<void> {
+  try {
+    await recordLoginLocked(db, userId, detail);
+  } catch (error) {
+    console.error(`failed to record login_locked (${detail.scope}${errorCode(error)})`);
+  }
+}
+
+/** `, code XXXXX` when the error carries a five-character code (a Postgres SQLSTATE), else nothing. */
+function errorCode(error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && /^[A-Z0-9]{5}$/.test(code) ? `, code ${code}` : "";
+}
+
+/**
+ * The peer address of the TCP connection. Forwarding headers are not trusted: the hub does not know
+ * whether a proxy sits in front of it. Behind a reverse proxy every login shares the proxy's address,
+ * so the source limit then applies to all logins together (the account limit is unaffected).
+ */
+function sourceAddress(c: Context): string {
+  const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
+  return env?.incoming?.socket?.remoteAddress ?? "unknown";
+}
 
 export function authRoutes(deps: AuthRouteDeps): Hono {
   const app = new Hono();
   let bootstrapToken = deps.bootstrapToken;
+  // One process, one throttle (spec topology for phase one).
+  const throttle = deps.loginThrottle ?? new LoginThrottle();
+  const decoy = decoyCache(deps.hashDecoy ?? hashDecoy);
+  const verify = deps.verifyPassword ?? verifyPassword;
 
   app.post("/bootstrap", async (c) => {
     // Closed for good once any credential row exists, whatever token or body is presented.
     if (await isBootstrapped(deps.db)) return c.json({ error: "bootstrap closed" }, 410);
-    const parsed = BootstrapBody.safeParse(await c.req.json().catch(() => undefined));
-    if (!parsed.success) return c.json({ error: "invalid bootstrap request" }, 400);
-    const { token, displayName, password } = parsed.data;
+    const parsed = await readBody(c, BootstrapBody);
+    if (!parsed) return c.json({ error: "invalid bootstrap request" }, 400);
+    const { token, displayName, password } = parsed;
     if (!bootstrapTokenMatches(bootstrapToken, token)) return c.json({ error: "invalid bootstrap token" }, 403);
 
     const passwordHash = await hashPassword(password);
@@ -56,16 +165,114 @@ export function authRoutes(deps: AuthRouteDeps): Hono {
     await removeBootstrapToken(deps.dataDir);
 
     const { userId, session } = completed;
-    setCookie(c, SESSION_COOKIE, session.token, {
-      httpOnly: true,
-      // The remote form always requires https or an encrypted overlay (spec D-8); browsers still accept
-      // Secure cookies from http://localhost.
-      secure: true,
-      sameSite: "Lax",
-      path: "/",
-      maxAge: Math.floor(SESSION_TTL_MS / 1000),
-    });
+    setSessionCookie(c, session.token);
     return c.json({ userId, displayName }, 201);
+  });
+
+  app.post("/login", async (c) => {
+    const parsed = await readBody(c, LoginBody);
+    if (!parsed) return c.json({ error: "invalid login request" }, 400);
+    const { account, password } = parsed;
+    const source = sourceAddress(c);
+    return throttle.serialize(account, async () => {
+      // A locked account or source is refused before the password is checked, even a correct one. Passing
+      // the gate reserves one of the source's remaining failures until this attempt settles.
+      const gate = throttle.begin(account, source);
+      if ("lock" in gate) {
+        c.header("Retry-After", String(Math.ceil(gate.lock.retryAfterMs / 1000)));
+        return c.json({ error: LOGIN_LOCKED }, 429);
+      }
+      const { attempt } = gate;
+      try {
+        const stored = await passwordHashFor(deps.db, account);
+        // A verifier fault (argon2 itself throwing) propagates as a 500 and counts no failure; only a
+        // completed check that does not match is a wrong password.
+        const ok = await verify(password, stored ?? (await decoy()));
+        // A reset redeemed after the hash was read refuses the login, like a wrong password.
+        const session = stored && ok ? await issueSessionIfCredentialUnchanged(deps.db, account, stored) : null;
+        if (!session) {
+          for (const scope of attempt.fail()) {
+            // Only a real account is named; a guessed one is not stored. The source is an address, not a secret.
+            await auditLock(deps.db, scope === "account" && stored ? account : null,
+              scope === "account" ? { scope } : { scope, source });
+          }
+          return c.json({ error: INVALID_CREDENTIALS }, 401);
+        }
+        attempt.succeed();
+        setSessionCookie(c, session.token);
+        return c.json({ userId: account });
+      } finally {
+        // An attempt that threw (database, decoy hashing, verifier fault) releases its reservation without
+        // counting a failure.
+        attempt.release();
+      }
+    });
+  });
+
+  app.post("/invites/accept", async (c) => {
+    const parsed = await readBody(c, AcceptInviteBody);
+    if (!parsed) return c.json({ error: "invalid invite request" }, 400);
+    // Hash first: an unknown code costs the same argon2id run as a valid one.
+    const passwordHash = await hashPassword(parsed.password);
+    try {
+      const { userId, session, intendedWorkspaceId } = await acceptInvite(deps.db, parsed.code, parsed.displayName, passwordHash);
+      setSessionCookie(c, session.token);
+      return c.json({ userId, displayName: parsed.displayName, intendedWorkspaceId }, 201);
+    } catch (error) {
+      return authFailure(c, error);
+    }
+  });
+
+  app.post("/credential-reset/accept", async (c) => {
+    const parsed = await readBody(c, AcceptResetBody);
+    if (!parsed) return c.json({ error: "invalid reset request" }, 400);
+    const passwordHash = await hashPassword(parsed.password);
+    try {
+      return c.json(await acceptCredentialReset(deps.db, parsed.code, passwordHash));
+    } catch (error) {
+      return authFailure(c, error);
+    }
+  });
+
+  return app;
+}
+
+export function authSessionRoutes(deps: { db: Db }): Hono {
+  const app = new Hono();
+
+  app.post("/logout", async (c) => {
+    // The identity middleware already proved the cookie names a live session.
+    await revokeSession(deps.db, getCookie(c, SESSION_COOKIE) ?? "");
+    deleteCookie(c, SESSION_COOKIE, sessionCookieOptions(true));
+    return c.json({ ok: true });
+  });
+
+  app.post("/invites", async (c) => {
+    const parsed = await readBody(c, CreateInviteBody);
+    if (!parsed) return c.json({ error: "invalid invite request" }, 400);
+    try {
+      return c.json(await createInvite(deps.db, c.get("identity").userId, { workspaceId: parsed.workspaceId ?? null }), 201);
+    } catch (error) {
+      return authFailure(c, error);
+    }
+  });
+
+  app.get("/invites", async (c) => c.json({ invites: await listInvites(deps.db, c.get("identity").userId) }));
+
+  app.post("/users/:userId/revoke-sessions", async (c) => {
+    try {
+      return c.json({ revoked: await revokeUserSessions(deps.db, c.get("identity").userId, c.req.param("userId")) });
+    } catch (error) {
+      return authFailure(c, error);
+    }
+  });
+
+  app.post("/users/:userId/credential-reset", async (c) => {
+    try {
+      return c.json(await createCredentialReset(deps.db, c.get("identity").userId, c.req.param("userId")), 201);
+    } catch (error) {
+      return authFailure(c, error);
+    }
   });
 
   return app;
