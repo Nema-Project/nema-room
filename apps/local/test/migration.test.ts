@@ -119,7 +119,7 @@ describe("identity tables (#163)", () => {
   it("names the tables an older validator does not know (the documented rollback limit)", () => {
     // Spec §快照与恢复: a new snapshot does not import into an older version, same as message_attachments did.
     const before = [...Object.keys(empty.tableData), "message_versions", "threads", "question_threads", "evidence_events", "source_import_receipts", "source_freshness", "message_attachments"];
-    expect(Object.keys(validateSnapshot(good()).tableData).filter((t) => !before.includes(t)).sort()).toEqual(["member_events", "users", "workspace_members"]);
+    expect(Object.keys(validateSnapshot(good()).tableData).filter((t) => !before.includes(t)).sort()).toEqual(["auth_events", "daemon_events", "daemons", "member_events", "user_credentials", "users", "workspace_members"]);
   });
 });
 

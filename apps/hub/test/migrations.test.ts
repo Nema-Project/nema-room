@@ -162,6 +162,89 @@ test("021 tags migration upgrades old rows with nulls and can be applied twice",
   } finally { await client.close(); }
 });
 
+/** #167 phase two foundations: credentials/sessions, invites/auth events, daemon registry. */
+const REMOTE_MIGRATIONS = ["023_user_credentials_sessions.sql", "024_invites_auth_events.sql", "025_daemons.sql"];
+
+describe("023–025 remote-form tables (#167)", () => {
+  const H = (c: string) => c.repeat(64);
+
+  test("a 022 database upgrades, keeps usr_local and its data, and gains the empty tables", async () => {
+    const earlier = await scratch("nema-before-remote-");
+    for (const name of (await readdir(MIGRATIONS)).filter((n) => n.endsWith(".sql") && !REMOTE_MIGRATIONS.includes(n)).sort()) {
+      await copyFile(path.join(MIGRATIONS, name), path.join(earlier, name));
+    }
+    const client = new PGlite();
+    const db = wrap(client);
+    try {
+      await migrate(db, earlier);
+      await db.query("insert into workspaces(id,name) values ('ws_keep','Keep')");
+      await db.query("insert into messages(id,workspace_id,role,content,author_user_id) values ('m_keep','ws_keep','user','hi','usr_local')");
+      const before = {
+        users: await db.query("select * from users order by id"),
+        members: await db.query("select workspace_id,user_id,role from workspace_members order by workspace_id"),
+        events: await db.query("select id,kind from member_events order by id"),
+      };
+      await migrate(db);
+      expect(await db.query("select * from users order by id")).toEqual(before.users);
+      expect(await db.query("select workspace_id,user_id,role from workspace_members order by workspace_id")).toEqual(before.members);
+      expect(await db.query("select id,kind from member_events order by id")).toEqual(before.events);
+      expect(await db.query("select id,author_user_id from messages")).toEqual([{ id: "m_keep", author_user_id: "usr_local" }]);
+      for (const table of ["user_credentials", "sessions", "invites", "auth_events", "daemons", "daemon_registration_codes", "daemon_events"]) {
+        expect(await db.query(`select count(*)::int as n from ${table}`), table).toEqual([{ n: 0 }]);
+      }
+      expect((await db.query<{ name: string }>("select name from schema_migrations order by name")).map((r) => r.name).slice(-3)).toEqual(REMOTE_MIGRATIONS);
+      await migrate(db);
+    } finally { await client.close(); }
+  });
+
+  test("columns match the plan and only hashes are stored", async () => {
+    const db = await createTestDb();
+    expect(await columnNames(db, "user_credentials")).toEqual(["created_at", "password_hash", "updated_at", "user_id"]);
+    expect(await columnNames(db, "sessions")).toEqual(["created_at", "expires_at", "id", "revoked_at", "token_hash", "user_id"]);
+    expect(await columnNames(db, "invites")).toEqual(["code_hash", "created_at", "created_by", "expires_at", "id", "intended_workspace_id", "used_at", "used_by_user_id"]);
+    expect(await columnNames(db, "auth_events")).toEqual(["actor_user_id", "created_at", "detail", "id", "kind", "user_id"]);
+    expect(await columnNames(db, "daemons")).toEqual(["created_at", "credential_hash", "id", "label", "last_seen_at", "owner_user_id", "revoked_at"]);
+    expect(await columnNames(db, "daemon_registration_codes")).toEqual(["code_hash", "created_at", "expires_at", "id", "owner_user_id", "used_at", "used_by_daemon_id"]);
+    expect(await columnNames(db, "daemon_events")).toEqual(["actor_user_id", "created_at", "daemon_id", "detail", "id", "kind", "owner_user_id"]);
+  });
+
+  test("foreign keys, uniqueness and kind checks hold", async () => {
+    const db = await createTestDb();
+    await db.query("insert into workspaces(id,name) values ('ws_r','R')");
+    await expect(db.query("insert into user_credentials(user_id,password_hash) values ('usr_ghost','$argon2id$x')")).rejects.toThrow();
+    await db.query("insert into user_credentials(user_id,password_hash) values ('usr_local','$argon2id$x')");
+    await db.query("insert into sessions(id,user_id,token_hash,expires_at) values ('s1','usr_local',$1,now())", [H("a")]);
+    await expect(db.query("insert into sessions(id,user_id,token_hash,expires_at) values ('s2','usr_local',$1,now())", [H("a")])).rejects.toThrow();
+    await expect(db.query("insert into sessions(id,user_id,token_hash,expires_at) values ('s3','usr_ghost',$1,now())", [H("b")])).rejects.toThrow();
+
+    await db.query("insert into invites(id,code_hash,created_by,intended_workspace_id,expires_at) values ('i1',$1,'usr_local','ws_r',now())", [H("c")]);
+    await db.query("insert into invites(id,code_hash,created_by,expires_at) values ('i2',$1,'usr_local',now())", [H("d")]);
+    await expect(db.query("insert into invites(id,code_hash,created_by,expires_at) values ('i3',$1,'usr_local',now())", [H("c")])).rejects.toThrow();
+    await expect(db.query("insert into invites(id,code_hash,created_by,intended_workspace_id,expires_at) values ('i4',$1,'usr_local','ws_ghost',now())", [H("e")])).rejects.toThrow();
+
+    for (const kind of ["account_created", "invite_created", "invite_used", "login_locked", "sessions_revoked", "bootstrap_completed"]) {
+      await db.query("insert into auth_events(id,user_id,kind) values ($1,null,$2)", [`aev_${kind}`, kind]);
+    }
+    await expect(db.query("insert into auth_events(id,kind) values ('aev_bad','added')")).rejects.toThrow();
+
+    await db.query("insert into daemons(id,owner_user_id,label,credential_hash) values ('dmn_1','usr_local','laptop',$1)", [H("f")]);
+    await expect(db.query("insert into daemons(id,owner_user_id,label,credential_hash) values ('dmn_2','usr_local','dup',$1)", [H("f")])).rejects.toThrow();
+    await expect(db.query("insert into daemons(id,owner_user_id,label,credential_hash) values ('dmn_3','usr_ghost','x',$1)", [H("1")])).rejects.toThrow();
+    await db.query("insert into daemon_registration_codes(id,code_hash,owner_user_id,expires_at,used_at,used_by_daemon_id) values ('drc_1',$1,'usr_local',now(),now(),'dmn_1')", [H("2")]);
+    await expect(db.query("insert into daemon_registration_codes(id,code_hash,owner_user_id,expires_at) values ('drc_2',$1,'usr_local',now())", [H("2")])).rejects.toThrow();
+    await expect(db.query("insert into daemon_registration_codes(id,code_hash,owner_user_id,expires_at,used_at,used_by_daemon_id) values ('drc_3',$1,'usr_local',now(),now(),'dmn_ghost')", [H("3")])).rejects.toThrow();
+    for (const kind of ["registered", "revoked", "rejected"]) {
+      await db.query("insert into daemon_events(id,daemon_id,owner_user_id,kind) values ($1,'dmn_1','usr_local',$2)", [`dev_${kind}`, kind]);
+    }
+    await db.query("insert into daemon_events(id,daemon_id,owner_user_id,kind) values ('dev_unknown',null,'usr_local','rejected')");
+    await expect(db.query("insert into daemon_events(id,owner_user_id,kind) values ('dev_bad','usr_local','connected')")).rejects.toThrow();
+    await expect(db.query("insert into daemon_events(id,daemon_id,owner_user_id,kind) values ('dev_ghost','dmn_ghost','usr_local','revoked')")).rejects.toThrow();
+
+    // member_events keeps its own four kinds: the new audit kinds are not smuggled into it (#163 semantics).
+    await expect(db.query("insert into member_events(id,user_id,kind) values ('mev_bad','usr_local','account_created')")).rejects.toThrow();
+  });
+});
+
 test("022 identity upgrades without guessing historical authors and seeds idempotently", async () => {
   const earlier = await scratch("nema-before-identity-");
   for (const name of (await readdir(MIGRATIONS)).filter(n => n.endsWith(".sql") && n < "022").sort()) {

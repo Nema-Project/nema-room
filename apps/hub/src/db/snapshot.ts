@@ -43,10 +43,21 @@ export const TABLE_COLUMNS = {
   main_moves: ["id", "repo_id", "from_sha", "to_sha", "at", "handled"],
   message_versions: ["message_id", "version", "content", "created_at"],
   message_attachments: ["id", "workspace_id", "message_id", "kind", "mime", "name", "size", "sha256", "upload_key", "status", "created_at", "attached_at", "deleted_at"],
+  // Remote form (#167). Long-lived account and daemon records travel like `users` does, carrying only hashes.
+  // sessions, invites and daemon_registration_codes are short-lived secrets and are deliberately absent: after an
+  // import people sign in again, are re-invited, and daemons are re-registered.
+  user_credentials: ["user_id", "password_hash", "created_at", "updated_at"],
+  auth_events: ["id", "user_id", "kind", "actor_user_id", "detail", "created_at"],
+  daemons: ["id", "owner_user_id", "label", "credential_hash", "created_at", "last_seen_at", "revoked_at"],
+  daemon_events: ["id", "daemon_id", "owner_user_id", "kind", "actor_user_id", "detail", "created_at"],
 } as const;
 
 /** Snapshots taken before this table existed still import. */
-const OPTIONAL_TABLES = new Set<keyof typeof TABLE_COLUMNS>(["message_versions", "threads", "question_threads", "evidence_events", "source_import_receipts", "source_freshness", "message_attachments", "users", "workspace_members", "member_events"]);
+const OPTIONAL_TABLES = new Set<keyof typeof TABLE_COLUMNS>(["message_versions", "threads", "question_threads", "evidence_events", "source_import_receipts", "source_freshness", "message_attachments", "users", "workspace_members", "member_events", "user_credentials", "auth_events", "daemons", "daemon_events"]);
+// Tables that exist in the database but never enter a snapshot (#167): sessions, invites and
+// daemon_registration_codes — short-lived credentials, re-issued after an import instead.
+const AUTH_EVENT_KINDS = ["account_created", "invite_created", "invite_used", "login_locked", "sessions_revoked", "bootstrap_completed"];
+const DAEMON_EVENT_KINDS = ["registered", "revoked", "rejected"];
 /** Tables the import re-seeds after loading rows (#163): their counts may exceed the snapshot's. */
 export const IDENTITY_TABLES = ["users", "workspace_members", "member_events"] as const;
 const userIdPattern = /^usr_[A-Za-z0-9_-]{1,32}$/;
@@ -159,6 +170,35 @@ export function validateSnapshot(value: unknown): Snapshot {
     if (typeof row.user_id !== "string" || !userIds.has(row.user_id) || !optionalUser(row.actor_user_id)) throw new Error("Snapshot contains a missing user reference (member_events)");
     if (typeof row.id !== "string" || !row.id || memberEventIds.has(row.id) || !["added", "removed", "role_changed", "renamed"].includes(String(row.kind))) throw new Error("Invalid member event row");
     memberEventIds.add(row.id);
+  }
+  // Remote form (#167): same rules as the 023–025 foreign keys and checks; secrets only as hashes.
+  const credentialUsers = new Set<string>();
+  for (const row of tableData.user_credentials!) {
+    if (typeof row.user_id !== "string" || !userIds.has(row.user_id) || credentialUsers.has(row.user_id)) throw new Error("Snapshot contains a missing user reference (user_credentials)");
+    if (typeof row.password_hash !== "string" || !row.password_hash.startsWith("$argon2id$")) throw new Error("Invalid user credential row");
+    credentialUsers.add(row.user_id);
+  }
+  const authEventIds = new Set<string>();
+  for (const row of tableData.auth_events!) {
+    if (!optionalUser(row.user_id) || !optionalUser(row.actor_user_id)) throw new Error("Snapshot contains a missing user reference (auth_events)");
+    if (typeof row.id !== "string" || !row.id || authEventIds.has(row.id) || !AUTH_EVENT_KINDS.includes(String(row.kind))) throw new Error("Invalid auth event row");
+    authEventIds.add(row.id);
+  }
+  const daemonIds = new Set<string>();
+  const credentialHashes = new Set<string>();
+  for (const row of tableData.daemons!) {
+    if (typeof row.owner_user_id !== "string" || !userIds.has(row.owner_user_id)) throw new Error("Snapshot contains a missing user reference (daemons)");
+    if (typeof row.id !== "string" || !row.id || daemonIds.has(row.id) || typeof row.label !== "string" || !validHash(row.credential_hash) ||
+        credentialHashes.has(String(row.credential_hash))) throw new Error("Invalid daemon row");
+    daemonIds.add(row.id);
+    credentialHashes.add(String(row.credential_hash));
+  }
+  const daemonEventIds = new Set<string>();
+  for (const row of tableData.daemon_events!) {
+    if (!optionalUser(row.owner_user_id) || !optionalUser(row.actor_user_id)) throw new Error("Snapshot contains a missing user reference (daemon_events)");
+    if (row.daemon_id != null && (typeof row.daemon_id !== "string" || !daemonIds.has(row.daemon_id))) throw new Error("Snapshot contains a missing daemon reference");
+    if (typeof row.id !== "string" || !row.id || daemonEventIds.has(row.id) || !DAEMON_EVENT_KINDS.includes(String(row.kind))) throw new Error("Invalid daemon event row");
+    daemonEventIds.add(row.id);
   }
   for (const row of tableData.messages!) {
     if (row.author_user_id == null) continue;
