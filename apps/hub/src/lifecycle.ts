@@ -38,6 +38,10 @@ export type StartHubOptions = {
   attachmentsMaxBytes?: number;
   /** `false` only when NEMA_SHARES_ENABLED is exactly "0". Omitted stays on. */
   sharesEnabled?: boolean;
+  /** #167 remote form, set only by the standalone hub (NEMA_HUB_REMOTE=1). The desktop never passes it. */
+  remoteAuth?: boolean;
+  /** One-time bootstrap token written by main.ts while no account exists. */
+  bootstrapToken?: string;
 };
 
 /** Expired uploads and leftover files are cleaned every hour after the startup pass. */
@@ -105,6 +109,8 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
       ownedHelpers: opts.ownedHelpers,
       releaseVersion: opts.releaseVersion,
       sharesEnabled: opts.sharesEnabled,
+      remoteAuth: opts.remoteAuth,
+      bootstrapToken: opts.bootstrapToken,
       attachments,
       ...(opts.ownedHelpers ? { archify: {
         validateDiagram: (type, spec) => validateDiagram(type, spec, opts.ownedHelpers),
