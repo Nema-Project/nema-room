@@ -6,16 +6,56 @@
   "type": "module",
   "main": "./dist/src/main.js",
   "exports": {
-    "./db/local": { "development": "./src/db/pglite.ts", "types": "./dist/src/db/pglite.d.ts", "import": "./dist/src/db/pglite.js" },
-    "./db/snapshot": { "development": "./src/db/snapshot.ts", "types": "./dist/src/db/snapshot.d.ts", "import": "./dist/src/db/snapshot.js" },
-    "./db/export": { "development": "./src/db/export.ts", "types": "./dist/src/db/export.d.ts", "import": "./dist/src/db/export.js" },
-    "./identity": { "development": "./src/identity.ts", "types": "./dist/src/identity.d.ts", "import": "./dist/src/identity.js" },
-    "./events": { "development": "./src/events.ts", "types": "./dist/src/events.d.ts", "import": "./dist/src/events.js" },
-    "./interrupts": { "development": "./src/interrupts.ts", "types": "./dist/src/interrupts.d.ts", "import": "./dist/src/interrupts.js" },
-    "./lifecycle": { "development": "./src/lifecycle.ts", "types": "./dist/src/lifecycle.d.ts", "import": "./dist/src/lifecycle.js" },
-    "./messages": { "development": "./src/messages.ts", "types": "./dist/src/messages.d.ts", "import": "./dist/src/messages.js" },
-    "./tasks": { "development": "./src/tasks.ts", "types": "./dist/src/tasks.d.ts", "import": "./dist/src/tasks.js" },
-    "./workspaces": { "development": "./src/workspaces.ts", "types": "./dist/src/workspaces.d.ts", "import": "./dist/src/workspaces.js" }
+    "./db/local": {
+      "development": "./src/db/pglite.ts",
+      "types": "./dist/src/db/pglite.d.ts",
+      "import": "./dist/src/db/pglite.js"
+    },
+    "./db/snapshot": {
+      "development": "./src/db/snapshot.ts",
+      "types": "./dist/src/db/snapshot.d.ts",
+      "import": "./dist/src/db/snapshot.js"
+    },
+    "./db/export": {
+      "development": "./src/db/export.ts",
+      "types": "./dist/src/db/export.d.ts",
+      "import": "./dist/src/db/export.js"
+    },
+    "./identity": {
+      "development": "./src/identity.ts",
+      "types": "./dist/src/identity.d.ts",
+      "import": "./dist/src/identity.js"
+    },
+    "./events": {
+      "development": "./src/events.ts",
+      "types": "./dist/src/events.d.ts",
+      "import": "./dist/src/events.js"
+    },
+    "./interrupts": {
+      "development": "./src/interrupts.ts",
+      "types": "./dist/src/interrupts.d.ts",
+      "import": "./dist/src/interrupts.js"
+    },
+    "./lifecycle": {
+      "development": "./src/lifecycle.ts",
+      "types": "./dist/src/lifecycle.d.ts",
+      "import": "./dist/src/lifecycle.js"
+    },
+    "./messages": {
+      "development": "./src/messages.ts",
+      "types": "./dist/src/messages.d.ts",
+      "import": "./dist/src/messages.js"
+    },
+    "./tasks": {
+      "development": "./src/tasks.ts",
+      "types": "./dist/src/tasks.d.ts",
+      "import": "./dist/src/tasks.js"
+    },
+    "./workspaces": {
+      "development": "./src/workspaces.ts",
+      "types": "./dist/src/workspaces.d.ts",
+      "import": "./dist/src/workspaces.js"
+    }
   },
   "scripts": {
     "dev": "tsx watch src/main.ts",
@@ -27,6 +67,7 @@
     "@hono/node-server": "^2.1.5",
     "@nema/knowledge": "*",
     "@nema/shared": "*",
+    "hash-wasm": "^4.12.0",
     "hono": "^4.13.14",
     "nanoid": "^3.3.20",
     "pg": "^8.23.1",
