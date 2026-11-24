@@ -33,17 +33,21 @@ const req = (as: string, method: string, path: string, body?: unknown) => {
   });
 };
 
-type Probe = { name: string; method: string; path: () => string; body?: unknown; owner: boolean };
+type Probe = { name: string; method: string; path: () => string; body?: unknown; owner: boolean; status: number };
 const probes: Probe[] = [
-  { name: "thread list (read)", method: "GET", path: () => `/api/workspaces/${ws}/threads`, owner: false },
-  { name: "entries (read)", method: "GET", path: () => `/api/workspaces/${ws}/entries`, owner: false },
-  { name: "mention context (read)", method: "GET", path: () => `/api/workspaces/${ws}/mention-context?q=x`, owner: false },
-  { name: "send message (write)", method: "POST", path: () => `/api/workspaces/${ws}/messages`, body: { content: "hello" }, owner: false },
-  { name: "rename workspace (owner)", method: "PATCH", path: () => `/api/workspaces/${ws}`, body: { name: "Renamed" }, owner: true },
+  { name: "thread list (read)", method: "GET", path: () => `/api/workspaces/${ws}/threads`, owner: false, status: 200 },
+  { name: "entries (read)", method: "GET", path: () => `/api/workspaces/${ws}/entries`, owner: false, status: 200 },
+  { name: "mention context (read)", method: "GET", path: () => `/api/workspaces/${ws}/mention-context?q=x`, owner: false, status: 200 },
+  { name: "send message (write)", method: "POST", path: () => `/api/workspaces/${ws}/messages`, body: { content: "hello" }, owner: false, status: 200 },
+  { name: "rename workspace (owner)", method: "PATCH", path: () => `/api/workspaces/${ws}`, body: { name: "Renamed" }, owner: true, status: 200 },
   // componentRoutes has no workspace-scoped route; repository binding is the workspace-level settings operation.
-  { name: "unbind repository (owner)", method: "DELETE", path: () => `/api/workspaces/${ws}/repos/repo_missing`, owner: true },
-  { name: "list shares (owner)", method: "GET", path: () => `/api/workspaces/${ws}/shares`, owner: true },
-  { name: "create share (owner)", method: "POST", path: () => `/api/workspaces/${ws}/shares`, body: {}, owner: true },
+  // The repository is deliberately missing, so the handler answers 404 once the owner gate passes.
+  { name: "unbind repository (owner)", method: "DELETE", path: () => `/api/workspaces/${ws}/repos/repo_missing`, owner: true, status: 404 },
+  { name: "list shares (owner)", method: "GET", path: () => `/api/workspaces/${ws}/shares`, owner: true, status: 200 },
+  // The fixture workspace is confidential by default (001_init.sql), so createShare answers 409 once the
+  // owner gate passes; the 201 path is covered by shares.test.ts. Asserting 409 still fails a 500 or a
+  // handler that never ran, which is what this probe is for.
+  { name: "create share (owner)", method: "POST", path: () => `/api/workspaces/${ws}/shares`, body: {}, owner: true, status: 409 },
 ];
 
 describe.each(probes)("$name", (p) => {
@@ -56,13 +60,13 @@ describe.each(probes)("$name", (p) => {
   test(p.owner ? "a plain member gets 403; the owner passes" : "members and the owner pass", async () => {
     const asMember = await req("usr_mem", p.method, p.path(), p.body);
     if (p.owner) expect(asMember.status).toBe(403);
-    else expect(asMember.status).toBeLessThan(400);
+    else expect(asMember.status, "member").toBe(p.status);
     const asOwner = await req("usr_owner", p.method, p.path(), p.body);
-    expect([401, 403]).not.toContain(asOwner.status);
+    expect(asOwner.status, "owner").toBe(p.status);
   });
   test("usr_local passes without being on the roster (local-form short-circuit)", async () => {
     const res = await req("usr_local", p.method, p.path(), p.body);
-    expect([401, 403]).not.toContain(res.status);
+    expect(res.status, "usr_local").toBe(p.status);
   });
 });
 
