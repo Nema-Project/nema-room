@@ -103,7 +103,14 @@ export function createApp(deps: AppDeps): Hono {
     .split(",")
     .map((o) => o.trim())
     .filter(Boolean);
-  app.use("/api/*", cors({ origin: (o) => (webOrigins.includes(o) ? o : null), allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }));
+  // credentials: the web calls the hub with credentials "include" so a remote-form session cookie reaches a
+  // hub on another origin. Only the listed origins are echoed, so no other page can read a credentialed
+  // response. The local form ignores cookies (its identity never reads one), so this changes nothing there.
+  app.use("/api/*", cors({
+    origin: (o) => (webOrigins.includes(o) ? o : null),
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    credentials: true,
+  }));
   app.get("/api/version", (c) => {
     if (!deps.releaseVersion) return c.json({ error: "version unavailable" }, 404);
     return c.json({ version: deps.releaseVersion });

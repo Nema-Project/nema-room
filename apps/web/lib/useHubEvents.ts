@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { eventsUrl } from "./hub";
+import { hubEventSourceInit } from "./hubMode";
 import type { HubEvent } from "./types";
 
 type Subscriber = { onEvent: (event: HubEvent) => void; onReconnect?: () => void };
@@ -11,7 +12,7 @@ const channels = new Map<string, Channel>();
 function subscribe(workspaceId: string, subscriber: Subscriber) {
   let channel = channels.get(workspaceId);
   if (!channel) {
-    const source = new EventSource(eventsUrl(workspaceId));
+    const source = new EventSource(eventsUrl(workspaceId), hubEventSourceInit);
     channel = { source, opened: false, subscribers: new Set() };
     channels.set(workspaceId, channel);
     const current = channel;

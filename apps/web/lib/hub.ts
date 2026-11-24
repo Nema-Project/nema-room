@@ -21,8 +21,10 @@ import type {
   WorkspaceView,
 } from "./types";
 
-/** Set at build time for the managed local desktop build; its UI and API share one origin. */
-export const LOCAL_HUB_MODE = process.env.NEXT_PUBLIC_NEMA_LOCAL === "1";
+import { HUB_CREDENTIALS, LOCAL_HUB_MODE } from "./hubMode";
+import { pageNavigation } from "./navigation";
+
+export { LOCAL_HUB_MODE };
 const DEFAULT_HUB_URL = "http://127.0.0.1:4400";
 
 /**
@@ -53,15 +55,31 @@ export class HubError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: { method?: string; body?: unknown; signal?: AbortSignal }): Promise<T> {
+export const LOGIN_PATH = "/login";
+
+/**
+ * A 401 from the hub's /api identity check means there is no valid remote-form session: send the browser
+ * to the login page. The local forms never produce it (their identity is always usr_local); the managed
+ * desktop build's gateway answers its own 401 for an expired desktop session, which a hub login cannot
+ * fix, so that build never redirects.
+ */
+function redirectOnSessionLoss(status: number): void {
+  if (status !== 401 || LOCAL_HUB_MODE || typeof window === "undefined") return;
+  if (window.location.pathname === LOGIN_PATH) return;
+  pageNavigation.assign(LOGIN_PATH);
+}
+
+async function request<T>(path: string, init?: { method?: string; body?: unknown; signal?: AbortSignal; loginRedirect?: boolean }): Promise<T> {
   const res = await fetch(`${base()}${path}`, {
     method: init?.method ?? "GET",
     headers: init?.body !== undefined ? { "content-type": "application/json" } : undefined,
     body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
     signal: init?.signal,
+    credentials: HUB_CREDENTIALS,
   });
   if (res.status === 204) return undefined as T;
   if (!res.ok) {
+    if (init?.loginRedirect !== false) redirectOnSessionLoss(res.status);
     let message = `hub request failed (${res.status})`;
     try {
       const j = (await res.json()) as { error?: string };
@@ -197,6 +215,11 @@ export const updateRepo = (id: string, repoId: string, patch: { label?: string; 
 export type WorkspaceMember = { userId: string; displayName: string | null; role: "owner" | "member"; removedAt: string | null };
 export const listMembers = (id: string) => request<WorkspaceMember[]>(`${w(id)}/members`);
 export const getMe = () => request<{ userId: string; displayName: string | null }>("/me");
+/** Remote form only. A refused login is a 401 on the login page itself, so it never triggers the redirect. */
+export const login = (account: string, password: string) =>
+  request<{ userId: string }>("/auth/login", { method: "POST", body: { account, password }, loginRedirect: false });
+/** Revokes the current session; the hub clears the cookie. */
+export const logout = () => request<{ ok: true }>("/auth/logout", { method: "POST", body: {}, loginRedirect: false });
 export const updateMe = (displayName: string | null) => request<{ userId: string; displayName: string | null }>("/me", { method: "PATCH", body: { displayName } });
 export const searchMentionContext = (id: string, q: string, signal?: AbortSignal, cursor?: string) =>
   request<import("./mentions").MentionContextResponse>(`${w(id)}/mention-context?q=${encodeURIComponent(q)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal });
@@ -240,6 +263,7 @@ function messageBody(content: string, quoteMessageId?: string, attachmentIds?: s
 }
 
 async function hubFailure(res: Response): Promise<HubError> {
+  redirectOnSessionLoss(res.status);
   let message = `hub request failed (${res.status})`;
   try {
     const j = (await res.json()) as { error?: string };
@@ -265,6 +289,7 @@ export async function uploadAttachment(workspaceId: string, file: Blob & { name:
       "x-nema-upload-key": uploadKey,
     },
     body: file,
+    credentials: HUB_CREDENTIALS,
   });
   if (!res.ok) throw await hubFailure(res);
   return (await res.json()) as AttachmentView;
@@ -276,7 +301,7 @@ export async function uploadAttachment(workspaceId: string, file: Blob & { name:
  * answers in the wrong shape.
  */
 export async function attachmentCapabilities(): Promise<AttachmentCapabilities | null> {
-  const res = await fetch(`${base()}/daemon/attachment-capabilities`);
+  const res = await fetch(`${base()}/daemon/attachment-capabilities`, { credentials: HUB_CREDENTIALS });
   if (res.status === 404 || res.status === 501) return null;
   if (!res.ok) throw await hubFailure(res);
   const parsed = AttachmentCapabilitiesSchema.safeParse(await res.json());
@@ -286,7 +311,7 @@ export async function attachmentCapabilities(): Promise<AttachmentCapabilities |
 
 /** The attachment's bytes, for a blob: URL. The hub address is never put into <img src>. */
 export async function fetchAttachmentBlob(workspaceId: string, id: string): Promise<Blob> {
-  const res = await fetch(`${base()}${att(workspaceId, id)}/content`);
+  const res = await fetch(`${base()}${att(workspaceId, id)}/content`, { credentials: HUB_CREDENTIALS });
   if (!res.ok) throw await hubFailure(res);
   return res.blob();
 }
