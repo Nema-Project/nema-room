@@ -330,6 +330,78 @@ describe("identity in snapshots (#163)", () => {
   });
 });
 
+describe("remote-form tables in snapshots (#167)", () => {
+  const H = (c: string) => c.repeat(64);
+  const PASSWORD_HASH = "$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHRzYWx0c2FsdA$aGFzaGhhc2hoYXNoaGFzaGhhc2hoYXNoaGFzaGhhc2g";
+  const remote = async (db: Awaited<ReturnType<typeof createTestDb>>) => {
+    await db.query("insert into users (id, display_name) values ('usr_zhang', '张三')");
+    await db.query("insert into user_credentials (user_id, password_hash) values ('usr_zhang', $1)", [PASSWORD_HASH]);
+    await db.query("insert into auth_events (id, user_id, kind, actor_user_id, detail) values ('aev_1', 'usr_zhang', 'account_created', 'usr_local', '{\"via\":\"invite\"}')");
+    await db.query("insert into daemons (id, owner_user_id, label, credential_hash) values ('dmn_1', 'usr_zhang', 'laptop', $1)", [H("a")]);
+    await db.query("insert into daemon_events (id, daemon_id, owner_user_id, kind, actor_user_id) values ('dev_1', 'dmn_1', 'usr_zhang', 'registered', 'usr_zhang')");
+    // Short-lived secrets: present in the source database, never in the snapshot.
+    await db.query("insert into sessions (id, user_id, token_hash, expires_at) values ('ses_1', 'usr_zhang', $1, now() + interval '1 day')", [H("b")]);
+    await db.query("insert into invites (id, code_hash, created_by, expires_at) values ('inv_1', $1, 'usr_local', now() + interval '1 day')", [H("c")]);
+    await db.query("insert into daemon_registration_codes (id, code_hash, owner_user_id, expires_at) values ('drc_1', $1, 'usr_zhang', now() + interval '1 day')", [H("d")]);
+  };
+  const KEPT = ["user_credentials", "auth_events", "daemons", "daemon_events"];
+  const DROPPED = ["sessions", "invites", "daemon_registration_codes"];
+
+  it("exports accounts and daemons with only hash columns, drops sessions, invites and registration codes", async () => {
+    const { outputDir } = await makeSource(false, false, false, remote);
+    const raw = readFileSync(join(outputDir, "snapshot.json"), "utf8");
+    const snapshot = JSON.parse(raw);
+    for (const table of DROPPED) expect(snapshot.tableData, table).not.toHaveProperty(table);
+    expect(Object.keys(snapshot.tableData.user_credentials[0]).sort()).toEqual(["created_at", "password_hash", "updated_at", "user_id"]);
+    expect(snapshot.tableData.user_credentials[0].password_hash).toBe(PASSWORD_HASH);
+    expect(Object.keys(snapshot.tableData.daemons[0]).sort()).toEqual(["created_at", "credential_hash", "id", "label", "last_seen_at", "owner_user_id", "revoked_at"]);
+    expect(snapshot.tableData.daemons[0].credential_hash).toBe(H("a"));
+    // No session, invite or registration-code hash leaks in through any other table.
+    for (const secret of [H("b"), H("c"), H("d")]) expect(raw).not.toContain(secret);
+
+    await importLegacySnapshot(outputDir, homeOf(), { gitPath });
+    const db = await createLocalDb(join(homeOf(), "db"));
+    try {
+      expect(await db.query("select user_id, password_hash from user_credentials")).toEqual([{ user_id: "usr_zhang", password_hash: PASSWORD_HASH }]);
+      expect(await db.query("select id, user_id, kind, detail from auth_events")).toEqual([{ id: "aev_1", user_id: "usr_zhang", kind: "account_created", detail: { via: "invite" } }]);
+      expect(await db.query("select id, owner_user_id, credential_hash, revoked_at from daemons")).toEqual([{ id: "dmn_1", owner_user_id: "usr_zhang", credential_hash: H("a"), revoked_at: null }]);
+      expect(await db.query("select id, daemon_id, kind from daemon_events")).toEqual([{ id: "dev_1", daemon_id: "dmn_1", kind: "registered" }]);
+      for (const table of DROPPED) expect(await db.query(`select count(*)::int as n from ${table}`), table).toEqual([{ n: 0 }]);
+    } finally { await db.close(); }
+  });
+
+  it("imports an older snapshot without the remote-form tables", async () => {
+    const { outputDir } = await makeSource();
+    const snapshotPath = join(outputDir, "snapshot.json");
+    const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));
+    for (const table of KEPT) delete snapshot.tableData[table];
+    writeFileSync(snapshotPath, JSON.stringify(snapshot));
+    await importLegacySnapshot(outputDir, homeOf(), { gitPath });
+    const db = await createLocalDb(join(homeOf(), "db"));
+    try {
+      for (const table of [...KEPT, ...DROPPED]) expect(await db.query(`select count(*)::int as n from ${table}`), table).toEqual([{ n: 0 }]);
+    } finally { await db.close(); }
+  });
+
+  it("refuses a snapshot that carries a short-lived credential table, a plaintext secret or a dangling reference", async () => {
+    const { outputDir } = await makeSource(false, false, false, remote);
+    const snapshotPath = join(outputDir, "snapshot.json");
+    const original = readFileSync(snapshotPath, "utf8");
+    const attempt = async (mutate: (s: any) => void, message: RegExp) => {
+      const snapshot = JSON.parse(original);
+      mutate(snapshot);
+      writeFileSync(snapshotPath, JSON.stringify(snapshot));
+      await expect(importLegacySnapshot(outputDir, homeOf(), { gitPath })).rejects.toThrow(message);
+    };
+    await attempt((s) => { s.tableData.sessions = [{ id: "ses_1", user_id: "usr_zhang", token_hash: H("b") }]; }, /unknown or missing table/);
+    await attempt((s) => { s.tableData.user_credentials[0].password_hash = "hunter2"; }, /Invalid user credential row/);
+    await attempt((s) => { s.tableData.daemons[0].credential_hash = "plain-daemon-token"; }, /Invalid daemon row/);
+    await attempt((s) => { s.tableData.daemons[0].owner_user_id = "usr_ghost"; }, /missing user reference \(daemons\)/);
+    await attempt((s) => { s.tableData.daemon_events[0].daemon_id = "dmn_ghost"; }, /missing daemon reference/);
+    await attempt((s) => { s.tableData.auth_events[0].kind = "added"; }, /Invalid auth event row/);
+  });
+});
+
 describe("attachments in snapshots", () => {
   it("round-trips live attachment rows and files, and drops what cannot be restored", async () => {
     const { outputDir } = await makeSource(false, true);
