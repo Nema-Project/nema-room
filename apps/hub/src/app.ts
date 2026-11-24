@@ -1,5 +1,5 @@
 import { localIdentity, sessionIdentity, type IdentityProvider } from "./identity.js";
-import { authRoutes } from "./authRoutes.js";
+import { authRoutes, authSessionRoutes } from "./authRoutes.js";
 import { Hono, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import type { DaemonRpc } from "./daemonRpc.js";
@@ -118,6 +118,8 @@ export function createApp(deps: AppDeps): Hono {
     await next();
   });
   app.use("/api/*", requireJson);
+  // Logout, invites and administrator actions need the session the middleware above resolved.
+  if (deps.remoteAuth) app.route("/api/auth", authSessionRoutes({ db: deps.db }));
   const attachments = deps.attachments ?? new AttachmentStore(deps.db, deps.dataDir);
   app.route("/api", attachmentRoutes({ store: attachments, daemon: deps.daemon, daemonStatus: deps.daemonStatus, db: deps.db, events: deps.events }));
   app.route("/api", mentionContextRoutes({ db: deps.db, attachments }));

@@ -122,3 +122,202 @@ export async function completeBootstrap(db: Db, displayName: string, passwordHas
     return { userId, session };
   });
 }
+
+// ---------------------------------------------------------------------------------------------------------
+// Task 5: invites, login, session management and credential reset.
+// ---------------------------------------------------------------------------------------------------------
+
+/** An invite is valid for 7 days from issue. */
+export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** A credential reset code is valid for 24 hours from issue. */
+export const CREDENTIAL_RESET_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** A policy refusal with the HTTP status the route returns. Messages never say whether an account exists. */
+export class AuthError extends Error {
+  constructor(public status: 403 | 404, message: string) {
+    super(message);
+    this.name = "AuthError";
+  }
+}
+
+async function authEvent(db: Db, kind: string, userId: string | null, actorUserId: string | null, detail: unknown = null): Promise<void> {
+  await db.query("insert into auth_events(id,user_id,kind,actor_user_id,detail) values ($1,$2,$3,$4,$5::jsonb)",
+    [`aev_${nanoid(16)}`, userId, kind, actorUserId, JSON.stringify(detail)]);
+}
+
+/**
+ * The hub administrator is the account that completed the bootstrap (spec: the bootstrap creates "the
+ * first administrator account"). auth_events travels in snapshots, so the role survives export/import.
+ * Phase one has no transfer and no second administrator.
+ */
+export async function isHubAdmin(db: Db, userId: string): Promise<boolean> {
+  const rows = await db.query("select 1 from auth_events where kind='bootstrap_completed' and user_id=$1 limit 1", [userId]);
+  return rows.length > 0;
+}
+
+export type CreatedInvite = { id: string; code: string; intendedWorkspaceId: string | null; expiresAt: string };
+
+/**
+ * Who may invite: an invite that names a workspace needs the actor to be an active owner of it (the same
+ * check addMember applies when the owner later confirms the account); an invite without a workspace needs
+ * the hub administrator. The plaintext code is returned here once; only its sha256 is stored.
+ */
+export async function createInvite(db: Db, actorUserId: string, opts: { workspaceId?: string | null; now?: Date } = {}): Promise<CreatedInvite> {
+  const workspaceId = opts.workspaceId ?? null;
+  if (workspaceId !== null) {
+    const [row] = await db.query<{ role: string }>(
+      "select role from workspace_members where workspace_id=$1 and user_id=$2 and removed_at is null", [workspaceId, actorUserId]);
+    if (row?.role !== "owner") throw new AuthError(403, "only an owner of the workspace may invite into it");
+  } else if (!(await isHubAdmin(db, actorUserId))) {
+    throw new AuthError(403, "only the hub administrator may issue an invite without a workspace");
+  }
+  const now = opts.now ?? new Date();
+  const code = newToken();
+  const id = `inv_${nanoid(16)}`;
+  const expiresAt = new Date(now.getTime() + INVITE_TTL_MS).toISOString();
+  return db.tx(async (t) => {
+    await t.query("insert into invites(id,code_hash,created_by,intended_workspace_id,expires_at,created_at) values ($1,$2,$3,$4,$5,$6)",
+      [id, sha256(code), actorUserId, workspaceId, expiresAt, now.toISOString()]);
+    await authEvent(t, "invite_created", null, actorUserId, { inviteId: id, intendedWorkspaceId: workspaceId });
+    return { id, code, intendedWorkspaceId: workspaceId, expiresAt };
+  });
+}
+
+export type InviteStatus = {
+  id: string;
+  createdBy: string;
+  intendedWorkspaceId: string | null;
+  createdAt: string;
+  expiresAt: string;
+  usedAt: string | null;
+  usedByUserId: string | null;
+  usedByDisplayName: string | null;
+  status: "pending" | "used" | "expired";
+};
+
+const iso = (v: Date | string) => new Date(v).toISOString();
+
+/**
+ * Invites the actor issued, plus invites into workspaces the actor actively owns, so an owner can confirm
+ * the new account with addMember. Codes and hashes are never returned.
+ */
+export async function listInvites(db: Db, actorUserId: string, now: Date = new Date()): Promise<InviteStatus[]> {
+  const rows = await db.query<{
+    id: string; created_by: string; intended_workspace_id: string | null; created_at: Date | string; expires_at: Date | string;
+    used_at: Date | string | null; used_by_user_id: string | null; display_name: string | null;
+  }>(
+    `select i.id,i.created_by,i.intended_workspace_id,i.created_at,i.expires_at,i.used_at,i.used_by_user_id,u.display_name
+     from invites i left join users u on u.id=i.used_by_user_id
+     where i.created_by=$1 or i.intended_workspace_id in (
+       select workspace_id from workspace_members where user_id=$1 and role='owner' and removed_at is null)
+     order by i.created_at desc, i.id desc`, [actorUserId]);
+  return rows.map((r) => ({
+    id: r.id,
+    createdBy: r.created_by,
+    intendedWorkspaceId: r.intended_workspace_id,
+    createdAt: iso(r.created_at),
+    expiresAt: iso(r.expires_at),
+    usedAt: r.used_at ? iso(r.used_at) : null,
+    usedByUserId: r.used_by_user_id,
+    usedByDisplayName: r.used_by_user_id ? r.display_name : null,
+    status: r.used_at ? "used" : new Date(r.expires_at).getTime() <= now.getTime() ? "expired" : "pending",
+  }));
+}
+
+/** An unknown, expired or already used invite: one message for all three, so codes cannot be probed. */
+export const INVALID_INVITE = "invalid invite";
+
+/**
+ * Creates an account from an invite: users + user_credentials, the invite marked used, invite_used and
+ * account_created recorded, and a first session — in one transaction. The conditional update on the
+ * invite is the single test of "unused and unexpired", so concurrent uses of one code create exactly one
+ * account. No membership is granted here; an owner adds the account with addMember (member_events).
+ */
+export async function acceptInvite(db: Db, code: string, displayName: string, passwordHash: string, now: Date = new Date()): Promise<{ userId: string; session: IssuedSession; intendedWorkspaceId: string | null }> {
+  if (!TOKEN_RE.test(code)) throw new AuthError(403, INVALID_INVITE);
+  return db.tx(async (t) => {
+    const userId = `usr_${nanoid(16)}`;
+    // The user row comes first because invites.used_by_user_id references it; a refused invite rolls it back.
+    await t.query("insert into users(id,display_name) values ($1,$2)", [userId, displayName]);
+    const [invite] = await t.query<{ id: string; created_by: string; intended_workspace_id: string | null }>(
+      `update invites set used_at=$3, used_by_user_id=$2
+       where code_hash=$1 and used_at is null and expires_at > $3
+       returning id, created_by, intended_workspace_id`, [sha256(code), userId, now.toISOString()]);
+    if (!invite) throw new AuthError(403, INVALID_INVITE);
+    await t.query("insert into user_credentials(user_id,password_hash) values ($1,$2)", [userId, passwordHash]);
+    await authEvent(t, "invite_used", userId, invite.created_by, { inviteId: invite.id });
+    await authEvent(t, "account_created", userId, invite.created_by, { inviteId: invite.id, intendedWorkspaceId: invite.intended_workspace_id });
+    const session = await insertSession(t, userId, now);
+    return { userId, session, intendedWorkspaceId: invite.intended_workspace_id };
+  });
+}
+
+/** The stored password hash of a login account, or null. `usr_local` has no credential row, so it is null. */
+export async function passwordHashFor(db: Db, account: string): Promise<string | null> {
+  const [row] = await db.query<{ password_hash: string }>("select password_hash from user_credentials where user_id=$1", [account]);
+  return row?.password_hash ?? null;
+}
+
+async function revokeAll(db: Db, userId: string): Promise<number> {
+  const rows = await db.query("update sessions set revoked_at=now() where user_id=$1 and revoked_at is null returning id", [userId]);
+  return rows.length;
+}
+
+async function requireAdminOver(db: Db, actorUserId: string, targetUserId: string): Promise<void> {
+  if (!(await isHubAdmin(db, actorUserId))) throw new AuthError(403, "only the hub administrator may do this");
+  if (!(await passwordHashFor(db, targetUserId))) throw new AuthError(404, "account not found");
+}
+
+/** Administrator action: revokes every live session of one account and records sessions_revoked. */
+export async function revokeUserSessions(db: Db, actorUserId: string, targetUserId: string): Promise<number> {
+  await requireAdminOver(db, actorUserId, targetUserId);
+  return db.tx(async (t) => {
+    const count = await revokeAll(t, targetUserId);
+    await authEvent(t, "sessions_revoked", targetUserId, actorUserId, { reason: "admin", count });
+    return count;
+  });
+}
+
+export type CreatedCredentialReset = { id: string; code: string; userId: string; expiresAt: string };
+
+/**
+ * Administrator action (there is no self-service recovery): revokes all of the account's sessions and
+ * issues a one-time reset code, hashed and expiring like an invite code. Earlier unused codes for the
+ * account are expired so only the newest works. The old password keeps working until a code is redeemed.
+ */
+export async function createCredentialReset(db: Db, actorUserId: string, targetUserId: string, now: Date = new Date()): Promise<CreatedCredentialReset> {
+  await requireAdminOver(db, actorUserId, targetUserId);
+  const code = newToken();
+  const id = `crs_${nanoid(16)}`;
+  const expiresAt = new Date(now.getTime() + CREDENTIAL_RESET_TTL_MS).toISOString();
+  return db.tx(async (t) => {
+    await t.query("update credential_resets set expires_at=$2 where user_id=$1 and used_at is null and expires_at > $2", [targetUserId, now.toISOString()]);
+    await t.query("insert into credential_resets(id,user_id,code_hash,created_by,expires_at,created_at) values ($1,$2,$3,$4,$5,$6)",
+      [id, targetUserId, sha256(code), actorUserId, expiresAt, now.toISOString()]);
+    const count = await revokeAll(t, targetUserId);
+    await authEvent(t, "sessions_revoked", targetUserId, actorUserId, { reason: "credential_reset", resetId: id, count });
+    return { id, code, userId: targetUserId, expiresAt };
+  });
+}
+
+/** An unknown, expired or already used reset code: one message for all three. */
+export const INVALID_RESET = "invalid reset code";
+
+/**
+ * Redeems a reset code: stores the new password hash and revokes every session again (including any signed
+ * with the old password after the reset was issued). Creates no account and signs no session; the person
+ * then signs in with the new password.
+ */
+export async function acceptCredentialReset(db: Db, code: string, passwordHash: string, now: Date = new Date()): Promise<{ userId: string }> {
+  if (!TOKEN_RE.test(code)) throw new AuthError(403, INVALID_RESET);
+  return db.tx(async (t) => {
+    const [reset] = await t.query<{ id: string; user_id: string }>(
+      "update credential_resets set used_at=$2 where code_hash=$1 and used_at is null and expires_at > $2 returning id, user_id",
+      [sha256(code), now.toISOString()]);
+    if (!reset) throw new AuthError(403, INVALID_RESET);
+    await t.query("update user_credentials set password_hash=$2, updated_at=$3 where user_id=$1", [reset.user_id, passwordHash, now.toISOString()]);
+    const count = await revokeAll(t, reset.user_id);
+    await authEvent(t, "sessions_revoked", reset.user_id, reset.user_id, { reason: "credential_reset_completed", resetId: reset.id, count });
+    return { userId: reset.user_id };
+  });
+}
