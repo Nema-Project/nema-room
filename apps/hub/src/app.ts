@@ -1,4 +1,5 @@
-import { localIdentity, type IdentityProvider } from "./identity.js";
+import { localIdentity, sessionIdentity, type IdentityProvider } from "./identity.js";
+import { authRoutes } from "./authRoutes.js";
 import { Hono, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import type { DaemonRpc } from "./daemonRpc.js";
@@ -45,6 +46,13 @@ export type AppDeps = {
   releaseVersion?: string;
   /** Chat attachment storage. startHub passes the one it swept at startup; tests may omit it. */
   attachments?: AttachmentStore;
+  /**
+   * #167 remote form (NEMA_HUB_REMOTE=1, standalone hub only). On: browser identity comes from the session
+   * cookie and /api/auth/* exists. Off or omitted: neither exists and identity behaves as before.
+   */
+  remoteAuth?: boolean;
+  /** One-time bootstrap token from main.ts; only read when remoteAuth is on and no account exists yet. */
+  bootstrapToken?: string;
 };
 
 /**
@@ -71,6 +79,8 @@ const requireJson: MiddlewareHandler = async (c, next) => {
 };
 
 export function createApp(deps: AppDeps): Hono {
+  if (deps.remoteAuth && deps.identity) throw new Error("remoteAuth uses the session provider; do not also inject an identity provider");
+  const identity = deps.remoteAuth ? sessionIdentity(deps.db) : (deps.identity ?? localIdentity);
   const app = new Hono();
   const guard = hostGuard(deps.port ?? DEFAULT_HUB_PORT);
   app.use("/share", guard);
@@ -95,10 +105,16 @@ export function createApp(deps: AppDeps): Hono {
     if (!deps.releaseVersion) return c.json({ error: "version unavailable" }, 404);
     return c.json({ version: deps.releaseVersion });
   });
+  if (deps.remoteAuth) {
+    // Like /share: unauthenticated by design, but still behind hostGuard and CORS. Mounted before the
+    // identity middleware so a request that matches here never needs a session.
+    app.use("/api/auth/*", requireJson);
+    app.route("/api/auth", authRoutes({ db: deps.db, dataDir: deps.dataDir, bootstrapToken: deps.bootstrapToken }));
+  }
   app.use("/api/*", async (c, next) => {
-    const identity = await (deps.identity ?? localIdentity)(c);
-    if (!identity) return c.json({ error: "unauthorized" }, 401);
-    c.set("identity", identity);
+    const resolved = await identity(c);
+    if (!resolved) return c.json({ error: "unauthorized" }, 401);
+    c.set("identity", resolved);
     await next();
   });
   app.use("/api/*", requireJson);
