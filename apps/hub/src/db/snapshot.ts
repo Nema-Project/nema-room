@@ -195,7 +195,7 @@ export function validateSnapshot(value: unknown): Snapshot {
   }
   const daemonEventIds = new Set<string>();
   for (const row of tableData.daemon_events!) {
-    if (typeof row.owner_user_id !== "string" || !userIds.has(row.owner_user_id) || !optionalUser(row.actor_user_id)) throw new Error("Snapshot contains a missing user reference (daemon_events)");
+    if (!optionalUser(row.owner_user_id) || !optionalUser(row.actor_user_id)) throw new Error("Snapshot contains a missing user reference (daemon_events)");
     if (row.daemon_id != null && (typeof row.daemon_id !== "string" || !daemonIds.has(row.daemon_id))) throw new Error("Snapshot contains a missing daemon reference");
     if (typeof row.id !== "string" || !row.id || daemonEventIds.has(row.id) || !DAEMON_EVENT_KINDS.includes(String(row.kind))) throw new Error("Invalid daemon event row");
     daemonEventIds.add(row.id);

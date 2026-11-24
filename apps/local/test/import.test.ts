@@ -370,6 +370,21 @@ describe("remote-form tables in snapshots (#167)", () => {
     } finally { await db.close(); }
   });
 
+  it("round-trips a rejected daemon event with no known daemon or owner", async () => {
+    // A hello rejected for an unknown credential names neither a registered daemon nor an
+    // owner (#167 task 9 logs those); the row must survive export and import as nulls.
+    const withRejected = async (db: Awaited<ReturnType<typeof createTestDb>>) => {
+      await remote(db);
+      await db.query("insert into daemon_events (id, daemon_id, owner_user_id, kind, actor_user_id) values ('dev_2', null, null, 'rejected', null)");
+    };
+    const { outputDir } = await makeSource(false, false, false, withRejected);
+    await importLegacySnapshot(outputDir, homeOf(), { gitPath });
+    const db = await createLocalDb(join(homeOf(), "db"));
+    try {
+      expect(await db.query("select id, daemon_id, owner_user_id, kind from daemon_events where id = 'dev_2'")).toEqual([{ id: "dev_2", daemon_id: null, owner_user_id: null, kind: "rejected" }]);
+    } finally { await db.close(); }
+  });
+
   it("imports an older snapshot without the remote-form tables", async () => {
     const { outputDir } = await makeSource();
     const snapshotPath = join(outputDir, "snapshot.json");
