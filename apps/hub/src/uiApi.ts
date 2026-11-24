@@ -24,6 +24,7 @@ import { RepoError, bindRepo, getRepo, listIndexing, listRepos, previewRepo, syn
 import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
 import { revokeActiveShares } from "./shares.js";
 import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, repoPath, updateWorkspace } from "./workspaces.js";
+import { canSeeWorkspace, workspaceAccess } from "./authz.js";
 import { attentionCounts, ensureThread, getThread, listThreads, markThreadRead, nextAttentionResult } from "./threads.js";
 import { listThreadMessages } from "./messages.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
@@ -188,6 +189,10 @@ export function uiRoutes(deps: UiDeps): Hono {
     return c.json({ error: "internal error" }, 500);
   });
 
+  // Workspace administration: settings, deletion, repository binding and plugin settings. Plain membership
+  // is checked for every /workspaces/:id route in app.ts before any of these run.
+  const owner = workspaceAccess(db, "owner");
+
   const store = (ws: string) => new KnowledgeStore(repoPath(dataDir, ws), deps.ownedHelpers);
 
   app.get("/daemon/status", (c) => c.json({ connected: deps.daemonStatus() }));
@@ -351,7 +356,9 @@ export function uiRoutes(deps: UiDeps): Hono {
   app.delete("/extensions/:id/mcp/secrets/:name", mcpRoute((c) => clearMcpSecret(deps.daemon, c.req.param("id")!, c.req.param("name")!)));
 
   app.get("/workspaces", async (c) => {
-    const [list, counts] = await Promise.all([listWorkspaces(db), attentionCounts(db, dataDir)]);
+    const [all, counts] = await Promise.all([listWorkspaces(db), attentionCounts(db, dataDir)]);
+    const visible = await Promise.all(all.map((w) => canSeeWorkspace(db, c.get("identity"), w.id)));
+    const list = all.filter((_, i) => visible[i]);
     return c.json(list.map((w) => ({ ...w, attention: counts[w.id] ?? 0, archived: w.archivedAt != null })));
   });
 
@@ -372,7 +379,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     await next();
   });
 
-  app.patch("/workspaces/:id", async (c) => {
+  app.patch("/workspaces/:id", owner, async (c) => {
     const id = c.req.param("id");
     const patch = await body(c, PatchWorkspaceBody);
     const clean: Parameters<typeof updateWorkspace>[2] = {};
@@ -401,7 +408,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     return c.json({ ...updated, archived: updated.archivedAt != null });
   });
 
-  app.delete("/workspaces/:id", async (c) => {
+  app.delete("/workspaces/:id", owner, async (c) => {
     const id = c.req.param("id")!;
     try {
       await deleteWorkspace(db, dataDir, id, deps.nemaHome);
@@ -431,18 +438,18 @@ export function uiRoutes(deps: UiDeps): Hono {
     }
   });
 
-  app.post("/workspaces/:id/repos/preview", async (c) => {
+  app.post("/workspaces/:id/repos/preview", owner, async (c) => {
     const input = await body(c, PreviewRepoBody);
     return c.json(await previewRepo(db, deps.daemon, c.req.param("id")!, input.path));
   });
 
-  app.post("/workspaces/:id/repos", async (c) => {
+  app.post("/workspaces/:id/repos", owner, async (c) => {
     const id = c.req.param("id")!;
     const input = await body(c, BindRepoBody);
     return c.json(await bindRepo(db, deps.daemon, id, input, events));
   });
 
-  app.patch("/workspaces/:id/repos/:repoId", async (c) => {
+  app.patch("/workspaces/:id/repos/:repoId", owner, async (c) => {
     const id = c.req.param("id")!;
     const repoId = c.req.param("repoId")!;
     const current = await getRepo(db, repoId);
@@ -452,12 +459,12 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.get("/workspaces/:id/plugins", async (c) => c.json(await workspacePluginState(db, c.req.param("id")!)));
 
-  app.patch("/workspaces/:id/plugins/:pluginId", async (c) => {
+  app.patch("/workspaces/:id/plugins/:pluginId", owner, async (c) => {
     const patch = await body(c, PatchPluginBody);
     return c.json(await setPluginState(db, c.req.param("id")!, c.req.param("pluginId")!, patch));
   });
 
-  app.delete("/workspaces/:id/repos/:repoId", async (c) => {
+  app.delete("/workspaces/:id/repos/:repoId", owner, async (c) => {
     const id = c.req.param("id")!;
     const repoId = c.req.param("repoId")!;
     const current = await getRepo(db, repoId);

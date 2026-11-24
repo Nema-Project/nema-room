@@ -17,9 +17,13 @@ import { memberRoutes } from "./memberRoutes.js";
 import { mentionContextRoutes } from "./mentionContext.js";
 import { uiRoutes } from "./uiApi.js";
 import { componentRoutes } from "./components.js";
+import { workspaceAccess } from "./authz.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 export const DEFAULT_HUB_PORT = 4400;
+
+/** memberRoutes' paths; they check membership themselves through members.ts. */
+const ROSTER_PATH = /^\/api\/workspaces\/[^/]+\/members(?:\/|$)/;
 
 export type AppDeps = {
   db: Db;
@@ -128,6 +132,12 @@ export function createApp(deps: AppDeps): Hono {
     await next();
   });
   app.use("/api/*", requireJson);
+  // Every workspace-scoped route needs the caller on that workspace's roster, before any route reads or
+  // writes (#167 task 8). Registered ahead of all routers so no route under the prefix can be missed; routes
+  // that administer a workspace add the owner check themselves. The roster routes keep their own checks in
+  // members.ts unchanged, so they are left out here.
+  const memberGate = workspaceAccess(deps.db);
+  app.use("/api/workspaces/:id/*", (c, next) => (ROSTER_PATH.test(c.req.path) ? next() : memberGate(c, next)));
   // Logout, invites and administrator actions need the session the middleware above resolved.
   if (deps.remoteAuth) app.route("/api/auth", authSessionRoutes({ db: deps.db }));
   const attachments = deps.attachments ?? new AttachmentStore(deps.db, deps.dataDir);
