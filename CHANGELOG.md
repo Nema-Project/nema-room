@@ -4,6 +4,16 @@ Version sections on main may describe release preparation. A version heading and
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-24
+
+### Changed
+
+- 开发与运行基线升级到 Node.js 24：仓库的 engines 下限、CI 与发布工作流、Docker 镜像统一改为 Node 24；桌面端内置的 Electron 45 本就运行 Node 24.22.1，不受影响。使用 npm 全局安装 CLI 的用户需要 Node.js 24 或更高。
+
+- Desktop: the first launch on a new data directory no longer builds the database from scratch. The installer now ships a schema-only database seed, generated for each target from that release's own migrations, which the app unpacks into `~/.nema/desktop/db` only when that directory does not exist yet; the app still checks migrations on open. An existing database is never read or replaced, and if the seed cannot be unpacked the app removes the partial copy and creates the database as before.
+
+- 代码图谱组件的内置 Python 从 3.11.18 换线到 3.14.10（graphifyy 仍为 0.9.95，组件包版本不变）。升级到这个版本后，之前安装的图谱组件会因锁不匹配被停用，图谱功能会提示你在设置页或用 `nema components install graphify` 重新安装一次；工作区里已生成的图谱文件不受影响。
+
 ## [0.3.1] - 2026-11-21
 
 ### Changed
