@@ -82,7 +82,17 @@ export function zip(entries: Array<{ name: string; body: string | Buffer; mode?:
   return Buffer.concat([...locals, centralBytes, end]);
 }
 
-export const PYTHON_RELEASE = "https://github.com/astral-sh/python-build-standalone/releases/download/20261026";
+/** A CPython line a fixture lock pins: the lock's `python` and `cpythonRelease`, and the interpreter name they imply. */
+export type PythonLine = { version: string; release: string; interpreter: string };
+
+/** The line the shipped lock pins (scripts/desktop/graphify-lock.json). Fixtures model it by default. */
+export const PYTHON_LINE: PythonLine = { version: "3.14.10", release: "20261123", interpreter: "python3.14" };
+
+/** The line shipped before #56: only for tests of a component installed under an older lock. */
+export const OLD_PYTHON_LINE: PythonLine = { version: "3.11.18", release: "20261026", interpreter: "python3.11" };
+
+const pythonRelease = (line: PythonLine) => `https://github.com/astral-sh/python-build-standalone/releases/download/${line.release}`;
+export const PYTHON_RELEASE = pythonRelease(PYTHON_LINE);
 export const PYPI_FILES = "https://files.pythonhosted.org/packages/aa/bb";
 
 export type FakeTarget = {
@@ -98,25 +108,27 @@ export type FakeComponent = {
 };
 
 /**
- * A component whose fake `python3.11` answers `-m graphify --version` and appends `$0` to `execLog`, so a
- * test can tell exactly which copy of it ever ran. `variant` changes the bytes, giving a different lock-hash.
+ * A component whose fake interpreter (`line.interpreter`, python3.14 by default) answers
+ * `-m graphify --version` and appends `$0` to `execLog`, so a test can tell exactly which copy of it ever
+ * ran. `variant` changes the bytes, giving a different lock-hash; `line` picks the CPython line it models.
  */
-export function fakeComponent(execLog: string, variant = "a"): FakeComponent {
+export function fakeComponent(execLog: string, variant = "a", line: PythonLine = PYTHON_LINE): FakeComponent {
   const key = `${process.platform}-${process.arch}`;
+  const py = line.interpreter;
   const python = tarGz([
     { name: "python/", type: "dir" },
     { name: "python/bin/", type: "dir" },
     {
-      name: "python/bin/python3.11",
+      name: `python/bin/${py}`,
       mode: 0o755,
       body: `#!/bin/sh\necho "$0" >> ${JSON.stringify(execLog)}\nif [ "$1" = "-m" ] && [ "$2" = "graphify" ] && [ "$3" = "--version" ]; then echo "graphify 0.9.95-${variant}"; exit 0; fi\necho "graphify ran: $*"\n`,
     },
-    { name: "python/bin/python3", type: "symlink", link: "python3.11" },
+    { name: "python/bin/python3", type: "symlink", link: py },
     { name: "python/lib/", type: "dir" },
-    { name: "python/lib/python3.11/", type: "dir" },
-    { name: "python/lib/python3.11/LICENSE.txt", body: "PSF license fixture\n" },
-    { name: "python/lib/python3.11/os.py", body: `# stdlib fixture ${variant}\n` },
-    { name: "python/lib/python3.11/tkinter/__init__.py", body: "# pruned\n" },
+    { name: `python/lib/${py}/`, type: "dir" },
+    { name: `python/lib/${py}/LICENSE.txt`, body: "PSF license fixture\n" },
+    { name: `python/lib/${py}/os.py`, body: `# stdlib fixture ${variant}\n` },
+    { name: `python/lib/${py}/tkinter/__init__.py`, body: "# pruned\n" },
   ]);
   const graphifyy = zip([
     { name: "graphify/__init__.py", body: `__version__ = "0.9.95-${variant}"\n` },
@@ -125,7 +137,7 @@ export function fakeComponent(execLog: string, variant = "a"): FakeComponent {
   ]);
   const networkx = zip([{ name: "networkx/__init__.py", body: `# networkx ${variant}\n` }]);
   // File names carry the variant, so one fake source can serve several versions without mixing bytes.
-  const pythonFile = `cpython-3.11.18+20261026-fixture-${variant}-install_only.tar.gz`;
+  const pythonFile = `cpython-${line.version}+${line.release}-fixture-${variant}-install_only.tar.gz`;
   const graphifyyFile = `graphifyy-0.9.95-1${variant}-py3-none-any.whl`;
   const networkxFile = `networkx-3.6.1-1${variant}-py3-none-any.whl`;
   const files = new Map<string, Buffer>([
@@ -138,26 +150,26 @@ export function fakeComponent(execLog: string, variant = "a"): FakeComponent {
     key,
     files,
     target: {
-      python: { file: pythonFile, url: `${PYTHON_RELEASE}/${pythonFile.replace("+", "%2B")}`, sha256: sha256(python), size: python.length, format: "tar.gz" },
+      python: { file: pythonFile, url: `${pythonRelease(line)}/${pythonFile.replace("+", "%2B")}`, sha256: sha256(python), size: python.length, format: "tar.gz" },
       wheels: [wheel(graphifyyFile), wheel(networkxFile)],
     },
   };
 }
 
-export function lockJson(targets: Record<string, unknown>): string {
+export function lockJson(targets: Record<string, unknown>, line: PythonLine = PYTHON_LINE): string {
   return `${JSON.stringify({
     schemaVersion: 1,
     graphifyy: "0.9.95",
-    python: "3.11.18",
-    cpythonRelease: "20261026",
+    python: line.version,
+    cpythonRelease: line.release,
     extras: [],
     sourceCorrespondence: { status: "pending-task-7c" },
     targets,
   }, null, 2)}\n`;
 }
 
-export function writeLock(file: string, component: FakeComponent): string {
-  writeFileSync(file, lockJson({ [component.key]: component.target }));
+export function writeLock(file: string, component: FakeComponent, line: PythonLine = PYTHON_LINE): string {
+  writeFileSync(file, lockJson({ [component.key]: component.target }, line));
   return file;
 }
 

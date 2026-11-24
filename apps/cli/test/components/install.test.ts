@@ -74,9 +74,9 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(launcher).toBe(path.join(graphifyRoot(), hash, "graphify"));
     expect(execFileSync(launcher!, ["--version"], { encoding: "utf8" }).trim()).toBe("graphify 0.9.95-a");
     // The self-check ran the staged copy, before the move; nothing ran the final directory until now.
-    expect(ran()).toEqual([path.join(graphifyRoot(), `${hash}.staging`, "python", "bin", "python3.11"), path.join(graphifyRoot(), hash, "python", "bin", "python3.11")]);
-    expect(existsSync(path.join(graphifyRoot(), hash, "python", "lib", "python3.11", "site-packages", "graphify", "__init__.py"))).toBe(true);
-    expect(existsSync(path.join(graphifyRoot(), hash, "python", "lib", "python3.11", "tkinter"))).toBe(false);
+    expect(ran()).toEqual([path.join(graphifyRoot(), `${hash}.staging`, "python", "bin", "python3.14"), path.join(graphifyRoot(), hash, "python", "bin", "python3.14")]);
+    expect(existsSync(path.join(graphifyRoot(), hash, "python", "lib", "python3.14", "site-packages", "graphify", "__init__.py"))).toBe(true);
+    expect(existsSync(path.join(graphifyRoot(), hash, "python", "lib", "python3.14", "tkinter"))).toBe(false);
     expect(existsSync(path.join(graphifyRoot(), hash, "licenses", "graphify", "LICENSE"))).toBe(true);
     const total = component.target.python.size + component.target.wheels.reduce((sum, wheel) => sum + wheel.size, 0);
     expect(progress.every((p) => p.totalBytes === total)).toBe(true);
@@ -84,7 +84,7 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(progress.map((p) => p.phase)).toEqual(expect.arrayContaining(["download", "verify", "extract", "self-check", "activate"]));
     // Mirrors only: every request reached the local fake source, none named an upstream host.
     expect(source.requests).toEqual([
-      `/python/20261026/${encodeURIComponent(component.target.python.file)}`,
+      `/python/20261123/${encodeURIComponent(component.target.python.file)}`,
       ...component.target.wheels.map((wheel) => `/pypi/packages/aa/bb/${wheel.file}`),
     ]);
   });
@@ -154,14 +154,14 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     const component = fakeComponent(execLog);
     const source = await serve(component);
     const orphan = await orphanOf(component, source);
-    const marker = path.join(orphan, "python", "lib", "python3.11", "os.py");
+    const marker = path.join(orphan, "python", "lib", "python3.14", "os.py");
     const before = readFileSync(marker);
     const env = envFor(component, source);
     expect(await install(env)).toMatchObject({ state: "installed", path: orphan });
     expect(readPointer(graphifyRoot()).active).toBe(lockHash(component.target));
     expect(readFileSync(marker)).toEqual(before);
     // Only the fresh staging copy ran; the orphan's launcher was never executed by the installer.
-    expect(ran()).toEqual([path.join(graphifyRoot(), `${lockHash(component.target)}.staging`, "python", "bin", "python3.11")]);
+    expect(ran()).toEqual([path.join(graphifyRoot(), `${lockHash(component.target)}.staging`, "python", "bin", "python3.14")]);
     expect(readdirSync(graphifyRoot()).filter((name) => name.includes(".staging") || name.includes(".replaced-"))).toEqual([]);
   });
 
@@ -169,12 +169,12 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     const component = fakeComponent(execLog);
     const source = await serve(component);
     const orphan = await orphanOf(component, source);
-    writeFileSync(path.join(orphan, "python", "bin", "python3.11"), `#!/bin/sh\necho "tampered $0" >> ${JSON.stringify(execLog)}\n`, { mode: 0o755 });
+    writeFileSync(path.join(orphan, "python", "bin", "python3.14"), `#!/bin/sh\necho "tampered $0" >> ${JSON.stringify(execLog)}\n`, { mode: 0o755 });
     const env = envFor(component, source);
     expect(await install(env)).toMatchObject({ state: "installed" });
-    expect(readFileSync(path.join(orphan, "python", "bin", "python3.11"), "utf8")).toContain("graphify 0.9.95-a");
-    expect(readFileSync(path.join(orphan, "python", "bin", "python3.11"), "utf8")).not.toContain("tampered");
-    expect(ran()).toEqual([path.join(graphifyRoot(), `${lockHash(component.target)}.staging`, "python", "bin", "python3.11")]);
+    expect(readFileSync(path.join(orphan, "python", "bin", "python3.14"), "utf8")).toContain("graphify 0.9.95-a");
+    expect(readFileSync(path.join(orphan, "python", "bin", "python3.14"), "utf8")).not.toContain("tampered");
+    expect(ran()).toEqual([path.join(graphifyRoot(), `${lockHash(component.target)}.staging`, "python", "bin", "python3.14")]);
   });
 
   test("an orphan with an extra file is not reused", async () => {
@@ -193,7 +193,7 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(await install(env)).toMatchObject({ state: "installed" });
     const hash = lockHash(component.target);
     const active = path.join(graphifyRoot(), hash);
-    const damaged = path.join(active, "python", "lib", "python3.11", "os.py");
+    const damaged = path.join(active, "python", "lib", "python3.14", "os.py");
     writeFileSync(damaged, "# damaged\n");
     const pointerBefore = readFileSync(path.join(graphifyRoot(), "current.json"), "utf8");
     const failing = await install(env, {
@@ -234,7 +234,7 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect((await install(env)).state).toBe("installed");
     const hash = lockHash(component.target);
     // Tamper the installed tree so the next install replaces the referenced version.
-    writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.11"), "tampered\n");
+    writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.14"), "tampered\n");
     const atFirstMove = deferred();
     const releaseMove = deferred();
     let renames = 0;
@@ -272,7 +272,7 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     const env = envFor(component, source);
     expect((await install(env)).state).toBe("installed");
     const hash = lockHash(component.target);
-    writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.11"), "tampered\n");
+    writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.14"), "tampered\n");
     const atPointer = deferred();
     const releasePointer = deferred();
     let paused = false;
@@ -307,7 +307,7 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     const env = envFor(component, source);
     expect((await install(env)).state).toBe("installed");
     const hash = lockHash(component.target);
-    writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.11"), "tampered\n");
+    writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.14"), "tampered\n");
     const atFirstMove = deferred();
     const releaseMove = deferred();
     let renames = 0;
@@ -347,12 +347,12 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(existsSync(path.join(graphifyRoot(), hash))).toBe(false);
     const backups = readdirSync(graphifyRoot()).filter((name) => name.includes(".replaced-"));
     expect(backups).toHaveLength(1);
-    expect(readFileSync(path.join(graphifyRoot(), backups[0]!, "python", "bin", "python3.11"), "utf8")).toBe("tampered\n");
+    expect(readFileSync(path.join(graphifyRoot(), backups[0]!, "python", "bin", "python3.14"), "utf8")).toBe("tampered\n");
     // Once the successor's lock is gone, recovery restores the replaced copy and the store
     // serves the previous version again.
     rmSync(lockFile);
     expect(await componentStatus(env)).toMatchObject({ state: "installed", lastFailure: { reason: "self-check" } });
-    expect(readFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.11"), "utf8")).toBe("tampered\n");
+    expect(readFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.14"), "utf8")).toBe("tampered\n");
     expect(readdirSync(graphifyRoot()).filter((name) => name.includes(".replaced-"))).toEqual([]);
   });
 
@@ -392,7 +392,7 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     const env = envFor(component, source);
     expect((await install(env)).state).toBe("installed");
     const hash = lockHash(component.target);
-    writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.11"), "tampered\n");
+    writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.14"), "tampered\n");
     const controller = new AbortController();
     const atFirstMove = deferred();
     const releaseMove = deferred();
@@ -429,10 +429,10 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     // successor's tree — the one the pointer names — is untouched, with the replaced copy
     // still aside for recovery once the successor's lock is gone.
     expect(readFailure(graphifyRoot())).toBeNull();
-    expect(readFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.11"), "utf8")).not.toBe("tampered\n");
+    expect(readFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.14"), "utf8")).not.toBe("tampered\n");
     const backups = readdirSync(graphifyRoot()).filter((name) => name.includes(".replaced-"));
     expect(backups).toHaveLength(1);
-    expect(readFileSync(path.join(graphifyRoot(), backups[0]!, "python", "bin", "python3.11"), "utf8")).toBe("tampered\n");
+    expect(readFileSync(path.join(graphifyRoot(), backups[0]!, "python", "bin", "python3.14"), "utf8")).toBe("tampered\n");
   });
 
   test("a displacement after the ownership read does not let rollback remove the successor's tree", async () => {
@@ -1001,10 +1001,10 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     await install(envFor(second, source));
     const firstHash = lockHash(first.target);
     expect(readPointer(graphifyRoot())).toEqual({ active: lockHash(second.target), previous: firstHash });
-    writeFileSync(path.join(graphifyRoot(), firstHash, "python", "lib", "python3.11", "os.py"), "# damaged\n");
+    writeFileSync(path.join(graphifyRoot(), firstHash, "python", "lib", "python3.14", "os.py"), "# damaged\n");
     expect(await componentStatus(firstEnv)).toMatchObject({ state: "lock-mismatch", installedLockHash: lockHash(second.target) });
     expect(await install(firstEnv)).toMatchObject({ state: "installed", lockHash: firstHash });
-    expect(readFileSync(path.join(graphifyRoot(), firstHash, "python", "lib", "python3.11", "os.py"), "utf8")).toBe("# stdlib fixture one\n");
+    expect(readFileSync(path.join(graphifyRoot(), firstHash, "python", "lib", "python3.14", "os.py"), "utf8")).toBe("# stdlib fixture one\n");
     expect(readPointer(graphifyRoot())).toEqual({ active: firstHash, previous: lockHash(second.target) });
   });
 
@@ -1127,7 +1127,7 @@ describe.skipIf(process.platform === "win32")("graphify component install", () =
     expect(await install(env)).toMatchObject({ state: "installed" });
     // Damage the installed tree so the reinstall replaces the referenced copy (the path whose
     // post-commit step removes the backup).
-    writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.11"), "tampered\n");
+    writeFileSync(path.join(graphifyRoot(), hash, "python", "bin", "python3.14"), "tampered\n");
     const logged: unknown[][] = [];
     const original = console.error;
     console.error = (...args: unknown[]) => {

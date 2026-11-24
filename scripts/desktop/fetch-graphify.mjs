@@ -33,12 +33,31 @@ export function graphifyLockHash(pin) {
   return createHash('sha256').update(canonicalJson({ python: pin.python, wheels: pin.wheels })).digest('hex');
 }
 
-/** POSIX launcher. The Python path is relative to this file, never a developer install. */
-export const POSIX_GRAPHIFY_LAUNCHER = `#!/bin/sh
+/**
+ * The POSIX interpreter name for a lock `python` version: `3.14.10` -> `python3.14`. Anything but a plain
+ * `3.<minor>.<patch>` throws; there is no fallback name. Must agree with `pythonInterpreterName` in
+ * apps/cli/src/components/lock.ts; a test keeps them equal.
+ */
+export function pythonInterpreterName(version) {
+  const match = typeof version === 'string' ? /^3\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version) : null;
+  if (!match) throw new Error(`Graphify lock has a malformed python version: ${JSON.stringify(version)}`);
+  return `python3.${match[1]}`;
+}
+
+/** The interpreter name of the lock this script ships with, e.g. `python3.14`. */
+export const GRAPHIFY_PYTHON_INTERPRETER = pythonInterpreterName(graphifyLock.python);
+
+/** POSIX launcher for `interpreter`. The Python path is relative to this file, never a developer install. */
+export function posixGraphifyLauncher(interpreter) {
+  return `#!/bin/sh
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
-exec "$root/python/bin/python3.11" -m graphify "$@"
+exec "$root/python/bin/${interpreter}" -m graphify "$@"
 `;
+}
+
+/** The POSIX launcher for the shipped lock's interpreter. */
+export const POSIX_GRAPHIFY_LAUNCHER = posixGraphifyLauncher(GRAPHIFY_PYTHON_INTERPRETER);
 
 function inside(root, candidate) {
   const base = path.resolve(root);
@@ -280,9 +299,9 @@ export function machoLoadNames(buffer) {
   return readMachONames(buffer, 0, buffer.length);
 }
 
-/** Drop byte-identical python and python3 copies. The payload cannot keep them as symlinks. */
-export async function dedupePythonInterpreters(pythonRoot) {
-  const canonical = path.join(pythonRoot, 'bin', 'python3.11');
+/** Drop python and python3 copies byte-identical to `interpreter`. The payload cannot keep them as symlinks. */
+export async function dedupePythonInterpreters(pythonRoot, interpreter = GRAPHIFY_PYTHON_INTERPRETER) {
+  const canonical = path.join(pythonRoot, 'bin', interpreter);
   const info = await lstat(canonical).catch(() => null);
   if (!info?.isFile() || info.isSymbolicLink()) return [];
   const canonicalBytes = await readFile(canonical);
@@ -291,9 +310,9 @@ export async function dedupePythonInterpreters(pythonRoot) {
     const file = path.join(pythonRoot, 'bin', name);
     const current = await lstat(file).catch(() => null);
     if (!current) continue;
-    if (!current.isFile() || current.isSymbolicLink()) throw new Error(`Refusing to drop ${name}: only a regular file that copies python3.11 can be removed`);
+    if (!current.isFile() || current.isSymbolicLink()) throw new Error(`Refusing to drop ${name}: only a regular file that copies ${interpreter} can be removed`);
     const bytes = await readFile(file);
-    if (bytes.length !== canonicalBytes.length || !bytes.equals(canonicalBytes)) throw new Error(`Refusing to drop ${name}: it is not a byte copy of python3.11`);
+    if (bytes.length !== canonicalBytes.length || !bytes.equals(canonicalBytes)) throw new Error(`Refusing to drop ${name}: it is not a byte copy of ${interpreter}`);
     await rm(file);
     removed.push(name);
   }
@@ -301,11 +320,12 @@ export async function dedupePythonInterpreters(pythonRoot) {
 }
 
 /**
- * Delete lib/libpython3.11.dylib when nothing loads it.
+ * Delete lib/lib<interpreter>.dylib (e.g. libpython3.14.dylib) when nothing loads it.
  * An unreadable Mach-O keeps the library. Windows has no such file and is unchanged.
  */
-export async function removeUnreferencedLibpython(pythonRoot) {
-  const dylib = path.join(pythonRoot, 'lib', 'libpython3.11.dylib');
+export async function removeUnreferencedLibpython(pythonRoot, interpreter = GRAPHIFY_PYTHON_INTERPRETER) {
+  const library = `lib${interpreter}`;
+  const dylib = path.join(pythonRoot, 'lib', `${library}.dylib`);
   const info = await lstat(dylib).catch(() => null);
   if (!info?.isFile() || info.isSymbolicLink()) return false;
   let referenced = false;
@@ -322,11 +342,11 @@ export async function removeUnreferencedLibpython(pythonRoot) {
         continue;
       }
       if (!currentInfo.isFile()) continue;
-      if (name !== 'python3.11' && !name.endsWith('.so') && !name.endsWith('.dylib')) continue;
+      if (name !== interpreter && !name.endsWith('.so') && !name.endsWith('.dylib')) continue;
       let names;
       try { names = machoLoadNames(await readFile(current)); }
       catch { referenced = true; return; }
-      if (names.some((item) => item.includes('libpython3.11'))) referenced = true;
+      if (names.some((item) => item.includes(library))) referenced = true;
     }
   }
   await walk(pythonRoot);
@@ -377,7 +397,7 @@ export async function fetchGraphify({ platform, arch, destination, cacheDir, sou
   await materializeSymlinks(destination);
   const pythonRoot = path.join(destination, 'python');
   if (platform !== 'win32') await dedupePythonInterpreters(pythonRoot);
-  const pythonExe = platform === 'win32' ? path.join(pythonRoot, 'python.exe') : path.join(pythonRoot, 'bin', 'python3.11');
+  const pythonExe = platform === 'win32' ? path.join(pythonRoot, 'python.exe') : path.join(pythonRoot, 'bin', GRAPHIFY_PYTHON_INTERPRETER);
   const pythonInfo = await lstat(pythonExe).catch(() => null);
   if (!pythonInfo?.isFile() || pythonInfo.isSymbolicLink()) throw new Error('Bundled CPython layout is missing its Python executable');
   const packages = await sitePackages(pythonRoot);

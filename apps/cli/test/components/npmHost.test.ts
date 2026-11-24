@@ -148,7 +148,7 @@ for (const arch of ["x64", "arm64"] as const) describe.skipIf(process.platform =
     expect(installed.code).toBe(0);
     expect(source.requests.length).toBe(1 + component.target.wheels.length);
     // The self-check ran the staged launcher's python before activation.
-    expect(readFileSync(execLog, "utf8").split("\n").filter(Boolean)).toEqual([path.join(store, `${hash}.staging`, "python", "bin", "python3.11")]);
+    expect(readFileSync(execLog, "utf8").split("\n").filter(Boolean)).toEqual([path.join(store, `${hash}.staging`, "python", "bin", "python3.14")]);
 
     // 3. Usable: componentBin, the daemon's graph resolution and its status agree.
     const launcher = path.join(store, hash, "graphify");

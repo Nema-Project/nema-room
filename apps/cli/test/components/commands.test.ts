@@ -145,7 +145,7 @@ describe.skipIf(process.platform === "win32")("install", () => {
     expect(await h.run("install", "graphify", "--yes")).toBe(0);
     const hash = lockHash(component.target);
     // Tamper the installed tree so the reinstall cannot take the identical-tree reuse path.
-    writeFileSync(path.join(store(), hash, "python", "lib", "python3.11", "os.py"), "# damaged\n");
+    writeFileSync(path.join(store(), hash, "python", "lib", "python3.14", "os.py"), "# damaged\n");
 
     const failing = harness(component, {
       env: source.env(),

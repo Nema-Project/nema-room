@@ -73,6 +73,21 @@ export function parseLock(text: string): GraphifyLock {
   return lock as GraphifyLock;
 }
 
+const PYTHON_VERSION = /^3\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+
+/**
+ * The POSIX interpreter name for the lock's `python` version: `3.14.10` -> `python3.14`. The CPython
+ * install_only layout names its interpreter (bin/python3.X) and stdlib (lib/python3.X) after the minor
+ * line, so the installer derives both from the lock instead of naming a line itself. Anything but a
+ * plain `3.<minor>.<patch>` throws; there is no fallback name. Must agree with `pythonInterpreterName`
+ * in scripts/desktop/fetch-graphify.mjs; a test keeps them equal.
+ */
+export function pythonInterpreterName(version: string): string {
+  const match = typeof version === "string" ? PYTHON_VERSION.exec(version) : null;
+  if (!match) throw new Error(`Graphify lock has a malformed python version: ${JSON.stringify(version)}`);
+  return `python3.${match[1]}`;
+}
+
 export function readLock(file: string = shippedLockPath()): GraphifyLock {
   return parseLock(readFileSync(file, "utf8"));
 }
