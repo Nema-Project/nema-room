@@ -25,6 +25,7 @@ import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
 import { revokeActiveShares } from "./shares.js";
 import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, repoPath, updateWorkspace } from "./workspaces.js";
 import { canSeeWorkspace, workspaceAccess } from "./authz.js";
+import { LOCAL_USER_ID } from "./identity.js";
 import { attentionCounts, ensureThread, getThread, listThreads, markThreadRead, nextAttentionResult } from "./threads.js";
 import { listThreadMessages } from "./messages.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
@@ -963,6 +964,7 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.get("/workspaces/:id/events", (c) => {
     const ws = c.req.param("id")!;
+    const userId = c.get("identity").userId;
     return streamSSE(c, async (stream) => {
       const queue: HubEvent[] = [];
       let wake: (() => void) | null = null;
@@ -975,17 +977,25 @@ export function uiRoutes(deps: UiDeps): Hono {
         if (w === "") push(e); // global events only; workspace events arrive via subscribe()
       });
       let closed = false;
+      // The member gate ran once, when the stream opened. Removal from the roster closes the stream and
+      // drops anything still queued, so nothing more reaches a former member. usr_local has no roster to
+      // leave (local form), so its stream is never revoked.
+      const unsubRevoke = userId === LOCAL_USER_ID ? () => {} : events.onRevoke(ws, userId, () => {
+        queue.length = 0;
+        close();
+      });
       const close = () => {
         if (closed) return;
         closed = true;
         unsubWs();
         unsubAll();
+        unsubRevoke();
         wake?.();
       };
       stream.onAbort(close);
       try {
         while (!closed) {
-          while (queue.length > 0) await stream.writeSSE({ data: JSON.stringify(queue.shift()) });
+          while (queue.length > 0 && !closed) await stream.writeSSE({ data: JSON.stringify(queue.shift()) });
           if (closed) break;
           let timer: ReturnType<typeof setTimeout> | undefined;
           const pinged = await new Promise<boolean>((resolve) => {

@@ -12,6 +12,7 @@ let deps: Awaited<ReturnType<typeof makeHubDeps>>;
 let app: ReturnType<typeof createApp>;
 let ws: string;
 let actor: string;
+let events: EventBus;
 
 beforeEach(async () => {
   deps = await makeHubDeps();
@@ -22,7 +23,8 @@ beforeEach(async () => {
   await addMember(deps.db, ws, "usr_gone", "member", "usr_owner");
   await removeMember(deps.db, ws, "usr_gone", "usr_owner");
   actor = "usr_owner";
-  app = createApp({ ...deps, events: new EventBus(), daemonStatus: () => false, daemon: { call: async () => null }, identity: async () => ({ userId: actor }) });
+  events = new EventBus();
+  app = createApp({ ...deps, events, daemonStatus: () => false, daemon: { call: async () => null }, identity: async () => ({ userId: actor }) });
 });
 afterEach(async () => { await deps.close(); await cleanupHubDeps(); });
 
@@ -98,6 +100,89 @@ test("the workspace list shows only the caller's active workspaces; usr_local se
 test("the workspace event stream needs membership", async () => {
   expect((await req("usr_out", "GET", `/api/workspaces/${ws}/events`)).status).toBe(403);
   expect((await req("usr_gone", "GET", `/api/workspaces/${ws}/events`)).status).toBe(403);
+});
+
+/** Opens the workspace event stream as `who` and reads it into a buffer. */
+async function openStream(who: string) {
+  const ac = new AbortController();
+  actor = who;
+  const res = await app.request(`${HUB}/api/workspaces/${ws}/events`, { signal: ac.signal });
+  expect(res.status, who).toBe(200);
+  const reader = res.body!.getReader();
+  const dec = new TextDecoder();
+  const s = { buf: "", ended: false };
+  // A read that loses the timeout race stays pending and is awaited next time, so no chunk is dropped.
+  let pending: ReturnType<typeof reader.read> | null = null;
+  const read = async (ms: number) => {
+    pending ??= reader.read();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const r = await Promise.race([pending, new Promise<null>((ok) => (timer = setTimeout(() => ok(null), ms)))]);
+    clearTimeout(timer);
+    if (r === null) return;
+    pending = null;
+    if (r.done) s.ended = true;
+    else s.buf += dec.decode(r.value);
+  };
+  return {
+    s,
+    /** Reads until `needle` arrives; fails after 3 s. */
+    async until(needle: string) {
+      const deadline = Date.now() + 3000;
+      while (!s.buf.includes(needle)) {
+        if (s.ended || Date.now() > deadline) throw new Error(`${who}: no ${needle}; got ${s.buf}`);
+        await read(200);
+      }
+    },
+    /** Reads until the hub ends the stream; fails after 3 s. */
+    async untilEnded() {
+      const deadline = Date.now() + 3000;
+      while (!s.ended) {
+        if (Date.now() > deadline) throw new Error(`${who}: stream still open; got ${s.buf}`);
+        await read(200);
+      }
+    },
+    async close() {
+      ac.abort();
+      await reader.cancel().catch(() => {});
+    },
+  };
+}
+const changed = (entryId: string) => events.emit(ws, { type: "knowledge.changed", entryId });
+
+test("removing a member closes their open event stream; other members keep receiving", async () => {
+  const removed = await openStream("usr_mem");
+  const kept = await openStream("usr_owner");
+  changed("E-before");
+  await removed.until("E-before");
+  await kept.until("E-before");
+
+  // The real roster route, which runs removeMember.
+  expect((await req("usr_owner", "POST", `/api/workspaces/${ws}/members/usr_mem/remove`)).status).toBe(200);
+  await removed.untilEnded();
+  changed("E-after");
+  await kept.until("E-after");
+  expect(removed.s.buf).not.toContain("E-after");
+  // The closed stream left the bus; the remaining member's subscription is still there.
+  expect((events as any).revokers.has(`${ws}\0usr_mem`)).toBe(false);
+  expect((events as any).byWs.get(ws).size).toBe(1);
+  await kept.close();
+
+  // A new stream goes through the open-time gate: refused while removed, admitted again once re-added.
+  expect((await req("usr_mem", "GET", `/api/workspaces/${ws}/events`)).status).toBe(403);
+  await addMember(deps.db, ws, "usr_mem", "member", "usr_owner");
+  const readded = await openStream("usr_mem");
+  changed("E-readded");
+  await readded.until("E-readded");
+  await readded.close();
+});
+
+test("usr_local's event stream is never revoked (local form has no roster to leave)", async () => {
+  const local = await openStream("usr_local");
+  events.revoke(ws, "usr_local");
+  changed("E-local");
+  await local.until("E-local");
+  expect(local.s.ended).toBe(false);
+  await local.close();
 });
 
 test("deleting a workspace is owner-only", async () => {

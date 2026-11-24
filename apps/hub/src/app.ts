@@ -143,7 +143,7 @@ export function createApp(deps: AppDeps): Hono {
   const attachments = deps.attachments ?? new AttachmentStore(deps.db, deps.dataDir);
   app.route("/api", attachmentRoutes({ store: attachments, daemon: deps.daemon, daemonStatus: deps.daemonStatus, db: deps.db, events: deps.events }));
   app.route("/api", mentionContextRoutes({ db: deps.db, attachments }));
-  app.route("/api", memberRoutes({ db: deps.db }));
+  app.route("/api", memberRoutes({ db: deps.db, events: deps.events }));
   app.route("/api", componentRoutes({ daemon: deps.daemon }));
   app.route("/api", uiRoutes(deps));
   app.route("/api", shareAdminRoutes({ db: deps.db, sharesEnabled: deps.sharesEnabled !== false }));
