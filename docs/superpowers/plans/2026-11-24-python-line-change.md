@@ -40,7 +40,7 @@
 ### 任务 3：测试字面量与 fixture 清点
 
 - [x] 以 grep 清点 `cp311`、`3\.11\.18`、`cpython-3.11` 在 `apps/cli/test`、`scripts` 中的全部出现，逐处更新到新线（fixture 的 wheel 文件名换所选目标线对应的标签名（cp314；回退时 cp313），断言的版本号换新版）。
-- [x] 受影响测试全绿：`apps/cli` components 相关套件、`scripts/desktop/graphify.test.mjs`、`graphify-languages.test.mjs`、bundle/stage-package 中引用锁的测试。
+- [x] 受影响测试全绿：`apps/cli` components 相关套件、`scripts/desktop/graphify.test.mjs`、`graphify-languages.test.mjs`、bundle/stage-package 中引用锁的测试（本机例外：`bundle-cli.test.mjs` 的 import.meta.url 路径断言在本机 VM 对干净 main 同样失败，属基线环境失败；以本 PR 的 CI 全绿为判定门，见执行证据）。
 
 ### 任务 4：已装组件语义（D-4）
 
