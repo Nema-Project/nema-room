@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "graphifyy": "0.9.95",
-  "python": "3.11.18",
-  "cpythonRelease": "20261026",
+  "python": "3.14.10",
+  "cpythonRelease": "20261123",
   "extras": [],
   "sourceCorrespondence": {
     "status": "pending-task-7c"
@@ -10,10 +10,10 @@
   "targets": {
     "win32-x64": {
       "python": {
-        "file": "cpython-3.11.18+20261026-x86_64-pc-windows-msvc-install_only.tar.gz",
-        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.11.18%2B20261026-x86_64-pc-windows-msvc-install_only.tar.gz",
-        "sha256": "75cb501dc11c7b55c6b447c58e4910bce5b1f609f1017328b4f3a858dfaf5428",
-        "size": 48749854,
+        "file": "cpython-3.14.10+20261123-x86_64-pc-windows-msvc-install_only.tar.gz",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261123/cpython-3.14.10%2B20261123-x86_64-pc-windows-msvc-install_only.tar.gz",
+        "sha256": "c2344c6f2c1e86852d5f747e5bb61f45315fd369547a75cc24f04efee5da55c1",
+        "size": 51386144,
         "format": "tar.gz"
       },
       "wheels": [
@@ -30,28 +30,28 @@
           "size": 2068504
         },
         {
-          "file": "numpy-2.4.6-cp311-cp311-win_amd64.whl",
-          "url": "https://files.pythonhosted.org/packages/c5/31/7fc6239c12bce7e931463251cca4426c465e1876ba3cc785402ef4dd8f4e/numpy-2.4.6-cp311-cp311-win_amd64.whl",
-          "sha256": "1e254a00cdf42b1e4d5b3d68d33af63268d41340d8885df2ab6470f2e1500147",
-          "size": 12608406
+          "file": "numpy-2.4.6-cp314-cp314-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/df/ac/46de6dda46478f7942f839e094970be2d4a861e005c4b3bf07c92e291a09/numpy-2.4.6-cp314-cp314-win_amd64.whl",
+          "sha256": "b507f5c4c1d508876d1819b6bf9a49d365b96320b5d4993426b33a23ca4b8261",
+          "size": 12450334
         },
         {
-          "file": "pyyaml-6.0.3-cp311-cp311-win_amd64.whl",
-          "url": "https://files.pythonhosted.org/packages/da/e3/ea007450a105ae919a72393cb06f122f288ef60bba2dc64b26e2646fa315/pyyaml-6.0.3-cp311-cp311-win_amd64.whl",
-          "sha256": "9f3bfb4965eb874431221a3ff3fdcddc7e74e3b07799e0e84ca4a0f867d449bf",
-          "size": 158763
+          "file": "pyyaml-6.0.3-cp314-cp314-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/23/20/bb6982b26a40bb43951265ba29d4c246ef0ff59c9fdcdf0ed04e0687de4d/pyyaml-6.0.3-cp314-cp314-win_amd64.whl",
+          "sha256": "4a2e8cebe2ff6ab7d1050ecd59c25d4c8bd7e6f400f5f82b96557ac0abafd0ac",
+          "size": 156429
         },
         {
-          "file": "rapidfuzz-3.14.6-cp311-cp311-win_amd64.whl",
-          "url": "https://files.pythonhosted.org/packages/41/72/638db21d63041ba17c4ed482a8cd1fe6dc4d90bc84b2a28aaccc2611ff84/rapidfuzz-3.14.6-cp311-cp311-win_amd64.whl",
-          "sha256": "737a57cbca3e5c16decac86e205727bcd4b99c52f77c48bb44123078c5cd9a7a",
-          "size": 1738042
+          "file": "rapidfuzz-3.14.6-cp314-cp314-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/57/8d/3ea3bf93a2f22858e1b1298126db35cbf58592d05571ca757f2f16071b17/rapidfuzz-3.14.6-cp314-cp314-win_amd64.whl",
+          "sha256": "41ee893c4d7d0fb1844f6cad966540a833784b3bad2c239a0d80195d9231cef4",
+          "size": 1783090
         },
         {
-          "file": "tree_sitter-0.25.2-cp311-cp311-win_amd64.whl",
-          "url": "https://files.pythonhosted.org/packages/f9/19/427e5943b276a0dd74c2a1f1d7a7393443f13d1ee47dedb3f8127903c080/tree_sitter-0.25.2-cp311-cp311-win_amd64.whl",
-          "sha256": "56ac6602c7d09c2c507c55e58dc7026b8988e0475bd0002f8a386cce5e8e8adc",
-          "size": 127304
+          "file": "tree_sitter-0.25.2-cp314-cp314-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/03/87/af9604ebe275a9345d88c3ace0cf2a1341aa3f8ef49dd9fc11662132df8a/tree_sitter-0.25.2-cp314-cp314-win_amd64.whl",
+          "sha256": "4973b718fcadfb04e59e746abfbb0288694159c6aeecd2add59320c03368c721",
+          "size": 130864
         },
         {
           "file": "tree_sitter_bash-0.25.1-cp310-abi3-win_amd64.whl",
@@ -147,10 +147,10 @@
     },
     "darwin-arm64": {
       "python": {
-        "file": "cpython-3.11.18+20261026-aarch64-apple-darwin-install_only.tar.gz",
-        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.11.18%2B20261026-aarch64-apple-darwin-install_only.tar.gz",
-        "sha256": "cba3455e18516fbe8668cff2820c9b6a53447c552d612443c2b2fb60d390a908",
-        "size": 26901713,
+        "file": "cpython-3.14.10+20261123-aarch64-apple-darwin-install_only.tar.gz",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261123/cpython-3.14.10%2B20261123-aarch64-apple-darwin-install_only.tar.gz",
+        "sha256": "167ad04069d3c43f087d995336e36b879ec2ad8dfcf99112c034350240d9ecdb",
+        "size": 27130590,
         "format": "tar.gz"
       },
       "wheels": [
@@ -167,28 +167,28 @@
           "size": 2068504
         },
         {
-          "file": "numpy-2.4.6-cp311-cp311-macosx_11_0_arm64.whl",
-          "url": "https://files.pythonhosted.org/packages/0e/0d/f5957185c0ee2f3e12f78715aa9e3b353fd83633316c8532b38faa37e3f6/numpy-2.4.6-cp311-cp311-macosx_11_0_arm64.whl",
-          "sha256": "110f8b71aacb688ec69062bb7f6938a0f8acb01b7c1c4beb453c65b6d234584d",
-          "size": 14964111
+          "file": "numpy-2.4.6-cp314-cp314-macosx_11_0_arm64.whl",
+          "url": "https://files.pythonhosted.org/packages/8e/62/764ce66fa4147ae6d73071a3abf804ffe606f174618697c571acdf26a7c9/numpy-2.4.6-cp314-cp314-macosx_11_0_arm64.whl",
+          "sha256": "38efbc8de75c7a0fc1ac190162d892787f3f47b57cc291231aafee36b80982b7",
+          "size": 14704559
         },
         {
-          "file": "pyyaml-6.0.3-cp311-cp311-macosx_11_0_arm64.whl",
-          "url": "https://files.pythonhosted.org/packages/16/19/13de8e4377ed53079ee996e1ab0a9c33ec2faf808a4647b7b4c0d46dd239/pyyaml-6.0.3-cp311-cp311-macosx_11_0_arm64.whl",
-          "sha256": "652cb6edd41e718550aad172851962662ff2681490a8a711af6a4d288dd96824",
-          "size": 175577
+          "file": "pyyaml-6.0.3-cp314-cp314-macosx_11_0_arm64.whl",
+          "url": "https://files.pythonhosted.org/packages/bd/9c/4d95bb87eb2063d20db7b60faa3840c1b18025517ae857371c4dd55a6b3a/pyyaml-6.0.3-cp314-cp314-macosx_11_0_arm64.whl",
+          "sha256": "34d5fcd24b8445fadc33f9cf348c1047101756fd760b4dacb5c3e99755703310",
+          "size": 173809
         },
         {
-          "file": "rapidfuzz-3.14.6-cp311-cp311-macosx_11_0_arm64.whl",
-          "url": "https://files.pythonhosted.org/packages/b9/8f/17985248f0f651a518b543f802fa706b7810cbe96a434a5a9dc24f99b7d2/rapidfuzz-3.14.6-cp311-cp311-macosx_11_0_arm64.whl",
-          "sha256": "0c61cade182f130c9903231946bd1074539121721693a918e7b70382ae802bd8",
-          "size": 1246874
+          "file": "rapidfuzz-3.14.6-cp314-cp314-macosx_11_0_arm64.whl",
+          "url": "https://files.pythonhosted.org/packages/3e/28/282e8c76b7dcc91e8f5aa1a594168d2136639f29dfda11384c6d36aabca0/rapidfuzz-3.14.6-cp314-cp314-macosx_11_0_arm64.whl",
+          "sha256": "8fa7d45388dec34a86038f2a38380f4922b74b5dd8991247f629a531178db10f",
+          "size": 1246072
         },
         {
-          "file": "tree_sitter-0.25.2-cp311-cp311-macosx_11_0_arm64.whl",
-          "url": "https://files.pythonhosted.org/packages/57/1c/22cc14f3910017b7a76d7358df5cd315a84fe0c7f6f7b443b49db2e2790d/tree_sitter-0.25.2-cp311-cp311-macosx_11_0_arm64.whl",
-          "sha256": "cc0351cfe5022cec5a77645f647f92a936b38850346ed3f6d6babfbeeeca4d26",
-          "size": 137765
+          "file": "tree_sitter-0.25.2-cp314-cp314-macosx_11_0_arm64.whl",
+          "url": "https://files.pythonhosted.org/packages/42/97/4bd4ad97f85a23011dd8a535534bb1035c4e0bac1234d58f438e15cff51f/tree_sitter-0.25.2-cp314-cp314-macosx_11_0_arm64.whl",
+          "sha256": "bda059af9d621918efb813b22fb06b3fe00c3e94079c6143fcb2c565eb44cb87",
+          "size": 137732
         },
         {
           "file": "tree_sitter_bash-0.25.1-cp310-abi3-macosx_11_0_arm64.whl",
@@ -284,10 +284,10 @@
     },
     "linux-x64": {
       "python": {
-        "file": "cpython-3.11.18+20261026-x86_64-unknown-linux-gnu-install_only.tar.gz",
-        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.11.18%2B20261026-x86_64-unknown-linux-gnu-install_only.tar.gz",
-        "sha256": "a87ee63646c8f8438b7af3954b2135ed2af91d033c631f12a8f20af903046d06",
-        "size": 49036443,
+        "file": "cpython-3.14.10+20261123-x86_64-unknown-linux-gnu-install_only.tar.gz",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261123/cpython-3.14.10%2B20261123-x86_64-unknown-linux-gnu-install_only.tar.gz",
+        "sha256": "6f216be7b5209a88586d5b6cf84ffd953db83d8942c5eb3b09517d056dac0d8d",
+        "size": 76639720,
         "format": "tar.gz"
       },
       "wheels": [
@@ -304,28 +304,28 @@
           "size": 2068504
         },
         {
-          "file": "numpy-2.4.6-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
-          "url": "https://files.pythonhosted.org/packages/02/03/74fe2a4cb3817d94d86402f2506554130a2f01414e299b5a843e5a8a957f/numpy-2.4.6-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
-          "sha256": "89cd468399cfd2504718f0ba50e410dca55a170b61a02ad92bb18c8a65186e93",
-          "size": 16918164
+          "file": "numpy-2.4.6-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/f3/eb/ebffaa97dc55502df69584a8f0dcf07f69a3e0b3e2323670a2722db9aa39/numpy-2.4.6-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "a2c306dea656c12c68f51f4cea133cbe78ca7435eb28c735eac1d3ebe73be6e8",
+          "size": 16638245
         },
         {
-          "file": "pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
-          "url": "https://files.pythonhosted.org/packages/71/60/917329f640924b18ff085ab889a11c763e0b573da888e8404ff486657602/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
-          "sha256": "b8bb0864c5a28024fac8a632c443c87c5aa6f215c0b126c449ae1a150412f31d",
-          "size": 806638
+          "file": "pyyaml-6.0.3-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/88/f9/16491d7ed2a919954993e48aa941b200f38040928474c9e85ea9e64222c3/pyyaml-6.0.3-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "c458b6d084f9b935061bc36216e8a69a7e293a2f1e68bf956dcd9e6cbcd143f5",
+          "size": 794175
         },
         {
-          "file": "rapidfuzz-3.14.6-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
-          "url": "https://files.pythonhosted.org/packages/11/ae/a781ec62825990319483c82ef962b509e9ce22a67a9f97d63d70b2b175b9/rapidfuzz-3.14.6-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
-          "sha256": "3d5d90bae3c6fb7ea34da968c9f23070e8440edb827a28b242580e0108110b14",
-          "size": 3180952
+          "file": "rapidfuzz-3.14.6-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/6d/56/1203b46cedefc3f0c16e10d87123fdd4ec0f2e209f65cd2bf221ec669217/rapidfuzz-3.14.6-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "08bc63b88048376114d1e66cf8fa6926495d03bb873eb87854fa74cf6848a70b",
+          "size": 3167618
         },
         {
-          "file": "tree_sitter-0.25.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
-          "url": "https://files.pythonhosted.org/packages/34/38/b735a58c1c2f60a168a678ca27b4c1a9df725d0bf2d1a8a1c571c033111e/tree_sitter-0.25.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
-          "sha256": "3e65ae456ad0d210ee71a89ee112ac7e72e6c2e5aac1b95846ecc7afa68a194c",
-          "size": 632229
+          "file": "tree_sitter-0.25.2-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/48/b6/cf08f4f20f4c9094006ef8828555484e842fc468827ad6e56011ab668dbd/tree_sitter-0.25.2-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "sha256": "260586381b23be33b6191a07cea3d44ecbd6c01aa4c6b027a0439145fcbc3358",
+          "size": 636772
         },
         {
           "file": "tree_sitter_bash-0.25.1-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
@@ -421,10 +421,10 @@
     },
     "linux-arm64": {
       "python": {
-        "file": "cpython-3.11.18+20261026-aarch64-unknown-linux-gnu-install_only.tar.gz",
-        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.11.18%2B20261026-aarch64-unknown-linux-gnu-install_only.tar.gz",
-        "sha256": "a344c887b04a309f292cac1ef7c7a85e39e11932ec301d635258c569d830861b",
-        "size": 49263049,
+        "file": "cpython-3.14.10+20261123-aarch64-unknown-linux-gnu-install_only.tar.gz",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261123/cpython-3.14.10%2B20261123-aarch64-unknown-linux-gnu-install_only.tar.gz",
+        "sha256": "e22a598b87c744318e3c0da365f2d2f1880ff4b46c851fb5ec0fcd20a9397ef8",
+        "size": 59054360,
         "format": "tar.gz"
       },
       "wheels": [
@@ -441,28 +441,28 @@
           "size": 2068504
         },
         {
-          "file": "numpy-2.4.6-cp311-cp311-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl",
-          "url": "https://files.pythonhosted.org/packages/33/a8/6fa8c1a345a8c85dbb21932c447bee07c30a2c2a3f31e369c0a84b300147/numpy-2.4.6-cp311-cp311-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl",
-          "sha256": "0ab0a9c4ffb1a6d95ef519fe4247dba8eb6b18ad93999f76b7f657039acabd47",
-          "size": 15966692
+          "file": "numpy-2.4.6-cp314-cp314-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl",
+          "url": "https://files.pythonhosted.org/packages/d5/91/64288395ee1799bd2e0b04a305dce9666da90c961e1f3fe982a05ee1c036/numpy-2.4.6-cp314-cp314-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl",
+          "sha256": "40fdc1ae7125e518ea98e53e69a4ebc27e1fd50510c47b7ea130cf21e5e1d42b",
+          "size": 15685197
         },
         {
-          "file": "pyyaml-6.0.3-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
-          "url": "https://files.pythonhosted.org/packages/0c/62/d2eb46264d4b157dae1275b573017abec435397aa59cbcdab6fc978a8af4/pyyaml-6.0.3-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
-          "sha256": "10892704fc220243f5305762e276552a0395f7beb4dbf9b14ec8fd43b57f126c",
-          "size": 775556
+          "file": "pyyaml-6.0.3-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "url": "https://files.pythonhosted.org/packages/92/b5/47e807c2623074914e29dabd16cbbdd4bf5e9b2db9f8090fa64411fc5382/pyyaml-6.0.3-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "sha256": "501a031947e3a9025ed4405a168e6ef5ae3126c59f90ce0cd6f2bfc477be31b7",
+          "size": 766454
         },
         {
-          "file": "rapidfuzz-3.14.6-cp311-cp311-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl",
-          "url": "https://files.pythonhosted.org/packages/de/8f/9cf3b552bb84911add3c86e014e8704d20ea4e274295686106dc010356ae/rapidfuzz-3.14.6-cp311-cp311-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl",
-          "sha256": "3781cf14f9fc933d7198c2b25a8bbbd1a62b752746d5cd26de14957edc0e802f",
-          "size": 1394531
+          "file": "rapidfuzz-3.14.6-cp314-cp314-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl",
+          "url": "https://files.pythonhosted.org/packages/4b/ae/8e0f714c55180667d66346e46a3d680dd9809bcee1c5f03557a58b4f2ef6/rapidfuzz-3.14.6-cp314-cp314-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl",
+          "sha256": "760ee152af5e8b4d241a469f933ba2d7215248618ae19770fec7d80d9e149db6",
+          "size": 1381829
         },
         {
-          "file": "tree_sitter-0.25.2-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
-          "url": "https://files.pythonhosted.org/packages/1c/0c/d0de46ded7d5b34631e0f630d9866dab22d3183195bf0f3b81de406d6622/tree_sitter-0.25.2-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
-          "sha256": "1799609636c0193e16c38f366bda5af15b1ce476df79ddaae7dd274df9e44266",
-          "size": 604643
+          "file": "tree_sitter-0.25.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "url": "https://files.pythonhosted.org/packages/b6/19/1e968aa0b1b567988ed522f836498a6a9529a74aab15f09dd9ac1e41f505/tree_sitter-0.25.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "sha256": "eac4e8e4c7060c75f395feec46421eb61212cb73998dbe004b7384724f3682ab",
+          "size": 609456
         },
         {
           "file": "tree_sitter_bash-0.25.1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",

@@ -14,7 +14,7 @@ import path from "node:path";
 import { windowsRuntimeEnv } from "../platform.js";
 import { extractTarGz, extractZip } from "./archive.js";
 import { downloadWithRetry, sourceUrl, sourceUrls } from "./download.js";
-import { readLock, resolveTarget, shippedLockPath, shippedWindowsLauncherPath, type LockFile, type LockTarget, type PlatformInfo } from "./lock.js";
+import { pythonInterpreterName, readLock, resolveTarget, shippedLockPath, shippedWindowsLauncherPath, type LockFile, type LockTarget, type PlatformInfo } from "./lock.js";
 import {
   assertComponent,
   claimInstallGeneration,
@@ -45,12 +45,17 @@ import {
 } from "./store.js";
 import { ComponentInstallError, type ComponentName, type ComponentStatus, type FailureReason, type InstallProgress } from "./types.js";
 
-/** Same text as POSIX_GRAPHIFY_LAUNCHER in scripts/desktop/fetch-graphify.mjs; a test keeps them equal. */
-export const POSIX_LAUNCHER = `#!/bin/sh
+/**
+ * The POSIX launcher for `interpreter` (from `pythonInterpreterName(lock.python)`). Same text as
+ * posixGraphifyLauncher in scripts/desktop/fetch-graphify.mjs; a test keeps them equal.
+ */
+export function posixLauncher(interpreter: string): string {
+  return `#!/bin/sh
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
-exec "$root/python/bin/python3.11" -m graphify "$@"
+exec "$root/python/bin/${interpreter}" -m graphify "$@"
 `;
+}
 
 /**
  * Unpacked size estimate: the lock pins only archive sizes. CPython install_only tarballs and the wheels
@@ -350,9 +355,9 @@ async function materializeSymlinks(root: string): Promise<void> {
   await walk(root);
 }
 
-/** python/python3 that are byte copies of python3.11 are dropped, as the desktop build does. */
-async function dedupePython(pythonRoot: string): Promise<void> {
-  const canonical = path.join(pythonRoot, "bin", "python3.11");
+/** python/python3 that are byte copies of the lock's interpreter (e.g. python3.14) are dropped, as the desktop build does. */
+async function dedupePython(pythonRoot: string, interpreter: string): Promise<void> {
+  const canonical = path.join(pythonRoot, "bin", interpreter);
   const bytes = await readFile(canonical).catch(() => null);
   if (!bytes) return;
   for (const name of ["python", "python3"]) {
@@ -414,15 +419,15 @@ async function exists(file: string): Promise<boolean> {
 /**
  * Build the component in `staging` from verified archives only. The launcher is the installer's own:
  * the shell text above, or the Windows launcher shipped with the program. Nothing from an archive or a
- * pack decides what the launcher is.
+ * pack decides what the launcher is. `interpreter` is `pythonInterpreterName(lock.python)`.
  */
-export async function assembleComponent(staging: string, archivesDir: string, target: LockTarget, platform: NodeJS.Platform, hooks: InstallHooks = {}): Promise<void> {
+export async function assembleComponent(staging: string, archivesDir: string, target: LockTarget, platform: NodeJS.Platform, interpreter: string, hooks: InstallHooks = {}): Promise<void> {
   await extractTarGz(await readFile(path.join(archivesDir, target.python.file)), staging);
   const pythonRoot = path.join(staging, "python");
   if (!(await exists(pythonRoot))) throw new Error("The CPython archive has no python/ directory");
   await materializeSymlinks(pythonRoot);
-  if (platform !== "win32") await dedupePython(pythonRoot);
-  const pythonExe = platform === "win32" ? path.join(pythonRoot, "python.exe") : path.join(pythonRoot, "bin", "python3.11");
+  if (platform !== "win32") await dedupePython(pythonRoot, interpreter);
+  const pythonExe = platform === "win32" ? path.join(pythonRoot, "python.exe") : path.join(pythonRoot, "bin", interpreter);
   const exeInfo = await lstat(pythonExe).catch(() => null);
   if (!exeInfo?.isFile()) throw new Error("The CPython archive is missing its Python executable");
   const packages = await sitePackages(pythonRoot, platform);
@@ -446,7 +451,7 @@ export async function assembleComponent(staging: string, archivesDir: string, ta
   if (distInfo && (await exists(path.join(packages, distInfo, "licenses")))) {
     await cp(path.join(packages, distInfo, "licenses"), path.join(staging, "licenses", "graphify"), { recursive: true });
   }
-  for (const candidate of [path.join(pythonRoot, "LICENSE.txt"), path.join(pythonRoot, "lib", "python3.11", "LICENSE.txt")]) {
+  for (const candidate of [path.join(pythonRoot, "LICENSE.txt"), path.join(pythonRoot, "lib", interpreter, "LICENSE.txt")]) {
     if (await exists(candidate)) {
       await mkdir(path.join(staging, "licenses", "python"), { recursive: true });
       await copyFile(candidate, path.join(staging, "licenses", "python", "LICENSE.txt"));
@@ -461,7 +466,7 @@ export async function assembleComponent(staging: string, archivesDir: string, ta
     });
     await writeFile(launcher, bytes, { flag: "wx" });
   } else {
-    await writeFile(launcher, POSIX_LAUNCHER, { flag: "wx", mode: 0o755 });
+    await writeFile(launcher, posixLauncher(interpreter), { flag: "wx", mode: 0o755 });
     await chmod(launcher, 0o755);
   }
 }
@@ -1227,7 +1232,7 @@ function classify(error: unknown): { reason: FailureReason; detail: string } {
   return { reason: "self-check", detail: error instanceof Error ? error.message : String(error) };
 }
 
-type Prepared = { name: ComponentName; env: ComponentEnv; root: string; target: LockTarget; lockHash: string; totalBytes: number; platform: PlatformInfo };
+type Prepared = { name: ComponentName; env: ComponentEnv; root: string; target: LockTarget; lockHash: string; totalBytes: number; platform: PlatformInfo; interpreter: string };
 
 /** Whether two failure records describe the same attempt outcome, field by field. The revision is stamped fresh on every write, so an identical rewrite — same lock, reason, detail and timestamp — still counts as a different record. */
 function sameFailure(a: FailureRecord | null, b: FailureRecord | null): boolean {
@@ -1256,7 +1261,9 @@ function prepare(name: string, env: ComponentEnv, allowOffline: boolean, expecte
     return { state: "failed", name, lockHash: resolved.lockHash, reason: "offer-changed", detail: "the component offer changed; confirm again", at: null };
   }
   if (!allowOffline && isOffline(env)) return componentStatusSync(name, env);
-  return { name, env, root: componentRoot(name, env), target: resolved.target, lockHash: resolved.lockHash, totalBytes: resolved.totalBytes, platform };
+  // The interpreter name comes from the lock's python version; a malformed version throws here, before any download.
+  const interpreter = pythonInterpreterName(lock.python);
+  return { name, env, root: componentRoot(name, env), target: resolved.target, lockHash: resolved.lockHash, totalBytes: resolved.totalBytes, platform, interpreter };
 }
 
 /**
@@ -1368,7 +1375,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
     }
     return prepared;
   }
-  const { root, target, lockHash, totalBytes, platform } = prepared;
+  const { root, target, lockHash, totalBytes, platform, interpreter } = prepared;
   const hooks = o.hooks ?? {};
   const before = componentStatusSync(prepared.name, env);
   if (before.state === "installing" || (before.state === "installed" && !o.force)) return before;
@@ -1425,7 +1432,7 @@ export async function installFromSource(name: string, source: ArchiveSource, o: 
     await verifyArchives(archivesDir, target, (file) => emit({ phase: "verify", file }));
     throwIfAborted(o.signal);
     emit({ phase: "extract", file: null });
-    await assembleComponent(staging, archivesDir, target, platform.platform, hooks);
+    await assembleComponent(staging, archivesDir, target, platform.platform, interpreter, hooks);
     await rm(archivesDir, { recursive: true, force: true });
     throwIfAborted(o.signal);
     emit({ phase: "self-check" });

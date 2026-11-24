@@ -5,12 +5,12 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { installComponent, POSIX_LAUNCHER, sameTree, type InstallOptions } from "../../src/components/install.js";
+import { installComponent, posixLauncher, sameTree, type InstallOptions } from "../../src/components/install.js";
 import { lockHash } from "../../src/components/lock.js";
 import { importComponent, packComponent, PACK_FORMAT, PackRejectedError } from "../../src/components/pack.js";
 import { componentBin, componentStatus, readPointer, type ComponentEnv } from "../../src/components/store.js";
 import { ComponentInstallError } from "../../src/components/types.js";
-import { fakeComponent, fakeSource, sha256, tar, writeLock, type FakeComponent, type FakeSource } from "./fixtures.js";
+import { fakeComponent, fakeSource, PYTHON_LINE, sha256, tar, writeLock, type FakeComponent, type FakeSource } from "./fixtures.js";
 
 let root: string;
 let execLog: string;
@@ -172,7 +172,7 @@ describe.skipIf(process.platform === "win32")("nema components import", () => {
     expect(await sameTree(path.join(storeDir(target), hash), path.join(storeDir(online), hash))).toBe(true);
     expect(componentBin("graphify", target)).toBe(path.join(storeDir(target), hash, "graphify"));
     // The self-check ran the staged copy of the importer's own assembly.
-    expect(ran().slice(before)).toEqual([path.join(storeDir(target), `${hash}.staging`, "python", "bin", "python3.11")]);
+    expect(ran().slice(before)).toEqual([path.join(storeDir(target), `${hash}.staging`, "python", "bin", "python3.14")]);
     expect(await componentStatus(target)).toMatchObject({ state: "installed" });
   });
 
@@ -187,7 +187,7 @@ describe.skipIf(process.platform === "win32")("nema components import", () => {
     const hash = lockHash(component.target);
     expect((await importComponent("graphify", file, { env: target, hooks: quick })).status).toMatchObject({ state: "installed" });
     // Damage the installed tree; a second import of the same pack is the offline repair path.
-    const damaged = path.join(storeDir(target), hash, "python", "lib", "python3.11", "os.py");
+    const damaged = path.join(storeDir(target), hash, "python", "lib", "python3.14", "os.py");
     writeFileSync(damaged, "# damaged\n");
     const repaired = await importComponent("graphify", file, { env: target, hooks: quick });
     expect(repaired.status).toMatchObject({ state: "installed", lockHash: hash });
@@ -262,7 +262,7 @@ describe.skipIf(process.platform === "win32")("nema components import", () => {
       { name: "prebuilt/", type: "dir" },
       { name: `prebuilt/${hash.slice(0, 16)}/`, type: "dir" },
       { name: `prebuilt/${hash.slice(0, 16)}/graphify`, body: evil, mode: 0o755 },
-      { name: `prebuilt/${hash.slice(0, 16)}/python/bin/python3.11`, body: evil, mode: 0o755 },
+      { name: `prebuilt/${hash.slice(0, 16)}/python/bin/python3.14`, body: evil, mode: 0o755 },
       { name: "graphify", body: evil, mode: 0o755 },
       { name: "install.sh", body: evil, mode: 0o755 },
       { name: "archives/nested/graphify", body: evil, mode: 0o755 },
@@ -275,12 +275,12 @@ describe.skipIf(process.platform === "win32")("nema components import", () => {
     expect([...result.ignored].sort()).toEqual(extra.map((entry) => entry.name).sort());
     const active = path.join(storeDir(env), hash);
     // The launcher is the installer's own text, not the pack's.
-    expect(readFileSync(path.join(active, "graphify"), "utf8")).toBe(POSIX_LAUNCHER);
+    expect(readFileSync(path.join(active, "graphify"), "utf8")).toBe(posixLauncher(PYTHON_LINE.interpreter));
     expect(existsSync(path.join(active, "prebuilt"))).toBe(false);
     expect(existsSync(path.join(active, "install.sh"))).toBe(false);
-    expect(readFileSync(path.join(active, "python", "bin", "python3.11"), "utf8")).not.toContain("evil-ran");
+    expect(readFileSync(path.join(active, "python", "bin", "python3.14"), "utf8")).not.toContain("evil-ran");
     expect(existsSync(marker)).toBe(false);
-    expect(ran()).toEqual([path.join(storeDir(env), `${hash}.staging`, "python", "bin", "python3.11")]);
+    expect(ran()).toEqual([path.join(storeDir(env), `${hash}.staging`, "python", "bin", "python3.14")]);
   });
 
   test("a truncated or non-tar file is rejected", async () => {

@@ -22,11 +22,11 @@ const LOCK_HASH = "c".repeat(64);
 
 /** A fixture lock target in the shape of scripts/desktop/graphify-lock.json; the offer's size is its sum. */
 const FIXTURE_LOCK_TARGET = {
-  python: { file: "cpython-3.11.18+20261026-x86_64-unknown-linux-gnu-install_only.tar.gz", size: 31_457_280 },
+  python: { file: "cpython-3.14.10+20261123-x86_64-unknown-linux-gnu-install_only.tar.gz", size: 31_457_280 },
   wheels: [
     { file: "graphifyy-0.9.95-py3-none-any.whl", size: 1_048_576 },
     { file: "networkx-3.6.1-py3-none-any.whl", size: 2_097_152 },
-    { file: "tree_sitter-0.25.2-cp311-cp311-manylinux_2_17_x86_64.whl", size: 655_360 },
+    { file: "tree_sitter-0.25.2-cp314-cp314-manylinux_2_17_x86_64.whl", size: 655_360 },
   ],
 };
 const LOCK_TOTAL = [FIXTURE_LOCK_TARGET.python, ...FIXTURE_LOCK_TARGET.wheels].reduce((sum, entry) => sum + entry.size, 0);
@@ -218,7 +218,7 @@ describe("graph entry and first-use offer", () => {
   });
 
   it("retrying a cancelled repair from the progress dialog sends a forced repair", async () => {
-    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.14.10" }, path: "/p", launcher: "/p/graphify" });
     const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
     // A repair started elsewhere is already running; this dialog only follows it (force=false).
     answer(view({ state: "installing", progress }));
@@ -379,7 +379,7 @@ describe("Settings → Components", () => {
   }
 
   it("shows the installed version and the agent CLI check with official links, without installing anything", async () => {
-    answer(view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" }));
+    answer(view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.14.10" }, path: "/p", launcher: "/p/graphify" }));
     vi.mocked(hub.getAgentClis).mockResolvedValue({
       agents: [
         { id: "codex", command: "codex", installed: false, version: null, installUrl: "https://developers.openai.com/codex/cli" },
@@ -387,7 +387,7 @@ describe("Settings → Components", () => {
       ],
     });
     renderSettings();
-    expect(await screen.findByText("Installed: Graphify 0.9.95 (Python 3.11.18).")).toBeTruthy();
+    expect(await screen.findByText("Installed: Graphify 0.9.95 (Python 3.14.10).")).toBeTruthy();
     expect(await screen.findByText("Installed: 2.1.400 (Claude Code)")).toBeTruthy();
     expect(screen.getByText(/codex was not found on PATH/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "official install instructions" }).getAttribute("href")).toBe("https://developers.openai.com/codex/cli");
@@ -431,7 +431,7 @@ describe("Settings → Components", () => {
     await refreshComponents();
     // The install starts before the save is sent: the mutation epoch it moves cannot mask
     // the status guard, which must be the only thing preserving the polled outcome.
-    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.14.10" }, path: "/p", launcher: "/p/graphify" });
     vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing" }));
     await startGraphifyInstall(LOCK_HASH);
     let resolveSettings!: (value: ComponentView) => void;
@@ -812,7 +812,7 @@ describe("Settings → Components", () => {
   it("a failed repair shows the failure with the installed version and offers another try", async () => {
     const installed = view({
       state: "installed",
-      version: { graphifyy: "0.9.95", python: "3.11.18" },
+      version: { graphifyy: "0.9.95", python: "3.14.10" },
       path: "/p",
       launcher: "/p/graphify",
       lastFailure: { reason: "self-check", detail: "injected", at: "2026-11-18T00:00:00.000Z" },
@@ -820,7 +820,7 @@ describe("Settings → Components", () => {
     answer(installed);
     vi.mocked(hub.installComponent).mockResolvedValue(installed);
     renderSettings();
-    expect(await screen.findByText("Installed: Graphify 0.9.95 (Python 3.11.18). The last reinstall failed: the installed component failed its self-check.")).toBeTruthy();
+    expect(await screen.findByText("Installed: Graphify 0.9.95 (Python 3.14.10). The last reinstall failed: the installed component failed its self-check.")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Reinstall" }));
     const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
@@ -834,7 +834,7 @@ describe("Settings → Components", () => {
   it("an installed repair with a failed refresh shows the snapshot error in the repair panel and does not retry directly", async () => {
     const installed = view({
       state: "installed",
-      version: { graphifyy: "0.9.95", python: "3.11.18" },
+      version: { graphifyy: "0.9.95", python: "3.14.10" },
       path: "/p",
       launcher: "/p/graphify",
       lastFailure: { reason: "self-check", detail: "injected", at: "2026-11-18T00:00:00.000Z" },
@@ -842,7 +842,7 @@ describe("Settings → Components", () => {
     answer(installed);
     vi.mocked(hub.installComponent).mockResolvedValue(installed);
     renderSettings();
-    expect(await screen.findByText("Installed: Graphify 0.9.95 (Python 3.11.18). The last reinstall failed: the installed component failed its self-check.")).toBeTruthy();
+    expect(await screen.findByText("Installed: Graphify 0.9.95 (Python 3.14.10). The last reinstall failed: the installed component failed its self-check.")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Reinstall" }));
     const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
@@ -885,10 +885,10 @@ describe("Settings → Components", () => {
   });
 
   it("offline mode offers no reinstall for an installed component", async () => {
-    const base = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const base = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.14.10" }, path: "/p", launcher: "/p/graphify" });
     answer({ ...base, settings: { ...base.settings, offline: { value: true, source: "env", config: false } } });
     renderSettings();
-    expect(await screen.findByText("Installed: Graphify 0.9.95 (Python 3.11.18).")).toBeTruthy();
+    expect(await screen.findByText("Installed: Graphify 0.9.95 (Python 3.14.10).")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Reinstall" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
     // Import is the one repair path left while downloads are off, so it stays.
@@ -896,7 +896,7 @@ describe("Settings → Components", () => {
   });
 
   it("cancelling a repair reports the cancel instead of calling the old copy ready", async () => {
-    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.14.10" }, path: "/p", launcher: "/p/graphify" });
     const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
     answer(installed);
     vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
@@ -913,7 +913,7 @@ describe("Settings → Components", () => {
   });
 
   it("a failed cancellation followed by a successful retry shows no error next to the cancel", async () => {
-    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.14.10" }, path: "/p", launcher: "/p/graphify" });
     const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
     answer(installed);
     vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
@@ -941,7 +941,7 @@ describe("Settings → Components", () => {
   });
 
   it("a cancel that landed after the repair completed shows the finished install", async () => {
-    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.14.10" }, path: "/p", launcher: "/p/graphify" });
     const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
     answer(installed);
     vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
@@ -956,10 +956,10 @@ describe("Settings → Components", () => {
   });
 
   it("a repair failure recorded during the attempt arrives through a later status read", async () => {
-    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.14.10" }, path: "/p", launcher: "/p/graphify" });
     const failedRepair = view({
       state: "installed",
-      version: { graphifyy: "0.9.95", python: "3.11.18" },
+      version: { graphifyy: "0.9.95", python: "3.14.10" },
       path: "/p",
       launcher: "/p/graphify",
       lastFailure: { reason: "network", detail: "connect ECONNREFUSED", at: "2026-11-18T00:00:00.000Z" },
@@ -982,7 +982,7 @@ describe("Settings → Components", () => {
   it("a confirmed cancellation is shown before a previous repair failure", async () => {
     const withFailure = view({
       state: "installed",
-      version: { graphifyy: "0.9.95", python: "3.11.18" },
+      version: { graphifyy: "0.9.95", python: "3.14.10" },
       path: "/p",
       launcher: "/p/graphify",
       lastFailure: { reason: "network", detail: "connect ECONNREFUSED", at: "2026-11-18T00:00:00.000Z" },
@@ -1002,7 +1002,7 @@ describe("Settings → Components", () => {
   });
 
   it("a cancel answer without an outcome shows the status, not a completion", async () => {
-    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.14.10" }, path: "/p", launcher: "/p/graphify" });
     const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
     answer(installed);
     vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
@@ -1013,13 +1013,13 @@ describe("Settings → Components", () => {
     const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
     await userEvent.click(await within(dialog).findByRole("button", { name: "Cancel download" }));
-    expect(await within(dialog).findByText("Installed: Graphify 0.9.95 (Python 3.11.18).")).toBeTruthy();
+    expect(await within(dialog).findByText("Installed: Graphify 0.9.95 (Python 3.14.10).")).toBeTruthy();
     expect(within(dialog).queryByText("Graphify is installed. Graph features are ready.")).toBeNull();
     expect(within(dialog).queryByText("The reinstall was cancelled; the installed copy is unchanged.")).toBeNull();
   });
 
   it("a rejected retry from the cancelled panel keeps the cancellation and shows the error", async () => {
-    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.14.10" }, path: "/p", launcher: "/p/graphify" });
     const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
     answer(installed);
     vi.mocked(hub.installComponent).mockRejectedValue(new Error("hub unreachable"));
@@ -1039,7 +1039,7 @@ describe("Settings → Components", () => {
   });
 
   it("a rejected retry from the unknown-outcome panel keeps the status and shows the error", async () => {
-    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.14.10" }, path: "/p", launcher: "/p/graphify" });
     const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
     answer(installed);
     vi.mocked(hub.installComponent).mockRejectedValue(new Error("hub unreachable"));
@@ -1050,10 +1050,10 @@ describe("Settings → Components", () => {
     const dialog = await screen.findByRole("dialog", { name: "Reinstall Graphify?" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Download and install" }));
     await userEvent.click(await within(dialog).findByRole("button", { name: "Cancel download" }));
-    expect(await within(dialog).findByText("Installed: Graphify 0.9.95 (Python 3.11.18).")).toBeTruthy();
+    expect(await within(dialog).findByText("Installed: Graphify 0.9.95 (Python 3.14.10).")).toBeTruthy();
     await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
     expect((await within(dialog).findByRole("alert")).textContent).toContain("hub unreachable");
-    expect(within(dialog).getByText("Installed: Graphify 0.9.95 (Python 3.11.18).")).toBeTruthy();
+    expect(within(dialog).getByText("Installed: Graphify 0.9.95 (Python 3.14.10).")).toBeTruthy();
     expect(within(dialog).queryByText("Graphify is installed. Graph features are ready.")).toBeNull();
   });
 
@@ -1101,7 +1101,7 @@ describe("Settings → Components", () => {
   it("a repair retry after a failure for a different offer shows the replacement offer first", async () => {
     const installed = view({
       state: "installed",
-      version: { graphifyy: "0.9.95", python: "3.11.18" },
+      version: { graphifyy: "0.9.95", python: "3.14.10" },
       path: "/p",
       launcher: "/p/graphify",
       lastFailure: { reason: "self-check", detail: "injected", at: "2026-11-18T00:00:00.000Z" },
@@ -1118,7 +1118,7 @@ describe("Settings → Components", () => {
     const replacementHash = "d".repeat(64);
     const replacement = view({
       state: "installed",
-      version: { graphifyy: "0.9.95", python: "3.11.18" },
+      version: { graphifyy: "0.9.95", python: "3.14.10" },
       path: "/p",
       launcher: "/p/graphify",
       lastFailure: { reason: "self-check", detail: "injected", at: "2026-11-18T00:00:00.000Z" },
@@ -1131,7 +1131,7 @@ describe("Settings → Components", () => {
   });
 
   it("a cancelled repair retry for a different offer confirms the replacement and still forces the repair", async () => {
-    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" });
+    const installed = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.14.10" }, path: "/p", launcher: "/p/graphify" });
     const progress = { phase: "download", downloadedBytes: 10, totalBytes: LOCK_TOTAL, file: null };
     answer(installed);
     vi.mocked(hub.installComponent).mockResolvedValue(view({ state: "installing", progress }));
@@ -1146,7 +1146,7 @@ describe("Settings → Components", () => {
     // A concurrent installer recorded a failure for a different lock: the dialog's offer
     // is now the replacement, and the cancelled Retry must show it before downloading.
     const replacementHash = "d".repeat(64);
-    const replacement = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.11.18" }, path: "/p", launcher: "/p/graphify" }, { offer: { lockHash: replacementHash, totalBytes: LOCK_TOTAL, location: "/home/u/.nema/runtime/graphify", hosts: ["new.example"] } });
+    const replacement = view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.14.10" }, path: "/p", launcher: "/p/graphify" }, { offer: { lockHash: replacementHash, totalBytes: LOCK_TOTAL, location: "/home/u/.nema/runtime/graphify", hosts: ["new.example"] } });
     vi.mocked(hub.getComponents).mockResolvedValue({ components: [replacement] });
     await refreshComponents();
     await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));

@@ -34,7 +34,7 @@ describe("mirrors", () => {
 
   test("each mirror variable replaces only its own upstream prefix", () => {
     const env = { NEMA_GRAPHIFY_PYTHON_MIRROR: "https://mirror.example/pbs/", NEMA_GRAPHIFY_PYPI_BASE: "https://pypi.example/root" };
-    expect(sourceUrl(target.python, "python", env)).toBe(`https://mirror.example/pbs/20261026/${target.python.file.replace("+", "%2B")}`);
+    expect(sourceUrl(target.python, "python", env)).toBe(`https://mirror.example/pbs/20261123/${target.python.file.replace("+", "%2B")}`);
     expect(sourceUrl(target.wheels[0]!, "wheel", env)).toBe(`https://pypi.example/root/packages/aa/bb/${target.wheels[0]!.file}`);
     expect(sourceUrl(target.python, "python", {})).toBe(target.python.url);
     expect(sourceUrls(target, { NEMA_GRAPHIFY_PYPI_BASE: "https://pypi.example" })[0]).toBe(target.python.url);
