@@ -554,6 +554,22 @@ describe("ui api", () => {
     expect(ok.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
   });
 
+  test("CORS allows credentials only alongside an allowed web origin", async () => {
+    // The web sends credentials so a remote-form session cookie reaches the hub; the browser only accepts the
+    // response when the exact origin is echoed together with allow-credentials.
+    const ok = await req("GET", "/api/workspaces", undefined, { Origin: "http://localhost:3000" });
+    expect(ok.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(ok.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
+    const preflight = await app.request(`${HUB}/api/workspaces`, {
+      method: "OPTIONS",
+      headers: { origin: "http://localhost:3000", "access-control-request-method": "POST" },
+    });
+    expect(preflight.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(preflight.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
+    const evil = await req("GET", "/api/workspaces", undefined, { Origin: "http://evil.example" });
+    expect(evil.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
   const SEEDED_AT = "2020-01-01T00:00:00.000Z";
 
   async function inferredEntry(input: Record<string, unknown>) {

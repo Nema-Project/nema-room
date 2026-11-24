@@ -448,6 +448,16 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .app-settings-panel > .drawer,
 .app-settings-panel > .plugins-page { flex: 1; min-height: 0; }
 .app-settings-section { overflow: auto; padding: 20px 28px 32px; max-width: 68ch; }
+.app-settings-section .session-user { margin-bottom: 8px; }
+.app-settings-section .session-user + button,
+.login-form button { border: 1px solid var(--ink); padding: 5px 14px; font-weight: 600; }
+.login-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.login-form { display: flex; flex-direction: column; gap: 8px; width: min(100%, 340px); }
+.login-form h1 { font-size: 18px; margin-bottom: 8px; }
+.login-form label { font-size: 13px; color: var(--ink-2); }
+.login-form input { border: 1px solid var(--rule); background: var(--paper); padding: 6px 8px; }
+.login-form button { margin-top: 8px; text-align: center; }
+.login-form button:disabled { opacity: 0.6; cursor: default; }
 .app-settings-section .label { margin-bottom: 12px; }
 .app-settings-section .help { margin-top: 8px; color: var(--ink-2); font-size: 13px; }
 .app-settings-section .foot-release { margin-top: 0; color: var(--ink-2); font-size: 13px; }

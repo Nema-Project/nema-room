@@ -5,9 +5,10 @@ import { AppReleaseAbout } from "@/components/AppRelease";
 import { ComponentsSettings } from "@/components/ComponentsSettings";
 import { ModelSettings } from "@/components/ModelSettings";
 import { PluginsPage } from "@/components/PluginsPage";
-import { getMe, updateMe } from "@/lib/hub";
+import { LOGIN_PATH, getMe, logout, updateMe } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
-import { invalidateRosters } from "@/lib/members";
+import { LOCAL_USER_ID, invalidateRosters } from "@/lib/members";
+import { pageNavigation } from "@/lib/navigation";
 
 const TABS = ["model", "plugins", "components", "general", "about"] as const;
 type SettingsTab = (typeof TABS)[number];
@@ -182,6 +183,49 @@ function DisplayNameSetting() {
   );
 }
 
+/**
+ * The signed-in person and a sign-out button (#167 task 7). Shown only when GET /api/me answers with a real
+ * user: the local forms answer usr_local, which has no login, so a single-machine install shows nothing (D-10).
+ */
+function SessionSetting() {
+  const t = useT();
+  const [me, setMe] = useState<{ userId: string; displayName: string | null } | null>(null);
+  const [state, setState] = useState<"idle" | "busy" | "error">("idle");
+
+  useEffect(() => {
+    let live = true;
+    Promise.resolve().then(() => getMe()).then((answer) => {
+      if (live && answer && answer.userId !== LOCAL_USER_ID) setMe(answer);
+    }).catch(() => {
+      /* no answer, no session entry: a 401 already sends the browser to the login page */
+    });
+    return () => { live = false; };
+  }, []);
+
+  if (!me) return null;
+
+  async function signOut() {
+    setState("busy");
+    try {
+      await logout();
+      pageNavigation.assign(LOGIN_PATH);
+    } catch (error) {
+      // A 401 means the session had already ended (expired or revoked elsewhere): the person is signed out.
+      if ((error as { status?: unknown }).status === 401) pageNavigation.assign(LOGIN_PATH);
+      else setState("error");
+    }
+  }
+
+  return (
+    <section className="app-settings-section" aria-labelledby="app-settings-session-title">
+      <h2 id="app-settings-session-title" className="label">{t("appSettings.session")}</h2>
+      <p className="session-user">{t("appSettings.sessionUser", { name: me.displayName ?? me.userId })}</p>
+      <button type="button" disabled={state === "busy"} onClick={() => { void signOut(); }}>{t("appSettings.logout")}</button>
+      {state === "error" && <p className="error" role="alert">{t("appSettings.logoutError")}</p>}
+    </section>
+  );
+}
+
 export function AppSettings({ onClose }: { onClose: () => void }) {
   const t = useT();
   const [tab, setTab] = useState<SettingsTab>("model");
@@ -275,6 +319,7 @@ export function AppSettings({ onClose }: { onClose: () => void }) {
               {id === "components" && selected && <ComponentsSettings />}
               {id === "general" && (
                 <>
+                  <SessionSetting />
                   <DisplayNameSetting />
                   <LoginItemSetting />
                 </>
