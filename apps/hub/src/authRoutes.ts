@@ -39,6 +39,8 @@ export type AuthRouteDeps = {
   loginThrottle?: LoginThrottle;
   /** Produces the decoy hash for unknown accounts; tests inject a failing one. */
   hashDecoy?: () => Promise<string>;
+  /** Checks a password against a stored hash; tests inject a throwing one to simulate a verifier fault. */
+  verifyPassword?: (password: string, stored: string) => Promise<boolean>;
 };
 
 const Password = z.string().refine((p) => {
@@ -105,15 +107,23 @@ function decoyCache(make: () => Promise<string>): () => Promise<string> {
 }
 
 /**
- * Writes a login_locked audit event. A failed write is logged (scope only, never the account string or a
- * password) and swallowed: the lock is already in force and the response must not depend on the audit.
+ * Writes a login_locked audit event. A failed write is logged and swallowed: the lock is already in force
+ * and the response must not depend on the audit. The log line is fixed text plus the scope and, when the
+ * error carries one, its SQLSTATE-style code. The error message is never logged, because a driver message
+ * can quote the parameters (the account string) it failed on.
  */
 async function auditLock(db: Db, userId: string | null, detail: { scope: "account" | "source"; source?: string }): Promise<void> {
   try {
     await recordLoginLocked(db, userId, detail);
   } catch (error) {
-    console.error(`failed to record login_locked (${detail.scope}):`, error instanceof Error ? error.message : String(error));
+    console.error(`failed to record login_locked (${detail.scope}${errorCode(error)})`);
   }
+}
+
+/** `, code XXXXX` when the error carries a five-character code (a Postgres SQLSTATE), else nothing. */
+function errorCode(error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && /^[A-Z0-9]{5}$/.test(code) ? `, code ${code}` : "";
 }
 
 /**
@@ -132,6 +142,7 @@ export function authRoutes(deps: AuthRouteDeps): Hono {
   // One process, one throttle (spec topology for phase one).
   const throttle = deps.loginThrottle ?? new LoginThrottle();
   const decoy = decoyCache(deps.hashDecoy ?? hashDecoy);
+  const verify = deps.verifyPassword ?? verifyPassword;
 
   app.post("/bootstrap", async (c) => {
     // Closed for good once any credential row exists, whatever token or body is presented.
@@ -174,7 +185,9 @@ export function authRoutes(deps: AuthRouteDeps): Hono {
       const { attempt } = gate;
       try {
         const stored = await passwordHashFor(deps.db, account);
-        const ok = await verifyPassword(password, stored ?? (await decoy()));
+        // A verifier fault (argon2 itself throwing) propagates as a 500 and counts no failure; only a
+        // completed check that does not match is a wrong password.
+        const ok = await verify(password, stored ?? (await decoy()));
         // A reset redeemed after the hash was read refuses the login, like a wrong password.
         const session = stored && ok ? await issueSessionIfCredentialUnchanged(deps.db, account, stored) : null;
         if (!session) {
@@ -189,7 +202,8 @@ export function authRoutes(deps: AuthRouteDeps): Hono {
         setSessionCookie(c, session.token);
         return c.json({ userId: account });
       } finally {
-        // An attempt that threw (database, hashing) releases its reservation without counting a failure.
+        // An attempt that threw (database, decoy hashing, verifier fault) releases its reservation without
+        // counting a failure.
         attempt.release();
       }
     });

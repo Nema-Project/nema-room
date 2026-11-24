@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { LOGIN_THROTTLE, LoginThrottle, SWEEP_BATCH, SWEEP_INTERVAL_MS } from "../src/loginThrottle.js";
+import { IN_FLIGHT_RETRY_MS, LOGIN_THROTTLE, LoginThrottle, SWEEP_BATCH, SWEEP_INTERVAL_MS } from "../src/loginThrottle.js";
 
 const MIN = 60 * 1000;
 
@@ -214,4 +214,29 @@ test("a successful or aborted attempt releases its reservation without counting 
   aborted.attempt.release();
   expect(throttle.begin("usr_r", "10.0.0.9")).toHaveProperty("attempt");
   expect(throttle.begin("usr_s", "10.0.0.9")).toHaveProperty("lock");
+});
+
+test("Retry-After is short when only in-flight attempts fill the source, the lock's remainder when locked, the longer with an account lock", () => {
+  const { throttle, advance } = clocked();
+  for (let i = 0; i < 19; i++) throttle.recordFailure(`usr_${i}`, "10.0.0.9");
+  const inFlight = throttle.begin("usr_x", "10.0.0.9");
+  if (!("attempt" in inFlight)) throw new Error("expected admission");
+
+  // 19 failures + 1 in flight: the source frees up as soon as that attempt settles, not in ~15 minutes.
+  expect(throttle.begin("usr_y", "10.0.0.9")).toEqual({ lock: { scope: "source", retryAfterMs: IN_FLIGHT_RETRY_MS } });
+  expect(throttle.check("usr_y", "10.0.0.9")).toEqual({ scope: "source", retryAfterMs: IN_FLIGHT_RETRY_MS });
+
+  // An account lock that also applies wins when longer; the in-flight retry wins when the account lock is shorter.
+  fail(throttle, 5, "usr_locked", "10.0.0.1");
+  expect(throttle.check("usr_locked", "10.0.0.9")).toEqual({ scope: "account", retryAfterMs: 15 * MIN });
+  advance(15 * MIN - 400);
+  expect(throttle.check("usr_locked", "10.0.0.9")).toEqual({ scope: "account", retryAfterMs: IN_FLIGHT_RETRY_MS });
+
+  // Once the reservation becomes a failure the source is locked and the real remaining lock is reported.
+  advance(400);
+  for (let i = 0; i < 19; i++) throttle.recordFailure(`usr_again${i}`, "10.0.0.9"); // the first 19 left the window
+  expect(inFlight.attempt.fail()).toEqual(["source"]);
+  expect(throttle.check("usr_y", "10.0.0.9")).toEqual({ scope: "source", retryAfterMs: 15 * MIN });
+  advance(5 * MIN);
+  expect(throttle.begin("usr_y", "10.0.0.9")).toEqual({ lock: { scope: "source", retryAfterMs: 10 * MIN } });
 });

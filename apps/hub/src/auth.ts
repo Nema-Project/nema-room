@@ -338,8 +338,12 @@ export const INVALID_RESET = "invalid reset code";
  * with the old password after the reset was issued). Creates no account and signs no session; the person
  * then signs in with the new password. A login that commits first has its session revoked here; a login
  * that commits after this sees the new hash and is refused.
+ *
+ * `clock` is read only once the credential row lock is held. Issuance takes the same lock and expires
+ * earlier codes at its own time, so a redemption that waited behind an issuance (or simply waited past a
+ * code's expiry) compares against the time it actually got the lock, not the time it was called.
  */
-export async function acceptCredentialReset(db: Db, code: string, passwordHash: string, now: Date = new Date()): Promise<{ userId: string }> {
+export async function acceptCredentialReset(db: Db, code: string, passwordHash: string, clock: () => Date = () => new Date()): Promise<{ userId: string }> {
   if (!TOKEN_RE.test(code)) throw new AuthError(403, INVALID_RESET);
   return db.tx(async (t) => {
     // The credential row is locked before the reset row is written, the same order issuance and login use,
@@ -348,6 +352,7 @@ export async function acceptCredentialReset(db: Db, code: string, passwordHash: 
     const [target] = await t.query<{ user_id: string }>("select user_id from credential_resets where code_hash=$1", [sha256(code)]);
     if (!target) throw new AuthError(403, INVALID_RESET);
     await lockCredential(t, target.user_id);
+    const now = clock();
     const [reset] = await t.query<{ id: string; user_id: string }>(
       "update credential_resets set used_at=$2 where code_hash=$1 and used_at is null and expires_at > $2 returning id, user_id",
       [sha256(code), now.toISOString()]);

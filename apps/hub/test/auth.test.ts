@@ -4,6 +4,8 @@ import { afterEach, expect, test, vi } from "vitest";
 import { createApp, type AppDeps } from "../src/app.js";
 import {
   BOOTSTRAP_TOKEN_FILE,
+  CREDENTIAL_RESET_TTL_MS,
+  INVALID_RESET,
   SESSION_COOKIE,
   acceptCredentialReset,
   completeBootstrap,
@@ -19,7 +21,7 @@ import { EventBus } from "../src/events.js";
 import { authRoutes } from "../src/authRoutes.js";
 import { LOCAL_USER_ID, localIdentity } from "../src/identity.js";
 import { LOGIN_THROTTLE, LoginThrottle } from "../src/loginThrottle.js";
-import { hashPassword } from "../src/passwords.js";
+import { hashPassword, verifyPassword } from "../src/passwords.js";
 import { createWorkspace } from "../src/workspaces.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 
@@ -748,4 +750,129 @@ test("with 19 source failures recorded, two concurrent logins on different accou
   const both = await Promise.all([attempt("usr_left"), attempt("usr_right")]);
   expect(both.map((r) => r.status).sort()).toEqual([401, 429]);
   expect((await attempt("usr_after")).status).toBe(429);
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// PR #292 review fixes, round 2: audit log redaction, reset clock under the lock, verifier faults.
+// ---------------------------------------------------------------------------------------------------------
+
+test("a failed audit write whose error quotes the account logs neither the account nor the message", async () => {
+  const { db, dataDir } = await makeHubDeps();
+  const account = "usr_quoted_identifier";
+  let failNext = true;
+  const flaky: Db = {
+    ...db,
+    query: (async (sql: string, params?: unknown[]) => {
+      if (failNext && sql.startsWith("insert into auth_events")) {
+        failNext = false;
+        // Drivers quote the offending parameters in their messages.
+        throw Object.assign(new Error(`insert into auth_events failed: Key (user_id)=(${account}) secret-guess`), { code: "23503" });
+      }
+      return db.query(sql, params);
+    }) as Db["query"],
+  };
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const throttle = new LoginThrottle(() => 1_000_000, { ...LOGIN_THROTTLE, accountMaxFailures: 1, sourceMaxFailures: 1 });
+    const routes = authRoutes({ db: flaky, dataDir, loginThrottle: throttle });
+    const res = await loginRequest(routes, account, "secret-guess");
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "invalid credentials" });
+    expect(failNext).toBe(false);
+    const locked = await loginRequest(routes, account, "secret-guess");
+    expect(locked.status).toBe(429);
+    expect(locked.headers.get("retry-after")).toBe("900");
+    const text = JSON.stringify(logged.mock.calls);
+    expect(text).toContain("failed to record login_locked (account, code 23503)");
+    expect(text).not.toContain(account);
+    expect(text).not.toContain("secret-guess");
+    expect(text).not.toContain("Key (user_id)");
+  } finally {
+    logged.mockRestore();
+  }
+});
+
+/** Runs `onLock` right after a transaction takes the credential row lock, i.e. when a waiting redemption resumes. */
+function afterCredentialLock(db: Db, onLock: () => void): Db {
+  return {
+    ...db,
+    tx: <T,>(fn: (t: Db) => Promise<T>): Promise<T> => db.tx((t) => fn({
+      ...t,
+      query: (async (sql: string, params?: unknown[]) => {
+        const rows = await t.query(sql, params);
+        if (LOCK_CREDENTIAL.test(sql)) onLock();
+        return rows;
+      }) as Db["query"],
+    })),
+  };
+}
+
+test("reset redemption reads the clock after the credential lock: a code superseded or expired while it waited is refused", async () => {
+  const { app, db, adminId, adminToken } = await adminHub();
+  const bob = await signUp(app, (await invite(app, adminToken)).code, "Bob", "old-pw");
+  const newHash = await hashPassword("new-pw");
+  const t0 = Date.now();
+  let t = t0;
+  const clock = () => new Date(t);
+  // Each redemption is called at t, then waits one second for the lock (an issuance holding it, say).
+  const waited = afterCredentialLock(db, () => { t += 1000; });
+
+  // Superseded: the administrator issued a replacement during the wait; issuance expired the old code at its own time.
+  const old = await createCredentialReset(db, adminId, bob.userId, new Date(t0 - 60_000));
+  const replacement = await createCredentialReset(db, adminId, bob.userId, new Date(t0 + 1000));
+  await expect(acceptCredentialReset(waited, old.code, newHash, clock)).rejects.toThrow(INVALID_RESET);
+
+  // Expired: the code's own expiry passed during the wait.
+  t = t0;
+  const expiring = await createCredentialReset(db, adminId, bob.userId, new Date(t0 - CREDENTIAL_RESET_TTL_MS + 500));
+  await expect(acceptCredentialReset(waited, expiring.code, newHash, clock)).rejects.toThrow(INVALID_RESET);
+  t = t0;
+  await expect(acceptCredentialReset(waited, replacement.code, newHash, clock)).rejects.toThrow(INVALID_RESET); // expired by that issue
+  expect((await login(app, bob.userId, "old-pw")).status).toBe(200);
+
+  // A live code is redeemed, and the redemption is stamped with the time after the lock, not the call time.
+  t = t0;
+  const live = await createCredentialReset(db, adminId, bob.userId, new Date(t0));
+  await acceptCredentialReset(waited, live.code, newHash, clock);
+  const stamped = t0 + 1000;
+  const [reset] = await db.query<{ used_at: Date }>("select used_at from credential_resets where id=$1", [live.id]);
+  const [credential] = await db.query<{ updated_at: Date }>("select updated_at from user_credentials where user_id=$1", [bob.userId]);
+  expect(new Date(reset!.used_at).getTime()).toBe(stamped);
+  expect(new Date(credential!.updated_at).getTime()).toBe(stamped);
+  expect((await login(app, bob.userId, "new-pw")).status).toBe(200);
+});
+
+test("a verifier fault answers 500 and counts no failure; a wrong password is still a counted 401", async () => {
+  const { db, dataDir } = await makeHubDeps();
+  const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    // 19 source failures recorded: one counted failure more would lock the source for 15 minutes.
+    const throttle = new LoginThrottle(() => 1_000_000);
+    for (let i = 0; i < 19; i++) throttle.recordFailure(`usr_spray${i}`, "unknown");
+    let faults = 1;
+    const verify = async (password: string, stored: string) => {
+      if (faults > 0) {
+        faults -= 1;
+        throw new Error("injected argon2 fault");
+      }
+      return verifyPassword(password, stored);
+    };
+    const routes = authRoutes({ db, dataDir, loginThrottle: throttle, verifyPassword: verify });
+
+    const faulted = await loginRequest(routes, "usr_ghost", "x");
+    expect(faulted.status).toBe(500);
+    expect(faulted.headers.get("set-cookie")).toBeNull();
+    expect(throttle.check("usr_ghost", "unknown")).toBeNull(); // not counted, reservation released, source not locked
+    expect(await db.query("select id from auth_events where kind='login_locked'")).toEqual([]);
+
+    // A wrong password behaves as before: 401, counted (the twentieth failure), and the source locks.
+    const wrong = await loginRequest(routes, "usr_ghost", "x");
+    expect(wrong.status).toBe(401);
+    expect(await wrong.json()).toEqual({ error: "invalid credentials" });
+    const locked = await loginRequest(routes, "usr_other", "x");
+    expect(locked.status).toBe(429);
+    expect(locked.headers.get("retry-after")).toBe("900");
+  } finally {
+    quiet.mockRestore();
+  }
 });

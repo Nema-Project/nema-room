@@ -28,7 +28,7 @@ export const SWEEP_INTERVAL_MS = 60 * 1000;
 /** At most this many entries are inspected per sweep; a larger map is finished by later sweeps. */
 export const SWEEP_BATCH = 5_000;
 /** Retry-After for a source whose remaining budget is held by attempts still in flight. */
-const IN_FLIGHT_RETRY_MS = 1000;
+export const IN_FLIGHT_RETRY_MS = 1000;
 
 /** Failure times inside the window (oldest first, at most `max` kept), the lock, and in-flight reservations. */
 type Entry = { failures: number[]; lockedUntil: number; reserved: number };
@@ -70,13 +70,14 @@ class Counters {
 
   /**
    * Whether one more attempt may start: the failures already in the window plus the attempts in flight
-   * stay below the threshold. 0 means yes; otherwise the milliseconds to suggest before retrying.
+   * stay below the threshold. 0 means yes; otherwise IN_FLIGHT_RETRY_MS. An unlocked key always has fewer
+   * than `max` failures (the max-th failure locks it), so a full unlocked key is full only because of
+   * attempts in flight, and those settle within about a second: the client is told to retry that soon,
+   * not when the oldest failure leaves the window. A locked key is answered by `lockedFor` instead.
    */
   fullFor(key: string, now: number): number {
     const entry = this.live(key, now);
-    if (!entry || entry.failures.length + entry.reserved < this.max) return 0;
-    const oldest = entry.failures[0];
-    return Math.max(IN_FLIGHT_RETRY_MS, oldest === undefined ? 0 : oldest + this.windowMs - now);
+    return entry && entry.failures.length + entry.reserved >= this.max ? IN_FLIGHT_RETRY_MS : 0;
   }
 
   reserve(key: string, now: number): void {
@@ -176,7 +177,8 @@ export class LoginThrottle {
 
   private lockAt(account: string, source: string, now: number): Lock | null {
     const accountMs = this.accounts.lockedFor(account, now);
-    const sourceMs = Math.max(this.sources.lockedFor(source, now), this.sources.fullFor(source, now));
+    // A locked source reports its remaining lock; an unlocked one is refused only while its budget is in flight.
+    const sourceMs = this.sources.lockedFor(source, now) || this.sources.fullFor(source, now);
     if (accountMs === 0 && sourceMs === 0) return null;
     return { scope: accountMs > 0 ? "account" : "source", retryAfterMs: Math.max(accountMs, sourceMs) };
   }
