@@ -21,11 +21,13 @@ import {
   issueSession,
   listInvites,
   passwordHashFor,
+  recordLoginLocked,
   removeBootstrapToken,
   revokeSession,
   revokeUserSessions,
 } from "./auth.js";
 import type { Db } from "./db/db.js";
+import { LoginThrottle } from "./loginThrottle.js";
 import { MAX_PASSWORD_BYTES, hashPassword, verifyPassword } from "./passwords.js";
 
 export type AuthRouteDeps = {
@@ -33,6 +35,8 @@ export type AuthRouteDeps = {
   dataDir: string;
   /** The one-time token main.ts wrote to `<dataDir>/bootstrap-token`; absent once bootstrapped. */
   bootstrapToken?: string;
+  /** Login rate limiting; tests inject one with a fake clock. */
+  loginThrottle?: LoginThrottle;
 };
 
 const Password = z.string().refine((p) => {
@@ -51,6 +55,8 @@ const CreateInviteBody = z.object({ workspaceId: z.string().min(1).max(64).nulla
 
 /** One message for an unknown account and a wrong password, so login does not reveal which accounts exist. */
 export const INVALID_CREDENTIALS = "invalid credentials";
+/** A locked account or source (429). Locks apply to unknown accounts too, so this reveals no account either. */
+export const LOGIN_LOCKED = "too many failed attempts; try again later";
 
 /**
  * Cookie attributes for every session the hub signs (bootstrap, invite, login) and for clearing it.
@@ -80,9 +86,21 @@ function authFailure(c: Context, error: unknown) {
 let decoyHash: Promise<string> | undefined;
 const decoy = () => (decoyHash ??= hashPassword("decoy password for accounts without credentials"));
 
+/**
+ * The peer address of the TCP connection. Forwarding headers are not trusted: the hub does not know
+ * whether a proxy sits in front of it. Behind a reverse proxy every login shares the proxy's address,
+ * so the source limit then applies to all logins together (the account limit is unaffected).
+ */
+function sourceAddress(c: Context): string {
+  const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
+  return env?.incoming?.socket?.remoteAddress ?? "unknown";
+}
+
 export function authRoutes(deps: AuthRouteDeps): Hono {
   const app = new Hono();
   let bootstrapToken = deps.bootstrapToken;
+  // One process, one throttle (spec topology for phase one).
+  const throttle = deps.loginThrottle ?? new LoginThrottle();
 
   app.post("/bootstrap", async (c) => {
     // Closed for good once any credential row exists, whatever token or body is presented.
@@ -112,12 +130,30 @@ export function authRoutes(deps: AuthRouteDeps): Hono {
   app.post("/login", async (c) => {
     const parsed = await readBody(c, LoginBody);
     if (!parsed) return c.json({ error: "invalid login request" }, 400);
-    const stored = await passwordHashFor(deps.db, parsed.account);
-    const ok = await verifyPassword(parsed.password, stored ?? (await decoy()));
-    if (!stored || !ok) return c.json({ error: INVALID_CREDENTIALS }, 401);
-    const session = await issueSession(deps.db, parsed.account);
-    setSessionCookie(c, session.token);
-    return c.json({ userId: parsed.account });
+    const { account, password } = parsed;
+    const source = sourceAddress(c);
+    return throttle.serialize(account, async () => {
+      // A locked account or source is refused before the password is checked, even a correct one.
+      const lock = throttle.check(account, source);
+      if (lock) {
+        c.header("Retry-After", String(Math.ceil(lock.retryAfterMs / 1000)));
+        return c.json({ error: LOGIN_LOCKED }, 429);
+      }
+      const stored = await passwordHashFor(deps.db, account);
+      const ok = await verifyPassword(password, stored ?? (await decoy()));
+      if (!stored || !ok) {
+        for (const scope of throttle.recordFailure(account, source)) {
+          // Only a real account is named; a guessed one is not stored. The source is an address, not a secret.
+          await recordLoginLocked(deps.db, scope === "account" && stored ? account : null,
+            scope === "account" ? { scope } : { scope, source });
+        }
+        return c.json({ error: INVALID_CREDENTIALS }, 401);
+      }
+      throttle.recordSuccess(account);
+      const session = await issueSession(deps.db, account);
+      setSessionCookie(c, session.token);
+      return c.json({ userId: account });
+    });
   });
 
   app.post("/invites/accept", async (c) => {

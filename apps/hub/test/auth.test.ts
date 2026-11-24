@@ -520,6 +520,54 @@ test("credential reset: sessions die, the code sets a new password once, the old
   ].sort());
 });
 
+test("login lockout (task 6): a locked account refuses even the right password; others and unknown names behave alike", async () => {
+  const { app, db, adminId, adminToken } = await adminHub();
+  const bob = await signUp(app, (await invite(app, adminToken)).code, "Bob", "bob-pw");
+
+  for (let i = 1; i <= 5; i++) {
+    const res = await login(app, adminId, `wrong-${i}`);
+    expect(res.status, `attempt ${i}`).toBe(401);
+  }
+  const locked = await login(app, adminId, "admin-pw");
+  expect(locked.status).toBe(429);
+  expect(await locked.json()).toEqual({ error: "too many failed attempts; try again later" });
+  expect(locked.headers.get("retry-after")).toBe("900");
+  expect(locked.headers.get("set-cookie")).toBeNull();
+  // Existing sessions are not touched by a lock, and Bob's account is unaffected.
+  expect((await get(app, "/api/identity-probe", adminToken)).status).toBe(200);
+  expect((await login(app, bob.userId, "bob-pw")).status).toBe(200);
+
+  // An unknown account locks the same way, so the 429 reveals nothing about existence.
+  for (let i = 0; i < 5; i++) await login(app, "usr_doesnotexist", "x");
+  const ghost = await login(app, "usr_doesnotexist", "x");
+  expect(ghost.status).toBe(429);
+  expect(await ghost.json()).toEqual({ error: "too many failed attempts; try again later" });
+
+  // Events: the real account is named; the guessed one is not stored.
+  expect(await db.query("select user_id,actor_user_id,detail from auth_events where kind='login_locked' order by created_at,id"))
+    .toEqual([
+      { user_id: adminId, actor_user_id: null, detail: { scope: "account" } },
+      { user_id: null, actor_user_id: null, detail: { scope: "account" } },
+    ]);
+
+  // A source that sprays 20 failures is locked for every account, including a correct password; another source is not.
+  const from = (addr: string) => ({ incoming: { socket: { remoteAddress: addr } } });
+  const attempt = (account: string, password: string, addr: string) =>
+    app.request(`${HUB}/api/auth/login`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ account, password }) }, from(addr));
+  for (let i = 0; i < 20; i++) expect((await attempt(`usr_spray${i}`, "x", "10.9.9.9")).status).toBe(401);
+  expect((await attempt(bob.userId, "bob-pw", "10.9.9.9")).status).toBe(429);
+  expect((await attempt(bob.userId, "bob-pw", "10.1.1.1")).status).toBe(200);
+  expect(await db.query("select detail from auth_events where kind='login_locked' and detail->>'scope'='source'"))
+    .toEqual([{ detail: { scope: "source", source: "10.9.9.9" } }]);
+});
+
+test("a concurrent burst against one account gets exactly five password checks before the lock", async () => {
+  const { app, adminId } = await adminHub();
+  const results = await Promise.all(Array.from({ length: 10 }, (_, i) => login(app, adminId, `burst-${i}`)));
+  expect(results.map((r) => r.status).sort()).toEqual([...Array(5).fill(401), ...Array(5).fill(429)]);
+  expect((await login(app, adminId, "admin-pw")).status).toBe(429);
+});
+
 test("the bootstrap channel stays closed after invited accounts exist; only the bootstrap account administers", async () => {
   const { app, db, adminToken, token } = await adminHub();
   const bob = await signUp(app, (await invite(app, adminToken)).code, "Bob", "bob-pw");

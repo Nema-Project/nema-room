@@ -252,6 +252,11 @@ export async function acceptInvite(db: Db, code: string, displayName: string, pa
   });
 }
 
+/** Task 6: a login lock was just triggered. `userId` is null unless the locked account exists. */
+export async function recordLoginLocked(db: Db, userId: string | null, detail: { scope: "account" | "source"; source?: string }): Promise<void> {
+  await authEvent(db, "login_locked", userId, null, detail);
+}
+
 /** The stored password hash of a login account, or null. `usr_local` has no credential row, so it is null. */
 export async function passwordHashFor(db: Db, account: string): Promise<string | null> {
   const [row] = await db.query<{ password_hash: string }>("select password_hash from user_credentials where user_id=$1", [account]);
