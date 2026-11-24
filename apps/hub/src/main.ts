@@ -59,12 +59,13 @@ async function main(): Promise<void> {
   try {
     await migrate(db);
     // #167 remote form: opt-in, exactly "1", standalone hub only. Until the first account exists, a fresh
-    // one-time bootstrap token is printed here and written next to daemon-token.
+    // one-time bootstrap token is written next to daemon-token; only the file path is logged (the token
+    // itself is a secret and stays out of logs).
     const remoteAuth = process.env.NEMA_HUB_REMOTE === "1";
     const bootstrapToken = remoteAuth ? await prepareBootstrapToken(db, dataDir) : null;
     if (remoteAuth) {
       console.log(bootstrapToken
-        ? `nema hub remote mode: no account yet. Bootstrap token: ${bootstrapToken} (also in ${path.join(dataDir, BOOTSTRAP_TOKEN_FILE)})`
+        ? `nema hub remote mode: no account yet. Bootstrap token written to ${path.join(dataDir, BOOTSTRAP_TOKEN_FILE)} (0600); POST it to /api/auth/bootstrap to create the first account`
         : "nema hub remote mode: bootstrap already completed");
     }
     const releaseVersion = readHubReleaseVersion();

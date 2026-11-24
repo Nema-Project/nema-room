@@ -5,6 +5,7 @@ import { createApp, type AppDeps } from "../src/app.js";
 import {
   BOOTSTRAP_TOKEN_FILE,
   SESSION_COOKIE,
+  completeBootstrap,
   isBootstrapped,
   issueSession,
   prepareBootstrapToken,
@@ -41,6 +42,36 @@ async function remoteHub(base?: { db: Db; dataDir: string }): Promise<Hub & { to
 function bootstrap(app: Hub["app"], body: unknown) {
   return app.request(`${HUB}/api/auth/bootstrap`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
 }
+
+test("a failed first-session insert rolls the bootstrap back, and a retry succeeds", async () => {
+  // Regression: account creation and the first session share one transaction. If the session
+  // insert fails after the credential rows were written, nothing may commit — otherwise the
+  // spent bootstrap would leave the hub with an account nobody can sign in to and a channel
+  // that answers 410 forever.
+  const { db } = await makeHubDeps();
+  let failOnce = true;
+  const flaky = {
+    ...db,
+    tx: <T,>(fn: (t: Db) => Promise<T>): Promise<T> => db.tx(async (t) => {
+      const wrapped: Db = {
+        ...t,
+        query: (async (sql: string, params?: unknown[]) => {
+          if (failOnce && /insert into sessions/.test(sql)) {
+            failOnce = false;
+            throw new Error("injected session insert failure");
+          }
+          return t.query(sql, params);
+        }) as Db["query"],
+      };
+      return fn(wrapped);
+    }),
+  } as Db;
+  await expect(completeBootstrap(flaky, "Admin", "hash")).rejects.toThrow(/injected session insert failure/);
+  expect(await isBootstrapped(db)).toBe(false);
+  const { userId, session } = await completeBootstrap(db, "Admin", "hash");
+  expect(await isBootstrapped(db)).toBe(true);
+  expect(await resolveSession(db, session.token)).toBe(userId);
+});
 
 function sessionCookie(res: Response): string {
   const header = res.headers.get("set-cookie") ?? "";

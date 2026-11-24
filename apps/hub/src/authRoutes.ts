@@ -10,7 +10,6 @@ import {
   bootstrapTokenMatches,
   completeBootstrap,
   isBootstrapped,
-  issueSession,
   removeBootstrapToken,
 } from "./auth.js";
 import type { Db } from "./db/db.js";
@@ -45,17 +44,18 @@ export function authRoutes(deps: AuthRouteDeps): Hono {
     if (!bootstrapTokenMatches(bootstrapToken, token)) return c.json({ error: "invalid bootstrap token" }, 403);
 
     const passwordHash = await hashPassword(password);
-    let userId: string;
+    let completed: Awaited<ReturnType<typeof completeBootstrap>>;
     try {
-      userId = await completeBootstrap(deps.db, displayName, passwordHash);
+      completed = await completeBootstrap(deps.db, displayName, passwordHash);
     } catch (error) {
       if (error instanceof BootstrapClosedError) return c.json({ error: "bootstrap closed" }, 410);
       throw error;
     }
+    // The account and its first session committed together; only now is the token spent.
     bootstrapToken = undefined;
     await removeBootstrapToken(deps.dataDir);
 
-    const session = await issueSession(deps.db, userId);
+    const { userId, session } = completed;
     setCookie(c, SESSION_COOKIE, session.token, {
       httpOnly: true,
       // The remote form always requires https or an encrypted overlay (spec D-8); browsers still accept

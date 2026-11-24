@@ -25,15 +25,18 @@ function newToken(): string {
 
 export type IssuedSession = { id: string; token: string; userId: string; expiresAt: string };
 
-/** Creates a session row and returns the plaintext token. The token is never stored or logged. */
-export async function issueSession(db: Db, userId: string, opts: { now?: Date } = {}): Promise<IssuedSession> {
-  const now = opts.now ?? new Date();
+async function insertSession(db: Db, userId: string, now: Date): Promise<IssuedSession> {
   const token = newToken();
   const id = `ses_${nanoid(16)}`;
   const expiresAt = new Date(now.getTime() + SESSION_TTL_MS).toISOString();
   await db.query("insert into sessions(id,user_id,token_hash,created_at,expires_at) values ($1,$2,$3,$4,$5)",
     [id, userId, sha256(token), now.toISOString(), expiresAt]);
   return { id, token, userId, expiresAt };
+}
+
+/** Creates a session row and returns the plaintext token. The token is never stored or logged. */
+export async function issueSession(db: Db, userId: string, opts: { now?: Date } = {}): Promise<IssuedSession> {
+  return insertSession(db, userId, opts.now ?? new Date());
 }
 
 /**
@@ -64,7 +67,8 @@ export async function isBootstrapped(db: Db): Promise<boolean> {
 
 /**
  * Startup step for a remote hub. Not bootstrapped: writes a fresh one-time token to
- * `<dataDir>/bootstrap-token` (0600) and returns it so the caller can print it. Bootstrapped: removes any
+ * `<dataDir>/bootstrap-token` (0600) and returns it for the app deps; the caller reports only the file
+ * path, never the token itself (secrets stay out of logs). Bootstrapped: removes any
  * leftover file and returns null, so the channel never reopens on restart.
  */
 export async function prepareBootstrapToken(db: Db, dataDir: string): Promise<string | null> {
@@ -100,10 +104,12 @@ export class BootstrapClosedError extends Error {
 }
 
 /**
- * Creates the first account (users + user_credentials + auth_events.bootstrap_completed) in one transaction.
- * The credentials table is locked first, so concurrent attempts serialize and only the first one succeeds.
+ * Creates the first account (users + user_credentials + auth_events.bootstrap_completed) and its first
+ * session in one transaction, so a failure anywhere — including the session insert — commits nothing and
+ * the bootstrap stays retryable. The credentials table is locked first, so concurrent attempts serialize
+ * and only the first one succeeds.
  */
-export async function completeBootstrap(db: Db, displayName: string, passwordHash: string): Promise<string> {
+export async function completeBootstrap(db: Db, displayName: string, passwordHash: string): Promise<{ userId: string; session: IssuedSession }> {
   return db.tx(async (t) => {
     await t.query("lock table user_credentials in share row exclusive mode");
     if (await isBootstrapped(t)) throw new BootstrapClosedError();
@@ -112,6 +118,7 @@ export async function completeBootstrap(db: Db, displayName: string, passwordHas
     await t.query("insert into user_credentials(user_id,password_hash) values ($1,$2)", [userId, passwordHash]);
     await t.query("insert into auth_events(id,user_id,kind,actor_user_id) values ($1,$2,'bootstrap_completed',$2)",
       [`aev_${nanoid(16)}`, userId]);
-    return userId;
+    const session = await insertSession(t, userId, new Date());
+    return { userId, session };
   });
 }
