@@ -18,7 +18,7 @@ import {
   createCredentialReset,
   createInvite,
   isBootstrapped,
-  issueSession,
+  issueSessionIfCredentialUnchanged,
   listInvites,
   passwordHashFor,
   recordLoginLocked,
@@ -37,6 +37,8 @@ export type AuthRouteDeps = {
   bootstrapToken?: string;
   /** Login rate limiting; tests inject one with a fake clock. */
   loginThrottle?: LoginThrottle;
+  /** Produces the decoy hash for unknown accounts; tests inject a failing one. */
+  hashDecoy?: () => Promise<string>;
 };
 
 const Password = z.string().refine((p) => {
@@ -82,9 +84,37 @@ function authFailure(c: Context, error: unknown) {
   throw error;
 }
 
-/** A hash to verify against when the account has no credential row, so both paths cost one argon2id run. */
-let decoyHash: Promise<string> | undefined;
-const decoy = () => (decoyHash ??= hashPassword("decoy password for accounts without credentials"));
+const hashDecoy = () => hashPassword("decoy password for accounts without credentials");
+
+/**
+ * A hash to verify against when the account has no credential row, so both paths cost one argon2id run.
+ * Concurrent first logins share one pending hash; a failed hash is not cached, so the next login retries.
+ */
+function decoyCache(make: () => Promise<string>): () => Promise<string> {
+  let cached: Promise<string> | undefined;
+  return () => {
+    if (!cached) {
+      const pending = make();
+      cached = pending;
+      pending.catch(() => {
+        if (cached === pending) cached = undefined;
+      });
+    }
+    return cached;
+  };
+}
+
+/**
+ * Writes a login_locked audit event. A failed write is logged (scope only, never the account string or a
+ * password) and swallowed: the lock is already in force and the response must not depend on the audit.
+ */
+async function auditLock(db: Db, userId: string | null, detail: { scope: "account" | "source"; source?: string }): Promise<void> {
+  try {
+    await recordLoginLocked(db, userId, detail);
+  } catch (error) {
+    console.error(`failed to record login_locked (${detail.scope}):`, error instanceof Error ? error.message : String(error));
+  }
+}
 
 /**
  * The peer address of the TCP connection. Forwarding headers are not trusted: the hub does not know
@@ -101,6 +131,7 @@ export function authRoutes(deps: AuthRouteDeps): Hono {
   let bootstrapToken = deps.bootstrapToken;
   // One process, one throttle (spec topology for phase one).
   const throttle = deps.loginThrottle ?? new LoginThrottle();
+  const decoy = decoyCache(deps.hashDecoy ?? hashDecoy);
 
   app.post("/bootstrap", async (c) => {
     // Closed for good once any credential row exists, whatever token or body is presented.
@@ -133,26 +164,34 @@ export function authRoutes(deps: AuthRouteDeps): Hono {
     const { account, password } = parsed;
     const source = sourceAddress(c);
     return throttle.serialize(account, async () => {
-      // A locked account or source is refused before the password is checked, even a correct one.
-      const lock = throttle.check(account, source);
-      if (lock) {
-        c.header("Retry-After", String(Math.ceil(lock.retryAfterMs / 1000)));
+      // A locked account or source is refused before the password is checked, even a correct one. Passing
+      // the gate reserves one of the source's remaining failures until this attempt settles.
+      const gate = throttle.begin(account, source);
+      if ("lock" in gate) {
+        c.header("Retry-After", String(Math.ceil(gate.lock.retryAfterMs / 1000)));
         return c.json({ error: LOGIN_LOCKED }, 429);
       }
-      const stored = await passwordHashFor(deps.db, account);
-      const ok = await verifyPassword(password, stored ?? (await decoy()));
-      if (!stored || !ok) {
-        for (const scope of throttle.recordFailure(account, source)) {
-          // Only a real account is named; a guessed one is not stored. The source is an address, not a secret.
-          await recordLoginLocked(deps.db, scope === "account" && stored ? account : null,
-            scope === "account" ? { scope } : { scope, source });
+      const { attempt } = gate;
+      try {
+        const stored = await passwordHashFor(deps.db, account);
+        const ok = await verifyPassword(password, stored ?? (await decoy()));
+        // A reset redeemed after the hash was read refuses the login, like a wrong password.
+        const session = stored && ok ? await issueSessionIfCredentialUnchanged(deps.db, account, stored) : null;
+        if (!session) {
+          for (const scope of attempt.fail()) {
+            // Only a real account is named; a guessed one is not stored. The source is an address, not a secret.
+            await auditLock(deps.db, scope === "account" && stored ? account : null,
+              scope === "account" ? { scope } : { scope, source });
+          }
+          return c.json({ error: INVALID_CREDENTIALS }, 401);
         }
-        return c.json({ error: INVALID_CREDENTIALS }, 401);
+        attempt.succeed();
+        setSessionCookie(c, session.token);
+        return c.json({ userId: account });
+      } finally {
+        // An attempt that threw (database, hashing) releases its reservation without counting a failure.
+        attempt.release();
       }
-      throttle.recordSuccess(account);
-      const session = await issueSession(deps.db, account);
-      setSessionCookie(c, session.token);
-      return c.json({ userId: account });
     });
   });
 

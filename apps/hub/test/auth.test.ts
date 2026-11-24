@@ -1,11 +1,13 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { createApp, type AppDeps } from "../src/app.js";
 import {
   BOOTSTRAP_TOKEN_FILE,
   SESSION_COOKIE,
+  acceptCredentialReset,
   completeBootstrap,
+  createCredentialReset,
   isBootstrapped,
   issueSession,
   prepareBootstrapToken,
@@ -14,7 +16,10 @@ import {
 } from "../src/auth.js";
 import type { Db } from "../src/db/db.js";
 import { EventBus } from "../src/events.js";
+import { authRoutes } from "../src/authRoutes.js";
 import { LOCAL_USER_ID, localIdentity } from "../src/identity.js";
+import { LOGIN_THROTTLE, LoginThrottle } from "../src/loginThrottle.js";
+import { hashPassword } from "../src/passwords.js";
 import { createWorkspace } from "../src/workspaces.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 
@@ -33,10 +38,10 @@ async function hubFor(extra: Partial<AppDeps> = {}, base?: { db: Db; dataDir: st
 }
 
 /** A remote hub as main.ts would start it: token generated and written before serving. */
-async function remoteHub(base?: { db: Db; dataDir: string }): Promise<Hub & { token: string }> {
+async function remoteHub(base?: { db: Db; dataDir: string }, extra: Partial<AppDeps> = {}): Promise<Hub & { token: string }> {
   const deps = base ?? (await makeHubDeps());
   const token = await prepareBootstrapToken(deps.db, deps.dataDir);
-  const hub = await hubFor({ remoteAuth: true, bootstrapToken: token ?? undefined }, deps);
+  const hub = await hubFor({ remoteAuth: true, bootstrapToken: token ?? undefined, ...extra }, deps);
   return { ...hub, token: token ?? "" };
 }
 
@@ -262,8 +267,8 @@ function get(app: Hub["app"], p: string, token?: string) {
 }
 
 /** A bootstrapped remote hub: the administrator's id and session token. */
-async function adminHub(): Promise<Hub & { token: string; adminId: string; adminToken: string }> {
-  const hub = await remoteHub();
+async function adminHub(extra: Partial<AppDeps> = {}): Promise<Hub & { token: string; adminId: string; adminToken: string }> {
+  const hub = await remoteHub(undefined, extra);
   const res = await bootstrap(hub.app, { token: hub.token, displayName: "Admin", password: "admin-pw" });
   const { userId } = await res.json() as { userId: string };
   return { ...hub, adminId: userId, adminToken: sessionCookie(res) };
@@ -521,7 +526,9 @@ test("credential reset: sessions die, the code sets a new password once, the old
 });
 
 test("login lockout (task 6): a locked account refuses even the right password; others and unknown names behave alike", async () => {
-  const { app, db, adminId, adminToken } = await adminHub();
+  // A frozen clock keeps Retry-After exact: no time passes between the locking failure and the refusal.
+  const frozen = Date.now();
+  const { app, db, adminId, adminToken } = await adminHub({ loginThrottle: new LoginThrottle(() => frozen) });
   const bob = await signUp(app, (await invite(app, adminToken)).code, "Bob", "bob-pw");
 
   for (let i = 1; i <= 5; i++) {
@@ -574,4 +581,171 @@ test("the bootstrap channel stays closed after invited accounts exist; only the 
   expect((await bootstrap(app, { token, displayName: "Eve", password: "eve-pw" })).status).toBe(410);
   expect((await post(app, "/api/auth/invites", {}, bob.token)).status).toBe(403);
   expect((await db.query("select user_id from auth_events where kind='bootstrap_completed'")).length).toBe(1);
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// PR #292 review fixes: reset/login serialization, decoy retry, audit isolation, source reservations.
+// ---------------------------------------------------------------------------------------------------------
+
+/** The statements each transaction runs, in order. PGlite runs transactions one at a time, so row-lock
+ * races cannot be produced here; these logs pin that every path takes the credential lock first. */
+function recordingTx(db: Db, log: string[]): Db {
+  return {
+    ...db,
+    tx: <T,>(fn: (t: Db) => Promise<T>): Promise<T> => db.tx((t) => fn({
+      ...t,
+      query: ((sql: string, params?: unknown[]) => {
+        log.push(sql);
+        return t.query(sql, params);
+      }) as Db["query"],
+    })),
+  };
+}
+
+const LOCK_CREDENTIAL = /^select password_hash from user_credentials where user_id=\$1 for update$/;
+
+function loginRequest(routes: ReturnType<typeof authRoutes>, account: string, password: string) {
+  return routes.request("/login", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ account, password }) });
+}
+
+test("concurrent reset issues for one account leave exactly one redeemable code, the later one", async () => {
+  const { app, db, adminId, adminToken } = await adminHub();
+  const bob = await signUp(app, (await invite(app, adminToken)).code, "Bob", "old-pw");
+  const [a, b] = await Promise.all([createCredentialReset(db, adminId, bob.userId), createCredentialReset(db, adminId, bob.userId)]);
+  const live = await db.query<{ id: string }>(
+    "select id from credential_resets where user_id=$1 and used_at is null and expires_at > now()", [bob.userId]);
+  expect(live).toHaveLength(1);
+  const [winner, loser] = live[0]!.id === a.id ? [a, b] : [b, a];
+  const [w, l] = await Promise.all([winner, loser].map(async (r) =>
+    (await db.query<{ created_at: Date }>("select created_at from credential_resets where id=$1", [r.id]))[0]!.created_at));
+  expect(new Date(w!).getTime()).toBeGreaterThanOrEqual(new Date(l!).getTime());
+  expect((await post(app, "/api/auth/credential-reset/accept", { code: loser.code, password: "x" })).status).toBe(403);
+  expect((await post(app, "/api/auth/credential-reset/accept", { code: winner.code, password: "new-pw" })).status).toBe(200);
+
+  // Issuance, redemption and login issuance all lock the credential row before writing anything.
+  const issueLog: string[] = [];
+  const again = await createCredentialReset(recordingTx(db, issueLog), adminId, bob.userId);
+  expect(issueLog[0]).toMatch(LOCK_CREDENTIAL);
+  const acceptLog: string[] = [];
+  await acceptCredentialReset(recordingTx(db, acceptLog), again.code, await hashPassword("newer-pw"));
+  const lockAt = acceptLog.findIndex((sql) => LOCK_CREDENTIAL.test(sql));
+  expect(lockAt).toBeGreaterThanOrEqual(0);
+  expect(lockAt).toBeLessThan(acceptLog.findIndex((sql) => sql.startsWith("update credential_resets")));
+  const loginLog: string[] = [];
+  const routes = authRoutes({ db: recordingTx(db, loginLog), dataDir: "/nonexistent" });
+  expect((await loginRequest(routes, bob.userId, "newer-pw")).status).toBe(200);
+  expect(loginLog[0]).toMatch(LOCK_CREDENTIAL);
+  expect(loginLog[1]).toMatch(/^insert into sessions/);
+});
+
+test("a reset redeemed between password verification and session issue refuses the old-password login", async () => {
+  const { app, db, dataDir, adminId, adminToken } = await adminHub();
+  const bob = await signUp(app, (await invite(app, adminToken)).code, "Bob", "old-pw");
+  const reset = await createCredentialReset(db, adminId, bob.userId);
+  const newHash = await hashPassword("new-pw");
+  // The reset commits right after login read the old hash, before it verifies and issues.
+  let raced = false;
+  const racing: Db = {
+    ...db,
+    query: (async (sql: string, params?: unknown[]) => {
+      const rows = await db.query(sql, params);
+      if (!raced && sql === "select password_hash from user_credentials where user_id=$1") {
+        raced = true;
+        await acceptCredentialReset(db, reset.code, newHash);
+      }
+      return rows;
+    }) as Db["query"],
+  };
+  const res = await loginRequest(authRoutes({ db: racing, dataDir }), bob.userId, "old-pw");
+  expect(raced).toBe(true);
+  expect(res.status).toBe(401);
+  expect(await res.json()).toEqual({ error: "invalid credentials" });
+  expect(res.headers.get("set-cookie")).toBeNull();
+  expect(await db.query("select id from sessions where user_id=$1 and revoked_at is null", [bob.userId])).toEqual([]);
+  // The new password is unaffected.
+  expect((await login(app, bob.userId, "new-pw")).status).toBe(200);
+});
+
+test("a failed decoy hash is not cached: the next unknown-account login retries it and is counted", async () => {
+  const { db, dataDir } = await makeHubDeps();
+  const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    let calls = 0;
+    const hashDecoy = async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("injected decoy failure");
+      return hashPassword("decoy");
+    };
+    const throttle = new LoginThrottle(Date.now, { ...LOGIN_THROTTLE, accountMaxFailures: 2 });
+    const routes = authRoutes({ db, dataDir, loginThrottle: throttle, hashDecoy });
+
+    expect((await loginRequest(routes, "usr_ghost", "x")).status).toBe(500);
+    // Retried, verified and recorded: the aborted first attempt did not count, so the lock comes on the third.
+    expect((await loginRequest(routes, "usr_ghost", "x")).status).toBe(401);
+    expect(calls).toBe(2);
+    expect((await loginRequest(routes, "usr_ghost", "x")).status).toBe(401);
+    expect(await db.query("select user_id,detail from auth_events where kind='login_locked'"))
+      .toEqual([{ user_id: null, detail: { scope: "account" } }]);
+    expect((await loginRequest(routes, "usr_ghost", "x")).status).toBe(429);
+    expect(calls).toBe(2);
+
+    // Concurrent first logins share one pending decoy hash.
+    let shared = 0;
+    const fresh = authRoutes({ db, dataDir, hashDecoy: async () => { shared += 1; return hashPassword("decoy"); } });
+    const statuses = await Promise.all(["usr_g1", "usr_g2", "usr_g3"].map((a) => loginRequest(fresh, a, "x")));
+    expect(statuses.map((r) => r.status)).toEqual([401, 401, 401]);
+    expect(shared).toBe(1);
+  } finally {
+    quiet.mockRestore();
+  }
+});
+
+test("a failed audit write changes neither the response nor the lock, and does not suppress the other event", async () => {
+  const { db, dataDir } = await makeHubDeps();
+  let failNext = true;
+  const flaky: Db = {
+    ...db,
+    query: (async (sql: string, params?: unknown[]) => {
+      if (failNext && sql.startsWith("insert into auth_events")) {
+        failNext = false;
+        throw new Error("injected audit failure");
+      }
+      return db.query(sql, params);
+    }) as Db["query"],
+  };
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    // One failure locks both scopes, so two events are written; the first (account) write fails.
+    const throttle = new LoginThrottle(() => 1_000_000, { ...LOGIN_THROTTLE, accountMaxFailures: 1, sourceMaxFailures: 1 });
+    const routes = authRoutes({ db: flaky, dataDir, loginThrottle: throttle });
+    const res = await loginRequest(routes, "usr_ghost", "secret-guess");
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "invalid credentials" });
+    expect(failNext).toBe(false);
+    expect(await db.query("select detail from auth_events where kind='login_locked'"))
+      .toEqual([{ detail: { scope: "source", source: "unknown" } }]);
+    const locked = await loginRequest(routes, "usr_ghost", "secret-guess");
+    expect(locked.status).toBe(429);
+    expect(locked.headers.get("retry-after")).toBe("900");
+    // Logged without the account string or the password.
+    expect(logged).toHaveBeenCalled();
+    const text = JSON.stringify(logged.mock.calls);
+    expect(text).toContain("login_locked");
+    expect(text).not.toContain("secret-guess");
+    expect(text).not.toContain("usr_ghost");
+  } finally {
+    logged.mockRestore();
+  }
+});
+
+test("with 19 source failures recorded, two concurrent logins on different accounts get one password check", async () => {
+  const { app } = await adminHub();
+  const from = { incoming: { socket: { remoteAddress: "10.7.7.7" } } };
+  const attempt = (account: string) =>
+    app.request(`${HUB}/api/auth/login`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ account, password: "x" }) }, from);
+  for (let i = 0; i < 19; i++) expect((await attempt(`usr_spray${i}`)).status).toBe(401);
+  // Without the reservation both would pass the gate before either failure was recorded (21 checks).
+  const both = await Promise.all([attempt("usr_left"), attempt("usr_right")]);
+  expect(both.map((r) => r.status).sort()).toEqual([401, 429]);
+  expect((await attempt("usr_after")).status).toBe(429);
 });

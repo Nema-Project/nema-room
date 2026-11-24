@@ -257,6 +257,28 @@ export async function recordLoginLocked(db: Db, userId: string | null, detail: {
   await authEvent(db, "login_locked", userId, null, detail);
 }
 
+/**
+ * Locks one account's credential row for the rest of the transaction. Login issuance, reset issuance and
+ * reset redemption all take this lock first, so they serialize per account in one order.
+ */
+async function lockCredential(db: Db, userId: string): Promise<string | null> {
+  const [row] = await db.query<{ password_hash: string }>("select password_hash from user_credentials where user_id=$1 for update", [userId]);
+  return row?.password_hash ?? null;
+}
+
+/**
+ * Login's last step: signs a session only if the credential still holds the hash the password was verified
+ * against. The check and the insert share one transaction under the credential row lock, which reset
+ * redemption also takes, so a reset that commits between verification and issue makes this return null
+ * instead of signing a session with the replaced password.
+ */
+export async function issueSessionIfCredentialUnchanged(db: Db, userId: string, verifiedHash: string, now: Date = new Date()): Promise<IssuedSession | null> {
+  return db.tx(async (t) => {
+    if ((await lockCredential(t, userId)) !== verifiedHash) return null;
+    return insertSession(t, userId, now);
+  });
+}
+
 /** The stored password hash of a login account, or null. `usr_local` has no credential row, so it is null. */
 export async function passwordHashFor(db: Db, account: string): Promise<string | null> {
   const [row] = await db.query<{ password_hash: string }>("select password_hash from user_credentials where user_id=$1", [account]);
@@ -296,6 +318,9 @@ export async function createCredentialReset(db: Db, actorUserId: string, targetU
   const id = `crs_${nanoid(16)}`;
   const expiresAt = new Date(now.getTime() + CREDENTIAL_RESET_TTL_MS).toISOString();
   return db.tx(async (t) => {
+    // Serializes issuance per account (and with redemption and login), so of two concurrent issues the later
+    // one expires the earlier code instead of both committing a usable code.
+    await lockCredential(t, targetUserId);
     await t.query("update credential_resets set expires_at=$2 where user_id=$1 and used_at is null and expires_at > $2", [targetUserId, now.toISOString()]);
     await t.query("insert into credential_resets(id,user_id,code_hash,created_by,expires_at,created_at) values ($1,$2,$3,$4,$5,$6)",
       [id, targetUserId, sha256(code), actorUserId, expiresAt, now.toISOString()]);
@@ -311,11 +336,18 @@ export const INVALID_RESET = "invalid reset code";
 /**
  * Redeems a reset code: stores the new password hash and revokes every session again (including any signed
  * with the old password after the reset was issued). Creates no account and signs no session; the person
- * then signs in with the new password.
+ * then signs in with the new password. A login that commits first has its session revoked here; a login
+ * that commits after this sees the new hash and is refused.
  */
 export async function acceptCredentialReset(db: Db, code: string, passwordHash: string, now: Date = new Date()): Promise<{ userId: string }> {
   if (!TOKEN_RE.test(code)) throw new AuthError(403, INVALID_RESET);
   return db.tx(async (t) => {
+    // The credential row is locked before the reset row is written, the same order issuance and login use,
+    // so redemption cannot interleave with a login that already checked the old password (see
+    // issueSessionIfCredentialUnchanged) and cannot deadlock against a concurrent issuance.
+    const [target] = await t.query<{ user_id: string }>("select user_id from credential_resets where code_hash=$1", [sha256(code)]);
+    if (!target) throw new AuthError(403, INVALID_RESET);
+    await lockCredential(t, target.user_id);
     const [reset] = await t.query<{ id: string; user_id: string }>(
       "update credential_resets set used_at=$2 where code_hash=$1 and used_at is null and expires_at > $2 returning id, user_id",
       [sha256(code), now.toISOString()]);
