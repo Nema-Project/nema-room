@@ -152,6 +152,7 @@
   "common.error": "Could not reach the hub: {message}",
   "main.empty": "No workspace yet. Create one in the sidebar to get started.",
   "settings.title": "Workspace settings",
+  "settings.repositories": "Repositories",
   "settings.name": "Name",
   "settings.confidential": "Confidential",
   "settings.confidentialHelp": "Confidential: this project's content will never appear in any cross-project suggestion. Turning this on revokes existing knowledge-share links and blocks new ones.",

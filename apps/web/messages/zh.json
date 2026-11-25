@@ -152,6 +152,7 @@
   "common.error": "无法连接 hub：{message}",
   "main.empty": "还没有 workspace。请在侧栏新建一个。",
   "settings.title": "Workspace 设置",
+  "settings.repositories": "仓库",
   "settings.name": "名称",
   "settings.confidential": "保密",
   "settings.confidentialHelp": "保密：本项目内容不会出现在任何跨项目提示中。打开保密会撤销已有的知识库分享链接，并且不能新建。",

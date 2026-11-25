@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AccountPicker } from "@/components/AccountPicker";
 import { CodeAndPlugins } from "@/components/CodeAndPlugins";
+import { RepositoriesSettings } from "@/components/RepositoriesSettings";
 import { ShareKnowledge } from "@/components/ShareKnowledge";
 import { updateWorkspace } from "@/lib/hub";
 import { boundAccount } from "@/lib/accounts";
@@ -21,6 +22,7 @@ export type WorkspaceSettingsProps = {
 export function WorkspaceSettings({ workspace, onUpdated, onClose }: WorkspaceSettingsProps) {
   const t = useT();
   const [name, setName] = useState(workspace.name);
+  const [graphOfferSignal, setGraphOfferSignal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   // The workspace's default account. It is a binding on the daemon's machine, so it is written through the
   // accounts API and never travels to the hub database.
@@ -91,7 +93,8 @@ export function WorkspaceSettings({ workspace, onUpdated, onClose }: WorkspaceSe
           {error && <p className="error" role="alert">{error}</p>}
         </section>
         <ShareKnowledge workspaceId={workspace.id} confidential={workspace.confidential} archived={workspace.archived} />
-        <CodeAndPlugins workspaceId={workspace.id} />
+        <RepositoriesSettings workspaceId={workspace.id} onRepoBound={() => setGraphOfferSignal((signal) => signal + 1)} />
+        <CodeAndPlugins workspaceId={workspace.id} graphOfferSignal={graphOfferSignal} />
       </div>
     </aside>
   );

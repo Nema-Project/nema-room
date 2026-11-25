@@ -200,6 +200,7 @@ describe("message files", () => {
       "diagram.update": { zh: "更新", ja: "更新", en: "Update" },
       "diagram.updateQueued": { zh: "已排队更新", ja: "更新をキューに追加しました", en: "Update queued" },
       "diagram.sourceCommit": { zh: "画图时的提交", ja: "作図時のコミット", en: "Drawn from commit" },
+      "settings.repositories": { zh: "仓库", ja: "リポジトリ", en: "Repositories" },
       "code.title": { zh: "代码与插件", ja: "コードとプラグイン", en: "Code & plugins" },
       "code.repos": { zh: "绑定的仓库", ja: "連携リポジトリ", en: "Linked repositories" },
       "code.addRepo": { zh: "添加仓库", ja: "リポジトリを追加", en: "Add repository" },
