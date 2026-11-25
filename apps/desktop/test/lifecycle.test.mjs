@@ -184,10 +184,66 @@ describe('Electron shell lifecycle', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  it('removes the per-window native menu on Windows so Alt cannot reveal a second menu row', async () => {
-    const value = harness();
+  it('adds the native Edit menu only to the macOS application menu, including after a refresh', async () => {
+    const value = harness({ platform: 'darwin' });
     await value.lifecycle.install();
-    if (process.platform !== 'darwin') expect(value.windows[0].setMenu).toHaveBeenCalledWith(null);
+    const initialTrayMenu = value.trays[0].menu;
+    value.lifecycle.refreshReleaseMenu();
+
+    const { setApplicationMenu } = value.electron.Menu;
+    expect(setApplicationMenu).toHaveBeenCalledTimes(2);
+    const trayMenus = [initialTrayMenu, value.trays[0].menu];
+    for (const [index, trayMenu] of trayMenus.entries()) {
+      expect(setApplicationMenu.mock.calls[index][0]).toEqual([
+        { label: 'Nema Room', submenu: trayMenu },
+        { role: 'editMenu', submenu: [
+          { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
+          { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
+        ] },
+      ]);
+      expect(trayMenu.map((item) => item.label ?? item.type)).toEqual([
+        expect.stringMatching(/^About Nema Room/), 'separator', 'Open Nema Room', 'Open in Browser',
+        'separator', 'Check for Updates', 'separator', 'Quit Nema Room',
+      ]);
+    }
+  });
+
+  it('opens a macOS editing context menu only for selections and editable fields', async () => {
+    const value = harness({ platform: 'darwin' });
+    await value.lifecycle.install();
+    const [main] = value.windows;
+    const openChild = main.webContents.setWindowOpenHandler.mock.calls[0][0];
+    openChild({ url: 'http://127.0.0.1:43001/w/ws_abc/t/m_xyz' });
+    openChild({ url: 'http://127.0.0.1:43001/api/workspaces/ws_abc/diagrams/G-1.html' });
+    expect(value.windows).toHaveLength(3);
+
+    const { buildFromTemplate } = value.electron.Menu;
+    buildFromTemplate.mockClear();
+    for (const window of value.windows) {
+      window.webContents.emit('context-menu', {}, { isEditable: false, selectionText: '' });
+    }
+    expect(buildFromTemplate).not.toHaveBeenCalled();
+
+    const popup = vi.fn();
+    buildFromTemplate.mockImplementation(() => ({ popup }));
+    main.webContents.emit('context-menu', {}, { isEditable: true, selectionText: '' });
+    value.windows[1].webContents.emit('context-menu', {}, { isEditable: true, selectionText: 'Selected text' });
+    value.windows[2].webContents.emit('context-menu', {}, { isEditable: false, selectionText: 'Selected text' });
+
+    const editItems = [{ role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }];
+    expect(buildFromTemplate.mock.calls).toEqual([[editItems], [editItems], [[{ role: 'copy' }]]]);
+    expect(popup.mock.calls).toEqual(value.windows.map((window) => [{ window }]));
+  });
+
+  it.each(['win32', 'linux'])('keeps the existing window menu behavior on %s', async (platform) => {
+    const value = harness({ platform });
+    await value.lifecycle.install();
+    const { setApplicationMenu, buildFromTemplate } = value.electron.Menu;
+    expect(setApplicationMenu).toHaveBeenCalledWith([{ label: 'Nema Room', submenu: value.trays[0].menu }]);
+    expect(value.windows[0].setMenu).toHaveBeenCalledWith(null);
+    buildFromTemplate.mockClear();
+    value.windows[0].webContents.emit('context-menu', {}, { isEditable: true, selectionText: 'Selected text' });
+    expect(buildFromTemplate).not.toHaveBeenCalled();
   });
 
   it('coalesces simultaneous activation requests while the shared core is still resolving', async () => {
