@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import { DaemonsSettings } from "@/components/DaemonsSettings";
@@ -13,13 +13,46 @@ vi.mock("@/lib/hub", async (importOriginal) => ({
   revokeDaemon: vi.fn(),
 }));
 
-test("explains how to proceed when the active registration code limit is reached", async () => {
+test("keeps the current code on generation failure and still clears it at expiry", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   vi.mocked(hub.listDaemons).mockResolvedValue([]);
-  vi.mocked(hub.createDaemonRegistrationCode).mockRejectedValueOnce(new hub.HubError(429, "registration code limit"));
-  render(<I18nProvider messages={{ en }}><DaemonsSettings /></I18nProvider>);
+  vi.mocked(hub.createDaemonRegistrationCode)
+    .mockResolvedValueOnce({ code: "current-code", expiresAt: new Date(Date.now() + 600_000).toISOString() })
+    .mockRejectedValueOnce(new hub.HubError(429, "registration code limit"));
+  try {
+    render(<I18nProvider messages={{ en }}><DaemonsSettings /></I18nProvider>);
+    const generate = screen.getByRole("button", { name: "Generate registration code" });
+    await act(async () => { fireEvent.click(generate); });
+    expect(screen.getByText("current-code")).toBeTruthy();
+    await act(async () => { fireEvent.click(generate); });
+    expect(screen.getByRole("alert").textContent).toMatch(/use one or wait for it to expire/i);
+    expect(screen.getByText("current-code")).toBeTruthy();
+    act(() => { vi.advanceTimersByTime(600_000); });
+    expect(screen.queryByText("current-code")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
-  await userEvent.setup().click(screen.getByRole("button", { name: "Generate registration code" }));
-  expect((await screen.findByRole("alert")).textContent).toMatch(/use one or wait for it to expire/i);
+test("refreshes daemon rows on window focus and retains the list when refresh fails", async () => {
+  const laptop = { id: "dmn_1", label: "Laptop", lastSeenAt: null, revokedAt: null };
+  const desktop = { ...laptop, id: "dmn_2", label: "Desktop" };
+  const list = vi.mocked(hub.listDaemons).mockClear()
+    .mockResolvedValueOnce([laptop])
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce([laptop, desktop]);
+  const view = render(<I18nProvider messages={{ en }}><DaemonsSettings /></I18nProvider>);
+  await screen.findByText("Laptop");
+  fireEvent.focus(window);
+  await screen.findByRole("alert");
+  expect(screen.getByText("Laptop")).toBeTruthy();
+  fireEvent.focus(window);
+  const newRow = (await screen.findByText("Desktop")).closest("li")!;
+  expect(within(newRow).getByRole("button", { name: "Revoke" })).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+  view.unmount();
+  fireEvent.focus(window);
+  expect(list).toHaveBeenCalledTimes(3);
 });
 
 test("displays a new code only for the current visit and asks before revoking a daemon", async () => {

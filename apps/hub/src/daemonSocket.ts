@@ -427,6 +427,12 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       }
       if (m.reportTokenHash) await registerReportToken(db, m.reportTokenHash);
       if (stopping || ws.readyState !== ws.OPEN) return;
+      // A failed close cleanup can leave running tasks under this stable ID.
+      const recovered = registeredId ? await interruptRunning(db, { daemonId: registeredId }) : null;
+      if (stopping || ws.readyState !== ws.OPEN) {
+        if (!stopping && recovered) await announceInterrupted(db, events, recovered);
+        return;
+      }
       const old = current;
       const accepted: Conn = {
         ws,
@@ -442,15 +448,19 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       // Wait for any unsent claim from the old socket to be requeued without counting an interruption.
       const pendingDispatch = chain;
       if (old) old.ws.close();
-      await pendingDispatch;
-      if (stopping) return;
-      await announceInterrupted(db, events, await interruptRunning(db, { exceptDaemonId: accepted.daemonId }));
-      if (stopping || ws.readyState !== ws.OPEN) return;
-      const workspaceIds = (await listWorkspaces(db)).map((w) => w.id);
-      if (stopping || ws.readyState !== ws.OPEN) return;
-      send(ws, { type: "welcome", workspaceIds });
-      track(syncBoundRepos(db, accepted.rpc).catch((error) => { if (!stopping) console.error("[daemon] repos.sync failed", error); }));
-      events.emitGlobal({ type: "daemon.status", connected: true });
+      try {
+        await pendingDispatch;
+        if (stopping) return;
+        await announceInterrupted(db, events, await interruptRunning(db, { exceptDaemonId: accepted.daemonId }));
+        if (stopping || ws.readyState !== ws.OPEN) return;
+        const workspaceIds = (await listWorkspaces(db)).map((w) => w.id);
+        if (stopping || ws.readyState !== ws.OPEN) return;
+        send(ws, { type: "welcome", workspaceIds });
+        track(syncBoundRepos(db, accepted.rpc).catch((error) => { if (!stopping) console.error("[daemon] repos.sync failed", error); }));
+        events.emitGlobal({ type: "daemon.status", connected: true });
+      } finally {
+        if (!stopping && recovered) await announceInterrupted(db, events, recovered);
+      }
     };
 
     const handle = async (raw: string) => {

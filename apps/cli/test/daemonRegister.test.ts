@@ -4,7 +4,8 @@ import os from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test, vi } from "vitest";
-import { daemonCredentialPath, registerDaemon, resolveDaemonToken, shouldWarnAboutPlaintextRegistration } from "../src/daemon/register.js";
+import { daemonCredentialPath, parseDaemonHubUrl, registerDaemon, resolveDaemonToken, shouldWarnAboutPlaintextRegistration } from "../src/daemon/register.js";
+import { startDaemon } from "../src/daemon/setup.js";
 import { saveSecretLine } from "../src/secrets/file.js";
 
 const homes: string[] = [];
@@ -28,9 +29,39 @@ test("registers using the supplied code and writes the credential privately", as
     body: JSON.stringify({ code: "fixture-code", label: "Laptop" }),
   }));
   expect(JSON.parse(await readFile(daemonCredentialPath(nemaHome), "utf8"))).toEqual({
-    origin: "http://127.0.0.1:4400", credential: "fixture-secret",
+    credentialsByOrigin: { "http://127.0.0.1:4400": "fixture-secret" },
   });
   if (process.platform !== "win32") expect((await stat(daemonCredentialPath(nemaHome))).mode & 0o777).toBe(0o600);
+});
+
+test.each(["/registration", "/nested/..", "?foo=bar", "/#", "/?"])("rejects hub URL suffix %s before registration or startup", async (suffix) => {
+  const hubUrl = "https://hub.example.com" + suffix;
+  expect(() => parseDaemonHubUrl(hubUrl)).toThrow(/no path, query, or fragment/i);
+  const nemaHome = await tempHome();
+  const fetcher = vi.fn<typeof fetch>();
+  await expect(registerDaemon({ nemaHome, hubUrl, code: "fixture-code", label: "Laptop", fetcher })).rejects.toThrow(/no path, query, or fragment/i);
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(() => startDaemon({
+    hubUrl, nemaHome, tokenFile: join(nemaHome, "missing"), userCodexHome: nemaHome, version: "test", cliEntry: "nema",
+  })).toThrow(/no path, query, or fragment/i);
+});
+
+test("accepts a root hub URL and canonicalizes its origin", () => {
+  expect(parseDaemonHubUrl("https://HUB.example.com:443/").origin).toBe("https://hub.example.com");
+  expect(parseDaemonHubUrl("http://127.0.0.1:4400").origin).toBe("http://127.0.0.1:4400");
+});
+
+test("preserves the previous origin-bound credential when upgrading the file", async () => {
+  const nemaHome = await tempHome();
+  const oldHub = "https://first.example.com";
+  const hubUrl = "https://second.example.com";
+  saveSecretLine(daemonCredentialPath(nemaHome), JSON.stringify({ origin: oldHub, credential: "first-token" }));
+  expect(resolveDaemonToken(nemaHome, oldHub, { token: "local-token" })).toBe("first-token");
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ credential: "second-token" }));
+  await registerDaemon({ nemaHome, hubUrl, code: "fixture-code", label: "Laptop", fetcher });
+  expect(JSON.parse(await readFile(daemonCredentialPath(nemaHome), "utf8"))).toEqual({
+    credentialsByOrigin: { [oldHub]: "first-token", [hubUrl]: "second-token" },
+  });
 });
 
 test.each([
@@ -108,12 +139,13 @@ vi.mock("ws", () => ({
 
 vi.mock("../src/daemon/signals.js", () => ({ stopOnSignals: cli.stopOnSignals }));
 
-test("the default daemon action uses the registered token only for its hub", async () => {
+test("the default daemon action uses the credentials of two registered hubs and falls back for a third", async () => {
   const home = await tempHome();
   const tokenFile = join(home, "shared-token");
   await writeFile(tokenFile, "local-token\n");
   const hub = "http://127.0.0.1:4400";
   const registeredHub = "https://hub.example.com";
+  const secondHub = "https://second.example.com";
   const entry = fileURLToPath(new URL("../src/index.ts", import.meta.url));
   vi.spyOn(os, "homedir").mockReturnValue(home);
   vi.spyOn(console, "log").mockImplementation(() => {});
@@ -133,11 +165,15 @@ test("the default daemon action uses the registered token only for its hub", asy
   try {
     expect(await helloToken()).toBe("local-token");
     const nemaHome = join(home, ".nema");
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ credential: "registered-token" }));
-    await registerDaemon({ nemaHome, hubUrl: "https://HUB.example.com:443/registration", code: "fixture", label: "Laptop", fetcher });
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ credential: "registered-token" }))
+      .mockResolvedValueOnce(Response.json({ credential: "second-token" }));
+    await registerDaemon({ nemaHome, hubUrl: "https://HUB.example.com:443/", code: "fixture", label: "Laptop", fetcher });
+    await registerDaemon({ nemaHome, hubUrl: secondHub, code: "fixture", label: "Laptop", fetcher });
     expect(await helloToken()).toBe("local-token");
     await rm(tokenFile);
     expect(await helloToken(registeredHub)).toBe("registered-token");
+    expect(await helloToken(secondHub + "/")).toBe("second-token");
     const fallback = { token: "local-token" };
     expect(resolveDaemonToken(nemaHome, "http://hub.example.com", fallback)).toBe("local-token");
     expect(resolveDaemonToken(nemaHome, "https://hub.example.com:4400", fallback)).toBe("local-token");
@@ -166,7 +202,7 @@ test("the register subcommand reads the code from stdin and uses its own hub and
       body: JSON.stringify({ code: "fixture-code", label: "Build machine" }),
     }));
     expect(JSON.parse(await readFile(daemonCredentialPath(join(home, ".nema")), "utf8"))).toEqual({
-      origin: hub, credential: "fixture-secret",
+      credentialsByOrigin: { [hub]: "fixture-secret" },
     });
     expect(JSON.stringify(log.mock.calls)).not.toMatch(/fixture-code|fixture-secret/);
   } finally {

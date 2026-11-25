@@ -31,17 +31,25 @@ const program = new Command().name("nema").version(cliVersion()).enablePositiona
 const daemonCommand = program
   .command("daemon")
   .description("Connect to the hub and run agent tasks")
+  .addHelpText("after", "\n  nema daemon register --hub <url> [--label <name>]")
   .option("--hub <url>", "hub URL", "http://127.0.0.1:4400")
   .option("--token-file <path>", "daemon token file", defaultTokenFile())
   .action(async (o: { hub: string; tokenFile: string }) => {
-    const daemon = startDaemon({
-      hubUrl: o.hub,
-      tokenFile: o.tokenFile,
-      nemaHome: nemaHomeDir(),
-      userCodexHome: defaultCodexHome(),
-      version: cliVersion(),
-      cliEntry: realpathSync(process.argv[1] ?? fileURLToPath(import.meta.url)),
-    });
+    let daemon: ReturnType<typeof startDaemon>;
+    try {
+      daemon = startDaemon({
+        hubUrl: o.hub,
+        tokenFile: o.tokenFile,
+        nemaHome: nemaHomeDir(),
+        userCodexHome: defaultCodexHome(),
+        version: cliVersion(),
+        cliEntry: realpathSync(process.argv[1] ?? fileURLToPath(import.meta.url)),
+      });
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : "Daemon startup failed.");
+      process.exitCode = 1;
+      return;
+    }
     // Ctrl-C, SIGTERM or SIGHUP close the daemon first, so its MCP servers do not outlive it.
     stopOnSignals({ close: () => daemon.close() });
     console.log(`nema daemon connecting to ${o.hub}`);

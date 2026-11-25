@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createDaemonRegistrationCode, HubError, listDaemons, revokeDaemon, type DaemonRegistrationCode, type RegisteredDaemon } from "@/lib/hub";
 import { useLocale, useT } from "@/lib/i18n";
 
@@ -13,15 +13,33 @@ export function DaemonsSettings() {
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [actionError, setActionError] = useState<"actionError" | "codeLimit" | null>(null);
+  const revocationVersion = useRef(0);
 
   useEffect(() => {
     let live = true;
-    Promise.resolve().then(listDaemons).then((rows) => {
-      if (live) setDaemons(rows);
-    }).catch(() => {
-      if (live) setLoadError(true);
-    });
-    return () => { live = false; };
+    let loading = false;
+    async function refresh() {
+      if (!live || loading) return;
+      loading = true;
+      const version = revocationVersion.current;
+      try {
+        const rows = await listDaemons();
+        if (live && version === revocationVersion.current) {
+          setDaemons(rows);
+          setLoadError(false);
+        }
+      } catch {
+        if (live) setLoadError(true);
+      } finally {
+        loading = false;
+      }
+    }
+    void refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      live = false;
+      window.removeEventListener("focus", refresh);
+    };
   }, []);
 
   useEffect(() => {
@@ -33,7 +51,6 @@ export function DaemonsSettings() {
   async function generate() {
     setBusy(true);
     setActionError(null);
-    setCode(null);
     try {
       setCode(await createDaemonRegistrationCode());
     } catch (error) {
@@ -48,6 +65,7 @@ export function DaemonsSettings() {
     setActionError(null);
     try {
       const { revokedAt } = await revokeDaemon(id);
+      revocationVersion.current++;
       setDaemons((rows) => rows?.map((row) => row.id === id ? { ...row, revokedAt } : row) ?? null);
       setConfirmId(null);
     } catch {

@@ -12,7 +12,7 @@ import { registerRepoHandlers } from "../repos/handlers.js";
 import { parseReposSync, RepoWatcher } from "../repos/watcher.js";
 import { electronRunAsNode } from "../platform.js";
 import { migrateReportHooks } from "../report/install.js";
-import { resolveDaemonToken } from "./register.js";
+import { parseDaemonHubUrl, resolveDaemonToken } from "./register.js";
 import { connectDaemon } from "./connection.js";
 import { Cooldowns } from "../routing/cooldown.js";
 import { RpcRouter } from "./rpc.js";
@@ -70,7 +70,8 @@ export type DaemonStart = {
 
 /** Connects the daemon and answers repo RPC plus `plugin.call` and `plugins.status`. */
 export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: RepoWatcher } {
-  const token = resolveDaemonToken(o.nemaHome, o.hubUrl, o);
+  const hubUrl = parseDaemonHubUrl(o.hubUrl).origin;
+  const token = resolveDaemonToken(o.nemaHome, hubUrl, o);
   // Hooks installed against the removed payload Node keep that absolute path. Rewrite them once Electron is the Node.
   if (electronRunAsNode()) {
     try {
@@ -133,7 +134,7 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
   });
   watcher.start();
   const connection = connectDaemon({
-    hubUrl: o.hubUrl,
+    hubUrl,
     token,
     runner,
     nemaHome: o.nemaHome,

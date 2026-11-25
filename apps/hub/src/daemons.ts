@@ -6,7 +6,10 @@ import type { Db } from "./db/db.js";
 
 const CODE_TTL_MS = 10 * 60_000;
 const MAX_ACTIVE_CODES = 5;
+const MAX_REGISTRATION_BODY_BYTES = 4096;
 const REJECTION_WINDOW_MS = 60_000;
+const MAX_UNKNOWN_REJECTIONS = 5_000;
+const REVOKED_REJECTION_WINDOW_SECONDS = 60 * 60;
 const hash = (secret: string) => createHash("sha256").update(secret).digest("hex");
 
 type DaemonOwner = { id: string; owner_user_id: string };
@@ -23,7 +26,14 @@ class RegistrationCodeLimitError extends Error {
 export class DaemonRejectionThrottle {
   private readonly loggedAt = new Map<string, number>();
 
-  constructor(private readonly now: () => number = () => performance.now()) {}
+  constructor(
+    private readonly now: () => number = () => performance.now(),
+    private readonly maxKeys = MAX_UNKNOWN_REJECTIONS,
+  ) {}
+
+  get trackedKeys(): number {
+    return this.loggedAt.size;
+  }
 
   shouldLog(credentialHash: string): boolean {
     const now = this.now();
@@ -33,6 +43,10 @@ export class DaemonRejectionThrottle {
       this.loggedAt.delete(key);
     }
     if (this.loggedAt.has(credentialHash)) return false;
+    if (this.loggedAt.size >= this.maxKeys) {
+      const oldest = this.loggedAt.keys().next();
+      if (!oldest.done) this.loggedAt.delete(oldest.value);
+    }
     this.loggedAt.set(credentialHash, now);
     return true;
   }
@@ -119,8 +133,18 @@ export async function verifyDaemonCredential(db: Db, credential: string, throttl
     "select id,owner_user_id,revoked_at from daemons where credential_hash=$1", [credentialHash],
   );
   if (daemon && !daemon.revoked_at) return { ok: true, id: daemon.id } as const;
-  if (daemon || throttle.shouldLog(credentialHash)) {
-    await daemonEvent(db, daemon, "rejected", null, daemon ? "revoked_credential" : "invalid_credential");
+  if (daemon) {
+    // Serialize audit writes per daemon and use its audit history so unknown hashes cannot evict this window.
+    await db.tx(async (t) => {
+      await t.query("select id from daemons where id=$1 for no key update", [daemon.id]);
+      const [recent] = await t.query(
+        "select 1 from daemon_events where daemon_id=$1 and kind='rejected' and created_at > now() - make_interval(secs => $2) limit 1",
+        [daemon.id, REVOKED_REJECTION_WINDOW_SECONDS],
+      );
+      if (!recent) await daemonEvent(t, daemon, "rejected", null, "revoked_credential");
+    });
+  } else if (throttle.shouldLog(credentialHash)) {
+    await daemonEvent(db, undefined, "rejected", null, "invalid_credential");
   }
   return { ok: false, error: daemon ? "Daemon credential has been revoked. Register this daemon again." : "Invalid daemon credential. Register this daemon first." } as const;
 }
@@ -131,7 +155,35 @@ export async function markDaemonSeen(db: Db, id: string): Promise<void> {
 
 export function daemonRegistrationRoutes(db: Db): Hono {
   return new Hono().post("/register", async (c) => {
-    const body = await c.req.json<{ code?: unknown; label?: unknown } | null>().catch(() => null);
+    const tooLarge = () => c.json({ error: "Daemon registration request body is too large." }, 413);
+    const length = c.req.header("content-length");
+    if (length !== undefined) {
+      if (!/^\d+$/.test(length.trim())) return c.json({ error: "Invalid Content-Length." }, 400);
+      if (Number(length) > MAX_REGISTRATION_BODY_BYTES) return tooLarge();
+    }
+    const reader = c.req.raw.body?.getReader();
+    let body: { code?: unknown; label?: unknown } | null = null;
+    if (reader) {
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > MAX_REGISTRATION_BODY_BYTES) {
+            void reader.cancel().catch(() => {});
+            return tooLarge();
+          }
+          chunks.push(value);
+        }
+        body = JSON.parse(Buffer.concat(chunks, size).toString("utf8"));
+      } catch {
+        return c.json({ error: "Invalid daemon registration request body." }, 400);
+      } finally {
+        reader.releaseLock();
+      }
+    }
     const code = typeof body?.code === "string" ? body.code.trim() : "";
     const label = typeof body?.label === "string" ? body.label.trim() : "";
     if (!code || code.length > 128 || !label || label.length > 120 || /[\u0000-\u001f\u007f]/.test(label)) {
