@@ -40,6 +40,23 @@ export function bumpPatch(version) {
   return `${match[1]}.${match[2]}.${Number(match[3]) + 1}${match[4]}`;
 }
 
+/**
+ * One version below `version`, for the skew smoke: under D-9 a newer CLI is welcomed, so a skew
+ * daemon must report below the hub's minimum, not above the packed version. Drops any prerelease
+ * suffix; the result only needs to sort below the installed version.
+ */
+export function lowerPatch(version) {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(.*)$/.exec(version);
+  if (!match) throw new Error(`cannot lower version ${version}`);
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  if (patch > 0) return `${major}.${minor}.${patch - 1}`;
+  if (minor > 0) return `${major}.${minor - 1}.0`;
+  if (major > 0) return `${major - 1}.0.0`;
+  return '0.0.0';
+}
+
 export function localTarballArg(tarball) {
   if (path.isAbsolute(tarball)) return tarball;
   const spec = String(tarball).replace(/\\/g, '/');
@@ -52,10 +69,23 @@ export function installedBin(installDir) {
   return path.join(installDir, 'node_modules', '.bin', name);
 }
 
+function installedPackageFile(installDir) {
+  return path.join(installDir, 'node_modules', '@nema-project', 'nema', 'package.json');
+}
+
 export async function bumpInstalledPackage(installDir) {
-  const file = path.join(installDir, 'node_modules', '@nema-project', 'nema', 'package.json');
+  const file = installedPackageFile(installDir);
   const pkg = JSON.parse(await readFile(file, 'utf8'));
   pkg.version = bumpPatch(pkg.version);
+  await writeFile(file, `${JSON.stringify(pkg, null, 2)}\n`);
+  return pkg.version;
+}
+
+/** Rewrites the installed package to a version below the packed one, so the hub refuses it as skewed. */
+export async function lowerInstalledPackage(installDir) {
+  const file = installedPackageFile(installDir);
+  const pkg = JSON.parse(await readFile(file, 'utf8'));
+  pkg.version = lowerPatch(pkg.version);
   await writeFile(file, `${JSON.stringify(pkg, null, 2)}\n`);
   return pkg.version;
 }
@@ -185,7 +215,9 @@ export async function smokePack(options, { cliVersion = undefined, timeoutMs = 2
   const componentEnv = { ...process.env, HOME: home, USERPROFILE: home, NEMA_GRAPHIFY_BIN: '' };
   const components = assertComponentStatus(runBin(bin, ['components', 'status', '--json'], root, componentEnv));
   process.stdout.write(`nema components status: graphify ${components.status.state}${components.status.reason ? ` (${components.status.reason})` : ''}\n`);
-  if (options.expectSkew) await bumpInstalledPackage(root);
+  // --expect-skew must produce a daemon the hub actually refuses. A newer CLI is welcomed under
+  // D-9, so lower the installed version below the floor instead of bumping it above the hub.
+  if (options.expectSkew) await lowerInstalledPackage(root);
   if (!options.hubUrl) return { root, version: printed.trim() };
   const child = spawn(bin, ['daemon', '--hub', options.hubUrl, '--token-file', options.tokenFile], {
     cwd: root,

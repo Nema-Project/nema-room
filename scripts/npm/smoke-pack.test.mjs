@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { assertComponentStatus, assertVersion, bumpInstalledPackage, installedBin, localTarballArg, parseSmokeArgs, releaseHost } from './smoke-pack.mjs';
+import { assertComponentStatus, assertVersion, bumpInstalledPackage, installedBin, localTarballArg, lowerInstalledPackage, lowerPatch, parseSmokeArgs, releaseHost } from './smoke-pack.mjs';
 
 test('parseSmokeArgs reads the tarball and optional hub flags', () => {
   assert.deepEqual(parseSmokeArgs(['nema-project-nema-0.1.3.tgz']), {
@@ -50,6 +50,24 @@ test('--expect-skew bumps the installed package version by one patch', async (t)
   await writeFile(pkgPath, JSON.stringify({ name: '@nema-project/nema', version: '0.1.3' }));
   assert.equal(await bumpInstalledPackage(root), '0.1.4');
   assert.equal(JSON.parse(await readFile(pkgPath, 'utf8')).version, '0.1.4');
+});
+
+test('--expect-skew lowers the installed package version below the hub floor', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nema-smoke-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const pkgPath = path.join(root, 'node_modules', '@nema-project', 'nema', 'package.json');
+  await mkdir(path.dirname(pkgPath), { recursive: true });
+  await writeFile(pkgPath, JSON.stringify({ name: '@nema-project/nema', version: '0.3.2' }));
+  assert.equal(await lowerInstalledPackage(root), '0.3.1');
+  assert.equal(JSON.parse(await readFile(pkgPath, 'utf8')).version, '0.3.1');
+});
+
+test('lowerPatch steps down through zero components', () => {
+  assert.equal(lowerPatch('0.3.2'), '0.3.1');
+  assert.equal(lowerPatch('0.3.0'), '0.2.0');
+  assert.equal(lowerPatch('1.0.0'), '0.0.0');
+  assert.equal(lowerPatch('0.0.0'), '0.0.0');
+  assert.throws(() => lowerPatch('test-version'), /cannot lower version/);
 });
 
 test('assertComponentStatus requires a download offer on a supported release host', () => {
