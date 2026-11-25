@@ -339,19 +339,19 @@ describe("Graphify errors", () => {
   // copied from another language, this test fails where the one above cannot.
   const literalCases: [string, string[]][] = [
     ["en", [
-      "Graphify is not installed. Repository indexing and code search need it.",
+      "Graphify is not installed. Repository indexing and code search need it. Install it from Settings, or run nema components install graphify.",
       "Graphify was interrupted.",
-      "Graphify is not installed (last attempt failed: proxy error). The previously installed version is turned off.",
+      "Graphify is not installed (last attempt failed: proxy error). Retry: nema components install graphify. The previously installed version is turned off.",
     ]],
     ["ja", [
-      "Graphify はインストールされていません。リポジトリのインデックスとコード検索に必要です。",
+      "Graphify はインストールされていません。リポジトリのインデックスとコード検索に必要です。設定ページからインストールするか、nema components install graphify を実行してください。",
       "Graphify の処理が中断されました。",
-      "Graphify はインストールされていません（前回の試行が失敗：プロキシエラー）。 以前インストールしたバージョンは無効になっています。",
+      "Graphify はインストールされていません（前回の試行が失敗：プロキシエラー）。再試行：nema components install graphify。 以前インストールしたバージョンは無効になっています。",
     ]],
     ["zh", [
-      "Graphify 未安装。仓库索引与代码检索需要它。",
+      "Graphify 未安装。仓库索引与代码检索需要它。请在设置页安装，或运行 nema components install graphify。",
       "Graphify 已中断。",
-      "Graphify 未安装（上次尝试失败：代理错误）。 之前安装的版本已停用。",
+      "Graphify 未安装（上次尝试失败：代理错误）。重试：nema components install graphify。 之前安装的版本已停用。",
     ]],
   ];
   it.each(literalCases)("renders literal expected copy in %s", async (locale, expected) => {

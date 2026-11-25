@@ -597,6 +597,52 @@ test("a failed Graphify index publishes and stores the structured failure for ch
   expect(await listMessages(db, ws.id)).toEqual([expect.objectContaining(indexMessage)]);
 });
 
+test("chat meta for a failed index drops the raw failure detail but keeps local facts", async () => {
+  const { db, dataDir } = await makeHubDeps();
+  const ws = await createWorkspace(db, dataDir, "Alpha");
+  const events = new EventBus();
+  const seen: HubEvent[] = [];
+  events.subscribe(ws.id, (event) => seen.push(event));
+  const secret = "http://user:pass@proxy.internal:8080";
+  const networkError: GraphifyError = {
+    code: "graphify-unavailable", state: "failed",
+    status: { state: "failed", reason: "proxy", detail: `fetch via ${secret} refused` },
+  };
+  const { daemon } = daemonOf({
+    "repo.inspect": () => inspected,
+    "repo.index": () => { throw new DaemonRpcError("graphify 不可用", networkError); },
+  });
+
+  await bindRepo(db, daemon, ws.id, { path: "/a", label: "API" }, events);
+  await until(async () => seen.some((event) => event.type === "message.created"));
+  const stored = (await listMessages(db, ws.id)).find((m) => m.content === indexFailedText("API"));
+  const storedError = (stored?.meta as { repoIndexFailure: { error: GraphifyError } }).repoIndexFailure.error;
+  expect(storedError).toEqual({
+    code: "graphify-unavailable", state: "failed",
+    status: { state: "failed", reason: "proxy", detail: "" },
+  });
+  expect(JSON.stringify(stored?.meta)).not.toContain(secret);
+  const emitted = seen.find((event) => event.type === "message.created");
+  expect(JSON.stringify(emitted)).not.toContain(secret);
+
+  const platformError: GraphifyError = {
+    code: "graphify-unavailable", state: "failed",
+    status: { state: "failed", reason: "unsupported-platform", detail: "freebsd/arm64" },
+  };
+  const second = daemonOf({
+    "repo.inspect": (params) => {
+      const requestPath = (params as { path: string }).path;
+      return { ...inspected, root: requestPath, gitCommonDir: `${requestPath}/.git` };
+    },
+    "repo.index": () => { throw new DaemonRpcError("graphify 不可用", platformError); },
+  });
+  await bindRepo(db, second.daemon, ws.id, { path: "/b", label: "Web" }, events);
+  await until(async () => (await listMessages(db, ws.id)).some((m) => m.content === indexFailedText("Web")));
+  const storedWeb = (await listMessages(db, ws.id)).find((m) => m.content === indexFailedText("Web"));
+  const webError = (storedWeb?.meta as { repoIndexFailure: { error: GraphifyError } }).repoIndexFailure.error;
+  expect(webError).toEqual(platformError);
+});
+
 test("a failed or empty index queues no architecture task", async () => {
   const { db, dataDir } = await makeHubDeps();
   const ws = await createWorkspace(db, dataDir, "Alpha");

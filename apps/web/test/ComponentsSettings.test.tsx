@@ -91,7 +91,7 @@ describe("graph entry and first-use offer", () => {
   it("shows not-installed with an install button and never opens the offer just by being shown", async () => {
     answer(view({ state: "not-installed" }));
     renderEntry();
-    expect(await screen.findByText("Graphify is not installed. Repository indexing and code search need it.")).toBeTruthy();
+    expect(await screen.findByText("Graphify is not installed. Repository indexing and code search need it. Install it from Settings, or run nema components install graphify.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Install" })).toBeTruthy();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -125,7 +125,7 @@ describe("graph entry and first-use offer", () => {
     signal(2);
     await settleAfter(before);
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByText("Graphify is not installed. Repository indexing and code search need it.")).toBeTruthy();
+    expect(screen.getByText("Graphify is not installed. Repository indexing and code search need it. Install it from Settings, or run nema components install graphify.")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Install" }));
     expect(await screen.findByRole("dialog", { name: "Download Graphify?" })).toBeTruthy();
     expect(hub.installComponent).not.toHaveBeenCalled();
@@ -312,7 +312,7 @@ describe("graph entry and first-use offer", () => {
   it("a failure greys only the graph entry, names the cause, and offers retry and import without a global error", async () => {
     answer(failed("network", "connect ECONNREFUSED"));
     const { container } = renderEntry();
-    expect(await screen.findByText("Graphify is not installed (last attempt failed: network error).")).toBeTruthy();
+    expect(await screen.findByText("Graphify is not installed (last attempt failed: network error). Retry: nema components install graphify.")).toBeTruthy();
     const entry = container.querySelector(".component-entry");
     expect(entry?.classList.contains("unavailable")).toBe(true);
     expect(entry?.getAttribute("aria-disabled")).toBe("true");
@@ -334,9 +334,9 @@ describe("graph entry and first-use offer", () => {
       unmount();
     }
     expect(texts).toEqual([
-      "Graphify is not installed (last attempt failed: network error).",
-      "Graphify is not installed (last attempt failed: proxy error).",
-      "Graphify is not installed (last attempt failed: a downloaded file does not match the pinned checksum).",
+      "Graphify is not installed (last attempt failed: network error). Retry: nema components install graphify.",
+      "Graphify is not installed (last attempt failed: proxy error). Retry: nema components install graphify.",
+      "Graphify is not installed (last attempt failed: a downloaded file does not match the pinned checksum). Retry: nema components install graphify.",
     ]);
   });
 

@@ -93,7 +93,7 @@ describe("CodeAndPlugins", () => {
     }]);
     mount();
 
-    expect(await screen.findByText("Graphify is not installed. Repository indexing and code search need it.")).toBeTruthy();
+    expect(await screen.findByText("Graphify is not installed. Repository indexing and code search need it. Install it from Settings, or run nema components install graphify.")).toBeTruthy();
   });
 
   it("localizes an interrupted Graphify catalog check from the HTTP response", async () => {

@@ -279,6 +279,18 @@ export function indexFailedText(label: string): string {
   return `仓库 ${label} 的代码索引没有完成，暂时还不能询问代码库。`;
 }
 
+/**
+ * The error copy kept in chat meta. The meta is persisted and broadcast to every workspace
+ * member, so it carries only the structured facts: a download/install failure's raw detail
+ * can embed the proxy URL, credentials included. The two locally produced details (the
+ * platform and lock facts) carry no secrets and stay.
+ */
+function chatGraphifyError(error: GraphifyError): GraphifyError {
+  if (error.code !== "graphify-unavailable" || error.status.state !== "failed") return error;
+  if (error.status.reason === "unsupported-platform" || error.status.reason === "lock-unreadable") return error;
+  return { ...error, status: { ...error.status, detail: "" } };
+}
+
 /** Posts the outcome and returns whether the repo is still bound. */
 async function announceIndex(db: Db, events: EventBus | undefined, repo: Repo, status: "done" | "failed", error?: GraphifyError): Promise<boolean> {
   noteIndex(events, repo, status);
@@ -286,7 +298,7 @@ async function announceIndex(db: Db, events: EventBus | undefined, repo: Repo, s
   const message = await addMessage(
     db, repo.workspaceId, "system",
     status === "done" ? indexReadyText(repo.label) : indexFailedText(repo.label),
-    error ? { meta: { repoIndexFailure: { label: repo.label, error } } } : undefined,
+    error ? { meta: { repoIndexFailure: { label: repo.label, error: chatGraphifyError(error) } } } : undefined,
   );
   events?.emit(repo.workspaceId, { type: "message.created", message });
   return true;

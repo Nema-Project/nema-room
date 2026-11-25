@@ -31,6 +31,25 @@ const mount = (m: Message) =>
   );
 
 describe("MessageItem", () => {
+  it("renders the stored text when the index-failure meta has an unreadable shape", () => {
+    const missingStatus = msg({
+      role: "system",
+      content: "仓库 API 的代码索引没有完成，暂时还不能询问代码库。",
+      meta: { repoIndexFailure: { label: "API", error: { code: "graphify-unavailable", state: "failed" } } },
+    });
+    const { unmount } = render(<I18nProvider><MessageItem message={missingStatus} /></I18nProvider>);
+    expect(screen.getByText(missingStatus.content)).toBeTruthy();
+    unmount();
+
+    const unknownCode = msg({
+      role: "system",
+      content: "仓库 API 的代码索引没有完成，暂时还不能询问代码库。",
+      meta: { repoIndexFailure: { label: "API", error: { code: "graphify-future", status: { state: "failed" } } } },
+    });
+    render(<I18nProvider><MessageItem message={unknownCode} /></I18nProvider>);
+    expect(screen.getByText(unknownCode.content)).toBeTruthy();
+  });
+
   it("renders a stored Graphify index failure in the UI language", async () => {
     localStorage.setItem("nema.locale", "ja");
     try {
