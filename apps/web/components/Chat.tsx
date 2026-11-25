@@ -190,14 +190,26 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
             setProgress("");
             setWaitingTask((cur) => (cur?.id === e.task.id ? null : cur));
           } else if (e.task.status === "queued") {
+            // A requeued task stops running: it was interrupted and waits again, so the working
+            // indicator must go or the !runningTask guard below would hide the waiting row too.
+            if (runningId.current === e.task.id) {
+              runningId.current = null;
+              setRunningTask(null);
+              setRunningMessageId(null);
+            }
             // A queued task with no reason is about to run; one with a reason waits for a daemon.
             if (e.task.waitingReason) setWaitingTask({ id: e.task.id, reason: e.task.waitingReason });
             else setWaitingTask((cur) => (cur?.id === e.task.id ? null : cur));
-          } else if (runningId.current === e.task.id) {
-            runningId.current = null;
-            setRunningTask(null);
-            setRunningMessageId(null);
+          } else {
+            // Terminal (done/failed): the waiting row clears whatever the task was doing, even when
+            // it never ran — a prompt-build failure, for one, finishes a task that was only queued.
+            // The working indicator only belongs to the task that was running.
             setWaitingTask((cur) => (cur?.id === e.task.id ? null : cur));
+            if (runningId.current === e.task.id) {
+              runningId.current = null;
+              setRunningTask(null);
+              setRunningMessageId(null);
+            }
           }
         } else if (e.type === "repo.index") {
           indexVersion.current++;
