@@ -423,7 +423,7 @@ export async function unbindRepo(db: Db, daemon: DaemonRpc, repoId: string): Pro
   const repo = await getRepo(db, repoId);
   if (!repo) throw missingRepo(repoId);
   await db.query("delete from workspace_repos where id = $1", [repoId]);
-  void daemon.call("repo.forget", rpcRepo(repo), undefined, { workspaceId: repo.workspaceId }).catch((error) => {
+  void daemon.call("repo.forget", rpcRepo(repo), undefined, { workspaceId: repo.workspaceId, all: true }).catch((error) => {
     console.error(`repo.forget failed for ${repo.id}`, error);
   });
   await syncBoundRepos(db, daemon);

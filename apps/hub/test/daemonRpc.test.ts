@@ -205,8 +205,35 @@ describe("connection table: which daemon a call reaches (#167 task 10)", () => {
     const second = await hello();
     const pending = handle.rpc.call("repos.sync", { repos: [] }, undefined, { all: true });
     expect(await answerNext(first, "first")).toMatchObject({ method: "repos.sync" });
-    expect(await answerNext(second, "second")).toMatchObject({ method: "repos.sync" });
+    // The first answer resolves the call; the second daemon was still asked.
     await expect(pending).resolves.toBe("first");
+    expect(await answerNext(second, "second")).toMatchObject({ method: "repos.sync" });
+  });
+
+  test("an all-daemons call resolves with the first answer, without waiting for the silent one", async () => {
+    const first = await hello();
+    const second = await hello();
+    const pending = handle.rpc.call("repos.sync", { repos: [] }, undefined, { all: true });
+    const firstReq = await first.next("rpc.request");
+    const secondReq = await second.next("rpc.request");
+    expect(firstReq).toMatchObject({ method: "repos.sync" });
+    expect(secondReq).toMatchObject({ method: "repos.sync" });
+    // The newer connection answers first; the older one stays silent.
+    second.send({ type: "rpc.response", id: secondReq.id, ok: true, result: "second" });
+    await expect(pending).resolves.toBe("second");
+  });
+
+  test("an all-daemons call rejects with the first error only when every daemon fails", async () => {
+    const first = await hello();
+    const second = await hello();
+    const pending = handle.rpc.call("repos.sync", { repos: [] }, undefined, { all: true });
+    const firstReq = await first.next("rpc.request");
+    const secondReq = await second.next("rpc.request");
+    first.send({ type: "rpc.response", id: firstReq.id, ok: false, error: "first failed" });
+    second.send({ type: "rpc.response", id: secondReq.id, ok: false, error: "second failed" });
+    const err = await pending.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DaemonRpcError);
+    expect((err as DaemonRpcError).message).toBe("first failed");
   });
 
   test("one daemon closing fails only its own in-flight calls", async () => {

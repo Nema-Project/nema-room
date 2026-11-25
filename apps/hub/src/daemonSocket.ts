@@ -656,10 +656,12 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       // One daemon: it answers every call, whatever the target, exactly as before the connection table.
       if (open.length === 1) return open[0]!.rpc.call(method, params, timeoutMs);
       if (target?.all) {
-        const results = await Promise.allSettled(open.map((conn) => conn.rpc.call(method, params, timeoutMs)));
-        const answered = results.find((result) => result.status === "fulfilled");
-        if (answered) return answered.value;
-        throw (results[0] as PromiseRejectedResult).reason;
+        try {
+          return await Promise.any(open.map((conn) => conn.rpc.call(method, params, timeoutMs)));
+        } catch (error) {
+          if (error instanceof AggregateError) throw error.errors[0];
+          throw error;
+        }
       }
       const conn = await chooseConnection(open, target ?? {});
       if (!isOpen(conn)) throw new DaemonRpcError("daemon 已断开");
