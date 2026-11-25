@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import type { Hono } from "hono";
 import { PLUGINS, bundledExtensions } from "@nema/shared";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
+import { expectNonAdminRefused, hostAdminHubs, type HostRoute } from "./hostAdminFixture.js";
 import type { Db } from "../src/db/db.js";
 import { DaemonRpcError, type DaemonRpc } from "../src/daemonRpc.js";
 import { EventBus } from "../src/events.js";
@@ -202,6 +203,69 @@ describe("MCP save checks", () => {
     const r = await req("POST", "/api/extensions/mcp", { id: "search", name: "Search", config, create: false });
     expect(r.status).toBe(404);
     expect(calls[0].params.create).toBe(false);
+  });
+});
+
+// #167 deviation 2: extensions, MCP servers and their secrets live with the daemon's machine, so the remote
+// form allows only the hub administrator, on every method; the local form's usr_local is unchanged.
+describe("/extensions/** is host-level: hub administrator only in the remote form", () => {
+  const commit = "a".repeat(40);
+  const everyRoute: HostRoute[] = [
+    { method: "GET", path: "/api/extensions" },
+    { method: "PATCH", path: "/api/extensions/search", body: { useState: "disabled" } },
+    { method: "DELETE", path: "/api/extensions/search" },
+    { method: "POST", path: "/api/extensions/resolve", body: { source: "https://github.com/acme/skills" } },
+    { method: "POST", path: "/api/extensions/install", body: { source: "https://github.com/acme/skills", commit, path: "skills/one" } },
+    { method: "GET", path: "/api/extensions/search/install" },
+    { method: "POST", path: "/api/extensions/search/install/cancel", body: {} },
+    { method: "POST", path: "/api/extensions/search/install/retry", body: {} },
+    { method: "GET", path: "/api/extensions/discover" },
+    { method: "POST", path: "/api/extensions/attach", body: { path: "/srv/skills/one" } },
+    { method: "POST", path: "/api/extensions/search/repair", body: {} },
+    { method: "POST", path: "/api/extensions/mcp", body: { id: "search", name: "Search", config } },
+    { method: "GET", path: "/api/extensions/search/mcp" },
+    { method: "GET", path: "/api/extensions/search/mcp/status" },
+    { method: "POST", path: "/api/extensions/search/mcp/start", body: {} },
+    { method: "POST", path: "/api/extensions/search/mcp/stop", body: {} },
+    { method: "PUT", path: "/api/extensions/search/mcp/secrets/API_TOKEN", body: { value: MARK } },
+    { method: "DELETE", path: "/api/extensions/search/mcp/secrets/API_TOKEN" },
+  ];
+  // Routes the fake daemon above answers, so the allowed callers see the route's own 200.
+  const answered: HostRoute[] = [
+    { method: "GET", path: "/api/extensions" },
+    { method: "POST", path: "/api/extensions/mcp", body: { id: "search", name: "Search", config } },
+    { method: "GET", path: "/api/extensions/search/mcp" },
+    { method: "GET", path: "/api/extensions/search/mcp/status" },
+    { method: "POST", path: "/api/extensions/search/mcp/start", body: {} },
+    { method: "POST", path: "/api/extensions/search/mcp/stop", body: {} },
+    { method: "PUT", path: "/api/extensions/search/mcp/secrets/API_TOKEN", body: { value: MARK } },
+    { method: "DELETE", path: "/api/extensions/search/mcp/secrets/API_TOKEN" },
+  ];
+
+  test("remote non-admin gets 403 on every route and method before the daemon is asked; anonymous stays 401", async () => {
+    const hubs = await hostAdminHubs(daemon);
+    await expectNonAdminRefused(hubs, everyRoute);
+    expect(calls).toEqual([]);
+  });
+
+  test("remote admin and usr_local get 200, including secret writes", async () => {
+    const hubs = await hostAdminHubs(daemon);
+    for (const who of ["admin", "local"] as const) {
+      for (const { method, path, body } of answered) {
+        const response = await hubs.send(who, method, path, body);
+        expect(response.status, `${method} ${path} as ${who}`).toBe(200);
+        expect(await response.text()).not.toContain(MARK);
+      }
+    }
+    expect(calls.filter((call) => call.method === "extensions.mcp.setSecret")).toHaveLength(2);
+  });
+
+  test("a percent-encoded path still meets the gate", async () => {
+    const hubs = await hostAdminHubs(daemon);
+    const refused = await hubs.send("member", "GET", "/api/%65xtensions");
+    // Hono decodes the path before routing, and the gate tests the same decoded path the router sees.
+    expect(refused.status).toBe(403);
+    expect(calls).toEqual([]);
   });
 });
 

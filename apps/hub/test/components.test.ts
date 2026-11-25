@@ -7,6 +7,7 @@ import { COMPONENT_RPC_TIMEOUT_MS, DaemonRpcError, type DaemonRpc } from "../src
 import { createApp } from "../src/app.js";
 import { EventBus } from "../src/events.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
+import { expectNonAdminRefused, hostAdminHubs, type HostRoute } from "./hostAdminFixture.js";
 
 const HUB = "http://127.0.0.1:4400";
 const LOCK_HASH = "a".repeat(64);
@@ -121,5 +122,37 @@ describe("component routes", () => {
     const plain = await hub.request(`${HUB}/api/components/graphify/install`, { method: "POST", headers: { "content-type": "text/plain" }, body: "{}" });
     expect(plain.status).toBe(415);
     expect(calls.map((call) => call.method)).toEqual(["components.status"]);
+  });
+});
+
+// #167 deviation 2: components act on the daemon's machine, so the remote form allows only the hub
+// administrator; the local form's usr_local is unchanged.
+describe("component routes are host-level: hub administrator only in the remote form", () => {
+  const routes: HostRoute[] = [
+    { method: "GET", path: "/api/components" },
+    { method: "POST", path: "/api/components/graphify/install", body: { confirmed: true, lockHash: LOCK_HASH } },
+    { method: "POST", path: "/api/components/graphify/cancel", body: {} },
+    { method: "PATCH", path: "/api/components/graphify/settings", body: { offline: true } },
+  ];
+
+  test("remote admin 200, remote non-admin 403 on every method, usr_local 200, anonymous 401", async () => {
+    const hubs = await hostAdminHubs(daemon);
+    await expectNonAdminRefused(hubs, routes);
+    for (const who of ["admin", "local"] as const) {
+      for (const { method, path, body } of routes) {
+        expect((await hubs.send(who, method, path, body)).status, `${method} ${path} as ${who}`).toBe(200);
+      }
+    }
+    expect(hubs.calls).toEqual([
+      "components.status", "components.install", "components.cancel", "components.configure",
+      "components.status", "components.install", "components.cancel", "components.configure",
+    ]);
+  });
+
+  test("/agent-clis is outside the decided family and stays open to any signed-in account", async () => {
+    answer = async () => ({ agents: [] });
+    const hubs = await hostAdminHubs(daemon);
+    expect((await hubs.send("member", "GET", "/api/agent-clis")).status).toBe(200);
+    expect((await hubs.send("anonymous", "GET", "/api/agent-clis")).status).toBe(401);
   });
 });

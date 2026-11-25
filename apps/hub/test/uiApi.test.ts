@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
+import { expectNonAdminRefused, hostAdminHubs } from "./hostAdminFixture.js";
 import { stagedRow, uploadPng } from "./attachmentFixtures.js";
 import type { Db } from "../src/db/db.js";
 import { createWorkspace } from "../src/workspaces.js";
@@ -1569,4 +1570,49 @@ test("all three user entry points stamp the provider identity, ignoring the body
   const thread = await json(await req("POST", `/api/workspaces/${ws}/threads`, { content: "Topic" }));
   const reply = await json(await req("POST", `/api/workspaces/${ws}/threads/${thread.thread.id}/messages`, { content: "Reply" }));
   for (const result of [main, thread, reply]) expect(result.message.authorUserId).toBe("usr_local");
+});
+
+// #167 deviation 2: the folder picker and daemon status are host-level, so the remote form allows only the
+// hub administrator; the local form's usr_local is unchanged. /api/version and /api/auth/* are not gated.
+describe("host-level /pick-directory and /daemon/*", () => {
+  const picker: DaemonRpc = {
+    call: async (method) => (method === "dialog.pickDirectory" ? { path: "/srv/app" } : Promise.reject(new DaemonRpcError("daemon 未连接"))),
+  };
+
+  test("remote admin 200, remote non-admin 403 on every method, usr_local 200, anonymous 401", async () => {
+    const hubs = await hostAdminHubs(picker);
+    await expectNonAdminRefused(hubs, [
+      { method: "POST", path: "/api/pick-directory", body: {} },
+      { method: "GET", path: "/api/daemon/status" },
+      // Methods and paths no route answers are refused the same way, before routing.
+      { method: "DELETE", path: "/api/daemon/status" },
+      { method: "GET", path: "/api/daemon/anything" },
+    ]);
+    for (const who of ["admin", "local"] as const) {
+      const picked = await hubs.send(who, "POST", "/api/pick-directory", {});
+      expect(picked.status, who).toBe(200);
+      expect(await picked.json()).toEqual({ path: "/srv/app" });
+      const daemonStatus = await hubs.send(who, "GET", "/api/daemon/status");
+      expect(daemonStatus.status, who).toBe(200);
+      expect(await daemonStatus.json()).toEqual({ connected: true });
+    }
+    expect(hubs.calls).toEqual(["dialog.pickDirectory", "dialog.pickDirectory"]);
+  });
+
+  test("the gate leaves /api/version, /api/auth/* and workspace routes to their own rules", async () => {
+    const hubs = await hostAdminHubs(picker, { releaseVersion: "test" });
+    for (const who of ["anonymous", "member", "admin"] as const) {
+      const version = await hubs.send(who, "GET", "/api/version");
+      expect(version.status, who).toBe(200);
+      expect(await version.json()).toEqual({ version: "test" });
+    }
+    // Unauthenticated by design: a wrong password is the login route's own refusal, not the gate's.
+    const login = await hubs.send("anonymous", "POST", "/api/auth/login", { account: hubs.remote.memberId, password: "wrong" });
+    expect([401, 403]).toContain(login.status);
+    expect(await login.json()).not.toEqual({ error: "unauthorized" });
+    // A signed-in non-administrator still reaches the session routes and plain API routes.
+    expect((await hubs.send("member", "GET", "/api/auth/invites")).status).toBe(200);
+    expect((await hubs.send("member", "GET", "/api/workspaces")).status).toBe(200);
+    expect((await hubs.send("anonymous", "GET", "/api/workspaces")).status).toBe(401);
+  });
 });
