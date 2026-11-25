@@ -161,9 +161,23 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
     dialog.showErrorBox('Nema Room could not open', message);
   }
 
+  function configureWindowMenu(window) {
+    if (platform !== 'darwin') {
+      window.setMenu(null);
+      return;
+    }
+    window.webContents.on('context-menu', (_event, { isEditable, selectionText }) => {
+      if (!isEditable && !selectionText) return;
+      const items = isEditable
+        ? [{ role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }]
+        : [{ role: 'copy' }];
+      Menu.buildFromTemplate(items).popup({ window });
+    });
+  }
+
   function openDiagramWindow(url, runtimeOrigin) {
     const child = new BrowserWindow({ ...createDiagramWindowOptions(), icon: brandAsset('icon.png') });
-    if (platform !== 'darwin') child.setMenu(null);
+    configureWindowMenu(child);
     handleNavigation(child, runtimeOrigin, { diagramsOnly: true });
     child.webContents.on('render-process-gone', () => {
       if (!child.isDestroyed()) child.destroy();
@@ -183,7 +197,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
       return;
     }
     const child = new BrowserWindow({ ...createSecureWindowOptions(runtimeOrigin, platform), icon: brandAsset('icon.png') });
-    if (platform !== 'darwin') child.setMenu(null);
+    configureWindowMenu(child);
     threadWindows.set(identity, child);
     threadLoadGeneration.set(child, 0);
     registerWindowControls({ ipcMain, window: child, runtimeOrigin });
@@ -248,7 +262,7 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
   function attachShell(window) {
     if (shellEventsBound.has(window)) return;
     shellEventsBound.add(window);
-    if (platform !== 'darwin') window.setMenu(null);
+    configureWindowMenu(window);
     destroyWindowOnClose(window);
     let sawLaunchShow = false;
     let sawLaunchLoad = false;
@@ -417,7 +431,22 @@ function createDesktopLifecycle({ electron, home, assetsDir, loadRuntimeApi, pla
 
   function applyMenus() {
     const entries = menuEntries();
-    Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'Nema Room', submenu: entries }]));
+    const appMenu = [{ label: 'Nema Room', submenu: entries }];
+    if (platform === 'darwin') {
+      appMenu.push({
+        role: 'editMenu',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'selectAll' },
+        ],
+      });
+    }
+    Menu.setApplicationMenu(Menu.buildFromTemplate(appMenu));
     if (tray) tray.setContextMenu(Menu.buildFromTemplate(entries));
   }
 

@@ -1,0 +1,1 @@
+- Restore standard editing shortcuts in the macOS desktop app and add right-click editing actions for selected text and editable fields.
