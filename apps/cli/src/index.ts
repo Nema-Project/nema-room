@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, InvalidArgumentError } from "commander";
 import { authClaude } from "./claude/token.js";
+import { registerDaemon } from "./daemon/register.js";
+import { readStdinLine } from "./secrets/file.js";
 import { startDaemon } from "./daemon/setup.js";
 import { stopOnSignals } from "./daemon/signals.js";
 import { startMcpServer } from "./mcp/server.js";
@@ -27,18 +28,16 @@ const nemaHomeDir = () => path.join(os.homedir(), ".nema");
 
 const program = new Command().name("nema").version(cliVersion()).enablePositionalOptions();
 
-program
+const daemonCommand = program
   .command("daemon")
   .description("Connect to the hub and run agent tasks")
   .option("--hub <url>", "hub URL", "http://127.0.0.1:4400")
   .option("--token-file <path>", "daemon token file", defaultTokenFile())
   .action(async (o: { hub: string; tokenFile: string }) => {
-    const token = (await readFile(o.tokenFile, "utf8")).trim();
-    const nemaHome = path.join(os.homedir(), ".nema");
     const daemon = startDaemon({
       hubUrl: o.hub,
-      token,
-      nemaHome,
+      tokenFile: o.tokenFile,
+      nemaHome: nemaHomeDir(),
       userCodexHome: defaultCodexHome(),
       version: cliVersion(),
       cliEntry: realpathSync(process.argv[1] ?? fileURLToPath(import.meta.url)),
@@ -46,6 +45,23 @@ program
     // Ctrl-C, SIGTERM or SIGHUP close the daemon first, so its MCP servers do not outlive it.
     stopOnSignals({ close: () => daemon.close() });
     console.log(`nema daemon connecting to ${o.hub}`);
+  });
+
+daemonCommand
+  .command("register")
+  .description("Register this machine with a remote hub using a code from App settings")
+  .requiredOption("--hub <url>", "hub URL")
+  .option("--label <name>", "machine label", os.hostname())
+  .action(async (o: { hub: string; label: string }) => {
+    if (process.stdin.isTTY) console.log("Paste the daemon registration code and press Enter:");
+    try {
+      const code = await readStdinLine(process.stdin);
+      await registerDaemon({ hubUrl: o.hub, label: o.label, code, nemaHome: nemaHomeDir() });
+      console.log("Daemon registered. Start it with nema daemon --hub <url> using the same hub URL.");
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : "Daemon registration failed.");
+      process.exitCode = 1;
+    }
   });
 
 const mcpCommand = program

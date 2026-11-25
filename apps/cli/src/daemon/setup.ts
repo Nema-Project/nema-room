@@ -12,6 +12,7 @@ import { registerRepoHandlers } from "../repos/handlers.js";
 import { parseReposSync, RepoWatcher } from "../repos/watcher.js";
 import { electronRunAsNode } from "../platform.js";
 import { migrateReportHooks } from "../report/install.js";
+import { resolveDaemonToken } from "./register.js";
 import { connectDaemon } from "./connection.js";
 import { Cooldowns } from "../routing/cooldown.js";
 import { RpcRouter } from "./rpc.js";
@@ -47,7 +48,6 @@ export function createRunner(o: RunnerSetup): Runner {
 
 export type DaemonStart = {
   hubUrl: string;
-  token: string;
   nemaHome: string;
   userCodexHome: string;
   version: string;
@@ -66,10 +66,11 @@ export type DaemonStart = {
   /** Where the report token the hub should accept lives; defaults to `nemaHome`. */
   reportTokenHome?: string;
   ownedHelpers?: OwnedHelperScope;
-};
+} & ({ token: string } | { tokenFile: string });
 
 /** Connects the daemon and answers repo RPC plus `plugin.call` and `plugins.status`. */
 export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: RepoWatcher } {
+  const token = resolveDaemonToken(o.nemaHome, o);
   // Hooks installed against the removed payload Node keep that absolute path. Rewrite them once Electron is the Node.
   if (electronRunAsNode()) {
     try {
@@ -133,7 +134,7 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
   watcher.start();
   const connection = connectDaemon({
     hubUrl: o.hubUrl,
-    token: o.token,
+    token,
     runner,
     nemaHome: o.nemaHome,
     ...(o.reportTokenHome ? { reportTokenHome: o.reportTokenHome } : {}),

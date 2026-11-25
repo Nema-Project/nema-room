@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { AppReleaseAbout } from "@/components/AppRelease";
+import { DaemonsSettings } from "@/components/DaemonsSettings";
 import { ComponentsSettings } from "@/components/ComponentsSettings";
 import { ModelSettings } from "@/components/ModelSettings";
 import { PluginsPage } from "@/components/PluginsPage";
@@ -187,7 +188,7 @@ function DisplayNameSetting() {
  * The signed-in person and a sign-out button (#167 task 7). Shown only when GET /api/me answers with a real
  * user: the local forms answer usr_local, which has no login, so a single-machine install shows nothing (D-10).
  */
-function SessionSetting() {
+function SessionSetting({ selected }: { selected: boolean }) {
   const t = useT();
   const [me, setMe] = useState<{ userId: string; displayName: string | null } | null>(null);
   const [state, setState] = useState<"idle" | "busy" | "error">("idle");
@@ -217,12 +218,15 @@ function SessionSetting() {
   }
 
   return (
-    <section className="app-settings-section" aria-labelledby="app-settings-session-title">
-      <h2 id="app-settings-session-title" className="label">{t("appSettings.session")}</h2>
-      <p className="session-user">{t("appSettings.sessionUser", { name: me.displayName ?? me.userId })}</p>
-      <button type="button" disabled={state === "busy"} onClick={() => { void signOut(); }}>{t("appSettings.logout")}</button>
-      {state === "error" && <p className="error" role="alert">{t("appSettings.logoutError")}</p>}
-    </section>
+    <>
+      <section className="app-settings-section" aria-labelledby="app-settings-session-title">
+        <h2 id="app-settings-session-title" className="label">{t("appSettings.session")}</h2>
+        <p className="session-user">{t("appSettings.sessionUser", { name: me.displayName ?? me.userId })}</p>
+        <button type="button" disabled={state === "busy"} onClick={() => { void signOut(); }}>{t("appSettings.logout")}</button>
+        {state === "error" && <p className="error" role="alert">{t("appSettings.logoutError")}</p>}
+      </section>
+      {selected && <DaemonsSettings />}
+    </>
   );
 }
 
@@ -319,7 +323,7 @@ export function AppSettings({ onClose }: { onClose: () => void }) {
               {id === "components" && selected && <ComponentsSettings />}
               {id === "general" && (
                 <>
-                  <SessionSetting />
+                  <SessionSetting selected={selected} />
                   <DisplayNameSetting />
                   <LoginItemSetting />
                 </>

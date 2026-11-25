@@ -340,3 +340,12 @@ export const clearMcpSecret = (id: string, name: string) =>
 
 export const tagEntries = (id: string, tag: string) =>
   request<{ entries: import("./mentions").MentionContextResponse["entries"] }>(`${w(id)}/tags/${encodeURIComponent(tag)}/entries`);
+
+export type RegisteredDaemon = { id: string; label: string; lastSeenAt: string | null; revokedAt: string | null };
+export type DaemonRegistrationCode = { code: string; expiresAt: string };
+
+export const listDaemons = () => request<RegisteredDaemon[]>("/daemons");
+export const createDaemonRegistrationCode = () =>
+  request<DaemonRegistrationCode>("/daemons/registration-codes", { method: "POST", body: {} });
+export const revokeDaemon = (id: string) =>
+  request<{ revokedAt: string }>(`/daemons/${encodeURIComponent(id)}/revoke`, { method: "POST", body: {} });

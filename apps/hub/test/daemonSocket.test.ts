@@ -1426,3 +1426,53 @@ describe("S3 acceptance: the account shown under the reply", () => {
     expect(rows[0]!.n).toBe(0);
   });
 });
+
+test("remote hello uses the registered ID across reconnects and revocation interrupts work", async () => {
+  const { createDaemonRegistrationCode, registerDaemon } = await import("../src/daemons.js");
+  await db.query("insert into users(id, display_name) values ('usr_daemon','Daemon owner')");
+  const { code } = await createDaemonRegistrationCode(db, "usr_daemon");
+  const { id, credential } = (await registerDaemon(db, code, "Laptop"))!;
+  const remoteServer = http.createServer();
+  const remote = attachDaemonSocket(remoteServer, { db, dataDir, events, daemonToken: TOKEN, hubUrl: "http://hub.test", remoteAuth: true });
+  await new Promise<void>((resolve) => remoteServer.listen(0, "127.0.0.1", resolve));
+  const remoteUrl = `ws://127.0.0.1:${(remoteServer.address() as AddressInfo).port}/daemon`;
+  try {
+    const shared = await connect(TOKEN, undefined, {}, remoteUrl);
+    expect((await shared.next("error")).message).toMatch(/invalid daemon credential/i);
+    await shared.closed;
+
+    const first = await connect(credential, undefined, {}, remoteUrl);
+    await first.next("welcome");
+    const { task: queued } = await postUserMessage(db, wsA, "First task", { authorUserId: "usr_local" });
+    const task = queued!;
+    events.emit(wsA, { type: "task.updated", task: tasks.toUiTask(task) });
+    expect((await first.next("task.assign")).taskId).toBe(task.id);
+    expect((await getTask(db, task.id))?.daemonId).toBe(id);
+
+    const second = await connect(credential, undefined, {}, remoteUrl);
+    await second.next("welcome");
+    await first.closed;
+    const assignment = await second.next("task.assign");
+    expect(assignment.taskId).toBe(task.id);
+    expect((await getTask(db, task.id))?.daemonId).toBe(id);
+    expect(await interruptionsOf(task.id)).toBe(1);
+    expect((await db.query("select last_seen_at from daemons where id=$1", [id]))[0]?.last_seen_at).not.toBeNull();
+
+    expect(await remote.revokeRegisteredDaemon(id, "usr_daemon")).toMatchObject({ revokedAt: expect.any(String) });
+    expect((await second.next("error")).message).toMatch(/revoked/i);
+    await second.closed;
+    await vi.waitFor(async () => expect((await getTask(db, task.id))?.status).toBe("queued"));
+    expect(await interruptionsOf(task.id)).toBe(2);
+
+    const revoked = await connect(credential, undefined, {}, remoteUrl);
+    expect((await revoked.next("error")).message).toMatch(/revoked/i);
+    await revoked.closed;
+    expect(await db.query("select daemon_id, owner_user_id from daemon_events where kind='rejected' order by created_at")).toEqual([
+      { daemon_id: null, owner_user_id: null },
+      { daemon_id: id, owner_user_id: "usr_daemon" },
+    ]);
+  } finally {
+    await remote.close();
+    await new Promise<void>((resolve) => remoteServer.close(() => resolve()));
+  }
+});
