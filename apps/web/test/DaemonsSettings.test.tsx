@@ -55,6 +55,29 @@ test("refreshes daemon rows on window focus and retains the list when refresh fa
   expect(list).toHaveBeenCalledTimes(3);
 });
 
+test("the Refresh button shows a daemon registered elsewhere and keeps the rows when it fails", async () => {
+  const laptop = { id: "dmn_1", label: "Laptop", lastSeenAt: null, revokedAt: null };
+  const desktop = { ...laptop, id: "dmn_2", label: "Desktop" };
+  const list = vi.mocked(hub.listDaemons).mockClear()
+    .mockResolvedValueOnce([laptop])
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce([laptop, desktop]);
+  const user = userEvent.setup();
+  render(<I18nProvider messages={{ en }}><DaemonsSettings /></I18nProvider>);
+  await screen.findByText("Laptop");
+  const refresh = screen.getByRole("button", { name: "Refresh" });
+
+  await user.click(refresh);
+  expect((await screen.findByRole("alert")).textContent).toBe("Could not load daemons.");
+  expect(screen.getByText("Laptop")).toBeTruthy();
+
+  await user.click(refresh);
+  expect(await screen.findByText("Desktop")).toBeTruthy();
+  expect(screen.getByText("Laptop")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(list).toHaveBeenCalledTimes(3);
+});
+
 test("displays a new code only for the current visit and asks before revoking a daemon", async () => {
   const laptop = { id: "dmn_1", label: "Laptop", lastSeenAt: "2026-11-24T12:00:00Z", revokedAt: null };
   vi.mocked(hub.listDaemons).mockResolvedValue([laptop, { id: "dmn_2", label: "Old Mac", lastSeenAt: null, revokedAt: "2026-11-24T12:00:00Z" }]);

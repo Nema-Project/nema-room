@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import { parseHubToDaemon } from "@nema/shared";
+import { DAEMON_CREDENTIAL_REVOKED_MESSAGE, parseHubToDaemon } from "@nema/shared";
 import { DAEMON_FEATURES } from "../attachments/capabilities.js";
 import { cliVersion } from "../direct/siwc.js";
 import { reportTokenHash } from "../report/token.js";
@@ -100,6 +100,10 @@ export function connectDaemon(opts: DaemonOpts): { close(): Promise<void> } {
         const guidance = skewGuidance(m.message);
         if (guidance) {
           console.error(guidance);
+          stop = true;
+        } else if (m.message === DAEMON_CREDENTIAL_REVOKED_MESSAGE) {
+          // Retrying a revoked credential can only be refused again; wait for a restart with a new one.
+          console.error("[nema] stopped reconnecting: run nema daemon register --hub <url>, then restart this daemon");
           stop = true;
         }
       } else if (m.type === "welcome") {

@@ -2,7 +2,7 @@ import type http from "node:http";
 import { nanoid } from "nanoid";
 import { WebSocketServer, type WebSocket } from "ws";
 import { KnowledgeStore } from "@nema/knowledge";
-import { AttachmentRefSchema, WORKPACKAGE_LIMITS, parseDaemonToHub, parseManualSkill, parseRouteDecision, type AgentMessageMeta, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
+import { AttachmentRefSchema, DAEMON_CREDENTIAL_REVOKED_MESSAGE, WORKPACKAGE_LIMITS, parseDaemonToHub, parseManualSkill, parseRouteDecision, type AgentMessageMeta, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
 import { createConnectionRpc, DaemonRpcError, type ConnectionRpc, type DaemonRpc } from "./daemonRpc.js";
 import { markDaemonSeen, revokeDaemon, verifyDaemonCredential, type RevokeRegisteredDaemon } from "./daemons.js";
 import type { Db } from "./db/db.js";
@@ -46,6 +46,8 @@ export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daem
 type Conn = {
   ws: WebSocket;
   daemonId: string;
+  /** The hub URL this daemon's task.assign carries: the hub's own loopback URL, or for a remote daemon the address it reached. */
+  hubUrl: string;
   closed: Promise<void>;
   assigned: { taskId: string; workspaceId: string; runToken: string } | null;
   rpc: ConnectionRpc;
@@ -68,6 +70,25 @@ export const NO_ATTACHMENT_SUPPORT_MESSAGE = "当前 daemon 不支持附件，�
 export const NO_ACCOUNT_SUPPORT_MESSAGE = "当前 daemon 不支持按账户运行任务，请升级 CLI 后再指定账户";
 
 export const OLD_CLI_MESSAGE = "nema CLI 版本过旧，请运行 npm run build -w apps/cli 并重启 nema daemon";
+/** Distinct from the credential refusals: the daemon's credential was not judged, so it should simply retry. */
+export const REMOTE_HELLO_FAILED_MESSAGE = "The hub hit an internal error while accepting this daemon. The daemon will retry.";
+/** A replaced socket that ignores the close handshake is terminated after this long. */
+const REPLACED_CLOSE_TIMEOUT_MS = 1_000;
+
+/**
+ * The URL a remote daemon reached this hub at, from the WebSocket upgrade's Host header. Another machine
+ * cannot use the hub's loopback URL for room calls or attachment downloads. Null when Host is not a bare host[:port].
+ */
+function hubUrlFromUpgrade(req: http.IncomingMessage | undefined): string | null {
+  const host = req?.headers.host?.trim();
+  if (!host || /[/\\@?#\s]/.test(host)) return null;
+  const scheme = (req?.socket as { encrypted?: boolean } | undefined)?.encrypted ? "https" : "http";
+  try {
+    return new URL(`${scheme}://${host}`).origin;
+  } catch {
+    return null;
+  }
+}
 
 export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps): {
   isConnected(): boolean;
@@ -320,7 +341,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         confidential: built.confidential,
         prompt: built.prompt,
         runToken: task.runToken!,
-        hubUrl: deps.hubUrl,
+        hubUrl: conn.hubUrl,
         pluginTools,
         ...(task.kind === "workpackage" ? { limits: { ...WORKPACKAGE_LIMITS } } : {}),
         ...(built.attachments.length > 0 ? { attachments: built.attachments } : {}),
@@ -387,8 +408,10 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     await dispatch();
   }
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
     let conn: Conn | null = null;
+    // Only a remote daemon needs the address it connected to; the local daemon shares the hub's loopback.
+    const hubUrl = deps.remoteAuth ? hubUrlFromUpgrade(req) : deps.hubUrl;
     // Per-connection serial handling keeps hello/finished ordering intact.
     let inbox: Promise<void> = Promise.resolve();
 
@@ -414,13 +437,25 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       }
       // Older CLIs silently drop adapter:"auto" assignments.
       if (!m.adapters.some((a) => a === "codex-direct" || a === "codex-cli")) return reject(OLD_CLI_MESSAGE);
+      if (!hubUrl) return reject("The hub could not tell which address this daemon connected to. Connect with a hub URL of the form http://host:port.");
 
       if (registeredId) {
         // Await the old socket's task cleanup before assigning under the same stable ID.
         const previous = [...connections].find((candidate) => candidate.daemonId === registeredId);
         if (previous) {
           previous.ws.close();
-          await previous.closed;
+          // A peer that never answers the close frame must not hold this hello, or the registry lock, open.
+          let timer: NodeJS.Timeout | undefined;
+          const timedOut = await Promise.race([
+            previous.closed.then(() => false),
+            new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(true), REPLACED_CLOSE_TIMEOUT_MS); }),
+          ]);
+          clearTimeout(timer);
+          if (timedOut) {
+            previous.ws.terminate();
+            // terminate() emits close, so the old socket's usual cleanup still runs before this ID is reused.
+            await previous.closed;
+          }
         }
         if (stopping || ws.readyState !== ws.OPEN) return;
         await markDaemonSeen(db, registeredId);
@@ -437,6 +472,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       const accepted: Conn = {
         ws,
         daemonId: registeredId ?? `d_${nanoid(10)}`,
+        hubUrl,
         closed,
         assigned: null,
         features: new Set(m.features ?? []),
@@ -476,8 +512,10 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         if (deps.remoteAuth) {
           try {
             await withRegistry(() => hello(m));
-          } catch {
-            reject("The hub could not authorize this daemon. Try connecting again.");
+          } catch (error) {
+            // A database or dependency failure is not a credential decision; say so, and keep the cause.
+            console.error("[daemon] remote hello failed", error);
+            reject(REMOTE_HELLO_FAILED_MESSAGE);
           }
         } else {
           await hello(m);
@@ -579,7 +617,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   const revokeRegisteredDaemon: RevokeRegisteredDaemon = (id, actor) => withRegistry(async () => {
     const result = await revokeDaemon(db, id, actor);
     if (typeof result !== "string" && current?.daemonId === id) {
-      send(current.ws, { type: "error", message: "Daemon credential has been revoked. Register this daemon again." });
+      send(current.ws, { type: "error", message: DAEMON_CREDENTIAL_REVOKED_MESSAGE });
       const { ws } = current;
       ws.close();
       // A revoked client cannot hold task cleanup open by ignoring the close frame.

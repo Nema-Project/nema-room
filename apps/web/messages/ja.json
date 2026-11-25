@@ -36,6 +36,7 @@
   "common.close": "閉じる",
   "daemonsSettings.title": "デーモン",
   "daemonsSettings.generate": "登録コードを発行",
+  "daemonsSettings.refresh": "再読み込み",
   "daemonsSettings.expires": "有効期限は {time} です。設定を閉じる前にコードをコピーしてください。",
   "daemonsSettings.enterCode": "次のコマンドを実行し、表示される指示に従ってコードを入力します。",
   "daemonsSettings.empty": "登録済みのデーモンはありません。",

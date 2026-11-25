@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { nanoid } from "nanoid";
+import { DAEMON_CREDENTIAL_REVOKED_MESSAGE } from "@nema/shared";
 import { isHubAdmin } from "./auth.js";
 import type { Db } from "./db/db.js";
 
@@ -43,10 +44,9 @@ export class DaemonRejectionThrottle {
       this.loggedAt.delete(key);
     }
     if (this.loggedAt.has(credentialHash)) return false;
-    if (this.loggedAt.size >= this.maxKeys) {
-      const oldest = this.loggedAt.keys().next();
-      if (!oldest.done) this.loggedAt.delete(oldest.value);
-    }
+    // At capacity a new hash is not audited: evicting the oldest would let every fresh guess write a row,
+    // so the window caps total writes at maxKeys per minute, not only repeats of one hash.
+    if (this.loggedAt.size >= this.maxKeys) return false;
     this.loggedAt.set(credentialHash, now);
     return true;
   }
@@ -146,7 +146,7 @@ export async function verifyDaemonCredential(db: Db, credential: string, throttl
   } else if (throttle.shouldLog(credentialHash)) {
     await daemonEvent(db, undefined, "rejected", null, "invalid_credential");
   }
-  return { ok: false, error: daemon ? "Daemon credential has been revoked. Register this daemon again." : "Invalid daemon credential. Register this daemon first." } as const;
+  return { ok: false, error: daemon ? DAEMON_CREDENTIAL_REVOKED_MESSAGE : "Invalid daemon credential. Register this daemon first." } as const;
 }
 
 export async function markDaemonSeen(db: Db, id: string): Promise<void> {

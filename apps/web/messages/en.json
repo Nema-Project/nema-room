@@ -36,6 +36,7 @@
   "common.close": "Close",
   "daemonsSettings.title": "Daemons",
   "daemonsSettings.generate": "Generate registration code",
+  "daemonsSettings.refresh": "Refresh",
   "daemonsSettings.expires": "Expires at {time}. Copy this code before leaving settings.",
   "daemonsSettings.enterCode": "Enter the code when prompted by",
   "daemonsSettings.empty": "No registered daemons.",

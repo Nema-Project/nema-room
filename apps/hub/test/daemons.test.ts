@@ -21,7 +21,7 @@ vi.mock("ws", () => ({
         const client = socket as TestDaemonSocket;
         this.clients.add(client);
         client.once("close", () => this.clients.delete(client));
-        this.emit("connection", client);
+        this.emit("connection", client, { headers: { host: "127.0.0.1:4400" }, socket: {} });
       };
     }
     close(done: () => void) { done(); }
@@ -176,15 +176,51 @@ test("registration consumes a private code once; listing is owner-scoped and rev
   }
 });
 
-test("unknown credential throttle evicts the oldest key at capacity", () => {
-  const throttle = new DaemonRejectionThrottle(() => 0, 2);
+test("unknown credential throttle admits no new key at capacity until the window frees one", () => {
+  let now = 0;
+  const throttle = new DaemonRejectionThrottle(() => now, 2);
   expect(throttle.shouldLog("first")).toBe(true);
+  now = 10;
   expect(throttle.shouldLog("second")).toBe(true);
+  expect(throttle.shouldLog("third")).toBe(false);
+  expect(throttle.shouldLog("first")).toBe(false);
+  expect(throttle.trackedKeys).toBe(2);
+  now = 60_000;
   expect(throttle.shouldLog("third")).toBe(true);
+  expect(throttle.shouldLog("fourth")).toBe(false);
   expect(throttle.trackedKeys).toBe(2);
-  expect(throttle.shouldLog("second")).toBe(false);
-  expect(throttle.shouldLog("first")).toBe(true);
-  expect(throttle.trackedKeys).toBe(2);
+});
+
+test("more than 5,000 distinct unknown credentials in one minute are audited at most 5,000 times", () => {
+  const throttle = new DaemonRejectionThrottle(() => 0);
+  let logged = 0;
+  for (let i = 0; i < 12_000; i++) if (throttle.shouldLog(`guess-${i}`)) logged++;
+  expect(logged).toBe(5_000);
+  expect(throttle.trackedKeys).toBe(5_000);
+});
+
+test("a saturated unknown-credential window bounds audit rows; valid and revoked credentials behave as before", async () => {
+  const { db, close } = await makeHubDeps();
+  const throttle = new DaemonRejectionThrottle(() => 0, 5);
+  try {
+    await db.query("insert into users(id, display_name) values ('usr_owner','Owner')");
+    const valid = (await registerDaemon(db, (await createDaemonRegistrationCode(db, "usr_owner")).code, "Laptop"))!;
+    const revoked = (await registerDaemon(db, (await createDaemonRegistrationCode(db, "usr_owner")).code, "Old"))!;
+    await revokeDaemon(db, revoked.id, "usr_owner");
+
+    for (let i = 0; i < 60; i++) {
+      expect(await verifyDaemonCredential(db, `ndc_guess_${i}`, throttle)).toMatchObject({ ok: false, error: expect.stringMatching(/invalid/i) });
+    }
+    expect(await db.query("select id from daemon_events where kind='rejected' and daemon_id is null")).toHaveLength(5);
+
+    expect(await verifyDaemonCredential(db, valid.credential, throttle)).toEqual({ ok: true, id: valid.id });
+    expect(await verifyDaemonCredential(db, revoked.credential, throttle)).toMatchObject({ ok: false, error: expect.stringMatching(/revoked/i) });
+    expect(await db.query("select detail from daemon_events where daemon_id=$1 and kind='rejected'", [revoked.id]))
+      .toEqual([{ detail: { reason: "revoked_credential" } }]);
+    expect(await db.query("select id from daemon_events where daemon_id=$1 and kind='rejected'", [valid.id])).toHaveLength(0);
+  } finally {
+    await close();
+  }
 });
 
 test("a revoked daemon's first denial is audited, then at most once per hour", async () => {

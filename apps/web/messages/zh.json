@@ -36,6 +36,7 @@
   "common.close": "关闭",
   "daemonsSettings.title": "Daemon 管理",
   "daemonsSettings.generate": "生成注册码",
+  "daemonsSettings.refresh": "刷新",
   "daemonsSettings.expires": "有效期至 {time}。离开设置前请复制此注册码。",
   "daemonsSettings.enterCode": "运行以下命令后，按提示输入注册码：",
   "daemonsSettings.empty": "暂无已注册的 daemon。",

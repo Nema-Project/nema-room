@@ -97,6 +97,9 @@ const HubToDaemonSchema = z.discriminatedUnion("type", [
 ]);
 export type HubToDaemon = z.infer<typeof HubToDaemonSchema>;
 
+/** The hub's `error` text for a revoked daemon credential; the daemon stops reconnecting on exactly this text. */
+export const DAEMON_CREDENTIAL_REVOKED_MESSAGE = "Daemon credential has been revoked. Register this daemon again.";
+
 export type TaskAssign = Extract<HubToDaemon, { type: "task.assign" }>;
 export type TaskEvent = Extract<DaemonToHub, { type: "task.event" }>["event"];
 

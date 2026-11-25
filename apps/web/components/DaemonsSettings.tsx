@@ -14,6 +14,8 @@ export function DaemonsSettings() {
   const [loadError, setLoadError] = useState(false);
   const [actionError, setActionError] = useState<"actionError" | "codeLimit" | null>(null);
   const revocationVersion = useRef(0);
+  // Shared by the mount load, window focus and the Refresh button; set while this panel is mounted.
+  const refreshRef = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
     let live = true;
@@ -29,11 +31,13 @@ export function DaemonsSettings() {
           setLoadError(false);
         }
       } catch {
+        // The rows already shown stay; only the error is added.
         if (live) setLoadError(true);
       } finally {
         loading = false;
       }
     }
+    refreshRef.current = refresh;
     void refresh();
     window.addEventListener("focus", refresh);
     return () => {
@@ -81,6 +85,7 @@ export function DaemonsSettings() {
     <section className="app-settings-section" aria-labelledby="daemon-settings-title">
       <h2 id="daemon-settings-title" className="label">{t("daemonsSettings.title")}</h2>
       <button type="button" disabled={busy} onClick={() => { void generate(); }}>{t("daemonsSettings.generate")}</button>
+      <button type="button" onClick={() => { void refreshRef.current(); }}>{t("daemonsSettings.refresh")}</button>
       {code && (
         <div aria-live="polite">
           <p><code>{code.code}</code></p>
