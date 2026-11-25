@@ -1492,6 +1492,8 @@ test("remote hello uses the registered ID across reconnects and revocation inter
   await db.query("insert into users(id, display_name) values ('usr_daemon','Daemon owner')");
   const { code } = await createDaemonRegistrationCode(db, "usr_daemon");
   const { id, credential } = (await registerDaemon(db, code, "Laptop"))!;
+  // D-6: a registered daemon only claims tasks of workspaces its owner belongs to.
+  await db.query("insert into workspace_members(workspace_id,user_id,role,added_by) values ($1,'usr_daemon','member','usr_local')", [wsA]);
   const remoteServer = http.createServer();
   const remote = attachDaemonSocket(remoteServer, { db, dataDir, events, daemonToken: TOKEN, hubUrl: "http://hub.test", remoteAuth: true });
   await new Promise<void>((resolve) => remoteServer.listen(0, "127.0.0.1", resolve));
@@ -1548,6 +1550,8 @@ describe("remote daemon hello", () => {
     const { createDaemonRegistrationCode, registerDaemon } = await import("../src/daemons.js");
     await db.query("insert into users(id, display_name) values ('usr_daemon','Daemon owner')");
     ({ credential } = (await registerDaemon(db, (await createDaemonRegistrationCode(db, "usr_daemon")).code, "Laptop"))!);
+    // D-6: a registered daemon only claims tasks of workspaces its owner belongs to.
+    await db.query("insert into workspace_members(workspace_id,user_id,role,added_by) values ($1,'usr_daemon','member','usr_local')", [wsA]);
     const httpServer = http.createServer();
     remoteServer = httpServer;
     remote = attachDaemonSocket(httpServer, { db, dataDir, events, daemonToken: TOKEN, hubUrl: "http://127.0.0.1:4400", remoteAuth: true });
@@ -1619,6 +1623,8 @@ describe("remote daemon hello", () => {
     const hub = await startRemoteHub();
     const [firstRow] = await db.query<{ id: string }>("select id from daemons where owner_user_id = 'usr_daemon'");
     const other = await registerSecond();
+    // D-6: the second daemon only claims tasks of workspaces its owner belongs to.
+    await db.query("insert into workspace_members(workspace_id,user_id,role,added_by) values ($1,'usr_other','member','usr_local')", [wsB]);
     const first = await connect(credential, undefined, {}, remoteUrl);
     await first.next("welcome");
     const a = await queueTask();

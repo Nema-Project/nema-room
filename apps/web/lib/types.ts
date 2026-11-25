@@ -43,12 +43,19 @@ export type Message = {
   attachments?: AttachmentView[];
 };
 
+/** Why a queued task is still waiting (D-6), derived live by the hub; absent when no daemon-side reason applies. */
+export type WaitingReason =
+  | { kind: "no-daemon-online" }
+  | { kind: "no-member-daemon"; onlineDaemons: number }
+  | { kind: "repo-not-held"; missingRepos: string[] };
+
 export type Task = {
   id: string;
   workspaceId: string;
   messageId: string;
   status: "queued" | "running" | "done" | "failed";
   error: string | null;
+  waitingReason?: WaitingReason | null;
 };
 
 export type HubEvent =

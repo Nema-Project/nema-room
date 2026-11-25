@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { nanoid } from "nanoid";
+import { normalizeRemoteUrl } from "@nema/shared";
 import type { Db } from "./db/db.js";
 
 export type Task = {
@@ -27,10 +28,78 @@ export type Task = {
  * The account choice stays out too. It is an input the daemon consumes, not a fact about the task's progress,
  * and the UI that would show it (S2's picker) reads the choice from where the user made it.
  */
-export type UiTask = Omit<Task, "runToken" | "daemonId" | "kind" | "accountId" | "routing">;
+export type UiTask = Omit<Task, "runToken" | "daemonId" | "kind" | "accountId" | "routing"> & {
+  /**
+   * Why a queued task is still waiting (D-6), derived live at read time, never stored. Absent unless the
+   * caller computed it — only the daemon socket knows which daemons are online.
+   */
+  waitingReason?: WaitingReason | null;
+};
 
-export function toUiTask(t: Task): UiTask {
-  return { id: t.id, workspaceId: t.workspaceId, messageId: t.messageId, status: t.status, error: t.error };
+/** Why a queued task has no daemon to run it. `missingRepos` are the bound repos' labels. */
+export type WaitingReason =
+  | { kind: "no-daemon-online" }
+  | { kind: "no-member-daemon"; onlineDaemons: number }
+  | { kind: "repo-not-held"; missingRepos: string[] };
+
+/** One online daemon as the waiting-reason derivation sees it. `ownerUserId` null is the local daemon, which counts as a member of every workspace (D-6 rule ①). */
+export type OnlineDaemon = { ownerUserId: string | null; heldRepos: ReadonlySet<string> };
+
+export function toUiTask(t: Task, waitingReason?: WaitingReason | null): UiTask {
+  return {
+    id: t.id,
+    workspaceId: t.workspaceId,
+    messageId: t.messageId,
+    status: t.status,
+    error: t.error,
+    ...(waitingReason ? { waitingReason } : {}),
+  };
+}
+
+/**
+ * Why `task` is still queued, or null when no daemon-side reason applies (a qualified daemon is online, or
+ * the workspace already has a running task and this one waits for it, not for a daemon).
+ */
+export async function computeWaitingReason(db: Db, task: Task, online: OnlineDaemon[]): Promise<WaitingReason | null> {
+  if (task.status !== "queued") return null;
+  const [running] = await db.query<{ ok: number }>(
+    `select 1 as ok from tasks where workspace_id = $1 and status = 'running' limit 1`,
+    [task.workspaceId],
+  );
+  if (running) return null;
+  if (online.length === 0) return { kind: "no-daemon-online" };
+  const members = await db.query<{ user_id: string }>(
+    `select user_id from workspace_members where workspace_id = $1 and removed_at is null`,
+    [task.workspaceId],
+  );
+  const memberIds = new Set(members.map((m) => m.user_id));
+  const memberDaemons = online.filter((d) => d.ownerUserId === null || memberIds.has(d.ownerUserId));
+  if (memberDaemons.length === 0) return { kind: "no-member-daemon", onlineDaemons: online.length };
+  const repos = await db.query<{ label: string; remote_url: string | null }>(
+    `select label, remote_url from workspace_repos where workspace_id = $1`,
+    [task.workspaceId],
+  );
+  const required: { label: string; normalized: string }[] = [];
+  for (const repo of repos) {
+    const normalized = normalizeRemoteUrl(repo.remote_url);
+    // A bound repo with no remote has nothing to hold; it cannot block routing.
+    if (normalized === null) continue;
+    required.push({ label: repo.label, normalized });
+  }
+  // Coverage is per daemon, like the claim predicate: one daemon must hold every bound repo. Repos
+  // split across daemons still leave the task unclaimable, so report what the best-placed member
+  // daemon is still missing instead of reporting nothing.
+  let bestMissing: string[] = [];
+  let first = true;
+  for (const d of memberDaemons) {
+    const missing = required.filter((r) => !d.heldRepos.has(r.normalized)).map((r) => r.label);
+    if (missing.length === 0) return null;
+    if (first || missing.length < bestMissing.length) {
+      bestMissing = missing;
+      first = false;
+    }
+  }
+  return { kind: "repo-not-held", missingRepos: bestMissing };
 }
 
 type Row = {
@@ -79,32 +148,86 @@ export async function insertQueuedTask(
 }
 
 /**
- * Claims the oldest queued task whose workspace has nothing running.
- * Locks the task row and its workspace row (SKIP LOCKED) so concurrent claimers
- * neither take the same task nor two tasks of one workspace; the update re-checks
- * "no running task" with a fresh statement snapshot after the locks are held.
+ * The registered owner of a daemon, for routing. Null is the local (unregistered) daemon, which counts as
+ * a member of every workspace; undefined is a revoked registration, which may claim nothing.
  */
-export async function claimNextTask(db: Db, daemonId: string): Promise<Task | null> {
+export async function getDaemonOwner(db: Db, daemonId: string): Promise<string | null | undefined> {
+  const [row] = await db.query<{ owner_user_id: string; revoked_at: Date | string | null }>(
+    `select owner_user_id, revoked_at from daemons where id = $1`,
+    [daemonId],
+  );
+  if (!row) return null;
+  if (row.revoked_at !== null) return undefined;
+  return row.owner_user_id;
+}
+
+/**
+ * Claims the oldest queued task this daemon is qualified for (D-6). A candidate is skipped, never claimed,
+ * unless ① its owner is an unremoved member of the task's workspace (a local daemon counts everywhere),
+ * ② every bound repo's normalized remote is in the daemon's held set (no bound repos, or a repo with no
+ * remote, makes this vacuous), and ③ the workspace has nothing running (the existing invariant, kept in
+ * both the candidate query and the update). Eligibility is decided before the update, inside the same
+ * transaction, so a claim never has to be discovered unqualified afterwards. Candidates are paged past by
+ * seq: an eligible task behind a long ineligible prefix must still be reached, or it would starve while
+ * every dispatch re-selected the same first batch. Each batch is capped and the scan is bounded, so one
+ * dispatch stays cheap; dispatch runs again on the next trigger.
+ */
+export async function claimNextTask(db: Db, daemonId: string, opts: { heldRepos?: Iterable<string> } = {}): Promise<Task | null> {
+  const BATCH = 50;
+  const MAX_CANDIDATES = 500;
   return db.tx(async (t) => {
-    const cand = await t.query<{ id: string }>(
-      `select t.id from tasks t
-       join workspaces w on w.id = t.workspace_id
-       where t.status = 'queued'
-         and w.archived_at is null
-         and not exists (select 1 from tasks r where r.workspace_id = t.workspace_id and r.status = 'running')
-       order by t.seq
-       limit 1
-       for update of t, w skip locked`,
-    );
-    if (!cand[0]) return null;
-    const rows = await t.query<Row>(
-      `update tasks set status = 'running', run_token = $2, daemon_id = $3, started_at = now(), error = null
-       where id = $1 and status = 'queued'
-         and not exists (select 1 from tasks r where r.workspace_id = tasks.workspace_id and r.status = 'running')
-       returning ${COLS}`,
-      [cand[0].id, randomBytes(32).toString("hex"), daemonId],
-    );
-    return rows[0] ? toTask(rows[0]) : null;
+    const owner = await getDaemonOwner(t, daemonId);
+    if (owner === undefined) return null;
+    const held = new Set<string>();
+    for (const raw of opts.heldRepos ?? []) {
+      const normalized = normalizeRemoteUrl(raw);
+      if (normalized !== null) held.add(normalized);
+    }
+    let afterSeq = 0;
+    let examined = 0;
+    while (examined < MAX_CANDIDATES) {
+      const cand = await t.query<{ id: string; workspace_id: string; seq: number }>(
+        `select t.id, t.workspace_id, t.seq from tasks t
+         join workspaces w on w.id = t.workspace_id
+         where t.status = 'queued'
+           and w.archived_at is null
+           and t.seq > $1
+           and not exists (select 1 from tasks r where r.workspace_id = t.workspace_id and r.status = 'running')
+         order by t.seq
+         limit ${BATCH}
+         for update of t, w skip locked`,
+        [afterSeq],
+      );
+      if (cand.length === 0) return null;
+      examined += cand.length;
+      for (const c of cand) {
+        if (owner !== null) {
+          const [member] = await t.query<{ ok: number }>(
+            `select 1 as ok from workspace_members where workspace_id = $1 and user_id = $2 and removed_at is null`,
+            [c.workspace_id, owner],
+          );
+          if (!member) continue;
+        }
+        const repos = await t.query<{ remote_url: string | null }>(
+          `select remote_url from workspace_repos where workspace_id = $1`,
+          [c.workspace_id],
+        );
+        const required = repos
+          .map((r) => normalizeRemoteUrl(r.remote_url))
+          .filter((r): r is string => r !== null);
+        if (!required.every((r) => held.has(r))) continue;
+        const rows = await t.query<Row>(
+          `update tasks set status = 'running', run_token = $2, daemon_id = $3, started_at = now(), error = null
+           where id = $1 and status = 'queued'
+             and not exists (select 1 from tasks r where r.workspace_id = tasks.workspace_id and r.status = 'running')
+           returning ${COLS}`,
+          [c.id, randomBytes(32).toString("hex"), daemonId],
+        );
+        if (rows[0]) return toTask(rows[0]);
+      }
+      afterSeq = cand[cand.length - 1]!.seq;
+    }
+    return null;
   });
 }
 

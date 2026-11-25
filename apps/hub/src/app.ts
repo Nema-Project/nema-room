@@ -6,6 +6,7 @@ import { cors } from "hono/cors";
 import { daemonRegistrationRoutes, daemonSessionRoutes, type RevokeRegisteredDaemon } from "./daemons.js";
 import type { DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
+import type { Task, WaitingReason } from "./tasks.js";
 import type { Archify } from "./diagrams.js";
 import type { EventBus } from "./events.js";
 import { ATTACHMENT_UPLOAD_PATH, attachmentRoutes } from "./attachmentRoutes.js";
@@ -68,6 +69,11 @@ export type AppDeps = {
    */
   remoteAuth?: boolean;
   revokeRegisteredDaemon?: RevokeRegisteredDaemon;
+  /**
+   * Why a queued task is still waiting, derived live from the online daemons (D-6). The daemon socket
+   * provides it; tests and callers without a socket omit it and queued tasks carry no reason.
+   */
+  waitingReasonFor?: (task: Task) => Promise<WaitingReason | null>;
   /** One-time bootstrap token from main.ts; only read when remoteAuth is on and no account exists yet. */
   bootstrapToken?: string;
   /** Login rate limiting for /api/auth/login; omitted creates one per app. Tests inject a fixed clock. */

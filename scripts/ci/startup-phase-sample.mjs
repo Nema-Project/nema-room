@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { copyFileSync, cpSync, mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -39,9 +39,13 @@ function buildFakeAssets(assets) {
   }
   mkdirSync(join(assets, 'licenses'), { recursive: true });
   cpSync(join(root, 'apps/local/test/fixtures'), join(assets, 'fixtures'), { recursive: true });
+  // The manifest version is the hub's release version and the managed daemon's hello version: it
+  // must be a real CLI version, not the old "test-version" sentinel (D-9 parses that as 0.0.0 and
+  // refuses the daemon). Read the CLI package so the sample tracks the floor.
+  const cliVersion = JSON.parse(readFileSync(join(root, 'apps/cli', 'package.json'), 'utf8')).version;
   writeFileSync(join(assets, 'runtime-manifest.json'), JSON.stringify({
     schemaVersion: 1,
-    version: 'test-version',
+    version: cliVersion,
     platform: process.platform,
     arch: process.arch,
     node: `node/${nodeName}`,

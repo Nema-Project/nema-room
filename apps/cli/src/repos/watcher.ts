@@ -65,6 +65,11 @@ export class RepoWatcher {
     this.repos = list;
   }
 
+  /** The repos the last `repos.sync` listed, in sync order. */
+  listRepos(): WatchedRepo[] {
+    return [...this.repos];
+  }
+
   private serial(fn: () => Promise<void>): Promise<void> {
     const run = this.queue.then(fn);
     this.queue = run.catch(() => {});

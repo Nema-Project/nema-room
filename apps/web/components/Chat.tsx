@@ -7,7 +7,7 @@ import { AgentAvatar, MessageItem, messageRoleLabel } from "@/components/Message
 import { formatDay, formatTime } from "@/lib/format";
 import { createThread, getActiveTask, getMessage, listMessages, listThreads, postMessage, searchMessages } from "@/lib/hub";
 import { useLocale, useT } from "@/lib/i18n";
-import type { HubEvent, Message, Thread } from "@/lib/types";
+import type { HubEvent, Message, Task, Thread } from "@/lib/types";
 
 export type ChatHandle = {
   scrollToMessage: (messageId: string) => void;
@@ -61,6 +61,8 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
   const [error, setError] = useState<string | null>(null);
   const [runningTask, setRunningTask] = useState<string | null>(null);
   const [runningMessageId, setRunningMessageId] = useState<string | null>(null);
+  /** A queued task the hub reports as waiting, with its reason; cleared once the task runs or finishes. */
+  const [waitingTask, setWaitingTask] = useState<{ id: string; reason: NonNullable<Task["waitingReason"]> } | null>(null);
   const [indexing, setIndexing] = useState<{ repoId: string; label: string }[]>([]);
   const [progress, setProgress] = useState<string>("");
   const [quote, setQuote] = useState<Message | null>(null);
@@ -186,10 +188,28 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
             setRunningTask(e.task.id);
             setRunningMessageId(e.task.messageId);
             setProgress("");
-          } else if (runningId.current === e.task.id) {
-            runningId.current = null;
-            setRunningTask(null);
-            setRunningMessageId(null);
+            setWaitingTask((cur) => (cur?.id === e.task.id ? null : cur));
+          } else if (e.task.status === "queued") {
+            // A requeued task stops running: it was interrupted and waits again, so the working
+            // indicator must go or the !runningTask guard below would hide the waiting row too.
+            if (runningId.current === e.task.id) {
+              runningId.current = null;
+              setRunningTask(null);
+              setRunningMessageId(null);
+            }
+            // A queued task with no reason is about to run; one with a reason waits for a daemon.
+            if (e.task.waitingReason) setWaitingTask({ id: e.task.id, reason: e.task.waitingReason });
+            else setWaitingTask((cur) => (cur?.id === e.task.id ? null : cur));
+          } else {
+            // Terminal (done/failed): the waiting row clears whatever the task was doing, even when
+            // it never ran — a prompt-build failure, for one, finishes a task that was only queued.
+            // The working indicator only belongs to the task that was running.
+            setWaitingTask((cur) => (cur?.id === e.task.id ? null : cur));
+            if (runningId.current === e.task.id) {
+              runningId.current = null;
+              setRunningTask(null);
+              setRunningMessageId(null);
+            }
           }
         } else if (e.type === "repo.index") {
           indexVersion.current++;
@@ -347,6 +367,21 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
               <div className="working">
                 <span className="bar2" />
                 {progress ? `${t("chat.working")} · ${progress}` : drawingDiagram ? t("chat.drawingDiagram") : t("chat.working")}
+              </div>
+            </div>
+          </div>
+        )}
+        {waitingTask && !runningTask && (
+          <div className="msg">
+            <AgentAvatar />
+            <div>
+              <div className="who">Nema</div>
+              <div className="working" role="status">
+                {waitingTask.reason.kind === "no-daemon-online"
+                  ? t("chat.waitingNoDaemon")
+                  : waitingTask.reason.kind === "no-member-daemon"
+                    ? t("chat.waitingNoMemberDaemon", { n: waitingTask.reason.onlineDaemons })
+                    : t("chat.waitingRepoNotHeld", { repos: waitingTask.reason.missingRepos.join(", ") })}
               </div>
             </div>
           </div>

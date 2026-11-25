@@ -21,7 +21,7 @@ import { posix, win32 } from "node:path";
 import { PluginError, clearMcpSecret, getMcpConfig, mcpHttpStatus, mcpServerStatus, saveMcpConfig, setMcpSecret, startMcp, stopMcp, attachExtension, attachHttpStatus, daemonHttpStatus, discoverExtensions, listExtensions, repairExtension, pluginsForUi, cancelExtensionInstall, extensionInstallStatus, installExtension, removeExtension, resolveExtensionSource, retryExtensionInstall, setExtensionUse, setPluginState, workspacePluginState } from "./plugins.js";
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
 import { RepoError, bindRepo, getRepo, listIndexing, listRepos, previewRepo, syncBoundRepos, trustedSkillRepos, unbindRepo, updateRepo } from "./repos.js";
-import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
+import { getRunningTask, listQueuedTasks, toUiTask, type Task, type WaitingReason } from "./tasks.js";
 import { revokeActiveShares } from "./shares.js";
 import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, repoPath, updateWorkspace } from "./workspaces.js";
 import { authorizeWorkspace, canSeeWorkspace, workspaceAccess } from "./authz.js";
@@ -43,6 +43,8 @@ export type UiDeps = {
   /** Diagram rendering; defaults to the vendored archify. Tests inject a fake. */
   archify?: Archify;
   ownedHelpers?: OwnedHelperScope;
+  /** Why a queued task is still waiting (D-6); provided by the daemon socket via AppDeps. */
+  waitingReasonFor?: (task: Task) => Promise<WaitingReason | null>;
 };
 
 /** Rendered diagram HTML runs archify's inline script only; it may not load or send anything. */
@@ -403,7 +405,9 @@ export function uiRoutes(deps: UiDeps): Hono {
     }
     if (clean.archived === false) {
       // Queued tasks were parked while archived; announce them so the dispatcher picks them up.
-      for (const t of await listQueuedTasks(db, id)) events.emit(id, { type: "task.updated", task: toUiTask(t) });
+      for (const t of await listQueuedTasks(db, id)) {
+        events.emit(id, { type: "task.updated", task: toUiTask(t, deps.waitingReasonFor ? await deps.waitingReasonFor(t) : undefined) });
+      }
     }
     // Archiving stops watching this workspace's repos; unarchiving resumes it.
     if (clean.archived !== undefined) await syncBoundRepos(db, deps.daemon);
@@ -507,7 +511,7 @@ export function uiRoutes(deps: UiDeps): Hono {
         const thread = await ensureThread(t, posted.message.id, title, "user");
         return { ...posted, thread };
       });
-      const task = toUiTask(created.task);
+      const task = toUiTask(created.task, deps.waitingReasonFor ? await deps.waitingReasonFor(created.task) : undefined);
       if (!created.replayed) {
         events.emit(workspaceId, { type: "message.created", message: created.message });
         events.emit(workspaceId, { type: "task.updated", task });
@@ -528,7 +532,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     try {
       const { message, task: created, replayed } = await postUserMessage(db, workspaceId, content, { authorUserId: c.get("identity").userId, quoteMessageId, threadId, attachmentIds, mentions, accountId, routing });
-      const task = toUiTask(created);
+      const task = toUiTask(created, deps.waitingReasonFor ? await deps.waitingReasonFor(created) : undefined);
       if (!replayed) {
         events.emit(workspaceId, { type: "message.created", message });
         events.emit(workspaceId, { type: "task.updated", task });
@@ -583,7 +587,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     const { content } = await body(c, EditMessageBody);
     try {
       const { message, task: created } = await editUserMessage(db, id, c.req.param("messageId")!, content, c.get("identity").userId);
-      const task = toUiTask(created);
+      const task = toUiTask(created, deps.waitingReasonFor ? await deps.waitingReasonFor(created) : undefined);
       events.emit(id, { type: "message.updated", message });
       events.emit(id, { type: "task.updated", task });
       return c.json({ message, task });
@@ -611,7 +615,7 @@ export function uiRoutes(deps: UiDeps): Hono {
       if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
       throw e;
     }
-    const task = toUiTask(created);
+    const task = toUiTask(created, deps.waitingReasonFor ? await deps.waitingReasonFor(created) : undefined);
     if (!replayed) {
       events.emit(id, { type: "message.created", message });
       events.emit(id, { type: "task.updated", task });

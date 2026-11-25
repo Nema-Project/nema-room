@@ -101,6 +101,28 @@ describe("Chat", () => {
     await mount(true);
     expect(screen.queryByRole("status")).toBeNull();
   });
+  it("shows why a queued task waits, and clears it once the task runs", async () => {
+    const ref = await mount(true);
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", status: "queued", error: null, waitingReason: { kind: "repo-not-held", missingRepos: ["Widget"] } } }));
+    expect(screen.getByText("Waiting for a daemon that holds Widget")).toBeTruthy();
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", status: "running", error: null } }));
+    expect(screen.queryByText("Waiting for a daemon that holds Widget")).toBeNull();
+  });
+  it("shows the waiting row again when a running task is requeued", async () => {
+    const ref = await mount(true);
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", status: "running", error: null } }));
+    expect(screen.getByText("Organizing")).toBeTruthy();
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", status: "queued", error: null, waitingReason: { kind: "repo-not-held", missingRepos: ["Widget"] } } }));
+    expect(screen.queryByText("Organizing")).toBeNull();
+    expect(screen.getByText("Waiting for a daemon that holds Widget")).toBeTruthy();
+  });
+  it("clears the waiting row when a queued task fails without ever running", async () => {
+    const ref = await mount(true);
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", status: "queued", error: null, waitingReason: { kind: "repo-not-held", missingRepos: ["Widget"] } } }));
+    expect(screen.getByText("Waiting for a daemon that holds Widget")).toBeTruthy();
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", status: "failed", error: "prompt build failed" } }));
+    expect(screen.queryByText("Waiting for a daemon that holds Widget")).toBeNull();
+  });
   it("shows an index line until that index finishes", async () => {
     const ref = await mount(true);
     act(() => ref.current!.handleEvent({ type: "repo.index", repoId: "r1", label: "API", status: "running" }));

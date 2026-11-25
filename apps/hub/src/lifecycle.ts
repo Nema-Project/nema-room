@@ -32,7 +32,7 @@ export type StartHubOptions = {
   /** Set false when the daemon owns its own workspace directories, as in Compose. */
   cleanDaemonDirs?: boolean;
   ownedHelpers?: OwnedHelperScope;
-  /** When set, hello.version must equal it. Unset keeps older callers accepting any CLI version. */
+  /** When set, a hello below the minimum daemon version is refused. Unset keeps older callers accepting any CLI version. */
   releaseVersion?: string;
   /** NEMA_ATTACHMENTS_MAX_BYTES; the store's 2 GB default when unset. */
   attachmentsMaxBytes?: number;
@@ -115,6 +115,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
       sharesEnabled: opts.sharesEnabled,
       remoteAuth: opts.remoteAuth,
       revokeRegisteredDaemon: attached.revokeRegisteredDaemon,
+      waitingReasonFor: attached.waitingReasonFor,
       bootstrapToken: opts.bootstrapToken,
       attachments,
       ...(opts.ownedHelpers ? { archify: {

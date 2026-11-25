@@ -2,7 +2,7 @@ import type http from "node:http";
 import { nanoid } from "nanoid";
 import { WebSocketServer, type WebSocket } from "ws";
 import { KnowledgeStore } from "@nema/knowledge";
-import { AttachmentRefSchema, DAEMON_CREDENTIAL_REVOKED_MESSAGE, WORKPACKAGE_LIMITS, parseDaemonToHub, parseManualSkill, parseRouteDecision, type AgentMessageMeta, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
+import { AttachmentRefSchema, DAEMON_CREDENTIAL_REVOKED_MESSAGE, WORKPACKAGE_LIMITS, normalizeRemoteUrl, parseDaemonToHub, parseManualSkill, parseRouteDecision, type AgentMessageMeta, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
 import { createConnectionRpc, DaemonRpcError, withDaemonTarget, type ConnectionRpc, type DaemonRpc, type DaemonTarget } from "./daemonRpc.js";
 import { markDaemonSeen, revokeDaemon, verifyDaemonCredential, type RevokeRegisteredDaemon } from "./daemons.js";
 import type { Db } from "./db/db.js";
@@ -20,10 +20,10 @@ import { buildPrompt, namedAnswerId, type WorkPackagePromptInput } from "./promp
 import { onRepoMoved } from "./diagrams.js";
 import { workPackageIdOf, workPackageRules } from "./workpackages.js";
 import { applyRepoFetched, applyRepoMoved, listRepos, syncBoundRepos, trustedSkillRepos } from "./repos.js";
-import { claimNextTask, finishTask, getTask, interruptRunning, listTaskChanges, requeueDaemonTasks, toUiTask, type Task } from "./tasks.js";
+import { claimNextTask, computeWaitingReason, finishTask, getDaemonOwner, getTask, interruptRunning, listQueuedTasks, listTaskChanges, requeueDaemonTasks, toUiTask, type OnlineDaemon, type Task, type WaitingReason } from "./tasks.js";
 import { getWorkspace, listWorkspaces, repoPath } from "./workspaces.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
-import { versionSkewMessage } from "./hubVersion.js";
+import { MIN_DAEMON_VERSION, compareVersions, versionSkewMessage } from "./hubVersion.js";
 import { clearSkillOffers, listSkillOffers } from "./skillOffers.js";
 
 type ProjectSkillRepo = Awaited<ReturnType<typeof trustedSkillRepos>>[number];
@@ -55,6 +55,10 @@ type Conn = {
   features: ReadonlySet<string>;
   /** A registered daemon (remote auth): its id is a `daemons` row with an owner. Local daemons are not. */
   registered: boolean;
+  /** The `daemons.owner_user_id` of a registered daemon; null for a local daemon (member of every workspace). */
+  ownerUserId: string | null;
+  /** Normalized remote URLs this daemon reported holding (D-6); empty for daemons that report none. */
+  heldRepos: Set<string>;
 };
 
 type TaskReplyRouting = {
@@ -97,6 +101,10 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   isConnected(daemonId?: string): boolean;
   /** Ids of the daemons online, oldest connection first. */
   connectedDaemonIds(): string[];
+  /** The online daemons as the waiting-reason derivation sees them, in acceptance order. */
+  connectionSnapshot(): OnlineDaemon[];
+  /** Why a queued task is still waiting, or null when no daemon-side reason applies. */
+  waitingReasonFor(task: Task): Promise<WaitingReason | null>;
   rpc: DaemonRpc;
   revokeRegisteredDaemon: RevokeRegisteredDaemon;
   close(): Promise<void>;
@@ -112,6 +120,9 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   const isOpen = (conn: Conn): boolean => conn.ws.readyState === conn.ws.OPEN;
   const isListed = (conn: Conn): boolean => connections.get(conn.daemonId) === conn;
   const openConnections = (): Conn[] => [...connections.values()].filter(isOpen);
+  /** A daemon's reported holdings, normalized; an entry that is not a remote URL is dropped. */
+  const normalizeHeld = (held: readonly string[]): Set<string> =>
+    new Set(held.map((r) => normalizeRemoteUrl(r)).filter((r): r is string => r !== null));
   let chain: Promise<void> = Promise.resolve();
   // A revocation and a remote hello must agree on which side of the revocation the socket became current.
   let registry: Promise<unknown> = Promise.resolve();
@@ -131,9 +142,43 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   const send = (ws: WebSocket, m: HubToDaemon) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(m));
   };
-  const emitTask = async (taskId: string) => {
+  /** The online daemons as the waiting-reason derivation sees them, in acceptance order. */
+  const connectionSnapshot = (): OnlineDaemon[] =>
+    openConnections().map((conn) => ({ ownerUserId: conn.ownerUserId, heldRepos: conn.heldRepos }));
+  /** Why a queued task is still waiting, for the UI; also exposed to the REST layer (see `waitingReasonFor`). */
+  const waitingReasonFor = async (task: Task): Promise<WaitingReason | null> =>
+    task.status === "queued" ? computeWaitingReason(db, task, connectionSnapshot()) : null;
+  const emitTask = async (taskId: string, options?: { reasonOnly?: boolean }) => {
     const t = await getTask(db, taskId);
-    if (t) events.emit(t.workspaceId, { type: "task.updated", task: toUiTask(t) });
+    if (t) {
+      events.emit(t.workspaceId, {
+        type: "task.updated",
+        task: toUiTask(t, await waitingReasonFor(t)),
+        ...(options?.reasonOnly ? { reasonOnly: true as const } : {}),
+      });
+    }
+  };
+  /**
+   * Republish the waiting reason for every still-queued task in the workspaces this connection may
+   * serve. A holdings refresh can change why a task waits (or leave it waiting for a different repo)
+   * without claiming it, and without this the UI keeps showing the reason computed before the refresh.
+   * These are reason-only updates: they carry `reasonOnly` so the dispatch subscriber skips them —
+   * the holdings handler already dispatched once before this runs, and one refresh must not fan out
+   * into a full dispatch per queued task.
+   */
+  const emitQueuedWaitingReasons = async (conn: Conn): Promise<void> => {
+    // Membership mirrors the claim predicate (D-6): a registered daemon serves only its owner's
+    // workspaces; a local daemon (owner null) serves every workspace.
+    const workspaceIds =
+      conn.ownerUserId === null
+        ? (await listWorkspaces(db)).map((w) => w.id)
+        : (await db.query<{ workspace_id: string }>(
+            `select workspace_id from workspace_members where user_id = $1 and removed_at is null`,
+            [conn.ownerUserId],
+          )).map((r) => r.workspace_id);
+    for (const workspaceId of workspaceIds) {
+      for (const task of await listQueuedTasks(db, workspaceId)) await emitTask(task.id, { reasonOnly: true });
+    }
   };
 
   async function taskReplyRouting(taskId: string): Promise<TaskReplyRouting | null> {
@@ -309,7 +354,9 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     for (;;) {
       if (stopping) return;
       if (!isListed(conn) || conn.assigned || !isOpen(conn)) return;
-      const task = await claimNextTask(db, conn.daemonId);
+      // The claim is filtered to what this connection may run (D-6): membership, held repos, one task per
+      // workspace. A connection that qualifies for nothing claims nothing.
+      const task = await claimNextTask(db, conn.daemonId, { heldRepos: conn.heldRepos });
       if (stopping) return;
       if (!task) return;
       if (!isListed(conn)) {
@@ -451,7 +498,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       } else if (m.token !== deps.daemonToken) {
         return reject("daemon token 无效");
       }
-      if (deps.releaseVersion && m.version !== deps.releaseVersion) {
+      // D-9: below the minimum compatible version the daemon is refused with an upgrade pointer.
+      // At or above the floor it is admitted whatever the hub version is; protocol drift is caught by
+      // the features checks at dispatch time, not by guessing from the version. A missing heldRepos
+      // report (an older daemon) is not a version refusal: it only means an empty held set (D-6).
+      if (deps.releaseVersion && compareVersions(m.version, MIN_DAEMON_VERSION) < 0) {
         return reject(versionSkewMessage(deps.releaseVersion));
       }
       // Older CLIs silently drop adapter:"auto" assignments.
@@ -497,6 +548,9 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         assigned: null,
         features: new Set(m.features ?? []),
         registered: registeredId !== undefined,
+        // The credential was verified above, so a registered id has an owner here.
+        ownerUserId: registeredId ? ((await getDaemonOwner(db, registeredId)) ?? null) : null,
+        heldRepos: normalizeHeld(m.heldRepos ?? []),
         rpc: createConnectionRpc((id, method, params) => send(ws, { type: "rpc.request", id, method, params })),
       };
       conn = accepted;
@@ -547,7 +601,13 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         return;
       }
       if (ws.readyState !== ws.OPEN) return;
-      if (m.type === "task.event") {
+      if (m.type === "holdings") {
+        // A repos.sync changed what this daemon watches: replace its held set wholesale. A repo newly
+        // held may unblock a queued task, so offer work again.
+        conn.heldRepos = normalizeHeld(m.heldRepos);
+        await dispatch();
+        await emitQueuedWaitingReasons(conn);
+      } else if (m.type === "task.event") {
         if (conn.assigned?.taskId !== m.taskId) return;
         events.emit(conn.assigned.workspaceId, { type: "task.progress", taskId: m.taskId, text: m.event.text });
       } else if (m.type === "task.finished") {
@@ -602,7 +662,10 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   });
 
   const unsubscribe = events.subscribeAll((_ws, e) => {
-    if (e.type === "task.updated" && e.task.status === "queued") void dispatch();
+    // A reason-only waiting-reason republish (holdings refresh) is UI news, not new work: the refresh
+    // already dispatched once, so dispatching again per queued task would fan out into one full
+    // dispatch per task. Every other queued task.updated still dispatches as before.
+    if (e.type === "task.updated" && e.task.status === "queued" && !e.reasonOnly) void dispatch();
     else if (e.type === "workspace.deleted") {
       // Any connected daemon may hold isolation dirs or watched repos for the workspace: tell every one,
       // then push each the bound-repo list again (syncBoundRepos addresses all daemons).
@@ -619,6 +682,10 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
    * 2. `taskId`: the daemon running that task (run-token calls: plugin calls, skill offers, hub functions).
    * 3. `workspaceId`: the newest registered daemon owned by one of the workspace's owners (repos, reports,
    *    work-package checks, the Skill catalog). Local daemons have no owner, so they never match here.
+   *    When the workspace has bound repos, an owner daemon whose held set covers their normalized remotes
+   *    wins over a newer owner daemon that holds none of them (D-6, #316: a repo call must reach the
+   *    machine that has the repo checked out); with no holder online the newest owner still answers, so
+   *    the call never fails for want of a holder.
    * 4. Otherwise the newest connection: the same daemon the single `current` slot used to hold. Calls that
    *    concern no workspace (components, extensions/MCP, plugins.status, the directory dialog, attachment
    *    capabilities) always land here.
@@ -642,8 +709,19 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
            and m.workspace_id = $2 and m.role = 'owner' and m.removed_at is null`,
         [registered.map((conn) => conn.daemonId), target.workspaceId],
       )).map((row) => row.id));
-      const owner = registered.reverse().find((conn) => owned.has(conn.daemonId));
-      if (owner) return owner;
+      // Newest first: the same order the single `current` slot used to hold.
+      const owners = [...registered].reverse().filter((conn) => owned.has(conn.daemonId));
+      if (owners.length > 0) {
+        const bound = await db.query<{ remote_url: string | null }>(
+          `select remote_url from workspace_repos where workspace_id = $1`,
+          [target.workspaceId],
+        );
+        const required = bound
+          .map((r) => normalizeRemoteUrl(r.remote_url))
+          .filter((r): r is string => r !== null);
+        const holder = required.length > 0 ? owners.find((conn) => required.every((r) => conn.heldRepos.has(r))) : undefined;
+        return holder ?? owners[0]!;
+      }
     }
     return open[open.length - 1]!;
   }
@@ -714,5 +792,5 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     return conn !== undefined && isOpen(conn);
   };
   const connectedDaemonIds = (): string[] => (stopping ? [] : openConnections().map((conn) => conn.daemonId));
-  return { isConnected, connectedDaemonIds, rpc, revokeRegisteredDaemon, close };
+  return { isConnected, connectedDaemonIds, connectionSnapshot, waitingReasonFor, rpc, revokeRegisteredDaemon, close };
 }

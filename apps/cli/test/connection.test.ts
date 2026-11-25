@@ -57,6 +57,20 @@ const waitConn = async (n: number) => {
 };
 
 describe("daemon connection", () => {
+  test("hello carries the held repos the daemon reports", async () => {
+    const port = await start();
+    const adapter: AgentAdapter = {
+      name: "codex-direct",
+      async run() {
+        return { ok: true, reply: "ok!" };
+      },
+    };
+    const hello = new Promise<any>((resolve) => wss.on("connection", (ws) => nextMsg(ws, "hello").then(resolve)));
+    const d = connectDaemon({ hubUrl: `http://127.0.0.1:${port}`, token: "tk", runner: new Runner([adapter]), heldRepos: () => ["github.com/acme/widget"] });
+    closers.push(() => d.close());
+    expect(await hello).toMatchObject({ type: "hello", token: "tk", heldRepos: ["github.com/acme/widget"] });
+  });
+
   test("hello, assign -> events + finished", async () => {
     const port = await start();
     const adapter: AgentAdapter = {

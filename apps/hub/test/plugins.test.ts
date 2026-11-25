@@ -84,7 +84,16 @@ async function insertRepo(workspaceId: string, label: string, remoteUrl: string 
 
 async function runningTask(workspaceId = wsA) {
   await postUserMessage(db, workspaceId, "memo", { authorUserId: "usr_local" });
-  const task = await claimNextTask(db, "d1");
+  // The stub daemon stands in for the local daemon: it holds every repo bound to this workspace,
+  // as a real daemon reports via hello.heldRepos. Without the held set D-6 refuses the claim for
+  // a workspace with bound remotes, which is the claim predicate working, not a test failure.
+  const repos = await db.query<{ remote_url: string | null }>(
+    `select remote_url from workspace_repos where workspace_id = $1`,
+    [workspaceId],
+  );
+  const task = await claimNextTask(db, "d1", {
+    heldRepos: repos.map((r) => r.remote_url).filter((u): u is string => u !== null),
+  });
   expect(task?.workspaceId).toBe(workspaceId);
   return { runToken: task!.runToken!, taskId: task!.id };
 }
