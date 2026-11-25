@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z, ZodError } from "zod";
 import type { Db } from "./db/db.js";
+import { workspaceAccess } from "./authz.js";
 import { createShare, listShares, revokeShare, ShareInputError } from "./shares.js";
 
 const createBody = z.object({
@@ -8,11 +9,12 @@ const createBody = z.object({
   expiresAt: z.string().nullable().optional(),
 }).strict();
 
-/** Owner routes. The token is returned only by create. */
+/** Owner routes; app.ts already checked membership. The token is returned only by create. */
 export function shareAdminRoutes(deps: { db: Db; sharesEnabled: boolean }): Hono {
   const app = new Hono();
+  const owner = workspaceAccess(deps.db, "owner");
 
-  app.get("/workspaces/:id/shares", async (c) => {
+  app.get("/workspaces/:id/shares", owner, async (c) => {
     const shares = (await listShares(deps.db, c.req.param("id"))).map((row) => ({
       id: row.id,
       note: row.note,
@@ -23,7 +25,7 @@ export function shareAdminRoutes(deps: { db: Db; sharesEnabled: boolean }): Hono
     return c.json({ shares });
   });
 
-  app.post("/workspaces/:id/shares", async (c) => {
+  app.post("/workspaces/:id/shares", owner, async (c) => {
     if (!deps.sharesEnabled) return c.json({ error: "sharing disabled" }, 403);
     let raw: unknown;
     try {
@@ -48,7 +50,7 @@ export function shareAdminRoutes(deps: { db: Db; sharesEnabled: boolean }): Hono
     }
   });
 
-  app.post("/workspaces/:id/shares/:shareId/revoke", async (c) => {
+  app.post("/workspaces/:id/shares/:shareId/revoke", owner, async (c) => {
     const row = await revokeShare(deps.db, c.req.param("id"), c.req.param("shareId"));
     if (!row) return c.json({ error: "not found" }, 404);
     return c.json({

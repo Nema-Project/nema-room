@@ -46,4 +46,26 @@ export class EventBus {
     this.all.add(fn);
     return () => void this.all.delete(fn);
   }
+
+  /**
+   * Access revocation, kept apart from HubEvent so it is never written to any stream. A workspace event
+   * stream checks membership only when it opens, so it registers here and closes when its user leaves
+   * the roster (#167 task 8).
+   */
+  private revokers = new Map<string, Set<() => void>>();
+
+  onRevoke(workspaceId: string, userId: string, fn: () => void): () => void {
+    const key = `${workspaceId}\0${userId}`;
+    let set = this.revokers.get(key);
+    if (!set) this.revokers.set(key, (set = new Set()));
+    set.add(fn);
+    return () => {
+      set!.delete(fn);
+      if (set!.size === 0 && this.revokers.get(key) === set) this.revokers.delete(key);
+    };
+  }
+
+  revoke(workspaceId: string, userId: string): void {
+    for (const fn of [...(this.revokers.get(`${workspaceId}\0${userId}`) ?? [])]) fn();
+  }
 }

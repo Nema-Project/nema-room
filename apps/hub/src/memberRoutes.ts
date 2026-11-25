@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import type { Db } from "./db/db.js";
+import type { EventBus } from "./events.js";
 import { MemberError, addMember, changeRole, getUser, listMemberEvents, listMembers, removeMember, renameUser, requireMember } from "./members.js";
 
 const Role = z.enum(["owner", "member"]);
@@ -10,7 +11,7 @@ async function body<T>(c: Context, schema: z.ZodType<T>): Promise<T> {
   if (!parsed.success) throw new MemberError(400, "invalid member request");
   return parsed.data;
 }
-export function memberRoutes({ db }: { db: Db }): Hono {
+export function memberRoutes({ db, events }: { db: Db; events: EventBus }): Hono {
   const app = new Hono();
   app.onError((err, c) => {
     if (err instanceof MemberError) return c.json({ error: err.message }, err.status);
@@ -38,6 +39,11 @@ export function memberRoutes({ db }: { db: Db }): Hono {
     const { role } = await body(c, z.object({ role: Role }).strict());
     return c.json(await changeRole(db, c.req.param("id"), c.req.param("userId"), role, c.get("identity").userId));
   });
-  app.post("/workspaces/:id/members/:userId/remove", async c => c.json(await removeMember(db, c.req.param("id"), c.req.param("userId"), c.get("identity").userId)));
+  app.post("/workspaces/:id/members/:userId/remove", async c => {
+    const removed = await removeMember(db, c.req.param("id"), c.req.param("userId"), c.get("identity").userId);
+    // After the commit: close the removed user's open event streams, which only checked membership on open.
+    events.revoke(c.req.param("id"), removed.userId);
+    return c.json(removed);
+  });
   return app;
 }
