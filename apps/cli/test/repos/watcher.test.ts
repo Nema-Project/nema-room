@@ -643,6 +643,66 @@ gitTest("tickRepo ticks only the named repo; an unknown repo is a no-op", async 
   expect(moves).toEqual([{ repoId: REPO, mainRef: "origin/main", from: before, to: next }]);
 });
 
+gitTest("a superseded repos.sync does not overwrite newer holdings", async () => {
+  const { repo, nemaHome } = setupOrigin();
+  const before = git(repo, ["rev-parse", "origin/main"]).trim();
+  // The watched repo reports a real remote, so its holdings are non-empty.
+  git(repo, ["remote", "set-url", "origin", "https://example.com/team/repo.git"]);
+  installGraphify(join(root, "graphify-record"));
+  const port = await startHub();
+  const daemon = startDaemon({
+    hubUrl: `http://127.0.0.1:${port}`,
+    token: "tk",
+    nemaHome,
+    userCodexHome: join(root, "codex"),
+    version: "0.0.0",
+    cliEntry: join(root, "index.js"),
+    graphify: fake,
+  });
+  closers.push(() => daemon.close());
+  for (let i = 0; i < 100 && conns.length < 1; i++) await new Promise((resolve) => setTimeout(resolve, 20));
+  const ws = conns[0]!;
+  const holdings: unknown[] = [];
+  ws.on("message", (data) => {
+    const message = JSON.parse(String(data)) as Record<string, unknown>;
+    if (message.type === "holdings") holdings.push(message.heldRepos);
+  });
+  // The first sync inspects the same repo twenty times, so it is still running when the second,
+  // empty sync lands and reports. A response is sent only after its handler returns, so once both
+  // responses arrive the holdings are settled.
+  // nextMsg cannot be awaited twice for one type (both listeners fire on the first message),
+  // so collect both responses with a single listener.
+  const responses: Record<string, unknown>[] = [];
+  const bothResponses = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timeout rpc.response")), 5000);
+    ws.on("message", (data) => {
+      const message = JSON.parse(String(data)) as Record<string, unknown>;
+      if (message.type !== "rpc.response") return;
+      responses.push(message);
+      if (responses.length === 2) {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+  });
+  ws.send(
+    JSON.stringify({
+      type: "rpc.request",
+      id: "sync-old",
+      method: "repos.sync",
+      params: { repos: Array.from({ length: 20 }, (_, i) => watched(repo, before, `repo_many_${i}`)) },
+    }),
+  );
+  ws.send(JSON.stringify({ type: "rpc.request", id: "sync-new", method: "repos.sync", params: { repos: [] } }));
+  await bothResponses;
+  const [first, second] = responses;
+  expect([first!.id, second!.id].sort()).toEqual(["sync-new", "sync-old"]);
+  expect(first!.ok).toBe(true);
+  expect(second!.ok).toBe(true);
+  expect(holdings).toContainEqual([]);
+  expect(holdings.at(-1)).toEqual([]);
+});
+
 gitTest("startDaemon answers repo.tick at once and then ticks that repo", async () => {
   const { repo, bare, nemaHome } = setupOrigin();
   const before = git(repo, ["rev-parse", "origin/main"]).trim();

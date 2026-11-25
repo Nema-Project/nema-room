@@ -93,6 +93,8 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
   let sendMessage: ((message: unknown) => boolean) | null = null;
   /** Normalized remotes this daemon holds (D-6); empty until the first `repos.sync` reports them. */
   let heldRepos: string[] = [];
+  /** Generation of the latest `repos.sync`; an older sync's result is discarded, never applied. */
+  let syncGeneration = 0;
   const watcher = new RepoWatcher({
     nemaHome: o.nemaHome,
     graphify,
@@ -124,10 +126,15 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
   registerSkillHandlers(rpc, o.nemaHome);
   rpc.register("repos.sync", async (params) => {
     watcher.setRepos(parseReposSync(params));
+    const generation = ++syncGeneration;
     // What this daemon watches just changed: re-inspect the watched paths and report the new held set.
     // A failed inspect never fails the sync; the stale path is simply not reported held.
+    // Syncs run concurrently (the connection does not await each RPC), so a newer sync can land while
+    // this one still inspects: only the latest generation may apply and report its holdings.
     try {
-      heldRepos = await computeHeldRepos(watcher, o.nemaHome, o.ownedHelpers);
+      const next = await computeHeldRepos(watcher, o.nemaHome, o.ownedHelpers);
+      if (generation !== syncGeneration) return { ok: true };
+      heldRepos = next;
     } catch (error) {
       console.error("[nema] held repos refresh failed", error);
       return { ok: true };
