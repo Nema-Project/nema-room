@@ -98,15 +98,15 @@ Compose では `curl http://127.0.0.1:4400/api/version` が `{"version":"..."}` 
 | `NEMA_HUB_REMOTE=1` | リモート形態を有効にします。スタンドアロン hub 専用です。 |
 | `NEMA_HUB_ALLOWED_HOSTS` | hub が応答する Host。ホスト名または `host:port` をカンマ区切りで指定します（例: `hub.example.lan`）。ループバック（`127.0.0.1` / `localhost`）は常に許可され、それ以外は 403 になります。リモート形態がオンのときのみ有効です。 |
 | `NEMA_HUB_HOST` | hub のバインドアドレス。たとえばコンテナ内の `0.0.0.0`。Compose ファイルはすでに `0.0.0.0` にバインドしています。スタンドアロン hub の既定値は `127.0.0.1` のままです。 |
-| `NEMA_WEB_ORIGIN` | 認証情報付きで hub を呼び出せる web オリジン。カンマ区切り。ブラウザが実際に使うオリジン（hub の LAN アドレスなど）を必ず含めてください。 |
+| `NEMA_WEB_ORIGIN` | 認証情報付きで hub を呼び出せる web オリジン。カンマ区切り。ブラウザが実際に使う web ページのオリジン（web の LAN オリジン `http://192.168.1.10:3000` など）を必ず含めてください。 |
 | `NEMA_HUB_PUBLIC_URL` | リモート daemon が到達しなければならない hub の公開オリジン（例: `https://hub.example.lan`）。hub の前に TLS 終端リバースプロキシがある場合に設定します。設定しない場合、daemon は自分の接続時のアドレスを使います。プロキシ越しでは `http://` になります。 |
 | `NEMA_HUB_URL` | （web コンテナ）ブラウザが hub に到達するための URL。リモート形態では hub の LAN アドレスに設定します。 |
 
-Compose は既定で hub のポートを `127.0.0.1` にのみ公開します。LAN に提供するには、hub の `ports:` を LAN インターフェースに公開するよう変更し、`NEMA_WEB_ORIGIN` と `NEMA_HUB_URL` をブラウザが使うアドレスに設定してください。
+Compose は既定で hub と web のポートを `127.0.0.1` にのみ公開します。LAN に提供するには、ポートを LAN インターフェースに公開します。hub は `ports:` を変更し、web は `NEMA_WEB_BIND` を LAN アドレスまたは `0.0.0.0` に設定するか、リバースプロキシ経由で提供します。`NEMA_WEB_ORIGIN` は web ページのオリジンに、`NEMA_HUB_URL` はブラウザが hub に到達するためのアドレスに設定してください。hub のポートだけを公開しても、他のマシンからはログインページを開けません。
 
 ### 構築手順
 
-1. リモート用の変数を設定して hub を起動します（`docker compose up -d`）。
+1. `.env` でリモート用の変数を設定して hub を起動します（`docker compose up -d`）。Compose が 3 つの変数を hub コンテナに渡すため、`docker-compose.yml` の編集は不要です。
 2. 最初のアカウントを作成します。アカウントがまだない状態での初回起動時、hub はワンタイムのブートストラップトークンを `<dataDir>/bootstrap-token`（権限 `0600`）に書き込み、パスをログに出力します。Compose では `docker compose logs hub` でパスを確認するか、データディレクトリ内のファイルを直接読みます（`${NEMA_DATA_HOST_DIR:-~/.nema/data}/bootstrap-token`）。`POST /api/auth/bootstrap`（`token`、`displayName`、`password`）でアカウントを作成します。
 3. その最初の（管理者）アカウントで web のログインページにサインインします。
 4. 次の人を招待します。管理者が `POST /api/auth/invites` を呼ぶとワンタイムの招待コードが返ります。相手は `POST /api/auth/invites/accept`（`code`、`displayName`、`password`）で招待を受け入れ、サインインします。
@@ -115,7 +115,7 @@ Compose は既定で hub のポートを `127.0.0.1` にのみ公開します。
 
 ### セッション
 
-リモート形態ではセッション cookie は常に `Secure` 付きです。そのためブラウザは `https` で hub に到達しなければなりません。自分で用意したリバースプロキシか、信頼できる VPN などの暗号化された経路を使います。LAN ホスト名に平文の `http://` でアクセスした場合、ブラウザは cookie を送り返さないため、サインインは維持できません。`http://localhost` はブラウザがセキュアコンテキストとして扱うため、ループバック開発では引き続き使えます。
+リモート形態ではセッション cookie は常に `Secure` 付きです。そのためブラウザは `https` で hub に到達しなければなりません。自分で用意したリバースプロキシを使ってください。信頼できる VPN はネットワーク接続を保護するだけで、HTTPS の代わりにはなりません。VPN 経由でも LAN ホスト名に平文の `http://` でアクセスした場合、ブラウザから見えるのは HTTP のままで、cookie は送り返されないため、サインインは維持できません。`http://localhost` はブラウザがセキュアコンテキストとして扱うため、ループバック開発では引き続き使えます。
 
 <a id="source-installation"></a>
 

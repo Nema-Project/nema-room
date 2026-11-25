@@ -98,15 +98,15 @@ The remote hub is an opt-in form for a small team on a trusted network. One stan
 | `NEMA_HUB_REMOTE=1` | Enables the remote form. Standalone hub only. |
 | `NEMA_HUB_ALLOWED_HOSTS` | Comma-separated hostnames or `host:port` values the hub answers to, for example `hub.example.lan`. Loopback (`127.0.0.1` / `localhost`) is always allowed; anything else is refused with 403. Ignored unless the remote form is on. |
 | `NEMA_HUB_HOST` | Address the hub binds, for example `0.0.0.0` inside the container. The Compose file already binds `0.0.0.0`; the default for a standalone hub stays `127.0.0.1`. |
-| `NEMA_WEB_ORIGIN` | Comma-separated web origins allowed to call the hub with credentials. It must include the origin the browser actually uses, for example the hub's LAN address. |
+| `NEMA_WEB_ORIGIN` | Comma-separated web origins allowed to call the hub with credentials. It must include the origin of the web page the browser actually uses, for example the web page's LAN origin `http://192.168.1.10:3000`. |
 | `NEMA_HUB_PUBLIC_URL` | Public origin of the hub as remote daemons must reach it, for example `https://hub.example.lan`. Set it when a TLS-terminating reverse proxy sits in front of the hub; without it, daemons use the address from their own connection, which is `http://` behind such a proxy. |
 | `NEMA_HUB_URL` | (Web container) The hub URL the browser uses. In the remote form set it to the hub's LAN address. |
 
-With Compose, the hub port is published on `127.0.0.1` by default. To serve the LAN, publish it on the LAN interface (change the hub `ports:` entry) and set `NEMA_WEB_ORIGIN` and `NEMA_HUB_URL` to the addresses the browser uses.
+With Compose, the hub and web ports are published on `127.0.0.1` by default. To serve the LAN, publish them on the LAN interface: change the hub `ports:` entry, and for the web set `NEMA_WEB_BIND` to a LAN address or `0.0.0.0`, or serve the web through a reverse proxy. Set `NEMA_WEB_ORIGIN` to the origin of the web page and `NEMA_HUB_URL` to the address the browser uses to reach the hub. Publishing only the hub port leaves the login page unreachable from other machines.
 
 ### Setup order
 
-1. Start the hub with the remote variables set (`docker compose up -d`).
+1. Set the remote variables in `.env` and start the hub (`docker compose up -d`). Compose forwards the three variables into the hub container, so no `docker-compose.yml` edit is needed.
 2. Create the first account. On first start with no account, the hub writes a one-time bootstrap token to `<dataDir>/bootstrap-token` (mode `0600`) and logs its path. Under Compose, find the path with `docker compose logs hub`, or read the file in the data directory (`${NEMA_DATA_HOST_DIR:-~/.nema/data}/bootstrap-token`). Create the account with `POST /api/auth/bootstrap` (`token`, `displayName`, `password`).
 3. Sign in at the web login page as that first (administrator) account.
 4. Invite the next person: as the administrator, `POST /api/auth/invites` returns a one-time code. They accept it with `POST /api/auth/invites/accept` (`code`, `displayName`, `password`) and then sign in.
@@ -115,7 +115,7 @@ With Compose, the hub port is published on `127.0.0.1` by default. To serve the 
 
 ### Sessions
 
-The session cookie is always `Secure` in the remote form, so the browser must reach the hub over `https` — either through the deployer's own reverse proxy or over an encrypted overlay such as a trusted VPN. Over plain `http://` on a LAN hostname the browser never sends the cookie back, so sign-in cannot stick. `http://localhost` still works for loopback development, because browsers treat localhost as a secure context.
+The session cookie is always `Secure` in the remote form, so the browser must reach the hub over `https`, through the deployer's own reverse proxy. A trusted VPN only protects the network connection; it does not replace HTTPS: over plain `http://` on a LAN hostname — even through a VPN — the browser still sees HTTP and never sends the cookie back, so sign-in cannot stick. `http://localhost` still works for loopback development, because browsers treat localhost as a secure context.
 
 <a id="source-installation"></a>
 
