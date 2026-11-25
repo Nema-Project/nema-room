@@ -581,6 +581,30 @@ describe("Composer @ mentions", () => {
     expect(screen.queryByTestId("mention-chip")).toBeNull();
   });
 
+  it("keeps a mention added while a send is in flight (#303)", async () => {
+    let resolveSend!: () => void;
+    const onSend = vi.fn().mockImplementation(() => new Promise<void>((resolve) => { resolveSend = resolve; }));
+    mountWs(onSend);
+    await userEvent.type(box(), "@D-12");
+    await userEvent.click(await screen.findByRole("option", { name: /D-12/ }));
+    await userEvent.type(box(), "first");
+    await userEvent.click(screen.getByRole("button", { name: /^Send\b/ }));
+    expect(onSend).toHaveBeenCalledExactlyOnceWith("[D-12] first", [], [
+      { type: "entry", id: "D-12", text: "[D-12]" },
+    ]);
+
+    // The same entry mentioned again while the first send is still pending:
+    // this chip was not part of the send and must survive its cleanup.
+    await userEvent.type(box(), " @D-12");
+    await userEvent.click(await screen.findByRole("option", { name: /D-12/ }));
+    expect(screen.getAllByTestId("mention-chip")).toHaveLength(2);
+
+    resolveSend();
+    await vi.waitFor(() => expect(screen.getAllByTestId("mention-chip")).toHaveLength(1));
+    expect(screen.getByTestId("mention-chip").textContent).toContain("[D-12]");
+    expect(box().value).toContain("[D-12]");
+  });
+
   it("chooses a member: inserts @name, or the localized me for a null name, and sends a member mention (#163)", async () => {
     vi.mocked(hub.searchMentionContext).mockResolvedValue({
       ...ctx, entries: [], attachments: [], threads: [],
