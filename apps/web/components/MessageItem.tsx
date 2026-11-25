@@ -105,7 +105,10 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
 const architectureRequest = /^为仓库 ([\s\S]+)（(repo_[\w-]+)）(画架构图：[\s\S]*)$/;
 const indexFailure = /^仓库 [\s\S]+ 的代码索引没有完成，暂时还不能询问代码库。$/;
 // Match complete recovery commands emitted by the hub/CLI. Other diagnostic text stays selectable prose.
-const recoveryCommand = /(?<![\w./-])(nema auth (?:login|byok|claude|github)|nema config set model <名称>|codex login|claude setup-token|npm run build -w apps\/cli|nema daemon)(?![\w/-]|\.[\w-]|[ \t]+-)/g;
+const recoveryCommand = /(?<![\w./-])(nema auth (?:login|byok|claude|github)|nema config set model <名称>|nema config set proxyEnv forward|codex login|claude setup-token|npm run build -w apps\/cli|nema daemon)(?![\w/-]|\.[\w-]|[ \t]+-)/g;
+// The hub appends the answering account to a stored failure (daemonSocket.saveTaskFailure). Account names
+// are user-chosen, so the suffix is rendered as plain text and never scanned for recovery commands.
+const accountSuffix = /（账户「[\s\S]+）$/;
 
 function SystemMessage({ message, onQuote }: Pick<Props, "message" | "onQuote">) {
   const t = useT();
@@ -124,6 +127,8 @@ function SystemMessage({ message, onQuote }: Pick<Props, "message" | "onQuote">)
     : undefined;
   const taskFailed = content.startsWith("处理失败：");
   const failed = taskFailed || indexFailure.test(content);
+  const suffix = taskFailed ? accountSuffix.exec(content)?.[0] : undefined;
+  const failureBody = suffix ? content.slice(0, content.length - suffix.length) : content;
   const label = failed ? t("chat.system.failure") : architecture ? t("chat.system.instruction") : messageRoleLabel(t, message.role);
   return (
     <div className={failed ? "sysmsg failed" : "sysmsg"} id={`msg-${message.id}`}>
@@ -139,8 +144,8 @@ function SystemMessage({ message, onQuote }: Pick<Props, "message" | "onQuote">)
       )}
       <div className="sysmsg-content">
         {graphifyFailureText ?? (taskFailed
-          ? content.split(recoveryCommand).map((part, index) =>
-            index % 2 === 0 ? part : <CopyableCommand key={index} command={part} />)
+          ? <>{failureBody.split(recoveryCommand).map((part, index) =>
+            index % 2 === 0 ? part : <CopyableCommand key={index} command={part} />)}{suffix}</>
           : (architecture?.[3] ?? content))}
       </div>
       {meta?.askedQuestion && <AskedQuestion workspaceId={message.workspaceId} asked={meta.askedQuestion} added={[]} />}
