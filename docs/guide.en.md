@@ -98,11 +98,13 @@ The remote hub is an opt-in form for a small team on a trusted network. One stan
 | `NEMA_HUB_REMOTE=1` | Enables the remote form. Standalone hub only. |
 | `NEMA_HUB_ALLOWED_HOSTS` | Comma-separated hostnames or `host:port` values the hub answers to, for example `hub.example.lan`. Loopback (`127.0.0.1` / `localhost`) is always allowed; anything else is refused with 403. Ignored unless the remote form is on. |
 | `NEMA_HUB_HOST` | Address the hub binds, for example `0.0.0.0` inside the container. The Compose file already binds `0.0.0.0`; the default for a standalone hub stays `127.0.0.1`. |
-| `NEMA_WEB_ORIGIN` | Comma-separated web origins allowed to call the hub with credentials. It must include the origin of the web page the browser actually uses, for example the web page's LAN origin `http://192.168.1.10:3000`. |
+| `NEMA_WEB_ORIGIN` | Comma-separated web origins allowed to call the hub with credentials. It must include the origin of the web page the browser actually uses, for example the web page's origin when served through the same TLS-terminating reverse proxy as the hub, `https://nema.example.lan`. |
 | `NEMA_HUB_PUBLIC_URL` | Public origin of the hub as remote daemons must reach it, for example `https://hub.example.lan`. Set it when a TLS-terminating reverse proxy sits in front of the hub; without it, daemons use the address from their own connection, which is `http://` behind such a proxy. |
 | `NEMA_HUB_URL` | (Web container) The hub URL the browser uses. In the remote form set it to the hub's LAN address. |
 
-With Compose, the hub and web ports are published on `127.0.0.1` by default. To serve the LAN, publish them on the LAN interface: change the hub `ports:` entry, and for the web set `NEMA_WEB_BIND` to a LAN address or `0.0.0.0`, or serve the web through a reverse proxy. Set `NEMA_WEB_ORIGIN` in `.env` to the origin of the web page and `NEMA_HUB_URL` to the address the browser uses to reach the hub. Publishing only the hub port leaves the login page unreachable from other machines.
+Before binding the web to a LAN address, configure the Docker daemon with `"userland-proxy": false`: with the userland proxy enabled, the apparent source becomes the bridge address and can fool the peer checks. Rootless Docker with RootlessKit before v3.0 does not keep the client source address even with `"userland-proxy": false`. On those versions, upgrade RootlessKit to v3.0 or later, or use rootful Docker, before setting a LAN `NEMA_WEB_BIND`.
+
+With Compose, the hub and web ports are published on `127.0.0.1` by default. To serve the LAN, publish them on the LAN interface: change the hub `ports:` entry, and for the web set `NEMA_WEB_BIND` to a LAN address, or serve the web through a reverse proxy. Set `NEMA_WEB_ORIGIN` in `.env` to the origin of the web page and `NEMA_HUB_URL` to the address the browser uses to reach the hub. Publishing only the hub port leaves the login page unreachable from other machines.
 
 ### Setup order
 
@@ -115,7 +117,7 @@ With Compose, the hub and web ports are published on `127.0.0.1` by default. To 
 
 ### Sessions
 
-The session cookie is always `Secure` in the remote form, so the browser must reach the hub over `https`, through the deployer's own reverse proxy. A trusted VPN only protects the network connection; it does not replace HTTPS: over plain `http://` on a LAN hostname — even through a VPN — the browser still sees HTTP and never sends the cookie back, so sign-in cannot stick. `http://localhost` still works for loopback development, because browsers treat localhost as a secure context.
+The session cookie is always `Secure` in the remote form, so the browser must reach the hub over `https`, through the deployer's own reverse proxy. The web login page must be served over HTTPS too in the remote form — the same reverse proxy can serve it — because a login page delivered over plain HTTP on the LAN can be altered to steal passwords, and the hub's HTTPS does not protect that page. A trusted VPN only protects the network connection; it does not replace HTTPS: over plain `http://` on a LAN hostname — even through a VPN — the browser still sees HTTP and never sends the cookie back, so sign-in cannot stick. `http://localhost` still works for loopback development, because browsers treat localhost as a secure context.
 
 <a id="source-installation"></a>
 

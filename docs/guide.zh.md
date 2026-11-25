@@ -98,11 +98,13 @@ Compose：`curl http://127.0.0.1:4400/api/version` 返回 `{"version":"..."}`。
 | `NEMA_HUB_REMOTE=1` | 开启远程形态。仅独立 hub 可用。 |
 | `NEMA_HUB_ALLOWED_HOSTS` | hub 接受的 Host，逗号分隔的主机名或 `host:port`，例如 `hub.example.lan`。回环（`127.0.0.1` / `localhost`）恒允许，其余一律 403。仅远程开启时生效。 |
 | `NEMA_HUB_HOST` | hub 绑定地址，例如容器内的 `0.0.0.0`。Compose 文件已绑定 `0.0.0.0`；独立 hub 的默认值仍为 `127.0.0.1`。 |
-| `NEMA_WEB_ORIGIN` | 允许携带凭据调用 hub 的 web 来源，逗号分隔。必须包含浏览器实际使用的 Web 页面来源，例如 Web 的局域网来源 `http://192.168.1.10:3000`。 |
+| `NEMA_WEB_ORIGIN` | 允许携带凭据调用 hub 的 web 来源，逗号分隔。必须包含浏览器实际使用的 Web 页面来源，例如与 hub 共用同一 TLS 终止反代提供时的 Web 页面来源 `https://nema.example.lan`。 |
 | `NEMA_HUB_PUBLIC_URL` | 远程 daemon 必须能访问到的 hub 公网来源，例如 `https://hub.example.lan`。hub 前有 TLS 终止反代时设置它；不设时 daemon 使用自己连接时的地址，反代后会是 `http://`。 |
 | `NEMA_HUB_URL` | （web 容器）浏览器访问 hub 的地址。远程形态下设为 hub 的局域网地址。 |
 
-Compose 默认只把 hub 与 web 端口都发布在 `127.0.0.1` 上。要服务局域网，需把端口发布到局域网接口：改 hub 的 `ports:` 项；web 则把 `NEMA_WEB_BIND` 设为局域网地址或 `0.0.0.0`，或经反向代理提供。在 `.env` 中把 `NEMA_WEB_ORIGIN` 设为 Web 页面的来源，并把 `NEMA_HUB_URL` 设为浏览器访问 hub 的地址。只发布 hub 端口时，别的机器仍打不开登录页。
+将 `NEMA_WEB_BIND` 设为局域网地址前，必须在 Docker 守护进程中配置 `"userland-proxy": false`：启用 userland proxy 时，看到的来源会变成桥接地址，可能骗过对端检查。Rootless Docker 所用的 RootlessKit 在 v3.0 之前即使设置 `"userland-proxy": false` 也不会保留客户端来源地址；使用这些版本时，须先将 RootlessKit 升级到 v3.0 或更高版本，或改用 rootful Docker，再设置局域网 `NEMA_WEB_BIND`。
+
+Compose 默认只把 hub 与 web 端口都发布在 `127.0.0.1` 上。要服务局域网，需把端口发布到局域网接口：改 hub 的 `ports:` 项；web 则把 `NEMA_WEB_BIND` 设为局域网地址，或经反向代理提供。在 `.env` 中把 `NEMA_WEB_ORIGIN` 设为 Web 页面的来源，并把 `NEMA_HUB_URL` 设为浏览器访问 hub 的地址。只发布 hub 端口时，别的机器仍打不开登录页。
 
 ### 搭建顺序
 
@@ -115,7 +117,7 @@ Compose 默认只把 hub 与 web 端口都发布在 `127.0.0.1` 上。要服务�
 
 ### 会话
 
-远程形态下会话 cookie 恒带 `Secure`，因此浏览器必须通过 `https` 访问 hub——部署者自备反代。受信 VPN 只保护网络连接，不能替代 HTTPS：经 VPN 用明文 `http://` 访问局域网地址时，浏览器看到的仍是 HTTP，不会把 cookie 发回，登录无法保持。`http://localhost` 仍可用于回环开发，因为浏览器把 localhost 视为安全上下文。
+远程形态下会话 cookie 恒带 `Secure`，因此浏览器必须通过 `https` 访问 hub——部署者自备反代。Web 登录页在远程形态下也必须经 HTTPS 提供——可由同一反代提供——因为经局域网明文 HTTP 下发的登录页可能被篡改以窃取密码，hub 的 HTTPS 保护不了该页面。受信 VPN 只保护网络连接，不能替代 HTTPS：经 VPN 用明文 `http://` 访问局域网地址时，浏览器看到的仍是 HTTP，不会把 cookie 发回，登录无法保持。`http://localhost` 仍可用于回环开发，因为浏览器把 localhost 视为安全上下文。
 
 <a id="source-installation"></a>
 
