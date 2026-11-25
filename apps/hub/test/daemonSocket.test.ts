@@ -12,7 +12,7 @@ import { AttachmentRefSchema } from "@nema/shared";
 import { png, uploadPng } from "./attachmentFixtures.js";
 import { claimNextTask, finishTask, getTask, insertQueuedTask, interruptRunning, recordTaskChange, resolveRunToken } from "../src/tasks.js";
 import * as tasks from "../src/tasks.js";
-import { attachDaemonSocket, REMOTE_HELLO_FAILED_MESSAGE } from "../src/daemonSocket.js";
+import { attachDaemonSocket, parsePublicHubUrl, REMOTE_HELLO_FAILED_MESSAGE } from "../src/daemonSocket.js";
 import { KnowledgeStore } from "@nema/knowledge";
 import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { addReportMessage, getMessage } from "../src/messages.js";
@@ -1546,7 +1546,7 @@ describe("remote daemon hello", () => {
   let credential: string;
 
   // Called inside each test so a cold PGlite start counts against the test timeout, not the 10 s hook timeout.
-  async function startRemoteHub(): Promise<NonNullable<typeof remote>> {
+  async function startRemoteHub(publicHubUrl?: string): Promise<NonNullable<typeof remote>> {
     const { createDaemonRegistrationCode, registerDaemon } = await import("../src/daemons.js");
     await db.query("insert into users(id, display_name) values ('usr_daemon','Daemon owner')");
     ({ credential } = (await registerDaemon(db, (await createDaemonRegistrationCode(db, "usr_daemon")).code, "Laptop"))!);
@@ -1554,7 +1554,7 @@ describe("remote daemon hello", () => {
     await db.query("insert into workspace_members(workspace_id,user_id,role,added_by) values ($1,'usr_daemon','member','usr_local')", [wsA]);
     const httpServer = http.createServer();
     remoteServer = httpServer;
-    remote = attachDaemonSocket(httpServer, { db, dataDir, events, daemonToken: TOKEN, hubUrl: "http://127.0.0.1:4400", remoteAuth: true });
+    remote = attachDaemonSocket(httpServer, { db, dataDir, events, daemonToken: TOKEN, hubUrl: "http://127.0.0.1:4400", remoteAuth: true, ...(publicHubUrl ? { publicHubUrl } : {}) });
     await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
     remoteUrl = `ws://127.0.0.1:${(httpServer.address() as AddressInfo).port}/daemon`;
     return remote;
@@ -1585,6 +1585,18 @@ describe("remote daemon hello", () => {
     expect(assignment.taskId).toBe(task.id);
     expect(assignment.hubUrl).toBe("http://hub.example:4400");
     expect(new URL(assignment.hubUrl).hostname).not.toMatch(/^(127\.|localhost$|\[::1\]$)/);
+  });
+
+  test("a configured public hub URL wins over the upgrade-derived one behind a TLS proxy", async () => {
+    await startRemoteHub("https://hub.example.lan");
+    const daemon = await connect(credential, undefined, {}, remoteUrl, { headers: { host: "hub.example:4400" } });
+    await daemon.next("welcome");
+    const task = await queueTask();
+    const assignment = await daemon.next("task.assign");
+    expect(assignment.taskId).toBe(task.id);
+    // Without the override the upgrade would have inferred http://hub.example:4400 here, and the
+    // daemon's room/attachment calls would have gone plaintext at a port the proxy never serves.
+    expect(assignment.hubUrl).toBe("https://hub.example.lan");
   });
 
   test("the local daemon keeps the hub's own URL whatever Host it sent", async () => {
@@ -1677,5 +1689,21 @@ describe("remote daemon hello", () => {
     }
     const retry = await connect(credential, undefined, {}, remoteUrl);
     await retry.next("welcome");
+  });
+});
+
+describe("parsePublicHubUrl", () => {
+  test("blank stays unset and an origin normalizes", () => {
+    expect(parsePublicHubUrl(undefined)).toBeUndefined();
+    expect(parsePublicHubUrl("  ")).toBeUndefined();
+    expect(parsePublicHubUrl("https://hub.example.lan")).toBe("https://hub.example.lan");
+    expect(parsePublicHubUrl("https://hub.example.lan/")).toBe("https://hub.example.lan");
+    expect(parsePublicHubUrl("https://hub.example.lan:8443")).toBe("https://hub.example.lan:8443");
+  });
+
+  test("anything that is not exactly an http(s) origin throws instead of handing daemons a bad URL", () => {
+    for (const bad of ["hub.example.lan", "ftp://hub.example.lan", "https://hub.example.lan/hub", "https://hub.example.lan?x=1", "https://hub.example.lan#frag"]) {
+      expect(() => parsePublicHubUrl(bad)).toThrow(/NEMA_HUB_PUBLIC_URL/);
+    }
   });
 });

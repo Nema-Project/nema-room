@@ -56,6 +56,13 @@ export type AppDeps = {
   archify?: Archify;
   /** Port the hub listens on; only `127.0.0.1:<port>` and `localhost:<port>` are accepted as Host. */
   port?: number;
+  /**
+   * #167 remote form: extra Host values the hub answers to, from NEMA_HUB_ALLOWED_HOSTS.
+   * Each entry is a hostname or a host:port; an entry without a port matches the Host's hostname
+   * part whatever port it carries. Only consulted while `remoteAuth` is on; without remoteAuth
+   * the list is ignored and the guard behaves exactly as before.
+   */
+  allowedHosts?: string[];
   /** `false` hides public share reads. Omitted stays on. */
   sharesEnabled?: boolean;
   ownedHelpers?: OwnedHelperScope;
@@ -83,12 +90,28 @@ export type AppDeps = {
 /**
  * Rejects requests whose Host is not the hub's own loopback name (DNS rebinding: a page on
  * evil.example that rebinds to 127.0.0.1 still sends `Host: evil.example:<port>`).
+ *
+ * #167 remote form: loopback (`127.0.0.1:<port>` / `localhost:<port>`) is always allowed, and
+ * while `remoteAuth` is on the allowlist adds hosts the deployer explicitly named. An entry is
+ * a hostname or a host:port; without a port it matches the Host's hostname part whatever port
+ * the request carries. Without `remoteAuth` the list is ignored, so a mis-filled list can never
+ * widen the local form. Anything else is refused with 403; the rebinding protection this guard
+ * exists for is unchanged, only the set of legitimate names grew.
  */
-function hostGuard(port: number): MiddlewareHandler {
-  const allowed = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
+function hostGuard(port: number, opts: { allowedHosts?: string[]; remoteAuth?: boolean } = {}): MiddlewareHandler {
+  const loopback = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
+  const allowed = (opts.allowedHosts ?? []).map((entry) => entry.trim().toLowerCase()).filter(Boolean);
+  /** The hostname part of a Host value: the whole value, minus a trailing numeric :port. */
+  const hostnameOf = (host: string): string => {
+    const idx = host.lastIndexOf(":");
+    return idx > 0 && /^\d+$/.test(host.slice(idx + 1)) ? host.slice(0, idx) : host;
+  };
+  /** A list entry matches when it names this exact host:port, or (no port in the entry) this hostname. */
+  const listed = (host: string): boolean =>
+    allowed.some((entry) => entry === host || (!/:\d+$/.test(entry) && hostnameOf(entry) === hostnameOf(host)));
   return async (c, next) => {
     const host = (c.req.header("host") ?? new URL(c.req.url).host).toLowerCase();
-    if (!allowed.has(host)) return c.json({ error: "forbidden host" }, 403);
+    if (!loopback.has(host) && !(opts.remoteAuth && listed(host))) return c.json({ error: "forbidden host" }, 403);
     await next();
   };
 }
@@ -107,7 +130,7 @@ export function createApp(deps: AppDeps): Hono {
   if (deps.remoteAuth && deps.identity) throw new Error("remoteAuth uses the session provider; do not also inject an identity provider");
   const identity = deps.remoteAuth ? sessionIdentity(deps.db) : (deps.identity ?? localIdentity);
   const app = new Hono();
-  const guard = hostGuard(deps.port ?? DEFAULT_HUB_PORT);
+  const guard = hostGuard(deps.port ?? DEFAULT_HUB_PORT, { allowedHosts: deps.allowedHosts, remoteAuth: deps.remoteAuth });
   app.use("/share", guard);
   app.use("/share/*", guard);
   app.route("/share", shareRoutes({

@@ -6,9 +6,15 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_HUB_PORT } from "./app.js";
 import { BOOTSTRAP_TOKEN_FILE, prepareBootstrapToken } from "./auth.js";
 import { attachmentsMaxBytesFromEnv } from "./attachments.js";
+import { parsePublicHubUrl } from "./daemonSocket.js";
 import { readHubReleaseVersion } from "./hubVersion.js";
 import { createPgDb, migrate } from "./db/db.js";
 import { startHub } from "./lifecycle.js";
+
+/** NEMA_HUB_ALLOWED_HOSTS: comma-separated hostnames or host:port entries; blanks are dropped. */
+export function parseAllowedHosts(value: string | undefined): string[] {
+  return (value ?? "").split(",").map((entry) => entry.trim()).filter(Boolean);
+}
 
 function isDirectExecution(): boolean {
   const entry = process.argv[1];
@@ -82,6 +88,10 @@ async function main(): Promise<void> {
       attachmentsMaxBytes,
       sharesEnabled: process.env.NEMA_SHARES_ENABLED !== "0",
       remoteAuth,
+      // The allowlist only takes effect inside the guard while remoteAuth is on; a filled list with
+      // remoteAuth off changes nothing. The public URL is likewise remote-only (see daemonSocket).
+      allowedHosts: parseAllowedHosts(process.env.NEMA_HUB_ALLOWED_HOSTS),
+      publicHubUrl: parsePublicHubUrl(process.env.NEMA_HUB_PUBLIC_URL),
       bootstrapToken: bootstrapToken ?? undefined,
     });
     console.log(`nema hub listening on ${hostname}:${port} (use ${hub.url})`);

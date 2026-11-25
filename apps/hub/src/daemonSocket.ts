@@ -41,7 +41,16 @@ type BuiltTask = {
   threadId: string | null;
 };
 
-export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daemonToken: string; hubUrl: string; ownedHelpers?: OwnedHelperScope; releaseVersion?: string; remoteAuth?: boolean };
+export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daemonToken: string; hubUrl: string; ownedHelpers?: OwnedHelperScope; releaseVersion?: string; remoteAuth?: boolean;
+  /**
+   * #167 task 13: the hub's public origin as its remote daemons must reach it
+   * (NEMA_HUB_PUBLIC_URL, e.g. `https://hub.example.lan`). A TLS-terminating reverse proxy
+   * leaves the hub's own socket plain HTTP, so inferring the scheme from the upgrade would
+   * hand daemons an `http://` URL whose room and attachment calls then go plaintext or fail.
+   * When set, remote daemons get this origin instead of the upgrade-derived one; the local
+   * daemon keeps `hubUrl` and this is never consulted. Forwarding headers are not trusted.
+   */
+  publicHubUrl?: string };
 
 type Conn = {
   ws: WebSocket;
@@ -82,8 +91,31 @@ export const REMOTE_HELLO_FAILED_MESSAGE = "The hub hit an internal error while 
 const REPLACED_CLOSE_TIMEOUT_MS = 1_000;
 
 /**
+ * Normalizes NEMA_HUB_PUBLIC_URL to an origin (`https://hub.example.lan`, optional port kept).
+ * Undefined or blank stays undefined (the upgrade-derived URL is used). Anything that is not
+ * exactly an http(s) origin — a path, query, fragment, or another scheme — is a deployer error
+ * and throws, so a mistyped value fails startup instead of silently handing daemons a bad URL.
+ */
+export function parsePublicHubUrl(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error(`NEMA_HUB_PUBLIC_URL must be an http(s) origin, got ${JSON.stringify(value)}`);
+  }
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error(`NEMA_HUB_PUBLIC_URL must be an http(s) origin without a path, got ${JSON.stringify(value)}`);
+  }
+  return url.origin;
+}
+
+/**
  * The URL a remote daemon reached this hub at, from the WebSocket upgrade's Host header. Another machine
  * cannot use the hub's loopback URL for room calls or attachment downloads. Null when Host is not a bare host[:port].
+ * Behind a TLS-terminating proxy the scheme here is `http` (the hub's own socket is plain), so a configured
+ * public URL (parsePublicHubUrl) takes precedence for remote daemons; see DaemonSocketDeps.publicHubUrl.
  */
 function hubUrlFromUpgrade(req: http.IncomingMessage | undefined): string | null {
   const host = req?.headers.host?.trim();
@@ -477,7 +509,9 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   wss.on("connection", (ws, req) => {
     let conn: Conn | null = null;
     // Only a remote daemon needs the address it connected to; the local daemon shares the hub's loopback.
-    const hubUrl = deps.remoteAuth ? hubUrlFromUpgrade(req) : deps.hubUrl;
+    // A configured public origin wins over the upgrade-derived one: behind a TLS-terminating proxy the
+    // upgrade would otherwise infer http:// and the daemon's room/attachment calls would go plaintext.
+    const hubUrl = deps.remoteAuth ? (deps.publicHubUrl ?? hubUrlFromUpgrade(req)) : deps.hubUrl;
     // Per-connection serial handling keeps hello/finished ordering intact.
     let inbox: Promise<void> = Promise.resolve();
 
