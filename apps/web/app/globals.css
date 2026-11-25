@@ -499,12 +499,12 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .plugin-row { padding: 12px 0; border-bottom: 1px solid var(--rule); }
 .repo-path { font-family: var(--mono); font-size: 12px; }
 .repo-row { padding: 8px 0 12px; border-bottom: 1px solid var(--rule); }
-.code-section > h2.label { margin-top: 8px; }
-.code-section h3.label { margin-top: 16px; }
-.code-section form button { border: 1px solid var(--ink); padding: 5px 14px; font-weight: 600; margin-top: 12px; }
-.code-section .path-pick { display: flex; align-items: baseline; gap: 12px; }
-.code-section .path-pick button { margin-top: 0; flex: none; }
-.code-section .path-pick .repo-path { min-width: 0; overflow-wrap: anywhere; }
+.code-section > h2.label, .repositories-section > h2.label { margin-top: 8px; }
+.code-section h3.label, .repositories-section h3.label { margin-top: 16px; }
+.repositories-section form button { border: 1px solid var(--ink); padding: 5px 14px; font-weight: 600; margin-top: 12px; }
+.repositories-section .path-pick { display: flex; align-items: baseline; gap: 12px; }
+.repositories-section .path-pick button { margin-top: 0; flex: none; }
+.repositories-section .path-pick .repo-path { min-width: 0; overflow-wrap: anywhere; }
 .tag.red { color: var(--accent); border-color: var(--accent); }
 
 .skill-offer { margin-top: 10px; border: 1px solid var(--rule); padding: 8px 12px; }

@@ -152,6 +152,7 @@
   "common.error": "hub に接続できません: {message}",
   "main.empty": "workspace がまだありません。サイドバーから作成してください。",
   "settings.title": "workspace 設定",
+  "settings.repositories": "リポジトリ",
   "settings.name": "名前",
   "settings.confidential": "機密",
   "settings.confidentialHelp": "機密：このプロジェクトの内容は、プロジェクトをまたぐどの提案にも表示されません。オンにすると、既存の知識共有リンクは取り消され、新しいリンクは作れなくなります。",
