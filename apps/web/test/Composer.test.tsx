@@ -564,6 +564,23 @@ describe("Composer @ mentions", () => {
     await vi.waitFor(() => expect(onSend).toHaveBeenCalledWith("[D-12]", [], [{ type: "entry", id: "D-12", text: "[D-12]" }]));
   });
 
+  it("sends and clears a clicked entry mention after typing the message (#303)", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    mountWs(onSend);
+    await userEvent.type(box(), "@D-12");
+    await userEvent.click(await screen.findByRole("option", { name: /D-12/ }));
+    await userEvent.type(box(), "check the release process");
+    expect(screen.getByTestId("mention-chip").textContent).toContain("[D-12]");
+
+    await userEvent.click(screen.getByRole("button", { name: /^Send\b/ }));
+
+    expect(onSend).toHaveBeenCalledExactlyOnceWith("[D-12] check the release process", [], [
+      { type: "entry", id: "D-12", text: "[D-12]" },
+    ]);
+    expect(box().value).toBe("");
+    expect(screen.queryByTestId("mention-chip")).toBeNull();
+  });
+
   it("chooses a member: inserts @name, or the localized me for a null name, and sends a member mention (#163)", async () => {
     vi.mocked(hub.searchMentionContext).mockResolvedValue({
       ...ctx, entries: [], attachments: [], threads: [],
@@ -763,8 +780,9 @@ describe("Composer @ mentions", () => {
     await userEvent.click(await screen.findByRole("option", { name: /^\/thread/ }));
     await userEvent.type(box(), "细节 @D-12");
     await (await screen.findByRole("option", { name: /D-12/ })).click();
-    fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
+    await userEvent.click(screen.getByRole("button", { name: /^Send\b/ }));
     await vi.waitFor(() => expect(onThread).toHaveBeenCalledWith("细节 [D-12]", [], [{ type: "entry", id: "D-12", text: "[D-12]" }]));
+    expect(screen.queryByTestId("mention-chip")).toBeNull();
   });
 });
 
