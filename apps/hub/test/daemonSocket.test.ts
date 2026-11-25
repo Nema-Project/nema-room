@@ -46,7 +46,7 @@ let dataDir: string;
 let events: EventBus;
 let server: http.Server;
 let url: string;
-let handle: { isConnected(): boolean };
+let handle: ReturnType<typeof attachDaemonSocket>;
 const sockets: WebSocket[] = [];
 let wsA: string;
 let wsB: string;
@@ -935,15 +935,56 @@ describe("daemon socket", () => {
     expect(a2.runToken).not.toBe(a1.runToken);
   });
 
-  test("second daemon replaces the first", async () => {
+  // #167 task 10: a second hello no longer replaces the first connection (spec acceptance ①).
+  test("a second daemon connects alongside the first; the first keeps its running task", async () => {
     const a = await postUserMessage(db, wsA, "a", { authorUserId: "usr_local" });
+    const b = await postUserMessage(db, wsB, "b", { authorUserId: "usr_local" });
+    const c1 = await connect();
+    const a1 = await c1.next("task.assign");
+    expect(a1.taskId).toBe(a.task.id);
+    const c2 = await connect();
+    const b2 = await c2.next("task.assign");
+    expect(b2.taskId).toBe(b.task.id);
+    expect(c1.ws.readyState).toBe(WebSocket.OPEN);
+    const ids = handle.connectedDaemonIds();
+    expect(ids).toHaveLength(2);
+    expect(await getTask(db, a.task.id)).toMatchObject({ status: "running", runToken: a1.runToken, daemonId: ids[0] });
+    expect(await getTask(db, b.task.id)).toMatchObject({ status: "running", runToken: b2.runToken, daemonId: ids[1] });
+    expect(await interruptionsOf(a.task.id)).toBe(0);
+    // Each finishes its own task; neither can finish the other's.
+    c2.send({ type: "task.finished", taskId: a.task.id, ok: true, reply: "not mine" });
+    c1.send({ type: "task.finished", taskId: a.task.id, ok: true, reply: "mine" });
+    await vi.waitFor(async () => expect((await getTask(db, a.task.id))?.status).toBe("done"));
+    expect((await listMessages(db, wsA)).filter((m) => m.role === "agent").map((m) => m.content)).toEqual(["mine"]);
+    expect((await getTask(db, b.task.id))?.status).toBe("running");
+  });
+
+  test("one daemon disconnecting requeues only its own task; the other's keeps running", async () => {
+    const a = await postUserMessage(db, wsA, "a", { authorUserId: "usr_local" });
+    const b = await postUserMessage(db, wsB, "b", { authorUserId: "usr_local" });
+    const status: boolean[] = [];
+    events.subscribeAll((_w, e) => { if (e.type === "daemon.status") status.push(e.connected); });
     const c1 = await connect();
     await c1.next("task.assign");
     const c2 = await connect();
+    const b2 = await c2.next("task.assign");
+    const [, secondId] = handle.connectedDaemonIds();
+    c1.ws.terminate();
     await c1.closed;
-    const a2 = await c2.next("task.assign");
-    expect(a2.taskId).toBe(a.task.id);
+    await vi.waitFor(async () => expect((await getTask(db, a.task.id))?.status).toBe("queued"));
+    expect(await interruptionsOf(a.task.id)).toBe(1);
+    expect(await getTask(db, b.task.id)).toMatchObject({ status: "running", runToken: b2.runToken, daemonId: secondId });
+    expect(await interruptionsOf(b.task.id)).toBe(0);
+    // The status the UI shows stays "connected" while any daemon is online.
     expect(handle.isConnected()).toBe(true);
+    expect(status).not.toContain(false);
+    // The survivor finishes its task, then picks up the requeued one.
+    c2.send({ type: "task.finished", taskId: b.task.id, ok: true, reply: "done b" });
+    expect((await c2.next("task.assign")).taskId).toBe(a.task.id);
+    c2.ws.terminate();
+    await c2.closed;
+    await vi.waitFor(() => expect(status.at(-1)).toBe(false));
+    expect(handle.isConnected()).toBe(false);
   });
 
   test("failure: system message, task failed, next dispatched", async () => {
@@ -967,9 +1008,11 @@ describe("daemon socket", () => {
     const realClaim = tasks.claimNextTask;
     const claimSpy = vi.spyOn(tasks, "claimNextTask").mockImplementation(async (database, daemonId) => {
       if (c2 === null) {
-        // Hello waits on this dispatchOnce, so only wait until it has closed c1, then claim.
-        c2 = await connect();
+        // c1 goes away between "it was idle" and the claim; a new daemon connects meanwhile. Its hello
+        // waits on this dispatchOnce, so the claim made for c1 is requeued before anything sweeps it.
+        c1.ws.terminate();
         await c1.closed;
+        c2 = await connect();
       }
       const task = await realClaim(database, daemonId);
       if (firstToken === null && task?.runToken) firstToken = task.runToken;
@@ -992,7 +1035,7 @@ describe("daemon socket", () => {
     }
   });
 
-  test("a second hello during prompt build does not spend a retry", async () => {
+  test("a second daemon's hello during the first's prompt build leaves that claim alone", async () => {
     const c1 = await connect();
     await c1.next("welcome");
     const posted = await postUserMessage(db, wsA, "unsent", { authorUserId: "usr_local" });
@@ -1001,11 +1044,14 @@ describe("daemon socket", () => {
     await gate.entered;
     expect((await getTask(db, posted.task.id))?.status).toBe("running");
     const c2 = await connect();
-    await c1.closed;
     gate.release();
-    const assign = await c2.next("task.assign");
+    const assign = await c1.next("task.assign");
     expect(assign.taskId).toBe(posted.task.id);
+    await c2.next("welcome");
+    expect(c1.ws.readyState).toBe(WebSocket.OPEN);
+    expect(await getTask(db, posted.task.id)).toMatchObject({ status: "running", runToken: assign.runToken });
     expect(await interruptionsOf(posted.task.id)).toBe(0);
+    await noMessage(c2);
     expect((await listMessages(db, wsA)).some((m) => m.role === "system")).toBe(false);
   });
 
@@ -1105,6 +1151,20 @@ describe("daemon socket", () => {
     events.emit(wsB, { type: "workspace.deleted", workspaceId: wsB });
     expect(await c.next("workspace.deleted")).toEqual({ type: "workspace.deleted", workspaceId: wsB });
     await noMessage(c, 200, "workspace.deleted");
+  });
+
+  test("workspace.deleted and the repos.sync that follows reach every connected daemon", async () => {
+    const c1 = await connect();
+    await c1.next("welcome");
+    await c1.next("rpc.request");
+    const c2 = await connect();
+    await c2.next("welcome");
+    await c2.next("rpc.request");
+    events.emit(wsB, { type: "workspace.deleted", workspaceId: wsB });
+    for (const c of [c1, c2]) {
+      expect(await c.next("workspace.deleted")).toEqual({ type: "workspace.deleted", workspaceId: wsB });
+      expect(await c.next("rpc.request")).toMatchObject({ method: "repos.sync" });
+    }
   });
 
   test("new task enqueued later is dispatched via task.updated", async () => {
@@ -1546,6 +1606,47 @@ describe("remote daemon hello", () => {
     // The old socket's cleanup still ran before the stable ID was reused: the task was interrupted once and comes back.
     expect((await second.next("task.assign")).taskId).toBe(task.id);
     expect(await interruptionsOf(task.id)).toBe(1);
+  });
+
+  async function registerSecond(): Promise<{ id: string; credential: string }> {
+    const { createDaemonRegistrationCode, registerDaemon } = await import("../src/daemons.js");
+    await db.query("insert into users(id, display_name) values ('usr_other','Other owner')");
+    return (await registerDaemon(db, (await createDaemonRegistrationCode(db, "usr_other")).code, "Desktop"))!;
+  }
+
+  // #167 task 10, spec acceptance ① and ② under the connection table.
+  test("two registered daemons coexist; revoking one disconnects only it and requeues only its task", async () => {
+    const hub = await startRemoteHub();
+    const [firstRow] = await db.query<{ id: string }>("select id from daemons where owner_user_id = 'usr_daemon'");
+    const other = await registerSecond();
+    const first = await connect(credential, undefined, {}, remoteUrl);
+    await first.next("welcome");
+    const a = await queueTask();
+    expect((await first.next("task.assign")).taskId).toBe(a.id);
+
+    const second = await connect(other.credential, undefined, {}, remoteUrl);
+    await second.next("welcome");
+    const { task: b } = await postUserMessage(db, wsB, "Other task", { authorUserId: "usr_local" });
+    events.emit(wsB, { type: "task.updated", task: tasks.toUiTask(b!) });
+    const bAssign = await second.next("task.assign");
+    expect(bAssign.taskId).toBe(b!.id);
+    // The second hello did not interrupt or requeue the first daemon's task.
+    expect(first.ws.readyState).toBe(WebSocket.OPEN);
+    expect(await getTask(db, a.id)).toMatchObject({ status: "running", daemonId: firstRow!.id });
+    expect(await interruptionsOf(a.id)).toBe(0);
+    expect(hub.connectedDaemonIds()).toEqual([firstRow!.id, other.id]);
+
+    expect(await hub.revokeRegisteredDaemon(firstRow!.id, "usr_daemon")).toMatchObject({ revokedAt: expect.any(String) });
+    expect((await first.next("error")).message).toMatch(/revoked/i);
+    await first.closed;
+    await vi.waitFor(async () => expect((await getTask(db, a.id))?.status).toBe("queued"));
+    expect(await interruptionsOf(a.id)).toBe(1);
+    expect(second.ws.readyState).toBe(WebSocket.OPEN);
+    expect(await getTask(db, b!.id)).toMatchObject({ status: "running", runToken: bAssign.runToken, daemonId: other.id });
+    expect(await interruptionsOf(b!.id)).toBe(0);
+    expect(hub.isConnected()).toBe(true);
+    expect(hub.isConnected(firstRow!.id)).toBe(false);
+    expect(hub.isConnected(other.id)).toBe(true);
   });
 
   test("a hub failure during remote hello is logged and not reported as a credential refusal", async () => {

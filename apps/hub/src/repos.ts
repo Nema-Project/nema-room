@@ -174,7 +174,8 @@ export async function syncBoundRepos(db: Db, daemon: DaemonRpc): Promise<void> {
      where w.archived_at is null
      order by r.created_at, r.id`,
   );
-  void daemon.call("repos.sync", { repos: rows.map((row) => syncRow(toRepo(row))) }).catch((error) => {
+  // Every connected daemon reconciles its watcher against the same bound set (#167 connection table).
+  void daemon.call("repos.sync", { repos: rows.map((row) => syncRow(toRepo(row))) }, undefined, { all: true }).catch((error) => {
     console.error("repos.sync failed", error);
   });
 }
@@ -230,7 +231,7 @@ export async function previewRepo(db: Db, daemon: DaemonRpc, workspaceId: string
   if (ws[0].archived_at) throw new RepoError(409, "workspace 已归档，取消归档后才能绑定仓库");
   let inspected: Inspected;
   try {
-    inspected = asInspected(await daemon.call("repo.inspect", { path }));
+    inspected = asInspected(await daemon.call("repo.inspect", { path }, undefined, { workspaceId }));
   } catch (error) {
     if (error instanceof DaemonRpcError) {
       if (DAEMON_UNAVAILABLE.has(error.message)) throw new RepoError(503, error.message);
@@ -301,7 +302,7 @@ export async function bindRepo(
   if (ws[0].archived_at) throw new RepoError(409, "workspace 已归档，取消归档后才能绑定仓库");
   let inspected: Inspected;
   try {
-    inspected = asInspected(await daemon.call("repo.inspect", { path: input.path }));
+    inspected = asInspected(await daemon.call("repo.inspect", { path: input.path }, undefined, { workspaceId }));
   } catch (error) {
     if (error instanceof DaemonRpcError) {
       if (DAEMON_UNAVAILABLE.has(error.message)) throw new RepoError(503, error.message);
@@ -333,7 +334,7 @@ export async function bindRepo(
   }
   noteIndex(events, repo, "running");
   void daemon
-    .call("repo.index", rpcRepo(repo), INDEX_RPC_TIMEOUT_MS)
+    .call("repo.index", rpcRepo(repo), INDEX_RPC_TIMEOUT_MS, { workspaceId })
     .then(async (result) => {
       const sha = (result as { sha?: unknown } | null)?.sha;
       if (typeof sha !== "string" || sha === "") {
@@ -422,7 +423,7 @@ export async function unbindRepo(db: Db, daemon: DaemonRpc, repoId: string): Pro
   const repo = await getRepo(db, repoId);
   if (!repo) throw missingRepo(repoId);
   await db.query("delete from workspace_repos where id = $1", [repoId]);
-  void daemon.call("repo.forget", rpcRepo(repo)).catch((error) => {
+  void daemon.call("repo.forget", rpcRepo(repo), undefined, { workspaceId: repo.workspaceId, all: true }).catch((error) => {
     console.error(`repo.forget failed for ${repo.id}`, error);
   });
   await syncBoundRepos(db, daemon);

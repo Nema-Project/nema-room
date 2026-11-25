@@ -249,7 +249,7 @@ async function checkPlan(deps: { db: Db; daemon: DaemonRpc }, workspaceId: strin
       path: repo.path,
       mainBranch: repo.mainBranch,
       paths,
-    });
+    }, undefined, { workspaceId: repo.workspaceId });
     const list = (result as { missing?: unknown } | null)?.missing;
     if (!Array.isArray(list) || !list.every((p) => typeof p === "string")) throw new Error("invalid repo.exists result");
     missing.push(...list.map((p) => `- 修改：${repo.label}:${p}`));

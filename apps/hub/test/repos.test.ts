@@ -2,7 +2,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, expect, test, vi } from "vitest";
 import WebSocket from "ws";
-import type { DaemonRpc } from "../src/daemonRpc.js";
+import type { DaemonRpc, DaemonTarget } from "../src/daemonRpc.js";
 import { DaemonRpcError } from "../src/daemonRpc.js";
 import { attachDaemonSocket } from "../src/daemonSocket.js";
 import { EventBus, type HubEvent } from "../src/events.js";
@@ -23,13 +23,16 @@ const inspected = {
   remoteUrl: "https://example.com/a.git",
 };
 
-function daemonOf(handlers: Record<string, (params: unknown) => Promise<unknown> | unknown>): { daemon: DaemonRpc; calls: { method: string; params: unknown; timeoutMs?: number }[] } {
+function daemonOf(handlers: Record<string, (params: unknown) => Promise<unknown> | unknown>): { daemon: DaemonRpc; calls: { method: string; params: unknown; timeoutMs?: number }[]; targets: { method: string; target: DaemonTarget | undefined }[] } {
   const calls: { method: string; params: unknown; timeoutMs?: number }[] = [];
+  const targets: { method: string; target: DaemonTarget | undefined }[] = [];
   return {
     calls,
+    targets,
     daemon: {
-      async call(method, params, timeoutMs) {
+      async call(method, params, timeoutMs, target) {
         calls.push({ method, params, timeoutMs });
+        targets.push({ method, target });
         const handler = handlers[method] ?? (method === "repos.sync" ? () => ({ ok: true }) : undefined);
         if (!handler) throw new Error(`unexpected ${method}`);
         return handler(params);
@@ -147,7 +150,7 @@ test("unbinding fires repo.forget and deleting the workspace removes its repos",
   const { db, dataDir } = await makeHubDeps();
   const ws = await createWorkspace(db, dataDir, "Alpha");
   const other = await createWorkspace(db, dataDir, "Beta");
-  const { daemon, calls } = daemonOf({
+  const { daemon, calls, targets } = daemonOf({
     "repo.inspect": (params) => {
       const requestPath = (params as { path: string }).path;
       return { ...inspected, root: requestPath, gitCommonDir: `${requestPath}/.git` };
@@ -170,6 +173,8 @@ test("unbinding fires repo.forget and deleting the workspace removes its repos",
   expect(calls.filter((c) => c.method === "repo.forget").map((c) => c.params)).toEqual([
     { workspaceId: ws.id, repoId: gone.id, path: "/gone", mainBranch: "main" },
   ]);
+  // The forget reaches every daemon that may hold the snapshot, not only the routed one.
+  expect(targets.filter((t) => t.method === "repo.forget")).toEqual([{ method: "repo.forget", target: { workspaceId: ws.id, all: true } }]);
   await new Promise((resolve) => setImmediate(resolve));
   expect(errors.mock.calls.some((args) => args.join(" ").includes("forget failed"))).toBe(true);
   errors.mockRestore();

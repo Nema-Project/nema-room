@@ -82,7 +82,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
     const liveDaemon: { rpc: DaemonRpc } = {
       rpc: { call: () => Promise.reject(new DaemonRpcError("daemon 未连接")) },
     };
-    const daemon: DaemonRpc = { call: (method, params, timeoutMs) => liveDaemon.rpc.call(method, params, timeoutMs) };
+    const daemon: DaemonRpc = { call: (method, params, timeoutMs, target) => liveDaemon.rpc.call(method, params, timeoutMs, target) };
     let requestListener: http.RequestListener = (_req, res) => { res.statusCode = 503; res.end("starting"); };
     server = http.createServer((req, res) => requestListener(req, res));
     await new Promise<void>((resolve, reject) => {

@@ -166,7 +166,7 @@ export const INTERRUPTED_ERROR = "任务被中断，自动重试 3 次后仍未�
  */
 export async function interruptRunning(
   db: Db,
-  scope: { daemonId: string } | { exceptDaemonId: string } | "all",
+  scope: { daemonId: string } | { exceptDaemonId: string } | { exceptDaemonIds: string[] } | "all",
 ): Promise<{ requeued: string[]; failed: string[] }> {
   const params: unknown[] = [MAX_INTERRUPT_RETRIES, INTERRUPTED_ERROR];
   let where = "status = 'running'";
@@ -174,9 +174,13 @@ export async function interruptRunning(
     if ("daemonId" in scope) {
       params.push(scope.daemonId);
       where += ` and daemon_id = $${params.length}`;
-    } else {
+    } else if ("exceptDaemonId" in scope) {
       params.push(scope.exceptDaemonId);
       where += ` and daemon_id is distinct from $${params.length}`;
+    } else {
+      // Every running task not held by one of these daemons (the hub's listed connections).
+      params.push(scope.exceptDaemonIds);
+      where += ` and (daemon_id is null or not (daemon_id = any($${params.length}::text[])))`;
     }
   }
   const rows = await db.tx((t) =>

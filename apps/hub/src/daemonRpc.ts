@@ -19,8 +19,33 @@ export const INDEX_RPC_TIMEOUT_MS = 300_000;
  */
 export const COMPONENT_RPC_TIMEOUT_MS = 30_000;
 
+/**
+ * What a call is about, so the hub can choose among several connected daemons (#167). Every field is a
+ * preference, never a requirement: with one daemon connected the call always goes to it, as it did before
+ * the connection table. The order in which the facade applies them is documented on `attachDaemonSocket`'s
+ * `rpc` in daemonSocket.ts.
+ */
+export type DaemonTarget = {
+  /** Answer from this daemon when it is connected, e.g. the one that reported a repo move. */
+  daemonId?: string;
+  /** The call serves this running task: answer from the daemon running it. */
+  taskId?: string;
+  /** The call concerns this workspace: prefer a daemon owned by one of its owners. */
+  workspaceId?: string;
+  /** Every connected daemon should hear it (e.g. `repos.sync`); resolves with the first answer. */
+  all?: boolean;
+};
+
 export interface DaemonRpc {
-  call(method: string, params: unknown, timeoutMs?: number): Promise<unknown>;
+  call(method: string, params: unknown, timeoutMs?: number, target?: DaemonTarget): Promise<unknown>;
+}
+
+/**
+ * Binds a default target, for code that already knows what its calls are about (a run-token request knows
+ * its task). A target given at the call is merged over the bound one.
+ */
+export function withDaemonTarget(daemon: DaemonRpc, bound: DaemonTarget): DaemonRpc {
+  return { call: (method, params, timeoutMs, target) => daemon.call(method, params, timeoutMs, { ...bound, ...target }) };
 }
 
 type RpcResponse = Extract<DaemonToHub, { type: "rpc.response" }>;
