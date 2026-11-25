@@ -83,6 +83,8 @@ Compose：`curl http://127.0.0.1:4400/api/version` 返回 `{"version":"..."}`。
 
 本项目面向本机使用，没有面向公网的多用户认证。hub 和 web 默认只开放回环地址，不要直接暴露到公网。
 
+<a id="remote-hub-multi-user"></a>
+
 ## 远程 hub（多人）
 
 远程 hub 是面向受信网络中小团队的可选形态。一个独立 hub 服务整个团队，后端为 PostgreSQL 与 web 界面；每个人在自己的机器上运行自己的 daemon，模型凭证与仓库检出保留在各人本机上。单用户安装不受影响：不设 `NEMA_HUB_REMOTE=1` 时 hub 行为与以前完全一致，桌面版永远不开启此形态。

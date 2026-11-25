@@ -83,6 +83,8 @@ Running the Web / Compose stack from this repository still uses the source wizar
 
 This is a local application without public-facing multi-user authentication. The hub and web UI default to loopback access; do not expose them directly to the internet.
 
+<a id="remote-hub-multi-user"></a>
+
 ## Remote hub (multi-user)
 
 The remote hub is an opt-in form for a small team on a trusted network. One standalone hub serves the team, backed by PostgreSQL and the web UI; each person runs their own daemon on their own machine, and model credentials and repository checkouts stay on that person's machine. Nothing changes for single-user installs: without `NEMA_HUB_REMOTE=1` the hub behaves exactly as before, and the desktop never enables this form.
