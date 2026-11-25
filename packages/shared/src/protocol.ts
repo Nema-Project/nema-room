@@ -12,6 +12,19 @@ const DaemonToHubSchema = z.union([
     reportTokenHash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
     /** Optional abilities, e.g. "attachments". Older daemons send none. */
     features: z.array(z.string()).optional(),
+    /**
+     * Normalized remote URLs this daemon holds (D-6): the `remote_url` of every repo in its local index,
+     * through `normalizeRemoteUrl`. Older daemons send none and are treated as holding nothing.
+     */
+    heldRepos: z.array(z.string()).optional(),
+  }),
+  /**
+   * Refresh of the hello `heldRepos` set, sent after `repos.sync` changes what this daemon watches (D-6).
+   * Same shape as the hello field, so the hub replaces the connection's held set wholesale.
+   */
+  z.object({
+    type: z.literal("holdings"),
+    heldRepos: z.array(z.string()),
   }),
   z.object({
     type: z.literal("task.event"),

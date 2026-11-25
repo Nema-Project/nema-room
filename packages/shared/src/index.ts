@@ -5,6 +5,7 @@ export * from "./extensions.js";
 export * from "./extensionSource.js";
 export * from "./mcpConfig.js";
 export * from "./protocol.js";
+export * from "./remoteUrl.js";
 export * from "./route.js";
 export * from "./roomApi.js";
 export * from "./report.js";

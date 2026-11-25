@@ -39,6 +39,18 @@ test("task.assign without pluginTools fails to parse; with [] parses", () => {
   expect(parseHubToDaemon({ ...base, pluginTools: [tool] })).toMatchObject({ pluginTools: [tool] });
   expect(() => parseHubToDaemon({ ...base, pluginTools: [{ name: "code__read" }] })).toThrow(ZodError);
 });
+test("hello carries heldRepos; holdings refreshes the same set (D-6)", () => {
+  const hello = parseDaemonToHub({ type: "hello", token: "t", version: "1", adapters: ["codex"], heldRepos: ["github.com/a/b"] });
+  expect(hello).toMatchObject({ type: "hello", heldRepos: ["github.com/a/b"] });
+  expect(parseDaemonToHub({ type: "hello", token: "t", version: "1", adapters: ["codex"] })).not.toHaveProperty("heldRepos");
+  expect(parseDaemonToHub({ type: "holdings", heldRepos: [] })).toEqual({ type: "holdings", heldRepos: [] });
+  expect(parseDaemonToHub({ type: "holdings", heldRepos: ["github.com/a/b", "example.com/x/y"] })).toMatchObject({
+    type: "holdings",
+    heldRepos: ["github.com/a/b", "example.com/x/y"],
+  });
+  expect(() => parseDaemonToHub({ type: "holdings" })).toThrow(ZodError);
+  expect(() => parseDaemonToHub({ type: "holdings", heldRepos: [1] })).toThrow(ZodError);
+});
 test("repo.fetched round-trips through the parser", () => {
   const ok = { type: "repo.fetched" as const, repoId: "r1", ok: true as const, at: "2026-10-23T00:00:00.000Z" };
   expect(parseDaemonToHub(ok)).toEqual(ok);
