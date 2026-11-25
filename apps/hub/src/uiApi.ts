@@ -511,7 +511,7 @@ export function uiRoutes(deps: UiDeps): Hono {
         const thread = await ensureThread(t, posted.message.id, title, "user");
         return { ...posted, thread };
       });
-      const task = toUiTask(created.task);
+      const task = toUiTask(created.task, deps.waitingReasonFor ? await deps.waitingReasonFor(created.task) : undefined);
       if (!created.replayed) {
         events.emit(workspaceId, { type: "message.created", message: created.message });
         events.emit(workspaceId, { type: "task.updated", task });
@@ -532,7 +532,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     try {
       const { message, task: created, replayed } = await postUserMessage(db, workspaceId, content, { authorUserId: c.get("identity").userId, quoteMessageId, threadId, attachmentIds, mentions, accountId, routing });
-      const task = toUiTask(created);
+      const task = toUiTask(created, deps.waitingReasonFor ? await deps.waitingReasonFor(created) : undefined);
       if (!replayed) {
         events.emit(workspaceId, { type: "message.created", message });
         events.emit(workspaceId, { type: "task.updated", task });
@@ -587,7 +587,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     const { content } = await body(c, EditMessageBody);
     try {
       const { message, task: created } = await editUserMessage(db, id, c.req.param("messageId")!, content, c.get("identity").userId);
-      const task = toUiTask(created);
+      const task = toUiTask(created, deps.waitingReasonFor ? await deps.waitingReasonFor(created) : undefined);
       events.emit(id, { type: "message.updated", message });
       events.emit(id, { type: "task.updated", task });
       return c.json({ message, task });

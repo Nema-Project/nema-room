@@ -103,6 +103,37 @@ describe("ui api", () => {
     expect(stored.map((r) => r.account_id)).toEqual([id, id, id]);
   });
 
+  test("thread, reply and edit responses carry the waiting reason, like POST /messages", async () => {
+    // The same stub reason the daemon socket would derive when no daemon is online; the point here is
+    // that all three task-creating responses forward it, not the derivation itself.
+    const reasoned = createApp({
+      db,
+      dataDir,
+      nemaHome,
+      events,
+      daemonStatus: () => true,
+      daemon,
+      webOrigin: "http://localhost:3000",
+      waitingReasonFor: async () => ({ kind: "no-daemon-online" }),
+    });
+    const rreq = (method: string, p: string, body?: unknown) =>
+      reasoned.request(`${HUB}${p}`, {
+        method,
+        headers: { "content-type": "application/json" },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+    const thread = await json(await rreq("POST", `/api/workspaces/${ws}/threads`, { content: "thread" }));
+    expect(thread.task.waitingReason).toEqual({ kind: "no-daemon-online" });
+    // An edit is refused (409) while the message's own task is still queued, so finish it first; the
+    // edit then queues a fresh task, which is the one that must carry the reason.
+    const first = (await claimNextTask(db, "d1"))!;
+    await finishTask(db, first.id, { ok: true });
+    const reply = await json(await rreq("POST", `/api/workspaces/${ws}/threads/${thread.thread.id}/messages`, { content: "reply" }));
+    expect(reply.task.waitingReason).toEqual({ kind: "no-daemon-online" });
+    const edited = await json(await rreq("PATCH", `/api/workspaces/${ws}/messages/${thread.message.id}`, { content: "revised" }));
+    expect(edited.task.waitingReason).toEqual({ kind: "no-daemon-online" });
+  });
+
   test("a malformed account id is refused rather than stored", async () => {
     const r = await req("POST", `/api/workspaces/${ws}/messages`, { content: "x", accountId: "not-an-account" });
     expect(r.status).toBe(400);
