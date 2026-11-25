@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createDaemonRegistrationCode, listDaemons, revokeDaemon, type DaemonRegistrationCode, type RegisteredDaemon } from "@/lib/hub";
+import { createDaemonRegistrationCode, HubError, listDaemons, revokeDaemon, type DaemonRegistrationCode, type RegisteredDaemon } from "@/lib/hub";
 import { useLocale, useT } from "@/lib/i18n";
 
 export function DaemonsSettings() {
@@ -12,7 +12,7 @@ export function DaemonsSettings() {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState(false);
-  const [actionError, setActionError] = useState(false);
+  const [actionError, setActionError] = useState<"actionError" | "codeLimit" | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -32,12 +32,12 @@ export function DaemonsSettings() {
 
   async function generate() {
     setBusy(true);
-    setActionError(false);
+    setActionError(null);
     setCode(null);
     try {
       setCode(await createDaemonRegistrationCode());
-    } catch {
-      setActionError(true);
+    } catch (error) {
+      setActionError(error instanceof HubError && error.status === 429 ? "codeLimit" : "actionError");
     } finally {
       setBusy(false);
     }
@@ -45,13 +45,13 @@ export function DaemonsSettings() {
 
   async function revoke(id: string) {
     setBusy(true);
-    setActionError(false);
+    setActionError(null);
     try {
       const { revokedAt } = await revokeDaemon(id);
       setDaemons((rows) => rows?.map((row) => row.id === id ? { ...row, revokedAt } : row) ?? null);
       setConfirmId(null);
     } catch {
-      setActionError(true);
+      setActionError("actionError");
     } finally {
       setBusy(false);
     }
@@ -70,7 +70,7 @@ export function DaemonsSettings() {
           <p>{t("daemonsSettings.enterCode")} <code>nema daemon register --hub &lt;url&gt;</code></p>
         </div>
       )}
-      {actionError && <p className="error" role="alert">{t("daemonsSettings.actionError")}</p>}
+      {actionError && <p className="error" role="alert">{t(`daemonsSettings.${actionError}`)}</p>}
       {loadError && <p className="error" role="alert">{t("daemonsSettings.loadError")}</p>}
       {daemons?.length === 0 && <p>{t("daemonsSettings.empty")}</p>}
       {daemons && daemons.length > 0 && (

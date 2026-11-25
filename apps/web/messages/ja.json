@@ -49,6 +49,7 @@
   "daemonsSettings.cancel": "キャンセル",
   "daemonsSettings.loadError": "デーモンの一覧を取得できませんでした。",
   "daemonsSettings.actionError": "デーモンの操作に失敗しました。もう一度お試しください。",
+  "daemonsSettings.codeLimit": "有効な登録コードがすでに5件あります。いずれかを使うか、有効期限が切れるまでお待ちください。",
   "appSettings.title": "アプリ設定",
   "appSettings.back": "会話に戻る",
   "appSettings.tabs": "設定の項目",

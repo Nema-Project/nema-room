@@ -6,11 +6,21 @@ import * as hub from "@/lib/hub";
 import { I18nProvider } from "@/lib/i18n";
 import en from "../messages/en.json";
 
-vi.mock("@/lib/hub", () => ({
+vi.mock("@/lib/hub", async (importOriginal) => ({
+  ...await importOriginal<typeof hub>(),
   listDaemons: vi.fn(),
   createDaemonRegistrationCode: vi.fn(),
   revokeDaemon: vi.fn(),
 }));
+
+test("explains how to proceed when the active registration code limit is reached", async () => {
+  vi.mocked(hub.listDaemons).mockResolvedValue([]);
+  vi.mocked(hub.createDaemonRegistrationCode).mockRejectedValueOnce(new hub.HubError(429, "registration code limit"));
+  render(<I18nProvider messages={{ en }}><DaemonsSettings /></I18nProvider>);
+
+  await userEvent.setup().click(screen.getByRole("button", { name: "Generate registration code" }));
+  expect((await screen.findByRole("alert")).textContent).toMatch(/use one or wait for it to expire/i);
+});
 
 test("displays a new code only for the current visit and asks before revoking a daemon", async () => {
   const laptop = { id: "dmn_1", label: "Laptop", lastSeenAt: "2026-11-24T12:00:00Z", revokedAt: null };

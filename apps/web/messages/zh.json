@@ -49,6 +49,7 @@
   "daemonsSettings.cancel": "取消",
   "daemonsSettings.loadError": "无法加载 daemon 列表。",
   "daemonsSettings.actionError": "Daemon 操作失败，请重试。",
+  "daemonsSettings.codeLimit": "已有五个有效的注册码。请先使用一个，或等一个过期。",
   "appSettings.title": "应用设置",
   "appSettings.back": "返回对话",
   "appSettings.tabs": "设置分类",

@@ -5,12 +5,40 @@ import { isHubAdmin } from "./auth.js";
 import type { Db } from "./db/db.js";
 
 const CODE_TTL_MS = 10 * 60_000;
+const MAX_ACTIVE_CODES = 5;
+const REJECTION_WINDOW_MS = 60_000;
 const hash = (secret: string) => createHash("sha256").update(secret).digest("hex");
 
 type DaemonOwner = { id: string; owner_user_id: string };
 type DaemonRow = DaemonOwner & { revoked_at: Date | string | null };
 type RevokeResult = "missing" | "forbidden" | { revokedAt: string };
 export type RevokeRegisteredDaemon = (id: string, actor: string) => Promise<RevokeResult>;
+
+class RegistrationCodeLimitError extends Error {
+  constructor() {
+    super("You already have five active daemon registration codes. Use one or wait for it to expire.");
+  }
+}
+
+export class DaemonRejectionThrottle {
+  private readonly loggedAt = new Map<string, number>();
+
+  constructor(private readonly now: () => number = () => performance.now()) {}
+
+  shouldLog(credentialHash: string): boolean {
+    const now = this.now();
+    // Entries are in time order. Drop expired hashes as new rejections arrive.
+    for (const [key, loggedAt] of this.loggedAt) {
+      if (now - loggedAt < REJECTION_WINDOW_MS) break;
+      this.loggedAt.delete(key);
+    }
+    if (this.loggedAt.has(credentialHash)) return false;
+    this.loggedAt.set(credentialHash, now);
+    return true;
+  }
+}
+
+const daemonRejectionThrottle = new DaemonRejectionThrottle();
 
 async function daemonEvent(
   db: Db, daemon: DaemonOwner | undefined, kind: "registered" | "revoked" | "rejected",
@@ -23,11 +51,26 @@ async function daemonEvent(
 }
 
 export async function createDaemonRegistrationCode(db: Db, owner: string) {
-  const code = randomBytes(24).toString("base64url");
-  const expiresAt = new Date(Date.now() + CODE_TTL_MS).toISOString();
-  await db.query("insert into daemon_registration_codes(id,code_hash,owner_user_id,expires_at) values ($1,$2,$3,$4)",
-    [`drc_${nanoid(16)}`, hash(code), owner, expiresAt]);
-  return { code, expiresAt };
+  const issued = await db.tx(async (t) => {
+    // Serialize issuance for this owner without blocking foreign key checks during redemption.
+    await t.query("select id from users where id=$1 for no key update", [owner]);
+    const now = Date.now();
+    const cutoff = new Date(now).toISOString();
+    await t.query("delete from daemon_registration_codes where used_at is not null or expires_at <= $1", [cutoff]);
+    const active = await t.query(
+      "select id from daemon_registration_codes where owner_user_id=$1 and used_at is null and expires_at > $2 limit $3",
+      [owner, cutoff, MAX_ACTIVE_CODES],
+    );
+    if (active.length >= MAX_ACTIVE_CODES) return null;
+
+    const code = randomBytes(24).toString("base64url");
+    const expiresAt = new Date(now + CODE_TTL_MS).toISOString();
+    await t.query("insert into daemon_registration_codes(id,code_hash,owner_user_id,expires_at) values ($1,$2,$3,$4)",
+      [`drc_${nanoid(16)}`, hash(code), owner, expiresAt]);
+    return { code, expiresAt };
+  });
+  if (!issued) throw new RegistrationCodeLimitError();
+  return issued;
 }
 
 export async function registerDaemon(db: Db, code: string, label: string) {
@@ -70,12 +113,15 @@ export async function revokeDaemon(db: Db, id: string, actor: string): Promise<R
   });
 }
 
-export async function verifyDaemonCredential(db: Db, credential: string) {
+export async function verifyDaemonCredential(db: Db, credential: string, throttle = daemonRejectionThrottle) {
+  const credentialHash = hash(credential);
   const [daemon] = await db.query<DaemonRow>(
-    "select id,owner_user_id,revoked_at from daemons where credential_hash=$1", [hash(credential)],
+    "select id,owner_user_id,revoked_at from daemons where credential_hash=$1", [credentialHash],
   );
   if (daemon && !daemon.revoked_at) return { ok: true, id: daemon.id } as const;
-  await daemonEvent(db, daemon, "rejected", null, daemon ? "revoked_credential" : "invalid_credential");
+  if (daemon || throttle.shouldLog(credentialHash)) {
+    await daemonEvent(db, daemon, "rejected", null, daemon ? "revoked_credential" : "invalid_credential");
+  }
   return { ok: false, error: daemon ? "Daemon credential has been revoked. Register this daemon again." : "Invalid daemon credential. Register this daemon first." } as const;
 }
 
@@ -102,7 +148,12 @@ export function daemonSessionRoutes(db: Db, revoke: RevokeRegisteredDaemon = (id
   return new Hono()
     .post("/registration-codes", async (c) => {
       c.header("Cache-Control", "no-store");
-      return c.json(await createDaemonRegistrationCode(db, c.get("identity").userId), 201);
+      try {
+        return c.json(await createDaemonRegistrationCode(db, c.get("identity").userId), 201);
+      } catch (error) {
+        if (error instanceof RegistrationCodeLimitError) return c.json({ error: error.message }, 429);
+        throw error;
+      }
     })
     .get("/", async (c) => c.json(await listDaemons(db, c.get("identity").userId)))
     .post("/:id/revoke", async (c) => {

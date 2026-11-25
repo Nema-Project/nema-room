@@ -70,7 +70,7 @@ export type DaemonStart = {
 
 /** Connects the daemon and answers repo RPC plus `plugin.call` and `plugins.status`. */
 export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: RepoWatcher } {
-  const token = resolveDaemonToken(o.nemaHome, o);
+  const token = resolveDaemonToken(o.nemaHome, o.hubUrl, o);
   // Hooks installed against the removed payload Node keep that absolute path. Rewrite them once Electron is the Node.
   if (electronRunAsNode()) {
     try {

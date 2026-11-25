@@ -49,6 +49,7 @@
   "daemonsSettings.cancel": "Cancel",
   "daemonsSettings.loadError": "Could not load daemons.",
   "daemonsSettings.actionError": "Could not complete the daemon action. Try again.",
+  "daemonsSettings.codeLimit": "You already have five active registration codes. Use one or wait for it to expire.",
   "appSettings.title": "App settings",
   "appSettings.back": "Back to conversation",
   "appSettings.tabs": "Settings sections",

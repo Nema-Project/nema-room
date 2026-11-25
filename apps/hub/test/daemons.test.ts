@@ -4,6 +4,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import { completeBootstrap, issueSession, SESSION_COOKIE } from "../src/auth.js";
 import { attachDaemonSocket } from "../src/daemonSocket.js";
+import { DaemonRejectionThrottle, verifyDaemonCredential } from "../src/daemons.js";
 import { EventBus } from "../src/events.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 
@@ -123,23 +124,66 @@ test("registration consumes a private code once; listing is owner-scoped and rev
     const revoked = new TestDaemonSocket();
     revoked.hello(credential);
     expect((await revoked.received("error")).message).toMatch(/revoked/i);
+    const revokedAgain = new TestDaemonSocket();
+    revokedAgain.hello(credential);
+    expect((await revokedAgain.received("error")).message).toMatch(/revoked/i);
     const shared = new TestDaemonSocket();
     shared.hello("shared-fixture-token");
     expect((await shared.received("error")).message).toMatch(/invalid/i);
     expect(await db.query("select daemon_id, owner_user_id from daemon_events where kind='rejected' order by created_at")).toEqual([
       { daemon_id: id, owner_user_id: "usr_owner" },
+      { daemon_id: id, owner_user_id: "usr_owner" },
       { daemon_id: null, owner_user_id: null },
     ]);
 
     const secondCode = ((await (await request("/registration-codes", owner, {})).json()) as { code: string }).code;
+    const expired = ((await (await request("/registration-codes", owner, {})).json()) as { code: string }).code;
     const second = await (await request("/register", undefined, { code: secondCode, label: "Desktop" })).json() as { id: string };
     expect((await request(`/${second.id}/revoke`, owner, {})).status).toBe(200);
 
-    const expired = ((await (await request("/registration-codes", owner, {})).json()) as { code: string }).code;
     await db.query("update daemon_registration_codes set expires_at=now() - interval '1 second' where used_at is null");
     expect((await request("/register", undefined, { code: expired, label: "Expired" })).status).toBe(400);
+    expect(await db.query("select id from daemon_registration_codes")).toHaveLength(2);
+
+    const batch = await Promise.all(Array.from({ length: 6 }, () => request("/registration-codes", owner, {})));
+    expect(batch.map((r) => r.status).sort()).toEqual([201, 201, 201, 201, 201, 429]);
+    const limit = await batch.find((r) => r.status === 429)!.json();
+    expect(limit).toEqual({ error: expect.stringMatching(/use .* or wait .* expire/i) });
+    const activeCodes = await db.query("select owner_user_id, used_at from daemon_registration_codes");
+    expect(activeCodes).toEqual(Array.from({ length: 5 }, () => ({ owner_user_id: "usr_owner", used_at: null })));
+    expect((await request("/registration-codes", other, {})).status).toBe(201);
+
+    const { code: activeCode } = await batch.find((r) => r.status === 201)!.json() as { code: string };
+    expect((await request("/register", undefined, { code: activeCode, label: "New daemon" })).status).toBe(201);
+    expect((await request("/registration-codes", owner, {})).status).toBe(201);
   } finally {
     await socket.close();
+    await close();
+  }
+});
+
+test("unknown daemon credentials are rejected each time and audited once per hash per minute", async () => {
+  const { db, close } = await makeHubDeps();
+  let now = 0;
+  const throttle = new DaemonRejectionThrottle(() => now);
+  const reject = async (credential: string) => {
+    expect(await verifyDaemonCredential(db, credential, throttle)).toMatchObject({ ok: false, error: expect.stringMatching(/invalid/i) });
+  };
+  const rejected = () => db.query("select daemon_id, owner_user_id, detail from daemon_events where kind='rejected'");
+
+  try {
+    await Promise.all(["unknown-one", "unknown-two", "unknown-one", "unknown-two", "unknown-three"].map(reject));
+    expect(await rejected()).toEqual(Array.from({ length: 3 }, () => ({
+      daemon_id: null, owner_user_id: null, detail: { reason: "invalid_credential" },
+    })));
+    now = 59_999;
+    await reject("unknown-one");
+    expect(await rejected()).toHaveLength(3);
+    now = 60_000;
+    await reject("unknown-one");
+    await reject("unknown-one");
+    expect(await rejected()).toHaveLength(4);
+  } finally {
     await close();
   }
 });
