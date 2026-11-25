@@ -115,6 +115,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
       sharesEnabled: opts.sharesEnabled,
       remoteAuth: opts.remoteAuth,
       revokeRegisteredDaemon: attached.revokeRegisteredDaemon,
+      waitingReasonFor: attached.waitingReasonFor,
       bootstrapToken: opts.bootstrapToken,
       attachments,
       ...(opts.ownedHelpers ? { archify: {

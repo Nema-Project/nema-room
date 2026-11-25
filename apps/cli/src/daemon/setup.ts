@@ -10,6 +10,7 @@ import { registerSkillHandlers } from "../skills/rpc.js";
 import { graphifyInstallStatus, type GraphifyOpts } from "../repos/graphify.js";
 import { registerRepoHandlers } from "../repos/handlers.js";
 import { parseReposSync, RepoWatcher } from "../repos/watcher.js";
+import { computeHeldRepos } from "../repos/heldRepos.js";
 import { electronRunAsNode } from "../platform.js";
 import { migrateReportHooks } from "../report/install.js";
 import { parseDaemonHubUrl, resolveDaemonToken } from "./register.js";
@@ -90,6 +91,8 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
     ownedHelpers: o.ownedHelpers,
   });
   let sendMessage: ((message: unknown) => boolean) | null = null;
+  /** Normalized remotes this daemon holds (D-6); empty until the first `repos.sync` reports them. */
+  let heldRepos: string[] = [];
   const watcher = new RepoWatcher({
     nemaHome: o.nemaHome,
     graphify,
@@ -121,6 +124,15 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
   registerSkillHandlers(rpc, o.nemaHome);
   rpc.register("repos.sync", async (params) => {
     watcher.setRepos(parseReposSync(params));
+    // What this daemon watches just changed: re-inspect the watched paths and report the new held set.
+    // A failed inspect never fails the sync; the stale path is simply not reported held.
+    try {
+      heldRepos = await computeHeldRepos(watcher, o.nemaHome, o.ownedHelpers);
+    } catch (error) {
+      console.error("[nema] held repos refresh failed", error);
+      return { ok: true };
+    }
+    sendMessage?.({ type: "holdings", heldRepos });
     return { ok: true };
   });
   // A coding agent's hook fired for this repo: look at its main now. Answered at once; the tick runs on.
@@ -140,6 +152,7 @@ export function startDaemon(o: DaemonStart): { close(): Promise<void>; watcher: 
     nemaHome: o.nemaHome,
     ...(o.reportTokenHome ? { reportTokenHome: o.reportTokenHome } : {}),
     version: o.version,
+    heldRepos: () => heldRepos,
     rpc,
     bindSend: (send) => {
       sendMessage = send;

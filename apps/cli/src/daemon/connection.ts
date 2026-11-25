@@ -18,6 +18,8 @@ export type DaemonOpts = {
   reportTokenHome?: string;
   /** Reported in `hello` (defaults to apps/cli/package.json's version). */
   version?: string;
+  /** Current normalized remote URLs this daemon holds (D-6); read at hello time, refreshed by `holdings`. */
+  heldRepos?: () => string[];
   /** When set, `rpc.request` is answered immediately and does not wait for the task runner. */
   rpc?: RpcRouter;
   /** Called with the live socket send, and with null when that socket closes. */
@@ -74,6 +76,7 @@ export function connectDaemon(opts: DaemonOpts): { close(): Promise<void> } {
         adapters: opts.runner.adapterNames,
         features: [...DAEMON_FEATURES],
         ...(hash ? { reportTokenHash: hash } : {}),
+        ...(opts.heldRepos ? { heldRepos: opts.heldRepos() } : {}),
       });
     });
     sock.on("message", (d) => {
