@@ -29,6 +29,16 @@ test("already-normalized host/path values pass through unchanged (idempotent)", 
   expect(normalizeRemoteUrl("GITHUB.COM/Acme/Widget")).toBe("github.com/acme/widget");
 });
 
+test("an explicit port survives a second normalization (ssh on the https default port)", () => {
+  // The daemon normalizes holdings before reporting them and the hub normalizes them again: the
+  // second pass must keep :443, or the holder no longer matches the bound repo's first-pass form.
+  expect(normalizeRemoteUrl("ssh://git@example.com:443/team/repo.git")).toBe("example.com:443/team/repo");
+  expect(normalizeRemoteUrl("example.com:443/team/repo")).toBe("example.com:443/team/repo");
+  // A default port on its own scheme is the same server with or without it, so it stays dropped.
+  expect(normalizeRemoteUrl("https://example.com:443/team/repo")).toBe("example.com/team/repo");
+  expect(normalizeRemoteUrl("example.com/team/repo")).toBe("example.com/team/repo");
+});
+
 test("not a remote URL gives null", () => {
   expect(normalizeRemoteUrl(null)).toBeNull();
   expect(normalizeRemoteUrl(undefined)).toBeNull();

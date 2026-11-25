@@ -40,15 +40,45 @@ export function normalizeRemoteUrl(remoteUrl: string | null | undefined): string
     const fromScheme = fromParsed(parsed);
     if (fromScheme !== null) return fromScheme;
   }
-  // No usable scheme: it may already be a normalized `host/path` value (what a daemon reports), so try it
-  // as one. Normalization must be idempotent on its own output. A `://` means a real scheme was present
-  // and already refused above, so it is not retried bare.
+  // No usable scheme: it may already be a normalized `host/path` value (what a daemon reports), so
+  // parse it as one. Normalization must be idempotent on its own output. A `://` means a real scheme
+  // was present and already refused above, so it is not retried bare. Parse it by hand, not through
+  // a URL with a scheme: the parser drops that scheme's default port, so a normalized
+  // `host:443/path` (from ssh://host:443/...) would lose its port and no longer match the hub's
+  // first-pass form of the same repo.
   if (!url.includes("/") || url.includes("://") || url.startsWith("/")) return null;
-  try {
-    return fromParsed(new URL(`https://${url}`));
-  } catch {
-    return null;
+  return fromBareIdentity(url);
+}
+
+/** The normalized form of a bare `host[:port]/path` identity, or null when it names no repository. */
+function fromBareIdentity(url: string): string | null {
+  const slash = url.indexOf("/");
+  const hostport = url.slice(0, slash);
+  const path = normalizePath(url.slice(slash + 1));
+  if (!path) return null;
+  // Userinfo never survives normalization, but tolerate it on input.
+  const at = hostport.lastIndexOf("@");
+  const hostAndPort = at >= 0 ? hostport.slice(at + 1) : hostport;
+  if (hostAndPort === "") return null;
+  let host = hostAndPort;
+  let port = "";
+  if (hostAndPort.startsWith("[")) {
+    const close = hostAndPort.indexOf("]");
+    if (close < 0) return null;
+    host = hostAndPort.slice(0, close + 1);
+    const rest = hostAndPort.slice(close + 1);
+    if (rest !== "" && !rest.startsWith(":")) return null;
+    port = rest;
+  } else {
+    const colon = hostAndPort.lastIndexOf(":");
+    if (colon >= 0) {
+      host = hostAndPort.slice(0, colon);
+      port = hostAndPort.slice(colon);
+      if (!/^\d+$/.test(port.slice(1))) return null;
+    }
   }
+  if (host === "") return null;
+  return `${host}${port}/${path}`.toLowerCase();
 }
 
 /** The normalized form of a parsed URL, or null when it names no repository. */
