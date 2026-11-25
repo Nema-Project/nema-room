@@ -2,7 +2,7 @@
 
 日期：2026-11-25。Issue：[Nema-Project/nema-room#302](https://github.com/Nema-Project/nema-room/issues/302)（首次运行无 coding agent 时的配置引导）。产品判断标准：[Nema-Project/nema-room#45](https://github.com/Nema-Project/nema-room/issues/45)。相关：[#132](https://github.com/Nema-Project/nema-room/issues/132) 轻量化发布的 D-6（Agent CLI 不打包、只检测并引导，见 [2026-11-18 轻量化发布设计 §9](2026-11-18-lightweight-release-design.md)）、[#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub 与多人（见 [2026-11-24 远程 hub 与多人设计](2026-11-24-remote-hub-multiuser-design.md)）。
 
-**状态**：D-1 已定案（2026-11-25，维护者：按推荐——就绪按运行时凭据状态判定）；其余 D 项待维护者拍板。设计所对照的 HEAD 为 `main` `ca0266d`；「现状核实」各条是在这个 SHA 上读代码得到的，没有在桌面实机或 Compose 实环境上复现。本文不改生产代码，实施计划另行成文。
+**状态**：全部定案（2026-11-25，维护者：D-1…D-10 一律按推荐；排期在 #167 之前实施）。设计所对照的 HEAD 为 `main` `ca0266d`；「现状核实」各条是在这个 SHA 上读代码得到的，没有在桌面实机或 Compose 实环境上复现。本文不改生产代码，实施计划另行成文。
 
 ## 如何服务 #45
 
@@ -146,10 +146,10 @@ type ReadinessReply = { current: "codex-direct" | "claude-code"; runtimes: Runti
 ## 待维护者拍板
 
 1. ~~D-1：就绪按运行时判定（CLI 只作为 `claude-code` 的子条件），不按 brief 原文的「两个 CLI × 三态」。~~ **已定案（2026-11-25）：按推荐。**
-2. D-2：落点为空状态卡、可关横幅、设置页深链，外加 Composer 一行提示；不做首启屏。
-3. D-3：不做自动真实 auth 探测，呈现为「已配置」而不是「可用」。
-4. D-6：「永不再扰」标记存浏览器 `localStorage`（零迁移），还是等 #167 真人身份落地后存 hub 用户偏好。
-5. D-7：新增 `agents.readiness` 与 `GET /api/agent-readiness`，不扩展 `agents.detect`。
-6. D-9：本项按单 daemon 实现，契约与文案预留 #167 的 daemon 标识；多 daemon 的就绪聚合随 #167 二期或本项后续再做。
-7. D-10：桌面 PATH 继承问题是否另开 issue；本项只改文案。
-8. 排期：本项排在 v0.3.3（#167）之前、之中还是之后。D-9 的预留让它可以先于 #167 落地。
+2. D-2：落点为空状态卡、可关横幅、设置页深链，外加 Composer 一行提示；不做首启屏。 **已定案（2026-11-25）：按推荐。**
+3. D-3：不做自动真实 auth 探测，呈现为「已配置」而不是「可用」。 **已定案（2026-11-25）：按推荐。**
+4. D-6：「永不再扰」标记存浏览器 `localStorage`（零迁移），还是等 #167 真人身份落地后存 hub 用户偏好。 **已定案（2026-11-25）：按推荐。**
+5. D-7：新增 `agents.readiness` 与 `GET /api/agent-readiness`，不扩展 `agents.detect`。 **已定案（2026-11-25）：按推荐。**
+6. D-9：本项按单 daemon 实现，契约与文案预留 #167 的 daemon 标识；多 daemon 的就绪聚合随 #167 二期或本项后续再做。 **已定案（2026-11-25）：按推荐。**
+7. D-10：桌面 PATH 继承问题是否另开 issue；本项只改文案。 **已定案（2026-11-25）：按推荐。**
+8. 排期：本项排在 v0.3.3（#167）之前、之中还是之后。D-9 的预留让它可以先于 #167 落地。 **已定案（2026-11-25）：按推荐。**
