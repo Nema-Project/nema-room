@@ -28,7 +28,7 @@ The desktop app puts the whole stack in one local program: an on-disk PGlite dat
 
 **Build (Windows x64):** after `npm ci`, run `npm run desktop:make -- --platform win32 --arch x64`. Output goes to `dist/desktop-artifacts/win32-x64/`: `Nema-<version>-win32-x64.exe` (NSIS installer) and `Nema-<version>-win32-x64.zip` (portable app; `Nema.exe` at the top of the archive). A build only targets the current OS and needs a native C compiler (Clang on Windows; see [scripts/desktop/README.md](../scripts/desktop/README.md)).
 
-**First launch and operating-system warnings:** open only a file you built or checked yourself. Windows SmartScreen shows "Windows protected your PC": choose "More info", then "Run anyway". The macOS package is unverified; as usual for an app that is not notarized, it would need "Open Anyway" in System Settings → Privacy & Security.
+**First launch and operating-system warnings:** open only a file you built or checked yourself. Windows SmartScreen shows "Windows protected your PC": choose "More info", then "Run anyway". The macOS package is unverified; as usual for an app that is not notarized, it would need "Open Anyway" in System Settings → Privacy & Security. Alternatively, after copying the app to Applications, remove the download quarantine attribute in Terminal: `xattr -dr com.apple.quarantine /Applications/Nema.app`.
 
 **Where data lives:** `~/.nema/desktop` by default (`db/` database, `data/` knowledge Git repositories, `instance.json` run state). It does not read the Compose database and never uses the old `~/.nema/data`.
 
