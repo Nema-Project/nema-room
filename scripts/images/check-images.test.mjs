@@ -104,6 +104,8 @@ test('ports and the hub URL follow env on the published file and the source buil
   assert.equal(String(moved.services.web.ports[0].published), '3010');
   assert.equal(moved.services.web.ports[0].target, 3000);
   assert.match(String(moved.services.hub.environment.NEMA_WEB_ORIGIN), /127\.0\.0\.1:3010/);
+  const lanOrigin = composeConfig(['docker-compose.yml'], { NEMA_WEB_ORIGIN: 'http://192.168.1.10:3010,http://127.0.0.1:3010' });
+  assert.equal(lanOrigin.services.hub.environment.NEMA_WEB_ORIGIN, 'http://192.168.1.10:3010,http://127.0.0.1:3010');
   const customUrl = composeConfig(['docker-compose.yml'], { NEMA_HUB_PORT: '4410', NEMA_HUB_URL: 'http://127.0.0.1:9999' });
   assert.equal(customUrl.services.web.environment.NEMA_HUB_URL, 'http://127.0.0.1:9999');
 
@@ -139,6 +141,7 @@ test('share publishing stays on a private web bind and the hub switch defaults o
 
   const plain = composeConfig(['docker-compose.yml']);
   assert.notEqual(plain.services.hub.environment.NEMA_SHARES_ENABLED, '0');
+  assert.equal(plain.services.hub.environment.NEMA_WEB_ORIGIN, 'http://localhost:3000,http://127.0.0.1:3000');
   assert.equal(plain.services.web.environment.NEMA_HUB_URL, 'http://127.0.0.1:4400');
   assert.equal(plain.services.web.environment.NEMA_HUB_INTERNAL_URL, 'http://hub:4400');
   assert.equal(plain.services.web.ports[0].host_ip, '127.0.0.1');
