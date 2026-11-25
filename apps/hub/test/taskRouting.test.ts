@@ -95,8 +95,8 @@ async function register(userId: string, label: string): Promise<{ id: string; cr
 async function bindRepo(workspaceId: string, remoteUrl: string, label: string): Promise<void> {
   await db.query(
     `insert into workspace_repos (id, workspace_id, path, git_common_dir, label, main_branch, has_origin, remote_url)
-     values ($1, $2, '/tmp/not-a-real-repo', '/tmp/not-a-real-repo/.git', $3, 'main', true, $4)`,
-    [`repo_${label}`, workspaceId, label, remoteUrl],
+     values ($1, $2, $3, $4, $5, 'main', true, $6)`,
+    [`repo_${label}`, workspaceId, `/tmp/not-a-real-repo-${label}`, `/tmp/not-a-real-repo-${label}/.git`, label, remoteUrl],
   );
 }
 
@@ -150,6 +150,18 @@ describe("routing eligibility (D-6, acceptance A)", () => {
     // The older bound task is skipped, never claimed, and the unbound one is taken.
     expect((await alice.next("task.assign")).taskId).toBe(free.id);
     expect((await getTask(db, bound.id))?.status).toBe("queued");
+  });
+
+  test("an eligible task past fifty ineligible ones is still reached", async () => {
+    const alice = await connect(aliceCredential, "alice", { heldRepos: [] }, remoteUrl);
+    await alice.next("welcome");
+    // Fifty bound tasks this daemon cannot claim (it holds nothing) sit ahead of one free task.
+    // The old first-50 cutoff re-selected the same prefix on every dispatch and starved the free one.
+    const blocked = [];
+    for (let i = 0; i < 50; i++) blocked.push(await queue(wsAlice, "usr_alice", `bound ${i}`));
+    const free = await queue(wsUnbound, "usr_alice", "free work");
+    expect((await alice.next("task.assign")).taskId).toBe(free.id);
+    for (const b of blocked) expect((await getTask(db, b.id))?.status).toBe("queued");
   });
 
   test("a holdings refresh unblocks a bound task, across remote URL forms", async () => {
@@ -225,6 +237,18 @@ describe("waitingReason", () => {
       missingRepos: ["Widget"],
     });
     expect(await reasonFor(task!.id, [{ ownerUserId: "usr_alice", heldRepos: new Set([WIDGET_NORMALIZED]) }])).toBeNull();
+  });
+
+  test("repos split across member daemons still wait, naming the closest holder's gap", async () => {
+    await bindRepo(wsAlice, "https://github.com/acme/api", "API");
+    const { task } = await postUserMessage(db, wsAlice, "w", { authorUserId: "usr_alice" });
+    // One daemon holds Widget, the other holds API; neither holds both, so the claim predicate
+    // refuses both — the reason must say so instead of vanishing.
+    const online: OnlineDaemon[] = [
+      { ownerUserId: "usr_alice", heldRepos: new Set([WIDGET_NORMALIZED]) },
+      { ownerUserId: "usr_alice", heldRepos: new Set(["github.com/acme/api"]) },
+    ];
+    expect(await reasonFor(task!.id, online)).toEqual({ kind: "repo-not-held", missingRepos: ["API"] });
   });
 
   test("member online, unbound workspace: no reason", async () => {

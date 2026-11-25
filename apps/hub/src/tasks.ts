@@ -79,15 +79,27 @@ export async function computeWaitingReason(db: Db, task: Task, online: OnlineDae
     `select label, remote_url from workspace_repos where workspace_id = $1`,
     [task.workspaceId],
   );
-  const missing: string[] = [];
+  const required: { label: string; normalized: string }[] = [];
   for (const repo of repos) {
     const normalized = normalizeRemoteUrl(repo.remote_url);
     // A bound repo with no remote has nothing to hold; it cannot block routing.
     if (normalized === null) continue;
-    if (!memberDaemons.some((d) => d.heldRepos.has(normalized))) missing.push(repo.label);
+    required.push({ label: repo.label, normalized });
   }
-  if (missing.length === 0) return null;
-  return { kind: "repo-not-held", missingRepos: missing };
+  // Coverage is per daemon, like the claim predicate: one daemon must hold every bound repo. Repos
+  // split across daemons still leave the task unclaimable, so report what the best-placed member
+  // daemon is still missing instead of reporting nothing.
+  let bestMissing: string[] = [];
+  let first = true;
+  for (const d of memberDaemons) {
+    const missing = required.filter((r) => !d.heldRepos.has(r.normalized)).map((r) => r.label);
+    if (missing.length === 0) return null;
+    if (first || missing.length < bestMissing.length) {
+      bestMissing = missing;
+      first = false;
+    }
+  }
+  return { kind: "repo-not-held", missingRepos: bestMissing };
 }
 
 type Row = {
@@ -155,9 +167,14 @@ export async function getDaemonOwner(db: Db, daemonId: string): Promise<string |
  * ② every bound repo's normalized remote is in the daemon's held set (no bound repos, or a repo with no
  * remote, makes this vacuous), and ③ the workspace has nothing running (the existing invariant, kept in
  * both the candidate query and the update). Eligibility is decided before the update, inside the same
- * transaction, so a claim never has to be discovered unqualified afterwards.
+ * transaction, so a claim never has to be discovered unqualified afterwards. Candidates are paged past by
+ * seq: an eligible task behind a long ineligible prefix must still be reached, or it would starve while
+ * every dispatch re-selected the same first batch. Each batch is capped and the scan is bounded, so one
+ * dispatch stays cheap; dispatch runs again on the next trigger.
  */
 export async function claimNextTask(db: Db, daemonId: string, opts: { heldRepos?: Iterable<string> } = {}): Promise<Task | null> {
+  const BATCH = 50;
+  const MAX_CANDIDATES = 500;
   return db.tx(async (t) => {
     const owner = await getDaemonOwner(t, daemonId);
     if (owner === undefined) return null;
@@ -166,40 +183,49 @@ export async function claimNextTask(db: Db, daemonId: string, opts: { heldRepos?
       const normalized = normalizeRemoteUrl(raw);
       if (normalized !== null) held.add(normalized);
     }
-    const cand = await t.query<{ id: string; workspace_id: string }>(
-      `select t.id, t.workspace_id from tasks t
-       join workspaces w on w.id = t.workspace_id
-       where t.status = 'queued'
-         and w.archived_at is null
-         and not exists (select 1 from tasks r where r.workspace_id = t.workspace_id and r.status = 'running')
-       order by t.seq
-       limit 50
-       for update of t, w skip locked`,
-    );
-    for (const c of cand) {
-      if (owner !== null) {
-        const [member] = await t.query<{ ok: number }>(
-          `select 1 as ok from workspace_members where workspace_id = $1 and user_id = $2 and removed_at is null`,
-          [c.workspace_id, owner],
+    let afterSeq = 0;
+    let examined = 0;
+    while (examined < MAX_CANDIDATES) {
+      const cand = await t.query<{ id: string; workspace_id: string; seq: number }>(
+        `select t.id, t.workspace_id, t.seq from tasks t
+         join workspaces w on w.id = t.workspace_id
+         where t.status = 'queued'
+           and w.archived_at is null
+           and t.seq > $1
+           and not exists (select 1 from tasks r where r.workspace_id = t.workspace_id and r.status = 'running')
+         order by t.seq
+         limit ${BATCH}
+         for update of t, w skip locked`,
+        [afterSeq],
+      );
+      if (cand.length === 0) return null;
+      examined += cand.length;
+      for (const c of cand) {
+        if (owner !== null) {
+          const [member] = await t.query<{ ok: number }>(
+            `select 1 as ok from workspace_members where workspace_id = $1 and user_id = $2 and removed_at is null`,
+            [c.workspace_id, owner],
+          );
+          if (!member) continue;
+        }
+        const repos = await t.query<{ remote_url: string | null }>(
+          `select remote_url from workspace_repos where workspace_id = $1`,
+          [c.workspace_id],
         );
-        if (!member) continue;
+        const required = repos
+          .map((r) => normalizeRemoteUrl(r.remote_url))
+          .filter((r): r is string => r !== null);
+        if (!required.every((r) => held.has(r))) continue;
+        const rows = await t.query<Row>(
+          `update tasks set status = 'running', run_token = $2, daemon_id = $3, started_at = now(), error = null
+           where id = $1 and status = 'queued'
+             and not exists (select 1 from tasks r where r.workspace_id = tasks.workspace_id and r.status = 'running')
+           returning ${COLS}`,
+          [c.id, randomBytes(32).toString("hex"), daemonId],
+        );
+        if (rows[0]) return toTask(rows[0]);
       }
-      const repos = await t.query<{ remote_url: string | null }>(
-        `select remote_url from workspace_repos where workspace_id = $1`,
-        [c.workspace_id],
-      );
-      const required = repos
-        .map((r) => normalizeRemoteUrl(r.remote_url))
-        .filter((r): r is string => r !== null);
-      if (!required.every((r) => held.has(r))) continue;
-      const rows = await t.query<Row>(
-        `update tasks set status = 'running', run_token = $2, daemon_id = $3, started_at = now(), error = null
-         where id = $1 and status = 'queued'
-           and not exists (select 1 from tasks r where r.workspace_id = tasks.workspace_id and r.status = 'running')
-         returning ${COLS}`,
-        [c.id, randomBytes(32).toString("hex"), daemonId],
-      );
-      if (rows[0]) return toTask(rows[0]);
+      afterSeq = cand[cand.length - 1]!.seq;
     }
     return null;
   });
