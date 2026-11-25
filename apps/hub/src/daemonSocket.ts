@@ -20,7 +20,7 @@ import { buildPrompt, namedAnswerId, type WorkPackagePromptInput } from "./promp
 import { onRepoMoved } from "./diagrams.js";
 import { workPackageIdOf, workPackageRules } from "./workpackages.js";
 import { applyRepoFetched, applyRepoMoved, listRepos, syncBoundRepos, trustedSkillRepos } from "./repos.js";
-import { claimNextTask, computeWaitingReason, finishTask, getDaemonOwner, getTask, interruptRunning, listTaskChanges, requeueDaemonTasks, toUiTask, type OnlineDaemon, type Task, type WaitingReason } from "./tasks.js";
+import { claimNextTask, computeWaitingReason, finishTask, getDaemonOwner, getTask, interruptRunning, listQueuedTasks, listTaskChanges, requeueDaemonTasks, toUiTask, type OnlineDaemon, type Task, type WaitingReason } from "./tasks.js";
 import { getWorkspace, listWorkspaces, repoPath } from "./workspaces.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { MIN_DAEMON_VERSION, compareVersions, versionSkewMessage } from "./hubVersion.js";
@@ -151,6 +151,25 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   const emitTask = async (taskId: string) => {
     const t = await getTask(db, taskId);
     if (t) events.emit(t.workspaceId, { type: "task.updated", task: toUiTask(t, await waitingReasonFor(t)) });
+  };
+  /**
+   * Republish the waiting reason for every still-queued task in the workspaces this connection may
+   * serve. A holdings refresh can change why a task waits (or leave it waiting for a different repo)
+   * without claiming it, and without this the UI keeps showing the reason computed before the refresh.
+   */
+  const emitQueuedWaitingReasons = async (conn: Conn): Promise<void> => {
+    // Membership mirrors the claim predicate (D-6): a registered daemon serves only its owner's
+    // workspaces; a local daemon (owner null) serves every workspace.
+    const workspaceIds =
+      conn.ownerUserId === null
+        ? (await listWorkspaces(db)).map((w) => w.id)
+        : (await db.query<{ workspace_id: string }>(
+            `select workspace_id from workspace_members where user_id = $1 and removed_at is null`,
+            [conn.ownerUserId],
+          )).map((r) => r.workspace_id);
+    for (const workspaceId of workspaceIds) {
+      for (const task of await listQueuedTasks(db, workspaceId)) await emitTask(task.id);
+    }
   };
 
   async function taskReplyRouting(taskId: string): Promise<TaskReplyRouting | null> {
@@ -578,6 +597,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         // held may unblock a queued task, so offer work again.
         conn.heldRepos = normalizeHeld(m.heldRepos);
         await dispatch();
+        await emitQueuedWaitingReasons(conn);
       } else if (m.type === "task.event") {
         if (conn.assigned?.taskId !== m.taskId) return;
         events.emit(conn.assigned.workspaceId, { type: "task.progress", taskId: m.taskId, text: m.event.text });

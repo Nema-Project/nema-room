@@ -300,4 +300,25 @@ describe("waitingReason", () => {
       await new Promise<void>((r) => localServer.close(() => r()));
     }
   });
+
+  test("a holdings refresh republishes the waiting reason of a task it leaves queued", async () => {
+    // Two bound repos; the daemon will hold only one, so the task stays queued but waits for less.
+    await bindRepo(wsAlice, "https://github.com/acme/api", "API");
+    const alice = await connect(aliceCredential, "alice", { heldRepos: [] }, remoteUrl);
+    await alice.next("welcome");
+    const task = await queue(wsAlice, "usr_alice", "bound work");
+    await expectNoAssign(alice);
+    const updates: any[] = [];
+    events.subscribe(wsAlice, (e) => {
+      if (e.type === "task.updated" && e.task.id === task.id) updates.push(e.task);
+    });
+    alice.send({ type: "holdings", heldRepos: [WIDGET_HTTPS] });
+    await vi.waitFor(() => expect(updates.length).toBeGreaterThan(0));
+    expect((await getTask(db, task.id))?.status).toBe("queued");
+    expect(updates.at(-1)).toMatchObject({
+      status: "queued",
+      waitingReason: { kind: "repo-not-held", missingRepos: ["API"] },
+    });
+    await expectNoAssign(alice);
+  });
 });
