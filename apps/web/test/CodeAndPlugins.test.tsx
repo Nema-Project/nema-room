@@ -6,7 +6,8 @@ import { I18nProvider } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
 import type { PluginCatalogItem, WorkspacePlugin } from "@/lib/types";
 
-vi.mock("@/lib/hub", () => ({
+vi.mock("@/lib/hub", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/hub")>()),
   listPlugins: vi.fn(),
   listWorkspacePlugins: vi.fn(),
   updateWorkspacePlugin: vi.fn(),
@@ -82,6 +83,34 @@ function mount() {
 }
 
 describe("CodeAndPlugins", () => {
+  it("localizes Graphify status using the catalog facts", async () => {
+    vi.mocked(hub.listWorkspacePlugins).mockResolvedValue([codePlugin]);
+    vi.mocked(hub.listPlugins).mockResolvedValue([{
+      ...catalog[0]!,
+      installed: false,
+      detail: "Graphify 组件未安装",
+      graphifyError: { code: "graphify-unavailable", state: "not-installed", status: { state: "not-installed" } },
+    }]);
+    mount();
+
+    expect(await screen.findByText("Graphify is not installed. Repository indexing and code search need it.")).toBeTruthy();
+  });
+
+  it("localizes an interrupted Graphify catalog check from the HTTP response", async () => {
+    vi.mocked(hub.listWorkspacePlugins).mockResolvedValue([codePlugin]);
+    const realHub = await vi.importActual<typeof hub>("@/lib/hub");
+    vi.mocked(hub.listPlugins).mockImplementation(realHub.listPlugins);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      error: "graphify 已中断", graphifyError: { code: "graphify-interrupted" },
+    }, { status: 502 })));
+    try {
+      mount();
+      expect(await screen.findByText("Graphify was interrupted.")).toBeTruthy();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("toggling a function sends PATCH with disabledFunctions", async () => {
     vi.mocked(hub.listPlugins).mockResolvedValue(catalog);
     vi.mocked(hub.listWorkspacePlugins).mockResolvedValue([codePlugin, githubPlugin]);

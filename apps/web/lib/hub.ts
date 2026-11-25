@@ -1,4 +1,4 @@
-import { AttachmentCapabilitiesSchema, type AttachmentCapabilities, type AttachmentView, type ExtensionRecord, type MessageMention, type SkillDiscovery, type SkillInstallJob, type SkillSourcePreview, type SkillUsage } from "@nema/shared";
+import { AttachmentCapabilitiesSchema, GraphifyErrorSchema, type GraphifyError, type AttachmentCapabilities, type AttachmentView, type ExtensionRecord, type MessageMention, type SkillDiscovery, type SkillInstallJob, type SkillSourcePreview, type SkillUsage } from "@nema/shared";
 import type { McpConfig, McpConnection } from "@nema/shared";
 import type {
   AgentCliStatus,
@@ -50,6 +50,7 @@ export class HubError extends Error {
   constructor(
     public status: number,
     message: string,
+    readonly graphifyError?: GraphifyError,
   ) {
     super(message);
   }
@@ -81,13 +82,15 @@ async function request<T>(path: string, init?: { method?: string; body?: unknown
   if (!res.ok) {
     if (init?.loginRedirect !== false) redirectOnSessionLoss(res.status);
     let message = `hub request failed (${res.status})`;
+    let graphifyError: GraphifyError | undefined;
     try {
-      const j = (await res.json()) as { error?: string };
+      const j = (await res.json()) as { error?: string; graphifyError?: unknown };
       if (j.error) message = j.error;
+      graphifyError = GraphifyErrorSchema.safeParse(j.graphifyError).data;
     } catch {
       /* non-JSON error body */
     }
-    throw new HubError(res.status, message);
+    throw new HubError(res.status, message, graphifyError);
   }
   return (await res.json()) as T;
 }

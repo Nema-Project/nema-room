@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { render, screen, act } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
+import type { ComponentFailureReason, GraphifyError, GraphifyUnavailableStatus } from "@nema/shared";
+import { graphifyErrorText } from "@/lib/graphifyText";
 import { I18nProvider, detectLocale, useLocale, useT } from "@/lib/i18n";
 
 function Probe() {
@@ -279,5 +281,57 @@ describe("message files", () => {
       expect(ja[key]).toBe(value.ja);
       expect(zh[key]).toBe(value.zh);
     }
+  });
+});
+
+
+describe("Graphify errors", () => {
+  const localeCases = ["en", "zh", "ja"] as const;
+  const reasonKeys: Record<ComponentFailureReason, string> = {
+    network: "components.reason.network",
+    proxy: "components.reason.proxy",
+    "hash-mismatch": "components.reason.hashMismatch",
+    "self-check": "components.reason.selfCheck",
+    "disk-space": "components.reason.diskSpace",
+    offline: "components.state.offline",
+    "unsupported-platform": "components.state.unsupported",
+    "lock-unreadable": "components.state.lockUnreadable",
+    "offer-changed": "components.reason.offerChanged",
+  };
+  const detail = "ENOENT /tmp/component";
+  const unavailable = (status: GraphifyUnavailableStatus): GraphifyError =>
+    ({ code: "graphify-unavailable", state: status.state, status });
+
+  function ErrorList({ errors }: { errors: GraphifyError[] }) {
+    const t = useT();
+    return <ul>{errors.map((error, i) => <li key={i}>{graphifyErrorText(error, t)}</li>)}</ul>;
+  }
+
+  it.each(localeCases)("renders every unavailable state and reason plus interruptions in %s", async (locale) => {
+    localStorage.setItem("nema.locale", locale);
+    const copy = JSON.parse(readFileSync(resolve(import.meta.dirname, `../messages/${locale}.json`), "utf8")) as Record<string, string>;
+    const mixedCases: [GraphifyError, string][] = [
+      [unavailable({ state: "not-installed" }), copy["components.state.notInstalled"]!],
+      [unavailable({ state: "lock-mismatch", installedLockHash: "old" }), copy["components.state.lockMismatch"]!],
+      [
+        unavailable({ state: "installing", progress: { downloadedBytes: 1048576, totalBytes: 2097152 } }),
+        copy["components.state.installing"]!.replace("{done}", "1.0 MiB").replace("{total}", "2.0 MiB"),
+      ],
+      [{ code: "graphify-interrupted" }, copy["components.state.interrupted"]!],
+    ];
+    for (const [reason, key] of Object.entries(reasonKeys) as [ComponentFailureReason, string][]) {
+      const error = unavailable({ state: "failed", reason, detail, installedLockHash: "old" });
+      const text = key.startsWith("components.state.")
+        ? copy[key]!.replace("{detail}", detail)
+        : `${copy["components.state.failed"]!.replace("{reason}", copy[key]!)} ${copy["components.state.failedDisabled"]} ${detail}`;
+      mixedCases.push([error, text]);
+    }
+    mixedCases.push([
+      unavailable({ state: "failed", reason: "proxy", detail: "" }),
+      copy["components.state.failed"]!.replace("{reason}", copy["components.reason.proxy"]!),
+    ]);
+    render(<I18nProvider><ErrorList errors={mixedCases.map(([error]) => error)} /></I18nProvider>);
+    await screen.findByText(mixedCases[0]![1]);
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(mixedCases.map(([, expected]) => expected));
   });
 });

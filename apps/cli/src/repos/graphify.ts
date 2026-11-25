@@ -8,6 +8,7 @@ import path from "node:path";
 import { commandSpec, windowsRuntimeEnv } from "../platform.js";
 import { componentBin, componentStatusSync, type ComponentEnv } from "../components/store.js";
 import type { ComponentStatus, FailureReason } from "../components/types.js";
+import { GraphifyUnavailableStatusSchema, type GraphifyError, type GraphifyUnavailableStatus } from "@nema/shared";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { runHelperFile } from "@nema/shared/ownedHelper";
 
@@ -17,7 +18,7 @@ const MAX_BUFFER = 256 * 1024 * 1024;
 export const INSTALL_COMMAND = "nema components install graphify";
 
 /** What a caller can tell apart: usable, never installed, installed for another lock (disabled), or a failed last attempt. */
-export type GraphifyState = "installed" | "not-installed" | "lock-mismatch" | "failed" | "installing";
+export type GraphifyState = "installed" | GraphifyUnavailableStatus["state"];
 
 const REASON_TEXT: Record<FailureReason, string> = {
   network: "网络错误",
@@ -49,12 +50,27 @@ export function unavailableMessage(status: ComponentStatus | null): string {
   return `Graphify 组件未安装（上次安装失败：${REASON_TEXT[status.reason]}，${status.detail}）。${disabled}重试：${INSTALL_COMMAND}`;
 }
 
-/** Graphify cannot run here. `state` and `status` say why; the message is the one shown to people and agents. */
+/** Graphify cannot run here. `state` and `status` say why; the message is the fallback for CLI and agent callers. */
 export class GraphifyUnavailableError extends Error {
   readonly code = "graphify-unavailable";
   constructor(readonly state: Exclude<GraphifyState, "installed">, readonly status: ComponentStatus | null, message = unavailableMessage(status)) {
     super(message);
     this.name = "GraphifyUnavailableError";
+  }
+
+  get graphifyError(): GraphifyError {
+    // An explicit launcher may disappear without a component status.
+    const status = GraphifyUnavailableStatusSchema.safeParse(this.status).data ?? { state: "not-installed" };
+    return { code: this.code, state: this.state, status };
+  }
+}
+
+class GraphifyInterruptedError extends Error {
+  readonly graphifyError = { code: "graphify-interrupted" } as const;
+
+  constructor() {
+    super("graphify 已中断");
+    this.name = "GraphifyInterruptedError";
   }
 }
 
@@ -87,9 +103,8 @@ export type GraphifyOpts = {
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 /**
- * Full `extract` of a repository. The one-minute cap kills a monorepo mid-build and reports
- * the same "graphify 已中断" as a cancel. Stays under the hub's 5-minute index RPC so fetch
- * and the snapshot export still fit.
+ * Full `extract` has a three-minute cap and reports an interruption if it times out. The hub's
+ * five-minute index RPC also has to cover the fetch and snapshot export.
  * ponytail: a larger repo needs this and INDEX_RPC_TIMEOUT_MS raised together.
  */
 export const EXTRACT_TIMEOUT_MS = 180_000;
@@ -222,7 +237,7 @@ function runGraphify(snapshotRoot: string, args: string[], cwd: string, opts?: G
       if (result.error) {
         const code = exitCode(result.error as ExecException);
         if (code === "missing") throw missingBinary();
-        if (code === "killed") throw new Error("graphify 已中断");
+        if (code === "killed") throw new GraphifyInterruptedError();
         return { code, stdout: result.stdout, stderr: result.stderr };
       }
       return { code: 0, stdout: result.stdout, stderr: result.stderr };
@@ -243,7 +258,7 @@ function runGraphify(snapshotRoot: string, args: string[], cwd: string, opts?: G
         const out = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout ?? "");
         const errOut = Buffer.isBuffer(stderr) ? stderr : Buffer.from(stderr ?? "");
         if (timedOut) {
-          reject(new Error("graphify 已中断"));
+          reject(new GraphifyInterruptedError());
           return;
         }
         if (!error) {
@@ -256,7 +271,7 @@ function runGraphify(snapshotRoot: string, args: string[], cwd: string, opts?: G
           return;
         }
         if (code === "killed") {
-          reject(new Error("graphify 已中断"));
+          reject(new GraphifyInterruptedError());
           return;
         }
         resolve({ code, stdout: out, stderr: errOut });
@@ -311,6 +326,7 @@ export type GraphifyInstallStatus = {
   state: GraphifyState;
   /** Why the last attempt failed, when `state` is `failed`. */
   reason?: FailureReason;
+  graphifyError?: GraphifyError;
   /** Which resolution step supplied the binary; `explicit` for a caller-given `bin`. */
   source?: "explicit" | "env" | "component" | "payload";
 };
@@ -326,7 +342,8 @@ export async function graphifyInstallStatus(opts?: GraphifyOpts): Promise<Graphi
     const resolved = resolveGraphify(process.env, opts ?? {});
     if (!resolved.found) {
       const reason = resolved.status?.state === "failed" ? resolved.status.reason : undefined;
-      return { installed: false, detail: unavailableMessage(resolved.status), state: resolved.state, ...(reason ? { reason } : {}) };
+      const error = new GraphifyUnavailableError(resolved.state, resolved.status);
+      return { installed: false, detail: error.message, state: error.state, graphifyError: error.graphifyError, ...(reason ? { reason } : {}) };
     }
     source = resolved.source;
     call = { ...opts, bin: resolved.bin };
@@ -337,7 +354,7 @@ export async function graphifyInstallStatus(opts?: GraphifyOpts): Promise<Graphi
     const detail = finish(await runGraphify(dir, ["--version"], dir, call)).trim();
     return { installed: true, detail, state: "installed", source };
   } catch (e) {
-    if (e instanceof GraphifyUnavailableError) return { installed: false, detail: e.message, state: e.state };
+    if (e instanceof GraphifyUnavailableError) return { installed: false, detail: e.message, state: e.state, graphifyError: e.graphifyError };
     throw e;
   } finally {
     await rm(dir, { recursive: true, force: true });

@@ -31,6 +31,24 @@ const mount = (m: Message) =>
   );
 
 describe("MessageItem", () => {
+  it("renders a stored Graphify index failure in the UI language", async () => {
+    localStorage.setItem("nema.locale", "ja");
+    try {
+      render(
+        <I18nProvider>
+          <MessageItem message={msg({
+            role: "system",
+            content: "仓库 API 的代码索引没有完成",
+            meta: { repoIndexFailure: { label: "API", error: { code: "graphify-interrupted" } } },
+          })} />
+        </I18nProvider>,
+      );
+      expect(await screen.findByText("API のインデックスを作成できませんでした。Graphify の処理が中断されました。")).toBeTruthy();
+    } finally {
+      localStorage.removeItem("nema.locale");
+    }
+  });
+
   it("a work package change shows a card with id, status and task count", async () => {
     vi.mocked(hub.getEntry).mockResolvedValue({
       id: "W-2", kind: "workpackage", title: "Pkg", status: "draft", businessDate: null, related: [], sourceMessages: [], body: "",

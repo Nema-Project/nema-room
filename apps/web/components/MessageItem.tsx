@@ -6,6 +6,7 @@ import { AttachmentList } from "@/components/AttachmentList";
 import { Markdown } from "@/components/Markdown";
 import { SkillOfferCard } from "@/components/SkillOfferCard";
 import { editMessage, getEntry, HubError, listEntries, listMessageVersions, withdrawEntry } from "@/lib/hub";
+import { graphifyErrorText } from "@/lib/graphifyText";
 import { formatTime } from "@/lib/format";
 import { useLocale, useT } from "@/lib/i18n";
 import { syncMentions } from "@/lib/mentions";
@@ -51,10 +52,15 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
 
   if (message.role === "system") {
     const meta = message.meta as AgentMessageMeta | null;
+    const indexFailure = message.meta && "repoIndexFailure" in message.meta
+      ? message.meta.repoIndexFailure
+      : undefined;
     return (
       <div className="sysmsg" id={`msg-${message.id}`}>
         <button type="button" className="quiet" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
-        {message.content}
+        {indexFailure
+          ? t("chat.graphifyIndexFailed", { label: indexFailure.label, reason: graphifyErrorText(indexFailure.error, t) })
+          : message.content}
         {meta?.askedQuestion && <AskedQuestion workspaceId={message.workspaceId} asked={meta.askedQuestion} added={[]} />}
       </div>
     );

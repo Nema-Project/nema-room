@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DEFAULT_GRILL_SETTINGS, GRILL_EXTRA_RULES_MAX, PLUGINS, bundledExtensions, isCheckTime, parseMcpConfig, pluginFunction, secretRefs, type ExtensionRecord, type McpConfig, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
+import { DEFAULT_GRILL_SETTINGS, GraphifyErrorSchema, GRILL_EXTRA_RULES_MAX, PLUGINS, bundledExtensions, isCheckTime, parseMcpConfig, pluginFunction, secretRefs, type ExtensionRecord, type GraphifyError, type McpConfig, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import { githubTargets } from "./githubScope.js";
@@ -224,7 +224,7 @@ export async function setPluginState(
   return { plugin, enabled, disabledFunctions, settings: stored };
 }
 
-type InstallStatus = { installed: boolean; detail: string; loggedIn?: boolean };
+type InstallStatus = { installed: boolean; detail: string; loggedIn?: boolean; graphifyError?: GraphifyError };
 
 export function pluginsForUi(status: unknown): Array<PluginManifest & InstallStatus> {
   const installed = new Map<string, InstallStatus>();
@@ -234,7 +234,12 @@ export function pluginsForUi(status: unknown): Array<PluginManifest & InstallSta
       const row = raw as Record<string, unknown>;
       if (typeof row.installed === "boolean" && typeof row.detail === "string") {
         // Only plugins that need a token (GitHub) report a login state.
-        installed.set(id, { installed: row.installed, detail: row.detail, ...(typeof row.loggedIn === "boolean" ? { loggedIn: row.loggedIn } : {}) });
+        const graphifyError = id === "code" ? GraphifyErrorSchema.safeParse(row.graphifyError).data : undefined;
+        installed.set(id, {
+          installed: row.installed, detail: row.detail,
+          ...(typeof row.loggedIn === "boolean" ? { loggedIn: row.loggedIn } : {}),
+          ...(graphifyError ? { graphifyError } : {}),
+        });
       }
     }
   }

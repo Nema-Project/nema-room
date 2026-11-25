@@ -1,4 +1,4 @@
-import type { DaemonToHub, HubToDaemon } from "@nema/shared";
+import { GraphifyErrorSchema, type DaemonToHub, type HubToDaemon } from "@nema/shared";
 
 export type RpcHandler = (params: unknown) => Promise<unknown>;
 
@@ -18,7 +18,14 @@ export class RpcRouter {
     try {
       return { type: "rpc.response", id: req.id, ok: true, result: await handler(req.params) };
     } catch (e) {
-      return { type: "rpc.response", id: req.id, ok: false, error: e instanceof Error ? e.message : String(e) };
+      const graphifyError = e instanceof Error && "graphifyError" in e
+        ? GraphifyErrorSchema.safeParse(e.graphifyError).data
+        : undefined;
+      return {
+        type: "rpc.response", id: req.id, ok: false,
+        error: e instanceof Error ? e.message : String(e),
+        ...(graphifyError ? { graphifyError } : {}),
+      };
     }
   }
 }

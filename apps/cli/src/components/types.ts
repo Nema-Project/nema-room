@@ -1,3 +1,5 @@
+import type { ComponentFailureReason as FailureReason } from "@nema/shared";
+
 // Optional components that Nema downloads on demand. Graphify is the only one.
 
 export type ComponentName = "graphify";
@@ -5,16 +7,7 @@ export type ComponentName = "graphify";
 export const COMPONENT_NAMES: readonly ComponentName[] = ["graphify"];
 
 /** Why the last install attempt, or this platform, leaves the component unusable. */
-export type FailureReason =
-  | "network"
-  | "proxy"
-  | "hash-mismatch"
-  | "self-check"
-  | "unsupported-platform"
-  | "offline"
-  | "disk-space"
-  | "lock-unreadable"
-  | "offer-changed";
+export type { FailureReason };
 
 export type InstallPhase = "download" | "verify" | "extract" | "self-check" | "activate";
 

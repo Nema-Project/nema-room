@@ -2,6 +2,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, expect, test, vi } from "vitest";
 import WebSocket from "ws";
+import type { GraphifyError } from "@nema/shared";
 import type { DaemonRpc, DaemonTarget } from "../src/daemonRpc.js";
 import { DaemonRpcError } from "../src/daemonRpc.js";
 import { attachDaemonSocket } from "../src/daemonSocket.js";
@@ -570,6 +571,30 @@ test("binding a repo queues one architecture task after its index succeeds", asy
   expect(list[4]!.content).toBe(indexReadyText("Web"));
   expect(list[5]!.content).toContain(`为仓库 Web（${again.id}）`);
   expect(list[5]!.queued).toBe(1);
+});
+
+test("a failed Graphify index publishes and stores the structured failure for chat", async () => {
+  const { db, dataDir } = await makeHubDeps();
+  const ws = await createWorkspace(db, dataDir, "Alpha");
+  const events = new EventBus();
+  const seen: HubEvent[] = [];
+  events.subscribe(ws.id, (event) => seen.push(event));
+  const error: GraphifyError = { code: "graphify-interrupted" };
+  const { daemon } = daemonOf({
+    "repo.inspect": () => inspected,
+    "repo.index": () => { throw new DaemonRpcError("graphify 已中断", error); },
+  });
+
+  const repo = await bindRepo(db, daemon, ws.id, { path: "/a", label: "API" }, events);
+  const indexMessage = {
+    role: "system",
+    content: indexFailedText("API"),
+    meta: { repoIndexFailure: { label: "API", error } },
+  };
+  await until(async () => seen.some((event) => event.type === "message.created"));
+  expect(seen).toContainEqual({ type: "repo.index", repoId: repo.id, label: "API", status: "failed" });
+  expect(seen).toContainEqual({ type: "message.created", message: expect.objectContaining(indexMessage) });
+  expect(await listMessages(db, ws.id)).toEqual([expect.objectContaining(indexMessage)]);
 });
 
 test("a failed or empty index queues no architecture task", async () => {

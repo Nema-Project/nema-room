@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { Hono } from "hono";
 import WebSocket from "ws";
-import { PLUGINS, bundledExtensions } from "@nema/shared";
+import { PLUGINS, bundledExtensions, type GraphifyError } from "@nema/shared";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import { expectNonAdminRefused, hostAdminHubs } from "./hostAdminFixture.js";
 import type { Db } from "../src/db/db.js";
@@ -158,6 +158,29 @@ describe("workspace plugins", () => {
       { enabled: true, disabledFunctions: [] },
       { enabled: false, disabledFunctions: [] },
     ]);
+  });
+
+  test("Graphify facts reach both the web catalog and the code tool response", async () => {
+    const graphifyError: GraphifyError = {
+      code: "graphify-unavailable",
+      state: "failed",
+      status: { state: "failed", reason: "proxy", detail: "Proxy refused", installedLockHash: "old" },
+    };
+    daemonCall = async (method) => {
+      if (method === "extensions.list") return bundledExtensions();
+      if (method === "plugins.status") return { code: { installed: false, detail: "fallback", graphifyError } };
+      throw new DaemonRpcError("fallback", graphifyError);
+    };
+    const catalog = await uiReq("GET", "/api/plugins");
+    expect(catalog.status).toBe(200);
+    expect(await catalog.json()).toContainEqual(expect.objectContaining({ id: "code", installed: false, graphifyError }));
+
+    const repo = await insertRepo(wsA, "api");
+    const task = await runningTask();
+    const call = await roomReq("POST", "/room/plugins/code__search", task.runToken, { repo: repo.id, query: "q" });
+    expect(call.status).toBe(502);
+    expect(await call.json()).toEqual({ error: "fallback", graphifyError });
+    expect(await db.query("select ok from plugin_calls")).toEqual([{ ok: false }]);
   });
 
   test("code functions are not offered when the workspace has no repo", async () => {

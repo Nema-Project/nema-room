@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { GraphifyEntry } from "@/components/ComponentsSettings";
-import { listPlugins, listWorkspacePlugins, updateWorkspacePlugin } from "@/lib/hub";
+import { graphifyErrorText } from "@/lib/graphifyText";
+import { HubError, listPlugins, listWorkspacePlugins, updateWorkspacePlugin } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
 import type { PluginCatalogItem, WorkspacePlugin } from "@/lib/types";
 
@@ -10,6 +11,7 @@ const EXTRA_RULES_MAX = 2000;
 
 function installText(pluginId: string, catalog: PluginCatalogItem[], t: ReturnType<typeof useT>): string {
   const row = catalog.find((item) => item.id === pluginId);
+  if (row?.graphifyError) return graphifyErrorText(row.graphifyError, t);
   const status = t(row?.installed ? "plugins.installed" : "plugins.notInstalled");
   return row?.detail ? `${status} ${row.detail}` : status;
 }
@@ -18,7 +20,7 @@ export function CodeAndPlugins({ workspaceId, graphOfferSignal }: { workspaceId:
   const t = useT();
   const [plugins, setPlugins] = useState<WorkspacePlugin[] | null>(null);
   const [catalog, setCatalog] = useState<PluginCatalogItem[] | null>(null);
-  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogError, setCatalogError] = useState<{ message: string; graphifyError?: HubError["graphifyError"] } | null>(null);
   const [pluginError, setPluginError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -40,7 +42,7 @@ export function CodeAndPlugins({ workspaceId, graphOfferSignal }: { workspaceId:
         if (!cancel) setCatalog(rows);
       })
       .catch((err: unknown) => {
-        if (!cancel) setCatalogError(message(err));
+        if (!cancel) setCatalogError({ message: message(err), graphifyError: err instanceof HubError ? err.graphifyError : undefined });
       });
     return () => {
       cancel = true;
@@ -82,7 +84,7 @@ export function CodeAndPlugins({ workspaceId, graphOfferSignal }: { workspaceId:
             </div>
             {row.plugin.dataFlow === "external" && <p className="help">{t("plugins.externalNote")}</p>}
             {catalogError ? (
-              <p className="error">{catalogError}</p>
+              <p className="error">{catalogError.graphifyError ? graphifyErrorText(catalogError.graphifyError, t) : catalogError.message}</p>
             ) : row.plugin.id === "github" ? null : catalog ? (
               <p className="kmeta">{installText(row.plugin.id, catalog, t)}</p>
             ) : (

@@ -1,4 +1,4 @@
-import type { AgentMessageMeta, AttachmentView, Implementation, KnowledgeLanguage, ReportMessageMeta, ReportPassState, Thread, UserMessageMeta, WpTask } from "@nema/shared";
+import type { AgentMessageMeta, AttachmentView, ComponentFailureReason, GraphifyError, Implementation, KnowledgeLanguage, ReportMessageMeta, ReportPassState, RepoIndexFailureMeta, Thread, UserMessageMeta, WpTask } from "@nema/shared";
 
 export type { AgentMessageMeta, Entry, EntrySummary, Implementation, KnowledgeLanguage, MessageMention, MessageQuote, ReportCheck, ReportMessageMeta, RouteDecision, Thread, ThreadOpenedBy, UpsertEntryInput, UserMessageMeta, WorkPackageMeta, WpTask } from "@nema/shared";
 
@@ -32,8 +32,7 @@ export type Message = {
   /** Who wrote a user message (#163). Null for older messages and every non-user role; absent from older hubs. */
   authorUserId?: string | null;
   content: string;
-  /** User messages may carry UserMessageMeta; agent messages carry AgentMessageMeta; report messages carry ReportMessageMeta. */
-  meta: AgentMessageMeta | ReportMessageMeta | UserMessageMeta | null;
+  meta: AgentMessageMeta | ReportMessageMeta | UserMessageMeta | RepoIndexFailureMeta | null;
   taskId: string | null;
   createdAt: string;
   editedAt: string | null;
@@ -114,6 +113,7 @@ export type PluginCatalogItem = {
   functions: PluginFunctionView[];
   installed: boolean;
   detail: string;
+  graphifyError?: GraphifyError;
   /** Only for plugins that need a login (GitHub): whether its token is saved. */
   loggedIn?: boolean;
 };
@@ -121,16 +121,7 @@ export type PluginCatalogItem = {
 /** Mirrors the daemon's component status (apps/cli/src/components/types.ts and rpc.ts). */
 export type ComponentName = "graphify";
 
-export type ComponentFailureReason =
-  | "network"
-  | "proxy"
-  | "hash-mismatch"
-  | "self-check"
-  | "unsupported-platform"
-  | "offline"
-  | "disk-space"
-  | "lock-unreadable"
-  | "offer-changed";
+export type { ComponentFailureReason } from "@nema/shared";
 
 export type ComponentProgress = {
   phase: "download" | "verify" | "extract" | "self-check" | "activate";

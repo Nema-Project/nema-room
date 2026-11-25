@@ -1,4 +1,4 @@
-import { isBranchName } from "@nema/shared";
+import { isBranchName, type GraphifyError } from "@nema/shared";
 import { nanoid } from "nanoid";
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
@@ -280,10 +280,14 @@ export function indexFailedText(label: string): string {
 }
 
 /** Posts the outcome and returns whether the repo is still bound. */
-async function announceIndex(db: Db, events: EventBus | undefined, repo: Repo, status: "done" | "failed"): Promise<boolean> {
+async function announceIndex(db: Db, events: EventBus | undefined, repo: Repo, status: "done" | "failed", error?: GraphifyError): Promise<boolean> {
   noteIndex(events, repo, status);
   if (!(await getRepo(db, repo.id))) return false;
-  const message = await addMessage(db, repo.workspaceId, "system", status === "done" ? indexReadyText(repo.label) : indexFailedText(repo.label));
+  const message = await addMessage(
+    db, repo.workspaceId, "system",
+    status === "done" ? indexReadyText(repo.label) : indexFailedText(repo.label),
+    error ? { meta: { repoIndexFailure: { label: repo.label, error } } } : undefined,
+  );
   events?.emit(repo.workspaceId, { type: "message.created", message });
   return true;
 }
@@ -353,7 +357,8 @@ export async function bindRepo(
     })
     .catch((error) => {
       console.error(`repo.index failed for ${repo.id}`, error);
-      void announceIndex(db, events, repo, "failed").catch((announceError) => {
+      const graphifyError = error instanceof DaemonRpcError ? error.graphifyError : undefined;
+      void announceIndex(db, events, repo, "failed", graphifyError).catch((announceError) => {
         console.error(`announcing the failed index for ${repo.id}`, announceError);
       });
     });
