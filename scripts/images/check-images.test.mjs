@@ -13,13 +13,26 @@ const template = readFileSync(new URL('../../docker-compose.yml', import.meta.ur
 const desktopVersion = JSON.parse(readFileSync(new URL('../../apps/desktop/package.json', import.meta.url), 'utf8')).version;
 const asset = renderComposeAsset(template, desktopVersion);
 
+// An empty env file so `docker compose` does not read the developer's repo
+// `.env` (which the docs tell them to extend with a LAN NEMA_WEB_ORIGIN):
+// the default-origin assertions below must measure the Compose defaults,
+// not a developer's remote setup.
+const emptyEnvDir = mkdtempSync(path.join(tmpdir(), 'nema-compose-empty-env-'));
+const emptyEnvFile = path.join(emptyEnvDir, '.env');
+writeFileSync(emptyEnvFile, '');
+
 function composeConfig(files, env = {}) {
   const base = { ...process.env };
   if (!Object.hasOwn(env, 'NEMA_HUB_URL')) delete base.NEMA_HUB_URL;
   if (!Object.hasOwn(env, 'NEMA_IMAGE_TAG')) delete base.NEMA_IMAGE_TAG;
   if (!Object.hasOwn(env, 'NEMA_SHARES_ENABLED')) delete base.NEMA_SHARES_ENABLED;
   if (!Object.hasOwn(env, 'NEMA_WEB_BIND')) delete base.NEMA_WEB_BIND;
-  const run = spawnSync('docker', ['compose', ...files.flatMap((file) => ['-f', file]), 'config', '--format', 'json'], {
+  // The default NEMA_WEB_ORIGIN is derived from NEMA_WEB_PORT, so both must
+  // be cleared from the inherited shell env or the default-origin assertions
+  // measure the developer's configuration instead of the Compose defaults.
+  if (!Object.hasOwn(env, 'NEMA_WEB_ORIGIN')) delete base.NEMA_WEB_ORIGIN;
+  if (!Object.hasOwn(env, 'NEMA_WEB_PORT')) delete base.NEMA_WEB_PORT;
+  const run = spawnSync('docker', ['compose', '--env-file', emptyEnvFile, ...files.flatMap((file) => ['-f', file]), 'config', '--format', 'json'], {
     cwd: root,
     env: { ...base, ...env },
     encoding: 'utf8',
