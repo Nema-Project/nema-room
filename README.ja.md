@@ -104,15 +104,15 @@ node scripts/setup.mjs --lang ja
 | `NEMA_HUB_REMOTE=1` | リモート形態を有効にします。スタンドアロン hub 専用です。 |
 | `NEMA_HUB_ALLOWED_HOSTS` | hub が応答する Host。ホスト名または `host:port` をカンマ区切りで指定します（例: `hub.example.lan`）。ループバック（`127.0.0.1` / `localhost`）は常に許可され、それ以外は 403 になります。リモート形態がオンのときのみ有効です。 |
 | `NEMA_HUB_HOST` | hub のバインドアドレス。たとえばコンテナ内の `0.0.0.0`。Compose ファイルはすでに `0.0.0.0` にバインドしています。スタンドアロン hub の既定値は `127.0.0.1` のままです。 |
-| `NEMA_WEB_ORIGIN` | 認証情報付きで hub を呼び出せる web オリジン。カンマ区切り。ブラウザが実際に使う web ページのオリジン（web の LAN オリジン `http://192.168.1.10:3000` など）を必ず含めてください。 |
+| `NEMA_WEB_ORIGIN` | 認証情報付きで hub を呼び出せる web オリジン。カンマ区切り。ブラウザが実際に使う web ページのオリジン（hub と同じ TLS 終端リバースプロキシで提供する場合の web ページのオリジン `https://nema.example.lan` など）を必ず含めてください。 |
 | `NEMA_HUB_PUBLIC_URL` | リモート daemon が到達しなければならない hub の公開オリジン（例: `https://hub.example.lan`）。hub の前に TLS 終端リバースプロキシがある場合に設定します。設定しない場合、daemon は自分の接続時のアドレスを使います。プロキシ越しでは `http://` になります。 |
 | `NEMA_HUB_URL` | （web コンテナ）ブラウザが hub に到達するための URL。リモート形態では hub の LAN アドレスに設定します。 |
 
-Compose は既定で hub と web のポートを `127.0.0.1` にのみ公開します。LAN に提供するには、ポートを LAN インターフェースに公開します。hub は `ports:` を変更し、web は `NEMA_WEB_BIND` を LAN アドレスまたは `0.0.0.0` に設定するか、リバースプロキシ経由で提供します。`NEMA_WEB_ORIGIN` は `.env` で web ページのオリジンに、`NEMA_HUB_URL` はブラウザが hub に到達するためのアドレスに設定してください。hub のポートだけを公開しても、他のマシンからはログインページを開けません。
+Compose は既定で hub と web のポートを `127.0.0.1` にのみ公開します。LAN に提供するには、ポートを LAN インターフェースに公開します。hub は `ports:` を変更し、web は `NEMA_WEB_BIND` を LAN アドレスに設定するか、リバースプロキシ経由で提供します。`NEMA_WEB_ORIGIN` は `.env` で web ページのオリジンに、`NEMA_HUB_URL` はブラウザが hub に到達するためのアドレスに設定してください。hub のポートだけを公開しても、他のマシンからはログインページを開けません。
 
 構築手順：リモート用の変数を設定して hub を起動します。hub が `<dataDir>/bootstrap-token` に書き込むワンタイムのブートストラップトークン（権限 `0600`、パスは hub のログに出力。Compose では `docker compose logs hub` で確認するか、`${NEMA_DATA_HOST_DIR:-~/.nema/data}/bootstrap-token` を読みます）を使い、`POST /api/auth/bootstrap` で最初のアカウントを作成します。web のログインページにサインインし、次の人を招待します（`POST /api/auth/invites`、相手は `POST /api/auth/invites/accept` で受け入れます）。相手をワークスペースに追加します（`POST /api/workspaces/:id/members`）。各自が**アプリ設定 → デーモン**で登録コードを生成し、自分の daemon を登録します（`nema daemon register --hub <hub の URL>`、続けて `nema daemon --hub <hub の URL>`）。ワークスペースを読めるのはメンバーのみです。ホストレベルのルートは hub 管理者のみが使え、それ以外のサインイン済みアカウントは 403 になります。
 
-リモート形態ではセッション cookie は常に `Secure` 付きです。そのためブラウザは `https` で hub に到達しなければなりません。自分で用意したリバースプロキシを使ってください。信頼できる VPN はネットワーク接続を保護するだけで、HTTPS の代わりにはなりません。VPN 経由でも LAN ホスト名に平文の `http://` でアクセスした場合、ブラウザから見えるのは HTTP のままで、cookie は送り返されないため、サインインは維持できません。`http://localhost` はブラウザがセキュアコンテキストとして扱うため、ループバック開発では引き続き使えます。詳しくは[リモート hub](docs/guide.ja.md#remote-hub-multi-user)を参照してください。
+リモート形態ではセッション cookie は常に `Secure` 付きです。そのためブラウザは `https` で hub に到達しなければなりません。自分で用意したリバースプロキシを使ってください。リモート形態では web のログインページも HTTPS で提供しなければなりません。同じリバースプロキシで提供できます。LAN 上で平文 HTTP によって配信されるログインページは改ざんされてパスワードを盗まれるおそれがあり、hub の HTTPS ではそのページは保護されないためです。信頼できる VPN はネットワーク接続を保護するだけで、HTTPS の代わりにはなりません。VPN 経由でも LAN ホスト名に平文の `http://` でアクセスした場合、ブラウザから見えるのは HTTP のままで、cookie は送り返されないため、サインインは維持できません。`http://localhost` はブラウザがセキュアコンテキストとして扱うため、ループバック開発では引き続き使えます。詳しくは[リモート hub](docs/guide.ja.md#remote-hub-multi-user)を参照してください。
 
 ## 議論から実装まで
 
