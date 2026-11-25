@@ -23,6 +23,12 @@ test("trailing slashes, .git suffix and case of the path are handled", () => {
   expect(normalizeRemoteUrl("https://EXAMPLE.COM/Team/Repo")).toBe("example.com/team/repo");
 });
 
+test("already-normalized host/path values pass through unchanged (idempotent)", () => {
+  expect(normalizeRemoteUrl("github.com/acme/widget")).toBe("github.com/acme/widget");
+  expect(normalizeRemoteUrl("example.com:2222/team/repo")).toBe("example.com:2222/team/repo");
+  expect(normalizeRemoteUrl("GITHUB.COM/Acme/Widget")).toBe("github.com/acme/widget");
+});
+
 test("not a remote URL gives null", () => {
   expect(normalizeRemoteUrl(null)).toBeNull();
   expect(normalizeRemoteUrl(undefined)).toBeNull();

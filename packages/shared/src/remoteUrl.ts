@@ -30,16 +30,31 @@ export function normalizeRemoteUrl(remoteUrl: string | null | undefined): string
     if (!path) return null;
     return `${host}/${path}`.toLowerCase();
   }
-  let parsed: URL;
+  let parsed: URL | null = null;
   try {
     parsed = new URL(url);
   } catch {
+    parsed = null;
+  }
+  if (parsed) {
+    const fromScheme = fromParsed(parsed);
+    if (fromScheme !== null) return fromScheme;
+  }
+  // No usable scheme: it may already be a normalized `host/path` value (what a daemon reports), so try it
+  // as one. Normalization must be idempotent on its own output. A `://` means a real scheme was present
+  // and already refused above, so it is not retried bare.
+  if (!url.includes("/") || url.includes("://") || url.startsWith("/")) return null;
+  try {
+    return fromParsed(new URL(`https://${url}`));
+  } catch {
     return null;
   }
+}
+
+/** The normalized form of a parsed URL, or null when it names no repository. */
+function fromParsed(parsed: URL): string | null {
   if (!["https:", "http:", "ssh:", "git:"].includes(parsed.protocol)) return null;
-  if (parsed.username || parsed.password) {
-    // Userinfo is stripped, not rejected: `https://token@host/path` names the same repo as `https://host/path`.
-  }
+  if (parsed.hostname === "") return null;
   let pathname: string;
   try {
     pathname = decodeURIComponent(parsed.pathname);
