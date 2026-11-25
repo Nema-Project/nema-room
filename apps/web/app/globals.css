@@ -222,7 +222,16 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .editbox .actions .primary { background: var(--ink); color: var(--on-ink); }
 .search-hit { margin-top: 6px; cursor: pointer; }
 .search-hit mark { background: var(--paper-2); color: var(--ink); font-weight: 700; }
-.sysmsg { padding: 6px 0 6px 48px; font-size: 12px; color: var(--ink-3); }
+.sysmsg { margin: 6px 0 6px 48px; padding: 6px 10px; border-left: 2px solid var(--rule); background: var(--paper-2); font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+.sysmsg.failed { border-color: var(--accent); background: var(--ask-bg); }
+.sysmsg-header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 2px; color: var(--ink); }
+.sysmsg-header button { color: var(--ink-2); }
+.sysmsg-content { white-space: pre-wrap; }
+.sysmsg-repo.chip { flex-wrap: wrap; margin: 2px 0 4px; background: var(--paper); }
+.sysmsg-command { background: var(--code-chip); padding: 2px 4px; }
+.sysmsg-command code { font-family: var(--mono); color: var(--ink); }
+.sysmsg-command button { margin-left: 4px; padding: 0 4px; text-decoration: underline; text-underline-offset: 2px; }
+.sysmsg-command [role="status"]:not(:empty) { margin-left: 4px; }
 .md { overflow-wrap: anywhere; }
 .md p + p, .md ul + p, .md p + ul, .md pre { margin-top: 6px; }
 .md ul, .md ol { margin-left: 18px; }

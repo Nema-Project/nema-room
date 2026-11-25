@@ -51,23 +51,7 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
   const time = formatTime(new Date(message.createdAt), locale);
 
   if (message.role === "system") {
-    const meta = message.meta as AgentMessageMeta | null;
-    const indexFailure = message.meta && typeof message.meta === "object" && "repoIndexFailure" in message.meta
-      ? message.meta.repoIndexFailure
-      : undefined;
-    // Stored meta is data, not a contract: a shape this client cannot read (an older or
-    // newer hub wrote it) falls back to the stored text instead of breaking the render.
-    const parsedError = indexFailure ? GraphifyErrorSchema.safeParse(indexFailure.error) : undefined;
-    const indexError = parsedError?.success ? parsedError.data : undefined;
-    return (
-      <div className="sysmsg" id={`msg-${message.id}`}>
-        <button type="button" className="quiet" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
-        {indexFailure && indexError && typeof indexFailure.label === "string"
-          ? t("chat.graphifyIndexFailed", { label: indexFailure.label, reason: graphifyErrorText(indexError, t) })
-          : message.content}
-        {meta?.askedQuestion && <AskedQuestion workspaceId={message.workspaceId} asked={meta.askedQuestion} added={[]} />}
-      </div>
-    );
+    return <SystemMessage message={message} onQuote={onQuote} />;
   }
 
   if (message.role === "user") {
@@ -114,6 +98,73 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
         )}
       </div>
     </div>
+  );
+}
+
+// The hub stores the architecture request's repository only in this legacy text format.
+const architectureRequest = /^为仓库 (.+)（(repo_[\w-]+)）(画架构图：[\s\S]*)$/;
+const indexFailure = /^仓库 .+ 的代码索引没有完成，暂时还不能询问代码库。$/;
+// Match complete recovery commands emitted by the hub/CLI. Other diagnostic text stays selectable prose.
+const recoveryCommand = /(?<![\w./-])(nema auth (?:login|byok|claude)|codex login|claude setup-token|npm run build -w apps\/cli|nema daemon)(?![\w/-]|\.[\w-]|[ \t]+-)/g;
+
+function SystemMessage({ message, onQuote }: Pick<Props, "message" | "onQuote">) {
+  const t = useT();
+  const { content } = message;
+  const meta = message.meta as AgentMessageMeta | null;
+  const architecture = architectureRequest.exec(content);
+  // Stored meta is data, not a contract: a shape this client cannot read (an older or
+  // newer hub wrote it) falls back to the stored text instead of breaking the render.
+  const storedIndexFailure = message.meta && typeof message.meta === "object" && "repoIndexFailure" in message.meta
+    ? message.meta.repoIndexFailure
+    : undefined;
+  const parsedError = storedIndexFailure ? GraphifyErrorSchema.safeParse(storedIndexFailure.error) : undefined;
+  const indexError = parsedError?.success ? parsedError.data : undefined;
+  const graphifyFailureText = storedIndexFailure && indexError && typeof storedIndexFailure.label === "string"
+    ? t("chat.graphifyIndexFailed", { label: storedIndexFailure.label, reason: graphifyErrorText(indexError, t) })
+    : undefined;
+  const taskFailed = content.startsWith("处理失败：");
+  const failed = taskFailed || indexFailure.test(content);
+  const label = failed ? t("chat.system.failure") : architecture ? t("chat.system.instruction") : messageRoleLabel(t, message.role);
+  return (
+    <div className={failed ? "sysmsg failed" : "sysmsg"} id={`msg-${message.id}`}>
+      <div className="sysmsg-header">
+        <strong className="label">{label}</strong>
+        <button type="button" className="quiet" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
+      </div>
+      {architecture && (
+        <div className="sysmsg-repo chip" role="group" aria-label={t("diagram.repo")}>
+          <span>{architecture[1]}</span>
+          <b>{architecture[2]}</b>
+        </div>
+      )}
+      <div className="sysmsg-content">
+        {graphifyFailureText ?? (taskFailed
+          ? content.split(recoveryCommand).map((part, index) =>
+            index % 2 === 0 ? part : <CopyableCommand key={index} command={part} />)
+          : (architecture?.[3] ?? content))}
+      </div>
+      {meta?.askedQuestion && <AskedQuestion workspaceId={message.workspaceId} asked={meta.askedQuestion} added={[]} />}
+    </div>
+  );
+}
+
+function CopyableCommand({ command }: { command: string }) {
+  const t = useT();
+  const [feedback, setFeedback] = useState<"copied" | "copyFailed" | null>(null);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(command);
+      setFeedback("copied");
+    } catch {
+      setFeedback("copyFailed");
+    }
+  }
+  return (
+    <span className="sysmsg-command">
+      <code>{command}</code>
+      <button type="button" onClick={copy} aria-label={t("chat.system.copyCommand", { command })}>{t("share.copy")}</button>
+      <span role="status">{feedback && t(`chat.system.${feedback}`)}</span>
+    </span>
   );
 }
 
