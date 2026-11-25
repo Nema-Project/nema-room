@@ -93,6 +93,27 @@ On a host whose only egress is a proxy, `nema config set proxyEnv forward` lets 
 
 **Without cloning.** Each release from `v0.1.6` attaches a `docker-compose.yml` whose hub and web images are pinned to that release. Releases produced by the multi-architecture workflow support `linux/amd64` and `linux/arm64`; Docker selects the host architecture automatically. Older release tags are unchanged and may lack arm64. Install the host daemon at the same version with `npm i -g @nema-project/nema@<version>`: hub, web, and daemon must match, and nothing upgrades on its own. The step-by-step script, upgrades, and ports are in the [installation guide](docs/guide.en.md#source-installation) and [Web / Compose requirements](docs/guide.en.md#requirements).
 
+### Remote hub (multi-user)
+
+The remote hub is an opt-in form for a small team on a trusted network. One standalone hub serves the team, backed by PostgreSQL and the web UI; each person runs their own daemon on their own machine, and model credentials and repository checkouts stay on that person's machine. Nothing changes for single-user installs: without `NEMA_HUB_REMOTE=1` the hub behaves exactly as before, and the desktop never enables this form.
+
+> **Trusted network only.** The remote form is supported on a LAN or your own VPN only. The hub does not terminate TLS and manages no certificates. Never expose the hub directly to the public internet.
+
+| Variable | Meaning |
+| --- | --- |
+| `NEMA_HUB_REMOTE=1` | Enables the remote form. Standalone hub only. |
+| `NEMA_HUB_ALLOWED_HOSTS` | Comma-separated hostnames or `host:port` values the hub answers to, for example `hub.example.lan`. Loopback (`127.0.0.1` / `localhost`) is always allowed; anything else is refused with 403. Ignored unless the remote form is on. |
+| `NEMA_HUB_HOST` | Address the hub binds, for example `0.0.0.0` inside the container. The Compose file already binds `0.0.0.0`; the default for a standalone hub stays `127.0.0.1`. |
+| `NEMA_WEB_ORIGIN` | Comma-separated web origins allowed to call the hub with credentials. It must include the origin the browser actually uses, for example the hub's LAN address. |
+| `NEMA_HUB_PUBLIC_URL` | Public origin of the hub as remote daemons must reach it, for example `https://hub.example.lan`. Set it when a TLS-terminating reverse proxy sits in front of the hub; without it, daemons use the address from their own connection, which is `http://` behind such a proxy. |
+| `NEMA_HUB_URL` | (Web container) The hub URL the browser uses. In the remote form set it to the hub's LAN address. |
+
+With Compose, the hub port is published on `127.0.0.1` by default. To serve the LAN, publish it on the LAN interface (change the hub `ports:` entry) and set `NEMA_WEB_ORIGIN` and `NEMA_HUB_URL` to the addresses the browser uses.
+
+Setup order: start the hub with the remote variables set; create the first account with the one-time bootstrap token the hub writes to `<dataDir>/bootstrap-token` (mode `0600`, path in the hub log; under Compose, `docker compose logs hub` or `${NEMA_DATA_HOST_DIR:-~/.nema/data}/bootstrap-token`) via `POST /api/auth/bootstrap`; sign in at the web login page; invite the next person (`POST /api/auth/invites`, accepted with `POST /api/auth/invites/accept`); add them to the workspace (`POST /api/workspaces/:id/members`); each person registers their own daemon from **App settings → Daemons** (`nema daemon register --hub <hub URL>`, then `nema daemon --hub <hub URL>`). Only workspace members can read a workspace; host-level routes are hub-administrator-only, and any other signed-in account gets 403.
+
+The session cookie is always `Secure` in the remote form, so the browser must reach the hub over `https` — through the deployer's own reverse proxy or an encrypted overlay such as a trusted VPN. Over plain `http://` on a LAN hostname the browser never sends the cookie back, so sign-in cannot stick. `http://localhost` still works for loopback development, because browsers treat localhost as a secure context. Full detail: [remote hub](docs/guide.en.md#remote-hub-multi-user).
+
 ## From discussion to delivery
 
 Delivery is a loop: commit reports come back into the discussion.
@@ -124,7 +145,7 @@ In a bound code repository, a coding agent retrieves the package with `nema wp l
 - **Extensions are yours to switch.** Enable, disable, install, or remove extensions, skills, and MCP servers on the Plugins page. The Installed section counts rows that cannot be used. A skill says when a runtime is missing something, or when its name does not match its folder. MCP tools are not offered to the agent in this release.
 - **GitHub is opt-in.** The plugin uses your signed-in local `gh` and is limited to bound repositories. Writes need a separate workspace opt-in.
 - **The code graph downloads on demand.** Graphify, which indexes repositories for code search, is not bundled. The first graph action, such as binding a repository, shows its size and asks before downloading it from its upstream sources into `~/.nema/runtime/graphify/`; every file is checked against the lock shipped with Nema, and nothing downloads at startup. Declining or a failed download disables only the graph features. If an installed copy stops running, reinstall it from **Workspace settings → Code & plugins**, or with `nema components install graphify --force`. After upgrading Nema Room, a previously installed copy is disabled when its lock no longer matches the one shipped; reinstall it once from that page to resume graph features — graphs already generated in your workspaces are unaffected. **App settings → Components** has mirrors and an offline switch. Air-gapped machines can import a pack made elsewhere with `nema components pack` and `nema components import`. npm and Compose host daemons use the same flow. See [code graph component](docs/guide.en.md#components).
-- **Built for local use.** You can create and revoke read-only share links for one workspace knowledge base; link tokens are stored hashed, never in plain text. There is still no public multi-user authentication. Multi-device sync, managed backups, and team accounts are not available yet.
+- **Built for local use.** You can create and revoke read-only share links for one workspace knowledge base; link tokens are stored hashed, never in plain text. There is still no public multi-user authentication; the opt-in remote hub below adds accounts for a trusted network only. Multi-device sync, managed backups, and team accounts are not available yet.
 - **Messages record their author.** A single user sees no change, and older messages are not backfilled. A display name set in App settings → General reaches the model only when a workspace has two or more members, and share pages never show people.
 
 More: [storage, backups, and limitations](docs/guide.en.md#data) · [plugins, skills, and MCP](docs/guide.en.md#models) · [attachments](docs/guide.en.md#attachments). A copy of this source repository is not an application-data backup.

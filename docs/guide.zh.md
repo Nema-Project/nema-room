@@ -83,6 +83,38 @@ Compose：`curl http://127.0.0.1:4400/api/version` 返回 `{"version":"..."}`。
 
 本项目面向本机使用，没有面向公网的多用户认证。hub 和 web 默认只开放回环地址，不要直接暴露到公网。
 
+## 远程 hub（多人）
+
+远程 hub 是面向受信网络中小团队的可选形态。一个独立 hub 服务整个团队，后端为 PostgreSQL 与 web 界面；每个人在自己的机器上运行自己的 daemon，模型凭证与仓库检出保留在各人本机上。单用户安装不受影响：不设 `NEMA_HUB_REMOTE=1` 时 hub 行为与以前完全一致，桌面版永远不开启此形态。
+
+> **仅限受信网络。** 远程形态只支持局域网或自备 VPN 组网。hub 自身不做 TLS 终止，也不管理证书。永远不要把 hub 直接暴露到公网。
+
+### 配置
+
+| 变量 | 含义 |
+| --- | --- |
+| `NEMA_HUB_REMOTE=1` | 开启远程形态。仅独立 hub 可用。 |
+| `NEMA_HUB_ALLOWED_HOSTS` | hub 接受的 Host，逗号分隔的主机名或 `host:port`，例如 `hub.example.lan`。回环（`127.0.0.1` / `localhost`）恒允许，其余一律 403。仅远程开启时生效。 |
+| `NEMA_HUB_HOST` | hub 绑定地址，例如容器内的 `0.0.0.0`。Compose 文件已绑定 `0.0.0.0`；独立 hub 的默认值仍为 `127.0.0.1`。 |
+| `NEMA_WEB_ORIGIN` | 允许携带凭据调用 hub 的 web 来源，逗号分隔。必须包含浏览器实际使用的来源，例如 hub 的局域网地址。 |
+| `NEMA_HUB_PUBLIC_URL` | 远程 daemon 必须能访问到的 hub 公网来源，例如 `https://hub.example.lan`。hub 前有 TLS 终止反代时设置它；不设时 daemon 使用自己连接时的地址，反代后会是 `http://`。 |
+| `NEMA_HUB_URL` | （web 容器）浏览器访问 hub 的地址。远程形态下设为 hub 的局域网地址。 |
+
+Compose 默认只把 hub 端口发布在 `127.0.0.1` 上。要服务局域网，需把端口发布到局域网接口（改 hub 的 `ports:` 项），并把 `NEMA_WEB_ORIGIN` 与 `NEMA_HUB_URL` 设为浏览器使用的地址。
+
+### 搭建顺序
+
+1. 设好远程变量后启动 hub（`docker compose up -d`）。
+2. 创建第一个账号。首次启动且尚无账号时，hub 把一次性引导令牌写入 `<dataDir>/bootstrap-token`（权限 `0600`），并在日志中打印路径。Compose 下用 `docker compose logs hub` 查看路径，或直接读数据目录下的文件（`${NEMA_DATA_HOST_DIR:-~/.nema/data}/bootstrap-token`）。用 `POST /api/auth/bootstrap`（`token`、`displayName`、`password`）建号。
+3. 以该首个（管理员）账号在 web 登录页登录。
+4. 邀请下一个人：管理员调用 `POST /api/auth/invites` 得到一次性邀请码；对方用 `POST /api/auth/invites/accept`（`code`、`displayName`、`password`）接受邀请，然后登录。
+5. 把对方加入工作区：`POST /api/workspaces/:id/members`，带上对方的用户 id。只有成员能读工作区；主机级路由（组件、扩展与 MCP、插件、目录选择、daemon 状态）仅限 hub 管理员，其他已登录账号访问得 403。
+6. 每个人注册自己的 daemon。在**应用设置 → Daemon 管理**中生成注册码，然后在本机运行 `nema daemon register --hub <hub 地址>` 并粘贴注册码，再运行 `nema daemon --hub <hub 地址>`。daemon 常驻在各人本机上；模型凭证不会离开本机。
+
+### 会话
+
+远程形态下会话 cookie 恒带 `Secure`，因此浏览器必须通过 `https` 访问 hub——部署者自备反代，或走受信 VPN 等加密通道。在局域网主机名上用明文 `http://` 访问时，浏览器不会把 cookie 发回，登录无法保持。`http://localhost` 仍可用于回环开发，因为浏览器把 localhost 视为安全上下文。
+
 <a id="source-installation"></a>
 
 ## 快速开始
@@ -392,7 +424,7 @@ MCP 服务器在「发现与安装」里用「添加 MCP 服务器…」添加�
 - 将 `NEMA_WEB_BIND` 设为局域网地址前，必须在 Docker 守护进程中配置 `"userland-proxy": false`：启用 userland proxy 时，看到的来源会变成桥接地址，可能骗过对端检查。Rootless Docker 所用的 RootlessKit 在 v3.0 之前即使设置 `"userland-proxy": false` 也不会保留客户端来源地址；使用这些版本时，须先将 RootlessKit 升级到 v3.0 或更高版本，或改用 rootful Docker，再设置局域网 `NEMA_WEB_BIND`。
 - 将 Web 服务绑定到局域网地址后，如需在该地址下管理分享，须把该来源（例如 `http://192.168.1.10:3000`）加入 hub 环境变量 `NEMA_WEB_ORIGIN`；hub 默认只接受回环地址的 Web 来源，从局域网地址打开的设置页无法调用 hub。请在局域网地址下创建链接，链接才会带局域网主机名；在回环地址下创建的链接会保留回环主机名。局域网分享流量是明文 HTTP，未加密。
 - 附件随用到它的任务发给模型服务商。删除只删掉文件，无法撤回模型已经收到的内容；引用一条消息时，它的附件随引用一起发送。备份时把 `attachments/` 和数据库一起备份：只有记录没有文件的附件会显示为丢失。
-- 消息现在会记录是哪个用户写的，每个工作区也会保留带审计记录的成员名单。单用户看不到任何变化：只有一个本地用户，消息仍显示「你」，`@` 菜单没有成员组。本版本之前写的消息不会补填作者。仍然没有多用户登录。可以在「应用设置 → 通用」里设置显示名；只有工作区有两个及以上成员时，它才会发给模型，分享页永远不显示人。
+- 消息现在会记录是哪个用户写的，每个工作区也会保留带审计记录的成员名单。单用户看不到任何变化：只有一个本地用户，消息仍显示「你」，`@` 菜单没有成员组。本版本之前写的消息不会补填作者。多用户登录只在可选的远程 hub 形态下可用（见上文）；默认单用户形态下仍然没有登录。可以在「应用设置 → 通用」里设置显示名；只有工作区有两个及以上成员时，它才会发给模型，分享页永远不显示人。
 - 普通任务上限：24 次模型调用、60 次工具调用、10 分钟；开发包：48 次、120 次、20 分钟。中断最多重试 3 次。
 - 启动时可恢复部分未提交知识文件，但 Git 与数据库索引尚无完整的自动一致性修复机制。
 - SIWC 刷新失败可能需要重新登录；当前实现检查 ID token 声明，但不做 JWKS 签名校验。

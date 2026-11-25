@@ -93,6 +93,27 @@ node scripts/setup.mjs --lang zh
 
 **不克隆安装。** 从 `v0.1.6` 起，每个 Release 都附带一份 `docker-compose.yml`，hub 与 web 镜像钉在该版本上。多架构工作流发布的版本支持 `linux/amd64` 和 `linux/arm64`，Docker 会自动选择宿主机架构。旧版本 tag 不变，可能不含 arm64。宿主机 daemon 用 `npm i -g @nema-project/nema@<版本>` 安装同一版本：hub、web 和 daemon 必须一致，且不会自动升级。分步脚本、升级方法和端口说明见[安装指南](docs/guide.zh.md#source-installation)与 [Web / Compose 环境要求](docs/guide.zh.md#requirements)。
 
+### 远程 hub（多人）
+
+远程 hub 是面向受信网络中小团队的可选形态。一个独立 hub 服务整个团队，后端为 PostgreSQL 与 web 界面；每个人在自己的机器上运行自己的 daemon，模型凭证与仓库检出保留在各人本机上。单用户安装不受影响：不设 `NEMA_HUB_REMOTE=1` 时 hub 行为与以前完全一致，桌面版永远不开启此形态。
+
+> **仅限受信网络。** 远程形态只支持局域网或自备 VPN 组网。hub 自身不做 TLS 终止，也不管理证书。永远不要把 hub 直接暴露到公网。
+
+| 变量 | 含义 |
+| --- | --- |
+| `NEMA_HUB_REMOTE=1` | 开启远程形态。仅独立 hub 可用。 |
+| `NEMA_HUB_ALLOWED_HOSTS` | hub 接受的 Host，逗号分隔的主机名或 `host:port`，例如 `hub.example.lan`。回环（`127.0.0.1` / `localhost`）恒允许，其余一律 403。仅远程开启时生效。 |
+| `NEMA_HUB_HOST` | hub 绑定地址，例如容器内的 `0.0.0.0`。Compose 文件已绑定 `0.0.0.0`；独立 hub 的默认值仍为 `127.0.0.1`。 |
+| `NEMA_WEB_ORIGIN` | 允许携带凭据调用 hub 的 web 来源，逗号分隔。必须包含浏览器实际使用的来源，例如 hub 的局域网地址。 |
+| `NEMA_HUB_PUBLIC_URL` | 远程 daemon 必须能访问到的 hub 公网来源，例如 `https://hub.example.lan`。hub 前有 TLS 终止反代时设置它；不设时 daemon 使用自己连接时的地址，反代后会是 `http://`。 |
+| `NEMA_HUB_URL` | （web 容器）浏览器访问 hub 的地址。远程形态下设为 hub 的局域网地址。 |
+
+Compose 默认只把 hub 端口发布在 `127.0.0.1` 上。要服务局域网，需把端口发布到局域网接口（改 hub 的 `ports:` 项），并把 `NEMA_WEB_ORIGIN` 与 `NEMA_HUB_URL` 设为浏览器使用的地址。
+
+搭建顺序：设好远程变量后启动 hub；用 hub 写入 `<dataDir>/bootstrap-token` 的一次性引导令牌（权限 `0600`，路径见 hub 日志；Compose 下用 `docker compose logs hub` 查看，或读 `${NEMA_DATA_HOST_DIR:-~/.nema/data}/bootstrap-token`）经 `POST /api/auth/bootstrap` 创建第一个账号；在 web 登录页登录；邀请下一个人（`POST /api/auth/invites`，对方用 `POST /api/auth/invites/accept` 接受）；把对方加入工作区（`POST /api/workspaces/:id/members`）；每个人在**应用设置 → Daemon 管理**中生成注册码并注册自己的 daemon（`nema daemon register --hub <hub 地址>`，再 `nema daemon --hub <hub 地址>`）。只有工作区成员能读工作区；主机级路由仅限 hub 管理员，其他已登录账号访问得 403。
+
+远程形态下会话 cookie 恒带 `Secure`，因此浏览器必须通过 `https` 访问 hub——部署者自备反代，或走受信 VPN 等加密通道。在局域网主机名上用明文 `http://` 访问时，浏览器不会把 cookie 发回，登录无法保持。`http://localhost` 仍可用于回环开发，因为浏览器把 localhost 视为安全上下文。完整说明见[远程 hub](docs/guide.zh.md#remote-hub-multi-user)。
+
 ## 从讨论到交付
 
 交付是一条回路：提交上报会回到讨论里。
@@ -124,7 +145,7 @@ node scripts/setup.mjs --lang zh
 - **扩展由你开关。** 在插件页启用、停用、安装或移除扩展、Skill 和 MCP 服务器。已安装区会标出不可用的数量。Skill 会标明某个运行时缺少的能力，以及名称与目录不一致。本版本不会把 MCP 工具交给 Agent。
 - **按需连接 GitHub。** 插件使用本机已登录的 `gh`，仅访问绑定仓库；写入需在工作区单独开启。
 - **代码图谱按需下载。** 为代码搜索建仓库索引的 Graphify 不随包附带。第一次用到图谱时（例如绑定仓库）会先显示大小并征得同意，再从上游来源下载到 `~/.nema/runtime/graphify/`；每个文件都按 Nema 随附的锁校验，启动时不下载任何东西。拒绝或下载失败只会停用图谱功能。已安装的副本如果停跑，可以在**工作区设置 → 代码与插件**中重装修复（或用 `nema components install graphify --force`）。升级 Nema Room 后，之前安装的副本若与随附的锁不匹配会被停用，在该页面重装一次即可恢复图谱功能；工作区里已生成的图谱文件不受影响。**应用设置 → 组件**里有下载镜像和离线开关。断网的机器可以用 `nema components pack` 在别处制包，再用 `nema components import` 导入。npm 和 Compose 的宿主机 daemon 走同一流程。见[代码图谱组件](docs/guide.zh.md#components)。
-- **面向本机使用。** 你可以为一个工作区的知识库创建和吊销只读分享链接；链接令牌只存哈希，不存明文。仍然没有公开的多用户认证。多设备同步、托管备份和团队账号还没有。
+- **面向本机使用。** 你可以为一个工作区的知识库创建和吊销只读分享链接；链接令牌只存哈希，不存明文。仍然没有公开的多用户认证；可选的远程 hub 只为受信网络增加账号，见下文。多设备同步、托管备份和团队账号还没有。
 - **消息记录作者。** 单用户看不到变化，旧消息不补填作者。在「应用设置 → 通用」里设置的显示名，只有工作区有两个及以上成员时才会发给模型；分享页永远不显示人。
 
 更多：[存储、备份与已知限制](docs/guide.zh.md#data) · [插件、Skill 与 MCP](docs/guide.zh.md#models) · [附件](docs/guide.zh.md#attachments)。源码仓库的副本不是应用数据备份。

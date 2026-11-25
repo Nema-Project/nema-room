@@ -83,6 +83,38 @@ Running the Web / Compose stack from this repository still uses the source wizar
 
 This is a local application without public-facing multi-user authentication. The hub and web UI default to loopback access; do not expose them directly to the internet.
 
+## Remote hub (multi-user)
+
+The remote hub is an opt-in form for a small team on a trusted network. One standalone hub serves the team, backed by PostgreSQL and the web UI; each person runs their own daemon on their own machine, and model credentials and repository checkouts stay on that person's machine. Nothing changes for single-user installs: without `NEMA_HUB_REMOTE=1` the hub behaves exactly as before, and the desktop never enables this form.
+
+> **Trusted network only.** The remote form is supported on a LAN or your own VPN only. The hub does not terminate TLS and manages no certificates. Never expose the hub directly to the public internet.
+
+### Configuration
+
+| Variable | Meaning |
+| --- | --- |
+| `NEMA_HUB_REMOTE=1` | Enables the remote form. Standalone hub only. |
+| `NEMA_HUB_ALLOWED_HOSTS` | Comma-separated hostnames or `host:port` values the hub answers to, for example `hub.example.lan`. Loopback (`127.0.0.1` / `localhost`) is always allowed; anything else is refused with 403. Ignored unless the remote form is on. |
+| `NEMA_HUB_HOST` | Address the hub binds, for example `0.0.0.0` inside the container. The Compose file already binds `0.0.0.0`; the default for a standalone hub stays `127.0.0.1`. |
+| `NEMA_WEB_ORIGIN` | Comma-separated web origins allowed to call the hub with credentials. It must include the origin the browser actually uses, for example the hub's LAN address. |
+| `NEMA_HUB_PUBLIC_URL` | Public origin of the hub as remote daemons must reach it, for example `https://hub.example.lan`. Set it when a TLS-terminating reverse proxy sits in front of the hub; without it, daemons use the address from their own connection, which is `http://` behind such a proxy. |
+| `NEMA_HUB_URL` | (Web container) The hub URL the browser uses. In the remote form set it to the hub's LAN address. |
+
+With Compose, the hub port is published on `127.0.0.1` by default. To serve the LAN, publish it on the LAN interface (change the hub `ports:` entry) and set `NEMA_WEB_ORIGIN` and `NEMA_HUB_URL` to the addresses the browser uses.
+
+### Setup order
+
+1. Start the hub with the remote variables set (`docker compose up -d`).
+2. Create the first account. On first start with no account, the hub writes a one-time bootstrap token to `<dataDir>/bootstrap-token` (mode `0600`) and logs its path. Under Compose, find the path with `docker compose logs hub`, or read the file in the data directory (`${NEMA_DATA_HOST_DIR:-~/.nema/data}/bootstrap-token`). Create the account with `POST /api/auth/bootstrap` (`token`, `displayName`, `password`).
+3. Sign in at the web login page as that first (administrator) account.
+4. Invite the next person: as the administrator, `POST /api/auth/invites` returns a one-time code. They accept it with `POST /api/auth/invites/accept` (`code`, `displayName`, `password`) and then sign in.
+5. Add them to the workspace: `POST /api/workspaces/:id/members` with their user id. Only members can read a workspace; host-level routes (components, extensions and MCP, plugins, the folder picker, daemon status) are hub-administrator-only, and any other signed-in account gets 403.
+6. Each person registers their own daemon. In **App settings → Daemons**, generate a registration code, then on their machine run `nema daemon register --hub <hub URL>` and paste the code, followed by `nema daemon --hub <hub URL>`. The daemon keeps running on their machine; model credentials never leave it.
+
+### Sessions
+
+The session cookie is always `Secure` in the remote form, so the browser must reach the hub over `https` — either through the deployer's own reverse proxy or over an encrypted overlay such as a trusted VPN. Over plain `http://` on a LAN hostname the browser never sends the cookie back, so sign-in cannot stick. `http://localhost` still works for loopback development, because browsers treat localhost as a secure context.
+
 <a id="source-installation"></a>
 
 ## Quick start
@@ -393,7 +425,7 @@ Tags are public on share pages. Select a tag link there to filter the server-ren
 - Before setting `NEMA_WEB_BIND` to a LAN address, you must configure the Docker daemon with `"userland-proxy": false`: with the userland proxy enabled, the apparent source becomes the bridge address and can fool the peer checks. Rootless Docker with RootlessKit before v3.0 does not keep the client source address even with `"userland-proxy": false`. On those versions, upgrade RootlessKit to v3.0 or later, or use rootful Docker, before setting a LAN `NEMA_WEB_BIND`.
 - To manage shares while the web service is bound to a LAN address, add that origin (for example `http://192.168.1.10:3000`) to `NEMA_WEB_ORIGIN` in the hub environment; by default the hub accepts only the loopback web origins, so the settings page opened at the LAN address cannot reach it. Create links while browsing at the LAN address so the link carries the LAN host; a link created at the loopback address keeps the loopback host. LAN share traffic is plain HTTP and is not encrypted.
 - Attachments are sent to the model provider with the task that uses them. Deleting one removes its file but cannot take back what a model already received; a quoted message's attachments go along with the quote. Back up `attachments/` together with the database: a row without its file shows as missing.
-- Messages now record which user wrote them, and each workspace keeps a member list with an audit trail. A single user sees no change: there is one local user, messages still show "You", and the `@` menu has no member group. Messages written before this release are not backfilled with an author. There is still no multi-user login. You can set a display name under App settings → General. It is sent to the model only when a workspace has two or more members, and share pages never show people.
+- Messages now record which user wrote them, and each workspace keeps a member list with an audit trail. A single user sees no change: there is one local user, messages still show "You", and the `@` menu has no member group. Messages written before this release are not backfilled with an author. Multi-user login is available only in the opt-in remote hub form (see above); in the default single-user form there is still no login. You can set a display name under App settings → General. It is sent to the model only when a workspace has two or more members, and share pages never show people.
 - Ordinary task limits: 24 model calls, 60 tool calls, 10 minutes. Work packages: 48, 120, 20 minutes. Interrupted tasks retry up to three times.
 - Startup can recover some uncommitted knowledge files, but Git and database indexes do not have complete automatic reconciliation.
 - SIWC refresh failures may require another login. The implementation checks ID token claims but does not verify JWKS signatures.
