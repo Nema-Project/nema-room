@@ -16,6 +16,14 @@ export function parseAllowedHosts(value: string | undefined): string[] {
   return (value ?? "").split(",").map((entry) => entry.trim()).filter(Boolean);
 }
 
+/**
+ * The public hub URL is remote-only: parsing it while the local hub starts would fail
+ * startup on a stray remote-only value. Remote mode still rejects an invalid value.
+ */
+export function resolvePublicHubUrl(remoteAuth: boolean, value: string | undefined): string | undefined {
+  return remoteAuth ? parsePublicHubUrl(value) : undefined;
+}
+
 function isDirectExecution(): boolean {
   const entry = process.argv[1];
   if (!entry) return false;
@@ -91,7 +99,7 @@ async function main(): Promise<void> {
       // The allowlist only takes effect inside the guard while remoteAuth is on; a filled list with
       // remoteAuth off changes nothing. The public URL is likewise remote-only (see daemonSocket).
       allowedHosts: parseAllowedHosts(process.env.NEMA_HUB_ALLOWED_HOSTS),
-      publicHubUrl: parsePublicHubUrl(process.env.NEMA_HUB_PUBLIC_URL),
+      publicHubUrl: resolvePublicHubUrl(remoteAuth, process.env.NEMA_HUB_PUBLIC_URL),
       bootstrapToken: bootstrapToken ?? undefined,
     });
     console.log(`nema hub listening on ${hostname}:${port} (use ${hub.url})`);
