@@ -108,7 +108,7 @@ node scripts/setup.mjs --lang ja
 | `NEMA_HUB_PUBLIC_URL` | リモート daemon が到達しなければならない hub の公開オリジン（例: `https://hub.example.lan`）。hub の前に TLS 終端リバースプロキシがある場合に設定します。設定しない場合、daemon は自分の接続時のアドレスを使います。プロキシ越しでは `http://` になります。 |
 | `NEMA_HUB_URL` | （web コンテナ）ブラウザが hub に到達するための URL。リモート形態では hub の LAN アドレスに設定します。 |
 
-Compose は既定で hub と web のポートを `127.0.0.1` にのみ公開します。LAN に提供するには、ポートを LAN インターフェースに公開します。hub は `ports:` を変更し、web は `NEMA_WEB_BIND` を LAN アドレスまたは `0.0.0.0` に設定するか、リバースプロキシ経由で提供します。`NEMA_WEB_ORIGIN` は web ページのオリジンに、`NEMA_HUB_URL` はブラウザが hub に到達するためのアドレスに設定してください。hub のポートだけを公開しても、他のマシンからはログインページを開けません。
+Compose は既定で hub と web のポートを `127.0.0.1` にのみ公開します。LAN に提供するには、ポートを LAN インターフェースに公開します。hub は `ports:` を変更し、web は `NEMA_WEB_BIND` を LAN アドレスまたは `0.0.0.0` に設定するか、リバースプロキシ経由で提供します。`NEMA_WEB_ORIGIN` は `.env` で web ページのオリジンに、`NEMA_HUB_URL` はブラウザが hub に到達するためのアドレスに設定してください。hub のポートだけを公開しても、他のマシンからはログインページを開けません。
 
 構築手順：リモート用の変数を設定して hub を起動します。hub が `<dataDir>/bootstrap-token` に書き込むワンタイムのブートストラップトークン（権限 `0600`、パスは hub のログに出力。Compose では `docker compose logs hub` で確認するか、`${NEMA_DATA_HOST_DIR:-~/.nema/data}/bootstrap-token` を読みます）を使い、`POST /api/auth/bootstrap` で最初のアカウントを作成します。web のログインページにサインインし、次の人を招待します（`POST /api/auth/invites`、相手は `POST /api/auth/invites/accept` で受け入れます）。相手をワークスペースに追加します（`POST /api/workspaces/:id/members`）。各自が**アプリ設定 → デーモン**で登録コードを生成し、自分の daemon を登録します（`nema daemon register --hub <hub の URL>`、続けて `nema daemon --hub <hub の URL>`）。ワークスペースを読めるのはメンバーのみです。ホストレベルのルートは hub 管理者のみが使え、それ以外のサインイン済みアカウントは 403 になります。
 

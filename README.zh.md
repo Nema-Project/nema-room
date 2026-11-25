@@ -108,7 +108,7 @@ node scripts/setup.mjs --lang zh
 | `NEMA_HUB_PUBLIC_URL` | 远程 daemon 必须能访问到的 hub 公网来源，例如 `https://hub.example.lan`。hub 前有 TLS 终止反代时设置它；不设时 daemon 使用自己连接时的地址，反代后会是 `http://`。 |
 | `NEMA_HUB_URL` | （web 容器）浏览器访问 hub 的地址。远程形态下设为 hub 的局域网地址。 |
 
-Compose 默认只把 hub 与 web 端口都发布在 `127.0.0.1` 上。要服务局域网，需把端口发布到局域网接口：改 hub 的 `ports:` 项；web 则把 `NEMA_WEB_BIND` 设为局域网地址或 `0.0.0.0`，或经反向代理提供。把 `NEMA_WEB_ORIGIN` 设为 Web 页面的来源，并把 `NEMA_HUB_URL` 设为浏览器访问 hub 的地址。只发布 hub 端口时，别的机器仍打不开登录页。
+Compose 默认只把 hub 与 web 端口都发布在 `127.0.0.1` 上。要服务局域网，需把端口发布到局域网接口：改 hub 的 `ports:` 项；web 则把 `NEMA_WEB_BIND` 设为局域网地址或 `0.0.0.0`，或经反向代理提供。在 `.env` 中把 `NEMA_WEB_ORIGIN` 设为 Web 页面的来源，并把 `NEMA_HUB_URL` 设为浏览器访问 hub 的地址。只发布 hub 端口时，别的机器仍打不开登录页。
 
 搭建顺序：设好远程变量后启动 hub；用 hub 写入 `<dataDir>/bootstrap-token` 的一次性引导令牌（权限 `0600`，路径见 hub 日志；Compose 下用 `docker compose logs hub` 查看，或读 `${NEMA_DATA_HOST_DIR:-~/.nema/data}/bootstrap-token`）经 `POST /api/auth/bootstrap` 创建第一个账号；在 web 登录页登录；邀请下一个人（`POST /api/auth/invites`，对方用 `POST /api/auth/invites/accept` 接受）；把对方加入工作区（`POST /api/workspaces/:id/members`）；每个人在**应用设置 → Daemon 管理**中生成注册码并注册自己的 daemon（`nema daemon register --hub <hub 地址>`，再 `nema daemon --hub <hub 地址>`）。只有工作区成员能读工作区；主机级路由仅限 hub 管理员，其他已登录账号访问得 403。
 
