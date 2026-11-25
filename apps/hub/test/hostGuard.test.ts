@@ -4,12 +4,17 @@ import { EventBus } from "../src/events.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import { parseAllowedHosts } from "../src/main.js";
 
-afterEach(cleanupHubDeps);
+const closers: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  await Promise.all(closers.splice(0).map((close) => close()));
+  await cleanupHubDeps();
+});
 
 const PORT = 4400;
 
 async function appFor(extra: Partial<AppDeps> = {}) {
-  const { db, dataDir } = await makeHubDeps();
+  const { db, dataDir, close } = await makeHubDeps();
+  closers.push(close);
   return createApp({
     db, dataDir, events: new EventBus(), daemonStatus: () => false,
     daemon: { call: async () => { throw new Error("offline"); } },
