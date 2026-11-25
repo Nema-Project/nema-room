@@ -54,7 +54,7 @@ test("Graphify RPC failures retain their fallback and component facts", async ()
   const response = await rpc.handle({ type: "rpc.request", id: "1", method: "repo.index", params: {} });
   expect(response).toMatchObject({
     ok: false,
-    error: expect.stringContaining("nema components install graphify"),
+    error: "Graphify 组件未安装（上次安装失败：代理错误，Proxy refused）。旧版本组件已停用。重试：nema components install graphify",
     graphifyError: { code: "graphify-unavailable", state: "failed", status: { state: "failed", reason: "proxy", detail: "Proxy refused", installedLockHash: "old" } },
   });
 });

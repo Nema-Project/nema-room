@@ -334,4 +334,35 @@ describe("Graphify errors", () => {
     await screen.findByText(mixedCases[0]![1]);
     expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(mixedCases.map(([, expected]) => expected));
   });
+
+  // Independent literals, not read from the locale files: if a locale file were
+  // copied from another language, this test fails where the one above cannot.
+  const literalCases: [string, string[]][] = [
+    ["en", [
+      "Graphify is not installed. Repository indexing and code search need it.",
+      "Graphify was interrupted.",
+      "Graphify is not installed (last attempt failed: proxy error). The previously installed version is turned off.",
+    ]],
+    ["ja", [
+      "Graphify はインストールされていません。リポジトリのインデックスとコード検索に必要です。",
+      "Graphify の処理が中断されました。",
+      "Graphify はインストールされていません（前回の試行が失敗：プロキシエラー）。 以前インストールしたバージョンは無効になっています。",
+    ]],
+    ["zh", [
+      "Graphify 未安装。仓库索引与代码检索需要它。",
+      "Graphify 已中断。",
+      "Graphify 未安装（上次尝试失败：代理错误）。 之前安装的版本已停用。",
+    ]],
+  ];
+  it.each(literalCases)("renders literal expected copy in %s", async (locale, expected) => {
+    localStorage.setItem("nema.locale", locale);
+    const errors: GraphifyError[] = [
+      unavailable({ state: "not-installed" }),
+      { code: "graphify-interrupted" },
+      unavailable({ state: "failed", reason: "proxy", detail: "", installedLockHash: "old" }),
+    ];
+    render(<I18nProvider><ErrorList errors={errors} /></I18nProvider>);
+    await screen.findByText(expected[0]!);
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(expected);
+  });
 });
