@@ -77,6 +77,16 @@ describe("daemon version skew", () => {
     await closed;
   });
 
+  test("a non-semver hello is refused: the dev sentinel is not exempted from the floor", async () => {
+    const port = await listen("1.2.3");
+    const { message, closed } = await hello(port, "test-version");
+    const error = await message;
+    expect(error.type).toBe("error");
+    expect(error.message).toContain("版本不一致");
+    expect(error.message).toContain("不低于 0.3.2");
+    await closed;
+  });
+
   test("a matching hello is welcomed", async () => {
     const port = await listen("1.2.3");
     const { message } = await hello(port, "1.2.3");

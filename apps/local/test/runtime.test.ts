@@ -23,6 +23,12 @@ const crashChildren: ChildProcess[] = [];
 let guardianFixtureDir: string | undefined;
 let guardianFixturePath: string | undefined;
 
+// The fake payload's version is both the hub's release version and the managed daemon's hello
+// version. It must be a real CLI version: D-9 admits a daemon at or above MIN_DAEMON_VERSION, and
+// the old "test-version" sentinel parses as 0.0.0, so the hub refused the managed daemon and every
+// test that needs it timed out. Read the CLI package so the fixture tracks the floor.
+const CLI_VERSION = (JSON.parse(readFileSync("apps/cli/package.json", "utf8")) as { version: string }).version;
+
 beforeAll(() => {
   if (process.platform !== "win32") return;
   guardianFixtureDir = mkdtempSync(join(tmpdir(), "nema-runtime-guardian-"));
@@ -58,7 +64,7 @@ function testAssets(): string {
   cpSync("apps/local/test/fixtures", join(assets, "fixtures"), { recursive: true });
   writeFileSync(join(assets, "runtime-manifest.json"), JSON.stringify({
     schemaVersion: 1,
-    version: "test-version",
+    version: CLI_VERSION,
     platform: process.platform,
     arch: process.arch,
     node: `node/${nodeName}`,
