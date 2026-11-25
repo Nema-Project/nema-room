@@ -28,7 +28,7 @@
 
 **构建（Windows x64）**：`npm ci` 后运行 `npm run desktop:make -- --platform win32 --arch x64`，产物在 `dist/desktop-artifacts/win32-x64/`：`Nema-<版本>-win32-x64.exe`（NSIS 安装包）和 `Nema-<版本>-win32-x64.zip`（便携应用，压缩包根上是 `Nema.exe`）。构建只支持当前系统，且需要本机 C 编译器（Windows 需要 Clang，见 [scripts/desktop/README.md](../scripts/desktop/README.md)）。
 
-**首次启动与系统提示**：只打开你自己构建或已核对过的文件。Windows 的 SmartScreen 会提示“Windows 已保护你的电脑”，点“更多信息”，再点“仍要运行”。macOS 包尚未验证；按系统惯例，未公证的应用需要在“系统设置 → 隐私与安全性”里选“仍要打开”。也可以把应用拷进“应用程序”文件夹后，在终端运行 `xattr -dr com.apple.quarantine /Applications/Nema.app` 去掉下载隔离标记。
+**首次启动与系统提示**：只打开你自己构建或已核对过的文件。Windows 的 SmartScreen 会提示“Windows 已保护你的电脑”，点“更多信息”，再点“仍要运行”。macOS 包尚未验证；按系统惯例，未公证的应用需要在“系统设置 → 隐私与安全性”里选“仍要打开”。也可以把应用拷进“应用程序”文件夹后，在终端运行 `xattr -dr com.apple.quarantine "/Applications/Nema Room.app"` 去掉下载隔离标记。
 
 **数据位置**：默认在 `~/.nema/desktop`（`db/` 数据库、`data/` 知识 Git 仓库、`instance.json` 运行状态）。它不读取 Compose 的数据库，也不使用旧的 `~/.nema/data`。
 

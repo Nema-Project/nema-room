@@ -71,7 +71,7 @@ See the original statement, why it was recorded, and whether it came from you or
 2. Open **App settings → Model** and connect a ChatGPT subscription, a Claude subscription, or a Responses API-compatible API key. More accounts can be added at the bottom of the same page; see [several accounts and automatic routing](docs/guide.en.md#accounts).
 3. Create a workspace and start a discussion. Bind a local repository when you want code context.
 
-> **Preview release.** Windows builds are unsigned; macOS builds are ad-hoc signed and not notarized. If macOS refuses to open the app, remove the download quarantine after copying it to Applications — `xattr -dr com.apple.quarantine /Applications/Nema.app` — or allow it under System Settings → Privacy & Security → Open Anyway. Verify downloads against the release checksums. The app links to newer releases but never installs them. Back up `~/.nema/desktop` before upgrading. See the [desktop guide](docs/guide.en.md#desktop) for first launch, the portable ZIP, and limitations.
+> **Preview release.** Windows builds are unsigned; macOS builds are ad-hoc signed and not notarized. Verify downloads against the release checksums. If macOS refuses to open the app, copy it to Applications and remove the download quarantine — `xattr -dr com.apple.quarantine "/Applications/Nema Room.app"` — or allow it under System Settings → Privacy & Security → Open Anyway. The app links to newer releases but never installs them. Back up `~/.nema/desktop` before upgrading. See the [desktop guide](docs/guide.en.md#desktop) for first launch, the portable ZIP, and limitations.
 
 <a id="first-release-scope-and-requirements"></a>
 
