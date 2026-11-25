@@ -96,6 +96,10 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
     if (!address || typeof address === "string") throw new Error("hub did not bind a TCP address");
     const actualPort = address.port;
     const hubUrl = `http://127.0.0.1:${actualPort}`;
+    attached = attachDaemonSocket(server, {
+      db: opts.db, dataDir: opts.dataDir, events, daemonToken: opts.daemonToken, hubUrl,
+      ownedHelpers: opts.ownedHelpers, releaseVersion: opts.releaseVersion, remoteAuth: opts.remoteAuth,
+    });
     const app = createApp({
       db: opts.db,
       dataDir: opts.dataDir,
@@ -110,6 +114,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
       releaseVersion: opts.releaseVersion,
       sharesEnabled: opts.sharesEnabled,
       remoteAuth: opts.remoteAuth,
+      revokeRegisteredDaemon: attached.revokeRegisteredDaemon,
       bootstrapToken: opts.bootstrapToken,
       attachments,
       ...(opts.ownedHelpers ? { archify: {
@@ -182,7 +187,6 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
     });
     requestListener = fetchListener;
 
-    attached = attachDaemonSocket(server, { db: opts.db, dataDir: opts.dataDir, events, daemonToken: opts.daemonToken, hubUrl, ownedHelpers: opts.ownedHelpers, releaseVersion: opts.releaseVersion });
     status.connected = attached.isConnected;
     liveDaemon.rpc = attached.rpc;
     fallback = startReportFallback(opts.db, daemon, events);

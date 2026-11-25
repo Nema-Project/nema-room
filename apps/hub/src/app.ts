@@ -3,6 +3,7 @@ import { authRoutes, authSessionRoutes } from "./authRoutes.js";
 import type { LoginThrottle } from "./loginThrottle.js";
 import { Hono, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
+import { daemonRegistrationRoutes, daemonSessionRoutes, type RevokeRegisteredDaemon } from "./daemons.js";
 import type { DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { Archify } from "./diagrams.js";
@@ -56,6 +57,7 @@ export type AppDeps = {
    * cookie and /api/auth/* exists. Off or omitted: neither exists and identity behaves as before.
    */
   remoteAuth?: boolean;
+  revokeRegisteredDaemon?: RevokeRegisteredDaemon;
   /** One-time bootstrap token from main.ts; only read when remoteAuth is on and no account exists yet. */
   bootstrapToken?: string;
   /** Login rate limiting for /api/auth/login; omitted creates one per app. Tests inject a fixed clock. */
@@ -123,6 +125,8 @@ export function createApp(deps: AppDeps): Hono {
     // Like /share: unauthenticated by design, but still behind hostGuard and CORS. Mounted before the
     // identity middleware so a request that matches here never needs a session.
     app.use("/api/auth/*", requireJson);
+    app.use("/api/daemons/register", requireJson);
+    app.route("/api/daemons", daemonRegistrationRoutes(deps.db));
     app.route("/api/auth", authRoutes({ db: deps.db, dataDir: deps.dataDir, bootstrapToken: deps.bootstrapToken, loginThrottle: deps.loginThrottle }));
   }
   app.use("/api/*", async (c, next) => {
@@ -139,7 +143,10 @@ export function createApp(deps: AppDeps): Hono {
   const memberGate = workspaceAccess(deps.db);
   app.use("/api/workspaces/:id/*", (c, next) => (ROSTER_PATH.test(c.req.path) ? next() : memberGate(c, next)));
   // Logout, invites and administrator actions need the session the middleware above resolved.
-  if (deps.remoteAuth) app.route("/api/auth", authSessionRoutes({ db: deps.db }));
+  if (deps.remoteAuth) {
+    app.route("/api/auth", authSessionRoutes({ db: deps.db }));
+    app.route("/api/daemons", daemonSessionRoutes(deps.db, deps.revokeRegisteredDaemon));
+  }
   const attachments = deps.attachments ?? new AttachmentStore(deps.db, deps.dataDir);
   app.route("/api", attachmentRoutes({ store: attachments, daemon: deps.daemon, daemonStatus: deps.daemonStatus, db: deps.db, events: deps.events }));
   app.route("/api", mentionContextRoutes({ db: deps.db, attachments }));

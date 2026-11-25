@@ -6,7 +6,7 @@ import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
-import type { TaskAssign } from "@nema/shared";
+import { DAEMON_CREDENTIAL_REVOKED_MESSAGE, type TaskAssign } from "@nema/shared";
 import { DAEMON_FEATURES } from "../src/attachments/capabilities.js";
 import { connectDaemon, VERSION_SKEW_ERROR } from "../src/daemon/connection.js";
 import { Runner, type AgentAdapter } from "../src/daemon/runner.js";
@@ -308,6 +308,31 @@ describe("daemon connection", () => {
       expect(text()).toContain(VERSION_SKEW_ERROR);
       expect(text()).toContain("run: npm i -g @nema-project/nema@<hub 版本>");
       expect(text()).toContain("请先查看正在运行的 hub 的版本");
+    } finally {
+      err.mockRestore();
+    }
+  });
+
+  test("a revoked credential refusal stops reconnecting; any other hub error still reconnects", async () => {
+    const port = await start();
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const revoked = connectDaemon({ hubUrl: `http://127.0.0.1:${port}`, token: "revoked", runner: new Runner([]), reconnectMs: 30 });
+      closers.push(() => revoked.close());
+      const ws = await waitConn(1);
+      ws.send(JSON.stringify({ type: "error", message: DAEMON_CREDENTIAL_REVOKED_MESSAGE }));
+      ws.close();
+      await new Promise((r) => setTimeout(r, 200));
+      expect(conns).toHaveLength(1);
+      expect(err.mock.calls.map((c) => String(c[0])).join("\n")).toContain("nema daemon register --hub <url>");
+
+      // Text that only contains the refusal is an ordinary error: the daemon retries on its timer.
+      const other = connectDaemon({ hubUrl: `http://127.0.0.1:${port}`, token: "other", runner: new Runner([]), reconnectMs: 30 });
+      closers.push(() => other.close());
+      const first = await waitConn(2);
+      first.send(JSON.stringify({ type: "error", message: `proxy: ${DAEMON_CREDENTIAL_REVOKED_MESSAGE}` }));
+      first.close();
+      await waitConn(3);
     } finally {
       err.mockRestore();
     }

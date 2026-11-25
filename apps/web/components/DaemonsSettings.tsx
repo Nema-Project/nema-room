@@ -1,0 +1,121 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { createDaemonRegistrationCode, HubError, listDaemons, revokeDaemon, type DaemonRegistrationCode, type RegisteredDaemon } from "@/lib/hub";
+import { useLocale, useT } from "@/lib/i18n";
+
+export function DaemonsSettings() {
+  const t = useT();
+  const [locale] = useLocale();
+  const [daemons, setDaemons] = useState<RegisteredDaemon[] | null>(null);
+  const [code, setCode] = useState<DaemonRegistrationCode | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [actionError, setActionError] = useState<"actionError" | "codeLimit" | null>(null);
+  const revocationVersion = useRef(0);
+  // Shared by the mount load, window focus and the Refresh button; set while this panel is mounted.
+  const refreshRef = useRef<() => Promise<void>>(async () => {});
+
+  useEffect(() => {
+    let live = true;
+    let loading = false;
+    async function refresh() {
+      if (!live || loading) return;
+      loading = true;
+      const version = revocationVersion.current;
+      try {
+        const rows = await listDaemons();
+        if (live && version === revocationVersion.current) {
+          setDaemons(rows);
+          setLoadError(false);
+        }
+      } catch {
+        // The rows already shown stay; only the error is added.
+        if (live) setLoadError(true);
+      } finally {
+        loading = false;
+      }
+    }
+    refreshRef.current = refresh;
+    void refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      live = false;
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!code) return;
+    const timer = window.setTimeout(() => setCode(null), Math.max(0, Date.parse(code.expiresAt) - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [code]);
+
+  async function generate() {
+    setBusy(true);
+    setActionError(null);
+    try {
+      setCode(await createDaemonRegistrationCode());
+    } catch (error) {
+      setActionError(error instanceof HubError && error.status === 429 ? "codeLimit" : "actionError");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revoke(id: string) {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const { revokedAt } = await revokeDaemon(id);
+      revocationVersion.current++;
+      setDaemons((rows) => rows?.map((row) => row.id === id ? { ...row, revokedAt } : row) ?? null);
+      setConfirmId(null);
+    } catch {
+      setActionError("actionError");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const formatTime = (value: string) => new Date(value).toLocaleString(locale);
+
+  return (
+    <section className="app-settings-section" aria-labelledby="daemon-settings-title">
+      <h2 id="daemon-settings-title" className="label">{t("daemonsSettings.title")}</h2>
+      <button type="button" disabled={busy} onClick={() => { void generate(); }}>{t("daemonsSettings.generate")}</button>
+      <button type="button" onClick={() => { void refreshRef.current(); }}>{t("daemonsSettings.refresh")}</button>
+      {code && (
+        <div aria-live="polite">
+          <p><code>{code.code}</code></p>
+          <p>{t("daemonsSettings.expires", { time: formatTime(code.expiresAt) })}</p>
+          <p>{t("daemonsSettings.enterCode")} <code>nema daemon register --hub &lt;url&gt;</code></p>
+        </div>
+      )}
+      {actionError && <p className="error" role="alert">{t(`daemonsSettings.${actionError}`)}</p>}
+      {loadError && <p className="error" role="alert">{t("daemonsSettings.loadError")}</p>}
+      {daemons?.length === 0 && <p>{t("daemonsSettings.empty")}</p>}
+      {daemons && daemons.length > 0 && (
+        <ul>
+          {daemons.map(({ id, label, lastSeenAt, revokedAt }) => (
+            <li key={id}>
+              <strong>{label}</strong>
+              <p>{t(revokedAt ? "daemonsSettings.revoked" : "daemonsSettings.registered")}</p>
+              <p>{lastSeenAt ? t("daemonsSettings.lastSeen", { time: formatTime(lastSeenAt) }) : t("daemonsSettings.neverSeen")}</p>
+              {!revokedAt && (confirmId === id ? (
+                <>
+                  <p>{t("daemonsSettings.confirm", { label })}</p>
+                  <button type="button" disabled={busy} onClick={() => { void revoke(id); }}>{t("daemonsSettings.confirmRevoke")}</button>
+                  <button type="button" disabled={busy} onClick={() => setConfirmId(null)}>{t("daemonsSettings.cancel")}</button>
+                </>
+              ) : (
+                <button type="button" disabled={busy} onClick={() => setConfirmId(id)}>{t("daemonsSettings.revoke")}</button>
+              ))}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}

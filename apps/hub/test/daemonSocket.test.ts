@@ -12,7 +12,7 @@ import { AttachmentRefSchema } from "@nema/shared";
 import { png, uploadPng } from "./attachmentFixtures.js";
 import { claimNextTask, finishTask, getTask, insertQueuedTask, interruptRunning, recordTaskChange, resolveRunToken } from "../src/tasks.js";
 import * as tasks from "../src/tasks.js";
-import { attachDaemonSocket } from "../src/daemonSocket.js";
+import { attachDaemonSocket, REMOTE_HELLO_FAILED_MESSAGE } from "../src/daemonSocket.js";
 import { KnowledgeStore } from "@nema/knowledge";
 import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { addReportMessage, getMessage } from "../src/messages.js";
@@ -91,9 +91,9 @@ type Client = {
   closed: Promise<void>;
 };
 
-function connect(token = TOKEN, adapters: string[] = ["codex-direct"], hello: Msg = {}, targetUrl = url): Promise<Client> {
+function connect(token = TOKEN, adapters: string[] = ["codex-direct"], hello: Msg = {}, targetUrl = url, options?: WebSocket.ClientOptions): Promise<Client> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(targetUrl);
+    const ws = new WebSocket(targetUrl, options);
     sockets.push(ws);
     const queue: Msg[] = [];
     const waiters: Array<() => void> = [];
@@ -1424,5 +1424,151 @@ describe("S3 acceptance: the account shown under the reply", () => {
     await expect(postUserMessage(db, wsA, "bad pick", { authorUserId: "usr_local", accountId: "../etc/passwd" })).rejects.toThrow();
     const rows = await db.query<{ n: number }>("select count(*)::int as n from tasks where account_id is not null");
     expect(rows[0]!.n).toBe(0);
+  });
+});
+
+test("remote hello uses the registered ID across reconnects and revocation interrupts work", async () => {
+  const { createDaemonRegistrationCode, registerDaemon } = await import("../src/daemons.js");
+  await db.query("insert into users(id, display_name) values ('usr_daemon','Daemon owner')");
+  const { code } = await createDaemonRegistrationCode(db, "usr_daemon");
+  const { id, credential } = (await registerDaemon(db, code, "Laptop"))!;
+  const remoteServer = http.createServer();
+  const remote = attachDaemonSocket(remoteServer, { db, dataDir, events, daemonToken: TOKEN, hubUrl: "http://hub.test", remoteAuth: true });
+  await new Promise<void>((resolve) => remoteServer.listen(0, "127.0.0.1", resolve));
+  const remoteUrl = `ws://127.0.0.1:${(remoteServer.address() as AddressInfo).port}/daemon`;
+  try {
+    const shared = await connect(TOKEN, undefined, {}, remoteUrl);
+    expect((await shared.next("error")).message).toMatch(/invalid daemon credential/i);
+    await shared.closed;
+
+    const first = await connect(credential, undefined, {}, remoteUrl);
+    await first.next("welcome");
+    const { task: queued } = await postUserMessage(db, wsA, "First task", { authorUserId: "usr_local" });
+    const task = queued!;
+    events.emit(wsA, { type: "task.updated", task: tasks.toUiTask(task) });
+    expect((await first.next("task.assign")).taskId).toBe(task.id);
+    expect((await getTask(db, task.id))?.daemonId).toBe(id);
+
+    const second = await connect(credential, undefined, {}, remoteUrl);
+    await second.next("welcome");
+    await first.closed;
+    const assignment = await second.next("task.assign");
+    expect(assignment.taskId).toBe(task.id);
+    expect((await getTask(db, task.id))?.daemonId).toBe(id);
+    expect(await interruptionsOf(task.id)).toBe(1);
+    expect((await db.query("select last_seen_at from daemons where id=$1", [id]))[0]?.last_seen_at).not.toBeNull();
+
+    expect(await remote.revokeRegisteredDaemon(id, "usr_daemon")).toMatchObject({ revokedAt: expect.any(String) });
+    expect((await second.next("error")).message).toMatch(/revoked/i);
+    await second.closed;
+    await vi.waitFor(async () => expect((await getTask(db, task.id))?.status).toBe("queued"));
+    expect(await interruptionsOf(task.id)).toBe(2);
+
+    const revoked = await connect(credential, undefined, {}, remoteUrl);
+    expect((await revoked.next("error")).message).toMatch(/revoked/i);
+    await revoked.closed;
+    expect(await db.query("select daemon_id, owner_user_id from daemon_events where kind='rejected' order by created_at")).toEqual([
+      { daemon_id: null, owner_user_id: null },
+      { daemon_id: id, owner_user_id: "usr_daemon" },
+    ]);
+  } finally {
+    await remote.close();
+    await new Promise<void>((resolve) => remoteServer.close(() => resolve()));
+  }
+});
+
+describe("remote daemon hello", () => {
+  let remoteServer: http.Server | undefined;
+  let remote: ReturnType<typeof attachDaemonSocket> | undefined;
+  let remoteUrl: string;
+  let credential: string;
+
+  // Called inside each test so a cold PGlite start counts against the test timeout, not the 10 s hook timeout.
+  async function startRemoteHub(): Promise<NonNullable<typeof remote>> {
+    const { createDaemonRegistrationCode, registerDaemon } = await import("../src/daemons.js");
+    await db.query("insert into users(id, display_name) values ('usr_daemon','Daemon owner')");
+    ({ credential } = (await registerDaemon(db, (await createDaemonRegistrationCode(db, "usr_daemon")).code, "Laptop"))!);
+    const httpServer = http.createServer();
+    remoteServer = httpServer;
+    remote = attachDaemonSocket(httpServer, { db, dataDir, events, daemonToken: TOKEN, hubUrl: "http://127.0.0.1:4400", remoteAuth: true });
+    await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+    remoteUrl = `ws://127.0.0.1:${(httpServer.address() as AddressInfo).port}/daemon`;
+    return remote;
+  }
+  afterEach(async () => {
+    for (const s of sockets.splice(0)) s.terminate();
+    await remote?.close();
+    const httpServer = remoteServer;
+    remote = undefined;
+    remoteServer = undefined;
+    if (!httpServer) return;
+    httpServer.closeAllConnections();
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+  });
+
+  async function queueTask() {
+    const { task } = await postUserMessage(db, wsA, "Remote task", { authorUserId: "usr_local" });
+    events.emit(wsA, { type: "task.updated", task: tasks.toUiTask(task!) });
+    return task!;
+  }
+
+  test("a remote daemon's task.assign carries the address it connected to, not the hub's loopback", async () => {
+    await startRemoteHub();
+    const daemon = await connect(credential, undefined, {}, remoteUrl, { headers: { host: "hub.example:4400" } });
+    await daemon.next("welcome");
+    const task = await queueTask();
+    const assignment = await daemon.next("task.assign");
+    expect(assignment.taskId).toBe(task.id);
+    expect(assignment.hubUrl).toBe("http://hub.example:4400");
+    expect(new URL(assignment.hubUrl).hostname).not.toMatch(/^(127\.|localhost$|\[::1\]$)/);
+  });
+
+  test("the local daemon keeps the hub's own URL whatever Host it sent", async () => {
+    const daemon = await connect(TOKEN, undefined, {}, url, { headers: { host: "hub.example:4400" } });
+    await daemon.next("welcome");
+    await queueTask();
+    expect((await daemon.next("task.assign")).hubUrl).toBe("http://hub.test");
+  });
+
+  test("a replaced socket that ignores the close frame is terminated, and the new hello completes promptly", async () => {
+    await startRemoteHub();
+    const first = await connect(credential, undefined, {}, remoteUrl);
+    await first.next("welcome");
+    const task = await queueTask();
+    expect((await first.next("task.assign")).taskId).toBe(task.id);
+    // The old peer stops reading, so it never answers the hub's close frame (ws itself would wait 30 s).
+    (first.ws as unknown as { _socket: { pause(): void } })._socket.pause();
+
+    const started = Date.now();
+    const second = await connect(credential, undefined, {}, remoteUrl);
+    await second.next("welcome");
+    expect(Date.now() - started).toBeLessThan(5_000);
+    // The old socket's cleanup still ran before the stable ID was reused: the task was interrupted once and comes back.
+    expect((await second.next("task.assign")).taskId).toBe(task.id);
+    expect(await interruptionsOf(task.id)).toBe(1);
+  });
+
+  test("a hub failure during remote hello is logged and not reported as a credential refusal", async () => {
+    const hub = await startRemoteHub();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const query = db.query.bind(db);
+    const spy = vi.spyOn(db, "query").mockImplementation(((sql: string, params?: unknown[]) => {
+      if (sql.startsWith("update daemons set last_seen_at")) return Promise.reject(new Error("database went away"));
+      return query(sql, params);
+    }) as typeof db.query);
+    try {
+      const daemon = await connect(credential, undefined, {}, remoteUrl);
+      const { message } = await daemon.next("error");
+      await daemon.closed;
+      expect(message).toBe(REMOTE_HELLO_FAILED_MESSAGE);
+      expect(message).not.toMatch(/invalid|revoked|credential|authori[sz]e|register/i);
+      expect(log).toHaveBeenCalledWith("[daemon] remote hello failed", expect.objectContaining({ message: "database went away" }));
+      expect(hub.isConnected()).toBe(false);
+    } finally {
+      spy.mockRestore();
+      log.mockRestore();
+    }
+    const retry = await connect(credential, undefined, {}, remoteUrl);
+    await retry.next("welcome");
   });
 });
