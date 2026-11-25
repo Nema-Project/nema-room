@@ -32,6 +32,9 @@ function composeConfig(files, env = {}) {
   // measure the developer's configuration instead of the Compose defaults.
   if (!Object.hasOwn(env, 'NEMA_WEB_ORIGIN')) delete base.NEMA_WEB_ORIGIN;
   if (!Object.hasOwn(env, 'NEMA_WEB_PORT')) delete base.NEMA_WEB_PORT;
+  // Same for NEMA_HUB_PORT: the default NEMA_HUB_URL is derived from it, so
+  // a developer's shell value would break the default-case assertions too.
+  if (!Object.hasOwn(env, 'NEMA_HUB_PORT')) delete base.NEMA_HUB_PORT;
   const run = spawnSync('docker', ['compose', '--env-file', emptyEnvFile, ...files.flatMap((file) => ['-f', file]), 'config', '--format', 'json'], {
     cwd: root,
     env: { ...base, ...env },
