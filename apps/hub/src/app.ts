@@ -27,11 +27,14 @@ export const DEFAULT_HUB_PORT = 4400;
 const ROSTER_PATH = /^\/api\/workspaces\/[^/]+\/members(?:\/|$)/;
 
 /**
- * Host-level routes (#167 deviation 2): componentRoutes' /components (not /agent-clis), every
+ * Host-level routes (#167 deviation 2): componentRoutes' /components and /agent-clis, every
  * /extensions route including MCP and its secrets, the host plugin catalog /plugins, /pick-directory and
  * /daemon/*. Workspace-level /workspaces/:id/plugins does not match; it keeps the roster and owner checks.
+ * The read-only attachment capability lookup is exempt: the composer needs it to refuse unsupported kinds
+ * before sending, and it neither reads nor writes host state.
  */
-const HOST_ADMIN_PATH = /^\/api\/(?:components|extensions|plugins|pick-directory|daemon)(?:\/|$)/;
+const HOST_ADMIN_PATH = /^\/api\/(?:components|agent-clis|extensions|plugins|pick-directory|daemon)(?:\/|$)/;
+const HOST_ADMIN_EXEMPT_PATH = /^\/api\/daemon\/attachment-capabilities$/;
 
 export type AppDeps = {
   db: Db;
@@ -146,7 +149,7 @@ export function createApp(deps: AppDeps): Hono {
   // administrator may use them, every method included (#167 deviation 2). Registered right after identity
   // resolution so a refused caller is answered before body checks and before any route reads or writes.
   const hostAdminGate = hostAdminAccess(deps.db);
-  app.use("/api/*", (c, next) => (HOST_ADMIN_PATH.test(c.req.path) ? hostAdminGate(c, next) : next()));
+  app.use("/api/*", (c, next) => (HOST_ADMIN_PATH.test(c.req.path) && !HOST_ADMIN_EXEMPT_PATH.test(c.req.path) ? hostAdminGate(c, next) : next()));
   app.use("/api/*", requireJson);
   // Every workspace-scoped route needs the caller on that workspace's roster, before any route reads or
   // writes (#167 task 8). Registered ahead of all routers so no route under the prefix can be missed; routes

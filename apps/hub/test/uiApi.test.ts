@@ -1599,6 +1599,23 @@ describe("host-level /pick-directory and /daemon/*", () => {
     expect(hubs.calls).toEqual(["dialog.pickDirectory", "dialog.pickDirectory"]);
   });
 
+  // CodeRabbit review on #315: the read-only attachment capability lookup is exempt from the gate so
+  // non-admin members still get unsupported kinds refused before sending.
+  test("the read-only /api/daemon/attachment-capabilities lookup stays open to signed-in members", async () => {
+    const caps = { adapter: "codex-direct", image: "native", pdf: "native", text: "text" };
+    const daemon: DaemonRpc = {
+      call: async (method) => (method === "attachments.capabilities" ? caps : Promise.reject(new DaemonRpcError("daemon 未连接"))),
+    };
+    const hubs = await hostAdminHubs(daemon);
+    for (const who of ["member", "admin", "local"] as const) {
+      const res = await hubs.send(who, "GET", "/api/daemon/attachment-capabilities");
+      expect(res.status, who).toBe(200);
+      expect(await res.json()).toEqual(caps);
+    }
+    expect((await hubs.send("anonymous", "GET", "/api/daemon/attachment-capabilities")).status).toBe(401);
+    expect(hubs.calls).toEqual(["attachments.capabilities", "attachments.capabilities", "attachments.capabilities"]);
+  });
+
   test("the gate leaves /api/version, /api/auth/* and workspace routes to their own rules", async () => {
     const hubs = await hostAdminHubs(picker, { releaseVersion: "test" });
     for (const who of ["anonymous", "member", "admin"] as const) {

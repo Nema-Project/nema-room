@@ -149,10 +149,17 @@ describe("component routes are host-level: hub administrator only in the remote 
     ]);
   });
 
-  test("/agent-clis is outside the decided family and stays open to any signed-in account", async () => {
+  // Cui 2026-11-25: /agent-clis detects the CLIs installed on the daemon's machine, so it joins the
+  // host-level family and is hub-administrator only in the remote form.
+  test("/agent-clis is host-level: remote admin 200, remote non-admin 403, usr_local 200, anonymous 401", async () => {
     answer = async () => ({ agents: [] });
     const hubs = await hostAdminHubs(daemon);
-    expect((await hubs.send("member", "GET", "/api/agent-clis")).status).toBe(200);
-    expect((await hubs.send("anonymous", "GET", "/api/agent-clis")).status).toBe(401);
+    await expectNonAdminRefused(hubs, [{ method: "GET", path: "/api/agent-clis" }]);
+    for (const who of ["admin", "local"] as const) {
+      const res = await hubs.send(who, "GET", "/api/agent-clis");
+      expect(res.status, who).toBe(200);
+      expect(await res.json()).toEqual({ agents: [] });
+    }
+    expect(hubs.calls).toEqual(["agents.detect", "agents.detect"]);
   });
 });
