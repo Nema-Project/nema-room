@@ -8,7 +8,8 @@ import { EventBus } from "../src/events.js";
 import { createWorkspace } from "../src/workspaces.js";
 import { postUserMessage } from "../src/messages.js";
 import { attachDaemonSocket } from "../src/daemonSocket.js";
-import { claimNextTask, computeWaitingReason, getTask, toUiTask, type OnlineDaemon } from "../src/tasks.js";
+import { claimNextTask, computeWaitingReason, getTask, toUiTask, type OnlineDaemon, type Task } from "../src/tasks.js";
+import * as tasks from "../src/tasks.js";
 import { createApp } from "../src/app.js";
 import { createDaemonRegistrationCode, registerDaemon } from "../src/daemons.js";
 
@@ -320,5 +321,45 @@ describe("waitingReason", () => {
       waitingReason: { kind: "repo-not-held", missingRepos: ["API"] },
     });
     await expectNoAssign(alice);
+  });
+
+  test("a holdings refresh republishes waiting reasons without a dispatch per task", async () => {
+    // Two bound repos; the daemon will hold only one at first, so every task stays queued.
+    await bindRepo(wsAlice, "https://github.com/acme/api", "API");
+    const alice = await connect(aliceCredential, "alice", { heldRepos: [] }, remoteUrl);
+    await alice.next("welcome");
+    const claimSpy = vi.spyOn(tasks, "claimNextTask");
+    try {
+      const queued: Task[] = [];
+      for (let i = 0; i < 3; i++) queued.push(await queue(wsAlice, "usr_alice", `bound ${i}`));
+      await expectNoAssign(alice);
+      const updates: any[] = [];
+      events.subscribe(wsAlice, (e) => {
+        if (e.type === "task.updated" && queued.some((t) => t.id === e.task.id)) updates.push(e.task);
+      });
+      claimSpy.mockClear();
+      // Holding only the widget repo leaves every task queued (the API repo is still missing):
+      // the refresh must republish all three reasons and dispatch exactly once — the holdings
+      // handler's own dispatch — instead of once per republished task.
+      alice.send({ type: "holdings", heldRepos: [WIDGET_HTTPS] });
+      await vi.waitFor(() => expect(updates.length).toBe(3));
+      expect(updates.at(-1)).toMatchObject({
+        status: "queued",
+        waitingReason: { kind: "repo-not-held", missingRepos: ["API"] },
+      });
+      // Let any fan-out dispatches the fix failed to suppress drain before counting.
+      await new Promise((r) => setTimeout(r, 500));
+      expect(claimSpy.mock.calls.length).toBe(1);
+      await expectNoAssign(alice);
+      // Holding both repos lets the refresh's own dispatch claim one of the three.
+      claimSpy.mockClear();
+      alice.send({ type: "holdings", heldRepos: [WIDGET_HTTPS, "https://github.com/acme/api"] });
+      const assigned = await alice.next("task.assign");
+      expect(queued.map((t) => t.id)).toContain(assigned.taskId);
+      await new Promise((r) => setTimeout(r, 200));
+      expect(claimSpy.mock.calls.length).toBe(1);
+    } finally {
+      claimSpy.mockRestore();
+    }
   });
 });

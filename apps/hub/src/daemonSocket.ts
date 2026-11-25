@@ -148,14 +148,23 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   /** Why a queued task is still waiting, for the UI; also exposed to the REST layer (see `waitingReasonFor`). */
   const waitingReasonFor = async (task: Task): Promise<WaitingReason | null> =>
     task.status === "queued" ? computeWaitingReason(db, task, connectionSnapshot()) : null;
-  const emitTask = async (taskId: string) => {
+  const emitTask = async (taskId: string, options?: { reasonOnly?: boolean }) => {
     const t = await getTask(db, taskId);
-    if (t) events.emit(t.workspaceId, { type: "task.updated", task: toUiTask(t, await waitingReasonFor(t)) });
+    if (t) {
+      events.emit(t.workspaceId, {
+        type: "task.updated",
+        task: toUiTask(t, await waitingReasonFor(t)),
+        ...(options?.reasonOnly ? { reasonOnly: true as const } : {}),
+      });
+    }
   };
   /**
    * Republish the waiting reason for every still-queued task in the workspaces this connection may
    * serve. A holdings refresh can change why a task waits (or leave it waiting for a different repo)
    * without claiming it, and without this the UI keeps showing the reason computed before the refresh.
+   * These are reason-only updates: they carry `reasonOnly` so the dispatch subscriber skips them —
+   * the holdings handler already dispatched once before this runs, and one refresh must not fan out
+   * into a full dispatch per queued task.
    */
   const emitQueuedWaitingReasons = async (conn: Conn): Promise<void> => {
     // Membership mirrors the claim predicate (D-6): a registered daemon serves only its owner's
@@ -168,7 +177,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
             [conn.ownerUserId],
           )).map((r) => r.workspace_id);
     for (const workspaceId of workspaceIds) {
-      for (const task of await listQueuedTasks(db, workspaceId)) await emitTask(task.id);
+      for (const task of await listQueuedTasks(db, workspaceId)) await emitTask(task.id, { reasonOnly: true });
     }
   };
 
@@ -653,7 +662,10 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   });
 
   const unsubscribe = events.subscribeAll((_ws, e) => {
-    if (e.type === "task.updated" && e.task.status === "queued") void dispatch();
+    // A reason-only waiting-reason republish (holdings refresh) is UI news, not new work: the refresh
+    // already dispatched once, so dispatching again per queued task would fan out into one full
+    // dispatch per task. Every other queued task.updated still dispatches as before.
+    if (e.type === "task.updated" && e.task.status === "queued" && !e.reasonOnly) void dispatch();
     else if (e.type === "workspace.deleted") {
       // Any connected daemon may hold isolation dirs or watched repos for the workspace: tell every one,
       // then push each the bound-repo list again (syncBoundRepos addresses all daemons).

@@ -6,7 +6,8 @@ export type HubEvent =
   | { type: "message.created"; message: Message }
   /** An existing message changed, for example a report once its check is stored. */
   | { type: "message.updated"; message: Message }
-  | { type: "task.updated"; task: UiTask }
+  /** `reasonOnly` marks a republish of the waiting reason only: the dispatch subscriber skips it. */
+  | { type: "task.updated"; task: UiTask; reasonOnly?: true }
   | { type: "thread.updated"; thread: Thread }
   | { type: "task.progress"; taskId: string; text: string }
   | { type: "knowledge.changed"; entryId: string }
