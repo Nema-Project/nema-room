@@ -8,6 +8,7 @@ import { Hono } from "hono";
 import WebSocket from "ws";
 import { PLUGINS, bundledExtensions } from "@nema/shared";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
+import { expectNonAdminRefused, hostAdminHubs } from "./hostAdminFixture.js";
 import type { Db } from "../src/db/db.js";
 import { DaemonRpcError, type DaemonRpc } from "../src/daemonRpc.js";
 import { EventBus } from "../src/events.js";
@@ -824,5 +825,58 @@ describe("extension list while the daemon is down", () => {
       expect(rows.map((row) => row.id)).toEqual(["code", "diagram", "superpowers", "grill", "github"]);
       expect(rows.every((row) => row.useState === "enabled")).toBe(true);
     }
+  });
+});
+
+// #167 deviation 2: the host plugin catalog is host-level (hub administrator only in the remote form);
+// workspace plugin settings keep their roster/owner checks; /room is the run-token API, not browser identity.
+describe("plugin routes under the host-level rule", () => {
+  test("GET /api/plugins: remote admin 200, remote non-admin 403, usr_local 200, anonymous 401", async () => {
+    daemonCall = async () => ({ code: { installed: true, detail: "graphify 0.1" } });
+    const hubs = await hostAdminHubs(daemon);
+    await expectNonAdminRefused(hubs, [{ method: "GET", path: "/api/plugins" }]);
+    for (const who of ["admin", "local"] as const) {
+      const allowed = await hubs.send(who, "GET", "/api/plugins");
+      expect(allowed.status, who).toBe(200);
+      expect(((await allowed.json()) as unknown[]).length).toBe(5);
+    }
+  });
+
+  test("/workspaces/:id/plugins is not host-level: the roster and owner checks decide, not the administrator role", async () => {
+    const hubs = await hostAdminHubs(daemon);
+    const { db: remoteDb, dataDir: remoteDir, adminId, memberId } = hubs.remote;
+    // The non-administrator owns this workspace; the administrator is a plain member of it.
+    const ws = (await createWorkspace(remoteDb, remoteDir, "Owned", undefined, memberId)).id;
+    await remoteDb.query("insert into workspace_members(workspace_id,user_id,role,added_by) values ($1,$2,'member',$3)", [ws, adminId, memberId]);
+
+    expect((await hubs.send("member", "GET", `/api/workspaces/${ws}/plugins`)).status).toBe(200);
+    expect((await hubs.send("member", "PATCH", `/api/workspaces/${ws}/plugins/grill`, { enabled: true })).status).toBe(200);
+    expect((await hubs.send("admin", "GET", `/api/workspaces/${ws}/plugins`)).status).toBe(200);
+    const notOwner = await hubs.send("admin", "PATCH", `/api/workspaces/${ws}/plugins/grill`, { enabled: false });
+    expect(notOwner.status).toBe(403);
+    expect(await notOwner.json()).toEqual({ error: "membership forbidden" });
+  });
+
+  test("/room/plugins and /room/extensions/offer stay on the run token: no browser identity, no administrator check", async () => {
+    const hubs = await hostAdminHubs(daemon);
+    const { db: remoteDb, dataDir: remoteDir, memberId } = hubs.remote;
+    const ws = (await createWorkspace(remoteDb, remoteDir, "Room", undefined, memberId)).id;
+    await postUserMessage(remoteDb, ws, "memo", { authorUserId: memberId });
+    const task = await claimNextTask(remoteDb, "d1");
+    expect(task?.workspaceId).toBe(ws);
+    const bearer = { authorization: `Bearer ${task!.runToken!}` };
+
+    // A browser session, administrator or not, is not a credential here.
+    for (const who of ["admin", "member"] as const) {
+      expect((await hubs.send(who, "GET", "/room/plugins")).status, who).toBe(401);
+      expect((await hubs.send(who, "POST", "/room/extensions/offer", { source: "https://github.com/acme/skills" })).status, who).toBe(401);
+    }
+    // The run token of a task in a workspace a non-administrator owns is enough: these are workspace-scoped.
+    const tools = await hubs.send("member", "GET", "/room/plugins", undefined, bearer);
+    expect(tools.status).toBe(200);
+    const offer = await hubs.send("member", "POST", "/room/extensions/offer", { source: "https://github.com/acme/skills" }, bearer);
+    // Past authorization: the fake daemon is offline for extensions.resolveSource, so the offer fails at the daemon.
+    expect(offer.status).toBe(503);
+    expect(hubs.calls).toContain("extensions.resolveSource");
   });
 });
