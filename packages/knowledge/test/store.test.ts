@@ -646,6 +646,46 @@ describe("KnowledgeStore", () => {
     await expect(s.writeDiagram({ ...diagramInput(spec), id: "G-9" }, { author: "agent" })).rejects.toThrow(/G-9/);
   });
 
+  test("#306: a redraw that asks for active brings a dropped diagram back", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    await s.writeDiagram(diagramInput({ v: 1 }), { author: "agent" });
+    await s.withdraw("G-1", { author: "user" });
+    const later = new Date("2030-01-01T00:00:00.000Z");
+    const redrawn = await s.writeDiagram({ ...diagramInput({ v: 2 }), id: "G-1", status: "active" }, { author: "agent", now: later });
+    expect(redrawn.entry).toMatchObject({ status: "active", confirmedAt: later.toISOString() });
+    expect(await s.get("G-1")).toMatchObject({ status: "active" });
+    expect(await s.readDiagramSpec("G-1")).toEqual({ v: 2 });
+    // Without a status the redraw keeps what the user chose.
+    await s.withdraw("G-1", { author: "user" });
+    expect((await s.writeDiagram({ ...diagramInput({ v: 3 }), id: "G-1" }, { author: "agent" })).entry.status).toBe("dropped");
+    // A status the diagram kind does not have is an error, not a silent keep.
+    await expect(
+      s.writeDiagram({ ...diagramInput({ v: 4 }), id: "G-1", status: "open" as never }, { author: "agent" }),
+    ).rejects.toThrow(/status/);
+    expect(await s.readDiagramSpec("G-1")).toEqual({ v: 3 });
+  });
+
+  test("#306: restoreDiagram sets a dropped diagram active, keeps its drawing and confirmation time, and records the change", async () => {
+    const s = new KnowledgeStore(dir);
+    await s.init();
+    const drawn = await s.writeDiagram(diagramInput({ v: 1 }), { author: "agent", now: new Date("2026-01-01T00:00:00.000Z") });
+    await s.withdraw("G-1", { author: "user" });
+    const restored = await s.restoreDiagram("G-1", { author: "user", now: new Date("2030-01-01T00:00:00.000Z") });
+    expect(restored.entry).toMatchObject({ status: "active", confirmedAt: drawn.entry.confirmedAt, diagram: DIAGRAM });
+    expect(await s.get("G-1")).toMatchObject({ status: "active", confirmedAt: drawn.entry.confirmedAt });
+    expect(await s.readDiagramSpec("G-1")).toEqual({ v: 1 });
+    const files = (await git(dir, ["show", "--name-only", "--format=", restored.commit])).split("\n").filter(Boolean);
+    expect(files).toEqual(["diagrams/G-1.md"]);
+    expect((await history(dir, "G-1")).map((h) => [h.reason, h.author])).toEqual([["用户恢复", "user"], ["用户撤回", "user"], ["画图：系统架构", "agent"]]);
+    // Nothing to restore, or not a diagram: an error, never a reported success.
+    await expect(s.restoreDiagram("G-1", { author: "user" })).rejects.toThrow(/G-1.*active/);
+    await expect(s.restoreDiagram("G-9", { author: "user" })).rejects.toThrow(/G-9/);
+    await s.upsert(req("r"), { author: "agent" });
+    await expect(s.restoreDiagram("R-1", { author: "user" })).rejects.toThrow(/R-1/);
+    expect(await history(dir, "G-1")).toHaveLength(3);
+  });
+
   test("a knowledge repo without diagrams/ still lists and recovers", async () => {
     // A repo created before diagrams existed: no diagrams/ directory at all.
     await mkdir(dir, { recursive: true });

@@ -38,8 +38,13 @@ const SaveArgs = z
     spec: z.record(z.string(), z.unknown()),
     nodePaths: z.record(z.string(), z.array(z.string())),
     id: z.string().regex(DIAGRAM_ID).optional(),
+    status: z.literal("active").optional(),
   })
-  .strict();
+  .strict()
+  .refine((args) => args.status === undefined || args.id !== undefined, {
+    path: ["status"],
+    message: "an existing diagram id is required",
+  });
 
 const ReadArgs = z.object({ id: z.string() }).strict();
 
@@ -94,6 +99,7 @@ async function saveDiagram(deps: DiagramDeps, auth: { taskId: string; workspaceI
     saved = await store.writeDiagram(
       {
         ...(input.id !== undefined ? { id: input.id } : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
         title: input.title,
         body: input.summary,
         diagram: {
@@ -124,7 +130,7 @@ async function saveDiagram(deps: DiagramDeps, auth: { taskId: string; workspaceI
   } catch (e) {
     console.error(`diagram__save: post-commit bookkeeping failed for ${entry.id} (commit ${commit})`, e);
   }
-  return { status: 200, result: { ok: true, id: entry.id }, ok: true };
+  return { status: 200, result: { ok: true, id: entry.id, status: entry.status }, ok: true };
 }
 
 async function readDiagram(deps: DiagramDeps, workspaceId: string, args: unknown): Promise<HubCallOutcome> {

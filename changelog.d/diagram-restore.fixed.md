@@ -1,0 +1,1 @@
+- Restore withdrawn code diagrams to active through the API or when redrawing them with the agent.

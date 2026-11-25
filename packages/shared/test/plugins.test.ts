@@ -109,7 +109,8 @@ test("diagram__save requires repo, type, title, summary, spec and nodePaths; dia
   const save = schema("diagram__save") as JsonSchema & { properties: Record<string, { enum?: string[] }> };
   expect(save).toMatchObject({ type: "object", additionalProperties: false });
   expect(save.required.sort()).toEqual(["nodePaths", "repo", "spec", "summary", "title", "type"]);
-  expect(Object.keys(save.properties).sort()).toEqual(["id", "nodePaths", "repo", "spec", "summary", "title", "type"]);
+  expect(Object.keys(save.properties).sort()).toEqual(["id", "nodePaths", "repo", "spec", "status", "summary", "title", "type"]);
+  expect(save.properties.status?.enum).toEqual(["active"]);
   expect(save.properties.repo).toEqual({ type: "string" });
   expect(save.properties.type?.enum).toContain("architecture");
   expect(schema("diagram__read").required).toEqual(["id"]);

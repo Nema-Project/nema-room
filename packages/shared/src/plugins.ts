@@ -276,7 +276,7 @@ export const PLUGINS: readonly PluginManifest[] = [
       {
         name: "diagram__save",
         description:
-          "Save an archify diagram of a bound repository as a knowledge entry; pass id to update that diagram in place, and fix the spec and retry when the result is ok:false with diagnostics.",
+          "Save an archify diagram of a bound repository as a knowledge entry; pass id to update in place, pass status active with id to restore a withdrawn diagram while redrawing it, and fix the spec and retry when the result is ok:false with diagnostics.",
         readOnly: true,
         parameters: {
           type: "object",
@@ -292,6 +292,7 @@ export const PLUGINS: readonly PluginManifest[] = [
               additionalProperties: { type: "array", items: { type: "string" } },
             },
             id: { type: "string", pattern: "^G-[1-9][0-9]*$", description: "An existing diagram to update; omit to create one." },
+            status: { type: "string", enum: ["active"], description: "Requires id. Omit to keep the existing diagram status." },
           },
           required: ["repo", "type", "title", "summary", "spec", "nodePaths"],
           additionalProperties: false,
