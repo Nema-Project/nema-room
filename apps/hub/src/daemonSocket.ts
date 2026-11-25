@@ -23,7 +23,7 @@ import { applyRepoFetched, applyRepoMoved, listRepos, syncBoundRepos, trustedSki
 import { claimNextTask, computeWaitingReason, finishTask, getDaemonOwner, getTask, interruptRunning, listTaskChanges, requeueDaemonTasks, toUiTask, type OnlineDaemon, type Task, type WaitingReason } from "./tasks.js";
 import { getWorkspace, listWorkspaces, repoPath } from "./workspaces.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
-import { versionSkewMessage } from "./hubVersion.js";
+import { MIN_DAEMON_VERSION, compareVersions, versionSkewMessage } from "./hubVersion.js";
 import { clearSkillOffers, listSkillOffers } from "./skillOffers.js";
 
 type ProjectSkillRepo = Awaited<ReturnType<typeof trustedSkillRepos>>[number];
@@ -470,7 +470,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       } else if (m.token !== deps.daemonToken) {
         return reject("daemon token 无效");
       }
-      if (deps.releaseVersion && m.version !== deps.releaseVersion) {
+      // D-9: below the minimum compatible version the daemon is refused with an upgrade pointer.
+      // At or above the floor it is admitted whatever the hub version is; protocol drift is caught by
+      // the features checks at dispatch time, not by guessing from the version. A missing heldRepos
+      // report (an older daemon) is not a version refusal: it only means an empty held set (D-6).
+      if (deps.releaseVersion && compareVersions(m.version, MIN_DAEMON_VERSION) < 0) {
         return reject(versionSkewMessage(deps.releaseVersion));
       }
       // Older CLIs silently drop adapter:"auto" assignments.

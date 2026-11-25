@@ -1,0 +1,1 @@
+- The hub no longer requires a daemon to report exactly the hub's version: any CLI at or above the minimum compatible version (0.3.2) is accepted, so upgrading the hub no longer stops the whole daemon fleet. A daemon below the minimum is refused with an upgrade pointer.

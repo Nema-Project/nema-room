@@ -65,12 +65,13 @@ describe("daemon version skew", () => {
     expect(readHubReleaseVersion()).toBe(pkg.version);
   });
 
-  test("a mismatched hello is rejected with the hub version", async () => {
+  test("a hello below the minimum version is rejected with an upgrade pointer", async () => {
     const port = await listen("1.2.3");
-    const { message, closed } = await hello(port, "9.9.9");
+    const { message, closed } = await hello(port, "0.3.1");
     const error = await message;
     expect(error.type).toBe("error");
     expect(error.message).toContain("版本不一致");
+    expect(error.message).toContain("不低于 0.3.2");
     expect(error.message).toContain("hub 1.2.3");
     expect(error.message).toContain("@nema-project/nema@1.2.3");
     await closed;
@@ -79,6 +80,24 @@ describe("daemon version skew", () => {
   test("a matching hello is welcomed", async () => {
     const port = await listen("1.2.3");
     const { message } = await hello(port, "1.2.3");
+    expect(await message).toMatchObject({ type: "welcome" });
+  });
+
+  test("a hello at exactly the minimum version is welcomed", async () => {
+    const port = await listen("1.2.3");
+    const { message } = await hello(port, "0.3.2");
+    expect(await message).toMatchObject({ type: "welcome" });
+  });
+
+  test("a newer hello is welcomed: the hub no longer demands an exact match", async () => {
+    const port = await listen("1.2.3");
+    const { message } = await hello(port, "9.9.9");
+    expect(await message).toMatchObject({ type: "welcome" });
+  });
+
+  test("a hello between the minimum and the hub version is welcomed", async () => {
+    const port = await listen("1.2.3");
+    const { message } = await hello(port, "0.3.3");
     expect(await message).toMatchObject({ type: "welcome" });
   });
 
