@@ -1,7 +1,9 @@
 // #167 task 8 (spec acceptance ③ and ⑥): workspace content routes require roster membership, workspace
 // administration requires an owner, and the local form's synthetic user passes everything as it did before.
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { SSEStreamingApi } from "hono/streaming";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createApp } from "../src/app.js";
+import type { Db } from "../src/db/db.js";
 import { EventBus } from "../src/events.js";
 import { addMember, removeMember } from "../src/members.js";
 import { createWorkspace } from "../src/workspaces.js";
@@ -13,6 +15,8 @@ let app: ReturnType<typeof createApp>;
 let ws: string;
 let actor: string;
 let events: EventBus;
+/** Runs after each query the app issues outside a transaction; see holdQuery. */
+let afterQuery: ((sql: string, params: unknown[]) => Promise<void>) | null;
 
 beforeEach(async () => {
   deps = await makeHubDeps();
@@ -24,8 +28,36 @@ beforeEach(async () => {
   await removeMember(deps.db, ws, "usr_gone", "usr_owner");
   actor = "usr_owner";
   events = new EventBus();
-  app = createApp({ ...deps, events, daemonStatus: () => false, daemon: { call: async () => null }, identity: async () => ({ userId: actor }) });
+  afterQuery = null;
+  const db: Db = {
+    async query<T>(sql: string, params: unknown[] = []) {
+      const rows = await deps.db.query<T>(sql, params);
+      await afterQuery?.(sql, params);
+      return rows;
+    },
+    tx: (fn) => deps.db.tx(fn),
+  };
+  app = createApp({ ...deps, db, events, daemonStatus: () => false, daemon: { call: async () => null }, identity: async () => ({ userId: actor }) });
 });
+
+/**
+ * Pauses the request that issues the `nth` query matching `match`, after that query has run, until
+ * `release()`. `reached` resolves once it is paused.
+ */
+function holdQuery(match: (sql: string, params: unknown[]) => boolean, nth = 1) {
+  let release!: () => void;
+  const released = new Promise<void>((ok) => (release = ok));
+  let reach!: () => void;
+  const reached = new Promise<void>((ok) => (reach = ok));
+  let seen = 0;
+  afterQuery = async (sql, params) => {
+    if (!match(sql, params) || ++seen < nth) return;
+    afterQuery = null;
+    reach();
+    await released;
+  };
+  return { reached, release };
+}
 afterEach(async () => { await deps.close(); await cleanupHubDeps(); });
 
 const req = (as: string, method: string, path: string, body?: unknown) => {
@@ -102,11 +134,16 @@ test("the workspace event stream needs membership", async () => {
   expect((await req("usr_gone", "GET", `/api/workspaces/${ws}/events`)).status).toBe(403);
 });
 
-/** Opens the workspace event stream as `who` and reads it into a buffer. */
-async function openStream(who: string) {
-  const ac = new AbortController();
+/** Starts a workspace event stream request as `who`. */
+function requestStream(who: string, signal?: AbortSignal) {
   actor = who;
-  const res = await app.request(`${HUB}/api/workspaces/${ws}/events`, { signal: ac.signal });
+  return app.request(`${HUB}/api/workspaces/${ws}/events`, signal ? { signal } : {});
+}
+
+/** Opens the workspace event stream as `who` (or takes a request already started) and reads it into a buffer. */
+async function openStream(who: string, started?: ReturnType<typeof requestStream>) {
+  const ac = new AbortController();
+  const res = await (started ?? requestStream(who, ac.signal));
   expect(res.status, who).toBe(200);
   const reader = res.body!.getReader();
   const dec = new TextDecoder();
@@ -183,6 +220,94 @@ test("usr_local's event stream is never revoked (local form has no roster to lea
   await local.until("E-local");
   expect(local.s.ended).toBe(false);
   await local.close();
+});
+
+const removeMem = async () => expect((await req("usr_owner", "POST", `/api/workspaces/${ws}/members/usr_mem/remove`)).status).toBe(200);
+const workspaceLookup = (sql: string) => sql.includes("from workspaces where id = $1");
+
+test("a removal after the member gate but before the stream listens refuses the stream", async () => {
+  // Paused in uiApi's workspace lookup: the gate has admitted usr_mem, the handler has not run yet.
+  const held = holdQuery(workspaceLookup);
+  const started = requestStream("usr_mem");
+  await held.reached;
+  await removeMem();
+  changed("E-window");
+  held.release();
+  const res = await started;
+  expect(res.status).toBe(403);
+  await res.body?.cancel();
+  expect((events as any).revokers.has(`${ws}\0usr_mem`)).toBe(false);
+  expect((events as any).byWs.has(ws)).toBe(false);
+});
+
+test("a removal after the final check passed closes the stream before any event", async () => {
+  // The second membership query for usr_mem is the handler's final check (the first is the gate). It has
+  // run and passed; the removal commits before the stream starts.
+  const held = holdQuery((sql, p) => sql.includes("from workspace_members") && p[1] === "usr_mem", 2);
+  const started = requestStream("usr_mem");
+  await held.reached;
+  await removeMem();
+  changed("E-window");
+  held.release();
+  const stream = await openStream("usr_mem", started);
+  changed("E-after");
+  await stream.untilEnded();
+  expect(stream.s.buf).not.toContain("E-window");
+  expect(stream.s.buf).not.toContain("E-after");
+  expect((events as any).revokers.has(`${ws}\0usr_mem`)).toBe(false);
+  expect((events as any).byWs.has(ws)).toBe(false);
+});
+
+test("a member still on the roster in the same window keeps receiving", async () => {
+  const held = holdQuery(workspaceLookup);
+  const started = requestStream("usr_owner");
+  await held.reached;
+  await removeMem();
+  held.release();
+  const kept = await openStream("usr_owner", started);
+  changed("E-kept");
+  await kept.until("E-kept");
+  expect(kept.s.ended).toBe(false);
+  await kept.close();
+});
+
+test("revoking a stream whose write is blocked on an unread client ends it and drops the event in flight", async () => {
+  // Track writes that have not completed. The client below reads nothing until after the revoke, so once
+  // the stream's buffers fill, one write stays blocked on backpressure.
+  const inFlight = new Set<string>();
+  const writeSSE = SSEStreamingApi.prototype.writeSSE;
+  const write = vi.spyOn(SSEStreamingApi.prototype, "writeSSE").mockImplementation(async function (this: SSEStreamingApi, m) {
+    const id = (JSON.parse(String(m.data)) as { entryId: string }).entryId;
+    inFlight.add(id);
+    try {
+      await writeSSE.call(this, m);
+    } finally {
+      inFlight.delete(id);
+    }
+  });
+  const abort = vi.spyOn(SSEStreamingApi.prototype, "abort");
+  try {
+    const stream = await openStream("usr_mem");
+    for (let i = 0; i < 20; i++) changed(`E-bp-${i}-`);
+    await vi.waitFor(() => expect(inFlight.size).toBe(1));
+    await new Promise((ok) => setTimeout(ok, 100));
+    expect(inFlight.size, "a write should still be blocked").toBe(1);
+    const [blocked] = [...inFlight];
+
+    events.revoke(ws, "usr_mem");
+    expect(abort).toHaveBeenCalledTimes(1);
+    // The blocked write is released while the client is still not reading.
+    await vi.waitFor(() => expect(inFlight.size).toBe(0));
+    await stream.untilEnded();
+    expect(stream.s.buf).not.toContain(blocked);
+    expect(stream.s.buf).not.toContain("E-bp-19-");
+    expect(abort).toHaveBeenCalledTimes(1);
+    expect((events as any).revokers.has(`${ws}\0usr_mem`)).toBe(false);
+    expect((events as any).byWs.has(ws)).toBe(false);
+  } finally {
+    write.mockRestore();
+    abort.mockRestore();
+  }
 });
 
 test("deleting a workspace is owner-only", async () => {

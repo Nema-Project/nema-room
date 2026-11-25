@@ -24,8 +24,9 @@ import { RepoError, bindRepo, getRepo, listIndexing, listRepos, previewRepo, syn
 import { getRunningTask, listQueuedTasks, toUiTask } from "./tasks.js";
 import { revokeActiveShares } from "./shares.js";
 import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, repoPath, updateWorkspace } from "./workspaces.js";
-import { canSeeWorkspace, workspaceAccess } from "./authz.js";
+import { authorizeWorkspace, canSeeWorkspace, workspaceAccess } from "./authz.js";
 import { LOCAL_USER_ID } from "./identity.js";
+import { MemberError } from "./members.js";
 import { attentionCounts, ensureThread, getThread, listThreads, markThreadRead, nextAttentionResult } from "./threads.js";
 import { listThreadMessages } from "./messages.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
@@ -962,9 +963,26 @@ export function uiRoutes(deps: UiDeps): Hono {
     return c.html(html);
   });
 
-  app.get("/workspaces/:id/events", (c) => {
+  app.get("/workspaces/:id/events", async (c) => {
     const ws = c.req.param("id")!;
-    const userId = c.get("identity").userId;
+    const identity = c.get("identity");
+    const userId = identity.userId;
+    // The member gate in app.ts ran before this handler, and other middleware awaited in between, so a
+    // removal could commit after the gate but before this stream listened for it. Listen for removal
+    // first, then check membership once more: a removal before the check fails it, and one after it
+    // reaches the listener. Removal from the roster closes the stream and drops anything still queued, so
+    // nothing more reaches a former member. usr_local has no roster to leave (local form), so its stream
+    // is never revoked.
+    let revoked = false;
+    let onRevoked = () => void (revoked = true);
+    const unsubRevoke = userId === LOCAL_USER_ID ? () => {} : events.onRevoke(ws, userId, () => onRevoked());
+    try {
+      await authorizeWorkspace(db, identity, ws);
+    } catch (e) {
+      unsubRevoke();
+      if (e instanceof MemberError) return c.json({ error: e.message }, e.status);
+      throw e;
+    }
     return streamSSE(c, async (stream) => {
       const queue: HubEvent[] = [];
       let wake: (() => void) | null = null;
@@ -977,13 +995,9 @@ export function uiRoutes(deps: UiDeps): Hono {
         if (w === "") push(e); // global events only; workspace events arrive via subscribe()
       });
       let closed = false;
-      // The member gate ran once, when the stream opened. Removal from the roster closes the stream and
-      // drops anything still queued, so nothing more reaches a former member. usr_local has no roster to
-      // leave (local form), so its stream is never revoked.
-      const unsubRevoke = userId === LOCAL_USER_ID ? () => {} : events.onRevoke(ws, userId, () => {
-        queue.length = 0;
-        close();
-      });
+      // Every exit path runs this once. abort() also releases a write blocked on a client that stopped
+      // reading, which the stream's own close() would wait behind, and discards what is still buffered for it. The
+      // onAbort subscriber it triggers is this function, which returns early.
       const close = () => {
         if (closed) return;
         closed = true;
@@ -991,8 +1005,14 @@ export function uiRoutes(deps: UiDeps): Hono {
         unsubAll();
         unsubRevoke();
         wake?.();
+        stream.abort();
+      };
+      onRevoked = () => {
+        queue.length = 0;
+        close();
       };
       stream.onAbort(close);
+      if (revoked) close(); // removed between the final check and this callback
       try {
         while (!closed) {
           while (queue.length > 0 && !closed) await stream.writeSSE({ data: JSON.stringify(queue.shift()) });
