@@ -38,10 +38,17 @@
 
 | 运行时 | 需要的命令 | 需要的凭据（daemon 本机） | 「已登录」在这里的含义 |
 | --- | --- | --- | --- |
-| `codex-direct`（默认） | 无 | 默认账户的 SIWC 登录 / BYOK key / compat 下的 `$CODEX_HOME/auth.json` | `credentialStateOf(默认账户) === "connected"` |
+| `codex-direct`（默认） | 无 | 默认账户的 SIWC 登录 / BYOK key / compat 下的 `$CODEX_HOME/auth.json`；BYOK 另需一个默认模型 | 默认账户的凭据判定为 `connected`（判定规则见下），BYOK 还要 `preferredModel(账户) !== null` |
 | `claude-code` | `claude` 在 daemon 的 PATH 上能答 `--version` | Nema 存的 Claude token | 同上，账户为该运行时的默认账户 |
 
-「默认账户」取 `resolveRoute` 无显式选择时的同一规则：该运行时下排序最前的已启用账户（`routing/index.ts:166-179`）。工作区或 thread 绑定了别的账户时按绑定走，那属于账户设置的范围，不属于首次运行引导。
+「默认账户」取 `resolveRoute` 无显式选择时的同一规则：该运行时下排序最前的已启用账户（`routing/index.ts:166-179`）。工作区或 thread 绑定了别的账户时按绑定走，那属于账户设置的范围，不属于首次运行引导；就绪状态因此只描述「不指定账户时任务会用的那个账户」，Composer 提示据此收窄（见 D-2）。
+
+凭据判定**不能直接用 `credentialStateOf` 的返回值**，有两处与「任务能不能跑」不一致：
+
+- **合成账户（首次运行的常态）**：没有 `accounts.json` 时，`loadRoutingAccounts` 合成一个 `IMPLICIT_ACCOUNT_ID` 账户（`routing/accountSet.ts:51-53`、`accounts/implicit.ts:74`），`credentialStateOf` 把它交给 `implicitCredentialState`（`routing/accountAuth.ts:45-47`）。后者只检查 SIWC；BYOK、compat 与 `claude-code` 一律直接回 `connected`（`accounts/credentials.ts:170-172`），留给运行时的 token source 自己报错。路由这样做是为了保留 0.2.0 的报错句子，就绪判定却不能照搬，否则缺 key、缺 token 的首次用户会被标成「已配置」。就绪处理器对合成账户的非 SIWC 模式只检查它自己的那一个旧路径文件：BYOK 的 `byok-key`、Claude 的 `claude-code-token` 按 `fileState` 的规则判定（私有、属主、单行非空）；compat 按 `codexLoginProblem` 的规则判定 `$CODEX_HOME/auth.json`。「一个目录只能有一种凭据」的外来文件规则**不**用在合成账户上，与 `implicitCredentialState` 的注释（`credentials.ts:160-168`）一致。这需要从 `credentials.ts` 导出一个只读的判定函数；`implicitCredentialState` 与 `resolveRoute` 本身不改（「不做」）。
+- **BYOK 缺模型**：凭据 `connected` 但账户没有模型时，`preferredModel` 返回 `null`（`routing/accountAuth.ts:28-37`），`checkNamed` 在凭据检查之后以 `model_missing` 拒绝任务（`routing/index.ts:314-317`）。就绪判定复用 `preferredModel`，这种情况记为 `needs_model`。
+
+这两处补充仍只读本机文件与 `config.json` 或 `accounts.json` 里的配置，不联网、不发请求，在 D-3 的范围之内。
 
 ### 三态与未知态（两运行时各自独立）
 
@@ -50,16 +57,17 @@
 | `not_installed` | 不适用（不需要命令） | `claude --version` 报 ENOENT | 「运行 daemon 的这台机器的 PATH 上找不到 `claude`」，附官方安装链接；**不说「未安装」**（现状 8） |
 | `not_signed_in` | 默认账户凭据 `missing`，或这个运行时下没有已启用账户 | 命令可用，但 token `missing` | 「还没有连接账户」，附下一步动作（D-5） |
 | `credential_unusable` | 默认账户凭据 `unusable` | token `unusable` | 「凭据文件不可用（权限、符号链接或内容）」，与 `not_signed_in` 分开，因为修法不同 |
-| `configured` | 凭据 `connected` | 命令可用，且 token `connected` | 「已配置」。**不说「可用」或「已验证」**（D-3） |
-| `unknown` | daemon 不在线、RPC 失败或超时、旧版 daemon 没有这个方法、凭据检查抛错 | 同左，另加 `--version` 超时或非 ENOENT 的失败 | 「暂时无法检查」，并写明原因 |
+| `needs_model` | BYOK 账户凭据 `connected`，但 `preferredModel` 为 `null` | 不适用（`claude-code` 总有默认模型） | 「BYOK 账户还没有指定模型」，附下一步动作（D-5） |
+| `configured` | 凭据 `connected`，且（BYOK 时）有模型 | 命令可用，且 token `connected` | 「已配置」。**不说「可用」或「已验证」**（D-3） |
+| `unknown` | daemon 不在线、RPC 失败或超时、旧版 daemon 没有这个方法、凭据检查抛错、`accounts.json` 不可读（`loadRoutingAccounts` 抛错） | 同左，另加 `--version` 超时、非 ENOENT 的失败，以及 PATH 上有 `claude` 但启动时报 ENOENT（损坏的 shim） | 「暂时无法检查」，并写明原因；损坏的 shim 写「PATH 上有 `claude`，但无法启动（目标或解释器缺失）」，不给安装链接 |
 
 整体就绪由 web 从两行推出：
 
 - **ready**：当前配置的运行时（`config.adapter`）是 `configured`。另一个运行时的状态只在设置页显示，不触发任何引导。
-- **needs_setup**：当前运行时是 `not_installed` / `not_signed_in` / `credential_unusable`。如果另一个运行时是 `configured`，引导多给一个「切换到它」的选项。
+- **needs_setup**：当前运行时是 `not_installed` / `not_signed_in` / `credential_unusable` / `needs_model`。如果另一个运行时是 `configured`，引导多给一个「切换到它」的选项。
 - **unknown**：当前运行时是 `unknown`。只在设置页与引导卡片里如实显示原因，**不弹横幅**（避免检测故障演变成打扰）。
 
-`--version` 的失败要拆开：ENOENT 记为 `not_installed`，超时和其他错误记为 `unknown`（附一行原因）。现状 1 里三者混成 `installed: false`，这个混淆要在本项修掉。
+`--version` 的失败要拆开：超时和非 ENOENT 的错误（包括 Windows 上 `commandSpec` 对不认识或入口缺失的 shim 抛出的错误，`apps/cli/src/platform.ts:45-47`）记为 `unknown`（附一行原因）。ENOENT 还要再分一步：POSIX 上，PATH 里的 `claude` 是指向不存在目标的链接，或者 shebang 解释器缺失时，`execFile` 同样报 ENOENT。所以收到 ENOENT 后，按 `commandSpec` 同样的 PATH 与扩展名规则查一次 PATH 目录项（只 `lstat`，不执行）：找不到才记 `not_installed`；找得到则记 `unknown`，理由码 `cli_broken`。现状 1 里这些情况都混成 `installed: false`，本项要把它们拆开。
 
 ### 数据契约（草案）
 
@@ -68,16 +76,29 @@
 ```ts
 type RuntimeReadiness = {
   runtime: "codex-direct" | "claude-code";
-  state: "not_installed" | "not_signed_in" | "credential_unusable" | "configured" | "unknown";
+  state: "not_installed" | "not_signed_in" | "credential_unusable" | "needs_model" | "configured" | "unknown";
   /** Why it is unknown or not configured, as a code the web translates; never stderr. */
-  reason?: "no_enabled_account" | "cli_timeout" | "cli_error" | "inspect_failed";
+  reason?: "no_enabled_account" | "cli_timeout" | "cli_error" | "cli_broken" | "inspect_failed";
   cli?: { command: string; version: string | null; installUrl: string };
-  accountId?: string; // which account was judged, never its credential
+  /** Which account was judged and what kind it is, so the web can pick the right next step (D-5); never its credential. */
+  account?: { id: string; implicit: boolean; authMode?: "siwc" | "compat" | "byok" };
 };
-type ReadinessReply = { current: "codex-direct" | "claude-code"; runtimes: RuntimeReadiness[]; checkedAt: string };
+type ReadinessReply = {
+  current: "codex-direct" | "claude-code";
+  runtimes: RuntimeReadiness[];
+  checkedAt: string;
+  /** Filled by the hub, not the daemon: today's per-connection daemonId; #167's stable daemons.id/label once it lands (D-9). */
+  daemon?: { id: string; label: string | null };
+};
 ```
 
-计算全部复用现有函数：`detectAgentClis` 的执行器（按 ENOENT 与其他失败拆开）、`loadRoutingAccounts`、`credentialStateOf`。不联网、不刷新令牌、不读令牌值。
+计算复用现有函数：`detectAgentClis` 的执行器（按上文拆开 ENOENT 与其他失败）、`loadRoutingAccounts`、`credentialStateOf`（存储账户）、`preferredModel`。合成账户的非 SIWC 模式另用一个只读的单文件判定（见「判定对象」）。不联网、不刷新令牌、不读出令牌值。
+
+**谁能看到多少**：远程身份模式（`remoteAuth`）今天已经存在，`/api/*` 的中间件对任何已登录会话放行（`apps/hub/src/app.ts:128-133`），`componentRoutes` 也没有按 daemon 所有者过滤（`apps/hub/src/components.ts:82`）。就绪回复里的账户信息与逐项状态属于 daemon 主人的本机配置，hub 路由要按调用者裁剪：
+
+- 单机形态（身份恒为 `usr_local`）：原样返回。
+- 远程身份模式、#167 的 `daemons.owner_user_id`（#167 D-5）落地之前：hub 无法判定谁是 daemon 的主人，所以对所有调用者都只返回裁剪后的形式。裁剪形式只保留 `current`、`checkedAt`、`daemon`，以及每行的 `runtime` 与 `state`；去掉 `account`、`cli.version` 与 `reason`。
+- #167 D-5 落地之后：daemon 主人拿到完整回复，其他人拿到裁剪形式，web 对这些人按 D-9 显示「这个 hub 上还没有为你准备好的 daemon」，不给命令。
 
 ## D 项（待维护者拍板）
 
@@ -87,7 +108,7 @@ type ReadinessReply = { current: "codex-direct" | "claude-code"; runtimes: Runti
   2. **工作区内可关横幅**：只在整体状态为 `needs_setup` 且用户没有关闭过时显示，一行，链到设置页。不在 `unknown` 时显示。
   3. **设置页深链**：横幅和清单卡的动作都打开设置页并定位到「模型」标签（桌面形态在那里登录或填 token）或「组件」标签（看 CLI 检测）。这需要给 `AppSettings` 加一个初始标签参数（现状 9：今天标签是内部 state）。
 
-  另在 Composer 发送区加一行就地提示：`needs_setup` 时说明「这条消息会排队，当前运行时尚未配置」。发送不被阻止，因为讨论本身会落库，任务回队或失败的既有路径不变。
+  另在 Composer 发送区加一行就地提示。它不预言这条消息的结局，因为 daemon 在线时，任务被认领后会立即路由，凭据或模型缺失时 `resolveRoute` 拒绝，任务以失败结束（`direct/adapter.ts:357`、`claude/adapter.ts:133`），而不是排队等配置。只有 daemon 离线时任务才会留在队列里。提示文案取条件式，例如：「默认账户尚未配置；用它运行的 agent 任务会失败，讨论本身照常保存。」显示条件三者同时成立：整体 `needs_setup`；这条消息会落到默认账户，即 Composer 没有选账户，且 web 已知的 thread 与工作区绑定（桌面形态的 `useAccounts().bindings`，`apps/web/lib/useAccounts.ts:22`）都没有指定别的账户；首次就绪标记尚未写入（D-6）。web 不知道绑定的形态（`supported: false`）按「落到默认账户」处理，所以文案本身必须是条件式。发送不被阻止，任务回队或失败的既有路径不变。
 
   理由：触达最高的是空状态与 Composer，它们只出现在用户正准备用 agent 的地方；横幅给已经有工作区的用户（例如从旧版升级、换了机器）一次提醒，可关；深链让每条提示都有去处。首启屏不选，原因有四：它挡住知识库等不需要 agent 的功能（与「不做」冲突）；桌面、npm、Compose、远程四种形态的「首次」定义各不相同（远程形态下首次打开 web 的人可能根本不管 daemon）；一旦关掉，之后就没有落点；还要再做一套关闭状态。备选：(a) 只做设置页状态（今天的做法加强版）：零打扰，但触达几乎为零，现状 2 已经说明这个面板很深；(b) 常驻横幅不可关：对只用知识库的人是持续打扰，违背「不挡住」。
 - **D-3 探测深度：只查存在性与本机凭据状态，还是对每个运行时做真实 auth 探测？推荐：只做前者（命令存在 + `credentialStateOf` 的本机文件判定），展示为「已配置」。真实探测只作为用户主动点击的动作，并且只在已有的地方提供（桌面「模型」页的 SIWC/BYOK 探测）。** 理由：
@@ -97,17 +118,29 @@ type ReadinessReply = { current: "codex-direct" | "claude-code"; runtimes: Runti
   - **桌面与远程的差异**：桌面上 daemon 与浏览器同机，用户点「检查」的代价可见。远程形态下探测发生在另一台机器、用的是那台机器主人的额度。一个看页面的人不该能触发别人机器上的计费请求（与 #167「凭据不出 daemon 本机」同向）。
 
   代价是会漏掉「文件在但令牌已失效」，这种情况继续由任务时的既有错误句子兜底（现状 5）。备选：自动真实探测（准确度最高，但上面四条都不成立）；只查存在性、不查凭据（等于今天，漏掉最常见的未登录）。
-- **D-4 刷新时机。推荐：在四个时刻读一次 `agents.readiness`：页面加载；`daemon.status` 从断开变为连接；窗口重新获得焦点（节流，两次至少间隔 30 秒）；用户点「重新检查」。不做后台轮询。daemon 侧不缓存凭据判定（够便宜），`--version` 结果缓存 30 秒，「重新检查」带 `force` 绕过缓存。** 理由：用户最典型的动作是切到终端装或登录，再切回来。焦点事件正好覆盖这一步，免去手动刷新。`--version` 每次都会起子进程，轮询会让空闲的 Room 持续 fork 进程。备选：固定间隔轮询（简单，但浪费进程，且只在需要引导时才有意义，状态机反而更复杂）；daemon 主动推送（需要监听文件与 PATH 变化，跨平台不可靠）。
-- **D-5 下一步动作按形态给。推荐：桌面形态（`LOCAL_HUB_MODE`，且 `/_nema/settings` 可用）给应用内动作：深链到「模型」页登录或填 token，`not_installed` 给官方安装链接。其他形态（npm 本地、Compose、远程）给「在运行 daemon 的那台机器上执行」的命令文本：`nema auth login`、`claude setup-token` 加 `nema auth claude`、`nema doctor`，并附 guide 链接。命令按版本化写法给出（AGENTS.md 要求，不写无版本的 `npx`）。** 理由：凭据只能在 daemon 本机写入（Compose 页面没有账户区块，远程形态按 #167 的不变量也不会有）。在 web 上给一个「登录」按钮，在这些形态下是做不到的承诺。备选：所有形态统一只给命令：桌面用户被迫开终端，退回 0.2 的体验。
+- **D-4 刷新时机。推荐：在四个时刻读一次 `agents.readiness`：页面加载；`daemon.status` 从断开变为连接；窗口重新获得焦点（节流，两次至少间隔 30 秒）；用户点「重新检查」。不做后台轮询。daemon 侧不缓存凭据判定（够便宜），`--version` 结果缓存 30 秒，「重新检查」带 `force` 绕过缓存。** 实施细节（评审后补充，不改上述取舍）：
+  - **设置页内的保存也是一个时刻**：用户沿深链进入设置页，在同一窗口里改运行时、保存 key、token 或模型，窗口焦点不变，上面四个时刻都不会触发。所以「模型」或账户设置成功保存后，以及关闭设置对话框时（若期间有过保存），各读一次。这仍是事件驱动，不是轮询。
+  - **节流不吞掉最后一次**：焦点事件落在 30 秒节流窗口内时，不丢弃，而是在窗口结束时补一次检查（trailing）。同一个窗口内多次焦点只补一次。
+  - **只缓存成功**：只缓存 `--version` 成功的结果。ENOENT、超时与其他失败不缓存，否则刚装好 `claude` 就切回窗口的用户会继续读到缓存里的「找不到」。ENOENT 不起子进程，不缓存也没有成本。
+  - **并发**：daemon 侧对同一命令的未完成 `--version` 只跑一个（共享同一个 promise）；`force` 请求另起一次，结果覆盖缓存。web 侧给每次读取编号，返回时如果已有更新的读取发出，就丢弃这次的结果，不让旧响应覆盖新状态。
+
+  理由：用户最典型的动作是切到终端装或登录，再切回来。焦点事件正好覆盖这一步，免去手动刷新。`--version` 每次都会起子进程，轮询会让空闲的 Room 持续 fork 进程。备选：固定间隔轮询（简单，但浪费进程，且只在需要引导时才有意义，状态机反而更复杂）；daemon 主动推送（需要监听文件与 PATH 变化，跨平台不可靠）。
+- **D-5 下一步动作按形态给。推荐：桌面形态（`LOCAL_HUB_MODE`，且 `/_nema/settings` 可用）给应用内动作：深链到「模型」页登录或填 token，`not_installed` 给官方安装链接。其他形态（npm 本地、Compose、远程）给「在运行 daemon 的那台机器上执行」的命令文本：`nema auth login`、`claude setup-token` 加 `nema auth claude`、`nema doctor`，并附 guide 链接。命令按版本化写法给出（AGENTS.md 要求，不写无版本的 `npx`）。** 实施细节（评审后补充，不改上述取舍）：具体给哪条命令，取决于被判定账户的种类与模式（回复里的 `account`），因为 CLI 的 `auth` 子命令只写合成账户的旧路径文件（`apps/cli/src/index.ts:105-125`），不写存储账户的目录。上面列的命令按下面的规则选用，并补上 BYOK 的两条：
+  - **合成账户**：沿用 `routing/messages.ts` 里已经指名命令的句子，保证引导与任务失败时说的是同一件事。SIWC：`nema auth login`（`NOT_LOGGED_IN`）。BYOK 缺 key：把 key 从标准输入交给 `nema auth byok`（`MISSING_BYOK_KEY`）。BYOK 缺模型：`nema config set model <名称>`（`BYOK_MODEL_REQUIRED`）。compat：先 `codex login`（`MISSING_CODEX_LOGIN`），再用 `nema auth login` 确认。Claude：`claude setup-token` 加 `nema auth claude`（`MISSING_CLAUDE_TOKEN`）。`credential_unusable` 时给同一模式下重写那份文件的命令。SIWC 即 `UNUSABLE_FILE_MESSAGE` 指名的 `nema auth login`（`direct/authStore.ts:40`）。BYOK 与 Claude 给各自的 `auth byok` 和 `auth claude`，不照搬那句只指名 `nema auth login` 的通用句子。compat 给 `codex login`。
+  - **存储账户，或 `accounts.json` 里这个运行时没有已启用账户**：CLI 没有能写存储账户凭据、或启用账户的命令。如实说明「这台机器的账户在桌面应用的设置页管理，终端命令改不到它」，并给 `nema doctor` 查看现状，不给一条执行后仍然无效的命令。这与 `credentialMessage` 对存储账户只指向设置页的口径一致（`routing/index.ts:257-270`）。
+  - **`not_installed`**：给官方安装链接，不分形态。
+  - **回复被裁剪、没有 `account` 时**（远程身份模式，见「数据契约」末段）：不猜模式，只给 `nema doctor` 与 guide 链接，并按 D-9 写明要在那台机器上、由那台机器的主人执行。
+
+  理由：凭据只能在 daemon 本机写入（Compose 页面没有账户区块，远程形态按 #167 的不变量也不会有）。在 web 上给一个「登录」按钮，在这些形态下是做不到的承诺。备选：所有形态统一只给命令：桌面用户被迫开终端，退回 0.2 的体验。
 - **D-6 退出与「配好后永不再扰」。推荐：**
   - **自动退出**：整体状态变为 `ready` 时，横幅与 Composer 提示立即消失，无需用户操作；空状态卡在有工作区后自然不再出现。
-  - **永久退休**：首次观察到 `ready` 时，在浏览器 `localStorage` 记一个按 hub 源区分的「已完成首次就绪」标记。之后即使状态退回 `needs_setup`（令牌被删、换了运行时），也不再显示首次引导横幅，退化由既有的任务失败句子与设置页状态承担。用户主动点「不再提示」效果相同。
+  - **永久退休**：首次观察到 `ready` 时，在浏览器 `localStorage` 记一个「已完成首次就绪」标记，键按 hub 源加当前用户 id 区分（`getMe()` 的 `userId`，`apps/web/lib/hub.ts:217`；单机形态恒为 `usr_local`），这样同一浏览器配置里的另一个 hub 用户不会继承别人的完成状态。之后即使状态退回 `needs_setup`（令牌被删、换了运行时），首次引导横幅与 Composer 提示都不再显示，退化由既有的任务失败句子与设置页状态承担。用户主动点「不再提示」效果相同。
   - **只关这一次**：横幅的关闭按钮只记当前的原因码。原因变了（例如从 `not_installed` 进到 `not_signed_in`）就再显示一次，因为这是新的一步。
 
   理由：首次引导的职责是把人带到第一次可用，之后的故障属于运维状态，不该用 onboarding 的语气反复出现。`localStorage` 不需要迁移、不进 hub 数据库，符合「数据库变更要有兼容与恢复计划」的低成本路径。代价是换浏览器会再看到一次（仅在仍未就绪时）。备选：存在 hub 的用户偏好里（跨浏览器一致，远程多人下更自然，但要新增 schema 并等 #167 的真人身份落地）。见「待维护者拍板」第 4 条。
 - **D-7 接口形态：扩展 `agents.detect` 还是新增方法？推荐：新增 daemon RPC `agents.readiness` 与 hub 路由 `GET /api/agent-readiness`；`agents.detect` 与「组件」页保持原样，只修它的 ENOENT 与超时混淆（复用同一个执行器）。** 理由：语义不同（一个是 CLI 清单，一个是运行时就绪，含凭据状态），分开后旧 daemon 对新方法回「未知方法」，web 按 `unknown` 处理、不显示横幅，降级是安静的。往 `agents.detect` 加字段也能做到，但那条路由的名字与「组件」页的定位都会被迫改义。备选：扩展现有方法（少一条路由，语义混在一起）。
 - **D-8 daemon 未连接时。推荐：清单卡的第 0 步是「daemon 已连接」，复用现有 `connected` 状态与侧栏指示；未连接时运行时行全部显示 `unknown（daemon 未连接）`，不显示横幅（侧栏已有指示，避免重复提示）。** 理由：没有 daemon，就绪无从判定。桌面形态 daemon 随应用启动，这一步主要服务 npm 与 Compose 用户，他们需要被告知「还要在终端启动 daemon」。备选：daemon 未连接也弹横幅（与侧栏指示重复）。
-- **D-9 远程形态（#167）下的差异。推荐：本项按单 daemon 实现，但数据契约与文案从一开始就带「哪台机器」：** 回复里预留 daemon 标识字段（#167 的 `daemons.id`/`label` 落地后填入），文案一律写「运行 daemon 的机器」而不是「你的电脑」。多 daemon 落地后，整体就绪定义为「当前用户可派任务的在线 daemon 中，至少一台 `ready`」（与 #167 D-6 的派发资格一致）。设置页按 daemon 分行列出各自状态。远程形态下所有下一步动作都按 D-5 的命令文本给，并说明「这些命令要在那台机器上、由那台机器的主人执行」。查看页面的人如果不是任何在线 daemon 的主人，提示改成「这个 hub 上还没有为你准备好的 daemon」，不给命令。理由：远程形态下浏览器、hub、daemon 可能分属三台机器、两个人，「装一下」「登录一下」的主语必须写清楚，否则用户会在自己的笔记本上装 CLI，却解决不了那台 Mac mini 的问题。备选：远程形态关闭引导（最省，但正是最需要说清「在哪台机器」的场景）。
+- **D-9 远程形态（#167）下的差异。推荐：本项按单 daemon 实现，但数据契约与文案从一开始就带「哪台机器」：** 回复里预留 daemon 标识字段（数据契约的 `ReadinessReply.daemon`，由 hub 填写：今天填连接时铸的 `daemonId`，#167 的 `daemons.id`/`label` 落地后改填稳定值），回复按调用者是否为 daemon 主人裁剪（见「数据契约」末段），文案一律写「运行 daemon 的机器」而不是「你的电脑」。多 daemon 落地后，整体就绪定义为「当前用户可派任务的在线 daemon 中，至少一台 `ready`」（与 #167 D-6 的派发资格一致）。设置页按 daemon 分行列出各自状态。远程形态下所有下一步动作都按 D-5 的命令文本给，并说明「这些命令要在那台机器上、由那台机器的主人执行」。查看页面的人如果不是任何在线 daemon 的主人，提示改成「这个 hub 上还没有为你准备好的 daemon」，不给命令。理由：远程形态下浏览器、hub、daemon 可能分属三台机器、两个人，「装一下」「登录一下」的主语必须写清楚，否则用户会在自己的笔记本上装 CLI，却解决不了那台 Mac mini 的问题。备选：远程形态关闭引导（最省，但正是最需要说清「在哪台机器」的场景）。
 - **D-10 桌面 PATH 看不到用户 shell 里的 `claude`。推荐：本项不改 daemon 的 PATH 来源，只把文案从「未安装」改成「daemon 的 PATH 上找不到」，并在桌面形态附一句「如果你已经安装，桌面应用可能看不到终端里的 PATH」与 guide 链接。是否让桌面运行时继承登录 shell 的 PATH 另开 issue。** 理由：PATH 来源影响 git、graphify 等所有子进程，是独立的兼容性决定；检测与运行同源，本项如实报告即可。备选：本项顺手解析登录 shell PATH（影响面超出引导，且 macOS、Windows 各有坑）。
 
 ## 流程
@@ -130,8 +163,8 @@ type ReadinessReply = { current: "codex-direct" | "claude-code"; runtimes: Runti
 
 ## 实施要点（供计划参考）
 
-- `apps/cli`：`agents.readiness` 处理器（复用 `credentialStateOf`、`loadRoutingAccounts` 与 `detectAgentClis` 的执行器，ENOENT 与其他失败分开），带单元测试覆盖上面状态表的每一格。
-- `apps/hub`：`GET /api/agent-readiness` 透传，daemon 离线回 503、未知方法回可识别错误。测试仿照 `apps/hub/test/components.test.ts`。
+- `apps/cli`：`agents.readiness` 处理器（复用 `credentialStateOf`、`loadRoutingAccounts`、`preferredModel` 与 `detectAgentClis` 的执行器，ENOENT 按 PATH 查找再分 `not_installed` 与 `cli_broken`；合成账户非 SIWC 模式用 `credentials.ts` 新导出的只读单文件判定；只缓存成功、并发共享），带单元测试覆盖上面状态表的每一格。
+- `apps/hub`：`GET /api/agent-readiness` 透传并填 `daemon` 字段，按调用者裁剪（见「数据契约」末段），daemon 离线回 503、未知方法回可识别错误。测试仿照 `apps/hub/test/components.test.ts`。
 - `apps/web`：空状态清单卡、横幅、Composer 提示、`AppSettings` 初始标签参数、`localStorage` 标记；三份 `messages/*.json` 同步。
 - 文档：`changelog.d/` 片段（`added`）；四份 README 与 `docs/guide.{en,zh,ja}.md` 中首次运行段落补一句引导的位置与「已配置 ≠ 已验证」。
 
@@ -140,7 +173,7 @@ type ReadinessReply = { current: "codex-direct" | "claude-code"; runtimes: Runti
 三类证据分开写，不互相替代：
 
 - **静态检查**：`npm run typecheck`、`npm run typecheck -w apps/cli`；web 改动加 `npm run lint -w apps/web` 与 `npm run build -w apps/web`。
-- **自动化测试**：① daemon 侧状态表逐格（假的 `--version` 执行器分别返回 ENOENT、超时、成功；临时 `nemaHome` 下凭据分别为 missing、unusable、connected；无已启用账户）；② hub 透传与 daemon 离线 503；③ web：每种整体状态下的空状态卡、横幅与 Composer 提示；`unknown` 与 daemon 未连接时不出横幅；`ready` 后横幅消失、标记写入、之后状态退回也不再出现；关闭按钮按原因码记忆；焦点复检节流。所有测试用临时数据目录与假执行器，不调用真实模型。
+- **自动化测试**：① daemon 侧状态表逐格：假的 `--version` 执行器分别返回 ENOENT、超时、成功；ENOENT 且 PATH 上有同名项时记 `cli_broken`。临时 `nemaHome` 下凭据分别为 missing、unusable、connected，合成账户与存储账户各跑一遍，合成账户覆盖 SIWC、BYOK、compat、Claude 四种模式。BYOK 有 key 无模型记 `needs_model`。另覆盖无已启用账户，以及只缓存成功、并发共享、`force` 覆盖。② hub：透传、daemon 离线 503、旧 daemon 未知方法；远程身份模式下非单机身份拿到裁剪形式，`daemon` 字段已填。③ web：每种整体状态下的空状态卡、横幅与 Composer 提示；`unknown` 与 daemon 未连接时不出横幅；Composer 选了或绑定了非默认账户时不出提示；`ready` 后横幅与 Composer 提示消失、标记按 hub 加用户写入、之后状态退回也不再出现，换一个用户则不受影响；关闭按钮按原因码记忆；焦点复检节流并在窗口末尾补检；设置保存后复检；旧响应不覆盖新响应；下一步命令按账户种类与模式选择。所有测试用临时数据目录与假执行器，不调用真实模型。
 - **真实环境验收**：按 2026-11-16 测试政策，在 VM 内走 Compose 路线：没有 `claude`、没有登录时看到清单卡与正确命令；执行 `nema auth login` 后切回窗口，状态更新并且引导退出。桌面实机不主动测；D-10 的 macOS PATH 推断如果要确认，需要维护者在实机上看一次。
 
 ## 待维护者拍板
