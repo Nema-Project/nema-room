@@ -429,7 +429,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     const id = c.req.param("id")!;
     if (!(await getWorkspace(db, id))) throw new HttpError(404, `workspace not found: ${id}`);
     try {
-      const skills = await deps.daemon.call("skills.catalog", { projectSkills: await trustedSkillRepos(db, id) });
+      const skills = await deps.daemon.call("skills.catalog", { projectSkills: await trustedSkillRepos(db, id) }, undefined, { workspaceId: id });
       if (!Array.isArray(skills)) return c.json({ error: "invalid skills.catalog result" }, 502);
       return c.json({ supported: true, skills });
     } catch (error) {

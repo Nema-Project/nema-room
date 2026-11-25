@@ -51,7 +51,7 @@ export async function receiveHook(deps: ReportDeps, repo: Repo, signal: HookSign
     `insert into repo_hooks(repo_id, agent, branch, head, session_id, at) values ($1, $2, $3, $4, $5, $6)`,
     [repo.id, signal.agent, signal.branch, signal.head, signal.sessionId, signal.at],
   );
-  void deps.daemon.call("repo.tick", { repoId: repo.id }).catch((error) => {
+  void deps.daemon.call("repo.tick", { repoId: repo.id }, undefined, { workspaceId: repo.workspaceId }).catch((error) => {
     console.error(`repo.tick failed for ${repo.id}`, error);
   });
 }
@@ -87,7 +87,7 @@ export async function receiveReport(deps: ReportDeps, repo: Repo, report: Report
     let patch: ReportMetaPatch;
     let checked = false;
     try {
-      const check = (await daemon.call("report.check", checkParams(repo, report), REPORT_CHECK_TIMEOUT_MS)) as ReportCheck;
+      const check = (await daemon.call("report.check", checkParams(repo, report), REPORT_CHECK_TIMEOUT_MS, { workspaceId: repo.workspaceId })) as ReportCheck;
       patch = { check, checkError: null, checkSkipped: null };
       checked = true;
     } catch (error) {
@@ -118,7 +118,7 @@ export function commitsCheckedTask(messageId: string): string {
  */
 async function recordAuthors(deps: ReportDeps, repo: Repo, messageId: string, report: StoredReport): Promise<Message | null> {
   try {
-    const authors = (await deps.daemon.call("report.authors", { ...repoParams(repo), commits: report.commits }, REPORT_CHECK_TIMEOUT_MS)) as ReportAuthors;
+    const authors = (await deps.daemon.call("report.authors", { ...repoParams(repo), commits: report.commits }, REPORT_CHECK_TIMEOUT_MS, { workspaceId: repo.workspaceId })) as ReportAuthors;
     return await mergeReportMeta(deps.db, messageId, { authors });
   } catch {
     console.error(`report ${messageId}: author lookup failed`);
@@ -136,9 +136,10 @@ async function githubPluginEnabled(db: Db, workspaceId: string): Promise<boolean
   return state.find((item) => item.plugin.id === "github")?.enabled ?? false;
 }
 
-async function ghStatus(daemon: DaemonRpc): Promise<{ installed: boolean; loggedIn: boolean }> {
+async function ghStatus(daemon: DaemonRpc, workspaceId: string): Promise<{ installed: boolean; loggedIn: boolean }> {
   try {
-    const status = (await daemon.call("plugins.status", {})) as { github?: { installed?: unknown; loggedIn?: unknown } } | null;
+    // Asked of the daemon that will make the GitHub read below, so both answers come from one machine.
+    const status = (await daemon.call("plugins.status", {}, undefined, { workspaceId })) as { github?: { installed?: unknown; loggedIn?: unknown } } | null;
     return { installed: status?.github?.installed === true, loggedIn: status?.github?.loggedIn === true };
   } catch {
     return { installed: false, loggedIn: false };
@@ -162,14 +163,14 @@ export async function observeGithub(deps: ReportDeps, repo: Repo, report: Stored
   const target = pr === undefined ? null : githubTarget(repo.remoteUrl);
   const pluginEnabled = pr !== undefined && (await githubPluginEnabled(deps.db, repo.workspaceId));
   // plugins.status is asked only when the plugin is on, so a report never makes a gh call it does not need.
-  const gh = pluginEnabled ? await ghStatus(deps.daemon) : { installed: false, loggedIn: false };
+  const gh = pluginEnabled ? await ghStatus(deps.daemon, repo.workspaceId) : { installed: false, loggedIn: false };
   const gated = githubObservationGate({ pr, pluginEnabled, gh, targets: target ? [target] : [] });
   if (gated.state === "not_requested") return { ...base, state: "not_requested", observedAt: new Date().toISOString(), binding: null };
   if (gated.state === "unavailable") return { ...base, state: "unavailable", reasonCode: gated.reasonCode, observedAt: new Date().toISOString(), binding: null };
   const claimedHeadSha = report.headSha ?? null;
   const binding = { repoId: repo.id, owner: gated.target.owner, repo: gated.target.repo, pr: pr!, observedHeadSha: null as string | null, claimedHeadSha };
   try {
-    const result = (await deps.daemon.call("github.observe", { owner: gated.target.owner, repo: gated.target.repo, pr, claimedHeadSha }, GITHUB_OBSERVE_TIMEOUT_MS)) as
+    const result = (await deps.daemon.call("github.observe", { owner: gated.target.owner, repo: gated.target.repo, pr, claimedHeadSha }, GITHUB_OBSERVE_TIMEOUT_MS, { workspaceId: repo.workspaceId })) as
       | { outcome: "out_of_scope" }
       | { outcome: "read"; observedHeadSha: string; checkRuns: GithubObservation["checkRuns"]; truncated: boolean };
     const observedAt = new Date().toISOString();
@@ -273,7 +274,7 @@ async function recheckOne(deps: ReportDeps, repo: Repo, row: { id: string; meta:
   const { db, events, daemon } = deps;
   let check: ReportCheck;
   try {
-    check = (await daemon.call("report.check", checkParams(repo, row.meta.report), REPORT_CHECK_TIMEOUT_MS)) as ReportCheck;
+    check = (await daemon.call("report.check", checkParams(repo, row.meta.report), REPORT_CHECK_TIMEOUT_MS, { workspaceId: repo.workspaceId })) as ReportCheck;
   } catch (error) {
     console.error(`re-checking report ${row.id} failed`, error);
     return;
@@ -346,7 +347,7 @@ async function handleMove(db: Db, daemon: DaemonRpc, events: EventBus, move: Mov
     from: move.from_sha,
     to: move.to_sha,
     covered: await coveredCommits(db, repo),
-  });
+  }, undefined, { workspaceId: repo.workspaceId });
   if (!Array.isArray(uncovered) || !uncovered.every((sha) => typeof sha === "string")) throw new Error("invalid repo.uncovered result");
   if (uncovered.length > 0) await queueSystemTask(db, events, repo.workspaceId, uncoveredTask(repo, uncovered as string[]));
   await markHandled();

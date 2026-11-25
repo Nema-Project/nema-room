@@ -6,7 +6,7 @@ import { ZodError } from "zod";
 import { KnowledgeStore, UpsertRejected } from "@nema/knowledge";
 import { canonicalJson, INACTIVE_STATUSES, UpsertEntryInput, pluginFunction, type Entry, type PluginToolSpec, type SourceRef, type GetEntryResponse, type ListEntriesResponse, type UpsertEntryResponse } from "@nema/shared";
 import type { Db } from "./db/db.js";
-import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
+import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, withDaemonTarget, type DaemonRpc } from "./daemonRpc.js";
 import { callHubFunction, vendoredArchify, type Archify } from "./diagrams.js";
 import type { EventBus } from "./events.js";
 import { deliveryScope, getMessage } from "./messages.js";
@@ -49,7 +49,12 @@ export function roomRoutes(deps: {
   /** The hub's attachment store; a read-only one over dataDir when omitted. */
   attachments?: AttachmentStore;
 }): Hono<{ Variables: { auth: Auth } }> {
-  const { db, dataDir, events, daemon } = deps;
+  const { db, dataDir, events } = deps;
+  /**
+   * Every daemon call made for a run token serves that token's task, so it goes to the daemon running the
+   * task (then the workspace rule, then the fallback; see daemonSocket.ts `chooseConnection`).
+   */
+  const taskDaemon = (auth: Auth): DaemonRpc => withDaemonTarget(deps.daemon, { taskId: auth.taskId, workspaceId: auth.workspaceId });
   const archify = deps.archify ?? vendoredArchify;
   const app = new Hono<{ Variables: { auth: Auth } }>();
 
@@ -250,7 +255,7 @@ export function roomRoutes(deps: {
     } catch {
       return c.json({ error: "request body must be valid JSON" }, 400);
     }
-    const outcome = await offerSkillInstall(db, daemon, taskId, workspaceId, raw);
+    const outcome = await offerSkillInstall(db, taskDaemon(c.get("auth")), taskId, workspaceId, raw);
     return c.json(outcome.body, outcome.status);
   });
 
@@ -258,7 +263,7 @@ export function roomRoutes(deps: {
   // daemon-side failure like any other: 503 when it is down, 502 when it answered with an error.
   app.get("/plugins", async (c) => {
     try {
-      return c.json({ tools: await installedToolsFor(daemon, db, c.get("auth").workspaceId) });
+      return c.json({ tools: await installedToolsFor(taskDaemon(c.get("auth")), db, c.get("auth").workspaceId) });
     } catch (error) {
       if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
       throw error;
@@ -267,6 +272,7 @@ export function roomRoutes(deps: {
 
   app.post("/plugins/:name", async (c) => {
     const { taskId, workspaceId } = c.get("auth");
+    const daemon = taskDaemon(c.get("auth"));
     const name = c.req.param("name");
     // The same list the page and the task prompt use, so a disabled extension is refused here too.
     let tools: PluginToolSpec[];

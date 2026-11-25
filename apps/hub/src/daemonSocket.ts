@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 import { WebSocketServer, type WebSocket } from "ws";
 import { KnowledgeStore } from "@nema/knowledge";
 import { AttachmentRefSchema, DAEMON_CREDENTIAL_REVOKED_MESSAGE, WORKPACKAGE_LIMITS, parseDaemonToHub, parseManualSkill, parseRouteDecision, type AgentMessageMeta, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
-import { createConnectionRpc, DaemonRpcError, type ConnectionRpc, type DaemonRpc } from "./daemonRpc.js";
+import { createConnectionRpc, DaemonRpcError, withDaemonTarget, type ConnectionRpc, type DaemonRpc, type DaemonTarget } from "./daemonRpc.js";
 import { markDaemonSeen, revokeDaemon, verifyDaemonCredential, type RevokeRegisteredDaemon } from "./daemons.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
@@ -53,6 +53,8 @@ type Conn = {
   rpc: ConnectionRpc;
   /** hello.features; "attachments" means the daemon fetches task.assign.attachments. */
   features: ReadonlySet<string>;
+  /** A registered daemon (remote auth): its id is a `daemons` row with an owner. Local daemons are not. */
+  registered: boolean;
 };
 
 type TaskReplyRouting = {
@@ -72,7 +74,7 @@ export const NO_ACCOUNT_SUPPORT_MESSAGE = "当前 daemon 不支持按账户运�
 export const OLD_CLI_MESSAGE = "nema CLI 版本过旧，请运行 npm run build -w apps/cli 并重启 nema daemon";
 /** Distinct from the credential refusals: the daemon's credential was not judged, so it should simply retry. */
 export const REMOTE_HELLO_FAILED_MESSAGE = "The hub hit an internal error while accepting this daemon. The daemon will retry.";
-/** A replaced socket that ignores the close handshake is terminated after this long. */
+/** A registered daemon's stale socket that ignores the close handshake is terminated after this long. */
 const REPLACED_CLOSE_TIMEOUT_MS = 1_000;
 
 /**
@@ -91,15 +93,25 @@ function hubUrlFromUpgrade(req: http.IncomingMessage | undefined): string | null
 }
 
 export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps): {
-  isConnected(): boolean;
+  /** Any daemon online; with an id, that daemon online. */
+  isConnected(daemonId?: string): boolean;
+  /** Ids of the daemons online, oldest connection first. */
+  connectedDaemonIds(): string[];
   rpc: DaemonRpc;
   revokeRegisteredDaemon: RevokeRegisteredDaemon;
   close(): Promise<void>;
 } {
   const { db, dataDir, events } = deps;
   const wss = new WebSocketServer({ server, path: "/daemon" });
-  let current: Conn | null = null;
-  const connections = new Set<Conn>();
+  /**
+   * The connection table (#167): every accepted daemon by its id, in acceptance order. A hello adds its
+   * connection and leaves the others alone; a close removes only its own. The only replacement left is a
+   * registered daemon reconnecting under its own stable id while its stale socket is still open.
+   */
+  const connections = new Map<string, Conn>();
+  const isOpen = (conn: Conn): boolean => conn.ws.readyState === conn.ws.OPEN;
+  const isListed = (conn: Conn): boolean => connections.get(conn.daemonId) === conn;
+  const openConnections = (): Conn[] => [...connections.values()].filter(isOpen);
   let chain: Promise<void> = Promise.resolve();
   // A revocation and a remote hello must agree on which side of the revocation the socket became current.
   let registry: Promise<unknown> = Promise.resolve();
@@ -285,15 +297,22 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     return saveTaskOutcome(routing, runToken, { ok: false, error }, "system", "处理失败：" + error + account, route ? { route } as AgentMessageMeta : undefined);
   }
 
+  /** Offers work to every idle connection in acceptance order; each runs one task at a time. */
   async function dispatchOnce(): Promise<void> {
+    for (const conn of [...connections.values()]) {
+      if (stopping) return;
+      await dispatchTo(conn);
+    }
+  }
+
+  async function dispatchTo(conn: Conn): Promise<void> {
     for (;;) {
       if (stopping) return;
-      const conn = current;
-      if (!conn || conn.assigned || conn.ws.readyState !== conn.ws.OPEN) return;
+      if (!isListed(conn) || conn.assigned || !isOpen(conn)) return;
       const task = await claimNextTask(db, conn.daemonId);
       if (stopping) return;
       if (!task) return;
-      if (current !== conn) {
+      if (!isListed(conn)) {
         await requeueAndEmit(conn.daemonId);
         return;
       }
@@ -328,7 +347,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         continue;
       }
       if (stopping) return;
-      if (current !== conn || conn.ws.readyState !== conn.ws.OPEN) {
+      if (!isListed(conn) || !isOpen(conn)) {
         await requeueAndEmit(conn.daemonId);
         return;
       }
@@ -440,8 +459,10 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       if (!hubUrl) return reject("The hub could not tell which address this daemon connected to. Connect with a hub URL of the form http://host:port.");
 
       if (registeredId) {
-        // Await the old socket's task cleanup before assigning under the same stable ID.
-        const previous = [...connections].find((candidate) => candidate.daemonId === registeredId);
+        // The same daemon reconnecting while its stale socket is still listed: one id holds one table entry,
+        // so retire that socket and await its task cleanup before assigning under the same stable ID.
+        // This never touches another daemon's connection.
+        const previous = connections.get(registeredId);
         if (previous) {
           previous.ws.close();
           // A peer that never answers the close frame must not hold this hello, or the registry lock, open.
@@ -468,7 +489,6 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         if (!stopping && recovered) await announceInterrupted(db, events, recovered);
         return;
       }
-      const old = current;
       const accepted: Conn = {
         ws,
         daemonId: registeredId ?? `d_${nanoid(10)}`,
@@ -476,18 +496,21 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         closed,
         assigned: null,
         features: new Set(m.features ?? []),
+        registered: registeredId !== undefined,
         rpc: createConnectionRpc((id, method, params) => send(ws, { type: "rpc.request", id, method, params })),
       };
       conn = accepted;
-      connections.add(accepted);
-      current = accepted;
-      // Wait for any unsent claim from the old socket to be requeued without counting an interruption.
+      // Delete first so a re-listed id moves to the end: the table stays in acceptance order.
+      connections.delete(accepted.daemonId);
+      connections.set(accepted.daemonId, accepted);
+      // Wait for any unsent claim of a closing socket to be requeued without counting an interruption.
       const pendingDispatch = chain;
-      if (old) old.ws.close();
       try {
         await pendingDispatch;
         if (stopping) return;
-        await announceInterrupted(db, events, await interruptRunning(db, { exceptDaemonId: accepted.daemonId }));
+        // Orphans only: running tasks whose daemon has no listed connection (a close cleanup that failed).
+        // Every listed daemon's tasks are left alone; with one daemon this is every task not its own, as before.
+        await announceInterrupted(db, events, await interruptRunning(db, { exceptDaemonIds: [...connections.keys()] }));
         if (stopping || ws.readyState !== ws.OPEN) return;
         const workspaceIds = (await listWorkspaces(db)).map((w) => w.id);
         if (stopping || ws.readyState !== ws.OPEN) return;
@@ -536,10 +559,12 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
           // Not awaited here: it waits on daemon RPC replies, which arrive through this same inbox.
           // Moves are chained so two quick moves of one repo settle in order.
           const move = { repoId: m.repoId, to: m.to };
+          // The daemon that saw the move has the repo checked out: its follow-up calls go back to it.
+          const reporter = withDaemonTarget(rpc, { daemonId: conn.daemonId });
           moves = moves
-            .then(() => onRepoMoved(db, dataDir, rpc, events, move, deps.ownedHelpers))
+            .then(() => onRepoMoved(db, dataDir, reporter, events, move, deps.ownedHelpers))
             .catch((e) => { if (!stopping) console.error("[daemon] diagram staleness check failed", e); })
-            .then(() => recheckReports({ db, events, daemon: rpc, dataDir, ownedHelpers: deps.ownedHelpers }, move.repoId))
+            .then(() => recheckReports({ db, events, daemon: reporter, dataDir, ownedHelpers: deps.ownedHelpers }, move.repoId))
             .catch((e) => { if (!stopping) console.error("[daemon] report re-check failed", e); });
           track(moves);
         }
@@ -555,20 +580,21 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     });
     ws.on("error", () => {});
     ws.on("close", () => {
+      // A close settles this connection only: its own running task and pending calls. Other daemons'
+      // connections and tasks are untouched.
       inbox = inbox.then(async () => {
         if (!conn || stopping) return;
-        const wasCurrent = current === conn;
         const assigned = conn.assigned;
-        if (wasCurrent) current = null;
         conn.assigned = null;
         conn.rpc.failAll("daemon 已断开");
         // A claim that never reached task.assign is not an interruption.
         if (deps.remoteAuth) await chain;
         if (assigned) await announceInterrupted(db, events, await interruptRunning(db, { daemonId: conn.daemonId }));
         else await requeueAndEmit(conn.daemonId);
-        if (wasCurrent && !current) events.emitGlobal({ type: "daemon.status", connected: false });
+        // The UI shows one "daemon connected" state: it turns off only when no daemon is left online.
+        if (openConnections().length === 0) events.emitGlobal({ type: "daemon.status", connected: false });
       }).catch((e) => console.error("[daemon] close failed", e)).finally(() => {
-        if (conn) connections.delete(conn);
+        if (conn && isListed(conn)) connections.delete(conn.daemonId);
         finishClose();
       });
       track(inbox);
@@ -577,15 +603,66 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
 
   const unsubscribe = events.subscribeAll((_ws, e) => {
     if (e.type === "task.updated" && e.task.status === "queued") void dispatch();
-    else if (e.type === "workspace.deleted" && current) {
-      send(current.ws, { type: "workspace.deleted", workspaceId: e.workspaceId });
-      track(syncBoundRepos(db, current.rpc).catch((error) => { if (!stopping) console.error("[daemon] repos.sync failed", error); }));
+    else if (e.type === "workspace.deleted") {
+      // Any connected daemon may hold isolation dirs or watched repos for the workspace: tell every one,
+      // then push each the bound-repo list again (syncBoundRepos addresses all daemons).
+      const open = openConnections();
+      if (open.length === 0) return;
+      for (const conn of open) send(conn.ws, { type: "workspace.deleted", workspaceId: e.workspaceId });
+      track(syncBoundRepos(db, rpc).catch((error) => { if (!stopping) console.error("[daemon] repos.sync failed", error); }));
     }
   });
+
+  /**
+   * Picks the connection for a targeted call among two or more open ones. The rules, first match wins:
+   * 1. `daemonId`: that daemon, when it is online (e.g. the daemon that reported a repo move).
+   * 2. `taskId`: the daemon running that task (run-token calls: plugin calls, skill offers, hub functions).
+   * 3. `workspaceId`: the newest registered daemon owned by one of the workspace's owners (repos, reports,
+   *    work-package checks, the Skill catalog). Local daemons have no owner, so they never match here.
+   * 4. Otherwise the newest connection: the same daemon the single `current` slot used to hold. Calls that
+   *    concern no workspace (components, extensions/MCP, plugins.status, the directory dialog, attachment
+   *    capabilities) always land here.
+   * No load or scoring: task 11 adds which daemon may run which task; this only chooses who answers a call.
+   */
+  async function chooseConnection(open: Conn[], target: DaemonTarget): Promise<Conn> {
+    const listed = (id: string | null | undefined): Conn | undefined => (id ? open.find((conn) => conn.daemonId === id) : undefined);
+    const pinned = listed(target.daemonId);
+    if (pinned) return pinned;
+    if (target.taskId) {
+      const [row] = await db.query<{ daemon_id: string | null }>(`select daemon_id from tasks where id = $1 and status = 'running'`, [target.taskId]);
+      const runner = listed(row?.daemon_id);
+      if (runner) return runner;
+    }
+    const registered = open.filter((conn) => conn.registered);
+    if (target.workspaceId && registered.length > 0) {
+      const owned = new Set((await db.query<{ id: string }>(
+        `select d.id from daemons d
+         join workspace_members m on m.user_id = d.owner_user_id
+         where d.id = any($1::text[]) and d.revoked_at is null
+           and m.workspace_id = $2 and m.role = 'owner' and m.removed_at is null`,
+        [registered.map((conn) => conn.daemonId), target.workspaceId],
+      )).map((row) => row.id));
+      const owner = registered.reverse().find((conn) => owned.has(conn.daemonId));
+      if (owner) return owner;
+    }
+    return open[open.length - 1]!;
+  }
+
+  /** The `DaemonRpc` facade every hub module calls (`deps.daemon`); see `chooseConnection` for the rules. */
   const rpc: DaemonRpc = {
-    call(method, params, timeoutMs) {
-      const conn = current;
-      if (!conn || conn.ws.readyState !== conn.ws.OPEN) return Promise.reject(new DaemonRpcError("daemon 未连接"));
+    async call(method, params, timeoutMs, target) {
+      const open = openConnections();
+      if (open.length === 0) throw new DaemonRpcError("daemon 未连接");
+      // One daemon: it answers every call, whatever the target, exactly as before the connection table.
+      if (open.length === 1) return open[0]!.rpc.call(method, params, timeoutMs);
+      if (target?.all) {
+        const results = await Promise.allSettled(open.map((conn) => conn.rpc.call(method, params, timeoutMs)));
+        const answered = results.find((result) => result.status === "fulfilled");
+        if (answered) return answered.value;
+        throw (results[0] as PromiseRejectedResult).reason;
+      }
+      const conn = await chooseConnection(open, target ?? {});
+      if (!isOpen(conn)) throw new DaemonRpcError("daemon 已断开");
       return conn.rpc.call(method, params, timeoutMs);
     },
   };
@@ -595,8 +672,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     closePromise ??= (async () => {
       stopping = true;
       unsubscribe();
-      current = null;
-      for (const conn of connections) conn.rpc.failAll("hub shutting down");
+      for (const conn of connections.values()) conn.rpc.failAll("hub shutting down");
       for (const client of wss.clients) {
         if (client.readyState === client.OPEN || client.readyState === client.CONNECTING) client.close(1001, "hub shutting down");
       }
@@ -616,9 +692,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   });
   const revokeRegisteredDaemon: RevokeRegisteredDaemon = (id, actor) => withRegistry(async () => {
     const result = await revokeDaemon(db, id, actor);
-    if (typeof result !== "string" && current?.daemonId === id) {
-      send(current.ws, { type: "error", message: DAEMON_CREDENTIAL_REVOKED_MESSAGE });
-      const { ws } = current;
+    // Only the revoked daemon's connection closes; its close cleanup requeues its own task.
+    const target = connections.get(id);
+    if (typeof result !== "string" && target) {
+      send(target.ws, { type: "error", message: DAEMON_CREDENTIAL_REVOKED_MESSAGE });
+      const { ws } = target;
       ws.close();
       // A revoked client cannot hold task cleanup open by ignoring the close frame.
       const timeout = setTimeout(() => ws.terminate(), 1_000);
@@ -627,5 +705,12 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     }
     return result;
   });
-  return { isConnected: () => !stopping && current !== null && current.ws.readyState === current.ws.OPEN, rpc, revokeRegisteredDaemon, close };
+  const isConnected = (daemonId?: string): boolean => {
+    if (stopping) return false;
+    if (daemonId === undefined) return openConnections().length > 0;
+    const conn = connections.get(daemonId);
+    return conn !== undefined && isOpen(conn);
+  };
+  const connectedDaemonIds = (): string[] => (stopping ? [] : openConnections().map((conn) => conn.daemonId));
+  return { isConnected, connectedDaemonIds, rpc, revokeRegisteredDaemon, close };
 }
