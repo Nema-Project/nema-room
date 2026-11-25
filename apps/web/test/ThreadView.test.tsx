@@ -8,19 +8,65 @@ import * as threadUrls from "@/lib/threads";
 import type { HubEvent, Message, Thread } from "@/lib/types";
 import { FakeEventSource } from "./FakeEventSource";
 
-vi.mock("@/lib/hub", () => ({ attachmentCapabilities: vi.fn(), uploadAttachment: vi.fn(), getThreadMessages: vi.fn(), postThreadMessage: vi.fn(), markThreadRead: vi.fn(), getMessage: vi.fn(), getEntry: vi.fn(), getHistory: vi.fn(), getWhy: vi.fn(), listMessages: vi.fn(), listEntries: vi.fn(), listRepos: vi.fn(), editMessage: vi.fn(), listMessageVersions: vi.fn(), withdrawEntry: vi.fn(), eventsUrl: (id: string) => `http://hub/workspaces/${id}/events` }));
+vi.mock("@/lib/hub", () => ({ attachmentCapabilities: vi.fn(), uploadAttachment: vi.fn(), getThreadMessages: vi.fn(), getActiveTask: vi.fn(), postThreadMessage: vi.fn(), markThreadRead: vi.fn(), getMessage: vi.fn(), getEntry: vi.fn(), getHistory: vi.fn(), getWhy: vi.fn(), listMessages: vi.fn(), listEntries: vi.fn(), listRepos: vi.fn(), editMessage: vi.fn(), listMessageVersions: vi.fn(), withdrawEntry: vi.fn(), eventsUrl: (id: string) => `http://hub/workspaces/${id}/events` }));
 const thread: Thread = { id: "anchor", workspaceId: "w1", title: "Need details", openedBy: "user", replyCount: 1, unread: 1, lastReplyAt: null, createdAt: "2026-10-21T00:00:00Z" };
 const msg = (id: string, seq: number, content = id, role: Message["role"] = "user"): Message => ({ id, workspaceId: "w1", role, content, meta: null, taskId: null, createdAt: "2026-10-21T00:00:00Z", editedAt: null, threadId: "anchor", seq });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 beforeEach(() => {
+  vi.mocked(hub.getActiveTask).mockResolvedValue({ running: null });
   vi.spyOn(document, "hasFocus").mockReturnValue(true);
   vi.mocked(hub.getThreadMessages).mockResolvedValue({ thread, anchor: msg("anchor", 2, "Pinned question"), messages: [msg("r1", 3, "Reply")] });
-  vi.mocked(hub.postThreadMessage).mockResolvedValue({ message: msg("r2", 4), task: { id: "task", workspaceId: "w1", messageId: "r2", status: "queued", error: null } });
+  vi.mocked(hub.postThreadMessage).mockResolvedValue({ message: msg("r2", 4), task: { id: "task", workspaceId: "w1", messageId: "r2", status: "queued", error: null, threadId: "anchor" } });
   vi.mocked(hub.attachmentCapabilities).mockResolvedValue(null);
 });
 const mount = (props: Partial<React.ComponentProps<typeof ThreadView>> = {}) => render(<I18nProvider><ThreadView workspaceId="w1" threadId="anchor" {...props} /></I18nProvider>);
 describe("ThreadView", () => {
   it("shows the anchor and thread messages", async () => { mount(); expect(await screen.findByText("Pinned question")).toBeTruthy(); expect(screen.getByText("Reply")).toBeTruthy(); });
+  const running = { id: "task", workspaceId: "w1", messageId: "r1", status: "running" as const, error: null, threadId: "anchor" };
+
+  it("shows live progress in its own thread and ignores main-chat progress", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource); FakeEventSource.reset();
+    mount();
+    await screen.findByText("Reply");
+    const source = FakeEventSource.forWorkspace("w1")!;
+    act(() => {
+      source.send({ type: "task.updated", task: { ...running, id: "main", threadId: null } });
+      source.send({ type: "task.progress", taskId: "main", threadId: null, text: "Main chat only" });
+    });
+    expect(screen.queryByText(/Organizing|Main chat only/)).toBeNull();
+    act(() => {
+      source.send({ type: "task.updated", task: running });
+      source.send({ type: "task.progress", taskId: running.id, threadId: running.threadId, text: "Reading thread context" });
+    });
+    expect(screen.getByText(/Reading thread context/)).toBeTruthy();
+    act(() => source.send({ type: "task.updated", task: { ...running, status: "done" } }));
+    expect(screen.queryByText(/Organizing|Reading thread context/)).toBeNull();
+  });
+
+  it("shows the active task when opened mid-run and then displays new progress", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource); FakeEventSource.reset();
+    vi.mocked(hub.getActiveTask).mockResolvedValue({ running });
+    mount({ floating: true });
+    expect(await screen.findByText("Organizing")).toBeTruthy();
+    act(() => FakeEventSource.forWorkspace("w1")!.send({
+      type: "task.progress", taskId: running.id, threadId: running.threadId, text: "Continuing in the thread",
+    }));
+    expect(screen.getByText(/Continuing in the thread/)).toBeTruthy();
+  });
+
+  it("keeps progress received while the active-task snapshot is pending", async () => {
+    let resolveSnapshot!: (snapshot: { running: typeof running }) => void;
+    vi.mocked(hub.getActiveTask).mockReturnValue(new Promise((resolve) => { resolveSnapshot = resolve; }));
+    vi.stubGlobal("EventSource", FakeEventSource); FakeEventSource.reset();
+    mount();
+    await screen.findByText("Reply");
+    act(() => FakeEventSource.forWorkspace("w1")!.send({
+      type: "task.progress", taskId: running.id, threadId: running.threadId, text: "Reading during load",
+    }));
+    await act(async () => resolveSnapshot({ running }));
+    expect(screen.getByText(/Reading during load/)).toBeTruthy();
+  });
+
   it("sends in the thread", async () => { mount(); const box = await screen.findByRole("textbox"); await userEvent.type(box, "more{Shift>}{Enter}{/Shift}"); expect(hub.postThreadMessage).toHaveBeenCalledWith("w1", "anchor", "more", undefined, [], []); });
   it("sends attachment ids with a thread reply", async () => {
     vi.mocked(hub.attachmentCapabilities).mockResolvedValue({ adapter: "codex-direct", image: "native", pdf: "native", text: "text" });

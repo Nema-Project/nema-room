@@ -551,6 +551,7 @@ button { background: none; border: 0; cursor: pointer; text-align: left; }
 .thread-header button { border: 0; background: transparent; color: var(--ink); font-size: 22px; cursor: pointer; }
 .thread-header .account-picker { position: relative; z-index: 3; }
 .thread-scroll { overflow: auto; flex: 1; padding: 12px; }
+.thread-activity { padding-inline: 12px; }
 .thread-anchor { border-bottom: 1px solid var(--rule); margin-bottom: 12px; padding-bottom: 12px; }
 .thread-anchor > span { display: block; color: var(--ink-2); font-size: 12px; }
 .thread-error { margin: 8px 12px; }

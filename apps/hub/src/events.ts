@@ -9,7 +9,7 @@ export type HubEvent =
   /** `reasonOnly` marks a republish of the waiting reason only: the dispatch subscriber skips it. */
   | { type: "task.updated"; task: UiTask; reasonOnly?: true }
   | { type: "thread.updated"; thread: Thread }
-  | { type: "task.progress"; taskId: string; text: string }
+  | { type: "task.progress"; taskId: string; threadId: string | null; text: string }
   | { type: "knowledge.changed"; entryId: string }
   | { type: "daemon.status"; connected: boolean }
   | { type: "workspace.deleted"; workspaceId: string }

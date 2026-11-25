@@ -21,13 +21,13 @@ import { posix, win32 } from "node:path";
 import { PluginError, clearMcpSecret, getMcpConfig, mcpHttpStatus, mcpServerStatus, saveMcpConfig, setMcpSecret, startMcp, stopMcp, attachExtension, attachHttpStatus, daemonHttpStatus, discoverExtensions, listExtensions, repairExtension, pluginsForUi, cancelExtensionInstall, extensionInstallStatus, installExtension, removeExtension, resolveExtensionSource, retryExtensionInstall, setExtensionUse, setPluginState, workspacePluginState } from "./plugins.js";
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
 import { RepoError, bindRepo, getRepo, listIndexing, listRepos, previewRepo, syncBoundRepos, trustedSkillRepos, unbindRepo, updateRepo } from "./repos.js";
-import { getRunningTask, listQueuedTasks, toUiTask, type Task, type WaitingReason } from "./tasks.js";
+import { getRunningTask, listQueuedTasks, resolveUiTask, toUiTask, type Task, type WaitingReason } from "./tasks.js";
 import { revokeActiveShares } from "./shares.js";
 import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, repoPath, updateWorkspace } from "./workspaces.js";
 import { authorizeWorkspace, canSeeWorkspace, workspaceAccess } from "./authz.js";
 import { LOCAL_USER_ID } from "./identity.js";
 import { MemberError } from "./members.js";
-import { attentionCounts, ensureThread, getThread, listThreads, markThreadRead, nextAttentionResult } from "./threads.js";
+import { attentionCounts, conversationOf, ensureThread, getThread, listThreads, markThreadRead, nextAttentionResult } from "./threads.js";
 import { listThreadMessages } from "./messages.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
@@ -406,7 +406,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     if (clean.archived === false) {
       // Queued tasks were parked while archived; announce them so the dispatcher picks them up.
       for (const t of await listQueuedTasks(db, id)) {
-        events.emit(id, { type: "task.updated", task: toUiTask(t, deps.waitingReasonFor ? await deps.waitingReasonFor(t) : undefined) });
+        events.emit(id, { type: "task.updated", task: await resolveUiTask(db, t, deps.waitingReasonFor ? await deps.waitingReasonFor(t) : undefined) });
       }
     }
     // Archiving stops watching this workspace's repos; unarchiving resumes it.
@@ -508,15 +508,16 @@ export function uiRoutes(deps: UiDeps): Hono {
       const created = await db.tx(async (t) => {
         const posted = await postUserMessage(t, workspaceId, content, { authorUserId: c.get("identity").userId, quoteMessageId, attachmentIds, mentions, accountId, routing });
         const title = Array.from(content.split(/\r?\n/, 1)[0]!.trim()).slice(0, 80).join("") || "新追问";
+        const alreadyAnchored = posted.replayed && (await conversationOf(t, posted.message)) !== null;
         const thread = await ensureThread(t, posted.message.id, title, "user");
-        return { ...posted, thread };
+        return { ...posted, thread, alreadyAnchored };
       });
-      const task = toUiTask(created.task, deps.waitingReasonFor ? await deps.waitingReasonFor(created.task) : undefined);
+      const task = toUiTask(created.task, created.thread.id, deps.waitingReasonFor ? await deps.waitingReasonFor(created.task) : undefined);
       if (!created.replayed) {
         events.emit(workspaceId, { type: "message.created", message: created.message });
         events.emit(workspaceId, { type: "task.updated", task });
-        events.emit(workspaceId, { type: "thread.updated", thread: created.thread });
       }
+      if (!created.alreadyAnchored) events.emit(workspaceId, { type: "thread.updated", thread: created.thread });
       return c.json({ message: created.message, thread: created.thread, task });
     } catch (e) {
       if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
@@ -532,7 +533,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     if ((await getWorkspace(db, workspaceId))?.archivedAt) throw new HttpError(409, ARCHIVED_MESSAGE);
     try {
       const { message, task: created, replayed } = await postUserMessage(db, workspaceId, content, { authorUserId: c.get("identity").userId, quoteMessageId, threadId, attachmentIds, mentions, accountId, routing });
-      const task = toUiTask(created, deps.waitingReasonFor ? await deps.waitingReasonFor(created) : undefined);
+      const task = toUiTask(created, threadId, deps.waitingReasonFor ? await deps.waitingReasonFor(created) : undefined);
       if (!replayed) {
         events.emit(workspaceId, { type: "message.created", message });
         events.emit(workspaceId, { type: "task.updated", task });
@@ -586,8 +587,8 @@ export function uiRoutes(deps: UiDeps): Hono {
     const id = c.req.param("id")!;
     const { content } = await body(c, EditMessageBody);
     try {
-      const { message, task: created } = await editUserMessage(db, id, c.req.param("messageId")!, content, c.get("identity").userId);
-      const task = toUiTask(created, deps.waitingReasonFor ? await deps.waitingReasonFor(created) : undefined);
+      const { message, task: created, threadId } = await editUserMessage(db, id, c.req.param("messageId")!, content, c.get("identity").userId);
+      const task = toUiTask(created, threadId, deps.waitingReasonFor ? await deps.waitingReasonFor(created) : undefined);
       events.emit(id, { type: "message.updated", message });
       events.emit(id, { type: "task.updated", task });
       return c.json({ message, task });
@@ -601,7 +602,7 @@ export function uiRoutes(deps: UiDeps): Hono {
   app.get("/workspaces/:id/tasks/active", async (c) => {
     const id = c.req.param("id")!;
     const running = await getRunningTask(db, id);
-    return c.json({ running: running ? toUiTask(running) : null, indexing: listIndexing(id) });
+    return c.json({ running: running ? await resolveUiTask(db, running) : null, indexing: listIndexing(id) });
   });
 
   app.post("/workspaces/:id/messages", async (c) => {
@@ -615,7 +616,8 @@ export function uiRoutes(deps: UiDeps): Hono {
       if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
       throw e;
     }
-    const task = toUiTask(created, deps.waitingReasonFor ? await deps.waitingReasonFor(created) : undefined);
+    const waitingReason = deps.waitingReasonFor ? await deps.waitingReasonFor(created) : undefined;
+    const task = replayed ? await resolveUiTask(db, created, waitingReason) : toUiTask(created, message.threadId, waitingReason);
     if (!replayed) {
       events.emit(id, { type: "message.created", message });
       events.emit(id, { type: "task.updated", task });
@@ -934,7 +936,7 @@ export function uiRoutes(deps: UiDeps): Hono {
       ws,
       `用户要求更新代码图 ${gid}：用 diagram__read 读旧图，用 code__changes 看自 ${since} 以来的改动，只改受影响的节点和连线，再用 diagram__save（带 id）保存。`,
     );
-    const task = toUiTask(created);
+    const task = toUiTask(created, message.threadId);
     events.emit(ws, { type: "message.created", message });
     events.emit(ws, { type: "task.updated", task });
     return c.json({ message, task });

@@ -179,7 +179,7 @@ describe("connection table: which daemon a call reaches (#167 task 10)", () => {
     const workspace = await createWorkspace(db, dataDir, "Task routing");
     const runner = await hello();
     const { task } = await postUserMessage(db, workspace.id, "run me", { authorUserId: "usr_local" });
-    events.emit(workspace.id, { type: "task.updated", task: toUiTask(task!) });
+    events.emit(workspace.id, { type: "task.updated", task: toUiTask(task!, null) });
     expect((await runner.next("task.assign")).taskId).toBe(task!.id);
     const later = await hello();
     const pending = handle.rpc.call("plugin.call", { name: "x" }, undefined, { taskId: task!.id, workspaceId: workspace.id });

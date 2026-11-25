@@ -387,7 +387,7 @@ async function queueArchitectureDiagram(db: Db, events: EventBus | undefined, re
       `为仓库 ${repo.label}（${repo.id}）画架构图：用 code__ 函数读代码，用 diagram__save 保存，type 为 architecture。`,
     );
     events?.emit(repo.workspaceId, { type: "message.created", message });
-    events?.emit(repo.workspaceId, { type: "task.updated", task: toUiTask(task) });
+    events?.emit(repo.workspaceId, { type: "task.updated", task: toUiTask(task, message.threadId) });
   } catch (error) {
     // The bind itself succeeded; a missing diagram can still be asked for in chat.
     console.error(`queueing the architecture diagram failed for ${repo.id}`, error);

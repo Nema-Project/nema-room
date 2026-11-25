@@ -99,7 +99,7 @@ export async function markThreadRead(db: Db, id: string, throughSeq: number): Pr
   await db.query("update threads set last_read_seq=greatest(last_read_seq,$2) where id=$1", [id, throughSeq]);
 }
 
-export async function conversationOf(db: Db, message: Message): Promise<string | null> {
+export async function conversationOf(db: Db, message: Pick<Message, "id" | "threadId">): Promise<string | null> {
   if (message.threadId) return message.threadId;
   const rows = await db.query<{ id: string }>("select id from threads where id=$1", [message.id]);
   return rows[0]?.id ?? null;

@@ -1,7 +1,7 @@
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
 import { addMessage, getMessage } from "./messages.js";
-import { getTask, INTERRUPTED_ERROR, toUiTask } from "./tasks.js";
+import { getTask, INTERRUPTED_ERROR, resolveUiTask } from "./tasks.js";
 import { conversationOf, getThread } from "./threads.js";
 
 /** Posts the final failure message and emits task.updated for every interrupted id. */
@@ -24,6 +24,6 @@ export async function announceInterrupted(
   }
   for (const id of [...result.requeued, ...result.failed]) {
     const task = await getTask(db, id);
-    if (task) events.emit(task.workspaceId, { type: "task.updated", task: toUiTask(task) });
+    if (task) events.emit(task.workspaceId, { type: "task.updated", task: await resolveUiTask(db, task) });
   }
 }
