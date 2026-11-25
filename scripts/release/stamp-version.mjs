@@ -15,6 +15,7 @@ export const PACKAGE_FILES = Object.freeze([
 ]);
 
 const LOCK_WORKSPACES = Object.freeze(['apps/cli', 'apps/desktop', 'apps/local']);
+export const HUB_VERSION_FILE = 'apps/hub/src/hubVersion.ts';
 const PACKAGE_NAMES = Object.freeze({
   'apps/cli/package.json': 'cli',
   'apps/desktop/package.json': 'desktop',
@@ -33,6 +34,17 @@ export function replacePackageVersion(text, version) {
   const hits = text.match(/^  "version": "[^"]*",$/gm);
   if (!hits || hits.length !== 1) throw new Error('package.json must have one top-level version');
   return text.replace(/^  "version": "[^"]*",$/m, `  "version": "${version}",`);
+}
+
+/**
+ * Raise the hub's daemon floor to the release version (D-9): the skew smoke lowers the installed
+ * package below the floor, so the floor must track the release or the smoke would admit the lowered
+ * daemon. Exactly one MIN_DAEMON_VERSION line must exist; the rest of the file is untouched.
+ */
+export function replaceMinDaemonVersion(text, version) {
+  const hits = text.match(/^export const MIN_DAEMON_VERSION = "[^"]*";$/gm);
+  if (!hits || hits.length !== 1) throw new Error('hubVersion.ts must have one MIN_DAEMON_VERSION');
+  return text.replace(/^export const MIN_DAEMON_VERSION = "[^"]*";$/m, `export const MIN_DAEMON_VERSION = "${version}";`);
 }
 
 function replaceLockWorkspaceVersion(text, workspace, version) {
@@ -138,8 +150,9 @@ async function selfCheck(root, version) {
 
 /**
  * Write the three release package versions and their lockfile records under the shared release lock,
- * so a concurrent `release:cut` on the same tree fails instead of interleaving.
- * Does not commit, tag, or publish. A failed self-check restores the four files.
+ * so a concurrent `release:cut` on the same tree fails instead of interleaving. Also raises the hub's
+ * daemon floor (MIN_DAEMON_VERSION) to the release version, so the skew smoke keeps refusing a daemon
+ * lowered below the floor. Does not commit, tag, or publish. A failed self-check restores the five files.
  * `options` forwards the lock's wait and poll budget to tests.
  */
 export async function stampVersion(root, version, verify = selfCheck, options = {}) {
@@ -148,7 +161,7 @@ export async function stampVersion(root, version, verify = selfCheck, options = 
 
 async function stampVersionLocked(root, version, verify) {
   assertStrictVersion(version);
-  const rels = [...PACKAGE_FILES, 'package-lock.json'];
+  const rels = [...PACKAGE_FILES, 'package-lock.json', HUB_VERSION_FILE];
   const originals = new Map();
   for (const rel of rels) originals.set(rel, await readFile(path.join(root, rel), 'utf8'));
 
@@ -177,6 +190,11 @@ async function stampVersionLocked(root, version, verify) {
   const lock = replaceLockVersions(originals.get('package-lock.json'), version);
   assertOnlyLockVersionsChanged(originals.get('package-lock.json'), lock, version);
   next.set('package-lock.json', lock);
+  const hubVersion = replaceMinDaemonVersion(originals.get(HUB_VERSION_FILE), version);
+  if (!hubVersion.includes(`export const MIN_DAEMON_VERSION = "${version}";`)) {
+    throw new Error(`${HUB_VERSION_FILE} MIN_DAEMON_VERSION was not set to ${version}`);
+  }
+  next.set(HUB_VERSION_FILE, hubVersion);
 
   let started = false;
   try {

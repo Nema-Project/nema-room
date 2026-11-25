@@ -22,10 +22,10 @@ export function readHubReleaseVersion(start = path.dirname(fileURLToPath(import.
 }
 
 /**
- * The oldest CLI a hub accepts (D-9). Held at the current CLI version: the release stamp for v0.3.3 must
- * raise it to 0.3.3, the first version that speaks registration credentials and heldRepos reporting.
- * Raising it before that stamp would refuse the development CLI, which still reports 0.3.2 until the
- * stamp runs — the hub reads its own release version from the same package.
+ * The oldest CLI a hub accepts (D-9). Raised by `release:stamp` to the release version, so the floor
+ * tracks the first version that speaks registration credentials and heldRepos reporting (0.3.3). Do not
+ * raise it by hand: raising it before that stamp would refuse the development CLI, which still reports
+ * 0.3.2 until the stamp runs — the hub reads its own release version from the same package.
  */
 export const MIN_DAEMON_VERSION = "0.3.2";
 

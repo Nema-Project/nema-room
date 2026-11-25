@@ -6,12 +6,12 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { releaseLockPath } from './release-lock.mjs';
-import { assertStrictVersion, stampVersion } from './stamp-version.mjs';
+import { assertStrictVersion, HUB_VERSION_FILE, replaceMinDaemonVersion, stampVersion } from './stamp-version.mjs';
 
 const repo = fileURLToPath(new URL('../..', import.meta.url));
 const script = fileURLToPath(new URL('./stamp-version.mjs', import.meta.url));
 const checkTag = fileURLToPath(new URL('../npm/check-tag.mjs', import.meta.url));
-const copied = ['apps/cli/package.json', 'apps/desktop/package.json', 'apps/local/package.json', 'package-lock.json', 'docker-compose.yml'];
+const copied = ['apps/cli/package.json', 'apps/desktop/package.json', 'apps/local/package.json', 'package-lock.json', 'docker-compose.yml', HUB_VERSION_FILE];
 
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -50,6 +50,16 @@ test('strict version rejects a v prefix, a short version, and build metadata', (
   assert.throws(() => assertStrictVersion('v1.2.3'), /without a v prefix/);
   assert.throws(() => assertStrictVersion('1.2'), /strict SemVer/);
   assert.throws(() => assertStrictVersion('1.2.3+build'), /strict SemVer/);
+});
+
+test('replaceMinDaemonVersion raises the floor to the release version and nothing else', () => {
+  const before = 'import { x } from "y";\n\nexport const MIN_DAEMON_VERSION = "0.3.2";\n\nexport function f() {}\n';
+  assert.equal(replaceMinDaemonVersion(before, '0.3.3'), before.replace('"0.3.2"', '"0.3.3"'));
+  assert.throws(() => replaceMinDaemonVersion('no floor here', '0.3.3'), /one MIN_DAEMON_VERSION/);
+  assert.throws(
+    () => replaceMinDaemonVersion(`${before}\nexport const MIN_DAEMON_VERSION = "0.3.2";\n`, '0.3.3'),
+    /one MIN_DAEMON_VERSION/,
+  );
 });
 
 test('usage errors do not stamp the repository', async () => {
@@ -118,6 +128,7 @@ test('stamping a consistent tree updates only the version files while compose ke
   const root = await fixture(t);
   const head = git(root, ['rev-parse', 'HEAD']);
   const compose = await readFile(path.join(root, 'docker-compose.yml'), 'utf8');
+  const hubBefore = await readFile(path.join(root, HUB_VERSION_FILE), 'utf8');
   const beforeLock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
   const source = await readFile(script, 'utf8');
   assert.match(source, /renderComposeAsset/);
@@ -126,9 +137,11 @@ test('stamping a consistent tree updates only the version files while compose ke
 
   assert.equal(git(root, ['rev-parse', 'HEAD']), head);
   assert.equal(await readFile(path.join(root, 'docker-compose.yml'), 'utf8'), compose);
+  assert.equal(await readFile(path.join(root, HUB_VERSION_FILE), 'utf8'), replaceMinDaemonVersion(hubBefore, '9.9.9'));
   assert.deepEqual(git(root, ['diff', '--name-only']).split('\n').filter(Boolean).sort(), [
     'apps/cli/package.json',
     'apps/desktop/package.json',
+    'apps/hub/src/hubVersion.ts',
     'apps/local/package.json',
     'package-lock.json',
   ]);

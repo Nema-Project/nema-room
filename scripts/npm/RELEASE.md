@@ -45,7 +45,7 @@ npm run release:stamp -- <x.y.z>
 npm run release:cut -- <x.y.z>
 ```
 
-`<x.y.z>` is strict SemVer with no `v` prefix. `release:stamp` writes `version` in `apps/cli`, `apps/desktop`, and `apps/local` `package.json`, and the matching `package-lock.json` workspace records. It then runs its self-check, and it does not commit, tag, or publish. If the three package versions already differ from each other, or any of their `package-lock.json` records is missing or differs, the command exits non-zero before it writes. A failed self-check after a write restores those four files.
+`<x.y.z>` is strict SemVer with no `v` prefix. `release:stamp` writes `version` in `apps/cli`, `apps/desktop`, and `apps/local` `package.json`, the matching `package-lock.json` workspace records, and `MIN_DAEMON_VERSION` in `apps/hub/src/hubVersion.ts` (the hub floor tracks the release version, so the skew smoke keeps refusing a daemon lowered below it). It then runs its self-check, and it does not commit, tag, or publish. If the three package versions already differ from each other, or any of their `package-lock.json` records is missing or differs, the command exits non-zero before it writes. A failed self-check after a write restores those five files.
 
 The self-check is `node scripts/npm/check-tag.mjs v<x.y.z>`, the shape assertions on the compose template, and the version assertions on that template rendered at `<x.y.z>`. `release:stamp` still does not edit or generate any compose file. The repository's `docker-compose.yml` is a template with `${NEMA_IMAGE_TAG:-latest}` in both `image:` entries, so no release commit changes an image tag in that file; the asset attached to the release is rendered from that template by `node scripts/images/stamp-compose.mjs <x.y.z>`.
 
