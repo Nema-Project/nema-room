@@ -102,10 +102,10 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
 }
 
 // The hub stores the architecture request's repository only in this legacy text format.
-const architectureRequest = /^为仓库 (.+)（(repo_[\w-]+)）(画架构图：[\s\S]*)$/;
-const indexFailure = /^仓库 .+ 的代码索引没有完成，暂时还不能询问代码库。$/;
+const architectureRequest = /^为仓库 ([\s\S]+)（(repo_[\w-]+)）(画架构图：[\s\S]*)$/;
+const indexFailure = /^仓库 [\s\S]+ 的代码索引没有完成，暂时还不能询问代码库。$/;
 // Match complete recovery commands emitted by the hub/CLI. Other diagnostic text stays selectable prose.
-const recoveryCommand = /(?<![\w./-])(nema auth (?:login|byok|claude)|codex login|claude setup-token|npm run build -w apps\/cli|nema daemon)(?![\w/-]|\.[\w-]|[ \t]+-)/g;
+const recoveryCommand = /(?<![\w./-])(nema auth (?:login|byok|claude|github)|nema config set model <名称>|codex login|claude setup-token|npm run build -w apps\/cli|nema daemon)(?![\w/-]|\.[\w-]|[ \t]+-)/g;
 
 function SystemMessage({ message, onQuote }: Pick<Props, "message" | "onQuote">) {
   const t = useT();

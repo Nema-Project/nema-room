@@ -128,6 +128,20 @@ describe("MessageItem", () => {
     expect(screen.getByRole("status").textContent).toBe("Copied");
   });
 
+  it("copies the BYOK model and GitHub recovery commands", async () => {
+    const user = userEvent.setup();
+    const model = msg({ role: "system", taskId: "task2", content: "处理失败：BYOK 需要指定模型，请运行 nema config set model <名称>" });
+    const { unmount } = render(<I18nProvider><MessageItem message={model} /></I18nProvider>);
+    await user.click(screen.getByRole("button", { name: "Copy command: nema config set model <名称>" }));
+    expect(await navigator.clipboard.readText()).toBe("nema config set model <名称>");
+    unmount();
+
+    const github = msg({ role: "system", taskId: "task3", content: "处理失败：GitHub 令牌未保存，请运行 nema auth github" });
+    render(<I18nProvider><MessageItem message={github} /></I18nProvider>);
+    await user.click(screen.getByRole("button", { name: "Copy command: nema auth github" }));
+    expect(await navigator.clipboard.readText()).toBe("nema auth github");
+  });
+
   it("marks an index failure even without a task or recovery command", () => {
     const message = msg({ role: "system", content: "仓库 nema auth login 的代码索引没有完成，暂时还不能询问代码库。" });
     render(<I18nProvider><MessageItem message={message} /></I18nProvider>);
