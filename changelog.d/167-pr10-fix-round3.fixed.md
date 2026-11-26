@@ -2,4 +2,3 @@
 - The remote hub guides now state the Docker `"userland-proxy": false` prerequisite (and the RootlessKit below v3.0 caveat) before the LAN publishing steps.
 - In the remote form, the web login page must be served over HTTPS too (the same TLS-terminating reverse proxy that fronts the hub can serve it); `http://localhost` stays the development exception.
 - The image checks' default-origin assertions no longer inherit a developer's `NEMA_WEB_ORIGIN` / `NEMA_WEB_PORT` or repo `.env`, so they measure the Compose defaults; the LAN pass-through case is unchanged.
-- Cross-site session cookie behavior (SameSite) is under analysis and not decided in this round.
