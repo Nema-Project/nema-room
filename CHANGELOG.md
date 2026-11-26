@@ -16,7 +16,7 @@ Version sections on main may describe release preparation. A version heading and
 
 - The hub now keeps every connected daemon instead of only the newest. A daemon that connects no longer disconnects another daemon or interrupts its running task, and a daemon that disconnects returns only its own running task to the queue. The daemon status shows connected while any daemon is online.
 
-- The hub no longer requires a daemon to report exactly the hub's version: any CLI at or above the minimum compatible version (0.3.3) is accepted, so upgrading the hub no longer stops the whole daemon fleet. A daemon below the minimum is refused with an upgrade pointer.
+- The hub no longer requires a daemon to report exactly the hub's version: any CLI at or above the minimum compatible version (0.3.3) is accepted, and a daemon below the minimum is refused with an upgrade pointer. Upgrade daemons to 0.3.3 before upgrading the hub: a fleet still on 0.3.2 is refused as a whole once the hub moves to 0.3.3.
 
 - In a remote hub, a task is now only claimed by a daemon whose owner belongs to the task's workspace and which holds the workspace's bound repositories; other daemons leave the task queued, and the chat shows why it is waiting (no daemon online, no member daemon, or a repository no online daemon holds). Repository calls prefer the daemon that holds the repository and fall back to the newest owner daemon when none does. Daemons report the repositories they hold when they connect and after every repository sync.
 
