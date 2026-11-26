@@ -766,10 +766,10 @@ export function uiRoutes(deps: UiDeps): Hono {
     const { entry, commit } = await store(ws).restoreDiagram(eid, { author: "user" });
     try {
       await indexEntry(db, ws, entry, deps.ownedHelpers);
-      events.emit(ws, { type: "knowledge.changed", entryId: entry.id });
     } catch (e) {
       console.error(`ui restore: post-commit bookkeeping failed for ${eid} (commit ${commit})`, e);
     }
+    events.emit(ws, { type: "knowledge.changed", entryId: entry.id });
     return c.json(entry);
   });
 

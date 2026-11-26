@@ -1317,8 +1317,10 @@ describe("diagram routes", () => {
     const indexed = () => db.query<{ status: string }>(`select status from entry_index where workspace_id = $1 and entry_id = $2`, [ws, g.id]);
     expect(await indexed()).toEqual([{ status: "dropped" }]);
     // The generic entry edit cannot apply a diagram status; it must not report success.
-    const put = await dreq("PUT", `/api/workspaces/${ws}/entries/${g.id}`, { kind: "diagram", title: "架构", body: "总览", status: "active", reason: "恢复" });
-    expect(put.status).toBeGreaterThanOrEqual(400);
+    // (UpsertEntryInput carries no diagram field, so a diagram PUT is rejected wholesale;
+    // the stored status staying "dropped" below is the assertion that matters.)
+    const put = await dreq("PUT", `/api/workspaces/${ws}/entries/${g.id}`, { kind: "diagram", title: "架构", body: "总览", status: "active", reason: "恢复", diagram: { repoId: "repo_x", type: "architecture", sourceCommits: { repo_x: "abc123" }, nodePaths: { hub: ["apps/hub"] } } });
+    expect(put.status).toBe(400);
     const store = new KnowledgeStore(repoPath(dataDir, ws));
     expect((await store.get(g.id))!.status).toBe("dropped");
 
