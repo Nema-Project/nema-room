@@ -35,11 +35,24 @@ services:
       NEMA_DATA_DIR: /data
       NEMA_HUB_HOST: 0.0.0.0
       NEMA_HUB_PORT: ${NEMA_HUB_PORT:-4400}
-      NEMA_WEB_ORIGIN: http://localhost:${NEMA_WEB_PORT:-3000},http://127.0.0.1:${NEMA_WEB_PORT:-3000}
+      NEMA_WEB_ORIGIN: ${NEMA_WEB_ORIGIN:-http://localhost:${NEMA_WEB_PORT:-3000},http://127.0.0.1:${NEMA_WEB_PORT:-3000}}
+      # Remote hub (multi-user, trusted network only). NEMA_WEB_ORIGIN above and the three
+      # values below are forwarded from .env (the remote three are empty by default, so remote
+      # mode stays off until NEMA_HUB_REMOTE=1 is set there). The hub port below is published
+      # on 127.0.0.1 by default; serving the LAN also needs the ports entry changed to publish
+      # on the LAN interface, NEMA_WEB_ORIGIN extended in .env with the web's LAN origin, and
+      # NEMA_HUB_URL set to the hub's LAN address.
+      # NEMA_HUB_PUBLIC_URL is only needed behind a TLS-terminating reverse proxy, so remote
+      # daemons get an https:// hub origin.
+      NEMA_HUB_REMOTE: ${NEMA_HUB_REMOTE:-}
+      NEMA_HUB_ALLOWED_HOSTS: ${NEMA_HUB_ALLOWED_HOSTS:-}
+      NEMA_HUB_PUBLIC_URL: ${NEMA_HUB_PUBLIC_URL:-}
       NEMA_SHARES_ENABLED: ${NEMA_SHARES_ENABLED:-}
       # The hub cannot see the host's ~/.nema/ws; the daemon removes those dirs itself.
       NEMA_HUB_CLEAN_DAEMON_DIRS: "0"
     ports:
+      # Loopback-only by default. The remote hub form (trusted network only) needs this published
+      # on the LAN interface instead, e.g. "${NEMA_HUB_PORT:-4400}:${NEMA_HUB_PORT:-4400}".
       - "127.0.0.1:${NEMA_HUB_PORT:-4400}:${NEMA_HUB_PORT:-4400}"
     volumes:
       # Same directory the host daemon reads its daemon-token from (default ~/.nema/data).

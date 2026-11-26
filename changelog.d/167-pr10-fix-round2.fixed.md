@@ -1,0 +1,1 @@
+- Compose now forwards `NEMA_WEB_ORIGIN` from `.env` into the hub container, so a LAN web origin set there takes effect; when unset, the loopback list built from `NEMA_WEB_PORT` is unchanged.

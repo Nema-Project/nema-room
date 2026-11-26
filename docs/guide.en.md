@@ -83,6 +83,44 @@ Running the Web / Compose stack from this repository still uses the source wizar
 
 This is a local application without public-facing multi-user authentication. The hub and web UI default to loopback access; do not expose them directly to the internet.
 
+<a id="remote-hub-multi-user"></a>
+
+## Remote hub (multi-user)
+
+The remote hub is an opt-in form for a small team on a trusted network. One standalone hub serves the team, backed by PostgreSQL and the web UI; each person runs their own daemon on their own machine, and model credentials and repository checkouts stay on that person's machine. Nothing changes for single-user installs: without `NEMA_HUB_REMOTE=1` the hub behaves exactly as before, and the desktop never enables this form.
+
+> **Trusted network only.** The remote form is supported on a LAN or your own VPN only. The hub does not terminate TLS and manages no certificates. Never expose the hub directly to the public internet.
+
+### Configuration
+
+| Variable | Meaning |
+| --- | --- |
+| `NEMA_HUB_REMOTE=1` | Enables the remote form. Standalone hub only. |
+| `NEMA_HUB_ALLOWED_HOSTS` | Comma-separated hostnames or `host:port` values the hub answers to, for example `hub.example.lan`. Loopback (`127.0.0.1` / `localhost`) is always allowed; anything else is refused with 403. Ignored unless the remote form is on. |
+| `NEMA_HUB_HOST` | Address the hub binds, for example `0.0.0.0` inside the container. The Compose file already binds `0.0.0.0`; the default for a standalone hub stays `127.0.0.1`. |
+| `NEMA_WEB_ORIGIN` | Comma-separated web origins allowed to call the hub with credentials. It must include the origin of the web page the browser actually uses, for example the web page's origin when served through the same TLS-terminating reverse proxy as the hub, `https://nema.example.lan`. |
+| `NEMA_HUB_PUBLIC_URL` | Public origin of the hub as remote daemons must reach it, for example `https://hub.example.lan`. Set it when a TLS-terminating reverse proxy sits in front of the hub; without it, daemons use the address from their own connection, which is `http://` behind such a proxy. |
+| `NEMA_HUB_URL` | (Web container) The hub URL the browser uses. In the remote form set it to the hub's LAN address. |
+
+Before binding the web to a LAN address, configure the Docker daemon with `"userland-proxy": false`: with the userland proxy enabled, the apparent source becomes the bridge address and can fool the peer checks. Rootless Docker with RootlessKit before v3.0 does not keep the client source address even with `"userland-proxy": false`. On those versions, upgrade RootlessKit to v3.0 or later, or use rootful Docker, before setting a LAN `NEMA_WEB_BIND`.
+
+With Compose, the hub and web ports are published on `127.0.0.1` by default. To serve the LAN, publish them on the LAN interface: change the hub `ports:` entry, and for the web set `NEMA_WEB_BIND` to a LAN address, or serve the web through a reverse proxy. Set `NEMA_WEB_ORIGIN` in `.env` to the origin of the web page and `NEMA_HUB_URL` to the address the browser uses to reach the hub. Publishing only the hub port leaves the login page unreachable from other machines.
+
+### Setup order
+
+1. Set the remote variables in `.env` and start the hub (`docker compose up -d`). Compose forwards the three variables into the hub container, so no `docker-compose.yml` edit is needed.
+2. Create the first account. On first start with no account, the hub writes a one-time bootstrap token to `<dataDir>/bootstrap-token` (mode `0600`) and logs its path. Under Compose, find the path with `docker compose logs hub`, or read the file in the data directory (`${NEMA_DATA_HOST_DIR:-~/.nema/data}/bootstrap-token`). Create the account with `POST /api/auth/bootstrap` (`token`, `displayName`, `password`).
+3. Sign in at the web login page as that first (administrator) account.
+4. Invite the next person: as the administrator, `POST /api/auth/invites` returns a one-time code. They accept it with `POST /api/auth/invites/accept` (`code`, `displayName`, `password`) and then sign in.
+5. Add them to the workspace: `POST /api/workspaces/:id/members` with their user id. Only members can read a workspace; host-level routes (components, extensions and MCP, plugins, the folder picker, daemon status) are hub-administrator-only, and any other signed-in account gets 403.
+6. Each person registers their own daemon. In **App settings → Daemons**, generate a registration code, then on their machine run `nema daemon register --hub <hub URL>` and paste the code, followed by `nema daemon --hub <hub URL>`. The daemon keeps running on their machine; model credentials never leave it.
+
+### Sessions
+
+The session cookie is always `Secure` in the remote form, so the browser must reach the hub over `https`, through the deployer's own reverse proxy. The web login page must be served over HTTPS too in the remote form — the same reverse proxy can serve it — because a login page delivered over plain HTTP on the LAN can be altered to steal passwords, and the hub's HTTPS does not protect that page. A trusted VPN only protects the network connection; it does not replace HTTPS: over plain `http://` on a LAN hostname — even through a VPN — the browser still sees HTTP and never sends the cookie back, so sign-in cannot stick. `http://localhost` still works for loopback development, because browsers treat localhost as a secure context.
+
+The session cookie is `SameSite=Lax`, so the web page and the hub must be on the same site; cross-site deployments are not supported. Same site means sibling subdomains behind the same TLS-terminating reverse proxy (for example `https://nema.example.lan` with `https://hub.example.lan`), or different ports on the same loopback address: with the hub at `127.0.0.1:4400`, open the web at `127.0.0.1:3000`. `localhost:3000` cannot sign in to a hub at `127.0.0.1:4400`, because `localhost` and `127.0.0.1` are different sites and the browser does not send a Lax cookie across sites.
+
 <a id="source-installation"></a>
 
 ## Quick start
@@ -391,9 +429,9 @@ Tags are public on share pages. Select a tag link there to filter the server-ren
 - Local storage is not offline inference: chat, knowledge, and code returned by tools go to the model provider. When the GitHub plugin is on, queries go to GitHub through your local `gh`; writing needs a separate opt-in in the workspace. A confidential workspace is not an offline mode or operating-system isolation boundary.
 - A share link is created in workspace settings and can be revoked there. The visitor sees that workspace's knowledge entries, including excerpts, and does not see chat, tasks, attachments, or settings. The link is the permission: anyone who has it can read that knowledge base until it is revoked, and the next request after revocation fails. By default the page opens only on this machine's loopback address. A LAN address is published only by binding the web service with `NEMA_WEB_BIND`. Public internet, tunnels, and reverse proxies are not supported, and the hub is not published. A confidential workspace cannot be shared, and turning confidential on revokes existing links. `NEMA_SHARES_ENABLED=0` stops new links and public reads.
 - Before setting `NEMA_WEB_BIND` to a LAN address, you must configure the Docker daemon with `"userland-proxy": false`: with the userland proxy enabled, the apparent source becomes the bridge address and can fool the peer checks. Rootless Docker with RootlessKit before v3.0 does not keep the client source address even with `"userland-proxy": false`. On those versions, upgrade RootlessKit to v3.0 or later, or use rootful Docker, before setting a LAN `NEMA_WEB_BIND`.
-- To manage shares while the web service is bound to a LAN address, add that origin (for example `http://192.168.1.10:3000`) to `NEMA_WEB_ORIGIN` in the hub environment; by default the hub accepts only the loopback web origins, so the settings page opened at the LAN address cannot reach it. Create links while browsing at the LAN address so the link carries the LAN host; a link created at the loopback address keeps the loopback host. LAN share traffic is plain HTTP and is not encrypted.
+- To manage shares while the web service is bound to a LAN address, add that origin (for example `http://192.168.1.10:3000`) to `NEMA_WEB_ORIGIN` in `.env` (Compose forwards it into the hub container); by default the hub accepts only the loopback web origins, so the settings page opened at the LAN address cannot reach it. Create links while browsing at the LAN address so the link carries the LAN host; a link created at the loopback address keeps the loopback host. LAN share traffic is plain HTTP and is not encrypted.
 - Attachments are sent to the model provider with the task that uses them. Deleting one removes its file but cannot take back what a model already received; a quoted message's attachments go along with the quote. Back up `attachments/` together with the database: a row without its file shows as missing.
-- Messages now record which user wrote them, and each workspace keeps a member list with an audit trail. A single user sees no change: there is one local user, messages still show "You", and the `@` menu has no member group. Messages written before this release are not backfilled with an author. There is still no multi-user login. You can set a display name under App settings → General. It is sent to the model only when a workspace has two or more members, and share pages never show people.
+- Messages now record which user wrote them, and each workspace keeps a member list with an audit trail. A single user sees no change: there is one local user, messages still show "You", and the `@` menu has no member group. Messages written before this release are not backfilled with an author. Multi-user login is available only in the opt-in remote hub form (see above); in the default single-user form there is still no login. You can set a display name under App settings → General. It is sent to the model only when a workspace has two or more members, and share pages never show people.
 - Ordinary task limits: 24 model calls, 60 tool calls, 10 minutes. Work packages: 48, 120, 20 minutes. Interrupted tasks retry up to three times.
 - Startup can recover some uncommitted knowledge files, but Git and database indexes do not have complete automatic reconciliation.
 - SIWC refresh failures may require another login. The implementation checks ID token claims but does not verify JWKS signatures.

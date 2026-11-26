@@ -40,6 +40,10 @@ export type StartHubOptions = {
   sharesEnabled?: boolean;
   /** #167 remote form, set only by the standalone hub (NEMA_HUB_REMOTE=1). The desktop never passes it. */
   remoteAuth?: boolean;
+  /** #167 task 13: Host allowlist from NEMA_HUB_ALLOWED_HOSTS; only consulted while remoteAuth is on. */
+  allowedHosts?: string[];
+  /** #167 task 13: public hub origin from NEMA_HUB_PUBLIC_URL, for remote daemons behind a TLS-terminating proxy. */
+  publicHubUrl?: string;
   /** One-time bootstrap token written by main.ts while no account exists. */
   bootstrapToken?: string;
 };
@@ -99,6 +103,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
     attached = attachDaemonSocket(server, {
       db: opts.db, dataDir: opts.dataDir, events, daemonToken: opts.daemonToken, hubUrl,
       ownedHelpers: opts.ownedHelpers, releaseVersion: opts.releaseVersion, remoteAuth: opts.remoteAuth,
+      publicHubUrl: opts.publicHubUrl,
     });
     const app = createApp({
       db: opts.db,
@@ -114,6 +119,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
       releaseVersion: opts.releaseVersion,
       sharesEnabled: opts.sharesEnabled,
       remoteAuth: opts.remoteAuth,
+      allowedHosts: opts.allowedHosts,
       revokeRegisteredDaemon: attached.revokeRegisteredDaemon,
       waitingReasonFor: attached.waitingReasonFor,
       bootstrapToken: opts.bootstrapToken,
