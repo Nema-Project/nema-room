@@ -8,7 +8,7 @@
 
 项目已形成“讨论 → 知识归档 → 开发包批准 → 编码 Agent 接手 → 提交回报”的功能链路，公开预览版的稳定化已推进到 v0.3.1（2026-11-21 发布）；当前开放事项见「下一项」与 P2 表。
 
-- 最新发布为 [v0.3.2](https://github.com/Nema-Project/nema-room/releases/tag/v0.3.2)（2026-11-24）：tag 指向 `b91946e`，三条 tag 工作流全 success（npm verify 首轮一例竞态测试 flake，重跑失败 job 后通过），晋升一次完成，晋升后 `release:verify` 退出 0（记录见「v0.3.2 发布」）。开放的 milestone 只剩 v0.3.3（[#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub 与多人，见「v0.3.3 准备」）；开放 issue 共 7 个：#45（北极星）、#25（连接器 Epic）、#32（设计参考）、#56（ESLint / TypeScript 两线延期，未排期）、#167、#264 与 #280（均已登记进 P2 表）。以下为历史证据记录，不替代各版本节的发布记录。
+- 最新发布为 [v0.3.2](https://github.com/Nema-Project/nema-room/releases/tag/v0.3.2)（2026-11-24）：tag 指向 `b91946e`，三条 tag 工作流全 success（npm verify 首轮一例竞态测试 flake，重跑失败 job 后通过），晋升一次完成，晋升后 `release:verify` 退出 0（记录见「v0.3.2 发布」）。开放的 milestone 只剩 v0.3.3（[#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub 与多人，2026-11-26 实施完成、验收通过，v0.3.3 尚未发布，见「v0.3.3 准备」）；开放 issue 共 7 个：#45（北极星）、#25（连接器 Epic）、#32（设计参考）、#56（ESLint / TypeScript 两线延期，未排期）、#167、#264 与 #280（均已登记进 P2 表）。以下为历史证据记录，不替代各版本节的发布记录。
 - [v0.1.2](https://github.com/Nema-Project/nema-room/releases/tag/v0.1.2) 已发布 Windows x64 与 macOS ARM64 安装包及校验清单。
 - 该版本对应提交的[完整 CI](https://github.com/Nema-Project/nema-room/actions/runs/40307045900)在 npm test 失败，但[发布工作流](https://github.com/Nema-Project/nema-room/actions/runs/40307052077)成功。失败原因需要另行定位，不能直接归因为产品缺陷或测试抖动。
 - 后续提交已有[完整 CI 成功记录](https://github.com/Nema-Project/nema-room/actions/runs/40309633322)，它不替代发布提交自身的验证。
@@ -23,7 +23,7 @@
 
 进本版：
 
-- [ ] 进行中：[#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub 与多人（P2-12）。spec 为 [2026-11-24 远程 hub 与多人设计](docs/superpowers/specs/2026-11-24-remote-hub-multiuser-design.md)，D-1～D-10 已于 2026-11-24 由维护者全部按推荐定案（PR #287 合入）；实施计划为 [2026-11-24 远程 hub 与多人实施计划](docs/superpowers/plans/2026-11-24-remote-hub-multiuser.md)（16 个任务、11 个 PR、四阶段硬顺序：政策 → 身份与校验 → 多路化 → 放开暴露）。范围覆盖 hub 远程部署拓扑、daemon 注册/吊销、多人身份执行面（引导/邀请/登录/会话）与内容 API 成员资格校验；认证先于暴露面，SECURITY.md 修订为第一阶段。
+- [ ] 完成：[#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub 与多人（P2-12）。spec 为 [2026-11-24 远程 hub 与多人设计](docs/superpowers/specs/2026-11-24-remote-hub-multiuser-design.md)，D-1～D-10 已于 2026-11-24 由维护者全部按推荐定案（PR #287 合入）；实施计划为 [2026-11-24 远程 hub 与多人实施计划](docs/superpowers/plans/2026-11-24-remote-hub-multiuser.md)（16 个任务、11 个 PR、四阶段硬顺序：政策 → 身份与校验 → 多路化 → 放开暴露）。范围覆盖 hub 远程部署拓扑、daemon 注册/吊销、多人身份执行面（引导/邀请/登录/会话）与内容 API 成员资格校验；认证先于暴露面，SECURITY.md 修订为第一阶段。2026-11-26 实施完成、验收通过：实现 PR-1～PR-10（PR #289、#290、#291、#292、#293、#294、#296、#316、#317、#318）全部合入，另有 PR #315（主机级路由限 hub 管理员）与 PR #319（任务 15 发现的 F-1：`/daemon` WebSocket 升级也过 Host 允许清单，合入 `412dae5`）；任务 15 原生演练 9/9 通过；任务 16 的收口 PR（PR-11，文档澄清 F-2 / F-3 与本节更新）随本次改动提交。验收记录分静态检查、自动化测试、真实环境三类贴在 #167，Compose 路线专属项、清单主机名下的真实 daemon 连接与真实浏览器行为等未覆盖项在记录中单列。**v0.3.3 的发布步骤（版本 bump、tag、`release:verify` 等）尚未执行**，本节只记录 #167 的交付状态，不代表 v0.3.3 已发布。
 
 ## v0.3.2 准备
 
@@ -300,7 +300,7 @@ v0.1.5 已公开发布：npm、hub/web 镜像与桌面产物的发布流水线�
 
 ## 下一项
 
-P0-01 与 P0-02 仍在进行中。v0.3.2 已于 2026-11-24 发布，milestone v0.3.2 关闭；下一版为 v0.3.3 的 [#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub 与多人（P2-12）：spec 已于 2026-11-24 定案立项（D-1～D-10 全部按推荐），实施计划已立，按四阶段顺序开工。未排期的后续项已登记在 P2 表：[#264](https://github.com/Nema-Project/nema-room/issues/264) 组件安装器 OS 锁（P2-10）、[#280](https://github.com/Nema-Project/nema-room/issues/280) 组件更新检查（P2-13）、[#56](https://github.com/Nema-Project/nema-room/issues/56) 的 ESLint 10 与 TypeScript 7 两条延期线（P2-07，等上游解封）；[#25](https://github.com/Nema-Project/nema-room/issues/25) 连接器 Epic 的后续 CX 项与 [#32](https://github.com/Nema-Project/nema-room/issues/32) 设计参考仍开放。下一项由维护者选定。连接器侧最近完成的是 CX-03：实现已由 PR #54 合入，最终验收已于 2026-11-17 完成（记录见 [#25 评论](https://github.com/Nema-Project/nema-room/issues/25#issuecomment-6936006267)，spec §515 第 1–8 条均有通过证据，三套测试在当前 main 上 44/44 通过）。
+P0-01 与 P0-02 仍在进行中。v0.3.2 已于 2026-11-24 发布，milestone v0.3.2 关闭；下一版为 v0.3.3 的 [#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub 与多人（P2-12）：spec 已于 2026-11-24 定案立项（D-1～D-10 全部按推荐），16 个任务已于 2026-11-26 实施完成、验收通过（记录见 #167）；v0.3.3 的发布步骤尚未执行。未排期的后续项已登记在 P2 表：[#264](https://github.com/Nema-Project/nema-room/issues/264) 组件安装器 OS 锁（P2-10）、[#280](https://github.com/Nema-Project/nema-room/issues/280) 组件更新检查（P2-13）、[#56](https://github.com/Nema-Project/nema-room/issues/56) 的 ESLint 10 与 TypeScript 7 两条延期线（P2-07，等上游解封）；[#25](https://github.com/Nema-Project/nema-room/issues/25) 连接器 Epic 的后续 CX 项与 [#32](https://github.com/Nema-Project/nema-room/issues/32) 设计参考仍开放。下一项由维护者选定。连接器侧最近完成的是 CX-03：实现已由 PR #54 合入，最终验收已于 2026-11-17 完成（记录见 [#25 评论](https://github.com/Nema-Project/nema-room/issues/25#issuecomment-6936006267)，spec §515 第 1–8 条均有通过证据，三套测试在当前 main 上 44/44 通过）。
 
 | ID | 事项与依据 | 状态 | 验收标准 |
 | --- | --- | --- | --- |
@@ -342,7 +342,7 @@ P0-01 与 P0-02 仍在进行中。v0.3.2 已于 2026-11-24 发布，milestone v0
 | P2-09 | [#132](https://github.com/Nema-Project/nema-room/issues/132) 轻量化发布：大组件按需下载与离线组件包。2026-10-31 从 v0.3.0 提前到 v0.2.x；2026-11-02 改排 v0.3.x，其中 Node 去重已拆到 [#134](https://github.com/Nema-Project/nema-room/issues/134)，留在 v0.2.x。2026-11-04 改排 v0.3.1。已于 v0.3.1 完成并发版（PR #262、#263、#269），#132 已关闭 | 已完成 | 按 #132 的 spec 与验收标准验收，记录见 #132；体积的 payload 口径达标（75.1 / 72.9 MiB、graphify 0），安装包上限未达、差额构成记在 #132 关闭记录 |
 | P2-10 | [#264](https://github.com/Nema-Project/nema-room/issues/264) 组件安装器跨进程发布/回滚窗口的 OS 锁方案。#263 评审中确认的两个竞态窗口（指针发布、回滚改名）已按维护者决定接受为残余风险并记录在该 issue；本项是其后续 | 待办 | 按 #264 的设计评估并实现 OS 级锁（fcntl / LockFileEx 或等价方案），或经评估后正式维持现状；两个窗口有回归测试或明确的不可测说明。未排期 |
 | P2-11 | [#265](https://github.com/Nema-Project/nema-room/issues/265) 预置数据目录（方案 A）立项讨论。#186 的 W2 评估触发 D-3：windows-latest 冷启动 DB 中位 3484ms 约为 Linux 基线 2.17 倍 | 已完成 | 已于 2026-11-22 由维护者按推荐立项并排入 v0.3.2，spec 与实施计划定案后由 PR #277 实现并合入；合入后 5 份 Windows 样本预置首次中位 1419ms（D-6：≤1600ms、较基线降 59.3%），种子归档约 4.6 MiB，#265 已于 2026-11-23 验收并关闭 |
-| P2-12 | [#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub 与多人：hub 作为远程综合主机、多个 daemon 互享、真人身份执行面 | 进行中 | spec 已定案（D-1～D-10 全部按推荐，PR #287），实施计划已立（16 任务 / 11 PR / 四阶段硬顺序）；五缺口已于 2026-11-24 按当前 main 复核全部仍成立。验收按计划任务 15/16：VM 内 Compose 双 daemon 双账号全流程 + #167 验收记录 |
+| P2-12 | [#167](https://github.com/Nema-Project/nema-room/issues/167) 远程 hub 与多人：hub 作为远程综合主机、多个 daemon 互享、真人身份执行面 | 已完成 | spec 已定案（D-1～D-10 全部按推荐，PR #287），实施计划已立（16 任务 / 11 PR / 四阶段硬顺序）；五缺口已于 2026-11-24 按当前 main 复核全部仍成立。2026-11-26 收口：16 个任务完成，实现 PR-1～PR-10（#289–#318）与追加的 #315、#319 全部合入，PR-11 为任务 16 收口 PR；任务 15 原生演练 9/9 通过，其发现的 F-1 由 PR #319 修复合入（`412dae5`）。验收记录见 #167（三类证据分开，未覆盖项单列）。v0.3.3 尚未发布 |
 | P2-13 | [#280](https://github.com/Nema-Project/nema-room/issues/280) 组件更新检查：插件页提示 graphify 可升级并由用户决定是否升级。2026-11-24 维护者定案：随包锁继续钉住发布版本作基线，面向用户的升级走本项的用户自主路径，不靠随包锁追版本 | 待办 | 先写 spec（检查来源、用户级锁扩展与信任模型、回滚语义、离线行为）并给出 D 项，维护者定案后再实现；未排期 |
 
 ## 仓库演进原则
@@ -396,3 +396,4 @@ P0-01 与 P0-02 仍在进行中。v0.3.2 已于 2026-11-24 发布，milestone v0
 | 2026-11-24 | P2-07 | Muse | [issue #56](https://github.com/Nema-Project/nema-room/issues/56) / PR #282 / PR #283 | v0.3.2 | #56 四线收口：Node 24 线与 Python 3.14 换线已合入（见上）；ESLint / TypeScript 两线延期并从 v0.3.2 剔除。更正上一行 D-4 的措辞记录：已装组件在换线后不是自动重装，而是进入 lock-mismatch 停用、由用户手动重装一次（spec 与计划已同步更正，D-4 测试按更正后的语义钉住） |
 | 2026-11-24 | P2-07 / P2-11 | Muse | [v0.3.2 发布](https://github.com/Nema-Project/nema-room/releases/tag/v0.3.2) / PR #285 | v0.3.2 | v0.3.2 已发布并收口：tag 指向 `b91946e`，三条 tag 工作流最终全 success（npm verify 首轮一例竞态 flake、重跑后通过），晋升一次完成（运行 45310512604），`release:verify` 退出 0（8 个资产一致）；milestone v0.3.2 关闭，#56 两条延期线移出 milestone、issue 保持开放 |
 | 2026-11-24 | P2-12 | 维护者 / Muse | [issue #167](https://github.com/Nema-Project/nema-room/issues/167) / PR #287 | v0.3.3 | #167 立项开工：维护者批准开工，spec 的 D-1～D-10 全部按推荐定案（PR #287 合入）；实施计划已立（16 任务、11 PR、四阶段硬顺序），P2-12 改进行中 |
+| 2026-11-26 | P2-12 | Muse | [issue #167](https://github.com/Nema-Project/nema-room/issues/167) / PR #289–#319 | v0.3.3 | #167 实施收口：16 个任务完成（PR-1～PR-10 即 #289、#290、#291、#292、#293、#294、#296、#316、#317、#318，另 #315、#319 合入，PR-11 为本收口 PR）；任务 15 原生演练 9/9，F-1 由 PR #319 修复（`412dae5`），F-2 / F-3 以文档澄清收口；验收记录贴在 #167，P2-12 改已完成。v0.3.3 尚未发布 |

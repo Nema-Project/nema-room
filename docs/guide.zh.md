@@ -110,10 +110,12 @@ Compose 默认只把 hub 与 web 端口都发布在 `127.0.0.1` 上。要服务�
 
 1. 在 `.env` 中设好远程变量后启动 hub（`docker compose up -d`）。Compose 会把这三个变量传入 hub 容器，无需再改 `docker-compose.yml`。
 2. 创建第一个账号。首次启动且尚无账号时，hub 把一次性引导令牌写入 `<dataDir>/bootstrap-token`（权限 `0600`），并在日志中打印路径。Compose 下用 `docker compose logs hub` 查看路径，或直接读数据目录下的文件（`${NEMA_DATA_HOST_DIR:-~/.nema/data}/bootstrap-token`）。用 `POST /api/auth/bootstrap`（`token`、`displayName`、`password`）建号。
-3. 以该首个（管理员）账号在 web 登录页登录。
-4. 邀请下一个人：管理员调用 `POST /api/auth/invites` 得到一次性邀请码；对方用 `POST /api/auth/invites/accept`（`code`、`displayName`、`password`）接受邀请，然后登录。
+3. 以该首个（管理员）账号在 web 登录页登录。登录页的「账号」填用户 id（`usr_…`），就是 `POST /api/auth/bootstrap` 响应里的 `userId`。
+4. 邀请下一个人：管理员调用 `POST /api/auth/invites` 得到一次性邀请码；对方用 `POST /api/auth/invites/accept`（`code`、`displayName`、`password`）接受邀请，然后用响应里的 `userId`（`usr_…`）作为账号登录。目前接受邀请只能调用这个 API，web 还没有接受邀请的页面。
 5. 把对方加入工作区：`POST /api/workspaces/:id/members`，带上对方的用户 id。只有成员能读工作区；主机级路由（组件、扩展与 MCP、插件、目录选择、daemon 状态）仅限 hub 管理员，其他已登录账号访问得 403。
 6. 每个人注册自己的 daemon。在**应用设置 → Daemon 管理**中生成注册码，然后在本机运行 `nema daemon register --hub <hub 地址>` 并粘贴注册码，再运行 `nema daemon --hub <hub 地址>`。daemon 常驻在各人本机上；模型凭证不会离开本机。
+
+共享工作区里，任务派给一台合格的在线 daemon：它的所有者是该工作区的成员，并且它持有工作区绑定的仓库。任务用的是这台 daemon 本机的模型账户和凭据，不一定是发消息的人自己的 daemon。例如乙没有合格的 daemon 在线、只有甲的合格时，乙的消息由甲的 daemon 执行，消耗甲的模型额度。
 
 ### 会话
 
