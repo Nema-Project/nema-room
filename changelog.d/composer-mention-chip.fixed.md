@@ -1,1 +1,0 @@
-- Clear sent mention chips from the composer after a successful send while keeping mentions added during the send.

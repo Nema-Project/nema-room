@@ -1,1 +1,0 @@
-- Workspace settings now has a dedicated Repositories section for linking repositories and managing their settings. Code & plugins shows Graphify and workspace plugins.

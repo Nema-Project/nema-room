@@ -1,5 +1,0 @@
-- A queued task behind fifty tasks its daemon cannot run is now reached instead of waiting forever while every dispatch re-checked the same first batch.
-- When a workspace's repositories are split across daemons, the waiting line names what the best-placed daemon is still missing instead of showing nothing.
-- The waiting line now refreshes when a daemon's held repositories change, and a holdings report that arrives out of order no longer overwrites a newer one.
-- Threads, thread replies and message edits now show why a task is waiting right away, like a plain message send.
-- A task sent back to the queue shows its waiting line again instead of a stuck working indicator, and a task that fails before running clears its waiting line.

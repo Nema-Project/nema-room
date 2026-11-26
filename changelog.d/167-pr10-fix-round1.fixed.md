@@ -1,1 +1,0 @@
-- A local hub no longer fails to start when `NEMA_HUB_PUBLIC_URL` holds a schemeless or otherwise invalid value: the remote-only setting is only parsed when `NEMA_HUB_REMOTE=1`. Remote mode still rejects an invalid value at startup.

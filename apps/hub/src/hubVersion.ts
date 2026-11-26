@@ -27,7 +27,7 @@ export function readHubReleaseVersion(start = path.dirname(fileURLToPath(import.
  * raise it by hand: raising it before that stamp would refuse the development CLI, which still reports
  * 0.3.2 until the stamp runs — the hub reads its own release version from the same package.
  */
-export const MIN_DAEMON_VERSION = "0.3.2";
+export const MIN_DAEMON_VERSION = "0.3.3";
 
 type ParsedVersion = { core: number[]; pre: (string | number)[] | null };
 

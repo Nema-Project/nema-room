@@ -1,2 +1,0 @@
-- A daemon reporting new held repositories no longer re-runs the whole task dispatch once per waiting task while refreshing the waiting lines.
-- Stamping a release now raises the oldest CLI version the hub accepts to that release, so the version-skew check keeps refusing an out-of-date daemon.
