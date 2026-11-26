@@ -119,6 +119,8 @@ Compose 默认只把 hub 与 web 端口都发布在 `127.0.0.1` 上。要服务�
 
 远程形态下会话 cookie 恒带 `Secure`，因此浏览器必须通过 `https` 访问 hub——部署者自备反代。Web 登录页在远程形态下也必须经 HTTPS 提供——可由同一反代提供——因为经局域网明文 HTTP 下发的登录页可能被篡改以窃取密码，hub 的 HTTPS 保护不了该页面。受信 VPN 只保护网络连接，不能替代 HTTPS：经 VPN 用明文 `http://` 访问局域网地址时，浏览器看到的仍是 HTTP，不会把 cookie 发回，登录无法保持。`http://localhost` 仍可用于回环开发，因为浏览器把 localhost 视为安全上下文。
 
+会话 cookie 为 `SameSite=Lax`，因此 web 与 hub 必须同站，不支持跨站部署。同站指同一 TLS 终止反代下的兄弟子域（例如 `https://nema.example.lan` 配 `https://hub.example.lan`），或同一回环地址的不同端口：hub 在 `127.0.0.1:4400` 时，web 须在 `127.0.0.1:3000` 打开。`localhost:3000` 不能登录 `127.0.0.1:4400` 的 hub，因为 `localhost` 与 `127.0.0.1` 是不同站点，浏览器不会跨站发送 Lax cookie。
+
 <a id="source-installation"></a>
 
 ## 快速开始

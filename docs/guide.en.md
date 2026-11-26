@@ -119,6 +119,8 @@ With Compose, the hub and web ports are published on `127.0.0.1` by default. To 
 
 The session cookie is always `Secure` in the remote form, so the browser must reach the hub over `https`, through the deployer's own reverse proxy. The web login page must be served over HTTPS too in the remote form — the same reverse proxy can serve it — because a login page delivered over plain HTTP on the LAN can be altered to steal passwords, and the hub's HTTPS does not protect that page. A trusted VPN only protects the network connection; it does not replace HTTPS: over plain `http://` on a LAN hostname — even through a VPN — the browser still sees HTTP and never sends the cookie back, so sign-in cannot stick. `http://localhost` still works for loopback development, because browsers treat localhost as a secure context.
 
+The session cookie is `SameSite=Lax`, so the web page and the hub must be on the same site; cross-site deployments are not supported. Same site means sibling subdomains behind the same TLS-terminating reverse proxy (for example `https://nema.example.lan` with `https://hub.example.lan`), or different ports on the same loopback address: with the hub at `127.0.0.1:4400`, open the web at `127.0.0.1:3000`. `localhost:3000` cannot sign in to a hub at `127.0.0.1:4400`, because `localhost` and `127.0.0.1` are different sites and the browser does not send a Lax cookie across sites.
+
 <a id="source-installation"></a>
 
 ## Quick start
