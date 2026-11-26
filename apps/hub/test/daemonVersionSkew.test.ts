@@ -6,7 +6,7 @@ import { afterAll, afterEach, describe, expect, test } from "vitest";
 import WebSocket from "ws";
 import { attachDaemonSocket } from "../src/daemonSocket.js";
 import { EventBus } from "../src/events.js";
-import { readHubReleaseVersion } from "../src/hubVersion.js";
+import { MIN_DAEMON_VERSION, readHubReleaseVersion } from "../src/hubVersion.js";
 import { startHub } from "../src/lifecycle.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 
@@ -71,7 +71,7 @@ describe("daemon version skew", () => {
     const error = await message;
     expect(error.type).toBe("error");
     expect(error.message).toContain("版本不一致");
-    expect(error.message).toContain("不低于 0.3.2");
+    expect(error.message).toContain(`不低于 ${MIN_DAEMON_VERSION}`);
     expect(error.message).toContain("hub 1.2.3");
     expect(error.message).toContain("@nema-project/nema@1.2.3");
     await closed;
@@ -83,7 +83,7 @@ describe("daemon version skew", () => {
     const error = await message;
     expect(error.type).toBe("error");
     expect(error.message).toContain("版本不一致");
-    expect(error.message).toContain("不低于 0.3.2");
+    expect(error.message).toContain(`不低于 ${MIN_DAEMON_VERSION}`);
     await closed;
   });
 
@@ -95,7 +95,7 @@ describe("daemon version skew", () => {
 
   test("a hello at exactly the minimum version is welcomed", async () => {
     const port = await listen("1.2.3");
-    const { message } = await hello(port, "0.3.2");
+    const { message } = await hello(port, MIN_DAEMON_VERSION);
     expect(await message).toMatchObject({ type: "welcome" });
   });
 
