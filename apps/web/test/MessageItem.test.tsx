@@ -78,6 +78,123 @@ describe("MessageItem", () => {
     }
   });
 
+  it("labels index completion as a system notice and quotes the original message", async () => {
+    const message = msg({ role: "system", content: "仓库 API 的代码索引已完成，可以开始询问代码库。" });
+    const onQuote = vi.fn();
+    render(<I18nProvider><MessageItem message={message} onQuote={onQuote} /></I18nProvider>);
+
+    expect(screen.getByText("System")).toBeTruthy();
+    expect(screen.getByText(message.content)).toBeTruthy();
+    expect(screen.queryByText("Failure")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Quote" }));
+    expect(onQuote).toHaveBeenCalledWith(message);
+  });
+
+  it("separates the repository from a task instruction and quotes the stored text", async () => {
+    const body = "画架构图：用 code__ 函数读代码，用 diagram__save 保存，type 为 architecture。";
+    const message = msg({ role: "system", content: `为仓库 API（backend）（repo_abcDeF0_-123）${body}` });
+    const onQuote = vi.fn();
+    render(<I18nProvider><MessageItem message={message} onQuote={onQuote} /></I18nProvider>);
+
+    expect(screen.getByText("Task instruction")).toBeTruthy();
+    const repository = screen.getByRole("group", { name: "Repository" });
+    expect(within(repository).getByText("API（backend）")).toBeTruthy();
+    expect(within(repository).getByText("repo_abcDeF0_-123")).toBeTruthy();
+    expect(screen.getByText(body)).toBeTruthy();
+    expect(screen.queryByText(message.content)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Quote" }));
+    expect(onQuote).toHaveBeenCalledWith(message);
+  });
+
+  it("keeps an unrecognized system message intact", () => {
+    const message = msg({ role: "system", content: "为仓库 API（repo_x）刷新说明。" });
+    render(<I18nProvider><MessageItem message={message} /></I18nProvider>);
+
+    expect(screen.getByText("System")).toBeTruthy();
+    expect(screen.getByText(message.content)).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Repository" })).toBeNull();
+  });
+
+  it("marks task failure and copies the command without surrounding prose", async () => {
+    const user = userEvent.setup();
+    const message = msg({ role: "system", taskId: "task1", content: "处理失败：未登录直连 Codex，请在终端运行 nema auth login（账户「Codex」· model）" });
+    render(<I18nProvider><MessageItem message={message} /></I18nProvider>);
+
+    expect(screen.getByText("Failure")).toBeTruthy();
+    expect(screen.getByText("nema auth login", { selector: "code" })).toBeTruthy();
+    expect(screen.getByText(/处理失败：未登录直连 Codex/)).toBeTruthy();
+    expect(screen.getByText(/（账户「Codex」· model）/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Copy command: nema auth login" }));
+    expect(await navigator.clipboard.readText()).toBe("nema auth login");
+    expect(screen.getByRole("status").textContent).toBe("Copied");
+  });
+
+  it("copies the BYOK model and GitHub recovery commands", async () => {
+    const user = userEvent.setup();
+    const model = msg({ role: "system", taskId: "task2", content: "处理失败：BYOK 需要指定模型，请运行 nema config set model <名称>" });
+    const { unmount } = render(<I18nProvider><MessageItem message={model} /></I18nProvider>);
+    await user.click(screen.getByRole("button", { name: "Copy command: nema config set model <名称>" }));
+    expect(await navigator.clipboard.readText()).toBe("nema config set model <名称>");
+    unmount();
+
+    const github = msg({ role: "system", taskId: "task3", content: "处理失败：GitHub 令牌未保存，请运行 nema auth github" });
+    render(<I18nProvider><MessageItem message={github} /></I18nProvider>);
+    await user.click(screen.getByRole("button", { name: "Copy command: nema auth github" }));
+    expect(await navigator.clipboard.readText()).toBe("nema auth github");
+  });
+
+  it("shows a placeholder hint beside the model command and not beside plain commands", () => {
+    const model = msg({ role: "system", taskId: "task2", content: "处理失败：BYOK 需要指定模型，请运行 nema config set model <名称>" });
+    const { unmount } = render(<I18nProvider><MessageItem message={model} /></I18nProvider>);
+    expect(screen.getByText("Replace <名称> with a model name before running.")).toBeTruthy();
+    unmount();
+
+    const github = msg({ role: "system", taskId: "task3", content: "处理失败：GitHub 令牌未保存，请运行 nema auth github" });
+    render(<I18nProvider><MessageItem message={github} /></I18nProvider>);
+    expect(screen.queryByText("Replace <名称> with a model name before running.")).toBeNull();
+  });
+
+  it("does not turn the appended account name into a recovery command", () => {
+    const message = msg({ role: "system", taskId: "task4", content: "处理失败：连接超时，任务已中止。（账户「nema auth github」· some-model）" });
+    render(<I18nProvider><MessageItem message={message} /></I18nProvider>);
+
+    expect(screen.getByText("Failure")).toBeTruthy();
+    expect(screen.getByText(message.content)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Copy command/ })).toBeNull();
+  });
+
+  it("copies the proxy forwarding recovery command the Claude adapter emits", async () => {
+    const user = userEvent.setup();
+    const message = msg({ role: "system", taskId: "task5", content: "处理失败：Claude 连不上 Anthropic API（网络或 API 连接失败），任务已中止。如果这台机器只能经代理出网，请运行 nema config set proxyEnv forward，让 Claude 子进程使用 daemon 环境里的代理变量。" });
+    render(<I18nProvider><MessageItem message={message} /></I18nProvider>);
+
+    await user.click(screen.getByRole("button", { name: "Copy command: nema config set proxyEnv forward" }));
+    expect(await navigator.clipboard.readText()).toBe("nema config set proxyEnv forward");
+  });
+
+  it("keeps the repository chip and failure styling for labels with U+2028/U+2029", () => {
+    const body = "画架构图：用 code__ 函数读代码，用 diagram__save 保存，type 为 architecture。";
+    const arch = msg({ role: "system", content: `为仓库 A B（repo_x）${body}` });
+    const { unmount } = render(<I18nProvider><MessageItem message={arch} /></I18nProvider>);
+    const repository = screen.getByRole("group", { name: "Repository" });
+    expect(repository.textContent).toContain("A\u2028B");
+    unmount();
+
+    const index = msg({ role: "system", content: "仓库 A B 的代码索引没有完成，暂时还不能询问代码库。" });
+    render(<I18nProvider><MessageItem message={index} /></I18nProvider>);
+    expect(screen.getByText("Failure")).toBeTruthy();
+    expect(document.body.textContent).toContain("仓库 A\u2029B 的代码索引没有完成");
+  });
+
+  it("marks an index failure even without a task or recovery command", () => {
+    const message = msg({ role: "system", content: "仓库 nema auth login 的代码索引没有完成，暂时还不能询问代码库。" });
+    render(<I18nProvider><MessageItem message={message} /></I18nProvider>);
+
+    expect(screen.getByText("Failure")).toBeTruthy();
+    expect(screen.getByText(message.content)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Copy command/ })).toBeNull();
+  });
+
   it("a work package change shows a card with id, status and task count", async () => {
     vi.mocked(hub.getEntry).mockResolvedValue({
       id: "W-2", kind: "workpackage", title: "Pkg", status: "draft", businessDate: null, related: [], sourceMessages: [], body: "",

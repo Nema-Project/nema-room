@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -132,7 +132,11 @@ describe("Chat", () => {
   });
   it("names architecture drawing until the agent reports progress", async () => {
     const ref = await mount(true);
-    act(() => ref.current!.handleEvent({ type: "message.created", message: m("s", "为仓库 API（repo_x）画架构图：用 code__ 函数读代码。", "system") }));
+    act(() => ref.current!.handleEvent({ type: "message.created", message: m("s", "为仓库 API（repo_abcDeF0_-123）画架构图：用 code__ 函数读代码，用 diagram__save 保存，type 为 architecture。", "system") }));
+    expect(screen.getByText("Task instruction")).toBeTruthy();
+    const repository = within(screen.getByRole("group", { name: "Repository" }));
+    expect(repository.getByText("API")).toBeTruthy();
+    expect(repository.getByText("repo_abcDeF0_-123")).toBeTruthy();
     act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t9", workspaceId: "w1", messageId: "s", status: "running", error: null } }));
     expect(screen.getByText("Drawing the architecture diagram")).toBeTruthy();
     act(() => ref.current!.handleEvent({ type: "task.progress", taskId: "t9", text: "reading src" }));
