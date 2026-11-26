@@ -21,7 +21,7 @@ import { buildPrompt, namedAnswerId, type WorkPackagePromptInput } from "./promp
 import { onRepoMoved } from "./diagrams.js";
 import { workPackageIdOf, workPackageRules } from "./workpackages.js";
 import { applyRepoFetched, applyRepoMoved, listRepos, syncBoundRepos, trustedSkillRepos } from "./repos.js";
-import { claimNextTask, computeWaitingReason, finishTask, getDaemonOwner, getTask, interruptRunning, listQueuedTasks, listTaskChanges, requeueDaemonTasks, toUiTask, type OnlineDaemon, type Task, type WaitingReason } from "./tasks.js";
+import { claimNextTask, computeWaitingReason, finishTask, getDaemonOwner, getTask, interruptRunning, listQueuedTasks, listTaskChanges, requeueDaemonTasks, resolveUiTask, type OnlineDaemon, type Task, type UiTask, type WaitingReason } from "./tasks.js";
 import { getWorkspace, listWorkspaces, repoPath } from "./workspaces.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { MIN_DAEMON_VERSION, compareVersions, versionSkewMessage } from "./hubVersion.js";
@@ -65,7 +65,8 @@ type Conn = {
   /** The hub URL this daemon's task.assign carries: the hub's own loopback URL, or for a remote daemon the address it reached. */
   hubUrl: string;
   closed: Promise<void>;
-  assigned: { taskId: string; workspaceId: string; runToken: string } | null;
+  /** The running task as the UI sees it, cached so progress events carry its conversation without a DB read. */
+  assigned: { task: UiTask; runToken: string } | null;
   rpc: ConnectionRpc;
   /** hello.features; "attachments" means the daemon fetches task.assign.attachments. */
   features: ReadonlySet<string>;
@@ -219,7 +220,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     if (t) {
       events.emit(t.workspaceId, {
         type: "task.updated",
-        task: toUiTask(t, await waitingReasonFor(t)),
+        task: await resolveUiTask(db, t, await waitingReasonFor(t)),
         ...(options?.reasonOnly ? { reasonOnly: true as const } : {}),
       });
     }
@@ -430,6 +431,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         return;
       }
       let built: BuiltTask;
+      let uiTask: UiTask;
       let pluginTools: PluginToolSpec[] = [];
       try {
         built = await buildTaskPrompt(task);
@@ -440,6 +442,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         // machine — the one thing the user did not choose. Failing here names the reason instead.
         if (task.accountId !== null && !conn.features.has("accounts")) throw new Error(NO_ACCOUNT_SUPPORT_MESSAGE);
         pluginTools = await enabledPluginTools(db, task.workspaceId);
+        uiTask = await resolveUiTask(db, task);
       } catch (e) {
         const error = e instanceof Error ? e.message : String(e);
         try {
@@ -464,7 +467,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         await requeueAndEmit(conn.daemonId);
         return;
       }
-      conn.assigned = { taskId: task.id, workspaceId: task.workspaceId, runToken: task.runToken! };
+      conn.assigned = { task: uiTask, runToken: task.runToken! };
       send(conn.ws, {
         type: "task.assign",
         taskId: task.id,
@@ -486,7 +489,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         ...(task.routing ? { routing: "auto" as const } : {}),
         ...(built.threadId ? { threadId: built.threadId } : {}),
       });
-      await emitTask(task.id);
+      events.emit(task.workspaceId, { type: "task.updated", task: uiTask });
       return;
     }
   }
@@ -500,7 +503,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
 
   async function onFinished(conn: Conn, m: Extract<ReturnType<typeof parseDaemonToHub>, { type: "task.finished" }>) {
     const a = conn.assigned;
-    if (!a || a.taskId !== m.taskId) return;
+    if (!a || a.task.id !== m.taskId) return;
     // The message schema accepts any `route` so that a route this hub cannot read cannot take the reply
     // down with it (see `parseRouteDecision`). Parsed here, at the only place it is stored: an unreadable
     // route is dropped as metadata and its account line is not shown, but the reply or error is still saved.
@@ -531,10 +534,10 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       return;
     }
     conn.assigned = null;
-    events.emit(a.workspaceId, { type: "message.created", message: msg });
+    events.emit(a.task.workspaceId, { type: "message.created", message: msg });
     if (msg.threadId) {
       const thread = await getThread(db, msg.threadId);
-      if (thread) events.emit(a.workspaceId, { type: "thread.updated", thread });
+      if (thread) events.emit(a.task.workspaceId, { type: "thread.updated", thread });
     }
     await emitTask(m.taskId);
     await dispatch();
@@ -676,8 +679,9 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         await dispatch();
         await emitQueuedWaitingReasons(conn);
       } else if (m.type === "task.event") {
-        if (conn.assigned?.taskId !== m.taskId) return;
-        events.emit(conn.assigned.workspaceId, { type: "task.progress", taskId: m.taskId, text: m.event.text });
+        const task = conn.assigned?.task;
+        if (task?.id !== m.taskId) return;
+        events.emit(task.workspaceId, { type: "task.progress", taskId: m.taskId, threadId: task.threadId, text: m.event.text });
       } else if (m.type === "task.finished") {
         await onFinished(conn, m);
       } else if (m.type === "rpc.response") {
@@ -734,7 +738,18 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     // already dispatched once, so dispatching again per queued task would fan out into one full
     // dispatch per task. Every other queued task.updated still dispatches as before.
     if (e.type === "task.updated" && e.task.status === "queued" && !e.reasonOnly) void dispatch();
-    else if (e.type === "workspace.deleted") {
+    else if (e.type === "thread.updated") {
+      // An agent can turn its current main-chat message into an anchor while running. Any connection
+      // may be running that message's task, so check each one's cached assignment.
+      const thread = e.thread;
+      for (const conn of connections.values()) {
+        const assigned = conn.assigned;
+        if (assigned && assigned.task.threadId === null && assigned.task.workspaceId === thread.workspaceId && assigned.task.messageId === thread.id) {
+          assigned.task = { ...assigned.task, threadId: thread.id };
+          events.emit(thread.workspaceId, { type: "task.updated", task: assigned.task });
+        }
+      }
+    } else if (e.type === "workspace.deleted") {
       // Any connected daemon may hold isolation dirs or watched repos for the workspace: tell every one,
       // then push each the bound-repo list again (syncBoundRepos addresses all daemons).
       const open = openConnections();

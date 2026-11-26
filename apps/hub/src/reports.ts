@@ -100,7 +100,7 @@ export async function receiveReport(deps: ReportDeps, repo: Repo, report: Report
     if (inProgress) return;
     if (updated && deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);
     const task = await queueReportTask(db, repo.workspaceId, message.id);
-    if (task) events.emit(repo.workspaceId, { type: "task.updated", task: toUiTask(task) });
+    if (task) events.emit(repo.workspaceId, { type: "task.updated", task: toUiTask(task, message.threadId) });
   })().catch((error) => {
     console.error(`handling report ${message.id} failed`, error);
   });
@@ -228,7 +228,7 @@ async function queueSystemTask(db: Db, events: EventBus, workspaceId: string, co
   try {
     const { message, task } = await postSystemTask(db, workspaceId, content);
     events.emit(workspaceId, { type: "message.created", message });
-    events.emit(workspaceId, { type: "task.updated", task: toUiTask(task) });
+    events.emit(workspaceId, { type: "task.updated", task: toUiTask(task, message.threadId) });
     return true;
   } catch (error) {
     if (error instanceof ArchivedWorkspaceError) return false;

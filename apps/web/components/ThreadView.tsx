@@ -13,6 +13,8 @@ import { useAccounts } from "@/lib/useAccounts";
 import { boundAccount } from "@/lib/accounts";
 import type { HubEvent, Message, Thread } from "@/lib/types";
 import { useHubEvents } from "@/lib/useHubEvents";
+import { useTaskActivity } from "@/lib/useTaskActivity";
+import { WorkingMessage } from "@/components/WorkingMessage";
 
 export type ThreadViewProps = {
   workspaceId: string;
@@ -27,6 +29,7 @@ export type ThreadViewProps = {
 
 export function ThreadView({ workspaceId, threadId, active = true, floating = false, onClose, onOpenThread, onOpenMainMessage, focusMessageId }: ThreadViewProps) {
   const t = useT();
+  const { runningTask, progress, loadActive, handleTaskEvent } = useTaskActivity(workspaceId, threadId);
   const root = useRef<HTMLElement>(null);
   const [thread, setThread] = useState<Thread | null>(null);
   const [anchor, setAnchor] = useState<Message | null>(null);
@@ -96,6 +99,7 @@ export function ThreadView({ workspaceId, threadId, active = true, floating = fa
   }, [workspaceId, threadId, focusMessageId]);
 
   const onEvent = useCallback((event: HubEvent) => {
+    handleTaskEvent(event);
     if (event.type === "message.created" && event.message.workspaceId === workspaceId && (event.message.threadId === threadId || event.message.id === threadId)) {
       const version = ++eventVersion.current;
       messageVersions.current.set(event.message.id, version);
@@ -114,16 +118,18 @@ export function ThreadView({ workspaceId, threadId, active = true, floating = fa
       threadVersion.current = ++eventVersion.current;
       setThread(event.thread);
     }
-  }, [workspaceId, threadId]);
+  }, [workspaceId, threadId, handleTaskEvent]);
 
   const resync = useCallback(() => {
     setReconnectVersion((version) => version + 1);
     void load();
-  }, [load]);
+    void loadActive();
+  }, [load, loadActive]);
   useEffect(() => {
     // Fetch the thread after mount and when the selected target changes.
     void load();
   }, [load]);
+  useEffect(() => { void loadActive(); }, [loadActive]);
   useHubEvents(workspaceId, onEvent, resync);
 
   useEffect(() => {
@@ -232,6 +238,7 @@ export function ThreadView({ workspaceId, threadId, active = true, floating = fa
         {anchor && <div className="thread-anchor"><span>{t("thread.anchor")}</span><MessageItem message={anchor} onOpenEntry={openEntry} onQuote={setQuote} onEdited={setAnchor} onJump={jump} onOpenHistory={(id) => setEntry({ id, history: true })} /></div>}
         {messages.map((message) => <MessageItem key={message.id} message={message} onOpenEntry={openEntry} onQuote={setQuote} onEdited={(next) => setMessages((current) => current.map((item) => item.id === next.id ? next : item))} onJump={jump} onOpenHistory={(id) => setEntry({ id, history: true })} />)}
       </div>
+      {runningTask && <div className="thread-activity"><WorkingMessage progress={progress} /></div>}
       <Composer workspaceId={workspaceId} threadId={threadId} onSend={(content, attachmentIds, mentions, accountId) => send(content, attachmentIds, mentions, quote, accountId)} quote={quote} onClearQuote={() => setQuote(null)} onThread={onThread} threadMode disabled={loadError || !thread} />
       {entry && <div className="thread-entry"><EntryDetailLazy key={`${entry.id}:${entry.history}`} workspaceId={workspaceId} entryId={entry.id} onClose={() => setEntry(null)} onOpenEntry={openEntry} onJumpToMessage={(id) => void jump(id)} initialTab={entry.history ? "history" : "content"} /></div>}
     </section>

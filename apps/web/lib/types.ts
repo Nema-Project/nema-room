@@ -52,6 +52,7 @@ export type Task = {
   id: string;
   workspaceId: string;
   messageId: string;
+  threadId: string | null;
   status: "queued" | "running" | "done" | "failed";
   error: string | null;
   waitingReason?: WaitingReason | null;
@@ -62,7 +63,7 @@ export type HubEvent =
   | { type: "message.updated"; message: Message }
   | { type: "task.updated"; task: Task }
   | { type: "thread.updated"; thread: Thread }
-  | { type: "task.progress"; taskId: string; text: string }
+  | { type: "task.progress"; taskId: string; threadId: string | null; text: string }
   | { type: "knowledge.changed"; entryId: string }
   | { type: "daemon.status"; connected: boolean }
   | { type: "repo.index"; repoId: string; label: string; status: "running" | "done" | "failed" };

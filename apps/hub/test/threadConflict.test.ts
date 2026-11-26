@@ -130,7 +130,7 @@ async function makeThreads() {
 
 async function postTurn(content: string, threadId?: string) {
   const posted = await postUserMessage(db, workspaceId, content, { authorUserId: "usr_local", threadId });
-  events.emit(workspaceId, { type: "task.updated", task: toUiTask(posted.task) });
+  events.emit(workspaceId, { type: "task.updated", task: toUiTask(posted.task, posted.message.threadId) });
   return posted;
 }
 

@@ -10,7 +10,7 @@ import { createWorkspace, updateWorkspace } from "../src/workspaces.js";
 import { addMessage, deliverySet, editUserMessage, listMessages, listThreadMessages, messageExcerpt, postUserMessage, type AgentMessage } from "../src/messages.js";
 import { AttachmentRefSchema } from "@nema/shared";
 import { png, uploadPng } from "./attachmentFixtures.js";
-import { claimNextTask, finishTask, getTask, insertQueuedTask, interruptRunning, recordTaskChange, resolveRunToken } from "../src/tasks.js";
+import { claimNextTask, finishTask, getTask, insertQueuedTask, interruptRunning, recordTaskChange, resolveRunToken, toUiTask } from "../src/tasks.js";
 import * as tasks from "../src/tasks.js";
 import { attachDaemonSocket, parsePublicHubUrl, REMOTE_HELLO_FAILED_MESSAGE } from "../src/daemonSocket.js";
 import { KnowledgeStore } from "@nema/knowledge";
@@ -271,7 +271,7 @@ describe("daemon socket", () => {
       expect(system?.meta).toBeNull();
     });
     const second = await editUserMessage(db, wsA, original.message.id, "latest", "usr_local");
-    events.emit(wsA, { type: "task.updated", task: { id: second.task.id, workspaceId: wsA, messageId: original.message.id, status: "queued", error: null } });
+    events.emit(wsA, { type: "task.updated", task: { id: second.task.id, workspaceId: wsA, messageId: original.message.id, status: "queued", error: null, threadId: null } });
     const again = await c.next("task.assign");
     expect(again.prompt).toContain(`[${original.message.id}] 旧版本：middle`);
     expect(again.prompt).toContain(`[${original.message.id}] 新版本：latest`);
@@ -471,13 +471,13 @@ describe("daemon socket", () => {
 
     await addQuestion(wsA, 1);
     await recordTaskChange(db, m1.task.id, { entryId: "R-1", kind: "requirement", title: "T", op: "add" });
-    const progress: string[] = [];
-    events.subscribe(wsA, (e) => e.type === "task.progress" && progress.push(e.text));
+    const progress: unknown[] = [];
+    events.subscribe(wsA, (e) => e.type === "task.progress" && progress.push(e));
     c.send({ type: "task.event", taskId: m1.task.id, event: { type: "progress", text: "working" } });
     c.send({ type: "task.finished", taskId: m1.task.id, ok: true, reply: "done 1" });
     const a2 = await c.next("task.assign");
     expect(a2.taskId).toBe(m2.task.id);
-    expect(progress).toEqual(["working"]);
+    expect(progress).toEqual([{ type: "task.progress", taskId: m1.task.id, text: "working", threadId: null }]);
     const msgs = await listMessages(db, wsA);
     const agent = msgs.find((m): m is AgentMessage => m.role === "agent")!;
     expect(agent.content).toBe("done 1");
@@ -1019,7 +1019,7 @@ describe("daemon socket", () => {
       return task;
     });
     try {
-      events.emit(wsA, { type: "task.updated", task: posted.task });
+      events.emit(wsA, { type: "task.updated", task: toUiTask(posted.task, posted.message.threadId) });
       for (let i = 0; i < 50 && c2 === null; i++) await new Promise((r) => setTimeout(r, 20));
       expect(c2).not.toBeNull();
       const assign = await c2!.next("task.assign");
@@ -1040,7 +1040,7 @@ describe("daemon socket", () => {
     await c1.next("welcome");
     const posted = await postUserMessage(db, wsA, "unsent", { authorUserId: "usr_local" });
     const gate = pausePromptBuild();
-    events.emit(wsA, { type: "task.updated", task: posted.task });
+    events.emit(wsA, { type: "task.updated", task: toUiTask(posted.task, posted.message.threadId) });
     await gate.entered;
     expect((await getTask(db, posted.task.id))?.status).toBe("running");
     const c2 = await connect();
@@ -1060,7 +1060,7 @@ describe("daemon socket", () => {
     await c1.next("welcome");
     const posted = await postUserMessage(db, wsA, "unsent", { authorUserId: "usr_local" });
     const gate = pausePromptBuild();
-    events.emit(wsA, { type: "task.updated", task: posted.task });
+    events.emit(wsA, { type: "task.updated", task: toUiTask(posted.task, posted.message.threadId) });
     await gate.entered;
     expect((await getTask(db, posted.task.id))?.status).toBe("running");
     c1.ws.terminate();
@@ -1171,7 +1171,7 @@ describe("daemon socket", () => {
     const c = await connect();
     await c.next("welcome");
     const a = await postUserMessage(db, wsA, "late", { authorUserId: "usr_local" });
-    events.emit(wsA, { type: "task.updated", task: a.task });
+    events.emit(wsA, { type: "task.updated", task: toUiTask(a.task, a.message.threadId) });
     expect((await c.next("task.assign")).taskId).toBe(a.task.id);
   });
 
@@ -1195,7 +1195,7 @@ describe("daemon socket", () => {
     expect(wp.prompt).toContain("repo_a（api）");
     c.send({ type: "task.finished", taskId: wp.taskId, ok: true, reply: "r" });
     await postUserMessage(db, wsB, "plain", { authorUserId: "usr_local" });
-    events.emit(wsB, { type: "task.updated", task: { id: "x", workspaceId: wsB, messageId: "x", status: "queued", error: null } });
+    events.emit(wsB, { type: "task.updated", task: { id: "x", workspaceId: wsB, messageId: "x", status: "queued", error: null, threadId: null } });
     const organize = await c.next("task.assign");
     expect(organize.workspaceId).toBe(wsB);
     expect(organize.limits).toBeUndefined();
@@ -1342,6 +1342,8 @@ describe("account choice and route decision", () => {
     const anchor = await postUserMessage(db, wsA, "anchor", { authorUserId: "usr_local" });
     await ensureThread(db, anchor.message.id, "A thread", "user");
     const inThread = await postUserMessage(db, wsA, "reply in the thread", { authorUserId: "usr_local", threadId: anchor.message.id });
+    const activity: unknown[] = [];
+    events.subscribe(wsA, (event) => activity.push(event));
     const c = await connect();
     const seen = new Map<string, Msg>();
     // Dispatch is one task at a time and the anchor now sits in its own thread, so walk the queue until the
@@ -1349,12 +1351,40 @@ describe("account choice and route decision", () => {
     for (let i = 0; i < 4 && !seen.has(inThread.task.id); i++) {
       const a = await c.next("task.assign");
       seen.set(a.taskId, a);
+      c.send({ type: "task.event", taskId: a.taskId, event: { type: "progress", text: "Reading" } });
       c.send({ type: "task.finished", taskId: a.taskId, ok: true, reply: "ok" });
     }
     // A main-chat message belongs to no thread, so nothing is claimed about one.
     expect(seen.get(mainChat.task.id)).toBeDefined();
     expect(seen.get(mainChat.task.id)).not.toHaveProperty("threadId");
     expect(seen.get(inThread.task.id)).toMatchObject({ threadId: anchor.message.id });
+    await vi.waitFor(() => {
+      for (const taskId of [anchor.task.id, inThread.task.id]) {
+        expect(activity).toContainEqual(expect.objectContaining({
+          type: "task.updated", task: expect.objectContaining({ id: taskId, status: "running", threadId: anchor.message.id }),
+        }));
+        expect(activity).toContainEqual({
+          type: "task.progress", taskId, threadId: anchor.message.id, text: "Reading",
+        });
+      }
+    });
+  });
+
+  test("progress follows a running task when its message becomes a thread anchor", async () => {
+    const posted = await postUserMessage(db, wsA, "Opening prompt", { authorUserId: "usr_local" });
+    const activity: unknown[] = [];
+    events.subscribe(wsA, (event) => activity.push(event));
+    const client = await connect();
+    const assignment = await client.next("task.assign");
+    const thread = await ensureThread(db, posted.message.id, "Follow-up", "agent");
+    events.emit(wsA, { type: "thread.updated", thread });
+    client.send({ type: "task.event", taskId: assignment.taskId, event: { type: "progress", text: "Reading" } });
+    await vi.waitFor(() => expect(activity).toContainEqual({
+      type: "task.progress", taskId: posted.task.id, threadId: thread.id, text: "Reading",
+    }));
+    expect(activity).toContainEqual(expect.objectContaining({
+      type: "task.updated", task: expect.objectContaining({ id: posted.task.id, status: "running", threadId: thread.id }),
+    }));
   });
 
   test("the route the daemon reports is stored on the agent message", async () => {
@@ -1507,7 +1537,7 @@ test("remote hello uses the registered ID across reconnects and revocation inter
     await first.next("welcome");
     const { task: queued } = await postUserMessage(db, wsA, "First task", { authorUserId: "usr_local" });
     const task = queued!;
-    events.emit(wsA, { type: "task.updated", task: tasks.toUiTask(task) });
+    events.emit(wsA, { type: "task.updated", task: tasks.toUiTask(task, null) });
     expect((await first.next("task.assign")).taskId).toBe(task.id);
     expect((await getTask(db, task.id))?.daemonId).toBe(id);
 
@@ -1573,7 +1603,7 @@ describe("remote daemon hello", () => {
 
   async function queueTask() {
     const { task } = await postUserMessage(db, wsA, "Remote task", { authorUserId: "usr_local" });
-    events.emit(wsA, { type: "task.updated", task: tasks.toUiTask(task!) });
+    events.emit(wsA, { type: "task.updated", task: tasks.toUiTask(task!, null) });
     return task!;
   }
 
@@ -1646,7 +1676,7 @@ describe("remote daemon hello", () => {
     const second = await connect(other.credential, undefined, {}, remoteUrl);
     await second.next("welcome");
     const { task: b } = await postUserMessage(db, wsB, "Other task", { authorUserId: "usr_local" });
-    events.emit(wsB, { type: "task.updated", task: tasks.toUiTask(b!) });
+    events.emit(wsB, { type: "task.updated", task: tasks.toUiTask(b!, null) });
     const bAssign = await second.next("task.assign");
     expect(bAssign.taskId).toBe(b!.id);
     // The second hello did not interrupt or requeue the first daemon's task.

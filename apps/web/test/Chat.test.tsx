@@ -28,7 +28,7 @@ vi.mock("@/lib/hub", () => ({
     }
   },
 }));
-const running = { id: "t1", workspaceId: "w1", messageId: "a", status: "running" as const, error: null };
+const running = { id: "t1", workspaceId: "w1", messageId: "a", status: "running" as const, error: null, threadId: null };
 
 const m = (id: string, content: string, role: Message["role"] = "user"): Message => ({
   id, workspaceId: "w1", role, content, meta: null, taskId: null, createdAt: "2026-10-21T14:00:00Z", editedAt: null, threadId: null, seq: 1,
@@ -83,7 +83,7 @@ describe("Chat", () => {
   });
   it("/thread text creates a thread and opens it", async () => {
     const thread = { id: "new-anchor", workspaceId: "w1", title: "Need more context", openedBy: "user" as const, replyCount: 0, unread: 0, lastReplyAt: null, createdAt: "2026-10-21T00:00:00Z" };
-    vi.mocked(hub.createThread).mockResolvedValue({ message: m("new-anchor", "Need more context"), thread, task: { id: "task", workspaceId: "w1", messageId: "new-anchor", status: "queued", error: null } });
+    vi.mocked(hub.createThread).mockResolvedValue({ message: m("new-anchor", "Need more context"), thread, task: { id: "task", workspaceId: "w1", messageId: "new-anchor", status: "queued", error: null, threadId: "new-anchor" } });
     const onOpenThread = vi.fn();
     render(<I18nProvider><Chat workspaceId="w1" onOpenThread={onOpenThread} /></I18nProvider>);
     const box = screen.getAllByRole("textbox").at(-1)!;
@@ -103,24 +103,24 @@ describe("Chat", () => {
   });
   it("shows why a queued task waits, and clears it once the task runs", async () => {
     const ref = await mount(true);
-    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", status: "queued", error: null, waitingReason: { kind: "repo-not-held", missingRepos: ["Widget"] } } }));
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", threadId: null, status: "queued", error: null, waitingReason: { kind: "repo-not-held", missingRepos: ["Widget"] } } }));
     expect(screen.getByText("Waiting for a daemon that holds Widget")).toBeTruthy();
-    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", status: "running", error: null } }));
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", threadId: null, status: "running", error: null } }));
     expect(screen.queryByText("Waiting for a daemon that holds Widget")).toBeNull();
   });
   it("shows the waiting row again when a running task is requeued", async () => {
     const ref = await mount(true);
-    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", status: "running", error: null } }));
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", threadId: null, status: "running", error: null } }));
     expect(screen.getByText("Organizing")).toBeTruthy();
-    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", status: "queued", error: null, waitingReason: { kind: "repo-not-held", missingRepos: ["Widget"] } } }));
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", threadId: null, status: "queued", error: null, waitingReason: { kind: "repo-not-held", missingRepos: ["Widget"] } } }));
     expect(screen.queryByText("Organizing")).toBeNull();
     expect(screen.getByText("Waiting for a daemon that holds Widget")).toBeTruthy();
   });
   it("clears the waiting row when a queued task fails without ever running", async () => {
     const ref = await mount(true);
-    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", status: "queued", error: null, waitingReason: { kind: "repo-not-held", missingRepos: ["Widget"] } } }));
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", threadId: null, status: "queued", error: null, waitingReason: { kind: "repo-not-held", missingRepos: ["Widget"] } } }));
     expect(screen.getByText("Waiting for a daemon that holds Widget")).toBeTruthy();
-    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", status: "failed", error: "prompt build failed" } }));
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "a", threadId: null, status: "failed", error: "prompt build failed" } }));
     expect(screen.queryByText("Waiting for a daemon that holds Widget")).toBeNull();
   });
   it("shows an index line until that index finishes", async () => {
@@ -137,15 +137,15 @@ describe("Chat", () => {
     const repository = within(screen.getByRole("group", { name: "Repository" }));
     expect(repository.getByText("API")).toBeTruthy();
     expect(repository.getByText("repo_abcDeF0_-123")).toBeTruthy();
-    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t9", workspaceId: "w1", messageId: "s", status: "running", error: null } }));
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t9", workspaceId: "w1", messageId: "s", status: "running", error: null, threadId: null } }));
     expect(screen.getByText("Drawing the architecture diagram")).toBeTruthy();
-    act(() => ref.current!.handleEvent({ type: "task.progress", taskId: "t9", text: "reading src" }));
+    act(() => ref.current!.handleEvent({ type: "task.progress", taskId: "t9", text: "reading src", threadId: null }));
     expect(screen.getByText(/reading src/)).toBeTruthy();
   });
   it("shows progress for a running task and refetches on resync", async () => {
     const ref = await mount(true);
-    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t1", workspaceId: "w1", messageId: "a", status: "running", error: null } }));
-    act(() => ref.current!.handleEvent({ type: "task.progress", taskId: "t1", text: "更新 R-7" }));
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t1", workspaceId: "w1", messageId: "a", status: "running", error: null, threadId: null } }));
+    act(() => ref.current!.handleEvent({ type: "task.progress", taskId: "t1", text: "更新 R-7", threadId: null }));
     expect(screen.getByText(/更新 R-7/)).toBeTruthy();
     const n = vi.mocked(hub.listMessages).mock.calls.length;
     const threadN = vi.mocked(hub.listThreads).mock.calls.length;
@@ -178,6 +178,17 @@ describe("Chat", () => {
     expect(screen.queryByText("elsewhere")).toBeNull();
     expect(screen.queryByText("other ws")).toBeNull();
     expect(screen.getByText("hello")).toBeTruthy();
+  });
+  it("ignores a thread's running task from both the snapshot and live events", async () => {
+    const task = { ...running, threadId: "anchor" };
+    vi.mocked(hub.getActiveTask).mockResolvedValue({ running: task });
+    const ref = await mount(true);
+    expect(screen.queryByText("Organizing")).toBeNull();
+    act(() => {
+      ref.current!.handleEvent({ type: "task.updated", task });
+      ref.current!.handleEvent({ type: "task.progress", taskId: task.id, threadId: task.threadId, text: "Working in the thread" });
+    });
+    expect(screen.queryByText(/Organizing|Working in the thread/)).toBeNull();
   });
   it("seeds the running indicator from the hub on mount", async () => {
     vi.mocked(hub.getActiveTask).mockResolvedValue({ running });
@@ -214,7 +225,7 @@ describe("Chat", () => {
     vi.mocked(hub.listMessages).mockResolvedValue([asked("a1", "Q-1"), m("u1", "先这样"), asked("a2", "Q-2"), asked("a9", "Q-9")]);
     vi.mocked(hub.postMessage).mockImplementation(async (_workspace, content) => ({
       message: m("u2", content),
-      task: { id: "t2", workspaceId: "w1", messageId: "u2", status: "queued", error: null },
+      task: { id: "t2", workspaceId: "w1", messageId: "u2", status: "queued", error: null, threadId: null },
     }));
     await mount(true);
     expect(await screen.findByText("Question · Q-1")).toBeTruthy();
@@ -253,11 +264,11 @@ describe("Chat", () => {
     try {
       const placeholder = "随手扔点什么… 会议速记、和 PdM 的聊天、需求变更、链接都可以";
       vi.mocked(hub.listMessages).mockResolvedValue([{ ...m("a", "hello"), editedAt: "2026-10-22T00:00:00Z" }]);
-      vi.mocked(hub.postMessage).mockResolvedValue({ message: m("n", "about it"), task: { id: "t", workspaceId: "w1", messageId: "n", status: "queued", error: null } });
+      vi.mocked(hub.postMessage).mockResolvedValue({ message: m("n", "about it"), task: { id: "t", workspaceId: "w1", messageId: "n", status: "queued", error: null, threadId: null } });
       vi.mocked(hub.listMessageVersions).mockResolvedValue([{ version: 1, content: "first draft", createdAt: "2026-10-21T00:00:00Z" }]);
       vi.mocked(hub.editMessage).mockResolvedValue({
         message: { ...m("a", "revised"), editedAt: "2026-10-22T01:00:00Z" },
-        task: { id: "t2", workspaceId: "w1", messageId: "a", status: "queued", error: null },
+        task: { id: "t2", workspaceId: "w1", messageId: "a", status: "queued", error: null, threadId: null },
       });
       vi.mocked(hub.searchMessages).mockResolvedValue([m("s", "进度说明", "agent")]);
       await mount(true, { searchOpen: true });
@@ -326,7 +337,7 @@ describe("Chat attachments", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("sends attachment ids with a main-chat message", async () => {
-    vi.mocked(hub.postMessage).mockResolvedValue({ message: m("n", ""), task: { id: "t", workspaceId: "w1", messageId: "n", status: "queued", error: null } });
+    vi.mocked(hub.postMessage).mockResolvedValue({ message: m("n", ""), task: { id: "t", workspaceId: "w1", messageId: "n", status: "queued", error: null, threadId: null } });
     await mount(true);
     await userEvent.upload(screen.getByLabelText("Choose files to attach"), png());
     const send = screen.getByRole("button", { name: /Send/ }) as HTMLButtonElement;
@@ -337,7 +348,7 @@ describe("Chat attachments", () => {
 
   it("sends attachment ids when a thread is started from the composer", async () => {
     const thread = { id: "new-anchor", workspaceId: "w1", title: "See this", openedBy: "user" as const, replyCount: 0, unread: 0, lastReplyAt: null, createdAt: "2026-10-21T00:00:00Z" };
-    vi.mocked(hub.createThread).mockResolvedValue({ message: m("new-anchor", "See this"), thread, task: { id: "task", workspaceId: "w1", messageId: "new-anchor", status: "queued", error: null } });
+    vi.mocked(hub.createThread).mockResolvedValue({ message: m("new-anchor", "See this"), thread, task: { id: "task", workspaceId: "w1", messageId: "new-anchor", status: "queued", error: null, threadId: "new-anchor" } });
     await mount(true);
     await userEvent.upload(screen.getByLabelText("Choose files to attach"), png());
     const send = screen.getByRole("button", { name: /Send/ }) as HTMLButtonElement;

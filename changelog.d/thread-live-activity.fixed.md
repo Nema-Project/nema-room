@@ -1,0 +1,1 @@
+- Show an agent’s live thinking and tool activity in the conversation where its task is running, including threads opened mid-task.

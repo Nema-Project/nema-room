@@ -173,7 +173,7 @@ export async function requestWorkPackage(
 async function queueGeneration(db: Db, events: EventBus, workspaceId: string, id: string, requirements: string[]): Promise<void> {
   const { message, task } = await postSystemTask(db, workspaceId, generationContent(id, requirements), { kind: "workpackage" });
   events.emit(workspaceId, { type: "message.created", message });
-  events.emit(workspaceId, { type: "task.updated", task: toUiTask(task) });
+  events.emit(workspaceId, { type: "task.updated", task: toUiTask(task, message.threadId) });
 }
 
 /**

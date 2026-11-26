@@ -488,11 +488,41 @@ describe("ui api", () => {
     const r = await json(await req("GET", `/api/workspaces/${ws}/tasks/active`));
     expect(r.running.id).toBe(t.id);
     expect(r.running.status).toBe("running");
+    expect(r.running.threadId).toBeNull();
     expect(r.running).not.toHaveProperty("runToken");
     expect(r.running).not.toHaveProperty("daemonId");
     expect(JSON.stringify(r)).not.toContain(t.runToken!);
     await finishTask(db, t.id, { ok: true });
     expect(await json(await req("GET", `/api/workspaces/${ws}/tasks/active`))).toEqual({ running: null, indexing: [] });
+  });
+
+  test("tasks/active resolves the conversation of an anchor and a thread reply", async () => {
+    const opened = await json(await req("POST", `/api/workspaces/${ws}/threads`, { content: "A new thread" }));
+    expect(opened.message.threadId).toBeNull();
+    expect(opened.task.threadId).toBe(opened.thread.id);
+    const reply = await json(await req("POST", `/api/workspaces/${ws}/threads/${opened.thread.id}/messages`, { content: "A reply" }));
+    for (const taskId of [opened.task.id, reply.task.id]) {
+      expect((await claimNextTask(db, "d1"))?.id).toBe(taskId);
+      const { running } = await json(await req("GET", `/api/workspaces/${ws}/tasks/active`));
+      expect(running).toMatchObject({ id: taskId, threadId: opened.thread.id });
+      await finishTask(db, taskId, { ok: true });
+    }
+  });
+
+  test("announces a thread when a replay makes its running main message the anchor", async () => {
+    const attachment = await uploadPng(db, dataDir, ws);
+    const body = { content: "Discuss this", attachmentIds: [attachment.id] };
+    const main = await json(await req("POST", `/api/workspaces/${ws}/messages`, body));
+    expect((await claimNextTask(db, "d1"))?.id).toBe(main.task.id);
+    const announced: string[] = [];
+    events.subscribe(ws, (event) => { if (event.type === "thread.updated") announced.push(event.thread.id); });
+
+    const opened = await json(await req("POST", `/api/workspaces/${ws}/threads`, body));
+    expect(opened.task).toMatchObject({ id: main.task.id, threadId: main.message.id });
+    expect(announced).toEqual([main.message.id]);
+
+    await req("POST", `/api/workspaces/${ws}/threads`, body);
+    expect(announced).toEqual([main.message.id]);
   });
 
   test("unknown workspace → 404", async () => {

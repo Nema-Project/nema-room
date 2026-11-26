@@ -332,7 +332,7 @@ export async function editUserMessage(
   messageId: string,
   content: string,
   actorUserId: string,
-): Promise<{ message: Message; task: Task }> {
+): Promise<{ message: Message; task: Task; threadId: string | null }> {
   return db.tx(async (t) => {
     const locked = await t.query<Row>(`select ${COLS} from messages where id = $1 and workspace_id = $2 for update`, [messageId, workspaceId]);
     const row = locked[0];
@@ -393,7 +393,7 @@ export async function editUserMessage(
       routing: first[0]?.routing ?? null,
     });
     const [message] = await withAttachments(t, [toMessage(updated[0]!)]);
-    return { message: message!, task };
+    return { message: message!, task, threadId: await conversationOf(t, message!) };
   });
 }
 

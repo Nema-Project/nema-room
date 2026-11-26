@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { nanoid } from "nanoid";
 import { normalizeRemoteUrl } from "@nema/shared";
 import type { Db } from "./db/db.js";
+import { conversationOf } from "./threads.js";
 
 export type Task = {
   id: string;
@@ -29,6 +30,8 @@ export type Task = {
  * and the UI that would show it (S2's picker) reads the choice from where the user made it.
  */
 export type UiTask = Omit<Task, "runToken" | "daemonId" | "kind" | "accountId" | "routing"> & {
+  /** Conversation the task's message belongs to (its thread anchor or the message itself), null if unresolvable. */
+  threadId: string | null;
   /**
    * Why a queued task is still waiting (D-6), derived live at read time, never stored. Absent unless the
    * caller computed it — only the daemon socket knows which daemons are online.
@@ -45,15 +48,24 @@ export type WaitingReason =
 /** One online daemon as the waiting-reason derivation sees it. `ownerUserId` null is the local daemon, which counts as a member of every workspace (D-6 rule ①). */
 export type OnlineDaemon = { ownerUserId: string | null; heldRepos: ReadonlySet<string> };
 
-export function toUiTask(t: Task, waitingReason?: WaitingReason | null): UiTask {
+export function toUiTask(t: Task, threadId: string | null, waitingReason?: WaitingReason | null): UiTask {
   return {
     id: t.id,
     workspaceId: t.workspaceId,
     messageId: t.messageId,
     status: t.status,
     error: t.error,
+    threadId,
     ...(waitingReason ? { waitingReason } : {}),
   };
+}
+
+/** Serializes tasks read independently of their originating message. */
+export async function resolveUiTask(db: Db, t: Task, waitingReason?: WaitingReason | null): Promise<UiTask> {
+  const [message] = await db.query<{ id: string; threadId: string | null }>(
+    'select id, thread_id as "threadId" from messages where id = $1', [t.messageId],
+  );
+  return toUiTask(t, message ? await conversationOf(db, message) : null, waitingReason);
 }
 
 /**

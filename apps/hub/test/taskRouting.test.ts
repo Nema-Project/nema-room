@@ -103,7 +103,7 @@ async function bindRepo(workspaceId: string, remoteUrl: string, label: string): 
 
 async function queue(workspaceId: string, authorUserId: string, content: string) {
   const { task } = await postUserMessage(db, workspaceId, content, { authorUserId });
-  events.emit(workspaceId, { type: "task.updated", task: toUiTask(task!) });
+  events.emit(workspaceId, { type: "task.updated", task: toUiTask(task!, null) });
   return task!;
 }
 
