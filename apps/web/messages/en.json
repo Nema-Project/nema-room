@@ -226,6 +226,7 @@
   "chat.system.instruction": "Task instruction",
   "chat.system.failure": "Failure",
   "chat.system.copyCommand": "Copy command: {command}",
+  "chat.system.modelPlaceholderHint": "Replace <名称> with a model name before running.",
   "chat.system.copied": "Copied",
   "chat.system.copyFailed": "Copy failed. Select the command to copy it.",
   "chat.role.report": "Report",

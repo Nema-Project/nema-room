@@ -226,6 +226,7 @@
   "chat.system.instruction": "タスクの指示",
   "chat.system.failure": "失敗",
   "chat.system.copyCommand": "コマンドをコピー：{command}",
+  "chat.system.modelPlaceholderHint": "実行前に <名称> をモデル名に置き換えてください。",
   "chat.system.copied": "コピーしました",
   "chat.system.copyFailed": "コピーできませんでした。コマンドを選択してコピーしてください。",
   "chat.role.report": "報告",

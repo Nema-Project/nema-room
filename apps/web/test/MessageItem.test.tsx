@@ -142,6 +142,17 @@ describe("MessageItem", () => {
     expect(await navigator.clipboard.readText()).toBe("nema auth github");
   });
 
+  it("shows a placeholder hint beside the model command and not beside plain commands", () => {
+    const model = msg({ role: "system", taskId: "task2", content: "处理失败：BYOK 需要指定模型，请运行 nema config set model <名称>" });
+    const { unmount } = render(<I18nProvider><MessageItem message={model} /></I18nProvider>);
+    expect(screen.getByText("Replace <名称> with a model name before running.")).toBeTruthy();
+    unmount();
+
+    const github = msg({ role: "system", taskId: "task3", content: "处理失败：GitHub 令牌未保存，请运行 nema auth github" });
+    render(<I18nProvider><MessageItem message={github} /></I18nProvider>);
+    expect(screen.queryByText("Replace <名称> with a model name before running.")).toBeNull();
+  });
+
   it("does not turn the appended account name into a recovery command", () => {
     const message = msg({ role: "system", taskId: "task4", content: "处理失败：连接超时，任务已中止。（账户「nema auth github」· some-model）" });
     render(<I18nProvider><MessageItem message={message} /></I18nProvider>);

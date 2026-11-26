@@ -169,6 +169,7 @@ function CopyableCommand({ command }: { command: string }) {
       <code>{command}</code>
       <button type="button" onClick={copy} aria-label={t("chat.system.copyCommand", { command })}>{t("share.copy")}</button>
       <span role="status">{feedback && t(`chat.system.${feedback}`)}</span>
+      {command.includes("<") && <span className="sysmsg-hint">{t("chat.system.modelPlaceholderHint")}</span>}
     </span>
   );
 }
