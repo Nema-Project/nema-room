@@ -259,7 +259,6 @@ export function Composer({
       // Only the chips this send carried go; one added while it was in flight belongs to the text kept below.
       const sentChips = new Set(chips);
       setChips((cur) => cur.filter((c) => !sentChips.has(c)));
-      sentChips.clear();
       // Text typed while the send was in flight stays: drop only what was sent.
       if (content !== "") setValue((cur) => (cur === sent ? "" : cur.startsWith(sent) ? cur.slice(sent.length).trimStart() : cur));
       // The choice belonged to the message that just went (spec §1.2: "this message's account"), so the
