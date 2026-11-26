@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { KnowledgeStore } from "@nema/knowledge";
 import { HookSignal, ReportInput, reportPassed, type GithubObservation, type ReportAuthors, type ReportCheck, type ReportMessageMeta, type StoredReport } from "@nema/shared";
-import { INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
+import { DAEMON_TIMED_OUT, INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
 import { githubObservationGate, githubTarget } from "./githubScope.js";
@@ -128,7 +128,6 @@ async function recordAuthors(deps: ReportDeps, repo: Repo, messageId: string, re
 
 /** The daemon's read is two `gh` calls of up to 60 s each; the hub waits a little longer than both. */
 const GITHUB_OBSERVE_TIMEOUT_MS = 130_000;
-const DAEMON_TIMEOUT = "daemon 响应超时";
 
 /** Whether the workspace's GitHub plugin is on; no row means off (the plugin sends data outside). */
 async function githubPluginEnabled(db: Db, workspaceId: string): Promise<boolean> {
@@ -148,7 +147,7 @@ async function ghStatus(daemon: DaemonRpc, workspaceId: string): Promise<{ insta
 
 function readFailure(error: unknown): GithubObservation["reasonCode"] {
   const message = error instanceof Error ? error.message : String(error);
-  if (message.includes("timed out") || message === DAEMON_TIMEOUT) return "timeout";
+  if (message.includes("timed out") || message === DAEMON_TIMED_OUT) return "timeout";
   if (message.startsWith("GitHub returned invalid")) return "invalid_response";
   return "http_error";
 }

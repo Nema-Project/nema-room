@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import { DAEMON_CREDENTIAL_REVOKED_MESSAGE, parseHubToDaemon } from "@nema/shared";
+import { DAEMON_CREDENTIAL_REVOKED_MESSAGE, nemaCliSpec, parseHubToDaemon, parseVersionSkew } from "@nema/shared";
 import { DAEMON_FEATURES } from "../attachments/capabilities.js";
 import { cliVersion } from "../direct/siwc.js";
 import { reportTokenHash } from "../report/token.js";
@@ -28,11 +28,12 @@ export type DaemonOpts = {
 
 export const VERSION_SKEW_ERROR = "hub 与 nema CLI 版本不一致，请同时更新（重新构建 compose 并重启 nema daemon）";
 
-function skewGuidance(message: string): string | null {
-  if (!message.includes("版本不一致")) return null;
-  const match = /@nema-project\/nema@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/.exec(message);
-  if (match) return `run: npm i -g @nema-project/nema@${match[1]}`;
-  return "run: npm i -g @nema-project/nema@<hub 版本>\n请先查看正在运行的 hub 的版本";
+/** Install guidance for a hub version-skew refusal (stops reconnecting); null for any other hub error. */
+export function skewGuidance(message: string): string | null {
+  const skew = parseVersionSkew(message);
+  if (!skew) return null;
+  if (skew.installVersion) return `run: npm i -g ${nemaCliSpec(skew.installVersion)}`;
+  return `run: npm i -g ${nemaCliSpec("<hub 版本>")}\n请先查看正在运行的 hub 的版本`;
 }
 
 export function connectDaemon(opts: DaemonOpts): { close(): Promise<void> } {

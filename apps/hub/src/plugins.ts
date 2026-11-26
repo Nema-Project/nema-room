@@ -1,13 +1,11 @@
 import { z } from "zod";
 import { DEFAULT_GRILL_SETTINGS, GraphifyErrorSchema, GRILL_EXTRA_RULES_MAX, PLUGINS, bundledExtensions, isCheckTime, parseMcpConfig, pluginFunction, secretRefs, type ExtensionRecord, type GraphifyError, type McpConfig, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
-import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
+import { DaemonRpcError, isDaemonOffline, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import { githubTargets } from "./githubScope.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { listRepos, type Repo } from "./repos.js";
-
-const DAEMON_OFFLINE = new Set(["daemon 未连接", "daemon 已断开", "daemon 响应超时"]);
 
 export class PluginError extends Error {
   constructor(
@@ -69,9 +67,9 @@ export async function grillState(db: Db, workspaceId: string): Promise<GrillStat
   return { enabled: state.enabled, ...(state.settings as GrillSettings) };
 }
 
-/** `daemon 未连接` / `daemon 已断开` / `daemon 响应超时` are 503. Any other daemon error is 502. */
+/** The hub's daemon-offline errors (`isDaemonOffline`) are 503. Any other daemon error is 502. */
 export function daemonHttpStatus(message: string): 502 | 503 {
-  return DAEMON_OFFLINE.has(message) ? 503 : 502;
+  return isDaemonOffline(message) ? 503 : 502;
 }
 
 /**
@@ -301,7 +299,7 @@ export async function listExtensions(daemon: DaemonRpc, nemaHome?: string): Prom
     if (!Array.isArray(rows)) throw new DaemonRpcError("extensions.list returned an invalid result");
     return rows as ExtensionRecord[];
   } catch (error) {
-    if (error instanceof DaemonRpcError && DAEMON_OFFLINE.has(error.message)) return extensionIndexFromDisk(nemaHome);
+    if (error instanceof DaemonRpcError && isDaemonOffline(error.message)) return extensionIndexFromDisk(nemaHome);
     throw error;
   }
 }
@@ -494,7 +492,7 @@ const MCP_CONNECTIONS = new Set(["disconnected", "connecting", "connected", "nee
 
 /** Daemon refusals are the request's fault; the daemon being away is 503; anything else 502. */
 export function mcpHttpStatus(message: string): 400 | 404 | 409 | 502 | 503 {
-  if (DAEMON_OFFLINE.has(message)) return 503;
+  if (isDaemonOffline(message)) return 503;
   if (/^MCP server not found: /.test(message) || /^extension not found: /.test(message)) return 404;
   if (/^MCP server \S+ already exists$/.test(message) || / is disabled; enable it first$/.test(message) || / is not an MCP server$/.test(message) || /is damaged or does not match the record/.test(message)) return 409;
   if (/^(invalid MCP config: |invalid extension id|invalid secret name|invalid MCP id|MCP server name must|secret .* is not referenced|extensions\.mcp\.\w+ (needs|does not take))/.test(message)) return 400;

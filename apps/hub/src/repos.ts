@@ -1,7 +1,7 @@
-import { isBranchName, type GraphifyError } from "@nema/shared";
+import { ARCHITECTURE_DIAGRAM_MARKER, isBranchName, type GraphifyError } from "@nema/shared";
 import { nanoid } from "nanoid";
 import type { Db } from "./db/db.js";
-import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
+import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, isDaemonOffline, type DaemonRpc } from "./daemonRpc.js";
 import type { EventBus } from "./events.js";
 import { githubTarget } from "./githubScope.js";
 import { addMessage, postSystemTask } from "./messages.js";
@@ -149,8 +149,6 @@ function checkLabel(label: string): void {
   if (length < 1 || length > 40 || /\p{Cc}/u.test(label)) throw new RepoError(400, "用途说明需为 1–40 个字符");
 }
 
-const DAEMON_UNAVAILABLE = new Set(["daemon 未连接", "daemon 已断开", "daemon 响应超时"]);
-
 function missingRepo(repoId: string): RepoError {
   return new RepoError(404, `找不到仓库：${repoId}`);
 }
@@ -234,7 +232,7 @@ export async function previewRepo(db: Db, daemon: DaemonRpc, workspaceId: string
     inspected = asInspected(await daemon.call("repo.inspect", { path }, undefined, { workspaceId }));
   } catch (error) {
     if (error instanceof DaemonRpcError) {
-      if (DAEMON_UNAVAILABLE.has(error.message)) throw new RepoError(503, error.message);
+      if (isDaemonOffline(error.message)) throw new RepoError(503, error.message);
       throw new RepoError(400, error.message);
     }
     throw error;
@@ -270,7 +268,7 @@ function noteIndex(events: EventBus | undefined, repo: Repo, status: "running" |
   events?.emit(repo.workspaceId, { type: "repo.index", repoId: repo.id, label: repo.label, status });
 }
 
-/** Shown in chat. The web progress line looks for「画架构图」in the task that follows a successful index. */
+/** Shown in chat. The web progress line looks for `ARCHITECTURE_DIAGRAM_MARKER` in the task that follows a successful index. */
 export function indexReadyText(label: string): string {
   return `仓库 ${label} 的代码索引已完成，可以开始询问代码库。`;
 }
@@ -321,7 +319,7 @@ export async function bindRepo(
     inspected = asInspected(await daemon.call("repo.inspect", { path: input.path }, undefined, { workspaceId }));
   } catch (error) {
     if (error instanceof DaemonRpcError) {
-      if (DAEMON_UNAVAILABLE.has(error.message)) throw new RepoError(503, error.message);
+      if (isDaemonOffline(error.message)) throw new RepoError(503, error.message);
       throw new RepoError(400, error.message);
     }
     throw error;
@@ -384,7 +382,7 @@ async function queueArchitectureDiagram(db: Db, events: EventBus | undefined, re
     const { message, task } = await postSystemTask(
       db,
       repo.workspaceId,
-      `为仓库 ${repo.label}（${repo.id}）画架构图：用 code__ 函数读代码，用 diagram__save 保存，type 为 architecture。`,
+      `为仓库 ${repo.label}（${repo.id}）${ARCHITECTURE_DIAGRAM_MARKER}：用 code__ 函数读代码，用 diagram__save 保存，type 为 architecture。`,
     );
     events?.emit(repo.workspaceId, { type: "message.created", message });
     events?.emit(repo.workspaceId, { type: "task.updated", task: toUiTask(task, message.threadId) });

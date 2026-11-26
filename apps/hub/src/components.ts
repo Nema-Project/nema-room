@@ -2,6 +2,7 @@
 // confirmed install through. The daemon owns the store, the lock and the download; the hub keeps nothing.
 import { Hono, type Context } from "hono";
 import { z } from "zod";
+import { MIRROR_URL_ERROR } from "@nema/shared";
 import { COMPONENT_RPC_TIMEOUT_MS, DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
 import { daemonHttpStatus } from "./plugins.js";
 
@@ -24,7 +25,8 @@ const SettingsBody = z
  */
 export function componentHttpStatus(message: string): 400 | 409 | 502 | 503 {
   if (/confirm again/.test(message)) return 409;
-  if (/needs the user's confirmation|Unknown component|镜像地址|invalid (pythonMirror|pypiBase|offline)/.test(message)) return 400;
+  if (message.includes(MIRROR_URL_ERROR)) return 400;
+  if (/needs the user's confirmation|Unknown component|invalid (pythonMirror|pypiBase|offline)/.test(message)) return 400;
   return daemonHttpStatus(message);
 }
 

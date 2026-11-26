@@ -3,7 +3,7 @@ import { getRequestListener } from "@hono/node-server";
 import type { IdentityProvider } from "./identity.js";
 import { KnowledgeStore } from "@nema/knowledge";
 import type { DaemonRpc } from "./daemonRpc.js";
-import { DaemonRpcError } from "./daemonRpc.js";
+import { DAEMON_NOT_CONNECTED, DaemonRpcError } from "./daemonRpc.js";
 import { createApp } from "./app.js";
 import { AttachmentStore } from "./attachments.js";
 import type { Db } from "./db/db.js";
@@ -84,7 +84,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
 
     const status = { connected: () => false };
     const liveDaemon: { rpc: DaemonRpc } = {
-      rpc: { call: () => Promise.reject(new DaemonRpcError("daemon 未连接")) },
+      rpc: { call: () => Promise.reject(new DaemonRpcError(DAEMON_NOT_CONNECTED)) },
     };
     const daemon: DaemonRpc = { call: (method, params, timeoutMs, target) => liveDaemon.rpc.call(method, params, timeoutMs, target) };
     let requestListener: http.RequestListener = (_req, res) => { res.statusCode = 503; res.end("starting"); };

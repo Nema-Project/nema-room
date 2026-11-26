@@ -9,7 +9,7 @@ import type { Implementation, ReportMessageMeta, WorkPackageMeta } from "@nema/s
 import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
 import { insertEvidenceEvent, consumeEvidenceEvent, reconcileUnconsumedEventsLocked, payloadHashFor, type EvidenceEventInput } from "./evidenceEvents.js";
 import type { Entry } from "@nema/shared";
-import { ATTACHMENT_LIMITS, messageHasBody } from "@nema/shared";
+import { ATTACHMENT_LIMITS, isUnknownRpcMethodError, messageHasBody } from "@nema/shared";
 import type { CommitMeta } from "@nema/knowledge";
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
@@ -439,7 +439,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     } catch (error) {
       if (!(error instanceof DaemonRpcError)) throw error;
       // An older daemon: the menu keeps only the built-in commands.
-      if (error.message.startsWith("未知方法 ")) return c.json({ supported: false, skills: [] });
+      if (isUnknownRpcMethodError(error.message)) return c.json({ supported: false, skills: [] });
       return c.json({ error: error.message }, daemonHttpStatus(error.message));
     }
   });

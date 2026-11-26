@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { MIRROR_URL_ERROR } from "@nema/shared";
 import { protectPrivatePath } from "./secrets/permissions.js";
 
 export const DEFAULT_BYOK_BASE_URL = "https://api.openai.com/v1";
@@ -26,8 +27,6 @@ export function normalizeByokBaseUrl(raw: string): string {
   }
   return raw.endsWith("/") ? raw.slice(0, -1) : raw;
 }
-
-const MIRROR_URL_ERROR = "镜像地址只允许 http(s) URL，且不能带账号、查询串或片段";
 
 /** A component mirror base: an http(s) URL without credentials, query or fragment; trailing slashes are dropped. */
 export function normalizeMirrorUrl(raw: string): string {

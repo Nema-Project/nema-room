@@ -113,6 +113,45 @@ export type HubToDaemon = z.infer<typeof HubToDaemonSchema>;
 /** The hub's `error` text for a revoked daemon credential; the daemon stops reconnecting on exactly this text. */
 export const DAEMON_CREDENTIAL_REVOKED_MESSAGE = "Daemon credential has been revoked. Register this daemon again.";
 
+/*
+ * Texts one side produces and the other side matches to decide behavior (#299 batch 0). Both sides import
+ * them from here, so translating the text later cannot silently break the match. Daemons and hubs already
+ * released send the current wording, so a later translation must keep accepting it.
+ */
+
+/** Prefix of the daemon's RPC error for a method it does not know; the hub reads it as "older daemon". */
+export const UNKNOWN_RPC_METHOD_PREFIX = "未知方法 ";
+
+export function unknownRpcMethodError(method: string): string {
+  return `${UNKNOWN_RPC_METHOD_PREFIX}${method}`;
+}
+
+export function isUnknownRpcMethodError(message: string): boolean {
+  return message.startsWith(UNKNOWN_RPC_METHOD_PREFIX);
+}
+
+/** The daemon's refusal of a mirror URL (component settings); the hub answers it with 400, not 502. */
+export const MIRROR_URL_ERROR = "镜像地址只允许 http(s) URL，且不能带账号、查询串或片段";
+
+/** Phrase every hub version-skew refusal contains; the daemon stops reconnecting when it sees it. */
+export const VERSION_SKEW_MARKER = "版本不一致";
+
+/** The npm spec the skew refusal names, e.g. `@nema-project/nema@1.2.3`. */
+export function nemaCliSpec(version: string): string {
+  return `@nema-project/nema@${version}`;
+}
+
+const NEMA_CLI_SPEC = /@nema-project\/nema@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/;
+
+/**
+ * Reads a hub `error` message as a version-skew refusal. Null when it is not one; otherwise the CLI version
+ * the hub asks for, or null when the message names none.
+ */
+export function parseVersionSkew(message: string): { installVersion: string | null } | null {
+  if (!message.includes(VERSION_SKEW_MARKER)) return null;
+  return { installVersion: NEMA_CLI_SPEC.exec(message)?.[1] ?? null };
+}
+
 export type TaskAssign = Extract<HubToDaemon, { type: "task.assign" }>;
 export type TaskEvent = Extract<DaemonToHub, { type: "task.event" }>["event"];
 
