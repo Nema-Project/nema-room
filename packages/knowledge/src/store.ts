@@ -37,6 +37,13 @@ export class UpsertRejected extends Error {
   }
 }
 
+export class RestoreDiagramError extends Error {
+  constructor(readonly status: 404 | 409, message: string) {
+    super(message);
+    this.name = "RestoreDiagramError";
+  }
+}
+
 export type UpsertGuardContext = {
   /** Entry read under the repo lock. Null when this upsert creates one. */
   existing: Entry | null;
@@ -71,6 +78,8 @@ export type WorkPackageMetaPatch = Partial<Pick<WorkPackageMeta, "approvedAt" | 
 export type WriteDiagramInput = {
   /** An existing diagram to update; omit to add a new one. */
   id?: string;
+  /** Explicitly reactivate an existing diagram when redrawing it. */
+  status?: "active";
   title: string;
   body: string;
   diagram: DiagramMeta;
@@ -552,6 +561,20 @@ export class KnowledgeStore {
     });
   }
 
+  /** Restore a withdrawn diagram without changing its drawing or confirmation time. */
+  async restoreDiagram(id: string, meta: CommitMeta): Promise<{ entry: Entry; commit: string }> {
+    return withRepoLock(this.repoDir, async () => {
+      const existing = kindFromId(id) === "diagram" ? await this.get(id) : null;
+      if (!existing) throw new RestoreDiagramError(404, `diagram ${id} not found`);
+      if (existing.status !== "dropped") {
+        throw new RestoreDiagramError(409, `diagram ${id} has status ${existing.status}; only dropped diagrams can be restored`);
+      }
+      const entry: Entry = { ...existing, status: "active" };
+      const commit = await this.writeAndCommit(entry, "update", "用户恢复", [], meta);
+      return { entry, commit };
+    });
+  }
+
   /** Hooks run under the repository lock. beforeWrite may return a prior commit for an exact replay. */
   async upsert(
     rawInput: UpsertEntryInput,
@@ -626,6 +649,9 @@ export class KnowledgeStore {
 
   /** Add or update a diagram entry: `diagrams/G-n.md` and its archify spec `diagrams/G-n.json` in one commit. */
   async writeDiagram(input: WriteDiagramInput, meta: CommitMeta): Promise<{ entry: Entry; commit: string; op: "add" | "update" }> {
+    if (input.status !== undefined && (input.status !== "active" || input.id === undefined)) {
+      throw new Error('Diagram status must be "active" and requires an existing diagram id');
+    }
     return withRepoLock(this.repoDir, async () => {
       let op: "add" | "update";
       let id: string;
@@ -645,7 +671,7 @@ export class KnowledgeStore {
           id,
           kind: "diagram",
           title: input.title,
-          status: existing?.status ?? DEFAULT_STATUS.diagram,
+          status: input.status ?? existing?.status ?? DEFAULT_STATUS.diagram,
           businessDate: existing?.businessDate ?? null,
           related: existing?.related ?? [],
           tags: existing?.tags ?? [],
@@ -661,7 +687,8 @@ export class KnowledgeStore {
       };
       const spec = JSON.stringify(input.spec, null, 2);
       if (spec === undefined) throw new Error("diagram spec must be JSON");
-      const commit = await this.writeAndCommit(entry, op, input.reason, input.sourceMessages, meta, [{ file: this.specPath(id), content: spec }]);
+      const reason = existing && existing.status !== entry.status ? `${input.reason}（恢复为 active）` : input.reason;
+      const commit = await this.writeAndCommit(entry, op, reason, input.sourceMessages, meta, [{ file: this.specPath(id), content: spec }]);
       return { entry, commit, op };
     });
   }

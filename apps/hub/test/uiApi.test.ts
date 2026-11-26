@@ -1305,8 +1305,42 @@ describe("diagram routes", () => {
       `用户要求更新代码图 ${g.id}：用 diagram__read 读旧图，用 code__changes 看自 abc123 以来的改动，只改受影响的节点和连线，再用 diagram__save（带 id）保存。`,
     );
     expect(seen).toEqual(["message.created", "task.updated"]);
+    expect((await dreq("POST", `/api/workspaces/${ws}/diagrams/${g.id}/update`, { status: "active" })).status).toBe(400);
     expect((await dreq("POST", `/api/workspaces/${ws}/diagrams/G-9/update`, {})).status).toBe(404);
     expect((await dreq("POST", `/api/workspaces/${ws}/diagrams/R-1/update`, {})).status).toBe(404);
+  });
+
+  test("#306: the restore route brings a withdrawn diagram back to active without touching its drawing", async () => {
+    const g = await diagram(ws, { v: 1 });
+    await indexEntry(db, ws, g);
+    expect((await json(await dreq("POST", `/api/workspaces/${ws}/entries/${g.id}/withdraw`))).status).toBe("dropped");
+    const indexed = () => db.query<{ status: string }>(`select status from entry_index where workspace_id = $1 and entry_id = $2`, [ws, g.id]);
+    expect(await indexed()).toEqual([{ status: "dropped" }]);
+    // The generic entry edit cannot apply a diagram status; it must not report success.
+    // (UpsertEntryInput carries no diagram field, so a diagram PUT is rejected wholesale;
+    // the stored status staying "dropped" below is the assertion that matters.)
+    const put = await dreq("PUT", `/api/workspaces/${ws}/entries/${g.id}`, { kind: "diagram", title: "架构", body: "总览", status: "active", reason: "恢复", diagram: { repoId: "repo_x", type: "architecture", sourceCommits: { repo_x: "abc123" }, nodePaths: { hub: ["apps/hub"] } } });
+    expect(put.status).toBe(400);
+    const store = new KnowledgeStore(repoPath(dataDir, ws));
+    expect((await store.get(g.id))!.status).toBe("dropped");
+
+    const seen: string[] = [];
+    events.subscribe(ws, (e) => seen.push(e.type));
+    const r = await dreq("POST", `/api/workspaces/${ws}/entries/${g.id}/restore`, {});
+    expect(r.status).toBe(200);
+    expect(await json(r)).toMatchObject({ id: g.id, status: "active", confirmedAt: g.confirmedAt });
+    expect((await store.get(g.id))!.status).toBe("active");
+    expect(await store.readDiagramSpec(g.id)).toEqual({ v: 1 });
+    expect(await indexed()).toEqual([{ status: "active" }]);
+    expect(seen).toEqual(["knowledge.changed"]);
+    const log = await json(await dreq("GET", `/api/workspaces/${ws}/entries/${g.id}/history`));
+    expect(log[0]).toMatchObject({ op: "update", reason: "用户恢复", author: "user" });
+
+    // Already active, missing, or not a diagram: an error, never a reported success.
+    expect((await dreq("POST", `/api/workspaces/${ws}/entries/${g.id}/restore`, {})).status).toBe(409);
+    expect((await dreq("POST", `/api/workspaces/${ws}/entries/G-9/restore`, {})).status).toBe(404);
+    const r1 = (await store.upsert({ kind: "requirement", title: "r", body: "b", sourceMessages: [], reason: "r" }, { author: "agent" })).entry;
+    expect((await dreq("POST", `/api/workspaces/${ws}/entries/${r1.id}/restore`, {})).status).toBe(404);
   });
 
   test("diagram html is served with the CSP and nosniff headers", async () => {

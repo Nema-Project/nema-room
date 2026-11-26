@@ -3,7 +3,7 @@ import { sourceEvidenceEntries, sourceEvidenceSummary } from "./sourceFreshness.
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z, ZodError } from "zod";
-import { KnowledgeStore, UpsertRejected, blameParagraphs, git, history, versionAt, parseCommitMessage } from "@nema/knowledge";
+import { KnowledgeStore, UpsertRejected, RestoreDiagramError, blameParagraphs, git, history, versionAt, parseCommitMessage } from "@nema/knowledge";
 import { KNOWLEDGE_LANGUAGES, MessageMentions, UpsertEntryInput, parseMcpConfig, citedReports, confirmableImplementation, kindFromId, canonicalJson, parseSkillSource, reportPassed, safeRepoPath } from "@nema/shared";
 import type { Implementation, ReportMessageMeta, WorkPackageMeta } from "@nema/shared";
 import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
@@ -182,7 +182,7 @@ export function uiRoutes(deps: UiDeps): Hono {
   const app = new Hono();
 
   app.onError((e, c) => {
-    if (e instanceof UpsertRejected) return c.json({ error: e.message }, e.status);
+    if (e instanceof UpsertRejected || e instanceof RestoreDiagramError) return c.json({ error: e.message }, e.status);
     if (e instanceof HttpError) return c.json({ error: e.message }, e.status);
     if (e instanceof ArchivedWorkspaceError) return c.json({ error: e.message }, 409);
     if (e instanceof WorkPackageError) return c.json({ error: e.message }, e.status);
@@ -759,6 +759,20 @@ export function uiRoutes(deps: UiDeps): Hono {
     return c.json(entry);
   });
 
+  app.post("/workspaces/:id/entries/:eid/restore", async (c) => {
+    const ws = c.req.param("id")!;
+    const eid = c.req.param("eid")!;
+    await body(c, EmptyBody);
+    const { entry, commit } = await store(ws).restoreDiagram(eid, { author: "user" });
+    try {
+      await indexEntry(db, ws, entry, deps.ownedHelpers);
+    } catch (e) {
+      console.error(`ui restore: post-commit bookkeeping failed for ${eid} (commit ${commit})`, e);
+    }
+    events.emit(ws, { type: "knowledge.changed", entryId: entry.id });
+    return c.json(entry);
+  });
+
   // Runs inside the store's existing repository lock; never calls a locking store method.
   const confirmation = (ws: string, mode: "put" | "confirm") => {
     const meta: CommitMeta = { author: "user", evidenceEventIds: [], uiAction: mode === "confirm" ? "confirm" : "edit" };
@@ -928,7 +942,7 @@ export function uiRoutes(deps: UiDeps): Hono {
   app.post("/workspaces/:id/diagrams/:gid/update", async (c) => {
     const ws = c.req.param("id")!;
     const gid = c.req.param("gid")!;
-    await body(c, z.object({}));
+    await body(c, EmptyBody);
     const { diagram } = await requireDiagram(ws, gid);
     const since = diagram.sourceCommits[diagram.repoId] ?? Object.values(diagram.sourceCommits)[0] ?? "（未记录）";
     const { message, task: created } = await postSystemTask(

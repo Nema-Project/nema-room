@@ -127,7 +127,7 @@ describe("diagram plugin", () => {
     const task = await runningTask();
     const res = await roomReq("POST", "/room/plugins/diagram__save", task.runToken, saveArgs(repo.id));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ result: { ok: true, id: "G-1" } });
+    expect(await res.json()).toEqual({ result: { ok: true, id: "G-1", status: "active" } });
     const store = new KnowledgeStore(repoPath(dataDir, wsA));
     expect(await store.get("G-1")).toMatchObject({
       kind: "diagram",
@@ -175,7 +175,7 @@ describe("diagram plugin", () => {
       saveArgs(repo.label, { id: "G-1", title: "系统架构 v2", spec: spec2, nodePaths: {} }),
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ result: { ok: true, id: "G-1" } });
+    expect(await res.json()).toEqual({ result: { ok: true, id: "G-1", status: "active" } });
     const store = new KnowledgeStore(repoPath(dataDir, wsA));
     expect((await store.list()).map((e) => e.id)).toEqual(["G-1"]);
     expect(await store.get("G-1")).toMatchObject({ title: "系统架构 v2", diagram: { nodePaths: {} } });
@@ -186,6 +186,38 @@ describe("diagram plugin", () => {
 
     const missing = await roomReq("POST", "/room/plugins/diagram__save", task.runToken, saveArgs(repo.label, { id: "G-7" }));
     expect(missing.status).toBe(404);
+  });
+
+  test("#306: diagram__save with id and status active restores a dropped diagram; without status it says the diagram stays dropped", async () => {
+    const repo = await insertRepo(wsA, "api");
+    const task = await runningTask();
+    expect((await roomReq("POST", "/room/plugins/diagram__save", task.runToken, saveArgs(repo.label))).status).toBe(200);
+    const dir = repoPath(dataDir, wsA);
+    const store = new KnowledgeStore(dir);
+    await store.withdraw("G-1", { author: "user" });
+    const indexed = () => db.query<{ status: string }>(`select status from entry_index where workspace_id = $1 and entry_id = 'G-1'`, [wsA]);
+
+    // A redraw that does not ask for a status keeps the user's choice and says so.
+    const kept = await roomReq("POST", "/room/plugins/diagram__save", task.runToken, saveArgs(repo.label, { id: "G-1" }));
+    expect(kept.status).toBe(200);
+    expect(await kept.json()).toEqual({ result: { ok: true, id: "G-1", status: "dropped" } });
+    expect((await store.get("G-1"))!.status).toBe("dropped");
+
+    const res = await roomReq("POST", "/room/plugins/diagram__save", task.runToken, saveArgs(repo.label, { id: "G-1", status: "active" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ result: { ok: true, id: "G-1", status: "active" } });
+    expect((await store.get("G-1"))!.status).toBe("active");
+    expect(await indexed()).toEqual([{ status: "active" }]);
+    expect((await history(dir, "G-1"))[0]).toMatchObject({ op: "update", reason: "画图：系统架构（恢复为 active）", author: "agent" });
+
+    // Only a restore is accepted from the agent; anything else is rejected before writing.
+    const head = (await git(dir, ["rev-parse", "HEAD"])).trim();
+    for (const status of ["dropped", "superseded", "open"]) {
+      const bad = await roomReq("POST", "/room/plugins/diagram__save", task.runToken, saveArgs(repo.label, { id: "G-1", status }));
+      expect(bad.status).toBe(400);
+    }
+    expect((await git(dir, ["rev-parse", "HEAD"])).trim()).toBe(head);
+    expect((await store.get("G-1"))!.status).toBe("active");
   });
 
   test("diagram__save for another workspace's repo is 400", async () => {
