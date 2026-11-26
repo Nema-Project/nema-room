@@ -3,6 +3,7 @@ import { createApp, type AppDeps } from "../src/app.js";
 import { EventBus } from "../src/events.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
 import { parseAllowedHosts } from "../src/main.js";
+import { createHostAllowed } from "../src/hostAllowlist.js";
 
 const closers: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -80,6 +81,15 @@ test("remote off without a list keeps today's loopback-only behaviour", async ()
   expect(await statusFor(app, "127.0.0.1:4400")).toBe(200);
   expect(await statusFor(app, "localhost:4400")).toBe(200);
   expect(await statusFor(app, "evil.example:4400")).toBe(403);
+});
+
+test("createHostAllowed ignores the allowlist without remoteAuth, so it cannot widen the local form", () => {
+  const local = createHostAllowed(PORT, { allowedHosts: ["hub.example.lan"] });
+  expect(local("hub.example.lan:4400")).toBe(false);
+  expect(local("127.0.0.1:4400")).toBe(true);
+  const remote = createHostAllowed(PORT, { allowedHosts: ["hub.example.lan"], remoteAuth: true });
+  expect(remote("hub.example.lan:4400")).toBe(true);
+  expect(remote("evil.example:4400")).toBe(false);
 });
 
 test("parseAllowedHosts splits on commas, trims, and drops empties", () => {

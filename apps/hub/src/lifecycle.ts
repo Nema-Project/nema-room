@@ -103,7 +103,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
     attached = attachDaemonSocket(server, {
       db: opts.db, dataDir: opts.dataDir, events, daemonToken: opts.daemonToken, hubUrl,
       ownedHelpers: opts.ownedHelpers, releaseVersion: opts.releaseVersion, remoteAuth: opts.remoteAuth,
-      publicHubUrl: opts.publicHubUrl,
+      publicHubUrl: opts.publicHubUrl, allowedHosts: opts.allowedHosts,
     });
     const app = createApp({
       db: opts.db,

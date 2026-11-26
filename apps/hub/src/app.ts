@@ -20,6 +20,7 @@ import { mentionContextRoutes } from "./mentionContext.js";
 import { uiRoutes } from "./uiApi.js";
 import { componentRoutes } from "./components.js";
 import { hostAdminAccess, workspaceAccess } from "./authz.js";
+import { createHostAllowed } from "./hostAllowlist.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
 
 export const DEFAULT_HUB_PORT = 4400;
@@ -99,19 +100,10 @@ export type AppDeps = {
  * exists for is unchanged, only the set of legitimate names grew.
  */
 function hostGuard(port: number, opts: { allowedHosts?: string[]; remoteAuth?: boolean } = {}): MiddlewareHandler {
-  const loopback = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
-  const allowed = (opts.allowedHosts ?? []).map((entry) => entry.trim().toLowerCase()).filter(Boolean);
-  /** The hostname part of a Host value: the whole value, minus a trailing numeric :port. */
-  const hostnameOf = (host: string): string => {
-    const idx = host.lastIndexOf(":");
-    return idx > 0 && /^\d+$/.test(host.slice(idx + 1)) ? host.slice(0, idx) : host;
-  };
-  /** A list entry matches when it names this exact host:port, or (no port in the entry) this hostname. */
-  const listed = (host: string): boolean =>
-    allowed.some((entry) => entry === host || (!/:\d+$/.test(entry) && hostnameOf(entry) === hostnameOf(host)));
+  // Same predicate as the /daemon WebSocket upgrade (daemonSocket.ts), so both entry points agree.
+  const hostAllowed = createHostAllowed(port, opts);
   return async (c, next) => {
-    const host = (c.req.header("host") ?? new URL(c.req.url).host).toLowerCase();
-    if (!loopback.has(host) && !(opts.remoteAuth && listed(host))) return c.json({ error: "forbidden host" }, 403);
+    if (!hostAllowed(c.req.header("host") ?? new URL(c.req.url).host)) return c.json({ error: "forbidden host" }, 403);
     await next();
   };
 }
