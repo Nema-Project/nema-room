@@ -50,6 +50,16 @@ describe("MessageItem", () => {
     expect(screen.getByText(unknownCode.content)).toBeTruthy();
   });
 
+  it("renders the stored text when the system meta is not an object", () => {
+    const legacy = msg({
+      role: "system",
+      content: "仓库 API 的代码索引没有完成，暂时还不能询问代码库。",
+      meta: "legacy" as unknown as Message["meta"],
+    });
+    render(<I18nProvider><MessageItem message={legacy} /></I18nProvider>);
+    expect(screen.getByText(legacy.content)).toBeTruthy();
+  });
+
   it("renders a stored Graphify index failure in the UI language", async () => {
     localStorage.setItem("nema.locale", "ja");
     try {

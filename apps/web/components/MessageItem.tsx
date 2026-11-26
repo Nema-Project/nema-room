@@ -52,7 +52,7 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
 
   if (message.role === "system") {
     const meta = message.meta as AgentMessageMeta | null;
-    const indexFailure = message.meta && "repoIndexFailure" in message.meta
+    const indexFailure = message.meta && typeof message.meta === "object" && "repoIndexFailure" in message.meta
       ? message.meta.repoIndexFailure
       : undefined;
     // Stored meta is data, not a contract: a shape this client cannot read (an older or
