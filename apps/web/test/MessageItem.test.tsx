@@ -35,7 +35,7 @@ describe("MessageItem", () => {
     const missingStatus = msg({
       role: "system",
       content: "仓库 API 的代码索引没有完成，暂时还不能询问代码库。",
-      meta: { repoIndexFailure: { label: "API", error: { code: "graphify-unavailable", state: "failed" } } },
+      meta: { repoIndexFailure: { label: "API", error: { code: "graphify-unavailable", state: "failed" } } } as unknown as Message["meta"],
     });
     const { unmount } = render(<I18nProvider><MessageItem message={missingStatus} /></I18nProvider>);
     expect(screen.getByText(missingStatus.content)).toBeTruthy();
@@ -44,7 +44,7 @@ describe("MessageItem", () => {
     const unknownCode = msg({
       role: "system",
       content: "仓库 API 的代码索引没有完成，暂时还不能询问代码库。",
-      meta: { repoIndexFailure: { label: "API", error: { code: "graphify-future", status: { state: "failed" } } } },
+      meta: { repoIndexFailure: { label: "API", error: { code: "graphify-future", status: { state: "failed" } } } } as unknown as Message["meta"],
     });
     render(<I18nProvider><MessageItem message={unknownCode} /></I18nProvider>);
     expect(screen.getByText(unknownCode.content)).toBeTruthy();
