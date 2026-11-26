@@ -152,7 +152,7 @@ describe("WorkspaceSettings Graphify offer", () => {
     setup();
     const code = within(screen.getByRole("region", { name: "Code & plugins" }));
     const repos = within(screen.getByRole("region", { name: "Repositories" }));
-    expect(await code.findByText("Graphify is not installed. Repository indexing and code search need it.")).toBeTruthy();
+    expect(await code.findByText("Graphify is not installed. Repository indexing and code search need it. Install it from Settings, or run nema components install graphify.")).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: "Download Graphify?" })).toBeNull();
     vi.mocked(hub.pickDirectory).mockResolvedValueOnce({ path: "/tmp/app" });
     vi.mocked(hub.previewRepo).mockResolvedValueOnce({

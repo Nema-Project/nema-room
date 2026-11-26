@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MessageMention } from "@nema/shared";
+import { GraphifyErrorSchema, type MessageMention } from "@nema/shared";
 import { AttachmentList } from "@/components/AttachmentList";
 import { Markdown } from "@/components/Markdown";
 import { SkillOfferCard } from "@/components/SkillOfferCard";
 import { editMessage, getEntry, HubError, listEntries, listMessageVersions, withdrawEntry } from "@/lib/hub";
+import { graphifyErrorText } from "@/lib/graphifyText";
 import { formatTime } from "@/lib/format";
 import { useLocale, useT } from "@/lib/i18n";
 import { syncMentions } from "@/lib/mentions";
@@ -51,10 +52,19 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
 
   if (message.role === "system") {
     const meta = message.meta as AgentMessageMeta | null;
+    const indexFailure = message.meta && typeof message.meta === "object" && "repoIndexFailure" in message.meta
+      ? message.meta.repoIndexFailure
+      : undefined;
+    // Stored meta is data, not a contract: a shape this client cannot read (an older or
+    // newer hub wrote it) falls back to the stored text instead of breaking the render.
+    const parsedError = indexFailure ? GraphifyErrorSchema.safeParse(indexFailure.error) : undefined;
+    const indexError = parsedError?.success ? parsedError.data : undefined;
     return (
       <div className="sysmsg" id={`msg-${message.id}`}>
         <button type="button" className="quiet" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
-        {message.content}
+        {indexFailure && indexError && typeof indexFailure.label === "string"
+          ? t("chat.graphifyIndexFailed", { label: indexFailure.label, reason: graphifyErrorText(indexError, t) })
+          : message.content}
         {meta?.askedQuestion && <AskedQuestion workspaceId={message.workspaceId} asked={meta.askedQuestion} added={[]} />}
       </div>
     );

@@ -349,7 +349,7 @@ export function roomRoutes(deps: {
     } catch (error) {
       // Check 1 already passed, including when lookup or the daemon call throws.
       if (!recorded) await record(false, 0);
-      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      if (error instanceof DaemonRpcError) return c.json({ error: error.message, graphifyError: error.graphifyError }, daemonHttpStatus(error.message));
       throw error;
     }
   });

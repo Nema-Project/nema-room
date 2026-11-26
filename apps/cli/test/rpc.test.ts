@@ -4,6 +4,7 @@ import { afterEach, expect, test } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import type { TaskAssign } from "@nema/shared";
 import { connectDaemon } from "../src/daemon/connection.js";
+import { GraphifyUnavailableError } from "../src/repos/graphify.js";
 import { RpcRouter } from "../src/daemon/rpc.js";
 import { Runner, type AgentAdapter } from "../src/daemon/runner.js";
 
@@ -38,6 +39,23 @@ test("a throwing handler returns ok:false with its message", async () => {
     id: "2",
     ok: false,
     error: "kaboom",
+  });
+});
+
+test("Graphify RPC failures retain their fallback and component facts", async () => {
+  const rpc = new RpcRouter();
+  const status = {
+    state: "failed", name: "graphify", lockHash: "new", installedLockHash: "old",
+    reason: "proxy", detail: "Proxy refused", at: null,
+  } as const;
+  rpc.register("repo.index", async () => {
+    throw new GraphifyUnavailableError("failed", status);
+  });
+  const response = await rpc.handle({ type: "rpc.request", id: "1", method: "repo.index", params: {} });
+  expect(response).toMatchObject({
+    ok: false,
+    error: "Graphify 组件未安装（上次安装失败：代理错误，Proxy refused）。旧版本组件已停用。重试：nema components install graphify",
+    graphifyError: { code: "graphify-unavailable", state: "failed", status: { state: "failed", reason: "proxy", detail: "Proxy refused", installedLockHash: "old" } },
   });
 });
 

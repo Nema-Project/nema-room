@@ -216,7 +216,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     try {
       return c.json(pluginsForUi(await deps.daemon.call("plugins.status", {})));
     } catch (error) {
-      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      if (error instanceof DaemonRpcError) return c.json({ error: error.message, graphifyError: error.graphifyError }, daemonHttpStatus(error.message));
       throw error;
     }
   });

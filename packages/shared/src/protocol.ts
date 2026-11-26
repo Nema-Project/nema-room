@@ -61,7 +61,7 @@ const DaemonToHubSchema = z.union([
     route: z.unknown().optional(),
   }),
   z.object({ type: z.literal("rpc.response"), id: z.string(), ok: z.literal(true), result: z.unknown() }),
-  z.object({ type: z.literal("rpc.response"), id: z.string(), ok: z.literal(false), error: z.string() }),
+  z.object({ type: z.literal("rpc.response"), id: z.string(), ok: z.literal(false), error: z.string(), graphifyError: z.unknown().optional() }),
   z.object({ type: z.literal("repo.moved"), repoId: z.string(), mainRef: z.string(), from: z.string().nullable(), to: z.string() }),
   z.object({ type: z.literal("repo.fetched"), repoId: z.string(), ok: z.boolean(), error: z.string().optional(), at: z.string() }),
 ]);

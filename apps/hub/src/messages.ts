@@ -10,6 +10,7 @@ import {
   type ReportCheck,
   type MessageMention,
   type ReportMessageMeta,
+  type RepoIndexFailureMeta,
   type UserMessageMeta,
 } from "@nema/shared";
 import { AttachmentError, bindAttachments, listAttachmentsByIds, listAttachmentsForMessages, toAttachmentRef } from "./attachments.js";
@@ -24,8 +25,7 @@ export type Message = {
   role: "user" | "agent" | "system" | "report";
   authorUserId: string | null;
   content: string;
-  /** Agent messages carry AgentMessageMeta; report messages carry ReportMessageMeta; user messages may carry UserMessageMeta. */
-  meta: AgentMessageMeta | ReportMessageMeta | UserMessageMeta | null;
+  meta: AgentMessageMeta | ReportMessageMeta | UserMessageMeta | RepoIndexFailureMeta | null;
   taskId: string | null;
   createdAt: string;
   editedAt: string | null;
@@ -501,7 +501,7 @@ export function addMessage(
   workspaceId: string,
   role: "agent" | "system",
   content: string,
-  opts: { taskId?: string; meta?: AgentMessageMeta; threadId?: string | null } = {},
+  opts: { taskId?: string; meta?: AgentMessageMeta | RepoIndexFailureMeta; threadId?: string | null } = {},
 ): Promise<Message> {
   return insertMessage(db, workspaceId, role, null, content, opts.taskId ?? null, opts.meta ?? null, opts.threadId ?? null);
 }

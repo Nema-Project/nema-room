@@ -31,6 +31,53 @@ const mount = (m: Message) =>
   );
 
 describe("MessageItem", () => {
+  it("renders the stored text when the index-failure meta has an unreadable shape", () => {
+    const missingStatus = msg({
+      role: "system",
+      content: "仓库 API 的代码索引没有完成，暂时还不能询问代码库。",
+      meta: { repoIndexFailure: { label: "API", error: { code: "graphify-unavailable", state: "failed" } } } as unknown as Message["meta"],
+    });
+    const { unmount } = render(<I18nProvider><MessageItem message={missingStatus} /></I18nProvider>);
+    expect(screen.getByText(missingStatus.content)).toBeTruthy();
+    unmount();
+
+    const unknownCode = msg({
+      role: "system",
+      content: "仓库 API 的代码索引没有完成，暂时还不能询问代码库。",
+      meta: { repoIndexFailure: { label: "API", error: { code: "graphify-future", status: { state: "failed" } } } } as unknown as Message["meta"],
+    });
+    render(<I18nProvider><MessageItem message={unknownCode} /></I18nProvider>);
+    expect(screen.getByText(unknownCode.content)).toBeTruthy();
+  });
+
+  it("renders the stored text when the system meta is not an object", () => {
+    const legacy = msg({
+      role: "system",
+      content: "仓库 API 的代码索引没有完成，暂时还不能询问代码库。",
+      meta: "legacy" as unknown as Message["meta"],
+    });
+    render(<I18nProvider><MessageItem message={legacy} /></I18nProvider>);
+    expect(screen.getByText(legacy.content)).toBeTruthy();
+  });
+
+  it("renders a stored Graphify index failure in the UI language", async () => {
+    localStorage.setItem("nema.locale", "ja");
+    try {
+      render(
+        <I18nProvider>
+          <MessageItem message={msg({
+            role: "system",
+            content: "仓库 API 的代码索引没有完成",
+            meta: { repoIndexFailure: { label: "API", error: { code: "graphify-interrupted" } } },
+          })} />
+        </I18nProvider>,
+      );
+      expect(await screen.findByText("API のインデックスを作成できませんでした。Graphify の処理が中断されました。")).toBeTruthy();
+    } finally {
+      localStorage.removeItem("nema.locale");
+    }
+  });
+
   it("a work package change shows a card with id, status and task count", async () => {
     vi.mocked(hub.getEntry).mockResolvedValue({
       id: "W-2", kind: "workpackage", title: "Pkg", status: "draft", businessDate: null, related: [], sourceMessages: [], body: "",

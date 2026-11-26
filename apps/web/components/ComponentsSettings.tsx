@@ -14,23 +14,10 @@ import {
   startGraphifyInstall,
   useComponents,
 } from "@/lib/components";
+import { repairFailureText, statusText } from "@/lib/graphifyText";
 import { getAgentClis } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
 import type { AgentCliStatus, ComponentFailureReason, ComponentStatus, ComponentView } from "@/lib/types";
-
-type T = ReturnType<typeof useT>;
-
-const REASON_KEY: Record<ComponentFailureReason, string> = {
-  network: "components.reason.network",
-  proxy: "components.reason.proxy",
-  "hash-mismatch": "components.reason.hashMismatch",
-  "self-check": "components.reason.selfCheck",
-  "disk-space": "components.reason.diskSpace",
-  offline: "components.reason.offline",
-  "unsupported-platform": "components.reason.unsupportedPlatform",
-  "lock-unreadable": "components.reason.lockUnreadable",
-  "offer-changed": "components.reason.offerChanged",
-};
 
 /** A next step per cause, so network, proxy and checksum failures read differently. */
 const HINT_KEY: Partial<Record<ComponentFailureReason, string>> = {
@@ -48,29 +35,6 @@ const PHASE_KEY = {
   "self-check": "components.progress.selfCheck",
   activate: "components.progress.activate",
 } as const;
-
-/** One sentence for the state. A version for another lock is described as turned off, never as still in use. */
-export function statusText(status: ComponentStatus, t: T): string {
-  switch (status.state) {
-    case "installed": {
-      const base = t("components.state.installed", { version: status.version.graphifyy, python: status.version.python });
-      return status.lastFailure ? `${base} ${t("components.state.repairFailed", { reason: t(REASON_KEY[status.lastFailure.reason]) })}` : base;
-    }
-    case "installing":
-      return t("components.state.installing", { done: formatMiB(status.progress.downloadedBytes), total: formatMiB(status.progress.totalBytes) });
-    case "not-installed":
-      return t("components.state.notInstalled");
-    case "lock-mismatch":
-      return t("components.state.lockMismatch");
-    case "failed": {
-      if (status.reason === "offline") return t("components.state.offline");
-      if (status.reason === "unsupported-platform") return t("components.state.unsupported", { detail: status.detail });
-      if (status.reason === "lock-unreadable") return t("components.state.lockUnreadable", { detail: status.detail });
-      const base = t("components.state.failed", { reason: t(REASON_KEY[status.reason]) });
-      return status.installedLockHash ? `${base} ${t("components.state.failedDisabled")}` : base;
-    }
-  }
-}
 
 /** Retry and import are the exits after a failure; install is the way in otherwise. Platform and lock problems have none. Repair re-downloads the installed version over itself. With downloads turned off, import is the only way in or out. */
 function actionsFor(view: ComponentView): { install: boolean; retry: boolean; import: boolean; cancel: boolean; repair: boolean } {
@@ -270,7 +234,7 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
           </>
         ) : status.lastFailure ? (
           <>
-            <p role="alert">{t("components.state.repairFailed", { reason: t(REASON_KEY[status.lastFailure.reason]) })}</p>
+            <p role="alert">{repairFailureText(status.lastFailure.reason, t)}</p>
             {error && <p className="error" role="alert">{t("components.state.unknown", { error })}</p>}
             {requestError && <p className="error" role="alert">{requestError}</p>}
             <div className="actions">

@@ -1,8 +1,8 @@
 import { nanoid } from "nanoid";
-import type { DaemonToHub } from "@nema/shared";
+import { GraphifyErrorSchema, type DaemonToHub, type GraphifyError } from "@nema/shared";
 
 export class DaemonRpcError extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly graphifyError?: GraphifyError) {
     super(message);
     this.name = "DaemonRpcError";
   }
@@ -83,7 +83,7 @@ export function createConnectionRpc(send: (id: string, method: string, params: u
       pending.delete(message.id);
       clearTimeout(waiter.timer);
       if (message.ok) waiter.resolve(message.result);
-      else waiter.reject(new DaemonRpcError(message.error));
+      else waiter.reject(new DaemonRpcError(message.error, GraphifyErrorSchema.safeParse(message.graphifyError).data));
     },
     failAll(message) {
       for (const waiter of pending.values()) {

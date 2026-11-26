@@ -1,0 +1,1 @@
+- Graphify availability and interruption messages in the app now follow the selected UI language.

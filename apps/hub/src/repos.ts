@@ -1,4 +1,4 @@
-import { isBranchName } from "@nema/shared";
+import { isBranchName, type GraphifyError } from "@nema/shared";
 import { nanoid } from "nanoid";
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
@@ -279,11 +279,27 @@ export function indexFailedText(label: string): string {
   return `仓库 ${label} 的代码索引没有完成，暂时还不能询问代码库。`;
 }
 
+/**
+ * The error copy kept in chat meta. The meta is persisted and broadcast to every workspace
+ * member, so it carries only the structured facts: a download/install failure's raw detail
+ * can embed the proxy URL, credentials included. The two locally produced details (the
+ * platform and lock facts) carry no secrets and stay.
+ */
+function chatGraphifyError(error: GraphifyError): GraphifyError {
+  if (error.code !== "graphify-unavailable" || error.status.state !== "failed") return error;
+  if (error.status.reason === "unsupported-platform" || error.status.reason === "lock-unreadable") return error;
+  return { ...error, status: { ...error.status, detail: "" } };
+}
+
 /** Posts the outcome and returns whether the repo is still bound. */
-async function announceIndex(db: Db, events: EventBus | undefined, repo: Repo, status: "done" | "failed"): Promise<boolean> {
+async function announceIndex(db: Db, events: EventBus | undefined, repo: Repo, status: "done" | "failed", error?: GraphifyError): Promise<boolean> {
   noteIndex(events, repo, status);
   if (!(await getRepo(db, repo.id))) return false;
-  const message = await addMessage(db, repo.workspaceId, "system", status === "done" ? indexReadyText(repo.label) : indexFailedText(repo.label));
+  const message = await addMessage(
+    db, repo.workspaceId, "system",
+    status === "done" ? indexReadyText(repo.label) : indexFailedText(repo.label),
+    error ? { meta: { repoIndexFailure: { label: repo.label, error: chatGraphifyError(error) } } } : undefined,
+  );
   events?.emit(repo.workspaceId, { type: "message.created", message });
   return true;
 }
@@ -353,7 +369,8 @@ export async function bindRepo(
     })
     .catch((error) => {
       console.error(`repo.index failed for ${repo.id}`, error);
-      void announceIndex(db, events, repo, "failed").catch((announceError) => {
+      const graphifyError = error instanceof DaemonRpcError ? error.graphifyError : undefined;
+      void announceIndex(db, events, repo, "failed", graphifyError).catch((announceError) => {
         console.error(`announcing the failed index for ${repo.id}`, announceError);
       });
     });

@@ -781,7 +781,7 @@ process.stdout.write("graphify 1.2.3\\n");
     type: "rpc.response",
     id: "st2",
     ok: true,
-    result: { code: { installed: false, state: "not-installed", detail: expect.stringContaining("nema components install graphify") }, github: GITHUB_MISSING },
+    result: { code: { installed: false, state: "not-installed", detail: expect.stringContaining("nema components install graphify"), graphifyError: { code: "graphify-unavailable", state: "not-installed", status: { state: "not-installed" } } }, github: GITHUB_MISSING },
   });
 });
 

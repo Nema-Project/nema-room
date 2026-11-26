@@ -130,7 +130,7 @@ fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
 process.on("SIGTERM", () => {});
 setInterval(() => {}, 1000);
 `), timeoutMs: 500 };
-  await expect(buildIndex(snapshot, fake)).rejects.toThrow("graphify 已中断");
+  await expect(buildIndex(snapshot, fake)).rejects.toMatchObject({ message: "graphify 已中断", graphifyError: { code: "graphify-interrupted" } });
   const pid = Number(readFileSync(pidFile, "utf8"));
   expect(() => process.kill(pid, 0)).toThrow();
 });
@@ -204,7 +204,7 @@ test("a missing graphify binary is reported as a not-installed component with th
   fake.bin = join(snapshot, "missing-graphify");
   const error = await buildIndex(snapshot, fake).catch((e: unknown) => e);
   expect(error).toBeInstanceOf(GraphifyUnavailableError);
-  expect(error).toMatchObject({ code: "graphify-unavailable", state: "not-installed" });
+  expect(error).toMatchObject({ code: "graphify-unavailable", state: "not-installed", status: null });
   expect((error as Error).message).toContain("nema components install graphify");
 });
 
