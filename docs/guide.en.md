@@ -110,10 +110,12 @@ With Compose, the hub and web ports are published on `127.0.0.1` by default. To 
 
 1. Set the remote variables in `.env` and start the hub (`docker compose up -d`). Compose forwards the three variables into the hub container, so no `docker-compose.yml` edit is needed.
 2. Create the first account. On first start with no account, the hub writes a one-time bootstrap token to `<dataDir>/bootstrap-token` (mode `0600`) and logs its path. Under Compose, find the path with `docker compose logs hub`, or read the file in the data directory (`${NEMA_DATA_HOST_DIR:-~/.nema/data}/bootstrap-token`). Create the account with `POST /api/auth/bootstrap` (`token`, `displayName`, `password`).
-3. Sign in at the web login page as that first (administrator) account.
-4. Invite the next person: as the administrator, `POST /api/auth/invites` returns a one-time code. They accept it with `POST /api/auth/invites/accept` (`code`, `displayName`, `password`) and then sign in.
+3. Sign in at the web login page as that first (administrator) account. The login page's **Account** field takes the user id (`usr_…`): the `userId` in the `POST /api/auth/bootstrap` response.
+4. Invite the next person: as the administrator, `POST /api/auth/invites` returns a one-time code. They accept it with `POST /api/auth/invites/accept` (`code`, `displayName`, `password`) and then sign in with the `userId` (`usr_…`) from that response as their account. Accepting an invite is API-only for now; the web has no invite-acceptance page.
 5. Add them to the workspace: `POST /api/workspaces/:id/members` with their user id. Only members can read a workspace; host-level routes (components, extensions and MCP, plugins, the folder picker, daemon status) are hub-administrator-only, and any other signed-in account gets 403.
 6. Each person registers their own daemon. In **App settings → Daemons**, generate a registration code, then on their machine run `nema daemon register --hub <hub URL>` and paste the code, followed by `nema daemon --hub <hub URL>`. The daemon keeps running on their machine; model credentials never leave it.
+
+In a shared workspace, a task goes to one eligible online daemon: its owner is a member of the workspace, and it holds the workspace's bound repositories. The task uses that daemon's local model account and credentials, which need not be the sender's own daemon. For example, if B has no eligible daemon online and only A's is eligible, A's daemon runs B's message and it consumes A's model quota.
 
 ### Sessions
 

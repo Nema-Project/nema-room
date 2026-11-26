@@ -110,10 +110,12 @@ Compose は既定で hub と web のポートを `127.0.0.1` にのみ公開し�
 
 1. `.env` でリモート用の変数を設定して hub を起動します（`docker compose up -d`）。Compose が 3 つの変数を hub コンテナに渡すため、`docker-compose.yml` の編集は不要です。
 2. 最初のアカウントを作成します。アカウントがまだない状態での初回起動時、hub はワンタイムのブートストラップトークンを `<dataDir>/bootstrap-token`（権限 `0600`）に書き込み、パスをログに出力します。Compose では `docker compose logs hub` でパスを確認するか、データディレクトリ内のファイルを直接読みます（`${NEMA_DATA_HOST_DIR:-~/.nema/data}/bootstrap-token`）。`POST /api/auth/bootstrap`（`token`、`displayName`、`password`）でアカウントを作成します。
-3. その最初の（管理者）アカウントで web のログインページにサインインします。
-4. 次の人を招待します。管理者が `POST /api/auth/invites` を呼ぶとワンタイムの招待コードが返ります。相手は `POST /api/auth/invites/accept`（`code`、`displayName`、`password`）で招待を受け入れ、サインインします。
+3. その最初の（管理者）アカウントで web のログインページにサインインします。ログインページの「アカウント」にはユーザー id（`usr_…`）を入力します。これは `POST /api/auth/bootstrap` のレスポンスに含まれる `userId` です。
+4. 次の人を招待します。管理者が `POST /api/auth/invites` を呼ぶとワンタイムの招待コードが返ります。相手は `POST /api/auth/invites/accept`（`code`、`displayName`、`password`）で招待を受け入れ、そのレスポンスの `userId`（`usr_…`）をアカウントとしてサインインします。現在、招待の受け入れはこの API でのみ行えます。web には招待を受け入れるページはまだありません。
 5. 相手をワークスペースに追加します。`POST /api/workspaces/:id/members` に相手のユーザー id を指定します。ワークスペースを読めるのはメンバーのみです。ホストレベルのルート（コンポーネント、拡張と MCP、プラグイン、ディレクトリ選択、daemon の状態）は hub 管理者のみが使え、それ以外のサインイン済みアカウントは 403 になります。
 6. 各自が自分の daemon を登録します。**アプリ設定 → デーモン**で登録コードを生成し、自分のマシンで `nema daemon register --hub <hub の URL>` を実行してコードを貼り付け、続けて `nema daemon --hub <hub の URL>` を実行します。daemon は各人のマシンで常駐します。モデル認証情報がマシンの外に出ることはありません。
+
+共有ワークスペースでは、タスクは条件を満たすオンラインの daemon 1 台に割り当てられます。条件は、所有者がそのワークスペースのメンバーであること、ワークスペースに紐付いたリポジトリを保持していることです。タスクはその daemon のマシンにあるモデルアカウントと認証情報を使うため、送信者自身の daemon とは限りません。たとえば条件を満たす B の daemon がオンラインになく、A の daemon だけが条件を満たす場合、B のメッセージは A の daemon が実行し、A のモデル利用枠を消費します。
 
 ### セッション
 
