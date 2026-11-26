@@ -76,6 +76,7 @@ describe("MessageItem", () => {
     } finally {
       localStorage.removeItem("nema.locale");
     }
+  });
 
   it("labels index completion as a system notice and quotes the original message", async () => {
     const message = msg({ role: "system", content: "仓库 API 的代码索引已完成，可以开始询问代码库。" });
