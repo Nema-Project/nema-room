@@ -1,1 +1,0 @@
-- Remote hub (`NEMA_HUB_REMOTE=1`): the `NEMA_HUB_ALLOWED_HOSTS` allowlist now also guards the `/daemon` WebSocket upgrade, not just HTTP requests. A remote hub refuses the upgrade with 403 when the `Host` is neither loopback nor listed, using the same rule as the HTTP guard. Local installs are unchanged and still accept any `Host` on the daemon socket.

@@ -1,1 +1,0 @@
-- The hub now keeps every connected daemon instead of only the newest. A daemon that connects no longer disconnects another daemon or interrupts its running task, and a daemon that disconnects returns only its own running task to the queue. The daemon status shows connected while any daemon is online.

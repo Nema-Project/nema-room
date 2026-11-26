@@ -4,6 +4,65 @@ Version sections on main may describe release preparation. A version heading and
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-26
+
+### Added
+
+- The remote hub is now available as an opt-in form for a small team on a trusted network (`NEMA_HUB_REMOTE=1`): one standalone hub serves several accounts, each person runs their own daemon on their own machine, and only the hub administrator may use host-level routes.
+- A remote hub only answers Host values the deployer lists in `NEMA_HUB_ALLOWED_HOSTS`; loopback is always allowed and anything else is refused with 403. When set, `NEMA_HUB_PUBLIC_URL` tells remote daemons the hub's public origin, so a TLS-terminating reverse proxy no longer leaves them with an `http://` hub address.
+- The default single-user behaviour is unchanged: without `NEMA_HUB_REMOTE=1` the hub behaves exactly as before, and upgrading changes nothing for installed components or existing single-user users.
+
+### Changed
+
+- The hub now keeps every connected daemon instead of only the newest. A daemon that connects no longer disconnects another daemon or interrupts its running task, and a daemon that disconnects returns only its own running task to the queue. The daemon status shows connected while any daemon is online.
+
+- The hub no longer requires a daemon to report exactly the hub's version: any CLI at or above the minimum compatible version (0.3.3) is accepted, so upgrading the hub no longer stops the whole daemon fleet. A daemon below the minimum is refused with an upgrade pointer.
+
+- In a remote hub, a task is now only claimed by a daemon whose owner belongs to the task's workspace and which holds the workspace's bound repositories; other daemons leave the task queued, and the chat shows why it is waiting (no daemon online, no member daemon, or a repository no online daemon holds). Repository calls prefer the daemon that holds the repository and fall back to the newest owner daemon when none does. Daemons report the repositories they hold when they connect and after every repository sync.
+
+- Give timeline system notices a labeled layout, show the repository separately in architecture task instructions, and highlight failures with copyable recovery commands.
+
+- Workspace settings now has a dedicated Repositories section for linking repositories and managing their settings. Code & plugins shows Graphify and workspace plugins.
+
+### Fixed
+
+- A local hub no longer fails to start when `NEMA_HUB_PUBLIC_URL` holds a schemeless or otherwise invalid value: the remote-only setting is only parsed when `NEMA_HUB_REMOTE=1`. Remote mode still rejects an invalid value at startup.
+
+- Compose now forwards `NEMA_WEB_ORIGIN` from `.env` into the hub container, so a LAN web origin set there takes effect; when unset, the loopback list built from `NEMA_WEB_PORT` is unchanged.
+
+- The remote hub guides and READMEs no longer suggest `0.0.0.0` for `NEMA_WEB_BIND`: the setup guard rejects it, so the documented value could never start via setup/up. Set a specific LAN address instead.
+- The remote hub guides now state the Docker `"userland-proxy": false` prerequisite (and the RootlessKit below v3.0 caveat) before the LAN publishing steps.
+- In the remote form, the web login page must be served over HTTPS too (the same TLS-terminating reverse proxy that fronts the hub can serve it); `http://localhost` stays the development exception.
+- The image checks' default-origin assertions no longer inherit a developer's `NEMA_WEB_ORIGIN` / `NEMA_WEB_PORT` or repo `.env`, so they measure the Compose defaults; the LAN pass-through case is unchanged.
+
+- The remote hub guides and READMEs now state that the web page and the hub must be on the same site: the session cookie is `SameSite=Lax`, so cross-site deployments are not supported. With the hub at `127.0.0.1:4400`, open the web at `127.0.0.1:3000`; `localhost:3000` cannot sign in to that hub, because `localhost` and `127.0.0.1` are different sites.
+
+- A queued task behind fifty tasks its daemon cannot run is now reached instead of waiting forever while every dispatch re-checked the same first batch.
+- When a workspace's repositories are split across daemons, the waiting line names what the best-placed daemon is still missing instead of showing nothing.
+- The waiting line now refreshes when a daemon's held repositories change, and a holdings report that arrives out of order no longer overwrites a newer one.
+- Threads, thread replies and message edits now show why a task is waiting right away, like a plain message send.
+- A task sent back to the queue shows its waiting line again instead of a stuck working indicator, and a task that fails before running clears its waiting line.
+
+- A daemon reporting new held repositories no longer re-runs the whole task dispatch once per waiting task while refreshing the waiting lines.
+- Stamping a release now raises the oldest CLI version the hub accepts to that release, so the version-skew check keeps refusing an out-of-date daemon.
+
+- A broadcast call to all connected daemons now resolves with the first answer instead of waiting for every daemon, so one silent daemon no longer delays the result.
+- Unbinding a repository now asks every connected daemon to forget it, so its snapshot is removed from whichever daemon indexed it.
+
+- Remote hub docs: the login account is the `usr_…` `userId` returned by `POST /api/auth/bootstrap` or `POST /api/auth/invites/accept`, and invites can only be accepted through that API for now (the web has no invite page). The guide also states that a task in a shared workspace runs on one eligible member's daemon and uses that daemon's local model account, so one member's message can consume another member's model quota.
+
+- Clear sent mention chips from the composer after a successful send while keeping mentions added during the send.
+
+- Graphify availability and interruption messages in the app now follow the selected UI language.
+
+- Restore standard editing shortcuts in the macOS desktop app and add right-click editing actions for selected text and editable fields.
+
+### Security
+
+- Remote hub (`NEMA_HUB_REMOTE=1`): the `NEMA_HUB_ALLOWED_HOSTS` allowlist now also guards the `/daemon` WebSocket upgrade, not just HTTP requests. A remote hub refuses the upgrade with 403 when the `Host` is neither loopback nor listed, using the same rule as the HTTP guard. Local installs are unchanged and still accept any `Host` on the daemon socket.
+
+- Remote hub (`NEMA_HUB_REMOTE=1`): host-level routes are now restricted to the hub administrator. These are optional components, the agent CLI list, extensions and MCP servers (including their secrets), the host plugin catalog, the folder picker and daemon status. Other signed-in accounts get 403. The read-only attachment capability lookup stays open to signed-in accounts. Workspace plugin settings keep their owner check, and local installs are unchanged.
+
 ## [0.3.2] - 2026-11-24
 
 ### Changed

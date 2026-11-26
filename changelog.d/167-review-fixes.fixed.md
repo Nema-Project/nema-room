@@ -1,2 +1,0 @@
-- A broadcast call to all connected daemons now resolves with the first answer instead of waiting for every daemon, so one silent daemon no longer delays the result.
-- Unbinding a repository now asks every connected daemon to forget it, so its snapshot is removed from whichever daemon indexed it.

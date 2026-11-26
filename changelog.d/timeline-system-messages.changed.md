@@ -1,1 +1,0 @@
-- Give timeline system notices a labeled layout, show the repository separately in architecture task instructions, and highlight failures with copyable recovery commands.
