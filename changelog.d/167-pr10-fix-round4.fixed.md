@@ -1,0 +1,1 @@
+- The remote hub guides and READMEs now state that the web page and the hub must be on the same site: the session cookie is `SameSite=Lax`, so cross-site deployments are not supported. With the hub at `127.0.0.1:4400`, open the web at `127.0.0.1:3000`; `localhost:3000` cannot sign in to that hub, because `localhost` and `127.0.0.1` are different sites.
