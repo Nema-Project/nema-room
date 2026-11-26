@@ -1,6 +1,7 @@
 import type http from "node:http";
 import { nanoid } from "nanoid";
-import { WebSocketServer, type WebSocket } from "ws";
+import { WebSocketServer, type VerifyClientCallbackAsync, type WebSocket } from "ws";
+import { createHostAllowed } from "./hostAllowlist.js";
 import { KnowledgeStore } from "@nema/knowledge";
 import { AttachmentRefSchema, DAEMON_CREDENTIAL_REVOKED_MESSAGE, WORKPACKAGE_LIMITS, normalizeRemoteUrl, parseDaemonToHub, parseManualSkill, parseRouteDecision, type AgentMessageMeta, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
 import { createConnectionRpc, DaemonRpcError, withDaemonTarget, type ConnectionRpc, type DaemonRpc, type DaemonTarget } from "./daemonRpc.js";
@@ -50,7 +51,13 @@ export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daem
    * When set, remote daemons get this origin instead of the upgrade-derived one; the local
    * daemon keeps `hubUrl` and this is never consulted. Forwarding headers are not trusted.
    */
-  publicHubUrl?: string };
+  publicHubUrl?: string;
+  /**
+   * #167 task 15 F-1: the Host allowlist from NEMA_HUB_ALLOWED_HOSTS, the same list the HTTP guard uses.
+   * While `remoteAuth` is on, a `/daemon` upgrade whose Host is neither loopback on the listening port nor
+   * listed is refused with 403 before any hello. Without `remoteAuth` it is ignored and any Host may connect.
+   */
+  allowedHosts?: string[] };
 
 type Conn = {
   ws: WebSocket;
@@ -128,6 +135,27 @@ function hubUrlFromUpgrade(req: http.IncomingMessage | undefined): string | null
   }
 }
 
+/**
+ * The remote form's `/daemon` upgrade check: the same Host predicate as the HTTP guard (createHostAllowed),
+ * against the port the server actually listens on. A refused upgrade is answered `403 Forbidden` and never
+ * reaches hello, matching the HTTP guard's 403; the refusal is logged with the offending Host, JSON-quoted.
+ */
+function daemonUpgradeHostCheck(
+  server: http.Server,
+  opts: { allowedHosts?: string[]; remoteAuth?: boolean },
+): VerifyClientCallbackAsync {
+  // The two-argument form: a synchronous `false` would make ws answer 401, which reads as an auth failure.
+  return ({ req }, done) => {
+    const address = server.address();
+    const host = req.headers.host;
+    const ok = typeof address === "object" && address !== null && host !== undefined
+      && createHostAllowed(address.port, opts)(host);
+    if (ok) return done(true);
+    console.warn(`daemon upgrade refused: forbidden host ${JSON.stringify(host ?? null)}`);
+    done(false, 403, "forbidden host");
+  };
+}
+
 export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps): {
   /** Any daemon online; with an id, that daemon online. */
   isConnected(daemonId?: string): boolean;
@@ -142,7 +170,13 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   close(): Promise<void>;
 } {
   const { db, dataDir, events } = deps;
-  const wss = new WebSocketServer({ server, path: "/daemon" });
+  const wss = new WebSocketServer({
+    server,
+    path: "/daemon",
+    // #167 task 15 F-1: the remote form applies the HTTP guard's Host allowlist to this upgrade too.
+    // Without it a DNS-rebinding page could still open /daemon; the local form keeps accepting any Host.
+    ...(deps.remoteAuth ? { verifyClient: daemonUpgradeHostCheck(server, { allowedHosts: deps.allowedHosts, remoteAuth: deps.remoteAuth }) } : {}),
+  });
   /**
    * The connection table (#167): every accepted daemon by its id, in acceptance order. A hello adds its
    * connection and leaves the others alone; a close removes only its own. The only replacement left is a

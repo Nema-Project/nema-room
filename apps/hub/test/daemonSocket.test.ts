@@ -1554,7 +1554,8 @@ describe("remote daemon hello", () => {
     await db.query("insert into workspace_members(workspace_id,user_id,role,added_by) values ($1,'usr_daemon','member','usr_local')", [wsA]);
     const httpServer = http.createServer();
     remoteServer = httpServer;
-    remote = attachDaemonSocket(httpServer, { db, dataDir, events, daemonToken: TOKEN, hubUrl: "http://127.0.0.1:4400", remoteAuth: true, ...(publicHubUrl ? { publicHubUrl } : {}) });
+    // hub.example is the Host these tests' daemons send; since #167 task 15 F-1 the remote upgrade needs it listed.
+    remote = attachDaemonSocket(httpServer, { db, dataDir, events, daemonToken: TOKEN, hubUrl: "http://127.0.0.1:4400", remoteAuth: true, allowedHosts: ["hub.example"], ...(publicHubUrl ? { publicHubUrl } : {}) });
     await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
     remoteUrl = `ws://127.0.0.1:${(httpServer.address() as AddressInfo).port}/daemon`;
     return remote;
@@ -1689,6 +1690,92 @@ describe("remote daemon hello", () => {
     }
     const retry = await connect(credential, undefined, {}, remoteUrl);
     await retry.next("welcome");
+  });
+});
+
+describe("/daemon upgrade Host allowlist (#167 task 15 F-1)", () => {
+  const opened: Array<{ server: http.Server; handle: ReturnType<typeof attachDaemonSocket> }> = [];
+  afterEach(async () => {
+    for (const s of sockets.splice(0)) s.terminate();
+    for (const { server: s, handle: h } of opened.splice(0)) {
+      await h.close();
+      s.closeAllConnections();
+      await new Promise<void>((resolve) => s.close(() => resolve()));
+    }
+  });
+
+  async function hubWith(extra: { remoteAuth?: boolean; allowedHosts?: string[] }): Promise<{ port: number; wsUrl: string }> {
+    const s = http.createServer();
+    const h = attachDaemonSocket(s, { db, dataDir, events, daemonToken: TOKEN, hubUrl: "http://127.0.0.1:4400", ...extra });
+    opened.push({ server: s, handle: h });
+    await new Promise<void>((resolve) => s.listen(0, "127.0.0.1", resolve));
+    const port = (s.address() as AddressInfo).port;
+    return { port, wsUrl: `ws://127.0.0.1:${port}/daemon` };
+  }
+
+  /** Opens a raw upgrade with the given Host; resolves "open" or the HTTP status the hub refused with. */
+  function upgrade(wsUrl: string, host: string): Promise<"open" | number> {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(wsUrl, { headers: { host } });
+      sockets.push(ws);
+      ws.on("open", () => resolve("open"));
+      ws.on("unexpected-response", (_req, res) => resolve(res.statusCode ?? -1));
+      ws.on("error", reject);
+    });
+  }
+
+  test("remote form: an off-list Host is refused with 403 and never reaches hello", async () => {
+    const { wsUrl } = await hubWith({ remoteAuth: true, allowedHosts: ["hub.example.lan"] });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await upgrade(wsUrl, "evil.example.com:4400")).toBe(403);
+      expect(warn).toHaveBeenCalledWith('daemon upgrade refused: forbidden host "evil.example.com:4400"');
+    } finally {
+      warn.mockRestore();
+    }
+    // No hello was processed, so not even a credential rejection was recorded.
+    expect(await db.query("select kind from daemon_events")).toEqual([]);
+  });
+
+  test("remote form: loopback on the listening port and listed hosts still upgrade", async () => {
+    const { port, wsUrl } = await hubWith({ remoteAuth: true, allowedHosts: ["hub.example.lan", "other.example:8443"] });
+    expect(await upgrade(wsUrl, `127.0.0.1:${port}`)).toBe("open");
+    expect(await upgrade(wsUrl, `localhost:${port}`)).toBe("open");
+    expect(await upgrade(wsUrl, "hub.example.lan:4400")).toBe("open");
+    expect(await upgrade(wsUrl, "HUB.EXAMPLE.LAN")).toBe("open");
+    expect(await upgrade(wsUrl, "other.example:8443")).toBe("open");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // A ported entry matches only that port; loopback on another port is not this hub.
+      expect(await upgrade(wsUrl, "other.example:4400")).toBe(403);
+      expect(await upgrade(wsUrl, `127.0.0.1:${port + 1}`)).toBe(403);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("remote form without an allowlist: only loopback upgrades", async () => {
+    const { port, wsUrl } = await hubWith({ remoteAuth: true });
+    expect(await upgrade(wsUrl, `127.0.0.1:${port}`)).toBe("open");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await upgrade(wsUrl, "hub.example.lan:4400")).toBe(403);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("local form: the upgrade is not Host-checked, even with a filled allowlist (behaviour unchanged)", async () => {
+    const { port, wsUrl } = await hubWith({ allowedHosts: ["hub.example.lan"] });
+    expect(await upgrade(wsUrl, `127.0.0.1:${port}`)).toBe("open");
+    expect(await upgrade(wsUrl, "evil.example.com:4400")).toBe("open");
+  });
+
+  test("remote form: an allowed upgrade still needs a valid credential at hello", async () => {
+    const { wsUrl } = await hubWith({ remoteAuth: true, allowedHosts: ["hub.example.lan"] });
+    const daemon = await connect("not-a-credential", undefined, {}, wsUrl, { headers: { host: "hub.example.lan:4400" } });
+    expect((await daemon.next("error")).message).toMatch(/invalid daemon credential/i);
+    await daemon.closed;
   });
 });
 
