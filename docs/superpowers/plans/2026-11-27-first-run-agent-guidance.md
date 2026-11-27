@@ -27,7 +27,7 @@ spec 的「现状核实」写于 `ca0266d`。此后 `main` 合入了 99 个提�
 - **不改 `agents.detect` 与「组件」页**（D-7）：两者共用执行器，但 `agents.detect` 仍把所有失败映射为 `installed: false`。每个触及执行器的任务都要有回归断言。
 - **回复不含凭据**：`agents.readiness` 的回复只有状态、理由码、命令名与版本、账户 id/是否合成/认证模式。不含路径内容、stderr 或令牌。hub 再按 `access` 裁剪（spec「数据契约」末段）。
 - **降级是安静的**：旧 daemon 没有 `agents.readiness` 方法、daemon 离线、RPC 失败，web 一律视为 `unknown`：不弹横幅，不给 Composer 提示（D-7、D-8）。
-- **永久标记只能由已确认的连接写入**（D-4 并发条、D-6）：只有浏览器已通过状态事件或快照持有同一个 `daemon.id`，`ready` 回复才能写「已完成首次就绪」标记。这条不变量在任务 6 中实现，在任务 6 与任务 9 中各用测试钉住。
+- **永久标记只能由已确认的连接写入**（D-4 并发条、D-6）：只有浏览器在收到 `ready` 回复**之后**又收到状态事件或快照，且该状态的 daemon 身份与**连接身份**都与回复一致，`ready` 回复才能写「已完成首次就绪」标记。只凭就绪回复本身、或凭回复之前收到的状态，不得写标记。浏览器尚未确认任何 `daemonId` 时（例如远程非管理员在两次状态事件之间打开页面），就绪视为 `unknown`：不写标记、不显示横幅与 Composer 提示，卡片第 0 步显示连接状态未知。这条不变量在任务 6 中实现，在任务 6 与任务 9 中各用测试钉住。
 - **文案**：主语是「运行 daemon 的机器」；不说「未安装」，只说「PATH 上找不到」（现状 8、D-10）；不说「可用」或「已验证」。所有新增字符串同步进 `apps/web/messages/{en,zh,ja}.json`。命令一律用版本化写法（AGENTS.md）。
 - **验收三类分开记**：静态检查、自动化测试、真实环境（VM 内 Compose，任务 13）互不替代。桌面实机不主动测（2026-11-16 测试政策）；D-10 的 macOS PATH 推断如需确认，由维护者在实机上看。
 
@@ -86,7 +86,7 @@ spec 的「现状核实」写于 `ca0266d`。此后 `main` 合入了 99 个提�
 
 ### 任务 3：`agents.readiness` RPC 与共享类型（D-1、D-3、D-7）
 
-- [ ] 在 `packages/shared` 定义 spec「数据契约」中的 `RuntimeReadiness`、`ReadinessReply`，以及 hub HTTP 回复类型 `AgentReadinessResponse = ReadinessReply & { daemon: { id; label }; access: "full" | "owner_unknown" | "non_owner" }`，裁剪形式的字段可选性用类型表达。理由码只能取 spec 列出的五个。
+- [ ] 在 `packages/shared` 定义 spec「数据契约」中的 `RuntimeReadiness`、`ReadinessReply`，以及 hub HTTP 回复类型 `AgentReadinessResponse = ReadinessReply & { daemon: { id; connectionId; label }; access: "full" | "owner_unknown" | "non_owner" }`，其中 `connectionId` 是 hub 为每次接受的连接分配的标识（同一 daemon 重连时不同），裁剪形式的字段可选性用类型表达。理由码只能取 spec 列出的五个。
 - [ ] 新 `apps/cli/src/agents/readiness.ts` 的 `computeReadiness({ nemaHome, codexHome, config, force, probe, now })`：
   - 同一次调用只执行一次 `loadRoutingAccounts`。它抛错时两行都记 `unknown` + `inspect_failed`。缺少 `accounts.json` 时只为当前 `config.adapter` 合成账户；另一运行时不用旧路径凭据预演切换。spec 写的是「只为当前运行时合成账户」，另一行此时怎么判定，执行时按 `loadRoutingAccounts` 的实际返回处理，原文见[待确认](#待确认不阻塞开工)第 4 条。
   - 默认账户按 `resolveRoute` 无显式选择时的规则选取（`routing/index.ts:166-179`：该运行时下已启用账户按 `order`、再按 id 排序取第一个）。把这段逻辑抽成共用函数，或在测试里与 `resolveRoute` 对拍，不要复制出一份会漂移的实现。
@@ -104,10 +104,10 @@ spec 的「现状核实」写于 `ca0266d`。此后 `main` 合入了 99 个提�
 ### 任务 4：daemon 状态带上当前应答连接的 id（D-4 第一条）
 
 - [ ] 定义「当前连接」为不带目标的 RPC 会落到的那个连接，即 `openConnections()` 中最新的一个（`chooseConnection` 规则 4；只有一个连接时就是它）。这正是任务 5 中就绪调用的应答者，两处必须用同一个函数取值。
-- [ ] `GET /api/daemon/status` 回 `{ connected, daemonId: string | null }`。`daemon.status` 事件同样带 `daemonId`。
-- [ ] 事件发布时机：接受 hello 后发布（新连接成为最新）；连接关闭后若最新连接的 id 变了，发布新的 id；没有剩余连接时发 `connected: false, daemonId: null`。只发布与发布时刻连接表一致的值（spec「hub 只发布仍与当前连接状态一致的事件」）：发布前重读连接表，不使用闭包里的旧值。
+- [ ] `GET /api/daemon/status` 回 `{ connected, daemonId: string | null, connectionId: string | null }`。`daemon.status` 事件同样带 `daemonId` 与 `connectionId`。`connectionId` 由 hub 在每次接受连接时分配（自增序号或随机串均可），同一 daemon 重连时 `daemonId` 不变而 `connectionId` 变化；没有剩余连接时两者都为 null。
+- [ ] 事件发布时机：接受 hello 后发布（新连接成为最新）；连接关闭后若最新连接的 id 变了，发布新的 id 与 connectionId；没有剩余连接时发 `connected: false, daemonId: null, connectionId: null`。只发布与发布时刻连接表一致的值（spec「hub 只发布仍与当前连接状态一致的事件」）：发布前重读连接表，不使用闭包里的旧值。
 - [ ] 同步 `packages/shared` 中的事件类型与 web 侧消费的类型（仅加可选字段，旧 web 忽略它）。
-- [ ] 先写失败测试（`apps/hub/test/daemonSocket.test.ts` 续写）：首次连接事件带 id；同一 daemon 直接替换连接时发布新 id（`true → true`）；两个连接中最新者关闭，事件给出较旧者的 id；全部关闭时为 null；`GET /api/daemon/status` 与事件给出同一个 id。
+- [ ] 先写失败测试（`apps/hub/test/daemonSocket.test.ts` 续写）：首次连接事件带 id 与 connectionId；同一 daemon 直接替换连接时发布新 id（`true → true`），且 connectionId 变化；两个连接中最新者关闭，事件给出较旧者的 id 与 connectionId；全部关闭时两者都为 null；`GET /api/daemon/status` 与事件给出同一个 id 与 connectionId。
 - [ ] 验证：`npx vitest run apps/hub/test/daemonSocket.test.ts`；hub 既有套件不回归。
 
 ### 任务 5：`GET /api/agent-readiness`（D-4、D-7、D-9）
@@ -118,14 +118,14 @@ spec 的「现状核实」写于 `ca0266d`。此后 `main` 合入了 99 个提�
   - daemon 离线时按既有 `daemonHttpStatus` 回 503。
   - 回复生成前，若应答连接已不在连接表中，或已不是「当前连接」，也回 503。
   - daemon 回「未知方法」时，回可识别的错误码（建议 `{ error: "readiness_unsupported" }`，状态码执行时与 web 侧约定），web 据此显示 `unknown`。daemon 侧对未注册方法的错误形状，执行时在 `apps/cli/src/daemon/rpc.ts` 核对。
-- [ ] `daemon` 字段由 hub 填写：`id` 取应答连接的 `daemonId`；`label` 对注册 daemon 取 `daemons.label`，对本机 daemon 取 `null`。
+- [ ] `daemon` 字段由 hub 填写：`id` 取应答连接的 `daemonId`，`connectionId` 取应答连接的连接标识；`label` 对注册 daemon 取 `daemons.label`，对本机 daemon 取 `null`。
 - [ ] `access` 与裁剪（spec「谁能看到多少」，按 #167 已落地的状态具体化）：
   - 身份为 `usr_local`（本机形态）：`full`。
   - 远程身份，应答连接已注册，且 `ownerUserId === identity.userId`：`full`。
   - 远程身份，应答连接已注册但属于他人：`non_owner`。
   - 远程身份，应答连接未注册（共享 token 的本机 daemon）：`owner_unknown`。
   - 两种裁剪形式都只保留 `access`、`current`、`checkedAt`、`daemon`，以及各行的 `runtime` 与 `state`，删掉 `reason`、`cli`、`account`。裁剪在 hub 端完成，用白名单构造新对象，不用删除字段的写法。
-- [ ] 先写失败测试（新 `apps/hub/test/agentReadiness.test.ts`，仿照 `apps/hub/test/components.test.ts`，覆盖 spec「验收口径·自动化测试」第 2 条）：透传与 `force`；离线 503；应答后、回复前连接被替换时回 503；旧 daemon 的未知方法；`daemon` 取自应答连接（两个连接在线时取最新者）；`full`、`owner_unknown`、`non_owner` 三种访问级别及各自的字段集合（裁剪回复中不出现 `account`、`cli`、`reason`）；远程模式下非管理员也能访问此路由（不返回 403）。
+- [ ] 先写失败测试（新 `apps/hub/test/agentReadiness.test.ts`，仿照 `apps/hub/test/components.test.ts`，覆盖 spec「验收口径·自动化测试」第 2 条）：透传与 `force`；离线 503；应答后、回复前连接被替换时回 503；旧 daemon 的未知方法；`daemon` 取自应答连接（两个连接在线时取最新者，`id` 与 `connectionId` 都与该连接一致）；`full`、`owner_unknown`、`non_owner` 三种访问级别及各自的字段集合（裁剪回复中不出现 `account`、`cli`、`reason`）；远程模式下非管理员也能访问此路由（不返回 403）。
 - [ ] 验证：`npx vitest run apps/hub/test/agentReadiness.test.ts apps/hub/test/daemonSocket.test.ts apps/hub/test/components.test.ts`；`npm run typecheck`；hub 全套件不回归。
 
 ## 阶段三：web 数据层与设置深链（PR-3）
@@ -142,10 +142,10 @@ spec 的「现状核实」写于 `ca0266d`。此后 `main` 合入了 99 个提�
   - 四个刷新时刻：页面加载；`daemon.status` 从断开变为连接，或 `daemonId` 变化（含 `true → true`）；窗口重新获得焦点；用户点「重新检查」（`force`）。
   - 焦点节流 30 秒，窗口内再获得焦点时在窗口结束补一次检查（trailing），同一窗口只补一次。
   - 另外导出 `recheck()`，供任务 8 在保存与登录成功时调用。
-  - 每个连接周期有一个序号。断开或 `daemonId` 变化时清空状态，并让在途请求失效。只接纳当前周期内最新一次请求的结果。成功回复的 `daemon.id` 必须等于浏览器从状态事件或快照得到的 `daemonId`，否则丢弃。
-  - **标记写入条件**：`overall === "ready"`，且回复的 `daemon.id` 等于浏览器已通过状态事件或快照确认的 id。只凭就绪回复本身不得写标记。
+  - 每个连接周期有一个序号。断开或 `daemonId` 变化时清空状态，并让在途请求失效。只接纳当前周期内最新一次请求的结果。成功回复的 `daemon.id` 与 `daemon.connectionId` 必须等于浏览器从状态事件或快照得到的最新值，否则丢弃。浏览器尚未确认任何 `daemonId` 时，所有就绪回复都丢弃，整体状态为 `unknown`。
+  - **标记写入条件**：`overall === "ready"`，且在收到该回复**之后**又收到状态事件或快照，其 `daemonId` 与 `connectionId` 都与回复一致。只凭就绪回复本身、或凭回复之前收到的状态，不得写标记。未确认任何 `daemonId` 时不写标记，整体状态为 `unknown`，卡片第 0 步显示连接状态未知（见任务 9）。
   - 不做轮询。
-- [ ] 先写失败测试（新 `apps/web/test/agentReadiness.test.ts` 与 `useAgentReadiness.test.tsx`，用假时钟、假 hub）：`overall` 的各分支；trailing 补检只发生一次；断开与直接换连接让旧响应失效；同一连接内旧响应不覆盖新响应；旧连接的 `ready` 不写标记；替换后状态事件未到时，在途的旧 daemon `ready` 回复不写标记；标记按 hub 加用户隔离，另一用户不继承；`localStorage` 抛错时不崩溃。
+- [ ] 先写失败测试（新 `apps/web/test/agentReadiness.test.ts` 与 `useAgentReadiness.test.tsx`，用假时钟、假 hub）：`overall` 的各分支；trailing 补检只发生一次；断开与直接换连接让旧响应失效；同一连接内旧响应不覆盖新响应；旧连接的 `ready` 不写标记；同一 daemon 重连后，旧连接的 `ready` 回复即使 `daemon.id` 相符也因 `connectionId` 不符而不写标记；标记只在回复之后收到的状态与回复的 daemon 与连接身份都一致时写入；替换后状态事件未到时，在途的旧 daemon `ready` 回复不写标记；未确认任何 `daemonId` 时整体为 `unknown` 且不写标记；标记按 hub 加用户隔离，另一用户不继承；`localStorage` 抛错时不崩溃。
 - [ ] 验证：`npx vitest run apps/web/test/agentReadiness.test.ts apps/web/test/useAgentReadiness.test.tsx`。
 
 ### 任务 7：下一步动作选择（D-5、D-9、D-10）
@@ -180,7 +180,7 @@ spec 的「现状核实」写于 `ca0266d`。此后 `main` 合入了 99 个提�
 
 - [ ] 新 `AgentReadinessCard.tsx`，放在零工作区时的 `main.empty` 位置（`WorkspaceShell.tsx` 中两处 `main.empty` 的语义执行时核对，只放在「没有任何工作区」的那一处），排在「创建工作区」旁边，不遮挡它。
 - [ ] 内容：
-  - 第 0 步是「daemon 已连接」，复用现有 `connected`。未连接时运行时行显示「unknown（daemon 未连接）」，并给出启动 daemon 的命令与 guide（D-8）。
+  - 第 0 步是「daemon 已连接」，复用现有 `connected`。未连接时运行时行显示「unknown（daemon 未连接）」，并给出启动 daemon 的命令与 guide（D-8）。浏览器尚未确认 daemon 身份时（见任务 6），第 0 步显示「连接状态未知」，不给出就绪结论。
   - 当前运行时一行，写明检查时间与「检查了什么、没检查什么」（「已配置」不等于「已验证」）。
   - 按任务 7 的结果给出下一步，附「重新检查」按钮。
 - [ ] 退休：`ready`、已有首次就绪标记或用户点过「不再提示」时，卡片只显示状态，不给建议或操作。创建工作区后卡片消失。
@@ -215,7 +215,7 @@ spec 的「现状核实」写于 `ca0266d`。此后 `main` 合入了 99 个提�
   1. daemon 未启动时：卡片第 0 步显示未连接，无横幅。
   2. 启动 daemon 后，卡片显示 `codex-direct` 为 `not_signed_in`，给出 `nema auth login` 的版本化命令。
   3. 切到 Claude 运行时：显示「PATH 上找不到 `claude`」与安装链接，不出现「未安装」字样。
-  4. 执行 `nema auth login` 后切回窗口：焦点复检，卡片转为「已配置」，引导退出。
+  4. 切回 `codex-direct` 运行时（第 3 步切到了 Claude；`nema auth login` 登录的是 Codex，不会使当前 Claude 运行时变为已配置），执行 `nema auth login`，再切回窗口：焦点复检，卡片转为「已配置」，引导退出。
   5. 删除凭据后：横幅与 Composer 提示不再出现（永久退休），设置页仍如实显示状态。
 - [ ] 第 4 步需要真实 SIWC 登录。若 VM 内无法完成真实登录，只验证到第 3 步，并在记录中写明此限制，不用自动化测试结果替代。不发起任何真实模型请求，不运行 `auth probe`。
 - [ ] 在 #302 贴验收记录，三类证据分开写，并注明桌面实机未测是政策决定。验收通过后关闭 #302；ROADMAP 中对应条目（若有）按证据更新状态。
@@ -225,7 +225,7 @@ spec 的「现状核实」写于 `ca0266d`。此后 `main` 合入了 99 个提�
 以下是 spec 写于 #167 落地之前，与 `e784ee4` 现状对照后发现的出入。本计划按括号中的落法执行。维护者如另有裁决，只需改动对应任务。
 
 1. **多 daemon 已经上线**：spec D-9 写「本项按单 daemon 实现」，并把「任一合格 daemon ready」的聚合留到 #167 二期或后续。#167 现已支持多连接，但本计划仍只报告不带目标的调用会落到的那一台（最新连接）。在多人远程部署中，这一台可能不是有权为某个工作区派发任务的 daemon。（任务 4、5 按「最新连接」实现；按工作区聚合另开 issue。）
-2. **非管理员拿不到 daemon 状态快照**：`GET /api/daemon/status` 位于 `HOST_ADMIN_PATH` 下。远程形态的非管理员只能通过 `daemon.status` 事件拿到 `daemonId`，在两次事件之间打开页面时可能一直没有确认的 id，因此不会写首次就绪标记。对非主人来说这无害，因为他们本来只拿到裁剪回复；但 daemon 主人如果不是 hub 管理员，同样受影响。（本计划不改主机级路由的门；可选做法是在就绪路由的回复之外，再为所有已登录用户开放一个只含 `{ connected, daemonId }` 的状态读取，需要维护者确认。）
+2. **非管理员拿不到 daemon 状态快照**：`GET /api/daemon/status` 位于 `HOST_ADMIN_PATH` 下。远程形态的非管理员只能通过 `daemon.status` 事件拿到 `daemonId`，在两次事件之间打开页面时可能一直没有确认的 id，因此不会写首次就绪标记。对非主人来说这无害，因为他们本来只拿到裁剪回复；但 daemon 主人如果不是 hub 管理员，同样受影响。（本计划不改主机级路由的门；可选做法是在就绪路由的回复之外，再为所有已登录用户开放一个只含 `{ connected, daemonId }` 的状态读取，需要维护者确认。**在裁决之前**：未确认 id 时按任务 6 的规则处理——就绪回复直接丢弃、整体状态为 `unknown`、不写标记、卡片第 0 步显示连接状态未知；无已确认 id 的就绪回复在任何情况下都不作为写标记的依据。若裁决开放快照，快照须同时带 `daemonId` 与 `connectionId`，其确认效力与状态事件相同。）
 3. **`owner_unknown` 的触发条件**：spec 以「#167 D-5 落地之前或之后」区分。D-5 落地后，远程形态里仍可能有未注册的共享 token 本机 daemon。（任务 5 对这种连接回 `owner_unknown`。）
 4. **缺少 `accounts.json` 时另一运行时的判定**：spec 写「只为当前运行时合成账户，不用旧路径凭据预演切换」，但状态表要求两行都给出状态。另一行是记 `not_signed_in`（`no_enabled_account`），还是沿用 `loadRoutingAccounts` 实际合成的结果，原文没有说清。（任务 3 以 `loadRoutingAccounts` 的实际返回为准，并用测试钉住，执行时在 PR 描述中写明。）
 
