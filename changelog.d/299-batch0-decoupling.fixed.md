@@ -1,0 +1,1 @@
+- Hub, daemon and web no longer copy the wording of the daemon-offline, unknown-method, version-skew, mirror-address and architecture-diagram texts they match on; producer and matcher share one constant, so translating these texts later cannot change HTTP status codes, the daemon's stop-on-version-skew, or the diagram progress label (#299). Behavior is unchanged.

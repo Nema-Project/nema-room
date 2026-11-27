@@ -4,7 +4,7 @@ import { WebSocketServer, type VerifyClientCallbackAsync, type WebSocket } from 
 import { createHostAllowed } from "./hostAllowlist.js";
 import { KnowledgeStore } from "@nema/knowledge";
 import { AttachmentRefSchema, DAEMON_CREDENTIAL_REVOKED_MESSAGE, WORKPACKAGE_LIMITS, normalizeRemoteUrl, parseDaemonToHub, parseManualSkill, parseRouteDecision, type AgentMessageMeta, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
-import { createConnectionRpc, DaemonRpcError, withDaemonTarget, type ConnectionRpc, type DaemonRpc, type DaemonTarget } from "./daemonRpc.js";
+import { createConnectionRpc, DAEMON_DISCONNECTED, DAEMON_NOT_CONNECTED, DaemonRpcError, withDaemonTarget, type ConnectionRpc, type DaemonRpc, type DaemonTarget } from "./daemonRpc.js";
 import { markDaemonSeen, revokeDaemon, verifyDaemonCredential, type RevokeRegisteredDaemon } from "./daemons.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
@@ -718,7 +718,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         if (!conn || stopping) return;
         const assigned = conn.assigned;
         conn.assigned = null;
-        conn.rpc.failAll("daemon 已断开");
+        conn.rpc.failAll(DAEMON_DISCONNECTED);
         // A claim that never reached task.assign is not an interruption.
         if (deps.remoteAuth) await chain;
         if (assigned) await announceInterrupted(db, events, await interruptRunning(db, { daemonId: conn.daemonId }));
@@ -813,7 +813,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   const rpc: DaemonRpc = {
     async call(method, params, timeoutMs, target) {
       const open = openConnections();
-      if (open.length === 0) throw new DaemonRpcError("daemon 未连接");
+      if (open.length === 0) throw new DaemonRpcError(DAEMON_NOT_CONNECTED);
       // One daemon: it answers every call, whatever the target, exactly as before the connection table.
       if (open.length === 1) return open[0]!.rpc.call(method, params, timeoutMs);
       if (target?.all) {
@@ -825,7 +825,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         }
       }
       const conn = await chooseConnection(open, target ?? {});
-      if (!isOpen(conn)) throw new DaemonRpcError("daemon 已断开");
+      if (!isOpen(conn)) throw new DaemonRpcError(DAEMON_DISCONNECTED);
       return conn.rpc.call(method, params, timeoutMs);
     },
   };

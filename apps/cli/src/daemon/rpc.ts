@@ -1,4 +1,4 @@
-import { GraphifyErrorSchema, type DaemonToHub, type HubToDaemon } from "@nema/shared";
+import { GraphifyErrorSchema, unknownRpcMethodError, type DaemonToHub, type HubToDaemon } from "@nema/shared";
 
 export type RpcHandler = (params: unknown) => Promise<unknown>;
 
@@ -14,7 +14,7 @@ export class RpcRouter {
 
   async handle(req: RpcRequest): Promise<RpcResponse> {
     const handler = this.handlers.get(req.method);
-    if (!handler) return { type: "rpc.response", id: req.id, ok: false, error: `未知方法 ${req.method}` };
+    if (!handler) return { type: "rpc.response", id: req.id, ok: false, error: unknownRpcMethodError(req.method) };
     try {
       return { type: "rpc.response", id: req.id, ok: true, result: await handler(req.params) };
     } catch (e) {

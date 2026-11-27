@@ -2,6 +2,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ARCHITECTURE_DIAGRAM_MARKER } from "@nema/shared";
 import { Chat, type ChatHandle } from "@/components/Chat";
 import { I18nProvider, LOCALE_STORAGE_KEY } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
@@ -141,6 +142,16 @@ describe("Chat", () => {
     expect(screen.getByText("Drawing the architecture diagram")).toBeTruthy();
     act(() => ref.current!.handleEvent({ type: "task.progress", taskId: "t9", text: "reading src", threadId: null }));
     expect(screen.getByText(/reading src/)).toBeTruthy();
+  });
+  it("labels a running system task by the hub's shared diagram marker, whatever the surrounding text", async () => {
+    const ref = await mount(true);
+    act(() => ref.current!.handleEvent({ type: "message.created", message: m("s1", `Repo API: ${ARCHITECTURE_DIAGRAM_MARKER}`, "system") }));
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t1", workspaceId: "w1", messageId: "s1", status: "running", error: null, threadId: null } }));
+    expect(screen.getByText("Drawing the architecture diagram")).toBeTruthy();
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t1", workspaceId: "w1", messageId: "s1", status: "done", error: null, threadId: null } }));
+    act(() => ref.current!.handleEvent({ type: "message.created", message: m("s2", "Repo API: summarize the code", "system") }));
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "s2", status: "running", error: null, threadId: null } }));
+    expect(screen.queryByText("Drawing the architecture diagram")).toBeNull();
   });
   it("shows progress for a running task and refetches on resync", async () => {
     const ref = await mount(true);

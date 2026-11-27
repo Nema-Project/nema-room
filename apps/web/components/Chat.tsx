@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
-import type { MessageMention } from "@nema/shared";
+import { ARCHITECTURE_DIAGRAM_MARKER, type MessageMention } from "@nema/shared";
 import { Composer } from "@/components/Composer";
 import { AgentAvatar, MessageItem, messageRoleLabel } from "@/components/MessageItem";
 import { formatDay, formatTime } from "@/lib/format";
@@ -192,8 +192,8 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
   );
 
   const runningMessage = runningTask ? messages.find((m) => m.id === runningTask.messageId) : undefined;
-  // ponytail: the hub's bind prompt contains 画架构图. The bar label depends on that phrase.
-  const drawingDiagram = runningMessage?.role === "system" && runningMessage.content.includes("画架构图");
+  // The hub's bind prompt contains ARCHITECTURE_DIAGRAM_MARKER; the bar label depends on it.
+  const drawingDiagram = runningMessage?.role === "system" && runningMessage.content.includes(ARCHITECTURE_DIAGRAM_MARKER);
 
   useLayoutEffect(() => {
     const el = stream.current;

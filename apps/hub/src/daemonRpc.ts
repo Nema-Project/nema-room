@@ -8,6 +8,21 @@ export class DaemonRpcError extends Error {
   }
 }
 
+/*
+ * The hub's own errors for "no daemon answered" (#299 batch 0). Status codes, repo binding and the extension
+ * index's disk fallback key on exactly these texts, so producers and matchers both use the constants and
+ * `isDaemonOffline` instead of repeating the wording.
+ */
+export const DAEMON_NOT_CONNECTED = "daemon 未连接";
+export const DAEMON_DISCONNECTED = "daemon 已断开";
+export const DAEMON_TIMED_OUT = "daemon 响应超时";
+const DAEMON_OFFLINE: ReadonlySet<string> = new Set([DAEMON_NOT_CONNECTED, DAEMON_DISCONNECTED, DAEMON_TIMED_OUT]);
+
+/** Whether an error message says no daemon answered (not connected, disconnected, or timed out). */
+export function isDaemonOffline(message: string): boolean {
+  return DAEMON_OFFLINE.has(message);
+}
+
 /** Plugin calls and index builds may run graphify on a whole repo, which takes minutes, not seconds. */
 export const INDEX_RPC_TIMEOUT_MS = 300_000;
 
@@ -71,7 +86,7 @@ export function createConnectionRpc(send: (id: string, method: string, params: u
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           if (!pending.delete(id)) return;
-          reject(new DaemonRpcError("daemon 响应超时"));
+          reject(new DaemonRpcError(DAEMON_TIMED_OUT));
         }, timeoutMs);
         pending.set(id, { resolve, reject, timer });
         send(id, method, params);

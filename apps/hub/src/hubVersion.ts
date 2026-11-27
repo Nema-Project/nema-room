@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { VERSION_SKEW_MARKER, nemaCliSpec } from "@nema/shared";
 
 /** Release version the daemon must match. `@nema/hub` stays 0.0.0; the user-facing version is the CLI package. */
 export function readHubReleaseVersion(start = path.dirname(fileURLToPath(import.meta.url))): string {
@@ -76,9 +77,9 @@ export function compareVersions(a: string, b: string): number {
 
 /**
  * The refusal for a daemon below the minimum version: names the floor and tells the operator to install
- * the hub's version. Keeps the `版本不一致` phrase and the `@nema-project/nema@<version>` spec the CLI's
- * reconnect logic keys on.
+ * the hub's version. Carries `VERSION_SKEW_MARKER` and the `nemaCliSpec` the CLI's reconnect logic keys on
+ * (`parseVersionSkew` in @nema/shared).
  */
 export function versionSkewMessage(hubVersion: string, minVersion: string = MIN_DAEMON_VERSION): string {
-  return `hub 与 nema CLI 版本不一致：hub 要求 CLI 不低于 ${minVersion}（hub ${hubVersion}），请安装 @nema-project/nema@${hubVersion} 后重启 daemon`;
+  return `hub 与 nema CLI ${VERSION_SKEW_MARKER}：hub 要求 CLI 不低于 ${minVersion}（hub ${hubVersion}），请安装 ${nemaCliSpec(hubVersion)} 后重启 daemon`;
 }
