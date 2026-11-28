@@ -19,6 +19,8 @@ import { memberRoutes } from "./memberRoutes.js";
 import { mentionContextRoutes } from "./mentionContext.js";
 import { uiRoutes } from "./uiApi.js";
 import { componentRoutes } from "./components.js";
+import { readinessRoutes } from "./readiness.js";
+import type { DaemonStatusSnapshot } from "@nema/shared";
 import { hostAdminAccess, workspaceAccess } from "./authz.js";
 import { createHostAllowed } from "./hostAllowlist.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
@@ -37,6 +39,15 @@ const ROSTER_PATH = /^\/api\/workspaces\/[^/]+\/members(?:\/|$)/;
  */
 const HOST_ADMIN_PATH = /^\/api\/(?:components|agent-clis|extensions|plugins|pick-directory|daemon)(?:\/|$)/;
 const HOST_ADMIN_EXEMPT_PATH = /^\/api\/daemon\/attachment-capabilities$/;
+/**
+ * #302 (maintainer ruling, issue comment 7232605390): reading the daemon status is open to every signed-in user.
+ * It carries only `{ connected, daemonId, connectionId }` (the same payload as the `daemon.status` event), no
+ * secret or configuration. The web needs it to confirm a readiness reply: the permanent "first-run ready" mark is
+ * written only against a snapshot fetched fresh after the `ready` reply whose daemon and connection ids both match
+ * it; an event alone never suffices (see `DaemonStatusSnapshot`). Only GET; every other method and every other
+ * /daemon/* path stays with the hub administrator.
+ */
+const isOpenDaemonStatusRead = (method: string, path: string): boolean => method === "GET" && path === "/api/daemon/status";
 
 export type AppDeps = {
   db: Db;
@@ -48,6 +59,11 @@ export type AppDeps = {
   nemaHome?: string;
   events: EventBus;
   daemonStatus: () => boolean;
+  /**
+   * The current daemon connection (#302 task 4), late-bound like `daemonStatus`. Omitted (tests without a
+   * socket): the status names no connection and no readiness reply can be confirmed current (503).
+   */
+  daemonSnapshot?: () => DaemonStatusSnapshot;
   /** Late-bound in main.ts, the same way `daemonStatus` is. */
   daemon: DaemonRpc;
   webOrigin?: string;
@@ -170,7 +186,10 @@ export function createApp(deps: AppDeps): Hono {
   // administrator may use them, every method included (#167 deviation 2). Registered right after identity
   // resolution so a refused caller is answered before body checks and before any route reads or writes.
   const hostAdminGate = hostAdminAccess(deps.db);
-  app.use("/api/*", (c, next) => (HOST_ADMIN_PATH.test(c.req.path) && !HOST_ADMIN_EXEMPT_PATH.test(c.req.path) ? hostAdminGate(c, next) : next()));
+  app.use("/api/*", (c, next) =>
+    HOST_ADMIN_PATH.test(c.req.path) && !HOST_ADMIN_EXEMPT_PATH.test(c.req.path) && !isOpenDaemonStatusRead(c.req.method, c.req.path)
+      ? hostAdminGate(c, next)
+      : next());
   app.use("/api/*", requireJson);
   // Every workspace-scoped route needs the caller on that workspace's roster, before any route reads or
   // writes (#167 task 8). Registered ahead of all routers so no route under the prefix can be missed; routes
@@ -188,6 +207,10 @@ export function createApp(deps: AppDeps): Hono {
   app.route("/api", mentionContextRoutes({ db: deps.db, attachments }));
   app.route("/api", memberRoutes({ db: deps.db, events: deps.events }));
   app.route("/api", componentRoutes({ daemon: deps.daemon }));
+  // GET /api/agent-readiness is deliberately not in HOST_ADMIN_PATH (#302 task 5, spec "谁能看到多少"): every
+  // signed-in user may ask whether the machine running the daemon can run agents. The route itself trims the
+  // reply to runtime and state for anyone who is not that daemon's owner, so no account, CLI or reason leaks.
+  app.route("/api", readinessRoutes({ db: deps.db, daemon: deps.daemon, daemonSnapshot: deps.daemonSnapshot }));
   app.route("/api", uiRoutes(deps));
   app.route("/api", shareAdminRoutes({ db: deps.db, sharesEnabled: deps.sharesEnabled !== false }));
   app.route(

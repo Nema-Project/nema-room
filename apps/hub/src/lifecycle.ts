@@ -15,6 +15,7 @@ import { startReportFallback } from "./reports.js";
 import { interruptRunning } from "./tasks.js";
 import { listWorkspaces, repoPath, type Workspace } from "./workspaces.js";
 import type { OwnedHelperScope } from "@nema/shared/ownedHelper";
+import type { DaemonStatusSnapshot } from "@nema/shared";
 import { reconcileSourceImports } from "./sourceImport.js";
 import { reconcileUnconsumedEvents } from "./evidenceEvents.js";
 import { renderDiagram, validateDiagram } from "./archify.js";
@@ -82,7 +83,10 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
       console.error("attachment startup sweep failed", error);
     }
 
-    const status = { connected: () => false };
+    const status: { connected: () => boolean; snapshot: () => DaemonStatusSnapshot } = {
+      connected: () => false,
+      snapshot: () => ({ connected: false, daemonId: null, connectionId: null }),
+    };
     const liveDaemon: { rpc: DaemonRpc } = {
       rpc: { call: () => Promise.reject(new DaemonRpcError(DAEMON_NOT_CONNECTED)) },
     };
@@ -111,6 +115,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
       nemaHome: opts.cleanDaemonDirs === false ? undefined : opts.nemaHome,
       events,
       daemonStatus: () => status.connected(),
+      daemonSnapshot: () => status.snapshot(),
       daemon,
       webOrigin: opts.webOrigin,
       identity: opts.identity,
@@ -195,6 +200,7 @@ export async function startHub(opts: StartHubOptions): Promise<RunningHub> {
     requestListener = fetchListener;
 
     status.connected = attached.isConnected;
+    status.snapshot = attached.statusSnapshot;
     liveDaemon.rpc = attached.rpc;
     fallback = startReportFallback(opts.db, daemon, events);
     sweepTimer = setInterval(() => {

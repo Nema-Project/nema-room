@@ -5,7 +5,7 @@ import { streamSSE } from "hono/streaming";
 import { z, ZodError } from "zod";
 import { KnowledgeStore, UpsertRejected, RestoreDiagramError, blameParagraphs, git, history, versionAt, parseCommitMessage } from "@nema/knowledge";
 import { KNOWLEDGE_LANGUAGES, MessageMentions, UpsertEntryInput, parseMcpConfig, citedReports, confirmableImplementation, kindFromId, canonicalJson, parseSkillSource, reportPassed, safeRepoPath } from "@nema/shared";
-import type { Implementation, ReportMessageMeta, WorkPackageMeta } from "@nema/shared";
+import type { DaemonStatusSnapshot, Implementation, ReportMessageMeta, WorkPackageMeta } from "@nema/shared";
 import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
 import { insertEvidenceEvent, consumeEvidenceEvent, reconcileUnconsumedEventsLocked, payloadHashFor, type EvidenceEventInput } from "./evidenceEvents.js";
 import type { Entry } from "@nema/shared";
@@ -39,6 +39,8 @@ export type UiDeps = {
   nemaHome?: string;
   events: EventBus;
   daemonStatus: () => boolean;
+  /** The current daemon connection (#302 task 4); without it the status names no connection. */
+  daemonSnapshot?: () => DaemonStatusSnapshot;
   daemon: DaemonRpc;
   /** Diagram rendering; defaults to the vendored archify. Tests inject a fake. */
   archify?: Archify;
@@ -201,7 +203,12 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   const store = (ws: string) => new KnowledgeStore(repoPath(dataDir, ws), deps.ownedHelpers);
 
-  app.get("/daemon/status", (c) => c.json({ connected: deps.daemonStatus() }));
+  // The same snapshot the `daemon.status` event carries, read now. Open to every signed-in user (see app.ts):
+  // it holds only whether a daemon is connected and which connection is current, no secret or configuration.
+  app.get("/daemon/status", (c) => {
+    const snapshot: DaemonStatusSnapshot = deps.daemonSnapshot?.() ?? { connected: deps.daemonStatus(), daemonId: null, connectionId: null };
+    return c.json({ connected: snapshot.connected, daemonId: snapshot.daemonId, connectionId: snapshot.connectionId });
+  });
 
   // The dialog runs in the host daemon: a hub inside Docker cannot see repository directories.
   app.post("/pick-directory", async (c) => {

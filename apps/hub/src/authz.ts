@@ -59,7 +59,8 @@ export function workspaceAccess(db: Db, access: WorkspaceAccess = "member"): Mid
 /**
  * Host-level routes (#167 deviation 2) act on the machine the daemon runs on rather than on one
  * workspace: components, the agent CLI list, extensions and MCP servers and their secrets, the host plugin
- * catalog, the folder picker and daemon status. In the remote form only the hub administrator (the account
+ * catalog, the folder picker and /daemon/* (except the read-only status and attachment-capability lookups that
+ * app.ts exempts). In the remote form only the hub administrator (the account
  * that completed the bootstrap) may use them; any other signed-in account gets AuthError(403). The local
  * form's `usr_local` passes unchanged.
  */

@@ -56,3 +56,32 @@ export type TrimmedAgentReadinessResponse = Pick<ReadinessReply, "current" | "ch
 
 /** The hub's `GET /api/agent-readiness` answer. */
 export type AgentReadinessResponse = FullAgentReadinessResponse | TrimmedAgentReadinessResponse;
+
+/**
+ * Error code of `GET /api/agent-readiness` (HTTP 501) when the daemon that answered predates `agents.readiness`.
+ * The web reads it, like an offline daemon (503), as readiness `unknown`.
+ */
+export const READINESS_UNSUPPORTED = "readiness_unsupported";
+
+/**
+ * Error code of `GET /api/agent-readiness` (HTTP 502) when the daemon's call failed for any other reason. The daemon's
+ * own message stays in the hub log: it can name paths on the daemon owner's machine, and a failure must not show more
+ * than a trimmed success would, so every caller, owner or not, gets this code.
+ */
+export const READINESS_DAEMON_ERROR = "readiness_daemon_error";
+
+/**
+ * Error code of `GET /api/agent-readiness` (HTTP 503) when the connection that answered was closed or is no longer
+ * the current one by the time the reply was built (spec D-4): the reply would describe a daemon the web no longer sees.
+ */
+export const READINESS_STALE = "readiness_stale";
+
+/**
+ * Which daemon connection is current, as `GET /api/daemon/status` and the `daemon.status` event report it (plan
+ * task 4). The current connection is the one a call without a target lands on: the newest open connection. Both
+ * ids are null exactly when `connected` is false. A snapshot and an event carry the same payload, but they are not
+ * equal evidence: an event may have been sent before a readiness reply and only arrive late, still describing an
+ * older connection. Writing the permanent "first-run ready" mark needs a snapshot fetched fresh after the `ready`
+ * reply, whose daemon and connection ids both match it (plan invariant D-4/D-6, task 6); an event alone never suffices.
+ */
+export type DaemonStatusSnapshot = { connected: boolean; daemonId: string | null; connectionId: string | null };

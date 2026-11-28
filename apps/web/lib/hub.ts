@@ -107,7 +107,9 @@ async function request<T>(path: string, init?: { method?: string; body?: unknown
 const w = (id: string) => `/workspaces/${encodeURIComponent(id)}`;
 const e = (id: string, eid: string) => `${w(id)}/entries/${encodeURIComponent(eid)}`;
 
-export const getDaemonStatus = () => request<{ connected: boolean }>("/daemon/status");
+/** `daemonId` / `connectionId` name the current connection (#302); a hub before #302 sends neither. */
+export const getDaemonStatus = () =>
+  request<{ connected: boolean; daemonId?: string | null; connectionId?: string | null }>("/daemon/status");
 export const listWorkspaces = () => request<WorkspaceView[]>("/workspaces");
 export const createWorkspace = (name: string) => request<Workspace>("/workspaces", { method: "POST", body: { name } });
 export const updateWorkspace = (id: string, patch: Partial<Pick<Workspace, "name" | "confidential" | "knowledgeLanguage">>) =>

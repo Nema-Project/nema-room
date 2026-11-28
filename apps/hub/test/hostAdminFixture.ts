@@ -30,7 +30,7 @@ export type HostAdminHubs = {
  */
 export async function hostAdminHubs(daemon: DaemonRpc, extra: Partial<AppDeps> = {}): Promise<HostAdminHubs> {
   const calls: string[] = [];
-  const recording: DaemonRpc = { call: (method, params, timeoutMs) => (calls.push(method), daemon.call(method, params, timeoutMs)) };
+  const recording: DaemonRpc = { call: (method, params, timeoutMs, target) => (calls.push(method), daemon.call(method, params, timeoutMs, target)) };
   const base = (deps: { db: AppDeps["db"]; dataDir: string }) =>
     ({ ...deps, events: new EventBus(), daemonStatus: () => true, daemon: recording, ...extra }) satisfies AppDeps;
 
