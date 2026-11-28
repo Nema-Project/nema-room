@@ -36,6 +36,11 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
   // the initial load answers while a bind is pending, the bind's success handler would otherwise
   // append the new repo to an empty list and hide every existing repo until another reread.
   const droppedList = useRef<Repo[] | null>(null);
+  // Whether a list read has produced rows that reached the screen (applied directly or stashed
+  // for the pending mutation to merge). Until the first read lands, a bind that succeeds first
+  // leaves only the new repo on screen: the stale initial response is discarded by the
+  // generation check, so the bind must reload to recover the existing repos.
+  const listLoaded = useRef(false);
 
   useEffect(() => {
     let cancel = false;
@@ -44,6 +49,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
     listRepos(workspaceId)
       .then((rows) => {
         if (cancel || mine !== seq.current) return;
+        listLoaded.current = true;
         if (pendingMutations.current > 0) {
           droppedList.current = rows;
           return;
@@ -81,6 +87,28 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
     }
   }
 
+  // Refetch the list after a bind that succeeded before the first read landed. The read starts
+  // after the bind, so its rows include the new repo; rows already on screen are kept when the
+  // server answer predates them. A failed reload keeps the list the bind produced.
+  async function reloadList() {
+    const mine = ++seq.current;
+    try {
+      const rows = await listRepos(workspaceId);
+      if (mine !== seq.current) return;
+      if (pendingMutations.current > 0) {
+        droppedList.current = rows;
+        return;
+      }
+      listLoaded.current = true;
+      setRepos((list) => {
+        const seen = new Set(rows.map((row) => row.id));
+        return [...rows, ...(list ?? []).filter((row) => !seen.has(row.id))];
+      });
+    } catch {
+      // Keep the list the bind produced; a later reread recovers the rest.
+    }
+  }
+
   async function add(e: FormEvent) {
     e.preventDefault();
     if (!preview) return;
@@ -95,6 +123,9 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
       const stashed = droppedList.current;
       droppedList.current = null;
       setRepos((list) => [...(list ?? stashed ?? []), created]);
+      // When the first list read has not landed yet, the stale initial response will be
+      // discarded, so reload to recover the existing repos.
+      if (!listLoaded.current) void reloadList();
       // Binding starts the repository's graph build: the first real Graphify call, so the offer may open here.
       onRepoBound();
       setPreview(null);

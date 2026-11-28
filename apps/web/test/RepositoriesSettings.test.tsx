@@ -133,6 +133,28 @@ describe("RepositoriesSettings", () => {
     expect(screen.getByText("/real/app")).toBeTruthy();
   });
 
+  it("reloads the initial list when the bind succeeds before it answers", async () => {
+    const existing = repo({ id: "r0", path: "/tmp/existing", label: "existing" });
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
+    let resolveList!: (rows: Repo[]) => void;
+    vi.mocked(hub.listRepos)
+      .mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveList = resolve; }))
+      .mockResolvedValueOnce([existing, created]);
+    vi.mocked(hub.bindRepo).mockResolvedValueOnce(created);
+    mount();
+    await screen.findByRole("button", { name: "Add repository" });
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    expect(await screen.findByText("None selected")).toBeTruthy();
+    // The bind succeeded before the initial load answered, so the component reloads.
+    expect(hub.listRepos).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("/real/app")).toBeTruthy();
+    // The delayed initial response is stale and must not wipe the reloaded list.
+    await act(async () => { resolveList([existing]); });
+    expect(await screen.findByText("/tmp/existing")).toBeTruthy();
+    expect(screen.getByText("/real/app")).toBeTruthy();
+  });
+
   it("shows the initial list when it resolves while a bind fails", async () => {
     const existing = repo({ id: "r0", path: "/tmp/existing", label: "existing" });
     let resolveList!: (rows: Repo[]) => void;
