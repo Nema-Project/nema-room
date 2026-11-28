@@ -27,7 +27,7 @@ spec 的「现状核实」写于 `ca0266d`。此后 `main` 合入了 99 个提�
 - **不改 `agents.detect` 与「组件」页**（D-7）：两者共用执行器，但 `agents.detect` 仍把所有失败映射为 `installed: false`。每个触及执行器的任务都要有回归断言。
 - **回复不含凭据**：`agents.readiness` 的回复只有状态、理由码、命令名与版本、账户 id/是否合成/认证模式。不含路径内容、stderr 或令牌。hub 再按 `access` 裁剪（spec「数据契约」末段）。
 - **降级是安静的**：旧 daemon 没有 `agents.readiness` 方法、daemon 离线、RPC 失败，web 一律视为 `unknown`：不弹横幅，不给 Composer 提示（D-7、D-8）。
-- **永久标记只能由已确认的连接写入**（D-4 并发条、D-6）：只有浏览器在收到 `ready` 回复**之后**又收到状态事件或快照，且该状态的 daemon 身份与**连接身份**都与回复一致，`ready` 回复才能写「已完成首次就绪」标记。只凭就绪回复本身、或凭回复之前收到的状态，不得写标记。浏览器尚未确认任何 `daemonId` 时（例如远程非管理员在两次状态事件之间打开页面），就绪视为 `unknown`：不写标记、不显示横幅与 Composer 提示，卡片第 0 步显示连接状态未知。这条不变量在任务 6 中实现，在任务 6 与任务 9 中各用测试钉住。
+- **永久标记只能由已确认的连接写入**（D-4 并发条、D-6）：只有浏览器在收到 `ready` 回复**之后**主动拉取到新的状态快照，且该快照的 daemon 身份与**连接身份**都与回复一致，`ready` 回复才能写「已完成首次就绪」标记。只凭就绪回复本身、或凭推送到达的状态事件，不得写标记——推送的事件可能在回复之前发出、只是延迟到达，仍可能描述旧连接。浏览器尚未确认任何 `daemonId` 时（例如远程非管理员在两次状态事件之间打开页面），就绪视为 `unknown`：不写标记、不显示横幅与 Composer 提示，卡片第 0 步显示连接状态未知。这条不变量在任务 6 中实现，在任务 6 与任务 9 中各用测试钉住。
 - **文案**：主语是「运行 daemon 的机器」；不说「未安装」，只说「PATH 上找不到」（现状 8、D-10）；不说「可用」或「已验证」。所有新增字符串同步进 `apps/web/messages/{en,zh,ja}.json`。命令一律用版本化写法（AGENTS.md）。
 - **验收三类分开记**：静态检查、自动化测试、真实环境（VM 内 Compose，任务 13）互不替代。桌面实机不主动测（2026-11-16 测试政策）；D-10 的 macOS PATH 推断如需确认，由维护者在实机上看。
 
@@ -139,13 +139,13 @@ spec 的「现状核实」写于 `ca0266d`。此后 `main` 合入了 99 个提�
   - 首次就绪标记：键为 hub 源加 `getMe().userId`，存于 `localStorage`，读写都用 try/catch 包住，遵循 `lib/components.ts` 的先例。
   - 临时关闭记忆：只记 `(runtime, state, reason ?? null)`。
 - [ ] 新 `apps/web/lib/useAgentReadiness.ts`（hook）：
-  - 四个刷新时刻：页面加载；`daemon.status` 从断开变为连接，或 `daemonId` 变化（含 `true → true`）；窗口重新获得焦点；用户点「重新检查」（`force`）。
+  - 四个刷新时刻：页面加载；`daemon.status` 从断开变为连接，或 `daemonId`/`connectionId` 变化（含 `true → true` 与同一 daemon 重连）；窗口重新获得焦点；用户点「重新检查」（`force`）。
   - 焦点节流 30 秒，窗口内再获得焦点时在窗口结束补一次检查（trailing），同一窗口只补一次。
   - 另外导出 `recheck()`，供任务 8 在保存与登录成功时调用。
-  - 每个连接周期有一个序号。断开或 `daemonId` 变化时清空状态，并让在途请求失效。只接纳当前周期内最新一次请求的结果。成功回复的 `daemon.id` 与 `daemon.connectionId` 必须等于浏览器从状态事件或快照得到的最新值，否则丢弃。浏览器尚未确认任何 `daemonId` 时，所有就绪回复都丢弃，整体状态为 `unknown`。
-  - **标记写入条件**：`overall === "ready"`，且在收到该回复**之后**又收到状态事件或快照，其 `daemonId` 与 `connectionId` 都与回复一致。只凭就绪回复本身、或凭回复之前收到的状态，不得写标记。未确认任何 `daemonId` 时不写标记，整体状态为 `unknown`，卡片第 0 步显示连接状态未知（见任务 9）。
+  - 每个连接周期有一个序号。断开、`daemonId` 变化或 `connectionId` 变化时清空状态，并让在途请求失效。只接纳当前周期内最新一次请求的结果。成功回复的 `daemon.id` 与 `daemon.connectionId` 必须等于浏览器从状态事件或快照得到的最新值，否则丢弃。浏览器尚未确认任何 `daemonId` 时，所有就绪回复都丢弃，整体状态为 `unknown`。
+  - **标记写入条件**：`overall === "ready"`，且在收到该回复**之后**主动拉取的状态快照（`getDaemonStatus()`）的 `daemonId` 与 `connectionId` 都与回复一致。只凭就绪回复本身、或凭推送到达的状态事件，不得写标记。快照拉取失败或被拒绝（例如远程非管理员调 `GET /api/daemon/status` 得 403）时不写标记。未确认任何 `daemonId` 时不写标记，整体状态为 `unknown`，卡片第 0 步显示连接状态未知（见任务 9）。
   - 不做轮询。
-- [ ] 先写失败测试（新 `apps/web/test/agentReadiness.test.ts` 与 `useAgentReadiness.test.tsx`，用假时钟、假 hub）：`overall` 的各分支；trailing 补检只发生一次；断开与直接换连接让旧响应失效；同一连接内旧响应不覆盖新响应；旧连接的 `ready` 不写标记；同一 daemon 重连后，旧连接的 `ready` 回复即使 `daemon.id` 相符也因 `connectionId` 不符而不写标记；标记只在回复之后收到的状态与回复的 daemon 与连接身份都一致时写入；替换后状态事件未到时，在途的旧 daemon `ready` 回复不写标记；未确认任何 `daemonId` 时整体为 `unknown` 且不写标记；标记按 hub 加用户隔离，另一用户不继承；`localStorage` 抛错时不崩溃。
+- [ ] 先写失败测试（新 `apps/web/test/agentReadiness.test.ts` 与 `useAgentReadiness.test.tsx`，用假时钟、假 hub）：`overall` 的各分支；trailing 补检只发生一次；断开与直接换连接让旧响应失效；同一连接内旧响应不覆盖新响应；旧连接的 `ready` 不写标记；同一 daemon 重连后，旧连接的 `ready` 回复即使 `daemon.id` 相符也因 `connectionId` 不符而不写标记；标记只在回复后拉取的快照与回复的 daemon 与连接身份都一致时写入，延迟到达的旧状态事件不作为写标记的依据，快照拉取被拒绝时不写标记；替换后状态事件未到时，在途的旧 daemon `ready` 回复不写标记；同一 daemon 重连（`connectionId` 变化）时刷新并让在途请求失效；未确认任何 `daemonId` 时整体为 `unknown` 且不写标记；标记按 hub 加用户隔离，另一用户不继承；`localStorage` 抛错时不崩溃。
 - [ ] 验证：`npx vitest run apps/web/test/agentReadiness.test.ts apps/web/test/useAgentReadiness.test.tsx`。
 
 ### 任务 7：下一步动作选择（D-5、D-9、D-10）
@@ -225,7 +225,7 @@ spec 的「现状核实」写于 `ca0266d`。此后 `main` 合入了 99 个提�
 以下是 spec 写于 #167 落地之前，与 `e784ee4` 现状对照后发现的出入。本计划按括号中的落法执行。维护者如另有裁决，只需改动对应任务。
 
 1. **多 daemon 已经上线**：spec D-9 写「本项按单 daemon 实现」，并把「任一合格 daemon ready」的聚合留到 #167 二期或后续。#167 现已支持多连接，但本计划仍只报告不带目标的调用会落到的那一台（最新连接）。在多人远程部署中，这一台可能不是有权为某个工作区派发任务的 daemon。（任务 4、5 按「最新连接」实现；按工作区聚合另开 issue。）
-2. **非管理员拿不到 daemon 状态快照**：`GET /api/daemon/status` 位于 `HOST_ADMIN_PATH` 下。远程形态的非管理员只能通过 `daemon.status` 事件拿到 `daemonId`，在两次事件之间打开页面时可能一直没有确认的 id，因此不会写首次就绪标记。对非主人来说这无害，因为他们本来只拿到裁剪回复；但 daemon 主人如果不是 hub 管理员，同样受影响。（本计划不改主机级路由的门；可选做法是在就绪路由的回复之外，再为所有已登录用户开放一个只含 `{ connected, daemonId }` 的状态读取，需要维护者确认。**在裁决之前**：未确认 id 时按任务 6 的规则处理——就绪回复直接丢弃、整体状态为 `unknown`、不写标记、卡片第 0 步显示连接状态未知；无已确认 id 的就绪回复在任何情况下都不作为写标记的依据。若裁决开放快照，快照须同时带 `daemonId` 与 `connectionId`，其确认效力与状态事件相同。）
+2. **非管理员拿不到 daemon 状态快照**：`GET /api/daemon/status` 位于 `HOST_ADMIN_PATH` 下。远程形态的非管理员只能通过 `daemon.status` 事件拿到 `daemonId`，在两次事件之间打开页面时可能一直没有确认的 id，因此不会写首次就绪标记。对非主人来说这无害，因为他们本来只拿到裁剪回复；但 daemon 主人如果不是 hub 管理员，同样受影响。（本计划不改主机级路由的门；可选做法是在就绪路由的回复之外，再为所有已登录用户开放一个只含 `{ connected, daemonId }` 的状态读取，需要维护者确认。**在裁决之前**：未确认 id 时按任务 6 的规则处理——就绪回复直接丢弃、整体状态为 `unknown`、不写标记、卡片第 0 步显示连接状态未知；无已确认 id 的就绪回复在任何情况下都不作为写标记的依据。若裁决开放快照，快照须同时带 `daemonId` 与 `connectionId`，其确认效力与状态事件相同；标记确认已改为回复后主动拉取的快照（见任务 6），裁决前非管理员无法拉取快照，故同样不写标记。）
 3. **`owner_unknown` 的触发条件**：spec 以「#167 D-5 落地之前或之后」区分。D-5 落地后，远程形态里仍可能有未注册的共享 token 本机 daemon。（任务 5 对这种连接回 `owner_unknown`。）
 4. **缺少 `accounts.json` 时另一运行时的判定**：spec 写「只为当前运行时合成账户，不用旧路径凭据预演切换」，但状态表要求两行都给出状态。另一行是记 `not_signed_in`（`no_enabled_account`），还是沿用 `loadRoutingAccounts` 实际合成的结果，原文没有说清。（任务 3 以 `loadRoutingAccounts` 的实际返回为准，并用测试钉住，执行时在 PR 描述中写明。）
 
