@@ -133,7 +133,11 @@ describe("Chat", () => {
   });
   it("names architecture drawing until the agent reports progress", async () => {
     const ref = await mount(true);
-    act(() => ref.current!.handleEvent({ type: "message.created", message: m("s", "为仓库 API（repo_abcDeF0_-123）画架构图：用 code__ 函数读代码，用 diagram__save 保存，type 为 architecture。", "system") }));
+    const diagram = {
+      ...m("s", "为仓库 API（repo_abcDeF0_-123）画架构图：用 code__ 函数读代码，用 diagram__save 保存，type 为 architecture。", "system"),
+      meta: { notice: { code: "system.task.diagram", params: { label: "API", repoId: "repo_abcDeF0_-123" } } },
+    };
+    act(() => ref.current!.handleEvent({ type: "message.created", message: diagram }));
     expect(screen.getByText("Task instruction")).toBeTruthy();
     const repository = within(screen.getByRole("group", { name: "Repository" }));
     expect(repository.getByText("API")).toBeTruthy();
@@ -143,14 +147,22 @@ describe("Chat", () => {
     act(() => ref.current!.handleEvent({ type: "task.progress", taskId: "t9", text: "reading src", threadId: null }));
     expect(screen.getByText(/reading src/)).toBeTruthy();
   });
-  it("labels a running system task by the hub's shared diagram marker, whatever the surrounding text", async () => {
+  it("labels a running system task by its notice code, not by the instruction text (#299 batch 2)", async () => {
     const ref = await mount(true);
-    act(() => ref.current!.handleEvent({ type: "message.created", message: m("s1", `Repo API: ${ARCHITECTURE_DIAGRAM_MARKER}`, "system") }));
+    // Any text: the code decides.
+    const coded = { ...m("s1", "Repo API: draw it", "system"), meta: { notice: { code: "system.task.diagram", params: { label: "API", repoId: "repo_x" } } } };
+    act(() => ref.current!.handleEvent({ type: "message.created", message: coded }));
     act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t1", workspaceId: "w1", messageId: "s1", status: "running", error: null, threadId: null } }));
     expect(screen.getByText("Drawing the architecture diagram")).toBeTruthy();
     act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t1", workspaceId: "w1", messageId: "s1", status: "done", error: null, threadId: null } }));
-    act(() => ref.current!.handleEvent({ type: "message.created", message: m("s2", "Repo API: summarize the code", "system") }));
+    // The marker phrase alone no longer labels the bar; another system task's code does not either.
+    act(() => ref.current!.handleEvent({ type: "message.created", message: m("s2", `Repo API: ${ARCHITECTURE_DIAGRAM_MARKER}`, "system") }));
     act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "s2", status: "running", error: null, threadId: null } }));
+    expect(screen.queryByText("Drawing the architecture diagram")).toBeNull();
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "s2", status: "done", error: null, threadId: null } }));
+    const update = { ...m("s3", "update it", "system"), meta: { notice: { code: "system.task.diagramUpdate", params: { id: "G-1" } } } };
+    act(() => ref.current!.handleEvent({ type: "message.created", message: update }));
+    act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t3", workspaceId: "w1", messageId: "s3", status: "running", error: null, threadId: null } }));
     expect(screen.queryByText("Drawing the architecture diagram")).toBeNull();
   });
   it("shows progress for a running task and refetches on resync", async () => {

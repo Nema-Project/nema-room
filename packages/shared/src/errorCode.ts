@@ -94,6 +94,10 @@ export const HUB_ERROR = {
   daemonNotConnected: "daemon.not-connected",
   daemonDisconnected: "daemon.disconnected",
   daemonTimedOut: "daemon.timed-out",
+  /** A task has attachments the connected (older) daemon cannot receive. */
+  daemonNoAttachments: "daemon.no-attachments",
+  /** A task names an account the connected (older) daemon cannot honour. */
+  daemonNoAccounts: "daemon.no-accounts",
   workspaceNotFound: "workspace.not-found",
   workspaceArchivedRepoBind: "workspace.archived-repo-bind",
   repoNotFound: "repo.not-found",

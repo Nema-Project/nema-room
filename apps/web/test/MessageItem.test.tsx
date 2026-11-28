@@ -465,6 +465,151 @@ describe("MessageItem", () => {
   });
 });
 
+describe("system notices (#299 batch 2)", () => {
+  const inLocale = (locale: string, message: Message) => {
+    localStorage.setItem("nema.locale", locale);
+    return render(<I18nProvider><MessageItem message={message} /></I18nProvider>);
+  };
+  afterEach(() => localStorage.removeItem("nema.locale"));
+
+  it("renders an index notice in the page's language instead of the English fallback", () => {
+    const content = "The code index for repository API is ready. You can now ask about the codebase.";
+    inLocale("ja", msg({ role: "system", content, meta: { notice: { code: "repo.index.ready", params: { label: "API" } } } }));
+    expect(screen.getByText("リポジトリ API のコードインデックスが完成しました。コードベースについて質問できます。")).toBeTruthy();
+    expect(screen.queryByText(content)).toBeNull();
+    expect(screen.queryByText("失敗")).toBeNull();
+  });
+
+  it("styles an index failure notice as a failure, and prefers the stored graphify reason", () => {
+    const content = "The code index for repository API did not finish. You cannot ask about the codebase yet.";
+    const { unmount } = inLocale("zh", msg({ role: "system", content, meta: { notice: { code: "repo.index.failed", params: { label: "API" } } } }));
+    expect(screen.getByText("失败")).toBeTruthy();
+    expect(screen.getByText("仓库 API 的代码索引没有完成，暂时还不能询问代码库。")).toBeTruthy();
+    unmount();
+
+    inLocale("ja", msg({
+      role: "system",
+      content,
+      meta: { repoIndexFailure: { label: "API", error: { code: "graphify-interrupted" } }, notice: { code: "repo.index.failed", params: { label: "API" } } } as unknown as Message["meta"],
+    }));
+    expect(screen.getByText("API のインデックスを作成できませんでした。Graphify の処理が中断されました。")).toBeTruthy();
+  });
+
+  it("falls back to the stored text when the catalog has no entry for the code, never to a blank or a key", () => {
+    const content = "Something a newer hub said.";
+    inLocale("en", msg({ role: "system", content, meta: { notice: { code: "future.notice", params: { x: 1 } } } }));
+    expect(screen.getByText(content)).toBeTruthy();
+    expect(screen.queryByText("notice.future.notice")).toBeNull();
+  });
+
+  it("renders the stored text when the notice cannot be read", () => {
+    const content = "仓库 API 的代码索引已完成，可以开始询问代码库。";
+    inLocale("en", msg({ role: "system", content, meta: { notice: { code: "Not A Code!" } } as unknown as Message["meta"] }));
+    expect(screen.getByText(content)).toBeTruthy();
+  });
+
+  it("names a coded task failure's reason in the page's language", () => {
+    inLocale("zh", msg({
+      role: "system",
+      taskId: "t1",
+      content: "Processing failed: The connected daemon does not support attachments. Upgrade the CLI.",
+      meta: { notice: { code: "task.failed", params: { reason: "daemon.no-attachments" } } },
+    }));
+    expect(screen.getByText("失败")).toBeTruthy();
+    expect(screen.getByText("处理失败：当前 daemon 不支持附件，请升级 CLI。")).toBeTruthy();
+  });
+
+  it("uses the reason's params for a coded failure", () => {
+    inLocale("ja", msg({
+      role: "system",
+      taskId: "t1",
+      content: "Processing failed: Work package W-3 not found.",
+      meta: { notice: { code: "task.failed", params: { reason: "workpackage.not-found", id: "W-3" } } },
+    }));
+    expect(document.body.textContent).toContain("処理に失敗しました：");
+    expect(document.body.textContent).toContain("W-3");
+    expect(document.body.textContent).not.toContain("Processing failed");
+  });
+
+  it("keeps an uncoded failure's error text inside the localised sentence, with its recovery command", async () => {
+    const user = userEvent.setup();
+    inLocale("ja", msg({
+      role: "system",
+      taskId: "t1",
+      content: "Processing failed: 未登录直连 Codex，请在终端运行 nema auth login",
+      meta: { notice: { code: "task.failed" } },
+    }));
+    expect(screen.getByText("失敗")).toBeTruthy();
+    expect(document.body.textContent).toContain("処理に失敗しました：未登录直连 Codex");
+    expect(document.body.textContent).not.toContain("Processing failed");
+    expect(screen.getByText("nema auth login", { selector: "code" })).toBeTruthy();
+    await user.click(screen.getAllByRole("button").find((b) => b.getAttribute("aria-label")?.includes("nema auth login"))!);
+    expect(await navigator.clipboard.readText()).toBe("nema auth login");
+  });
+
+  it("names the failed task's account and model from meta.route, never as a command", () => {
+    const route = { accountId: "acct_abc1234567", accountName: "nema auth github", model: "gpt-5.5", mode: "manual" as const, reason: "user_message" as const };
+    inLocale("en", msg({
+      role: "system",
+      taskId: "t1",
+      content: "Processing failed: 订阅额度已用完",
+      meta: { notice: { code: "task.failed" }, route } as unknown as Message["meta"],
+    }));
+    expect(document.body.textContent).toContain("Processing failed: 订阅额度已用完 (account “nema auth github” · gpt-5.5)");
+    expect(screen.queryByRole("button", { name: /Copy command/ })).toBeNull();
+  });
+
+  it("renders an interrupted task in the page's language", () => {
+    inLocale("zh", msg({
+      role: "system",
+      taskId: "t1",
+      content: "Processing failed: The task was interrupted and did not finish after 3 automatic retries. Send the message again.",
+      meta: { notice: { code: "task.interrupted", params: { retries: 3 } } },
+    }));
+    expect(screen.getByText("失败")).toBeTruthy();
+    expect(screen.getByText("处理失败：任务被中断，自动重试 3 次后仍未完成。请重新发送这条消息。")).toBeTruthy();
+  });
+
+  it("shows a diagram task as an instruction with its repository, not the model's instruction text", () => {
+    const content = "为仓库 API（repo_x）画架构图：用 code__ 函数读代码，用 diagram__save 保存，type 为 architecture。";
+    inLocale("en", msg({ role: "system", content, meta: { notice: { code: "system.task.diagram", params: { label: "API", repoId: "repo_x" } } } }));
+    expect(screen.getByText("Task instruction")).toBeTruthy();
+    const repository = screen.getByRole("group", { name: "Repository" });
+    expect(within(repository).getByText("API")).toBeTruthy();
+    expect(within(repository).getByText("repo_x")).toBeTruthy();
+    expect(screen.getByText("Draw the architecture diagram of repository API.")).toBeTruthy();
+    expect(screen.queryByText(content)).toBeNull();
+  });
+
+  it("shows the other system tasks from their codes", () => {
+    const { unmount } = inLocale("en", msg({ role: "system", content: "用户要求更新代码图 G-1：…", meta: { notice: { code: "system.task.diagramUpdate", params: { id: "G-1" } } } }));
+    expect(screen.getByText("Update code diagram G-1 with the code changes since it was drawn.")).toBeTruthy();
+    expect(screen.getByText("Task instruction")).toBeTruthy();
+    unmount();
+    const second = inLocale("ja", msg({ role: "system", content: "上报 m9 的提交已核对…", meta: { notice: { code: "system.task.commitsChecked", params: { messageId: "m9" } } } }));
+    expect(document.body.textContent).toContain("報告 m9 のコミットを照合しました");
+    second.unmount();
+    inLocale("en", msg({
+      role: "system",
+      content: "主分支有新提交但没有收到上报…",
+      meta: { notice: { code: "system.task.uncoveredCommits", params: { label: "API", repoId: "repo_x", count: 2, commits: "aaa, bbb" } } },
+    }));
+    expect(document.body.textContent).toContain("The main branch of repository API has 2 new commit(s) without a report: aaa, bbb.");
+  });
+
+  it("renders a follow-up card from its notice and keeps the question box", () => {
+    vi.mocked(hub.getEntry).mockResolvedValue({ id: "Q-4", kind: "question", status: "open", title: "Which DB?", body: "pick one" } as never);
+    inLocale("zh", msg({
+      role: "system",
+      threadId: "t1",
+      content: "Follow-up Q-4: Which DB?",
+      meta: { changes: [], askedQuestion: { id: "Q-4", title: "Which DB?", body: "pick one" }, notice: { code: "question.followUp", params: { id: "Q-4", title: "Which DB?" } } } as unknown as Message["meta"],
+    }));
+    expect(screen.getByText("追问 Q-4：Which DB?")).toBeTruthy();
+    expect(screen.queryByText("Follow-up Q-4: Which DB?")).toBeNull();
+  });
+});
+
 describe("MessageItem attachments", () => {
   const file = { id: "a1", kind: "text" as const, mime: "text/plain", name: "err.log", size: 300, sha256: "f".repeat(64), messageId: "m1", status: "attached" as const, deletedAt: null };
   const user = (p: Partial<Message>) => msg({ role: "user", ...p });

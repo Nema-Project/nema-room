@@ -374,6 +374,8 @@ test("a completed recheck that passes applies the report to its package task", a
   expect(task).toMatchObject({ status: "verified", confirmedBy: null, reportMessageId: message.id });
   const system = (await listMessages(db, ws)).filter((m) => m.role === "system");
   expect(system.map((m) => m.content)).toEqual([S3(message.id)]);
+  // The instruction stays the model's; the chat shows the notice (#299 batch 2).
+  expect(system.map((m) => m.meta)).toEqual([{ notice: { code: "system.task.commitsChecked", params: { messageId: message.id } } }]);
 });
 
 test("does not recheck a report that is already on main", async () => {
@@ -485,6 +487,9 @@ test("the fallback ignores a move younger than 30 minutes, marks a covered move 
   ]);
   const system = (await listMessages(db, ws)).filter((m) => m.role === "system");
   expect(system.map((m) => m.content)).toEqual([uncoveredText(uncovered)]);
+  expect(system.map((m) => m.meta)).toEqual([{
+    notice: { code: "system.task.uncoveredCommits", params: { label: "API", repoId: "repo_A", count: 2, commits: uncovered.join(", ") } },
+  }]);
   expect((await listQueuedTasks(db, ws)).filter((t) => t.messageId === system[0]!.id)).toHaveLength(1);
 });
 

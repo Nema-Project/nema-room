@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { GraphifyErrorSchema, type MessageMention } from "@nema/shared";
+import { GraphifyErrorSchema, LEGACY_TASK_FAILED_PREFIX, NOTICE, readSystemNotice, type MessageMention, type SystemNotice } from "@nema/shared";
 import { AttachmentList } from "@/components/AttachmentList";
 import { Markdown } from "@/components/Markdown";
 import { SkillOfferCard } from "@/components/SkillOfferCard";
@@ -14,6 +14,7 @@ import { authorLabel, memberName, removedMemberMentions, useWorkspaceRoster } fr
 import { useHubEvents } from "@/lib/useHubEvents";
 import type { AgentMessageMeta, Entry, Message, MessageQuote, ReportMessageMeta, RouteDecision } from "@/lib/types";
 import { hubErrorText } from "@/lib/errorText";
+import { isFailureNotice, isInstructionNotice, noticeText } from "@/lib/noticeText";
 
 export function AgentAvatar() {
   return <div className="av ai">AI</div>;
@@ -102,20 +103,65 @@ export function MessageItem({ message, onOpenEntry, onQuote, onEdited, onJump, o
   );
 }
 
+// Messages stored before #299 batch 2 (no `meta.notice`) are recognised by their Chinese text, as before.
 // The hub stores the architecture request's repository only in this legacy text format.
 const architectureRequest = /^为仓库 ([\s\S]+)（(repo_[\w-]+)）(画架构图：[\s\S]*)$/;
 const indexFailure = /^仓库 [\s\S]+ 的代码索引没有完成，暂时还不能询问代码库。$/;
 // Match complete recovery commands emitted by the hub/CLI. Other diagnostic text stays selectable prose.
 const recoveryCommand = /(?<![\w./-])(nema auth (?:login|byok|claude|github)|nema config set model <名称>|nema config set proxyEnv forward|codex login|claude setup-token|npm run build -w apps\/cli|nema daemon)(?![\w/-]|\.[\w-]|[ \t]+-)/g;
-// The hub appends the answering account to a stored failure (daemonSocket.saveTaskFailure). Account names
-// are user-chosen, so the suffix is rendered as plain text and never scanned for recovery commands.
+// Before #299 batch 2 the hub appended the answering account to a stored failure. Account names are
+// user-chosen, so the suffix is rendered as plain text and never scanned for recovery commands.
 const accountSuffix = /（账户「[\s\S]+）$/;
 
 function SystemMessage({ message, onQuote }: Pick<Props, "message" | "onQuote">) {
+  const notice = readSystemNotice(message.meta);
+  return notice
+    ? <NoticeSystemMessage message={message} notice={notice} onQuote={onQuote} />
+    : <LegacySystemMessage message={message} onQuote={onQuote} />;
+}
+
+/** Splits recovery commands out of failure text so each can be copied; the rest stays prose. */
+function withCommands(text: string) {
+  return text.split(recoveryCommand).map((part, index) => index % 2 === 0 ? part : <CopyableCommand key={index} command={part} />);
+}
+
+/**
+ * A system message the hub wrote with `meta.notice` (#299 batch 2): rendered from the code in the page's
+ * language, falling back to `content` when the catalog has no entry. A failed task names its account and
+ * model from `meta.route`, never from the text.
+ */
+function NoticeSystemMessage({ message, notice, onQuote }: Pick<Props, "message" | "onQuote"> & { notice: SystemNotice }) {
   const t = useT();
-  const { content } = message;
-  const meta = message.meta as AgentMessageMeta | null;
-  const architecture = architectureRequest.exec(content);
+  const meta = message.meta as (Partial<AgentMessageMeta> & { route?: RouteDecision }) | null;
+  const failed = isFailureNotice(notice);
+  const label = failed ? t("chat.system.failure") : isInstructionNotice(notice) ? t("chat.system.instruction") : messageRoleLabel(t, message.role);
+  const text = (notice.code === NOTICE.repoIndexFailed ? storedIndexFailureText(message, t) : undefined) ?? noticeText(notice, message.content, t);
+  const route = notice.code === NOTICE.taskFailed ? meta?.route : undefined;
+  const repo = notice.code === NOTICE.systemTaskDiagram ? notice.params : undefined;
+  return (
+    <div className={failed ? "sysmsg failed" : "sysmsg"} id={`msg-${message.id}`}>
+      <div className="sysmsg-header">
+        <strong className="label">{label}</strong>
+        <button type="button" className="quiet" onClick={() => onQuote?.(message)}>{t("chat.quote")}</button>
+      </div>
+      {repo?.label !== undefined && repo.repoId !== undefined && (
+        <div className="sysmsg-repo chip" role="group" aria-label={t("diagram.repo")}>
+          <span>{repo.label}</span>
+          <b>{repo.repoId}</b>
+        </div>
+      )}
+      <div className="sysmsg-content">
+        {failed ? withCommands(text) : text}
+        {/* Account names are user-chosen: plain text, never scanned for recovery commands. */}
+        {route && t("chat.system.failureAccount", { account: route.accountName, model: route.model })}
+      </div>
+      {meta?.askedQuestion && <AskedQuestion workspaceId={message.workspaceId} asked={meta.askedQuestion} added={[]} />}
+    </div>
+  );
+}
+
+/** The text of a graphify index failure kept in `meta.repoIndexFailure`, or undefined when this client cannot read one. */
+function storedIndexFailureText(message: Message, t: ReturnType<typeof useT>): string | undefined {
   // Stored meta is data, not a contract: a shape this client cannot read (an older or
   // newer hub wrote it) falls back to the stored text instead of breaking the render.
   const storedIndexFailure = message.meta && typeof message.meta === "object" && "repoIndexFailure" in message.meta
@@ -123,10 +169,19 @@ function SystemMessage({ message, onQuote }: Pick<Props, "message" | "onQuote">)
     : undefined;
   const parsedError = storedIndexFailure ? GraphifyErrorSchema.safeParse(storedIndexFailure.error) : undefined;
   const indexError = parsedError?.success ? parsedError.data : undefined;
-  const graphifyFailureText = storedIndexFailure && indexError && typeof storedIndexFailure.label === "string"
+  return storedIndexFailure && indexError && typeof storedIndexFailure.label === "string"
     ? t("chat.graphifyIndexFailed", { label: storedIndexFailure.label, reason: graphifyErrorText(indexError, t) })
     : undefined;
-  const taskFailed = content.startsWith("处理失败：");
+}
+
+/** A system message stored before notices existed: rendered from its text exactly as before (D3, no backfill). */
+function LegacySystemMessage({ message, onQuote }: Pick<Props, "message" | "onQuote">) {
+  const t = useT();
+  const { content } = message;
+  const meta = message.meta as AgentMessageMeta | null;
+  const architecture = architectureRequest.exec(content);
+  const graphifyFailureText = storedIndexFailureText(message, t);
+  const taskFailed = content.startsWith(LEGACY_TASK_FAILED_PREFIX);
   const failed = taskFailed || indexFailure.test(content);
   const suffix = taskFailed ? accountSuffix.exec(content)?.[0] : undefined;
   const failureBody = suffix ? content.slice(0, content.length - suffix.length) : content;
@@ -145,8 +200,7 @@ function SystemMessage({ message, onQuote }: Pick<Props, "message" | "onQuote">)
       )}
       <div className="sysmsg-content">
         {graphifyFailureText ?? (taskFailed
-          ? <>{failureBody.split(recoveryCommand).map((part, index) =>
-            index % 2 === 0 ? part : <CopyableCommand key={index} command={part} />)}{suffix}</>
+          ? <>{withCommands(failureBody)}{suffix}</>
           : (architecture?.[3] ?? content))}
       </div>
       {meta?.askedQuestion && <AskedQuestion workspaceId={message.workspaceId} asked={meta.askedQuestion} added={[]} />}

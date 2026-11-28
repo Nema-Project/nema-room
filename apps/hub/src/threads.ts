@@ -1,4 +1,4 @@
-import type { Thread, ThreadOpenedBy, AgentMessageMeta } from "@nema/shared";
+import { NOTICE, type Thread, type ThreadOpenedBy, type AgentMessageMeta } from "@nema/shared";
 import type { Db } from "./db/db.js";
 import { MessageOpError, addMessage, getMessage, type AgentMessage, type Message } from "./messages.js";
 import { KnowledgeStore } from "@nema/knowledge";
@@ -221,20 +221,26 @@ export async function nextAttentionResult(db: Db, dataDir: string, workspaceId: 
       anchorId = latest[0]?.id ?? null;
     }
     let anchor: Message | null = null;
+    const notice = { code: NOTICE.questionFollowUp, params: { id: question.id, title: question.title } };
     if (!anchorId) {
-      anchor = await addMessage(t, workspaceId, "system", `追问 ${question.id}：${question.title}`);
+      anchor = await addMessage(t, workspaceId, "system", followUpText(question.id, question.title), { meta: { notice } });
       anchorId = anchor.id;
     }
     const thread = await ensureThread(t, anchorId, question.title, "agent");
     const association = await associateQuestion(t, workspaceId, question.id, thread.id);
     if (!association.inserted) return { threadId: association.threadId, anchor: null, card: null };
-    const card = await addMessage(t, workspaceId, "system", `追问 ${question.id}：${question.title}`, {
+    const card = await addMessage(t, workspaceId, "system", followUpText(question.id, question.title), {
       threadId: thread.id,
-      meta: { changes: [], askedQuestion: { id: question.id, title: question.title, body: question.body } },
+      meta: { changes: [], askedQuestion: { id: question.id, title: question.title, body: question.body }, notice },
     });
     return { threadId: thread.id, anchor, card };
   });
   return converted;
+}
+
+/** Fallback text of the `question.followUp` notice (#299 batch 2, D2: English). */
+export function followUpText(id: string, title: string): string {
+  return `Follow-up ${id}: ${title}`;
 }
 
 export async function nextAttention(db: Db, dataDir: string, workspaceId: string): Promise<string | null> {

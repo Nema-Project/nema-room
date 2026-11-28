@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 import { WebSocketServer, type VerifyClientCallbackAsync, type WebSocket } from "ws";
 import { createHostAllowed } from "./hostAllowlist.js";
 import { KnowledgeStore } from "@nema/knowledge";
-import { AttachmentRefSchema, DAEMON_CREDENTIAL_REVOKED_MESSAGE, WORKPACKAGE_LIMITS, normalizeRemoteUrl, parseDaemonToHub, parseManualSkill, parseRouteDecision, readCoded, readCodedTexts, type AgentMessageMeta, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
+import { AttachmentRefSchema, CodedError, codedFields, DAEMON_CREDENTIAL_REVOKED_MESSAGE, HUB_ERROR, NOTICE, TASK_FAILED_PREFIX, WORKPACKAGE_LIMITS, normalizeRemoteUrl, parseDaemonToHub, parseManualSkill, parseRouteDecision, readCoded, readCodedTexts, type AgentMessageMeta, type CodeParams, type RouteDecision, type TaskFailureMeta, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
 import { createConnectionRpc, DAEMON_DISCONNECTED, DAEMON_NOT_CONNECTED, DaemonRpcError, withDaemonTarget, type ConnectionRpc, type DaemonRpc, type DaemonTarget } from "./daemonRpc.js";
 import { markDaemonSeen, revokeDaemon, verifyDaemonCredential, type RevokeRegisteredDaemon } from "./daemons.js";
 import type { Db } from "./db/db.js";
@@ -88,9 +88,10 @@ type TaskReplyRouting = {
   createThread: boolean;
 };
 
-export const NO_ATTACHMENT_SUPPORT_MESSAGE = "当前 daemon 不支持附件，请升级 CLI";
+/** Fallback text of `HUB_ERROR.daemonNoAttachments`; the chat shows `error.<code>` (#299 batch 2). */
+export const NO_ATTACHMENT_SUPPORT_MESSAGE = "The connected daemon does not support attachments. Upgrade the CLI.";
 /** An older daemon would drop `accountId` from `task.assign` and run the task on its default account. */
-export const NO_ACCOUNT_SUPPORT_MESSAGE = "当前 daemon 不支持按账户运行任务，请升级 CLI 后再指定账户";
+export const NO_ACCOUNT_SUPPORT_MESSAGE = "The connected daemon cannot run a task on a chosen account. Upgrade the CLI before choosing an account.";
 
 export const OLD_CLI_MESSAGE = "nema CLI 版本过旧，请运行 npm run build -w apps/cli 并重启 nema daemon";
 /** Distinct from the credential refusals: the daemon's credential was not judged, so it should simply retry. */
@@ -280,7 +281,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     result: { ok: true } | { ok: false; error: string },
     role: "agent" | "system",
     content: string,
-    meta?: AgentMessageMeta,
+    meta?: AgentMessageMeta | TaskFailureMeta,
   ): Promise<Message | null> {
     return db.tx(async (t) => {
       if (!(await finishTask(t, routing.task.id, result, expectedRunToken))) return null;
@@ -341,7 +342,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     if (task.kind === "workpackage") {
       const id = workPackageIdOf(userMessage.content);
       const wp = id ? await store.get(id) : null;
-      if (!wp?.workpackage) throw new Error(`找不到开发包 ${id ?? "（未知）"}`);
+      if (!wp?.workpackage) {
+        throw id
+          ? new CodedError(HUB_ERROR.workpackageNotFound, `Work package ${id} not found.`, { id })
+          : new Error("The work package of this task could not be found.");
+      }
       const repos = await listRepos(db, task.workspaceId);
       workpackage = {
         id: wp.id,
@@ -398,15 +403,27 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     return { prompt, confidential: workspace.confidential, attachments, retainedSkills: retained, projectSkills, manualSkill: manual, threadId: conversationId };
   }
 
-  async function saveTaskFailure(taskId: string, error: string, expectedRunToken?: string, route?: RouteDecision): Promise<Message | null> {
+  /**
+   * Stores a failed task's system message. `content` is the English fallback with the error as reported
+   * (#299 batch 2, D2); `meta.notice` is `task.failed`, with the error's code as `reason` when it has one.
+   * The raw error text never goes into the params. A failed task has no reply to hang the route on, so the
+   * account and model stay beside the notice in `meta.route` (spec §1.3), still without any credential, and
+   * the chat names them from there instead of from a suffix in the text.
+   */
+  async function saveTaskFailure(
+    taskId: string,
+    error: string,
+    expectedRunToken?: string,
+    route?: RouteDecision,
+    coded: { code?: string; params?: CodeParams } = {},
+  ): Promise<Message | null> {
     const routing = await taskReplyRouting(taskId);
     if (!routing) return null;
     const runToken = expectedRunToken ?? routing.task.runToken;
     if (!runToken) return null;
-    // A failed task has no reply to hang the route on, so the account is named in the failure line itself
-    // (spec §1.3) and the record is kept beside it, still without any credential.
-    const account = route ? `（账户「${route.accountName}」· ${route.model}）` : "";
-    return saveTaskOutcome(routing, runToken, { ok: false, error }, "system", "处理失败：" + error + account, route ? { route } as AgentMessageMeta : undefined);
+    const params: CodeParams | undefined = coded.code ? { ...coded.params, reason: coded.code } : undefined;
+    const meta: TaskFailureMeta = { notice: { code: NOTICE.taskFailed, ...(params ? { params } : {}) }, ...(route ? { route } : {}) };
+    return saveTaskOutcome(routing, runToken, { ok: false, error }, "system", TASK_FAILED_PREFIX + error, meta);
   }
 
   /** Offers work to every idle connection in acceptance order; each runs one task at a time. */
@@ -436,17 +453,17 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       try {
         built = await buildTaskPrompt(task);
         // An older daemon would drop the field and answer from the text alone; fail the task instead.
-        if (built.attachments.length > 0 && !conn.features.has("attachments")) throw new Error(NO_ATTACHMENT_SUPPORT_MESSAGE);
+        if (built.attachments.length > 0 && !conn.features.has("attachments")) throw new CodedError(HUB_ERROR.daemonNoAttachments, NO_ATTACHMENT_SUPPORT_MESSAGE);
         // Same hazard as an attachment, same answer: a daemon that does not know `accountId` parses the
         // message by dropping it, so the task would silently run on whichever account is the default on that
         // machine — the one thing the user did not choose. Failing here names the reason instead.
-        if (task.accountId !== null && !conn.features.has("accounts")) throw new Error(NO_ACCOUNT_SUPPORT_MESSAGE);
+        if (task.accountId !== null && !conn.features.has("accounts")) throw new CodedError(HUB_ERROR.daemonNoAccounts, NO_ACCOUNT_SUPPORT_MESSAGE);
         pluginTools = await enabledPluginTools(db, task.workspaceId);
         uiTask = await resolveUiTask(db, task);
       } catch (e) {
         const error = e instanceof Error ? e.message : String(e);
         try {
-          const msg = task.runToken ? await saveTaskFailure(task.id, error, task.runToken) : null;
+          const msg = task.runToken ? await saveTaskFailure(task.id, error, task.runToken, undefined, codedFields(e)) : null;
           if (msg) {
             events.emit(task.workspaceId, { type: "message.created", message: msg });
             if (msg.threadId) {

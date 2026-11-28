@@ -9,7 +9,7 @@ type T = ReturnType<typeof useT>;
  * `t(key, params)` when the catalog has the key, else null. `t` answers a missing key with the key itself,
  * which must never reach the page: the caller shows its fallback text instead (#299 batch 1).
  */
-function lookup(t: T, key: string, params?: CodeParams): string | null {
+export function lookup(t: T, key: string, params?: CodeParams): string | null {
   const text = t(key, params);
   return text === key ? null : text;
 }

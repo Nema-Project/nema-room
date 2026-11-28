@@ -1,4 +1,4 @@
-import { ARCHITECTURE_DIAGRAM_MARKER, HUB_ERROR, isBranchName, type CodeParams, type GraphifyError } from "@nema/shared";
+import { ARCHITECTURE_DIAGRAM_MARKER, HUB_ERROR, isBranchName, NOTICE, type CodeParams, type GraphifyError } from "@nema/shared";
 import { nanoid } from "nanoid";
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, isDaemonOffline, type DaemonRpc } from "./daemonRpc.js";
@@ -284,13 +284,16 @@ function noteIndex(events: EventBus | undefined, repo: Repo, status: "running" |
   events?.emit(repo.workspaceId, { type: "repo.index", repoId: repo.id, label: repo.label, status });
 }
 
-/** Shown in chat. The web progress line looks for `ARCHITECTURE_DIAGRAM_MARKER` in the task that follows a successful index. */
+/**
+ * Fallback text of the index notices (#299 batch 2, D2: English). The chat shows `notice.repo.index.*` in the
+ * page's language; this text is for older clients, exports and the model's context.
+ */
 export function indexReadyText(label: string): string {
-  return `仓库 ${label} 的代码索引已完成，可以开始询问代码库。`;
+  return `The code index for repository ${label} is ready. You can now ask about the codebase.`;
 }
 
 export function indexFailedText(label: string): string {
-  return `仓库 ${label} 的代码索引没有完成，暂时还不能询问代码库。`;
+  return `The code index for repository ${label} did not finish. You cannot ask about the codebase yet.`;
 }
 
 /**
@@ -309,10 +312,11 @@ function chatGraphifyError(error: GraphifyError): GraphifyError {
 async function announceIndex(db: Db, events: EventBus | undefined, repo: Repo, status: "done" | "failed", error?: GraphifyError): Promise<boolean> {
   noteIndex(events, repo, status);
   if (!(await getRepo(db, repo.id))) return false;
+  const notice = { code: status === "done" ? NOTICE.repoIndexReady : NOTICE.repoIndexFailed, params: { label: repo.label } };
   const message = await addMessage(
     db, repo.workspaceId, "system",
     status === "done" ? indexReadyText(repo.label) : indexFailedText(repo.label),
-    error ? { meta: { repoIndexFailure: { label: repo.label, error: chatGraphifyError(error) } } } : undefined,
+    { meta: error ? { repoIndexFailure: { label: repo.label, error: chatGraphifyError(error) }, notice } : { notice } },
   );
   events?.emit(repo.workspaceId, { type: "message.created", message });
   return true;
@@ -397,6 +401,7 @@ async function queueArchitectureDiagram(db: Db, events: EventBus | undefined, re
       db,
       repo.workspaceId,
       `为仓库 ${repo.label}（${repo.id}）${ARCHITECTURE_DIAGRAM_MARKER}：用 code__ 函数读代码，用 diagram__save 保存，type 为 architecture。`,
+      { notice: { code: NOTICE.systemTaskDiagram, params: { label: repo.label, repoId: repo.id } } },
     );
     events?.emit(repo.workspaceId, { type: "message.created", message });
     events?.emit(repo.workspaceId, { type: "task.updated", task: toUiTask(task, message.threadId) });
