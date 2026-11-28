@@ -380,7 +380,9 @@ export function uiRoutes(deps: UiDeps): Hono {
     const sub = new URL(c.req.url).pathname.replace(/^\/api\/workspaces\/[^/]+/, "");
     if (sub !== "") {
       const id = c.req.param("id")!;
-      if (!(await getWorkspace(db, id))) throw new HttpError(404, `workspace not found: ${id}`);
+      if (!(await getWorkspace(db, id))) {
+        throw new HttpError(404, `workspace not found: ${id}`, { code: HUB_ERROR.workspaceNotFound, params: { id } });
+      }
     }
     await next();
   });
