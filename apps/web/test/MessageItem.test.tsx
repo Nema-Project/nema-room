@@ -607,6 +607,43 @@ describe("system notices (#299 batch 2)", () => {
     }));
     expect(screen.getByText("追问 Q-4：Which DB?")).toBeTruthy();
     expect(screen.queryByText("Follow-up Q-4: Which DB?")).toBeNull();
+    // The question card itself still renders below the notice.
+    expect(screen.getByText("pick one")).toBeTruthy();
+  });
+
+  it("falls back to the stored text when a known notice is missing a param it needs", () => {
+    const content = "The code index for repository API is ready. You can now ask about the codebase.";
+    inLocale("ja", msg({ role: "system", content, meta: { notice: { code: "repo.index.ready" } } }));
+    expect(screen.getByText(content)).toBeTruthy();
+    expect(document.body.textContent).not.toContain("{label}");
+  });
+
+  it("falls back to the stored text when a known notice's param has an invalid type", () => {
+    const content = "The code index for repository API is ready. You can now ask about the codebase.";
+    inLocale("en", msg({ role: "system", content, meta: { notice: { code: "repo.index.ready", params: { label: {} } } } as unknown as Message["meta"] }));
+    expect(screen.getByText(content)).toBeTruthy();
+    expect(document.body.textContent).not.toContain("{label}");
+  });
+
+  it("falls back to the stored failure when a coded reason is missing its param", () => {
+    const content = "Processing failed: Work package W-3 not found.";
+    inLocale("en", msg({
+      role: "system",
+      taskId: "t1",
+      content,
+      meta: { notice: { code: "task.failed", params: { reason: "workpackage.not-found" } } },
+    }));
+    expect(screen.getByText(content)).toBeTruthy();
+    expect(document.body.textContent).not.toContain("{id}");
+  });
+
+  it("keeps a command-like repository label in an index failure as plain text", () => {
+    const content = "The code index for repository codex login did not finish. You cannot ask about the codebase yet.";
+    inLocale("en", msg({ role: "system", content, meta: { notice: { code: "repo.index.failed", params: { label: "codex login" } } } }));
+    expect(screen.getByText("Failure")).toBeTruthy();
+    expect(screen.getByText(content)).toBeTruthy();
+    expect(screen.queryByText("codex login", { selector: "code" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Copy command/ })).toBeNull();
   });
 });
 

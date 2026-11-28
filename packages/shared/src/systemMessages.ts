@@ -4,7 +4,8 @@ import type { RouteDecision } from "./route.js";
 /**
  * Phrase in the instruction the hub sends the model to draw a newly bound repo's architecture diagram. The
  * instruction is for the model and keeps its wording. The web labels its progress bar from the message's
- * `meta.notice` code (`NOTICE.systemTaskDiagram`), not from this phrase (#299 batch 2).
+ * `meta.notice` code (`NOTICE.systemTaskDiagram`) when the message has a readable notice (#299 batch 2). A
+ * message stored before notices existed (D3) has none, and the web still matches this phrase in its text.
  */
 export const ARCHITECTURE_DIAGRAM_MARKER = "画架构图";
 

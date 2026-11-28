@@ -14,7 +14,7 @@ import { authorLabel, memberName, removedMemberMentions, useWorkspaceRoster } fr
 import { useHubEvents } from "@/lib/useHubEvents";
 import type { AgentMessageMeta, Entry, Message, MessageQuote, ReportMessageMeta, RouteDecision } from "@/lib/types";
 import { hubErrorText } from "@/lib/errorText";
-import { isFailureNotice, isInstructionNotice, noticeText } from "@/lib/noticeText";
+import { hasRecoveryCommands, isFailureNotice, isInstructionNotice, noticeText } from "@/lib/noticeText";
 
 export function AgentAvatar() {
   return <div className="av ai">AI</div>;
@@ -151,7 +151,7 @@ function NoticeSystemMessage({ message, notice, onQuote }: Pick<Props, "message"
         </div>
       )}
       <div className="sysmsg-content">
-        {failed ? withCommands(text) : text}
+        {hasRecoveryCommands(notice) ? withCommands(text) : text}
         {/* Account names are user-chosen: plain text, never scanned for recovery commands. */}
         {route && t("chat.system.failureAccount", { account: route.accountName, model: route.model })}
       </div>

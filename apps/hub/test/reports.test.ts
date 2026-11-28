@@ -514,11 +514,14 @@ test("a long uncovered-commit list is bounded at whole SHAs, never a partial one
   // 100 full SHAs join to more than the 4096-char param cap: the notice must stay within it.
   expect(commits.length).toBeLessThanOrEqual(4096);
   expect(commits.endsWith(", …")).toBe(true);
-  for (const token of commits.split(", ")) {
-    expect(token === "…" || /^[0-9a-f]{40}$/.test(token)).toBe(true);
-  }
-  // The instruction text itself still lists every commit.
-  expect(system[0]!.content).toContain(uncovered[99]);
+  const tokens = commits.split(", ");
+  expect(tokens.at(-1)).toBe("…");
+  // The kept SHAs are exactly an in-order prefix of the uncovered list.
+  const kept = tokens.slice(0, -1);
+  expect(kept.length).toBeGreaterThan(0);
+  expect(kept).toEqual(uncovered.slice(0, kept.length));
+  // The instruction text itself still lists every commit, one per line.
+  expect(system[0]!.content).toContain(`\n${uncovered.join("\n")}\n`);
 });
 
 test("a fallback daemon error leaves the move unhandled", async () => {
