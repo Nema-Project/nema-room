@@ -17,6 +17,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { CodedError, codedFields, TASK_ERROR, type CodeParams } from "@nema/shared";
 import { jwtExp } from "./jwt.js";
 import { LockTimeoutError, withFileLock, type LockOptions } from "./lock.js";
 import { openPrivateFile, privateModeMatches, protectPrivatePath } from "../secrets/permissions.js";
@@ -120,16 +121,23 @@ export class ReloginRequiredError extends Error {
   }
 }
 
-export class AuthRateLimitedError extends Error {
+/** Coded (#299 batch 3a): a task that fails on it shows the wait in the user's language. */
+export class AuthRateLimitedError extends CodedError {
   constructor(readonly retryAfterS?: number, options?: ErrorOptions) {
-    super(`直连登录刷新被限流${retryAfterS !== undefined ? `，请约 ${retryAfterS} 秒后重试` : "，请稍后重试"}`, options);
+    super(
+      retryAfterS !== undefined ? TASK_ERROR.authRefreshRateLimitedFor : TASK_ERROR.authRefreshRateLimited,
+      `直连登录刷新被限流${retryAfterS !== undefined ? `，请约 ${retryAfterS} 秒后重试` : "，请稍后重试"}`,
+      retryAfterS !== undefined ? { seconds: retryAfterS } : undefined,
+      options,
+    );
     this.name = "AuthRateLimitedError";
   }
 }
 
-export class TransientAuthError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
+/** A refresh that may work if tried again. Each cause has its own code (#299 batch 3a); the message is the fallback. */
+export class TransientAuthError extends CodedError {
+  constructor(code: string, message: string, params?: CodeParams, options?: ErrorOptions) {
+    super(code, message, params, options);
     this.name = "TransientAuthError";
   }
 }
@@ -177,7 +185,7 @@ export class AuthStore {
       const inHome = isWithin(this.nemaHome, opts.baseDir);
       const checkedRoot = inHome ? this.nemaHome : opts.baseDir;
       if (hasSymlinkedComponent(checkedRoot, opts.baseDir)) {
-        throw new Error("账户目录是符号链接，已拒绝使用该账户目录。");
+        throw new CodedError(TASK_ERROR.accountsDirSymlink, "账户目录是符号链接，已拒绝使用该账户目录。");
       }
     }
     this.dir = opts.baseDir ?? nemaHome;
@@ -293,7 +301,7 @@ export class AuthStore {
     try {
       return await withFileLock(this.lockPath, () => this.refreshLocked(held, req, opts.signal), lockOpts);
     } catch (e) {
-      if (e instanceof LockTimeoutError) throw new TransientAuthError("等待直连登录凭证锁超时，请稍后重试", { cause: e });
+      if (e instanceof LockTimeoutError) throw new TransientAuthError(TASK_ERROR.authLockTimedOut, "等待直连登录凭证锁超时，请稍后重试", undefined, { cause: e });
       throw e;
     }
   }
@@ -337,7 +345,8 @@ export class AuthStore {
     const deadline = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         ac.abort();
-        reject(new TransientAuthError(`刷新直连登录超时（${Math.round(ms / 1000)} 秒），请稍后重试`));
+        const seconds = Math.round(ms / 1000);
+        reject(new TransientAuthError(TASK_ERROR.authRefreshTimedOut, `刷新直连登录超时（${seconds} 秒），请稍后重试`, { seconds }));
       }, ms);
     });
     try {
@@ -360,7 +369,7 @@ export class AuthStore {
       return this.onRefreshFailure(disk, e, retries);
     }
     if (!res || typeof res.access_token !== "string" || res.access_token === "") {
-      throw new TransientAuthError("刷新响应缺少 access_token");
+      throw new TransientAuthError(TASK_ERROR.authRefreshNoAccessToken, "刷新响应缺少 access_token");
     }
 
     const idToken = res.id_token || disk.tokens.id_token;
@@ -402,9 +411,13 @@ export class AuthStore {
         (e.status === 401 || e.status === 403 || (TERMINAL_CODES as readonly string[]).includes(e.code ?? "")));
     if (!terminal) {
       if (e instanceof RefreshError) {
-        throw new TransientAuthError(`刷新直连登录失败（HTTP ${e.status}），请稍后重试`, { cause: e });
+        throw new TransientAuthError(TASK_ERROR.authRefreshHttp, `刷新直连登录失败（HTTP ${e.status}），请稍后重试`, { status: e.status }, { cause: e });
       }
-      throw new TransientAuthError(`刷新直连登录失败：${errMessage(e)}`, { cause: e });
+      // A refresher that names its failure with a code (the SIWC refresher's missing access_token) keeps it, so
+      // the wrapped sentence is still shown in the user's language; anything else carries its own text.
+      const inner = codedFields(e);
+      if (inner.code) throw new TransientAuthError(inner.code, `刷新直连登录失败：${errMessage(e)}`, inner.params, { cause: e });
+      throw new TransientAuthError(TASK_ERROR.authRefreshFailed, `刷新直连登录失败：${errMessage(e)}`, { error: errMessage(e) }, { cause: e });
     }
 
     const code =

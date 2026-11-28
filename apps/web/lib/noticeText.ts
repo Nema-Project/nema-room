@@ -1,5 +1,5 @@
 import { isErrorCode, LEGACY_TASK_FAILED_PREFIX, NOTICE, TASK_FAILED_PREFIX, type CodeParams, type SystemNotice } from "@nema/shared";
-import { ERROR_KEY, lookup } from "./errorText";
+import { ERROR_KEY, expandErrorParams, lookup } from "./errorText";
 import type { useT } from "./i18n";
 
 type T = ReturnType<typeof useT>;
@@ -64,7 +64,8 @@ export function noticeText(notice: SystemNotice, content: string, t: T): string 
     const { reason, ...reasonParams } = notice.params ?? {};
     const reasonKey = isErrorCode(reason) ? ERROR_KEY[reason] ?? `error.${reason}` : null;
     if (reasonKey !== null && lookup(t, reasonKey) !== null) {
-      const known = lookupFilled(t, reasonKey, reasonParams as CodeParams);
+      const expanded = expandErrorParams(reason as string, reasonParams as CodeParams, t);
+      const known = expanded === null ? null : lookupFilled(t, reasonKey, expanded);
       if (known === null) return content;
       return lookupFilled(t, `notice.${notice.code}`, { reason: known }) ?? content;
     }

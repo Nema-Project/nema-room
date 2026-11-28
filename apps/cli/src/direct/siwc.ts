@@ -11,6 +11,7 @@ import {
   type Refresher,
   type StoredAuth,
 } from "./authStore.js";
+import { CodedError, TASK_ERROR } from "@nema/shared";
 import { decodeJwtPayload } from "./jwt.js";
 import { withFileLock } from "./lock.js";
 import { protectPrivatePath } from "../secrets/permissions.js";
@@ -507,7 +508,8 @@ export function makeSiwcRefresher(tokenUrl: string = SIWC.tokenUrl): Refresher {
       throw new RefreshError(res.status, { code, retryAfterS: Number.isFinite(ra) && ra >= 0 && res.headers.has("retry-after") ? ra : undefined });
     }
     const body = (await res.json()) as Record<string, unknown>;
-    if (typeof body.access_token !== "string" || body.access_token === "") throw new Error("刷新响应缺少 access_token");
+    // Coded (#299 batch 3a): `AuthStore` wraps it as a transient failure and keeps the code for the task's UI.
+    if (typeof body.access_token !== "string" || body.access_token === "") throw new CodedError(TASK_ERROR.authRefreshNoAccessToken, "刷新响应缺少 access_token");
     return {
       access_token: body.access_token,
       ...(typeof body.refresh_token === "string" && body.refresh_token !== "" ? { refresh_token: body.refresh_token } : {}),

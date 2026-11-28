@@ -1,3 +1,6 @@
+import { codedFields, TASK_ERROR, type CodeParams } from "@nema/shared";
+import { ReloginRequiredError } from "../direct/authStore.js";
+
 /**
  * The sentences that name a problem with the account the user chose, in one place.
  *
@@ -20,3 +23,32 @@ export const MISSING_CODEX_LOGIN = "没有可用的 Codex 登录。请先运行 
 
 /** A BYOK account with no model: the endpoint has no catalog to fall back to. */
 export const BYOK_MODEL_REQUIRED = "BYOK 需要指定模型，请运行 nema config set model <名称>";
+
+/*
+ * The code each sentence above carries when it fails a task (#299 batch 3a). The sentence stays the fallback
+ * text; the web shows `error.<code>` in the user's language and keeps the command it names verbatim.
+ */
+const CODE_OF: ReadonlyMap<string, string> = new Map([
+  [NOT_LOGGED_IN, TASK_ERROR.authNotLoggedIn],
+  [MISSING_BYOK_KEY, TASK_ERROR.byokKeyMissing],
+  [MISSING_CLAUDE_TOKEN, TASK_ERROR.claudeTokenMissing],
+  [MISSING_CODEX_LOGIN, TASK_ERROR.codexLoginMissing],
+  [BYOK_MODEL_REQUIRED, TASK_ERROR.byokModelRequired],
+]);
+
+type AccountSentence = typeof NOT_LOGGED_IN | typeof MISSING_BYOK_KEY | typeof MISSING_CLAUDE_TOKEN | typeof MISSING_CODEX_LOGIN | typeof BYOK_MODEL_REQUIRED;
+
+/** One of the sentences above with its code, for a refusal or a thrown error. */
+export function accountCode(sentence: AccountSentence): string {
+  return CODE_OF.get(sentence)!;
+}
+
+/**
+ * The code and params a task failure carries for this error, or `{}`. A `CodedError` carries its own; a dead
+ * direct login is a `ReloginRequiredError`, whose `code` is the OAuth reason it records in `auth.json` and so
+ * cannot double as the UI code. Anything else (a provider error, a Node error) has none and is shown as text.
+ */
+export function failureFields(e: unknown): { code?: string; params?: CodeParams } {
+  if (e instanceof ReloginRequiredError) return { code: TASK_ERROR.authReloginRequired };
+  return codedFields(e);
+}

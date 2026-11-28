@@ -1,5 +1,6 @@
 import { existsSync, rmSync } from "node:fs";
 import path from "node:path";
+import { TASK_ERROR } from "@nema/shared";
 import { accountDir } from "../accounts/store.js";
 import { holdsAccountsLock, withAccountsLock } from "../accounts/lock.js";
 import { protectPrivatePath } from "./permissions.js";
@@ -24,8 +25,8 @@ export type AccountSecretKind = "key" | "token";
 
 const FILE_NAME: Record<AccountSecretKind, string> = { key: "key", token: "token" };
 
-const MISSING = "没有这个账户的凭据。请在设置页重新填写。";
-const INVALID = "账户凭据文件内容无效，或权限不是私有的。请重新填写。";
+const MISSING = { code: TASK_ERROR.accountCredentialMissing, message: "没有这个账户的凭据。请在设置页重新填写。" };
+const INVALID = { code: TASK_ERROR.accountCredentialInvalid, message: "账户凭据文件内容无效，或权限不是私有的。请重新填写。" };
 
 export function accountSecretPath(nemaHome: string, accountId: string, kind: AccountSecretKind): string {
   return path.join(accountDir(nemaHome, accountId), FILE_NAME[kind]);

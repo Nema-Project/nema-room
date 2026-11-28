@@ -143,7 +143,10 @@ export function connectDaemon(opts: DaemonOpts): { close(): Promise<void> } {
           (r) => send({
             type: "task.finished",
             taskId,
-            ...(r.ok ? { ok: true, reply: r.reply } : { ok: false, error: r.error }),
+            // The code travels beside the text (#299 batch 3a); a result without one is sent exactly as before.
+            ...(r.ok
+              ? { ok: true, reply: r.reply }
+              : { ok: false, error: r.error, ...(r.code ? { errorCode: r.code } : {}), ...(r.code && r.params ? { errorParams: r.params } : {}) }),
             // Only when the adapter actually routed; an adapter that does not know about accounts sends none.
             ...(r.route ? { route: r.route } : {}),
           }),

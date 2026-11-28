@@ -1,5 +1,6 @@
 import { lstatSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { CodedError, TASK_ERROR } from "@nema/shared";
 import { isWithin } from "../pathWithin.js";
 
 /**
@@ -43,7 +44,8 @@ export function hasSymlinkedComponent(nemaHome: string, target: string): boolean
 
 /** Throws unless `nemaHome` and every component of `dir` under it are real directories (or still absent). */
 export function assertNoSymlinkedComponent(nemaHome: string, dir: string): void {
-  if (hasSymlinkedComponent(nemaHome, dir)) throw new Error(SYMLINK_REASON);
+  // Coded (#299 batch 3a): a task reading an account's credential reaches this through `accountDir`.
+  if (hasSymlinkedComponent(nemaHome, dir)) throw new CodedError(TASK_ERROR.accountsDirSymlink, SYMLINK_REASON);
 }
 
 /** The same check for `nemaHome` itself, with a message that names the home directory. */

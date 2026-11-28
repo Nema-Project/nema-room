@@ -507,6 +507,8 @@ describe("CodexDirectAdapter", () => {
     expect((await run(new CodexDirectAdapter({ nemaHome: home, version: "9.9.9", refresher }))).result).toEqual({
       ok: false,
       error: "BYOK 需要指定模型，请运行 nema config set model <名称>",
+      // #299 batch 3a: the same refusal as a code the web shows in the user's language.
+      code: "auth.byok-model-required",
     });
     expect(server.requests).toEqual([]);
   });

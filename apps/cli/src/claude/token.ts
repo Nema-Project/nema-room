@@ -20,7 +20,8 @@ import type { Out } from "../direct/authCommands.js";
 import { openPrivateFile, privateModeMatches, protectPrivatePath } from "../secrets/permissions.js";
 // One sentence for this, shared with the routing layer's account messages: two copies drift apart the moment
 // one of them is edited.
-import { MISSING_CLAUDE_TOKEN } from "../routing/messages.js";
+import { accountCode, MISSING_CLAUDE_TOKEN } from "../routing/messages.js";
+import { CodedError, TASK_ERROR } from "@nema/shared";
 
 const INVALID_TOKEN = "token 必须是一行非空文本";
 const SYMLINK_TOKEN = "Claude Code token 文件是符号链接，已拒绝。";
@@ -69,13 +70,14 @@ export function readClaudeToken(nemaHome: string): string {
   try {
     fd = openPrivateFile(file);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new Error(MISSING_TOKEN);
-    if ((e as NodeJS.ErrnoException).code === "ELOOP") throw new Error(SYMLINK_TOKEN);
+    // Coded (#299 batch 3a): the implicit Claude account's token is read when a task starts.
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new CodedError(accountCode(MISSING_TOKEN), MISSING_TOKEN);
+    if ((e as NodeJS.ErrnoException).code === "ELOOP") throw new CodedError(TASK_ERROR.claudeTokenSymlink, SYMLINK_TOKEN);
     throw e;
   }
   try {
     const st = fstatSync(fd);
-    if (!st.isFile() || !privateModeMatches(st)) throw new Error(TOKEN_MODE);
+    if (!st.isFile() || !privateModeMatches(st)) throw new CodedError(TASK_ERROR.claudeTokenMode, TOKEN_MODE);
     return readFileSync(fd, "utf8");
   } finally {
     closeSync(fd);

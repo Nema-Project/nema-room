@@ -547,6 +547,63 @@ describe("system notices (#299 batch 2)", () => {
     expect(await navigator.clipboard.readText()).toBe("nema auth login");
   });
 
+  describe("routing, credential and account failures (#299 batch 3a)", () => {
+    const failed = (content: string, params: Record<string, string | number>) => msg({
+      role: "system",
+      taskId: "t1",
+      content: `Processing failed: ${content}`,
+      meta: { notice: { code: "task.failed", params } } as unknown as Message["meta"],
+    });
+
+    it("a missing login is shown in the page's language and its command stays copyable", async () => {
+      const user = userEvent.setup();
+      inLocale("en", failed("未登录直连 Codex，请在终端运行 nema auth login", { reason: "auth.not-logged-in" }));
+      // The command is split out as a copyable element, so the sentence is checked around it.
+      expect(document.body.textContent).toContain("Processing failed: You are not logged in to direct Codex. Run nema auth login");
+      expect(document.body.textContent).toContain(" in a terminal.");
+      expect(document.body.textContent).not.toContain("未登录");
+      await user.click(screen.getAllByRole("button").find((b) => b.getAttribute("aria-label")?.includes("nema auth login"))!);
+      expect(await navigator.clipboard.readText()).toBe("nema auth login");
+    });
+
+    it("a refusal names the account from its params", () => {
+      inLocale("ja", failed("账户「Work」 还没有凭据，请在设置页填写后再运行。", { reason: "route.refusal.credential-missing", account: "Work" }));
+      expect(document.body.textContent).toContain("処理に失敗しました：アカウント「Work」にはまだ認証情報がありません。");
+      expect(document.body.textContent).not.toContain("还没有凭据");
+    });
+
+    it("accounts set aside are listed by reason, each reason in the page's language", () => {
+      inLocale("en", failed("没有可用的 codex-direct 账户，无法自动选择：…", {
+        reason: "route.refusal.no-candidate-excluded", adapter: "codex-direct", disabled: "Off, AlsoOff", cooling: "Busy",
+      }));
+      expect(document.body.textContent).toContain(
+        "No codex-direct account is available, so none can be chosen automatically: Off, AlsoOff (disabled); Busy (recently rate limited, cooling down). Check",
+      );
+    });
+
+    it("the attachment kinds no account declares are worded in the page's language", () => {
+      inLocale("zh", failed("没有账户声明支持图片、PDF，无法自动选择：…", { reason: "route.refusal.no-capable-account", needs: "image,pdf", accounts: "Work" }));
+      expect(document.body.textContent).toContain("处理失败：没有账户声明支持图片、PDF，无法自动选择：Work 没有声明这项能力。");
+    });
+
+    it("a list it cannot read shows the stored text, never a raw placeholder", () => {
+      const content = "没有账户声明支持视频，无法自动选择。";
+      const first = inLocale("en", failed(content, { reason: "route.refusal.no-capable-account", needs: "video", accounts: "Work" }));
+      expect(document.body.textContent).toContain(`Processing failed: ${content}`);
+      expect(document.body.textContent).not.toContain("{needs}");
+      first.unmount();
+      inLocale("en", failed("没有可用的 codex-direct 账户", { reason: "route.refusal.no-candidate-excluded", adapter: "codex-direct" }));
+      expect(document.body.textContent).toContain("Processing failed: 没有可用的 codex-direct 账户");
+      expect(document.body.textContent).not.toContain("{excluded}");
+    });
+
+    it("the BYOK model command keeps its placeholder and stays copyable", () => {
+      inLocale("en", failed("BYOK 需要指定模型，请运行 nema config set model <名称>", { reason: "auth.byok-model-required" }));
+      expect(document.body.textContent).toContain("Processing failed: BYOK needs a model. Run nema config set model <名称>");
+      expect(screen.getByRole("button", { name: "Copy command: nema config set model <名称>" })).toBeTruthy();
+    });
+  });
+
   it("names the failed task's account and model from meta.route, never as a command", () => {
     const route = { accountId: "acct_abc1234567", accountName: "nema auth github", model: "gpt-5.5", mode: "manual" as const, reason: "user_message" as const };
     inLocale("en", msg({

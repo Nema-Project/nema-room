@@ -1,10 +1,10 @@
-import type { RouteDecision, TaskAssign } from "@nema/shared";
+import { EXCLUSION_REASONS, MAX_PARAM_LENGTH, TASK_ERROR, type CodeParams, type RouteDecision, type TaskAssign } from "@nema/shared";
 import type { NemaConfig } from "../config.js";
 import { IMPLICIT_ACCOUNT_ID, type Account } from "../accounts/schema.js";
 import type { CredentialState } from "../accounts/credentials.js";
 import type { Cooldowns } from "./cooldown.js";
 import { UNUSABLE_FILE_MESSAGE } from "../direct/authStore.js";
-import { BYOK_MODEL_REQUIRED, MISSING_BYOK_KEY, MISSING_CLAUDE_TOKEN, MISSING_CODEX_LOGIN, NOT_LOGGED_IN } from "./messages.js";
+import { accountCode, BYOK_MODEL_REQUIRED, MISSING_BYOK_KEY, MISSING_CLAUDE_TOKEN, MISSING_CODEX_LOGIN, NOT_LOGGED_IN } from "./messages.js";
 import { computeCandidates, type Candidate, type CandidateSet, type Excluded } from "./candidates.js";
 import { taskNeeds, type TaskNeeds } from "./capabilities.js";
 
@@ -58,7 +58,11 @@ export type RouteResult =
      */
     autoCandidates?: Candidate[];
   }
-  | { ok: false; failure: RouteRefusal; error: string; excluded: Excluded[] };
+  /**
+   * `error` is the fallback sentence; `code` and `params` (#299 batch 3a) are the same refusal for the UI to
+   * show in the user's language. The codes extend the `route.failure.*` vocabulary as `route.refusal.*`.
+   */
+  | { ok: false; failure: RouteRefusal; error: string; code: string; params?: CodeParams; excluded: Excluded[] };
 
 export type RouteRequest = {
   task: TaskAssign;
@@ -93,6 +97,32 @@ function label(account: Pick<Account, "id" | "name">): string {
 /** The same rule for every sentence that names an account, including the failover progress line. */
 export { label as accountLabel };
 
+/**
+ * How an account is named in a code's params: its name, or its id when the name looks like a credential. The
+ * web wraps it in its own words ("account “…”"), so the Chinese "账户「…」" of `label` stays out of the params.
+ */
+function accountParam(account: Pick<Account, "id" | "name">): string {
+  return SECRET_LIKE.test(account.name.trim()) ? account.id : account.name;
+}
+
+/**
+ * A list of account names as one param, cut at a whole name so the hub's per-param bound never splits one.
+ * What was cut is counted (`+3`) rather than dropped silently.
+ */
+function namesParam(names: string[]): string {
+  const budget = MAX_PARAM_LENGTH - 16;
+  let out = "";
+  for (let i = 0; i < names.length; i += 1) {
+    const next = out === "" ? names[i]! : `${out}, ${names[i]}`;
+    if (next.length > budget) return `${out}, +${names.length - i}`;
+    out = next;
+  }
+  return out;
+}
+
+/** A refusal with its fallback sentence and its code (#299 batch 3a). */
+type Refusal = { failure: RouteRefusal; error: string; code: string; params?: CodeParams };
+
 /** Why an account was set aside, in the user's terms. The code itself stays in `excluded` for the UI. */
 const EXCLUSION_WORDS: Record<Excluded["reason"], string> = {
   disabled: "已停用",
@@ -103,6 +133,13 @@ const EXCLUSION_WORDS: Record<Excluded["reason"], string> = {
   capability: "没有声明所需能力",
   model_missing: "没有默认模型",
 };
+
+// The shared list the web reads the no-candidate params by must name exactly these reasons: a reason missing
+// from it would drop its accounts from the localised sentence.
+const SHARED_REASONS: readonly Excluded["reason"][] = EXCLUSION_REASONS;
+const ALL_REASONS_SHARED: Exclude<Excluded["reason"], (typeof EXCLUSION_REASONS)[number]> extends never ? true : never = true;
+void SHARED_REASONS;
+void ALL_REASONS_SHARED;
 
 /**
  * The sentence for `routing: "auto"` while the switch is off.
@@ -158,7 +195,7 @@ export function resolveRoute(req: RouteRequest): RouteResult {
   // the default account instead would spend an account the user did not choose.
   const choice = choose(task, req.bindings);
   if (task.routing === "auto" || choice?.kind === "auto") {
-    if (!req.autoRouting) return { ok: false, failure: "auto_unavailable", error: AUTO_OFF_MESSAGE, excluded: set.excluded };
+    if (!req.autoRouting) return { ok: false, failure: "auto_unavailable", error: AUTO_OFF_MESSAGE, code: TASK_ERROR.routeAutoUnavailable, excluded: set.excluded };
     return autoRoute(set, req);
   }
 
@@ -173,6 +210,8 @@ export function resolveRoute(req: RouteRequest): RouteResult {
         ok: false,
         failure: "no_account",
         error: `这台机器上没有启用的 ${adapter} 账户。请在设置页添加一个账户并填写凭据。`,
+        code: TASK_ERROR.routeNoAccount,
+        params: { adapter },
         excluded: set.excluded,
       };
     }
@@ -187,6 +226,8 @@ export function resolveRoute(req: RouteRequest): RouteResult {
       ok: false,
       failure: "unknown_account",
       error: `本条消息指定的账户 ${choice.id} 在这台机器上不存在。请在设置页确认账户，或改用默认账户。`,
+      code: TASK_ERROR.routeUnknownAccount,
+      params: { accountId: choice.id },
       excluded: set.excluded,
     };
   }
@@ -204,13 +245,13 @@ export function resolveRoute(req: RouteRequest): RouteResult {
 function autoRoute(set: CandidateSet, req: RouteRequest): RouteResult {
   const first = set.candidates[0];
   if (first === undefined) {
-    return { ok: false, failure: "no_candidate", error: refusalMessage(req.adapter, taskNeeds(req.task), set.excluded), excluded: set.excluded };
+    return { ok: false, ...noCandidate(req.adapter, taskNeeds(req.task), set.excluded), excluded: set.excluded };
   }
   // The credential is checked for the head of the list only. The rest were filtered on it by
   // `computeCandidates`, and a later one that has become unusable since then fails when it is tried.
   const state = req.credentialOf(first.account);
   if (state !== "connected") {
-    return { ok: false, failure: state === "unusable" ? "credential_unusable" : "credential_missing", error: credentialMessage(first.account, state), excluded: set.excluded };
+    return { ok: false, ...credentialRefusal(first.account, state), excluded: set.excluded };
   }
   return {
     ok: true,
@@ -230,20 +271,35 @@ function autoRoute(set: CandidateSet, req: RouteRequest): RouteResult {
  * alone leaves the user with nothing to do: the fix is either declaring the ability on an account or naming
  * one that has it.
  */
-function refusalMessage(adapter: Account["adapter"], needs: TaskNeeds, excluded: Excluded[]): string {
+function noCandidate(adapter: Account["adapter"], needs: TaskNeeds, excluded: Excluded[]): Refusal {
   const missing = (["image", "pdf"] as const).filter((need) => needs[need] === true);
   const names = missing.map((need) => (need === "image" ? "图片" : "PDF")).join("、");
   const describe = (e: Excluded): string => label({ id: e.accountId, name: e.accountName });
+  const param = (e: Excluded): string => accountParam({ id: e.accountId, name: e.accountName });
   const incapable = excluded.filter((e) => e.reason === "capability");
   // An image or PDF on the task is not itself a capability refusal. That sentence is only honest when at
   // least one account was set aside for capability; a cooldown or a missing credential has to name itself.
   if (missing.length > 0 && incapable.length > 0) {
     const who = `：${incapable.map(describe).join("、")} 没有声明这项能力`;
-    return `没有账户声明支持${names}，无法自动选择${who}。请在设置页为账户打开对应的能力声明，或在这条消息上指定一个支持它的账户。`;
+    return {
+      failure: "no_candidate",
+      error: `没有账户声明支持${names}，无法自动选择${who}。请在设置页为账户打开对应的能力声明，或在这条消息上指定一个支持它的账户。`,
+      code: TASK_ERROR.routeNoCapableAccount,
+      params: { needs: missing.join(","), accounts: namesParam(incapable.map(param)) },
+    };
   }
   // No capability was the obstacle, so the other exclusions are: name them rather than say "none".
   const why = excluded.length > 0 ? `：${excluded.map((e) => `${describe(e)}（${EXCLUSION_WORDS[e.reason]}）`).join("、")}` : "";
-  return `没有可用的 ${adapter} 账户，无法自动选择${why}。请在设置页检查账户的启用状态与凭据。`;
+  const error = `没有可用的 ${adapter} 账户，无法自动选择${why}。请在设置页检查账户的启用状态与凭据。`;
+  if (excluded.length === 0) return { failure: "no_candidate", error, code: TASK_ERROR.routeNoCandidate, params: { adapter } };
+  // One param per reason, in `EXCLUSION_REASONS` order, holding the names set aside for it: params are flat,
+  // and the web words each reason in the page's language.
+  const params: CodeParams = { adapter };
+  for (const reason of EXCLUSION_REASONS) {
+    const who = excluded.filter((e) => e.reason === reason).map(param);
+    if (who.length > 0) params[reason] = namesParam(who);
+  }
+  return { failure: "no_candidate", error, code: TASK_ERROR.routeNoCandidateExcluded, params };
 }
 
 /**
@@ -254,27 +310,38 @@ function refusalMessage(adapter: Account["adapter"], needs: TaskNeeds, excluded:
  * credential is in its own directory, which none of those commands writes, so it is named and pointed at the
  * settings page instead.
  */
-function credentialMessage(account: Account, state: CredentialState): string {
+function credentialRefusal(account: Account, state: CredentialState): Refusal {
+  const failure: RouteRefusal = state === "unusable" ? "credential_unusable" : "credential_missing";
   if (account.id === IMPLICIT_ACCOUNT_ID) {
     // The 0.2.0 sentence for a login that is there but cannot be trusted, verbatim: it names the one thing
     // to run, and this account's file is the file that command rewrites.
-    if (state === "unusable") return UNUSABLE_FILE_MESSAGE;
-    if (account.adapter === "claude-code") return MISSING_CLAUDE_TOKEN;
-    if (account.authMode === "byok") return MISSING_BYOK_KEY;
-    if (account.authMode === "compat") return MISSING_CODEX_LOGIN;
-    return NOT_LOGGED_IN;
+    if (state === "unusable") return { failure, error: UNUSABLE_FILE_MESSAGE, code: TASK_ERROR.authLoginFileUnusable };
+    const sentence = account.adapter === "claude-code"
+      ? MISSING_CLAUDE_TOKEN
+      : account.authMode === "byok"
+        ? MISSING_BYOK_KEY
+        : account.authMode === "compat"
+          ? MISSING_CODEX_LOGIN
+          : NOT_LOGGED_IN;
+    return { failure, error: sentence, code: accountCode(sentence) };
   }
+  const params = { account: accountParam(account) };
   return state === "unusable"
-    ? `${label(account)} 的凭据不可用（权限、符号链接或内容有问题），请在设置页重新填写。`
-    : `${label(account)} 还没有凭据，请在设置页填写后再运行。`;
+    ? { failure, error: `${label(account)} 的凭据不可用（权限、符号链接或内容有问题），请在设置页重新填写。`, code: TASK_ERROR.routeCredentialUnusable, params }
+    : { failure, error: `${label(account)} 还没有凭据，请在设置页填写后再运行。`, code: TASK_ERROR.routeCredentialMissing, params };
 }
 
 /** The same for a missing model: the old command for the synthesized account, the settings page otherwise. */
-function modelMessage(account: Account): string {
+function modelRefusal(account: Account): Refusal {
   if (account.id === IMPLICIT_ACCOUNT_ID && account.adapter === "codex-direct" && account.authMode === "byok") {
-    return BYOK_MODEL_REQUIRED;
+    return { failure: "model_missing", error: BYOK_MODEL_REQUIRED, code: accountCode(BYOK_MODEL_REQUIRED) };
   }
-  return `${label(account)} 没有默认模型。请在设置页为它指定一个模型。`;
+  return {
+    failure: "model_missing",
+    error: `${label(account)} 没有默认模型。请在设置页为它指定一个模型。`,
+    code: TASK_ERROR.routeModelMissing,
+    params: { account: accountParam(account) },
+  };
 }
 
 /**
@@ -292,6 +359,8 @@ function checkNamed(
       ok: false,
       failure: "adapter_mismatch",
       error: `${label(account)} 属于 ${account.adapter}，这个任务按 ${adapter} 运行，不能在它上面跑。`,
+      code: TASK_ERROR.routeAdapterMismatch,
+      params: { account: accountParam(account), accountAdapter: account.adapter, adapter },
     };
   }
   // Enabled state is deliberately not checked here. Spec step 2: a named account "is not excluded for
@@ -304,17 +373,9 @@ function checkNamed(
   // provider 401 in the chat. `credentialOf` decides what "usable" means for this account kind; a key or a
   // token whose own reader has a better sentence is left to it.
   const state = req.credentialOf(account);
-  if (state !== "connected") {
-    return {
-      ok: false,
-      failure: state === "unusable" ? "credential_unusable" : "credential_missing",
-      error: credentialMessage(account, state),
-    };
-  }
+  if (state !== "connected") return { ok: false, ...credentialRefusal(account, state) };
   const model = req.resolveModel(account);
-  if (model === null) {
-    return { ok: false, failure: "model_missing", error: modelMessage(account) };
-  }
+  if (model === null) return { ok: false, ...modelRefusal(account) };
   return { ok: true, account, model, mode: "manual", reason: source };
 }
 

@@ -2,12 +2,13 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { rmSync } from "node:fs";
 import path from "node:path";
 import { commandSpec } from "../platform.js";
-import { PROGRESS, SKILL_WARNING, type RouteDecision, type TaskAssign, type TaskEvent } from "@nema/shared";
+import { PROGRESS, SKILL_WARNING, type CodeParams, type RouteDecision, type TaskAssign, type TaskEvent } from "@nema/shared";
 import { notLoadedEvent, notPreloadedEvent } from "../skills/direct.js";
 import { attachmentCapabilities, refusal } from "../attachments/capabilities.js";
 import { attachmentLabel, attachmentPreamble, textAttachmentBlock } from "../attachments/blocks.js";
 import { loadTaskAttachments, type LoadedAttachment } from "../attachments/fetch.js";
-import { configErrorMessage, loadConfig, proxyEnvMode, type NemaConfig } from "../config.js";
+import { configError, loadConfig, proxyEnvMode, type NemaConfig } from "../config.js";
+import { failureFields } from "../routing/messages.js";
 import type { AgentAdapter, AgentResult } from "../daemon/runner.js";
 import { isApiConnectionFailure, parseClaudeLine, roomToolsOk, skillActivationFrom } from "./events.js";
 import { claudeAllowedToolNames } from "../direct/tools.js";
@@ -72,6 +73,11 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** A failed run's text, with the code of a routing, credential or config error when it has one (#299 batch 3a). */
+function failed(e: unknown): { error: string; code?: string; params?: CodeParams } {
+  return { error: message(e), ...failureFields(e) };
+}
+
 type ContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
@@ -104,7 +110,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     try {
       config = loadConfig(this.opts.nemaHome);
     } catch (e) {
-      return { ok: false, error: configErrorMessage(e) };
+      return { ok: false, ...failed(configError(e)) };
     }
     // An attachment Claude cannot take is refused first, before any login or launch problem (D-2 A).
     const caps = attachmentCapabilities({ ...config, adapter: "claude-code" });
@@ -118,7 +124,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     try {
       picked = this.accountSet(config);
     } catch (e) {
-      return { ok: false, error: message(e) };
+      return { ok: false, ...failed(e) };
     }
     const route = resolveRoute({
       task,
@@ -131,7 +137,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       resolveModel: preferredModel,
       autoRouting: picked.autoRouting,
     });
-    if (!route.ok) return { ok: false, error: route.error };
+    if (!route.ok) return { ok: false, error: route.error, code: route.code, ...(route.params ? { params: route.params } : {}) };
     const model = route.model === CLAUDE_DEFAULT_MODEL ? undefined : route.model;
     const decision = (m: string): RouteDecision => routeDecision(route, m);
 
@@ -139,7 +145,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     try {
       token = route.account.id === IMPLICIT_ACCOUNT_ID ? readClaudeToken(this.opts.nemaHome) : claudeTokenFor(this.opts.nemaHome, route.account);
     } catch (e) {
-      return { ok: false, error: message(e), route: decision(route.model) };
+      return { ok: false, ...failed(e), route: decision(route.model) };
     }
 
     // The run's clock starts here: a stalled attachment download counts toward the timeout.

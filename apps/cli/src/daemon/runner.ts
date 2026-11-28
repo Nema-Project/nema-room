@@ -1,5 +1,6 @@
-import type { RouteDecision, TaskAssign, TaskEvent } from "@nema/shared";
-import { configErrorMessage, DEFAULT_CONFIG, type NemaConfig } from "../config.js";
+import type { CodeParams, RouteDecision, TaskAssign, TaskEvent } from "@nema/shared";
+import { configError, DEFAULT_CONFIG, type NemaConfig } from "../config.js";
+import { failureFields } from "../routing/messages.js";
 
 /**
  * What an adapter reports back. `route` says which account and model ran the task, on success and on failure
@@ -7,7 +8,11 @@ import { configErrorMessage, DEFAULT_CONFIG, type NemaConfig } from "../config.j
  */
 export type AgentResult =
   | { ok: true; reply: string; route?: RouteDecision }
-  | { ok: false; error: string; route?: RouteDecision };
+  /**
+   * `error` is the fallback text the hub stores. `code` and `params` (#299 batch 3a) let the UI show it in the
+   * user's language; both optional, so an adapter that sets neither is reported exactly as before.
+   */
+  | { ok: false; error: string; route?: RouteDecision; code?: string; params?: CodeParams };
 
 export interface AgentAdapter {
   name: string;
@@ -60,7 +65,8 @@ export class Runner {
         name = resolveAdapterName(task.adapter, this.getConfig());
       } catch (e) {
         // config unreadable: fail loudly, never fall back to another adapter
-        result = { ok: false, error: configErrorMessage(e) };
+        const error = configError(e);
+        result = { ok: false, error: error.message, ...failureFields(error) };
       }
       if (name !== undefined) {
         const adapter = this.adapters.find((a) => a.name === name);
@@ -74,7 +80,8 @@ export class Runner {
               if (!this.stopped) onEvent(event);
             }, controller.signal);
           } catch (e) {
-            result = { ok: false, error: e instanceof Error ? e.message : String(e) };
+            // An adapter that throws instead of returning a failure still keeps a routing or credential code.
+            result = { ok: false, error: e instanceof Error ? e.message : String(e), ...failureFields(e) };
           } finally {
             if (this.activeController === controller) this.activeController = undefined;
           }
