@@ -9,7 +9,7 @@ import type { Implementation, ReportMessageMeta, WorkPackageMeta } from "@nema/s
 import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
 import { insertEvidenceEvent, consumeEvidenceEvent, reconcileUnconsumedEventsLocked, payloadHashFor, type EvidenceEventInput } from "./evidenceEvents.js";
 import type { Entry } from "@nema/shared";
-import { ATTACHMENT_LIMITS, HUB_ERROR, isUnknownRpcMethodError, messageHasBody, type CodeParams } from "@nema/shared";
+import { ATTACHMENT_LIMITS, HUB_ERROR, isUnknownRpcMethodError, messageHasBody, NOTICE, type CodeParams } from "@nema/shared";
 import type { CommitMeta } from "@nema/knowledge";
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, daemonErrorBody, errorBody, type DaemonRpc } from "./daemonRpc.js";
@@ -953,6 +953,7 @@ export function uiRoutes(deps: UiDeps): Hono {
       db,
       ws,
       `用户要求更新代码图 ${gid}：用 diagram__read 读旧图，用 code__changes 看自 ${since} 以来的改动，只改受影响的节点和连线，再用 diagram__save（带 id）保存。`,
+      { notice: { code: NOTICE.systemTaskDiagramUpdate, params: { id: gid } } },
     );
     const task = toUiTask(created, message.threadId);
     events.emit(ws, { type: "message.created", message });

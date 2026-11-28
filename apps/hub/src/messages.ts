@@ -13,6 +13,9 @@ import {
   type MessageMention,
   type ReportMessageMeta,
   type RepoIndexFailureMeta,
+  type SystemNotice,
+  type SystemNoticeMeta,
+  type TaskFailureMeta,
   type UserMessageMeta,
 } from "@nema/shared";
 import { AttachmentError, bindAttachments, listAttachmentsByIds, listAttachmentsForMessages, toAttachmentRef } from "./attachments.js";
@@ -27,7 +30,8 @@ export type Message = {
   role: "user" | "agent" | "system" | "report";
   authorUserId: string | null;
   content: string;
-  meta: AgentMessageMeta | ReportMessageMeta | UserMessageMeta | RepoIndexFailureMeta | null;
+  /** A system message may add `notice` (#299 batch 2) to any of these; see `SystemNoticeMeta`. */
+  meta: AgentMessageMeta | ReportMessageMeta | UserMessageMeta | RepoIndexFailureMeta | SystemNoticeMeta | null;
   taskId: string | null;
   createdAt: string;
   editedAt: string | null;
@@ -413,20 +417,22 @@ export class ArchivedWorkspaceError extends Error {
 
 /**
  * Work the system starts itself (draw on bind, update on request): a `system` message and a queued
- * task for it, in one transaction. An archived workspace is refused like a user message.
+ * task for it, in one transaction. An archived workspace is refused like a user message. `notice`, when
+ * given, is stored as `meta.notice` for the chat to show instead of the instruction text.
  */
 export async function postSystemTask(
   db: Db,
   workspaceId: string,
   content: string,
-  opts: { kind?: Task["kind"] } = {},
+  opts: { kind?: Task["kind"]; notice?: SystemNotice } = {},
 ): Promise<{ message: Message; task: Task }> {
   if (content.trim() === "") throw new Error("message content must not be empty");
   return db.tx(async (t) => {
     const ws = await t.query<{ archived_at: Date | string | null }>(`select archived_at from workspaces where id = $1`, [workspaceId]);
     if (!ws[0]) throw new Error(`workspace not found: ${workspaceId}`);
     if (ws[0].archived_at) throw new ArchivedWorkspaceError();
-    const message = await insertMessage(t, workspaceId, "system", null, content, null, null);
+    // `content` is the model's instruction; the notice is what the chat shows in the page's language.
+    const message = await insertMessage(t, workspaceId, "system", null, content, null, opts.notice ? { notice: opts.notice } : null);
     const task = await insertQueuedTask(t, workspaceId, message.id, opts.kind ?? "organize");
     return { message, task };
   });
@@ -500,12 +506,24 @@ export async function mergeReportMeta(db: Db, messageId: string, patch: ReportMe
   });
 }
 
+/**
+ * Meta an `addMessage` caller may store. A system message's notice (#299 batch 2) rides alongside the other
+ * keys: a follow-up card keeps `askedQuestion`, an index failure keeps `repoIndexFailure`.
+ */
+export type SystemMessageMeta =
+  | AgentMessageMeta
+  | (AgentMessageMeta & SystemNoticeMeta)
+  | RepoIndexFailureMeta
+  | (RepoIndexFailureMeta & SystemNoticeMeta)
+  | SystemNoticeMeta
+  | TaskFailureMeta;
+
 export function addMessage(
   db: Db,
   workspaceId: string,
   role: "agent" | "system",
   content: string,
-  opts: { taskId?: string; meta?: AgentMessageMeta | RepoIndexFailureMeta; threadId?: string | null } = {},
+  opts: { taskId?: string; meta?: SystemMessageMeta; threadId?: string | null } = {},
 ): Promise<Message> {
   return insertMessage(db, workspaceId, role, null, content, opts.taskId ?? null, opts.meta ?? null, opts.threadId ?? null);
 }

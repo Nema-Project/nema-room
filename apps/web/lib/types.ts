@@ -1,4 +1,4 @@
-import type { AgentMessageMeta, AttachmentView, CodeParams, CodedText, ComponentFailureReason, GraphifyError, Implementation, KnowledgeLanguage, ReportMessageMeta, ReportPassState, RepoIndexFailureMeta, Thread, UserMessageMeta, WpTask } from "@nema/shared";
+import type { AgentMessageMeta, AttachmentView, CodeParams, CodedText, ComponentFailureReason, GraphifyError, Implementation, KnowledgeLanguage, ReportMessageMeta, ReportPassState, RepoIndexFailureMeta, SystemNoticeMeta, Thread, UserMessageMeta, WpTask } from "@nema/shared";
 
 export type { AgentMessageMeta, Entry, EntrySummary, Implementation, KnowledgeLanguage, MessageMention, MessageQuote, ReportCheck, ReportMessageMeta, RouteDecision, Thread, ThreadOpenedBy, UpsertEntryInput, UserMessageMeta, WorkPackageMeta, WpTask } from "@nema/shared";
 
@@ -32,7 +32,8 @@ export type Message = {
   /** Who wrote a user message (#163). Null for older messages and every non-user role; absent from older hubs. */
   authorUserId?: string | null;
   content: string;
-  meta: AgentMessageMeta | ReportMessageMeta | UserMessageMeta | RepoIndexFailureMeta | null;
+  /** A system message may add `notice` (#299 batch 2) to any of these; see `SystemNoticeMeta`. */
+  meta: AgentMessageMeta | ReportMessageMeta | UserMessageMeta | RepoIndexFailureMeta | SystemNoticeMeta | null;
   taskId: string | null;
   createdAt: string;
   editedAt: string | null;

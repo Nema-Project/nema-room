@@ -374,6 +374,8 @@ test("a completed recheck that passes applies the report to its package task", a
   expect(task).toMatchObject({ status: "verified", confirmedBy: null, reportMessageId: message.id });
   const system = (await listMessages(db, ws)).filter((m) => m.role === "system");
   expect(system.map((m) => m.content)).toEqual([S3(message.id)]);
+  // The instruction stays the model's; the chat shows the notice (#299 batch 2).
+  expect(system.map((m) => m.meta)).toEqual([{ notice: { code: "system.task.commitsChecked", params: { messageId: message.id } } }]);
 });
 
 test("does not recheck a report that is already on main", async () => {
@@ -485,7 +487,41 @@ test("the fallback ignores a move younger than 30 minutes, marks a covered move 
   ]);
   const system = (await listMessages(db, ws)).filter((m) => m.role === "system");
   expect(system.map((m) => m.content)).toEqual([uncoveredText(uncovered)]);
+  expect(system.map((m) => m.meta)).toEqual([{
+    notice: { code: "system.task.uncoveredCommits", params: { label: "API", repoId: "repo_A", count: 2, commits: uncovered.join(", ") } },
+  }]);
   expect((await listQueuedTasks(db, ws)).filter((t) => t.messageId === system[0]!.id)).toHaveLength(1);
+});
+
+test("a long uncovered-commit list is bounded at whole SHAs, never a partial one", async () => {
+  const { ws, repoId } = await bind();
+  await insertMove(repoId, "a".repeat(40), "b".repeat(40), minutesAgo(40));
+  const uncovered = Array.from({ length: 100 }, (_, i) => i.toString(16).padStart(40, "0"));
+  handlers["repo.uncovered"] = () => uncovered;
+
+  const fallback = startReportFallback(db, daemon, events, { intervalMs: 3_600_000, now: () => NOW });
+  try {
+    await fallback.tick();
+  } finally {
+    fallback.stop();
+  }
+
+  const system = (await listMessages(db, ws)).filter((m) => m.role === "system");
+  expect(system).toHaveLength(1);
+  const params = (system[0]!.meta as { notice: { params: Record<string, unknown> } }).notice.params;
+  expect(params.count).toBe(100);
+  const commits = params.commits as string;
+  // 100 full SHAs join to more than the 4096-char param cap: the notice must stay within it.
+  expect(commits.length).toBeLessThanOrEqual(4096);
+  expect(commits.endsWith(", …")).toBe(true);
+  const tokens = commits.split(", ");
+  expect(tokens.at(-1)).toBe("…");
+  // The kept SHAs are exactly an in-order prefix of the uncovered list.
+  const kept = tokens.slice(0, -1);
+  expect(kept.length).toBeGreaterThan(0);
+  expect(kept).toEqual(uncovered.slice(0, kept.length));
+  // The instruction text itself still lists every commit, one per line.
+  expect(system[0]!.content).toContain(`\n${uncovered.join("\n")}\n`);
 });
 
 test("a fallback daemon error leaves the move unhandled", async () => {

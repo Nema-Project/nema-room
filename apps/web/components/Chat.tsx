@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
-import { ARCHITECTURE_DIAGRAM_MARKER, type MessageMention } from "@nema/shared";
+import { ARCHITECTURE_DIAGRAM_MARKER, NOTICE, readSystemNotice, type MessageMention } from "@nema/shared";
 import { Composer } from "@/components/Composer";
 import { AgentAvatar, MessageItem, messageRoleLabel } from "@/components/MessageItem";
 import { formatDay, formatTime } from "@/lib/format";
@@ -192,8 +192,14 @@ export const Chat = forwardRef<ChatHandle, Props>(function Chat({ workspaceId, c
   );
 
   const runningMessage = runningTask ? messages.find((m) => m.id === runningTask.messageId) : undefined;
-  // The hub's bind prompt contains ARCHITECTURE_DIAGRAM_MARKER; the bar label depends on it.
-  const drawingDiagram = runningMessage?.role === "system" && runningMessage.content.includes(ARCHITECTURE_DIAGRAM_MARKER);
+  // The hub marks the diagram task's system message with its notice code (#299 batch 2); the bar label depends on it.
+  // A message stored before the notice change has no notice metadata (D3): it keeps the previous text match, so a
+  // diagram task that started before the upgrade keeps its label while it is still running.
+  const runningNotice = readSystemNotice(runningMessage?.meta);
+  const drawingDiagram =
+    runningMessage?.role === "system" &&
+    (runningNotice?.code === NOTICE.systemTaskDiagram ||
+      (runningNotice === undefined && runningMessage.content.includes(ARCHITECTURE_DIAGRAM_MARKER)));
 
   useLayoutEffect(() => {
     const el = stream.current;

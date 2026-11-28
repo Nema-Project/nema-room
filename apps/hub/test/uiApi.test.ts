@@ -214,6 +214,13 @@ describe("ui api", () => {
     expect(cards).toHaveLength(1);
     const anchor = await db.query<{ role: string; task_id: string | null }>("select role,task_id from messages where id=$1", [ids[0]]);
     expect(anchor[0]).toEqual({ role: "system", task_id: null });
+    // Anchor and card carry the follow-up notice (#299 batch 2); the card keeps askedQuestion beside it.
+    const notice = { code: "question.followUp", params: { id: q.id, title: q.title } };
+    const stored = await db.query<{ content: string; meta: unknown }>("select content,meta from messages where workspace_id=$1 and role='system' order by seq", [ws]);
+    expect(stored).toEqual([
+      { content: `Follow-up ${q.id}: ${q.title}`, meta: { notice } },
+      { content: `Follow-up ${q.id}: ${q.title}`, meta: { changes: [], askedQuestion: { id: q.id, title: q.title, body: q.body }, notice } },
+    ]);
   });
 
   test("legacy conversion explicitly associates a question whose original task is not on its source anchor", async () => {
@@ -1304,6 +1311,8 @@ describe("diagram routes", () => {
     expect(b.message.content).toBe(
       `用户要求更新代码图 ${g.id}：用 diagram__read 读旧图，用 code__changes 看自 abc123 以来的改动，只改受影响的节点和连线，再用 diagram__save（带 id）保存。`,
     );
+    // The instruction stays the model's; the chat shows the notice (#299 batch 2).
+    expect(b.message.meta).toEqual({ notice: { code: "system.task.diagramUpdate", params: { id: g.id } } });
     expect(seen).toEqual(["message.created", "task.updated"]);
     expect((await dreq("POST", `/api/workspaces/${ws}/diagrams/${g.id}/update`, { status: "active" })).status).toBe(400);
     expect((await dreq("POST", `/api/workspaces/${ws}/diagrams/G-9/update`, {})).status).toBe(404);

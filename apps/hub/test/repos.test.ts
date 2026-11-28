@@ -559,7 +559,7 @@ test("binding a repo queues one architecture task after its index succeeds", asy
     const tasks = await listQueuedTasks(db, ws.id);
     return messages
       .filter((m) => m.role === "system")
-      .map((m) => ({ content: m.content, queued: tasks.filter((t) => t.messageId === m.id).length }));
+      .map((m) => ({ content: m.content, meta: m.meta, queued: tasks.filter((t) => t.messageId === m.id).length }));
   };
 
   const api = await bindRepo(db, daemon, ws.id, { path: "/api", label: "API" }, events);
@@ -569,9 +569,16 @@ test("binding a repo queues one architecture task after its index succeeds", asy
   finishers[0]!({ sha: "abc" });
   await until(async () => (await architectureTasks()).length === 2);
   expect(await architectureTasks()).toEqual([
-    { content: indexReadyText("API"), queued: 0 },
-    { content: `为仓库 API（${api.id}）画架构图：用 code__ 函数读代码，用 diagram__save 保存，type 为 architecture。`, queued: 1 },
+    { content: indexReadyText("API"), meta: { notice: { code: "repo.index.ready", params: { label: "API" } } }, queued: 0 },
+    // The instruction stays the model's text; the chat shows the notice (#299 batch 2).
+    {
+      content: `为仓库 API（${api.id}）画架构图：用 code__ 函数读代码，用 diagram__save 保存，type 为 architecture。`,
+      meta: { notice: { code: "system.task.diagram", params: { label: "API", repoId: api.id } } },
+      queued: 1,
+    },
   ]);
+  // The fallback text is English (D2).
+  expect(indexReadyText("API")).toBe("The code index for repository API is ready. You can now ask about the codebase.");
   expect(seen.map((e) => e.type)).toEqual(["repo.index", "repo.index", "message.created", "message.created", "task.updated"]);
 
   const web = await bindRepo(db, daemon, ws.id, { path: "/web", label: "Web" }, events);
@@ -610,7 +617,7 @@ test("a failed Graphify index publishes and stores the structured failure for ch
   const indexMessage = {
     role: "system",
     content: indexFailedText("API"),
-    meta: { repoIndexFailure: { label: "API", error } },
+    meta: { repoIndexFailure: { label: "API", error }, notice: { code: "repo.index.failed", params: { label: "API" } } },
   };
   await until(async () => seen.some((event) => event.type === "message.created"));
   expect(seen).toContainEqual({ type: "repo.index", repoId: repo.id, label: "API", status: "failed" });
@@ -691,6 +698,12 @@ test("a failed or empty index queues no architecture task", async () => {
     indexFailedText("API"),
     indexFailedText("Web"),
   ]);
+  // Without a graphify error there is no repoIndexFailure, only the notice (#299 batch 2).
+  expect((await listMessages(db, ws.id)).filter((m) => m.role === "system").map((m) => m.meta)).toEqual([
+    { notice: { code: "repo.index.failed", params: { label: "API" } } },
+    { notice: { code: "repo.index.failed", params: { label: "Web" } } },
+  ]);
+  expect(indexFailedText("API")).toBe("The code index for repository API did not finish. You cannot ask about the codebase yet.");
   expect(await listQueuedTasks(db, ws.id)).toEqual([]);
   errors.mockRestore();
 });

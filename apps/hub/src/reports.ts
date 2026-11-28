@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { createHash } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { KnowledgeStore } from "@nema/knowledge";
-import { HookSignal, ReportInput, reportPassed, type GithubObservation, type ReportAuthors, type ReportCheck, type ReportMessageMeta, type StoredReport } from "@nema/shared";
+import { HookSignal, MAX_PARAM_LENGTH, NOTICE, ReportInput, reportPassed, type GithubObservation, type SystemNotice, type ReportAuthors, type ReportCheck, type ReportMessageMeta, type StoredReport } from "@nema/shared";
 import { DAEMON_TIMED_OUT, INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
@@ -222,10 +222,13 @@ function checkParams(repo: Repo, report: StoredReport) {
   return { workspaceId: repo.workspaceId, repoId: repo.id, path: repo.path, mainBranch: repo.mainBranch, commits: report.commits, files: report.files };
 }
 
-/** Queues a system task and announces it. An archived workspace is skipped: it starts no work. */
-async function queueSystemTask(db: Db, events: EventBus, workspaceId: string, content: string): Promise<boolean> {
+/**
+ * Queues a system task and announces it. An archived workspace is skipped: it starts no work. `content` is
+ * the model's instruction; `notice` is what the chat shows (#299 batch 2).
+ */
+async function queueSystemTask(db: Db, events: EventBus, workspaceId: string, content: string, notice: SystemNotice): Promise<boolean> {
   try {
-    const { message, task } = await postSystemTask(db, workspaceId, content);
+    const { message, task } = await postSystemTask(db, workspaceId, content, { notice });
     events.emit(workspaceId, { type: "message.created", message });
     events.emit(workspaceId, { type: "task.updated", task: toUiTask(task, message.threadId) });
     return true;
@@ -296,7 +299,9 @@ async function recheckOne(deps: ReportDeps, repo: Repo, row: { id: string; meta:
   // An in-progress report only keeps its new check, even once it is on main.
   if (row.meta.report.progress === "in_progress") return;
   if (deps.dataDir) await applyReportToWorkPackage(db, deps.dataDir, events, repo.workspaceId, updated, deps.ownedHelpers);
-  if (reportPassed(check)) await queueSystemTask(db, events, repo.workspaceId, commitsCheckedTask(row.id));
+  if (reportPassed(check)) {
+    await queueSystemTask(db, events, repo.workspaceId, commitsCheckedTask(row.id), { code: NOTICE.systemTaskCommitsChecked, params: { messageId: row.id } });
+  }
 }
 
 export type ReportFallbackOptions = {
@@ -309,6 +314,24 @@ export type ReportFallbackOptions = {
 };
 
 type MoveRow = { id: string; repo_id: string; from_sha: string | null; to_sha: string };
+
+/**
+ * The `commits` notice param, bounded to `MAX_PARAM_LENGTH` without ever cutting a SHA in half:
+ * complete SHAs only, in order, with an ellipsis marking a list that continues past the cap.
+ * `readCodeParams` slices string params at the same limit on read, so an unbounded join would
+ * otherwise surface a partial SHA in the localised notice.
+ */
+function uncoveredCommitsParam(shas: string[]): string {
+  const joined = shas.join(", ");
+  if (joined.length <= MAX_PARAM_LENGTH) return joined;
+  let out = "";
+  for (const sha of shas) {
+    const next = out === "" ? sha : `${out}, ${sha}`;
+    if (next.length + ", …".length > MAX_PARAM_LENGTH) break;
+    out = next;
+  }
+  return out === "" ? "…" : `${out}, …`;
+}
 
 function uncoveredTask(repo: Repo, shas: string[]): string {
   return (
@@ -348,7 +371,13 @@ async function handleMove(db: Db, daemon: DaemonRpc, events: EventBus, move: Mov
     covered: await coveredCommits(db, repo),
   }, undefined, { workspaceId: repo.workspaceId });
   if (!Array.isArray(uncovered) || !uncovered.every((sha) => typeof sha === "string")) throw new Error("invalid repo.uncovered result");
-  if (uncovered.length > 0) await queueSystemTask(db, events, repo.workspaceId, uncoveredTask(repo, uncovered as string[]));
+  if (uncovered.length > 0) {
+    const shas = uncovered as string[];
+    await queueSystemTask(db, events, repo.workspaceId, uncoveredTask(repo, shas), {
+      code: NOTICE.systemTaskUncoveredCommits,
+      params: { label: repo.label, repoId: repo.id, count: shas.length, commits: uncoveredCommitsParam(shas) },
+    });
+  }
   await markHandled();
 }
 

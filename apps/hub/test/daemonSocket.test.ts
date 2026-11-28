@@ -268,7 +268,8 @@ describe("daemon socket", () => {
     await vi.waitFor(async () => {
       const system = (await listMessages(db, wsA)).find((m) => m.role === "system");
       expect(system?.content).toContain("boom");
-      expect(system?.meta).toBeNull();
+      // Only the failure notice: an edit's quote belongs to a reply, not to a failure.
+      expect(system?.meta).toEqual({ notice: { code: "task.failed" } });
     });
     const second = await editUserMessage(db, wsA, original.message.id, "latest", "usr_local");
     events.emit(wsA, { type: "task.updated", task: { id: second.task.id, workspaceId: wsA, messageId: original.message.id, status: "queued", error: null, threadId: null } });
@@ -631,7 +632,7 @@ describe("daemon socket", () => {
     const a = await c.next("task.assign");
     c.send({ type: "task.finished", taskId: a.taskId, ok: false, error: "boom" });
     await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
-    expect(await listThreadMessages(db, m.message.id)).toContainEqual(expect.objectContaining({ role: "system", threadId: m.message.id, content: "处理失败：boom" }));
+    expect(await listThreadMessages(db, m.message.id)).toContainEqual(expect.objectContaining({ role: "system", threadId: m.message.id, content: "Processing failed: boom" }));
   });
 
   test("daemon failure opens a grill thread for a touched open question", async () => {
@@ -644,7 +645,7 @@ describe("daemon socket", () => {
     await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
     expect(await getThread(db, m.message.id)).toMatchObject({ id: m.message.id, openedBy: "grill" });
     expect(await getQuestionThread(db, wsA, q.id)).toBe(m.message.id);
-    expect(await listThreadMessages(db, m.message.id)).toContainEqual(expect.objectContaining({ role: "system", threadId: m.message.id, content: "处理失败：daemon error" }));
+    expect(await listThreadMessages(db, m.message.id)).toContainEqual(expect.objectContaining({ role: "system", threadId: m.message.id, content: "Processing failed: daemon error" }));
   });
 
   test("prompt failure routes a retained question from an interrupted attempt", async () => {
@@ -675,7 +676,7 @@ describe("daemon socket", () => {
     c.send({ type: "task.finished", taskId: a.taskId, ok: false, error: "thread error" });
     await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
     expect(await getQuestionThread(db, wsA, q.id)).toBe(m.message.id);
-    expect(await listThreadMessages(db, m.message.id)).toContainEqual(expect.objectContaining({ role: "system", threadId: m.message.id, content: "处理失败：thread error" }));
+    expect(await listThreadMessages(db, m.message.id)).toContainEqual(expect.objectContaining({ role: "system", threadId: m.message.id, content: "Processing failed: thread error" }));
   });
 
   test("retry reuses the thread opened during the first run and stores one reply", async () => {
@@ -919,7 +920,9 @@ describe("daemon socket", () => {
     const sys = (await listThreadMessages(db, a.message.id)).filter((m) => m.role === "system");
     expect(sys).toHaveLength(1);
     expect(sys[0]).toMatchObject({ threadId: a.message.id });
-    expect(sys[0]!.content.startsWith("处理失败：")).toBe(true);
+    expect(sys[0]!.content.startsWith("Processing failed: ")).toBe(true);
+    // A hub error without a code: the notice has no reason, and the raw text stays out of the params.
+    expect(sys[0]!.meta).toEqual({ notice: { code: "task.failed" } });
   });
 
   test("disconnect emits task.updated queued for the requeued task", async () => {
@@ -1008,7 +1011,8 @@ describe("daemon socket", () => {
     c.send({ type: "task.finished", taskId: a.task.id, ok: false, error: "boom" });
     expect((await c.next("task.assign")).taskId).toBe(b.task.id);
     const sys = (await listMessages(db, wsA)).find((m) => m.role === "system")!;
-    expect(sys.content).toBe("处理失败：boom");
+    expect(sys.content).toBe("Processing failed: boom");
+    expect(sys.meta).toEqual({ notice: { code: "task.failed" } });
     expect((await getTask(db, a.task.id))?.status).toBe("failed");
   });
 
@@ -1119,7 +1123,8 @@ describe("daemon socket", () => {
         client = await connect();
       }
     }
-    const failedText = "处理失败：任务被中断，自动重试 3 次后仍未完成。请重新发送这条消息。";
+    const failedText = "Processing failed: The task was interrupted and did not finish after 3 automatic retries. Send the message again.";
+    const meta = { notice: { code: "task.interrupted", params: { retries: 3 } } };
     if (threadId) {
       let system: Awaited<ReturnType<typeof listThreadMessages>> = [];
       for (let n = 0; n < 50; n++) {
@@ -1127,7 +1132,7 @@ describe("daemon socket", () => {
         if (system.length > 0) break;
         await new Promise((r) => setTimeout(r, 20));
       }
-      expect(system).toEqual([expect.objectContaining({ content: failedText, taskId, threadId })]);
+      expect(system).toEqual([expect.objectContaining({ content: failedText, meta, taskId, threadId })]);
       expect((await listMessages(db, wsA)).filter((m) => m.role === "system")).toHaveLength(0);
       expect(threadUpdates).toBe(1);
     } else {
@@ -1137,7 +1142,7 @@ describe("daemon socket", () => {
         if (system.length > 0) break;
         await new Promise((r) => setTimeout(r, 20));
       }
-      expect(system).toEqual([expect.objectContaining({ content: failedText, taskId, threadId: null })]);
+      expect(system).toEqual([expect.objectContaining({ content: failedText, meta, taskId, threadId: null })]);
       expect(threadUpdates).toBe(0);
     }
     const [row] = await db.query<{ status: string; error: string | null; interruptions: number }>(
@@ -1291,7 +1296,9 @@ describe("attachments in task.assign", () => {
     expect(a.attachments).toBeUndefined();
     await vi.waitFor(async () => expect((await getTask(db, withFile.task.id))?.status).toBe("failed"));
     const failure = (await listMessages(db, wsA)).find((row) => row.role === "system" && row.taskId === withFile.task.id);
-    expect(failure?.content).toContain("当前 daemon 不支持附件");
+    expect(failure?.content).toBe("Processing failed: The connected daemon does not support attachments. Upgrade the CLI.");
+    // The reason is a code the page can show in its own language.
+    expect(failure?.meta).toEqual({ notice: { code: "task.failed", params: { reason: "daemon.no-attachments" } } });
   });
 
   test("a text-only task carries no attachments field", async () => {
@@ -1330,7 +1337,8 @@ describe("account choice and route decision", () => {
     await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
     expect(await c.has("task.assign")).toBe(false);
     const system = (await listMessages(db, wsA)).find((x) => x.role === "system")!;
-    expect(system.content).toContain("不支持按账户运行任务");
+    expect(system.content).toContain("cannot run a task on a chosen account");
+    expect(system.meta).toEqual({ notice: { code: "task.failed", params: { reason: "daemon.no-accounts" } } });
   });
 
   test("a task that names no account still runs on a daemon without the capability", async () => {
@@ -1422,9 +1430,9 @@ describe("account choice and route decision", () => {
     expect(agent.meta?.route).toBeUndefined();
   });
 
-  test("a failure names the account it happened on, and keeps the record", async () => {
-    // A failed task has no reply, so the route line has nowhere to go; the account and model join the
-    // failure line instead, and the same record is stored beside it for later.
+  test("a failure keeps the account it happened on in meta.route, not in the text", async () => {
+    // A failed task has no reply, so the route line has nowhere to go. The record is stored beside the
+    // failure notice and the page names the account and model from it (#299 batch 2); the text has no suffix.
     const m = await postUserMessage(db, wsA, "will fail", { authorUserId: "usr_local", accountId: "acct_abc1234567" });
     const c = await connect();
     const a = await c.next("task.assign");
@@ -1432,10 +1440,10 @@ describe("account choice and route decision", () => {
     c.send({ type: "task.finished", taskId: a.taskId, ok: false, error: "订阅额度已用完", route });
     await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
     const system = (await listMessages(db, wsA)).find((x) => x.role === "system")!;
-    expect(system.content).toContain("订阅额度已用完");
-    expect(system.content).toContain("Personal");
-    expect(system.content).toContain("gpt-5.5");
-    expect((system.meta as { route?: unknown } | null)?.route).toEqual(route);
+    expect(system.content).toBe("Processing failed: 订阅额度已用完");
+    expect(system.content).not.toContain("Personal");
+    // The daemon sent no code (batch 3), so the notice names no reason and the raw text stays out of the params.
+    expect(system.meta).toEqual({ notice: { code: "task.failed" }, route });
   });
 
   test("a route this hub cannot read costs the route line, not the reply", async () => {
@@ -1471,18 +1479,19 @@ describe("account choice and route decision", () => {
     await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
     const system = (await listMessages(db, wsA)).find((x) => x.role === "system")!;
     // The error survives and no unreadable account line is invented for it.
-    expect(system.content).toBe("处理失败：订阅额度已用完");
+    expect(system.content).toBe("Processing failed: 订阅额度已用完");
+    expect(system.meta).toEqual({ notice: { code: "task.failed" } });
   });
 
-  test("a failure from a daemon that routed nothing reads as it always did", async () => {
+  test("a failure from a daemon that routed nothing stores no route", async () => {
     const m = await postUserMessage(db, wsA, "plain failure", { authorUserId: "usr_local" });
     const c = await connect();
     const a = await c.next("task.assign");
     c.send({ type: "task.finished", taskId: a.taskId, ok: false, error: "something broke" });
     await vi.waitFor(async () => expect((await getTask(db, m.task.id))?.status).toBe("failed"));
     const system = (await listMessages(db, wsA)).find((x) => x.role === "system")!;
-    expect(system.content).toBe("处理失败：something broke");
-    expect(system.meta).toBeNull();
+    expect(system.content).toBe("Processing failed: something broke");
+    expect(system.meta).toEqual({ notice: { code: "task.failed" } });
   });
 });
 
