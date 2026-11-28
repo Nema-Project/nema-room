@@ -33,7 +33,9 @@ export function commandPathCandidates(bin: string, env: NodeJS.ProcessEnv = proc
   const searchPath = Object.entries(env).find(([key]) => platform === "win32" ? key.toLowerCase() === "path" : key === "PATH")?.[1] ?? "";
   if (platform !== "win32") {
     if (bin.includes("/")) return [bin];
-    return searchPath.split(":").map((dir) => (dir === "" ? `./${bin}` : path.posix.join(dir, bin)));
+    // Join by hand, not path.posix.join: join normalizes `..` away, but the kernel resolves PATH entries
+    // left to right, so `dir/nonexistent/../bin` is ENOENT while the normalized `dir/bin` exists.
+    return searchPath.split(":").map((dir) => (dir === "" ? `./${bin}` : `${dir}/${bin}`));
   }
   const p = path.win32;
   const dirs = p.isAbsolute(bin) || /[/\\]/.test(bin) ? [""] : searchPath.split(";");

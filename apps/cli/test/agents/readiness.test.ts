@@ -345,6 +345,18 @@ describe("the reply carries no credential (reverse assertion)", () => {
     for (const secret of [...Object.values(FAKE), "fake-codex-refresh", "fake-acct"]) expect(serialized).not.toContain(secret);
     for (const local of [root, home, codexHome, "auth.json", "byok-key", "claude-code-token"]) expect(serialized).not.toContain(local);
   });
+
+  test("a stored BYOK default is judged (and its key still never leaks)", async () => {
+    // The stored BYOK account above is order 1 behind an order-0 SIWC account, so it is never the
+    // default and its key is never read. Make it the default to prove the reverse assertion is real.
+    accountsFile([stored({ id: "acct_byk0000000", authMode: "byok", baseUrl: "https://api.openai.com/v1", order: 0 })]);
+    saveAccountSecret(home, "acct_byk0000000", "key", FAKE.storedKey);
+    const reply = await computeReadiness(input({ config: { ...DEFAULT_CONFIG, authMode: "byok", model: "fake-model" } }));
+    const r = row(reply, "codex-direct");
+    expect(r.state).toBe("configured");
+    expect(r.account).toEqual({ id: "acct_byk0000000", implicit: false, authMode: "byok" });
+    expect(JSON.stringify(reply)).not.toContain(FAKE.storedKey);
+  });
 });
 
 describe("the default account matches resolveRoute (no drifting copy)", () => {

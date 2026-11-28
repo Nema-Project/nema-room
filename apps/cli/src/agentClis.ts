@@ -2,10 +2,7 @@
 // whether one answers `--version` on PATH and, when not, where its official install instructions live.
 import { execFile } from "node:child_process";
 import { lstatSync } from "node:fs";
-import { promisify } from "node:util";
 import { commandPathCandidates, commandSpec } from "./platform.js";
-
-const execFileAsync = promisify(execFile);
 
 export type AgentCliId = "codex" | "claude-code";
 
@@ -26,25 +23,38 @@ export const AGENT_CLIS: ReadonlyArray<{ id: AgentCliId; command: string; instal
 ];
 
 const VERSION_TIMEOUT_MS = 10_000;
+/** Grace after SIGTERM before SIGKILL: long enough for a running child that traps the signal to exit
+ * (signal handling is immediate for a process that is already running), short enough that a child
+ * ignoring the signal is killed promptly. The probe always ends by timeout + grace. */
+const VERSION_KILL_GRACE_MS = 250;
 
 /** Runs `<command> --version` and resolves with its stdout; rejects with the spawn error as Node reports it. */
 export type VersionRunner = (command: string) => Promise<string>;
 
 export async function runVersion(command: string, timeoutMs: number = VERSION_TIMEOUT_MS): Promise<string> {
   const spec = commandSpec(command, ["--version"]);
-  // execFile resolves successfully when the child traps the kill signal and exits 0, so track the timer
-  // separately: a probe that outlived the timeout is a timeout whatever the exit status.
-  let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; }, timeoutMs);
-  try {
-    const { stdout } = await execFileAsync(spec.bin, spec.args, { timeout: timeoutMs, windowsHide: true });
-    if (timedOut) {
-      throw Object.assign(new Error(`Command timed out after ${timeoutMs}ms: ${spec.bin} --version`), { killed: true, signal: "SIGTERM" });
-    }
-    return stdout;
-  } finally {
-    clearTimeout(timer);
-  }
+  return new Promise<string>((resolve, reject) => {
+    let timedOut = false;
+    let timer: NodeJS.Timeout | undefined;
+    let graceTimer: NodeJS.Timeout | undefined;
+    const child = execFile(spec.bin, spec.args, { windowsHide: true }, (error, stdout) => {
+      if (timer !== undefined) clearTimeout(timer);
+      if (graceTimer !== undefined) clearTimeout(graceTimer);
+      if (!error) return resolve(stdout);
+      if (timedOut) {
+        return reject(Object.assign(new Error(`Command timed out after ${timeoutMs}ms: ${spec.bin} --version`), { killed: true, signal: "SIGTERM" }));
+      }
+      reject(error);
+    });
+    timer = setTimeout(() => {
+      // The deadline, not the exit: ask the child to stop, then force it. The wait stays bounded even
+      // when the child ignores SIGTERM, while a child that exits 0 on the signal still resolves above —
+      // that is what execFile's own timeout reports, and the old `agents.detect` depends on it (D-7).
+      timedOut = true;
+      child.kill("SIGTERM");
+      graceTimer = setTimeout(() => child.kill("SIGKILL"), VERSION_KILL_GRACE_MS);
+    }, timeoutMs);
+  });
 }
 
 /**
@@ -73,8 +83,8 @@ export function executeVersion(run: VersionRunner = runVersion): VersionExecutor
     } catch (e) {
       const err = e as (NodeJS.ErrnoException & { killed?: boolean; signal?: string | null }) | null | undefined;
       if (err?.code === "ENOENT") return { kind: "enoent" };
-      // execFile's `timeout` kills the child and rejects with `killed` and the signal it sent; runVersion
-      // throws the same shape when the child traps the signal and exits 0 after the timer fired.
+      // runVersion throws this shape when the deadline fired and the child did not exit 0; a child
+      // that exits 0 after the signal still resolves, matching execFile's own timeout behavior.
       if (err?.killed === true && typeof err.signal === "string") return { kind: "timeout" };
       return { kind: "error" };
     }

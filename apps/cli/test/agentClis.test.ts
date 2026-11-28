@@ -44,14 +44,27 @@ describe("executeVersion splits the outcome", () => {
   });
 });
 
-describe("runVersion: a child that outlives the timeout is a timeout even when it exits 0", () => {
+describe("runVersion: the deadline bounds the wait without changing a successful exit", () => {
   // Synthetic node children, not agent CLIs; the timeout is shortened to 500ms through runVersion's
-  // second parameter (long enough for a node child to start under load) so the trap case does not
-  // wait out the real 10s probe timeout.
-  test("a child that traps SIGTERM and exits 0 after the timer fired", async () => {
+  // second parameter (long enough for a node child to start under load) so these cases do not wait
+  // out the real 10s probe timeout.
+  test("a child that traps SIGTERM and exits 0 after the timer fired is still ok (D-7: base execFile behavior)", async () => {
     const script = path.join(root, "trap-sigterm.cjs");
     writeFileSync(script, "process.on('SIGTERM', () => process.exit(0));\nsetTimeout(() => {}, 5000);\n");
+    await expect(executeVersion((command) => runVersion(command, 500))(script)).resolves.toEqual({ kind: "ok", version: null });
+  });
+  test("a child that traps SIGTERM and exits non-zero after the timer fired is a timeout", async () => {
+    const script = path.join(root, "trap-sigterm-7.cjs");
+    writeFileSync(script, "process.on('SIGTERM', () => process.exit(7));\nsetTimeout(() => {}, 5000);\n");
     await expect(executeVersion((command) => runVersion(command, 500))(script)).resolves.toEqual({ kind: "timeout" });
+  });
+  test("a child that ignores SIGTERM is a timeout within the kill grace", async () => {
+    const script = path.join(root, "ignore-sigterm.cjs");
+    writeFileSync(script, "process.on('SIGTERM', () => {});\nsetTimeout(() => process.exit(0), 5000);\n");
+    const start = Date.now();
+    await expect(executeVersion((command) => runVersion(command, 500))(script)).resolves.toEqual({ kind: "timeout" });
+    // Deadline 500ms plus the 250ms SIGKILL grace; 2s leaves room for a loaded machine.
+    expect(Date.now() - start).toBeLessThan(2000);
   });
   test("a child that exits 0 before the timer is still ok", async () => {
     const script = path.join(root, "fast.cjs");
@@ -95,6 +108,9 @@ describe("commandPathCandidates follows commandSpec's lookup rules", () => {
   test("POSIX: a command with a directory part is the only candidate", () => {
     expect(commandPathCandidates("./bin/claude", { PATH: "/a" }, "darwin")).toEqual(["./bin/claude"]);
   });
+  test("POSIX: a PATH entry with .. keeps its segments (the kernel resolves them)", () => {
+    expect(commandPathCandidates("claude", { PATH: "/a/b/../c" }, "linux")).toEqual(["/a/b/../c/claude"]);
+  });
   test("Windows: case-insensitive Path, the same extension order as commandSpec", () => {
     expect(commandPathCandidates("claude", { Path: "C:\\a" }, "win32")).toEqual(
       [".exe", ".com", ".cmd", ".bat", ""].map((ext) => path.win32.join("C:\\a", `claude${ext}`)),
@@ -128,6 +144,11 @@ describe("commandOnSearchPath only looks at directory entries", () => {
     } finally {
       process.chdir(cwd);
     }
+  });
+  test.runIf(process.platform !== "win32")("a PATH entry with .. is resolved by the kernel, not normalized", () => {
+    mkdirSync(path.join(root, "bin"));
+    writeFileSync(path.join(root, "bin", "claude"), "not a program");
+    expect(commandOnSearchPath("claude", { PATH: `${path.join(root, "bin")}/nonexistent/..` })).toBe(false);
   });
 });
 
