@@ -184,6 +184,35 @@ export function implicitCredentialState(nemaHome: string, account: Account): Cre
   return inspected.reason === "unusable" ? "unusable" : "missing";
 }
 
+/**
+ * The synthesized account's own legacy credential as first-run readiness sees it (#302 D-1). Read-only: no
+ * refresh, no network, and the value never leaves the file readers.
+ *
+ * Unlike `implicitCredentialState`, which routing keeps as it is so the 0.2.0 sentences stay the ones a task
+ * prints, every kind is judged here: a first-run user with no key or token must not be told they are set up.
+ * SIWC is judged like a stored account's login (`usableSiwcLogin` on the parsed record), BYOK and Claude by
+ * the key/token file rules, compat by the Codex CLI's own login. The "one kind per directory" rule is still
+ * not applied, for the reason given on `implicitCredentialState`: that directory is the whole home.
+ */
+export function implicitCredentialReadiness(nemaHome: string, account: Account, codexHome: string): CredentialState {
+  if (account.id !== IMPLICIT_ACCOUNT_ID) throw new Error("implicitCredentialReadiness judges only the synthesized account");
+  if (account.adapter === "codex-direct" && account.authMode === "compat") return codexLoginProblem(codexHome) ?? "connected";
+  let file: string | undefined;
+  try {
+    file = accountCredentialFiles(nemaHome, account)[0];
+  } catch {
+    // A linked home or credential path: nothing under it is read.
+    return "unusable";
+  }
+  if (file === undefined) return "missing";
+  if (account.adapter === "codex-direct" && account.authMode === "siwc") {
+    const inspected = new AuthStore(nemaHome, neverRefresh, Date.now, { baseDir: path.dirname(file) }).inspect();
+    if (inspected.auth) return usableSiwcLogin(inspected.auth) ? "connected" : "unusable";
+    return inspected.reason === "unusable" ? "unusable" : "missing";
+  }
+  return fileState(file);
+}
+
 export function accountCredentialState(
   nemaHome: string,
   account: Account,
