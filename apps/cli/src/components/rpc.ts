@@ -1,6 +1,7 @@
 // The daemon's component RPC: what the settings page and the graph entry points ask and start. Nothing here
 // downloads on its own: `components.install` runs only when the caller says the person confirmed the offer,
 // and the offer it confirmed (size, location, hosts) is the one `components.status` reported.
+import { CodedError, DAEMON_ERROR, GraphifyUnavailableStatusSchema, type GraphifyError } from "@nema/shared";
 import { loadConfig, saveConfig, normalizeMirrorUrl, type NemaConfig } from "../config.js";
 import { sourceUrls } from "./download.js";
 import { installComponent, type InstallOptions } from "./install.js";
@@ -170,10 +171,16 @@ export function registerComponentHandlers(rpc: RpcRouter, o: ComponentRpcOptions
     // and re-activates the same version. An install already running is never started twice.
     const force = (params as { force?: unknown } | null)?.force === true;
     if (current.status.state === "installing" || (current.status.state === "installed" && !force)) return current;
-    if (!current.offer) throw new Error(current.offerError ?? (current.status.state === "failed" ? current.status.detail : "component cannot be installed here"));
+    if (!current.offer) {
+      const refused = new Error(current.offerError ?? (current.status.state === "failed" ? current.status.detail : "component cannot be installed here"));
+      // A failed status says why in the UI language through the Graphify facts the page already renders (#299 batch 1).
+      const status = GraphifyUnavailableStatusSchema.safeParse(current.status).data;
+      if (status?.state === "failed") throw Object.assign(refused, { graphifyError: { code: "graphify-unavailable", state: "failed", status } satisfies GraphifyError });
+      throw refused;
+    }
     // The yes was for one lock's download; a different one (the program was upgraded meanwhile) is asked again.
     const expected = (params as { lockHash?: unknown }).lockHash;
-    if (expected !== undefined && expected !== current.offer.lockHash) throw new Error("the component offer changed; confirm again");
+    if (expected !== undefined && expected !== current.offer.lockHash) throw new CodedError(DAEMON_ERROR.componentOfferChanged, "the component offer changed; confirm again");
     const controller = new AbortController();
     const install = o.install ?? installComponent;
     const job: { controller: AbortController; done: Promise<unknown>; aborted: boolean } = { controller, done: Promise.resolve(), aborted: false };

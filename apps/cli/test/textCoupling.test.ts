@@ -20,5 +20,7 @@ test("skew guidance keys on the shared marker and spec, not on a copied wording"
 test("a rejected mirror URL throws the shared mirror error the hub maps to 400", () => {
   for (const raw of ["ftp://mirror.example", "https://u:p@mirror.example", "https://mirror.example/?q", "not a url"]) {
     expect(() => normalizeMirrorUrl(raw)).toThrow(MIRROR_URL_ERROR);
+    // The text the hub matches is unchanged; the code is for the page (#299 batch 1).
+    expect(() => normalizeMirrorUrl(raw)).toThrow(expect.objectContaining({ code: "components.mirror-url-invalid" }));
   }
 });

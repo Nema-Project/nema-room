@@ -199,6 +199,7 @@ describe("CodexDirectAdapter", () => {
     expect(output).toContain(`<skill_content name="tdd" revision="${COMMIT}">\n# TDD\n\nRed, green, refactor.\n`);
     expect(hubSeen.map((h) => `${h.method} ${h.url} ${h.body}`)).toEqual([`POST /room/skills/activated {"skillId":"tdd","revision":"${COMMIT}"}`]);
     expect(events.filter((e) => e.type === "tool_call").map((e) => e.text)).toEqual([`读取 Skill tdd（${COMMIT}）`]);
+    expect(events.find((e) => e.type === "tool_call")).toMatchObject({ code: "skills.read", params: { id: "tdd", revision: COMMIT, file: "" } });
   });
 
   test("a thread's retained Skill is preloaded, not read again and not reported", async () => {
@@ -234,7 +235,7 @@ describe("CodexDirectAdapter", () => {
     server.responses(stream([fcItem("read_skill", { name: "tdd" }, "c1")]), stream([msgItem("done")]));
     const failed = await run();
     expect(failed.result).toMatchObject({ ok: true, reply: "done" });
-    expect(failed.events).toContainEqual({ type: "progress", text: "1 条 Skill 激活记录上报失败" });
+    expect(failed.events).toContainEqual({ type: "progress", text: "1 条 Skill 激活记录上报失败", code: "skills.activation-failed", params: { count: 1 } });
   });
 
   test("a task that fails after reading a Skill still reports the load, so its thread keeps the Skill", async () => {
@@ -1219,6 +1220,11 @@ describe("automatic routing (S4)", () => {
     expect(announced).toBeDefined();
     // What happened, in the user's terms: the first account was limited and the second one took over.
     expect(announced).toContain("改用");
+    // The same facts as a code: the reason is the RouteFailure the web renders as route.failure.<reason>.
+    const coded = events.find((e) => e.type === "progress" && e.code === "route.switch");
+    expect(coded?.params).toMatchObject({ reason: "rate_limit" });
+    expect(String((coded?.params as { from?: string }).from)).toContain("First");
+    expect(String((coded?.params as { to?: string }).to)).toContain("Second");
   });
 
   test("when every candidate is rate limited the task fails and the attempts are all recorded", async () => {

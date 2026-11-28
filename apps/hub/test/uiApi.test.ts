@@ -1441,6 +1441,37 @@ describe("diagram routes", () => {
     expect(down.status).toBe(503);
     expect(((await down.json()) as { error: string }).error).toBe("daemon 未连接");
   });
+
+  test("a failed preview or picker answers { error, code, params } (#299 batch 1)", async () => {
+    const ws = await createWorkspace(db, dataDir, "Alpha");
+    const app = createApp({
+      db,
+      dataDir,
+      nemaHome,
+      events,
+      daemonStatus: () => true,
+      daemon: {
+        call: async (method) => {
+          if (method === "repo.inspect") throw new DaemonRpcError("不能绑定 ~/.nema 之下的目录", undefined, { code: "repo.under-nema-home" });
+          throw new DaemonRpcError("无法打开文件夹选择器", undefined, { code: "dialog.picker-unavailable" });
+        },
+      },
+      webOrigin: "http://localhost:3000",
+    });
+    const preview = await app.request(`${HUB}/api/workspaces/${ws.id}/repos/preview`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: "/a/x" }),
+    });
+    expect(preview.status).toBe(400);
+    expect(await preview.json()).toEqual({ error: "不能绑定 ~/.nema 之下的目录", code: "repo.under-nema-home" });
+
+    const missing = await app.request(`${HUB}/api/workspaces/ws_missing/repos/preview`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: "/a/x" }),
+    });
+    expect(await missing.json()).toMatchObject({ code: "workspace.not-found", params: { id: "ws_missing" } });
+
+    const picker = await app.request(`${HUB}/api/pick-directory`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    expect(await picker.json()).toEqual({ error: "无法打开文件夹选择器", code: "dialog.picker-unavailable" });
+  });
 });
 
 describe("sending messages with attachments", () => {

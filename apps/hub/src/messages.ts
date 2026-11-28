@@ -1,6 +1,8 @@
 import { nanoid } from "nanoid";
 import {
   ATTACHMENT_LIMITS,
+  HUB_ERROR,
+  type CodeParams,
   messageHasBody,
   type AgentMessageMeta,
   type AttachmentRef,
@@ -63,6 +65,8 @@ export class MessageOpError extends Error {
   constructor(
     public status: 400 | 403 | 404 | 409,
     message: string,
+    /** Lets the page show the error in its own language (#299 batch 1); the message stays the fallback. */
+    readonly coded?: { code: string; params?: CodeParams },
   ) {
     super(message);
     this.name = "MessageOpError";
@@ -231,7 +235,7 @@ export async function postUserMessage(
       const message = { ...inserted, attachments: await reorder(t, inserted.id, attachments) };
       const delivered = await deliverySetFor(t, message);
       if (delivered.length > ATTACHMENT_LIMITS.perTaskCount || delivered.reduce((sum, r) => sum + r.size, 0) > ATTACHMENT_LIMITS.perTaskBytes) {
-        throw new MessageOpError(400, DELIVERY_LIMIT_MESSAGE);
+        throw new MessageOpError(400, DELIVERY_LIMIT_MESSAGE, { code: HUB_ERROR.attachmentsDeliveryLimit, params: { maxMb: 32, maxFiles: ATTACHMENT_LIMITS.perTaskCount } });
       }
       const task = await insertQueuedTask(t, workspaceId, message.id, "organize", {
         ...(options.accountId !== undefined ? { accountId: options.accountId } : {}),

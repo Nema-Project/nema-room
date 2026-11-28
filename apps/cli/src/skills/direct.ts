@@ -1,10 +1,23 @@
-import type { TaskEvent } from "@nema/shared";
+import { PROGRESS, type CodedText, type TaskEvent } from "@nema/shared";
 import type { FunctionTool } from "../direct/transport.js";
 import { codexCatalog } from "./catalog.js";
 import { READ_SKILL, SkillReader, readSkillTool } from "./readSkill.js";
 import type { SkillSnapshot, SnapshotSkill } from "./snapshot.js";
 import { readRepoSkillFile, takeTaskSnapshot, type ProjectSkillRepo } from "./repoSkills.js";
 import { manualSection, preloadSection, readSkillBody } from "./preload.js";
+
+/**
+ * "Some Skills were not loaded", one item per warning. Shared with the Claude Code adapter so both runtimes
+ * send the same line; the joined text is the fallback for a hub or page that cannot localise the items.
+ */
+export function notLoadedEvent(warnings: CodedText[]): TaskEvent {
+  return { type: "progress", text: `部分 Skill 未载入：${warnings.map((w) => w.text).join("；")}`, code: PROGRESS.skillsNotLoaded, items: warnings };
+}
+
+/** "These Skills did not fit and were not preloaded"; the items are Skill ids, which need no translation. */
+export function notPreloadedEvent(ids: string[]): TaskEvent {
+  return { type: "progress", text: `这些 Skill 放不下，没有预载：${ids.join("、")}`, code: PROGRESS.skillsNotPreloaded, items: ids.map((id) => ({ text: id })) };
+}
 
 /** What a codex-direct task adds for Skills: the catalog after the hub prompt, `read_skill`, and its reader. */
 export type DirectSkills = { instructions: string; tools: FunctionTool[]; reader: SkillReader | null; snapshot: SkillSnapshot };
@@ -33,14 +46,15 @@ export async function prepareDirectSkills(o: {
     // Claude Code's version does not matter to codex-direct.
     snapshot = await takeTaskSnapshot({ nemaHome: o.nemaHome, claudeCodeOk: true, ...(o.projectSkills ? { projectSkills: o.projectSkills } : {}) });
   } catch (error) {
-    o.onEvent({ type: "progress", text: `Skills 读取失败，本任务不使用 Skills：${error instanceof Error ? error.message : String(error)}` });
+    const detail = error instanceof Error ? error.message : String(error);
+    o.onEvent({ type: "progress", text: `Skills 读取失败，本任务不使用 Skills：${detail}`, code: PROGRESS.skillsReadFailed, params: { error: detail } });
     return { instructions: o.prompt, tools: [], reader: null, snapshot: { skills: [], warnings: [] } };
   }
-  if (snapshot.warnings.length > 0) o.onEvent({ type: "progress", text: `部分 Skill 未载入：${snapshot.warnings.join("；")}` });
+  if (snapshot.warnings.length > 0) o.onEvent(notLoadedEvent(snapshot.warnings));
   const catalog = codexCatalog(snapshot);
   const called = o.manual ? snapshot.skills.find((skill) => skill.id === o.manual!.skillId) : undefined;
   const clash = (catalog !== null || called !== undefined) && (o.pluginToolNames?.includes(READ_SKILL) ?? false);
-  if (clash) o.onEvent({ type: "progress", text: `插件工具与 ${READ_SKILL} 同名，本任务不使用 Skills。` });
+  if (clash) o.onEvent({ type: "progress", text: `插件工具与 ${READ_SKILL} 同名，本任务不使用 Skills。`, code: PROGRESS.skillsToolClash, params: { name: READ_SKILL } });
   // A Skill called by hand is readable even when the model may not pick it itself.
   const extraIds = called ? [called.id] : [];
   const tool = clash ? null : readSkillTool(snapshot, { listed: catalog?.listed ?? [], extraIds });
@@ -51,7 +65,7 @@ export async function prepareDirectSkills(o: {
         listed: catalog?.listed ?? [],
         extraIds,
         readRepoFile: readRepoSkillFile,
-        onRead: (text) => o.onEvent({ type: "tool_call", text }),
+        onRead: (text, coded) => o.onEvent({ type: "tool_call", text, ...coded }),
         onActivated: o.onActivated ?? (async () => {}),
       })
     : null;
@@ -76,7 +90,7 @@ export async function prepareDirectSkills(o: {
     const preload = await preloadSection({ snapshot, retained: o.retained.filter((id) => id !== called?.id), readBody });
     for (const id of preload.loaded) reader.markLoaded(id);
     if (preload.text) sections.push(preload.text);
-    if (preload.dropped.length > 0) o.onEvent({ type: "progress", text: `这些 Skill 放不下，没有预载：${preload.dropped.join("、")}` });
+    if (preload.dropped.length > 0) o.onEvent(notPreloadedEvent(preload.dropped));
   }
   const instructions = sections.length > 0 ? `${o.prompt}\n\n${sections.join("\n\n")}` : o.prompt;
   return { instructions, tools: tool ? [tool] : [], reader, snapshot };

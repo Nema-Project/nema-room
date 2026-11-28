@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 import { WebSocketServer, type VerifyClientCallbackAsync, type WebSocket } from "ws";
 import { createHostAllowed } from "./hostAllowlist.js";
 import { KnowledgeStore } from "@nema/knowledge";
-import { AttachmentRefSchema, DAEMON_CREDENTIAL_REVOKED_MESSAGE, WORKPACKAGE_LIMITS, normalizeRemoteUrl, parseDaemonToHub, parseManualSkill, parseRouteDecision, type AgentMessageMeta, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
+import { AttachmentRefSchema, DAEMON_CREDENTIAL_REVOKED_MESSAGE, WORKPACKAGE_LIMITS, normalizeRemoteUrl, parseDaemonToHub, parseManualSkill, parseRouteDecision, readCoded, readCodedTexts, type AgentMessageMeta, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
 import { createConnectionRpc, DAEMON_DISCONNECTED, DAEMON_NOT_CONNECTED, DaemonRpcError, withDaemonTarget, type ConnectionRpc, type DaemonRpc, type DaemonTarget } from "./daemonRpc.js";
 import { markDaemonSeen, revokeDaemon, verifyDaemonCredential, type RevokeRegisteredDaemon } from "./daemons.js";
 import type { Db } from "./db/db.js";
@@ -681,7 +681,14 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       } else if (m.type === "task.event") {
         const task = conn.assigned?.task;
         if (task?.id !== m.taskId) return;
-        events.emit(task.workspaceId, { type: "task.progress", taskId: m.taskId, threadId: task.threadId, text: m.event.text });
+        // The daemon's code fields are relayed only after sanitising: an older daemon sends none, and a
+        // malformed one costs the translation, never the line (#299 batch 1).
+        const items = readCodedTexts(m.event.items);
+        events.emit(task.workspaceId, {
+          type: "task.progress", taskId: m.taskId, threadId: task.threadId, text: m.event.text,
+          ...readCoded(m.event.code, m.event.params),
+          ...(items && items.length > 0 ? { items } : {}),
+        });
       } else if (m.type === "task.finished") {
         await onFinished(conn, m);
       } else if (m.type === "rpc.response") {

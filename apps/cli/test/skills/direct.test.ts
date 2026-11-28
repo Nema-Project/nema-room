@@ -16,7 +16,7 @@ test("a plugin tool named read_skill keeps its name; the task runs without Skill
   const events: TaskEvent[] = [];
   const clash = await prepareDirectSkills({ nemaHome, prompt: "P", pluginToolNames: ["read_skill"], onEvent: (e) => events.push(e) });
   expect(clash).toMatchObject({ instructions: "P", tools: [], reader: null });
-  expect(events).toEqual([{ type: "progress", text: "插件工具与 read_skill 同名，本任务不使用 Skills。" }]);
+  expect(events).toEqual([{ type: "progress", text: "插件工具与 read_skill 同名，本任务不使用 Skills。", code: "skills.tool-clash", params: { name: "read_skill" } }]);
   const normal = await prepareDirectSkills({ nemaHome, prompt: "P", pluginToolNames: ["code__read"], onEvent: () => {} });
   expect(normal.tools.map((t) => t.name)).toEqual(["read_skill"]);
   expect(normal.reader).not.toBeNull();

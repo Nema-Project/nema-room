@@ -1,5 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { isReservedSlashName, isSkillName } from "@nema/shared";
+import { SKILL_WARNING, isReservedSlashName, isSkillName, type CodeParams, type CodedText } from "@nema/shared";
 import { skillId } from "../extensions/source.js";
 import { fetchMain, gitRaw, gitText, mainRef } from "../repos/git.js";
 import { parseSkillFile } from "./frontmatter.js";
@@ -80,11 +80,19 @@ async function sameRepository(repo: ProjectSkillRepo): Promise<boolean> {
 }
 
 /** Where a Skill lives in the tree; the first root wins a name both have. */
-type Found = { name: string; dir: string; files: TreeRow[] } | { name: string; dir: string; problem: string };
+type Found = { name: string; dir: string; files: TreeRow[] } | { name: string; dir: string; badName: true };
 
-async function listSkillDirs(repo: ProjectSkillRepo, commit: string): Promise<{ found: Found[]; warnings: string[] }> {
+/** A progress-line item: the fallback text plus the code and params the UI localises it with (#299 batch 1). */
+function warning(code: string, text: string, params: CodeParams): CodedText {
+  return { text, code, params };
+}
+
+/** Why a Skill directory was not copied: the fallback phrase and the warning code that says the same. */
+type Refusal = { code: string; params: CodeParams; text: string };
+
+async function listSkillDirs(repo: ProjectSkillRepo, commit: string): Promise<{ found: Found[]; warnings: CodedText[] }> {
   const found: Found[] = [];
-  const warnings: string[] = [];
+  const warnings: CodedText[] = [];
   const seen = new Set<string>();
   for (const root of SKILL_ROOTS) {
     let top: TreeRow[];
@@ -98,12 +106,12 @@ async function listSkillDirs(repo: ProjectSkillRepo, commit: string): Promise<{ 
       if (row.type !== "tree") continue;
       const dir = `${root}/${name}`;
       if (seen.has(name)) {
-        warnings.push(`${repo.label}：${dir} 被同仓库的同名 Skill 覆盖`);
+        warnings.push(warning(SKILL_WARNING.repoOverridden, `${repo.label}：${dir} 被同仓库的同名 Skill 覆盖`, { repo: repo.label, dir }));
         continue;
       }
       seen.add(name);
       if (!isSkillName(name)) {
-        found.push({ name, dir, problem: "名字不符合 Skill 命名规则" });
+        found.push({ name, dir, badName: true });
         continue;
       }
       const files = parseTree(await gitRaw(repo.path, ["--literal-pathspecs", "ls-tree", "-r", "-z", "-l", commit, "--", `${dir}/`]));
@@ -115,18 +123,18 @@ async function listSkillDirs(repo: ProjectSkillRepo, commit: string): Promise<{ 
 
 const binaryByBlob = new Map<string, boolean>();
 
-async function manifestOf(repo: ProjectSkillRepo, dir: string, rows: TreeRow[]): Promise<ManifestFile[] | string> {
-  if (rows.length > MAX_FILES) return `超过 ${MAX_FILES} 个文件`;
+async function manifestOf(repo: ProjectSkillRepo, dir: string, rows: TreeRow[]): Promise<ManifestFile[] | Refusal> {
+  if (rows.length > MAX_FILES) return { code: SKILL_WARNING.refusedTooManyFiles, params: { max: MAX_FILES }, text: `超过 ${MAX_FILES} 个文件` };
   const files: ManifestFile[] = [];
   let total = 0;
   for (const row of rows) {
     const rel = row.path.slice(dir.length + 1);
-    if (row.mode === LINK) return `${rel} 是符号链接`;
-    if (row.mode === SUBMODULE || row.type === "commit") return `${rel} 是子模块`;
-    if (row.type !== "blob" || row.size === null || normalizeSkillPath(rel) !== rel) return `${rel} 无法读取`;
-    if (row.size > MAX_FILE_BYTES) return `${rel} 超过 5 MiB`;
+    if (row.mode === LINK) return { code: SKILL_WARNING.refusedSymlink, params: { path: rel }, text: `${rel} 是符号链接` };
+    if (row.mode === SUBMODULE || row.type === "commit") return { code: SKILL_WARNING.refusedSubmodule, params: { path: rel }, text: `${rel} 是子模块` };
+    if (row.type !== "blob" || row.size === null || normalizeSkillPath(rel) !== rel) return { code: SKILL_WARNING.refusedUnreadable, params: { path: rel }, text: `${rel} 无法读取` };
+    if (row.size > MAX_FILE_BYTES) return { code: SKILL_WARNING.refusedFileTooLarge, params: { path: rel }, text: `${rel} 超过 5 MiB` };
     total += row.size;
-    if (total > MAX_TOTAL_BYTES) return "合计超过 20 MiB";
+    if (total > MAX_TOTAL_BYTES) return { code: SKILL_WARNING.refusedTotalTooLarge, params: {}, text: "合计超过 20 MiB" };
     let binary = binaryByBlob.get(row.sha);
     if (binary === undefined) {
       binary = isBinary(await gitRaw(repo.path, ["cat-file", "blob", row.sha]));
@@ -142,43 +150,48 @@ async function manifestOf(repo: ProjectSkillRepo, dir: string, rows: TreeRow[]):
 export async function scanRepoSkills(
   repo: ProjectSkillRepo,
   o: { slug: string; claudeCodeOk: boolean; now?: number },
-): Promise<{ skills: SnapshotSkill[]; warnings: string[] }> {
-  const warnings: string[] = [];
-  if (!(await sameRepository(repo))) return { skills: [], warnings: [`${repo.label}：仓库位置已不是绑定时的那个仓库，跳过它的 Skills`] };
+): Promise<{ skills: SnapshotSkill[]; warnings: CodedText[] }> {
+  const warnings: CodedText[] = [];
+  const label = repo.label;
+  if (!(await sameRepository(repo))) {
+    return { skills: [], warnings: [warning(SKILL_WARNING.repoMoved, `${label}：仓库位置已不是绑定时的那个仓库，跳过它的 Skills`, { repo: label })] };
+  }
   const now = o.now ?? Date.now();
   const last = lastFetch.get(repo.path);
   if (last === undefined || now - last >= FETCH_INTERVAL_MS) {
     lastFetch.set(repo.path, now);
     const fetched = await fetchMain(repo.path, repo.mainBranch);
-    if (!fetched.ok) warnings.push(`${repo.label}：取主分支失败，使用已有的提交（${fetched.error}）`);
+    // The git error stays as it came: it is git's text, not ours.
+    if (!fetched.ok) warnings.push(warning(SKILL_WARNING.repoFetchFailed, `${label}：取主分支失败，使用已有的提交（${fetched.error}）`, { repo: label, error: fetched.error }));
   }
   let commit: string;
   try {
     commit = await gitText(repo.path, ["rev-parse", "--verify", `${await mainRef(repo.path, repo.mainBranch)}^{commit}`]);
   } catch {
-    return { skills: [], warnings: [...warnings, `${repo.label}：找不到主分支 ${repo.mainBranch}`] };
+    return { skills: [], warnings: [...warnings, warning(SKILL_WARNING.repoNoMainBranch, `${label}：找不到主分支 ${repo.mainBranch}`, { repo: label, branch: repo.mainBranch })] };
   }
   const listed = await listSkillDirs(repo, commit);
   warnings.push(...listed.warnings);
   const skills: SnapshotSkill[] = [];
   for (const entry of listed.found) {
-    if ("problem" in entry) {
-      warnings.push(`${repo.label}：${entry.dir} ${entry.problem}`);
+    if ("badName" in entry) {
+      warnings.push(warning(SKILL_WARNING.repoBadName, `${label}：${entry.dir} 名字不符合 Skill 命名规则`, { repo: label, dir: entry.dir }));
       continue;
     }
     const manifest = await manifestOf(repo, entry.dir, entry.files);
-    if (typeof manifest === "string") {
-      warnings.push(`${repo.label}：${entry.dir} ${manifest}，已拒绝`);
+    if (!Array.isArray(manifest)) {
+      warnings.push(warning(manifest.code, `${label}：${entry.dir} ${manifest.text}，已拒绝`, { repo: label, dir: entry.dir, ...manifest.params }));
       continue;
     }
     const skillMd = manifest.find((f) => f.path === "SKILL.md");
     if (!skillMd || skillMd.size > MAX_SKILL_MD_BYTES) {
-      warnings.push(`${repo.label}：${entry.dir} 没有可读的 SKILL.md`);
+      warnings.push(warning(SKILL_WARNING.repoNoSkillMd, `${label}：${entry.dir} 没有可读的 SKILL.md`, { repo: label, dir: entry.dir }));
       continue;
     }
     const parsed = parseSkillFile((await gitRaw(repo.path, ["cat-file", "blob", skillMd.blob])).toString("utf8"), entry.name);
     if (!parsed.ok) {
-      warnings.push(`${repo.label}：${entry.dir}/SKILL.md ${parsed.reason}`);
+      // The parse reason comes from frontmatter.ts and is not coded yet; it is passed through as a param.
+      warnings.push(warning(SKILL_WARNING.repoBadSkillMd, `${label}：${entry.dir}/SKILL.md ${parsed.reason}`, { repo: label, dir: entry.dir, reason: parsed.reason }));
       continue;
     }
     skills.push({
@@ -203,17 +216,18 @@ export async function scanRepoSkills(
 export async function scanProjectSkills(
   repos: ProjectSkillRepo[],
   o: { userIds: ReadonlySet<string>; claudeCodeOk: boolean; now?: number },
-): Promise<{ skills: SnapshotSkill[]; warnings: string[] }> {
+): Promise<{ skills: SnapshotSkill[]; warnings: CodedText[] }> {
   const slugs = repoSlugs(repos);
   const all: SnapshotSkill[] = [];
-  const warnings: string[] = [];
+  const warnings: CodedText[] = [];
   for (const repo of repos) {
     try {
       const scanned = await scanRepoSkills(repo, { slug: slugs.get(repo.repoId)!, claudeCodeOk: o.claudeCodeOk, ...(o.now !== undefined ? { now: o.now } : {}) });
       all.push(...scanned.skills);
       warnings.push(...scanned.warnings);
     } catch (error) {
-      warnings.push(`${repo.label}：读取 Skills 失败（${error instanceof Error ? error.message : String(error)}）`);
+      const detail = error instanceof Error ? error.message : String(error);
+      warnings.push(warning(SKILL_WARNING.repoReadFailed, `${repo.label}：读取 Skills 失败（${detail}）`, { repo: repo.label, error: detail }));
     }
   }
   const owners = new Map<string, number>();

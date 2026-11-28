@@ -42,7 +42,8 @@ test("a SKILL.md that cannot be parsed is a warning, not a Skill", async () => {
   managedSkill(nemaHome, "good", { "SKILL.md": skillText("good") });
   const snapshot = await takeSnapshot({ nemaHome, claudeCodeOk: true });
   expect(snapshot.skills.map((s) => s.id)).toEqual(["good"]);
-  expect(snapshot.warnings).toEqual([expect.stringContaining("bad")]);
+  // A user-level folder's read error has no code: its text is shown as it is.
+  expect(snapshot.warnings).toEqual([{ text: expect.stringContaining("bad") }]);
 });
 
 test("disabling a Skill makes it unreadable", async () => {

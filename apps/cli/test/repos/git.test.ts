@@ -139,6 +139,7 @@ test("inspectRepo rejects a subdirectory and a path under nemaHome", async () =>
   const { repo, nemaHome } = setupOrigin();
   mkdirSync(join(repo, "sub"));
   await expect(inspectRepo(join(repo, "sub"), nemaHome)).rejects.toThrow("不是 git 仓库的根目录");
+  await expect(inspectRepo(join(repo, "sub"), nemaHome)).rejects.toMatchObject({ code: "repo.not-git-root" });
 
   const inside = join(nemaHome, "proj");
   initRepo(inside);

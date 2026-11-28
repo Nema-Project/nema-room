@@ -417,6 +417,27 @@ test("binding to an archived workspace is 409 and never calls the daemon", async
   expect(calls).toEqual([]);
 });
 
+test("repo errors carry a code the page can localise, and the daemon's code passes through (#299 batch 1)", async () => {
+  const { db, dataDir } = await makeHubDeps();
+  const ws = await createWorkspace(db, dataDir, "Alpha");
+  const refused = daemonOf({
+    "repo.inspect": () => { throw new DaemonRpcError("不是 git 仓库的根目录", undefined, { code: "repo.not-git-root" }); },
+  });
+  await expect(previewRepo(db, refused.daemon, ws.id, "/a/x")).rejects.toMatchObject({ status: 400, message: "不是 git 仓库的根目录", coded: { code: "repo.not-git-root" } });
+  await expect(bindRepo(db, refused.daemon, ws.id, { path: "/a/x", label: "API" })).rejects.toMatchObject({ status: 400, coded: { code: "repo.not-git-root" } });
+
+  // An older daemon sends no code; the text is all there is.
+  const old = daemonOf({ "repo.inspect": () => { throw new DaemonRpcError("不是 git 仓库的根目录"); } });
+  const plain = await previewRepo(db, old.daemon, ws.id, "/a/x").catch((e: unknown) => e) as RepoError;
+  expect(plain.coded?.code).toBeUndefined();
+
+  const offline = daemonOf({ "repo.inspect": () => { throw new DaemonRpcError("daemon 未连接"); } });
+  await expect(previewRepo(db, offline.daemon, ws.id, "/a/x")).rejects.toMatchObject({ status: 503, coded: { code: "daemon.not-connected" } });
+
+  await expect(bindRepo(db, refused.daemon, ws.id, { path: "/a/x", label: "" })).rejects.toMatchObject({ coded: { code: "repo.label-invalid" } });
+  await expect(previewRepo(db, refused.daemon, "ws_missing", "/a/x")).rejects.toMatchObject({ coded: { code: "workspace.not-found", params: { id: "ws_missing" } } });
+});
+
 test("binding to a missing workspace is 404 and never calls the daemon", async () => {
   const { db } = await makeHubDeps();
   const { daemon, calls } = daemonOf({ "repo.inspect": () => inspected });

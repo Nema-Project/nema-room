@@ -3,7 +3,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { MIRROR_URL_ERROR } from "@nema/shared";
-import { COMPONENT_RPC_TIMEOUT_MS, DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
+import { COMPONENT_RPC_TIMEOUT_MS, DaemonRpcError, daemonErrorBody, type DaemonRpc } from "./daemonRpc.js";
 import { daemonHttpStatus } from "./plugins.js";
 
 const COMPONENT = z.enum(["graphify"]);
@@ -52,7 +52,7 @@ export function componentRoutes(deps: { daemon: DaemonRpc }): Hono {
       if (!result || typeof result !== "object" || Array.isArray(result)) return c.json({ error: `${method} returned an invalid result` }, 502);
       return c.json(result as Record<string, unknown>);
     } catch (error) {
-      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, componentHttpStatus(error.message));
+      if (error instanceof DaemonRpcError) return c.json(daemonErrorBody(error), componentHttpStatus(error.message));
       throw error;
     }
   }

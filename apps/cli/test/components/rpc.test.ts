@@ -107,6 +107,20 @@ describe("components.install", () => {
     expect(install).not.toHaveBeenCalled();
   });
 
+  test("a refusal carries what the page needs to say it in its language (#299 batch 1)", async () => {
+    const changed = new RpcRouter();
+    registerComponentHandlers(changed, { nemaHome, env: {}, components: { runtimeRoot, lockPath, platform }, install: vi.fn() });
+    expect(await changed.handle({ type: "rpc.request", id: "1", method: "components.install", params: { name: "graphify", confirmed: true, lockHash: "0".repeat(64) } }))
+      .toMatchObject({ ok: false, error: "the component offer changed; confirm again", code: "components.offer-changed" });
+
+    // No offer on this platform: the status's own reason travels as Graphify facts, the text stays the fallback.
+    const unsupported = new RpcRouter();
+    registerComponentHandlers(unsupported, { nemaHome, env: {}, components: { runtimeRoot, lockPath, platform: { platform: "linux", arch: "x64", musl: true } }, install: vi.fn() });
+    const refused = await unsupported.handle({ type: "rpc.request", id: "2", method: "components.install", params: { name: "graphify", confirmed: true } });
+    expect(refused).toMatchObject({ ok: false, graphifyError: { code: "graphify-unavailable", state: "failed", status: { state: "failed", reason: "unsupported-platform" } } });
+    expect(refused).not.toHaveProperty("code");
+  });
+
   test("answers at once, reports installing while the installer runs, and runs one install at a time", async () => {
     const gate = deferred<ComponentStatus>();
     const install = vi.fn((_name: string, _o: InstallOptions) => gate.promise);

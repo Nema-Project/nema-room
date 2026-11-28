@@ -41,6 +41,7 @@ describe("folder dialog", () => {
       throw new Error("zenity missing");
     };
     await expect(pickDirectory("linux", broken)).rejects.toThrow("无法打开文件夹选择器");
+    await expect(pickDirectory("linux", broken)).rejects.toMatchObject({ code: "dialog.picker-unavailable" });
   });
 
   test("dialog.pickDirectory returns the injected folder", async () => {

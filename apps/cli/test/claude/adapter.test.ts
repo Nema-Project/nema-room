@@ -805,7 +805,10 @@ describe("ClaudeCodeAdapter with Skills", () => {
     const recorded = JSON.parse(readFileSync(argvFile, "utf8")) as { argv: string[] };
     expect(recorded.argv[recorded.argv.indexOf("--tools") + 1]).toBe("");
     expect(recorded.argv).not.toContain("--settings");
-    expect(events).toContainEqual({ type: "progress", text: "Claude Code 版本过低（需要 2.1.309 或更新），本任务不使用 Skills。" });
+    expect(events).toContainEqual({
+      type: "progress", text: "Claude Code 版本过低（需要 2.1.309 或更新），本任务不使用 Skills。",
+      code: "skills.claude-too-old", params: { min: "2.1.309" },
+    });
   });
 });
 

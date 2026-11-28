@@ -1,7 +1,7 @@
 // Read-only git operations for a bound repository.
 // Every command is execFile (no shell): `git -C <repoPath> …` with only PATH, HOME, LANG, SSH_AUTH_SOCK,
 // GIT_TERMINAL_PROMPT=0 and a BatchMode ssh, so the caller cannot point git at another directory via the environment.
-import { isBranchName } from "@nema/shared";
+import { CodedError, DAEMON_ERROR, isBranchName } from "@nema/shared";
 import { execFile } from "node:child_process";
 import { lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -252,17 +252,17 @@ async function emptyDir(destDir: string): Promise<void> {
 export async function inspectRepo(repoPath: string, nemaHome: string, ownedHelpers?: OwnedHelperScope): Promise<RepoInspect> {
   const real = await canonical(repoPath);
   const home = await canonical(nemaHome);
-  if (isUnder(real, home)) throw new Error("不能绑定 ~/.nema 之下的目录");
-  if (isUnder(home, real)) throw new Error("不能绑定包含 ~/.nema 的目录");
+  if (isUnder(real, home)) throw new CodedError(DAEMON_ERROR.repoUnderNemaHome, "不能绑定 ~/.nema 之下的目录");
+  if (isUnder(home, real)) throw new CodedError(DAEMON_ERROR.repoContainsNemaHome, "不能绑定包含 ~/.nema 的目录");
 
   let toplevel: string;
   try {
     toplevel = await gitText(repoPath, ["rev-parse", "--show-toplevel"], undefined, ownedHelpers);
   } catch {
-    throw new Error("不是 git 仓库的根目录");
+    throw new CodedError(DAEMON_ERROR.repoNotGitRoot, "不是 git 仓库的根目录");
   }
   const root = await canonical(toplevel);
-  if (root !== real) throw new Error("不是 git 仓库的根目录");
+  if (root !== real) throw new CodedError(DAEMON_ERROR.repoNotGitRoot, "不是 git 仓库的根目录");
 
   const commonRaw = await gitText(repoPath, ["rev-parse", "--git-common-dir"], undefined, ownedHelpers);
   const commonAbs = path.isAbsolute(commonRaw) ? commonRaw : path.resolve(root, commonRaw);
