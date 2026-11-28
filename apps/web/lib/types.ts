@@ -66,7 +66,8 @@ export type HubEvent =
   /** `text` is the fallback; `code`, `params` and `items` let `progressText` localise it (#299 batch 1). */
   | { type: "task.progress"; taskId: string; threadId: string | null; text: string; code?: string; params?: CodeParams; items?: CodedText[] }
   | { type: "knowledge.changed"; entryId: string }
-  | { type: "daemon.status"; connected: boolean }
+  /** `daemonId` / `connectionId` name the current connection (#302); a hub before #302 sends neither. */
+  | { type: "daemon.status"; connected: boolean; daemonId?: string | null; connectionId?: string | null }
   | { type: "repo.index"; repoId: string; label: string; status: "running" | "done" | "failed" };
 
 export type EntryListItem = EntrySummaryView & { isNew: boolean };

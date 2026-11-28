@@ -13,6 +13,7 @@ import { png, uploadPng } from "./attachmentFixtures.js";
 import { claimNextTask, finishTask, getTask, insertQueuedTask, interruptRunning, recordTaskChange, resolveRunToken, toUiTask } from "../src/tasks.js";
 import * as tasks from "../src/tasks.js";
 import { attachDaemonSocket, parsePublicHubUrl, REMOTE_HELLO_FAILED_MESSAGE } from "../src/daemonSocket.js";
+import { createApp } from "../src/app.js";
 import { KnowledgeStore } from "@nema/knowledge";
 import type { OwnedHelperProcess, OwnedHelperScope } from "@nema/shared/ownedHelper";
 import { addReportMessage, getMessage } from "../src/messages.js";
@@ -1733,6 +1734,114 @@ describe("remote daemon hello", () => {
     }
     const retry = await connect(credential, undefined, {}, remoteUrl);
     await retry.next("welcome");
+  });
+
+  // #302 task 4: the same registered daemon replacing its own connection keeps its id, gets a new connection
+  // id, and the UI sees `true → true` with no `false` in between.
+  test("a registered daemon replacing its connection publishes the same id with a new connectionId, never false", async () => {
+    const hub = await startRemoteHub();
+    const [row] = await db.query<{ id: string }>("select id from daemons where owner_user_id = 'usr_daemon'");
+    const published = statusEvents();
+    const first = await connect(credential, undefined, {}, remoteUrl);
+    await first.next("welcome");
+    await vi.waitFor(() => expect(published).toHaveLength(1));
+    expect(published[0]).toEqual({ connected: true, daemonId: row!.id, connectionId: expect.any(String) });
+
+    const second = await connect(credential, undefined, {}, remoteUrl);
+    await second.next("welcome");
+    await first.closed;
+    await vi.waitFor(() => expect(published).toHaveLength(2));
+    expect(published[1]).toEqual({ connected: true, daemonId: row!.id, connectionId: expect.any(String) });
+    expect(published[1]!.connectionId).not.toBe(published[0]!.connectionId);
+    expect(hub.statusSnapshot()).toEqual(published[1]);
+    // Give a late close event the chance to arrive: there must be none.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(published.map((s) => s.connected)).toEqual([true, true]);
+  });
+});
+
+/** Collects every published `daemon.status` event, without its `type`. */
+function statusEvents(): Array<{ connected: boolean; daemonId: string | null; connectionId: string | null }> {
+  const seen: Array<{ connected: boolean; daemonId: string | null; connectionId: string | null }> = [];
+  events.subscribeAll((_w, e) => {
+    if (e.type === "daemon.status") seen.push({ connected: e.connected, daemonId: e.daemonId, connectionId: e.connectionId });
+  });
+  return seen;
+}
+
+// #302 task 4 (D-4): the status names the current connection, the one a call without a target lands on.
+describe("daemon status names the current connection", () => {
+  test("the first connection's event carries its daemonId and connectionId, and GET /api/daemon/status agrees", async () => {
+    const published = statusEvents();
+    expect(handle.statusSnapshot()).toEqual({ connected: false, daemonId: null, connectionId: null });
+    const c = await connect();
+    await c.next("welcome");
+    await vi.waitFor(() => expect(published).toHaveLength(1));
+    const [id] = handle.connectedDaemonIds();
+    expect(published[0]).toEqual({ connected: true, daemonId: id, connectionId: expect.any(String) });
+    expect(handle.statusSnapshot()).toEqual(published[0]);
+    const app = createApp({ db, dataDir, events, daemonStatus: () => handle.isConnected(), daemonSnapshot: () => handle.statusSnapshot(), daemon: handle.rpc });
+    const response = await app.request("http://127.0.0.1:4400/api/daemon/status");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(published[0]);
+  });
+
+  test("the newest of two closing hands the status back to the older one; the last closing publishes nulls", async () => {
+    const published = statusEvents();
+    const older = await connect();
+    await older.next("welcome");
+    const newer = await connect();
+    await newer.next("welcome");
+    await vi.waitFor(() => expect(published).toHaveLength(2));
+    const [olderId, newerId] = handle.connectedDaemonIds();
+    expect(published.map((s) => s.daemonId)).toEqual([olderId, newerId]);
+    expect(published[0]!.connectionId).not.toBe(published[1]!.connectionId);
+
+    newer.ws.terminate();
+    await newer.closed;
+    await vi.waitFor(() => expect(published).toHaveLength(3));
+    // The older connection answers untargeted calls again, so the status names it, with its own connection id.
+    expect(published[2]).toEqual(published[0]);
+    expect(handle.statusSnapshot()).toEqual(published[0]);
+
+    older.ws.terminate();
+    await older.closed;
+    await vi.waitFor(() => expect(published).toHaveLength(4));
+    expect(published[3]).toEqual({ connected: false, daemonId: null, connectionId: null });
+    expect(handle.statusSnapshot()).toEqual(published[3]);
+  });
+
+  test("the older of two closing publishes nothing: the current connection did not change", async () => {
+    const published = statusEvents();
+    const older = await connect();
+    await older.next("welcome");
+    const newer = await connect();
+    await newer.next("welcome");
+    await vi.waitFor(() => expect(published).toHaveLength(2));
+    older.ws.terminate();
+    await older.closed;
+    await vi.waitFor(() => expect(handle.connectedDaemonIds()).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 200));
+    expect(published).toHaveLength(2);
+    expect(handle.statusSnapshot()).toEqual(published[1]);
+  });
+
+  test("an untargeted call reports the current connection as its responder", async () => {
+    const older = await connect();
+    await older.next("welcome");
+    const newer = await connect();
+    await newer.next("welcome");
+    const responders: unknown[] = [];
+    const call = handle.rpc.call("agents.readiness", {}, 5_000, { onResponder: (r) => responders.push(r) });
+    // Each connection also receives the repos.sync every hello triggers; the call itself must reach the newer one.
+    let request: Msg;
+    do request = await newer.next("rpc.request");
+    while (request.method !== "agents.readiness");
+    newer.send({ type: "rpc.response", id: request.id, ok: true, result: { ok: 1 } });
+    expect(await call).toEqual({ ok: 1 });
+    const snapshot = handle.statusSnapshot();
+    expect(snapshot.daemonId).toBe(handle.connectedDaemonIds()[1]);
+    expect(responders).toEqual([{ daemonId: snapshot.daemonId, connectionId: snapshot.connectionId, registered: false, ownerUserId: null }]);
   });
 });
 

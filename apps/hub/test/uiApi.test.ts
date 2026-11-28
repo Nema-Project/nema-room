@@ -18,6 +18,7 @@ import { repoPath } from "../src/workspaces.js";
 import { createApp } from "../src/app.js";
 import type { Hono } from "hono";
 import { DaemonRpcError, type DaemonRpc } from "../src/daemonRpc.js";
+import type { DaemonStatusSnapshot } from "@nema/shared";
 import { getLastAskedQuestion, getQuestionThread } from "../src/threads.js";
 
 let db: Db;
@@ -532,7 +533,8 @@ describe("ui api", () => {
   });
 
   test("daemon status", async () => {
-    expect(await json(await req("GET", "/api/daemon/status"))).toEqual({ connected: true });
+    // This app has no daemon socket (no daemonSnapshot): connected comes from daemonStatus and names no connection.
+    expect(await json(await req("GET", "/api/daemon/status"))).toEqual({ connected: true, daemonId: null, connectionId: null });
   });
 
   test("SSE delivers message.created and global events, cleans up on abort", async () => {
@@ -559,7 +561,7 @@ describe("ui api", () => {
     await until("task.updated");
     expect(buf).toContain("data: ");
     expect(buf).not.toMatch(/runToken|daemonId/);
-    events.emitGlobal({ type: "daemon.status", connected: false });
+    events.emitGlobal({ type: "daemon.status", connected: false, daemonId: null, connectionId: null });
     await until("daemon.status");
     ac.abort();
     await reader.cancel().catch(() => {});
@@ -1698,8 +1700,9 @@ test("all three user entry points stamp the provider identity, ignoring the body
   for (const result of [main, thread, reply]) expect(result.message.authorUserId).toBe("usr_local");
 });
 
-// #167 deviation 2: the folder picker and daemon status are host-level, so the remote form allows only the
+// #167 deviation 2: the folder picker and /daemon/* are host-level, so the remote form allows only the
 // hub administrator; the local form's usr_local is unchanged. /api/version and /api/auth/* are not gated.
+// #302 (maintainer ruling): GET /api/daemon/status is the exception, open to every signed-in user.
 describe("host-level /pick-directory and /daemon/*", () => {
   const picker: DaemonRpc = {
     call: async (method) => (method === "dialog.pickDirectory" ? { path: "/srv/app" } : Promise.reject(new DaemonRpcError("daemon 未连接"))),
@@ -1709,20 +1712,43 @@ describe("host-level /pick-directory and /daemon/*", () => {
     const hubs = await hostAdminHubs(picker);
     await expectNonAdminRefused(hubs, [
       { method: "POST", path: "/api/pick-directory", body: {} },
-      { method: "GET", path: "/api/daemon/status" },
-      // Methods and paths no route answers are refused the same way, before routing.
+      // Methods and paths no route answers are refused the same way, before routing. Only GET of the status is open.
       { method: "DELETE", path: "/api/daemon/status" },
+      { method: "POST", path: "/api/daemon/status", body: {} },
       { method: "GET", path: "/api/daemon/anything" },
     ]);
     for (const who of ["admin", "local"] as const) {
       const picked = await hubs.send(who, "POST", "/api/pick-directory", {});
       expect(picked.status, who).toBe(200);
       expect(await picked.json()).toEqual({ path: "/srv/app" });
-      const daemonStatus = await hubs.send(who, "GET", "/api/daemon/status");
-      expect(daemonStatus.status, who).toBe(200);
-      expect(await daemonStatus.json()).toEqual({ connected: true });
     }
     expect(hubs.calls).toEqual(["dialog.pickDirectory", "dialog.pickDirectory"]);
+  });
+
+  // #302 maintainer ruling (issue comment 7232605390): the minimal status read is open to every signed-in user,
+  // and it is the same snapshot the daemon.status event carries.
+  test("GET /api/daemon/status is open to a remote non-admin and matches the daemon.status event", async () => {
+    const events = new EventBus();
+    let current: DaemonStatusSnapshot = { connected: true, daemonId: "d_current", connectionId: "c_current" };
+    const published: unknown[] = [];
+    events.subscribeAll((_w, e) => {
+      if (e.type === "daemon.status") published.push({ connected: e.connected, daemonId: e.daemonId, connectionId: e.connectionId });
+    });
+    const hubs = await hostAdminHubs(picker, { events, daemonSnapshot: () => current });
+    events.emitGlobal({ type: "daemon.status", ...current });
+    for (const who of ["member", "admin", "local"] as const) {
+      const res = await hubs.send(who, "GET", "/api/daemon/status");
+      expect(res.status, who).toBe(200);
+      expect(await res.json()).toEqual(published.at(-1));
+    }
+    current = { connected: false, daemonId: null, connectionId: null };
+    events.emitGlobal({ type: "daemon.status", ...current });
+    const offline = await hubs.send("member", "GET", "/api/daemon/status");
+    expect(offline.status).toBe(200);
+    expect(await offline.json()).toEqual({ connected: false, daemonId: null, connectionId: null });
+    expect(published.at(-1)).toEqual({ connected: false, daemonId: null, connectionId: null });
+    expect((await hubs.send("anonymous", "GET", "/api/daemon/status")).status).toBe(401);
+    expect(hubs.calls).toEqual([]);
   });
 
   // CodeRabbit review on #315: the read-only attachment capability lookup is exempt from the gate so

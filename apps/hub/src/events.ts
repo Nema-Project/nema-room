@@ -1,6 +1,6 @@
 import type { Message } from "./messages.js";
 import type { UiTask } from "./tasks.js";
-import type { CodeParams, CodedText, Thread } from "@nema/shared";
+import type { CodeParams, CodedText, DaemonStatusSnapshot, Thread } from "@nema/shared";
 
 export type HubEvent =
   | { type: "message.created"; message: Message }
@@ -12,7 +12,8 @@ export type HubEvent =
   /** `text` is the fallback; `code`, `params` and `items` let the page localise it (#299 batch 1). */
   | { type: "task.progress"; taskId: string; threadId: string | null; text: string; code?: string; params?: CodeParams; items?: CodedText[] }
   | { type: "knowledge.changed"; entryId: string }
-  | { type: "daemon.status"; connected: boolean }
+  /** The current daemon connection, read from the connection table when published (plan #302 task 4). */
+  | ({ type: "daemon.status" } & DaemonStatusSnapshot)
   | { type: "workspace.deleted"; workspaceId: string }
   | { type: "repo.moved"; repoId: string; mainRef: string; from: string | null; to: string }
   /** Bind-time code index. `running` is the progress line; `done` and `failed` clear it. */

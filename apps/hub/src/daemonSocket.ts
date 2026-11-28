@@ -3,8 +3,8 @@ import { nanoid } from "nanoid";
 import { WebSocketServer, type VerifyClientCallbackAsync, type WebSocket } from "ws";
 import { createHostAllowed } from "./hostAllowlist.js";
 import { KnowledgeStore } from "@nema/knowledge";
-import { AttachmentRefSchema, DAEMON_CREDENTIAL_REVOKED_MESSAGE, WORKPACKAGE_LIMITS, normalizeRemoteUrl, parseDaemonToHub, parseManualSkill, parseRouteDecision, readCoded, readCodedTexts, type AgentMessageMeta, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
-import { createConnectionRpc, DAEMON_DISCONNECTED, DAEMON_NOT_CONNECTED, DaemonRpcError, withDaemonTarget, type ConnectionRpc, type DaemonRpc, type DaemonTarget } from "./daemonRpc.js";
+import { AttachmentRefSchema, DAEMON_CREDENTIAL_REVOKED_MESSAGE, WORKPACKAGE_LIMITS, normalizeRemoteUrl, parseDaemonToHub, parseManualSkill, parseRouteDecision, readCoded, readCodedTexts, type AgentMessageMeta, type DaemonStatusSnapshot, type RouteDecision, type AttachmentRef, type Entry, type HubToDaemon, type PluginToolSpec, type UserMessageMeta } from "@nema/shared";
+import { createConnectionRpc, DAEMON_DISCONNECTED, DAEMON_NOT_CONNECTED, DaemonRpcError, withDaemonTarget, type ConnectionRpc, type DaemonResponder, type DaemonRpc, type DaemonTarget } from "./daemonRpc.js";
 import { markDaemonSeen, revokeDaemon, verifyDaemonCredential, type RevokeRegisteredDaemon } from "./daemons.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
@@ -62,6 +62,13 @@ export type DaemonSocketDeps = { db: Db; dataDir: string; events: EventBus; daem
 type Conn = {
   ws: WebSocket;
   daemonId: string;
+  /**
+   * Minted for every accepted connection (#302 task 4), so a registered daemon reconnecting under its stable
+   * `daemonId` is still told apart from its previous socket.
+   */
+  connectionId: string;
+  /** Set when a hello of the same registered daemon retires this socket; that hello publishes the status instead. */
+  replaced: boolean;
   /** The hub URL this daemon's task.assign carries: the hub's own loopback URL, or for a remote daemon the address it reached. */
   hubUrl: string;
   closed: Promise<void>;
@@ -166,6 +173,8 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   connectionSnapshot(): OnlineDaemon[];
   /** Why a queued task is still waiting, or null when no daemon-side reason applies. */
   waitingReasonFor(task: Task): Promise<WaitingReason | null>;
+  /** The current connection (see `currentConnection`), read from the table now; what `daemon.status` publishes. */
+  statusSnapshot(): DaemonStatusSnapshot;
   rpc: DaemonRpc;
   revokeRegisteredDaemon: RevokeRegisteredDaemon;
   close(): Promise<void>;
@@ -187,6 +196,32 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   const isOpen = (conn: Conn): boolean => conn.ws.readyState === conn.ws.OPEN;
   const isListed = (conn: Conn): boolean => connections.get(conn.daemonId) === conn;
   const openConnections = (): Conn[] => [...connections.values()].filter(isOpen);
+  /** The newest of `open`: who answers a call without a target (`chooseConnection` rule 4). */
+  const newestOf = (open: Conn[]): Conn | undefined => open[open.length - 1];
+  /**
+   * The current connection (#302 task 4): the one a call without a target lands on. The status snapshot, the
+   * `daemon.status` event and the readiness route's responder check all read it through this one function.
+   */
+  const currentConnection = (): Conn | undefined => newestOf(openConnections());
+  const statusSnapshot = (): DaemonStatusSnapshot => {
+    const conn = stopping ? undefined : currentConnection();
+    return conn
+      ? { connected: true, daemonId: conn.daemonId, connectionId: conn.connectionId }
+      : { connected: false, daemonId: null, connectionId: null };
+  };
+  let published: DaemonStatusSnapshot = { connected: false, daemonId: null, connectionId: null };
+  /**
+   * Publishes `daemon.status` when the current connection differs from the last one published. The value is
+   * read from the table at publish time, never carried over from before an await, so an event never names a
+   * connection that is already gone (spec D-4: only events consistent with the current state are published).
+   */
+  const publishStatus = (): void => {
+    if (stopping) return;
+    const now = statusSnapshot();
+    if (now.connected === published.connected && now.daemonId === published.daemonId && now.connectionId === published.connectionId) return;
+    published = now;
+    events.emitGlobal({ type: "daemon.status", ...now });
+  };
   /** A daemon's reported holdings, normalized; an entry that is not a remote URL is dropped. */
   const normalizeHeld = (held: readonly string[]): Set<string> =>
     new Set(held.map((r) => normalizeRemoteUrl(r)).filter((r): r is string => r !== null));
@@ -559,7 +594,8 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       ws.close();
     };
 
-    const hello = async (m: Extract<ReturnType<typeof parseDaemonToHub>, { type: "hello" }>) => {
+    /** `replacing.happened` is set once this hello retires a previous socket of the same registered daemon. */
+    const hello = async (m: Extract<ReturnType<typeof parseDaemonToHub>, { type: "hello" }>, replacing?: { happened: boolean }) => {
       if (stopping || ws.readyState !== ws.OPEN) return;
       let registeredId: string | undefined;
       if (deps.remoteAuth) {
@@ -586,6 +622,10 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         // This never touches another daemon's connection.
         const previous = connections.get(registeredId);
         if (previous) {
+          // Its close stays quiet about the status: this hello publishes it, whatever the outcome (#302 task 4),
+          // so a direct replacement reads as `true → true` with a new connectionId rather than a false blip.
+          previous.replaced = true;
+          if (replacing) replacing.happened = true;
           previous.ws.close();
           // A peer that never answers the close frame must not hold this hello, or the registry lock, open.
           let timer: NodeJS.Timeout | undefined;
@@ -614,6 +654,8 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       const accepted: Conn = {
         ws,
         daemonId: registeredId ?? `d_${nanoid(10)}`,
+        connectionId: `c_${nanoid(12)}`,
+        replaced: false,
         hubUrl,
         closed,
         assigned: null,
@@ -641,7 +683,8 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         if (stopping || ws.readyState !== ws.OPEN) return;
         send(ws, { type: "welcome", workspaceIds });
         track(syncBoundRepos(db, accepted.rpc).catch((error) => { if (!stopping) console.error("[daemon] repos.sync failed", error); }));
-        events.emitGlobal({ type: "daemon.status", connected: true });
+        // The accepted connection is the newest, unless another hello was accepted meanwhile: read the table.
+        publishStatus();
       } finally {
         if (!stopping && recovered) await announceInterrupted(db, events, recovered);
       }
@@ -658,12 +701,16 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       if (!conn) {
         if (m.type !== "hello") return;
         if (deps.remoteAuth) {
+          const replacing = { happened: false };
           try {
-            await withRegistry(() => hello(m));
+            await withRegistry(() => hello(m, replacing));
           } catch (error) {
             // A database or dependency failure is not a credential decision; say so, and keep the cause.
             console.error("[daemon] remote hello failed", error);
             reject(REMOTE_HELLO_FAILED_MESSAGE);
+          } finally {
+            // The retired socket's close published nothing; whatever happened to this hello, say who is current.
+            if (replacing.happened) publishStatus();
           }
         } else {
           await hello(m);
@@ -730,10 +777,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         if (deps.remoteAuth) await chain;
         if (assigned) await announceInterrupted(db, events, await interruptRunning(db, { daemonId: conn.daemonId }));
         else await requeueAndEmit(conn.daemonId);
-        // The UI shows one "daemon connected" state: it turns off only when no daemon is left online.
-        if (openConnections().length === 0) events.emitGlobal({ type: "daemon.status", connected: false });
       }).catch((e) => console.error("[daemon] close failed", e)).finally(() => {
         if (conn && isListed(conn)) connections.delete(conn.daemonId);
+        // The current connection may have changed: to an older one, or to none (connected: false, it turns off
+        // only when no daemon is left online). A socket retired by its own daemon's new hello leaves it to that hello.
+        if (conn && !conn.replaced) publishStatus();
         finishClose();
       });
       track(inbox);
@@ -813,7 +861,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         return holder ?? owners[0]!;
       }
     }
-    return open[open.length - 1]!;
+    return newestOf(open)!;
   }
 
   /** The `DaemonRpc` facade every hub module calls (`deps.daemon`); see `chooseConnection` for the rules. */
@@ -822,7 +870,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       const open = openConnections();
       if (open.length === 0) throw new DaemonRpcError(DAEMON_NOT_CONNECTED);
       // One daemon: it answers every call, whatever the target, exactly as before the connection table.
-      if (open.length === 1) return open[0]!.rpc.call(method, params, timeoutMs);
+      if (open.length === 1) return callOn(open[0]!, method, params, timeoutMs, target);
       if (target?.all) {
         try {
           return await Promise.any(open.map((conn) => conn.rpc.call(method, params, timeoutMs)));
@@ -833,9 +881,15 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       }
       const conn = await chooseConnection(open, target ?? {});
       if (!isOpen(conn)) throw new DaemonRpcError(DAEMON_DISCONNECTED);
-      return conn.rpc.call(method, params, timeoutMs);
+      return callOn(conn, method, params, timeoutMs, target);
     },
   };
+  /** Sends one call on `conn`, first telling `target.onResponder` which connection it went to (#302 task 5). */
+  function callOn(conn: Conn, method: string, params: unknown, timeoutMs: number | undefined, target: DaemonTarget | undefined): Promise<unknown> {
+    const responder: DaemonResponder = { daemonId: conn.daemonId, connectionId: conn.connectionId, registered: conn.registered, ownerUserId: conn.ownerUserId };
+    target?.onResponder?.(responder);
+    return conn.rpc.call(method, params, timeoutMs);
+  }
 
   let closePromise: Promise<void> | undefined;
   const close = (): Promise<void> => {
@@ -882,5 +936,5 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
     return conn !== undefined && isOpen(conn);
   };
   const connectedDaemonIds = (): string[] => (stopping ? [] : openConnections().map((conn) => conn.daemonId));
-  return { isConnected, connectedDaemonIds, connectionSnapshot, waitingReasonFor, rpc, revokeRegisteredDaemon, close };
+  return { isConnected, connectedDaemonIds, connectionSnapshot, waitingReasonFor, statusSnapshot, rpc, revokeRegisteredDaemon, close };
 }

@@ -56,3 +56,22 @@ export type TrimmedAgentReadinessResponse = Pick<ReadinessReply, "current" | "ch
 
 /** The hub's `GET /api/agent-readiness` answer. */
 export type AgentReadinessResponse = FullAgentReadinessResponse | TrimmedAgentReadinessResponse;
+
+/**
+ * Error code of `GET /api/agent-readiness` (HTTP 501) when the daemon that answered predates `agents.readiness`.
+ * The web reads it, like an offline daemon (503), as readiness `unknown`.
+ */
+export const READINESS_UNSUPPORTED = "readiness_unsupported";
+
+/**
+ * Error code of `GET /api/agent-readiness` (HTTP 503) when the connection that answered was closed or is no longer
+ * the current one by the time the reply was built (spec D-4): the reply would describe a daemon the web no longer sees.
+ */
+export const READINESS_STALE = "readiness_stale";
+
+/**
+ * Which daemon connection is current, as `GET /api/daemon/status` and the `daemon.status` event report it (plan
+ * task 4). The current connection is the one a call without a target lands on: the newest open connection. Both
+ * ids are null exactly when `connected` is false. A snapshot and an event confirm a readiness reply equally.
+ */
+export type DaemonStatusSnapshot = { connected: boolean; daemonId: string | null; connectionId: string | null };

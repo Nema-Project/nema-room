@@ -79,6 +79,23 @@ export type DaemonTarget = {
   workspaceId?: string;
   /** Every connected daemon should hear it (e.g. `repos.sync`); resolves with the first answer. */
   all?: boolean;
+  /**
+   * Told which connection the call was sent to, synchronously, before the request goes out (#302 task 5): the
+   * readiness route fills `daemon` and `access` from the connection that actually answered. Not called for `all`
+   * calls, nor when no connection is open.
+   */
+  onResponder?: (responder: DaemonResponder) => void;
+};
+
+/** The connection a call was sent to, as `DaemonTarget.onResponder` reports it. */
+export type DaemonResponder = {
+  daemonId: string;
+  /** Minted by the hub for each accepted connection; a daemon reconnecting under the same id gets a new one. */
+  connectionId: string;
+  /** A registered daemon (remote auth) has a `daemons` row; a daemon on the shared token does not. */
+  registered: boolean;
+  /** `daemons.owner_user_id` of a registered daemon; null otherwise. */
+  ownerUserId: string | null;
 };
 
 export interface DaemonRpc {
