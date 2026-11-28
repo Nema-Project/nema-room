@@ -5,6 +5,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
+  READINESS_DAEMON_ERROR,
   READINESS_REASONS,
   READINESS_RUNTIMES,
   READINESS_STALE,
@@ -16,10 +17,9 @@ import {
   type ReadinessAccess,
   type ReadinessDaemon,
 } from "@nema/shared";
-import { COMPONENT_RPC_TIMEOUT_MS, DaemonRpcError, type DaemonResponder, type DaemonRpc } from "./daemonRpc.js";
+import { COMPONENT_RPC_TIMEOUT_MS, DaemonRpcError, isDaemonOffline, type DaemonResponder, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import { LOCAL_USER_ID, type Identity } from "./identity.js";
-import { daemonHttpStatus } from "./plugins.js";
 
 /**
  * What the daemon may send. Unknown keys are stripped (a `daemon` field from the daemon included: the hub fills
@@ -72,7 +72,13 @@ export function readinessRoutes(deps: {
     } catch (error) {
       if (!(error instanceof DaemonRpcError)) throw error;
       if (isUnknownRpcMethodError(error.message)) return c.json({ error: READINESS_UNSUPPORTED }, 501);
-      return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      // The hub's own "no daemon answered" texts are public; they are the only messages passed on (503, as
+      // `daemonHttpStatus` maps them for every daemon route).
+      if (isDaemonOffline(error.message)) return c.json({ error: error.message }, 503);
+      // Anything else is the daemon's raw diagnostic (it can name paths on its owner's machine). It is handled
+      // before access is known, so nobody gets it: it goes to the hub log, and every caller gets the same code.
+      console.error("[readiness] agents.readiness failed:", error.message);
+      return c.json({ error: READINESS_DAEMON_ERROR }, 502);
     }
     const answered = responder as DaemonResponder | undefined;
     if (!answered) return c.json({ error: READINESS_STALE }, 503);

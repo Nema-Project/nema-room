@@ -211,12 +211,25 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   };
   let published: DaemonStatusSnapshot = { connected: false, daemonId: null, connectionId: null };
   /**
+   * Registered daemons in the middle of replacing their own connection: the retired socket is closed and its
+   * successor is not listed yet. Every publisher holds off meanwhile (an unrelated close included), so a direct
+   * replacement reads as `true → true` and never as a `false` blip; the replacement publishes the actual state
+   * when it ends, whether the successor was listed or the hello failed.
+   */
+  let replacementsInFlight = 0;
+  type Replacing = { happened: boolean; inFlight: boolean };
+  const endReplacement = (replacing: Replacing | undefined): void => {
+    if (!replacing?.inFlight) return;
+    replacing.inFlight = false;
+    replacementsInFlight -= 1;
+  };
+  /**
    * Publishes `daemon.status` when the current connection differs from the last one published. The value is
    * read from the table at publish time, never carried over from before an await, so an event never names a
    * connection that is already gone (spec D-4: only events consistent with the current state are published).
    */
   const publishStatus = (): void => {
-    if (stopping) return;
+    if (stopping || replacementsInFlight > 0) return;
     const now = statusSnapshot();
     if (now.connected === published.connected && now.daemonId === published.daemonId && now.connectionId === published.connectionId) return;
     published = now;
@@ -594,8 +607,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       ws.close();
     };
 
-    /** `replacing.happened` is set once this hello retires a previous socket of the same registered daemon. */
-    const hello = async (m: Extract<ReturnType<typeof parseDaemonToHub>, { type: "hello" }>, replacing?: { happened: boolean }) => {
+    /**
+     * `replacing.happened` is set once this hello retires a previous socket of the same registered daemon;
+     * `replacing.inFlight` stays set until the successor is listed or the hello gives up (`endReplacement`).
+     */
+    const hello = async (m: Extract<ReturnType<typeof parseDaemonToHub>, { type: "hello" }>, replacing?: Replacing) => {
       if (stopping || ws.readyState !== ws.OPEN) return;
       let registeredId: string | undefined;
       if (deps.remoteAuth) {
@@ -624,8 +640,14 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         if (previous) {
           // Its close stays quiet about the status: this hello publishes it, whatever the outcome (#302 task 4),
           // so a direct replacement reads as `true → true` with a new connectionId rather than a false blip.
+          // Until then no other close publishes either: with the retired socket gone and the successor not yet
+          // listed, an unrelated close would otherwise find nothing open and publish a false `connected: false`.
           previous.replaced = true;
-          if (replacing) replacing.happened = true;
+          if (replacing && !replacing.inFlight) {
+            replacing.happened = true;
+            replacing.inFlight = true;
+            replacementsInFlight += 1;
+          }
           previous.ws.close();
           // A peer that never answers the close frame must not hold this hello, or the registry lock, open.
           let timer: NodeJS.Timeout | undefined;
@@ -670,6 +692,11 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       // Delete first so a re-listed id moves to the end: the table stays in acceptance order.
       connections.delete(accepted.daemonId);
       connections.set(accepted.daemonId, accepted);
+      // Visible and published together: `statusSnapshot` (GET /api/daemon/status) reads this table from here on,
+      // so the event goes out now too. A reader that adopted this connection over HTTP is then sure to hear of
+      // its leaving, even when it closes before the hello finishes (its close publishes the change back).
+      endReplacement(replacing);
+      publishStatus();
       // Wait for any unsent claim of a closing socket to be requeued without counting an interruption.
       const pendingDispatch = chain;
       try {
@@ -683,7 +710,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
         if (stopping || ws.readyState !== ws.OPEN) return;
         send(ws, { type: "welcome", workspaceIds });
         track(syncBoundRepos(db, accepted.rpc).catch((error) => { if (!stopping) console.error("[daemon] repos.sync failed", error); }));
-        // The accepted connection is the newest, unless another hello was accepted meanwhile: read the table.
+        // Already published when listed; this only catches a change since (publishStatus skips an unchanged value).
         publishStatus();
       } finally {
         if (!stopping && recovered) await announceInterrupted(db, events, recovered);
@@ -701,7 +728,7 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       if (!conn) {
         if (m.type !== "hello") return;
         if (deps.remoteAuth) {
-          const replacing = { happened: false };
+          const replacing: Replacing = { happened: false, inFlight: false };
           try {
             await withRegistry(() => hello(m, replacing));
           } catch (error) {
@@ -709,7 +736,9 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
             console.error("[daemon] remote hello failed", error);
             reject(REMOTE_HELLO_FAILED_MESSAGE);
           } finally {
-            // The retired socket's close published nothing; whatever happened to this hello, say who is current.
+            // The retired socket's close, and any close during the replacement, published nothing; whatever
+            // happened to this hello (successor listed, refused or failed), say who is current now.
+            endReplacement(replacing);
             if (replacing.happened) publishStatus();
           }
         } else {
@@ -780,7 +809,8 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       }).catch((e) => console.error("[daemon] close failed", e)).finally(() => {
         if (conn && isListed(conn)) connections.delete(conn.daemonId);
         // The current connection may have changed: to an older one, or to none (connected: false, it turns off
-        // only when no daemon is left online). A socket retired by its own daemon's new hello leaves it to that hello.
+        // only when no daemon is left online). A socket retired by its own daemon's new hello leaves it to that hello,
+        // and so does any close while a replacement is in flight (`publishStatus` holds off until it ends).
         if (conn && !conn.replaced) publishStatus();
         finishClose();
       });
@@ -886,8 +916,10 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
   };
   /** Sends one call on `conn`, first telling `target.onResponder` which connection it went to (#302 task 5). */
   function callOn(conn: Conn, method: string, params: unknown, timeoutMs: number | undefined, target: DaemonTarget | undefined): Promise<unknown> {
-    const responder: DaemonResponder = { daemonId: conn.daemonId, connectionId: conn.connectionId, registered: conn.registered, ownerUserId: conn.ownerUserId };
-    target?.onResponder?.(responder);
+    // An `all` call has no single responder, even when only one connection happens to be open.
+    if (target?.onResponder && !target.all) {
+      target.onResponder({ daemonId: conn.daemonId, connectionId: conn.connectionId, registered: conn.registered, ownerUserId: conn.ownerUserId });
+    }
     return conn.rpc.call(method, params, timeoutMs);
   }
 

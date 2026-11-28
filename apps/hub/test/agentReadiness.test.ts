@@ -6,11 +6,12 @@ import type { AddressInfo } from "node:net";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import WebSocket from "ws";
 import type { Hono } from "hono";
-import { READINESS_STALE, READINESS_UNSUPPORTED, unknownRpcMethodError, type AgentReadinessResponse, type DaemonStatusSnapshot, type ReadinessReply, type TrimmedAgentReadinessResponse } from "@nema/shared";
+import { READINESS_DAEMON_ERROR, READINESS_STALE, READINESS_UNSUPPORTED, unknownRpcMethodError, type AgentReadinessResponse, type DaemonStatusSnapshot, type ReadinessReply, type TrimmedAgentReadinessResponse } from "@nema/shared";
 import { createApp } from "../src/app.js";
 import { attachDaemonSocket } from "../src/daemonSocket.js";
 import { createDaemonRegistrationCode, registerDaemon } from "../src/daemons.js";
 import { COMPONENT_RPC_TIMEOUT_MS, DAEMON_DISCONNECTED, DAEMON_NOT_CONNECTED, DAEMON_TIMED_OUT, DaemonRpcError, type DaemonResponder, type DaemonRpc } from "../src/daemonRpc.js";
+import type { Db } from "../src/db/db.js";
 import { EventBus } from "../src/events.js";
 import { readinessAccess } from "../src/readiness.js";
 import { cleanupHubDeps, makeHubDeps } from "./helpers.js";
@@ -113,8 +114,14 @@ describe("GET /api/agent-readiness pass-through", () => {
   });
 
   test("another daemon failure is a 502, and so is a reply that does not fit the contract", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     fake.answer = async () => { throw new DaemonRpcError("boom"); };
-    expect((await get(local)).status).toBe(502);
+    const failed = await get(local);
+    expect(failed.status).toBe(502);
+    // The daemon's own text goes to the hub log, never into the body.
+    expect(await failed.json()).toEqual({ error: READINESS_DAEMON_ERROR });
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("[readiness]"), "boom");
+    logged.mockRestore();
     fake.answer = async () => ({ current: "codex-direct", runtimes: [{ runtime: "codex-direct", state: "great" }], checkedAt: "x" });
     expect((await get(local)).status).toBe(502);
     fake.answer = async () => null;
@@ -146,6 +153,31 @@ describe("GET /api/agent-readiness pass-through", () => {
       return REPLY;
     };
     expect((await get(local)).status).toBe(503);
+  });
+
+  test("a replacement that lands while the registered daemon's label is being read makes the reply stale", async () => {
+    // The label query is the route's last await: the RPC has resolved, the final comparison has not run yet.
+    fake.responder = { daemonId: "d_reg", connectionId: "c_reg_1", registered: true, ownerUserId: "usr_a" };
+    const deps = await makeHubDeps();
+    let labelQueries = 0;
+    const db: Db = {
+      ...deps.db,
+      query: (async (sql: string, params?: unknown[]) => {
+        if (sql.startsWith("select label from daemons")) {
+          labelQueries += 1;
+          // The same registered daemon reconnects mid-query: same id, new connection id.
+          fake.snapshot = { connected: true, daemonId: "d_reg", connectionId: "c_reg_2" };
+          return [{ label: "Laptop" }];
+        }
+        return deps.db.query(sql, params);
+      }) as Db["query"],
+      tx: (fn) => deps.db.tx(fn),
+    };
+    const app = createApp({ ...deps, db, events: new EventBus(), daemonStatus: () => true, daemon: fake.daemon, daemonSnapshot: fake.daemonSnapshot });
+    const response = await get(app);
+    expect(labelQueries).toBe(1);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: READINESS_STALE });
   });
 
   test("without a snapshot source no reply can be confirmed current", async () => {
@@ -211,6 +243,28 @@ describe("access and trimming", () => {
     expect(Object.keys(body).sort()).toEqual(TRIMMED_KEYS);
     expect(JSON.stringify(body)).not.toMatch(/"account"|"cli"|"reason"/);
     expect((await hubs.send("anonymous", "GET", "/api/agent-readiness")).status).toBe(401);
+  });
+
+  test("remote: a daemon failure naming its owner's paths reaches nobody; owner and non-owner get the same public code", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const hubs = await hostAdminHubs(fake.daemon, { daemonSnapshot: fake.daemonSnapshot });
+    const { db, memberId } = hubs.remote;
+    const { code } = await createDaemonRegistrationCode(db, memberId);
+    const { id } = (await registerDaemon(db, code, "Member's Mac mini"))!;
+    fake.responder = { daemonId: id, connectionId: "c_reg", registered: true, ownerUserId: memberId };
+    // What a daemon's config() rethrows for an unreadable config file, passed through by its RPC layer.
+    const raw = "EACCES: permission denied, open '/home/owner-secret/.nema/config.json'";
+    fake.answer = async () => { throw new DaemonRpcError(raw); };
+
+    for (const who of ["admin", "member"] as const) {
+      const response = await hubs.send(who, "GET", "/api/agent-readiness");
+      expect(response.status, who).toBe(502);
+      const text = await response.text();
+      expect(JSON.parse(text), who).toEqual({ error: READINESS_DAEMON_ERROR });
+      expect(text, who).not.toMatch(/owner-secret|EACCES|config\.json/);
+    }
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("[readiness]"), raw);
+    logged.mockRestore();
   });
 
   test("the local form through the shared fixture is full", async () => {

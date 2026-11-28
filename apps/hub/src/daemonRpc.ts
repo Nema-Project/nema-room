@@ -81,8 +81,8 @@ export type DaemonTarget = {
   all?: boolean;
   /**
    * Told which connection the call was sent to, synchronously, before the request goes out (#302 task 5): the
-   * readiness route fills `daemon` and `access` from the connection that actually answered. Not called for `all`
-   * calls, nor when no connection is open.
+   * readiness route fills `daemon` and `access` from the connection that actually answered. Never called for an
+   * `all` call (not even when a single connection is open), nor when no connection is open.
    */
   onResponder?: (responder: DaemonResponder) => void;
 };
