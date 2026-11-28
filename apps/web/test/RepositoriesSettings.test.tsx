@@ -155,6 +155,46 @@ describe("RepositoriesSettings", () => {
     expect(screen.getByText("/real/app")).toBeTruthy();
   });
 
+  it("reloads again when an update settles while the first reload is pending", async () => {
+    const existing = repo({ id: "r0", path: "/tmp/existing", label: "existing" });
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
+    const renamed = repo({ ...created, label: "renamed" });
+    let resolveList!: (rows: Repo[]) => void;
+    let resolveReload!: (rows: Repo[]) => void;
+    vi.mocked(hub.listRepos)
+      .mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveList = resolve; }))
+      .mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveReload = resolve; }))
+      .mockResolvedValueOnce([existing, renamed]);
+    let resolveUpdate!: (value: Repo) => void;
+    vi.mocked(hub.updateRepo).mockImplementationOnce(() => new Promise<Repo>((resolve) => { resolveUpdate = resolve; }));
+    vi.mocked(hub.bindRepo).mockResolvedValueOnce(created);
+    mount();
+    await screen.findByRole("button", { name: "Add repository" });
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    expect(await screen.findByText("/real/app")).toBeTruthy();
+    // The bind succeeded before the initial load answered, so the component reloads.
+    expect(hub.listRepos).toHaveBeenCalledTimes(2);
+    // The new repo is renamed while that reload is still pending.
+    const label = screen.getByRole("textbox", { name: "Label /real/app" });
+    await userEvent.clear(label);
+    await userEvent.type(label, "renamed");
+    await userEvent.tab();
+    expect(hub.updateRepo).toHaveBeenCalledWith("w1", "r1", { label: "renamed" });
+    // The first reload answers during the update: its rows are stashed, not applied.
+    await act(async () => { resolveReload([existing, created]); });
+    expect(screen.queryByText("/tmp/existing")).toBeNull();
+    // Once the update settles, the component reloads again instead of leaving the stash unused.
+    await act(async () => { resolveUpdate(renamed); });
+    expect(hub.listRepos).toHaveBeenCalledTimes(3);
+    expect(await screen.findByText("/tmp/existing")).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "Label /real/app" }) as HTMLInputElement).value).toBe("renamed");
+    // The delayed initial response is stale and must not wipe the reloaded list.
+    await act(async () => { resolveList([existing]); });
+    expect(screen.getByText("/tmp/existing")).toBeTruthy();
+    expect(screen.getByText("/real/app")).toBeTruthy();
+  });
+
   it("shows the initial list when it resolves while a bind fails", async () => {
     const existing = repo({ id: "r0", path: "/tmp/existing", label: "existing" });
     let resolveList!: (rows: Repo[]) => void;

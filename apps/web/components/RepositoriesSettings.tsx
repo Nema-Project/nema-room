@@ -54,6 +54,8 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
           droppedList.current = rows;
           return;
         }
+        // These rows supersede any stashed response: the mutation it was stashed for has settled.
+        droppedList.current = null;
         setRepos(rows);
       })
       .catch((err: unknown) => {
@@ -100,6 +102,8 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
         return;
       }
       listLoaded.current = true;
+      // These rows supersede any stashed response: the mutation it was stashed for has settled.
+      droppedList.current = null;
       setRepos((list) => {
         const seen = new Set(rows.map((row) => row.id));
         return [...rows, ...(list ?? []).filter((row) => !seen.has(row.id))];
@@ -107,6 +111,14 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
     } catch {
       // Keep the list the bind produced; a later reread recovers the rest.
     }
+  }
+
+  // A mutation that settles while the list has never loaded leaves the screen without the
+  // existing repos: a reload stashed during the mutation is never applied on its own, so retry
+  // the load once the mutation settles. A fresh read also supersedes the stashed rows, which
+  // may predate the mutation that just settled.
+  function ensureListLoaded() {
+    if (!listLoaded.current) void reloadList();
   }
 
   async function add(e: FormEvent) {
@@ -123,9 +135,6 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
       const stashed = droppedList.current;
       droppedList.current = null;
       setRepos((list) => [...(list ?? stashed ?? []), created]);
-      // When the first list read has not landed yet, the stale initial response will be
-      // discarded, so reload to recover the existing repos.
-      if (!listLoaded.current) void reloadList();
       // Binding starts the repository's graph build: the first real Graphify call, so the offer may open here.
       onRepoBound();
       setPreview(null);
@@ -141,6 +150,9 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
         droppedList.current = null;
         setRepos((list) => list ?? stashed);
       }
+      // When the first list read has not landed yet, the stale initial response will be
+      // discarded, so reload to recover the existing repos.
+      ensureListLoaded();
     }
   }
 
@@ -155,6 +167,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
       throw err;
     } finally {
       pendingMutations.current -= 1;
+      ensureListLoaded();
     }
   }
 
@@ -172,6 +185,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
       setFormError(hubErrorText(err, t));
     } finally {
       pendingMutations.current -= 1;
+      ensureListLoaded();
     }
   }
 
