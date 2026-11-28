@@ -637,6 +637,49 @@ describe("system notices (#299 batch 2)", () => {
     expect(document.body.textContent).not.toContain("{id}");
   });
 
+  // The English template's prefix equals the stored one, so only another language tells the stored-text fallback
+  // apart from re-wrapping the stored detail in the localised sentence.
+  it.each([
+    ["zh", "missing", {}],
+    ["ja", "missing", {}],
+    ["zh", "non-scalar", { id: {} }],
+    ["ja", "non-scalar", { id: {} }],
+  ])("shows the whole stored failure in %s when a known reason's param is %s", (locale, _case, extra) => {
+    const content = "Processing failed: Work package W-3 not found.";
+    const { container } = inLocale(locale, msg({
+      role: "system",
+      taskId: "t1",
+      content,
+      meta: { notice: { code: "task.failed", params: { reason: "workpackage.not-found", ...extra } } } as unknown as Message["meta"],
+    }));
+    expect(container.querySelector(".sysmsg-content")?.textContent).toBe(content);
+  });
+
+  it("keeps an uncoded failure in the localised sentence in zh, with its recovery command", () => {
+    const { container } = inLocale("zh", msg({
+      role: "system",
+      taskId: "t1",
+      content: "Processing failed: Codex is not signed in. Run nema auth login",
+      meta: { notice: { code: "task.failed" } },
+    }));
+    // The copy button's label follows the command inside the same element.
+    expect(container.querySelector(".sysmsg-content")?.textContent).toMatch(/^处理失败：Codex is not signed in\. Run nema auth login/);
+    expect(document.body.textContent).not.toContain("Processing failed");
+    expect(screen.getByText("nema auth login", { selector: "code" })).toBeTruthy();
+  });
+
+  it("shows no account line for a stored route that is not a whole route decision", () => {
+    const content = "Processing failed: 订阅额度已用完";
+    const { container } = inLocale("en", msg({
+      role: "system",
+      taskId: "t1",
+      content,
+      meta: { notice: { code: "task.failed" }, route: {} } as unknown as Message["meta"],
+    }));
+    expect(container.querySelector(".sysmsg-content")?.textContent).toBe(content);
+    expect(document.body.textContent).not.toContain("undefined");
+  });
+
   it("keeps a command-like repository label in an index failure as plain text", () => {
     const content = "The code index for repository codex login did not finish. You cannot ask about the codebase yet.";
     inLocale("en", msg({ role: "system", content, meta: { notice: { code: "repo.index.failed", params: { label: "codex login" } } } }));

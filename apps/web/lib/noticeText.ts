@@ -54,15 +54,21 @@ function failureDetail(content: string): string {
  * `{placeholder}`.
  *
  * `task.failed` names its reason from `error.<reason>` when the failure carried a code the catalog knows and
- * params that fill it.
- * A failure without one (every daemon failure until the daemon sends codes) shows the error text as the hub
- * stored it, inside the localised sentence.
+ * params that fill it. A known reason whose params do not fill it shows the whole stored `content`: the hub
+ * wrote that text from the same code, so it is not a raw daemon error to re-wrap in the localised sentence.
+ * A failure without a code the catalog knows (every daemon failure until the daemon sends codes) shows the
+ * error text as the hub stored it, inside the localised sentence.
  */
 export function noticeText(notice: SystemNotice, content: string, t: T): string {
   if (notice.code === NOTICE.taskFailed) {
     const { reason, ...reasonParams } = notice.params ?? {};
-    const known = isErrorCode(reason) ? lookupFilled(t, ERROR_KEY[reason] ?? `error.${reason}`, reasonParams as CodeParams) : null;
-    return lookupFilled(t, `notice.${notice.code}`, { reason: known ?? failureDetail(content) }) ?? content;
+    const reasonKey = isErrorCode(reason) ? ERROR_KEY[reason] ?? `error.${reason}` : null;
+    if (reasonKey !== null && lookup(t, reasonKey) !== null) {
+      const known = lookupFilled(t, reasonKey, reasonParams as CodeParams);
+      if (known === null) return content;
+      return lookupFilled(t, `notice.${notice.code}`, { reason: known }) ?? content;
+    }
+    return lookupFilled(t, `notice.${notice.code}`, { reason: failureDetail(content) }) ?? content;
   }
   return lookupFilled(t, `notice.${notice.code}`, notice.params) ?? content;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { GraphifyErrorSchema, LEGACY_TASK_FAILED_PREFIX, NOTICE, readSystemNotice, type MessageMention, type SystemNotice } from "@nema/shared";
+import { GraphifyErrorSchema, LEGACY_TASK_FAILED_PREFIX, NOTICE, parseRouteDecision, readSystemNotice, type MessageMention, type SystemNotice } from "@nema/shared";
 import { AttachmentList } from "@/components/AttachmentList";
 import { Markdown } from "@/components/Markdown";
 import { SkillOfferCard } from "@/components/SkillOfferCard";
@@ -136,7 +136,8 @@ function NoticeSystemMessage({ message, notice, onQuote }: Pick<Props, "message"
   const failed = isFailureNotice(notice);
   const label = failed ? t("chat.system.failure") : isInstructionNotice(notice) ? t("chat.system.instruction") : messageRoleLabel(t, message.role);
   const text = (notice.code === NOTICE.repoIndexFailed ? storedIndexFailureText(message, t) : undefined) ?? noticeText(notice, message.content, t);
-  const route = notice.code === NOTICE.taskFailed ? meta?.route : undefined;
+  // Stored meta is data: an imported or damaged route that is not a whole route decision shows no account line.
+  const route = notice.code === NOTICE.taskFailed ? parseRouteDecision(meta?.route) : undefined;
   const repo = notice.code === NOTICE.systemTaskDiagram ? notice.params : undefined;
   return (
     <div className={failed ? "sysmsg failed" : "sysmsg"} id={`msg-${message.id}`}>
