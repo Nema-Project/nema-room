@@ -130,6 +130,54 @@ describe("RepositoriesSettings", () => {
     expect(screen.getByText("/tmp/app")).toBeTruthy();
   });
 
+  it("does not restore a removed row when the reread answers before the unbind", async () => {
+    const existing = repo({ id: "r1", path: "/tmp/app", label: "app" });
+    vi.mocked(hub.listRepos).mockResolvedValue([existing]);
+    let resolveUnbind!: (value: undefined) => void;
+    vi.mocked(hub.unbindRepo).mockImplementationOnce(() => new Promise<undefined>((resolve) => { resolveUnbind = resolve; }));
+    let resolveList!: (rows: Repo[]) => void;
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <RepositoriesSettings workspaceId="w1" onRepoBound={vi.fn()} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("/tmp/app")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Delete /tmp/app" }));
+    expect(screen.queryByText("/tmp/app")).toBeNull();
+    // A locale change starts a reread while the unbind is pending; the server still lists the repo.
+    vi.mocked(hub.listRepos).mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveList = resolve; }));
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    await act(async () => { resolveList([existing]); });
+    expect(screen.queryByText("/tmp/app")).toBeNull();
+    await act(async () => { resolveUnbind(undefined); });
+    expect(screen.queryByText("/tmp/app")).toBeNull();
+    expect(hub.unbindRepo).toHaveBeenCalledWith("w1", "r1");
+  });
+
+  it("does not restore a removed row when the reread answers after the unbind", async () => {
+    const existing = repo({ id: "r1", path: "/tmp/app", label: "app" });
+    vi.mocked(hub.listRepos).mockResolvedValue([existing]);
+    let resolveUnbind!: (value: undefined) => void;
+    vi.mocked(hub.unbindRepo).mockImplementationOnce(() => new Promise<undefined>((resolve) => { resolveUnbind = resolve; }));
+    let resolveList!: (rows: Repo[]) => void;
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <RepositoriesSettings workspaceId="w1" onRepoBound={vi.fn()} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("/tmp/app")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Delete /tmp/app" }));
+    expect(screen.queryByText("/tmp/app")).toBeNull();
+    vi.mocked(hub.listRepos).mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveList = resolve; }));
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    await act(async () => { resolveUnbind(undefined); });
+    expect(screen.queryByText("/tmp/app")).toBeNull();
+    await act(async () => { resolveList([existing]); });
+    expect(screen.queryByText("/tmp/app")).toBeNull();
+  });
+
   it("asks for another name when the suggested label is taken and ignores a cancelled pick", async () => {
     mount();
     await screen.findByRole("button", { name: "Add repository" });

@@ -29,6 +29,9 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
   // (or a newer read) must not overwrite the mutated list, and a failed background reread keeps the
   // list that is already shown.
   const seq = useRef(0);
+  // Mutations in flight: a reread that resolves while one is pending may return a server list that
+  // predates it, so its response is dropped even when it started after the mutation did.
+  const pendingMutations = useRef(0);
 
   useEffect(() => {
     let cancel = false;
@@ -36,7 +39,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
     const message = (err: unknown) => (hubErrorText(err, t));
     listRepos(workspaceId)
       .then((rows) => {
-        if (!cancel && mine === seq.current) setRepos(rows);
+        if (!cancel && mine === seq.current && pendingMutations.current === 0) setRepos(rows);
       })
       .catch((err: unknown) => {
         if (cancel || mine !== seq.current) return;
@@ -74,6 +77,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
     if (!preview) return;
     const trimmedLabel = label.trim();
     if (!trimmedLabel || (preview.labelTaken && trimmedLabel === preview.label)) return;
+    pendingMutations.current += 1;
     try {
       const created = await bindRepo(workspaceId, { path: preview.root, label: trimmedLabel, mainBranch: preview.defaultBranch });
       seq.current += 1;
@@ -85,10 +89,13 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
       setFormError(null);
     } catch (err) {
       setFormError(hubErrorText(err, t));
+    } finally {
+      pendingMutations.current -= 1;
     }
   }
 
   async function saveRepo(repoId: string, patch: { label?: string; mainBranch?: string; trustSkills?: boolean }) {
+    pendingMutations.current += 1;
     try {
       const next = await updateRepo(workspaceId, repoId, patch);
       seq.current += 1;
@@ -96,18 +103,25 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
     } catch (err) {
       setFormError(hubErrorText(err, t));
       throw err;
+    } finally {
+      pendingMutations.current -= 1;
     }
   }
 
   async function removeRepo(repoId: string) {
     const previous = repos;
     seq.current += 1;
+    pendingMutations.current += 1;
     setRepos((list) => list?.filter((repo) => repo.id !== repoId) ?? null);
     try {
       await unbindRepo(workspaceId, repoId);
+      // A reread started while the unbind was pending may still return the old server list.
+      seq.current += 1;
     } catch (err) {
       setRepos(previous);
       setFormError(hubErrorText(err, t));
+    } finally {
+      pendingMutations.current -= 1;
     }
   }
 
