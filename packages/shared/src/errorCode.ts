@@ -74,11 +74,11 @@ export const CodedTextSchema = z.object({
 });
 export type CodedText = z.infer<typeof CodedTextSchema>;
 
-/** Keeps the well-formed items of an untrusted list; a malformed item becomes its text alone, or is dropped. */
+/** Keeps the well-formed items of an untrusted list; a malformed item becomes its text alone, or is dropped. The bound stays generous enough for any realistic list (a Skill catalog with hundreds of failed loads) while still capping untrusted input. */
 export function readCodedTexts(value: unknown): CodedText[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const out: CodedText[] = [];
-  for (const item of value.slice(0, 64)) {
+  for (const item of value.slice(0, 512)) {
     if (!item || typeof item !== "object" || typeof (item as { text?: unknown }).text !== "string") continue;
     const row = item as { text: string; code?: unknown; params?: unknown };
     out.push({ text: row.text, ...readCoded(row.code, row.params) });

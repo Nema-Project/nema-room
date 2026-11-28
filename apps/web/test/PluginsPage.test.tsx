@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionRecord } from "@nema/shared";
 import { PluginsPage } from "@/components/PluginsPage";
-import { I18nProvider } from "@/lib/i18n";
+import { I18nProvider, useLocale } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
 
 vi.mock("@/lib/hub", () => ({
@@ -494,6 +494,12 @@ function renderPage() {
   );
 }
 
+/** Switches the UI language mid-test, so locale-triggered refetches can be observed. */
+function LocaleSwitcher() {
+  const [, setLocale] = useLocale();
+  return <button onClick={() => setLocale("ja")}>switch locale</button>;
+}
+
 async function previewSource(source = "https://github.com/acme/skills") {
   renderPage();
   const input = await screen.findByLabelText("GitHub repository or skills.sh link");
@@ -590,6 +596,38 @@ describe("installing a skill from the page", () => {
     expect(hub.retryExtensionInstall).toHaveBeenCalledWith("pdf");
     await waitFor(() => expect(hub.getExtensionInstall).toHaveBeenCalledWith("pdf"));
     expect(await screen.findByText("Install finished")).toBeTruthy();
+  });
+
+  it("keeps a panel-started install's progress and Cancel after a locale re-read", async () => {
+    vi.mocked(hub.resolveExtensionSource).mockResolvedValue(preview);
+    vi.mocked(hub.installExtension).mockResolvedValue(job("running"));
+    vi.mocked(hub.getExtensionInstall).mockResolvedValue(job("running"));
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <PluginsPage pollMs={1} />
+      </I18nProvider>,
+    );
+    const input = await screen.findByLabelText("GitHub repository or skills.sh link");
+    fireEvent.change(input, { target: { value: "https://github.com/acme/skills" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    });
+    const panel = screen.getByRole("region", { name: "Install a skill" });
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("button", { name: "Install" }));
+    });
+    expect(within(panel).getByText("Installing 0/3")).toBeTruthy();
+    // The next list read sees the install in flight; a language switch must not move it to the list origin.
+    vi.mocked(hub.listExtensions).mockResolvedValue([
+      ...catalog,
+      row({ id: "pdf", name: "pdf", kind: "skill", provision: "managed", installState: "installing" }),
+    ]);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    });
+    expect(await within(panel).findByText("インストール中 0/3")).toBeTruthy();
+    expect(within(panel).getByRole("button", { name: "インストールを取り消す" })).toBeTruthy();
   });
 
   it("drops a preview as soon as the source is edited, so Install can only use what is shown", async () => {

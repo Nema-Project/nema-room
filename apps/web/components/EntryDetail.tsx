@@ -86,8 +86,11 @@ function PlainEntryDetail({ workspaceId, entryId, onClose, onJumpToMessage, refr
   const firstRun = useRef(true);
   useEffect(() => {
     // A change event while the form is open must not reset the typed values; flag it instead.
+    // A language change re-runs the load below but is not a change event, so it must not flag stale.
     if (!firstRun.current && editingRef.current) setStale(true);
     firstRun.current = false;
+  }, [refreshKey]);
+  useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount and refresh: state is set once the requests resolve
     void load();
   }, [load, refreshKey]);

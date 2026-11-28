@@ -324,7 +324,7 @@ describe("workspace plugins", () => {
   test("grill-me settings are stored, validated and default to strict", async () => {
     const tooLong = await uiReq("PATCH", `/api/workspaces/${wsA}/plugins/grill`, { settings: { strictness: "lenient", extraRules: "x".repeat(2001) } });
     expect(tooLong.status).toBe(400);
-    expect(await tooLong.json()).toEqual({ error: "补充追问规则最多 2000 字" });
+    expect(await tooLong.json()).toEqual({ error: "补充追问规则最多 2000 字", code: "plugin.grill-rules-too-long", params: { max: 2000 } });
     const bad = await uiReq("PATCH", `/api/workspaces/${wsA}/plugins/grill`, { settings: { strictness: "harsh" } });
     expect(bad.status).toBe(400);
     expect(await db.query("select 1 from workspace_plugins")).toEqual([]);

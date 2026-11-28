@@ -56,6 +56,11 @@ function matches(extension: ExtensionRecord, type: TypeFilter, query: string): b
 export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onClose?: () => void; embedded?: boolean; pollMs?: number }) {
   const t = useT();
   const [jobs, setJobs] = useState<Record<string, TrackedJob>>({});
+  // The locale re-read below must keep a panel-started install's origin; the ref reads the latest jobs.
+  const jobsRef = useRef(jobs);
+  useEffect(() => {
+    jobsRef.current = jobs;
+  });
   // One polling chain per id. Starting, cancelling or retrying bumps the id's generation, so an answer
   // from an older chain cannot overwrite a newer state.
   const generation = useRef(new Map<string, number>());
@@ -318,11 +323,13 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
         if (cancel || applied.current !== seen) return;
         setExtensions(rows);
         // An install started before this page opened is still the daemon's; follow it from here.
+        // Keep the origin a panel start already recorded, so a language switch does not hide its
+        // progress and Cancel behind the list origin.
         for (const row of rows) {
           if (row.provision !== "managed" || row.installState !== "installing") continue;
           getExtensionInstall(row.id)
             .then((job) => {
-              if (!cancel) track(job, "list");
+              if (!cancel) track(job, jobsRef.current[row.id]?.origin ?? "list");
             })
             .catch(() => {});
         }

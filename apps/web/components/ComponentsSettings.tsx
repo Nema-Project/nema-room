@@ -440,7 +440,9 @@ function AgentClis() {
     let live = true;
     getAgentClis()
       .then((body) => {
-        if (live) setAgents(body.agents);
+        if (!live) return;
+        setAgents(body.agents);
+        setError(null);
       })
       .catch((err: unknown) => {
         if (live) setError(hubErrorText(err, t));

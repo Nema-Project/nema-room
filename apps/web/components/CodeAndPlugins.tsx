@@ -30,7 +30,9 @@ export function CodeAndPlugins({ workspaceId, graphOfferSignal }: { workspaceId:
     const message = (err: unknown) => (hubErrorText(err, t));
     listWorkspacePlugins(workspaceId)
       .then((rows) => {
-        if (!cancel) setPlugins(rows);
+        if (cancel) return;
+        setPlugins(rows);
+        setPluginError(null);
       })
       .catch((err: unknown) => {
         if (cancel) return;
@@ -40,7 +42,9 @@ export function CodeAndPlugins({ workspaceId, graphOfferSignal }: { workspaceId:
     // Install status is a join. A failed catalog must not hide the toggles.
     listPlugins()
       .then((rows) => {
-        if (!cancel) setCatalog(rows);
+        if (cancel) return;
+        setCatalog(rows);
+        setCatalogError(null);
       })
       .catch((err: unknown) => {
         if (!cancel) setCatalogError({ message: message(err), graphifyError: err instanceof HubError ? err.graphifyError : undefined });

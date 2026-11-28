@@ -1,9 +1,9 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RepositoriesSettings } from "@/components/RepositoriesSettings";
 import { formatDay, formatTime } from "@/lib/format";
-import { I18nProvider } from "@/lib/i18n";
+import { I18nProvider, useLocale } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
 import type { Repo } from "@/lib/types";
 
@@ -51,6 +51,12 @@ function mount() {
   );
 }
 
+/** Switches the UI language mid-test, so locale-triggered refetches can be observed. */
+function LocaleSwitcher() {
+  const [, setLocale] = useLocale();
+  return <button onClick={() => setLocale("ja")}>switch locale</button>;
+}
+
 const preview = {
   root: "/real/app",
   defaultBranch: "develop",
@@ -90,6 +96,38 @@ describe("RepositoriesSettings", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("该仓库已绑定到 workspace Alpha");
     expect(screen.getByText("/real/dup")).toBeTruthy();
     expect(hub.previewRepo).toHaveBeenLastCalledWith("w1", "/tmp/dup");
+  });
+
+  it("ignores a stale list response that resolves after a bind", async () => {
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
+    let resolveList!: (rows: Repo[]) => void;
+    vi.mocked(hub.listRepos).mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveList = resolve; }));
+    vi.mocked(hub.bindRepo).mockResolvedValueOnce(created);
+    mount();
+    await screen.findByRole("button", { name: "Add repository" });
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    expect(hub.bindRepo).toHaveBeenCalledWith("w1", { path: "/real/app", label: "app", mainBranch: "develop" });
+    // The add finished and the preview cleared, so the path below is the bound row, not the preview.
+    expect(await screen.findByText("None selected")).toBeTruthy();
+    await act(async () => { resolveList([]); });
+    expect(screen.getByText("/real/app")).toBeTruthy();
+  });
+
+  it("keeps the loaded list when a locale reread fails", async () => {
+    vi.mocked(hub.listRepos).mockResolvedValue([repo({ id: "r1", path: "/tmp/app", label: "app" })]);
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <RepositoriesSettings workspaceId="w1" onRepoBound={vi.fn()} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("/tmp/app")).toBeTruthy();
+    vi.mocked(hub.listRepos).mockRejectedValue(new Error("list boom"));
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe("list boom");
+    expect(screen.getByText("/tmp/app")).toBeTruthy();
   });
 
   it("asks for another name when the suggested label is taken and ignores a cancelled pick", async () => {

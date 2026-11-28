@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { formatDay, formatTime } from "@/lib/format";
 import { bindRepo, listRepos, pickDirectory, previewRepo, unbindRepo, updateRepo, type RepoPreview } from "@/lib/hub";
 import { useLocale, useT, type Locale } from "@/lib/i18n";
@@ -25,17 +25,22 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
   const [previewing, setPreviewing] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
+  // Every list read and every mutation bumps this. A list response that resolves after a mutation
+  // (or a newer read) must not overwrite the mutated list, and a failed background reread keeps the
+  // list that is already shown.
+  const seq = useRef(0);
 
   useEffect(() => {
     let cancel = false;
+    const mine = ++seq.current;
     const message = (err: unknown) => (hubErrorText(err, t));
     listRepos(workspaceId)
       .then((rows) => {
-        if (!cancel) setRepos(rows);
+        if (!cancel && mine === seq.current) setRepos(rows);
       })
       .catch((err: unknown) => {
-        if (cancel) return;
-        setRepos([]);
+        if (cancel || mine !== seq.current) return;
+        setRepos((list) => list ?? []);
         setFormError(message(err));
       });
     return () => {
@@ -71,6 +76,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
     if (!trimmedLabel || (preview.labelTaken && trimmedLabel === preview.label)) return;
     try {
       const created = await bindRepo(workspaceId, { path: preview.root, label: trimmedLabel, mainBranch: preview.defaultBranch });
+      seq.current += 1;
       setRepos((list) => [...(list ?? []), created]);
       // Binding starts the repository's graph build: the first real Graphify call, so the offer may open here.
       onRepoBound();
@@ -85,6 +91,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
   async function saveRepo(repoId: string, patch: { label?: string; mainBranch?: string; trustSkills?: boolean }) {
     try {
       const next = await updateRepo(workspaceId, repoId, patch);
+      seq.current += 1;
       setRepos((list) => list?.map((repo) => (repo.id === repoId ? next : repo)) ?? null);
     } catch (err) {
       setFormError(hubErrorText(err, t));
@@ -94,6 +101,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
 
   async function removeRepo(repoId: string) {
     const previous = repos;
+    seq.current += 1;
     setRepos((list) => list?.filter((repo) => repo.id !== repoId) ?? null);
     try {
       await unbindRepo(workspaceId, repoId);
