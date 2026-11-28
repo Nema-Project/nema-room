@@ -14,7 +14,8 @@ export type CodeParams = Record<string, string | number>;
 const CODE = /^[a-z][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)*$/;
 const MAX_CODE_LENGTH = 80;
 const MAX_PARAMS = 16;
-const MAX_PARAM_LENGTH = 4096;
+/** A string param longer than this is cut when read back (`readCodeParams`). Writers with unbounded lists must bound them first, at a whole-value boundary. */
+export const MAX_PARAM_LENGTH = 4096;
 
 export function isErrorCode(value: unknown): value is string {
   return typeof value === "string" && value.length <= MAX_CODE_LENGTH && CODE.test(value);

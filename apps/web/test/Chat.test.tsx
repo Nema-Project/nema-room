@@ -155,12 +155,13 @@ describe("Chat", () => {
     act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t1", workspaceId: "w1", messageId: "s1", status: "running", error: null, threadId: null } }));
     expect(screen.getByText("Drawing the architecture diagram")).toBeTruthy();
     act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t1", workspaceId: "w1", messageId: "s1", status: "done", error: null, threadId: null } }));
-    // The marker phrase alone no longer labels the bar; another system task's code does not either.
+    // A message stored before the notice change has no notice (D3): the marker phrase still labels it.
     act(() => ref.current!.handleEvent({ type: "message.created", message: m("s2", `Repo API: ${ARCHITECTURE_DIAGRAM_MARKER}`, "system") }));
     act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "s2", status: "running", error: null, threadId: null } }));
-    expect(screen.queryByText("Drawing the architecture diagram")).toBeNull();
+    expect(screen.getByText("Drawing the architecture diagram")).toBeTruthy();
     act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t2", workspaceId: "w1", messageId: "s2", status: "done", error: null, threadId: null } }));
-    const update = { ...m("s3", "update it", "system"), meta: { notice: { code: "system.task.diagramUpdate", params: { id: "G-1" } } } };
+    // But a message whose notice names another task is not a diagram task, marker phrase or not.
+    const update = { ...m("s3", `Repo API: ${ARCHITECTURE_DIAGRAM_MARKER}`, "system"), meta: { notice: { code: "system.task.diagramUpdate", params: { id: "G-1" } } } };
     act(() => ref.current!.handleEvent({ type: "message.created", message: update }));
     act(() => ref.current!.handleEvent({ type: "task.updated", task: { id: "t3", workspaceId: "w1", messageId: "s3", status: "running", error: null, threadId: null } }));
     expect(screen.queryByText("Drawing the architecture diagram")).toBeNull();

@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { createHash } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { KnowledgeStore } from "@nema/knowledge";
-import { HookSignal, NOTICE, ReportInput, reportPassed, type GithubObservation, type SystemNotice, type ReportAuthors, type ReportCheck, type ReportMessageMeta, type StoredReport } from "@nema/shared";
+import { HookSignal, MAX_PARAM_LENGTH, NOTICE, ReportInput, reportPassed, type GithubObservation, type SystemNotice, type ReportAuthors, type ReportCheck, type ReportMessageMeta, type StoredReport } from "@nema/shared";
 import { DAEMON_TIMED_OUT, INDEX_RPC_TIMEOUT_MS, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
@@ -315,6 +315,24 @@ export type ReportFallbackOptions = {
 
 type MoveRow = { id: string; repo_id: string; from_sha: string | null; to_sha: string };
 
+/**
+ * The `commits` notice param, bounded to `MAX_PARAM_LENGTH` without ever cutting a SHA in half:
+ * complete SHAs only, in order, with an ellipsis marking a list that continues past the cap.
+ * `readCodeParams` slices string params at the same limit on read, so an unbounded join would
+ * otherwise surface a partial SHA in the localised notice.
+ */
+function uncoveredCommitsParam(shas: string[]): string {
+  const joined = shas.join(", ");
+  if (joined.length <= MAX_PARAM_LENGTH) return joined;
+  let out = "";
+  for (const sha of shas) {
+    const next = out === "" ? sha : `${out}, ${sha}`;
+    if (next.length + ", …".length > MAX_PARAM_LENGTH) break;
+    out = next;
+  }
+  return out === "" ? "…" : `${out}, …`;
+}
+
 function uncoveredTask(repo: Repo, shas: string[]): string {
   return (
     `主分支有新提交但没有收到上报（仓库 ${repo.label}，${repo.id}）：\n${shas.join("\n")}\n` +
@@ -357,7 +375,7 @@ async function handleMove(db: Db, daemon: DaemonRpc, events: EventBus, move: Mov
     const shas = uncovered as string[];
     await queueSystemTask(db, events, repo.workspaceId, uncoveredTask(repo, shas), {
       code: NOTICE.systemTaskUncoveredCommits,
-      params: { label: repo.label, repoId: repo.id, count: shas.length, commits: shas.join(", ") },
+      params: { label: repo.label, repoId: repo.id, count: shas.length, commits: uncoveredCommitsParam(shas) },
     });
   }
   await markHandled();
