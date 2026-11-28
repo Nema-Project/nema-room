@@ -1760,14 +1760,45 @@ describe("remote daemon hello", () => {
   });
 });
 
+type SqlMatch = (sql: string, params?: unknown[]) => boolean;
+type GatedDb = {
+  db: Db;
+  /** Holds the next query matching `match`; `release` lets it run (or fail with `fail`). */
+  hold(match: SqlMatch, fail?: Error): { entered: Promise<void>; release(): void };
+  /** Resolves when a query matching `match` is issued (from now on). */
+  seen(match: SqlMatch): Promise<void>;
+  /**
+   * Resolves once no query or transaction is running, except a held one, at a point where every continuation
+   * of the last one has run: a chain of awaits on the database has then reached its end, or a held query.
+   */
+  quiet(): Promise<void>;
+  /** Lets every held query run; for cleanup, so a failed assertion never leaves a hello stuck behind its gate. */
+  releaseAll(): void;
+};
+
 /**
  * Wraps `db` so a test can hold the next query matching a predicate: `entered` resolves when it arrives, and the
  * query runs (or fails with `fail`) only once `release` is called.
  */
-function gatedDb(inner: Db): { db: Db; hold(match: (sql: string, params?: unknown[]) => boolean, fail?: Error): { entered: Promise<void>; release(): void } } {
-  let gate: { match: (sql: string, params?: unknown[]) => boolean; fail?: Error; enter: () => void; released: Promise<void> } | null = null;
+function gatedDb(inner: Db): GatedDb {
+  let gate: { match: SqlMatch; fail?: Error; enter: () => void; released: Promise<void> } | null = null;
+  const releases: Array<() => void> = [];
+  const watchers: Array<{ match: SqlMatch; resolve: () => void }> = [];
+  let running = 0;
+  const counted = async <T>(run: () => Promise<T>): Promise<T> => {
+    running += 1;
+    try {
+      return await run();
+    } finally {
+      running -= 1;
+    }
+  };
   const wrapped: Db = {
     async query<T>(sql: string, params?: unknown[]): Promise<T[]> {
+      for (const w of watchers.splice(0)) {
+        if (w.match(sql, params)) w.resolve();
+        else watchers.push(w);
+      }
       if (gate?.match(sql, params)) {
         const current = gate;
         gate = null;
@@ -1775,9 +1806,9 @@ function gatedDb(inner: Db): { db: Db; hold(match: (sql: string, params?: unknow
         await current.released;
         if (current.fail) throw current.fail;
       }
-      return inner.query<T>(sql, params);
+      return counted(() => inner.query<T>(sql, params));
     },
-    tx: (fn) => inner.tx(fn),
+    tx: (fn) => counted(() => inner.tx(fn)),
   };
   return {
     db: wrapped,
@@ -1786,11 +1817,30 @@ function gatedDb(inner: Db): { db: Db; hold(match: (sql: string, params?: unknow
       let release!: () => void;
       const entered = new Promise<void>((resolve) => { enter = resolve; });
       const released = new Promise<void>((resolve) => { release = resolve; });
+      releases.push(release);
       gate = { match, ...(fail ? { fail } : {}), enter, released };
       return { entered, release };
     },
+    seen(match) {
+      return new Promise<void>((resolve) => { watchers.push({ match, resolve }); });
+    },
+    async quiet() {
+      // Microtasks run before setImmediate: a continuation between two queries has issued the next one by then.
+      for (let idle = 0; idle < 2;) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        idle = running === 0 ? idle + 1 : 0;
+      }
+    },
+    releaseAll() {
+      gate = null;
+      for (const release of releases.splice(0)) release();
+    },
   };
 }
+
+/** The close cleanup's first query for `daemonId` (requeueing its running tasks). */
+const closeCleanupOf = (daemonId: string): SqlMatch => (sql, params) =>
+  sql.includes("where daemon_id = $1 and status = 'running'") && params?.[0] === daemonId;
 
 // #302 task 4: a registered daemon replacing its own connection must not let any other close publish meanwhile.
 describe("daemon status during a registered daemon's replacement", () => {
@@ -1800,13 +1850,17 @@ describe("daemon status during a registered daemon's replacement", () => {
   let gate: ReturnType<typeof gatedDb>;
   let credentialA: string;
   let credentialB: string;
+  let credentialC: string;
+  let idA: string;
   let idB: string;
+  let idC: string;
 
   beforeEach(async () => {
     const { createDaemonRegistrationCode, registerDaemon } = await import("../src/daemons.js");
     await db.query("insert into users(id, display_name) values ('usr_daemon','Daemon owner')");
-    ({ credential: credentialA } = (await registerDaemon(db, (await createDaemonRegistrationCode(db, "usr_daemon")).code, "Desktop"))!);
+    ({ credential: credentialA, id: idA } = (await registerDaemon(db, (await createDaemonRegistrationCode(db, "usr_daemon")).code, "Desktop"))!);
     ({ credential: credentialB, id: idB } = (await registerDaemon(db, (await createDaemonRegistrationCode(db, "usr_daemon")).code, "Laptop"))!);
+    ({ credential: credentialC, id: idC } = (await registerDaemon(db, (await createDaemonRegistrationCode(db, "usr_daemon")).code, "Server"))!);
     gate = gatedDb(db);
     remoteServer = http.createServer();
     remote = attachDaemonSocket(remoteServer, { db: gate.db, dataDir, events, daemonToken: TOKEN, hubUrl: "http://127.0.0.1:4400", remoteAuth: true, allowedHosts: ["hub.example"] });
@@ -1814,10 +1868,25 @@ describe("daemon status during a registered daemon's replacement", () => {
     remoteUrl = `ws://127.0.0.1:${(remoteServer.address() as AddressInfo).port}/daemon`;
   });
   afterEach(async () => {
+    // Whatever an assertion left held, let it go first: close() waits for every hello still behind a gate.
+    gate.releaseAll();
     await remote.close();
     remoteServer.closeAllConnections();
     await new Promise<void>((resolve) => remoteServer.close(() => resolve()));
   });
+
+  /** Holds the successor's markDaemonSeen of `id`: it runs after the retired socket closed, before the successor is listed. */
+  const holdSeen = (id: string, fail?: Error) =>
+    gate.hold((sql, params) => sql.startsWith("update daemons set last_seen_at") && params?.[0] === id, fail);
+
+  /** Closes `client` and waits until the hub finished its close cleanup, publication included. */
+  async function closeAndSettle(client: Client, daemonId: string): Promise<void> {
+    const cleanup = gate.seen(closeCleanupOf(daemonId));
+    client.ws.terminate();
+    await client.closed;
+    await cleanup;
+    await gate.quiet();
+  }
 
   /** A online, then B; B' (B's credential again) starts replacing B and is held right after B's socket closed. */
   async function heldReplacement(fail?: Error) {
@@ -1827,8 +1896,7 @@ describe("daemon status during a registered daemon's replacement", () => {
     const b = await connect(credentialB, undefined, {}, remoteUrl);
     await b.next("welcome");
     await vi.waitFor(() => expect(published).toHaveLength(2));
-    // markDaemonSeen of B's id runs after the retired socket closed and before the successor is listed.
-    const held = gate.hold((sql, params) => sql.startsWith("update daemons set last_seen_at") && params?.[0] === idB, fail);
+    const held = holdSeen(idB, fail);
     const successor = await connect(credentialB, undefined, {}, remoteUrl);
     await held.entered;
     await b.closed;
@@ -1838,11 +1906,8 @@ describe("daemon status during a registered daemon's replacement", () => {
   test("an unrelated close inside the replacement gap publishes no false blip; the successor is published", async () => {
     const { published, a, successor, held } = await heldReplacement();
     // A's close completes inside the gap: nothing is open now, which HTTP may report, but the stream holds off.
-    a.ws.terminate();
-    await a.closed;
-    await vi.waitFor(() => expect(remote.connectedDaemonIds()).toEqual([]));
+    await closeAndSettle(a, idA);
     expect(remote.statusSnapshot().connected).toBe(false);
-    await new Promise((r) => setTimeout(r, 100));
     expect(published).toHaveLength(2);
 
     held.release();
@@ -1859,9 +1924,7 @@ describe("daemon status during a registered daemon's replacement", () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const { published, a, successor, held } = await heldReplacement(new Error("db down"));
-      a.ws.terminate();
-      await a.closed;
-      await vi.waitFor(() => expect(remote.connectedDaemonIds()).toEqual([]));
+      await closeAndSettle(a, idA);
       expect(published).toHaveLength(2);
 
       held.release();
@@ -1872,6 +1935,66 @@ describe("daemon status during a registered daemon's replacement", () => {
     } finally {
       logged.mockRestore();
     }
+  });
+
+  test("the published connection closing while an older daemon replaces itself publishes the real fallback", async () => {
+    const published = statusEvents();
+    const a = await connect(credentialA, undefined, {}, remoteUrl);
+    await a.next("welcome");
+    const c = await connect(credentialC, undefined, {}, remoteUrl);
+    await c.next("welcome");
+    const b = await connect(credentialB, undefined, {}, remoteUrl);
+    await b.next("welcome");
+    await vi.waitFor(() => expect(published).toHaveLength(3));
+    expect(published.map((s) => s.daemonId)).toEqual([idA, idC, idB]);
+    const atC = published[1]!;
+
+    // A' replaces A (not the current connection) and is held inside the gap.
+    const held = holdSeen(idA);
+    const successor = await connect(credentialA, undefined, {}, remoteUrl);
+    await held.entered;
+    await a.closed;
+
+    // B, the published connection, leaves for good: C is current, and HTTP and the event stream both say so now.
+    await closeAndSettle(b, idB);
+    expect(remote.statusSnapshot()).toEqual(atC);
+    expect(published).toHaveLength(4);
+    expect(published[3]).toEqual(atC);
+
+    held.release();
+    await successor.next("welcome");
+    await vi.waitFor(() => expect(published).toHaveLength(5));
+    expect(published[4]).toEqual({ connected: true, daemonId: idA, connectionId: expect.any(String) });
+    expect(published[4]!.connectionId).not.toBe(published[0]!.connectionId);
+    expect(remote.statusSnapshot()).toEqual(published[4]);
+    expect(published.map((s) => s.daemonId)).toEqual([idA, idC, idB, idC, idA]);
+  });
+
+  test("a close that is not the published connection's, inside the replacement of the published one, stays quiet", async () => {
+    const published = statusEvents();
+    const a = await connect(credentialA, undefined, {}, remoteUrl);
+    await a.next("welcome");
+    const c = await connect(credentialC, undefined, {}, remoteUrl);
+    await c.next("welcome");
+    const b = await connect(credentialB, undefined, {}, remoteUrl);
+    await b.next("welcome");
+    await vi.waitFor(() => expect(published).toHaveLength(3));
+
+    // B' replaces B, the published connection; C closing meanwhile leaves A open but must not flash A.
+    const held = holdSeen(idB);
+    const successor = await connect(credentialB, undefined, {}, remoteUrl);
+    await held.entered;
+    await b.closed;
+    await closeAndSettle(c, idC);
+    expect(remote.statusSnapshot().daemonId).toBe(idA);
+    expect(published).toHaveLength(3);
+
+    held.release();
+    await successor.next("welcome");
+    await vi.waitFor(() => expect(published).toHaveLength(4));
+    expect(published[3]).toEqual({ connected: true, daemonId: idB, connectionId: expect.any(String) });
+    expect(published[3]!.connectionId).not.toBe(published[2]!.connectionId);
+    expect(remote.statusSnapshot()).toEqual(published[3]);
   });
 });
 
@@ -1971,6 +2094,63 @@ describe("daemon status names the current connection", () => {
       expect(published[2]).toEqual(atA);
       expect(gated.statusSnapshot()).toEqual(atA);
     } finally {
+      // Before close(): it waits for B's hello, which a failed assertion could otherwise leave behind the gate.
+      gate.releaseAll();
+      await gated.close();
+      gatedServer.closeAllConnections();
+      await new Promise<void>((resolve) => gatedServer.close(() => resolve()));
+    }
+  });
+
+  test("a readiness request sent on the event of a connection still in its hello gets the daemon's reply", async () => {
+    const gate = gatedDb(db);
+    const gatedServer = http.createServer();
+    const gated = attachDaemonSocket(gatedServer, { db: gate.db, dataDir, events, daemonToken: TOKEN, hubUrl: "http://hub.test" });
+    await new Promise<void>((resolve) => gatedServer.listen(0, "127.0.0.1", resolve));
+    const gatedUrl = `ws://127.0.0.1:${(gatedServer.address() as AddressInfo).port}/daemon`;
+    const app = createApp({ db, dataDir, events, daemonStatus: () => gated.isConnected(), daemonSnapshot: () => gated.statusSnapshot(), daemon: gated.rpc });
+    try {
+      const published = statusEvents();
+      const a = await connect(TOKEN, undefined, {}, gatedUrl);
+      await a.next("welcome");
+      await vi.waitFor(() => expect(published).toHaveLength(1));
+
+      // B is listed and published, and its hello then waits on the workspace list before the welcome.
+      const held = gate.hold((sql) => sql.includes("from workspaces order by"));
+      const b = await connect(TOKEN, undefined, {}, gatedUrl);
+      await held.entered;
+      expect(published).toHaveLength(2);
+      const atB = published[1]!;
+      expect(gated.statusSnapshot()).toEqual(atB);
+
+      // The page reacts to B's event (plan task 6) and B answers at once, before its welcome.
+      const response = app.request("http://127.0.0.1:4400/api/agent-readiness");
+      let request: Msg;
+      do request = await b.next("rpc.request");
+      while (request.method !== "agents.readiness");
+      b.send({
+        type: "rpc.response", id: request.id, ok: true,
+        result: { current: "codex-direct", runtimes: [{ runtime: "codex-direct", state: "configured" }], checkedAt: "2026-11-28T00:00:00.000Z" },
+      });
+      // The reply is not queued behind the unfinished hello: it settles while the workspace list is still held.
+      const answered = await Promise.race([
+        response,
+        new Promise<"stuck">((resolve) => setTimeout(() => resolve("stuck"), 5_000)),
+      ]);
+      expect(answered).not.toBe("stuck");
+      const ready = answered as Response;
+      expect(ready.status).toBe(200);
+      expect(await ready.json()).toMatchObject({ access: "full", daemon: { id: atB.daemonId, connectionId: atB.connectionId } });
+      expect(b.has("welcome")).toBe(false);
+
+      // The hello then completes as before: B is welcomed, still current, and nothing else was published.
+      held.release();
+      await b.next("welcome");
+      await gate.quiet();
+      expect(gated.statusSnapshot()).toEqual(atB);
+      expect(published).toEqual([published[0], atB]);
+    } finally {
+      gate.releaseAll();
       await gated.close();
       gatedServer.closeAllConnections();
       await new Promise<void>((resolve) => gatedServer.close(() => resolve()));

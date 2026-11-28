@@ -41,9 +41,11 @@ const HOST_ADMIN_PATH = /^\/api\/(?:components|agent-clis|extensions|plugins|pic
 const HOST_ADMIN_EXEMPT_PATH = /^\/api\/daemon\/attachment-capabilities$/;
 /**
  * #302 (maintainer ruling, issue comment 7232605390): reading the daemon status is open to every signed-in user.
- * It carries only `{ connected, daemonId, connectionId }`, no secret or configuration, and the web needs the
- * snapshot to confirm a readiness reply exactly as the `daemon.status` event does. Only GET; every other method
- * and every other /daemon/* path stays with the hub administrator.
+ * It carries only `{ connected, daemonId, connectionId }` (the same payload as the `daemon.status` event), no
+ * secret or configuration. The web needs it to confirm a readiness reply: the permanent "first-run ready" mark is
+ * written only against a snapshot fetched fresh after the `ready` reply whose daemon and connection ids both match
+ * it; an event alone never suffices (see `DaemonStatusSnapshot`). Only GET; every other method and every other
+ * /daemon/* path stays with the hub administrator.
  */
 const isOpenDaemonStatusRead = (method: string, path: string): boolean => method === "GET" && path === "/api/daemon/status";
 
